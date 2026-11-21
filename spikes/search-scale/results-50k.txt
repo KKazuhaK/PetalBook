@@ -1,0 +1,47 @@
+corpus: 50000 pages, 62.2 M characters, 192 MB on disk, generated in 14.39s
+
+== trigram
+  full rebuild from files   1m49.798s   (455 pages/s)
+  index size                405 MB  (211% of the text)
+  search (top 20 by relevance, median of 15):
+    栀子花                      29.6 ms   10968 matching pages
+    琥珀色的鲸落                    0.1 ms   3 matching pages
+    第七个雨夜                     0.1 ms   3 matching pages
+    栀子                     not answerable from this index
+    黄昏                     not answerable from this index
+    海                      not answerable from this index
+    栀子 黄昏                  not answerable from this index
+    白玉兰 搁浅 殉情              not answerable from this index
+    Petalbook                 0.1 ms   2 matching pages
+  listings (median of 15):
+    largest folder, first 50      0.1 ms   50 rows
+    most used tag, first 50       2.6 ms   50 rows
+    recent across space, 50       0.1 ms   50 rows
+    folder tree with counts       7.8 ms   400 rows
+    all tags with counts         14.5 ms   303 rows
+    tag + search together        31.2 ms   20 rows
+  update one page           1.1 ms (median of 200)
+
+== per-character
+  full rebuild from files   29.049s   (1721 pages/s)
+  index size                166 MB  (87% of the text)
+  search (top 20 by relevance, median of 15):
+    栀子花                     190.2 ms   13325 matching pages
+    琥珀色的鲸落                    0.2 ms   3 matching pages
+    第七个雨夜                     0.2 ms   3 matching pages
+    栀子                      221.7 ms   45380 matching pages
+    黄昏                      104.8 ms   27068 matching pages
+    海                       171.5 ms   49399 matching pages
+    栀子 黄昏                   201.7 ms   25633 matching pages
+    白玉兰 搁浅 殉情               182.0 ms   10706 matching pages
+    Petalbook                 0.1 ms   2 matching pages
+  listings (median of 15):
+    largest folder, first 50      0.1 ms   50 rows
+    most used tag, first 50       2.9 ms   50 rows
+    recent across space, 50       0.1 ms   50 rows
+    folder tree with counts       7.9 ms   400 rows
+    all tags with counts         15.2 ms   303 rows
+    tag + search together       186.2 ms   20 rows
+  update one page           0.7 ms (median of 200)
+
+for comparison, scanning every file for a 2-character word: 9.906s (45585 files match)
