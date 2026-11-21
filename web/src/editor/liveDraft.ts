@@ -31,7 +31,7 @@ export class LiveDraft {
     this.editor = editor
   }
 
-  setField(key: 'title' | 'subtitle', value: string): Fields {
+  setField(key: 'title' | 'subtitle' | 'source', value: string): Fields {
     return (this.fields = { ...this.fields, [key]: value })
   }
   setTags(tags: string[]): Fields {

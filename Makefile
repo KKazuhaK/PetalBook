@@ -5,7 +5,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 SPACE   ?= ./space
 
-.PHONY: build test vet run clean contract
+.PHONY: build test test-postgres vet run clean contract
 
 # Go binary only; the web app is embedded in a later milestone.
 build:
@@ -13,6 +13,11 @@ build:
 
 test:
 	go test -race ./cmd/... ./internal/...
+
+# The same tests, with the state-database ones also run on PostgreSQL in a
+# throwaway cluster (needs initdb, pg_ctl and psql on PATH).
+test-postgres:
+	bash scripts/test-postgres.sh
 
 vet:
 	go vet ./...

@@ -231,4 +231,5 @@
 /* Title and subtitle inputs: borderless, sized like headings. */
 .pb-title { font-size: 2rem; line-height: 1.35; font-weight: 700; letter-spacing: 0; }
 .pb-subtitle { font-size: 1.1rem; line-height: 1.6; color: var(--muted-foreground); }
-.pb-title::placeholder, .pb-subtitle::placeholder { color: var(--muted-foreground); opacity: 0.5; }
+.pb-source { font-size: 0.875rem; line-height: 1.5; color: var(--muted-foreground); }
+.pb-title::placeholder, .pb-subtitle::placeholder, .pb-source::placeholder { color: var(--muted-foreground); opacity: 0.5; }

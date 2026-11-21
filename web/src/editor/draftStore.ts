@@ -1,10 +1,11 @@
-// A local copy of what has been typed but not yet confirmed saved, per page.
+// A local copy of what has been typed but not yet confirmed by the server, per page.
 //
 // Autosave goes to the server; this goes to the browser's own storage, because
-// that is the only thing that is still there when a tab is closed while a save
-// is in flight, or when the body is too large for a `keepalive` request. It is
-// written synchronously (storage has no async step to lose) and removed once a
-// save of that exact state succeeds. Every storage access can fail (blocked,
+// that is the only thing that is still there when a tab is closed while a
+// request is in flight, when the body is too large for a `keepalive` request,
+// or when the session ended. It is written synchronously (storage has no async
+// step to lose) and removed once the server has confirmed storing that exact
+// state, as a draft or as the page. Every storage access can fail (blocked,
 // private window, full), and none of those failures may reach the editor.
 
 import type { DocJSON } from '@/markdown'
@@ -22,10 +23,23 @@ export interface DraftContent {
   // Identifies this write. A tab removes a draft only if the stored one still
   // carries the token it wrote itself, so it cannot remove another tab's.
   token: string
+  // Digests of the drafts (header, body and base rev) the editor had sent to the
+  // server since that revision was adopted, and of the one it was opened on. When this text
+  // comes back after the page was closed, a file or draft that is exactly one of
+  // them is the person's own text (the server committed it), not someone else's:
+  // see reconcile.ts.
+  sent?: { baseRev: string; digest: string }[]
+  // Set when the server confirmed holding exactly this text as its draft of this
+  // version. Such a copy is no longer what protects the text (the server does not
+  // drop a draft on its own); it is kept only so the text can be offered back if
+  // the page itself is deleted elsewhere. When the page is opened again it decides
+  // nothing: see draftRestore.ts.
+  confirmed?: string
 }
 
 export interface StoredDraft extends DraftContent {
   v: 1
+  // The draft's reference (see draftRef): whose, in which space, of which page.
   id: string
 }
 
@@ -40,8 +54,34 @@ export interface KeyValueStorage {
 
 const PREFIX = 'pb.draft.'
 const SAVED_PREFIX = 'pb.saved.'
-const keyOf = (id: string) => PREFIX + id
-export const savedMarkerKey = (id: string) => SAVED_PREFIX + id
+const keyOf = (ref: string) => PREFIX + ref
+
+// A local draft belongs to a person, a space and a page: a second user of the
+// same browser is never offered someone else's text. In single-user mode that
+// is `local`, `default`.
+export const draftRef = (userId: string, spaceId: string, pageId: string) => [userId, spaceId, pageId].map(encodeURIComponent).join('/')
+
+// Milestone 1.1 kept drafts under the page id alone. In single-user mode (the
+// only person there can have been) such a draft moves to the new key, so it is
+// not orphaned. In accounts mode there is no telling whose it was, so it is
+// left alone (and expires like any other).
+export function draftRefFor(userId: string, spaceId: string, pageId: string, storage: KeyValueStorage | null = browserStorage()): string {
+  const ref = draftRef(userId, spaceId, pageId)
+  if (!storage || userId !== 'local' || spaceId !== 'default') return ref
+  try {
+    const old = storage.getItem(PREFIX + pageId)
+    if (old === null || storage.getItem(keyOf(ref)) !== null) return ref
+    const d = JSON.parse(old) as StoredDraft
+    if (d && d.id === pageId) {
+      storage.setItem(keyOf(ref), JSON.stringify({ ...d, id: ref }))
+      storage.removeItem(PREFIX + pageId)
+    }
+  } catch {
+    // A draft that cannot be moved stays where it was.
+  }
+  return ref
+}
+export const savedMarkerKey = (ref: string) => SAVED_PREFIX + ref
 export const DRAFT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
 
 export function browserStorage(): KeyValueStorage | null {
@@ -54,7 +94,7 @@ export function browserStorage(): KeyValueStorage | null {
 
 const isFields = (f: unknown): f is Fields => {
   const x = f as Fields | null
-  return !!x && typeof x.title === 'string' && typeof x.subtitle === 'string' && Array.isArray(x.tags) && x.tags.every((t) => typeof t === 'string')
+  return !!x && typeof x.title === 'string' && typeof x.subtitle === 'string' && (x.source === undefined || typeof x.source === 'string') && Array.isArray(x.tags) && x.tags.every((t) => typeof t === 'string')
 }
 
 export function loadDraft(id: string, storage: KeyValueStorage | null = browserStorage(), now: number = Date.now()): StoredDraft | null {
@@ -68,7 +108,7 @@ export function loadDraft(id: string, storage: KeyValueStorage | null = browserS
   if (raw === null) return null
   try {
     const d = JSON.parse(raw) as StoredDraft
-    if (d && d.v === 1 && d.id === id && typeof d.baseRev === 'string' && typeof d.token === 'string' && isFields(d.fields) && typeof d.savedAt === 'number') {
+    if (d && d.v === 1 && d.id === id && typeof d.baseRev === 'string' && typeof d.token === 'string' && isFields(d.fields) && typeof d.savedAt === 'number' && (d.confirmed === undefined || typeof d.confirmed === 'string') && (d.sent === undefined || (Array.isArray(d.sent) && d.sent.every((x) => x && typeof x.baseRev === 'string' && typeof x.digest === 'string')))) {
       if (now - d.savedAt <= DRAFT_MAX_AGE_MS) return d
       // Too old to be what anyone still means to recover.
       clearDraft(id, storage)
@@ -166,6 +206,16 @@ export function pruneExpired(storage: KeyValueStorage | null = browserStorage(),
   }
 }
 
+// The token of the stored draft, if there is one.
+export function draftTokenOf(id: string, storage: KeyValueStorage | null = browserStorage()): string | null {
+  try {
+    const raw = storage?.getItem(keyOf(id))
+    return raw == null ? null : ((JSON.parse(raw) as { token?: string }).token ?? null)
+  } catch {
+    return null
+  }
+}
+
 // Remove the draft only if it is still the one with `token`.
 export function clearDraftIf(id: string, token: string, storage: KeyValueStorage | null = browserStorage()): void {
   if (!storage) return
@@ -178,37 +228,42 @@ export function clearDraftIf(id: string, token: string, storage: KeyValueStorage
   }
 }
 
-// Point the draft with `token` at a newer server revision (same content).
-export function rebaseDraft(id: string, token: string, baseRev: string, storage: KeyValueStorage | null = browserStorage()): void {
+// Point the draft with `token` at newer server state (same content): the file
+// revision it sits on and what had been sent on it.
+export function rebaseDraft(id: string, token: string, baseRev: string, sent: DraftContent['sent'], storage: KeyValueStorage | null = browserStorage()): void {
   if (!storage) return
   try {
     const raw = storage.getItem(keyOf(id))
     if (raw === null) return
     const d = JSON.parse(raw) as StoredDraft
-    if (d.token === token) storage.setItem(keyOf(id), JSON.stringify({ ...d, baseRev }))
+    if (d.token === token) storage.setItem(keyOf(id), JSON.stringify({ ...d, baseRev, sent }))
   } catch {
     // Best effort; a failure leaves the draft on its old rev.
   }
 }
 
-// Written after every successful save. A `storage` event is delivered to the
-// *other* tabs, which is how they learn that this page moved on.
+// Written after every request that changed what the server has. A `storage`
+// event is delivered to the *other* tabs, which is how they learn that this
+// page moved on: `rev` is the file, `draft` the `version` of the server draft
+// (null when there is none). A new value is written every time, so the event
+// fires even when nothing in them changed.
 export interface SavedMarker {
   rev: string
+  draft: string | null
   at: number
 }
-export function announceSaved(id: string, rev: string, storage: KeyValueStorage | null = browserStorage(), now: number = Date.now()): void {
+export function announce(id: string, rev: string, draft: string | null, storage: KeyValueStorage | null = browserStorage(), now: number = Date.now()): void {
   try {
-    storage?.setItem(savedMarkerKey(id), JSON.stringify({ rev, at: now } satisfies SavedMarker))
+    storage?.setItem(savedMarkerKey(id), JSON.stringify({ rev, draft, at: now } satisfies SavedMarker))
   } catch {
-    // Other tabs then find out at their next save (a normal conflict).
+    // Other tabs then find out at their next request (a normal conflict).
   }
 }
 export function parseSavedMarker(value: string | null): SavedMarker | null {
   if (!value) return null
   try {
-    const m = JSON.parse(value) as SavedMarker
-    return typeof m.rev === 'string' ? m : null
+    const m = JSON.parse(value) as Partial<SavedMarker>
+    return typeof m.rev === 'string' ? { rev: m.rev, draft: typeof m.draft === 'string' ? m.draft : null, at: typeof m.at === 'number' ? m.at : 0 } : null
   } catch {
     return null
   }
@@ -221,8 +276,10 @@ export interface DraftStore {
   clear(): void
   // Only if the stored draft is still the one written with `token`.
   clearIf(token: string): void
-  rebase(token: string, baseRev: string): void
-  announceSaved(rev: string): void
+  // The token of the stored draft (null when there is none).
+  tokenOf(): string | null
+  rebase(token: string, baseRev: string, sent: DraftContent['sent']): void
+  announce(rev: string, draft: string | null): void
 }
 
 export function draftStoreFor(id: string, storage: KeyValueStorage | null = browserStorage()): DraftStore {
@@ -231,7 +288,8 @@ export function draftStoreFor(id: string, storage: KeyValueStorage | null = brow
     write: (content) => void saveDraft(id, content, storage),
     clear: () => clearDraft(id, storage),
     clearIf: (token) => clearDraftIf(id, token, storage),
-    rebase: (token, rev) => rebaseDraft(id, token, rev, storage),
-    announceSaved: (rev) => announceSaved(id, rev, storage),
+    tokenOf: () => draftTokenOf(id, storage),
+    rebase: (token, rev, sent) => rebaseDraft(id, token, rev, sent, storage),
+    announce: (rev, draft) => announce(id, rev, draft, storage),
   }
 }

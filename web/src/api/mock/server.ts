@@ -1,16 +1,20 @@
 // An in-memory implementation of docs/api.md, for `npm run dev:mock` and for
-// tests. It is deliberately strict about the parts the web app depends on
-// (revs, 409 conflicts, header order, untitled pages, cursors) and simple
-// about everything else. It has no DOM or Node dependencies.
+// tests. Single-user mode is the default; accounts mode adds sessions (a
+// cookie stand-in), invites, spaces per user and a fake OpenID Connect
+// provider. It has no DOM or Node dependencies.
 
-import type { Page, PageMeta, PageSummary } from '../types.ts'
-import { folderRuleMessage } from '../../lib/folderRules.ts'
+import type { Identity, Invite, Page, Role, SpaceInfo, User } from '../types.ts'
 import { gitBlobId } from './sha1.ts'
-import { SEED_EMPTY_FOLDERS, SPACE_NAME, seedPages } from './seed.ts'
+import { ALPHABET, HttpError, compareCodePoints, createSpaceStore, isRecord, rfc3339, type SpaceStore } from './store.ts'
+import { SPACE_NAME } from './seed.ts'
+
+export { validFolder } from './store.ts'
 
 export interface MockResponse {
   status: number
   body?: unknown
+  // Response headers other than the content type: Set-Cookie, Location, Retry-After.
+  headers?: Record<string, string>
 }
 
 export interface MockOptions {
@@ -19,373 +23,582 @@ export interface MockOptions {
   empty?: boolean
   // Fixed ids (seed pages use deterministic ids so tests can address them).
   random?: () => number
+  mode?: 'single' | 'accounts'
+  // Accounts mode: the seeded administrator. `false` starts with no user at
+  // all, which is the first-run state (`session.setup` is true).
+  admin?: { username: string; password: string; name?: string } | false
+  // The token the first-run page needs.
+  setupToken?: string
+  // Accounts mode: a configured OpenID Connect provider. The mock provider
+  // always signs in the same person (`sub`).
+  oidc?: { name: string; autoCreate?: boolean; sub?: string } | null
+  // Accounts mode: an invite that exists from the start, with this token.
+  invite?: { token: string; role?: Role }
+  // Drafts the server commits by itself (docs/api.md: --draft-idle, --draft-max).
+  // Accounts mode: how many spaces one person may own (POST /api/spaces is 403 beyond it).
+  maxSpaces?: number
+  draftIdleMs?: number
+  draftMaxMs?: number
 }
 
-interface Stored {
+export const MOCK_ADMIN = { username: 'admin', password: 'petalbook-admin', name: '管理员' }
+export const MOCK_SETUP_TOKEN = 'mock-setup-token'
+export const MOCK_INVITE_TOKEN = 'mock-invite-token'
+export const SESSION_COOKIE = 'pb_session'
+const OIDC_COOKIE = 'pb_oidc'
+const LOCAL_USER: User = { id: 'local', username: 'local', name: 'Local user', email: '', role: 'admin', disabled: false, created: '2026-01-01T00:00:00Z' }
+
+interface UserRec extends User {
+  passwordHash?: string
+  identities: (Identity & { sub: string })[]
+}
+interface InviteRec {
   id: string
-  folder: string
-  fileName: string
-  meta: PageMeta
-  body: string
-  rev: string
-  updated: number
+  tokenHash: string
+  role: Role
+  created: number
+  expires: number
+  createdBy: string
+  used: boolean
+}
+interface SpaceRec {
+  id: string
+  name: string
+  ownerId: string
+  personal: boolean
+  store: SpaceStore
+}
+interface OidcAttempt {
+  intent: string
+  token: string
+  ret: string
+  userId: string | null
+  created: number
+  used: boolean
 }
 
-const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
-const ID_RE = /^[0-9A-HJKMNP-TV-Z]{10}$/
+const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{1,31}$/
+const hashOf = (s: string) => gitBlobId(`mock:${s}`)
+const codePoints = (s: string) => Array.from(s).length
 
-class HttpError extends Error {
-  status: number
-  code: string
-  extra?: Record<string, unknown>
-  constructor(status: number, code: string, message: string, extra?: Record<string, unknown>) {
-    super(message)
-    this.status = status
-    this.code = code
-    this.extra = extra
+const parseCookies = (header: string | null | undefined): Record<string, string> => {
+  const out: Record<string, string> = {}
+  for (const part of (header ?? '').split(';')) {
+    const i = part.indexOf('=')
+    if (i > 0) out[part.slice(0, i).trim()] = part.slice(i + 1).trim()
   }
-}
-
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
-
-export const validFolder = (path: string) => folderRuleMessage(path) === null
-
-const ancestors = (path: string): string[] => {
-  const out: string[] = []
-  const parts = path.split('/').filter(Boolean)
-  for (let i = 1; i <= parts.length; i++) out.push(parts.slice(0, i).join('/'))
   return out
 }
+const setCookie = (name: string, value: string, maxAge?: number) => `${name}=${value}; Path=/; HttpOnly; SameSite=Lax${maxAge === undefined ? '' : `; Max-Age=${maxAge}`}`
 
-// The file as it would sit on disk. Only used to compute the rev, so the YAML
-// flavour does not matter, but it must change whenever header or body does.
-function serializeFile(meta: PageMeta, body: string): string {
-  const lines = Object.entries(meta).map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
-  return `---\n${lines.join('\n')}\n---\n${body}`
-}
-
-function plain(markdown: string): string {
-  return markdown
-    .replace(/```[^\n]*\n([\s\S]*?)```/g, '$1')
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+\.|- \[[ x]\])\s+/gm, '')
-    .replace(/^\s*\|?\s*:?-{3,}.*$/gm, '')
-    .replace(/[*_`~|]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function firstLine(body: string): string {
-  for (const raw of body.split('\n')) {
-    const line = plain(raw)
-    if (line) return line
-  }
-  return ''
-}
-
-// Titles compare by code point (not by locale), case-insensitively.
-function compareCodePoints(a: string, b: string): number {
-  const x = Array.from(a)
-  const y = Array.from(b)
-  for (let i = 0; i < Math.min(x.length, y.length); i++) {
-    const d = x[i].codePointAt(0)! - y[i].codePointAt(0)!
-    if (d !== 0) return d
-  }
-  return x.length - y.length
-}
-
-const stringField = (meta: PageMeta, key: string): string | undefined => {
-  const v = meta[key]
-  return typeof v === 'string' && v !== '' ? v : undefined
-}
-const tagsOf = (meta: PageMeta): string[] => (Array.isArray(meta.tags) ? meta.tags.filter((t: unknown): t is string => typeof t === 'string') : [])
-
-const rfc3339 = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z')
+// What the sign-in cookie holds is meaningless to the client, as in the real server.
+const plainPath = (p: unknown): string => (typeof p === 'string' && p.startsWith('/') && !p.startsWith('//') && !p.includes('\\') ? p : '/')
 
 export function createMockServer(options: MockOptions = {}) {
   const now = options.now ?? Date.now
   const random = options.random ?? Math.random
-  const pages = new Map<string, Stored>()
-  const folders = new Set<string>([''])
+  const mode = options.mode ?? 'single'
+  const accounts = mode === 'accounts'
+  const setupToken = options.setupToken ?? MOCK_SETUP_TOKEN
+  const idleMs = options.draftIdleMs ?? 120_000
+  const maxMs = options.draftMaxMs ?? 600_000
+  const oidc = accounts ? (options.oidc ?? null) : null
   let counter = 0
 
-  const newId = () => {
+  const users = new Map<string, UserRec>()
+  const sessions = new Map<string, string>()
+  const invites = new Map<string, InviteRec>()
+  const spaces = new Map<string, SpaceRec>()
+  const oidcAttempts = new Map<string, OidcAttempt>()
+  const failures = new Map<string, { count: number; first: number }>()
+
+  const randomString = (n: number) => {
+    let s = ''
+    for (let i = 0; i < n; i++) s += ALPHABET[Math.floor(random() * 32)]
+    return s
+  }
+  const newId = (taken: (id: string) => boolean) => {
     for (;;) {
-      let id = '01'
-      for (let i = 0; i < 8; i++) id += ALPHABET[Math.floor(random() * 32)]
-      if (!pages.has(id)) return id
+      const id = '01' + randomString(8)
+      if (!taken(id)) return id
     }
   }
-  const addFolder = (path: string) => ancestors(path).forEach((p) => folders.add(p))
 
-  const fileNameFor = (folder: string, meta: PageMeta, id: string, self?: string): string => {
-    const title = stringField(meta, 'title')
-    const created = stringField(meta, 'created') ?? new Date(now()).toISOString().slice(0, 10)
-    const base = title ? title.replace(/[\\/:*?"<>|\p{Cc}]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || id : `${created}-${id.slice(-4).toLowerCase()}`
-    const taken = (name: string) => [...pages.values()].some((p) => p.id !== self && p.folder === folder && p.fileName === name)
-    let name = `${base}.md`
-    for (let n = 2; taken(name); n++) name = `${base} ${n}.md`
+  const publicUser = (u: UserRec): User => ({ id: u.id, username: u.username, name: u.name, email: u.email, role: u.role, disabled: u.disabled, created: u.created })
+  const spaceInfo = (s: SpaceRec): SpaceInfo => ({ id: s.id, name: s.name, role: 'owner', personal: s.personal })
+
+  const addSpace = (id: string, name: string, ownerId: string, personal: boolean, seed: boolean) => {
+    const rec: SpaceRec = { id, name, ownerId, personal, store: createSpaceStore({ now, random, seed }) }
+    spaces.set(id, rec)
+    return rec
+  }
+
+  const addUser = (input: { username: string; name?: string; role: Role; password?: string; identity?: { sub: string; label: string } }, seedSpace: boolean) => {
+    const id = newId((x) => users.has(x))
+    const u: UserRec = {
+      id,
+      username: input.username,
+      name: input.name || input.username,
+      email: '',
+      role: input.role,
+      disabled: false,
+      created: rfc3339(now()),
+      passwordHash: input.password === undefined ? undefined : hashOf(input.password),
+      identities: [],
+    }
+    if (input.identity) u.identities.push({ id: newId(() => false), provider: oidc?.name ?? 'SSO', label: input.identity.label, created: rfc3339(now()), sub: input.identity.sub })
+    users.set(id, u)
+    // Every account gets a personal space.
+    addSpace(newId((x) => spaces.has(x)), SPACE_NAME, id, true, seedSpace)
+    return u
+  }
+
+  // --- initial state ---
+  if (!accounts) {
+    users.set(LOCAL_USER.id, { ...LOCAL_USER, identities: [] })
+    addSpace('default', SPACE_NAME, LOCAL_USER.id, true, !options.empty)
+  } else {
+    if (options.admin !== false) {
+      const a = options.admin ?? MOCK_ADMIN
+      addUser({ username: a.username, name: a.name, role: 'admin', password: a.password }, !options.empty)
+    }
+    if (options.invite) {
+      const id = newId((x) => invites.has(x))
+      invites.set(id, { id, tokenHash: hashOf(options.invite.token), role: options.invite.role ?? 'member', created: now(), expires: now() + 7 * 86_400_000, createdBy: [...users.keys()][0] ?? '', used: false })
+    }
+  }
+
+  // --- request context ---
+  interface Ctx {
+    user: UserRec | null
+    token: string | null
+    cookies: Record<string, string>
+  }
+  const contextOf = (cookie: string | null | undefined): Ctx => {
+    const cookies = parseCookies(cookie)
+    if (!accounts) return { user: users.get('local') ?? null, token: null, cookies }
+    const token = cookies[SESSION_COOKIE] ?? null
+    const uid = token ? sessions.get(token) : undefined
+    const user = uid ? (users.get(uid) ?? null) : null
+    return { user: user && !user.disabled ? user : null, token, cookies }
+  }
+  const requireUser = (ctx: Ctx): UserRec => {
+    if (!ctx.user) throw new HttpError(401, 'unauthenticated', '请先登录')
+    return ctx.user
+  }
+  const requireAdmin = (ctx: Ctx): UserRec => {
+    const u = requireUser(ctx)
+    if (u.role !== 'admin') throw new HttpError(403, 'forbidden', '需要管理员权限')
+    return u
+  }
+  // The sign-in, account, user, invite and space-management endpoints do not
+  // exist in single-user mode.
+  const accountsOnly = () => {
+    if (!accounts) throw new HttpError(404, 'not_found', '没有这个接口')
+  }
+
+  const callerSpaces = (u: UserRec | null): SpaceRec[] => {
+    if (!u) return []
+    return [...spaces.values()]
+      .filter((s) => s.ownerId === u.id)
+      .sort((a, b) => Number(b.personal) - Number(a.personal) || compareCodePoints(a.name, b.name))
+  }
+
+  const startSession = (u: UserRec): string => {
+    const token = randomString(32)
+    sessions.set(token, u.id)
+    return setCookie(SESSION_COOKIE, token)
+  }
+  const endSessions = (userId: string, except?: string | null) => {
+    for (const [t, uid] of [...sessions]) if (uid === userId && t !== except) sessions.delete(t)
+  }
+
+  // --- validation ---
+  const checkUsername = (raw: unknown): string => {
+    if (typeof raw !== 'string') throw new HttpError(400, 'invalid', '缺少用户名')
+    const name = raw.toLowerCase()
+    if (!USERNAME_RE.test(name)) throw new HttpError(400, 'invalid', '用户名是 2 到 32 个字符，只能用小写字母、数字、点、下划线和连字符，且以字母或数字开头')
+    return name
+  }
+  const checkPassword = (raw: unknown, what = '密码'): string => {
+    if (typeof raw !== 'string') throw new HttpError(400, 'invalid', `缺少${what}`)
+    if (Array.from(raw).length < 8) throw new HttpError(400, 'invalid', `${what}至少 8 个字符`)
+    if (new TextEncoder().encode(raw).length > 1024) throw new HttpError(400, 'invalid', `${what}太长`)
+    return raw
+  }
+  const checkName = (raw: unknown, fallback?: string): string => {
+    if (raw === undefined && fallback !== undefined) return fallback
+    if (typeof raw !== 'string' || raw.trim() === '' || codePoints(raw.trim()) > 80) throw new HttpError(400, 'invalid', '名称需要 1 到 80 个字符')
+    return raw.trim()
+  }
+  const usernameTaken = (name: string) => [...users.values()].some((u) => u.username === name)
+
+  // --- sign in ---
+  const createFirstAdmin = (body: Record<string, unknown>): MockResponse => {
+    if (users.size > 0) throw new HttpError(409, 'exists', '已经有用户了')
+    if (typeof body.token !== 'string' || body.token !== setupToken) throw new HttpError(403, 'forbidden', '设置令牌不对')
+    const username = checkUsername(body.username)
+    const password = checkPassword(body.password)
+    const name = body.name === undefined || body.name === '' ? username : checkName(body.name)
+    const u = addUser({ username, name, role: 'admin', password }, false)
+    return { status: 201, body: { user: publicUser(u) }, headers: { 'Set-Cookie': startSession(u) } }
+  }
+
+  const login = (body: Record<string, unknown>): MockResponse => {
+    const username = typeof body.username === 'string' ? body.username.toLowerCase() : ''
+    // Five failures in a minute against one name lock it for the rest of the minute.
+    const rec = failures.get(username)
+    if (rec && now() - rec.first >= 60_000) failures.delete(username)
+    const live = failures.get(username)
+    if (live && live.count >= 5) {
+      const wait = Math.max(1, Math.ceil((live.first + 60_000 - now()) / 1000))
+      throw new HttpError(429, 'rate_limited', '尝试次数太多，请稍后再试', { __retryAfter: wait })
+    }
+    const u = [...users.values()].find((x) => x.username === username)
+    const ok = !!u && !u.disabled && u.passwordHash !== undefined && typeof body.password === 'string' && u.passwordHash === hashOf(body.password)
+    if (!ok) {
+      failures.set(username, { count: (live?.count ?? 0) + 1, first: live?.first ?? now() })
+      throw new HttpError(401, 'unauthenticated', '用户名或密码不对')
+    }
+    failures.delete(username)
+    return { status: 200, body: { user: publicUser(u) }, headers: { 'Set-Cookie': startSession(u) } }
+  }
+
+  const checkInviteToken = (token: unknown): InviteRec => {
+    const h = typeof token === 'string' ? hashOf(token) : ''
+    const inv = [...invites.values()].find((i) => i.tokenHash === h)
+    if (!inv || inv.used || inv.expires <= now()) throw new HttpError(404, 'not_found', '邀请不存在或已失效')
+    return inv
+  }
+
+  const acceptInvite = (body: Record<string, unknown>): MockResponse => {
+    const inv = checkInviteToken(body.token)
+    const username = checkUsername(body.username)
+    const password = checkPassword(body.password)
+    const name = body.name === undefined || body.name === '' ? username : checkName(body.name)
+    if (usernameTaken(username)) throw new HttpError(409, 'exists', '这个用户名已经有人用了')
+    const u = addUser({ username, name, role: inv.role, password }, false)
+    inv.used = true
+    return { status: 201, body: { user: publicUser(u) }, headers: { 'Set-Cookie': startSession(u) } }
+  }
+
+  // --- single sign-on (the provider is a fake that signs in one person) ---
+  const oidcStart = (ctx: Ctx, body: Record<string, unknown>): MockResponse => {
+    if (!oidc) throw new HttpError(404, 'not_found', '没有配置单点登录')
+    const intent = body.intent === undefined || body.intent === '' ? 'login' : body.intent
+    if (typeof intent !== 'string' || !['login', 'setup', 'invite', 'link'].includes(intent)) throw new HttpError(400, 'invalid', 'intent 不对')
+    let userId: string | null = null
+    if (intent === 'link') userId = requireUser(ctx).id
+    const state = randomString(24)
+    oidcAttempts.set(state, { intent, token: typeof body.token === 'string' ? body.token : '', ret: plainPath(body.return), userId, created: now(), used: false })
+    const url = `/api/auth/oidc/callback?state=${state}&sub=${encodeURIComponent(oidc.sub ?? 'mock-sub-1')}`
+    return { status: 200, body: { url }, headers: { 'Set-Cookie': setCookie(OIDC_COOKIE, state, 600) } }
+  }
+
+  const uniqueUsername = (wanted: string) => {
+    let base = wanted.toLowerCase().replace(/[^a-z0-9._-]/g, '').replace(/^[^a-z0-9]+/, '')
+    if (base.length < 2) base = (base + 'user').slice(0, 32)
+    base = base.slice(0, 28)
+    let name = base
+    for (let n = 2; usernameTaken(name); n++) name = `${base}${n}`
     return name
   }
 
-  const store = (p: Omit<Stored, 'rev'>): Stored => {
-    const s: Stored = { ...p, rev: gitBlobId(serializeFile(p.meta, p.body)) }
-    pages.set(s.id, s)
-    addFolder(s.folder)
+  const oidcCallback = (ctx: Ctx, q: URLSearchParams): MockResponse => {
+    const state = q.get('state') ?? ''
+    const attempt = oidcAttempts.get(state)
+    const redirect = (to: string, session?: string): MockResponse => ({ status: 303, headers: { Location: to, ...(session ? { 'Set-Cookie': session } : {}) } })
+    // Nothing changes unless this browser started the attempt, it is unused and young.
+    if (!oidc || !attempt || attempt.used || ctx.cookies[OIDC_COOKIE] !== state || now() - attempt.created > 600_000) return redirect('/login?error=expired')
+    attempt.used = true
+    const fail = (code: string) => redirect(attempt.intent === 'link' ? `/settings?error=${code}` : `/login?error=${code}`)
+    if (q.get('error')) return fail('idp_error')
+    const sub = q.get('sub') ?? ''
+    if (!sub) return fail('idp_error')
+    const holder = [...users.values()].find((u) => u.identities.some((i) => i.sub === sub))
+    const claims = { label: 'mock@example.com', username: 'mockuser', name: 'Mock User' }
+
+    switch (attempt.intent) {
+      case 'login': {
+        if (holder) return holder.disabled ? fail('disabled') : redirect(attempt.ret, startSession(holder))
+        if (!oidc.autoCreate) return fail('no_account')
+        const u = addUser({ username: uniqueUsername(claims.username), name: claims.name, role: 'member', identity: { sub, label: claims.label } }, false)
+        return redirect(attempt.ret, startSession(u))
+      }
+      case 'setup': {
+        if (users.size > 0 || attempt.token !== setupToken) return fail('setup_invalid')
+        const u = addUser({ username: uniqueUsername(claims.username), name: claims.name, role: 'admin', identity: { sub, label: claims.label } }, false)
+        return redirect(attempt.ret, startSession(u))
+      }
+      case 'invite': {
+        let inv: InviteRec
+        try {
+          inv = checkInviteToken(attempt.token)
+        } catch {
+          return fail('invite_invalid')
+        }
+        if (holder) return fail('identity_in_use')
+        const u = addUser({ username: uniqueUsername(claims.username), name: claims.name, role: inv.role, identity: { sub, label: claims.label } }, false)
+        inv.used = true
+        return redirect(attempt.ret, startSession(u))
+      }
+      default: {
+        // link: the session must still be the one that started it.
+        const me = ctx.user
+        if (!me || me.id !== attempt.userId) return fail('expired')
+        if (holder && holder.id !== me.id) return fail('identity_in_use')
+        if (!holder) me.identities.push({ id: newId(() => false), provider: oidc.name, label: claims.label, created: rfc3339(now()), sub })
+        return redirect(attempt.ret)
+      }
+    }
+  }
+
+  // --- account ---
+  const accountInfo = (u: UserRec) => ({
+    user: publicUser(u),
+    hasPassword: u.passwordHash !== undefined,
+    identities: u.identities.map(({ sub: _sub, ...rest }) => {
+      void _sub
+      return rest
+    }),
+  })
+
+  const patchAccount = (u: UserRec, body: Record<string, unknown>) => {
+    if (body.name !== undefined) u.name = checkName(body.name)
+    if (body.email !== undefined) {
+      if (typeof body.email !== 'string' || body.email.length > 254) throw new HttpError(400, 'invalid', '邮箱不合法')
+      u.email = body.email.trim()
+    }
+    return { user: publicUser(u) }
+  }
+
+  const changePassword = (ctx: Ctx, u: UserRec, body: Record<string, unknown>) => {
+    const next = checkPassword(body.new, '新密码')
+    if (u.passwordHash !== undefined) {
+      if (typeof body.current !== 'string') throw new HttpError(400, 'invalid', '缺少当前密码')
+      if (hashOf(body.current) !== u.passwordHash) throw new HttpError(403, 'forbidden', '当前密码不对')
+    } else if (body.current !== undefined) {
+      throw new HttpError(400, 'invalid', '这个账号还没有密码，不需要当前密码')
+    }
+    u.passwordHash = hashOf(next)
+    // Other sessions end; this one stays.
+    endSessions(u.id, ctx.token)
+  }
+
+  const removeIdentity = (u: UserRec, id: string) => {
+    const i = u.identities.findIndex((x) => x.id === id)
+    if (i < 0) throw new HttpError(404, 'not_found', '没有这个登录方式')
+    if (u.passwordHash === undefined && u.identities.length <= 1) throw new HttpError(409, 'conflict', '这是你唯一的登录方式，移除后就无法登录了')
+    u.identities.splice(i, 1)
+  }
+
+  // --- users and invites ---
+  const patchUser = (me: UserRec, id: string, body: Record<string, unknown>) => {
+    const u = users.get(id)
+    if (!u) throw new HttpError(404, 'not_found', '没有这个用户')
+    if (body.role !== undefined && body.role !== 'admin' && body.role !== 'member') throw new HttpError(400, 'invalid', 'role 不对')
+    if (body.disabled !== undefined && typeof body.disabled !== 'boolean') throw new HttpError(400, 'invalid', 'disabled 要是布尔值')
+    const role = (body.role as Role | undefined) ?? u.role
+    const disabled = (body.disabled as boolean | undefined) ?? u.disabled
+    if (disabled && !u.disabled && u.id === me.id) throw new HttpError(409, 'conflict', '不能停用自己')
+    const enabledAdmins = (list: UserRec[]) => list.filter((x) => x.role === 'admin' && !x.disabled).length
+    const after = [...users.values()].map((x) => (x.id === u.id ? { ...x, role, disabled } : x)) as UserRec[]
+    if (enabledAdmins(after) === 0) throw new HttpError(409, 'conflict', '至少要留一个可用的管理员')
+    u.role = role
+    u.disabled = disabled
+    if (disabled) endSessions(u.id)
+    return { user: publicUser(u) }
+  }
+
+  const createInvite = (me: UserRec, body: Record<string, unknown>): MockResponse => {
+    const role = body.role === undefined ? 'member' : body.role
+    if (role !== 'admin' && role !== 'member') throw new HttpError(400, 'invalid', 'role 不对')
+    const days = body.days === undefined ? 7 : body.days
+    if (typeof days !== 'number' || !Number.isInteger(days) || days < 1 || days > 30) throw new HttpError(400, 'invalid', 'days 要在 1 到 30 之间')
+    const id = newId((x) => invites.has(x))
+    const token = randomString(32)
+    const rec: InviteRec = { id, tokenHash: hashOf(token), role, created: now(), expires: now() + days * 86_400_000, createdBy: me.id, used: false }
+    invites.set(id, rec)
+    return { status: 201, body: { id, token, role, created: rfc3339(rec.created), expires: rfc3339(rec.expires) } }
+  }
+  const openInvites = (): Invite[] =>
+    [...invites.values()]
+      .filter((i) => !i.used && i.expires > now())
+      .map((i) => ({ id: i.id, role: i.role, created: rfc3339(i.created), expires: rfc3339(i.expires), createdBy: i.createdBy }))
+
+  // --- spaces ---
+  const spaceOf = (u: UserRec, id: string): SpaceRec => {
+    const s = spaces.get(id)
+    // A space of someone else is the same 404 as one that does not exist.
+    if (!s || s.ownerId !== u.id) throw new HttpError(404, 'not_found', '没有这个空间')
     return s
   }
 
-  const toPage = (p: Stored): Page => ({
-    id: p.id,
-    path: p.folder ? `${p.folder}/${p.fileName}` : p.fileName,
-    folder: p.folder,
-    rev: p.rev,
-    updated: rfc3339(p.updated),
-    meta: structuredClone(p.meta),
-    body: p.body,
-  })
-
-  const toSummary = (p: Stored): PageSummary => {
-    const title = stringField(p.meta, 'title')
-    const subtitle = stringField(p.meta, 'subtitle')
-    const tags = tagsOf(p.meta)
-    return {
-      id: p.id,
-      path: p.folder ? `${p.folder}/${p.fileName}` : p.fileName,
-      folder: p.folder,
-      ...(title ? { title } : {}),
-      ...(subtitle ? { subtitle } : {}),
-      // "" for an untitled page with nothing in it.
-      label: title ?? Array.from(firstLine(p.body)).slice(0, 30).join(''),
-      untitled: !title,
-      ...(tags.length ? { tags } : {}),
-      type: '',
-      ...(typeof p.meta.created === 'string' ? { created: p.meta.created } : {}),
-      updated: rfc3339(p.updated),
-      excerpt: Array.from(plain(p.body)).slice(0, 200).join(''),
+  const routeSpace = (u: UserRec, space: SpaceRec, method: string, rest: string, url: URL, body: Record<string, unknown>): MockResponse => {
+    const st = space.store
+    if (rest === '/pages') {
+      if (method === 'GET') return { status: 200, body: st.listPages(url.searchParams) }
+      if (method === 'POST') return { status: 201, body: st.create(body) }
     }
-  }
-
-  // --- seed ---------------------------------------------------------------
-  if (!options.empty) {
-    for (const f of SEED_EMPTY_FOLDERS) addFolder(f)
-    seedPages.forEach((sp, i) => {
-      const id = `01JD${(i + 1).toString(32).toUpperCase().padStart(6, '0')}`.replace(/[ILOU]/g, 'X')
-      const meta: PageMeta = { id }
-      if (sp.title) meta.title = sp.title
-      if (sp.subtitle) meta.subtitle = sp.subtitle
-      if (sp.tags?.length) meta.tags = [...sp.tags]
-      meta.created = sp.created
-      Object.assign(meta, sp.extra)
-      store({ id, folder: sp.folder, fileName: fileNameFor(sp.folder, meta, id), meta, body: sp.body, updated: now() - sp.ago * 60_000 })
-    })
-  }
-
-  // --- handlers -------------------------------------------------------------
-  const get = (id: string): Stored => {
-    const p = pages.get(id)
-    if (!p) throw new HttpError(404, 'not_found', '找不到这个页面')
-    return p
-  }
-
-  const sortItems = (items: Stored[], sort: string, relevance?: Map<string, number>) => {
-    const desc = sort.startsWith('-')
-    const key = desc ? sort.slice(1) : sort
-    const dir = desc ? -1 : 1
-    const created = (p: Stored) => stringField(p.meta, 'created') ?? ''
-    return [...items].sort((a, b) => {
-      if (relevance && sort === 'relevance') return (relevance.get(b.id) ?? 0) - (relevance.get(a.id) ?? 0) || b.updated - a.updated
-      if (key === 'title') {
-        const ta = stringField(a.meta, 'title')
-        const tb = stringField(b.meta, 'title')
-        // Untitled pages go last, in creation order, whichever way it sorts.
-        if (!ta && !tb) return created(a).localeCompare(created(b)) || a.id.localeCompare(b.id)
-        if (!ta) return 1
-        if (!tb) return -1
-        return dir * compareCodePoints(ta.toLowerCase(), tb.toLowerCase()) || a.id.localeCompare(b.id)
+    const one = /^\/pages\/([^/]+)(\/(move|draft|commit))?$/.exec(rest)
+    if (one) {
+      const id = decodeURIComponent(one[1])
+      switch (one[3]) {
+        case undefined:
+          if (method === 'GET') return { status: 200, body: st.getPage(u.id, id) }
+          if (method === 'PUT') return { status: 200, body: st.save(u.id, id, body) }
+          if (method === 'DELETE') {
+            st.remove(id)
+            return { status: 204 }
+          }
+          break
+        case 'move':
+          if (method === 'POST') return { status: 200, body: st.move(id, body) }
+          break
+        case 'draft':
+          if (method === 'PUT') return { status: 200, body: st.putDraft(u.id, id, body) }
+          if (method === 'DELETE') {
+            st.deleteDraft(u.id, id, url.searchParams.get('version'), url.searchParams.get('rev'))
+            return { status: 204 }
+          }
+          break
+        case 'commit':
+          if (method === 'POST') return { status: 200, body: st.commit(u.id, id, body) }
+          break
       }
-      if (key === 'created') return dir * created(a).localeCompare(created(b)) || b.updated - a.updated
-      return dir * (a.updated - b.updated) || a.id.localeCompare(b.id)
-    })
-  }
-
-  const listPages = (q: URLSearchParams) => {
-    const folder = q.get('folder')
-    const recursive = q.get('recursive') === 'true'
-    const tags = q.getAll('tag')
-    const text = (q.get('q') ?? '').trim().toLowerCase()
-    const limitRaw = q.get('limit')
-    const limit = limitRaw === null ? 50 : Number(limitRaw)
-    if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new HttpError(400, 'invalid', 'limit 要在 1 到 200 之间')
-    const sortParam = q.get('sort')
-    if (sortParam !== null && !/^-?(updated|created|title)$/.test(sortParam)) throw new HttpError(400, 'invalid', '不支持的排序')
-
-    let items = [...pages.values()]
-    if (folder !== null) {
-      if (!validFolder(folder)) throw new HttpError(400, 'invalid', '文件夹路径不合法')
-      items = items.filter((p) => (recursive ? folder === '' || p.folder === folder || p.folder.startsWith(folder + '/') : p.folder === folder))
     }
-    if (tags.length) items = items.filter((p) => tags.every((t) => tagsOf(p.meta).includes(t)))
-
-    let relevance: Map<string, number> | undefined
-    if (text) {
-      const words = text.split(/\s+/)
-      relevance = new Map()
-      items = items.filter((p) => {
-        const title = (stringField(p.meta, 'title') ?? '').toLowerCase()
-        const sub = (stringField(p.meta, 'subtitle') ?? '').toLowerCase()
-        const body = p.body.toLowerCase()
-        if (!words.every((w) => title.includes(w) || sub.includes(w) || body.includes(w))) return false
-        relevance!.set(p.id, words.reduce((n, w) => n + (title.includes(w) ? 3 : 0) + (sub.includes(w) ? 2 : 0) + (body.includes(w) ? 1 : 0), 0))
-        return true
-      })
-    }
-    const sort = sortParam ?? (text ? 'relevance' : '-updated')
-    items = sortItems(items, sort, relevance)
-
-    let offset = 0
-    const cursor = q.get('cursor')
-    if (cursor) {
-      const m = /^o(\d+)$/.exec(atob(cursor))
-      if (!m) throw new HttpError(400, 'invalid', 'cursor 不合法')
-      offset = Number(m[1])
-    }
-    const slice = items.slice(offset, offset + limit)
-    const end = offset + slice.length
-    return { items: slice.map(toSummary), next: end < items.length ? btoa(`o${end}`) : '' }
+    if (rest === '/tree' && method === 'GET') return { status: 200, body: st.tree() }
+    if (rest === '/tags' && method === 'GET') return { status: 200, body: st.tags() }
+    if (rest === '/folders' && method === 'POST') return { status: 201, body: st.createFolder(body.path) }
+    if (rest === '/reindex' && method === 'POST') return { status: 200, body: st.reindex() }
+    throw new HttpError(404, 'not_found', '没有这个接口')
   }
 
-  const parseMeta = (raw: unknown): PageMeta => {
-    if (raw === undefined || raw === null) return {}
-    if (!isRecord(raw)) throw new HttpError(400, 'invalid', 'meta 必须是对象')
-    return raw
-  }
-
-  const create = (body: Record<string, unknown>): Page => {
-    const folder = typeof body.folder === 'string' ? body.folder : ''
-    if (!validFolder(folder)) throw new HttpError(400, 'invalid', '文件夹路径不合法')
-    const given = parseMeta(body.meta)
-    if (body.body !== undefined && typeof body.body !== 'string') throw new HttpError(400, 'invalid', 'body 必须是字符串')
-    const id = newId()
-    const created = new Date(now()).toISOString().slice(0, 10)
-    // The server owns id and created; any the client sent are ignored. Id goes
-    // first, then the client's fields in the order given, then created.
-    const meta: PageMeta = { id }
-    const rest = Object.entries(given).filter(([k]) => k !== 'id' && k !== 'created')
-    for (const [k, v] of rest.filter(([k]) => ['title', 'subtitle', 'tags'].includes(k))) meta[k] = v
-    meta.created = created
-    for (const [k, v] of rest.filter(([k]) => !['title', 'subtitle', 'tags'].includes(k))) meta[k] = v
-    const s = store({ id, folder, fileName: fileNameFor(folder, meta, id), meta, body: (body.body as string | undefined) ?? '', updated: now() })
-    return toPage(s)
-  }
-
-  // PUT replaces the header. Keys already in the file keep their place;
-  // `id` and `created` stay even when left out; other absent keys are removed;
-  // new keys are appended in the order given. Values are taken as they come.
-  const mergeHeader = (old: PageMeta, given: PageMeta): PageMeta => {
-    const out: PageMeta = {}
-    for (const k of Object.keys(old)) {
-      if (k in given) out[k] = given[k]
-      else if (k === 'id' || k === 'created') out[k] = old[k]
-    }
-    for (const k of Object.keys(given)) if (!(k in out)) out[k] = given[k]
-    return out
-  }
-
-  const save = (id: string, input: Record<string, unknown>): Page => {
-    const cur = get(id)
-    if (!isRecord(input.meta)) throw new HttpError(400, 'invalid', '缺少 meta')
-    if (typeof input.body !== 'string') throw new HttpError(400, 'invalid', '缺少 body')
-    if (typeof input.baseRev !== 'string' || input.baseRev === '') throw new HttpError(400, 'invalid', '缺少 baseRev')
-    const meta = input.meta
-    if (meta.id !== undefined && meta.id !== id) throw new HttpError(400, 'invalid', 'meta.id 与页面 id 不一致')
-    if (input.baseRev !== cur.rev) throw new HttpError(409, 'conflict', '页面已被修改', { current: toPage(cur) })
-    const next = mergeHeader(cur.meta, meta)
-    const s = store({ id, folder: cur.folder, fileName: fileNameFor(cur.folder, next, id, id), meta: next, body: input.body, updated: now() })
-    return toPage(s)
-  }
-
-  const move = (id: string, input: Record<string, unknown>): Page => {
-    const cur = get(id)
-    if (typeof input.folder !== 'string' || !validFolder(input.folder)) throw new HttpError(400, 'invalid', '文件夹路径不合法')
-    const folder = input.folder
-    const moved: Stored = { ...cur, folder, fileName: fileNameFor(folder, cur.meta, id, id), updated: now() }
-    pages.set(id, moved)
-    addFolder(folder)
-    return toPage(moved)
-  }
-
-  const tree = () => {
-    const counts = new Map<string, number>()
-    for (const p of pages.values()) counts.set(p.folder, (counts.get(p.folder) ?? 0) + 1)
-    return { folders: [...folders].sort((a, b) => a.localeCompare(b, 'zh')).map((path) => ({ path, pages: counts.get(path) ?? 0 })) }
-  }
-
-  const tags = () => {
-    const counts = new Map<string, number>()
-    for (const p of pages.values()) for (const t of new Set(tagsOf(p.meta))) counts.set(t, (counts.get(t) ?? 0) + 1)
-    return { tags: [...counts].map(([tag, n]) => ({ tag, pages: n })).sort((a, b) => b.pages - a.pages || a.tag.localeCompare(b.tag, 'zh')) }
-  }
-
-  const route = (method: string, url: URL, body: Record<string, unknown>): MockResponse => {
+  const route = (method: string, url: URL, body: Record<string, unknown>, ctx: Ctx): MockResponse => {
     const path = url.pathname.replace(/^\/api/, '')
-    if (method === 'GET' && path === '/meta') return { status: 200, body: { version: 'mock', spaces: [{ id: 'default', name: SPACE_NAME }] } }
+    const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
+
+    if (method === 'GET' && path === '/meta') return j({ version: 'mock', spaces: callerSpaces(ctx.user).map(spaceInfo) })
+    if (method === 'GET' && path === '/session') {
+      const base = { mode, user: ctx.user ? publicUser(ctx.user) : null, setup: accounts && users.size === 0 }
+      return {
+        status: 200,
+        // Never cached: it says who is signed in.
+        headers: { 'Cache-Control': 'no-store' },
+        body: accounts ? { ...base, methods: { password: true, oidc: oidc ? { name: oidc.name } : null } } : base,
+      }
+    }
 
     // Mock only: change a page behind the app's back, as another editor or a
     // `git pull` would, to exercise the conflict path by hand.
     const touch = /^\/_mock\/touch\/([^/]+)$/.exec(path)
     if (method === 'POST' && touch) {
-      const cur = get(touch[1])
-      const meta = { ...cur.meta }
-      if (typeof body.title === 'string') meta.title = body.title
-      const s = store({ ...cur, meta, body: typeof body.body === 'string' ? body.body : cur.body + '\n（别处追加的一行）\n', updated: now() })
-      return { status: 200, body: toPage(s) }
+      const target = [...spaces.values()].find((s) => s.id === (url.searchParams.get('space') ?? '') || (!url.searchParams.get('space') && s.store.peek(touch[1])))
+      if (!target) throw new HttpError(404, 'not_found', '没有这个页面')
+      return j(target.store.touch(touch[1], body))
     }
 
+    // --- signing in (accounts mode) ---
+    if (path === '/setup' && method === 'POST') {
+      accountsOnly()
+      return createFirstAdmin(body)
+    }
+    if (path === '/login' && method === 'POST') {
+      accountsOnly()
+      return login(body)
+    }
+    if (path === '/logout' && method === 'POST') {
+      accountsOnly()
+      if (ctx.token) sessions.delete(ctx.token)
+      return { status: 204, headers: { 'Set-Cookie': setCookie(SESSION_COOKIE, '', 0) } }
+    }
+    if (path === '/auth/oidc/start' && method === 'POST') {
+      accountsOnly()
+      return oidcStart(ctx, body)
+    }
+    if (path === '/auth/oidc/callback' && method === 'GET') {
+      accountsOnly()
+      return oidcCallback(ctx, url.searchParams)
+    }
+    if (path === '/invites/check' && method === 'POST') {
+      accountsOnly()
+      const inv = checkInviteToken(body.token)
+      return j({ role: inv.role, expires: rfc3339(inv.expires) })
+    }
+    if (path === '/invites/accept' && method === 'POST') {
+      accountsOnly()
+      return acceptInvite(body)
+    }
+
+    // --- account ---
+    if (path === '/account' || path === '/account/password' || path.startsWith('/account/identities/')) {
+      accountsOnly()
+      const me = requireUser(ctx)
+      if (path === '/account' && method === 'GET') return j(accountInfo(me))
+      if (path === '/account' && method === 'PATCH') return j(patchAccount(me, body))
+      if (path === '/account/password' && method === 'POST') {
+        changePassword(ctx, me, body)
+        return { status: 204 }
+      }
+      const ident = /^\/account\/identities\/([^/]+)$/.exec(path)
+      if (ident && method === 'DELETE') {
+        removeIdentity(me, decodeURIComponent(ident[1]))
+        return { status: 204 }
+      }
+    }
+
+    // --- users and invites ---
+    if (path === '/users' || path.startsWith('/users/') || path === '/invites' || path.startsWith('/invites/')) {
+      accountsOnly()
+      const me = requireAdmin(ctx)
+      if (path === '/users' && method === 'GET') return j({ users: [...users.values()].sort((a, b) => a.created.localeCompare(b.created)).map(publicUser) })
+      const user = /^\/users\/([^/]+)$/.exec(path)
+      if (user && method === 'PATCH') return j(patchUser(me, decodeURIComponent(user[1]), body))
+      if (path === '/invites' && method === 'POST') return createInvite(me, body)
+      if (path === '/invites' && method === 'GET') return j({ invites: openInvites() })
+      const inv = /^\/invites\/([^/]+)$/.exec(path)
+      if (inv && method === 'DELETE') {
+        if (!invites.delete(decodeURIComponent(inv[1]))) throw new HttpError(404, 'not_found', '没有这个邀请')
+        return { status: 204 }
+      }
+    }
+
+    // --- spaces ---
+    if (path === '/spaces') {
+      if (method === 'GET') return j({ spaces: callerSpaces(requireUser(ctx)).map(spaceInfo) })
+      if (method === 'POST') {
+        accountsOnly()
+        const me = requireUser(ctx)
+        const name = checkName(body.name)
+        if (options.maxSpaces !== undefined && callerSpaces(me).length >= options.maxSpaces) throw new HttpError(403, 'forbidden', `最多只能拥有 ${options.maxSpaces} 个空间`)
+        return j(spaceInfo(addSpace(newId((x) => spaces.has(x)), name, me.id, false, false)), 201)
+      }
+    }
     const m = /^\/spaces\/([^/]+)(\/.*)?$/.exec(path)
-    if (!m) throw new HttpError(404, 'not_found', '没有这个接口')
-    if (m[1] !== 'default') throw new HttpError(404, 'not_found', '没有这个空间')
-    const rest = m[2] ?? ''
-
-    if (rest === '/pages') {
-      if (method === 'GET') return { status: 200, body: listPages(url.searchParams) }
-      if (method === 'POST') return { status: 201, body: create(body) }
+    if (m) {
+      const me = requireUser(ctx)
+      const id = decodeURIComponent(m[1])
+      const rest = m[2] ?? ''
+      if (rest === '' && method === 'PATCH') {
+        accountsOnly()
+        const s = spaceOf(me, id)
+        s.name = checkName(body.name)
+        return j(spaceInfo(s))
+      }
+      return routeSpace(me, spaceOf(me, id), method, rest, url, body)
     }
-    const one = /^\/pages\/([^/]+)(\/move)?$/.exec(rest)
-    if (one) {
-      const id = decodeURIComponent(one[1])
-      if (!ID_RE.test(id) && !pages.has(id)) throw new HttpError(404, 'not_found', '找不到这个页面')
-      if (!one[2]) {
-        if (method === 'GET') return { status: 200, body: toPage(get(id)) }
-        if (method === 'PUT') return { status: 200, body: save(id, body) }
-        if (method === 'DELETE') {
-          get(id)
-          pages.delete(id)
-          return { status: 204 }
-        }
-      } else if (method === 'POST') return { status: 200, body: move(id, body) }
-    }
-    if (rest === '/tree' && method === 'GET') return { status: 200, body: tree() }
-    if (rest === '/tags' && method === 'GET') return { status: 200, body: tags() }
-    if (rest === '/folders' && method === 'POST') {
-      const p = body.path
-      if (typeof p !== 'string') throw new HttpError(400, 'invalid', '缺少 path')
-      // The root always exists, so creating it is "already there", not invalid.
-      if (p !== '' && !validFolder(p)) throw new HttpError(400, 'invalid', folderRuleMessage(p) ?? '文件夹路径不合法')
-      if (folders.has(p)) throw new HttpError(409, 'exists', '这个文件夹已经存在')
-      addFolder(p)
-      return { status: 201, body: { path: p } }
-    }
-    if (rest === '/reindex' && method === 'POST') return { status: 200, body: { pages: pages.size, ms: 1 } }
     throw new HttpError(404, 'not_found', '没有这个接口')
   }
 
+  const sweepAll = () => spaces.forEach((s) => s.store.sweep(idleMs, maxMs))
+
   return {
     // `target` is a path with query, as sent by the client ("/api/...").
-    handle(method: string, target: string, bodyText?: string, contentType?: string | null): MockResponse {
+    // `cookie` is the request's Cookie header.
+    handle(method: string, target: string, bodyText?: string, contentType?: string | null, cookie?: string | null): MockResponse {
       counter++
       try {
+        sweepAll()
         // Writes must say they are JSON, like the real server insists.
         if (method.toUpperCase() !== 'GET' && !/^application\/json\s*(;|$)/i.test(contentType ?? '')) throw new HttpError(415, 'invalid', '请求需要 Content-Type: application/json')
         let body: Record<string, unknown> = {}
@@ -398,9 +611,16 @@ export function createMockServer(options: MockOptions = {}) {
             throw new HttpError(400, 'invalid', '请求体不是合法的 JSON')
           }
         }
-        return route(method.toUpperCase(), new URL(target, 'http://mock.local'), body)
+        return route(method.toUpperCase(), new URL(target, 'http://mock.local'), body, contextOf(cookie))
       } catch (e) {
-        if (e instanceof HttpError) return { status: e.status, body: { error: e.code, message: e.message, ...e.extra } }
+        if (e instanceof HttpError) {
+          const { __retryAfter, ...extra } = e.extra ?? {}
+          return {
+            status: e.status,
+            body: { error: e.code, message: e.message, ...extra },
+            ...(typeof __retryAfter === 'number' ? { headers: { 'Retry-After': String(__retryAfter) } } : {}),
+          }
+        }
         throw e
       }
     },
@@ -408,8 +628,14 @@ export function createMockServer(options: MockOptions = {}) {
     get requestCount() {
       return counter
     },
-    peek: (id: string) => (pages.has(id) ? toPage(get(id)) : undefined),
-    ids: () => [...pages.keys()],
+    // The first space of the single-user server, or the one named.
+    peek: (id: string, space?: string): Page | undefined => (space ? spaces.get(space) : [...spaces.values()].find((s) => s.store.peek(id)))?.store.peek(id),
+    ids: (space = 'default') => spaces.get(space)?.store.ids() ?? [],
+    spaceIds: () => [...spaces.keys()],
+    peekDraft: (userId: string, id: string, space = 'default') => spaces.get(space)?.store.peekDraft(userId, id),
+    userId: (username: string) => [...users.values()].find((u) => u.username === username)?.id,
+    // Let the server's own draft commits run now (they also run on every request).
+    sweep: sweepAll,
   }
 }
 

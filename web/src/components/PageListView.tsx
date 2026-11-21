@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { FilePlus2, Folder as FolderIcon, Tag as TagIcon } from 'lucide-react'
 import { toast } from 'sonner'
-import { useCreatePage, usePageList } from '@/api/hooks'
+import { useCreatePage, usePageList, useUrls } from '@/api/hooks'
 import type { PageSummary, SortKey } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -10,8 +10,8 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ErrorState, Spinner } from '@/components/common'
 import { TopBar } from '@/components/layout/TopBar'
-import { pageUrl } from '@/lib/folders'
 import { absoluteTime, relativeTime } from '@/lib/time'
+import type { SpaceUrls } from '@/lib/urls'
 import { t } from '@/i18n/zh-CN'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 
@@ -51,11 +51,11 @@ function emptyText(s: ListSource): { main: string; hint?: string } {
   }
 }
 
-function Row({ page, showFolder, index }: { page: PageSummary; showFolder: boolean; index: number }) {
+function Row({ page, showFolder, index, urls }: { page: PageSummary; showFolder: boolean; index: number; urls: SpaceUrls }) {
   return (
     <li>
       <Link
-        to={pageUrl(page.id)}
+        to={urls.page(page.id)}
         data-index={index}
         className="group flex items-start gap-3 rounded-lg px-3 py-2.5 outline-none transition-colors hover:bg-muted/70 focus-visible:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring/50"
       >
@@ -94,6 +94,7 @@ export function PageListView({ source }: { source: ListSource }) {
   const [params, setParams] = useSearchParams()
   const navigate = useNavigate()
   const create = useCreatePage()
+  const urls = useUrls()
   const [creating, setCreating] = useState(false)
 
   const sortParam = params.get('sort') as SortKey | null
@@ -123,7 +124,7 @@ export function PageListView({ source }: { source: ListSource }) {
         ...(source.kind === 'tag' ? { meta: { tags: [source.tag] } } : {}),
         body: '',
       })
-      navigate(pageUrl(page.id))
+      navigate(urls.page(page.id))
     } catch (e) {
       toast.error(`${t.list.createFailed}：${e instanceof Error ? e.message : ''}`)
       setCreating(false)
@@ -199,7 +200,7 @@ export function PageListView({ source }: { source: ListSource }) {
           <>
             <ul className="divide-y divide-border/60">
               {items.map((p, i) => (
-                <Row key={p.id} page={p} index={i} showFolder={source.kind !== 'folder'} />
+                <Row key={p.id} page={p} index={i} urls={urls} showFolder={source.kind !== 'folder'} />
               ))}
             </ul>
             <div className="flex flex-col items-center gap-2 py-6">

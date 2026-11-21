@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "vite",
     "dev:mock": "vite --mode mock",
+    "dev:mock:accounts": "MOCK_MODE=accounts vite --mode mock",
+    "dev:mock:setup": "MOCK_MODE=setup vite --mode mock",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "lint": "eslint .",

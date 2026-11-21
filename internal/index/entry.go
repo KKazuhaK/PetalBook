@@ -14,6 +14,7 @@ import (
 type Entry struct {
 	ID, Path, Folder string
 	Title, Subtitle  string // "" when the page has none
+	Source           string // where the text comes from, or ""
 	Label            string
 	Untitled         bool
 	Type             string
@@ -26,7 +27,7 @@ type Entry struct {
 	Excerpt          string
 
 	// Text fed to the full-text index, already tokenised.
-	ftsTitle, ftsSubtitle, ftsBody string
+	ftsTitle, ftsSubtitle, ftsSource, ftsBody string
 }
 
 // BuildEntry parses a page file. When the file cannot be a page (no usable
@@ -42,11 +43,11 @@ func BuildEntry(rel string, data []byte, mtimeNs int64) (*Entry, *page.Problem) 
 	plain := page.PlainText(doc.Body)
 	e := &Entry{
 		ID: m.ID(), Path: rel, Folder: folderOf(rel),
-		Title: title, Subtitle: m.Subtitle(), Label: label, Untitled: untitled,
+		Title: title, Subtitle: m.Subtitle(), Source: m.Source(), Label: label, Untitled: untitled,
 		Type: m.Type(), Tags: m.Tags(), Created: m.Created(),
 		MtimeNs: mtimeNs, Size: int64(len(data)), Rev: page.Rev(data),
 		Excerpt:  page.Excerpt(doc.Body),
-		ftsTitle: Fold(title), ftsSubtitle: Fold(m.Subtitle()), ftsBody: Fold(plain),
+		ftsTitle: Fold(title), ftsSubtitle: Fold(m.Subtitle()), ftsSource: Fold(m.Source()), ftsBody: Fold(plain),
 	}
 	if e.Tags == nil {
 		e.Tags = []string{}

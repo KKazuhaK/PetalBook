@@ -11,6 +11,7 @@ export function draftToCreateInput(draft: StoredDraft, toMarkdown: (doc: DocJSON
   const meta: PageMeta = {}
   if (f.title) meta.title = f.title
   if (f.subtitle) meta.subtitle = f.subtitle
+  if (f.source) meta.source = f.source
   if (f.tags.length) meta.tags = f.tags
   // The draft does not remember a folder: the new page goes to the root.
   return { folder: '', meta, body: draft.bodyJson ? toMarkdown(draft.bodyJson) : '' }

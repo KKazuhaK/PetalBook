@@ -166,7 +166,7 @@ func newMeta(in page.Meta) page.Meta {
 		}
 		switch v := f.Value.(type) {
 		case string:
-			if f.Key == "title" || f.Key == "subtitle" || f.Key == "type" {
+			if f.Key == "title" || f.Key == "subtitle" || f.Key == "source" || f.Key == "type" {
 				f.Value = strings.TrimSpace(v)
 			}
 		case []any:
@@ -196,7 +196,7 @@ func newMeta(in page.Meta) page.Meta {
 // empty list.
 func cleared(f page.Field) bool {
 	switch f.Key {
-	case "title", "subtitle", "type":
+	case "title", "subtitle", "source", "type":
 		if f.Value == nil {
 			return true
 		}
@@ -214,13 +214,13 @@ func cleared(f page.Field) bool {
 	return false
 }
 
-// placeAfterKnown inserts f after the last of id, title, subtitle and tags,
+// placeAfterKnown inserts f after the last of id, title, subtitle, source and tags,
 // so a new `created` sits where the design document shows it.
 func placeAfterKnown(m page.Meta, f page.Field) page.Meta {
 	at := 0
 	for i, x := range m {
 		switch x.Key {
-		case "id", "title", "subtitle", "tags":
+		case "id", "title", "subtitle", "source", "tags":
 			at = i + 1
 		}
 	}
@@ -256,6 +256,9 @@ func (s *Space) Create(in CreateInput) (*Page, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return nil, ErrClosed
+	}
 	now := s.now().UTC()
 	var id string
 	for i := 0; ; i++ {
@@ -370,6 +373,9 @@ func (s *Space) Save(id, baseRev string, meta page.Meta, body string) (*Page, er
 	s.refresh(id)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return nil, ErrClosed
+	}
 
 	rel, data, mtime, err := s.load(id, false)
 	if err != nil {
@@ -427,6 +433,40 @@ func (s *Space) Save(id, baseRev string, meta page.Meta, body string) (*Page, er
 	return s.afterWrite(newRel, newData, rel)
 }
 
+// CheckDraft applies the checks of Save to a draft without writing anything,
+// and returns the page as the file has it now, so the caller can tell whether
+// the draft's base is still current. It answers ErrNotFound for a page that is
+// not there.
+func (s *Space) CheckDraft(id string, meta page.Meta, body string) (*Page, error) {
+	p, _, err := s.Equivalent(id, meta, body)
+	return p, err
+}
+
+// Equivalent is CheckDraft that also reports whether saving this header and
+// body would leave the file exactly as it is, whatever the rev they started
+// from: a draft of that kind has nothing to conflict with.
+func (s *Space) Equivalent(id string, meta page.Meta, body string) (*Page, bool, error) {
+	if err := checkBody(body); err != nil {
+		return nil, false, err
+	}
+	rel, data, mtime, err := s.load(id, true)
+	if err != nil {
+		return nil, false, err
+	}
+	doc := page.Parse(data)
+	old := doc.Meta()
+	newMeta, err := saveMeta(id, old, meta)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := doc.SetMeta(newMeta); err != nil {
+		return nil, false, invalidf("%v", err)
+	}
+	doc.SetBody(body)
+	same := bytes.Equal(doc.Bytes(), data) && old.Title() == newMeta.Title()
+	return pageFrom(rel, data, mtime), same, nil
+}
+
 // Move puts a page in another folder, creating it if needed. A folder that
 // differs only in case from an existing one is the existing one.
 func (s *Space) Move(id, folder string) (*Page, error) {
@@ -436,6 +476,9 @@ func (s *Space) Move(id, folder string) (*Page, error) {
 	s.refresh(id)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return nil, ErrClosed
+	}
 	rel, data, mtime, err := s.load(id, false)
 	if err != nil {
 		return nil, err
@@ -470,6 +513,9 @@ func (s *Space) Delete(id string) error {
 	s.refresh(id)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return ErrClosed
+	}
 	rel, _, _, err := s.load(id, false)
 	if err != nil {
 		return err
@@ -507,6 +553,9 @@ func (s *Space) CreateFolder(rel string) (string, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return "", ErrClosed
+	}
 	canon, existed, err := s.resolveFolder(rel)
 	if err != nil {
 		return "", err
@@ -547,5 +596,8 @@ func (s *Space) Tags() ([]index.TagCount, error) { return s.idx.Tags() }
 func (s *Space) Reindex() (index.Stats, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return index.Stats{}, ErrClosed
+	}
 	return s.idx.Sync(s.src, true)
 }

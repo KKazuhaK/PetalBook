@@ -21,7 +21,7 @@ import (
 
 // schemaVersion changes whenever the tables or the way text is tokenised
 // change; an index with another version is thrown away and rebuilt.
-const schemaVersion = 2
+const schemaVersion = 3
 
 const schema = `
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -32,6 +32,7 @@ CREATE TABLE pages (
 	folder      TEXT NOT NULL,
 	title       TEXT NOT NULL,
 	subtitle    TEXT NOT NULL,
+	source      TEXT NOT NULL,
 	untitled    INTEGER NOT NULL,
 	title_key   TEXT NOT NULL,
 	label       TEXT NOT NULL,
@@ -55,7 +56,7 @@ CREATE TABLE folders (path TEXT PRIMARY KEY);
 -- Files that are not pages (no usable id). They are remembered with their size
 -- and mtime so that start-up does not read them again.
 CREATE TABLE problems (path TEXT PRIMARY KEY, code TEXT NOT NULL, message TEXT NOT NULL, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL);
-CREATE VIRTUAL TABLE fts USING fts5(title, subtitle, body, content='', contentless_delete=1, tokenize='unicode61');
+CREATE VIRTUAL TABLE fts USING fts5(title, subtitle, source, body, content='', contentless_delete=1, tokenize='unicode61');
 INSERT INTO folders(path) VALUES ('');
 `
 

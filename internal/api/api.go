@@ -4,6 +4,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,28 +20,46 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/KazuhaHub/PetalBook/internal/auth"
+	"github.com/KazuhaHub/PetalBook/internal/drafts"
 	"github.com/KazuhaHub/PetalBook/internal/index"
 	"github.com/KazuhaHub/PetalBook/internal/page"
 	"github.com/KazuhaHub/PetalBook/internal/space"
+	"github.com/KazuhaHub/PetalBook/internal/spaces"
+	"github.com/KazuhaHub/PetalBook/internal/store"
 )
 
-// SpaceID is the id of the one space milestone 1.1 serves.
-const SpaceID = "default"
+// SpaceID is the id of the one space of single-user mode.
+const SpaceID = spaces.SingleID
 
 // DefaultMaxBody caps a request body. A page is text; 8 MiB is hundreds of
 // thousands of words.
 const DefaultMaxBody = 8 << 20
 
+// authBodyLimit caps the bodies of the sign-in and account endpoints, which
+// anyone can reach.
+const authBodyLimit = 64 << 10
+
 // Options configures the handler.
 type Options struct {
-	Space   *space.Space
 	Version string
 	MaxBody int64 // bytes; DefaultMaxBody when 0
+	// Store, Spaces and Drafts are required.
+	Store  *store.Store
+	Spaces *spaces.Manager
+	Drafts *drafts.Service
+	// Auth is set in accounts mode and nil in single-user mode, where every
+	// request acts as the built-in user.
+	Auth *auth.Service
+	// PublicURL is the address people use in accounts mode; its origin is
+	// accepted as the server's own on any listen address.
+	PublicURL string
 	// RestrictHost is loopback-only mode: it refuses requests whose Host header
 	// is not a loopback name (or the host of an allowed origin), which stops a
 	// web page on another site from reaching the server through DNS rebinding,
 	// and it makes loopback origins on the request's port the server's own.
-	// With it off there is no implicit own origin: browsers need AllowOrigins.
+	// With it off there is no implicit own origin: browsers need AllowOrigins
+	// (or, in accounts mode, the public URL).
 	RestrictHost bool
 	// AllowOrigins are origins (scheme://host[:port]) besides the server's own
 	// that may make requests, for a development server on another port that
@@ -51,8 +70,12 @@ type Options struct {
 
 type server struct {
 	opt     Options
-	sp      *space.Space
 	log     *slog.Logger
+	auth    *auth.Service
+	spaces  *spaces.Manager
+	drafts  *drafts.Service
+	single  bool
+	local   store.User // the built-in user of single-user mode
 	origins map[string]bool
 	// originHosts are the hosts of the allowed origins: a request addressed to
 	// one of them (through a reverse proxy, say) passes the Host restriction.
@@ -67,51 +90,92 @@ func New(opt Options) http.Handler {
 	if opt.Version == "" {
 		opt.Version = "dev"
 	}
-	s := &server{opt: opt, sp: opt.Space, log: opt.Logger, origins: map[string]bool{}, originHosts: map[string]bool{}}
-	for _, o := range opt.AllowOrigins {
+	s := &server{opt: opt, log: opt.Logger, auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, single: opt.Auth == nil,
+		origins: map[string]bool{}, originHosts: map[string]bool{}}
+	if s.log == nil {
+		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	allow := append([]string(nil), opt.AllowOrigins...)
+	if !s.single && opt.PublicURL != "" {
+		allow = append(allow, OriginOf(opt.PublicURL))
+	}
+	for _, o := range allow {
 		s.origins[NormalizeOrigin(o)] = true
 		if u, err := url.Parse(NormalizeOrigin(o)); err == nil && u.Host != "" {
 			s.originHosts[u.Host] = true
 		}
 	}
-	if s.log == nil {
-		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	if s.single {
+		s.local = store.User{ID: store.LocalUserID, Username: "local", Name: "Local user", Role: "admin", Created: time.Now().UTC()}
+		if u, err := store.GetUser(context.Background(), opt.Store.Q(), store.LocalUserID); err == nil {
+			s.local = *u
+		}
 	}
 	mux := http.NewServeMux()
-	routes := []struct {
-		method, pattern string
-		h               http.HandlerFunc
-	}{
-		{"GET", "/api/meta", s.getMeta},
-		{"GET", "/api/spaces/{space}/pages", s.listPages},
-		{"POST", "/api/spaces/{space}/pages", s.createPage},
-		{"GET", "/api/spaces/{space}/pages/{id}", s.getPage},
-		{"PUT", "/api/spaces/{space}/pages/{id}", s.savePage},
-		{"DELETE", "/api/spaces/{space}/pages/{id}", s.deletePage},
-		{"POST", "/api/spaces/{space}/pages/{id}/move", s.movePage},
-		{"GET", "/api/spaces/{space}/tree", s.getTree},
-		{"POST", "/api/spaces/{space}/folders", s.createFolder},
-		{"GET", "/api/spaces/{space}/tags", s.getTags},
-		{"POST", "/api/spaces/{space}/reindex", s.reindex},
+	for _, rt := range routeTable {
+		mux.HandleFunc(rt.method+" "+rt.pattern, s.handle(rt))
 	}
-	allowed := map[string][]string{}
-	for _, r := range routes {
-		mux.HandleFunc(r.method+" "+r.pattern, r.h)
-		allowed[r.pattern] = append(allowed[r.pattern], r.method)
-	}
-	// The mux answers a wrong method with plain text; a method-less pattern
-	// per path lets us answer in the API's error shape.
-	for pattern, methods := range allowed {
-		allow := strings.Join(methods, ", ")
-		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+	// A path that exists with other methods is 405 in the API's error shape
+	// (the mux would answer in plain text), anything else 404. This cannot be
+	// method-less patterns in the mux: they conflict with wildcard routes such
+	// as /api/invites/{id} next to /api/invites/accept.
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if methods := s.methodsFor(r.URL.Path); len(methods) > 0 {
+			allow := strings.Join(methods, ", ")
 			w.Header().Set("Allow", allow)
 			writeError(w, http.StatusMethodNotAllowed, "invalid", "method "+r.Method+" is not allowed here; use "+allow)
-		})
-	}
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			return
+		}
 		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
 	})
 	return s.wrap(mux)
+}
+
+// methodsFor lists the methods of the routes a path matches, preferring the
+// most literal match (so /api/invites/accept is not also /api/invites/{id}).
+func (s *server) methodsFor(path string) []string {
+	segs := strings.Split(path, "/")
+	best := -1
+	var out []string
+	for _, rt := range routeTable {
+		if rt.accountsOnly && s.single {
+			continue
+		}
+		ps := strings.Split(rt.pattern, "/")
+		if len(ps) != len(segs) {
+			continue
+		}
+		wild, ok := 0, true
+		for i := range ps {
+			if strings.HasPrefix(ps[i], "{") {
+				if segs[i] == "" {
+					ok = false
+				}
+				wild++
+			} else if ps[i] != segs[i] {
+				ok = false
+			}
+		}
+		if !ok {
+			continue
+		}
+		if best < 0 || wild < best {
+			best, out = wild, nil
+		}
+		if wild == best {
+			out = append(out, rt.method)
+		}
+	}
+	return out
+}
+
+// OriginOf returns scheme://host[:port], lower case, of a URL.
+func OriginOf(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return strings.ToLower(u.Scheme + "://" + u.Host)
 }
 
 // wrap adds the Host check, panic recovery and access logging.
@@ -131,13 +195,19 @@ func (s *server) wrap(next http.Handler) http.Handler {
 			}
 			s.log.Debug("request", "method", r.Method, "path", r.URL.Path, "status", sw.status, "ms", time.Since(start).Milliseconds())
 		}()
+		sw.Header().Set("X-Content-Type-Options", "nosniff")
 		if s.opt.RestrictHost && !loopbackHost(r.Host) && !s.originHosts[strings.ToLower(r.Host)] {
 			writeError(sw, http.StatusForbidden, "forbidden", "this server only answers requests addressed to localhost")
 			return
 		}
-		if why := s.crossSite(r); why != "" {
-			writeError(sw, http.StatusForbidden, "forbidden", why)
-			return
+		// The identity provider's redirect is a cross-site navigation by
+		// nature. It changes nothing unless its state matches a sign-in this
+		// browser started, so the cross-site rules do not apply to it.
+		if !(r.Method == http.MethodGet && r.URL.Path == oidcCallbackPath) {
+			if why := s.crossSite(r); why != "" {
+				writeError(sw, http.StatusForbidden, "forbidden", why)
+				return
+			}
 		}
 		switch r.Method {
 		case http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch:
@@ -151,6 +221,8 @@ func (s *server) wrap(next http.Handler) http.Handler {
 		next.ServeHTTP(sw, r)
 	})
 }
+
+const oidcCallbackPath = "/api/auth/oidc/callback"
 
 // NormalizeOrigin lower-cases an origin and drops a trailing slash.
 func NormalizeOrigin(o string) string {
@@ -252,6 +324,15 @@ type errorBody struct {
 	Current any    `json:"current,omitempty"`
 }
 
+// draftConflictBody is the 409 of the draft endpoints: the draft there is (or
+// null) and the page as the file has it. Unlike errorBody, draft is always present.
+type draftConflictBody struct {
+	Error   string     `json:"error"`
+	Message string     `json:"message"`
+	Draft   *draftResp `json:"draft"`
+	Current pageResp   `json:"current"`
+}
+
 func writeError(w http.ResponseWriter, status int, code, msg string) {
 	writeJSON(w, status, errorBody{Error: code, Message: msg})
 }
@@ -260,12 +341,16 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 // optional is true. Invalid UTF-8 is refused outright: encoding/json would
 // silently replace it, and the API promises 400 for it.
 func (s *server) readJSON(w http.ResponseWriter, r *http.Request, v any, optional bool) bool {
+	return s.readJSONMax(w, r, v, optional, s.opt.MaxBody)
+}
+
+func (s *server) readJSONMax(w http.ResponseWriter, r *http.Request, v any, optional bool, max int64) bool {
 	ct := r.Header.Get("Content-Type")
-	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, s.opt.MaxBody))
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, max))
 	if err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
-			writeError(w, http.StatusRequestEntityTooLarge, "invalid", fmt.Sprintf("the request body is larger than %d bytes", s.opt.MaxBody))
+			writeError(w, http.StatusRequestEntityTooLarge, "invalid", fmt.Sprintf("the request body is larger than %d bytes", max))
 		} else {
 			writeError(w, http.StatusBadRequest, "invalid", "could not read the request body")
 		}
@@ -300,8 +385,29 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	var (
 		inv *space.InvalidError
 		ce  *space.ConflictError
+		ae  *auth.Error
+		dc  *drafts.Conflict
 	)
 	switch {
+	case errors.As(err, &ae):
+		s.failAuth(w, ae)
+	case errors.As(err, &dc):
+		var draft *draftResp
+		if dc.Draft != nil {
+			draft = toDraftResp(dc.Draft)
+		}
+		writeJSON(w, http.StatusConflict, draftConflictBody{Error: "conflict",
+			Message: "the draft on the server is not the one you meant; here is what there is", Draft: draft, Current: toPage(dc.Current)})
+	case errors.Is(err, spaces.ErrLimit):
+		writeError(w, http.StatusForbidden, "forbidden", strings.TrimPrefix(err.Error(), spaces.ErrLimit.Error()+": "))
+	case errors.Is(err, spaces.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "no such space")
+	case errors.Is(err, spaces.ErrForbidden):
+		writeError(w, http.StatusForbidden, "forbidden", "only an owner of the space may do that")
+	case errors.Is(err, spaces.ErrInvalid):
+		writeError(w, http.StatusBadRequest, "invalid", strings.TrimPrefix(err.Error(), spaces.ErrInvalid.Error()+": "))
+	case errors.Is(err, space.ErrClosed):
+		writeError(w, http.StatusInternalServerError, "internal", "the server is shutting down; try again when it is back")
 	case errors.Is(err, space.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "no such page")
 	case errors.Is(err, space.ErrExists), errors.Is(err, fs.ErrExist):
@@ -319,27 +425,27 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	}
 }
 
-// checkSpace answers 404 for any space but the one this server has.
-func (s *server) checkSpace(w http.ResponseWriter, r *http.Request) bool {
-	if r.PathValue("space") != SpaceID {
-		writeError(w, http.StatusNotFound, "not_found", "no such space")
-		return false
+func (s *server) failAuth(w http.ResponseWriter, e *auth.Error) {
+	switch e.Kind {
+	case auth.Invalid:
+		writeError(w, http.StatusBadRequest, "invalid", e.Msg)
+	case auth.Unauthenticated:
+		writeError(w, http.StatusUnauthorized, "unauthenticated", e.Msg)
+	case auth.Forbidden:
+		writeError(w, http.StatusForbidden, "forbidden", e.Msg)
+	case auth.NotFound:
+		writeError(w, http.StatusNotFound, "not_found", e.Msg)
+	case auth.Conflict:
+		writeError(w, http.StatusConflict, "conflict", e.Msg)
+	case auth.Exists:
+		writeError(w, http.StatusConflict, "exists", e.Msg)
+	case auth.RateLimited:
+		secs := int((e.RetryAfter + time.Second - 1) / time.Second)
+		w.Header().Set("Retry-After", strconv.Itoa(max(secs, 1)))
+		writeError(w, http.StatusTooManyRequests, "rate_limited", e.Msg)
+	default:
+		writeError(w, http.StatusInternalServerError, "internal", e.Msg)
 	}
-	return true
-}
-
-// pageID returns the {id} of the request, answering 404 for anything that
-// cannot be a page id.
-func (s *server) pageID(w http.ResponseWriter, r *http.Request) (string, bool) {
-	if !s.checkSpace(w, r) {
-		return "", false
-	}
-	id := r.PathValue("id")
-	if !page.ValidID(id) {
-		writeError(w, http.StatusNotFound, "not_found", "no such page")
-		return "", false
-	}
-	return id, true
 }
 
 // --- resources --------------------------------------------------------------
@@ -370,6 +476,7 @@ type summaryResp struct {
 	Folder   string   `json:"folder"`
 	Title    string   `json:"title,omitempty"`
 	Subtitle string   `json:"subtitle,omitempty"`
+	Source   string   `json:"source,omitempty"`
 	Label    string   `json:"label"`
 	Untitled bool     `json:"untitled"`
 	Tags     []string `json:"tags"`
@@ -380,228 +487,6 @@ type summaryResp struct {
 }
 
 func toSummary(s index.Summary) summaryResp {
-	return summaryResp{ID: s.ID, Path: s.Path, Folder: s.Folder, Title: s.Title, Subtitle: s.Subtitle, Label: s.Label,
+	return summaryResp{ID: s.ID, Path: s.Path, Folder: s.Folder, Title: s.Title, Subtitle: s.Subtitle, Source: s.Source, Label: s.Label,
 		Untitled: s.Untitled, Tags: s.Tags, Type: s.Type, Created: s.Created, Updated: rfc3339(s.Updated), Excerpt: s.Excerpt}
-}
-
-// --- handlers ---------------------------------------------------------------
-
-func (s *server) getMeta(w http.ResponseWriter, r *http.Request) {
-	type sp struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	}
-	writeJSON(w, http.StatusOK, struct {
-		Version string `json:"version"`
-		Spaces  []sp   `json:"spaces"`
-	}{s.opt.Version, []sp{{SpaceID, s.sp.Name()}}})
-}
-
-func (s *server) listPages(w http.ResponseWriter, r *http.Request) {
-	if !s.checkSpace(w, r) {
-		return
-	}
-	v := r.URL.Query()
-	q := index.Query{Tags: v["tag"], Text: v.Get("q"), Sort: v.Get("sort"), Cursor: v.Get("cursor")}
-	if v.Has("folder") {
-		f := v.Get("folder")
-		if err := space.ValidFolder(f); err != nil {
-			s.fail(w, err)
-			return
-		}
-		q.Folder = &f
-	}
-	switch rec := v.Get("recursive"); rec {
-	case "", "false":
-	case "true":
-		q.Recursive = true
-	default:
-		writeError(w, http.StatusBadRequest, "invalid", "recursive must be true or false")
-		return
-	}
-	if l := v.Get("limit"); l != "" {
-		n, err := strconv.Atoi(l)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid", "limit must be a number from 1 to 200")
-			return
-		}
-		q.Limit = n
-		if n == 0 { // 0 means "default" inside the index; over HTTP it is out of range
-			q.Limit = -1
-		}
-	}
-	res, err := s.sp.List(q)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	items := make([]summaryResp, len(res.Items))
-	for i, it := range res.Items {
-		items[i] = toSummary(it)
-	}
-	writeJSON(w, http.StatusOK, struct {
-		Items []summaryResp `json:"items"`
-		Next  string        `json:"next"`
-	}{items, res.Next})
-}
-
-func (s *server) getPage(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.pageID(w, r)
-	if !ok {
-		return
-	}
-	p, err := s.sp.Get(id)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, toPage(p))
-}
-
-func (s *server) createPage(w http.ResponseWriter, r *http.Request) {
-	if !s.checkSpace(w, r) {
-		return
-	}
-	var req struct {
-		Folder string    `json:"folder"`
-		Meta   page.Meta `json:"meta"`
-		Body   string    `json:"body"`
-	}
-	if !s.readJSON(w, r, &req, true) {
-		return
-	}
-	p, err := s.sp.Create(space.CreateInput{Folder: req.Folder, Meta: req.Meta, Body: req.Body})
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	w.Header().Set("Location", "/api/spaces/"+SpaceID+"/pages/"+url.PathEscape(p.ID))
-	writeJSON(w, http.StatusCreated, toPage(p))
-}
-
-func (s *server) savePage(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.pageID(w, r)
-	if !ok {
-		return
-	}
-	var req struct {
-		BaseRev string     `json:"baseRev"`
-		Meta    *page.Meta `json:"meta"`
-		Body    *string    `json:"body"`
-	}
-	if !s.readJSON(w, r, &req, false) {
-		return
-	}
-	// A save replaces the whole page, so a request that leaves out the header
-	// or the body would silently empty it. Refuse instead of guessing.
-	if req.Meta == nil || req.Body == nil {
-		writeError(w, http.StatusBadRequest, "invalid", "a save needs both meta and body; send the page's current values for the part that did not change")
-		return
-	}
-	// A save without the rev it started from is a malformed request, not a
-	// conflict: there is no other version to show the person.
-	if req.BaseRev == "" {
-		writeError(w, http.StatusBadRequest, "invalid", "a save needs baseRev, the rev of the page it started from")
-		return
-	}
-	p, err := s.sp.Save(id, req.BaseRev, *req.Meta, *req.Body)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, toPage(p))
-}
-
-func (s *server) movePage(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.pageID(w, r)
-	if !ok {
-		return
-	}
-	var req struct {
-		Folder string `json:"folder"`
-	}
-	if !s.readJSON(w, r, &req, false) {
-		return
-	}
-	p, err := s.sp.Move(id, req.Folder)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, toPage(p))
-}
-
-func (s *server) deletePage(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.pageID(w, r)
-	if !ok {
-		return
-	}
-	if err := s.sp.Delete(id); err != nil {
-		s.fail(w, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *server) getTree(w http.ResponseWriter, r *http.Request) {
-	if !s.checkSpace(w, r) {
-		return
-	}
-	folders, err := s.sp.Tree()
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, struct {
-		Folders []index.FolderCount `json:"folders"`
-	}{folders})
-}
-
-func (s *server) createFolder(w http.ResponseWriter, r *http.Request) {
-	if !s.checkSpace(w, r) {
-		return
-	}
-	var req struct {
-		Path string `json:"path"`
-	}
-	if !s.readJSON(w, r, &req, false) {
-		return
-	}
-	path, err := s.sp.CreateFolder(req.Path)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, struct {
-		Path string `json:"path"`
-	}{path})
-}
-
-func (s *server) getTags(w http.ResponseWriter, r *http.Request) {
-	if !s.checkSpace(w, r) {
-		return
-	}
-	tags, err := s.sp.Tags()
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, struct {
-		Tags []index.TagCount `json:"tags"`
-	}{tags})
-}
-
-func (s *server) reindex(w http.ResponseWriter, r *http.Request) {
-	if !s.checkSpace(w, r) {
-		return
-	}
-	st, err := s.sp.Reindex()
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, struct {
-		Pages int   `json:"pages"`
-		Ms    int64 `json:"ms"`
-	}{st.Pages, st.Elapsed.Milliseconds()})
 }

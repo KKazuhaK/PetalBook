@@ -22,10 +22,12 @@ import (
 	"github.com/KazuhaHub/PetalBook/internal/index"
 )
 
-// Defaults for the committer: a commit after two quiet minutes, or ten
-// minutes after the first uncommitted write.
+// Defaults for the committer: a commit after a few quiet seconds, or ten
+// minutes after the first uncommitted write. The quiet period is short because
+// the long wait now happens in drafts (see the drafts package): by the time a
+// write reaches a file the person has stopped typing or asked for it.
 const (
-	DefaultCommitIdle = 2 * time.Minute
+	DefaultCommitIdle = 5 * time.Second
 	DefaultCommitMax  = 10 * time.Minute
 	DefaultName       = "My notes"
 	DefaultCommitter  = "PetalBook <petalbook@localhost>"
@@ -39,8 +41,11 @@ type Options struct {
 	Name string
 	// StateDir holds the index. Default: <Root>/.petalbook/cache.
 	StateDir string
-	// Committer is the Git author of automatic commits, "Name <email>".
-	Committer  string
+	// Committer is the Git committer of automatic commits, "Name <email>"; it
+	// is their author too unless Author is given.
+	Committer string
+	// Author, "Name <email>", is who the commits are for (the space's owner).
+	Author     string
 	CommitIdle time.Duration
 	CommitMax  time.Duration
 	// ResyncInterval is the shortest time between two index re-syncs
@@ -51,15 +56,17 @@ type Options struct {
 
 // Space is safe for concurrent use.
 type Space struct {
-	root string // absolute, symlinks resolved
-	name string
-	idx  *index.Index
-	cm   *committer
-	log  *slog.Logger
+	root     string // absolute, symlinks resolved
+	stateDir string
+	name     string
+	idx      *index.Index
+	cm       *committer
+	log      *slog.Logger
 
-	mu  sync.Mutex // serialises every change to files and the index
-	now func() time.Time
-	ops fileOps
+	mu     sync.Mutex // serialises every change to files and the index
+	closed bool       // set by Close, under mu: later changes are refused before they write
+	now    func() time.Time
+	ops    fileOps
 
 	// src is the file tree the index mirrors. syncEvery throttles the
 	// re-sync a missed lookup triggers, so ids that do not exist (a stale
@@ -75,6 +82,9 @@ type Space struct {
 var (
 	ErrNotFound = errors.New("not found")
 	ErrExists   = errors.New("already exists")
+	// ErrClosed: the space has been closed (the server is shutting down) and
+	// takes no more changes; nothing was written.
+	ErrClosed = errors.New("the space is closed")
 )
 
 // InvalidError is a request the space refuses because of its content.
@@ -115,6 +125,13 @@ func Open(opt Options) (*Space, error) {
 		return nil, err
 	}
 	g := &gitRepo{dir: root, name: author, email: email}
+	if opt.Author != "" {
+		an, ae, err := ParseCommitter(opt.Author)
+		if err != nil {
+			return nil, err
+		}
+		g.setAuthor(an, ae)
+	}
 	if _, err := os.Stat(filepath.Join(root, ".git")); errors.Is(err, fs.ErrNotExist) {
 		if err := g.init(); err != nil {
 			return nil, err
@@ -181,7 +198,7 @@ func Open(opt Options) (*Space, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Space{root: root, name: name, idx: idx, log: log, now: time.Now, ops: osOps(), src: dirSource{root}, syncEvery: opt.ResyncInterval}
+	s := &Space{root: root, stateDir: stateDir, name: name, idx: idx, log: log, now: time.Now, ops: osOps(), src: dirSource{root}, syncEvery: opt.ResyncInterval}
 	if s.syncEvery <= 0 {
 		s.syncEvery = 2 * time.Second
 	}
@@ -236,9 +253,19 @@ func (s *Space) Name() string { return s.name }
 // Root is the absolute directory of the space.
 func (s *Space) Root() string { return s.root }
 
+// StateDir is where the index and the commit journal are kept.
+func (s *Space) StateDir() string { return s.stateDir }
+
+// SetAuthor changes the Git author of later commits. The committer stays the service.
+func (s *Space) SetAuthor(name, email string) { s.cm.git.setAuthor(name, email) }
+
 // Close commits what is still uncommitted, stops the committer and closes the
 // index. It returns the commit error, if any.
 func (s *Space) Close() error {
+	// Under the lock: a change in progress finishes first, and none starts after.
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
 	err := s.cm.Close()
 	if cerr := s.idx.Close(); err == nil {
 		err = cerr

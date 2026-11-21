@@ -1,20 +1,20 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Link, useBlocker, useNavigate, useParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { Placeholder } from '@tiptap/extensions'
-import { Folder, MoreHorizontal, Trash2, FolderInput } from 'lucide-react'
+import { Folder, MoreHorizontal, Save, Trash2, FolderInput } from 'lucide-react'
 import { toast } from 'sonner'
-import { api, ApiError } from '@/api/client'
-import { invalidateListings, keys, usePage, useTags, useTree } from '@/api/hooks'
+import { ApiError, isUnauthenticated, spaceApi, type SpaceApi } from '@/api/client'
+import { invalidateListings, keys, usePage, useSession, useTags, useTree, useUrls } from '@/api/hooks'
 import type { Page } from '@/api/types'
 import { createExtensions, docToMarkdown, markdownToDoc } from '@/markdown'
-import { planRestore } from '@/editor/draftRestore'
-import { draftStoreFor, loadDraft, parseSavedMarker, savedMarkerKey } from '@/editor/draftStore'
+import { planRestore, type Content } from '@/editor/draftRestore'
+import { draftRefFor, draftStoreFor, loadDraft, parseSavedMarker, savedMarkerKey } from '@/editor/draftStore'
 import { LateBound } from '@/editor/lateBound'
 import { recoverDraft } from '@/editor/recoverDraft'
 import { LiveDraft } from '@/editor/liveDraft'
-import { fieldsOf, SaveController, waitForSaves, type Draft, type Fields } from '@/editor/saveController'
+import { fieldsOf, SaveController, waitForSaves, type ConflictInfo, type Fields } from '@/editor/saveController'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -27,7 +27,6 @@ import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { MovePageDialog } from '@/components/editor/MovePageDialog'
 import { SaveIndicator } from '@/components/editor/SaveIndicator'
 import { TagsEditor } from '@/components/editor/TagsEditor'
-import { folderUrl } from '@/lib/folders'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { t } from '@/i18n/zh-CN'
 
@@ -36,8 +35,11 @@ import { t } from '@/i18n/zh-CN'
 const extensions = [...createExtensions({ linkOpensOnClick: false }), Placeholder.configure({ placeholder: t.editor.bodyPlaceholder })]
 
 export default function PageEditor() {
-  const { id = '' } = useParams()
-  const { data, isPending, error, refetch } = usePage(id)
+  const { id = '', space = '' } = useParams()
+  const urls = useUrls()
+  // Local drafts belong to a person: `local` in single-user mode.
+  const userId = useSession().data?.user?.id ?? 'local'
+  const { data, isPending, error, refetch } = usePage(space, id)
 
   if (isPending) {
     return (
@@ -50,28 +52,30 @@ export default function PageEditor() {
   if (error || !data) {
     const missing = error instanceof ApiError && error.code === 'not_found'
     // Whatever was typed here and never saved is kept: offer it back.
-    if (missing) return <MissingPage id={id} />
+    if (missing) return <MissingPage space={space} id={id} userId={userId} />
     return (
       <>
         <TopBar />
         <div className="py-24 text-center">
-          <ErrorState message={missing ? t.editor.notFound : `${t.editor.loadFailed}：${error?.message ?? ''}`} onRetry={missing ? undefined : () => void refetch()} />
-          <Link to="/recent" className="text-sm text-brand underline underline-offset-4">
+          <ErrorState message={`${t.editor.loadFailed}：${error?.message ?? ''}`} onRetry={() => void refetch()} />
+          <Link to={urls.recent()} className="text-sm text-brand underline underline-offset-4">
             {t.editor.backToList}
           </Link>
         </div>
       </>
     )
   }
-  // One session per page id. It reads `data` once: later cache updates (our
-  // own saves) must never reset what the person is typing.
-  return <EditorSession key={data.id} initial={data} />
+  // One session per page id. It reads `data` once: later cache updates must
+  // never reset what the person is typing.
+  return <EditorSession key={`${userId}/${space}/${data.id}`} space={space} userId={userId} initial={data} />
 }
 
-function MissingPage({ id }: { id: string }) {
+function MissingPage({ space, id, userId }: { space: string; id: string; userId: string }) {
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [draft] = useState(() => loadDraft(id))
+  const urls = useUrls()
+  const [ref] = useState(() => draftRefFor(userId, space, id))
+  const [draft] = useState(() => loadDraft(ref))
   const [busy, setBusy] = useState(false)
   const preview = (() => {
     if (!draft?.bodyJson) return ''
@@ -86,10 +90,10 @@ function MissingPage({ id }: { id: string }) {
     if (!draft) return
     setBusy(true)
     try {
-      const page = await recoverDraft(id, draft, { create: (input) => api.createPage(input), toMarkdown: docToMarkdown })
-      void invalidateListings(qc)
+      const page = await recoverDraft(ref, draft, { create: (input) => spaceApi(space).createPage(input), toMarkdown: docToMarkdown })
+      void invalidateListings(qc, space)
       toast.success(t.editor.recovered)
-      navigate(`/p/${encodeURIComponent(page.id)}`, { replace: true })
+      navigate(urls.page(page.id), { replace: true })
     } catch (e) {
       setBusy(false)
       toast.error(`${t.editor.recoverFailed}：${e instanceof Error ? e.message : ''}`)
@@ -116,7 +120,7 @@ function MissingPage({ id }: { id: string }) {
             </Button>
           </section>
         )}
-        <Link to="/recent" className="text-sm text-brand underline underline-offset-4">
+        <Link to={urls.recent()} className="text-sm text-brand underline underline-offset-4">
           {t.editor.backToList}
         </Link>
       </div>
@@ -124,52 +128,93 @@ function MissingPage({ id }: { id: string }) {
   )
 }
 
-function EditorSession({ initial }: { initial: Page }) {
+// Leaving the editor commits what was typed, which can take a moment. A slow
+// one gets a notice that does not block anything (the list refreshes by itself
+// when the file is written); one that fails says where the text is.
+function watchLeave(done: Promise<void>, c: SaveController, id: string) {
+  // Nothing was typed, or nothing is out: nothing to watch.
+  if (c.state !== 'storing' && c.state !== 'committing') return
+  const toastId = `leave-${id}`
+  const slow = setTimeout(() => toast.loading(t.editor.leaving, { id: toastId }), 700)
+  void done.finally(() => {
+    clearTimeout(slow)
+    toast.dismiss(toastId)
+    const err = c.getSnapshot().error
+    if (c.state === 'error') {
+      // Text that never reached the server is in this browser; a draft that did
+      // is the server's to write to the file.
+      if (c.hasUnsaved()) toast.error(isUnauthenticated(err) ? t.editor.leaveSignedOut : t.editor.leaveFailed, { duration: 8000 })
+      else if (!isUnauthenticated(err)) toast.warning(t.editor.leaveDrafted, { duration: 8000 })
+    } else if (c.state === 'conflict') toast.warning(t.editor.leftInConflict, { duration: 8000 })
+  })
+}
+
+function EditorSession({ space, userId, initial }: { space: string; userId: string; initial: Page }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
+  const urls = useUrls()
+  const client: SpaceApi = useMemo(() => spaceApi(space), [space])
   const tree = useTree()
   const tags = useTags()
 
-  // A draft left by an earlier visit (closed tab, failed save) is compared with
-  // what the server has now before anything is shown.
-  const [drafts] = useState(() => draftStoreFor(initial.id))
-  const [restore] = useState(() =>
-    planRestore(initial, loadDraft(initial.id), docToMarkdown, (md) => docToMarkdown(markdownToDoc(md))),
-  )
-  const [fields, setFields] = useState<Fields>(() => (restore.kind === 'none' ? fieldsOf(initial.meta) : restore.fields))
-  // What has been typed, readable when a save runs (see LiveDraft).
+  // The page file, without the draft that came with it.
+  const [file] = useState<Page>(() => {
+    const { draft: _draft, ...rest } = initial
+    void _draft
+    return rest
+  })
+  // What the browser kept from an earlier visit (closed tab, failed request,
+  // signed out) and what the server holds as a draft are both weighed against
+  // the file before anything is shown: by content and lineage, not by clocks.
+  const [ref] = useState(() => draftRefFor(userId, space, initial.id))
+  const [drafts] = useState(() => draftStoreFor(ref))
+  const [local] = useState(() => loadDraft(ref))
+  const [restore] = useState(() => planRestore(initial, local, docToMarkdown, (md) => docToMarkdown(markdownToDoc(md))))
+  const content: Content | null = restore.kind === 'file' ? null : restore.content
+  // A local copy from before the source field existed carries none: the box then shows
+  // what the server has, so the person never types over a value they were not shown.
+  const [fields, setFields] = useState<Fields>(() => (content ? { ...content.fields, source: content.fields.source ?? fieldsOf((initial.draft ?? initial).meta).source } : fieldsOf(initial.meta)))
+  // What has been typed, readable when a request runs (see LiveDraft).
   const [live] = useState(() => new LiveDraft(fields, docToMarkdown))
-  const [conflict, setConflict] = useState<{ current: Page; mine: Draft } | null>(null)
+  const [conflict, setConflict] = useState<ConflictInfo | null>(null)
   const [conflictOpen, setConflictOpen] = useState(false)
   const [moveOpen, setMoveOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const subtitleRef = useRef<HTMLTextAreaElement>(null)
 
   // Computed once: a brand-new blank page puts the cursor in the body.
-  const [startInBody] = useState(() => !fields.title && initial.body.trim() === '')
-  const [initialDoc] = useState(() => (restore.kind !== 'none' && restore.doc ? restore.doc : markdownToDoc(initial.body)))
+  const [startInBody] = useState(() => !fields.title && !content?.doc && (content?.markdown ?? initial.body).trim() === '')
+  const [initialDoc] = useState(() => content?.doc ?? markdownToDoc(content?.markdown ?? initial.body))
 
-  // Called when another tab saved this page and this one has nothing unsaved.
-  const [reload] = useState(() => new LateBound<[string]>())
+  // Called when another tab or device changed the server's copy and this one has
+  // nothing unsaved.
+  const [reload] = useState(() => new LateBound<[Page]>())
   const [controller] = useState(
     () =>
       new SaveController({
-        draftToken: restore.kind === 'none' ? undefined : restore.token,
-        onExternalSave: reload.call,
-        page: initial,
+        scope: space,
+        page: file,
+        draft: initial.draft,
+        seed: restore.seed,
+        draftToken: restore.kind === 'local' || restore.kind === 'conflict' || restore.kind === 'server' ? restore.token : undefined,
+        onExternalChange: reload.call,
         read: live.read,
-        save: (id, input, opts) => api.savePage(id, input, opts),
+        api: {
+          putDraft: (id, input, opts) => client.putDraft(id, input, opts),
+          deleteDraft: (id, version, rev) => client.deleteDraft(id, version, rev),
+          commit: (id, version) => client.commitPage(id, version),
+          getPage: (id) => client.getPage(id),
+        },
         // What the editor would write for the original text, so an edit that
         // is undone again is recognised as no change at all.
         normalizeBody: (md) => docToMarkdown(markdownToDoc(md)),
         drafts,
         readDraft: live.readStorable,
-        onSaved: (page) => {
-          qc.setQueryData(keys.page(page.id), page)
-          void invalidateListings(qc)
-        },
-        onConflict: (current, mine) => {
-          setConflict({ current, mine })
+        // The lists show the file, so they change only when the file does. This
+        // also runs when the commit lands after the editor was left.
+        onCommitted: () => void invalidateListings(qc, space),
+        onConflict: (info) => {
+          setConflict(info)
           setConflictOpen(true)
         },
       }),
@@ -182,38 +227,64 @@ function EditorSession({ initial }: { initial: Page }) {
     controller.attach()
     const onHidden = () => {
       if (document.visibilityState === 'hidden') controller.flushKeepalive()
+      else controller.noticeVisible() // back in view: retry a failed step, or see what changed elsewhere
     }
     const onPageHide = () => controller.flushKeepalive()
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       controller.persistNow()
-      // Anything not yet confirmed saved (typed, in flight, failed, in conflict)
-      // asks first. The local draft keeps it either way.
-      if (controller.state !== 'saved') {
+      // Text the server has not confirmed (typed, failed, in conflict) asks
+      // first. The local draft keeps it either way; a draft the server holds is
+      // committed by the server itself, so closing is fine.
+      if (controller.hasUnsaved() || controller.state === 'error' || controller.state === 'conflict') {
         e.preventDefault()
         e.returnValue = ''
+      }
+    }
+    const onOnline = () => controller.noticeOnline()
+    // Save a version, as the browser's own "save page" shortcut would suggest.
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        void controller.commit()
       }
     }
     document.addEventListener('visibilitychange', onHidden)
     window.addEventListener('pagehide', onPageHide)
     window.addEventListener('beforeunload', onBeforeUnload)
+    window.addEventListener('online', onOnline)
+    window.addEventListener('keydown', onKeyDown)
     return () => {
       document.removeEventListener('visibilitychange', onHidden)
       window.removeEventListener('pagehide', onPageHide)
       window.removeEventListener('beforeunload', onBeforeUnload)
-      void controller.detach()
+      window.removeEventListener('online', onOnline)
+      window.removeEventListener('keydown', onKeyDown)
+      watchLeave(controller.detach(), controller, initial.id)
     }
-  }, [controller])
+  }, [controller, initial.id])
 
-  // Once, on open: put a draft back, or raise the conflict it implies.
+  // Once, on open: show the draft that was found, or raise the conflict it implies.
   useEffect(() => {
-    if (restore.kind === 'none') {
-      if (restore.stale) drafts.clear()
-      return
+    switch (restore.kind) {
+      case 'file':
+        if (restore.dropLocal && local) drafts.clearIf(local.token)
+        return
+      case 'server':
+        // Already on the server; the editor just shows it.
+        if (restore.dropLocal && local) drafts.clearIf(local.token)
+        live.bodyChanged()
+        return
+      case 'local':
+        // Only in this browser: it goes to the server next.
+        live.bodyChanged()
+        controller.markDirty()
+        return
+      case 'conflict':
+        live.bodyChanged()
+        if (restore.dropLocal && local) drafts.clearIf(local.token)
+        controller.enterConflict(restore.info, restore.unsaved)
     }
-    if (restore.doc) live.bodyChanged()
-    if (restore.kind === 'apply') controller.markDirty()
-    else controller.enterConflict(initial, restore.mine)
-  }, [restore, drafts, live, controller, initial])
+  }, [restore, local, drafts, live, controller])
 
   const editor = useEditor({
     extensions,
@@ -233,8 +304,12 @@ function EditorSession({ initial }: { initial: Page }) {
     if (editor) live.attachEditor(editor)
   }, [editor, live])
 
-  // Leaving with text that never reached the server asks first.
-  const blocker = useBlocker(() => controller.state === 'conflict' || controller.state === 'error')
+  // Leaving with a conflict open, or with text that never reached the server,
+  // asks first. (Signed out: the sign-in page takes over, and the browser keeps the text.)
+  const blocker = useBlocker(() => {
+    const s = controller.getSnapshot()
+    return s.state === 'conflict' || (s.state === 'error' && !isUnauthenticated(s.error))
+  })
   useEffect(() => {
     if (blocker.state !== 'blocked') return
     if (window.confirm(controller.state === 'conflict' ? t.editor.leaveConflict : t.editor.leaveUnsaved)) blocker.proceed()
@@ -244,7 +319,7 @@ function EditorSession({ initial }: { initial: Page }) {
   const page = controller.page
   useDocumentTitle(`${fields.title.trim() || t.editor.untitled} · ${t.appName}`)
 
-  const setField = (key: 'title' | 'subtitle', value: string) => {
+  const setField = (key: 'title' | 'subtitle' | 'source', value: string) => {
     setFields(live.setField(key, value))
     controller.markDirty()
   }
@@ -253,65 +328,69 @@ function EditorSession({ initial }: { initial: Page }) {
     controller.markDirty()
   }
 
-  const keepMine = () => {
-    if (!conflict) return
-    setConflictOpen(false)
-    void controller.keepMine(conflict.current)
-    setConflict(null)
-  }
-  // Replace everything on screen with what the server has.
-  const loadServerVersion = (theirs: Page) => {
+  // Put these fields and this Markdown on screen, replacing what is there.
+  const showContent = (f: Fields, markdown: string) => {
     if (!editor) return
-    controller.useTheirs(theirs)
-    const f = fieldsOf(theirs.meta)
     live.reset(f)
     setFields(f)
-    editor.commands.setContent(markdownToDoc(theirs.body), { emitUpdate: false })
-    qc.setQueryData(keys.page(theirs.id), theirs)
-  }
-  const useTheirs = () => {
-    if (!conflict) return
-    loadServerVersion(conflict.current)
-    setConflictOpen(false)
-    setConflict(null)
+    editor.commands.setContent(markdownToDoc(markdown), { emitUpdate: false })
   }
 
-  // Another tab saved this same page. This tab has nothing unsaved, so show
-  // what was saved; with something unsaved the controller instead saves now and
-  // the person meets the usual conflict dialog.
+  // The dialog is closed and cleared first: the controller may raise the next
+  // question (both drafts stale, the file still to weigh) straight away.
+  const keepMine = () => {
+    setConflictOpen(false)
+    setConflict(null)
+    void controller.keepMine()
+  }
+  const useTheirs = () => {
+    setConflictOpen(false)
+    setConflict(null)
+    const shown = controller.useTheirs()
+    showContent(fieldsOf(shown.meta), shown.body)
+  }
+
+  // Another tab or device changed what the server has, and this one has nothing
+  // unsaved: show it. (With something unsaved the controller stores now and the
+  // person meets the conflict dialog instead.)
   useEffect(() => {
-    reload.bind(() => {
-      void api.getPage(initial.id).then((page) => {
-        if (page.rev === controller.page.rev) return
-        if (!controller.hasUnsaved() && controller.state === 'saved') loadServerVersion(page)
-      }, () => undefined)
+    reload.bind((fresh) => {
+      const plan = planRestore(fresh, null, docToMarkdown, (md) => docToMarkdown(markdownToDoc(md)))
+      if (plan.kind === 'file') showContent(fieldsOf(fresh.meta), fresh.body)
+      else {
+        showContent(plan.content.fields, plan.content.markdown ?? fresh.body)
+        live.bodyChanged()
+        if (plan.kind === 'conflict') controller.enterConflict(plan.info, false)
+      }
     })
-    const key = savedMarkerKey(initial.id)
+    const key = savedMarkerKey(ref)
     const onStorage = (e: StorageEvent) => {
       if (e.key !== key) return
       const marker = parseSavedMarker(e.newValue)
-      if (marker) controller.noticeExternalSave(marker.rev)
+      if (!marker) return
+      if (marker.rev !== controller.page.rev) controller.noticeExternalSave(marker.rev)
+      else controller.noticeExternalDraft(marker.draft)
     }
     window.addEventListener('storage', onStorage)
     return () => {
       window.removeEventListener('storage', onStorage)
       reload.bind(null)
     }
-    // loadServerVersion closes over the editor, which exists once this runs.
+    // showContent closes over the editor, which exists once this runs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controller, initial.id, reload, editor])
+  }, [controller, ref, reload, editor])
 
   const move = async (folder: string) => {
-    // Whatever is typed goes to the server first; the file then moves as saved.
-    await controller.flush()
+    // What is typed becomes the file first; then the file moves as it is.
+    await controller.commit()
     if (controller.state === 'conflict' || controller.state === 'error') {
       toast.error(t.editor.moveFailed)
       throw new Error('unsaved')
     }
     try {
-      const moved = await api.movePage(page.id, folder)
+      const moved = await client.movePage(page.id, folder)
       controller.adopt(moved)
-      void invalidateListings(qc)
+      void invalidateListings(qc, space)
       toast.success(t.editor.moved(folder))
     } catch (e) {
       toast.error(`${t.editor.moveFailed}：${e instanceof Error ? e.message : ''}`)
@@ -322,8 +401,8 @@ function EditorSession({ initial }: { initial: Page }) {
   const remove = async () => {
     controller.suspend()
     try {
-      await waitForSaves(page.id)
-      await api.deletePage(page.id)
+      await waitForSaves(space, page.id)
+      await client.deletePage(page.id)
     } catch (e) {
       controller.attach()
       if (controller.hasUnsaved()) controller.markDirty()
@@ -331,11 +410,15 @@ function EditorSession({ initial }: { initial: Page }) {
       return
     }
     controller.discard()
-    qc.removeQueries({ queryKey: keys.page(page.id) })
-    void invalidateListings(qc)
+    qc.removeQueries({ queryKey: keys.page(space, page.id) })
+    void invalidateListings(qc, space)
     toast.success(t.editor.deleted)
-    navigate(folderUrl(page.folder), { replace: true })
+    navigate(urls.folder(page.folder), { replace: true })
   }
+
+  // "Save version" has something to do when there is text or a draft that is
+  // not the file yet, and the request is not already out.
+  const canSave = snapshot.state === 'dirty' || snapshot.state === 'drafted' || (snapshot.state === 'error' && !isUnauthenticated(snapshot.error))
 
   return (
     <>
@@ -343,6 +426,10 @@ function EditorSession({ initial }: { initial: Page }) {
         actions={
           <>
             <SaveIndicator snapshot={snapshot} onRetry={() => void controller.retry()} onOpenConflict={() => setConflictOpen(true)} />
+            <Button variant="ghost" size="sm" disabled={!canSave} onClick={() => void controller.commit()} title={t.editor.saveVersionHint} aria-label={t.editor.saveVersion}>
+              <Save />
+              <span className="hidden sm:inline">{t.editor.saveVersion}</span>
+            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={t.editor.more} />}>
                 <MoreHorizontal />
@@ -362,7 +449,7 @@ function EditorSession({ initial }: { initial: Page }) {
           </>
         }
       >
-        <Link to={folderUrl(page.folder)} className="inline-flex min-w-0 items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+        <Link to={urls.folder(page.folder)} className="inline-flex min-w-0 items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
           <Folder className="size-3.5 shrink-0" />
           <span className="truncate">{page.folder === '' ? t.nav.rootFolder : page.folder}</span>
         </Link>
@@ -394,8 +481,16 @@ function EditorSession({ initial }: { initial: Page }) {
           label={t.editor.subtitlePlaceholder}
           className="pb-subtitle mt-1"
         />
-        <div className="mt-4 mb-6">
+        <div className="mt-4 mb-6 flex flex-col gap-2">
           <TagsEditor tags={fields.tags} onChange={setTags} suggestions={tags.data?.tags ?? []} />
+          <AutoTextarea
+            value={fields.source ?? ''}
+            onChange={(v) => setField('source', v)}
+            onEnter={() => editor?.commands.focus('start')}
+            placeholder={t.editor.sourcePlaceholder}
+            label={t.editor.sourceLabel}
+            className="pb-source"
+          />
         </div>
         {editor && (
           <>
@@ -406,7 +501,7 @@ function EditorSession({ initial }: { initial: Page }) {
         )}
       </div>
 
-      {conflict && <ConflictDialog open={conflictOpen} onOpenChange={setConflictOpen} current={conflict.current} mine={conflict.mine} onKeepMine={keepMine} onUseTheirs={useTheirs} />}
+      {conflict && <ConflictDialog open={conflictOpen} onOpenChange={setConflictOpen} info={conflict} onKeepMine={keepMine} onUseTheirs={useTheirs} />}
       <MovePageDialog open={moveOpen} onOpenChange={setMoveOpen} current={page.folder} folders={(tree.data?.folders ?? []).map((f) => f.path)} onMove={move} />
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>

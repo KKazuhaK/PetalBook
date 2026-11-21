@@ -38,13 +38,6 @@ export function buildFolderTree(folders: { path: string; pages: number }[]): { r
   return { rootPages, nodes: roots }
 }
 
-const encodePath = (path: string) => path.split('/').map(encodeURIComponent).join('/')
-
-export const folderUrl = (path: string) => (path === '' ? '/f' : `/f/${encodePath(path)}`)
-export const tagUrl = (tag: string) => `/t/${encodePath(tag)}`
-export const pageUrl = (id: string) => `/p/${encodeURIComponent(id)}`
-export const searchUrl = (q: string) => `/search?q=${encodeURIComponent(q)}`
-
 export const ancestorsOf = (path: string): string[] => {
   const parts = path.split('/').filter(Boolean)
   return parts.map((_, i) => parts.slice(0, i + 1).join('/'))

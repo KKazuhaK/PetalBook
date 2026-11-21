@@ -244,7 +244,7 @@ func encodeMapping(root *yaml.Node) (string, error) {
 
 // textKeys are header fields whose scalar value is always read as text, so a
 // title like `1984` or an id of only digits is not turned into a number.
-var textKeys = map[string]bool{"id": true, "title": true, "subtitle": true, "type": true, "created": true}
+var textKeys = map[string]bool{"id": true, "title": true, "subtitle": true, "source": true, "type": true, "created": true}
 
 func metaFromNode(root *yaml.Node) Meta {
 	m := Meta{}
@@ -378,6 +378,10 @@ func (m Meta) Title() string { return strings.TrimSpace(m.String("title")) }
 
 // Subtitle returns the subtitle, or "".
 func (m Meta) Subtitle() string { return strings.TrimSpace(m.String("subtitle")) }
+
+// Source returns where the text comes from (a person, a book, an address),
+// or "".
+func (m Meta) Source() string { return strings.TrimSpace(m.String("source")) }
 
 // Type returns the page type, or "".
 func (m Meta) Type() string { return strings.TrimSpace(m.String("type")) }

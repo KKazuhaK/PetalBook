@@ -1,0 +1,219 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"time"
+)
+
+// User is an account. The built-in user of single-user mode has the id "local".
+type User struct {
+	ID       string
+	Username string
+	Name     string
+	Email    string
+	Role     string // "admin" or "member"
+	Disabled bool
+	Created  time.Time
+}
+
+// LocalUserID is the built-in user of single-user mode.
+const LocalUserID = "local"
+
+const userCols = `id, username, name, email, role, disabled, created`
+
+func scanUser(sc interface{ Scan(...any) error }) (*User, error) {
+	var u User
+	var disabled, created int64
+	if err := sc.Scan(&u.ID, &u.Username, &u.Name, &u.Email, &u.Role, &disabled, &created); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	u.Disabled, u.Created = disabled != 0, fromMS(created)
+	return &u, nil
+}
+
+// GetUser returns the user with this id, or ErrNotFound.
+func GetUser(ctx context.Context, q Q, id string) (*User, error) {
+	return scanUser(q.QueryRow(ctx, `SELECT `+userCols+` FROM users WHERE id = ?`, id))
+}
+
+// GetUserByUsername finds a user by the stored (lower case) username.
+func GetUserByUsername(ctx context.Context, q Q, username string) (*User, error) {
+	return scanUser(q.QueryRow(ctx, `SELECT `+userCols+` FROM users WHERE username = ?`, username))
+}
+
+// HasUsers reports whether any account exists.
+func HasUsers(ctx context.Context, q Q) (bool, error) {
+	var one int
+	err := q.QueryRow(ctx, `SELECT 1 FROM users LIMIT 1`).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// ListUsers returns every user, oldest first.
+func ListUsers(ctx context.Context, q Q) ([]User, error) {
+	rows, err := q.Query(ctx, `SELECT `+userCols+` FROM users ORDER BY created, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *u)
+	}
+	return out, rows.Err()
+}
+
+// InsertUser adds a user. A taken username or id is a unique violation (see UniqueOn).
+func InsertUser(ctx context.Context, q Q, u User) error {
+	_, err := q.Exec(ctx, `INSERT INTO users(`+userCols+`) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		u.ID, u.Username, u.Name, u.Email, u.Role, b2i(u.Disabled), ms(u.Created))
+	return err
+}
+
+// UpdateProfile sets the name and email.
+func UpdateProfile(ctx context.Context, q Q, id, name, email string) error {
+	res, err := q.Exec(ctx, `UPDATE users SET name = ?, email = ? WHERE id = ?`, name, email, id)
+	return oneRow(res, err)
+}
+
+// SetRole changes a user's instance role.
+func SetRole(ctx context.Context, q Q, id, role string) error {
+	res, err := q.Exec(ctx, `UPDATE users SET role = ? WHERE id = ?`, role, id)
+	return oneRow(res, err)
+}
+
+// SetDisabled disables or enables a user.
+func SetDisabled(ctx context.Context, q Q, id string, disabled bool) error {
+	res, err := q.Exec(ctx, `UPDATE users SET disabled = ? WHERE id = ?`, b2i(disabled), id)
+	return oneRow(res, err)
+}
+
+// CountEnabledAdmins counts administrators who can sign in.
+func CountEnabledAdmins(ctx context.Context, q Q) (n int, err error) {
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0`).Scan(&n)
+	return
+}
+
+func oneRow(res sql.Result, err error) error {
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// MarkFirstUser records, in the same transaction that creates the first
+// account, that one exists. With strict the second caller fails with ErrExists
+// even when two run at once: the primary key is the arbiter, not a count that
+// both could read as zero.
+func MarkFirstUser(ctx context.Context, q Q, strict bool, now time.Time) error {
+	if strict {
+		ok, err := HasUsers(ctx, q)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return ErrExists
+		}
+		if _, err := q.Exec(ctx, `INSERT INTO settings(key, value) VALUES ('first_user', ?)`, now.UTC().Format(time.RFC3339)); err != nil {
+			if IsUnique(err) {
+				return ErrExists
+			}
+			return err
+		}
+		return nil
+	}
+	_, err := q.Exec(ctx, `INSERT INTO settings(key, value) VALUES ('first_user', ?) ON CONFLICT (key) DO NOTHING`, now.UTC().Format(time.RFC3339))
+	return err
+}
+
+// --- passwords ---------------------------------------------------------------
+
+// GetPasswordHash returns the encoded hash, or ErrNotFound when the user has no password.
+func GetPasswordHash(ctx context.Context, q Q, userID string) (string, error) {
+	var h string
+	err := q.QueryRow(ctx, `SELECT hash FROM passwords WHERE user_id = ?`, userID).Scan(&h)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return h, err
+}
+
+// SetPasswordHash stores or replaces a user's password hash.
+func SetPasswordHash(ctx context.Context, q Q, userID, hash string, now time.Time) error {
+	_, err := q.Exec(ctx, `INSERT INTO passwords(user_id, hash, updated) VALUES (?, ?, ?)
+		ON CONFLICT (user_id) DO UPDATE SET hash = excluded.hash, updated = excluded.updated`, userID, hash, ms(now))
+	return err
+}
+
+// --- identities --------------------------------------------------------------
+
+// Identity is an external sign-in (issuer plus subject) attached to a user.
+type Identity struct {
+	ID      string
+	UserID  string
+	Issuer  string
+	Subject string
+	Label   string
+	Created time.Time
+}
+
+// InsertIdentity attaches an identity; (issuer, subject) is unique.
+func InsertIdentity(ctx context.Context, q Q, i Identity) error {
+	_, err := q.Exec(ctx, `INSERT INTO identities(id, user_id, issuer, subject, label, created) VALUES (?, ?, ?, ?, ?, ?)`,
+		i.ID, i.UserID, i.Issuer, i.Subject, i.Label, ms(i.Created))
+	return err
+}
+
+// FindIdentity looks an identity up by issuer and subject.
+func FindIdentity(ctx context.Context, q Q, issuer, subject string) (*Identity, error) {
+	var i Identity
+	var created int64
+	err := q.QueryRow(ctx, `SELECT id, user_id, issuer, subject, label, created FROM identities WHERE issuer = ? AND subject = ?`, issuer, subject).
+		Scan(&i.ID, &i.UserID, &i.Issuer, &i.Subject, &i.Label, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	i.Created = fromMS(created)
+	return &i, err
+}
+
+// ListIdentities returns a user's identities, oldest first.
+func ListIdentities(ctx context.Context, q Q, userID string) ([]Identity, error) {
+	rows, err := q.Query(ctx, `SELECT id, user_id, issuer, subject, label, created FROM identities WHERE user_id = ? ORDER BY created, id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Identity
+	for rows.Next() {
+		var i Identity
+		var created int64
+		if err := rows.Scan(&i.ID, &i.UserID, &i.Issuer, &i.Subject, &i.Label, &created); err != nil {
+			return nil, err
+		}
+		i.Created = fromMS(created)
+		out = append(out, i)
+	}
+	return out, rows.Err()
+}
+
+// DeleteIdentity removes one of the user's identities; ErrNotFound when it is
+// not theirs or does not exist.
+func DeleteIdentity(ctx context.Context, q Q, id, userID string) error {
+	res, err := q.Exec(ctx, `DELETE FROM identities WHERE id = ? AND user_id = ?`, id, userID)
+	return oneRow(res, err)
+}

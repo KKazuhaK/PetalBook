@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router'
 import { ChevronRight, Clock, Folder, FolderOpen, FolderPlus, Home, Search, Tag } from 'lucide-react'
-import { useMeta, useTags, useTree } from '@/api/hooks'
+import { useActiveSpace, useSession, useTags, useTree, useUrls } from '@/api/hooks'
 import {
   Sidebar,
   SidebarContent,
@@ -18,10 +18,12 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar'
 import { Skeleton } from '@/components/ui/skeleton'
-import { buildFolderTree, ancestorsOf, folderUrl, pathAfter, searchUrl, tagUrl, type FolderNode } from '@/lib/folders'
+import { buildFolderTree, ancestorsOf, pathAfter, type FolderNode } from '@/lib/folders'
 import { t } from '@/i18n/zh-CN'
 import { NewFolderDialog } from './NewFolderDialog'
+import { SpaceSwitcher } from './SpaceSwitcher'
 import { ThemeToggle } from './ThemeToggle'
+import { UserMenu } from './UserMenu'
 
 const OPEN_KEY = 'pb.folders.open'
 
@@ -41,7 +43,9 @@ function SearchBox() {
   const navigate = useNavigate()
   const { isMobile, open, setOpen, setOpenMobile } = useSidebar()
   const input = useRef<HTMLInputElement>(null)
-  const urlQ = pathname === '/search' ? (new URLSearchParams(search).get('q') ?? '') : ''
+  const urls = useUrls()
+  const searchPath = `${urls.base}/search`
+  const urlQ = pathname === searchPath ? (new URLSearchParams(search).get('q') ?? '') : ''
   // While typing the box owns its text; otherwise it mirrors the URL.
   const [draft, setDraft] = useState<string | null>(null)
   const value = draft ?? urlQ
@@ -49,8 +53,8 @@ function SearchBox() {
   const go = (q: string) => {
     setDraft(null)
     const trimmed = q.trim()
-    if (trimmed) navigate(searchUrl(trimmed))
-    else if (pathname === '/search') navigate('/recent')
+    if (trimmed) navigate(urls.search(trimmed))
+    else if (pathname === searchPath) navigate(urls.recent())
   }
 
   useEffect(() => {
@@ -103,6 +107,7 @@ function SearchBox() {
 }
 
 function FolderRow({ node, depth, activeFolder, isOpen, toggle }: { node: FolderNode; depth: number; activeFolder: string | null; isOpen: (p: string) => boolean; toggle: (p: string) => void }) {
+  const urls = useUrls()
   const open = node.children.length > 0 && isOpen(node.path)
   const Icon = open ? FolderOpen : Folder
   return (
@@ -120,7 +125,7 @@ function FolderRow({ node, depth, activeFolder, isOpen, toggle }: { node: Folder
             <ChevronRight className={`size-3.5 transition-transform ${open ? 'rotate-90' : ''}`} />
           </button>
         )}
-        <SidebarMenuButton isActive={activeFolder === node.path} render={<NavLink to={folderUrl(node.path)} />} style={{ paddingLeft: 24 + depth * 12 }}>
+        <SidebarMenuButton isActive={activeFolder === node.path} render={<NavLink to={urls.folder(node.path)} />} style={{ paddingLeft: 24 + depth * 12 }}>
           <Icon />
           <span className="truncate">{node.name}</span>
         </SidebarMenuButton>
@@ -133,6 +138,7 @@ function FolderRow({ node, depth, activeFolder, isOpen, toggle }: { node: Folder
 
 function FolderTree({ activeFolder }: { activeFolder: string | null }) {
   const { data, isPending, isError } = useTree()
+  const urls = useUrls()
   const [explicit, setExplicit] = useState<Record<string, boolean>>(loadOpen)
   const tree = useMemo(() => buildFolderTree(data?.folders ?? []), [data])
   // The folder being viewed is opened to show its subfolders, unless the person closed it.
@@ -154,7 +160,7 @@ function FolderTree({ activeFolder }: { activeFolder: string | null }) {
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton isActive={activeFolder === ''} render={<NavLink to="/f" />}>
+        <SidebarMenuButton isActive={activeFolder === ''} render={<NavLink to={urls.folder('')} />}>
           <Home />
           <span className="truncate">{t.nav.rootFolder}</span>
         </SidebarMenuButton>
@@ -171,6 +177,7 @@ const TAGS_SHOWN = 24
 
 function TagCloud({ activeTag }: { activeTag: string | null }) {
   const { data } = useTags()
+  const urls = useUrls()
   const [all, setAll] = useState(false)
   const tags = data?.tags ?? []
   if (tags.length === 0) return null
@@ -180,7 +187,7 @@ function TagCloud({ activeTag }: { activeTag: string | null }) {
       {shown.map((tag) => (
         <NavLink
           key={tag.tag}
-          to={tagUrl(tag.tag)}
+          to={urls.tag(tag.tag)}
           className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors hover:bg-sidebar-accent ${activeTag === tag.tag ? 'border-brand/50 bg-sidebar-accent text-sidebar-accent-foreground' : 'text-sidebar-foreground'}`}
         >
           <span className="max-w-32 truncate">{tag.tag}</span>
@@ -198,19 +205,26 @@ function TagCloud({ activeTag }: { activeTag: string | null }) {
 
 export function AppSidebar() {
   const { pathname } = useLocation()
-  const { data: meta } = useMeta()
+  const urls = useUrls()
+  const session = useSession().data
+  const { id, spaces } = useActiveSpace()
   const [newFolder, setNewFolder] = useState(false)
-  const activeFolder = pathAfter(pathname, '/f')
-  const activeTag = pathAfter(pathname, '/t')
-  const spaceName = meta?.spaces[0]?.name
+  const accounts = session?.mode === 'accounts'
+  const activeFolder = pathAfter(pathname, `${urls.base}/f`)
+  const activeTag = pathAfter(pathname, `${urls.base}/t`)
+  const spaceName = spaces.find((s) => s.id === id)?.name
 
   return (
     <Sidebar>
       <SidebarHeader className="gap-3 p-3 pb-1">
-        <NavLink to="/recent" className="flex items-center gap-2 px-1 pt-0.5">
-          <img src="/favicon.svg" alt="" className="size-6 rounded-md" />
-          <span className="truncate text-sm font-semibold">{spaceName ?? t.appName}</span>
-        </NavLink>
+        {accounts ? (
+          <SpaceSwitcher />
+        ) : (
+          <NavLink to={urls.recent()} className="flex items-center gap-2 px-1 pt-0.5">
+            <img src="/favicon.svg" alt="" className="size-6 rounded-md" />
+            <span className="truncate text-sm font-semibold">{spaceName ?? t.appName}</span>
+          </NavLink>
+        )}
         <SearchBox />
       </SidebarHeader>
       <SidebarContent>
@@ -218,7 +232,7 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton isActive={pathname === '/recent'} render={<NavLink to="/recent" />}>
+                <SidebarMenuButton isActive={pathname === urls.recent()} render={<NavLink to={urls.recent()} />}>
                   <Clock />
                   <span>{t.nav.recent}</span>
                 </SidebarMenuButton>
@@ -245,8 +259,11 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="flex-row items-center justify-end border-t p-2">
-        <ThemeToggle />
+      <SidebarFooter className="flex-row items-center justify-between gap-1 border-t p-2">
+        {accounts ? <UserMenu /> : null}
+        <div className="ml-auto">
+          <ThemeToggle />
+        </div>
       </SidebarFooter>
       <NewFolderDialog open={newFolder} onOpenChange={setNewFolder} parent={activeFolder ?? ''} />
     </Sidebar>

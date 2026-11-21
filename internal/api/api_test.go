@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,7 +17,10 @@ import (
 	"time"
 
 	"github.com/KazuhaHub/PetalBook/internal/api"
+	"github.com/KazuhaHub/PetalBook/internal/drafts"
 	"github.com/KazuhaHub/PetalBook/internal/space"
+	"github.com/KazuhaHub/PetalBook/internal/spaces"
+	"github.com/KazuhaHub/PetalBook/internal/store/storetest"
 )
 
 type fixture struct {
@@ -32,13 +36,23 @@ func newFixture(t *testing.T, mod ...func(*api.Options)) *fixture {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed")
 	}
-	dir := t.TempDir()
+	// A directory of its own, so a test can check that nothing is written next to it.
+	dir := filepath.Join(t.TempDir(), "space")
 	sp, err := space.Open(space.Options{Root: dir, Name: "测试空间", CommitIdle: time.Hour, CommitMax: 2 * time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { sp.Close() })
-	opts := api.Options{Space: sp, Version: "test-1"}
+	st := storetest.Open(t, "sqlite")
+	mgr, err := spaces.NewSingle(context.Background(), st, sp, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drf, err := drafts.New(context.Background(), st, mgr, drafts.Config{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := api.Options{Store: st, Spaces: mgr, Drafts: drf, Version: "test-1"}
 	for _, m := range mod {
 		m(&opts)
 	}
@@ -117,7 +131,7 @@ var rfc3339 = regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$`)
 func TestMetaAndRouting(t *testing.T) {
 	f := newFixture(t)
 	code, r, raw := f.do("GET", "/api/meta", nil)
-	if code != 200 || r["version"] != "test-1" || raw != "{\"version\":\"test-1\",\"spaces\":[{\"id\":\"default\",\"name\":\"测试空间\"}]}\n" {
+	if code != 200 || r["version"] != "test-1" || raw != "{\"version\":\"test-1\",\"spaces\":[{\"id\":\"default\",\"name\":\"测试空间\",\"role\":\"owner\",\"personal\":true}]}\n" {
 		t.Fatalf("%d %s", code, raw)
 	}
 	code, r, raw = f.do("GET", "/api/spaces/other/pages", nil)

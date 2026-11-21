@@ -1,54 +1,138 @@
 // TanStack Query hooks over the API client.
 
+import { useMemo } from 'react'
+import { useMatch } from 'react-router'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { waitForSaves } from '@/editor/saveController'
-import { api } from './client'
-import type { CreatePageInput, ListParams } from './types'
+import { spaceUrls } from '@/lib/urls'
+import { api, ApiError, spaceApi } from './client'
+import type { CreatePageInput, ListParams, SessionInfo, SpaceInfo, User } from './types'
 
+// Everything of one space is under ['space', id, …], so switching space never
+// shows another space's data and one invalidation covers a space.
 export const keys = {
-  meta: ['meta'] as const,
-  tree: ['tree'] as const,
-  tags: ['tags'] as const,
-  pages: ['pages'] as const,
-  list: (params: ListParams) => ['pages', 'list', params] as const,
-  page: (id: string) => ['page', id] as const,
+  session: ['session'] as const,
+  spaces: ['spaces'] as const,
+  account: ['account'] as const,
+  users: ['users'] as const,
+  invites: ['invites'] as const,
+  space: (space: string) => ['space', space] as const,
+  tree: (space: string) => ['space', space, 'tree'] as const,
+  tags: (space: string) => ['space', space, 'tags'] as const,
+  pages: (space: string) => ['space', space, 'pages'] as const,
+  list: (space: string, params: ListParams) => ['space', space, 'pages', 'list', params] as const,
+  page: (space: string, id: string) => ['space', space, 'page', id] as const,
 }
 
 export const PAGE_SIZE = 50
 
-export function useMeta() {
-  return useQuery({ queryKey: keys.meta, queryFn: ({ signal }) => api.meta(signal), staleTime: Infinity })
+// --- session and spaces ------------------------------------------------------
+
+// Fetched once and kept: it only changes when this app signs in or out, or a
+// request comes back 401 (see App.tsx), and each of those updates the cache.
+export function useSession() {
+  return useQuery({ queryKey: keys.session, queryFn: ({ signal }) => api.session(signal), staleTime: Infinity, gcTime: Infinity })
+}
+
+// Changes with create and rename, which update the cache themselves.
+export function useSpaces() {
+  return useQuery({ queryKey: keys.spaces, queryFn: ({ signal }) => api.spaces(signal), staleTime: Infinity })
+}
+
+const LAST_SPACE_KEY = 'pb.space'
+export function rememberSpace(id: string) {
+  try {
+    localStorage.setItem(LAST_SPACE_KEY, id)
+  } catch {
+    // Blocked storage: the next visit starts from the first space.
+  }
+}
+export function lastSpace(): string | null {
+  try {
+    return localStorage.getItem(LAST_SPACE_KEY)
+  } catch {
+    return null
+  }
+}
+
+// The space in the address, if the address is inside one.
+export function useRouteSpace(): string | null {
+  const m = useMatch({ path: '/s/:space', end: false })
+  return m?.params.space ?? null
+}
+
+// The space whose pages are shown: the one in the address, else (on the
+// account pages, which have none) the one used last if it still exists, else
+// the first.
+export function useActiveSpace(): { id: string | null; spaces: SpaceInfo[] } {
+  const route = useRouteSpace()
+  const spaces = useSpaces().data?.spaces ?? []
+  // The storage is only read when the address has no space.
+  const last = route ? null : lastSpace()
+  const id = route ?? (last && spaces.some((s) => s.id === last) ? last : (spaces[0]?.id ?? null))
+  return { id, spaces }
+}
+
+// The same as a string, for the hooks below: '' while the list of spaces is
+// still on its way (their queries wait for it).
+export function useSpaceId(): string {
+  return useActiveSpace().id ?? ''
+}
+
+// Addresses of the space being shown.
+export function useUrls() {
+  const space = useSpaceId()
+  return useMemo(() => spaceUrls(space), [space])
+}
+
+// What changes when someone signs in or out: nothing cached may carry over to
+// another person.
+export function applySession(qc: QueryClient, user: User | null) {
+  const prev = qc.getQueryData<SessionInfo>(keys.session)
+  qc.clear()
+  qc.setQueryData<SessionInfo>(keys.session, { ...(prev ?? { mode: 'accounts' as const }), user, setup: false })
+}
+
+// --- space data ----------------------------------------------------------------
+
+export function useSpaceApi() {
+  const space = useSpaceId()
+  return useMemo(() => spaceApi(space), [space])
 }
 
 export function useTree() {
-  return useQuery({ queryKey: keys.tree, queryFn: ({ signal }) => api.tree(signal), staleTime: 15_000 })
+  const space = useSpaceId()
+  return useQuery({ queryKey: keys.tree(space), queryFn: ({ signal }) => spaceApi(space).tree(signal), staleTime: 15_000, enabled: space !== '' })
 }
 
 export function useTags() {
-  return useQuery({ queryKey: keys.tags, queryFn: ({ signal }) => api.tags(signal), staleTime: 15_000 })
+  const space = useSpaceId()
+  return useQuery({ queryKey: keys.tags(space), queryFn: ({ signal }) => spaceApi(space).tags(signal), staleTime: 15_000, enabled: space !== '' })
 }
 
 // Listings are fetched one cursor page at a time; nothing renders more rows
 // than the person has asked for with "load more".
 export function usePageList(params: Omit<ListParams, 'cursor' | 'limit'>) {
+  const space = useSpaceId()
   return useInfiniteQuery({
-    queryKey: keys.list(params),
+    queryKey: keys.list(space, params),
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => api.listPages({ ...params, limit: PAGE_SIZE, cursor: pageParam || undefined }, signal),
+    queryFn: ({ pageParam, signal }) => spaceApi(space).listPages({ ...params, limit: PAGE_SIZE, cursor: pageParam || undefined }, signal),
     getNextPageParam: (last) => last.next || undefined,
     staleTime: 10_000,
   })
 }
 
-// The editor starts from what the server has right now: no cache is kept once
-// nobody is looking at the page, and a save still on its way is waited for so
-// the rev read here is the one that save produced.
-export function usePage(id: string) {
+// The editor starts from what the server has right now (the file and the
+// draft, if there is one): no cache is kept once nobody is looking at the
+// page, and a request still on its way is waited for so what is read here is
+// what it produced.
+export function usePage(space: string, id: string) {
   return useQuery({
-    queryKey: keys.page(id),
+    queryKey: keys.page(space, id),
     queryFn: async ({ signal }) => {
-      await waitForSaves(id)
-      return api.getPage(id, signal)
+      await waitForSaves(space, id)
+      return spaceApi(space).getPage(id, signal)
     },
     gcTime: 0,
     staleTime: Infinity,
@@ -57,39 +141,84 @@ export function usePage(id: string) {
   })
 }
 
-// Pages move between listings, folder counts and tag counts on every write.
-export function invalidateListings(qc: QueryClient) {
-  return Promise.all([qc.invalidateQueries({ queryKey: keys.pages }), qc.invalidateQueries({ queryKey: keys.tree }), qc.invalidateQueries({ queryKey: keys.tags })])
+// Pages move between listings, folder counts and tag counts when a file is
+// written. Storing a draft does not: lists show the file.
+export function invalidateListings(qc: QueryClient, space: string) {
+  return Promise.all([qc.invalidateQueries({ queryKey: keys.pages(space) }), qc.invalidateQueries({ queryKey: keys.tree(space) }), qc.invalidateQueries({ queryKey: keys.tags(space) })])
 }
 
 export function useCreatePage() {
   const qc = useQueryClient()
+  const space = useSpaceId()
   return useMutation({
-    mutationFn: (input: CreatePageInput) => api.createPage(input),
-    onSuccess: () => invalidateListings(qc),
+    mutationFn: (input: CreatePageInput) => spaceApi(space).createPage(input),
+    onSuccess: () => invalidateListings(qc, space),
   })
 }
 
 export function useMovePage() {
   const qc = useQueryClient()
+  const space = useSpaceId()
   return useMutation({
-    mutationFn: ({ id, folder }: { id: string; folder: string }) => api.movePage(id, folder),
-    onSuccess: () => invalidateListings(qc),
+    mutationFn: ({ id, folder }: { id: string; folder: string }) => spaceApi(space).movePage(id, folder),
+    onSuccess: () => invalidateListings(qc, space),
   })
 }
 
 export function useDeletePage() {
   const qc = useQueryClient()
+  const space = useSpaceId()
   return useMutation({
-    mutationFn: (id: string) => api.deletePage(id),
-    onSuccess: () => invalidateListings(qc),
+    mutationFn: (id: string) => spaceApi(space).deletePage(id),
+    onSuccess: () => invalidateListings(qc, space),
   })
 }
 
 export function useCreateFolder() {
   const qc = useQueryClient()
+  const space = useSpaceId()
   return useMutation({
-    mutationFn: (path: string) => api.createFolder(path),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.tree }),
+    mutationFn: (path: string) => spaceApi(space).createFolder(path),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.tree(space) }),
   })
+}
+
+// --- spaces, account, users ----------------------------------------------------
+
+export function useCreateSpace() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (name: string) => api.createSpace(name),
+    // Another space, in the same list order the server gives: personal first, then by name.
+    onSuccess: (space) =>
+      qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => ({
+        spaces: [...(prev?.spaces ?? []), space].sort((a, b) => Number(b.personal) - Number(a.personal) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
+      })),
+  })
+}
+
+export function useRenameSpace() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => api.renameSpace(id, name),
+    onSuccess: (space) => qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => ({ spaces: (prev?.spaces ?? []).map((s) => (s.id === space.id ? space : s)) })),
+  })
+}
+
+export function useAccount(enabled = true) {
+  return useQuery({ queryKey: keys.account, queryFn: ({ signal }) => api.account(signal), staleTime: Infinity, enabled })
+}
+
+export function useUsers(enabled = true) {
+  return useQuery({ queryKey: keys.users, queryFn: ({ signal }) => api.users(signal), staleTime: 30_000, enabled })
+}
+
+export function useInvites(enabled = true) {
+  return useQuery({ queryKey: keys.invites, queryFn: ({ signal }) => api.invites(signal), staleTime: 30_000, enabled })
+}
+
+// What a person is told about a failed request, for the pages that show errors inline.
+export function errorMessage(e: unknown, fallback: string): string {
+  if (e instanceof ApiError) return e.code === 'network' ? e.message : e.message || fallback
+  return fallback
 }

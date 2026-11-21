@@ -3,12 +3,12 @@ import { useNavigate } from 'react-router'
 import { toast } from 'sonner'
 import { isConflict } from '@/api/client'
 import { ApiError } from '@/api/client'
-import { useCreateFolder } from '@/api/hooks'
+import { useCreateFolder, useUrls } from '@/api/hooks'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { checkFolderPath, folderUrl } from '@/lib/folders'
+import { checkFolderPath } from '@/lib/folders'
 import { t } from '@/i18n/zh-CN'
 
 export function NewFolderDialog({ open, onOpenChange, parent }: { open: boolean; onOpenChange: (open: boolean) => void; parent: string }) {
@@ -25,6 +25,7 @@ function NewFolderForm({ parent, onDone }: { parent: string; onDone: () => void 
   const [error, setError] = useState('')
   const create = useCreateFolder()
   const navigate = useNavigate()
+  const urls = useUrls()
 
   const submit = async () => {
     const checked = checkFolderPath(value)
@@ -34,7 +35,7 @@ function NewFolderForm({ parent, onDone }: { parent: string; onDone: () => void 
     try {
       await create.mutateAsync(path)
       onDone()
-      navigate(folderUrl(path))
+      navigate(urls.folder(path))
     } catch (e) {
       if (isConflict(e) || (e instanceof ApiError && e.code === 'exists')) setError(t.folder.exists)
       else if (e instanceof ApiError && e.code === 'invalid') setError(e.message || t.folder.invalid)

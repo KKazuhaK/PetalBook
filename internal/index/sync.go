@@ -515,18 +515,18 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 	case !errors.Is(err, sql.ErrNoRows):
 		return "", err
 	}
-	args := []any{e.ID, e.Path, e.Folder, e.Title, e.Subtitle, b2i(e.Untitled), strings.ToLower(e.Title), e.Label, e.Type,
+	args := []any{e.ID, e.Path, e.Folder, e.Title, e.Subtitle, e.Source, b2i(e.Untitled), strings.ToLower(e.Title), e.Label, e.Type,
 		tagsJSON(e.Tags), e.Created, e.CreatedKey, e.MtimeNs, e.Size, e.Rev, e.Excerpt}
 	if found {
 		if err := w.deleteRowKeepPage(rowid); err != nil {
 			return "", err
 		}
-		_, err = w.exec(`UPDATE pages SET id=?, path=?, folder=?, title=?, subtitle=?, untitled=?, title_key=?, label=?, type=?,
+		_, err = w.exec(`UPDATE pages SET id=?, path=?, folder=?, title=?, subtitle=?, source=?, untitled=?, title_key=?, label=?, type=?,
 			tags=?, created=?, created_key=?, mtime_ns=?, size=?, rev=?, excerpt=? WHERE rowid = ?`, append(args, rowid)...)
 	} else {
 		var res sql.Result
-		res, err = w.exec(`INSERT INTO pages(id, path, folder, title, subtitle, untitled, title_key, label, type,
-			tags, created, created_key, mtime_ns, size, rev, excerpt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, args...)
+		res, err = w.exec(`INSERT INTO pages(id, path, folder, title, subtitle, source, untitled, title_key, label, type,
+			tags, created, created_key, mtime_ns, size, rev, excerpt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, args...)
 		if err == nil {
 			rowid, err = res.LastInsertId()
 		}
@@ -539,7 +539,7 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 			return "", err
 		}
 	}
-	if _, err := w.exec(`INSERT INTO fts(rowid, title, subtitle, body) VALUES (?,?,?,?)`, rowid, e.ftsTitle, e.ftsSubtitle, e.ftsBody); err != nil {
+	if _, err := w.exec(`INSERT INTO fts(rowid, title, subtitle, source, body) VALUES (?,?,?,?,?)`, rowid, e.ftsTitle, e.ftsSubtitle, e.ftsSource, e.ftsBody); err != nil {
 		return "", err
 	}
 	// The file is a page now, whatever it was before.

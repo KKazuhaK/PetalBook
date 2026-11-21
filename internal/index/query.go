@@ -23,6 +23,7 @@ type Summary struct {
 	Folder   string    `json:"folder"`
 	Title    string    `json:"title,omitempty"`
 	Subtitle string    `json:"subtitle,omitempty"`
+	Source   string    `json:"source,omitempty"`
 	Label    string    `json:"label"`
 	Untitled bool      `json:"untitled"`
 	Tags     []string  `json:"tags"`
@@ -168,7 +169,7 @@ func (x *Index) List(q Query) (Result, error) {
 	offset := 0
 	if relevance {
 		// Title matches count more than body matches.
-		orderBy = `bm25(fts, 10.0, 5.0, 1.0), p.rowid`
+		orderBy = `bm25(fts, 10.0, 5.0, 3.0, 1.0), p.rowid`
 		if cur != nil {
 			offset = cur.Off
 		}
@@ -184,7 +185,7 @@ func (x *Index) List(q Query) (Result, error) {
 		}
 		orderBy = strings.Join(parts, ", ")
 	}
-	query := `SELECT p.rowid, p.id, p.path, p.folder, p.title, p.subtitle, p.untitled, p.label, p.type, p.tags, p.created,
+	query := `SELECT p.rowid, p.id, p.path, p.folder, p.title, p.subtitle, p.source, p.untitled, p.label, p.type, p.tags, p.created,
 		p.mtime_ns, p.excerpt, p.title_key, p.created_key ` + from
 	if len(where) > 0 {
 		query += ` WHERE ` + strings.Join(where, ` AND `)
@@ -210,7 +211,7 @@ func (x *Index) List(q Query) (Result, error) {
 			untitled           int
 			tagsText, titleKey string
 		)
-		if err := rows.Scan(&rowid, &s.ID, &s.Path, &s.Folder, &s.Title, &s.Subtitle, &untitled, &s.Label, &s.Type,
+		if err := rows.Scan(&rowid, &s.ID, &s.Path, &s.Folder, &s.Title, &s.Subtitle, &s.Source, &untitled, &s.Label, &s.Type,
 			&tagsText, &s.Created, &mtime, &s.Excerpt, &titleKey, &ckey); err != nil {
 			return Result{}, err
 		}

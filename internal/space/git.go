@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -32,7 +33,12 @@ func ParseCommitter(s string) (name, email string, err error) {
 // commits and (once) initialises: no push, no reset, no history rewriting.
 type gitRepo struct {
 	dir         string
-	name, email string
+	name, email string // the committer: the service
+	// author is who commits are made for (the space's owner); empty means the
+	// committer. It can change while the server runs, when the owner edits
+	// their profile.
+	amu                     sync.RWMutex
+	authorName, authorEmail string
 	// before, if set, is called with the arguments of every git command
 	// before it runs. Tests use it to hold a commit in progress.
 	before func(args []string)
@@ -74,10 +80,22 @@ func (g *gitRepo) env() []string {
 		}
 		env = append(env, kv)
 	}
+	g.amu.RLock()
+	an, ae := g.authorName, g.authorEmail
+	g.amu.RUnlock()
+	if an == "" || ae == "" {
+		an, ae = g.name, g.email
+	}
 	return append(env,
-		"GIT_AUTHOR_NAME="+g.name, "GIT_AUTHOR_EMAIL="+g.email,
+		"GIT_AUTHOR_NAME="+an, "GIT_AUTHOR_EMAIL="+ae,
 		"GIT_COMMITTER_NAME="+g.name, "GIT_COMMITTER_EMAIL="+g.email,
 		"GIT_TERMINAL_PROMPT=0")
+}
+
+func (g *gitRepo) setAuthor(name, email string) {
+	g.amu.Lock()
+	g.authorName, g.authorEmail = name, email
+	g.amu.Unlock()
 }
 
 func (g *gitRepo) init() error {
