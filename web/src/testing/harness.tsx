@@ -126,15 +126,19 @@ export async function mount(
   }
 }
 
-// Waits (with the clock moving) until `check` holds.
-export const settle = async (check: () => boolean, what: string, tries = 100) => {
-  for (let i = 0; i < tries; i++) {
+// Waits (with the clock moving) until `check` holds. The budget is time, not a
+// number of tries: a try takes as long as the runner needs for 20 ms, so a count
+// would give a busy machine less time, not the same. Every wait gets the same five
+// seconds; `tries` (20 ms steps) can only ask for more.
+export const settle = async (check: () => boolean, what: string, tries = 0) => {
+  const until = Date.now() + Math.max(5_000, tries * 20)
+  for (;;) {
     if (check()) return
+    if (Date.now() >= until) throw new Error(`never happened: ${what}`)
     await act(async () => {
       await new Promise((r) => setTimeout(r, 20))
     })
   }
-  throw new Error(`never happened: ${what}`)
 }
 
 export const click = (el: Element | null | undefined) => {

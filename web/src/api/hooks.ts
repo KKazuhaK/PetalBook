@@ -96,14 +96,24 @@ function recheck(qc: QueryClient, key: readonly unknown[], notFound: boolean) {
   pendingRechecks.set(qc, timers)
   const id = JSON.stringify(key)
   if (timers.has(id)) return
-  timers.set(
-    id,
-    setTimeout(() => {
-      timers.delete(id)
-      // Asked again meanwhile (by anything): that answer is newer than the 404.
-      if (Date.now() - asked() >= notFoundRecheck.ms) void qc.invalidateQueries({ queryKey: key })
-    }, wait),
-  )
+  const seen = asked()
+  const arm = (ms: number) =>
+    timers.set(
+      id,
+      setTimeout(() => {
+        timers.delete(id)
+        // Asked again meanwhile (by anything): that answer is newer than the 404.
+        if (asked() !== seen) return
+        // A timer may go off a little before the clock (Date.now) says the window is
+        // over, since the event loop counts from when it last looked at the time, which
+        // after a long task is well before now. Dropping the recheck then would leave
+        // the old state up with nothing to ask again, so wait for what is left.
+        const left = notFoundRecheck.ms - (Date.now() - seen)
+        if (left > 0) arm(left)
+        else void qc.invalidateQueries({ queryKey: key })
+      }, ms),
+    )
+  arm(wait)
 }
 export function refreshSpaceAccess(qc: QueryClient, space: string | null, notFound: boolean) {
   // The viewed space is only ever asked for by an administrator, and is one request.
