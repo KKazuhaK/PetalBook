@@ -1,16 +1,16 @@
 package space
 
 import (
-	"bytes"
-	"errors"
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
 	"sync"
 	"unicode/utf8"
+
+	"github.com/KazuhaHub/PetalBook/internal/gitstore"
 )
 
 // ParseCommitter splits "Name <email>". An empty string means DefaultCommitter.
@@ -29,8 +29,10 @@ func ParseCommitter(s string) (name, email string, err error) {
 	return name, email, nil
 }
 
-// gitRepo runs the system git in the space directory. It only ever adds,
-// commits and (once) initialises: no push, no reset, no history rewriting.
+// gitRepo is the committer's view of the repository: the service identity,
+// the author commits are made for, and the restricted runner of the gitstore
+// package. It only ever adds, commits and (once) initialises: nothing here
+// pushes, resets or rewrites history.
 type gitRepo struct {
 	dir         string
 	name, email string // the committer: the service
@@ -39,57 +41,39 @@ type gitRepo struct {
 	// their profile.
 	amu                     sync.RWMutex
 	authorName, authorEmail string
-	// before, if set, is called with the arguments of every git command
-	// before it runs. Tests use it to hold a commit in progress.
+	// before, if set, is called with the subcommand and arguments of every git
+	// command before it runs. Tests use it to hold a commit in progress.
 	before func(args []string)
+
+	once sync.Once
+	repo *gitstore.Repo
 }
 
-func (g *gitRepo) run(args ...string) ([]byte, error) { return g.runIn(nil, args...) }
-
-func (g *gitRepo) runIn(stdin []byte, args ...string) ([]byte, error) {
-	if g.before != nil {
-		g.before(args)
-	}
-	git, err := exec.LookPath("git")
-	if err != nil {
-		return nil, errors.New("git was not found in PATH; PetalBook needs it to keep history")
-	}
-	cmd := exec.Command(git, append([]string{"-C", g.dir, "-c", "core.quotepath=false", "-c", "commit.gpgsign=false"}, args...)...)
-	cmd.Env = g.env()
-	if stdin != nil {
-		cmd.Stdin = bytes.NewReader(stdin)
-	}
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(errb.String()))
-	}
-	return out.Bytes(), nil
+func (g *gitRepo) r() *gitstore.Repo {
+	g.once.Do(func() { g.repo = gitstore.New(gitstore.Options{Dir: g.dir, Runner: hookRunner{g}}) })
+	return g.repo
 }
 
-// env drops variables that would point git at some other repository and sets
-// the identity of automatic commits.
-func (g *gitRepo) env() []string {
-	var env []string
-	for _, kv := range os.Environ() {
-		k, _, _ := strings.Cut(kv, "=")
-		switch k {
-		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR", "GIT_NAMESPACE",
-			"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE":
-			continue
-		}
-		env = append(env, kv)
+// hookRunner calls the test hook and then the real runner.
+type hookRunner struct{ g *gitRepo }
+
+func (h hookRunner) Run(ctx context.Context, c gitstore.Cmd) (string, string, error) {
+	if h.g.before != nil {
+		sub, rest := gitstore.Subcommand(c.Args)
+		h.g.before(append([]string{sub}, rest...))
 	}
+	return gitstore.RunReal(ctx, c)
+}
+
+// identities are the author and the committer of the next commit.
+func (g *gitRepo) identities() (author, committer gitstore.Identity) {
 	g.amu.RLock()
 	an, ae := g.authorName, g.authorEmail
 	g.amu.RUnlock()
 	if an == "" || ae == "" {
 		an, ae = g.name, g.email
 	}
-	return append(env,
-		"GIT_AUTHOR_NAME="+an, "GIT_AUTHOR_EMAIL="+ae,
-		"GIT_COMMITTER_NAME="+g.name, "GIT_COMMITTER_EMAIL="+g.email,
-		"GIT_TERMINAL_PROMPT=0")
+	return gitstore.Identity{Name: an, Email: ae}, gitstore.Identity{Name: g.name, Email: g.email}
 }
 
 func (g *gitRepo) setAuthor(name, email string) {
@@ -98,10 +82,7 @@ func (g *gitRepo) setAuthor(name, email string) {
 	g.amu.Unlock()
 }
 
-func (g *gitRepo) init() error {
-	_, err := g.run("init", "-q")
-	return err
-}
+func (g *gitRepo) init() error { return g.r().Init(context.Background(), "main") }
 
 // exclude keeps a path out of the repository without touching a tracked file.
 func (g *gitRepo) exclude(pattern string) error {
@@ -113,144 +94,41 @@ func (g *gitRepo) exclude(pattern string) error {
 	return err
 }
 
-// busyError means the repository is in the middle of an operation of the
-// user's (merge, rebase...), which a commit of ours would disturb.
-type busyError struct{ what string }
+// Names the rest of the package (and its tests) use for what gitstore owns.
+type (
+	change    = gitstore.Change
+	busyError = gitstore.BusyError
+)
 
-func (e *busyError) Error() string { return "the repository is in the middle of a " + e.what }
-
-// busy reports an operation in progress in the repository, or "".
-func (g *gitRepo) busy() (string, error) {
-	out, err := g.run("rev-parse", "--absolute-git-dir")
-	if err != nil {
-		return "", err
-	}
-	gitDir := strings.TrimSpace(string(out))
-	for _, c := range []struct{ file, what string }{
-		{"MERGE_HEAD", "merge"}, {"rebase-merge", "rebase"}, {"rebase-apply", "rebase"},
-		{"CHERRY_PICK_HEAD", "cherry-pick"}, {"REVERT_HEAD", "revert"}, {"BISECT_LOG", "bisect"}, {"sequencer", "cherry-pick"},
-	} {
-		if _, err := os.Lstat(filepath.Join(gitDir, c.file)); err == nil {
-			return c.what, nil
-		}
-	}
-	return "", nil
-}
-
-func nulList(paths []string) []byte {
-	return []byte(strings.Join(paths, "\x00") + "\x00")
-}
+var parseNameStatus = gitstore.ParseNameStatus
 
 // commitPaths commits the changes to exactly these paths (slash-separated,
 // relative to the space) and nothing else: other modified or untracked files,
 // and anything the user staged, stay as they are. It reports whether a commit
 // was made.
 func (g *gitRepo) commitPaths(paths []string) (bool, error) {
-	if what, err := g.busy(); err != nil {
-		return false, err
-	} else if what != "" {
-		return false, &busyError{what}
-	}
-	var present, gone []string
-	for _, p := range paths {
-		if _, err := os.Lstat(filepath.Join(g.dir, filepath.FromSlash(p))); err == nil {
-			present = append(present, p)
-		} else {
-			gone = append(gone, p)
-		}
-	}
-	if len(present) > 0 {
-		if _, err := g.runIn(nulList(present), "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"); err != nil {
-			return false, err
-		}
-	}
-	if len(gone) > 0 {
-		// A path that was created and deleted before it was ever committed is
-		// unknown to git; --ignore-unmatch makes that fine.
-		if _, err := g.runIn(nulList(gone), "rm", "--cached", "-r", "-q", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"); err != nil {
-			return false, err
-		}
-	}
-	out, err := g.run("diff", "--cached", "--name-status", "-z", "-M")
-	if err != nil {
-		return false, err
-	}
-	mine := make(map[string]bool, len(paths))
-	for _, p := range paths {
-		mine[p] = true
-	}
-	var changes []change
-	var touched []string
-	for _, c := range parseNameStatus(out) {
-		if mine[c.old] || mine[c.new] {
-			changes = append(changes, c)
-			touched = append(touched, c.new)
-			if c.old != c.new {
-				touched = append(touched, c.old)
-			}
-		}
-	}
-	if len(changes) == 0 {
-		return false, nil
-	}
-	if _, err := g.runIn(nulList(touched), "commit", "-q", "-m", commitMessage(changes), "--pathspec-from-file=-", "--pathspec-file-nul"); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-type change struct {
-	status   byte // A, M, D, R, T...
-	old, new string
-}
-
-// parseNameStatus reads `git diff --name-status -z`: "M\0path\0", and for
-// renames "R100\0old\0new\0".
-func parseNameStatus(out []byte) []change {
-	f := strings.Split(strings.TrimRight(string(out), "\x00"), "\x00")
-	var cs []change
-	for i := 0; i < len(f); {
-		st := f[i]
-		if st == "" {
-			i++
-			continue
-		}
-		switch st[0] {
-		case 'R', 'C':
-			if i+2 >= len(f) {
-				return cs
-			}
-			cs = append(cs, change{st[0], f[i+1], f[i+2]})
-			i += 3
-		default:
-			if i+1 >= len(f) {
-				return cs
-			}
-			cs = append(cs, change{st[0], f[i+1], f[i+1]})
-			i += 2
-		}
-	}
-	return cs
+	author, committer := g.identities()
+	return g.r().CommitPaths(context.Background(), paths, commitMessage, author, committer)
 }
 
 // commitMessage summarises a change set in a short English line: "Edit 暮雪",
 // "Add 3 pages", "Add 2 pages, edit 1 page".
-func commitMessage(cs []change) string {
+func commitMessage(cs []gitstore.Change) string {
 	var added, edited, deleted, renamed, moved, others []string
 	for _, c := range cs {
-		p := c.new
+		p := c.New
 		if !isPagePath(p) {
 			others = append(others, path.Base(p))
 			continue
 		}
 		title := strings.TrimSuffix(path.Base(p), path.Ext(p))
-		switch c.status {
+		switch c.Status {
 		case 'A', 'C':
 			added = append(added, title)
 		case 'D':
-			deleted = append(deleted, strings.TrimSuffix(path.Base(c.old), path.Ext(c.old)))
+			deleted = append(deleted, strings.TrimSuffix(path.Base(c.Old), path.Ext(c.Old)))
 		case 'R':
-			if path.Dir(c.old) != path.Dir(c.new) {
+			if path.Dir(c.Old) != path.Dir(c.New) {
 				moved = append(moved, title)
 			} else {
 				renamed = append(renamed, title)

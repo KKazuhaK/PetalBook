@@ -11,6 +11,9 @@ export interface SeedPage {
   ago: number
   extra?: Record<string, unknown>
   body: string
+  // Earlier versions of the page, oldest first, so its history has something
+  // to show. `ago` is minutes before now, as for the page itself.
+  earlier?: { ago: number; title?: string; subtitle?: string; tags?: string[]; folder?: string; body: string }[]
 }
 
 export const SPACE_NAME = '我的笔记'
@@ -23,7 +26,19 @@ export const seedPages: SeedPage[] = [
   { folder: '', created: '2026-11-20', ago: 12, tags: ['随记'], body: '晚饭后绕着小区走了一圈，桂花已经落光了，路灯下面还剩一点香。\n' },
   { folder: '', created: '2026-11-18', ago: 60 * 30, body: '想起外婆晒的梅干菜，坛子口总是压着一块青石。\n' },
   { folder: '', created: '2026-11-02', ago: 60 * 24 * 12, tags: ['随记', '天气'], body: '第一次开了暖气。窗上起雾，字写在雾上，一会儿就干了。\n' },
-  { folder: '', title: '本周要做的事', created: '2026-11-16', ago: 60 * 5, tags: ['待办'], body: '- [x] 给阳台的绿萝换盆\n- [ ] 回复房东的消息\n- [ ] 把旧书整理出两箱\n- [ ] 预约牙医\n' },
+  {
+    folder: '',
+    title: '本周要做的事',
+    created: '2026-11-16',
+    ago: 60 * 5,
+    tags: ['待办'],
+    body: '- [x] 给阳台的绿萝换盆\n- [ ] 回复房东的消息\n- [ ] 把旧书整理出两箱\n- [ ] 预约牙医\n',
+    earlier: [
+      { ago: 60 * 24 * 5, title: '本周要做的事', body: '- [ ] 给阳台的绿萝换盆\n- [ ] 回复房东\n' },
+      { ago: 60 * 24 * 3, title: '本周要做的事', tags: ['待办'], body: '- [ ] 给阳台的绿萝换盆\n- [ ] 回复房东的消息\n- [ ] 把旧书整理出两箱\n' },
+      { ago: 60 * 28, title: '本周要做的事', tags: ['待办'], body: '- [ ] 给阳台的绿萝换盆\n- [ ] 回复房东的消息\n- [ ] 把旧书整理出两箱\n- [ ] 预约牙医\n' },
+    ],
+  },
 
   // --- 随笔 ---
   {
@@ -34,6 +49,23 @@ export const seedPages: SeedPage[] = [
     ago: 60 * 26,
     tags: ['随笔', '日常'],
     body: '我一直觉得“慢”不是速度，是**注意力停留的时间**。\n\n煮饭的时候不看手机，米香就会从锅盖的缝里钻出来，这是快的人闻不到的。\n\n## 三件小事\n\n1. 走路时只看路\n2. 喝茶时只喝茶\n3. 睡前十分钟什么也不做\n',
+    earlier: [
+      { ago: 60 * 24 * 40, title: '慢', body: '我一直觉得“慢”不是速度，是注意力停留的时间。\n' },
+      {
+        ago: 60 * 24 * 22,
+        title: '关于慢',
+        subtitle: '走路和煮饭',
+        tags: ['随笔'],
+        body: '我一直觉得“慢”不是速度，是**注意力停留的时间**。\n\n煮饭的时候不看手机，米香就会从锅盖的缝里钻出来。\n\n### 两件小事\n\n1. 走路时只看路\n2. 喝茶时只喝茶\n',
+      },
+      {
+        ago: 60 * 24 * 5,
+        title: '关于慢',
+        subtitle: '走路、煮饭和等一壶水',
+        tags: ['随笔', '日常'],
+        body: '我一直觉得“慢”不是速度，是**注意力停留的时间**。\n\n煮饭的时候不看手机，米香就会从锅盖的缝里钻出来，这是快的人闻不到的。\n\n### 三件小事\n\n1. 走路时只看路\n2. 喝茶时只喝茶\n3. 睡前十分钟什么也不做\n',
+      },
+    ],
   },
   {
     folder: '随笔',
@@ -43,6 +75,10 @@ export const seedPages: SeedPage[] = [
     ago: 60 * 24 * 3,
     tags: ['随笔', '物件'],
     body: '伞骨断了一根，撑开时像一只受伤的鸟。\n\n> 修伞的老师傅说，伞是修得好的，只是没人再愿意等。\n\n我等了三天，取回来的时候它多了一根不一样颜色的骨头。\n',
+    earlier: [
+      { ago: 60 * 24 * 20, title: '旧伞', folder: '', body: '伞骨断了一根。\n' },
+      { ago: 60 * 24 * 9, title: '一把旧伞', subtitle: '它比我更懂下雨', tags: ['随笔'], body: '伞骨断了一根，撑开时像一只受伤的鸟。\n\n> 修伞的老师傅说，伞是修得好的。\n' },
+    ],
   },
   { folder: '随笔', title: '菜市场的早晨', created: '2026-05-21', ago: 60 * 24 * 40, tags: ['随笔', '日常'], body: '六点半的菜市场，鱼摊的冰还没化，卖豆腐的阿姨已经把秤砣擦得发亮。\n' },
   {
@@ -131,7 +167,19 @@ export const seedPages: SeedPage[] = [
     tags: ['工作', '会议'],
     body: '## 议题\n\n1. 发布节奏\n2. 文档整理\n3. 下周排班\n\n## 结论\n\n- 周四之前把草稿交出来\n- 文档统一放进共享文件夹\n\n行动项：\n\n- [ ] 整理旧文档目录\n- [ ] 确认周四的评审时间\n',
   },
-  { folder: '工作', title: '术语表', subtitle: '大家说的是同一件事吗', created: '2026-08-21', ago: 60 * 24 * 33, tags: ['工作'], body: '| 术语 | 含义 |\n| --- | --- |\n| 草稿 | 还没有被别人看过的版本 |\n| 定稿 | 写的人觉得可以了的版本 |\n| 最终版 | 以后再改的版本 |\n' },
+  {
+    folder: '工作',
+    title: '术语表',
+    subtitle: '大家说的是同一件事吗',
+    created: '2026-08-21',
+    ago: 60 * 24 * 33,
+    tags: ['工作'],
+    body: '| 术语 | 含义 |\n| --- | --- |\n| 草稿 | 还没有被别人看过的版本 |\n| 定稿 | 写的人觉得可以了的版本 |\n| 最终版 | 以后再改的版本 |\n',
+    earlier: [
+      { ago: 60 * 24 * 60, title: '术语表', body: '| 术语 | 含义 |\n| --- | --- |\n| 草稿 | 没人看过的版本 |\n| 定稿 | 写的人觉得可以了的版本 |\n' },
+      { ago: 60 * 24 * 45, title: '术语表', subtitle: '大家说的是同一件事吗', tags: ['工作'], body: '| 术语 | 含义 |\n| --- | --- |\n| 草稿 | 还没有被别人看过的版本 |\n| 定稿 | 写的人觉得可以了的版本 |\n' },
+    ],
+  },
   { folder: '工作', created: '2026-10-28', ago: 60 * 24 * 24, tags: ['工作', '随记'], body: '开会时有人说“我们对齐一下颗粒度”，我在本子上画了一颗米。\n' },
 
   // --- 旅行 (second level) ---

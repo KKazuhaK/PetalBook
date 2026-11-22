@@ -22,6 +22,7 @@ import (
 
 	"github.com/KazuhaHub/PetalBook/internal/auth"
 	"github.com/KazuhaHub/PetalBook/internal/drafts"
+	"github.com/KazuhaHub/PetalBook/internal/gitstore"
 	"github.com/KazuhaHub/PetalBook/internal/index"
 	"github.com/KazuhaHub/PetalBook/internal/page"
 	"github.com/KazuhaHub/PetalBook/internal/space"
@@ -383,10 +384,13 @@ func (s *server) readJSONMax(w http.ResponseWriter, r *http.Request, v any, opti
 
 func (s *server) fail(w http.ResponseWriter, err error) {
 	var (
-		inv *space.InvalidError
-		ce  *space.ConflictError
-		ae  *auth.Error
-		dc  *drafts.Conflict
+		inv   *space.InvalidError
+		ce    *space.ConflictError
+		ae    *auth.Error
+		dc    *drafts.Conflict
+		ue    *space.UnavailableError
+		urle  *gitstore.URLError
+		hoste *gitstore.HostError
 	)
 	switch {
 	case errors.As(err, &ae):
@@ -398,6 +402,20 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		}
 		writeJSON(w, http.StatusConflict, draftConflictBody{Error: "conflict",
 			Message: "the draft on the server is not the one you meant; here is what there is", Draft: draft, Current: toPage(dc.Current)})
+	case errors.As(err, &ue):
+		writeError(w, http.StatusServiceUnavailable, "unavailable", ue.Msg)
+	case errors.As(err, &urle):
+		writeError(w, http.StatusBadRequest, "invalid", urle.Msg)
+	case errors.As(err, &hoste):
+		writeError(w, http.StatusForbidden, "forbidden", hoste.Error())
+	case errors.Is(err, space.ErrNoRemote):
+		writeError(w, http.StatusNotFound, "not_found", "this space has no remote repository")
+	case errors.Is(err, space.ErrDiverged):
+		writeError(w, http.StatusConflict, "conflict", "both the space and the repository have content of their own, and the server will not merge two histories; make a new space for that repository")
+	case errors.Is(err, space.ErrNotTip), errors.Is(err, space.ErrNothingToAccept):
+		writeError(w, http.StatusConflict, "conflict", err.Error())
+	case errors.Is(err, spaces.ErrConnected):
+		writeError(w, http.StatusConflict, "conflict", err.Error())
 	case errors.Is(err, spaces.ErrLimit):
 		writeError(w, http.StatusForbidden, "forbidden", strings.TrimPrefix(err.Error(), spaces.ErrLimit.Error()+": "))
 	case errors.Is(err, spaces.ErrNotFound):
@@ -408,6 +426,8 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid", strings.TrimPrefix(err.Error(), spaces.ErrInvalid.Error()+": "))
 	case errors.Is(err, space.ErrClosed):
 		writeError(w, http.StatusInternalServerError, "internal", "the server is shutting down; try again when it is back")
+	case errors.Is(err, space.ErrNoVersion):
+		writeError(w, http.StatusNotFound, "not_found", "that commit is not a version of this page")
 	case errors.Is(err, space.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "no such page")
 	case errors.Is(err, space.ErrExists), errors.Is(err, fs.ErrExist):

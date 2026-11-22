@@ -3,6 +3,7 @@ package space
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -32,9 +33,11 @@ func commits(t *testing.T, dir string) []string {
 	return strings.Split(out, "\n")
 }
 
+// gitTry runs plain git, independent of the code under test.
 func gitTry(dir string, args ...string) (string, error) {
-	g := &gitRepo{dir: dir, name: "x", email: "x@x"}
-	out, err := g.run(args...)
+	cmd := exec.Command("git", append([]string{"-C", dir, "-c", "core.quotepath=false"}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_SYSTEM="+os.DevNull)
+	out, err := cmd.Output()
 	return strings.TrimSpace(string(out)), err
 }
 
@@ -205,9 +208,9 @@ func TestCommitMessages(t *testing.T) {
 		for _, s := range spec {
 			f := strings.Split(s, " ")
 			if len(f) == 3 {
-				out = append(out, change{f[0][0], f[1], f[2]})
+				out = append(out, change{Status: f[0][0], Old: f[1], New: f[2]})
 			} else {
-				out = append(out, change{f[0][0], f[1], f[1]})
+				out = append(out, change{Status: f[0][0], Old: f[1], New: f[1]})
 			}
 		}
 		return out
@@ -233,7 +236,7 @@ func TestCommitMessages(t *testing.T) {
 		}
 	}
 	got := parseNameStatus([]byte("M\x00a.md\x00R100\x00b.md\x00c.md\x00D\x00d.md\x00"))
-	if len(got) != 3 || got[1].old != "b.md" || got[1].new != "c.md" || got[2].status != 'D' {
+	if len(got) != 3 || got[1].Old != "b.md" || got[1].New != "c.md" || got[2].Status != 'D' {
 		t.Fatalf("%+v", got)
 	}
 }

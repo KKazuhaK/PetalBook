@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Link, useBlocker, useNavigate, useParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { Placeholder } from '@tiptap/extensions'
-import { Folder, MoreHorizontal, Save, Trash2, FolderInput } from 'lucide-react'
+import { Folder, History, MoreHorizontal, Save, Trash2, FolderInput } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError, isUnauthenticated, spaceApi, type SpaceApi } from '@/api/client'
 import { invalidateListings, keys, usePage, useSession, useTags, useTree, useUrls } from '@/api/hooks'
 import type { Page } from '@/api/types'
+import type { VersionContent } from '@/diff'
 import { createExtensions, docToMarkdown, markdownToDoc } from '@/markdown'
 import { planRestore, type Content } from '@/editor/draftRestore'
 import { draftRefFor, draftStoreFor, loadDraft, parseSavedMarker, savedMarkerKey } from '@/editor/draftStore'
@@ -27,8 +28,14 @@ import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { MovePageDialog } from '@/components/editor/MovePageDialog'
 import { SaveIndicator } from '@/components/editor/SaveIndicator'
 import { TagsEditor } from '@/components/editor/TagsEditor'
+import { failureText } from '@/lib/failure'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { t } from '@/i18n/zh-CN'
+
+// The history of a page (and the comparison code with it) loads when it is first
+// opened: someone who only writes never pays for it.
+const loadHistory = () => import('@/components/history/HistoryMode')
+const HistoryMode = lazy(loadHistory)
 
 // The page's own extensions: exactly the Markdown layer's, with a link click
 // that edits instead of navigating, plus the empty-body hint (display only).
@@ -96,7 +103,7 @@ function MissingPage({ space, id, userId }: { space: string; id: string; userId:
       navigate(urls.page(page.id), { replace: true })
     } catch (e) {
       setBusy(false)
-      toast.error(`${t.editor.recoverFailed}：${e instanceof Error ? e.message : ''}`)
+      toast.error(`${t.editor.recoverFailed}：${failureText(e)}`)
     }
   }
 
@@ -180,6 +187,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
   const [conflictOpen, setConflictOpen] = useState(false)
   const [moveOpen, setMoveOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const subtitleRef = useRef<HTMLTextAreaElement>(null)
 
   // Computed once: a brand-new blank page puts the cursor in the body.
@@ -393,7 +401,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
       void invalidateListings(qc, space)
       toast.success(t.editor.moved(folder))
     } catch (e) {
-      toast.error(`${t.editor.moveFailed}：${e instanceof Error ? e.message : ''}`)
+      toast.error(`${t.editor.moveFailed}：${failureText(e)}`)
       throw e
     }
   }
@@ -406,7 +414,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
     } catch (e) {
       controller.attach()
       if (controller.hasUnsaved()) controller.markDirty()
-      toast.error(`${t.editor.deleteFailed}：${e instanceof Error ? e.message : ''}`)
+      toast.error(`${t.editor.deleteFailed}：${failureText(e)}`)
       return
     }
     controller.discard()
@@ -414,6 +422,73 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
     void invalidateListings(qc, space)
     toast.success(t.editor.deleted)
     navigate(urls.folder(page.folder), { replace: true })
+  }
+
+  // --- history ---
+  // The content as the editor holds it now, in the shape of a version: the
+  // file's header with the fields as typed, and the body as Markdown.
+  const currentContent = (): VersionContent => {
+    const f = live.fields
+    const meta: Record<string, unknown> = { ...controller.page.meta }
+    for (const k of ['title', 'subtitle', 'source'] as const) {
+      const v = f[k] ?? ''
+      if (v === '') delete meta[k]
+      else meta[k] = v
+    }
+    if (f.tags.length) meta.tags = f.tags
+    else delete meta.tags
+    return { meta, body: editor ? docToMarkdown(editor.getJSON()) : controller.page.body }
+  }
+
+  // Going back to a version is an ordinary edit: its header fields and body are
+  // put in the editor as if they had been typed, and go the usual way (draft,
+  // then a new version). Nothing here talks to the server except the optional
+  // save of what is there first.
+  const restoreVersion = async (v: VersionContent, saveFirst: boolean, whenText: string): Promise<boolean> => {
+    if (!editor) return false
+    if (saveFirst) {
+      await controller.commit()
+      if (controller.state === 'conflict' || controller.state === 'error') {
+        toast.error(t.history.restoreSaveFailed)
+        return false
+      }
+    }
+    const before = { fields: live.fields, markdown: docToMarkdown(editor.getJSON()) }
+    const put = (f: Fields, markdown: string) => {
+      showContent(f, markdown)
+      live.bodyChanged()
+      controller.markDirty()
+    }
+    put(fieldsOf(v.meta), v.body)
+    setHistoryOpen(false)
+    // Undo puts back what was there, but only while the restored text is still
+    // what is on screen: once the person has typed on, or left the page, there is
+    // nothing this button may replace.
+    const restored = { fields: live.fields, markdown: docToMarkdown(editor.getJSON()) }
+    const sameTags = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i])
+    toast(t.history.restored(whenText), {
+      duration: 12_000,
+      action: {
+        label: t.history.undoRestore,
+        onClick: () => {
+          const f = live.fields
+          const untouched =
+            !editor.isDestroyed &&
+            f.title === restored.fields.title &&
+            f.subtitle === restored.fields.subtitle &&
+            (f.source ?? '') === (restored.fields.source ?? '') &&
+            sameTags(f.tags, restored.fields.tags) &&
+            docToMarkdown(editor.getJSON()) === restored.markdown
+          if (!untouched) {
+            toast.info(t.history.undoTooLate)
+            return
+          }
+          put(before.fields, before.markdown)
+          toast.success(t.history.undone)
+        },
+      },
+    })
+    return true
   }
 
   // "Save version" has something to do when there is text or a draft that is
@@ -425,27 +500,41 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
       <TopBar
         actions={
           <>
-            <SaveIndicator snapshot={snapshot} onRetry={() => void controller.retry()} onOpenConflict={() => setConflictOpen(true)} />
-            <Button variant="ghost" size="sm" disabled={!canSave} onClick={() => void controller.commit()} title={t.editor.saveVersionHint} aria-label={t.editor.saveVersion}>
-              <Save />
-              <span className="hidden sm:inline">{t.editor.saveVersion}</span>
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={t.editor.more} />}>
-                <MoreHorizontal />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-40">
-                <DropdownMenuItem onClick={() => setMoveOpen(true)}>
-                  <FolderInput />
-                  {t.editor.move}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
-                  <Trash2 />
-                  {t.editor.delete}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <SaveIndicator snapshot={snapshot} draftSafe={!controller.hasUnsaved()} onRetry={() => void controller.retry()} onOpenConflict={() => setConflictOpen(true)} />
+            {!historyOpen && (
+              <Button variant="ghost" size="sm" onClick={() => setHistoryOpen(true)} onPointerEnter={() => void loadHistory()} onFocus={() => void loadHistory()} title={t.history.openHint} aria-label={t.history.open}>
+                <History />
+                <span className="hidden sm:inline">{t.history.open}</span>
+              </Button>
+            )}
+            {!historyOpen && (
+              <Button variant="ghost" size="sm" disabled={!canSave} onClick={() => void controller.commit()} title={t.editor.saveVersionHint} aria-label={t.editor.saveVersion}>
+                <Save />
+                <span className="hidden sm:inline">{t.editor.saveVersion}</span>
+              </Button>
+            )}
+            {!historyOpen && (
+              <DropdownMenu>
+                <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={t.editor.more} />}>
+                  <MoreHorizontal />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-40">
+                  <DropdownMenuItem onClick={() => setHistoryOpen(true)}>
+                    <History />
+                    {t.history.open}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setMoveOpen(true)}>
+                    <FolderInput />
+                    {t.editor.move}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
+                    <Trash2 />
+                    {t.editor.delete}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </>
         }
       >
@@ -455,6 +544,15 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
         </Link>
       </TopBar>
 
+      {historyOpen && (
+        <Suspense fallback={<PageFallback />}>
+          <HistoryMode space={space} pageId={page.id} getCurrent={currentContent} saveState={snapshot.state} onClose={() => setHistoryOpen(false)} onRestore={restoreVersion} />
+        </Suspense>
+      )}
+
+      {/* Under the history view the editor stays as it is (so does everything typed
+          in it), hidden and out of reach of the keyboard. */}
+      <div className={historyOpen ? 'hidden' : 'flex flex-1 flex-col'} inert={historyOpen}>
       {editor && (
         <div className="sticky top-12 z-20 border-b bg-background/90 backdrop-blur">
           <div className="mx-auto max-w-[720px] px-3">
@@ -499,6 +597,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
             <LinkPopover editor={editor} />
           </>
         )}
+      </div>
       </div>
 
       {conflict && <ConflictDialog open={conflictOpen} onOpenChange={setConflictOpen} info={conflict} onKeepMine={keepMine} onUseTheirs={useTheirs} />}

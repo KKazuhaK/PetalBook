@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { NavLink, useNavigate } from 'react-router'
 import { ChevronsUpDown } from 'lucide-react'
-import { useActiveSpace, useCreateSpace, useRenameSpace } from '@/api/hooks'
+import { syncOf, useActiveSpace, useCreateSpace, useRenameSpace } from '@/api/hooks'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { spaceUrls } from '@/lib/urls'
 import { t } from '@/i18n/zh-CN'
 import { NameDialog } from './NameDialog'
+import { SyncIndicator } from './SyncIndicator'
 
 // Accounts mode only: the space in use, the others to switch to, and making or
 // renaming one. The space is in the address, so switching is navigating.
@@ -45,8 +46,13 @@ export function SpaceSwitcher() {
             <DropdownMenuItem disabled={!current} onClick={() => setDialog('rename')}>
               {t.spaces.rename}
             </DropdownMenuItem>
+            {/* Only the owner can change where the space keeps its repository. */}
+            <DropdownMenuItem disabled={!current || current.role !== 'owner'} onClick={() => id && navigate(spaceUrls(id).settings())}>
+              {t.spaces.settings}
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        {id && <SyncIndicator space={id} sync={syncOf(current)} />}
       </div>
       <NameDialog
         open={dialog === 'new'}

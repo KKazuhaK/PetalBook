@@ -5,7 +5,7 @@ import { ThemeProvider } from '@/providers/theme'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { toast } from 'sonner'
-import { ApiError, onForbidden, onSignedOut } from '@/api/client'
+import { ApiError, onForbidden, onSignedOut, onUnavailable } from '@/api/client'
 import { keys, lastSpace, rememberSpace, useSession, useSpaces } from '@/api/hooks'
 import type { SessionInfo } from '@/api/types'
 import { AppShell } from '@/components/layout/AppShell'
@@ -25,6 +25,7 @@ const SetupPage = lazy(() => import('@/pages/auth/SetupPage'))
 const InvitePage = lazy(() => import('@/pages/auth/InvitePage'))
 const SettingsPage = lazy(() => import('@/pages/auth/SettingsPage'))
 const UsersPage = lazy(() => import('@/pages/auth/UsersPage'))
+const SpaceSettingsPage = lazy(() => import('@/pages/SpaceSettingsPage'))
 
 const later = (el: ReactNode) => <Suspense fallback={<PageFallback />}>{el}</Suspense>
 
@@ -116,6 +117,7 @@ const router = createBrowserRouter([
               { path: 'f/*', element: <FolderList /> },
               { path: 't/*', element: <TagList /> },
               { path: 'search', element: <SearchList /> },
+              { path: 'settings', element: later(<SpaceSettingsPage />) },
               { path: 'p/:id', element: later(<PageEditor />) },
               { path: '*', element: <NotFoundPage /> },
             ],
@@ -136,6 +138,16 @@ export default function App() {
     () =>
       onSignedOut(() => {
         queryClient.setQueryData<SessionInfo>(keys.session, (prev) => prev && { ...prev, user: null })
+      }),
+    [],
+  )
+  // A write refused because the remote cannot be reached says the sync state
+  // changed: look again, so the indicator by the space name is not out of date.
+  useEffect(
+    () =>
+      onUnavailable(() => {
+        void queryClient.invalidateQueries({ queryKey: keys.spaces })
+        void queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'space' && q.queryKey[2] === 'remote' })
       }),
     [],
   )

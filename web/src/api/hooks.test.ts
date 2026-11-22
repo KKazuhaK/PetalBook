@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { QueryClient } from '@tanstack/react-query'
-import { applySession, keys, lastSpace, rememberSpace } from './hooks'
+import { MutationObserver, QueryClient } from '@tanstack/react-query'
+import { applySession, keys, lastSpace, rememberSpace, secretMutation } from './hooks'
 import type { SessionInfo, User } from './types'
 
 const user = (over: Partial<User> = {}): User => ({ id: 'u1', username: 'ada', name: 'Ada', email: '', role: 'member', disabled: false, created: '2026-11-21T08:30:00Z', ...over })
@@ -48,5 +48,23 @@ describe('the space used last', () => {
     } finally {
       Storage.prototype.getItem = real
     }
+  })
+})
+
+describe('a mutation that carries a secret', () => {
+  it('is not kept in the cache once nothing shows it', async () => {
+    const qc = new QueryClient()
+    const run = async (opts: object) => {
+      const obs = new MutationObserver(qc, { ...opts, mutationFn: async (v: { token: string }) => v.token.length })
+      const off = obs.subscribe(() => {})
+      await obs.mutate({ token: 'SECRET-123' })
+      obs.reset()
+      off()
+      await new Promise((r) => setTimeout(r, 0))
+      return JSON.stringify(qc.getMutationCache().getAll().map((m) => m.state))
+    }
+    expect(await run(secretMutation)).not.toContain('SECRET-123')
+    // Without it the default keeps the variables around: this is what the option is for.
+    expect(await run({})).toContain('SECRET-123')
   })
 })

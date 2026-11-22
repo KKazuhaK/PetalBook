@@ -1,0 +1,560 @@
+package spaces
+
+// Remote repositories of spaces: connecting, disconnecting, status, and the
+// puller.
+//
+// Where pulling lives. Spaces are opened lazily and closed when idle, so there
+// is no goroutine per space (and none per closed space). One loop in the
+// manager (RunPull) looks, every few seconds, at the spaces that are open right
+// now and follow a remote, and pulls those whose turn it is (every
+// --pull-interval, jittered so spaces do not all fetch together), a few at a
+// time. A space that is closed is not pulled: nobody is looking at it, it costs
+// nothing, and the pull that every opening starts brings it up to date at the
+// moment someone is. A pull never counts as use, so a space that is only being
+// pulled still goes idle and closes.
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math/rand/v2"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/KazuhaHub/PetalBook/internal/gitstore"
+	"github.com/KazuhaHub/PetalBook/internal/space"
+	"github.com/KazuhaHub/PetalBook/internal/store"
+)
+
+// DefaultPullInterval is the flag's default.
+const DefaultPullInterval = time.Minute
+
+// pullWorkers bounds how many remotes are fetched at the same time.
+const pullWorkers = 4
+
+var (
+	// ErrConnected: the space follows a remote; this is only possible while it is local.
+	ErrConnected = errors.New("the space follows a remote repository; disconnect it first")
+	// ErrNoRemote: the space is local.
+	ErrNoRemote = space.ErrNoRemote
+)
+
+// Credential types.
+const (
+	CredSSH   = "ssh"
+	CredToken = "token"
+)
+
+// RemoteView is a remote as the API shows it.
+type RemoteView struct {
+	URL, Branch string
+	CredType    string
+	Username    string // token
+	PublicKey   string // ssh
+	Fingerprint string // ssh: of the public key
+	HostKey     string // ssh: fingerprint of the host key trusted on first use
+	State       string
+	LastSync    time.Time
+	Error       string
+	Rewritten   *Rewritten
+}
+
+// Rewritten says which commits the paused remote is about.
+type Rewritten struct{ LastGood, Remote string }
+
+// ConnectRequest is what the owner gives to connect a space.
+type ConnectRequest struct {
+	URL, Branch string
+	CredType    string
+	Username    string
+	Token       string // empty keeps the stored one
+}
+
+func (m *Manager) knownHosts(id string) string {
+	return filepath.Join(m.opt.DataDir, "known_hosts", id)
+}
+
+func (m *Manager) box() (interface {
+	Seal(spaceID, purpose string, plaintext []byte) (string, error)
+	Open(spaceID, purpose, sealed string) ([]byte, error)
+}, error) {
+	if m.opt.Secrets == nil {
+		return nil, errors.New("this server has no key for storing credentials")
+	}
+	return m.opt.Secrets, nil
+}
+
+// credential builds what git runs with from a stored row. The secrets stay
+// encrypted until a command needs them.
+func (m *Manager) credential(id string, r *store.Remote) gitstore.Credential {
+	switch r.CredType {
+	case CredToken:
+		enc := r.TokenEnc
+		return gitstore.Token{Username: r.Username, URL: r.URL, Get: func() (string, error) {
+			b, err := m.opt.Secrets.Open(id, "token", enc)
+			return string(b), err
+		}}
+	case CredSSH:
+		enc := r.PrivKeyEnc
+		return gitstore.SSH{KnownHosts: m.knownHosts(id), Key: func() ([]byte, error) {
+			return m.opt.Secrets.Open(id, "ssh-key", enc)
+		}}
+	}
+	return nil
+}
+
+func statusOf(r *store.Remote) space.RemoteStatus {
+	return space.RemoteStatus{State: r.State, Kind: r.ErrorKind, Error: r.LastError, LastGood: r.LastGood, RemoteTip: r.RemoteTip, LastSync: r.LastSync}
+}
+
+// remoteOptions is what a space is opened (or connected) with.
+func (m *Manager) remoteOptions(id string, r *store.Remote) *space.RemoteOptions {
+	return &space.RemoteOptions{
+		URL: r.URL, Branch: r.Branch, Cred: m.credential(id, r), Status: statusOf(r),
+		OnStatus:   m.persistStatus(id),
+		NetTimeout: m.opt.NetTimeout, FetchFresh: m.opt.FetchFresh, FailFast: m.opt.FailFast,
+		Runner: m.opt.RemoteRunner, AllowUnsafe: m.opt.RemotePolicy.AllowUnsafe,
+	}
+}
+
+// persistStatus is the callback that keeps the database and the list of
+// spaces' sync states in line with a space's remote.
+func (m *Manager) persistStatus(id string) func(space.RemoteStatus) {
+	return func(st space.RemoteStatus) {
+		m.setSync(id, st.State)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		err := store.UpdateRemoteStatus(ctx, m.opt.Store.Q(), id, store.RemoteStatus{
+			State: st.State, ErrorKind: st.Kind, LastError: st.Error, LastGood: st.LastGood, RemoteTip: st.RemoteTip, LastSync: st.LastSync,
+		}, m.opt.Now())
+		if err != nil {
+			m.log.Warn("could not store the state of a remote", "space", id, "error", err)
+		}
+	}
+}
+
+// --- sync states ----------------------------------------------------------------
+
+// syncState is what Info.Sync says for a space: "local" or the remote's state.
+func (m *Manager) syncStates(ctx context.Context) map[string]string {
+	m.mu.Lock()
+	if m.syncs != nil {
+		out := m.syncs
+		m.mu.Unlock()
+		return out
+	}
+	m.mu.Unlock()
+	states, err := store.RemoteStates(ctx, m.opt.Store.Q())
+	if err != nil {
+		m.log.Warn("could not read the states of the remotes", "error", err)
+		return map[string]string{}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.syncs == nil {
+		m.syncs = states
+	}
+	return m.syncs
+}
+
+func (m *Manager) setSync(id, state string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.syncs == nil {
+		return // loaded from the database on first use
+	}
+	if state == "" {
+		delete(m.syncs, id)
+	} else {
+		m.syncs[id] = state
+	}
+}
+
+// withSync fills in Info.Sync. The list of spaces is cached; the sync state
+// changes by itself, so it is read at the end, not cached with it.
+func (m *Manager) withSync(ctx context.Context, in []Info) []Info {
+	if m.single != nil {
+		return in
+	}
+	states := m.syncStates(ctx)
+	m.mu.Lock()
+	out := make([]Info, len(in))
+	for i, x := range in {
+		x.Sync = "local"
+		if st, ok := states[x.ID]; ok {
+			x.Sync = st
+		}
+		out[i] = x
+	}
+	m.mu.Unlock()
+	return out
+}
+
+// --- the owner's operations ------------------------------------------------------
+
+func (m *Manager) viewOf(h *Handle, r *store.Remote) *RemoteView {
+	v := &RemoteView{URL: r.URL, Branch: r.Branch, CredType: r.CredType, Username: r.Username, State: r.State, LastSync: r.LastSync, Error: r.LastError}
+	if st, ok := h.Space.Remote(); ok {
+		v.State, v.LastSync, v.Error = st.State, st.LastSync, st.Error
+		if st.State == space.RemoteRewritten {
+			v.Rewritten = &Rewritten{LastGood: st.LastGood, Remote: st.RemoteTip}
+		}
+	}
+	if r.CredType == CredSSH {
+		v.PublicKey = r.PubKey
+		v.Fingerprint, _ = gitstore.Fingerprint(r.PubKey)
+		v.HostKey = gitstore.HostKeyFingerprint(m.knownHosts(r.SpaceID))
+	}
+	return v
+}
+
+// Remote returns the remote of the space, or ErrNoRemote when it is local.
+func (m *Manager) Remote(ctx context.Context, h *Handle) (*RemoteView, error) {
+	r, err := store.GetRemote(ctx, m.opt.Store.Q(), h.Info.ID)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && !r.Connected()) {
+		return nil, ErrNoRemote
+	}
+	if err != nil {
+		return nil, err
+	}
+	return m.viewOf(h, r), nil
+}
+
+// SSHKey makes (or returns) the SSH key pair of the space. rotate replaces it,
+// only while the space is local.
+func (m *Manager) SSHKey(ctx context.Context, h *Handle, rotate bool) (publicKey, fingerprint string, err error) {
+	if m.single != nil {
+		return "", "", ErrNotFound
+	}
+	box, err := m.box()
+	if err != nil {
+		return "", "", err
+	}
+	id := h.Info.ID
+	m.remoteMu.Lock()
+	defer m.remoteMu.Unlock()
+	r, err := store.GetRemote(ctx, m.opt.Store.Q(), id)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return "", "", err
+	}
+	if err == nil && r.PubKey != "" && !rotate {
+		fp, _ := gitstore.Fingerprint(r.PubKey)
+		return r.PubKey, fp, nil
+	}
+	if err == nil && r.Connected() {
+		return "", "", ErrConnected
+	}
+	k, err := gitstore.GenerateSSHKey("petalbook-" + id)
+	if err != nil {
+		return "", "", err
+	}
+	enc, err := box.Seal(id, "ssh-key", k.Private)
+	if err != nil {
+		return "", "", err
+	}
+	row := store.Remote{SpaceID: id, Branch: "main", CredType: CredSSH, PrivKeyEnc: enc, PubKey: k.Public, State: store.RemoteLocal, Updated: m.opt.Now()}
+	if err := store.PutRemote(ctx, m.opt.Store.Q(), row); err != nil {
+		return "", "", err
+	}
+	return k.Public, k.Fingerprint, nil
+}
+
+// Connect makes the space follow a remote repository. It does not return
+// until the space and the remote agree (see space.Connect).
+func (m *Manager) Connect(ctx context.Context, h *Handle, req ConnectRequest) (*RemoteView, error) {
+	if m.single != nil {
+		return nil, ErrNotFound
+	}
+	box, err := m.box()
+	if err != nil {
+		return nil, err
+	}
+	id := h.Info.ID
+	remote, err := gitstore.ParseURL(req.URL, m.opt.RemotePolicy)
+	if err != nil {
+		return nil, err
+	}
+	branch := strings.TrimSpace(req.Branch)
+	if branch == "" {
+		branch = "main"
+	}
+	if err := gitstore.ValidBranch(branch); err != nil {
+		return nil, fmt.Errorf("%w: %s is not a usable branch name", ErrInvalid, branch)
+	}
+	m.remoteMu.Lock()
+	defer m.remoteMu.Unlock()
+	old, err := store.GetRemote(ctx, m.opt.Store.Q(), id)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return nil, err
+	}
+	restoreHosts, dropOldHosts := func() {}, func() {}
+	row := store.Remote{SpaceID: id, URL: remote.URL, Branch: branch, State: store.RemoteOK}
+	if old != nil {
+		row.PrivKeyEnc, row.PubKey, row.TokenEnc, row.Username = old.PrivKeyEnc, old.PubKey, old.TokenEnc, old.Username
+	}
+	switch req.CredType {
+	case CredToken:
+		if remote.Scheme != "https" && remote.Scheme != "http" && remote.Scheme != "file" { // http and file only exist in tests
+			return nil, fmt.Errorf("%w: a token goes with an https address; use an ssh key for %s", ErrInvalid, remote.URL)
+		}
+		row.CredType = CredToken
+		if u := strings.TrimSpace(req.Username); u != "" {
+			row.Username = u
+		} else if row.Username == "" {
+			row.Username = "x-access-token"
+		}
+		if strings.ContainsAny(row.Username, " \t\r\n:\x00") {
+			return nil, fmt.Errorf("%w: the user name is not usable", ErrInvalid)
+		}
+		if req.Token != "" {
+			if strings.ContainsAny(req.Token, "\r\n\x00") || len(req.Token) > 4096 {
+				return nil, fmt.Errorf("%w: the token is not usable", ErrInvalid)
+			}
+			if row.TokenEnc, err = box.Seal(id, "token", []byte(req.Token)); err != nil {
+				return nil, err
+			}
+		} else if old == nil || old.TokenEnc == "" {
+			return nil, fmt.Errorf("%w: a token is required", ErrInvalid)
+		} else if prev, perr := gitstore.ParseURL(old.URL, m.opt.RemotePolicy); perr != nil || prev.Scheme != remote.Scheme || prev.Host != remote.Host || gitstore.CredentialScope(prev.URL) != gitstore.CredentialScope(remote.URL) {
+			// A stored token was given for one host and port. It is not sent to
+			// another because the address was edited.
+			return nil, fmt.Errorf("%w: the address is on another host now; enter the token for it", ErrInvalid)
+		}
+	case CredSSH:
+		if remote.Scheme != "ssh" {
+			return nil, fmt.Errorf("%w: an ssh key goes with an ssh address (git@host:path); use a token for %s", ErrInvalid, remote.URL)
+		}
+		row.CredType = CredSSH
+		if row.PrivKeyEnc == "" {
+			k, err := gitstore.GenerateSSHKey("petalbook-" + id)
+			if err != nil {
+				return nil, err
+			}
+			if row.PrivKeyEnc, err = box.Seal(id, "ssh-key", k.Private); err != nil {
+				return nil, err
+			}
+			row.PubKey = k.Public
+			// Kept even if connecting fails, so the public key can be added to the
+			// repository. For a space that is connected already (it is changing
+			// from a token to a key) only the key is added to its row: the row
+			// keeps saying what the space follows until the new connection works.
+			keyOnly := row
+			keyOnly.URL, keyOnly.State, keyOnly.Updated = "", store.RemoteLocal, m.opt.Now()
+			if old != nil && old.Connected() {
+				keyOnly = *old
+				keyOnly.PrivKeyEnc, keyOnly.PubKey = row.PrivKeyEnc, row.PubKey
+			}
+			if err := store.PutRemote(ctx, m.opt.Store.Q(), keyOnly); err != nil {
+				return nil, err
+			}
+		}
+		// Host keys are trusted per connection: a changed address starts afresh.
+		// The old file is set aside, not deleted, until the new connection works:
+		// if it fails the space keeps following the old remote with the host key
+		// it trusted.
+		if old != nil && old.URL != row.URL {
+			kh := m.knownHosts(id)
+			if err := os.Rename(kh, kh+".old"); err == nil {
+				restoreHosts = func() { os.Rename(kh+".old", kh) }
+				dropOldHosts = func() { os.Remove(kh + ".old") }
+			}
+		}
+	default:
+		return nil, fmt.Errorf("%w: credential.type must be ssh or token", ErrInvalid)
+	}
+	row.Updated = m.opt.Now()
+	if err := h.Space.Connect(ctx, *m.remoteOptions(id, &row)); err != nil {
+		restoreHosts()
+		return nil, err
+	}
+	dropOldHosts()
+	st, _ := h.Space.Remote()
+	row.State, row.LastGood, row.LastSync = st.State, st.LastGood, st.LastSync
+	if err := store.PutRemote(ctx, m.opt.Store.Q(), row); err != nil {
+		if derr := h.Space.Disconnect(); derr != nil {
+			m.log.Error("could not disconnect a space whose remote could not be stored", "space", id, "error", derr)
+		}
+		return nil, err
+	}
+	m.setSync(id, row.State)
+	m.schedulePull(id)
+	return m.viewOf(h, &row), nil
+}
+
+// schedulePull makes an open space due for its first pull one interval from
+// now (it has just been synced by connecting).
+func (m *Manager) schedulePull(id string) {
+	m.mu.Lock()
+	if e := m.open[id]; e != nil && m.opt.PullInterval > 0 {
+		e.nextPull = m.opt.Now().Add(jittered(m.opt.PullInterval))
+	}
+	m.mu.Unlock()
+}
+
+// Disconnect makes the space local again. Nothing is changed on the remote;
+// the credential is deleted.
+func (m *Manager) Disconnect(ctx context.Context, h *Handle) error {
+	if m.single != nil {
+		return ErrNotFound
+	}
+	id := h.Info.ID
+	m.remoteMu.Lock()
+	defer m.remoteMu.Unlock()
+	if err := h.Space.Disconnect(); err != nil {
+		return err
+	}
+	if err := store.DeleteRemote(ctx, m.opt.Store.Q(), id); err != nil {
+		return err
+	}
+	os.Remove(m.knownHosts(id))
+	m.setSync(id, "")
+	return nil
+}
+
+// Sync fetches the remote now.
+func (m *Manager) Sync(ctx context.Context, h *Handle) (*RemoteView, error) {
+	r, err := m.stored(ctx, h)
+	if err != nil {
+		return nil, err
+	}
+	h.Space.ClearNotice()
+	// An unreachable remote is not an error of this call: the view says so.
+	var ue *space.UnavailableError
+	if err := h.Space.Pull(ctx, true); err != nil && !errors.As(err, &ue) {
+		return nil, err
+	}
+	return m.viewOf(h, r), nil
+}
+
+// Accept accepts a rewritten remote history.
+func (m *Manager) Accept(ctx context.Context, h *Handle, commit string) (*RemoteView, error) {
+	r, err := m.stored(ctx, h)
+	if err != nil {
+		return nil, err
+	}
+	if err := h.Space.Accept(ctx, commit); err != nil {
+		return nil, err
+	}
+	return m.viewOf(h, r), nil
+}
+
+func (m *Manager) stored(ctx context.Context, h *Handle) (*store.Remote, error) {
+	r, err := store.GetRemote(ctx, m.opt.Store.Q(), h.Info.ID)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && !r.Connected()) {
+		return nil, ErrNoRemote
+	}
+	return r, err
+}
+
+// --- the puller -------------------------------------------------------------------
+
+// RunPull pulls the open spaces that follow a remote, every PullInterval each
+// (about: it is jittered), until ctx ends. It does nothing when the interval is
+// not positive.
+func (m *Manager) RunPull(ctx context.Context) {
+	if m.single != nil || m.opt.PullInterval <= 0 {
+		return
+	}
+	tick := m.opt.PullInterval / 4
+	if tick > 5*time.Second {
+		tick = 5 * time.Second
+	}
+	if tick < 20*time.Millisecond {
+		tick = 20 * time.Millisecond
+	}
+	t := time.NewTicker(tick)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-m.pullWake:
+		case <-t.C:
+		}
+		m.pullDue(ctx)
+	}
+}
+
+func (m *Manager) wakePull() {
+	select {
+	case m.pullWake <- struct{}{}:
+	default:
+	}
+}
+
+// jittered is d plus or minus 20 percent.
+func jittered(d time.Duration) time.Duration {
+	return d - d/5 + time.Duration(rand.Int64N(int64(d)*2/5+1))
+}
+
+// pullDue pulls the spaces whose turn has come. The spaces are pinned while
+// it works, so none is closed under it, but their last-use time is left alone.
+func (m *Manager) pullDue(ctx context.Context) {
+	now := m.opt.Now()
+	var due []*opening
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return
+	}
+	for _, e := range m.open {
+		if e.closing != nil || e.nextPull.IsZero() || now.Before(e.nextPull) {
+			continue
+		}
+		select {
+		case <-e.done: // still being opened otherwise: e.sp is not settled
+		default:
+			continue
+		}
+		if e.sp == nil {
+			continue
+		}
+		if _, ok := e.sp.Remote(); !ok {
+			e.nextPull = time.Time{}
+			continue
+		}
+		e.nextPull = now.Add(jittered(m.opt.PullInterval))
+		e.refs++
+		due = append(due, e)
+	}
+	m.mu.Unlock()
+	if len(due) == 0 {
+		return
+	}
+	sem := make(chan struct{}, pullWorkers)
+	var wg sync.WaitGroup
+	for _, e := range due {
+		sem <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer func() {
+				<-sem
+				m.mu.Lock()
+				e.refs--
+				m.mu.Unlock()
+				wg.Done()
+			}()
+			if ctx.Err() != nil {
+				return
+			}
+			var ue *space.UnavailableError
+			if err := e.sp.Pull(ctx, false); err != nil && !errors.As(err, &ue) && ctx.Err() == nil && !errors.Is(err, space.ErrClosed) {
+				m.log.Warn("pulling a remote failed", "error", err)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// PullNow pulls one open space immediately (tests, and "sync now").
+func (m *Manager) PullNow(ctx context.Context, id string) error {
+	sp, release, err := m.Acquire(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return sp.Pull(ctx, true)
+}

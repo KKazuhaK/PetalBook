@@ -24,6 +24,9 @@ const (
 	// member needs a session of a member of the {space} in the path. Anyone
 	// else, an administrator included, is told the space does not exist.
 	member
+	// owner is member, and the caller's role in the space must be owner: a
+	// member who is not one is refused with 403, the space being theirs to see.
+	owner
 )
 
 // call is a request after the middleware has decided it may proceed. Handlers
@@ -92,6 +95,16 @@ var routeTable = []route{
 	{"POST", "/api/spaces/{space}/folders", member, false, false, (*server).createFolder},
 	{"GET", "/api/spaces/{space}/tags", member, false, false, (*server).getTags},
 	{"POST", "/api/spaces/{space}/reindex", member, false, false, (*server).reindex},
+
+	{"GET", "/api/spaces/{space}/pages/{id}/history", member, false, false, (*server).getHistory},
+	{"GET", "/api/spaces/{space}/pages/{id}/versions/{commit}", member, false, false, (*server).getVersion},
+
+	{"GET", "/api/spaces/{space}/remote", owner, true, false, (*server).getRemote},
+	{"POST", "/api/spaces/{space}/remote/key", owner, true, false, (*server).remoteKey},
+	{"PUT", "/api/spaces/{space}/remote", owner, true, false, (*server).putRemote},
+	{"DELETE", "/api/spaces/{space}/remote", owner, true, false, (*server).deleteRemote},
+	{"POST", "/api/spaces/{space}/remote/sync", owner, true, false, (*server).syncRemote},
+	{"POST", "/api/spaces/{space}/remote/accept", owner, true, false, (*server).acceptRemote},
 }
 
 // RouteInfo describes a route for tests and tooling.
@@ -99,7 +112,8 @@ type RouteInfo struct {
 	Method, Pattern string
 	Public          bool // no session needed
 	Admin           bool
-	Space           bool // a member of {space}
+	Space           bool // a member of {space} (an owner is one)
+	Owner           bool // an owner of {space}
 	AccountsOnly    bool
 }
 
@@ -107,7 +121,7 @@ type RouteInfo struct {
 func Routes() []RouteInfo {
 	out := make([]RouteInfo, len(routeTable))
 	for i, r := range routeTable {
-		out[i] = RouteInfo{r.method, r.pattern, r.access == public, r.access == admin, r.access == member, r.accountsOnly}
+		out[i] = RouteInfo{r.method, r.pattern, r.access == public, r.access == admin, r.access == member || r.access == owner, r.access == owner, r.accountsOnly}
 	}
 	return out
 }
@@ -145,7 +159,7 @@ func (s *server) handle(rt route) http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "forbidden", "only an administrator may do that")
 			return
 		}
-		if rt.access == member {
+		if rt.access == member || rt.access == owner {
 			h, err := s.spaces.Open(r.Context(), c.p.User.ID, r.PathValue("space"))
 			if err != nil {
 				s.fail(w, err)
@@ -153,6 +167,10 @@ func (s *server) handle(rt route) http.HandlerFunc {
 			}
 			c.sp = h
 			defer h.Release()
+			if rt.access == owner && h.Info.Role != "owner" {
+				writeError(w, http.StatusForbidden, "forbidden", "only an owner of the space may do that")
+				return
+			}
 		}
 		rt.h(s, c)
 	}

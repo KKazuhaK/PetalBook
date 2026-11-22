@@ -28,12 +28,13 @@ type spaceResp struct {
 	Name     string `json:"name"`
 	Role     string `json:"role"`
 	Personal bool   `json:"personal"`
+	Sync     string `json:"sync"`
 }
 
 func toSpaces(in []spaces.Info) []spaceResp {
 	out := make([]spaceResp, len(in))
 	for i, s := range in {
-		out[i] = spaceResp{s.ID, s.Name, s.Role, s.Personal}
+		out[i] = spaceResp{s.ID, s.Name, s.Role, s.Personal, s.Sync}
 	}
 	return out
 }

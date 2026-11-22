@@ -30,6 +30,12 @@ const (
 	// retryAfter is how long a draft that failed for a reason that may pass
 	// (disk, Git) waits before the sweeper tries again.
 	retryAfter = time.Minute
+	// A draft whose space follows a remote that cannot be reached is kept, not
+	// held, and tried again after a delay that doubles each time up to a limit.
+	unavailableBase = 30 * time.Second
+	unavailableMax  = 10 * time.Minute
+	// maxBackoffs bounds the memory of those delays.
+	maxBackoffs = 10_000
 )
 
 // Config sets the timing.
@@ -76,6 +82,14 @@ type Service struct {
 	afterSave func()
 	// beforeLock, if set, is called by Put just before it takes the lock (tests).
 	beforeLock func()
+	// backoff counts, per draft, the failed attempts because the remote was
+	// unavailable. It is only a delay: a restart forgets it.
+	bmu     sync.Mutex
+	backoff map[string]int
+	// writing has an entry for every page whose file is being written through
+	// the network right now (see remoteCall and enter).
+	pmu     sync.Mutex
+	writing map[string]chan struct{}
 }
 
 // New returns the service and brings the due times of waiting drafts in line
@@ -103,7 +117,7 @@ func New(ctx context.Context, st *store.Store, mgr *spaces.Manager, cfg Config, 
 	if now == nil {
 		now = time.Now
 	}
-	return &Service{st: st, spaces: mgr, cfg: cfg, log: log, now: now}, nil
+	return &Service{st: st, spaces: mgr, cfg: cfg, log: log, now: now, backoff: map[string]int{}, writing: map[string]chan struct{}{}}, nil
 }
 
 // lock is the lock of a page. It is per page, not per draft, so that deleting
@@ -120,6 +134,53 @@ func (s *Service) lock(spaceID, pageID, _ string) *sync.Mutex {
 // the file, which later shows up as a false conflict.
 func bookkeeping(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+}
+
+// remoteCall runs f, which writes the page's file. When the space follows a
+// remote f waits for the network, and the lock l is shared by many pages, so it
+// is not held meanwhile: typing in the other pages must keep being stored while
+// the remote is slow. The page itself stays excluded (see enter): a draft stored
+// for it while its file is being written would be stored on the rev that is
+// about to be replaced, and the person would later be asked to choose between
+// their own older and newer text.
+func (s *Service) remoteCall(l *sync.Mutex, sp *space.Space, spaceID, pageID string, f func()) {
+	if l == nil || !sp.IsRemote() {
+		f()
+		return
+	}
+	key := spaceID + "\x00" + pageID
+	done := make(chan struct{})
+	s.pmu.Lock()
+	s.writing[key] = done
+	s.pmu.Unlock()
+	l.Unlock()
+	defer func() {
+		l.Lock()
+		s.pmu.Lock()
+		delete(s.writing, key)
+		s.pmu.Unlock()
+		close(done)
+	}()
+	f()
+}
+
+// enter is called with the page's lock l held, at the start of everything that
+// reads or changes the page's drafts: it waits until no write of that page's
+// file is out on the network (remoteCall), so each of them sees the file and
+// the drafts as they are after it.
+func (s *Service) enter(l *sync.Mutex, spaceID, pageID string) {
+	key := spaceID + "\x00" + pageID
+	for {
+		s.pmu.Lock()
+		done := s.writing[key]
+		s.pmu.Unlock()
+		if done == nil {
+			return
+		}
+		l.Unlock()
+		<-done
+		l.Lock()
+	}
 }
 
 func toDraft(d *store.Draft, currentRev string) (*Draft, error) {
@@ -160,6 +221,7 @@ func (s *Service) Put(ctx context.Context, sp *space.Space, spaceID, userID, pag
 	l := s.lock(spaceID, pageID, userID)
 	l.Lock()
 	defer l.Unlock()
+	s.enter(l, spaceID, pageID)
 	// Checked under the lock: a page deleted, or a file saved, while this store
 	// waited is seen as it is now (no draft for a deleted page; a true "stale").
 	cur, err := sp.CheckDraft(pageID, meta, body)
@@ -213,6 +275,7 @@ func (s *Service) Delete(ctx context.Context, sp *space.Space, spaceID, pageID, 
 	l := s.lock(spaceID, pageID, userID)
 	l.Lock()
 	defer l.Unlock()
+	s.enter(l, spaceID, pageID)
 	if version == "" {
 		return store.DeleteDraft(ctx, s.st.Q(), spaceID, pageID, userID)
 	}
@@ -257,6 +320,7 @@ func (s *Service) DeletePage(ctx context.Context, spaceID, pageID string) error 
 	l := s.lock(spaceID, pageID, "")
 	l.Lock()
 	defer l.Unlock()
+	s.enter(l, spaceID, pageID)
 	return store.DeletePageDrafts(ctx, s.st.Q(), spaceID, pageID)
 }
 
@@ -268,8 +332,11 @@ func (s *Service) DeletePageFile(ctx context.Context, sp *space.Space, spaceID, 
 	l := s.lock(spaceID, pageID, "")
 	l.Lock()
 	defer l.Unlock()
-	if err := sp.Delete(pageID); err != nil {
-		return err
+	s.enter(l, spaceID, pageID)
+	var derr error
+	s.remoteCall(l, sp, spaceID, pageID, func() { derr = sp.Delete(pageID) })
+	if derr != nil {
+		return derr
 	}
 	bk, cancel := bookkeeping(ctx)
 	defer cancel()
@@ -291,6 +358,7 @@ func (s *Service) SaveFile(ctx context.Context, sp *space.Space, spaceID, userID
 	l := s.lock(spaceID, pageID, userID)
 	l.Lock()
 	defer l.Unlock()
+	s.enter(l, spaceID, pageID)
 	seen, err := store.GetDraft(ctx, s.st.Q(), spaceID, pageID, userID)
 	if errors.Is(err, store.ErrNotFound) {
 		seen, err = nil, nil
@@ -298,7 +366,8 @@ func (s *Service) SaveFile(ctx context.Context, sp *space.Space, spaceID, userID
 	if err != nil {
 		return nil, err
 	}
-	p, err := sp.Save(pageID, baseRev, meta, body)
+	var p *space.Page
+	s.remoteCall(l, sp, spaceID, pageID, func() { p, err = sp.Save(pageID, baseRev, meta, body) })
 	if err != nil {
 		return nil, err
 	}
@@ -332,6 +401,7 @@ func (s *Service) Commit(ctx context.Context, sp *space.Space, spaceID, userID, 
 	l := s.lock(spaceID, pageID, userID)
 	l.Lock()
 	defer l.Unlock()
+	s.enter(l, spaceID, pageID)
 	cur, err := sp.Get(pageID)
 	if err != nil {
 		return nil, err
@@ -346,7 +416,7 @@ func (s *Service) Commit(ctx context.Context, sp *space.Space, spaceID, userID, 
 	if d.Version != version {
 		return nil, s.conflict(d, cur)
 	}
-	p, err := s.apply(ctx, sp, d)
+	p, err := s.applyUnder(ctx, sp, d, l)
 	var ce *space.ConflictError
 	if errors.As(err, &ce) {
 		bk, cancel := bookkeeping(ctx)
@@ -364,11 +434,18 @@ func (s *Service) Commit(ctx context.Context, sp *space.Space, spaceID, userID, 
 // nothing (Save sees identical bytes) and still counts as applied; so does one
 // that is stale but equals what the file holds now.
 func (s *Service) apply(ctx context.Context, sp *space.Space, d *store.Draft) (*space.Page, error) {
+	return s.applyUnder(ctx, sp, d, nil)
+}
+
+// applyUnder is apply for a caller that holds the page's lock l (see remoteCall).
+func (s *Service) applyUnder(ctx context.Context, sp *space.Space, d *store.Draft, l *sync.Mutex) (*space.Page, error) {
 	var meta page.Meta
 	if err := meta.UnmarshalJSON([]byte(d.Meta)); err != nil {
 		return nil, err
 	}
-	p, err := sp.Save(d.PageID, d.BaseRev, meta, d.Body)
+	var p *space.Page
+	var err error
+	s.remoteCall(l, sp, d.SpaceID, d.PageID, func() { p, err = sp.Save(d.PageID, d.BaseRev, meta, d.Body) })
 	var ce *space.ConflictError
 	if errors.As(err, &ce) {
 		if cur, same, eerr := sp.Equivalent(d.PageID, meta, d.Body); eerr == nil && same {
@@ -386,7 +463,37 @@ func (s *Service) apply(ctx context.Context, sp *space.Space, d *store.Draft) (*
 	if _, err := store.DeleteDraftVersion(bk, s.st.Q(), d.SpaceID, d.PageID, d.UserID, d.Version); err != nil {
 		return nil, err
 	}
+	s.forget(d)
 	return p, nil
+}
+
+func backoffKey(d *store.Draft) string { return d.SpaceID + "\x00" + d.PageID + "\x00" + d.UserID }
+
+func (s *Service) forget(d *store.Draft) {
+	s.bmu.Lock()
+	delete(s.backoff, backoffKey(d))
+	s.bmu.Unlock()
+}
+
+// unavailableDelay is how long a draft waits after its space's remote could not
+// be reached: 30 seconds, then twice as long each time, at most ten minutes.
+func (s *Service) unavailableDelay(d *store.Draft) time.Duration {
+	s.bmu.Lock()
+	defer s.bmu.Unlock()
+	if len(s.backoff) >= maxBackoffs {
+		for k := range s.backoff { // bounded: drop an arbitrary entry
+			delete(s.backoff, k)
+			break
+		}
+	}
+	k := backoffKey(d)
+	n := s.backoff[k]
+	s.backoff[k] = n + 1
+	delay := unavailableBase
+	for i := 0; i < n && delay < unavailableMax; i++ {
+		delay *= 2
+	}
+	return min(delay, unavailableMax)
 }
 
 // Run sweeps every Tick until ctx ends. It returns after any draft it was
@@ -424,6 +531,9 @@ func (s *Service) Sweep(ctx context.Context) SweepResult {
 		}
 		return r
 	}
+	// A space whose remote did not answer is not tried again for its other
+	// drafts in this sweep: each attempt would wait for the same failure.
+	down := map[string]bool{}
 	for i := range due {
 		if ctx.Err() != nil {
 			break
@@ -432,7 +542,13 @@ func (s *Service) Sweep(ctx context.Context) SweepResult {
 		if s.hook != nil {
 			s.hook(d.SpaceID, d.PageID, d.UserID)
 		}
-		s.sweepOne(ctx, d, now, &r)
+		if down[d.SpaceID] {
+			s.delayUnavailable(ctx, &d, now, &r)
+			continue
+		}
+		if s.sweepOne(ctx, d, now, &r) {
+			down[d.SpaceID] = true
+		}
 	}
 	return r
 }
@@ -442,26 +558,28 @@ func (s *Service) Sweep(ctx context.Context) SweepResult {
 // slow (opening a space, which may rebuild an index) is done while holding a
 // draft lock for something else. So the sweeper opens the space first and only
 // then locks, and re-reads the draft under the lock.
-func (s *Service) sweepOne(ctx context.Context, d store.Draft, now time.Time, r *SweepResult) {
+func (s *Service) sweepOne(ctx context.Context, d store.Draft, now time.Time, r *SweepResult) (unavailable bool) {
 	sp, release, err := s.spaces.Acquire(ctx, d.SpaceID)
 	if err != nil {
 		s.log.Warn("could not open the space of a draft", "space", d.SpaceID, "error", err)
 		s.delay(ctx, &d, now, r)
-		return
+		return false
 	}
 	defer release()
 	l := s.lock(d.SpaceID, d.PageID, d.UserID)
 	l.Lock()
 	defer l.Unlock()
+	s.enter(l, d.SpaceID, d.PageID)
 	// The user may have committed or replaced it since the query.
 	cur, err := store.GetDraft(ctx, s.st.Q(), d.SpaceID, d.PageID, d.UserID)
 	if err != nil || cur.Held || cur.Due.After(now) {
-		return
+		return false
 	}
-	_, err = s.apply(ctx, sp, cur)
+	_, err = s.applyUnder(ctx, sp, cur, l)
 	var (
 		ce  *space.ConflictError
 		inv *space.InvalidError
+		ue  *space.UnavailableError
 	)
 	bk, cancel := bookkeeping(ctx)
 	defer cancel()
@@ -478,10 +596,22 @@ func (s *Service) sweepOne(ctx context.Context, d store.Draft, now time.Time, r 
 			s.log.Warn("a draft is kept although its page file is gone: its text can be recovered with \"petalbook draft export\"",
 				"space", cur.SpaceID, "page", cur.PageID)
 		}
+	case errors.As(err, &ue):
+		// The remote cannot be reached (or is paused). The draft is kept as it
+		// is, not held: it is the person's text, and nothing is wrong with it.
+		s.log.Warn("a draft waits for its space's remote", "space", cur.SpaceID, "page", cur.PageID, "reason", ue.Msg)
+		s.delayUnavailable(ctx, cur, now, r)
+		return true
 	default:
 		s.log.Warn("could not apply a draft; will try again", "space", cur.SpaceID, "page", cur.PageID, "error", err)
 		s.delay(ctx, cur, now, r)
 	}
+	return false
+}
+
+func (s *Service) delayUnavailable(ctx context.Context, d *store.Draft, now time.Time, r *SweepResult) {
+	r.Failed++
+	store.DelayDraft(ctx, s.st.Q(), d.SpaceID, d.PageID, d.UserID, d.Version, now.Add(s.unavailableDelay(d)))
 }
 
 func (s *Service) delay(ctx context.Context, d *store.Draft, now time.Time, r *SweepResult) {

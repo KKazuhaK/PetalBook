@@ -22,6 +22,7 @@ import (
 	"github.com/KazuhaHub/PetalBook/internal/api"
 	"github.com/KazuhaHub/PetalBook/internal/auth"
 	"github.com/KazuhaHub/PetalBook/internal/drafts"
+	"github.com/KazuhaHub/PetalBook/internal/gitstore"
 	"github.com/KazuhaHub/PetalBook/internal/space"
 	"github.com/KazuhaHub/PetalBook/internal/spaces"
 	"github.com/KazuhaHub/PetalBook/internal/store"
@@ -43,6 +44,13 @@ type serveConfig struct {
 	// and maxOpenSpaces decide when spaces that are not in use are closed.
 	maxSpaces, maxOpenSpaces int
 	spaceIdle                time.Duration
+	// pullInterval is how often a space that follows a remote is fetched (0:
+	// never by itself), remoteHosts the hosts a remote may be on, remoteTimeout
+	// how long one command that talks to a remote may take. remoteSet says one
+	// of them was given. remoteUnsafe lets tests use local paths as remotes.
+	pullInterval, remoteTimeout time.Duration
+	remoteHosts                 []string
+	remoteSet, remoteUnsafe     bool
 	// draftTick is how often due drafts are looked for (tests shorten it).
 	draftTick         time.Duration
 	nameSet, insecure bool
@@ -82,13 +90,25 @@ directory directly.
 Either way a space is a Git repository. Typing is kept as a draft in the state
 database; a draft becomes the file after --draft-idle without changes (or
 --draft-max after the first), and the file is committed a few seconds later by
-a background committer, and when the server stops. Nothing is ever pushed.
+a background committer, and when the server stops.
+
+In accounts mode the owner of a space may make it follow a remote repository
+(https with an access token, or ssh with a deploy key the server makes). Then
+the remote branch is the truth: every change is committed and pushed before the
+request is answered, and the server fetches the remote every --pull-interval and
+moves the space forward to it. It never forces a push and never rewrites
+anything on the remote; if the remote's history was rewritten the space pauses
+until its owner accepts the new history. Remotes may only be on the hosts given
+with --remote-host. Their credentials are stored encrypted with the key in
+DATA/secret.key (made on first use) or in PETALBOOK_SECRET_KEY, and are passed to
+git through its environment, never on a command line or in a log.
 
 --database is a SQLite file path or a postgres:// URL; as it may contain a
 password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c.nameSet = cmd.Flags().Changed("name")
+			c.remoteSet = cmd.Flags().Changed("pull-interval") || cmd.Flags().Changed("remote-host") || cmd.Flags().Changed("remote-timeout")
 			c.oidcClientSecret = os.Getenv("PETALBOOK_OIDC_CLIENT_SECRET")
 			c.logger = slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), nil))
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
@@ -116,6 +136,9 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 	f.DurationVar(&c.commitMax, "commit-max", space.DefaultCommitMax, "commit at most this long after the first uncommitted write")
 	f.DurationVar(&c.draftIdle, "draft-idle", drafts.DefaultIdle, "write a draft to its file after this long without changes")
 	f.DurationVar(&c.draftMax, "draft-max", drafts.DefaultMax, "write a draft to its file at most this long after it was first stored")
+	f.DurationVar(&c.pullInterval, "pull-interval", spaces.DefaultPullInterval, "accounts mode: fetch the remote of every open space that follows one this often, jittered (0: never by itself; a space is also fetched when it is opened)")
+	f.StringSliceVar(&c.remoteHosts, "remote-host", gitstore.DefaultHosts, "accounts mode: a host a space's remote repository may be on (repeatable, or comma-separated; * allows any host); giving it replaces the default list")
+	f.DurationVar(&c.remoteTimeout, "remote-timeout", 60*time.Second, "accounts mode: how long one fetch or push may take before the remote counts as unreachable")
 	f.IntVar(&c.maxSpaces, "max-spaces", spaces.DefaultMaxSpaces, "accounts mode: how many spaces one user may own (0: no limit)")
 	f.DurationVar(&c.spaceIdle, "space-idle", spaces.DefaultIdleAfter, "accounts mode: close a space that has not been used for this long (it reopens on the next request)")
 	f.IntVar(&c.maxOpenSpaces, "max-open-spaces", spaces.DefaultMaxOpen, "accounts mode: at most this many spaces open at once; the least recently used are closed first")
@@ -172,6 +195,14 @@ func (c serveConfig) check() (*checked, error) {
 	if c.maxSpaces < 0 || c.maxOpenSpaces < 0 || c.spaceIdle < 0 {
 		return nil, errors.New("--max-spaces, --max-open-spaces and --space-idle must not be negative")
 	}
+	if c.pullInterval < 0 || c.remoteTimeout < 0 {
+		return nil, errors.New("--pull-interval and --remote-timeout must not be negative")
+	}
+	for _, h := range c.remoteHosts {
+		if h = strings.TrimSpace(h); h == "" || strings.ContainsAny(h, "/@ \t") || strings.Contains(h, "://") {
+			return nil, fmt.Errorf("--remote-host %q must be a host name such as github.com, or *", h)
+		}
+	}
 	if c.draftIdle < 0 || c.draftMax < 0 || (c.draftIdle > 0 && c.draftMax > 0 && c.draftMax < c.draftIdle) {
 		return nil, errors.New("--draft-max must not be shorter than --draft-idle")
 	}
@@ -183,6 +214,9 @@ func (c serveConfig) check() (*checked, error) {
 			return nil, errors.New("--state-dir and --name are for single-user mode (--space); in accounts mode the data directory holds everything")
 		}
 	} else {
+		if c.remoteSet {
+			return nil, errors.New("--pull-interval, --remote-host and --remote-timeout are for accounts mode (--data): a single-user space stays local")
+		}
 		if c.publicURL != "" || len(c.trustedProxies) > 0 || c.oidcIssuer != "" || c.oidcClientID != "" || c.oidcClientSecretFile != "" || c.oidcClientSecret != "" || c.oidcName != "" || len(c.oidcScopes) > 0 || c.oidcAutoCreate {
 			return nil, errors.New("--public-url, --trusted-proxy and --oidc-* are for accounts mode (--data)")
 		}
@@ -304,7 +338,9 @@ func runServe(ctx context.Context, c serveConfig) error {
 		}
 		if mgr, err = spaces.NewAccounts(spaces.Options{Store: st, DataDir: c.data, Committer: c.committer,
 			CommitIdle: c.commitIdle, CommitMax: c.commitMax, Logger: log,
-			MaxSpaces: c.maxSpaces, IdleAfter: c.spaceIdle, MaxOpen: c.maxOpenSpaces}); err != nil {
+			MaxSpaces: c.maxSpaces, IdleAfter: c.spaceIdle, MaxOpen: c.maxOpenSpaces,
+			PullInterval: c.pullInterval, NetTimeout: c.remoteTimeout,
+			RemotePolicy: gitstore.Policy{Hosts: c.remoteHosts, AllowUnsafe: c.remoteUnsafe}}); err != nil {
 			return err
 		}
 		if svc, err = auth.New(ctx, auth.Config{Store: st, Spaces: mgr, PublicURL: cfg.publicURL, TrustedProxies: cfg.proxies,
@@ -368,6 +404,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 	run(drf.Run)
 	if cfg.accounts {
 		run(mgr.Run)
+		run(mgr.RunPull)
 	}
 	if svc != nil {
 		run(svc.Run)

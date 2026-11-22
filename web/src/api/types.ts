@@ -7,6 +7,9 @@ export interface SpaceInfo {
   role: string
   // Made together with the account.
   personal: boolean
+  // `local` (the repository lives on the server only) or the state of the
+  // remote it follows. A server that does not say is taken to be local.
+  sync?: SyncState
 }
 export interface MetaResponse {
   version: string
@@ -104,6 +107,68 @@ export interface TagsResponse {
   tags: { tag: string; pages: number }[]
 }
 
+// --- history (docs/api.md, "History") -------------------------------------------
+
+export type VersionChange = 'add' | 'edit' | 'move' | 'delete'
+// One commit that changed the page's file, newest first in a listing.
+export interface HistoryItem {
+  commit: string
+  time: string
+  author: string
+  path: string
+  // Absent for the version in which the page was deleted.
+  rev?: string
+  change: VersionChange
+}
+export interface HistoryList {
+  items: HistoryItem[]
+  next: string
+}
+// The page as it was in one version.
+export interface PageVersion {
+  commit: string
+  time: string
+  author: string
+  path: string
+  rev?: string
+  meta: PageMeta
+  body: string
+}
+
+// --- remote repository (docs/api.md, "Remote repository") -------------------------
+
+export type RemoteState = 'ok' | 'offline' | 'rewritten' | 'error'
+export type SyncState = 'local' | RemoteState
+
+export type RemoteCredential = { type: 'ssh'; publicKey: string; fingerprint: string } | { type: 'token'; username: string }
+
+export interface Remote {
+  url: string
+  branch: string
+  credential: RemoteCredential
+  state: RemoteState
+  // Absent before the first time the server saw the remote.
+  lastSync?: string
+  // In words fit to show; empty when all is well.
+  error: string
+  // SSH only: the host key trusted on first connection.
+  hostKey?: string
+  // Set when `state` is `rewritten`.
+  rewritten: { lastGood: string; remote: string } | null
+}
+
+export interface RemoteKey {
+  publicKey: string
+  fingerprint: string
+}
+
+export interface ConnectRemoteInput {
+  url: string
+  branch?: string
+  // A token left out while the space already has one keeps it.
+  credential: { type: 'ssh' } | { type: 'token'; username?: string; token?: string }
+}
+
 export type ErrorCode =
   | 'not_found'
   | 'invalid'
@@ -112,6 +177,7 @@ export type ErrorCode =
   | 'unauthenticated'
   | 'forbidden'
   | 'rate_limited'
+  | 'unavailable'
   | 'internal'
   | 'network'
   | 'unknown'

@@ -6,7 +6,9 @@ import type {
   CreatePageInput,
   DraftInput,
   DraftReceipt,
+  ConnectRemoteInput,
   ErrorCode,
+  HistoryList,
   Invite,
   InviteCheck,
   ListParams,
@@ -15,6 +17,9 @@ import type {
   Page,
   PageDraft,
   PageList,
+  PageVersion,
+  Remote,
+  RemoteKey,
   Role,
   SavePageInput,
   SessionInfo,
@@ -98,9 +103,24 @@ const SIGN_IN_PATHS = /^\/(login|logout|setup|session|meta|invites\/(check|accep
 // a wrong current password, a member asking for admin things), not a refused
 // origin. Page and space endpoints have no such 403: a space of someone else
 // is a 404.
-const USER_LEVEL_403 = /^\/(setup|account(\/.*)?|users(\/.*)?|invites(\/.*)?)$|^\/spaces(\/[^/]+)?$/
+// The remote endpoints answer 403 for a host the administrator did not allow.
+const USER_LEVEL_403 = /^\/(setup|account(\/.*)?|users(\/.*)?|invites(\/.*)?)$|^\/spaces(\/[^/]+(\/remote(\/.*)?)?)?$/
+
+// --- a remote that cannot be reached ---------------------------------------------
+//
+// A space that follows a remote answers every write with 503 `unavailable`
+// while the remote is out of reach or paused. The app learns of it once, from
+// whichever request hit it, so the sync indicator can look again.
+
+type UnavailableListener = () => void
+const unavailableListeners = new Set<UnavailableListener>()
+export function onUnavailable(fn: UnavailableListener): () => void {
+  unavailableListeners.add(fn)
+  return () => void unavailableListeners.delete(fn)
+}
 
 export const isConflict = (e: unknown): e is ApiError => e instanceof ApiError && e.code === 'conflict'
+export const isUnavailable = (e: unknown): e is ApiError => e instanceof ApiError && e.code === 'unavailable'
 export const isUnauthenticated = (e: unknown): e is ApiError => e instanceof ApiError && e.status === 401
 
 // Browsers refuse keepalive requests whose body is over 64 KiB; stay under it
@@ -158,6 +178,7 @@ async function request<T>(path: string, { method = 'GET', body, keepalive, signa
       throw new ApiError(res.status, 'forbidden', message)
     }
     if (res.status === 401 && !isSignIn) markSignedOut()
+    if (err.error === 'unavailable') unavailableListeners.forEach((fn) => fn())
     const retry = Number(res.headers.get('Retry-After'))
     throw new ApiError(
       res.status,
@@ -209,6 +230,24 @@ export function spaceApi(space: string) {
     tree: (signal?: AbortSignal) => request<TreeResponse>(base('/tree'), { signal }),
     createFolder: (path: string) => request<{ path: string }>(base('/folders'), { method: 'POST', body: { path } }),
     tags: (signal?: AbortSignal) => request<TagsResponse>(base('/tags'), { signal }),
+
+    // History: nothing here is asked for until the history panel is open.
+    history: (id: string, params: { limit?: number; cursor?: string } = {}, signal?: AbortSignal) => {
+      const q = new URLSearchParams()
+      if (params.limit) q.set('limit', String(params.limit))
+      if (params.cursor) q.set('cursor', params.cursor)
+      const qs = q.toString()
+      return request<HistoryList>(pageBase(id, `/history${qs ? `?${qs}` : ''}`), { signal })
+    },
+    version: (id: string, commit: string, signal?: AbortSignal) => request<PageVersion>(pageBase(id, `/versions/${enc(commit)}`), { signal }),
+
+    // The remote repository of the space (accounts mode, owner only).
+    getRemote: (signal?: AbortSignal) => request<Remote>(base('/remote'), { signal }),
+    remoteKey: (rotate = false) => request<RemoteKey>(base('/remote/key'), { method: 'POST', body: rotate ? { rotate: true } : {} }),
+    connectRemote: (input: ConnectRemoteInput) => request<Remote>(base('/remote'), { method: 'PUT', body: input }),
+    disconnectRemote: () => request<void>(base('/remote'), { method: 'DELETE' }),
+    syncRemote: () => request<Remote>(base('/remote/sync'), { method: 'POST' }),
+    acceptRemote: (commit: string) => request<Remote>(base('/remote/accept'), { method: 'POST', body: { commit } }),
 
     reindex: () => request<{ pages: number; ms: number }>(base('/reindex'), { method: 'POST' }),
   }

@@ -9,7 +9,8 @@ const quiet = 'inline-flex items-center gap-1 text-xs text-muted-foreground'
 // server as a draft, written to the page as a version, or not getting through
 // (offline or error, with a retry), or in conflict. Each state has its own
 // icon and words, so it does not depend on colour.
-export function SaveIndicator({ snapshot, onRetry, onOpenConflict }: { snapshot: SaveSnapshot; onRetry: () => void; onOpenConflict: () => void }) {
+// `draftSafe`: the server holds everything that was typed (nothing is only in this browser).
+export function SaveIndicator({ snapshot, draftSafe, onRetry, onOpenConflict }: { snapshot: SaveSnapshot; draftSafe: boolean; onRetry: () => void; onOpenConflict: () => void }) {
   const s = t.editor.save
   switch (snapshot.state) {
     case 'saved':
@@ -51,6 +52,23 @@ export function SaveIndicator({ snapshot, onRetry, onOpenConflict }: { snapshot:
       const e = snapshot.error
       const signedOut = e instanceof ApiError && e.status === 401
       const offline = e instanceof ApiError && e.code === 'network'
+      // The space follows a remote that cannot be reached: the commit was refused,
+      // the draft is untouched. Said as what it is, not as a failed save.
+      if (e instanceof ApiError && e.code === 'unavailable') {
+        const u = t.remote.unavailable
+        return (
+          <button
+            type="button"
+            onClick={onRetry}
+            title={`${draftSafe ? u.commitDraftHint : u.commitLocalHint}${e.message ? `（${e.message}）` : ''}`}
+            role="alert"
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-warning hover:bg-warning/10"
+          >
+            <CloudOff className="size-3.5" />
+            {draftSafe ? u.commitDraft : u.commitLocal}（{s.retry}）
+          </button>
+        )
+      }
       const Icon = signedOut ? LogIn : offline ? CloudOff : RotateCw
       return (
         <button

@@ -250,3 +250,38 @@ describe('429 and 403 that are not about the origin', () => {
     expect(seen).toHaveLength(1)
   })
 })
+
+describe('a remote that cannot be reached', () => {
+  const answer = (status: number, body: unknown) => (() => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))) as typeof fetch
+
+  it('503 unavailable is its own error code with the server\'s message, and tells the listeners once', async () => {
+    const { onUnavailable, isUnavailable } = await import('./client')
+    globalThis.fetch = answer(503, { error: 'unavailable', message: '远端仓库现在连不上' })
+    let told = 0
+    const off = onUnavailable(() => told++)
+    const e = await api.commitPage('01ZZZZZZZZ', 'v1').catch((x: unknown) => x)
+    off()
+    expect(e).toBeInstanceOf(ApiError)
+    expect(isUnavailable(e)).toBe(true)
+    expect(e).toMatchObject({ status: 503, code: 'unavailable', message: '远端仓库现在连不上' })
+    expect(told).toBe(1)
+  })
+
+  it('a 403 from the remote endpoints is about the host, not a refused origin', async () => {
+    const seen: string[] = []
+    const off = onForbidden((m) => seen.push(m))
+    globalThis.fetch = answer(403, { error: 'forbidden', message: '管理员没有允许连接 example.org' })
+    const e = await api.connectRemote({ url: 'https://example.org/a.git', credential: { type: 'ssh' } }).catch((x: unknown) => x)
+    off()
+    expect(e).toMatchObject({ status: 403, code: 'forbidden', message: '管理员没有允许连接 example.org' })
+    expect(seen).toEqual([])
+  })
+
+  it('history and version paths and the remote endpoints go where the contract says', async () => {
+    const [{ id }] = (await api.listPages({ limit: 1 })).items
+    await api.history(id, { limit: 5 })
+    await expect(api.version(id, 'abc')).rejects.toMatchObject({ status: 404 })
+    await expect(api.getRemote()).rejects.toMatchObject({ status: 404 })
+    expect(calls.slice(-3).map((c) => `${c.method} ${c.url}`)).toEqual([`GET /api/spaces/default/pages/${id}/history?limit=5`, `GET /api/spaces/default/pages/${id}/versions/abc`, 'GET /api/spaces/default/remote'])
+  })
+})

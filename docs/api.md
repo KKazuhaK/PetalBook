@@ -1,6 +1,7 @@
 # HTTP API
 
-Status: milestone 1.2 (sign-in, several spaces, drafts kept on the server).
+Status: milestone 1.3 (a space can follow a remote Git repository; page
+history). Before it: 1.2 (sign-in, several spaces, drafts kept on the server).
 Endpoints and fields will be added in later milestones; what is listed here is
 not expected to change shape.
 
@@ -16,7 +17,9 @@ The web app talks to the server only through this API.
   `conflict` (409), `exists` (409), `unauthenticated` (401: not signed in, or
   wrong credentials), `forbidden` (403: cross-site requests, see below, and
   actions the signed-in user may not take), `rate_limited` (429, with a
-  `Retry-After` header in seconds), `internal` (500).
+  `Retry-After` header in seconds), `unavailable` (503: the space follows a
+  remote repository that cannot be reached or is paused, see "Remote
+  repository"; nothing was changed), `internal` (500).
 - **Cross-site requests.** These rules keep other web sites from using a
   browser to change pages, and in loopback-only mode from reading them. They
   apply to every request. With `--insecure-no-auth` a site that controls a DNS
@@ -287,11 +290,13 @@ taken (the invite stays usable).
 ### Space
 
 ```json
-{"id": "01JD3K8Q7Z", "name": "My notes", "role": "owner", "personal": true}
+{"id": "01JD3K8Q7Z", "name": "My notes", "role": "owner", "personal": true, "sync": "local"}
 ```
 
 `role` is the caller's role in the space; in this milestone always `owner`.
-`personal` marks the space made together with the account.
+`personal` marks the space made together with the account. `sync` is `local`
+(the repository exists only on the server) or the `state` of its remote (see
+"Remote repository").
 
 ### `GET /api/spaces`
 
@@ -308,6 +313,122 @@ the caller already owns as many spaces as the server allows (`--max-spaces`,
 ### `PATCH /api/spaces/{space}`
 
 Accounts mode. `{"name": "…"}`. `200` with the space.
+
+## Remote repository
+
+Accounts mode; the space's owner only (`403 forbidden` for anyone else who can
+open the space). A space either keeps its repository on the server only, or
+follows a remote: then the remote branch is the truth.
+
+- The server fetches the remote every minute (`--pull-interval`) and moves
+  the space forward to it. Changes made on the remote directly (on GitHub,
+  from another clone) show up after that, in pages, lists and search.
+- Every change to a file made through this API (creating, saving, committing
+  a draft, moving, deleting) is made on top of the remote's current state and
+  pushed before the request is answered. If the remote moved in between, the
+  change is made again on the new state; a save or commit whose page changed
+  on the remote answers `409 conflict` exactly as it does for any other
+  change to the file. The server never forces a push and never rewrites or
+  deletes anything on the remote.
+- When the remote cannot be reached, those requests answer `503 unavailable`
+  and change nothing. Drafts are not affected: typing keeps being stored, and
+  the server commits a draft once the remote is back.
+- If the remote's history was rewritten (the branch no longer contains the
+  last commit the server saw), the space is paused: reads keep working from
+  what the server has, writes answer `503 unavailable`, until the owner
+  accepts the remote's new history.
+- An empty folder exists only on the server: Git does not carry it.
+
+Only `https://host/path` and SSH addresses (`git@host:path`,
+`ssh://[user@]host[:port]/path`) are accepted, without a password in them, and
+only for hosts the administrator allows (`--remote-host`, repeatable; by
+default `github.com`, `gitlab.com`, `codeberg.org`, `bitbucket.org`; `*`
+allows any).
+
+### Remote
+
+```json
+{
+  "url": "git@github.com:kazuha/notes.git",
+  "branch": "main",
+  "credential": {"type": "ssh", "publicKey": "ssh-ed25519 AAAA… petalbook-01JD3K8Q7Z", "fingerprint": "SHA256:…"},
+  "state": "ok",
+  "lastSync": "2026-11-21T08:30:00Z",
+  "error": "",
+  "hostKey": "SHA256:…",
+  "rewritten": null
+}
+```
+
+- `credential.type`: `ssh` (a key pair the server made for this space; the
+  private key never leaves the server and is never returned; `publicKey` is
+  what to add to the repository as a deploy key with write access) or `token`
+  (`{"type": "token", "username": "x-access-token"}`; the token is never
+  returned).
+- `state`: `ok`; `offline` (the last attempt could not reach the remote;
+  `error` says why, in words fit to show); `rewritten` (paused, see above;
+  `rewritten` is then `{"lastGood": "<commit>", "remote": "<commit>"}`);
+  `error` (anything else that needs attention: the credential is refused, the
+  host key changed, the clone is not in the state the server left it in).
+- `lastSync`: when the server last saw the remote (absent before the first).
+- `hostKey`: for SSH, the fingerprint of the host key trusted on first
+  connection, to compare with what the host publishes.
+
+Secrets are stored encrypted with a key kept in the data directory
+(`secret.key`, or `PETALBOOK_SECRET_KEY`), and are passed to Git through its
+environment, never on a command line, in a URL, in Git's configuration or in
+a log.
+
+### `GET /api/spaces/{space}/remote`
+
+`200` with the remote, or `404 not_found` when the space is local.
+
+### `POST /api/spaces/{space}/remote/key`
+
+Makes (or returns, if there is one already) the SSH key pair of this space,
+so the public key can be added to the repository before connecting. `200`
+with `{"publicKey": "…", "fingerprint": "…"}`. With `{"rotate": true}` a new
+pair replaces the old one (only while the space is local).
+
+### `PUT /api/spaces/{space}/remote`
+
+```json
+{"url": "https://github.com/kazuha/notes.git", "branch": "main",
+ "credential": {"type": "token", "username": "x-access-token", "token": "…"}}
+```
+
+`branch` defaults to `main`. For `ssh` the credential is `{"type": "ssh"}`
+(the key from `…/remote/key`). Leaving `credential.token` out while the space
+already has a token keeps it. The server connects before answering:
+
+- the remote has no such branch (a new, empty repository): the space's
+  history is pushed to it;
+- the space is pristine (no page and no folder was ever made in it): the
+  space takes the remote's content and history;
+- one side's history contains the other's: the one behind is moved forward;
+- otherwise `409 conflict`: both have content of their own, and the server
+  will not merge two histories. Make a new space for that repository.
+
+`200` with the remote. `400 invalid` for an address that is not accepted;
+`403 forbidden` for a host that is not allowed; `503 unavailable` when the
+remote cannot be reached or refuses the credential (nothing is changed, and
+`message` says which).
+
+### `DELETE /api/spaces/{space}/remote`
+
+`204`. The space becomes local, with everything it has; the credential is
+deleted. Nothing is changed on the remote.
+
+### `POST /api/spaces/{space}/remote/sync`
+
+Fetches now. `200` with the remote.
+
+### `POST /api/spaces/{space}/remote/accept`
+
+`{"commit": "<the remote commit shown in rewritten.remote>"}`. Accepts a
+rewritten history: the space moves to that commit. `200` with the remote;
+`409 conflict` if the remote is no longer at that commit. Drafts are kept;
+those whose page changed are stale and are shown as such.
 
 ## Pages
 
@@ -507,6 +628,36 @@ nothing is deleted, so a client that drops its draft because its text equals
 the file finds out when the file is no longer the one it knows.
 
 Deleting a page deletes its drafts.
+
+### History
+
+A version of a page is a commit that changed its file. The history follows
+the page through renames and moves.
+
+#### `GET /api/spaces/{space}/pages/{id}/history`
+
+Query: `limit` (1–100, default 30), `cursor`.
+
+```json
+{"items": [{"commit": "9fceb02d0ae598e95dc970b74767f19372d61af8", "time": "2026-11-21T08:30:00Z",
+            "author": "Kazuha", "path": "Tang/暮雪.md", "rev": "3b18e5…", "change": "edit"}],
+ "next": ""}
+```
+
+Newest first. `author` is the name on the commit. `rev` is the rev of the
+file in that version. `change` is `add`, `edit` (content changed), `move`
+(only the path changed) or `delete`. A version in which the page was deleted
+has no `rev`.
+
+#### `GET /api/spaces/{space}/pages/{id}/versions/{commit}`
+
+The page as it was in that version: `{"commit", "time", "author", "path",
+"rev", "meta", "body"}`. `404 not_found` when that commit is not a version of
+this page (it is not possible to read any other file through this endpoint).
+
+Going back to an old version is an ordinary edit: the app loads the old
+content into the editor and it is stored and committed like anything typed, as
+a new version. History is never rewritten.
 
 ### `POST /api/spaces/{space}/pages/{id}/move`
 

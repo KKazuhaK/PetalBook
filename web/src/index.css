@@ -233,3 +233,81 @@
 .pb-subtitle { font-size: 1.1rem; line-height: 1.6; color: var(--muted-foreground); }
 .pb-source { font-size: 0.875rem; line-height: 1.5; color: var(--muted-foreground); }
 .pb-title::placeholder, .pb-subtitle::placeholder, .pb-source::placeholder { color: var(--muted-foreground); opacity: 0.5; }
+
+/* ---- comparing versions ----
+   Insertion: green, underlined. Deletion: red, struck through. Format change:
+   blue, wavy underline. A block that only moved: purple, dashed outline. None of
+   them depends on colour alone, and each carries a hidden label (`data-sr`) that
+   a screen reader reads where the change starts. */
+:root {
+  --diff-ins-bg: oklch(0.93 0.08 150);
+  --diff-ins-line: oklch(0.5 0.15 150);
+  --diff-del-bg: oklch(0.93 0.06 22);
+  --diff-del-fg: oklch(0.42 0.16 25);
+  --diff-del-line: oklch(0.55 0.2 25);
+  --diff-fmt-bg: oklch(0.94 0.04 255);
+  --diff-fmt-line: oklch(0.5 0.17 255);
+  --diff-move-bg: oklch(0.94 0.04 300);
+  --diff-move-line: oklch(0.5 0.14 300);
+}
+.dark {
+  --diff-ins-bg: oklch(0.34 0.07 150);
+  --diff-ins-line: oklch(0.78 0.16 150);
+  --diff-del-bg: oklch(0.34 0.08 22);
+  --diff-del-fg: oklch(0.84 0.1 22);
+  --diff-del-line: oklch(0.75 0.17 25);
+  --diff-fmt-bg: oklch(0.33 0.06 255);
+  --diff-fmt-line: oklch(0.78 0.13 255);
+  --diff-move-bg: oklch(0.33 0.06 300);
+  --diff-move-line: oklch(0.78 0.12 300);
+}
+
+.pb-diff { min-height: 0; padding-bottom: 6rem; cursor: default; }
+.pb-diff ins { background: var(--diff-ins-bg); text-decoration: underline; text-decoration-color: var(--diff-ins-line); text-decoration-thickness: 2px; text-underline-offset: 0.2em; border-radius: 0.2em; }
+.pb-diff del { background: var(--diff-del-bg); color: var(--diff-del-fg); text-decoration: line-through; text-decoration-color: var(--diff-del-line); text-decoration-thickness: 2px; border-radius: 0.2em; }
+.pb-diff .pb-diff-fmt { background: var(--diff-fmt-bg); text-decoration: underline wavy var(--diff-fmt-line); text-decoration-thickness: 1.5px; text-underline-offset: 0.28em; border-radius: 0.2em; }
+.pb-diff img { max-width: 100%; }
+.pb-diff ins img { outline: 3px solid var(--diff-ins-line); outline-offset: 2px; }
+.pb-diff del img { outline: 3px dashed var(--diff-del-line); outline-offset: 2px; opacity: 0.6; }
+
+/* Whole blocks: a bar on the left, a tinted background, and the same text
+   decoration as the inline kinds, which runs on into everything inside. */
+.pb-diff [data-diff="ins"]:not(ins):not(del):not(span) { background: var(--diff-ins-bg); box-shadow: inset 3px 0 0 var(--diff-ins-line); text-decoration: underline; text-decoration-color: var(--diff-ins-line); text-decoration-thickness: 1px; text-underline-offset: 0.2em; }
+.pb-diff [data-diff="del"]:not(ins):not(del):not(span) { background: var(--diff-del-bg); color: var(--diff-del-fg); box-shadow: inset 3px 0 0 var(--diff-del-line); text-decoration: line-through; text-decoration-color: var(--diff-del-line); text-decoration-thickness: 1px; }
+.pb-diff [data-diff="fmt"]:not(ins):not(del):not(span) { background: var(--diff-fmt-bg); box-shadow: inset 3px 0 0 var(--diff-fmt-line); text-decoration: underline dotted var(--diff-fmt-line); text-decoration-thickness: 2px; text-underline-offset: 0.25em; }
+.pb-diff [data-diff-move]:not(ins):not(del):not(span) { background: var(--diff-move-bg); color: inherit; box-shadow: none; outline: 1.5px dashed var(--diff-move-line); outline-offset: 1px; text-decoration: none; opacity: 0.85; }
+.pb-diff [data-diff="del"][data-diff-move]:not(ins):not(del):not(span) { opacity: 0.6; }
+/* Inside a block that is changed as a whole, the text inside is not marked again. */
+.pb-diff [data-diff="del"] ins, .pb-diff [data-diff="ins"] del { background: transparent; }
+/* A deleted block's own descendants that are marked as inserted cannot happen; this is only for text colour. */
+.pb-diff tr[data-diff] { box-shadow: none; }
+.pb-diff tr[data-diff="ins"] > td, .pb-diff tr[data-diff="ins"] > th { background: var(--diff-ins-bg); }
+.pb-diff tr[data-diff="del"] > td, .pb-diff tr[data-diff="del"] > th { background: var(--diff-del-bg); }
+.pb-diff td[data-diff="fmt"], .pb-diff th[data-diff="fmt"] { box-shadow: none; outline: 1.5px dotted var(--diff-fmt-line); outline-offset: -2px; }
+
+/* The label a screen reader reads; the tooltip (`title`) says the same to everyone else. */
+.pb-diff [data-sr]::before { content: attr(data-sr); position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.pb-diff aside[data-sr]::before { content: "[^" attr(data-footnote-def) "]"; position: static; width: auto; height: auto; margin: 0 0.5em 0 0; clip: auto; overflow: visible; }
+.pb-diff aside[data-sr]::after { content: attr(data-sr); position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.pb-diff .pb-diff-current { outline: 2px solid var(--brand); outline-offset: 3px; border-radius: 0.3em; }
+
+/* The same marks outside the editor (header changes, the legend). */
+.pb-diff-sample ins { background: var(--diff-ins-bg); text-decoration: underline; text-decoration-color: var(--diff-ins-line); text-decoration-thickness: 2px; text-underline-offset: 0.2em; border-radius: 0.2em; padding: 0 0.15em; }
+.pb-diff-sample del { background: var(--diff-del-bg); color: var(--diff-del-fg); text-decoration: line-through; text-decoration-color: var(--diff-del-line); text-decoration-thickness: 2px; border-radius: 0.2em; padding: 0 0.15em; }
+.pb-diff-sample .pb-diff-fmt { background: var(--diff-fmt-bg); text-decoration: underline wavy var(--diff-fmt-line); text-decoration-thickness: 1.5px; text-underline-offset: 0.28em; border-radius: 0.2em; padding: 0 0.15em; }
+.pb-diff-sample .pb-diff-move { background: var(--diff-move-bg); outline: 1.5px dashed var(--diff-move-line); outline-offset: 1px; border-radius: 0.2em; padding: 0 0.15em; }
+
+/* Line by line. The sign column says what a line is without colour. */
+.pb-rawdiff { font-family: var(--font-mono); font-size: 0.85rem; line-height: 1.6; }
+.pb-rawdiff .pb-line { display: grid; grid-template-columns: 3.2rem 3.2rem 1.4rem minmax(0, 1fr); }
+.pb-rawdiff .pb-line > span { padding: 0 0.4rem; }
+.pb-rawdiff .pb-no { text-align: right; color: var(--muted-foreground); user-select: none; }
+.pb-rawdiff .pb-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.pb-rawdiff .pb-line[data-op="ins"] { background: var(--diff-ins-bg); }
+.pb-rawdiff .pb-line[data-op="del"] { background: var(--diff-del-bg); }
+.pb-rawdiff .pb-line[data-op="del"] .pb-text { text-decoration: line-through; text-decoration-color: var(--diff-del-line); }
+.pb-rawdiff .pb-sign { font-weight: 700; text-align: center; user-select: none; }
+@media (max-width: 640px) {
+  .pb-rawdiff .pb-line { grid-template-columns: 2.2rem 2.2rem 1.2rem minmax(0, 1fr); }
+}

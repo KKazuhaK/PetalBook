@@ -745,3 +745,93 @@ func (h *hookSource) Walk(f func(FileInfo) error, d func(string) error) error {
 	}
 	return err
 }
+
+// Refresh must end where a full rebuild of the same files would, while
+// reading only the files it is told about.
+func TestRefreshAgreesWithARebuildAndReadsOnlyTheChanged(t *testing.T) {
+	m := newMem()
+	for i := 0; i < 30; i++ {
+		m.put(fmt.Sprintf("d%d/p%02d.md", i%3, i), pageFile(fmt.Sprintf("P%09d", i), fmt.Sprintf("T%02d", i), "", []string{"x"}, "2026-11-0"+fmt.Sprint(i%9+1), "body "+fmt.Sprint(i)+"\n"))
+	}
+	m.put("swap/a.md", pageFile("SWAPAAAAAA", "A", "", nil, "", "a\n"))
+	m.put("swap/b.md", pageFile("SWAPBBBBBB", "B", "", nil, "", "b\n"))
+	m.put("twin/one.md", pageFile("TWXNTWXNTW", "One", "", nil, "", "1\n"))
+	x := openIndex(t)
+	syncAll(t, x, m, false)
+
+	var paths []string
+	touch := func(p string) { paths = append(paths, p) }
+	// edited
+	m.put("d1/p01.md", pageFile("P000000001", "T01 edited", "", []string{"x", "y"}, "", "new\n"))
+	touch("d1/p01.md")
+	// deleted
+	delete(m.files, "d2/p02.md")
+	touch("d2/p02.md")
+	// added, in a folder that did not exist
+	m.put("fresh/new.md", pageFile("NEWNEWNEWN", "New", "", nil, "", "n\n"))
+	touch("fresh/new.md")
+	// renamed: same id at another path (old path gone)
+	m.files["d0/renamed.md"] = m.files["d0/p03.md"]
+	delete(m.files, "d0/p03.md")
+	touch("d0/p03.md")
+	touch("d0/renamed.md")
+	// the id of a file changed
+	m.put("d1/p04.md", pageFile("CHANGEDXD1", "T04 with a new id", "", nil, "", "x\n"))
+	touch("d1/p04.md")
+	// two files swapped their paths
+	m.files["swap/a.md"], m.files["swap/b.md"] = m.files["swap/b.md"], m.files["swap/a.md"]
+	touch("swap/a.md")
+	touch("swap/b.md")
+	// a file that takes the id of another file that is still there: a duplicate
+	m.put("twin/two.md", pageFile("P000000010", "Twin of 10", "", nil, "", "dup\n"))
+	touch("twin/two.md")
+	// a whole folder disappears
+	delete(m.files, "twin/one.md")
+	touch("twin/one.md")
+
+	m.reads.Store(0)
+	dirs := []string{"d0", "d1", "d2", "fresh", "swap", "twin"}
+	if _, err := x.Refresh(m, append([]string{"d0/p03.md"}, paths...), dirs); err != nil { // duplicates in the list are fine
+		t.Fatal(err)
+	}
+	// 7 files exist among the 9 distinct paths given (two are gone).
+	if got := m.reads.Load(); got != 7 {
+		t.Fatalf("refresh read %d files, want 7", got)
+	}
+	y := openIndex(t)
+	syncAll(t, y, m, true)
+	if a, b := dump(t, x), dump(t, y); !reflect.DeepEqual(a, b) {
+		t.Fatalf("refresh and rebuild disagree:\n%v\n%v", a, b)
+	}
+	for id, want := range map[string]string{"P000000001": "d1/p01.md", "P000000003": "d0/renamed.md", "SWAPAAAAAA": "swap/b.md", "SWAPBBBBBB": "swap/a.md", "CHANGEDXD1": "d1/p04.md", "NEWNEWNEWN": "fresh/new.md"} {
+		if got := pathOf(t, x, id); got != want {
+			t.Errorf("%s at %q, want %q", id, got, want)
+		}
+	}
+	if _, ok := x.PathByID("P000000004"); ok {
+		t.Error("the old id of the changed file is still indexed")
+	}
+	if probs, _ := x.Problems(); len(probs) != 1 || probs[0].Path != "twin/two.md" || probs[0].Code != "duplicate_id" {
+		t.Fatalf("%+v", probs)
+	}
+	tree, _ := x.Tree()
+	var folders []string
+	for _, f := range tree {
+		folders = append(folders, f.Path)
+	}
+	sort.Strings(folders)
+	if strings.Join(folders, ",") != ",d0,d1,d2,fresh,swap,twin" { // twin still has the duplicate file
+		t.Fatalf("folders %v", folders)
+	}
+	// Removing the last file of a folder drops the folder.
+	delete(m.files, "twin/two.md")
+	if _, err := x.Refresh(m, []string{"twin/two.md"}, []string{"twin"}); err != nil {
+		t.Fatal(err)
+	}
+	tree, _ = x.Tree()
+	for _, f := range tree {
+		if f.Path == "twin" {
+			t.Fatal("an emptied folder is still listed")
+		}
+	}
+}

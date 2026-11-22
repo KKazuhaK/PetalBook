@@ -679,3 +679,106 @@ func (x *Index) RetryDuplicates(src Source) error {
 	}
 	return tx.Commit()
 }
+
+// Refresh brings the index in line with the source for exactly these page
+// files, and the folder rows of exactly these directories (and their
+// ancestors): what a pull or the undoing of a change touched. It reads only
+// the files that exist; a path that is gone is removed. Cost: O(len(paths)),
+// never a walk of the tree.
+//
+// Removals come first and insertions after, in path order, so a page that
+// moved, two pages that swapped paths and a file whose id changed cannot
+// conflict with their own stale rows. An id that a file outside paths still
+// holds makes the new file a duplicate, as in Sync.
+func (x *Index) Refresh(src Source, paths, dirs []string) (Stats, error) {
+	start := time.Now()
+	ctx := context.Background()
+	sort.Strings(paths)
+	var todo []FileInfo
+	var gone []string
+	for i, p := range paths {
+		if i > 0 && p == paths[i-1] {
+			continue
+		}
+		info, err := src.Stat(p)
+		switch {
+		case err == nil:
+			todo = append(todo, info)
+		case errors.Is(err, fs.ErrNotExist):
+			gone = append(gone, p)
+		default:
+			return Stats{}, err
+		}
+	}
+
+	x.wmu.Lock()
+	defer x.wmu.Unlock()
+	tx, err := x.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Stats{}, err
+	}
+	defer tx.Rollback()
+	w := newWriter(ctx, tx)
+	defer w.close()
+
+	st := Stats{}
+	for _, p := range gone {
+		if err := w.removePath(p); err != nil {
+			return Stats{}, err
+		}
+		st.Removed++
+	}
+	for _, f := range todo {
+		if err := w.removePath(f.Rel); err != nil {
+			return Stats{}, err
+		}
+	}
+	onDisk := func(p string) bool { _, err := src.Stat(p); return err == nil }
+	for _, r := range x.loadBatch(src, todo, runtime.GOMAXPROCS(0)) {
+		if r.gone {
+			continue
+		}
+		f := r.info
+		if r.entry != nil {
+			conflict, err := w.upsert(r.entry, onDisk)
+			if err != nil {
+				return Stats{}, err
+			}
+			if conflict != "" {
+				r.prob = &page.Problem{Code: "duplicate_id", Message: fmt.Sprintf("id %s is already used by %s", r.entry.ID, conflict)}
+				r.entry = nil
+			}
+		}
+		if r.entry == nil {
+			if err := w.setProblem(f, r.prob); err != nil {
+				return Stats{}, err
+			}
+		}
+		st.Updated++
+	}
+	seen := map[string]bool{}
+	for _, d := range dirs {
+		for ; d != "" && d != "."; d = path.Dir(d) {
+			if seen[d] {
+				break
+			}
+			seen[d] = true
+			if src.DirExists(d) {
+				_, err = w.exec(`INSERT OR IGNORE INTO folders(path) VALUES (?)`, d)
+			} else {
+				// A folder that is gone takes its (page-less) descendants with it.
+				_, err = w.exec(`DELETE FROM folders WHERE path = ?`, d)
+			}
+			if err != nil {
+				return Stats{}, err
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return Stats{}, err
+	}
+	x.db.QueryRowContext(ctx, `SELECT count(*) FROM pages`).Scan(&st.Pages)
+	x.db.QueryRowContext(ctx, `SELECT count(*) FROM problems`).Scan(&st.Problems)
+	st.Elapsed = time.Since(start)
+	return st, nil
+}

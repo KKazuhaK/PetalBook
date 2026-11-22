@@ -4,6 +4,7 @@
 package space
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -52,6 +53,10 @@ type Options struct {
 	// triggered by a lookup that missed (default 2 s).
 	ResyncInterval time.Duration
 	Logger         *slog.Logger
+	// Remote, when set, makes the space follow a remote repository (see
+	// remote.go): changes are pushed before they are answered, the background
+	// committer is not used for them, and what a crash left behind is dealt with.
+	Remote *RemoteOptions
 }
 
 // Space is safe for concurrent use.
@@ -65,6 +70,13 @@ type Space struct {
 
 	mu     sync.Mutex // serialises every change to files and the index
 	closed bool       // set by Close, under mu: later changes are refused before they write
+	// rem is set while the space follows a remote repository. It is switched
+	// under mu.
+	rem atomic.Pointer[remote]
+	// ctx ends when the space is closed; network commands run under it so that
+	// a hung remote cannot keep Close waiting.
+	ctx    context.Context
+	cancel context.CancelFunc
 	now    func() time.Time
 	ops    fileOps
 
@@ -133,6 +145,11 @@ func Open(opt Options) (*Space, error) {
 		g.setAuthor(an, ae)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".git")); errors.Is(err, fs.ErrNotExist) {
+		if opt.Remote != nil {
+			// Making an empty repository here would hide pages that were never
+			// pushed. Putting the clone back is for an administrator.
+			return nil, fmt.Errorf("the repository of this space is missing (%s has no .git): restore it, or disconnect the remote", root)
+		}
 		if err := g.init(); err != nil {
 			return nil, err
 		}
@@ -146,17 +163,29 @@ func Open(opt Options) (*Space, error) {
 		return nil, err
 	}
 	var ours []string // files under .petalbook the server made, for the first commit
-	if changed, err := ensureLines(filepath.Join(pb, ".gitignore"), "cache/", "tmp/"); err != nil {
-		return nil, err
-	} else if changed {
-		ours = append(ours, ".petalbook/.gitignore")
-	}
-	name, madeConfig, err := ensureSpaceConfig(filepath.Join(pb, "space.yml"), opt.Name)
-	if err != nil {
-		return nil, err
-	}
-	if madeConfig {
-		ours = append(ours, ".petalbook/space.yml")
+	var name string
+	if opt.Remote != nil {
+		// A space that follows a remote never makes tracked files of its own
+		// here: they would be commits nobody pushes. Its temporary files are
+		// kept out of Git's way through the clone's own exclude file, and its
+		// name is read, not written.
+		if _, err := ensureLines(filepath.Join(root, ".git", "info", "exclude"), "/.petalbook/tmp/", "/.petalbook/cache/"); err != nil {
+			return nil, err
+		}
+		name = readSpaceName(filepath.Join(pb, "space.yml"), opt.Name)
+	} else {
+		if changed, err := ensureLines(filepath.Join(pb, ".gitignore"), "cache/", "tmp/"); err != nil {
+			return nil, err
+		} else if changed {
+			ours = append(ours, ".petalbook/.gitignore")
+		}
+		var madeConfig bool
+		if name, madeConfig, err = ensureSpaceConfig(filepath.Join(pb, "space.yml"), opt.Name); err != nil {
+			return nil, err
+		}
+		if madeConfig {
+			ours = append(ours, ".petalbook/space.yml")
+		}
 	}
 
 	stateDir := opt.StateDir
@@ -199,6 +228,7 @@ func Open(opt Options) (*Space, error) {
 		return nil, err
 	}
 	s := &Space{root: root, stateDir: stateDir, name: name, idx: idx, log: log, now: time.Now, ops: osOps(), src: dirSource{root}, syncEvery: opt.ResyncInterval}
+	s.ctx, s.cancel = context.WithCancel(context.Background())
 	if s.syncEvery <= 0 {
 		s.syncEvery = 2 * time.Second
 	}
@@ -229,6 +259,17 @@ func Open(opt Options) (*Space, error) {
 		max = DefaultCommitMax
 	}
 	s.lastSync = time.Now()
+	if opt.Remote != nil {
+		// What the journal says was written but not committed is handled by
+		// initRemote, not by the background committer.
+		s.cm = newCommitter(g, idle, max, log, jrn, nil)
+		if err := s.initRemote(opt.Remote, recovered); err != nil {
+			s.cm.Close()
+			idx.Close()
+			return nil, err
+		}
+		return s, nil
+	}
 	s.cm = newCommitter(g, idle, max, log, jrn, recovered)
 	if len(ours) > 0 {
 		recs := make([]jrec, len(ours))
@@ -262,6 +303,7 @@ func (s *Space) SetAuthor(name, email string) { s.cm.git.setAuthor(name, email) 
 // Close commits what is still uncommitted, stops the committer and closes the
 // index. It returns the commit error, if any.
 func (s *Space) Close() error {
+	s.cancel() // a change waiting on the network ends, so the lock below is not held for long
 	// Under the lock: a change in progress finishes first, and none starts after.
 	s.mu.Lock()
 	s.closed = true
@@ -304,6 +346,25 @@ func ensureLines(file string, lines ...string) (bool, error) {
 		return false, nil
 	}
 	return true, os.WriteFile(file, []byte(out), 0o644)
+}
+
+// readSpaceName is ensureSpaceConfig that never writes.
+func readSpaceName(file, name string) string {
+	if name != "" {
+		return name
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return DefaultName
+	}
+	var cfg struct {
+		Name string `yaml:"name"`
+	}
+	_ = yaml.Unmarshal(data, &cfg)
+	if cfg.Name == "" {
+		return DefaultName
+	}
+	return cfg.Name
 }
 
 // ensureSpaceConfig creates space.yml with the name if it is missing, and

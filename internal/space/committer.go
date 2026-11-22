@@ -6,6 +6,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/KazuhaHub/PetalBook/internal/gitstore"
 )
 
 // committer turns a stream of file writes into Git commits. Saving only
@@ -110,7 +112,7 @@ func (c *committer) loop() {
 			// A write moved the deadline: recompute.
 		case <-timer:
 			if err := c.commit(); err != nil {
-				var busy *busyError
+				var busy *gitstore.BusyError
 				if errors.As(err, &busy) {
 					c.log.Warn("not committing now; will retry", "reason", err.Error())
 				} else {
@@ -176,6 +178,18 @@ func (c *committer) commit() error {
 		}
 	}
 	return nil
+}
+
+// clearJournal empties the journal: for a space that follows a remote, whose
+// changes are committed and pushed (or undone) before the request is answered,
+// so nothing is ever pending between two changes.
+func (c *committer) clearJournal() error {
+	if c == nil || c.j == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.j.rewrite(nil)
 }
 
 // Flush commits pending changes immediately.

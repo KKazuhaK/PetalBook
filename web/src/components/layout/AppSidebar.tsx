@@ -21,6 +21,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { buildFolderTree, ancestorsOf, pathAfter, type FolderNode } from '@/lib/folders'
 import { t } from '@/i18n/zh-CN'
 import { NewFolderDialog } from './NewFolderDialog'
+import { SidebarToggle } from './SidebarToggle'
 import { SpaceSwitcher } from './SpaceSwitcher'
 import { ThemeToggle } from './ThemeToggle'
 import { UserMenu } from './UserMenu'
@@ -217,14 +218,19 @@ export function AppSidebar() {
   return (
     <Sidebar>
       <SidebarHeader className="gap-3 p-3 pb-1">
-        {accounts ? (
-          <SpaceSwitcher />
-        ) : (
-          <NavLink to={urls.recent()} className="flex items-center gap-2 px-1 pt-0.5">
-            <img src="/favicon.svg" alt="" className="size-6 rounded-md" />
-            <span className="truncate text-sm font-semibold">{spaceName ?? t.appName}</span>
-          </NavLink>
-        )}
+        <div className="flex items-center gap-1">
+          <div className="min-w-0 flex-1">
+            {accounts ? (
+              <SpaceSwitcher />
+            ) : (
+              <NavLink to={urls.recent()} className="flex items-center gap-2 px-1 pt-0.5">
+                <img src="/favicon.svg" alt="" className="size-6 rounded-md" />
+                <span className="truncate text-sm font-semibold">{spaceName ?? t.appName}</span>
+              </NavLink>
+            )}
+          </div>
+          <SidebarToggle where="sidebar" />
+        </div>
         <SearchBox />
       </SidebarHeader>
       <SidebarContent>

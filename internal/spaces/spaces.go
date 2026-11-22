@@ -16,7 +16,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/KazuhaHub/PetalBook/internal/gitstore"
 	"github.com/KazuhaHub/PetalBook/internal/page"
+	"github.com/KazuhaHub/PetalBook/internal/secret"
 	"github.com/KazuhaHub/PetalBook/internal/space"
 	"github.com/KazuhaHub/PetalBook/internal/store"
 )
@@ -46,6 +48,9 @@ type Info struct {
 	Name     string
 	Role     string
 	Personal bool
+	// Sync is "local", or the state of the remote the space follows (ok,
+	// offline, rewritten, error). It is read when the list is asked for, not cached.
+	Sync string
 }
 
 // Handle is an open space together with the caller's view of it. Release it
@@ -86,6 +91,19 @@ type Options struct {
 	CloseWait time.Duration
 	// OpenHook, if set, runs before a space is opened from disk (tests).
 	OpenHook func(id string)
+
+	// Secrets encrypts the credentials of remotes; by default a box keyed from
+	// DataDir/secret.key or PETALBOOK_SECRET_KEY.
+	Secrets *secret.Box
+	// RemotePolicy says which remote addresses are accepted.
+	RemotePolicy gitstore.Policy
+	// PullInterval is how often a remote is fetched (default DefaultPullInterval
+	// in the flag; 0 here means never by itself).
+	PullInterval time.Duration
+	// NetTimeout, FetchFresh and FailFast tune the remote commands (space.RemoteOptions).
+	NetTimeout, FetchFresh, FailFast time.Duration
+	// RemoteRunner replaces the git runner of remote spaces (tests).
+	RemoteRunner gitstore.Runner
 }
 
 // Defaults for closing spaces that are not in use.
@@ -103,9 +121,10 @@ type opening struct {
 	err  error
 
 	// Guarded by Manager.mu.
-	refs    int           // requests (and sweeps) using it right now
-	last    time.Time     // when it was last acquired or released
-	closing chan struct{} // set while it is being closed; closed when that is done
+	refs     int           // requests (and sweeps) using it right now
+	last     time.Time     // when it was last acquired or released
+	closing  chan struct{} // set while it is being closed; closed when that is done
+	nextPull time.Time     // when the remote is pulled next; zero for a local space
 }
 
 // Manager is safe for concurrent use.
@@ -118,6 +137,10 @@ type Manager struct {
 	open   map[string]*opening
 	lists  map[string][]Info // membership cache: user id -> spaces, personal first
 	closed bool
+
+	syncs    map[string]string // space id -> state of its remote, for Info.Sync (guarded by mu; nil until first needed)
+	remoteMu sync.Mutex        // one connect, disconnect or key change at a time
+	pullWake chan struct{}     // a space with a remote was just opened: pull it now
 
 	trimMu   sync.Mutex // one trim at a time
 	trimming bool       // a background trim is queued or running (guarded by mu)
@@ -141,6 +164,9 @@ func NewAccounts(opt Options) (*Manager, error) {
 	opt.DataDir = abs
 	if err := os.MkdirAll(filepath.Join(abs, "spaces"), 0o755); err != nil {
 		return nil, err
+	}
+	if opt.Secrets == nil {
+		opt.Secrets = secret.NewBox(abs)
 	}
 	return newManager(opt, nil), nil
 }
@@ -171,7 +197,7 @@ func newManager(opt Options, single *space.Space) *Manager {
 	if opt.CloseWait <= 0 {
 		opt.CloseWait = 5 * time.Second
 	}
-	return &Manager{opt: opt, single: single, log: log, open: map[string]*opening{}, lists: map[string][]Info{}}
+	return &Manager{opt: opt, single: single, log: log, open: map[string]*opening{}, lists: map[string][]Info{}, pullWake: make(chan struct{}, 1)}
 }
 
 // Single reports single-user mode.
@@ -180,11 +206,19 @@ func (m *Manager) Single() bool { return m.single != nil }
 // List returns the spaces the user is a member of. After the first call for a
 // user it does not touch the database until something about their spaces changes.
 func (m *Manager) List(ctx context.Context, userID string) ([]Info, error) {
+	l, err := m.list(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return m.withSync(ctx, l), nil
+}
+
+func (m *Manager) list(ctx context.Context, userID string) ([]Info, error) {
 	if m.single != nil {
 		if userID != store.LocalUserID {
 			return nil, nil
 		}
-		return []Info{{ID: SingleID, Name: m.single.Name(), Role: "owner", Personal: true}}, nil
+		return []Info{{ID: SingleID, Name: m.single.Name(), Role: "owner", Personal: true, Sync: "local"}}, nil
 	}
 	m.mu.Lock()
 	l, ok := m.lists[userID]
@@ -295,6 +329,15 @@ func (m *Manager) Acquire(ctx context.Context, id string) (*space.Space, func(),
 				delete(m.open, id)
 				m.mu.Unlock()
 			}
+			if e.err == nil {
+				if _, ok := e.sp.Remote(); ok {
+					// Someone is about to look at it: bring it up to date now.
+					m.mu.Lock()
+					e.nextPull = m.opt.Now()
+					m.mu.Unlock()
+					m.wakePull()
+				}
+			}
 			close(e.done)
 			if e.err == nil {
 				m.trimSoon()
@@ -342,9 +385,16 @@ func (m *Manager) openSpace(ctx context.Context, id string) (*space.Space, error
 	if owner != nil {
 		author = IdentityOf(*owner).String()
 	}
+	var rem *space.RemoteOptions
+	switch r, err := store.GetRemote(ctx, m.opt.Store.Q(), id); {
+	case err == nil && r.Connected():
+		rem = m.remoteOptions(id, r)
+	case err != nil && !errors.Is(err, store.ErrNotFound):
+		return nil, err
+	}
 	return space.Open(space.Options{
 		Root: root, Name: name, StateDir: state, Committer: m.opt.Committer, Author: author,
-		CommitIdle: m.opt.CommitIdle, CommitMax: m.opt.CommitMax, Logger: m.log.With("space", id),
+		CommitIdle: m.opt.CommitIdle, CommitMax: m.opt.CommitMax, Logger: m.log.With("space", id), Remote: rem,
 	})
 }
 
@@ -517,7 +567,7 @@ func (m *Manager) Create(ctx context.Context, userID, name string) (Info, error)
 		return Info{}, err
 	}
 	stg.Commit(userID)
-	return Info{ID: stg.ID(), Name: stg.Name(), Role: "owner"}, nil
+	return Info{ID: stg.ID(), Name: stg.Name(), Role: "owner", Sync: "local"}, nil
 }
 
 // Rename changes a space's display name; only an owner may.

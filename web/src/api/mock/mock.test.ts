@@ -133,3 +133,94 @@ describe('draft rules the real server shares', () => {
     expect(body()).toBe('elsewhere\n')
   })
 })
+
+describe('history', () => {
+  type Item = { commit: string; change: string; path: string; rev?: string; author: string }
+  const history = (s: ReturnType<typeof createMockServer>, id: string, q = '') => call(s, 'GET', `/api/spaces/default/pages/${id}/history${q}`)
+  const changes = (s: ReturnType<typeof createMockServer>, id: string) => ((history(s, id).body as { items: Item[] }).items).map((i) => i.change)
+
+  it('every write that changes the file adds one version: add, edit, edit by rename, move', () => {
+    const s = createMockServer({ empty: true })
+    const p = call(s, 'POST', '/api/spaces/default/pages', { meta: { title: '甲' }, body: 'a\n', folder: 'x' }).body as { id: string; rev: string; meta: Record<string, unknown> }
+    expect(changes(s, p.id)).toEqual(['add'])
+    const saved = call(s, 'PUT', `/api/spaces/default/pages/${p.id}`, { baseRev: p.rev, meta: p.meta, body: 'b\n' }).body as { rev: string }
+    expect(changes(s, p.id)).toEqual(['edit', 'add'])
+    // Saving what the file already says is no version.
+    call(s, 'PUT', `/api/spaces/default/pages/${p.id}`, { baseRev: saved.rev, meta: p.meta, body: 'b\n' })
+    expect(changes(s, p.id)).toEqual(['edit', 'add'])
+    const renamed = call(s, 'PUT', `/api/spaces/default/pages/${p.id}`, { baseRev: saved.rev, meta: { ...p.meta, title: '乙' }, body: 'b\n' }).body as { path: string }
+    expect(renamed.path).toBe('x/乙.md')
+    call(s, 'POST', `/api/spaces/default/pages/${p.id}/move`, { folder: 'y' })
+    // Moving to where it is already is no version either.
+    call(s, 'POST', `/api/spaces/default/pages/${p.id}/move`, { folder: 'y' })
+    const items = (history(s, p.id).body as { items: Item[] }).items
+    expect(items.map((i) => i.change)).toEqual(['move', 'edit', 'edit', 'add'])
+    expect(items.map((i) => i.path)).toEqual(['y/乙.md', 'x/乙.md', 'x/甲.md', 'x/甲.md'])
+    // A move changes no bytes: the rev stays.
+    expect(items[0].rev).toBe(items[1].rev)
+    expect(items.every((i) => i.author === 'Local user')).toBe(true)
+    expect(new Set(items.map((i) => i.commit)).size).toBe(4)
+  })
+
+  it('a version holds the header and body as they were, whatever the page became', () => {
+    const s = createMockServer({ empty: true })
+    const p = call(s, 'POST', '/api/spaces/default/pages', { meta: { title: '甲', tags: ['t'] }, body: 'a\n' }).body as { id: string; rev: string; meta: Record<string, unknown> }
+    call(s, 'PUT', `/api/spaces/default/pages/${p.id}`, { baseRev: p.rev, meta: { ...p.meta, title: '乙', tags: [] }, body: 'b\n' })
+    const items = (history(s, p.id).body as { items: Item[] }).items
+    const old = call(s, 'GET', `/api/spaces/default/pages/${p.id}/versions/${items[1].commit}`).body as { meta: Record<string, unknown>; body: string; rev: string }
+    expect(old.body).toBe('a\n')
+    expect(old.meta).toMatchObject({ title: '甲', tags: ['t'] })
+    expect(old.rev).toBe(p.rev)
+  })
+
+  it('a committed draft, and the server\'s own commit of one, are versions', () => {
+    let clock = 1_700_000_000_000
+    const s = createMockServer({ empty: true, now: () => clock })
+    const p = call(s, 'POST', '/api/spaces/default/pages', { meta: { title: '甲' }, body: 'a\n' }).body as { id: string; rev: string; meta: Record<string, unknown> }
+    const d1 = call(s, 'PUT', `/api/spaces/default/pages/${p.id}/draft`, { baseRev: p.rev, meta: p.meta, body: 'b\n' }).body as { version: string }
+    const committed = call(s, 'POST', `/api/spaces/default/pages/${p.id}/commit`, { version: d1.version }).body as { rev: string; meta: Record<string, unknown> }
+    expect(changes(s, p.id)).toEqual(['edit', 'add'])
+    call(s, 'PUT', `/api/spaces/default/pages/${p.id}/draft`, { baseRev: committed.rev, meta: p.meta, body: 'c\n' })
+    clock += 3 * 60_000
+    s.sweep()
+    expect(changes(s, p.id)).toEqual(['edit', 'edit', 'add'])
+  })
+
+  it('a deleted page keeps its history in the mock; the version of the deletion has no rev', () => {
+    const s = createMockServer({ empty: true })
+    const p = call(s, 'POST', '/api/spaces/default/pages', { meta: { title: '甲' }, body: 'a\n' }).body as { id: string }
+    call(s, 'DELETE', `/api/spaces/default/pages/${p.id}`)
+    const items = (history(s, p.id).body as { items: Item[] }).items
+    expect(items.map((i) => i.change)).toEqual(['delete', 'add'])
+    expect('rev' in items[0]).toBe(false)
+    expect(call(s, 'GET', `/api/spaces/default/pages/${p.id}/versions/${items[0].commit}`).status).toBe(200)
+  })
+
+  it('pages newest first with a cursor, and refuses limits and cursors it does not know', () => {
+    const s = createMockServer({ empty: true })
+    const p = call(s, 'POST', '/api/spaces/default/pages', { meta: { title: '0' }, body: '0\n' }).body as { id: string; rev: string; meta: Record<string, unknown> }
+    let rev = p.rev
+    for (let i = 1; i <= 6; i++) rev = (call(s, 'PUT', `/api/spaces/default/pages/${p.id}`, { baseRev: rev, meta: p.meta, body: `${i}\n` }).body as { rev: string }).rev
+    const first = history(s, p.id, '?limit=3').body as { items: Item[]; next: string }
+    expect(first.items).toHaveLength(3)
+    expect(first.next).not.toBe('')
+    const second = history(s, p.id, `?limit=3&cursor=${encodeURIComponent(first.next)}`).body as { items: Item[]; next: string }
+    const third = history(s, p.id, `?limit=3&cursor=${encodeURIComponent(second.next)}`).body as { items: Item[]; next: string }
+    expect([second.items.length, third.items.length, third.next]).toEqual([3, 1, ''])
+    expect(third.items[0].change).toBe('add')
+    expect(history(s, p.id, '?limit=0').status).toBe(400)
+    expect(history(s, p.id, '?limit=101').status).toBe(400)
+    expect(history(s, p.id, '?cursor=!!').status).toBe(400)
+  })
+
+  it('the seed gives some pages a history to look at', () => {
+    const s = createMockServer()
+    const items = (call(s, 'GET', '/api/spaces/default/pages?q=关于慢&limit=5').body as { items: { id: string; title?: string }[] }).items
+    const id = items.find((i) => i.title === '关于慢')!.id
+    const h = (history(s, id).body as { items: Item[] }).items
+    expect(h.length).toBeGreaterThanOrEqual(4)
+    expect(h[h.length - 1].change).toBe('add')
+    const oldest = call(s, 'GET', `/api/spaces/default/pages/${id}/versions/${h[h.length - 1].commit}`).body as { body: string }
+    expect(oldest.body).not.toBe((call(s, 'GET', `/api/spaces/default/pages/${id}`).body as { body: string }).body)
+  })
+})

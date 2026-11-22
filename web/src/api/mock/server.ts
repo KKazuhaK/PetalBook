@@ -3,7 +3,7 @@
 // cookie stand-in), invites, spaces per user and a fake OpenID Connect
 // provider. It has no DOM or Node dependencies.
 
-import type { Identity, Invite, Page, Role, SpaceInfo, User } from '../types.ts'
+import type { ConnectRemoteInput, Identity, Invite, Page, Remote, RemoteKey, RemoteState, Role, SpaceInfo, User } from '../types.ts'
 import { gitBlobId } from './sha1.ts'
 import { ALPHABET, HttpError, compareCodePoints, createSpaceStore, isRecord, rfc3339, type SpaceStore } from './store.ts'
 import { SPACE_NAME } from './seed.ts'
@@ -39,7 +39,29 @@ export interface MockOptions {
   maxSpaces?: number
   draftIdleMs?: number
   draftMaxMs?: number
+  // Following a remote repository (docs/api.md, "Remote repository").
+  remote?: MockRemoteOptions
 }
+
+// What the mock plays for the remote endpoints.
+export interface MockRemoteOptions {
+  // Hosts the administrator allows (`--remote-host`); `*` allows any. Default:
+  // github.com, gitlab.com, codeberg.org, bitbucket.org.
+  hosts?: string[]
+  // What a connecting PUT finds at the address, unless the address says so
+  // (it contains one of these words, which is handy by hand):
+  //   no-branch    the remote has no such branch yet: the space's history is pushed
+  //   ahead        the remote has commits the space lacks: the space moves forward
+  //   behind       the space has commits the remote lacks: the remote is moved forward
+  //   diverged     both have commits of their own: 409, unless the space is pristine
+  //   unreachable  503: cannot be reached
+  //   refused      503: the credential is refused
+  find?: 'no-branch' | 'ahead' | 'behind' | 'diverged' | 'unreachable' | 'refused'
+  // The first space starts out following a remote, in this state.
+  start?: RemoteState
+}
+
+const DEFAULT_HOSTS = ['github.com', 'gitlab.com', 'codeberg.org', 'bitbucket.org']
 
 export const MOCK_ADMIN = { username: 'admin', password: 'petalbook-admin', name: '管理员' }
 export const MOCK_SETUP_TOKEN = 'mock-setup-token'
@@ -61,12 +83,26 @@ interface InviteRec {
   createdBy: string
   used: boolean
 }
+interface RemoteRec {
+  url: string
+  branch: string
+  credential: { type: 'ssh' } | { type: 'token'; username: string; token: string }
+  state: RemoteState
+  lastSync?: number
+  error: string
+  hostKey?: string
+  rewritten: { lastGood: string; remote: string } | null
+}
 interface SpaceRec {
   id: string
   name: string
   ownerId: string
   personal: boolean
   store: SpaceStore
+  remote: RemoteRec | null
+  key: RemoteKey | null
+  // Mock only: whether the pretend remote answers.
+  reachable: boolean
 }
 interface OidcAttempt {
   intent: string
@@ -125,10 +161,19 @@ export function createMockServer(options: MockOptions = {}) {
   }
 
   const publicUser = (u: UserRec): User => ({ id: u.id, username: u.username, name: u.name, email: u.email, role: u.role, disabled: u.disabled, created: u.created })
-  const spaceInfo = (s: SpaceRec): SpaceInfo => ({ id: s.id, name: s.name, role: 'owner', personal: s.personal })
+  const spaceInfo = (s: SpaceRec): SpaceInfo => ({ id: s.id, name: s.name, role: 'owner', personal: s.personal, sync: s.remote ? s.remote.state : 'local' })
+
+  // Why writes fail right now, if they do (docs/api.md: 503 `unavailable`).
+  const blockedReason = (s: SpaceRec): string | null => {
+    if (!s.remote) return null
+    if (s.remote.state === 'offline') return `远端仓库现在连不上${s.remote.error ? `（${s.remote.error}）` : ''}。这次修改没有写入，已写的草稿还在。`
+    if (s.remote.state === 'rewritten') return '远端仓库的历史被改写过，这个空间已暂停写入。请空间的所有者在空间设置里查看并决定是否接受远端的历史。'
+    return null
+  }
 
   const addSpace = (id: string, name: string, ownerId: string, personal: boolean, seed: boolean) => {
-    const rec: SpaceRec = { id, name, ownerId, personal, store: createSpaceStore({ now, random, seed }) }
+    const rec: SpaceRec = { id, name, ownerId, personal, store: undefined as unknown as SpaceStore, remote: null, key: null, reachable: true }
+    rec.store = createSpaceStore({ now, random, seed, author: () => users.get(rec.ownerId)?.name ?? 'Local user', blocked: () => blockedReason(rec) })
     spaces.set(id, rec)
     return rec
   }
@@ -434,12 +479,181 @@ export function createMockServer(options: MockOptions = {}) {
     return s
   }
 
+  // --- remote repository ---
+  const hosts = options.remote?.hosts ?? DEFAULT_HOSTS
+  const hostAllowed = (host: string) => hosts.includes('*') || hosts.includes(host.toLowerCase())
+  const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  const b64 = (n: number) => Array.from({ length: n }, () => B64[Math.floor(random() * 64)]).join('')
+  const fakeCommit = () => gitBlobId(`remote ${++counter} ${random()}`)
+  const hostKeyOf = (host: string) => `SHA256:${btoa(gitBlobId(host)).replace(/=+$/, '').slice(0, 43)}`
+
+  const makeKey = (space: SpaceRec): RemoteKey => ({ publicKey: `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI${b64(43)} petalbook-${space.id}`, fingerprint: `SHA256:${b64(43)}` })
+
+  const remoteInfo = (s: SpaceRec): Remote => {
+    const r = s.remote!
+    return {
+      url: r.url,
+      branch: r.branch,
+      credential: r.credential.type === 'ssh' ? { type: 'ssh', publicKey: s.key!.publicKey, fingerprint: s.key!.fingerprint } : { type: 'token', username: r.credential.username },
+      state: r.state,
+      ...(r.lastSync !== undefined ? { lastSync: rfc3339(r.lastSync) } : {}),
+      error: r.error,
+      ...(r.hostKey ? { hostKey: r.hostKey } : {}),
+      rewritten: r.rewritten,
+    }
+  }
+
+  // Mock only (also behind `/api/_mock/remote`): put the space's remote in a
+  // state, making it up if the space was local.
+  const setRemoteState = (space: SpaceRec, state: RemoteState | 'local', patch: { error?: string } = {}) => {
+    if (state === 'local') {
+      space.remote = null
+      space.reachable = true
+      return
+    }
+    space.key ??= makeKey(space)
+    space.remote ??= { url: 'git@github.com:mock/notes.git', branch: 'main', credential: { type: 'ssh' }, state: 'ok', lastSync: now(), error: '', hostKey: hostKeyOf('github.com'), rewritten: null }
+    const r = space.remote
+    r.state = state
+    space.reachable = state !== 'offline'
+    r.error = patch.error ?? (state === 'offline' ? '连接超时' : state === 'error' ? '远端拒绝了这个凭据，请检查令牌或部署密钥' : '')
+    r.rewritten = state === 'rewritten' ? { lastGood: fakeCommit(), remote: fakeCommit() } : null
+    if (state === 'ok') r.lastSync = now()
+  }
+
+  // `https://host/path` or an SSH address, with no password in it.
+  const parseRemoteUrl = (raw: unknown): { kind: 'https' | 'ssh'; host: string } => {
+    const bad = () => new HttpError(400, 'invalid', '只接受 https://主机/路径 或 SSH 地址（git@主机:路径），地址里不能带密码')
+    if (typeof raw !== 'string' || raw.trim() === '' || /\s/.test(raw.trim())) throw bad()
+    const url = raw.trim()
+    let m: RegExpExecArray | null
+    if (/^https:\/\//i.test(url)) {
+      let u: URL
+      try {
+        u = new URL(url)
+      } catch {
+        throw bad()
+      }
+      if (u.username || u.password || !u.hostname || u.pathname.length <= 1) throw bad()
+      return { kind: 'https', host: u.hostname }
+    }
+    if ((m = /^[\w.-]+@([\w.-]+):(?!\/)\S+$/.exec(url))) return { kind: 'ssh', host: m[1] }
+    if ((m = /^ssh:\/\/(?:[\w.-]+@)?([\w.-]+)(?::\d+)?\/\S+$/.exec(url))) return { kind: 'ssh', host: m[1] }
+    throw bad()
+  }
+
+  const connectRemote = (space: SpaceRec, body: Record<string, unknown>): Remote => {
+    const input = body as unknown as Partial<ConnectRemoteInput>
+    const { kind, host } = parseRemoteUrl(input.url)
+    if (!hostAllowed(host)) throw new HttpError(403, 'forbidden', `管理员没有允许连接 ${host}。需要在服务器启动时用 --remote-host 加上它。`)
+    const branch = input.branch === undefined || input.branch === '' ? 'main' : input.branch
+    if (typeof branch !== 'string' || /\s/.test(branch)) throw new HttpError(400, 'invalid', '分支名不合法')
+    const cred = input.credential
+    if (!cred || (cred.type !== 'ssh' && cred.type !== 'token')) throw new HttpError(400, 'invalid', '缺少 credential')
+    if ((cred.type === 'ssh') !== (kind === 'ssh')) throw new HttpError(400, 'invalid', cred.type === 'ssh' ? 'SSH 密钥要配 SSH 地址' : '令牌要配 https 地址')
+    let credential: RemoteRec['credential']
+    if (cred.type === 'ssh') {
+      space.key ??= makeKey(space)
+      credential = { type: 'ssh' }
+    } else {
+      const kept = space.remote?.credential.type === 'token' ? space.remote.credential : null
+      const token = typeof cred.token === 'string' && cred.token !== '' ? cred.token : kept?.token
+      if (!token) throw new HttpError(400, 'invalid', '缺少令牌')
+      const username = typeof cred.username === 'string' && cred.username.trim() !== '' ? cred.username.trim() : (kept?.username ?? 'x-access-token')
+      credential = { type: 'token', username, token }
+    }
+
+    // What the pretend remote is like.
+    const word = /unreachable|refused|diverged|behind|ahead|empty/.exec(String(input.url))?.[0]
+    const found = word === 'empty' ? 'no-branch' : ((word as NonNullable<MockRemoteOptions['find']> | undefined) ?? options.remote?.find ?? 'no-branch')
+    if (found === 'unreachable') throw new HttpError(503, 'unavailable', `连不上 ${host}：连接超时。什么也没有改。`)
+    if (found === 'refused') throw new HttpError(503, 'unavailable', `${host} 拒绝了这个凭据（认证失败）。什么也没有改。`)
+    if (found !== 'no-branch') {
+      if (space.store.pristine()) {
+        // A space nothing was ever made in takes the remote's content and history.
+        space.store.adopt([
+          { folder: '', title: '来自远端的页面', body: '这个页面原本就在远端仓库里。\n', tags: ['远端'] },
+          { folder: '笔记', title: '远端的笔记', body: '远端仓库里的第二个页面。\n' },
+        ])
+      } else if (found === 'diverged') {
+        throw new HttpError(409, 'conflict', '这个空间和远端仓库各自都有内容，两边的历史互不包含。PetalBook 不会合并两份历史，请为这个仓库新建一个空间。')
+      } else if (found === 'ahead') {
+        space.store.adopt([{ folder: '', title: '远端新增的页面', body: '这个页面是在远端新增的。\n' }])
+      }
+    }
+    space.remote = { url: String(input.url).trim(), branch, credential, state: 'ok', lastSync: now(), error: '', hostKey: kind === 'ssh' ? hostKeyOf(host) : undefined, rewritten: null }
+    space.reachable = true
+    return remoteInfo(space)
+  }
+
+  const routeRemote = (space: SpaceRec, method: string, rest: string, body: Record<string, unknown>): MockResponse => {
+    // Accounts mode only, like the other space-management endpoints.
+    accountsOnly()
+    const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
+    const following = () => {
+      if (!space.remote) throw new HttpError(404, 'not_found', '这个空间没有连接远端仓库')
+      return space.remote
+    }
+    if (rest === '/remote') {
+      if (method === 'GET') {
+        following()
+        return j(remoteInfo(space))
+      }
+      if (method === 'PUT') return j(connectRemote(space, body))
+      if (method === 'DELETE') {
+        following()
+        space.remote = null
+        space.reachable = true
+        return { status: 204 }
+      }
+    }
+    if (rest === '/remote/key' && method === 'POST') {
+      if (body.rotate === true) {
+        if (space.remote) throw new HttpError(409, 'conflict', '空间已经连着远端，不能更换密钥。先断开连接。')
+        space.key = makeKey(space)
+      } else space.key ??= makeKey(space)
+      return j({ publicKey: space.key.publicKey, fingerprint: space.key.fingerprint })
+    }
+    if (rest === '/remote/sync' && method === 'POST') {
+      const r = following()
+      if (!space.reachable) {
+        if (r.state !== 'rewritten') {
+          r.state = 'offline'
+          r.error ||= '连接超时'
+        }
+      } else {
+        r.lastSync = now()
+        if (r.state === 'offline') {
+          r.state = 'ok'
+          r.error = ''
+        }
+      }
+      return j(remoteInfo(space))
+    }
+    if (rest === '/remote/accept' && method === 'POST') {
+      const r = following()
+      if (typeof body.commit !== 'string' || body.commit === '') throw new HttpError(400, 'invalid', '缺少 commit')
+      if (r.state !== 'rewritten' || !r.rewritten || r.rewritten.remote !== body.commit) throw new HttpError(409, 'conflict', '远端已经不在这个提交上了，请刷新后再看')
+      r.state = 'ok'
+      r.rewritten = null
+      r.error = ''
+      r.lastSync = now()
+      return j(remoteInfo(space))
+    }
+    throw new HttpError(404, 'not_found', '没有这个接口')
+  }
+
   const routeSpace = (u: UserRec, space: SpaceRec, method: string, rest: string, url: URL, body: Record<string, unknown>): MockResponse => {
     const st = space.store
     if (rest === '/pages') {
       if (method === 'GET') return { status: 200, body: st.listPages(url.searchParams) }
       if (method === 'POST') return { status: 201, body: st.create(body) }
     }
+    const hist = /^\/pages\/([^/]+)\/history$/.exec(rest)
+    if (hist && method === 'GET') return { status: 200, body: st.history(decodeURIComponent(hist[1]), url.searchParams) }
+    const ver = /^\/pages\/([^/]+)\/versions\/([^/]+)$/.exec(rest)
+    if (ver && method === 'GET') return { status: 200, body: st.version(decodeURIComponent(ver[1]), decodeURIComponent(ver[2])) }
+    if (rest === '/remote' || rest.startsWith('/remote/')) return routeRemote(space, method, rest, body)
     const one = /^\/pages\/([^/]+)(\/(move|draft|commit))?$/.exec(rest)
     if (one) {
       const id = decodeURIComponent(one[1])
@@ -496,6 +710,16 @@ export function createMockServer(options: MockOptions = {}) {
       const target = [...spaces.values()].find((s) => s.id === (url.searchParams.get('space') ?? '') || (!url.searchParams.get('space') && s.store.peek(touch[1])))
       if (!target) throw new HttpError(404, 'not_found', '没有这个页面')
       return j(target.store.touch(touch[1], body))
+    }
+
+    // Mock only: put a space's remote in a state, to see how the app shows it.
+    if (method === 'POST' && path === '/_mock/remote') {
+      const target = spaces.get(url.searchParams.get('space') ?? '') ?? [...spaces.values()][0]
+      if (!target) throw new HttpError(404, 'not_found', '没有这个空间')
+      const state = body.state
+      if (state !== 'local' && state !== 'ok' && state !== 'offline' && state !== 'rewritten' && state !== 'error') throw new HttpError(400, 'invalid', 'state 不对')
+      setRemoteState(target, state, { error: typeof body.error === 'string' ? body.error : undefined })
+      return j(spaceInfo(target))
     }
 
     // --- signing in (accounts mode) ---
@@ -590,6 +814,12 @@ export function createMockServer(options: MockOptions = {}) {
     throw new HttpError(404, 'not_found', '没有这个接口')
   }
 
+  // The first space may start out following a remote, to see the states by hand.
+  if (options.remote?.start) {
+    const first = [...spaces.values()][0]
+    if (first) setRemoteState(first, options.remote.start)
+  }
+
   const sweepAll = () => spaces.forEach((s) => s.store.sweep(idleMs, maxMs))
 
   return {
@@ -636,6 +866,19 @@ export function createMockServer(options: MockOptions = {}) {
     userId: (username: string) => [...users.values()].find((u) => u.username === username)?.id,
     // Let the server's own draft commits run now (they also run on every request).
     sweep: sweepAll,
+    // Put a space's remote in a state, as the dev route does.
+    setRemote: (space: string, state: RemoteState | 'local', patch: { error?: string } = {}) => setRemoteState(spaces.get(space)!, state, patch),
+    // Whether the pretend remote can be reached by `sync`.
+    remoteReachable: (space: string, on: boolean) => {
+      spaces.get(space)!.reachable = on
+    },
+    // The remote commit a `rewritten` space would accept.
+    rewrittenCommit: (space: string) => spaces.get(space)?.remote?.rewritten?.remote,
+    // The token as the mock keeps it (never returned by the API).
+    storedToken: (space: string) => {
+      const c = spaces.get(space)?.remote?.credential
+      return c?.type === 'token' ? c.token : undefined
+    },
   }
 }
 

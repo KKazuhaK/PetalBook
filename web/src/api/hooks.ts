@@ -6,7 +6,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClie
 import { waitForSaves } from '@/editor/saveController'
 import { spaceUrls } from '@/lib/urls'
 import { api, ApiError, spaceApi } from './client'
-import type { CreatePageInput, ListParams, SessionInfo, SpaceInfo, User } from './types'
+import type { ConnectRemoteInput, CreatePageInput, ListParams, Remote, SessionInfo, SpaceInfo, SyncState, User } from './types'
 
 // Everything of one space is under ['space', id, …], so switching space never
 // shows another space's data and one invalidation covers a space.
@@ -22,9 +22,15 @@ export const keys = {
   pages: (space: string) => ['space', space, 'pages'] as const,
   list: (space: string, params: ListParams) => ['space', space, 'pages', 'list', params] as const,
   page: (space: string, id: string) => ['space', space, 'page', id] as const,
+  history: (space: string, id: string) => ['space', space, 'history', id, 'list'] as const,
+  version: (space: string, id: string, commit: string) => ['space', space, 'history', id, 'version', commit] as const,
+  remote: (space: string) => ['space', space, 'remote'] as const,
 }
 
 export const PAGE_SIZE = 50
+export const HISTORY_PAGE_SIZE = 30
+
+export const syncOf = (s: SpaceInfo | undefined): SyncState => s?.sync ?? 'local'
 
 // --- session and spaces ------------------------------------------------------
 
@@ -34,9 +40,17 @@ export function useSession() {
   return useQuery({ queryKey: keys.session, queryFn: ({ signal }) => api.session(signal), staleTime: Infinity, gcTime: Infinity })
 }
 
-// Changes with create and rename, which update the cache themselves.
+// Changes with create and rename, which update the cache themselves. While a
+// space follows a remote its sync state moves on the server (it fetches every
+// minute), so the list is read again about as often; with only local spaces
+// nothing is ever asked twice.
 export function useSpaces() {
-  return useQuery({ queryKey: keys.spaces, queryFn: ({ signal }) => api.spaces(signal), staleTime: Infinity })
+  return useQuery({
+    queryKey: keys.spaces,
+    queryFn: ({ signal }) => api.spaces(signal),
+    staleTime: Infinity,
+    refetchInterval: (q) => (q.state.data?.spaces.some((s) => syncOf(s) !== 'local') ? 60_000 : false),
+  })
 }
 
 const LAST_SPACE_KEY = 'pb.space'
@@ -221,4 +235,101 @@ export function useInvites(enabled = true) {
 export function errorMessage(e: unknown, fallback: string): string {
   if (e instanceof ApiError) return e.code === 'network' ? e.message : e.message || fallback
   return fallback
+}
+
+// --- history ---------------------------------------------------------------------
+
+// The versions of one page, newest first, a cursor page at a time. Nothing is
+// fetched until `enabled` (the panel is open); the list is read again each time
+// it opens, because the page may have been saved since.
+export function useHistory(space: string, id: string, enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: keys.history(space, id),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => spaceApi(space).history(id, { limit: HISTORY_PAGE_SIZE, cursor: pageParam || undefined }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled,
+    staleTime: 0,
+    gcTime: 5 * 60_000,
+  })
+}
+
+// One version. A commit never changes, so it is kept as it is for as long as
+// it is likely to be looked at again, and never refetched.
+export function useVersion(space: string, id: string, commit: string | null) {
+  return useQuery({
+    queryKey: keys.version(space, id, commit ?? ''),
+    queryFn: ({ signal }) => spaceApi(space).version(id, commit!, signal),
+    enabled: commit !== null,
+    staleTime: Infinity,
+    gcTime: 30 * 60_000,
+  })
+}
+
+// --- remote repository -----------------------------------------------------------
+
+// `null` while the space is local (the server answers 404).
+export function useRemote(space: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.remote(space),
+    queryFn: async ({ signal }): Promise<Remote | null> => {
+      try {
+        return await spaceApi(space).getRemote(signal)
+      } catch (e) {
+        if (e instanceof ApiError && e.code === 'not_found') return null
+        throw e
+      }
+    },
+    enabled: enabled && space !== '',
+    staleTime: 10_000,
+  })
+}
+
+// What the server says about the remote also says what the space list shows
+// next to the space name.
+function useRemoteCache(space: string) {
+  const qc = useQueryClient()
+  return (remote: Remote | null) => {
+    qc.setQueryData(keys.remote(space), remote)
+    qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => prev && { spaces: prev.spaces.map((s) => (s.id === space ? { ...s, sync: remote ? remote.state : 'local' } : s)) })
+  }
+}
+
+// For a mutation whose variables hold a secret (a token). A finished mutation is
+// otherwise kept in the cache, variables included, for minutes; with this it is
+// dropped as soon as nothing shows it.
+export const secretMutation = { gcTime: 0 } as const
+
+export function useConnectRemote(space: string) {
+  const put = useRemoteCache(space)
+  const qc = useQueryClient()
+  return useMutation({
+    ...secretMutation,
+    mutationFn: (input: ConnectRemoteInput) => spaceApi(space).connectRemote(input),
+    onSuccess: (remote) => {
+      put(remote)
+      // A space that had nothing takes the remote's pages; one that was behind moves forward.
+      void invalidateListings(qc, space)
+    },
+  })
+}
+export function useDisconnectRemote(space: string) {
+  const put = useRemoteCache(space)
+  return useMutation({ mutationFn: () => spaceApi(space).disconnectRemote(), onSuccess: () => put(null) })
+}
+export function useSyncRemote(space: string) {
+  const put = useRemoteCache(space)
+  return useMutation({ mutationFn: () => spaceApi(space).syncRemote(), onSuccess: put })
+}
+export function useAcceptRemote(space: string) {
+  const put = useRemoteCache(space)
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (commit: string) => spaceApi(space).acceptRemote(commit),
+    onSuccess: (remote) => {
+      put(remote)
+      // Pages, lists and counts may all have moved with the remote's history.
+      void invalidateListings(qc, space)
+    },
+  })
 }

@@ -253,12 +253,10 @@ func (s *Space) Create(in CreateInput) (*Page, error) {
 		}
 	}
 	meta = newMeta(meta)
+	return mutate(s, func(tx *txn) (*Page, error) { return s.createLocked(tx, in, meta) })
+}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil, ErrClosed
-	}
+func (s *Space) createLocked(tx *txn, in CreateInput, meta page.Meta) (*Page, error) {
 	now := s.now().UTC()
 	var id string
 	for i := 0; ; i++ {
@@ -284,7 +282,7 @@ func (s *Space) Create(in CreateInput) (*Page, error) {
 	if stem == "" {
 		stem = page.UntitledStem(created, id, now)
 	}
-	folder, dirAbs, err := s.ensureFolder(in.Folder)
+	folder, dirAbs, err := s.ensureFolder(tx, in.Folder)
 	if err != nil {
 		return nil, err
 	}
@@ -292,21 +290,23 @@ func (s *Space) Create(in CreateInput) (*Page, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.afterWrite(path.Join(folder, name), data)
+	return s.afterWrite(tx, path.Join(folder, name), data)
 }
 
 // afterWrite indexes a file the server just wrote and tells the committer.
 // touched are the paths the commit must include.
-func (s *Space) afterWrite(rel string, data []byte, touched ...string) (*Page, error) {
+func (s *Space) afterWrite(tx *txn, rel string, data []byte, touched ...string) (*Page, error) {
 	abs := filepath.Join(s.root, filepath.FromSlash(rel))
 	st, err := os.Stat(abs)
 	if err != nil {
 		return nil, err
 	}
+	// The file is part of the change from the moment it is written: if the index
+	// refuses it, undoing the change takes the file back too.
+	tx.touch(append(touched, rel)...)
 	if _, err := s.idx.Put(rel, data, st.ModTime().UnixNano()); err != nil {
 		return nil, err
 	}
-	s.cm.Touch(append(touched, rel)...)
 	if len(touched) > 0 {
 		// A move or rename may free an id that a duplicate was waiting for.
 		if err := s.idx.RetryDuplicates(s.src); err != nil {
@@ -371,12 +371,10 @@ func (s *Space) Save(id, baseRev string, meta page.Meta, body string) (*Page, er
 		return nil, err
 	}
 	s.refresh(id)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil, ErrClosed
-	}
+	return mutate(s, func(tx *txn) (*Page, error) { return s.saveLocked(tx, id, baseRev, meta, body) })
+}
 
+func (s *Space) saveLocked(tx *txn, id, baseRev string, meta page.Meta, body string) (*Page, error) {
 	rel, data, mtime, err := s.load(id, false)
 	if err != nil {
 		return nil, err
@@ -430,7 +428,7 @@ func (s *Space) Save(id, baseRev string, meta page.Meta, body string) (*Page, er
 			}
 		}
 	}
-	return s.afterWrite(newRel, newData, rel)
+	return s.afterWrite(tx, newRel, newData, rel)
 }
 
 // CheckDraft applies the checks of Save to a draft without writing anything,
@@ -474,16 +472,15 @@ func (s *Space) Move(id, folder string) (*Page, error) {
 		return nil, err
 	}
 	s.refresh(id)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil, ErrClosed
-	}
+	return mutate(s, func(tx *txn) (*Page, error) { return s.moveLocked(tx, id, folder) })
+}
+
+func (s *Space) moveLocked(tx *txn, id, folder string) (*Page, error) {
 	rel, data, mtime, err := s.load(id, false)
 	if err != nil {
 		return nil, err
 	}
-	canon, dirAbs, err := s.ensureFolder(folder)
+	canon, dirAbs, err := s.ensureFolder(tx, folder)
 	if err != nil {
 		return nil, err
 	}
@@ -505,17 +502,17 @@ func (s *Space) Move(id, folder string) (*Page, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.afterWrite(path.Join(canon, name), data, rel)
+	return s.afterWrite(tx, path.Join(canon, name), data, rel)
 }
 
 // Delete removes the page file; Git history keeps it.
 func (s *Space) Delete(id string) error {
 	s.refresh(id)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return ErrClosed
-	}
+	_, err := mutate(s, func(tx *txn) (struct{}, error) { return struct{}{}, s.deleteLocked(tx, id) })
+	return err
+}
+
+func (s *Space) deleteLocked(tx *txn, id string) error {
 	rel, _, _, err := s.load(id, false)
 	if err != nil {
 		return err
@@ -527,13 +524,15 @@ func (s *Space) Delete(id string) error {
 	if err := s.cm.Record(jrec{Op: "d", Path: rel}); err != nil {
 		return err
 	}
+	// The file is part of the change from the moment it is removed: if the index
+	// refuses, undoing the change puts the file back.
+	tx.touch(rel)
 	if err := os.Remove(abs); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	if err := s.idx.Remove(id); err != nil {
 		return err
 	}
-	s.cm.Touch(rel)
 	// A page that was a duplicate of this one may be a page now.
 	if err := s.idx.RetryDuplicates(s.src); err != nil {
 		s.log.Warn("could not re-check duplicate ids", "error", err)
@@ -555,6 +554,9 @@ func (s *Space) CreateFolder(rel string) (string, error) {
 	defer s.mu.Unlock()
 	if s.closed {
 		return "", ErrClosed
+	}
+	if s.rem.Load() != nil {
+		return s.createFolderRemoteLocked(rel)
 	}
 	canon, existed, err := s.resolveFolder(rel)
 	if err != nil {
@@ -580,6 +582,30 @@ func (s *Space) CreateFolder(rel string) (string, error) {
 		return "", err
 	}
 	s.cm.Touch(canon + "/.gitkeep")
+	return canon, nil
+}
+
+// createFolderRemoteLocked makes a folder of a space that follows a remote.
+// Git does not carry an empty folder, so it exists only here: no .gitkeep, no
+// commit, nothing to push.
+func (s *Space) createFolderRemoteLocked(rel string) (string, error) {
+	canon, existed, err := s.resolveFolder(rel)
+	if err != nil {
+		return "", err
+	}
+	if existed {
+		return "", ErrExists
+	}
+	abs, err := s.abs(canon)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(abs, 0o755); err != nil {
+		return "", err
+	}
+	if err := s.idx.AddFolder(canon); err != nil {
+		return "", err
+	}
 	return canon, nil
 }
 

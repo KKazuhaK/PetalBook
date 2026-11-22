@@ -2,7 +2,7 @@
 // Strict about the parts the web app depends on (revs, 409 conflicts, header
 // order, untitled pages, cursors, draft semantics), simple about the rest.
 
-import type { DraftReceipt, Page, PageDraft, PageMeta, PageSummary } from '../types.ts'
+import type { DraftReceipt, HistoryList, Page, PageDraft, PageMeta, PageSummary, PageVersion, VersionChange } from '../types.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
 import { gitBlobId } from './sha1.ts'
 import { SEED_EMPTY_FOLDERS, seedPages } from './seed.ts'
@@ -27,6 +27,18 @@ interface Stored {
   body: string
   rev: string
   updated: number
+}
+
+// One commit that touched a page's file.
+interface VersionRec {
+  commit: string
+  time: number
+  author: string
+  path: string
+  rev?: string
+  change: VersionChange
+  meta: PageMeta
+  body: string
 }
 
 interface DraftRecord {
@@ -103,10 +115,24 @@ export interface StoreOptions {
   now: () => number
   random: () => number
   seed: boolean
+  // The name on the commits: the space's owner.
+  author?: () => string
+  // A reason why writes must fail with 503 `unavailable` right now (the space
+  // follows a remote that cannot be reached, or is paused), or null.
+  blocked?: () => string | null
 }
 
-export function createSpaceStore({ now, random, seed }: StoreOptions) {
+export function createSpaceStore({ now, random, seed, author = () => 'Local user', blocked = () => null }: StoreOptions) {
   const pages = new Map<string, Stored>()
+  // Every page's commits, oldest first; kept after the page is deleted.
+  const histories = new Map<string, VersionRec[]>()
+  let commits = 0
+  // Whether any page or folder was ever made: a pristine space may take a remote's content.
+  let touched = false
+  const guard = () => {
+    const why = blocked()
+    if (why) throw new HttpError(503, 'unavailable', why)
+  }
   const folders = new Set<string>([''])
   // userId + page id -> draft
   const drafts = new Map<string, DraftRecord>()
@@ -122,7 +148,10 @@ export function createSpaceStore({ now, random, seed }: StoreOptions) {
       if (!pages.has(id)) return id
     }
   }
-  const addFolder = (path: string) => ancestors(path).forEach((p) => folders.add(p))
+  const addFolder = (path: string) => {
+    ancestors(path).forEach((p) => folders.add(p))
+    if (path !== '') touched = true
+  }
 
   const fileNameFor = (folder: string, meta: PageMeta, id: string, self?: string): string => {
     const title = stringField(meta, 'title')
@@ -138,10 +167,19 @@ export function createSpaceStore({ now, random, seed }: StoreOptions) {
     const s: Stored = { ...p, rev: gitBlobId(serializeFile(p.meta, p.body)) }
     pages.set(s.id, s)
     addFolder(s.folder)
+    touched = true
     return s
   }
 
   const pathOf = (p: Stored) => (p.folder ? `${p.folder}/${p.fileName}` : p.fileName)
+
+  // A commit for what the file is now. Ids look like Git's and are unique.
+  const record = (p: Stored, change: VersionChange, at = now()) => {
+    const list = histories.get(p.id) ?? []
+    histories.set(p.id, list)
+    const commit = gitBlobId(`commit ${++commits} ${p.id} ${p.rev} ${at}`)
+    list.push({ commit, time: at, author: author(), path: pathOf(p), ...(change === 'delete' ? {} : { rev: p.rev }), change, meta: structuredClone(p.meta), body: p.body })
+  }
 
   const toPage = (p: Stored): Page => ({
     id: p.id,
@@ -187,7 +225,22 @@ export function createSpaceStore({ now, random, seed }: StoreOptions) {
       if (sp.tags?.length) meta.tags = [...sp.tags]
       meta.created = sp.created
       Object.assign(meta, sp.extra)
-      store({ id, folder: sp.folder, fileName: fileNameFor(sp.folder, meta, id), meta, body: sp.body, updated: now() - sp.ago * 60_000 })
+      const at = now() - sp.ago * 60_000
+      // Earlier versions first (oldest to newest), each a commit of its own.
+      let prev: Stored | undefined
+      for (const e of sp.earlier ?? []) {
+        const em: PageMeta = { id }
+        if (e.title) em.title = e.title
+        if (e.subtitle) em.subtitle = e.subtitle
+        if (e.tags?.length) em.tags = [...e.tags]
+        em.created = sp.created
+        const folder = e.folder ?? sp.folder
+        const old: Stored = { id, folder, fileName: `${e.title ?? id}.md`, meta: em, body: e.body, rev: gitBlobId(serializeFile(em, e.body)), updated: now() - e.ago * 60_000 }
+        record(old, prev ? (prev.rev === old.rev ? 'move' : 'edit') : 'add', old.updated)
+        prev = old
+      }
+      const s = store({ id, folder: sp.folder, fileName: fileNameFor(sp.folder, meta, id), meta, body: sp.body, updated: at })
+      record(s, prev ? (prev.rev === s.rev ? 'move' : 'edit') : 'add', at)
     })
   }
 
@@ -291,6 +344,7 @@ export function createSpaceStore({ now, random, seed }: StoreOptions) {
   }
 
   const create = (body: Record<string, unknown>): Page => {
+    guard()
     const folder = typeof body.folder === 'string' ? body.folder : ''
     if (!validFolder(folder)) throw new HttpError(400, 'invalid', '文件夹路径不合法')
     const given = parseMeta(body.meta)
@@ -305,6 +359,7 @@ export function createSpaceStore({ now, random, seed }: StoreOptions) {
     meta.created = created
     for (const [k, v] of rest.filter(([k]) => !['title', 'subtitle', 'source', 'tags'].includes(k))) meta[k] = v
     const s = store({ id, folder, fileName: fileNameFor(folder, meta, id), meta, body: (body.body as string | undefined) ?? '', updated: now() })
+    record(s, 'add')
     return toPage(s)
   }
 
@@ -338,11 +393,14 @@ export function createSpaceStore({ now, random, seed }: StoreOptions) {
     const fileName = fileNameFor(cur.folder, next, cur.id, cur.id)
     const rev = gitBlobId(serializeFile(next, body))
     if (rev === cur.rev && fileName === cur.fileName) return cur
-    return store({ id: cur.id, folder: cur.folder, fileName, meta: next, body, updated: now() })
+    const s = store({ id: cur.id, folder: cur.folder, fileName, meta: next, body, updated: now() })
+    record(s, rev === cur.rev ? 'move' : 'edit')
+    return s
   }
 
   const save = (userId: string, id: string, input: Record<string, unknown>): Page => {
     const cur = lookup(id)
+    guard()
     const { baseRev, meta, body } = checkInput(id, input)
     const s = writeFile(cur, baseRev, meta, body)
     // A save never takes a draft away (its text may exist nowhere else), except
@@ -354,17 +412,23 @@ export function createSpaceStore({ now, random, seed }: StoreOptions) {
 
   const move = (id: string, input: Record<string, unknown>): Page => {
     const cur = lookup(id)
+    guard()
     if (typeof input.folder !== 'string' || !validFolder(input.folder)) throw new HttpError(400, 'invalid', '文件夹路径不合法')
     const folder = input.folder
     const moved: Stored = { ...cur, folder, fileName: fileNameFor(folder, cur.meta, id, id), updated: now() }
+    // Moving to where it already is changes nothing, so it is no version.
+    if (pathOf(moved) === pathOf(cur)) return toPage(cur)
     pages.set(id, moved)
     addFolder(folder)
+    record(moved, 'move')
     return toPage(moved)
   }
 
   const remove = (id: string) => {
-    lookup(id)
+    const gone = lookup(id)
+    guard()
     pages.delete(id)
+    record(gone, 'delete')
     for (const k of [...drafts.keys()]) if (k.endsWith(`\u0000${id}`)) drafts.delete(k)
   }
 
@@ -406,6 +470,7 @@ export function createSpaceStore({ now, random, seed }: StoreOptions) {
   // (another version, none, or a stale draft) is a 409 and nothing changes.
   const commit = (userId: string, id: string, input: Record<string, unknown>): Page => {
     const cur = lookup(id)
+    guard()
     if (typeof input.version !== 'string' || input.version === '') throw new HttpError(400, 'invalid', '缺少 version')
     const d = drafts.get(draftKey(userId, id))
     if (!d || d.version !== input.version) throw draftConflict(userId, cur)
@@ -424,6 +489,8 @@ export function createSpaceStore({ now, random, seed }: StoreOptions) {
   // The server's own commits: a draft quiet for `idleMs`, or first stored
   // `maxMs` ago, is committed. A stale draft is left alone.
   const sweep = (idleMs: number, maxMs: number) => {
+    // The server writes drafts once the remote is back; until then they wait.
+    if (blocked()) return
     const t = now()
     for (const [key, d] of [...drafts]) {
       if (t - d.updated < idleMs && t - d.first < maxMs) continue
@@ -438,6 +505,56 @@ export function createSpaceStore({ now, random, seed }: StoreOptions) {
       }
       writeFile(cur, d.baseRev, d.meta, d.body)
       drafts.delete(key)
+    }
+  }
+
+  // --- history ---
+  // A deleted page keeps its history here, so a test can see the version with
+  // no rev; the real server may answer 404 for a page that is gone.
+  const versionsOf = (id: string): VersionRec[] => {
+    if (!pages.has(id) && !histories.has(id)) throw new HttpError(404, 'not_found', '找不到这个页面')
+    return histories.get(id) ?? []
+  }
+  const itemOf = (v: VersionRec) => ({ commit: v.commit, time: rfc3339(v.time), author: v.author, path: v.path, ...(v.rev ? { rev: v.rev } : {}), change: v.change })
+
+  const history = (id: string, q: URLSearchParams): HistoryList => {
+    const list = versionsOf(id)
+    const limitRaw = q.get('limit')
+    const limit = limitRaw === null ? 30 : Number(limitRaw)
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new HttpError(400, 'invalid', 'limit 要在 1 到 100 之间')
+    let offset = 0
+    const cursor = q.get('cursor')
+    if (cursor) {
+      let m: RegExpExecArray | null = null
+      try {
+        m = /^h(\d+)$/.exec(atob(cursor))
+      } catch {
+        // Not base64 at all.
+      }
+      if (!m) throw new HttpError(400, 'invalid', 'cursor 不合法')
+      offset = Number(m[1])
+    }
+    const newestFirst = [...list].reverse()
+    const slice = newestFirst.slice(offset, offset + limit)
+    const end = offset + slice.length
+    return { items: slice.map(itemOf), next: end < newestFirst.length ? btoa(`h${end}`) : '' }
+  }
+
+  const version = (id: string, commit: string): PageVersion => {
+    const v = versionsOf(id).find((x) => x.commit === commit)
+    // Another page's commit is as unknown here as one that does not exist.
+    if (!v) throw new HttpError(404, 'not_found', '这个提交不是该页面的版本')
+    return { ...itemOf(v), meta: v.change === 'delete' ? {} : structuredClone(v.meta), body: v.change === 'delete' ? '' : v.body }
+  }
+
+  // The remote's content for a space that had none: pages made as the remote's
+  // commits (mock only; the pages are invented).
+  const adopt = (items: { folder: string; title: string; body: string; tags?: string[] }[]) => {
+    for (const it of items) {
+      const id = newId()
+      const meta: PageMeta = { id, title: it.title, ...(it.tags?.length ? { tags: it.tags } : {}), created: new Date(now()).toISOString().slice(0, 10) }
+      const s = store({ id, folder: it.folder, fileName: fileNameFor(it.folder, meta, id), meta, body: it.body, updated: now() })
+      record(s, 'add')
     }
   }
 
@@ -468,7 +585,9 @@ export function createSpaceStore({ now, random, seed }: StoreOptions) {
     const cur = get(id)
     const meta = { ...cur.meta }
     if (typeof body.title === 'string') meta.title = body.title
-    return toPage(store({ ...cur, meta, body: typeof body.body === 'string' ? body.body : cur.body + '\n（别处追加的一行）\n', updated: now() }))
+    const s = store({ ...cur, meta, body: typeof body.body === 'string' ? body.body : cur.body + '\n（别处追加的一行）\n', updated: now() })
+    record(s, 'edit')
+    return toPage(s)
   }
 
   return {
@@ -486,6 +605,10 @@ export function createSpaceStore({ now, random, seed }: StoreOptions) {
     tags,
     createFolder,
     touch,
+    history,
+    version,
+    adopt,
+    pristine: () => !touched,
     reindex: () => ({ pages: pages.size, ms: 1 }),
     peek: (id: string) => (pages.has(id) ? toPage(get(id)) : undefined),
     peekDraft: (userId: string, id: string) => {

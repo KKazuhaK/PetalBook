@@ -1,0 +1,220 @@
+package gitstore
+
+// PetalBook never rewrites or deletes anything on the remote. Every push is a
+// fast-forward push of HEAD to one branch, and this file is the only place
+// that knows what such a command line looks like: pushArgs builds it, and
+// refuseDestructive (which runs in front of every real git call) refuses
+// anything that could force, delete or mirror. The static test in
+// safegit_test.go keeps these words out of every other non-test source file.
+//
+// This is the file that carries the safety guarantee. It is kept as close as
+// possible to the one in RackBook's gitstore; additions to the allow list are
+// marked "added:" with the reason.
+
+import (
+	"errors"
+	"fmt"
+	"regexp"
+	"strings"
+)
+
+var branchRe = regexp.MustCompile(`^[\p{L}\p{N}][\p{L}\p{N}._/-]*$`)
+
+// ValidBranch reports whether b is a branch name the store will use.
+func ValidBranch(b string) error { return validBranch(b) }
+
+func validBranch(b string) error {
+	if !branchRe.MatchString(b) || strings.Contains(b, "..") || strings.Contains(b, "//") ||
+		strings.HasSuffix(b, "/") || strings.HasSuffix(b, ".lock") || strings.HasSuffix(b, ".") {
+		return fmt.Errorf("refusing to push to unusable branch name %q", b)
+	}
+	return nil
+}
+
+// pushArgs is the only builder of push command lines. The result is always
+// `push --quiet origin HEAD:refs/heads/<branch>`: no force, no "+" or ":"
+// refspec, no deletion.
+func pushArgs(branch string) ([]string, error) {
+	if err := validBranch(branch); err != nil {
+		return nil, err
+	}
+	return []string{"push", "--quiet", "origin", "HEAD:refs/heads/" + branch}, nil
+}
+
+// keepRefPrefix is where commits that never reached the remote are kept when
+// the clone has to move to the remote's history (see KeepUnpushed).
+const keepRefPrefix = "refs/petalbook/unpushed/"
+
+var (
+	keepRefRe = regexp.MustCompile(`^refs/petalbook/unpushed/[0-9A-Za-z._-]{1,64}$`)
+	commitRe  = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+)
+
+// keepRefArgs builds the one ref-creating command: a new ref under
+// refs/petalbook/unpushed/ pointing at a full commit id. Never a deletion and
+// never an existing ref outside that namespace.
+// added: crash recovery and an accepted rewrite must keep unpushed work
+// reachable before the clone moves to the remote.
+func keepRefArgs(name, commit string) ([]string, error) {
+	ref := keepRefPrefix + name
+	if !keepRefRe.MatchString(ref) || strings.Contains(name, "..") || strings.HasSuffix(name, ".lock") || !commitRe.MatchString(commit) {
+		return nil, fmt.Errorf("refusing to make the ref %q at %q", ref, commit)
+	}
+	return []string{"update-ref", ref, commit}, nil
+}
+
+var errDestructive = errors.New("refusing a git command that could rewrite or delete history")
+
+// allowedConfigKeys are the only "-c key=value" settings passed by callers.
+var allowedConfigKeys = map[string]bool{"commit.gpgsign": true, "safe.directory": true, "core.quotepath": true, "core.autocrlf": true}
+
+// Subcommand returns the git subcommand of a command line and its arguments,
+// skipping the global options the runner allows.
+func Subcommand(args []string) (string, []string) { return subcommand(args) }
+
+// subcommand returns the git subcommand and its arguments. Only the global
+// options PetalBook itself uses may precede it: -C <dir>, -c <allowed key>=<value>
+// and --no-pager. For anything else (--git-dir, --attr-source, --foo x, ...) it
+// returns "", which refuseDestructive refuses.
+func subcommand(args []string) (string, []string) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "-C" && i+1 < len(args):
+			i++
+		case a == "-c" && i+1 < len(args):
+			key, _, ok := strings.Cut(args[i+1], "=")
+			if !ok || !allowedConfigKeys[strings.ToLower(key)] {
+				return "", nil
+			}
+			i++
+		case a == "--no-pager":
+		case strings.HasPrefix(a, "-"):
+			return "", nil
+		default:
+			return a, args[i+1:]
+		}
+	}
+	return "", nil
+}
+
+// allowedOptions lists, for every subcommand PetalBook runs, the only option
+// tokens it may be given (a trailing "*" matches a prefix). Anything else that
+// starts with "-" is refused, which keeps out --upload-pack, --receive-pack,
+// --exec, --output, -u, -o/--push-option, --ext-diff, --textconv and every
+// other option that runs a program or writes somewhere. Everything after a bare
+// "--" is a path. A new need has to be added here on purpose. push, remote,
+// update-ref and config are checked exactly below instead.
+//
+// The additions to RackBook's list, and why:
+//
+//	add, rm      --pathspec-from-file=- / --pathspec-file-nul: commit exactly a list
+//	             of paths given on stdin, so the list is not limited by argv size.
+//	             -A, --cached, -r, -q, --ignore-unmatch: stage a change or a deletion
+//	             of those paths (never the whole tree).
+//	cat-file     --batch: read many blobs of the history in one process.
+//	checkout     --pathspec-from-file=- ...: restore the files of a discarded change in one command.
+//	commit       --message=*: the message is one argument, so it cannot be read as an option.
+//	diff         --cached/--name-status/-z/--no-renames/-M: what a commit changed, and what
+//	             moved between two commits (the index update after a pull).
+//	fetch        --no-tags: fetch only the branch, not every tag of the remote.
+//	init         --quiet and --initial-branch=*: a new space's repository.
+//	log          --follow, --name-status, -z, --no-color, --format=*: page history.
+//	ls-remote    --heads: whether the remote has the branch yet (connecting).
+//	ls-tree      -r, -z, --name-only: which of the discarded files exist in the parent commit.
+//	rev-list     --left-right: how far ahead and behind in one command.
+//	status       --porcelain, -z, --untracked-files=no: modified tracked files when a space opens.
+//
+// Dropped from RackBook's list because nothing here needs them: --grep and
+// --fixed-strings (trailer search), merge-base's use for pull requests.
+var allowedOptions = map[string][]string{
+	"add":        {"--", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"},
+	"rm":         {"--", "--cached", "-r", "-q", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"},
+	"cat-file":   {"--batch"},
+	"checkout":   {"--quiet", "--", "--pathspec-from-file=-", "--pathspec-file-nul"},
+	"commit":     {"--quiet", "--no-verify", "--message=*", "--only", "--", "--pathspec-from-file=-", "--pathspec-file-nul"},
+	"diff":       {"--cached", "--name-status", "-z", "-M", "--no-renames", "--"},
+	"fetch":      {"--quiet", "--no-tags"},
+	"init":       {"--quiet", "-q", "--initial-branch=*"},
+	"log":        {"-n", "--format=*", "--follow", "--name-status", "-z", "--no-color", "--"},
+	"ls-remote":  {"--heads"},
+	"ls-tree":    {"-r", "-z", "--name-only", "--"},
+	"merge":      {"--quiet", "--ff-only"},
+	"merge-base": {"--is-ancestor"},
+	"push":       {},
+	"remote":     {},
+	"update-ref": {},
+	"reset":      {"--quiet", "--hard"},
+	"rev-list":   {"--count", "--left-right", "--not"},
+	"rev-parse":  {"--is-inside-work-tree", "--abbrev-ref", "--absolute-git-dir", "--show-prefix", "--verify", "--quiet", "--short"},
+	"status":     {"--porcelain", "-z", "--untracked-files=no"},
+}
+
+func optionAllowed(sub, opt string) bool {
+	for _, a := range allowedOptions[sub] {
+		if a == opt || (strings.HasSuffix(a, "*") && strings.HasPrefix(opt, strings.TrimSuffix(a, "*"))) {
+			return true
+		}
+	}
+	return false
+}
+
+// remoteArgsOK checks the four forms of `remote` the store uses: get-url,
+// add, set-url (a URL that passed ValidateURL, which never starts with a dash)
+// and removal of origin.
+// added: connecting a space to a repository, and disconnecting it again; all
+// of them change only this clone's own configuration.
+func remoteArgsOK(rest []string) bool {
+	switch {
+	case len(rest) == 2 && rest[0] == "get-url" && rest[1] == "origin":
+		return true
+	case len(rest) == 2 && rest[0] == "remove" && rest[1] == "origin":
+		return true
+	case len(rest) == 3 && (rest[0] == "add" || rest[0] == "set-url") && rest[1] == "origin":
+		return rest[2] != "" && !strings.HasPrefix(rest[2], "-")
+	}
+	return false
+}
+
+// refuseDestructive is a last line of defence in the real runner. A push must
+// be exactly what pushArgs builds, only the subcommands of allowedOptions may
+// run, and each may only use its own options.
+func refuseDestructive(args []string) error {
+	sub, rest := subcommand(args)
+	if _, ok := allowedOptions[sub]; !ok {
+		return fmt.Errorf("%w: git %s (only -C, -c <known key>, --no-pager may precede the subcommand; subcommands: see allowedOptions)", errDestructive, sub)
+	}
+	switch sub {
+	case "push":
+		if len(rest) != 3 || rest[0] != "--quiet" || rest[1] != "origin" || !strings.HasPrefix(rest[2], "HEAD:refs/heads/") ||
+			validBranch(strings.TrimPrefix(rest[2], "HEAD:refs/heads/")) != nil {
+			return fmt.Errorf("%w: push %s", errDestructive, strings.Join(rest, " "))
+		}
+	case "remote":
+		if !remoteArgsOK(rest) {
+			return fmt.Errorf("%w: remote %s", errDestructive, strings.Join(rest, " "))
+		}
+	case "update-ref":
+		if len(rest) != 2 || !strings.HasPrefix(rest[0], keepRefPrefix) {
+			return fmt.Errorf("%w: update-ref %s", errDestructive, strings.Join(rest, " "))
+		}
+		if _, err := keepRefArgs(strings.TrimPrefix(rest[0], keepRefPrefix), rest[1]); err != nil {
+			return fmt.Errorf("%w: update-ref %s", errDestructive, strings.Join(rest, " "))
+		}
+	default:
+		for i := 0; i < len(rest); i++ {
+			a := rest[i]
+			if a == "--" {
+				break
+			}
+			if sub == "log" && a == "-n" {
+				i++ // the count that follows is a value
+				continue
+			}
+			if strings.HasPrefix(a, "-") && !optionAllowed(sub, a) {
+				return fmt.Errorf("%w: git %s %s (option not allowed)", errDestructive, sub, a)
+			}
+		}
+	}
+	return nil
+}

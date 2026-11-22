@@ -11,6 +11,7 @@ export function spaceUrls(space: string) {
     folder: (path: string) => (path === '' ? `${base}/f` : `${base}/f/${encodePath(path)}`),
     tag: (tag: string) => `${base}/t/${encodePath(tag)}`,
     page: (id: string) => `${base}/p/${encodeURIComponent(id)}`,
+    settings: () => `${base}/settings`,
     search: (q: string) => `${base}/search?q=${encodeURIComponent(q)}`,
   }
 }

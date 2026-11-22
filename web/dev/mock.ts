@@ -3,6 +3,7 @@
 // memory and is reset on restart. MOCK_DELAY_MS adds latency to every call.
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin } from 'vite'
+import type { RemoteState } from '../src/api/types.ts'
 import { createMockServer, MOCK_ADMIN, MOCK_INVITE_TOKEN, MOCK_SETUP_TOKEN, type MockOptions } from '../src/api/mock/server.ts'
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -18,13 +19,22 @@ function readBody(req: IncomingMessage): Promise<string> {
 //   single (default)  one space, no sign-in, as `serve --space`
 //   accounts          sign-in with the seeded administrator, an invite and a fake single sign-on provider
 //   setup             accounts mode with no user yet: the first-run page
+// In accounts mode MOCK_REMOTE=ok|offline|rewritten|error starts the first
+// space following a remote in that state. Whatever the state, it can be changed
+// while the server runs:
+//   curl -X POST -H 'Content-Type: application/json' -d '{"state":"offline"}' \
+//        http://localhost:PORT/api/_mock/remote
+// Connecting a space to an address that contains "diverged", "unreachable",
+// "refused", "ahead" or "behind" plays that outcome (see MockRemoteOptions).
 function optionsFromEnv(): MockOptions {
   const mode = process.env.MOCK_MODE ?? 'single'
   if (mode === 'single') return {}
   const oidc = { name: '示例单点登录' }
   if (mode === 'setup') return { mode: 'accounts', admin: false, oidc }
   if (mode !== 'accounts') throw new Error(`MOCK_MODE must be single, accounts or setup, not ${mode}`)
-  return { mode: 'accounts', oidc, invite: { token: MOCK_INVITE_TOKEN } }
+  const start = process.env.MOCK_REMOTE
+  if (start && !['ok', 'offline', 'rewritten', 'error'].includes(start)) throw new Error(`MOCK_REMOTE must be ok, offline, rewritten or error, not ${start}`)
+  return { mode: 'accounts', oidc, invite: { token: MOCK_INVITE_TOKEN }, ...(start ? { remote: { start: start as RemoteState } } : {}) }
 }
 
 export function mockApi(): Plugin {

@@ -69,7 +69,7 @@ func TestSingleMode(t *testing.T) {
 		t.Fatal()
 	}
 	l, _ := m.List(ctx, store.LocalUserID)
-	if len(l) != 1 || l[0] != (Info{ID: "default", Name: "Mine", Role: "owner", Personal: true}) {
+	if len(l) != 1 || l[0] != (Info{ID: "default", Name: "Mine", Role: "owner", Personal: true, Sync: "local"}) {
 		t.Fatalf("%+v", l)
 	}
 	if h, err := m.Open(ctx, store.LocalUserID, "default"); err != nil || h.Space != sp {

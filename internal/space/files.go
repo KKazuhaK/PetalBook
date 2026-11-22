@@ -233,7 +233,7 @@ func (s *Space) resolveFolder(rel string) (canon string, existed bool, err error
 
 // ensureFolder creates a folder path (and records it) and returns it as it is
 // spelled on disk, with its file system path.
-func (s *Space) ensureFolder(rel string) (canon, abs string, err error) {
+func (s *Space) ensureFolder(tx *txn, rel string) (canon, abs string, err error) {
 	if err := checkRel(rel); err != nil {
 		return "", "", err
 	}
@@ -247,9 +247,22 @@ func (s *Space) ensureFolder(rel string) (canon, abs string, err error) {
 	if canon == "" {
 		return "", abs, nil
 	}
+	// The directories this call makes are noted, so a change that is undone
+	// can remove them again.
+	var missing []string
+	for d := canon; d != ""; d = path.Dir(d) {
+		if d == "." {
+			break
+		}
+		if _, err := os.Lstat(filepath.Join(s.root, filepath.FromSlash(d))); err == nil {
+			break
+		}
+		missing = append([]string{d}, missing...)
+	}
 	if err := os.MkdirAll(abs, 0o755); err != nil {
 		return "", "", err
 	}
+	tx.created = append(tx.created, missing...)
 	return canon, abs, s.idx.AddFolder(canon)
 }
 

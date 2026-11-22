@@ -24,6 +24,16 @@
 // and it slows down rather than fails; start from a fresh data directory when
 // that matters.
 //
+// History is written by Git commits, which a real server makes a few seconds
+// after the file is written and may join (two quick saves can be one commit),
+// so the tests against a real server wait for the newest version to show up and
+// never count versions exactly; the mock, which commits on the spot, is held to
+// exact counts in mock.test.ts. The remote repository tests need a remote: on
+// a real server only what needs none is asserted (a local space, the key,
+// addresses and hosts that are refused); the four outcomes of connecting, the
+// states and the 503s are asserted on the mock. Set PETALBOOK_CONTRACT_HOSTS_OPEN=1
+// when the server was started with `--remote-host '*'` (no host is then refused).
+//
 // It creates all its own data (under names made unique per run) and never
 // assumes anything else is in the space. Where the mock and the server
 // differ, the mock is wrong.
@@ -38,6 +48,7 @@ declare const process: { env: Record<string, string | undefined> }
 const REAL = process.env.PETALBOOK_API?.replace(/\/+$/, '')
 const CONTRACT_USER = process.env.PETALBOOK_CONTRACT_USER
 const CONTRACT_PASSWORD = process.env.PETALBOOK_CONTRACT_PASSWORD
+const HOSTS_OPEN = process.env.PETALBOOK_CONTRACT_HOSTS_OPEN === '1'
 const realFetch = globalThis.fetch
 
 interface Target {
@@ -238,6 +249,13 @@ function suite(target: Target) {
       ]
       for (const [method, path, body] of probes) {
         const r = await call(admin, method, path, body ?? (method === 'GET' ? undefined : {}))
+        expect([r.status, r.json?.error], `${method} ${path}`).toEqual([404, 'not_found'])
+      }
+    })
+
+    it('the remote repository endpoints answer 404', async () => {
+      for (const [method, path] of [['GET', `/api/spaces/${spaceId}/remote`], ['POST', `/api/spaces/${spaceId}/remote/key`], ['POST', `/api/spaces/${spaceId}/remote/sync`]] as const) {
+        const r = await call(admin, method, path, method === 'GET' ? undefined : {})
         expect([r.status, r.json?.error], `${method} ${path}`).toEqual([404, 'not_found'])
       }
     })
@@ -1252,6 +1270,392 @@ function suite(target: Target) {
       }
       // Never quiet for 2 minutes, yet 10 have passed.
       expect((await S.getPage(p.id)).body).toBe('v5\n')
+    })
+  })
+
+  describe('history', () => {
+    const HEX40 = /^[0-9a-f]{40}$/
+    const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/
+    // Against a real server the commit comes a few seconds after the write.
+    const eventually = async <T,>(fn: () => Promise<T>, done: (v: T) => boolean, ms = 25_000): Promise<T> => {
+      const end = Date.now() + (REAL ? ms : 0)
+      for (;;) {
+        const v = await fn()
+        if (done(v) || Date.now() >= end) return v
+        await new Promise((r) => setTimeout(r, 400))
+      }
+    }
+    const allHistory = async (id: string, limit: number) => {
+      const out: Awaited<ReturnType<SpaceApi['history']>>['items'] = []
+      let cursor = ''
+      for (let guard = 0; guard < 200; guard++) {
+        const r = await S.history(id, { limit, cursor: cursor || undefined })
+        out.push(...r.items)
+        cursor = r.next
+        if (!cursor) return out
+      }
+      throw new Error('cursor never ended')
+    }
+    // A page with two contents, and its history once the second one is in.
+    const twice = async (folder: string, title: string) => {
+      const p = await mk(`${root}/${folder}`, { title, tags: [`h${run}`] }, '第一版的文字。\n')
+      const saved = await S.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: '第二版的文字，多了一些。\n' })
+      const items = (await eventually(() => allHistory(p.id, 50), (l) => l[0]?.rev === saved.rev)) ?? []
+      return { p, saved, items }
+    }
+
+    it('lists the versions newest first, each with commit, time, author, path, rev and change', async () => {
+      const { p, saved, items } = await twice('h1', `历史${run}`)
+      expect(items.length).toBeGreaterThanOrEqual(1)
+      for (const it of items) {
+        expect(it.commit).toMatch(HEX40)
+        expect(it.time).toMatch(RFC3339)
+        expect(typeof it.author).toBe('string')
+        expect(it.author).not.toBe('')
+        expect(it.path.endsWith('.md')).toBe(true)
+        expect(['add', 'edit', 'move', 'delete']).toContain(it.change)
+        expect(it.rev).toMatch(HEX40)
+      }
+      // The newest is what the file is now; the oldest is where the page began.
+      expect(items[0]).toMatchObject({ rev: saved.rev, path: saved.path })
+      expect(items[items.length - 1].change).toBe('add')
+      for (let i = 1; i < items.length; i++) expect(Date.parse(items[i - 1].time)).toBeGreaterThanOrEqual(Date.parse(items[i].time))
+      expect(new Set(items.map((i) => i.commit)).size).toBe(items.length)
+      expect((await S.history(p.id)).items.length).toBe(items.length)
+    })
+
+    it('a version is the page as it was: header and body, with the rev of that file', async () => {
+      const { p, saved, items } = await twice('h2', `版本内容${run}`)
+      const newest = await S.version(p.id, items[0].commit)
+      expect(newest).toMatchObject({ commit: items[0].commit, rev: saved.rev, path: saved.path, author: items[0].author })
+      expect(newest.time).toMatch(RFC3339)
+      expect(newest.body).toBe('第二版的文字，多了一些。\n')
+      expect(newest.meta).toMatchObject({ id: p.id, title: `版本内容${run}`, tags: [`h${run}`] })
+      if (items.length > 1) {
+        const oldest = await S.version(p.id, items[items.length - 1].commit)
+        expect(oldest.body).toBe('第一版的文字。\n')
+        expect(oldest.rev).toBe(p.rev)
+      }
+    })
+
+    it('a commit that is not a version of this page is 404, even if it is a version of another page', async () => {
+      const a = await twice('h3a', `甲${run}`)
+      const b = await twice('h3b', `乙${run}`)
+      const unknown = await failure(S.version(a.p.id, 'f'.repeat(40)))
+      expect([unknown.status, unknown.code]).toEqual([404, 'not_found'])
+      const other = await failure(S.version(a.p.id, b.items[0].commit))
+      expect([other.status, other.code]).toEqual([404, 'not_found'])
+      expect((await S.version(b.p.id, b.items[0].commit)).commit).toBe(b.items[0].commit)
+    })
+
+    it('history and versions of a page that does not exist are 404', async () => {
+      for (const id of ['01ZZZZZZZZ', 'nope']) {
+        const h = await failure(S.history(id))
+        expect([h.status, h.code]).toEqual([404, 'not_found'])
+        const v = await failure(S.version(id, 'a'.repeat(40)))
+        expect([v.status, v.code]).toEqual([404, 'not_found'])
+      }
+    })
+
+    it('pages with a cursor: one at a time gives the same versions as all at once, ending with an empty next', async () => {
+      const { p, items } = await twice('h4', `分页${run}`)
+      const one = await allHistory(p.id, 1)
+      expect(one.map((i) => i.commit)).toEqual(items.map((i) => i.commit))
+      const first = await S.history(p.id, { limit: 1 })
+      expect(first.items).toHaveLength(1)
+      expect(first.next === '').toBe(items.length === 1)
+    })
+
+    it('limit must be 1 to 100 and a cursor must be one the server gave: 400 invalid', async () => {
+      const p = await mk(`${root}/h5`, { title: `参数${run}` })
+      for (const q of ['limit=0', 'limit=101', 'limit=x', 'cursor=not-a-cursor']) {
+        const r = await call(admin, 'GET', `${SP_PAGES}/${p.id}/history?${q}`)
+        expect([r.status, r.json?.error], q).toEqual([400, 'invalid'])
+      }
+      expect((await call(admin, 'GET', `${SP_PAGES}/${p.id}/history?limit=100`)).status).toBe(200)
+    })
+
+    it('a draft is not a version; the version appears when the draft is committed', async () => {
+      const p = await mk(`${root}/h6`, { title: `草稿版本${run}` }, '甲\n')
+      const before = await eventually(() => allHistory(p.id, 50), (l) => l.length >= 1)
+      const r = await S.putDraft(p.id, { prev: '', baseRev: p.rev, meta: p.meta, body: '乙\n' })
+      expect((await allHistory(p.id, 50)).map((i) => i.commit)).toEqual(before.map((i) => i.commit))
+      const committed = await S.commitPage(p.id, r.version)
+      const after = await eventually(() => allHistory(p.id, 50), (l) => l[0]?.rev === committed.rev)
+      expect(after[0].rev).toBe(committed.rev)
+      expect((await S.version(p.id, after[0].commit)).body).toBe('乙\n')
+    })
+
+    it('renaming through the title keeps the history of the page, with the new path on the newest version', async () => {
+      const p = await mk(`${root}/h7`, { title: `旧名${run}` }, '内容\n')
+      const saved = await S.savePage(p.id, { baseRev: p.rev, meta: { ...p.meta, title: `新名${run}` }, body: '内容\n' })
+      const items = await eventually(() => allHistory(p.id, 50), (l) => l[0]?.path === saved.path)
+      expect(items[0].path).toBe(`${root}/h7/新名${run}.md`)
+      expect(items[items.length - 1].change).toBe('add')
+      expect(items.length).toBeGreaterThanOrEqual(1)
+    })
+  })
+
+  const url = (host: string, tail = 'notes.git') => `https://${host}/${tail}`
+
+  describe.skipIf(!accounts)('remote repository (accounts server only: a space is made for it; on a real server only what needs no remote is asserted)', () => {
+    let rid = ''
+    let R: SpaceApi
+    beforeAll(async () => {
+      rid = (await api.createSpace(`远端${run}`.slice(0, 40))).id
+      R = spaceApi(rid)
+    })
+    it('a new space is local: `sync` says so and there is no remote', async () => {
+      const mine = (await api.spaces()).spaces.find((x) => x.id === rid)
+      expect(mine?.sync).toBe('local')
+      const e = await failure(R.getRemote())
+      expect([e.status, e.code]).toEqual([404, 'not_found'])
+    })
+
+    it('the SSH key is made once and returned again; rotating makes another while the space is local', async () => {
+      const k = await R.remoteKey()
+      expect(k.publicKey).toMatch(/^ssh-\S+ \S+/)
+      expect(k.fingerprint).toMatch(/^SHA256:\S+/)
+      expect(await R.remoteKey()).toEqual(k)
+      const rotated = await R.remoteKey(true)
+      expect(rotated.publicKey).not.toBe(k.publicKey)
+      expect(rotated.fingerprint).not.toBe(k.fingerprint)
+      expect(await R.remoteKey()).toEqual(rotated)
+    })
+
+    it('an address that is not https or SSH, or carries a password, is 400 invalid', async () => {
+      const cred = { type: 'token' as const, token: 'x' }
+      for (const bad of ['ftp://github.com/a/b.git', 'github.com/a/b.git', 'https://user:secret@github.com/a/b.git', 'https://github.com', '', 'git@github.com', 'file:///tmp/x']) {
+        const e = await failure(R.connectRemote({ url: bad, credential: cred }))
+        expect([e.status, e.code], bad).toEqual([400, 'invalid'])
+      }
+      // Still local.
+      expect((await failure(R.getRemote())).status).toBe(404)
+    })
+
+    it.skipIf(HOSTS_OPEN)('a host the administrator did not allow is 403 forbidden, and is not taken for a refused origin', async () => {
+      const e = await failure(R.connectRemote({ url: url('git.not-allowed.example'), credential: { type: 'token', token: 'x' } }))
+      expect([e.status, e.code]).toEqual([403, 'forbidden'])
+      expect(e.message).not.toMatch(/allow-origin/)
+      const ssh = await failure(R.connectRemote({ url: 'git@git.not-allowed.example:a/b.git', credential: { type: 'ssh' } }))
+      expect([ssh.status, ssh.code]).toEqual([403, 'forbidden'])
+    })
+  })
+
+  describe.skipIf(!accounts || !!REAL)('mock only (a real server has no remote to talk to): connecting, states and unavailable writes', () => {
+    const fresh = async (name: string) => {
+      const sp = await api.createSpace(`${name}${run}`.slice(0, 40))
+      const R = spaceApi(sp.id)
+      ids.set(R, sp.id)
+      return { id: sp.id, R }
+    }
+    const token = { type: 'token' as const, username: 'u', token: 'secret-token-1' }
+    const list = async (id: string) => (await api.spaces()).spaces.find((x) => x.id === id)!
+    const ids = new Map<SpaceApi, string>()
+    const spaceIdOf = (R: SpaceApi) => ids.get(R)!
+    const titles = async (R: SpaceApi) => (await R.listPages({ recursive: true, folder: '' })).items.map((i) => i.title)
+
+    it('connecting to a remote with no such branch pushes the space: 200 with the remote, state ok, a sync time, and the token never comes back', async () => {
+      const { id, R } = await fresh('推送')
+      const r = await R.connectRemote({ url: url('github.com'), credential: token })
+      expect(r).toMatchObject({ url: url('github.com'), branch: 'main', state: 'ok', error: '', rewritten: null, credential: { type: 'token', username: 'u' } })
+      expect(r.lastSync).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+      expect(JSON.stringify(r)).not.toContain('secret-token-1')
+      expect(await R.getRemote()).toEqual(r)
+      expect((await list(id)).sync).toBe('ok')
+    })
+
+    it('the branch defaults to main and can be named', async () => {
+      const { R } = await fresh('分支')
+      expect((await R.connectRemote({ url: url('github.com'), branch: 'notes', credential: token })).branch).toBe('notes')
+      expect((await R.connectRemote({ url: url('gitlab.com'), credential: token })).branch).toBe('main')
+    })
+
+    it('a pristine space takes the remote\'s content', async () => {
+      const { R } = await fresh('接收')
+      expect(await titles(R)).toEqual([])
+      await R.connectRemote({ url: url('github.com', 'ahead.git'), credential: token })
+      expect((await titles(R)).length).toBeGreaterThan(0)
+    })
+
+    it('a space with pages: a remote that is ahead moves it forward, one that is behind changes nothing here', async () => {
+      const a = await fresh('前进')
+      await a.R.createPage({ meta: { title: '本地页面' } })
+      await a.R.connectRemote({ url: url('github.com', 'ahead.git'), credential: token })
+      expect(await titles(a.R)).toContain('本地页面')
+      expect((await titles(a.R)).length).toBeGreaterThan(1)
+      const b = await fresh('落后')
+      await b.R.createPage({ meta: { title: '本地页面' } })
+      await b.R.connectRemote({ url: url('github.com', 'behind.git'), credential: token })
+      expect(await titles(b.R)).toEqual(['本地页面'])
+    })
+
+    it('both sides with content of their own is 409 conflict, and the space stays local', async () => {
+      const { id, R } = await fresh('分叉')
+      await R.createPage({ meta: { title: '我的' } })
+      const e = await failure(R.connectRemote({ url: url('github.com', 'diverged.git'), credential: token }))
+      expect([e.status, e.code]).toEqual([409, 'conflict'])
+      expect(e.message).not.toBe('')
+      expect((await failure(R.getRemote())).status).toBe(404)
+      expect((await list(id)).sync).toBe('local')
+    })
+
+    it('a remote that cannot be reached, or refuses the credential, is 503 unavailable with a message, and nothing changes', async () => {
+      const { id, R } = await fresh('连不上')
+      for (const word of ['unreachable', 'refused']) {
+        const e = await failure(R.connectRemote({ url: url('github.com', `${word}.git`), credential: token }))
+        expect([e.status, e.code], word).toEqual([503, 'unavailable'])
+        expect(e.message).not.toBe('')
+      }
+      expect((await failure(R.getRemote())).status).toBe(404)
+      expect((await list(id)).sync).toBe('local')
+    })
+
+    it('a token left out keeps the stored one; with none stored it is 400; the user name defaults', async () => {
+      const { R } = await fresh('令牌')
+      const none = await failure(R.connectRemote({ url: url('github.com'), credential: { type: 'token', username: 'u' } }))
+      expect([none.status, none.code]).toEqual([400, 'invalid'])
+      const first = await R.connectRemote({ url: url('github.com'), credential: { type: 'token', token: 'tok-1' } })
+      expect(first.credential).toEqual({ type: 'token', username: 'x-access-token' })
+      expect(server!.storedToken(spaceIdOf(R))).toBe('tok-1')
+      const again = await R.connectRemote({ url: url('github.com', 'other.git'), credential: { type: 'token', username: 'me' } })
+      expect(again.credential).toEqual({ type: 'token', username: 'me' })
+      expect(server!.storedToken(spaceIdOf(R))).toBe('tok-1')
+      await R.connectRemote({ url: url('github.com', 'other.git'), credential: { type: 'token', token: 'tok-2' } })
+      expect(server!.storedToken(spaceIdOf(R))).toBe('tok-2')
+    })
+
+    it('SSH: the key from /remote/key is the credential, the host key is shown, and the address must be an SSH one', async () => {
+      const { R } = await fresh('密钥')
+      const key = await R.remoteKey()
+      const r = await R.connectRemote({ url: 'git@github.com:me/notes.git', credential: { type: 'ssh' } })
+      expect(r.credential).toEqual({ type: 'ssh', publicKey: key.publicKey, fingerprint: key.fingerprint })
+      expect(r.hostKey).toMatch(/^SHA256:/)
+      for (const [u, c] of [[url('github.com'), { type: 'ssh' }], ['git@github.com:me/x.git', token]] as const) {
+        const e = await failure(R.connectRemote({ url: u, credential: c }))
+        expect([e.status, e.code]).toEqual([400, 'invalid'])
+      }
+      const e = await failure(R.remoteKey(true))
+      expect([e.status, e.code]).toEqual([409, 'conflict'])
+      expect((await R.connectRemote({ url: 'ssh://git@gitlab.com:2222/me/notes.git', credential: { type: 'ssh' } })).state).toBe('ok')
+    })
+
+    it('a space connected without making a key first still gets one', async () => {
+      const { R } = await fresh('自动密钥')
+      const r = await R.connectRemote({ url: 'git@codeberg.org:me/notes.git', credential: { type: 'ssh' } })
+      expect(r.credential.type === 'ssh' && r.credential.publicKey).toMatch(/^ssh-/)
+    })
+
+    it('while the remote is unreachable, writes are 503 unavailable and change nothing; reads and drafts go on; the draft is written once it is back', async () => {
+      const { id, R } = await fresh('离线')
+      const p = await R.createPage({ meta: { title: '页' }, body: '旧\n' })
+      await R.connectRemote({ url: url('github.com'), credential: token })
+      server!.setRemote(id, 'offline', { error: '连接超时' })
+      const remote = await R.getRemote()
+      expect(remote).toMatchObject({ state: 'offline', error: '连接超时' })
+      expect((await list(id)).sync).toBe('offline')
+      const refused = async (fn: () => Promise<unknown>) => {
+        const e = await failure(fn())
+        expect([e.status, e.code]).toEqual([503, 'unavailable'])
+        expect(e.message).not.toBe('')
+      }
+      await refused(() => R.createPage({ meta: { title: '新' } }))
+      await refused(() => R.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: '改\n' }))
+      await refused(() => R.movePage(p.id, '别处'))
+      // A draft is stored; a commit is refused and keeps it.
+      const d = await R.putDraft(p.id, { prev: '', baseRev: p.rev, meta: p.meta, body: '草稿里的\n' })
+      await refused(() => R.commitPage(p.id, d.version))
+      expect((await R.getPage(p.id)).draft?.version).toBe(d.version)
+      await refused(() => R.deletePage(p.id))
+      expect((await R.getPage(p.id)).body).toBe('旧\n')
+      expect(await titles(R)).toEqual(['页'])
+      // The server's own commit waits for the remote.
+      clock += 20 * 60_000
+      server!.sweep()
+      expect((await R.getPage(p.id)).body).toBe('旧\n')
+      server!.remoteReachable(id, true)
+      const back = await R.syncRemote()
+      expect(back).toMatchObject({ state: 'ok', error: '' })
+      expect((await list(id)).sync).toBe('ok')
+      server!.sweep()
+      expect((await R.getPage(p.id)).body).toBe('草稿里的\n')
+    })
+
+    it('a sync while the remote is still out of reach answers 200 with state offline', async () => {
+      const { id, R } = await fresh('仍离线')
+      await R.connectRemote({ url: url('github.com'), credential: token })
+      server!.setRemote(id, 'offline')
+      expect((await R.syncRemote()).state).toBe('offline')
+    })
+
+    it('a rewritten remote pauses writes until its new history is accepted with the commit shown; a wrong commit is 409', async () => {
+      const { id, R } = await fresh('改写')
+      const p = await R.createPage({ meta: { title: '页' } })
+      await R.connectRemote({ url: url('github.com'), credential: token })
+      const e0 = await failure(R.acceptRemote('a'.repeat(40)))
+      expect([e0.status, e0.code]).toEqual([409, 'conflict'])
+      server!.setRemote(id, 'rewritten')
+      const r = await R.getRemote()
+      expect(r.state).toBe('rewritten')
+      expect(r.rewritten).toEqual({ lastGood: expect.stringMatching(/^[0-9a-f]{40}$/), remote: expect.stringMatching(/^[0-9a-f]{40}$/) })
+      expect((await list(id)).sync).toBe('rewritten')
+      expect((await R.getPage(p.id)).id).toBe(p.id)
+      const e = await failure(R.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: 'x\n' }))
+      expect([e.status, e.code]).toEqual([503, 'unavailable'])
+      // Syncing does not clear it.
+      expect((await R.syncRemote()).state).toBe('rewritten')
+      const wrong = await failure(R.acceptRemote('b'.repeat(40)))
+      expect([wrong.status, wrong.code]).toEqual([409, 'conflict'])
+      const accepted = await R.acceptRemote(r.rewritten!.remote)
+      expect(accepted).toMatchObject({ state: 'ok', rewritten: null, error: '' })
+      expect((await R.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: 'x\n' })).body).toBe('x\n')
+    })
+
+    it('state `error` carries the text to show', async () => {
+      const { id, R } = await fresh('出错')
+      await R.connectRemote({ url: url('github.com'), credential: token })
+      server!.setRemote(id, 'error', { error: '凭据被拒绝' })
+      expect(await R.getRemote()).toMatchObject({ state: 'error', error: '凭据被拒绝' })
+      expect((await list(id)).sync).toBe('error')
+    })
+
+    it('disconnecting is 204: the space is local again with all its pages, and the stored token is gone', async () => {
+      const { id, R } = await fresh('断开')
+      await R.createPage({ meta: { title: '留着' } })
+      await R.connectRemote({ url: url('github.com'), credential: token })
+      await R.disconnectRemote()
+      expect((await failure(R.getRemote())).status).toBe(404)
+      expect((await list(id)).sync).toBe('local')
+      expect(await titles(R)).toEqual(['留着'])
+      expect(server!.storedToken(id)).toBeUndefined()
+      expect((await failure(R.disconnectRemote())).status).toBe(404)
+      expect((await failure(R.syncRemote())).status).toBe(404)
+    })
+
+    it('a space of someone else is 404 for the remote endpoints too', async () => {
+      const r = await call(admin, 'GET', '/api/spaces/01ZZZZZZZZ/remote')
+      expect([r.status, r.json.error]).toEqual([404, 'not_found'])
+    })
+
+    it('a host the administrator allows with `*` takes any', async () => {
+      const open = createMockServer({ empty: true, mode: 'accounts', now: () => clock, oidc: null, remote: { hosts: ['*'] } })
+      const b = newBrowser(mockFetch(open, { jar: false }))
+      await as(b, async () => {
+        await api.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
+        const sp = await api.createSpace('任意主机')
+        expect((await spaceApi(sp.id).connectRemote({ url: url('git.anywhere.example'), credential: token })).state).toBe('ok')
+      })
+    })
+
+    it('the mock can start a space in a state (for the app to be seen by hand)', async () => {
+      const m = createMockServer({ empty: true, mode: 'accounts', now: () => clock, oidc: null, remote: { start: 'offline' } })
+      const b = newBrowser(mockFetch(m, { jar: false }))
+      await as(b, async () => {
+        await api.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
+        const first = (await api.spaces()).spaces[0]
+        expect(first.sync).toBe('offline')
+        expect(await spaceApi(first.id).getRemote()).toMatchObject({ state: 'offline' })
+      })
     })
   })
 

@@ -65,6 +65,9 @@ type accOpts struct {
 	mod     func(*auth.Config)
 	// maxSpaces is how many spaces one user may own (0: no limit).
 	maxSpaces int
+	// spaces and draftCfg adjust the manager and the draft service.
+	spaces   func(*spaces.Options)
+	draftCfg func(*drafts.Config)
 }
 
 func needGit(t *testing.T) {
@@ -95,8 +98,12 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	}
 	t.Cleanup(func() { os.RemoveAll(base) })
 	dir := filepath.Join(base, "data")
-	mgr, err := spaces.NewAccounts(spaces.Options{Store: st, DataDir: dir, Committer: "PetalBook Test <svc@example.test>",
-		CommitIdle: time.Hour, CommitMax: 2 * time.Hour, Now: clk.Now, MaxSpaces: o.maxSpaces})
+	sopt := spaces.Options{Store: st, DataDir: dir, Committer: "PetalBook Test <svc@example.test>",
+		CommitIdle: time.Hour, CommitMax: 2 * time.Hour, Now: clk.Now, MaxSpaces: o.maxSpaces}
+	if o.spaces != nil {
+		o.spaces(&sopt)
+	}
+	mgr, err := spaces.NewAccounts(sopt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +122,11 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	if err != nil {
 		t.Fatal(err)
 	}
-	drf, err := drafts.New(ctx, st, mgr, drafts.Config{Now: clk.Now}, nil)
+	dcfg := drafts.Config{Now: clk.Now}
+	if o.draftCfg != nil {
+		o.draftCfg(&dcfg)
+	}
+	drf, err := drafts.New(ctx, st, mgr, dcfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
