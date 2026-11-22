@@ -1,6 +1,5 @@
-.git
-.github
-.claude
+# Nothing whose name starts with a dot is needed to build.
+.*
 docs
 spikes
 scripts
