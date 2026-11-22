@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KazuhaHub/PetalBook/internal/index"
+	"github.com/KKazuhaK/PetalBook/internal/index"
 )
 
 // crash stops a space the way kill -9 would: nothing is flushed or committed.

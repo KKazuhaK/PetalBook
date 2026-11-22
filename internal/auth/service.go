@@ -22,9 +22,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/KazuhaHub/PetalBook/internal/page"
-	"github.com/KazuhaHub/PetalBook/internal/spaces"
-	"github.com/KazuhaHub/PetalBook/internal/store"
+	"github.com/KKazuhaK/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/spaces"
+	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
 // Session lifetimes of docs/api.md.

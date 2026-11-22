@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/KazuhaHub/PetalBook/internal/store"
+	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
 type draftFlags struct {

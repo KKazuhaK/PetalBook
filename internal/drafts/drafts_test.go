@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KazuhaHub/PetalBook/internal/page"
-	"github.com/KazuhaHub/PetalBook/internal/space"
-	"github.com/KazuhaHub/PetalBook/internal/spaces"
-	"github.com/KazuhaHub/PetalBook/internal/store"
-	"github.com/KazuhaHub/PetalBook/internal/store/storetest"
+	"github.com/KKazuhaK/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/space"
+	"github.com/KKazuhaK/PetalBook/internal/spaces"
+	"github.com/KKazuhaK/PetalBook/internal/store"
+	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
 )
 
 var ctx = context.Background()

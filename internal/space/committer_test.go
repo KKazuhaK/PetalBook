@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KazuhaHub/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/page"
 )
 
 func eventually(t *testing.T, what string, within time.Duration, cond func() bool) {

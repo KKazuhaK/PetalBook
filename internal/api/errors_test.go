@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/KazuhaHub/PetalBook/internal/space"
+	"github.com/KKazuhaK/PetalBook/internal/space"
 )
 
 func TestExistingNameErrorsAre409NotFiveHundred(t *testing.T) {

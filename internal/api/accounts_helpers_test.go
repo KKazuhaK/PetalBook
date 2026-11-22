@@ -16,12 +16,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KazuhaHub/PetalBook/internal/api"
-	"github.com/KazuhaHub/PetalBook/internal/auth"
-	"github.com/KazuhaHub/PetalBook/internal/drafts"
-	"github.com/KazuhaHub/PetalBook/internal/spaces"
-	"github.com/KazuhaHub/PetalBook/internal/store"
-	"github.com/KazuhaHub/PetalBook/internal/store/storetest"
+	"github.com/KKazuhaK/PetalBook/internal/api"
+	"github.com/KKazuhaK/PetalBook/internal/auth"
+	"github.com/KKazuhaK/PetalBook/internal/drafts"
+	"github.com/KKazuhaK/PetalBook/internal/spaces"
+	"github.com/KKazuhaK/PetalBook/internal/store"
+	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
 )
 
 // clock is a settable time shared by the services of a fixture.

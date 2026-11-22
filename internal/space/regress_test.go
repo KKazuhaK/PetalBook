@@ -12,8 +12,8 @@ import (
 
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/KazuhaHub/PetalBook/internal/index"
-	"github.com/KazuhaHub/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/index"
+	"github.com/KKazuhaK/PetalBook/internal/page"
 )
 
 // --- 1. a name the file system treats as taken must not hang a create --------

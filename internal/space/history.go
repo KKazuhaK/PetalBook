@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KazuhaHub/PetalBook/internal/gitstore"
-	"github.com/KazuhaHub/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"github.com/KKazuhaK/PetalBook/internal/page"
 )
 
 // HistoryItem is one version of a page: a commit that changed its file.

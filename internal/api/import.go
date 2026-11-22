@@ -7,8 +7,8 @@ import (
 	"path"
 	"time"
 
-	"github.com/KazuhaHub/PetalBook/internal/importer"
-	"github.com/KazuhaHub/PetalBook/internal/space"
+	"github.com/KKazuhaK/PetalBook/internal/importer"
+	"github.com/KKazuhaK/PetalBook/internal/space"
 )
 
 // importMarkdown brings one Markdown file or a zip of them into the space

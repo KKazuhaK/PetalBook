@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KazuhaHub/PetalBook/internal/api"
+	"github.com/KKazuhaK/PetalBook/internal/api"
 )
 
 // The server must accept its own GET output: the web app sends meta and body

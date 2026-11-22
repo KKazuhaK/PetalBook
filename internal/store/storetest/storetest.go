@@ -16,7 +16,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/KazuhaHub/PetalBook/internal/store"
+	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
 // EnvPostgres names the variable that switches the PostgreSQL runs on.

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KazuhaHub/PetalBook/internal/index"
-	"github.com/KazuhaHub/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/index"
+	"github.com/KKazuhaK/PetalBook/internal/page"
 )
 
 func needGit(t *testing.T) {

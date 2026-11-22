@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KazuhaHub/PetalBook/internal/store"
+	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
 // draftPage makes a page in the client's personal space and returns its URL

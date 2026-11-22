@@ -16,11 +16,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/KazuhaHub/PetalBook/internal/gitstore"
-	"github.com/KazuhaHub/PetalBook/internal/page"
-	"github.com/KazuhaHub/PetalBook/internal/secret"
-	"github.com/KazuhaHub/PetalBook/internal/space"
-	"github.com/KazuhaHub/PetalBook/internal/store"
+	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"github.com/KKazuhaK/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/secret"
+	"github.com/KKazuhaK/PetalBook/internal/space"
+	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
 // SingleID is the id of the one space of single-user mode.

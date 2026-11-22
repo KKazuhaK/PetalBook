@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KazuhaHub/PetalBook/internal/store"
+	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
 // Authenticate resolves a session cookie value to its user. It answers from

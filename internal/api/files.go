@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KazuhaHub/PetalBook/internal/space"
+	"github.com/KKazuhaK/PetalBook/internal/space"
 )
 
 // inlineTypes are the files a browser may show in place: the content type is

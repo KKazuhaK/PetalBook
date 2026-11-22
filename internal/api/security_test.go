@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KazuhaHub/PetalBook/internal/api"
-	"github.com/KazuhaHub/PetalBook/internal/auth"
+	"github.com/KKazuhaK/PetalBook/internal/api"
+	"github.com/KKazuhaK/PetalBook/internal/auth"
 )
 
 func TestLoginRateLimitPerUsername(t *testing.T) {

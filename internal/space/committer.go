@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KazuhaHub/PetalBook/internal/gitstore"
+	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 )
 
 // committer turns a stream of file writes into Git commits. Saving only

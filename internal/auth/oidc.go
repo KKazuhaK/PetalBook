@@ -13,7 +13,7 @@ import (
 
 	authoidc "github.com/KazuhaHub/authcore/oidc"
 
-	"github.com/KazuhaHub/PetalBook/internal/store"
+	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
 // OIDCConfig is the configured OpenID Connect provider.

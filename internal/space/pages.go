@@ -12,8 +12,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/KazuhaHub/PetalBook/internal/index"
-	"github.com/KazuhaHub/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/index"
+	"github.com/KKazuhaK/PetalBook/internal/page"
 )
 
 // Page is a page as the API returns it.

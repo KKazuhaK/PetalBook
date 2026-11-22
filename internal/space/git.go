@@ -10,7 +10,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/KazuhaHub/PetalBook/internal/gitstore"
+	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 )
 
 // ParseCommitter splits "Name <email>". An empty string means DefaultCommitter.

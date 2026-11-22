@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KazuhaHub/PetalBook/internal/store"
-	"github.com/KazuhaHub/PetalBook/internal/store/storetest"
+	"github.com/KKazuhaK/PetalBook/internal/store"
+	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
 )
 
 var ctx = context.Background()

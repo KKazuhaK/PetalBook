@@ -4,10 +4,10 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/KazuhaHub/PetalBook/internal/auth"
-	"github.com/KazuhaHub/PetalBook/internal/page"
-	"github.com/KazuhaHub/PetalBook/internal/spaces"
-	"github.com/KazuhaHub/PetalBook/internal/store"
+	"github.com/KKazuhaK/PetalBook/internal/auth"
+	"github.com/KKazuhaK/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/spaces"
+	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
 // access is who may call a route. There is no zero value on purpose: a route

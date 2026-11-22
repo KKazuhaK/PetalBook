@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/KazuhaHub/PetalBook/internal/index"
-	"github.com/KazuhaHub/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/index"
+	"github.com/KKazuhaK/PetalBook/internal/page"
 )
 
 // folderKey is a folder path as a file system that ignores case and Unicode

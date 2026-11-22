@@ -1,4 +1,4 @@
-module github.com/KazuhaHub/PetalBook
+module github.com/KKazuhaK/PetalBook
 
 go 1.27
 

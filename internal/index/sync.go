@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KazuhaHub/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/page"
 )
 
 // FileInfo describes one page file as the file system reports it.

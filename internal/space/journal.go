@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/KazuhaHub/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/page"
 )
 
 // A journal record says what the server is about to do to a file (or did),

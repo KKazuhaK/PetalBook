@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KazuhaHub/PetalBook/internal/gitstore"
-	"github.com/KazuhaHub/PetalBook/internal/index"
+	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"github.com/KKazuhaK/PetalBook/internal/index"
 )
 
 // netRunner is the real git with a switch for the network: while down, every

@@ -20,7 +20,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/KazuhaHub/PetalBook/internal/index"
+	"github.com/KKazuhaK/PetalBook/internal/index"
 )
 
 // Defaults for the committer: a commit after a few quiet seconds, or ten

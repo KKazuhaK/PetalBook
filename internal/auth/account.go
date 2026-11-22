@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/KazuhaHub/PetalBook/internal/store"
+	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
 // AccountView is what GET /api/account shows.

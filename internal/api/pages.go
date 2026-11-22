@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KazuhaHub/PetalBook/internal/drafts"
-	"github.com/KazuhaHub/PetalBook/internal/index"
-	"github.com/KazuhaHub/PetalBook/internal/page"
-	"github.com/KazuhaHub/PetalBook/internal/space"
+	"github.com/KKazuhaK/PetalBook/internal/drafts"
+	"github.com/KKazuhaK/PetalBook/internal/index"
+	"github.com/KKazuhaK/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/space"
 )
 
 func (s *server) listPages(c *call) {

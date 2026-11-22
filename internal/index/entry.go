@@ -7,7 +7,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/KazuhaHub/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/page"
 )
 
 // Entry is what the index keeps about one page file.

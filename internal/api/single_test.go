@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KazuhaHub/PetalBook/internal/api"
+	"github.com/KKazuhaK/PetalBook/internal/api"
 )
 
 func TestSingleUserSession(t *testing.T) {

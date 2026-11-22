@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KazuhaHub/PetalBook/internal/gitstore"
+	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 )
 
 // States of a remote (the state field of the API).

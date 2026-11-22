@@ -24,9 +24,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KazuhaHub/PetalBook/internal/gitstore"
-	"github.com/KazuhaHub/PetalBook/internal/space"
-	"github.com/KazuhaHub/PetalBook/internal/store"
+	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"github.com/KKazuhaK/PetalBook/internal/space"
+	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
 // DefaultPullInterval is the flag's default.
