@@ -412,6 +412,23 @@ describe('a tag', () => {
   })
 })
 
+describe('a view whose layout this listing cannot show', () => {
+  it('keeps its layout when another part of it is saved (a table in a tag shows as a list)', async () => {
+    await open('/s/default/t/栀子', (send) => putViews(send, { tag: '栀子' }, [{ name: '表', layout: 'table' }]))
+    await settle(() => tabs().length === 1 && rowTitles().length === 1, 'the tab and the page')
+    // The listing shows a list; the view is not modified by that.
+    expect(button(t.view.list)!.getAttribute('aria-pressed')).toBe('true')
+    expect(modifiedMark()).toBeNull()
+    const sort = document.querySelector<HTMLSelectElement>(`select[aria-label="${t.list.sort}"]`)!
+    await type(sort, 'title')
+    await settle(() => modifiedMark() !== null, 'the change')
+    await click(textButton(t.views.save))
+    await settle(() => puts().length === 1, 'the save')
+    expect(JSON.parse(puts()[0].body!).views[0]).toMatchObject({ name: '表', layout: 'table', sort: 'title' })
+    expect(viewsOf(sender(m!.server), 'tag=%E6%A0%80%E5%AD%90').views[0].layout).toBe('table')
+  })
+})
+
 const tp = () => tpWords
 const tb = () => tbWords
 async function settleFor<T>(find: () => T | null | undefined): Promise<T> {

@@ -437,3 +437,126 @@ func TestOptionOrderOfASmallFolderAsksOnlyForTheGroupsItHas(t *testing.T) {
 		}
 	}
 }
+
+// What is read whole (a small folder, or the few pages a selective filter keeps
+// of a big one) comes out in the same order, with the same cursors, as what is
+// read group by group.
+func TestSmallListingsFollowTheOrderOfTheGroupedRead(t *testing.T) {
+	x := openIndex(t)
+	opts := []string{"todo", "doing", "done", "review"}
+	vals := []string{"todo", "doing", "done", "review", "zeta", "alpha", "beta", ""}
+	for i := 0; i < 120; i++ {
+		h := fmt.Sprintf("points: %d\n", i%7)
+		if v := vals[i*5%len(vals)]; v != "" {
+			h += "status: " + v + "\n"
+		}
+		if i%3 == 0 {
+			h += "flag: x\n"
+		}
+		putProps(t, x, "t", fmt.Sprintf("P%03d", i), h)
+	}
+	for i := 0; i < 30; i++ {
+		putProps(t, x, "other", fmt.Sprintf("Q%03d", i), "status: todo\nflag: x\n")
+	}
+	filters := map[string][]Filter{
+		"none":        nil,
+		"in":          {{Key: "flag", Op: "in", Values: []any{"x"}}},
+		"range":       {{Key: "points", Op: "range", Values: []any{2, 3}}},
+		"in and rng":  {{Key: "flag", Op: "in", Values: []any{"x"}}, {Key: "points", Op: "range", Values: []any{nil, 3}}},
+		"notEmpty":    {{Key: "status", Op: "notEmpty"}},
+		"in on lists": {{Key: "status", Op: "in", Values: []any{"todo", "doing", "zeta"}}},
+	}
+	for name, fs := range filters {
+		for _, sort := range []string{"prop:status", "-prop:status"} {
+			for _, limit := range []int{1, 7, 200} {
+				q := Query{Folder: strp("t"), Sort: sort, PropOptions: opts, Filters: fs}
+				maxSmallScope = 2000
+				before := x.queries.Load()
+				small := listAll(t, x, q, limit)
+				if limit == 200 && x.queries.Load()-before > 2 {
+					t.Errorf("%s %s: %d queries for one page", name, sort, x.queries.Load()-before)
+				}
+				maxSmallScope = 0
+				grouped := listAll(t, x, q, limit)
+				maxSmallScope = 2000
+				if !reflect.DeepEqual(small, grouped) {
+					t.Errorf("%s %s limit %d:\n small   %v\n grouped %v", name, sort, limit, small, grouped)
+				}
+			}
+		}
+	}
+}
+
+// A selective filter in a big folder costs the pages it keeps: one query for
+// them and one for the page of summaries, not one per group.
+func TestASelectiveFilterIsReadOnceNotPerGroup(t *testing.T) {
+	x := openIndex(t)
+	opts := make([]string, 40)
+	for i := range opts {
+		opts[i] = fmt.Sprintf("o%02d", i)
+	}
+	for i := 0; i < 2500; i++ {
+		h := "status: " + opts[i%40] + "\n"
+		if i%250 == 0 {
+			h += "flag: x\n"
+		}
+		putProps(t, x, "big", fmt.Sprintf("B%04d", i), h)
+	}
+	for _, f := range []Filter{
+		{Key: "flag", Op: "in", Values: []any{"x"}},
+		{Key: "flag", Op: "notEmpty"},
+	} {
+		before := x.queries.Load()
+		got := listAll(t, x, Query{Folder: strp("big"), Sort: "prop:status", PropOptions: opts, Filters: []Filter{f}}, 50)
+		if len(got) != 10 {
+			t.Errorf("%s: %d pages, want 10", f.Op, len(got))
+		}
+		if n := x.queries.Load() - before; f.Op == "in" && n > 2 {
+			t.Errorf("%d queries for 10 pages in 10 groups", n)
+		}
+	}
+}
+
+// The counts of a board's column heads are made once per change of the index:
+// asked again they come from memory, and after any write they are counted anew.
+func TestGroupCountsAreRememberedUntilTheIndexChanges(t *testing.T) {
+	x := optionsFixture(t)
+	q := GroupQuery{Folder: strp("t"), Key: "status", Filters: []Filter{{Key: "status", Op: "notEmpty"}}}
+	first, err := x.Groups(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := x.queries.Load()
+	for i := 0; i < 5; i++ {
+		again, err := x.Groups(q)
+		if err != nil || !reflect.DeepEqual(again, first) {
+			t.Fatalf("%v %+v", err, again)
+		}
+		again.Groups[0].Count = 99 // what a caller does with its copy is its own
+	}
+	if n := x.queries.Load() - before; n != 0 {
+		t.Errorf("%d queries for counts that were known", n)
+	}
+	other := q
+	other.Filters = nil
+	if _, err := x.Groups(other); err != nil {
+		t.Fatal(err)
+	}
+	if n := x.queries.Load() - before; n != 1 {
+		t.Errorf("another question: %d queries", n)
+	}
+	putProps(t, x, "t", "NEW", "status: done\n")
+	got, err := x.Groups(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := func(r GroupResult) (n int) {
+		for _, g := range r.Groups {
+			n += g.Count
+		}
+		return
+	}
+	if total(got) != total(first)+1 {
+		t.Errorf("after a write: %d, before %d", total(got), total(first))
+	}
+}

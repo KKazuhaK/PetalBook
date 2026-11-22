@@ -410,6 +410,21 @@ describe('editing a cell', () => {
     await settle(() => m!.server.peek(ids.B.id)!.meta.status === 'done', 'the second try')
   })
 
+  it('of two rows edited in a row frees both when the answers come, and tells of the one that failed', async () => {
+    let ids: ReturnType<typeof seed> | undefined
+    m = await mount(shell, { entries: (server) => ((ids = seed(server)), ['/s/default/f/Work']), delay: (method) => (method === 'PATCH' ? 300 : 0) })
+    await settle(() => byLabel(t.view.list) !== null, 'the listing')
+    await showTable()
+    // B was changed elsewhere, so its edit is refused; C is edited before B has been answered.
+    sender(m!.server)('PATCH', `/pages/${ids!.B.id}/props`, { baseRev: ids!.B.rev, set: { status: 'doing' } })
+    await type(cell('B', 'f:status').querySelector('select')!, 'done')
+    await type(cell('C', 'f:status').querySelector('select')!, 'todo')
+    await settle(() => patches().length === 2, 'both requests')
+    await settle(() => document.body.textContent!.includes(tp.table.conflict('B')), 'the message for B')
+    await settle(() => m!.server.peek(ids!.C.id)!.meta.status === 'todo', 'C changed')
+    await settle(() => [...document.querySelectorAll('[data-row] [aria-busy="true"], [data-row][aria-busy="true"]')].length === 0 && !(cell('B', 'f:status').querySelector('select') as HTMLSelectElement).disabled, 'no row left busy')
+  })
+
   it('cannot be done by someone who may only read: the values are text, and nothing is sent', async () => {
     m = await mount(shell, {
       signIn: true,

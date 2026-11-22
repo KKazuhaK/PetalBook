@@ -305,6 +305,23 @@ func stringList(raw json.RawMessage) ([]string, bool) {
 	return l, true
 }
 
+// uniqueOptions is opts without the values already seen (the first writing
+// counts) and at most maxOptions of them. A type file written by hand is not
+// checked as a write is, and a value listed twice would list its pages twice,
+// and give a board two columns of one id.
+func uniqueOptions(opts []string) []string {
+	seen := make(map[string]bool, len(opts))
+	out := make([]string, 0, len(opts))
+	for _, o := range opts {
+		if seen[o] || len(out) >= maxOptions {
+			continue
+		}
+		seen[o] = true
+		out = append(out, o)
+	}
+	return out
+}
+
 // kindOf recognises a field's schema by the table of kinds.
 func kindOf(o []kv) (string, []string) {
 	typ, _ := stringOf(o, "type")
@@ -312,7 +329,7 @@ func kindOf(o []kv) (string, []string) {
 	case "string":
 		if raw, _ := lookup(o, "enum"); raw != nil {
 			if opts, ok := stringList(raw); ok {
-				return KindSelect, opts
+				return KindSelect, uniqueOptions(opts)
 			}
 			return KindOther, nil
 		}
@@ -338,7 +355,7 @@ func kindOf(o []kv) (string, []string) {
 		}
 		if e, _ := lookup(items, "enum"); e != nil {
 			if opts, ok := stringList(e); ok {
-				return KindMultiSelect, opts
+				return KindMultiSelect, uniqueOptions(opts)
 			}
 		}
 		return KindOther, nil

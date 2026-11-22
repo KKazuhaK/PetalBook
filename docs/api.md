@@ -642,7 +642,7 @@ Query parameters, all optional:
 A date that is not a day written `YYYY-MM-DD`, or lies outside the years 1970
 to 2261, is `400 invalid`.
 | `sort` | `updated` (default), `created`, `title`, or `prop:{key}` for a property of the header; prefix `-` for descending. Default is `-updated`. With `q` and no `sort`, results are ordered by relevance |
-| `filter` | a JSON array of conditions on properties, all of which must hold (see below), at most 11 (a saved view has at most 10: a board's column adds its own condition), at most 64 KiB |
+| `filter` | a JSON array of conditions on properties, all of which must hold (see below), at most 11 (a saved view has at most 10: a board's column adds its own condition), at most 128 KiB (room for a board's "other values" column on a field with the most options a type may give) |
 | `props` | `1` to put `props` and `rev` in the summaries (see Page summary); default `0` |
 | `body` | `1` to put the Markdown `body` of each page in the summaries (see below); default `0` |
 | `limit` | 1–200, default 50; with `body=1` at most 20, default 20 |
@@ -684,11 +684,14 @@ option the pages are in the order the server holds them, reversed for `-`. The
 listing is read from the index one option at a time, with a cursor that names
 the option and the place in it, so a page costs the same however many pages
 the folder holds (measured: well under a millisecond in a folder of 50 000).
-A folder of at most 2000 pages (after the filters) is read from its own pages:
-one pass over their values says which options have a page, and only those
-groups are asked for, so a small folder among 50 000 pages, with any number of
-options, takes about a millisecond. A larger folder reads each group from the
-index of the property.
+A listing of at most 2000 pages (after the filters) in a folder is read whole,
+in one query, and put in the order here: a small folder among 50 000 pages, or
+the few pages a selective filter keeps of a big folder (the read starts from
+the rows of an `in` or `range` filter in the index, so it costs the pages that
+match and not the folder), with any number of options, takes about a
+millisecond. A listing of more pages reads each group from the index of the
+property. A field that lists an option twice (a type file edited by hand) has
+it once, the first writing counting, and at most 500 options count.
 The cursor also says how many options there were: a cursor made for another
 list of options, or from a listing that was not in option order (the type was
 changed, or the folder has none), is `400 invalid` and the client starts over.
@@ -741,7 +744,9 @@ listing); a folder or a tag is required.
 the value (numbers and booleans as the index holds them: `"3"`, `"true"`); a
 list property counts a page once for each distinct value it holds. `empty` is
 the number of pages in the scope that have no value for the key (the same pages
-as the filter `empty`). Both come from the index, no file is read. At most 1000
+as the filter `empty`). Both come from the index, no file is read; the answer
+is kept for as long as the index is not written to, so a board opened again
+costs nothing. At most 1000
 values are returned, the rarest left out, and `truncated` says so. The cost
 follows the scope: the pages of the folder, or the pages of the (first) tag
 when there is no folder (about 60 ms for 50 000 pages in one folder, 100 ms for
@@ -1025,7 +1030,9 @@ Renaming or moving a folder changes its bindings, and those of the folders in
 it, in the same commit; deleting one removes them (and its views, see Saved
 views). Other settings an entry has stay. The move and the change of the bindings are one change: if the server
 stops between the two, it finishes the bindings when it starts again, and if
-the bindings cannot be written the folder is not moved and the request fails.
+the bindings cannot be written the folder is not moved and the request fails
+(also when `space.yml` is so full that the new key would make it larger than the
+1 MiB the server reads).
 Nothing was at the place a folder is moved to, so every binding at that place
 and under it is stale and is dropped (the moved folder takes the bindings it
 had, and none it did not); the journal of the move is kept until the bindings
@@ -1263,8 +1270,15 @@ conflict` with `current` the same object as a `GET` answers:
 `400 invalid` for a missing `baseRev`, `views` or scope, both a folder and a
 tag, more than 20 views, any view out of the limits above, an `id` the folder
 or tag does not have, an `id` twice, a change that would make `space.yml` or
-`tags.yml` larger than the 1 MiB the server reads (nothing is written, so the
-settings stay readable), or settings that have to be fixed by hand. `[]` removes
+`tags.yml` larger than the 1 MiB the server reads, or that would leave either
+in a form the server cannot read again (an anchor that something else in the
+file refers to would be removed; both: nothing is written, so the settings stay
+readable), or settings that have to be fixed by hand. The body of the request is
+at most 20 views at their largest and 512 KiB more (`413` above that), and the
+list is refused as soon as it has a 21st entry, before any of them is built.
+A view that the request gives back as it is stored is left as it is in the file,
+also what the server could not read of it (an alias, a scalar where a list
+belongs); a key is removed or rewritten only when the request changes it. `[]` removes
 the views from every writing of the folder in `space.yml`, so none comes back.
 `404 not_found` for a folder that does not exist (a tag need not be in use).
 A write that changes nothing writes nothing.

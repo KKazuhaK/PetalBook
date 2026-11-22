@@ -55,8 +55,11 @@ const (
 	// as JSON, the views a request changes at most maxViewsBytes together, and
 	// a view has at most maxViewExtraKeys such keys, each at most
 	// maxViewExtraBytes as JSON.
-	maxViewBytes      = 16 << 10
-	maxViewsBytes     = 128 << 10
+	maxViewBytes  = 16 << 10
+	maxViewsBytes = 128 << 10
+	// MaxViewsBody is the most a request that replaces the views may be: every
+	// view at its largest, and room for the rest of the request.
+	MaxViewsBody      = MaxViews*maxViewBytes + 512<<10
 	maxViewExtraKeys  = 16
 	maxViewExtraBytes = 4 << 10
 
@@ -845,6 +848,10 @@ func putViewsInto(top *yaml.Node, section string, section2 func(*yaml.Node, bool
 	}
 	result := make([]View, len(views))
 	matched := make([]*yaml.Node, len(views))
+	// unchanged[i] says the request gives view i back exactly as it was read:
+	// its YAML node is then left as it is (it may hold what the reader could
+	// not interpret, written by hand).
+	unchanged := make([]bool, len(views))
 	for i, v := range views {
 		if v.ID == "" {
 			id, err := newViewID(taken)
@@ -858,6 +865,7 @@ func putViewsInto(top *yaml.Node, section string, section2 func(*yaml.Node, bool
 				return false, ViewList{}, invalidf("view %d: there is no view with the id %q here; leave the id out to make a new view", i+1, v.ID)
 			}
 			matched[i] = curNodes[j]
+			unchanged[i] = !strings.HasPrefix(v.ID, "@") && sameView(stored[v.ID], v)
 			if strings.HasPrefix(v.ID, "@") {
 				// A view whose written id was not usable gets a new one.
 				id, err := newViewID(taken)
@@ -942,7 +950,9 @@ func putViewsInto(top *yaml.Node, section string, section2 func(*yaml.Node, bool
 		if n == nil {
 			n = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 		}
-		applyView(n, v)
+		if !unchanged[i] {
+			applyView(n, v)
+		}
 		nodes = append(nodes, n)
 	}
 	seq.Content = append(nodes, rest...)
@@ -1023,23 +1033,33 @@ func applyView(n *yaml.Node, v View) {
 	setKey(n, "id", textNode(v.ID))
 	setKey(n, "name", textNode(v.Name))
 	setKey(n, "layout", textNode(v.Layout))
-	for _, f := range []struct{ key, val string }{{"group", v.Group}, {"sort", v.Sort}} {
-		if f.val == "" {
+	// A key is removed or rewritten only when the request changes it from what
+	// was read: what the reader could not interpret (an alias, a scalar where a
+	// list belongs) reads as empty, and must not be taken for a request to
+	// remove it.
+	old := viewOf(n)
+	for _, f := range []struct{ key, val, was string }{{"group", v.Group, old.Group}, {"sort", v.Sort, old.Sort}} {
+		switch {
+		case f.val == f.was:
+		case f.val == "":
 			removeKey(n, f.key)
-		} else {
+		default:
 			setKey(n, f.key, textNode(f.val))
 		}
 	}
-	old := viewOf(n)
-	if len(v.Filter) == 0 {
-		removeKey(n, "filter")
-	} else if !sameValue(filterPlain(old.Filter), filterPlain(v.Filter)) {
-		setKey(n, "filter", filterNode(v.Filter))
+	if !sameValue(filterPlain(old.Filter), filterPlain(v.Filter)) {
+		if len(v.Filter) == 0 {
+			removeKey(n, "filter")
+		} else {
+			setKey(n, "filter", filterNode(v.Filter))
+		}
 	}
-	if len(v.Hidden) == 0 {
-		removeKey(n, "hidden")
-	} else if !reflect.DeepEqual(old.Hidden, v.Hidden) {
-		setKey(n, "hidden", hiddenNode(v.Hidden))
+	if !reflect.DeepEqual(old.Hidden, v.Hidden) && !(len(old.Hidden) == 0 && len(v.Hidden) == 0) {
+		if len(v.Hidden) == 0 {
+			removeKey(n, "hidden")
+		} else {
+			setKey(n, "hidden", hiddenNode(v.Hidden))
+		}
 	}
 	keys := make([]string, 0, len(v.Extra))
 	for k := range v.Extra {

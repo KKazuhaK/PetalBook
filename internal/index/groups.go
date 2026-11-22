@@ -1,8 +1,10 @@
 package index
 
 import (
+	"encoding/json"
 	"sort"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -43,6 +45,79 @@ type GroupResult struct {
 // props table only (and the pages table for the scope), never a file. Cost: one
 // pass over the rows of the property that belong to the scope.
 func (x *Index) Groups(q GroupQuery) (GroupResult, error) {
+	gen := x.gen.Load()
+	ck, cacheable := q.cacheKey()
+	if cacheable {
+		if res, ok := x.groups.get(ck, gen); ok {
+			return res, nil
+		}
+	}
+	res, err := x.countGroups(q)
+	if err == nil && cacheable {
+		x.groups.put(ck, gen, res)
+	}
+	return res, err
+}
+
+// maxGroupCache is the most answers of Groups remembered.
+const maxGroupCache = 64
+
+// groupCache remembers the answers of Groups for as long as the index has not
+// been written: a board that is opened again, or read again after something
+// that did not touch the index, costs nothing, and the count over a large
+// folder is made once per change rather than once per request.
+type groupCache struct {
+	mu  sync.Mutex
+	gen uint64
+	m   map[string]GroupResult
+}
+
+func (c *groupCache) get(key string, gen uint64) (GroupResult, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.gen != gen {
+		return GroupResult{}, false
+	}
+	res, ok := c.m[key]
+	if ok {
+		res.Groups = append([]Group{}, res.Groups...)
+	}
+	return res, ok
+}
+
+func (c *groupCache) put(key string, gen uint64, res GroupResult) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.gen != gen || c.m == nil || len(c.m) >= maxGroupCache {
+		c.gen, c.m = gen, map[string]GroupResult{}
+	}
+	res.Groups = append([]Group{}, res.Groups...)
+	c.m[key] = res
+}
+
+// cacheKey is the question as a key, false when it cannot be made one.
+func (q GroupQuery) cacheKey() (string, bool) {
+	type f struct {
+		Key, Op string
+		Values  []any
+	}
+	fs := make([]f, len(q.Filters))
+	for i, x := range q.Filters {
+		fs[i] = f{x.Key, x.Op, x.Values}
+	}
+	b, err := json.Marshal(struct {
+		Folder    *string
+		Recursive bool
+		Tags      []string
+		Filters   []f
+		Key       string
+	}{q.Folder, q.Recursive, q.Tags, fs, q.Key})
+	return string(b), err == nil
+}
+
+// countGroups is Groups without the cache.
+func (x *Index) countGroups(q GroupQuery) (GroupResult, error) {
+	x.queries.Add(1)
 	if q.Key == "" || len(q.Key) > maxFilterKey || !utf8.ValidString(q.Key) {
 		return GroupResult{}, invalid("groups needs the key of a property")
 	}

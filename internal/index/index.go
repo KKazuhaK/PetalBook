@@ -22,7 +22,7 @@ import (
 
 // schemaVersion changes whenever the tables or the way text is tokenised
 // change; an index with another version is thrown away and rebuilt.
-const schemaVersion = 6
+const schemaVersion = 7
 
 const schema = `
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -63,6 +63,7 @@ CREATE INDEX tags_page ON tags(page);
 CREATE TABLE props (page INTEGER NOT NULL, key TEXT NOT NULL, pos INTEGER NOT NULL, val TEXT NOT NULL, skey TEXT NOT NULL, PRIMARY KEY (page, key, pos)) WITHOUT ROWID;
 CREATE INDEX props_sort ON props(key, pos, skey, page);
 CREATE INDEX props_val ON props(key, val, page);
+CREATE INDEX props_skey ON props(key, skey, page);
 CREATE TABLE folders (path TEXT PRIMARY KEY);
 -- Files that are not pages (no usable id). They are remembered with their size
 -- and mtime so that start-up does not read them again.
@@ -78,6 +79,11 @@ type Index struct {
 	path string
 	root string
 	wmu  sync.Mutex
+
+	// gen counts the writes that are done: a result computed from the index is
+	// good for as long as it has not changed (see Groups).
+	gen    atomic.Uint64
+	groups groupCache
 
 	// queries counts the queries of listings by a property (read by tests).
 	queries atomic.Int64
@@ -163,3 +169,10 @@ func (x *Index) Close() error { return x.db.Close() }
 
 // Path is where the database file lives.
 func (x *Index) Path() string { return x.path }
+
+// unlockWrite ends a write. The generation moves after the write is committed,
+// so a reader that sees the new generation sees the write.
+func (x *Index) unlockWrite() {
+	x.gen.Add(1)
+	x.wmu.Unlock()
+}

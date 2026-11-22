@@ -3,6 +3,7 @@ package space
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -178,6 +179,12 @@ func (s *Space) editSpaceFile(tx *txn, edit func(root *yaml.Node) (changed bool,
 	return err
 }
 
+// settingsFullError is the refusal of a change that would make space.yml too
+// large to be read. It is an *InvalidError too.
+type settingsFullError struct{ *InvalidError }
+
+func (e *settingsFullError) Unwrap() error { return e.InvalidError }
+
 // editSpaceYAML is the editing of the settings file of the space at root,
 // without a Space: before runs once, just ahead of the write, when there is
 // something to write. It reports whether the file was written. Comments in the
@@ -215,7 +222,10 @@ func editSpaceYAML(root, name, tmpDir string, edit func(root *yaml.Node) (bool, 
 	if buf.Len() > maxSpaceFile {
 		// A file this large would not be read again, and every setting in it
 		// would be lost with it.
-		return false, invalidf("the change would make space.yml larger than %d bytes, more than the server reads; nothing was changed", maxSpaceFile)
+		return false, &settingsFullError{&InvalidError{fmt.Sprintf("the change would make space.yml larger than %d bytes, more than the server reads; nothing was changed", maxSpaceFile)}}
+	}
+	if err := checkWritable(spaceFile, buf.Bytes(), errSpaceFile); err != nil {
+		return false, err
 	}
 	if before != nil {
 		if err := before(); err != nil {
@@ -483,6 +493,13 @@ func (s *Space) fileGone(rel string) bool {
 // is.
 func (s *Space) editBindings(tx *txn, edit func(root *yaml.Node) (bool, error)) error {
 	err := s.editSpaceFile(tx, edit)
+	// A file that is too full is not the same as one that cannot be read: the
+	// move or delete is refused (and undone), or the folder's type and views
+	// would stay under a key that a new folder of that name then inherits.
+	var full *settingsFullError
+	if errors.As(err, &full) {
+		return invalidf("the folder's settings in space.yml could not be moved with it because the file is full (%d bytes at most); remove some views and try again", maxSpaceFile)
+	}
 	var inv *InvalidError
 	if errors.As(err, &inv) {
 		s.log.Warn("the folder bindings in space.yml were not updated", "error", err)

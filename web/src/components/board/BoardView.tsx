@@ -87,17 +87,16 @@ export default function BoardView({ scope, type, group, sort, filters, cardField
         return next
       })
     mark(true)
-    patch.mutate(
-      { id: row.id, baseRev: row.rev, ...(to.kind === 'empty' ? { unset: [group] } : { set: { [group]: to.value } }) },
-      {
-        onError: (e) => {
-          // The hook has read the card again; nothing of the move was kept.
-          if (e instanceof ApiError && e.code === 'conflict') toast.error(tb.board.conflict(name))
-          else toast.error(tb.board.moveFailed(name, e instanceof Error ? e.message : ''))
-        },
-        onSettled: () => mark(false),
-      },
-    )
+    // Not the callbacks of mutate(): the observer keeps only those of its latest call, so a card whose move was
+    // overtaken by another would stay marked as busy, and its failure would not be told.
+    patch
+      .mutateAsync({ id: row.id, baseRev: row.rev, ...(to.kind === 'empty' ? { unset: [group] } : { set: { [group]: to.value } }) })
+      .then(undefined, (e: unknown) => {
+        // The hook has read the card again; nothing of the move was kept.
+        if (e instanceof ApiError && e.code === 'conflict') toast.error(tb.board.conflict(name))
+        else toast.error(tb.board.moveFailed(name, e instanceof Error ? e.message : ''))
+      })
+      .finally(() => mark(false))
   }
 
   if (group === '') return <p className="py-16 text-center text-sm text-muted-foreground">{tb.board.needsGroup}</p>

@@ -152,12 +152,17 @@ func (s *server) listPages(c *call) {
 	}{items, res.Next})
 }
 
+// maxFilterParam is the most a filter parameter may be.
+const maxFilterParam = 128 << 10
+
 // parseFilters reads the filter parameter: a JSON array of
 // {"key", "op", "values"}. The values keep their JSON types (a number is a
 // number, not text).
 func parseFilters(raw string) ([]index.Filter, error) {
 	const bad = "filter must be a JSON array of {\"key\", \"op\", \"values\"}"
-	if len(raw) > 64<<10 {
+	// Room for a board's "other values" column on a select field with as many
+	// options as one may have (500 of 200 bytes), all excluded.
+	if len(raw) > maxFilterParam {
 		return nil, errors.New("filter is too long")
 	}
 	dec := json.NewDecoder(strings.NewReader(raw))

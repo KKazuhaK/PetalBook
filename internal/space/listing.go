@@ -68,7 +68,7 @@ func (s *Space) optionsOf(folder, key string) []string {
 	}
 	for _, f := range info.Fields {
 		if f.Key == key && (f.Kind == KindSelect || f.Kind == KindMultiSelect) {
-			return f.Options
+			return uniqueOptions(f.Options)
 		}
 	}
 	return nil

@@ -368,7 +368,7 @@ function Listing({ source }: { source: ListSource }) {
               views={saved}
               rev={views.data?.rev ?? ''}
               active={active}
-              working={{ ...state, layout: mode }}
+              working={state}
               modified={modified}
               write={write && views.data !== undefined}
               onPick={pick}

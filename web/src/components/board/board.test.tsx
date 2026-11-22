@@ -223,6 +223,22 @@ describe('moving a card', () => {
     await settle(() => cardsIn('o:done').includes('B'), 'moved')
   })
 
+  it('of two cards in a row frees both when the answers come, and tells of the one that failed', async () => {
+    const ids = await openBoard(undefined, '/s/default/f/Work', { delay: (method) => (method === 'PATCH' ? 300 : 0) })
+    await settle(() => cardsIn('o:todo').length === 1 && cardsIn('o:doing').length === 1, 'cards')
+    // B is changed elsewhere, so its move is refused; C is dragged before B has been answered.
+    sender(m!.server)('PATCH', `/pages/${ids.B.id}/props`, { baseRev: ids.B.rev, set: { points: 99 } })
+    await drag(card('B'), col('o:done'))
+    await drag(card('C'), col('o:done'))
+    expect(card('B').getAttribute('aria-busy')).toBe('true')
+    await settle(() => patches().length === 2, 'both requests')
+    await settle(() => document.body.textContent!.includes(tb.board.conflict('B')), 'the message for B')
+    await settle(() => m!.server.peek(ids.C.id)!.meta.status === 'done', 'C moved')
+    await settle(() => [...document.querySelectorAll('[data-card]')].every((c) => c.getAttribute('aria-busy') !== 'true'), 'no card left busy')
+    expect(card('B').getAttribute('draggable')).toBe('true')
+    expect(m!.server.peek(ids.B.id)!.meta.status).toBe('todo')
+  })
+
   it('is not offered for a card whose value the listing holds only in part', async () => {
     await openBoard((send) => send('POST', '/pages', { folder: 'Work', meta: { title: 'LONG', status: 'x'.repeat(400) }, body: '' }))
     await settle(() => cardsIn('other').length === 1, 'the other column')

@@ -125,6 +125,13 @@ func loadYAMLAt(root, rel string, max int64, bad error) (*yaml.Node, error) {
 	if int64(len(data)) > max {
 		return nil, bad
 	}
+	return parseYAMLDoc(data, bad)
+}
+
+// parseYAMLDoc reads the text of a settings file by the rules of loadYAMLAt.
+// It is also what a file about to be written is checked with: a document the
+// server could not read again must not be written.
+func parseYAMLDoc(data []byte, bad error) (*yaml.Node, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var doc yaml.Node
 	switch err := dec.Decode(&doc); {
@@ -155,6 +162,21 @@ func loadYAMLAt(root, rel string, max int64, bad error) (*yaml.Node, error) {
 		return nil, bad
 	}
 	return &doc, nil
+}
+
+// checkWritable refuses text that the server could not read again, which
+// is what an alias left without the anchor it pointed to makes of a file: the
+// edit dropped the node that carried the anchor. Nothing is then written, so
+// the settings stay as they were instead of being lost to a file that no
+// longer parses.
+func checkWritable(file string, data []byte, bad error) error {
+	if len(data) == 0 {
+		return nil
+	}
+	if _, err := parseYAMLDoc(data, bad); err != nil {
+		return invalidf("the change would leave %s in a form the server cannot read again (an anchor that something else in the file refers to would be removed); nothing was changed; fix the file by hand", file)
+	}
+	return nil
 }
 
 // mapValue finds a key of a mapping by its text, whatever YAML made of it
@@ -278,6 +300,9 @@ func (s *Space) editTagsFile(tx *txn, edit func(root *yaml.Node) (changed bool, 
 	}
 	if len(data) > maxTagsFile {
 		return invalidf("the change would make tags.yml larger than %d bytes, more than the server reads; nothing was changed", maxTagsFile)
+	}
+	if err := checkWritable(tagsFile, data, errTagsFile); err != nil {
+		return err
 	}
 	if err := tx.record(jrec{Op: "t", Path: tagsFile}); err != nil {
 		return err

@@ -72,18 +72,17 @@ export default function TableView({ folder, typeName, type, sort, onSort, filter
           return next
         })
       mark(true)
-      patch.mutate(
-        { id: row.id, baseRev: row.rev, ...(value === undefined ? { unset: [key] } : { set: { [key]: value } }) },
-        {
-          onError: (e) => {
-            const name = row.title || row.label || t.editor.untitled
-            // The row has been read again by the hook; nothing of the change was kept.
-            if (e instanceof ApiError && e.code === 'conflict') toast.error(tp.table.conflict(name))
-            else toast.error(t.fmt.labelled(tp.table.changeFailed(name), e instanceof Error ? e.message : ''))
-          },
-          onSettled: () => mark(false),
-        },
-      )
+      // Not the callbacks of mutate(): the observer keeps only those of its latest call, so a row whose change was
+      // overtaken by another would stay marked as busy, and its failure would not be told.
+      patch
+        .mutateAsync({ id: row.id, baseRev: row.rev, ...(value === undefined ? { unset: [key] } : { set: { [key]: value } }) })
+        .then(undefined, (e: unknown) => {
+          const name = row.title || row.label || t.editor.untitled
+          // The row has been read again by the hook; nothing of the change was kept.
+          if (e instanceof ApiError && e.code === 'conflict') toast.error(tp.table.conflict(name))
+          else toast.error(t.fmt.labelled(tp.table.changeFailed(name), e instanceof Error ? e.message : ''))
+        })
+        .finally(() => mark(false))
     },
     [patch],
   )

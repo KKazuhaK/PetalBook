@@ -2,10 +2,12 @@ package api_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -381,5 +383,59 @@ func TestAViewIsWrittenWithEveryKey(t *testing.T) {
 	}
 	if string(v["filter"]) != "[]" || string(v["hidden"]) != "[]" || string(v["sort"]) != `""` {
 		t.Errorf("%s", raw)
+	}
+}
+
+// A body of many tiny views is refused before they are all built: the body is
+// capped to what the limits allow, and the list is read until the first one
+// beyond the most a folder may have.
+func TestAViewsRequestIsBoundedBeforeItIsBuilt(t *testing.T) {
+	f := newFixture(t)
+	f.do("POST", base+"/folders", map[string]any{"path": "F"})
+	_, r, _ := f.do("GET", base+"/views?folder=F", nil)
+	rev, _ := r["rev"].(string)
+	// Under the cap, but far more entries than a folder may have.
+	body := `{"folder":"F","baseRev":"` + rev + `","views":[` + strings.Repeat("{},", 250000) + `{}]}`
+	if len(body) >= 8<<20 {
+		t.Fatal("test body too large")
+	}
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	code, r, _ := f.do("PUT", base+"/views", body)
+	runtime.ReadMemStats(&after)
+	if code != 400 || !strings.Contains(r["message"].(string), "at most 20 views") {
+		t.Errorf("%d %v", code, r)
+	}
+	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 100<<20 {
+		t.Errorf("the request allocated %d MiB", alloc>>20)
+	}
+	// Over the cap: refused as too large.
+	big := `{"folder":"F","baseRev":"x","views":[` + strings.Repeat("{},", 400000) + `{}]}`
+	if code, r, _ := f.do("PUT", base+"/views", big); code != 413 {
+		t.Errorf("%d %v", code, r)
+	}
+}
+
+// The "other values" column of a board excludes every option of the field,
+// and a field may have 500 options of 200 bytes: that filter is accepted.
+func TestAFilterThatExcludesEveryOptionOfAFieldIsAccepted(t *testing.T) {
+	f := newFixture(t)
+	f.do("POST", base+"/folders", map[string]any{"path": "F"})
+	var values []any
+	for i := 0; i < 500; i++ {
+		values = append(values, strings.Repeat("x", 190)+fmt.Sprintf("%010d", i))
+	}
+	raw, _ := json.Marshal([]any{map[string]any{"key": "status", "op": "notIn", "values": values}})
+	if len(raw) <= 64<<10 {
+		t.Fatalf("the filter is only %d bytes", len(raw))
+	}
+	code, r, _ := f.do("GET", base+"/pages?folder=F&filter="+url.QueryEscape(string(raw)), nil)
+	if code != 200 {
+		t.Errorf("%d %v", code, r)
+	}
+	huge := strings.Repeat(" ", 129<<10) + string(raw)
+	if code, _, _ := f.do("GET", base+"/pages?folder=F&filter="+url.QueryEscape(huge), nil); code != 400 {
+		t.Errorf("%d", code)
 	}
 }

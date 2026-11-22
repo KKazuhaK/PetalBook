@@ -691,7 +691,15 @@ export function usePatchProps() {
       void qc.invalidateQueries({ queryKey: [...keys.pages(space), 'list'] })
       // A card that changed its column: the column it left and the one it joined are read again, and the counts.
       void qc.invalidateQueries({ queryKey: [...keys.pages(space), 'board'], predicate: (q) => columnAffected(q, page.id, input) })
-      void qc.invalidateQueries({ queryKey: [...keys.pages(space), 'groups'] })
+      // The counts of the column heads change only when the property they count by, or one they filter by, was changed.
+      const changed = new Set([...Object.keys(input.set ?? {}), ...(input.unset ?? [])])
+      void qc.invalidateQueries({
+        queryKey: [...keys.pages(space), 'groups'],
+        predicate: (q) => {
+          const p = q.queryKey[4] as GroupsParams | undefined
+          return !p || changed.has(p.key) || (p.filter ?? []).some((f) => changed.has(f.key))
+        },
+      })
     },
     onError: (e) => {
       if (e instanceof ApiError && e.code === 'conflict' && e.current) {

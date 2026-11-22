@@ -90,7 +90,7 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 	}
 
 	x.wmu.Lock()
-	defer x.wmu.Unlock()
+	defer x.unlockWrite()
 
 	have := map[string]known{}
 	var recheck []string
@@ -304,7 +304,7 @@ func (x *Index) loadBatch(src Source, files []FileInfo, workers int) []loaded {
 // the file is not a usable page (and records why).
 func (x *Index) Put(rel string, data []byte, mtimeNs int64) (bool, error) {
 	x.wmu.Lock()
-	defer x.wmu.Unlock()
+	defer x.unlockWrite()
 	ctx := context.Background()
 	tx, err := x.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -331,7 +331,7 @@ func (x *Index) Put(rel string, data []byte, mtimeNs int64) (bool, error) {
 // Remove drops a page from the index by id.
 func (x *Index) Remove(id string) error {
 	x.wmu.Lock()
-	defer x.wmu.Unlock()
+	defer x.unlockWrite()
 	ctx := context.Background()
 	tx, err := x.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -355,7 +355,7 @@ func (x *Index) Remove(id string) error {
 // AddFolder records a folder and its ancestors.
 func (x *Index) AddFolder(rel string) error {
 	x.wmu.Lock()
-	defer x.wmu.Unlock()
+	defer x.unlockWrite()
 	for ; rel != "" && rel != "."; rel = path.Dir(rel) {
 		if _, err := x.db.Exec(`INSERT OR IGNORE INTO folders(path) VALUES (?)`, rel); err != nil {
 			return err
@@ -371,7 +371,7 @@ func (x *Index) AddFolder(rel string) error {
 func (x *Index) Forget(paths, dirs []string) error {
 	ctx := context.Background()
 	x.wmu.Lock()
-	defer x.wmu.Unlock()
+	defer x.unlockWrite()
 	tx, err := x.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -651,7 +651,7 @@ var ErrNotExist = fs.ErrNotExist
 // reads only those files, which are few.
 func (x *Index) RetryDuplicates(src Source) error {
 	x.wmu.Lock()
-	defer x.wmu.Unlock()
+	defer x.unlockWrite()
 	ctx := context.Background()
 	rows, err := x.db.QueryContext(ctx, `SELECT path FROM problems WHERE code = 'duplicate_id' ORDER BY path`)
 	if err != nil {
@@ -745,7 +745,7 @@ func (x *Index) Refresh(src Source, paths, dirs []string) (Stats, error) {
 	}
 
 	x.wmu.Lock()
-	defer x.wmu.Unlock()
+	defer x.unlockWrite()
 	tx, err := x.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Stats{}, err

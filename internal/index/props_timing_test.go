@@ -218,6 +218,9 @@ func TestOptionOrderAndBoardInALargeFolder(t *testing.T) {
 		}
 		measure("a page among the other values / without one, "+sort, list(Query{Folder: &folder, Sort: sort, PropOptions: options, Limit: 20, Cursor: r.Next}))
 		measure("a folder of 100 among 50 000, sort "+sort, list(Query{Folder: &small, Sort: sort, PropOptions: options, Limit: 20}))
+		// A selective filter: about 25 to 50 of the 50 000 pages match.
+		measure("points in range [5,5] (selective), sort "+sort, list(Query{Folder: &folder, Sort: sort, PropOptions: options, Limit: 20, Filters: []Filter{{Key: "points", Op: "range", Values: []any{5, 5}}}}))
+		measure("labels in [later] (none), sort "+sort, list(Query{Folder: &folder, Sort: sort, PropOptions: options, Limit: 20, Filters: []Filter{{Key: "labels", Op: "in", Values: []any{"later"}}}}))
 	}
 	measure("(for comparison) sort prop:status by text", list(Query{Folder: &folder, Sort: "prop:status", Limit: 20, Props: true}))
 	measure("filter points range, sort prop:status in option order", list(Query{Folder: &folder, Sort: "prop:status", PropOptions: options, Limit: 20,
