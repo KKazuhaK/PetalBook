@@ -227,6 +227,16 @@ func Open(opt Options) (*Space, error) {
 		return nil, err
 	}
 	recovered := recoverPending(root, recs)
+	for _, r := range recs {
+		if r.Op == "b" || r.Op == "u" {
+			// What the records asked for is done now; they must not be made
+			// again by a later crash, after the bindings may have changed.
+			if err := jrn.rewrite(recovered, nil); err != nil {
+				return nil, err
+			}
+			break
+		}
+	}
 	if len(recovered) > 0 {
 		log.Info("recovered uncommitted changes from the journal", "paths", len(recovered))
 	}

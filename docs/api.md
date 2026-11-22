@@ -552,7 +552,13 @@ was.
 `partialProps` comes with `props` and lists, in header order, the keys whose
 value in `props` is not exactly what the file holds: text that was cut, a list
 that was cut or lost an element, a value that is an object (it has no entry in
-`props` at all), a number JSON cannot say, a key beyond the first 200. It is
+`props` at all), a number JSON cannot say, a key beyond the first 200, and any
+value that would not come back the same through JSON and the browser: an
+integer beyond 2^53, a number not written the way the server writes it
+(`0x10`, `1.0`, `+5`, `1e3`, `.5`), a value with a tag of its own (`!custom x`),
+a bool not written `true` or `false`. A text, a bool or a number written the
+canonical way, and a date written `YYYY-MM-DD`, are whole. One such element
+makes the key of a list partial. It is
 left out when there are none. Such a key must not be written back from the
 copy: a client shows it as it is and leaves it to be changed by opening the
 page. A key whose value is null, blank text or an empty list has nothing to
@@ -947,8 +953,13 @@ it, in the same commit; deleting one removes them. Other settings an entry has
 stay. The move and the change of the bindings are one change: if the server
 stops between the two, it finishes the bindings when it starts again, and if
 the bindings cannot be written the folder is not moved and the request fails.
-A folder moved onto a place that still has an entry from before replaces that
-entry; a folder written twice in `space.yml` counts as its last entry, and
+Nothing was at the place a folder is moved to, so every binding at that place
+and under it is stale and is dropped (the moved folder takes the bindings it
+had, and none it did not); the journal of the move is kept until the bindings
+are done, so a crash at any point, also while a failed change in a space that
+follows a remote is undone, is finished or taken back with folder and bindings
+agreeing. If the move fails and is taken back, the parent folders it made for
+the target are removed again. The same place, written twice, is its last entry; a folder written twice in `space.yml` counts as its last entry, and
 removing a binding removes all of them. Comments in `space.yml` and `tags.yml`
 stay, also in a file that has nothing else.
 

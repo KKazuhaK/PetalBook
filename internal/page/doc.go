@@ -6,6 +6,7 @@ package page
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -153,6 +154,85 @@ func (d *Doc) Meta() Meta {
 		return Meta{}
 	}
 	return metaFromNode(d.root)
+}
+
+// InexactKeys lists the top-level keys whose value Meta gives as something
+// other than what the file says, so that writing the Meta value back (through
+// JSON, a browser, and the encoder) would change the file. A scalar is exact
+// when it is text with the !!str tag (a calendar date written as one counts
+// too: it is written back the same), a bool written true or false, or a number
+// whose text is the one the encoder writes and, for an integer, is within
+// 2^53. Everything else is not: other spellings of a number (0x10, 1.0, +5,
+// 1e3, .5), integers past int64 or 2^53, other tags, other bools. One inexact
+// element makes a list's key inexact. It is nil when there is none.
+func (d *Doc) InexactKeys() map[string]bool {
+	if d.root == nil {
+		return nil
+	}
+	var out map[string]bool
+	seen := map[string]bool{}
+	for i := 0; i+1 < len(d.root.Content); i += 2 {
+		key := d.root.Content[i].Value
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if !exactValue(d.root.Content[i+1], 0) {
+			if out == nil {
+				out = map[string]bool{}
+			}
+			out[key] = true
+		}
+	}
+	return out
+}
+
+func exactValue(n *yaml.Node, depth int) bool {
+	for n.Kind == yaml.AliasNode && n.Alias != nil {
+		n = n.Alias
+	}
+	switch n.Kind {
+	case yaml.SequenceNode:
+		if depth > 32 {
+			return false
+		}
+		for _, c := range n.Content {
+			if !exactValue(c, depth+1) {
+				return false
+			}
+		}
+		return true
+	case yaml.ScalarNode:
+		return exactScalar(n)
+	}
+	return true // an object: not a value a cell holds at all
+}
+
+// maxExactInt is the largest integer a JSON number carries in a browser exactly.
+const maxExactInt = 1 << 53
+
+func exactScalar(n *yaml.Node) bool {
+	switch n.ShortTag() {
+	case "!!null", "!!str":
+		return true
+	case "!!timestamp":
+		return isCalendarDate(n.Value)
+	case "!!bool":
+		return n.Value == "true" || n.Value == "false"
+	case "!!int":
+		var i int64
+		if n.Decode(&i) != nil || strconv.FormatInt(i, 10) != n.Value {
+			return false
+		}
+		return i >= -maxExactInt && i <= maxExactInt
+	case "!!float":
+		var f float64
+		if n.Decode(&f) != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+			return false
+		}
+		return strconv.FormatFloat(f, 'g', -1, 64) == n.Value
+	}
+	return false
 }
 
 // HeaderText returns the header exactly as it is written in the file: the

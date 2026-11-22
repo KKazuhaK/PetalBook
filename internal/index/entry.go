@@ -61,7 +61,7 @@ func BuildEntry(rel string, data []byte, mtimeNs int64) (*Entry, *page.Problem) 
 		e.Tags = []string{}
 	}
 	var partial []string
-	e.props, e.PropsJSON, partial = propsOf(m)
+	e.props, e.PropsJSON, partial = propsOf(m, doc.InexactKeys())
 	if len(partial) > 0 {
 		b, _ := json.Marshal(partial)
 		e.PartialJSON = string(b)

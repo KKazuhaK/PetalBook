@@ -3,6 +3,7 @@ package space
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -166,6 +167,7 @@ func TestSettingsFilesThatAreOnlyCommentsKeepThemWhenWritten(t *testing.T) {
 	for _, c := range []struct{ name, content string }{
 		{"comments", "# mine\n\n# second\n"},
 		{"marker", "---\n# mine\n\n# second\n"},
+		{"both sides of the marker", "# mine\n---\n# second\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			s := open(t)
@@ -225,7 +227,7 @@ func TestMovingAFolderOntoAStaleBindingReplacesIt(t *testing.T) {
 			t.Errorf("%s is written %d times:\n%s", key, n, got)
 		}
 	}
-	want := map[string]string{"B": "a", "B/x": "ax", "B/other": "stale-other"}
+	want := map[string]string{"B": "a", "B/x": "ax"} // nothing was at B: B/other was stale too
 	if m := bindingMap(s); !reflect.DeepEqual(m, want) {
 		t.Errorf("%v, want %v\n%s", m, want, got)
 	}
@@ -385,4 +387,206 @@ func TestFolderMoveIsTakenBackWhenItsBindingsCannotBeWritten(t *testing.T) {
 		t.Errorf("%v", m)
 	}
 	_ = bytes.Equal
+}
+
+// --- a move onto stale bindings ------------------------------------------------
+
+func TestMovingAFolderDropsEveryStaleBindingAtAndUnderTheTarget(t *testing.T) {
+	s := open(t)
+	root := s.Root()
+	putCurrent(s, "t", TypeInput{})
+	mustCreate(t, s, "Plain/sub", meta("title", "P"), "x\n")
+	mustCreate(t, s, "Bound", meta("title", "Q"), "x\n")
+	setSpaceYML(t, root, "name: n\nfolders:\n  Gone:\n    type: t\n  Gone/deep:\n    type: t\n  Elsewhere:\n    type: t\n  Bound:\n    type: t\n  Other:\n    type: t\n  Other/deep:\n    type: t\n")
+	// An unbound folder moved onto a place with bindings left from a folder that was there once.
+	if _, err := s.MoveFolder(Author{}, "Plain", "Gone"); err != nil {
+		t.Fatal(err)
+	}
+	if m := bindingMap(s); !reflect.DeepEqual(m, map[string]string{"Elsewhere": "t", "Bound": "t", "Other": "t", "Other/deep": "t"}) {
+		t.Errorf("%v\n%s", m, spaceYML(root))
+	}
+	if got, _ := s.TypeResolver(), 0; got.For("Gone/sub", "") != "" {
+		t.Errorf("the moved folder has a type it never had: %q", got.For("Gone/sub", ""))
+	}
+	// A bound one brings its own, and nothing else is kept at the target.
+	if _, err := s.MoveFolder(Author{}, "Bound", "Other"); err != nil {
+		t.Fatal(err)
+	}
+	if m := bindingMap(s); !reflect.DeepEqual(m, map[string]string{"Elsewhere": "t", "Other": "t"}) {
+		t.Errorf("%v\n%s", m, spaceYML(root))
+	}
+}
+
+func TestRecoveryOfAMoveDropsStaleBindingsAtTheTargetToo(t *testing.T) {
+	needGit(t)
+	root := t.TempDir()
+	s := openAt(t, root)
+	putCurrent(s, "t", TypeInput{})
+	mustCreate(t, s, "A", meta("title", "P"), "x\n")
+	if _, err := s.BindFolder(Author{}, "A", "t"); err != nil {
+		t.Fatal(err)
+	}
+	s.Flush()
+	crash(s)
+	setSpaceYML(t, root, spaceYML(root)+"  B:\n    type: stale\n  B/x:\n    type: stale\n")
+	os.Rename(filepath.Join(root, "A"), filepath.Join(root, "B"))
+	os.WriteFile(journalFile(root), []byte(`{"op":"b","f":"A","to":"B"}`+"\n"), 0o644)
+	s2 := openAt(t, root)
+	if m := bindingMap(s2); !reflect.DeepEqual(m, map[string]string{"B": "t"}) {
+		t.Errorf("%v\n%s", m, spaceYML(root))
+	}
+}
+
+// --- the committer and the records of bindings -----------------------------------
+
+func TestACommitBetweenTheRecordAndTheEditOfBindingsKeepsTheRecord(t *testing.T) {
+	needGit(t)
+	root := t.TempDir()
+	s := openAt(t, root)
+	putCurrent(s, "t", TypeInput{})
+	mustCreate(t, s, "A", meta("title", "P"), "x\n")
+	if _, err := s.BindFolder(Author{}, "A", "t"); err != nil {
+		t.Fatal(err)
+	}
+	s.Flush()
+	// The move has renamed the folder and journaled "b"; the edit of space.yml is not made yet.
+	rec := jrec{Op: "b", From: "A", To: "B"}
+	if err := s.cm.Record(Author{}, rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(root, "A"), filepath.Join(root, "B")); err != nil {
+		t.Fatal(err)
+	}
+	// ... and the committer runs now, as it does when the quiet period ends.
+	mustCreate(t, s, "Other", meta("title", "Q"), "x\n")
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(journalFile(root)); !strings.Contains(string(b), `"op":"b"`) {
+		t.Fatalf("the commit dropped the record: %q", b)
+	}
+	crash(s)
+	s2 := openAt(t, root)
+	if m := bindingMap(s2); !reflect.DeepEqual(m, map[string]string{"B": "t"}) {
+		t.Errorf("after the crash: %v", m)
+	}
+	// Once the edit is done the record is done too: the next commit drops it, and a
+	// crash before that does not make the edit again.
+	s2.cm.Record(Author{}, rec)
+	s2.cm.Done(rec)
+	mustCreate(t, s2, "Other2", meta("title", "R"), "x\n")
+	s2.Flush()
+	if b, _ := os.ReadFile(journalFile(root)); strings.Contains(string(b), `"op":"b"`) {
+		t.Errorf("a done record is kept: %q", b)
+	}
+	recs := []jrec{{Op: "b", From: "A", To: "B"}, {Op: "bd", From: "A", To: "B"}}
+	if got := recoverPending(root, recs); len(got) != 0 {
+		t.Errorf("a done record was made again: %v", got)
+	}
+}
+
+// --- an undone move in a space that follows a remote -----------------------------
+
+func TestUndoOfAFolderMoveIsConsistentAtEveryCrashPoint(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		after bool // the crash comes after the folder was renamed back
+	}{{"before the folder goes back", false}, {"after the folder went back", true}} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newRemoteSpace(t)
+			putCurrent(f.s, "t", TypeInput{})
+			mustCreate(t, f.s, "Tang/Sub", meta("title", "P"), "x\n")
+			if _, err := f.s.BindFolder(Author{}, "Tang", "t"); err != nil {
+				t.Fatal(err)
+			}
+			f.net.beforePush = func() { f.net.setDown(true) } // the push fails, and the move is undone
+			type crashed struct{}
+			real := f.s.ops.Rename
+			back := filepath.Join(f.root, "Tang")
+			f.s.ops.Rename = func(from, to string) error {
+				if to != back {
+					return real(from, to)
+				}
+				if c.after {
+					if err := real(from, to); err != nil {
+						return err
+					}
+				}
+				panic(crashed{})
+			}
+			func() {
+				defer func() {
+					if r := recover(); r == nil {
+						t.Fatal("the undo did not reach the folder")
+					} else if _, ok := r.(crashed); !ok {
+						panic(r)
+					}
+				}()
+				f.s.MoveFolder(Author{}, "Tang", "唐")
+			}()
+			crash(f.s)
+			s2 := openAt(t, f.root)
+			at := ""
+			for _, d := range []string{"Tang", "唐"} {
+				if exists(s2, d+"/Sub") {
+					at = d
+				}
+			}
+			if at == "" || exists(s2, "Tang") == exists(s2, "唐") {
+				t.Fatalf("the folder is in no place or two")
+			}
+			if m := bindingMap(s2); !reflect.DeepEqual(m, map[string]string{at: "t"}) {
+				t.Errorf("the folder is at %s, the bindings are %v\n%s", at, m, spaceYML(f.root))
+			}
+		})
+	}
+}
+
+// --- a move taken back leaves nothing it made -------------------------------------
+
+func TestFolderMoveTakenBackLeavesNoFoldersItMade(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a file mode does not stop root")
+	}
+	s := open(t)
+	root := s.Root()
+	putCurrent(s, "t", TypeInput{})
+	mustCreate(t, s, "A", meta("title", "P"), "x\n")
+	mustCreate(t, s, "Keep/Inner", meta("title", "Q"), "x\n")
+	if _, err := s.BindFolder(Author{}, "A", "t"); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, ".petalbook")
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	if f, err := os.Create(filepath.Join(dir, "probe")); err == nil {
+		f.Close()
+		os.Remove(f.Name())
+		t.Skip("the file system ignores the mode")
+	}
+	// The target's parents: one is new (New/Deeper), one exists (Keep).
+	for _, to := range []string{"New/Deeper/B", "Keep/Made/B"} {
+		if _, err := s.MoveFolder(Author{}, "A", to); err == nil {
+			t.Fatalf("%s: the move was reported as done", to)
+		}
+	}
+	if exists(s, "New") || exists(s, "Keep/Made") || !exists(s, "Keep/Inner") || !exists(s, "A") {
+		t.Errorf("folders left: New=%v Made=%v", exists(s, "New"), exists(s, "Keep/Made"))
+	}
+	tree, err := s.Tree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, f := range tree {
+		paths = append(paths, f.Path)
+	}
+	for _, p := range paths {
+		if strings.HasPrefix(p, "New") || strings.HasPrefix(p, "Keep/Made") {
+			t.Errorf("the index still lists %q: %v", p, paths)
+		}
+	}
+	_ = fmt.Sprint
 }

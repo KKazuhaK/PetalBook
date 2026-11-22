@@ -14,14 +14,14 @@ import (
 func rowsOf(t *testing.T, header string) ([]propRow, string) {
 	t.Helper()
 	doc := page.Parse([]byte("---\nid: AAAAAAAAAA\n" + header + "---\nbody\n"))
-	rows, col, _ := propsOf(doc.Meta())
+	rows, col, _ := propsOf(doc.Meta(), doc.InexactKeys())
 	return rows, col
 }
 
 func partialOf(t *testing.T, header string) []string {
 	t.Helper()
 	doc := page.Parse([]byte("---\nid: AAAAAAAAAA\n" + header + "---\nbody\n"))
-	_, _, partial := propsOf(doc.Meta())
+	_, _, partial := propsOf(doc.Meta(), doc.InexactKeys())
 	return partial
 }
 
@@ -53,6 +53,11 @@ func TestPropsThatTheIndexOnlyPartlyHoldAreListed(t *testing.T) {
 		{"an object", "o: {a: 1}\nfine: 2\nsecond: {b: [1]}\n", []string{"o", "second"}},
 		{"not a number", "n: .nan\ni: .inf\n", []string{"n", "i"}},
 		{"no value to lose", "a:\nb: null\nc: \"  \"\nd: []\n", nil},
+		{"integers past int64 and 2^53", "a: 99999999999999999999\nb: 9007199254740993\nc: 9007199254740992\nd: -9007199254740993\ne: [1, 9007199254740993]\n", []string{"a", "b", "d", "e"}},
+		{"other spellings of a number", "a: 0x10\nb: 1.0\nc: +5\nd: 1e3\ne: .5\nf: 0o7\ng: 1_000\nh: [2, 1.0]\n", []string{"a", "b", "c", "d", "e", "f", "g", "h"}},
+		{"numbers as the app writes them", "a: 5\nb: -3\nc: 2.5\nd: 0.5\ne: 1e+21\nf: -0.25\n", nil},
+		{"tags and spellings of text and bools", "a: !custom x\nb: !!str y\nc: !!str 5\nd: yes\ne: True\nf: true\ng: \"5\"\nh: [x, !custom y]\n", []string{"a", "e", "h"}},
+		{"dates", "a: 2026-11-22\nb: 2026-11-22T10:00:00Z\nc: \"2026-11-22\"\n", []string{"b"}},
 		{"keys past the limit", keys.String(), []string{"k200", "k201"}},
 	} {
 		if got := partialOf(t, c.header); !reflect.DeepEqual(got, c.want) {

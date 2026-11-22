@@ -48,9 +48,9 @@ type propRow struct {
 // not exactly what the header holds: text that was cut, a list that was cut or
 // lost elements, an object, a number JSON cannot say, a key past the limit.
 // Writing such a copy back would change the file, so a client must not offer
-// them for editing. Null, blank text and an empty list are no values and are
+// them for editing (inexact, for the keys page.Doc.InexactKeys names). Null, blank text and an empty list are no values and are
 // not on it: the key has nothing to lose.
-func propsOf(m page.Meta) ([]propRow, string, []string) {
+func propsOf(m page.Meta, inexact map[string]bool) ([]propRow, string, []string) {
 	var rows []propRow
 	var partial []string
 	var col strings.Builder
@@ -64,7 +64,9 @@ func propsOf(m page.Meta) ([]propRow, string, []string) {
 			continue
 		}
 		var out any
-		lossy := false
+		// Text that is not a plain string, a number that is not written the way
+		// the app writes it, an integer past 2^53: see page.Doc.InexactKeys.
+		lossy := inexact[f.Key]
 		switch v := f.Value.(type) {
 		case []any:
 			list := make([]any, 0, min(len(v), maxPropElements))
@@ -107,7 +109,7 @@ func propsOf(m page.Meta) ([]propRow, string, []string) {
 			r.key = f.Key
 			rows = append(rows, r)
 			out = cv
-			lossy = !exact
+			lossy = lossy || !exact
 		}
 		b, err := json.Marshal(out)
 		if err != nil {

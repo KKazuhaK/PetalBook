@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bindingSource, fieldKeyProblem, filterOps, fits, folderTypeName, hasValue, isDay, propsOfMeta, typeNameProblem } from './pageTypes'
+import { bindingSource, fieldKeyProblem, filterOps, fits, folderTypeName, hasValue, isDay, partialPropsOf, propsOfMeta, typeNameProblem } from './pageTypes'
 
 describe('the type a folder has', () => {
   const bindings = [
@@ -117,5 +117,12 @@ describe('the filters a kind offers', () => {
     expect(filterOps('date')).toContain('range')
     expect(filterOps('text')).toContain('contains')
     expect(filterOps('other')).toEqual(['empty', 'notEmpty'])
+  })
+})
+
+describe('partialPropsOf', () => {
+  it('lists what a cell must not write back: cut text, objects, lists that lost elements, integers past 2^53', () => {
+    expect(partialPropsOf({ a: 'x', b: 3, c: [1, 'y'], d: true })).toEqual([])
+    expect(partialPropsOf({ a: '字'.repeat(301), o: { k: 1 }, l: ['a', null], big: 2 ** 53 + 2, list: [1, 2 ** 60], ok: 2 ** 53, f: 1.5 })).toEqual(['a', 'o', 'l', 'big', 'list'])
   })
 })

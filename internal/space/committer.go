@@ -41,6 +41,7 @@ type committer struct {
 	last  time.Time         // latest write
 
 	j     *journal   // what is pending, on disk, so a crash does not lose it
+	open  []jrec     // "b" and "u" records whose edit of space.yml is not done yet (under mu)
 	runMu sync.Mutex // one git run at a time
 
 	wake chan struct{}
@@ -74,7 +75,39 @@ func (c *committer) Record(by Author, recs ...jrec) error {
 	for i := range recs {
 		recs[i].AuthorName, recs[i].AuthorEmail = by.Name, by.Email
 	}
+	// A record of a folder move or delete is the only trace of the bindings
+	// still to be changed: the trim after a commit keeps it until Done.
+	c.mu.Lock()
+	for _, r := range recs {
+		if r.Op == "b" || r.Op == "u" {
+			c.open = append(c.open, r)
+		}
+	}
+	c.mu.Unlock()
 	return c.j.append(recs...)
+}
+
+// Done says the edit of space.yml that the "b" or "u" record rec announced has
+// been made (or is not going to be: the move was taken back). From then on a
+// crash must not make it again, so a record that says so goes after it, and
+// the trim no longer keeps it.
+func (c *committer) Done(rec jrec) {
+	if c == nil || c.j == nil {
+		return
+	}
+	c.mu.Lock()
+	for i, r := range c.open {
+		if r.Op == rec.Op && r.From == rec.From && r.To == rec.To && r.Path == rec.Path {
+			c.open = append(c.open[:i:i], c.open[i+1:]...)
+			break
+		}
+	}
+	c.mu.Unlock()
+	done := rec
+	done.Op += "d"
+	if err := c.j.append(done); err != nil {
+		c.log.Error("could not journal that the bindings were changed", "error", err)
+	}
 }
 
 // Touch records that by changed these files (relative, slash-separated). A
@@ -257,7 +290,7 @@ func (c *committer) commit() error {
 	// was written during the commit, which are pending again.
 	if c.j != nil {
 		c.mu.Lock()
-		err := c.j.rewrite(c.paths)
+		err := c.j.rewrite(c.paths, c.open)
 		c.mu.Unlock()
 		if err != nil {
 			c.log.Error("could not trim the commit journal", "error", err)
@@ -275,7 +308,7 @@ func (c *committer) clearJournal() error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.j.rewrite(nil)
+	return c.j.rewrite(nil, c.open)
 }
 
 // Flush commits pending changes immediately.

@@ -111,7 +111,8 @@ export function propsOfMeta(meta: PageMeta): Record<string, unknown> {
 // in a listing; this is for a row a change has just brought.
 export function partialPropsOf(meta: PageMeta): string[] {
   const plain = (v: unknown): v is string | number | boolean => (typeof v === 'string' && v.trim() !== '') || typeof v === 'number' || typeof v === 'boolean'
-  const whole = (v: string | number | boolean) => typeof v !== 'string' || Array.from(v).length <= 300
+  // An integer past 2^53 is not what the file says once a browser has had it.
+  const whole = (v: string | number | boolean) => (typeof v === 'string' ? Array.from(v).length <= 300 : typeof v === 'number' ? !Number.isInteger(v) || Math.abs(v) <= 2 ** 53 : true)
   const out: string[] = []
   let held = 0
   for (const [k, v] of Object.entries(meta)) {

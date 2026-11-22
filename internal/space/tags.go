@@ -139,12 +139,10 @@ func loadYAMLAt(root, rel string, max int64, bad error) (*yaml.Node, error) {
 		return nil, nil
 	}
 	if r := doc.Content[0]; doc.Kind == yaml.DocumentNode && r.Kind == yaml.ScalarNode && r.Tag == "!!null" && r.Value == "" {
-		// `---` with nothing after it: an empty document, whose comments stay.
-		head := strings.TrimSpace(doc.HeadComment + "\n" + r.HeadComment)
-		foot := strings.TrimSpace(doc.FootComment + "\n" + r.FootComment)
-		d := emptyDoc(head)
-		d.FootComment = foot
-		return d, nil
+		// `---` with nothing after it: an empty document. The parser keeps only
+		// some of its comments (not the ones before the marker, say), so the
+		// comments are taken from the text, all of them in their order.
+		return emptyDoc(commentLines(data)), nil
 	}
 	if doc.Kind != yaml.DocumentNode || doc.Content[0].Kind != yaml.MappingNode {
 		return nil, bad

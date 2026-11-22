@@ -28,6 +28,8 @@ import (
 //	   and of the folders in it have to follow (done at recovery if the folder
 //	   is at To, not at From, and the old keys are still there)
 //	u  the folder Path is being deleted: its bindings have to go with it
+//	bd, ud  the bindings of the "b" or "u" record with the same fields have
+//	   been dealt with: that record is not made again
 //
 // A "w" record only counts at recovery if the file really has that content,
 // so a name the server tried to take but another file held is never committed.
@@ -96,9 +98,9 @@ func (j *journal) append(recs ...jrec) error {
 	return j.f.Sync()
 }
 
-// rewrite replaces the journal by the pending paths, each with its author,
-// atomically.
-func (j *journal) rewrite(pending map[string]Author) error {
+// rewrite replaces the journal by the pending paths, each with its author, and
+// the records in keep, atomically.
+func (j *journal) rewrite(pending map[string]Author, keep []jrec) error {
 	paths := make([]string, 0, len(pending))
 	for p := range pending {
 		paths = append(paths, p)
@@ -108,6 +110,12 @@ func (j *journal) rewrite(pending map[string]Author) error {
 	for _, p := range paths {
 		by := pending[p]
 		b, _ := json.Marshal(jrec{Op: "t", Path: p, AuthorName: by.Name, AuthorEmail: by.Email})
+		buf.Write(b)
+		buf.WriteByte('\n')
+	}
+	// Records of bindings still to be changed are not "done" by a commit.
+	for _, r := range keep {
+		b, _ := json.Marshal(r)
 		buf.Write(b)
 		buf.WriteByte('\n')
 	}
@@ -174,6 +182,13 @@ func recoverPending(root string, recs []jrec) map[string]Author {
 			}
 			finishMove(root, r.From, r.To)
 			set[r.From], set[r.To] = by, by
+		case "bd", "ud":
+			for i, o := range bindRecs {
+				if o.Op+"d" == r.Op && o.From == r.From && o.To == r.To && o.Path == r.Path {
+					bindRecs = append(bindRecs[:i:i], bindRecs[i+1:]...)
+					break
+				}
+			}
 		case "b", "u":
 			// Looked at after the files are in their final places.
 			if (r.Op == "b" && (!ok(r.From) || !ok(r.To))) || (r.Op == "u" && !ok(r.Path)) {

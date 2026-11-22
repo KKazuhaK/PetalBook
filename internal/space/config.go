@@ -339,10 +339,16 @@ func setBinding(root *yaml.Node, folder, typ string) (bool, error) {
 
 // rebind moves the entries of folder, and of the folders below it, to the same
 // places under to. Nothing was at to before the move (a folder is never moved
-// onto one), so an entry written for a place under to is stale; where it has
-// the key of an entry that arrives, it is replaced by it, never kept beside
-// it. An entry written twice arrives as its last one (the one that counted).
-func rebind(root *yaml.Node, from, to string) (bool, error) {
+// onto one), so every entry written for to or for a place under it is stale and
+// goes, whether or not the folder has bindings of its own to bring: it must not
+// give the moved folder a type it never had. An entry written twice arrives as
+// its last one (the one that counted).
+//
+// With onlyIfBound the stale entries go only when there are entries to move:
+// that is for the recovery of a move, where the old keys being still there is
+// what says the edit was not made yet (a repeat must not drop what a first run
+// moved to to).
+func rebind(root *yaml.Node, from, to string, onlyIfBound bool) (bool, error) {
 	folders, err := foldersNode(root, false)
 	if err != nil || folders == nil {
 		return false, err
@@ -365,9 +371,10 @@ func rebind(root *yaml.Node, from, to string) (bool, error) {
 		}
 		arriving[newKey[e]] = e
 	}
-	if len(arriving) == 0 {
+	if onlyIfBound && len(arriving) == 0 {
 		return false, nil
 	}
+	changed := len(arriving) > 0
 	out := make([]*yaml.Node, 0, len(folders.Content))
 	for e := 0; e < n; e++ {
 		k, v := folders.Content[2*e], folders.Content[2*e+1]
@@ -378,14 +385,18 @@ func rebind(root *yaml.Node, from, to string) (bool, error) {
 			}
 			*k = *textNode(newKey[e])
 		case k.Kind == yaml.ScalarNode:
-			if _, stale := arriving[bindingKey(k.Value)]; stale {
-				continue
+			if key := bindingKey(k.Value); key == to || strings.HasPrefix(key, to+"/") {
+				changed = true
+				continue // stale: nothing was there
 			}
 		}
 		out = append(out, k, v)
 	}
 	folders.Content = out
-	return true, nil
+	if len(folders.Content) == 0 {
+		dropEmpty(root, folders, -1)
+	}
+	return changed, nil
 }
 
 // unbindWhere takes the type off every folder for which drop says it is to go
@@ -462,7 +473,7 @@ func recoverBindings(root string, recs []jrec) (changed bool) {
 				continue // the old folder is there: nothing was moved, or it was moved back
 			}
 			from, to := bindingKey(r.From), bindingKey(r.To)
-			edit = func(top *yaml.Node) (bool, error) { return rebind(top, from, to) }
+			edit = func(top *yaml.Node) (bool, error) { return rebind(top, from, to, true) }
 		case "u":
 			canon := bindingKey(r.Path)
 			edit = func(top *yaml.Node) (bool, error) {
