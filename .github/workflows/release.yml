@@ -254,9 +254,19 @@ jobs:
             # One version per line: the published final releases, the final
             # tags on main, and this tag.
             versions="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 100 --json tagName --jq '.[].tagName' | { grep -E "$final" || true; })"
+            # The tag list first, in a variable: set -e checks that, not a
+            # process substitution. merge-base exits 1 for "not an ancestor";
+            # anything else is a failure, not a no.
+            tags="$(git tag -l 'v*')"
             while IFS= read -r t; do
-              if git merge-base --is-ancestor "$t" origin/main; then versions="$versions"$'\n'"$t"; fi
-            done < <(git tag -l 'v*' | { grep -E "$final" || true; })
+              [ -n "$t" ] || continue
+              if git merge-base --is-ancestor "$t" origin/main; then
+                versions="$versions"$'\n'"$t"
+              else
+                rc=$?
+                if [ "$rc" -ne 1 ]; then echo "git merge-base failed for $t" >&2; exit 1; fi
+              fi
+            done < <(printf '%s\n' "$tags" | { grep -E "$final" || true; })
             highest="$(printf '%s\n%s\n' "$versions" "$TAG" | grep -v '^$' | sort -V | tail -n 1)"
             if [ "$highest" = "$TAG" ]; then latest=true; fi
           fi
