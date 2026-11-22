@@ -205,6 +205,11 @@ describe('the handles at the edges of a table', () => {
     editor.commands.blur()
     const cell = Array.from(editor.view.dom.querySelectorAll('td, th')).find((c) => c.textContent === text)!
     await act(async () => void cell.dispatchEvent(new MouseEvent('mousemove', { bubbles: true })))
+    // The controls are laid out on the next animation frame, once for each of
+    // the cursor move, the blur and the pointer. Until those have run, the
+    // handles of the last hover may still be up and go away a moment later:
+    // let them run, then look.
+    await act(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))))
     await expect.poll(() => q('[aria-label="这一列"]')).not.toBeNull()
   }
   async function page(markdown = SOURCE) {
