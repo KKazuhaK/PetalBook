@@ -452,3 +452,30 @@ func TestDateLookingTextIsNeverWrittenWithATag(t *testing.T) {
 		t.Errorf("%s", out)
 	}
 }
+
+// A real date in a list is written as a date, like one alone, so that what the
+// file says survives a round trip through a client; tags stay text.
+func TestDatesInListsAreWrittenUnquoted(t *testing.T) {
+	d := Parse([]byte("---\nid: 01JD3K8Q7Z\n---\nbody\n"))
+	m := Meta{}
+	_ = json.Unmarshal([]byte(`{"id":"01JD3K8Q7Z","l":["2026-11-22","2026-13-45","x"],"tags":["2026-11-23"]}`), &m)
+	if err := d.SetMeta(m); err != nil {
+		t.Fatal(err)
+	}
+	out := string(d.Bytes())
+	if !strings.Contains(out, "l: [2026-11-22, \"2026-13-45\", x]") || !strings.Contains(out, `"2026-11-23"`) || strings.Contains(out, "!!") {
+		t.Errorf("%s", out)
+	}
+	back := Parse([]byte(out))
+	if got := back.Meta(); !MetaEqual(got, m) {
+		t.Errorf("round trip: %v", got)
+	}
+	if k := back.InexactKeys(); k["l"] {
+		t.Errorf("the list is exact and was reported inexact: %v", k)
+	}
+	// And what it was before the write: a list of dates in the file is exact, and writing the Meta back changes nothing.
+	again := Parse([]byte(out))
+	if err := again.SetMeta(again.Meta()); err != nil || string(again.Bytes()) != out {
+		t.Errorf("writing it back changed it:\n%s", again.Bytes())
+	}
+}

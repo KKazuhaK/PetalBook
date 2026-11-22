@@ -109,6 +109,9 @@ export interface Page {
   draft?: PageDraft
   // The type the page has: its header's `type`, else its folder's, else "".
   effectiveType?: string
+  // The keys of `meta` that a listing holds only in part (the summary's list, judged by the server from
+  // the file); absent when none. A cell must not write such a key back.
+  partialProps?: string[]
 }
 
 export interface DraftReceipt {

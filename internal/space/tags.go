@@ -81,7 +81,14 @@ func emptyDoc(head string) *yaml.Node {
 func commentLines(data []byte) string {
 	var out []string
 	for _, l := range strings.Split(string(data), "\n") {
-		if t := strings.TrimSpace(l); strings.HasPrefix(t, "#") {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "---") || strings.HasPrefix(t, "...") {
+			// A comment on the marker's own line (`--- # note`) is a comment too.
+			if rest := strings.TrimSpace(t[3:]); strings.HasPrefix(rest, "#") {
+				t = rest
+			}
+		}
+		if strings.HasPrefix(t, "#") {
 			out = append(out, t)
 		} else if t == "" && len(out) > 0 {
 			out = append(out, "")

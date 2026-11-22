@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MutationObserver, QueryClient } from '@tanstack/react-query'
-import { applySession, keys, lastSpace, refreshSpaceAccess, rememberSpace, secretMutation } from './hooks'
-import type { SessionInfo, User } from './types'
+import { applySession, keys, putTableRow, lastSpace, refreshSpaceAccess, rememberSpace, secretMutation } from './hooks'
+import type { Page, SessionInfo, User } from './types'
 
 const user = (over: Partial<User> = {}): User => ({ id: 'u1', username: 'ada', name: 'Ada', email: '', role: 'member', disabled: false, created: '2026-11-21T08:30:00Z', ...over })
 const session = (over: Partial<SessionInfo> = {}): SessionInfo => ({ mode: 'accounts', user: null, setup: false, methods: { password: true, oidc: null }, ...over })
@@ -132,5 +132,24 @@ describe('a request refused for access or not found inside a space', () => {
     expect(spy).not.toHaveBeenCalled()
     vi.advanceTimersByTime(5_000)
     expect(spy).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('putTableRow', () => {
+  const row = { id: 'p1', rev: 'r0', updated: 'x', props: {}, partialProps: ['old'] }
+  const page = (over: Partial<Page>): Page => ({ id: 'p1', path: 'p1.md', folder: '', rev: 'r1', updated: 'y', meta: { title: 'T', hex: 16 }, body: '', ...over })
+  const key = [...keys.pages('sp'), 'table', 'x']
+  const read = (qc: QueryClient) => (qc.getQueryData(key) as { pages: { items: Record<string, unknown>[] }[] }).pages[0].items[0]
+
+  it('takes the partial keys from the server, which sees how the file spells a value, not from the header it was given', () => {
+    const qc = new QueryClient()
+    qc.setQueryData(key, { pages: [{ items: [row] }], pageParams: [] })
+    // 0x10 is 16 in meta: the browser cannot tell it from a canonical 16.
+    putTableRow(qc, 'sp', page({ partialProps: ['hex'] }))
+    expect(read(qc)).toMatchObject({ rev: 'r1', props: { hex: 16 }, partialProps: ['hex'] })
+    // A response without the list says there are none.
+    putTableRow(qc, 'sp', page({ rev: 'r2' }))
+    expect(read(qc)).toMatchObject({ rev: 'r2' })
+    expect('partialProps' in read(qc)).toBe(false)
   })
 })

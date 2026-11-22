@@ -167,6 +167,7 @@ func TestSettingsFilesThatAreOnlyCommentsKeepThemWhenWritten(t *testing.T) {
 	for _, c := range []struct{ name, content string }{
 		{"comments", "# mine\n\n# second\n"},
 		{"marker", "---\n# mine\n\n# second\n"},
+		{"on the marker line", "--- # mine\n# second\n"},
 		{"both sides of the marker", "# mine\n---\n# second\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -589,4 +590,21 @@ func TestFolderMoveTakenBackLeavesNoFoldersItMade(t *testing.T) {
 		}
 	}
 	_ = fmt.Sprint
+}
+
+// A record that could not be journaled is not kept open: the trim would carry it
+// for as long as the process lives.
+func TestARecordThatCouldNotBeJournaledIsNotKeptOpen(t *testing.T) {
+	needGit(t)
+	s := openAt(t, t.TempDir())
+	s.cm.j.f.Close() // appends fail now
+	if err := s.cm.Record(Author{}, jrec{Op: "b", From: "A", To: "B"}); err == nil {
+		t.Fatal("the append should have failed")
+	}
+	s.cm.mu.Lock()
+	n := len(s.cm.open)
+	s.cm.mu.Unlock()
+	if n != 0 {
+		t.Errorf("%d records kept open", n)
+	}
 }

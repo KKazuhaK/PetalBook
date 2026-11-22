@@ -105,14 +105,15 @@ export function propsOfMeta(meta: PageMeta): Record<string, unknown> {
   return out
 }
 
-// The keys of a header whose copy in `propsOfMeta` is not the whole of the value
+// For the in-memory server only (the real one judges by the file, which this cannot see; the app takes
+// the list from the server's responses). The keys of a header whose copy in `propsOfMeta` is not the whole of the value
 // (docs/api.md, "Page summary", `partialProps`): text that was cut, a list that was
 // cut or lost an element, an object, a key past the 200th. The server says the same
 // in a listing; this is for a row a change has just brought.
 export function partialPropsOf(meta: PageMeta): string[] {
   const plain = (v: unknown): v is string | number | boolean => (typeof v === 'string' && v.trim() !== '') || typeof v === 'number' || typeof v === 'boolean'
   // An integer past 2^53 is not what the file says once a browser has had it.
-  const whole = (v: string | number | boolean) => (typeof v === 'string' ? Array.from(v).length <= 300 : typeof v === 'number' ? !Number.isInteger(v) || Math.abs(v) <= 2 ** 53 : true)
+  const whole = (v: string | number | boolean) => (typeof v === 'string' ? Array.from(v).length <= 300 : typeof v === 'number' ? !Number.isInteger(v) || Number.isSafeInteger(v) : true)
   const out: string[] = []
   let held = 0
   for (const [k, v] of Object.entries(meta)) {

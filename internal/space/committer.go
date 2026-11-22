@@ -77,14 +77,21 @@ func (c *committer) Record(by Author, recs ...jrec) error {
 	}
 	// A record of a folder move or delete is the only trace of the bindings
 	// still to be changed: the trim after a commit keeps it until Done.
+	// Under the lock the trim takes too, so that it cannot replace the journal
+	// between the append and the entry in the open list (it would drop the
+	// record); and entered only once the append has worked, so a record that
+	// was never journaled does not stay open for the life of the process.
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.j.append(recs...); err != nil {
+		return err
+	}
 	for _, r := range recs {
 		if r.Op == "b" || r.Op == "u" {
 			c.open = append(c.open, r)
 		}
 	}
-	c.mu.Unlock()
-	return c.j.append(recs...)
+	return nil
 }
 
 // Done says the edit of space.yml that the "b" or "u" record rec announced has

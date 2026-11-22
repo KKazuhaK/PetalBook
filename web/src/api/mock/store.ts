@@ -214,6 +214,7 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
       .join(''),
     body: p.body,
     effectiveType: effectiveOf(p),
+    ...(partialPropsOf(p.meta).length ? { partialProps: partialPropsOf(p.meta) } : {}),
   })
 
   const toSummary = (p: Stored, withProps = false): PageSummary => {

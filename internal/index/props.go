@@ -138,6 +138,14 @@ func propsOf(m page.Meta, inexact map[string]bool) ([]propRow, string, []string)
 	return rows, col.String(), partial
 }
 
+// PartialProps is the keys of a page's header whose copy in a listing is not the
+// whole of the value (see propsOf): what a page response says too, so a client
+// has one judge.
+func PartialProps(doc *page.Doc) []string {
+	_, _, partial := propsOf(doc.Meta(), doc.InexactKeys())
+	return partial
+}
+
 func dropKey(rows []propRow, key string) []propRow {
 	out := rows[:0]
 	for _, r := range rows {

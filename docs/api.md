@@ -557,7 +557,8 @@ value that would not come back the same through JSON and the browser: an
 integer beyond 2^53, a number not written the way the server writes it
 (`0x10`, `1.0`, `+5`, `1e3`, `.5`), a value with a tag of its own (`!custom x`),
 a bool not written `true` or `false`. A text, a bool or a number written the
-canonical way, and a date written `YYYY-MM-DD`, are whole. One such element
+canonical way, and a date written `YYYY-MM-DD` (alone or in a list; a list of
+dates is written back as dates), are whole. One such element
 makes the key of a list partial. It is
 left out when there are none. Such a key must not be written back from the
 copy: a client shows it as it is and leaves it to be changed by opening the
@@ -612,6 +613,13 @@ has one for the page (see Drafts); `meta` and `body` are always the file's.
 `effectiveType` is the type the page has: the header's `type`, else that of
 the nearest folder above it bound to a type, else `""` (see Page types). A
 new page is not given a `type` in its header; it takes its folder's.
+
+`partialProps` is there when some keys of `meta` are held only in part by a
+listing: the same list, judged by the server from the file, as a summary's
+(see Page summary), in every response that returns a page (get, create, save,
+`PATCH …/props`, move, and the `current` of a 409), and left out when there
+are none. A client takes it from the response and never works it out from
+`meta`: `0x10` and `16` look the same there.
 
 ### `GET /api/spaces/{space}/pages`
 

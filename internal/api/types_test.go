@@ -391,6 +391,22 @@ func TestListingSaysWhichPropsArePartial(t *testing.T) {
 	if code != 201 {
 		t.Fatalf("%d %s", code, raw)
 	}
+	want := []any{"note", "obj"}
+	if !reflect.DeepEqual(r["partialProps"], want) {
+		t.Errorf("create: %v", r["partialProps"])
+	}
+	id, rev := r["id"].(string), r["rev"].(string)
+	// The page responses carry the same list, so a client has one judge.
+	if code, g, _ := f.do("GET", base+"/pages/"+id, nil); code != 200 || !reflect.DeepEqual(g["partialProps"], want) {
+		t.Errorf("get: %d %v", code, g["partialProps"])
+	}
+	code, pr, raw := f.do("PATCH", base+"/pages/"+id+"/props", map[string]any{"baseRev": rev, "set": map[string]any{"status": "doing"}})
+	if code != 200 || !reflect.DeepEqual(pr["partialProps"], want) {
+		t.Errorf("patch: %d %s", code, raw)
+	}
+	if code, c, _ := f.do("PATCH", base+"/pages/"+id+"/props", map[string]any{"baseRev": rev, "set": map[string]any{"status": "x"}}); code != 409 || !reflect.DeepEqual(c["current"].(map[string]any)["partialProps"], want) {
+		t.Errorf("409: %d %v", code, c)
+	}
 	f.do("POST", base+"/pages", map[string]any{"meta": map[string]any{"title": "Q", "status": "done"}, "body": "x\n"})
 	code, r, raw = f.do("GET", base+"/pages?props=1&sort=title", nil)
 	items, _ := r["items"].([]any)

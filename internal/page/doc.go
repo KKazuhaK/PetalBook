@@ -462,7 +462,9 @@ func valueNode(key string, v any) *yaml.Node {
 		n := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
 		allScalar, width := true, 0
 		for _, e := range x {
-			c := valueNode("", e)
+			// An element is written by the rule of its list's key, so a real date in a
+			// list of dates is a date, as it is alone (and tags stay text).
+			c := valueNode(key, e)
 			if c.Kind != yaml.ScalarNode {
 				allScalar = false
 			}

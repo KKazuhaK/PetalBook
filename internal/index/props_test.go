@@ -440,3 +440,10 @@ func TestListSaysWhichPropsAreOnlyPartlyThere(t *testing.T) {
 		}
 	}
 }
+
+func TestPartialPropsOfAPageIsWhatTheListingSays(t *testing.T) {
+	doc := page.Parse([]byte("---\nid: AAAAAAAAAA\nhex: 0x10\nok: 3\nl: [x, !custom y]\n---\nbody\n"))
+	if got := PartialProps(doc); !reflect.DeepEqual(got, []string{"hex", "l"}) {
+		t.Errorf("%v", got)
+	}
+}

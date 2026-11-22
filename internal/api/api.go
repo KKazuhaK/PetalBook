@@ -554,6 +554,9 @@ type pageResp struct {
 	Body    string    `json:"body"`
 	// EffectiveType is the type the page has: its header's, else its folder's.
 	EffectiveType string `json:"effectiveType"`
+	// PartialProps are the keys of meta that a listing holds only in part
+	// (the same list as the summary's); left out when there are none.
+	PartialProps []string `json:"partialProps,omitempty"`
 }
 
 func toPage(p *space.Page) pageResp {
@@ -561,7 +564,7 @@ func toPage(p *space.Page) pageResp {
 	if m == nil {
 		m = page.Meta{}
 	}
-	return pageResp{ID: p.ID, Path: p.Path, Folder: p.Folder, Rev: p.Rev, Updated: rfc3339(p.Updated), Meta: m, Header: p.Header, Body: p.Body, EffectiveType: p.EffectiveType}
+	return pageResp{ID: p.ID, Path: p.Path, Folder: p.Folder, Rev: p.Rev, Updated: rfc3339(p.Updated), Meta: m, Header: p.Header, Body: p.Body, EffectiveType: p.EffectiveType, PartialProps: p.PartialProps}
 }
 
 type summaryResp struct {

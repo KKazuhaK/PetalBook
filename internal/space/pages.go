@@ -30,6 +30,9 @@ type Page struct {
 	// EffectiveType is the type the page has: the one its header names, else
 	// the one of the nearest folder above it that is bound to a type, else "".
 	EffectiveType string
+	// PartialProps are the keys of the header that a listing holds only in part
+	// (see index.PartialProps); nil when there are none.
+	PartialProps []string
 }
 
 func (s *Space) pageFrom(rel string, data []byte, mtime time.Time) *Page {
@@ -39,6 +42,7 @@ func (s *Space) pageFrom(rel string, data []byte, mtime time.Time) *Page {
 		ID: m.ID(), Path: rel, Folder: folderOf(rel), Rev: page.Rev(data),
 		Updated: mtime.UTC(), Meta: m, Header: doc.HeaderText(), Body: doc.Body,
 		EffectiveType: s.TypeResolver().For(folderOf(rel), m.Type()),
+		PartialProps:  index.PartialProps(doc),
 	}
 }
 

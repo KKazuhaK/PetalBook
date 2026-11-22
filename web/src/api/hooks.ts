@@ -8,7 +8,7 @@ import { spaceUrls } from '@/lib/urls'
 import { api, ApiError, spaceApi } from './client'
 import { parseTagColor } from '../lib/tagColors.ts'
 import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
-import { partialPropsOf, propsOfMeta } from '../lib/pageTypes.ts'
+import { propsOfMeta } from '../lib/pageTypes.ts'
 import type { BatchPagesInput, ConnectRemoteInput, CreatePageInput, ListParams, Member, Page, PageList, PatchPropsInput, Permission, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User } from './types'
 
 // Everything of one space is under ['space', id, …], so switching space never
@@ -607,8 +607,10 @@ export function useBindFolder() {
   return useMutation({ mutationFn: ({ folder, type }: { folder: string; type: string }) => spaceApi(space).bindFolder(folder, type), onSuccess: changed })
 }
 
-// A row with `partialProps` as given, left out when there are none (as the server does).
-function withPartial<T extends { partialProps?: string[] }>(row: T, partial: string[]): T {
+// A row with `partialProps` as the server gave them for the page (a response leaves them out when there
+// are none). Only the server can say: it sees how the file spells a value, which the header as the browser
+// has it does not show (0x10, a tag of its own, an integer past 2^53).
+function withPartial<T extends { partialProps?: string[] }>(row: T, partial: string[] = []): T {
   const next = { ...row }
   if (partial.length) next.partialProps = partial
   else delete next.partialProps
@@ -623,7 +625,7 @@ export function putTableRow(qc: QueryClient, space: string, page: Page) {
     if (!prev || !prev.pages.some((p) => p.items.some((i) => i.id === page.id))) return prev
     return {
       ...prev,
-      pages: prev.pages.map((p) => ({ ...p, items: p.items.map((i) => (i.id === page.id ? withPartial({ ...i, props: propsOfMeta(page.meta), rev: page.rev, updated: page.updated }, partialPropsOf(page.meta)) : i)) })),
+      pages: prev.pages.map((p) => ({ ...p, items: p.items.map((i) => (i.id === page.id ? withPartial({ ...i, props: propsOfMeta(page.meta), rev: page.rev, updated: page.updated }, page.partialProps) : i)) })),
     }
   })
 }

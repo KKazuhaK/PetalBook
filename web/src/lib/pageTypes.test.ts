@@ -123,6 +123,6 @@ describe('the filters a kind offers', () => {
 describe('partialPropsOf', () => {
   it('lists what a cell must not write back: cut text, objects, lists that lost elements, integers past 2^53', () => {
     expect(partialPropsOf({ a: 'x', b: 3, c: [1, 'y'], d: true })).toEqual([])
-    expect(partialPropsOf({ a: '字'.repeat(301), o: { k: 1 }, l: ['a', null], big: 2 ** 53 + 2, list: [1, 2 ** 60], ok: 2 ** 53, f: 1.5 })).toEqual(['a', 'o', 'l', 'big', 'list'])
+    expect(partialPropsOf({ a: '字'.repeat(301), o: { k: 1 }, l: ['a', null], big: 2 ** 53 + 2, list: [1, 2 ** 60], ok: 2 ** 53 - 1, f: 1.5 })).toEqual(['a', 'o', 'l', 'big', 'list'])
   })
 })
