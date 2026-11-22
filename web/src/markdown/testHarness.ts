@@ -4,9 +4,14 @@
 
 import { Editor } from '@tiptap/core'
 import { extensions, docToMarkdown, markdownToDoc, normalizeDoc, type DocJSON } from './index'
+import { trackEditor } from '@/testing/editors'
 
 let editor: Editor | null = null
-const get = () => (editor ??= new Editor({ element: document.createElement('div'), extensions }))
+const get = () => {
+  // A file's editor is destroyed when the file is done (testing/setup.ts).
+  if (editor?.isDestroyed) editor = null
+  return (editor ??= trackEditor(new Editor({ element: document.createElement('div'), extensions })))
+}
 
 export function canonical(json: DocJSON): DocJSON {
   get().commands.setContent(json)

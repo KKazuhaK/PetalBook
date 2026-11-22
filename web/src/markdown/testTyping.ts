@@ -4,9 +4,10 @@
 import { Editor } from '@tiptap/core'
 import type { Extensions } from '@tiptap/core'
 import { extensions as markdownExtensions, type DocJSON } from './index'
+import { trackEditor } from '@/testing/editors'
 
 export function makeEditor(content?: DocJSON, extensions: Extensions = markdownExtensions): Editor {
-  return new Editor({ element: document.createElement('div'), extensions, ...(content ? { content } : {}) })
+  return trackEditor(new Editor({ element: document.createElement('div'), extensions, ...(content ? { content } : {}) }))
 }
 
 // One character at a time: input rules only see what is typed, never a paste.

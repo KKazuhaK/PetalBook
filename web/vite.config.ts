@@ -29,6 +29,7 @@ export default defineConfig(async ({ mode }) => {
     },
     test: {
       environment: 'jsdom',
+      setupFiles: ['src/testing/setup.ts'],
       include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
       // Markdown conversion of the corpus under jsdom is CPU-heavy on slow machines.
       testTimeout: 30_000,

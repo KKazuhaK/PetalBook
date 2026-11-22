@@ -9,6 +9,7 @@ import { EditorContent } from '@tiptap/react'
 import { createExtensions, docToMarkdown, markdownToDoc, type DocJSON } from '@/markdown'
 import { CodeBlockWithView } from './code/codeBlock'
 import { TableTools } from './table/TableTools'
+import { trackEditor } from '@/testing/editors'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -21,7 +22,7 @@ if (!Range.prototype.getClientRects) {
 export const pageExtensions = () => [...createExtensions({ linkOpensOnClick: false, codeBlock: CodeBlockWithView }), TableTools]
 
 export function pageEditor(markdown = ''): Editor {
-  return new Editor({ element: document.createElement('div'), extensions: pageExtensions(), content: markdown ? markdownToDoc(markdown) : undefined })
+  return trackEditor(new Editor({ element: document.createElement('div'), extensions: pageExtensions(), content: markdown ? markdownToDoc(markdown) : undefined }))
 }
 
 export const markdownOf = (editor: Editor) => docToMarkdown(editor.getJSON() as DocJSON)
