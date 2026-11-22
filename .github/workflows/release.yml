@@ -1,41 +1,162 @@
 name: release
 
 # A tag v* publishes binaries with the web app embedded, and the container image.
+# Nothing becomes visible until everything is built, tested and signed: the
+# release is made as a draft and published as the very last step.
 on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: read
+# One run per tag. A single shared group would keep only one pending run and
+# cancel the others when several tags are pushed together.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# No permissions by default; each job asks for what it needs.
+permissions: {}
 
 env:
+  # Ignore any go.work file and use exactly the Go version from go.mod.
   GOWORK: "off"
+  GOTOOLCHAIN: local
 
 jobs:
-  web:
-    name: Build the web app
+  # Only a commit that is on main and that ci already passed on may be
+  # released: a tag on a side branch, or one pushed before the checks finished,
+  # stops here.
+  gate:
+    name: gate
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read # list the ci runs
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The tagged commit is on main
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "$GITHUB_SHA is not on main; merge it through a pull request first and tag the merge commit." >&2
+            exit 1
+          fi
+      # SemVer only: vX.Y.Z, or vX.Y.Z-<pre-release> for a pre-release, with
+      # the pre-release identifiers SemVer allows (no empty ones, no leading zeros).
+      - name: The tag is a version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          n='(0|[1-9][0-9]*)'
+          id='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+          if ! [[ "$TAG" =~ ^v$n\.$n\.$n(-$id(\.$id)*)?$ ]]; then
+            echo "$TAG is not a version tag (vX.Y.Z or vX.Y.Z-rc.N)" >&2
+            exit 1
+          fi
+      # Only the push run on main counts: a pull request's run is the light set,
+      # and one from a fork's main branch would also report the branch "main".
+      - name: ci passed on the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --event push --branch main --commit "$GITHUB_SHA" --status success --json databaseId --jq length)"
+          if [ "$n" -lt 1 ]; then
+            echo "no successful ci run on main for $GITHUB_SHA; wait for it to finish (or fix it), then run this workflow again." >&2
+            exit 1
+          fi
+      # A published release is never rebuilt: its files and image are what
+      # people downloaded and checked. A re-run may only finish a draft.
+      - name: Not released yet
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Only "not found" means not released; any other failure (rate limit,
+          # outage) stops here rather than letting a published version be rebuilt.
+          # The token cannot see drafts, so a draft from an earlier run counts as
+          # not released, and the release job finishes it.
+          if out="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq .draft 2>&1)"; then
+            if [ "$out" != "true" ]; then
+              echo "$TAG is already published; tag a new version instead." >&2
+              exit 1
+            fi
+          elif ! grep -q 'HTTP 404' <<<"$out"; then
+            echo "could not tell whether $TAG is released: $out" >&2
+            exit 1
+          fi
+
+  # The tests on the platforms people run it on. macOS gives the
+  # case-insensitive APFS that the casefold job in ci.yml imitates on Linux.
+  # Windows is not here: the server is not supported there yet, and the
+  # cross-compile check keeps it building.
+  verify:
+    name: verify ${{ matrix.name }}
+    needs: gate
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-amd64, runner: ubuntu-latest }
+          - { name: linux-arm64, runner: ubuntu-24.04-arm }
+          - { name: macos-arm64, runner: macos-latest }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      # setup-go installs the go line of go.mod; fail if any other Go is on PATH.
+      - name: Go version matches go.mod
+        shell: bash
+        run: |
+          want="$(go list -m -f '{{.GoVersion}}')"
+          case "$(go env GOVERSION)" in
+            "go$want" | "go$want".*) ;;
+            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
+          esac
+      - run: make check-go
+
+  # The web app is built once; every binary embeds this build.
+  web:
+    name: web
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: npm ci
-        working-directory: web
-      - run: npm run build
-        working-directory: web
-      - uses: actions/upload-artifact@v4
+      - run: make web
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: web-dist
           path: web/dist
           if-no-files-found: error
+          retention-days: 7
 
   binaries:
-    name: Binary ${{ matrix.goos }}/${{ matrix.goarch }}
+    name: binary ${{ matrix.goos }}/${{ matrix.goarch }}
     needs: web
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
     strategy:
       fail-fast: true
       matrix:
@@ -45,11 +166,21 @@ jobs:
           - { goos: darwin, goarch: amd64 }
           - { goos: darwin, goarch: arm64 }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
-      - uses: actions/download-artifact@v4
+      - name: Go version matches go.mod
+        shell: bash
+        run: |
+          want="$(go list -m -f '{{.GoVersion}}')"
+          case "$(go env GOVERSION)" in
+            "go$want" | "go$want".*) ;;
+            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
+          esac
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: web-dist
           path: internal/webui/dist
@@ -68,68 +199,80 @@ jobs:
           go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "dist/$dir/petalbook" ./cmd/petalbook
           cp LICENSE README.md "dist/$dir/"
           tar -C dist -czf "dist/$dir.tar.gz" "$dir"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: binary-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*.tar.gz
           if-no-files-found: error
+          retention-days: 7
 
-  release:
-    name: GitHub release
-    needs: binaries
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: binary-*
-          path: files
-          merge-multiple: true
-      - name: Checksums
-        working-directory: files
-        run: sha256sum *.tar.gz > SHA256SUMS
-      - name: Publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" files/* --clobber
-          else
-            # A tag with a suffix (v1.0.0-rc1) is a pre-release.
-            case "$TAG" in *-*) pre=--prerelease ;; *) pre= ;; esac
-            gh release create "$TAG" files/* --verify-tag --title "$TAG" --generate-notes $pre
-          fi
-
+  # Pushed only after the tests passed everywhere and every binary built, so a
+  # failing platform or build never leaves an image behind.
   image:
-    name: Container image
-    # Only once the binaries built: a tag publishes all of it or none.
-    needs: binaries
+    name: image
+    needs: [gate, verify, binaries]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
-      packages: write
+      packages: write # push to ghcr.io
+      id-token: write # keyless signing and attestation (OIDC)
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # All tags and main, for the "latest" decision below.
+          fetch-depth: 0
+      # ghcr.io only takes lower case, and the owner name has capitals.
+      - name: Image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
       # The arm64 image's last stage runs apk, which needs emulation.
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # "latest" moves only for a final release that is at least the highest one
+      # published so far and the highest final tag on main: a fix on an older
+      # line (v1.2.5 after v1.3.0) does not take it back, and neither does a run
+      # that finishes after a newer tag's run, published yet or not. It errs on
+      # the side of not moving: a newer tag on main that is never released keeps
+      # "latest" where it is until a higher one is.
+      - id: latest
+        name: Whether this is the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          latest=false
+          if [[ "$TAG" != *-* ]]; then
+            final='^v[0-9]+\.[0-9]+\.[0-9]+$'
+            published="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 100 --json tagName --jq '.[].tagName' | { grep -E "$final" || true; })"
+            on_main=""
+            for t in $(git tag -l 'v*' | { grep -E "$final" || true; }); do
+              if git merge-base --is-ancestor "$t" origin/main; then on_main="$on_main $t"; fi
+            done
+            highest="$(printf '%s\n' $published $on_main "$TAG" | sort -V | tail -n 1)"
+            if [ "$highest" = "$TAG" ]; then latest=true; fi
+          fi
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ghcr.io/${{ github.repository }}
-          # The version without its "v"; "latest" is added for final releases only.
-          tags: type=semver,pattern={{version}}
-          flavor: latest=auto
-      - uses: docker/build-push-action@v6
+          images: ${{ env.IMAGE }}
+          # The version without its "v", and its major.minor; "latest" moves for final releases only.
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ steps.latest.outputs.latest == 'true' }}
+          # Without this, every final semver tag would add "latest" by itself.
+          flavor: latest=false
+      - id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -139,3 +282,65 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - name: Sign the image by digest
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+  release:
+    name: GitHub release
+    needs: [gate, verify, binaries, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # create and publish the release
+      id-token: write # sign the provenance attestation (OIDC)
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: binary-*
+          path: files
+          merge-multiple: true
+      - name: Checksums
+        working-directory: files
+        run: sha256sum ./*.tar.gz > SHA256SUMS
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            files/*.tar.gz
+            files/SHA256SUMS
+      # A draft is invisible to everyone but the maintainers, so a half-built
+      # release is never seen. If a draft exists already (a re-run), its files
+      # are replaced; a published one is refused (also checked in gate).
+      - name: Make the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if draft="$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [ "$draft" != "true" ]; then
+              echo "$TAG is already published; not replacing its files." >&2
+              exit 1
+            fi
+            gh release upload "$TAG" files/* --clobber
+          else
+            # A tag with a suffix (v0.2.0-rc.1) is a pre-release.
+            case "$TAG" in *-*) pre=--prerelease ;; *) pre= ;; esac
+            gh release create "$TAG" files/* --draft --verify-tag --title "$TAG" --generate-notes $pre
+          fi
+      # The last step: everything before it succeeded.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: gh release edit "$TAG" --draft=false

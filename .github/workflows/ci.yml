@@ -1,31 +1,174 @@
 name: ci
 
+# Every check is a make target (see the Makefile); this file only decides
+# where each one runs. A pull request gets the fast set, and a push to main
+# gets all of it. The one check branch protection requires is the "ci" job.
 on:
+  pull_request:
   push:
     branches: [main]
-  pull_request:
 
-permissions:
-  contents: read
+# A new push to a pull request makes the run in flight stale, so that run is
+# cancelled. A push to main is never cancelled: it gets a group of its own (the
+# run id), so every commit on main keeps its own verdict even when two merges
+# arrive seconds apart.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# No permissions by default; each job asks for read access to the code only.
+permissions: {}
 
 env:
+  # Ignore any go.work file and use exactly the Go version from go.mod.
   GOWORK: "off"
+  GOTOOLCHAIN: local
 
 jobs:
-  go-sqlite:
-    name: Go (vet, tests on SQLite)
+  # Decides which of the slow jobs a pull request needs. It uses plain git, no
+  # third-party action. On a push to main everything runs.
+  changes:
+    name: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      go: ${{ steps.diff.outputs.go }}
+      web: ${{ steps.diff.outputs.web }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      # The whole history, so the diff against the base branch has both ends.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          go=false
+          web=false
+          if [ "$EVENT" != "pull_request" ]; then
+            go=true
+            web=true
+          else
+            # --no-renames: a file moved out of the Go or web tree is listed
+            # under both names, not only the new one (docs/ would skip the checks).
+            files="$(git diff --name-only --no-renames "$BASE...$HEAD")"
+            # When in doubt, run: an empty diff runs everything.
+            if [ -z "$files" ]; then
+              go=true
+              web=true
+            fi
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              case "$f" in
+                web/*) web=true ;;
+                docs/*) ;;
+                # Only a top-level Markdown file is documentation.
+                */*) go=true ;;
+                *.md) ;;
+                *) go=true ;;
+              esac
+              # The web job runs make targets and the workflows, so those count for it too.
+              case "$f" in
+                Makefile | .github/*) web=true ;;
+              esac
+            done <<<"$files"
+          fi
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+          echo "web=$web" >> "$GITHUB_OUTPUT"
+          echo "go=$go web=$web"
+
+  go:
+    name: go
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
-      - run: go vet ./...
-      - run: go test -race ./cmd/... ./internal/...
+      # setup-go installs the go line of go.mod; fail if any other Go is on PATH.
+      - name: Go version matches go.mod
+        shell: bash
+        run: |
+          want="$(go list -m -f '{{.GoVersion}}')"
+          case "$(go env GOVERSION)" in
+            "go$want" | "go$want".*) ;;
+            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
+          esac
+      # gofmt, go mod tidy, go vet and the tests on SQLite. The tests need no
+      # web build: internal/webui/dist holds only a placeholder.
+      - run: make check-go
+      - run: make vuln
 
-  go-postgres:
-    name: Go (tests on SQLite and PostgreSQL)
+  web:
+    name: web
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      # Installs from package-lock.json (npm ci), then typecheck, lint, tests.
+      - run: make check-web
+
+  # Cheap, and a broken workflow file should never wait for a path filter.
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Go version matches go.mod
+        shell: bash
+        run: |
+          want="$(go list -m -f '{{.GoVersion}}')"
+          case "$(go env GOVERSION)" in
+            "go$want" | "go$want".*) ;;
+            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
+          esac
+      - run: make actionlint
+
+  # From here on only pushes to main run. A pull request gets the fast set
+  # above; these need services, a second toolchain, or a long build.
+
+  # On a runner the database is a service container instead of the throwaway
+  # cluster scripts/test-postgres.sh makes locally; the script uses the one in
+  # PETALBOOK_TEST_POSTGRES when that is set, so this is still make test-postgres.
+  postgres:
+    name: postgres
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
     services:
       postgres:
         image: postgres:18
@@ -43,41 +186,135 @@ jobs:
     env:
       PETALBOOK_TEST_POSTGRES: postgres://petalbook:petalbook@127.0.0.1:5432/petalbook_test?sslmode=disable
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
-      - run: go test -race ./cmd/... ./internal/...
+      - name: Go version matches go.mod
+        shell: bash
+        run: |
+          want="$(go list -m -f '{{.GoVersion}}')"
+          case "$(go env GOVERSION)" in
+            "go$want" | "go$want".*) ;;
+            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
+          esac
+      # The same limit the local cluster gets: go test runs packages in
+      # parallel, each with a pool of its own, and 100 is too few.
+      - name: Allow more connections
+        env:
+          PGPASSWORD: petalbook
+          SERVICE: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          docker exec "$SERVICE" psql -U petalbook -d postgres -v ON_ERROR_STOP=1 -c 'ALTER SYSTEM SET max_connections = 300'
+          docker restart "$SERVICE"
+          for _ in $(seq 1 30); do
+            docker exec "$SERVICE" pg_isready -U petalbook -q && break
+            sleep 1
+          done
+          docker exec "$SERVICE" psql -U petalbook -d postgres -tAc 'SHOW max_connections' | grep -qx 300
+      - run: make test-postgres
 
-  web:
-    name: Web (typecheck, lint, tests)
+  casefold:
+    name: casefold
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
+    timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Go version matches go.mod
+        shell: bash
+        run: |
+          want="$(go list -m -f '{{.GoVersion}}')"
+          case "$(go env GOVERSION)" in
+            "go$want" | "go$want".*) ;;
+            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
+          esac
+      # The runner's kernel may be older than tmpfs casefold (Linux 6.13), and
+      # Ubuntu restricts the user namespaces the script's local mode needs. An
+      # ext4 image made with -O casefold works on any kernel since 5.2; it is
+      # mounted here as root and handed to the runner's user, so the tests run
+      # unprivileged and the chmod tests run too.
+      - name: Mount a case-folding ext4 file system
+        run: |
+          set -euo pipefail
+          img="$RUNNER_TEMP/casefold.img"
+          mnt="$RUNNER_TEMP/casefold"
+          truncate -s 4G "$img"
+          mkfs.ext4 -q -O casefold -E encoding=utf8 "$img"
+          mkdir -p "$mnt"
+          sudo mount -o loop "$img" "$mnt"
+          sudo chown "$(id -u):$(id -g)" "$mnt"
+          mkdir "$mnt/t"
+          chattr +F "$mnt/t"
+          echo "CASEFOLD_DIR=$mnt/t" >> "$GITHUB_ENV"
+      - run: make test-casefold
+
+  # scripts/contract.sh runs the single-user and the accounts-mode server one
+  # after the other, so one job covers both.
+  contract:
+    name: contract
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Go version matches go.mod
+        shell: bash
+        run: |
+          want="$(go list -m -f '{{.GoVersion}}')"
+          case "$(go env GOVERSION)" in
+            "go$want" | "go$want".*) ;;
+            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
+          esac
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm test
+      - run: make contract
 
   # The release build: the web app is built and embedded, so a break in
   # either, or in the way they are put together, shows up here and not on tag day.
   release-build:
-    name: Single binary (make release)
+    name: release-build
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@v4
+      - name: Go version matches go.mod
+        shell: bash
+        run: |
+          want="$(go list -m -f '{{.GoVersion}}')"
+          case "$(go env GOVERSION)" in
+            "go$want" | "go$want".*) ;;
+            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
+          esac
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -85,16 +322,60 @@ jobs:
       - run: make release
       # With the app embedded the handler's tests run against the real build.
       - run: go test ./internal/webui/ ./cmd/...
+      # Release builds are static (no cgo): every release target must still compile.
+      - run: make cross-compile
 
   docker:
-    name: Container image (build only)
+    name: docker
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # The Dockerfile builds the web app and the binary itself; nothing is
+      # pushed, and one architecture is enough to prove the build works (the
+      # release builds both).
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
+          platforms: linux/amd64
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # The one check branch protection requires. Requiring this job alone means a
+  # skipped job (a pull request that touches no Go) and a renamed or added job
+  # never leave a required check missing or stuck. It fails when any job it
+  # waits for failed or was cancelled. On a push to main nothing may be
+  # skipped either: a skipped job there would be a check that silently did not run.
+  ci:
+    name: ci
+    if: always()
+    needs: [changes, go, web, actionlint, postgres, casefold, contract, release-build, docker]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every job passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          bad="$(echo "$NEEDS" | jq -r --arg event "$EVENT" '
+            to_entries[]
+            | select(if $event == "pull_request"
+                     then (.value.result != "success" and .value.result != "skipped")
+                     else .value.result != "success" end)
+            | .key')"
+          if [ -n "$bad" ]; then
+            echo "not green:" >&2
+            echo "$bad" >&2
+            exit 1
+          fi
