@@ -743,7 +743,7 @@ function suite(target: Target) {
         await addMember(owner, sp.id, viewer.user.username, 'viewer')
         await addMember(owner, sp.id, editor.user.username, 'editor')
         const other = await call(editor.browser, 'DELETE', `/api/spaces/${sp.id}/members/${viewer.user.id}`)
-        expect([other.status, other.json.error]).toEqual([403, 'forbidden'])
+        expect([other.status, other.json.error]).toEqual([403, 'no_permission'])
         expect((await call(viewer.browser, 'DELETE', `/api/spaces/${sp.id}/members/${viewer.user.id}`)).status).toBe(204)
         expect((await call(viewer.browser, 'GET', `/api/spaces/${sp.id}/pages`)).status).toBe(404)
         expect((await call(editor.browser, 'DELETE', `/api/spaces/${sp.id}/members/${editor.user.id}`)).status).toBe(204)
@@ -779,7 +779,7 @@ function suite(target: Target) {
         ]
         for (const [method, path, body] of writes) {
           const r = await call(viewer.browser, method, path, body ?? {})
-          expect([r.status, r.json?.error], `viewer ${method} ${path}`).toEqual([403, 'forbidden'])
+          expect([r.status, r.json?.error], `viewer ${method} ${path}`).toEqual([403, 'no_permission'])
         }
         // The page is as it was.
         const still = await call(owner.browser, 'GET', `${base}/pages/${page.json.id}`)
@@ -795,7 +795,7 @@ function suite(target: Target) {
           ['PATCH', `${base}/members/${viewer.user.id}`, { role: 'editor' }],
         ] as [string, string, unknown][]) {
           const r = await call(editor.browser, method, path, body)
-          expect([r.status, r.json?.error], `editor ${method} ${path}`).toEqual([403, 'forbidden'])
+          expect([r.status, r.json?.error], `editor ${method} ${path}`).toEqual([403, 'no_permission'])
         }
       })
     })

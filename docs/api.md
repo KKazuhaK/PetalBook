@@ -16,7 +16,9 @@ The web app talks to the server only through this API.
   Codes: `not_found` (404), `invalid` (400; also 405, 413 and 415),
   `conflict` (409), `exists` (409), `unauthenticated` (401: not signed in, or
   wrong credentials), `forbidden` (403: cross-site requests, see below, and
-  actions the signed-in user may not take), `space_disabled` (403: an
+  actions the signed-in user may not take that are not a matter of a role in a
+  space), `no_permission` (403: a member whose role in the space lacks the
+  permission the request needs; the message names it), `space_disabled` (403: an
   administrator has disabled the space, see "Administration"), `rate_limited` (429, with a
   `Retry-After` header in seconds), `unavailable` (503: the space follows a
   remote repository that cannot be reached or is paused, see "Remote
@@ -77,7 +79,8 @@ The server runs in one of two modes, chosen at start-up.
   of answers `404 not_found`, the same as a space that does not exist, unless
   the user is an administrator: an administrator may do everything in every
   space (see "Members"). A member whose role lacks the permission a route needs
-  answers `403 forbidden`.
+  answers `403 no_permission`, a code of its own: it is never confused with the
+  cross-site refusal, which is `403 forbidden`.
 
 ## Meta
 
@@ -396,7 +399,7 @@ The removed member's very next request to the space answers `404 not_found`.
 
 ## Remote repository
 
-Accounts mode; needs `manage` (`403 forbidden` for anyone else who can
+Accounts mode; needs `manage` (`403 no_permission` for anyone else who can
 open the space). A space either keeps its repository on the server only, or
 follows a remote: then the remote branch is the truth.
 

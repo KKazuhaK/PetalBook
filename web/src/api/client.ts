@@ -119,11 +119,11 @@ const SIGN_IN_PATHS = /^\/(login|logout|setup|session|meta|invites\/(check|accep
 // is a 404.
 // The remote endpoints answer 403 for a host the administrator did not allow.
 // The administration and the members of a space answer the same way.
-const USER_LEVEL_403 = /^\/(setup|account(\/.*)?|users(\/.*)?|invites(\/.*)?|admin(\/.*)?)$|^\/spaces(\/[^/]+(\/(remote|members)(\/.*)?)?)?$/
-// A member whose role lacks the permission a route needs gets 403 too, from
-// any space endpoint; the server's words for it start like this. It is an
-// answer about the person, not a refused origin.
-const NO_PERMISSION = /^your role in this space does not allow that/
+// A member whose role lacks the permission a route needs gets 403 `no_permission`
+// from any space endpoint: its own code, so it is never taken for a refused origin
+// and no path has to be listed for it. What is listed here answers `forbidden` for
+// reasons of its own (the limit on spaces, a host that is not allowed).
+const USER_LEVEL_403 = /^\/(setup|account(\/.*)?|users(\/.*)?|invites(\/.*)?|admin(\/.*)?)$|^\/spaces(\/[^/]+\/remote(\/.*)?)?$/
 
 // --- a remote that cannot be reached ---------------------------------------------
 //
@@ -209,14 +209,14 @@ async function request<T>(path: string, { method = 'GET', body, keepalive, signa
   }
   if (!res.ok) {
     const err = (json ?? {}) as { error?: string; message?: string; current?: Page; draft?: PageDraft | null }
-    if (err.error === 'forbidden' && !USER_LEVEL_403.test(barePath) && !NO_PERMISSION.test(err.message ?? '')) {
+    if (err.error === 'forbidden' && !USER_LEVEL_403.test(barePath)) {
       const message = forbiddenMessage(globalThis.location?.origin ?? '')
       forbiddenListeners.forEach((fn) => fn(message))
       throw new ApiError(res.status, 'forbidden', message)
     }
     if (res.status === 401 && !isSignIn) markSignedOut()
     if (err.error === 'unavailable') unavailableListeners.forEach((fn) => fn())
-    if (err.error === 'space_disabled' || (err.error === 'forbidden' && NO_PERMISSION.test(err.message ?? ''))) accessListeners.forEach((fn) => fn())
+    if (err.error === 'space_disabled' || err.error === 'no_permission') accessListeners.forEach((fn) => fn())
     const retry = Number(res.headers.get('Retry-After'))
     throw new ApiError(
       res.status,

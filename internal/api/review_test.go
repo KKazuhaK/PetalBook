@@ -20,7 +20,7 @@ func TestAViewerMayDiscardTheirOwnDraft(t *testing.T) {
 		url := base + "/pages/" + p.body["id"].(string)
 		tm.editor.draft(url, p.body["rev"], "Shared", "typed\n").want(t, 200, "")
 		tm.owner.do("PATCH", base+"/members/"+tm.editorID, map[string]any{"role": "viewer"}).want(t, 200, "")
-		tm.editor.draft(url, p.body["rev"], "Shared", "more\n").want(t, 403, "forbidden")
+		tm.editor.draft(url, p.body["rev"], "Shared", "more\n").want(t, 403, "no_permission")
 		tm.editor.do("DELETE", url+"/draft", nil).want(t, 204, "")
 		var n int
 		a.st.Q().QueryRow(context.Background(), `SELECT COUNT(*) FROM drafts WHERE space_id = ?`, tm.sid).Scan(&n)

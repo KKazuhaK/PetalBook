@@ -97,7 +97,7 @@ describe('403 forbidden', () => {
 
   it('a member refused for want of a permission keeps the server\'s words and is no refused origin; the app is told the space\'s access changed', async () => {
     const message = 'your role in this space does not allow that; it needs the write permission'
-    globalThis.fetch = (() => Promise.resolve(new Response(JSON.stringify({ error: 'forbidden', message }), { status: 403 }))) as typeof fetch
+    globalThis.fetch = (() => Promise.resolve(new Response(JSON.stringify({ error: 'no_permission', message }), { status: 403 }))) as typeof fetch
     const origin: string[] = []
     let access = 0
     const offOrigin = onForbidden((m) => origin.push(m))
@@ -105,9 +105,23 @@ describe('403 forbidden', () => {
     const err = await api.createPage({}).catch((e) => e)
     offOrigin()
     offAccess()
-    expect(err).toMatchObject({ status: 403, code: 'forbidden', message })
+    expect(err).toMatchObject({ status: 403, code: 'no_permission', message })
     expect(origin).toEqual([])
     expect(access).toBe(1)
+  })
+
+  it('is told apart by its code, not its words: a refusal with the permission wording but the code forbidden is still the origin notice', async () => {
+    globalThis.fetch = (() => Promise.resolve(new Response(JSON.stringify({ error: 'forbidden', message: 'your role in this space does not allow that' }), { status: 403 }))) as typeof fetch
+    const origin: string[] = []
+    let access = 0
+    const offOrigin = onForbidden((m) => origin.push(m))
+    const offAccess = onSpaceAccess(() => access++)
+    const err = await spaceApi('01SPACE0001').members().catch((e) => e)
+    offOrigin()
+    offAccess()
+    expect(err).toMatchObject({ status: 403, code: 'forbidden', message: forbiddenMessage(location.origin) })
+    expect(origin).toHaveLength(1)
+    expect(access).toBe(0)
   })
 
   it('a disabled space says so (space_disabled) and tells the app too', async () => {

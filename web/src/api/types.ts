@@ -227,6 +227,7 @@ export type ErrorCode =
   | 'exists'
   | 'unauthenticated'
   | 'forbidden'
+  | 'no_permission'
   | 'space_disabled'
   | 'user_not_found'
   | 'user_disabled'

@@ -558,7 +558,7 @@ export function createMockServer(options: MockOptions = {}) {
     const s = spaces.get(id)
     if (!s || (!s.members.has(u.id) && u.role !== 'admin')) throw new HttpError(404, 'not_found', '没有这个空间')
     if (s.disabled) throw new HttpError(403, 'space_disabled', 'this space has been disabled by an administrator')
-    if (!spaceInfo(s, u).permissions.includes(need)) throw new HttpError(403, 'forbidden', NO_PERMISSION(need))
+    if (!spaceInfo(s, u).permissions.includes(need)) throw new HttpError(403, 'no_permission', NO_PERMISSION(need))
     return s
   }
   // What a route on a space asks of the caller (the route table of the real server).

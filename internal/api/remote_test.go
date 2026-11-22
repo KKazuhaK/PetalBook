@@ -404,7 +404,7 @@ func TestOwnerRoutesAreForOwnersOnly(t *testing.T) {
 				t.Errorf("%s %s: a remote route must ask for the manage permission, in accounts mode", rt.Method, rt.Pattern)
 			}
 			path := strings.NewReplacer("{space}", tangSpace, "{id}", "01JD3K8Q7Z").Replace(rt.Pattern)
-			if got := helper.do(rt.Method, path, "{}"); got.code != 403 || got.body["error"] != "forbidden" {
+			if got := helper.do(rt.Method, path, "{}"); got.code != 403 || got.body["error"] != "no_permission" {
 				t.Errorf("%s %s as a member who is not an owner: %d %s", rt.Method, rt.Pattern, got.code, got.raw)
 			}
 			for who, cl := range map[string]*client{"stranger": stranger} {

@@ -69,8 +69,8 @@ func TestRolesGetWhatTheirPermissionsAllow(t *testing.T) {
 					if got.code == 403 {
 						t.Errorf("%s %s as %s: refused: %s", rt.Method, rt.Pattern, who, got.raw)
 					}
-				} else if got.code != 403 || got.body["error"] != "forbidden" || !strings.Contains(got.raw, rt.Perm.String()) {
-					t.Errorf("%s %s as %s: want 403 forbidden naming %q, got %d %s", rt.Method, rt.Pattern, who, rt.Perm, got.code, got.raw)
+				} else if got.code != 403 || got.body["error"] != "no_permission" || !strings.Contains(got.raw, rt.Perm.String()) {
+					t.Errorf("%s %s as %s: want 403 no_permission naming %q, got %d %s", rt.Method, rt.Pattern, who, rt.Perm, got.code, got.raw)
 				}
 			}
 			if got := tm.outsider.do(rt.Method, path, "{}", typeFor(rt)...); got.code != 404 || got.body["error"] != "not_found" {
@@ -84,8 +84,8 @@ func TestRolesGetWhatTheirPermissionsAllow(t *testing.T) {
 		base := "/api/spaces/" + tm.sid
 		p := tm.editor.do("POST", base+"/pages", map[string]any{"meta": map[string]any{"title": "By editor"}, "body": "x\n"}).want(t, 201, "")
 		tm.viewer.do("GET", base+"/pages/"+p.body["id"].(string), nil).want(t, 200, "")
-		tm.viewer.do("POST", base+"/pages", map[string]any{"meta": map[string]any{"title": "No"}}).want(t, 403, "forbidden")
-		tm.editor.do("PATCH", base, map[string]any{"name": "Renamed"}).want(t, 403, "forbidden")
+		tm.viewer.do("POST", base+"/pages", map[string]any{"meta": map[string]any{"title": "No"}}).want(t, 403, "no_permission")
+		tm.editor.do("PATCH", base, map[string]any{"name": "Renamed"}).want(t, 403, "no_permission")
 		tm.owner.do("PATCH", base, map[string]any{"name": "Renamed"}).want(t, 200, "")
 		// The rename reaches everyone's list at once.
 		for _, c := range []*client{tm.editor, tm.viewer} {
@@ -188,7 +188,7 @@ func TestMembers(t *testing.T) {
 		}
 
 		// Adding.
-		tm.editor.do("POST", base, map[string]any{"username": "oscar", "role": "viewer"}).want(t, 403, "forbidden")
+		tm.editor.do("POST", base, map[string]any{"username": "oscar", "role": "viewer"}).want(t, 403, "no_permission")
 		tm.owner.do("POST", base, map[string]any{"username": "edith", "role": "viewer"}).want(t, 409, "exists")
 		tm.owner.do("POST", base, map[string]any{"username": "nobody", "role": "viewer"}).want(t, 404, "user_not_found")
 		tm.owner.do("POST", base, map[string]any{"username": "oscar", "role": "admin"}).want(t, 400, "invalid")
@@ -210,17 +210,17 @@ func TestMembers(t *testing.T) {
 
 		// Changing a role.
 		oscarID := mustUserID(t, a, "oscar")
-		tm.editor.do("PATCH", base+"/"+oscarID, map[string]any{"role": "owner"}).want(t, 403, "forbidden")
+		tm.editor.do("PATCH", base+"/"+oscarID, map[string]any{"role": "owner"}).want(t, 403, "no_permission")
 		tm.owner.do("PATCH", base+"/"+oscarID, map[string]any{"role": "boss"}).want(t, 400, "invalid")
 		tm.owner.do("PATCH", base+"/01JD3K8Q7Z", map[string]any{"role": "viewer"}).want(t, 404, "not_found")
 		r = tm.owner.do("PATCH", base+"/"+oscarID, map[string]any{"role": "viewer"}).want(t, 200, "")
 		if r.body["role"] != "viewer" || r.body["username"] != "oscar" {
 			t.Fatalf("%s", r.raw)
 		}
-		tm.outsider.do("POST", "/api/spaces/"+tm.sid+"/pages", map[string]any{"meta": map[string]any{"title": "No"}}).want(t, 403, "forbidden")
+		tm.outsider.do("POST", "/api/spaces/"+tm.sid+"/pages", map[string]any{"meta": map[string]any{"title": "No"}}).want(t, 403, "no_permission")
 
 		// Removing, and leaving.
-		tm.viewer.do("DELETE", base+"/"+oscarID, nil).want(t, 403, "forbidden")
+		tm.viewer.do("DELETE", base+"/"+oscarID, nil).want(t, 403, "no_permission")
 		tm.owner.do("DELETE", base+"/"+oscarID, nil).want(t, 204, "")
 		tm.outsider.do("GET", "/api/spaces/"+tm.sid+"/tree", nil).want(t, 404, "not_found")
 		tm.owner.do("DELETE", base+"/"+oscarID, nil).want(t, 404, "not_found")
@@ -233,7 +233,7 @@ func TestMembers(t *testing.T) {
 		}
 		// An editor may leave too, but not remove someone else.
 		tm.owner.do("POST", base, map[string]any{"username": "victor", "role": "viewer"}).want(t, 201, "")
-		tm.editor.do("DELETE", base+"/"+tm.viewerID, nil).want(t, 403, "forbidden")
+		tm.editor.do("DELETE", base+"/"+tm.viewerID, nil).want(t, 403, "no_permission")
 		tm.editor.do("DELETE", base+"/"+tm.editorID, nil).want(t, 204, "")
 	})
 }
@@ -328,7 +328,7 @@ func TestMembershipChangesApplyAtOnce(t *testing.T) {
 		tm.editor.do("POST", base+"/pages", map[string]any{"meta": map[string]any{"title": "One"}}).want(t, 201, "")
 
 		tm.owner.do("PATCH", base+"/members/"+tm.editorID, map[string]any{"role": "viewer"}).want(t, 200, "")
-		tm.editor.do("POST", base+"/pages", map[string]any{"meta": map[string]any{"title": "Two"}}).want(t, 403, "forbidden")
+		tm.editor.do("POST", base+"/pages", map[string]any{"meta": map[string]any{"title": "Two"}}).want(t, 403, "no_permission")
 		tm.editor.do("GET", base+"/tree", nil).want(t, 200, "")
 
 		tm.owner.do("PATCH", base+"/members/"+tm.viewerID, map[string]any{"role": "editor"}).want(t, 200, "")

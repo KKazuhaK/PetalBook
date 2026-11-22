@@ -471,7 +471,7 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	case errors.Is(err, spaces.ErrUserDisabled):
 		writeError(w, http.StatusConflict, "user_disabled", "that user is disabled and cannot own a space")
 	case errors.Is(err, spaces.ErrForbidden):
-		writeError(w, http.StatusForbidden, "forbidden", "your role in this space does not allow that")
+		writeError(w, http.StatusForbidden, "no_permission", "your role in this space does not allow that")
 	case errors.Is(err, spaces.ErrUserNotFound):
 		writeError(w, http.StatusNotFound, "user_not_found", "there is no such user")
 	case errors.Is(err, spaces.ErrNotMember):

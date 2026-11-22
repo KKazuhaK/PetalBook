@@ -244,7 +244,7 @@ func (s *server) handle(rt route) http.HandlerFunc {
 				need = perm.Read
 			}
 			if !h.Info.Perms.Has(need) {
-				writeError(w, http.StatusForbidden, "forbidden", "your role in this space does not allow that; it needs the "+need.String()+" permission")
+				writeError(w, http.StatusForbidden, "no_permission", "your role in this space does not allow that; it needs the "+need.String()+" permission")
 				return
 			}
 		}

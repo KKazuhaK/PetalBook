@@ -302,7 +302,7 @@ func TestAdminTransferOwnership(t *testing.T) {
 			t.Fatalf("%v", roles)
 		}
 		// The caches of those concerned were dropped: the old owner cannot manage any more, the new one can.
-		tm.owner.do("PATCH", base, map[string]any{"name": "Mine"}).want(t, 403, "forbidden")
+		tm.owner.do("PATCH", base, map[string]any{"name": "Mine"}).want(t, 403, "no_permission")
 		tm.viewer.do("PATCH", base, map[string]any{"name": "Victor's"}).want(t, 200, "")
 		// Later commits are by the new owner.
 		create("after")
