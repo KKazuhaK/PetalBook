@@ -7,6 +7,7 @@ package spaces
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -266,15 +267,29 @@ func (m *Manager) DeleteSpace(ctx context.Context, id string) (*Deleted, error) 
 		m.markDisabled(id, was)
 		return nil, err
 	}
+	stamp := m.opt.Now().UTC().Format("20060102T150405Z")
+	trash := filepath.Join(m.opt.DataDir, "trash")
 	var members []string
+	var draftsFile string
 	err = m.opt.Store.Tx(ctx, func(q store.Q) error {
 		if err := store.LockSpace(ctx, q, id); err != nil {
 			return err
+		}
+		// The members' drafts are in the database, and the rows go with the
+		// space; restoring the directory from the trash would bring back the
+		// pages but not the text people had typed and not saved. So they are
+		// written next to it first, and if that fails nothing is deleted.
+		var err error
+		if draftsFile, err = m.saveDrafts(ctx, q, id, trash, stamp); err != nil {
+			return fmt.Errorf("could not keep the drafts of the space: %w", err)
 		}
 		members, err = store.DeleteSpace(ctx, q, id)
 		return err
 	})
 	if err != nil {
+		if draftsFile != "" {
+			os.Remove(draftsFile)
+		}
 		m.markDisabled(id, was)
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, ErrNotFound
@@ -285,9 +300,7 @@ func (m *Manager) DeleteSpace(ctx context.Context, id string) (*Deleted, error) 
 	m.setSync(id, "")
 
 	res := &Deleted{}
-	stamp := m.opt.Now().UTC().Format("20060102T150405Z")
 	root, state := m.paths(id)
-	trash := filepath.Join(m.opt.DataDir, "trash")
 	move := func(from, name string, must bool) string {
 		if _, err := os.Lstat(from); errors.Is(err, os.ErrNotExist) {
 			if must {
@@ -312,6 +325,68 @@ func (m *Manager) DeleteSpace(ctx context.Context, id string) (*Deleted, error) 
 	res.CacheTrashed = move(state, id+"-"+stamp+".cache", false)
 	m.log.Info("space deleted", "space", id, "name", sp.Name, "trashed", res.Trashed, "cache", res.CacheTrashed)
 	return res, nil
+}
+
+// trashedDraft is one draft as it is kept in <id>-<stamp>.drafts.json.
+type trashedDraft struct {
+	Space    string          `json:"space"`
+	Page     string          `json:"page"`
+	UserID   string          `json:"userId"`
+	Username string          `json:"username"`
+	BaseRev  string          `json:"baseRev"`
+	Meta     json.RawMessage `json:"meta"`
+	Body     string          `json:"body"`
+	Held     bool            `json:"held"`
+	Created  time.Time       `json:"created"`
+	Updated  time.Time       `json:"updated"`
+}
+
+// saveDrafts writes every draft of the space, whoever's and held or not, to
+// trash/<id>-<stamp>.drafts.json beside where the directory is about to go,
+// and returns the file's path ("" when there are no drafts, and no file). It
+// is written whole to a temporary name, synced and renamed, so a file that is
+// there is complete.
+func (m *Manager) saveDrafts(ctx context.Context, q store.Q, id, trash, stamp string) (string, error) {
+	ds, names, err := store.SpaceDrafts(ctx, q, id)
+	if err != nil || len(ds) == 0 {
+		return "", err
+	}
+	out := make([]trashedDraft, len(ds))
+	for i, d := range ds {
+		meta := json.RawMessage(d.Meta)
+		if !json.Valid(meta) {
+			meta, _ = json.Marshal(d.Meta)
+		}
+		out[i] = trashedDraft{d.SpaceID, d.PageID, d.UserID, names[i], d.BaseRev, meta, d.Body, d.Held, d.Created.UTC(), d.Updated.UTC()}
+	}
+	b, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(trash, 0o755); err != nil {
+		return "", err
+	}
+	final := filepath.Join(trash, id+"-"+stamp+".drafts.json")
+	tmp := final + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", err
+	}
+	_, err = f.Write(b)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, final)
+	}
+	if err != nil {
+		os.Remove(tmp)
+		return "", err
+	}
+	return final, nil
 }
 
 func (m *Manager) rel(p string) string {

@@ -30,6 +30,13 @@ const (
 	// retryAfter is how long a draft that failed for a reason that may pass
 	// (disk, Git) waits before the sweeper tries again.
 	retryAfter = time.Minute
+	// deniedRetry is how long a draft whose author may no longer write in the
+	// space waits before the sweeper looks again. The draft is kept untouched
+	// (nothing is applied, nothing deleted), so it can still be listed and
+	// exported; looking again costs a cached membership check, so a person who
+	// is given the role back sees it applied within this time without the
+	// sweeper spinning on it meanwhile.
+	deniedRetry = 10 * time.Minute
 	// A draft whose space follows a remote that cannot be reached is kept, not
 	// held, and tried again after a delay that doubles each time up to a limit.
 	unavailableBase = 30 * time.Second
@@ -579,6 +586,23 @@ func (s *Service) sweepOne(ctx context.Context, d store.Draft, now time.Time, r 
 		return false
 	}
 	defer release()
+	// Acquire asks nobody who is looking, so whether the author may still write
+	// here is asked now: a draft must not be committed for someone who was
+	// removed from the space, made a viewer or disabled after they typed it.
+	// Checked before the lock (it may read the database once) and from caches.
+	may, err := s.spaces.MayWrite(ctx, d.UserID, d.SpaceID)
+	if err != nil {
+		s.log.Warn("could not check whether the author of a draft may still write", "space", d.SpaceID, "error", err)
+		s.delay(ctx, &d, now, r)
+		return false
+	}
+	if !may {
+		s.log.Warn("a draft is kept, not applied: its author may no longer write in the space; \"petalbook draft export\" prints it",
+			"space", d.SpaceID, "page", d.PageID)
+		r.Held++
+		store.DelayDraft(ctx, s.st.Q(), d.SpaceID, d.PageID, d.UserID, d.Version, now.Add(deniedRetry))
+		return false
+	}
 	l := s.lock(d.SpaceID, d.PageID, d.UserID)
 	l.Lock()
 	defer l.Unlock()

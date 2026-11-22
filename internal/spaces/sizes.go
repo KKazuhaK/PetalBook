@@ -94,6 +94,9 @@ func (m *Manager) measureNext(ctx context.Context, age time.Duration) bool {
 	m.log.Warn("could not measure a space", "space", id, "error", err)
 	// Back of the queue, so one broken space does not take every turn.
 	if err := store.SkipSpaceSize(context.WithoutCancel(ctx), m.opt.Store.Q(), id, m.opt.Now()); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return true // deleted meanwhile: nothing to queue, go on to the next
+		}
 		m.log.Warn("could not note a failed measurement", "space", id, "error", err)
 		return false
 	}
@@ -115,6 +118,13 @@ func (m *Manager) Resize(ctx context.Context, id string) (int64, time.Time, erro
 	root, _ := m.paths(id)
 	n, err := dirSize(ctx, root)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			// A space deleted while it was being measured has had its directory
+			// moved away: that is not a failure to measure.
+			if _, aerr := m.adminSpace(ctx, id); errors.Is(aerr, ErrNotFound) {
+				return 0, time.Time{}, ErrNotFound
+			}
+		}
 		return 0, time.Time{}, err
 	}
 	// Not the request's context: a measurement that was made is kept.

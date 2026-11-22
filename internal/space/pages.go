@@ -585,6 +585,7 @@ func (s *Space) CreateFolder(by Author, rel string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	s.cm.SwitchTo(by)
 	if err := os.MkdirAll(abs, 0o755); err != nil {
 		return "", err
 	}

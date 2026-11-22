@@ -2,9 +2,11 @@ package spaces
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
+	"github.com/KKazuhaK/PetalBook/internal/perm"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
@@ -20,8 +22,10 @@ const (
 )
 
 type cachedAuthor struct {
-	a  space.Author
-	at time.Time
+	a        space.Author
+	admin    bool // an instance administrator
+	disabled bool
+	at       time.Time
 }
 
 type authorCache struct {
@@ -47,25 +51,63 @@ func (m *Manager) AuthorByID(ctx context.Context, userID string) (space.Author, 
 	if m.single != nil {
 		return space.Author{}, nil
 	}
+	c, err := m.userEntry(ctx, userID)
+	return c.a, err
+}
+
+func (m *Manager) userEntry(ctx context.Context, userID string) (cachedAuthor, error) {
 	now := time.Now()
 	m.authors.mu.Lock()
 	c, ok := m.authors.m[userID]
 	m.authors.mu.Unlock()
 	if ok && now.Sub(c.at) < authorTTL {
-		return c.a, nil
+		return c, nil
 	}
 	u, err := store.GetUser(ctx, m.opt.Store.Q(), userID)
 	if err != nil {
-		return space.Author{}, err
+		return cachedAuthor{}, err
 	}
 	a := m.AuthorOf(*u)
+	c = cachedAuthor{a: a, admin: u.Role == "admin", disabled: u.Disabled, at: now}
 	m.authors.mu.Lock()
 	if m.authors.m == nil || len(m.authors.m) >= maxAuthors {
 		m.authors.m = map[string]cachedAuthor{}
 	}
-	m.authors.m[userID] = cachedAuthor{a, now}
+	m.authors.m[userID] = c
 	m.authors.mu.Unlock()
-	return a, nil
+	return c, nil
+}
+
+// MayWrite reports whether the user may still write in the space: an enabled
+// member whose role holds the write permission, or an enabled instance
+// administrator. The drafts sweeper asks it before it commits a draft for a
+// person who may have been removed or made a viewer since they typed it. It
+// costs the cached membership list and the author cache (one user read a
+// minute at most), no query per draft. A user who is gone may not.
+func (m *Manager) MayWrite(ctx context.Context, userID, spaceID string) (bool, error) {
+	if m.single != nil {
+		return spaceID == SingleID, nil
+	}
+	c, err := m.userEntry(ctx, userID)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil || c.disabled {
+		return false, err
+	}
+	if c.admin {
+		return true, nil
+	}
+	l, err := m.list(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	for _, in := range l {
+		if in.ID == spaceID {
+			return in.Perms.Has(perm.Write), nil
+		}
+	}
+	return false, nil
 }
 
 func (m *Manager) forgetAuthor(userID string) {

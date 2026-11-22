@@ -55,7 +55,9 @@ func TestRolesGetWhatTheirPermissionsAllow(t *testing.T) {
 			if rt.Perm == 0 {
 				t.Errorf("%s %s: a space route without a permission", rt.Method, rt.Pattern)
 			}
-			if rt.Method != "GET" && rt.Perm == perm.Read {
+			// Discarding one's own draft is the one change a reader may make: a
+			// person who lost the write permission can still throw theirs away.
+			if rt.Method != "GET" && rt.Perm == perm.Read && !strings.HasSuffix(rt.Pattern, "/pages/{id}/draft") {
 				t.Errorf("%s %s changes something and asks only for read", rt.Method, rt.Pattern)
 			}
 			path := routePath(rt, tm.sid)

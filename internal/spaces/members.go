@@ -59,9 +59,20 @@ func (m *Manager) AddMember(ctx context.Context, h *Handle, username, role strin
 		return nil, err
 	}
 	now := m.opt.Now()
-	if err := store.AddMember(ctx, m.opt.Store.Q(), h.Info.ID, u.ID, role, now); err != nil {
+	// Under the space lock like every other change of its members, so it
+	// cannot interleave with an ownership transfer or a removal.
+	err = m.opt.Store.Tx(ctx, func(q store.Q) error {
+		if err := store.LockSpace(ctx, q, h.Info.ID); err != nil {
+			return err
+		}
+		return store.AddMember(ctx, q, h.Info.ID, u.ID, role, now)
+	})
+	if err != nil {
 		if store.IsUnique(err) {
 			return nil, ErrAlreadyMember
+		}
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, ErrNotFound
 		}
 		return nil, err
 	}
@@ -90,7 +101,7 @@ func (m *Manager) SetMemberRole(ctx context.Context, h *Handle, userID, role str
 			return err
 		}
 		if cur != role {
-			if err := m.keepOneOwner(ctx, q, h.Info.ID, cur); err != nil {
+			if err := m.keepOneOwner(ctx, q, h.Info.ID, userID, cur); err != nil {
 				return err
 			}
 			if err := store.SetMemberRole(ctx, q, h.Info.ID, userID, role); err != nil {
@@ -108,7 +119,9 @@ func (m *Manager) SetMemberRole(ctx context.Context, h *Handle, userID, role str
 }
 
 // RemoveMember removes a member, or lets a member leave (userID is the caller's
-// own): leaving needs no more than being a member. The last owner cannot go.
+// own): leaving needs no more than being a member, and does not open the space
+// (h may come from OpenMembership), so it works in a disabled one too. The last
+// owner who can sign in cannot go.
 func (m *Manager) RemoveMember(ctx context.Context, actor store.User, h *Handle, userID string) error {
 	if m.single != nil {
 		return ErrNotFound
@@ -129,7 +142,7 @@ func (m *Manager) RemoveMember(ctx context.Context, actor store.User, h *Handle,
 		if err != nil {
 			return err
 		}
-		if err := m.keepOneOwner(ctx, q, h.Info.ID, cur); err != nil {
+		if err := m.keepOneOwner(ctx, q, h.Info.ID, userID, cur); err != nil {
 			return err
 		}
 		return store.RemoveMember(ctx, q, h.Info.ID, userID)
@@ -141,17 +154,19 @@ func (m *Manager) RemoveMember(ctx context.Context, actor store.User, h *Handle,
 	return nil
 }
 
-// keepOneOwner refuses to take owner role away (as demotion or removal) from
-// the only owner. Call it inside a transaction that holds LockSpace.
-func (m *Manager) keepOneOwner(ctx context.Context, q store.Q, spaceID, leaving string) error {
-	if leaving != perm.Owner {
+// keepOneOwner refuses to take the owner role away (as demotion or removal)
+// from userID, whose role is role, when no other owner who can sign in would
+// be left: a disabled user cannot be the one remaining owner. Call it inside a
+// transaction that holds LockSpace.
+func (m *Manager) keepOneOwner(ctx context.Context, q store.Q, spaceID, userID, role string) error {
+	if role != perm.Owner {
 		return nil
 	}
-	n, err := store.CountOwners(ctx, q, spaceID)
+	n, err := store.CountOtherEnabledOwners(ctx, q, spaceID, userID)
 	if err != nil {
 		return err
 	}
-	if n <= 1 {
+	if n < 1 {
 		return ErrLastOwner
 	}
 	return nil

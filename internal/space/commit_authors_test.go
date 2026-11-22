@@ -99,7 +99,9 @@ func TestOneAuthorIsOneCommitAndOneGitRun(t *testing.T) {
 	}
 }
 
-func TestAPathChangedByTwoPeopleBelongsToTheLastOne(t *testing.T) {
+// A second person's change to a path commits the first person's work first, so
+// the path's history shows both, each as its author.
+func TestAPathChangedByTwoPeopleIsOneCommitEach(t *testing.T) {
 	needGit(t)
 	root := t.TempDir()
 	s := openTwoAuthors(t, root)
@@ -115,52 +117,40 @@ func TestAPathChangedByTwoPeopleBelongsToTheLastOne(t *testing.T) {
 		t.Fatal(err)
 	}
 	log := commitLog(t, root)
-	if log[0] != "Bo Chen|Service|Add Shared|"+p.Path {
+	if len(log) < 2 || log[0] != "Bo Chen|Service|Edit Shared|"+p.Path || log[1] != "Ann Lee|Service|Add Shared|"+p.Path {
 		t.Fatalf("%q", log)
-	}
-	for _, l := range log {
-		if strings.HasPrefix(l, "Ann Lee|") {
-			t.Fatalf("the first author got a commit of a path that was the second's: %q", log)
-		}
 	}
 }
 
-func TestAFailedAuthorDoesNotHoldBackTheOthers(t *testing.T) {
+// When the commit of the earlier author fails, the next person's change still
+// goes through (it is not refused for someone else's error), and a later
+// commit makes both, each as its author.
+func TestAFailedSwitchCommitDoesNotBlockTheNextChange(t *testing.T) {
 	needGit(t)
 	root := t.TempDir()
 	s := openTwoAuthors(t, root)
 	s.Flush()
-	a, _ := s.Create(ann, CreateInput{Meta: meta("title", "Alpha"), Body: "a\n"})
-	b, _ := s.Create(bo, CreateInput{Meta: meta("title", "Beta"), Body: "b\n"})
-	// Ann's commit goes first; the second author's staging meets a lock.
 	lock := filepath.Join(root, ".git", "index.lock")
-	var mu sync.Mutex
-	adds := 0
-	s.cm.git.before = func(args []string) {
-		mu.Lock()
-		defer mu.Unlock()
-		if args[0] == "add" {
-			adds++
-			if adds == 2 {
-				os.WriteFile(lock, nil, 0o644)
-			}
-		}
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if err := s.Flush(); err == nil {
-		t.Fatal("the failed commit was not reported")
+	a, err := s.Create(ann, CreateInput{Meta: meta("title", "Alpha"), Body: "a\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.Create(bo, CreateInput{Meta: meta("title", "Beta"), Body: "b\n"})
+	if err != nil {
+		t.Fatalf("a failed commit of the earlier author blocked the change: %v", err)
+	}
+	if s.cm.paths[a.Path] != ann || s.cm.paths[b.Path] != bo {
+		t.Fatalf("pending paths lost their authors: %v", s.cm.paths)
 	}
 	os.Remove(lock)
-	s.cm.git.before = nil
-	if log := commitLog(t, root); log[0] != "Ann Lee|Service|Add Alpha|"+a.Path {
-		t.Fatalf("the first author's commit is missing: %q", log)
-	}
-	if got := pathsOf(s.cm.paths); len(got) != 1 || got[0] != b.Path || s.cm.paths[b.Path] != bo {
-		t.Fatalf("the failed author's path is not pending as theirs: %v", s.cm.paths)
-	}
 	if err := s.Flush(); err != nil {
 		t.Fatal(err)
 	}
-	if log := commitLog(t, root); log[0] != "Bo Chen|Service|Add Beta|"+b.Path {
+	log := commitLog(t, root)
+	if len(log) < 2 || log[0] != "Bo Chen|Service|Add Beta|"+b.Path || log[1] != "Ann Lee|Service|Add Alpha|"+a.Path {
 		t.Fatalf("%q", log)
 	}
 }
@@ -199,6 +189,12 @@ func TestCrashRecoveryCommitsEachPersonsChangesAsThem(t *testing.T) {
 	root := t.TempDir()
 	s := openTwoAuthors(t, root)
 	s.Flush()
+	// Commits fail while the lock is there, so several people's changes are
+	// pending together when the process dies.
+	lock := filepath.Join(root, ".git", "index.lock")
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	a, _ := s.Create(ann, CreateInput{Meta: meta("title", "Alpha"), Body: "a\n"})
 	b, _ := s.Create(bo, CreateInput{Meta: meta("title", "Beta"), Body: "b\n"})
 	if err := s.Delete(ann, b.ID); err != nil { // Ann deletes what Bo made: hers now
@@ -206,6 +202,7 @@ func TestCrashRecoveryCommitsEachPersonsChangesAsThem(t *testing.T) {
 	}
 	c, _ := s.Create(bo, CreateInput{Meta: meta("title", "Gamma"), Body: "c\n"})
 	crash(s)
+	os.Remove(lock)
 
 	s2 := openTwoAuthors(t, root)
 	if err := s2.Flush(); err != nil {

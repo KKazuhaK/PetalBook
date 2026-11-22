@@ -3,9 +3,12 @@ package store
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"strings"
 	"time"
+
+	"modernc.org/sqlite"
 )
 
 // AdminSpace is a space as the administration list shows it.
@@ -33,11 +36,33 @@ type AdminOwner struct {
 type SpaceFilter struct {
 	// Query keeps the spaces whose name contains it, ignoring case.
 	Query string
+	// Dialect is the database in use (Store.Dialect). On SQLite the name is
+	// folded by a function the store registers, so that case is ignored for all
+	// of Unicode and not only ASCII, which is all SQLite's own LOWER does; on
+	// PostgreSQL LOWER follows the database's locale (the C locale folds ASCII
+	// only). Either way it is the same single query and page.
+	Dialect Dialect
 	// After is the id the page continues after ("" for the first page).
 	After string
 	// Limit is the page size; at most one more row is read to learn whether
 	// there is another page.
 	Limit int
+}
+
+// sqliteLower is the name of the function that lower-cases text on SQLite
+// (registered in init), for case-insensitive search beyond ASCII.
+const sqliteLower = "petalbook_lower"
+
+func init() {
+	sqlite.MustRegisterDeterministicScalarFunction(sqliteLower, 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		switch v := args[0].(type) {
+		case string:
+			return strings.ToLower(v), nil
+		case []byte:
+			return strings.ToLower(string(v)), nil
+		}
+		return args[0], nil
+	})
 }
 
 // likeEscape makes s a literal inside a LIKE pattern (ESCAPE '\').
@@ -61,7 +86,11 @@ func ListAllSpaces(ctx context.Context, q Q, f SpaceFilter) (out []AdminSpace, n
 		args = append(args, f.After)
 	}
 	if f.Query != "" {
-		where = append(where, `LOWER(s.name) LIKE ? ESCAPE '\'`)
+		lower := "LOWER"
+		if f.Dialect == SQLite {
+			lower = sqliteLower
+		}
+		where = append(where, lower+`(s.name) LIKE ? ESCAPE '\'`)
 		args = append(args, "%"+likeEscape(strings.ToLower(f.Query))+"%")
 	}
 	cond := ""
@@ -89,13 +118,16 @@ func ListAllSpaces(ctx context.Context, q Q, f SpaceFilter) (out []AdminSpace, n
 			return nil, "", err
 		}
 		s.Personal, s.Created, s.Disabled = personal.Valid, fromMS(created), disabled != 0
+		// A space whose first measurement failed has a size_at (it was put at the
+		// back of the queue, see SkipSpaceSize) but no size: it is reported as
+		// not measured, both null, never a time with nothing measured.
 		if size.Valid {
 			v := size.Int64
 			s.SizeBytes = &v
-		}
-		if sizeAt.Valid {
-			t := fromMS(sizeAt.Int64)
-			s.SizeAt = &t
+			if sizeAt.Valid {
+				t := fromMS(sizeAt.Int64)
+				s.SizeAt = &t
+			}
 		}
 		if ownerID.Valid {
 			s.Owner = &AdminOwner{ID: ownerID.String, Username: ownerUser.String, Name: ownerName.String}
@@ -144,7 +176,8 @@ func SetSpaceSize(ctx context.Context, q Q, id string, bytes int64, at time.Time
 
 // SkipSpaceSize records that measuring failed at this time, keeping the
 // earlier size: the space goes to the back of the queue instead of being tried
-// again at the next turn, for ever.
+// again at the next turn, for ever. For a space never measured this sets the
+// time but no size, which the list reports as not measured (both null).
 func SkipSpaceSize(ctx context.Context, q Q, id string, at time.Time) error {
 	res, err := q.Exec(ctx, `UPDATE spaces SET size_at = ? WHERE id = ?`, ms(at), id)
 	return oneRow(res, err)
@@ -193,18 +226,12 @@ func TransferOwnership(ctx context.Context, q Q, spaceID, newOwner string, now t
 	if _, err := q.Exec(ctx, `UPDATE space_members SET role = 'editor' WHERE space_id = ? AND role = 'owner' AND user_id <> ?`, spaceID, newOwner); err != nil {
 		return nil, err
 	}
-	switch _, err := MemberRole(ctx, q, spaceID, newOwner); {
-	case errors.Is(err, ErrNotFound):
-		err = AddMember(ctx, q, spaceID, newOwner, "owner", now)
-		if err != nil {
-			return nil, err
-		}
-	case err != nil:
+	// One statement, so a membership that appeared (or was there all along) is
+	// made the owner's instead of failing on the key. Callers also hold
+	// LockSpace, as every change of members does.
+	if _, err := q.Exec(ctx, `INSERT INTO space_members(space_id, user_id, role, created) VALUES (?, ?, 'owner', ?)
+		ON CONFLICT (space_id, user_id) DO UPDATE SET role = 'owner'`, spaceID, newOwner, ms(now)); err != nil {
 		return nil, err
-	default:
-		if err := SetMemberRole(ctx, q, spaceID, newOwner, "owner"); err != nil {
-			return nil, err
-		}
 	}
 	return append(touched, newOwner), nil
 }

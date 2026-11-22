@@ -22,10 +22,13 @@ import (
 //
 // Every pending path remembers who changed it last, and a commit holds one
 // person's changes: the paths are grouped by author and each group is its own
-// commit. When a path is changed by one person and then another before the
-// commit, it is the second person's: a commit cannot split a file, and the
-// file as it stands is their version of it. With one author, the common case,
-// there is one group and one commit, as if authors did not exist.
+// commit. So that a later change by someone else cannot take earlier work for
+// itself (Ann edits a page, Bo moves it in the same window: Git sees one
+// file, and its latest toucher would get all of it), a change starts with
+// SwitchTo: if anything is pending for another author, that is committed
+// first, before the change writes anything. With one author, the common case,
+// nothing is pending for anyone else and this costs nothing; it costs one
+// commit only when the author switches inside a quiet window.
 type committer struct {
 	git  *gitRepo
 	idle time.Duration
@@ -93,6 +96,38 @@ func (c *committer) Touch(by Author, paths ...string) {
 	select {
 	case c.wake <- struct{}{}:
 	default:
+	}
+}
+
+// SwitchTo commits what is pending for authors other than by, so that the
+// change by by that is about to write files cannot take their paths over. Call
+// it under the space lock (mutate does), before the change records or writes
+// anything: nothing else adds pending paths meanwhile, and the commit takes no
+// lock of the space's, so it cannot wait on the caller. A commit that fails (a
+// repository busy with a merge, a full disk) does not hold the change back:
+// it goes ahead, and a path that both authors touched is then pending for by,
+// the later one; the loop retries the failed commit. That is the one case
+// where earlier work can be credited to someone else, and better than
+// refusing a person's change for another's error.
+func (c *committer) SwitchTo(by Author) {
+	if c == nil {
+		return
+	}
+	id, _ := c.git.identities(by)
+	c.mu.Lock()
+	other := false
+	for _, a := range c.paths {
+		if x, _ := c.git.identities(a); x != id {
+			other = true
+			break
+		}
+	}
+	c.mu.Unlock()
+	if !other {
+		return
+	}
+	if err := c.commit(); err != nil {
+		c.log.Warn("could not commit earlier changes before another author's; they may be credited to that author", "error", err)
 	}
 }
 

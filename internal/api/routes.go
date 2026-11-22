@@ -133,7 +133,7 @@ var routeTable = []route{
 	{"PUT", "/api/spaces/{space}/pages/{id}", inSpace(perm.Write), false, false, false, (*server).savePage},
 	{"DELETE", "/api/spaces/{space}/pages/{id}", inSpace(perm.Write), false, false, false, (*server).deletePage},
 	{"PUT", "/api/spaces/{space}/pages/{id}/draft", inSpace(perm.Write), false, false, false, (*server).putDraft},
-	{"DELETE", "/api/spaces/{space}/pages/{id}/draft", inSpace(perm.Write), false, false, false, (*server).deleteDraft},
+	{"DELETE", "/api/spaces/{space}/pages/{id}/draft", inSpace(perm.Read), false, false, false, (*server).deleteDraft},
 	{"POST", "/api/spaces/{space}/pages/{id}/commit", inSpace(perm.Write), false, false, false, (*server).commitDraft},
 	{"POST", "/api/spaces/{space}/pages/{id}/move", inSpace(perm.Write), false, false, false, (*server).movePage},
 	{"GET", "/api/spaces/{space}/tree", inSpace(perm.Read), false, false, false, (*server).getTree},
@@ -222,7 +222,16 @@ func (s *server) handle(rt route) http.HandlerFunc {
 			return
 		}
 		if rt.access.kind == kindSpace {
-			h, err := s.spaces.Open(r.Context(), c.p.User, r.PathValue("space"))
+			self := rt.access.orSelf && r.PathValue("user") == c.p.User.ID
+			var h *spaces.Handle
+			var err error
+			if self {
+				// Acting on one's own membership (leaving) needs no open space.
+				h, err = s.spaces.OpenMembership(r.Context(), c.p.User, r.PathValue("space"))
+			}
+			if !self || errors.Is(err, spaces.ErrNotFound) {
+				h, err = s.spaces.Open(r.Context(), c.p.User, r.PathValue("space"))
+			}
 			if err != nil {
 				s.fail(w, err)
 				return
@@ -230,7 +239,7 @@ func (s *server) handle(rt route) http.HandlerFunc {
 			c.sp = h
 			defer h.Release()
 			need := rt.access.need
-			if rt.access.orSelf && r.PathValue("user") == c.p.User.ID {
+			if self {
 				need = perm.Read
 			}
 			if !h.Info.Perms.Has(need) {

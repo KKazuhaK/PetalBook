@@ -257,3 +257,28 @@ func prefixed(alias, cols string) string {
 	}
 	return strings.Join(parts, ", ")
 }
+
+// SpaceDrafts returns every user's drafts in a space, held or not, with the
+// username (empty if the user is gone), oldest first. It reads the texts, so
+// it is for the rare deletion of a space, never for a request.
+func SpaceDrafts(ctx context.Context, q Q, spaceID string) ([]Draft, []string, error) {
+	rows, err := q.Query(ctx, `SELECT `+prefixed("d", draftCols)+`, COALESCE(u.username, '') FROM drafts d LEFT JOIN users u ON u.id = d.user_id
+		WHERE d.space_id = ? ORDER BY d.updated, d.page_id, d.user_id`, spaceID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	var ds []Draft
+	var names []string
+	for rows.Next() {
+		var d Draft
+		var created, updated, held, due int64
+		var name string
+		if err := rows.Scan(&d.SpaceID, &d.PageID, &d.UserID, &d.Version, &d.BaseRev, &d.Meta, &d.Body, &created, &updated, &held, &due, &name); err != nil {
+			return nil, nil, err
+		}
+		d.Created, d.Updated, d.Held, d.Due = fromMS(created), fromMS(updated), held != 0, fromMS(due)
+		ds, names = append(ds, d), append(names, name)
+	}
+	return ds, names, rows.Err()
+}

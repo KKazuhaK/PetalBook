@@ -179,6 +179,15 @@ func CountOwners(ctx context.Context, q Q, spaceID string) (n int, err error) {
 	return
 }
 
+// CountOtherEnabledOwners counts the owners of the space other than except who
+// can sign in: a disabled owner cannot act as one, so the "keep one owner" rule
+// asks whether anyone else would still be able to.
+func CountOtherEnabledOwners(ctx context.Context, q Q, spaceID, except string) (n int, err error) {
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM space_members m JOIN users u ON u.id = m.user_id
+		WHERE m.space_id = ? AND m.role = 'owner' AND m.user_id <> ? AND u.disabled = 0`, spaceID, except).Scan(&n)
+	return
+}
+
 // LockSpace makes the rest of the transaction the only one changing who is a
 // member of the space: the "keep one owner" rule reads a count and then
 // writes, and two people leaving at once must not both pass. A no-op write is

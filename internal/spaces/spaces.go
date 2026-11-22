@@ -379,6 +379,23 @@ func (m *Manager) Open(ctx context.Context, user store.User, spaceID string) (*H
 	return &Handle{Space: sp, Info: in, release: release}, nil
 }
 
+// OpenMembership is Open without opening the space: the handle carries what
+// the user is in it (Info) and no Space. It is for leaving a space, which is a
+// matter of the membership only and must work for a space that is switched off.
+// ErrNotFound unless the user is a member.
+func (m *Manager) OpenMembership(ctx context.Context, user store.User, spaceID string) (*Handle, error) {
+	l, err := m.list(ctx, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, x := range l {
+		if x.ID == spaceID {
+			return &Handle{Info: m.withSync(ctx, []Info{x})[0]}, nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
 // Acquire opens a space by id without asking who is looking: for the draft
 // sweeper, which acts for a draft's author. Request handlers use Open. The
 // space stays open until release is called, and is opened again transparently
@@ -750,8 +767,9 @@ func (m *Manager) Update(ctx context.Context, user store.User, spaceID string, n
 	return h.Info, nil
 }
 
-// UserChanged tells the manager a user's name or email changed, so spaces they
-// own that are open commit under the new identity.
+// UserChanged tells the manager a user's name or email changed, so spaces whose
+// default author they are (the first owner, as openSpace and SpaceOwner have it)
+// and that are open commit under the new identity.
 func (m *Manager) UserChanged(ctx context.Context, u store.User) {
 	if m.single != nil {
 		return
@@ -773,10 +791,15 @@ func (m *Manager) UserChanged(ctx context.Context, u store.User) {
 		}
 		select {
 		case <-e.done:
-			if e.sp != nil {
-				id := IdentityOf(u)
-				e.sp.SetAuthor(id.Name, id.Email)
+			if e.sp == nil {
+				break
 			}
+			// Another owner's profile change is none of this space's business.
+			if first, _, err := store.SpaceOwner(ctx, m.opt.Store.Q(), in.ID); err != nil || first == nil || first.ID != u.ID {
+				break
+			}
+			id := IdentityOf(u)
+			e.sp.SetAuthor(id.Name, id.Email)
 		default:
 		}
 	}

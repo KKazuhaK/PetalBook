@@ -387,9 +387,12 @@ applies to the member's very next request.
 ### `DELETE /api/spaces/{space}/members/{user}`
 
 Needs `members`, except that a member may remove themself (leave the space)
-with no more than `read`. `204`. `409 last_owner` for the only owner: make
-someone else an owner first. The removed member's very next request to the
-space answers `404 not_found`.
+with no more than `read`; leaving only touches the membership, so it works in a
+space an administrator has switched off too (removing someone else does not: that
+goes through the space, which cannot be opened). `204`. `409 last_owner` when no
+other owner who can sign in would be left (a disabled user cannot be the one
+remaining owner; the same goes for `PATCH`): make someone else an owner first.
+The removed member's very next request to the space answers `404 not_found`.
 
 ## Remote repository
 
@@ -650,7 +653,11 @@ A draft becomes the file's content, and a Git commit, when it is committed:
 - the app asks for it (the user leaves the page or chooses to save a version);
 - or the server does it by itself once the draft has not changed for
   2 minutes, or 10 minutes after the draft was first stored
-  (`--draft-idle`, `--draft-max`).
+  (`--draft-idle`, `--draft-max`). The server does it only while the author may
+  still write in the space: a draft of someone who was removed, made a viewer or
+  disabled in the meantime is not applied and not deleted. It stays in the
+  database (`petalbook draft list|export` shows it), is looked at again after 10
+  minutes, and is applied then if the person has the write permission again.
 
 #### `PUT /api/spaces/{space}/pages/{id}/draft`
 
@@ -680,7 +687,9 @@ typing on two devices cannot silently replace one draft with the other:
 
 #### `DELETE /api/spaces/{space}/pages/{id}/draft`
 
-`204`. See below for `?version=`.
+`204`. Needs only `read`: whoever lost the `write` permission may still discard
+their own draft (drafts are per user, so it is always the caller's). See below
+for `?version=`.
 
 #### `POST /api/spaces/{space}/pages/{id}/commit`
 
@@ -1033,15 +1042,17 @@ Every space on the server, in order of creation, one page at a time:
  "next": "01JD3K8Q7Z"}
 ```
 
-`q` keeps the spaces whose name contains it, ignoring case. `limit` is 1 to
+`q` keeps the spaces whose name contains it, ignoring case (on SQLite for all of
+Unicode; on PostgreSQL as its `LOWER` does, which in a database with the C
+locale folds ASCII letters only). `limit` is 1 to
 200 (default 50). `next` is the `cursor` of the following page, `""` after the
 last. The list is one database query for the whole page, however many spaces
 there are.
 
 `owner` is the first owner (the one whose name is the Git author of a space's
 default commits), `null` if there is none. `members` counts every member.
-`sizeBytes` and `sizeAt` are the last stored measurement and are `null` until
-the space has been measured. Sizes are not measured when the list is asked for:
+`sizeBytes` and `sizeAt` are the last stored measurement and are both `null`
+until the space has been measured (also when its first measurement failed). Sizes are not measured when the list is asked for:
 a space can hold tens of thousands of pages. The server measures them in the
 background, one space at a time: it takes the space measured longest ago (or
 never), if that was more than 6 hours ago, and adds up the sizes of the files
@@ -1098,7 +1109,10 @@ inside the data directory; no file is deleted. `200`:
 `trashed` is the repository, `cacheTrashed` the index and journal (moved too:
 the journal can hold a change that never reached Git), both relative to the
 data directory. To get a space back, move the directory back and add the
-records by hand; to get the room back, delete the trash. If a move fails after
+records by hand; to get the room back, delete the trash. Members' drafts, held
+ones too, are written first to `trash/<id>-<stamp>.drafts.json` (space, page,
+user, base rev, header, body, times) so that the text typed and not saved is not
+lost with the records; if that file cannot be written nothing is deleted. If a move fails after
 the records are gone, the files are left where they are, `trashed` is `""` and
 `warnings` says what happened (the server also logs it as an error). Members'
 very next request answers `404 not_found`. `409 busy` when requests still use

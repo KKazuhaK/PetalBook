@@ -633,6 +633,7 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 	}
 	r := s.rem.Load()
 	if r == nil {
+		s.cm.SwitchTo(by)
 		return op(&txn{s: s, by: by})
 	}
 	ctx := s.ctx
