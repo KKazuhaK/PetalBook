@@ -25,7 +25,9 @@ describe('a mermaid block in the editor', () => {
     const editor = pageEditor(diagram('graph TD\nA-->B'))
     const view = await mount(editor)
     await flush()
-    await vi.waitFor(() => expect(view.host.querySelector('.pb-diagram img')).not.toBeNull())
+    // vi.waitFor has its own one-second default, which the poll setting in
+    // vite.config.ts does not reach.
+    await vi.waitFor(() => expect(view.host.querySelector('.pb-diagram img')).not.toBeNull(), { timeout: 5_000 })
     const code = view.host.querySelector('pre')!
     expect(code.hidden).toBe(true)
     expect(renderDiagram).toHaveBeenCalledWith('graph TD\nA-->B', false)

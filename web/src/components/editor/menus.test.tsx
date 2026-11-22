@@ -279,7 +279,7 @@ describe('the handles at the edges of a table', () => {
     const { editor, view } = await page()
     await hover(editor, '1')
     await act(async () => void editor.view.dom.dispatchEvent(new MouseEvent('mouseleave')))
-    await expect.poll(() => q('[aria-label="这一列"]'), { timeout: 2000 }).toBeNull()
+    await expect.poll(() => q('[aria-label="这一列"]')).toBeNull()
     await view.unmount()
   })
 })
