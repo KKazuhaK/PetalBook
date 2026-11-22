@@ -119,19 +119,29 @@ export function blocksFromMdast(nodes: MdNode[] = [], defs: Definitions): DocJSO
       case 'thematicBreak':
         out.push({ type: 'horizontalRule' })
         break
-      case 'table':
+      case 'table': {
+        // Markdown lets rows differ in length; the editor's table is a grid.
+        // Every row is filled up at its end to the longest one here, so that no
+        // cell changes column when the table is first edited (the table
+        // extension would otherwise pad some rows at their start), and a cell
+        // beyond the header's width is shown instead of silently dropped.
+        const width = Math.max(...node.children!.map((row) => row.children!.length))
         out.push({
           type: 'table',
           content: node.children!.map((row, r) => ({
             type: 'tableRow',
-            content: row.children!.map((cell, c) => ({
-              type: r === 0 ? 'tableHeader' : 'tableCell',
-              ...(node.align?.[c] ? { attrs: { align: node.align[c] } } : {}),
-              content: [withContent({ type: 'paragraph' }, inlineFromMdast(cell.children, defs, [], { inCell: true }))],
-            })),
+            content: Array.from({ length: width }, (_, c) => {
+              const cell = row.children![c]
+              return {
+                type: r === 0 ? 'tableHeader' : 'tableCell',
+                ...(node.align?.[c] ? { attrs: { align: node.align[c] } } : {}),
+                content: [withContent({ type: 'paragraph' }, cell ? inlineFromMdast(cell.children, defs, [], { inCell: true }) : [])],
+              }
+            }),
           })),
         })
         break
+      }
       case 'html':
         if (node.value === EMPTY_PARAGRAPH) out.push({ type: 'paragraph' })
         else out.push({ type: 'rawBlock', attrs: { value: node.value } })

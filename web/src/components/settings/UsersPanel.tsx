@@ -5,45 +5,32 @@ import { api, ApiError } from '@/api/client'
 import { keys, useInvites, useSession, useUsers } from '@/api/hooks'
 import type { CreatedInvite, Role, User } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
+import { SettingsSection } from './SettingsParts'
 import { ErrorState, PageFallback } from '@/components/common'
-import { TopBar } from '@/components/layout/TopBar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { absoluteTime } from '@/lib/time'
-import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { t } from '@/i18n'
 
-export default function UsersPage() {
-  useDocumentTitle(`${t.users.title} · ${t.appName}`)
+// Users and invites, for administrators. Moved from the old users page; the
+// lists and forms are as they were.
+export function UsersPanel() {
   const session = useSession()
   const me = session.data?.user
   const isAdmin = session.data?.mode === 'accounts' && me?.role === 'admin'
   const users = useUsers(isAdmin)
+  if (!session.data) return <PageFallback />
+  if (!isAdmin) return <ErrorState message={t.users.adminOnly} />
+  if (users.isPending) return <PageFallback />
+  if (users.isError) return <ErrorState message={t.fmt.labelled(t.users.loadFailed, users.error.message)} onRetry={() => void users.refetch()} />
   return (
-    <>
-      <TopBar>
-        <h1 className="truncate text-sm font-medium">{t.users.title}</h1>
-      </TopBar>
-      <div className="mx-auto w-full max-w-[760px] flex-1 space-y-6 px-4 py-6 sm:px-5">
-        {!session.data ? (
-          <PageFallback />
-        ) : !isAdmin ? (
-          <ErrorState message={t.users.adminOnly} />
-        ) : users.isPending ? (
-          <PageFallback />
-        ) : users.isError ? (
-          <ErrorState message={t.fmt.labelled(t.users.loadFailed, users.error.message)} onRetry={() => void users.refetch()} />
-        ) : (
-          <>
-            <UserList users={users.data.users} meId={me!.id} />
-            <Invites users={users.data.users} />
-          </>
-        )}
-      </div>
-    </>
+    <div className="space-y-8">
+      <UserList users={users.data.users} meId={me!.id} />
+      <Invites users={users.data.users} />
+    </div>
   )
 }
 
@@ -75,10 +62,7 @@ function UserList({ users, meId }: { users: User[]; meId: string }) {
   }
 
   return (
-    <section aria-labelledby="users-heading" className="grid gap-3">
-      <h2 id="users-heading" className="text-sm font-medium">
-        {t.users.title}
-      </h2>
+    <SettingsSection title={t.users.title} id="users-heading">
       <FormMessage focusRef={messageRef}>{error ? error.message : ''}</FormMessage>
       <ul className="divide-y rounded-lg border">
         {users.map((u) => {
@@ -115,7 +99,7 @@ function UserList({ users, meId }: { users: User[]; meId: string }) {
           )
         })}
       </ul>
-    </section>
+    </SettingsSection>
   )
 }
 
@@ -158,10 +142,7 @@ function Invites({ users }: { users: User[] }) {
   }
 
   return (
-    <section aria-labelledby="invites-heading" className="grid gap-3">
-      <h2 id="invites-heading" className="text-sm font-medium">
-        {t.users.invites}
-      </h2>
+    <SettingsSection title={t.users.invites} id="invites-heading">
       <p className="text-sm text-muted-foreground">{t.users.invitesHelp}</p>
       <form className="flex flex-wrap items-end gap-3 rounded-lg border p-3" onSubmit={(e) => void create(e)} noValidate>
         <div className="grid gap-1.5">
@@ -211,7 +192,7 @@ function Invites({ users }: { users: User[] }) {
           ))}
         </ul>
       )}
-    </section>
+    </SettingsSection>
   )
 }
 

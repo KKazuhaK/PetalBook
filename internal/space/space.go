@@ -94,6 +94,10 @@ type Space struct {
 var (
 	ErrNotFound = errors.New("not found")
 	ErrExists   = errors.New("already exists")
+	// ErrNoFolder: the path is not a folder of the space.
+	ErrNoFolder = errors.New("no such folder")
+	// ErrNotEmpty: the folder holds pages and was not to be removed with them.
+	ErrNotEmpty = errors.New("the folder holds pages")
 	// ErrClosed: the space has been closed (the server is shutting down) and
 	// takes no more changes; nothing was written.
 	ErrClosed = errors.New("the space is closed")

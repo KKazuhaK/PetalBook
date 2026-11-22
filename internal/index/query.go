@@ -39,9 +39,16 @@ type Query struct {
 	Recursive bool    // include subfolders of Folder
 	Tags      []string
 	Text      string // full-text search
-	Sort      string // "", updated, created, title; a leading "-" reverses
-	Limit     int    // 1-200, default 50
-	Cursor    string // Result.Next of the previous page
+	TitleOnly bool   // with Text: match titles only
+	// UpdatedFrom and UpdatedTo bound the time the file was last written, in
+	// nanoseconds since the epoch: from inclusive, to exclusive; 0 is no bound.
+	UpdatedFrom, UpdatedTo int64
+	// CreatedFrom and CreatedTo bound the header's created date (2006-01-02),
+	// both inclusive; "" is no bound. A page without that date never matches.
+	CreatedFrom, CreatedTo string
+	Sort                   string // "", updated, created, title; a leading "-" reverses
+	Limit                  int    // 1-200, default 50
+	Cursor                 string // Result.Next of the previous page
 }
 
 // Result is one page of a listing.
@@ -108,6 +115,9 @@ func (x *Index) List(q Query) (Result, error) {
 		if match, ok = MatchQuery(q.Text); !ok {
 			return Result{Items: []Summary{}}, nil
 		}
+		if q.TitleOnly {
+			match = "title : (" + match + ")"
+		}
 		searching = true
 		relevance = sortName == ""
 	}
@@ -163,6 +173,26 @@ func (x *Index) List(q Query) (Result, error) {
 	for _, t := range q.Tags {
 		where = append(where, `EXISTS (SELECT 1 FROM tags t WHERE t.page = p.rowid AND t.tag = ?)`)
 		args = append(args, t)
+	}
+	if q.UpdatedFrom != 0 {
+		where = append(where, `p.mtime_ns >= ?`)
+		args = append(args, q.UpdatedFrom)
+	}
+	if q.UpdatedTo != 0 {
+		where = append(where, `p.mtime_ns < ?`)
+		args = append(args, q.UpdatedTo)
+	}
+	// `created` holds a date or nothing; dates in this form compare as text.
+	if q.CreatedFrom != "" || q.CreatedTo != "" {
+		where = append(where, `p.created <> ''`)
+	}
+	if q.CreatedFrom != "" {
+		where = append(where, `p.created >= ?`)
+		args = append(args, q.CreatedFrom)
+	}
+	if q.CreatedTo != "" {
+		where = append(where, `p.created <= ?`)
+		args = append(args, q.CreatedTo)
 	}
 
 	var orderBy string

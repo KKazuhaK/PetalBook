@@ -102,6 +102,14 @@ export interface ListParams {
   recursive?: boolean
   tag?: string[]
   q?: string
+  // With `q`: `title` searches titles only.
+  in?: 'title'
+  // Days (`2026-11-01`, UTC), both ends included. `updated*` is when the file
+  // was last written; `created*` is the header's own date.
+  updatedFrom?: string
+  updatedTo?: string
+  createdFrom?: string
+  createdTo?: string
   sort?: SortKey
   limit?: number
   cursor?: string
@@ -129,8 +137,14 @@ export interface DraftInput extends SavePageInput {
 export interface TreeResponse {
   folders: { path: string; pages: number }[]
 }
+// The ten names the server accepts for a tag's colour; how each looks is the
+// client's business (src/lib/tagColors.ts).
+export type TagColorName = 'gray' | 'red' | 'orange' | 'amber' | 'green' | 'teal' | 'blue' | 'purple' | 'pink' | 'rose'
+// A name, or a custom `#rrggbb` (the server stores it in lower case).
+export type TagColor = TagColorName | `#${string}`
 export interface TagsResponse {
-  tags: { tag: string; pages: number }[]
+  // `color` is absent when the tag has none.
+  tags: { tag: string; pages: number; color?: TagColor }[]
 }
 
 // --- history (docs/api.md, "History") -------------------------------------------
@@ -264,3 +278,5 @@ export interface InviteCheck {
 }
 
 export type OidcIntent = 'login' | 'setup' | 'invite' | 'link'
+
+export type BatchPagesInput = { op: 'move'; ids: string[]; folder: string } | { op: 'delete'; ids: string[] }

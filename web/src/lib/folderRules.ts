@@ -15,6 +15,8 @@ export function folderRuleMessage(path: string): string | null {
   for (const seg of segments) {
     if (seg.startsWith('.')) return t.folderRules.dotStart
     if (seg.endsWith('.') || seg.endsWith(' ')) return t.folderRules.dotEnd
+    // That is how page files are named.
+    if (/\.md$/i.test(seg)) return t.folderRules.mdEnd
     if (new TextEncoder().encode(seg).length > MAX_SEGMENT_BYTES) return t.folderRules.tooLong(MAX_SEGMENT_BYTES)
   }
   // Reserved for attachments.

@@ -364,6 +364,34 @@ func (x *Index) AddFolder(rel string) error {
 	return nil
 }
 
+// Forget drops the rows of these file paths and these folders, whatever is on
+// disk. It is for paths that were just renamed away: on a file system that
+// ignores case, the old spelling of a renamed folder still "exists", and
+// looking would keep both spellings.
+func (x *Index) Forget(paths, dirs []string) error {
+	ctx := context.Background()
+	x.wmu.Lock()
+	defer x.wmu.Unlock()
+	tx, err := x.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	w := newWriter(ctx, tx)
+	defer w.close()
+	for _, p := range paths {
+		if err := w.removePath(p); err != nil {
+			return err
+		}
+	}
+	for _, d := range dirs {
+		if _, err := w.exec(`DELETE FROM folders WHERE path = ?`, d); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // PathByID returns the file path of a page.
 func (x *Index) PathByID(id string) (string, bool) {
 	var p string

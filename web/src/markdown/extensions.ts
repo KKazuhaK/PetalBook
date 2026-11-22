@@ -1,7 +1,7 @@
 // The editor features that exist. Each one has a Markdown form in toMdast.ts
 // and fromMdast.ts; adding one here without a form there loses content.
 
-import { Node } from '@tiptap/core'
+import { Node, type AnyExtension } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { TableKit } from '@tiptap/extension-table'
 import { TaskList, TaskItem } from '@tiptap/extension-list'
@@ -52,9 +52,12 @@ export interface ExtensionOptions {
   // Maps the address of an image, as written in the page, to what the browser
   // loads. Only drawing is affected; the document keeps the address.
   resolveImageSrc?: ResolveSrc
+  // A code block of the same name and attributes, drawn differently (language
+  // picker, colours, diagrams). The Markdown form does not depend on it.
+  codeBlock?: AnyExtension
 }
 
-export function createExtensions({ linkOpensOnClick, resolveImageSrc }: ExtensionOptions = {}) {
+export function createExtensions({ linkOpensOnClick, resolveImageSrc, codeBlock }: ExtensionOptions = {}) {
   return [
     // Underline has no Markdown form; trailingNode is a UI convenience that
     // would otherwise show up as an empty paragraph in every document.
@@ -67,12 +70,14 @@ export function createExtensions({ linkOpensOnClick, resolveImageSrc }: Extensio
       italic: false,
       strike: false,
       code: false,
+      ...(codeBlock ? { codeBlock: false as const } : {}),
       ...(linkOpensOnClick === undefined ? {} : { link: { openOnClick: linkOpensOnClick } }),
     }),
     CjkBold,
     CjkItalic,
     CjkStrike,
     CjkCode,
+    ...(codeBlock ? [codeBlock] : []),
     TableKit,
     TaskList,
     TaskItem.configure({ nested: true }),

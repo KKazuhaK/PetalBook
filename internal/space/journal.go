@@ -23,6 +23,7 @@ import (
 //	d  Path is being deleted
 //	m  From is being moved to To (hard link, then remove the old name)
 //	t  Path changed; no further check
+//	r  From is being renamed to To, another spelling of its name, through Path
 //
 // A "w" record only counts at recovery if the file really has that content,
 // so a name the server tried to take but another file held is never committed.
@@ -32,6 +33,9 @@ type jrec struct {
 	From string `json:"f,omitempty"`
 	To   string `json:"to,omitempty"`
 	Rev  string `json:"rev,omitempty"`
+	// Dir marks an "r" record of a folder: its files are journaled one by
+	// one, and the folder's own names are not paths to commit.
+	Dir bool `json:"dir,omitempty"`
 }
 
 // journal is an append-only file in the state directory. Every append is
@@ -149,6 +153,14 @@ func recoverPending(root string, recs []jrec) []string {
 			}
 			finishMove(root, r.From, r.To)
 			set[r.From], set[r.To] = true, true
+		case "r":
+			if !ok(r.From) || !ok(r.To) || !ok(r.Path) {
+				continue
+			}
+			finishRespell(root, r.Path, r.To)
+			if !r.Dir {
+				set[r.From], set[r.To], set[r.Path] = true, true, true
+			}
 		}
 	}
 	out := make([]string, 0, len(set))
@@ -157,6 +169,36 @@ func recoverPending(root string, recs []jrec) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// listed reports whether dir has an entry named exactly name.
+func listed(dir, name string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.Name() == name {
+			return true
+		}
+	}
+	return false
+}
+
+// finishRespell completes a rename through a third name that stopped
+// between its two steps: what is at mid goes to to, if neither to nor (on a
+// file system that folds names) the old spelling is there. A folder that
+// stays at mid has its files journaled under mid (Space.rename), so they are
+// committed there, not as deleted.
+func finishRespell(root, mid, to string) {
+	m, t := filepath.Join(root, filepath.FromSlash(mid)), filepath.Join(root, filepath.FromSlash(to))
+	if _, err := os.Lstat(m); err != nil {
+		return
+	}
+	if _, err := os.Lstat(t); !errors.Is(err, fs.ErrNotExist) {
+		return
+	}
+	os.Rename(m, t)
 }
 
 // finishMove completes a move that stopped between the link and the removal of
@@ -170,7 +212,14 @@ func finishMove(root, from, to string) {
 		return
 	}
 	if os.SameFile(fa, fb) {
-		os.Remove(a)
+		// Two names of one file: the link was made and the old name is still
+		// there. But on a file system that folds names, a rename to another
+		// spelling of the file's own name answers to both names with one
+		// entry, and removing "the old name" would remove the only one. Only
+		// two entries in the listing are two names.
+		if a != b && listed(filepath.Dir(a), filepath.Base(a)) && listed(filepath.Dir(b), filepath.Base(b)) {
+			os.Remove(a)
+		}
 		return
 	}
 	da, errA := os.ReadFile(a)

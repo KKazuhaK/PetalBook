@@ -864,6 +864,176 @@ function suite(target: Target) {
     })
   })
 
+  describe('batch, folder move and folder delete', () => {
+    const treeOf = async () => Object.fromEntries((await S.tree()).folders.map((f) => [f.path, f.pages]))
+
+    it('batch move moves every page and counts them, one already in the folder included', async () => {
+      const a = await mk(`${root}/bm/src`, { title: `批一${run}` }, 'a\n')
+      const b = await mk(`${root}/bm/src`, { title: `批二${run}` }, 'b\n')
+      const c = await mk(`${root}/bm/dst`, { title: `批三${run}` }, 'c\n')
+      const r = await S.batchPages({ op: 'move', ids: [a.id, b.id, c.id], folder: `${root}/bm/dst` })
+      expect(r).toEqual({ pages: 3 })
+      for (const p of [a, b, c]) {
+        const now = await S.getPage(p.id)
+        expect(now.folder).toBe(`${root}/bm/dst`)
+        expect(now.body).toBe(p.body)
+      }
+      const tree = await treeOf()
+      expect(tree[`${root}/bm/dst`]).toBe(3)
+      expect(tree[`${root}/bm/src`]).toBe(0)
+      // A page that is already in the folder counts and stays; so does a move to the root.
+      expect(await S.batchPages({ op: 'move', ids: [a.id], folder: `${root}/bm/dst` })).toEqual({ pages: 1 })
+      expect(await S.batchPages({ op: 'move', ids: [a.id, b.id], folder: '' })).toEqual({ pages: 2 })
+      expect((await S.getPage(a.id)).folder).toBe('')
+      await S.batchPages({ op: 'delete', ids: [a.id, b.id, c.id] })
+    })
+
+    it('batch delete removes every page and counts them', async () => {
+      const a = await mk(`${root}/bd`, { title: `批删一${run}` })
+      const b = await mk(`${root}/bd`, { title: `批删二${run}` })
+      expect(await S.batchPages({ op: 'delete', ids: [a.id, b.id] })).toEqual({ pages: 2 })
+      expect((await failure(S.getPage(a.id))).code).toBe('not_found')
+      expect((await failure(S.getPage(b.id))).code).toBe('not_found')
+      expect((await walk({ folder: `${root}/bd` })).length).toBe(0)
+    })
+
+    it('an id that is not a page is 404 not_found and nothing at all is changed', async () => {
+      const a = await mk(`${root}/bu`, { title: `批未知${run}` })
+      const nowhere = '0ZZZZZZZZZ'
+      for (const input of [
+        { op: 'move' as const, ids: [a.id, nowhere], folder: `${root}/bu/elsewhere` },
+        { op: 'delete' as const, ids: [nowhere, a.id] },
+      ]) {
+        const e = await failure(S.batchPages(input))
+        expect([e.status, e.code], input.op).toEqual([404, 'not_found'])
+        expect((await S.getPage(a.id)).folder, input.op).toBe(`${root}/bu`)
+      }
+      expect((await treeOf())[`${root}/bu/elsewhere`]).toBeUndefined()
+      await S.deletePage(a.id)
+    })
+
+    it('a bad op, folder or list is 400 invalid and nothing is changed', async () => {
+      const a = await mk(`${root}/bb`, { title: `批坏${run}` })
+      const bad: unknown[] = [
+        { op: 'copy', ids: [a.id], folder: `${root}/bb` },
+        { op: 'move', ids: [a.id], folder: '.hidden' },
+        { op: 'move', ids: [a.id], folder: 'assets' },
+        { op: 'move', ids: [], folder: `${root}/bb/x` },
+        { op: 'delete', ids: [] },
+        { op: 'delete', ids: [a.id, a.id] },
+        { op: 'delete', ids: Array.from({ length: 501 }, (_, i) => `0${String(i).padStart(9, '0')}`) },
+      ]
+      for (const input of bad) {
+        const e = await failure(S.batchPages(input as Parameters<SpaceApi['batchPages']>[0]))
+        expect([e.status, e.code], JSON.stringify(input).slice(0, 60)).toEqual([400, 'invalid'])
+      }
+      expect((await S.getPage(a.id)).folder).toBe(`${root}/bb`)
+      await S.deletePage(a.id)
+    })
+
+    it('moves a folder with everything in it: ids stay, paths and the tree follow', async () => {
+      const top = await mk(`${root}/fm/old`, { title: `夹顶${run}` }, 'top\n')
+      const deep = await mk(`${root}/fm/old/inner/deep`, { title: `夹深${run}` }, 'deep\n')
+      await S.createFolder(`${root}/fm/old/emptyinside`)
+      const r = await S.moveFolder(`${root}/fm/old`, `${root}/fm2/made/new`)
+      expect(r).toEqual({ path: `${root}/fm2/made/new` })
+      const topNow = await S.getPage(top.id)
+      const deepNow = await S.getPage(deep.id)
+      expect(topNow.id).toBe(top.id)
+      expect(topNow.folder).toBe(`${root}/fm2/made/new`)
+      expect(topNow.path).toBe(`${root}/fm2/made/new/夹顶${run}.md`)
+      expect(topNow.body).toBe('top\n')
+      expect(deepNow.folder).toBe(`${root}/fm2/made/new/inner/deep`)
+      const tree = await treeOf()
+      expect(tree[`${root}/fm2/made/new`]).toBe(1)
+      expect(tree[`${root}/fm2/made/new/inner/deep`]).toBe(1)
+      expect(tree[`${root}/fm2/made/new/emptyinside`]).toBe(0)
+      expect(tree[`${root}/fm/old`]).toBeUndefined()
+      expect(tree[`${root}/fm/old/inner/deep`]).toBeUndefined()
+      expect(ids(await walk({ folder: `${root}/fm2/made/new`, recursive: true }))).toEqual(expect.arrayContaining([top.id, deep.id]))
+      expect(await walk({ folder: `${root}/fm/old`, recursive: true })).toEqual([])
+    })
+
+    it('renames a folder: a move to a sibling path; a change of letter case alone is allowed', async () => {
+      const p = await mk(`${root}/Rn`, { title: `改名${run}` })
+      expect(await S.moveFolder(`${root}/Rn`, `${root}/rn`)).toEqual({ path: `${root}/rn` })
+      const tree = await treeOf()
+      expect(tree[`${root}/rn`]).toBe(1)
+      expect(tree[`${root}/Rn`]).toBeUndefined()
+      expect((await S.getPage(p.id)).folder).toBe(`${root}/rn`)
+      expect(await S.moveFolder(`${root}/rn`, `${root}/renamed`)).toEqual({ path: `${root}/renamed` })
+      expect((await S.getPage(p.id)).folder).toBe(`${root}/renamed`)
+    })
+
+    it('refuses a folder move: 404 for a missing source, 409 exists for an existing target (no merging), 400 for the rest, and nothing changes', async () => {
+      const p = await mk(`${root}/fr/src`, { title: `夹拒${run}` })
+      await S.createFolder(`${root}/fr/taken`)
+      const cases: [string, string, number, string][] = [
+        [`${root}/fr/nothere`, `${root}/fr/x`, 404, 'not_found'],
+        [`${root}/fr/src`, `${root}/fr/taken`, 409, 'exists'],
+        ['', `${root}/fr/fromroot`, 400, 'invalid'],
+        [`${root}/fr/src`, `${root}/fr/src`, 400, 'invalid'],
+        [`${root}/fr/src`, `${root}/fr/src/inside`, 400, 'invalid'],
+        [`${root}/fr/src`, `${root}/fr/.hidden`, 400, 'invalid'],
+        [`${root}/fr/src`, 'assets', 400, 'invalid'],
+        [`${root}/fr/src`, `${root}/fr/ends.md`, 400, 'invalid'],
+        [`${root}/fr/src`, `${root}/fr//double`, 400, 'invalid'],
+      ]
+      for (const [from, to, status, code] of cases) {
+        const e = await failure(S.moveFolder(from, to))
+        expect([e.status, e.code], `${from} -> ${to}`).toEqual([status, code])
+      }
+      expect((await S.getPage(p.id)).folder).toBe(`${root}/fr/src`)
+      const tree = await treeOf()
+      expect(tree[`${root}/fr/src`]).toBe(1)
+      expect(tree[`${root}/fr/taken`]).toBe(0)
+    })
+
+    it('deletes an empty folder with 204, empty subfolders going with it', async () => {
+      await S.createFolder(`${root}/fd/empty/sub/subsub`)
+      expect(await S.deleteFolder(`${root}/fd/empty`)).toBeUndefined()
+      const tree = await treeOf()
+      expect(tree[`${root}/fd/empty`]).toBeUndefined()
+      expect(tree[`${root}/fd/empty/sub`]).toBeUndefined()
+      expect(tree[`${root}/fd/empty/sub/subsub`]).toBeUndefined()
+    })
+
+    it('without recursive a folder holding pages, in it or below it, is 409 conflict and stays whole', async () => {
+      const here = await mk(`${root}/fc/full`, { title: `夹满${run}` })
+      const below = await mk(`${root}/fc/below/deeper`, { title: `夹下${run}` })
+      for (const folder of [`${root}/fc/full`, `${root}/fc/below`]) {
+        const e = await failure(S.deleteFolder(folder))
+        expect([e.status, e.code], folder).toEqual([409, 'conflict'])
+        expect((await treeOf())[folder], folder).not.toBeUndefined()
+      }
+      expect((await S.getPage(here.id)).folder).toBe(`${root}/fc/full`)
+      expect((await S.getPage(below.id)).folder).toBe(`${root}/fc/below/deeper`)
+    })
+
+    it('with recursive=true the pages in it and below it are deleted too', async () => {
+      const a = await mk(`${root}/fx/all`, { title: `夹删一${run}` })
+      const b = await mk(`${root}/fx/all/in/in`, { title: `夹删二${run}` })
+      const keep = await mk(`${root}/fx/keep`, { title: `夹留${run}` })
+      expect(await S.deleteFolder(`${root}/fx/all`, true)).toBeUndefined()
+      expect((await failure(S.getPage(a.id))).code).toBe('not_found')
+      expect((await failure(S.getPage(b.id))).code).toBe('not_found')
+      expect((await S.getPage(keep.id)).folder).toBe(`${root}/fx/keep`)
+      const tree = await treeOf()
+      expect(tree[`${root}/fx/all`]).toBeUndefined()
+      expect(tree[`${root}/fx/all/in/in`]).toBeUndefined()
+      expect(tree[`${root}/fx`]).not.toBeUndefined()
+    })
+
+    it('deleting the root is 400 invalid and a folder that is not there is 404 not_found', async () => {
+      for (const recursive of [false, true]) {
+        const e = await failure(S.deleteFolder('', recursive))
+        expect([e.status, e.code]).toEqual([400, 'invalid'])
+      }
+      const e = await failure(S.deleteFolder(`${root}/fx/never/was`, true))
+      expect([e.status, e.code]).toEqual([404, 'not_found'])
+    })
+  })
+
   describe('tags', () => {
     it('counts pages per tag, ordered by count descending', async () => {
       const a = `a${run}`
@@ -884,6 +1054,76 @@ function suite(target: Target) {
       expect((await S.tags()).tags.find((x) => x.tag === t)?.pages).toBe(1)
       await S.savePage(p.id, { baseRev: p.rev, meta: { ...p.meta, tags: [] }, body: p.body })
       expect((await S.tags()).tags.find((x) => x.tag === t)).toBeUndefined()
+    })
+
+    it('sets a colour on a tag, shows it in the listing, and removes it with null', async () => {
+      const t = `col${run}`
+      await mk(`${root}/tagcolor`, { title: `染色${run}`, tags: [t] })
+      expect((await S.tags()).tags.find((x) => x.tag === t)?.color).toBeUndefined()
+      expect(await S.setTagColor(t, 'rose')).toEqual({ tag: t, color: 'rose' })
+      expect((await S.tags()).tags.find((x) => x.tag === t)).toMatchObject({ tag: t, pages: 1, color: 'rose' })
+      // Another colour replaces it.
+      expect(await S.setTagColor(t, 'teal')).toEqual({ tag: t, color: 'teal' })
+      expect((await S.tags()).tags.find((x) => x.tag === t)?.color).toBe('teal')
+      // null removes it; the answer then has no `color` at all.
+      const removed = await S.setTagColor(t, null)
+      expect(removed).toEqual({ tag: t })
+      expect('color' in removed).toBe(false)
+      expect('color' in (await S.tags()).tags.find((x) => x.tag === t)!).toBe(false)
+    })
+
+    it('accepts each of the ten colour names', async () => {
+      const t = `ten${run}`
+      await mk(`${root}/tagcolor`, { title: `十色${run}`, tags: [t] })
+      for (const c of ['gray', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'purple', 'pink', 'rose'] as const) {
+        expect((await S.setTagColor(t, c)).color).toBe(c)
+      }
+      await S.setTagColor(t, null)
+    })
+
+    it('a custom #rrggbb colour is stored in lower case and listed that way', async () => {
+      const t = `hex${run}`
+      await mk(`${root}/tagcolor`, { title: `自定${run}`, tags: [t] })
+      expect(await S.setTagColor(t, '#A1B2C3')).toEqual({ tag: t, color: '#a1b2c3' })
+      expect((await S.tags()).tags.find((x) => x.tag === t)?.color).toBe('#a1b2c3')
+      await S.setTagColor(t, null)
+    })
+
+    it('#abc, #gggggg and a hex without the # are 400 invalid and change nothing', async () => {
+      const t = `hexbad${run}`
+      await mk(`${root}/tagcolor`, { title: `坏自定${run}`, tags: [t] })
+      await S.setTagColor(t, '#112233')
+      for (const color of ['#abc', '#gggggg', 'abcdef', '#a1b2c3d']) {
+        const r = await call(admin, 'PUT', `/api/spaces/${spaceId}/tags/${encodeURIComponent(t)}`, { color })
+        expect([r.status, r.json?.error]).toEqual([400, 'invalid'])
+      }
+      expect((await S.tags()).tags.find((x) => x.tag === t)?.color).toBe('#112233')
+      await S.setTagColor(t, null)
+    })
+
+    it('another colour name, or a colour of the wrong kind, is 400 invalid and changes nothing', async () => {
+      const t = `bad${run}`
+      await mk(`${root}/tagcolor`, { title: `坏色${run}`, tags: [t] })
+      await S.setTagColor(t, 'blue')
+      for (const color of ['magenta', '', 'Rose', 7, true, ['red']]) {
+        const r = await call(admin, 'PUT', `/api/spaces/${spaceId}/tags/${encodeURIComponent(t)}`, { color })
+        expect([r.status, r.json?.error]).toEqual([400, 'invalid'])
+      }
+      expect((await S.tags()).tags.find((x) => x.tag === t)?.color).toBe('blue')
+      await S.setTagColor(t, null)
+    })
+
+    it('a tag need not be in use, and a tag with a slash or non-ASCII letters keeps its name', async () => {
+      const t = `${run}/子/标签`
+      expect(await S.setTagColor(t, 'amber')).toEqual({ tag: t, color: 'amber' })
+      await mk(`${root}/tagcolor`, { title: `斜杠${run}`, tags: [t] })
+      expect((await S.tags()).tags.find((x) => x.tag === t)?.color).toBe('amber')
+      await S.setTagColor(t, null)
+    })
+
+    it('a write that does not say it is JSON is refused, as everywhere', async () => {
+      const r = await call(admin, 'PUT', `/api/spaces/${spaceId}/tags/x${run}`, '{"color":"red"}', {})
+      expect(r.status).toBeGreaterThanOrEqual(400)
     })
   })
 
@@ -1028,6 +1268,69 @@ function suite(target: Target) {
     it('can be sorted explicitly and combined with a tag filter', async () => {
       const r = await walk({ q: '蕨', folder: f, recursive: true, sort: 'title' })
       expect(r[r.length - 1].untitled).toBe(true)
+    })
+  })
+
+  describe('listing: title only and date ranges', () => {
+    const f = `${root}/ranges`
+    const word = `quince${run}`
+    const dayOf = (iso: string) => iso.slice(0, 10)
+    // A day before or after a `YYYY-MM-DD`, in UTC.
+    const shift = (day: string, n: number) => new Date(Date.parse(day) + n * 86_400_000).toISOString().slice(0, 10)
+    let titled: Page, bodied: Page
+
+    beforeAll(async () => {
+      titled = await mk(f, { title: `${word} 记` }, '没有那个词\n')
+      bodied = await mk(f, { title: `别的${run}` }, `正文里有 ${word}\n`)
+    })
+
+    it('`in=title` with q searches titles only', async () => {
+      expect(ids(await walk({ q: word, folder: f }))).toEqual(expect.arrayContaining([titled.id, bodied.id]))
+      expect(ids(await walk({ q: word, in: 'title', folder: f }))).toEqual([titled.id])
+      expect(await walk({ q: `正文里有`, in: 'title', folder: f })).toEqual([])
+    })
+
+    it('updatedFrom and updatedTo are days, both ends included', async () => {
+      const day = dayOf(titled.updated)
+      expect(ids(await walk({ folder: f, updatedFrom: day }))).toEqual(expect.arrayContaining([titled.id, bodied.id]))
+      expect(await walk({ folder: f, updatedFrom: shift(day, 2) })).toEqual([])
+      expect(ids(await walk({ folder: f, updatedTo: day }))).toEqual(expect.arrayContaining([titled.id, bodied.id]))
+      expect(await walk({ folder: f, updatedTo: shift(day, -2) })).toEqual([])
+      expect(ids(await walk({ folder: f, updatedFrom: day, updatedTo: day }))).toEqual(expect.arrayContaining([titled.id]))
+      // An empty range is an empty list, not an error.
+      expect(await walk({ folder: f, updatedFrom: shift(day, 1), updatedTo: shift(day, -1) })).toEqual([])
+    })
+
+    it('createdFrom and createdTo use the header\'s created day', async () => {
+      const day = String(titled.meta.created)
+      expect(day).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+      expect(ids(await walk({ folder: f, createdFrom: day, createdTo: day }))).toEqual(expect.arrayContaining([titled.id, bodied.id]))
+      expect(await walk({ folder: f, createdFrom: shift(day, 2) })).toEqual([])
+      expect(await walk({ folder: f, createdTo: shift(day, -2) })).toEqual([])
+    })
+
+    it('ranges combine with the text, the folder and the tag filters, and with the cursor', async () => {
+      const day = dayOf(titled.updated)
+      expect(ids(await walk({ q: word, folder: f, updatedFrom: day, updatedTo: day }, 1)).sort()).toEqual([titled.id, bodied.id].sort())
+      expect(await walk({ q: word, folder: f, updatedFrom: shift(day, 2) })).toEqual([])
+      expect(await walk({ q: word, in: 'title', folder: f, createdTo: shift(String(titled.meta.created), -2) })).toEqual([])
+    })
+
+    it('a date that is not a day is 400 invalid', async () => {
+      for (const q of ['updatedFrom=yesterday', 'updatedTo=2026-13-40', 'createdFrom=2026-1-1']) {
+        const r = await call(admin, 'GET', `${SP_PAGES}?${q}`)
+        expect([r.status, r.json?.error]).toEqual([400, 'invalid'])
+      }
+    })
+
+    it.skipIf(!!REAL)('mock only: a created range picks pages by their own created day (set with a save)', async () => {
+      const older = await mk(f, { title: `旧${run}` })
+      const saved = await S.savePage(older.id, { baseRev: older.rev, meta: { ...older.meta, created: '2020-03-15' }, body: older.body })
+      expect(saved.meta.created).toBe('2020-03-15')
+      expect(ids(await walk({ folder: f, createdFrom: '2020-03-15', createdTo: '2020-03-15' }))).toEqual([older.id])
+      expect(ids(await walk({ folder: f, createdTo: '2020-03-14' }))).toEqual([])
+      expect(ids(await walk({ folder: f, createdTo: '2020-03-16' }))).toEqual([older.id])
+      expect(ids(await walk({ folder: f, createdFrom: '2020-03-16', updatedFrom: dayOf(saved.updated) }))).toEqual(expect.arrayContaining([titled.id]))
     })
   })
 

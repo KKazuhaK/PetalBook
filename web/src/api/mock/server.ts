@@ -673,6 +673,7 @@ export function createMockServer(options: MockOptions = {}) {
       if (method === 'GET') return { status: 200, body: st.listPages(url.searchParams) }
       if (method === 'POST') return { status: 201, body: st.create(body) }
     }
+    if (rest === '/pages/batch' && method === 'POST') return { status: 200, body: st.batch(body) }
     const hist = /^\/pages\/([^/]+)\/history$/.exec(rest)
     if (hist && method === 'GET') return { status: 200, body: st.history(decodeURIComponent(hist[1]), url.searchParams) }
     const ver = /^\/pages\/([^/]+)\/versions\/([^/]+)$/.exec(rest)
@@ -741,7 +742,22 @@ export function createMockServer(options: MockOptions = {}) {
     }
     if (rest === '/tree' && method === 'GET') return { status: 200, body: st.tree() }
     if (rest === '/tags' && method === 'GET') return { status: 200, body: st.tags() }
+    const tagOne = /^\/tags\/(.+)$/.exec(rest)
+    if (tagOne && method === 'PUT') {
+      let tag: string
+      try {
+        tag = decodeURIComponent(tagOne[1])
+      } catch {
+        throw new HttpError(400, 'invalid', '标签不合法')
+      }
+      return { status: 200, body: st.setTagColor(tag, body) }
+    }
     if (rest === '/folders' && method === 'POST') return { status: 201, body: st.createFolder(body.path) }
+    if (rest === '/folders/move' && method === 'POST') return { status: 200, body: st.moveFolder(body) }
+    if (rest === '/folders' && method === 'DELETE') {
+      st.removeFolder(url.searchParams.get('path'), url.searchParams.get('recursive') === 'true')
+      return { status: 204 }
+    }
     if (rest === '/reindex' && method === 'POST') return { status: 200, body: st.reindex() }
     throw new HttpError(404, 'not_found', '没有这个接口')
   }

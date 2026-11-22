@@ -6,7 +6,8 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClie
 import { waitForSaves } from '@/editor/saveController'
 import { spaceUrls } from '@/lib/urls'
 import { api, ApiError, spaceApi } from './client'
-import type { ConnectRemoteInput, CreatePageInput, ListParams, Remote, SessionInfo, SpaceInfo, SyncState, User } from './types'
+import { parseTagColor } from '../lib/tagColors.ts'
+import type { BatchPagesInput, ConnectRemoteInput, CreatePageInput, ListParams, Remote, SessionInfo, SpaceInfo, SyncState, TagColor, TagsResponse, User } from './types'
 
 // Everything of one space is under ['space', id, …], so switching space never
 // shows another space's data and one invalidation covers a space.
@@ -124,6 +125,40 @@ export function useTags() {
   return useQuery({ queryKey: keys.tags(space), queryFn: ({ signal }) => spaceApi(space).tags(signal), staleTime: 15_000, enabled: space !== '' })
 }
 
+// Tag name -> colour, for every tag that has one. Built from the tags listing
+// the sidebar already asks for, so using it costs no request of its own; an
+// empty map until that has arrived. Memoised on the data, so it is safe in a
+// dependency list.
+export function useTagColors(): ReadonlyMap<string, TagColor> {
+  const { data } = useTags()
+  return useMemo(() => {
+    const m = new Map<string, TagColor>()
+    for (const t of data?.tags ?? []) {
+      const c = parseTagColor(t.color)
+      if (c) m.set(t.tag, c.kind === 'preset' ? c.name : c.hex)
+    }
+    return m
+  }, [data])
+}
+
+// Sets a tag's colour, or removes it with null. The cached listing is changed
+// on the spot, so every chip repaints without another request.
+export function useSetTagColor() {
+  const qc = useQueryClient()
+  const space = useSpaceId()
+  return useMutation({
+    mutationFn: ({ tag, color }: { tag: string; color: TagColor | null }) => spaceApi(space).setTagColor(tag, color),
+    onSuccess: (res, { tag }) =>
+      qc.setQueryData<TagsResponse>(keys.tags(space), (prev) => {
+        if (!prev) return prev
+        const found = prev.tags.some((t) => t.tag === tag)
+        // A tag in no page is not in the listing; nothing to repaint.
+        if (!found) return prev
+        return { tags: prev.tags.map((t) => (t.tag === tag ? { tag: t.tag, pages: t.pages, ...(res.color ? { color: res.color } : {}) } : t)) }
+      }),
+  })
+}
+
 // Listings are fetched one cursor page at a time; nothing renders more rows
 // than the person has asked for with "load more".
 export function usePageList(params: Omit<ListParams, 'cursor' | 'limit'>) {
@@ -184,6 +219,36 @@ export function useDeletePage() {
   const space = useSpaceId()
   return useMutation({
     mutationFn: (id: string) => spaceApi(space).deletePage(id),
+    onSuccess: () => invalidateListings(qc, space),
+  })
+}
+
+// Several pages at once (docs/api.md, `pages/batch`): move or delete.
+export function useBatchPages() {
+  const qc = useQueryClient()
+  const space = useSpaceId()
+  return useMutation({
+    mutationFn: (input: BatchPagesInput) => spaceApi(space).batchPages(input),
+    onSuccess: () => invalidateListings(qc, space),
+  })
+}
+
+// A folder moves with its pages, which keep their ids; their paths change, so
+// every listing and the tree are read again.
+export function useMoveFolder() {
+  const qc = useQueryClient()
+  const space = useSpaceId()
+  return useMutation({
+    mutationFn: ({ from, to }: { from: string; to: string }) => spaceApi(space).moveFolder(from, to),
+    onSuccess: () => invalidateListings(qc, space),
+  })
+}
+
+export function useDeleteFolder() {
+  const qc = useQueryClient()
+  const space = useSpaceId()
+  return useMutation({
+    mutationFn: ({ path, recursive }: { path: string; recursive?: boolean }) => spaceApi(space).deleteFolder(path, recursive),
     onSuccess: () => invalidateListings(qc, space),
   })
 }

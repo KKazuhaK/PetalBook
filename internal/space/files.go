@@ -1,6 +1,7 @@
 package space
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -136,7 +137,7 @@ func (s *Space) moveNamed(src, dir, stem string, intent func(name string) error)
 			default:
 				continue
 			}
-			if err := s.ops.Rename(src, dst); err != nil {
+			if err := s.rename(src, dst, nil); err != nil {
 				return "", err
 			}
 			return name, nil
@@ -165,6 +166,117 @@ func (s *Space) moveNamed(src, dir, stem string, intent func(name string) error)
 		return name, nil
 	}
 	return "", noFreeName(stem)
+}
+
+// rename renames from to to, also when to is another spelling of from's own
+// name on a file system that takes the two for one entry. macOS respells the
+// entry on a plain rename; Linux (a case-folding ext4, f2fs or tmpfs
+// directory) takes it for a rename of a file onto itself, reports success
+// and changes nothing. Going through a third name respells it on both.
+//
+// inside lists the files of a folder being renamed (relative to it); nil for
+// a file. The third name is journaled before anything moves: if the process
+// dies between the two steps, the next start finishes the rename
+// (recoverPending), and if it cannot, the files are committed under the third
+// name rather than as deleted. That name is next to
+// the target and keeps a file's extension, so a page left there is still a
+// page in its folder.
+func (s *Space) rename(from, to string, inside []string) error {
+	fi, err := s.ops.Lstat(from)
+	if err != nil {
+		return err
+	}
+	ti, err := s.ops.Lstat(to)
+	if err != nil || filepath.Base(from) == filepath.Base(to) || !s.ops.SameFile(fi, ti) {
+		return s.ops.Rename(from, to)
+	}
+	base := filepath.Base(to)
+	ext := ""
+	if !fi.IsDir() {
+		ext = filepath.Ext(base)
+	}
+	stem := strings.TrimSuffix(base, ext)
+	// A name of its own each time: the undo of a rename goes through a third
+	// name as well, and if both were "(renaming 1)" a crash during the undo
+	// would be finished by the record of the rename it was undoing.
+	mid := ""
+	for n := 1; n <= maxNameTries && mid == ""; n++ {
+		var b [4]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return err
+		}
+		c := filepath.Join(filepath.Dir(to), fmt.Sprintf("%s (renaming %x)%s", stem, b, ext))
+		if _, err := s.ops.Lstat(c); errors.Is(err, fs.ErrNotExist) {
+			mid = c
+		}
+	}
+	if mid == "" {
+		return fmt.Errorf("%w: no free name to rename %s through", ErrExists, base)
+	}
+	midPaths, err := s.journalRespell(from, mid, to, inside)
+	if err != nil {
+		return err
+	}
+	if err := s.ops.Rename(from, mid); err != nil {
+		return err
+	}
+	if err := s.ops.Rename(mid, to); err != nil {
+		if back := s.ops.Rename(mid, from); back != nil {
+			// Stuck under the third name. In local mode that is committed
+			// there (the next commit's journal rewrite would otherwise drop
+			// the records, and only the old name would go, as a deletion); a
+			// space that follows a remote undoes the change from Git instead.
+			if s.cm != nil && s.rem.Load() == nil {
+				s.cm.Touch(midPaths...)
+			}
+			return errors.Join(err, fmt.Errorf("%s is left as %s: %w", filepath.Base(from), filepath.Base(mid), back))
+		}
+		return err
+	}
+	return nil
+}
+
+// journalRespell records a rename through a third name (see rename) and
+// returns the paths under it and under the old name. A Space without a committer (tests of naming
+// alone) journals nothing.
+func (s *Space) journalRespell(from, mid, to string, inside []string) ([]string, error) {
+	if s.cm == nil {
+		return nil, nil
+	}
+	rel := func(p string) (string, error) {
+		r, err := filepath.Rel(s.root, p)
+		if err != nil || !fs.ValidPath(filepath.ToSlash(r)) {
+			return "", fmt.Errorf("%s is not inside the space", p)
+		}
+		return filepath.ToSlash(r), nil
+	}
+	f, err := rel(from)
+	if err != nil {
+		return nil, err
+	}
+	m, err := rel(mid)
+	if err != nil {
+		return nil, err
+	}
+	t, err := rel(to)
+	if err != nil {
+		return nil, err
+	}
+	paths, olds := []string{m}, []string{f}
+	if inside != nil {
+		paths, olds = paths[:0], olds[:0]
+		for _, p := range inside {
+			paths, olds = append(paths, path.Join(m, p)), append(olds, path.Join(f, p))
+		}
+	}
+	recs := []jrec{{Op: "r", From: f, To: t, Path: m, Dir: inside != nil}}
+	for _, p := range paths {
+		recs = append(recs, jrec{Op: "t", Path: p})
+	}
+	// Journaled only, not handed to the committer: once the rename is done
+	// the third name is gone, and a space that follows a remote commits its
+	// changes itself (txn), not in the background.
+	return append(paths, olds...), s.cm.Record(recs...)
 }
 
 // moveIntent returns the journal call for moving the page at rel into folder:
@@ -206,6 +318,20 @@ func (s *Space) resolveFolder(rel string) (canon string, existed bool, err error
 				for _, e := range entries {
 					if found == "" && page.NameKey(e.Name()) == page.NameKey(seg) {
 						found = e.Name()
+					}
+				}
+				if found == "" {
+					// Not in the listing under any spelling this code can fold,
+					// yet the file system may still take the name for one of the
+					// entries (ß and ss, the Greek sigmas, are one name to some).
+					// Ask it: the entry that is the same file is the folder.
+					if fi, lerr := s.ops.Lstat(filepath.Join(cur, seg)); lerr == nil {
+						for _, e := range entries {
+							if ei, ierr := e.Info(); ierr == nil && s.ops.SameFile(fi, ei) {
+								found = e.Name()
+								break
+							}
+						}
 					}
 				}
 				if found == "" {

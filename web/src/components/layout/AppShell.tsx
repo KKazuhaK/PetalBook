@@ -2,6 +2,8 @@ import { useEffect } from 'react'
 import { Outlet, useLocation } from 'react-router'
 import { SidebarInset, SidebarProvider, useSidebar } from '@/components/ui/sidebar'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
+import { FileOpsProvider } from '@/components/files/FileOps'
+import { SearchDialogProvider } from '@/components/search/SearchDialog'
 import { AppSidebar } from './AppSidebar'
 import { QuickCaptureProvider } from './QuickCapture'
 
@@ -17,13 +19,17 @@ export function AppShell() {
   return (
     <SidebarProvider>
       <QuickCaptureProvider>
-        <CloseMobileOnNavigate />
-        <AppSidebar />
-        <SidebarInset className="min-w-0">
-          <ErrorBoundary>
-            <Outlet />
-          </ErrorBoundary>
-        </SidebarInset>
+        <SearchDialogProvider>
+          <FileOpsProvider>
+            <CloseMobileOnNavigate />
+            <AppSidebar />
+            <SidebarInset className="min-w-0">
+              <ErrorBoundary>
+                <Outlet />
+              </ErrorBoundary>
+            </SidebarInset>
+          </FileOpsProvider>
+        </SearchDialogProvider>
       </QuickCaptureProvider>
     </SidebarProvider>
   )

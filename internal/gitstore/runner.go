@@ -92,6 +92,12 @@ func baseEnv(unsafe bool) []string {
 		"GIT_OPTIONAL_LOCKS=0")
 }
 
+// commitBuilding are the commands that stage and assemble a commit.
+var commitBuilding = map[string]bool{
+	"add": true, "rm": true, "diff": true, "ls-files": true, "update-index": true,
+	"read-tree": true, "write-tree": true, "commit-tree": true,
+}
+
 type limitWriter struct {
 	buf bytes.Buffer
 	max int
@@ -104,15 +110,32 @@ func (w *limitWriter) Write(p []byte) (int, error) {
 	return w.buf.Write(p)
 }
 
+// commandLine is what follows "git" for these arguments run in dir: the
+// runner's fixed options, then the caller's arguments.
+func commandLine(dir string, args []string) []string {
+	// Hooks never run (not even pre-push) and files are committed byte for
+	// byte, whatever the platform default is.
+	full := []string{"-C", dir, "-c", "core.quotepath=off", "-c", "core.hooksPath=" + os.DevNull,
+		"-c", "core.autocrlf=false", "-c", "safe.directory=*"}
+	// While a commit is being built, names are taken as they are written. A
+	// file system may ignore case; Git must not then, or a file renamed to
+	// another spelling of its own name keeps the old one in the repository:
+	// which name a file has is decided by Repo.CommitPaths, from the directory
+	// listing. Everything else (checking out, fast-forwarding, status) runs
+	// on the repository's own setting: there Git has to know that the disk
+	// takes two spellings for one file, or a rename by case coming from the
+	// remote looks like a file in the way.
+	if sub, _ := subcommand(args); commitBuilding[sub] {
+		full = append(full, "-c", "core.ignorecase=false")
+	}
+	return append(full, args...)
+}
+
 func (execRunner) Run(ctx context.Context, c Cmd) (string, string, error) {
 	if err := refuseDestructive(c.Args); err != nil {
 		return "", "", err
 	}
-	// Hooks never run (not even pre-push) and files are committed byte for
-	// byte, whatever the platform default is.
-	full := []string{"-C", c.Dir, "-c", "core.quotepath=off", "-c", "core.hooksPath=" + os.DevNull,
-		"-c", "core.autocrlf=false", "-c", "safe.directory=*"}
-	cmd := exec.CommandContext(ctx, "git", append(full, c.Args...)...)
+	cmd := exec.CommandContext(ctx, "git", commandLine(c.Dir, c.Args)...)
 	cmd.Env = append(baseEnv(c.AllowUnsafe), c.Env...)
 	if c.Stdin != nil {
 		cmd.Stdin = bytes.NewReader(c.Stdin)

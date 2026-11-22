@@ -63,10 +63,43 @@ func keepRefArgs(name, commit string) ([]string, error) {
 	return []string{"update-ref", ref, commit}, nil
 }
 
+// advanceHeadArgs builds the command that makes a new commit the head of the
+// branch: a compare-and-swap of HEAD (which names the branch) from the commit
+// it was built on to the new one. old is "" when there is no commit yet; the
+// ref must then not exist. Nothing else about HEAD is ever written this way:
+// no deletion, no other ref, no move without saying what it moves from.
+// added: commits are assembled without reading the work tree (commitChanges).
+func advanceHeadArgs(commit, old string) ([]string, error) {
+	if old == "" {
+		old = strings.Repeat("0", len(commit))
+	}
+	if !commitRe.MatchString(commit) || !commitRe.MatchString(old) || len(commit) != len(old) || strings.Trim(commit, "0") == "" {
+		return nil, fmt.Errorf("refusing to move HEAD to %q from %q", commit, old)
+	}
+	return []string{"update-ref", "HEAD", commit, old}, nil
+}
+
+// commitTreeArgs builds the command that makes a commit object of a tree,
+// with the commit before it as its only parent ("" for the first commit) and
+// the message on standard input.
+func commitTreeArgs(tree, parent string) ([]string, error) {
+	if !commitRe.MatchString(tree) || (parent != "" && !commitRe.MatchString(parent)) {
+		return nil, fmt.Errorf("refusing to make a commit of %q on %q", tree, parent)
+	}
+	// A repository's own configuration may ask for signed commits; there is
+	// no key here to sign with, and a commit that can never be made would
+	// hold every later one up.
+	args := []string{"-c", "commit.gpgsign=false", "commit-tree", tree}
+	if parent != "" {
+		args = append(args, "-p", parent)
+	}
+	return append(args, "-F", "-"), nil
+}
+
 var errDestructive = errors.New("refusing a git command that could rewrite or delete history")
 
 // allowedConfigKeys are the only "-c key=value" settings passed by callers.
-var allowedConfigKeys = map[string]bool{"commit.gpgsign": true, "safe.directory": true, "core.quotepath": true, "core.autocrlf": true}
+var allowedConfigKeys = map[string]bool{"commit.gpgsign": true, "core.splitindex": true, "safe.directory": true, "core.quotepath": true, "core.autocrlf": true}
 
 // Subcommand returns the git subcommand of a command line and its arguments,
 // skipping the global options the runner allows.
@@ -114,7 +147,6 @@ func subcommand(args []string) (string, []string) {
 //	             of those paths (never the whole tree).
 //	cat-file     --batch: read many blobs of the history in one process.
 //	checkout     --pathspec-from-file=- ...: restore the files of a discarded change in one command.
-//	commit       --message=*: the message is one argument, so it cannot be read as an option.
 //	diff         --cached/--name-status/-z/--no-renames/-M: what a commit changed, and what
 //	             moved between two commits (the index update after a pull).
 //	fetch        --no-tags: fetch only the branch, not every tag of the remote.
@@ -123,17 +155,27 @@ func subcommand(args []string) (string, []string) {
 //	ls-remote    --heads: whether the remote has the branch yet (connecting).
 //	ls-tree      -r, -z, --name-only: which of the discarded files exist in the parent commit.
 //	rev-list     --left-right: how far ahead and behind in one command.
+//	read-tree HEAD, ls-files -s -z, update-index --index-info, write-tree,
+//	commit-tree, update-ref HEAD: a commit is assembled in an index of its own
+//	             from the last commit and the staged entries of the change, and
+//	             the branch moved to it (Repo.commitChanges). No file of the
+//	             work tree is read but those of the change; what grows with the
+//	             space is only the index in memory (about 60 ms for 20 000
+//	             files). Their arguments are checked exactly in refuseDestructive.
 //	status       --porcelain, -z, --untracked-files=no: modified tracked files when a space opens.
 //
 // Dropped from RackBook's list because nothing here needs them: --grep and
 // --fixed-strings (trailer search), merge-base's use for pull requests.
 var allowedOptions = map[string][]string{
 	"add":          {"--", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"},
-	"update-index": {"--add", "--replace", "-z", "--stdin"},
+	"update-index": {"--add", "--replace", "-z", "--stdin", "--index-info"},
+	"read-tree":    {},
+	"write-tree":   {},
+	"commit-tree":  {},
+	"ls-files":     {"-s", "-z", "--"},
 	"rm":           {"--", "--cached", "-r", "-q", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"},
 	"cat-file":     {"--batch"},
 	"checkout":     {"--quiet", "--", "--pathspec-from-file=-", "--pathspec-file-nul"},
-	"commit":       {"--quiet", "--no-verify", "--message=*", "--only", "--", "--pathspec-from-file=-", "--pathspec-file-nul"},
 	"diff":         {"--cached", "--name-status", "-z", "-M", "--no-renames", "--"},
 	"fetch":        {"--quiet", "--no-tags"},
 	"init":         {"--quiet", "-q", "--initial-branch=*"},
@@ -196,11 +238,40 @@ func refuseDestructive(args []string) error {
 			return fmt.Errorf("%w: remote %s", errDestructive, strings.Join(rest, " "))
 		}
 	case "update-ref":
+		// Two shapes and no other: HEAD moved from a named commit to a new one
+		// (never deleted, never without the old value), or a new ref made under
+		// refs/petalbook/unpushed/.
+		if len(rest) == 3 && rest[0] == "HEAD" {
+			if _, err := advanceHeadArgs(rest[1], rest[2]); err != nil {
+				return fmt.Errorf("%w: update-ref %s", errDestructive, strings.Join(rest, " "))
+			}
+			break
+		}
 		if len(rest) != 2 || !strings.HasPrefix(rest[0], keepRefPrefix) {
 			return fmt.Errorf("%w: update-ref %s", errDestructive, strings.Join(rest, " "))
 		}
 		if _, err := keepRefArgs(strings.TrimPrefix(rest[0], keepRefPrefix), rest[1]); err != nil {
 			return fmt.Errorf("%w: update-ref %s", errDestructive, strings.Join(rest, " "))
+		}
+	case "write-tree", "read-tree":
+		// write-tree takes nothing; read-tree only the commit to read.
+		if (sub == "write-tree" && len(rest) != 0) || (sub == "read-tree" && (len(rest) != 1 || rest[0] != "HEAD")) {
+			return fmt.Errorf("%w: %s %s", errDestructive, sub, strings.Join(rest, " "))
+		}
+	case "commit-tree":
+		ok := (len(rest) == 3 || len(rest) == 5) && rest[len(rest)-2] == "-F" && rest[len(rest)-1] == "-"
+		if ok {
+			parent := ""
+			if len(rest) == 5 {
+				ok = rest[1] == "-p"
+				parent = rest[2]
+			}
+			if _, err := commitTreeArgs(rest[0], parent); err != nil || (len(rest) == 5 && parent == "") {
+				ok = false
+			}
+		}
+		if !ok {
+			return fmt.Errorf("%w: commit-tree %s", errDestructive, strings.Join(rest, " "))
 		}
 	default:
 		for i := 0; i < len(rest); i++ {

@@ -2,7 +2,8 @@
 // Strict about the parts the web app depends on (revs, 409 conflicts, header
 // order, untitled pages, cursors, draft semantics), simple about the rest.
 
-import type { DraftReceipt, HistoryList, Page, PageDraft, PageMeta, PageSummary, PageVersion, VersionChange } from '../types.ts'
+import type { DraftReceipt, HistoryList, Page, PageDraft, PageMeta, PageSummary, PageVersion, TagColor, VersionChange } from '../types.ts'
+import { TAG_COLORS, parseTagColor } from '../../lib/tagColors.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
 import { gitBlobId } from './sha1.ts'
 import { SEED_EMPTY_FOLDERS, seedPages } from './seed.ts'
@@ -229,8 +230,15 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     }
   }
 
+  // Kept apart from the pages, as `.petalbook/tags.yml` is on the server; a
+  // colour outlives the last page that uses the tag.
+  const tagColors = new Map<string, TagColor>()
+
   // --- seed ---------------------------------------------------------------
   if (seed) {
+    // A couple of coloured tags, so the colours show in a fresh mock.
+    tagColors.set('随笔', 'rose')
+    tagColors.set('待办', 'amber')
     for (const f of SEED_EMPTY_FOLDERS) addFolder(f)
     seedPages.forEach((sp, i) => {
       const id = `01JD${(i + 1).toString(32).toUpperCase().padStart(6, '0')}`.replace(/[ILOU]/g, 'X')
@@ -310,6 +318,20 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     const recursive = q.get('recursive') === 'true'
     const tags = q.getAll('tag')
     const text = (q.get('q') ?? '').trim().toLowerCase()
+    const inParam = q.get('in')
+    if (inParam !== null && inParam !== 'title') throw new HttpError(400, 'invalid', 'in 只能是 title')
+    const titleOnly = inParam === 'title'
+    // Days, UTC, both ends included; one that is not a day is refused.
+    const day = (name: string): string | null => {
+      const v = q.get(name)
+      if (v === null) return null
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(v) || Number.isNaN(Date.parse(v))) throw new HttpError(400, 'invalid', `${name} 要写成 2026-11-01 这样的日期`)
+      return v
+    }
+    const updatedFrom = day('updatedFrom')
+    const updatedTo = day('updatedTo')
+    const createdFrom = day('createdFrom')
+    const createdTo = day('createdTo')
     const limitRaw = q.get('limit')
     const limit = limitRaw === null ? 50 : Number(limitRaw)
     if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new HttpError(400, 'invalid', 'limit 要在 1 到 200 之间')
@@ -322,6 +344,18 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
       items = items.filter((p) => (recursive ? folder === '' || p.folder === folder || p.folder.startsWith(folder + '/') : p.folder === folder))
     }
     if (tags.length) items = items.filter((p) => tags.every((t) => tagsOf(p.meta).includes(t)))
+    // `updated` is the day the file was last written; `created` is the header's
+    // own date, and a page without one never matches a created range.
+    if (updatedFrom || updatedTo)
+      items = items.filter((p) => {
+        const d = rfc3339(p.updated).slice(0, 10)
+        return (!updatedFrom || d >= updatedFrom) && (!updatedTo || d <= updatedTo)
+      })
+    if (createdFrom || createdTo)
+      items = items.filter((p) => {
+        const d = stringField(p.meta, 'created')
+        return d !== undefined && (!createdFrom || d >= createdFrom) && (!createdTo || d <= createdTo)
+      })
 
     let relevance: Map<string, number> | undefined
     if (text) {
@@ -332,6 +366,11 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
         const sub = (stringField(p.meta, 'subtitle') ?? '').toLowerCase()
         const src = (stringField(p.meta, 'source') ?? '').toLowerCase()
         const body = p.body.toLowerCase()
+        if (titleOnly) {
+          if (!words.every((w) => title.includes(w))) return false
+          relevance!.set(p.id, words.length)
+          return true
+        }
         if (!words.every((w) => title.includes(w) || sub.includes(w) || src.includes(w) || body.includes(w))) return false
         relevance!.set(p.id, words.reduce((n, w) => n + (title.includes(w) ? 3 : 0) + (sub.includes(w) ? 2 : 0) + (src.includes(w) ? 1.5 : 0) + (body.includes(w) ? 1 : 0), 0))
         return true
@@ -445,6 +484,36 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     pages.delete(id)
     record(gone, 'delete')
     for (const k of [...drafts.keys()]) if (k.endsWith(`\u0000${id}`)) drafts.delete(k)
+  }
+
+  // Several pages in one change. Everything is checked before anything is
+  // touched, so a bad request or an unknown id leaves the space as it was.
+  const batch = (input: Record<string, unknown>): { pages: number } => {
+    guard()
+    const op = input.op
+    if (op !== 'move' && op !== 'delete') throw new HttpError(400, 'invalid', 'op 要是 move 或 delete')
+    const list = input.ids
+    if (!Array.isArray(list) || list.length < 1 || list.length > 500 || list.some((i) => typeof i !== 'string') || new Set(list).size !== list.length) {
+      throw new HttpError(400, 'invalid', 'ids 要是 1 到 500 个不重复的页面 id')
+    }
+    const idList = list as string[]
+    if (op === 'move' && (typeof input.folder !== 'string' || !validFolder(input.folder))) throw new HttpError(400, 'invalid', '文件夹路径不合法')
+    const found = idList.map((id) => lookup(id))
+    if (op === 'delete') {
+      for (const p of found) remove(p.id)
+      return { pages: found.length }
+    }
+    const folder = input.folder as string
+    for (const cur of found) {
+      const moved: Stored = { ...cur, folder, fileName: fileNameFor(folder, cur.meta, cur.id, cur.id), updated: now() }
+      // A page already there counts and stays as it is.
+      if (pathOf(moved) === pathOf(cur)) continue
+      pages.set(cur.id, moved)
+      addFolder(folder)
+      record(moved, 'move')
+    }
+    addFolder(folder)
+    return { pages: found.length }
   }
 
   // --- drafts ---
@@ -582,7 +651,24 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
   const tags = () => {
     const counts = new Map<string, number>()
     for (const p of pages.values()) for (const t of new Set(tagsOf(p.meta))) counts.set(t, (counts.get(t) ?? 0) + 1)
-    return { tags: [...counts].map(([tag, n]) => ({ tag, pages: n })).sort((a, b) => b.pages - a.pages || a.tag.localeCompare(b.tag, 'zh')) }
+    return { tags: [...counts].map(([tag, n]) => ({ tag, pages: n, ...(tagColors.has(tag) ? { color: tagColors.get(tag) } : {}) })).sort((a, b) => b.pages - a.pages || a.tag.localeCompare(b.tag, 'zh')) }
+  }
+
+  // `{"color": "rose"}` sets, `{"color": null}` removes; the tag need not be in use.
+  const setTagColor = (tag: string, body: Record<string, unknown>) => {
+    guard()
+    if (tag === '') throw new HttpError(400, 'invalid', '标签不能是空的')
+    if (!('color' in body)) throw new HttpError(400, 'invalid', '缺少 color')
+    const c = body.color
+    if (c === null) {
+      tagColors.delete(tag)
+      return { tag }
+    }
+    const parsed = parseTagColor(c)
+    if (parsed === null) throw new HttpError(400, 'invalid', `color 只能是 ${TAG_COLORS.join('、')} 之一、#rrggbb，或 null`)
+    const color = parsed.kind === 'preset' ? parsed.name : parsed.hex
+    tagColors.set(tag, color)
+    return { tag, color }
   }
 
   const createFolder = (p: unknown) => {
@@ -592,6 +678,45 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     if (folders.has(p)) throw new HttpError(409, 'exists', '这个文件夹已经存在')
     addFolder(p)
     return { path: p }
+  }
+
+  const isUnder = (path: string, parent: string) => path === parent || path.startsWith(parent + '/')
+
+  // Moves a folder with everything in it; this is also how one is renamed.
+  // Pages keep their ids, so nothing that points at them changes.
+  const moveFolder = (input: Record<string, unknown>): { path: string } => {
+    guard()
+    const { from, to } = input
+    if (typeof from !== 'string' || typeof to !== 'string') throw new HttpError(400, 'invalid', '缺少 from 或 to')
+    if (from === '') throw new HttpError(400, 'invalid', '根目录不能移动')
+    if (!folders.has(from)) throw new HttpError(404, 'not_found', '找不到这个文件夹')
+    if (to === '' || !validFolder(to)) throw new HttpError(400, 'invalid', folderRuleMessage(to) ?? '文件夹路径不合法')
+    if (to === from || to.startsWith(from + '/')) throw new HttpError(400, 'invalid', '不能把文件夹移到它自己里面')
+    // Another spelling of the folder itself (a change of letter case) is not "already there".
+    const sameFolder = to.toLowerCase() === from.toLowerCase()
+    if (folders.has(to) && !sameFolder) throw new HttpError(409, 'exists', '目标位置已经有这个文件夹')
+    const rename = (path: string) => to + path.slice(from.length)
+    const inside = [...folders].filter((f) => isUnder(f, from))
+    for (const f of inside) folders.delete(f)
+    for (const f of inside) addFolder(rename(f))
+    addFolder(to)
+    for (const p of [...pages.values()].filter((x) => isUnder(x.folder, from))) {
+      const moved: Stored = { ...p, folder: rename(p.folder) }
+      pages.set(p.id, moved)
+      record(moved, 'move')
+    }
+    return { path: to }
+  }
+
+  // Without `recursive` the folder must hold no page, in it or below it.
+  const removeFolder = (path: string | null, recursive: boolean) => {
+    guard()
+    if (path === '') throw new HttpError(400, 'invalid', '根目录不能删除')
+    if (path === null || !folders.has(path)) throw new HttpError(404, 'not_found', '找不到这个文件夹')
+    const doomed = [...pages.values()].filter((p) => isUnder(p.folder, path))
+    if (doomed.length > 0 && !recursive) throw new HttpError(409, 'conflict', '文件夹里还有页面')
+    for (const p of doomed) remove(p.id)
+    for (const f of [...folders]) if (isUnder(f, path)) folders.delete(f)
   }
 
   // Mock only: change a page behind the app's back, as another editor or a
@@ -618,7 +743,11 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     sweep,
     tree,
     tags,
+    setTagColor,
     createFolder,
+    moveFolder,
+    removeFolder,
+    batch,
     touch,
     history,
     version,

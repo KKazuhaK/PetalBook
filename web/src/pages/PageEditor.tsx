@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalSt
 import { Link, useBlocker, useNavigate, useParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { EditorContent, useEditor } from '@tiptap/react'
-import { Code, Columns2, Folder, History, MoreHorizontal, Save, Trash2, FolderInput, Type } from 'lucide-react'
+import { Code, Columns2, History, MoreHorizontal, Save, Trash2, FolderInput, Type } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError, isUnauthenticated, spaceApi, type SpaceApi } from '@/api/client'
 import { invalidateListings, keys, usePage, useSession, useTags, useTree, useUrls } from '@/api/hooks'
@@ -21,11 +21,13 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { ErrorState, PageFallback } from '@/components/common'
+import { Breadcrumbs } from '@/components/files/Breadcrumbs'
 import { TopBar } from '@/components/layout/TopBar'
 import { AutoTextarea } from '@/components/editor/AutoTextarea'
 import { ImagePopover, LinkPopover, SelectionBubble } from '@/components/editor/BubbleToolbar'
 import { ConflictDialog } from '@/components/editor/ConflictDialog'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
+import { TableControls } from '@/components/editor/table/TableControls'
 import { MovePageDialog } from '@/components/editor/MovePageDialog'
 import { createPageExtensions } from '@/components/editor/pageExtensions'
 import { SaveIndicator } from '@/components/editor/SaveIndicator'
@@ -718,10 +720,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
           </>
         }
       >
-        <Link to={urls.folder(page.folder)} className="inline-flex min-w-0 items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-          <Folder className="size-3.5 shrink-0" />
-          <span className="truncate">{page.folder === '' ? t.nav.rootFolder : page.folder}</span>
-        </Link>
+        <Breadcrumbs folder={page.folder} currentLast={false} />
       </TopBar>
 
       {historyOpen && (
@@ -826,6 +825,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
             <SelectionBubble editor={editor} />
             <LinkPopover editor={editor} />
             <ImagePopover editor={editor} />
+            <TableControls editor={editor} />
           </>
         )}
       </div>

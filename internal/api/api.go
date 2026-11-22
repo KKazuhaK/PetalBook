@@ -469,6 +469,10 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusInternalServerError, "internal", "the server is shutting down; try again when it is back")
 	case errors.Is(err, space.ErrNoVersion):
 		writeError(w, http.StatusNotFound, "not_found", "that commit is not a version of this page")
+	case errors.Is(err, space.ErrNoFolder):
+		writeError(w, http.StatusNotFound, "not_found", "no such folder")
+	case errors.Is(err, space.ErrNotEmpty):
+		writeError(w, http.StatusConflict, "conflict", "the folder holds pages; remove them first, or ask for them to go with it")
 	case errors.Is(err, space.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "no such page")
 	case errors.Is(err, space.ErrExists), errors.Is(err, fs.ErrExist):

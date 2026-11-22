@@ -1,9 +1,13 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/KazuhaHub/PetalBook/internal/drafts"
 	"github.com/KazuhaHub/PetalBook/internal/index"
@@ -29,6 +33,50 @@ func (s *server) listPages(c *call) {
 	default:
 		writeError(c.w, http.StatusBadRequest, "invalid", "recursive must be true or false")
 		return
+	}
+	switch in := v.Get("in"); in {
+	case "":
+	case "title":
+		q.TitleOnly = true
+	default:
+		writeError(c.w, http.StatusBadRequest, "invalid", "in must be title")
+		return
+	}
+	// A day in UTC: "from" is its first moment, "to" its last.
+	day := func(name string) (time.Time, bool, bool) {
+		raw := v.Get(name)
+		if raw == "" {
+			return time.Time{}, false, true
+		}
+		t, err := time.Parse("2006-01-02", raw)
+		// Years the index can compare: file times are kept in nanoseconds
+		// since 1970, which run out in 2262. A day outside is refused rather
+		// than turned into a bound that means something else.
+		if err != nil || t.Year() < 1970 || t.Year() > 2261 {
+			writeError(c.w, http.StatusBadRequest, "invalid", name+" must be a day like 2026-11-01, from 1970 to 2261")
+			return time.Time{}, false, false
+		}
+		return t, true, true
+	}
+	if t, set, ok := day("updatedFrom"); !ok {
+		return
+	} else if set {
+		q.UpdatedFrom = t.UnixNano()
+	}
+	if t, set, ok := day("updatedTo"); !ok {
+		return
+	} else if set {
+		q.UpdatedTo = t.AddDate(0, 0, 1).UnixNano()
+	}
+	if t, set, ok := day("createdFrom"); !ok {
+		return
+	} else if set {
+		q.CreatedFrom = t.Format("2006-01-02")
+	}
+	if t, set, ok := day("createdTo"); !ok {
+		return
+	} else if set {
+		q.CreatedTo = t.Format("2006-01-02")
 	}
 	if l := v.Get("limit"); l != "" {
 		n, err := strconv.Atoi(l)
@@ -228,9 +276,144 @@ func (s *server) getTags(c *call) {
 		s.fail(c.w, err)
 		return
 	}
+	type tagResp struct {
+		index.TagCount
+		Color string `json:"color,omitempty"`
+	}
+	colors := c.sp.Space.TagColors()
+	out := make([]tagResp, len(tags))
+	for i, t := range tags {
+		out[i] = tagResp{t, colors[t.Tag]}
+	}
 	writeJSON(c.w, http.StatusOK, struct {
-		Tags []index.TagCount `json:"tags"`
-	}{tags})
+		Tags []tagResp `json:"tags"`
+	}{out})
+}
+
+// putTag sets or removes the colour of a tag.
+func (s *server) putTag(c *call) {
+	tag := c.r.PathValue("tag")
+	// Absent and null both take the colour away; anything else must be text.
+	var req struct {
+		Color json.RawMessage `json:"color"`
+	}
+	if !s.readJSON(c.w, c.r, &req, false) {
+		return
+	}
+	color := ""
+	if raw := strings.TrimSpace(string(req.Color)); raw != "" && raw != "null" {
+		if err := json.Unmarshal(req.Color, &color); err != nil || color == "" {
+			writeError(c.w, http.StatusBadRequest, "invalid", "color must be the name of a colour, a colour written #rrggbb, or null")
+			return
+		}
+		// Answered and stored in one form: lower case.
+		if norm, ok := space.NormalTagColor(color); ok {
+			color = norm
+		}
+	}
+	if err := c.sp.Space.SetTagColor(tag, color); err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	writeJSON(c.w, http.StatusOK, struct {
+		Tag   string `json:"tag"`
+		Color string `json:"color,omitempty"`
+	}{tag, color})
+}
+
+// batchPages moves or deletes several pages as one change.
+func (s *server) batchPages(c *call) {
+	var req struct {
+		Op  string   `json:"op"`
+		IDs []string `json:"ids"`
+		// A pointer: a move must say where to, and "" (the root) is a place.
+		Folder *string `json:"folder"`
+	}
+	if !s.readJSON(c.w, c.r, &req, false) {
+		return
+	}
+	var err error
+	switch req.Op {
+	case "move":
+		if req.Folder == nil {
+			writeError(c.w, http.StatusBadRequest, "invalid", "a move needs the folder to move to (\"\" is the top level)")
+			return
+		}
+		err = c.sp.Space.BatchMove(req.IDs, *req.Folder)
+	case "delete":
+		var gone []string
+		gone, err = c.sp.Space.BatchDelete(req.IDs)
+		// Also when it failed part way: what is deleted is deleted.
+		s.dropDrafts(c, gone)
+	default:
+		writeError(c.w, http.StatusBadRequest, "invalid", "op must be move or delete")
+		return
+	}
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	writeJSON(c.w, http.StatusOK, struct {
+		Pages int `json:"pages"`
+	}{len(req.IDs)})
+}
+
+// dropDrafts removes every user's drafts of pages that were just deleted. The
+// pages are gone: a failure here is logged, not reported as theirs.
+func (s *server) dropDrafts(c *call, ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	// Not the request's own context: the pages are deleted whether or not the
+	// client is still there, and their drafts must not be left behind. Each
+	// page has its own time, so one slow answer does not cost the rest theirs.
+	for _, id := range ids {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(c.r.Context()), 5*time.Second)
+		err := s.drafts.DeletePage(ctx, c.sp.Info.ID, id)
+		cancel()
+		if err != nil {
+			s.log.Warn("could not discard the drafts of a deleted page", "space", c.sp.Info.ID, "page", id, "error", err)
+		}
+	}
+}
+
+func (s *server) moveFolder(c *call) {
+	var req struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	if !s.readJSON(c.w, c.r, &req, false) {
+		return
+	}
+	p, err := c.sp.Space.MoveFolder(req.From, req.To)
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	writeJSON(c.w, http.StatusOK, struct {
+		Path string `json:"path"`
+	}{p})
+}
+
+func (s *server) deleteFolder(c *call) {
+	v := c.r.URL.Query()
+	recursive := false
+	switch v.Get("recursive") {
+	case "", "false":
+	case "true":
+		recursive = true
+	default:
+		writeError(c.w, http.StatusBadRequest, "invalid", "recursive must be true or false")
+		return
+	}
+	ids, err := c.sp.Space.DeleteFolder(v.Get("path"), recursive)
+	// Also when it failed part way: what is deleted is deleted.
+	s.dropDrafts(c, ids)
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	c.w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) reindex(c *call) {

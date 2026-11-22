@@ -1,16 +1,22 @@
 package gitstore
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // Identity is a Git author or committer.
@@ -153,6 +159,25 @@ func (r *Repo) CommitOf(ctx context.Context, ref string) string {
 // Head is the commit id of HEAD, "" in a repository with no commit yet.
 func (r *Repo) Head(ctx context.Context) string { return r.CommitOf(ctx, "HEAD") }
 
+// TrackedUnder lists the files HEAD has in dir (slash-separated, relative to
+// the work tree), recursively. Nothing when there is no commit yet.
+func (r *Repo) TrackedUnder(ctx context.Context, dir string) ([]string, error) {
+	if r.Head(ctx) == "" {
+		return nil, nil
+	}
+	out, err := r.run(ctx, Cmd{Args: []string{"ls-tree", "-r", "-z", "--name-only", "HEAD", "--", dir}})
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, p := range strings.Split(strings.TrimRight(out, "\x00"), "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}
+
 func remoteRef(branch string) string { return "refs/remotes/origin/" + branch }
 
 // RemoteTip is the commit the remote branch was at when it was last fetched,
@@ -255,11 +280,21 @@ func (r *Repo) CommitPaths(ctx context.Context, paths []string, message func([]C
 	}
 	var present, gone, skipped []string
 	skip := map[string]bool{}
+	// Present means present under exactly this name. Asking the file system
+	// is not enough: one that ignores case answers for "Apple.md" when the file
+	// is now "apple.md", and the old name would never be recorded as gone.
+	names := exactNames{root: r.opt.Dir, dirs: map[string]dirNames{}}
 	for _, p := range paths {
-		switch fi, err := os.Lstat(filepath.Join(r.opt.Dir, filepath.FromSlash(p))); {
-		case err != nil:
+		e, err := names.entry(p)
+		if err != nil {
+			// Not knowing is not the same as gone: a directory that cannot be
+			// read must not turn its files into deletions.
+			return false, err
+		}
+		switch {
+		case e == nil:
 			gone = append(gone, p)
-		case fi.IsDir():
+		case e.IsDir():
 			// A path of the change that is a directory now was a file when it was
 			// noted, and something outside the server put a directory in its place
 			// (the server itself never makes a folder named like a page). Git cannot
@@ -270,6 +305,15 @@ func (r *Repo) CommitPaths(ctx context.Context, paths []string, message func([]C
 			skipped = append(skipped, p)
 		default:
 			present = append(present, p)
+		}
+	}
+	if len(gone) > 0 {
+		// Removals first: git adds a file under the spelling the index already
+		// has for it, so the old name has to be out of the index before the new
+		// one goes in. A path that was created and deleted before it was ever
+		// committed is unknown to git; --ignore-unmatch makes that fine.
+		if _, err := r.gitIn(ctx, nil, nulList(gone), "rm", "--cached", "-r", "-q", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"); err != nil {
+			return false, err
 		}
 	}
 	if len(present) > 0 {
@@ -302,13 +346,6 @@ func (r *Repo) CommitPaths(ctx context.Context, paths []string, message func([]C
 			}
 		}
 	}
-	if len(gone) > 0 {
-		// A path that was created and deleted before it was ever committed is
-		// unknown to git; --ignore-unmatch makes that fine.
-		if _, err := r.gitIn(ctx, nil, nulList(gone), "rm", "--cached", "-r", "-q", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"); err != nil {
-			return false, err
-		}
-	}
 	out, err := r.run(ctx, Cmd{Args: []string{"diff", "--cached", "--name-status", "-z", "-M"}})
 	if err != nil {
 		return false, err
@@ -318,17 +355,25 @@ func (r *Repo) CommitPaths(ctx context.Context, paths []string, message func([]C
 		mine[p] = true
 	}
 	var changes []Change
-	var touched []string
 	for _, c := range ParseNameStatus([]byte(out)) {
-		if (mine[c.Old] || mine[c.New]) && !skip[c.Old] && !skip[c.New] {
+		if skip[c.Old] || skip[c.New] {
+			continue
+		}
+		switch {
+		case mine[c.Old] && mine[c.New]:
 			changes = append(changes, c)
-			touched = append(touched, c.New)
-			if c.Old != c.New {
-				touched = append(touched, c.Old)
-			}
+		case c.Status == 'R' && mine[c.Old]:
+			// Rename detection paired a path of the change with one a person
+			// staged (or one that is simply new): only this side is ours. The
+			// other stays staged, as it was.
+			changes = append(changes, Change{'D', c.Old, c.Old})
+		case c.Status == 'R' && mine[c.New]:
+			changes = append(changes, Change{'A', c.New, c.New})
+		case mine[c.New]:
+			changes = append(changes, c)
 		}
 	}
-	// What could not be staged is reported, after the rest is committed.
+	// What could not be staged or committed is reported, after the rest is committed.
 	var left error
 	if len(skipped) > 0 {
 		left = &SkippedError{Paths: skipped}
@@ -340,11 +385,250 @@ func (r *Repo) CommitPaths(ctx context.Context, paths []string, message func([]C
 		"GIT_AUTHOR_NAME=" + author.Name, "GIT_AUTHOR_EMAIL=" + author.Email,
 		"GIT_COMMITTER_NAME=" + committer.Name, "GIT_COMMITTER_EMAIL=" + committer.Email,
 	}
-	if _, err := r.gitIn(ctx, env, nulList(touched), "-c", "commit.gpgsign=false", "commit", "--quiet", "--no-verify",
-		"--message="+message(changes), "--pathspec-from-file=-", "--pathspec-file-nul"); err != nil {
+	made, err := r.commitChanges(ctx, changes, message(changes), env)
+	if err != nil {
 		return false, err
 	}
-	return true, left
+	return made, left
+}
+
+// commitChanges commits these staged changes and nothing else, and reports
+// whether there was anything to commit. The commit is assembled without the
+// work tree: an index of its own gets the last commit's files, the removed
+// names are taken out and the added and changed ones put in as the real index
+// has them staged; that index is written as a tree, the tree made a commit on
+// top of the last one, and the branch moved to it.
+//
+// `git commit <paths>` would do the same on most days, but it looks at the
+// work tree again for every name it is given, and on a file system that
+// ignores case the old name of a renamed file still answers there: the old
+// name would be committed back next to the new one. And `git commit` on a
+// fresh index re-reads every tracked file to see whether it changed, which
+// makes one commit cost as much as the whole space is large. This way nothing
+// is read from the work tree at all, and what a person has staged besides
+// stays staged and uncommitted.
+func (r *Repo) commitChanges(ctx context.Context, changes []Change, message string, env []string) (bool, error) {
+	dir, err := r.tempIndexDir(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer os.RemoveAll(dir)
+	ienv := []string{"GIT_INDEX_FILE=" + filepath.Join(dir, "index")}
+	// The index of this commit is thrown away; a repository set to split its
+	// index would keep a shared copy of it, the size of the whole index, in
+	// .git for every commit.
+	noSplit := []string{"-c", "core.splitIndex=false"}
+	head := r.Head(ctx)
+	headTree := ""
+	if head != "" {
+		if _, err := r.gitIn(ctx, ienv, nil, append(noSplit, "read-tree", "HEAD")...); err != nil {
+			return false, err
+		}
+		if headTree, err = r.git(ctx, "rev-parse", "--verify", "--quiet", "HEAD^{tree}"); err != nil {
+			return false, err
+		}
+	}
+	want := map[string]bool{}
+	var removed []string
+	for _, c := range changes {
+		switch c.Status {
+		case 'D':
+			removed = append(removed, c.Old)
+		case 'R':
+			removed = append(removed, c.Old)
+			want[c.New] = true
+		default:
+			want[c.New] = true
+		}
+	}
+	staged, err := r.stagedEntries(ctx, want)
+	if err != nil {
+		return false, err
+	}
+	zero := strings.Repeat("0", 40)
+	if len(head) > 40 {
+		zero = strings.Repeat("0", len(head))
+	}
+	var in bytes.Buffer
+	// Removals first: a name that was a file and is a folder now (or the
+	// other way round) must be gone before what replaces it goes in.
+	for _, p := range removed {
+		if !want[p] {
+			fmt.Fprintf(&in, "0 %s 0\t%s\x00", zero, p)
+		}
+	}
+	for _, e := range staged {
+		in.WriteString(e)
+		in.WriteByte(0)
+	}
+	if _, err := r.gitIn(ctx, ienv, in.Bytes(), append(noSplit, "update-index", "-z", "--index-info")...); err != nil {
+		return false, err
+	}
+	tree, err := r.gitIn(ctx, ienv, nil, append(noSplit, "write-tree")...)
+	if err != nil {
+		return false, err
+	}
+	if tree == headTree {
+		return false, nil // the change netted out to nothing
+	}
+	args, err := commitTreeArgs(tree, head)
+	if err != nil {
+		return false, err
+	}
+	commit, err := r.gitIn(ctx, env, []byte(message+"\n"), args...)
+	if err != nil {
+		return false, err
+	}
+	// The branch moves only if it is still where this commit was built.
+	if args, err = advanceHeadArgs(commit, head); err != nil {
+		return false, err
+	}
+	if _, err := r.git(ctx, args...); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// tempIndexDir makes the directory for a commit's own index, inside the git
+// directory: on the same disk as the repository, and found again after a
+// crash. Directories a crash left behind (older than any commit takes) are
+// removed first, so they do not pile up.
+func (r *Repo) tempIndexDir(ctx context.Context) (string, error) {
+	gd, err := r.absGitDir(ctx)
+	if err != nil {
+		return "", err
+	}
+	if old, _ := filepath.Glob(filepath.Join(gd, tempIndexPrefix+"*")); len(old) > 0 {
+		for _, d := range old {
+			if fi, err := os.Lstat(d); err == nil && fi.IsDir() && time.Since(fi.ModTime()) > time.Hour {
+				os.RemoveAll(d)
+			}
+		}
+	}
+	return os.MkdirTemp(gd, tempIndexPrefix)
+}
+
+const tempIndexPrefix = "petalbook-index-"
+
+// stagedEntries returns the real index's entries of these paths, each as
+// "mode id stage<TAB>path": what update-index --index-info takes. A path that
+// is not staged is an error: there would be nothing to commit for it.
+func (r *Repo) stagedEntries(ctx context.Context, want map[string]bool) ([]string, error) {
+	if len(want) == 0 {
+		return nil, nil
+	}
+	// Asked for by name, a command line's worth at a time: the whole index
+	// is never listed for the sake of a few files.
+	paths := make([]string, 0, len(want))
+	for p := range want {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	var entries []string
+	found := map[string]bool{}
+	for len(paths) > 0 {
+		n := min(len(paths), maxArgPaths)
+		out, err := r.run(ctx, Cmd{Args: append([]string{"ls-files", "-s", "-z", "--"}, paths[:n]...)})
+		if err != nil {
+			return nil, err
+		}
+		paths = paths[n:]
+		for _, e := range strings.Split(out, "\x00") {
+			// A name given may be a folder to Git and bring its files: only
+			// the names asked for are taken.
+			if _, p, ok := strings.Cut(e, "\t"); ok && want[p] && !found[p] {
+				entries = append(entries, e)
+				found[p] = true
+			}
+		}
+	}
+	for p := range want {
+		if !found[p] {
+			return nil, fmt.Errorf("%q is part of the change but is not staged", p)
+		}
+	}
+	return entries, nil
+}
+
+// exactNames answers whether a path exists under exactly the name given, by
+// the listing of each directory on the way (read once per directory). A name
+// in another Unicode form than the one asked for counts only when the file
+// system itself takes the two for one (macOS hands back names in a form of
+// its own): on one that does not, they are two different files, and the one
+// asked for is not there.
+type exactNames struct {
+	root string
+	dirs map[string]dirNames
+}
+
+type dirNames struct {
+	exact map[string]fs.DirEntry
+	nfc   map[string][]fs.DirEntry
+}
+
+func (x exactNames) list(dir string) (dirNames, error) {
+	if m, ok := x.dirs[dir]; ok {
+		return m, nil
+	}
+	m := dirNames{exact: map[string]fs.DirEntry{}, nfc: map[string][]fs.DirEntry{}}
+	entries, err := os.ReadDir(filepath.Join(x.root, filepath.FromSlash(dir)))
+	// No such directory (or a file where one is expected): nothing is in it.
+	if err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
+		return dirNames{}, err
+	}
+	for _, e := range entries {
+		m.exact[e.Name()] = e
+		k := norm.NFC.String(e.Name())
+		m.nfc[k] = append(m.nfc[k], e)
+	}
+	x.dirs[dir] = m
+	return m, nil
+}
+
+// entry is the directory entry of rel, or nil when no file or directory has
+// exactly that name.
+func (x exactNames) entry(rel string) (fs.DirEntry, error) {
+	dir := ""
+	segs := strings.Split(rel, "/")
+	for i, seg := range segs {
+		m, err := x.list(dir)
+		if err != nil {
+			return nil, err
+		}
+		e := m.exact[seg]
+		if e == nil {
+			e, err = x.sameForm(dir, seg, m.nfc[norm.NFC.String(seg)])
+			if err != nil {
+				return nil, err
+			}
+		}
+		if e == nil || i == len(segs)-1 {
+			return e, nil
+		}
+		dir = path.Join(dir, seg)
+	}
+	return nil, nil
+}
+
+// sameForm picks, of the entries whose names differ from seg only in Unicode
+// form, the one the file system finds under seg; nil if it finds none.
+func (x exactNames) sameForm(dir, seg string, cands []fs.DirEntry) (fs.DirEntry, error) {
+	if len(cands) == 0 {
+		return nil, nil
+	}
+	fi, err := os.Lstat(filepath.Join(x.root, filepath.FromSlash(dir), seg))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	for _, c := range cands {
+		if ci, err := c.Info(); err == nil && os.SameFile(fi, ci) {
+			return c, nil
+		}
+	}
+	return nil, nil
 }
 
 // unstageable reports the errors of staging a path that trying again cannot
@@ -404,24 +688,35 @@ func (r *Repo) Discard(ctx context.Context, parent string, paths []string) error
 	if len(paths) == 0 {
 		return nil
 	}
-	args := append([]string{"ls-tree", "-r", "-z", "--name-only", parent, "--"}, paths...)
+	// Which of the paths the parent had. A few are asked for by name; many
+	// would not fit on a command line, so then the whole tree is listed once
+	// and looked through here.
+	args := []string{"ls-tree", "-r", "-z", "--name-only", parent}
+	few := len(paths) <= maxArgPaths
+	if few {
+		args = append(append(args, "--"), paths...)
+	}
 	out, err := r.run(ctx, Cmd{Args: args})
 	if err != nil {
 		return err
 	}
+	want := map[string]bool{}
+	for _, p := range paths {
+		want[p] = true
+	}
 	had := map[string]bool{}
 	var restore []string
 	for _, p := range strings.Split(strings.TrimRight(out, "\x00"), "\x00") {
-		if p != "" {
+		if p != "" && (few || want[p]) {
 			had[p] = true
 			restore = append(restore, p)
 		}
 	}
-	if len(restore) > 0 {
-		if _, err := r.gitIn(ctx, nil, nulList(restore), "checkout", "--quiet", "--pathspec-from-file=-", "--pathspec-file-nul"); err != nil {
-			return err
-		}
-	}
+	// What the change added goes first, and what it replaced or removed comes
+	// back after. The other way round, a file renamed to another spelling of
+	// its own name (a change of case, on a file system that ignores case) would
+	// be restored under the old name and then deleted under the new one, which
+	// there is the same file.
 	var errs []error
 	for _, p := range paths {
 		if had[p] {
@@ -436,8 +731,17 @@ func (r *Repo) Discard(ctx context.Context, parent string, paths []string) error
 			errs = append(errs, err)
 		}
 	}
+	if len(restore) > 0 {
+		if _, err := r.gitIn(ctx, nil, nulList(restore), "checkout", "--quiet", "--pathspec-from-file=-", "--pathspec-file-nul"); err != nil {
+			return errors.Join(append(errs, err)...)
+		}
+	}
 	return errors.Join(errs...)
 }
+
+// maxArgPaths is how many paths are put on a git command line; more go
+// through standard input or are filtered here.
+const maxArgPaths = 100
 
 // safeJoin is dir plus rel, refusing a path that goes through a symbolic link.
 func safeJoin(dir, rel string) (string, error) {

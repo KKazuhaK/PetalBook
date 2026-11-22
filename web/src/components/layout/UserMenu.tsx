@@ -5,16 +5,17 @@ import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { applySession, useSession } from '@/api/hooks'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { LanguageRadioItems } from './LanguageMenu'
+import { useOpenSettings } from '@/components/settings/useSettings'
 import { flushAllSaves } from '@/editor/saveController'
 import { t } from '@/i18n'
 
 // Accounts mode only: the person's name, and settings, users (administrators)
-// and sign out behind it.
+// and sign out behind it. The language and theme live in Settings, Preferences.
 export function UserMenu() {
   const session = useSession().data
   const qc = useQueryClient()
   const navigate = useNavigate()
+  const openSettings = useOpenSettings()
   const user = session?.user
   if (!user) return null
 
@@ -44,18 +45,16 @@ export function UserMenu() {
         <span className="truncate">{user.name}</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" side="top" className="min-w-48">
-        <DropdownMenuItem onClick={() => navigate('/settings')}>
+        <DropdownMenuItem onClick={() => openSettings(session?.mode === 'accounts' ? 'profile' : 'preferences')}>
           <Settings />
           {t.userMenu.settings}
         </DropdownMenuItem>
         {user.role === 'admin' && (
-          <DropdownMenuItem onClick={() => navigate('/users')}>
+          <DropdownMenuItem onClick={() => openSettings('users')}>
             <Users />
             {t.userMenu.users}
           </DropdownMenuItem>
         )}
-        <DropdownMenuSeparator />
-        <LanguageRadioItems />
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => void signOut()}>
           <LogOut />

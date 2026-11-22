@@ -7,6 +7,8 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { toast } from 'sonner'
 import { ApiError, onForbidden, onSignedOut, onUnavailable } from '@/api/client'
 import { keys, lastSpace, rememberSpace, useSession, useSpaces } from '@/api/hooks'
+import { SpaceSettingsRedirect } from '@/components/settings/SpaceSettingsRedirect'
+import { settingsPath } from '@/components/settings/sections'
 import type { SessionInfo } from '@/api/types'
 import { AppShell } from '@/components/layout/AppShell'
 import { ErrorState, PageFallback } from '@/components/common'
@@ -23,9 +25,7 @@ const PageEditor = lazy(() => import('@/pages/PageEditor'))
 const LoginPage = lazy(() => import('@/pages/auth/LoginPage'))
 const SetupPage = lazy(() => import('@/pages/auth/SetupPage'))
 const InvitePage = lazy(() => import('@/pages/auth/InvitePage'))
-const SettingsPage = lazy(() => import('@/pages/auth/SettingsPage'))
-const UsersPage = lazy(() => import('@/pages/auth/UsersPage'))
-const SpaceSettingsPage = lazy(() => import('@/pages/SpaceSettingsPage'))
+const SettingsRoute = lazy(() => import('@/components/settings/SettingsRoute'))
 const ImportPage = lazy(() => import('@/pages/ImportPage'))
 
 const later = (el: ReactNode) => <Suspense fallback={<PageFallback />}>{el}</Suspense>
@@ -109,8 +109,9 @@ const router = createBrowserRouter([
           { path: 't/*', element: <LegacyRedirect /> },
           { path: 'search', element: <LegacyRedirect /> },
           { path: 'p/:id', element: <LegacyRedirect /> },
-          { path: 'settings', element: later(<SettingsPage />) },
-          { path: 'users', element: later(<UsersPage />) },
+          // The settings dialog. `/settings` with no section picks the first one.
+          { path: 'settings/:section?', element: later(<SettingsRoute />) },
+          { path: 'users', element: <Navigate to={settingsPath('users')} replace /> },
           {
             path: 's/:space',
             element: <SpaceGate />,
@@ -120,7 +121,7 @@ const router = createBrowserRouter([
               { path: 'f/*', element: <FolderList /> },
               { path: 't/*', element: <TagList /> },
               { path: 'search', element: <SearchList /> },
-              { path: 'settings', element: later(<SpaceSettingsPage />) },
+              { path: 'settings', element: <SpaceSettingsRedirect /> },
               { path: 'import', element: later(<ImportPage />) },
               { path: 'p/:id', element: later(<PageEditor />) },
               { path: '*', element: <NotFoundPage /> },

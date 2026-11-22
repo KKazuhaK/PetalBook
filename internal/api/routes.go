@@ -96,7 +96,11 @@ var routeTable = []route{
 	{"POST", "/api/spaces/{space}/pages/{id}/move", member, false, false, false, (*server).movePage},
 	{"GET", "/api/spaces/{space}/tree", member, false, false, false, (*server).getTree},
 	{"POST", "/api/spaces/{space}/folders", member, false, false, false, (*server).createFolder},
+	{"POST", "/api/spaces/{space}/folders/move", member, false, false, false, (*server).moveFolder},
+	{"DELETE", "/api/spaces/{space}/folders", member, false, false, false, (*server).deleteFolder},
+	{"POST", "/api/spaces/{space}/pages/batch", member, false, false, false, (*server).batchPages},
 	{"GET", "/api/spaces/{space}/tags", member, false, false, false, (*server).getTags},
+	{"PUT", "/api/spaces/{space}/tags/{tag}", member, false, false, false, (*server).putTag},
 	{"POST", "/api/spaces/{space}/reindex", member, false, false, false, (*server).reindex},
 
 	{"POST", "/api/spaces/{space}/pages/{id}/assets", member, false, false, true, (*server).putAsset},

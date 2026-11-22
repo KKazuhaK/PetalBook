@@ -88,9 +88,12 @@ func (f fakeInfo) Sys() any           { return nil }
 
 // fakeFS is a directory of files with inode numbers, case-sensitive or not.
 type fakeFS struct {
-	mu    sync.Mutex
-	fold  bool
-	files map[string]int // exact name -> inode
+	mu   sync.Mutex
+	fold bool
+	// selfNoop: a rename onto a name that is the same entry does nothing and
+	// succeeds, as on Linux (rename(2) of a file onto itself).
+	selfNoop bool
+	files    map[string]int // exact name -> inode
 }
 
 func (f *fakeFS) find(name string) (string, bool) {
@@ -127,6 +130,9 @@ func (f *fakeFS) ops() fileOps {
 				return fs.ErrNotExist
 			}
 			ino := f.files[n]
+			if t, ok := f.find(base(to)); ok && f.selfNoop && f.files[t] == ino {
+				return nil
+			}
 			delete(f.files, n)
 			if old, ok := f.find(base(to)); ok { // rename(2) replaces
 				delete(f.files, old)
@@ -191,6 +197,13 @@ func TestRenameNeverReplacesAnotherFile(t *testing.T) {
 
 	// Case-insensitive: "a.md" is the same file as "A.md", so renaming is allowed.
 	ci := &fakeFS{fold: true, files: map[string]int{"A.md": 1}}
+	s = &Space{ops: ci.ops()}
+	if name, err = s.moveNamed("/d/A.md", "/d", "a", nil); err != nil || name != "a.md" || ci.files["a.md"] != 1 || len(ci.files) != 1 {
+		t.Fatalf("%q %v %v", name, err, ci.files)
+	}
+	// The same where a rename onto the same entry changes nothing (Linux):
+	// the file is still respelled, and nothing else is left.
+	ci = &fakeFS{fold: true, selfNoop: true, files: map[string]int{"A.md": 1}}
 	s = &Space{ops: ci.ops()}
 	if name, err = s.moveNamed("/d/A.md", "/d", "a", nil); err != nil || name != "a.md" || ci.files["a.md"] != 1 || len(ci.files) != 1 {
 		t.Fatalf("%q %v %v", name, err, ci.files)
@@ -514,7 +527,7 @@ func TestSavesDoNotWaitForGit(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	s.cm.git.before = func(args []string) {
-		if args[0] == "commit" {
+		if args[0] == "commit-tree" {
 			once.Do(func() { close(entered) })
 			<-release
 		}

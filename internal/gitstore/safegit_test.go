@@ -93,8 +93,16 @@ func problems(c Cmd) []string {
 				out = append(out, "update-ref deletion or batch")
 			}
 		}
-		if len(rest) != 2 || !strings.HasPrefix(rest[0], "refs/petalbook/unpushed/") {
-			out = append(out, "update-ref outside refs/petalbook/unpushed/")
+		// Allowed: a new ref under refs/petalbook/unpushed/, or HEAD moved from
+		// the commit it is at (all zeros: it must not exist yet) to a new one.
+		// Both values are full ids: a ref name or "" would let it move anywhere
+		// or delete.
+		switch {
+		case len(rest) == 2 && strings.HasPrefix(rest[0], "refs/petalbook/unpushed/"):
+		case len(rest) == 3 && rest[0] == "HEAD" && fullID(rest[1]) && fullID(rest[2]) &&
+			len(rest[1]) == len(rest[2]) && strings.Trim(rest[1], "0") != "":
+		default:
+			out = append(out, "update-ref other than a new unpushed ref or a compare-and-swap of HEAD")
 		}
 	case "remote":
 		if len(rest) > 0 && rest[0] != "get-url" && rest[0] != "add" && rest[0] != "set-url" && rest[0] != "remove" {
@@ -107,6 +115,19 @@ func problems(c Cmd) []string {
 		out = append(out, "history rewriting command "+sub)
 	}
 	return out
+}
+
+// fullID is a whole commit id, SHA-1 or SHA-256, in lower-case hex.
+func fullID(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func TestCheckerCatchesDestructiveCommands(t *testing.T) {
@@ -126,6 +147,14 @@ func TestCheckerCatchesDestructiveCommands(t *testing.T) {
 		{"tag", "-d", "v1"},
 		{"update-ref", "-d", "refs/heads/main"},
 		{"update-ref", "refs/heads/main", "0000000000000000000000000000000000000000"},
+		{"update-ref", "HEAD", strings.Repeat("a", 40)},
+		{"update-ref", "HEAD", strings.Repeat("0", 40), strings.Repeat("a", 40)},
+		{"update-ref", "HEAD", "", strings.Repeat("a", 40)},
+		{"update-ref", "HEAD", "refs/heads/other", strings.Repeat("a", 40)},
+		{"update-ref", "HEAD", strings.Repeat("b", 40), "main"},
+		{"update-ref", "HEAD", strings.Repeat("b", 64), strings.Repeat("a", 40)},
+		{"update-ref", "refs/heads/main", strings.Repeat("b", 40), strings.Repeat("a", 40)},
+		{"update-ref", "--no-deref", "HEAD", strings.Repeat("b", 40), strings.Repeat("a", 40)},
 		{"-c", "x=y", "push", "-f", "origin"},
 		{"--git-dir", "x", "push", "-f", "origin"},
 		{"remote", "prune", "origin"},
@@ -143,6 +172,8 @@ func TestCheckerCatchesDestructiveCommands(t *testing.T) {
 		{"reset", "--quiet", "--hard", "refs/remotes/origin/main"},
 		{"fetch", "--quiet", "--no-tags", "origin", "main"},
 		{"update-ref", "refs/petalbook/unpushed/20261121-120000", strings.Repeat("a", 40)},
+		{"update-ref", "HEAD", strings.Repeat("b", 40), strings.Repeat("a", 40)},
+		{"update-ref", "HEAD", strings.Repeat("b", 40), strings.Repeat("0", 40)},
 		{"remote", "add", "origin", "https://github.com/a/b.git"},
 		{"remote", "remove", "origin"},
 		{"log", "--follow", "--name-status", "-z", "-n", "5", "HEAD", "--", "a.md"},
@@ -174,6 +205,21 @@ func TestRuntimeGuardRefusesDestructiveCommands(t *testing.T) {
 		{"update-ref", "refs/petalbook/unpushed/x", "HEAD"},
 		{"update-ref", "refs/petalbook/unpushed/x/../../heads/main", sha},
 		{"update-ref", "refs/petalbook/unpushed/x", sha, sha},
+		{"update-ref", "HEAD", sha},
+		{"update-ref", "HEAD", sha, "main"},
+		{"update-ref", "HEAD", strings.Repeat("0", 40), sha},
+		{"update-ref", "HEAD", strings.Repeat("b", 64), sha},
+		{"update-ref", "--no-deref", "HEAD", strings.Repeat("b", 40), sha},
+		{"update-ref", "-m", "x", "HEAD", strings.Repeat("b", 40), sha},
+		{"read-tree", "--reset", "-u", "HEAD"},
+		{"read-tree", sha},
+		{"write-tree", "--prefix=x"},
+		{"commit-tree", sha, "-m", "x"},
+		{"commit-tree", sha, "-p", "HEAD", "-F", "-"},
+		{"commit-tree", sha, "-F", "/etc/passwd"},
+		{"commit-tree", sha, "-p", sha, "-p", sha, "-F", "-"},
+		{"update-index", "--index-info", "--chmod=+x"},
+		{"ls-files", "-s", "-z", "--with-tree=x"},
 		{"remote", "prune", "origin"},
 		{"remote", "set-url", "origin"},
 		{"remote", "add", "upstream", "https://x/y"},
@@ -216,6 +262,7 @@ func TestRuntimeGuardRefusesDestructiveCommands(t *testing.T) {
 		{"commit", "--quiet", "-m", "x"},
 		{"commit", "--quiet", "--amend", "-F", "-"},
 		{"commit", "--quiet", "-F", "-"},
+		{"commit", "--quiet", "--no-verify", "--message=x", "--pathspec-from-file=-", "--pathspec-file-nul"},
 		{"rev-parse", "--git-dir", "--exec-path"},
 		{"config", "user.name", "evil"},
 		{"config", "--global", "user.name"},
@@ -241,10 +288,17 @@ func TestRuntimeGuardRefusesDestructiveCommands(t *testing.T) {
 		{"remote", "add", "origin", "https://github.com/a/b.git"},
 		{"remote", "remove", "origin"},
 		{"update-ref", "refs/petalbook/unpushed/20261121-120000", sha},
+		{"update-ref", "HEAD", strings.Repeat("b", 40), sha},
+		{"update-ref", "HEAD", sha, strings.Repeat("0", 40)},
+		{"read-tree", "HEAD"},
+		{"write-tree"},
+		{"commit-tree", sha, "-F", "-"},
+		{"commit-tree", sha, "-p", strings.Repeat("b", 40), "-F", "-"},
+		{"update-index", "-z", "--index-info"},
+		{"ls-files", "-s", "-z", "--", "a.md", "-f"},
 		{"ls-remote", "--heads", "origin", "refs/heads/main"},
 		{"log", "--follow", "--name-status", "-z", "--no-color", "-n", "5", "--format=%H%x00%ct%x00%an", sha, "--", "--weird-file"},
 		{"cat-file", "--batch"},
-		{"commit", "--quiet", "--no-verify", "--message=-x subject", "--pathspec-from-file=-", "--pathspec-file-nul"},
 		{"diff", "--name-status", "-z", "--no-renames", sha, sha},
 		{"diff", "--cached", "--name-status", "-z", "-M"},
 		{"ls-tree", "-r", "-z", "--name-only", sha, "--", "-f"},

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -84,6 +85,20 @@ func (c *committer) Touch(paths ...string) {
 	case c.wake <- struct{}{}:
 	default:
 	}
+}
+
+// pendingUnder lists the paths in dir (and below) that changed and are not
+// committed yet.
+func (c *committer) pendingUnder(dir string) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+	for p := range c.paths {
+		if strings.HasPrefix(p, dir+"/") {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func (c *committer) loop() {

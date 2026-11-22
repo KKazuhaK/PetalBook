@@ -5,6 +5,7 @@ import { syncOf, useActiveSpace, useCreateSpace, useRenameSpace } from '@/api/ho
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { spaceUrls } from '@/lib/urls'
 import { t } from '@/i18n'
+import { useOpenSettings } from '@/components/settings/useSettings'
 import { NameDialog } from './NameDialog'
 import { SyncIndicator } from './SyncIndicator'
 
@@ -13,6 +14,7 @@ import { SyncIndicator } from './SyncIndicator'
 export function SpaceSwitcher() {
   const { id, spaces } = useActiveSpace()
   const navigate = useNavigate()
+  const openSettings = useOpenSettings()
   const create = useCreateSpace()
   const rename = useRenameSpace()
   const [dialog, setDialog] = useState<'new' | 'rename' | null>(null)
@@ -47,7 +49,7 @@ export function SpaceSwitcher() {
               {t.spaces.rename}
             </DropdownMenuItem>
             {/* Only the owner can change where the space keeps its repository. */}
-            <DropdownMenuItem disabled={!current || current.role !== 'owner'} onClick={() => id && navigate(spaceUrls(id).settings())}>
+            <DropdownMenuItem disabled={!current || current.role !== 'owner'} onClick={() => id && openSettings('sync')}>
               {t.spaces.settings}
             </DropdownMenuItem>
           </DropdownMenuContent>

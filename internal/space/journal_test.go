@@ -2,6 +2,8 @@ package space
 
 import (
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -343,4 +345,244 @@ func TestStaleRowIsRepairedImmediately(t *testing.T) {
 	if s.walks.Load() > before {
 		t.Fatalf("%d walks for unknown ids inside the interval", s.walks.Load()-before)
 	}
+}
+
+// A rename through a third name (Space.rename) that a crash stopped between
+// its two steps: the next start finishes it, and the page or folder is
+// committed under its new name, never as deleted. Where the new name has been
+// taken meanwhile, what is under the third name is committed there.
+func TestRespellingStoppedByACrashIsFinished(t *testing.T) {
+	needGit(t)
+	type step struct{ from, mid, to string }
+	for _, c := range []struct {
+		name     string
+		folder   string
+		take     bool // something else holds the new name at the restart
+		want     []string
+		wantGone []string
+	}{
+		{name: "page", want: []string{"apple.md"}, wantGone: []string{"Apple.md", "apple (renaming 1).md"}},
+		{name: "page whose new name was taken", take: true, want: []string{"apple (renaming 1).md", "apple.md"}, wantGone: []string{"Apple.md"}},
+		{name: "folder", folder: "notes", want: []string{"Notes/Apple.md"}, wantGone: []string{"notes/Apple.md", "Notes (renaming 1)/Apple.md"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			s := openAt(t, root)
+			p := mustCreate(t, s, c.folder, meta("title", "Apple"), "fruit\n")
+			if err := s.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			crash(s)
+			st := step{"Apple.md", "apple (renaming 1).md", "apple.md"}
+			recs := []string{`{"op":"m","f":"Apple.md","to":"apple.md"}`}
+			inside := ""
+			if c.folder != "" {
+				st = step{"notes", "Notes (renaming 1)", "Notes"}
+				inside = "/Apple.md"
+				recs = []string{`{"op":"t","p":"notes/Apple.md"}`, `{"op":"t","p":"Notes/Apple.md"}`}
+			}
+			dir := ""
+			if c.folder != "" {
+				dir = `,"dir":true`
+			}
+			recs = append(recs, `{"op":"r","f":"`+st.from+`","to":"`+st.to+`","p":"`+st.mid+`"`+dir+`}`,
+				`{"op":"t","p":"`+st.mid+inside+`"}`)
+			if err := os.Rename(filepath.Join(root, st.from), filepath.Join(root, st.mid)); err != nil {
+				t.Fatal(err)
+			}
+			if c.take {
+				os.WriteFile(filepath.Join(root, st.to), []byte("someone else's\n"), 0o644)
+			}
+			os.WriteFile(filepath.Join(root, ".petalbook", "cache", "pending.journal"), []byte(strings.Join(recs, "\n")+"\n"), 0o644)
+
+			s2 := openAt(t, root)
+			defer s2.Close()
+			if err := s2.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			files, _ := gitTry(root, "-c", "core.quotepath=off", "ls-files")
+			for _, w := range c.want {
+				if !strings.Contains("\n"+files+"\n", "\n"+w+"\n") {
+					t.Fatalf("%s is not committed:\n%s", w, files)
+				}
+			}
+			for _, g := range c.wantGone {
+				if strings.Contains("\n"+files+"\n", "\n"+g+"\n") {
+					t.Fatalf("%s is still committed:\n%s", g, files)
+				}
+			}
+			if _, err := s2.Get(p.ID); err != nil {
+				t.Fatalf("the page is lost: %v", err)
+			}
+			if c.take {
+				if b, _ := os.ReadFile(filepath.Join(root, st.to)); string(b) != "someone else's\n" {
+					t.Fatalf("the file that took the new name: %q", b)
+				}
+			}
+		})
+	}
+}
+
+// A folder's names are not paths to commit: its files are journaled one by
+// one. Committing the folder itself would be a path Git cannot stage, and a
+// space that follows a remote refuses changes after that.
+func TestRecoveryOfAFolderRespellingListsOnlyFiles(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "Notes"), 0o755)
+	got := recoverPending(root, []jrec{
+		{Op: "t", Path: "notes/a.md"}, {Op: "t", Path: "Notes/a.md"},
+		{Op: "r", From: "notes", To: "Notes", Path: "Notes (renaming 1)", Dir: true},
+		{Op: "t", Path: "Notes (renaming 1)/a.md"},
+	})
+	if strings.Join(got, ",") != "Notes (renaming 1)/a.md,Notes/a.md,notes/a.md" {
+		t.Fatalf("%q", got)
+	}
+}
+
+// A move by case recorded, done, and then a crash before the commit: on a
+// file system that folds names both names find the one file, and finishing
+// the move must not remove it as "the old name".
+func TestFinishMoveKeepsAFileRenamedByCase(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "apple.md"), []byte("the page\n"), 0o644)
+	if _, err := os.Stat(filepath.Join(root, "Apple.md")); err != nil {
+		t.Skip("this file system tells names apart by case")
+	}
+	recoverPending(root, []jrec{{Op: "m", From: "Apple.md", To: "apple.md"}})
+	if b, err := os.ReadFile(filepath.Join(root, "apple.md")); err != nil || string(b) != "the page\n" {
+		t.Fatalf("%q %v", b, err)
+	}
+}
+
+// A move to another folder under the same file name, stopped after the link:
+// the old name is removed as before.
+func TestFinishMoveAcrossFoldersRemovesTheOldName(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "a"), 0o755)
+	os.MkdirAll(filepath.Join(root, "b"), 0o755)
+	os.WriteFile(filepath.Join(root, "a", "x.md"), []byte("the page\n"), 0o644)
+	if err := os.Link(filepath.Join(root, "a", "x.md"), filepath.Join(root, "b", "x.md")); err != nil {
+		t.Skip("no hard links here")
+	}
+	recoverPending(root, []jrec{{Op: "m", From: "a/x.md", To: "b/x.md"}})
+	if _, err := os.Lstat(filepath.Join(root, "a", "x.md")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the old name is still there: %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(root, "b", "x.md")); err != nil || string(b) != "the page\n" {
+		t.Fatalf("%q %v", b, err)
+	}
+}
+
+// foldingOps makes a case-sensitive disk act like a case-folding Linux one
+// for the space's own file operations: a name finds an entry spelled in any
+// case, and a rename onto the same entry under another spelling does nothing.
+// fail, when set, is asked before every rename and may refuse it.
+func foldingOps(fail func(n int, from, to string) error) fileOps {
+	ops := osOps()
+	find := func(p string) string {
+		if _, err := os.Lstat(p); err == nil {
+			return p
+		}
+		entries, _ := os.ReadDir(filepath.Dir(p))
+		for _, e := range entries {
+			if strings.EqualFold(e.Name(), filepath.Base(p)) {
+				return filepath.Join(filepath.Dir(p), e.Name())
+			}
+		}
+		return p
+	}
+	ops.Lstat = func(p string) (fs.FileInfo, error) { return os.Lstat(find(p)) }
+	var n int
+	ops.Rename = func(from, to string) error {
+		n++
+		if fail != nil {
+			if err := fail(n, from, to); err != nil {
+				return err
+			}
+		}
+		if a, b := find(from), find(to); a == b {
+			return nil
+		}
+		return os.Rename(find(from), to)
+	}
+	return ops
+}
+
+// The same end to end, through Space.rename: a page and a folder renamed by
+// case on such a disk, and the process dying between the two steps (the
+// second rename and the way back both fail, then the process is gone).
+func TestRespellingThroughTheSpaceSurvivesACrash(t *testing.T) {
+	needGit(t)
+	stop := func(n int, from, to string) error {
+		if n >= 2 {
+			return errors.New("the process is gone")
+		}
+		return nil
+	}
+	for _, keepRunning := range []bool{false, true} {
+		t.Run(fmt.Sprintf("page, running on %v", keepRunning), func(t *testing.T) {
+			root := t.TempDir()
+			s := openAt(t, root)
+			p := mustCreate(t, s, "", meta("title", "Apple"), "fruit\n")
+			if err := s.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			s.ops = foldingOps(stop)
+			if _, err := s.Save(p.ID, p.Rev, meta("title", "apple"), "fruit\n"); err == nil {
+				t.Fatal("the save went through although the rename did not")
+			}
+			if keepRunning {
+				// No crash: the space goes on, and its next commit must not
+				// take the page for deleted.
+				s.ops = osOps()
+				if err := s.Flush(); err != nil {
+					t.Fatal(err)
+				}
+				files, _ := gitTry(root, "ls-files", "--", "*.md")
+				if !strings.HasPrefix(files, "apple (renaming ") {
+					t.Fatalf("committed: %q", files)
+				}
+				s.Close()
+				return
+			}
+			crash(s)
+			s2 := openAt(t, root)
+			defer s2.Close()
+			if err := s2.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			files, _ := gitTry(root, "ls-files", "--", "*.md")
+			if files != "apple.md" {
+				t.Fatalf("committed: %q", files)
+			}
+			if _, err := s2.Get(p.ID); err != nil {
+				t.Fatalf("the page is lost: %v", err)
+			}
+		})
+	}
+	t.Run("folder", func(t *testing.T) {
+		root := t.TempDir()
+		s := openAt(t, root)
+		p := mustCreate(t, s, "notes", meta("title", "Apple"), "fruit\n")
+		if err := s.Flush(); err != nil {
+			t.Fatal(err)
+		}
+		s.ops = foldingOps(stop)
+		if _, err := s.MoveFolder("notes", "Notes"); err == nil {
+			t.Fatal("the move went through although the rename did not")
+		}
+		crash(s)
+		s2 := openAt(t, root)
+		defer s2.Close()
+		if err := s2.Flush(); err != nil {
+			t.Fatal(err)
+		}
+		files, _ := gitTry(root, "ls-files", "--", "*.md")
+		if files != "Notes/Apple.md" {
+			t.Fatalf("committed: %q", files)
+		}
+		if _, err := s2.Get(p.ID); err != nil {
+			t.Fatalf("the page is lost: %v", err)
+		}
+	})
 }

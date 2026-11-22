@@ -36,7 +36,7 @@ describe('folders', () => {
     expect(nodes.map((n) => n.path).sort()).toEqual(['Tang', '随笔'])
     const essays = nodes.find((n) => n.path === '随笔')!
     expect(essays.pages).toBe(2)
-    expect(essays.children).toEqual([{ path: '随笔/2026', name: '2026', pages: 4, children: [] }])
+    expect(essays.children).toEqual([{ path: '随笔/2026', name: '2026', pages: 4, total: 4, children: [] }])
     expect(buildFolderTree([{ path: 'a/b/c', pages: 1 }]).nodes[0].children[0].children[0].path).toBe('a/b/c')
   })
   it('builds URLs inside a space that keep slashes and escape the rest', () => {

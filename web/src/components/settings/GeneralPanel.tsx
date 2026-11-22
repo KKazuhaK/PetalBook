@@ -1,0 +1,68 @@
+import { useState, type FormEvent } from 'react'
+import { toast } from 'sonner'
+import { ApiError } from '@/api/client'
+import { useSession, useSpaces, useUpdateSpace } from '@/api/hooks'
+import type { SpaceInfo } from '@/api/types'
+import { Field } from '@/components/auth/Field'
+import { PageFallback, Spinner } from '@/components/common'
+import { Button } from '@/components/ui/button'
+import { t } from '@/i18n'
+import { SettingsSection } from './SettingsParts'
+import { InboxSection } from './SyncPanel'
+
+// The space's own name and its inbox folder. In single-user mode both are set
+// when the server starts, so they are shown and not changed here.
+export function GeneralPanel({ space }: { space: string }) {
+  const session = useSession().data
+  const spaces = useSpaces()
+  const current = spaces.data?.spaces.find((s) => s.id === space)
+  if (!session || spaces.isPending) return <PageFallback />
+  if (!current) return <p className="rounded-lg border p-4 text-sm text-muted-foreground">{t.editor.spaceMissing}</p>
+  const single = session.mode === 'single'
+  if (!single && current.role !== 'owner') return <p className="rounded-lg border p-4 text-sm text-muted-foreground">{t.remote.ownerOnly}</p>
+  return (
+    <div className="space-y-8">
+      <NameSection space={current} readOnly={single} />
+      <InboxSection space={current} readOnly={single} />
+    </div>
+  )
+}
+
+function NameSection({ space, readOnly }: { space: SpaceInfo; readOnly: boolean }) {
+  const update = useUpdateSpace()
+  const [value, setValue] = useState(space.name)
+  const [error, setError] = useState('')
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (update.isPending) return
+    const name = value.trim()
+    const length = Array.from(name).length
+    if (length < 1 || length > 80) return setError(t.spaces.nameInvalid)
+    setError('')
+    if (name === space.name) return setValue(name)
+    try {
+      const saved = await update.mutateAsync({ id: space.id, name })
+      setValue(saved.name)
+      toast.success(t.general.nameSaved)
+    } catch (err) {
+      setError(err instanceof ApiError && err.code === 'invalid' ? err.message : t.fmt.labelled(t.spaces.failed, err instanceof Error ? err.message : ''))
+    }
+  }
+
+  return (
+    <SettingsSection title={t.general.nameTitle} id="space-name-title">
+      <form className="grid gap-3" onSubmit={(e) => void submit(e)} noValidate>
+        <Field label={t.spaces.nameLabel} help={readOnly ? t.general.nameReadOnly : t.spaces.nameHelp} value={readOnly ? space.name : value} onChange={(e) => setValue(e.target.value)} readOnly={readOnly} error={error} autoComplete="off" />
+        {!readOnly && (
+          <div>
+            <Button type="submit" disabled={update.isPending || value.trim() === space.name}>
+              {update.isPending && <Spinner />}
+              {t.spaces.save}
+            </Button>
+          </div>
+        )}
+      </form>
+    </SettingsSection>
+  )
+}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { createExtensions, type DocJSON } from '@/markdown'
 import { addressToUrl } from '@/lib/fileAddress'
+import { CodeBlockWithView } from '@/components/editor/code/codeBlock'
 import { diffExtensions } from './diffExtension'
 
 // The page's own extensions and typography, read-only, plus what draws changes.
@@ -19,7 +20,7 @@ class Where {
     this.folder = folder
   }
 }
-const pageExtensions = (where: Where) => [...createExtensions({ linkOpensOnClick: false, resolveImageSrc: (src) => addressToUrl(where.space, where.folder, src) }), ...diffExtensions]
+const pageExtensions = (where: Where) => [...createExtensions({ linkOpensOnClick: false, resolveImageSrc: (src) => addressToUrl(where.space, where.folder, src), codeBlock: CodeBlockWithView }), ...diffExtensions]
 
 // A run of changes next to each other (a deletion and the insertion that
 // replaces it) is one place to jump to.

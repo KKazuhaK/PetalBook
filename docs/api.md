@@ -510,6 +510,12 @@ Query parameters, all optional:
 | `recursive` | `true` to include subfolders of `folder` |
 | `tag` | only pages with this tag (repeatable: all must match) |
 | `q` | full-text search over title, subtitle, source and body |
+| `in` | with `q`: `title` searches titles only |
+| `updatedFrom`, `updatedTo` | only pages last written on or after / on or before this day (`2026-11-01`, UTC) |
+| `createdFrom`, `createdTo` | the same for the `created` date of the header; a page without one never matches |
+
+A date that is not a day written `YYYY-MM-DD`, or lies outside the years 1970
+to 2261, is `400 invalid`.
 | `sort` | `updated` (default), `created`, `title`; prefix `-` for descending. Default is `-updated`. With `q` and no `sort`, results are ordered by relevance |
 | `limit` | 1–200, default 50 |
 | `cursor` | the `next` value of the previous response |
@@ -692,6 +698,27 @@ Moves the file, creating the folder if needed. Returns the page.
 
 `204`. The file is removed from the working tree; it remains in Git history.
 
+### `POST /api/spaces/{space}/pages/batch`
+
+Moves or deletes several pages as one change: one commit, and in a space
+that follows a remote one push, or nothing at all. In a local space a failure
+half way (a full disk) leaves the pages handled so far moved or deleted; what
+can be refused beforehand (an unknown id, a bad folder) is refused before
+anything changes.
+
+```json
+{"op": "move", "ids": ["01JD3K8Q7Z", "01JD3K8Q80"], "folder": "随笔/2026"}
+{"op": "delete", "ids": ["01JD3K8Q7Z"]}
+```
+
+`ids` holds 1 to 500 page ids, each once. `200` with `{"pages": 2}`: how
+many were moved or deleted. A page that is already in `folder` counts and is
+left where it is. `404 not_found` when one of the ids is not a page, and
+`400 invalid` for a bad `op`, a list that is empty, too long or names an id
+twice, a `move` without `folder` (`""` is the top level), or a `folder` that
+cannot be one: in both cases nothing is changed. Deleting a page also removes the drafts of it, as deleting one page
+does.
+
 ## Files
 
 Images and other attachments are ordinary files of the space. The ones the
@@ -849,13 +876,61 @@ letter case (that name is reserved for attachments), or a name ending in
 `.md` (that is how page files are named). The same applies to folders made
 on the way by creating or moving a page.
 
+### `POST /api/spaces/{space}/folders/move`
+
+```json
+{"from": "随笔/2026", "to": "归档/2026"}
+```
+
+Moves a folder with everything in it, which is also how a folder is renamed
+(`{"from": "随笔", "to": "散文"}`). Missing parents of `to` are made. `200`
+with `{"path": "归档/2026"}`. Pages keep their ids, so links, drafts and
+attachments are not affected. It is one change: one commit, and one push in
+a space that follows a remote.
+
+Errors: `404 not_found` when `from` is not a folder; `409 exists` when `to`
+already exists (folders are not merged), except that `to` may be another
+spelling of `from` itself (a change of letter case); `400 invalid` when
+`from` is the root, when `to` is `from` or inside it, or when `to` is not a
+folder name the server makes (see `POST …/folders`).
+
+### `DELETE /api/spaces/{space}/folders?path={path}`
+
+Removes a folder. `204`. Without `recursive=true` the folder must hold no
+pages, in it or below it (`409 conflict` otherwise; empty subfolders go with
+it). With `recursive=true` the pages in it and below it are deleted like
+`DELETE …/pages/{id}` deletes one, drafts included; they remain in Git
+history. Files in the folder that are not pages are left where they are, and
+then so is the folder that holds them. `404 not_found` when it is not a
+folder, `400 invalid` for the root.
+
 ### `GET /api/spaces/{space}/tags`
 
 ```json
-{"tags": [{"tag": "栀子", "pages": 41}]}
+{"tags": [{"tag": "栀子", "pages": 41, "color": "rose"}]}
 ```
 
-Ordered by count, descending.
+Ordered by count, descending. `color` is absent when the tag has none.
+
+### `PUT /api/spaces/{space}/tags/{tag}`
+
+```json
+{"color": "rose"}
+```
+
+Sets the colour of a tag, or removes it with `{"color": null}`. The colour
+is either one of the names `gray`, `red`, `orange`, `amber`, `green`, `teal`,
+`blue`, `purple`, `pink`, `rose` (how each looks is the client's business,
+and follows its theme), or a colour of the person's own as `#rrggbb` (six
+hexadecimal digits; stored in lower case). `200`
+with `{"tag": "栀子", "color": "rose"}` (`color` absent when removed).
+`400 invalid` for another value, for a tag that is empty, longer than 200
+bytes or has a line break in it, and when `.petalbook/tags.yml` exists but
+cannot be read as YAML (it is then left as it is, for a person to fix). The
+tag in the address is percent-encoded, so it may contain `/`. The tag need
+not be in use (it is listed, with its colour, once a page uses it). Colours are
+kept in `.petalbook/tags.yml` in the space, so they travel with the
+repository; a change is committed like any other.
 
 ## Maintenance
 

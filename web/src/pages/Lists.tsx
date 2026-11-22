@@ -1,5 +1,6 @@
 import { useParams, useSearchParams } from 'react-router'
 import { PageListView } from '@/components/PageListView'
+import { paramsFromQuery } from '@/components/search/searchModel'
 
 export function RecentList() {
   return <PageListView source={{ kind: 'recent' }} />
@@ -17,7 +18,10 @@ export function TagList() {
   return <PageListView source={{ kind: 'tag', tag }} />
 }
 
+// The full results page of the search dialog: the text, and the filters the
+// dialog had, in the address.
 export function SearchList() {
   const [params] = useSearchParams()
-  return <PageListView source={{ kind: 'search', q: params.get('q') ?? '' }} />
+  const { text, extra } = paramsFromQuery(params)
+  return <PageListView source={{ kind: 'search', q: text, filters: extra }} />
 }

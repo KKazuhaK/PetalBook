@@ -591,6 +591,16 @@ type txn struct {
 	paths   []string // files the change wrote, moved or deleted
 	dirs    []string // directories whose folder rows may change
 	created []string // directories the change made, deepest last
+	// undo are steps that take back what Git cannot: a directory that was
+	// renamed (with whatever in it Git does not track), directories that were
+	// removed. They run last-first before Git's side is put back. A step
+	// returns the paths of the change that are gone again because of it, so
+	// that nothing goes looking for them (under another spelling of an old
+	// name, on a file system that ignores case, that would find the old file).
+	undo []func() []string
+	// undoFailed is set by a step that could not do its part: what is wrong,
+	// for the administrator.
+	undoFailed string
 }
 
 func (t *txn) touch(paths ...string) {
@@ -738,9 +748,30 @@ func (s *Space) undoLocked(ctx context.Context, r *remote, tx *txn, parent strin
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	paths := uniq(tx.paths)
+	settled := map[string]bool{}
+	for i := len(tx.undo) - 1; i >= 0; i-- {
+		for _, p := range tx.undo[i]() {
+			settled[p] = true
+		}
+	}
+	discard := paths
+	if len(settled) > 0 {
+		discard = make([]string, 0, len(paths))
+		for _, p := range paths {
+			if !settled[p] {
+				discard = append(discard, p)
+			}
+		}
+	}
 	undone := true
+	if tx.undoFailed != "" {
+		undone = false
+		s.log.Error("could not undo a change; changes are refused until an administrator looks", "error", tx.undoFailed)
+		r.blocked = "a change could not be undone completely: " + gitstore.Scrub(tx.undoFailed)
+		r.set(func(st *RemoteStatus) { st.State, st.Kind, st.Error = RemoteError, KindClone, r.blocked })
+	}
 	if parent != "" {
-		if err := r.repo.Discard(ctx, parent, paths); err != nil {
+		if err := r.repo.Discard(ctx, parent, discard); err != nil {
 			undone = false
 			s.log.Error("could not undo a change; changes are refused until an administrator looks", "error", err)
 			r.blocked = "a change could not be undone completely: " + gitstore.Scrub(err.Error())

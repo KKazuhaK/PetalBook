@@ -8,6 +8,7 @@ import type {
   CreatePageInput,
   DraftInput,
   DraftReceipt,
+  BatchPagesInput,
   ConnectRemoteInput,
   ErrorCode,
   HistoryList,
@@ -27,6 +28,7 @@ import type {
   SavePageInput,
   SessionInfo,
   SpaceInfo,
+  TagColor,
   TagsResponse,
   TreeResponse,
   UploadedAsset,
@@ -206,6 +208,11 @@ export function listParamsToQuery(p: ListParams): string {
   if (p.recursive) q.set('recursive', 'true')
   for (const tag of p.tag ?? []) q.append('tag', tag)
   if (p.q) q.set('q', p.q)
+  if (p.in) q.set('in', p.in)
+  if (p.updatedFrom) q.set('updatedFrom', p.updatedFrom)
+  if (p.updatedTo) q.set('updatedTo', p.updatedTo)
+  if (p.createdFrom) q.set('createdFrom', p.createdFrom)
+  if (p.createdTo) q.set('createdTo', p.createdTo)
   if (p.sort) q.set('sort', p.sort)
   if (p.limit) q.set('limit', String(p.limit))
   if (p.cursor) q.set('cursor', p.cursor)
@@ -234,6 +241,8 @@ export function spaceApi(space: string) {
     savePage: (id: string, input: SavePageInput, opts: { keepalive?: boolean } = {}) => request<Page>(pageBase(id), { method: 'PUT', body: input, keepalive: opts.keepalive }),
     movePage: (id: string, folder: string) => request<Page>(pageBase(id, '/move'), { method: 'POST', body: { folder } }),
     deletePage: (id: string) => request<void>(pageBase(id), { method: 'DELETE' }),
+    // Several pages as one change. Resolves to how many were moved or deleted.
+    batchPages: (input: BatchPagesInput) => request<{ pages: number }>(base('/pages/batch'), { method: 'POST', body: input }),
 
     // Drafts: what autosave writes. The file changes only on commit.
     putDraft: (id: string, input: DraftInput, opts: { keepalive?: boolean } = {}) => request<DraftReceipt>(pageBase(id, '/draft'), { method: 'PUT', body: input, keepalive: opts.keepalive }),
@@ -257,7 +266,13 @@ export function spaceApi(space: string) {
 
     tree: (signal?: AbortSignal) => request<TreeResponse>(base('/tree'), { signal }),
     createFolder: (path: string) => request<{ path: string }>(base('/folders'), { method: 'POST', body: { path } }),
+    // Moves a folder with its contents; renaming is a move to a sibling path.
+    moveFolder: (from: string, to: string) => request<{ path: string }>(base('/folders/move'), { method: 'POST', body: { from, to } }),
+    // Without `recursive` the folder must hold no pages.
+    deleteFolder: (path: string, recursive = false) => request<void>(base(`/folders?path=${enc(path)}${recursive ? '&recursive=true' : ''}`), { method: 'DELETE' }),
     tags: (signal?: AbortSignal) => request<TagsResponse>(base('/tags'), { signal }),
+    // Sets a tag's colour, or removes it with null. The answer leaves `color` out when removed.
+    setTagColor: (tag: string, color: TagColor | null) => request<{ tag: string; color?: TagColor }>(base(`/tags/${enc(tag)}`), { method: 'PUT', body: { color } }),
 
     // History: nothing here is asked for until the history panel is open.
     history: (id: string, params: { limit?: number; cursor?: string } = {}, signal?: AbortSignal) => {

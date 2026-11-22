@@ -853,3 +853,44 @@ func TestNoJournalOrCommitterWorkIsLeftBetweenChanges(t *testing.T) {
 		t.Fatalf("%s local commits are not on the remote", got)
 	}
 }
+
+// A folder move whose push fails, and which then cannot be moved back: the
+// files stay where they are (they may be the only copy), nothing at the new
+// place is removed, and the space refuses changes until someone has looked.
+func TestFolderThatCannotBeMovedBackIsLeftWhereItIsAndTheSpaceBlocked(t *testing.T) {
+	f := newRemoteSpace(t)
+	mustCreate(t, f.s, "old", meta("title", "Tracked"), "t\n")
+	hand := filepath.Join(f.root, "old", "by-hand.md")
+	if err := os.WriteFile(hand, []byte("no header, never committed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.net.beforePush = func() { f.net.setDown(true) }
+	rename := f.s.ops.Rename
+	calls := 0
+	f.s.ops.Rename = func(from, to string) error {
+		calls++
+		if calls == 2 { // the first is the move, the second the move back
+			return errors.New("the disk says no")
+		}
+		return rename(from, to)
+	}
+	_, err := f.s.MoveFolder("old", "new")
+	var ue *UnavailableError
+	if !errors.As(err, &ue) {
+		t.Fatalf("%v", err)
+	}
+	f.s.ops.Rename = rename
+	for _, rel := range []string{"new/Tracked.md", "new/by-hand.md"} {
+		if _, err := os.Stat(filepath.Join(f.root, filepath.FromSlash(rel))); err != nil {
+			t.Fatalf("%s was removed: %v", rel, err)
+		}
+	}
+	if st := f.last(); st.State != RemoteError || !strings.Contains(st.Error, "could not be moved back") {
+		t.Fatalf("%+v", st)
+	}
+	f.net.setDown(false)
+	f.net.beforePush = nil
+	if _, err := f.s.Create(CreateInput{Meta: meta("title", "Later")}); err == nil {
+		t.Fatal("a change was accepted in a space that could not undo the last one")
+	}
+}

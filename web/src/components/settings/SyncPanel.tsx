@@ -1,17 +1,18 @@
-// Settings of one space: where it keeps its Git repository. A space either
-// lives on the server only, or follows a remote repository; this page connects
-// it, shows how the connection is doing and disconnects it.
+// Settings of one space that live in the settings dialog: the inbox folder, the
+// way into the import page, and where the space keeps its Git repository. A
+// space either lives on the server only, or follows a remote repository; the
+// sync section connects it, shows how the connection is doing and disconnects it.
 
-import { useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { Link, useParams } from 'react-router'
+import { useRef, useState, type FormEvent } from 'react'
+import { Link } from 'react-router'
 import { AlertTriangle, Check, CircleAlert, CirclePause, Cloud, CloudOff, Copy, KeyRound, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError, spaceApi } from '@/api/client'
-import { useAcceptRemote, useConnectRemote, useDisconnectRemote, useRemote, useSession, useSpaces, useSyncRemote, useUpdateSpace } from '@/api/hooks'
+import { useAcceptRemote, useConnectRemote, useDisconnectRemote, useRemote, useSpaces, useSyncRemote, useUpdateSpace } from '@/api/hooks'
 import type { ConnectRemoteInput, Remote, RemoteKey, RemoteState, SpaceInfo } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
-import { TopBar } from '@/components/layout/TopBar'
+import { SettingsSection } from './SettingsParts'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -19,74 +20,40 @@ import { Textarea } from '@/components/ui/textarea'
 import { checkFolderPath } from '@/lib/folders'
 import { absoluteTime, relativeTime } from '@/lib/time'
 import { spaceUrls } from '@/lib/urls'
-import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { t } from '@/i18n'
 
-export default function SpaceSettingsPage() {
-  const { space = '' } = useParams()
-  const session = useSession().data
+// What a space owner sees under Sync: the remote repository, connected,
+// followed and disconnected as before. Moved from the old space settings page.
+export function SyncPanel({ space }: { space: string }) {
   const spaces = useSpaces()
   const current = spaces.data?.spaces.find((s) => s.id === space)
-  useDocumentTitle(`${current ? t.remote.pageTitle(current.name) : t.remote.spaceSettings} · ${t.appName}`)
-
-  let body: ReactNode
-  if (session?.mode === 'single')
-    body = (
-      <>
-        {current && <InboxSection space={current} readOnly />}
-        <ImportSection space={space} />
-        <p className="rounded-lg border p-4 text-sm text-muted-foreground">{t.remote.singleUser}</p>
-      </>
-    )
-  else if (current && current.role !== 'owner') body = <p className="rounded-lg border p-4 text-sm text-muted-foreground">{t.remote.ownerOnly}</p>
-  else if (!session || !current) body = <PageFallback />
-  else
-    body = (
-      <>
-        <InboxSection space={current} />
-        <ImportSection space={space} />
-        <RemoteSection space={space} />
-      </>
-    )
-
+  if (spaces.isPending) return <PageFallback />
+  if (current && current.role !== 'owner') return <p className="rounded-lg border p-4 text-sm text-muted-foreground">{t.remote.ownerOnly}</p>
+  if (!current) return <p className="rounded-lg border p-4 text-sm text-muted-foreground">{t.editor.spaceMissing}</p>
   return (
-    <>
-      <TopBar>
-        <h1 className="truncate text-sm font-medium">{current ? t.remote.pageTitle(current.name) : t.remote.spaceSettings}</h1>
-      </TopBar>
-      <div className="mx-auto w-full max-w-[640px] flex-1 space-y-6 px-4 py-6 sm:px-5">{body}</div>
-    </>
-  )
-}
-
-function Section({ title, children, id }: { title: string; children: ReactNode; id?: string }) {
-  return (
-    <section aria-labelledby={id} className="grid gap-4 rounded-lg border p-4">
-      <h2 id={id} className="text-sm font-medium">
-        {title}
-      </h2>
-      {children}
-    </section>
+    <div className="space-y-8">
+      <RemoteSection space={space} />
+    </div>
   )
 }
 
 // A way into the import page; the import itself has a page of its own.
-function ImportSection({ space }: { space: string }) {
+export function ImportSection({ space }: { space: string }) {
   return (
-    <Section title={t.import.settingsTitle} id="import-title">
+    <SettingsSection title={t.import.settingsTitle} id="import-title">
       <p className="text-sm text-muted-foreground">{t.import.settingsHelp}</p>
       <div>
         <Button variant="outline" render={<Link to={spaceUrls(space).import()} />}>
           {t.import.settingsLink}
         </Button>
       </div>
-    </Section>
+    </SettingsSection>
   )
 }
 
 // Where quick notes go. Single-user mode sets it with `--inbox`, so it is only
 // shown there; in accounts mode the owner can change it, and nothing is moved.
-function InboxSection({ space, readOnly = false }: { space: SpaceInfo; readOnly?: boolean }) {
+export function InboxSection({ space, readOnly = false }: { space: SpaceInfo; readOnly?: boolean }) {
   const update = useUpdateSpace()
   const [value, setValue] = useState(space.inbox)
   const [error, setError] = useState('')
@@ -108,7 +75,7 @@ function InboxSection({ space, readOnly = false }: { space: SpaceInfo; readOnly?
   }
 
   return (
-    <Section title={t.inboxSetting.title} id="inbox-title">
+    <SettingsSection title={t.inboxSetting.title} id="inbox-title">
       <form className="grid gap-3" onSubmit={(e) => void submit(e)} noValidate>
         <Field label={t.inboxSetting.label} help={readOnly ? t.inboxSetting.readOnly : t.inboxSetting.help} value={readOnly ? space.inbox : value} onChange={(e) => setValue(e.target.value)} readOnly={readOnly} error={error} autoComplete="off" spellCheck={false} />
         {!readOnly && (
@@ -120,14 +87,14 @@ function InboxSection({ space, readOnly = false }: { space: SpaceInfo; readOnly?
           </div>
         )}
       </form>
-    </Section>
+    </SettingsSection>
   )
 }
 
 function RemoteSection({ space }: { space: string }) {
   const remote = useRemote(space)
   return (
-    <Section title={t.remote.title} id="remote-title">
+    <SettingsSection title={t.remote.title} id="remote-title">
       {remote.isPending ? (
         <PageFallback />
       ) : remote.isError ? (
@@ -140,7 +107,7 @@ function RemoteSection({ space }: { space: string }) {
       ) : (
         <Following space={space} remote={remote.data} />
       )}
-    </Section>
+    </SettingsSection>
   )
 }
 

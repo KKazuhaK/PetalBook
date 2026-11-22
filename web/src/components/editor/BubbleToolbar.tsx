@@ -30,7 +30,7 @@ function Tool({ label, active, onClick, children }: { label: string; active?: bo
 
 // The URL box shared by both floating panels. Remounted (by key) whenever the
 // link under the cursor changes so it always starts from that link's address.
-function UrlInput({ editor, initial, onDone, autoFocus }: { editor: Editor; initial: string; onDone?: () => void; autoFocus?: boolean }) {
+export function UrlInput({ editor, initial, onDone, autoFocus }: { editor: Editor; initial: string; onDone?: () => void; autoFocus?: boolean }) {
   const [value, setValue] = useState(initial)
   const apply = () => {
     const href = normalizeUrl(value)
@@ -163,57 +163,116 @@ export function LinkPopover({ editor }: { editor: Editor }) {
   )
 }
 
-// The description box of the image popover. Remounted (by key) when another
-// image is selected or the description changes from outside.
-function AltInput({ editor, initial }: { editor: Editor; initial: string }) {
-  const [value, setValue] = useState(initial)
-  const apply = () => {
-    editor.chain().focus().updateAttributes('image', { alt: value.trim() || null }).run()
+const imageField = 'h-7 w-[min(18rem,calc(100vw-9rem))] rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 aria-invalid:border-destructive'
+
+// The two fields of the image popover. What is typed is kept as a draft until
+// it is applied (Enter, or leaving the field); then the document's own value
+// is shown again. The address is the one written in the page
+// (`/assets/<id>/x.png`), not the URL the picture is loaded from, and it
+// cannot be emptied: an image without an address is not an image.
+export function ImageFields({ editor, alt, src }: { editor: Editor; alt: string; src: string }) {
+  const [draftAlt, setDraftAlt] = useState<string | null>(null)
+  const [draftSrc, setDraftSrc] = useState<string | null>(null)
+  const [refused, setRefused] = useState(false)
+
+  // Compared with the document at the moment of applying, not with what was drawn
+  // last: leaving a field right after Enter must not apply twice.
+  const applyAlt = () => {
+    if (draftAlt === null) return
+    const next = draftAlt.trim() || null
+    if (next !== ((editor.getAttributes('image').alt as string | null) || null)) editor.chain().updateAttributes('image', { alt: next }).run()
+    setDraftAlt(null)
   }
-  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+  const applySrc = (): boolean => {
+    if (draftSrc === null) return true
+    const next = draftSrc.trim()
+    setDraftSrc(null)
+    if (!next) {
+      setRefused(true)
+      return false
+    }
+    setRefused(false)
+    if (next !== editor.getAttributes('image').src) editor.chain().updateAttributes('image', { src: next }).run()
+    return true
+  }
+  const keys = (apply: () => boolean | void, revert: () => void) => (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.nativeEvent.isComposing) return
     if (e.key === 'Enter') {
       e.preventDefault()
-      apply()
+      if (apply() !== false) editor.commands.focus()
     } else if (e.key === 'Escape') {
       e.preventDefault()
+      revert()
       editor.commands.focus()
     }
   }
+
   return (
-    <>
-      <input
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={onKeyDown}
-        placeholder={t.files.altPlaceholder}
-        aria-label={t.files.altLabel}
-        className="h-7 w-56 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
-      />
-      <Button type="button" size="sm" variant="ghost" onClick={apply}>
-        {t.files.apply}
-      </Button>
-    </>
+    <div className="flex flex-col gap-1.5 p-1">
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <span className="w-10 shrink-0">{t.files.descriptionLabel}</span>
+        <input
+          value={draftAlt ?? alt}
+          onChange={(e) => setDraftAlt(e.target.value)}
+          onBlur={applyAlt}
+          onKeyDown={keys(applyAlt, () => setDraftAlt(null))}
+          placeholder={t.files.altPlaceholder}
+          aria-label={t.files.altLabel}
+          className={imageField}
+        />
+      </label>
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <span className="w-10 shrink-0">{t.files.addressLabel}</span>
+        <input
+          value={draftSrc ?? src}
+          onChange={(e) => {
+            setRefused(false)
+            setDraftSrc(e.target.value)
+          }}
+          onBlur={() => void applySrc()}
+          onKeyDown={keys(applySrc, () => {
+            setDraftSrc(null)
+            setRefused(false)
+          })}
+          placeholder={t.files.addressPlaceholder}
+          aria-label={t.files.addressLabel}
+          aria-invalid={refused || undefined}
+          spellCheck={false}
+          className={`${imageField} font-mono text-xs`}
+        />
+      </label>
+      {refused && (
+        <p role="alert" className="pl-12 text-xs text-destructive">
+          {t.files.addressRequired}
+        </p>
+      )}
+    </div>
   )
 }
 
 // Appears when an image is selected: its description (the alt text, which
-// screen readers read and which shows when the file cannot be loaded), or take
-// the image out of the page.
+// screen readers read and which shows when the file cannot be loaded), its
+// address, or take the image out of the page.
 export function ImagePopover({ editor }: { editor: Editor }) {
-  const { alt, from } = useEditorState({
+  const { alt, src, from } = useEditorState({
     editor,
-    selector: ({ editor: e }) => ({ alt: e.isActive('image') ? ((e.getAttributes('image').alt as string | null) ?? '') : '', from: e.state.selection.from }),
+    selector: ({ editor: e }) => ({
+      alt: e.isActive('image') ? ((e.getAttributes('image').alt as string | null) ?? '') : '',
+      src: e.isActive('image') ? ((e.getAttributes('image').src as string | null) ?? '') : '',
+      from: e.state.selection.from,
+    }),
   })
   return (
     <BubbleMenu
       editor={editor}
       pluginKey="imagePopover"
-      options={{ placement: 'bottom', offset: 6 }}
+      // The panel is wider than most images; it starts at the image's left edge and is kept inside the window.
+      options={{ placement: 'bottom-start', offset: 6, shift: { padding: 8 } }}
       shouldShow={({ editor: e, state }) => e.isEditable && 'node' in state.selection && e.isActive('image')}
     >
-      <div className={panel}>
-        <AltInput key={`${from}:${alt}`} editor={editor} initial={alt} />
+      <div className={`${panel} items-start`}>
+        {/* Another image starts from its own values. */}
+        <ImageFields key={from} editor={editor} alt={alt} src={src} />
         <Tool label={t.files.removeImage} onClick={() => editor.chain().focus().deleteSelection().run()}>
           <Trash2 />
         </Tool>
