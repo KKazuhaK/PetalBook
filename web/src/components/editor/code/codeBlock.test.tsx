@@ -1,4 +1,7 @@
+import { act } from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
+import { t } from '@/i18n'
+import { setEditableQuietly } from '../editable'
 import { cleanup, markdownOf, mount, pageEditor } from '../pageTestKit'
 import { loadHighlighter } from './highlighter'
 import { MAX_HIGHLIGHTED_CHARS } from './highlightPlugin'
@@ -31,6 +34,24 @@ describe('the language of a code block', () => {
   it('does not change what a page with code blocks is saved as', () => {
     const source = fence('js', 'const a = 1') + '\n' + fence('', 'plain') + '\n' + fence('klingon', 'qapla')
     expect(markdownOf(pageEditor(source))).toBe(source)
+  })
+})
+
+describe('the language picker', () => {
+  it('follows whether the editor can be typed in, both ways', async () => {
+    const editor = pageEditor(fence('js', 'a'))
+    const host = await mount(editor)
+    let updates = 0
+    editor.on('update', () => updates++)
+    const picker = () => host.host.querySelector(`[aria-label^="${t.code.language}:"]`) !== null
+    expect(picker()).toBe(true)
+    await act(async () => setEditableQuietly(editor, false))
+    expect(picker()).toBe(false)
+    await act(async () => setEditableQuietly(editor, true))
+    expect(picker()).toBe(true)
+    // Switching is not typing.
+    expect(updates).toBe(0)
+    await host.unmount()
   })
 })
 

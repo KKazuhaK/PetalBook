@@ -21,6 +21,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { ErrorState, PageFallback } from '@/components/common'
+import { setEditableQuietly } from '@/components/editor/editable'
 import { Breadcrumbs } from '@/components/files/Breadcrumbs'
 import { TopBar } from '@/components/layout/TopBar'
 import { AutoTextarea } from '@/components/editor/AutoTextarea'
@@ -408,8 +409,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
   }, [editor, live])
   // The role can change while the page is open (the list of spaces is read again).
   useEffect(() => {
-    // No update event: switching is not typing, and an update would mark the page dirty.
-    if (editor && !editor.isDestroyed && editor.isEditable === readOnly) editor.setEditable(!readOnly, false)
+    if (editor) setEditableQuietly(editor, !readOnly)
   }, [editor, readOnly])
 
   // Leaving with a conflict open, or with text that never reached the server,
