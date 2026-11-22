@@ -3,7 +3,7 @@
 
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { MemoryRouter, useLocation, type InitialEntry } from 'react-router'
+import { createMemoryRouter, MemoryRouter, Outlet, RouterProvider, useLocation, type InitialEntry, type RouteObject } from 'react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from 'sonner'
 import { api, markSignedIn } from '@/api/client'
@@ -43,7 +43,16 @@ export const locationState = () => JSON.parse(document.querySelector('[data-test
 
 export async function mount(
   ui: ReactNode,
-  options: { entries?: InitialEntry[]; index?: number; server?: MockOptions; signIn?: boolean; delay?: (method: string, url: string) => number } = {},
+  options: {
+    // Where to start; a function is given the server, for a scene made first (see `shareSpace`).
+    entries?: InitialEntry[] | ((server: MockServer) => InitialEntry[])
+    index?: number
+    server?: MockOptions
+    signIn?: boolean
+    delay?: (method: string, url: string) => number
+    // A data router with these routes, for what needs one (`useBlocker`); `ui` is then not used.
+    routes?: RouteObject[]
+  } = {},
 ): Promise<Mounted> {
   const server = createMockServer({ now: () => Date.now(), ...options.server })
   const requests: Mounted['requests'] = []
@@ -65,15 +74,36 @@ export async function mount(
   document.body.appendChild(host)
   const root = createRoot(host)
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const entries = typeof options.entries === 'function' ? options.entries(server) : (options.entries ?? ['/'])
+  const router = options.routes
+    ? createMemoryRouter(
+        [
+          {
+            element: (
+              <>
+                <Outlet />
+                <LocationProbe />
+              </>
+            ),
+            children: options.routes,
+          },
+        ],
+        { initialEntries: entries, initialIndex: options.index },
+      )
+    : null
   await act(async () =>
     root.render(
       <QueryClientProvider client={qc}>
         <ThemeProvider>
           <TooltipProvider>
-            <MemoryRouter initialEntries={options.entries ?? ['/']} initialIndex={options.index}>
-              {ui}
-              <LocationProbe />
-            </MemoryRouter>
+            {router ? (
+              <RouterProvider router={router} />
+            ) : (
+              <MemoryRouter initialEntries={entries} initialIndex={options.index}>
+                {ui}
+                <LocationProbe />
+              </MemoryRouter>
+            )}
             <Toaster />
           </TooltipProvider>
         </ThemeProvider>
@@ -132,3 +162,45 @@ export const press = (el: Element | Document, key: string, init: KeyboardEventIn
 
 export const byLabel = (label: string) => document.querySelector<HTMLElement>(`[aria-label="${label}"]`)
 export const byText = (selector: string, text: string) => [...document.querySelectorAll<HTMLElement>(selector)].find((e) => e.textContent?.trim() === text) ?? null
+
+// --- people and shared spaces, made behind the app's back ----------------------------
+//
+// The tests drive the mock server directly (the way another person's browser
+// would) to set a scene: a second person, a space they own, the signed-in
+// administrator a member of it in some role.
+
+export const WRITE_HEADERS = 'application/json'
+
+// One request to the server as the person holding `cookie` (a Set-Cookie value's
+// `name=value`, or null for no session).
+export function asPerson(server: MockServer, cookie: string | null) {
+  return (method: string, path: string, body?: unknown) => {
+    const r = server.handle(method, path, body === undefined ? undefined : JSON.stringify(body), WRITE_HEADERS, cookie)
+    if (r.status >= 400) throw new Error(`${method} ${path}: ${r.status} ${JSON.stringify(r.body)}`)
+    return r
+  }
+}
+const cookieOf = (setCookie: string | undefined) => setCookie?.split(';')[0] ?? null
+
+export const adminRequests = (server: MockServer) => {
+  const login = server.handle('POST', '/api/login', JSON.stringify({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password }), WRITE_HEADERS, null)
+  return asPerson(server, cookieOf(login.headers?.['Set-Cookie']))
+}
+
+export const PERSON_PASSWORD = 'a-long-password'
+
+// An account made through an invite. `request` acts as that person.
+export function makePerson(server: MockServer, username: string, role: 'member' | 'admin' = 'member') {
+  const invite = adminRequests(server)('POST', '/api/invites', { role }).body as { token: string }
+  const r = asPerson(server, null)('POST', '/api/invites/accept', { token: invite.token, username, name: `名 ${username}`, password: PERSON_PASSWORD })
+  const user = (r.body as { user: { id: string } }).user
+  return { id: user.id, username, password: PERSON_PASSWORD, request: asPerson(server, cookieOf(r.headers?.['Set-Cookie'])) }
+}
+
+// A space that `owner` made, which the signed-in administrator belongs to in `role`.
+export function shareSpace(server: MockServer, role: 'owner' | 'editor' | 'viewer', name = '团队', ownerName = 'sharer'): { space: string; owner: ReturnType<typeof makePerson> } {
+  const owner = makePerson(server, ownerName)
+  const space = (owner.request('POST', '/api/spaces', { name }).body as { id: string }).id
+  owner.request('POST', `/api/spaces/${space}/members`, { username: MOCK_ADMIN.username, role })
+  return { space, owner }
+}

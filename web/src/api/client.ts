@@ -4,7 +4,10 @@ import { t } from '@/i18n'
 
 import type {
   AccountInfo,
+  AdminSpaceList,
+  AdminSpacesParams,
   CreatedInvite,
+  DeletedSpace,
   CreatePageInput,
   DraftInput,
   DraftReceipt,
@@ -16,6 +19,7 @@ import type {
   Invite,
   InviteCheck,
   ListParams,
+  Member,
   MetaResponse,
   OidcIntent,
   Page,
@@ -26,8 +30,11 @@ import type {
   RemoteKey,
   Role,
   SavePageInput,
+  ServerStatus,
   SessionInfo,
   SpaceInfo,
+  SpaceRole,
+  SpaceSize,
   TagColor,
   TagsResponse,
   TreeResponse,
@@ -110,7 +117,12 @@ const SIGN_IN_PATHS = /^\/(login|logout|setup|session|meta|invites\/(check|accep
 // origin. Page and space endpoints have no such 403: a space of someone else
 // is a 404.
 // The remote endpoints answer 403 for a host the administrator did not allow.
-const USER_LEVEL_403 = /^\/(setup|account(\/.*)?|users(\/.*)?|invites(\/.*)?)$|^\/spaces(\/[^/]+(\/remote(\/.*)?)?)?$/
+// The administration and the members of a space answer the same way.
+const USER_LEVEL_403 = /^\/(setup|account(\/.*)?|users(\/.*)?|invites(\/.*)?|admin(\/.*)?)$|^\/spaces(\/[^/]+(\/(remote|members)(\/.*)?)?)?$/
+// A member whose role lacks the permission a route needs gets 403 too, from
+// any space endpoint; the server's words for it start like this. It is an
+// answer about the person, not a refused origin.
+const NO_PERMISSION = /^your role in this space does not allow that/
 
 // --- a remote that cannot be reached ---------------------------------------------
 //
@@ -123,6 +135,20 @@ const unavailableListeners = new Set<UnavailableListener>()
 export function onUnavailable(fn: UnavailableListener): () => void {
   unavailableListeners.add(fn)
   return () => void unavailableListeners.delete(fn)
+}
+
+// --- access to a space changed -------------------------------------------------------
+//
+// A request refused because an administrator switched the space off, or because
+// the person's role no longer allows it, says that what the app knows about the
+// space (its list entry: permissions, the disabled mark) is out of date. The app
+// is told once per refusal, and looks again.
+
+type AccessListener = () => void
+const accessListeners = new Set<AccessListener>()
+export function onSpaceAccess(fn: AccessListener): () => void {
+  accessListeners.add(fn)
+  return () => void accessListeners.delete(fn)
 }
 
 export const isConflict = (e: unknown): e is ApiError => e instanceof ApiError && e.code === 'conflict'
@@ -182,13 +208,14 @@ async function request<T>(path: string, { method = 'GET', body, keepalive, signa
   }
   if (!res.ok) {
     const err = (json ?? {}) as { error?: string; message?: string; current?: Page; draft?: PageDraft | null }
-    if (err.error === 'forbidden' && !USER_LEVEL_403.test(barePath)) {
+    if (err.error === 'forbidden' && !USER_LEVEL_403.test(barePath) && !NO_PERMISSION.test(err.message ?? '')) {
       const message = forbiddenMessage(globalThis.location?.origin ?? '')
       forbiddenListeners.forEach((fn) => fn(message))
       throw new ApiError(res.status, 'forbidden', message)
     }
     if (res.status === 401 && !isSignIn) markSignedOut()
     if (err.error === 'unavailable') unavailableListeners.forEach((fn) => fn())
+    if (err.error === 'space_disabled' || (err.error === 'forbidden' && NO_PERMISSION.test(err.message ?? ''))) accessListeners.forEach((fn) => fn())
     const retry = Number(res.headers.get('Retry-After'))
     throw new ApiError(
       res.status,
@@ -293,6 +320,13 @@ export function spaceApi(space: string) {
     acceptRemote: (commit: string) => request<Remote>(base('/remote/accept'), { method: 'POST', body: { commit } }),
 
     reindex: () => request<{ pages: number; ms: number }>(base('/reindex'), { method: 'POST' }),
+
+    // The people of the space (accounts mode). `user` is a member's `userId`.
+    members: (signal?: AbortSignal) => request<{ members: Member[] }>(base('/members'), { signal }),
+    addMember: (username: string, role: SpaceRole) => request<Member>(base('/members'), { method: 'POST', body: { username, role } }),
+    setMemberRole: (user: string, role: SpaceRole) => request<Member>(base(`/members/${enc(user)}`), { method: 'PATCH', body: { role } }),
+    // Removing yourself is leaving the space.
+    removeMember: (user: string) => request<void>(base(`/members/${enc(user)}`), { method: 'DELETE' }),
   }
 }
 export type SpaceApi = ReturnType<typeof spaceApi>
@@ -345,4 +379,21 @@ export const api = {
   renameSpace: (id: string, name: string) => request<SpaceInfo>(`/spaces/${enc(id)}`, { method: 'PATCH', body: { name } }),
   // Either field or both; the server refuses a body with neither.
   updateSpace: (id: string, patch: { name?: string; inbox?: string }) => request<SpaceInfo>(`/spaces/${enc(id)}`, { method: 'PATCH', body: patch }),
+
+  // --- administration (administrators, accounts mode) ---
+  adminSpaces: (params: AdminSpacesParams = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.q) q.set('q', params.q)
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<AdminSpaceList>(`/admin/spaces${qs ? `?${qs}` : ''}`, { signal })
+  },
+  // Measures the space's directory now.
+  adminResizeSpace: (id: string) => request<SpaceSize>(`/admin/spaces/${enc(id)}/size`, { method: 'POST' }),
+  adminTransferSpace: (id: string, userId: string) => request<void>(`/admin/spaces/${enc(id)}/transfer`, { method: 'POST', body: { userId } }),
+  adminDisableSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/disable`, { method: 'POST' }),
+  adminEnableSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/enable`, { method: 'POST' }),
+  adminDeleteSpace: (id: string) => request<DeletedSpace>(`/admin/spaces/${enc(id)}`, { method: 'DELETE' }),
+  adminStatus: (signal?: AbortSignal) => request<ServerStatus>('/admin/status', { signal }),
 }

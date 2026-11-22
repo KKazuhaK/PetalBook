@@ -41,6 +41,8 @@ export interface HistoryModeProps {
   // Puts a version in the editor as an ordinary edit. `saveFirst`: write what is
   // there as a version before replacing it. Resolves to whether it was done.
   onRestore: (version: VersionContent, saveFirst: boolean, when: string) => Promise<boolean>
+  // The person may look at versions but not change the page: no way to go back to one.
+  readOnly?: boolean
 }
 
 // undefined: still loading; null: nothing there (before the first version, or a deletion).
@@ -62,7 +64,7 @@ function useContent(space: string, pageId: string, item: HistoryItem | null) {
   return { content, error: q.isError ? q.error : null, retry: () => void q.refetch() }
 }
 
-export default function HistoryMode({ space, pageId, folder = '', getCurrent, saveState, onClose, onRestore }: HistoryModeProps) {
+export default function HistoryMode({ space, pageId, folder = '', getCurrent, saveState, onClose, onRestore, readOnly = false }: HistoryModeProps) {
   const isMobile = useIsMobile()
   const history = useHistory(space, pageId, true)
   const items = useMemo(() => history.data?.pages.flatMap((p) => p.items) ?? [], [history.data])
@@ -273,10 +275,12 @@ export default function HistoryMode({ space, pageId, folder = '', getCurrent, sa
                 {t.history.raw}
               </Button>
             </div>
-            <Button size="sm" className="ml-auto" disabled={!canRestore || restoring} onClick={() => setRestoreOpen(true)} title={selItem ? t.history.restoreAt(when(selItem.time)) : undefined}>
-              <RotateCcw />
-              {t.history.restore}
-            </Button>
+            {!readOnly && (
+              <Button size="sm" className="ml-auto" disabled={!canRestore || restoring} onClick={() => setRestoreOpen(true)} title={selItem ? t.history.restoreAt(when(selItem.time)) : undefined}>
+                <RotateCcw />
+                {t.history.restore}
+              </Button>
+            )}
           </div>
         )}
 

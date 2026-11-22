@@ -1,10 +1,21 @@
 // Shapes of docs/api.md.
 
+// What a caller may do in a space (docs/api.md, "Space"). The app shows or hides
+// controls by these and never by the name of a role.
+export type Permission = 'read' | 'write' | 'members' | 'manage'
+// The caller's role in a space. Empty for an administrator who is not a member.
+export type SpaceRole = 'owner' | 'editor' | 'viewer'
+
 export interface SpaceInfo {
   id: string
   name: string
-  // The caller's role in the space; always `owner` in this milestone.
-  role: string
+  // For showing ("Owner", "Viewer"); never for deciding what is allowed.
+  role: SpaceRole | ''
+  // What the caller may do here.
+  permissions: Permission[]
+  // True while an administrator has switched the space off: it stays in the
+  // list, but nothing in it can be opened.
+  disabled?: boolean
   // Made together with the account.
   personal: boolean
   // `local` (the repository lives on the server only) or the state of the
@@ -216,6 +227,12 @@ export type ErrorCode =
   | 'exists'
   | 'unauthenticated'
   | 'forbidden'
+  | 'space_disabled'
+  | 'user_not_found'
+  | 'user_disabled'
+  | 'last_owner'
+  | 'personal_space'
+  | 'busy'
   | 'rate_limited'
   | 'unavailable'
   | 'internal'
@@ -280,3 +297,63 @@ export interface InviteCheck {
 export type OidcIntent = 'login' | 'setup' | 'invite' | 'link'
 
 export type BatchPagesInput = { op: 'move'; ids: string[]; folder: string } | { op: 'delete'; ids: string[] }
+
+// --- members (docs/api.md, "Members") -----------------------------------------------
+
+export interface Member {
+  userId: string
+  username: string
+  name: string
+  role: SpaceRole
+  // True for the caller.
+  you: boolean
+}
+
+// --- administration (docs/api.md, "Administration") -----------------------------------
+
+export interface AdminSpace {
+  id: string
+  name: string
+  personal: boolean
+  created: string
+  disabled: boolean
+  // The first owner; null when there is none.
+  owner: { id: string; username: string; name: string } | null
+  members: number
+  // The last stored measurement; null until the space has been measured.
+  sizeBytes: number | null
+  sizeAt: string | null
+  sync: SyncState
+}
+export interface AdminSpaceList {
+  items: AdminSpace[]
+  // The cursor of the next page, '' after the last.
+  next: string
+}
+export interface AdminSpacesParams {
+  q?: string
+  cursor?: string
+  limit?: number
+}
+export interface SpaceSize {
+  sizeBytes: number
+  sizeAt: string
+}
+export interface DeletedSpace {
+  // Where the repository went, relative to the data directory; '' if it could not be moved.
+  trashed: string
+  cacheTrashed: string
+  warnings: string[]
+}
+export interface ServerStatus {
+  version: string
+  startedAt: string
+  uptimeSeconds: number
+  database: 'sqlite' | 'postgres'
+  spaces: number
+  users: number
+  openSpaces: number
+  // Absent where the platform cannot say.
+  diskFreeBytes?: number
+  goVersion: string
+}

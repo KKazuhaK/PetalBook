@@ -9,6 +9,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { CheckCircle2, FileText, Upload } from 'lucide-react'
 import { spaceApi } from '@/api/client'
 import { invalidateListings, useSession, useSpaces } from '@/api/hooks'
+import { can } from '@/lib/permissions'
 import type { ImportReport } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
@@ -69,6 +70,8 @@ export default function ImportPage() {
   if (!session || spaces.isPending) return <PageFallback />
   if (spaces.isError && !spaces.data) return <ErrorState message={spaces.error.message} onRetry={() => void spaces.refetch()} />
   if (!current) return <NotFoundPage message={t.editor.spaceMissing} />
+  // An import makes pages.
+  if (!can(current, 'write')) return <NotFoundPage message={t.permissions.readOnlyNote} />
 
   const picked = classifyFiles(files)
   const pickError = picked.kind === 'error' ? (picked.error === 'zipAlone' ? t.import.zipAlone : t.import.oneZip) : ''

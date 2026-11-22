@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, type MouseEvent, type ReactNode, type TouchEvent } from 'react'
 import { Check, Ban, Palette } from 'lucide-react'
 import { toast } from 'sonner'
-import { useSetTagColor } from '@/api/hooks'
+import { useSetTagColor, useSpacePermissions } from '@/api/hooks'
 import type { TagColor } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -27,6 +27,7 @@ export function useOpenTagColorMenu() {
 export function TagColorMenu({ children, className, colorOf }: { children: ReactNode; className?: string; colorOf: (tag: string) => TagColor | undefined }) {
   const [tag, setTag] = useState<string | null>(null)
   const set = useSetTagColor()
+  const { write } = useSpacePermissions()
 
   const capture = (e: MouseEvent) => {
     const el = (e.target as Element).closest?.(`[${TAG_ATTR}]`)
@@ -58,6 +59,8 @@ export function TagColorMenu({ children, className, colorOf }: { children: React
   const customHex = parsed?.kind === 'custom' ? parsed.hex : undefined
   const [customFor, setCustomFor] = useState<string | null>(null)
 
+  // Colouring a tag changes the space: without `write` the tags are only shown.
+  if (!write) return <div className={className}>{children}</div>
   return (
     <Open.Provider value={openAt}>
       <ContextMenu>

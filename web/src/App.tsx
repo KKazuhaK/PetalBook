@@ -1,14 +1,15 @@
 import { lazy, Suspense, useEffect, type ReactNode } from 'react'
-import { createBrowserRouter, Navigate, Outlet, RouterProvider, useLocation, useParams } from 'react-router'
+import { createBrowserRouter, Navigate, Outlet, RouterProvider, useLocation } from 'react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from '@/providers/theme'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { toast } from 'sonner'
-import { ApiError, onForbidden, onSignedOut, onUnavailable } from '@/api/client'
-import { keys, lastSpace, rememberSpace, useSession, useSpaces } from '@/api/hooks'
+import { ApiError, onForbidden, onSignedOut, onSpaceAccess, onUnavailable } from '@/api/client'
+import { keys, lastSpace, useSession, useSpaces } from '@/api/hooks'
 import { SpaceSettingsRedirect } from '@/components/settings/SpaceSettingsRedirect'
-import { settingsPath } from '@/components/settings/sections'
+import { AdminGate } from '@/components/admin/AdminGate'
+import { SpaceGate } from '@/components/layout/SpaceGate'
 import type { SessionInfo } from '@/api/types'
 import { AppShell } from '@/components/layout/AppShell'
 import { ErrorState, PageFallback } from '@/components/common'
@@ -76,22 +77,6 @@ function LegacyRedirect() {
   return <Navigate to={`/s/${encodeURIComponent(space.id)}${target}${search}${hash}`} replace />
 }
 
-// Only a space the person can open: anything else is the same "not found",
-// whether it does not exist or is someone else's.
-function SpaceGate() {
-  const { space = '' } = useParams()
-  const spaces = useSpaces()
-  const known = spaces.data?.spaces.some((s) => s.id === space)
-  useEffect(() => {
-    if (known) rememberSpace(space)
-  }, [known, space])
-  if (spaces.isPending) return <PageFallback />
-  if (spaces.isError && !spaces.data) return <ErrorState message={spaces.error.message} onRetry={() => void spaces.refetch()} />
-  if (!known) return <NotFoundPage message={t.editor.spaceMissing} />
-  // A new key per space: nothing of the old one stays mounted.
-  return <Outlet key={space} />
-}
-
 // useBlocker (leave-with-unsaved-text guard) needs a data router.
 const router = createBrowserRouter([
   { path: 'login', element: later(<LoginPage />) },
@@ -111,7 +96,10 @@ const router = createBrowserRouter([
           { path: 'p/:id', element: <LegacyRedirect /> },
           // The settings dialog. `/settings` with no section picks the first one.
           { path: 'settings/:section?', element: later(<SettingsRoute />) },
-          { path: 'users', element: <Navigate to={settingsPath('users')} replace /> },
+          // Users and invites moved from the settings to the administration.
+          { path: 'users', element: <Navigate to="/admin/users" replace /> },
+          { path: 'settings/users', element: <Navigate to="/admin/users" replace /> },
+          { path: 'admin/:section?', element: <AdminGate /> },
           {
             path: 's/:space',
             element: <SpaceGate />,
@@ -146,6 +134,9 @@ export default function App() {
       }),
     [],
   )
+  // A request refused because the space was switched off, or the person's role
+  // no longer allows it: the list says so too, once it is read again.
+  useEffect(() => onSpaceAccess(() => void queryClient.invalidateQueries({ queryKey: keys.spaces })), [])
   // A write refused because the remote cannot be reached says the sync state
   // changed: look again, so the indicator by the space name is not out of date.
   useEffect(

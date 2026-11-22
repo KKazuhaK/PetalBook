@@ -3,7 +3,7 @@
 // cookie stand-in), invites, spaces per user and a fake OpenID Connect
 // provider. It has no DOM or Node dependencies.
 
-import type { ConnectRemoteInput, Identity, Invite, Page, Remote, RemoteKey, RemoteState, Role, SpaceInfo, User } from '../types.ts'
+import type { AdminSpace, ConnectRemoteInput, Identity, Invite, Member, Page, Permission, Remote, RemoteKey, RemoteState, Role, ServerStatus, SpaceInfo, SpaceRole, User } from '../types.ts'
 import { gitBlobId } from './sha1.ts'
 import { ALPHABET, HttpError, compareCodePoints, createSpaceStore, isRecord, rfc3339, validFolder, type SpaceStore } from './store.ts'
 import { SPACE_NAME } from './seed.ts'
@@ -106,11 +106,22 @@ interface RemoteRec {
   hostKey?: string
   rewritten: { lastGood: string; remote: string } | null
 }
+interface MemberRec {
+  role: SpaceRole
+  // Order of joining: the first owner is the one who joined first.
+  joined: number
+}
 interface SpaceRec {
   id: string
   name: string
-  ownerId: string
+  members: Map<string, MemberRec>
   personal: boolean
+  created: number
+  // Switched off by an administrator (docs/api.md, "Administration").
+  disabled: boolean
+  // The last stored measurement; the real server measures in the background,
+  // the mock only when asked.
+  size: { bytes: number; at: number } | null
   inbox: string
   store: SpaceStore
   files: FileStore
@@ -127,6 +138,16 @@ interface OidcAttempt {
   created: number
   used: boolean
 }
+
+// What each role may do: the one table the server has (internal/perm). The app
+// reads `permissions` from the space and never this.
+const ROLE_PERMISSIONS: Record<SpaceRole, Permission[]> = {
+  owner: ['read', 'write', 'members', 'manage'],
+  editor: ['read', 'write'],
+  viewer: ['read'],
+}
+const ROLES = Object.keys(ROLE_PERMISSIONS)
+const NO_PERMISSION = (need: Permission) => `your role in this space does not allow that; it needs the ${need} permission`
 
 const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{1,31}$/
 const hashOf = (s: string) => gitBlobId(`mock:${s}`)
@@ -157,6 +178,7 @@ export function createMockServer(options: MockOptions = {}) {
   const maxImport = options.maxImport ?? DEFAULT_MAX_IMPORT
   const oidc = accounts ? (options.oidc ?? null) : null
   let counter = 0
+  const startedAt = now()
 
   const users = new Map<string, UserRec>()
   const sessions = new Map<string, string>()
@@ -178,7 +200,25 @@ export function createMockServer(options: MockOptions = {}) {
   }
 
   const publicUser = (u: UserRec): User => ({ id: u.id, username: u.username, name: u.name, email: u.email, role: u.role, disabled: u.disabled, created: u.created })
-  const spaceInfo = (s: SpaceRec): SpaceInfo => ({ id: s.id, name: s.name, role: 'owner', personal: s.personal, sync: s.remote ? s.remote.state : 'local', inbox: s.inbox })
+  // The first owner: who the space's own commits are credited to.
+  const ownerOf = (s: SpaceRec): UserRec | undefined => {
+    const owners = [...s.members].filter(([, m]) => m.role === 'owner').sort((a, b) => a[1].joined - b[1].joined)
+    return owners[0] ? users.get(owners[0][0]) : undefined
+  }
+  const spaceInfo = (s: SpaceRec, u: UserRec): SpaceInfo => {
+    const role = s.members.get(u.id)?.role
+    return {
+      id: s.id,
+      name: s.name,
+      role: role ?? '',
+      // An administrator who is not a member may do everything.
+      permissions: [...(role ? ROLE_PERMISSIONS[role] : ROLE_PERMISSIONS.owner)],
+      personal: s.personal,
+      sync: s.remote ? s.remote.state : 'local',
+      inbox: s.inbox,
+      disabled: s.disabled,
+    }
+  }
 
   // Why writes fail right now, if they do (docs/api.md: 503 `unavailable`).
   const blockedReason = (s: SpaceRec): string | null => {
@@ -189,8 +229,22 @@ export function createMockServer(options: MockOptions = {}) {
   }
 
   const addSpace = (id: string, name: string, ownerId: string, personal: boolean, seed: boolean, inbox = options.inbox ?? DEFAULT_INBOX) => {
-    const rec: SpaceRec = { id, name, ownerId, personal, inbox, store: undefined as unknown as SpaceStore, files: createFileStore(now), remote: null, key: null, reachable: true }
-    rec.store = createSpaceStore({ now, random, seed, author: () => users.get(rec.ownerId)?.name ?? 'Local user', blocked: () => blockedReason(rec) })
+    const rec: SpaceRec = {
+      id,
+      name,
+      members: new Map([[ownerId, { role: 'owner', joined: ++counter }]]),
+      personal,
+      created: now(),
+      disabled: false,
+      size: null,
+      inbox,
+      store: undefined as unknown as SpaceStore,
+      files: createFileStore(now),
+      remote: null,
+      key: null,
+      reachable: true,
+    }
+    rec.store = createSpaceStore({ now, random, seed, author: () => ownerOf(rec)?.name ?? 'Local user', blocked: () => blockedReason(rec) })
     spaces.set(id, rec)
     return rec
   }
@@ -262,7 +316,7 @@ export function createMockServer(options: MockOptions = {}) {
   const callerSpaces = (u: UserRec | null): SpaceRec[] => {
     if (!u) return []
     return [...spaces.values()]
-      .filter((s) => s.ownerId === u.id)
+      .filter((s) => s.members.has(u.id))
       .sort((a, b) => Number(b.personal) - Number(a.personal) || compareCodePoints(a.name, b.name))
   }
 
@@ -496,11 +550,184 @@ export function createMockServer(options: MockOptions = {}) {
       .map((i) => ({ id: i.id, role: i.role, created: rfc3339(i.created), expires: rfc3339(i.expires), createdBy: i.createdBy }))
 
   // --- spaces ---
-  const spaceOf = (u: UserRec, id: string): SpaceRec => {
+  // Opening a space (the real server's `handle`): someone who is no member, and
+  // no administrator, is told it does not exist, the same as for a space that
+  // does not; a disabled space opens for no one; a member without the
+  // permission the route needs is refused.
+  const openSpace = (u: UserRec, id: string, need: Permission): SpaceRec => {
     const s = spaces.get(id)
-    // A space of someone else is the same 404 as one that does not exist.
-    if (!s || s.ownerId !== u.id) throw new HttpError(404, 'not_found', '没有这个空间')
+    if (!s || (!s.members.has(u.id) && u.role !== 'admin')) throw new HttpError(404, 'not_found', '没有这个空间')
+    if (s.disabled) throw new HttpError(403, 'space_disabled', 'this space has been disabled by an administrator')
+    if (!spaceInfo(s, u).permissions.includes(need)) throw new HttpError(403, 'forbidden', NO_PERMISSION(need))
     return s
+  }
+  // What a route on a space asks of the caller (the route table of the real server).
+  const needOf = (me: UserRec, method: string, rest: string): Permission => {
+    if ((rest === '' && method === 'PATCH') || rest === '/reindex' || rest === '/remote' || rest.startsWith('/remote/')) return 'manage'
+    if (rest === '/members' || rest.startsWith('/members/')) {
+      if (method === 'GET') return 'read'
+      // Anyone may leave: removing yourself needs no more than being a member.
+      if (method === 'DELETE' && decodeURIComponent(rest.slice('/members/'.length)) === me.id) return 'read'
+      return 'members'
+    }
+    return method === 'GET' ? 'read' : 'write'
+  }
+
+  // --- members ---
+  const memberOf = (s: SpaceRec, userId: string, you: string): Member => {
+    const u = users.get(userId)!
+    return { userId, username: u.username, name: u.name, role: s.members.get(userId)!.role, you: userId === you }
+  }
+  const checkRole = (raw: unknown): SpaceRole => {
+    if (typeof raw !== 'string' || !ROLES.includes(raw)) throw new HttpError(400, 'invalid', `a role is one of ${ROLES.join(', ')}`)
+    return raw as SpaceRole
+  }
+  // A space always keeps one owner.
+  const keepOneOwner = (s: SpaceRec, leaving: SpaceRole) => {
+    if (leaving === 'owner' && [...s.members.values()].filter((m) => m.role === 'owner').length <= 1) throw new HttpError(409, 'last_owner', 'a space needs at least one owner; make someone else an owner first')
+  }
+  const routeMembers = (me: UserRec, s: SpaceRec, method: string, rest: string, body: Record<string, unknown>): MockResponse => {
+    const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
+    if (rest === '/members' && method === 'GET') {
+      const list = [...s.members.keys()].map((id) => memberOf(s, id, me.id))
+      list.sort((a, b) => Number(b.role === 'owner') - Number(a.role === 'owner') || compareCodePoints(a.name, b.name))
+      return j({ members: list })
+    }
+    if (rest === '/members' && method === 'POST') {
+      const role = checkRole(body.role)
+      if (s.personal) throw new HttpError(409, 'personal_space', 'a personal space belongs to one person and cannot be shared')
+      const name = typeof body.username === 'string' ? body.username.trim().toLowerCase() : ''
+      const u = [...users.values()].find((x) => x.username === name)
+      if (!u || u.disabled) throw new HttpError(404, 'user_not_found', 'there is no such user')
+      if (s.members.has(u.id)) throw new HttpError(409, 'exists', 'that user is a member of this space already')
+      s.members.set(u.id, { role, joined: ++counter })
+      return j(memberOf(s, u.id, me.id), 201)
+    }
+    const one = /^\/members\/([^/]+)$/.exec(rest)
+    if (one) {
+      const userId = decodeURIComponent(one[1])
+      if (method === 'PATCH') {
+        const role = checkRole(body.role)
+        const cur = s.members.get(userId)
+        if (!cur) throw new HttpError(404, 'not_found', 'that user is not a member of this space')
+        if (cur.role !== role) {
+          keepOneOwner(s, cur.role)
+          cur.role = role
+        }
+        return j(memberOf(s, userId, me.id))
+      }
+      if (method === 'DELETE') {
+        const cur = s.members.get(userId)
+        if (!cur) throw new HttpError(404, 'not_found', 'that user is not a member of this space')
+        keepOneOwner(s, cur.role)
+        s.members.delete(userId)
+        return { status: 204 }
+      }
+    }
+    throw new HttpError(404, 'not_found', '没有这个接口')
+  }
+
+  // --- administration ---
+  const spaceSync = (s: SpaceRec) => (s.remote ? s.remote.state : 'local')
+  const adminSpaceOf = (id: string): SpaceRec => {
+    const s = spaces.get(id)
+    if (!s) throw new HttpError(404, 'not_found', 'no such space')
+    return s
+  }
+  const sizeOf = (s: SpaceRec) => {
+    // The files of the pages, plus what a repository weighs on its own.
+    let bytes = 4096
+    for (const id of s.store.ids()) {
+      const p = s.store.peek(id)
+      if (p) bytes += new TextEncoder().encode(JSON.stringify(p.meta) + p.body).length
+    }
+    return bytes
+  }
+  const routeAdmin = (method: string, path: string, url: URL, body: Record<string, unknown>): MockResponse => {
+    const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
+    if (path === '/admin/spaces' && method === 'GET') {
+      let limit = 50
+      const raw = url.searchParams.get('limit')
+      if (raw !== null && raw !== '') {
+        const n = Number(raw)
+        if (!Number.isInteger(n) || n < 1 || n > 200) throw new HttpError(400, 'invalid', 'limit is a number from 1 to 200')
+        limit = n
+      }
+      const needle = (url.searchParams.get('q') ?? '').toLowerCase()
+      const after = url.searchParams.get('cursor') ?? ''
+      // In order of creation, as the real server's id order is.
+      const all = [...spaces.values()]
+      const from = after ? all.findIndex((s) => s.id === after) + 1 : 0
+      const matching = all.slice(from).filter((s) => needle === '' || s.name.toLowerCase().includes(needle))
+      const page = matching.slice(0, limit)
+      const items: AdminSpace[] = page.map((s) => {
+        const owner = ownerOf(s)
+        return {
+          id: s.id,
+          name: s.name,
+          personal: s.personal,
+          created: rfc3339(s.created),
+          disabled: s.disabled,
+          owner: owner ? { id: owner.id, username: owner.username, name: owner.name } : null,
+          members: s.members.size,
+          sizeBytes: s.size ? s.size.bytes : null,
+          sizeAt: s.size ? rfc3339(s.size.at) : null,
+          sync: spaceSync(s),
+        }
+      })
+      return j({ items, next: matching.length > limit ? page[page.length - 1].id : '' })
+    }
+    if (path === '/admin/status' && method === 'GET') {
+      const status: ServerStatus = {
+        version: 'mock',
+        startedAt: rfc3339(startedAt),
+        uptimeSeconds: Math.max(0, Math.floor((now() - startedAt) / 1000)),
+        database: 'sqlite',
+        spaces: spaces.size,
+        users: users.size,
+        openSpaces: spaces.size,
+        diskFreeBytes: 50 * 1024 ** 3,
+        goVersion: 'go1.27.4',
+      }
+      return j(status)
+    }
+    const one = /^\/admin\/spaces\/([^/]+)(?:\/(size|transfer|disable|enable))?$/.exec(path)
+    if (one) {
+      const id = decodeURIComponent(one[1])
+      const s = adminSpaceOf(id)
+      switch (one[2]) {
+        case 'size':
+          if (method !== 'POST') break
+          s.size = { bytes: sizeOf(s), at: now() }
+          return j({ sizeBytes: s.size.bytes, sizeAt: rfc3339(s.size.at) })
+        case 'transfer': {
+          if (method !== 'POST') break
+          if (s.personal) throw new HttpError(409, 'personal_space', 'a personal space belongs to one person and cannot be transferred or deleted')
+          const u = typeof body.userId === 'string' ? users.get(body.userId) : undefined
+          if (!u) throw new HttpError(404, 'user_not_found', 'there is no such user')
+          if (u.disabled) throw new HttpError(409, 'user_disabled', 'that user is disabled and cannot own a space')
+          for (const m of s.members.values()) if (m.role === 'owner') m.role = 'editor'
+          const had = s.members.get(u.id)
+          if (had) had.role = 'owner'
+          else s.members.set(u.id, { role: 'owner', joined: ++counter })
+          return { status: 204 }
+        }
+        case 'disable':
+        case 'enable':
+          if (method !== 'POST') break
+          s.disabled = one[2] === 'disable'
+          return { status: 204 }
+        case undefined:
+          if (method !== 'DELETE') break
+          if (s.personal) throw new HttpError(409, 'personal_space', 'a personal space belongs to one person and cannot be transferred or deleted')
+          spaces.delete(id)
+          {
+            const stamp = rfc3339(now()).replace(/[-:]/g, '')
+            return j({ trashed: `trash/${id}-${stamp}`, cacheTrashed: `trash/${id}-${stamp}.cache`, warnings: [] })
+          }
+      }
+    }
+    throw new HttpError(404, 'not_found', '没有这个接口')
   }
 
   // --- remote repository ---
@@ -766,7 +993,10 @@ export function createMockServer(options: MockOptions = {}) {
     const path = url.pathname.replace(/^\/api/, '')
     const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
 
-    if (method === 'GET' && path === '/meta') return j({ version: 'mock', maxUpload, maxImport, spaces: callerSpaces(ctx.user).map(spaceInfo) })
+    if (method === 'GET' && path === '/meta') {
+      const u = ctx.user
+      return j({ version: 'mock', maxUpload, maxImport, spaces: u ? callerSpaces(u).map((s) => spaceInfo(s, u)) : [] })
+    }
     if (method === 'GET' && path === '/session') {
       const base = { mode, user: ctx.user ? publicUser(ctx.user) : null, setup: accounts && users.size === 0 }
       return {
@@ -793,7 +1023,7 @@ export function createMockServer(options: MockOptions = {}) {
       const state = body.state
       if (state !== 'local' && state !== 'ok' && state !== 'offline' && state !== 'rewritten' && state !== 'error') throw new HttpError(400, 'invalid', 'state 不对')
       setRemoteState(target, state, { error: typeof body.error === 'string' ? body.error : undefined })
-      return j(spaceInfo(target))
+      return j(spaceInfo(target, ownerOf(target) ?? [...users.values()][0]))
     }
 
     // --- signing in (accounts mode) ---
@@ -861,16 +1091,26 @@ export function createMockServer(options: MockOptions = {}) {
       }
     }
 
+    // --- administration (administrators only; accounts mode) ---
+    if (path === '/admin/status' || path === '/admin/spaces' || path.startsWith('/admin/spaces/')) {
+      accountsOnly()
+      requireAdmin(ctx)
+      return routeAdmin(method, path, url, body)
+    }
+
     // --- spaces ---
     if (path === '/spaces') {
-      if (method === 'GET') return j({ spaces: callerSpaces(requireUser(ctx)).map(spaceInfo) })
+      if (method === 'GET') {
+        const me = requireUser(ctx)
+        return j({ spaces: callerSpaces(me).map((s) => spaceInfo(s, me)) })
+      }
       if (method === 'POST') {
         accountsOnly()
         const me = requireUser(ctx)
         const name = checkName(body.name)
-        if (options.maxSpaces !== undefined && callerSpaces(me).length >= options.maxSpaces) throw new HttpError(403, 'forbidden', `最多只能拥有 ${options.maxSpaces} 个空间`)
+        if (options.maxSpaces !== undefined && callerSpaces(me).filter((s) => s.members.get(me.id)?.role === 'owner').length >= options.maxSpaces) throw new HttpError(403, 'forbidden', `最多只能拥有 ${options.maxSpaces} 个空间`)
         const inbox = body.inbox === undefined ? DEFAULT_INBOX : checkInbox(body.inbox)
-        return j(spaceInfo(addSpace(newId((x) => spaces.has(x)), name, me.id, false, false, inbox)), 201)
+        return j(spaceInfo(addSpace(newId((x) => spaces.has(x)), name, me.id, false, false, inbox), me), 201)
       }
     }
     const m = /^\/spaces\/([^/]+)(\/.*)?$/.exec(path)
@@ -878,18 +1118,23 @@ export function createMockServer(options: MockOptions = {}) {
       const me = requireUser(ctx)
       const id = decodeURIComponent(m[1])
       const rest = m[2] ?? ''
+      // These do not exist in single-user mode, whoever asks.
+      if ((rest === '' && method === 'PATCH') || rest === '/remote' || rest.startsWith('/remote/') || rest === '/members' || rest.startsWith('/members/')) accountsOnly()
+      const s = openSpace(me, id, needOf(me, method, rest))
       if (rest === '' && method === 'PATCH') {
-        accountsOnly()
-        const s = spaceOf(me, id)
         if (body.name === undefined && body.inbox === undefined) throw new HttpError(400, 'invalid', '至少要给出 name 或 inbox')
         // Check both before changing either, so a bad one leaves the space as it was.
         const name = body.name === undefined ? s.name : checkName(body.name)
         const inbox = body.inbox === undefined ? s.inbox : checkInbox(body.inbox)
         s.name = name
         s.inbox = inbox
-        return j(spaceInfo(s))
+        return j(spaceInfo(s, me))
       }
-      return routeSpace(me, spaceOf(me, id), method, rest, url, body, raw)
+      if (rest === '/members' || rest.startsWith('/members/')) {
+        // Leaving needs no more than being a member: the permission check above is waived for it.
+        return routeMembers(me, s, method, rest, body)
+      }
+      return routeSpace(me, s, method, rest, url, body, raw)
     }
     throw new HttpError(404, 'not_found', '没有这个接口')
   }

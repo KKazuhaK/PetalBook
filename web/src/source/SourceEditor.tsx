@@ -38,6 +38,8 @@ interface Props {
   problemLine?: number | null
   label: string
   className?: string
+  // The text can be looked at and selected, not changed.
+  readOnly?: boolean
 }
 
 const fromOutside = Annotation.define<boolean>()
@@ -79,7 +81,7 @@ const highlight = HighlightStyle.define([
   { tag: tg.comment, color: 'var(--muted-foreground)', fontStyle: 'italic' },
 ])
 
-export default function SourceEditor({ ref, getInitialText, onChange, onScroll, problemLine = null, label, className }: Props) {
+export default function SourceEditor({ ref, getInitialText, onChange, onScroll, problemLine = null, label, className, readOnly = false }: Props) {
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
   // The latest callbacks, without rebuilding the editor when they change.
@@ -98,6 +100,9 @@ export default function SourceEditor({ ref, getInitialText, onChange, onScroll, 
           drawSelection(),
           highlightSpecialChars(),
           EditorView.lineWrapping,
+          // Both: no change can be made, and no caret or keyboard comes up on a phone.
+          EditorState.readOnly.of(readOnly),
+          EditorView.editable.of(!readOnly),
           keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
           yamlFrontmatter({ content: markdown() }),
           syntaxHighlighting(highlight),

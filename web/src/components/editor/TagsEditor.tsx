@@ -5,7 +5,7 @@ import { t } from '@/i18n'
 // Chips plus an input. A tag is committed on Enter, comma (half or full
 // width) or when the box loses focus; Backspace in the empty box removes the
 // last one. Suggestions come from the tags already used elsewhere.
-export function TagsEditor({ tags, onChange, suggestions }: { tags: string[]; onChange: (tags: string[]) => void; suggestions: { tag: string; pages: number }[] }) {
+export function TagsEditor({ tags, onChange, suggestions, readOnly = false }: { tags: string[]; onChange: (tags: string[]) => void; suggestions: { tag: string; pages: number }[]; readOnly?: boolean }) {
   const [text, setText] = useState('')
   const [focused, setFocused] = useState(false)
   const [active, setActive] = useState(-1)
@@ -39,6 +39,21 @@ export function TagsEditor({ tags, onChange, suggestions }: { tags: string[]; on
       setActive(-1)
       setFocused(false)
     }
+  }
+
+  // Read only: the tags as they are, with nothing to add or take away.
+  if (readOnly) {
+    if (tags.length === 0) return null
+    return (
+      <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={t.editor.tagsLabel}>
+        <Tag className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        {tags.map((tag) => (
+          <span key={tag} className="inline-flex h-6 items-center rounded-full bg-secondary px-2.5 text-xs text-secondary-foreground">
+            {tag}
+          </span>
+        ))}
+      </div>
+    )
   }
 
   return (

@@ -9,6 +9,7 @@ export function AutoTextarea({
   placeholder,
   className,
   label,
+  readOnly = false,
   ref,
 }: {
   value: string
@@ -17,6 +18,7 @@ export function AutoTextarea({
   placeholder: string
   className?: string
   label: string
+  readOnly?: boolean
   ref?: Ref<HTMLTextAreaElement>
 }) {
   const own = useRef<HTMLTextAreaElement | null>(null)
@@ -58,6 +60,7 @@ export function AutoTextarea({
       }}
       rows={1}
       value={value}
+      readOnly={readOnly}
       placeholder={placeholder}
       aria-label={label}
       onChange={(e) => onChange(e.target.value.replace(/[\r\n]+/g, ' '))}

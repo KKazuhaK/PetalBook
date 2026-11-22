@@ -12,7 +12,8 @@ import { useAcceptRemote, useConnectRemote, useDisconnectRemote, useRemote, useS
 import type { ConnectRemoteInput, Remote, RemoteKey, RemoteState, SpaceInfo } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
-import { SettingsSection } from './SettingsParts'
+import { can } from '@/lib/permissions'
+import { SettingsNote, SettingsSection } from './SettingsParts'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -28,8 +29,9 @@ export function SyncPanel({ space }: { space: string }) {
   const spaces = useSpaces()
   const current = spaces.data?.spaces.find((s) => s.id === space)
   if (spaces.isPending) return <PageFallback />
-  if (current && current.role !== 'owner') return <p className="rounded-lg border p-4 text-sm text-muted-foreground">{t.remote.ownerOnly}</p>
-  if (!current) return <p className="rounded-lg border p-4 text-sm text-muted-foreground">{t.editor.spaceMissing}</p>
+  if (!current) return <SettingsNote>{t.editor.spaceMissing}</SettingsNote>
+  if (current.disabled) return <SettingsNote>{t.spaces.disabledTitle}</SettingsNote>
+  if (!can(current, 'manage')) return <SettingsNote>{t.remote.ownerOnly}</SettingsNote>
   return (
     <div className="space-y-8">
       <RemoteSection space={space} />
@@ -53,7 +55,7 @@ export function ImportSection({ space }: { space: string }) {
 
 // Where quick notes go. Single-user mode sets it with `--inbox`, so it is only
 // shown there; in accounts mode the owner can change it, and nothing is moved.
-export function InboxSection({ space, readOnly = false }: { space: SpaceInfo; readOnly?: boolean }) {
+export function InboxSection({ space, readOnly = false, why }: { space: SpaceInfo; readOnly?: boolean; why?: string }) {
   const update = useUpdateSpace()
   const [value, setValue] = useState(space.inbox)
   const [error, setError] = useState('')
@@ -77,7 +79,7 @@ export function InboxSection({ space, readOnly = false }: { space: SpaceInfo; re
   return (
     <SettingsSection title={t.inboxSetting.title} id="inbox-title">
       <form className="grid gap-3" onSubmit={(e) => void submit(e)} noValidate>
-        <Field label={t.inboxSetting.label} help={readOnly ? t.inboxSetting.readOnly : t.inboxSetting.help} value={readOnly ? space.inbox : value} onChange={(e) => setValue(e.target.value)} readOnly={readOnly} error={error} autoComplete="off" spellCheck={false} />
+        <Field label={t.inboxSetting.label} help={readOnly ? (why ?? t.inboxSetting.readOnly) : t.inboxSetting.help} value={readOnly ? space.inbox : value} onChange={(e) => setValue(e.target.value)} readOnly={readOnly} error={error} autoComplete="off" spellCheck={false} />
         {!readOnly && (
           <div>
             <Button type="submit" disabled={update.isPending || value === space.inbox}>

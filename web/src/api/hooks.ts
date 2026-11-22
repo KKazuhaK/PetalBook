@@ -2,12 +2,13 @@
 
 import { useMemo } from 'react'
 import { useMatch } from 'react-router'
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData, type QueryClient } from '@tanstack/react-query'
 import { waitForSaves } from '@/editor/saveController'
 import { spaceUrls } from '@/lib/urls'
 import { api, ApiError, spaceApi } from './client'
 import { parseTagColor } from '../lib/tagColors.ts'
-import type { BatchPagesInput, ConnectRemoteInput, CreatePageInput, ListParams, Remote, SessionInfo, SpaceInfo, SyncState, TagColor, TagsResponse, User } from './types'
+import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
+import type { AdminSpace, AdminSpaceList, BatchPagesInput, ConnectRemoteInput, CreatePageInput, ListParams, Member, Permission, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, User } from './types'
 
 // Everything of one space is under ['space', id, …], so switching space never
 // shows another space's data and one invalidation covers a space.
@@ -17,6 +18,11 @@ export const keys = {
   account: ['account'] as const,
   users: ['users'] as const,
   invites: ['invites'] as const,
+  adminSpaces: ['admin', 'spaces'] as const,
+  adminSpaceList: (q: string) => ['admin', 'spaces', 'list', q] as const,
+  adminStatus: ['admin', 'status'] as const,
+  // A space an administrator opens without being a member of it.
+  viewedSpace: (space: string) => ['admin', 'spaces', 'view', space] as const,
   space: (space: string) => ['space', space] as const,
   tree: (space: string) => ['space', space, 'tree'] as const,
   tags: (space: string) => ['space', space, 'tags'] as const,
@@ -26,6 +32,7 @@ export const keys = {
   history: (space: string, id: string) => ['space', space, 'history', id, 'list'] as const,
   version: (space: string, id: string, commit: string) => ['space', space, 'history', id, 'version', commit] as const,
   remote: (space: string) => ['space', space, 'remote'] as const,
+  members: (space: string) => ['space', space, 'members'] as const,
 }
 
 export const PAGE_SIZE = 50
@@ -79,14 +86,60 @@ export function useRouteSpace(): string | null {
 // The space whose pages are shown: the one in the address, else (on the
 // account pages, which have none) the one used last if it still exists, else
 // the first.
-export function useActiveSpace(): { id: string | null; spaces: SpaceInfo[] } {
+export function useActiveSpace(): { id: string | null; spaces: SpaceInfo[]; resolving: boolean } {
   const route = useRouteSpace()
-  const spaces = useSpaces().data?.spaces ?? []
+  const list = useSpaces()
+  const mine = list.data?.spaces ?? []
+  // A space in the address that is not the person's own may still be one an
+  // administrator can open.
+  const viewed = useViewedSpace(route, !list.isPending && !!route && !mine.some((s) => s.id === route))
+  const spaces = viewed.data ? [...mine, viewed.data] : mine
   // The storage is only read when the address has no space.
   const last = route ? null : lastSpace()
   const id = route ?? (last && spaces.some((s) => s.id === last) ? last : (spaces[0]?.id ?? null))
-  return { id, spaces }
+  return { id, spaces, resolving: list.isPending || viewed.isLoading }
 }
+
+// An administrator may do everything in every space, but a space they are not a
+// member of is not in their list. The administration's list knows it: from the
+// pages already loaded, else by reading it a page at a time, which only happens
+// when someone opens such a space by its address. It carries no role, and every
+// permission; the inbox is not known, and is left empty.
+function useViewedSpace(space: string | null, wanted: boolean) {
+  const qc = useQueryClient()
+  const session = useSession().data
+  const admin = session?.mode === 'accounts' && session.user?.role === 'admin'
+  return useQuery({
+    queryKey: keys.viewedSpace(space ?? ''),
+    enabled: wanted && admin,
+    staleTime: Infinity,
+    queryFn: async ({ signal }): Promise<SpaceInfo | null> => {
+      const asSpace = (s: AdminSpace): SpaceInfo => ({ id: s.id, name: s.name, role: '', permissions: ['read', 'write', 'members', 'manage'], personal: s.personal, sync: s.sync, inbox: '', disabled: s.disabled })
+      for (const [, data] of qc.getQueriesData<InfiniteData<AdminSpaceList>>({ queryKey: ['admin', 'spaces', 'list'] })) {
+        const hit = data?.pages.flatMap((p) => p.items).find((s) => s.id === space)
+        if (hit) return asSpace(hit)
+      }
+      let cursor = ''
+      for (;;) {
+        const r = await api.adminSpaces({ cursor: cursor || undefined, limit: 200 }, signal)
+        const hit = r.items.find((s) => s.id === space)
+        if (hit) return asSpace(hit)
+        if (!r.next) return null
+        cursor = r.next
+      }
+    },
+  })
+}
+
+// What the caller may do in the space being shown. Nothing while the list of
+// spaces is still on its way, and nothing in a disabled space.
+export function useSpacePermissions(): SpacePermissions {
+  const { id, spaces } = useActiveSpace()
+  const space = spaces.find((s) => s.id === id)
+  return useMemo(() => permissionsOf(space), [space])
+}
+export const useCan = (permission: Permission): boolean => useSpacePermissions()[permission]
+export { can }
 
 // The same as a string, for the hooks below: '' while the list of spaces is
 // still on its way (their queries wait for it).
@@ -115,14 +168,18 @@ export function useSpaceApi() {
   return useMemo(() => spaceApi(space), [space])
 }
 
+// A space that is switched off (or one the list does not show yet) is not asked
+// for its folders and tags: every request on it would be refused.
 export function useTree() {
   const space = useSpaceId()
-  return useQuery({ queryKey: keys.tree(space), queryFn: ({ signal }) => spaceApi(space).tree(signal), staleTime: 15_000, enabled: space !== '' })
+  const { read } = useSpacePermissions()
+  return useQuery({ queryKey: keys.tree(space), queryFn: ({ signal }) => spaceApi(space).tree(signal), staleTime: 15_000, enabled: space !== '' && read })
 }
 
 export function useTags() {
   const space = useSpaceId()
-  return useQuery({ queryKey: keys.tags(space), queryFn: ({ signal }) => spaceApi(space).tags(signal), staleTime: 15_000, enabled: space !== '' })
+  const { read } = useSpacePermissions()
+  return useQuery({ queryKey: keys.tags(space), queryFn: ({ signal }) => spaceApi(space).tags(signal), staleTime: 15_000, enabled: space !== '' && read })
 }
 
 // Tag name -> colour, for every tag that has one. Built from the tags listing
@@ -404,6 +461,104 @@ export function useAcceptRemote(space: string) {
       put(remote)
       // Pages, lists and counts may all have moved with the remote's history.
       void invalidateListings(qc, space)
+    },
+  })
+}
+
+// --- members ---------------------------------------------------------------------
+
+// The people of one space, owners first. Asked for only where they are shown.
+export function useMembers(space: string, enabled = true) {
+  return useQuery({ queryKey: keys.members(space), queryFn: ({ signal }) => spaceApi(space).members(signal), enabled: enabled && space !== '', staleTime: 10_000 })
+}
+
+// A change of members changes the list of members, and what the space list
+// says of the caller (their own role and permissions, or the space itself when
+// they leave).
+function useMembersChanged(space: string) {
+  const qc = useQueryClient()
+  return () => Promise.all([qc.invalidateQueries({ queryKey: keys.members(space) }), qc.invalidateQueries({ queryKey: keys.spaces })])
+}
+
+export function useAddMember(space: string) {
+  const changed = useMembersChanged(space)
+  return useMutation({ mutationFn: ({ username, role }: { username: string; role: SpaceRole }) => spaceApi(space).addMember(username, role), onSuccess: changed })
+}
+export function useSetMemberRole(space: string) {
+  const changed = useMembersChanged(space)
+  return useMutation({ mutationFn: ({ user, role }: { user: string; role: SpaceRole }) => spaceApi(space).setMemberRole(user, role), onSuccess: changed })
+}
+export function useRemoveMember(space: string) {
+  const changed = useMembersChanged(space)
+  return useMutation({ mutationFn: (user: string) => spaceApi(space).removeMember(user), onSuccess: changed })
+}
+
+// Updates one member in the cached list (a role change), without asking again.
+export function putMember(qc: QueryClient, space: string, member: Member) {
+  qc.setQueryData<{ members: Member[] }>(keys.members(space), (prev) => prev && { members: prev.members.map((m) => (m.userId === member.userId ? member : m)) })
+}
+
+// --- administration ----------------------------------------------------------------
+
+export const ADMIN_PAGE_SIZE = 50
+
+// Every space on the server, a cursor page at a time; `q` is the name filter.
+export function useAdminSpaces(q: string, enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.adminSpaceList(q),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => api.adminSpaces({ q: q || undefined, cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled,
+    staleTime: 15_000,
+  })
+}
+
+export function useAdminStatus(enabled = true) {
+  return useQuery({ queryKey: keys.adminStatus, queryFn: ({ signal }) => api.adminStatus(signal), enabled, staleTime: 5_000 })
+}
+
+// What an administrator does to a space changes the administration's list, and
+// what the members see of it (the space list: a marker, a new owner, gone).
+function useAdminSpaceChanged() {
+  const qc = useQueryClient()
+  return (space: string) =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: keys.adminSpaces }),
+      qc.invalidateQueries({ queryKey: keys.spaces }),
+      qc.invalidateQueries({ queryKey: keys.members(space) }),
+      qc.invalidateQueries({ queryKey: keys.adminStatus }),
+    ])
+}
+
+// Measuring answers with the one space's numbers: they are put into the cached
+// pages, so the table does not reload to show them.
+export function useResizeSpace() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.adminResizeSpace(id),
+    onSuccess: (size, id) => {
+      const patch = (list: AdminSpaceList) => ({ ...list, items: list.items.map((s) => (s.id === id ? { ...s, ...size } : s)) })
+      qc.setQueriesData<{ pages: AdminSpaceList[]; pageParams: unknown[] }>({ queryKey: keys.adminSpaces }, (prev) => prev && 'pages' in prev ? { ...prev, pages: prev.pages.map(patch) } : prev)
+    },
+  })
+}
+export function useTransferSpace() {
+  const changed = useAdminSpaceChanged()
+  return useMutation({ mutationFn: ({ id, userId }: { id: string; userId: string }) => api.adminTransferSpace(id, userId), onSuccess: (_r, { id }) => changed(id) })
+}
+export function useSetSpaceDisabled() {
+  const changed = useAdminSpaceChanged()
+  return useMutation({ mutationFn: ({ id, disabled }: { id: string; disabled: boolean }) => (disabled ? api.adminDisableSpace(id) : api.adminEnableSpace(id)), onSuccess: (_r, { id }) => changed(id) })
+}
+export function useDeleteSpace() {
+  const changed = useAdminSpaceChanged()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.adminDeleteSpace(id),
+    onSuccess: (_r, id) => {
+      qc.removeQueries({ queryKey: keys.space(id) })
+      return changed(id)
     },
   })
 }

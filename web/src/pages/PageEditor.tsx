@@ -5,7 +5,7 @@ import { EditorContent, useEditor } from '@tiptap/react'
 import { Code, Columns2, History, MoreHorizontal, Save, Trash2, FolderInput, Type } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError, isUnauthenticated, spaceApi, type SpaceApi } from '@/api/client'
-import { invalidateListings, keys, usePage, useSession, useTags, useTree, useUrls } from '@/api/hooks'
+import { invalidateListings, keys, usePage, useSession, useSpacePermissions, useTags, useTree, useUrls } from '@/api/hooks'
 import type { Page } from '@/api/types'
 import type { VersionContent } from '@/diff'
 import { docToMarkdown, markdownToDoc } from '@/markdown'
@@ -116,8 +116,10 @@ function MissingPage({ space, id, userId }: { space: string; id: string; userId:
   const navigate = useNavigate()
   const qc = useQueryClient()
   const urls = useUrls()
+  const { write } = useSpacePermissions()
   const [ref] = useState(() => draftRefFor(userId, space, id))
-  const [draft] = useState(() => loadDraft(ref))
+  // Putting text back makes a page: only for someone who may.
+  const [draft] = useState(() => (write ? loadDraft(ref) : null))
   const [busy, setBusy] = useState(false)
   const preview = (() => {
     if (draft?.bodyText !== undefined) return draft.bodyText.slice(0, 400)
@@ -199,6 +201,14 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
   const client: SpaceApi = useMemo(() => spaceApi(space), [space])
   const tree = useTree()
   const tags = useTags()
+  // Without `write` the page is shown and nothing about it can be changed: no
+  // typing, no draft, no move or delete, no going back to a version.
+  const { write } = useSpacePermissions()
+  const readOnly = !write
+  const readOnlyRef = useRef(readOnly)
+  useEffect(() => {
+    readOnlyRef.current = readOnly
+  })
 
   // The page file, without the draft that came with it.
   const [file] = useState<Page>(() => {
@@ -211,8 +221,9 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
   // the file before anything is shown: by content and lineage, not by clocks.
   const [ref] = useState(() => draftRefFor(userId, space, initial.id))
   const [drafts] = useState(() => draftStoreFor(ref))
-  const [local] = useState(() => loadDraft(ref))
-  const [restore] = useState(() => planRestore(initial, local, docToMarkdown, (md) => docToMarkdown(markdownToDoc(md))))
+  // What this browser kept is the text of someone who could write; it is not offered back.
+  const [local] = useState(() => (readOnly ? null : loadDraft(ref)))
+  const [restore] = useState(() => planRestore(readOnly ? file : initial, local, docToMarkdown, (md) => docToMarkdown(markdownToDoc(md))))
   const content: Content | null = restore.kind === 'file' ? null : restore.content
   // A local copy from before the source field existed carries none: the box then shows
   // what the server has, so the person never types over a value they were not shown.
@@ -289,7 +300,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 's') {
         e.preventDefault()
-        void controller.commit()
+        if (!readOnlyRef.current) void controller.commit()
       }
     }
     document.addEventListener('visibilitychange', onHidden)
@@ -358,7 +369,8 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
   const editor = useEditor({
     extensions,
     content: initialDoc,
-    autofocus: startInBody ? 'start' : false,
+    editable: !readOnly,
+    autofocus: startInBody && !readOnly ? 'start' : false,
     editorProps: { attributes: { class: 'pb-prose', 'aria-label': t.editor.bodyLabel } },
     onUpdate: ({ editor: ed }) => {
       // Always the editor that is live: in development React creates and
@@ -373,6 +385,10 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
   useEffect(() => {
     if (editor) live.attachEditor(editor)
   }, [editor, live])
+  // The role can change while the page is open (the list of spaces is read again).
+  useEffect(() => {
+    if (editor && !editor.isDestroyed && editor.isEditable === readOnly) editor.setEditable(!readOnly)
+  }, [editor, readOnly])
 
   // Leaving with a conflict open, or with text that never reached the server,
   // asks first. (Signed out: the sign-in page takes over, and the browser keeps the text.)
@@ -681,7 +697,13 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
       <TopBar
         actions={
           <>
-            <SaveIndicator snapshot={snapshot} draftSafe={!controller.hasUnsaved()} onRetry={() => void controller.retry()} onOpenConflict={() => setConflictOpen(true)} />
+            {readOnly ? (
+              <span className="rounded-md border px-1.5 py-0.5 text-xs text-muted-foreground" title={t.permissions.readOnlyNote}>
+                {t.permissions.readOnly}
+              </span>
+            ) : (
+              <SaveIndicator snapshot={snapshot} draftSafe={!controller.hasUnsaved()} onRetry={() => void controller.retry()} onOpenConflict={() => setConflictOpen(true)} />
+            )}
             {!historyOpen && <ModeSwitch mode={mode} wide={wide} onChange={changeMode} />}
             {!historyOpen && (
               <Button variant="ghost" size="sm" onClick={() => setHistoryOpen(true)} onPointerEnter={() => void loadHistory()} onFocus={() => void loadHistory()} title={t.history.openHint} aria-label={t.history.open}>
@@ -689,7 +711,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
                 <span className="hidden sm:inline">{t.history.open}</span>
               </Button>
             )}
-            {!historyOpen && (
+            {!historyOpen && !readOnly && (
               <Button variant="ghost" size="sm" disabled={!canSave} onClick={() => void controller.commit()} title={t.editor.saveVersionHint} aria-label={t.editor.saveVersion}>
                 <Save />
                 <span className="hidden sm:inline">{t.editor.saveVersion}</span>
@@ -705,15 +727,19 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
                     <History />
                     {t.history.open}
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setMoveOpen(true)}>
-                    <FolderInput />
-                    {t.editor.move}
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
-                    <Trash2 />
-                    {t.editor.delete}
-                  </DropdownMenuItem>
+                  {!readOnly && (
+                    <>
+                      <DropdownMenuItem onClick={() => setMoveOpen(true)}>
+                        <FolderInput />
+                        {t.editor.move}
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
+                        <Trash2 />
+                        {t.editor.delete}
+                      </DropdownMenuItem>
+                    </>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
@@ -725,7 +751,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
 
       {historyOpen && (
         <Suspense fallback={<PageFallback />}>
-          <HistoryMode space={space} pageId={page.id} folder={page.folder} getCurrent={currentContent} saveState={snapshot.state} onClose={() => setHistoryOpen(false)} onRestore={restoreVersion} />
+          <HistoryMode space={space} pageId={page.id} folder={page.folder} getCurrent={currentContent} saveState={snapshot.state} onClose={() => setHistoryOpen(false)} onRestore={restoreVersion} readOnly={readOnly} />
         </Suspense>
       )}
 
@@ -768,6 +794,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
               problemLine={sv.problem?.line ?? null}
               label={t.modes.sourceLabel}
               className="h-full"
+              readOnly={readOnly}
             />
           </Suspense>
         </div>
@@ -782,7 +809,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
         inert={mode === 'split' && sv.broken}
         className={mode === 'source' ? 'hidden' : mode === 'split' ? `min-h-0 min-w-0 overflow-y-auto ${sv.broken ? 'opacity-50' : ''}` : 'flex flex-1 flex-col'}
       >
-      {editor && (
+      {editor && !readOnly && (
         <div className={`sticky z-20 border-b bg-background/90 backdrop-blur ${mode === 'split' ? 'top-0' : 'top-12'}`}>
           <div className="mx-auto max-w-[720px] px-3">
             <EditorToolbar editor={editor} />
@@ -793,24 +820,30 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
       <div className="mx-auto w-full max-w-[720px] flex-1 px-5 pt-10 pb-24">
         <AutoTextarea
           value={fields.title}
+          readOnly={readOnly}
           onChange={(v) => setField('title', v)}
           onEnter={() => subtitleRef.current?.focus()}
           placeholder={t.editor.titlePlaceholder}
           label={t.editor.titlePlaceholder}
           className="pb-title"
         />
+        {(!readOnly || fields.subtitle !== '') && (
         <AutoTextarea
           ref={subtitleRef}
           value={fields.subtitle}
+          readOnly={readOnly}
           onChange={(v) => setField('subtitle', v)}
           onEnter={() => editor?.commands.focus('start')}
           placeholder={t.editor.subtitlePlaceholder}
           label={t.editor.subtitlePlaceholder}
           className="pb-subtitle mt-1"
         />
+        )}
         <div className="mt-4 mb-6 flex flex-col gap-2">
-          <TagsEditor tags={fields.tags} onChange={setTags} suggestions={tags.data?.tags ?? []} />
+          <TagsEditor tags={fields.tags} onChange={setTags} suggestions={tags.data?.tags ?? []} readOnly={readOnly} />
+          {(!readOnly || (fields.source ?? '') !== '') && (
           <AutoTextarea
+            readOnly={readOnly}
             value={fields.source ?? ''}
             onChange={(v) => setField('source', v)}
             onEnter={() => editor?.commands.focus('start')}
@@ -818,14 +851,19 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
             label={t.editor.sourceLabel}
             className="pb-source"
           />
+          )}
         </div>
         {editor && (
           <>
             <EditorContent editor={editor} />
-            <SelectionBubble editor={editor} />
-            <LinkPopover editor={editor} />
-            <ImagePopover editor={editor} />
-            <TableControls editor={editor} />
+            {!readOnly && (
+              <>
+                <SelectionBubble editor={editor} />
+                <LinkPopover editor={editor} />
+                <ImagePopover editor={editor} />
+                <TableControls editor={editor} />
+              </>
+            )}
           </>
         )}
       </div>
@@ -834,8 +872,8 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
       </div>
 
       {conflict && <ConflictDialog open={conflictOpen} onOpenChange={setConflictOpen} info={conflict} onKeepMine={keepMine} onUseTheirs={useTheirs} />}
-      <MovePageDialog open={moveOpen} onOpenChange={setMoveOpen} current={page.folder} folders={(tree.data?.folders ?? []).map((f) => f.path)} onMove={move} />
-      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+      {!readOnly && <MovePageDialog open={moveOpen} onOpenChange={setMoveOpen} current={page.folder} folders={(tree.data?.folders ?? []).map((f) => f.path)} onMove={move} />}
+      <AlertDialog open={deleteOpen && !readOnly} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{t.delete.title}</AlertDialogTitle>
