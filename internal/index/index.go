@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	_ "modernc.org/sqlite" // pure-Go driver, keeps the binary static
 )
@@ -77,6 +78,9 @@ type Index struct {
 	path string
 	root string
 	wmu  sync.Mutex
+
+	// queries counts the queries of listings by a property (read by tests).
+	queries atomic.Int64
 }
 
 // Open opens or creates the index at dbPath for the space at root. An index

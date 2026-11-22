@@ -157,7 +157,7 @@ func (s *server) listPages(c *call) {
 // number, not text).
 func parseFilters(raw string) ([]index.Filter, error) {
 	const bad = "filter must be a JSON array of {\"key\", \"op\", \"values\"}"
-	if len(raw) > 16<<10 {
+	if len(raw) > 64<<10 {
 		return nil, errors.New("filter is too long")
 	}
 	dec := json.NewDecoder(strings.NewReader(raw))

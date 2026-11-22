@@ -276,13 +276,21 @@ func (s *Space) editTagsFile(tx *txn, edit func(root *yaml.Node) (changed bool, 
 			return err
 		}
 	}
+	if len(data) > maxTagsFile {
+		return invalidf("the change would make tags.yml larger than %d bytes, more than the server reads; nothing was changed", maxTagsFile)
+	}
 	if err := tx.record(jrec{Op: "t", Path: tagsFile}); err != nil {
 		return err
 	}
 	tx.touch(tagsFile)
-	s.cfgMu.Lock()
-	s.tagCfg = tagCache{}
-	s.cfgMu.Unlock()
+	// The cache is dropped after the write, as with space.yml: a reading in
+	// between would otherwise keep the old content under the size and time of
+	// the new file.
+	defer func() {
+		s.cfgMu.Lock()
+		s.tagCfg = tagCache{}
+		s.cfgMu.Unlock()
+	}()
 	if empty {
 		if err := os.Remove(abs); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err

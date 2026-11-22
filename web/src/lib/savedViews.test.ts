@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PageType, SavedView } from '../api/types.ts'
-import { boardColumns, cardFieldsOf, cardMovable, columnFilter, DEFAULT_STATE, freshName, groupFieldsOf, loadViewId, moveView, pickView, sameState, saveViewId, stateOfView, viewIdKey, withState } from './savedViews.ts'
+import { boardColumns, cardFieldsOf, cardMovable, columnDroppable, columnFilter, MAX_COLUMNS, DEFAULT_STATE, freshName, groupFieldsOf, loadViewId, moveView, pickView, sameState, saveViewId, stateOfView, viewIdKey, withState } from './savedViews.ts'
 
 const view = (id: string, extra: Partial<SavedView> = {}): SavedView => ({ id, name: id, layout: 'list', sort: '', group: '', filter: [], hidden: [], ...extra })
 
@@ -117,6 +117,37 @@ describe('the columns of a board', () => {
     const cols = boardColumns(null, [{ value: '草稿', count: 5 }, { value: '定稿', count: 2 }], 1)
     expect(cols.map((c) => [c.id, c.count])).toEqual([['o:草稿', 5], ['o:定稿', 2], ['empty', 1]])
     expect(boardColumns(null, [], 0).map((c) => c.kind)).toEqual(['empty'])
+  })
+  it('made of values are the first MAX_COLUMNS of them and one "other values" for the rest, which leaves out the ones shown', () => {
+    const groups = Array.from({ length: 80 }, (_, i) => ({ value: `v${String(i).padStart(2, '0')}`, count: 80 - i }))
+    const cols = boardColumns(null, groups, 3)
+    expect(cols).toHaveLength(MAX_COLUMNS + 2)
+    const other = cols[MAX_COLUMNS]
+    expect(other.kind).toBe('other')
+    expect(other.count).toBe(groups.slice(MAX_COLUMNS).reduce((n, g) => n + g.count, 0))
+    const f = columnFilter(other, 'k', null)
+    expect(f.op).toBe('notIn')
+    expect(f.values).toEqual(groups.slice(0, MAX_COLUMNS).map((g) => g.value))
+    // The index cut the list of values short: there are more than are known.
+    expect(boardColumns(null, groups.slice(0, 3), 0, true).map((c) => c.kind)).toEqual(['option', 'option', 'option', 'other', 'empty'])
+    expect(boardColumns(null, groups.slice(0, 3), 0).map((c) => c.kind)).toEqual(['option', 'option', 'option', 'empty'])
+  })
+  it('of a select with more than MAX_COLUMNS options are those that have pages', () => {
+    const options = Array.from({ length: 120 }, (_, i) => `o${i}`)
+    expect(boardColumns(options, [{ value: 'o7', count: 2 }, { value: 'o99', count: 1 }], 0).filter((c) => c.kind === 'option').map((c) => c.value)).toEqual(['o7', 'o99'])
+    // The "other values" column leaves out every option, up to what the server takes (500).
+    const other = boardColumns(options, [{ value: 'x', count: 1 }], 0).find((c) => c.kind === 'other')!
+    expect(columnFilter(other, 'k', options).values).toHaveLength(120)
+  })
+  it('"other values" of a select with no options is every page that has a value', () => {
+    const other = boardColumns([], [{ value: 'x', count: 1 }], 0).find((c) => c.kind === 'other')!
+    expect(columnFilter(other, 'k', [])).toEqual({ key: 'k', op: 'notEmpty' })
+  })
+  it('take a dropped card only when the value is an option of a select, or when it is taken away', () => {
+    const cols = boardColumns(['a'], [{ value: 'z', count: 1 }], 0)
+    expect(cols.map((c) => columnDroppable(c, true))).toEqual([true, false, true])
+    const byValue = boardColumns(null, [{ value: '2', count: 1 }], 0)
+    expect(byValue.map((c) => columnDroppable(c, false))).toEqual([false, true])
   })
   it('each pick their pages by one filter: in, none of the options, no value', () => {
     const options = ['todo', 'doing']

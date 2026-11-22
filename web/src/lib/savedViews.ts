@@ -99,32 +99,54 @@ export interface BoardColumn {
   kind: ColumnKind
   // The value of an `option` column.
   value?: string
+  // The values an `other` column leaves out: the options, or the values the columns shown stand for.
+  exclude?: readonly string[]
   // Pages in it; undefined while the counts are not known.
   count: number | undefined
 }
 
+// The most columns a board made of values (not of the options of a select) shows; the rest are one "other values".
+export const MAX_COLUMNS = 50
+
 // The columns of a board: the options in order, "other values" when some page has a value that is not an option, "empty".
-// Without options (a tag's board, whose pages need not share a type) the columns are the values the pages have, most first.
-export function boardColumns(options: readonly string[] | null, groups: { value: string; count: number }[] | undefined, empty: number | undefined): BoardColumn[] {
+// Without options (a tag's board, whose pages need not share a type) the columns are the values the pages have, most
+// first, the first MAX_COLUMNS of them and "other values" for the rest. A select with more than MAX_COLUMNS options shows
+// those that have pages.
+export function boardColumns(options: readonly string[] | null, groups: { value: string; count: number }[] | undefined, empty: number | undefined, truncated = false): BoardColumn[] {
   const counts = groups ? new Map(groups.map((g) => [g.value, g.count])) : null
   const out: BoardColumn[] = []
   if (options) {
-    for (const o of options) out.push({ id: `o:${o}`, kind: 'option', value: o, count: counts ? (counts.get(o) ?? 0) : undefined })
+    const shown = options.length <= MAX_COLUMNS ? options : counts ? options.filter((o) => (counts.get(o) ?? 0) > 0) : options.slice(0, MAX_COLUMNS)
+    for (const o of shown) out.push({ id: `o:${o}`, kind: 'option', value: o, count: counts ? (counts.get(o) ?? 0) : undefined })
     const others = groups ? groups.filter((g) => !options.includes(g.value)).reduce((n, g) => n + g.count, 0) : undefined
-    if (others === undefined || others > 0) out.push({ id: 'other', kind: 'other', count: others })
+    if (others === undefined || others > 0) out.push({ id: 'other', kind: 'other', exclude: options, count: others })
   } else {
-    for (const g of groups ?? []) out.push({ id: `o:${g.value}`, kind: 'option', value: g.value, count: g.count })
+    const all = groups ?? []
+    const head = all.slice(0, MAX_COLUMNS)
+    for (const g of head) out.push({ id: `o:${g.value}`, kind: 'option', value: g.value, count: g.count })
+    if (all.length > MAX_COLUMNS || truncated) {
+      out.push({ id: 'other', kind: 'other', exclude: head.map((g) => g.value), count: all.slice(MAX_COLUMNS).reduce((n, g) => n + g.count, 0) })
+    }
   }
   out.push({ id: 'empty', kind: 'empty', count: empty })
   return out
 }
 
-// The condition that picks the pages of a column.
+// The condition that picks the pages of a column. "Other values" is the pages that have a value and none of the
+// excluded ones; with nothing to exclude, every page that has a value.
 export function columnFilter(col: BoardColumn, key: string, options: readonly string[] | null): PropFilter {
   if (col.kind === 'empty') return { key, op: 'empty' }
-  if (col.kind === 'other') return { key, op: 'notIn', values: [...(options ?? [])] }
+  if (col.kind === 'other') {
+    const values = [...(col.exclude ?? options ?? [])]
+    return values.length > 0 ? { key, op: 'notIn', values } : { key, op: 'notEmpty' }
+  }
   return { key, op: 'in', values: [col.value as string] }
 }
+
+// Whether a card can be dropped on a column: the value of an option of a select is the value to write, as typed; a
+// column made of the values the index holds is not (they are text, cut when long, whatever the page has), and "other
+// values" is no value. Taking the value away (the "empty" column) is always possible.
+export const columnDroppable = (col: BoardColumn, typed: boolean): boolean => col.kind === 'empty' || (col.kind === 'option' && typed)
 
 // The fields a card shows: the chosen ones that the type has, else the first three that are not the grouping one.
 export function cardFieldsOf(type: PageType | undefined, chosen: readonly string[] | undefined, group: string): TypeField[] {

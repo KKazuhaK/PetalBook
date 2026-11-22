@@ -228,7 +228,9 @@ describe('tabs', () => {
     const ids = (await saved()).views.map((v) => v.id)
     expect(new Set(ids).size).toBe(3)
     // move it to the front
+    // (the button is off while a move is being written: the second click waits for the first to settle)
     await click(button(t.views.moveLeft))
+    await settle(() => tabNames()[1] === t.views.copyName('所有页面') && !button(t.views.moveLeft)!.disabled, 'moved once')
     await click(button(t.views.moveLeft))
     await settle(() => tabNames()[0] === t.views.copyName('所有页面'), 'moved')
     expect((await saved()).views.map((v) => v.name)).toEqual([t.views.copyName('所有页面'), '所有页面', '看板'])

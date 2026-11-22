@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react'
 import { useMatch } from 'react-router'
-import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient, type Query, type QueryClient } from '@tanstack/react-query'
 import { waitForSaves } from '@/editor/saveController'
 import { spaceUrls } from '@/lib/urls'
 import { api, ApiError, spaceApi } from './client'
@@ -655,6 +655,30 @@ export function putTableRow(qc: QueryClient, space: string, page: Page) {
   for (const part of ['table', 'board']) qc.setQueriesData<{ pages: PageList[]; pageParams: unknown[] }>({ queryKey: [...keys.pages(space), part] }, put)
 }
 
+// Whether a loaded column of a board can be changed by the patch: it holds the page, or its filters would now pick it.
+// What the filters of a column cannot be told to exclude is taken to be affected.
+function columnAffected(q: Query, id: string, input: PatchPropsInput): boolean {
+  const data = q.state.data as { pages: PageList[] } | undefined
+  if (data?.pages.some((p) => p.items.some((i) => i.id === id))) return true
+  const params = q.queryKey[4] as ListParams | undefined
+  const set = input.set ?? {}
+  const keysChanged = new Set([...Object.keys(set), ...(input.unset ?? [])])
+  return (params?.filter ?? []).some((f) => {
+    if (!keysChanged.has(f.key)) return false
+    const now = f.key in set ? String(set[f.key]) : undefined
+    switch (f.op) {
+      case 'in':
+        return now !== undefined && (f.values ?? []).map(String).includes(now)
+      case 'notIn':
+        return now !== undefined && !(f.values ?? []).map(String).includes(now)
+      case 'empty':
+        return now === undefined
+      default:
+        return true
+    }
+  })
+}
+
 // Changes properties of one page (a table cell). The answer, or the page a 409
 // brings, replaces that row; the other listings are read again by and by.
 export function usePatchProps() {
@@ -662,11 +686,11 @@ export function usePatchProps() {
   const space = useSpaceId()
   return useMutation({
     mutationFn: ({ id, ...input }: { id: string } & PatchPropsInput) => spaceApi(space).patchProps(id, input),
-    onSuccess: (page) => {
+    onSuccess: (page, input) => {
       putTableRow(qc, space, page)
       void qc.invalidateQueries({ queryKey: [...keys.pages(space), 'list'] })
-      // A card that changed its column: the columns and their counts are read again.
-      void qc.invalidateQueries({ queryKey: [...keys.pages(space), 'board'] })
+      // A card that changed its column: the column it left and the one it joined are read again, and the counts.
+      void qc.invalidateQueries({ queryKey: [...keys.pages(space), 'board'], predicate: (q) => columnAffected(q, page.id, input) })
       void qc.invalidateQueries({ queryKey: [...keys.pages(space), 'groups'] })
     },
     onError: (e) => {

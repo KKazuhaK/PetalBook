@@ -49,30 +49,8 @@ func (x *Index) Groups(q GroupQuery) (GroupResult, error) {
 	if err := checkFilters(q.Filters); err != nil {
 		return GroupResult{}, err
 	}
-	where, args := scopeConds(q.Folder, q.Recursive, q.Tags)
-	for _, f := range q.Filters {
-		cond, cargs := f.sql()
-		where = append(where, cond)
-		args = append(args, cargs...)
-	}
-	scope := ""
-	if len(where) > 0 {
-		scope = ` AND ` + strings.Join(where, ` AND `)
-	}
+	query, qargs, totalQuery, totalArgs := groupSQL(q)
 	res := GroupResult{Groups: []Group{}}
-
-	// One pass over the rows of the property that belong to the scope: the pages
-	// that have each value, and (the rows at position 0, one for each page that
-	// has the property) the pages that have any.
-	// With a folder the pages are read first (the folder index gives them, and
-	// each has its row of the property by primary key): the cost follows the
-	// size of the scope, not the number of pages that have the property in the
-	// whole space. Without one, the rows of the property are read first.
-	query := `SELECT s.val, count(DISTINCT s.page), sum(s.pos = 0) FROM props s CROSS JOIN pages p ON p.rowid = s.page WHERE s.key = ?` + scope + ` GROUP BY s.val`
-	qargs := append([]any{q.Key}, args...)
-	if q.Folder != nil {
-		query = `SELECT s.val, count(DISTINCT s.page), sum(s.pos = 0) FROM pages p CROSS JOIN props s ON s.page = p.rowid AND s.key = ? WHERE 1 = 1` + scope + ` GROUP BY s.val`
-	}
 	rows, err := x.db.Query(query, qargs...)
 	if err != nil {
 		return GroupResult{}, err
@@ -107,9 +85,54 @@ func (x *Index) Groups(q GroupQuery) (GroupResult, error) {
 	}
 
 	var total int
-	if err := x.db.QueryRow(`SELECT count(*) FROM pages p WHERE 1 = 1`+scope, args...).Scan(&total); err != nil {
+	if err := x.db.QueryRow(totalQuery, totalArgs...).Scan(&total); err != nil {
 		return GroupResult{}, err
 	}
 	res.Empty = total - with
 	return res, nil
+}
+
+// groupSQL builds the two queries of Groups: the values with their page counts,
+// and the number of pages in the scope. Where the scan starts follows the
+// scope, so that the cost follows its size and not that of the space:
+//
+//   - a folder: its pages (the folder index), each with its row of the property
+//     by primary key;
+//   - tags and no folder: the pages of the first tag (the tags index);
+//   - neither: the rows of the property.
+func groupSQL(q GroupQuery) (query string, qargs []any, totalQuery string, totalArgs []any) {
+	tags := q.Tags
+	var lead string
+	if q.Folder == nil && len(tags) > 0 {
+		lead, tags = tags[0], tags[1:]
+	}
+	where, args := scopeConds(q.Folder, q.Recursive, tags)
+	for _, f := range q.Filters {
+		cond, cargs := f.sql()
+		where = append(where, cond)
+		args = append(args, cargs...)
+	}
+	scope := ""
+	if len(where) > 0 {
+		scope = ` AND ` + strings.Join(where, ` AND `)
+	}
+	const cols = `SELECT s.val, count(DISTINCT s.page), sum(s.pos = 0) `
+	switch {
+	case q.Folder != nil:
+		query = cols + `FROM pages p CROSS JOIN props s ON s.page = p.rowid AND s.key = ? WHERE 1 = 1` + scope + ` GROUP BY s.val`
+		qargs = append([]any{q.Key}, args...)
+		totalQuery = `SELECT count(*) FROM pages p WHERE 1 = 1` + scope
+		totalArgs = args
+	case lead != "":
+		query = cols + `FROM tags t CROSS JOIN pages p ON p.rowid = t.page CROSS JOIN props s ON s.page = p.rowid AND s.key = ? WHERE t.tag = ?` + scope + ` GROUP BY s.val`
+		qargs = append([]any{q.Key, lead}, args...)
+		totalQuery = `SELECT count(*) FROM tags t CROSS JOIN pages p ON p.rowid = t.page WHERE t.tag = ?` + scope
+		totalArgs = append([]any{lead}, args...)
+	default:
+		query = cols + `FROM props s CROSS JOIN pages p ON p.rowid = s.page WHERE s.key = ?` + scope + ` GROUP BY s.val`
+		qargs = append([]any{q.Key}, args...)
+		totalQuery = `SELECT count(*) FROM pages p WHERE 1 = 1` + scope
+		totalArgs = args
+	}
+	return
 }

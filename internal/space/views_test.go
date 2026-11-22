@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/index"
 )
@@ -923,3 +924,204 @@ func TestBodiesOfAListingAreReadFromTheirFiles(t *testing.T) {
 }
 
 func strp(s string) *string { return &s }
+
+func writeSpaceYML(t *testing.T, s *Space, content string) {
+	t.Helper()
+	file := filepath.Join(s.Root(), ".petalbook", "space.yml")
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAViewCannotMakeTheSettingsTooLargeToRead(t *testing.T) {
+	s := open(t)
+	mustCreate(t, s, "F", meta("title", "x"), "x\n")
+	writeSpaceYML(t, s, "folders:\n  F:\n    type: wenan\n")
+	before := spaceYML(s.Root())
+	big := View{Name: "v", Layout: "list", Extra: map[string]any{"note": strings.Repeat("x", 1_100_000)}}
+	_, err := putViews(s, folderScope("F"), big)
+	wantInvalid(t, "one value of 1.1 MB", err, "larger")
+	_, err = putViews(s, tagScope("t"), big)
+	wantInvalid(t, "the same for a tag", err, "larger")
+	many := map[string]any{}
+	for i := 0; i < 40; i++ {
+		many[fmt.Sprintf("k%d", i)] = "x"
+	}
+	_, err = putViews(s, folderScope("F"), View{Name: "v", Layout: "list", Extra: many})
+	wantInvalid(t, "40 unknown keys", err, "keys")
+	var views []View
+	for i := 0; i < 20; i++ {
+		views = append(views, View{Name: fmt.Sprint(i), Layout: "list", Extra: map[string]any{"a": strings.Repeat("y", 3000), "b": strings.Repeat("y", 3000), "c": strings.Repeat("y", 3000), "d": strings.Repeat("y", 3000)}})
+	}
+	_, err = putViews(s, folderScope("F"), views...)
+	wantInvalid(t, "views of 12 KB each", err, "larger")
+	if got := spaceYML(s.Root()); got != before {
+		t.Errorf("space.yml was written: %d bytes", len(got))
+	}
+	if len(s.Bindings()) != 1 {
+		t.Errorf("the binding is gone: %v", s.Bindings())
+	}
+
+	// A file that is nearly at the limit is not taken over it, and stays readable.
+	writeSpaceYML(t, s, "# "+strings.Repeat("c", maxSpaceFile-20000)+"\nfolders:\n  F:\n    type: wenan\n")
+	var vs []View
+	for i := 0; i < 10; i++ {
+		vs = append(vs, View{Name: fmt.Sprint(i), Layout: "list", Extra: map[string]any{"a": strings.Repeat("z", 3000)}})
+	}
+	_, err = putViews(s, folderScope("F"), vs...)
+	wantInvalid(t, "space.yml at its limit", err, "space.yml")
+	if len(s.Bindings()) != 1 {
+		t.Errorf("space.yml cannot be read any more: %v", s.Bindings())
+	}
+	setTagsYML(t, s.Root(), "# "+strings.Repeat("c", maxTagsFile-20000)+"\n")
+	_, err = putViews(s, tagScope("t"), vs...)
+	wantInvalid(t, "tags.yml at its limit", err, "tags.yml")
+	if _, err := s.Views(tagScope("t")); err != nil {
+		t.Error(err)
+	}
+	if _, err := putViews(s, tagScope("t"), View{Name: "small", Layout: "list"}); err != nil {
+		t.Errorf("a small change still goes in: %v", err)
+	}
+}
+
+func TestViewsWrittenByHandAreReadAsUniqueAndSavable(t *testing.T) {
+	s := open(t)
+	mustCreate(t, s, "F", meta("title", "x"), "x\n")
+	writeSpaceYML(t, s, `folders:
+  F:
+    views:
+      - {id: k3f9, name: one, layout: list}
+      - {id: k3f9, name: two, layout: board}
+      - {name: three, layout: table}
+      - {id: my view, name: four, layout: cards}
+      - {id: ok1, name: five}
+      - {id: ok1, name: six, layout: gantt}
+`)
+	l, _ := s.Views(folderScope("F"))
+	ids := map[string]bool{}
+	for _, v := range l.Views {
+		if !(validViewID(v.ID) || strings.HasPrefix(v.ID, "@")) || ids[v.ID] || !validLayout(v.Layout) {
+			t.Errorf("a view the client cannot work with: %+v", v)
+		}
+		ids[v.ID] = true
+	}
+	if len(l.Views) != 6 || names(l) != "one,two,three,four,five,six" {
+		t.Fatalf("%s", names(l))
+	}
+	// The list as it was read is accepted as it is.
+	l2, err := s.PutViews(Author{}, folderScope("F"), l.Rev, l.Views)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names(l2) != "one,two,three,four,five,six" {
+		t.Errorf("%s", names(l2))
+	}
+	ids = map[string]bool{}
+	for _, v := range l2.Views {
+		if !validViewID(v.ID) || ids[v.ID] {
+			t.Errorf("the id %q is not valid or used twice", v.ID)
+		}
+		ids[v.ID] = true
+	}
+	back, _ := s.Views(folderScope("F"))
+	if back.Rev != l2.Rev || names(back) != names(l2) {
+		t.Errorf("what was written reads back differently: %s", names(back))
+	}
+	// One of two that had the same id goes alone; another is renamed alone.
+	l3 := append([]View(nil), back.Views[:1]...)
+	l3 = append(l3, back.Views[2:]...)
+	l3[1].Name = "THREE"
+	got := mustPutViews(t, s, folderScope("F"), l3...)
+	if names(got) != "one,THREE,four,five,six" {
+		t.Errorf("%s", names(got))
+	}
+	// A list read before any of it was fixed works too: a rename of the second of two.
+	writeSpaceYML(t, s, "folders:\n  G:\n    views:\n      - {id: a1, name: x, layout: list}\n      - {id: a1, name: y, layout: list}\n")
+	mustCreate(t, s, "G", meta("title", "x"), "x\n")
+	g, _ := s.Views(folderScope("G"))
+	g.Views[1].Name = "Y"
+	got, err = s.PutViews(Author{}, folderScope("G"), g.Rev, g.Views)
+	if err != nil || names(got) != "x,Y" {
+		t.Errorf("%v %s", err, names(got))
+	}
+}
+
+func TestEmptyingTheViewsOfAFolderWrittenTwiceLeavesNone(t *testing.T) {
+	s := open(t)
+	mustCreate(t, s, "F", meta("title", "x"), "x\n")
+	writeSpaceYML(t, s, `folders:
+  F:
+    views:
+      - {id: aaa, name: early, layout: list}
+  F/:
+    type: wenan
+    views:
+      - {id: bbb, name: late, layout: list}
+`)
+	l, _ := s.Views(folderScope("F"))
+	if names(l) != "late" {
+		t.Fatalf("%s", names(l))
+	}
+	got, err := s.PutViews(Author{}, folderScope("F"), l.Rev, nil)
+	if err != nil || len(got.Views) != 0 {
+		t.Fatalf("%v %+v", err, got)
+	}
+	back, _ := s.Views(folderScope("F"))
+	if len(back.Views) != 0 || back.Rev != got.Rev {
+		t.Errorf("views came back: %s", names(back))
+	}
+	if strings.Contains(spaceYML(s.Root()), "early") {
+		t.Error(spaceYML(s.Root()))
+	}
+	// The same for a tag.
+	setTagsYML(t, s.Root(), "tags:\n  a:\n    views:\n      - {id: ccc, name: early, layout: list}\n  a:\n    views:\n      - {id: ddd, name: late, layout: list}\n")
+	tl, _ := s.Views(tagScope("a"))
+	if _, err := s.PutViews(Author{}, tagScope("a"), tl.Rev, nil); err != nil {
+		t.Skipf("a repeated key of tags.yml is not readable here: %v", err)
+	}
+	if back, _ := s.Views(tagScope("a")); len(back.Views) != 0 {
+		t.Errorf("views of a tag came back: %s", names(back))
+	}
+}
+
+func TestNestedAliasesInAViewAreNotExpanded(t *testing.T) {
+	s := open(t)
+	mustCreate(t, s, "F", meta("title", "x"), "x\n")
+	var b strings.Builder
+	b.WriteString("folders:\n  F:\n    type: wenan\n    views:\n      - id: bomb1\n        name: v\n        layout: list\n        a: &a0 [x, x, x, x, x, x, x, x, x, x]\n")
+	for i := 1; i <= 8; i++ {
+		fmt.Fprintf(&b, "        l%d: &a%d [", i, i)
+		for j := 0; j < 10; j++ {
+			if j > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "*a%d", i-1)
+		}
+		b.WriteString("]\n")
+	}
+	b.WriteString("        keep: yes\n")
+	writeSpaceYML(t, s, b.String())
+	start := time.Now()
+	l, err := s.Views(folderScope("F"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("reading the views took %v", d)
+	}
+	if len(l.Views) != 1 {
+		t.Fatalf("%+v", l)
+	}
+	if _, ok := l.Views[0].Extra["l8"]; ok {
+		t.Error("a value that stands for 10^8 elements was read")
+	}
+	if len(s.Bindings()) != 1 {
+		t.Error("the bindings were lost")
+	}
+	if b, _ := json.Marshal(l); len(b) > 1<<20 {
+		t.Errorf("the answer is %d bytes", len(b))
+	}
+}

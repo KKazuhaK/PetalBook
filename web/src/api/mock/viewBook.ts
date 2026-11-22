@@ -3,7 +3,7 @@
 // and what a folder's move or removal does to them.
 
 import { HttpError } from './store.ts'
-import { parseFilter, type PropFilter } from './propQuery.ts'
+import { MAX_VIEW_FILTERS, parseFilter, type PropFilter } from './propQuery.ts'
 import { gitBlobId } from './sha1.ts'
 
 const MAX_VIEWS = 20
@@ -75,7 +75,7 @@ export function createViewBook(opts: { random: () => number; spelledFolder: (pat
       if (sort !== '' && !/^-?(updated|created|title|prop:.+)$/.test(sort)) throw invalid(`${at}的 sort 不支持`)
       const group = text('group')
       if (!oneLine(group, 256)) throw invalid(`${at}的 group 不合法`)
-      const filter = o.filter === undefined || o.filter === null ? [] : parseFilter(JSON.stringify(o.filter))
+      const filter = o.filter === undefined || o.filter === null ? [] : parseFilter(JSON.stringify(o.filter), MAX_VIEW_FILTERS)
       let hidden: string[] = []
       if (o.hidden !== undefined && o.hidden !== null) {
         if (!Array.isArray(o.hidden) || !o.hidden.every((h) => typeof h === 'string' && h !== '' && oneLine(h, 256))) throw invalid(`${at}的 hidden 要是一串键`)

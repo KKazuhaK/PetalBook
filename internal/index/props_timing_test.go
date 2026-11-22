@@ -162,7 +162,7 @@ func TestOptionOrderAndBoardInALargeFolder(t *testing.T) {
 		m.files[fmt.Sprintf("tasks/%05d.md", i)] = memFile{[]byte(b.String()), clock + int64(i)}
 	}
 	for i := 0; i < 100; i++ { // a small folder written last, in the groups of the big one
-		m.files[fmt.Sprintf("small/%03d.md", i)] = memFile{[]byte(fmt.Sprintf("---\nid: S%09d\nstatus: %s\n---\nx\n", i, options[i%5])), clock + int64(pages+i)}
+		m.files[fmt.Sprintf("small/%03d.md", i)] = memFile{[]byte(fmt.Sprintf("---\nid: S%09d\nstatus: %s\ntags: [rare]\n---\nx\n", i, options[i%5])), clock + int64(pages+i)}
 	}
 	start := time.Now()
 	if _, err := x.Sync(m, false); err != nil {
@@ -248,4 +248,6 @@ func TestOptionOrderAndBoardInALargeFolder(t *testing.T) {
 	measure("groups of labels (a list)", groups(GroupQuery{Folder: &folder, Key: "labels"}))
 	measure("groups of status, filter points range", groups(GroupQuery{Folder: &folder, Key: "status", Filters: []Filter{{Key: "points", Op: "range", Values: []any{100, 200}}}}))
 	measure("groups of status in the small folder", groups(GroupQuery{Folder: &small, Key: "status"}))
+	// A rare tag (100 pages) in the space of 50 000: its cost follows the tag.
+	measure("groups of status of a rare tag (100 pages)", groups(GroupQuery{Tags: []string{"rare"}, Key: "status"}))
 }

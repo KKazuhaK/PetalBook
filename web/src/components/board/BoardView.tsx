@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type DragEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type RefObject } from 'react'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
@@ -9,7 +9,7 @@ import { TagChip } from '@/components/TagChip'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cardTitleLine } from '@/lib/listView'
-import { boardColumns, cardFieldsOf, cardMovable, columnFilter, type BoardColumn } from '@/lib/savedViews'
+import { boardColumns, cardFieldsOf, cardMovable, columnDroppable, columnFilter, type BoardColumn } from '@/lib/savedViews'
 import { hasValue, showValue } from '@/lib/pageTypes'
 import { t } from '@/i18n'
 import { tb } from '@/i18n/boards'
@@ -17,7 +17,10 @@ import { tb } from '@/i18n/boards'
 // The board of a folder or a tag: a column per value of one property, the pages as cards in them. Every column is
 // asked for on its own, twenty cards at a time, by the filter that picks its pages (the value, "none of the options",
 // "no value"); the counts at the heads come from the index, not from the cards, so a column nobody is in is not even
-// asked for. Moving a card to another column changes that property of its page.
+// asked for, and neither is one that has not come near the visible part of the board. Moving a card to another column
+// changes that property of its page: to an option of a select (the value is the typed one), or to "empty". The columns of
+// a board made of the values the pages have are text from the index, which is not what a page holds (a number, a
+// cut value), so nothing is dropped on them.
 
 export type BoardScope = { folder: string } | { tag: string }
 
@@ -34,6 +37,27 @@ interface Props {
 
 // How close to the bottom of a column (in pixels) the next cards are asked for.
 const AHEAD_PX = 160
+// How far (in pixels) from the visible part of the board a column is asked for.
+const COLUMN_AHEAD_PX = 400
+
+// Whether the element has been within `margin` pixels of the visible part of `root`, ever: a column that has been
+// asked for stays asked for. Without IntersectionObserver every column is near.
+function useSeenIn(root: RefObject<HTMLElement | null>, el: RefObject<HTMLElement | null>, margin: number): boolean {
+  const [seen, setSeen] = useState(typeof IntersectionObserver === 'undefined')
+  useEffect(() => {
+    const target = el.current
+    if (seen || !target || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) setSeen(true)
+      },
+      { root: root.current, rootMargin: `0px ${margin}px 0px ${margin}px` },
+    )
+    io.observe(target)
+    return () => io.disconnect()
+  }, [root, el, margin, seen])
+  return seen
+}
 
 export default function BoardView({ scope, type, group, sort, filters, cardFields }: Props) {
   const { write } = useSpacePermissions()
@@ -42,7 +66,8 @@ export default function BoardView({ scope, type, group, sort, filters, cardField
   const options = useMemo(() => (field?.kind === 'select' ? (field.options ?? []) : null), [field])
   const where = useMemo(() => ('folder' in scope ? { folder: scope.folder } : { tag: [scope.tag] }), [scope])
   const groups = useGroups({ key: group, ...where, ...(filters.length ? { filter: filters } : {}) })
-  const columns = useMemo(() => boardColumns(options, groups.data?.groups, groups.data?.empty), [options, groups.data])
+  const columns = useMemo(() => boardColumns(options, groups.data?.groups, groups.data?.empty, groups.data?.truncated), [options, groups.data])
+  const scroller = useRef<HTMLDivElement>(null)
   const shown = cardFieldsOf(type, cardFields, group)
 
   const patch = usePatchProps()
@@ -52,7 +77,7 @@ export default function BoardView({ scope, type, group, sort, filters, cardField
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set())
 
   const move = (row: PageSummary, from: string, to: BoardColumn) => {
-    if (!row.rev || from === to.id || to.kind === 'other' || !cardMovable(row.props, row.partialProps, group)) return
+    if (!row.rev || from === to.id || !columnDroppable(to, options !== null) || !cardMovable(row.props, row.partialProps, group)) return
     const name = row.title || row.label || tb.board.untitled
     const mark = (on: boolean) =>
       setBusy((prev) => {
@@ -81,11 +106,12 @@ export default function BoardView({ scope, type, group, sort, filters, cardField
   return (
     <div data-slot="board-view" data-group={group} className="grid gap-2">
       {groups.isError && <p className="text-xs text-destructive">{tb.board.groupsFailed}</p>}
-      <div className="flex items-start gap-3 overflow-x-auto pb-3" role="group" aria-label={tb.board.label}>
+      <div ref={scroller} className="flex items-start gap-3 overflow-x-auto pb-3" role="group" aria-label={tb.board.label}>
         {columns.map((c) => (
           <Column
             key={c.id}
             column={c}
+            scroller={scroller}
             title={label(c)}
             // Asked for once the counts say there is something in it (or they could not be had).
             enabled={groups.isError || (c.count !== undefined && c.count > 0)}
@@ -94,7 +120,8 @@ export default function BoardView({ scope, type, group, sort, filters, cardField
             shown={shown.map((f) => ({ key: f.key, label: f.title || f.key }))}
             write={write}
             busy={busy}
-            canDrop={(from) => drag.current !== null && c.kind !== 'other' && from !== c.id}
+            droppable={columnDroppable(c, options !== null)}
+            canDrop={(from) => drag.current !== null && columnDroppable(c, options !== null) && from !== c.id}
             over={over === c.id}
             onOver={(on) => setOver((prev) => (on ? c.id : prev === c.id ? null : prev))}
             onDragStart={(row) => (drag.current = { row, column: c.id })}
@@ -113,12 +140,14 @@ export default function BoardView({ scope, type, group, sort, filters, cardField
         ))}
       </div>
       {columns.some((c) => c.kind === 'other') && write && <p className="sr-only">{tb.board.dropOther}</p>}
+      {options === null && write && <p className="text-xs text-muted-foreground">{tb.board.valuesReadOnly}</p>}
     </div>
   )
 }
 
 function Column({
   column,
+  scroller,
   title,
   enabled,
   params,
@@ -126,6 +155,7 @@ function Column({
   shown,
   write,
   busy,
+  droppable: dropTarget,
   canDrop,
   over,
   onOver,
@@ -135,6 +165,7 @@ function Column({
   dragSource,
 }: {
   column: BoardColumn
+  scroller: RefObject<HTMLElement | null>
   title: string
   enabled: boolean
   params: Omit<ListParams, 'cursor' | 'limit' | 'props'>
@@ -142,6 +173,7 @@ function Column({
   shown: { key: string; label: string }[]
   write: boolean
   busy: ReadonlySet<string>
+  droppable: boolean
   canDrop: (from: string) => boolean
   over: boolean
   onOver: (on: boolean) => void
@@ -150,13 +182,17 @@ function Column({
   onDrop: () => void
   dragSource: () => { column: string } | null
 }) {
-  const query = useBoardColumn(params, enabled)
+  const box = useRef<HTMLElement>(null)
+  const near = useSeenIn(scroller, box, COLUMN_AHEAD_PX)
+  const asked = enabled && near
+  const query = useBoardColumn(params, asked)
   const rows = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data])
   const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = query
-  const droppable = write && column.kind !== 'other'
+  const droppable = write && dropTarget
 
   return (
     <section
+      ref={box}
       data-column={column.id}
       aria-label={tb.board.columnLabel(title, column.count ?? '…')}
       className={`flex w-72 shrink-0 flex-col rounded-xl border bg-muted/30 transition-colors ${over ? 'border-ring bg-muted/60' : ''}`}
@@ -188,10 +224,12 @@ function Column({
           if (el.scrollHeight - el.scrollTop - el.clientHeight < AHEAD_PX && hasNextPage && !isFetchingNextPage && !isFetchNextPageError) void fetchNextPage()
         }}
       >
-        {query.isPending && enabled ? (
+        {query.isPending && asked ? (
           <Skeleton className="h-20 w-full" aria-busy="true" />
         ) : query.isError && rows.length === 0 ? (
           <ErrorState message={t.fmt.labelled(tb.board.loadFailed, query.error.message)} onRetry={() => void query.refetch()} />
+        ) : rows.length === 0 && !asked && enabled ? (
+          <Skeleton className="h-20 w-full" aria-hidden="true" />
         ) : rows.length === 0 ? (
           <p className="px-1 py-3 text-center text-xs text-muted-foreground">{tb.board.noCards}</p>
         ) : (

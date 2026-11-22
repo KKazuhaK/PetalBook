@@ -21,8 +21,10 @@ export function valuesOf(meta: PageMeta, key: string): (string | number | boolea
   return one(v)
 }
 
-export function parseFilter(raw: string): PropFilter[] {
-  if (raw.length > 16 * 1024) throw invalid('filter 太长')
+// A listing takes one filter more than a view has: a board's column adds its own to the view's.
+export const MAX_VIEW_FILTERS = 10
+export function parseFilter(raw: string, max = MAX_VIEW_FILTERS + 1): PropFilter[] {
+  if (raw.length > 64 * 1024) throw invalid('filter 太长')
   let json: unknown
   try {
     json = JSON.parse(raw)
@@ -30,7 +32,7 @@ export function parseFilter(raw: string): PropFilter[] {
     throw invalid('filter 不是 JSON')
   }
   if (!Array.isArray(json)) throw invalid('filter 要是数组')
-  if (json.length > 10) throw invalid('filter 最多 10 项')
+  if (json.length > max) throw invalid(`filter 最多 ${max} 项`)
   return json.map((item): PropFilter => {
     if (typeof item !== 'object' || item === null || Array.isArray(item)) throw invalid('filter 的每一项要是对象')
     const o = item as Record<string, unknown>
@@ -44,7 +46,7 @@ export function parseFilter(raw: string): PropFilter[] {
     if (op === 'empty' || op === 'notEmpty') {
       if (values.length) throw invalid(`${op} 不带 values`)
     } else if (op === 'in' || op === 'notIn') {
-      if (values.length < 1 || values.length > 100 || !values.every(scalar)) throw invalid(`${op} 要 1 到 100 个值`)
+      if (values.length < 1 || values.length > 500 || !values.every(scalar)) throw invalid(`${op} 要 1 到 500 个值`)
     } else if (op === 'contains') {
       if (values.length !== 1 || typeof values[0] !== 'string') throw invalid('contains 要一段文字')
     } else {

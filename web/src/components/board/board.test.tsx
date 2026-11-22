@@ -266,7 +266,7 @@ describe('moving a card', () => {
 })
 
 describe('the board of a tag', () => {
-  it('has a column for each value the pages have, most pages first, and "empty"; and moves cards between them', async () => {
+  it('has a column for each value the pages have, most pages first, and "empty"; a card can be taken out of a value column but not dropped on one', async () => {
     const ids = await openBoard(
       (send) => {
         send('POST', '/pages', { folder: 'Work', meta: { title: 'E', status: 'done', tags: ['栀子'] }, body: '' })
@@ -279,12 +279,82 @@ describe('the board of a tag', () => {
     expect(columnIds()).toEqual(['o:done', 'empty'])
     expect(['o:done', 'empty'].map(count)).toEqual(['2', '1'])
     expect(cardsIn('empty')).toEqual(['F'])
+    // The values are text from the index, not what the page holds (a number, a cut value): nothing is written into them.
     await drag(card('F'), col('o:done'))
+    expect(patches()).toHaveLength(0)
+    expect(document.body.textContent).toContain(tb.board.valuesReadOnly)
+    // Taking the value away is typed whatever the property is.
+    await drag(card('E'), col('empty'))
     await settle(() => patches().length === 1, 'the request')
+    expect(JSON.parse(patches()[0].body!)).toMatchObject({ unset: ['status'] })
     expect(m!.server.peek(ids.A.id)).toBeTruthy()
-    await settle(() => cardsIn('o:done').length === 3, 'moved')
+    await settle(() => cardsIn('empty').length === 2, 'moved')
     const groups = m!.requests.filter((r) => /\/pages\/groups\?/.test(r.url))
     expect(decodeURIComponent(groups[0].url)).toContain('tag=栀子')
+  })
+})
+
+describe('a board with many columns', () => {
+  it('of values shows the first fifty and one "other values", which asks for what the fifty are not', async () => {
+    await openBoard(
+      (send) => {
+        for (let i = 0; i < 60; i++) send('POST', '/pages', { folder: 'Work', meta: { title: `V${i}`, status: `s${String(i).padStart(2, '0')}`, tags: ['many'] }, body: '' })
+      },
+      '/s/default/t/many',
+    )
+    await settle(() => document.querySelectorAll('[data-column]').length > 0, 'columns')
+    expect(columnIds()).toHaveLength(52)
+    expect(columnIds().at(-2)).toBe('other')
+    expect(count('other')).toBe('10')
+  })
+
+  it('are asked for only once they come near the visible part: a column far to the side costs no request', async () => {
+    const watchers: { cb: IntersectionObserverCallback; el: Element }[] = []
+    class Watch {
+      cb: IntersectionObserverCallback
+      constructor(cb: IntersectionObserverCallback) {
+        this.cb = cb
+      }
+      observe(el: Element) {
+        watchers.push({ cb: this.cb, el })
+      }
+      disconnect() {}
+      unobserve() {}
+      takeRecords() {
+        return []
+      }
+    }
+    vi.stubGlobal('IntersectionObserver', Watch)
+    try {
+      await openBoard()
+      const near = (id: string) =>
+        act(async () => {
+          const w = watchers.find((x) => x.el.getAttribute('data-column') === id)!
+          w.cb([{ isIntersecting: true, target: w.el } as IntersectionObserverEntry], {} as IntersectionObserver)
+        })
+      // The counts of every column are known, and no cards are asked for.
+      await settle(() => count('o:todo') === '1', 'the counts')
+      expect(listRequests().filter((q) => q.get('props') === '1')).toHaveLength(0)
+      expect(cardsIn('o:todo')).toEqual([])
+      await near('o:doing')
+      await settle(() => cardsIn('o:doing').length === 1, 'the near column')
+      expect(listRequests().filter((q) => q.get('props') === '1')).toHaveLength(1)
+      expect(cardsIn('o:todo')).toEqual([])
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('refreshes only the columns a moved card leaves and joins', async () => {
+    await openBoard()
+    await settle(() => cardsIn('o:todo').length === 1 && cardsIn('o:done').length === 1 && cardsIn('o:doing').length === 1, 'cards')
+    const before = listRequests().filter((q) => q.get('props') === '1').length
+    await drag(card('B'), col('o:done'))
+    await settle(() => cardsIn('o:done').length === 2, 'moved')
+    // todo (left) and done (joined) are asked for again; doing and empty are not.
+    const again = listRequests().filter((q) => q.get('props') === '1').slice(before)
+    const ops = again.map((q) => filterOf(q).map((f) => `${f.op}:${(f.values ?? []).join('|')}`).join()).sort()
+    expect(ops).toEqual(['in:done', 'in:todo'])
   })
 })
 

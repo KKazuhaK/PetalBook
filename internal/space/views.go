@@ -49,6 +49,22 @@ const (
 	maxViewKey    = 256
 	maxViewExtra  = 64
 	viewIDLen     = 6
+
+	// What the keys the server does not know may take, so that a write cannot
+	// make settings too large to be read again: a view is at most maxViewBytes
+	// as JSON, the views a request changes at most maxViewsBytes together, and
+	// a view has at most maxViewExtraKeys such keys, each at most
+	// maxViewExtraBytes as JSON.
+	maxViewBytes      = 16 << 10
+	maxViewsBytes     = 128 << 10
+	maxViewExtraKeys  = 16
+	maxViewExtraBytes = 4 << 10
+
+	// maxNodeBudget is the most YAML nodes read for the values of one view,
+	// aliases followed: a file written with nested aliases can stand for far
+	// more than its size.
+	maxNodeBudget = 10000
+	maxNodeDepth  = 32
 )
 
 // ViewLayouts are the layouts a view may have.
@@ -221,10 +237,34 @@ func newViewList(vs []View) ViewList {
 // --- reading views out of a YAML document --------------------------------------------
 
 // nodeValue is a YAML value as plain Go: text, int64, float64, bool, nil,
-// []any, map[string]any. A date written bare is text, as it is in a page.
+// []any, map[string]any. A date written bare is text, as it is in a page. A
+// value of more than maxNodeBudget nodes (aliases counted as often as they are
+// used) or deeper than maxNodeDepth is nil.
 func nodeValue(n *yaml.Node) any {
-	for n.Kind == yaml.AliasNode && n.Alias != nil {
-		n = n.Alias
+	w := nodeWalk{left: maxNodeBudget}
+	v := w.value(n, 0)
+	if w.over {
+		return nil
+	}
+	return v
+}
+
+// nodeWalk is the budget of a reading of YAML values.
+type nodeWalk struct {
+	left int
+	over bool
+}
+
+func (w *nodeWalk) value(n *yaml.Node, depth int) any {
+	if w.left--; w.left < 0 || depth > maxNodeDepth {
+		w.over = true
+		return nil
+	}
+	if n.Kind == yaml.AliasNode {
+		if n.Alias == nil {
+			return nil
+		}
+		return w.value(n.Alias, depth+1)
 	}
 	switch n.Kind {
 	case yaml.ScalarNode:
@@ -251,14 +291,20 @@ func nodeValue(n *yaml.Node) any {
 	case yaml.SequenceNode:
 		out := make([]any, 0, len(n.Content))
 		for _, c := range n.Content {
-			out = append(out, nodeValue(c))
+			out = append(out, w.value(c, depth+1))
+			if w.over {
+				return nil
+			}
 		}
 		return out
 	case yaml.MappingNode:
 		out := make(map[string]any, len(n.Content)/2)
 		for i := 0; i+1 < len(n.Content); i += 2 {
 			if k := n.Content[i]; k.Kind == yaml.ScalarNode {
-				out[k.Value] = nodeValue(n.Content[i+1])
+				out[k.Value] = w.value(n.Content[i+1], depth+1)
+				if w.over {
+					return nil
+				}
 			}
 		}
 		return out
@@ -315,6 +361,7 @@ func scalarText(n *yaml.Node) (string, bool) {
 
 // viewOf reads a view from its mapping node.
 func viewOf(n *yaml.Node) View {
+	w := &nodeWalk{left: maxNodeBudget}
 	var v View
 	v.ID, _ = scalarText(first(mapValue(n, "id")))
 	v.Name, _ = scalarText(first(mapValue(n, "name")))
@@ -331,7 +378,7 @@ func viewOf(n *yaml.Node) View {
 			vf.Op, _ = scalarText(first(mapValue(c, "op")))
 			if vals, _ := mapValue(c, "values"); vals != nil && vals.Kind == yaml.SequenceNode {
 				for _, e := range vals.Content {
-					vf.Values = append(vf.Values, nodeValue(e))
+					vf.Values = append(vf.Values, w.value(e, 0))
 				}
 			}
 			v.Filter = append(v.Filter, vf)
@@ -354,12 +401,48 @@ func viewOf(n *yaml.Node) View {
 		if viewKnown[k] {
 			continue
 		}
+		val := w.value(n.Content[i+1], 0)
+		if w.over {
+			break // what is too large to read is left out (and left in the file)
+		}
 		if v.Extra == nil {
 			v.Extra = map[string]any{}
 		}
-		v.Extra[k] = nodeValue(n.Content[i+1])
+		v.Extra[k] = val
 	}
 	return v
+}
+
+func validLayout(l string) bool {
+	for _, x := range ViewLayouts {
+		if x == l {
+			return true
+		}
+	}
+	return false
+}
+
+// pseudoID is the id of the view at position i of an entry whose written id is
+// not usable. No real id starts with @.
+func pseudoID(i int) string { return "@" + strconv.Itoa(i) }
+
+// readable makes what was read from a file that may have been written by hand
+// something a client can work with: every view has an id, valid and used once
+// (a missing, malformed or repeated one is the pseudo id of the view's position,
+// which PutViews takes for that view and replaces with a new id), and a layout.
+func readable(vs []View) []View {
+	seen := map[string]bool{}
+	for i := range vs {
+		if id := vs[i].ID; !validViewID(id) || seen[id] {
+			vs[i].ID = pseudoID(i)
+		} else {
+			seen[id] = true
+		}
+		if !validLayout(vs[i].Layout) {
+			vs[i].Layout = "list"
+		}
+	}
+	return vs
 }
 
 func first(n *yaml.Node, _ int) *yaml.Node { return n }
@@ -385,7 +468,7 @@ func viewsIn(entry *yaml.Node) []View {
 	for _, n := range viewNodes(entry) {
 		out = append(out, viewOf(n))
 	}
-	return out
+	return readable(out)
 }
 
 // viewsOf reads the views of every entry of the mapping `section` of a
@@ -488,16 +571,28 @@ func validViewID(id string) bool {
 	return true
 }
 
+// sameView reports whether two views are the same as JSON.
+func sameView(a, b View) bool {
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	return bytes.Equal(x, y)
+}
+
 // checkViews validates what a request gives as the views of a folder or tag.
-func checkViews(vs []View) error {
+// stored are the views the entry has now, by id: one that the request gives
+// back as it is stored passes without a look (it may have been written by hand,
+// and a client that saves another view must not be refused for it).
+func checkViews(vs []View, stored map[string]View) error {
 	if len(vs) > MaxViews {
 		return invalidf("a folder or a tag has at most %d views", MaxViews)
 	}
 	ids := map[string]bool{}
+	total := 0
 	for i, v := range vs {
 		at := "view " + strconv.Itoa(i+1)
+		old, isStored := stored[v.ID]
 		if v.ID != "" {
-			if !validViewID(v.ID) {
+			if !validViewID(v.ID) && !isStored {
 				return invalidf("%s: that is not a view id", at)
 			}
 			if ids[v.ID] {
@@ -505,17 +600,16 @@ func checkViews(vs []View) error {
 			}
 			ids[v.ID] = true
 		}
+		if isStored && sameView(old, v) {
+			continue
+		}
 		if strings.TrimSpace(v.Name) == "" {
 			return invalidf("%s needs a name", at)
 		}
 		if err := checkViewText(at+": the name", v.Name, maxViewName); err != nil {
 			return err
 		}
-		ok := false
-		for _, l := range ViewLayouts {
-			ok = ok || l == v.Layout
-		}
-		if !ok {
+		if !validLayout(v.Layout) {
 			return invalidf("%s: the layout must be one of %s", at, strings.Join(ViewLayouts, ", "))
 		}
 		if err := checkViewText(at+": the sort", v.Sort, maxViewKey+8); err != nil {
@@ -547,10 +641,23 @@ func checkViews(vs []View) error {
 				return err
 			}
 		}
-		for k := range v.Extra {
+		if len(v.Extra) > maxViewExtraKeys {
+			return invalidf("%s: at most %d keys the server does not know", at, maxViewExtraKeys)
+		}
+		for k, e := range v.Extra {
 			if k == "" || len(k) > maxViewExtra || !utf8.ValidString(k) {
 				return invalidf("%s: a key of a view is 1 to %d bytes", at, maxViewExtra)
 			}
+			if b, err := json.Marshal(e); err != nil || len(b) > maxViewExtraBytes {
+				return invalidf("%s: the value of %q is larger than %d bytes", at, k, maxViewExtraBytes)
+			}
+		}
+		b, err := json.Marshal(v)
+		if err != nil || len(b) > maxViewBytes {
+			return invalidf("%s is larger than %d bytes", at, maxViewBytes)
+		}
+		if total += len(b); total > maxViewsBytes {
+			return invalidf("the views changed are larger than %d bytes together", maxViewsBytes)
 		}
 	}
 	return nil
@@ -641,8 +748,8 @@ func (s *Space) PutViews(by Author, scope ViewScope, baseRev string, views []Vie
 	if err := checkScope(scope); err != nil {
 		return ViewList{}, err
 	}
-	if err := checkViews(views); err != nil {
-		return ViewList{}, err
+	if len(views) > MaxViews {
+		return ViewList{}, invalidf("a folder or a tag has at most %d views", MaxViews)
 	}
 	views = normalViews(views)
 	return mutate(s, by, func(tx *txn) (ViewList, error) {
@@ -712,22 +819,27 @@ func putViewsInto(top *yaml.Node, section string, section2 func(*yaml.Node, bool
 	if entry != nil {
 		curNodes = viewNodes(entry)
 	}
-	cur := make([]View, len(curNodes))
+	var cur []View
+	if entry != nil {
+		cur = viewsIn(entry) // as the client read them: the same ids, pseudo ones included
+	}
 	byID := map[string]int{}
-	for i, n := range curNodes {
-		cur[i] = viewOf(n)
-		if cur[i].ID != "" {
-			byID[cur[i].ID] = i
-		}
+	stored := make(map[string]View, len(cur))
+	for i, c := range cur {
+		byID[c.ID] = i
+		stored[c.ID] = c
 	}
 	curList := newViewList(cur)
 	if baseRev != curList.Rev {
 		return false, ViewList{}, &ViewsConflictError{curList}
 	}
+	if err := checkViews(views, stored); err != nil {
+		return false, ViewList{}, err
+	}
 
 	// The views as they are to be: ids given, keys the request does not mention kept.
 	for _, v := range views {
-		if v.ID != "" {
+		if v.ID != "" && !strings.HasPrefix(v.ID, "@") {
 			taken[v.ID] = true
 		}
 	}
@@ -746,6 +858,14 @@ func putViewsInto(top *yaml.Node, section string, section2 func(*yaml.Node, bool
 				return false, ViewList{}, invalidf("view %d: there is no view with the id %q here; leave the id out to make a new view", i+1, v.ID)
 			}
 			matched[i] = curNodes[j]
+			if strings.HasPrefix(v.ID, "@") {
+				// A view whose written id was not usable gets a new one.
+				id, err := newViewID(taken)
+				if err != nil {
+					return false, ViewList{}, err
+				}
+				v.ID = id
+			}
 			if len(cur[j].Extra) > 0 {
 				extra := map[string]any{}
 				for k, e := range cur[j].Extra {
@@ -766,15 +886,23 @@ func putViewsInto(top *yaml.Node, section string, section2 func(*yaml.Node, bool
 
 	// Write them: an entry and the lists above it are made when there are none.
 	if len(result) == 0 {
-		if entry == nil {
+		if entry == nil || cont == nil {
 			return false, res, nil
 		}
-		removeViewNodes(entry)
-		if cont != nil {
+		// Every writing of the entry loses its views, or the last one that is
+		// left would be the entry and bring its views back.
+		for i := len(cont.Content) - 2; i >= 0; i -= 2 {
+			k := cont.Content[i]
+			if k.Kind != yaml.ScalarNode || norm(k.Value) != key {
+				continue
+			}
+			if e := cont.Content[i+1]; e.Kind == yaml.MappingNode {
+				removeViewNodes(e)
+			}
 			if section == "folders" {
-				dropEmpty(top, cont, at)
+				dropEmpty(top, cont, i)
 			} else {
-				dropEmptyTag(top, cont, at)
+				dropEmptyTag(top, cont, i)
 			}
 		}
 		return true, res, nil

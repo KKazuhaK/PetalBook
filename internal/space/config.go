@@ -212,6 +212,11 @@ func editSpaceYAML(root, name, tmpDir string, edit func(root *yaml.Node) (bool, 
 	if err := enc.Close(); err != nil {
 		return false, err
 	}
+	if buf.Len() > maxSpaceFile {
+		// A file this large would not be read again, and every setting in it
+		// would be lost with it.
+		return false, invalidf("the change would make space.yml larger than %d bytes, more than the server reads; nothing was changed", maxSpaceFile)
+	}
 	if before != nil {
 		if err := before(); err != nil {
 			return false, err

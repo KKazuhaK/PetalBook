@@ -642,7 +642,7 @@ Query parameters, all optional:
 A date that is not a day written `YYYY-MM-DD`, or lies outside the years 1970
 to 2261, is `400 invalid`.
 | `sort` | `updated` (default), `created`, `title`, or `prop:{key}` for a property of the header; prefix `-` for descending. Default is `-updated`. With `q` and no `sort`, results are ordered by relevance |
-| `filter` | a JSON array of conditions on properties, all of which must hold (see below), at most 10, at most 16 KiB |
+| `filter` | a JSON array of conditions on properties, all of which must hold (see below), at most 11 (a saved view has at most 10: a board's column adds its own condition), at most 64 KiB |
 | `props` | `1` to put `props` and `rev` in the summaries (see Page summary); default `0` |
 | `body` | `1` to put the Markdown `body` of each page in the summaries (see below); default `0` |
 | `limit` | 1–200, default 50; with `body=1` at most 20, default 20 |
@@ -683,8 +683,12 @@ pages without a value last. A multiselect counts by its first value. Within an
 option the pages are in the order the server holds them, reversed for `-`. The
 listing is read from the index one option at a time, with a cursor that names
 the option and the place in it, so a page costs the same however many pages
-the folder holds (measured: well under a millisecond in a folder of 50 000;
-at most about 50 ms for a small folder lying among 50 000 pages of a space).
+the folder holds (measured: well under a millisecond in a folder of 50 000).
+A folder of at most 2000 pages (after the filters) is read from its own pages:
+one pass over their values says which options have a page, and only those
+groups are asked for, so a small folder among 50 000 pages, with any number of
+options, takes about a millisecond. A larger folder reads each group from the
+index of the property.
 The cursor also says how many options there were: a cursor made for another
 list of options, or from a listing that was not in option order (the type was
 changed, or the folder has none), is `400 invalid` and the client starts over.
@@ -697,8 +701,8 @@ the parameter (percent-encoded), each item `{"key", "op", "values"}`:
 
 | `op` | `values` | keeps pages whose property |
 |---|---|---|
-| `in` | up to 100 texts, numbers or booleans | equals one of them (a list: holds one of them) |
-| `notIn` | up to 100 texts, numbers or booleans | has a value and none of its values (a list has several) is one of them: not empty, and not an option; the "other values" column of a board |
+| `in` | up to 500 texts, numbers or booleans | equals one of them (a list: holds one of them) |
+| `notIn` | up to 500 texts (as many as a select field has options), numbers or booleans | has a value and none of its values (a list has several) is one of them: not empty, and not an option; the "other values" column of a board |
 | `range` | `[from, to]`, both numbers or both texts (dates), either end `null` or `""`, not both; ends are included | has a value in the range (a list: an element is in it) |
 | `empty` | none | has no value |
 | `notEmpty` | none | has a value (`false` and `0` are values) |
@@ -739,8 +743,10 @@ list property counts a page once for each distinct value it holds. `empty` is
 the number of pages in the scope that have no value for the key (the same pages
 as the filter `empty`). Both come from the index, no file is read. At most 1000
 values are returned, the rarest left out, and `truncated` says so. The cost
-follows the pages of the folder: about 60 ms for 50 000 pages in one folder
-(100 ms for a list), under a millisecond for a small folder among them.
+follows the scope: the pages of the folder, or the pages of the (first) tag
+when there is no folder (about 60 ms for 50 000 pages in one folder, 100 ms for
+a list; under a millisecond for a small folder, or for a tag of a hundred
+pages, among them).
 `400 invalid` for a missing `key`, no folder and no tag, or a bad `filter`.
 
 ### `GET /api/spaces/{space}/pages/{id}`
@@ -1203,7 +1209,19 @@ checked the same way, `notIn` included). `group` is the field a board is
 grouped by, at most 256 bytes; it is kept whatever the layout. `hidden` are the
 keys of the columns a table hides, each once, at most 200. A key that is not
 one of these is kept as it is (`"color": "teal"` comes back) and is written to
-the file; the server does not look at it.
+the file; the server does not look at its meaning, but it limits its size: at
+most 16 such keys, each value at most 4 KiB as JSON, and a view at most 16 KiB
+as JSON (the views a request changes, 128 KiB together). A view that a request
+gives back exactly as it is stored is not checked again.
+
+Views written by hand are read so that a client can work with them: a view
+whose `id` is missing, malformed or repeated has the id `@{n}`, `n` its
+position (from 0) in the folder's list, and a missing or unknown `layout` reads
+as `list`; every view in an answer therefore has a unique id and a layout. A
+write that names such an id changes that view and gives it a new one. A value
+of a key the server does not know that stands for more than 10 000 YAML nodes
+(aliases counted each time they are used) is left out of the answer, and stays
+in the file.
 
 ### `GET /api/spaces/{space}/views?folder={path}` or `?tag={tag}`
 
@@ -1233,7 +1251,7 @@ change the sort and filter for themselves; they cannot save them.
 views the request was made from; `views` is the whole list the folder or tag is
 to have, in order (`[]` removes them all, and the entry of the folder when
 nothing else is left in it). A view with an `id` must be one of the views the
-folder or tag has now; one without gets a new id. A view that keeps its `id`
+folder or tag has now (`@{n}` ids included, see above); one without gets a new id. A view that keeps its `id`
 keeps what the request does not mention: its comments, and the keys the server
 does not know that the request leaves out. A view that is not listed is
 removed.
@@ -1244,7 +1262,10 @@ conflict` with `current` the same object as a `GET` answers:
 `{"error": "conflict", "message": "…", "current": {"views": […], "rev": "…"}}`.
 `400 invalid` for a missing `baseRev`, `views` or scope, both a folder and a
 tag, more than 20 views, any view out of the limits above, an `id` the folder
-or tag does not have, an `id` twice, or settings that have to be fixed by hand.
+or tag does not have, an `id` twice, a change that would make `space.yml` or
+`tags.yml` larger than the 1 MiB the server reads (nothing is written, so the
+settings stay readable), or settings that have to be fixed by hand. `[]` removes
+the views from every writing of the folder in `space.yml`, so none comes back.
 `404 not_found` for a folder that does not exist (a tag need not be in use).
 A write that changes nothing writes nothing.
 

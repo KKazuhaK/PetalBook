@@ -33,15 +33,23 @@ type Filter struct {
 }
 
 const (
-	maxFilters      = 10
-	maxFilterValues = 100
+	// MaxViewFilters is the most filters a saved view has. A listing takes one
+	// more (maxFilters): a board's column adds its own condition to the view's.
+	MaxViewFilters = 10
+	maxFilters     = MaxViewFilters + 1
+	// maxFilterValues is the most values of an in or notIn filter: as many as a
+	// select field has options, so that a board's "other values" column can
+	// exclude them all.
+	maxFilterValues = 500
 	maxFilterKey    = 256
 )
 
 // checkFilters validates the filters and prepares them for use.
-func checkFilters(fs []Filter) error {
-	if len(fs) > maxFilters {
-		return invalid("at most %d filters", maxFilters)
+func checkFilters(fs []Filter) error { return checkFiltersMax(fs, maxFilters) }
+
+func checkFiltersMax(fs []Filter, max int) error {
+	if len(fs) > max {
+		return invalid("at most %d filters", max)
 	}
 	for i := range fs {
 		f := &fs[i]
@@ -219,7 +227,7 @@ func (f Filter) sql() (string, []any) {
 // stores them (a saved view).
 func CheckFilters(fs []Filter) error {
 	cp := append([]Filter(nil), fs...)
-	return checkFilters(cp)
+	return checkFiltersMax(cp, MaxViewFilters)
 }
 
 // ValidSort reports whether name is a sort a listing accepts: "", updated,
@@ -321,6 +329,7 @@ func (x *Index) listByProp(q Query, limit int, key string, desc bool, sortName s
 // withKey says the query selects the sort key as a last column, which seen
 // gets.
 func (x *Index) scanInto(res *Result, query string, args []any, props, withKey bool, limit int, seen func(rowid int64, skey string)) (more bool, err error) {
+	x.queries.Add(1)
 	rows, err := x.db.Query(query, args...)
 	if err != nil {
 		return false, err
@@ -376,6 +385,15 @@ func (x *Index) listByOptions(q Query, limit int, key string, desc bool, sortNam
 	}
 	groups = append(groups, group{opt: -2})
 
+	// A scope of few pages (a small folder) is read from its pages, and the
+	// groups that none of them has are not asked for at all: the cost follows
+	// the scope, not the number of pages that hold the property in the space.
+	small := x.smallScope(q, key, where, args)
+	fromProps := `props s CROSS JOIN pages p ON p.rowid = s.page`
+	if small != nil {
+		fromProps = `pages p CROSS JOIN props s ON s.page = p.rowid`
+	}
+
 	g := 0
 	if cur != nil {
 		if cur.N != n+1 || cur.G < 0 || cur.G >= len(groups) {
@@ -399,6 +417,9 @@ func (x *Index) listByOptions(q Query, limit int, key string, desc bool, sortNam
 		// The position in the cursor applies to the group it names, unless it is
 		// the start of that group (no row seen yet: rowids begin at 1).
 		inGroup := cur != nil && cur.G == g && cur.R != 0
+		if small != nil && !small.has(grp.opt, opts) {
+			continue
+		}
 		switch {
 		case grp.opt >= 0:
 			w = append([]string{`s.key = ?`, `s.val = ?`, `s.pos = 0`}, where...)
@@ -407,7 +428,7 @@ func (x *Index) listByOptions(q Query, limit int, key string, desc bool, sortNam
 				w = append(w, `s.page `+op+` ?`)
 				a = append(a, cur.R)
 			}
-			query = `SELECT ` + selectCols(q.Props) + ` FROM props s CROSS JOIN pages p ON p.rowid = s.page WHERE ` +
+			query = `SELECT ` + selectCols(q.Props) + ` FROM ` + fromProps + ` WHERE ` +
 				strings.Join(w, ` AND `) + ` ORDER BY s.page` + d + ` LIMIT ?`
 			a = append(a, remaining)
 		case grp.opt == -1:
@@ -422,7 +443,7 @@ func (x *Index) listByOptions(q Query, limit int, key string, desc bool, sortNam
 				w = append(w, `(s.skey, s.page) `+op+` (?, ?)`)
 				a = append(a, cur.T, cur.R)
 			}
-			query = `SELECT ` + selectCols(q.Props) + `, s.skey FROM props s CROSS JOIN pages p ON p.rowid = s.page WHERE ` +
+			query = `SELECT ` + selectCols(q.Props) + `, s.skey FROM ` + fromProps + ` WHERE ` +
 				strings.Join(w, ` AND `) + ` ORDER BY s.skey` + d + `, s.page` + d + ` LIMIT ?`
 			a = append(a, remaining)
 			withKey = true
@@ -451,4 +472,66 @@ func (x *Index) listByOptions(q Query, limit int, key string, desc bool, sortNam
 		}
 	}
 	return res, nil
+}
+
+// maxSmallScope is the most pages a scope has to be read from its pages.
+const maxSmallScope = 2000
+
+// scopeValues is what the pages of a small scope hold of a property.
+type scopeValues struct {
+	pages  int            // pages in the scope
+	with   int            // of which have a first value
+	counts map[string]int // pages by first value
+}
+
+// has reports whether the group opt (an option's index, -1 for the other values,
+// -2 for the pages without the property) has any page in the scope.
+func (v *scopeValues) has(opt int, opts []string) bool {
+	switch {
+	case opt >= 0:
+		return v.counts[opts[opt]] > 0
+	case opt == -1:
+		in := 0
+		for _, o := range opts {
+			in += v.counts[o]
+		}
+		return v.with > in
+	}
+	return v.pages > v.with
+}
+
+// smallScope reads what a scope holds of the property key when it is a folder
+// of at most maxSmallScope pages (after the filters), at the cost of those
+// pages. It answers nil for any other scope or when it cannot tell.
+func (x *Index) smallScope(q Query, key string, where []string, args []any) *scopeValues {
+	if q.Folder == nil {
+		return nil
+	}
+	w := ""
+	if len(where) > 0 {
+		w = ` WHERE ` + strings.Join(where, ` AND `)
+	}
+	v := &scopeValues{counts: map[string]int{}}
+	if err := x.db.QueryRow(`SELECT count(*) FROM (SELECT 1 FROM pages p`+w+` LIMIT ?)`, append(append([]any(nil), args...), maxSmallScope+1)...).Scan(&v.pages); err != nil || v.pages > maxSmallScope {
+		return nil
+	}
+	rows, err := x.db.Query(`SELECT s.val, count(*) FROM pages p CROSS JOIN props s ON s.page = p.rowid AND s.key = ? AND s.pos = 0`+w+` GROUP BY s.val`,
+		append([]any{key}, args...)...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var val string
+		var n int
+		if rows.Scan(&val, &n) != nil {
+			return nil
+		}
+		v.counts[val] = n
+		v.with += n
+	}
+	if rows.Err() != nil {
+		return nil
+	}
+	return v
 }

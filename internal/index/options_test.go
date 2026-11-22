@@ -328,3 +328,112 @@ func TestValidSortAndCheckFilters(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+func TestFiltersOfAListingAndOfAViewHaveTheirOwnLimits(t *testing.T) {
+	x := optionsFixture(t)
+	n := func(k int) []Filter {
+		fs := make([]Filter, k)
+		for i := range fs {
+			fs[i] = Filter{Key: "status", Op: "notEmpty"}
+		}
+		return fs
+	}
+	// A board's column adds its condition to the ten a view may hold.
+	if _, err := x.List(Query{Folder: strp("t"), Filters: n(MaxViewFilters + 1)}); err != nil {
+		t.Errorf("a view's filters and a column's: %v", err)
+	}
+	if err := CheckFilters(n(MaxViewFilters)); err != nil {
+		t.Error(err)
+	}
+	if err := CheckFilters(n(MaxViewFilters + 1)); !errors.Is(err, ErrInvalidQuery) {
+		t.Errorf("a view with too many filters: %v", err)
+	}
+	// An "other values" column excludes every option of a select, up to 500.
+	many := make([]any, 500)
+	for i := range many {
+		many[i] = fmt.Sprintf("option %d", i)
+	}
+	res, err := x.List(Query{Folder: strp("t"), Limit: 50, Filters: []Filter{{Key: "status", Op: "notIn", Values: many}}})
+	if err != nil || len(res.Items) == 0 {
+		t.Errorf("notIn of 500 values: %v, %d items", err, len(res.Items))
+	}
+	if _, err := x.List(Query{Filters: []Filter{{Key: "status", Op: "notIn", Values: append(many, "one more")}}}); !errors.Is(err, ErrInvalidQuery) {
+		t.Errorf("notIn of 501 values: %v", err)
+	}
+}
+
+func TestGroupsOfATagStartFromTheTagsIndex(t *testing.T) {
+	x := optionsFixture(t)
+	putProps(t, x, "t", "T1", "status: todo\ntags: [rare]\n")
+	putProps(t, x, "other", "T2", "status: done\ntags: [rare, more]\n")
+	putProps(t, x, "other", "T3", "tags: [rare]\n")
+	for _, q := range []GroupQuery{
+		{Tags: []string{"rare"}, Key: "status"},
+		{Tags: []string{"rare", "more"}, Key: "status"},
+		{Tags: []string{"rare"}, Key: "status", Filters: []Filter{{Key: "status", Op: "notEmpty"}}},
+	} {
+		query, qargs, totalQuery, totalArgs := groupSQL(q)
+		for _, c := range []struct {
+			sql  string
+			args []any
+		}{{query, qargs}, {totalQuery, totalArgs}} {
+			rows, err := x.db.Query(`EXPLAIN QUERY PLAN `+c.sql, c.args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+					t.Fatal(err)
+				}
+				if strings.HasPrefix(detail, "SCAN") && !strings.Contains(detail, "t ") && !strings.Contains(detail, " t") {
+					t.Errorf("%v reads a whole table: %s", q.Tags, detail)
+				}
+				if strings.Contains(detail, "pages_created") || strings.Contains(detail, "SCAN p") || strings.Contains(detail, "SCAN s") {
+					t.Errorf("%v scans the pages or the property: %s", q.Tags, detail)
+				}
+			}
+			rows.Close()
+		}
+	}
+	got, err := x.Groups(GroupQuery{Tags: []string{"rare"}, Key: "status"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Groups, []Group{{"done", 1}, {"todo", 1}}) || got.Empty != 1 {
+		t.Errorf("%+v", got)
+	}
+	both, _ := x.Groups(GroupQuery{Tags: []string{"rare", "more"}, Key: "status"})
+	if !reflect.DeepEqual(both.Groups, []Group{{"done", 1}}) || both.Empty != 0 {
+		t.Errorf("%+v", both)
+	}
+}
+
+func TestOptionOrderOfASmallFolderAsksOnlyForTheGroupsItHas(t *testing.T) {
+	x := openIndex(t)
+	opts := make([]string, 300)
+	for i := range opts {
+		opts[i] = fmt.Sprintf("o%03d", i)
+	}
+	putProps(t, x, "mine", "A", "status: o007\n")
+	putProps(t, x, "mine", "B", "status: o250\n")
+	putProps(t, x, "mine", "C", "status: legacy\n")
+	putProps(t, x, "mine", "D", "points: 1\n")
+	for i := 0; i < 50; i++ { // other folders hold every option
+		putProps(t, x, "big", fmt.Sprintf("P%d", i), "status: "+opts[i*6]+"\n")
+	}
+	for _, c := range []struct{ sort, want string }{
+		{"prop:status", "A,B,C,D"},
+		{"-prop:status", "C,B,A,D"},
+	} {
+		before := x.queries.Load()
+		got := strings.Join(listAll(t, x, Query{Folder: strp("mine"), Sort: c.sort, PropOptions: opts}, 20), ",")
+		if got != c.want {
+			t.Errorf("%s: %q, want %q", c.sort, got, c.want)
+		}
+		if n := x.queries.Load() - before; n > 6 {
+			t.Errorf("%s: %d group queries for a folder of 4 pages with 3 groups", c.sort, n)
+		}
+	}
+}

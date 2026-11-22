@@ -36,6 +36,7 @@ export const boardsEn: BoardsMessages = {
     partial: 'The list holds only part of this value; open the page to change it',
     moved: (name, column) => `Moved "${name}" to "${column}"`,
     dropOther: '"Other values" is not one value, so a card cannot be dropped there',
+    valuesReadOnly: 'These columns are the values the pages have; to move a card, change the property in its page, or group by a single-choice field',
   },
   reading: {
     label: 'Reading',
