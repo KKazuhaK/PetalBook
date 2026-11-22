@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { act } from 'react'
 import { Outlet, Route, Routes } from 'react-router'
+import { keys } from '@/api/hooks'
+import { draftRef, loadDraft, saveDraft } from '@/editor/draftStore'
 import { FileOpsProvider } from '@/components/files/FileOps'
 import { AppSidebar } from '@/components/layout/AppSidebar'
 import { QuickCaptureProvider } from '@/components/layout/QuickCapture'
@@ -8,7 +11,7 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import PageEditor from '@/pages/PageEditor'
 import { FolderList } from '@/pages/Lists'
 import { t } from '@/i18n'
-import { byLabel, click, installDomShims, mount, settle, shareSpace, type Mounted } from '@/testing/harness'
+import { adminRequests, byLabel, click, installDomShims, mount, settle, shareSpace, type Mounted } from '@/testing/harness'
 
 // Without the `write` permission nothing that changes the space is offered: the
 // controls are not there (not merely disabled), and the editor will not type.
@@ -193,5 +196,63 @@ describe('the page editor', () => {
     expect(document.querySelector(`input[aria-label="${t.editor.tagsPlaceholder}"]`)).toBeNull()
     expect(document.querySelector(`textarea[aria-label="${t.editor.subtitlePlaceholder}"]`)).toBeNull()
     expect(document.querySelector(`textarea[aria-label="${t.editor.sourceLabel}"]`)).toBeNull()
+  })
+})
+
+describe('gaining write while a page is open', () => {
+  it('keeps the draft this person has, and offers it as on any open', async () => {
+    let space = ''
+    let pageId = ''
+    let owner!: ReturnType<typeof shareSpace>['owner']
+    let adminId = ''
+    m = await mount(null, {
+      signIn: true,
+      server: { mode: 'accounts' },
+      entries: (server) => {
+        const shared = shareSpace(server, 'viewer')
+        space = shared.space
+        owner = shared.owner
+        const page = owner.request('POST', `/api/spaces/${space}/pages`, { meta: { title: '共享页' }, body: '正文' }).body as { id: string; rev: string }
+        pageId = page.id
+        adminId = (adminRequests(server)('GET', '/api/session').body as { user: { id: string } }).user.id
+        // What this browser kept from when the person could write.
+        saveDraft(draftRef(adminId, space, pageId), {
+          baseRev: page.rev,
+          fields: { title: '共享页', subtitle: '', tags: [] },
+          bodyText: '我的草稿',
+          savedAt: Date.now(),
+          token: 'tok-1',
+        })
+        return [`/s/${space}/p/${pageId}`]
+      },
+      routes: [
+        {
+          path: '/s/:space/p/:id',
+          element: (
+            <SidebarProvider>
+              <QuickCaptureProvider>
+                <FileOpsProvider>
+                  <PageEditor />
+                </FileOpsProvider>
+              </QuickCaptureProvider>
+            </SidebarProvider>
+          ),
+        },
+      ],
+    })
+    const editable = () => document.querySelector('.pb-prose')?.getAttribute('contenteditable')
+    await settle(() => editable() === 'false' && document.body.textContent?.includes('正文') === true, 'the page as a viewer')
+    const admin = adminRequests(m.server)
+    expect(loadDraft(draftRef(adminId, space, pageId))?.bodyText).toBe('我的草稿')
+
+    owner.request('PATCH', `/api/spaces/${space}/members/${adminId}`, { role: 'editor' })
+    await act(async () => {
+      await m!.qc.invalidateQueries({ queryKey: keys.spaces })
+    })
+    await settle(() => editable() === 'true', 'the editor opens for writing')
+    // The draft is offered back, as on a normal open, and reaches the server.
+    await settle(() => document.body.textContent?.includes('我的草稿') === true, 'the draft is shown')
+    await settle(() => (admin('GET', `/api/spaces/${space}/pages/${pageId}`).body as { draft?: { body: string } }).draft?.body.includes('我的草稿') === true, 'the draft reaches the server')
+    expect(m.requests.some((r) => r.method === 'DELETE' && r.url.includes('/draft'))).toBe(false)
   })
 })

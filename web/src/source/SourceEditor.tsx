@@ -4,7 +4,7 @@
 // back as a change).
 
 import { useEffect, useImperativeHandle, useRef, type Ref } from 'react'
-import { Annotation, EditorState, StateEffect, StateField } from '@codemirror/state'
+import { Annotation, Compartment, EditorState, StateEffect, StateField } from '@codemirror/state'
 import { Decoration, EditorView, drawSelection, highlightSpecialChars, keymap, type DecorationSet } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
@@ -41,6 +41,13 @@ interface Props {
   // The text can be looked at and selected, not changed.
   readOnly?: boolean
 }
+
+// Whether the text can be changed: it follows the person's permission while the view is open.
+const access = (readOnly: boolean) => [
+  // Both: no change can be made, and no caret or keyboard comes up on a phone.
+  EditorState.readOnly.of(readOnly),
+  EditorView.editable.of(!readOnly),
+]
 
 const fromOutside = Annotation.define<boolean>()
 const setProblem = StateEffect.define<number | null>()
@@ -84,6 +91,7 @@ const highlight = HighlightStyle.define([
 export default function SourceEditor({ ref, getInitialText, onChange, onScroll, problemLine = null, label, className, readOnly = false }: Props) {
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
+  const accessSlot = useRef(new Compartment())
   // The latest callbacks, without rebuilding the editor when they change.
   const cb = useRef({ onChange, onScroll })
   useEffect(() => {
@@ -100,9 +108,7 @@ export default function SourceEditor({ ref, getInitialText, onChange, onScroll, 
           drawSelection(),
           highlightSpecialChars(),
           EditorView.lineWrapping,
-          // Both: no change can be made, and no caret or keyboard comes up on a phone.
-          EditorState.readOnly.of(readOnly),
-          EditorView.editable.of(!readOnly),
+          accessSlot.current.of(access(readOnly)),
           keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
           yamlFrontmatter({ content: markdown() }),
           syntaxHighlighting(highlight),
@@ -126,6 +132,11 @@ export default function SourceEditor({ ref, getInitialText, onChange, onScroll, 
     // The editor is built once; text from outside arrives through setText.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Not a change of the text: nothing is reported, nothing is marked unsaved.
+  useEffect(() => {
+    view.current?.dispatch({ effects: accessSlot.current.reconfigure(access(readOnly)) })
+  }, [readOnly])
 
   useEffect(() => {
     view.current?.dispatch({ effects: setProblem.of(problemLine) })

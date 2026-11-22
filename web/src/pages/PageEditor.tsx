@@ -5,7 +5,7 @@ import { EditorContent, useEditor } from '@tiptap/react'
 import { Code, Columns2, History, MoreHorizontal, Save, Trash2, FolderInput, Type } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError, isUnauthenticated, spaceApi, type SpaceApi } from '@/api/client'
-import { invalidateListings, keys, usePage, useSession, useSpacePermissions, useTags, useTree, useUrls } from '@/api/hooks'
+import { invalidateListings, keys, useActiveSpace, usePage, useSession, useSpacePermissions, useTags, useTree, useUrls } from '@/api/hooks'
 import type { Page } from '@/api/types'
 import type { VersionContent } from '@/diff'
 import { docToMarkdown, markdownToDoc } from '@/markdown'
@@ -82,6 +82,27 @@ export default function PageEditor() {
   // Local drafts belong to a person: `local` in single-user mode.
   const userId = useSession().data?.user?.id ?? 'local'
   const { data, isPending, error, refetch } = usePage(space, id)
+  const qc = useQueryClient()
+  const { write } = useSpacePermissions()
+  const { resolving } = useActiveSpace()
+  // Counts the times `write` came on while this page was open: each starts a new editor session.
+  const [gained, setGained] = useState(0)
+  const wrote = useRef<boolean | null>(null)
+  useEffect(() => {
+    if (resolving) return
+    const before = wrote.current
+    wrote.current = write
+    if (before !== false || !write) return
+    // Gaining `write` while a page is open: the page is read again and the editor
+    // opens afresh, so the draft this person has (here, on the server) is weighed
+    // and offered as on any normal open. The viewer's session never looked at it,
+    // and switching a live editor on must not look like typing.
+    let live = true
+    void qc.resetQueries({ queryKey: keys.page(space, id) }).then(() => live && setGained((n) => n + 1))
+    return () => {
+      live = false
+    }
+  }, [write, resolving, qc, space, id])
 
   if (isPending) {
     return (
@@ -109,7 +130,7 @@ export default function PageEditor() {
   }
   // One session per page id. It reads `data` once: later cache updates must
   // never reset what the person is typing.
-  return <EditorSession key={`${userId}/${space}/${data.id}`} space={space} userId={userId} initial={data} />
+  return <EditorSession key={`${userId}/${space}/${data.id}/${gained}`} space={space} userId={userId} initial={data} />
 }
 
 function MissingPage({ space, id, userId }: { space: string; id: string; userId: string }) {
@@ -387,7 +408,8 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
   }, [editor, live])
   // The role can change while the page is open (the list of spaces is read again).
   useEffect(() => {
-    if (editor && !editor.isDestroyed && editor.isEditable === readOnly) editor.setEditable(!readOnly)
+    // No update event: switching is not typing, and an update would mark the page dirty.
+    if (editor && !editor.isDestroyed && editor.isEditable === readOnly) editor.setEditable(!readOnly, false)
   }, [editor, readOnly])
 
   // Leaving with a conflict open, or with text that never reached the server,
