@@ -162,6 +162,10 @@ jobs:
   # On a runner the database is a service container instead of the throwaway
   # cluster scripts/test-postgres.sh makes locally; the script uses the one in
   # PETALBOOK_TEST_POSTGRES when that is set, so this is still make test-postgres.
+  # The same service container also serves make contract-postgres (the contract
+  # tests against an accounts-mode server on PostgreSQL), which makes a database
+  # of its own in it; that is why it runs here and not in the contract job, which
+  # would need a second service container and the same connection-limit step.
   postgres:
     name: postgres
     if: github.event_name == 'push'
@@ -216,6 +220,12 @@ jobs:
           done
           docker exec "$SERVICE" psql -U petalbook -d postgres -tAc 'SHOW max_connections' | grep -qx 300
       - run: make test-postgres
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: make contract-postgres
 
   casefold:
     name: casefold
