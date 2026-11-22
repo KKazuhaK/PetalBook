@@ -1086,8 +1086,11 @@ export function createMockServer(options: MockOptions = {}) {
       const me = requireAdmin(ctx)
       if (path === '/users' && method === 'GET') {
         let list = [...users.values()].sort((a, b) => a.created.localeCompare(b.created))
-        // Without parameters, everyone; `q` (username or name contains it, ignoring case) and `limit` narrow it.
+        // Without parameters, everyone; `q` (username or name contains it, ignoring case), `enabled=1` and `limit` narrow it.
         const q = url.searchParams.get('q')
+        const enabled = url.searchParams.get('enabled')
+        if (enabled !== null && enabled !== '1' && enabled !== '0') throw new HttpError(400, 'invalid', 'enabled is 1 or 0')
+        if (enabled === '1') list = list.filter((u) => !u.disabled)
         if (q !== null && q.trim() !== '') {
           const needle = q.trim().toLowerCase()
           list = list.filter((u) => u.username.toLowerCase().includes(needle) || u.name.toLowerCase().includes(needle))

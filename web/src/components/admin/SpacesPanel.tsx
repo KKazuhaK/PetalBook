@@ -216,7 +216,7 @@ function TransferDialog({ space, onClose }: { space: AdminSpace; onClose: () => 
   const [chosen, setChosen] = useState<User | null>(null)
   const [error, setError] = useState('')
   const userId = chosen?.id ?? ''
-  const matches = (found.data?.users ?? []).filter((u) => !u.disabled && u.id !== space.owner?.id)
+  const matches = (found.data?.users ?? []).filter((u) => u.id !== space.owner?.id)
   // The person already picked stays in the list while the search moves on.
   const choices = chosen && !matches.some((u) => u.id === chosen.id) ? [chosen, ...matches] : matches
   const truncated = (found.data?.users.length ?? 0) >= USER_SEARCH_LIMIT

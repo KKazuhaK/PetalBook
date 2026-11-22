@@ -76,17 +76,26 @@ func ListUsers(ctx context.Context, q Q) ([]User, error) {
 }
 
 // SearchUsers returns the users whose username or name contains query, ignoring
-// case, oldest first; an empty query matches everyone. limit <= 0 means no limit.
-func SearchUsers(ctx context.Context, q Q, d Dialect, query string, limit int) ([]User, error) {
-	cond, args := "", []any{}
+// case, oldest first; an empty query matches everyone. enabledOnly leaves out the
+// disabled accounts before the limit counts. limit <= 0 means no limit.
+func SearchUsers(ctx context.Context, q Q, d Dialect, query string, enabledOnly bool, limit int) ([]User, error) {
+	var conds []string
+	args := []any{}
 	if query != "" {
 		lower := "LOWER"
 		if d == SQLite {
 			lower = sqliteLower
 		}
-		cond = ` WHERE ` + lower + `(username) LIKE ? ESCAPE '\' OR ` + lower + `(name) LIKE ? ESCAPE '\'`
+		conds = append(conds, `(`+lower+`(username) LIKE ? ESCAPE '\' OR `+lower+`(name) LIKE ? ESCAPE '\')`)
 		pat := "%" + likeEscape(strings.ToLower(query)) + "%"
 		args = append(args, pat, pat)
+	}
+	if enabledOnly {
+		conds = append(conds, `disabled = 0`)
+	}
+	cond := ""
+	if len(conds) > 0 {
+		cond = ` WHERE ` + strings.Join(conds, ` AND `)
 	}
 	lim := ""
 	if limit > 0 {

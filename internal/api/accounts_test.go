@@ -374,10 +374,13 @@ func TestInvites(t *testing.T) {
 func TestUsersCanBeSearched(t *testing.T) {
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
+		ids := map[string]string{}
 		for _, u := range []struct{ username, name string }{{"tang", "Tang Wei"}, {"tangerine", "橘子"}, {"a_b", ""}, {"axb", "金鱼"}, {"mei", "Mei"}} {
-			if _, err := a.auth.CreateUser(context.Background(), auth.CreateParams{Username: u.username, Name: u.name, Role: "member", Password: pw}); err != nil {
+			created, err := a.auth.CreateUser(context.Background(), auth.CreateParams{Username: u.username, Name: u.name, Role: "member", Password: pw})
+			if err != nil {
 				t.Fatal(err)
 			}
+			ids[u.username] = created.ID
 			a.clock.Advance(time.Second)
 		}
 		names := func(path string) []string {
@@ -405,6 +408,15 @@ func TestUsersCanBeSearched(t *testing.T) {
 		eq(names("/api/users?q="), "kazuha", "tang", "tangerine", "a_b", "axb", "mei")
 		eq(names("/api/users?q=tang&limit=1"), "tang")
 		eq(names("/api/users?limit=2"), "kazuha", "tang")
+		// enabled=1 leaves out disabled accounts in SQL, so the limit counts only the rest.
+		admin.do("PATCH", "/api/users/"+ids["tang"], map[string]any{"disabled": true}).want(t, 200, "")
+		eq(names("/api/users?q=tang"), "tang", "tangerine")
+		eq(names("/api/users?q=tang&enabled=1"), "tangerine")
+		eq(names("/api/users?q=tang&enabled=1&limit=1"), "tangerine")
+		eq(names("/api/users?enabled=1&limit=2"), "kazuha", "tangerine")
+		eq(names("/api/users?enabled=1"), "kazuha", "tangerine", "a_b", "axb", "mei")
+		eq(names("/api/users?enabled=0"), "kazuha", "tang", "tangerine", "a_b", "axb", "mei")
+		admin.do("GET", "/api/users?enabled=yes", nil).want(t, 400, "invalid")
 		for _, bad := range []string{"limit=0", "limit=201", "limit=x", "limit="} {
 			admin.do("GET", "/api/users?"+bad, nil).want(t, 400, "invalid")
 		}

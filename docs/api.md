@@ -259,8 +259,10 @@ otherwise) except the two invite endpoints marked public.
 `?q={text}` keeps the users whose `username` or `name` contains the text,
 ignoring case (as the name filter of the administration's list of spaces does);
 `?limit={n}` (1 to 200) returns at most that many, the oldest first. Either may
-be sent alone; `400 invalid` for a `limit` outside the range. A picker that
-looks for one person sends both, so it never loads every account.
+be sent alone; `400 invalid` for a `limit` outside the range. `?enabled=1`
+leaves out the disabled accounts, before the limit counts (`enabled=0`, the
+default, keeps them; `400 invalid` for anything else). A picker that looks for
+one person sends `q` and `limit`, so it never loads every account.
 
 ### `PATCH /api/users/{id}`
 

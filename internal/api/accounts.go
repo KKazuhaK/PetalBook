@@ -310,7 +310,18 @@ func (s *server) listUsers(c *call) {
 	q := c.r.URL.Query()
 	var us []store.User
 	var err error
-	if q.Has("q") || q.Has("limit") {
+	enabledOnly := false
+	if q.Has("enabled") {
+		switch q.Get("enabled") {
+		case "1":
+			enabledOnly = true
+		case "0":
+		default:
+			writeError(c.w, http.StatusBadRequest, "invalid", "enabled is 1 or 0")
+			return
+		}
+	}
+	if q.Has("q") || q.Has("limit") || enabledOnly {
 		limit := 0
 		if v := q.Get("limit"); q.Has("limit") {
 			n, aerr := strconv.Atoi(v)
@@ -320,7 +331,7 @@ func (s *server) listUsers(c *call) {
 			}
 			limit = n
 		}
-		us, err = s.auth.FindUsers(c.r.Context(), strings.TrimSpace(q.Get("q")), limit)
+		us, err = s.auth.FindUsers(c.r.Context(), strings.TrimSpace(q.Get("q")), enabledOnly, limit)
 	} else {
 		us, err = s.auth.Users(c.r.Context())
 	}

@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MutationObserver, QueryClient } from '@tanstack/react-query'
-import { applySession, keys, lastSpace, rememberSpace, secretMutation } from './hooks'
+import { applySession, keys, lastSpace, refreshSpaceAccess, rememberSpace, secretMutation } from './hooks'
 import type { SessionInfo, User } from './types'
 
 const user = (over: Partial<User> = {}): User => ({ id: 'u1', username: 'ada', name: 'Ada', email: '', role: 'member', disabled: false, created: '2026-11-21T08:30:00Z', ...over })
@@ -66,5 +66,28 @@ describe('a mutation that carries a secret', () => {
     expect(await run(secretMutation)).not.toContain('SECRET-123')
     // Without it the default keeps the variables around: this is what the option is for.
     expect(await run({})).toContain('SECRET-123')
+  })
+})
+
+describe('a request refused for access or not found inside a space', () => {
+  afterEach(() => vi.useRealTimers())
+  it('looks at the viewed space again at most every five seconds when it is only a 404, like the list', () => {
+    vi.useFakeTimers()
+    const qc = new QueryClient()
+    const stale = (key: readonly unknown[]) => qc.getQueryState(key)?.isInvalidated
+    const answered = () => {
+      qc.setQueryData(keys.spaces, { spaces: [] })
+      qc.setQueryData(keys.viewedSpace('sp1'), null)
+    }
+    answered()
+    refreshSpaceAccess(qc, 'sp1', true)
+    expect([stale(keys.spaces), stale(keys.viewedSpace('sp1'))]).toEqual([false, false])
+    vi.advanceTimersByTime(5_000)
+    refreshSpaceAccess(qc, 'sp1', true)
+    expect([stale(keys.spaces), stale(keys.viewedSpace('sp1'))]).toEqual([true, true])
+    // A refusal for access is never throttled.
+    answered()
+    refreshSpaceAccess(qc, 'sp1', false)
+    expect([stale(keys.spaces), stale(keys.viewedSpace('sp1'))]).toEqual([true, true])
   })
 })

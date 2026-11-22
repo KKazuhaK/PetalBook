@@ -68,12 +68,14 @@ export function useSpaces() {
 // A request inside a space was refused for access (disabled, no permission) or
 // said the space is not there: what the app holds about the space is out of date,
 // the list and the space an administrator views alike. A 404 may only be a page
-// that is gone, so it looks again at most every few seconds.
+// that is gone, so each of the two looks again at most every few seconds, counted
+// from when that query last got an answer.
 const NOT_FOUND_RECHECK_MS = 5_000
 export function refreshSpaceAccess(qc: QueryClient, space: string | null, notFound: boolean) {
+  const recent = (key: readonly unknown[]) => Date.now() - (qc.getQueryState(key)?.dataUpdatedAt ?? 0) < NOT_FOUND_RECHECK_MS
   // The viewed space is only ever asked for by an administrator, and is one request.
-  if (space) void qc.invalidateQueries({ queryKey: keys.viewedSpace(space) })
-  if (notFound && Date.now() - (qc.getQueryState(keys.spaces)?.dataUpdatedAt ?? 0) < NOT_FOUND_RECHECK_MS) return
+  if (space && !(notFound && recent(keys.viewedSpace(space)))) void qc.invalidateQueries({ queryKey: keys.viewedSpace(space) })
+  if (notFound && recent(keys.spaces)) return
   void qc.invalidateQueries({ queryKey: keys.spaces })
 }
 

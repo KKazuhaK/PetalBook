@@ -196,6 +196,8 @@ describe('all spaces', () => {
     expect(asked.length).toBeGreaterThan(0)
     for (const q of asked) expect(q).toContain('limit=20')
     expect(asked.some((q) => q.includes('q=tang'))).toBe(true)
+    // Disabled accounts are left out by the server, ahead of the limit.
+    for (const q of asked) expect(q).toContain('enabled=1')
     // The pick stays when the search moves on.
     await type(pick, [...pick.options][1].value)
     await type(document.querySelector<HTMLInputElement>('#transfer-search')!, 'mei')

@@ -10,11 +10,13 @@ import type { AdminSpaceList, AdminSpacesParams, CreatedInvite, DeletedSpace, In
 
 export const adminApi = {
   // --- users and invites ---
-  // `q` keeps the users whose username or name contains it; `limit` caps the count (1 to 200).
-  users: (params: { q?: string; limit?: number } = {}, signal?: AbortSignal) => {
+  // `q` keeps the users whose username or name contains it; `limit` caps the count (1 to 200);
+  // `enabled` leaves out the disabled accounts before the limit counts.
+  users: (params: { q?: string; limit?: number; enabled?: boolean } = {}, signal?: AbortSignal) => {
     const q = new URLSearchParams()
     if (params.q) q.set('q', params.q)
     if (params.limit) q.set('limit', String(params.limit))
+    if (params.enabled) q.set('enabled', '1')
     const query = q.toString()
     return request<{ users: User[] }>(`/users${query ? `?${query}` : ''}`, { signal })
   },
@@ -48,10 +50,11 @@ export function useUsers(enabled = true) {
 }
 
 // A few users by (part of) a username or name, for a picker: the server does the
-// filtering and the limit, so the whole list of accounts is never loaded for it.
+// filtering and the limit (disabled accounts never count), so the whole list of
+// accounts is never loaded for it.
 export const USER_SEARCH_LIMIT = 20
 export function useUserSearch(q: string, enabled = true) {
-  return useQuery({ queryKey: keys.userSearch(q), queryFn: ({ signal }) => adminApi.users({ q, limit: USER_SEARCH_LIMIT }, signal), staleTime: 15_000, enabled })
+  return useQuery({ queryKey: keys.userSearch(q), queryFn: ({ signal }) => adminApi.users({ q, limit: USER_SEARCH_LIMIT, enabled: true }, signal), staleTime: 15_000, enabled })
 }
 
 export function useInvites(enabled = true) {

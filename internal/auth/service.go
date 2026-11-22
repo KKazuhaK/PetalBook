@@ -551,7 +551,8 @@ func (s *Service) Users(ctx context.Context) ([]store.User, error) {
 }
 
 // FindUsers lists the accounts whose username or name contains query (ignoring
-// case), oldest first, at most limit of them (limit <= 0: no limit).
-func (s *Service) FindUsers(ctx context.Context, query string, limit int) ([]store.User, error) {
-	return store.SearchUsers(ctx, s.st.Q(), s.st.Dialect(), query, limit)
+// case), oldest first, at most limit of them (limit <= 0: no limit). enabledOnly
+// leaves the disabled accounts out before the limit counts.
+func (s *Service) FindUsers(ctx context.Context, query string, enabledOnly bool, limit int) ([]store.User, error) {
+	return store.SearchUsers(ctx, s.st.Q(), s.st.Dialect(), query, enabledOnly, limit)
 }
