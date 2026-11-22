@@ -2,7 +2,7 @@
 // the rules (which sections a person sees, how an old address maps to one) are
 // tested without rendering anything.
 
-export type SectionId = 'profile' | 'preferences' | 'security' | 'general' | 'members' | 'sync' | 'import'
+export type SectionId = 'profile' | 'preferences' | 'security' | 'general' | 'types' | 'members' | 'sync' | 'import'
 export type GroupId = 'account' | 'space'
 
 export interface SectionDef {
@@ -16,6 +16,7 @@ export const SECTIONS: readonly SectionDef[] = [
   { id: 'preferences', group: 'account' },
   { id: 'security', group: 'account' },
   { id: 'general', group: 'space' },
+  { id: 'types', group: 'space' },
   { id: 'members', group: 'space' },
   { id: 'sync', group: 'space' },
   { id: 'import', group: 'space' },
@@ -52,6 +53,9 @@ export function visibleSections(v: Visibility): SectionDef[] {
         return true
       case 'general':
         return v.hasSpace
+      case 'types':
+        // Reading the types is reading the space; changing them is for those who manage it.
+        return v.hasSpace && v.canRead
       case 'import':
         return v.hasSpace && v.canWrite
       case 'members':

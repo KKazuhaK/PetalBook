@@ -379,3 +379,103 @@ func TestNestedMapsCompareWithoutOrder(t *testing.T) {
 		t.Fatal("missing nested key not noticed")
 	}
 }
+
+// A date in a property is written as a date, as `created` is, and reads back
+// as the same text; a title or a tag that looks like one stays text.
+func TestDatesInPropertiesAreWrittenUnquoted(t *testing.T) {
+	d := Parse([]byte("---\nid: 01JD3K8Q7Z\n---\nbody\n"))
+	var m Meta
+	_ = json.Unmarshal([]byte(`{"id":"01JD3K8Q7Z","due":"2026-11-22","title":"2026-11-22","tags":["2026-11-23"],"note":"2026-11-22 morning"}`), &m)
+	if err := d.SetMeta(m); err != nil {
+		t.Fatal(err)
+	}
+	out := string(d.Bytes())
+	for _, want := range []string{"due: 2026-11-22\n", `title: "2026-11-22"`, `"2026-11-23"`, "note: 2026-11-22 morning\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in\n%s", want, out)
+		}
+	}
+	back := Parse([]byte(out)).Meta()
+	if v, _ := back.Get("due"); v != "2026-11-22" {
+		t.Errorf("due reads back as %#v", v)
+	}
+}
+
+func TestKeyKinds(t *testing.T) {
+	for _, k := range []string{"id", "title", "subtitle", "source", "tags", "created", "type"} {
+		if !IsBuiltinKey(k) {
+			t.Errorf("%s is built in", k)
+		}
+	}
+	for _, k := range []string{"status", "publish", "slug", "Title", ""} {
+		if IsBuiltinKey(k) {
+			t.Errorf("%q is not built in", k)
+		}
+	}
+	if !IsReservedKey("publish") || !IsReservedKey("slug") || IsReservedKey("status") {
+		t.Error("publish and slug are reserved, nothing else")
+	}
+}
+
+// Text that looks like a date but is not one is written as a string, never with
+// an explicit tag: `!!timestamp 2026-13-45` cannot be read by other tools, and
+// unquoted it would fail in readers that take the shape for a date.
+func TestDateLookingTextIsNeverWrittenWithATag(t *testing.T) {
+	for _, v := range []string{"2026-13-45", "2026-02-30", "2026-00-10", "2026-1-5", "2026-11-22T10:00:00Z", "2026-11-22 10:00:00", "0000-00-00"} {
+		d := Parse([]byte("---\nid: 01JD3K8Q7Z\n---\nbody\n"))
+		m := Meta{}
+		raw, _ := json.Marshal(map[string]any{"id": "01JD3K8Q7Z", "due": v, "created": v, "list": []string{v}})
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.SetMeta(m); err != nil {
+			t.Fatal(err)
+		}
+		out := string(d.Bytes())
+		if strings.Contains(out, "!!") {
+			t.Errorf("%q: an explicit tag in\n%s", v, out)
+		}
+		if !strings.Contains(out, `due: "`+v+`"`) {
+			t.Errorf("%q should be written quoted:\n%s", v, out)
+		}
+		back := Parse([]byte(out)).Meta()
+		if got, _ := back.Get("due"); got != v {
+			t.Errorf("%q reads back as %#v", v, got)
+		}
+	}
+	// A real date stays the plain date form, and nothing else gets a tag.
+	d := Parse([]byte("---\nid: 01JD3K8Q7Z\n---\nbody\n"))
+	m := Meta{}
+	_ = json.Unmarshal([]byte(`{"id":"01JD3K8Q7Z","due":"2026-02-28","leap":"2028-02-29"}`), &m)
+	d.SetMeta(m)
+	if out := string(d.Bytes()); !strings.Contains(out, "due: 2026-02-28\n") || !strings.Contains(out, "leap: 2028-02-29\n") || strings.Contains(out, "!!") {
+		t.Errorf("%s", out)
+	}
+}
+
+// A real date in a list is written as a date, like one alone, so that what the
+// file says survives a round trip through a client; tags stay text.
+func TestDatesInListsAreWrittenUnquoted(t *testing.T) {
+	d := Parse([]byte("---\nid: 01JD3K8Q7Z\n---\nbody\n"))
+	m := Meta{}
+	_ = json.Unmarshal([]byte(`{"id":"01JD3K8Q7Z","l":["2026-11-22","2026-13-45","x"],"tags":["2026-11-23"]}`), &m)
+	if err := d.SetMeta(m); err != nil {
+		t.Fatal(err)
+	}
+	out := string(d.Bytes())
+	if !strings.Contains(out, "l: [2026-11-22, \"2026-13-45\", x]") || !strings.Contains(out, `"2026-11-23"`) || strings.Contains(out, "!!") {
+		t.Errorf("%s", out)
+	}
+	back := Parse([]byte(out))
+	if got := back.Meta(); !MetaEqual(got, m) {
+		t.Errorf("round trip: %v", got)
+	}
+	if k := back.InexactKeys(); k["l"] {
+		t.Errorf("the list is exact and was reported inexact: %v", k)
+	}
+	// And what it was before the write: a list of dates in the file is exact, and writing the Meta back changes nothing.
+	again := Parse([]byte(out))
+	if err := again.SetMeta(again.Meta()); err != nil || string(again.Bytes()) != out {
+		t.Errorf("writing it back changed it:\n%s", again.Bytes())
+	}
+}

@@ -62,9 +62,19 @@ export interface PageSummary {
   untitled: boolean
   tags?: string[]
   type?: string
+  // The type the page has: its header's, else its folder's (see "Page types").
+  effectiveType?: string
   created?: string
   updated: string
   excerpt?: string
+  // Only with `props: true` in the listing (the table view): the header's keys
+  // that are not built in, as plain values, and the rev a change of them needs.
+  props?: Record<string, unknown>
+  rev?: string
+  // With `props`: the keys whose value there is not the whole of what the header
+  // holds (cut text, a list that lost elements, an object). Absent when none. A
+  // cell must not write such a copy back.
+  partialProps?: string[]
 }
 
 // The page header as the server serves it. Fields the app does not know about
@@ -97,6 +107,11 @@ export interface Page {
   body: string
   // Only `GET .../pages/{id}` carries it, and only when the caller has one.
   draft?: PageDraft
+  // The type the page has: its header's `type`, else its folder's, else "".
+  effectiveType?: string
+  // The keys of `meta` that a listing holds only in part (the summary's list, judged by the server from
+  // the file); absent when none. A cell must not write such a key back.
+  partialProps?: string[]
 }
 
 export interface DraftReceipt {
@@ -107,6 +122,16 @@ export interface DraftReceipt {
 }
 
 export type SortKey = 'updated' | 'created' | 'title' | '-updated' | '-created' | '-title'
+// Sorting by a property of the header: `prop:status`, `-prop:status`.
+export type PropSort = `prop:${string}` | `-prop:${string}`
+
+// One condition of a table's filter (docs/api.md, "Filtering by properties").
+export type FilterOp = 'in' | 'range' | 'empty' | 'notEmpty' | 'contains'
+export interface PropFilter {
+  key: string
+  op: FilterOp
+  values?: (string | number | boolean | null)[]
+}
 
 export interface ListParams {
   folder?: string
@@ -121,7 +146,11 @@ export interface ListParams {
   updatedTo?: string
   createdFrom?: string
   createdTo?: string
-  sort?: SortKey
+  sort?: SortKey | PropSort
+  // Conditions on properties; all must hold.
+  filter?: PropFilter[]
+  // Put `props` and `rev` in the summaries (the table view does).
+  props?: boolean
   limit?: number
   cursor?: string
 }
@@ -143,6 +172,51 @@ export interface SavePageInput {
 // Storing a draft says which version it replaces ("" when none is known).
 export interface DraftInput extends SavePageInput {
   prev: string
+}
+
+// --- page types (docs/api.md, "Page types") ----------------------------------------
+
+export type FieldKind = 'text' | 'longtext' | 'select' | 'multiselect' | 'date' | 'number' | 'checkbox' | 'url' | 'other'
+export interface TypeField {
+  key: string
+  // "" when the file gives none: show the key.
+  title: string
+  kind: FieldKind
+  // For select and multiselect.
+  options?: string[]
+  // The field's schema as the file has it.
+  schema?: unknown
+}
+export interface PageType {
+  // The file name; what a header's `type` says. Never changes.
+  name: string
+  // "" when the file gives none: show the name.
+  title: string
+  // The Git blob id of the type's file: a change or a delete is made from it (`baseRev`).
+  rev: string
+  fields: TypeField[]
+  // Set when the file cannot be used; the fields are then empty.
+  error?: string
+}
+export interface FolderBinding {
+  folder: string
+  type: string
+}
+export interface TypesResponse {
+  types: PageType[]
+  bindings: FolderBinding[]
+}
+// What `PUT .../types/{name}` takes: the whole of what the type is to be.
+export interface TypeInput {
+  // The `rev` of the type this is made from; "" or absent to make one.
+  baseRev?: string
+  title: string
+  fields: { key: string; title?: string; kind?: FieldKind; options?: string[] }[]
+}
+export interface PatchPropsInput {
+  baseRev: string
+  set?: Record<string, unknown>
+  unset?: string[]
 }
 
 export interface TreeResponse {

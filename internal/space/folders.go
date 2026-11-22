@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 
+	"go.yaml.in/yaml/v3"
+
 	"github.com/KKazuhaK/PetalBook/internal/index"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 )
@@ -196,15 +198,22 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	for _, p := range append(append([]string{}, oldPaths...), newPaths...) {
 		recs = append(recs, jrec{Op: "t", Path: p})
 	}
+	// The bindings of the folder (and of the folders in it) follow it: that is
+	// part of the move, so it is journaled with it and a crash between the
+	// rename and the edit of space.yml is finished at recovery (see "b").
+	bind := jrec{Op: "b", From: canonFrom, To: target}
+	recs = append(recs, bind)
 	if err := tx.record(recs...); err != nil {
 		return "", err
 	}
+	tx.bind = append(tx.bind, bind)
 	inside := make([]string, 0, len(ours))
 	for f := range ours {
 		inside = append(inside, f)
 	}
 	sort.Strings(inside)
 	if err := s.rename(tx.by, absFrom, absTarget, inside); err != nil {
+		tx.settleBindings() // nothing moved (or the rename is stuck: its own records say so)
 		return "", err
 	}
 	// The folder is part of the change from here on. Undoing it renames the
@@ -223,6 +232,42 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 		return append(append([]string{}, newPaths...), untracked...)
 	})
 	tx.touch(append(append([]string{}, oldPaths...), newPaths...)...)
+
+	if tx.remote {
+		// If the change is undone, space.yml goes back before the folder does:
+		// a crash between the two leaves the folder at the new place and the
+		// bindings at the old, which the "b" record (still open) finishes
+		// forwards at the next start. The other order would leave the folder at
+		// the old place and the bindings at the new, which nothing repairs.
+		tx.undo = append(tx.undo, func() []string {
+			s.restoreSpaceFile(tx)
+			return nil
+		})
+	}
+	// What was bound to the folder, and to the folders in it, follows it.
+	//
+	// If that edit fails the folder must not stay at its new place with its
+	// bindings at the old one while the request reports failure. In a space that
+	// follows a remote the failed change is undone as a whole. In a local space
+	// nothing undoes it, so the rename is taken back here: a rename moves
+	// nothing but the name, so undoing it cannot lose a file, and the edit of
+	// space.yml is atomic, so either it was made (and then it did not fail) or
+	// it is as it was. (Finishing the edit instead would only repeat what just
+	// failed.) Should the rename not go back either, the "b" record above has
+	// the next start move the bindings to where the folder now is.
+	if err := s.editBindings(tx, func(root *yaml.Node) (bool, error) { return rebind(root, canonFrom, target, false) }); err != nil {
+		if !tx.remote {
+			tx.runUndo()
+			s.dropCreated(tx)
+			if tx.undoFailed != "" {
+				err = errors.Join(err, errors.New(tx.undoFailed))
+			} else {
+				tx.settleBindings() // the folder is where it was, with its bindings
+			}
+		}
+		return "", err
+	}
+	tx.settleBindings()
 
 	oldDirs, newDirs := []string{canonFrom}, []string{target}
 	for _, d := range subdirs {
@@ -291,6 +336,19 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 		if err != nil {
 			return struct{}{}, err
 		}
+		// Journaled before the first deletion: the bindings of what is gone go
+		// too, at recovery if the crash comes before the edit of space.yml (see "u").
+		startU := func() error {
+			if len(tx.bind) > 0 {
+				return nil
+			}
+			u := jrec{Op: "u", Path: canon}
+			if err := tx.record(u); err != nil {
+				return err
+			}
+			tx.bind = append(tx.bind, u)
+			return nil
+		}
 		// Deleting a page can turn another file with the same id into the
 		// page, so the folder is looked at again until nothing is left or a
 		// round deletes nothing.
@@ -308,12 +366,18 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 			if round > maxNameTries {
 				return struct{}{}, errors.New("the folder keeps showing pages after they were deleted")
 			}
+			if err := startU(); err != nil {
+				return struct{}{}, err
+			}
 			for _, id := range ids {
 				if err := s.deleteLocked(tx, id); err != nil {
 					return struct{}{}, err
 				}
 				deleted = append(deleted, id)
 			}
+		}
+		if err := startU(); err != nil {
+			return struct{}{}, err
 		}
 		// The folders, deepest first: their placeholders go, and each folder
 		// that is empty then goes too.
@@ -357,6 +421,19 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 				removed = append(removed, d)
 			}
 		}
+		// A folder that is gone has no type to keep. One that stays (it holds
+		// files that are not pages) keeps its binding.
+		if err := s.editBindings(tx, func(root *yaml.Node) (bool, error) {
+			return unbindWhere(root, func(folder, _ string) bool {
+				return (folder == canon || strings.HasPrefix(folder, canon+"/")) && s.fileGone(folder)
+			})
+		}); err != nil {
+			// Pages are deleted for good in a local space, so there is nothing
+			// to take back; the error says so (see the ids returned), and the
+			// "u" record has the next start drop the bindings of what is gone.
+			return struct{}{}, err
+		}
+		tx.settleBindings()
 		if tx.remote {
 			tx.dirs = append(tx.dirs, dirs...)
 		}

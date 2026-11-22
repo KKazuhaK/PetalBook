@@ -3,7 +3,7 @@
 // cookie stand-in), invites, spaces per user and a fake OpenID Connect
 // provider. It has no DOM or Node dependencies.
 
-import type { AdminSpace, ConnectRemoteInput, Identity, Invite, Member, Page, Permission, Remote, RemoteKey, RemoteState, Role, ServerStatus, SpaceInfo, SpaceRole, User } from '../types.ts'
+import type { AdminSpace, ConnectRemoteInput, FieldKind, Identity, Invite, Member, Page, Permission, Remote, RemoteKey, RemoteState, Role, ServerStatus, SpaceInfo, SpaceRole, User } from '../types.ts'
 import { gitBlobId } from './sha1.ts'
 import { ALPHABET, HttpError, compareCodePoints, createSpaceStore, isRecord, rfc3339, validFolder, type SpaceStore } from './store.ts'
 import { SPACE_NAME } from './seed.ts'
@@ -563,6 +563,8 @@ export function createMockServer(options: MockOptions = {}) {
   }
   // What a route on a space asks of the caller (the route table of the real server).
   const needOf = (me: UserRec, method: string, rest: string): Permission => {
+    // Types and their bindings are for those who manage the space; reading them is reading.
+    if ((rest.startsWith('/types/') && method !== 'GET') || (rest === '/folders/type' && method === 'PUT')) return 'manage'
     if ((rest === '' && method === 'PATCH') || rest === '/reindex' || rest === '/remote' || rest.startsWith('/remote/')) return 'manage'
     if (rest === '/members' || rest.startsWith('/members/')) {
       if (method === 'GET') return 'read'
@@ -911,6 +913,27 @@ export function createMockServer(options: MockOptions = {}) {
     const ver = /^\/pages\/([^/]+)\/versions\/([^/]+)$/.exec(rest)
     if (ver && method === 'GET') return { status: 200, body: st.version(decodeURIComponent(ver[1]), decodeURIComponent(ver[2])) }
     if (rest === '/remote' || rest.startsWith('/remote/')) return routeRemote(space, method, rest, body)
+    const props = /^\/pages\/([^/]+)\/props$/.exec(rest)
+    if (props && method === 'PATCH') return { status: 200, body: st.patchProps(u.id, decodeURIComponent(props[1]), body) }
+    if (rest === '/types' && method === 'GET') return { status: 200, body: st.types() }
+    const typeOne = /^\/types\/(.+)$/.exec(rest)
+    if (typeOne && (method === 'PUT' || method === 'DELETE')) {
+      let name: string
+      try {
+        name = decodeURIComponent(typeOne[1])
+      } catch {
+        throw new HttpError(400, 'invalid', '类型名不合法')
+      }
+      if (method === 'DELETE') {
+        st.deleteType(name, url.searchParams.get('baseRev') ?? '')
+        return { status: 204 }
+      }
+      return { status: 200, body: st.putType(name, body as never) }
+    }
+    if (rest === '/folders/type' && method === 'PUT') {
+      if (typeof body.folder !== 'string' || (body.type !== undefined && typeof body.type !== 'string')) throw new HttpError(400, 'invalid', '缺少 folder 或 type')
+      return { status: 200, body: st.bindFolder(body.folder, (body.type as string | undefined) ?? '') }
+    }
     const one = /^\/pages\/([^/]+)(\/(move|draft|commit))?$/.exec(rest)
     if (one) {
       const id = decodeURIComponent(one[1])
@@ -1217,6 +1240,10 @@ export function createMockServer(options: MockOptions = {}) {
     },
     // The first space of the single-user server, or the one named.
     peek: (id: string, space?: string): Page | undefined => (space ? spaces.get(space) : [...spaces.values()].find((s) => s.store.peek(id)))?.store.peek(id),
+    // Mock only: the file of a type was damaged by hand.
+    damageType: (space: string, name: string, message: string) => spaces.get(space)!.store.damageType(name, message),
+    // Mock only: a field of a kind the app does not know.
+    forceKind: (space: string, name: string, key: string, kind: FieldKind) => spaces.get(space)!.store.forceKind(name, key, kind),
     ids: (space = 'default') => spaces.get(space)?.store.ids() ?? [],
     spaceIds: () => [...spaces.keys()],
     peekDraft: (userId: string, id: string, space = 'default') => spaces.get(space)?.store.peekDraft(userId, id),

@@ -86,6 +86,7 @@ export const en: Messages = {
     open: 'Open',
     rename: 'Rename',
     move: 'Move to…',
+    setType: 'Set type…',
     delete: 'Delete',
     select: 'Select',
     newPage: 'New page',
@@ -347,7 +348,7 @@ export const en: Messages = {
     disabledAdminLink: 'Go to administration',
     disabledBack: 'Back to my spaces',
   },
-  view: { label: 'View', list: 'List', cards: 'Cards' },
+  view: { label: 'View', list: 'List', cards: 'Cards', table: 'Table' },
   inbox: {
     folderName: 'Inbox',
     empty: 'The inbox is empty. Jot something down now and sort it later.',
@@ -384,7 +385,7 @@ export const en: Messages = {
     close: 'Close settings',
     nav: 'Settings sections',
     groups: { account: 'Account', space: 'Space' },
-    sections: { profile: 'Profile', preferences: 'Preferences', security: 'Security', general: 'General', members: 'Members', sync: 'Sync', import: 'Import' },
+    sections: { profile: 'Profile', preferences: 'Preferences', security: 'Security', general: 'General', types: 'Types', members: 'Members', sync: 'Sync', import: 'Import' },
   },
   prefs: {
     appearance: 'Appearance',

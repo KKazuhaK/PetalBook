@@ -4,6 +4,8 @@ import { en } from './en'
 import { zhCN } from './zh-CN'
 import { adminEn } from './admin/en'
 import { adminZhCN } from './admin/zh-CN'
+import { propsEn } from './props/en'
+import { propsZhCN } from './props/zh-CN'
 
 describe('decideLanguage', () => {
   it('uses a saved choice over the browser', () => {
@@ -102,6 +104,7 @@ describe('dictionaries', () => {
     const problems: string[] = []
     walk(zhCN, en, 't', problems)
     walk(adminZhCN, adminEn, 'admin', problems)
+    walk(propsZhCN, propsEn, 'props', problems)
     expect(problems).toEqual([])
   })
   it('English has no Chinese text in it', () => {
@@ -118,6 +121,7 @@ describe('dictionaries', () => {
     }
     scan(en, 't')
     scan(adminEn, 'admin')
+    scan(propsEn, 'props')
     expect(found).toEqual([])
   })
   it('English plurals read correctly', () => {

@@ -21,7 +21,7 @@ import (
 
 // schemaVersion changes whenever the tables or the way text is tokenised
 // change; an index with another version is thrown away and rebuilt.
-const schemaVersion = 4
+const schemaVersion = 6
 
 const schema = `
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -43,7 +43,9 @@ CREATE TABLE pages (
 	mtime_ns    INTEGER NOT NULL,
 	size        INTEGER NOT NULL,
 	rev         TEXT NOT NULL,
-	excerpt     TEXT NOT NULL
+	excerpt     TEXT NOT NULL,
+	props       TEXT NOT NULL DEFAULT '',
+	partial     TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX pages_folder_mtime ON pages(folder, mtime_ns);
 CREATE INDEX pages_mtime ON pages(mtime_ns);
@@ -52,6 +54,14 @@ CREATE INDEX pages_title ON pages(untitled, title_key, created_key);
 CREATE INDEX pages_title_desc ON pages(untitled, title_key DESC, created_key DESC);
 CREATE TABLE tags (tag TEXT NOT NULL, page INTEGER NOT NULL, PRIMARY KEY (tag, page)) WITHOUT ROWID;
 CREATE INDEX tags_page ON tags(page);
+-- The properties of the pages (the header keys that are not built in): one row
+-- for a scalar, one per element for a list. skey sorts in the order of the
+-- values (see propsOf). The primary key serves a page's own rows; props_sort
+-- serves sorting by the first value of a property, props_val the lookups by
+-- value.
+CREATE TABLE props (page INTEGER NOT NULL, key TEXT NOT NULL, pos INTEGER NOT NULL, val TEXT NOT NULL, skey TEXT NOT NULL, PRIMARY KEY (page, key, pos)) WITHOUT ROWID;
+CREATE INDEX props_sort ON props(key, pos, skey, page);
+CREATE INDEX props_val ON props(key, val, page);
 CREATE TABLE folders (path TEXT PRIMARY KEY);
 -- Files that are not pages (no usable id). They are remembered with their size
 -- and mtime so that start-up does not read them again.

@@ -2,7 +2,7 @@
 // tree and the breadcrumbs: one place for the dialogs, the requests, the
 // undo after a move and the redirect when the folder being looked at moves.
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, lazy, Suspense, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -14,9 +14,13 @@ import { MoveItemsDialog } from './MoveItemsDialog'
 import { RenameFolderDialog } from './RenameFolderDialog'
 import { NewFolderDialog } from '@/components/layout/NewFolderDialog'
 
+// Binding a folder to a type: loaded when the dialog is first opened.
+const SetTypeDialog = lazy(() => import('./SetTypeDialog'))
+
 type Dialog =
   | { kind: 'newFolder'; parent: string }
   | { kind: 'rename'; path: string }
+  | { kind: 'setType'; path: string }
   | { kind: 'move'; items: FileItem[]; onDone?: () => void }
   | { kind: 'delete'; items: FileItem[]; onDone?: () => void }
 
@@ -29,6 +33,8 @@ export interface FileOps {
   newPage: (folder: string) => Promise<void>
   newFolder: (parent: string) => void
   rename: (path: string) => void
+  // Opens the choice of a type for a folder (needs `manage`).
+  setType: (path: string) => void
   // Opens the folder picker.
   chooseMove: (items: FileItem[], onDone?: () => void) => void
   // Asks, then deletes.
@@ -174,6 +180,7 @@ export function FileOpsProvider({ children }: { children: ReactNode }) {
     },
     newFolder: (parent) => setDialog({ kind: 'newFolder', parent }),
     rename: (path) => setDialog({ kind: 'rename', path }),
+    setType: (path) => setDialog({ kind: 'setType', path }),
     chooseMove: (items, onDone) => setDialog({ kind: 'move', items, onDone }),
     confirmDelete: (items, onDone) => setDialog({ kind: 'delete', items, onDone }),
     moveTo,
@@ -189,6 +196,11 @@ export function FileOpsProvider({ children }: { children: ReactNode }) {
       {children}
       <NewFolderDialog open={dialog?.kind === 'newFolder'} onOpenChange={(o) => !o && close()} parent={dialog?.kind === 'newFolder' ? dialog.parent : ''} spaceName={spaceName} />
       {dialog?.kind === 'rename' && <RenameFolderDialog path={dialog.path} index={index} onRename={ops.renameFolder} onClose={close} />}
+      {dialog?.kind === 'setType' && (
+        <Suspense fallback={null}>
+          <SetTypeDialog path={dialog.path} spaceName={spaceName} onClose={close} />
+        </Suspense>
+      )}
       {dialog?.kind === 'move' && (
         <MoveItemsDialog
           items={dialog.items}

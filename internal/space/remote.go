@@ -603,9 +603,44 @@ type txn struct {
 	// that nothing goes looking for them (under another spelling of an old
 	// name, on a file system that ignores case, that would find the old file).
 	undo []func() []string
+	// parent is the commit the change started from (a remote space).
+	parent string
+	// bind are the "b" and "u" records of the change whose edit of space.yml
+	// is not yet final (see finishBindings).
+	bind []jrec
 	// undoFailed is set by a step that could not do its part: what is wrong,
 	// for the administrator.
 	undoFailed string
+}
+
+// settleBindings is for a change that has made, or taken back, its edit of
+// space.yml. In a local space nothing can undo that edit later, so the records
+// are done now. In a space that follows a remote the commit or the push may
+// still fail and undo the edit, so they are done when the change is final
+// (finishBindings).
+func (t *txn) settleBindings() {
+	if !t.remote {
+		t.finishBindings()
+	}
+}
+
+// finishBindings tells the journal that the bindings the change was to move or
+// drop are as they are to stay: a crash from here on must not touch them.
+func (t *txn) finishBindings() {
+	for _, r := range t.bind {
+		t.s.cm.Done(r)
+	}
+	t.bind = nil
+}
+
+// runUndo takes back the steps of the change that the file system needs undone
+// (see undo), last first. A local space runs it itself when a change fails
+// after the folder it moved has moved.
+func (t *txn) runUndo() {
+	for i := len(t.undo) - 1; i >= 0; i-- {
+		t.undo[i]()
+	}
+	t.undo = nil
 }
 
 // record journals what the change is about to do, as the change of its author.
@@ -642,7 +677,7 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 			return zero, err
 		}
 		parent := r.repo.Head(ctx)
-		tx := &txn{s: s, by: by, remote: true}
+		tx := &txn{s: s, by: by, remote: true, parent: parent}
 		res, err := op(tx)
 		if err != nil {
 			s.undoLocked(ctx, r, tx, parent)
@@ -650,6 +685,7 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 		}
 		tx.paths = uniq(tx.paths)
 		if len(tx.paths) == 0 {
+			tx.finishBindings()
 			s.cm.clearJournal()
 			return res, nil
 		}
@@ -660,17 +696,20 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 			return zero, err
 		}
 		if !made { // the change netted out to nothing
+			tx.finishBindings()
 			s.cm.clearJournal()
 			return res, nil
 		}
 		perr := r.repo.Push(ctx, r.branch)
 		if perr == nil {
+			tx.finishBindings()
 			s.pushedLocked(ctx, r)
 			return res, nil
 		}
 		// The answer may have been lost although the push went through.
 		landed, lerr := s.landed(ctx, r)
 		if lerr == nil && landed {
+			tx.finishBindings()
 			s.pushedLocked(ctx, r)
 			return res, nil
 		}
@@ -746,6 +785,39 @@ func (s *Space) pushedLocked(ctx context.Context, r *remote) {
 	r.markOK()
 	if err := s.cm.clearJournal(); err != nil {
 		s.log.Warn("could not clear the commit journal", "error", err)
+	}
+}
+
+// restoreSpaceFile puts space.yml back as it is in the commit the change
+// started from. It is the first step of undoing a change that edited it.
+func (s *Space) restoreSpaceFile(tx *txn) {
+	r := s.rem.Load()
+	if r == nil || tx.parent == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := r.repo.Discard(ctx, tx.parent, []string{spaceFile}); err != nil {
+		// The undo as a whole discards it again, and says so if it cannot.
+		s.log.Warn("could not put space.yml back first while undoing a change", "error", err)
+	}
+}
+
+// dropCreated removes the folders a change made (the parents of a folder it
+// moved, say) that are still empty, and their rows in the index. A local space
+// has no undo that does it; a space that follows a remote does it in undoLocked.
+func (s *Space) dropCreated(tx *txn) {
+	if len(tx.created) == 0 {
+		return
+	}
+	dirs := append([]string{}, tx.created...)
+	for i := len(tx.created) - 1; i >= 0; i-- {
+		os.Remove(filepath.Join(s.root, filepath.FromSlash(tx.created[i]))) // fails, rightly, when not empty
+		dirs = append(dirs, path.Dir(tx.created[i]))
+	}
+	tx.created = nil
+	if _, err := s.idx.Refresh(s.src, nil, visibleDirs(dirs)); err != nil {
+		s.log.Error("could not put the index back after taking a change back", "error", err)
 	}
 }
 
@@ -826,6 +898,7 @@ func (s *Space) undoLocked(ctx context.Context, r *remote, tx *txn, parent strin
 	if !undone {
 		return
 	}
+	tx.finishBindings()
 	if err := s.cm.clearJournal(); err != nil {
 		s.log.Warn("could not clear the commit journal", "error", err)
 	}

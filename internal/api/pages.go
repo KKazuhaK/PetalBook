@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -78,6 +80,22 @@ func (s *server) listPages(c *call) {
 	} else if set {
 		q.CreatedTo = t.Format("2006-01-02")
 	}
+	switch v.Get("props") {
+	case "", "0", "false":
+	case "1", "true":
+		q.Props = true
+	default:
+		writeError(c.w, http.StatusBadRequest, "invalid", "props must be 1 or 0")
+		return
+	}
+	if raw := v.Get("filter"); raw != "" {
+		fs, err := parseFilters(raw)
+		if err != nil {
+			writeError(c.w, http.StatusBadRequest, "invalid", err.Error())
+			return
+		}
+		q.Filters = fs
+	}
 	if l := v.Get("limit"); l != "" {
 		n, err := strconv.Atoi(l)
 		if err != nil {
@@ -95,13 +113,43 @@ func (s *server) listPages(c *call) {
 		return
 	}
 	items := make([]summaryResp, len(res.Items))
+	types := c.sp.Space.TypeResolver()
 	for i, it := range res.Items {
-		items[i] = toSummary(it)
+		items[i] = toSummary(it, types)
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Items []summaryResp `json:"items"`
 		Next  string        `json:"next"`
 	}{items, res.Next})
+}
+
+// parseFilters reads the filter parameter: a JSON array of
+// {"key", "op", "values"}. The values keep their JSON types (a number is a
+// number, not text).
+func parseFilters(raw string) ([]index.Filter, error) {
+	const bad = "filter must be a JSON array of {\"key\", \"op\", \"values\"}"
+	if len(raw) > 16<<10 {
+		return nil, errors.New("filter is too long")
+	}
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.UseNumber()
+	dec.DisallowUnknownFields()
+	var in []struct {
+		Key    string `json:"key"`
+		Op     string `json:"op"`
+		Values []any  `json:"values"`
+	}
+	if err := dec.Decode(&in); err != nil {
+		return nil, errors.New(bad)
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, errors.New(bad)
+	}
+	out := make([]index.Filter, len(in))
+	for i, f := range in {
+		out[i] = index.Filter{Key: f.Key, Op: f.Op, Values: f.Values}
+	}
+	return out, nil
 }
 
 type draftResp struct {
@@ -204,6 +252,36 @@ func (s *server) savePage(c *call) {
 	}
 	// The file will hold what the person sent; the draft they had of it is spent.
 	p, err := s.drafts.SaveFile(c.r.Context(), c.sp.Space, c.sp.Info.ID, c.user().ID, id, req.BaseRev, *req.Meta, *req.Body)
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	writeJSON(c.w, http.StatusOK, toPage(p))
+}
+
+// patchProps changes properties of a page's header and nothing else.
+func (s *server) patchProps(c *call) {
+	id, ok := s.pageID(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		BaseRev string    `json:"baseRev"`
+		Set     page.Meta `json:"set"`
+		Unset   []string  `json:"unset"`
+	}
+	if !s.readJSON(c.w, c.r, &req, false) {
+		return
+	}
+	if req.BaseRev == "" {
+		writeError(c.w, http.StatusBadRequest, "invalid", "a change needs baseRev, the rev of the page it started from")
+		return
+	}
+	if len(req.Set) == 0 && len(req.Unset) == 0 {
+		writeError(c.w, http.StatusBadRequest, "invalid", "a change needs set or unset")
+		return
+	}
+	p, err := s.drafts.PatchProps(c.r.Context(), c.sp.Space, c.sp.Info.ID, c.user().ID, id, req.BaseRev, req.Set, req.Unset)
 	if err != nil {
 		s.fail(c.w, err)
 		return

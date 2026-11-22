@@ -428,6 +428,7 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	var (
 		inv   *space.InvalidError
 		ce    *space.ConflictError
+		tce   *space.TypeConflictError
 		ae    *auth.Error
 		dc    *drafts.Conflict
 		ue    *space.UnavailableError
@@ -496,6 +497,12 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found", "no such page")
 	case errors.Is(err, space.ErrExists), errors.Is(err, fs.ErrExist):
 		writeError(w, http.StatusConflict, "exists", "it already exists")
+	case errors.As(err, &tce):
+		body := errorBody{Error: "conflict", Message: "the type changed since you opened it, or is not there; here is how it is now"}
+		if tce.Current != nil {
+			body.Current = toType(*tce.Current)
+		}
+		writeJSON(w, http.StatusConflict, body)
 	case errors.As(err, &ce):
 		writeJSON(w, http.StatusConflict, errorBody{Error: "conflict",
 			Message: "the page changed since you opened it; here is the current version", Current: toPage(ce.Current)})
@@ -545,6 +552,11 @@ type pageResp struct {
 	Meta    page.Meta `json:"meta"`
 	Header  string    `json:"header"`
 	Body    string    `json:"body"`
+	// EffectiveType is the type the page has: its header's, else its folder's.
+	EffectiveType string `json:"effectiveType"`
+	// PartialProps are the keys of meta that a listing holds only in part
+	// (the same list as the summary's); left out when there are none.
+	PartialProps []string `json:"partialProps,omitempty"`
 }
 
 func toPage(p *space.Page) pageResp {
@@ -552,7 +564,7 @@ func toPage(p *space.Page) pageResp {
 	if m == nil {
 		m = page.Meta{}
 	}
-	return pageResp{ID: p.ID, Path: p.Path, Folder: p.Folder, Rev: p.Rev, Updated: rfc3339(p.Updated), Meta: m, Header: p.Header, Body: p.Body}
+	return pageResp{ID: p.ID, Path: p.Path, Folder: p.Folder, Rev: p.Rev, Updated: rfc3339(p.Updated), Meta: m, Header: p.Header, Body: p.Body, EffectiveType: p.EffectiveType, PartialProps: p.PartialProps}
 }
 
 type summaryResp struct {
@@ -569,9 +581,18 @@ type summaryResp struct {
 	Created  string   `json:"created,omitempty"`
 	Updated  string   `json:"updated"`
 	Excerpt  string   `json:"excerpt"`
+	// EffectiveType is the type the page has: its header's, else its folder's.
+	EffectiveType string `json:"effectiveType"`
+	// Props and Rev are there when the listing was asked for them (props=1).
+	Props json.RawMessage `json:"props,omitempty"`
+	Rev   string          `json:"rev,omitempty"`
+	// PartialProps are the keys of props that are not the whole of the value
+	// in the file (see the index); left out when there are none.
+	PartialProps []string `json:"partialProps,omitempty"`
 }
 
-func toSummary(s index.Summary) summaryResp {
+func toSummary(s index.Summary, types space.TypeResolver) summaryResp {
 	return summaryResp{ID: s.ID, Path: s.Path, Folder: s.Folder, Title: s.Title, Subtitle: s.Subtitle, Source: s.Source, Label: s.Label,
-		Untitled: s.Untitled, Tags: s.Tags, Type: s.Type, Created: s.Created, Updated: rfc3339(s.Updated), Excerpt: s.Excerpt}
+		Untitled: s.Untitled, Tags: s.Tags, Type: s.Type, Created: s.Created, Updated: rfc3339(s.Updated), Excerpt: s.Excerpt,
+		EffectiveType: types.For(s.Folder, s.Type), Props: s.Props, Rev: s.Rev, PartialProps: s.PartialProps}
 }

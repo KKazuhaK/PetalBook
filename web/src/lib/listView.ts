@@ -3,7 +3,8 @@
 
 import type { PageSummary } from '@/api/types'
 
-export type ListViewMode = 'list' | 'cards'
+// The table is only offered for a folder that has a type.
+export type ListViewMode = 'list' | 'cards' | 'table'
 
 // What a listing shows is told apart by its kind and, for a folder or a tag,
 // by which one; the space is in the key too. A search is one setting for all
@@ -15,7 +16,8 @@ export function viewKey(space: string, kind: string, name = ''): string {
 // Storage can be blocked or hold something else: the list is the default.
 export function loadView(key: string): ListViewMode {
   try {
-    return localStorage.getItem(key) === 'cards' ? 'cards' : 'list'
+    const v = localStorage.getItem(key)
+    return v === 'cards' || v === 'table' ? v : 'list'
   } catch {
     return 'list'
   }

@@ -399,19 +399,57 @@ func (s *Service) SaveFile(ctx context.Context, sp *space.Space, spaceID, userID
 	if s.afterSave != nil {
 		s.afterSave()
 	}
-	if seen != nil {
-		var dm page.Meta
-		if err := dm.UnmarshalJSON([]byte(seen.Meta)); err != nil {
-			return p, nil
-		}
-		if _, same, err := sp.Equivalent(pageID, dm, seen.Body); err == nil && same {
-			bk, cancel := bookkeeping(ctx)
-			defer cancel()
-			if _, err := store.DeleteDraftVersion(bk, s.st.Q(), spaceID, pageID, userID, seen.Version); err != nil {
-				s.log.Warn("could not remove a draft that equals the saved page", "error", err)
-			}
+	s.dropIfSaved(ctx, sp, spaceID, userID, pageID, seen)
+	return p, nil
+}
+
+// dropIfSaved removes the draft the user had before a write, if the file now
+// says what the draft says. A draft that says something else is kept: the
+// write moved the page's rev on, so the draft is stale and the person is asked
+// what to do with it, which loses nothing.
+func (s *Service) dropIfSaved(ctx context.Context, sp *space.Space, spaceID, userID, pageID string, seen *store.Draft) {
+	if seen == nil {
+		return
+	}
+	var dm page.Meta
+	if err := dm.UnmarshalJSON([]byte(seen.Meta)); err != nil {
+		return
+	}
+	if _, same, err := sp.Equivalent(pageID, dm, seen.Body); err == nil && same {
+		bk, cancel := bookkeeping(ctx)
+		defer cancel()
+		if _, err := store.DeleteDraftVersion(bk, s.st.Q(), spaceID, pageID, userID, seen.Version); err != nil {
+			s.log.Warn("could not remove a draft that equals the saved page", "error", err)
 		}
 	}
+}
+
+// PatchProps changes properties of a page's file (space.PatchProps) as the
+// user, the way SaveFile saves a page: the page is excluded from other writes
+// while it is written, and the user's draft of it is kept unless the file now
+// says what the draft says.
+func (s *Service) PatchProps(ctx context.Context, sp *space.Space, spaceID, userID, pageID, baseRev string, set page.Meta, unset []string) (*space.Page, error) {
+	l := s.lock(spaceID, pageID, userID)
+	l.Lock()
+	defer l.Unlock()
+	s.enter(l, spaceID, pageID)
+	seen, err := store.GetDraft(ctx, s.st.Q(), spaceID, pageID, userID)
+	if errors.Is(err, store.ErrNotFound) {
+		seen, err = nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	by, err := s.spaces.AuthorByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	var p *space.Page
+	s.remoteCall(l, sp, spaceID, pageID, func() { p, err = sp.PatchProps(by, pageID, baseRev, set, unset) })
+	if err != nil {
+		return nil, err
+	}
+	s.dropIfSaved(ctx, sp, spaceID, userID, pageID, seen)
 	return p, nil
 }
 

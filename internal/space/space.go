@@ -80,6 +80,10 @@ type Space struct {
 	now    func() time.Time
 	ops    fileOps
 
+	// cfg is what was last read of the bindings in space.yml (see config.go).
+	cfgMu sync.Mutex
+	cfg   configCache
+
 	// src is the file tree the index mirrors. syncEvery throttles the
 	// re-sync a missed lookup triggers, so ids that do not exist (a stale
 	// bookmark) cost one directory walk per interval, not one per request.
@@ -223,6 +227,16 @@ func Open(opt Options) (*Space, error) {
 		return nil, err
 	}
 	recovered := recoverPending(root, recs)
+	for _, r := range recs {
+		if r.Op == "b" || r.Op == "u" {
+			// What the records asked for is done now; they must not be made
+			// again by a later crash, after the bindings may have changed.
+			if err := jrn.rewrite(recovered, nil); err != nil {
+				return nil, err
+			}
+			break
+		}
+	}
 	if len(recovered) > 0 {
 		log.Info("recovered uncommitted changes from the journal", "paths", len(recovered))
 	}

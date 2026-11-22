@@ -44,7 +44,7 @@ import { adminApi } from './admin'
 import { mockFetch } from './mock/fetch'
 import { sha256Hex } from './mock/sha256'
 import { createMockServer, MOCK_ADMIN, type MockServer } from './mock/server'
-import type { AdminSpace, Member, Page, PageSummary, SpaceInfo, User } from './types'
+import type { AdminSpace, ListParams, Member, Page, PageSummary, SpaceInfo, User } from './types'
 
 declare const process: { env: Record<string, string | undefined> }
 const REAL = process.env.PETALBOOK_API?.replace(/\/+$/, '')
@@ -791,6 +791,10 @@ function suite(target: Target) {
           ['POST', `${base}/pages/batch`, { op: 'delete', ids: [page.json.id] }],
           ['POST', `${base}/folders`, { path: 'x' }],
           ['PUT', `${base}/tags/blue`, { color: 'red' }],
+          ['PATCH', `${base}/pages/${page.json.id}/props`, { baseRev: page.json.rev, set: { status: 'x' } }],
+          ['PUT', `${base}/types/task`, { title: '任务', fields: [] }],
+          ['DELETE', `${base}/types/task`, undefined],
+          ['PUT', `${base}/folders/type`, { folder: '', type: '' }],
           ['PATCH', base, { name: '改名' }],
           ['POST', `${base}/reindex`, undefined],
           ['POST', `${base}/members`, { username: owner.user.username, role: 'viewer' }],
@@ -806,7 +810,14 @@ function suite(target: Target) {
         const made = await call(editor.browser, 'POST', `${base}/pages`, { meta: { title: '编辑者写的' }, body: 'x\n' })
         expect(made.status).toBe(201)
         expect((await call(editor.browser, 'PUT', `${base}/tags/blue`, { color: 'red' })).status).toBe(200)
+        // An editor writes properties of a page, and reads the types; making one needs `manage`.
+        const patched = await call(editor.browser, 'PATCH', `${base}/pages/${page.json.id}/props`, { baseRev: page.json.rev, set: { status: 'x' } })
+        expect([patched.status, patched.json.meta.status]).toEqual([200, 'x'])
+        expect((await call(editor.browser, 'GET', `${base}/types`)).status).toBe(200)
         for (const [method, path, body] of [
+          ['PUT', `${base}/types/task`, { title: '任务', fields: [] }],
+          ['DELETE', `${base}/types/task`, {}],
+          ['PUT', `${base}/folders/type`, { folder: '', type: '' }],
           ['PATCH', base, { name: '改名' }],
           ['POST', `${base}/reindex`, {}],
           ['POST', `${base}/members`, { username: viewer.user.username, role: 'editor' }],
@@ -1730,6 +1741,208 @@ function suite(target: Target) {
       expect(ids(await walk({ folder: f, createdTo: '2020-03-14' }))).toEqual([])
       expect(ids(await walk({ folder: f, createdTo: '2020-03-16' }))).toEqual([older.id])
       expect(ids(await walk({ folder: f, createdFrom: '2020-03-16', updatedFrom: dayOf(saved.updated) }))).toEqual(expect.arrayContaining([titled.id]))
+    })
+  })
+
+  describe('page types, properties and the table listing', () => {
+    const folder = `${root}/types`
+    const typeName = `task${run}`
+    const spec = {
+      title: '任务',
+      fields: [
+        { key: 'status', title: '状态', kind: 'select' as const, options: ['todo', 'doing', 'done'] },
+        { key: 'points', kind: 'number' as const },
+        { key: 'due', kind: 'date' as const },
+        { key: 'labels', kind: 'multiselect' as const, options: ['a', 'b'] },
+      ],
+    }
+    const titles = (items: PageSummary[]) => items.map((i) => i.title).join(' ')
+    const filter = (f: unknown[]) => JSON.stringify(f)
+    let A: Page
+    let B: Page
+
+    let typeRev = ''
+    it('makes a type with its fields in order, and lists it with the raw schema; names and keys are checked', async () => {
+      const t = await S.putType(typeName, spec)
+      expect(t).toMatchObject({ name: typeName, title: '任务' })
+      expect(t.rev).toMatch(/^[0-9a-f]{40}$/)
+      typeRev = t.rev
+      expect((await S.types()).types.find((x) => x.name === typeName)?.rev).toBe(typeRev)
+      // Made again with no rev, or from one that is not the file's: 409 with the type as it is.
+      for (const baseRev of [undefined, '0'.repeat(40)]) {
+        const e = await failure(S.putType(typeName, { ...spec, baseRev }))
+        expect(e.code).toBe('conflict')
+        expect(e.current).toMatchObject({ name: typeName, rev: typeRev })
+      }
+      expect(t.fields.map((f) => [f.key, f.title, f.kind])).toEqual([
+        ['status', '状态', 'select'],
+        ['points', '', 'number'],
+        ['due', '', 'date'],
+        ['labels', '', 'multiselect'],
+      ])
+      expect(t.fields[0].options).toEqual(['todo', 'doing', 'done'])
+      expect(t.fields[0].schema).toEqual({ title: '状态', type: 'string', enum: ['todo', 'doing', 'done'] })
+      const listed = await S.types()
+      expect(listed.types.find((x) => x.name === typeName)?.fields).toHaveLength(4)
+      expect(Array.isArray(listed.bindings)).toBe(true)
+      expect((await failure(S.putType(`bad:${run}`, spec))).code).toBe('invalid')
+      expect((await failure(S.putType(`x${run}`, { title: '', fields: [{ key: 'tags', kind: 'text' }] }))).code).toBe('invalid')
+      expect((await failure(S.putType(`x${run}`, { title: '', fields: [{ key: 'a', kind: 'select', options: [] }] }))).code).toBe('invalid')
+    })
+
+    it('binds a folder, which a page made there takes as its effective type without a type in its header; unbinding takes it away', async () => {
+      expect((await failure(S.bindFolder(`${folder}/nowhere${run}`, typeName))).code).toBe('not_found')
+      await S.createFolder(`${folder}/sub`)
+      expect((await failure(S.bindFolder(folder, `nothing${run}`))).code).toBe('invalid')
+      expect(await S.bindFolder(folder, typeName)).toEqual({ folder, type: typeName })
+      expect((await S.types()).bindings).toContainEqual({ folder, type: typeName })
+      A = await mk(folder, { title: 'A', status: 'done', points: 5, due: '2026-03-01', labels: ['a'] }, '正文 A\n')
+      B = await mk(folder, { title: 'B', status: 'todo', points: 12, due: '2026-01-01', labels: ['b', 'a'] })
+      const C = await mk(`${folder}/sub`, { title: 'C', status: 'doing', points: 7.5 })
+      const D = await mk(folder, { title: 'D', type: `memo${run}` })
+      const E = await mk(`${root}/untyped`, { title: 'E', status: 'todo' })
+      expect([A.effectiveType, C.effectiveType, D.effectiveType, E.effectiveType]).toEqual([typeName, typeName, `memo${run}`, ''])
+      expect('type' in A.meta).toBe(false)
+      expect((await S.getPage(A.id)).effectiveType).toBe(typeName)
+      const folderItems = await walk({ folder, recursive: true })
+      expect(folderItems.find((i) => i.id === C.id)?.effectiveType).toBe(typeName)
+      expect(folderItems.find((i) => i.id === D.id)).toMatchObject({ type: `memo${run}`, effectiveType: `memo${run}` })
+    })
+
+    it('props=1 adds props and rev to the summaries, and only then', async () => {
+      const plain = await S.listPages({ folder, sort: 'title' })
+      expect(plain.items[0].props).toBeUndefined()
+      expect(plain.items[0].rev).toBeUndefined()
+      const withProps = await S.listPages({ folder, sort: 'title', props: true })
+      expect(withProps.items[0]).toMatchObject({ title: 'A', rev: A.rev, props: { status: 'done', points: 5, due: '2026-03-01', labels: ['a'] } })
+      expect(withProps.items[2].props).toEqual({})
+    })
+
+    it('props=1 says which properties it holds only in part: cut text, an object, a list that lost an element', async () => {
+      const whole = await mk(`${root}/partialprops`, { title: 'Whole', status: 'done', labels: ['a'] })
+      const cut = await mk(`${root}/partialprops`, { title: 'Cut', note: '字'.repeat(301), obj: { a: 1 }, list: ['a', { x: 1 }], fine: 'ok' })
+      const items = (await S.listPages({ folder: `${root}/partialprops`, sort: 'title', props: true })).items
+      const of = (id: string) => items.find((i) => i.id === id)!
+      expect(of(cut.id).partialProps).toEqual(['note', 'obj', 'list'])
+      expect(Array.from(String(of(cut.id).props?.note)).length).toBe(300)
+      expect(of(cut.id).props).not.toHaveProperty('obj')
+      expect(of(whole.id).partialProps).toBeUndefined()
+      expect('partialProps' in of(whole.id)).toBe(false)
+      const plain = (await S.listPages({ folder: `${root}/partialprops` })).items
+      expect(plain.some((i) => 'partialProps' in i)).toBe(false)
+    })
+
+    it('sorts by a property both ways, pages without it last, and the cursor walks the whole order', async () => {
+      const order = async (sort: ListParams['sort']) => titles(await walk({ folder, recursive: true, sort, props: true }, 1))
+      expect(await order('prop:points')).toBe('A C B D')
+      expect(await order('-prop:points')).toBe('B C A D')
+      expect(await order('prop:due')).toBe('B A C D')
+      expect(await order('-prop:due')).toBe('A B C D')
+      expect(await order('prop:status')).toBe('C A B D')
+      expect(await order('prop:labels')).toBe('A B C D')
+    })
+
+    it('filters by in, range, empty, notEmpty and contains; several conditions all hold; a bad filter is 400', async () => {
+      const q = async (f: ListParams['filter'], sort: ListParams['sort'] = 'title') => titles(await walk({ folder, recursive: true, sort, filter: f }))
+      expect(await q([{ key: 'status', op: 'in', values: ['todo', 'doing'] }])).toBe('B C')
+      expect(await q([{ key: 'labels', op: 'in', values: ['b'] }])).toBe('B')
+      expect(await q([{ key: 'points', op: 'range', values: [6, null] }])).toBe('B C')
+      expect(await q([{ key: 'due', op: 'range', values: ['2026-02-01', '2026-12-31'] }])).toBe('A')
+      expect(await q([{ key: 'due', op: 'empty' }])).toBe('C D')
+      expect(await q([{ key: 'due', op: 'notEmpty' }])).toBe('A B')
+      expect(await q([{ key: 'status', op: 'contains', values: ['DO'] }])).toBe('A B C')
+      expect(await q([{ key: 'status', op: 'in', values: ['todo', 'done'] }, { key: 'due', op: 'notEmpty' }], '-prop:points')).toBe('B A')
+      for (const bad of [filter([{ key: 'a', op: 'like', values: ['x'] }]), filter([{ key: 'a', op: 'range', values: [1] }]), 'nope']) {
+        const r = await call(admin, 'GET', `${SP_PAGES}?folder=${encodeURIComponent(folder)}&filter=${encodeURIComponent(bad)}`)
+        expect([r.status, r.json.error], bad).toEqual([400, 'invalid'])
+      }
+      expect((await call(admin, 'GET', `${SP_PAGES}?props=maybe`)).status).toBe(400)
+    })
+
+    it('changes properties of the header only: body and other keys stay, a list is replaced, unset and blank values remove, the listing sees it at once', async () => {
+      const p = await S.patchProps(A.id, { baseRev: A.rev, set: { status: 'doing', owner: 'Ann', labels: ['b'] }, unset: ['due'] })
+      expect(p.rev).not.toBe(A.rev)
+      expect(p.body).toBe(A.body)
+      expect(p.meta).toMatchObject({ status: 'doing', owner: 'Ann', labels: ['b'], title: 'A', points: 5 })
+      expect('due' in p.meta).toBe(false)
+      expect(p.effectiveType).toBe(typeName)
+      const seen = (await S.listPages({ folder, props: true, filter: [{ key: 'owner', op: 'in', values: ['Ann'] }] })).items
+      expect(seen).toHaveLength(1)
+      expect(seen[0]).toMatchObject({ rev: p.rev, props: { status: 'doing' } })
+      // Blank text removes the key, as unset does; a change to nothing keeps the rev.
+      const q = await S.patchProps(A.id, { baseRev: p.rev, set: { owner: '  ' } })
+      expect('owner' in q.meta).toBe(false)
+      expect((await S.patchProps(A.id, { baseRev: q.rev, set: { status: 'doing' } })).rev).toBe(q.rev)
+      A = q
+    })
+
+    it('a stale baseRev is a 409 with the current page; malformed requests, built-in keys and unknown pages are refused', async () => {
+      const stale = await failure(S.patchProps(A.id, { baseRev: B.rev, set: { status: 'done' } }))
+      expect([stale.status, stale.code]).toEqual([409, 'conflict'])
+      expect(stale.current?.rev).toBe(A.rev)
+      const bad: Record<string, unknown>[] = [
+        { set: { x: 1 } },
+        { baseRev: A.rev },
+        { baseRev: A.rev, set: { title: 'x' } },
+        { baseRev: A.rev, unset: ['tags'] },
+        { baseRev: A.rev, set: { x: 1 }, unset: ['x'] },
+        { baseRev: A.rev, set: [1] },
+      ]
+      for (const body of bad) {
+        const r = await call(admin, 'PATCH', `${SP_PAGES}/${A.id}/props`, body)
+        expect([r.status, r.json.error], JSON.stringify(body)).toEqual([400, 'invalid'])
+      }
+      expect((await failure(S.patchProps('ZZZZZZZZZZ', { baseRev: A.rev, set: { x: 1 } }))).code).toBe('not_found')
+      expect((await S.getPage(A.id)).rev).toBe(A.rev)
+    })
+
+    it('keeps the caller\'s draft when properties change', async () => {
+      const page = await S.getPage(A.id)
+      await S.putDraft(A.id, { baseRev: page.rev, meta: page.meta, body: '打了一半\n', prev: '' })
+      const p = await S.patchProps(A.id, { baseRev: page.rev, set: { status: 'done' } })
+      const again = await S.getPage(A.id)
+      expect(again.draft).toMatchObject({ body: '打了一半\n', stale: true })
+      await S.deleteDraft(A.id)
+      A = p
+    })
+
+    it('changes a type by its keys: the order, titles and options follow the request, a field left out goes, pages keep their values', async () => {
+      const t = await S.putType(typeName, { baseRev: typeRev, title: '任务单', fields: [{ key: 'points', title: '点数' }, { key: 'status', title: '状态', options: ['todo', 'doing', 'done', 'dropped'] }] })
+      expect(t.title).toBe('任务单')
+      expect(t.rev).not.toBe(typeRev)
+      // The old rev is stale now, for a change and for a delete.
+      const stale = await failure(S.putType(typeName, { baseRev: typeRev, title: 'late', fields: [] }))
+      expect(stale).toMatchObject({ code: 'conflict' })
+      expect(stale.current).toMatchObject({ title: '任务单', rev: t.rev })
+      expect((await failure(S.deleteType(typeName, typeRev))).code).toBe('conflict')
+      typeRev = t.rev
+      expect(t.fields.map((f) => f.key)).toEqual(['points', 'status'])
+      expect(t.fields[0]).toMatchObject({ kind: 'number', title: '点数' })
+      expect(t.fields[1].options).toEqual(['todo', 'doing', 'done', 'dropped'])
+      expect((await S.getPage(B.id)).meta.due).toBe('2026-01-01')
+    })
+
+    it('deleting a type takes the bindings with it; the pages keep what their headers say; a second delete is 404', async () => {
+      await S.deleteType(typeName, typeRev)
+      expect((await failure(S.deleteType(typeName, typeRev))).code).toBe('not_found')
+      const after = await S.types()
+      expect(after.types.some((x) => x.name === typeName)).toBe(false)
+      expect(after.bindings.some((b) => b.type === typeName)).toBe(false)
+      expect((await S.getPage(A.id)).effectiveType).toBe('')
+      const memo = (await walk({ folder, sort: 'title' })).find((i) => i.title === 'D')
+      expect(memo?.effectiveType).toBe(`memo${run}`)
+    })
+
+    it('a folder renamed carries its binding with it', async () => {
+      const t = `mv${run}`
+      const made = await S.putType(t, { title: '', fields: [{ key: 'k', kind: 'text' }] })
+      await S.createFolder(`${root}/bound`)
+      await S.bindFolder(`${root}/bound`, t)
+      await S.moveFolder(`${root}/bound`, `${root}/bound2`)
+      const { bindings } = await S.types()
+      expect(bindings).toContainEqual({ folder: `${root}/bound2`, type: t })
+      expect(bindings.some((b) => b.folder === `${root}/bound`)).toBe(false)
+      await S.deleteType(t, made.rev)
     })
   })
 

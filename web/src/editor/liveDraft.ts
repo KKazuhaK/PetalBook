@@ -40,6 +40,11 @@ export class LiveDraft {
   setTags(tags: string[]): Fields {
     return (this.fields = { ...this.fields, tags })
   }
+  // The header keys that are not the named fields (the properties of a type, and
+  // whatever else the header holds), as the person has them now.
+  setOthers(others: Fields['others']): Fields {
+    return (this.fields = { ...this.fields, others })
+  }
   // The whole header as parsed from the source view.
   setFields(fields: Fields): Fields {
     return (this.fields = fields)

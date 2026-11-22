@@ -6,7 +6,7 @@ import { Code, Columns2, History, MoreHorizontal, Save, Trash2, FolderInput, Typ
 import { toast } from 'sonner'
 import { ApiError, isUnauthenticated, spaceApi, type SpaceApi } from '@/api/client'
 import { invalidateListings, keys, useActiveSpace, usePage, useSession, useSpacePermissions, useTags, useTree, useUrls } from '@/api/hooks'
-import type { Page } from '@/api/types'
+import type { Page, PageMeta } from '@/api/types'
 import type { VersionContent } from '@/diff'
 import { docToMarkdown, markdownToDoc } from '@/markdown'
 import { planRestore, type Content } from '@/editor/draftRestore'
@@ -14,7 +14,7 @@ import { draftRefFor, draftStoreFor, loadDraft, parseSavedMarker, savedMarkerKey
 import { LateBound } from '@/editor/lateBound'
 import { recoverDraft } from '@/editor/recoverDraft'
 import { LiveDraft } from '@/editor/liveDraft'
-import { buildSave, fieldsOf, SaveController, waitForSaves, type ConflictInfo, type Fields } from '@/editor/saveController'
+import { buildSave, fieldsOf, othersOf, SaveController, waitForSaves, type ConflictInfo, type Fields } from '@/editor/saveController'
 import type { SourceHandle } from '@/source/SourceEditor'
 import { dropOldSource, loadMode, saveMode, saveRawSource, setAsideSource, takeOldSource, useSourceView, type EditMode, type RawSource } from '@/source/useSourceView'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
@@ -45,6 +45,8 @@ const loadHistory = () => import('@/components/history/HistoryMode')
 const HistoryMode = lazy(loadHistory)
 // The source view brings a code editor with it; it loads when first shown.
 const SourceEditor = lazy(() => import('@/source/SourceEditor'))
+// The properties of a page's type: a chunk of its own, asked for only by a page that has a type.
+const PropertyPanel = lazy(() => import('@/components/editor/PropertyPanel'))
 
 // Side by side needs room: on a narrow screen that choice shows the editor alone.
 const WIDE = '(min-width: 768px)'
@@ -447,6 +449,17 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
     controller.markDirty()
     noteRich.current({ fields: true })
   }
+
+  // The properties of the page's type live in the same draft as the title and the
+  // tags: `others` holds every header key that is not a named field, and is the file's
+  // until the person changes one.
+  const setProps = (next: PageMeta) => {
+    setFields(live.setOthers(next))
+    controller.markDirty()
+    noteRich.current({ fields: true })
+  }
+  const typeName = page.effectiveType ?? ''
+  const propValues = fields.others ?? othersOf(page.meta)
 
   // --- the three ways to edit (docs/design.md, 7.0) ---
   const wide = useSyncExternalStore(subscribeWide, isWide)
@@ -873,6 +886,11 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
             label={t.editor.sourceLabel}
             className="pb-source"
           />
+          )}
+          {typeName !== '' && (
+            <Suspense fallback={null}>
+              <PropertyPanel typeName={typeName} values={propValues} onChange={setProps} readOnly={readOnly} />
+            </Suspense>
           )}
         </div>
         {editor && (

@@ -2,13 +2,14 @@
 
 import { useMemo } from 'react'
 import { useMatch } from 'react-router'
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { waitForSaves } from '@/editor/saveController'
 import { spaceUrls } from '@/lib/urls'
 import { api, ApiError, spaceApi } from './client'
 import { parseTagColor } from '../lib/tagColors.ts'
 import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
-import type { BatchPagesInput, ConnectRemoteInput, CreatePageInput, ListParams, Member, Permission, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, User } from './types'
+import { propsOfMeta } from '../lib/pageTypes.ts'
+import type { BatchPagesInput, ConnectRemoteInput, CreatePageInput, ListParams, Member, Page, PageList, PatchPropsInput, Permission, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User } from './types'
 
 // Everything of one space is under ['space', id, …], so switching space never
 // shows another space's data and one invalidation covers a space.
@@ -28,6 +29,10 @@ export const keys = {
   tree: (space: string) => ['space', space, 'tree'] as const,
   tags: (space: string) => ['space', space, 'tags'] as const,
   pages: (space: string) => ['space', space, 'pages'] as const,
+  types: (space: string) => ['space', space, 'types'] as const,
+  // The table view's listing: kept apart from the list and card listings, which
+  // ask for less, and which an edit of a cell does not read again.
+  table: (space: string, params: ListParams) => ['space', space, 'pages', 'table', params] as const,
   list: (space: string, params: ListParams) => ['space', space, 'pages', 'list', params] as const,
   page: (space: string, id: string) => ['space', space, 'page', id] as const,
   history: (space: string, id: string) => ['space', space, 'history', id, 'list'] as const,
@@ -37,6 +42,8 @@ export const keys = {
 }
 
 export const PAGE_SIZE = 50
+// The table view reads its rows in batches of this many.
+export const TABLE_PAGE_SIZE = 100
 export const HISTORY_PAGE_SIZE = 30
 
 export const syncOf = (s: SpaceInfo | undefined): SyncState => s?.sync ?? 'local'
@@ -266,14 +273,33 @@ export function useSetTagColor() {
 
 // Listings are fetched one cursor page at a time; nothing renders more rows
 // than the person has asked for with "load more".
-export function usePageList(params: Omit<ListParams, 'cursor' | 'limit'>) {
+export function usePageList(params: Omit<ListParams, 'cursor' | 'limit'>, enabled = true) {
   const space = useSpaceId()
   return useInfiniteQuery({
+    enabled,
     queryKey: keys.list(space, params),
     initialPageParam: '',
     queryFn: ({ pageParam, signal }) => spaceApi(space).listPages({ ...params, limit: PAGE_SIZE, cursor: pageParam || undefined }, signal),
     getNextPageParam: (last) => last.next || undefined,
     staleTime: 10_000,
+  })
+}
+
+// The listing of the table view: rows with their properties and revs, a hundred
+// at a time, with the sort and the filter the person chose. It is its own query so
+// that the other listings stay as small as they were.
+export function useTablePages(params: Omit<ListParams, 'cursor' | 'limit' | 'props'>, enabled = true) {
+  const space = useSpaceId()
+  const full = { ...params, props: true }
+  return useInfiniteQuery({
+    enabled: enabled && space !== '',
+    queryKey: keys.table(space, full),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => spaceApi(space).listPages({ ...full, limit: TABLE_PAGE_SIZE, cursor: pageParam || undefined }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    staleTime: 10_000,
+    // A new sort or filter keeps the rows on screen until the new ones arrive.
+    placeholderData: keepPreviousData,
   })
 }
 
@@ -544,4 +570,79 @@ export function useRemoveMember(space: string) {
 // Updates one member in the cached list (a role change), without asking again.
 export function putMember(qc: QueryClient, space: string, member: Member) {
   qc.setQueryData<{ members: Member[] }>(keys.members(space), (prev) => prev && { members: prev.members.map((m) => (m.userId === member.userId ? member : m)) })
+}
+
+// --- page types ------------------------------------------------------------------
+
+// The types of the space and the folders bound to them. Asked for where a page
+// has a type, in the types settings, and in a folder's view.
+export function useTypes(enabled = true) {
+  const space = useSpaceId()
+  const { read } = useSpacePermissions()
+  return useQuery({ queryKey: keys.types(space), queryFn: ({ signal }) => spaceApi(space).types(signal), staleTime: 15_000, enabled: enabled && space !== '' && read })
+}
+
+// A change of a type or of a binding changes what pages are shown with: the
+// types, and every summary's `effectiveType`.
+function useTypesChanged() {
+  const qc = useQueryClient()
+  const space = useSpaceId()
+  return () => Promise.all([qc.invalidateQueries({ queryKey: keys.types(space) }), qc.invalidateQueries({ queryKey: keys.pages(space) }), qc.invalidateQueries({ queryKey: ['space', space, 'page'] })])
+}
+
+export function useSaveType() {
+  const space = useSpaceId()
+  const changed = useTypesChanged()
+  // A 409 means the type is not as it was opened: read it again.
+  return useMutation({ mutationFn: ({ name, input }: { name: string; input: TypeInput }) => spaceApi(space).putType(name, input), onSuccess: changed, onError: (e) => (e instanceof ApiError && e.code === 'conflict' ? void changed() : undefined) })
+}
+export function useDeleteType() {
+  const space = useSpaceId()
+  const changed = useTypesChanged()
+  return useMutation({ mutationFn: ({ name, baseRev }: { name: string; baseRev: string }) => spaceApi(space).deleteType(name, baseRev), onSuccess: changed, onError: (e) => (e instanceof ApiError && e.code === 'conflict' ? void changed() : undefined) })
+}
+export function useBindFolder() {
+  const space = useSpaceId()
+  const changed = useTypesChanged()
+  return useMutation({ mutationFn: ({ folder, type }: { folder: string; type: string }) => spaceApi(space).bindFolder(folder, type), onSuccess: changed })
+}
+
+// A row with `partialProps` as the server gave them for the page (a response leaves them out when there
+// are none). Only the server can say: it sees how the file spells a value, which the header as the browser
+// has it does not show (0x10, a tag of its own, an integer past 2^53).
+function withPartial<T extends { partialProps?: string[] }>(row: T, partial: string[] = []): T {
+  const next = { ...row }
+  if (partial.length) next.partialProps = partial
+  else delete next.partialProps
+  return next
+}
+
+// Puts a page as the server has it now into the rows of every table that holds
+// it, without reading anything again (a table of thousands of rows is not
+// refetched for one cell).
+export function putTableRow(qc: QueryClient, space: string, page: Page) {
+  qc.setQueriesData<{ pages: PageList[]; pageParams: unknown[] }>({ queryKey: [...keys.pages(space), 'table'] }, (prev) => {
+    if (!prev || !prev.pages.some((p) => p.items.some((i) => i.id === page.id))) return prev
+    return {
+      ...prev,
+      pages: prev.pages.map((p) => ({ ...p, items: p.items.map((i) => (i.id === page.id ? withPartial({ ...i, props: propsOfMeta(page.meta), rev: page.rev, updated: page.updated }, page.partialProps) : i)) })),
+    }
+  })
+}
+
+// Changes properties of one page (a table cell). The answer, or the page a 409
+// brings, replaces that row; the other listings are read again by and by.
+export function usePatchProps() {
+  const qc = useQueryClient()
+  const space = useSpaceId()
+  return useMutation({
+    mutationFn: ({ id, ...input }: { id: string } & PatchPropsInput) => spaceApi(space).patchProps(id, input),
+    onSuccess: (page) => {
+      putTableRow(qc, space, page)
+      void qc.invalidateQueries({ queryKey: [...keys.pages(space), 'list'] })
+    },
+    onError: (e) => {
+      if (e instanceof ApiError && e.code === 'conflict' && e.current) putTableRow(qc, space, e.current)
+    },
+  })
 }

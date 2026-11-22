@@ -59,7 +59,49 @@ var errTagsFile = errors.New("the tags file cannot be read")
 // file that is too large, is not a regular file, does not parse, or is not a
 // mapping at the top.
 func (s *Space) loadTags() (*yaml.Node, error) {
-	abs := filepath.Join(s.root, filepath.FromSlash(tagsFile))
+	return s.loadYAMLFile(tagsFile, maxTagsFile, errTagsFile)
+}
+
+// loadYAMLFile is loadTags for any of the space's YAML files: rel is the path
+// in the space, max the most that is read, and bad what is returned for a file
+// that cannot be used as it is.
+func (s *Space) loadYAMLFile(rel string, max int64, bad error) (*yaml.Node, error) {
+	return loadYAMLAt(s.root, rel, max, bad)
+}
+
+// emptyDoc is a document with an empty mapping, carrying head as its comment
+// (a file with nothing but comments keeps them when something is written to it).
+func emptyDoc(head string) *yaml.Node {
+	return &yaml.Node{Kind: yaml.DocumentNode, HeadComment: head,
+		Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
+}
+
+// commentLines is the comments of a file that has no content: its comment
+// lines, with the blank lines between them, without those around them.
+func commentLines(data []byte) string {
+	var out []string
+	for _, l := range strings.Split(string(data), "\n") {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "---") || strings.HasPrefix(t, "...") {
+			// A comment on the marker's own line (`--- # note`) is a comment too.
+			if rest := strings.TrimSpace(t[3:]); strings.HasPrefix(rest, "#") {
+				t = rest
+			}
+		}
+		if strings.HasPrefix(t, "#") {
+			out = append(out, t)
+		} else if t == "" && len(out) > 0 {
+			out = append(out, "")
+		}
+	}
+	return strings.TrimRight(strings.Join(out, "\n"), "\n")
+}
+
+// loadYAMLAt is loadYAMLFile for the space at root. A file with nothing but
+// comments gives an empty document that has them as its head comment, so
+// that writing to it does not lose them.
+func loadYAMLAt(root, rel string, max int64, bad error) (*yaml.Node, error) {
+	abs := filepath.Join(root, filepath.FromSlash(rel))
 	fi, err := os.Lstat(abs)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -68,40 +110,49 @@ func (s *Space) loadTags() (*yaml.Node, error) {
 		return nil, err
 	}
 	// A link in the way could lead out of the space.
-	if !fi.Mode().IsRegular() || fi.Size() > maxTagsFile {
-		return nil, errTagsFile
+	if !fi.Mode().IsRegular() || fi.Size() > max {
+		return nil, bad
 	}
 	f, err := os.Open(abs)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, maxTagsFile+1))
+	data, err := io.ReadAll(io.LimitReader(f, max+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > maxTagsFile {
-		return nil, errTagsFile
+	if int64(len(data)) > max {
+		return nil, bad
 	}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var doc yaml.Node
 	switch err := dec.Decode(&doc); {
 	case errors.Is(err, io.EOF):
+		if c := commentLines(data); c != "" {
+			return emptyDoc(c), nil
+		}
 		return nil, nil
 	case err != nil:
-		return nil, errTagsFile
+		return nil, bad
 	}
 	// One document only: a second would not be written back, and what is in
 	// it is someone's.
 	var more yaml.Node
 	if err := dec.Decode(&more); !errors.Is(err, io.EOF) {
-		return nil, errTagsFile
+		return nil, bad
 	}
 	if doc.Kind == 0 || len(doc.Content) == 0 {
 		return nil, nil
 	}
+	if r := doc.Content[0]; doc.Kind == yaml.DocumentNode && r.Kind == yaml.ScalarNode && r.Tag == "!!null" && r.Value == "" {
+		// `---` with nothing after it: an empty document. The parser keeps only
+		// some of its comments (not the ones before the marker, say), so the
+		// comments are taken from the text, all of them in their order.
+		return emptyDoc(commentLines(data)), nil
+	}
 	if doc.Kind != yaml.DocumentNode || doc.Content[0].Kind != yaml.MappingNode {
-		return nil, errTagsFile
+		return nil, bad
 	}
 	return &doc, nil
 }
