@@ -177,6 +177,38 @@ describe('an administrator opens a space they are not a member of', () => {
   })
 })
 
+describe('an administrator in a space they are not a member of', () => {
+  const frankSpace = (server: MockServer) => {
+    const owner = makePerson(server, 'frank')
+    return (owner.request('POST', '/api/spaces', { name: '别人的空间', inbox: '待整理' }).body as { id: string }).id
+  }
+  const dialog = () => document.querySelector<HTMLElement>('[data-slot="settings-dialog"]')
+
+  it('has the settings of that space: its name, its real inbox, its members and sync', async () => {
+    let space = ''
+    await boot(() => `/s/${space}/settings`, { mode: 'accounts', scene: (s) => void (space = frankSpace(s)) })
+    // The old address of a space's settings lands on its sync section.
+    await settle(() => where() === '/settings/sync' && dialog() !== null && dialog()!.textContent!.includes(t.remote.title), 'the sync section')
+    expect(dialog()!.textContent).not.toContain(t.remote.ownerOnly)
+    await click([...dialog()!.querySelectorAll('nav a')].find((a) => a.textContent === t.settingsUi.sections.general))
+    await settle(() => [...dialog()!.querySelectorAll('input')].some((i) => i.value === '别人的空间') && [...dialog()!.querySelectorAll('input')].some((i) => i.value === '待整理'), 'the name and the inbox')
+    expect(dialog()!.textContent).not.toContain(t.editor.spaceMissing)
+    await click([...dialog()!.querySelectorAll('nav a')].find((a) => a.textContent === t.settingsUi.sections.members))
+    await settle(() => dialog()!.textContent!.includes('frank'), 'the members')
+  })
+
+  it('can import into it, and write a quick note into its inbox', async () => {
+    let space = ''
+    await boot(() => `/s/${space}/import`, { mode: 'accounts', scene: (s) => void (space = frankSpace(s)) })
+    await settle(() => text().includes(t.import.intro), 'the import page')
+    expect(text()).not.toContain(t.permissions.readOnlyNote)
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyN', altKey: true, shiftKey: true, bubbles: true, cancelable: true }))
+    })
+    await settle(() => document.querySelector('[role="dialog"] textarea') !== null, 'the quick note box')
+  })
+})
+
 describe('what the app knows of a space it is showing', () => {
   const frankSpace = (server: MockServer) => {
     const owner = makePerson(server, 'frank')

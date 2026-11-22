@@ -8,7 +8,7 @@ import { NotFoundPage } from '@/pages/NotFoundPage'
 import { useQueryClient } from '@tanstack/react-query'
 import { CheckCircle2, FileText, Upload } from 'lucide-react'
 import { spaceApi } from '@/api/client'
-import { invalidateListings, useSession, useSpaces } from '@/api/hooks'
+import { invalidateListings, useActiveSpace, useSession, useSpaces } from '@/api/hooks'
 import { can } from '@/lib/permissions'
 import type { ImportReport } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
@@ -30,7 +30,9 @@ export default function ImportPage() {
   const qc = useQueryClient()
   const session = useSession().data
   const spaces = useSpaces()
-  const current = spaces.data?.spaces.find((s) => s.id === space)
+  // The space in use, which for an administrator may be one they are not a member of.
+  const { spaces: usable, resolving } = useActiveSpace()
+  const current = usable.find((s) => s.id === space)
   const maxImport = useMaxImport()
   useDocumentTitle(`${current ? t.import.pageTitle(current.name) : t.import.title} · ${t.appName}`)
 
@@ -67,7 +69,7 @@ export default function ImportPage() {
     else blocker.reset()
   }, [blocker])
 
-  if (!session || spaces.isPending) return <PageFallback />
+  if (!session || resolving) return <PageFallback />
   if (spaces.isError && !spaces.data) return <ErrorState message={spaces.error.message} onRetry={() => void spaces.refetch()} />
   if (!current) return <NotFoundPage message={t.editor.spaceMissing} />
   // An import makes pages.

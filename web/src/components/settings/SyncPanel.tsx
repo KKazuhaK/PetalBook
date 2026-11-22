@@ -8,7 +8,7 @@ import { Link } from 'react-router'
 import { AlertTriangle, Check, CircleAlert, CirclePause, Cloud, CloudOff, Copy, KeyRound, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError, spaceApi } from '@/api/client'
-import { useAcceptRemote, useConnectRemote, useDisconnectRemote, useRemote, useSpaces, useSyncRemote, useUpdateSpace } from '@/api/hooks'
+import { useAcceptRemote, useConnectRemote, useDisconnectRemote, useActiveSpace, useRemote, useSyncRemote, useUpdateSpace } from '@/api/hooks'
 import type { ConnectRemoteInput, Remote, RemoteKey, RemoteState, SpaceInfo } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
@@ -26,9 +26,9 @@ import { t } from '@/i18n'
 // What a space owner sees under Sync: the remote repository, connected,
 // followed and disconnected as before. Moved from the old space settings page.
 export function SyncPanel({ space }: { space: string }) {
-  const spaces = useSpaces()
-  const current = spaces.data?.spaces.find((s) => s.id === space)
-  if (spaces.isPending) return <PageFallback />
+  const { spaces, resolving } = useActiveSpace()
+  const current = spaces.find((s) => s.id === space)
+  if (resolving) return <PageFallback />
   if (!current) return <SettingsNote>{t.editor.spaceMissing}</SettingsNote>
   if (current.disabled) return <SettingsNote>{t.spaces.disabledTitle}</SettingsNote>
   if (!can(current, 'manage')) return <SettingsNote>{t.remote.ownerOnly}</SettingsNote>

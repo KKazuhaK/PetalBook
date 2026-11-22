@@ -106,12 +106,13 @@ export function useActiveSpace(): { id: string | null; spaces: SpaceInfo[]; reso
   const route = useRouteSpace()
   const list = useSpaces()
   const mine = list.data?.spaces ?? []
-  // A space in the address that is not the person's own may still be one an
-  // administrator can open.
-  const viewed = useViewedSpace(route, !list.isPending && !!route && !mine.some((s) => s.id === route))
-  const spaces = viewed.data ? [...mine, viewed.data] : mine
   // The storage is only read when the address has no space.
   const last = route ? null : lastSpace()
+  // A space in the address (or, off the space pages, the one used last) that is not
+  // the person's own may still be one an administrator can open.
+  const wanted = route ?? last
+  const viewed = useViewedSpace(wanted, !list.isPending && !!wanted && !mine.some((s) => s.id === wanted))
+  const spaces = viewed.data ? [...mine, viewed.data] : mine
   const id = route ?? (last && spaces.some((s) => s.id === last) ? last : (spaces[0]?.id ?? null))
   return { id, spaces, resolving: list.isPending || viewed.isLoading }
 }
@@ -348,7 +349,7 @@ export function useRenameSpace() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) => api.renameSpace(id, name),
-    onSuccess: (space) => qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => ({ spaces: (prev?.spaces ?? []).map((s) => (s.id === space.id ? space : s)) })),
+    onSuccess: (space) => spaceChanged(qc, space),
   })
 }
 
@@ -357,8 +358,15 @@ export function useUpdateSpace() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, ...patch }: { id: string; name?: string; inbox?: string }) => api.updateSpace(id, patch),
-    onSuccess: (space) => qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => ({ spaces: (prev?.spaces ?? []).map((s) => (s.id === space.id ? space : s)) })),
+    onSuccess: (space) => spaceChanged(qc, space),
   })
+}
+
+// A space that changed (name, inbox) in the list, and in the cache of the one an
+// administrator is viewing without being a member, if that is it.
+function spaceChanged(qc: QueryClient, space: SpaceInfo) {
+  qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => ({ spaces: (prev?.spaces ?? []).map((s) => (s.id === space.id ? space : s)) }))
+  qc.setQueryData<SpaceInfo | null | undefined>(keys.viewedSpace(space.id), (prev) => (prev ? space : prev))
 }
 
 export function useAccount(enabled = true) {
@@ -441,6 +449,7 @@ function useRemoteCache(space: string) {
   return (remote: Remote | null) => {
     qc.setQueryData(keys.remote(space), remote)
     qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => prev && { spaces: prev.spaces.map((s) => (s.id === space ? { ...s, sync: remote ? remote.state : 'local' } : s)) })
+    qc.setQueryData<SpaceInfo | null | undefined>(keys.viewedSpace(space), (prev) => prev && { ...prev, sync: remote ? remote.state : 'local' })
   }
 }
 

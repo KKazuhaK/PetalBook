@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { useSession, useSpaces, useUpdateSpace } from '@/api/hooks'
+import { useActiveSpace, useSession, useUpdateSpace } from '@/api/hooks'
 import { can } from '@/lib/permissions'
 import type { SpaceInfo } from '@/api/types'
 import { Field } from '@/components/auth/Field'
@@ -16,9 +16,9 @@ import { InboxSection } from './SyncPanel'
 // `manage` permission they are shown as they are.
 export function GeneralPanel({ space }: { space: string }) {
   const session = useSession().data
-  const spaces = useSpaces()
-  const current = spaces.data?.spaces.find((s) => s.id === space)
-  if (!session || spaces.isPending) return <PageFallback />
+  const { spaces, resolving } = useActiveSpace()
+  const current = spaces.find((s) => s.id === space)
+  if (!session || resolving) return <PageFallback />
   if (!current) return <SettingsNote>{t.editor.spaceMissing}</SettingsNote>
   if (current.disabled) return <SettingsNote>{t.spaces.disabledTitle}</SettingsNote>
   const single = session.mode === 'single'

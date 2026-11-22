@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { putMember, useAddMember, useMembers, useRemoveMember, useSession, useSetMemberRole, useSpaces } from '@/api/hooks'
+import { putMember, useActiveSpace, useAddMember, useMembers, useRemoveMember, useSession, useSetMemberRole } from '@/api/hooks'
 import type { Member, SpaceInfo, SpaceRole } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
@@ -40,11 +40,11 @@ export function memberError(e: unknown): string {
 // leave; changing it (adding, roles, removing others) is for the `members`
 // permission. A personal space is for one person: it says so and has no form.
 export function MembersPanel({ space }: { space: string }) {
-  const spaces = useSpaces()
-  const current = spaces.data?.spaces.find((s) => s.id === space)
+  const { spaces, resolving } = useActiveSpace()
+  const current = spaces.find((s) => s.id === space)
   const readable = can(current, 'read')
   const members = useMembers(space, readable)
-  if (spaces.isPending) return <PageFallback />
+  if (resolving) return <PageFallback />
   if (!current) return <SettingsNote>{t.editor.spaceMissing}</SettingsNote>
   if (current.disabled) return <DisabledSpace space={current} />
   if (members.isPending) return <PageFallback />
