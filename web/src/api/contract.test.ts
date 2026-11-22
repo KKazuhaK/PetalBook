@@ -40,6 +40,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { ApiError, api, fileUrl, markSignedIn, spaceApi, type SpaceApi } from './client'
+import { adminApi } from './admin'
 import { mockFetch } from './mock/fetch'
 import { sha256Hex } from './mock/sha256'
 import { createMockServer, MOCK_ADMIN, type MockServer } from './mock/server'
@@ -176,7 +177,7 @@ function suite(target: Target) {
   })
   afterAll(async () => {
     globalThis.fetch = admin.fetch
-    for (const id of created.users) await api.updateUser(id, { disabled: true }).catch(() => undefined)
+    for (const id of created.users) await adminApi.updateUser(id, { disabled: true }).catch(() => undefined)
     globalThis.fetch = realFetch
     markSignedIn()
   })
@@ -311,7 +312,7 @@ function suite(target: Target) {
     const uniq = (p: string) => `${p}${run}`.slice(0, 30)
     // A member made through an invite, signed in in its own browser.
     const newMember = async (name: string, password = 'a-long-password') => {
-      const invite = await as(admin, () => api.createInvite({ role: 'member', days: 1 }))
+      const invite = await as(admin, () => adminApi.createInvite({ role: 'member', days: 1 }))
       const b = browser()
       const r = await call(b, 'POST', '/api/invites/accept', { token: invite.token, username: name, name: `名 ${name}`, password })
       expect(r.status).toBe(201)
@@ -424,14 +425,14 @@ function suite(target: Target) {
     describe('users', () => {
       it('finds users by part of a username or name, ignoring case, and caps the count; no parameters is everyone', async () => {
         const m = await newMember(uniq('fu'))
-        const all = (await as(admin, () => api.users())).users
+        const all = (await as(admin, () => adminApi.users())).users
         const upper = m.user.username.toUpperCase()
-        const hit = (await as(admin, () => api.users({ q: upper }))).users
+        const hit = (await as(admin, () => adminApi.users({ q: upper }))).users
         expect(hit.map((u) => u.id)).toContain(m.user.id)
         for (const u of hit) expect((u.username + '\n' + u.name).toLowerCase()).toContain(m.user.username)
-        expect((await as(admin, () => api.users({ q: m.user.name }))).users.map((u) => u.id)).toContain(m.user.id)
-        expect((await as(admin, () => api.users({ q: 'zzz-no-such-user-zzz' }))).users).toEqual([])
-        const one = (await as(admin, () => api.users({ limit: 1 }))).users
+        expect((await as(admin, () => adminApi.users({ q: m.user.name }))).users.map((u) => u.id)).toContain(m.user.id)
+        expect((await as(admin, () => adminApi.users({ q: 'zzz-no-such-user-zzz' }))).users).toEqual([])
+        const one = (await as(admin, () => adminApi.users({ limit: 1 }))).users
         expect(one.map((u) => u.id)).toEqual([all[0].id])
         for (const bad of ['0', '201', 'x']) {
           const r = await call(admin, 'GET', `/api/users?limit=${bad}`)
@@ -441,7 +442,7 @@ function suite(target: Target) {
 
       it('an administrator lists users, ordered by created; a member gets 403 forbidden for users and invites', async () => {
         const m = await newMember(uniq('us'))
-        const { users } = await as(admin, () => api.users())
+        const { users } = await as(admin, () => adminApi.users())
         expect(users.find((u) => u.id === m.user.id)).toMatchObject({ username: m.user.username, role: 'member', disabled: false })
         for (let i = 1; i < users.length; i++) expect(users[i - 1].created <= users[i].created).toBe(true)
         for (const [method, path] of [
@@ -457,18 +458,18 @@ function suite(target: Target) {
 
       it('changes a role and disables and enables a user; disabling ends every session and blocks signing in', async () => {
         const m = await newMember(uniq('ro'))
-        const promoted = await as(admin, () => api.updateUser(m.user.id, { role: 'admin' }))
+        const promoted = await as(admin, () => adminApi.updateUser(m.user.id, { role: 'admin' }))
         expect(promoted.user.role).toBe('admin')
         expect((await call(m.browser, 'GET', '/api/users')).status).toBe(200)
-        await as(admin, () => api.updateUser(m.user.id, { role: 'member' }))
+        await as(admin, () => adminApi.updateUser(m.user.id, { role: 'member' }))
         expect((await call(m.browser, 'GET', '/api/users')).status).toBe(403)
 
-        const off = await as(admin, () => api.updateUser(m.user.id, { disabled: true }))
+        const off = await as(admin, () => adminApi.updateUser(m.user.id, { disabled: true }))
         expect(off.user.disabled).toBe(true)
         expect((await call(m.browser, 'GET', '/api/account')).status).toBe(401)
         const again = await call(browser(), 'POST', '/api/login', { username: m.user.username, password: m.password })
         expect([again.status, again.json.error]).toEqual([401, 'unauthenticated'])
-        await as(admin, () => api.updateUser(m.user.id, { disabled: false }))
+        await as(admin, () => adminApi.updateUser(m.user.id, { disabled: false }))
         expect((await call(browser(), 'POST', '/api/login', { username: m.user.username, password: m.password })).status).toBe(200)
       })
 
@@ -476,7 +477,7 @@ function suite(target: Target) {
         const me = (await call(admin, 'GET', '/api/session')).json.user as User
         const self = await call(admin, 'PATCH', `/api/users/${me.id}`, { disabled: true })
         expect([self.status, self.json.error]).toEqual([409, 'conflict'])
-        const { users } = await as(admin, () => api.users())
+        const { users } = await as(admin, () => adminApi.users())
         if (users.filter((u) => u.role === 'admin' && !u.disabled).length === 1) {
           const demote = await call(admin, 'PATCH', `/api/users/${me.id}`, { role: 'member' })
           expect([demote.status, demote.json.error]).toEqual([409, 'conflict'])
@@ -492,11 +493,11 @@ function suite(target: Target) {
 
     describe('invites', () => {
       it('create: 201 with the token once; the list shows the open ones without it', async () => {
-        const inv = await as(admin, () => api.createInvite({ role: 'member', days: 3 }))
+        const inv = await as(admin, () => adminApi.createInvite({ role: 'member', days: 3 }))
         expect(inv.token.length).toBeGreaterThanOrEqual(16)
         expect(inv).toMatchObject({ role: 'member' })
         expect(Date.parse(inv.expires)).toBeGreaterThan(Date.parse(inv.created))
-        const { invites } = await as(admin, () => api.invites())
+        const { invites } = await as(admin, () => adminApi.invites())
         const row = invites.find((i) => i.id === inv.id)!
         expect(row).toMatchObject({ role: 'member', expires: inv.expires })
         expect(typeof row.createdBy).toBe('string')
@@ -512,7 +513,7 @@ function suite(target: Target) {
       })
 
       it('check is public: 200 with role and expiry for a good token, 404 for anything else', async () => {
-        const inv = await as(admin, () => api.createInvite({ role: 'member', days: 1 }))
+        const inv = await as(admin, () => adminApi.createInvite({ role: 'member', days: 1 }))
         const anon = browser()
         const ok = await call(anon, 'POST', '/api/invites/check', { token: inv.token })
         expect(ok.status).toBe(200)
@@ -522,7 +523,7 @@ function suite(target: Target) {
       })
 
       it('accept is public: 201 with the user and a session, a personal space of their own; the invite works once', async () => {
-        const inv = await as(admin, () => api.createInvite({ role: 'member', days: 1 }))
+        const inv = await as(admin, () => adminApi.createInvite({ role: 'member', days: 1 }))
         const name = uniq('ac2')
         const b = browser()
         const r = await call(b, 'POST', '/api/invites/accept', { token: inv.token, username: name.toUpperCase(), name: '新人', password: 'a-long-password' })
@@ -536,12 +537,12 @@ function suite(target: Target) {
         // Used: gone from the list, and a 404 to check. (Accepting it again is not
         // tried: a real server counts every bad token against the client address.)
         expect((await call(browser(), 'POST', '/api/invites/check', { token: inv.token })).status).toBe(404)
-        expect((await as(admin, () => api.invites())).invites.map((i) => i.id)).not.toContain(inv.id)
+        expect((await as(admin, () => adminApi.invites())).invites.map((i) => i.id)).not.toContain(inv.id)
       })
 
       it('a taken username is 409 exists and the invite stays usable; a short password is 400', async () => {
         const m = await newMember(uniq('tk'))
-        const inv = await as(admin, () => api.createInvite({ role: 'member', days: 1 }))
+        const inv = await as(admin, () => adminApi.createInvite({ role: 'member', days: 1 }))
         const taken = await call(browser(), 'POST', '/api/invites/accept', { token: inv.token, username: m.user.username, password: 'a-long-password' })
         expect([taken.status, taken.json.error]).toEqual([409, 'exists'])
         const short = await call(browser(), 'POST', '/api/invites/accept', { token: inv.token, username: uniq('sh'), password: 'short' })
@@ -550,10 +551,10 @@ function suite(target: Target) {
       })
 
       it('revoke is 204 and the token stops working', async () => {
-        const inv = await as(admin, () => api.createInvite({}))
-        await as(admin, () => api.revokeInvite(inv.id))
+        const inv = await as(admin, () => adminApi.createInvite({}))
+        await as(admin, () => adminApi.revokeInvite(inv.id))
         expect((await call(browser(), 'POST', '/api/invites/check', { token: inv.token })).status).toBe(404)
-        expect((await as(admin, () => api.invites())).invites.map((i) => i.id)).not.toContain(inv.id)
+        expect((await as(admin, () => adminApi.invites())).invites.map((i) => i.id)).not.toContain(inv.id)
       })
     })
 
@@ -832,7 +833,7 @@ function suite(target: Target) {
         const items: AdminSpace[] = []
         let cursor = ''
         for (let guard = 0; guard < 500; guard++) {
-          const r = await as(admin, () => api.adminSpaces({ q: query || undefined, cursor: cursor || undefined, limit }))
+          const r = await as(admin, () => adminApi.adminSpaces({ q: query || undefined, cursor: cursor || undefined, limit }))
           items.push(...r.items)
           cursor = r.next
           if (!cursor) return items
@@ -871,7 +872,7 @@ function suite(target: Target) {
         expect(typeof found[0].created).toBe('string')
         // Not measured yet, or measured: both are shaped alike.
         expect(found[0].sizeBytes === null ? found[0].sizeAt : typeof found[0].sizeAt).toEqual(found[0].sizeBytes === null ? null : 'string')
-        const first = await as(admin, () => api.adminSpaces({ limit: 1 }))
+        const first = await as(admin, () => adminApi.adminSpaces({ limit: 1 }))
         expect(first.items.length).toBe(1)
         expect(typeof first.next).toBe('string')
         // Walking the pages meets each space once, the personal ones included.
@@ -901,7 +902,7 @@ function suite(target: Target) {
         const owner = await newMember(uniq('sz'))
         const sp = await ownedSpace(owner, `Sized ${run}`)
         await call(owner.browser, 'POST', `/api/spaces/${sp.id}/pages`, { meta: { title: '占地方' }, body: '一些字\n' })
-        const size = await as(admin, () => api.adminResizeSpace(sp.id))
+        const size = await as(admin, () => adminApi.adminResizeSpace(sp.id))
         expect(size.sizeBytes).toBeGreaterThan(0)
         expect(typeof size.sizeAt).toBe('string')
         const row = (await listAll(`sized ${run}`)).find((s) => s.id === sp.id)!
@@ -930,13 +931,13 @@ function suite(target: Target) {
         const sp = await ownedSpace(owner, 'Enabled owners')
         await addMember(owner, sp.id, second.user.username, 'owner')
         const self = `/api/spaces/${sp.id}/members/${owner.user.id}`
-        await as(admin, () => api.updateUser(second.user.id, { disabled: true }))
+        await as(admin, () => adminApi.updateUser(second.user.id, { disabled: true }))
         const demote = await call(owner.browser, 'PATCH', self, { role: 'editor' })
         expect([demote.status, demote.json.error]).toEqual([409, 'last_owner'])
         const leave = await call(owner.browser, 'DELETE', self)
         expect([leave.status, leave.json.error]).toEqual([409, 'last_owner'])
         // Enabled again, the other owner counts: the first may step down.
-        await as(admin, () => api.updateUser(second.user.id, { disabled: false }))
+        await as(admin, () => adminApi.updateUser(second.user.id, { disabled: false }))
         expect((await call(owner.browser, 'PATCH', self, { role: 'editor' })).status).toBe(200)
       })
 
@@ -951,7 +952,7 @@ function suite(target: Target) {
         expect([p.status, p.json.error]).toEqual([409, 'personal_space'])
         const unknown = await transfer('01ZZZZZZZZ')
         expect([unknown.status, unknown.json.error]).toEqual([404, 'user_not_found'])
-        await as(admin, () => api.updateUser(gone.user.id, { disabled: true }))
+        await as(admin, () => adminApi.updateUser(gone.user.id, { disabled: true }))
         const off = await transfer(gone.user.id)
         expect([off.status, off.json.error]).toEqual([409, 'user_disabled'])
         expect((await transfer(heir.user.id)).status).toBe(204)
@@ -1012,7 +1013,7 @@ function suite(target: Target) {
       })
 
       it('reports the server\'s status', async () => {
-        const st = await as(admin, () => api.adminStatus())
+        const st = await as(admin, () => adminApi.adminStatus())
         expect(typeof st.version).toBe('string')
         expect(Number.isNaN(Date.parse(st.startedAt))).toBe(false)
         expect(st.uptimeSeconds).toBeGreaterThanOrEqual(0)

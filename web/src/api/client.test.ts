@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { api as accountApi, ApiError, forbiddenMessage, isSignedOut, listParamsToQuery, markSignedIn, onForbidden, onSignedOut, onSpaceAccess, spaceApi } from './client'
+import { adminApi } from './admin'
 import { mockFetch } from './mock/fetch'
 import { createMockServer, MOCK_ADMIN, type MockServer } from './mock/server'
 
@@ -140,14 +141,14 @@ describe('403 forbidden', () => {
     await owner.addMember('tang', 'viewer').catch(() => undefined)
     await owner.setMemberRole('01USER00001', 'editor').catch(() => undefined)
     await owner.removeMember('01USER00001').catch(() => undefined)
-    await accountApi.adminSpaces({ q: '团队 a', cursor: 'c1', limit: 20 }).catch(() => undefined)
-    await accountApi.adminSpaces().catch(() => undefined)
-    await accountApi.adminResizeSpace('01SPACE0001').catch(() => undefined)
-    await accountApi.adminTransferSpace('01SPACE0001', '01USER00001').catch(() => undefined)
-    await accountApi.adminDisableSpace('01SPACE0001').catch(() => undefined)
-    await accountApi.adminEnableSpace('01SPACE0001').catch(() => undefined)
-    await accountApi.adminDeleteSpace('01SPACE0001').catch(() => undefined)
-    await accountApi.adminStatus().catch(() => undefined)
+    await adminApi.adminSpaces({ q: '团队 a', cursor: 'c1', limit: 20 }).catch(() => undefined)
+    await adminApi.adminSpaces().catch(() => undefined)
+    await adminApi.adminResizeSpace('01SPACE0001').catch(() => undefined)
+    await adminApi.adminTransferSpace('01SPACE0001', '01USER00001').catch(() => undefined)
+    await adminApi.adminDisableSpace('01SPACE0001').catch(() => undefined)
+    await adminApi.adminEnableSpace('01SPACE0001').catch(() => undefined)
+    await adminApi.adminDeleteSpace('01SPACE0001').catch(() => undefined)
+    await adminApi.adminStatus().catch(() => undefined)
     expect(calls.map((c) => `${c.method} ${c.url}${c.body ? ' ' + c.body : ''}`)).toEqual([
       'GET /api/spaces/01SPACE0001/members',
       'POST /api/spaces/01SPACE0001/members {"username":"tang","role":"viewer"}',
@@ -299,8 +300,8 @@ describe('429 and 403 that are not about the origin', () => {
     const off = onForbidden((m) => seen.push(m))
     const results = await Promise.all([
       accountApi.changePassword({ current: 'x', new: 'a-long-password' }).catch((x) => x),
-      accountApi.users().catch((x) => x),
-      accountApi.createInvite().catch((x) => x),
+      adminApi.users().catch((x) => x),
+      adminApi.createInvite().catch((x) => x),
       accountApi.setup({ token: 't', username: 'ab', password: 'a-long-password' }).catch((x) => x),
       // The space limit: the server's message goes to the new-space dialog.
       accountApi.createSpace('第十一个').catch((x) => x),

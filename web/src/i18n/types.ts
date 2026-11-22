@@ -5,6 +5,6 @@
 
 import type { zhCN } from './zh-CN.ts'
 
-type Widen<T> = T extends string ? string : T extends (...args: infer A) => string ? (...args: A) => string : T extends object ? { -readonly [K in keyof T]: Widen<T[K]> } : T
+export type Widen<T> = T extends string ? string : T extends (...args: infer A) => string ? (...args: A) => string : T extends object ? { -readonly [K in keyof T]: Widen<T[K]> } : T
 
 export type Messages = Widen<typeof zhCN>

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { decideLanguage, languages, LANG_KEY } from './index'
 import { en } from './en'
 import { zhCN } from './zh-CN'
+import { adminEn } from './admin/en'
+import { adminZhCN } from './admin/zh-CN'
 
 describe('decideLanguage', () => {
   it('uses a saved choice over the browser', () => {
@@ -99,6 +101,7 @@ describe('dictionaries', () => {
   it('have the same keys, with functions where the other has functions', () => {
     const problems: string[] = []
     walk(zhCN, en, 't', problems)
+    walk(adminZhCN, adminEn, 'admin', problems)
     expect(problems).toEqual([])
   })
   it('English has no Chinese text in it', () => {
@@ -114,6 +117,7 @@ describe('dictionaries', () => {
       } else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) scan(x, `${path}.${k}`)
     }
     scan(en, 't')
+    scan(adminEn, 'admin')
     expect(found).toEqual([])
   })
   it('English plurals read correctly', () => {

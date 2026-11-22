@@ -5,10 +5,6 @@ import { t } from '@/i18n'
 import type {
   AccountInfo,
   AdminSpace,
-  AdminSpaceList,
-  AdminSpacesParams,
-  CreatedInvite,
-  DeletedSpace,
   CreatePageInput,
   DraftInput,
   DraftReceipt,
@@ -17,7 +13,6 @@ import type {
   ErrorCode,
   HistoryList,
   ImportReport,
-  Invite,
   InviteCheck,
   ListParams,
   Member,
@@ -29,13 +24,10 @@ import type {
   PageVersion,
   Remote,
   RemoteKey,
-  Role,
   SavePageInput,
-  ServerStatus,
   SessionInfo,
   SpaceInfo,
   SpaceRole,
-  SpaceSize,
   TagColor,
   TagsResponse,
   TreeResponse,
@@ -172,7 +164,7 @@ interface RequestOptions {
   blob?: Blob
 }
 
-async function request<T>(path: string, { method = 'GET', body, keepalive, signal, blob }: RequestOptions = {}): Promise<T> {
+export async function request<T>(path: string, { method = 'GET', body, keepalive, signal, blob }: RequestOptions = {}): Promise<T> {
   const barePath = path.split('?')[0]
   const isSignIn = SIGN_IN_PATHS.test(barePath)
   if (signedOut && !isSignIn) throw new ApiError(401, 'unauthenticated', t.errors.signedOut)
@@ -254,7 +246,7 @@ export function listParamsToQuery(p: ListParams): string {
   return s ? `?${s}` : ''
 }
 
-const enc = encodeURIComponent
+export const enc = encodeURIComponent
 
 // Where the bytes of a file of a space are served (docs/api.md, "Files"): `path`
 // is from the root of the space, and each segment is percent-encoded.
@@ -368,18 +360,6 @@ export const api = {
   removeIdentity: (id: string) => request<void>(`/account/identities/${enc(id)}`, { method: 'DELETE' }),
 
   // --- users and invites (administrators) ---
-  // `q` keeps the users whose username or name contains it; `limit` caps the count (1 to 200).
-  users: (params: { q?: string; limit?: number } = {}, signal?: AbortSignal) => {
-    const q = new URLSearchParams()
-    if (params.q) q.set('q', params.q)
-    if (params.limit) q.set('limit', String(params.limit))
-    const query = q.toString()
-    return request<{ users: User[] }>(`/users${query ? `?${query}` : ''}`, { signal })
-  },
-  updateUser: (id: string, input: { role?: Role; disabled?: boolean }) => request<{ user: User }>(`/users/${enc(id)}`, { method: 'PATCH', body: input }),
-  createInvite: (input: { role?: Role; days?: number } = {}) => request<CreatedInvite>('/invites', { method: 'POST', body: input }),
-  invites: (signal?: AbortSignal) => request<{ invites: Invite[] }>('/invites', { signal }),
-  revokeInvite: (id: string) => request<void>(`/invites/${enc(id)}`, { method: 'DELETE' }),
   checkInvite: (token: string, signal?: AbortSignal) => request<InviteCheck>('/invites/check', { method: 'POST', body: { token }, signal }),
   acceptInvite: async (input: { token: string; username: string; name?: string; password: string }) => {
     const r = await request<{ user: User }>('/invites/accept', { method: 'POST', body: input })
@@ -395,21 +375,6 @@ export const api = {
   updateSpace: (id: string, patch: { name?: string; inbox?: string }) => request<SpaceInfo>(`/spaces/${enc(id)}`, { method: 'PATCH', body: patch }),
 
   // --- administration (administrators, accounts mode) ---
-  adminSpaces: (params: AdminSpacesParams = {}, signal?: AbortSignal) => {
-    const q = new URLSearchParams()
-    if (params.q) q.set('q', params.q)
-    if (params.cursor) q.set('cursor', params.cursor)
-    if (params.limit) q.set('limit', String(params.limit))
-    const qs = q.toString()
-    return request<AdminSpaceList>(`/admin/spaces${qs ? `?${qs}` : ''}`, { signal })
-  },
   // One space as the list has it; 404 for an id that is no space.
   adminSpace: (id: string, signal?: AbortSignal) => request<AdminSpace>(`/admin/spaces/${enc(id)}`, { signal }),
-  // Measures the space's directory now.
-  adminResizeSpace: (id: string) => request<SpaceSize>(`/admin/spaces/${enc(id)}/size`, { method: 'POST' }),
-  adminTransferSpace: (id: string, userId: string) => request<void>(`/admin/spaces/${enc(id)}/transfer`, { method: 'POST', body: { userId } }),
-  adminDisableSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/disable`, { method: 'POST' }),
-  adminEnableSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/enable`, { method: 'POST' }),
-  adminDeleteSpace: (id: string) => request<DeletedSpace>(`/admin/spaces/${enc(id)}`, { method: 'DELETE' }),
-  adminStatus: (signal?: AbortSignal) => request<ServerStatus>('/admin/status', { signal }),
 }

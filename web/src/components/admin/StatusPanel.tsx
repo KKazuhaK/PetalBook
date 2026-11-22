@@ -1,19 +1,20 @@
 import { RefreshCw } from 'lucide-react'
-import { useAdminStatus } from '@/api/hooks'
+import { useAdminStatus } from '@/api/admin'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { SettingsSection } from '@/components/settings/SettingsParts'
 import { Button } from '@/components/ui/button'
 import { formatBytes } from '@/lib/bytes'
 import { absoluteTime } from '@/lib/time'
 import { t } from '@/i18n'
+import { ta } from '@/i18n/admin'
 
 // What the server says about itself (GET /api/admin/status).
 export function StatusPanel() {
   const status = useAdminStatus()
   if (status.isPending) return <PageFallback />
-  if (status.isError) return <ErrorState message={t.fmt.labelled(t.admin.status.loadFailed, status.error.message)} onRetry={() => void status.refetch()} />
+  if (status.isError) return <ErrorState message={t.fmt.labelled(ta.status.loadFailed, status.error.message)} onRetry={() => void status.refetch()} />
   const s = status.data
-  const st = t.admin.status
+  const st = ta.status
   const uptime = Math.max(0, s.uptimeSeconds)
   const rows: [string, string, string?][] = [
     [st.version, s.version],

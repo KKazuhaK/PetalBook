@@ -5,6 +5,7 @@ import { useActiveSpace } from '@/api/hooks'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { adminPath, isAdminSection, spaceUrls, type AdminSection } from '@/lib/urls'
 import { t } from '@/i18n'
+import { ta } from '@/i18n/admin'
 import { SpacesPanel } from './SpacesPanel'
 import { StatusPanel } from './StatusPanel'
 import { UsersPanel } from './UsersPanel'
@@ -19,17 +20,17 @@ const SECTIONS: readonly AdminSection[] = ['users', 'spaces', 'status']
 export default function AdminRoute() {
   const { section } = useParams()
   const { id } = useActiveSpace()
-  useDocumentTitle(`${isAdminSection(section) ? t.admin.sections[section] : t.admin.title} · ${t.admin.title} · ${t.appName}`)
+  useDocumentTitle(`${isAdminSection(section) ? ta.sections[section] : ta.title} · ${ta.title} · ${t.appName}`)
   if (!isAdminSection(section)) return <Navigate to={adminPath('users')} replace />
 
   return (
     <>
       <TopBar>
-        <h1 className="truncate text-sm font-medium">{t.admin.title}</h1>
+        <h1 className="truncate text-sm font-medium">{ta.title}</h1>
       </TopBar>
       <div className="mx-auto w-full max-w-5xl flex-1 px-4 py-5 md:px-8 md:py-7">
         <div className="mb-6 flex flex-wrap items-center gap-x-6 gap-y-2">
-          <nav aria-label={t.admin.nav}>
+          <nav aria-label={ta.nav}>
             <ul className="flex flex-wrap gap-1">
               {SECTIONS.map((s) => {
                 const Icon = ICONS[s]
@@ -41,7 +42,7 @@ export default function AdminRoute() {
                       className={`flex h-8 items-center gap-2 rounded-md px-2.5 text-sm whitespace-nowrap outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 ${s === section ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'}`}
                     >
                       <Icon aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} />
-                      {t.admin.sections[s]}
+                      {ta.sections[s]}
                     </Link>
                   </li>
                 )
@@ -50,7 +51,7 @@ export default function AdminRoute() {
           </nav>
           <Link to={id ? spaceUrls(id).recent() : '/'} className="ml-auto flex items-center gap-1 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
             <ArrowLeft className="size-3.5" />
-            {t.admin.back}
+            {ta.back}
           </Link>
         </div>
         {section === 'users' && <UsersPanel />}

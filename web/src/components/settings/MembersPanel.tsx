@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { putMember, useActiveSpace, useAddMember, useMembers, useRemoveMember, useSession, useSetMemberRole } from '@/api/hooks'
+import { forgetSpace, putMember, useActiveSpace, useAddMember, useMembers, useRemoveMember, useSession, useSetMemberRole } from '@/api/hooks'
 import type { Member, SpaceInfo, SpaceRole } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
@@ -71,6 +71,7 @@ function DisabledSpace({ space }: { space: SpaceInfo }) {
     setError('')
     try {
       await remove.mutateAsync(userId!)
+      forgetSpace(space.id)
       toast.success(t.members.left)
     } catch (e) {
       setError(memberError(e))
@@ -133,6 +134,7 @@ function MemberList({ space, members, manage }: { space: SpaceInfo; members: Mem
     setError('')
     try {
       await remove.mutateAsync(m.userId)
+      if (m.you) forgetSpace(space.id)
       toast.success(m.you ? t.members.left : t.members.removed(m.name))
     } catch (e) {
       setError(memberError(e))

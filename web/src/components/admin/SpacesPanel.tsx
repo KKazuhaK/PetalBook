@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 import { MoreHorizontal, RefreshCw, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { useAdminSpaces, useDeleteSpace, useResizeSpace, useSetSpaceDisabled, useTransferSpace, useUserSearch, USER_SEARCH_LIMIT } from '@/api/hooks'
+import { useAdminSpaces, useDeleteSpace, useResizeSpace, useSetSpaceDisabled, useTransferSpace, useUserSearch, USER_SEARCH_LIMIT } from '@/api/admin'
 import type { AdminSpace, DeletedSpace, User } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
@@ -21,6 +21,7 @@ import { absoluteTime } from '@/lib/time'
 import { spaceUrls } from '@/lib/urls'
 import { useDebounced } from '@/lib/useDebounced'
 import { t } from '@/i18n'
+import { ta } from '@/i18n/admin'
 
 // Two names that read the same: trimmed, and in the same Unicode normal form.
 const sameName = (a: string, b: string) => a.trim().normalize('NFC') === b.trim().normalize('NFC')
@@ -29,8 +30,8 @@ type Action = { kind: 'transfer' | 'disable' | 'delete'; space: AdminSpace }
 
 // What a refusal of an administration call means, in plain words.
 function actionError(e: unknown): string {
-  const text = t.admin.spaces.errors
-  if (!(e instanceof ApiError)) return t.admin.spaces.failed
+  const text = ta.spaces.errors
+  if (!(e instanceof ApiError)) return ta.spaces.failed
   switch (e.code) {
     case 'personal_space':
       return text.personalSpace
@@ -43,7 +44,7 @@ function actionError(e: unknown): string {
     case 'not_found':
       return text.notFound
     default:
-      return e.message || t.admin.spaces.failed
+      return e.message || ta.spaces.failed
   }
 }
 
@@ -61,38 +62,38 @@ export function SpacesPanel() {
   const enable = async (s: AdminSpace) => {
     try {
       await setDisabled.mutateAsync({ id: s.id, disabled: false })
-      toast.success(t.admin.spaces.enabledDone)
+      toast.success(ta.spaces.enabledDone)
     } catch (e) {
       toast.error(actionError(e))
     }
   }
 
   return (
-    <SettingsSection title={t.admin.spaces.title} id="admin-spaces-heading" description={t.admin.spaces.help}>
+    <SettingsSection title={ta.spaces.title} id="admin-spaces-heading" description={ta.spaces.help}>
       <div className="relative max-w-sm">
         <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input type="search" value={text} onChange={(e) => setText(e.target.value)} placeholder={t.admin.spaces.searchPlaceholder} aria-label={t.admin.spaces.search} className="pl-8" autoComplete="off" />
+        <Input type="search" value={text} onChange={(e) => setText(e.target.value)} placeholder={ta.spaces.searchPlaceholder} aria-label={ta.spaces.search} className="pl-8" autoComplete="off" />
       </div>
 
       {spaces.isPending ? (
         <PageFallback />
       ) : spaces.isError && !spaces.data ? (
-        <ErrorState message={t.fmt.labelled(t.admin.spaces.loadFailed, spaces.error.message)} onRetry={() => void spaces.refetch()} />
+        <ErrorState message={t.fmt.labelled(ta.spaces.loadFailed, spaces.error.message)} onRetry={() => void spaces.refetch()} />
       ) : items.length === 0 ? (
-        <p className="py-8 text-center text-sm text-muted-foreground">{q ? t.admin.spaces.noMatch(q) : t.admin.spaces.empty}</p>
+        <p className="py-8 text-center text-sm text-muted-foreground">{q ? ta.spaces.noMatch(q) : ta.spaces.empty}</p>
       ) : (
         <>
           <div className="overflow-x-auto rounded-lg border">
             <table className="w-full min-w-[44rem] text-left text-sm">
               <thead className="border-b bg-muted/40 text-xs text-muted-foreground">
                 <tr>
-                  <th scope="col" className="px-3 py-2 font-medium">{t.admin.spaces.name}</th>
-                  <th scope="col" className="px-3 py-2 font-medium">{t.admin.spaces.owner}</th>
-                  <th scope="col" className="px-3 py-2 text-right font-medium">{t.admin.spaces.members}</th>
-                  <th scope="col" className="px-3 py-2 font-medium">{t.admin.spaces.size}</th>
-                  <th scope="col" className="px-3 py-2 font-medium">{t.admin.spaces.sync}</th>
-                  <th scope="col" className="px-3 py-2 font-medium">{t.admin.spaces.status}</th>
-                  <th scope="col" className="px-3 py-2 text-right font-medium">{t.admin.spaces.actions}</th>
+                  <th scope="col" className="px-3 py-2 font-medium">{ta.spaces.name}</th>
+                  <th scope="col" className="px-3 py-2 font-medium">{ta.spaces.owner}</th>
+                  <th scope="col" className="px-3 py-2 text-right font-medium">{ta.spaces.members}</th>
+                  <th scope="col" className="px-3 py-2 font-medium">{ta.spaces.size}</th>
+                  <th scope="col" className="px-3 py-2 font-medium">{ta.spaces.sync}</th>
+                  <th scope="col" className="px-3 py-2 font-medium">{ta.spaces.status}</th>
+                  <th scope="col" className="px-3 py-2 text-right font-medium">{ta.spaces.actions}</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -106,10 +107,10 @@ export function SpacesPanel() {
             {spaces.hasNextPage && (
               <Button type="button" variant="outline" size="sm" disabled={spaces.isFetchingNextPage} onClick={() => void spaces.fetchNextPage()}>
                 {spaces.isFetchingNextPage && <Spinner />}
-                {spaces.isFetchingNextPage ? t.admin.spaces.loadingMore : t.admin.spaces.loadMore}
+                {spaces.isFetchingNextPage ? ta.spaces.loadingMore : ta.spaces.loadMore}
               </Button>
             )}
-            <span className="text-xs text-muted-foreground">{spaces.hasNextPage ? t.admin.spaces.loaded(items.length) : t.admin.spaces.allLoaded(items.length)}</span>
+            <span className="text-xs text-muted-foreground">{spaces.hasNextPage ? ta.spaces.loaded(items.length) : ta.spaces.allLoaded(items.length)}</span>
             {spaces.isFetchNextPageError && <ErrorState message={spaces.error.message} onRetry={() => void spaces.fetchNextPage()} />}
           </div>
         </>
@@ -123,7 +124,7 @@ export function SpacesPanel() {
 }
 
 function SpaceRow({ space: s, onAction, onEnable }: { space: AdminSpace; onAction: (kind: Action['kind']) => void; onEnable: () => void }) {
-  const sp = t.admin.spaces
+  const sp = ta.spaces
   return (
     <tr data-space={s.id}>
       <th scope="row" className="max-w-56 px-3 py-2.5 font-normal">
@@ -177,7 +178,7 @@ function SpaceRow({ space: s, onAction, onEnable }: { space: AdminSpace; onActio
 // The stored size, or a dash until the server has measured it, and a way to
 // measure this one space now.
 function SizeCell({ space: s }: { space: AdminSpace }) {
-  const sp = t.admin.spaces
+  const sp = ta.spaces
   const resize = useResizeSpace()
   const measure = async () => {
     try {
@@ -206,7 +207,7 @@ function SizeCell({ space: s }: { space: AdminSpace }) {
 }
 
 function TransferDialog({ space, onClose }: { space: AdminSpace; onClose: () => void }) {
-  const sp = t.admin.spaces
+  const sp = ta.spaces
   const transfer = useTransferSpace()
   // Who to hand the space to is looked for on the server, a few at a time: a server
   // with many accounts is never asked for all of them.
@@ -285,7 +286,7 @@ function TransferDialog({ space, onClose }: { space: AdminSpace; onClose: () => 
 }
 
 function DisableDialog({ space, onClose }: { space: AdminSpace; onClose: () => void }) {
-  const sp = t.admin.spaces
+  const sp = ta.spaces
   const disable = useSetSpaceDisabled()
   const [error, setError] = useState('')
   const confirm = async () => {
@@ -321,7 +322,7 @@ function DisableDialog({ space, onClose }: { space: AdminSpace; onClose: () => v
 
 // Deleting asks for the space's name, and afterwards says where its files went.
 function DeleteDialog({ space, onClose }: { space: AdminSpace; onClose: () => void }) {
-  const sp = t.admin.spaces
+  const sp = ta.spaces
   const del = useDeleteSpace()
   const [typed, setTyped] = useState('')
   const [error, setError] = useState('')
