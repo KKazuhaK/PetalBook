@@ -16,8 +16,11 @@ describe('which sections are shown', () => {
   it('someone who may only read has no import (it writes pages) but still sees the members', () => {
     expect(ids(viewer)).toEqual(['profile', 'preferences', 'security', 'general', 'members', 'sync'])
   })
-  it('a space that cannot be read (switched off) shows no members', () => {
+  it('a space that cannot be read shows no members', () => {
     expect(ids({ ...member, canRead: false, canWrite: false })).toEqual(['profile', 'preferences', 'security', 'general', 'sync'])
+  })
+  it('a space that is switched off still has the members section, for leaving it', () => {
+    expect(ids({ ...member, canRead: false, canWrite: false, disabled: true })).toEqual(['profile', 'preferences', 'security', 'general', 'members', 'sync'])
   })
   it('users and invites are not a section here any more: they are in the administration', () => {
     expect(ids(member)).not.toContain('users')

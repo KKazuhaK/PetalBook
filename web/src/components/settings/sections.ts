@@ -32,6 +32,9 @@ export interface Visibility {
   canRead: boolean
   // Whether the person may change that space's pages (an import writes them).
   canWrite: boolean
+  // That space is switched off: its members cannot be listed, but a member may
+  // still leave it, and that is on the members section.
+  disabled?: boolean
 }
 
 // Single-user mode has no account, no remote repository and no members: only
@@ -52,7 +55,7 @@ export function visibleSections(v: Visibility): SectionDef[] {
       case 'import':
         return v.hasSpace && v.canWrite
       case 'members':
-        return v.mode === 'accounts' && v.hasSpace && v.canRead
+        return v.mode === 'accounts' && v.hasSpace && (v.canRead || v.disabled === true)
       case 'sync':
         return v.mode === 'accounts' && v.hasSpace
     }

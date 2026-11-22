@@ -751,7 +751,7 @@ function suite(target: Target) {
         expect(left.map((m) => m.userId)).toEqual([owner.user.id])
       })
 
-      it('a viewer reads but is refused every write with 403 forbidden; an editor writes but cannot manage or add members', async () => {
+      it('a viewer reads but is refused every write with 403 no_permission; an editor writes but cannot manage or add members', async () => {
         const owner = await newMember(uniq('wo'))
         const viewer = await newMember(uniq('wv'))
         const editor = await newMember(uniq('we'))
@@ -890,6 +890,37 @@ function suite(target: Target) {
         const row = (await listAll(`sized ${run}`)).find((s) => s.id === sp.id)!
         expect(row.sizeBytes).toBe(size.sizeBytes)
         expect(row.sizeAt).toBe(size.sizeAt)
+      })
+
+      it('a member may leave a space that is switched off, though nothing else in it opens', async () => {
+        const owner = await newMember(uniq('dfo'))
+        const guest = await newMember(uniq('dfg'))
+        const sp = await ownedSpace(owner, 'Left switched off')
+        await addMember(owner, sp.id, guest.user.username, 'editor')
+        expect((await call(admin, 'POST', `/api/admin/spaces/${sp.id}/disable`, {})).status).toBe(204)
+        const members = await call(guest.browser, 'GET', `/api/spaces/${sp.id}/members`)
+        expect([members.status, members.json.error]).toEqual([403, 'space_disabled'])
+        expect((await call(guest.browser, 'DELETE', `/api/spaces/${sp.id}/members/${guest.user.id}`)).status).toBe(204)
+        expect(await roleOf(guest.browser, sp.id)).toBeUndefined()
+        expect((await call(admin, 'POST', `/api/admin/spaces/${sp.id}/enable`, {})).status).toBe(204)
+        const left = (await call(owner.browser, 'GET', `/api/spaces/${sp.id}/members`)).json.members as Member[]
+        expect(left.map((m) => m.userId)).toEqual([owner.user.id])
+      })
+
+      it('the owner who must stay is one who can sign in: with the other owner disabled, the only enabled owner can neither be demoted nor leave', async () => {
+        const owner = await newMember(uniq('efo'))
+        const second = await newMember(uniq('efs'))
+        const sp = await ownedSpace(owner, 'Enabled owners')
+        await addMember(owner, sp.id, second.user.username, 'owner')
+        const self = `/api/spaces/${sp.id}/members/${owner.user.id}`
+        await as(admin, () => api.updateUser(second.user.id, { disabled: true }))
+        const demote = await call(owner.browser, 'PATCH', self, { role: 'editor' })
+        expect([demote.status, demote.json.error]).toEqual([409, 'last_owner'])
+        const leave = await call(owner.browser, 'DELETE', self)
+        expect([leave.status, leave.json.error]).toEqual([409, 'last_owner'])
+        // Enabled again, the other owner counts: the first may step down.
+        await as(admin, () => api.updateUser(second.user.id, { disabled: false }))
+        expect((await call(owner.browser, 'PATCH', self, { role: 'editor' })).status).toBe(200)
       })
 
       it('transfers ownership: the user becomes the owner and the owners before become editors; a personal space, an unknown or a disabled user is refused', async () => {

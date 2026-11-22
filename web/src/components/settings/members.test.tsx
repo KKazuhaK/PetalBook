@@ -29,6 +29,11 @@ const select = (label: string) => dialog()!.querySelector<HTMLSelectElement>(`se
 const rows = () => [...dialog()!.querySelectorAll('ul.divide-y > li')].map((li) => li.textContent ?? '')
 const sentToServer = () => m!.requests.filter((r) => r.method !== 'GET' && r.url !== '/api/login').map((r) => `${r.method} ${r.url}`)
 
+const confirmDemotion = async () => {
+  await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
+  await click([...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent === t.members.demoteConfirm))
+}
+
 // The signed-in administrator, owner of 'Team', with another person to add; Team is the space in use.
 async function openAsOwner() {
   m = await mount(routes, {
@@ -122,9 +127,44 @@ describe('the members section: an owner', () => {
   it('will not leave the space without an owner: the refusal is explained', async () => {
     await openAsOwner()
     await type(select(t.fmt.labelled(MOCK_ADMIN.name, t.members.role))!, 'editor')
+    await confirmDemotion()
     await settle(() => panelText().includes(t.members.errors.lastOwner), 'last owner')
     // Still the owner: the list was not changed.
     await settle(() => select(t.fmt.labelled(MOCK_ADMIN.name, t.members.role))!.value === 'owner', 'back to owner')
+  })
+
+  it('asks before an owner gives up their own ownership, and does nothing if they change their mind', async () => {
+    await openAsOwner()
+    await type(dialog()!.querySelector<HTMLInputElement>('input[autocomplete="off"]')!, 'tang')
+    await type(dialog()!.querySelector<HTMLSelectElement>('#add-member-role')!, 'owner')
+    await click(button(t.members.add))
+    await settle(() => rows().length === 2, 'a second owner')
+    const mine = t.fmt.labelled(MOCK_ADMIN.name, t.members.role)
+    await type(select(mine)!, 'editor')
+    await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
+    expect(document.querySelector('[role="alertdialog"]')!.textContent).toContain(t.members.demoteTitle)
+    // Nothing has been sent yet; saying no keeps the role.
+    expect(sentToServer().some((r) => r.startsWith('PATCH'))).toBe(false)
+    await click([...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent === t.members.cancel))
+    await settle(() => document.querySelector('[role="alertdialog"]') === null, 'the question gone')
+    expect(select(mine)!.value).toBe('owner')
+    expect(sentToServer().some((r) => r.startsWith('PATCH'))).toBe(false)
+    // Saying yes changes it.
+    await type(select(mine)!, 'editor')
+    await confirmDemotion()
+    // An editor no longer changes members: the list is read-only now.
+    await settle(() => panelText().includes(t.members.noManage), 'the new role')
+    expect(sentToServer().filter((r) => r.startsWith('PATCH'))).toHaveLength(1)
+  })
+
+  it('does not ask when someone else\'s role is changed', async () => {
+    await openAsOwner()
+    await type(dialog()!.querySelector<HTMLInputElement>('input[autocomplete="off"]')!, 'tang')
+    await click(button(t.members.add))
+    await settle(() => rows().length === 2, 'added')
+    await type(select(t.fmt.labelled('名 tang', t.members.role))!, 'viewer')
+    await settle(() => sentToServer().some((r) => r.startsWith('PATCH')), 'the role request')
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull()
   })
 
   it('a personal space is not shared: one line says so, and there is no form to add anyone', async () => {
@@ -161,6 +201,31 @@ describe('the members section: without the members permission', () => {
     await openAs('editor')
     expect(dialog()!.querySelector('select')).toBeNull()
     expect(panelText()).toContain(t.members.noManage)
+  })
+})
+
+describe('a space that an administrator switched off', () => {
+  it('cannot show its members, but a member may still leave it', async () => {
+    let space = ''
+    m = await mount(routes, {
+      signIn: true,
+      server: { mode: 'accounts' },
+      entries: (server) => {
+        space = shareSpace(server, 'viewer', '停用的').space
+        adminRequests(server)('POST', `/api/admin/spaces/${space}/disable`)
+        localStorage.setItem('pb.space', space)
+        return ['/settings/members']
+      },
+    })
+    await settle(() => panelText().includes(t.members.disabledLeaveHelp), 'the notice')
+    expect(rows()).toHaveLength(0)
+    await click(button(t.members.leave))
+    await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
+    await click([...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent === t.members.leaveConfirm))
+    await settle(() => sentToServer().some((r) => r.startsWith('DELETE')), 'leaving')
+    expect(sentToServer()[0]).toMatch(/^DELETE \/api\/spaces\/[^/]+\/members\/[^/]+$/)
+    // It is gone from the list: the settings are about another space now.
+    await settle(() => panelText().includes(t.members.personalNote), 'moved on to the personal space')
   })
 })
 

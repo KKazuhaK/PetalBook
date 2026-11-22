@@ -582,9 +582,11 @@ export function createMockServer(options: MockOptions = {}) {
     if (typeof raw !== 'string' || !ROLES.includes(raw)) throw new HttpError(400, 'invalid', `a role is one of ${ROLES.join(', ')}`)
     return raw as SpaceRole
   }
-  // A space always keeps one owner.
-  const keepOneOwner = (s: SpaceRec, leaving: SpaceRole) => {
-    if (leaving === 'owner' && [...s.members.values()].filter((m) => m.role === 'owner').length <= 1) throw new HttpError(409, 'last_owner', 'a space needs at least one owner; make someone else an owner first')
+  // A space always keeps one owner who can sign in: a disabled user cannot be the
+  // one that remains (as the real server counts).
+  const keepOneOwner = (s: SpaceRec, userId: string, leaving: SpaceRole) => {
+    const others = [...s.members].filter(([id, m]) => m.role === 'owner' && id !== userId && !users.get(id)?.disabled).length
+    if (leaving === 'owner' && others < 1) throw new HttpError(409, 'last_owner', 'a space needs at least one owner; make someone else an owner first')
   }
   const routeMembers = (me: UserRec, s: SpaceRec, method: string, rest: string, body: Record<string, unknown>): MockResponse => {
     const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
@@ -611,7 +613,7 @@ export function createMockServer(options: MockOptions = {}) {
         const cur = s.members.get(userId)
         if (!cur) throw new HttpError(404, 'not_found', 'that user is not a member of this space')
         if (cur.role !== role) {
-          keepOneOwner(s, cur.role)
+          keepOneOwner(s, userId, cur.role)
           cur.role = role
         }
         return j(memberOf(s, userId, me.id))
@@ -619,7 +621,7 @@ export function createMockServer(options: MockOptions = {}) {
       if (method === 'DELETE') {
         const cur = s.members.get(userId)
         if (!cur) throw new HttpError(404, 'not_found', 'that user is not a member of this space')
-        keepOneOwner(s, cur.role)
+        keepOneOwner(s, userId, cur.role)
         s.members.delete(userId)
         return { status: 204 }
       }
@@ -1123,7 +1125,10 @@ export function createMockServer(options: MockOptions = {}) {
       const rest = m[2] ?? ''
       // These do not exist in single-user mode, whoever asks.
       if ((rest === '' && method === 'PATCH') || rest === '/remote' || rest.startsWith('/remote/') || rest === '/members' || rest.startsWith('/members/')) accountsOnly()
-      const s = openSpace(me, id, needOf(me, method, rest))
+      // Leaving touches only the membership: it works in a space that is switched off.
+      const leaving = method === 'DELETE' && rest.startsWith('/members/') && decodeURIComponent(rest.slice('/members/'.length)) === me.id
+      const own = leaving ? spaces.get(id) : undefined
+      const s = own?.members.has(me.id) ? own : openSpace(me, id, needOf(me, method, rest))
       if (rest === '' && method === 'PATCH') {
         if (body.name === undefined && body.inbox === undefined) throw new HttpError(400, 'invalid', '至少要给出 name 或 inbox')
         // Check both before changing either, so a bad one leaves the space as it was.

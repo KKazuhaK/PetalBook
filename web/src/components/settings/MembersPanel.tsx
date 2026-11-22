@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { putMember, useAddMember, useMembers, useRemoveMember, useSetMemberRole, useSpaces } from '@/api/hooks'
+import { putMember, useAddMember, useMembers, useRemoveMember, useSession, useSetMemberRole, useSpaces } from '@/api/hooks'
 import type { Member, SpaceInfo, SpaceRole } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
@@ -46,7 +46,7 @@ export function MembersPanel({ space }: { space: string }) {
   const members = useMembers(space, readable)
   if (spaces.isPending) return <PageFallback />
   if (!current) return <SettingsNote>{t.editor.spaceMissing}</SettingsNote>
-  if (current.disabled) return <SettingsNote>{t.spaces.disabledTitle}</SettingsNote>
+  if (current.disabled) return <DisabledSpace space={current} />
   if (members.isPending) return <PageFallback />
   if (members.isError) return <ErrorState message={t.fmt.labelled(t.members.loadFailed, members.error.message)} onRetry={() => void members.refetch()} />
   const manage = can(current, 'members')
@@ -58,15 +58,67 @@ export function MembersPanel({ space }: { space: string }) {
   )
 }
 
+// A space an administrator switched off cannot be opened, so its members cannot be
+// listed; the server still lets a member leave it (it only touches the membership).
+function DisabledSpace({ space }: { space: SpaceInfo }) {
+  const userId = useSession().data?.user?.id
+  const remove = useRemoveMember(space.id)
+  const [asking, setAsking] = useState(false)
+  const [error, setError] = useState('')
+  // An administrator who is not a member has nothing to leave; neither has the owner of a personal space.
+  const canLeave = !space.personal && space.role !== '' && userId !== undefined
+  const leave = async () => {
+    setError('')
+    try {
+      await remove.mutateAsync(userId!)
+      toast.success(t.members.left)
+    } catch (e) {
+      setError(memberError(e))
+    }
+    setAsking(false)
+  }
+  return (
+    <div className="space-y-4">
+      <SettingsNote>{t.spaces.disabledTitle}</SettingsNote>
+      {canLeave && (
+        <>
+          <p className="text-sm text-muted-foreground">{t.members.disabledLeaveHelp}</p>
+          <FormMessage>{error}</FormMessage>
+          <Button type="button" variant="outline" size="sm" onClick={() => setAsking(true)}>
+            {t.members.leave}
+          </Button>
+          <AlertDialog open={asking} onOpenChange={setAsking}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{t.members.leaveTitle}</AlertDialogTitle>
+                <AlertDialogDescription>{t.members.leaveHelp(space.name)}</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{t.members.cancel}</AlertDialogCancel>
+                <AlertDialogAction variant="destructive" onClick={() => void leave()}>
+                  {t.members.leaveConfirm}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </>
+      )}
+    </div>
+  )
+}
+
 function MemberList({ space, members, manage }: { space: SpaceInfo; members: Member[]; manage: boolean }) {
   const qc = useQueryClient()
   const setRole = useSetMemberRole(space.id)
   const remove = useRemoveMember(space.id)
   const [error, setError] = useState('')
   const [asking, setAsking] = useState<Member | null>(null)
+  // An owner giving up their own ownership is asked first: they cannot take it back.
+  const [demoting, setDemoting] = useState<{ member: Member; role: SpaceRole } | null>(null)
 
-  const change = async (m: Member, role: SpaceRole) => {
+  const change = async (m: Member, role: SpaceRole, confirmed = false) => {
     if (role === m.role) return
+    if (m.you && m.role === 'owner' && !confirmed) return setDemoting({ member: m, role })
     setError('')
     try {
       putMember(qc, space.id, await setRole.mutateAsync({ user: m.userId, role }))
@@ -126,6 +178,27 @@ function MemberList({ space, members, manage }: { space: SpaceInfo; members: Mem
           </li>
         ))}
       </ul>
+      <AlertDialog open={demoting !== null} onOpenChange={(o) => !o && setDemoting(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t.members.demoteTitle}</AlertDialogTitle>
+            <AlertDialogDescription>{demoting ? t.members.demoteHelp(space.name, t.roles[demoting.role]) : ''}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t.members.cancel}</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                const d = demoting
+                setDemoting(null)
+                if (d) void change(d.member, d.role, true)
+              }}
+            >
+              {t.members.demoteConfirm}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog open={asking !== null} onOpenChange={(o) => !o && setAsking(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>

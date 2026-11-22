@@ -39,6 +39,7 @@ export default function SettingsRoute() {
     hasSpace: !!space,
     canRead: can(current, 'read'),
     canWrite: can(current, 'write'),
+    disabled: current?.disabled === true,
   }
   const shown = visibleSections(visibility)
   const section = resolveSection(requested, visibility)
