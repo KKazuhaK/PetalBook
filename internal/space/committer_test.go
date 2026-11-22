@@ -67,8 +67,9 @@ func TestCommitAfterQuietPeriod(t *testing.T) {
 		rev = n.Rev
 	}
 	eventually(t, "commit after the quiet period", 10*time.Second, func() bool { return len(commits(t, root)) == 2 })
-	// Longer than the quiet period: nothing else is committed.
-	time.Sleep(1500 * time.Millisecond)
+	// Twice the quiet period: a committer that started another one after its
+	// own commit would have made it by then.
+	time.Sleep(2 * time.Second)
 	log := commits(t, root)
 	if len(log) != 2 || log[0] != "Add 暮雪" {
 		t.Fatalf("commits %q", log)
@@ -117,8 +118,10 @@ func TestCommitAfterQuietPeriod(t *testing.T) {
 func TestCommitAfterMaximumAgeEvenWhileWriting(t *testing.T) {
 	needGit(t)
 	root := t.TempDir()
-	// Never quiet for 300 ms, but a commit is due 400 ms after the first write.
-	s := openAt(t, root, func(o *Options) { o.CommitIdle, o.CommitMax = 300*time.Millisecond, 400*time.Millisecond })
+	// A commit is due 400 ms after the first write. The quiet period is far
+	// longer than any gap between the saves, even on a slow disk, so the
+	// commit can only come from the maximum age.
+	s := openAt(t, root, func(o *Options) { o.CommitIdle, o.CommitMax = 5*time.Second, 400*time.Millisecond })
 	eventually(t, "initial commit", 5*time.Second, func() bool { return len(commits(t, root)) >= 1 })
 	base := len(commits(t, root))
 	p := mustCreate(t, s, "", meta("title", "长写"), "0")
