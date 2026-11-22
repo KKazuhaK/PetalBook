@@ -549,6 +549,15 @@ null, blank text and an empty list are left out, as is anything inside a list
 that is not a plain value. Without `props=1` the summary is as small as it
 was.
 
+`partialProps` comes with `props` and lists, in header order, the keys whose
+value in `props` is not exactly what the file holds: text that was cut, a list
+that was cut or lost an element, a value that is an object (it has no entry in
+`props` at all), a number JSON cannot say, a key beyond the first 200. It is
+left out when there are none. Such a key must not be written back from the
+copy: a client shows it as it is and leaves it to be changed by opening the
+page. A key whose value is null, blank text or an empty list has nothing to
+lose and is not listed.
+
 ```json
 {
   "id": "01JD3K8Q7Z",
@@ -724,7 +733,9 @@ them, and the body does not travel. The table view's cells use it.
 list, an object). A value that is `null`, blank text or an empty list removes
 the key, as `unset` does; `false` and `0` are values. A key that is new goes
 at the end of the header; a key that is in the file keeps its place. A date
-written `2026-11-22` is written to the file as a YAML date. The keys are any
+written `2026-11-22` (a real date, exactly `YYYY-MM-DD`) is written to the file
+as a YAML date; text that only looks like one (`2026-13-45`, `2026-1-5`) is
+written as a quoted string, and the file never gets an explicit `!!` tag. The keys are any
 that are not built in (`id`, `title`, `subtitle`, `source`, `tags`,
 `created`, `type`: save the page to change those) and not reserved (`publish`,
 `slug`); at most 200 keys at once, none both set and unset. A change that
@@ -933,7 +944,13 @@ A folder takes the type of the nearest folder above it that is bound (the
 root, `""`, may be bound too); a page whose header has a `type` has that.
 Renaming or moving a folder changes its bindings, and those of the folders in
 it, in the same commit; deleting one removes them. Other settings an entry has
-stay.
+stay. The move and the change of the bindings are one change: if the server
+stops between the two, it finishes the bindings when it starts again, and if
+the bindings cannot be written the folder is not moved and the request fails.
+A folder moved onto a place that still has an entry from before replaces that
+entry; a folder written twice in `space.yml` counts as its last entry, and
+removing a binding removes all of them. Comments in `space.yml` and `tags.yml`
+stay, also in a file that has nothing else.
 
 Limits: a space has at most 100 types; a type file is at most 256 KiB and has
 at most 200 fields; a field key is 1 to 64 bytes, has no control character
@@ -942,7 +959,9 @@ and no `:`, and is not `id`, `title`, `subtitle`, `source`, `tags`, `created`,
 bytes each, none blank, none twice; titles are one line of at most 200 bytes;
 a type name is 1 to 100 bytes, not starting with a dot or ending in a dot or
 space, with none of `< > : " / \ | ? *`; two names that differ only in case
-are one name.
+are one name. The key rules are for a field that is new: a field the file
+already has keeps its key whatever it is (written by hand, say), and a request
+may list it as it is.
 
 A type file or `space.yml` that someone damaged by hand (not JSON or YAML, not
 an object, too large, a link) is never overwritten: a request that would
@@ -956,6 +975,7 @@ read binds nothing. Moving or deleting a folder is not stopped by one.
 {
   "name": "task",
   "title": "任务",
+  "rev": "9c2f…",
   "fields": [
     {"key": "status", "title": "状态", "kind": "select", "options": ["todo", "doing", "done"],
      "schema": {"title": "状态", "type": "string", "enum": ["todo", "doing", "done"]}},
@@ -964,7 +984,12 @@ read binds nothing. Moving or deleting a folder is not stopped by one.
 }
 ```
 
-`title` is `""` when the file gives none (show the name or key). `options` is
+`rev` is the Git blob id of the type's file, as the `rev` of a page is: it
+changes whenever the file does, and a change or a delete of the type is made
+from it (`baseRev`, below). A file too large or not a regular file has the
+`rev` `"unreadable"`. `title` is `""` when the file gives none or gives
+something that is not text (show the name or key); a `title` that is not text
+stays in the file when a request leaves the title empty. `options` is
 there for `select` and `multiselect`. `schema` is the field's schema as the
 file has it. A type whose file cannot be used is
 `{"name": "…", "title": "", "fields": [], "error": "…"}` and the error says
@@ -988,11 +1013,16 @@ Needs `manage`. Makes the type, or changes it. The request is the whole of
 what the type is to be:
 
 ```json
-{"title": "任务", "fields": [
+{"baseRev": "9c2f…", "title": "任务", "fields": [
   {"key": "status", "title": "状态", "kind": "select", "options": ["todo", "doing", "done"]},
   {"key": "points", "kind": "number"}
 ]}
 ```
+
+`baseRev` is the `rev` of the type the request was made from, and `""` or
+absent to make a type that is not there yet. When the type is not as that says
+(changed, made or removed since) nothing is written and the answer is `409
+conflict`.
 
 The fields are the type's fields, in this order: one the type has that is not
 listed is removed from the type (pages keep the values; the app shows them as
@@ -1007,14 +1037,21 @@ is removing one and adding another; the pages are not rewritten. `200` with
 the type.
 
 Errors: `400 invalid` for anything above that is out of limits or malformed,
-and for a file that has to be fixed by hand; `409 exists` when another name
+and for a file that has to be fixed by hand; `409 conflict` when `baseRev` is
+not the file's current rev, or the type is there and `baseRev` is empty, or
+the type is not there and `baseRev` is not: `{"error": "conflict", "message":
+"…", "current": {/* type */}}`, `current` being the type as it is now (absent
+when it is gone); `409 exists` when another name
 differs from `{name}` only in case. The change is journaled and committed like
 any other.
 
-### `DELETE /api/spaces/{space}/types/{name}`
+### `DELETE /api/spaces/{space}/types/{name}?baseRev=…`
 
 Needs `manage`. Removes the file and, in the same commit, every binding to the
-type. The headers of pages that name the type are not touched. `204`;
+type. `baseRev` is the `rev` of the type the request was made from, as for
+`PUT`; `409 conflict` (with `current`, as there) when it is not the file's
+current rev. For a type whose file is gone and only bindings are left, it is
+`""`. The headers of pages that name the type are not touched. `204`;
 `404 not_found` when there is no such type and no folder is bound to it. The
 file of a type that cannot be read can be deleted too. Deleting a folder, not a
 file, in its place is `400 invalid`.

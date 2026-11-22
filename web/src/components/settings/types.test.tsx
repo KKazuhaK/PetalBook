@@ -125,6 +125,7 @@ describe('the types section: someone who manages the space', () => {
     await settle(() => puts().length === 1, 'the request')
     expect(puts()[0].url).toContain('/types/%E6%96%87%E6%A1%88')
     expect(lastPut()).toEqual({
+      baseRev: '',
       title: '写作',
       fields: [
         { key: '阶段', title: '写作阶段', kind: 'select', options: ['草稿', '定稿'] },
@@ -170,9 +171,11 @@ describe('the types section: someone who manages the space', () => {
     await click(button(tp.types.addField))
     await type(rowsOf()[2].querySelectorAll('input')[0], 'owner')
     expect(fieldKeys()).toEqual(['due', 'status', 'owner'])
+    const rev = (m!.server.handle('GET', '/api/spaces/default/types', undefined, null).body as { types: { rev: string }[] }).types[0].rev
     await click(button(tp.types.save))
     await settle(() => puts().length === 1, 'the request')
     expect(lastPut()).toEqual({
+      baseRev: rev,
       title: '任务单',
       fields: [
         { key: 'due', title: '截止', kind: 'text' },
@@ -206,9 +209,27 @@ describe('the types section: someone who manages the space', () => {
     await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
     await click([...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent === tp.types.deleteConfirm))
     await settle(() => typeRow('task') === null, 'the type gone')
-    expect(m!.requests.some((r) => r.method === 'DELETE' && r.url.endsWith('/types/task'))).toBe(true)
+    expect(m!.requests.some((r) => r.method === 'DELETE' && /\/types\/task\?baseRev=[0-9a-f]{40}$/.test(r.url))).toBe(true)
     await settle(() => dialog().querySelector('li[data-binding]') === null, 'the binding gone')
     expect(panelText()).toContain(tp.types.none)
+  })
+
+  it('does not save over a change someone else made meanwhile: it says so, and the type is read again', async () => {
+    await openSingle()
+    await click(typeRow('task')!.querySelector('button'))
+    await type(dialog().querySelector<HTMLInputElement>('#type-title')!, '我的标题')
+    // Someone else changes the type after the form was opened.
+    const rev = (m!.server.handle('GET', '/api/spaces/default/types', undefined, null).body as { types: { rev: string }[] }).types[0].rev
+    expect(send(m!.server, 'PUT', '/types/task', { baseRev: rev, title: '别人的标题', fields: TASK.fields.map((f) => ({ key: f.key })) }).status).toBe(200)
+    await click(button(tp.types.save))
+    await settle(() => document.body.textContent!.includes(tp.types.changedMeanwhile), 'the message')
+    expect(puts().filter((r) => r.url.includes('/types/task')).length).toBeGreaterThan(0)
+    // The form is made again from the type as it is now, not from what was typed.
+    await settle(() => typeRow('task')!.textContent!.includes('别人的标题'), 'the type read again')
+    expect(m!.server.handle('GET', '/api/spaces/default/types', undefined, null).body).toMatchObject({ types: [{ title: '别人的标题' }] })
+    // The server refuses a change from the old rev too.
+    const old = rev
+    expect(send(m!.server, 'PUT', '/types/task', { baseRev: old, title: 'x', fields: [] }).status).toBe(409)
   })
 
   it('takes a binding away from the list of bindings', async () => {

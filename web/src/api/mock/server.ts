@@ -925,7 +925,7 @@ export function createMockServer(options: MockOptions = {}) {
         throw new HttpError(400, 'invalid', '类型名不合法')
       }
       if (method === 'DELETE') {
-        st.deleteType(name)
+        st.deleteType(name, url.searchParams.get('baseRev') ?? '')
         return { status: 204 }
       }
       return { status: 200, body: st.putType(name, body as never) }

@@ -64,12 +64,14 @@ export const propsZhCN = {
     create: '创建',
     saved: '类型已保存',
     saveFailed: '没能保存类型',
+    changedMeanwhile: '没有保存：这个类型在这期间被别人改过了。已重新载入含他人改动的版本，表单里你改的内容已被丢弃，请重新改一次。',
     delete: '删除类型',
     deleteTitle: (name: string) => `删除类型“${name}”？`,
     deleteHelp: (folders: number) => (folders > 0 ? `页面里已经写好的值不会动。绑定了这个类型的 ${folders} 个文件夹会解除绑定。` : '页面里已经写好的值不会动。'),
     deleteConfirm: '删除',
     deleted: '类型已删除',
     deleteFailed: '没能删除类型',
+    deleteChanged: '没有删除：这个类型在这期间被别人改过了，已重新载入。',
   },
   bindings: {
     title: '绑定了类型的文件夹',
@@ -104,6 +106,7 @@ export const propsZhCN = {
     cellLabel: (column: string, page: string) => `${page}的${column}`,
     conflict: (page: string) => `“${page}”刚刚在别处被改过，这一行已经刷新，请再改一次。`,
     changeFailed: (page: string) => `没能修改“${page}”`,
+    partial: '这个值在这里只显示了一部分（太长，或不是普通的值），请打开页面来修改。',
   },
   filter: {
     add: '添加筛选',

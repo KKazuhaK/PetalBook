@@ -105,6 +105,50 @@ export function propsOfMeta(meta: PageMeta): Record<string, unknown> {
   return out
 }
 
+// The keys of a header whose copy in `propsOfMeta` is not the whole of the value
+// (docs/api.md, "Page summary", `partialProps`): text that was cut, a list that was
+// cut or lost an element, an object, a key past the 200th. The server says the same
+// in a listing; this is for a row a change has just brought.
+export function partialPropsOf(meta: PageMeta): string[] {
+  const plain = (v: unknown): v is string | number | boolean => (typeof v === 'string' && v.trim() !== '') || typeof v === 'number' || typeof v === 'boolean'
+  const whole = (v: string | number | boolean) => typeof v !== 'string' || Array.from(v).length <= 300
+  const out: string[] = []
+  let held = 0
+  for (const [k, v] of Object.entries(meta)) {
+    if (BUILTIN_KEYS.has(k)) continue
+    if (held >= 200) {
+      out.push(k)
+      continue
+    }
+    if (Array.isArray(v)) {
+      let lossy = false
+      let kept = 0
+      for (const e of v) {
+        if (kept === 100) {
+          lossy = true
+          break
+        }
+        if (plain(e)) {
+          kept++
+          if (!whole(e)) lossy = true
+        } else lossy = true
+      }
+      if (kept === 0) {
+        if (v.length > 0) out.push(k)
+        continue
+      }
+      held++
+      if (lossy) out.push(k)
+    } else if (plain(v)) {
+      held++
+      if (!whole(v)) out.push(k)
+    } else if (v !== null && v !== undefined && typeof v !== 'string') {
+      out.push(k) // an object
+    }
+  }
+  return out
+}
+
 // A value as one line of text, for a cell and for a key that is not in the type.
 export function showValue(v: unknown): string {
   if (v === undefined || v === null) return ''

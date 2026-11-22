@@ -10,7 +10,7 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import { viewKey } from '@/lib/listView'
 import { t } from '@/i18n'
 import { tp } from '@/i18n/props'
-import { byLabel, click, installDomShims, locationText, mount, settle, shareSpace, type, type Mounted } from '@/testing/harness'
+import { byLabel, click, installDomShims, locationText, mount, press, settle, shareSpace, type, type Mounted } from '@/testing/harness'
 import { columnsOf, nextSort, tableSortOf } from './TableView'
 
 // The table view of a folder that has a type, against the mock server.
@@ -283,7 +283,10 @@ describe('editing a cell', () => {
     expect(afterFirst).not.toBe(ids.B.rev)
     // The next change uses the rev the answer brought: no 409.
     await settle(() => !cell('B', 'f:points').querySelector('input')!.hasAttribute('readonly'), 'the row free again')
-    await type(cell('B', 'f:points').querySelector('input')!, '20')
+    const points = () => cell('B', 'f:points').querySelector('input')!
+    await act(async () => points().focus())
+    await type(points(), '20')
+    await press(points(), 'Enter')
     await settle(() => patches().length === 2, 'the second request')
     expect(JSON.parse(patches()[1].body!)).toEqual({ baseRev: afterFirst, set: { points: 20 } })
     await settle(() => m!.server.peek(ids.B.id)!.meta.points === 20, 'the number')
@@ -293,6 +296,86 @@ describe('editing a cell', () => {
     expect(tableReads()).toBe(before)
     // The page's other keys, its title and its text, were left alone.
     expect(m!.server.peek(ids.B.id)).toMatchObject({ body: 'B 正文\n', meta: { title: 'B', status: 'done', due: '2026-01-01', labels: ['b', 'a'] } })
+  })
+
+  it('sends a number once, when the person leaves the cell or presses Enter, and not at all for Escape or for what is not a number', async () => {
+    const ids = await openWork()
+    await showTable()
+    const points = () => cell('C', 'f:points').querySelector('input')!
+    const focus = () => act(async () => points().focus())
+    const blur = () => act(async () => points().blur())
+    // Typed in pieces: nothing goes to the server while the person is still typing.
+    await focus()
+    for (const text of ['1', '12', '12.', '12.5', '12.55']) await type(points(), text)
+    await new Promise((r) => setTimeout(r, 30))
+    expect(patches()).toHaveLength(0)
+    expect(points().value).toBe('12.55')
+    await blur()
+    await settle(() => patches().length === 1, 'the request when the cell is left')
+    expect(JSON.parse(patches()[0].body!)).toEqual({ baseRev: ids.C.rev, set: { points: 12.55 } })
+    await settle(() => m!.server.peek(ids.C.id)!.meta.points === 12.55, 'the number')
+    await settle(() => !points().hasAttribute('readonly'), 'the row free again')
+    // Enter commits too.
+    await focus()
+    await type(points(), '3')
+    await press(points(), 'Enter')
+    await settle(() => patches().length === 2, 'the request for Enter')
+    expect(JSON.parse(patches()[1].body!).set).toEqual({ points: 3 })
+    await settle(() => m!.server.peek(ids.C.id)!.meta.points === 3 && !points().hasAttribute('readonly'), 'the second number')
+    // Escape drops what was typed and keeps the value.
+    await focus()
+    await type(points(), '99')
+    await press(points(), 'Escape')
+    await new Promise((r) => setTimeout(r, 30))
+    expect(patches()).toHaveLength(2)
+    expect(points().value).toBe('3')
+    // Text that is no number, and the value it already has, send nothing.
+    await focus()
+    await type(points(), 'abc')
+    await blur()
+    await focus()
+    await type(points(), '3')
+    await blur()
+    await new Promise((r) => setTimeout(r, 30))
+    expect(patches()).toHaveLength(2)
+    expect(points().value).toBe('3')
+    // Emptied, it takes the key out.
+    await focus()
+    await type(points(), '')
+    await blur()
+    await settle(() => patches().length === 3, 'the request for an emptied cell')
+    expect(JSON.parse(patches()[2].body!)).toMatchObject({ unset: ['points'] })
+  })
+
+  it('shows a value the listing holds only in part as it is, with a hint, and changes nothing there', async () => {
+    // Made behind the table's back: an object where a number goes, cut text, a list that lost an element.
+    const long = '字'.repeat(301)
+    m = await mount(shell, {
+      entries: (server) => {
+        seed(server)
+        const made = sender(server)('POST', '/pages', { folder: 'Work', meta: { title: 'E', points: { a: 1 }, note: long, labels: ['a', { x: 1 }], status: 'done' }, body: '' })
+        expect(made.status).toBe(201)
+        return ['/s/default/f/Work']
+      },
+    })
+    await settle(() => byLabel(t.view.list) !== null, 'the listing')
+    await showTable()
+    await settle(() => rowEls().some((r) => r.querySelector('[data-col="title"]')!.textContent === 'E'), 'the row')
+    for (const col of ['f:points', 'f:note', 'f:labels']) {
+      const c = cell('E', col)
+      expect(c.querySelector('[data-partial]'), col).not.toBeNull()
+      expect(c.querySelector('[data-partial]')!.getAttribute('title')).toBe(tp.table.partial)
+      expect(c.querySelector('input, button, select'), col).toBeNull()
+    }
+    // What is whole in the same row is still editable, and so are the other rows.
+    expect(cell('E', 'f:status').querySelector('select')).not.toBeNull()
+    expect(cell('B', 'f:points').querySelector('input')).not.toBeNull()
+    expect(rowOf('B').querySelector('[data-partial]')).toBeNull()
+    expect(patches()).toHaveLength(0)
+    // Changing the whole key does not touch the others: the object stays as it is.
+    await type(cell('E', 'f:status').querySelector('select')!, 'todo')
+    await settle(() => patches().length === 1, 'the request')
+    expect(JSON.parse(patches()[0].body!).set).toEqual({ status: 'todo' })
   })
 
   it('edits a date, a checkbox and a list of choices, and emptying a cell removes the key', async () => {
@@ -395,7 +478,7 @@ describe('a long folder', () => {
 describe('what the table is made of', () => {
   it('the columns follow the type, and a type that is missing leaves the title, tags and update time', () => {
     expect(columnsOf(undefined).map((c) => c.id)).toEqual(['title', 'tags', 'updated'])
-    const cols = columnsOf({ name: 'x', title: '', fields: [{ key: 'a', title: '', kind: 'text' }, { key: 'b', title: 'B', kind: 'number' }] })
+    const cols = columnsOf({ name: 'x', title: '', rev: '', fields: [{ key: 'a', title: '', kind: 'text' }, { key: 'b', title: 'B', kind: 'number' }] })
     expect(cols.map((c) => [c.id, c.label, c.sort])).toEqual([
       ['title', tp.table.title, 'title'],
       ['f:a', 'a', 'prop:a'],

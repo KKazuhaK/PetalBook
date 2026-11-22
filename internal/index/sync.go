@@ -544,17 +544,17 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 		return "", err
 	}
 	args := []any{e.ID, e.Path, e.Folder, e.Title, e.Subtitle, e.Source, b2i(e.Untitled), strings.ToLower(e.Title), e.Label, e.Type,
-		tagsJSON(e.Tags), e.Created, e.CreatedKey, e.MtimeNs, e.Size, e.Rev, e.Excerpt, e.PropsJSON}
+		tagsJSON(e.Tags), e.Created, e.CreatedKey, e.MtimeNs, e.Size, e.Rev, e.Excerpt, e.PropsJSON, e.PartialJSON}
 	if found {
 		if err := w.deleteRowKeepPage(rowid); err != nil {
 			return "", err
 		}
 		_, err = w.exec(`UPDATE pages SET id=?, path=?, folder=?, title=?, subtitle=?, source=?, untitled=?, title_key=?, label=?, type=?,
-			tags=?, created=?, created_key=?, mtime_ns=?, size=?, rev=?, excerpt=?, props=? WHERE rowid = ?`, append(args, rowid)...)
+			tags=?, created=?, created_key=?, mtime_ns=?, size=?, rev=?, excerpt=?, props=?, partial=? WHERE rowid = ?`, append(args, rowid)...)
 	} else {
 		var res sql.Result
 		res, err = w.exec(`INSERT INTO pages(id, path, folder, title, subtitle, source, untitled, title_key, label, type,
-			tags, created, created_key, mtime_ns, size, rev, excerpt, props) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, args...)
+			tags, created, created_key, mtime_ns, size, rev, excerpt, props, partial) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, args...)
 		if err == nil {
 			rowid, err = res.LastInsertId()
 		}

@@ -78,6 +78,10 @@ func typesScenario(t *testing.T, base string, owner, editor, viewer caller, refu
 	if code != 200 || r["name"] != "task" || r["title"] != "任务" {
 		t.Fatalf("PUT type: %d %v", code, r)
 	}
+	trev, _ := r["rev"].(string)
+	if len(trev) != 40 {
+		t.Errorf("a type has the rev of its file: %v", r["rev"])
+	}
 	fields := r["fields"].([]any)
 	f0 := fields[0].(map[string]any)
 	if len(fields) != 4 || f0["key"] != "status" || f0["title"] != "状态" || f0["kind"] != "select" || !reflect.DeepEqual(f0["options"], []any{"todo", "doing", "done"}) ||
@@ -281,15 +285,38 @@ func typesScenario(t *testing.T, base string, owner, editor, viewer caller, refu
 	}
 
 	// A type can be edited: only the keys the server knows change.
-	code, r = owner("PUT", base+"/types/task", map[string]any{"title": "任务", "fields": []any{
+	code, r = owner("PUT", base+"/types/task", map[string]any{"baseRev": trev, "title": "任务", "fields": []any{
 		map[string]any{"key": "status", "title": "状态", "options": []any{"todo", "doing", "done", "dropped"}},
 		map[string]any{"key": "points"},
 	}})
 	if code != 200 || len(r["fields"].([]any)) != 2 || !reflect.DeepEqual(r["fields"].([]any)[0].(map[string]any)["options"], []any{"todo", "doing", "done", "dropped"}) {
 		t.Errorf("%d %v", code, r)
 	}
+	newRev, _ := r["rev"].(string)
+	if newRev == trev || len(newRev) != 40 {
+		t.Errorf("the rev did not change: %v", r["rev"])
+	}
+	// The old rev is stale now: 409 with the type as it is, for PUT and DELETE.
+	for _, c := range []struct {
+		method, path string
+		body         any
+	}{
+		{"PUT", "/types/task", map[string]any{"baseRev": trev, "title": "stale"}},
+		{"PUT", "/types/task", map[string]any{"title": "no rev"}},
+		{"DELETE", "/types/task?baseRev=" + trev, nil},
+		{"DELETE", "/types/task", nil},
+	} {
+		code, r := owner(c.method, base+c.path, c.body)
+		cur, _ := r["current"].(map[string]any)
+		if code != 409 || r["error"] != "conflict" || cur["name"] != "task" || cur["rev"] != newRev {
+			t.Errorf("%s %s: %d %v", c.method, c.path, code, r)
+		}
+	}
+	if code, r := owner("PUT", base+"/types/fresh", map[string]any{"baseRev": "0123456789012345678901234567890123456789"}); code != 409 || r["error"] != "conflict" || r["current"] != nil {
+		t.Errorf("a type that is not there, from a rev: %d %v", code, r)
+	}
 	// Deleting a type takes the bindings; the pages keep what their headers say.
-	if code, _ := owner("DELETE", base+"/types/task", nil); code != 204 {
+	if code, _ := owner("DELETE", base+"/types/task?baseRev="+newRev, nil); code != 204 {
 		t.Fatalf("%d", code)
 	}
 	if code, r := owner("DELETE", base+"/types/task", nil); code != 404 || r["error"] != "not_found" {
@@ -352,5 +379,32 @@ func TestDamagedTypeFileIsReportedNotReplaced(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(file); string(b) != `{"properties": {` {
 		t.Errorf("the file was replaced: %s", b)
+	}
+}
+
+// A summary says which properties the listing holds only in part, so that a
+// table does not write a shortened copy back.
+func TestListingSaysWhichPropsArePartial(t *testing.T) {
+	f := newFixture(t)
+	code, r, raw := f.do("POST", base+"/pages", map[string]any{"meta": map[string]any{"title": "P", "status": "todo",
+		"note": strings.Repeat("字", 301), "obj": map[string]any{"a": 1}}, "body": "x\n"})
+	if code != 201 {
+		t.Fatalf("%d %s", code, raw)
+	}
+	f.do("POST", base+"/pages", map[string]any{"meta": map[string]any{"title": "Q", "status": "done"}, "body": "x\n"})
+	code, r, raw = f.do("GET", base+"/pages?props=1&sort=title", nil)
+	items, _ := r["items"].([]any)
+	if code != 200 || len(items) != 2 {
+		t.Fatalf("%d %s", code, raw)
+	}
+	p, q := items[0].(map[string]any), items[1].(map[string]any)
+	if !reflect.DeepEqual(p["partialProps"], []any{"note", "obj"}) {
+		t.Errorf("partialProps: %v", p["partialProps"])
+	}
+	if _, has := q["partialProps"]; has {
+		t.Errorf("a page with nothing partial has no partialProps: %v", q)
+	}
+	if code, r, _ = f.do("GET", base+"/pages?sort=title", nil); code != 200 || strings.Contains(fmt.Sprint(r["items"]), "partialProps") {
+		t.Errorf("without props=1: %d %v", code, r)
 	}
 }

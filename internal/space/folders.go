@@ -198,6 +198,10 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	for _, p := range append(append([]string{}, oldPaths...), newPaths...) {
 		recs = append(recs, jrec{Op: "t", Path: p})
 	}
+	// The bindings of the folder (and of the folders in it) follow it: that is
+	// part of the move, so it is journaled with it and a crash between the
+	// rename and the edit of space.yml is finished at recovery (see "b").
+	recs = append(recs, jrec{Op: "b", From: canonFrom, To: target})
 	if err := tx.record(recs...); err != nil {
 		return "", err
 	}
@@ -227,7 +231,23 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	tx.touch(append(append([]string{}, oldPaths...), newPaths...)...)
 
 	// What was bound to the folder, and to the folders in it, follows it.
+	//
+	// If that edit fails the folder must not stay at its new place with its
+	// bindings at the old one while the request reports failure. In a space that
+	// follows a remote the failed change is undone as a whole. In a local space
+	// nothing undoes it, so the rename is taken back here: a rename moves
+	// nothing but the name, so undoing it cannot lose a file, and the edit of
+	// space.yml is atomic, so either it was made (and then it did not fail) or
+	// it is as it was. (Finishing the edit instead would only repeat what just
+	// failed.) Should the rename not go back either, the "b" record above has
+	// the next start move the bindings to where the folder now is.
 	if err := s.editBindings(tx, func(root *yaml.Node) (bool, error) { return rebind(root, canonFrom, target) }); err != nil {
+		if !tx.remote {
+			tx.runUndo()
+			if tx.undoFailed != "" {
+				err = errors.Join(err, errors.New(tx.undoFailed))
+			}
+		}
 		return "", err
 	}
 
@@ -292,6 +312,11 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 			return struct{}{}, ErrNoFolder
 		}
 		if err != nil {
+			return struct{}{}, err
+		}
+		// Journaled with the deletion: the bindings of what is gone go too, at
+		// recovery if the crash comes before the edit of space.yml (see "u").
+		if err := tx.record(jrec{Op: "u", Path: canon}); err != nil {
 			return struct{}{}, err
 		}
 		abs, err := s.abs(canon)
@@ -371,6 +396,9 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 				return (folder == canon || strings.HasPrefix(folder, canon+"/")) && s.fileGone(folder)
 			})
 		}); err != nil {
+			// Pages are deleted for good in a local space, so there is nothing
+			// to take back; the error says so (see the ids returned), and the
+			// "u" record has the next start drop the bindings of what is gone.
 			return struct{}{}, err
 		}
 		if tx.remote {

@@ -608,6 +608,16 @@ type txn struct {
 	undoFailed string
 }
 
+// runUndo takes back the steps of the change that the file system needs undone
+// (see undo), last first. A local space runs it itself when a change fails
+// after the folder it moved has moved.
+func (t *txn) runUndo() {
+	for i := len(t.undo) - 1; i >= 0; i-- {
+		t.undo[i]()
+	}
+	t.undo = nil
+}
+
 // record journals what the change is about to do, as the change of its author.
 func (t *txn) record(recs ...jrec) error { return t.s.cm.Record(t.by, recs...) }
 

@@ -3,7 +3,7 @@
 // order, untitled pages, cursors, draft semantics), simple about the rest.
 
 import type { DraftReceipt, HistoryList, Page, PageDraft, PageMeta, PageSummary, PageVersion, TagColor, VersionChange } from '../types.ts'
-import { BUILTIN_KEYS, RESERVED_KEYS, propsOfMeta } from '../../lib/pageTypes.ts'
+import { BUILTIN_KEYS, RESERVED_KEYS, partialPropsOf, propsOfMeta } from '../../lib/pageTypes.ts'
 import { matches, parseFilter, sortValue } from './propQuery.ts'
 import { createTypeBook } from './typeBook.ts'
 import { TAG_COLORS, parseTagColor } from '../../lib/tagColors.ts'
@@ -237,7 +237,7 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
       ...(typeof p.meta.created === 'string' ? { created: p.meta.created } : {}),
       updated: rfc3339(p.updated),
       excerpt: excerptOf(p.body),
-      ...(withProps ? { props: propsOfMeta(p.meta), rev: p.rev } : {}),
+      ...(withProps ? { props: propsOfMeta(p.meta), rev: p.rev, ...(partialPropsOf(p.meta).length ? { partialProps: partialPropsOf(p.meta) } : {}) } : {}),
     }
   }
 
@@ -803,9 +803,9 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
       guard()
       return book.put(name, input)
     },
-    deleteType: (name: string) => {
+    deleteType: (name: string, baseRev: string) => {
       guard()
-      book.remove(name)
+      book.remove(name, baseRev)
     },
     bindFolder: (folder: string, type: string) => {
       guard()

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { ExternalLink, X } from 'lucide-react'
 import { parse, stringify } from 'yaml'
 import { Input } from '@/components/ui/input'
@@ -23,6 +23,11 @@ export interface ControlProps {
   id?: string
   // The accessible name of the control.
   label: string
+  // When a typed value is handed to `onChange`: "change" at every keystroke that
+  // makes a value (the editor's draft takes them as they come), "blur" only when
+  // the person leaves the box or presses Enter, and never when they press
+  // Escape (a table cell: each change there is a request to the server).
+  commit?: 'change' | 'blur'
 }
 
 // What marks a value as not fitting; the controls call it so the rule is one.
@@ -136,10 +141,21 @@ export function DateControl({ field, value, onChange, readOnly, id, label, class
 
 // A number is typed as text, so that "1." and "-" can be on the way to one; the
 // header only gets a number, and a text that is not one is shown as wrong.
-export function NumberControl({ field, value, onChange, readOnly, id, label, className }: ControlProps & { className?: string }) {
+export function NumberControl({ field, value, onChange, readOnly, id, label, className, commit = 'change' }: ControlProps & { className?: string }) {
   const [typed, setTyped] = useState<string | null>(null)
+  // Escape leaves the box without handing anything over.
+  const cancelled = useRef(false)
   const shown = typed ?? (hasValue(value) ? showValue(value) : '')
   const wrong = typed !== null ? typed.trim() !== '' && !Number.isFinite(Number(typed)) : isWrong(field, value)
+  // What is typed, as the value it stands for: a number, undefined for nothing, null for text that is no number.
+  const valueOf = (text: string): number | undefined | null => (text.trim() === '' ? undefined : Number.isFinite(Number(text)) ? Number(text) : null)
+  const settle = () => {
+    if (typed === null) return
+    const next = valueOf(typed)
+    const same = next === undefined ? !hasValue(value) : next === value
+    if (next !== null && !same) onChange(next)
+    setTyped(null)
+  }
   return (
     <Input
       id={id}
@@ -152,10 +168,27 @@ export function NumberControl({ field, value, onChange, readOnly, id, label, cla
       onChange={(e) => {
         const text = e.target.value
         setTyped(text)
-        if (text.trim() === '') onChange(undefined)
-        else if (Number.isFinite(Number(text))) onChange(Number(text))
+        if (commit === 'change') {
+          const next = valueOf(text)
+          if (next !== null) onChange(next)
+        }
       }}
-      onBlur={() => setTyped(null)}
+      onKeyDown={
+        commit === 'blur'
+          ? (e) => {
+              if (e.key === 'Enter') e.currentTarget.blur()
+              else if (e.key === 'Escape') {
+                cancelled.current = true
+                e.currentTarget.blur()
+              }
+            }
+          : undefined
+      }
+      onBlur={() => {
+        if (commit === 'blur' && !cancelled.current) settle()
+        else setTyped(null)
+        cancelled.current = false
+      }}
     />
   )
 }

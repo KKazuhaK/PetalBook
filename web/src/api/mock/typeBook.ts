@@ -6,6 +6,7 @@
 import type { FieldKind, FolderBinding, PageType, TypeField, TypeInput } from '../types.ts'
 import { BUILTIN_KEYS, RESERVED_KEYS, folderTypeName } from '../../lib/pageTypes.ts'
 import { HttpError } from './store.ts'
+import { gitBlobId } from './sha1.ts'
 
 const MAX_TYPES = 100
 const MAX_FIELDS = 200
@@ -13,6 +14,7 @@ const KINDS: readonly string[] = ['text', 'longtext', 'select', 'multiselect', '
 
 const bytes = (s: string) => new TextEncoder().encode(s).length
 const invalid = (message: string) => new HttpError(400, 'invalid', message)
+const conflict = (current: StoredType | undefined) => new HttpError(409, 'conflict', '类型已被修改', current ? { current: view(current) } : undefined)
 
 interface StoredField {
   key: string
@@ -52,9 +54,13 @@ function schemaOf(f: StoredField): unknown {
   }
 }
 
+// The rev of a type: the blob id of what its file would say, "unreadable" for a damaged file.
+const revOf = (t: StoredType) => (t.error ? 'unreadable' : gitBlobId(JSON.stringify({ title: t.title, fields: t.fields.map((f) => [f.key, f.title, f.kind, f.options ?? null]) })))
+
 const view = (t: StoredType): PageType => ({
   name: t.name,
   title: t.title,
+  rev: revOf(t),
   fields: t.fields.map((f): TypeField => ({ key: f.key, title: f.title, kind: f.kind, ...(f.kind === 'select' || f.kind === 'multiselect' ? { options: [...(f.options ?? [])] } : {}), schema: schemaOf(f) })),
   ...(t.error ? { error: t.error } : {}),
 })
@@ -84,6 +90,8 @@ export function createTypeBook(folderExists: (path: string) => string | null) {
       if (same) throw new HttpError(409, 'exists', `已有一个叫 ${same} 的类型，名字只差大小写`)
       const old = types.get(name)
       if (old?.error) throw invalid('这个类型的文件坏了，要手动修好才能改')
+      // Made from the type as it is: a type that is there needs its rev, one that is not needs none.
+      if ((old ? revOf(old) : '') !== (input.baseRev ?? '')) throw conflict(old)
       if (!old && types.size >= MAX_TYPES) throw invalid(`一个空间最多 ${MAX_TYPES} 个类型`)
       if (typeof input.title !== 'string' && input.title !== undefined) throw invalid('title 要是字符串')
       const title = (input.title ?? '').trim()
@@ -93,12 +101,14 @@ export function createTypeBook(folderExists: (path: string) => string | null) {
       const seen = new Set<string>()
       const fields: StoredField[] = input.fields.map((f) => {
         const key = typeof f.key === 'string' ? f.key : ''
-        if (key === '' || bytes(key) > 64 || /[\p{Cc}:]/u.test(key) || BUILTIN_KEYS.has(key) || RESERVED_KEYS.has(key)) throw invalid(`字段的键 “${key}” 不能用`)
+        if (key === '') throw invalid('字段的键不能为空')
+        // Only a new field has its key checked: one the type has keeps its key as it is.
+        const before = old?.fields.find((x) => x.key === key)
+        if (!before && (bytes(key) > 64 || /[\p{Cc}:]/u.test(key) || BUILTIN_KEYS.has(key) || RESERVED_KEYS.has(key))) throw invalid(`字段的键 “${key}” 不能用`)
         if (seen.has(key)) throw invalid(`字段 “${key}” 写了两次`)
         seen.add(key)
         const ftitle = (f.title ?? '').trim()
         line('字段的显示名', ftitle)
-        const before = old?.fields.find((x) => x.key === key)
         const kind = (f.kind ?? before?.kind) as FieldKind | undefined
         if (!kind) throw invalid(`新字段 “${key}” 要写种类`)
         if (kind === 'other' ? before?.kind !== 'other' : !KINDS.includes(kind)) throw invalid(`字段 “${key}” 的种类不对`)
@@ -123,9 +133,11 @@ export function createTypeBook(folderExists: (path: string) => string | null) {
       return view(next)
     },
 
-    remove(name: string) {
+    remove(name: string, baseRev: string) {
       const bound = bindings.some((b) => b.type === name)
       if (!types.has(name) && !bound) throw new HttpError(404, 'not_found', '没有这个类型')
+      const old = types.get(name)
+      if ((old ? revOf(old) : '') !== baseRev) throw conflict(old)
       types.delete(name)
       bindings = bindings.filter((b) => b.type !== name)
     },

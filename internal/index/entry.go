@@ -28,6 +28,9 @@ type Entry struct {
 	// PropsJSON is the JSON object of the header's properties (see propsOf),
 	// "" for none.
 	PropsJSON string
+	// PartialJSON is the JSON array of the keys whose copy in PropsJSON is not
+	// the whole of the value (see propsOf), "" for none.
+	PartialJSON string
 
 	props []propRow
 
@@ -57,7 +60,12 @@ func BuildEntry(rel string, data []byte, mtimeNs int64) (*Entry, *page.Problem) 
 	if e.Tags == nil {
 		e.Tags = []string{}
 	}
-	e.props, e.PropsJSON = propsOf(m)
+	var partial []string
+	e.props, e.PropsJSON, partial = propsOf(m)
+	if len(partial) > 0 {
+		b, _ := json.Marshal(partial)
+		e.PartialJSON = string(b)
+	}
 	e.CreatedKey = mtimeNs
 	if t, err := time.Parse("2006-01-02", e.Created); err == nil {
 		e.CreatedKey = t.UnixNano()

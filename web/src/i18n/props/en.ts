@@ -66,12 +66,14 @@ export const propsEn: PropsMessages = {
     create: 'Create',
     saved: 'Type saved',
     saveFailed: 'Could not save the type',
+    changedMeanwhile: 'Not saved: the type was changed by someone else in the meantime. It has been loaded again with their change, and your edit is gone from the form; make it again.',
     delete: 'Delete type',
     deleteTitle: (name) => `Delete the type “${name}”?`,
     deleteHelp: (folders) => (folders > 0 ? `The values already written in pages are left alone. ${plural(folders, 'folder', 'folders')} using this type will lose the binding.` : 'The values already written in pages are left alone.'),
     deleteConfirm: 'Delete',
     deleted: 'Type deleted',
     deleteFailed: 'Could not delete the type',
+    deleteChanged: 'Not deleted: the type was changed by someone else in the meantime. It has been loaded again.',
   },
   bindings: {
     title: 'Folders with a type',
@@ -104,6 +106,7 @@ export const propsEn: PropsMessages = {
     cellLabel: (column, page) => `${column} of ${page}`,
     conflict: (page) => `“${page}” was just changed elsewhere. The row has been refreshed; make the change again.`,
     changeFailed: (page) => `Could not change “${page}”`,
+    partial: 'This value is only partly shown here (too long, or not a plain value). Open the page to change it.',
   },
   filter: {
     add: 'Add a filter',

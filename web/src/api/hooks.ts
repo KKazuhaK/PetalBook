@@ -8,7 +8,7 @@ import { spaceUrls } from '@/lib/urls'
 import { api, ApiError, spaceApi } from './client'
 import { parseTagColor } from '../lib/tagColors.ts'
 import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
-import { propsOfMeta } from '../lib/pageTypes.ts'
+import { partialPropsOf, propsOfMeta } from '../lib/pageTypes.ts'
 import type { BatchPagesInput, ConnectRemoteInput, CreatePageInput, ListParams, Member, Page, PageList, PatchPropsInput, Permission, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User } from './types'
 
 // Everything of one space is under ['space', id, …], so switching space never
@@ -593,17 +593,26 @@ function useTypesChanged() {
 export function useSaveType() {
   const space = useSpaceId()
   const changed = useTypesChanged()
-  return useMutation({ mutationFn: ({ name, input }: { name: string; input: TypeInput }) => spaceApi(space).putType(name, input), onSuccess: changed })
+  // A 409 means the type is not as it was opened: read it again.
+  return useMutation({ mutationFn: ({ name, input }: { name: string; input: TypeInput }) => spaceApi(space).putType(name, input), onSuccess: changed, onError: (e) => (e instanceof ApiError && e.code === 'conflict' ? void changed() : undefined) })
 }
 export function useDeleteType() {
   const space = useSpaceId()
   const changed = useTypesChanged()
-  return useMutation({ mutationFn: (name: string) => spaceApi(space).deleteType(name), onSuccess: changed })
+  return useMutation({ mutationFn: ({ name, baseRev }: { name: string; baseRev: string }) => spaceApi(space).deleteType(name, baseRev), onSuccess: changed, onError: (e) => (e instanceof ApiError && e.code === 'conflict' ? void changed() : undefined) })
 }
 export function useBindFolder() {
   const space = useSpaceId()
   const changed = useTypesChanged()
   return useMutation({ mutationFn: ({ folder, type }: { folder: string; type: string }) => spaceApi(space).bindFolder(folder, type), onSuccess: changed })
+}
+
+// A row with `partialProps` as given, left out when there are none (as the server does).
+function withPartial<T extends { partialProps?: string[] }>(row: T, partial: string[]): T {
+  const next = { ...row }
+  if (partial.length) next.partialProps = partial
+  else delete next.partialProps
+  return next
 }
 
 // Puts a page as the server has it now into the rows of every table that holds
@@ -614,7 +623,7 @@ export function putTableRow(qc: QueryClient, space: string, page: Page) {
     if (!prev || !prev.pages.some((p) => p.items.some((i) => i.id === page.id))) return prev
     return {
       ...prev,
-      pages: prev.pages.map((p) => ({ ...p, items: p.items.map((i) => (i.id === page.id ? { ...i, props: propsOfMeta(page.meta), rev: page.rev, updated: page.updated } : i)) })),
+      pages: prev.pages.map((p) => ({ ...p, items: p.items.map((i) => (i.id === page.id ? withPartial({ ...i, props: propsOfMeta(page.meta), rev: page.rev, updated: page.updated }, partialPropsOf(page.meta)) : i)) })),
     }
   })
 }

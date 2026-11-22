@@ -71,6 +71,10 @@ export interface PageSummary {
   // that are not built in, as plain values, and the rev a change of them needs.
   props?: Record<string, unknown>
   rev?: string
+  // With `props`: the keys whose value there is not the whole of what the header
+  // holds (cut text, a list that lost elements, an object). Absent when none. A
+  // cell must not write such a copy back.
+  partialProps?: string[]
 }
 
 // The page header as the server serves it. Fields the app does not know about
@@ -185,6 +189,8 @@ export interface PageType {
   name: string
   // "" when the file gives none: show the name.
   title: string
+  // The Git blob id of the type's file: a change or a delete is made from it (`baseRev`).
+  rev: string
   fields: TypeField[]
   // Set when the file cannot be used; the fields are then empty.
   error?: string
@@ -199,6 +205,8 @@ export interface TypesResponse {
 }
 // What `PUT .../types/{name}` takes: the whole of what the type is to be.
 export interface TypeInput {
+  // The `rev` of the type this is made from; "" or absent to make one.
+  baseRev?: string
   title: string
   fields: { key: string; title?: string; kind?: FieldKind; options?: string[] }[]
 }

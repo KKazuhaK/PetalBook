@@ -1,0 +1,388 @@
+package space
+
+import (
+	"bytes"
+	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/KKazuhaK/PetalBook/internal/page"
+)
+
+func spaceYML(root string) string {
+	b, _ := os.ReadFile(filepath.Join(root, ".petalbook", "space.yml"))
+	return string(b)
+}
+
+func setSpaceYML(t *testing.T, root, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, ".petalbook"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".petalbook", "space.yml"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func bindingMap(s *Space) map[string]string {
+	m := map[string]string{}
+	for _, b := range s.Bindings() {
+		m[b.Folder] = b.Type
+	}
+	return m
+}
+
+// --- types: rev ---------------------------------------------------------------
+
+func TestTypeChangesNeedTheRevTheyWereBasedOn(t *testing.T) {
+	s := open(t)
+	root := s.Root()
+	made, err := s.PutType(Author{}, "t", "", TypeInput{Title: "one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if made.Rev != page.Rev([]byte(readType(t, root, "t"))) {
+		t.Errorf("rev %q is not the blob id of the file", made.Rev)
+	}
+	types, _, _ := s.Types()
+	if len(types) != 1 || types[0].Rev != made.Rev {
+		t.Errorf("listed rev: %+v", types)
+	}
+	conflict := func(what string, err error, wantCurrent bool) {
+		t.Helper()
+		var ce *TypeConflictError
+		if !errors.As(err, &ce) {
+			t.Errorf("%s: want a conflict, got %v", what, err)
+		} else if (ce.Current != nil) != wantCurrent {
+			t.Errorf("%s: current %+v", what, ce.Current)
+		}
+	}
+	// Making one that is there, with no rev or a wrong one.
+	_, err = s.PutType(Author{}, "t", "", TypeInput{Title: "two"})
+	conflict("make over an existing type", err, true)
+	_, err = s.PutType(Author{}, "t", "0000", TypeInput{Title: "two"})
+	conflict("a rev that is not the file's", err, true)
+	// Changing one that is not there.
+	_, err = s.PutType(Author{}, "gone", made.Rev, TypeInput{})
+	conflict("a type that is gone", err, false)
+	if readType(t, root, "t") == "" || !strings.Contains(readType(t, root, "t"), "one") {
+		t.Errorf("a refused change wrote: %s", readType(t, root, "t"))
+	}
+	next, err := s.PutType(Author{}, "t", made.Rev, TypeInput{Title: "two"})
+	if err != nil || next.Rev == made.Rev {
+		t.Fatalf("%+v %v", next, err)
+	}
+	// The one who still has the old rev is refused, and deleting is no different.
+	_, err = s.PutType(Author{}, "t", made.Rev, TypeInput{Title: "three"})
+	var ce *TypeConflictError
+	if !errors.As(err, &ce) || ce.Current == nil || ce.Current.Title != "two" || ce.Current.Rev != next.Rev {
+		t.Errorf("the conflict should carry the current type: %v", err)
+	}
+	conflict("delete from an old rev", s.DeleteType(Author{}, "t", made.Rev), true)
+	conflict("delete with no rev", s.DeleteType(Author{}, "t", ""), true)
+	if !exists(s, ".petalbook/types/t.json") {
+		t.Fatal("a refused delete removed the file")
+	}
+	// A type that cannot be read is deleted from the rev the listing gave it.
+	writeType(t, root, "bad", `{"properties": {`)
+	types, _, _ = s.Types()
+	var bad TypeInfo
+	for _, ti := range types {
+		if ti.Name == "bad" {
+			bad = ti
+		}
+	}
+	if bad.Error == "" || bad.Rev == "" {
+		t.Errorf("%+v", bad)
+	}
+	if err := s.DeleteType(Author{}, "bad", bad.Rev); err != nil {
+		t.Errorf("%v", err)
+	}
+	if err := s.DeleteType(Author{}, "t", next.Rev); err != nil {
+		t.Errorf("%v", err)
+	}
+}
+
+// --- types: keys and titles that are already there ----------------------------
+
+func TestFieldsThatAreAlreadyThereKeepTheirKeysAndNonTextTitles(t *testing.T) {
+	s := open(t)
+	root := s.Root()
+	long := strings.Repeat("k", 70)
+	writeType(t, root, "old", `{
+  "title": 7,
+  "properties": {
+    "slug": {"type": "string", "title": 5},
+    "a:b": {"type": "string", "title": ["x"]},
+    "`+long+`": {"type": "number"}
+  }
+}
+`)
+	// What a listing says of them, and what a request that changes nothing says.
+	types, _, _ := s.Types()
+	if len(types) != 1 || len(types[0].Fields) != 3 || types[0].Title != "" || types[0].Fields[0].Title != "" {
+		t.Fatalf("%+v", types)
+	}
+	in := TypeInput{Fields: []FieldInput{{Key: "slug"}, {Key: "a:b"}, {Key: long}}}
+	if _, err := putCurrent(s, "old", in); err != nil {
+		t.Fatalf("a field that is there is refused for its key: %v", err)
+	}
+	// (The first write sets the file in the server's layout.)
+	before := readType(t, root, "old")
+	if !strings.Contains(before, `"title": 7`) || !strings.Contains(before, `"title": 5`) {
+		t.Fatalf("a title that is not text was dropped:\n%s", before)
+	}
+	if _, err := putCurrent(s, "old", in); err != nil {
+		t.Fatal(err)
+	}
+	if got := readType(t, root, "old"); got != before {
+		t.Errorf("the file changed:\n%s\nwas\n%s", got, before)
+	}
+	// A new field still has the rules.
+	in.Fields = append(in.Fields, FieldInput{Key: "id", Kind: KindText})
+	_, err := putCurrent(s, "old", in)
+	wantInvalid(t, "a new built-in key", err, "")
+	in.Fields[3] = FieldInput{Key: "x:y", Kind: KindText}
+	_, err = putCurrent(s, "old", in)
+	wantInvalid(t, "a new key with a colon", err, "colon")
+	// A title that is text is changed as ever, and then the others stay.
+	in.Fields = in.Fields[:3]
+	in.Fields[0].Title = "Slug"
+	if _, err := putCurrent(s, "old", in); err != nil {
+		t.Fatal(err)
+	}
+	got := readType(t, root, "old")
+	if !strings.Contains(got, `"title": "Slug"`) || !strings.Contains(got, `"x"`) || !strings.Contains(got, `"title": 7`) {
+		t.Errorf("%s", got)
+	}
+}
+
+// --- space.yml and tags.yml with nothing but comments --------------------------
+
+func TestSettingsFilesThatAreOnlyCommentsKeepThemWhenWritten(t *testing.T) {
+	for _, c := range []struct{ name, content string }{
+		{"comments", "# mine\n\n# second\n"},
+		{"marker", "---\n# mine\n\n# second\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := open(t)
+			root := s.Root()
+			if _, err := putCurrent(s, "t", TypeInput{}); err != nil {
+				t.Fatal(err)
+			}
+			mustCreate(t, s, "F", meta("title", "A"), "x\n")
+			setSpaceYML(t, root, c.content)
+			if _, err := s.BindFolder(Author{}, "F", "t"); err != nil {
+				t.Fatal(err)
+			}
+			got := spaceYML(root)
+			if !strings.Contains(got, "# mine") || !strings.Contains(got, "# second") || !strings.Contains(got, "folders:") {
+				t.Errorf("space.yml:\n%s", got)
+			}
+			if bindingMap(s)["F"] != "t" {
+				t.Errorf("%v", s.Bindings())
+			}
+			// And they stay when the binding goes.
+			if _, err := s.BindFolder(Author{}, "F", ""); err != nil {
+				t.Fatal(err)
+			}
+			if got := spaceYML(root); !strings.Contains(got, "# mine") || !strings.Contains(got, "# second") {
+				t.Errorf("space.yml after unbinding:\n%s", got)
+			}
+		})
+	}
+	t.Run("tags", func(t *testing.T) {
+		s := open(t)
+		file := filepath.Join(s.Root(), ".petalbook", "tags.yml")
+		os.MkdirAll(filepath.Dir(file), 0o755)
+		os.WriteFile(file, []byte("# colours of the tags\n"), 0o644)
+		if err := s.SetTagColor(Author{}, "栀子", "rose"); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := os.ReadFile(file)
+		if !strings.Contains(string(b), "# colours of the tags") || !strings.Contains(string(b), "栀子") {
+			t.Errorf("tags.yml:\n%s", b)
+		}
+	})
+}
+
+// --- bindings: duplicates -----------------------------------------------------
+
+func TestMovingAFolderOntoAStaleBindingReplacesIt(t *testing.T) {
+	s := open(t)
+	root := s.Root()
+	mustCreate(t, s, "A/x", meta("title", "P"), "x\n")
+	setSpaceYML(t, root, "name: n\nfolders:\n  B:\n    type: stale\n    views: [old]\n  A:\n    type: a\n  B/x:\n    type: stale-x\n  A/x:\n    type: ax\n  B/other:\n    type: stale-other\n")
+	if _, err := s.MoveFolder(Author{}, "A", "B"); err != nil {
+		t.Fatal(err)
+	}
+	got := spaceYML(root)
+	for _, key := range []string{"B:", "B/x:", "A:", "A/x:"} {
+		if n := strings.Count("\n"+got, "\n  "+key); n > 1 || (n == 0 && strings.HasPrefix(key, "B")) {
+			t.Errorf("%s is written %d times:\n%s", key, n, got)
+		}
+	}
+	want := map[string]string{"B": "a", "B/x": "ax", "B/other": "stale-other"}
+	if m := bindingMap(s); !reflect.DeepEqual(m, want) {
+		t.Errorf("%v, want %v\n%s", m, want, got)
+	}
+}
+
+func TestReadersOfBindingsAgreeOnAFolderWrittenTwice(t *testing.T) {
+	s := open(t)
+	root := s.Root()
+	mustCreate(t, s, "A", meta("title", "P"), "x\n")
+	if _, err := putCurrent(s, "t", TypeInput{}); err != nil {
+		t.Fatal(err)
+	}
+	setSpaceYML(t, root, "name: n\nfolders:\n  A:\n    type: first\n  B:\n    type: b\n  A:\n    type: t\n")
+	if bs := s.Bindings(); !reflect.DeepEqual(bs, []Binding{{"B", "b"}, {"A", "t"}}) {
+		t.Errorf("%+v", bs)
+	}
+	if got := s.TypeResolver().For("A", ""); got != "t" {
+		t.Errorf("resolver: %q", got)
+	}
+	// Unbinding takes every entry, so the first does not come back.
+	if _, err := s.BindFolder(Author{}, "A", ""); err != nil {
+		t.Fatal(err)
+	}
+	if m := bindingMap(s); !reflect.DeepEqual(m, map[string]string{"B": "b"}) || strings.Contains(spaceYML(root), "first") {
+		t.Errorf("%v\n%s", m, spaceYML(root))
+	}
+	// And so does deleting the type they name.
+	setSpaceYML(t, root, "name: n\nfolders:\n  A:\n    type: t\n  A:\n    type: t\n")
+	if err := deleteCurrent(s, "t"); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Bindings()) != 0 || strings.Contains(spaceYML(root), "type:") {
+		t.Errorf("%v\n%s", s.Bindings(), spaceYML(root))
+	}
+}
+
+// --- a folder move and its bindings are one change -----------------------------
+
+func journalFile(root string) string {
+	return filepath.Join(root, ".petalbook", "cache", "pending.journal")
+}
+
+func TestCrashAfterAFolderRenameFinishesTheBindingsAtRecovery(t *testing.T) {
+	needGit(t)
+	root := t.TempDir()
+	s := openAt(t, root)
+	if _, err := putCurrent(s, "t", TypeInput{}); err != nil {
+		t.Fatal(err)
+	}
+	mustCreate(t, s, "A/sub", meta("title", "P"), "x\n")
+	for f, typ := range map[string]string{"A": "t", "A/sub": "t"} {
+		if _, err := s.BindFolder(Author{}, f, typ); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Flush()
+	crash(s)
+	// The rename was made; the edit of space.yml never was.
+	if err := os.Rename(filepath.Join(root, "A"), filepath.Join(root, "B")); err != nil {
+		t.Fatal(err)
+	}
+	rec := []byte(`{"op":"b","f":"A","to":"B"}` + "\n")
+	if err := os.WriteFile(journalFile(root), rec, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s2 := openAt(t, root)
+	if m := bindingMap(s2); !reflect.DeepEqual(m, map[string]string{"B": "t", "B/sub": "t"}) {
+		t.Fatalf("after recovery: %v\n%s", m, spaceYML(root))
+	}
+	if err := s2.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if got := git(t, root, "show", "HEAD:.petalbook/space.yml"); !strings.Contains(got, "B/sub") {
+		t.Errorf("the recovered settings are not committed:\n%s", got)
+	}
+	// Again, as if the crash came once more before the journal was trimmed:
+	// nothing is done twice.
+	crash(s2)
+	before := spaceYML(root)
+	os.WriteFile(journalFile(root), rec, 0o644)
+	s3 := openAt(t, root)
+	if spaceYML(root) != before || !reflect.DeepEqual(bindingMap(s3), map[string]string{"B": "t", "B/sub": "t"}) {
+		t.Errorf("a second recovery changed the file:\n%s", spaceYML(root))
+	}
+	// A move that never happened (the old folder is there) moves no bindings.
+	crash(s3)
+	os.Rename(filepath.Join(root, "B"), filepath.Join(root, "A"))
+	os.WriteFile(journalFile(root), []byte(`{"op":"b","f":"A","to":"B"}`+"\n"), 0o644)
+	s4 := openAt(t, root)
+	if m := bindingMap(s4); !reflect.DeepEqual(m, map[string]string{"B": "t", "B/sub": "t"}) {
+		t.Errorf("%v", m)
+	}
+}
+
+func TestCrashAfterAFolderDeleteDropsItsBindingsAtRecovery(t *testing.T) {
+	needGit(t)
+	root := t.TempDir()
+	s := openAt(t, root)
+	putCurrent(s, "t", TypeInput{})
+	mustCreate(t, s, "G/deep", meta("title", "P"), "x\n")
+	mustCreate(t, s, "Keep", meta("title", "Q"), "x\n")
+	for _, f := range []string{"G", "G/deep", "Keep"} {
+		if _, err := s.BindFolder(Author{}, f, "t"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Flush()
+	crash(s)
+	os.RemoveAll(filepath.Join(root, "G"))
+	os.WriteFile(journalFile(root), []byte(`{"op":"u","p":"G"}`+"\n"), 0o644)
+	s2 := openAt(t, root)
+	if m := bindingMap(s2); !reflect.DeepEqual(m, map[string]string{"Keep": "t"}) {
+		t.Errorf("%v", m)
+	}
+}
+
+func TestFolderMoveIsTakenBackWhenItsBindingsCannotBeWritten(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a file mode does not stop root")
+	}
+	s := open(t)
+	root := s.Root()
+	putCurrent(s, "t", TypeInput{})
+	p := mustCreate(t, s, "A", meta("title", "P"), "x\n")
+	if _, err := s.BindFolder(Author{}, "A", "t"); err != nil {
+		t.Fatal(err)
+	}
+	// space.yml can be read but nothing can be put in its place.
+	dir := filepath.Join(root, ".petalbook")
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	if f, err := os.Create(filepath.Join(dir, "probe")); err == nil {
+		f.Close()
+		os.Remove(f.Name())
+		t.Skip("the file system ignores the mode")
+	}
+	_, err := s.MoveFolder(Author{}, "A", "B")
+	if err == nil {
+		t.Fatal("the move was reported as done")
+	}
+	if !exists(s, "A/"+filepath.Base(p.Path)) || exists(s, "B") {
+		t.Errorf("the folder moved although the request failed: A=%v B=%v", exists(s, "A"), exists(s, "B"))
+	}
+	if m := bindingMap(s); !reflect.DeepEqual(m, map[string]string{"A": "t"}) {
+		t.Errorf("%v", m)
+	}
+	if got, err := s.Get(p.ID); err != nil || got.Folder != "A" || got.EffectiveType != "t" {
+		t.Errorf("%+v %v", got, err)
+	}
+	os.Chmod(dir, 0o755)
+	if _, err := s.MoveFolder(Author{}, "A", "B"); err != nil {
+		t.Fatal(err)
+	}
+	if m := bindingMap(s); !reflect.DeepEqual(m, map[string]string{"B": "t"}) {
+		t.Errorf("%v", m)
+	}
+	_ = bytes.Equal
+}

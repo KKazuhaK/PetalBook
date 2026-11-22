@@ -36,6 +36,10 @@ type Summary struct {
 	// the page's properties as a JSON object, and the rev of its file.
 	Props json.RawMessage `json:"props,omitempty"`
 	Rev   string          `json:"rev,omitempty"`
+	// PartialProps are the keys of Props whose value there is not the whole of
+	// what the header holds (cut text, a list that lost elements, an object):
+	// a table must not write them back. Absent when there are none.
+	PartialProps []string `json:"partialProps,omitempty"`
 }
 
 // Query selects pages. The zero value lists the newest 50 pages of the space.
@@ -286,18 +290,18 @@ func selectCols(props bool) string {
 	c := `p.rowid, p.id, p.path, p.folder, p.title, p.subtitle, p.source, p.untitled, p.label, p.type, p.tags, p.created,
 		p.mtime_ns, p.excerpt, p.title_key, p.created_key`
 	if props {
-		c += `, p.props, p.rev`
+		c += `, p.props, p.rev, p.partial`
 	}
 	return c
 }
 
 // scanSummary reads one row of selectCols, then the extra columns, if any.
 func scanSummary(rows *sql.Rows, props bool, extra ...any) (s Summary, rowid, mtime, ckey int64, untitled int, titleKey string, err error) {
-	var tagsText, propsText string
+	var tagsText, propsText, partialText string
 	dest := []any{&rowid, &s.ID, &s.Path, &s.Folder, &s.Title, &s.Subtitle, &s.Source, &untitled, &s.Label, &s.Type,
 		&tagsText, &s.Created, &mtime, &s.Excerpt, &titleKey, &ckey}
 	if props {
-		dest = append(dest, &propsText, &s.Rev)
+		dest = append(dest, &propsText, &s.Rev, &partialText)
 	}
 	dest = append(dest, extra...)
 	if err = rows.Scan(dest...); err != nil {
@@ -313,6 +317,9 @@ func scanSummary(rows *sql.Rows, props bool, extra ...any) (s Summary, rowid, mt
 			propsText = "{}"
 		}
 		s.Props = json.RawMessage(propsText)
+		if partialText != "" {
+			json.Unmarshal([]byte(partialText), &s.PartialProps)
+		}
 	}
 	return
 }

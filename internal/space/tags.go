@@ -66,7 +66,35 @@ func (s *Space) loadTags() (*yaml.Node, error) {
 // in the space, max the most that is read, and bad what is returned for a file
 // that cannot be used as it is.
 func (s *Space) loadYAMLFile(rel string, max int64, bad error) (*yaml.Node, error) {
-	abs := filepath.Join(s.root, filepath.FromSlash(rel))
+	return loadYAMLAt(s.root, rel, max, bad)
+}
+
+// emptyDoc is a document with an empty mapping, carrying head as its comment
+// (a file with nothing but comments keeps them when something is written to it).
+func emptyDoc(head string) *yaml.Node {
+	return &yaml.Node{Kind: yaml.DocumentNode, HeadComment: head,
+		Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
+}
+
+// commentLines is the comments of a file that has no content: its comment
+// lines, with the blank lines between them, without those around them.
+func commentLines(data []byte) string {
+	var out []string
+	for _, l := range strings.Split(string(data), "\n") {
+		if t := strings.TrimSpace(l); strings.HasPrefix(t, "#") {
+			out = append(out, t)
+		} else if t == "" && len(out) > 0 {
+			out = append(out, "")
+		}
+	}
+	return strings.TrimRight(strings.Join(out, "\n"), "\n")
+}
+
+// loadYAMLAt is loadYAMLFile for the space at root. A file with nothing but
+// comments gives an empty document that has them as its head comment, so
+// that writing to it does not lose them.
+func loadYAMLAt(root, rel string, max int64, bad error) (*yaml.Node, error) {
+	abs := filepath.Join(root, filepath.FromSlash(rel))
 	fi, err := os.Lstat(abs)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -94,6 +122,9 @@ func (s *Space) loadYAMLFile(rel string, max int64, bad error) (*yaml.Node, erro
 	var doc yaml.Node
 	switch err := dec.Decode(&doc); {
 	case errors.Is(err, io.EOF):
+		if c := commentLines(data); c != "" {
+			return emptyDoc(c), nil
+		}
 		return nil, nil
 	case err != nil:
 		return nil, bad
@@ -106,6 +137,14 @@ func (s *Space) loadYAMLFile(rel string, max int64, bad error) (*yaml.Node, erro
 	}
 	if doc.Kind == 0 || len(doc.Content) == 0 {
 		return nil, nil
+	}
+	if r := doc.Content[0]; doc.Kind == yaml.DocumentNode && r.Kind == yaml.ScalarNode && r.Tag == "!!null" && r.Value == "" {
+		// `---` with nothing after it: an empty document, whose comments stay.
+		head := strings.TrimSpace(doc.HeadComment + "\n" + r.HeadComment)
+		foot := strings.TrimSpace(doc.FootComment + "\n" + r.FootComment)
+		d := emptyDoc(head)
+		d.FootComment = foot
+		return d, nil
 	}
 	if doc.Kind != yaml.DocumentNode || doc.Content[0].Kind != yaml.MappingNode {
 		return nil, bad

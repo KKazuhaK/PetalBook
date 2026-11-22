@@ -43,45 +43,80 @@ type propRow struct {
 //   - null and blank text are not values, so the key has no row: "empty" means
 //     no row, and a sort puts the page among those without the property;
 //   - text is cut to MaxPropText characters.
-func propsOf(m page.Meta) ([]propRow, string) {
+//
+// The third result lists, in header order, the keys whose copy in the index is
+// not exactly what the header holds: text that was cut, a list that was cut or
+// lost elements, an object, a number JSON cannot say, a key past the limit.
+// Writing such a copy back would change the file, so a client must not offer
+// them for editing. Null, blank text and an empty list are no values and are
+// not on it: the key has nothing to lose.
+func propsOf(m page.Meta) ([]propRow, string, []string) {
 	var rows []propRow
+	var partial []string
 	var col strings.Builder
 	n := 0
 	for _, f := range m {
-		if page.IsBuiltinKey(f.Key) || n >= maxPropKeys {
+		if page.IsBuiltinKey(f.Key) {
+			continue
+		}
+		if n >= maxPropKeys {
+			partial = append(partial, f.Key)
 			continue
 		}
 		var out any
+		lossy := false
 		switch v := f.Value.(type) {
 		case []any:
 			list := make([]any, 0, min(len(v), maxPropElements))
 			for _, e := range v {
 				if len(list) == maxPropElements {
+					lossy = true
 					break
 				}
-				if cv, r, ok := scalarProp(e); ok {
+				if cv, r, ok, exact := scalarProp(e); ok {
 					r.key, r.pos = f.Key, len(list)
 					rows = append(rows, r)
 					list = append(list, cv)
+					lossy = lossy || !exact
+				} else {
+					lossy = true
 				}
 			}
 			if len(list) == 0 {
+				rows = dropKey(rows, f.Key)
+				if len(v) > 0 {
+					partial = append(partial, f.Key)
+				}
 				continue
 			}
 			out = list
 		default:
-			cv, r, ok := scalarProp(v)
+			cv, r, ok, exact := scalarProp(v)
 			if !ok {
+				switch x := v.(type) {
+				case nil, string: // no value: blank text, null
+				case float64:
+					if math.IsNaN(x) || math.IsInf(x, 0) {
+						partial = append(partial, f.Key)
+					}
+				default: // an object
+					partial = append(partial, f.Key)
+				}
 				continue
 			}
 			r.key = f.Key
 			rows = append(rows, r)
 			out = cv
+			lossy = !exact
 		}
 		b, err := json.Marshal(out)
 		if err != nil {
 			rows = dropKey(rows, f.Key)
+			partial = append(partial, f.Key)
 			continue
+		}
+		if lossy {
+			partial = append(partial, f.Key)
 		}
 		k, _ := json.Marshal(f.Key)
 		if n == 0 {
@@ -95,10 +130,10 @@ func propsOf(m page.Meta) ([]propRow, string) {
 		n++
 	}
 	if n == 0 {
-		return nil, ""
+		return nil, "", partial
 	}
 	col.WriteByte('}')
-	return rows, col.String()
+	return rows, col.String(), partial
 }
 
 func dropKey(rows []propRow, key string) []propRow {
@@ -112,29 +147,30 @@ func dropKey(rows []propRow, key string) []propRow {
 }
 
 // scalarProp turns a header value into the value shown (cut to length) and
-// its row; ok is false for what is not a scalar value.
-func scalarProp(v any) (shown any, r propRow, ok bool) {
+// its row; ok is false for what is not a scalar value, and exact is false when
+// the value shown is not the whole of it.
+func scalarProp(v any) (shown any, r propRow, ok, exact bool) {
 	switch x := v.(type) {
 	case string:
 		if strings.TrimSpace(x) == "" {
-			return nil, r, false
+			return nil, r, false, false
 		}
-		x = cutText(x)
-		return x, propRow{val: x, skey: strings.ToLower(x)}, true
+		cut := cutText(x)
+		return cut, propRow{val: cut, skey: strings.ToLower(cut)}, true, len(cut) == len(x)
 	case bool:
 		if x {
-			return x, propRow{val: "true", skey: "1"}, true
+			return x, propRow{val: "true", skey: "1"}, true, true
 		}
-		return x, propRow{val: "false", skey: "0"}, true
+		return x, propRow{val: "false", skey: "0"}, true, true
 	case int64:
-		return x, propRow{val: strconv.FormatInt(x, 10), skey: numberKey(float64(x))}, true
+		return x, propRow{val: strconv.FormatInt(x, 10), skey: numberKey(float64(x))}, true, true
 	case float64:
 		if math.IsNaN(x) || math.IsInf(x, 0) {
-			return nil, r, false // JSON cannot say it either
+			return nil, r, false, false // JSON cannot say it either
 		}
-		return x, propRow{val: numberText(x), skey: numberKey(x)}, true
+		return x, propRow{val: numberText(x), skey: numberKey(x)}, true, true
 	}
-	return nil, r, false
+	return nil, r, false, false
 }
 
 // cutText keeps the first MaxPropText characters of s.

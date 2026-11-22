@@ -312,7 +312,7 @@ export function spaceApi(space: string) {
     // Page types and the folders bound to them. Writing needs `manage`.
     types: (signal?: AbortSignal) => request<TypesResponse>(base('/types'), { signal }),
     putType: (name: string, input: TypeInput) => request<PageType>(base(`/types/${enc(name)}`), { method: 'PUT', body: input }),
-    deleteType: (name: string) => request<void>(base(`/types/${enc(name)}`), { method: 'DELETE' }),
+    deleteType: (name: string, baseRev: string) => request<void>(base(`/types/${enc(name)}?baseRev=${enc(baseRev)}`), { method: 'DELETE' }),
     // `type` "" removes the binding.
     bindFolder: (folder: string, type: string) => request<FolderBinding>(base('/folders/type'), { method: 'PUT', body: { folder, type } }),
 

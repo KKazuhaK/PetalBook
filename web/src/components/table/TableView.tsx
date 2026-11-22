@@ -242,6 +242,20 @@ function Cell({ col, row, readOnly, busy, onChange, href }: { col: Column; row: 
   const set = (v: unknown) => onChange(row, field.key, v)
   const wrong = isWrong(field, value)
 
+  // What the listing holds of this value is not all of it (cut, or not a plain value): showing it is
+  // all that is safe, a change would write the shortened copy over the page's value.
+  if (row.partialProps?.includes(field.key)) {
+    const text = hasValue(value) ? showValue(value) : ''
+    return (
+      <span className="flex min-w-0 items-center gap-1 text-muted-foreground" title={tp.table.partial} data-partial="true">
+        <span className="min-w-0 truncate" aria-label={`${label}: ${tp.table.partial}`}>
+          {text}
+        </span>
+        <span aria-hidden className="shrink-0">…</span>
+      </span>
+    )
+  }
+
   // Read only, or a kind with no control here: the value as text, marked when it does not fit.
   const plain = (text: string) => (
     <span className={`min-w-0 truncate ${wrong ? 'text-destructive' : ''}`} title={text} data-wrong={wrong || undefined}>
@@ -269,7 +283,8 @@ function Cell({ col, row, readOnly, busy, onChange, href }: { col: Column; row: 
     case 'date':
       return <DateControl field={field} value={value} onChange={set} label={label} readOnly={busy} className="h-7 text-sm" />
     case 'number':
-      return <NumberControl field={field} value={value} onChange={set} label={label} readOnly={busy} className="h-7 text-sm" />
+      // One request per number, not per keystroke: it is sent when the person leaves the cell or presses Enter.
+      return <NumberControl field={field} value={value} onChange={set} label={label} readOnly={busy} commit="blur" className="h-7 text-sm" />
     default:
       return plain(hasValue(value) ? showValue(value) : '')
   }

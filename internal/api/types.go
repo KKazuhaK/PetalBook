@@ -21,10 +21,11 @@ type typeResp struct {
 	Title  string          `json:"title"`
 	Fields []typeFieldResp `json:"fields"`
 	Error  string          `json:"error,omitempty"`
+	Rev    string          `json:"rev"`
 }
 
 func toType(t space.TypeInfo) typeResp {
-	out := typeResp{Name: t.Name, Title: t.Title, Fields: make([]typeFieldResp, len(t.Fields)), Error: t.Error}
+	out := typeResp{Name: t.Name, Title: t.Title, Fields: make([]typeFieldResp, len(t.Fields)), Error: t.Error, Rev: t.Rev}
 	for i, f := range t.Fields {
 		out.Fields[i] = typeFieldResp{Key: f.Key, Title: f.Title, Kind: f.Kind, Options: f.Options, Schema: f.Schema}
 	}
@@ -53,8 +54,9 @@ func (s *server) getTypes(c *call) {
 // putType makes a type or changes one.
 func (s *server) putType(c *call) {
 	var req struct {
-		Title  string `json:"title"`
-		Fields []struct {
+		BaseRev string `json:"baseRev"`
+		Title   string `json:"title"`
+		Fields  []struct {
 			Key     string   `json:"key"`
 			Title   string   `json:"title"`
 			Kind    string   `json:"kind"`
@@ -68,7 +70,7 @@ func (s *server) putType(c *call) {
 	for _, f := range req.Fields {
 		in.Fields = append(in.Fields, space.FieldInput{Key: f.Key, Title: f.Title, Kind: f.Kind, Options: f.Options})
 	}
-	t, err := c.sp.Space.PutType(s.author(c), c.r.PathValue("name"), in)
+	t, err := c.sp.Space.PutType(s.author(c), c.r.PathValue("name"), req.BaseRev, in)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -78,7 +80,7 @@ func (s *server) putType(c *call) {
 
 // deleteType removes a type and the bindings to it.
 func (s *server) deleteType(c *call) {
-	if err := c.sp.Space.DeleteType(s.author(c), c.r.PathValue("name")); err != nil {
+	if err := c.sp.Space.DeleteType(s.author(c), c.r.PathValue("name"), c.r.URL.Query().Get("baseRev")); err != nil {
 		if errors.Is(err, space.ErrNotFound) {
 			writeError(c.w, http.StatusNotFound, "not_found", "no such type")
 			return

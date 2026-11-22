@@ -24,6 +24,10 @@ import (
 //	m  From is being moved to To (hard link, then remove the old name)
 //	t  Path changed; no further check
 //	r  From is being renamed to To, another spelling of its name, through Path
+//	b  the folder From is being moved to To: the bindings in space.yml of it
+//	   and of the folders in it have to follow (done at recovery if the folder
+//	   is at To, not at From, and the old keys are still there)
+//	u  the folder Path is being deleted: its bindings have to go with it
 //
 // A "w" record only counts at recovery if the file really has that content,
 // so a name the server tried to take but another file held is never committed.
@@ -148,6 +152,7 @@ func recoverPending(root string, recs []jrec) map[string]Author {
 	ok := func(p string) bool {
 		return p != "" && fs.ValidPath(p) && !strings.HasPrefix(p, ".git/") && p != ".git"
 	}
+	var bindRecs []jrec
 	for _, r := range recs {
 		by := r.author()
 		switch r.Op {
@@ -169,6 +174,12 @@ func recoverPending(root string, recs []jrec) map[string]Author {
 			}
 			finishMove(root, r.From, r.To)
 			set[r.From], set[r.To] = by, by
+		case "b", "u":
+			// Looked at after the files are in their final places.
+			if (r.Op == "b" && (!ok(r.From) || !ok(r.To))) || (r.Op == "u" && !ok(r.Path)) {
+				continue
+			}
+			bindRecs = append(bindRecs, r)
 		case "r":
 			if !ok(r.From) || !ok(r.To) || !ok(r.Path) {
 				continue
@@ -178,6 +189,10 @@ func recoverPending(root string, recs []jrec) map[string]Author {
 				set[r.From], set[r.To], set[r.Path] = by, by, by
 			}
 		}
+	}
+	if len(bindRecs) > 0 && recoverBindings(root, bindRecs) {
+		by := bindRecs[len(bindRecs)-1].author()
+		set[spaceFile] = by
 	}
 	return set
 }

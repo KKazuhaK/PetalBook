@@ -1761,9 +1761,19 @@ function suite(target: Target) {
     let A: Page
     let B: Page
 
+    let typeRev = ''
     it('makes a type with its fields in order, and lists it with the raw schema; names and keys are checked', async () => {
       const t = await S.putType(typeName, spec)
       expect(t).toMatchObject({ name: typeName, title: '任务' })
+      expect(t.rev).toMatch(/^[0-9a-f]{40}$/)
+      typeRev = t.rev
+      expect((await S.types()).types.find((x) => x.name === typeName)?.rev).toBe(typeRev)
+      // Made again with no rev, or from one that is not the file's: 409 with the type as it is.
+      for (const baseRev of [undefined, '0'.repeat(40)]) {
+        const e = await failure(S.putType(typeName, { ...spec, baseRev }))
+        expect(e.code).toBe('conflict')
+        expect(e.current).toMatchObject({ name: typeName, rev: typeRev })
+      }
       expect(t.fields.map((f) => [f.key, f.title, f.kind])).toEqual([
         ['status', '状态', 'select'],
         ['points', '', 'number'],
@@ -1806,6 +1816,20 @@ function suite(target: Target) {
       const withProps = await S.listPages({ folder, sort: 'title', props: true })
       expect(withProps.items[0]).toMatchObject({ title: 'A', rev: A.rev, props: { status: 'done', points: 5, due: '2026-03-01', labels: ['a'] } })
       expect(withProps.items[2].props).toEqual({})
+    })
+
+    it('props=1 says which properties it holds only in part: cut text, an object, a list that lost an element', async () => {
+      const whole = await mk(`${root}/partialprops`, { title: 'Whole', status: 'done', labels: ['a'] })
+      const cut = await mk(`${root}/partialprops`, { title: 'Cut', note: '字'.repeat(301), obj: { a: 1 }, list: ['a', { x: 1 }], fine: 'ok' })
+      const items = (await S.listPages({ folder: `${root}/partialprops`, sort: 'title', props: true })).items
+      const of = (id: string) => items.find((i) => i.id === id)!
+      expect(of(cut.id).partialProps).toEqual(['note', 'obj', 'list'])
+      expect(Array.from(String(of(cut.id).props?.note)).length).toBe(300)
+      expect(of(cut.id).props).not.toHaveProperty('obj')
+      expect(of(whole.id).partialProps).toBeUndefined()
+      expect('partialProps' in of(whole.id)).toBe(false)
+      const plain = (await S.listPages({ folder: `${root}/partialprops` })).items
+      expect(plain.some((i) => 'partialProps' in i)).toBe(false)
     })
 
     it('sorts by a property both ways, pages without it last, and the cursor walks the whole order', async () => {
@@ -1883,8 +1907,15 @@ function suite(target: Target) {
     })
 
     it('changes a type by its keys: the order, titles and options follow the request, a field left out goes, pages keep their values', async () => {
-      const t = await S.putType(typeName, { title: '任务单', fields: [{ key: 'points', title: '点数' }, { key: 'status', title: '状态', options: ['todo', 'doing', 'done', 'dropped'] }] })
+      const t = await S.putType(typeName, { baseRev: typeRev, title: '任务单', fields: [{ key: 'points', title: '点数' }, { key: 'status', title: '状态', options: ['todo', 'doing', 'done', 'dropped'] }] })
       expect(t.title).toBe('任务单')
+      expect(t.rev).not.toBe(typeRev)
+      // The old rev is stale now, for a change and for a delete.
+      const stale = await failure(S.putType(typeName, { baseRev: typeRev, title: 'late', fields: [] }))
+      expect(stale).toMatchObject({ code: 'conflict' })
+      expect(stale.current).toMatchObject({ title: '任务单', rev: t.rev })
+      expect((await failure(S.deleteType(typeName, typeRev))).code).toBe('conflict')
+      typeRev = t.rev
       expect(t.fields.map((f) => f.key)).toEqual(['points', 'status'])
       expect(t.fields[0]).toMatchObject({ kind: 'number', title: '点数' })
       expect(t.fields[1].options).toEqual(['todo', 'doing', 'done', 'dropped'])
@@ -1892,8 +1923,8 @@ function suite(target: Target) {
     })
 
     it('deleting a type takes the bindings with it; the pages keep what their headers say; a second delete is 404', async () => {
-      await S.deleteType(typeName)
-      expect((await failure(S.deleteType(typeName))).code).toBe('not_found')
+      await S.deleteType(typeName, typeRev)
+      expect((await failure(S.deleteType(typeName, typeRev))).code).toBe('not_found')
       const after = await S.types()
       expect(after.types.some((x) => x.name === typeName)).toBe(false)
       expect(after.bindings.some((b) => b.type === typeName)).toBe(false)
@@ -1904,14 +1935,14 @@ function suite(target: Target) {
 
     it('a folder renamed carries its binding with it', async () => {
       const t = `mv${run}`
-      await S.putType(t, { title: '', fields: [{ key: 'k', kind: 'text' }] })
+      const made = await S.putType(t, { title: '', fields: [{ key: 'k', kind: 'text' }] })
       await S.createFolder(`${root}/bound`)
       await S.bindFolder(`${root}/bound`, t)
       await S.moveFolder(`${root}/bound`, `${root}/bound2`)
       const { bindings } = await S.types()
       expect(bindings).toContainEqual({ folder: `${root}/bound2`, type: t })
       expect(bindings.some((b) => b.folder === `${root}/bound`)).toBe(false)
-      await S.deleteType(t)
+      await S.deleteType(t, made.rev)
     })
   })
 

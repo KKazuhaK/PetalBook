@@ -14,7 +14,51 @@ import (
 func rowsOf(t *testing.T, header string) ([]propRow, string) {
 	t.Helper()
 	doc := page.Parse([]byte("---\nid: AAAAAAAAAA\n" + header + "---\nbody\n"))
-	return propsOf(doc.Meta())
+	rows, col, _ := propsOf(doc.Meta())
+	return rows, col
+}
+
+func partialOf(t *testing.T, header string) []string {
+	t.Helper()
+	doc := page.Parse([]byte("---\nid: AAAAAAAAAA\n" + header + "---\nbody\n"))
+	_, _, partial := propsOf(doc.Meta())
+	return partial
+}
+
+// What the index holds of a key that is not the whole of it is said, so that a
+// table does not write the shortened copy back over the file's value.
+func TestPropsThatTheIndexOnlyPartlyHoldAreListed(t *testing.T) {
+	long := strings.Repeat("字", MaxPropText+1)
+	exact := strings.Repeat("字", MaxPropText)
+	var many strings.Builder
+	for i := 0; i <= maxPropElements; i++ {
+		fmt.Fprintf(&many, "%d, ", i)
+	}
+	var keys strings.Builder
+	for i := 0; i < maxPropKeys+2; i++ {
+		fmt.Fprintf(&keys, "k%03d: 1\n", i)
+	}
+	for _, c := range []struct {
+		name, header string
+		want         []string
+	}{
+		{"nothing is lost", "status: draft\npoints: 3\nlist: [a, 1, true]\ndone: false\n", nil},
+		{"text of exactly the limit", "t: " + exact + "\n", nil},
+		{"cut text", "t: " + long + "\nok: fine\n", []string{"t"}},
+		{"cut text in a list", "l: [a, " + long + "]\n", []string{"l"}},
+		{"a list that was cut", "l: [" + many.String() + "]\n", []string{"l"}},
+		{"a list that lost an object", "l: [a, {x: 1}, b]\n", []string{"l"}},
+		{"a list that lost a null", "l: [a, null, b]\n", []string{"l"}},
+		{"a list of nothing that is a value", "l: [{x: 1}]\nm: [[1], [2]]\n", []string{"l", "m"}},
+		{"an object", "o: {a: 1}\nfine: 2\nsecond: {b: [1]}\n", []string{"o", "second"}},
+		{"not a number", "n: .nan\ni: .inf\n", []string{"n", "i"}},
+		{"no value to lose", "a:\nb: null\nc: \"  \"\nd: []\n", nil},
+		{"keys past the limit", keys.String(), []string{"k200", "k201"}},
+	} {
+		if got := partialOf(t, c.header); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
 }
 
 func TestPropsExtraction(t *testing.T) {
@@ -350,5 +394,44 @@ func TestPropsFollowThePage(t *testing.T) {
 	syncAll(t, x, m, true)
 	if err := x.db.QueryRow(`SELECT count(*) FROM props`).Scan(&n); err != nil || n != 1 {
 		t.Errorf("rows after two full syncs: %d %v", n, err)
+	}
+}
+
+func TestListSaysWhichPropsAreOnlyPartlyThere(t *testing.T) {
+	x := openIndex(t)
+	putProp(t, x, "", "F1", "status: draft\nnote: "+strings.Repeat("a", MaxPropText+5)+"\nmeta: {a: 1}\nl: [x, null]\n")
+	putProp(t, x, "", "F2", "status: done\n")
+	for _, sort := range []string{"", "prop:status"} {
+		res, err := x.List(Query{Sort: sort, Props: true})
+		if err != nil || len(res.Items) != 2 {
+			t.Fatal(sort, err)
+		}
+		for _, it := range res.Items {
+			want := []string(nil)
+			if it.ID == pid("F1") {
+				want = []string{"note", "meta", "l"}
+			}
+			if !reflect.DeepEqual(it.PartialProps, want) {
+				t.Errorf("sort %q: %s partial %v, want %v", sort, it.ID, it.PartialProps, want)
+			}
+			b, _ := json.Marshal(it)
+			if want == nil && strings.Contains(string(b), "partialProps") {
+				t.Errorf("an empty partialProps is left out: %s", b)
+			}
+		}
+	}
+	plain, _ := x.List(Query{})
+	for _, it := range plain.Items {
+		if it.PartialProps != nil {
+			t.Errorf("a listing without props=1 has none: %+v", it)
+		}
+	}
+	// It follows the page: a rewrite that makes the value whole clears it.
+	putProp(t, x, "", "F1", "status: draft\nnote: short\n")
+	res, _ := x.List(Query{Props: true, Sort: "prop:status"})
+	for _, it := range res.Items {
+		if it.PartialProps != nil {
+			t.Errorf("%s: %v", it.ID, it.PartialProps)
+		}
 	}
 }

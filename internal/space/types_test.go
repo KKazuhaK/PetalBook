@@ -65,7 +65,7 @@ func allKinds() TypeInput {
 
 func TestPutTypeWritesTheSchemaForEveryKind(t *testing.T) {
 	s := open(t)
-	got, err := s.PutType(Author{}, "文案", allKinds())
+	got, err := putCurrent(s, "文案", allKinds())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestPutTypeWritesTheSchemaForEveryKind(t *testing.T) {
 		t.Errorf("Types: %+v %v\nwant %+v", types, err, got)
 	}
 	// The same request again changes nothing.
-	again, err := s.PutType(Author{}, "文案", allKinds())
+	again, err := putCurrent(s, "文案", allKinds())
 	if err != nil || readType(t, s.Root(), "文案") != data || !reflect.DeepEqual(again, got) {
 		t.Errorf("an unchanged type was rewritten: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestPutTypeKeepsWhatItDoesNotUnderstand(t *testing.T) {
 		{Key: "anyof", Title: "Either"},
 		{Key: "always"},
 	}}
-	if _, err := s.PutType(Author{}, "log", in); err != nil {
+	if _, err := putCurrent(s, "log", in); err != nil {
 		t.Fatal(err)
 	}
 	data := readType(t, s.Root(), "log")
@@ -206,7 +206,7 @@ func TestPutTypeKeepsWhatItDoesNotUnderstand(t *testing.T) {
 		last += i
 	}
 	// A field of the type that the request leaves out is removed from the type.
-	if _, err := s.PutType(Author{}, "log", TypeInput{Title: "Logs", Fields: []FieldInput{{Key: "when"}}}); err != nil {
+	if _, err := putCurrent(s, "log", TypeInput{Title: "Logs", Fields: []FieldInput{{Key: "when"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if data := readType(t, s.Root(), "log"); strings.Contains(data, `"level":`) || !strings.Contains(data, `"$schema"`) || !strings.Contains(data, `"required"`) {
@@ -217,7 +217,7 @@ func TestPutTypeKeepsWhatItDoesNotUnderstand(t *testing.T) {
 func TestPutTypeChangingAKindKeepsTheOtherKeywords(t *testing.T) {
 	s := open(t)
 	writeType(t, s.Root(), "t", `{"properties":{"x":{"type":"string","format":"date","default":"2026-01-01","description":"d"}}}`)
-	got, err := s.PutType(Author{}, "t", TypeInput{Fields: []FieldInput{{Key: "x", Kind: KindSelect, Options: []string{"a"}}}})
+	got, err := putCurrent(s, "t", TypeInput{Fields: []FieldInput{{Key: "x", Kind: KindSelect, Options: []string{"a"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,9 +231,9 @@ func TestPutTypeChangingAKindKeepsTheOtherKeywords(t *testing.T) {
 	}
 	// A field that is not understood cannot be given a kind, and a kind cannot be dropped to "other".
 	writeType(t, s.Root(), "o", `{"properties":{"x":{"type":"object"}}}`)
-	_, err = s.PutType(Author{}, "o", TypeInput{Fields: []FieldInput{{Key: "x", Kind: KindOther}, {Key: "y", Kind: KindOther}}})
+	_, err = putCurrent(s, "o", TypeInput{Fields: []FieldInput{{Key: "x", Kind: KindOther}, {Key: "y", Kind: KindOther}}})
 	wantInvalid(t, "a new field of kind other", err, "does not know")
-	_, err = s.PutType(Author{}, "t", TypeInput{Fields: []FieldInput{{Key: "x", Kind: KindOther}}})
+	_, err = putCurrent(s, "t", TypeInput{Fields: []FieldInput{{Key: "x", Kind: KindOther}}})
 	wantInvalid(t, "a field changed to other", err, "other")
 }
 
@@ -264,7 +264,7 @@ func TestTypeFilesThatCannotBeReadAreNotReplaced(t *testing.T) {
 	}
 	for name, content := range cases {
 		writeType(t, root, "bad", content)
-		_, err := s.PutType(Author{}, "bad", TypeInput{Fields: []FieldInput{{Key: "a", Kind: KindText}}})
+		_, err := putCurrent(s, "bad", TypeInput{Fields: []FieldInput{{Key: "a", Kind: KindText}}})
 		wantInvalid(t, name, err, "fixed by hand")
 		if got := readType(t, root, "bad"); got != content {
 			t.Errorf("%s: the file was replaced", name)
@@ -281,13 +281,13 @@ func TestTypeFilesThatCannotBeReadAreNotReplaced(t *testing.T) {
 	if err := os.Symlink(outside, typeFile(root, "bad")); err != nil {
 		t.Skip("no symbolic links here")
 	}
-	_, err := s.PutType(Author{}, "bad", TypeInput{})
+	_, err := putCurrent(s, "bad", TypeInput{})
 	wantInvalid(t, "a link", err, "fixed by hand")
 	if b, _ := os.ReadFile(outside); string(b) != `{"properties":{}}` {
 		t.Error("a file outside the space was written through a link")
 	}
 	// The way out is to delete it.
-	if err := s.DeleteType(Author{}, "bad"); err != nil {
+	if err := deleteCurrent(s, "bad"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(typeFile(root, "bad")); !os.IsNotExist(err) {
@@ -299,23 +299,23 @@ func TestTypeRules(t *testing.T) {
 	s := open(t)
 	ok := func(key string) TypeInput { return TypeInput{Fields: []FieldInput{{Key: key, Kind: KindText}}} }
 	for _, key := range []string{"id", "title", "subtitle", "source", "tags", "created", "type", "publish", "slug", "", strings.Repeat("a", 65), "a:b", "a\nb", "a\x00"} {
-		_, err := s.PutType(Author{}, "t", ok(key))
+		_, err := putCurrent(s, "t", ok(key))
 		wantInvalid(t, fmt.Sprintf("the key %q", key), err, "")
 	}
 	for _, key := range []string{"状态", strings.Repeat("a", 64), "with space", "Title", "a.b"} {
-		if _, err := s.PutType(Author{}, "t", ok(key)); err != nil {
+		if _, err := putCurrent(s, "t", ok(key)); err != nil {
 			t.Errorf("the key %q is allowed: %v", key, err)
 		}
 	}
 	for _, name := range []string{"", ".hidden", "a/b", `a\b`, "a:b", "a ", " a", "a.", strings.Repeat("x", 101), "a\nb", "a*"} {
-		_, err := s.PutType(Author{}, name, TypeInput{})
+		_, err := putCurrent(s, name, TypeInput{})
 		wantInvalid(t, fmt.Sprintf("the name %q", name), err, "")
 	}
-	_, err := s.PutType(Author{}, "ok", TypeInput{Fields: []FieldInput{{Key: "a", Kind: KindText}, {Key: "a", Kind: KindText}}})
+	_, err := putCurrent(s, "ok", TypeInput{Fields: []FieldInput{{Key: "a", Kind: KindText}, {Key: "a", Kind: KindText}}})
 	wantInvalid(t, "a key twice", err, "twice")
-	_, err = s.PutType(Author{}, "ok", TypeInput{Fields: []FieldInput{{Key: "a"}}})
+	_, err = putCurrent(s, "ok", TypeInput{Fields: []FieldInput{{Key: "a"}}})
 	wantInvalid(t, "a new field without a kind", err, "needs a kind")
-	_, err = s.PutType(Author{}, "ok", TypeInput{Fields: []FieldInput{{Key: "a", Kind: "color"}}})
+	_, err = putCurrent(s, "ok", TypeInput{Fields: []FieldInput{{Key: "a", Kind: "color"}}})
 	wantInvalid(t, "an unknown kind", err, "unknown kind")
 	for name, f := range map[string]FieldInput{
 		"a select with no options":   {Key: "a", Kind: KindSelect},
@@ -326,22 +326,22 @@ func TestTypeRules(t *testing.T) {
 		"a title with a line break":  {Key: "a", Kind: KindText, Title: "a\nb"},
 		"a field title that is long": {Key: "a", Kind: KindText, Title: strings.Repeat("x", 201)},
 	} {
-		_, err := s.PutType(Author{}, "ok", TypeInput{Fields: []FieldInput{f}})
+		_, err := putCurrent(s, "ok", TypeInput{Fields: []FieldInput{f}})
 		wantInvalid(t, name, err, "")
 	}
 	opts := make([]string, maxOptions+1)
 	for i := range opts {
 		opts[i] = fmt.Sprint("o", i)
 	}
-	_, err = s.PutType(Author{}, "ok", TypeInput{Fields: []FieldInput{{Key: "a", Kind: KindSelect, Options: opts}}})
+	_, err = putCurrent(s, "ok", TypeInput{Fields: []FieldInput{{Key: "a", Kind: KindSelect, Options: opts}}})
 	wantInvalid(t, "too many options", err, "")
 	fields := make([]FieldInput, MaxTypeFields+1)
 	for i := range fields {
 		fields[i] = FieldInput{Key: fmt.Sprint("k", i), Kind: KindText}
 	}
-	_, err = s.PutType(Author{}, "ok", TypeInput{Fields: fields})
+	_, err = putCurrent(s, "ok", TypeInput{Fields: fields})
 	wantInvalid(t, "too many fields", err, fmt.Sprint(MaxTypeFields))
-	if _, err := s.PutType(Author{}, "ok", TypeInput{Fields: fields[:MaxTypeFields]}); err != nil {
+	if _, err := putCurrent(s, "ok", TypeInput{Fields: fields[:MaxTypeFields]}); err != nil {
 		t.Errorf("exactly %d fields are allowed: %v", MaxTypeFields, err)
 	}
 	// The largest file that is allowed: long options fill it; one more is refused.
@@ -353,7 +353,7 @@ func TestTypeRules(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		many = append(many, FieldInput{Key: fmt.Sprint("s", i), Kind: KindSelect, Options: big})
 	}
-	_, err = s.PutType(Author{}, "huge", TypeInput{Fields: many})
+	_, err = putCurrent(s, "huge", TypeInput{Fields: many})
 	wantInvalid(t, "a file over the limit", err, "KiB")
 	if _, err := os.Lstat(typeFile(s.Root(), "huge")); !os.IsNotExist(err) {
 		t.Error("a refused type left a file")
@@ -362,22 +362,22 @@ func TestTypeRules(t *testing.T) {
 
 func TestATypeNeedsAFreeNameAndTheSpaceHasALimit(t *testing.T) {
 	s := open(t)
-	if _, err := s.PutType(Author{}, "Case", TypeInput{}); err != nil {
+	if _, err := putCurrent(s, "Case", TypeInput{}); err != nil {
 		t.Fatal(err)
 	}
 	// Two names that one file system folds to one are one name.
-	if _, err := s.PutType(Author{}, "case", TypeInput{}); !errors.Is(err, ErrExists) {
+	if _, err := putCurrent(s, "case", TypeInput{}); !errors.Is(err, ErrExists) {
 		t.Errorf("%v", err)
 	}
 	for i := 1; i < MaxTypes; i++ {
-		if _, err := s.PutType(Author{}, fmt.Sprintf("t%03d", i), TypeInput{}); err != nil {
+		if _, err := putCurrent(s, fmt.Sprintf("t%03d", i), TypeInput{}); err != nil {
 			t.Fatal(i, err)
 		}
 	}
-	_, err := s.PutType(Author{}, "one-too-many", TypeInput{})
+	_, err := putCurrent(s, "one-too-many", TypeInput{})
 	wantInvalid(t, "the 101st type", err, fmt.Sprint(MaxTypes))
 	// An existing type can still be changed.
-	if _, err := s.PutType(Author{}, "t001", TypeInput{Title: "changed"}); err != nil {
+	if _, err := putCurrent(s, "t001", TypeInput{Title: "changed"}); err != nil {
 		t.Error(err)
 	}
 	// Files beyond the limit, put there by hand, are listed and not read.
@@ -391,7 +391,7 @@ func TestATypeNeedsAFreeNameAndTheSpaceHasALimit(t *testing.T) {
 func TestEffectiveType(t *testing.T) {
 	s := open(t)
 	for _, n := range []string{"文案", "task", "memo"} {
-		if _, err := s.PutType(Author{}, n, TypeInput{}); err != nil {
+		if _, err := putCurrent(s, n, TypeInput{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -488,7 +488,7 @@ func TestEffectiveType(t *testing.T) {
 
 func TestBindFolderRefusals(t *testing.T) {
 	s := open(t)
-	if _, err := s.PutType(Author{}, "t", TypeInput{}); err != nil {
+	if _, err := putCurrent(s, "t", TypeInput{}); err != nil {
 		t.Fatal(err)
 	}
 	mustCreate(t, s, "F", meta("title", "A"), "x\n")
@@ -547,7 +547,7 @@ func TestBindingsFollowTheirFolders(t *testing.T) {
 	s := open(t)
 	root := s.Root()
 	for _, n := range []string{"a", "b"} {
-		if _, err := s.PutType(Author{}, n, TypeInput{}); err != nil {
+		if _, err := putCurrent(s, n, TypeInput{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -654,7 +654,7 @@ func TestMovingAFolderIsNotStoppedBySettingsThatCannotBeRead(t *testing.T) {
 func TestDeleteTypeRemovesItsBindingsAndNotThePages(t *testing.T) {
 	s := open(t)
 	for _, n := range []string{"a", "b"} {
-		if _, err := s.PutType(Author{}, n, TypeInput{}); err != nil {
+		if _, err := putCurrent(s, n, TypeInput{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -668,7 +668,7 @@ func TestDeleteTypeRemovesItsBindingsAndNotThePages(t *testing.T) {
 	if err := s.Flush(); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeleteType(Author{}, "a"); err != nil {
+	if err := deleteCurrent(s, "a"); err != nil {
 		t.Fatal(err)
 	}
 	if bs := s.Bindings(); len(bs) != 1 || bs[0] != (Binding{"F/G", "b"}) {
@@ -688,13 +688,13 @@ func TestDeleteTypeRemovesItsBindingsAndNotThePages(t *testing.T) {
 	if st := git(t, s.Root(), "status", "--porcelain", "--untracked-files=no"); st != "" {
 		t.Errorf("one change, one commit: %q", st)
 	}
-	if err := s.DeleteType(Author{}, "a"); !errors.Is(err, ErrNotFound) {
+	if err := deleteCurrent(s, "a"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("%v", err)
 	}
-	wantInvalid(t, "a bad name", s.DeleteType(Author{}, "a/b"), "")
+	wantInvalid(t, "a bad name", deleteCurrent(s, "a/b"), "")
 	// A binding to a type whose file went away by hand can still be cleared by deleting the type.
 	os.Remove(typeFile(s.Root(), "b"))
-	if err := s.DeleteType(Author{}, "b"); err != nil {
+	if err := deleteCurrent(s, "b"); err != nil {
 		t.Fatal(err)
 	}
 	if bs := s.Bindings(); len(bs) != 0 {
@@ -834,7 +834,7 @@ func TestTypesBindingsAndPatchesGoThroughTheRemoteCommitPath(t *testing.T) {
 	}
 	p := mustCreate(t, f.s, "Tang/Sub", meta("title", "暮雪"), "x\n")
 	n = len(f.remoteLog())
-	if _, err := f.s.PutType(Author{}, "文案", allKinds()); err != nil {
+	if _, err := putCurrent(f.s, "文案", allKinds()); err != nil {
 		t.Fatal(err)
 	}
 	step("PutType")
@@ -887,9 +887,9 @@ func TestTypesBindingsAndPatchesGoThroughTheRemoteCommitPath(t *testing.T) {
 		}
 		consistent(t, f.s)
 	}
-	_, err = f.s.PutType(Author{}, "文案", TypeInput{Title: "changed", Fields: []FieldInput{{Key: "due", Kind: KindText}}})
+	_, err = putCurrent(f.s, "文案", TypeInput{Title: "changed", Fields: []FieldInput{{Key: "due", Kind: KindText}}})
 	unavailable("PutType", err)
-	_, err = f.s.PutType(Author{}, "new", TypeInput{})
+	_, err = putCurrent(f.s, "new", TypeInput{})
 	unavailable("PutType of a new type", err)
 	_, err = f.s.BindFolder(Author{}, "唐/Sub", "文案")
 	unavailable("BindFolder", err)
@@ -897,14 +897,14 @@ func TestTypesBindingsAndPatchesGoThroughTheRemoteCommitPath(t *testing.T) {
 	unavailable("PatchProps", err)
 	_, err = f.s.MoveFolder(Author{}, "唐", "宋")
 	unavailable("MoveFolder", err)
-	unavailable("DeleteType", f.s.DeleteType(Author{}, "文案"))
+	unavailable("DeleteType", deleteCurrent(f.s, "文案"))
 	_, err = f.s.DeleteFolder(Author{}, "唐", true)
 	unavailable("DeleteFolder", err)
 	if bs := f.s.Bindings(); len(bs) != 1 || bs[0] != (Binding{"唐", "文案"}) {
 		t.Errorf("the bindings after the undo: %+v", bs)
 	}
 	f.net.setDown(false)
-	if err := f.s.DeleteType(Author{}, "文案"); err != nil {
+	if err := deleteCurrent(f.s, "文案"); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.remoteLog(); len(got) != n+1 {
@@ -921,7 +921,7 @@ func TestTypesBindingsAndPatchesGoThroughTheRemoteCommitPath(t *testing.T) {
 func TestTypeAndBindingWritesAreJournaled(t *testing.T) {
 	s := open(t)
 	p := mustCreate(t, s, "F", meta("title", "x"), "x\n")
-	if _, err := s.PutType(Author{}, "t", allKinds()); err != nil {
+	if _, err := putCurrent(s, "t", allKinds()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.BindFolder(Author{}, "F", "t"); err != nil {
@@ -949,4 +949,26 @@ func TestTypeAndBindingWritesAreJournaled(t *testing.T) {
 			t.Errorf("%s is not committed:\n%s", want, tree)
 		}
 	}
+}
+
+// currentRev is the rev of the type file as it is now ("" when there is none).
+func currentRev(s *Space, name string) string {
+	data, err := s.readTypeFile(name)
+	switch {
+	case err != nil:
+		return UnreadableRev
+	case data == nil:
+		return ""
+	}
+	return page.Rev(data)
+}
+
+// putCurrent is PutType made from the type as it is now.
+func putCurrent(s *Space, name string, in TypeInput) (TypeInfo, error) {
+	return s.PutType(Author{}, name, currentRev(s, name), in)
+}
+
+// deleteCurrent is DeleteType made from the type as it is now.
+func deleteCurrent(s *Space, name string) error {
+	return s.DeleteType(Author{}, name, currentRev(s, name))
 }

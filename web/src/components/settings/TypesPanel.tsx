@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
+import { ApiError } from '@/api/client'
 import { errorMessage, useBindFolder, useDeleteType, useSaveType, useTypes } from '@/api/hooks'
 import type { FieldKind, FolderBinding, PageType, TypeInput } from '@/api/types'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
@@ -148,13 +149,16 @@ function DeleteType({ type, bindings, onGone }: { type: PageType; bindings: Fold
               variant="destructive"
               disabled={del.isPending}
               onClick={() =>
-                del.mutate(type.name, {
-                  onSuccess: () => {
-                    toast.success(tp.types.deleted)
-                    onGone()
+                del.mutate(
+                  { name: type.name, baseRev: type.rev },
+                  {
+                    onSuccess: () => {
+                      toast.success(tp.types.deleted)
+                      onGone()
+                    },
+                    onError: (e) => toast.error(e instanceof ApiError && e.code === 'conflict' ? tp.types.deleteChanged : errorMessage(e, tp.types.deleteFailed)),
                   },
-                  onError: (e) => toast.error(errorMessage(e, tp.types.deleteFailed)),
-                })
+                )
               }
             >
               {tp.types.deleteConfirm}
@@ -244,13 +248,17 @@ function TypeEditor({ type, others, bindings, canManage, onClose, onGone, onCrea
     if (invalid || save.isPending) return
     setError('')
     // Keys are as typed, trimmed; the server takes them as they are.
-    const body: TypeInput = { ...input, fields: input.fields.map((f) => ({ ...f, key: f.key.trim() })) }
+    // Made from the rev the form was opened at: someone else's change in between is a 409, not lost.
+    const body: TypeInput = { ...input, baseRev: type?.rev ?? '', fields: input.fields.map((f) => ({ ...f, key: f.key.trim() })) }
     try {
       const saved = await save.mutateAsync({ name: isNew ? name.trim() : type.name, input: body })
       toast.success(tp.types.saved)
       if (isNew) onCreated?.(saved.name)
     } catch (e) {
-      setError(errorMessage(e, tp.types.saveFailed))
+      // The type is read again by the hook, and the form is made again from it (it is keyed by the type),
+      // so what was typed is not kept: the message says so, where it outlives the form.
+      if (e instanceof ApiError && e.code === 'conflict') toast.error(tp.types.changedMeanwhile, { duration: 12000 })
+      else setError(errorMessage(e, tp.types.saveFailed))
     }
   }
 

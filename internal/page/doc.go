@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -336,6 +337,20 @@ func nodeValue(key string, n *yaml.Node, depth int) any {
 
 var dateOnly = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
+// dateLike is text that a YAML 1.1 reader (PyYAML, say) takes for a date or a
+// time stamp when it is written without quotes, and then fails on if it is not
+// a real one.
+var dateLike = regexp.MustCompile(`^\d{4}-\d{1,2}-\d{1,2}(?:(?:[Tt]|[ \t]+)\d{1,2}:\d{2}:\d{2}(?:\.\d*)?(?:[ \t]*(?:Z|[-+]\d{1,2}(?::\d{2})?))?)?$`)
+
+// isCalendarDate reports whether s is a real date written YYYY-MM-DD.
+func isCalendarDate(s string) bool {
+	if !dateOnly.MatchString(s) {
+		return false
+	}
+	_, err := time.Parse("2006-01-02", s)
+	return err == nil
+}
+
 func valueNode(key string, v any) *yaml.Node {
 	switch x := v.(type) {
 	case nil:
@@ -344,10 +359,19 @@ func valueNode(key string, v any) *yaml.Node {
 		// `created` is a date in the file, not a quoted string.
 		// A date in any other property of the page is written the same way, so
 		// a date field reads as a date in other tools too.
-		if dateOnly.MatchString(x) && (key == "created" || (key != "" && !textKeys[key] && key != "tags")) {
+		// Only a real date in the exact form YYYY-MM-DD; text that merely looks
+		// like one is a string. (A node tagged !!timestamp whose text is no
+		// time stamp is written with the tag spelled out, `!!timestamp 2026-13-45`,
+		// which other readers cannot take.)
+		if isCalendarDate(x) && (key == "created" || (key != "" && !textKeys[key] && key != "tags")) {
 			return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!timestamp", Value: x}
 		}
-		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: x}
+		n := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: x}
+		if dateLike.MatchString(x) {
+			// Quoted, so that no reader takes it for a date it is not.
+			n.Style = yaml.DoubleQuotedStyle
+		}
+		return n
 	case bool:
 		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: strconv.FormatBool(x)}
 	case int64:

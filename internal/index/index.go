@@ -21,7 +21,7 @@ import (
 
 // schemaVersion changes whenever the tables or the way text is tokenised
 // change; an index with another version is thrown away and rebuilt.
-const schemaVersion = 5
+const schemaVersion = 6
 
 const schema = `
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -44,7 +44,8 @@ CREATE TABLE pages (
 	size        INTEGER NOT NULL,
 	rev         TEXT NOT NULL,
 	excerpt     TEXT NOT NULL,
-	props       TEXT NOT NULL DEFAULT ''
+	props       TEXT NOT NULL DEFAULT '',
+	partial     TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX pages_folder_mtime ON pages(folder, mtime_ns);
 CREATE INDEX pages_mtime ON pages(mtime_ns);

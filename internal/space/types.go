@@ -76,6 +76,42 @@ type TypeInfo struct {
 	Title  string
 	Fields []TypeField
 	Error  string
+	// Rev is the Git blob id of the file's bytes, as the rev of a page is:
+	// it changes whenever the file does, and PutType and DeleteType must be
+	// given the one they were based on. A file too large or not a regular
+	// file has no bytes to take it from and is UnreadableRev.
+	Rev string
+}
+
+// UnreadableRev is the Rev of a type file that cannot be read at all (see
+// TypeInfo.Rev); a change to such a file goes unnoticed, but it can only be
+// deleted, which is the way to fix it.
+const UnreadableRev = "unreadable"
+
+// TypeConflictError means the type is not as the request thought it was:
+// another change came first. Current is the type as it is now, nil when the
+// type is gone.
+type TypeConflictError struct{ Current *TypeInfo }
+
+func (e *TypeConflictError) Error() string { return "the type was changed by someone else" }
+
+// typeNow is the type in file data (as listed), for a conflict. data is nil
+// for a file that is not there, which has no type to show.
+func typeNow(name string, data []byte, readErr error) *TypeInfo {
+	if data == nil && readErr == nil {
+		return nil
+	}
+	t := TypeInfo{Name: name, Rev: UnreadableRev}
+	if readErr == nil {
+		t.Rev = page.Rev(data)
+		if p, _, err := parseType(name, data); err == nil {
+			t = p
+			t.Rev = page.Rev(data)
+			return &t
+		}
+	}
+	t.Error = typeFileProblem(name).Error()
+	return &t
 }
 
 // FieldInput is a field as a request gives it. An empty Kind keeps the kind
@@ -243,6 +279,12 @@ func fieldFrom(key string, raw json.RawMessage) TypeField {
 	f.Title, _ = stringOf(obj, "title")
 	f.Kind, f.Options = kindOf(obj)
 	return f
+}
+
+// isString reports whether raw is a JSON string.
+func isString(raw json.RawMessage) bool {
+	var s string
+	return json.Unmarshal(raw, &s) == nil
 }
 
 func stringOf(o []kv, key string) (string, bool) {
@@ -414,20 +456,13 @@ func (s *Space) Types() ([]TypeInfo, []Binding, error) {
 			continue
 		}
 		data, err := s.readTypeFile(n)
-		var t TypeInfo
 		if err == nil && data == nil {
 			continue // gone since the listing
 		}
-		if err == nil {
-			t, _, err = parseType(n, data)
-		}
-		switch {
-		case errors.Is(err, errTypeFile):
-			t = TypeInfo{Name: n, Error: typeFileProblem(n).Error()}
-		case err != nil:
+		if err != nil && !errors.Is(err, errTypeFile) {
 			return nil, nil, err
 		}
-		out = append(out, t)
+		out = append(out, *typeNow(n, data, err))
 	}
 	return out, s.Bindings(), nil
 }
@@ -533,7 +568,10 @@ func mergeField(cur []kv, exists bool, in FieldInput) ([]kv, error) {
 		}
 		out = append(kindSchema(kind, in.Options), out...)
 	}
-	if in.Title == "" {
+	if raw, _ := lookup(out, "title"); in.Title == "" && raw != nil && !isString(raw) {
+		// The file's title is not text (written by hand), so what a listing
+		// gave for it is "": a request that says "" is not asking to lose it.
+	} else if in.Title == "" {
 		out = del(out, "title")
 	} else if exists {
 		out = set(out, "title", jsonText(in.Title))
@@ -547,7 +585,16 @@ func mergeField(cur []kv, exists bool, in FieldInput) ([]kv, error) {
 // the fields of the request are merged into it, and it is written back. What
 // the file has that the server does not understand stays. A file that cannot be
 // read is not replaced: the answer says it has to be fixed by hand.
-func (s *Space) PutType(by Author, name string, in TypeInput) (TypeInfo, error) {
+//
+// baseRev is the Rev of the type the request was made from, "" to make one. A
+// type that is not as that says (changed, made or removed since) is a
+// *TypeConflictError and nothing is written.
+//
+// Only a field that is new has its key checked: one the file already has keeps
+// its key, whatever it is (a person may have written one the rules would not
+// allow, and renaming it is not what a change of its title means). A title in
+// the file that is not text is kept when the request gives none (see mergeField).
+func (s *Space) PutType(by Author, name, baseRev string, in TypeInput) (TypeInfo, error) {
 	if err := ValidTypeName(name); err != nil {
 		return TypeInfo{}, err
 	}
@@ -559,8 +606,8 @@ func (s *Space) PutType(by Author, name string, in TypeInput) (TypeInfo, error) 
 	}
 	seen := map[string]bool{}
 	for _, f := range in.Fields {
-		if err := validFieldKey(f.Key); err != nil {
-			return TypeInfo{}, err
+		if f.Key == "" || !utf8.ValidString(f.Key) {
+			return TypeInfo{}, invalidf("a field key is 1 to %d bytes of text", maxFieldKey)
 		}
 		if seen[f.Key] {
 			return TypeInfo{}, invalidf("the field %q is listed twice", f.Key)
@@ -605,9 +652,17 @@ func (s *Space) PutType(by Author, name string, in TypeInput) (TypeInfo, error) 
 				props, _ = decodeObject(raw)
 			}
 		}
+		if (data == nil && baseRev != "") || (data != nil && baseRev != page.Rev(data)) {
+			return TypeInfo{}, &TypeConflictError{typeNow(name, data, nil)}
+		}
 		var next []kv
 		for _, f := range in.Fields {
 			raw, i := lookup(props, f.Key)
+			if i < 0 {
+				if err := validFieldKey(f.Key); err != nil {
+					return TypeInfo{}, err
+				}
+			}
 			var cur []kv
 			if i >= 0 {
 				// A schema that is not an object (true, say) is kept as it is
@@ -629,7 +684,9 @@ func (s *Space) PutType(by Author, name string, in TypeInput) (TypeInfo, error) 
 		if top == nil {
 			top = []kv{}
 		}
-		if in.Title == "" {
+		if raw, _ := lookup(top, "title"); in.Title == "" && raw != nil && !isString(raw) {
+			// Not text: listed as "", and not lost by a request that gives none.
+		} else if in.Title == "" {
 			top = del(top, "title")
 		} else if _, i := lookup(top, "title"); i >= 0 {
 			top = set(top, "title", jsonText(in.Title))
@@ -647,6 +704,7 @@ func (s *Space) PutType(by Author, name string, in TypeInput) (TypeInfo, error) 
 		}
 		if bytes.Equal(out.Bytes(), data) {
 			t, _, _ := parseType(name, data)
+			t.Rev = page.Rev(data)
 			return t, nil
 		}
 		rel := typesDir + "/" + name + ".json"
@@ -662,6 +720,7 @@ func (s *Space) PutType(by Author, name string, in TypeInput) (TypeInfo, error) 
 			return TypeInfo{}, err
 		}
 		t, _, err := parseType(name, out.Bytes())
+		t.Rev = page.Rev(out.Bytes())
 		return t, err
 	})
 }
@@ -669,8 +728,12 @@ func (s *Space) PutType(by Author, name string, in TypeInput) (TypeInfo, error) 
 // DeleteType removes a type: its file, and in the same change the bindings of
 // folders to it. Pages that name it in their header are not touched. ErrNotFound
 // when there is no such type and no folder is bound to it. The file of a type
-// that cannot be read can be deleted too: that is one way to fix it.
-func (s *Space) DeleteType(by Author, name string) error {
+// that cannot be read can be deleted too: that is one way to fix it (its rev is
+// UnreadableRev). baseRev is the Rev of the type the request was made from, as
+// for PutType; a type that is not as that says is a *TypeConflictError and
+// nothing is removed. Bindings to a type whose file is not there (put there by
+// hand) are removed with baseRev "".
+func (s *Space) DeleteType(by Author, name, baseRev string) error {
 	if err := ValidTypeName(name); err != nil {
 		return err
 	}
@@ -697,6 +760,19 @@ func (s *Space) DeleteType(by Author, name string) error {
 		}
 		if !have && !bound {
 			return struct{}{}, ErrNotFound
+		}
+		if !have && baseRev != "" {
+			return struct{}{}, &TypeConflictError{}
+		}
+		if have {
+			data, err := s.readTypeFile(name)
+			if err != nil && !errors.Is(err, errTypeFile) {
+				return struct{}{}, err
+			}
+			cur := typeNow(name, data, err)
+			if cur == nil || cur.Rev != baseRev {
+				return struct{}{}, &TypeConflictError{cur}
+			}
 		}
 		if bound {
 			if err := s.editSpaceFile(tx, func(root *yaml.Node) (bool, error) {
