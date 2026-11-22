@@ -368,7 +368,14 @@ export const api = {
   removeIdentity: (id: string) => request<void>(`/account/identities/${enc(id)}`, { method: 'DELETE' }),
 
   // --- users and invites (administrators) ---
-  users: (signal?: AbortSignal) => request<{ users: User[] }>('/users', { signal }),
+  // `q` keeps the users whose username or name contains it; `limit` caps the count (1 to 200).
+  users: (params: { q?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.q) q.set('q', params.q)
+    if (params.limit) q.set('limit', String(params.limit))
+    const query = q.toString()
+    return request<{ users: User[] }>(`/users${query ? `?${query}` : ''}`, { signal })
+  },
   updateUser: (id: string, input: { role?: Role; disabled?: boolean }) => request<{ user: User }>(`/users/${enc(id)}`, { method: 'PATCH', body: input }),
   createInvite: (input: { role?: Role; days?: number } = {}) => request<CreatedInvite>('/invites', { method: 'POST', body: input }),
   invites: (signal?: AbortSignal) => request<{ invites: Invite[] }>('/invites', { signal }),

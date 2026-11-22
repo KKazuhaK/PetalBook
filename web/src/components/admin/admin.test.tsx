@@ -177,6 +177,33 @@ describe('all spaces', () => {
     expect(JSON.parse(sent.body!)).toEqual({ userId: m.server.userId('tang') })
   })
 
+  it('looks for the new owner by name on the server, never loading every user', async () => {
+    m = await open((server) => {
+      for (const name of ['tang', 'tangerine', 'mei']) makePerson(server, name)
+      adminRequests(server)('POST', '/api/spaces', { name: '转让' })
+    })
+    await settle(() => rows().length === 5, 'spaces')
+    await openMenu('转让')
+    await click(menuItem(t.admin.spaces.transfer))
+    await settle(() => document.querySelector('#transfer-search') !== null, 'the dialog')
+    const pick = document.querySelector<HTMLSelectElement>('#transfer-to')!
+    await settle(() => pick.options.length > 1, 'the first users')
+    await type(document.querySelector<HTMLInputElement>('#transfer-search')!, 'tang')
+    await settle(() => [...pick.options].map((o) => o.textContent).join() === [t.admin.spaces.transferChoose, '名 tang (tang)', '名 tangerine (tangerine)'].join(), 'the matches')
+    // Every request for users says what it wants and how many: none asks for the lot.
+    const asked = m.requests.filter((r) => new URL(r.url, 'http://x').pathname === '/api/users').map((r) => new URL(r.url, 'http://x').search)
+    expect(asked.length).toBeGreaterThan(0)
+    for (const q of asked) expect(q).toContain('limit=20')
+    expect(asked.some((q) => q.includes('q=tang'))).toBe(true)
+    // The pick stays when the search moves on.
+    await type(pick, [...pick.options][1].value)
+    await type(document.querySelector<HTMLInputElement>('#transfer-search')!, 'mei')
+    await settle(() => [...pick.options].some((o) => o.textContent === '名 mei (mei)'), 'the other matches')
+    expect(pick.selectedOptions[0].textContent).toBe('名 tang (tang)')
+    await type(document.querySelector<HTMLInputElement>('#transfer-search')!, 'nobody-like-this')
+    await settle(() => document.body.textContent!.includes(t.admin.spaces.transferNoMatch), 'no match')
+  })
+
   it('disables a space after asking, and enables it again', async () => {
     m = await open((server) => void adminRequests(server)('POST', '/api/spaces', { name: '停用我' }))
     await settle(() => rows().length === 2, 'spaces')
@@ -212,6 +239,22 @@ describe('all spaces', () => {
     expect(document.body.textContent).toMatch(new RegExp(`trash/${space}-\\d{8}T\\d{6}Z`))
     await click([...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === t.common.close))
     await settle(() => rows().length === 1, 'the space is out of the table')
+  })
+
+  it('compares the typed name trimmed and normalised, and shows the name to copy', async () => {
+    const name = 'Caf\u00e9'
+    m = await open((server) => void adminRequests(server)('POST', '/api/spaces', { name }))
+    await settle(() => rows().length === 2, 'spaces')
+    await openMenu(name)
+    await click(menuItem(t.admin.spaces.delete))
+    await settle(() => document.querySelector('#delete-confirm') !== null, 'the dialog')
+    expect([...document.querySelectorAll('[role="dialog"] code')].map((c) => c.textContent)).toContain(name)
+    const confirm = () => [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === t.admin.spaces.deleteConfirm) as HTMLButtonElement
+    // The same letters, composed the other way, with spaces around.
+    await type(document.querySelector<HTMLInputElement>('#delete-confirm')!, ' Cafe\u0301  ')
+    expect(confirm().disabled).toBe(false)
+    await type(document.querySelector<HTMLInputElement>('#delete-confirm')!, 'cafe')
+    expect(confirm().disabled).toBe(true)
   })
 
   it('a personal space cannot be transferred or deleted from the menu', async () => {

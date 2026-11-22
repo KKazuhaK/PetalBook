@@ -3,8 +3,8 @@ import { Link } from 'react-router'
 import { MoreHorizontal, RefreshCw, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { useAdminSpaces, useDeleteSpace, useResizeSpace, useSetSpaceDisabled, useTransferSpace, useUsers } from '@/api/hooks'
-import type { AdminSpace, DeletedSpace } from '@/api/types'
+import { useAdminSpaces, useDeleteSpace, useResizeSpace, useSetSpaceDisabled, useTransferSpace, useUserSearch, USER_SEARCH_LIMIT } from '@/api/hooks'
+import type { AdminSpace, DeletedSpace, User } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { SettingsSection } from '@/components/settings/SettingsParts'
@@ -21,6 +21,9 @@ import { absoluteTime } from '@/lib/time'
 import { spaceUrls } from '@/lib/urls'
 import { useDebounced } from '@/lib/useDebounced'
 import { t } from '@/i18n'
+
+// Two names that read the same: trimmed, and in the same Unicode normal form.
+const sameName = (a: string, b: string) => a.trim().normalize('NFC') === b.trim().normalize('NFC')
 
 type Action = { kind: 'transfer' | 'disable' | 'delete'; space: AdminSpace }
 
@@ -204,18 +207,25 @@ function SizeCell({ space: s }: { space: AdminSpace }) {
 
 function TransferDialog({ space, onClose }: { space: AdminSpace; onClose: () => void }) {
   const sp = t.admin.spaces
-  const users = useUsers()
   const transfer = useTransferSpace()
-  const [userId, setUserId] = useState('')
+  // Who to hand the space to is looked for on the server, a few at a time: a server
+  // with many accounts is never asked for all of them.
+  const [term, setTerm] = useState('')
+  const found = useUserSearch(useDebounced(term.trim(), 250))
+  const [chosen, setChosen] = useState<User | null>(null)
   const [error, setError] = useState('')
-  const choices = (users.data?.users ?? []).filter((u) => !u.disabled && u.id !== space.owner?.id)
+  const userId = chosen?.id ?? ''
+  const matches = (found.data?.users ?? []).filter((u) => !u.disabled && u.id !== space.owner?.id)
+  // The person already picked stays in the list while the search moves on.
+  const choices = chosen && !matches.some((u) => u.id === chosen.id) ? [chosen, ...matches] : matches
+  const truncated = (found.data?.users.length ?? 0) >= USER_SEARCH_LIMIT
 
   const submit = async () => {
     if (!userId || transfer.isPending) return
     setError('')
     try {
       await transfer.mutateAsync({ id: space.id, userId })
-      toast.success(sp.transferred(choices.find((u) => u.id === userId)?.name ?? ''))
+      toast.success(sp.transferred(chosen?.name ?? ''))
       onClose()
     } catch (e) {
       setError(actionError(e))
@@ -237,8 +247,12 @@ function TransferDialog({ space, onClose }: { space: AdminSpace; onClose: () => 
             <DialogDescription>{sp.transferHelp}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-1.5">
+            <Label htmlFor="transfer-search">{sp.transferSearch}</Label>
+            <Input id="transfer-search" type="search" value={term} onChange={(e) => setTerm(e.target.value)} placeholder={sp.transferSearchHint} autoComplete="off" spellCheck={false} />
+          </div>
+          <div className="grid gap-1.5">
             <Label htmlFor="transfer-to">{sp.transferTo}</Label>
-            <NativeSelect id="transfer-to" value={userId} onChange={(e) => setUserId(e.target.value)} disabled={users.isPending}>
+            <NativeSelect id="transfer-to" value={userId} onChange={(e) => setChosen(choices.find((u) => u.id === e.target.value) ?? null)} disabled={found.isPending}>
               <option value="">{sp.transferChoose}</option>
               {choices.map((u) => (
                 <option key={u.id} value={u.id}>
@@ -246,6 +260,13 @@ function TransferDialog({ space, onClose }: { space: AdminSpace; onClose: () => 
                 </option>
               ))}
             </NativeSelect>
+            {found.isError ? (
+              <p className="text-xs text-destructive">{t.fmt.labelled(sp.transferSearchFailed, found.error.message)}</p>
+            ) : (
+              !found.isPending && (
+                <p className="text-xs text-muted-foreground">{matches.length === 0 ? sp.transferNoMatch : truncated ? sp.transferNarrow(USER_SEARCH_LIMIT) : ''}</p>
+              )
+            )}
           </div>
           <FormMessage>{error}</FormMessage>
           <DialogFooter>
@@ -305,9 +326,12 @@ function DeleteDialog({ space, onClose }: { space: AdminSpace; onClose: () => vo
   const [typed, setTyped] = useState('')
   const [error, setError] = useState('')
   const [result, setResult] = useState<DeletedSpace | null>(null)
+  // Typed names are compared as people see them: without stray spaces around, and
+  // with the same characters composed the same way.
+  const typedMatches = sameName(typed, space.name)
 
   const confirm = async () => {
-    if (typed !== space.name || del.isPending) return
+    if (!typedMatches || del.isPending) return
     setError('')
     try {
       setResult(await del.mutateAsync(space.id))
@@ -354,7 +378,8 @@ function DeleteDialog({ space, onClose }: { space: AdminSpace; onClose: () => vo
               <DialogDescription>{sp.deleteHelp}</DialogDescription>
             </DialogHeader>
             <div className="grid gap-1.5">
-              <Label htmlFor="delete-confirm">{sp.deleteType(space.name)}</Label>
+              <Label htmlFor="delete-confirm">{sp.deleteType}</Label>
+              <code className="rounded-md bg-muted px-2 py-1 text-sm break-all select-all">{space.name}</code>
               <Input id="delete-confirm" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" spellCheck={false} />
             </div>
             <FormMessage>{error}</FormMessage>
@@ -362,7 +387,7 @@ function DeleteDialog({ space, onClose }: { space: AdminSpace; onClose: () => vo
               <Button type="button" variant="outline" onClick={onClose}>
                 {sp.cancel}
               </Button>
-              <Button type="submit" variant="destructive" disabled={typed !== space.name || del.isPending}>
+              <Button type="submit" variant="destructive" disabled={!typedMatches || del.isPending}>
                 {del.isPending && <Spinner />}
                 {sp.deleteConfirm}
               </Button>

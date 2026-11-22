@@ -17,6 +17,7 @@ export const keys = {
   spaces: ['spaces'] as const,
   account: ['account'] as const,
   users: ['users'] as const,
+  userSearch: (q: string) => ['users', 'search', q] as const,
   invites: ['invites'] as const,
   adminSpaces: ['admin', 'spaces'] as const,
   adminSpaceList: (q: string) => ['admin', 'spaces', 'list', q] as const,
@@ -365,7 +366,14 @@ export function useAccount(enabled = true) {
 }
 
 export function useUsers(enabled = true) {
-  return useQuery({ queryKey: keys.users, queryFn: ({ signal }) => api.users(signal), staleTime: 30_000, enabled })
+  return useQuery({ queryKey: keys.users, queryFn: ({ signal }) => api.users({}, signal), staleTime: 30_000, enabled })
+}
+
+// A few users by (part of) a username or name, for a picker: the server does the
+// filtering and the limit, so the whole list of accounts is never loaded for it.
+export const USER_SEARCH_LIMIT = 20
+export function useUserSearch(q: string, enabled = true) {
+  return useQuery({ queryKey: keys.userSearch(q), queryFn: ({ signal }) => api.users({ q, limit: USER_SEARCH_LIMIT }, signal), staleTime: 15_000, enabled })
 }
 
 export function useInvites(enabled = true) {

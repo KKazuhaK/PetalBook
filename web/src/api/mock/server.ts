@@ -1084,7 +1084,22 @@ export function createMockServer(options: MockOptions = {}) {
     if (path === '/users' || path.startsWith('/users/') || path === '/invites' || path.startsWith('/invites/')) {
       accountsOnly()
       const me = requireAdmin(ctx)
-      if (path === '/users' && method === 'GET') return j({ users: [...users.values()].sort((a, b) => a.created.localeCompare(b.created)).map(publicUser) })
+      if (path === '/users' && method === 'GET') {
+        let list = [...users.values()].sort((a, b) => a.created.localeCompare(b.created))
+        // Without parameters, everyone; `q` (username or name contains it, ignoring case) and `limit` narrow it.
+        const q = url.searchParams.get('q')
+        if (q !== null && q.trim() !== '') {
+          const needle = q.trim().toLowerCase()
+          list = list.filter((u) => u.username.toLowerCase().includes(needle) || u.name.toLowerCase().includes(needle))
+        }
+        if (url.searchParams.has('limit')) {
+          const raw = url.searchParams.get('limit') ?? ''
+          const n = /^\d+$/.test(raw) ? Number(raw) : NaN
+          if (!(n >= 1 && n <= 200)) throw new HttpError(400, 'invalid', 'limit is a number from 1 to 200')
+          list = list.slice(0, n)
+        }
+        return j({ users: list.map(publicUser) })
+      }
       const user = /^\/users\/([^/]+)$/.exec(path)
       if (user && method === 'PATCH') return j(patchUser(me, decodeURIComponent(user[1]), body))
       if (path === '/invites' && method === 'POST') return createInvite(me, body)

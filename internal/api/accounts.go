@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 
 	"github.com/KKazuhaK/PetalBook/internal/auth"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
@@ -305,7 +307,23 @@ func (s *server) unlinkIdentity(c *call) {
 // --- users and invites (administrators) --------------------------------------
 
 func (s *server) listUsers(c *call) {
-	us, err := s.auth.Users(c.r.Context())
+	q := c.r.URL.Query()
+	var us []store.User
+	var err error
+	if q.Has("q") || q.Has("limit") {
+		limit := 0
+		if v := q.Get("limit"); q.Has("limit") {
+			n, aerr := strconv.Atoi(v)
+			if aerr != nil || n < 1 || n > maxAdminLimit {
+				writeError(c.w, http.StatusBadRequest, "invalid", "limit is a number from 1 to "+strconv.Itoa(maxAdminLimit))
+				return
+			}
+			limit = n
+		}
+		us, err = s.auth.FindUsers(c.r.Context(), strings.TrimSpace(q.Get("q")), limit)
+	} else {
+		us, err = s.auth.Users(c.r.Context())
+	}
 	if err != nil {
 		s.fail(c.w, err)
 		return

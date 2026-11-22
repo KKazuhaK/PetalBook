@@ -422,6 +422,23 @@ function suite(target: Target) {
     })
 
     describe('users', () => {
+      it('finds users by part of a username or name, ignoring case, and caps the count; no parameters is everyone', async () => {
+        const m = await newMember(uniq('fu'))
+        const all = (await as(admin, () => api.users())).users
+        const upper = m.user.username.toUpperCase()
+        const hit = (await as(admin, () => api.users({ q: upper }))).users
+        expect(hit.map((u) => u.id)).toContain(m.user.id)
+        for (const u of hit) expect((u.username + '\n' + u.name).toLowerCase()).toContain(m.user.username)
+        expect((await as(admin, () => api.users({ q: m.user.name }))).users.map((u) => u.id)).toContain(m.user.id)
+        expect((await as(admin, () => api.users({ q: 'zzz-no-such-user-zzz' }))).users).toEqual([])
+        const one = (await as(admin, () => api.users({ limit: 1 }))).users
+        expect(one.map((u) => u.id)).toEqual([all[0].id])
+        for (const bad of ['0', '201', 'x']) {
+          const r = await call(admin, 'GET', `/api/users?limit=${bad}`)
+          expect([r.status, r.json.error], bad).toEqual([400, 'invalid'])
+        }
+      })
+
       it('an administrator lists users, ordered by created; a member gets 403 forbidden for users and invites', async () => {
         const m = await newMember(uniq('us'))
         const { users } = await as(admin, () => api.users())

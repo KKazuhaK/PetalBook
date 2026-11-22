@@ -255,7 +255,12 @@ otherwise) except the two invite endpoints marked public.
 
 ### `GET /api/users`
 
-`{"users": [{…}]}`, ordered by `created`.
+`{"users": [{…}]}`, ordered by `created`. Without parameters, every user.
+`?q={text}` keeps the users whose `username` or `name` contains the text,
+ignoring case (as the name filter of the administration's list of spaces does);
+`?limit={n}` (1 to 200) returns at most that many, the oldest first. Either may
+be sent alone; `400 invalid` for a `limit` outside the range. A picker that
+looks for one person sends both, so it never loads every account.
 
 ### `PATCH /api/users/{id}`
 
