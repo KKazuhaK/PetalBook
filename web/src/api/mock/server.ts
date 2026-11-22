@@ -1254,6 +1254,8 @@ export function createMockServer(options: MockOptions = {}) {
     spaceIds: () => [...spaces.keys()],
     peekDraft: (userId: string, id: string, space = 'default') => spaces.get(space)?.store.peekDraft(userId, id),
     userId: (username: string) => [...users.values()].find((u) => u.username === username)?.id,
+    // Views of a folder as written by hand in space.yml: served as "@n" until a write names them.
+    seedHandWrittenViews: (folder: string, views: Record<string, unknown>[], space = 'default') => spaces.get(space)!.store.seedHandWrittenViews(folder, views as never),
     // Let the server's own draft commits run now (they also run on every request).
     sweep: sweepAll,
     // Put a space's remote in a state, as the dev route does.

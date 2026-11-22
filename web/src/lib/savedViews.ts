@@ -44,6 +44,23 @@ export const sameState = (a: ViewState, b: ViewState): boolean => norm(a) === no
 
 export const DEFAULT_STATE: ViewState = { layout: 'list', sort: '', group: '', filter: [], hidden: [] }
 
+// The server limits a view's name to 200 bytes of UTF-8 (a CJK character is 3), not to a number of characters.
+export const MAX_NAME_BYTES = 200
+export const nameBytes = (s: string): number => new TextEncoder().encode(s).length
+
+// `s` cut, by whole characters, to at most `max` bytes.
+export function cutBytes(s: string, max: number): string {
+  let out = ''
+  let used = 0
+  for (const ch of s) {
+    const n = nameBytes(ch)
+    if (used + n > max) break
+    out += ch
+    used += n
+  }
+  return out
+}
+
 // "View 2", "View 3", … : a name no tab has yet.
 export function freshName(names: readonly string[], base: string): string {
   const taken = new Set(names)

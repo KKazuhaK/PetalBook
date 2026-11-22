@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -185,6 +186,64 @@ type settingsFullError struct{ *InvalidError }
 
 func (e *settingsFullError) Unwrap() error { return e.InvalidError }
 
+// unreadableEditError is the refusal of a change that would leave space.yml in
+// a form that cannot be read again. It is an *InvalidError too.
+type unreadableEditError struct{ *InvalidError }
+
+func (e *unreadableEditError) Unwrap() error { return e.InvalidError }
+
+// detachAnchors makes the nodes in doomed safe to remove: an alias anywhere
+// else in the document that points into them is replaced by a copy of what it
+// pointed to, so that no alias is left without its anchor. It reports whether
+// anything was replaced.
+func detachAnchors(top *yaml.Node, doomed []*yaml.Node) bool {
+	set := map[*yaml.Node]bool{}
+	anchored := false
+	var mark func(n *yaml.Node)
+	mark = func(n *yaml.Node) {
+		set[n] = true
+		if n.Anchor != "" {
+			anchored = true
+		}
+		for _, c := range n.Content {
+			mark(c)
+		}
+	}
+	for _, n := range doomed {
+		mark(n)
+	}
+	if !anchored {
+		return false
+	}
+	var clone func(n *yaml.Node) *yaml.Node
+	clone = func(n *yaml.Node) *yaml.Node {
+		c := *n
+		c.Anchor = ""
+		c.Content = make([]*yaml.Node, len(n.Content))
+		for i, k := range n.Content {
+			c.Content[i] = clone(k)
+		}
+		return &c
+	}
+	changed := false
+	var walk func(n *yaml.Node)
+	walk = func(n *yaml.Node) {
+		if set[n] {
+			return
+		}
+		for i, c := range n.Content {
+			if c.Kind == yaml.AliasNode && c.Alias != nil && set[c.Alias] {
+				c = clone(c.Alias)
+				n.Content[i] = c
+				changed = true
+			}
+			walk(c)
+		}
+	}
+	walk(top)
+	return changed
+}
+
 // editSpaceYAML is the editing of the settings file of the space at root,
 // without a Space: before runs once, just ahead of the write, when there is
 // something to write. It reports whether the file was written. Comments in the
@@ -225,6 +284,10 @@ func editSpaceYAML(root, name, tmpDir string, edit func(root *yaml.Node) (bool, 
 		return false, &settingsFullError{&InvalidError{fmt.Sprintf("the change would make space.yml larger than %d bytes, more than the server reads; nothing was changed", maxSpaceFile)}}
 	}
 	if err := checkWritable(spaceFile, buf.Bytes(), errSpaceFile); err != nil {
+		var inv *InvalidError
+		if errors.As(err, &inv) {
+			return false, &unreadableEditError{inv}
+		}
 		return false, err
 	}
 	if before != nil {
@@ -406,11 +469,13 @@ func rebind(root *yaml.Node, from, to string, onlyIfBound bool) (bool, error) {
 		switch {
 		case newKey[e] != "":
 			if arriving[newKey[e]] != e {
+				detachAnchors(root, []*yaml.Node{k, v})
 				continue // an earlier writing of the same folder
 			}
 			*k = *textNode(newKey[e])
 		case k.Kind == yaml.ScalarNode:
 			if key := bindingKey(k.Value); key == to || strings.HasPrefix(key, to+"/") {
+				detachAnchors(root, []*yaml.Node{k, v})
 				changed = true
 				continue // stale: nothing was there
 			}
@@ -472,6 +537,7 @@ func forgetFolders(root *yaml.Node, gone func(folder string) bool) (bool, error)
 		}
 		for j := len(e.Content) - 2; j >= 0; j -= 2 {
 			if kk := e.Content[j]; kk.Kind == yaml.ScalarNode && (kk.Value == "type" || kk.Value == "views") {
+				detachAnchors(root, e.Content[j:j+2])
 				e.Content = append(e.Content[:j:j], e.Content[j+2:]...)
 				changed = true
 			}
@@ -499,6 +565,10 @@ func (s *Space) editBindings(tx *txn, edit func(root *yaml.Node) (bool, error)) 
 	var full *settingsFullError
 	if errors.As(err, &full) {
 		return invalidf("the folder's settings in space.yml could not be moved with it because the file is full (%d bytes at most); remove some views and try again", maxSpaceFile)
+	}
+	var unreadable *unreadableEditError
+	if errors.As(err, &unreadable) {
+		return invalidf("the folder's settings in space.yml could not be moved with it because the file would no longer be readable (an anchor that something else in it refers to); fix the anchors in space.yml by hand and try again")
 	}
 	var inv *InvalidError
 	if errors.As(err, &inv) {
@@ -543,9 +613,30 @@ func recoverBindings(root string, recs []jrec) (changed bool) {
 			continue
 		}
 		// A file that cannot be read is left alone, as when the change was made.
-		if ok, err := editSpaceYAML(root, "", tmp, edit, nil); err == nil && ok {
+		ok, err := editSpaceYAML(root, "", tmp, edit, nil)
+		if err == nil && ok {
 			changed = true
 		}
+		var full *settingsFullError
+		var unreadable *unreadableEditError
+		if !errors.As(err, &full) && !errors.As(err, &unreadable) {
+			continue
+		}
+		// The online path refuses such a change and moves the folder back; do
+		// the same, or the folder's type and views stay under a key that a new
+		// folder of that name inherits.
+		if r.Op == "b" {
+			from := filepath.Join(root, filepath.FromSlash(r.From))
+			rerr := os.Rename(filepath.Join(root, filepath.FromSlash(r.To)), from)
+			if rerr == nil {
+				slog.Error("recovery: the settings of a moved folder do not fit in space.yml; the folder was moved back",
+					"folder", r.From, "moved_to", r.To, "error", err)
+				continue
+			}
+			err = errors.Join(err, rerr)
+		}
+		slog.Error("recovery: the settings of a folder in space.yml were not moved or removed; fix space.yml by hand",
+			"folder", r.From+r.Path, "moved_to", r.To, "error", err)
 	}
 	return changed
 }

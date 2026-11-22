@@ -3,6 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { act } from 'react'
 import { byLabel, click, installDomShims, locationText, mount, settle, shareSpace, type, type Mounted } from '@/testing/harness'
 import { listShell, putViews, seedWork, sender, TASK, viewsOf } from '@/testing/listKit'
+import type { MockServer } from '@/api/mock/server'
 import { viewIdKey } from '@/lib/savedViews'
 import { viewKey } from '@/lib/listView'
 import { t } from '@/i18n'
@@ -33,13 +34,13 @@ const rowTitles = () => [...document.querySelectorAll('[data-file-key^="p:"]')].
 const button = (label: string) => byLabel(label) as HTMLButtonElement | null
 const textButton = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === label) ?? null
 
-async function open(path = '/s/default/f/Work', scene?: (send: ReturnType<typeof sender>, ids: ReturnType<typeof seedWork>) => void, options: Parameters<typeof mount>[1] = {}) {
+async function open(path = '/s/default/f/Work', scene?: (send: ReturnType<typeof sender>, ids: ReturnType<typeof seedWork>, server: MockServer) => void, options: Parameters<typeof mount>[1] = {}) {
   m = await mount(listShell, {
     ...options,
     entries: (server) => {
       const send = sender(server)
       const ids = seedWork(server)
-      scene?.(send, ids)
+      scene?.(send, ids, server)
       return [path]
     },
   })
@@ -436,3 +437,87 @@ async function settleFor<T>(find: () => T | null | undefined): Promise<T> {
   await settle(() => (found = find()) != null, 'the element')
   return found as T
 }
+
+describe('a view written by hand', () => {
+  const hand = (_send: unknown, _ids: unknown, server: MockServer) => server.seedHandWrittenViews('Work', [{ name: '甲', layout: 'list' }, { name: '乙', layout: 'list' }])
+  const dragOnto = async (from: string, to: string) => {
+    const dt = { setData() {}, effectAllowed: '' }
+    const fire = (el: Element, type: string) => act(async () => {
+      const e = new Event(type, { bubbles: true, cancelable: true })
+      Object.assign(e, { dataTransfer: dt })
+      el.dispatchEvent(e)
+    })
+    await fire(tab(from), 'dragstart')
+    await fire(tab(to), 'dragover')
+    await fire(tab(to), 'drop')
+  }
+
+  it('stays the view shown when it is saved: the write gives it a new id and the tab, the memory and the page follow', async () => {
+    await open('/s/default/f/Work', hand)
+    await settle(() => tabs().length === 2, 'the tabs')
+    expect((await saved()).views.map((v) => v.id)).toEqual(['@0', '@1'])
+    await click(tab('乙'))
+    expect(localStorage.getItem(viewIdKey('default', 'folder', 'Work'))).toBe('@1')
+    await click(button(t.view.cards))
+    expect(modifiedMark()).not.toBeNull()
+    await click(textButton(t.views.save))
+    await settle(() => modifiedMark() === null && puts().length === 1, 'saved')
+    expect(selected()).toBe('乙')
+    expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('true')
+    const id = (await saved()).views[1].id
+    expect(id).not.toMatch(/^@/)
+    expect(localStorage.getItem(viewIdKey('default', 'folder', 'Work'))).toBe(id)
+  })
+
+  it('keeps its unsaved changes when another write gives it a new id', async () => {
+    await open('/s/default/f/Work', hand)
+    await settle(() => tabs().length === 2, 'the tabs')
+    await click(tab('乙'))
+    await click(button(t.view.cards))
+    await dragOnto('甲', '乙')
+    await settle(() => puts().length === 1 && tabNames().join() === '乙,甲', 'reordered')
+    expect(selected()).toBe('乙')
+    expect(modifiedMark()).not.toBeNull()
+    expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('true')
+    expect(localStorage.getItem(viewIdKey('default', 'folder', 'Work'))).not.toMatch(/^@/)
+  })
+})
+
+describe('the tab that is shown', () => {
+  it('keeps what was changed in it when it is clicked again; another tab is the way to leave it', async () => {
+    await open('/s/default/f/Work', (send) => putViews(send, FOLDER, [{ name: '全部', layout: 'list' }, { name: '看板', layout: 'board', group: 'status' }]))
+    await settle(() => tabs().length === 2, 'the tabs')
+    await click(button(t.view.cards))
+    expect(modifiedMark()).not.toBeNull()
+    await click(tab('全部'))
+    expect(modifiedMark()).not.toBeNull()
+    expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('true')
+  })
+})
+
+describe('the name of a view', () => {
+  const zh = (n: number) => '字'.repeat(n)
+  it('is counted in bytes as the server counts them: 67 characters of 3 bytes are too long, 66 are not', async () => {
+    await open('/s/default/f/Work')
+    await settle(() => button(t.views.add) !== null, 'the add button')
+    await click(button(t.views.add))
+    const input = () => document.querySelector<HTMLInputElement>(`input[aria-label="${t.views.name}"]`)!
+    await type(input(), zh(67))
+    await act(async () => input().form!.requestSubmit())
+    expect(document.body.textContent).toContain(t.views.nameInvalid)
+    expect(puts()).toHaveLength(0)
+    await type(input(), zh(66))
+    await act(async () => input().form!.requestSubmit())
+    await settle(() => puts().length === 1, 'the save')
+  })
+
+  it('of a copy is cut to fit, not refused by the server', async () => {
+    const long = zh(65)
+    await open('/s/default/f/Work', (send) => putViews(send, FOLDER, [{ name: long, layout: 'list' }]))
+    await settle(() => tabs().length === 1, 'the tab')
+    await click(button(t.views.duplicate))
+    await settle(() => tabs().length === 2, 'the copy')
+    expect(puts()).toHaveLength(1)
+    expect(new TextEncoder().encode((await saved()).views[1].name).length).toBeLessThanOrEqual(200)
+  })
+})

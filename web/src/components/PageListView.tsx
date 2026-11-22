@@ -185,10 +185,21 @@ function Listing({ source }: { source: ListSource }) {
       return next
     }, { replace: true })
   }
-  const pick = (id: string) => {
+  // Shows a view and drops the working copy of the one shown (a saved view has nothing left of it).
+  const select = (id: string) => {
     setRemembered(id)
     saveViewId(idKey, id)
     clearEdits()
+  }
+  // Clicking the tab that is already shown changes nothing, and does not drop what was changed in it.
+  const pick = (id: string) => {
+    if (id !== (active?.id ?? '')) select(id)
+  }
+  // The view shown got a new id (a view written by hand has "@n" until a write names it): its working copy goes with it.
+  const remap = (from: string, to: string) => {
+    setRemembered(to)
+    saveViewId(idKey, to)
+    setEdits((e) => (e.id === from ? { ...e, id: to } : e))
   }
 
   // What the layouts need: the table and the board a folder with a type (the board a single-choice field of it), a tag's
@@ -372,7 +383,8 @@ function Listing({ source }: { source: ListSource }) {
               modified={modified}
               write={write && views.data !== undefined}
               onPick={pick}
-              onSaved={pick}
+              onSaved={select}
+              onRemap={remap}
               onRevert={clearEdits}
             />
           )}

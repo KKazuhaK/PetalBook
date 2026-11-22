@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -159,5 +160,104 @@ func TestAMoveThatFillsTheSettingsFileIsRefusedAndUndone(t *testing.T) {
 	}
 	if bs := s.Bindings(); len(bs) != 1 || bs[0].Folder != "A" {
 		t.Errorf("bindings: %v", bs)
+	}
+}
+
+const crossAnchors = `folders:
+  A:
+    type: wenan
+    views:
+      - {id: aaa111, name: one, layout: list, filter: &f [{key: series, op: in, values: [a]}]}
+  B:
+    views:
+      - {id: bbb111, name: two, layout: list, filter: *f}
+`
+
+func TestDeletingAFolderWhoseAnchorAnotherFolderUsesForgetsItsViews(t *testing.T) {
+	s := open(t)
+	mustCreate(t, s, "A", meta("title", "x"), "x\n")
+	mustCreate(t, s, "B", meta("title", "y"), "y\n")
+	writeSpaceYML(t, s, crossAnchors)
+	if _, err := s.DeleteFolder(Author{}, "A", true); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(spaceYML(s.Root()), "aaa111") {
+		t.Errorf("the deleted folder's views stay in space.yml:\n%s", spaceYML(s.Root()))
+	}
+	bl, err := s.Views(folderScope("B"))
+	if err != nil || len(bl.Views) != 1 || len(bl.Views[0].Filter) != 1 {
+		t.Fatalf("B lost its filter: %v %+v", err, bl)
+	}
+	if err := os.MkdirAll(filepath.Join(s.Root(), "A"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if nl, _ := s.Views(folderScope("A")); len(nl.Views) != 0 {
+		t.Errorf("a new folder A inherits %+v", nl.Views)
+	}
+}
+
+func TestMovingAFolderWhoseAnchorAnotherFolderUsesKeepsBothViews(t *testing.T) {
+	s := open(t)
+	mustCreate(t, s, "A", meta("title", "x"), "x\n")
+	mustCreate(t, s, "B", meta("title", "y"), "y\n")
+	writeSpaceYML(t, s, crossAnchors)
+	// A stale entry at the target holds the anchor B's view refers to.
+	writeSpaceYML(t, s, `folders:
+  A:
+    views:
+      - {id: aaa111, name: one, layout: list}
+  C:
+    views:
+      - {id: ccc111, name: old, layout: list, filter: &f [{key: series, op: in, values: [a]}]}
+  B:
+    views:
+      - {id: bbb111, name: two, layout: list, filter: *f}
+`)
+	if _, err := s.MoveFolder(Author{}, "A", "C"); err != nil {
+		t.Fatal(err)
+	}
+	got := spaceYML(s.Root())
+	if strings.Contains(got, "ccc111") || !strings.Contains(got, "aaa111") {
+		t.Errorf("the bindings did not follow the folder:\n%s", got)
+	}
+	if bl, err := s.Views(folderScope("B")); err != nil || len(bl.Views) != 1 || len(bl.Views[0].Filter) != 1 {
+		t.Fatalf("B lost its filter: %v %+v", err, bl)
+	}
+}
+
+func TestRecoveryOfAMoveWhoseSettingsDoNotFitMovesTheFolderBack(t *testing.T) {
+	needGit(t)
+	root := t.TempDir()
+	s := openAt(t, root)
+	if _, err := putCurrent(s, "t", TypeInput{}); err != nil {
+		t.Fatal(err)
+	}
+	mustCreate(t, s, "A", meta("title", "x"), "x\n")
+	if _, err := s.BindFolder(Author{}, "A", "t"); err != nil {
+		t.Fatal(err)
+	}
+	s.Flush()
+	crash(s)
+	// Pad space.yml to a few bytes below the limit: the longer key does not fit.
+	file := filepath.Join(root, ".petalbook", "space.yml")
+	b, _ := os.ReadFile(file)
+	pad := maxSpaceFile - len(b) - 4
+	if err := os.WriteFile(file, append([]byte("# "+strings.Repeat("x", pad-3)+"\n"), b...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The rename was made; the edit of space.yml never was.
+	if err := os.Rename(filepath.Join(root, "A"), filepath.Join(root, "A-much-longer-name")); err != nil {
+		t.Fatal(err)
+	}
+	rec := `{"op":"b","f":"A","to":"A-much-longer-name"}` + "\n"
+	if err := os.WriteFile(journalFile(root), []byte(rec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s2 := openAt(t, root)
+	if _, err := os.Stat(filepath.Join(root, "A")); err != nil {
+		t.Errorf("the folder was left at the name its settings are not under: %v", err)
+	}
+	if m := bindingMap(s2); !reflect.DeepEqual(m, map[string]string{"A": "t"}) {
+		t.Errorf("bindings: %v", m)
 	}
 }

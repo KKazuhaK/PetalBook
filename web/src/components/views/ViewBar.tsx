@@ -9,7 +9,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/common'
-import { freshName, MAX_VIEWS, moveView, withState, type ViewState } from '@/lib/savedViews'
+import { cutBytes, freshName, MAX_NAME_BYTES, MAX_VIEWS, moveView, nameBytes, withState, type ViewState } from '@/lib/savedViews'
 import { t } from '@/i18n'
 
 // The tabs above the listing of a folder or a tag: its saved views, one of them shown. What is done to the list of
@@ -31,14 +31,19 @@ interface Props {
   onPick: (id: string) => void
   // The working copy was written (or the view it belonged to is gone): nothing is left of it.
   onSaved: (id: string) => void
+  // A view written by hand has the id "@n" until a write gives it a real one: the view shown (and what was changed in
+  // it) goes on under the new id.
+  onRemap: (from: string, to: string) => void
   onRevert: () => void
 }
 
-export function ViewBar({ scope, views, rev, active, working, modified, write, onPick, onSaved, onRevert }: Props) {
+export function ViewBar({ scope, views, rev, active, working, modified, write, onPick, onSaved, onRemap, onRevert }: Props) {
   const save = useSaveViews(scope)
   const [dialog, setDialog] = useState<null | { kind: 'create' } | { kind: 'rename'; view: SavedView }>(null)
   const [removing, setRemoving] = useState<SavedView | null>(null)
   const drag = useRef<string | null>(null)
+  // Where the view shown went when the last write gave it a new id.
+  const movedTo = useRef<string | null>(null)
   const full = views.length >= MAX_VIEWS
 
   // Writes the whole list. Nothing is thrown: the person is told what happened. A 409 leaves the views as the server
@@ -46,7 +51,14 @@ export function ViewBar({ scope, views, rev, active, working, modified, write, o
   const run = async (next: Draft[]): Promise<SavedView[] | null> => {
     try {
       const input: PutViewsInput = { baseRev: rev, views: next }
-      return (await save.mutateAsync(input)).views
+      const list = (await save.mutateAsync(input)).views
+      // Every write gives the "@n" views a new id, the one shown too: find it again by its place in what was sent.
+      const at = active && active.id.startsWith('@') ? next.findIndex((v) => v.id === active.id) : -1
+      if (active && at >= 0 && list[at] && list[at].id !== active.id) {
+        onRemap(active.id, list[at].id)
+        movedTo.current = list[at].id
+      }
+      return list
     } catch (e) {
       if (e instanceof ApiError && e.code === 'conflict') toast.error(t.views.conflict)
       else toast.error(t.views.failed(e instanceof Error ? e.message : ''))
@@ -56,9 +68,10 @@ export function ViewBar({ scope, views, rev, active, working, modified, write, o
 
   const saveWorking = async () => {
     if (!active) return
+    movedTo.current = null
     const list = await run(views.map((v) => (v.id === active.id ? withState(v, working) : v)))
     if (list) {
-      onSaved(active.id)
+      onSaved(movedTo.current ?? active.id)
       toast.success(t.views.saved)
     }
   }
@@ -76,7 +89,9 @@ export function ViewBar({ scope, views, rev, active, working, modified, write, o
   const duplicate = async (view: SavedView) => {
     const { id, ...rest } = view
     void id
-    const copy: Draft = { ...rest, name: freshName(views.map((v) => v.name), t.views.copyName(view.name)) }
+    // The name of the copy has to fit the server's limit too: the long name is cut, not the words around it (room is left for " 20").
+    const room = MAX_NAME_BYTES - nameBytes(t.views.copyName('')) - 3
+    const copy: Draft = { ...rest, name: freshName(views.map((v) => v.name), t.views.copyName(cutBytes(view.name, room))) }
     // The copy of the view being shown is made from what is shown.
     const list = await run([...views, view.id === active?.id ? withState(copy, working) : copy])
     if (list) onSaved(list[list.length - 1].id)
@@ -238,7 +253,7 @@ function NameDialog({ title, help, initial, submit, onSubmit, onClose }: { title
   const send = async (e: FormEvent) => {
     e.preventDefault()
     const name = value.trim()
-    if (name === '' || Array.from(name).length > 80 || /[\r\n]/.test(name)) return setError(t.views.nameInvalid)
+    if (name === '' || nameBytes(name) > MAX_NAME_BYTES || /[\r\n]/.test(name)) return setError(t.views.nameInvalid)
     setBusy(true)
     try {
       await onSubmit(name)

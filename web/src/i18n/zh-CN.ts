@@ -367,7 +367,7 @@ export const zhCN = {
     createHelp: '按现在的显示方式、排序和筛选存成一个视图，这个文件夹或标签里的人都能用。',
     create: '新建',
     renameTitle: '重命名视图',
-    nameInvalid: '请填写名称（一行，不超过 80 个字）',
+    nameInvalid: '请填写名称（一行，不超过 200 字节；一个汉字占 3 字节）',
     defaultName: '视图',
     copyName: (name: string) => `${name} 的副本`,
     deleteTitle: (name: string) => `删除视图“${name}”？`,

@@ -247,6 +247,16 @@ func TestOptionOrderAndBoardInALargeFolder(t *testing.T) {
 			return len(r.Groups) + r.Empty, err
 		}
 	}
+	// Without the cache, which any write to the index clears: this is what a
+	// board costs after every save.
+	uncached := func(q GroupQuery) func() (int, error) {
+		return func() (int, error) {
+			r, err := x.countGroups(q)
+			return len(r.Groups) + r.Empty, err
+		}
+	}
+	measure("groups of status, uncached", uncached(GroupQuery{Folder: &folder, Key: "status"}))
+	measure("groups of status, filter points range, uncached", uncached(GroupQuery{Folder: &folder, Key: "status", Filters: []Filter{{Key: "points", Op: "range", Values: []any{100, 200}}}}))
 	measure("groups of status (count + empty)", groups(GroupQuery{Folder: &folder, Key: "status"}))
 	measure("groups of labels (a list)", groups(GroupQuery{Folder: &folder, Key: "labels"}))
 	measure("groups of status, filter points range", groups(GroupQuery{Folder: &folder, Key: "status", Filters: []Filter{{Key: "points", Op: "range", Values: []any{100, 200}}}}))

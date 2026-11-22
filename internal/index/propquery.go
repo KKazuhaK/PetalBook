@@ -208,11 +208,11 @@ func (f Filter) sql() (string, []any) {
 	case "range":
 		cond, args := has, []any{f.Key}
 		if f.lo != nil {
-			cond += ` AND f.skey >= ?`
+			cond += ` AND +f.skey >= ?` // the plus keeps props_skey out of it: a lookup by (page, key) is what this needs
 			args = append(args, *f.lo)
 		}
 		if f.hi != nil {
-			cond += ` AND f.skey <= ?`
+			cond += ` AND +f.skey <= ?`
 			args = append(args, *f.hi)
 		}
 		return cond + `)`, args

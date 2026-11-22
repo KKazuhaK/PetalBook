@@ -861,6 +861,7 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     listPages,
     groups,
     views: (folder: string | undefined, tag: string | undefined) => viewBook.get(folder, tag),
+    seedHandWrittenViews: (folder: string, views: Parameters<typeof viewBook.seedHandWritten>[1]) => viewBook.seedHandWritten(folder, views),
     putViews: (body: Record<string, unknown>) => {
       guard()
       return viewBook.put(body)

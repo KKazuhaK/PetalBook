@@ -1032,7 +1032,15 @@ views). Other settings an entry has stay. The move and the change of the binding
 stops between the two, it finishes the bindings when it starts again, and if
 the bindings cannot be written the folder is not moved and the request fails
 (also when `space.yml` is so full that the new key would make it larger than the
-1 MiB the server reads).
+1 MiB the server reads). Moving or deleting a folder removes entries of
+`space.yml`; an alias elsewhere in the file that pointed into a removed entry
+(a hand-written `*anchor` of another folder's view) is replaced by a copy of what
+it pointed to, so the other folder keeps its views and the removed folder's
+settings never stay behind under the old name. Should the file still not be
+readable after the edit, the move or delete is refused like a full file (`400
+invalid`, fix `space.yml` by hand). A move that a crash interrupted and whose
+bindings then do not fit in `space.yml` is taken back at the next start: the
+folder goes back to its old name, and the error is logged.
 Nothing was at the place a folder is moved to, so every binding at that place
 and under it is stale and is dropped (the moved folder takes the bindings it
 had, and none it did not); the journal of the move is kept until the bindings

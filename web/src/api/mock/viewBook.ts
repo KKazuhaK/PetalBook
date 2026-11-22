@@ -63,7 +63,7 @@ export function createViewBook(opts: { random: () => number; spelledFolder: (pat
       }
       const id = text('id')
       if (id !== '') {
-        if (!/^[A-Za-z0-9_-]{1,32}$/.test(id)) throw invalid(`${at}的 id 不合法`)
+        if (!/^[A-Za-z0-9_-]{1,32}$/.test(id) && !/^@\d+$/.test(id)) throw invalid(`${at}的 id 不合法`)
         if (ids.has(id)) throw invalid(`${at}的 id 重复了`)
         ids.add(id)
       }
@@ -130,11 +130,25 @@ export function createViewBook(opts: { random: () => number; spelledFolder: (pat
         if (!before) throw invalid(`这里没有 id 为 ${v.id} 的视图；新视图不要带 id`)
         // Keys the server does not know that the request leaves out stay.
         const kept = Object.fromEntries(Object.entries(before).filter(([k]) => !KNOWN.includes(k)))
+        // A view written by hand ("@n") is given a real id by any write that names it.
+        if (v.id.startsWith('@')) {
+          let id: string
+          do {
+            id = Array.from({ length: 6 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(opts.random() * 36)]).join('')
+          } while (used.has(id))
+          used.add(id)
+          return { ...kept, ...v, id }
+        }
         return { ...kept, ...v }
       })
       if (next.length === 0) books.delete(key)
       else books.set(key, next)
       return listOf(next)
+    },
+
+    // Views as a person's hand in space.yml leaves them: no usable id, so each is served as "@n", n its place from 0.
+    seedHandWritten(folder: string, views: Omit<SavedView, 'id'>[]) {
+      books.set('f:' + folder, views.map((v, i) => ({ filter: [], hidden: [], group: '', sort: '', ...v, id: '@' + i }) as unknown as SavedView))
     },
 
     // Views follow their folder, and what was at the place it moves to is stale.

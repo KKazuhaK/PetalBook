@@ -367,7 +367,7 @@ export const en: Messages = {
     createHelp: 'Saves the current layout, sort and filters as a view that everyone here can use.',
     create: 'Create',
     renameTitle: 'Rename view',
-    nameInvalid: 'Enter a name (one line, at most 80 characters)',
+    nameInvalid: 'Enter a name (one line, at most 200 bytes of UTF-8; a Chinese character takes 3)',
     defaultName: 'View',
     copyName: (name: string) => `Copy of ${name}`,
     deleteTitle: (name: string) => `Delete the view "${name}"?`,
