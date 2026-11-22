@@ -32,7 +32,7 @@ func TestCreateWithNameTakenInAnotherUnicodeForm(t *testing.T) {
 
 	done := make(chan *Page, 1)
 	go func() {
-		p, err := s.Create(CreateInput{Meta: meta("title", "Café")})
+		p, err := s.Create(Author{}, CreateInput{Meta: meta("title", "Café")})
 		if err != nil {
 			t.Errorf("create: %v", err)
 		}
@@ -57,7 +57,7 @@ func TestCreateWithNameTakenInAnotherUnicodeForm(t *testing.T) {
 	always.ReadDir = func(string) ([]fs.DirEntry, error) { return nil, nil }
 	s.ops = always
 	errc := make(chan error, 1)
-	go func() { _, err := s.Create(CreateInput{Meta: meta("title", "Never")}); errc <- err }()
+	go func() { _, err := s.Create(Author{}, CreateInput{Meta: meta("title", "Never")}); errc <- err }()
 	select {
 	case err := <-errc:
 		if !errors.Is(err, ErrExists) {
@@ -177,7 +177,7 @@ func TestRenameNeverReplacesAnotherFile(t *testing.T) {
 	// Case-sensitive: A.md is page X (inode 1) and a.md is page Y (inode 2).
 	cs := &fakeFS{files: map[string]int{"A.md": 1, "a.md": 2}}
 	s := &Space{ops: cs.ops()}
-	name, err := s.moveNamed("/d/A.md", "/d", "a", nil)
+	name, err := s.moveNamed(Author{}, "/d/A.md", "/d", "a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,33 +191,33 @@ func TestRenameNeverReplacesAnotherFile(t *testing.T) {
 	// Case-sensitive, nothing in the way: a case-only rename is fine.
 	cs = &fakeFS{files: map[string]int{"A.md": 1}}
 	s = &Space{ops: cs.ops()}
-	if name, err = s.moveNamed("/d/A.md", "/d", "a", nil); err != nil || name != "a.md" || cs.files["a.md"] != 1 || len(cs.files) != 1 {
+	if name, err = s.moveNamed(Author{}, "/d/A.md", "/d", "a", nil); err != nil || name != "a.md" || cs.files["a.md"] != 1 || len(cs.files) != 1 {
 		t.Fatalf("%q %v %v", name, err, cs.files)
 	}
 
 	// Case-insensitive: "a.md" is the same file as "A.md", so renaming is allowed.
 	ci := &fakeFS{fold: true, files: map[string]int{"A.md": 1}}
 	s = &Space{ops: ci.ops()}
-	if name, err = s.moveNamed("/d/A.md", "/d", "a", nil); err != nil || name != "a.md" || ci.files["a.md"] != 1 || len(ci.files) != 1 {
+	if name, err = s.moveNamed(Author{}, "/d/A.md", "/d", "a", nil); err != nil || name != "a.md" || ci.files["a.md"] != 1 || len(ci.files) != 1 {
 		t.Fatalf("%q %v %v", name, err, ci.files)
 	}
 	// The same where a rename onto the same entry changes nothing (Linux):
 	// the file is still respelled, and nothing else is left.
 	ci = &fakeFS{fold: true, selfNoop: true, files: map[string]int{"A.md": 1}}
 	s = &Space{ops: ci.ops()}
-	if name, err = s.moveNamed("/d/A.md", "/d", "a", nil); err != nil || name != "a.md" || ci.files["a.md"] != 1 || len(ci.files) != 1 {
+	if name, err = s.moveNamed(Author{}, "/d/A.md", "/d", "a", nil); err != nil || name != "a.md" || ci.files["a.md"] != 1 || len(ci.files) != 1 {
 		t.Fatalf("%q %v %v", name, err, ci.files)
 	}
 	// ... but a different file with the folded name is never replaced.
 	ci = &fakeFS{fold: true, files: map[string]int{"B.md": 1, "a.md": 2}}
 	s = &Space{ops: ci.ops()}
-	if name, err = s.moveNamed("/d/B.md", "/d", "A", nil); err != nil || name != "A 2.md" || ci.files["a.md"] != 2 {
+	if name, err = s.moveNamed(Author{}, "/d/B.md", "/d", "A", nil); err != nil || name != "A 2.md" || ci.files["a.md"] != 2 {
 		t.Fatalf("%q %v %v", name, err, ci.files)
 	}
 	// A move into another folder skips taken names, whatever their spelling.
 	cs = &fakeFS{files: map[string]int{"x.md": 1, "X.md": 2, "X 2.md": 3}}
 	s = &Space{ops: cs.ops()}
-	if name, err = s.moveNamed("/src/x.md", "/d", "X", nil); err != nil || name != "X 3.md" {
+	if name, err = s.moveNamed(Author{}, "/src/x.md", "/d", "X", nil); err != nil || name != "X 3.md" {
 		t.Fatalf("%q %v %v", name, err, cs.files)
 	}
 }
@@ -240,7 +240,7 @@ func TestSaveRenameDoesNotOverwriteCaseVariant(t *testing.T) {
 	if _, err := s.Reindex(); err != nil {
 		t.Fatal(err)
 	}
-	n, err := s.Save(x.ID, x.Rev, meta("title", "a"), "page X\n")
+	n, err := s.Save(Author{}, x.ID, x.Rev, meta("title", "a"), "page X\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func swapped(t *testing.T) (s *Space, x, y *Page, xNow string) {
 
 func TestDeleteActsOnTheRightFile(t *testing.T) {
 	s, x, y, xNow := swapped(t)
-	if err := s.Delete(x.ID); err != nil {
+	if err := s.Delete(Author{}, x.ID); err != nil {
 		t.Fatal(err)
 	}
 	if exists(s, xNow) {
@@ -284,7 +284,7 @@ func TestDeleteActsOnTheRightFile(t *testing.T) {
 		t.Fatalf("%v %+v", err, g)
 	}
 	// An id that no longer exists anywhere is not found, and nothing is deleted.
-	if err := s.Delete(x.ID); !errors.Is(err, ErrNotFound) {
+	if err := s.Delete(Author{}, x.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("%v", err)
 	}
 	if !exists(s, x.Path) {
@@ -295,19 +295,19 @@ func TestDeleteActsOnTheRightFile(t *testing.T) {
 func TestSaveAndMoveActOnTheRightFile(t *testing.T) {
 	s, x, y, xNow := swapped(t)
 	// The conflict answer shows X, never Y.
-	_, err := s.Save(x.ID, "stale", x.Meta, "mine\n")
+	_, err := s.Save(Author{}, x.ID, "stale", x.Meta, "mine\n")
 	var ce *ConflictError
 	if !errors.As(err, &ce) || ce.Current.ID != x.ID || ce.Current.Body != "page X\n" || ce.Current.Path != xNow {
 		t.Fatalf("%v %+v", err, ce)
 	}
-	n, err := s.Save(x.ID, ce.Current.Rev, x.Meta, "X edited\n")
+	n, err := s.Save(Author{}, x.ID, ce.Current.Rev, x.Meta, "X edited\n")
 	if err != nil || n.ID != x.ID || n.Path != xNow {
 		t.Fatalf("%v %+v", err, n)
 	}
 	if !strings.Contains(readDisk(t, s, x.Path), "page Y") {
 		t.Fatal("page Y's file was overwritten")
 	}
-	m, err := s.Move(x.ID, "sub")
+	m, err := s.Move(Author{}, x.ID, "sub")
 	if err != nil || m.ID != x.ID || !strings.HasPrefix(m.Path, "sub/") {
 		t.Fatalf("%v %+v", err, m)
 	}
@@ -316,10 +316,10 @@ func TestSaveAndMoveActOnTheRightFile(t *testing.T) {
 	}
 	// Gone entirely: not found for every write.
 	os.Remove(filepath.Join(s.Root(), m.Path))
-	if _, err := s.Save(x.ID, m.Rev, x.Meta, "x"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Save(Author{}, x.ID, m.Rev, x.Meta, "x"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("%v", err)
 	}
-	if _, err := s.Move(x.ID, "other"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Move(Author{}, x.ID, "other"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("%v", err)
 	}
 }
@@ -339,7 +339,7 @@ func TestSaveKeepsFileOrderWhateverTheRequestOrder(t *testing.T) {
 
 	// A browser puts integer-like keys first; the file does not follow.
 	req := page.Meta{{Key: "2024", Value: "年度"}, {Key: "alpha", Value: "a"}, {Key: "zeta", Value: "z"}, {Key: "title", Value: "T"}, {Key: "id", Value: p.ID}}
-	n, err := s.Save(p.ID, g.Rev, req, "b\n")
+	n, err := s.Save(Author{}, p.ID, g.Rev, req, "b\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +349,7 @@ func TestSaveKeepsFileOrderWhateverTheRequestOrder(t *testing.T) {
 
 	// New keys are appended in request order; absent keys are removed.
 	req = page.Meta{{Key: "new2", Value: int64(2)}, {Key: "title", Value: "T"}, {Key: "new1", Value: "n"}, {Key: "2024", Value: "年度"}}
-	n, err = s.Save(p.ID, n.Rev, req, "b\n")
+	n, err = s.Save(Author{}, p.ID, n.Rev, req, "b\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,22 +366,22 @@ func TestSaveKeepsFileOrderWhateverTheRequestOrder(t *testing.T) {
 
 func TestFolderNamesResolveToTheExistingSpelling(t *testing.T) {
 	s := open(t)
-	if _, err := s.CreateFolder("Tang/诗"); err != nil {
+	if _, err := s.CreateFolder(Author{}, "Tang/诗"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateFolder("tang/诗"); !errors.Is(err, ErrExists) {
+	if _, err := s.CreateFolder(Author{}, "tang/诗"); !errors.Is(err, ErrExists) {
 		t.Fatalf("case variant of an existing folder: %v", err)
 	}
-	if c, err := s.CreateFolder("TANG/新"); err != nil || c != "Tang/新" {
+	if c, err := s.CreateFolder(Author{}, "TANG/新"); err != nil || c != "Tang/新" {
 		t.Fatalf("%q %v", c, err)
 	}
 	a := mustCreate(t, s, "", meta("title", "A"), "")
-	m, err := s.Move(a.ID, "tang")
+	m, err := s.Move(Author{}, a.ID, "tang")
 	if err != nil || m.Path != "Tang/A.md" || m.Folder != "Tang" {
 		t.Fatalf("%v %+v", err, m)
 	}
 	// Moving to another spelling of the folder it is in changes nothing.
-	same, err := s.Move(a.ID, "TANG")
+	same, err := s.Move(Author{}, a.ID, "TANG")
 	if err != nil || same.Path != "Tang/A.md" {
 		t.Fatalf("%v %+v", err, same)
 	}
@@ -391,10 +391,10 @@ func TestFolderNamesResolveToTheExistingSpelling(t *testing.T) {
 	}
 	// Composed and decomposed forms are one folder.
 	nfd := norm.NFD.String("café")
-	if _, err := s.CreateFolder(nfd); err != nil {
+	if _, err := s.CreateFolder(Author{}, nfd); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateFolder(norm.NFC.String("café")); !errors.Is(err, ErrExists) {
+	if _, err := s.CreateFolder(Author{}, norm.NFC.String("café")); !errors.Is(err, ErrExists) {
 		t.Fatalf("NFC after NFD: %v", err)
 	}
 	tree, _ := s.Tree()
@@ -419,7 +419,7 @@ func TestMoveFailsCleanlyWhenNoNameIsFree(t *testing.T) {
 	a := mustCreate(t, s, "", meta("title", "A"), "")
 	s.ops.Link = func(string, string) error { return fs.ErrExist }
 	s.ops.ReadDir = func(string) ([]fs.DirEntry, error) { return nil, nil }
-	_, err := s.Move(a.ID, "x")
+	_, err := s.Move(Author{}, a.ID, "x")
 	if !errors.Is(err, ErrExists) {
 		t.Fatalf("%v", err)
 	}
@@ -532,7 +532,7 @@ func TestSavesDoNotWaitForGit(t *testing.T) {
 			<-release
 		}
 	}
-	n, err := s.Save(p.ID, p.Rev, meta("title", "并发"), "v2\n")
+	n, err := s.Save(Author{}, p.ID, p.Rev, meta("title", "并发"), "v2\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,9 +546,9 @@ func TestSavesDoNotWaitForGit(t *testing.T) {
 	// git is busy committing v2. A save, a create and a read must not wait.
 	finished := make(chan error, 1)
 	go func() {
-		m, err := s.Save(p.ID, n.Rev, meta("title", "并发"), "v3 during the commit\n")
+		m, err := s.Save(Author{}, p.ID, n.Rev, meta("title", "并发"), "v3 during the commit\n")
 		if err == nil {
-			_, err = s.Create(CreateInput{Meta: meta("title", "期间新建")})
+			_, err = s.Create(Author{}, CreateInput{Meta: meta("title", "期间新建")})
 		}
 		if err == nil {
 			_, err = s.Get(m.ID)

@@ -27,7 +27,7 @@ func folderKey(rel string) string {
 // also how a folder is renamed. Missing parents of to are made. It returns the
 // folder's new path as it is on disk. It is one change: one commit, and in a
 // space that follows a remote one push, or nothing at all.
-func (s *Space) MoveFolder(from, to string) (string, error) {
+func (s *Space) MoveFolder(by Author, from, to string) (string, error) {
 	if err := checkRel(from); err != nil {
 		return "", err
 	}
@@ -40,7 +40,7 @@ func (s *Space) MoveFolder(from, to string) (string, error) {
 	if to == "" {
 		return "", invalidf("a folder cannot become the root")
 	}
-	return mutate(s, func(tx *txn) (string, error) { return s.moveFolderLocked(tx, from, to) })
+	return mutate(s, by, func(tx *txn) (string, error) { return s.moveFolderLocked(tx, from, to) })
 }
 
 func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
@@ -196,7 +196,7 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	for _, p := range append(append([]string{}, oldPaths...), newPaths...) {
 		recs = append(recs, jrec{Op: "t", Path: p})
 	}
-	if err := s.cm.Record(recs...); err != nil {
+	if err := tx.record(recs...); err != nil {
 		return "", err
 	}
 	inside := make([]string, 0, len(ours))
@@ -204,7 +204,7 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 		inside = append(inside, f)
 	}
 	sort.Strings(inside)
-	if err := s.rename(absFrom, absTarget, inside); err != nil {
+	if err := s.rename(tx.by, absFrom, absTarget, inside); err != nil {
 		return "", err
 	}
 	// The folder is part of the change from here on. Undoing it renames the
@@ -212,7 +212,7 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	// track, and empty folders, which Git cannot put back.
 	sort.Strings(subdirs)
 	tx.undo = append(tx.undo, func() []string {
-		if err := s.rename(absTarget, absFrom, inside); err != nil {
+		if err := s.rename(tx.by, absTarget, absFrom, inside); err != nil {
 			s.log.Error("could not move a folder back while undoing a change", "from", target, "to", canonFrom, "error", err)
 			// The files are at the new place and may be nowhere else: nothing
 			// there is removed. The space refuses changes until someone has looked.
@@ -270,7 +270,7 @@ func (s *Space) pagesUnder(folder string) ([]string, error) {
 // The ids returned are the pages that were deleted and stay deleted: all of
 // them on success; on a failure, the ones a local space had already deleted
 // (it has no undo), and none in a space that follows a remote (it has).
-func (s *Space) DeleteFolder(rel string, recursive bool) ([]string, error) {
+func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, error) {
 	if err := checkRel(rel); err != nil {
 		return nil, err
 	}
@@ -278,7 +278,7 @@ func (s *Space) DeleteFolder(rel string, recursive bool) ([]string, error) {
 		return nil, invalidf("the root cannot be removed")
 	}
 	var deleted []string
-	_, err := mutate(s, func(tx *txn) (struct{}, error) {
+	_, err := mutate(s, by, func(tx *txn) (struct{}, error) {
 		deleted = deleted[:0] // the change may be made again on a newer remote
 		canon, existed, err := s.resolveFolder(rel)
 		if errors.Is(err, ErrExists) || (err == nil && !existed) {
@@ -344,7 +344,7 @@ func (s *Space) DeleteFolder(rel string, recursive bool) ([]string, error) {
 			keep := path.Join(d, ".gitkeep")
 			absKeep := filepath.Join(s.root, filepath.FromSlash(keep))
 			if fi, err := os.Lstat(absKeep); err == nil && fi.Mode().IsRegular() {
-				if err := s.cm.Record(jrec{Op: "d", Path: keep}); err != nil {
+				if err := tx.record(jrec{Op: "d", Path: keep}); err != nil {
 					return struct{}{}, err
 				}
 				tx.touch(keep)
@@ -395,7 +395,7 @@ const MaxBatch = 500
 // BatchMove moves pages into folder as one change. A page already there is
 // left where it is. ErrNotFound when one of the ids is not a page; nothing is
 // changed then.
-func (s *Space) BatchMove(ids []string, folder string) error {
+func (s *Space) BatchMove(by Author, ids []string, folder string) error {
 	if err := checkBatch(ids); err != nil {
 		return err
 	}
@@ -405,7 +405,7 @@ func (s *Space) BatchMove(ids []string, folder string) error {
 	for _, id := range ids {
 		s.refresh(id)
 	}
-	_, err := mutate(s, func(tx *txn) (struct{}, error) {
+	_, err := mutate(s, by, func(tx *txn) (struct{}, error) {
 		for _, id := range ids {
 			if _, _, _, err := s.load(id, false); err != nil {
 				return struct{}{}, err
@@ -431,7 +431,7 @@ func (s *Space) BatchMove(ids []string, folder string) error {
 // BatchDelete deletes pages as one change. ErrNotFound when one of the ids is
 // not a page; nothing is changed then. The ids returned are the pages that
 // were deleted and stay deleted (see DeleteFolder).
-func (s *Space) BatchDelete(ids []string) ([]string, error) {
+func (s *Space) BatchDelete(by Author, ids []string) ([]string, error) {
 	if err := checkBatch(ids); err != nil {
 		return nil, err
 	}
@@ -439,7 +439,7 @@ func (s *Space) BatchDelete(ids []string) ([]string, error) {
 		s.refresh(id)
 	}
 	var deleted []string
-	_, err := mutate(s, func(tx *txn) (struct{}, error) {
+	_, err := mutate(s, by, func(tx *txn) (struct{}, error) {
 		deleted = deleted[:0]
 		for _, id := range ids {
 			if _, _, _, err := s.load(id, false); err != nil {

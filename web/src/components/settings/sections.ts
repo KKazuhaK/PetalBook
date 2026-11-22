@@ -2,8 +2,8 @@
 // the rules (which sections a person sees, how an old address maps to one) are
 // tested without rendering anything.
 
-export type SectionId = 'profile' | 'preferences' | 'security' | 'general' | 'sync' | 'import' | 'users'
-export type GroupId = 'account' | 'space' | 'admin'
+export type SectionId = 'profile' | 'preferences' | 'security' | 'general' | 'members' | 'sync' | 'import'
+export type GroupId = 'account' | 'space'
 
 export interface SectionDef {
   id: SectionId
@@ -16,23 +16,31 @@ export const SECTIONS: readonly SectionDef[] = [
   { id: 'preferences', group: 'account' },
   { id: 'security', group: 'account' },
   { id: 'general', group: 'space' },
+  { id: 'members', group: 'space' },
   { id: 'sync', group: 'space' },
   { id: 'import', group: 'space' },
-  { id: 'users', group: 'admin' },
 ]
 
 export interface Visibility {
   // `undefined` until the session has been read.
   mode: 'single' | 'accounts' | undefined
   signedIn: boolean
-  admin: boolean
   // Whether there is a space to show settings of.
   hasSpace: boolean
+  // Whether the person may read that space (the people of a space are for its
+  // members to see). Not the case for a disabled one.
+  canRead: boolean
+  // Whether the person may change that space's pages (an import writes them).
+  canWrite: boolean
+  // That space is switched off: its members cannot be listed, but a member may
+  // still leave it, and that is on the members section.
+  disabled?: boolean
 }
 
-// Single-user mode has no account, no remote repository and no users: only what
-// applies is listed. Accounts mode lists the space sections while there is a
-// space, and the administrator's section for administrators.
+// Single-user mode has no account, no remote repository and no members: only
+// what applies is listed. Accounts mode lists the space sections while there is
+// a space. (The administration is not a section here: it has its own address,
+// /admin.)
 export function visibleSections(v: Visibility): SectionDef[] {
   if (v.mode === undefined) return []
   return SECTIONS.filter((s) => {
@@ -43,12 +51,13 @@ export function visibleSections(v: Visibility): SectionDef[] {
       case 'preferences':
         return true
       case 'general':
-      case 'import':
         return v.hasSpace
+      case 'import':
+        return v.hasSpace && v.canWrite
+      case 'members':
+        return v.mode === 'accounts' && v.hasSpace && (v.canRead || v.disabled === true)
       case 'sync':
         return v.mode === 'accounts' && v.hasSpace
-      case 'users':
-        return v.mode === 'accounts' && v.signedIn && v.admin
     }
   })
 }
@@ -89,12 +98,10 @@ export function sectionFromPath(pathname: string): SectionId | null | undefined 
 
 // The old addresses, and the section each one is now:
 //   /settings            -> profile (accounts) or preferences (single-user)
-//   /users               -> users
 //   /s/<space>/settings  -> sync (accounts) or general (single-user), for that space
 // The space is returned so the caller can make it the one in use.
 export function legacySettingsTarget(pathname: string, v: Visibility): { section: SectionId; space?: string } | null {
   if (pathname === '/settings' || pathname === '/settings/') return { section: defaultSection(v) }
-  if (pathname === '/users' || pathname === '/users/') return { section: 'users' }
   const m = /^\/s\/([^/]+)\/settings\/?$/.exec(pathname)
   if (m) {
     let space = m[1]

@@ -29,7 +29,7 @@ func (f *rfx) crashedWithUnpushedCommit(title, id string) {
 func (f *rfx) crashedWithUncommittedFile(title, id string) {
 	f.t.Helper()
 	data := []byte(pageText(id, title, "written\n"))
-	if err := f.s.cm.Record(jrec{Op: "w", Path: title + ".md", Rev: page.Rev(data)}); err != nil {
+	if err := f.s.cm.Record(Author{}, jrec{Op: "w", Path: title + ".md", Rev: page.Rev(data)}); err != nil {
 		f.t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(f.root, title+".md"), data, 0o644); err != nil {
@@ -139,7 +139,7 @@ func TestCrashRecoveryWhenTheRemoteMovedKeepsTheWorkAndFollowsTheRemote(t *testi
 				t.Fatalf("%v %v", got, err)
 			}
 			// Changes still work, and the notice stays until it is cleared.
-			if _, err := f.s.Create(CreateInput{Meta: meta("title", "After")}); err != nil {
+			if _, err := f.s.Create(Author{}, CreateInput{Meta: meta("title", "After")}); err != nil {
 				t.Fatal(err)
 			}
 			if f.last().Kind != KindRescued {
@@ -171,7 +171,7 @@ func TestACloneWithChangesTheServerDidNotMakeRefusesChanges(t *testing.T) {
 		t.Fatalf("status %+v", st)
 	}
 	var ue *UnavailableError
-	if _, err := f.s.Create(CreateInput{Meta: meta("title", "Nope")}); !errors.As(err, &ue) {
+	if _, err := f.s.Create(Author{}, CreateInput{Meta: meta("title", "Nope")}); !errors.As(err, &ue) {
 		t.Fatalf("create: %v", err)
 	}
 	// Nothing of theirs was discarded.
@@ -189,7 +189,7 @@ func TestACloneWithChangesTheServerDidNotMakeRefusesChanges(t *testing.T) {
 	}
 	// The index still holds the hand edit until the page is read again.
 	f.s.Reindex()
-	if _, err := f.s.Create(CreateInput{Meta: meta("title", "Now fine")}); err != nil {
+	if _, err := f.s.Create(Author{}, CreateInput{Meta: meta("title", "Now fine")}); err != nil {
 		t.Fatal(err)
 	}
 	consistent(t, f.s)

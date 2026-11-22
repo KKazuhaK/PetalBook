@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -62,6 +64,138 @@ func ListUserSpaces(ctx context.Context, q Q, userID string) ([]SpaceInfo, error
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// GetSpace returns a space by id, with no member's role: for an administrator
+// who is not a member. One primary-key lookup.
+func GetSpace(ctx context.Context, q Q, id string) (*SpaceInfo, error) {
+	var s SpaceInfo
+	var personal sql.NullString
+	var created int64
+	err := q.QueryRow(ctx, `SELECT id, name, personal_of, inbox, created FROM spaces WHERE id = ?`, id).
+		Scan(&s.ID, &s.Name, &personal, &s.Inbox, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	s.Personal, s.Created = personal.Valid, fromMS(created)
+	return &s, nil
+}
+
+// Member is a user's membership of a space, with who they are.
+type Member struct {
+	UserID   string
+	Username string
+	Name     string
+	Role     string
+	Created  time.Time
+}
+
+// ListMembers returns the members of a space, owners first, then by name. One
+// query on the space's index, joined to users; a space has as many members as
+// people share it, not as many as the server has users.
+func ListMembers(ctx context.Context, q Q, spaceID string) ([]Member, error) {
+	rows, err := q.Query(ctx, `SELECT m.user_id, u.username, u.name, m.role, m.created
+		FROM space_members m JOIN users u ON u.id = m.user_id
+		WHERE m.space_id = ?`, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Member
+	for rows.Next() {
+		var m Member
+		var created int64
+		if err := rows.Scan(&m.UserID, &m.Username, &m.Name, &m.Role, &created); err != nil {
+			return nil, err
+		}
+		m.Created = fromMS(created)
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Sorted here, not by the database, so SQLite and PostgreSQL agree on case and accents.
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if (a.Role == "owner") != (b.Role == "owner") {
+			return a.Role == "owner"
+		}
+		if an, bn := strings.ToLower(a.Name), strings.ToLower(b.Name); an != bn {
+			return an < bn
+		}
+		if a.Username != b.Username {
+			return a.Username < b.Username
+		}
+		return a.UserID < b.UserID
+	})
+	return out, nil
+}
+
+// GetMember returns one member with who they are, or ErrNotFound.
+func GetMember(ctx context.Context, q Q, spaceID, userID string) (*Member, error) {
+	var m Member
+	var created int64
+	err := q.QueryRow(ctx, `SELECT m.user_id, u.username, u.name, m.role, m.created
+		FROM space_members m JOIN users u ON u.id = m.user_id
+		WHERE m.space_id = ? AND m.user_id = ?`, spaceID, userID).Scan(&m.UserID, &m.Username, &m.Name, &m.Role, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	m.Created = fromMS(created)
+	return &m, nil
+}
+
+// MemberRole returns a user's role in a space, or ErrNotFound if they are not a member.
+func MemberRole(ctx context.Context, q Q, spaceID, userID string) (string, error) {
+	var role string
+	err := q.QueryRow(ctx, `SELECT role FROM space_members WHERE space_id = ? AND user_id = ?`, spaceID, userID).Scan(&role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return role, err
+}
+
+// SetMemberRole changes a member's role.
+func SetMemberRole(ctx context.Context, q Q, spaceID, userID, role string) error {
+	res, err := q.Exec(ctx, `UPDATE space_members SET role = ? WHERE space_id = ? AND user_id = ?`, role, spaceID, userID)
+	return oneRow(res, err)
+}
+
+// RemoveMember removes a member from a space.
+func RemoveMember(ctx context.Context, q Q, spaceID, userID string) error {
+	res, err := q.Exec(ctx, `DELETE FROM space_members WHERE space_id = ? AND user_id = ?`, spaceID, userID)
+	return oneRow(res, err)
+}
+
+// CountOwners counts the owners of a space.
+func CountOwners(ctx context.Context, q Q, spaceID string) (n int, err error) {
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM space_members WHERE space_id = ? AND role = 'owner'`, spaceID).Scan(&n)
+	return
+}
+
+// CountOtherEnabledOwners counts the owners of the space other than except who
+// can sign in: a disabled owner cannot act as one, so the "keep one owner" rule
+// asks whether anyone else would still be able to.
+func CountOtherEnabledOwners(ctx context.Context, q Q, spaceID, except string) (n int, err error) {
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM space_members m JOIN users u ON u.id = m.user_id
+		WHERE m.space_id = ? AND m.role = 'owner' AND m.user_id <> ? AND u.disabled = 0`, spaceID, except).Scan(&n)
+	return
+}
+
+// LockSpace makes the rest of the transaction the only one changing who is a
+// member of the space: the "keep one owner" rule reads a count and then
+// writes, and two people leaving at once must not both pass. A no-op write is
+// the lock that works the same on both databases (PostgreSQL holds the row
+// until commit; SQLite's transactions are serialized already).
+func LockSpace(ctx context.Context, q Q, spaceID string) error {
+	res, err := q.Exec(ctx, `UPDATE spaces SET id = id WHERE id = ?`, spaceID)
+	return oneRow(res, err)
 }
 
 // RenameSpace changes a space's display name.

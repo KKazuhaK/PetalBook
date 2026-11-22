@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { ArrowUpDown, FilePlus2, FolderPlus, LayoutGrid, List as ListIcon, PenLine, Tag as TagIcon } from 'lucide-react'
 import { toast } from 'sonner'
-import { useActiveSpace, useCreatePage, usePageList, useUrls } from '@/api/hooks'
+import { useActiveSpace, useCreatePage, usePageList, useSpacePermissions, useUrls } from '@/api/hooks'
 import type { ListParams, SortKey } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -45,10 +45,11 @@ function titleOf(s: ListSource, spaceName: string): string {
   }
 }
 
-function emptyText(s: ListSource): { main: string; hint?: string } {
+function emptyText(s: ListSource, write: boolean): { main: string; hint?: string } {
   switch (s.kind) {
     case 'recent':
-      return { main: t.list.emptyRecent }
+      // "Make the first one" is not for someone who may only read.
+      return { main: write ? t.list.emptyRecent : t.list.emptyRecentReadOnly }
     case 'folder':
       return { main: t.list.emptyFolder }
     case 'tag':
@@ -113,6 +114,7 @@ function Listing({ source }: { source: ListSource }) {
   const create = useCreatePage()
   const urls = useUrls()
   const ops = useFileOps()
+  const { write } = useSpacePermissions()
   const [creating, setCreating] = useState(false)
   const { id: spaceId, spaces } = useActiveSpace()
   const [mode, setMode] = useViewMode(spaceId ?? '', source)
@@ -166,7 +168,7 @@ function Listing({ source }: { source: ListSource }) {
   // Delete or Backspace asks to delete the selection; Escape lets go of it.
   // Not while typing, or while a dialog or menu has the keyboard.
   useEffect(() => {
-    if (selection.keys.size === 0 || !ops) return
+    if (selection.keys.size === 0 || !ops || !write) return
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return
       if ((e.target as Element | null)?.closest?.('input, textarea, select, [contenteditable="true"], [role="dialog"], [role="alertdialog"], [role="menu"]')) return
@@ -180,7 +182,7 @@ function Listing({ source }: { source: ListSource }) {
     return () => window.removeEventListener('keydown', onKey)
     // `selected` and `clear` are rebuilt on every render; what matters is the selection itself.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selection, ops])
+  }, [selection, ops, write])
 
   const newPage = async () => {
     setCreating(true)
@@ -198,7 +200,7 @@ function Listing({ source }: { source: ListSource }) {
   }
 
   const Icon = source.kind === 'tag' ? TagIcon : null
-  const empty = emptyText(source)
+  const empty = emptyText(source, write)
   const treeReady = source.kind !== 'folder' || !ops || ops.ready
   const nothing = !query.isPending && !query.isError && items.length === 0 && folders.length === 0 && treeReady
 
@@ -206,7 +208,7 @@ function Listing({ source }: { source: ListSource }) {
     <>
       <TopBar
         actions={
-          selection.keys.size > 0 && ops ? (
+          selection.keys.size > 0 && ops && write ? (
             <SelectionBar count={selection.keys.size} onMove={() => ops.chooseMove(selected, clear)} onDelete={() => ops.confirmDelete(selected, clear)} onClear={clear} />
           ) : (
           <>
@@ -239,15 +241,17 @@ function Listing({ source }: { source: ListSource }) {
             </NativeSelect>
             </div>
             <ViewSwitch mode={mode} onChange={setMode} />
-            {source.kind === 'folder' && ops && (
+            {write && source.kind === 'folder' && ops && (
               <Button variant="outline" size="icon-sm" className="max-sm:hidden" onClick={() => ops.newFolder(source.folder)} title={t.manage.newFolder} aria-label={t.manage.newFolder}>
                 <FolderPlus />
               </Button>
             )}
-            <Button size="sm" onClick={newPage} disabled={creating} aria-label={t.list.newPage}>
-              {creating ? <Spinner /> : <FilePlus2 />}
-              <span className="max-sm:hidden">{creating ? t.list.creating : t.list.newPage}</span>
-            </Button>
+            {write && (
+              <Button size="sm" onClick={newPage} disabled={creating} aria-label={t.list.newPage}>
+                {creating ? <Spinner /> : <FilePlus2 />}
+                <span className="max-sm:hidden">{creating ? t.list.creating : t.list.newPage}</span>
+              </Button>
+            )}
           </>
           )
         }
@@ -300,13 +304,13 @@ function Listing({ source }: { source: ListSource }) {
             <div className="flex flex-col items-center gap-3 py-20 text-center">
               <p className="text-sm text-muted-foreground">{isInbox ? t.inbox.empty : empty.main}</p>
               {empty.hint && <p className="text-xs text-muted-foreground">{empty.hint}</p>}
-              {isInbox && (
+              {write && isInbox && (
                 <Button size="sm" onClick={capture.open} disabled={!capture.available}>
                   <PenLine />
                   {t.inbox.emptyAction}
                 </Button>
               )}
-              {source.kind === 'folder' && !isInbox && ops && (
+              {write && source.kind === 'folder' && !isInbox && ops && (
                 <div className="flex flex-wrap justify-center gap-2">
                   <Button variant="outline" size="sm" onClick={newPage} disabled={creating}>
                     <FilePlus2 />
@@ -318,7 +322,7 @@ function Listing({ source }: { source: ListSource }) {
                   </Button>
                 </div>
               )}
-              {source.kind !== 'search' && source.kind !== 'folder' && !isInbox && (
+              {write && source.kind !== 'search' && source.kind !== 'folder' && !isInbox && (
                 <Button variant="outline" size="sm" onClick={newPage} disabled={creating}>
                   <FilePlus2 />
                   {t.list.newPage}

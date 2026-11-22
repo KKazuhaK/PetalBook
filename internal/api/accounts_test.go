@@ -371,6 +371,59 @@ func TestInvites(t *testing.T) {
 	})
 }
 
+func TestUsersCanBeSearched(t *testing.T) {
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		ids := map[string]string{}
+		for _, u := range []struct{ username, name string }{{"tang", "Tang Wei"}, {"tangerine", "橘子"}, {"a_b", ""}, {"axb", "金鱼"}, {"mei", "Mei"}} {
+			created, err := a.auth.CreateUser(context.Background(), auth.CreateParams{Username: u.username, Name: u.name, Role: "member", Password: pw})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids[u.username] = created.ID
+			a.clock.Advance(time.Second)
+		}
+		names := func(path string) []string {
+			var out []string
+			for _, u := range admin.do("GET", path, nil).want(t, 200, "").body["users"].([]any) {
+				out = append(out, u.(map[string]any)["username"].(string))
+			}
+			return out
+		}
+		eq := func(got []string, want ...string) {
+			t.Helper()
+			if strings.Join(got, ",") != strings.Join(want, ",") {
+				t.Fatalf("got %v, want %v", got, want)
+			}
+		}
+		// Without a parameter: everyone, as before.
+		eq(names("/api/users"), "kazuha", "tang", "tangerine", "a_b", "axb", "mei")
+		// A username or a name, ignoring case; oldest first.
+		eq(names("/api/users?q=TANG"), "tang", "tangerine")
+		eq(names("/api/users?q=%E6%A9%98"), "tangerine")
+		eq(names("/api/users?q=%E9%87%91"), "axb")
+		// % and _ are only themselves.
+		eq(names("/api/users?q=a_b"), "a_b")
+		eq(names("/api/users?q=%25"))
+		eq(names("/api/users?q="), "kazuha", "tang", "tangerine", "a_b", "axb", "mei")
+		eq(names("/api/users?q=tang&limit=1"), "tang")
+		eq(names("/api/users?limit=2"), "kazuha", "tang")
+		// enabled=1 leaves out disabled accounts in SQL, so the limit counts only the rest.
+		admin.do("PATCH", "/api/users/"+ids["tang"], map[string]any{"disabled": true}).want(t, 200, "")
+		eq(names("/api/users?q=tang"), "tang", "tangerine")
+		eq(names("/api/users?q=tang&enabled=1"), "tangerine")
+		eq(names("/api/users?q=tang&enabled=1&limit=1"), "tangerine")
+		eq(names("/api/users?enabled=1&limit=2"), "kazuha", "tangerine")
+		eq(names("/api/users?enabled=1"), "kazuha", "tangerine", "a_b", "axb", "mei")
+		eq(names("/api/users?enabled=0"), "kazuha", "tang", "tangerine", "a_b", "axb", "mei")
+		admin.do("GET", "/api/users?enabled=yes", nil).want(t, 400, "invalid")
+		for _, bad := range []string{"limit=0", "limit=201", "limit=x", "limit="} {
+			admin.do("GET", "/api/users?"+bad, nil).want(t, 400, "invalid")
+		}
+		a.addUser("nina", pw, "member").do("GET", "/api/users?q=tang", nil).want(t, 403, "forbidden")
+	})
+}
+
 func TestUsersAdministration(t *testing.T) {
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)

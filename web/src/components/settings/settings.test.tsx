@@ -12,8 +12,6 @@ import { t } from '@/i18n'
 import { byLabel, click, installDomShims, locationState, locationText, mount, press, settle, type, type Mounted } from '@/testing/harness'
 import SettingsRoute from './SettingsRoute'
 import { SpaceSettingsRedirect } from './SpaceSettingsRedirect'
-import { Navigate } from 'react-router'
-import { settingsPath } from './sections'
 
 // The dialog is built only when it is open, and each section is a different
 // piece of code: each one is opened here.
@@ -34,7 +32,6 @@ afterEach(async () => {
 const routes = (
   <Routes>
     <Route path="/settings/:section?" element={<SettingsRoute />} />
-    <Route path="/users" element={<Navigate to={settingsPath('users')} replace />} />
     <Route path="/s/:space/settings" element={<SpaceSettingsRedirect />} />
     <Route path="*" element={<div data-testid="elsewhere">elsewhere</div>} />
   </Routes>
@@ -53,9 +50,9 @@ describe('the settings dialog, accounts mode, administrator', () => {
 
   it('lists the sections in groups', async () => {
     await open('/settings/profile')
-    expect(navLinks()).toEqual([t.settingsUi.sections.profile, t.settingsUi.sections.preferences, t.settingsUi.sections.security, t.settingsUi.sections.general, t.settingsUi.sections.sync, t.settingsUi.sections.import, t.settingsUi.sections.users])
+    expect(navLinks()).toEqual([t.settingsUi.sections.profile, t.settingsUi.sections.preferences, t.settingsUi.sections.security, t.settingsUi.sections.general, t.settingsUi.sections.members, t.settingsUi.sections.sync, t.settingsUi.sections.import])
     const groups = [...dialog()!.querySelectorAll('nav [role="group"]')].map((g) => g.getAttribute('aria-label'))
-    expect(groups).toEqual([t.settingsUi.groups.account, t.settingsUi.groups.space, t.settingsUi.groups.admin])
+    expect(groups).toEqual([t.settingsUi.groups.account, t.settingsUi.groups.space])
   })
 
   it('profile: only the name and the email', async () => {
@@ -132,14 +129,6 @@ describe('the settings dialog, accounts mode, administrator', () => {
     expect(dialog()!.querySelector('a[href$="/import"]')).not.toBeNull()
   })
 
-  it('users: the list and the invites', async () => {
-    await open('/settings/users')
-    await settle(() => panelText().includes(t.users.createInvite), 'users')
-    expect(heading()).toBe(t.settingsUi.sections.users)
-    expect(panelText()).toContain('管理员')
-    expect(panelText()).toContain(t.users.createInvite)
-  })
-
   it('/settings with no section opens the first one', async () => {
     await open('/settings')
     await settle(() => locationText().startsWith('/settings/profile'), 'redirected')
@@ -163,10 +152,7 @@ describe('the settings dialog, accounts mode, administrator', () => {
     await settle(() => locationText() === '/settings/profile', 'redirected')
   })
 
-  it('the old addresses land on the right sections', async () => {
-    await open('/users')
-    await settle(() => locationText() === '/settings/users', '/users')
-    await m!.unmount()
+  it('the old address of a space\'s settings lands on the right section (users and invites moved to /admin, see admin.test.tsx)', async () => {
     await open('/s/default/settings')
     await settle(() => locationText() === '/settings/sync', '/s/default/settings')
   })
@@ -286,7 +272,7 @@ describe('the preferences', () => {
 })
 
 describe('where settings are opened from', () => {
-  it('the user menu has Settings (no language or theme items) and Users for an administrator', async () => {
+  it('the user menu has Settings (no language or theme items) and Administration for an administrator', async () => {
     m = await mount(
       <>
         <UserMenu />
@@ -299,11 +285,9 @@ describe('where settings are opened from', () => {
     await click(trigger())
     await settle(() => document.querySelectorAll('[role="menuitem"]').length > 0, 'menu open')
     const items = [...document.querySelectorAll('[role="menuitem"], [role="menuitemradio"]')].map((e) => e.textContent?.trim())
-    expect(items).toEqual([t.userMenu.settings, t.userMenu.users, t.userMenu.signOut])
-    await click(byLabelText(t.userMenu.users))
-    await settle(() => locationText() === '/settings/users', 'users')
-    // Where the person was is kept.
-    expect(locationState()).toEqual({ from: '/s/default/recent' })
+    expect(items).toEqual([t.userMenu.settings, t.userMenu.admin, t.userMenu.signOut])
+    await click(byLabelText(t.userMenu.admin))
+    await settle(() => locationText() === '/admin', 'administration')
   })
 
   it('the sidebar footer has a settings button and no language switch', async () => {

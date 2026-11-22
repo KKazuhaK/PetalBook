@@ -57,6 +57,19 @@ func TestSingleUserHasNoAccountEndpoints(t *testing.T) {
 	}
 }
 
+func TestSingleUserHasNoMembers(t *testing.T) {
+	f := newFixture(t)
+	for _, c := range [][2]string{{"GET", ""}, {"POST", ""}, {"PATCH", "/local"}, {"DELETE", "/local"}} {
+		if code, r, raw := f.do(c[0], base+"/members"+c[1], "{}"); code != 404 || r["error"] != "not_found" {
+			t.Errorf("%s members%s: %d %s", c[0], c[1], code, raw)
+		}
+	}
+	// The one local user may do everything, with no membership table involved.
+	if code, _, raw := f.do("POST", base+"/reindex", nil); code != 200 {
+		t.Fatal(raw)
+	}
+}
+
 func TestSingleUserDrafts(t *testing.T) {
 	f := newFixture(t)
 	p := f.create("", map[string]any{"title": "T"}, "one\n")

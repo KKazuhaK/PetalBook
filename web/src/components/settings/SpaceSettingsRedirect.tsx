@@ -13,8 +13,9 @@ export function SpaceSettingsRedirect() {
   const target = legacySettingsTarget(`/s/${encodeURIComponent(space)}/settings`, {
     mode: session?.mode,
     signedIn: !!session?.user,
-    admin: session?.user?.role === 'admin',
     hasSpace: true,
+    canRead: true,
+    canWrite: true,
   })
   useEffect(() => rememberSpace(space), [space])
   // Which section it is depends on the mode, so wait to know it.

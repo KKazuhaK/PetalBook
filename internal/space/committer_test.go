@@ -60,7 +60,7 @@ func TestCommitAfterQuietPeriod(t *testing.T) {
 	rev := p.Rev
 	for i := 0; i < 5; i++ {
 		time.Sleep(40 * time.Millisecond)
-		n, err := s.Save(p.ID, rev, meta("title", "暮雪"), fmt.Sprintf("v%d\n", i+2))
+		n, err := s.Save(Author{}, p.ID, rev, meta("title", "暮雪"), fmt.Sprintf("v%d\n", i+2))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -82,12 +82,12 @@ func TestCommitAfterQuietPeriod(t *testing.T) {
 	}
 
 	// The next edit is described as an edit; a rename and a move too.
-	n, _ := s.Save(p.ID, rev, meta("title", "暮雪"), "again\n")
+	n, _ := s.Save(Author{}, p.ID, rev, meta("title", "暮雪"), "again\n")
 	eventually(t, "edit commit", 10*time.Second, func() bool { return len(commits(t, root)) == 3 })
 	if got := commits(t, root)[0]; got != "Edit 暮雪" {
 		t.Fatalf("%q", got)
 	}
-	m, err := s.Move(p.ID, "随笔")
+	m, err := s.Move(Author{}, p.ID, "随笔")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestCommitAfterQuietPeriod(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 	_ = n
-	if err := s.Delete(m.ID); err != nil {
+	if err := s.Delete(Author{}, m.ID); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, "delete commit", 10*time.Second, func() bool { return len(commits(t, root)) == 5 })
@@ -128,7 +128,7 @@ func TestCommitAfterMaximumAgeEvenWhileWriting(t *testing.T) {
 	rev := p.Rev
 	stop := time.Now().Add(3 * time.Second)
 	for i := 1; time.Now().Before(stop); i++ {
-		n, err := s.Save(p.ID, rev, meta("title", "长写"), fmt.Sprint(i))
+		n, err := s.Save(Author{}, p.ID, rev, meta("title", "长写"), fmt.Sprint(i))
 		if err != nil {
 			t.Fatal(err)
 		}

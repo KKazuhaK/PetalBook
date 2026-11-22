@@ -63,7 +63,7 @@ func newFixture(t *testing.T, st *store.Store, cfg Config) *fixture {
 
 func (f *fixture) page(title, body string) *space.Page {
 	f.t.Helper()
-	p, err := f.sp.Create(space.CreateInput{Meta: page.Meta{{Key: "title", Value: title}}, Body: body})
+	p, err := f.sp.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: title}}, Body: body})
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -276,7 +276,7 @@ func TestADraftIsNeverDeletedBecauseItsPageIsMissing(t *testing.T) {
 		f := newFixture(t, st, Config{})
 		p := f.page("T", "x\n")
 		f.put(p, p.Rev, "my only copy of this text\n")
-		if err := f.sp.Delete(p.ID); err != nil { // the file goes (here through the space; outside the server it is the same to the draft)
+		if err := f.sp.Delete(space.Author{}, p.ID); err != nil { // the file goes (here through the space; outside the server it is the same to the draft)
 			t.Fatal(err)
 		}
 		// Committing it says the page is gone and keeps the text.
@@ -312,7 +312,7 @@ func TestADraftThatSaysWhatTheFileSaysIsNotAConflict(t *testing.T) {
 		p := f.page("T", "one\n")
 		f.put(p, p.Rev, "same text\n")
 		// Another device saved exactly that text meanwhile, so the draft's base is stale.
-		moved, err := f.sp.Save(p.ID, p.Rev, page.Meta{{Key: "title", Value: "T"}}, "same text\n")
+		moved, err := f.sp.Save(space.Author{}, p.ID, p.Rev, page.Meta{{Key: "title", Value: "T"}}, "same text\n")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -326,7 +326,7 @@ func TestADraftThatSaysWhatTheFileSaysIsNotAConflict(t *testing.T) {
 		// Through the sweeper.
 		q := f.page("U", "one\n")
 		f.put(q, q.Rev, "same text\n")
-		if _, err := f.sp.Save(q.ID, q.Rev, page.Meta{{Key: "title", Value: "U"}}, "same text\n"); err != nil {
+		if _, err := f.sp.Save(space.Author{}, q.ID, q.Rev, page.Meta{{Key: "title", Value: "U"}}, "same text\n"); err != nil {
 			t.Fatal(err)
 		}
 		f.clk.t = f.clk.t.Add(3 * time.Minute)
@@ -336,7 +336,7 @@ func TestADraftThatSaysWhatTheFileSaysIsNotAConflict(t *testing.T) {
 		// A draft that differs is still a conflict.
 		r := f.page("V", "one\n")
 		f.put(r, r.Rev, "mine\n")
-		f.sp.Save(r.ID, r.Rev, page.Meta{{Key: "title", Value: "V"}}, "theirs\n")
+		f.sp.Save(space.Author{}, r.ID, r.Rev, page.Meta{{Key: "title", Value: "V"}}, "theirs\n")
 		var c *Conflict
 		if _, err := f.svc.Commit(ctx, f.sp, spaces.SingleID, store.LocalUserID, r.ID, f.versions[r.ID]); !errors.As(err, &c) || c.Draft == nil || !c.Draft.Stale || c.Current.Body != "theirs\n" {
 			t.Fatalf("%v", err)
@@ -488,7 +488,7 @@ func TestAStoreWaitingOnTheLockSeesTheFileAsItIsWhenItRuns(t *testing.T) {
 			done <- answer{s, err}
 		}()
 		<-reached // the store is about to wait for the lock
-		if _, err := f.sp.Save(p.ID, p.Rev, meta, "saved meanwhile\n"); err != nil {
+		if _, err := f.sp.Save(space.Author{}, p.ID, p.Rev, meta, "saved meanwhile\n"); err != nil {
 			t.Fatal(err)
 		}
 		l.Unlock()
@@ -516,7 +516,7 @@ func TestAStoreRacingAPageDeleteLeavesNoDraftBehind(t *testing.T) {
 			}()
 			<-reached
 			delDone := make(chan error, 1)
-			go func() { delDone <- f.svc.DeletePageFile(ctx, f.sp, spaces.SingleID, p.ID) }()
+			go func() { delDone <- f.svc.DeletePageFile(ctx, f.sp, spaces.SingleID, store.LocalUserID, p.ID) }()
 			l.Unlock()
 			perr, derr := <-putDone, <-delDone
 			if derr != nil {
@@ -546,10 +546,10 @@ func TestDeletingAPageRemovesEveryUsersDrafts(t *testing.T) {
 		if f.count() != 2 {
 			t.Fatal(f.count())
 		}
-		if err := f.svc.DeletePageFile(ctx, f.sp, spaces.SingleID, p.ID); err != nil || f.count() != 0 {
+		if err := f.svc.DeletePageFile(ctx, f.sp, spaces.SingleID, store.LocalUserID, p.ID); err != nil || f.count() != 0 {
 			t.Fatalf("%v %d", err, f.count())
 		}
-		if err := f.svc.DeletePageFile(ctx, f.sp, spaces.SingleID, p.ID); !errors.Is(err, space.ErrNotFound) {
+		if err := f.svc.DeletePageFile(ctx, f.sp, spaces.SingleID, store.LocalUserID, p.ID); !errors.Is(err, space.ErrNotFound) {
 			t.Fatalf("%v", err)
 		}
 	})
@@ -562,7 +562,7 @@ func TestAHeldDraftOfAMissingPageIsLoggedOnceWithoutItsText(t *testing.T) {
 		f.svc.log = slog.New(slog.NewTextHandler(&buf, nil))
 		p := f.page("T", "one\n")
 		f.put(p, p.Rev, "private words in the draft\n")
-		if err := f.sp.Delete(p.ID); err != nil {
+		if err := f.sp.Delete(space.Author{}, p.ID); err != nil {
 			t.Fatal(err)
 		}
 		f.clk.t = f.clk.t.Add(3 * time.Minute)
@@ -642,12 +642,12 @@ func TestASlowSpaceOpenInTheSweeperDoesNotBlockOtherDrafts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hb, err := mgr.Open(ctx, "U1", b.ID)
+	hb, err := mgr.Open(ctx, store.User{ID: "U1"}, b.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer hb.Release()
-	pb, err := hb.Space.Create(space.CreateInput{Meta: page.Meta{{Key: "title", Value: "B page"}}, Body: "x\n"})
+	pb, err := hb.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "B page"}}, Body: "x\n"})
 	if err != nil {
 		t.Fatal(err)
 	}

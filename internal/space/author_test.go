@@ -109,19 +109,19 @@ func TestChangesAfterCloseAreRefusedBeforeAnythingIsWritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := gitTry(root, "status", "--porcelain")
-	if _, err := s.Create(CreateInput{Meta: meta("title", "Late")}); err != ErrClosed {
+	if _, err := s.Create(Author{}, CreateInput{Meta: meta("title", "Late")}); err != ErrClosed {
 		t.Fatalf("create: %v", err)
 	}
-	if _, err := s.Save(p.ID, p.Rev, meta("title", "T"), "changed\n"); err != ErrClosed {
+	if _, err := s.Save(Author{}, p.ID, p.Rev, meta("title", "T"), "changed\n"); err != ErrClosed {
 		t.Fatalf("save: %v", err)
 	}
-	if _, err := s.Move(p.ID, "Sub"); err != ErrClosed {
+	if _, err := s.Move(Author{}, p.ID, "Sub"); err != ErrClosed {
 		t.Fatalf("move: %v", err)
 	}
-	if err := s.Delete(p.ID); err != ErrClosed {
+	if err := s.Delete(Author{}, p.ID); err != ErrClosed {
 		t.Fatalf("delete: %v", err)
 	}
-	if _, err := s.CreateFolder("Folder"); err != ErrClosed {
+	if _, err := s.CreateFolder(Author{}, "Folder"); err != ErrClosed {
 		t.Fatalf("folder: %v", err)
 	}
 	if _, err := s.Reindex(); err != ErrClosed {

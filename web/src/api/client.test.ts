@@ -1,7 +1,8 @@
 // The API client against the in-memory server, which implements docs/api.md.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { api as accountApi, ApiError, forbiddenMessage, isSignedOut, listParamsToQuery, markSignedIn, onForbidden, onSignedOut, spaceApi } from './client'
+import { api as accountApi, ApiError, forbiddenMessage, isSignedOut, listParamsToQuery, markSignedIn, onForbidden, onSignedOut, onSpaceAccess, spaceApi } from './client'
+import { adminApi } from './admin'
 import { mockFetch } from './mock/fetch'
 import { createMockServer, MOCK_ADMIN, type MockServer } from './mock/server'
 
@@ -93,6 +94,75 @@ describe('403 forbidden', () => {
     await api.meta().catch(() => undefined)
     expect(seen).toHaveLength(2)
     expect(seen[0]).toContain(location.origin)
+  })
+
+  it('a member refused for want of a permission keeps the server\'s words and is no refused origin; the app is told the space\'s access changed', async () => {
+    const message = 'your role in this space does not allow that; it needs the write permission'
+    globalThis.fetch = (() => Promise.resolve(new Response(JSON.stringify({ error: 'no_permission', message }), { status: 403 }))) as typeof fetch
+    const origin: string[] = []
+    let access = 0
+    const offOrigin = onForbidden((m) => origin.push(m))
+    const offAccess = onSpaceAccess(() => access++)
+    const err = await api.createPage({}).catch((e) => e)
+    offOrigin()
+    offAccess()
+    expect(err).toMatchObject({ status: 403, code: 'no_permission', message })
+    expect(origin).toEqual([])
+    expect(access).toBe(1)
+  })
+
+  it('is told apart by its code, not its words: a refusal with the permission wording but the code forbidden is still the origin notice', async () => {
+    globalThis.fetch = (() => Promise.resolve(new Response(JSON.stringify({ error: 'forbidden', message: 'your role in this space does not allow that' }), { status: 403 }))) as typeof fetch
+    const origin: string[] = []
+    let access = 0
+    const offOrigin = onForbidden((m) => origin.push(m))
+    const offAccess = onSpaceAccess(() => access++)
+    const err = await spaceApi('01SPACE0001').members().catch((e) => e)
+    offOrigin()
+    offAccess()
+    expect(err).toMatchObject({ status: 403, code: 'forbidden', message: forbiddenMessage(location.origin) })
+    expect(origin).toHaveLength(1)
+    expect(access).toBe(0)
+  })
+
+  it('a disabled space says so (space_disabled) and tells the app too', async () => {
+    globalThis.fetch = (() => Promise.resolve(new Response(JSON.stringify({ error: 'space_disabled', message: 'this space has been disabled by an administrator' }), { status: 403 }))) as typeof fetch
+    let access = 0
+    const off = onSpaceAccess(() => access++)
+    const err = await api.tree().catch((e) => e)
+    off()
+    expect(err).toMatchObject({ status: 403, code: 'space_disabled' })
+    expect(access).toBe(1)
+  })
+
+  it('the members and administration endpoints are called as docs/api.md names them', async () => {
+    const owner = spaceApi('01SPACE0001')
+    await owner.members().catch(() => undefined)
+    await owner.addMember('tang', 'viewer').catch(() => undefined)
+    await owner.setMemberRole('01USER00001', 'editor').catch(() => undefined)
+    await owner.removeMember('01USER00001').catch(() => undefined)
+    await adminApi.adminSpaces({ q: '团队 a', cursor: 'c1', limit: 20 }).catch(() => undefined)
+    await adminApi.adminSpaces().catch(() => undefined)
+    await adminApi.adminResizeSpace('01SPACE0001').catch(() => undefined)
+    await adminApi.adminTransferSpace('01SPACE0001', '01USER00001').catch(() => undefined)
+    await adminApi.adminDisableSpace('01SPACE0001').catch(() => undefined)
+    await adminApi.adminEnableSpace('01SPACE0001').catch(() => undefined)
+    await adminApi.adminDeleteSpace('01SPACE0001').catch(() => undefined)
+    await adminApi.adminStatus().catch(() => undefined)
+    expect(calls.map((c) => `${c.method} ${c.url}${c.body ? ' ' + c.body : ''}`)).toEqual([
+      'GET /api/spaces/01SPACE0001/members',
+      'POST /api/spaces/01SPACE0001/members {"username":"tang","role":"viewer"}',
+      'PATCH /api/spaces/01SPACE0001/members/01USER00001 {"role":"editor"}',
+      'DELETE /api/spaces/01SPACE0001/members/01USER00001 {}',
+      `GET /api/admin/spaces?q=${encodeURIComponent('团队 a').replace(/%20/g, '+')}&cursor=c1&limit=20`,
+      'GET /api/admin/spaces',
+      'POST /api/admin/spaces/01SPACE0001/size {}',
+      'POST /api/admin/spaces/01SPACE0001/transfer {"userId":"01USER00001"}',
+      'POST /api/admin/spaces/01SPACE0001/disable {}',
+      'POST /api/admin/spaces/01SPACE0001/enable {}',
+      'DELETE /api/admin/spaces/01SPACE0001 {}',
+      'GET /api/admin/status',
+    ])
   })
 
   it('other errors keep the server message', async () => {
@@ -230,8 +300,8 @@ describe('429 and 403 that are not about the origin', () => {
     const off = onForbidden((m) => seen.push(m))
     const results = await Promise.all([
       accountApi.changePassword({ current: 'x', new: 'a-long-password' }).catch((x) => x),
-      accountApi.users().catch((x) => x),
-      accountApi.createInvite().catch((x) => x),
+      adminApi.users().catch((x) => x),
+      adminApi.createInvite().catch((x) => x),
       accountApi.setup({ token: 't', username: 'ab', password: 'a-long-password' }).catch((x) => x),
       // The space limit: the server's message goes to the new-space dialog.
       accountApi.createSpace('第十一个').catch((x) => x),

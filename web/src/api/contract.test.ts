@@ -40,10 +40,11 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { ApiError, api, fileUrl, markSignedIn, spaceApi, type SpaceApi } from './client'
+import { adminApi } from './admin'
 import { mockFetch } from './mock/fetch'
 import { sha256Hex } from './mock/sha256'
 import { createMockServer, MOCK_ADMIN, type MockServer } from './mock/server'
-import type { Page, PageSummary, SpaceInfo, User } from './types'
+import type { AdminSpace, Member, Page, PageSummary, SpaceInfo, User } from './types'
 
 declare const process: { env: Record<string, string | undefined> }
 const REAL = process.env.PETALBOOK_API?.replace(/\/+$/, '')
@@ -176,7 +177,7 @@ function suite(target: Target) {
   })
   afterAll(async () => {
     globalThis.fetch = admin.fetch
-    for (const id of created.users) await api.updateUser(id, { disabled: true }).catch(() => undefined)
+    for (const id of created.users) await adminApi.updateUser(id, { disabled: true }).catch(() => undefined)
     globalThis.fetch = realFetch
     markSignedIn()
   })
@@ -236,6 +237,22 @@ function suite(target: Target) {
       }
     })
 
+    it('every space carries the caller\'s role and permissions, and whether it is disabled; meta and the list say the same', async () => {
+      const m = await api.meta()
+      const { spaces } = await api.spaces()
+      const mine = spaces.find((s) => s.id === spaceId)!
+      // The first space is the caller's own: they own it and may do everything in it.
+      expect(mine.role).toBe('owner')
+      expect(mine.permissions).toEqual(['read', 'write', 'members', 'manage'])
+      expect(mine.disabled).toBe(false)
+      expect(m.spaces.find((s) => s.id === spaceId)).toEqual(mine)
+      for (const s of spaces) {
+        expect(['owner', 'editor', 'viewer', ''], s.id).toContain(s.role)
+        expect(Array.isArray(s.permissions), s.id).toBe(true)
+        expect(typeof s.disabled, s.id).toBe('boolean')
+      }
+    })
+
     it('spaces lists the caller\'s spaces, the personal one first', async () => {
       const { spaces } = await api.spaces()
       expect(spaces.length).toBeGreaterThanOrEqual(1)
@@ -258,6 +275,19 @@ function suite(target: Target) {
         ['POST', '/api/invites/accept', { token: 'x', username: 'ab', password: 'password1' }],
         ['POST', '/api/spaces', { name: 'Other' }],
         ['PATCH', `/api/spaces/${spaceId}`, { name: 'Other' }],
+        // Members and the administration are a layer on top that a single-user server does not have.
+        ['GET', `/api/spaces/${spaceId}/members`],
+        ['POST', `/api/spaces/${spaceId}/members`, { username: 'ab', role: 'viewer' }],
+        ['PATCH', `/api/spaces/${spaceId}/members/local`, { role: 'viewer' }],
+        ['DELETE', `/api/spaces/${spaceId}/members/local`],
+        ['GET', '/api/admin/spaces'],
+        ['GET', '/api/admin/status'],
+        ['GET', `/api/admin/spaces/${spaceId}`],
+        ['POST', `/api/admin/spaces/${spaceId}/size`],
+        ['POST', `/api/admin/spaces/${spaceId}/transfer`, { userId: 'local' }],
+        ['POST', `/api/admin/spaces/${spaceId}/disable`],
+        ['POST', `/api/admin/spaces/${spaceId}/enable`],
+        ['DELETE', `/api/admin/spaces/${spaceId}`],
       ]
       for (const [method, path, body] of probes) {
         const r = await call(admin, method, path, body ?? (method === 'GET' ? undefined : {}))
@@ -282,7 +312,7 @@ function suite(target: Target) {
     const uniq = (p: string) => `${p}${run}`.slice(0, 30)
     // A member made through an invite, signed in in its own browser.
     const newMember = async (name: string, password = 'a-long-password') => {
-      const invite = await as(admin, () => api.createInvite({ role: 'member', days: 1 }))
+      const invite = await as(admin, () => adminApi.createInvite({ role: 'member', days: 1 }))
       const b = browser()
       const r = await call(b, 'POST', '/api/invites/accept', { token: invite.token, username: name, name: `名 ${name}`, password })
       expect(r.status).toBe(201)
@@ -393,9 +423,26 @@ function suite(target: Target) {
     })
 
     describe('users', () => {
+      it('finds users by part of a username or name, ignoring case, and caps the count; no parameters is everyone', async () => {
+        const m = await newMember(uniq('fu'))
+        const all = (await as(admin, () => adminApi.users())).users
+        const upper = m.user.username.toUpperCase()
+        const hit = (await as(admin, () => adminApi.users({ q: upper }))).users
+        expect(hit.map((u) => u.id)).toContain(m.user.id)
+        for (const u of hit) expect((u.username + '\n' + u.name).toLowerCase()).toContain(m.user.username)
+        expect((await as(admin, () => adminApi.users({ q: m.user.name }))).users.map((u) => u.id)).toContain(m.user.id)
+        expect((await as(admin, () => adminApi.users({ q: 'zzz-no-such-user-zzz' }))).users).toEqual([])
+        const one = (await as(admin, () => adminApi.users({ limit: 1 }))).users
+        expect(one.map((u) => u.id)).toEqual([all[0].id])
+        for (const bad of ['0', '201', 'x']) {
+          const r = await call(admin, 'GET', `/api/users?limit=${bad}`)
+          expect([r.status, r.json.error], bad).toEqual([400, 'invalid'])
+        }
+      })
+
       it('an administrator lists users, ordered by created; a member gets 403 forbidden for users and invites', async () => {
         const m = await newMember(uniq('us'))
-        const { users } = await as(admin, () => api.users())
+        const { users } = await as(admin, () => adminApi.users())
         expect(users.find((u) => u.id === m.user.id)).toMatchObject({ username: m.user.username, role: 'member', disabled: false })
         for (let i = 1; i < users.length; i++) expect(users[i - 1].created <= users[i].created).toBe(true)
         for (const [method, path] of [
@@ -411,18 +458,18 @@ function suite(target: Target) {
 
       it('changes a role and disables and enables a user; disabling ends every session and blocks signing in', async () => {
         const m = await newMember(uniq('ro'))
-        const promoted = await as(admin, () => api.updateUser(m.user.id, { role: 'admin' }))
+        const promoted = await as(admin, () => adminApi.updateUser(m.user.id, { role: 'admin' }))
         expect(promoted.user.role).toBe('admin')
         expect((await call(m.browser, 'GET', '/api/users')).status).toBe(200)
-        await as(admin, () => api.updateUser(m.user.id, { role: 'member' }))
+        await as(admin, () => adminApi.updateUser(m.user.id, { role: 'member' }))
         expect((await call(m.browser, 'GET', '/api/users')).status).toBe(403)
 
-        const off = await as(admin, () => api.updateUser(m.user.id, { disabled: true }))
+        const off = await as(admin, () => adminApi.updateUser(m.user.id, { disabled: true }))
         expect(off.user.disabled).toBe(true)
         expect((await call(m.browser, 'GET', '/api/account')).status).toBe(401)
         const again = await call(browser(), 'POST', '/api/login', { username: m.user.username, password: m.password })
         expect([again.status, again.json.error]).toEqual([401, 'unauthenticated'])
-        await as(admin, () => api.updateUser(m.user.id, { disabled: false }))
+        await as(admin, () => adminApi.updateUser(m.user.id, { disabled: false }))
         expect((await call(browser(), 'POST', '/api/login', { username: m.user.username, password: m.password })).status).toBe(200)
       })
 
@@ -430,7 +477,7 @@ function suite(target: Target) {
         const me = (await call(admin, 'GET', '/api/session')).json.user as User
         const self = await call(admin, 'PATCH', `/api/users/${me.id}`, { disabled: true })
         expect([self.status, self.json.error]).toEqual([409, 'conflict'])
-        const { users } = await as(admin, () => api.users())
+        const { users } = await as(admin, () => adminApi.users())
         if (users.filter((u) => u.role === 'admin' && !u.disabled).length === 1) {
           const demote = await call(admin, 'PATCH', `/api/users/${me.id}`, { role: 'member' })
           expect([demote.status, demote.json.error]).toEqual([409, 'conflict'])
@@ -446,11 +493,11 @@ function suite(target: Target) {
 
     describe('invites', () => {
       it('create: 201 with the token once; the list shows the open ones without it', async () => {
-        const inv = await as(admin, () => api.createInvite({ role: 'member', days: 3 }))
+        const inv = await as(admin, () => adminApi.createInvite({ role: 'member', days: 3 }))
         expect(inv.token.length).toBeGreaterThanOrEqual(16)
         expect(inv).toMatchObject({ role: 'member' })
         expect(Date.parse(inv.expires)).toBeGreaterThan(Date.parse(inv.created))
-        const { invites } = await as(admin, () => api.invites())
+        const { invites } = await as(admin, () => adminApi.invites())
         const row = invites.find((i) => i.id === inv.id)!
         expect(row).toMatchObject({ role: 'member', expires: inv.expires })
         expect(typeof row.createdBy).toBe('string')
@@ -466,7 +513,7 @@ function suite(target: Target) {
       })
 
       it('check is public: 200 with role and expiry for a good token, 404 for anything else', async () => {
-        const inv = await as(admin, () => api.createInvite({ role: 'member', days: 1 }))
+        const inv = await as(admin, () => adminApi.createInvite({ role: 'member', days: 1 }))
         const anon = browser()
         const ok = await call(anon, 'POST', '/api/invites/check', { token: inv.token })
         expect(ok.status).toBe(200)
@@ -476,7 +523,7 @@ function suite(target: Target) {
       })
 
       it('accept is public: 201 with the user and a session, a personal space of their own; the invite works once', async () => {
-        const inv = await as(admin, () => api.createInvite({ role: 'member', days: 1 }))
+        const inv = await as(admin, () => adminApi.createInvite({ role: 'member', days: 1 }))
         const name = uniq('ac2')
         const b = browser()
         const r = await call(b, 'POST', '/api/invites/accept', { token: inv.token, username: name.toUpperCase(), name: '新人', password: 'a-long-password' })
@@ -490,12 +537,12 @@ function suite(target: Target) {
         // Used: gone from the list, and a 404 to check. (Accepting it again is not
         // tried: a real server counts every bad token against the client address.)
         expect((await call(browser(), 'POST', '/api/invites/check', { token: inv.token })).status).toBe(404)
-        expect((await as(admin, () => api.invites())).invites.map((i) => i.id)).not.toContain(inv.id)
+        expect((await as(admin, () => adminApi.invites())).invites.map((i) => i.id)).not.toContain(inv.id)
       })
 
       it('a taken username is 409 exists and the invite stays usable; a short password is 400', async () => {
         const m = await newMember(uniq('tk'))
-        const inv = await as(admin, () => api.createInvite({ role: 'member', days: 1 }))
+        const inv = await as(admin, () => adminApi.createInvite({ role: 'member', days: 1 }))
         const taken = await call(browser(), 'POST', '/api/invites/accept', { token: inv.token, username: m.user.username, password: 'a-long-password' })
         expect([taken.status, taken.json.error]).toEqual([409, 'exists'])
         const short = await call(browser(), 'POST', '/api/invites/accept', { token: inv.token, username: uniq('sh'), password: 'short' })
@@ -504,10 +551,10 @@ function suite(target: Target) {
       })
 
       it('revoke is 204 and the token stops working', async () => {
-        const inv = await as(admin, () => api.createInvite({}))
-        await as(admin, () => api.revokeInvite(inv.id))
+        const inv = await as(admin, () => adminApi.createInvite({}))
+        await as(admin, () => adminApi.revokeInvite(inv.id))
         expect((await call(browser(), 'POST', '/api/invites/check', { token: inv.token })).status).toBe(404)
-        expect((await as(admin, () => api.invites())).invites.map((i) => i.id)).not.toContain(inv.id)
+        expect((await as(admin, () => adminApi.invites())).invites.map((i) => i.id)).not.toContain(inv.id)
       })
     })
 
@@ -598,7 +645,7 @@ function suite(target: Target) {
         expect(listed.map((i) => i.id)).toEqual([note.json.id])
       })
 
-      it('a space of someone else is 404 not_found, the same as one that does not exist: pages, folders, drafts, rename, and for an administrator too', async () => {
+      it('a space of someone else is 404 not_found, the same as one that does not exist: pages, folders, drafts, rename', async () => {
         const m = await newMember(uniq('is'))
         const mine = ((await call(m.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[])[0]
         const own = await call(m.browser, 'POST', `/api/spaces/${mine.id}/pages`, { meta: { title: '只有我能看' }, body: '秘密\n' })
@@ -608,22 +655,374 @@ function suite(target: Target) {
         const absent = await call(admin, 'GET', `/api/spaces/01ZZZZZZZZ/pages`)
         expect([absent.status, absent.json.error]).toEqual([404, 'not_found'])
         for (const [b, method, path, body] of [
-          [admin, 'GET', `${mineSpace}/pages`, undefined],
-          [admin, 'GET', `${mineSpace}/pages/${own.json.id}`, undefined],
-          [admin, 'PUT', `${mineSpace}/pages/${own.json.id}/draft`, { baseRev: own.json.rev, meta: own.json.meta, body: 'x\n' }],
-          [admin, 'POST', `${mineSpace}/pages/${own.json.id}/commit`, {}],
-          [admin, 'GET', `${mineSpace}/tree`, undefined],
-          [admin, 'POST', `${mineSpace}/folders`, { path: 'x' }],
-          [admin, 'PATCH', mineSpace, { name: '抢走' }],
           [m.browser, 'GET', `${theirs}/pages`, undefined],
           [m.browser, 'POST', `${theirs}/pages`, { body: 'x' }],
           [m.browser, 'PATCH', theirs, { name: '抢走' }],
+          [m.browser, 'GET', `${theirs}/members`, undefined],
         ] as [Browser, string, string, unknown][]) {
           const r = await call(b, method, path, body ?? (method === 'GET' ? undefined : {}))
           expect([r.status, r.json?.error], `${method} ${path}`).toEqual([404, 'not_found'])
         }
+        // An administrator is no member, but may open any space; it is not in their own list.
+        for (const path of [`${mineSpace}/pages`, `${mineSpace}/pages/${own.json.id}`, `${mineSpace}/tree`]) {
+          expect((await call(admin, 'GET', path)).status, path).toBe(200)
+        }
+        expect(((await call(admin, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).map((s) => s.id)).not.toContain(mine.id)
         // Nothing of theirs shows in their lists, either way.
         expect((await walk({ q: '只有我能看', recursive: true, folder: '' })).length).toBe(0)
+      })
+    })
+
+    // A space owned by a member, so the contract user (an administrator) is no member of it.
+    const ownedSpace = async (owner: { browser: Browser }, name: string): Promise<SpaceInfo> => {
+      const r = await call(owner.browser, 'POST', '/api/spaces', { name })
+      expect(r.status).toBe(201)
+      return r.json as SpaceInfo
+    }
+    const addMember = async (owner: { browser: Browser }, space: string, username: string, role: string) => {
+      const r = await call(owner.browser, 'POST', `/api/spaces/${space}/members`, { username, role })
+      expect(r.status, `${username} as ${role}`).toBe(201)
+      return r.json as Member
+    }
+    const roleOf = async (b: Browser, space: string) => ((await call(b, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).find((s) => s.id === space)
+
+    describe('members and permissions', () => {
+      it('adds a member by username with a role; lists owners first with `you`; the role and its permissions show in the member\'s own list', async () => {
+        const owner = await newMember(uniq('mo'))
+        const guest = await newMember(uniq('mg'))
+        const sp = await ownedSpace(owner, 'Shared')
+        expect(sp).toMatchObject({ role: 'owner', permissions: ['read', 'write', 'members', 'manage'], disabled: false })
+        // Not a member yet: not even found.
+        expect((await call(guest.browser, 'GET', `/api/spaces/${sp.id}/pages`)).status).toBe(404)
+        const added = await addMember(owner, sp.id, guest.user.username.toUpperCase(), 'viewer')
+        expect(added).toEqual({ userId: guest.user.id, username: guest.user.username, name: guest.user.name, role: 'viewer', you: false })
+        const list = (await call(owner.browser, 'GET', `/api/spaces/${sp.id}/members`)).json.members as Member[]
+        expect(list.map((m) => [m.userId, m.role, m.you])).toEqual([
+          [owner.user.id, 'owner', true],
+          [guest.user.id, 'viewer', false],
+        ])
+        expect(await roleOf(guest.browser, sp.id)).toMatchObject({ role: 'viewer', permissions: ['read'], disabled: false })
+        // The role changes at the member's very next request.
+        const changed = await call(owner.browser, 'PATCH', `/api/spaces/${sp.id}/members/${guest.user.id}`, { role: 'editor' })
+        expect(changed.status).toBe(200)
+        expect(changed.json).toMatchObject({ userId: guest.user.id, role: 'editor', you: false })
+        expect(await roleOf(guest.browser, sp.id)).toMatchObject({ role: 'editor', permissions: ['read', 'write'] })
+        // Removed: the space is gone for them, at once.
+        expect((await call(owner.browser, 'DELETE', `/api/spaces/${sp.id}/members/${guest.user.id}`)).status).toBe(204)
+        expect((await call(guest.browser, 'GET', `/api/spaces/${sp.id}/pages`)).status).toBe(404)
+        expect(await roleOf(guest.browser, sp.id)).toBeUndefined()
+      })
+
+      it('refuses what it should: an unknown user 404 user_not_found, a member already 409 exists, a role that is none 400 invalid, a personal space 409 personal_space', async () => {
+        const owner = await newMember(uniq('me'))
+        const guest = await newMember(uniq('mf'))
+        const sp = await ownedSpace(owner, 'Rules')
+        const add = (username: string, role: string, space = sp.id) => call(owner.browser, 'POST', `/api/spaces/${space}/members`, { username, role })
+        const unknown = await add(uniq('nobody'), 'viewer')
+        expect([unknown.status, unknown.json.error]).toEqual([404, 'user_not_found'])
+        await addMember(owner, sp.id, guest.user.username, 'viewer')
+        const twice = await add(guest.user.username, 'editor')
+        expect([twice.status, twice.json.error]).toEqual([409, 'exists'])
+        const own = await add(owner.user.username, 'editor')
+        expect([own.status, own.json.error]).toEqual([409, 'exists'])
+        const bad = await add(guest.user.username, 'boss', (await ownedSpace(owner, 'Rules 2')).id)
+        expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
+        const personal = ((await call(owner.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).find((s) => s.personal)!
+        const shared = await add(guest.user.username, 'viewer', personal.id)
+        expect([shared.status, shared.json.error]).toEqual([409, 'personal_space'])
+        const notMember = await call(owner.browser, 'PATCH', `/api/spaces/${sp.id}/members/01ZZZZZZZZ`, { role: 'viewer' })
+        expect([notMember.status, notMember.json.error]).toEqual([404, 'not_found'])
+        const badRole = await call(owner.browser, 'PATCH', `/api/spaces/${sp.id}/members/${guest.user.id}`, { role: 'boss' })
+        expect([badRole.status, badRole.json.error]).toEqual([400, 'invalid'])
+      })
+
+      it('a space keeps an owner: the only owner can neither be demoted nor removed (409 last_owner), until there is another', async () => {
+        const owner = await newMember(uniq('lx'))
+        const second = await newMember(uniq('lw'))
+        const sp = await ownedSpace(owner, 'Owners')
+        const self = `/api/spaces/${sp.id}/members/${owner.user.id}`
+        const demote = await call(owner.browser, 'PATCH', self, { role: 'editor' })
+        expect([demote.status, demote.json.error]).toEqual([409, 'last_owner'])
+        const leave = await call(owner.browser, 'DELETE', self)
+        expect([leave.status, leave.json.error]).toEqual([409, 'last_owner'])
+        expect((await roleOf(owner.browser, sp.id))!.role).toBe('owner')
+        await addMember(owner, sp.id, second.user.username, 'owner')
+        expect((await call(owner.browser, 'PATCH', self, { role: 'editor' })).status).toBe(200)
+        // The new owner is the last one now.
+        const last = await call(second.browser, 'DELETE', `/api/spaces/${sp.id}/members/${second.user.id}`)
+        expect([last.status, last.json.error]).toEqual([409, 'last_owner'])
+      })
+
+      it('any member may leave a space, a viewer too; someone else\'s removal needs the members permission', async () => {
+        const owner = await newMember(uniq('lv'))
+        const viewer = await newMember(uniq('vw'))
+        const editor = await newMember(uniq('ed'))
+        const sp = await ownedSpace(owner, 'Leaving')
+        await addMember(owner, sp.id, viewer.user.username, 'viewer')
+        await addMember(owner, sp.id, editor.user.username, 'editor')
+        const other = await call(editor.browser, 'DELETE', `/api/spaces/${sp.id}/members/${viewer.user.id}`)
+        expect([other.status, other.json.error]).toEqual([403, 'no_permission'])
+        expect((await call(viewer.browser, 'DELETE', `/api/spaces/${sp.id}/members/${viewer.user.id}`)).status).toBe(204)
+        expect((await call(viewer.browser, 'GET', `/api/spaces/${sp.id}/pages`)).status).toBe(404)
+        expect((await call(editor.browser, 'DELETE', `/api/spaces/${sp.id}/members/${editor.user.id}`)).status).toBe(204)
+        const left = (await call(owner.browser, 'GET', `/api/spaces/${sp.id}/members`)).json.members as Member[]
+        expect(left.map((m) => m.userId)).toEqual([owner.user.id])
+      })
+
+      it('a viewer reads but is refused every write with 403 no_permission; an editor writes but cannot manage or add members', async () => {
+        const owner = await newMember(uniq('wo'))
+        const viewer = await newMember(uniq('wv'))
+        const editor = await newMember(uniq('we'))
+        const sp = await ownedSpace(owner, 'Writes')
+        await addMember(owner, sp.id, viewer.user.username, 'viewer')
+        await addMember(owner, sp.id, editor.user.username, 'editor')
+        const base = `/api/spaces/${sp.id}`
+        const page = await call(owner.browser, 'POST', `${base}/pages`, { meta: { title: '读得到' }, body: '正文\n' })
+        expect(page.status).toBe(201)
+        for (const path of [`${base}/pages`, `${base}/pages/${page.json.id}`, `${base}/tree`, `${base}/tags`, `${base}/members`]) {
+          expect((await call(viewer.browser, 'GET', path)).status, `viewer GET ${path}`).toBe(200)
+        }
+        const writes: [string, string, unknown][] = [
+          ['POST', `${base}/pages`, { body: 'x' }],
+          ['PUT', `${base}/pages/${page.json.id}`, { baseRev: page.json.rev, meta: page.json.meta, body: '改\n' }],
+          ['PUT', `${base}/pages/${page.json.id}/draft`, { baseRev: page.json.rev, meta: page.json.meta, body: '改\n', prev: '' }],
+          ['POST', `${base}/pages/${page.json.id}/move`, { folder: 'x' }],
+          ['DELETE', `${base}/pages/${page.json.id}`, undefined],
+          ['POST', `${base}/pages/batch`, { op: 'delete', ids: [page.json.id] }],
+          ['POST', `${base}/folders`, { path: 'x' }],
+          ['PUT', `${base}/tags/blue`, { color: 'red' }],
+          ['PATCH', base, { name: '改名' }],
+          ['POST', `${base}/reindex`, undefined],
+          ['POST', `${base}/members`, { username: owner.user.username, role: 'viewer' }],
+        ]
+        for (const [method, path, body] of writes) {
+          const r = await call(viewer.browser, method, path, body ?? {})
+          expect([r.status, r.json?.error], `viewer ${method} ${path}`).toEqual([403, 'no_permission'])
+        }
+        // The page is as it was.
+        const still = await call(owner.browser, 'GET', `${base}/pages/${page.json.id}`)
+        expect(still.json).toMatchObject({ rev: page.json.rev, body: '正文\n' })
+
+        const made = await call(editor.browser, 'POST', `${base}/pages`, { meta: { title: '编辑者写的' }, body: 'x\n' })
+        expect(made.status).toBe(201)
+        expect((await call(editor.browser, 'PUT', `${base}/tags/blue`, { color: 'red' })).status).toBe(200)
+        for (const [method, path, body] of [
+          ['PATCH', base, { name: '改名' }],
+          ['POST', `${base}/reindex`, {}],
+          ['POST', `${base}/members`, { username: viewer.user.username, role: 'editor' }],
+          ['PATCH', `${base}/members/${viewer.user.id}`, { role: 'editor' }],
+        ] as [string, string, unknown][]) {
+          const r = await call(editor.browser, method, path, body)
+          expect([r.status, r.json?.error], `editor ${method} ${path}`).toEqual([403, 'no_permission'])
+        }
+      })
+    })
+
+    describe('administration', () => {
+      const adminPaths: [string, string, unknown?][] = [
+        ['GET', '/api/admin/spaces'],
+        ['GET', '/api/admin/status'],
+        ['GET', '/api/admin/spaces/01ZZZZZZZZ'],
+        ['POST', '/api/admin/spaces/01ZZZZZZZZ/size'],
+        ['POST', '/api/admin/spaces/01ZZZZZZZZ/transfer', { userId: 'x' }],
+        ['POST', '/api/admin/spaces/01ZZZZZZZZ/disable'],
+        ['POST', '/api/admin/spaces/01ZZZZZZZZ/enable'],
+        ['DELETE', '/api/admin/spaces/01ZZZZZZZZ'],
+      ]
+      const listAll = async (query = '', limit = 3) => {
+        const items: AdminSpace[] = []
+        let cursor = ''
+        for (let guard = 0; guard < 500; guard++) {
+          const r = await as(admin, () => adminApi.adminSpaces({ q: query || undefined, cursor: cursor || undefined, limit }))
+          items.push(...r.items)
+          cursor = r.next
+          if (!cursor) return items
+        }
+        throw new Error('cursor never ended')
+      }
+
+      it('is for administrators only: a member gets 403 forbidden from every endpoint, and nothing changes', async () => {
+        const m = await newMember(uniq('na'))
+        const own = await ownedSpace(m, 'Mine')
+        for (const [method, path, body] of adminPaths) {
+          const r = await call(m.browser, method, path, body ?? (method === 'GET' ? undefined : {}))
+          expect([r.status, r.json?.error], `${method} ${path}`).toEqual([403, 'forbidden'])
+        }
+        const real = await call(m.browser, 'POST', `/api/admin/spaces/${own.id}/disable`, {})
+        expect(real.status).toBe(403)
+        expect((await roleOf(m.browser, own.id))!.disabled).toBe(false)
+      })
+
+      it('an unknown space is 404 not_found', async () => {
+        for (const [method, path, body] of adminPaths.filter(([, p]) => p.includes('01ZZZZZZZZ'))) {
+          const r = await call(admin, method, path, body ?? (method === 'GET' ? undefined : {}))
+          expect([r.status, r.json?.error], `${method} ${path}`).toEqual([404, 'not_found'])
+        }
+      })
+
+      it('lists every space in a page at a time, with its owner, members, size, sync and whether it is disabled', async () => {
+        const owner = await newMember(uniq('ls1'))
+        const guest = await newMember(uniq('ls2'))
+        const name = `Listed ${run}`
+        const sp = await ownedSpace(owner, name)
+        await addMember(owner, sp.id, guest.user.username, 'viewer')
+        const found = (await listAll(name.toLowerCase()))
+        expect(found.map((s) => s.id)).toEqual([sp.id])
+        expect(found[0]).toMatchObject({ id: sp.id, name, personal: false, disabled: false, members: 2, sync: 'local', owner: { id: owner.user.id, username: owner.user.username, name: owner.user.name } })
+        expect(typeof found[0].created).toBe('string')
+        // Not measured yet, or measured: both are shaped alike.
+        expect(found[0].sizeBytes === null ? found[0].sizeAt : typeof found[0].sizeAt).toEqual(found[0].sizeBytes === null ? null : 'string')
+        const first = await as(admin, () => adminApi.adminSpaces({ limit: 1 }))
+        expect(first.items.length).toBe(1)
+        expect(typeof first.next).toBe('string')
+        // Walking the pages meets each space once, the personal ones included.
+        const all = await listAll('', 2)
+        expect(new Set(all.map((s) => s.id)).size).toBe(all.length)
+        expect(all.map((s) => s.id)).toContain(sp.id)
+        expect(all.some((s) => s.personal)).toBe(true)
+        expect((await listAll('no-such-space-' + run)).length).toBe(0)
+        const bad = await call(admin, 'GET', '/api/admin/spaces?limit=0')
+        expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
+      })
+
+      it('finds one space by its id: the same object as its item of the list, 404 for an unknown id', async () => {
+        const owner = await newMember(uniq('g1'))
+        const guest = await newMember(uniq('g2'))
+        const name = `Single ${run}`
+        const sp = await ownedSpace(owner, name)
+        await addMember(owner, sp.id, guest.user.username, 'editor')
+        const listed = (await listAll(name.toLowerCase())).find((s) => s.id === sp.id)
+        expect(listed).toBeTruthy()
+        expect(await as(admin, () => api.adminSpace(sp.id))).toEqual(listed)
+        const missing = await call(admin, 'GET', '/api/admin/spaces/01ZZZZZZZZ')
+        expect([missing.status, missing.json.error]).toEqual([404, 'not_found'])
+      })
+
+      it('measures a space on request and stores the size', async () => {
+        const owner = await newMember(uniq('sz'))
+        const sp = await ownedSpace(owner, `Sized ${run}`)
+        await call(owner.browser, 'POST', `/api/spaces/${sp.id}/pages`, { meta: { title: '占地方' }, body: '一些字\n' })
+        const size = await as(admin, () => adminApi.adminResizeSpace(sp.id))
+        expect(size.sizeBytes).toBeGreaterThan(0)
+        expect(typeof size.sizeAt).toBe('string')
+        const row = (await listAll(`sized ${run}`)).find((s) => s.id === sp.id)!
+        expect(row.sizeBytes).toBe(size.sizeBytes)
+        expect(row.sizeAt).toBe(size.sizeAt)
+      })
+
+      it('a member may leave a space that is switched off, though nothing else in it opens', async () => {
+        const owner = await newMember(uniq('dfo'))
+        const guest = await newMember(uniq('dfg'))
+        const sp = await ownedSpace(owner, 'Left switched off')
+        await addMember(owner, sp.id, guest.user.username, 'editor')
+        expect((await call(admin, 'POST', `/api/admin/spaces/${sp.id}/disable`, {})).status).toBe(204)
+        const members = await call(guest.browser, 'GET', `/api/spaces/${sp.id}/members`)
+        expect([members.status, members.json.error]).toEqual([403, 'space_disabled'])
+        expect((await call(guest.browser, 'DELETE', `/api/spaces/${sp.id}/members/${guest.user.id}`)).status).toBe(204)
+        expect(await roleOf(guest.browser, sp.id)).toBeUndefined()
+        expect((await call(admin, 'POST', `/api/admin/spaces/${sp.id}/enable`, {})).status).toBe(204)
+        const left = (await call(owner.browser, 'GET', `/api/spaces/${sp.id}/members`)).json.members as Member[]
+        expect(left.map((m) => m.userId)).toEqual([owner.user.id])
+      })
+
+      it('the owner who must stay is one who can sign in: with the other owner disabled, the only enabled owner can neither be demoted nor leave', async () => {
+        const owner = await newMember(uniq('efo'))
+        const second = await newMember(uniq('efs'))
+        const sp = await ownedSpace(owner, 'Enabled owners')
+        await addMember(owner, sp.id, second.user.username, 'owner')
+        const self = `/api/spaces/${sp.id}/members/${owner.user.id}`
+        await as(admin, () => adminApi.updateUser(second.user.id, { disabled: true }))
+        const demote = await call(owner.browser, 'PATCH', self, { role: 'editor' })
+        expect([demote.status, demote.json.error]).toEqual([409, 'last_owner'])
+        const leave = await call(owner.browser, 'DELETE', self)
+        expect([leave.status, leave.json.error]).toEqual([409, 'last_owner'])
+        // Enabled again, the other owner counts: the first may step down.
+        await as(admin, () => adminApi.updateUser(second.user.id, { disabled: false }))
+        expect((await call(owner.browser, 'PATCH', self, { role: 'editor' })).status).toBe(200)
+      })
+
+      it('transfers ownership: the user becomes the owner and the owners before become editors; a personal space, an unknown or a disabled user is refused', async () => {
+        const owner = await newMember(uniq('to'))
+        const heir = await newMember(uniq('th'))
+        const gone = await newMember(uniq('tg'))
+        const sp = await ownedSpace(owner, 'Handed over')
+        const transfer = (userId: string, space = sp.id) => call(admin, 'POST', `/api/admin/spaces/${space}/transfer`, { userId })
+        const personal = ((await call(owner.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).find((s) => s.personal)!
+        const p = await transfer(heir.user.id, personal.id)
+        expect([p.status, p.json.error]).toEqual([409, 'personal_space'])
+        const unknown = await transfer('01ZZZZZZZZ')
+        expect([unknown.status, unknown.json.error]).toEqual([404, 'user_not_found'])
+        await as(admin, () => adminApi.updateUser(gone.user.id, { disabled: true }))
+        const off = await transfer(gone.user.id)
+        expect([off.status, off.json.error]).toEqual([409, 'user_disabled'])
+        expect((await transfer(heir.user.id)).status).toBe(204)
+        const list = (await call(heir.browser, 'GET', `/api/spaces/${sp.id}/members`)).json.members as Member[]
+        expect(list.map((m) => [m.userId, m.role])).toEqual([
+          [heir.user.id, 'owner'],
+          [owner.user.id, 'editor'],
+        ])
+        expect(await roleOf(owner.browser, sp.id)).toMatchObject({ role: 'editor', permissions: ['read', 'write'] })
+        expect((await listAll(sp.name.toLowerCase())).find((s) => s.id === sp.id)!.owner!.id).toBe(heir.user.id)
+      })
+
+      it('disables a space: it stays in its members\' lists, marked, and nothing opens it for anyone, an administrator included; enabling undoes it', async () => {
+        const owner = await newMember(uniq('do'))
+        const sp = await ownedSpace(owner, 'Switched off')
+        const page = await call(owner.browser, 'POST', `/api/spaces/${sp.id}/pages`, { meta: { title: '还在' }, body: 'x\n' })
+        expect(page.status).toBe(201)
+        expect((await call(admin, 'POST', `/api/admin/spaces/${sp.id}/disable`, {})).status).toBe(204)
+        expect(await roleOf(owner.browser, sp.id)).toMatchObject({ role: 'owner', disabled: true })
+        expect((await call(owner.browser, 'GET', '/api/meta')).json.spaces.find((s: SpaceInfo) => s.id === sp.id).disabled).toBe(true)
+        for (const [b, method, path] of [
+          [owner.browser, 'GET', `/api/spaces/${sp.id}/pages`],
+          [owner.browser, 'GET', `/api/spaces/${sp.id}/tree`],
+          [owner.browser, 'POST', `/api/spaces/${sp.id}/pages`],
+          [admin, 'GET', `/api/spaces/${sp.id}/pages`],
+        ] as [Browser, string, string][]) {
+          const r = await call(b, method, path, method === 'GET' ? undefined : { body: 'x' })
+          expect([r.status, r.json?.error], `${method} ${path}`).toEqual([403, 'space_disabled'])
+        }
+        // The administration itself still reaches it.
+        expect((await listAll(sp.name.toLowerCase())).find((s) => s.id === sp.id)!.disabled).toBe(true)
+        expect((await call(admin, 'POST', `/api/admin/spaces/${sp.id}/size`, {})).status).toBe(200)
+        expect((await call(admin, 'POST', `/api/admin/spaces/${sp.id}/enable`, {})).status).toBe(204)
+        expect((await roleOf(owner.browser, sp.id))!.disabled).toBe(false)
+        const again = await call(owner.browser, 'GET', `/api/spaces/${sp.id}/pages/${page.json.id}`)
+        expect(again.status).toBe(200)
+        expect(again.json.meta.title).toBe('还在')
+      })
+
+      it('deletes a space (the files go to the trash, not away); a personal space cannot be deleted', async () => {
+        const owner = await newMember(uniq('de'))
+        const guest = await newMember(uniq('dg'))
+        const sp = await ownedSpace(owner, 'To be deleted')
+        await addMember(owner, sp.id, guest.user.username, 'viewer')
+        const personal = ((await call(owner.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).find((s) => s.personal)!
+        const refused = await call(admin, 'DELETE', `/api/admin/spaces/${personal.id}`)
+        expect([refused.status, refused.json.error]).toEqual([409, 'personal_space'])
+        const done = await call(admin, 'DELETE', `/api/admin/spaces/${sp.id}`)
+        expect(done.status).toBe(200)
+        expect(done.json.trashed).toMatch(/^trash\//)
+        expect(done.json.trashed).toContain(sp.id)
+        expect(typeof done.json.cacheTrashed).toBe('string')
+        expect(done.json.warnings).toEqual([])
+        for (const b of [owner.browser, guest.browser, admin]) expect((await call(b, 'GET', `/api/spaces/${sp.id}/pages`)).status).toBe(404)
+        expect(await roleOf(guest.browser, sp.id)).toBeUndefined()
+        expect((await listAll('to be deleted')).some((s) => s.id === sp.id)).toBe(false)
+        expect((await call(admin, 'DELETE', `/api/admin/spaces/${sp.id}`)).status).toBe(404)
+      })
+
+      it('reports the server\'s status', async () => {
+        const st = await as(admin, () => adminApi.adminStatus())
+        expect(typeof st.version).toBe('string')
+        expect(Number.isNaN(Date.parse(st.startedAt))).toBe(false)
+        expect(st.uptimeSeconds).toBeGreaterThanOrEqual(0)
+        expect(['sqlite', 'postgres']).toContain(st.database)
+        expect(st.spaces).toBeGreaterThanOrEqual(1)
+        expect(st.users).toBeGreaterThanOrEqual(1)
+        expect(st.openSpaces).toBeGreaterThanOrEqual(0)
+        expect(typeof st.goVersion).toBe('string')
+        if (st.diskFreeBytes !== undefined) expect(st.diskFreeBytes).toBeGreaterThanOrEqual(0)
       })
     })
   })

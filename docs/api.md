@@ -16,7 +16,10 @@ The web app talks to the server only through this API.
   Codes: `not_found` (404), `invalid` (400; also 405, 413 and 415),
   `conflict` (409), `exists` (409), `unauthenticated` (401: not signed in, or
   wrong credentials), `forbidden` (403: cross-site requests, see below, and
-  actions the signed-in user may not take), `rate_limited` (429, with a
+  actions the signed-in user may not take that are not a matter of a role in a
+  space), `no_permission` (403: a member whose role in the space lacks the
+  permission the request needs; the message names it), `space_disabled` (403: an
+  administrator has disabled the space, see "Administration"), `rate_limited` (429, with a
   `Retry-After` header in seconds), `unavailable` (503: the space follows a
   remote repository that cannot be reached or is paused, see "Remote
   repository"; nothing was changed), `internal` (500).
@@ -73,7 +76,11 @@ The server runs in one of two modes, chosen at start-up.
   `DIR/spaces/<space id>/`. Every endpoint except `GET /api/meta`,
   `GET /api/session` and the ones under "Signing in" needs a session and
   answers `401 unauthenticated` without one. A space the user is not a member
-  of answers `404 not_found`, the same as a space that does not exist.
+  of answers `404 not_found`, the same as a space that does not exist, unless
+  the user is an administrator: an administrator may do everything in every
+  space (see "Members"). A member whose role lacks the permission a route needs
+  answers `403 no_permission`, a code of its own: it is never confused with the
+  cross-site refusal, which is `403 forbidden`.
 
 ## Meta
 
@@ -87,7 +94,7 @@ not signed in), in the shape of `GET /api/spaces`.
   "version": "dev",
   "maxUpload": 10485760,
   "maxImport": 104857600,
-  "spaces": [{"id": "default", "name": "My notes", "role": "owner", "personal": true, "sync": "local", "inbox": "Inbox"}]
+  "spaces": [{"id": "default", "name": "My notes", "role": "owner", "permissions": ["read", "write", "members", "manage"], "personal": true, "sync": "local", "inbox": "Inbox"}]
 }
 ```
 
@@ -248,7 +255,14 @@ otherwise) except the two invite endpoints marked public.
 
 ### `GET /api/users`
 
-`{"users": [{…}]}`, ordered by `created`.
+`{"users": [{…}]}`, ordered by `created`. Without parameters, every user.
+`?q={text}` keeps the users whose `username` or `name` contains the text,
+ignoring case (as the name filter of the administration's list of spaces does);
+`?limit={n}` (1 to 200) returns at most that many, the oldest first. Either may
+be sent alone; `400 invalid` for a `limit` outside the range. `?enabled=1`
+leaves out the disabled accounts, before the limit counts (`enabled=0`, the
+default, keeps them; `400 invalid` for anything else). A picker that looks for
+one person sends `q` and `limit`, so it never loads every account.
 
 ### `PATCH /api/users/{id}`
 
@@ -299,16 +313,32 @@ taken (the invite stays usable).
 ### Space
 
 ```json
-{"id": "01JD3K8Q7Z", "name": "My notes", "role": "owner", "personal": true, "sync": "local", "inbox": "Inbox"}
+{"id": "01JD3K8Q7Z", "name": "My notes", "role": "owner", "permissions": ["read", "write", "members", "manage"], "personal": true, "sync": "local", "inbox": "Inbox", "disabled": false}
 ```
 
-`role` is the caller's role in the space; in this milestone always `owner`.
+`role` is the caller's role in the space: `owner`, `editor` or `viewer`, and
+empty for an administrator who is not a member. `permissions` is what the
+caller may do in the space, so a client shows or hides controls by it and never
+by the name of a role:
+
+| Permission | Allows |
+|---|---|
+| `read` | seeing pages, history, attachments and search |
+| `write` | creating, changing, moving and deleting pages and folders; tags, attachments, imports, drafts |
+| `members` | adding, changing and removing members |
+| `manage` | renaming the space, its inbox, its remote and sync, rebuilding the index |
+
+An `owner` has all four, an `editor` `read` and `write`, a `viewer` `read`.
+In single-user mode the one user has all of them.
 `personal` marks the space made together with the account. `sync` is `local`
 (the repository exists only on the server) or the `state` of its remote (see
 "Remote repository"). `inbox` is the folder that quick notes go to: a folder
 path, never empty. It is only a name: the folder is made when the first page
 is created in it, and changing the setting moves nothing. In single-user mode
-it is set with `--inbox` (default `Inbox`).
+it is set with `--inbox` (default `Inbox`). `disabled` is true when an
+administrator has switched the space off (see "Administration"): it stays in
+its members' lists, with the permissions they would have, but every request
+that opens it answers `403 space_disabled`.
 
 ### `GET /api/spaces`
 
@@ -326,12 +356,57 @@ the caller already owns as many spaces as the server allows (`--max-spaces`,
 
 ### `PATCH /api/spaces/{space}`
 
-Accounts mode, owners only. `{"name": "…", "inbox": "…"}`, each optional; at
+Accounts mode, needs `manage`. `{"name": "…", "inbox": "…"}`, each optional; at
 least one must be given. `200` with the space.
+
+## Members
+
+Accounts mode; single-user mode answers `404`. The people who belong to a
+space, each with a role (`owner`, `editor` or `viewer`, see "Space"). A space
+always keeps at least one owner. A personal space (`personal: true`) belongs to
+its person alone and never has other members. An administrator is not a member
+of the spaces they open, so they are not listed here and not in `GET /api/spaces`,
+but may use these endpoints as if they were an owner.
+
+### Member
+
+```json
+{"userId": "01JD3K8Q7Z", "username": "tang", "name": "Tang", "role": "editor", "you": false}
+```
+
+`you` is true for the caller.
+
+### `GET /api/spaces/{space}/members`
+
+Needs `read`. `{"members": [{…}]}`: owners first, then by name.
+
+### `POST /api/spaces/{space}/members`
+
+Needs `members`. `{"username": "tang", "role": "editor"}`. `201` with the member.
+`404 user_not_found` when no enabled user has that username; `409 exists` when
+they are a member already; `409 personal_space` for a personal space;
+`400 invalid` for a role that is not one of the three.
+
+### `PATCH /api/spaces/{space}/members/{user}`
+
+Needs `members`. `{"role": "viewer"}`, `{user}` being the member's `userId`.
+`200` with the member. `404 not_found` when they are not a member;
+`409 last_owner` when it would leave the space without an owner. The change
+applies to the member's very next request.
+
+### `DELETE /api/spaces/{space}/members/{user}`
+
+Needs `members`, except that a member may remove themself (leave the space)
+with no more than `read`; leaving only touches the membership, so it works in a
+space an administrator has switched off too (removing someone else does not: that
+goes through the space, which cannot be opened). `204`. `409 last_owner` when no
+other owner who can sign in would be left (a disabled user cannot be the one
+remaining owner; the same goes for `PATCH`): make someone else an owner first.
+The removed member's very next request to the space answers `404 not_found`.
 
 ## Remote repository
 
-Accounts mode; the space's owner only (`403 forbidden` for anyone else who can
+Accounts mode; needs `manage` (`403 no_permission` for anyone else who can
 open the space). A space either keeps its repository on the server only, or
 follows a remote: then the remote branch is the truth.
 
@@ -588,7 +663,11 @@ A draft becomes the file's content, and a Git commit, when it is committed:
 - the app asks for it (the user leaves the page or chooses to save a version);
 - or the server does it by itself once the draft has not changed for
   2 minutes, or 10 minutes after the draft was first stored
-  (`--draft-idle`, `--draft-max`).
+  (`--draft-idle`, `--draft-max`). The server does it only while the author may
+  still write in the space: a draft of someone who was removed, made a viewer or
+  disabled in the meantime is not applied and not deleted. It stays in the
+  database (`petalbook draft list|export` shows it), is looked at again after 10
+  minutes, and is applied then if the person has the write permission again.
 
 #### `PUT /api/spaces/{space}/pages/{id}/draft`
 
@@ -618,7 +697,9 @@ typing on two devices cannot silently replace one draft with the other:
 
 #### `DELETE /api/spaces/{space}/pages/{id}/draft`
 
-`204`. See below for `?version=`.
+`204`. Needs only `read`: whoever lost the `write` permission may still discard
+their own draft (drafts are per user, so it is always the caller's). See below
+for `?version=`.
 
 #### `POST /api/spaces/{space}/pages/{id}/commit`
 
@@ -952,3 +1033,118 @@ before acting, so a request never touches another page's file.
 A `.md` file with no header, a header that does not parse, no `id`, or an `id`
 another file already uses is not served as a page. The server logs each one
 at start-up. Showing and repairing them in the app comes in a later milestone.
+
+## Administration
+
+Accounts mode, administrators only; single-user mode answers `404`, anyone else
+`403 forbidden`. These endpoints work on the server's records, not on a space's
+pages: none opens a space (so they work on a disabled one), and nothing they do
+deletes a file. They are separate from "Users and invites", which is unchanged.
+
+### `GET /api/admin/spaces?q={text}&cursor={cursor}&limit={n}`
+
+Every space on the server, in order of creation, one page at a time:
+
+```json
+{"items": [{"id": "01JD3K8Q7Z", "name": "Team", "personal": false, "inbox": "Inbox", "created": "2026-11-21T08:30:00Z",
+  "disabled": false, "owner": {"id": "01JD3K7A2M", "username": "tang", "name": "Tang"}, "members": 3,
+  "sizeBytes": 18304211, "sizeAt": "2026-11-22T02:10:00Z", "sync": "local"}],
+ "next": "01JD3K8Q7Z"}
+```
+
+`q` keeps the spaces whose name contains it, ignoring case (on SQLite for all of
+Unicode; on PostgreSQL as its `LOWER` does, which in a database with the C
+locale folds ASCII letters only). `limit` is 1 to
+200 (default 50). `next` is the `cursor` of the following page, `""` after the
+last. The list is one database query for the whole page, however many spaces
+there are.
+
+`inbox` is the folder quick notes go to (see "Space"): an administrator who opens a
+space they are not a member of captures into it. `owner` is the first owner (the one whose name is the Git author of a space's
+default commits), `null` if there is none. `members` counts every member.
+`sizeBytes` and `sizeAt` are the last stored measurement and are both `null`
+until the space has been measured (also when its first measurement failed). Sizes are not measured when the list is asked for:
+a space can hold tens of thousands of pages. The server measures them in the
+background, one space at a time: it takes the space measured longest ago (or
+never), if that was more than 6 hours ago, and adds up the sizes of the files
+under its directory, `.git` included (the index cache is not counted); then it
+goes straight on to the next stale space, so a first round over thousands of
+spaces takes as long as the walks do (a few hundred milliseconds for a space of
+tens of thousands of pages), not days. Walks never overlap and pause
+briefly after each directory, so the load stays that of one walk. When no space
+is stale it looks again every minute. So the number can be several hours old.
+`POST .../size` measures one space now.
+
+`sync` is `local` or the state of the remote the space follows (see "Remote
+repository"), as the server knows it without opening the space. A space that
+has never been opened since the server started has the state it was last left
+in; nothing is opened to fill this in.
+
+### `GET /api/admin/spaces/{space}`
+
+One space, the same object as an item of the list (same first owner, same
+member count), found by its id with one query; this is how a client finds a
+space it was sent to by address without reading the list. `404 not_found` for
+an id that is no space.
+
+### `POST /api/admin/spaces/{space}/size`
+
+Measures the space's directory now (waiting its turn if a measurement is
+running: they never run in parallel) and stores the result. `200` with
+`{"sizeBytes": 18304211, "sizeAt": "2026-11-22T02:10:00Z"}`.
+
+### `POST /api/admin/spaces/{space}/transfer`
+
+`{"userId": "01JD3K7A2M"}`. The user becomes the owner of the space (a member
+is promoted, anyone else added) and every other owner becomes an editor. The
+Git author of later commits is the new owner, also in a space that is open
+now. `204`. `404 user_not_found` when there is no such user, `409 user_disabled`
+when the user cannot sign in, `409 personal_space` for a personal space.
+
+### `POST /api/admin/spaces/{space}/disable`
+
+`204`. A disabled space stays in its members' lists (`disabled: true`) but
+cannot be opened by anyone, administrators included: every request on it
+answers `403 space_disabled`, and the drafts waiting in it are kept and
+committed once it is enabled. If it is open it is closed after committing what
+it holds; requests that are using it at that moment finish first (the server
+waits up to 5 seconds, then leaves it to close as soon as the last one is done).
+
+### `POST /api/admin/spaces/{space}/enable`
+
+`204`. Undoes `disable`.
+
+### `DELETE /api/admin/spaces/{space}`
+
+Closes the space (committing what it holds), deletes its records (members,
+drafts, remote and the space itself) and moves its directories into the trash
+inside the data directory; no file is deleted. `200`:
+
+```json
+{"trashed": "trash/01JD3K8Q7Z-20261122T021000Z", "cacheTrashed": "trash/01JD3K8Q7Z-20261122T021000Z.cache", "warnings": []}
+```
+
+`trashed` is the repository, `cacheTrashed` the index and journal (moved too:
+the journal can hold a change that never reached Git), both relative to the
+data directory. To get a space back, move the directory back and add the
+records by hand; to get the room back, delete the trash. Members' drafts, held
+ones too, are written first to `trash/<id>-<stamp>.drafts.json` (space, page,
+user, base rev, header, body, times) so that the text typed and not saved is not
+lost with the records; if that file cannot be written nothing is deleted. If a move fails after
+the records are gone, the files are left where they are, `trashed` is `""` and
+`warnings` says what happened (the server also logs it as an error). Members'
+very next request answers `404 not_found`. `409 busy` when requests still use
+the space or its pending changes cannot be committed: nothing was changed, try
+again. `409 personal_space` for a personal space, which goes with its person.
+
+### `GET /api/admin/status`
+
+```json
+{"version": "0.9.0", "startedAt": "2026-11-22T01:00:00Z", "uptimeSeconds": 4210, "database": "sqlite",
+ "spaces": 212, "users": 40, "openSpaces": 7, "diskFreeBytes": 52428800000, "goVersion": "go1.27.4"}
+```
+
+`database` is `sqlite` or `postgres`. `openSpaces` is how many spaces are open
+in memory now (idle ones are closed, see `--space-idle`). `diskFreeBytes` is
+the room left for the server on the disk of the data directory; it is absent
+on platforms that cannot say (anything but Linux, macOS and FreeBSD).

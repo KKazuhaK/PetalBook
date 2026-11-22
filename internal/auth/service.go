@@ -549,3 +549,10 @@ func (s *Service) SetPassword(ctx context.Context, username, password string) er
 func (s *Service) Users(ctx context.Context) ([]store.User, error) {
 	return store.ListUsers(ctx, s.st.Q())
 }
+
+// FindUsers lists the accounts whose username or name contains query (ignoring
+// case), oldest first, at most limit of them (limit <= 0: no limit). enabledOnly
+// leaves the disabled accounts out before the limit counts.
+func (s *Service) FindUsers(ctx context.Context, query string, enabledOnly bool, limit int) ([]store.User, error) {
+	return store.SearchUsers(ctx, s.st.Q(), s.st.Dialect(), query, enabledOnly, limit)
+}

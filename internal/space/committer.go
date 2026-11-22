@@ -3,7 +3,6 @@ package space
 import (
 	"errors"
 	"log/slog"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +19,16 @@ import (
 // person's own work in the same repository is never swept into a commit. It
 // takes its list of paths under a small lock of its own and runs git without
 // holding any lock the writers need, so a save never waits for git.
+//
+// Every pending path remembers who changed it last, and a commit holds one
+// person's changes: the paths are grouped by author and each group is its own
+// commit. So that a later change by someone else cannot take earlier work for
+// itself (Ann edits a page, Bo moves it in the same window: Git sees one
+// file, and its latest toucher would get all of it), a change starts with
+// SwitchTo: if anything is pending for another author, that is committed
+// first, before the change writes anything. With one author, the common case,
+// nothing is pending for anyone else and this costs nothing; it costs one
+// commit only when the author switches inside a quiet window.
 type committer struct {
 	git  *gitRepo
 	idle time.Duration
@@ -27,9 +36,9 @@ type committer struct {
 	log  *slog.Logger
 
 	mu    sync.Mutex
-	paths map[string]bool // changed since the last commit
-	first time.Time       // first uncommitted write
-	last  time.Time       // latest write
+	paths map[string]Author // changed since the last commit, and by whom
+	first time.Time         // first uncommitted write
+	last  time.Time         // latest write
 
 	j     *journal   // what is pending, on disk, so a crash does not lose it
 	runMu sync.Mutex // one git run at a time
@@ -42,32 +51,35 @@ type committer struct {
 
 // newCommitter starts the committer. initial are paths recovered from an
 // earlier run's journal.
-func newCommitter(g *gitRepo, idle, max time.Duration, log *slog.Logger, j *journal, initial []string) *committer {
-	c := &committer{git: g, idle: idle, max: max, log: log, j: j, paths: map[string]bool{},
+func newCommitter(g *gitRepo, idle, max time.Duration, log *slog.Logger, j *journal, initial map[string]Author) *committer {
+	c := &committer{git: g, idle: idle, max: max, log: log, j: j, paths: map[string]Author{},
 		wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{})}
 	if len(initial) > 0 {
 		now := time.Now()
 		c.first, c.last = now, now
-		for _, p := range initial {
-			c.paths[p] = true
+		for p, by := range initial {
+			c.paths[p] = by
 		}
 	}
 	go c.loop()
 	return c
 }
 
-// Record journals what is about to happen to files, durably. Call it before
-// the write; if it fails, do not write.
-func (c *committer) Record(recs ...jrec) error {
+// Record journals what is about to happen to files, durably, as a change by
+// by. Call it before the write; if it fails, do not write.
+func (c *committer) Record(by Author, recs ...jrec) error {
 	if c == nil || c.j == nil {
 		return nil
+	}
+	for i := range recs {
+		recs[i].AuthorName, recs[i].AuthorEmail = by.Name, by.Email
 	}
 	return c.j.append(recs...)
 }
 
-// Touch records that these files (relative, slash-separated) changed. A moved
-// file is two paths: the old and the new.
-func (c *committer) Touch(paths ...string) {
+// Touch records that by changed these files (relative, slash-separated). A
+// moved file is two paths: the old and the new.
+func (c *committer) Touch(by Author, paths ...string) {
 	if len(paths) == 0 {
 		return
 	}
@@ -77,13 +89,45 @@ func (c *committer) Touch(paths ...string) {
 		c.first = now
 	}
 	for _, p := range paths {
-		c.paths[p] = true
+		c.paths[p] = by
 	}
 	c.last = now
 	c.mu.Unlock()
 	select {
 	case c.wake <- struct{}{}:
 	default:
+	}
+}
+
+// SwitchTo commits what is pending for authors other than by, so that the
+// change by by that is about to write files cannot take their paths over. Call
+// it under the space lock (mutate does), before the change records or writes
+// anything: nothing else adds pending paths meanwhile, and the commit takes no
+// lock of the space's, so it cannot wait on the caller. A commit that fails (a
+// repository busy with a merge, a full disk) does not hold the change back:
+// it goes ahead, and a path that both authors touched is then pending for by,
+// the later one; the loop retries the failed commit. That is the one case
+// where earlier work can be credited to someone else, and better than
+// refusing a person's change for another's error.
+func (c *committer) SwitchTo(by Author) {
+	if c == nil {
+		return
+	}
+	id, _ := c.git.identities(by)
+	c.mu.Lock()
+	other := false
+	for _, a := range c.paths {
+		if x, _ := c.git.identities(a); x != id {
+			other = true
+			break
+		}
+	}
+	c.mu.Unlock()
+	if !other {
+		return
+	}
+	if err := c.commit(); err != nil {
+		c.log.Warn("could not commit earlier changes before another author's; they may be credited to that author", "error", err)
 	}
 }
 
@@ -141,10 +185,11 @@ func (c *committer) loop() {
 	}
 }
 
-// commit commits what is pending. A failed commit (or a repository that is
-// busy with a merge or rebase) leaves the paths pending, to be tried again
-// after another quiet period. Writes that arrive while git runs are not lost:
-// they are pending again and go into the next commit.
+// commit commits what is pending, one commit per author. A failed commit (or
+// a repository that is busy with a merge or rebase) leaves that author's paths
+// pending, to be tried again after another quiet period; the other authors'
+// commits are not held back by it. Writes that arrive while git runs are not
+// lost: they are pending again and go into the next commit.
 func (c *committer) commit() error {
 	c.runMu.Lock()
 	defer c.runMu.Unlock()
@@ -153,54 +198,72 @@ func (c *committer) commit() error {
 		c.mu.Unlock()
 		return nil
 	}
-	taken := make([]string, 0, len(c.paths))
-	for p := range c.paths {
-		taken = append(taken, p)
-	}
-	sort.Strings(taken)
-	c.paths = map[string]bool{}
+	taken := c.paths
+	c.paths = map[string]Author{}
 	c.mu.Unlock()
 
-	made, err := c.git.commitPaths(taken)
-	// Paths Git could not stage are left out for good: kept pending they would
-	// fail this commit again, and every commit after it. The files are still
-	// where they are; a person has to look.
-	var skipped *gitstore.SkippedError
-	if errors.As(err, &skipped) {
-		c.log.Error("some files could not be committed and are left out", "paths", skipped.Paths)
-		err = nil
+	var errs []error
+	var failed []string
+	committed := 0
+	repoBusy := false
+	for _, grp := range c.git.groupByAuthor(taken) {
+		if repoBusy {
+			// The repository is mid-merge or mid-rebase for everyone: do not
+			// ask git again for each author.
+			failed = append(failed, grp.paths...)
+			continue
+		}
+		made, err := c.git.commitPaths(grp.id, grp.paths)
+		if made {
+			c.log.Info("committed changes", "files", len(grp.paths), "author", grp.id.Name)
+		}
+		// Paths Git could not stage are left out for good: kept pending they
+		// would fail this commit again, and every commit after it. The files
+		// are still where they are; a person has to look.
+		var skipped *gitstore.SkippedError
+		if errors.As(err, &skipped) {
+			c.log.Error("some files could not be committed and are left out", "paths", skipped.Paths)
+			err = nil
+		}
+		if err != nil {
+			var busy *gitstore.BusyError
+			repoBusy = errors.As(err, &busy)
+			errs = append(errs, err)
+			failed = append(failed, grp.paths...)
+			continue
+		}
+		committed++
 	}
-	if err != nil {
+	if len(failed) > 0 {
 		now := time.Now()
 		c.mu.Lock()
 		if len(c.paths) == 0 {
 			c.first = now
 		}
-		for _, p := range taken {
-			c.paths[p] = true
+		for _, p := range failed {
+			// A path changed again while git ran is pending with its newer
+			// author; only paths nobody touched since go back as they were.
+			if _, newer := c.paths[p]; !newer {
+				c.paths[p] = taken[p]
+			}
 		}
 		c.last = now
 		c.mu.Unlock()
-		return err
+		if committed == 0 {
+			return errors.Join(errs...)
+		}
 	}
-	if made {
-		c.log.Info("committed changes", "files", len(taken))
-	}
-	// Everything journaled so far is in Git now, except what was written
-	// during the commit, which is pending again.
+	// Everything journaled so far is in Git now, except what failed and what
+	// was written during the commit, which are pending again.
 	if c.j != nil {
 		c.mu.Lock()
-		pending := make([]string, 0, len(c.paths))
-		for p := range c.paths {
-			pending = append(pending, p)
-		}
-		err := c.j.rewrite(pending)
+		err := c.j.rewrite(c.paths)
 		c.mu.Unlock()
 		if err != nil {
 			c.log.Error("could not trim the commit journal", "error", err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // clearJournal empties the journal: for a space that follows a remote, whose

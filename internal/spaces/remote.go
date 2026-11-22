@@ -180,6 +180,7 @@ func (m *Manager) withSync(ctx context.Context, in []Info) []Info {
 		return in
 	}
 	states := m.syncStates(ctx)
+	m.loadDisabled(ctx) // on failure nothing is shown as disabled here; Open still refuses
 	m.mu.Lock()
 	out := make([]Info, len(in))
 	for i, x := range in {
@@ -187,6 +188,7 @@ func (m *Manager) withSync(ctx context.Context, in []Info) []Info {
 		if st, ok := states[x.ID]; ok {
 			x.Sync = st
 		}
+		x.Disabled = m.disabled[x.ID]
 		out[i] = x
 	}
 	m.mu.Unlock()

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { NodeViewContent, NodeViewWrapper, type NodeViewProps } from '@tiptap/react'
+import { NodeViewContent, NodeViewWrapper, useEditorState, type NodeViewProps } from '@tiptap/react'
 import { Check, Code2, Copy } from 'lucide-react'
 import { t } from '@/i18n'
 import { isDiagramLanguage } from './diagrams'
@@ -64,7 +64,8 @@ function Diagram({ text, state: { url, error, busy } }: { text: string; state: D
 export function CodeBlockView({ node, editor, getPos, updateAttributes, HTMLAttributes }: NodeViewProps) {
   const language = node.attrs.language as string | null
   const diagram = isDiagramLanguage(language)
-  const editable = editor.isEditable
+  // Follows the editor when the person's permission changes while the page is open.
+  const editable = useEditorState({ editor, selector: ({ editor: e }) => e.isEditable })
   const text = node.textContent
   const dark = useDarkTheme()
   // Nothing is drawn for a block that is not a diagram.

@@ -2,7 +2,8 @@ import { useCallback, type ReactNode } from 'react'
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router'
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog'
 import { X } from 'lucide-react'
-import { useActiveSpace, useSession, useSpaces } from '@/api/hooks'
+import { useActiveSpace, useSession } from '@/api/hooks'
+import { can } from '@/lib/permissions'
 import { PageFallback } from '@/components/common'
 import { Button } from '@/components/ui/button'
 import { DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog'
@@ -17,7 +18,7 @@ import { SectionIcon } from './SettingsParts'
 import { groupsOf, resolveSection, settingsPath, visibleSections, type Visibility } from './sections'
 import type { SettingsState } from './useSettings'
 import { SyncPanel } from './SyncPanel'
-import { UsersPanel } from './UsersPanel'
+import { MembersPanel } from './MembersPanel'
 
 // The settings surface: one dialog, reached from `/settings/<section>`. It is a
 // route so a link, a reload and the old addresses all work; what is behind it is
@@ -28,18 +29,20 @@ export default function SettingsRoute() {
   const location = useLocation()
   const navigate = useNavigate()
   const session = useSession().data
-  const { id: space, spaces } = useActiveSpace()
-  const spacesReady = !useSpaces().isPending
+  const { id: space, spaces, resolving } = useActiveSpace()
+  const spacesReady = !resolving
 
+  const current = spaces.find((s) => s.id === space)
   const visibility: Visibility = {
     mode: session?.mode,
     signedIn: !!session?.user,
-    admin: session?.user?.role === 'admin',
     hasSpace: !!space,
+    canRead: can(current, 'read'),
+    canWrite: can(current, 'write'),
+    disabled: current?.disabled === true,
   }
   const shown = visibleSections(visibility)
   const section = resolveSection(requested, visibility)
-  const current = spaces.find((s) => s.id === space)
   useDocumentTitle(`${t.settingsUi.sections[section]} · ${t.settingsUi.title} · ${t.appName}`)
 
   const from = (location.state as SettingsState | null)?.from
@@ -75,14 +78,14 @@ export default function SettingsRoute() {
       case 'general':
         body = <GeneralPanel space={sp} />
         break
+      case 'members':
+        body = <MembersPanel space={sp} />
+        break
       case 'sync':
         body = <SyncPanel space={sp} />
         break
       case 'import':
         body = <ImportPanel space={sp} />
-        break
-      case 'users':
-        body = <UsersPanel />
         break
     }
   }

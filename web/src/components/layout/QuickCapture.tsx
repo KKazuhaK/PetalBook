@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router'
 import { PenLine } from 'lucide-react'
 import { toast } from 'sonner'
 import { useActiveSpace, useCreatePage, useSession, useUrls } from '@/api/hooks'
+import { can } from '@/lib/permissions'
 import { FormMessage } from '@/components/auth/Field'
 import { Spinner } from '@/components/common'
 import { Button } from '@/components/ui/button'
@@ -30,7 +31,8 @@ export function QuickCaptureProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false)
   const { id, spaces } = useActiveSpace()
   const space = spaces.find((s) => s.id === id)
-  const available = space !== undefined
+  // A note is a page, made in the inbox: it needs `write`, and an inbox to go to.
+  const available = space !== undefined && !!space.inbox && can(space, 'write')
 
   const show = useCallback(() => setOpen(true), [])
   const busy = useRef(false)

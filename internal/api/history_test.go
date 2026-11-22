@@ -152,7 +152,7 @@ func TestHistoryEndpoints(t *testing.T) {
 
 func TestHistoryInAccountsModeIsForEveryMember(t *testing.T) {
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
-		boss := a.setup("kazuha", pw)
+		a.setup("kazuha", pw)
 		tang := a.addUser("tang", pw, "member")
 		sid := tang.personalSpace()
 		p := tang.do("POST", "/api/spaces/"+sid+"/pages", map[string]any{"meta": map[string]any{"title": "Mine"}, "body": "x\n"}).want(t, 201, "")
@@ -173,8 +173,9 @@ func TestHistoryInAccountsModeIsForEveryMember(t *testing.T) {
 		commit := items[0].(map[string]any)["commit"].(string)
 		tang.do("GET", url+"/versions/"+commit, nil).want(t, 200, "")
 		// Someone who is not a member is told the space is not there.
-		boss.do("GET", url+"/history", nil).want(t, 404, "not_found")
-		boss.do("GET", url+"/versions/"+commit, nil).want(t, 404, "not_found")
+		stranger := a.addUser("stranger", pw, "member")
+		stranger.do("GET", url+"/history", nil).want(t, 404, "not_found")
+		stranger.do("GET", url+"/versions/"+commit, nil).want(t, 404, "not_found")
 		// The author on the commit is the space's owner.
 		if items[0].(map[string]any)["author"] != "tang" {
 			t.Fatalf("%v", items[0])
@@ -183,3 +184,41 @@ func TestHistoryInAccountsModeIsForEveryMember(t *testing.T) {
 }
 
 var ctxBG = context.Background()
+
+// Each commit carries the person who made the change, and the history says so,
+// whoever else shares the space.
+func TestHistoryNamesThePersonWhoMadeEachChange(t *testing.T) {
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		a.setup("kazuha", pw)
+		tm := newTeam(t, a)
+		pages := "/api/spaces/" + tm.sid + "/pages"
+		pa := tm.owner.do("POST", pages, map[string]any{"meta": map[string]any{"title": "Alpha"}, "body": "a\n"}).want(t, 201, "")
+		pb := tm.editor.do("POST", pages, map[string]any{"meta": map[string]any{"title": "Beta"}, "body": "b\n"}).want(t, 201, "")
+		// Both are in one commit window of the server; Flush closes it.
+		sp, release, err := a.mgr.Acquire(ctxBG, tm.sid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer release()
+		if err := sp.Flush(); err != nil {
+			t.Fatal(err)
+		}
+		tm.editor.do("PUT", pages+"/"+pa.body["id"].(string), map[string]any{"baseRev": pa.body["rev"], "meta": map[string]any{"title": "Alpha"}, "body": "edited by edith\n"}).want(t, 200, "")
+		if err := sp.Flush(); err != nil {
+			t.Fatal(err)
+		}
+		authors := func(id string) []string {
+			var out []string
+			for _, it := range tm.owner.do("GET", pages+"/"+id+"/history", nil).want(t, 200, "").body["items"].([]any) {
+				out = append(out, it.(map[string]any)["author"].(string))
+			}
+			return out
+		}
+		if got := strings.Join(authors(pa.body["id"].(string)), ","); got != "edith,olive" {
+			t.Fatalf("Alpha: %s", got)
+		}
+		if got := strings.Join(authors(pb.body["id"].(string)), ","); got != "edith" {
+			t.Fatalf("Beta: %s", got)
+		}
+	})
+}

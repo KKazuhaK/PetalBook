@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { NavLink, useLocation } from 'react-router'
 import { ChevronRight, Clock, Folder, FolderOpen, FolderPlus, Home, Inbox, MoreHorizontal, PenLine, Search, Settings, Tag, Upload } from 'lucide-react'
-import { useActiveSpace, useSession, useTagColors, useTags, useTree, useUrls } from '@/api/hooks'
+import { useActiveSpace, useSession, useSpacePermissions, useTagColors, useTags, useTree, useUrls } from '@/api/hooks'
 import type { TagColor } from '@/api/types'
 import { TAG_ATTR, TagColorMenu, useOpenTagColorMenu } from '@/components/TagColorMenu'
 import { isTagColor } from '@/lib/tagColors'
@@ -80,7 +80,10 @@ function SearchBox() {
 // closes first so the box does not open on top of it.
 function QuickNoteButton() {
   const { open, available } = useQuickCapture()
+  const { write } = useSpacePermissions()
   const { isMobile, setOpenMobile } = useSidebar()
+  // A note is a page: it needs `write`.
+  if (!write) return null
   return (
     <button
       type="button"
@@ -313,15 +316,17 @@ function TagLink({ tag, pages, color: given, to, active }: { tag: string; pages:
         <span className="max-w-32 truncate">{tag}</span>
         <span className="tabular-nums opacity-70">{pages}</span>
       </NavLink>
-      <button
-        type="button"
-        aria-label={t.tagColor.more(tag)}
-        title={t.tagColor.menu(tag)}
-        onClick={(e) => openMenu?.(e.currentTarget)}
-        className="absolute top-1/2 right-0.5 hidden size-4 -translate-y-1/2 items-center justify-center rounded-full bg-popover text-foreground shadow-sm ring-1 ring-foreground/15 outline-none group-focus-within/tag:flex group-hover/tag:flex focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <MoreHorizontal className="size-3" />
-      </button>
+      {openMenu && (
+        <button
+          type="button"
+          aria-label={t.tagColor.more(tag)}
+          title={t.tagColor.menu(tag)}
+          onClick={(e) => openMenu(e.currentTarget)}
+          className="absolute top-1/2 right-0.5 hidden size-4 -translate-y-1/2 items-center justify-center rounded-full bg-popover text-foreground shadow-sm ring-1 ring-foreground/15 outline-none group-focus-within/tag:flex group-hover/tag:flex focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <MoreHorizontal className="size-3" />
+        </button>
+      )}
     </span>
   )
 }
@@ -332,6 +337,7 @@ export function AppSidebar() {
   const session = useSession().data
   const { id, spaces } = useActiveSpace()
   const ops = useFileOps()
+  const { write } = useSpacePermissions()
   const openSettings = useOpenSettings()
   const accounts = session?.mode === 'accounts'
   const activeFolder = pathAfter(pathname, `${urls.base}/f`)
@@ -362,7 +368,7 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              <InboxLink inbox={current?.inbox} activeFolder={activeFolder} />
+              <InboxLink inbox={current?.inbox || undefined} activeFolder={activeFolder} />
               <SidebarMenuItem>
                 <SidebarMenuButton isActive={pathname === urls.recent()} render={<NavLink to={urls.recent()} />}>
                   <Clock />
@@ -374,13 +380,17 @@ export function AppSidebar() {
         </SidebarGroup>
         <SidebarGroup>
           <FoldersHeading activeFolder={activeFolder} />
-          <SidebarGroupAction title={t.nav.newFolder} aria-label={t.nav.newFolder} onClick={() => ops?.newFolder(activeFolder ?? '')}>
-            <FolderPlus />
-          </SidebarGroupAction>
-          {/* Next to "new folder"; brings files into the folder being viewed. */}
-          <SidebarGroupAction title={t.nav.import} aria-label={t.nav.import} className="right-9" render={<NavLink to={urls.import(activeFolder ?? '')} />}>
-            <Upload />
-          </SidebarGroupAction>
+          {write && (
+            <>
+              <SidebarGroupAction title={t.nav.newFolder} aria-label={t.nav.newFolder} onClick={() => ops?.newFolder(activeFolder ?? '')}>
+                <FolderPlus />
+              </SidebarGroupAction>
+              {/* Next to "new folder"; brings files into the folder being viewed. */}
+              <SidebarGroupAction title={t.nav.import} aria-label={t.nav.import} className="right-9" render={<NavLink to={urls.import(activeFolder ?? '')} />}>
+                <Upload />
+              </SidebarGroupAction>
+            </>
+          )}
           {/* Scrolls by itself, so a hundred folders do not push the tags out of reach. */}
           <SidebarGroupContent className="max-h-[min(24rem,45vh)] overflow-y-auto overscroll-contain">
             <FolderTree activeFolder={activeFolder} inbox={current?.inbox} />

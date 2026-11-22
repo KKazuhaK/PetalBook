@@ -244,9 +244,9 @@ func checkBody(body string) error {
 	return nil
 }
 
-// Create makes a new page. The id and created date are assigned here; any in
-// the input are ignored.
-func (s *Space) Create(in CreateInput) (*Page, error) {
+// Create makes a new page, as a change by by. The id and created date are
+// assigned here; any in the input are ignored.
+func (s *Space) Create(by Author, in CreateInput) (*Page, error) {
 	if err := checkRel(in.Folder); err != nil {
 		return nil, err
 	}
@@ -260,7 +260,7 @@ func (s *Space) Create(in CreateInput) (*Page, error) {
 		}
 	}
 	meta = newMeta(meta)
-	return mutate(s, func(tx *txn) (*Page, error) { return s.createLocked(tx, in, meta) })
+	return mutate(s, by, func(tx *txn) (*Page, error) { return s.createLocked(tx, in, meta) })
 }
 
 func (s *Space) createLocked(tx *txn, in CreateInput, meta page.Meta) (*Page, error) {
@@ -299,7 +299,7 @@ func (s *Space) createLocked(tx *txn, in CreateInput, meta page.Meta) (*Page, er
 	if err != nil {
 		return nil, err
 	}
-	name, err := s.createNamed(folder, dirAbs, stem, data)
+	name, err := s.createNamed(tx.by, folder, dirAbs, stem, data)
 	if err != nil {
 		return nil, err
 	}
@@ -379,12 +379,12 @@ func saveMeta(id string, old, req page.Meta) (page.Meta, error) {
 // Save replaces a page's header and body. baseRev must be the rev the client
 // read; if the file has changed since, a *ConflictError carries the current
 // page. A changed title renames the file; the id never changes.
-func (s *Space) Save(id, baseRev string, meta page.Meta, body string) (*Page, error) {
+func (s *Space) Save(by Author, id, baseRev string, meta page.Meta, body string) (*Page, error) {
 	if err := checkBody(body); err != nil {
 		return nil, err
 	}
 	s.refresh(id)
-	return mutate(s, func(tx *txn) (*Page, error) { return s.saveLocked(tx, id, baseRev, meta, body) })
+	return mutate(s, by, func(tx *txn) (*Page, error) { return s.saveLocked(tx, id, baseRev, meta, body) })
 }
 
 func (s *Space) saveLocked(tx *txn, id, baseRev string, meta page.Meta, body string) (*Page, error) {
@@ -416,7 +416,7 @@ func (s *Space) saveLocked(tx *txn, id, baseRev string, meta page.Meta, body str
 		return nil, err
 	}
 	if !bytes.Equal(newData, data) {
-		if err := s.cm.Record(jrec{Op: "w", Path: rel, Rev: page.Rev(newData)}); err != nil {
+		if err := tx.record(jrec{Op: "w", Path: rel, Rev: page.Rev(newData)}); err != nil {
 			return nil, err
 		}
 		if err := writeAtomic(s.tmpDir(), abs, newData); err != nil {
@@ -432,7 +432,7 @@ func (s *Space) saveLocked(tx *txn, id, baseRev string, meta page.Meta, body str
 		cur := strings.TrimSuffix(path.Base(rel), path.Ext(rel))
 		if !page.SameStem(cur, stem) {
 			dirAbs := filepath.Dir(abs)
-			name, err := s.moveNamed(abs, dirAbs, stem, s.moveIntent(rel, folderOf(rel)))
+			name, err := s.moveNamed(tx.by, abs, dirAbs, stem, s.moveIntent(tx.by, rel, folderOf(rel)))
 			if err != nil {
 				// The content is saved; only the name is left as it was.
 				s.log.Warn("could not rename page file", "from", rel, "stem", stem, "error", err)
@@ -480,12 +480,12 @@ func (s *Space) Equivalent(id string, meta page.Meta, body string) (*Page, bool,
 
 // Move puts a page in another folder, creating it if needed. A folder that
 // differs only in case from an existing one is the existing one.
-func (s *Space) Move(id, folder string) (*Page, error) {
+func (s *Space) Move(by Author, id, folder string) (*Page, error) {
 	if err := checkRel(folder); err != nil {
 		return nil, err
 	}
 	s.refresh(id)
-	return mutate(s, func(tx *txn) (*Page, error) { return s.moveLocked(tx, id, folder) })
+	return mutate(s, by, func(tx *txn) (*Page, error) { return s.moveLocked(tx, id, folder) })
 }
 
 func (s *Space) moveLocked(tx *txn, id, folder string) (*Page, error) {
@@ -511,7 +511,7 @@ func (s *Space) moveLocked(tx *txn, id, folder string) (*Page, error) {
 	if err != nil {
 		return nil, err
 	}
-	name, err := s.moveNamed(src, dirAbs, stem, s.moveIntent(rel, canon))
+	name, err := s.moveNamed(tx.by, src, dirAbs, stem, s.moveIntent(tx.by, rel, canon))
 	if err != nil {
 		return nil, err
 	}
@@ -519,9 +519,9 @@ func (s *Space) moveLocked(tx *txn, id, folder string) (*Page, error) {
 }
 
 // Delete removes the page file; Git history keeps it.
-func (s *Space) Delete(id string) error {
+func (s *Space) Delete(by Author, id string) error {
 	s.refresh(id)
-	_, err := mutate(s, func(tx *txn) (struct{}, error) { return struct{}{}, s.deleteLocked(tx, id) })
+	_, err := mutate(s, by, func(tx *txn) (struct{}, error) { return struct{}{}, s.deleteLocked(tx, id) })
 	return err
 }
 
@@ -534,7 +534,7 @@ func (s *Space) deleteLocked(tx *txn, id string) error {
 	if err != nil {
 		return err
 	}
-	if err := s.cm.Record(jrec{Op: "d", Path: rel}); err != nil {
+	if err := tx.record(jrec{Op: "d", Path: rel}); err != nil {
 		return err
 	}
 	// The file is part of the change from the moment it is removed: if the index
@@ -556,7 +556,7 @@ func (s *Space) deleteLocked(tx *txn, id string) error {
 // CreateFolder makes a folder and returns its path as it is on disk (the
 // case of existing parents wins). Git does not track empty directories, so a
 // .gitkeep file goes in; it is not a page and is never listed.
-func (s *Space) CreateFolder(rel string) (string, error) {
+func (s *Space) CreateFolder(by Author, rel string) (string, error) {
 	if err := checkRel(rel); err != nil {
 		return "", err
 	}
@@ -585,10 +585,11 @@ func (s *Space) CreateFolder(rel string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	s.cm.SwitchTo(by)
 	if err := os.MkdirAll(abs, 0o755); err != nil {
 		return "", err
 	}
-	if err := s.cm.Record(jrec{Op: "t", Path: canon + "/.gitkeep"}); err != nil {
+	if err := s.cm.Record(by, jrec{Op: "t", Path: canon + "/.gitkeep"}); err != nil {
 		return "", err
 	}
 	if err := os.WriteFile(filepath.Join(abs, ".gitkeep"), nil, 0o644); err != nil {
@@ -597,7 +598,7 @@ func (s *Space) CreateFolder(rel string) (string, error) {
 	if err := s.idx.AddFolder(canon); err != nil {
 		return "", err
 	}
-	s.cm.Touch(canon + "/.gitkeep")
+	s.cm.Touch(by, canon+"/.gitkeep")
 	return canon, nil
 }
 

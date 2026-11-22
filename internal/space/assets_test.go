@@ -34,7 +34,7 @@ func TestAssetIsJournaledBeforeItIsWrittenAndSurvivesACrash(t *testing.T) {
 		seen = string(b)
 		return link(from, to)
 	}
-	a, err := s.PutAsset(p.ID, "pic.png", data)
+	a, err := s.PutAsset(Author{}, p.ID, "pic.png", data)
 	if err != nil || !a.Created || a.Rel != "assets/"+p.ID+"/"+a.Name || a.Size != int64(len(data)) {
 		t.Fatalf("%v %+v", err, a)
 	}
@@ -63,35 +63,35 @@ func TestPutAsset(t *testing.T) {
 	p := mustCreate(t, s, "Tang", meta("title", "Doc"), "x\n")
 	data := []byte("hello")
 
-	if _, err := s.PutAsset("0000000000", "a.txt", data); !errors.Is(err, ErrNotFound) {
+	if _, err := s.PutAsset(Author{}, "0000000000", "a.txt", data); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown page: %v", err)
 	}
-	if _, err := s.PutAsset("not an id", "a.txt", data); !errors.Is(err, ErrNotFound) {
+	if _, err := s.PutAsset(Author{}, "not an id", "a.txt", data); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("bad id: %v", err)
 	}
 	var inv *InvalidError
-	if _, err := s.PutAsset(p.ID, "a.txt", nil); !errors.As(err, &inv) {
+	if _, err := s.PutAsset(Author{}, p.ID, "a.txt", nil); !errors.As(err, &inv) {
 		t.Fatalf("empty: %v", err)
 	}
-	if _, err := s.PutAsset(p.ID, "  ", data); !errors.As(err, &inv) {
+	if _, err := s.PutAsset(Author{}, p.ID, "  ", data); !errors.As(err, &inv) {
 		t.Fatalf("no name: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(s.Root(), "assets")); !os.IsNotExist(err) {
 		t.Fatalf("a refused upload made the directory: %v", err)
 	}
 
-	a, err := s.PutAsset(p.ID, "a.txt", data)
+	a, err := s.PutAsset(Author{}, p.ID, "a.txt", data)
 	if err != nil || !a.Created {
 		t.Fatalf("%v %+v", err, a)
 	}
-	b, err := s.PutAsset(p.ID, "a.txt", data)
+	b, err := s.PutAsset(Author{}, p.ID, "a.txt", data)
 	if err != nil || b.Created || b.Rel != a.Rel {
 		t.Fatalf("%v %+v", err, b)
 	}
 	// Another file holding the name (a clash of the short hash) is not replaced.
 	target := filepath.Join(s.Root(), filepath.FromSlash(a.Rel))
 	os.WriteFile(target, []byte("other bytes"), 0o644)
-	if _, err := s.PutAsset(p.ID, "a.txt", data); !errors.Is(err, ErrExists) {
+	if _, err := s.PutAsset(Author{}, p.ID, "a.txt", data); !errors.Is(err, ErrExists) {
 		t.Fatalf("clash: %v", err)
 	}
 	if got, _ := os.ReadFile(target); string(got) != "other bytes" {
@@ -99,18 +99,18 @@ func TestPutAsset(t *testing.T) {
 	}
 
 	// The page is found after it moved; the files stay with its id.
-	if _, err := s.Move(p.ID, "Elsewhere"); err != nil {
+	if _, err := s.Move(Author{}, p.ID, "Elsewhere"); err != nil {
 		t.Fatal(err)
 	}
-	c, err := s.PutAsset(p.ID, "b.txt", []byte("more"))
+	c, err := s.PutAsset(Author{}, p.ID, "b.txt", []byte("more"))
 	if err != nil || !strings.HasPrefix(c.Rel, "assets/"+p.ID+"/") {
 		t.Fatalf("%v %+v", err, c)
 	}
 	// A deleted page takes no more files.
-	if err := s.Delete(p.ID); err != nil {
+	if err := s.Delete(Author{}, p.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.PutAsset(p.ID, "c.txt", data); !errors.Is(err, ErrNotFound) {
+	if _, err := s.PutAsset(Author{}, p.ID, "c.txt", data); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("deleted page: %v", err)
 	}
 
@@ -121,7 +121,7 @@ func TestPutAsset(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(s2.Root(), "assets")); err != nil {
 		t.Skip("no symbolic links here")
 	}
-	if _, err := s2.PutAsset(p2.ID, "a.txt", data); !errors.As(err, &inv) {
+	if _, err := s2.PutAsset(Author{}, p2.ID, "a.txt", data); !errors.As(err, &inv) {
 		t.Fatalf("link: %v", err)
 	}
 	if l, _ := os.ReadDir(outside); len(l) != 0 {
@@ -132,7 +132,7 @@ func TestPutAsset(t *testing.T) {
 func TestOpenFile(t *testing.T) {
 	s := open(t)
 	p := mustCreate(t, s, "Tang", meta("title", "Doc"), "x\n")
-	a, err := s.PutAsset(p.ID, "a.bin", []byte("payload"))
+	a, err := s.PutAsset(Author{}, p.ID, "a.bin", []byte("payload"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestAnIgnoredAttachmentIsStillCommitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := mustCreate(t, s, "", meta("title", "Doc"), "x\n")
-	a, err := s.PutAsset(p.ID, "c.pdf", []byte("%PDF-1.7"))
+	a, err := s.PutAsset(Author{}, p.ID, "c.pdf", []byte("%PDF-1.7"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestAFolderNamedLikeAssetsInAnotherCaseIsNotUsed(t *testing.T) {
 	}
 	s := openAt(t, root)
 	p := mustCreate(t, s, "", meta("title", "Doc"), "x\n")
-	_, err := s.PutAsset(p.ID, "a.png", []byte("x"))
+	_, err := s.PutAsset(Author{}, p.ID, "a.png", []byte("x"))
 	if _, lerr := os.Lstat(filepath.Join(root, "assets")); lerr == nil {
 		// The file system ignores case: the upload must have been refused.
 		var inv *InvalidError
@@ -210,7 +210,7 @@ func TestAFolderNamedLikeAssetsInAnotherCaseIsNotUsed(t *testing.T) {
 			t.Fatalf("stored inside the folder Assets: %v", err)
 		}
 	}
-	if _, cerr := s.CreateFolder("ASSETS"); cerr == nil {
+	if _, cerr := s.CreateFolder(Author{}, "ASSETS"); cerr == nil {
 		t.Fatal("a folder ASSETS could be made")
 	}
 }
@@ -227,13 +227,13 @@ func TestAFileThatBecameAFolderDoesNotBlockCommits(t *testing.T) {
 		t.Fatal(err)
 	}
 	var inv *InvalidError
-	if _, err := s.CreateFolder("Bar.MD"); !errors.As(err, &inv) {
+	if _, err := s.CreateFolder(Author{}, "Bar.MD"); !errors.As(err, &inv) {
 		t.Fatalf("a folder named like a page: %v", err)
 	}
-	if _, err := s.Create(CreateInput{Folder: "a/b.md", Meta: meta("title", "In")}); !errors.As(err, &inv) {
+	if _, err := s.Create(Author{}, CreateInput{Folder: "a/b.md", Meta: meta("title", "In")}); !errors.As(err, &inv) {
 		t.Fatalf("a page in a new folder named like a page: %v", err)
 	}
-	if err := s.Delete(p.ID); err != nil {
+	if err := s.Delete(Author{}, p.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Mkdir(filepath.Join(root, "Foo.md"), 0o755); err != nil {
@@ -262,7 +262,7 @@ func TestACaseOnlyRenameIsCommitted(t *testing.T) {
 	if err := s.Flush(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Save(p.ID, p.Rev, meta("id", p.ID, "title", "apple"), "x\n"); err != nil {
+	if _, err := s.Save(Author{}, p.ID, p.Rev, meta("id", p.ID, "title", "apple"), "x\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Flush(); err != nil {

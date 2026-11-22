@@ -7,7 +7,8 @@ import { waitForSaves } from '@/editor/saveController'
 import { spaceUrls } from '@/lib/urls'
 import { api, ApiError, spaceApi } from './client'
 import { parseTagColor } from '../lib/tagColors.ts'
-import type { BatchPagesInput, ConnectRemoteInput, CreatePageInput, ListParams, Remote, SessionInfo, SpaceInfo, SyncState, TagColor, TagsResponse, User } from './types'
+import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
+import type { BatchPagesInput, ConnectRemoteInput, CreatePageInput, ListParams, Member, Permission, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, User } from './types'
 
 // Everything of one space is under ['space', id, …], so switching space never
 // shows another space's data and one invalidation covers a space.
@@ -16,7 +17,13 @@ export const keys = {
   spaces: ['spaces'] as const,
   account: ['account'] as const,
   users: ['users'] as const,
+  userSearch: (q: string) => ['users', 'search', q] as const,
   invites: ['invites'] as const,
+  adminSpaces: ['admin', 'spaces'] as const,
+  adminSpaceList: (q: string) => ['admin', 'spaces', 'list', q] as const,
+  adminStatus: ['admin', 'status'] as const,
+  // A space an administrator opens without being a member of it.
+  viewedSpace: (space: string) => ['admin', 'spaces', 'view', space] as const,
   space: (space: string) => ['space', space] as const,
   tree: (space: string) => ['space', space, 'tree'] as const,
   tags: (space: string) => ['space', space, 'tags'] as const,
@@ -26,6 +33,7 @@ export const keys = {
   history: (space: string, id: string) => ['space', space, 'history', id, 'list'] as const,
   version: (space: string, id: string, commit: string) => ['space', space, 'history', id, 'version', commit] as const,
   remote: (space: string) => ['space', space, 'remote'] as const,
+  members: (space: string) => ['space', space, 'members'] as const,
 }
 
 export const PAGE_SIZE = 50
@@ -50,8 +58,49 @@ export function useSpaces() {
     queryKey: keys.spaces,
     queryFn: ({ signal }) => api.spaces(signal),
     staleTime: Infinity,
+    // Someone else may have removed this person from a space, or deleted it: coming
+    // back to the window asks once, however long it has been.
+    refetchOnWindowFocus: 'always',
     refetchInterval: (q) => (q.state.data?.spaces.some((s) => syncOf(s) !== 'local') ? 60_000 : false),
   })
+}
+
+// A request inside a space was refused for access (disabled, no permission) or
+// said the space is not there: what the app holds about the space is out of date,
+// the list and the space an administrator views alike. A 404 may only be a page
+// that is gone, so each of the two looks again at most every few seconds, counted
+// from the last time that query asked (answered or failed). A 404 inside that
+// window is not dropped, since the viewed space is not read again by itself: one
+// recheck waits for the end of the window, whatever number of 404s come meanwhile.
+const NOT_FOUND_RECHECK_MS = 5_000
+const pendingRechecks = new WeakMap<QueryClient, Map<string, ReturnType<typeof setTimeout>>>()
+function recheck(qc: QueryClient, key: readonly unknown[], notFound: boolean) {
+  const asked = () => {
+    const s = qc.getQueryState(key)
+    return Math.max(s?.dataUpdatedAt ?? 0, s?.errorUpdatedAt ?? 0)
+  }
+  const wait = NOT_FOUND_RECHECK_MS - (Date.now() - asked())
+  if (!notFound || wait <= 0) {
+    void qc.invalidateQueries({ queryKey: key })
+    return
+  }
+  const timers = pendingRechecks.get(qc) ?? new Map<string, ReturnType<typeof setTimeout>>()
+  pendingRechecks.set(qc, timers)
+  const id = JSON.stringify(key)
+  if (timers.has(id)) return
+  timers.set(
+    id,
+    setTimeout(() => {
+      timers.delete(id)
+      // Asked again meanwhile (by anything): that answer is newer than the 404.
+      if (Date.now() - asked() >= NOT_FOUND_RECHECK_MS) void qc.invalidateQueries({ queryKey: key })
+    }, wait),
+  )
+}
+export function refreshSpaceAccess(qc: QueryClient, space: string | null, notFound: boolean) {
+  // The viewed space is only ever asked for by an administrator, and is one request.
+  if (space) recheck(qc, keys.viewedSpace(space), notFound)
+  recheck(qc, keys.spaces, notFound)
 }
 
 const LAST_SPACE_KEY = 'pb.space'
@@ -60,6 +109,15 @@ export function rememberSpace(id: string) {
     localStorage.setItem(LAST_SPACE_KEY, id)
   } catch {
     // Blocked storage: the next visit starts from the first space.
+  }
+}
+// A space the person left is not the one used last any more (an administrator could
+// still open it, which is not what leaving means).
+export function forgetSpace(id: string) {
+  try {
+    if (localStorage.getItem(LAST_SPACE_KEY) === id) localStorage.removeItem(LAST_SPACE_KEY)
+  } catch {
+    // Blocked storage: nothing was kept.
   }
 }
 export function lastSpace(): string | null {
@@ -79,14 +137,56 @@ export function useRouteSpace(): string | null {
 // The space whose pages are shown: the one in the address, else (on the
 // account pages, which have none) the one used last if it still exists, else
 // the first.
-export function useActiveSpace(): { id: string | null; spaces: SpaceInfo[] } {
+export function useActiveSpace(): { id: string | null; spaces: SpaceInfo[]; resolving: boolean } {
   const route = useRouteSpace()
-  const spaces = useSpaces().data?.spaces ?? []
+  const list = useSpaces()
+  const mine = list.data?.spaces ?? []
   // The storage is only read when the address has no space.
   const last = route ? null : lastSpace()
+  // A space in the address (or, off the space pages, the one used last) that is not
+  // the person's own may still be one an administrator can open.
+  const wanted = route ?? last
+  const viewed = useViewedSpace(wanted, !list.isPending && !!wanted && !mine.some((s) => s.id === wanted))
+  const spaces = viewed.data ? [...mine, viewed.data] : mine
   const id = route ?? (last && spaces.some((s) => s.id === last) ? last : (spaces[0]?.id ?? null))
-  return { id, spaces }
+  return { id, spaces, resolving: list.isPending || viewed.isLoading }
 }
+
+// An administrator may do everything in every space, but a space they are not a
+// member of is not in their list. The administration knows it: one request, made
+// when someone opens such a space by its address. It carries no role, and every
+// permission. It is read again when a request in the space is refused or says it is
+// gone (see refreshSpaceAccess) and after what an administrator does to a space;
+// never from the administration's lists, whose pages are only as fresh as their
+// search was.
+function useViewedSpace(space: string | null, wanted: boolean) {
+  const session = useSession().data
+  const admin = session?.mode === 'accounts' && session.user?.role === 'admin'
+  return useQuery({
+    queryKey: keys.viewedSpace(space ?? ''),
+    enabled: wanted && admin,
+    staleTime: Infinity,
+    queryFn: async ({ signal }): Promise<SpaceInfo | null> => {
+      try {
+        const s = await api.adminSpace(space ?? '', signal)
+        return { id: s.id, name: s.name, role: '', permissions: ['read', 'write', 'members', 'manage'], personal: s.personal, sync: s.sync, inbox: s.inbox, disabled: s.disabled }
+      } catch (e) {
+        if (e instanceof ApiError && e.code === 'not_found') return null
+        throw e
+      }
+    },
+  })
+}
+
+// What the caller may do in the space being shown. Nothing while the list of
+// spaces is still on its way, and nothing in a disabled space.
+export function useSpacePermissions(): SpacePermissions {
+  const { id, spaces } = useActiveSpace()
+  const space = spaces.find((s) => s.id === id)
+  return useMemo(() => permissionsOf(space), [space])
+}
+export const useCan = (permission: Permission): boolean => useSpacePermissions()[permission]
+export { can }
 
 // The same as a string, for the hooks below: '' while the list of spaces is
 // still on its way (their queries wait for it).
@@ -115,14 +215,18 @@ export function useSpaceApi() {
   return useMemo(() => spaceApi(space), [space])
 }
 
+// A space that is switched off (or one the list does not show yet) is not asked
+// for its folders and tags: every request on it would be refused.
 export function useTree() {
   const space = useSpaceId()
-  return useQuery({ queryKey: keys.tree(space), queryFn: ({ signal }) => spaceApi(space).tree(signal), staleTime: 15_000, enabled: space !== '' })
+  const { read } = useSpacePermissions()
+  return useQuery({ queryKey: keys.tree(space), queryFn: ({ signal }) => spaceApi(space).tree(signal), staleTime: 15_000, enabled: space !== '' && read })
 }
 
 export function useTags() {
   const space = useSpaceId()
-  return useQuery({ queryKey: keys.tags(space), queryFn: ({ signal }) => spaceApi(space).tags(signal), staleTime: 15_000, enabled: space !== '' })
+  const { read } = useSpacePermissions()
+  return useQuery({ queryKey: keys.tags(space), queryFn: ({ signal }) => spaceApi(space).tags(signal), staleTime: 15_000, enabled: space !== '' && read })
 }
 
 // Tag name -> colour, for every tag that has one. Built from the tags listing
@@ -280,7 +384,7 @@ export function useRenameSpace() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) => api.renameSpace(id, name),
-    onSuccess: (space) => qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => ({ spaces: (prev?.spaces ?? []).map((s) => (s.id === space.id ? space : s)) })),
+    onSuccess: (space) => spaceChanged(qc, space),
   })
 }
 
@@ -289,20 +393,19 @@ export function useUpdateSpace() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, ...patch }: { id: string; name?: string; inbox?: string }) => api.updateSpace(id, patch),
-    onSuccess: (space) => qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => ({ spaces: (prev?.spaces ?? []).map((s) => (s.id === space.id ? space : s)) })),
+    onSuccess: (space) => spaceChanged(qc, space),
   })
+}
+
+// A space that changed (name, inbox) in the list, and in the cache of the one an
+// administrator is viewing without being a member, if that is it.
+function spaceChanged(qc: QueryClient, space: SpaceInfo) {
+  qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => ({ spaces: (prev?.spaces ?? []).map((s) => (s.id === space.id ? space : s)) }))
+  qc.setQueryData<SpaceInfo | null | undefined>(keys.viewedSpace(space.id), (prev) => (prev ? space : prev))
 }
 
 export function useAccount(enabled = true) {
   return useQuery({ queryKey: keys.account, queryFn: ({ signal }) => api.account(signal), staleTime: Infinity, enabled })
-}
-
-export function useUsers(enabled = true) {
-  return useQuery({ queryKey: keys.users, queryFn: ({ signal }) => api.users(signal), staleTime: 30_000, enabled })
-}
-
-export function useInvites(enabled = true) {
-  return useQuery({ queryKey: keys.invites, queryFn: ({ signal }) => api.invites(signal), staleTime: 30_000, enabled })
 }
 
 // What a person is told about a failed request, for the pages that show errors inline.
@@ -366,6 +469,7 @@ function useRemoteCache(space: string) {
   return (remote: Remote | null) => {
     qc.setQueryData(keys.remote(space), remote)
     qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => prev && { spaces: prev.spaces.map((s) => (s.id === space ? { ...s, sync: remote ? remote.state : 'local' } : s)) })
+    qc.setQueryData<SpaceInfo | null | undefined>(keys.viewedSpace(space), (prev) => prev && { ...prev, sync: remote ? remote.state : 'local' })
   }
 }
 
@@ -406,4 +510,37 @@ export function useAcceptRemote(space: string) {
       void invalidateListings(qc, space)
     },
   })
+}
+
+// --- members ---------------------------------------------------------------------
+
+// The people of one space, owners first. Asked for only where they are shown.
+export function useMembers(space: string, enabled = true) {
+  return useQuery({ queryKey: keys.members(space), queryFn: ({ signal }) => spaceApi(space).members(signal), enabled: enabled && space !== '', staleTime: 10_000 })
+}
+
+// A change of members changes the list of members, and what the space list
+// says of the caller (their own role and permissions, or the space itself when
+// they leave).
+function useMembersChanged(space: string) {
+  const qc = useQueryClient()
+  return () => Promise.all([qc.invalidateQueries({ queryKey: keys.members(space) }), qc.invalidateQueries({ queryKey: keys.spaces })])
+}
+
+export function useAddMember(space: string) {
+  const changed = useMembersChanged(space)
+  return useMutation({ mutationFn: ({ username, role }: { username: string; role: SpaceRole }) => spaceApi(space).addMember(username, role), onSuccess: changed })
+}
+export function useSetMemberRole(space: string) {
+  const changed = useMembersChanged(space)
+  return useMutation({ mutationFn: ({ user, role }: { user: string; role: SpaceRole }) => spaceApi(space).setMemberRole(user, role), onSuccess: changed })
+}
+export function useRemoveMember(space: string) {
+  const changed = useMembersChanged(space)
+  return useMutation({ mutationFn: (user: string) => spaceApi(space).removeMember(user), onSuccess: changed })
+}
+
+// Updates one member in the cached list (a role change), without asking again.
+export function putMember(qc: QueryClient, space: string, member: Member) {
+  qc.setQueryData<{ members: Member[] }>(keys.members(space), (prev) => prev && { members: prev.members.map((m) => (m.userId === member.userId ? member : m)) })
 }

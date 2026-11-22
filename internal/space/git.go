@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -29,6 +30,53 @@ func ParseCommitter(s string) (name, email string, err error) {
 	return name, email, nil
 }
 
+// Author is who made a change, as Git records them. The core knows nothing of
+// accounts: whoever calls a change (the API, the drafts sweeper) passes the
+// identity of the person acting. The zero value is the space's default author
+// (the owner set at open), which is what a single-user server passes.
+type Author struct{ Name, Email string }
+
+// authorGroup is the paths one identity gets credit for in one commit.
+type authorGroup struct {
+	id    gitstore.Identity
+	paths []string // sorted
+}
+
+// groupByAuthor splits pending paths into one group per resulting author, in
+// a fixed order (by name, then email), so the commits of one idle window come
+// out the same way every time. Authors are resolved first: the zero Author
+// and the owner spelled out are one person and one commit. With a single
+// author, the common case, this is one group and no extra work.
+func (g *gitRepo) groupByAuthor(pending map[string]Author) []authorGroup {
+	byID := map[gitstore.Identity]*authorGroup{}
+	resolved := map[Author]gitstore.Identity{}
+	for p, by := range pending {
+		id, ok := resolved[by]
+		if !ok {
+			id, _ = g.identities(by)
+			resolved[by] = id
+		}
+		grp := byID[id]
+		if grp == nil {
+			grp = &authorGroup{id: id}
+			byID[id] = grp
+		}
+		grp.paths = append(grp.paths, p)
+	}
+	out := make([]authorGroup, 0, len(byID))
+	for _, grp := range byID {
+		sort.Strings(grp.paths)
+		out = append(out, *grp)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].id.Name != out[j].id.Name {
+			return out[i].id.Name < out[j].id.Name
+		}
+		return out[i].id.Email < out[j].id.Email
+	})
+	return out
+}
+
 // gitRepo is the committer's view of the repository: the service identity,
 // the author commits are made for, and the restricted runner of the gitstore
 // package. It only ever adds, commits and (once) initialises: nothing here
@@ -36,7 +84,8 @@ func ParseCommitter(s string) (name, email string, err error) {
 type gitRepo struct {
 	dir         string
 	name, email string // the committer: the service
-	// author is who commits are made for (the space's owner); empty means the
+	// author is who commits are made for when a change names nobody (the
+	// space's owner); empty means the
 	// committer. It can change while the server runs, when the owner edits
 	// their profile.
 	amu                     sync.RWMutex
@@ -65,11 +114,17 @@ func (h hookRunner) Run(ctx context.Context, c gitstore.Cmd) (string, string, er
 	return gitstore.RunReal(ctx, c)
 }
 
-// identities are the author and the committer of the next commit.
-func (g *gitRepo) identities() (author, committer gitstore.Identity) {
-	g.amu.RLock()
-	an, ae := g.authorName, g.authorEmail
-	g.amu.RUnlock()
+// identities are the author and the committer of a commit made for by. A
+// zero Author, or one missing its name or email, is the default author: the
+// owner set at open, else the committer. Git would refuse an empty name or
+// email, so a half-filled identity is never used as given.
+func (g *gitRepo) identities(by Author) (author, committer gitstore.Identity) {
+	an, ae := by.Name, by.Email
+	if an == "" || ae == "" {
+		g.amu.RLock()
+		an, ae = g.authorName, g.authorEmail
+		g.amu.RUnlock()
+	}
 	if an == "" || ae == "" {
 		an, ae = g.name, g.email
 	}
@@ -104,10 +159,11 @@ var parseNameStatus = gitstore.ParseNameStatus
 
 // commitPaths commits the changes to exactly these paths (slash-separated,
 // relative to the space) and nothing else: other modified or untracked files,
-// and anything the user staged, stay as they are. It reports whether a commit
-// was made.
-func (g *gitRepo) commitPaths(paths []string) (bool, error) {
-	author, committer := g.identities()
+// and anything the user staged, stay as they are. The commit is authored by
+// author (already resolved, see identities). It reports whether a commit was
+// made.
+func (g *gitRepo) commitPaths(author gitstore.Identity, paths []string) (bool, error) {
+	_, committer := g.identities(Author{})
 	return g.r().CommitPaths(context.Background(), paths, commitMessage, author, committer)
 }
 

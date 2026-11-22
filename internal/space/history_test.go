@@ -22,22 +22,22 @@ func TestHistoryFollowsAPageThroughRenamesAndMoves(t *testing.T) {
 	ctx := context.Background()
 	p := mustCreate(t, s, "Tang", meta("title", "暮雪"), "v1\n")
 	flushed(t, s)
-	p2, err := s.Save(p.ID, p.Rev, meta("title", "暮雪"), "v2\n")
+	p2, err := s.Save(Author{}, p.ID, p.Rev, meta("title", "暮雪"), "v2\n")
 	if err != nil {
 		t.Fatal(err)
 	}
 	flushed(t, s)
-	p3, err := s.Save(p.ID, p2.Rev, meta("title", "夜雪"), "v2\n") // rename: path and header change
+	p3, err := s.Save(Author{}, p.ID, p2.Rev, meta("title", "夜雪"), "v2\n") // rename: path and header change
 	if err != nil {
 		t.Fatal(err)
 	}
 	flushed(t, s)
-	p4, err := s.Move(p.ID, "随笔")
+	p4, err := s.Move(Author{}, p.ID, "随笔")
 	if err != nil {
 		t.Fatal(err)
 	}
 	flushed(t, s)
-	p5, err := s.Save(p.ID, p4.Rev, meta("title", "夜雪"), "v3\n")
+	p5, err := s.Save(Author{}, p.ID, p4.Rev, meta("title", "夜雪"), "v3\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestHistoryFollowsAPageThroughRenamesAndMoves(t *testing.T) {
 		t.Fatalf("%+v", v)
 	}
 	// An uncommitted edit is not in the history yet.
-	if _, err := s.Save(p.ID, p5.Rev, meta("title", "夜雪"), "v4\n"); err != nil {
+	if _, err := s.Save(Author{}, p.ID, p5.Rev, meta("title", "夜雪"), "v4\n"); err != nil {
 		t.Fatal(err)
 	}
 	if items2, _, _ := s.History(ctx, p.ID, 30, ""); len(items2) != len(items) {
@@ -133,11 +133,11 @@ func TestVersionsOfAPageNeverShowAnyOtherFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(s.Root(), "notes.txt"), []byte("not a page, secret\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	s.cm.Touch("notes.txt")
+	s.cm.Touch(Author{}, "notes.txt")
 	flushed(t, s)
 	commitOfB := git(t, s.Root(), "log", "-1", "--format=%H", "--", b.Path)
 	commitOfTxt := git(t, s.Root(), "log", "-1", "--format=%H", "--", "notes.txt")
-	a2, err := s.Save(a.ID, a.Rev, meta("title", "Alpha"), "alpha 2\n")
+	a2, err := s.Save(Author{}, a.ID, a.Rev, meta("title", "Alpha"), "alpha 2\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestHistoryPagingDoesNotWalkFromTheTop(t *testing.T) {
 	flushed(t, s)
 	rev := p.Rev
 	for i := 1; i <= 12; i++ {
-		n, err := s.Save(p.ID, rev, meta("title", "Many"), fmt.Sprintf("%d\n", i))
+		n, err := s.Save(Author{}, p.ID, rev, meta("title", "Many"), fmt.Sprintf("%d\n", i))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -322,13 +322,13 @@ func TestHistoryFollowsARenameThatRewroteTheText(t *testing.T) {
 	long := strings.Repeat("the first text of this page, which will be replaced entirely. ", 20) + "\n"
 	p := mustCreate(t, s, "", meta("title", "雨停之后"), long)
 	flushed(t, s)
-	p2, err := s.Save(p.ID, p.Rev, meta("title", "雨停之后"), long+"one more line\n")
+	p2, err := s.Save(Author{}, p.ID, p.Rev, meta("title", "雨停之后"), long+"one more line\n")
 	if err != nil {
 		t.Fatal(err)
 	}
 	flushed(t, s)
 	// New title and a completely different body, in one commit.
-	p3, err := s.Save(p.ID, p2.Rev, meta("title", "巷口"), "卖豆浆的车，一只不怕人的猫。\n")
+	p3, err := s.Save(Author{}, p.ID, p2.Rev, meta("title", "巷口"), "卖豆浆的车，一只不怕人的猫。\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +337,7 @@ func TestHistoryFollowsARenameThatRewroteTheText(t *testing.T) {
 		t.Fatal("the title change did not rename the file")
 	}
 	// A second rename-with-rewrite, so two hops are needed.
-	p4, err := s.Save(p.ID, p3.Rev, meta("title", "书店"), strings.Repeat("完全不同的另一段文字。", 30)+"\n")
+	p4, err := s.Save(Author{}, p.ID, p3.Rev, meta("title", "书店"), strings.Repeat("完全不同的另一段文字。", 30)+"\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,10 +389,10 @@ func TestHistoryFollowsARenameThatRewroteTheText(t *testing.T) {
 	// Another page deleted in the same commit is never taken for the earlier name.
 	other := mustCreate(t, s, "", meta("title", "别的页"), "x\n")
 	flushed(t, s)
-	if err := s.Delete(other.ID); err != nil {
+	if err := s.Delete(Author{}, other.ID); err != nil {
 		t.Fatal(err)
 	}
-	p5, err := s.Save(p.ID, p4.Rev, meta("title", "又改名"), strings.Repeat("第三次全部重写。", 30)+"\n")
+	p5, err := s.Save(Author{}, p.ID, p4.Rev, meta("title", "又改名"), strings.Repeat("第三次全部重写。", 30)+"\n")
 	if err != nil {
 		t.Fatal(err)
 	}

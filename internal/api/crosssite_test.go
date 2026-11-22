@@ -90,7 +90,7 @@ func TestCommitsCarryTheOwnerAsAuthor(t *testing.T) {
 		ctx := context.Background()
 		c := a.setup("kazuha", pw)
 		sid := c.personalSpace()
-		h, err := a.mgr.Open(ctx, mustUserID(t, a, "kazuha"), sid)
+		h, err := a.mgr.Open(ctx, mustUser(t, a, "kazuha"), sid)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -126,7 +126,7 @@ func TestCommitsCarryTheOwnerAsAuthor(t *testing.T) {
 		r := c.do("POST", "/api/spaces", map[string]any{"name": "More"}).want(t, 201, "")
 		nsid := r.body["id"].(string)
 		c.do("POST", "/api/spaces/"+nsid+"/pages", map[string]any{"meta": map[string]any{"title": "x"}}).want(t, 201, "")
-		nh, _ := a.mgr.Open(ctx, mustUserID(t, a, "kazuha"), nsid)
+		nh, _ := a.mgr.Open(ctx, mustUser(t, a, "kazuha"), nsid)
 		nh.Space.Flush()
 		out, _ := exec.Command("git", "-C", filepath.Join(a.dir, "spaces", nsid), "log", "-1", "--format=%an|%cn").Output()
 		if strings.TrimSpace(string(out)) != "A b C|PetalBook Test" {

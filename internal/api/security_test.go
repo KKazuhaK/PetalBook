@@ -11,6 +11,7 @@ import (
 
 	"github.com/KKazuhaK/PetalBook/internal/api"
 	"github.com/KKazuhaK/PetalBook/internal/auth"
+	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
 func TestLoginRateLimitPerUsername(t *testing.T) {
@@ -179,8 +180,9 @@ func TestMemberRoutesAreNotForOtherPeopleSpaces(t *testing.T) {
 			}
 			n++
 			path := strings.NewReplacer("{space}", tangSpace, "{id}", pageID).Replace(rt.Pattern)
-			// The administrator and a third member are told the same as for a space that does not exist.
-			for who, c := range map[string]*client{"admin": boss, "member": a.addUser(fmt.Sprintf("m%d", n), pw, "member")} {
+			// A member of nothing here is told the same as for a space that does not
+			// exist. (An administrator is not refused: see TestAdministratorSeesEverySpace.)
+			for who, c := range map[string]*client{"member": a.addUser(fmt.Sprintf("m%d", n), pw, "member")} {
 				got := c.do(rt.Method, path, "{}", typeFor(rt)...)
 				if got.code != 404 || got.raw != ghost.raw {
 					t.Errorf("%s %s as %s: %d %s", rt.Method, rt.Pattern, who, got.code, got.raw)
@@ -395,4 +397,13 @@ func TestSpacesPerUserAreLimited(t *testing.T) {
 		// Another user is not affected.
 		a.addUser("tang", pw, "member").do("POST", "/api/spaces", map[string]any{"name": "B"}).want(t, 201, "")
 	})
+}
+
+func mustUser(t *testing.T, a *acc, username string) store.User {
+	t.Helper()
+	u, err := store.GetUser(context.Background(), a.st.Q(), mustUserID(t, a, username))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return *u
 }

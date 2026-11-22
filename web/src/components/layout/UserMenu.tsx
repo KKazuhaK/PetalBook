@@ -1,12 +1,13 @@
 import { useNavigate } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import { LogOut, Settings, Users } from 'lucide-react'
+import { LogOut, Settings, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { applySession, useSession } from '@/api/hooks'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { useOpenSettings } from '@/components/settings/useSettings'
 import { flushAllSaves } from '@/editor/saveController'
+import { adminPath } from '@/lib/urls'
 import { t } from '@/i18n'
 
 // Accounts mode only: the person's name, and settings, users (administrators)
@@ -50,9 +51,9 @@ export function UserMenu() {
           {t.userMenu.settings}
         </DropdownMenuItem>
         {user.role === 'admin' && (
-          <DropdownMenuItem onClick={() => openSettings('users')}>
-            <Users />
-            {t.userMenu.users}
+          <DropdownMenuItem onClick={() => navigate(adminPath())}>
+            <ShieldCheck />
+            {t.userMenu.admin}
           </DropdownMenuItem>
         )}
         <DropdownMenuSeparator />

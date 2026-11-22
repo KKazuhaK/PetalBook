@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -59,6 +60,49 @@ func HasUsers(ctx context.Context, q Q) (bool, error) {
 // ListUsers returns every user, oldest first.
 func ListUsers(ctx context.Context, q Q) ([]User, error) {
 	rows, err := q.Query(ctx, `SELECT `+userCols+` FROM users ORDER BY created, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *u)
+	}
+	return out, rows.Err()
+}
+
+// SearchUsers returns the users whose username or name contains query, ignoring
+// case, oldest first; an empty query matches everyone. enabledOnly leaves out the
+// disabled accounts before the limit counts. limit <= 0 means no limit.
+func SearchUsers(ctx context.Context, q Q, d Dialect, query string, enabledOnly bool, limit int) ([]User, error) {
+	var conds []string
+	args := []any{}
+	if query != "" {
+		lower := "LOWER"
+		if d == SQLite {
+			lower = sqliteLower
+		}
+		conds = append(conds, `(`+lower+`(username) LIKE ? ESCAPE '\' OR `+lower+`(name) LIKE ? ESCAPE '\')`)
+		pat := "%" + likeEscape(strings.ToLower(query)) + "%"
+		args = append(args, pat, pat)
+	}
+	if enabledOnly {
+		conds = append(conds, `disabled = 0`)
+	}
+	cond := ""
+	if len(conds) > 0 {
+		cond = ` WHERE ` + strings.Join(conds, ` AND `)
+	}
+	lim := ""
+	if limit > 0 {
+		lim = ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := q.Query(ctx, `SELECT `+userCols+` FROM users`+cond+` ORDER BY created, id`+lim, args...)
 	if err != nil {
 		return nil, err
 	}

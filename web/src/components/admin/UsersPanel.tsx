@@ -1,11 +1,12 @@
 import { useRef, useState, type FormEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { api, ApiError } from '@/api/client'
-import { keys, useInvites, useSession, useUsers } from '@/api/hooks'
+import { ApiError } from '@/api/client'
+import { adminApi, useInvites, useUsers } from '@/api/admin'
+import { keys, useSession } from '@/api/hooks'
 import type { CreatedInvite, Role, User } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
-import { SettingsSection } from './SettingsParts'
+import { SettingsSection } from '@/components/settings/SettingsParts'
 import { ErrorState, PageFallback } from '@/components/common'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -50,7 +51,7 @@ function UserList({ users, meId }: { users: User[]; meId: string }) {
     setBusy(u.id)
     setError(null)
     try {
-      const { user } = await api.updateUser(u.id, patch)
+      const { user } = await adminApi.updateUser(u.id, patch)
       qc.setQueryData<{ users: User[] }>(keys.users, (prev) => prev && { users: prev.users.map((x) => (x.id === user.id ? user : x)) })
     } catch (e) {
       // Whatever the server refused, the list may be out of date: ask again.
@@ -122,7 +123,7 @@ function Invites({ users }: { users: User[] }) {
     setBusy(true)
     setError('')
     try {
-      const inv = await api.createInvite({ role, days: n })
+      const inv = await adminApi.createInvite({ role, days: n })
       setFresh(inv)
       void qc.invalidateQueries({ queryKey: keys.invites })
     } catch (err) {
@@ -133,7 +134,7 @@ function Invites({ users }: { users: User[] }) {
 
   const revoke = async (id: string) => {
     try {
-      await api.revokeInvite(id)
+      await adminApi.revokeInvite(id)
       qc.setQueryData<{ invites: { id: string }[] }>(keys.invites, (prev) => prev && { invites: prev.invites.filter((i) => i.id !== id) })
       toast.success(t.users.revoked)
     } catch (err) {

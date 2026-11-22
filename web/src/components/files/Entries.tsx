@@ -5,6 +5,7 @@
 import { useLayoutEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { Check, FileText, Folder as FolderIcon } from 'lucide-react'
+import { useSpacePermissions } from '@/api/hooks'
 import type { PageSummary } from '@/api/types'
 import { TagChip } from '@/components/TagChip'
 import { cardTitleLine } from '@/lib/listView'
@@ -33,7 +34,10 @@ export interface EntryState {
 
 // Shift, ⌘ and Ctrl change what a click on an entry means; a plain click opens it.
 function useEntryClick(state: EntryState) {
+  const { write } = useSpacePermissions()
   return (e: MouseEvent) => {
+    // Selecting is for moving and deleting: without `write` the click just opens.
+    if (!write) return
     if (!(e.shiftKey || e.metaKey || e.ctrlKey)) return
     e.preventDefault()
     state.pick({ shift: e.shiftKey && !e.metaKey && !e.ctrlKey })
@@ -42,10 +46,11 @@ function useEntryClick(state: EntryState) {
 
 function useDragSource(state: EntryState) {
   const [dragging, setDragging] = useState(false)
+  const { write } = useSpacePermissions()
   return {
     dragging,
     props: {
-      draggable: true,
+      draggable: write,
       onDragStart: (e: DragEvent) => {
         startDrag(e, state.dragItems())
         setDragging(true)
@@ -80,7 +85,14 @@ function Checkbox({ checked, label, onPick, className }: { checked: boolean; lab
 // A row's first column: the kind icon, swapped for the checkbox while the row
 // is hovered or focused, or whenever something is selected.
 function Leading({ icon, state, label }: { icon: ReactNode; state: EntryState; label: string }) {
+  const { write } = useSpacePermissions()
   const show = state.selected || state.selecting
+  if (!write)
+    return (
+      <div className="absolute top-2.5 left-3 size-6">
+        <span className="flex size-6 items-center justify-center text-muted-foreground">{icon}</span>
+      </div>
+    )
   return (
     <div className="absolute top-2.5 left-3 size-6">
       <span className={`flex size-6 items-center justify-center text-muted-foreground group-focus-within/entry:invisible group-hover/entry:invisible ${show ? 'invisible' : ''}`}>{icon}</span>
@@ -162,7 +174,9 @@ const cardClass = (selected: boolean, dragging: boolean) =>
 
 // A card's checkbox sits in its corner and shows on hover, on focus, or while selecting.
 function CardCheck({ state, label }: { state: EntryState; label: string }) {
+  const { write } = useSpacePermissions()
   const show = state.selected || state.selecting
+  if (!write) return null
   return (
     <Checkbox
       checked={state.selected}

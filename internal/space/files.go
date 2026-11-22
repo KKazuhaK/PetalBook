@@ -64,7 +64,7 @@ func noFreeName(stem string) error {
 // the listing did not show (another name for the same file on a file system
 // that ignores case or Unicode form) is never replaced, and the search ends
 // after maxNameTries.
-func (s *Space) createNamed(folder, dir, stem string, data []byte) (string, error) {
+func (s *Space) createNamed(by Author, folder, dir, stem string, data []byte) (string, error) {
 	taken, err := s.takenKeys(dir)
 	if err != nil {
 		return "", err
@@ -82,7 +82,7 @@ func (s *Space) createNamed(folder, dir, stem string, data []byte) (string, erro
 		}
 		// Journal the name before taking it; recovery only believes this
 		// record if the file has our content.
-		if err := s.cm.Record(jrec{Op: "w", Path: path.Join(folder, name), Rev: rev}); err != nil {
+		if err := s.cm.Record(by, jrec{Op: "w", Path: path.Join(folder, name), Rev: rev}); err != nil {
 			return "", err
 		}
 		err := s.ops.Link(tmp, filepath.Join(dir, name))
@@ -101,7 +101,7 @@ func (s *Space) createNamed(folder, dir, stem string, data []byte) (string, erro
 // is src's own folder the file may be renamed to another spelling of its own
 // name (a case change), which is allowed only if the target really is the same
 // file or does not exist.
-func (s *Space) moveNamed(src, dir, stem string, intent func(name string) error) (string, error) {
+func (s *Space) moveNamed(by Author, src, dir, stem string, intent func(name string) error) (string, error) {
 	if intent == nil {
 		intent = func(string) error { return nil }
 	}
@@ -137,7 +137,7 @@ func (s *Space) moveNamed(src, dir, stem string, intent func(name string) error)
 			default:
 				continue
 			}
-			if err := s.rename(src, dst, nil); err != nil {
+			if err := s.rename(by, src, dst, nil); err != nil {
 				return "", err
 			}
 			return name, nil
@@ -181,7 +181,7 @@ func (s *Space) moveNamed(src, dir, stem string, intent func(name string) error)
 // name rather than as deleted. That name is next to
 // the target and keeps a file's extension, so a page left there is still a
 // page in its folder.
-func (s *Space) rename(from, to string, inside []string) error {
+func (s *Space) rename(by Author, from, to string, inside []string) error {
 	fi, err := s.ops.Lstat(from)
 	if err != nil {
 		return err
@@ -213,7 +213,7 @@ func (s *Space) rename(from, to string, inside []string) error {
 	if mid == "" {
 		return fmt.Errorf("%w: no free name to rename %s through", ErrExists, base)
 	}
-	midPaths, err := s.journalRespell(from, mid, to, inside)
+	midPaths, err := s.journalRespell(by, from, mid, to, inside)
 	if err != nil {
 		return err
 	}
@@ -227,7 +227,7 @@ func (s *Space) rename(from, to string, inside []string) error {
 			// the records, and only the old name would go, as a deletion); a
 			// space that follows a remote undoes the change from Git instead.
 			if s.cm != nil && s.rem.Load() == nil {
-				s.cm.Touch(midPaths...)
+				s.cm.Touch(by, midPaths...)
 			}
 			return errors.Join(err, fmt.Errorf("%s is left as %s: %w", filepath.Base(from), filepath.Base(mid), back))
 		}
@@ -239,7 +239,7 @@ func (s *Space) rename(from, to string, inside []string) error {
 // journalRespell records a rename through a third name (see rename) and
 // returns the paths under it and under the old name. A Space without a committer (tests of naming
 // alone) journals nothing.
-func (s *Space) journalRespell(from, mid, to string, inside []string) ([]string, error) {
+func (s *Space) journalRespell(by Author, from, mid, to string, inside []string) ([]string, error) {
 	if s.cm == nil {
 		return nil, nil
 	}
@@ -276,15 +276,15 @@ func (s *Space) journalRespell(from, mid, to string, inside []string) ([]string,
 	// Journaled only, not handed to the committer: once the rename is done
 	// the third name is gone, and a space that follows a remote commits its
 	// changes itself (txn), not in the background.
-	return append(paths, olds...), s.cm.Record(recs...)
+	return append(paths, olds...), s.cm.Record(by, recs...)
 }
 
 // moveIntent returns the journal call for moving the page at rel into folder:
 // it records from -> to before the link, so a crash between link and remove
 // can be finished at the next start.
-func (s *Space) moveIntent(rel, folder string) func(name string) error {
+func (s *Space) moveIntent(by Author, rel, folder string) func(name string) error {
 	return func(name string) error {
-		return s.cm.Record(jrec{Op: "m", From: rel, To: path.Join(folder, name)})
+		return s.cm.Record(by, jrec{Op: "m", From: rel, To: path.Join(folder, name)})
 	}
 }
 

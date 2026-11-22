@@ -154,7 +154,7 @@ func (s *server) createPage(c *call) {
 	if !s.readJSON(c.w, c.r, &req, true) {
 		return
 	}
-	p, err := c.sp.Space.Create(space.CreateInput{Folder: req.Folder, Meta: req.Meta, Body: req.Body})
+	p, err := c.sp.Space.Create(s.author(c), space.CreateInput{Folder: req.Folder, Meta: req.Meta, Body: req.Body})
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -222,7 +222,7 @@ func (s *server) movePage(c *call) {
 	if !s.readJSON(c.w, c.r, &req, false) {
 		return
 	}
-	p, err := c.sp.Space.Move(id, req.Folder)
+	p, err := c.sp.Space.Move(s.author(c), id, req.Folder)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -235,7 +235,7 @@ func (s *server) deletePage(c *call) {
 	if !ok {
 		return
 	}
-	if err := s.drafts.DeletePageFile(c.r.Context(), c.sp.Space, c.sp.Info.ID, id); err != nil {
+	if err := s.drafts.DeletePageFile(c.r.Context(), c.sp.Space, c.sp.Info.ID, c.user().ID, id); err != nil {
 		s.fail(c.w, err)
 		return
 	}
@@ -260,7 +260,7 @@ func (s *server) createFolder(c *call) {
 	if !s.readJSON(c.w, c.r, &req, false) {
 		return
 	}
-	path, err := c.sp.Space.CreateFolder(req.Path)
+	path, err := c.sp.Space.CreateFolder(s.author(c), req.Path)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -311,7 +311,7 @@ func (s *server) putTag(c *call) {
 			color = norm
 		}
 	}
-	if err := c.sp.Space.SetTagColor(tag, color); err != nil {
+	if err := c.sp.Space.SetTagColor(s.author(c), tag, color); err != nil {
 		s.fail(c.w, err)
 		return
 	}
@@ -339,10 +339,10 @@ func (s *server) batchPages(c *call) {
 			writeError(c.w, http.StatusBadRequest, "invalid", "a move needs the folder to move to (\"\" is the top level)")
 			return
 		}
-		err = c.sp.Space.BatchMove(req.IDs, *req.Folder)
+		err = c.sp.Space.BatchMove(s.author(c), req.IDs, *req.Folder)
 	case "delete":
 		var gone []string
-		gone, err = c.sp.Space.BatchDelete(req.IDs)
+		gone, err = c.sp.Space.BatchDelete(s.author(c), req.IDs)
 		// Also when it failed part way: what is deleted is deleted.
 		s.dropDrafts(c, gone)
 	default:
@@ -385,7 +385,7 @@ func (s *server) moveFolder(c *call) {
 	if !s.readJSON(c.w, c.r, &req, false) {
 		return
 	}
-	p, err := c.sp.Space.MoveFolder(req.From, req.To)
+	p, err := c.sp.Space.MoveFolder(s.author(c), req.From, req.To)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -406,7 +406,7 @@ func (s *server) deleteFolder(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "recursive must be true or false")
 		return
 	}
-	ids, err := c.sp.Space.DeleteFolder(v.Get("path"), recursive)
+	ids, err := c.sp.Space.DeleteFolder(s.author(c), v.Get("path"), recursive)
 	// Also when it failed part way: what is deleted is deleted.
 	s.dropDrafts(c, ids)
 	if err != nil {

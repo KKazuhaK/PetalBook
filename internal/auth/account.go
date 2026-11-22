@@ -224,6 +224,9 @@ func (s *Service) UpdateUser(ctx context.Context, actorID, targetID string, patc
 		return nil, err
 	}
 	s.evictUser(targetID, "")
+	// The space manager remembers a user's role and whether they are disabled
+	// for a minute (the drafts sweeper asks it); a change here applies at once.
+	s.cfg.Spaces.UserChanged(ctx, *out)
 	return out, nil
 }
 

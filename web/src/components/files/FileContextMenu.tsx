@@ -1,6 +1,7 @@
 import { createContext, useContext, useRef, useState, type MouseEvent, type ReactNode, type TouchEvent } from 'react'
 import { FilePlus2, FolderInput, FolderPlus, ListChecks, MoreHorizontal, PenLine, SquareArrowOutUpRight, Trash2 } from 'lucide-react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
+import { useSpacePermissions } from '@/api/hooks'
 import type { FileItem } from '@/lib/folders'
 import { t } from '@/i18n'
 import { useFileOps } from './FileOps'
@@ -34,6 +35,7 @@ export function FileContextMenu({
   afterAction?: () => void
 }) {
   const ops = useFileOps()
+  const { write } = useSpacePermissions()
   const trigger = useRef<HTMLDivElement>(null)
   const [target, setTarget] = useState<{ key: string; items: FileItem[] } | null>(null)
 
@@ -62,7 +64,8 @@ export function FileContextMenu({
     anchor.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left, clientY: r.bottom, button: 2 }))
   }
 
-  if (!ops) return <div className={className}>{children}</div>
+  // Everything in the menu changes something: without `write` there is none.
+  if (!ops || !write) return <div className={className}>{children}</div>
   const items = target?.items ?? null
   const one = items?.length === 1 ? items[0] : null
 
@@ -126,6 +129,7 @@ export function FileContextMenu({
 // The button at the end of an entry that opens the same menu, for touch.
 export function MoreButton({ label, className = '' }: { label: string; className?: string }) {
   const open = useContext(Open)
+  // The menu is not there without `write` (see above), so neither is its button.
   if (!open) return null
   return (
     <button

@@ -1,34 +1,38 @@
 import { useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { useSession, useSpaces, useUpdateSpace } from '@/api/hooks'
+import { useActiveSpace, useSession, useUpdateSpace } from '@/api/hooks'
+import { can } from '@/lib/permissions'
 import type { SpaceInfo } from '@/api/types'
 import { Field } from '@/components/auth/Field'
 import { PageFallback, Spinner } from '@/components/common'
 import { Button } from '@/components/ui/button'
 import { t } from '@/i18n'
-import { SettingsSection } from './SettingsParts'
+import { SettingsNote, SettingsSection } from './SettingsParts'
 import { InboxSection } from './SyncPanel'
 
 // The space's own name and its inbox folder. In single-user mode both are set
-// when the server starts, so they are shown and not changed here.
+// when the server starts, so they are shown and not changed here; without the
+// `manage` permission they are shown as they are.
 export function GeneralPanel({ space }: { space: string }) {
   const session = useSession().data
-  const spaces = useSpaces()
-  const current = spaces.data?.spaces.find((s) => s.id === space)
-  if (!session || spaces.isPending) return <PageFallback />
-  if (!current) return <p className="rounded-lg border p-4 text-sm text-muted-foreground">{t.editor.spaceMissing}</p>
+  const { spaces, resolving } = useActiveSpace()
+  const current = spaces.find((s) => s.id === space)
+  if (!session || resolving) return <PageFallback />
+  if (!current) return <SettingsNote>{t.editor.spaceMissing}</SettingsNote>
+  if (current.disabled) return <SettingsNote>{t.spaces.disabledTitle}</SettingsNote>
   const single = session.mode === 'single'
-  if (!single && current.role !== 'owner') return <p className="rounded-lg border p-4 text-sm text-muted-foreground">{t.remote.ownerOnly}</p>
+  const readOnly = single || !can(current, 'manage')
+  const why = single ? undefined : t.general.noManage
   return (
     <div className="space-y-8">
-      <NameSection space={current} readOnly={single} />
-      <InboxSection space={current} readOnly={single} />
+      <NameSection space={current} readOnly={readOnly} why={why} />
+      <InboxSection space={current} readOnly={readOnly} why={why} />
     </div>
   )
 }
 
-function NameSection({ space, readOnly }: { space: SpaceInfo; readOnly: boolean }) {
+function NameSection({ space, readOnly, why }: { space: SpaceInfo; readOnly: boolean; why?: string }) {
   const update = useUpdateSpace()
   const [value, setValue] = useState(space.name)
   const [error, setError] = useState('')
@@ -53,7 +57,7 @@ function NameSection({ space, readOnly }: { space: SpaceInfo; readOnly: boolean 
   return (
     <SettingsSection title={t.general.nameTitle} id="space-name-title">
       <form className="grid gap-3" onSubmit={(e) => void submit(e)} noValidate>
-        <Field label={t.spaces.nameLabel} help={readOnly ? t.general.nameReadOnly : t.spaces.nameHelp} value={readOnly ? space.name : value} onChange={(e) => setValue(e.target.value)} readOnly={readOnly} error={error} autoComplete="off" />
+        <Field label={t.spaces.nameLabel} help={readOnly ? (why ?? t.general.nameReadOnly) : t.spaces.nameHelp} value={readOnly ? space.name : value} onChange={(e) => setValue(e.target.value)} readOnly={readOnly} error={error} autoComplete="off" />
         {!readOnly && (
           <div>
             <Button type="submit" disabled={update.isPending || value.trim() === space.name}>

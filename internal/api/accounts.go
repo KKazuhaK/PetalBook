@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 
 	"github.com/KKazuhaK/PetalBook/internal/auth"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
@@ -24,18 +26,24 @@ func toUser(u store.User) userResp {
 }
 
 type spaceResp struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Role     string `json:"role"`
-	Personal bool   `json:"personal"`
-	Sync     string `json:"sync"`
-	Inbox    string `json:"inbox"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Role is the caller's role as a member; "" for an administrator who is not one.
+	Role string `json:"role"`
+	// Permissions is what the caller may do in the space; clients show and hide
+	// controls by these, never by the role's name.
+	Permissions []string `json:"permissions"`
+	Personal    bool     `json:"personal"`
+	Sync        string   `json:"sync"`
+	Inbox       string   `json:"inbox"`
+	// Disabled: an administrator switched the space off; it is listed but cannot be opened.
+	Disabled bool `json:"disabled"`
 }
 
 func toSpaces(in []spaces.Info) []spaceResp {
 	out := make([]spaceResp, len(in))
 	for i, s := range in {
-		out[i] = spaceResp{s.ID, s.Name, s.Role, s.Personal, s.Sync, s.Inbox}
+		out[i] = spaceResp{s.ID, s.Name, s.Role, s.Perms.Names(), s.Personal, s.Sync, s.Inbox, s.Disabled}
 	}
 	return out
 }
@@ -299,7 +307,34 @@ func (s *server) unlinkIdentity(c *call) {
 // --- users and invites (administrators) --------------------------------------
 
 func (s *server) listUsers(c *call) {
-	us, err := s.auth.Users(c.r.Context())
+	q := c.r.URL.Query()
+	var us []store.User
+	var err error
+	enabledOnly := false
+	if q.Has("enabled") {
+		switch q.Get("enabled") {
+		case "1":
+			enabledOnly = true
+		case "0":
+		default:
+			writeError(c.w, http.StatusBadRequest, "invalid", "enabled is 1 or 0")
+			return
+		}
+	}
+	if q.Has("q") || q.Has("limit") || enabledOnly {
+		limit := 0
+		if v := q.Get("limit"); q.Has("limit") {
+			n, aerr := strconv.Atoi(v)
+			if aerr != nil || n < 1 || n > maxAdminLimit {
+				writeError(c.w, http.StatusBadRequest, "invalid", "limit is a number from 1 to "+strconv.Itoa(maxAdminLimit))
+				return
+			}
+			limit = n
+		}
+		us, err = s.auth.FindUsers(c.r.Context(), strings.TrimSpace(q.Get("q")), enabledOnly, limit)
+	} else {
+		us, err = s.auth.Users(c.r.Context())
+	}
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -425,7 +460,7 @@ func (s *server) renameSpace(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "give a name, an inbox folder, or both")
 		return
 	}
-	in, err := s.spaces.Update(c.r.Context(), c.user().ID, c.sp.Info.ID, req.Name, req.Inbox)
+	in, err := s.spaces.Update(c.r.Context(), c.user(), c.sp.Info.ID, req.Name, req.Inbox)
 	if err != nil {
 		s.fail(c.w, err)
 		return

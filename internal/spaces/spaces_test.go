@@ -14,6 +14,7 @@ import (
 
 	"github.com/KKazuhaK/PetalBook/internal/index"
 	"github.com/KKazuhaK/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/perm"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
@@ -69,16 +70,16 @@ func TestSingleMode(t *testing.T) {
 		t.Fatal()
 	}
 	l, _ := m.List(ctx, store.LocalUserID)
-	if len(l) != 1 || l[0] != (Info{ID: "default", Name: "Mine", Role: "owner", Personal: true, Inbox: "Inbox", Sync: "local"}) {
+	if len(l) != 1 || l[0] != (Info{ID: "default", Name: "Mine", Role: "owner", Perms: perm.All, Personal: true, Inbox: "Inbox", Sync: "local"}) {
 		t.Fatalf("%+v", l)
 	}
-	if h, err := m.Open(ctx, store.LocalUserID, "default"); err != nil || h.Space != sp {
+	if h, err := m.Open(ctx, store.User{ID: store.LocalUserID, Role: "admin"}, "default"); err != nil || h.Space != sp {
 		t.Fatalf("%v %v", h, err)
 	}
-	if _, err := m.Open(ctx, store.LocalUserID, "other"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.Open(ctx, store.User{ID: store.LocalUserID, Role: "admin"}, "other"); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
-	if _, err := m.Open(ctx, "someone", "default"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.Open(ctx, store.User{ID: "someone"}, "default"); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
 	if _, err := m.Create(ctx, store.LocalUserID, "x"); err == nil {
@@ -121,7 +122,7 @@ func TestOpenIsLazyAndOnce(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				h, err := m2.Open(ctx, u.ID, a.ID)
+				h, err := m2.Open(ctx, u, a.ID)
 				if err != nil {
 					t.Error(err)
 					return
@@ -147,14 +148,14 @@ func TestMembershipDecidesAccessAndIsCached(t *testing.T) {
 		m := testManager(t, st)
 		u1, u2 := addUser(t, st, "U1", "one"), addUser(t, st, "U2", "two")
 		a, _ := m.Create(ctx, u1.ID, "A")
-		if _, err := m.Open(ctx, u2.ID, a.ID); !errors.Is(err, ErrNotFound) {
+		if _, err := m.Open(ctx, u2, a.ID); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("a non-member got in: %v", err)
 		}
-		if _, err := m.Open(ctx, u1.ID, "0000000000"); !errors.Is(err, ErrNotFound) {
+		if _, err := m.Open(ctx, u1, "0000000000"); !errors.Is(err, ErrNotFound) {
 			t.Fatal(err)
 		}
 		for _, bad := range []string{"", "../../etc", "a/b", "..", strings.Repeat("A", 11)} {
-			if _, err := m.Open(ctx, u1.ID, bad); !errors.Is(err, ErrNotFound) {
+			if _, err := m.Open(ctx, u1, bad); !errors.Is(err, ErrNotFound) {
 				t.Errorf("%q: %v", bad, err)
 			}
 			if _, _, err := m.Acquire(ctx, bad); !errors.Is(err, ErrNotFound) {
@@ -168,12 +169,12 @@ func TestMembershipDecidesAccessAndIsCached(t *testing.T) {
 		if err := store.AddMember(ctx, st.Q(), a.ID, u2.ID, "owner", time.Now()); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := m.Open(ctx, u2.ID, a.ID); !errors.Is(err, ErrNotFound) {
+		if _, err := m.Open(ctx, u2, a.ID); !errors.Is(err, ErrNotFound) {
 			t.Fatal("the cache was not used")
 		}
 		// ... until something about the user's spaces changes.
-		m.Forget(u2.ID)
-		if h, err := m.Open(ctx, u2.ID, a.ID); err != nil || h.Info.Role != "owner" {
+		m.MembershipChanged(u2.ID)
+		if h, err := m.Open(ctx, u2, a.ID); err != nil || h.Info.Role != "owner" {
 			t.Fatalf("%v %v", h, err)
 		}
 		// Creating a space shows up at once, without a Forget.
@@ -193,15 +194,15 @@ func TestRenameIsForOwnersAndInvalidatesEveryMember(t *testing.T) {
 		u1, u2 := addUser(t, st, "U1", "one"), addUser(t, st, "U2", "two")
 		a, _ := m.Create(ctx, u1.ID, "A")
 		store.AddMember(ctx, st.Q(), a.ID, u2.ID, "reader", time.Now())
-		m.Forget(u2.ID)
+		m.MembershipChanged(u2.ID)
 		m.List(ctx, u2.ID)
-		if _, err := m.Rename(ctx, u2.ID, a.ID, "Mine"); !errors.Is(err, ErrForbidden) {
+		if _, err := m.Rename(ctx, u2, a.ID, "Mine"); !errors.Is(err, ErrForbidden) {
 			t.Fatalf("a reader renamed a space: %v", err)
 		}
-		if _, err := m.Rename(ctx, u1.ID, a.ID, " "); !errors.Is(err, ErrInvalid) {
+		if _, err := m.Rename(ctx, u1, a.ID, " "); !errors.Is(err, ErrInvalid) {
 			t.Fatal(err)
 		}
-		if _, err := m.Rename(ctx, u1.ID, a.ID, "  Renamed  "); err != nil {
+		if _, err := m.Rename(ctx, u1, a.ID, "  Renamed  "); err != nil {
 			t.Fatal(err)
 		}
 		for _, uid := range []string{u1.ID, u2.ID} {
@@ -210,7 +211,7 @@ func TestRenameIsForOwnersAndInvalidatesEveryMember(t *testing.T) {
 				t.Fatalf("%s sees %q", uid, l[0].Name)
 			}
 		}
-		if _, err := m.Rename(ctx, "stranger", a.ID, "x"); !errors.Is(err, ErrNotFound) {
+		if _, err := m.Rename(ctx, store.User{ID: "stranger"}, a.ID, "x"); !errors.Is(err, ErrNotFound) {
 			t.Fatal(err)
 		}
 	})
@@ -257,7 +258,7 @@ func TestMissingDirectoryIsAnErrorNotAnEmptyRepository(t *testing.T) {
 		if err := os.RemoveAll(root); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := m2.Open(ctx, u.ID, a.ID); err == nil || errors.Is(err, ErrNotFound) {
+		if _, err := m2.Open(ctx, u, a.ID); err == nil || errors.Is(err, ErrNotFound) {
 			t.Fatalf("%v", err)
 		}
 		if _, err := os.Stat(root); !os.IsNotExist(err) {
@@ -275,8 +276,8 @@ func TestCloseCommitsAndRefusesFurtherOpens(t *testing.T) {
 	m := testManager(t, st)
 	u := addUser(t, st, "U1", "kazuha")
 	a, _ := m.Create(ctx, u.ID, "A")
-	h, _ := m.Open(ctx, u.ID, a.ID)
-	if _, err := h.Space.Create(space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Unsaved"}}}); err != nil {
+	h, _ := m.Open(ctx, u, a.ID)
+	if _, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Unsaved"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.Close(); err != nil {
@@ -479,7 +480,7 @@ func TestOpenSpacesAndFilesStayBounded(t *testing.T) {
 	}
 	// Every one is still there: closed ones reopen on the next request.
 	for _, id := range ids {
-		h, err := m.Open(ctx, u.ID, id)
+		h, err := m.Open(ctx, u, id)
 		if err != nil {
 			t.Fatalf("%s: %v", id, err)
 		}
@@ -499,8 +500,8 @@ func TestIdleSpacesAreClosedFlushedAndReopened(t *testing.T) {
 		m, clk := limitedManager(t, st, func(o *Options) { o.IdleAfter = 10 * time.Minute; o.MaxSpaces = 0 })
 		u := addUser(t, st, "U1", "kazuha")
 		a, _ := m.Create(ctx, u.ID, "A")
-		h, _ := m.Open(ctx, u.ID, a.ID)
-		pg, err := h.Space.Create(space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Written"}}, Body: "x\n"})
+		h, _ := m.Open(ctx, u, a.ID)
+		pg, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Written"}}, Body: "x\n"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -529,7 +530,7 @@ func TestIdleSpacesAreClosedFlushedAndReopened(t *testing.T) {
 			t.Fatalf("not committed when closed: %q %v", out, err)
 		}
 		// The next request reopens it without anyone noticing.
-		h, err = m.Open(ctx, u.ID, a.ID)
+		h, err = m.Open(ctx, u, a.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -551,8 +552,8 @@ func TestASpaceThatCannotFlushStaysOpenWithItsPendingChanges(t *testing.T) {
 	u := addUser(t, st, "U1", "kazuha")
 	a, _ := m.Create(ctx, u.ID, "A")
 	root, _ := m.paths(a.ID)
-	h, _ := m.Open(ctx, u.ID, a.ID)
-	if _, err := h.Space.Create(space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Pending"}}}); err != nil {
+	h, _ := m.Open(ctx, u, a.ID)
+	if _, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Pending"}}}); err != nil {
 		t.Fatal(err)
 	}
 	h.Release()
@@ -605,12 +606,12 @@ func TestACloseNeverRunsAlongsideAnOpenOfTheSameSpace(t *testing.T) {
 		go func() {
 			defer users.Done()
 			for range 25 {
-				h, err := m.Open(ctx, u.ID, a.ID)
+				h, err := m.Open(ctx, u, a.ID)
 				if err != nil {
 					t.Error(err)
 					return
 				}
-				if _, err := h.Space.Create(space.CreateInput{Meta: page.Meta{{Key: "title", Value: "x"}}}); err != nil {
+				if _, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "x"}}}); err != nil {
 					t.Error(err)
 				}
 				h.Release()
@@ -620,7 +621,7 @@ func TestACloseNeverRunsAlongsideAnOpenOfTheSameSpace(t *testing.T) {
 	users.Wait()
 	close(stop)
 	wg.Wait()
-	h, err := m.Open(ctx, u.ID, a.ID)
+	h, err := m.Open(ctx, u, a.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -644,14 +645,14 @@ func TestCloseWaitsForSpacesThatRequestsStillHold(t *testing.T) {
 	m, _ := limitedManager(t, st, func(o *Options) { o.CloseWait = 10 * time.Second; o.MaxSpaces = 0 })
 	u := addUser(t, st, "U1", "one")
 	a, _ := m.Create(ctx, u.ID, "A")
-	h, err := m.Open(ctx, u.ID, a.ID)
+	h, err := m.Open(ctx, u, a.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	released := make(chan struct{})
 	go func() {
 		time.Sleep(200 * time.Millisecond) // a request that is still working
-		if _, err := h.Space.Create(space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Finished"}}}); err != nil {
+		if _, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Finished"}}}); err != nil {
 			t.Error(err) // the space must still be open while the request holds it
 		}
 		close(released)
@@ -686,7 +687,7 @@ func TestCloseGivesUpOnAStuckRequestAndItsLaterWritesFailCleanly(t *testing.T) {
 	})
 	u := addUser(t, st, "U1", "one")
 	a, _ := m.Create(ctx, u.ID, "A")
-	h, _ := m.Open(ctx, u.ID, a.ID) // never released
+	h, _ := m.Open(ctx, u, a.ID) // never released
 	start := time.Now()
 	if err := m.Close(); err != nil {
 		t.Fatal(err)
@@ -698,11 +699,110 @@ func TestCloseGivesUpOnAStuckRequestAndItsLaterWritesFailCleanly(t *testing.T) {
 		t.Fatalf("giving up was not logged:\n%s", logs.String())
 	}
 	// The request that arrives late is refused, and nothing is written.
-	if _, err := h.Space.Create(space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Late"}}}); !errors.Is(err, space.ErrClosed) {
+	if _, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Late"}}}); !errors.Is(err, space.ErrClosed) {
 		t.Fatalf("%v", err)
 	}
 	root, _ := m.paths(a.ID)
 	if _, err := os.Stat(filepath.Join(root, "Late.md")); err == nil {
 		t.Fatal("a half-written file after close")
+	}
+}
+
+func TestOpenPermissions(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		m := testManager(t, st)
+		owner := addUser(t, st, "U1", "kazuha")
+		viewer := addUser(t, st, "U2", "tang")
+		stranger := addUser(t, st, "U3", "kai")
+		boss := addUser(t, st, "U4", "boss")
+		boss.Role = "admin"
+		a, err := m.Create(ctx, owner.ID, "A")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.AddMember(ctx, st.Q(), a.ID, viewer.ID, perm.Viewer, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		m.MembershipChanged(viewer.ID)
+
+		open := func(u store.User, id string) *Handle {
+			t.Helper()
+			h, err := m.Open(ctx, u, id)
+			if err != nil {
+				t.Fatalf("%s: %v", u.Username, err)
+			}
+			t.Cleanup(h.Release)
+			return h
+		}
+		if h := open(owner, a.ID); h.Info.Perms != perm.All || h.Info.Role != "owner" || h.Info.ViaAdmin {
+			t.Fatalf("%+v", h.Info)
+		}
+		if h := open(viewer, a.ID); h.Info.Perms != perm.Of(perm.Read) || h.Info.Role != "viewer" || h.Info.ViaAdmin {
+			t.Fatalf("%+v", h.Info)
+		}
+		h := open(boss, a.ID)
+		if h.Info.Perms != perm.All || h.Info.Role != "" || !h.Info.ViaAdmin || h.Info.Name != "A" || h.Info.Inbox != "Inbox" {
+			t.Fatalf("%+v", h.Info)
+		}
+		if _, err := m.Open(ctx, stranger, a.ID); !errors.Is(err, ErrNotFound) {
+			t.Fatal(err)
+		}
+		// Not even an administrator opens what is not there, or what is no id.
+		for _, id := range []string{"0000000000", "../x", ""} {
+			if _, err := m.Open(ctx, boss, id); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("%q: %v", id, err)
+			}
+		}
+		// The administrator is in no list.
+		if l, _ := m.List(ctx, boss.ID); len(l) != 0 {
+			t.Fatalf("%+v", l)
+		}
+		// Only whoever may manage renames, and an administrator may.
+		if _, err := m.Rename(ctx, viewer, a.ID, "X"); !errors.Is(err, ErrForbidden) {
+			t.Fatal(err)
+		}
+		if in, err := m.Rename(ctx, boss, a.ID, "By admin"); err != nil || in.Name != "By admin" {
+			t.Fatal(in, err)
+		}
+		if l, _ := m.List(ctx, viewer.ID); l[len(l)-1].Name != "By admin" && l[0].Name != "By admin" {
+			t.Fatalf("%+v", l)
+		}
+	})
+}
+
+// A change drops the cache of the people it touches and of no one else, and it
+// moves the generation that keeps a list read before the change out of the cache.
+func TestMembershipChangedDropsOnlyThoseUsers(t *testing.T) {
+	st := storetest.Open(t, "sqlite")
+	m := testManager(t, st)
+	u1, u2 := addUser(t, st, "U1", "kazuha"), addUser(t, st, "U2", "tang")
+	for _, u := range []store.User{u1, u2} {
+		if _, err := m.List(ctx, u.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cached := func(id string) bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		_, ok := m.lists[id]
+		return ok
+	}
+	if !cached("U1") || !cached("U2") {
+		t.Fatal("lists are not cached")
+	}
+	m.MembershipChanged("U1")
+	if cached("U1") || !cached("U2") {
+		t.Fatalf("U1 cached %v, U2 cached %v", cached("U1"), cached("U2"))
+	}
+	// A read that began before a change must not store what it read.
+	m.mu.Lock()
+	gen := m.listGen
+	m.mu.Unlock()
+	m.MembershipChanged("U2")
+	m.mu.Lock()
+	moved := m.listGen != gen
+	m.mu.Unlock()
+	if !moved {
+		t.Fatal("a change does not move the generation")
 	}
 }

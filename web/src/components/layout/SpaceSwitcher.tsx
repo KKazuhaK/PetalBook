@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { NavLink, useNavigate } from 'react-router'
 import { ChevronsUpDown } from 'lucide-react'
 import { syncOf, useActiveSpace, useCreateSpace, useRenameSpace } from '@/api/hooks'
+import { can } from '@/lib/permissions'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { spaceUrls } from '@/lib/urls'
 import { t } from '@/i18n'
@@ -40,16 +41,18 @@ export function SpaceSwitcher() {
                 <DropdownMenuRadioItem key={s.id} value={s.id}>
                   <span className="truncate">{s.name}</span>
                   {s.personal && <span className="text-xs text-muted-foreground">{t.spaces.personal}</span>}
+                  {s.disabled && <span className="rounded border px-1 text-[0.65rem] leading-4 text-muted-foreground">{t.spaces.disabledMark}</span>}
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => setDialog('new')}>{t.spaces.new}</DropdownMenuItem>
-            <DropdownMenuItem disabled={!current} onClick={() => setDialog('rename')}>
+            {/* Renaming is for whoever may manage the space. */}
+            <DropdownMenuItem disabled={!can(current, 'manage')} onClick={() => setDialog('rename')}>
               {t.spaces.rename}
             </DropdownMenuItem>
-            {/* Only the owner can change where the space keeps its repository. */}
-            <DropdownMenuItem disabled={!current || current.role !== 'owner'} onClick={() => id && openSettings('sync')}>
+            {/* Everyone sees the settings (the members, at least); what they may change there depends on the permissions. */}
+            <DropdownMenuItem disabled={!current} onClick={() => id && openSettings('general')}>
               {t.spaces.settings}
             </DropdownMenuItem>
           </DropdownMenuContent>

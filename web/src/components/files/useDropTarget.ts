@@ -1,4 +1,5 @@
 import { useRef, useState, type DragEvent } from 'react'
+import { useSpacePermissions } from '@/api/hooks'
 import { draggedItems, endDrag, isOurDrag } from './dnd'
 import { planDrop, type FileItem, type FolderIndex } from '@/lib/folders'
 
@@ -10,13 +11,14 @@ const OPEN_AFTER_MS = 700
 // does not accept anything else, so the pointer shows "not allowed".
 export function useDropTarget(path: string, index: FolderIndex | undefined, onDrop: (items: FileItem[], target: string) => void, onHover?: () => void) {
   const [over, setOver] = useState(false)
+  const { write } = useSpacePermissions()
   // dragenter/dragleave fire for every child element crossed; count them.
   const depth = useRef(0)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const accepts = (e: DragEvent) => {
     const items = draggedItems()
-    return isOurDrag(e.dataTransfer) && items !== null && planDrop(items, path, index).ok
+    return write && isOurDrag(e.dataTransfer) && items !== null && planDrop(items, path, index).ok
   }
   const reset = () => {
     depth.current = 0

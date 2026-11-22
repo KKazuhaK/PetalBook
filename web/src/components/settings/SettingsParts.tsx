@@ -22,6 +22,11 @@ export function SettingsSection({ title, children, id, description }: { title: s
   )
 }
 
+// A sentence in a box where a section would be: why there is nothing to do here.
+export function SettingsNote({ children }: { children: ReactNode }) {
+  return <p className="rounded-lg border p-4 text-sm text-muted-foreground">{children}</p>
+}
+
 // Rows are divided by a hairline; a section's own form sits below its heading
 // without that.
 export function SettingsRows({ children }: { children: ReactNode }) {
@@ -61,7 +66,7 @@ const ICONS: Record<Exclude<SectionId, 'profile'>, typeof User> = {
   general: Settings,
   sync: GitBranch,
   import: Download,
-  users: Users,
+  members: Users,
 }
 
 // The small mark in front of a navigation entry. Profile shows the person's
