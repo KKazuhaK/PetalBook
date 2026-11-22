@@ -2,8 +2,9 @@
 # Runs the Go tests against a throwaway PostgreSQL cluster.
 #
 # The state-database tests always run on SQLite; with PETALBOOK_TEST_POSTGRES
-# set they run on PostgreSQL as well, each test in a schema of its own. This
-# script makes a cluster in a temporary directory on a free port, runs the
+# set they run on PostgreSQL as well, each test in a schema of its own. When
+# that variable is already set (CI) the database it names is used; otherwise
+# this script makes a cluster in a temporary directory on a free port, runs the
 # tests with the variable pointing at it, and stops and removes the cluster
 # whatever happens. It needs initdb, pg_ctl and psql on PATH.
 #
@@ -11,12 +12,22 @@
 # Default arguments: -race ./cmd/... ./internal/...
 set -euo pipefail
 
+export GOWORK=off
+cd "$(dirname "$0")/.."
+
+# A database given from outside (CI's service container) is used as it is.
+if [ -n "${PETALBOOK_TEST_POSTGRES:-}" ]; then
+  echo "PostgreSQL from PETALBOOK_TEST_POSTGRES" >&2
+  if [ "$#" -eq 0 ]; then
+    set -- -race ./cmd/... ./internal/...
+  fi
+  exec go test "$@"
+fi
+
 for tool in initdb pg_ctl psql; do
   command -v "$tool" >/dev/null || { echo "$tool is not on PATH; install PostgreSQL" >&2; exit 2; }
 done
 
-export GOWORK=off
-cd "$(dirname "$0")/.."
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/petalbook-pg.XXXXXX")"
 started=""

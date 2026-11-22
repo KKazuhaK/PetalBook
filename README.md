@@ -78,6 +78,7 @@ npm --prefix web run dev
 
 - [设计与分期计划](docs/design.md)
 - [HTTP 接口](docs/api.md)
+- [参与开发 / Contributing](CONTRIBUTING.md)：推送前跑 `make check` / run `make check` before pushing
 - 验证
   - [Markdown 往返与浏览器编辑](spikes/markdown-roundtrip/README.md)
   - [搜索与列表的规模](spikes/search-scale/README.md)
