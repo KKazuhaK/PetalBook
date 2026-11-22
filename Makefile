@@ -78,6 +78,7 @@ tidy-check:
 
 # Lints the workflow files (expressions, job wiring, inputs).
 actionlint:
+	@command -v shellcheck >/dev/null || echo "warning: shellcheck is not installed, so actionlint does not check the run: scripts; CI does" >&2
 	go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
 # Known vulnerabilities in the standard library and in modules the code calls.
