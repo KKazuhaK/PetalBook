@@ -49,8 +49,17 @@ var (
 	// ErrInvalid wraps a refused name.
 	ErrInvalid = errors.New("invalid")
 	// ErrLimit: the user owns as many spaces as the server allows.
-	ErrLimit  = errors.New("space limit reached")
-	errClosed = errors.New("the server is shutting down")
+	ErrLimit = errors.New("space limit reached")
+	// ErrDisabled: an administrator has disabled the space; it is in its
+	// members' lists, but nothing in it can be opened.
+	ErrDisabled = errors.New("this space is disabled")
+	// ErrBusy: requests still use the space, so it could not be closed now.
+	ErrBusy = errors.New("the space is in use; try again in a moment")
+	// ErrPersonalSpace: a personal space cannot be transferred or deleted.
+	ErrPersonalSpace = errors.New("a personal space belongs to one person")
+	// ErrUserDisabled: the user cannot sign in, so cannot own a space.
+	ErrUserDisabled = errors.New("that user is disabled")
+	errClosed       = errors.New("the server is shutting down")
 )
 
 // Info is a space as one user sees it.
@@ -66,6 +75,10 @@ type Info struct {
 	// everything in every space without belonging to any (so it is in no list).
 	ViaAdmin bool
 	Personal bool
+	// Disabled: an administrator has switched the space off. Perms are what the
+	// user would have in it, but Open refuses it. Read when the list is asked
+	// for, like Sync, not cached with it.
+	Disabled bool
 	// Inbox is the folder quick notes go to: a folder path, never empty.
 	Inbox string
 	// Sync is "local", or the state of the remote the space follows (ok,
@@ -111,6 +124,12 @@ type Options struct {
 	CloseWait time.Duration
 	// OpenHook, if set, runs before a space is opened from disk (tests).
 	OpenHook func(id string)
+
+	// SizeEvery is how often the background sizer measures one space (default
+	// DefaultSizeEvery; negative turns it off), and SizeAge how old a space's
+	// measurement must be before it is measured again (default DefaultSizeAge).
+	// See sizes.go for what that costs.
+	SizeEvery, SizeAge time.Duration
 
 	// Secrets encrypts the credentials of remotes; by default a box keyed from
 	// DataDir/secret.key or PETALBOOK_SECRET_KEY.
@@ -167,6 +186,9 @@ type Manager struct {
 	authors authorCache // names for commits, by user id (see AuthorByID)
 
 	syncs    map[string]string // space id -> state of its remote, for Info.Sync (guarded by mu; nil until first needed)
+	disabled map[string]bool   // ids of the disabled spaces, and of deleted ones, which stay refused (guarded by mu; nil until first needed)
+	adminMu  sync.Mutex        // one administrator action (disable, transfer, delete) at a time
+	sizeSem  chan struct{}     // one directory walk at a time (see Resize)
 	remoteMu sync.Mutex        // one connect, disconnect or key change at a time
 	pullWake chan struct{}     // a space with a remote was just opened: pull it now
 
@@ -225,7 +247,7 @@ func newManager(opt Options, single *space.Space) *Manager {
 	if opt.CloseWait <= 0 {
 		opt.CloseWait = 5 * time.Second
 	}
-	return &Manager{opt: opt, single: single, singleInbox: store.DefaultInbox, log: log, open: map[string]*opening{}, lists: map[string][]Info{}, pullWake: make(chan struct{}, 1)}
+	return &Manager{opt: opt, single: single, singleInbox: store.DefaultInbox, log: log, open: map[string]*opening{}, lists: map[string][]Info{}, pullWake: make(chan struct{}, 1), sizeSem: make(chan struct{}, 1)}
 }
 
 // SetSingleInbox sets the inbox folder of single-user mode (the --inbox flag).
@@ -371,11 +393,25 @@ func (m *Manager) Acquire(ctx context.Context, id string) (*space.Space, func(),
 	if !page.ValidID(id) {
 		return nil, nil, ErrNotFound
 	}
+	if err := m.loadDisabled(ctx); err != nil {
+		return nil, nil, err
+	}
+	return m.acquire(ctx, id, false)
+}
+
+// acquire is Acquire; admin lets the administration reach a disabled space.
+func (m *Manager) acquire(ctx context.Context, id string, admin bool) (*space.Space, func(), error) {
 	for {
 		m.mu.Lock()
 		if m.closed {
 			m.mu.Unlock()
 			return nil, nil, errClosed
+		}
+		// Decided under the lock that takes the reference, so a space being
+		// disabled has no new holders from this moment on.
+		if !admin && m.disabled[id] {
+			m.mu.Unlock()
+			return nil, nil, ErrDisabled
 		}
 		e := m.open[id]
 		if e != nil && e.closing != nil {
@@ -813,11 +849,15 @@ func (m *Manager) Close() error {
 
 // --- closing spaces that are not in use -------------------------------------
 
-// Run closes idle spaces once a minute until ctx ends.
+// Run closes idle spaces once a minute, and measures the sizes of spaces in
+// the background, until ctx ends.
 func (m *Manager) Run(ctx context.Context) {
 	if m.single != nil {
 		return
 	}
+	sized := make(chan struct{})
+	go func() { defer close(sized); m.runSizer(ctx) }()
+	defer func() { <-sized }()
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for {
@@ -895,7 +935,7 @@ func (m *Manager) pickIdle(now time.Time, skip map[*opening]bool) (string, *open
 		if e.refs > 0 || e.closing != nil || e.sp == nil || skip[e] {
 			continue
 		}
-		idle := now.Sub(e.last) >= m.opt.IdleAfter
+		idle := now.Sub(e.last) >= m.opt.IdleAfter || m.disabled[id]
 		if !idle && over <= 0 {
 			continue
 		}

@@ -87,6 +87,7 @@ type server struct {
 	spaces  *spaces.Manager
 	drafts  *drafts.Service
 	single  bool
+	started time.Time
 	local   store.User // the built-in user of single-user mode
 	origins map[string]bool
 	// importing lets one import run at a time (see importMarkdown).
@@ -110,7 +111,7 @@ func New(opt Options) http.Handler {
 	if opt.Version == "" {
 		opt.Version = "dev"
 	}
-	s := &server{opt: opt, log: opt.Logger, auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, single: opt.Auth == nil,
+	s := &server{opt: opt, log: opt.Logger, auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, single: opt.Auth == nil, started: time.Now(),
 		origins: map[string]bool{}, originHosts: map[string]bool{}, importing: make(chan struct{}, 1)}
 	if s.log == nil {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -461,10 +462,18 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "forbidden", strings.TrimPrefix(err.Error(), spaces.ErrLimit.Error()+": "))
 	case errors.Is(err, spaces.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "no such space")
+	case errors.Is(err, spaces.ErrDisabled):
+		writeError(w, http.StatusForbidden, "space_disabled", "this space has been disabled by an administrator")
+	case errors.Is(err, spaces.ErrBusy):
+		writeError(w, http.StatusConflict, "busy", "the space is in use right now; try again in a moment")
+	case errors.Is(err, spaces.ErrPersonalSpace):
+		writeError(w, http.StatusConflict, "personal_space", "a personal space belongs to one person and cannot be transferred or deleted")
+	case errors.Is(err, spaces.ErrUserDisabled):
+		writeError(w, http.StatusConflict, "user_disabled", "that user is disabled and cannot own a space")
 	case errors.Is(err, spaces.ErrForbidden):
 		writeError(w, http.StatusForbidden, "forbidden", "your role in this space does not allow that")
 	case errors.Is(err, spaces.ErrUserNotFound):
-		writeError(w, http.StatusNotFound, "user_not_found", "there is no user with that username")
+		writeError(w, http.StatusNotFound, "user_not_found", "there is no such user")
 	case errors.Is(err, spaces.ErrNotMember):
 		writeError(w, http.StatusNotFound, "not_found", "that user is not a member of this space")
 	case errors.Is(err, spaces.ErrAlreadyMember):

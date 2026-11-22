@@ -34,12 +34,14 @@ type spaceResp struct {
 	Personal    bool     `json:"personal"`
 	Sync        string   `json:"sync"`
 	Inbox       string   `json:"inbox"`
+	// Disabled: an administrator switched the space off; it is listed but cannot be opened.
+	Disabled bool `json:"disabled"`
 }
 
 func toSpaces(in []spaces.Info) []spaceResp {
 	out := make([]spaceResp, len(in))
 	for i, s := range in {
-		out[i] = spaceResp{s.ID, s.Name, s.Role, s.Perms.Names(), s.Personal, s.Sync, s.Inbox}
+		out[i] = spaceResp{s.ID, s.Name, s.Role, s.Perms.Names(), s.Personal, s.Sync, s.Inbox, s.Disabled}
 	}
 	return out
 }
