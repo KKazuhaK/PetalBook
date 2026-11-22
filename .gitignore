@@ -1,5 +1,9 @@
 node_modules/
-dist/
+# Build output. The embedded copy under internal/webui/dist is filled by
+# "make release"; only its placeholder is tracked, so a fresh clone builds.
+/web/dist/
+/internal/webui/dist/*
+!/internal/webui/dist/placeholder.txt
 .DS_Store
 *.db
 *.db-wal

@@ -34,7 +34,7 @@ import { useMaxUpload } from '@/components/editor/useMaxUpload'
 import { failureText } from '@/lib/failure'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { getUploadOriginal } from '@/lib/uploadPrefs'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 // The history of a page (and the comparison code with it) loads when it is first
 // opened: someone who only writes never pays for it.
@@ -97,7 +97,7 @@ export default function PageEditor() {
       <>
         <TopBar />
         <div className="py-24 text-center">
-          <ErrorState message={`${t.editor.loadFailed}：${error?.message ?? ''}`} onRetry={() => void refetch()} />
+          <ErrorState message={t.fmt.labelled(t.editor.loadFailed, error?.message ?? '')} onRetry={() => void refetch()} />
           <Link to={urls.recent()} className="text-sm text-brand underline underline-offset-4">
             {t.editor.backToList}
           </Link>
@@ -137,7 +137,7 @@ function MissingPage({ space, id, userId }: { space: string; id: string; userId:
       navigate(urls.page(page.id), { replace: true })
     } catch (e) {
       setBusy(false)
-      toast.error(`${t.editor.recoverFailed}：${failureText(e)}`)
+      toast.error(t.fmt.labelled(t.editor.recoverFailed, failureText(e)))
     }
   }
 
@@ -357,7 +357,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
     extensions,
     content: initialDoc,
     autofocus: startInBody ? 'start' : false,
-    editorProps: { attributes: { class: 'pb-prose', 'aria-label': '正文' } },
+    editorProps: { attributes: { class: 'pb-prose', 'aria-label': t.editor.bodyLabel } },
     onUpdate: ({ editor: ed }) => {
       // Always the editor that is live: in development React creates and
       // discards a first one, and that one must never be read from.
@@ -575,7 +575,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
       void invalidateListings(qc, space)
       toast.success(t.editor.moved(folder))
     } catch (e) {
-      toast.error(`${t.editor.moveFailed}：${failureText(e)}`)
+      toast.error(t.fmt.labelled(t.editor.moveFailed, failureText(e)))
       throw e
     }
   }
@@ -588,7 +588,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
     } catch (e) {
       controller.attach()
       if (controller.hasUnsaved()) controller.markDirty()
-      toast.error(`${t.editor.deleteFailed}：${failureText(e)}`)
+      toast.error(t.fmt.labelled(t.editor.deleteFailed, failureText(e)))
       return
     }
     controller.discard()
@@ -736,7 +736,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
       {mode !== 'rich' && sv.problem && (
         <div role="alert" className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm">
           <span className="font-medium text-destructive">
-            {t.modes.problemAt(sv.problem.line)}：{t.modes.problem[sv.problem.code]}
+            {t.fmt.labelled(t.modes.problemAt(sv.problem.line), t.modes.problem[sv.problem.code])}
           </span>
           {sv.problem.code === 'bad_yaml' && <span className="ml-2 font-mono text-xs text-muted-foreground">{sv.problem.message}</span>}
           <span className="ml-2 text-muted-foreground">{t.modes.problemHelp}</span>
@@ -840,7 +840,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
           <AlertDialogHeader>
             <AlertDialogTitle>{t.delete.title}</AlertDialogTitle>
             <AlertDialogDescription>
-              「{fields.title.trim() || t.editor.untitled}」{t.delete.description}
+              {t.fmt.quoted(fields.title.trim() || t.editor.untitled, t.delete.description)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

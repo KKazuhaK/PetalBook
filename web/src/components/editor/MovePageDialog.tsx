@@ -4,7 +4,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { checkFolderPath } from '@/lib/folders'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 export function MovePageDialog({ open, onOpenChange, current, folders, onMove }: { open: boolean; onOpenChange: (open: boolean) => void; current: string; folders: string[]; onMove: (folder: string) => Promise<void> }) {
   return (

@@ -1,7 +1,7 @@
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 export function PageFallback() {
   return (

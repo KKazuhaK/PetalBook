@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Field } from '@/components/auth/Field'
 import { ApiError } from '@/api/client'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 // Asks for one name (a space's). Mounted only while open, so the field starts
 // from `initial` each time.

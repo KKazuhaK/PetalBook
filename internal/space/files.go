@@ -282,6 +282,18 @@ func notPageNames(dirs []string) error {
 	return nil
 }
 
+// ValidNewFolder reports whether rel is a folder path the server would make
+// (ValidFolder, and no segment named like a page file). "" is the root.
+func ValidNewFolder(rel string) error {
+	if err := checkRel(rel); err != nil {
+		return err
+	}
+	if rel == "" {
+		return nil
+	}
+	return notPageNames(strings.Split(rel, "/"))
+}
+
 func newTemp(tmpDir string, data []byte, mode os.FileMode) (string, error) {
 	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
 		return "", err

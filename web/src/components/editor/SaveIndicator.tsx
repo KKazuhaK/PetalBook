@@ -1,7 +1,7 @@
 import { AlertTriangle, Check, CircleDashed, CircleDot, CloudOff, Loader2, LogIn, RotateCw } from 'lucide-react'
 import { ApiError } from '@/api/client'
 import type { SaveSnapshot } from '@/editor/saveController'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 const quiet = 'inline-flex items-center gap-1 text-xs text-muted-foreground'
 
@@ -60,12 +60,12 @@ export function SaveIndicator({ snapshot, draftSafe, onRetry, onOpenConflict }: 
           <button
             type="button"
             onClick={onRetry}
-            title={`${draftSafe ? u.commitDraftHint : u.commitLocalHint}${e.message ? `（${e.message}）` : ''}`}
+            title={e.message ? t.fmt.note(draftSafe ? u.commitDraftHint : u.commitLocalHint, e.message) : draftSafe ? u.commitDraftHint : u.commitLocalHint}
             role="alert"
             className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-warning hover:bg-warning/10"
           >
             <CloudOff className="size-3.5" />
-            {draftSafe ? u.commitDraft : u.commitLocal}（{s.retry}）
+            {t.fmt.note(draftSafe ? u.commitDraft : u.commitLocal, s.retry)}
           </button>
         )
       }
@@ -79,7 +79,7 @@ export function SaveIndicator({ snapshot, draftSafe, onRetry, onOpenConflict }: 
           className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-destructive hover:bg-destructive/10"
         >
           <Icon className="size-3.5" />
-          {signedOut ? s.signedOut : offline ? s.offline : s.error}（{s.retry}）
+          {t.fmt.note(signedOut ? s.signedOut : offline ? s.offline : s.error, s.retry)}
         </button>
       )
     }

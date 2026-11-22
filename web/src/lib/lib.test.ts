@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { absoluteTime, relativeTime } from './time'
+import { addReports, classifyFiles, emptyReport, mergeFiles } from './importFiles'
 import { ancestorsOf, buildFolderTree, checkFolderPath } from './folders'
 import { spaceUrls } from './urls'
 import { fragmentToken, loginUrl, safeReturn } from './auth'
@@ -106,5 +107,41 @@ describe('tokens in the address fragment', () => {
     expect(window.location.href).not.toContain('secret-token')
     expect(JSON.stringify({ ...localStorage })).not.toContain('secret-token')
     expect(JSON.stringify({ ...sessionStorage })).not.toContain('secret-token')
+  })
+})
+
+describe('importFiles', () => {
+  const f = (name: string, size = 1) => ({ name, size })
+  it('accepts Markdown files in any case, and names the rest as ignored', () => {
+    const r = classifyFiles([f('a.md'), f('B.MARKDOWN'), f('c.txt'), f('d.docx')])
+    expect(r.kind).toBe('markdown')
+    if (r.kind === 'markdown') expect(r.files.map((x) => x.name)).toEqual(['a.md', 'B.MARKDOWN'])
+    expect(r.ignored).toEqual(['c.txt', 'd.docx'])
+  })
+  it('accepts one zip on its own', () => {
+    const r = classifyFiles([f('notes.ZIP'), f('x.png')])
+    expect(r.kind).toBe('zip')
+    expect(r.ignored).toEqual(['x.png'])
+  })
+  it('refuses a zip mixed with Markdown files, and more than one zip', () => {
+    expect(classifyFiles([f('a.zip'), f('b.md')])).toMatchObject({ kind: 'error', error: 'zipAlone' })
+    expect(classifyFiles([f('a.zip'), f('b.zip')])).toMatchObject({ kind: 'error', error: 'oneZip' })
+  })
+  it('has nothing to send when no file qualifies', () => {
+    expect(classifyFiles([])).toMatchObject({ kind: 'none' })
+    expect(classifyFiles([f('a.pdf')])).toMatchObject({ kind: 'none', ignored: ['a.pdf'] })
+  })
+  it('adds reports up, cutting the skipped list at 200 and counting the rest', () => {
+    const one = { pages: 2, files: 1, skipped: [{ path: 'a', reason: 'r' }] }
+    expect(addReports(one, one)).toEqual({ pages: 4, files: 2, skipped: [{ path: 'a', reason: 'r' }, { path: 'a', reason: 'r' }] })
+    const many = { pages: 1, files: 0, skipped: Array.from({ length: 150 }, (_, i) => ({ path: String(i), reason: 'r' })), skippedMore: 5 }
+    const sum = addReports(many, many)
+    expect(sum.skipped).toHaveLength(200)
+    expect(sum.skippedMore).toBe(5 + 5 + 100)
+    expect(addReports(emptyReport(), emptyReport())).toEqual({ pages: 0, files: 0, skipped: [] })
+  })
+  it('does not add the same file twice', () => {
+    const a = { name: 'a.md', size: 3 }
+    expect(mergeFiles([a], [{ name: 'a.md', size: 3 }, { name: 'a.md', size: 4 }])).toHaveLength(2)
   })
 })

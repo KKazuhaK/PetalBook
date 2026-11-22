@@ -4,7 +4,7 @@ import { ChevronsUpDown } from 'lucide-react'
 import { syncOf, useActiveSpace, useCreateSpace, useRenameSpace } from '@/api/hooks'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { spaceUrls } from '@/lib/urls'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 import { NameDialog } from './NameDialog'
 import { SyncIndicator } from './SyncIndicator'
 
@@ -26,7 +26,7 @@ export function SpaceSwitcher() {
         </NavLink>
         <DropdownMenu>
           <DropdownMenuTrigger
-            aria-label={`${t.spaces.switcher}：${current?.name ?? ''}`}
+            aria-label={t.fmt.labelled(t.spaces.switcher, current?.name ?? '')}
             className="flex min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 py-1 text-left text-sm font-semibold outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring/50"
           >
             <span className="truncate">{current?.name ?? t.appName}</span>

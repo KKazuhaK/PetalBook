@@ -1,5 +1,5 @@
 import type { HeaderChange, TextPart } from '@/diff'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 const shown = (v: unknown): string => (v === undefined || v === null || v === '' ? t.history.empty_ : typeof v === 'string' ? v : JSON.stringify(v))
 

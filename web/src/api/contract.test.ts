@@ -1492,6 +1492,89 @@ function suite(target: Target) {
     })
   })
 
+  describe('import', () => {
+    const enc = encodeURIComponent
+    const IMPORT = () => `/api/spaces/${spaceId}/import`
+    // Built by Node's own Response, not by jsdom: a real `fetch` only knows how to send its own kind of Blob.
+    const blobOf = (text: string) => new Response(text).blob()
+    const send = (query: string, body: string, type = 'application/octet-stream') =>
+      admin.fetch(`${IMPORT()}${query}`, { method: 'POST', headers: { 'Content-Type': type }, body })
+    const pagesIn = async (folder: string) => (await S.listPages({ folder })).items
+    let n = 0
+    const fresh = () => `${root}/import${++n}`
+
+    it('meta reports the import limit in bytes', async () => {
+      const m = await api.meta()
+      expect(Number.isInteger(m.maxImport)).toBe(true)
+      expect(m.maxImport).toBeGreaterThan(0)
+    })
+
+    it('a single Markdown file becomes a page: the title is its heading, which leaves the body', async () => {
+      const folder = fresh()
+      const report = await S.importMarkdown(await blobOf('# Imported heading\n\nFirst paragraph.\n'), { folder, name: 'notes.md' })
+      expect(report.pages).toBe(1)
+      expect(Array.isArray(report.skipped)).toBe(true)
+      const items = await pagesIn(folder)
+      expect(items).toHaveLength(1)
+      const page = await S.getPage(items[0].id)
+      expect(page.meta.title).toBe('Imported heading')
+      expect(page.body).toContain('First paragraph.')
+      expect(page.body).not.toContain('Imported heading')
+    })
+
+    it('without a heading or a header title, the title is the file name without its extension', async () => {
+      const folder = fresh()
+      await S.importMarkdown(await blobOf('Just text.\n'), { folder, name: 'plain-note.markdown' })
+      const [item] = await pagesIn(folder)
+      expect((await S.getPage(item.id)).meta.title).toBe('plain-note')
+    })
+
+    it('a header is kept key by key and the page gets a new id', async () => {
+      const folder = fresh()
+      await S.importMarkdown(await blobOf('---\nid: not-my-id\ntitle: From the header\nauthor: Ada\n---\n\nBody text.\n'), { folder, name: 'h.md' })
+      const [item] = await pagesIn(folder)
+      const page = await S.getPage(item.id)
+      expect(page.id).not.toBe('not-my-id')
+      expect(page.meta.id).toBe(page.id)
+      expect(page.meta.title).toBe('From the header')
+      expect(page.meta.author).toBe('Ada')
+      expect(page.body).toContain('Body text.')
+    })
+
+    it('importing the same file twice does not replace the first page', async () => {
+      const folder = fresh()
+      await S.importMarkdown(await blobOf('# Same\n\nOne.\n'), { folder, name: 'same.md' })
+      await S.importMarkdown(await blobOf('# Same\n\nOne.\n'), { folder, name: 'same.md' })
+      const items = await pagesIn(folder)
+      expect(items).toHaveLength(2)
+      expect(new Set(ids(items)).size).toBe(2)
+    })
+
+    it('400 for a single file without name, and for a name that is not Markdown', async () => {
+      const folder = enc(fresh())
+      const noName = await send(`?folder=${folder}`, '# x\n')
+      expect(noName.status).toBe(400)
+      expect((await noName.json()).error).toBe('invalid')
+      expect((await send(`?folder=${folder}&name=notes.txt`, '# x\n')).status).toBe(400)
+    })
+
+    it('400 for an empty body', async () => {
+      expect((await send(`?folder=${enc(fresh())}&name=a.md`, '')).status).toBe(400)
+    })
+
+    it('400 for a folder that is not a valid path', async () => {
+      const r = await send(`?folder=${enc('.hidden')}&name=a.md`, '# x\n')
+      expect(r.status).toBe(400)
+      expect((await r.json()).error).toBe('invalid')
+    })
+
+    it('415 for a JSON content type', async () => {
+      const r = await send(`?folder=${enc(fresh())}&name=a.md`, '# x\n', 'application/json')
+      expect(r.status).toBe(415)
+      expect((await r.json()).error).toBe('invalid')
+    })
+  })
+
   describe('history', () => {
     const HEX40 = /^[0-9a-f]{40}$/
     const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/

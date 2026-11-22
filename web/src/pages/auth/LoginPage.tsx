@@ -8,7 +8,7 @@ import { Field, FormMessage } from '@/components/auth/Field'
 import { PageFallback, ErrorState } from '@/components/common'
 import { Button } from '@/components/ui/button'
 import { safeReturn } from '@/lib/auth'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 export default function LoginPage() {
   const session = useSession()
@@ -16,7 +16,7 @@ export default function LoginPage() {
   const ret = safeReturn(params.get('return'))
 
   if (session.isPending) return <PageFallback />
-  if (session.isError) return <ErrorState message={`${t.auth.loadFailed}：${session.error.message}`} onRetry={() => void session.refetch()} />
+  if (session.isError) return <ErrorState message={t.fmt.labelled(t.auth.loadFailed, session.error.message)} onRetry={() => void session.refetch()} />
   const s = session.data
   // Nothing to sign in to, or already signed in, or nobody exists yet.
   if (s.mode === 'single') return <Navigate to="/" replace />

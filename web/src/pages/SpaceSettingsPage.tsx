@@ -3,7 +3,7 @@
 // it, shows how the connection is doing and disconnects it.
 
 import { useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { useParams } from 'react-router'
+import { Link, useParams } from 'react-router'
 import { AlertTriangle, Check, CircleAlert, CirclePause, Cloud, CloudOff, Copy, KeyRound, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError, spaceApi } from '@/api/client'
@@ -18,8 +18,9 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { checkFolderPath } from '@/lib/folders'
 import { absoluteTime, relativeTime } from '@/lib/time'
+import { spaceUrls } from '@/lib/urls'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 export default function SpaceSettingsPage() {
   const { space = '' } = useParams()
@@ -33,6 +34,7 @@ export default function SpaceSettingsPage() {
     body = (
       <>
         {current && <InboxSection space={current} readOnly />}
+        <ImportSection space={space} />
         <p className="rounded-lg border p-4 text-sm text-muted-foreground">{t.remote.singleUser}</p>
       </>
     )
@@ -42,6 +44,7 @@ export default function SpaceSettingsPage() {
     body = (
       <>
         <InboxSection space={current} />
+        <ImportSection space={space} />
         <RemoteSection space={space} />
       </>
     )
@@ -67,6 +70,20 @@ function Section({ title, children, id }: { title: string; children: ReactNode; 
   )
 }
 
+// A way into the import page; the import itself has a page of its own.
+function ImportSection({ space }: { space: string }) {
+  return (
+    <Section title={t.import.settingsTitle} id="import-title">
+      <p className="text-sm text-muted-foreground">{t.import.settingsHelp}</p>
+      <div>
+        <Button variant="outline" render={<Link to={spaceUrls(space).import()} />}>
+          {t.import.settingsLink}
+        </Button>
+      </div>
+    </Section>
+  )
+}
+
 // Where quick notes go. Single-user mode sets it with `--inbox`, so it is only
 // shown there; in accounts mode the owner can change it, and nothing is moved.
 function InboxSection({ space, readOnly = false }: { space: SpaceInfo; readOnly?: boolean }) {
@@ -78,7 +95,7 @@ function InboxSection({ space, readOnly = false }: { space: SpaceInfo; readOnly?
     e.preventDefault()
     if (update.isPending) return
     const checked = checkFolderPath(value)
-    if ('error' in checked) return setError(checked.error === '路径不能为空' ? t.inboxSetting.invalid : checked.error)
+    if ('error' in checked) return setError(checked.error === t.folderRules.empty ? t.inboxSetting.invalid : checked.error)
     setError('')
     if (checked.path === space.inbox) return setValue(checked.path)
     try {
@@ -86,7 +103,7 @@ function InboxSection({ space, readOnly = false }: { space: SpaceInfo; readOnly?
       setValue(saved.inbox)
       toast.success(t.inboxSetting.saved)
     } catch (err) {
-      setError(err instanceof ApiError && err.code === 'invalid' ? err.message : `${t.inboxSetting.failed}：${err instanceof Error ? err.message : ''}`)
+      setError(err instanceof ApiError && err.code === 'invalid' ? err.message : t.fmt.labelled(t.inboxSetting.failed, err instanceof Error ? err.message : ''))
     }
   }
 
@@ -114,7 +131,7 @@ function RemoteSection({ space }: { space: string }) {
       {remote.isPending ? (
         <PageFallback />
       ) : remote.isError ? (
-        <ErrorState message={`${t.remote.loadFailed}：${remote.error.message}`} onRetry={() => void remote.refetch()} />
+        <ErrorState message={t.fmt.labelled(t.remote.loadFailed, remote.error.message)} onRetry={() => void remote.refetch()} />
       ) : remote.data === null ? (
         <>
           <p className="text-sm text-muted-foreground">{t.remote.intro}</p>
@@ -151,9 +168,9 @@ function Following({ space, remote }: { space: string; remote: Remote }) {
     try {
       const r = await sync.mutateAsync()
       if (r.state === 'ok') toast.success(t.remote.synced)
-      else toast.warning(`${t.remote.syncFailed}：${r.error || t.remote.state[r.state]}`)
+      else toast.warning(t.fmt.labelled(t.remote.syncFailed, r.error || t.remote.state[r.state]))
     } catch (e) {
-      toast.error(`${t.remote.syncFailed}：${e instanceof Error ? e.message : ''}`)
+      toast.error(t.fmt.labelled(t.remote.syncFailed, e instanceof Error ? e.message : ''))
     }
   }
   const doDisconnect = async () => {
@@ -163,7 +180,7 @@ function Following({ space, remote }: { space: string; remote: Remote }) {
       toast.success(t.remote.disconnected)
     } catch (e) {
       setConfirmDisconnect(false)
-      toast.error(`${t.remote.disconnectFailed}：${e instanceof Error ? e.message : ''}`)
+      toast.error(t.fmt.labelled(t.remote.disconnectFailed, e instanceof Error ? e.message : ''))
     }
   }
 
@@ -172,7 +189,7 @@ function Following({ space, remote }: { space: string; remote: Remote }) {
       <div className="flex flex-wrap items-center gap-2">
         <StateBadge state={remote.state} />
         <span className="text-sm text-muted-foreground" role="status">
-          {remote.lastSync ? `${t.remote.lastSync}：${relativeTime(remote.lastSync)}（${absoluteTime(remote.lastSync)}）` : t.remote.never}
+          {remote.lastSync ? t.fmt.labelled(t.remote.lastSync, t.fmt.note(relativeTime(remote.lastSync), absoluteTime(remote.lastSync))) : t.remote.never}
         </span>
       </div>
 
@@ -270,7 +287,7 @@ function Rewritten({ space, remote }: { space: string; remote: Remote }) {
       if (e instanceof ApiError && e.code === 'conflict') {
         toast.warning(t.remote.acceptStale)
         void sync.mutateAsync().catch(() => undefined)
-      } else toast.error(`${t.remote.acceptFailed}：${e instanceof Error ? e.message : ''}`)
+      } else toast.error(t.fmt.labelled(t.remote.acceptFailed, e instanceof Error ? e.message : ''))
     }
   }
 
@@ -354,7 +371,7 @@ function PublicKey({ publicKey, fingerprint, title }: { publicKey: string; finge
       </div>
       <p className="text-xs text-muted-foreground">{t.remote.addKeyHow}</p>
       <p className="text-xs text-muted-foreground">
-        {t.remote.fingerprint}：<code className="font-mono break-all">{fingerprint}</code>
+        {t.remote.fingerprint}{t.fmt.colon}<code className="font-mono break-all">{fingerprint}</code>
       </p>
     </div>
   )
@@ -393,7 +410,7 @@ function Problem({ error }: { error: unknown }) {
         <p className="break-words">{e.message}</p>
       </div>
     )
-  return <FormMessage>{`${t.remote.failed}：${error instanceof Error ? error.message : ''}`}</FormMessage>
+  return <FormMessage>{t.fmt.labelled(t.remote.failed, error instanceof Error ? error.message : '')}</FormMessage>
 }
 
 function ConnectForm({ space, existing, onDone }: { space: string; existing: Remote | null; onDone?: () => void }) {
@@ -428,7 +445,7 @@ function ConnectForm({ space, existing, onDone }: { space: string; existing: Rem
       setKey(await spaceApi(space).remoteKey(rotate))
       setFieldError((f) => ({ ...f, key: undefined }))
     } catch (e) {
-      setKeyError(`${t.remote.keyFailed}：${e instanceof Error ? e.message : ''}`)
+      setKeyError(t.fmt.labelled(t.remote.keyFailed, e instanceof Error ? e.message : ''))
     }
     setKeyBusy(false)
     setRotateOpen(false)

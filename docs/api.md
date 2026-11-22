@@ -27,8 +27,9 @@ The web app talks to the server only through this API.
   flag on a network you do not trust until sign-in exists.
   - Every `POST`, `PUT`, `DELETE` and `PATCH` must send
     `Content-Type: application/json`, even with no body, or the answer is
-    `415 invalid`. The one exception is uploading a file (see "Files"), which
-    must send `Content-Type: application/octet-stream`; a plain HTML form
+    `415 invalid`. The exceptions are uploading a file (see "Files") and an
+    import (see "Import"), which must send
+    `Content-Type: application/octet-stream`; a plain HTML form
     cannot send that type either.
   - A request whose `Sec-Fetch-Site` header is present and is neither
     `same-origin` nor `none` gets `403 forbidden`.
@@ -85,12 +86,14 @@ not signed in), in the shape of `GET /api/spaces`.
 {
   "version": "dev",
   "maxUpload": 10485760,
+  "maxImport": 104857600,
   "spaces": [{"id": "default", "name": "My notes", "role": "owner", "personal": true, "sync": "local", "inbox": "Inbox"}]
 }
 ```
 
 `maxUpload` is the largest file, in bytes, the server accepts as an upload
-(`--max-upload`, 10 MiB by default, at most 256 MiB).
+(`--max-upload`, 10 MiB by default, at most 256 MiB). `maxImport` is the same for an import
+(`--max-import`, 100 MiB by default, at most 512 MiB).
 
 ## Session
 
@@ -757,6 +760,71 @@ video, PDF and plain-text types; those are sent `Content-Disposition:
 inline`. A PDF is sent without the policy header, because browsers' PDF
 viewers do not start under it. Everything else is `application/octet-stream` and
 `Content-Disposition: attachment`.
+
+## Import
+
+### `POST /api/spaces/{space}/import?folder={folder}&name={file name}`
+
+Brings Markdown files into the space as pages. The body is either one
+Markdown file or a `.zip` of files and folders (which it is, is told from the
+content: a zip starts with its signature), sent with
+`Content-Type: application/octet-stream` like an upload. It may be at most
+`maxImport` bytes (see `GET /api/meta`; `--max-import`, 100 MiB by default).
+
+| name | meaning |
+|---|---|
+| `folder` | the folder the pages go into; optional, the root by default. It is made if missing |
+| `name` | the name the file had; required for a single Markdown file (it gives the title when the file has none), ignored for a zip |
+
+Every file whose name ends in `.md` or `.markdown` becomes one page; folders
+of a zip become folders below `folder` (a file in a folder the server would
+not make, see `POST …/folders`, is left out). The server works on one import
+at a time; a second one waits its turn. Nothing that exists is replaced: a
+page whose file name is taken gets a numbered one, as when creating a page.
+For each file:
+
+- A header (YAML between `---` lines at the top) is kept, key by key, except
+  `id`: every imported page gets a new id. A `created` that is not a date is
+  dropped, and one is assigned as for a new page. A header that does not
+  parse is left in the body as text.
+- A Markdown file larger than a page may be (8 MiB) is left out of a zip,
+  and refused (`400 invalid`) when sent alone.
+- The title is the header's `title`; else the first line of the body when it
+  is a `# ` heading (which is then taken out of the body); else the file's
+  name without its extension.
+- An image or link whose address is a relative path to another file in the
+  zip (not a page) makes that file an attachment of the page, and the
+  address is rewritten to it (see "Files"). A file larger than `maxUpload`
+  is left out and the address stays as written. Addresses with a scheme,
+  absolute paths, and links to other Markdown files stay as written.
+
+Files that are neither pages nor referred to by one are not imported; hidden
+files and folders (a name starting with a dot, `__MACOSX`) are ignored.
+
+`200` with a report:
+
+```json
+{
+  "pages": 104,
+  "files": 3,
+  "skipped": [{"path": "notes/draft.docx", "reason": "not a Markdown file and no page refers to it"}]
+}
+```
+
+`files` counts attachments stored. `skipped` lists what was left out and
+why, for a person to check (at most 200 entries; `skippedMore` is how many
+further ones there were, absent when none).
+
+Errors: `400 invalid` when the body is empty, is a single file without
+`name` or with a name that is not Markdown, is a zip without any Markdown
+file, unpacks to more than four times `maxImport`, has more than 20,000
+entries, or `folder` is not a valid folder path; `413 invalid` over
+`maxImport`; `415 invalid` for another content type; `503 unavailable` as
+for every change in a space that follows a remote.
+
+The whole import is one change: one commit, and in a space that follows a
+remote one push, with nothing left behind if it fails. In a local space a
+failure half way (a full disk) can leave the pages created so far.
 
 ## Folders and tags
 

@@ -1,6 +1,6 @@
 import { Link } from 'react-router'
 import { useActiveSpace } from '@/api/hooks'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 import { TopBar } from '@/components/layout/TopBar'
 import { spaceUrls } from '@/lib/urls'
 

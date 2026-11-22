@@ -8,14 +8,14 @@ import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
 import { Button } from '@/components/ui/button'
 import { forgetFragmentToken, fragmentToken } from '@/lib/auth'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 // First run: the server has no user yet. The setup token comes from the address
 // (`/setup#<token>`, as the server prints it), or is pasted.
 export default function SetupPage() {
   const session = useSession()
   if (session.isPending) return <PageFallback />
-  if (session.isError) return <ErrorState message={`${t.auth.loadFailed}：${session.error.message}`} onRetry={() => void session.refetch()} />
+  if (session.isError) return <ErrorState message={t.fmt.labelled(t.auth.loadFailed, session.error.message)} onRetry={() => void session.refetch()} />
   const s = session.data
   if (s.mode === 'single') return <Navigate to="/" replace />
   if (!s.setup) return <Navigate to={s.user ? '/' : '/login'} replace />

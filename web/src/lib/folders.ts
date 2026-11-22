@@ -1,5 +1,6 @@
 // Folder paths: tree building, URLs, validation.
 
+import { t } from '@/i18n'
 import { folderRuleMessage } from './folderRules'
 
 export interface FolderNode {
@@ -54,12 +55,12 @@ export function checkFolderPath(input: string): { path: string } | { error: stri
     .split('/')
     .map((s) => s.trim())
     .join('/')
-  if (path === '') return { error: '路径不能为空' }
+  if (path === '') return { error: t.folderRules.empty }
   const error = folderRuleMessage(path)
   return error ? { error } : { path }
 }
 
-export const folderLabel = (path: string) => (path === '' ? '根目录' : path.slice(path.lastIndexOf('/') + 1))
+export const folderLabel = (path: string) => (path === '' ? t.nav.rootFolder : path.slice(path.lastIndexOf('/') + 1))
 
 // "/f/随笔/2026" -> "随笔/2026" for a route prefix like "/f". Returns null
 // when the pathname is not under that prefix.

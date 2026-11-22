@@ -1,0 +1,3 @@
+This directory is filled with the built web app (web/dist) by "make release"
+before a release build. Only this file is tracked; the rest is ignored by git.
+The server treats a directory without index.html as "no web app built in".

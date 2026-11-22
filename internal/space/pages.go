@@ -155,6 +155,11 @@ type CreateInput struct {
 	Folder string
 	Meta   page.Meta
 	Body   string
+
+	// For an import (see Import): the creation date the page came with, and
+	// the body once the page's id is known (attachments are addressed by it).
+	created string
+	bodyFor func(id string) string
 }
 
 // newMeta prepares the header of a page being created: fields that are empty
@@ -270,6 +275,12 @@ func (s *Space) createLocked(tx *txn, in CreateInput, meta page.Meta) (*Page, er
 		}
 	}
 	created := now.Format("2006-01-02")
+	if in.created != "" {
+		created = in.created
+	}
+	if in.bodyFor != nil {
+		in.Body = in.bodyFor(id)
+	}
 	meta = append(page.Meta{{Key: "id", Value: id}}, meta...)
 	meta = placeAfterKnown(meta, page.Field{Key: "created", Value: created})
 

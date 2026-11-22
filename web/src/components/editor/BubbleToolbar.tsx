@@ -5,7 +5,7 @@ import { BubbleMenu } from '@tiptap/react/menus'
 import { Bold, Code, ExternalLink, Italic, Link2, Link2Off, Strikethrough, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { normalizeUrl } from '@/lib/url'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 import { resolveAddressIn } from './pageFiles'
 
 const panel = 'flex items-center gap-0.5 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10'

@@ -66,3 +66,35 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
+
+  # The release build: the web app is built and embedded, so a break in
+  # either, or in the way they are put together, shows up here and not on tag day.
+  release-build:
+    name: Single binary (make release)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: make release
+      # With the app embedded the handler's tests run against the real build.
+      - run: go test ./internal/webui/ ./cmd/...
+
+  docker:
+    name: Container image (build only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

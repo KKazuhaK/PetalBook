@@ -26,6 +26,7 @@ import (
 	"github.com/KazuhaHub/PetalBook/internal/space"
 	"github.com/KazuhaHub/PetalBook/internal/spaces"
 	"github.com/KazuhaHub/PetalBook/internal/store"
+	"github.com/KazuhaHub/PetalBook/internal/webui"
 )
 
 type serveConfig struct {
@@ -46,6 +47,8 @@ type serveConfig struct {
 	// maxUpload is the largest file accepted as an upload, in bytes; inbox is
 	// the folder quick notes go to in single-user mode.
 	maxUpload int64
+	// maxImport is the largest body of an import, in bytes.
+	maxImport int64
 	inbox     string
 	spaceIdle time.Duration
 	// pullInterval is how often a space that follows a remote is fetched (0:
@@ -144,6 +147,7 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 	f.StringSliceVar(&c.remoteHosts, "remote-host", gitstore.DefaultHosts, "accounts mode: a host a space's remote repository may be on (repeatable, or comma-separated; * allows any host); giving it replaces the default list")
 	f.DurationVar(&c.remoteTimeout, "remote-timeout", 60*time.Second, "accounts mode: how long one fetch or push may take before the remote counts as unreachable")
 	f.Int64Var(&c.maxUpload, "max-upload", api.DefaultMaxUpload, "largest file accepted as an upload, in bytes (0: the default, 10 MiB)")
+	f.Int64Var(&c.maxImport, "max-import", api.DefaultMaxImport, "largest Markdown file or zip accepted as an import, in bytes (0: the default, 100 MiB)")
 	f.StringVar(&c.inbox, "inbox", store.DefaultInbox, "single-user mode: the folder quick notes go to")
 	f.IntVar(&c.maxSpaces, "max-spaces", spaces.DefaultMaxSpaces, "accounts mode: how many spaces one user may own (0: no limit)")
 	f.DurationVar(&c.spaceIdle, "space-idle", spaces.DefaultIdleAfter, "accounts mode: close a space that has not been used for this long (it reopens on the next request)")
@@ -202,6 +206,10 @@ func (c serveConfig) check() (*checked, error) {
 		return nil, errors.New("--max-spaces, --max-open-spaces and --space-idle must not be negative")
 	}
 	// An upload is held in memory while it is stored, so the limit has a limit.
+	// An import is read into memory too.
+	if c.maxImport < 0 || c.maxImport > 512<<20 {
+		return nil, errors.New("--max-import must be between 0 and 536870912 (512 MiB)")
+	}
 	if c.maxUpload < 0 || c.maxUpload > 256<<20 {
 		return nil, errors.New("--max-upload must be between 0 and 268435456 (256 MiB)")
 	}
@@ -390,10 +398,14 @@ func runServe(ctx context.Context, c serveConfig) error {
 		return err
 	}
 
-	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, PublicURL: cfg.publicURL, Version: version, MaxUpload: c.maxUpload,
+	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, PublicURL: cfg.publicURL, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
 		RestrictHost: loopback, AllowOrigins: cfg.origins, Logger: log})
+	webApp, webBuilt := webui.Handler()
+	if !webBuilt {
+		log.Warn("this binary has no web app built in (build it with make release); only the API is served")
+	}
 	srv := &http.Server{
-		Handler:           handler,
+		Handler:           withWebApp(handler, webApp),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      5 * time.Minute, // a reindex of a large space is slow
@@ -468,6 +480,22 @@ func runServe(ctx context.Context, c serveConfig) error {
 		closeErr("the space", sp.Close())
 	}
 	return serveErr
+}
+
+// withWebApp sends /api/ to the API and everything else to the web app. The
+// prefix test, not a ServeMux, so the API sees the request path exactly as it
+// did before the app was served from here. The page and the API share one
+// origin, so the API's own-origin rules (the public URL in accounts mode, the
+// loopback address on the listen port in single-user mode) already let the
+// page call it.
+func withWebApp(api, app http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			api.ServeHTTP(w, r)
+			return
+		}
+		app.ServeHTTP(w, r)
+	})
 }
 
 func signInMethods(cfg *checked) string {

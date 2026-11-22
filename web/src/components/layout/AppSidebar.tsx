@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router'
-import { ChevronRight, Clock, Folder, FolderOpen, FolderPlus, Home, Inbox, PenLine, Search, Tag } from 'lucide-react'
+import { ChevronRight, Clock, Folder, FolderOpen, FolderPlus, Home, Inbox, PenLine, Search, Tag, Upload } from 'lucide-react'
 import { useActiveSpace, useSession, useTags, useTree, useUrls } from '@/api/hooks'
 import {
   Sidebar,
@@ -19,11 +19,12 @@ import {
 } from '@/components/ui/sidebar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { buildFolderTree, ancestorsOf, pathAfter, type FolderNode } from '@/lib/folders'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 import { NewFolderDialog } from './NewFolderDialog'
 import { useQuickCapture } from './QuickCapture'
 import { SidebarToggle } from './SidebarToggle'
 import { SpaceSwitcher } from './SpaceSwitcher'
+import { LanguageToggle } from './LanguageMenu'
 import { ThemeToggle } from './ThemeToggle'
 import { UserMenu } from './UserMenu'
 
@@ -296,6 +297,10 @@ export function AppSidebar() {
           <SidebarGroupAction title={t.nav.newFolder} aria-label={t.nav.newFolder} onClick={() => setNewFolder(true)}>
             <FolderPlus />
           </SidebarGroupAction>
+          {/* Next to "new folder"; brings files into the folder being viewed. */}
+          <SidebarGroupAction title={t.nav.import} aria-label={t.nav.import} className="right-9" render={<NavLink to={urls.import(activeFolder ?? '')} />}>
+            <Upload />
+          </SidebarGroupAction>
           <SidebarGroupContent>
             <FolderTree activeFolder={activeFolder} />
           </SidebarGroupContent>
@@ -312,7 +317,8 @@ export function AppSidebar() {
       </SidebarContent>
       <SidebarFooter className="flex-row items-center justify-between gap-1 border-t p-2">
         {accounts ? <UserMenu /> : null}
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center">
+          {accounts ? null : <LanguageToggle />}
           <ThemeToggle />
         </div>
       </SidebarFooter>

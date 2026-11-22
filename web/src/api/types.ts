@@ -18,7 +18,18 @@ export interface MetaResponse {
   version: string
   // The largest file, in bytes, the server accepts as an upload.
   maxUpload: number
+  // The largest body, in bytes, the server accepts for an import.
+  maxImport: number
   spaces: SpaceInfo[]
+}
+
+// What an import did (docs/api.md, "Import"). `skipped` is at most 200 entries;
+// `skippedMore` counts the ones beyond that and is absent when there are none.
+export interface ImportReport {
+  pages: number
+  files: number
+  skipped: { path: string; reason: string }[]
+  skippedMore?: number
 }
 
 // The answer to storing a file for a page: `path` is what goes into the page.

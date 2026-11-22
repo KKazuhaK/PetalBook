@@ -55,8 +55,9 @@ func (s *server) getMeta(c *call) {
 	writeJSON(c.w, http.StatusOK, struct {
 		Version   string      `json:"version"`
 		MaxUpload int64       `json:"maxUpload"`
+		MaxImport int64       `json:"maxImport"`
 		Spaces    []spaceResp `json:"spaces"`
-	}{s.opt.Version, s.opt.MaxUpload, list})
+	}{s.opt.Version, s.opt.MaxUpload, s.opt.MaxImport, list})
 }
 
 func (s *server) getSession(c *call) {

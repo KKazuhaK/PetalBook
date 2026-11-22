@@ -4,7 +4,7 @@ import { useEditorState } from '@tiptap/react'
 import { Code2, Heading1, Heading2, Heading3, List, ListChecks, ListOrdered, Minus, Quote, Redo2, Table2, Undo2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 import { UploadButtons } from './UploadButtons'
 
 function Tool({ label, active, disabled, onClick, children }: { label: string; active?: boolean; disabled?: boolean; onClick: () => void; children: ReactNode }) {
@@ -51,7 +51,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
   const run = () => editor.chain().focus()
 
   return (
-    <div role="toolbar" aria-label="格式" className="flex items-center gap-0.5 overflow-x-auto px-1 py-1">
+    <div role="toolbar" aria-label={t.toolbar.label} className="flex items-center gap-0.5 overflow-x-auto px-1 py-1">
       <Tool label={t.toolbar.undo} disabled={!s.canUndo} onClick={() => run().undo().run()}>
         <Undo2 />
       </Tool>

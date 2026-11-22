@@ -1,5 +1,7 @@
 // Typed functions for every endpoint of docs/api.md.
 
+import { t } from '@/i18n'
+
 import type {
   AccountInfo,
   CreatedInvite,
@@ -9,6 +11,7 @@ import type {
   ConnectRemoteInput,
   ErrorCode,
   HistoryList,
+  ImportReport,
   Invite,
   InviteCheck,
   ListParams,
@@ -59,7 +62,7 @@ export class ApiError extends Error {
 // address (its allowed origins do not include it). The generic message would
 // send people looking for a save bug, so say what is wrong and show where we are.
 export function forbiddenMessage(origin: string): string {
-  return `服务器拒绝了这个页面的地址（${origin}）：它不在服务器允许的来源里。请让服务器允许 ${origin}（启动时加 --allow-origin ${origin}），然后刷新本页。`
+  return t.errors.forbidden(origin)
 }
 
 type ForbiddenListener = (message: string) => void
@@ -141,7 +144,7 @@ interface RequestOptions {
 async function request<T>(path: string, { method = 'GET', body, keepalive, signal, blob }: RequestOptions = {}): Promise<T> {
   const barePath = path.split('?')[0]
   const isSignIn = SIGN_IN_PATHS.test(barePath)
-  if (signedOut && !isSignIn) throw new ApiError(401, 'unauthenticated', '登录已失效，请重新登录')
+  if (signedOut && !isSignIn) throw new ApiError(401, 'unauthenticated', t.errors.signedOut)
   // Every write carries a JSON content type, even with nothing to say: the
   // server refuses writes without one (it is what keeps other sites from
   // posting to it from a browser form).
@@ -162,7 +165,7 @@ async function request<T>(path: string, { method = 'GET', body, keepalive, signa
     })
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') throw e
-    throw new ApiError(0, 'network', '无法连接到服务器')
+    throw new ApiError(0, 'network', t.errors.network)
   }
   if (res.status === 204) return undefined as T
   const text = await res.text()
@@ -172,7 +175,7 @@ async function request<T>(path: string, { method = 'GET', body, keepalive, signa
       json = JSON.parse(text)
     } catch {
       // A proxy answering with HTML when the server is down.
-      throw new ApiError(res.status, 'network', res.ok ? '服务器返回了无法识别的内容' : '无法连接到服务器')
+      throw new ApiError(res.status, 'network', res.ok ? t.errors.badResponse : t.errors.network)
     }
   }
   if (!res.ok) {
@@ -188,7 +191,7 @@ async function request<T>(path: string, { method = 'GET', body, keepalive, signa
     throw new ApiError(
       res.status,
       (err.error as ErrorCode) || 'unknown',
-      err.message || `请求失败（${res.status}）`,
+      err.message || t.errors.requestFailed(res.status),
       err.current,
       res.status === 429 && Number.isFinite(retry) && retry > 0 ? retry : undefined,
       err.draft,
@@ -241,6 +244,16 @@ export function spaceApi(space: string) {
 
     // Stores a file for a page; the answer's `path` is what the page refers to.
     uploadAsset: (id: string, file: Blob, name: string, signal?: AbortSignal) => request<UploadedAsset>(pageBase(id, `/assets?name=${enc(name)}`), { method: 'POST', blob: file, signal }),
+
+    // One Markdown file (`name` is required) or a .zip of them; the server tells
+    // which from the bytes. Everything lands in `folder`, made if missing.
+    importMarkdown: (file: Blob, opts: { folder?: string; name?: string } = {}, signal?: AbortSignal) => {
+      const q = new URLSearchParams()
+      if (opts.folder) q.set('folder', opts.folder)
+      if (opts.name) q.set('name', opts.name)
+      const qs = q.toString()
+      return request<ImportReport>(base(`/import${qs ? `?${qs}` : ''}`), { method: 'POST', blob: file, signal })
+    },
 
     tree: (signal?: AbortSignal) => request<TreeResponse>(base('/tree'), { signal }),
     createFolder: (path: string) => request<{ path: string }>(base('/folders'), { method: 'POST', body: { path } }),

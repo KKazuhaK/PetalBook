@@ -2,6 +2,8 @@
 // bad name is refused with a clear message before any request, and by the
 // in-memory mock, so it cannot drift from the UI.
 
+import { t } from '../i18n/index.ts'
+
 const MAX_SEGMENT_BYTES = 255
 
 // null when `path` is acceptable. The root folder ("") always is. The path is
@@ -9,13 +11,13 @@ const MAX_SEGMENT_BYTES = 255
 export function folderRuleMessage(path: string): string | null {
   if (path === '') return null
   const segments = path.split('/')
-  if (segments.some((s) => s === '')) return '路径不能以 / 开头或结尾，也不能有连续的 /'
+  if (segments.some((s) => s === '')) return t.folderRules.slashes
   for (const seg of segments) {
-    if (seg.startsWith('.')) return '文件夹名不能以 . 开头'
-    if (seg.endsWith('.') || seg.endsWith(' ')) return '文件夹名不能以 . 或空格结尾'
-    if (new TextEncoder().encode(seg).length > MAX_SEGMENT_BYTES) return `文件夹名太长（最多 ${MAX_SEGMENT_BYTES} 字节）`
+    if (seg.startsWith('.')) return t.folderRules.dotStart
+    if (seg.endsWith('.') || seg.endsWith(' ')) return t.folderRules.dotEnd
+    if (new TextEncoder().encode(seg).length > MAX_SEGMENT_BYTES) return t.folderRules.tooLong(MAX_SEGMENT_BYTES)
   }
   // Reserved for attachments.
-  if (segments[0] === 'assets') return '“assets” 是附件的保留名称，不能作为顶层文件夹名'
+  if (segments[0] === 'assets') return t.folderRules.reserved
   return null
 }

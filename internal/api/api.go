@@ -40,6 +40,9 @@ const DefaultMaxBody = 8 << 20
 // DefaultMaxUpload caps an uploaded file.
 const DefaultMaxUpload = 10 << 20
 
+// DefaultMaxImport caps the body of an import.
+const DefaultMaxImport = 100 << 20
+
 // authBodyLimit caps the bodies of the sign-in and account endpoints, which
 // anyone can reach.
 const authBodyLimit = 64 << 10
@@ -51,6 +54,8 @@ type Options struct {
 	// MaxUpload is the largest file accepted as an upload, in bytes;
 	// DefaultMaxUpload when 0.
 	MaxUpload int64
+	// MaxImport is the largest body of an import, in bytes; DefaultMaxImport when 0.
+	MaxImport int64
 	// Store, Spaces and Drafts are required.
 	Store  *store.Store
 	Spaces *spaces.Manager
@@ -84,6 +89,8 @@ type server struct {
 	single  bool
 	local   store.User // the built-in user of single-user mode
 	origins map[string]bool
+	// importing lets one import run at a time (see importMarkdown).
+	importing chan struct{}
 	// originHosts are the hosts of the allowed origins: a request addressed to
 	// one of them (through a reverse proxy, say) passes the Host restriction.
 	originHosts map[string]bool
@@ -97,11 +104,14 @@ func New(opt Options) http.Handler {
 	if opt.MaxUpload <= 0 {
 		opt.MaxUpload = DefaultMaxUpload
 	}
+	if opt.MaxImport <= 0 {
+		opt.MaxImport = DefaultMaxImport
+	}
 	if opt.Version == "" {
 		opt.Version = "dev"
 	}
 	s := &server{opt: opt, log: opt.Logger, auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, single: opt.Auth == nil,
-		origins: map[string]bool{}, originHosts: map[string]bool{}}
+		origins: map[string]bool{}, originHosts: map[string]bool{}, importing: make(chan struct{}, 1)}
 	if s.log == nil {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}

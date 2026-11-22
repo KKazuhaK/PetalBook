@@ -1,6 +1,6 @@
 import { useMemo, useState, type KeyboardEvent } from 'react'
 import { Tag, X } from 'lucide-react'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 // Chips plus an input. A tag is committed on Enter, comma (half or full
 // width) or when the box loses focus; Backspace in the empty box removes the

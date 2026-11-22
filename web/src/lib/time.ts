@@ -1,21 +1,29 @@
-const rtf = new Intl.RelativeTimeFormat('zh-CN', { numeric: 'auto' })
+import { lang, t } from '@/i18n'
 
-// "刚刚", "5 分钟前", "昨天", and a plain date once it is more than a month old.
+const rtf = new Intl.RelativeTimeFormat(lang, { numeric: 'auto' })
+
+// "just now", "5 minutes ago", "yesterday", and a plain date once it is more
+// than a month old; the wording and the date's shape follow the language.
 export function relativeTime(iso: string, now: number = Date.now()): string {
   const then = Date.parse(iso)
   if (Number.isNaN(then)) return ''
   const sec = Math.round((then - now) / 1000)
   const abs = Math.abs(sec)
-  if (abs < 45) return '刚刚'
+  if (abs < 45) return t.time.justNow
   if (abs < 3600) return rtf.format(Math.round(sec / 60), 'minute')
   if (abs < 86_400) return rtf.format(Math.round(sec / 3600), 'hour')
   if (abs < 86_400 * 30) return rtf.format(Math.round(sec / 86_400), 'day')
-  const d = new Date(then)
-  const sameYear = d.getFullYear() === new Date(now).getFullYear()
-  return sameYear ? `${d.getMonth() + 1}月${d.getDate()}日` : `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`
+  return shortDate(new Date(then), new Date(now))
 }
+
+// "11月21日" / "November 21"; the year only when it is not the current one.
+export const shortDate = (d: Date, now: Date = new Date()) =>
+  d.toLocaleDateString(lang, d.getFullYear() === now.getFullYear() ? { month: 'long', day: 'numeric' } : { year: 'numeric', month: 'long', day: 'numeric' })
+
+// 24-hour clock in both languages ("h23": plain `hour12: false` shows 24:05 in some English locales).
+export const clockTime = (d: Date) => d.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 
 export const absoluteTime = (iso: string) => {
   const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('zh-CN', { hour12: false })
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(lang, { hourCycle: 'h23' })
 }

@@ -14,7 +14,7 @@ import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { absoluteTime } from '@/lib/time'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 export default function UsersPage() {
   useDocumentTitle(`${t.users.title} · ${t.appName}`)
@@ -35,7 +35,7 @@ export default function UsersPage() {
         ) : users.isPending ? (
           <PageFallback />
         ) : users.isError ? (
-          <ErrorState message={`${t.users.loadFailed}：${users.error.message}`} onRetry={() => void users.refetch()} />
+          <ErrorState message={t.fmt.labelled(t.users.loadFailed, users.error.message)} onRetry={() => void users.refetch()} />
         ) : (
           <>
             <UserList users={users.data.users} meId={me!.id} />
@@ -99,7 +99,7 @@ function UserList({ users, meId }: { users: User[]; meId: string }) {
               <div className="w-28">
                 <NativeSelect
                   className="h-8"
-                  aria-label={`${u.name}：${t.users.role}`}
+                  aria-label={t.fmt.labelled(u.name, t.users.role)}
                   value={u.role}
                   disabled={busy === u.id}
                   onChange={(e) => void change(u, { role: e.target.value as Role })}
@@ -108,7 +108,7 @@ function UserList({ users, meId }: { users: User[]; meId: string }) {
                   <option value="admin">{t.roles.admin}</option>
                 </NativeSelect>
               </div>
-              <Button type="button" variant="outline" size="sm" disabled={busy === u.id} onClick={() => void change(u, { disabled: !u.disabled })} aria-label={`${u.disabled ? t.users.enable : t.users.disable}：${u.name}`}>
+              <Button type="button" variant="outline" size="sm" disabled={busy === u.id} onClick={() => void change(u, { disabled: !u.disabled })} aria-label={t.fmt.labelled(u.disabled ? t.users.enable : t.users.disable, u.name)}>
                 {u.disabled ? t.users.enable : t.users.disable}
               </Button>
             </li>
@@ -204,7 +204,7 @@ function Invites({ users }: { users: User[] }) {
                   {t.users.expires(absoluteTime(i.expires))} · {t.users.createdBy(nameOf(i.createdBy))}
                 </div>
               </div>
-              <Button type="button" variant="outline" size="sm" onClick={() => void revoke(i.id)} aria-label={`${t.users.revoke}：${t.roles[i.role]}，${absoluteTime(i.expires)}`}>
+              <Button type="button" variant="outline" size="sm" onClick={() => void revoke(i.id)} aria-label={t.fmt.labelled(t.users.revoke, `${t.roles[i.role]}, ${absoluteTime(i.expires)}`)}>
                 {t.users.revoke}
               </Button>
             </li>

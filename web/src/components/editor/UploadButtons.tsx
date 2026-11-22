@@ -4,7 +4,7 @@ import { ImagePlus, Paperclip } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { getUploadOriginal, setUploadOriginal } from '@/lib/uploadPrefs'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 import { uploadFiles, type UploadMode } from './pageFiles'
 
 // Two toolbar buttons that open a file picker: pictures (with the choice of

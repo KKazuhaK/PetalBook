@@ -22,7 +22,7 @@ import { addressToUrl } from '@/lib/fileAddress'
 import { failureText } from '@/lib/failure'
 import { formatBytes } from '@/lib/bytes'
 import { browserCodec, prepareImage, type ImageCodec } from '@/lib/imageCompress'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 export interface PageFilesOptions {
   space: string

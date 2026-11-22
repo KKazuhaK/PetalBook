@@ -12,7 +12,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Button } from '@/components/ui/button'
 import { absoluteTime } from '@/lib/time'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 export default function SettingsPage() {
   useDocumentTitle(`${t.settings.title} · ${t.appName}`)
@@ -30,7 +30,7 @@ export default function SettingsPage() {
         {account.isPending || !session.data ? (
           <PageFallback />
         ) : account.isError ? (
-          <ErrorState message={`${t.settings.loadFailed}：${account.error.message}`} onRetry={() => void account.refetch()} />
+          <ErrorState message={t.fmt.labelled(t.settings.loadFailed, account.error.message)} onRetry={() => void account.refetch()} />
         ) : (
           <Sections account={account.data} session={session.data} />
         )}
@@ -74,7 +74,7 @@ function Sections({ account, session }: { account: AccountInfo; session: Session
   }, [linkError])
   return (
     <>
-      {linkError && <FormMessage focusRef={messageRef}>{`${t.settings.linkFailed}：${linkError}`}</FormMessage>}
+      {linkError && <FormMessage focusRef={messageRef}>{t.fmt.labelled(t.settings.linkFailed, linkError)}</FormMessage>}
       <Profile account={account} />
       <PasswordSection account={account} />
       <Identities account={account} oidc={session.methods?.oidc?.name ?? null} />

@@ -101,6 +101,7 @@ var routeTable = []route{
 
 	{"POST", "/api/spaces/{space}/pages/{id}/assets", member, false, false, true, (*server).putAsset},
 	{"GET", "/api/spaces/{space}/files/{path...}", member, false, false, false, (*server).getFile},
+	{"POST", "/api/spaces/{space}/import", member, false, false, true, (*server).importMarkdown},
 
 	{"GET", "/api/spaces/{space}/pages/{id}/history", member, false, false, false, (*server).getHistory},
 	{"GET", "/api/spaces/{space}/pages/{id}/versions/{commit}", member, false, false, false, (*server).getVersion},

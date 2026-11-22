@@ -5,8 +5,9 @@ import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { applySession, useSession } from '@/api/hooks'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { LanguageRadioItems } from './LanguageMenu'
 import { flushAllSaves } from '@/editor/saveController'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 // Accounts mode only: the person's name, and settings, users (administrators)
 // and sign out behind it.
@@ -34,7 +35,7 @@ export function UserMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        aria-label={`${t.userMenu.label}：${user.name}`}
+        aria-label={t.fmt.labelled(t.userMenu.label, user.name)}
         className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-left text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring/50"
       >
         <span aria-hidden="true" className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand/15 text-xs font-medium text-brand">
@@ -53,6 +54,8 @@ export function UserMenu() {
             {t.userMenu.users}
           </DropdownMenuItem>
         )}
+        <DropdownMenuSeparator />
+        <LanguageRadioItems />
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => void signOut()}>
           <LogOut />

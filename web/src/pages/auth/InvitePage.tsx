@@ -10,14 +10,14 @@ import { ErrorState, PageFallback } from '@/components/common'
 import { Button } from '@/components/ui/button'
 import { forgetFragmentToken, fragmentToken } from '@/lib/auth'
 import { absoluteTime } from '@/lib/time'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 // The invite token comes from the address (`/invite#<token>`) or is pasted. It
 // is checked with the server before the person is asked for anything.
 export default function InvitePage() {
   const session = useSession()
   if (session.isPending) return <PageFallback />
-  if (session.isError) return <ErrorState message={`${t.auth.loadFailed}：${session.error.message}`} onRetry={() => void session.refetch()} />
+  if (session.isError) return <ErrorState message={t.fmt.labelled(t.auth.loadFailed, session.error.message)} onRetry={() => void session.refetch()} />
   if (session.data.mode === 'single') return <Navigate to="/" replace />
   return <InviteForm oidc={session.data.methods?.oidc?.name ?? null} />
 }
@@ -133,7 +133,7 @@ function InviteForm({ oidc }: { oidc: string | null }) {
   }
 
   return (
-    <AuthLayout title={t.invite.title} intro={`${t.invite.role(t.roles[check.invite.role])}。${t.invite.expires(absoluteTime(check.invite.expires))}`}>
+    <AuthLayout title={t.invite.title} intro={t.fmt.sentences(t.invite.role(t.roles[check.invite.role]), t.invite.expires(absoluteTime(check.invite.expires)))}>
       <FormMessage focusRef={messageRef}>{error}</FormMessage>
       <form className="grid gap-4" onSubmit={(e) => void submit(e)} noValidate>
         <Field label={t.auth.username} help={t.auth.usernameHelp} error={fieldError.username} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoFocus required />

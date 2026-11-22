@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
+import { LanguageToggle } from '@/components/layout/LanguageMenu'
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 // The frame of the pages that come before the app: sign in, first-run setup,
 // invite. One centred column that works at phone width.
@@ -14,7 +15,10 @@ export function AuthLayout({ title, intro, children }: { title: string; intro?: 
           <img src="/favicon.svg" alt="" className="size-6 rounded-md" />
           <span className="text-sm font-semibold">{t.appName}</span>
         </div>
-        <ThemeToggle />
+        <div className="flex items-center">
+          <LanguageToggle />
+          <ThemeToggle />
+        </div>
       </header>
       <main className="mx-auto flex w-full max-w-[400px] flex-1 flex-col justify-center gap-5 px-4 pt-4 pb-16">
         <div className="grid gap-1.5">

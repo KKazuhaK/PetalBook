@@ -12,6 +12,7 @@ export function spaceUrls(space: string) {
     tag: (tag: string) => `${base}/t/${encodePath(tag)}`,
     page: (id: string) => `${base}/p/${encodeURIComponent(id)}`,
     settings: () => `${base}/settings`,
+    import: (folder = '') => (folder === '' ? `${base}/import` : `${base}/import?folder=${encodeURIComponent(folder)}`),
     search: (q: string) => `${base}/search?q=${encodeURIComponent(q)}`,
   }
 }

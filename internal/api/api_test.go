@@ -131,7 +131,7 @@ var rfc3339 = regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$`)
 func TestMetaAndRouting(t *testing.T) {
 	f := newFixture(t)
 	code, r, raw := f.do("GET", "/api/meta", nil)
-	if code != 200 || r["version"] != "test-1" || raw != "{\"version\":\"test-1\",\"maxUpload\":10485760,\"spaces\":[{\"id\":\"default\",\"name\":\"测试空间\",\"role\":\"owner\",\"personal\":true,\"sync\":\"local\",\"inbox\":\"Inbox\"}]}\n" {
+	if code != 200 || r["version"] != "test-1" || raw != "{\"version\":\"test-1\",\"maxUpload\":10485760,\"maxImport\":104857600,\"spaces\":[{\"id\":\"default\",\"name\":\"测试空间\",\"role\":\"owner\",\"personal\":true,\"sync\":\"local\",\"inbox\":\"Inbox\"}]}\n" {
 		t.Fatalf("%d %s", code, raw)
 	}
 	code, r, raw = f.do("GET", "/api/spaces/other/pages", nil)

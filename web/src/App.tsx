@@ -13,7 +13,7 @@ import { ErrorState, PageFallback } from '@/components/common'
 import { FolderList, RecentList, SearchList, TagList } from '@/pages/Lists'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { loginUrl } from '@/lib/auth'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 // The editor drags in Tiptap, ProseMirror and the Markdown pipeline; the list
 // views do not need any of it, so it loads only when a page is opened. The
@@ -26,6 +26,7 @@ const InvitePage = lazy(() => import('@/pages/auth/InvitePage'))
 const SettingsPage = lazy(() => import('@/pages/auth/SettingsPage'))
 const UsersPage = lazy(() => import('@/pages/auth/UsersPage'))
 const SpaceSettingsPage = lazy(() => import('@/pages/SpaceSettingsPage'))
+const ImportPage = lazy(() => import('@/pages/ImportPage'))
 
 const later = (el: ReactNode) => <Suspense fallback={<PageFallback />}>{el}</Suspense>
 
@@ -50,7 +51,7 @@ function AuthGate() {
   if (session.isPending) return <PageFallback />
   // Only when there is nothing to go on: a failed refresh in the background
   // (offline for a moment) must not take away the page someone is typing in.
-  if (session.isError && !session.data) return <ErrorState message={`${t.auth.loadFailed}：${session.error.message}`} onRetry={() => void session.refetch()} />
+  if (session.isError && !session.data) return <ErrorState message={t.fmt.labelled(t.auth.loadFailed, session.error.message)} onRetry={() => void session.refetch()} />
   const s = session.data
   if (s.mode === 'accounts') {
     if (s.setup) return <Navigate to="/setup" replace />
@@ -120,6 +121,7 @@ const router = createBrowserRouter([
               { path: 't/*', element: <TagList /> },
               { path: 'search', element: <SearchList /> },
               { path: 'settings', element: later(<SpaceSettingsPage />) },
+              { path: 'import', element: later(<ImportPage />) },
               { path: 'p/:id', element: later(<PageEditor />) },
               { path: '*', element: <NotFoundPage /> },
             ],

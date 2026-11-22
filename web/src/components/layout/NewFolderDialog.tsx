@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { checkFolderPath } from '@/lib/folders'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 export function NewFolderDialog({ open, onOpenChange, parent }: { open: boolean; onOpenChange: (open: boolean) => void; parent: string }) {
   return (
@@ -39,7 +39,7 @@ function NewFolderForm({ parent, onDone }: { parent: string; onDone: () => void 
     } catch (e) {
       if (isConflict(e) || (e instanceof ApiError && e.code === 'exists')) setError(t.folder.exists)
       else if (e instanceof ApiError && e.code === 'invalid') setError(e.message || t.folder.invalid)
-      else toast.error(`${t.folder.failed}：${e instanceof Error ? e.message : ''}`)
+      else toast.error(t.fmt.labelled(t.folder.failed, e instanceof Error ? e.message : ''))
     }
   }
 

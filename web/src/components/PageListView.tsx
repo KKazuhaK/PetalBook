@@ -14,7 +14,7 @@ import { TopBar } from '@/components/layout/TopBar'
 import { cardTitleLine, loadView, saveView, viewKey, type ListViewMode } from '@/lib/listView'
 import { absoluteTime, relativeTime } from '@/lib/time'
 import type { SpaceUrls } from '@/lib/urls'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 
 export type ListSource =
@@ -64,7 +64,7 @@ function Row({ page, showFolder, index, urls }: { page: PageSummary; showFolder:
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
             {/* An untitled page shows its first line, in a lighter colour. */}
-            <span className={`truncate text-[0.95rem] ${page.untitled ? 'text-muted-foreground' : 'font-medium'}`}>{page.label || '空白页面'}</span>
+            <span className={`truncate text-[0.95rem] ${page.untitled ? 'text-muted-foreground' : 'font-medium'}`}>{page.label || t.list.blankPage}</span>
             {page.subtitle && <span className="hidden truncate text-sm text-muted-foreground sm:inline">{page.subtitle}</span>}
           </div>
           {page.subtitle && <div className="truncate text-sm text-muted-foreground sm:hidden">{page.subtitle}</div>}
@@ -232,7 +232,7 @@ export function PageListView({ source }: { source: ListSource }) {
       })
       navigate(urls.page(page.id))
     } catch (e) {
-      toast.error(`${t.list.createFailed}：${e instanceof Error ? e.message : ''}`)
+      toast.error(t.fmt.labelled(t.list.createFailed, e instanceof Error ? e.message : ''))
       setCreating(false)
     }
   }
@@ -291,7 +291,7 @@ export function PageListView({ source }: { source: ListSource }) {
             ))}
           </div>
         ) : query.isError ? (
-          <ErrorState message={`${t.list.loadFailed}：${query.error.message}`} onRetry={() => void query.refetch()} />
+          <ErrorState message={t.fmt.labelled(t.list.loadFailed, query.error.message)} onRetry={() => void query.refetch()} />
         ) : items.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-20 text-center">
             <p className="text-sm text-muted-foreground">{isInbox ? t.inbox.empty : empty.main}</p>

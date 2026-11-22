@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { captureKey, loadCapture, noteBody, saveCapture } from '@/lib/capture'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 const CaptureContext = createContext<{ open: () => void; available: boolean } | null>(null)
 
@@ -102,7 +102,7 @@ function CaptureForm({ space, inbox, onClose, onDone, onBusy }: { space: string;
       toast.success(t.capture.saved, { action: { label: t.capture.open, onClick: () => navigate(urls.page(page.id)) } })
     } catch (e) {
       // The box stays open with the text.
-      setError(`${t.capture.failed}：${e instanceof Error ? e.message : ''}`)
+      setError(t.fmt.labelled(t.capture.failed, e instanceof Error ? e.message : ''))
     }
   }
 

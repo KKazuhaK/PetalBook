@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 import { SidebarTrigger, useSidebar } from '@/components/ui/sidebar'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 // The button that opens and closes the sidebar lives in two places: in the
 // sidebar's own header, and in the page's top bar while the sidebar is out of

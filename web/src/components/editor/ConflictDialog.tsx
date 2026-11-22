@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { fieldsOf, type ConflictInfo } from '@/editor/saveController'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 import { absoluteTime } from '@/lib/time'
 
 interface Shown {
@@ -26,7 +26,7 @@ function Version({ heading, shown }: { heading: string; shown: Shown }) {
       {line(t.conflict.title_, shown.title)}
       {line(t.conflict.subtitle_, shown.subtitle)}
       {shown.source ? line(t.conflict.source_, shown.source) : null}
-      {line(t.conflict.tags_, shown.tags.join('、'))}
+      {line(t.conflict.tags_, t.fmt.list(shown.tags))}
       <div className="text-sm text-muted-foreground">{t.conflict.body_}</div>
       {/* Plain Markdown text: it is the file's content, shown as written. */}
       <pre className="max-h-72 overflow-auto rounded-md bg-muted p-2.5 text-xs leading-relaxed whitespace-pre-wrap break-words">{shown.body || t.conflict.none}</pre>

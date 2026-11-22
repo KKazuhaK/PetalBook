@@ -19,8 +19,8 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { ErrorState, Spinner } from '@/components/common'
 import { useIsMobile } from '@/hooks/use-mobile'
-import { absoluteTime } from '@/lib/time'
-import { t } from '@/i18n/zh-CN'
+import { absoluteTime, clockTime, shortDate } from '@/lib/time'
+import { t } from '@/i18n'
 import { DiffView, changeStops } from './DiffView'
 import { HeaderChanges } from './HeaderChanges'
 import { RawDiff } from './RawDiff'
@@ -50,8 +50,7 @@ const when = (iso: string) => absoluteTime(iso).replace(/:\d{2}$/, '')
 // Short enough for a phone's title row.
 const whenShort = (iso: string) => {
   const d = new Date(iso)
-  const date = d.getFullYear() === new Date().getFullYear() ? `${d.getMonth() + 1}月${d.getDate()}日` : `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`
-  return `${date} ${d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}`
+  return `${shortDate(d)} ${clockTime(d)}`
 }
 
 function useContent(space: string, pageId: string, item: HistoryItem | null) {
@@ -289,7 +288,7 @@ export default function HistoryMode({ space, pageId, folder = '', getCurrent, sa
               {t.history.loading}
             </p>
           )}
-          {status === 'error' && <ErrorState message={`${t.history.loadFailed}：${history.error?.message ?? ''}`} onRetry={() => { askedFor.current = null; void history.refetch() }} />}
+          {status === 'error' && <ErrorState message={t.fmt.labelled(t.history.loadFailed, history.error?.message ?? '')} onRetry={() => { askedFor.current = null; void history.refetch() }} />}
           {status === 'empty' && (
             <div className="py-12 text-center">
               <p className="text-sm">{t.history.empty}</p>
@@ -300,7 +299,7 @@ export default function HistoryMode({ space, pageId, folder = '', getCurrent, sa
             <>
               <Summary mode={mode} item={selItem} kind={selItem ? describeVersion(selItem, items[selIndex + 1]).kind : ''} base={baseItem} targetIsCurrent={targetIsCurrent} counts={counts} />
               {view === 'rendered' && <Legend />}
-              {loadError && <ErrorState message={`${t.history.versionFailed}：${loadError.message}`} onRetry={() => { base.retry(); target.retry() }} />}
+              {loadError && <ErrorState message={t.fmt.labelled(t.history.versionFailed, loadError.message)} onRetry={() => { base.retry(); target.retry() }} />}
               {!loadError && !result && (
                 <p role="status" className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
                   <Spinner />
@@ -362,7 +361,7 @@ function Summary({ mode, item, kind, base, targetIsCurrent, counts }: { mode: Mo
   return (
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
       <span className="font-medium">{`${when(item.time)} · ${item.author} · ${kind}`}</span>
-      {mode === 'previous' && <span className="text-muted-foreground">{against ? `${t.history.modes.previous}：${against}` : t.history.firstVersion}</span>}
+      {mode === 'previous' && <span className="text-muted-foreground">{against ? t.fmt.labelled(t.history.modes.previous, against) : t.history.firstVersion}</span>}
       {mode === 'current' && <span className="text-muted-foreground">{t.history.modes.current}</span>}
       {mode === 'pick' && <span className="text-muted-foreground">{targetIsCurrent ? t.history.currentContent : ''}</span>}
       {counts && (

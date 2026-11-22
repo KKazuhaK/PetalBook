@@ -6,7 +6,7 @@ import type { Extensions } from '@tiptap/core'
 import { Placeholder } from '@tiptap/extensions'
 import { createExtensions } from '@/markdown'
 import { addressToUrl } from '@/lib/fileAddress'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 import { PlainTextPaste } from './paste'
 import { PageFiles, type PageFilesOptions } from './pageFiles'
 

@@ -3,8 +3,8 @@ import type { HistoryItem } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/common'
-import { absoluteTime } from '@/lib/time'
-import { t } from '@/i18n/zh-CN'
+import { absoluteTime, clockTime } from '@/lib/time'
+import { lang, t } from '@/i18n'
 
 const dirOf = (path: string) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '')
 
@@ -34,9 +34,9 @@ function dayLabel(iso: string, now = new Date()): string {
   if (days === 0) return t.history.dayToday
   if (days === 1) return t.history.dayYesterday
   const sameYear = d.getFullYear() === now.getFullYear()
-  return t.history.dayOf(d.toLocaleDateString('zh-CN', { year: sameYear ? undefined : 'numeric', month: 'long', day: 'numeric', weekday: 'short' }))
+  return t.history.dayOf(d.toLocaleDateString(lang, { year: sameYear ? undefined : 'numeric', month: 'long', day: 'numeric', weekday: 'short' }))
 }
-const clock = (iso: string) => new Date(iso).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+const clock = (iso: string) => clockTime(new Date(iso))
 
 export interface VersionListProps {
   items: HistoryItem[]

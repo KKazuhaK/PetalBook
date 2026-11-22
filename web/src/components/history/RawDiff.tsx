@@ -1,5 +1,5 @@
 import type { LineDiff } from '@/diff'
-import { t } from '@/i18n/zh-CN'
+import { t } from '@/i18n'
 
 // A line-by-line comparison of the Markdown text. A sign column says what each
 // line is, so it does not depend on colour.

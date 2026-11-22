@@ -5,9 +5,10 @@
 
 import type { ConnectRemoteInput, Identity, Invite, Page, Remote, RemoteKey, RemoteState, Role, SpaceInfo, User } from '../types.ts'
 import { gitBlobId } from './sha1.ts'
-import { ALPHABET, HttpError, compareCodePoints, createSpaceStore, isRecord, rfc3339, type SpaceStore } from './store.ts'
+import { ALPHABET, HttpError, compareCodePoints, createSpaceStore, isRecord, rfc3339, validFolder, type SpaceStore } from './store.ts'
 import { SPACE_NAME } from './seed.ts'
 import { createFileStore, DEFAULT_MAX_UPLOAD, type FileStore } from './files.ts'
+import { DEFAULT_MAX_IMPORT, runImport } from './importer.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
 
 const DEFAULT_INBOX = 'Inbox'
@@ -51,6 +52,8 @@ export interface MockOptions {
   remote?: MockRemoteOptions
   // The largest upload in bytes (`--max-upload`); 10 MiB by default.
   maxUpload?: number
+  // The largest import in bytes (`--max-import`); 100 MiB by default.
+  maxImport?: number
 }
 
 // What the mock plays for the remote endpoints.
@@ -151,6 +154,7 @@ export function createMockServer(options: MockOptions = {}) {
   const idleMs = options.draftIdleMs ?? 120_000
   const maxMs = options.draftMaxMs ?? 600_000
   const maxUpload = options.maxUpload ?? DEFAULT_MAX_UPLOAD
+  const maxImport = options.maxImport ?? DEFAULT_MAX_IMPORT
   const oidc = accounts ? (options.oidc ?? null) : null
   let counter = 0
 
@@ -715,6 +719,15 @@ export function createMockServer(options: MockOptions = {}) {
       const r = space.files.upload(id, name, raw)
       return { status: r.created ? 201 : 200, body: r.asset }
     }
+    if (rest === '/import' && method === 'POST') {
+      const why = blockedReason(space)
+      if (why) throw new HttpError(503, 'unavailable', why)
+      const folder = url.searchParams.get('folder') ?? ''
+      if (!validFolder(folder)) throw new HttpError(400, 'invalid', folderRuleMessage(folder) ?? '文件夹路径不合法')
+      if (!raw || raw.length === 0) throw new HttpError(400, 'invalid', '文件是空的')
+      if (raw.length > maxImport) throw new HttpError(413, 'invalid', `文件太大，上限是 ${maxImport} 字节`)
+      return { status: 200, body: runImport(st.create, raw, folder, url.searchParams.get('name') ?? '') }
+    }
     if (rest.startsWith('/files/') && method === 'GET') {
       let segments: string[]
       try {
@@ -737,7 +750,7 @@ export function createMockServer(options: MockOptions = {}) {
     const path = url.pathname.replace(/^\/api/, '')
     const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
 
-    if (method === 'GET' && path === '/meta') return j({ version: 'mock', maxUpload, spaces: callerSpaces(ctx.user).map(spaceInfo) })
+    if (method === 'GET' && path === '/meta') return j({ version: 'mock', maxUpload, maxImport, spaces: callerSpaces(ctx.user).map(spaceInfo) })
     if (method === 'GET' && path === '/session') {
       const base = { mode, user: ctx.user ? publicUser(ctx.user) : null, setup: accounts && users.size === 0 }
       return {
@@ -881,10 +894,10 @@ export function createMockServer(options: MockOptions = {}) {
       counter++
       try {
         sweepAll()
-        const upload = method.toUpperCase() === 'POST' && /^\/api\/spaces\/[^/?]+\/pages\/[^/?]+\/assets(\?|$)/.test(target)
+        const upload = method.toUpperCase() === 'POST' && /^\/api\/spaces\/[^/?]+\/(pages\/[^/?]+\/assets|import)(\?|$)/.test(target)
         // Writes must say they are JSON, like the real server insists; a file says it is bytes.
         if (upload) {
-          if (!/^application\/octet-stream\s*(;|$)/i.test(contentType ?? '')) throw new HttpError(415, 'invalid', '上传文件需要 Content-Type: application/octet-stream')
+          if (!/^application\/octet-stream\s*(;|$)/i.test(contentType ?? '')) throw new HttpError(415, 'invalid', '上传文件和导入需要 Content-Type: application/octet-stream')
           return route('POST', new URL(target, 'http://mock.local'), {}, contextOf(cookie), raw ?? new TextEncoder().encode(bodyText ?? ''))
         }
         if (method.toUpperCase() !== 'GET' && !/^application\/json\s*(;|$)/i.test(contentType ?? '')) throw new HttpError(415, 'invalid', '请求需要 Content-Type: application/json')
