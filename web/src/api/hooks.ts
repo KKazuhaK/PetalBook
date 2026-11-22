@@ -119,13 +119,11 @@ function useViewedSpace(space: string | null, wanted: boolean) {
         const hit = data?.pages.flatMap((p) => p.items).find((s) => s.id === space)
         if (hit) return asSpace(hit)
       }
-      let cursor = ''
-      for (;;) {
-        const r = await api.adminSpaces({ cursor: cursor || undefined, limit: 200 }, signal)
-        const hit = r.items.find((s) => s.id === space)
-        if (hit) return asSpace(hit)
-        if (!r.next) return null
-        cursor = r.next
+      try {
+        return asSpace(await api.adminSpace(space ?? '', signal))
+      } catch (e) {
+        if (e instanceof ApiError && e.code === 'not_found') return null
+        throw e
       }
     },
   })

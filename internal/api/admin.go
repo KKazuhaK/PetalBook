@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"runtime"
 	"strconv"
@@ -57,6 +58,15 @@ func (s *server) adminListSpaces(c *call) {
 		s.fail(c.w, err)
 		return
 	}
+	items := s.adminSpaceItems(c, rows)
+	writeJSON(c.w, http.StatusOK, struct {
+		Items []adminSpaceResp `json:"items"`
+		Next  string           `json:"next"`
+	}{items, next})
+}
+
+// adminSpaceItems is the answer's form of rows read by the store.
+func (s *server) adminSpaceItems(c *call, rows []store.AdminSpace) []adminSpaceResp {
 	ids := make([]string, len(rows))
 	for i, r := range rows {
 		ids[i] = r.ID
@@ -75,10 +85,21 @@ func (s *server) adminListSpaces(c *call) {
 		}
 		items[i] = it
 	}
-	writeJSON(c.w, http.StatusOK, struct {
-		Items []adminSpaceResp `json:"items"`
-		Next  string           `json:"next"`
-	}{items, next})
+	return items
+}
+
+// adminGetSpace is one item of the list, found by its id.
+func (s *server) adminGetSpace(c *call) {
+	row, err := store.GetAdminSpace(c.r.Context(), s.opt.Store.Q(), c.r.PathValue("space"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(c.w, http.StatusNotFound, "not_found", "no such space")
+		return
+	}
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	writeJSON(c.w, http.StatusOK, s.adminSpaceItems(c, []store.AdminSpace{row})[0])
 }
 
 func (s *server) adminResizeSpace(c *call) {

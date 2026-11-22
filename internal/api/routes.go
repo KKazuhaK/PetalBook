@@ -116,6 +116,7 @@ var routeTable = []route{
 	{"DELETE", "/api/invites/{id}", admin, true, false, false, (*server).deleteInvite},
 
 	{"GET", "/api/admin/spaces", admin, true, false, false, (*server).adminListSpaces},
+	{"GET", "/api/admin/spaces/{space}", admin, true, false, false, (*server).adminGetSpace},
 	{"POST", "/api/admin/spaces/{space}/size", admin, true, false, false, (*server).adminResizeSpace},
 	{"POST", "/api/admin/spaces/{space}/transfer", admin, true, false, false, (*server).adminTransferSpace},
 	{"POST", "/api/admin/spaces/{space}/disable", admin, true, false, false, (*server).adminDisableSpace},

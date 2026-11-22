@@ -131,6 +131,34 @@ func TestAdminListsEverySpaceWithOwnersAndPages(t *testing.T) {
 	})
 }
 
+func TestAdminGetsOneSpaceAsTheListHasIt(t *testing.T) {
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		tang := a.addUser("tang", pw, "member")
+		a.addUser("mei", pw, "member")
+		sid := tang.do("POST", "/api/spaces", map[string]any{"name": "Team Rocket"}).want(t, 201, "").body["id"].(string)
+		tang.do("POST", "/api/spaces/"+sid+"/members", map[string]any{"username": "mei", "role": "editor"}).want(t, 201, "")
+
+		// Every space, the personal ones included, is the same object as its list item.
+		list := admin.do("GET", "/api/admin/spaces", nil).want(t, 200, "").body["items"].([]any)
+		if len(list) != 4 {
+			t.Fatalf("%d spaces", len(list))
+		}
+		for _, it := range list {
+			want := it.(map[string]any)
+			got := admin.do("GET", "/api/admin/spaces/"+want["id"].(string), nil).want(t, 200, "").body
+			if fmt.Sprint(got) != fmt.Sprint(want) {
+				t.Fatalf("%v != %v", got, want)
+			}
+		}
+		one := admin.do("GET", "/api/admin/spaces/"+sid, nil).want(t, 200, "").body
+		if o, _ := one["owner"].(map[string]any); one["members"] != float64(2) || o["username"] != "tang" {
+			t.Fatalf("%v", one)
+		}
+		admin.do("GET", "/api/admin/spaces/01ZZZZZZZZ", nil).want(t, 404, "not_found")
+	})
+}
+
 func TestAdminListDoesNotOpenSpaces(t *testing.T) {
 	opened := 0
 	eachAccounts(t, accOpts{spaces: func(o *spaces.Options) { o.OpenHook = func(string) { opened++ } }}, func(t *testing.T, a *acc) {

@@ -634,6 +634,21 @@ export function createMockServer(options: MockOptions = {}) {
     if (!s) throw new HttpError(404, 'not_found', 'no such space')
     return s
   }
+  const adminItem = (s: SpaceRec): AdminSpace => {
+    const owner = ownerOf(s)
+    return {
+      id: s.id,
+      name: s.name,
+      personal: s.personal,
+      created: rfc3339(s.created),
+      disabled: s.disabled,
+      owner: owner ? { id: owner.id, username: owner.username, name: owner.name } : null,
+      members: s.members.size,
+      sizeBytes: s.size ? s.size.bytes : null,
+      sizeAt: s.size ? rfc3339(s.size.at) : null,
+      sync: spaceSync(s),
+    }
+  }
   const sizeOf = (s: SpaceRec) => {
     // The files of the pages, plus what a repository weighs on its own.
     let bytes = 4096
@@ -660,21 +675,7 @@ export function createMockServer(options: MockOptions = {}) {
       const from = after ? all.findIndex((s) => s.id === after) + 1 : 0
       const matching = all.slice(from).filter((s) => needle === '' || s.name.toLowerCase().includes(needle))
       const page = matching.slice(0, limit)
-      const items: AdminSpace[] = page.map((s) => {
-        const owner = ownerOf(s)
-        return {
-          id: s.id,
-          name: s.name,
-          personal: s.personal,
-          created: rfc3339(s.created),
-          disabled: s.disabled,
-          owner: owner ? { id: owner.id, username: owner.username, name: owner.name } : null,
-          members: s.members.size,
-          sizeBytes: s.size ? s.size.bytes : null,
-          sizeAt: s.size ? rfc3339(s.size.at) : null,
-          sync: spaceSync(s),
-        }
-      })
+      const items = page.map(adminItem)
       return j({ items, next: matching.length > limit ? page[page.length - 1].id : '' })
     }
     if (path === '/admin/status' && method === 'GET') {
@@ -718,6 +719,7 @@ export function createMockServer(options: MockOptions = {}) {
           s.disabled = one[2] === 'disable'
           return { status: 204 }
         case undefined:
+          if (method === 'GET') return j(adminItem(s))
           if (method !== 'DELETE') break
           if (s.personal) throw new HttpError(409, 'personal_space', 'a personal space belongs to one person and cannot be transferred or deleted')
           spaces.delete(id)

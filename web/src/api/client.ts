@@ -4,6 +4,7 @@ import { t } from '@/i18n'
 
 import type {
   AccountInfo,
+  AdminSpace,
   AdminSpaceList,
   AdminSpacesParams,
   CreatedInvite,
@@ -389,6 +390,8 @@ export const api = {
     const qs = q.toString()
     return request<AdminSpaceList>(`/admin/spaces${qs ? `?${qs}` : ''}`, { signal })
   },
+  // One space as the list has it; 404 for an id that is no space.
+  adminSpace: (id: string, signal?: AbortSignal) => request<AdminSpace>(`/admin/spaces/${enc(id)}`, { signal }),
   // Measures the space's directory now.
   adminResizeSpace: (id: string) => request<SpaceSize>(`/admin/spaces/${enc(id)}/size`, { method: 'POST' }),
   adminTransferSpace: (id: string, userId: string) => request<void>(`/admin/spaces/${enc(id)}/transfer`, { method: 'POST', body: { userId } }),

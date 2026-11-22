@@ -42,6 +42,9 @@ type SpaceFilter struct {
 	// PostgreSQL LOWER follows the database's locale (the C locale folds ASCII
 	// only). Either way it is the same single query and page.
 	Dialect Dialect
+	// ID keeps only the space with this id: the same row the list has, found
+	// directly.
+	ID string
 	// After is the id the page continues after ("" for the first page).
 	After string
 	// Limit is the page size; at most one more row is read to learn whether
@@ -84,6 +87,10 @@ func ListAllSpaces(ctx context.Context, q Q, f SpaceFilter) (out []AdminSpace, n
 	if f.After != "" {
 		where = append(where, `s.id > ?`)
 		args = append(args, f.After)
+	}
+	if f.ID != "" {
+		where = append(where, `s.id = ?`)
+		args = append(args, f.ID)
 	}
 	if f.Query != "" {
 		lower := "LOWER"
@@ -142,6 +149,19 @@ func ListAllSpaces(ctx context.Context, q Q, f SpaceFilter) (out []AdminSpace, n
 		next = out[len(out)-1].ID
 	}
 	return out, next, nil
+}
+
+// GetAdminSpace returns one space as the list shows it (the same query, cut to
+// the one id), or ErrNotFound.
+func GetAdminSpace(ctx context.Context, q Q, id string) (AdminSpace, error) {
+	rows, _, err := ListAllSpaces(ctx, q, SpaceFilter{ID: id, Limit: 1})
+	if err != nil {
+		return AdminSpace{}, err
+	}
+	if len(rows) == 0 {
+		return AdminSpace{}, ErrNotFound
+	}
+	return rows[0], nil
 }
 
 // SetSpaceDisabled stops or allows opening a space.

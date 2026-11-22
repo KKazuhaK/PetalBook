@@ -281,6 +281,7 @@ function suite(target: Target) {
         ['DELETE', `/api/spaces/${spaceId}/members/local`],
         ['GET', '/api/admin/spaces'],
         ['GET', '/api/admin/status'],
+        ['GET', `/api/admin/spaces/${spaceId}`],
         ['POST', `/api/admin/spaces/${spaceId}/size`],
         ['POST', `/api/admin/spaces/${spaceId}/transfer`, { userId: 'local' }],
         ['POST', `/api/admin/spaces/${spaceId}/disable`],
@@ -803,6 +804,7 @@ function suite(target: Target) {
       const adminPaths: [string, string, unknown?][] = [
         ['GET', '/api/admin/spaces'],
         ['GET', '/api/admin/status'],
+        ['GET', '/api/admin/spaces/01ZZZZZZZZ'],
         ['POST', '/api/admin/spaces/01ZZZZZZZZ/size'],
         ['POST', '/api/admin/spaces/01ZZZZZZZZ/transfer', { userId: 'x' }],
         ['POST', '/api/admin/spaces/01ZZZZZZZZ/disable'],
@@ -835,7 +837,7 @@ function suite(target: Target) {
 
       it('an unknown space is 404 not_found', async () => {
         for (const [method, path, body] of adminPaths.filter(([, p]) => p.includes('01ZZZZZZZZ'))) {
-          const r = await call(admin, method, path, body ?? {})
+          const r = await call(admin, method, path, body ?? (method === 'GET' ? undefined : {}))
           expect([r.status, r.json?.error], `${method} ${path}`).toEqual([404, 'not_found'])
         }
       })
@@ -863,6 +865,19 @@ function suite(target: Target) {
         expect((await listAll('no-such-space-' + run)).length).toBe(0)
         const bad = await call(admin, 'GET', '/api/admin/spaces?limit=0')
         expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
+      })
+
+      it('finds one space by its id: the same object as its item of the list, 404 for an unknown id', async () => {
+        const owner = await newMember(uniq('g1'))
+        const guest = await newMember(uniq('g2'))
+        const name = `Single ${run}`
+        const sp = await ownedSpace(owner, name)
+        await addMember(owner, sp.id, guest.user.username, 'editor')
+        const listed = (await listAll(name.toLowerCase())).find((s) => s.id === sp.id)
+        expect(listed).toBeTruthy()
+        expect(await as(admin, () => api.adminSpace(sp.id))).toEqual(listed)
+        const missing = await call(admin, 'GET', '/api/admin/spaces/01ZZZZZZZZ')
+        expect([missing.status, missing.json.error]).toEqual([404, 'not_found'])
       })
 
       it('measures a space on request and stores the size', async () => {

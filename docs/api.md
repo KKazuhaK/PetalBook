@@ -1069,6 +1069,13 @@ repository"), as the server knows it without opening the space. A space that
 has never been opened since the server started has the state it was last left
 in; nothing is opened to fill this in.
 
+### `GET /api/admin/spaces/{space}`
+
+One space, the same object as an item of the list (same first owner, same
+member count), found by its id with one query; this is how a client finds a
+space it was sent to by address without reading the list. `404 not_found` for
+an id that is no space.
+
 ### `POST /api/admin/spaces/{space}/size`
 
 Measures the space's directory now (waiting its turn if a measurement is
