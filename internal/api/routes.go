@@ -136,6 +136,7 @@ var routeTable = []route{
 	{"PUT", "/api/spaces/{space}/pages/{id}/draft", inSpace(perm.Write), false, false, false, (*server).putDraft},
 	{"DELETE", "/api/spaces/{space}/pages/{id}/draft", inSpace(perm.Read), false, false, false, (*server).deleteDraft},
 	{"POST", "/api/spaces/{space}/pages/{id}/commit", inSpace(perm.Write), false, false, false, (*server).commitDraft},
+	{"PATCH", "/api/spaces/{space}/pages/{id}/props", inSpace(perm.Write), false, false, false, (*server).patchProps},
 	{"POST", "/api/spaces/{space}/pages/{id}/move", inSpace(perm.Write), false, false, false, (*server).movePage},
 	{"GET", "/api/spaces/{space}/tree", inSpace(perm.Read), false, false, false, (*server).getTree},
 	{"POST", "/api/spaces/{space}/folders", inSpace(perm.Write), false, false, false, (*server).createFolder},
@@ -144,6 +145,10 @@ var routeTable = []route{
 	{"POST", "/api/spaces/{space}/pages/batch", inSpace(perm.Write), false, false, false, (*server).batchPages},
 	{"GET", "/api/spaces/{space}/tags", inSpace(perm.Read), false, false, false, (*server).getTags},
 	{"PUT", "/api/spaces/{space}/tags/{tag}", inSpace(perm.Write), false, false, false, (*server).putTag},
+	{"GET", "/api/spaces/{space}/types", inSpace(perm.Read), false, false, false, (*server).getTypes},
+	{"PUT", "/api/spaces/{space}/types/{name}", inSpace(perm.Manage), false, false, false, (*server).putType},
+	{"DELETE", "/api/spaces/{space}/types/{name}", inSpace(perm.Manage), false, false, false, (*server).deleteType},
+	{"PUT", "/api/spaces/{space}/folders/type", inSpace(perm.Manage), false, false, false, (*server).putFolderType},
 	{"POST", "/api/spaces/{space}/reindex", inSpace(perm.Manage), false, false, false, (*server).reindex},
 
 	{"POST", "/api/spaces/{space}/pages/{id}/assets", inSpace(perm.Write), false, false, true, (*server).putAsset},

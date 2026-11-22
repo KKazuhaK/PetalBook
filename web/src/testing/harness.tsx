@@ -148,9 +148,9 @@ export const click = (el: Element | null | undefined) => {
 }
 
 // Types into a controlled input the way a person would.
-export const type = (input: HTMLInputElement | HTMLSelectElement, value: string) =>
+export const type = (input: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement, value: string) =>
   act(async () => {
-    const proto = input instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype
+    const proto = input instanceof HTMLSelectElement ? HTMLSelectElement.prototype : input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
     Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(input, value)
     input.dispatchEvent(new Event(input instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }))
   })

@@ -21,6 +21,7 @@ import type {
   Page,
   PageDraft,
   PageList,
+  PatchPropsInput,
   PageVersion,
   Remote,
   RemoteKey,
@@ -30,6 +31,10 @@ import type {
   SpaceRole,
   TagColor,
   TagsResponse,
+  TypeInput,
+  PageType,
+  TypesResponse,
+  FolderBinding,
   TreeResponse,
   UploadedAsset,
   User,
@@ -240,6 +245,8 @@ export function listParamsToQuery(p: ListParams): string {
   if (p.createdFrom) q.set('createdFrom', p.createdFrom)
   if (p.createdTo) q.set('createdTo', p.createdTo)
   if (p.sort) q.set('sort', p.sort)
+  if (p.filter?.length) q.set('filter', JSON.stringify(p.filter))
+  if (p.props) q.set('props', '1')
   if (p.limit) q.set('limit', String(p.limit))
   if (p.cursor) q.set('cursor', p.cursor)
   const s = q.toString()
@@ -265,6 +272,8 @@ export function spaceApi(space: string) {
     getPage: (id: string, signal?: AbortSignal) => request<Page>(pageBase(id), { signal }),
     createPage: (input: CreatePageInput = {}) => request<Page>(base('/pages'), { method: 'POST', body: input }),
     savePage: (id: string, input: SavePageInput, opts: { keepalive?: boolean } = {}) => request<Page>(pageBase(id), { method: 'PUT', body: input, keepalive: opts.keepalive }),
+    // Changes properties of the header only; the body does not travel. 409 with the page on a stale rev.
+    patchProps: (id: string, input: PatchPropsInput) => request<Page>(pageBase(id, '/props'), { method: 'PATCH', body: input }),
     movePage: (id: string, folder: string) => request<Page>(pageBase(id, '/move'), { method: 'POST', body: { folder } }),
     deletePage: (id: string) => request<void>(pageBase(id), { method: 'DELETE' }),
     // Several pages as one change. Resolves to how many were moved or deleted.
@@ -299,6 +308,13 @@ export function spaceApi(space: string) {
     tags: (signal?: AbortSignal) => request<TagsResponse>(base('/tags'), { signal }),
     // Sets a tag's colour, or removes it with null. The answer leaves `color` out when removed.
     setTagColor: (tag: string, color: TagColor | null) => request<{ tag: string; color?: TagColor }>(base(`/tags/${enc(tag)}`), { method: 'PUT', body: { color } }),
+
+    // Page types and the folders bound to them. Writing needs `manage`.
+    types: (signal?: AbortSignal) => request<TypesResponse>(base('/types'), { signal }),
+    putType: (name: string, input: TypeInput) => request<PageType>(base(`/types/${enc(name)}`), { method: 'PUT', body: input }),
+    deleteType: (name: string) => request<void>(base(`/types/${enc(name)}`), { method: 'DELETE' }),
+    // `type` "" removes the binding.
+    bindFolder: (folder: string, type: string) => request<FolderBinding>(base('/folders/type'), { method: 'PUT', body: { folder, type } }),
 
     // History: nothing here is asked for until the history panel is open.
     history: (id: string, params: { limit?: number; cursor?: string } = {}, signal?: AbortSignal) => {

@@ -1,4 +1,4 @@
-import { useCallback, type ReactNode } from 'react'
+import { lazy, Suspense, useCallback, type ReactNode } from 'react'
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router'
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog'
 import { X } from 'lucide-react'
@@ -19,6 +19,9 @@ import { groupsOf, resolveSection, settingsPath, visibleSections, type Visibilit
 import type { SettingsState } from './useSettings'
 import { SyncPanel } from './SyncPanel'
 import { MembersPanel } from './MembersPanel'
+
+// The page types' editor is a chunk of its own, loaded when its section is opened.
+const TypesPanel = lazy(() => import('./TypesPanel'))
 
 // The settings surface: one dialog, reached from `/settings/<section>`. It is a
 // route so a link, a reload and the old addresses all work; what is behind it is
@@ -77,6 +80,13 @@ export default function SettingsRoute() {
         break
       case 'general':
         body = <GeneralPanel space={sp} />
+        break
+      case 'types':
+        body = (
+          <Suspense fallback={<PageFallback />}>
+            <TypesPanel canManage={can(current, 'manage')} />
+          </Suspense>
+        )
         break
       case 'members':
         body = <MembersPanel space={sp} />

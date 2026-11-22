@@ -545,6 +545,8 @@ type pageResp struct {
 	Meta    page.Meta `json:"meta"`
 	Header  string    `json:"header"`
 	Body    string    `json:"body"`
+	// EffectiveType is the type the page has: its header's, else its folder's.
+	EffectiveType string `json:"effectiveType"`
 }
 
 func toPage(p *space.Page) pageResp {
@@ -552,7 +554,7 @@ func toPage(p *space.Page) pageResp {
 	if m == nil {
 		m = page.Meta{}
 	}
-	return pageResp{ID: p.ID, Path: p.Path, Folder: p.Folder, Rev: p.Rev, Updated: rfc3339(p.Updated), Meta: m, Header: p.Header, Body: p.Body}
+	return pageResp{ID: p.ID, Path: p.Path, Folder: p.Folder, Rev: p.Rev, Updated: rfc3339(p.Updated), Meta: m, Header: p.Header, Body: p.Body, EffectiveType: p.EffectiveType}
 }
 
 type summaryResp struct {
@@ -569,9 +571,15 @@ type summaryResp struct {
 	Created  string   `json:"created,omitempty"`
 	Updated  string   `json:"updated"`
 	Excerpt  string   `json:"excerpt"`
+	// EffectiveType is the type the page has: its header's, else its folder's.
+	EffectiveType string `json:"effectiveType"`
+	// Props and Rev are there when the listing was asked for them (props=1).
+	Props json.RawMessage `json:"props,omitempty"`
+	Rev   string          `json:"rev,omitempty"`
 }
 
-func toSummary(s index.Summary) summaryResp {
+func toSummary(s index.Summary, types space.TypeResolver) summaryResp {
 	return summaryResp{ID: s.ID, Path: s.Path, Folder: s.Folder, Title: s.Title, Subtitle: s.Subtitle, Source: s.Source, Label: s.Label,
-		Untitled: s.Untitled, Tags: s.Tags, Type: s.Type, Created: s.Created, Updated: rfc3339(s.Updated), Excerpt: s.Excerpt}
+		Untitled: s.Untitled, Tags: s.Tags, Type: s.Type, Created: s.Created, Updated: rfc3339(s.Updated), Excerpt: s.Excerpt,
+		EffectiveType: types.For(s.Folder, s.Type), Props: s.Props, Rev: s.Rev}
 }

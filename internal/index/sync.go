@@ -462,7 +462,7 @@ func (w *writer) queryRow(q string, args ...any) *sql.Row {
 }
 
 func (w *writer) clearAll() error {
-	for _, q := range []string{`DELETE FROM pages`, `DELETE FROM tags`, `DELETE FROM problems`, `INSERT INTO fts(fts) VALUES ('delete-all')`} {
+	for _, q := range []string{`DELETE FROM pages`, `DELETE FROM tags`, `DELETE FROM props`, `DELETE FROM problems`, `INSERT INTO fts(fts) VALUES ('delete-all')`} {
 		if _, err := w.tx.ExecContext(w.ctx, q); err != nil {
 			return err
 		}
@@ -487,7 +487,7 @@ func (w *writer) removePath(rel string) error {
 }
 
 func (w *writer) deleteRow(rowid int64) error {
-	for _, q := range []string{`DELETE FROM tags WHERE page = ?`, `DELETE FROM fts WHERE rowid = ?`, `DELETE FROM pages WHERE rowid = ?`} {
+	for _, q := range []string{`DELETE FROM tags WHERE page = ?`, `DELETE FROM props WHERE page = ?`, `DELETE FROM fts WHERE rowid = ?`, `DELETE FROM pages WHERE rowid = ?`} {
 		if _, err := w.exec(q, rowid); err != nil {
 			return err
 		}
@@ -544,17 +544,17 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 		return "", err
 	}
 	args := []any{e.ID, e.Path, e.Folder, e.Title, e.Subtitle, e.Source, b2i(e.Untitled), strings.ToLower(e.Title), e.Label, e.Type,
-		tagsJSON(e.Tags), e.Created, e.CreatedKey, e.MtimeNs, e.Size, e.Rev, e.Excerpt}
+		tagsJSON(e.Tags), e.Created, e.CreatedKey, e.MtimeNs, e.Size, e.Rev, e.Excerpt, e.PropsJSON}
 	if found {
 		if err := w.deleteRowKeepPage(rowid); err != nil {
 			return "", err
 		}
 		_, err = w.exec(`UPDATE pages SET id=?, path=?, folder=?, title=?, subtitle=?, source=?, untitled=?, title_key=?, label=?, type=?,
-			tags=?, created=?, created_key=?, mtime_ns=?, size=?, rev=?, excerpt=? WHERE rowid = ?`, append(args, rowid)...)
+			tags=?, created=?, created_key=?, mtime_ns=?, size=?, rev=?, excerpt=?, props=? WHERE rowid = ?`, append(args, rowid)...)
 	} else {
 		var res sql.Result
 		res, err = w.exec(`INSERT INTO pages(id, path, folder, title, subtitle, source, untitled, title_key, label, type,
-			tags, created, created_key, mtime_ns, size, rev, excerpt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, args...)
+			tags, created, created_key, mtime_ns, size, rev, excerpt, props) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, args...)
 		if err == nil {
 			rowid, err = res.LastInsertId()
 		}
@@ -564,6 +564,11 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 	}
 	for _, t := range e.Tags {
 		if _, err := w.exec(`INSERT OR IGNORE INTO tags(tag, page) VALUES (?, ?)`, t, rowid); err != nil {
+			return "", err
+		}
+	}
+	for _, r := range e.props {
+		if _, err := w.exec(`INSERT INTO props(page, key, pos, val, skey) VALUES (?,?,?,?,?)`, rowid, r.key, r.pos, r.val, r.skey); err != nil {
 			return "", err
 		}
 	}
@@ -588,7 +593,7 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 
 // deleteRowKeepPage clears the dependent rows of a page that is about to be rewritten.
 func (w *writer) deleteRowKeepPage(rowid int64) error {
-	for _, q := range []string{`DELETE FROM tags WHERE page = ?`, `DELETE FROM fts WHERE rowid = ?`} {
+	for _, q := range []string{`DELETE FROM tags WHERE page = ?`, `DELETE FROM props WHERE page = ?`, `DELETE FROM fts WHERE rowid = ?`} {
 		if _, err := w.exec(q, rowid); err != nil {
 			return err
 		}

@@ -25,6 +25,11 @@ type Entry struct {
 	Size             int64
 	Rev              string
 	Excerpt          string
+	// PropsJSON is the JSON object of the header's properties (see propsOf),
+	// "" for none.
+	PropsJSON string
+
+	props []propRow
 
 	// Text fed to the full-text index, already tokenised.
 	ftsTitle, ftsSubtitle, ftsSource, ftsBody string
@@ -52,6 +57,7 @@ func BuildEntry(rel string, data []byte, mtimeNs int64) (*Entry, *page.Problem) 
 	if e.Tags == nil {
 		e.Tags = []string{}
 	}
+	e.props, e.PropsJSON = propsOf(m)
 	e.CreatedKey = mtimeNs
 	if t, err := time.Parse("2006-01-02", e.Created); err == nil {
 		e.CreatedKey = t.UnixNano()

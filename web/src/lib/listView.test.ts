@@ -37,8 +37,11 @@ describe('view preference', () => {
     saveView(key, 'list')
     expect(loadView(key)).toBe('list')
   })
-  it('ignores a stored value it does not know', () => {
-    localStorage.setItem('k', 'table')
+  it('remembers the table too, and ignores a stored value it does not know', () => {
+    saveView('k', 'table')
+    expect(localStorage.getItem('k')).toBe('table')
+    expect(loadView('k')).toBe('table')
+    localStorage.setItem('k', 'kanban')
     expect(loadView('k')).toBe('list')
   })
   it('survives blocked storage', () => {

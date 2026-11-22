@@ -379,3 +379,40 @@ func TestNestedMapsCompareWithoutOrder(t *testing.T) {
 		t.Fatal("missing nested key not noticed")
 	}
 }
+
+// A date in a property is written as a date, as `created` is, and reads back
+// as the same text; a title or a tag that looks like one stays text.
+func TestDatesInPropertiesAreWrittenUnquoted(t *testing.T) {
+	d := Parse([]byte("---\nid: 01JD3K8Q7Z\n---\nbody\n"))
+	var m Meta
+	_ = json.Unmarshal([]byte(`{"id":"01JD3K8Q7Z","due":"2026-11-22","title":"2026-11-22","tags":["2026-11-23"],"note":"2026-11-22 morning"}`), &m)
+	if err := d.SetMeta(m); err != nil {
+		t.Fatal(err)
+	}
+	out := string(d.Bytes())
+	for _, want := range []string{"due: 2026-11-22\n", `title: "2026-11-22"`, `"2026-11-23"`, "note: 2026-11-22 morning\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in\n%s", want, out)
+		}
+	}
+	back := Parse([]byte(out)).Meta()
+	if v, _ := back.Get("due"); v != "2026-11-22" {
+		t.Errorf("due reads back as %#v", v)
+	}
+}
+
+func TestKeyKinds(t *testing.T) {
+	for _, k := range []string{"id", "title", "subtitle", "source", "tags", "created", "type"} {
+		if !IsBuiltinKey(k) {
+			t.Errorf("%s is built in", k)
+		}
+	}
+	for _, k := range []string{"status", "publish", "slug", "Title", ""} {
+		if IsBuiltinKey(k) {
+			t.Errorf("%q is not built in", k)
+		}
+	}
+	if !IsReservedKey("publish") || !IsReservedKey("slug") || IsReservedKey("status") {
+		t.Error("publish and slug are reserved, nothing else")
+	}
+}

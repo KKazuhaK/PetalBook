@@ -80,6 +80,10 @@ type Space struct {
 	now    func() time.Time
 	ops    fileOps
 
+	// cfg is what was last read of the bindings in space.yml (see config.go).
+	cfgMu sync.Mutex
+	cfg   configCache
+
 	// src is the file tree the index mirrors. syncEvery throttles the
 	// re-sync a missed lookup triggers, so ids that do not exist (a stale
 	// bookmark) cost one directory walk per interval, not one per request.

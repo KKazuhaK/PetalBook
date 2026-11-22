@@ -1,5 +1,5 @@
 import { createContext, useContext, useRef, useState, type MouseEvent, type ReactNode, type TouchEvent } from 'react'
-import { FilePlus2, FolderInput, FolderPlus, ListChecks, MoreHorizontal, PenLine, SquareArrowOutUpRight, Trash2 } from 'lucide-react'
+import { FilePlus2, FolderInput, FolderPlus, ListChecks, MoreHorizontal, PenLine, Shapes, SquareArrowOutUpRight, Trash2 } from 'lucide-react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { useSpacePermissions } from '@/api/hooks'
 import type { FileItem } from '@/lib/folders'
@@ -35,7 +35,7 @@ export function FileContextMenu({
   afterAction?: () => void
 }) {
   const ops = useFileOps()
-  const { write } = useSpacePermissions()
+  const { write, manage } = useSpacePermissions()
   const trigger = useRef<HTMLDivElement>(null)
   const [target, setTarget] = useState<{ key: string; items: FileItem[] } | null>(null)
 
@@ -88,6 +88,12 @@ export function FileContextMenu({
                 <ContextMenuItem onClick={() => ops.rename(one.path)}>
                   <PenLine />
                   {t.manage.rename}
+                </ContextMenuItem>
+              )}
+              {one?.kind === 'folder' && manage && (
+                <ContextMenuItem onClick={() => ops.setType(one.path)}>
+                  <Shapes />
+                  {t.manage.setType}
                 </ContextMenuItem>
               )}
               {one && target && onSelect && (

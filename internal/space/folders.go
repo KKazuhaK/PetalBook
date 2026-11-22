@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 
+	"go.yaml.in/yaml/v3"
+
 	"github.com/KKazuhaK/PetalBook/internal/index"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 )
@@ -224,6 +226,11 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	})
 	tx.touch(append(append([]string{}, oldPaths...), newPaths...)...)
 
+	// What was bound to the folder, and to the folders in it, follows it.
+	if err := s.editBindings(tx, func(root *yaml.Node) (bool, error) { return rebind(root, canonFrom, target) }); err != nil {
+		return "", err
+	}
+
 	oldDirs, newDirs := []string{canonFrom}, []string{target}
 	for _, d := range subdirs {
 		oldDirs, newDirs = append(oldDirs, path.Join(canonFrom, d)), append(newDirs, path.Join(target, d))
@@ -356,6 +363,15 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 			if os.Remove(filepath.Join(s.root, filepath.FromSlash(d))) == nil {
 				removed = append(removed, d)
 			}
+		}
+		// A folder that is gone has no type to keep. One that stays (it holds
+		// files that are not pages) keeps its binding.
+		if err := s.editBindings(tx, func(root *yaml.Node) (bool, error) {
+			return unbindWhere(root, func(folder, _ string) bool {
+				return (folder == canon || strings.HasPrefix(folder, canon+"/")) && s.fileGone(folder)
+			})
+		}); err != nil {
+			return struct{}{}, err
 		}
 		if tx.remote {
 			tx.dirs = append(tx.dirs, dirs...)

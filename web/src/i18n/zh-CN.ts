@@ -84,6 +84,7 @@ export const zhCN = {
     open: '打开',
     rename: '重命名',
     move: '移动到…',
+    setType: '设置类型…',
     delete: '删除',
     select: '选择',
     newPage: '新建页面',
@@ -347,7 +348,7 @@ export const zhCN = {
     disabledAdminLink: '去管理后台',
     disabledBack: '回到我的空间',
   },
-  view: { label: '显示方式', list: '列表', cards: '卡片' },
+  view: { label: '显示方式', list: '列表', cards: '卡片', table: '表格' },
   // The folder quick notes go to. A space made from the app gets this name.
   inbox: {
     folderName: '收件箱',
@@ -385,7 +386,7 @@ export const zhCN = {
     close: '关闭设置',
     nav: '设置导航',
     groups: { account: '账号', space: '空间' },
-    sections: { profile: '个人资料', preferences: '偏好设置', security: '安全', general: '常规', members: '成员', sync: '同步', import: '导入' },
+    sections: { profile: '个人资料', preferences: '偏好设置', security: '安全', general: '常规', types: '类型', members: '成员', sync: '同步', import: '导入' },
   },
   prefs: {
     appearance: '外观',

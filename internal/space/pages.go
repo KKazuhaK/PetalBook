@@ -27,13 +27,18 @@ type Page struct {
 	// Header is the header text exactly as the file has it.
 	Header string
 	Body   string
+	// EffectiveType is the type the page has: the one its header names, else
+	// the one of the nearest folder above it that is bound to a type, else "".
+	EffectiveType string
 }
 
-func pageFrom(rel string, data []byte, mtime time.Time) *Page {
+func (s *Space) pageFrom(rel string, data []byte, mtime time.Time) *Page {
 	doc := page.Parse(data)
+	m := doc.Meta()
 	return &Page{
-		ID: doc.Meta().ID(), Path: rel, Folder: folderOf(rel), Rev: page.Rev(data),
-		Updated: mtime.UTC(), Meta: doc.Meta(), Header: doc.HeaderText(), Body: doc.Body,
+		ID: m.ID(), Path: rel, Folder: folderOf(rel), Rev: page.Rev(data),
+		Updated: mtime.UTC(), Meta: m, Header: doc.HeaderText(), Body: doc.Body,
+		EffectiveType: s.TypeResolver().For(folderOf(rel), m.Type()),
 	}
 }
 
@@ -147,7 +152,7 @@ func (s *Space) Get(id string) (*Page, error) {
 	if err != nil {
 		return nil, err
 	}
-	return pageFrom(rel, data, mtime), nil
+	return s.pageFrom(rel, data, mtime), nil
 }
 
 // CreateInput is the body of a create request.
@@ -326,7 +331,7 @@ func (s *Space) afterWrite(tx *txn, rel string, data []byte, touched ...string) 
 			s.log.Warn("could not re-check duplicate ids", "error", err)
 		}
 	}
-	return pageFrom(rel, data, st.ModTime()), nil
+	return s.pageFrom(rel, data, st.ModTime()), nil
 }
 
 // saveMeta builds the header a save writes from the one the client sent.
@@ -393,7 +398,7 @@ func (s *Space) saveLocked(tx *txn, id, baseRev string, meta page.Meta, body str
 		return nil, err
 	}
 	if baseRev != page.Rev(data) {
-		return nil, &ConflictError{Current: pageFrom(rel, data, mtime)}
+		return nil, &ConflictError{Current: s.pageFrom(rel, data, mtime)}
 	}
 	doc := page.Parse(data)
 	old := doc.Meta()
@@ -409,7 +414,7 @@ func (s *Space) saveLocked(tx *txn, id, baseRev string, meta page.Meta, body str
 
 	wantRename := old.Title() != newMeta.Title()
 	if bytes.Equal(newData, data) && !wantRename {
-		return pageFrom(rel, data, mtime), nil
+		return s.pageFrom(rel, data, mtime), nil
 	}
 	abs, err := s.abs(rel)
 	if err != nil {
@@ -475,7 +480,7 @@ func (s *Space) Equivalent(id string, meta page.Meta, body string) (*Page, bool,
 	}
 	doc.SetBody(body)
 	same := bytes.Equal(doc.Bytes(), data) && old.Title() == newMeta.Title()
-	return pageFrom(rel, data, mtime), same, nil
+	return s.pageFrom(rel, data, mtime), same, nil
 }
 
 // Move puts a page in another folder, creating it if needed. A folder that
@@ -498,7 +503,7 @@ func (s *Space) moveLocked(tx *txn, id, folder string) (*Page, error) {
 		return nil, err
 	}
 	if folderOf(rel) == canon {
-		return pageFrom(rel, data, mtime), nil
+		return s.pageFrom(rel, data, mtime), nil
 	}
 	// A file named after the title gets the plain title name again where it is
 	// free (dropping a collision number it only had because of its old
@@ -646,4 +651,113 @@ func (s *Space) Reindex() (index.Stats, error) {
 		return index.Stats{}, ErrClosed
 	}
 	return s.idx.Sync(s.src, true)
+}
+
+// MaxPatchProps is the most properties one PatchProps may set and unset.
+const MaxPatchProps = 200
+
+// checkPropKey says whether a property can be set or removed by PatchProps:
+// anything that is not a field the application owns or keeps for itself.
+func checkPropKey(key string) error {
+	switch {
+	case key == "" || len(key) > 256 || !utf8.ValidString(key) || strings.IndexFunc(key, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0:
+		return invalidf("a property key is 1 to 256 bytes of text with no control characters")
+	case page.IsBuiltinKey(key):
+		return invalidf("%q is a field of every page; change it by saving the page", key)
+	case page.IsReservedKey(key):
+		return invalidf("%q is reserved", key)
+	}
+	return nil
+}
+
+// PatchProps changes some properties of a page's header and nothing else: the
+// body, the built-in fields and the other properties stay exactly as the file
+// has them. set gives values (a value that is null, blank text or an empty
+// list removes the property instead), unset names properties to remove. A
+// property that is new goes at the end of the header. baseRev must be the rev
+// the client read, as for Save; a page that has changed since is a
+// *ConflictError. The file is not written when nothing would change.
+func (s *Space) PatchProps(by Author, id, baseRev string, set page.Meta, unset []string) (*Page, error) {
+	if len(set)+len(unset) > MaxPatchProps {
+		return nil, invalidf("at most %d properties can be changed at once", MaxPatchProps)
+	}
+	seen := map[string]bool{}
+	for _, f := range set {
+		if err := checkPropKey(f.Key); err != nil {
+			return nil, err
+		}
+		seen[f.Key] = true
+	}
+	for _, k := range unset {
+		if err := checkPropKey(k); err != nil {
+			return nil, err
+		}
+		if seen[k] {
+			return nil, invalidf("%q is both set and unset", k)
+		}
+		seen[k] = true
+	}
+	s.refresh(id)
+	return mutate(s, by, func(tx *txn) (*Page, error) {
+		rel, data, mtime, err := s.load(id, false)
+		if err != nil {
+			return nil, err
+		}
+		if baseRev != page.Rev(data) {
+			return nil, &ConflictError{Current: s.pageFrom(rel, data, mtime)}
+		}
+		doc := page.Parse(data)
+		meta := doc.Meta().Clone()
+		for _, k := range unset {
+			if i := meta.Index(k); i >= 0 {
+				meta = append(meta[:i], meta[i+1:]...)
+			}
+		}
+		for _, f := range set {
+			i := meta.Index(f.Key)
+			switch {
+			case propCleared(f.Value):
+				if i >= 0 {
+					meta = append(meta[:i], meta[i+1:]...)
+				}
+			case i >= 0:
+				if !page.ValuesEqual(meta[i].Value, f.Value) {
+					meta[i].Value = f.Value
+				}
+			default:
+				meta = append(meta, f)
+			}
+		}
+		if err := doc.SetMeta(meta); err != nil {
+			return nil, invalidf("%v", err)
+		}
+		newData := doc.Bytes()
+		if bytes.Equal(newData, data) {
+			return s.pageFrom(rel, data, mtime), nil
+		}
+		abs, err := s.abs(rel)
+		if err != nil {
+			return nil, err
+		}
+		if err := tx.record(jrec{Op: "w", Path: rel, Rev: page.Rev(newData)}); err != nil {
+			return nil, err
+		}
+		if err := writeAtomic(s.tmpDir(), abs, newData); err != nil {
+			return nil, err
+		}
+		return s.afterWrite(tx, rel, newData)
+	})
+}
+
+// propCleared reports a value that is no value: null, blank text, an empty list.
+func propCleared(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return true
+	case string:
+		return strings.TrimSpace(x) == ""
+	case []any:
+		return len(x) == 0
+	}
+	return false
 }

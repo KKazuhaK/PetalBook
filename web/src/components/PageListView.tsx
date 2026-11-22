@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
-import { ArrowUpDown, FilePlus2, FolderPlus, LayoutGrid, List as ListIcon, PenLine, Tag as TagIcon } from 'lucide-react'
+import { ArrowUpDown, FilePlus2, FolderPlus, LayoutGrid, List as ListIcon, PenLine, Table2, Tag as TagIcon } from 'lucide-react'
 import { toast } from 'sonner'
-import { useActiveSpace, useCreatePage, usePageList, useSpacePermissions, useUrls } from '@/api/hooks'
+import { useActiveSpace, useCreatePage, usePageList, useSpacePermissions, useTypes, useUrls } from '@/api/hooks'
 import type { ListParams, SortKey } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -17,9 +17,13 @@ import { useFileOps } from '@/components/files/FileOps'
 import { SelectionBar } from '@/components/files/SelectionBar'
 import { childFolders, itemKey, type FileItem } from '@/lib/folders'
 import { loadView, saveView, viewKey, type ListViewMode } from '@/lib/listView'
+import { folderTypeName } from '@/lib/pageTypes'
 import { applyClick, emptySelection, prune, type Selection } from '@/lib/selection'
 import { t } from '@/i18n'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
+
+// The table view, with the virtual list it needs, is a chunk of its own: it loads when a table is first shown.
+const TableView = lazy(() => import('@/components/table/TableView'))
 
 export type ListSource =
   | { kind: 'recent' }
@@ -80,7 +84,7 @@ function useViewMode(space: string, source: ListSource): [ListViewMode, (m: List
   ]
 }
 
-function ViewSwitch({ mode, onChange }: { mode: ListViewMode; onChange: (m: ListViewMode) => void }) {
+function ViewSwitch({ mode, onChange, table }: { mode: ListViewMode; onChange: (m: ListViewMode) => void; table: boolean }) {
   const item = (m: ListViewMode, label: string, Icon: typeof ListIcon) => (
     <button
       type="button"
@@ -97,6 +101,7 @@ function ViewSwitch({ mode, onChange }: { mode: ListViewMode; onChange: (m: List
     <div role="group" aria-label={t.view.label} className="flex items-center rounded-lg border p-0.5">
       {item('list', t.view.list, ListIcon)}
       {item('cards', t.view.cards, LayoutGrid)}
+      {table && item('table', t.view.table, Table2)}
     </div>
   )
 }
@@ -117,7 +122,14 @@ function Listing({ source }: { source: ListSource }) {
   const { write } = useSpacePermissions()
   const [creating, setCreating] = useState(false)
   const { id: spaceId, spaces } = useActiveSpace()
-  const [mode, setMode] = useViewMode(spaceId ?? '', source)
+  const [chosen, setMode] = useViewMode(spaceId ?? '', source)
+  // The types are only asked for in a folder: the table is a view of a folder that has one.
+  const types = useTypes(source.kind === 'folder')
+  const typeName = source.kind === 'folder' && types.data ? folderTypeName(types.data.bindings, source.folder) : ''
+  // A table remembered for a folder that has no type (any more) shows as a list.
+  // While the types are still on their way the choice is kept, and nothing is loaded for it.
+  const mode: ListViewMode = chosen === 'table' && typeName === '' && !types.isPending ? 'list' : chosen
+  const isTable = mode === 'table'
   const capture = useQuickCapture()
   const isInbox = source.kind === 'folder' && source.folder === spaces.find((s) => s.id === spaceId)?.inbox
   const [rawSelection, setSelection] = useState<Selection>(emptySelection)
@@ -133,7 +145,7 @@ function Listing({ source }: { source: ListSource }) {
     ...(source.kind === 'tag' ? { tag: [source.tag] } : {}),
     ...(source.kind === 'search' ? { ...source.filters, q: source.q } : {}),
     ...(sort ? { sort } : {}),
-  })
+  }, !isTable)
   // Read before the status checks below narrow `query` (a failed "load more" leaves the list in place).
   const nextError = query.isFetchNextPageError ? query.error : null
   const fetchNext = query.fetchNextPage
@@ -202,7 +214,7 @@ function Listing({ source }: { source: ListSource }) {
   const Icon = source.kind === 'tag' ? TagIcon : null
   const empty = emptyText(source, write)
   const treeReady = source.kind !== 'folder' || !ops || ops.ready
-  const nothing = !query.isPending && !query.isError && items.length === 0 && folders.length === 0 && treeReady
+  const nothing = !isTable && !query.isPending && !query.isError && items.length === 0 && folders.length === 0 && treeReady
 
   return (
     <>
@@ -213,6 +225,8 @@ function Listing({ source }: { source: ListSource }) {
           ) : (
           <>
             {/* On a phone the sort choice shrinks to an icon (the select is still what opens), leaving the room to the breadcrumbs. */}
+            {/* In a table the headers of the columns sort. */}
+            {!isTable && (
             <div className="relative w-28 max-sm:w-8 max-sm:[&>div>svg]:hidden">
             <ArrowUpDown className="pointer-events-none absolute top-1/2 left-1/2 size-4 -translate-x-1/2 -translate-y-1/2 text-muted-foreground sm:hidden" />
             <NativeSelect
@@ -240,7 +254,8 @@ function Listing({ source }: { source: ListSource }) {
               ))}
             </NativeSelect>
             </div>
-            <ViewSwitch mode={mode} onChange={setMode} />
+            )}
+            <ViewSwitch mode={mode} onChange={setMode} table={typeName !== ''} />
             {write && source.kind === 'folder' && ops && (
               <Button variant="outline" size="icon-sm" className="max-sm:hidden" onClick={() => ops.newFolder(source.folder)} title={t.manage.newFolder} aria-label={t.manage.newFolder}>
                 <FolderPlus />
@@ -276,7 +291,7 @@ function Listing({ source }: { source: ListSource }) {
         onSelect={(key) => setSelection({ keys: new Set([key]), anchor: key })}
         afterAction={clear}
       >
-        <div className={`mx-auto w-full flex-1 px-2 py-4 max-md:pb-20 sm:px-4 ${mode === 'cards' ? 'max-w-7xl' : 'max-w-3xl'}`}>
+        <div className={`mx-auto w-full flex-1 px-2 py-4 max-md:pb-20 sm:px-4 ${mode === 'cards' ? 'max-w-7xl' : isTable ? 'max-w-[96rem]' : 'max-w-3xl'}`}>
           {folders.length > 0 &&
             (mode === 'cards' ? (
               <ul className="mb-4 grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -292,7 +307,15 @@ function Listing({ source }: { source: ListSource }) {
               </ul>
             ))}
 
-          {query.isPending ? (
+          {isTable && source.kind === 'folder' ? (
+            typeName === '' ? (
+              <Skeleton className="h-40 w-full" />
+            ) : (
+              <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+                <TableView folder={source.folder} typeName={typeName} type={types.data?.types.find((x) => x.name === typeName)} />
+              </Suspense>
+            )
+          ) : query.isPending ? (
             <div className="space-y-2 px-3" aria-busy="true">
               {[0, 1, 2, 3, 4, 5].map((i) => (
                 <Skeleton key={i} className="h-14 w-full" />

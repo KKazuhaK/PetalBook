@@ -59,7 +59,14 @@ var errTagsFile = errors.New("the tags file cannot be read")
 // file that is too large, is not a regular file, does not parse, or is not a
 // mapping at the top.
 func (s *Space) loadTags() (*yaml.Node, error) {
-	abs := filepath.Join(s.root, filepath.FromSlash(tagsFile))
+	return s.loadYAMLFile(tagsFile, maxTagsFile, errTagsFile)
+}
+
+// loadYAMLFile is loadTags for any of the space's YAML files: rel is the path
+// in the space, max the most that is read, and bad what is returned for a file
+// that cannot be used as it is.
+func (s *Space) loadYAMLFile(rel string, max int64, bad error) (*yaml.Node, error) {
+	abs := filepath.Join(s.root, filepath.FromSlash(rel))
 	fi, err := os.Lstat(abs)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -68,20 +75,20 @@ func (s *Space) loadTags() (*yaml.Node, error) {
 		return nil, err
 	}
 	// A link in the way could lead out of the space.
-	if !fi.Mode().IsRegular() || fi.Size() > maxTagsFile {
-		return nil, errTagsFile
+	if !fi.Mode().IsRegular() || fi.Size() > max {
+		return nil, bad
 	}
 	f, err := os.Open(abs)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, maxTagsFile+1))
+	data, err := io.ReadAll(io.LimitReader(f, max+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > maxTagsFile {
-		return nil, errTagsFile
+	if int64(len(data)) > max {
+		return nil, bad
 	}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var doc yaml.Node
@@ -89,19 +96,19 @@ func (s *Space) loadTags() (*yaml.Node, error) {
 	case errors.Is(err, io.EOF):
 		return nil, nil
 	case err != nil:
-		return nil, errTagsFile
+		return nil, bad
 	}
 	// One document only: a second would not be written back, and what is in
 	// it is someone's.
 	var more yaml.Node
 	if err := dec.Decode(&more); !errors.Is(err, io.EOF) {
-		return nil, errTagsFile
+		return nil, bad
 	}
 	if doc.Kind == 0 || len(doc.Content) == 0 {
 		return nil, nil
 	}
 	if doc.Kind != yaml.DocumentNode || doc.Content[0].Kind != yaml.MappingNode {
-		return nil, errTagsFile
+		return nil, bad
 	}
 	return &doc, nil
 }

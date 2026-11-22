@@ -342,7 +342,9 @@ func valueNode(key string, v any) *yaml.Node {
 		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!null", Value: "null"}
 	case string:
 		// `created` is a date in the file, not a quoted string.
-		if key == "created" && dateOnly.MatchString(x) {
+		// A date in any other property of the page is written the same way, so
+		// a date field reads as a date in other tools too.
+		if dateOnly.MatchString(x) && (key == "created" || (key != "" && !textKeys[key] && key != "tags")) {
 			return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!timestamp", Value: x}
 		}
 		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: x}

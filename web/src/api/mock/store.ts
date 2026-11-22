@@ -3,6 +3,9 @@
 // order, untitled pages, cursors, draft semantics), simple about the rest.
 
 import type { DraftReceipt, HistoryList, Page, PageDraft, PageMeta, PageSummary, PageVersion, TagColor, VersionChange } from '../types.ts'
+import { BUILTIN_KEYS, RESERVED_KEYS, propsOfMeta } from '../../lib/pageTypes.ts'
+import { matches, parseFilter, sortValue } from './propQuery.ts'
+import { createTypeBook } from './typeBook.ts'
 import { TAG_COLORS, parseTagColor } from '../../lib/tagColors.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
 import { gitBlobId } from './sha1.ts'
@@ -146,6 +149,11 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     if (why) throw new HttpError(503, 'unavailable', why)
   }
   const folders = new Set<string>([''])
+  // The folder as it is spelled here, for a name that may differ in case; null when there is none.
+  const spelledFolder = (path: string): string | null => (folders.has(path) ? path : ([...folders].find((f) => f.toLowerCase() === path.toLowerCase()) ?? null))
+  const book = createTypeBook(spelledFolder)
+  // The type a page has: its header's, else its folder's.
+  const effectiveOf = (p: Stored): string => stringField(p.meta, 'type')?.trim() || book.effective(p.folder)
   // userId + page id -> draft
   const drafts = new Map<string, DraftRecord>()
   const draftKey = (userId: string, id: string) => `${userId}\u0000${id}`
@@ -205,9 +213,10 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
       .map(([k, v]) => `${k}: ${JSON.stringify(v)}\n`)
       .join(''),
     body: p.body,
+    effectiveType: effectiveOf(p),
   })
 
-  const toSummary = (p: Stored): PageSummary => {
+  const toSummary = (p: Stored, withProps = false): PageSummary => {
     const title = stringField(p.meta, 'title')
     const subtitle = stringField(p.meta, 'subtitle')
     const source = stringField(p.meta, 'source')
@@ -223,10 +232,12 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
       label: title ?? Array.from(firstLine(p.body)).slice(0, 30).join(''),
       untitled: !title,
       ...(tags.length ? { tags } : {}),
-      type: '',
+      type: stringField(p.meta, 'type') ?? '',
+      effectiveType: effectiveOf(p),
       ...(typeof p.meta.created === 'string' ? { created: p.meta.created } : {}),
       updated: rfc3339(p.updated),
       excerpt: excerptOf(p.body),
+      ...(withProps ? { props: propsOfMeta(p.meta), rev: p.rev } : {}),
     }
   }
 
@@ -297,7 +308,20 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     const key = desc ? sort.slice(1) : sort
     const dir = desc ? -1 : 1
     const created = (p: Stored) => stringField(p.meta, 'created') ?? ''
+    // The order the server holds the pages in, for ties and for pages without the value.
+    const held = new Map([...pages.keys()].map((id, i) => [id, i]))
     return [...items].sort((a, b) => {
+      if (key.startsWith('prop:')) {
+        const prop = key.slice(5)
+        const va = sortValue(a.meta, prop)
+        const vb = sortValue(b.meta, prop)
+        // No value: after every page that has one, in both directions.
+        if (va === undefined && vb === undefined) return held.get(a.id)! - held.get(b.id)!
+        if (va === undefined) return 1
+        if (vb === undefined) return -1
+        const c = typeof va === 'number' && typeof vb === 'number' ? va - vb : compareCodePoints(String(va), String(vb))
+        return dir * c || dir * (held.get(a.id)! - held.get(b.id)!)
+      }
       if (relevance && sort === 'relevance') return (relevance.get(b.id) ?? 0) - (relevance.get(a.id) ?? 0) || b.updated - a.updated
       if (key === 'title') {
         const ta = stringField(a.meta, 'title')
@@ -336,7 +360,10 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     const limit = limitRaw === null ? 50 : Number(limitRaw)
     if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new HttpError(400, 'invalid', 'limit 要在 1 到 200 之间')
     const sortParam = q.get('sort')
-    if (sortParam !== null && !/^-?(updated|created|title)$/.test(sortParam)) throw new HttpError(400, 'invalid', '不支持的排序')
+    if (sortParam !== null && !/^-?(updated|created|title|prop:.+)$/.test(sortParam)) throw new HttpError(400, 'invalid', '不支持的排序')
+    const propsParam = q.get('props')
+    if (propsParam !== null && propsParam !== '0' && propsParam !== '1') throw new HttpError(400, 'invalid', 'props 只能是 0 或 1')
+    const filters = q.get('filter') === null ? [] : parseFilter(q.get('filter')!)
 
     let items = [...pages.values()]
     if (folder !== null) {
@@ -356,6 +383,8 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
         const d = stringField(p.meta, 'created')
         return d !== undefined && (!createdFrom || d >= createdFrom) && (!createdTo || d <= createdTo)
       })
+
+    for (const f of filters) items = items.filter((p) => matches(p.meta, f))
 
     let relevance: Map<string, number> | undefined
     if (text) {
@@ -388,7 +417,7 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     }
     const slice = items.slice(offset, offset + limit)
     const end = offset + slice.length
-    return { items: slice.map(toSummary), next: end < items.length ? btoa(`o${end}`) : '' }
+    return { items: slice.map((p) => toSummary(p, propsParam === '1')), next: end < items.length ? btoa(`o${end}`) : '' }
   }
 
   const parseMeta = (raw: unknown): PageMeta => {
@@ -459,6 +488,37 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     const s = writeFile(cur, baseRev, meta, body)
     // A save never takes a draft away (its text may exist nowhere else), except
     // one that says exactly what was just saved.
+    const d = drafts.get(draftKey(userId, id))
+    if (d && sameParsed(s, d)) drafts.delete(draftKey(userId, id))
+    return toPage(s)
+  }
+
+  // Changes properties of the header and nothing else. A value that is null, blank
+  // text or an empty list removes the key; a key that is in the file keeps its place.
+  const patchProps = (userId: string, id: string, input: Record<string, unknown>): Page => {
+    const cur = lookup(id)
+    guard()
+    if (typeof input.baseRev !== 'string' || input.baseRev === '') throw new HttpError(400, 'invalid', '缺少 baseRev')
+    if (input.set !== undefined && !isRecord(input.set)) throw new HttpError(400, 'invalid', 'set 要是对象')
+    if (input.unset !== undefined && (!Array.isArray(input.unset) || input.unset.some((k) => typeof k !== 'string'))) throw new HttpError(400, 'invalid', 'unset 要是字符串列表')
+    const set = (input.set ?? {}) as Record<string, unknown>
+    const unset = (input.unset ?? []) as string[]
+    if (Object.keys(set).length + unset.length === 0) throw new HttpError(400, 'invalid', 'set 和 unset 里要有要改的东西')
+    if (Object.keys(set).length + unset.length > 200) throw new HttpError(400, 'invalid', '一次最多改 200 个键')
+    for (const k of [...Object.keys(set), ...unset]) if (k === '' || BUILTIN_KEYS.has(k) || RESERVED_KEYS.has(k)) throw new HttpError(400, 'invalid', `键 “${k}” 不能这样改`)
+    for (const k of unset) if (k in set) throw new HttpError(400, 'invalid', `键 “${k}” 不能既写又删`)
+    if (input.baseRev !== cur.rev) throw new HttpError(409, 'conflict', '页面已被修改', { current: toPage(cur) })
+    const next: PageMeta = { ...cur.meta }
+    const none = (v: unknown) => v === null || (typeof v === 'string' && v.trim() === '') || (Array.isArray(v) && v.length === 0)
+    for (const [k, v] of Object.entries(set)) {
+      if (none(v)) delete next[k]
+      else next[k] = v
+    }
+    for (const k of unset) delete next[k]
+    const rev = gitBlobId(serializeFile(next, cur.body))
+    if (rev === cur.rev) return toPage(cur)
+    const s = store({ id: cur.id, folder: cur.folder, fileName: cur.fileName, meta: next, body: cur.body, updated: now() })
+    record(s, 'edit')
     const d = drafts.get(draftKey(userId, id))
     if (d && sameParsed(s, d)) drafts.delete(draftKey(userId, id))
     return toPage(s)
@@ -699,6 +759,7 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     const inside = [...folders].filter((f) => isUnder(f, from))
     for (const f of inside) folders.delete(f)
     for (const f of inside) addFolder(rename(f))
+    book.folderMoved(from, to)
     addFolder(to)
     for (const p of [...pages.values()].filter((x) => isUnder(x.folder, from))) {
       const moved: Stored = { ...p, folder: rename(p.folder) }
@@ -717,6 +778,7 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     if (doomed.length > 0 && !recursive) throw new HttpError(409, 'conflict', '文件夹里还有页面')
     for (const p of doomed) remove(p.id)
     for (const f of [...folders]) if (isUnder(f, path)) folders.delete(f)
+    book.folderRemoved(path)
   }
 
   // Mock only: change a page behind the app's back, as another editor or a
@@ -735,6 +797,22 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     getPage,
     create,
     save,
+    patchProps,
+    types: () => book.list(),
+    putType: (name: string, input: Parameters<typeof book.put>[1]) => {
+      guard()
+      return book.put(name, input)
+    },
+    deleteType: (name: string) => {
+      guard()
+      book.remove(name)
+    },
+    bindFolder: (folder: string, type: string) => {
+      guard()
+      return { folder: book.bind(folder, type), type }
+    },
+    damageType: book.damage,
+    forceKind: book.forceKind,
     move,
     remove,
     putDraft,

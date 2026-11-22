@@ -1,6 +1,7 @@
 package index
 
 import (
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -31,6 +32,10 @@ type Summary struct {
 	Created  string    `json:"created,omitempty"`
 	Updated  time.Time `json:"updated"`
 	Excerpt  string    `json:"excerpt"`
+	// Props and Rev are filled only when the query asks for them (Query.Props):
+	// the page's properties as a JSON object, and the rev of its file.
+	Props json.RawMessage `json:"props,omitempty"`
+	Rev   string          `json:"rev,omitempty"`
 }
 
 // Query selects pages. The zero value lists the newest 50 pages of the space.
@@ -46,9 +51,14 @@ type Query struct {
 	// CreatedFrom and CreatedTo bound the header's created date (2006-01-02),
 	// both inclusive; "" is no bound. A page without that date never matches.
 	CreatedFrom, CreatedTo string
-	Sort                   string // "", updated, created, title; a leading "-" reverses
-	Limit                  int    // 1-200, default 50
-	Cursor                 string // Result.Next of the previous page
+	// Filters keep the pages whose properties match every one of them.
+	Filters []Filter
+	// Props asks for the properties and the rev of every page in the summaries.
+	Props bool
+	Sort  string // "", updated, created, title, prop:<key>; a leading "-" reverses
+	Limit int    // 1-200, default 50
+	// Cursor is Result.Next of the previous page.
+	Cursor string
 }
 
 // Result is one page of a listing.
@@ -68,10 +78,11 @@ const (
 type cursor struct {
 	Sort string `json:"s"`
 	Off  int    `json:"o,omitempty"`
+	G    int    `json:"g,omitempty"` // prop sorts: 1 once the pages without the property are being listed
 	M    int64  `json:"m,omitempty"` // mtime_ns
 	C    int64  `json:"c,omitempty"` // created_key
 	U    int    `json:"u,omitempty"` // untitled
-	T    string `json:"t,omitempty"` // title_key
+	T    string `json:"t,omitempty"` // title_key; skey in a prop sort
 	R    int64  `json:"r,omitempty"` // rowid
 }
 
@@ -125,7 +136,11 @@ func (x *Index) List(q Query) (Result, error) {
 		sortName = "-updated"
 	}
 	var order []sortKey
-	if !relevance {
+	propKey, propDesc, byProp, err := propSort(sortName)
+	if err != nil {
+		return Result{}, err
+	}
+	if !relevance && !byProp {
 		var err error
 		if order, err = sortKeys(sortName); err != nil {
 			return Result{}, err
@@ -148,6 +163,9 @@ func (x *Index) List(q Query) (Result, error) {
 		where []string
 		args  []any
 	)
+	if err := checkFilters(q.Filters); err != nil {
+		return Result{}, err
+	}
 	if searching {
 		if relevance {
 			from = `FROM fts JOIN pages p ON p.rowid = fts.rowid`
@@ -195,6 +213,15 @@ func (x *Index) List(q Query) (Result, error) {
 		args = append(args, q.CreatedTo)
 	}
 
+	for _, f := range q.Filters {
+		cond, cargs := f.sql()
+		where = append(where, cond)
+		args = append(args, cargs...)
+	}
+	if byProp {
+		return x.listByProp(q, limit, propKey, propDesc, sortName, cur, where, args)
+	}
+
 	var orderBy string
 	offset := 0
 	if relevance {
@@ -215,8 +242,7 @@ func (x *Index) List(q Query) (Result, error) {
 		}
 		orderBy = strings.Join(parts, ", ")
 	}
-	query := `SELECT p.rowid, p.id, p.path, p.folder, p.title, p.subtitle, p.source, p.untitled, p.label, p.type, p.tags, p.created,
-		p.mtime_ns, p.excerpt, p.title_key, p.created_key ` + from
+	query := `SELECT ` + selectCols(q.Props) + ` ` + from
 	if len(where) > 0 {
 		query += ` WHERE ` + strings.Join(where, ` AND `)
 	}
@@ -235,14 +261,8 @@ func (x *Index) List(q Query) (Result, error) {
 	res := Result{Items: []Summary{}}
 	var last cursor
 	for rows.Next() {
-		var (
-			s                  Summary
-			rowid, mtime, ckey int64
-			untitled           int
-			tagsText, titleKey string
-		)
-		if err := rows.Scan(&rowid, &s.ID, &s.Path, &s.Folder, &s.Title, &s.Subtitle, &s.Source, &untitled, &s.Label, &s.Type,
-			&tagsText, &s.Created, &mtime, &s.Excerpt, &titleKey, &ckey); err != nil {
+		s, rowid, mtime, ckey, untitled, titleKey, err := scanSummary(rows, q.Props)
+		if err != nil {
 			return Result{}, err
 		}
 		if len(res.Items) == limit {
@@ -255,15 +275,46 @@ func (x *Index) List(q Query) (Result, error) {
 			}
 			break
 		}
-		s.Untitled = untitled == 1
-		s.Updated = time.Unix(0, mtime).UTC()
-		if err := json.Unmarshal([]byte(tagsText), &s.Tags); err != nil || s.Tags == nil {
-			s.Tags = []string{}
-		}
 		last = cursor{M: mtime, C: ckey, U: untitled, T: titleKey, R: rowid}
 		res.Items = append(res.Items, s)
 	}
 	return res, rows.Err()
+}
+
+// selectCols are the columns of a summary, in the order scanSummary reads them.
+func selectCols(props bool) string {
+	c := `p.rowid, p.id, p.path, p.folder, p.title, p.subtitle, p.source, p.untitled, p.label, p.type, p.tags, p.created,
+		p.mtime_ns, p.excerpt, p.title_key, p.created_key`
+	if props {
+		c += `, p.props, p.rev`
+	}
+	return c
+}
+
+// scanSummary reads one row of selectCols, then the extra columns, if any.
+func scanSummary(rows *sql.Rows, props bool, extra ...any) (s Summary, rowid, mtime, ckey int64, untitled int, titleKey string, err error) {
+	var tagsText, propsText string
+	dest := []any{&rowid, &s.ID, &s.Path, &s.Folder, &s.Title, &s.Subtitle, &s.Source, &untitled, &s.Label, &s.Type,
+		&tagsText, &s.Created, &mtime, &s.Excerpt, &titleKey, &ckey}
+	if props {
+		dest = append(dest, &propsText, &s.Rev)
+	}
+	dest = append(dest, extra...)
+	if err = rows.Scan(dest...); err != nil {
+		return
+	}
+	s.Untitled = untitled == 1
+	s.Updated = time.Unix(0, mtime).UTC()
+	if err := json.Unmarshal([]byte(tagsText), &s.Tags); err != nil || s.Tags == nil {
+		s.Tags = []string{}
+	}
+	if props {
+		if propsText == "" {
+			propsText = "{}"
+		}
+		s.Props = json.RawMessage(propsText)
+	}
+	return
 }
 
 func dir(desc bool) string {

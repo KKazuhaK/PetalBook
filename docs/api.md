@@ -534,6 +534,21 @@ when the header has none. `updated` is when the file was last written.
 `excerpt` keeps the line breaks of the text as single `\n`; blank lines
 between paragraphs are not kept.
 
+`type` is what the header says (`""` when it says nothing). `effectiveType` is
+the type the page has: the header's, else the type of the nearest folder
+above the page that is bound to one (see Page types), else `""`. It names a
+type; whether a type of that name exists is not looked at.
+`props` and `rev` are there only when the listing was asked for them with
+`props=1` (the table view does): `props` is an object of the header's keys
+that are not built in (everything except `id`, `title`, `subtitle`, `source`,
+`tags`, `created` and `type`), in header order, `{}` when there are none, and
+`rev` is the page's rev, which a change of a property needs. Only values a
+table cell can show are in it: text (cut to 300 characters), numbers, true
+and false, and lists of those (the first 100 elements). A nested object, a
+null, blank text and an empty list are left out, as is anything inside a list
+that is not a plain value. Without `props=1` the summary is as small as it
+was.
+
 ```json
 {
   "id": "01JD3K8Q7Z",
@@ -546,9 +561,12 @@ between paragraphs are not kept.
   "untitled": false,
   "tags": ["玉兰", "黄昏"],
   "type": "",
+  "effectiveType": "文案",
   "created": "2025-12-03",
   "updated": "2026-11-21T08:30:00Z",
-  "excerpt": "first 400 characters of the body as plain text"
+  "excerpt": "first 400 characters of the body as plain text",
+  "props": {"status": "draft", "points": 3, "labels": ["a", "b"]},
+  "rev": "3b18e512dba79e4c8300dd08aeb37f8e728b8dad"
 }
 ```
 
@@ -571,9 +589,14 @@ has one for the page (see Drafts); `meta` and `body` are always the file's.
   "updated": "2026-11-21T08:30:00Z",
   "meta": {"id": "01JD3K8Q7Z", "title": "暮雪", "tags": ["玉兰"], "created": "2025-12-03"},
   "header": "id: 01JD3K8Q7Z\ntitle: 暮雪\ntags: [玉兰]\ncreated: 2025-12-03\n",
-  "body": "…\n"
+  "body": "…\n",
+  "effectiveType": "文案"
 }
 ```
+
+`effectiveType` is the type the page has: the header's `type`, else that of
+the nearest folder above it bound to a type, else `""` (see Page types). A
+new page is not given a `type` in its header; it takes its folder's.
 
 ### `GET /api/spaces/{space}/pages`
 
@@ -591,7 +614,9 @@ Query parameters, all optional:
 
 A date that is not a day written `YYYY-MM-DD`, or lies outside the years 1970
 to 2261, is `400 invalid`.
-| `sort` | `updated` (default), `created`, `title`; prefix `-` for descending. Default is `-updated`. With `q` and no `sort`, results are ordered by relevance |
+| `sort` | `updated` (default), `created`, `title`, or `prop:{key}` for a property of the header; prefix `-` for descending. Default is `-updated`. With `q` and no `sort`, results are ordered by relevance |
+| `filter` | a JSON array of conditions on properties, all of which must hold (see below), at most 10, at most 16 KiB |
+| `props` | `1` to put `props` and `rev` in the summaries (see Page summary); default `0` |
 | `limit` | 1–200, default 50 |
 | `cursor` | the `next` value of the previous response |
 
@@ -604,6 +629,37 @@ puts untitled pages last in both directions, ordered by `created`; titles
 compare by code point, case-insensitively. Search terms separated by spaces
 must all match; a term matches as a run of adjacent characters and does not
 match across punctuation or a line break.
+
+**Sorting by a property.** `sort=prop:status` orders by the value of the
+header key `status`; `sort=-prop:status` reverses that. A page that has no
+value for the key (the key is missing, null, blank text or an empty list)
+comes after all that have one, in both directions, in the order the server
+holds the pages in; ties among the others are broken the same way, following
+the direction of the sort. Text sorts like titles do (by code point,
+case-insensitively), numbers as numbers, dates (`2026-11-22`) as text, true
+after false. A list sorts by its first element. The key is any key; it need
+not belong to a type. The cursor stays valid while pages change: it names the
+position, not an offset, and a cursor made for one sort is refused for
+another. Every page of such a listing is read from an index, however many
+pages the folder holds.
+
+**Filtering by properties.** `filter` is a JSON array, sent as the value of
+the parameter (percent-encoded), each item `{"key", "op", "values"}`:
+
+| `op` | `values` | keeps pages whose property |
+|---|---|---|
+| `in` | up to 100 texts, numbers or booleans | equals one of them (a list: holds one of them) |
+| `range` | `[from, to]`, both numbers or both texts (dates), either end `null` or `""`, not both; ends are included | has a value in the range (a list: an element is in it) |
+| `empty` | none | has no value |
+| `notEmpty` | none | has a value (`false` and `0` are values) |
+| `contains` | one text | has a value that contains it; letters outside ASCII match in the case they are written |
+
+Several items must all hold. An unknown `op`, a missing key, the wrong number
+or kind of `values`, or text that is not that JSON is `400 invalid`. The
+filter works together with every other parameter (`folder`, `tag`, `q`, the
+sort and the cursor). A text is compared as the first 300 characters of it.
+Both `sort` and `filter` answer from the index: nothing reads the page files,
+so a folder of 50 000 pages answers in milliseconds.
 
 ### `GET /api/spaces/{space}/pages/{id}`
 
@@ -652,6 +708,41 @@ nothing and returns the same `rev`.
   client can show both versions.
 - `400 invalid` for a body that is not valid UTF-8, an `id` mismatch, or a
   request without `baseRev`, `meta` or `body`.
+
+### `PATCH /api/spaces/{space}/pages/{id}/props`
+
+Needs `write`. Changes properties of the header and nothing else: the body,
+the built-in fields and the other properties stay exactly as the file has
+them, and the body does not travel. The table view's cells use it.
+
+```json
+{"baseRev": "3b18e5…", "set": {"status": "done", "points": 3, "labels": ["a", "b"]}, "unset": ["old"]}
+```
+
+`baseRev` is required, and `set` or `unset` must name something. A value in
+`set` is any JSON value a header can hold (text, number, `true`/`false`, a
+list, an object). A value that is `null`, blank text or an empty list removes
+the key, as `unset` does; `false` and `0` are values. A key that is new goes
+at the end of the header; a key that is in the file keeps its place. A date
+written `2026-11-22` is written to the file as a YAML date. The keys are any
+that are not built in (`id`, `title`, `subtitle`, `source`, `tags`,
+`created`, `type`: save the page to change those) and not reserved (`publish`,
+`slug`); at most 200 keys at once, none both set and unset. A change that
+would leave the file as it is writes nothing and returns the same `rev`.
+
+- `200` with the page (new `rev`).
+- `409 conflict` when `baseRev` is not the file's current rev, as for `PUT`:
+  `{"error": "conflict", "message": "…", "current": {/* page */}}`.
+- `400 invalid` for a request without `baseRev` or without anything to change,
+  a key that may not be changed this way, or a value that cannot be written.
+- `403 no_permission` without `write`; `404 not_found` for a page that is not
+  there.
+
+The caller's draft of the page is handled as `PUT` does: kept, unless it says
+exactly what the file now says. After a change it is usually stale, and the
+app shows both versions when the page is opened. The change is journaled and
+committed like a save, and in a space that follows a remote it is pushed
+before it is answered.
 
 ### Drafts
 
@@ -799,6 +890,149 @@ left where it is. `404 not_found` when one of the ids is not a page, and
 twice, a `move` without `folder` (`""` is the top level), or a `folder` that
 cannot be one: in both cases nothing is changed. Deleting a page also removes the drafts of it, as deleting one page
 does.
+
+## Page types
+
+A page type says which properties the pages of a kind have. It is a file of
+the space, `.petalbook/types/{name}.json`, a JSON Schema of which the server
+understands a small part. The file name (without `.json`) is the **name** of
+the type, the value of `type` in a page's header; it never changes once the
+type is made. The `title` in the file is the name people see and can change.
+The properties are the keys of `properties`, and their order in the file is
+their order everywhere.
+
+Each field has a **kind**, which the server recognises from its schema:
+
+| kind | schema |
+|---|---|
+| `text` | `{"type": "string"}` |
+| `longtext` | `{"type": "string", "x-multiline": true}` |
+| `select` | `{"type": "string", "enum": […]}` |
+| `multiselect` | `{"type": "array", "items": {"type": "string", "enum": […]}, "uniqueItems": true}` |
+| `date` | `{"type": "string", "format": "date"}` |
+| `number` | `{"type": "number"}` (`"integer"` is read as a number too) |
+| `checkbox` | `{"type": "boolean"}` |
+| `url` | `{"type": "string", "format": "uri"}` |
+| `other` | anything else: shown and edited as the YAML in the header, never rewritten |
+
+A field may have a `title`. Everything else in a schema (other keywords of a
+field, `$schema`, `description`, `required`, …) stays in the file as it was,
+and the server changes only the keys it knows when it writes one. A value that
+does not fit its field's schema is saved all the same: nothing here checks
+page values.
+
+A folder is bound to a type in `.petalbook/space.yml`:
+
+```yaml
+folders:
+  Tang:
+    type: 文案
+```
+
+A folder takes the type of the nearest folder above it that is bound (the
+root, `""`, may be bound too); a page whose header has a `type` has that.
+Renaming or moving a folder changes its bindings, and those of the folders in
+it, in the same commit; deleting one removes them. Other settings an entry has
+stay.
+
+Limits: a space has at most 100 types; a type file is at most 256 KiB and has
+at most 200 fields; a field key is 1 to 64 bytes, has no control character
+and no `:`, and is not `id`, `title`, `subtitle`, `source`, `tags`, `created`,
+`type`, `publish` or `slug`; a select has 1 to 500 options of at most 200
+bytes each, none blank, none twice; titles are one line of at most 200 bytes;
+a type name is 1 to 100 bytes, not starting with a dot or ending in a dot or
+space, with none of `< > : " / \ | ? *`; two names that differ only in case
+are one name.
+
+A type file or `space.yml` that someone damaged by hand (not JSON or YAML, not
+an object, too large, a link) is never overwritten: a request that would
+write it is `400 invalid` and says it has to be fixed by hand. Reads still
+work: such a type is listed with an `error`, and a `space.yml` that cannot be
+read binds nothing. Moving or deleting a folder is not stopped by one.
+
+### Type
+
+```json
+{
+  "name": "task",
+  "title": "任务",
+  "fields": [
+    {"key": "status", "title": "状态", "kind": "select", "options": ["todo", "doing", "done"],
+     "schema": {"title": "状态", "type": "string", "enum": ["todo", "doing", "done"]}},
+    {"key": "points", "title": "", "kind": "number", "schema": {"type": "number"}}
+  ]
+}
+```
+
+`title` is `""` when the file gives none (show the name or key). `options` is
+there for `select` and `multiselect`. `schema` is the field's schema as the
+file has it. A type whose file cannot be used is
+`{"name": "…", "title": "", "fields": [], "error": "…"}` and the error says
+how to fix it.
+
+### `GET /api/spaces/{space}/types`
+
+Needs `read`.
+
+```json
+{"types": [/* types, in name order */], "bindings": [{"folder": "Work", "type": "task"}]}
+```
+
+`bindings` are all the folders that are bound, in the order of the file. Only
+the first 100 type files are read; more than that (put there by hand) are
+listed with an `error`.
+
+### `PUT /api/spaces/{space}/types/{name}`
+
+Needs `manage`. Makes the type, or changes it. The request is the whole of
+what the type is to be:
+
+```json
+{"title": "任务", "fields": [
+  {"key": "status", "title": "状态", "kind": "select", "options": ["todo", "doing", "done"]},
+  {"key": "points", "kind": "number"}
+]}
+```
+
+The fields are the type's fields, in this order: one the type has that is not
+listed is removed from the type (pages keep the values; the app shows them as
+not in the type), and a `title` that is left out or empty removes the title.
+The server merges this into the file: a field that exists and keeps its kind
+has only its `title` and options changed, a field whose `kind` changes gets
+the keys of the new kind and keeps its others, a field that is new is made.
+`kind` may be left out for a field that exists (it keeps its kind) and is
+required for a new one; `other` cannot be made, and a field cannot be changed
+to it. `options` goes with `select` and `multiselect` only. Renaming a field
+is removing one and adding another; the pages are not rewritten. `200` with
+the type.
+
+Errors: `400 invalid` for anything above that is out of limits or malformed,
+and for a file that has to be fixed by hand; `409 exists` when another name
+differs from `{name}` only in case. The change is journaled and committed like
+any other.
+
+### `DELETE /api/spaces/{space}/types/{name}`
+
+Needs `manage`. Removes the file and, in the same commit, every binding to the
+type. The headers of pages that name the type are not touched. `204`;
+`404 not_found` when there is no such type and no folder is bound to it. The
+file of a type that cannot be read can be deleted too. Deleting a folder, not a
+file, in its place is `400 invalid`.
+
+### `PUT /api/spaces/{space}/folders/type`
+
+Needs `manage`.
+
+```json
+{"folder": "Work", "type": "task"}
+```
+
+Binds a folder (and, by inheritance, the folders below it) to a type, or
+removes the binding when `type` is `""`. `200` with `{"folder": "Work",
+"type": "task"}`, the folder as it is spelled on disk. `404 not_found` when
+the folder does not exist; `400 invalid` when the type does not exist, or
+`space.yml` has to be fixed by hand. Pages are not changed: their
+`effectiveType` is.
 
 ## Files
 
