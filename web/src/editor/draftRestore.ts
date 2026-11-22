@@ -23,6 +23,9 @@ export interface Content {
   fields: Fields
   doc?: DocJSON
   markdown?: string
+  // `markdown` is a local draft's body as it was typed in the source view: it
+  // is the body as it stands, not something the editor may rewrite.
+  typed?: true
 }
 
 // What the controller starts out knowing (see reconcile.ts): the rev the text on
@@ -49,8 +52,8 @@ export type RestorePlan =
 export function planRestore(page: Page, local: StoredDraft | null, toMarkdown: (doc: DocJSON) => string, normalizeBody: (md: string) => string): RestorePlan {
   const server = page.draft
   const norm = (body: string) => () => normalizeBody(body)
-  const serverContent = (): Content => ({ fields: fieldsOf(server!.meta), markdown: server!.body })
-  const serverAsDraft = (): Draft => ({ ...fieldsOf(server!.meta), body: server!.body })
+  const serverContent = (): Content => ({ fields: fieldsOf(server!.meta, page.meta), markdown: server!.body })
+  const serverAsDraft = (): Draft => ({ ...fieldsOf(server!.meta, page.meta), body: server!.body })
   // The draft the controller holds when the editor shows it.
   const held = (): Ours[] => (server ? [oursOf(server.baseRev, server)] : [])
   const serverShown = () => draftAsPage(page, server!)
@@ -77,8 +80,11 @@ export function planRestore(page: Page, local: StoredDraft | null, toMarkdown: (
   }
 
   // The local text as a draft, its body filled in from what it was typed on.
-  const typed: Draft = { ...local.fields, body: local.bodyJson ? toMarkdown(local.bodyJson) : undefined }
-  const localContent = (basisBody: string): Content => ({ fields: local.fields, ...(local.bodyJson ? { doc: local.bodyJson } : { markdown: basisBody }) })
+  const typed: Draft = { ...local.fields, body: local.bodyText ?? (local.bodyJson ? toMarkdown(local.bodyJson) : undefined), ...(local.bodyText !== undefined ? { bodyTyped: true } : {}) }
+  const localContent = (basisBody: string): Content => ({
+    fields: local.fields,
+    ...(local.bodyText !== undefined ? { markdown: local.bodyText, typed: true as const } : local.bodyJson ? { doc: local.bodyJson } : { markdown: basisBody }),
+  })
   // What the page was when the text was typed, and what had been sent from it.
   const known = { fileRev: local.baseRev, ours: local.sent ?? [] }
 

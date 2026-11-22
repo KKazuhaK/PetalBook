@@ -23,8 +23,22 @@ export function AutoTextarea({
   useLayoutEffect(() => {
     const el = own.current
     if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${el.scrollHeight}px`
+    const fit = () => {
+      el.style.height = 'auto'
+      el.style.height = `${el.scrollHeight}px`
+    }
+    fit()
+    // The width decides where the text wraps, and a box that was hidden when
+    // its text arrived measured nothing: fit again whenever the width changes.
+    if (typeof ResizeObserver === 'undefined') return
+    let width = el.clientWidth
+    const ro = new ResizeObserver(() => {
+      if (el.clientWidth === width) return
+      width = el.clientWidth
+      fit()
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
   }, [value])
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {

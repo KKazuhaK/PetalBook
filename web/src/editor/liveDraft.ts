@@ -20,6 +20,9 @@ export class LiveDraft {
   private bodySeq = 0
   private cache: { seq: number; md: string } | null = null
   private jsonCache: { seq: number; doc: DocJSON } | null = null
+  // The body as text typed in the source view, for the edit state it was typed in.
+  // An edit in the editor after it moves `bodySeq` on, and the document counts again.
+  private text: { seq: number; value: string } | null = null
   private readonly toMarkdown: (doc: DocJSON) => string
 
   constructor(fields: Fields, toMarkdown: (doc: DocJSON) => string) {
@@ -37,16 +40,36 @@ export class LiveDraft {
   setTags(tags: string[]): Fields {
     return (this.fields = { ...this.fields, tags })
   }
+  // The whole header as parsed from the source view.
+  setFields(fields: Fields): Fields {
+    return (this.fields = fields)
+  }
   // Replace everything with what the server has (the other side of a conflict).
   reset(fields: Fields) {
     this.fields = fields
     this.bodySeq = 0
     this.cache = null
     this.jsonCache = null
+    this.text = null
   }
 
+  // The body was edited in the editor: the document is the body.
   bodyChanged() {
     this.bodySeq++
+  }
+  // The body was typed as Markdown: that text is the body, exactly as typed,
+  // until the editor is edited again.
+  setBodyText(value: string) {
+    this.bodySeq++
+    this.text = { seq: this.bodySeq, value }
+  }
+  // 'none': not edited since it was loaded; 'text': typed as Markdown; 'doc': edited in the editor.
+  bodyKind(): 'none' | 'text' | 'doc' {
+    if (this.bodySeq === 0) return 'none'
+    return this.text?.seq === this.bodySeq ? 'text' : 'doc'
+  }
+  private typedText(): string | undefined {
+    return this.text?.seq === this.bodySeq ? this.text.value : undefined
   }
 
   // The editor document for the latest body edit. Cheap (no Markdown), and
@@ -63,17 +86,21 @@ export class LiveDraft {
   }
 
   // For the local draft: header fields plus the document, no conversion.
-  readStorable = (): { fields: Fields; bodyJson?: DocJSON } => ({ fields: this.fields, bodyJson: this.json() })
+  readStorable = (): { fields: Fields; bodyJson?: DocJSON; bodyText?: string } => {
+    const bodyText = this.typedText()
+    return bodyText !== undefined ? { fields: this.fields, bodyText } : { fields: this.fields, bodyJson: this.json() }
+  }
 
   // For a save: header fields plus the body as Markdown (converted once per edit state).
   read = (): Draft => {
-    let body: string | undefined
-    const doc = this.json()
+    const typed = this.typedText()
+    let body = typed
+    const doc = body === undefined ? this.json() : undefined
     if (doc) {
       const seq = this.bodySeq
       if (this.cache?.seq !== seq) this.cache = { seq, md: this.toMarkdown(doc) }
       body = this.cache.md
     }
-    return { ...this.fields, body }
+    return typed === undefined ? { ...this.fields, body } : { ...this.fields, body, bodyTyped: true }
   }
 }

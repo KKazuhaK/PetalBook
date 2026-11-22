@@ -29,12 +29,13 @@ type spaceResp struct {
 	Role     string `json:"role"`
 	Personal bool   `json:"personal"`
 	Sync     string `json:"sync"`
+	Inbox    string `json:"inbox"`
 }
 
 func toSpaces(in []spaces.Info) []spaceResp {
 	out := make([]spaceResp, len(in))
 	for i, s := range in {
-		out[i] = spaceResp{s.ID, s.Name, s.Role, s.Personal, s.Sync}
+		out[i] = spaceResp{s.ID, s.Name, s.Role, s.Personal, s.Sync, s.Inbox}
 	}
 	return out
 }
@@ -52,9 +53,10 @@ func (s *server) getMeta(c *call) {
 		list = toSpaces(l)
 	}
 	writeJSON(c.w, http.StatusOK, struct {
-		Version string      `json:"version"`
-		Spaces  []spaceResp `json:"spaces"`
-	}{s.opt.Version, list})
+		Version   string      `json:"version"`
+		MaxUpload int64       `json:"maxUpload"`
+		Spaces    []spaceResp `json:"spaces"`
+	}{s.opt.Version, s.opt.MaxUpload, list})
 }
 
 func (s *server) getSession(c *call) {
@@ -395,12 +397,13 @@ func (s *server) listSpaces(c *call) {
 
 func (s *server) createSpace(c *call) {
 	var req struct {
-		Name string `json:"name"`
+		Name  string `json:"name"`
+		Inbox string `json:"inbox"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	in, err := s.spaces.Create(c.r.Context(), c.user().ID, req.Name)
+	in, err := s.spaces.CreateWith(c.r.Context(), c.user().ID, req.Name, req.Inbox)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -411,12 +414,17 @@ func (s *server) createSpace(c *call) {
 
 func (s *server) renameSpace(c *call) {
 	var req struct {
-		Name string `json:"name"`
+		Name  *string `json:"name"`
+		Inbox *string `json:"inbox"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	in, err := s.spaces.Rename(c.r.Context(), c.user().ID, c.sp.Info.ID, req.Name)
+	if req.Name == nil && req.Inbox == nil {
+		writeError(c.w, http.StatusBadRequest, "invalid", "give a name, an inbox folder, or both")
+		return
+	}
+	in, err := s.spaces.Update(c.r.Context(), c.user().ID, c.sp.Info.ID, req.Name, req.Inbox)
 	if err != nil {
 		s.fail(c.w, err)
 		return

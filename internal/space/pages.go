@@ -24,14 +24,16 @@ type Page struct {
 	Rev     string
 	Updated time.Time
 	Meta    page.Meta
-	Body    string
+	// Header is the header text exactly as the file has it.
+	Header string
+	Body   string
 }
 
 func pageFrom(rel string, data []byte, mtime time.Time) *Page {
 	doc := page.Parse(data)
 	return &Page{
 		ID: doc.Meta().ID(), Path: rel, Folder: folderOf(rel), Rev: page.Rev(data),
-		Updated: mtime.UTC(), Meta: doc.Meta(), Body: doc.Body,
+		Updated: mtime.UTC(), Meta: doc.Meta(), Header: doc.HeaderText(), Body: doc.Body,
 	}
 }
 
@@ -565,6 +567,9 @@ func (s *Space) CreateFolder(rel string) (string, error) {
 	if existed {
 		return "", ErrExists
 	}
+	if err := notPageNames(strings.Split(canon, "/")); err != nil {
+		return "", err
+	}
 	abs, err := s.abs(canon)
 	if err != nil {
 		return "", err
@@ -595,6 +600,9 @@ func (s *Space) createFolderRemoteLocked(rel string) (string, error) {
 	}
 	if existed {
 		return "", ErrExists
+	}
+	if err := notPageNames(strings.Split(canon, "/")); err != nil {
+		return "", err
 	}
 	abs, err := s.abs(canon)
 	if err != nil {

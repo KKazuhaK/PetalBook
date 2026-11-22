@@ -84,6 +84,17 @@ function plain(markdown: string): string {
     .trim()
 }
 
+// The text of a page for a listing: up to 400 characters, one line per
+// non-blank line of the body (docs/api.md, "Page summary").
+function excerptOf(markdown: string): string {
+  const lines = markdown
+    .replace(/```[^\n]*\n([\s\S]*?)```/g, '$1')
+    .split('\n')
+    .map((l) => plain(l))
+    .filter(Boolean)
+  return Array.from(lines.join('\n')).slice(0, 400).join('')
+}
+
 function firstLine(body: string): string {
   for (const raw of body.split('\n')) {
     const line = plain(raw)
@@ -188,6 +199,10 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     rev: p.rev,
     updated: rfc3339(p.updated),
     meta: structuredClone(p.meta),
+    // The header as this pretend file has it (see serializeFile): JSON values, which are YAML too.
+    header: Object.entries(p.meta)
+      .map(([k, v]) => `${k}: ${JSON.stringify(v)}\n`)
+      .join(''),
     body: p.body,
   })
 
@@ -210,7 +225,7 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
       type: '',
       ...(typeof p.meta.created === 'string' ? { created: p.meta.created } : {}),
       updated: rfc3339(p.updated),
-      excerpt: Array.from(plain(p.body)).slice(0, 200).join(''),
+      excerpt: excerptOf(p.body),
     }
   }
 

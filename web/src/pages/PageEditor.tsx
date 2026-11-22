@@ -2,44 +2,77 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalSt
 import { Link, useBlocker, useNavigate, useParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { EditorContent, useEditor } from '@tiptap/react'
-import { Placeholder } from '@tiptap/extensions'
-import { Folder, History, MoreHorizontal, Save, Trash2, FolderInput } from 'lucide-react'
+import { Code, Columns2, Folder, History, MoreHorizontal, Save, Trash2, FolderInput, Type } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError, isUnauthenticated, spaceApi, type SpaceApi } from '@/api/client'
 import { invalidateListings, keys, usePage, useSession, useTags, useTree, useUrls } from '@/api/hooks'
 import type { Page } from '@/api/types'
 import type { VersionContent } from '@/diff'
-import { createExtensions, docToMarkdown, markdownToDoc } from '@/markdown'
+import { docToMarkdown, markdownToDoc } from '@/markdown'
 import { planRestore, type Content } from '@/editor/draftRestore'
 import { draftRefFor, draftStoreFor, loadDraft, parseSavedMarker, savedMarkerKey } from '@/editor/draftStore'
 import { LateBound } from '@/editor/lateBound'
 import { recoverDraft } from '@/editor/recoverDraft'
 import { LiveDraft } from '@/editor/liveDraft'
-import { fieldsOf, SaveController, waitForSaves, type ConflictInfo, type Fields } from '@/editor/saveController'
+import { buildSave, fieldsOf, SaveController, waitForSaves, type ConflictInfo, type Fields } from '@/editor/saveController'
+import type { SourceHandle } from '@/source/SourceEditor'
+import { dropOldSource, loadMode, saveMode, saveRawSource, setAsideSource, takeOldSource, useSourceView, type EditMode, type RawSource } from '@/source/useSourceView'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { ErrorState, PageFallback } from '@/components/common'
 import { TopBar } from '@/components/layout/TopBar'
 import { AutoTextarea } from '@/components/editor/AutoTextarea'
-import { LinkPopover, SelectionBubble } from '@/components/editor/BubbleToolbar'
+import { ImagePopover, LinkPopover, SelectionBubble } from '@/components/editor/BubbleToolbar'
 import { ConflictDialog } from '@/components/editor/ConflictDialog'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { MovePageDialog } from '@/components/editor/MovePageDialog'
+import { createPageExtensions } from '@/components/editor/pageExtensions'
 import { SaveIndicator } from '@/components/editor/SaveIndicator'
 import { TagsEditor } from '@/components/editor/TagsEditor'
+import { useMaxUpload } from '@/components/editor/useMaxUpload'
 import { failureText } from '@/lib/failure'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
+import { getUploadOriginal } from '@/lib/uploadPrefs'
 import { t } from '@/i18n/zh-CN'
 
 // The history of a page (and the comparison code with it) loads when it is first
 // opened: someone who only writes never pays for it.
 const loadHistory = () => import('@/components/history/HistoryMode')
 const HistoryMode = lazy(loadHistory)
+// The source view brings a code editor with it; it loads when first shown.
+const SourceEditor = lazy(() => import('@/source/SourceEditor'))
 
-// The page's own extensions: exactly the Markdown layer's, with a link click
-// that edits instead of navigating, plus the empty-body hint (display only).
-const extensions = [...createExtensions({ linkOpensOnClick: false }), Placeholder.configure({ placeholder: t.editor.bodyPlaceholder })]
+// Side by side needs room: on a narrow screen that choice shows the editor alone.
+const WIDE = '(min-width: 768px)'
+const subscribeWide = (cb: () => void) => {
+  const mq = window.matchMedia(WIDE)
+  mq.addEventListener('change', cb)
+  return () => mq.removeEventListener('change', cb)
+}
+const isWide = () => window.matchMedia(WIDE).matches
+
+function ModeSwitch({ mode, wide, onChange }: { mode: EditMode; wide: boolean; onChange: (m: EditMode) => void }) {
+  const item = (m: EditMode, label: string, Icon: typeof Type) => (
+    <button
+      type="button"
+      aria-pressed={mode === m}
+      aria-label={label}
+      title={label}
+      onClick={() => onChange(m)}
+      className={`flex size-7 items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 ${mode === m ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+    >
+      <Icon className="size-4" />
+    </button>
+  )
+  return (
+    <div role="group" aria-label={t.modes.label} className="flex items-center rounded-lg border p-0.5">
+      {item('rich', t.modes.rich, Type)}
+      {item('source', t.modes.source, Code)}
+      {wide && item('split', t.modes.split, Columns2)}
+    </div>
+  )
+}
 
 export default function PageEditor() {
   const { id = '', space = '' } = useParams()
@@ -85,6 +118,7 @@ function MissingPage({ space, id, userId }: { space: string; id: string; userId:
   const [draft] = useState(() => loadDraft(ref))
   const [busy, setBusy] = useState(false)
   const preview = (() => {
+    if (draft?.bodyText !== undefined) return draft.bodyText.slice(0, 400)
     if (!draft?.bodyJson) return ''
     try {
       return docToMarkdown(draft.bodyJson).slice(0, 400)
@@ -283,16 +317,41 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
         live.bodyChanged()
         return
       case 'local':
-        // Only in this browser: it goes to the server next.
-        live.bodyChanged()
+        // Only in this browser: it goes to the server next. A body typed as
+        // Markdown stays that text; one edited in the editor is its document.
+        if (restore.content.typed) live.setBodyText(restore.content.markdown ?? '')
+        else live.bodyChanged()
         controller.markDirty()
         return
       case 'conflict':
-        live.bodyChanged()
+        if (restore.content.typed) live.setBodyText(restore.content.markdown ?? '')
+        else live.bodyChanged()
         if (restore.dropLocal && local) drafts.clearIf(local.token)
         controller.enterConflict(restore.info, restore.unsaved)
     }
   }, [restore, local, drafts, live, controller])
+
+  // Tells the source view (when it is open) that something changed outside it.
+  const noteRich = useRef<(what?: { fields?: boolean; force?: boolean }) => void>(() => {})
+  // Brings the editor up to date with text typed in the source view.
+  const [settleRich] = useState(() => new LateBound<[]>())
+  const [uploadLanded] = useState(() => new LateBound<[string]>())
+  // The page's own extensions (see pageExtensions.ts). A page that is open always
+  // exists on the server, so it always has an id to upload files under.
+  const getMaxUpload = useMaxUpload()
+  const [extensions] = useState(() =>
+    createPageExtensions({
+      space,
+      pageId: initial.id,
+      getFolder: () => controller.page.folder,
+      getMaxUpload,
+      upload: (file, name) => client.uploadAsset(initial.id, file, name),
+      getOriginal: getUploadOriginal,
+      notify: (message) => void toast.error(message),
+      beforeInsert: settleRich.call,
+      afterInsert: uploadLanded.call,
+    }),
+  )
 
   const editor = useEditor({
     extensions,
@@ -305,6 +364,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
       live.attachEditor(ed)
       live.bodyChanged()
       controller.markDirty()
+      noteRich.current()
     },
   })
 
@@ -314,13 +374,23 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
 
   // Leaving with a conflict open, or with text that never reached the server,
   // asks first. (Signed out: the sign-in page takes over, and the browser keeps the text.)
+  // Source text whose header does not read, if any (set once the source view exists).
+  const brokenNow = useRef<() => RawSource | null>(() => null)
+  // The last attempt to leave found such text and could not store it.
+  const lostOnLeave = useRef(false)
   const blocker = useBlocker(() => {
+    // Unfinished source text is set aside on the way out, and offered again
+    // when the page is next opened. Only if the browser cannot keep it does
+    // leaving ask first: it would be gone.
+    const text = brokenNow.current()
+    lostOnLeave.current = text !== null && !setAsideSource(ref, text).stored
     const s = controller.getSnapshot()
-    return s.state === 'conflict' || (s.state === 'error' && !isUnauthenticated(s.error))
+    return lostOnLeave.current || s.state === 'conflict' || (s.state === 'error' && !isUnauthenticated(s.error))
   })
   useEffect(() => {
     if (blocker.state !== 'blocked') return
-    if (window.confirm(controller.state === 'conflict' ? t.editor.leaveConflict : t.editor.leaveUnsaved)) blocker.proceed()
+    const message = lostOnLeave.current ? t.modes.leaveBroken : controller.state === 'conflict' ? t.editor.leaveConflict : t.editor.leaveUnsaved
+    if (window.confirm(message)) blocker.proceed()
     else blocker.reset()
   }, [blocker, controller])
 
@@ -330,18 +400,114 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
   const setField = (key: 'title' | 'subtitle' | 'source', value: string) => {
     setFields(live.setField(key, value))
     controller.markDirty()
+    noteRich.current({ fields: true })
   }
   const setTags = (next: string[]) => {
     setFields(live.setTags(next))
     controller.markDirty()
+    noteRich.current({ fields: true })
   }
 
+  // --- the three ways to edit (docs/design.md, 7.0) ---
+  const wide = useSyncExternalStore(subscribeWide, isWide)
+  // Source text left with a broken header last time is shown again where it was typed.
+  // If the page has changed since, the person is asked first (see the notice below).
+  const [rawLeft, setRawLeft] = useState(() => takeOldSource(ref))
+  const [chosenMode, setChosenMode] = useState<EditMode>(loadMode)
+  const richScroller = useRef<HTMLDivElement>(null)
+  const sourceRef = useRef<SourceHandle>(null)
+  const [narrowTo, setNarrowTo] = useState<EditMode>('rich')
+  // Side by side on a screen too narrow for it shows one side: the editor,
+  // unless the source text has a problem that only the source view can fix.
+  const mode: EditMode = chosenMode === 'split' && !wide ? narrowTo : chosenMode
+  const sv = useSourceView({ id: initial.id, mode, live, controller, editor, setFields, richScroller, source: sourceRef, draftRef: ref })
+  if (narrowTo !== (sv.broken ? 'source' : 'rich') && (sv.broken || mode !== 'source')) setNarrowTo(sv.broken ? 'source' : 'rich')
+  const { noteRichChange, settle, hasProblem, landed, brokenText } = sv
+  useEffect(() => {
+    brokenNow.current = brokenText
+  }, [brokenText])
+  useEffect(() => {
+    noteRich.current = noteRichChange
+    settleRich.bind(() => settle('rich'))
+    uploadLanded.bind(landed)
+    return () => {
+      settleRich.bind(null)
+      uploadLanded.bind(null)
+    }
+  }, [noteRichChange, settle, landed, settleRich, uploadLanded])
+  // Source text left unfinished on an older file of this page: take it up
+  // again (in the source view, where it can be finished), or let it go.
+  const [sourceKey, setSourceKey] = useState(0)
+  // Source text in the view that does not read is set aside (stored, then the
+  // view let go of it). False when the browser could not store it: the view
+  // then keeps it, and must not be rewritten.
+  const setAsideBroken = (): boolean => {
+    const text = sv.brokenText()
+    if (!text) return !sv.hasProblem()
+    const { stored, list } = setAsideSource(ref, text)
+    if (!stored) return false
+    sv.parkBroken()
+    setRawLeft(list)
+    return true
+  }
+  const staleRaw = rawLeft.length > 0
+  const resumeRaw = () => {
+    const raw = rawLeft[0]
+    if (!raw) return
+    // Broken text in the view now is set aside in turn, not replaced; if the
+    // browser cannot keep it, it stays in the view and nothing is taken up.
+    if (!setAsideBroken()) {
+      toast.error(t.modes.cannotSetAside)
+      return
+    }
+    sv.resumeStale(raw)
+    saveMode('source')
+    setRawLeft((dropOldSource(ref, raw), takeOldSource(ref)))
+    setSourceKey((k) => k + 1)
+    setChosenMode('source')
+  }
+  const dropRaw = () => {
+    if (rawLeft[0]) setRawLeft(dropOldSource(ref, rawLeft[0]))
+  }
+  // Source text that does not read as a page is in no draft and on no server:
+  // closing the tab asks first (the browser keeps the text for next time).
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!hasProblem()) return
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [hasProblem])
+  // A draft restored on open is put into the live content by an effect above;
+  // a source view built before that is brought up to date here.
+  useEffect(() => {
+    if (restore.kind !== 'file') sv.noteRichChange({ fields: true })
+    // Once, on open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const changeMode = (next: EditMode) => {
+    if (next === mode) return
+    if (next === 'rich' && mode !== 'rich' && sv.canLeaveSource()) {
+      toast.error(t.modes.cannotLeave)
+      return
+    }
+    setChosenMode(next)
+    saveMode(next)
+  }
+  // The body as it stands, whichever side it was last typed on.
+  const bodyNow = () => live.read().body ?? controller.shownBody
+
   // Put these fields and this Markdown on screen, replacing what is there.
-  const showContent = (f: Fields, markdown: string) => {
+  // `chosen`: the person picked this content themself, so unfinished source text gives way to it.
+  const showContent = (f: Fields, markdown: string, chosen = false) => {
     if (!editor) return
     live.reset(f)
     setFields(f)
     editor.commands.setContent(markdownToDoc(markdown), { emitUpdate: false })
+    // After the caller has finished (it may still mark the body as edited).
+    noteRich.current({ fields: true, force: chosen })
   }
 
   // The dialog is closed and cleared first: the controller may raise the next
@@ -355,7 +521,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
     setConflictOpen(false)
     setConflict(null)
     const shown = controller.useTheirs()
-    showContent(fieldsOf(shown.meta), shown.body)
+    showContent(fieldsOf(shown.meta, controller.page.meta), shown.body, true)
   }
 
   // Another tab or device changed what the server has, and this one has nothing
@@ -363,6 +529,12 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
   // person meets the conflict dialog instead.)
   useEffect(() => {
     reload.bind((fresh) => {
+      // Source text that does not read was about the page as it was: it is set
+      // aside, the page is shown as it is now, and the person is asked.
+      // (When the browser cannot store it, the view keeps it and says so.)
+      const had = sv.hasProblem()
+      const parked = had && setAsideBroken()
+      if (had && !parked) toast.warning(t.modes.changedUnderBroken, { duration: 12_000 })
       const plan = planRestore(fresh, null, docToMarkdown, (md) => docToMarkdown(markdownToDoc(md)))
       if (plan.kind === 'file') showContent(fieldsOf(fresh.meta), fresh.body)
       else {
@@ -370,6 +542,8 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
         live.bodyChanged()
         if (plan.kind === 'conflict') controller.enterConflict(plan.info, false)
       }
+      // At once, not after a pause: a keystroke in between would be on the old text.
+      if (parked) sv.noteRichChange({ fields: true, now: true })
     })
     const key = savedMarkerKey(ref)
     const onStorage = (e: StorageEvent) => {
@@ -418,6 +592,8 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
       return
     }
     controller.discard()
+    saveRawSource(ref, null)
+    dropOldSource(ref)
     qc.removeQueries({ queryKey: keys.page(space, page.id) })
     void invalidateListings(qc, space)
     toast.success(t.editor.deleted)
@@ -429,7 +605,9 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
   // file's header with the fields as typed, and the body as Markdown.
   const currentContent = (): VersionContent => {
     const f = live.fields
-    const meta: Record<string, unknown> = { ...controller.page.meta }
+    // Header keys written in the source view are part of it.
+    const base = controller.page
+    const meta: Record<string, unknown> = { ...(buildSave(base, { ...f, body: undefined }, () => base.body)?.meta ?? base.meta) }
     for (const k of ['title', 'subtitle', 'source'] as const) {
       const v = f[k] ?? ''
       if (v === '') delete meta[k]
@@ -437,7 +615,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
     }
     if (f.tags.length) meta.tags = f.tags
     else delete meta.tags
-    return { meta, body: editor ? docToMarkdown(editor.getJSON()) : controller.page.body }
+    return { meta, body: bodyNow() }
   }
 
   // Going back to a version is an ordinary edit: its header fields and body are
@@ -453,18 +631,18 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
         return false
       }
     }
-    const before = { fields: live.fields, markdown: docToMarkdown(editor.getJSON()) }
+    const before = { fields: live.fields, markdown: bodyNow() }
     const put = (f: Fields, markdown: string) => {
-      showContent(f, markdown)
+      showContent(f, markdown, true)
       live.bodyChanged()
       controller.markDirty()
     }
-    put(fieldsOf(v.meta), v.body)
+    put(fieldsOf(v.meta, controller.page.meta), v.body)
     setHistoryOpen(false)
     // Undo puts back what was there, but only while the restored text is still
     // what is on screen: once the person has typed on, or left the page, there is
     // nothing this button may replace.
-    const restored = { fields: live.fields, markdown: docToMarkdown(editor.getJSON()) }
+    const restored = { fields: live.fields, markdown: bodyNow() }
     const sameTags = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i])
     toast(t.history.restored(whenText), {
       duration: 12_000,
@@ -478,7 +656,8 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
             f.subtitle === restored.fields.subtitle &&
             (f.source ?? '') === (restored.fields.source ?? '') &&
             sameTags(f.tags, restored.fields.tags) &&
-            docToMarkdown(editor.getJSON()) === restored.markdown
+            f.others === restored.fields.others &&
+            bodyNow() === restored.markdown
           if (!untouched) {
             toast.info(t.history.undoTooLate)
             return
@@ -501,6 +680,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
         actions={
           <>
             <SaveIndicator snapshot={snapshot} draftSafe={!controller.hasUnsaved()} onRetry={() => void controller.retry()} onOpenConflict={() => setConflictOpen(true)} />
+            {!historyOpen && <ModeSwitch mode={mode} wide={wide} onChange={changeMode} />}
             {!historyOpen && (
               <Button variant="ghost" size="sm" onClick={() => setHistoryOpen(true)} onPointerEnter={() => void loadHistory()} onFocus={() => void loadHistory()} title={t.history.openHint} aria-label={t.history.open}>
                 <History />
@@ -546,15 +726,65 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
 
       {historyOpen && (
         <Suspense fallback={<PageFallback />}>
-          <HistoryMode space={space} pageId={page.id} getCurrent={currentContent} saveState={snapshot.state} onClose={() => setHistoryOpen(false)} onRestore={restoreVersion} />
+          <HistoryMode space={space} pageId={page.id} folder={page.folder} getCurrent={currentContent} saveState={snapshot.state} onClose={() => setHistoryOpen(false)} onRestore={restoreVersion} />
         </Suspense>
       )}
 
       {/* Under the history view the editor stays as it is (so does everything typed
           in it), hidden and out of reach of the keyboard. */}
-      <div className={historyOpen ? 'hidden' : 'flex flex-1 flex-col'} inert={historyOpen}>
+      <div className={historyOpen ? 'hidden' : mode === 'rich' ? 'flex flex-1 flex-col' : 'flex h-[calc(100dvh-3rem)] flex-col'} inert={historyOpen}>
+      {mode !== 'rich' && sv.problem && (
+        <div role="alert" className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm">
+          <span className="font-medium text-destructive">
+            {t.modes.problemAt(sv.problem.line)}：{t.modes.problem[sv.problem.code]}
+          </span>
+          {sv.problem.code === 'bad_yaml' && <span className="ml-2 font-mono text-xs text-muted-foreground">{sv.problem.message}</span>}
+          <span className="ml-2 text-muted-foreground">{t.modes.problemHelp}</span>
+          <button type="button" className="ml-2 underline underline-offset-4" onClick={sv.discardBroken}>
+            {t.modes.discardBroken}
+          </button>
+        </div>
+      )}
+      {staleRaw && (
+        <div role="status" className="shrink-0 border-b border-warning/30 bg-warning/10 px-4 py-2 text-sm">
+          <span>{t.modes.staleRaw}</span>
+          <button type="button" className="ml-2 underline underline-offset-4" onClick={resumeRaw}>
+            {t.modes.staleRawResume}
+          </button>
+          <button type="button" className="ml-2 underline underline-offset-4" onClick={dropRaw}>
+            {t.modes.staleRawDrop}
+          </button>
+        </div>
+      )}
+      <div className={mode === 'rich' ? 'flex flex-1 flex-col' : `grid min-h-0 flex-1 ${mode === 'split' ? 'grid-cols-2 divide-x' : 'grid-cols-1'}`}>
+      {mode !== 'rich' && (
+        <div className="min-h-0 min-w-0" onPointerDownCapture={() => sv.settle('source')} onFocusCapture={() => sv.settle('source')}>
+          <Suspense fallback={<PageFallback />}>
+            <SourceEditor
+              key={sourceKey}
+              ref={sourceRef}
+              getInitialText={sv.currentText}
+              onChange={sv.onSourceChange}
+              onScroll={sv.onSourceScroll}
+              problemLine={sv.problem?.line ?? null}
+              label={t.modes.sourceLabel}
+              className="h-full"
+            />
+          </Suspense>
+        </div>
+      )}
+      <div
+        ref={richScroller}
+        onScroll={mode === 'split' ? sv.onRichScroll : undefined}
+        onPointerDownCapture={mode === 'split' ? () => sv.settle('rich') : undefined}
+        onFocusCapture={mode === 'split' ? () => sv.settle('rich') : undefined}
+        // While the source text does not read as a page the editor side cannot
+        // follow it, so it is out of reach: an edit there would be on old text.
+        inert={mode === 'split' && sv.broken}
+        className={mode === 'source' ? 'hidden' : mode === 'split' ? `min-h-0 min-w-0 overflow-y-auto ${sv.broken ? 'opacity-50' : ''}` : 'flex flex-1 flex-col'}
+      >
       {editor && (
-        <div className="sticky top-12 z-20 border-b bg-background/90 backdrop-blur">
+        <div className={`sticky z-20 border-b bg-background/90 backdrop-blur ${mode === 'split' ? 'top-0' : 'top-12'}`}>
           <div className="mx-auto max-w-[720px] px-3">
             <EditorToolbar editor={editor} />
           </div>
@@ -595,8 +825,11 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
             <EditorContent editor={editor} />
             <SelectionBubble editor={editor} />
             <LinkPopover editor={editor} />
+            <ImagePopover editor={editor} />
           </>
         )}
+      </div>
+      </div>
       </div>
       </div>
 

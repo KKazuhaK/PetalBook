@@ -6,11 +6,13 @@ import type { Plugin } from 'vite'
 import type { RemoteState } from '../src/api/types.ts'
 import { createMockServer, MOCK_ADMIN, MOCK_INVITE_TOKEN, MOCK_SETUP_TOKEN, type MockOptions } from '../src/api/mock/server.ts'
 
-function readBody(req: IncomingMessage): Promise<string> {
+// The body as bytes: an uploaded file must reach the mock unchanged. JSON
+// requests read the same bytes as text.
+function readBody(req: IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
     req.on('data', (c: Buffer) => chunks.push(c))
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    req.on('end', () => resolve(Buffer.concat(chunks)))
     req.on('error', reject)
   })
 }
@@ -55,9 +57,10 @@ export function mockApi(): Plugin {
         if (!req.url?.startsWith('/api/')) return next()
         const body = await readBody(req)
         if (delay > 0) await new Promise((r) => setTimeout(r, delay))
-        const out = server.handle(req.method ?? 'GET', req.url, body, req.headers['content-type'], req.headers.cookie)
+        const out = server.handle(req.method ?? 'GET', req.url, body.toString('utf8'), req.headers['content-type'], req.headers.cookie, new Uint8Array(body))
         res.statusCode = out.status
         for (const [k, v] of Object.entries(out.headers ?? {})) res.setHeader(k, v)
+        if (out.bytes) return res.end(Buffer.from(out.bytes))
         if (out.status === 204 || out.status === 303) return res.end()
         res.setHeader('Content-Type', 'application/json; charset=utf-8')
         res.end(JSON.stringify(out.body))

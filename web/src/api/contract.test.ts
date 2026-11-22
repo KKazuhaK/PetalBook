@@ -39,8 +39,9 @@
 // differ, the mock is wrong.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { ApiError, api, markSignedIn, spaceApi, type SpaceApi } from './client'
+import { ApiError, api, fileUrl, markSignedIn, spaceApi, type SpaceApi } from './client'
 import { mockFetch } from './mock/fetch'
+import { sha256Hex } from './mock/sha256'
 import { createMockServer, MOCK_ADMIN, type MockServer } from './mock/server'
 import type { Page, PageSummary, SpaceInfo, User } from './types'
 
@@ -203,6 +204,17 @@ function suite(target: Target) {
       expect(typeof mine!.name).toBe('string')
       expect(typeof mine!.role).toBe('string')
       expect(typeof mine!.personal).toBe('boolean')
+    })
+
+    it('every space has an inbox: a folder path that is not empty, the same in meta and in the list of spaces', async () => {
+      const m = await api.meta()
+      const { spaces } = await api.spaces()
+      expect(spaces.length).toBeGreaterThanOrEqual(1)
+      for (const s of [...m.spaces, ...spaces]) {
+        expect(typeof s.inbox, s.id).toBe('string')
+        expect(s.inbox.length, s.id).toBeGreaterThan(0)
+      }
+      expect(m.spaces.find((s) => s.id === spaceId)!.inbox).toBe(spaces.find((s) => s.id === spaceId)!.inbox)
     })
 
     it('session says the mode and who is signed in, and is never cached', async () => {
@@ -526,6 +538,66 @@ function suite(target: Target) {
         expect((await call(admin, 'POST', '/api/spaces', { name: '字'.repeat(80) })).status).toBe(201)
       })
 
+      it('inbox: Inbox unless given; set on creation, changed with PATCH alone or with the name; a PATCH with neither is 400', async () => {
+        const m = await newMember(uniq('ib1'))
+        const plain = await call(m.browser, 'POST', '/api/spaces', { name: 'Plain' })
+        expect(plain.status).toBe(201)
+        expect(plain.json.inbox).toBe('Inbox')
+        const own = await call(m.browser, 'POST', '/api/spaces', { name: 'Own', inbox: '收件箱' })
+        expect(own.status).toBe(201)
+        expect(own.json.inbox).toBe('收件箱')
+        const path = `/api/spaces/${own.json.id}`
+        const moved = await call(m.browser, 'PATCH', path, { inbox: '随记/待整理' })
+        expect(moved.status).toBe(200)
+        expect(moved.json).toMatchObject({ id: own.json.id, name: 'Own', inbox: '随记/待整理' })
+        const renamed = await call(m.browser, 'PATCH', path, { name: 'Renamed' })
+        expect(renamed.json).toMatchObject({ name: 'Renamed', inbox: '随记/待整理' })
+        const both = await call(m.browser, 'PATCH', path, { name: 'Both', inbox: 'Notes' })
+        expect(both.json).toMatchObject({ name: 'Both', inbox: 'Notes' })
+        const none = await call(m.browser, 'PATCH', path, {})
+        expect([none.status, none.json.error]).toEqual([400, 'invalid'])
+        const { spaces } = (await call(m.browser, 'GET', '/api/spaces')).json as { spaces: SpaceInfo[] }
+        expect(spaces.find((s) => s.id === own.json.id)).toMatchObject({ name: 'Both', inbox: 'Notes' })
+        expect(spaces.find((s) => s.id === plain.json.id)!.inbox).toBe('Inbox')
+      })
+
+      it('an invalid inbox path is 400 on create and on PATCH, and the space is left as it was', async () => {
+        const m = await newMember(uniq('ib2'))
+        for (const inbox of ['.hidden', 'assets']) {
+          const r = await call(m.browser, 'POST', '/api/spaces', { name: 'Bad', inbox })
+          expect([r.status, r.json.error], inbox).toEqual([400, 'invalid'])
+        }
+        const made = await call(m.browser, 'POST', '/api/spaces', { name: 'Good', inbox: 'Keep' })
+        for (const inbox of ['.hidden', 'assets']) {
+          const r = await call(m.browser, 'PATCH', `/api/spaces/${made.json.id}`, { inbox })
+          expect([r.status, r.json.error], inbox).toEqual([400, 'invalid'])
+        }
+        // A bad inbox does not let the name through either.
+        const mixed = await call(m.browser, 'PATCH', `/api/spaces/${made.json.id}`, { name: 'Changed', inbox: '.hidden' })
+        expect(mixed.status).toBe(400)
+        const { spaces } = (await call(m.browser, 'GET', '/api/spaces')).json as { spaces: SpaceInfo[] }
+        expect(spaces.find((s) => s.id === made.json.id)).toMatchObject({ name: 'Good', inbox: 'Keep' })
+      })
+
+      it('the inbox is only a name: no folder until a page is made in it, and changing it moves nothing', async () => {
+        const m = await newMember(uniq('ib3'))
+        const sp = await call(m.browser, 'POST', '/api/spaces', { name: 'Quick', inbox: '收件箱' })
+        const base = `/api/spaces/${sp.json.id}`
+        expect(((await call(m.browser, 'GET', `${base}/tree`)).json.folders as { path: string }[]).map((f) => f.path)).not.toContain('收件箱')
+        // What quick capture sends: the inbox folder and a body, no title.
+        const note = await call(m.browser, 'POST', `${base}/pages`, { folder: sp.json.inbox, body: '一句话\n' })
+        expect(note.status).toBe(201)
+        expect(note.json.folder).toBe('收件箱')
+        expect('title' in note.json.meta).toBe(false)
+        const tree = (await call(m.browser, 'GET', `${base}/tree`)).json.folders as { path: string; pages: number }[]
+        expect(tree.find((f) => f.path === '收件箱')).toEqual({ path: '收件箱', pages: 1 })
+        await call(m.browser, 'PATCH', base, { inbox: '别处' })
+        const after = await call(m.browser, 'GET', `${base}/pages/${note.json.id}`)
+        expect(after.json.folder).toBe('收件箱')
+        const listed = (await call(m.browser, 'GET', `${base}/pages?folder=${encodeURIComponent('收件箱')}`)).json.items as PageSummary[]
+        expect(listed.map((i) => i.id)).toEqual([note.json.id])
+      })
+
       it('a space of someone else is 404 not_found, the same as one that does not exist: pages, folders, drafts, rename, and for an administrator too', async () => {
         const m = await newMember(uniq('is'))
         const mine = ((await call(m.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[])[0]
@@ -557,6 +629,18 @@ function suite(target: Target) {
   })
 
   describe('create and read', () => {
+    it('a page carries its header as text: the lines between the --- lines, naming its id and fields, the same from create, get and save', async () => {
+      const p = await mk(`${root}/header`, { title: `头部原文${run}`, tags: ['a'] }, 'x\n')
+      expect(typeof p.header).toBe('string')
+      expect(p.header!.endsWith('\n')).toBe(true)
+      expect(p.header).not.toContain('---')
+      expect(p.header).toMatch(new RegExp(`^id: ["']?${p.id}["']?$`, 'm'))
+      expect(p.header).toMatch(/^title: /m)
+      expect((await S.getPage(p.id)).header).toBe(p.header)
+      const saved = await S.savePage(p.id, { baseRev: p.rev, meta: { ...p.meta, series: '冬' }, body: p.body })
+      expect(saved.header).toMatch(/^series: /m)
+      expect((await S.getPage(p.id)).header).toBe(saved.header)
+    })
     it('creates a titled page: assigned id and created, file named from the title, missing folders made', async () => {
       const p = await mk(`${root}/titled/deep`, { id: 'CLIENTSENT', created: '1999-01-01', title: `暮雪${run}`, subtitle: '副', tags: [`tg${run}`] }, '正文\n')
       expect(p.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{10}$/)
@@ -881,6 +965,15 @@ function suite(target: Target) {
       expect(s.updated).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/)
       expect(s.created).toMatch(/^\d{4}-\d{2}-\d{2}$/)
       expect(s.excerpt).toContain('正文1')
+    })
+
+    it('an excerpt is up to 400 characters and keeps line breaks as single \\n, without blank lines', async () => {
+      const f = `${root}/excerpt`
+      const lines = await mk(f, { title: `行${run}` }, '第一行\n第二行\n\n\n第三段\n')
+      const long = await mk(f, { title: `长${run}` }, `${'字'.repeat(500)}\n`)
+      const items = await walk({ folder: f })
+      expect(items.find((i) => i.id === lines.id)!.excerpt).toBe('第一行\n第二行\n第三段')
+      expect(Array.from(items.find((i) => i.id === long.id)!.excerpt ?? '')).toHaveLength(400)
     })
   })
 
@@ -1270,6 +1363,132 @@ function suite(target: Target) {
       }
       // Never quiet for 2 minutes, yet 10 have passed.
       expect((await S.getPage(p.id)).body).toBe('v5\n')
+    })
+  })
+
+  describe('files', () => {
+    const enc = encodeURIComponent
+    const hash8 = (data: Uint8Array) => sha256Hex(data).slice(0, 8)
+    const bytesOf = (s: string) => new TextEncoder().encode(s)
+    // Built by Node's own Response, not by jsdom: a real `fetch` only knows how to send its own kind of Blob.
+    const blobOf = (data: Uint8Array) => new Response(data as BodyInit).blob()
+    const post = (pageId: string, name: string | null, data: Uint8Array, type = 'application/octet-stream') =>
+      admin.fetch(`/api/spaces/${spaceId}/pages/${pageId}/assets${name === null ? '' : `?name=${enc(name)}`}`, { method: 'POST', headers: { 'Content-Type': type }, body: data as BodyInit })
+    const get = (path: string) => admin.fetch(fileUrl(spaceId, path))
+    let page: Page
+    beforeAll(async () => {
+      page = await mk(`${root}/files`, { title: `附件${run}` }, 'x\n')
+    })
+
+    it('meta reports the upload limit in bytes', async () => {
+      const m = await api.meta()
+      expect(Number.isInteger(m.maxUpload)).toBe(true)
+      expect(m.maxUpload).toBeGreaterThan(0)
+    })
+
+    it('stores a file under assets/<page id>/ with the content hash in its name, and answers 201', async () => {
+      const data = bytesOf(`bytes-${run}`)
+      const r = await post(page.id, `street${run}.JPG`, data)
+      expect(r.status).toBe(201)
+      const body = await r.json()
+      expect(body.name).toBe(`street${run}-${hash8(data)}.jpg`)
+      expect(body.path).toBe(`/assets/${page.id}/${body.name}`)
+      expect(body.size).toBe(data.length)
+    })
+
+    it('the client uploads a Blob and returns the same shape', async () => {
+      const data = bytesOf(`client-${run}`)
+      const a = await S.uploadAsset(page.id, await blobOf(data), `合同${run}.pdf`)
+      expect(a).toEqual({ path: `/assets/${page.id}/合同${run}-${hash8(data)}.pdf`, name: `合同${run}-${hash8(data)}.pdf`, size: data.length })
+    })
+
+    it('the same bytes under the same name again is 200 with the same body', async () => {
+      const data = bytesOf(`again-${run}`)
+      const first = await post(page.id, `again${run}.txt`, data)
+      expect(first.status).toBe(201)
+      const second = await post(page.id, `again${run}.txt`, data)
+      expect(second.status).toBe(200)
+      expect(await second.json()).toEqual(await first.json())
+    })
+
+    it('other bytes under the same name are a new file', async () => {
+      const a = await (await post(page.id, `same${run}.txt`, bytesOf('one'))).json()
+      const r = await post(page.id, `same${run}.txt`, bytesOf('two'))
+      expect(r.status).toBe(201)
+      expect((await r.json()).path).not.toBe(a.path)
+    })
+
+    it('only the last segment of the name is used, and characters file systems refuse do not survive', async () => {
+      const data = bytesOf(`seg-${run}`)
+      const r = await (await post(page.id, `a/b/seg${run}.txt`, data)).json()
+      expect(r.name).toBe(`seg${run}-${hash8(data)}.txt`)
+      const odd = await (await post(page.id, `we?ird*na:me${run}.txt`, bytesOf(`odd-${run}`))).json()
+      expect(odd.name).not.toMatch(/[?*:/\\]/)
+      expect(odd.name).toMatch(/-[0-9a-f]{8}\.txt$/)
+      expect((await get(odd.path)).status).toBe(200)
+    })
+
+    it('errors: 404 for an unknown page, 400 for no bytes or no name, 415 for another content type', async () => {
+      const unknown = await post('01ZZZZZZZZ', 'a.txt', bytesOf('x'))
+      expect([unknown.status, (await unknown.json()).error]).toEqual([404, 'not_found'])
+      const empty = await post(page.id, 'a.txt', new Uint8Array())
+      expect([empty.status, (await empty.json()).error]).toEqual([400, 'invalid'])
+      const nameless = await post(page.id, null, bytesOf('x'))
+      expect([nameless.status, (await nameless.json()).error]).toEqual([400, 'invalid'])
+      const json = await post(page.id, 'a.txt', bytesOf('{}'), 'application/json')
+      expect([json.status, (await json.json()).error]).toEqual([415, 'invalid'])
+      const text = await post(page.id, 'a.txt', bytesOf('x'), 'text/plain')
+      expect(text.status).toBe(415)
+    })
+
+    it('a file over maxUpload is 413 invalid', async () => {
+      const { maxUpload } = await api.meta()
+      // A server started with a huge limit would be sent too much to prove this.
+      if (maxUpload > 64 * 1024 * 1024) return
+      const r = await post(page.id, `big${run}.bin`, new Uint8Array(maxUpload + 1))
+      expect([r.status, (await r.json()).error]).toEqual([413, 'invalid'])
+      const exact = await post(page.id, `edge${run}.bin`, new Uint8Array(maxUpload).fill(7))
+      expect(exact.status).toBe(201)
+    })
+
+    it('serves the bytes back, with the headers that make a file safe to show', async () => {
+      const data = bytesOf(`plain text ${run}`)
+      const up = await (await post(page.id, `note${run}.txt`, data)).json()
+      const r = await get(up.path)
+      expect(r.status).toBe(200)
+      expect(Array.from(new Uint8Array(await r.arrayBuffer()))).toEqual(Array.from(data))
+      expect(r.headers.get('X-Content-Type-Options')).toBe('nosniff')
+      expect(r.headers.get('Content-Security-Policy')).toMatch(/sandbox/)
+      expect(r.headers.get('Cache-Control')).toMatch(/private/)
+      expect(r.headers.get('Cache-Control')).toMatch(/no-cache/)
+      expect(r.headers.get('Last-Modified')).toBeTruthy()
+      expect(r.headers.get('Content-Type')).toMatch(/^text\/plain/)
+      expect(r.headers.get('Content-Disposition')).toMatch(/^inline/)
+    })
+
+    it('an image is inline with its type; an unknown extension is an attachment of octet-stream', async () => {
+      const png = await (await post(page.id, `pic${run}.png`, bytesOf(`png-${run}`))).json()
+      const r = await get(png.path)
+      expect(r.headers.get('Content-Type')).toBe('image/png')
+      expect(r.headers.get('Content-Disposition')).toMatch(/^inline/)
+      const bin = await (await post(page.id, `blob${run}.xyz`, bytesOf(`xyz-${run}`))).json()
+      const b = await get(bin.path)
+      expect(b.headers.get('Content-Type')).toBe('application/octet-stream')
+      expect(b.headers.get('Content-Disposition')).toMatch(/^attachment/)
+    })
+
+    it('every segment of the path is percent-encoded, so names with spaces and Chinese characters work', async () => {
+      const up = await (await post(page.id, `我的 照片${run}.jpg`, bytesOf(`cjk-${run}`))).json()
+      expect(fileUrl(spaceId, up.path)).toBe(`/api/spaces/${spaceId}/files/assets/${page.id}/${enc(up.name)}`)
+      const r = await get(up.path)
+      expect(r.status).toBe(200)
+    })
+
+    it('404 not_found for a file that is not there, a page, and a segment starting with a dot', async () => {
+      for (const path of [`/assets/${page.id}/missing${run}.png`, `/${page.path}`, '/.git/config', `/assets/.hidden${run}/x.png`, `/assets/${page.id}/.x${run}.png`]) {
+        const r = await get(path)
+        expect([path, r.status, (await r.json()).error]).toEqual([path, 404, 'not_found'])
+      }
     })
   })
 

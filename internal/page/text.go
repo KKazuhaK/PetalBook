@@ -10,7 +10,7 @@ import (
 
 const (
 	// ExcerptRunes is the length of a page summary's excerpt.
-	ExcerptRunes = 200
+	ExcerptRunes = 400
 	// LabelRunes is where the label of an untitled page is cut.
 	LabelRunes = 30
 )

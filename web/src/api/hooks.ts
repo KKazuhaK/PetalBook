@@ -202,7 +202,7 @@ export function useCreateFolder() {
 export function useCreateSpace() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (name: string) => api.createSpace(name),
+    mutationFn: (input: string | { name: string; inbox?: string }) => (typeof input === 'string' ? api.createSpace(input) : api.createSpace(input.name, input.inbox)),
     // Another space, in the same list order the server gives: personal first, then by name.
     onSuccess: (space) =>
       qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => ({
@@ -215,6 +215,15 @@ export function useRenameSpace() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) => api.renameSpace(id, name),
+    onSuccess: (space) => qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => ({ spaces: (prev?.spaces ?? []).map((s) => (s.id === space.id ? space : s)) })),
+  })
+}
+
+// Changes the name and/or the inbox folder of a space.
+export function useUpdateSpace() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...patch }: { id: string; name?: string; inbox?: string }) => api.updateSpace(id, patch),
     onSuccess: (space) => qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => ({ spaces: (prev?.spaces ?? []).map((s) => (s.id === space.id ? space : s)) })),
   })
 }

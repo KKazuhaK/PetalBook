@@ -13,8 +13,11 @@ export function draftToCreateInput(draft: StoredDraft, toMarkdown: (doc: DocJSON
   if (f.subtitle) meta.subtitle = f.subtitle
   if (f.source) meta.source = f.source
   if (f.tags.length) meta.tags = f.tags
+  // Header keys written in the source view come along; the server gives the
+  // new page its own id and creation date.
+  for (const [k, v] of Object.entries(f.others ?? {})) if (!(k in meta) && k !== 'id' && k !== 'created') meta[k] = v
   // The draft does not remember a folder: the new page goes to the root.
-  return { folder: '', meta, body: draft.bodyJson ? toMarkdown(draft.bodyJson) : '' }
+  return { folder: '', meta, body: draft.bodyText ?? (draft.bodyJson ? toMarkdown(draft.bodyJson) : '') }
 }
 
 // The draft is removed only after the new page exists, so a failed attempt

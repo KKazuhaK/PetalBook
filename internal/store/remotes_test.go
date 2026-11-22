@@ -13,7 +13,7 @@ func TestRemotes(t *testing.T) {
 		mkUser(t, st, "A", "a", "admin")
 		now := time.Date(2026, 11, 21, 8, 0, 0, 0, time.UTC)
 		for _, id := range []string{"S1", "S2"} {
-			if err := store.InsertSpace(ctx, st.Q(), id, id, "", now); err != nil {
+			if err := store.InsertSpace(ctx, st.Q(), id, id, "", "", now); err != nil {
 				t.Fatal(err)
 			}
 		}

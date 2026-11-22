@@ -259,11 +259,27 @@ func (s *Space) ensureFolder(tx *txn, rel string) (canon, abs string, err error)
 		}
 		missing = append([]string{d}, missing...)
 	}
+	if err := notPageNames(missing); err != nil {
+		return "", "", err
+	}
 	if err := os.MkdirAll(abs, 0o755); err != nil {
 		return "", "", err
 	}
 	tx.created = append(tx.created, missing...)
 	return canon, abs, s.idx.AddFolder(canon)
+}
+
+// notPageNames refuses to make a folder whose name ends in .md: that is how
+// page files are named, and a folder standing where a page file was cannot be
+// told apart from it by Git while the page's removal is not yet committed.
+// Folders of that name that already exist are used as they are.
+func notPageNames(dirs []string) error {
+	for _, d := range dirs {
+		if strings.EqualFold(path.Ext(d), ".md") {
+			return invalidf("a folder name cannot end in .md (%q)", path.Base(d))
+		}
+	}
+	return nil
 }
 
 func newTemp(tmpDir string, data []byte, mode os.FileMode) (string, error) {

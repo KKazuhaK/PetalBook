@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router'
-import { ChevronRight, Clock, Folder, FolderOpen, FolderPlus, Home, Search, Tag } from 'lucide-react'
+import { ChevronRight, Clock, Folder, FolderOpen, FolderPlus, Home, Inbox, PenLine, Search, Tag } from 'lucide-react'
 import { useActiveSpace, useSession, useTags, useTree, useUrls } from '@/api/hooks'
 import {
   Sidebar,
@@ -21,12 +21,14 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { buildFolderTree, ancestorsOf, pathAfter, type FolderNode } from '@/lib/folders'
 import { t } from '@/i18n/zh-CN'
 import { NewFolderDialog } from './NewFolderDialog'
+import { useQuickCapture } from './QuickCapture'
 import { SidebarToggle } from './SidebarToggle'
 import { SpaceSwitcher } from './SpaceSwitcher'
 import { ThemeToggle } from './ThemeToggle'
 import { UserMenu } from './UserMenu'
 
 const OPEN_KEY = 'pb.folders.open'
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
 
 // Which folders the person collapsed or expanded by hand. Remembered per
 // browser; storage can be blocked, so every access is guarded.
@@ -104,6 +106,46 @@ function SearchBox() {
       />
       <kbd className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 rounded border bg-muted px-1 font-sans text-[10px] text-muted-foreground">⌘K</kbd>
     </div>
+  )
+}
+
+// The button above the search box. On a phone it sits in the drawer, which
+// closes first so the box does not open on top of it.
+function QuickNoteButton() {
+  const { open, available } = useQuickCapture()
+  const { isMobile, setOpenMobile } = useSidebar()
+  return (
+    <button
+      type="button"
+      disabled={!available}
+      onClick={() => {
+        if (isMobile) setOpenMobile(false)
+        open()
+      }}
+      className="flex h-8 w-full items-center gap-2 rounded-lg border border-input bg-background px-2.5 text-sm outline-none transition-colors hover:bg-sidebar-accent focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
+    >
+      <PenLine className="size-4 text-muted-foreground" />
+      <span className="flex-1 text-left">{t.nav.quickNote}</span>
+      <kbd className="pointer-events-none hidden rounded border bg-muted px-1 font-sans text-[10px] text-muted-foreground md:inline">{isMac ? '⌥⇧N' : 'Alt+Shift+N'}</kbd>
+    </button>
+  )
+}
+
+// The inbox is a folder, so this is a link to its listing. It works before the
+// folder exists: the listing is then empty and says how to fill it.
+function InboxLink({ inbox, activeFolder }: { inbox: string | undefined; activeFolder: string | null }) {
+  const urls = useUrls()
+  const { data } = useTree()
+  const count = inbox === undefined ? 0 : (data?.folders.find((f) => f.path === inbox)?.pages ?? 0)
+  if (inbox === undefined) return null
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton isActive={activeFolder === inbox} render={<NavLink to={urls.folder(inbox)} />}>
+        <Inbox />
+        <span>{t.nav.inbox}</span>
+      </SidebarMenuButton>
+      {count > 0 && <SidebarMenuBadge>{count}</SidebarMenuBadge>}
+    </SidebarMenuItem>
   )
 }
 
@@ -213,7 +255,8 @@ export function AppSidebar() {
   const accounts = session?.mode === 'accounts'
   const activeFolder = pathAfter(pathname, `${urls.base}/f`)
   const activeTag = pathAfter(pathname, `${urls.base}/t`)
-  const spaceName = spaces.find((s) => s.id === id)?.name
+  const current = spaces.find((s) => s.id === id)
+  const spaceName = current?.name
 
   return (
     <Sidebar>
@@ -231,12 +274,14 @@ export function AppSidebar() {
           </div>
           <SidebarToggle where="sidebar" />
         </div>
+        <QuickNoteButton />
         <SearchBox />
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
+              <InboxLink inbox={current?.inbox} activeFolder={activeFolder} />
               <SidebarMenuItem>
                 <SidebarMenuButton isActive={pathname === urls.recent()} render={<NavLink to={urls.recent()} />}>
                   <Clock />

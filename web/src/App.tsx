@@ -48,7 +48,9 @@ function AuthGate() {
   const session = useSession()
   const { pathname, search } = useLocation()
   if (session.isPending) return <PageFallback />
-  if (session.isError) return <ErrorState message={`${t.auth.loadFailed}：${session.error.message}`} onRetry={() => void session.refetch()} />
+  // Only when there is nothing to go on: a failed refresh in the background
+  // (offline for a moment) must not take away the page someone is typing in.
+  if (session.isError && !session.data) return <ErrorState message={`${t.auth.loadFailed}：${session.error.message}`} onRetry={() => void session.refetch()} />
   const s = session.data
   if (s.mode === 'accounts') {
     if (s.setup) return <Navigate to="/setup" replace />
@@ -64,7 +66,7 @@ function LegacyRedirect() {
   const spaces = useSpaces()
   const { pathname, search, hash } = useLocation()
   if (spaces.isPending) return <PageFallback />
-  if (spaces.isError) return <ErrorState message={spaces.error.message} onRetry={() => void spaces.refetch()} />
+  if (spaces.isError && !spaces.data) return <ErrorState message={spaces.error.message} onRetry={() => void spaces.refetch()} />
   const list = spaces.data.spaces
   const last = lastSpace()
   const space = list.find((s) => s.id === last) ?? list[0]
@@ -83,7 +85,7 @@ function SpaceGate() {
     if (known) rememberSpace(space)
   }, [known, space])
   if (spaces.isPending) return <PageFallback />
-  if (spaces.isError) return <ErrorState message={spaces.error.message} onRetry={() => void spaces.refetch()} />
+  if (spaces.isError && !spaces.data) return <ErrorState message={spaces.error.message} onRetry={() => void spaces.refetch()} />
   if (!known) return <NotFoundPage message={t.editor.spaceMissing} />
   // A new key per space: nothing of the old one stays mounted.
   return <Outlet key={space} />

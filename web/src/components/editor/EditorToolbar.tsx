@@ -5,6 +5,7 @@ import { Code2, Heading1, Heading2, Heading3, List, ListChecks, ListOrdered, Min
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { t } from '@/i18n/zh-CN'
+import { UploadButtons } from './UploadButtons'
 
 function Tool({ label, active, disabled, onClick, children }: { label: string; active?: boolean; disabled?: boolean; onClick: () => void; children: ReactNode }) {
   return (
@@ -87,6 +88,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
       <Tool label={t.toolbar.rule} onClick={() => run().setHorizontalRule().run()}>
         <Minus />
       </Tool>
+      <UploadButtons editor={editor} />
       <DropdownMenu>
         <DropdownMenuTrigger
           render={

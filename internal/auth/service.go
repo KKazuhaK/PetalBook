@@ -459,7 +459,7 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 					return err
 				}
 			}
-			if err := store.InsertSpace(ctx, q, stg.ID(), stg.Name(), cand.ID, s.now()); err != nil {
+			if err := store.InsertSpace(ctx, q, stg.ID(), stg.Name(), cand.ID, "", s.now()); err != nil {
 				return err
 			}
 			return store.AddMember(ctx, q, stg.ID(), cand.ID, "owner", s.now())

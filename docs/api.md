@@ -27,7 +27,9 @@ The web app talks to the server only through this API.
   flag on a network you do not trust until sign-in exists.
   - Every `POST`, `PUT`, `DELETE` and `PATCH` must send
     `Content-Type: application/json`, even with no body, or the answer is
-    `415 invalid`.
+    `415 invalid`. The one exception is uploading a file (see "Files"), which
+    must send `Content-Type: application/octet-stream`; a plain HTML form
+    cannot send that type either.
   - A request whose `Sec-Fetch-Site` header is present and is neither
     `same-origin` nor `none` gets `403 forbidden`.
   - A request carrying an `Origin` header gets `403 forbidden` unless that
@@ -82,9 +84,13 @@ not signed in), in the shape of `GET /api/spaces`.
 ```json
 {
   "version": "dev",
-  "spaces": [{"id": "default", "name": "My notes", "role": "owner", "personal": true}]
+  "maxUpload": 10485760,
+  "spaces": [{"id": "default", "name": "My notes", "role": "owner", "personal": true, "sync": "local", "inbox": "Inbox"}]
 }
 ```
+
+`maxUpload` is the largest file, in bytes, the server accepts as an upload
+(`--max-upload`, 10 MiB by default, at most 256 MiB).
 
 ## Session
 
@@ -290,13 +296,16 @@ taken (the invite stays usable).
 ### Space
 
 ```json
-{"id": "01JD3K8Q7Z", "name": "My notes", "role": "owner", "personal": true, "sync": "local"}
+{"id": "01JD3K8Q7Z", "name": "My notes", "role": "owner", "personal": true, "sync": "local", "inbox": "Inbox"}
 ```
 
 `role` is the caller's role in the space; in this milestone always `owner`.
 `personal` marks the space made together with the account. `sync` is `local`
 (the repository exists only on the server) or the `state` of its remote (see
-"Remote repository").
+"Remote repository"). `inbox` is the folder that quick notes go to: a folder
+path, never empty. It is only a name: the folder is made when the first page
+is created in it, and changing the setting moves nothing. In single-user mode
+it is set with `--inbox` (default `Inbox`).
 
 ### `GET /api/spaces`
 
@@ -305,14 +314,17 @@ name.
 
 ### `POST /api/spaces`
 
-Accounts mode. `{"name": "Tang"}` (1–80 characters). `201` with the space.
+Accounts mode. `{"name": "Tang", "inbox": "收件箱"}`: `name` is 1–80
+characters; `inbox` is optional (default `Inbox`) and must be a valid folder
+path. `201` with the space.
 The server makes the Git repository. The caller is its owner. `403 forbidden` when
 the caller already owns as many spaces as the server allows (`--max-spaces`,
 20 by default).
 
 ### `PATCH /api/spaces/{space}`
 
-Accounts mode. `{"name": "…"}`. `200` with the space.
+Accounts mode, owners only. `{"name": "…", "inbox": "…"}`, each optional; at
+least one must be given. `200` with the space.
 
 ## Remote repository
 
@@ -441,6 +453,8 @@ address); it is free text from the header field of the same name.
 of the body cut to about 30 characters (`untitled` says which). It is an
 empty string for an untitled page with an empty body. `created` is absent
 when the header has none. `updated` is when the file was last written.
+`excerpt` keeps the line breaks of the text as single `\n`; blank lines
+between paragraphs are not kept.
 
 ```json
 {
@@ -456,7 +470,7 @@ when the header has none. `updated` is when the file was last written.
   "type": "",
   "created": "2025-12-03",
   "updated": "2026-11-21T08:30:00Z",
-  "excerpt": "first 200 characters of the body as plain text"
+  "excerpt": "first 400 characters of the body as plain text"
 }
 ```
 
@@ -464,7 +478,10 @@ when the header has none. `updated` is when the file was last written.
 
 Returned by get, create, save and commit. `meta` is the header as an object,
 in file order, including fields the server does not know about; `id` is in it.
-`body` is the Markdown after the header. `GET` adds `draft` when the caller
+`body` is the Markdown after the header. `header` is the text of the header
+exactly as it is in the file (the lines between the two `---` lines, each
+ending in `\n`), for showing the file as it was written; it is always the
+file's, and what a save writes is decided by `meta` alone. `GET` adds `draft` when the caller
 has one for the page (see Drafts); `meta` and `body` are always the file's.
 
 ```json
@@ -475,6 +492,7 @@ has one for the page (see Drafts); `meta` and `body` are always the file's.
   "rev": "3b18e512dba79e4c8300dd08aeb37f8e728b8dad",
   "updated": "2026-11-21T08:30:00Z",
   "meta": {"id": "01JD3K8Q7Z", "title": "暮雪", "tags": ["玉兰"], "created": "2025-12-03"},
+  "header": "id: 01JD3K8Q7Z\ntitle: 暮雪\ntags: [玉兰]\ncreated: 2025-12-03\n",
   "body": "…\n"
 }
 ```
@@ -671,6 +689,75 @@ Moves the file, creating the folder if needed. Returns the page.
 
 `204`. The file is removed from the working tree; it remains in Git history.
 
+## Files
+
+Images and other attachments are ordinary files of the space. The ones the
+server stores live in `assets/<page id>/` at the root of the space, and a page
+refers to them by a path from the root of the space:
+
+```markdown
+![a rainy street](/assets/01JD3K8Q7Z/street-3f9a1c2b.jpg)
+[the contract](/assets/01JD3K8Q7Z/contract-91be02aa.pdf)
+```
+
+That path stays right when the page is moved or renamed. A client showing a
+page resolves the address of an image or link like this: one with a scheme
+(`https:`, `data:`, `mailto:` …) or starting with `//` or `#` is left alone;
+one starting with `/` is a path from the root of the space; anything else is
+relative to the folder of the page. The resulting path is fetched with
+`GET …/files/{path}`.
+
+### `POST /api/spaces/{space}/pages/{id}/assets?name={file name}`
+
+Stores a file for the page. The body is the file's bytes, sent with
+`Content-Type: application/octet-stream`. `name` is the name the file had;
+only its last path segment is used.
+
+`201` with
+
+```json
+{"path": "/assets/01JD3K8Q7Z/street-3f9a1c2b.jpg", "name": "street-3f9a1c2b.jpg", "size": 48213}
+```
+
+`path` is what goes into the page. The stored name is made by the server:
+the given name with characters that file systems refuse replaced, cut to a
+reasonable length, the extension in lower case, and the first 8 hexadecimal
+digits of the SHA-256 of the content before the extension. Uploading the same
+bytes under the same name again answers `200` with the same body and stores
+nothing new.
+
+Errors: `404 not_found` when the page does not exist; `400 invalid` for an
+empty body or a missing name, and when `assets` or the page's directory in it
+is not a plain directory (a symbolic link, a file, or a folder named the same
+in another letter case on a file system that ignores case); `409 exists` when
+another file already has the stored name (same name, same first 8 digits,
+other bytes); `413 invalid` when the file is larger than
+`maxUpload` (see `GET /api/meta`); `415 invalid` for another content type;
+`503 unavailable` as for every change in a space that follows a remote.
+
+The file is committed like a page is: at once and pushed in a space that
+follows a remote, otherwise by the next background commit. It is stored
+whether or not the page ends up referring to it; nothing removes files that
+no page refers to (a later milestone).
+
+### `GET /api/spaces/{space}/files/{path}`
+
+The bytes of a file of the space. `path` is from the root of the space, each
+segment percent-encoded. `404 not_found` for a path that does not exist, is
+not a regular file, has a segment starting with a dot, goes through a
+symbolic link, or is a page (a `.md` file outside `assets/`): pages are read
+through the page endpoints.
+
+The answer carries `X-Content-Type-Options: nosniff`, a
+`Content-Security-Policy` that forbids scripts and sandboxes the document,
+and `Cache-Control: private, no-cache` with `Last-Modified`, so a browser
+revalidates with `If-Modified-Since` and gets `304`. `Range` requests work.
+The content type comes from the extension, for a fixed list of image, audio,
+video, PDF and plain-text types; those are sent `Content-Disposition:
+inline`. A PDF is sent without the policy header, because browsers' PDF
+viewers do not start under it. Everything else is `application/octet-stream` and
+`Content-Disposition: attachment`.
+
 ## Folders and tags
 
 ### `GET /api/spaces/{space}/tree`
@@ -689,8 +776,10 @@ directly inside it.
 ```
 
 `201` with `{"path": "随笔/2027"}`; `409 exists` if it is already there;
-`400 invalid` for a name starting with a dot, or `assets` at the root (that
-name is reserved for attachments).
+`400 invalid` for a name starting with a dot, `assets` at the root in any
+letter case (that name is reserved for attachments), or a name ending in
+`.md` (that is how page files are named). The same applies to folders made
+on the way by creating or moving a page.
 
 ### `GET /api/spaces/{space}/tags`
 

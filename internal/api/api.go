@@ -37,6 +37,9 @@ const SpaceID = spaces.SingleID
 // thousands of words.
 const DefaultMaxBody = 8 << 20
 
+// DefaultMaxUpload caps an uploaded file.
+const DefaultMaxUpload = 10 << 20
+
 // authBodyLimit caps the bodies of the sign-in and account endpoints, which
 // anyone can reach.
 const authBodyLimit = 64 << 10
@@ -45,6 +48,9 @@ const authBodyLimit = 64 << 10
 type Options struct {
 	Version string
 	MaxBody int64 // bytes; DefaultMaxBody when 0
+	// MaxUpload is the largest file accepted as an upload, in bytes;
+	// DefaultMaxUpload when 0.
+	MaxUpload int64
 	// Store, Spaces and Drafts are required.
 	Store  *store.Store
 	Spaces *spaces.Manager
@@ -88,6 +94,9 @@ func New(opt Options) http.Handler {
 	if opt.MaxBody <= 0 {
 		opt.MaxBody = DefaultMaxBody
 	}
+	if opt.MaxUpload <= 0 {
+		opt.MaxUpload = DefaultMaxUpload
+	}
 	if opt.Version == "" {
 		opt.Version = "dev"
 	}
@@ -113,8 +122,12 @@ func New(opt Options) http.Handler {
 		}
 	}
 	mux := http.NewServeMux()
+	uploads := map[string]bool{}
 	for _, rt := range routeTable {
 		mux.HandleFunc(rt.method+" "+rt.pattern, s.handle(rt))
+		if rt.upload {
+			uploads[rt.method+" "+rt.pattern] = true
+		}
 	}
 	// A path that exists with other methods is 405 in the API's error shape
 	// (the mux would answer in plain text), anything else 404. This cannot be
@@ -129,20 +142,32 @@ func New(opt Options) http.Handler {
 		}
 		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
 	})
-	return s.wrap(mux)
+	// The body of a request that changes something must be JSON, or, on an
+	// upload route, a file: asked of the mux, so the route table decides.
+	bodyType := func(r *http.Request) string {
+		if _, pattern := mux.Handler(r); uploads[pattern] {
+			return "application/octet-stream"
+		}
+		return "application/json"
+	}
+	return s.wrap(mux, bodyType)
 }
 
 // methodsFor lists the methods of the routes a path matches, preferring the
 // most literal match (so /api/invites/accept is not also /api/invites/{id}).
 func (s *server) methodsFor(path string) []string {
-	segs := strings.Split(path, "/")
+	all := strings.Split(path, "/")
 	best := -1
 	var out []string
 	for _, rt := range routeTable {
+		segs := all
 		if rt.accountsOnly && s.single {
 			continue
 		}
 		ps := strings.Split(rt.pattern, "/")
+		if last := ps[len(ps)-1]; strings.HasSuffix(last, "...}") && len(segs) >= len(ps) {
+			segs = append(append([]string{}, segs[:len(ps)-1]...), strings.Join(segs[len(ps)-1:], "/"))
+		}
 		if len(ps) != len(segs) {
 			continue
 		}
@@ -180,7 +205,7 @@ func OriginOf(raw string) string {
 }
 
 // wrap adds the Host check, panic recovery and access logging.
-func (s *server) wrap(next http.Handler) http.Handler {
+func (s *server) wrap(next http.Handler, bodyType func(*http.Request) string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w}
@@ -214,8 +239,14 @@ func (s *server) wrap(next http.Handler) http.Handler {
 		case http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch:
 			// Even without a body: a plain HTML form cannot send this type, so
 			// requiring it keeps pages on other sites from making changes.
-			if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
-				writeError(sw, http.StatusUnsupportedMediaType, "invalid", "send Content-Type: application/json with every request that changes something")
+			// A file upload is the one exception, and its type cannot be sent by a form either.
+			want := bodyType(r)
+			if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != want {
+				msg := "send Content-Type: application/json with every request that changes something"
+				if want != "application/json" {
+					msg = "send the file with Content-Type: " + want
+				}
+				writeError(sw, http.StatusUnsupportedMediaType, "invalid", msg)
 				return
 			}
 		}
@@ -479,6 +510,7 @@ type pageResp struct {
 	Rev     string    `json:"rev"`
 	Updated string    `json:"updated"`
 	Meta    page.Meta `json:"meta"`
+	Header  string    `json:"header"`
 	Body    string    `json:"body"`
 }
 
@@ -487,7 +519,7 @@ func toPage(p *space.Page) pageResp {
 	if m == nil {
 		m = page.Meta{}
 	}
-	return pageResp{ID: p.ID, Path: p.Path, Folder: p.Folder, Rev: p.Rev, Updated: rfc3339(p.Updated), Meta: m, Body: p.Body}
+	return pageResp{ID: p.ID, Path: p.Path, Folder: p.Folder, Rev: p.Rev, Updated: rfc3339(p.Updated), Meta: m, Header: p.Header, Body: p.Body}
 }
 
 type summaryResp struct {

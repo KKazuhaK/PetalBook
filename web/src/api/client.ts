@@ -26,6 +26,7 @@ import type {
   SpaceInfo,
   TagsResponse,
   TreeResponse,
+  UploadedAsset,
   User,
 } from './types'
 
@@ -133,9 +134,11 @@ interface RequestOptions {
   body?: unknown
   keepalive?: boolean
   signal?: AbortSignal
+  // A file's bytes, sent as they are (the one request that is not JSON).
+  blob?: Blob
 }
 
-async function request<T>(path: string, { method = 'GET', body, keepalive, signal }: RequestOptions = {}): Promise<T> {
+async function request<T>(path: string, { method = 'GET', body, keepalive, signal, blob }: RequestOptions = {}): Promise<T> {
   const barePath = path.split('?')[0]
   const isSignIn = SIGN_IN_PATHS.test(barePath)
   if (signedOut && !isSignIn) throw new ApiError(401, 'unauthenticated', '登录已失效，请重新登录')
@@ -143,7 +146,9 @@ async function request<T>(path: string, { method = 'GET', body, keepalive, signa
   // server refuses writes without one (it is what keeps other sites from
   // posting to it from a browser form).
   const isWrite = method !== 'GET'
-  const payload = body === undefined ? (isWrite ? '{}' : undefined) : JSON.stringify(body)
+  // A file goes out as its bytes: every fetch implementation sends those the
+  // same way, which cannot be said of a Blob made by another library.
+  const payload: string | ArrayBuffer | undefined = blob ? await blob.arrayBuffer() : body === undefined ? (isWrite ? '{}' : undefined) : JSON.stringify(body)
   let res: Response
   try {
     res = await fetch(API_BASE + path, {
@@ -151,9 +156,9 @@ async function request<T>(path: string, { method = 'GET', body, keepalive, signa
       signal,
       // The session is a same-origin cookie.
       credentials: 'same-origin',
-      headers: { Accept: 'application/json', ...(payload === undefined ? {} : { 'Content-Type': 'application/json' }) },
+      headers: { Accept: 'application/json', ...(payload === undefined ? {} : { 'Content-Type': blob ? 'application/octet-stream' : 'application/json' }) },
       body: payload,
-      keepalive: keepalive && payload !== undefined && byteLength(payload) < KEEPALIVE_LIMIT ? true : undefined,
+      keepalive: keepalive && typeof payload === 'string' && byteLength(payload) < KEEPALIVE_LIMIT ? true : undefined,
     })
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') throw e
@@ -207,6 +212,13 @@ export function listParamsToQuery(p: ListParams): string {
 
 const enc = encodeURIComponent
 
+// Where the bytes of a file of a space are served (docs/api.md, "Files"): `path`
+// is from the root of the space, and each segment is percent-encoded.
+export function fileUrl(space: string, path: string): string {
+  const segments = path.split('/').filter((s) => s !== '')
+  return `${API_BASE}/spaces/${enc(space)}/files/${segments.map(enc).join('/')}`
+}
+
 // Everything under one space. A space id is a path segment of the URL, so each
 // caller says which space it means; there is no "current" space in this module.
 export function spaceApi(space: string) {
@@ -226,6 +238,9 @@ export function spaceApi(space: string) {
     deleteDraft: (id: string, version?: string, rev?: string) => request<void>(pageBase(id, `/draft${version ? `?version=${enc(version)}${rev ? `&rev=${enc(rev)}` : ''}` : ''}`), { method: 'DELETE' }),
     // Only the draft of that version is committed (409 with the page and the draft otherwise).
     commitPage: (id: string, version: string) => request<Page>(pageBase(id, '/commit'), { method: 'POST', body: { version } }),
+
+    // Stores a file for a page; the answer's `path` is what the page refers to.
+    uploadAsset: (id: string, file: Blob, name: string, signal?: AbortSignal) => request<UploadedAsset>(pageBase(id, `/assets?name=${enc(name)}`), { method: 'POST', blob: file, signal }),
 
     tree: (signal?: AbortSignal) => request<TreeResponse>(base('/tree'), { signal }),
     createFolder: (path: string) => request<{ path: string }>(base('/folders'), { method: 'POST', body: { path } }),
@@ -298,6 +313,8 @@ export const api = {
 
   // --- spaces ---
   spaces: (signal?: AbortSignal) => request<{ spaces: SpaceInfo[] }>('/spaces', { signal }),
-  createSpace: (name: string) => request<SpaceInfo>('/spaces', { method: 'POST', body: { name } }),
+  createSpace: (name: string, inbox?: string) => request<SpaceInfo>('/spaces', { method: 'POST', body: { name, ...(inbox === undefined ? {} : { inbox }) } }),
   renameSpace: (id: string, name: string) => request<SpaceInfo>(`/spaces/${enc(id)}`, { method: 'PATCH', body: { name } }),
+  // Either field or both; the server refuses a body with neither.
+  updateSpace: (id: string, patch: { name?: string; inbox?: string }) => request<SpaceInfo>(`/spaces/${enc(id)}`, { method: 'PATCH', body: patch }),
 }

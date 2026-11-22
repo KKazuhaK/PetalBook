@@ -13,16 +13,25 @@ type SpaceInfo struct {
 	Name     string
 	Role     string // the member's role in the space
 	Personal bool
-	Created  time.Time
+	// Inbox is the folder quick notes go to.
+	Inbox   string
+	Created time.Time
 }
 
-// InsertSpace adds a space row. personalOf is the user a personal space belongs to, or "".
-func InsertSpace(ctx context.Context, q Q, id, name, personalOf string, now time.Time) error {
+// DefaultInbox is the inbox folder of a space made without one.
+const DefaultInbox = "Inbox"
+
+// InsertSpace adds a space row. personalOf is the user a personal space
+// belongs to, or "". An empty inbox is DefaultInbox.
+func InsertSpace(ctx context.Context, q Q, id, name, personalOf, inbox string, now time.Time) error {
 	var owner any
 	if personalOf != "" {
 		owner = personalOf
 	}
-	_, err := q.Exec(ctx, `INSERT INTO spaces(id, name, personal_of, created) VALUES (?, ?, ?, ?)`, id, name, owner, ms(now))
+	if inbox == "" {
+		inbox = DefaultInbox
+	}
+	_, err := q.Exec(ctx, `INSERT INTO spaces(id, name, personal_of, inbox, created) VALUES (?, ?, ?, ?, ?)`, id, name, owner, inbox, ms(now))
 	return err
 }
 
@@ -34,7 +43,7 @@ func AddMember(ctx context.Context, q Q, spaceID, userID, role string, now time.
 // ListUserSpaces returns the spaces a user is a member of, the personal one
 // first, then by name: one query on the member's index.
 func ListUserSpaces(ctx context.Context, q Q, userID string) ([]SpaceInfo, error) {
-	rows, err := q.Query(ctx, `SELECT s.id, s.name, m.role, s.personal_of, s.created
+	rows, err := q.Query(ctx, `SELECT s.id, s.name, m.role, s.personal_of, s.inbox, s.created
 		FROM space_members m JOIN spaces s ON s.id = m.space_id
 		WHERE m.user_id = ?`, userID)
 	if err != nil {
@@ -46,7 +55,7 @@ func ListUserSpaces(ctx context.Context, q Q, userID string) ([]SpaceInfo, error
 		var s SpaceInfo
 		var personal sql.NullString
 		var created int64
-		if err := rows.Scan(&s.ID, &s.Name, &s.Role, &personal, &created); err != nil {
+		if err := rows.Scan(&s.ID, &s.Name, &s.Role, &personal, &s.Inbox, &created); err != nil {
 			return nil, err
 		}
 		s.Personal, s.Created = personal.Valid, fromMS(created)
@@ -58,6 +67,12 @@ func ListUserSpaces(ctx context.Context, q Q, userID string) ([]SpaceInfo, error
 // RenameSpace changes a space's display name.
 func RenameSpace(ctx context.Context, q Q, id, name string) error {
 	res, err := q.Exec(ctx, `UPDATE spaces SET name = ? WHERE id = ?`, name, id)
+	return oneRow(res, err)
+}
+
+// SetSpaceInbox changes the folder quick notes of a space go to.
+func SetSpaceInbox(ctx context.Context, q Q, id, inbox string) error {
+	res, err := q.Exec(ctx, `UPDATE spaces SET inbox = ? WHERE id = ?`, inbox, id)
 	return oneRow(res, err)
 }
 

@@ -173,6 +173,9 @@ func TestServeConfigurationIsCheckedBeforeAnythingIsCreated(t *testing.T) {
 		{"public url not a url", []string{"serve", "--data", data, "--public-url", "x.example"}, "--public-url"},
 		{"bad trusted proxy", []string{"serve", "--data", data, "--trusted-proxy", "banana"}, "--trusted-proxy"},
 		{"draft max below idle", []string{"serve", "--data", data, "--draft-idle", "5m", "--draft-max", "1m"}, "--draft-max"},
+		{"negative upload limit", []string{"serve", "--space", space, "--max-upload", "-1"}, "--max-upload"},
+		{"inbox in the attachments folder", []string{"serve", "--space", space, "--inbox", "assets"}, "--inbox"},
+		{"hidden inbox", []string{"serve", "--space", space, "--inbox", ".inbox"}, "--inbox"},
 		{"data path with #", []string{"serve", "--data", data + "#x"}, "'#'"},
 		{"missing secret file", []string{"serve", "--data", data, "--public-url", "https://x.example", "--oidc-issuer", "https://idp.example", "--oidc-client-id", "c", "--oidc-client-secret-file", "/nonexistent/secret"}, "--oidc-client-secret-file"},
 	} {

@@ -154,6 +154,15 @@ func (d *Doc) Meta() Meta {
 	return metaFromNode(d.root)
 }
 
+// HeaderText returns the header exactly as it is written in the file: the
+// lines between the two fences. It is "" for a file without a usable header.
+func (d *Doc) HeaderText() string {
+	if !d.present {
+		return ""
+	}
+	return d.text
+}
+
 // Bytes returns the file content.
 func (d *Doc) Bytes() []byte {
 	var b bytes.Buffer

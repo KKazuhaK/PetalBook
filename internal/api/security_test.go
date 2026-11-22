@@ -119,6 +119,14 @@ func TestUnknownUserCostsAsMuchAsAWrongPassword(t *testing.T) {
 	})
 }
 
+// typeFor is the content type a route's body must have, as extra headers.
+func typeFor(rt api.RouteInfo) []string {
+	if rt.Upload {
+		return []string{"Content-Type", "application/octet-stream"}
+	}
+	return nil
+}
+
 func TestEveryProtectedRouteWantsASession(t *testing.T) {
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
@@ -134,7 +142,7 @@ func TestEveryProtectedRouteWantsASession(t *testing.T) {
 				continue
 			}
 			checked++
-			r := anon.do(rt.Method, path, "{}")
+			r := anon.do(rt.Method, path, "{}", typeFor(rt)...)
 			if r.code != 401 || r.body["error"] != "unauthenticated" {
 				t.Errorf("%s %s without a session: %d %s", rt.Method, rt.Pattern, r.code, r.raw)
 			}
@@ -173,7 +181,7 @@ func TestMemberRoutesAreNotForOtherPeopleSpaces(t *testing.T) {
 			path := strings.NewReplacer("{space}", tangSpace, "{id}", pageID).Replace(rt.Pattern)
 			// The administrator and a third member are told the same as for a space that does not exist.
 			for who, c := range map[string]*client{"admin": boss, "member": a.addUser(fmt.Sprintf("m%d", n), pw, "member")} {
-				got := c.do(rt.Method, path, "{}")
+				got := c.do(rt.Method, path, "{}", typeFor(rt)...)
 				if got.code != 404 || got.raw != ghost.raw {
 					t.Errorf("%s %s as %s: %d %s", rt.Method, rt.Pattern, who, got.code, got.raw)
 				}

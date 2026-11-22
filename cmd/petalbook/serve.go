@@ -43,7 +43,11 @@ type serveConfig struct {
 	// maxSpaces is how many spaces one user may own (0: no limit); spaceIdle
 	// and maxOpenSpaces decide when spaces that are not in use are closed.
 	maxSpaces, maxOpenSpaces int
-	spaceIdle                time.Duration
+	// maxUpload is the largest file accepted as an upload, in bytes; inbox is
+	// the folder quick notes go to in single-user mode.
+	maxUpload int64
+	inbox     string
+	spaceIdle time.Duration
 	// pullInterval is how often a space that follows a remote is fetched (0:
 	// never by itself), remoteHosts the hosts a remote may be on, remoteTimeout
 	// how long one command that talks to a remote may take. remoteSet says one
@@ -139,6 +143,8 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 	f.DurationVar(&c.pullInterval, "pull-interval", spaces.DefaultPullInterval, "accounts mode: fetch the remote of every open space that follows one this often, jittered (0: never by itself; a space is also fetched when it is opened)")
 	f.StringSliceVar(&c.remoteHosts, "remote-host", gitstore.DefaultHosts, "accounts mode: a host a space's remote repository may be on (repeatable, or comma-separated; * allows any host); giving it replaces the default list")
 	f.DurationVar(&c.remoteTimeout, "remote-timeout", 60*time.Second, "accounts mode: how long one fetch or push may take before the remote counts as unreachable")
+	f.Int64Var(&c.maxUpload, "max-upload", api.DefaultMaxUpload, "largest file accepted as an upload, in bytes (0: the default, 10 MiB)")
+	f.StringVar(&c.inbox, "inbox", store.DefaultInbox, "single-user mode: the folder quick notes go to")
 	f.IntVar(&c.maxSpaces, "max-spaces", spaces.DefaultMaxSpaces, "accounts mode: how many spaces one user may own (0: no limit)")
 	f.DurationVar(&c.spaceIdle, "space-idle", spaces.DefaultIdleAfter, "accounts mode: close a space that has not been used for this long (it reopens on the next request)")
 	f.IntVar(&c.maxOpenSpaces, "max-open-spaces", spaces.DefaultMaxOpen, "accounts mode: at most this many spaces open at once; the least recently used are closed first")
@@ -194,6 +200,15 @@ func (c serveConfig) check() (*checked, error) {
 	}
 	if c.maxSpaces < 0 || c.maxOpenSpaces < 0 || c.spaceIdle < 0 {
 		return nil, errors.New("--max-spaces, --max-open-spaces and --space-idle must not be negative")
+	}
+	// An upload is held in memory while it is stored, so the limit has a limit.
+	if c.maxUpload < 0 || c.maxUpload > 256<<20 {
+		return nil, errors.New("--max-upload must be between 0 and 268435456 (256 MiB)")
+	}
+	if c.inbox != "" {
+		if _, err := spaces.ValidInbox(c.inbox); err != nil {
+			return nil, fmt.Errorf("--inbox: %s", strings.TrimPrefix(err.Error(), spaces.ErrInvalid.Error()+": "))
+		}
 	}
 	if c.pullInterval < 0 || c.remoteTimeout < 0 {
 		return nil, errors.New("--pull-interval and --remote-timeout must not be negative")
@@ -364,13 +379,18 @@ func runServe(ctx context.Context, c serveConfig) error {
 		if mgr, err = spaces.NewSingle(ctx, st, sp, log); err != nil {
 			return err
 		}
+		if c.inbox != "" {
+			if err := mgr.SetSingleInbox(c.inbox); err != nil {
+				return err
+			}
+		}
 	}
 	drf, err := drafts.New(ctx, st, mgr, drafts.Config{Idle: c.draftIdle, Max: c.draftMax, Tick: c.draftTick}, log)
 	if err != nil {
 		return err
 	}
 
-	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, PublicURL: cfg.publicURL, Version: version,
+	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, PublicURL: cfg.publicURL, Version: version, MaxUpload: c.maxUpload,
 		RestrictHost: loopback, AllowOrigins: cfg.origins, Logger: log})
 	srv := &http.Server{
 		Handler:           handler,

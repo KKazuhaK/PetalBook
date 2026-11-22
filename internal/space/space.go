@@ -425,7 +425,8 @@ func checkRel(rel string) error {
 			return invalidf("path %q: a name ends with a dot or space", rel)
 		case strings.IndexFunc(seg, func(r rune) bool { return r < 0x20 || r == 0x7f || strings.ContainsRune(`<>:"\|?*`, r) }) >= 0:
 			return invalidf("path %q: a name has a character that file systems do not allow", rel)
-		case i == 0 && seg == "assets":
+		case i == 0 && strings.EqualFold(seg, "assets"):
+			// In any spelling: on a file system that ignores case, Assets is assets.
 			return invalidf("the folder name %q is reserved for attachments", seg)
 		}
 	}

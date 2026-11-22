@@ -69,7 +69,7 @@ func TestSingleMode(t *testing.T) {
 		t.Fatal()
 	}
 	l, _ := m.List(ctx, store.LocalUserID)
-	if len(l) != 1 || l[0] != (Info{ID: "default", Name: "Mine", Role: "owner", Personal: true, Sync: "local"}) {
+	if len(l) != 1 || l[0] != (Info{ID: "default", Name: "Mine", Role: "owner", Personal: true, Inbox: "Inbox", Sync: "local"}) {
 		t.Fatalf("%+v", l)
 	}
 	if h, err := m.Open(ctx, store.LocalUserID, "default"); err != nil || h.Space != sp {
@@ -383,7 +383,7 @@ func TestAUserCannotOwnMoreSpacesThanTheLimit(t *testing.T) {
 		u := addUser(t, st, "U1", "one")
 		other := addUser(t, st, "U2", "two")
 		// A personal space counts, as any space the user owns does.
-		if err := store.InsertSpace(ctx, st.Q(), "PERSONAL1", "My notes", u.ID, time.Now()); err != nil {
+		if err := store.InsertSpace(ctx, st.Q(), "PERSONAL1", "My notes", u.ID, "", time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		store.AddMember(ctx, st.Q(), "PERSONAL1", u.ID, "owner", time.Now())

@@ -27,7 +27,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		// Open already migrated once; running again must change nothing.
 		var n int
-		if err := st.Q().QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil || n != 3 {
+		if err := st.Q().QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil || n != 4 {
 			t.Fatalf("%d %v", n, err)
 		}
 		mkUser(t, st, "A", "a", "admin")
@@ -194,7 +194,7 @@ func TestSpacesAndMembership(t *testing.T) {
 		for _, s := range []struct{ id, name, personal, owner string }{
 			{"S1", "Zed", "", "A"}, {"S2", "My notes", "A", "A"}, {"S3", "Alpha", "", "A"}, {"S4", "Other", "B", "B"},
 		} {
-			if err := store.InsertSpace(ctx, st.Q(), s.id, s.name, s.personal, now); err != nil {
+			if err := store.InsertSpace(ctx, st.Q(), s.id, s.name, s.personal, "", now); err != nil {
 				t.Fatal(err)
 			}
 			store.AddMember(ctx, st.Q(), s.id, s.owner, "owner", now)
@@ -204,7 +204,7 @@ func TestSpacesAndMembership(t *testing.T) {
 			t.Fatalf("%v %v", got, err)
 		}
 		// A second personal space for the same user is refused by the database.
-		if err := store.InsertSpace(ctx, st.Q(), "S5", "again", "A", now); !store.IsUnique(err) {
+		if err := store.InsertSpace(ctx, st.Q(), "S5", "again", "A", "", now); !store.IsUnique(err) {
 			t.Fatalf("%v", err)
 		}
 		o, name, err := store.SpaceOwner(ctx, st.Q(), "S4")
@@ -220,7 +220,7 @@ func TestSpacesAndMembership(t *testing.T) {
 func TestDraftsLifecycle(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")
-		store.InsertSpace(ctx, st.Q(), "S", "s", "", time.Now())
+		store.InsertSpace(ctx, st.Q(), "S", "s", "", "", time.Now())
 		t0 := time.UnixMilli(1_000_000)
 		idle, max := 2*time.Minute, 10*time.Minute
 		version := ""
@@ -286,7 +286,7 @@ func TestDraftsLifecycle(t *testing.T) {
 func TestPutDraftChecksThePreviousVersion(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")
-		store.InsertSpace(ctx, st.Q(), "S", "s", "", time.Now())
+		store.InsertSpace(ctx, st.Q(), "S", "s", "", "", time.Now())
 		now := time.UnixMilli(5_000)
 		put := func(prev, body string) (store.Draft, error) {
 			return store.PutDraft(ctx, st.Q(), store.Draft{SpaceID: "S", PageID: "P", UserID: "A", BaseRev: "r", Meta: "{}", Body: body, Updated: now}, prev, time.Minute, time.Hour)
@@ -340,7 +340,7 @@ func TestPutDraftChecksThePreviousVersion(t *testing.T) {
 func TestConcurrentDraftStoresHaveOneWinner(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")
-		store.InsertSpace(ctx, st.Q(), "S", "s", "", time.Now())
+		store.InsertSpace(ctx, st.Q(), "S", "s", "", "", time.Now())
 		for _, prev := range []string{"", "next"} {
 			base := ""
 			if prev != "" {
@@ -384,7 +384,7 @@ func TestConcurrentDraftStoresHaveOneWinner(t *testing.T) {
 func TestRescheduleAppliesNewTimes(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")
-		store.InsertSpace(ctx, st.Q(), "S", "s", "", time.Now())
+		store.InsertSpace(ctx, st.Q(), "S", "s", "", "", time.Now())
 		t0 := time.UnixMilli(5_000_000)
 		store.PutDraft(ctx, st.Q(), store.Draft{SpaceID: "S", PageID: "P", UserID: "A", BaseRev: "r", Meta: "{}", Body: "", Updated: t0}, "", time.Hour, 2*time.Hour)
 		if err := store.RescheduleDrafts(ctx, st.Q(), time.Minute, 5*time.Minute); err != nil {
@@ -442,7 +442,7 @@ func TestRedactHidesThePassword(t *testing.T) {
 func TestTheDraftWriteIsItselfAGuard(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")
-		store.InsertSpace(ctx, st.Q(), "S", "s", "", time.Now())
+		store.InsertSpace(ctx, st.Q(), "S", "s", "", "", time.Now())
 		put := func(page, prev, body string) (store.Draft, error) {
 			return store.PutDraft(ctx, st.Q(), store.Draft{SpaceID: "S", PageID: page, UserID: "A", BaseRev: "r", Meta: "{}", Body: body, Updated: time.Now()}, prev, time.Minute, time.Hour)
 		}
@@ -487,7 +487,7 @@ func TestHeldDraftsAreListedForRecovery(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "alice", "admin")
 		mkUser(t, st, "B", "bob", "member")
-		store.InsertSpace(ctx, st.Q(), "S", "s", "", time.Now())
+		store.InsertSpace(ctx, st.Q(), "S", "s", "", "", time.Now())
 		put := func(user, page, body string) store.Draft {
 			d, err := store.PutDraft(ctx, st.Q(), store.Draft{SpaceID: "S", PageID: page, UserID: user, BaseRev: "r", Meta: `{"title":"T"}`, Body: body, Updated: time.UnixMilli(1000)}, "", time.Minute, time.Hour)
 			if err != nil {
@@ -506,6 +506,50 @@ func TestHeldDraftsAreListedForRecovery(t *testing.T) {
 		ds, names, err := store.PageDrafts(ctx, st.Q(), "S", "P1")
 		if err != nil || len(ds) != 2 || len(names) != 2 || ds[0].Body == "" {
 			t.Fatalf("%v %v", ds, err)
+		}
+	})
+}
+
+func TestSpaceInbox(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		mkUser(t, st, "A", "a", "admin")
+		now := time.Now()
+		for _, s := range []struct{ id, inbox string }{{"S1", ""}, {"S2", "收件箱"}} {
+			if err := store.InsertSpace(ctx, st.Q(), s.id, s.id, "", s.inbox, now); err != nil {
+				t.Fatal(err)
+			}
+			store.AddMember(ctx, st.Q(), s.id, "A", "owner", now)
+		}
+		inbox := func() map[string]string {
+			got, err := store.ListUserSpaces(ctx, st.Q(), "A")
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := map[string]string{}
+			for _, s := range got {
+				m[s.ID] = s.Inbox
+			}
+			return m
+		}
+		if m := inbox(); m["S1"] != store.DefaultInbox || m["S2"] != "收件箱" {
+			t.Fatalf("%v", m)
+		}
+		if err := store.SetSpaceInbox(ctx, st.Q(), "S1", "随手记/今天"); err != nil {
+			t.Fatal(err)
+		}
+		if m := inbox(); m["S1"] != "随手记/今天" || m["S2"] != "收件箱" {
+			t.Fatalf("%v", m)
+		}
+		if err := store.SetSpaceInbox(ctx, st.Q(), "nope", "x"); err != store.ErrNotFound {
+			t.Fatalf("%v", err)
+		}
+		// The space of single-user mode has the default too.
+		if err := store.EnsureLocal(ctx, st.Q(), "default", "Mine", now); err != nil {
+			t.Fatal(err)
+		}
+		got, err := store.ListUserSpaces(ctx, st.Q(), store.LocalUserID)
+		if err != nil || len(got) != 1 || got[0].Inbox != store.DefaultInbox {
+			t.Fatalf("%v %v", got, err)
 		}
 	})
 }

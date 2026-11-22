@@ -10,10 +10,22 @@ export interface SpaceInfo {
   // `local` (the repository lives on the server only) or the state of the
   // remote it follows. A server that does not say is taken to be local.
   sync?: SyncState
+  // The folder quick notes go to: a folder path, never empty. Only a name; the
+  // folder exists once a page has been made in it.
+  inbox: string
 }
 export interface MetaResponse {
   version: string
+  // The largest file, in bytes, the server accepts as an upload.
+  maxUpload: number
   spaces: SpaceInfo[]
+}
+
+// The answer to storing a file for a page: `path` is what goes into the page.
+export interface UploadedAsset {
+  path: string
+  name: string
+  size: number
 }
 
 export interface PageSummary {
@@ -57,6 +69,9 @@ export interface Page {
   rev: string
   updated: string
   meta: PageMeta
+  // The header exactly as the file has it (the text between the `---` lines),
+  // for showing the file as written. What a save writes is `meta` alone.
+  header?: string
   body: string
   // Only `GET .../pages/{id}` carries it, and only when the caller has one.
   draft?: PageDraft

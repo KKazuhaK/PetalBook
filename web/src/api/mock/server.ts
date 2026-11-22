@@ -7,6 +7,10 @@ import type { ConnectRemoteInput, Identity, Invite, Page, Remote, RemoteKey, Rem
 import { gitBlobId } from './sha1.ts'
 import { ALPHABET, HttpError, compareCodePoints, createSpaceStore, isRecord, rfc3339, type SpaceStore } from './store.ts'
 import { SPACE_NAME } from './seed.ts'
+import { createFileStore, DEFAULT_MAX_UPLOAD, type FileStore } from './files.ts'
+import { folderRuleMessage } from '../../lib/folderRules.ts'
+
+const DEFAULT_INBOX = 'Inbox'
 
 export { validFolder } from './store.ts'
 
@@ -15,6 +19,8 @@ export interface MockResponse {
   body?: unknown
   // Response headers other than the content type: Set-Cookie, Location, Retry-After.
   headers?: Record<string, string>
+  // A file's bytes (GET .../files/...): sent as they are, with `headers`, instead of JSON.
+  bytes?: Uint8Array
 }
 
 export interface MockOptions {
@@ -37,10 +43,14 @@ export interface MockOptions {
   // Drafts the server commits by itself (docs/api.md: --draft-idle, --draft-max).
   // Accounts mode: how many spaces one person may own (POST /api/spaces is 403 beyond it).
   maxSpaces?: number
+  // Single-user mode: the inbox folder (`--inbox`); default `Inbox`.
+  inbox?: string
   draftIdleMs?: number
   draftMaxMs?: number
   // Following a remote repository (docs/api.md, "Remote repository").
   remote?: MockRemoteOptions
+  // The largest upload in bytes (`--max-upload`); 10 MiB by default.
+  maxUpload?: number
 }
 
 // What the mock plays for the remote endpoints.
@@ -98,7 +108,9 @@ interface SpaceRec {
   name: string
   ownerId: string
   personal: boolean
+  inbox: string
   store: SpaceStore
+  files: FileStore
   remote: RemoteRec | null
   key: RemoteKey | null
   // Mock only: whether the pretend remote answers.
@@ -138,6 +150,7 @@ export function createMockServer(options: MockOptions = {}) {
   const setupToken = options.setupToken ?? MOCK_SETUP_TOKEN
   const idleMs = options.draftIdleMs ?? 120_000
   const maxMs = options.draftMaxMs ?? 600_000
+  const maxUpload = options.maxUpload ?? DEFAULT_MAX_UPLOAD
   const oidc = accounts ? (options.oidc ?? null) : null
   let counter = 0
 
@@ -161,7 +174,7 @@ export function createMockServer(options: MockOptions = {}) {
   }
 
   const publicUser = (u: UserRec): User => ({ id: u.id, username: u.username, name: u.name, email: u.email, role: u.role, disabled: u.disabled, created: u.created })
-  const spaceInfo = (s: SpaceRec): SpaceInfo => ({ id: s.id, name: s.name, role: 'owner', personal: s.personal, sync: s.remote ? s.remote.state : 'local' })
+  const spaceInfo = (s: SpaceRec): SpaceInfo => ({ id: s.id, name: s.name, role: 'owner', personal: s.personal, sync: s.remote ? s.remote.state : 'local', inbox: s.inbox })
 
   // Why writes fail right now, if they do (docs/api.md: 503 `unavailable`).
   const blockedReason = (s: SpaceRec): string | null => {
@@ -171,8 +184,8 @@ export function createMockServer(options: MockOptions = {}) {
     return null
   }
 
-  const addSpace = (id: string, name: string, ownerId: string, personal: boolean, seed: boolean) => {
-    const rec: SpaceRec = { id, name, ownerId, personal, store: undefined as unknown as SpaceStore, remote: null, key: null, reachable: true }
+  const addSpace = (id: string, name: string, ownerId: string, personal: boolean, seed: boolean, inbox = options.inbox ?? DEFAULT_INBOX) => {
+    const rec: SpaceRec = { id, name, ownerId, personal, inbox, store: undefined as unknown as SpaceStore, files: createFileStore(now), remote: null, key: null, reachable: true }
     rec.store = createSpaceStore({ now, random, seed, author: () => users.get(rec.ownerId)?.name ?? 'Local user', blocked: () => blockedReason(rec) })
     spaces.set(id, rec)
     return rec
@@ -275,6 +288,13 @@ export function createMockServer(options: MockOptions = {}) {
     if (raw === undefined && fallback !== undefined) return fallback
     if (typeof raw !== 'string' || raw.trim() === '' || codePoints(raw.trim()) > 80) throw new HttpError(400, 'invalid', '名称需要 1 到 80 个字符')
     return raw.trim()
+  }
+  // The inbox is a folder path that is never empty.
+  const checkInbox = (raw: unknown): string => {
+    if (typeof raw !== 'string' || raw === '') throw new HttpError(400, 'invalid', '收件箱需要一个文件夹路径')
+    const bad = folderRuleMessage(raw)
+    if (bad) throw new HttpError(400, 'invalid', bad)
+    return raw
   }
   const usernameTaken = (name: string) => [...users.values()].some((u) => u.username === name)
 
@@ -643,7 +663,7 @@ export function createMockServer(options: MockOptions = {}) {
     throw new HttpError(404, 'not_found', '没有这个接口')
   }
 
-  const routeSpace = (u: UserRec, space: SpaceRec, method: string, rest: string, url: URL, body: Record<string, unknown>): MockResponse => {
+  const routeSpace = (u: UserRec, space: SpaceRec, method: string, rest: string, url: URL, body: Record<string, unknown>, raw?: Uint8Array): MockResponse => {
     const st = space.store
     if (rest === '/pages') {
       if (method === 'GET') return { status: 200, body: st.listPages(url.searchParams) }
@@ -681,6 +701,31 @@ export function createMockServer(options: MockOptions = {}) {
           break
       }
     }
+    // Files: uploading one for a page, and reading any file of the space.
+    const asset = /^\/pages\/([^/]+)\/assets$/.exec(rest)
+    if (asset && method === 'POST') {
+      const id = decodeURIComponent(asset[1])
+      if (!st.peek(id)) throw new HttpError(404, 'not_found', '找不到这个页面')
+      const why = blockedReason(space)
+      if (why) throw new HttpError(503, 'unavailable', why)
+      const name = url.searchParams.get('name') ?? ''
+      if (name.trim() === '' || !(name.split(/[\\/]/).pop() ?? '').trim()) throw new HttpError(400, 'invalid', '缺少文件名')
+      if (!raw || raw.length === 0) throw new HttpError(400, 'invalid', '文件是空的')
+      if (raw.length > maxUpload) throw new HttpError(413, 'invalid', `文件太大，上限是 ${maxUpload} 字节`)
+      const r = space.files.upload(id, name, raw)
+      return { status: r.created ? 201 : 200, body: r.asset }
+    }
+    if (rest.startsWith('/files/') && method === 'GET') {
+      let segments: string[]
+      try {
+        segments = rest.slice('/files/'.length).split('/').map(decodeURIComponent)
+      } catch {
+        throw new HttpError(404, 'not_found', '没有这个文件')
+      }
+      const f = space.files.read(segments)
+      if (!f) throw new HttpError(404, 'not_found', '没有这个文件')
+      return { status: 200, bytes: f.bytes, headers: f.headers }
+    }
     if (rest === '/tree' && method === 'GET') return { status: 200, body: st.tree() }
     if (rest === '/tags' && method === 'GET') return { status: 200, body: st.tags() }
     if (rest === '/folders' && method === 'POST') return { status: 201, body: st.createFolder(body.path) }
@@ -688,11 +733,11 @@ export function createMockServer(options: MockOptions = {}) {
     throw new HttpError(404, 'not_found', '没有这个接口')
   }
 
-  const route = (method: string, url: URL, body: Record<string, unknown>, ctx: Ctx): MockResponse => {
+  const route = (method: string, url: URL, body: Record<string, unknown>, ctx: Ctx, raw?: Uint8Array): MockResponse => {
     const path = url.pathname.replace(/^\/api/, '')
     const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
 
-    if (method === 'GET' && path === '/meta') return j({ version: 'mock', spaces: callerSpaces(ctx.user).map(spaceInfo) })
+    if (method === 'GET' && path === '/meta') return j({ version: 'mock', maxUpload, spaces: callerSpaces(ctx.user).map(spaceInfo) })
     if (method === 'GET' && path === '/session') {
       const base = { mode, user: ctx.user ? publicUser(ctx.user) : null, setup: accounts && users.size === 0 }
       return {
@@ -795,7 +840,8 @@ export function createMockServer(options: MockOptions = {}) {
         const me = requireUser(ctx)
         const name = checkName(body.name)
         if (options.maxSpaces !== undefined && callerSpaces(me).length >= options.maxSpaces) throw new HttpError(403, 'forbidden', `最多只能拥有 ${options.maxSpaces} 个空间`)
-        return j(spaceInfo(addSpace(newId((x) => spaces.has(x)), name, me.id, false, false)), 201)
+        const inbox = body.inbox === undefined ? DEFAULT_INBOX : checkInbox(body.inbox)
+        return j(spaceInfo(addSpace(newId((x) => spaces.has(x)), name, me.id, false, false, inbox)), 201)
       }
     }
     const m = /^\/spaces\/([^/]+)(\/.*)?$/.exec(path)
@@ -806,10 +852,15 @@ export function createMockServer(options: MockOptions = {}) {
       if (rest === '' && method === 'PATCH') {
         accountsOnly()
         const s = spaceOf(me, id)
-        s.name = checkName(body.name)
+        if (body.name === undefined && body.inbox === undefined) throw new HttpError(400, 'invalid', '至少要给出 name 或 inbox')
+        // Check both before changing either, so a bad one leaves the space as it was.
+        const name = body.name === undefined ? s.name : checkName(body.name)
+        const inbox = body.inbox === undefined ? s.inbox : checkInbox(body.inbox)
+        s.name = name
+        s.inbox = inbox
         return j(spaceInfo(s))
       }
-      return routeSpace(me, spaceOf(me, id), method, rest, url, body)
+      return routeSpace(me, spaceOf(me, id), method, rest, url, body, raw)
     }
     throw new HttpError(404, 'not_found', '没有这个接口')
   }
@@ -825,11 +876,17 @@ export function createMockServer(options: MockOptions = {}) {
   return {
     // `target` is a path with query, as sent by the client ("/api/...").
     // `cookie` is the request's Cookie header.
-    handle(method: string, target: string, bodyText?: string, contentType?: string | null, cookie?: string | null): MockResponse {
+    // `raw` is the request body as bytes, for the one request that is not JSON (uploading a file).
+    handle(method: string, target: string, bodyText?: string, contentType?: string | null, cookie?: string | null, raw?: Uint8Array): MockResponse {
       counter++
       try {
         sweepAll()
-        // Writes must say they are JSON, like the real server insists.
+        const upload = method.toUpperCase() === 'POST' && /^\/api\/spaces\/[^/?]+\/pages\/[^/?]+\/assets(\?|$)/.test(target)
+        // Writes must say they are JSON, like the real server insists; a file says it is bytes.
+        if (upload) {
+          if (!/^application\/octet-stream\s*(;|$)/i.test(contentType ?? '')) throw new HttpError(415, 'invalid', '上传文件需要 Content-Type: application/octet-stream')
+          return route('POST', new URL(target, 'http://mock.local'), {}, contextOf(cookie), raw ?? new TextEncoder().encode(bodyText ?? ''))
+        }
         if (method.toUpperCase() !== 'GET' && !/^application\/json\s*(;|$)/i.test(contentType ?? '')) throw new HttpError(415, 'invalid', '请求需要 Content-Type: application/json')
         let body: Record<string, unknown> = {}
         if (bodyText) {

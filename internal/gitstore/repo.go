@@ -253,17 +253,53 @@ func (r *Repo) CommitPaths(ctx context.Context, paths []string, message func([]C
 	} else if what != "" {
 		return false, &BusyError{what}
 	}
-	var present, gone []string
+	var present, gone, skipped []string
+	skip := map[string]bool{}
 	for _, p := range paths {
-		if _, err := os.Lstat(filepath.Join(r.opt.Dir, filepath.FromSlash(p))); err == nil {
-			present = append(present, p)
-		} else {
+		switch fi, err := os.Lstat(filepath.Join(r.opt.Dir, filepath.FromSlash(p))); {
+		case err != nil:
 			gone = append(gone, p)
+		case fi.IsDir():
+			// A path of the change that is a directory now was a file when it was
+			// noted, and something outside the server put a directory in its place
+			// (the server itself never makes a folder named like a page). Git cannot
+			// commit "this file is gone" for a name that is a directory on disk, so
+			// the path is left as it is in the repository: that is for a person to
+			// sort out, and must not stop this commit or the ones after it.
+			skip[p] = true
+			skipped = append(skipped, p)
+		default:
+			present = append(present, p)
 		}
 	}
 	if len(present) > 0 {
 		if _, err := r.gitIn(ctx, nil, nulList(present), "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"); err != nil {
-			return false, err
+			// add refuses the whole list when one path cannot be added: a file an
+			// ignore rule matches (the repository's, or the user's own
+			// ~/.config/git/ignore), a path that something outside the server put
+			// behind a symbolic link or turned into a device. The server wrote these
+			// files and named them one by one, so each is staged on its own,
+			// whatever the ignore rules say; one that still cannot be staged is left
+			// out of the commit. Otherwise this commit would fail, and with the
+			// paths still pending, every commit after it.
+			for _, p := range present {
+				one := nulList([]string{p})
+				// add first, on its own: it knows about names that differ only in
+				// case, which update-index would stage as a second file.
+				if _, aerr := r.gitIn(ctx, nil, one, "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"); aerr == nil {
+					continue
+				}
+				if _, uerr := r.gitIn(ctx, nil, one, "update-index", "--add", "--replace", "-z", "--stdin"); uerr != nil {
+					// Left out only when the path is something Git cannot hold at
+					// all. Any other failure (the index is locked for a moment, the
+					// disk is full) is the whole commit's failure, to be tried again.
+					if !unstageable(uerr) {
+						return false, err
+					}
+					skip[p] = true
+					skipped = append(skipped, p)
+				}
+			}
 		}
 	}
 	if len(gone) > 0 {
@@ -284,7 +320,7 @@ func (r *Repo) CommitPaths(ctx context.Context, paths []string, message func([]C
 	var changes []Change
 	var touched []string
 	for _, c := range ParseNameStatus([]byte(out)) {
-		if mine[c.Old] || mine[c.New] {
+		if (mine[c.Old] || mine[c.New]) && !skip[c.Old] && !skip[c.New] {
 			changes = append(changes, c)
 			touched = append(touched, c.New)
 			if c.Old != c.New {
@@ -292,8 +328,13 @@ func (r *Repo) CommitPaths(ctx context.Context, paths []string, message func([]C
 			}
 		}
 	}
+	// What could not be staged is reported, after the rest is committed.
+	var left error
+	if len(skipped) > 0 {
+		left = &SkippedError{Paths: skipped}
+	}
 	if len(changes) == 0 {
-		return false, nil
+		return false, left
 	}
 	env := []string{
 		"GIT_AUTHOR_NAME=" + author.Name, "GIT_AUTHOR_EMAIL=" + author.Email,
@@ -303,7 +344,24 @@ func (r *Repo) CommitPaths(ctx context.Context, paths []string, message func([]C
 		"--message="+message(changes), "--pathspec-from-file=-", "--pathspec-file-nul"); err != nil {
 		return false, err
 	}
-	return true, nil
+	return true, left
+}
+
+// unstageable reports the errors of staging a path that trying again cannot
+// cure: the path is behind a symbolic link, or is not a file or a link.
+func unstageable(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "beyond a symbolic link") || strings.Contains(msg, "unsupported file type")
+}
+
+// SkippedError says that CommitPaths committed what it could and left these
+// paths out: Git could not stage them (see CommitPaths). A caller that keeps
+// committing in the background goes on; one that promised the change to
+// someone treats it as the failure it is.
+type SkippedError struct{ Paths []string }
+
+func (e *SkippedError) Error() string {
+	return fmt.Sprintf("git could not stage %d path(s), first %q; they were left out of the commit", len(e.Paths), e.Paths[0])
 }
 
 // ModifiedTracked lists tracked files that differ from the index or the

@@ -48,6 +48,8 @@ type Info struct {
 	Name     string
 	Role     string
 	Personal bool
+	// Inbox is the folder quick notes go to: a folder path, never empty.
+	Inbox string
 	// Sync is "local", or the state of the remote the space follows (ok,
 	// offline, rewritten, error). It is read when the list is asked for, not cached.
 	Sync string
@@ -131,7 +133,9 @@ type opening struct {
 type Manager struct {
 	opt    Options
 	single *space.Space
-	log    *slog.Logger
+	// singleInbox is the inbox folder of the one space of single-user mode.
+	singleInbox string
+	log         *slog.Logger
 
 	mu     sync.Mutex
 	open   map[string]*opening
@@ -197,7 +201,29 @@ func newManager(opt Options, single *space.Space) *Manager {
 	if opt.CloseWait <= 0 {
 		opt.CloseWait = 5 * time.Second
 	}
-	return &Manager{opt: opt, single: single, log: log, open: map[string]*opening{}, lists: map[string][]Info{}, pullWake: make(chan struct{}, 1)}
+	return &Manager{opt: opt, single: single, singleInbox: store.DefaultInbox, log: log, open: map[string]*opening{}, lists: map[string][]Info{}, pullWake: make(chan struct{}, 1)}
+}
+
+// SetSingleInbox sets the inbox folder of single-user mode (the --inbox flag).
+// Call it before serving.
+func (m *Manager) SetSingleInbox(folder string) error {
+	folder, err := ValidInbox(folder)
+	if err != nil {
+		return err
+	}
+	m.singleInbox = folder
+	return nil
+}
+
+// ValidInbox checks an inbox folder: a valid folder path that is not the root.
+func ValidInbox(folder string) (string, error) {
+	if folder == "" {
+		return "", fmt.Errorf("%w: the inbox must be a folder, not the root of the space", ErrInvalid)
+	}
+	if err := space.ValidFolder(folder); err != nil {
+		return "", fmt.Errorf("%w: %s", ErrInvalid, err.Error())
+	}
+	return folder, nil
 }
 
 // Single reports single-user mode.
@@ -218,7 +244,7 @@ func (m *Manager) list(ctx context.Context, userID string) ([]Info, error) {
 		if userID != store.LocalUserID {
 			return nil, nil
 		}
-		return []Info{{ID: SingleID, Name: m.single.Name(), Role: "owner", Personal: true, Sync: "local"}}, nil
+		return []Info{{ID: SingleID, Name: m.single.Name(), Role: "owner", Personal: true, Inbox: m.singleInbox, Sync: "local"}}, nil
 	}
 	m.mu.Lock()
 	l, ok := m.lists[userID]
@@ -232,7 +258,7 @@ func (m *Manager) list(ctx context.Context, userID string) ([]Info, error) {
 	}
 	l = make([]Info, len(rows))
 	for i, r := range rows {
-		l[i] = Info{ID: r.ID, Name: r.Name, Role: r.Role, Personal: r.Personal}
+		l[i] = Info{ID: r.ID, Name: r.Name, Role: r.Role, Personal: r.Personal, Inbox: r.Inbox}
 	}
 	sort.Slice(l, func(i, j int) bool {
 		a, b := l[i], l[j]
@@ -533,8 +559,20 @@ func (s *Staged) Abort() {
 // server allows. The repository is made first and the row second, so a failure
 // in either leaves nothing visible.
 func (m *Manager) Create(ctx context.Context, userID, name string) (Info, error) {
+	return m.CreateWith(ctx, userID, name, "")
+}
+
+// CreateWith is Create with the inbox folder given ("" is the default).
+func (m *Manager) CreateWith(ctx context.Context, userID, name, inbox string) (Info, error) {
 	if m.single != nil {
 		return Info{}, errors.New("single-user mode has one space")
+	}
+	if inbox == "" {
+		inbox = store.DefaultInbox
+	}
+	inbox, err := ValidInbox(inbox)
+	if err != nil {
+		return Info{}, err
 	}
 	m.createMu.Lock()
 	defer m.createMu.Unlock()
@@ -557,7 +595,7 @@ func (m *Manager) Create(ctx context.Context, userID, name string) (Info, error)
 	}
 	now := m.opt.Now()
 	err = m.opt.Store.Tx(ctx, func(q store.Q) error {
-		if err := store.InsertSpace(ctx, q, stg.ID(), stg.Name(), "", now); err != nil {
+		if err := store.InsertSpace(ctx, q, stg.ID(), stg.Name(), "", inbox, now); err != nil {
 			return err
 		}
 		return store.AddMember(ctx, q, stg.ID(), userID, "owner", now)
@@ -567,11 +605,17 @@ func (m *Manager) Create(ctx context.Context, userID, name string) (Info, error)
 		return Info{}, err
 	}
 	stg.Commit(userID)
-	return Info{ID: stg.ID(), Name: stg.Name(), Role: "owner", Sync: "local"}, nil
+	return Info{ID: stg.ID(), Name: stg.Name(), Role: "owner", Inbox: inbox, Sync: "local"}, nil
 }
 
 // Rename changes a space's display name; only an owner may.
 func (m *Manager) Rename(ctx context.Context, userID, spaceID, name string) (Info, error) {
+	return m.Update(ctx, userID, spaceID, &name, nil)
+}
+
+// Update changes a space's display name, its inbox folder, or both (nil
+// leaves one as it is); only an owner may. Changing the inbox moves nothing.
+func (m *Manager) Update(ctx context.Context, userID, spaceID string, newName, newInbox *string) (Info, error) {
 	if m.single != nil {
 		return Info{}, ErrNotFound
 	}
@@ -583,14 +627,28 @@ func (m *Manager) Rename(ctx context.Context, userID, spaceID, name string) (Inf
 	if h.Info.Role != "owner" {
 		return Info{}, ErrForbidden
 	}
-	name, err = ValidName(name)
-	if err != nil {
-		return Info{}, err
+	name, inbox := h.Info.Name, h.Info.Inbox
+	if newName != nil {
+		if name, err = ValidName(*newName); err != nil {
+			return Info{}, err
+		}
+	}
+	if newInbox != nil {
+		if inbox, err = ValidInbox(*newInbox); err != nil {
+			return Info{}, err
+		}
 	}
 	var members []string
 	err = m.opt.Store.Tx(ctx, func(q store.Q) error {
-		if err := store.RenameSpace(ctx, q, spaceID, name); err != nil {
-			return err
+		if newName != nil {
+			if err := store.RenameSpace(ctx, q, spaceID, name); err != nil {
+				return err
+			}
+		}
+		if newInbox != nil {
+			if err := store.SetSpaceInbox(ctx, q, spaceID, inbox); err != nil {
+				return err
+			}
 		}
 		members, err = store.SpaceMemberIDs(ctx, q, spaceID)
 		return err
@@ -603,7 +661,7 @@ func (m *Manager) Rename(ctx context.Context, userID, spaceID, name string) (Inf
 		delete(m.lists, id)
 	}
 	m.mu.Unlock()
-	h.Info.Name = name
+	h.Info.Name, h.Info.Inbox = name, inbox
 	return h.Info, nil
 }
 

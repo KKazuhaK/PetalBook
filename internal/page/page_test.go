@@ -330,8 +330,8 @@ func TestLabelAndExcerpt(t *testing.T) {
 	if l, u := Label("", ""); l != "" || !u {
 		t.Fatalf("empty: %q %v", l, u)
 	}
-	ex := Excerpt("# 标题\n\n" + strings.Repeat("花", 300))
-	if n := utf8.RuneCountInString(ex); n != 200 || !strings.HasPrefix(ex, "标题\n花") {
+	ex := Excerpt("# 标题\n\n" + strings.Repeat("花", 600))
+	if n := utf8.RuneCountInString(ex); n != 400 || !strings.HasPrefix(ex, "标题\n花") {
 		t.Fatalf("%d runes: %q", n, ex)
 	}
 	if Excerpt("") != "" {

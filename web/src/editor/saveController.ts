@@ -75,10 +75,21 @@ export interface Fields {
   // edited here": a local draft written before the field existed carries none,
   // and must not read as "the person emptied it".
   source?: string
+  // The rest of the header (every key but `id` and the four above), when it is
+  // not the file's: rewritten in the source view, or held by a draft the text
+  // was loaded from. Absent means "as the file has them", whatever the file
+  // has by the time of a save: keys the person never changed are never sent
+  // over what someone else wrote.
+  others?: PageMeta
 }
 // `body` is undefined while the body has not been edited since it was loaded.
 export interface Draft extends Fields {
   body?: string
+  // The body is Markdown the person typed themself (the source view), to be
+  // kept as typed: it counts as changed unless it is the file's text exactly.
+  // A body written by the editor also counts as unchanged when it is merely
+  // the editor's way of writing the file's text.
+  bodyTyped?: boolean
 }
 
 export interface SaveSnapshot {
@@ -149,7 +160,7 @@ export interface SaveControllerOptions {
   // Local draft. `readDraft` must be cheap and synchronous (no Markdown
   // conversion); it returns nothing for the body unless the body was edited.
   drafts?: DraftStore
-  readDraft?: () => { fields: Fields; bodyJson?: DocJSON }
+  readDraft?: () => { fields: Fields; bodyJson?: DocJSON; bodyText?: string }
   draftDebounceMs?: number
   // The token of a draft this page was opened with (restored from an earlier
   // visit), so that storing it can remove it.
@@ -177,12 +188,16 @@ type FieldKey = (typeof FIELD_KEYS)[number]
 // text; `tags` written as a single string is one tag, and in a list the string
 // entries are the tags. Anything else is shown as nothing, and is only ever
 // replaced if the person edits that very field (see applyFields).
-export function fieldsOf(meta: PageMeta): Fields {
+//
+// `fileMeta` is the header of the file when `meta` is a draft's or a version's:
+// other keys that differ from the file's come along (see Fields.others).
+export function fieldsOf(meta: PageMeta, fileMeta?: PageMeta): Fields {
   const text = (v: unknown) => (typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : '')
   let tags: string[] = []
   if (typeof meta.tags === 'string') tags = meta.tags === '' ? [] : [meta.tags]
   else if (Array.isArray(meta.tags)) tags = meta.tags.filter((t): t is string => typeof t === 'string')
-  return { title: text(meta.title), subtitle: text(meta.subtitle), source: text(meta.source), tags }
+  const others = fileMeta && !sameData(othersOf(meta), othersOf(fileMeta)) ? { others: othersOf(meta) } : {}
+  return { title: text(meta.title), subtitle: text(meta.subtitle), source: text(meta.source), tags, ...others }
 }
 
 // What a field becomes when the person writes it: one line, trimmed, tags
@@ -194,7 +209,47 @@ export function cleanFields(f: Fields): Fields {
     const t = line(raw)
     if (t && !tags.includes(t)) tags.push(t)
   }
-  return { title: line(f.title), subtitle: line(f.subtitle), ...(f.source === undefined ? {} : { source: line(f.source) }), tags }
+  return { title: line(f.title), subtitle: line(f.subtitle), ...(f.source === undefined ? {} : { source: line(f.source) }), tags, ...(f.others === undefined ? {} : { others: f.others }) }
+}
+
+// The keys of a header that `others` stands for.
+const NAMED_KEYS = new Set<string>(['id', 'title', 'subtitle', 'source', 'tags'])
+export function othersOf(meta: PageMeta): PageMeta {
+  const out: PageMeta = {}
+  for (const [k, v] of Object.entries(meta)) if (!NAMED_KEYS.has(k)) out[k] = v
+  return out
+}
+
+// Equal as data. The order of keys does not count: where a key sits in the
+// file is the server's business.
+export function sameData(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
+  if (Array.isArray(a) !== Array.isArray(b)) return false
+  if (Array.isArray(a)) return a.length === (b as unknown[]).length && a.every((v, i) => sameData(v, (b as unknown[])[i]))
+  const ka = Object.keys(a)
+  return ka.length === Object.keys(b).length && ka.every((k) => k in (b as object) && sameData((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]))
+}
+
+// Other keys as the server will have them once written (internal/space/pages.go):
+// `created` cannot be removed, and an emptied `type` is no key at all. Without
+// this a header typed that way would never compare equal to the file it became.
+function settleOthers(others: PageMeta, baseMeta: PageMeta): PageMeta {
+  const out: PageMeta = { ...others }
+  if ((!('created' in out) || out.created === null) && 'created' in baseMeta) out.created = baseMeta.created
+  if (typeof out.type === 'number' || typeof out.type === 'boolean') out.type = String(out.type)
+  if (typeof out.type === 'string') out.type = out.type.trim()
+  if (out.type === '' || out.type === null) delete out.type
+  return out
+}
+
+// The header with its other keys replaced by the ones written in the source
+// view; `id` and the named fields stay as `meta` has them.
+function withOthers(meta: PageMeta, others: PageMeta): PageMeta {
+  const out: PageMeta = {}
+  for (const [k, v] of Object.entries(meta)) if (NAMED_KEYS.has(k)) out[k] = v
+  for (const [k, v] of Object.entries(others)) if (!NAMED_KEYS.has(k)) out[k] = v
+  return out
 }
 
 const sameTags = (a: string[], b: string[]) => a.length === b.length && a.every((t, i) => t === b[i])
@@ -241,11 +296,14 @@ export function applyFields(meta: PageMeta, typed: Fields, changed: FieldChanges
 // other save sends the original body string untouched.
 export function buildSave(base: Page, draft: Draft, normalizedBase: () => string): SavePageInput | null {
   const changed = changedFields(fieldsOf(base.meta), draft)
-  const bodyChanged = draft.body !== undefined && draft.body !== base.body && draft.body !== normalizedBase()
-  if (!bodyChanged && !changed.title && !changed.subtitle && !changed.source && !changed.tags) return null
+  const bodyChanged = draft.body !== undefined && draft.body !== base.body && (draft.bodyTyped === true || draft.body !== normalizedBase())
+  const settled = draft.others === undefined ? undefined : settleOthers(draft.others, base.meta)
+  const others = settled !== undefined && !sameData(settled, othersOf(base.meta)) ? settled : undefined
+  if (!bodyChanged && !changed.title && !changed.subtitle && !changed.source && !changed.tags && !others) return null
+  const meta = applyFields(base.meta, draft, changed)
   return {
     baseRev: base.rev,
-    meta: applyFields(base.meta, draft, changed),
+    meta: others ? withOthers(meta, others) : meta,
     body: bodyChanged ? draft.body! : base.body,
   }
 }
@@ -361,6 +419,11 @@ export class SaveController {
   get page(): Page {
     return this.file
   }
+  // The body the editor was loaded with (the file's, or a draft's): what the
+  // body is while nobody has edited it.
+  get shownBody(): string {
+    return this.openBody
+  }
   // Typed text the server has not confirmed.
   hasUnsaved(): boolean {
     return this.editSeq > this.storedSeq
@@ -446,13 +509,13 @@ export class SaveController {
     const { drafts, readDraft } = this.opts
     if (!drafts || !readDraft || this.discarded || (!force && !this.hasUnsaved())) return
     try {
-      const { fields, bodyJson } = readDraft()
+      const { fields, bodyJson, bodyText } = readDraft()
       const at = (this.opts.now ?? Date.now)()
       const token = `${at}-${++this.tokenSeq}-${Math.random().toString(36).slice(2, 8)}`
       // `sent` says what was sent on this rev, so the
       // next visit can tell "newer than the server's" from "unrelated to it".
       const confirmed = !this.hasUnsaved() && !this.uncertain && this.serverDraft && !this.stale ? { confirmed: this.serverDraft.version } : {}
-      drafts.write({ baseRev: this.lineageRev(), fields, bodyJson, savedAt: at, token, sent: this.knownOurs(), ...confirmed } satisfies DraftContent)
+      drafts.write({ baseRev: this.lineageRev(), fields, bodyJson, ...(bodyText === undefined ? {} : { bodyText }), savedAt: at, token, sent: this.knownOurs(), ...confirmed } satisfies DraftContent)
       this.draftToken = token
     } catch {
       // The draft is a safety net; failing to take it must not break typing.
@@ -786,7 +849,7 @@ export class SaveController {
         // The file the dialog showed.
         this.file = info.after
         this.stale = true
-        this.raise({ kind: 'file', theirs: info.after, mine: { ...fieldsOf(info.draft.meta), body: info.draft.body } })
+        this.raise({ kind: 'file', theirs: info.after, mine: { ...fieldsOf(info.draft.meta, info.after.meta), body: info.draft.body } })
       } else this.settle()
     }
     return info.theirs

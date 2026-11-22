@@ -32,6 +32,8 @@ const CURRENT = 'current'
 export interface HistoryModeProps {
   space: string
   pageId: string
+  // The folder of the page, which relative image addresses are resolved against.
+  folder?: string
   // The editor's content as it is now (unsaved text included), read when the panel opens.
   getCurrent: () => VersionContent
   saveState: SaveState
@@ -61,7 +63,7 @@ function useContent(space: string, pageId: string, item: HistoryItem | null) {
   return { content, error: q.isError ? q.error : null, retry: () => void q.refetch() }
 }
 
-export default function HistoryMode({ space, pageId, getCurrent, saveState, onClose, onRestore }: HistoryModeProps) {
+export default function HistoryMode({ space, pageId, folder = '', getCurrent, saveState, onClose, onRestore }: HistoryModeProps) {
   const isMobile = useIsMobile()
   const history = useHistory(space, pageId, true)
   const items = useMemo(() => history.data?.pages.flatMap((p) => p.items) ?? [], [history.data])
@@ -311,7 +313,7 @@ export default function HistoryMode({ space, pageId, getCurrent, saveState, onCl
                   {view === 'rendered' ? (
                     <>
                       {result.identical && <p className="mb-4 rounded-md border bg-muted/40 px-3 py-2 text-sm">{selItem?.change === 'move' && mode === 'previous' ? t.history.onlyMoved : t.history.identical}</p>}
-                      <DiffView doc={result.doc} label={t.history.open} onRendered={onRendered} />
+                      <DiffView doc={result.doc} label={t.history.open} onRendered={onRendered} space={space} folder={folder} />
                     </>
                   ) : (
                     lines && <RawDiff diff={lines} />

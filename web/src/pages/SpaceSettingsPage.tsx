@@ -7,8 +7,8 @@ import { useParams } from 'react-router'
 import { AlertTriangle, Check, CircleAlert, CirclePause, Cloud, CloudOff, Copy, KeyRound, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError, spaceApi } from '@/api/client'
-import { useAcceptRemote, useConnectRemote, useDisconnectRemote, useRemote, useSession, useSpaces, useSyncRemote } from '@/api/hooks'
-import type { ConnectRemoteInput, Remote, RemoteKey, RemoteState } from '@/api/types'
+import { useAcceptRemote, useConnectRemote, useDisconnectRemote, useRemote, useSession, useSpaces, useSyncRemote, useUpdateSpace } from '@/api/hooks'
+import type { ConnectRemoteInput, Remote, RemoteKey, RemoteState, SpaceInfo } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { TopBar } from '@/components/layout/TopBar'
@@ -16,6 +16,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { checkFolderPath } from '@/lib/folders'
 import { absoluteTime, relativeTime } from '@/lib/time'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { t } from '@/i18n/zh-CN'
@@ -28,10 +29,22 @@ export default function SpaceSettingsPage() {
   useDocumentTitle(`${current ? t.remote.pageTitle(current.name) : t.remote.spaceSettings} · ${t.appName}`)
 
   let body: ReactNode
-  if (session?.mode === 'single') body = <p className="rounded-lg border p-4 text-sm text-muted-foreground">{t.remote.singleUser}</p>
+  if (session?.mode === 'single')
+    body = (
+      <>
+        {current && <InboxSection space={current} readOnly />}
+        <p className="rounded-lg border p-4 text-sm text-muted-foreground">{t.remote.singleUser}</p>
+      </>
+    )
   else if (current && current.role !== 'owner') body = <p className="rounded-lg border p-4 text-sm text-muted-foreground">{t.remote.ownerOnly}</p>
   else if (!session || !current) body = <PageFallback />
-  else body = <RemoteSection space={space} />
+  else
+    body = (
+      <>
+        <InboxSection space={current} />
+        <RemoteSection space={space} />
+      </>
+    )
 
   return (
     <>
@@ -51,6 +64,46 @@ function Section({ title, children, id }: { title: string; children: ReactNode; 
       </h2>
       {children}
     </section>
+  )
+}
+
+// Where quick notes go. Single-user mode sets it with `--inbox`, so it is only
+// shown there; in accounts mode the owner can change it, and nothing is moved.
+function InboxSection({ space, readOnly = false }: { space: SpaceInfo; readOnly?: boolean }) {
+  const update = useUpdateSpace()
+  const [value, setValue] = useState(space.inbox)
+  const [error, setError] = useState('')
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (update.isPending) return
+    const checked = checkFolderPath(value)
+    if ('error' in checked) return setError(checked.error === '路径不能为空' ? t.inboxSetting.invalid : checked.error)
+    setError('')
+    if (checked.path === space.inbox) return setValue(checked.path)
+    try {
+      const saved = await update.mutateAsync({ id: space.id, inbox: checked.path })
+      setValue(saved.inbox)
+      toast.success(t.inboxSetting.saved)
+    } catch (err) {
+      setError(err instanceof ApiError && err.code === 'invalid' ? err.message : `${t.inboxSetting.failed}：${err instanceof Error ? err.message : ''}`)
+    }
+  }
+
+  return (
+    <Section title={t.inboxSetting.title} id="inbox-title">
+      <form className="grid gap-3" onSubmit={(e) => void submit(e)} noValidate>
+        <Field label={t.inboxSetting.label} help={readOnly ? t.inboxSetting.readOnly : t.inboxSetting.help} value={readOnly ? space.inbox : value} onChange={(e) => setValue(e.target.value)} readOnly={readOnly} error={error} autoComplete="off" spellCheck={false} />
+        {!readOnly && (
+          <div>
+            <Button type="submit" disabled={update.isPending || value === space.inbox}>
+              {update.isPending && <Spinner />}
+              {t.inboxSetting.save}
+            </Button>
+          </div>
+        )}
+      </form>
+    </Section>
   )
 }
 

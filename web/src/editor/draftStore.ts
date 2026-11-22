@@ -19,6 +19,10 @@ export interface DraftContent {
   fields: Fields
   // Absent when the body was never edited.
   bodyJson?: DocJSON
+  // The body as Markdown, when it was last written in the source view: that
+  // text is kept as typed, so it is stored as text and not as a document.
+  // When present it is the body and `bodyJson` is not.
+  bodyText?: string
   savedAt: number
   // Identifies this write. A tab removes a draft only if the stored one still
   // carries the token it wrote itself, so it cannot remove another tab's.
@@ -94,7 +98,7 @@ export function browserStorage(): KeyValueStorage | null {
 
 const isFields = (f: unknown): f is Fields => {
   const x = f as Fields | null
-  return !!x && typeof x.title === 'string' && typeof x.subtitle === 'string' && (x.source === undefined || typeof x.source === 'string') && Array.isArray(x.tags) && x.tags.every((t) => typeof t === 'string')
+  return !!x && typeof x.title === 'string' && typeof x.subtitle === 'string' && (x.source === undefined || typeof x.source === 'string') && Array.isArray(x.tags) && x.tags.every((t) => typeof t === 'string') && (x.others === undefined || (typeof x.others === 'object' && x.others !== null && !Array.isArray(x.others)))
 }
 
 export function loadDraft(id: string, storage: KeyValueStorage | null = browserStorage(), now: number = Date.now()): StoredDraft | null {
@@ -108,7 +112,7 @@ export function loadDraft(id: string, storage: KeyValueStorage | null = browserS
   if (raw === null) return null
   try {
     const d = JSON.parse(raw) as StoredDraft
-    if (d && d.v === 1 && d.id === id && typeof d.baseRev === 'string' && typeof d.token === 'string' && isFields(d.fields) && typeof d.savedAt === 'number' && (d.confirmed === undefined || typeof d.confirmed === 'string') && (d.sent === undefined || (Array.isArray(d.sent) && d.sent.every((x) => x && typeof x.baseRev === 'string' && typeof x.digest === 'string')))) {
+    if (d && d.v === 1 && d.id === id && typeof d.baseRev === 'string' && typeof d.token === 'string' && isFields(d.fields) && (d.bodyText === undefined || typeof d.bodyText === 'string') && typeof d.savedAt === 'number' && (d.confirmed === undefined || typeof d.confirmed === 'string') && (d.sent === undefined || (Array.isArray(d.sent) && d.sent.every((x) => x && typeof x.baseRev === 'string' && typeof x.digest === 'string')))) {
       if (now - d.savedAt <= DRAFT_MAX_AGE_MS) return d
       // Too old to be what anyone still means to recover.
       clearDraft(id, storage)

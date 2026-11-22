@@ -1,15 +1,17 @@
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
-import { FilePlus2, Folder as FolderIcon, Tag as TagIcon } from 'lucide-react'
+import { FilePlus2, Folder as FolderIcon, LayoutGrid, List as ListIcon, PenLine, Tag as TagIcon } from 'lucide-react'
 import { toast } from 'sonner'
-import { useCreatePage, usePageList, useUrls } from '@/api/hooks'
+import { useActiveSpace, useCreatePage, usePageList, useUrls } from '@/api/hooks'
 import type { PageSummary, SortKey } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ErrorState, Spinner } from '@/components/common'
+import { QuickCaptureFab, useQuickCapture } from '@/components/layout/QuickCapture'
 import { TopBar } from '@/components/layout/TopBar'
+import { cardTitleLine, loadView, saveView, viewKey, type ListViewMode } from '@/lib/listView'
 import { absoluteTime, relativeTime } from '@/lib/time'
 import type { SpaceUrls } from '@/lib/urls'
 import { t } from '@/i18n/zh-CN'
@@ -90,12 +92,116 @@ function Row({ page, showFolder, index, urls }: { page: PageSummary; showFolder:
   )
 }
 
+// The list or cards choice of one listing, remembered in the browser. The
+// listing component stays mounted when the folder or tag changes, so the choice
+// is read again whenever the key does.
+function useViewMode(space: string, source: ListSource): [ListViewMode, (m: ListViewMode) => void] {
+  const name = source.kind === 'folder' ? source.folder : source.kind === 'tag' ? source.tag : ''
+  const key = viewKey(space, source.kind, name)
+  const [stored, setStored] = useState(() => ({ key, mode: loadView(key) }))
+  let mode = stored.mode
+  if (stored.key !== key) {
+    mode = loadView(key)
+    setStored({ key, mode })
+  }
+  return [
+    mode,
+    (m) => {
+      saveView(key, m)
+      setStored({ key, mode: m })
+    },
+  ]
+}
+
+function ViewSwitch({ mode, onChange }: { mode: ListViewMode; onChange: (m: ListViewMode) => void }) {
+  const item = (m: ListViewMode, label: string, Icon: typeof ListIcon) => (
+    <button
+      type="button"
+      aria-pressed={mode === m}
+      aria-label={label}
+      title={label}
+      onClick={() => onChange(m)}
+      className={`flex size-7 items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 ${mode === m ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+    >
+      <Icon className="size-4" />
+    </button>
+  )
+  return (
+    <div role="group" aria-label={t.view.label} className="flex items-center rounded-lg border p-0.5">
+      {item('list', t.view.list, ListIcon)}
+      {item('cards', t.view.cards, LayoutGrid)}
+    </div>
+  )
+}
+
+// The text of a card is cut at this many lines; the cut is shown as a fade.
+const CARD_LINES = 12
+
+// For short copy: the text itself, a muted line of where it is from, its tags
+// and when it was changed. The whole card opens the page.
+function Card({ page, urls }: { page: PageSummary; urls: SpaceUrls }) {
+  const titleLine = cardTitleLine(page)
+  const text = useRef<HTMLDivElement>(null)
+  const [clipped, setClipped] = useState(false)
+
+  // Whether the text runs past the cut depends on the width of the column.
+  useLayoutEffect(() => {
+    const el = text.current
+    if (!el) return
+    const measure = () => setClipped(el.scrollHeight > el.clientHeight + 1)
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [page.excerpt])
+
+  const empty = !page.excerpt && !titleLine
+  return (
+    <li className="mb-3 break-inside-avoid">
+      <Link
+        to={urls.page(page.id)}
+        className="group block rounded-xl border bg-card p-3.5 text-card-foreground outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50"
+      >
+        {titleLine && <div className="mb-1.5 text-[0.95rem] leading-snug font-medium break-words">{titleLine}</div>}
+        {page.excerpt ? (
+          <div
+            ref={text}
+            className="overflow-hidden text-[0.9rem] leading-relaxed break-words whitespace-pre-line"
+            style={{
+              maxHeight: `${CARD_LINES * 1.625}em`,
+              ...(clipped ? { maskImage: 'linear-gradient(to bottom, #000 75%, transparent)', WebkitMaskImage: 'linear-gradient(to bottom, #000 75%, transparent)' } : {}),
+            }}
+          >
+            {page.excerpt}
+          </div>
+        ) : (
+          empty && <div className="text-sm text-muted-foreground">{t.list.untitledHint}</div>
+        )}
+        <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+          {page.source && <span className="break-all">——{page.source}</span>}
+          {page.tags?.map((tag) => (
+            <span key={tag}>#{tag}</span>
+          ))}
+          <time dateTime={page.updated} title={absoluteTime(page.updated)} className="ml-auto tabular-nums">
+            {relativeTime(page.updated)}
+          </time>
+        </div>
+      </Link>
+    </li>
+  )
+}
+
 export function PageListView({ source }: { source: ListSource }) {
   const [params, setParams] = useSearchParams()
   const navigate = useNavigate()
   const create = useCreatePage()
   const urls = useUrls()
   const [creating, setCreating] = useState(false)
+  const { id: spaceId, spaces } = useActiveSpace()
+  const [mode, setMode] = useViewMode(spaceId ?? '', source)
+  const capture = useQuickCapture()
+  const isInbox = source.kind === 'folder' && source.folder === spaces.find((s) => s.id === spaceId)?.inbox
 
   const sortParam = params.get('sort') as SortKey | null
   const sort = sortParam && SORTS.includes(sortParam) ? sortParam : undefined
@@ -165,6 +271,7 @@ export function PageListView({ source }: { source: ListSource }) {
               ))}
             </NativeSelect>
             </div>
+            <ViewSwitch mode={mode} onChange={setMode} />
             <Button size="sm" onClick={newPage} disabled={creating}>
               {creating ? <Spinner /> : <FilePlus2 />}
               {creating ? t.list.creating : t.list.newPage}
@@ -176,7 +283,7 @@ export function PageListView({ source }: { source: ListSource }) {
         <h1 className="truncate text-sm font-medium">{title}</h1>
       </TopBar>
 
-      <div className="mx-auto w-full max-w-3xl flex-1 px-2 py-4 sm:px-4" key={sourceKey(source)}>
+      <div className={`mx-auto w-full flex-1 px-2 py-4 max-md:pb-20 sm:px-4 ${mode === 'cards' ? 'max-w-7xl' : 'max-w-3xl'}`} key={sourceKey(source)}>
         {query.isPending ? (
           <div className="space-y-2 px-3" aria-busy="true">
             {[0, 1, 2, 3, 4, 5].map((i) => (
@@ -187,9 +294,15 @@ export function PageListView({ source }: { source: ListSource }) {
           <ErrorState message={`${t.list.loadFailed}：${query.error.message}`} onRetry={() => void query.refetch()} />
         ) : items.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-20 text-center">
-            <p className="text-sm text-muted-foreground">{empty.main}</p>
+            <p className="text-sm text-muted-foreground">{isInbox ? t.inbox.empty : empty.main}</p>
             {empty.hint && <p className="text-xs text-muted-foreground">{empty.hint}</p>}
-            {source.kind !== 'search' && (
+            {isInbox && (
+              <Button size="sm" onClick={capture.open} disabled={!capture.available}>
+                <PenLine />
+                {t.inbox.emptyAction}
+              </Button>
+            )}
+            {source.kind !== 'search' && !isInbox && (
               <Button variant="outline" size="sm" onClick={newPage} disabled={creating}>
                 <FilePlus2 />
                 {t.list.newPage}
@@ -198,11 +311,20 @@ export function PageListView({ source }: { source: ListSource }) {
           </div>
         ) : (
           <>
-            <ul className="divide-y divide-border/60">
-              {items.map((p, i) => (
-                <Row key={p.id} page={p} index={i} urls={urls} showFolder={source.kind !== 'folder'} />
-              ))}
-            </ul>
+            {mode === 'cards' ? (
+              // Columns flow top to bottom, so short and long pieces pack together.
+              <ul className="columns-1 gap-3 sm:columns-2 xl:columns-3 2xl:columns-4">
+                {items.map((p) => (
+                  <Card key={p.id} page={p} urls={urls} />
+                ))}
+              </ul>
+            ) : (
+              <ul className="divide-y divide-border/60">
+                {items.map((p, i) => (
+                  <Row key={p.id} page={p} index={i} urls={urls} showFolder={source.kind !== 'folder'} />
+                ))}
+              </ul>
+            )}
             <div className="flex flex-col items-center gap-2 py-6">
               {query.hasNextPage ? (
                 <Button variant="outline" size="sm" onClick={() => void fetchNext()} disabled={query.isFetchingNextPage}>
@@ -216,6 +338,7 @@ export function PageListView({ source }: { source: ListSource }) {
           </>
         )}
       </div>
+      <QuickCaptureFab />
     </>
   )
 }

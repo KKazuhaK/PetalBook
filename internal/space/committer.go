@@ -147,6 +147,14 @@ func (c *committer) commit() error {
 	c.mu.Unlock()
 
 	made, err := c.git.commitPaths(taken)
+	// Paths Git could not stage are left out for good: kept pending they would
+	// fail this commit again, and every commit after it. The files are still
+	// where they are; a person has to look.
+	var skipped *gitstore.SkippedError
+	if errors.As(err, &skipped) {
+		c.log.Error("some files could not be committed and are left out", "paths", skipped.Paths)
+		err = nil
+	}
 	if err != nil {
 		now := time.Now()
 		c.mu.Lock()

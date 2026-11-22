@@ -97,6 +97,7 @@ func TestServeEndToEndAndGracefulShutdown(t *testing.T) {
 		done <- runServe(ctx, serveConfig{
 			space: dir, listen: "127.0.0.1:0", name: "我的笔记", nameSet: true,
 			committer: "Test <t@example.com>", commitIdle: time.Hour, commitMax: time.Hour,
+			inbox: "收件箱", maxUpload: 2048,
 			onReady: func(a net.Addr) { ready <- a },
 		})
 	}()
@@ -122,7 +123,7 @@ func TestServeEndToEndAndGracefulShutdown(t *testing.T) {
 	}
 	meta := get("/api/meta")
 	sp := meta["spaces"].([]any)[0].(map[string]any)
-	if sp["id"] != "default" || sp["name"] != "我的笔记" {
+	if sp["id"] != "default" || sp["name"] != "我的笔记" || sp["inbox"] != "收件箱" || meta["maxUpload"] != float64(2048) {
 		t.Fatalf("%v", meta)
 	}
 	resp, err := http.Post(base+"/api/spaces/default/pages", "application/json", strings.NewReader(`{"meta":{"title":"退出前写的"},"body":"x"}`))

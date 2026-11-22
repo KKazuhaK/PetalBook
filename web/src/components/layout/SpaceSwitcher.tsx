@@ -61,7 +61,8 @@ export function SpaceSwitcher() {
         initial=""
         submitLabel={t.spaces.create}
         onSubmit={async (name) => {
-          const space = await create.mutateAsync(name)
+          // A Chinese-language app names the inbox folder in Chinese.
+          const space = await create.mutateAsync({ name, inbox: t.inbox.folderName })
           navigate(spaceUrls(space.id).recent())
         }}
       />
