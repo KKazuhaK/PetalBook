@@ -2,13 +2,13 @@
 
 import { useMemo } from 'react'
 import { useMatch } from 'react-router'
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData, type QueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { waitForSaves } from '@/editor/saveController'
 import { spaceUrls } from '@/lib/urls'
 import { api, ApiError, spaceApi } from './client'
 import { parseTagColor } from '../lib/tagColors.ts'
 import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
-import type { AdminSpace, AdminSpaceList, BatchPagesInput, ConnectRemoteInput, CreatePageInput, ListParams, Member, Permission, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, User } from './types'
+import type { AdminSpaceList, BatchPagesInput, ConnectRemoteInput, CreatePageInput, ListParams, Member, Permission, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, User } from './types'
 
 // Everything of one space is under ['space', id, …], so switching space never
 // shows another space's data and one invalidation covers a space.
@@ -57,8 +57,23 @@ export function useSpaces() {
     queryKey: keys.spaces,
     queryFn: ({ signal }) => api.spaces(signal),
     staleTime: Infinity,
+    // Someone else may have removed this person from a space, or deleted it: coming
+    // back to the window asks once, however long it has been.
+    refetchOnWindowFocus: 'always',
     refetchInterval: (q) => (q.state.data?.spaces.some((s) => syncOf(s) !== 'local') ? 60_000 : false),
   })
+}
+
+// A request inside a space was refused for access (disabled, no permission) or
+// said the space is not there: what the app holds about the space is out of date,
+// the list and the space an administrator views alike. A 404 may only be a page
+// that is gone, so it looks again at most every few seconds.
+const NOT_FOUND_RECHECK_MS = 5_000
+export function refreshSpaceAccess(qc: QueryClient, space: string | null, notFound: boolean) {
+  // The viewed space is only ever asked for by an administrator, and is one request.
+  if (space) void qc.invalidateQueries({ queryKey: keys.viewedSpace(space) })
+  if (notFound && Date.now() - (qc.getQueryState(keys.spaces)?.dataUpdatedAt ?? 0) < NOT_FOUND_RECHECK_MS) return
+  void qc.invalidateQueries({ queryKey: keys.spaces })
 }
 
 const LAST_SPACE_KEY = 'pb.space'
@@ -101,12 +116,13 @@ export function useActiveSpace(): { id: string | null; spaces: SpaceInfo[]; reso
 }
 
 // An administrator may do everything in every space, but a space they are not a
-// member of is not in their list. The administration's list knows it: from the
-// pages already loaded, else by reading it a page at a time, which only happens
+// member of is not in their list. The administration knows it: one request, made
 // when someone opens such a space by its address. It carries no role, and every
-// permission; the inbox is not known, and is left empty.
+// permission. It is read again when a request in the space is refused or says it is
+// gone (see refreshSpaceAccess) and after what an administrator does to a space;
+// never from the administration's lists, whose pages are only as fresh as their
+// search was.
 function useViewedSpace(space: string | null, wanted: boolean) {
-  const qc = useQueryClient()
   const session = useSession().data
   const admin = session?.mode === 'accounts' && session.user?.role === 'admin'
   return useQuery({
@@ -114,13 +130,9 @@ function useViewedSpace(space: string | null, wanted: boolean) {
     enabled: wanted && admin,
     staleTime: Infinity,
     queryFn: async ({ signal }): Promise<SpaceInfo | null> => {
-      const asSpace = (s: AdminSpace): SpaceInfo => ({ id: s.id, name: s.name, role: '', permissions: ['read', 'write', 'members', 'manage'], personal: s.personal, sync: s.sync, inbox: '', disabled: s.disabled })
-      for (const [, data] of qc.getQueriesData<InfiniteData<AdminSpaceList>>({ queryKey: ['admin', 'spaces', 'list'] })) {
-        const hit = data?.pages.flatMap((p) => p.items).find((s) => s.id === space)
-        if (hit) return asSpace(hit)
-      }
       try {
-        return asSpace(await api.adminSpace(space ?? '', signal))
+        const s = await api.adminSpace(space ?? '', signal)
+        return { id: s.id, name: s.name, role: '', permissions: ['read', 'write', 'members', 'manage'], personal: s.personal, sync: s.sync, inbox: s.inbox, disabled: s.disabled }
       } catch (e) {
         if (e instanceof ApiError && e.code === 'not_found') return null
         throw e

@@ -6,7 +6,7 @@ import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { toast } from 'sonner'
 import { ApiError, onForbidden, onSignedOut, onSpaceAccess, onUnavailable } from '@/api/client'
-import { keys, lastSpace, useSession, useSpaces } from '@/api/hooks'
+import { keys, lastSpace, refreshSpaceAccess, useSession, useSpaces } from '@/api/hooks'
 import { SpaceSettingsRedirect } from '@/components/settings/SpaceSettingsRedirect'
 import { AdminGate } from '@/components/admin/AdminGate'
 import { SpaceGate } from '@/components/layout/SpaceGate'
@@ -135,8 +135,9 @@ export default function App() {
     [],
   )
   // A request refused because the space was switched off, or the person's role
-  // no longer allows it: the list says so too, once it is read again.
-  useEffect(() => onSpaceAccess(() => void queryClient.invalidateQueries({ queryKey: keys.spaces })), [])
+  // no longer allows it, or a space that is not there: the list says so too, once it
+  // is read again (and the space an administrator is viewing, which the list lacks).
+  useEffect(() => onSpaceAccess((space, notFound) => void refreshSpaceAccess(queryClient, space, notFound)), [])
   // A write refused because the remote cannot be reached says the sync state
   // changed: look again, so the indicator by the space name is not out of date.
   useEffect(

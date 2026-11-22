@@ -640,6 +640,7 @@ export function createMockServer(options: MockOptions = {}) {
       id: s.id,
       name: s.name,
       personal: s.personal,
+      inbox: s.inbox,
       created: rfc3339(s.created),
       disabled: s.disabled,
       owner: owner ? { id: owner.id, username: owner.username, name: owner.name } : null,

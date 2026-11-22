@@ -1039,7 +1039,7 @@ deletes a file. They are separate from "Users and invites", which is unchanged.
 Every space on the server, in order of creation, one page at a time:
 
 ```json
-{"items": [{"id": "01JD3K8Q7Z", "name": "Team", "personal": false, "created": "2026-11-21T08:30:00Z",
+{"items": [{"id": "01JD3K8Q7Z", "name": "Team", "personal": false, "inbox": "Inbox", "created": "2026-11-21T08:30:00Z",
   "disabled": false, "owner": {"id": "01JD3K7A2M", "username": "tang", "name": "Tang"}, "members": 3,
   "sizeBytes": 18304211, "sizeAt": "2026-11-22T02:10:00Z", "sync": "local"}],
  "next": "01JD3K8Q7Z"}
@@ -1052,7 +1052,8 @@ locale folds ASCII letters only). `limit` is 1 to
 last. The list is one database query for the whole page, however many spaces
 there are.
 
-`owner` is the first owner (the one whose name is the Git author of a space's
+`inbox` is the folder quick notes go to (see "Space"): an administrator who opens a
+space they are not a member of captures into it. `owner` is the first owner (the one whose name is the Git author of a space's
 default commits), `null` if there is none. `members` counts every member.
 `sizeBytes` and `sizeAt` are the last stored measurement and are both `null`
 until the space has been measured (also when its first measurement failed). Sizes are not measured when the list is asked for:

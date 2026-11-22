@@ -142,10 +142,12 @@ export function onUnavailable(fn: UnavailableListener): () => void {
 //
 // A request refused because an administrator switched the space off, or because
 // the person's role no longer allows it, says that what the app knows about the
-// space (its list entry: permissions, the disabled mark) is out of date. The app
-// is told once per refusal, and looks again.
+// space (its list entry: permissions, the disabled mark) is out of date. So does a
+// 404 on a space's own address (the person was removed, the space deleted), though
+// it can as well be a page that is gone: `notFound` says which kind it was, and the
+// app decides how much to look again. The app is told once per refusal.
 
-type AccessListener = () => void
+type AccessListener = (space: string | null, notFound: boolean) => void
 const accessListeners = new Set<AccessListener>()
 export function onSpaceAccess(fn: AccessListener): () => void {
   accessListeners.add(fn)
@@ -216,7 +218,11 @@ async function request<T>(path: string, { method = 'GET', body, keepalive, signa
     }
     if (res.status === 401 && !isSignIn) markSignedOut()
     if (err.error === 'unavailable') unavailableListeners.forEach((fn) => fn())
-    if (err.error === 'space_disabled' || err.error === 'no_permission') accessListeners.forEach((fn) => fn())
+    if (err.error === 'space_disabled' || err.error === 'no_permission' || err.error === 'not_found') {
+      const space = /^\/spaces\/([^/]+)/.exec(barePath)?.[1]
+      // Only requests inside a space say anything about the space.
+      if (space || err.error !== 'not_found') accessListeners.forEach((fn) => fn(space ? decodeURIComponent(space) : null, err.error === 'not_found'))
+    }
     const retry = Number(res.headers.get('Retry-After'))
     throw new ApiError(
       res.status,

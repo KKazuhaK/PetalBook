@@ -6,6 +6,7 @@ import { markSignedIn } from '@/api/client'
 import { mockFetch } from '@/api/mock/fetch'
 import { createMockServer, MOCK_ADMIN, type MockServer } from '@/api/mock/server'
 import { t } from '@/i18n'
+import { keys } from '@/api/hooks'
 import { adminRequests, click, installDomShims, makePerson, PERSON_PASSWORD, settle, shareSpace } from '@/testing/harness'
 
 // The real route table, in the real app shell: where the addresses go, who gets
@@ -172,6 +173,94 @@ describe('an administrator opens a space they are not a member of', () => {
         space = shareSpace(server, 'viewer', '另一个', 'hal').space
       },
     })
+    await settle(() => text().includes(t.editor.spaceMissing), 'not found')
+  })
+})
+
+describe('what the app knows of a space it is showing', () => {
+  const frankSpace = (server: MockServer) => {
+    const owner = makePerson(server, 'frank')
+    const space = (owner.request('POST', '/api/spaces', { name: '别人的空间' }).body as { id: string }).id
+    owner.request('POST', `/api/spaces/${space}/pages`, { meta: { title: '别人写的页面' }, body: 'x\n' })
+    return { owner, space }
+  }
+  // Asks the server for something in the space, as any request of the app would.
+  const ask = async (space: string) => {
+    const { spaceApi } = await import('@/api/client')
+    await act(async () => void (await spaceApi(space).tree().catch(() => undefined)))
+  }
+
+  it('an administrator viewing a space is shown the disabled notice when it is switched off meanwhile', async () => {
+    let space = ''
+    const server = await boot(() => `/s/${space}/recent`, { mode: 'accounts', scene: (s) => void (space = frankSpace(s).space) })
+    await settle(() => text().includes('别人写的页面'), 'the pages')
+    adminRequests(server)('POST', `/api/admin/spaces/${space}/disable`)
+    await ask(space)
+    await settle(() => text().includes(t.spaces.disabledTitle), 'the notice')
+    // And back again.
+    adminRequests(server)('POST', `/api/admin/spaces/${space}/enable`)
+    const { queryClient } = await import('@/App')
+    await act(async () => void (await queryClient.invalidateQueries({ queryKey: keys.viewedSpace(space) })))
+    await settle(() => text().includes('别人写的页面'), 'the pages again')
+  })
+
+  it('a space opened from the administration is read as it is now, not as an older search left it', async () => {
+    let space = ''
+    const server = await boot('/admin/spaces', { mode: 'accounts', scene: (s) => void (space = frankSpace(s).space) })
+    await settle(() => document.querySelector(`a[href="/s/${space}/recent"]`) !== null, 'the table')
+    // Switched off by someone else; the table on screen does not know.
+    adminRequests(server)('POST', `/api/admin/spaces/${space}/disable`)
+    await click(document.querySelector(`a[href="/s/${space}/recent"]`))
+    await settle(() => text().includes(t.spaces.disabledTitle), 'the notice')
+  })
+
+  it('a space that is deleted while it is viewed is not found', async () => {
+    let space = ''
+    const server = await boot(() => `/s/${space}/recent`, { mode: 'accounts', scene: (s) => void (space = frankSpace(s).space) })
+    await settle(() => text().includes('别人写的页面'), 'the pages')
+    adminRequests(server)('DELETE', `/api/admin/spaces/${space}`)
+    await ask(space)
+    await settle(() => text().includes(t.editor.spaceMissing), 'not found')
+  })
+
+  // A member of a space, who is removed from it (or whose space is deleted) by someone else.
+  const removable = () => {
+    let space = ''
+    let remove = () => {}
+    const scene = (server: MockServer) => {
+      const ivy = makePerson(server, 'ivy')
+      const jon = makePerson(server, 'jon')
+      space = (jon.request('POST', '/api/spaces', { name: '共享的' }).body as { id: string }).id
+      jon.request('POST', `/api/spaces/${space}/members`, { username: 'ivy', role: 'editor' })
+      remove = () => void jon.request('DELETE', `/api/spaces/${space}/members/${ivy.id}`)
+    }
+    return { scene, space: () => space, remove: () => remove() }
+  }
+
+  it('a member removed from a space meanwhile finds it gone once the window is looked at again', async () => {
+    const x = removable()
+    await boot(() => `/s/${x.space()}/recent`, { mode: 'accounts', as: 'ivy', scene: x.scene })
+    await settle(() => text().includes(t.nav.quickNote) || document.querySelector(`[aria-label="${t.list.newPage}"]`) !== null, 'the space')
+    x.remove()
+    await act(async () => {
+      window.dispatchEvent(new Event('visibilitychange'))
+    })
+    await settle(() => text().includes(t.editor.spaceMissing), 'not found')
+  })
+
+  it('a 404 from a space the list holds makes the list be read again, not offering the page text back', async () => {
+    const x = removable()
+    await boot(() => `/s/${x.space()}/recent`, { mode: 'accounts', as: 'ivy', scene: x.scene })
+    await settle(() => document.querySelector(`[aria-label="${t.list.newPage}"]`) !== null, 'the space')
+    x.remove()
+    // The list was read a moment ago: a 404 is looked into only after a few seconds.
+    const now = Date.now()
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(now + 10_000)
+    try {
+      await ask(x.space())
+    } finally {
+      spy.mockRestore()
+    }
     await settle(() => text().includes(t.editor.spaceMissing), 'not found')
   })
 })

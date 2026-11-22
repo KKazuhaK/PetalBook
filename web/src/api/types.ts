@@ -316,6 +316,8 @@ export interface AdminSpace {
   id: string
   name: string
   personal: boolean
+  // The folder quick notes go to.
+  inbox: string
   created: string
   disabled: boolean
   // The first owner; null when there is none.

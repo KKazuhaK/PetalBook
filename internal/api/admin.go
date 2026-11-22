@@ -30,6 +30,7 @@ type adminSpaceResp struct {
 	ID       string      `json:"id"`
 	Name     string      `json:"name"`
 	Personal bool        `json:"personal"`
+	Inbox    string      `json:"inbox"`
 	Created  string      `json:"created"`
 	Disabled bool        `json:"disabled"`
 	Owner    *adminOwner `json:"owner"`
@@ -74,7 +75,7 @@ func (s *server) adminSpaceItems(c *call, rows []store.AdminSpace) []adminSpaceR
 	syncs := s.spaces.SyncOf(c.r.Context(), ids)
 	items := make([]adminSpaceResp, len(rows))
 	for i, r := range rows {
-		it := adminSpaceResp{ID: r.ID, Name: r.Name, Personal: r.Personal, Created: rfc3339(r.Created), Disabled: r.Disabled,
+		it := adminSpaceResp{ID: r.ID, Name: r.Name, Personal: r.Personal, Inbox: r.Inbox, Created: rfc3339(r.Created), Disabled: r.Disabled,
 			Members: r.Members, SizeBytes: r.SizeBytes, Sync: syncs[i]}
 		if r.Owner != nil {
 			it.Owner = &adminOwner{r.Owner.ID, r.Owner.Username, r.Owner.Name}

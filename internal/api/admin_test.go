@@ -107,7 +107,7 @@ func TestAdminListsEverySpaceWithOwnersAndPages(t *testing.T) {
 			}
 			if id == sid {
 				o := it["owner"].(map[string]any)
-				if it["name"] != "Team Rocket" || it["personal"] != false || it["members"] != float64(2) || o["username"] != "tang" || o["id"] != mustUserID(t, a, "tang") {
+				if it["name"] != "Team Rocket" || it["personal"] != false || it["inbox"] != "Inbox" || it["members"] != float64(2) || o["username"] != "tang" || o["id"] != mustUserID(t, a, "tang") {
 					t.Fatalf("%v", it)
 				}
 			}

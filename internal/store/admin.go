@@ -16,6 +16,8 @@ type AdminSpace struct {
 	ID       string
 	Name     string
 	Personal bool
+	// Inbox is the folder quick notes go to.
+	Inbox    string
 	Created  time.Time
 	Disabled bool
 	// SizeBytes and SizeAt are the last measurement (see SetSpaceSize); nil
@@ -105,8 +107,8 @@ func ListAllSpaces(ctx context.Context, q Q, f SpaceFilter) (out []AdminSpace, n
 		cond = "WHERE " + strings.Join(where, " AND ")
 	}
 	args = append(args, f.Limit+1)
-	rows, err := q.Query(ctx, `SELECT p.id, p.name, p.personal_of, p.created, p.disabled, p.size_bytes, p.size_at, p.members, u.id, u.username, u.name
-		FROM (SELECT s.id, s.name, s.personal_of, s.created, s.disabled, s.size_bytes, s.size_at,
+	rows, err := q.Query(ctx, `SELECT p.id, p.name, p.personal_of, p.inbox, p.created, p.disabled, p.size_bytes, p.size_at, p.members, u.id, u.username, u.name
+		FROM (SELECT s.id, s.name, s.personal_of, s.inbox, s.created, s.disabled, s.size_bytes, s.size_at,
 			(SELECT COUNT(*) FROM space_members m WHERE m.space_id = s.id) AS members,
 			(SELECT m.user_id FROM space_members m WHERE m.space_id = s.id AND m.role = 'owner' ORDER BY m.created, m.user_id LIMIT 1) AS owner_id
 			FROM spaces s `+cond+` ORDER BY s.id LIMIT ?) p
@@ -121,7 +123,7 @@ func ListAllSpaces(ctx context.Context, q Q, f SpaceFilter) (out []AdminSpace, n
 		var personal, ownerID, ownerUser, ownerName sql.NullString
 		var created, disabled int64
 		var size, sizeAt sql.NullInt64
-		if err := rows.Scan(&s.ID, &s.Name, &personal, &created, &disabled, &size, &sizeAt, &s.Members, &ownerID, &ownerUser, &ownerName); err != nil {
+		if err := rows.Scan(&s.ID, &s.Name, &personal, &s.Inbox, &created, &disabled, &size, &sizeAt, &s.Members, &ownerID, &ownerUser, &ownerName); err != nil {
 			return nil, "", err
 		}
 		s.Personal, s.Created, s.Disabled = personal.Valid, fromMS(created), disabled != 0
