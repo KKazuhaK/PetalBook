@@ -72,14 +72,15 @@ export function useSpaces() {
 // from the last time that query asked (answered or failed). A 404 inside that
 // window is not dropped, since the viewed space is not read again by itself: one
 // recheck waits for the end of the window, whatever number of 404s come meanwhile.
-const NOT_FOUND_RECHECK_MS = 5_000
+// The window is a setting, not a constant, only so that tests can shorten it.
+export const notFoundRecheck = { ms: 5_000 }
 const pendingRechecks = new WeakMap<QueryClient, Map<string, ReturnType<typeof setTimeout>>>()
 function recheck(qc: QueryClient, key: readonly unknown[], notFound: boolean) {
   const asked = () => {
     const s = qc.getQueryState(key)
     return Math.max(s?.dataUpdatedAt ?? 0, s?.errorUpdatedAt ?? 0)
   }
-  const wait = NOT_FOUND_RECHECK_MS - (Date.now() - asked())
+  const wait = notFoundRecheck.ms - (Date.now() - asked())
   if (!notFound || wait <= 0) {
     void qc.invalidateQueries({ queryKey: key })
     return
@@ -93,7 +94,7 @@ function recheck(qc: QueryClient, key: readonly unknown[], notFound: boolean) {
     setTimeout(() => {
       timers.delete(id)
       // Asked again meanwhile (by anything): that answer is newer than the 404.
-      if (Date.now() - asked() >= NOT_FOUND_RECHECK_MS) void qc.invalidateQueries({ queryKey: key })
+      if (Date.now() - asked() >= notFoundRecheck.ms) void qc.invalidateQueries({ queryKey: key })
     }, wait),
   )
 }

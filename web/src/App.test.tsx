@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { markSignedIn } from '@/api/client'
@@ -249,10 +249,17 @@ describe('what the app knows of a space it is showing', () => {
   it('a space that is deleted while it is viewed is not found', async () => {
     let space = ''
     const server = await boot(() => `/s/${space}/recent`, { mode: 'accounts', scene: (s) => void (space = frankSpace(s).space) })
+    // A short window, so the recheck that a 404 inside it waits for comes soon:
+    // waiting the real five seconds made the test depend on a runner's speed.
+    // Set on the app's own copy of the module (the modules are loaded anew per test).
+    const { notFoundRecheck } = await import('@/api/hooks')
+    const window = notFoundRecheck.ms
+    notFoundRecheck.ms = 200
+    onTestFinished(() => void (notFoundRecheck.ms = window))
     await settle(() => text().includes('别人写的页面'), 'the pages')
     adminRequests(server)('DELETE', `/api/admin/spaces/${space}`)
     await ask(space)
-    await settle(() => text().includes(t.editor.spaceMissing), 'not found', 400)
+    await settle(() => text().includes(t.editor.spaceMissing), 'not found')
   })
 
   // A member of a space, who is removed from it (or whose space is deleted) by someone else.
