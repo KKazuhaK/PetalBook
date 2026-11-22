@@ -14,8 +14,9 @@ import (
 const (
 	// authorTTL bounds how long a user's name and email are remembered for
 	// commits made on their behalf when they are not at hand (the drafts
-	// sweeper). A profile change drops the entry at once (UserChanged); this
-	// only covers a change made some other way.
+	// sweeper), and whether they are an administrator or disabled. Any change to
+	// the user drops the entry at once (UserChanged); this only covers a change
+	// made some other way.
 	authorTTL = time.Minute
 	// maxAuthors bounds the memory of that cache.
 	maxAuthors = 10_000
@@ -86,7 +87,7 @@ func (m *Manager) userEntry(ctx context.Context, userID string) (cachedAuthor, e
 // minute at most), no query per draft. A user who is gone may not.
 func (m *Manager) MayWrite(ctx context.Context, userID, spaceID string) (bool, error) {
 	if m.single != nil {
-		return spaceID == SingleID, nil
+		return true, nil // the one local user may do everything; Acquire knows which space exists
 	}
 	c, err := m.userEntry(ctx, userID)
 	if errors.Is(err, store.ErrNotFound) {

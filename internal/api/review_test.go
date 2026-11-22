@@ -130,3 +130,42 @@ func TestAdminDeleteKeepsTheDraftsInTheTrash(t *testing.T) {
 		}
 	})
 }
+
+// Disabling a user, and changing their role, is seen by the drafts sweeper at once.
+func TestUserChangesReachTheWriteCheckAtOnce(t *testing.T) {
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		tm := newTeam(t, a)
+		may := func() bool {
+			ok, err := a.mgr.MayWrite(context.Background(), tm.editorID, tm.sid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return ok
+		}
+		if !may() {
+			t.Fatal("an editor may not write")
+		}
+		admin.do("PATCH", "/api/users/"+tm.editorID, map[string]any{"disabled": true}).want(t, 200, "")
+		if may() {
+			t.Fatal("a disabled user may still write")
+		}
+		admin.do("PATCH", "/api/users/"+tm.editorID, map[string]any{"disabled": false}).want(t, 200, "")
+		if !may() {
+			t.Fatal("an enabled user may not write")
+		}
+		// An administrator may write in every space; the change from member shows at once.
+		oscar := mustUserID(t, a, "oscar")
+		if ok, _ := a.mgr.MayWrite(context.Background(), oscar, tm.sid); ok {
+			t.Fatal("an outsider may write")
+		}
+		admin.do("PATCH", "/api/users/"+oscar, map[string]any{"role": "admin"}).want(t, 200, "")
+		if ok, _ := a.mgr.MayWrite(context.Background(), oscar, tm.sid); !ok {
+			t.Fatal("a new administrator may not write")
+		}
+		admin.do("PATCH", "/api/users/"+oscar, map[string]any{"role": "member"}).want(t, 200, "")
+		if ok, _ := a.mgr.MayWrite(context.Background(), oscar, tm.sid); ok {
+			t.Fatal("a demoted administrator may still write")
+		}
+	})
+}

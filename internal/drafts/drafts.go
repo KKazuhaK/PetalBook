@@ -30,6 +30,16 @@ const (
 	// retryAfter is how long a draft that failed for a reason that may pass
 	// (disk, Git) waits before the sweeper tries again.
 	retryAfter = time.Minute
+	// maxRounds bounds how many batches one sweep takes while they are full of
+	// drafts that were only refused (see denied). A refused draft costs a cached
+	// membership check and one UPDATE that moves its due time out by
+	// deniedRetry, so it leaves the due set at once; but it is taken from the
+	// same oldest-first window as every due draft, and without more rounds
+	// thousands of them would hold the real ones back for batch-sized steps of
+	// one tick each. With 20 rounds a sweep clears up to 1000 of them before
+	// anything else is late by more than a tick; N refused drafts cost N cheap
+	// checks and N small UPDATEs every deniedRetry, not every tick.
+	maxRounds = 20
 	// deniedRetry is how long a draft whose author may no longer write in the
 	// space waits before the sweeper looks again. The draft is kept untouched
 	// (nothing is applied, nothing deleted), so it can still be listed and
@@ -535,6 +545,9 @@ func (s *Service) Run(ctx context.Context) {
 // SweepResult counts what one sweep did.
 type SweepResult struct {
 	Applied, Held, Failed int
+	// Denied are drafts left alone because their author may no longer write in
+	// the space: kept, not held, looked at again after deniedRetry.
+	Denied int
 }
 
 // Sweep applies the drafts that are due: one indexed query. A draft that turns
@@ -544,33 +557,68 @@ type SweepResult struct {
 func (s *Service) Sweep(ctx context.Context) SweepResult {
 	var r SweepResult
 	now := s.now()
-	due, err := store.DueDrafts(ctx, s.st.Q(), now, batch)
-	if err != nil {
-		if ctx.Err() == nil {
-			s.log.Error("could not look for due drafts", "error", err)
-		}
-		return r
-	}
 	// A space whose remote did not answer is not tried again for its other
 	// drafts in this sweep: each attempt would wait for the same failure.
 	down := map[string]bool{}
-	for i := range due {
-		if ctx.Err() != nil {
+	for round := 0; round < maxRounds && ctx.Err() == nil; round++ {
+		due, err := store.DueDrafts(ctx, s.st.Q(), now, batch)
+		if err != nil {
+			if ctx.Err() == nil {
+				s.log.Error("could not look for due drafts", "error", err)
+			}
+			return r
+		}
+		denied := 0
+		for i := range due {
+			if ctx.Err() != nil {
+				break
+			}
+			d := due[i]
+			if s.hook != nil {
+				s.hook(d.SpaceID, d.PageID, d.UserID)
+			}
+			// Before anything opens the space: a refused draft must not open it,
+			// keep it open or make it rebuild its index.
+			if s.denied(ctx, d, now, &r) {
+				denied++
+				continue
+			}
+			if down[d.SpaceID] {
+				s.delayUnavailable(ctx, &d, now, &r)
+				continue
+			}
+			if s.sweepOne(ctx, d, now, &r) {
+				down[d.SpaceID] = true
+			}
+		}
+		// Another round only if this one was full of refusals, which have left
+		// the due set: what is due next is what they were hiding.
+		if len(due) < batch || denied == 0 {
 			break
-		}
-		d := due[i]
-		if s.hook != nil {
-			s.hook(d.SpaceID, d.PageID, d.UserID)
-		}
-		if down[d.SpaceID] {
-			s.delayUnavailable(ctx, &d, now, &r)
-			continue
-		}
-		if s.sweepOne(ctx, d, now, &r) {
-			down[d.SpaceID] = true
 		}
 	}
 	return r
+}
+
+// denied reports whether the draft's author may not write in its space any
+// more (removed, made a viewer, disabled, or gone) and, if so, leaves the draft
+// as it is and puts it off by deniedRetry. A failure of the check is no
+// refusal: the draft is tried again after the usual delay.
+func (s *Service) denied(ctx context.Context, d store.Draft, now time.Time, r *SweepResult) bool {
+	may, err := s.spaces.MayWrite(ctx, d.UserID, d.SpaceID)
+	if err != nil {
+		s.log.Warn("could not check whether the author of a draft may still write", "space", d.SpaceID, "error", err)
+		s.delay(ctx, &d, now, r)
+		return true
+	}
+	if may {
+		return false
+	}
+	s.log.Debug("a draft is kept, not applied: its author may no longer write in the space; \"petalbook draft export\" prints it",
+		"space", d.SpaceID, "page", d.PageID)
+	r.Denied++
+	store.DelayDraft(ctx, s.st.Q(), d.SpaceID, d.PageID, d.UserID, d.Version, now.Add(deniedRetry))
+	return true
 }
 
 // Lock order, everywhere: a space is acquired (a request's middleware, or the
@@ -586,23 +634,6 @@ func (s *Service) sweepOne(ctx context.Context, d store.Draft, now time.Time, r 
 		return false
 	}
 	defer release()
-	// Acquire asks nobody who is looking, so whether the author may still write
-	// here is asked now: a draft must not be committed for someone who was
-	// removed from the space, made a viewer or disabled after they typed it.
-	// Checked before the lock (it may read the database once) and from caches.
-	may, err := s.spaces.MayWrite(ctx, d.UserID, d.SpaceID)
-	if err != nil {
-		s.log.Warn("could not check whether the author of a draft may still write", "space", d.SpaceID, "error", err)
-		s.delay(ctx, &d, now, r)
-		return false
-	}
-	if !may {
-		s.log.Warn("a draft is kept, not applied: its author may no longer write in the space; \"petalbook draft export\" prints it",
-			"space", d.SpaceID, "page", d.PageID)
-		r.Held++
-		store.DelayDraft(ctx, s.st.Q(), d.SpaceID, d.PageID, d.UserID, d.Version, now.Add(deniedRetry))
-		return false
-	}
 	l := s.lock(d.SpaceID, d.PageID, d.UserID)
 	l.Lock()
 	defer l.Unlock()
