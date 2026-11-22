@@ -11,6 +11,8 @@ import (
 // Filter keeps the pages whose property Key matches. Op is one of:
 //
 //	in        the property equals one of Values (a list property: holds one of them)
+//	notIn     the page has a value for the property and none of them is one of
+//	          Values (a board's "other values" column: not empty, not an option)
 //	range     Values is [from, to], either end null or "" for none; numbers or
 //	          dates (text); a list property matches when an element is in the range
 //	empty     the page has no value for the property
@@ -48,14 +50,14 @@ func checkFilters(fs []Filter) error {
 		}
 		f.vals, f.lo, f.hi = nil, nil, nil
 		switch f.Op {
-		case "in":
+		case "in", "notIn":
 			if len(f.Values) == 0 || len(f.Values) > maxFilterValues {
-				return invalid("an in filter needs 1 to %d values", maxFilterValues)
+				return invalid("an %s filter needs 1 to %d values", f.Op, maxFilterValues)
 			}
 			for _, v := range f.Values {
 				t, ok := valText(v)
 				if !ok {
-					return invalid("the values of an in filter must be text, numbers or true/false")
+					return invalid("the values of an %s filter must be text, numbers or true/false", f.Op)
 				}
 				f.vals = append(f.vals, t)
 			}
@@ -99,7 +101,7 @@ func checkFilters(fs []Filter) error {
 			}
 			f.vals = []string{asciiLower(t)}
 		default:
-			return invalid("unknown filter op %q (use in, range, empty, notEmpty or contains)", f.Op)
+			return invalid("unknown filter op %q (use in, notIn, range, empty, notEmpty or contains)", f.Op)
 		}
 	}
 	return nil
@@ -186,6 +188,13 @@ func (f Filter) sql() (string, []any) {
 			args = append(args, v)
 		}
 		return has + ` AND f.val IN (` + marks + `))`, args
+	case "notIn":
+		marks := strings.TrimSuffix(strings.Repeat("?,", len(f.vals)), ",")
+		args := []any{f.Key, f.Key}
+		for _, v := range f.vals {
+			args = append(args, v)
+		}
+		return has + `) AND NOT ` + has + ` AND f.val IN (` + marks + `))`, args
 	case "range":
 		cond, args := has, []any{f.Key}
 		if f.lo != nil {
@@ -204,6 +213,26 @@ func (f Filter) sql() (string, []any) {
 	default: // contains
 		return has + ` AND instr(lower(f.val), ?) > 0)`, []any{f.Key, f.vals[0]}
 	}
+}
+
+// CheckFilters validates filters the way a listing does, for a caller that
+// stores them (a saved view).
+func CheckFilters(fs []Filter) error {
+	cp := append([]Filter(nil), fs...)
+	return checkFilters(cp)
+}
+
+// ValidSort reports whether name is a sort a listing accepts: "", updated,
+// created, title or prop:<key>, each with an optional leading -.
+func ValidSort(name string) error {
+	if name == "" {
+		return nil
+	}
+	if _, _, byProp, err := propSort(name); err != nil || byProp {
+		return err
+	}
+	_, err := sortKeys(name)
+	return err
 }
 
 // propSort reads a sort name of the form prop:<key>, with a leading - to
@@ -314,4 +343,112 @@ func (x *Index) scanInto(res *Result, query string, args []any, props, withKey b
 		seen(rowid, skey)
 	}
 	return false, rows.Err()
+}
+
+// listByOptions lists the pages sorted by the first value of a property whose
+// values have an order of their own, the options of a select field. The pages
+// are read in groups, one after the other: ascending, each option in turn,
+// then the other values (by text), then the pages without the property (by
+// rowid); descending, the other values first (by text, reversed), then the
+// options from the last, and the pages without the property last as always.
+// Each group is an index range scan that stops at the limit, so nothing is
+// sorted however many pages there are. The cursor names the group and the
+// position in it; it also says how many options there were, so one made for
+// another list of options is refused rather than read as something else.
+func (x *Index) listByOptions(q Query, limit int, key string, desc bool, sortName string, cur *cursor, where []string, args []any) (Result, error) {
+	opts := q.PropOptions
+	n := len(opts)
+	// The groups, in the order they are read.
+	type group struct {
+		opt int // the index of the option, -1 for the other values, -2 for the pages without the property
+	}
+	var groups []group
+	if desc {
+		groups = append(groups, group{opt: -1})
+		for i := n - 1; i >= 0; i-- {
+			groups = append(groups, group{opt: i})
+		}
+	} else {
+		for i := 0; i < n; i++ {
+			groups = append(groups, group{opt: i})
+		}
+		groups = append(groups, group{opt: -1})
+	}
+	groups = append(groups, group{opt: -2})
+
+	g := 0
+	if cur != nil {
+		if cur.N != n+1 || cur.G < 0 || cur.G >= len(groups) {
+			return Result{}, invalid("cursor belongs to another sort order")
+		}
+		g = cur.G
+	}
+	res := Result{Items: []Summary{}}
+	d, op := "", ">"
+	if desc {
+		d, op = " DESC", "<"
+	}
+	var last cursor
+	for ; g < len(groups); g++ {
+		grp := groups[g]
+		var w []string
+		var a []any
+		var query string
+		withKey := false
+		remaining := limit - len(res.Items) + 1
+		// The position in the cursor applies to the group it names, unless it is
+		// the start of that group (no row seen yet: rowids begin at 1).
+		inGroup := cur != nil && cur.G == g && cur.R != 0
+		switch {
+		case grp.opt >= 0:
+			w = append([]string{`s.key = ?`, `s.val = ?`, `s.pos = 0`}, where...)
+			a = append([]any{key, opts[grp.opt]}, args...)
+			if inGroup {
+				w = append(w, `s.page `+op+` ?`)
+				a = append(a, cur.R)
+			}
+			query = `SELECT ` + selectCols(q.Props) + ` FROM props s CROSS JOIN pages p ON p.rowid = s.page WHERE ` +
+				strings.Join(w, ` AND `) + ` ORDER BY s.page` + d + ` LIMIT ?`
+			a = append(a, remaining)
+		case grp.opt == -1:
+			marks := strings.TrimSuffix(strings.Repeat("?,", n), ",")
+			w = append([]string{`s.key = ?`, `s.pos = 0`, `s.val NOT IN (` + marks + `)`}, where...)
+			a = []any{key}
+			for _, o := range opts {
+				a = append(a, o)
+			}
+			a = append(a, args...)
+			if inGroup {
+				w = append(w, `(s.skey, s.page) `+op+` (?, ?)`)
+				a = append(a, cur.T, cur.R)
+			}
+			query = `SELECT ` + selectCols(q.Props) + `, s.skey FROM props s CROSS JOIN pages p ON p.rowid = s.page WHERE ` +
+				strings.Join(w, ` AND `) + ` ORDER BY s.skey` + d + `, s.page` + d + ` LIMIT ?`
+			a = append(a, remaining)
+			withKey = true
+		default:
+			w = append([]string{`NOT EXISTS (SELECT 1 FROM props s WHERE s.page = p.rowid AND s.key = ?)`}, where...)
+			a = append([]any{key}, args...)
+			if inGroup {
+				w = append(w, `p.rowid > ?`)
+				a = append(a, cur.R)
+			}
+			query = `SELECT ` + selectCols(q.Props) + ` FROM pages p WHERE ` + strings.Join(w, ` AND `) + ` ORDER BY p.rowid LIMIT ?`
+			a = append(a, remaining)
+		}
+		// The start of this group is where the next page begins if the limit was
+		// reached just before its first row.
+		last = cursor{Sort: sortName, N: n + 1, G: g}
+		more, err := x.scanInto(&res, query, a, q.Props, withKey, limit, func(rowid int64, skey string) {
+			last = cursor{Sort: sortName, N: n + 1, G: g, T: skey, R: rowid}
+		})
+		if err != nil {
+			return Result{}, err
+		}
+		if more {
+			res.Next = last.encode()
+			return res, nil
+		}
+	}
+	return res, nil
 }

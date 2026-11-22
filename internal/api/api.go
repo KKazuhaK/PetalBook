@@ -429,6 +429,7 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		inv   *space.InvalidError
 		ce    *space.ConflictError
 		tce   *space.TypeConflictError
+		vce   *space.ViewsConflictError
 		ae    *auth.Error
 		dc    *drafts.Conflict
 		ue    *space.UnavailableError
@@ -497,6 +498,8 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found", "no such page")
 	case errors.Is(err, space.ErrExists), errors.Is(err, fs.ErrExist):
 		writeError(w, http.StatusConflict, "exists", "it already exists")
+	case errors.As(err, &vce):
+		writeJSON(w, http.StatusConflict, viewsConflict(vce))
 	case errors.As(err, &tce):
 		body := errorBody{Error: "conflict", Message: "the type changed since you opened it, or is not there; here is how it is now"}
 		if tce.Current != nil {
@@ -586,6 +589,9 @@ type summaryResp struct {
 	// Props and Rev are there when the listing was asked for them (props=1).
 	Props json.RawMessage `json:"props,omitempty"`
 	Rev   string          `json:"rev,omitempty"`
+	// Body is the page's Markdown, there when the listing was asked for it
+	// (body=1).
+	Body *string `json:"body,omitempty"`
 	// PartialProps are the keys of props that are not the whole of the value
 	// in the file (see the index); left out when there are none.
 	PartialProps []string `json:"partialProps,omitempty"`

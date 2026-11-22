@@ -549,6 +549,10 @@ null, blank text and an empty list are left out, as is anything inside a list
 that is not a plain value. Without `props=1` the summary is as small as it
 was.
 
+`body` is there only when the listing was asked for it with `body=1` (the
+continuous reading does): the page's Markdown as the file has it now, without
+the header, `""` for a page with no body. See `GET …/pages`.
+
 `partialProps` comes with `props` and lists, in header order, the keys whose
 value in `props` is not exactly what the file holds: text that was cut, a list
 that was cut or lost an element, a value that is an object (it has no entry in
@@ -640,7 +644,8 @@ to 2261, is `400 invalid`.
 | `sort` | `updated` (default), `created`, `title`, or `prop:{key}` for a property of the header; prefix `-` for descending. Default is `-updated`. With `q` and no `sort`, results are ordered by relevance |
 | `filter` | a JSON array of conditions on properties, all of which must hold (see below), at most 10, at most 16 KiB |
 | `props` | `1` to put `props` and `rev` in the summaries (see Page summary); default `0` |
-| `limit` | 1–200, default 50 |
+| `body` | `1` to put the Markdown `body` of each page in the summaries (see below); default `0` |
+| `limit` | 1–200, default 50; with `body=1` at most 20, default 20 |
 | `cursor` | the `next` value of the previous response |
 
 ```json
@@ -666,12 +671,34 @@ position, not an offset, and a cursor made for one sort is refused for
 another. Every page of such a listing is read from an index, however many
 pages the folder holds.
 
+**Sorting by a select field.** When the listing has a `folder`, and the
+folder's effective type (the type of the folder, or of the nearest folder above
+it that is bound; see Page types) has a `select` or `multiselect` field with
+the key sorted by and at least one option, `sort=prop:{key}` follows the order
+of the field's options instead of the order of the text: the options in turn,
+then the values that are not options (by text, as above), then the pages
+without a value. `sort=-prop:{key}` is the reverse of the first two groups
+(the other values first, then the options from the last) and still puts the
+pages without a value last. A multiselect counts by its first value. Within an
+option the pages are in the order the server holds them, reversed for `-`. The
+listing is read from the index one option at a time, with a cursor that names
+the option and the place in it, so a page costs the same however many pages
+the folder holds (measured: well under a millisecond in a folder of 50 000;
+at most about 50 ms for a small folder lying among 50 000 pages of a space).
+The cursor also says how many options there were: a cursor made for another
+list of options, or from a listing that was not in option order (the type was
+changed, or the folder has none), is `400 invalid` and the client starts over.
+Pages of subfolders listed with `recursive=true` follow the order of the
+options of the folder asked for, whatever type they have. Without `folder`,
+or for any other field, the order is that of the text.
+
 **Filtering by properties.** `filter` is a JSON array, sent as the value of
 the parameter (percent-encoded), each item `{"key", "op", "values"}`:
 
 | `op` | `values` | keeps pages whose property |
 |---|---|---|
 | `in` | up to 100 texts, numbers or booleans | equals one of them (a list: holds one of them) |
+| `notIn` | up to 100 texts, numbers or booleans | has a value and none of its values (a list has several) is one of them: not empty, and not an option; the "other values" column of a board |
 | `range` | `[from, to]`, both numbers or both texts (dates), either end `null` or `""`, not both; ends are included | has a value in the range (a list: an element is in it) |
 | `empty` | none | has no value |
 | `notEmpty` | none | has a value (`false` and `0` are values) |
@@ -682,7 +709,39 @@ or kind of `values`, or text that is not that JSON is `400 invalid`. The
 filter works together with every other parameter (`folder`, `tag`, `q`, the
 sort and the cursor). A text is compared as the first 300 characters of it.
 Both `sort` and `filter` answer from the index: nothing reads the page files,
-so a folder of 50 000 pages answers in milliseconds.
+so a folder of 50 000 pages answers in milliseconds. (A filter that few pages
+match, in a folder where many do not, is the slow case: a column of a board for
+an option no page has takes about 40 ms in a folder of 50 000. `…/pages/groups`
+says which columns are empty.)
+
+**Bodies.** With `body=1` each summary has `body`, the page's Markdown, read
+from its file. That is a file read per item, so `limit` is at most 20 (also
+the default) and a larger one is `400 invalid`; the other parameters work as
+usual, so the reading of a folder, a tag or a set of filters goes on with the
+`next` cursor. A page whose file is not that page any more (it changed outside
+the server since the index looked) has `""`.
+
+### `GET /api/spaces/{space}/pages/groups`
+
+Needs `read`. How many pages of a folder or a tag have each value of a
+property, for the heads of the columns of a board. Parameters: `key` (required,
+the property), `folder` and `recursive`, `tag` (repeatable), `filter` (as for a
+listing); a folder or a tag is required.
+
+```json
+{"groups": [{"value": "草稿", "count": 12}, {"value": "定稿", "count": 7}, {"value": "已废弃", "count": 1}],
+ "empty": 4, "truncated": false}
+```
+
+`groups` are the values the pages have, most pages first, then by the text of
+the value (numbers and booleans as the index holds them: `"3"`, `"true"`); a
+list property counts a page once for each distinct value it holds. `empty` is
+the number of pages in the scope that have no value for the key (the same pages
+as the filter `empty`). Both come from the index, no file is read. At most 1000
+values are returned, the rarest left out, and `truncated` says so. The cost
+follows the pages of the folder: about 60 ms for 50 000 pages in one folder
+(100 ms for a list), under a millisecond for a small folder among them.
+`400 invalid` for a missing `key`, no folder and no tag, or a bad `filter`.
 
 ### `GET /api/spaces/{space}/pages/{id}`
 
@@ -957,8 +1016,8 @@ folders:
 A folder takes the type of the nearest folder above it that is bound (the
 root, `""`, may be bound too); a page whose header has a `type` has that.
 Renaming or moving a folder changes its bindings, and those of the folders in
-it, in the same commit; deleting one removes them. Other settings an entry has
-stay. The move and the change of the bindings are one change: if the server
+it, in the same commit; deleting one removes them (and its views, see Saved
+views). Other settings an entry has stay. The move and the change of the bindings are one change: if the server
 stops between the two, it finishes the bindings when it starts again, and if
 the bindings cannot be written the folder is not moved and the request fails.
 Nothing was at the place a folder is moved to, so every binding at that place
@@ -1089,6 +1148,105 @@ removes the binding when `type` is `""`. `200` with `{"folder": "Work",
 the folder does not exist; `400 invalid` when the type does not exist, or
 `space.yml` has to be fixed by hand. Pages are not changed: their
 `effectiveType` is.
+
+## Saved views
+
+A view is a saved way of looking at the pages of a folder or of a tag: a
+layout, a sort, filters, the field a board is grouped by, the hidden columns of
+a table. A folder's views are written under its entry in
+`.petalbook/space.yml`, next to its type; a tag's under its entry in
+`.petalbook/tags.yml`, next to its colour. The root folder is the key `""`.
+
+```yaml
+folders:
+  文案:
+    type: wenan
+    views:
+      - id: k3f9
+        name: 按状态
+        layout: board
+        group: status
+        sort: -prop:written
+        filter: [{key: series, op: in, values: [冬季]}]
+```
+
+The first view is the default one; a folder or tag with none shows the
+implicit default. Moving or renaming a folder carries its views, and those of
+the folders in it, in the same commit and the same journal record as its
+bindings (a crash in between is finished when the server starts); deleting a
+folder removes them (a folder that stays, because it holds files that are not
+pages, keeps them). Deleting a type keeps the views of the folders that were
+bound to it; unbinding a folder keeps its views. Comments, keys the server does
+not know (in a view, in the entry) and other settings stay in the file: a
+view that is saved again is changed in its own YAML. The settings files are
+read and written the way bindings and tag colours are (a file damaged by hand
+is never overwritten: a save is `400 invalid` and says it has to be fixed by
+hand), and a change is journaled and committed like any other, in a space that
+follows a remote too. There is no tag rename in the API, so nothing carries a
+tag's views to another name.
+
+### View
+
+```json
+{"id": "k3f9a1", "name": "按状态", "layout": "board", "sort": "-prop:written", "group": "status",
+ "filter": [{"key": "series", "op": "in", "values": ["冬季"]}], "hidden": []}
+```
+
+Every key is always there when the server answers (`sort` and `group` as `""`,
+`filter` and `hidden` as `[]` when empty). `id` is made by the server: six
+lower-case letters and digits, unique in the space (folders and tags together).
+`name` is one line of 1 to 200 bytes. `layout` is `list`, `cards`, `table`,
+`board` or `read`. `sort` is `""` (the default order of the listing), `updated`,
+`created`, `title` or `prop:{key}`, each with an optional leading `-`, as for a
+listing. `filter` is written as the `filter` of a listing (at most 10, each
+checked the same way, `notIn` included). `group` is the field a board is
+grouped by, at most 256 bytes; it is kept whatever the layout. `hidden` are the
+keys of the columns a table hides, each once, at most 200. A key that is not
+one of these is kept as it is (`"color": "teal"` comes back) and is written to
+the file; the server does not look at it.
+
+### `GET /api/spaces/{space}/views?folder={path}` or `?tag={tag}`
+
+Needs `read`. Exactly one of `folder` (the root is `folder=`) and `tag`.
+
+```json
+{"views": [/* views, the first being the default */], "rev": "6a6d14f7db61e4f5578c38cad4f75dfc5a97a9a6"}
+```
+
+`rev` is a digest of the views as the server reads them (a list with none has
+one too), so a change to the file by hand is a new rev as well. A folder that
+does not exist has no views (it is not looked for on disk). A settings file
+that cannot be read gives none. `400 invalid` for neither or both of `folder`
+and `tag`, or a path that cannot be a folder.
+
+### `PUT /api/spaces/{space}/views`
+
+Needs `write`: views are a shared way of arranging pages, and whoever can write
+pages can change them. A member who can only read can switch between views and
+change the sort and filter for themselves; they cannot save them.
+
+```json
+{"folder": "文案", "baseRev": "6a6d…", "views": [/* the whole list */]}
+```
+
+`folder` (or, instead, `tag`) says whose views; `baseRev` is the `rev` of the
+views the request was made from; `views` is the whole list the folder or tag is
+to have, in order (`[]` removes them all, and the entry of the folder when
+nothing else is left in it). A view with an `id` must be one of the views the
+folder or tag has now; one without gets a new id. A view that keeps its `id`
+keeps what the request does not mention: its comments, and the keys the server
+does not know that the request leaves out. A view that is not listed is
+removed.
+
+`200` with `{"views": […], "rev": "…"}`, the views as they are now. When the
+views are not as `baseRev` says nothing is written and the answer is `409
+conflict` with `current` the same object as a `GET` answers:
+`{"error": "conflict", "message": "…", "current": {"views": […], "rev": "…"}}`.
+`400 invalid` for a missing `baseRev`, `views` or scope, both a folder and a
+tag, more than 20 views, any view out of the limits above, an `id` the folder
+or tag does not have, an `id` twice, or settings that have to be fixed by hand.
+`404 not_found` for a folder that does not exist (a tag need not be in use).
+A write that changes nothing writes nothing.
 
 ## Files
 
@@ -1301,7 +1459,9 @@ cannot be read as YAML (it is then left as it is, for a person to fix). The
 tag in the address is percent-encoded, so it may contain `/`. The tag need
 not be in use (it is listed, with its colour, once a page uses it). Colours are
 kept in `.petalbook/tags.yml` in the space, so they travel with the
-repository; a change is committed like any other.
+repository; a change is committed like any other. The same entry of the file
+holds the tag's saved views (see Saved views), which setting or removing the
+colour leaves alone.
 
 ## Maintenance
 

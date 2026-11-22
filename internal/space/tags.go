@@ -211,16 +211,113 @@ func (s *Space) TagColors() map[string]string {
 	return out
 }
 
+// checkTagName refuses what cannot be the name of a tag.
+func checkTagName(tag string) error {
+	if strings.TrimSpace(tag) == "" || !utf8.ValidString(tag) || len(tag) > MaxTagBytes || strings.ContainsAny(tag, "\x00\n\r") {
+		return invalidf("that is not a tag")
+	}
+	return nil
+}
+
+// tagsFileProblem is what is said of a tags file that cannot be used as it is.
+func tagsFileProblem() error {
+	return invalidf("%s is not something the server can read (it must be YAML with keys at the top, a regular file, under 1 MiB); it was left as it is and has to be fixed by hand", tagsFile)
+}
+
+// tagsNode returns the tags mapping of the file, made when create is set; nil
+// when it is not there and not made. A `tags` that is not a mapping is the
+// person's to fix.
+func tagsNode(root *yaml.Node, create bool) (*yaml.Node, error) {
+	tags, _ := mapValue(root, "tags")
+	switch {
+	case tags != nil && tags.Kind == yaml.MappingNode:
+		return tags, nil
+	case tags != nil && tags.Kind == yaml.ScalarNode && tags.Tag == "!!null":
+		if create {
+			*tags = yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			return tags, nil
+		}
+		return nil, nil
+	case tags != nil:
+		return nil, invalidf("`tags` in %s is not a list of tags with their settings; it was left as it is and has to be fixed by hand", tagsFile)
+	case !create:
+		return nil, nil
+	}
+	tags = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	root.Content = append(root.Content, textNode("tags"), tags)
+	return tags, nil
+}
+
+// editTagsFile reads the tags file, lets edit change the document, and writes
+// it back if edit says it changed (inside a change: the write is journaled and
+// part of the commit). With nothing left to say, and no comment worth keeping,
+// the file goes. A file that cannot be read is not replaced.
+func (s *Space) editTagsFile(tx *txn, edit func(root *yaml.Node) (changed bool, err error)) error {
+	doc, err := s.loadTags()
+	if errors.Is(err, errTagsFile) {
+		return tagsFileProblem()
+	}
+	if err != nil {
+		return err
+	}
+	if doc == nil {
+		doc = &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
+	}
+	root := doc.Content[0]
+	changed, err := edit(root)
+	if err != nil || !changed {
+		return err
+	}
+	abs := filepath.Join(s.root, filepath.FromSlash(tagsFile))
+	empty := len(root.Content) == 0 && doc.HeadComment == "" && doc.FootComment == "" && root.HeadComment == "" && root.FootComment == ""
+	var data []byte
+	if !empty {
+		if data, err = yaml.Marshal(doc); err != nil {
+			return err
+		}
+	}
+	if err := tx.record(jrec{Op: "t", Path: tagsFile}); err != nil {
+		return err
+	}
+	tx.touch(tagsFile)
+	s.cfgMu.Lock()
+	s.tagCfg = tagCache{}
+	s.cfgMu.Unlock()
+	if empty {
+		if err := os.Remove(abs); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	return writeAtomic(s.tmpDir(), abs, data)
+}
+
+// tagEntry finds the settings of a tag in the tags mapping: the entry (nil if
+// there is none or it holds nothing) and the position of its key (-1 if none).
+// An entry that is not a mapping and not empty is the person's to fix.
+func tagEntry(tags *yaml.Node, tag string) (entry *yaml.Node, at int, err error) {
+	entry, at = mapValue(tags, tag)
+	if entry != nil && entry.Kind != yaml.MappingNode {
+		// `栀子: rose` or an empty value written by hand: the entry becomes
+		// a mapping only when something is set.
+		if entry.Kind == yaml.ScalarNode && (entry.Tag == "!!null" || entry.Value == "") {
+			return nil, at, nil
+		}
+		return nil, at, invalidf("the entry of %q in %s is not a list of settings; it was left as it is and has to be fixed by hand", tag, tagsFile)
+	}
+	return entry, at, nil
+}
+
 // SetTagColor gives a tag a colour (see NormalTagColor; it is stored in its
 // normal form), or takes it away when color is "". The
-// tag need not be in use. Everything else in the file stays as it is. A file
-// that cannot be read is not replaced: the answer says it must be fixed by
-// hand. The change is committed like any other.
+// tag need not be in use. Everything else in the file stays as it is (the
+// views of the tag too). A file that cannot be read is not replaced: the answer
+// says it must be fixed by hand. The change is committed like any other.
 func (s *Space) SetTagColor(by Author, tag, color string) error {
-	switch {
-	case strings.TrimSpace(tag) == "" || !utf8.ValidString(tag) || len(tag) > MaxTagBytes || strings.ContainsAny(tag, "\x00\n\r"):
-		return invalidf("that is not a tag")
-	case color != "":
+	if err := checkTagName(tag); err != nil {
+		return err
+	}
+	if color != "" {
 		c, ok := NormalTagColor(color)
 		if !ok {
 			return invalidf("the colour must be one of %s, or a colour written #rrggbb", strings.Join(TagColors, ", "))
@@ -228,51 +325,36 @@ func (s *Space) SetTagColor(by Author, tag, color string) error {
 		color = c
 	}
 	_, err := mutate(s, by, func(tx *txn) (struct{}, error) {
-		doc, err := s.loadTags()
-		if errors.Is(err, errTagsFile) {
-			return struct{}{}, invalidf("%s is not something the server can read (it must be YAML with keys at the top, a regular file, under 1 MiB); it was left as it is and has to be fixed by hand", tagsFile)
-		}
-		if err != nil {
-			return struct{}{}, err
-		}
-		if doc == nil {
-			doc = &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
-		}
-		root := doc.Content[0]
-		tags, tagsAt := mapValue(root, "tags")
-		if tags != nil && tags.Kind != yaml.MappingNode {
-			return struct{}{}, invalidf("`tags` in %s is not a list of tags with their settings; it was left as it is and has to be fixed by hand", tagsFile)
-		}
-		entry, entryAt := mapValue(tags, tag)
-		if entry != nil && entry.Kind != yaml.MappingNode {
-			// `栀子: rose` or an empty value written by hand: the entry becomes
-			// a mapping only when a colour is set.
-			if entry.Kind == yaml.ScalarNode && (entry.Tag == "!!null" || entry.Value == "") {
-				entry = nil
-			} else {
-				return struct{}{}, invalidf("the entry of %q in %s is not a list of settings; it was left as it is and has to be fixed by hand", tag, tagsFile)
+		return struct{}{}, s.editTagsFile(tx, func(root *yaml.Node) (bool, error) {
+			tags, tagsAt := mapValue(root, "tags")
+			if tags != nil && tags.Kind != yaml.MappingNode {
+				return false, invalidf("`tags` in %s is not a list of tags with their settings; it was left as it is and has to be fixed by hand", tagsFile)
 			}
-		}
-		if color == "" {
-			cur, colorAt := mapValue(entry, "color")
-			if cur == nil {
-				return struct{}{}, nil // nothing to take away
+			entry, entryAt, err := tagEntry(tags, tag)
+			if err != nil {
+				return false, err
 			}
-			entry.Content = append(entry.Content[:colorAt:colorAt], entry.Content[colorAt+2:]...)
-			if len(entry.Content) == 0 {
-				tags.Content = append(tags.Content[:entryAt:entryAt], tags.Content[entryAt+2:]...)
+			if color == "" {
+				cur, colorAt := mapValue(entry, "color")
+				if cur == nil {
+					return false, nil // nothing to take away
+				}
+				entry.Content = append(entry.Content[:colorAt:colorAt], entry.Content[colorAt+2:]...)
+				if len(entry.Content) == 0 {
+					tags.Content = append(tags.Content[:entryAt:entryAt], tags.Content[entryAt+2:]...)
+				}
+				if len(tags.Content) == 0 {
+					root.Content = append(root.Content[:tagsAt:tagsAt], root.Content[tagsAt+2:]...)
+				}
+				return true, nil
 			}
-			if len(tags.Content) == 0 {
-				root.Content = append(root.Content[:tagsAt:tagsAt], root.Content[tagsAt+2:]...)
-			}
-		} else {
 			if tags == nil {
 				tags = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 				root.Content = append(root.Content, textNode("tags"), tags)
 			}
 			switch cur, _ := mapValue(entry, "color"); {
 			case cur != nil && cur.Kind == yaml.ScalarNode && cur.Value == color:
-				return struct{}{}, nil
+				return false, nil
 			case cur != nil:
 				*cur = *textNode(color)
 			case entry != nil:
@@ -284,27 +366,8 @@ func (s *Space) SetTagColor(by Author, tag, color string) error {
 				tags.Content = append(tags.Content, textNode(tag),
 					&yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{textNode("color"), textNode(color)}})
 			}
-		}
-		abs := filepath.Join(s.root, filepath.FromSlash(tagsFile))
-		// With nothing left to say (and no comment worth keeping) the file goes.
-		empty := len(root.Content) == 0 && doc.HeadComment == "" && doc.FootComment == "" && root.HeadComment == "" && root.FootComment == ""
-		var data []byte
-		if !empty {
-			if data, err = yaml.Marshal(doc); err != nil {
-				return struct{}{}, err
-			}
-		}
-		if err := tx.record(jrec{Op: "t", Path: tagsFile}); err != nil {
-			return struct{}{}, err
-		}
-		tx.touch(tagsFile)
-		if empty {
-			if err := os.Remove(abs); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return struct{}{}, err
-			}
-			return struct{}{}, nil
-		}
-		return struct{}{}, writeAtomic(s.tmpDir(), abs, data)
+			return true, nil
+		})
 	})
 	return err
 }

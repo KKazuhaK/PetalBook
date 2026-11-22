@@ -907,6 +907,12 @@ export function createMockServer(options: MockOptions = {}) {
       if (method === 'GET') return { status: 200, body: st.listPages(url.searchParams) }
       if (method === 'POST') return { status: 201, body: st.create(body) }
     }
+    if (rest === '/pages/groups' && method === 'GET') return { status: 200, body: st.groups(url.searchParams) }
+    if (rest === '/views' && method === 'GET') {
+      const v = url.searchParams
+      return { status: 200, body: st.views(v.has('folder') ? (v.get('folder') ?? '') : undefined, v.get('tag') ?? undefined) }
+    }
+    if (rest === '/views' && method === 'PUT') return { status: 200, body: st.putViews(body) }
     if (rest === '/pages/batch' && method === 'POST') return { status: 200, body: st.batch(body) }
     const hist = /^\/pages\/([^/]+)\/history$/.exec(rest)
     if (hist && method === 'GET') return { status: 200, body: st.history(decodeURIComponent(hist[1]), url.searchParams) }

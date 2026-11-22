@@ -129,6 +129,9 @@ var routeTable = []route{
 	{"PATCH", "/api/spaces/{space}", inSpace(perm.Manage), true, false, false, (*server).renameSpace},
 
 	{"GET", "/api/spaces/{space}/pages", inSpace(perm.Read), false, false, false, (*server).listPages},
+	{"GET", "/api/spaces/{space}/pages/groups", inSpace(perm.Read), false, false, false, (*server).getGroups},
+	{"GET", "/api/spaces/{space}/views", inSpace(perm.Read), false, false, false, (*server).getViews},
+	{"PUT", "/api/spaces/{space}/views", inSpace(perm.Write), false, false, false, (*server).putViews},
 	{"POST", "/api/spaces/{space}/pages", inSpace(perm.Write), false, false, false, (*server).createPage},
 	{"GET", "/api/spaces/{space}/pages/{id}", inSpace(perm.Read), false, false, false, (*server).getPage},
 	{"PUT", "/api/spaces/{space}/pages/{id}", inSpace(perm.Write), false, false, false, (*server).savePage},

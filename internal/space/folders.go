@@ -421,10 +421,10 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 				removed = append(removed, d)
 			}
 		}
-		// A folder that is gone has no type to keep. One that stays (it holds
+		// A folder that is gone has no type or views to keep. One that stays (it holds
 		// files that are not pages) keeps its binding.
 		if err := s.editBindings(tx, func(root *yaml.Node) (bool, error) {
-			return unbindWhere(root, func(folder, _ string) bool {
+			return forgetFolders(root, func(folder string) bool {
 				return (folder == canon || strings.HasPrefix(folder, canon+"/")) && s.fileGone(folder)
 			})
 		}); err != nil {

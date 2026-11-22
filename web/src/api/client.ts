@@ -247,6 +247,7 @@ export function listParamsToQuery(p: ListParams): string {
   if (p.sort) q.set('sort', p.sort)
   if (p.filter?.length) q.set('filter', JSON.stringify(p.filter))
   if (p.props) q.set('props', '1')
+  if (p.body) q.set('body', '1')
   if (p.limit) q.set('limit', String(p.limit))
   if (p.cursor) q.set('cursor', p.cursor)
   const s = q.toString()

@@ -779,7 +779,7 @@ function suite(target: Target) {
         const base = `/api/spaces/${sp.id}`
         const page = await call(owner.browser, 'POST', `${base}/pages`, { meta: { title: '读得到' }, body: '正文\n' })
         expect(page.status).toBe(201)
-        for (const path of [`${base}/pages`, `${base}/pages/${page.json.id}`, `${base}/tree`, `${base}/tags`, `${base}/members`]) {
+        for (const path of [`${base}/pages`, `${base}/pages/${page.json.id}`, `${base}/tree`, `${base}/tags`, `${base}/members`, `${base}/views?folder=`, `${base}/pages/groups?folder=&key=status`]) {
           expect((await call(viewer.browser, 'GET', path)).status, `viewer GET ${path}`).toBe(200)
         }
         const writes: [string, string, unknown][] = [
@@ -795,6 +795,7 @@ function suite(target: Target) {
           ['PUT', `${base}/types/task`, { title: '任务', fields: [] }],
           ['DELETE', `${base}/types/task`, undefined],
           ['PUT', `${base}/folders/type`, { folder: '', type: '' }],
+          ['PUT', `${base}/views`, { folder: '', baseRev: '0'.repeat(40), views: [] }],
           ['PATCH', base, { name: '改名' }],
           ['POST', `${base}/reindex`, undefined],
           ['POST', `${base}/members`, { username: owner.user.username, role: 'viewer' }],
@@ -814,6 +815,11 @@ function suite(target: Target) {
         const patched = await call(editor.browser, 'PATCH', `${base}/pages/${page.json.id}/props`, { baseRev: page.json.rev, set: { status: 'x' } })
         expect([patched.status, patched.json.meta.status]).toEqual([200, 'x'])
         expect((await call(editor.browser, 'GET', `${base}/types`)).status).toBe(200)
+        // Views are a shared arrangement of pages: whoever may write pages may save them.
+        const noViews = await call(editor.browser, 'GET', `${base}/views?folder=`)
+        const savedViews = await call(editor.browser, 'PUT', `${base}/views`, { folder: '', baseRev: noViews.json.rev, views: [{ name: '全部', layout: 'cards' }] })
+        expect([savedViews.status, savedViews.json.views[0].name]).toEqual([200, '全部'])
+        expect((await call(viewer.browser, 'GET', `${base}/views?folder=`)).json).toEqual(savedViews.json)
         for (const [method, path, body] of [
           ['PUT', `${base}/types/task`, { title: '任务', fields: [] }],
           ['DELETE', `${base}/types/task`, {}],
@@ -1838,7 +1844,9 @@ function suite(target: Target) {
       expect(await order('-prop:points')).toBe('B C A D')
       expect(await order('prop:due')).toBe('B A C D')
       expect(await order('-prop:due')).toBe('A B C D')
-      expect(await order('prop:status')).toBe('C A B D')
+      // A select field, in a folder whose type defines it: the order of its options (todo, doing, done), not of the text.
+      expect(await order('prop:status')).toBe('B C A D')
+      expect(await order('-prop:status')).toBe('A C B D')
       expect(await order('prop:labels')).toBe('A B C D')
     })
 
@@ -1943,6 +1951,208 @@ function suite(target: Target) {
       expect(bindings).toContainEqual({ folder: `${root}/bound2`, type: t })
       expect(bindings.some((b) => b.folder === `${root}/bound`)).toBe(false)
       await S.deleteType(t, made.rev)
+    })
+  })
+
+  describe('saved views, the groups of a board and the bodies of a listing', () => {
+    const folder = `${root}/views`
+    const typeName = `board${run}`
+    const enc = encodeURIComponent
+    const viewsUrl = (scope: string) => `/api/spaces/${spaceId}/views?${scope}`
+    const getViews = async (scope: string) => (await call(admin, 'GET', viewsUrl(scope))).json as { views: Record<string, any>[]; rev: string }
+    const putViews = (body: Record<string, unknown>) => call(admin, 'PUT', `/api/spaces/${spaceId}/views`, body)
+    const titles = (items: PageSummary[]) => items.map((i) => i.title).join(' ')
+    const listUrl = (query: string) => `${SP_PAGES}?folder=${enc(folder)}&${query}`
+    const groupsUrl = (query: string) => `${SP_PAGES}/groups?${query}`
+    const options = ['draft', 'review', 'final']
+    let typeRev = ''
+
+    it('has no views until some are saved; a save makes the ids and the rev, and reads back the same', async () => {
+      const t = await S.putType(typeName, { title: '文案', fields: [{ key: 'status', kind: 'select', options }, { key: 'points', kind: 'number' }] })
+      typeRev = t.rev
+      await S.createFolder(folder)
+      await S.bindFolder(folder, typeName)
+      const empty = await getViews(`folder=${enc(folder)}`)
+      expect(empty.views).toEqual([])
+      expect(empty.rev).toMatch(/^[0-9a-f]{40}$/)
+      const board = { name: '按状态', layout: 'board', group: 'status', sort: '-prop:points', filter: [{ key: 'points', op: 'range', values: [1, null] }] }
+      const table = { name: '表格', layout: 'table', hidden: ['points'], color: 'teal' }
+      const saved = await putViews({ folder, baseRev: empty.rev, views: [board, table] })
+      expect(saved.status).toBe(200)
+      const [a, b] = saved.json.views
+      expect(a).toMatchObject({ name: '按状态', layout: 'board', group: 'status', sort: '-prop:points', hidden: [], filter: [{ key: 'points', op: 'range', values: [1, null] }] })
+      expect(b).toMatchObject({ name: '表格', layout: 'table', group: '', sort: '', filter: [], hidden: ['points'], color: 'teal' })
+      expect(a.id).toMatch(/^[a-z0-9]{4,}$/)
+      expect(a.id).not.toBe(b.id)
+      expect(saved.json.rev).not.toBe(empty.rev)
+      expect(await getViews(`folder=${enc(folder)}`)).toEqual(saved.json)
+      expect((await getViews(`folder=${enc(`${folder}/elsewhere`)}`)).views).toEqual([])
+    })
+
+    it('a save from an old rev is a 409 with the views as they are; kept views keep their ids, a view that is left out goes', async () => {
+      const cur = await getViews(`folder=${enc(folder)}`)
+      const stale = await putViews({ folder, baseRev: '0'.repeat(40), views: [] })
+      expect([stale.status, stale.json.error]).toEqual([409, 'conflict'])
+      expect(stale.json.current).toEqual(cur)
+      const [a, b] = cur.views
+      const next = await putViews({ folder, baseRev: cur.rev, views: [b, { ...a, name: '看板' }, { name: '连读', layout: 'read' }] })
+      expect(next.status).toBe(200)
+      expect(next.json.views.map((v: any) => v.name)).toEqual(['表格', '看板', '连读'])
+      expect([next.json.views[0].id, next.json.views[1].id]).toEqual([b.id, a.id])
+      expect(next.json.views[2].id).not.toBe('')
+      expect(next.json.views[0].color).toBe('teal')
+      const dropped = await putViews({ folder, baseRev: next.json.rev, views: [next.json.views[1]] })
+      expect(dropped.json.views.map((v: any) => v.name)).toEqual(['看板'])
+      // An id is made by the server and is unique in the space: another folder's id cannot be claimed.
+      const other = `${root}/views2`
+      await S.createFolder(other)
+      const mine = await getViews(`folder=${enc(other)}`)
+      const claim = await putViews({ folder: other, baseRev: mine.rev, views: [{ ...dropped.json.views[0] }] })
+      expect([claim.status, claim.json.error]).toEqual([400, 'invalid'])
+      const made = await putViews({ folder: other, baseRev: mine.rev, views: [{ name: 'x', layout: 'list' }] })
+      expect(made.json.views[0].id).not.toBe(dropped.json.views[0].id)
+    })
+
+    it('refuses what is malformed: the limits of a view, 21 views, an unknown id, no scope or both, a folder that is not there', async () => {
+      const cur = await getViews(`folder=${enc(folder)}`)
+      const ok = { name: 'v', layout: 'list' }
+      const many = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `v${i}`, layout: 'list' }))
+      const bad: [string, Record<string, unknown>, number, string][] = [
+        ['no baseRev', { folder, views: [] }, 400, 'invalid'],
+        ['no views', { folder, baseRev: cur.rev }, 400, 'invalid'],
+        ['no scope', { baseRev: cur.rev, views: [] }, 400, 'invalid'],
+        ['both scopes', { folder, tag: 't', baseRev: cur.rev, views: [] }, 400, 'invalid'],
+        ['no name', { folder, baseRev: cur.rev, views: [{ layout: 'list' }] }, 400, 'invalid'],
+        ['a layout that is none', { folder, baseRev: cur.rev, views: [{ ...ok, layout: 'gantt' }] }, 400, 'invalid'],
+        ['a sort that is none', { folder, baseRev: cur.rev, views: [{ ...ok, sort: 'size' }] }, 400, 'invalid'],
+        ['a filter that is none', { folder, baseRev: cur.rev, views: [{ ...ok, filter: [{ key: 'a', op: 'like' }] }] }, 400, 'invalid'],
+        ['hidden twice', { folder, baseRev: cur.rev, views: [{ ...ok, hidden: ['a', 'a'] }] }, 400, 'invalid'],
+        ['an id nobody has', { folder, baseRev: cur.rev, views: [{ ...ok, id: 'zzzzzz' }] }, 400, 'invalid'],
+        ['21 views', { folder, baseRev: cur.rev, views: many(21) }, 400, 'invalid'],
+        ['a folder that is not there', { folder: `${folder}/nowhere`, baseRev: cur.rev, views: [] }, 404, 'not_found'],
+      ]
+      for (const [what, body, status, error] of bad) {
+        const r = await putViews(body)
+        expect([r.status, r.json?.error], what).toEqual([status, error])
+      }
+      expect((await putViews({ folder, baseRev: cur.rev, views: many(20) })).json.views).toHaveLength(20)
+      expect((await putViews({ folder, baseRev: (await getViews(`folder=${enc(folder)}`)).rev, views: [ok] })).status).toBe(200)
+      for (const q of ['', 'folder=a&tag=b']) expect((await call(admin, 'GET', viewsUrl(q))).status, q).toBe(400)
+    })
+
+    it('a tag has its own views, which need not be used by any page', async () => {
+      const tag = `标签${run}`
+      const none = await getViews(`tag=${enc(tag)}`)
+      expect(none.views).toEqual([])
+      const saved = await putViews({ tag, baseRev: none.rev, views: [{ name: '连读', layout: 'read' }] })
+      expect(saved.status).toBe(200)
+      expect(await getViews(`tag=${enc(tag)}`)).toEqual(saved.json)
+      expect((await putViews({ tag, baseRev: none.rev, views: [] })).status).toBe(409)
+      // The colour of the tag and its views do not get in each other's way.
+      await S.setTagColor(tag, 'rose')
+      expect((await getViews(`tag=${enc(tag)}`)).views).toHaveLength(1)
+      await S.setTagColor(tag, null)
+      expect((await getViews(`tag=${enc(tag)}`)).views).toHaveLength(1)
+    })
+
+    it('views follow their folder when it is renamed, and go when it is deleted', async () => {
+      const from = `${root}/vmove`
+      await S.createFolder(`${from}/sub`)
+      const top = await putViews({ folder: from, baseRev: (await getViews(`folder=${enc(from)}`)).rev, views: [{ name: '上', layout: 'list' }] })
+      const low = await putViews({ folder: `${from}/sub`, baseRev: (await getViews(`folder=${enc(`${from}/sub`)}`)).rev, views: [{ name: '下', layout: 'board', group: 'status' }] })
+      await S.moveFolder(from, `${root}/vmoved`)
+      expect(await getViews(`folder=${enc(`${root}/vmoved`)}`)).toEqual(top.json)
+      expect((await getViews(`folder=${enc(`${root}/vmoved/sub`)}`)).views[0]).toMatchObject({ id: low.json.views[0].id, name: '下', group: 'status' })
+      expect((await getViews(`folder=${enc(from)}`)).views).toEqual([])
+      await S.deleteFolder(`${root}/vmoved`, true)
+      expect((await getViews(`folder=${enc(`${root}/vmoved`)}`)).views).toEqual([])
+      expect((await getViews(`folder=${enc(`${root}/vmoved/sub`)}`)).views).toEqual([])
+    })
+
+    describe('a board over a select field', () => {
+      const pages: Record<string, Page> = {}
+      const filter = (f: unknown[]) => `filter=${enc(JSON.stringify(f))}`
+      it('lists each column on its own: the options, the other values, the empty', async () => {
+        for (const [title, meta] of [['甲', { status: 'final', points: 3 }], ['乙', { status: 'draft', points: 9 }], ['丙', { status: 'review' }], ['丁', { status: 'legacy' }], ['戊', {}], ['己', { status: 'draft' }], ['庚', { status: ['draft', 'x'] }]] as [string, Record<string, unknown>][]) {
+          pages[title] = await mk(folder, { title, ...meta }, `正文 ${title}\n`)
+        }
+        const col = async (f: unknown[]) => titles((await call(admin, 'GET', listUrl(`${filter(f)}&sort=title&limit=20`))).json.items)
+        expect(await col([{ key: 'status', op: 'in', values: ['draft'] }])).toBe('乙 己 庚')
+        expect(await col([{ key: 'status', op: 'in', values: ['review'] }])).toBe('丙')
+        // Not empty and not an option: a page that holds one of the options (a list) is in that column.
+        expect(await col([{ key: 'status', op: 'notIn', values: options }])).toBe('丁')
+        expect(await col([{ key: 'status', op: 'notIn', values: ['draft'] }])).toBe('丁 丙 甲')
+        expect(await col([{ key: 'status', op: 'empty' }])).toBe('戊')
+        const r = await call(admin, 'GET', listUrl(`${filter([{ key: 'status', op: 'notIn' }])}`))
+        expect([r.status, r.json.error]).toEqual([400, 'invalid'])
+      })
+
+      it('counts the pages of each column from the index: values, the empty, and a filter', async () => {
+        const g = (await call(admin, 'GET', groupsUrl(`folder=${enc(folder)}&key=status`))).json
+        expect(g.groups).toEqual([
+          { value: 'draft', count: 3 },
+          { value: 'final', count: 1 },
+          { value: 'legacy', count: 1 },
+          { value: 'review', count: 1 },
+          { value: 'x', count: 1 },
+        ])
+        expect([g.empty, g.truncated]).toEqual([1, false])
+        const some = (await call(admin, 'GET', groupsUrl(`folder=${enc(folder)}&key=status&${filter([{ key: 'points', op: 'notEmpty' }])}`))).json
+        expect(some.groups).toEqual([{ value: 'draft', count: 1 }, { value: 'final', count: 1 }])
+        expect(some.empty).toBe(0)
+        expect((await call(admin, 'GET', groupsUrl(`folder=${enc(folder)}&key=nothing${run}`))).json).toMatchObject({ groups: [], empty: 7 })
+        for (const q of ['folder=a', 'key=status', `folder=${enc(folder)}&key=s&recursive=maybe`, `folder=${enc(folder)}&key=s&filter=nope`]) {
+          const r = await call(admin, 'GET', groupsUrl(q))
+          expect([r.status, r.json.error], q).toEqual([400, 'invalid'])
+        }
+      })
+
+      it('sorts by the options of the field when the folder has it as a select: options, other values, none; both ways, by cursor', async () => {
+        const walkTitles = async (sort: string, limit: number) => titles(await walk({ folder, sort: sort as never }, limit))
+        // draft: 乙 己 庚 (a list sorts by its first value); review; final; legacy; none.
+        for (const limit of [1, 2, 20]) {
+          expect(await walkTitles('prop:status', limit)).toBe('乙 己 庚 丙 甲 丁 戊')
+          expect(await walkTitles('-prop:status', limit)).toBe('丁 甲 丙 庚 己 乙 戊')
+        }
+        // A field the type does not give as a select sorts by its text; so does a listing without the folder.
+        expect(await walkTitles('prop:points', 20)).toBe('甲 乙 丙 丁 戊 己 庚')
+        const noFolder = (await call(admin, 'GET', `${SP_PAGES}?${filter([{ key: 'status', op: 'in', values: options }])}&sort=prop:status&limit=50`)).json.items as PageSummary[]
+        expect(titles(noFolder.filter((i) => i.folder === folder))).toBe('乙 己 庚 甲 丙')
+        // A cursor of the order of the options is no cursor of another sort.
+        const first = (await call(admin, 'GET', listUrl('sort=prop:status&limit=1'))).json
+        const other = await call(admin, 'GET', listUrl(`sort=-prop:status&limit=1&cursor=${enc(first.next)}`))
+        expect([other.status, other.json.error]).toEqual([400, 'invalid'])
+      })
+
+      it('an option reordered in the type changes the order at once', async () => {
+        const t = await S.putType(typeName, { baseRev: typeRev, title: '文案', fields: [{ key: 'status', options: ['final', 'review', 'draft'] }, { key: 'points' }] })
+        typeRev = t.rev
+        expect(titles(await walk({ folder, sort: 'prop:status' }, 20))).toBe('甲 丙 乙 己 庚 丁 戊')
+      })
+    })
+
+    it('gives the Markdown of each page with body=1, 20 at a time at most, and not otherwise', async () => {
+      const plain = (await call(admin, 'GET', listUrl('sort=title&limit=3'))).json.items
+      expect(plain.some((i: any) => 'body' in i)).toBe(false)
+      const r = await call(admin, 'GET', listUrl('sort=title&body=1&limit=3'))
+      expect(r.status).toBe(200)
+      expect(r.json.items).toHaveLength(3)
+      for (const it of r.json.items) expect(it.body).toBe(`正文 ${it.title}\n`)
+      // With props too; the default is 20.
+      const withProps = (await call(admin, 'GET', listUrl('sort=title&body=1&props=1'))).json
+      expect(withProps.items.length).toBeLessThanOrEqual(20)
+      expect(withProps.items[0]).toMatchObject({ body: expect.any(String), rev: expect.any(String) })
+      for (const q of ['limit=21&body=1', 'limit=200&body=1', 'limit=0&body=1', 'body=yes']) {
+        const bad = await call(admin, 'GET', listUrl(q))
+        expect([bad.status, bad.json.error], q).toEqual([400, 'invalid'])
+      }
+      // The next 20 by cursor.
+      for (let i = 0; i < 22; i++) await mk(`${folder}/long`, { title: `长${String(i).padStart(2, '0')}` }, `第 ${i} 篇\n`)
+      const first = (await call(admin, 'GET', `${SP_PAGES}?folder=${enc(`${folder}/long`)}&sort=title&body=1`)).json
+      expect(first.items).toHaveLength(20)
+      const rest = (await call(admin, 'GET', `${SP_PAGES}?folder=${enc(`${folder}/long`)}&sort=title&body=1&cursor=${enc(first.next)}`)).json
+      expect(rest.items.map((i: any) => i.body)).toEqual(['第 20 篇\n', '第 21 篇\n'])
+      expect(rest.next).toBe('')
     })
   })
 

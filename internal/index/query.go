@@ -59,8 +59,13 @@ type Query struct {
 	Filters []Filter
 	// Props asks for the properties and the rev of every page in the summaries.
 	Props bool
-	Sort  string // "", updated, created, title, prop:<key>; a leading "-" reverses
-	Limit int    // 1-200, default 50
+	// PropOptions, with a sort by a property, puts the pages in the order of
+	// these options (the options of a select or multiselect field) instead of
+	// the order of the text: the options in turn, then the other values by
+	// text, then the pages without a value. Empty: the order of the text.
+	PropOptions []string
+	Sort        string // "", updated, created, title, prop:<key>; a leading "-" reverses
+	Limit       int    // 1-200, default 50
 	// Cursor is Result.Next of the previous page.
 	Cursor string
 }
@@ -82,10 +87,11 @@ const (
 type cursor struct {
 	Sort string `json:"s"`
 	Off  int    `json:"o,omitempty"`
-	G    int    `json:"g,omitempty"` // prop sorts: 1 once the pages without the property are being listed
+	G    int    `json:"g,omitempty"` // prop sorts: 1 once the pages without the property are being listed; in an option order, the group
 	M    int64  `json:"m,omitempty"` // mtime_ns
 	C    int64  `json:"c,omitempty"` // created_key
 	U    int    `json:"u,omitempty"` // untitled
+	N    int    `json:"n,omitempty"` // option-order prop sorts: the number of options plus one
 	T    string `json:"t,omitempty"` // title_key; skey in a prop sort
 	R    int64  `json:"r,omitempty"` // rowid
 }
@@ -179,23 +185,8 @@ func (x *Index) List(q Query) (Result, error) {
 		}
 		args = append(args, match)
 	}
-	if q.Folder != nil {
-		f := *q.Folder
-		switch {
-		case !q.Recursive:
-			where = append(where, `p.folder = ?`)
-			args = append(args, f)
-		case f != "":
-			// Subfolders are the range "f/" .. "f0" ('0' follows '/'), which
-			// the (folder, mtime) index can serve.
-			where = append(where, `(p.folder = ? OR (p.folder >= ? AND p.folder < ?))`)
-			args = append(args, f, f+"/", f+"0")
-		}
-	}
-	for _, t := range q.Tags {
-		where = append(where, `EXISTS (SELECT 1 FROM tags t WHERE t.page = p.rowid AND t.tag = ?)`)
-		args = append(args, t)
-	}
+	sw, sa := scopeConds(q.Folder, q.Recursive, q.Tags)
+	where, args = append(where, sw...), append(args, sa...)
 	if q.UpdatedFrom != 0 {
 		where = append(where, `p.mtime_ns >= ?`)
 		args = append(args, q.UpdatedFrom)
@@ -222,7 +213,13 @@ func (x *Index) List(q Query) (Result, error) {
 		where = append(where, cond)
 		args = append(args, cargs...)
 	}
+	if byProp && len(q.PropOptions) > 0 {
+		return x.listByOptions(q, limit, propKey, propDesc, sortName, cur, where, args)
+	}
 	if byProp {
+		if cur != nil && cur.N != 0 {
+			return Result{}, invalid("cursor belongs to another sort order")
+		}
 		return x.listByProp(q, limit, propKey, propDesc, sortName, cur, where, args)
 	}
 
@@ -283,6 +280,29 @@ func (x *Index) List(q Query) (Result, error) {
 		res.Items = append(res.Items, s)
 	}
 	return res, rows.Err()
+}
+
+// scopeConds are the conditions on the page row p that say which pages a
+// listing is about: those in a folder (and below it), those with every tag.
+func scopeConds(folder *string, recursive bool, tags []string) (where []string, args []any) {
+	if folder != nil {
+		f := *folder
+		switch {
+		case !recursive:
+			where = append(where, `p.folder = ?`)
+			args = append(args, f)
+		case f != "":
+			// Subfolders are the range "f/" .. "f0" ('0' follows '/'), which
+			// the (folder, mtime) index can serve.
+			where = append(where, `(p.folder = ? OR (p.folder >= ? AND p.folder < ?))`)
+			args = append(args, f, f+"/", f+"0")
+		}
+	}
+	for _, t := range tags {
+		where = append(where, `EXISTS (SELECT 1 FROM tags t WHERE t.page = p.rowid AND t.tag = ?)`)
+		args = append(args, t)
+	}
+	return where, args
 }
 
 // selectCols are the columns of a summary, in the order scanSummary reads them.

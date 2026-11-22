@@ -88,6 +88,15 @@ func (s *server) listPages(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "props must be 1 or 0")
 		return
 	}
+	body := false
+	switch v.Get("body") {
+	case "", "0", "false":
+	case "1", "true":
+		body = true
+	default:
+		writeError(c.w, http.StatusBadRequest, "invalid", "body must be 1 or 0")
+		return
+	}
 	if raw := v.Get("filter"); raw != "" {
 		fs, err := parseFilters(raw)
 		if err != nil {
@@ -107,6 +116,16 @@ func (s *server) listPages(c *call) {
 			q.Limit = -1
 		}
 	}
+	if body {
+		// Every body is a file to read: only a few at a time.
+		if q.Limit == 0 {
+			q.Limit = space.MaxBodies
+		}
+		if q.Limit > space.MaxBodies {
+			writeError(c.w, http.StatusBadRequest, "invalid", "with body=1 the limit is at most "+strconv.Itoa(space.MaxBodies))
+			return
+		}
+	}
 	res, err := c.sp.Space.List(q)
 	if err != nil {
 		s.fail(c.w, err)
@@ -116,6 +135,16 @@ func (s *server) listPages(c *call) {
 	types := c.sp.Space.TypeResolver()
 	for i, it := range res.Items {
 		items[i] = toSummary(it, types)
+	}
+	if body {
+		bodies, err := c.sp.Space.Bodies(res.Items)
+		if err != nil {
+			s.fail(c.w, err)
+			return
+		}
+		for i := range items {
+			items[i].Body = &bodies[i]
+		}
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Items []summaryResp `json:"items"`

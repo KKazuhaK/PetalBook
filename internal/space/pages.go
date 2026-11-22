@@ -638,9 +638,6 @@ func (s *Space) createFolderRemoteLocked(rel string) (string, error) {
 	return canon, nil
 }
 
-// List queries the index. See index.Query.
-func (s *Space) List(q index.Query) (index.Result, error) { return s.idx.List(q) }
-
 // Tree lists every folder with its page count.
 func (s *Space) Tree() ([]index.FolderCount, error) { return s.idx.Tree() }
 

@@ -75,6 +75,8 @@ export interface PageSummary {
   // holds (cut text, a list that lost elements, an object). Absent when none. A
   // cell must not write such a copy back.
   partialProps?: string[]
+  // Only with `body: true` in the listing (continuous reading): the Markdown.
+  body?: string
 }
 
 // The page header as the server serves it. Fields the app does not know about
@@ -151,6 +153,8 @@ export interface ListParams {
   filter?: PropFilter[]
   // Put `props` and `rev` in the summaries (the table view does).
   props?: boolean
+  // Put the Markdown `body` in the summaries; the limit is then at most 20.
+  body?: boolean
   limit?: number
   cursor?: string
 }

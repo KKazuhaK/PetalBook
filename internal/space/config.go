@@ -17,6 +17,7 @@ import (
 //	folders:
 //	  Tang:
 //	    type: 文案
+//	    views: [...]        (see views.go)
 //
 // A folder takes the type of the nearest folder above it that has one.
 const spaceFile = ".petalbook/space.yml"
@@ -80,21 +81,23 @@ type configCache struct {
 	mtimeNs  int64
 	bindings []Binding
 	byFolder map[string]string
+	views    map[string][]View // by folder, only those that have some
 }
 
-// readBindings returns the bindings of the space. A file that cannot be read
-// says nothing: a page then has no type but its own.
-func (s *Space) readBindings() ([]Binding, map[string]string) {
+// config returns what is known of the settings file, read again when the file
+// looks different. A file that cannot be read says nothing: a page then has no
+// type but its own.
+func (s *Space) config() configCache {
 	abs := filepath.Join(s.root, filepath.FromSlash(spaceFile))
 	fi, err := os.Lstat(abs)
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
 	if err != nil || !fi.Mode().IsRegular() {
 		s.cfg = configCache{}
-		return nil, nil
+		return s.cfg
 	}
-	if c := &s.cfg; c.valid && c.size == fi.Size() && c.mtimeNs == fi.ModTime().UnixNano() {
-		return c.bindings, c.byFolder
+	if c := s.cfg; c.valid && c.size == fi.Size() && c.mtimeNs == fi.ModTime().UnixNano() {
+		return c
 	}
 	doc, err := s.loadYAMLFile(spaceFile, maxSpaceFile, errSpaceFile)
 	c := configCache{valid: true, size: fi.Size(), mtimeNs: fi.ModTime().UnixNano()}
@@ -104,8 +107,15 @@ func (s *Space) readBindings() ([]Binding, map[string]string) {
 		for _, b := range c.bindings {
 			c.byFolder[b.Folder] = b.Type
 		}
+		c.views = viewsOf(doc, "folders", bindingKey)
 	}
 	s.cfg = c
+	return c
+}
+
+// readBindings returns the bindings of the space.
+func (s *Space) readBindings() ([]Binding, map[string]string) {
+	c := s.config()
 	return c.bindings, c.byFolder
 }
 
@@ -430,6 +440,32 @@ func unbindWhere(root *yaml.Node, drop func(folder, typ string) bool) (bool, err
 	return changed, nil
 }
 
+// forgetFolders takes the settings the server keeps for a folder (its type and
+// its views) off every folder for which gone says it is no more. A folder's
+// entry is dropped when nothing else is left in it; what else a person wrote
+// there stays, as it does for a binding. It reports whether anything changed.
+func forgetFolders(root *yaml.Node, gone func(folder string) bool) (bool, error) {
+	folders, err := foldersNode(root, false)
+	if err != nil || folders == nil {
+		return false, err
+	}
+	changed := false
+	for i := len(folders.Content) - 2; i >= 0; i -= 2 {
+		k, e := folders.Content[i], folders.Content[i+1]
+		if k.Kind != yaml.ScalarNode || e.Kind != yaml.MappingNode || !gone(bindingKey(k.Value)) {
+			continue
+		}
+		for j := len(e.Content) - 2; j >= 0; j -= 2 {
+			if kk := e.Content[j]; kk.Kind == yaml.ScalarNode && (kk.Value == "type" || kk.Value == "views") {
+				e.Content = append(e.Content[:j:j], e.Content[j+2:]...)
+				changed = true
+			}
+		}
+		dropEmpty(root, folders, i)
+	}
+	return changed, nil
+}
+
 // fileGone reports whether a path of the space is not there any more.
 func (s *Space) fileGone(rel string) bool {
 	_, err := os.Lstat(filepath.Join(s.root, filepath.FromSlash(rel)))
@@ -477,7 +513,7 @@ func recoverBindings(root string, recs []jrec) (changed bool) {
 		case "u":
 			canon := bindingKey(r.Path)
 			edit = func(top *yaml.Node) (bool, error) {
-				return unbindWhere(top, func(folder, _ string) bool {
+				return forgetFolders(top, func(folder string) bool {
 					return (folder == canon || strings.HasPrefix(folder, canon+"/")) && gone(folder)
 				})
 			}

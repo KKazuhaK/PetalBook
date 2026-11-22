@@ -83,6 +83,10 @@ type Space struct {
 	// cfg is what was last read of the bindings in space.yml (see config.go).
 	cfgMu sync.Mutex
 	cfg   configCache
+	// tagCfg is what was last read of the views in tags.yml (see views.go).
+	tagCfg tagCache
+	// typeCache are the type files parsed, by name (see listing.go).
+	typeCache map[string]typeCacheEntry
 
 	// src is the file tree the index mirrors. syncEvery throttles the
 	// re-sync a missed lookup triggers, so ids that do not exist (a stale

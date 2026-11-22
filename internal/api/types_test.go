@@ -159,7 +159,7 @@ func typesScenario(t *testing.T, base string, owner, editor, viewer caller, refu
 		"sort=-prop:points": "B C A D",
 		"sort=prop:due":     "B A C D",
 		"sort=-prop:due":    "A B C D",
-		"sort=prop:status":  "C A B D",
+		"sort=prop:status":  "B C A D", // a select: the order of its options (todo, doing, done), not of the text
 		"sort=prop:labels":  "A B C D",
 		"sort=prop:zzz":     "A B C D",
 	} {
