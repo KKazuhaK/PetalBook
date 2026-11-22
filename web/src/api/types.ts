@@ -131,7 +131,9 @@ export type PropSort = `prop:${string}` | `-prop:${string}`
 export type FilterOp = 'in' | 'range' | 'empty' | 'notEmpty' | 'contains'
 export interface PropFilter {
   key: string
-  op: FilterOp
+  // `notIn` is the server's too (has a value and none of the given ones); the table's own form never makes it,
+  // a board's "other values" column and a saved view do.
+  op: FilterOp | 'notIn'
   values?: (string | number | boolean | null)[]
 }
 
@@ -221,6 +223,50 @@ export interface PatchPropsInput {
   baseRev: string
   set?: Record<string, unknown>
   unset?: string[]
+}
+
+// --- saved views (docs/api.md, "Saved views") -------------------------------------------
+
+export type ViewLayout = 'list' | 'cards' | 'table' | 'board' | 'read'
+// One saved view. The server always answers with every key; keys it does not know come back as they were
+// sent (the app keeps `cardFields` there: the fields a board's card shows).
+export interface SavedView {
+  id: string
+  name: string
+  layout: ViewLayout
+  // "" is the listing's default order.
+  sort: string
+  // The field a board is grouped by.
+  group: string
+  filter: PropFilter[]
+  // The keys of the columns a table hides.
+  hidden: string[]
+  [extra: string]: unknown
+}
+export interface ViewList {
+  views: SavedView[]
+  rev: string
+}
+// A view belongs to a folder ("" is the root) or to a tag.
+export type ViewScope = { folder: string } | { tag: string }
+export interface PutViewsInput {
+  baseRev: string
+  // New views have no `id`; the server makes one.
+  views: (Omit<SavedView, 'id'> & { id?: string })[]
+}
+
+// The answer of `GET .../pages/groups`: how many pages hold each value of a property, for a board's headers.
+export interface GroupsResponse {
+  groups: { value: string; count: number }[]
+  empty: number
+  truncated: boolean
+}
+export interface GroupsParams {
+  key: string
+  folder?: string
+  recursive?: boolean
+  tag?: string[]
+  filter?: PropFilter[]
 }
 
 export interface TreeResponse {

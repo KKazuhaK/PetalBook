@@ -112,7 +112,7 @@ export function setColumnAlign(editor: Editor, ref: CellRef, align: Align): bool
   return act(editor, ref, (chain) =>
     chain.command(({ tr }) => {
       const table = tr.doc.nodeAt(ref.tablePos)
-      if (!table) return false
+      if (!table || table.type.name !== 'table') return false
       const map = TableMap.get(table)
       for (let r = 0; r < map.height; r++) {
         const pos = ref.tablePos + 1 + map.map[r * map.width + ref.col]
@@ -124,11 +124,14 @@ export function setColumnAlign(editor: Editor, ref: CellRef, align: Align): bool
   )
 }
 
-// What the controls need to know about a column: its alignment.
+// What the controls need to know about a column: its alignment. A table menu can stay open while the table is replaced
+// (a draft restored, a version loaded): what is at the position is then not a table, or one without that column, and
+// the answer is that there is none (as `tableSize` says), not an error.
 export function columnAlign(state: EditorState, ref: CellRef): Align {
   const table = state.doc.nodeAt(ref.tablePos)
-  if (!table) return null
+  if (!table || table.type.name !== 'table') return null
   const map = TableMap.get(table)
+  if (ref.col < 0 || ref.col >= map.width) return null
   return (table.nodeAt(map.map[ref.col])?.attrs.align as Align) ?? null
 }
 

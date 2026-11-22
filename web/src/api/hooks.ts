@@ -9,7 +9,7 @@ import { api, ApiError, spaceApi } from './client'
 import { parseTagColor } from '../lib/tagColors.ts'
 import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
 import { propsOfMeta } from '../lib/pageTypes.ts'
-import type { BatchPagesInput, ConnectRemoteInput, CreatePageInput, ListParams, Member, Page, PageList, PatchPropsInput, Permission, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User } from './types'
+import type { BatchPagesInput, ConnectRemoteInput, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, PutViewsInput, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
 
 // Everything of one space is under ['space', id, …], so switching space never
 // shows another space's data and one invalidation covers a space.
@@ -34,6 +34,14 @@ export const keys = {
   // ask for less, and which an edit of a cell does not read again.
   table: (space: string, params: ListParams) => ['space', space, 'pages', 'table', params] as const,
   list: (space: string, params: ListParams) => ['space', space, 'pages', 'list', params] as const,
+  // The saved views of a folder or a tag.
+  views: (space: string, scope: ViewScope) => ['space', space, 'views', scope] as const,
+  // A board's counts and the cards of one of its columns; under `pages`, so a write of a page reads them again.
+  groups: (space: string, params: GroupsParams) => ['space', space, 'pages', 'groups', params] as const,
+  column: (space: string, params: ListParams) => ['space', space, 'pages', 'board', params] as const,
+  // Continuous reading: outside `pages`, since reading again every batch loaded (they hold whole texts) for each
+  // change somewhere would be heavy; it is a snapshot that is taken afresh when the reading is opened.
+  reading: (space: string, params: ListParams) => ['space', space, 'reading', params] as const,
   page: (space: string, id: string) => ['space', space, 'page', id] as const,
   history: (space: string, id: string) => ['space', space, 'history', id, 'list'] as const,
   version: (space: string, id: string, commit: string) => ['space', space, 'history', id, 'version', commit] as const,
@@ -45,6 +53,10 @@ export const PAGE_SIZE = 50
 // The table view reads its rows in batches of this many.
 export const TABLE_PAGE_SIZE = 100
 export const HISTORY_PAGE_SIZE = 30
+// A column of a board is read this many cards at a time.
+export const BOARD_PAGE_SIZE = 20
+// Continuous reading takes the most the server gives with the bodies.
+export const READING_PAGE_SIZE = 20
 
 export const syncOf = (s: SpaceInfo | undefined): SyncState => s?.sync ?? 'local'
 
@@ -381,7 +393,8 @@ export function useMoveFolder() {
   const space = useSpaceId()
   return useMutation({
     mutationFn: ({ from, to }: { from: string; to: string }) => spaceApi(space).moveFolder(from, to),
-    onSuccess: () => invalidateListings(qc, space),
+    // The views of a folder go with it.
+    onSuccess: () => Promise.all([invalidateListings(qc, space), qc.invalidateQueries({ queryKey: ['space', space, 'views'] })]),
   })
 }
 
@@ -390,7 +403,7 @@ export function useDeleteFolder() {
   const space = useSpaceId()
   return useMutation({
     mutationFn: ({ path, recursive }: { path: string; recursive?: boolean }) => spaceApi(space).deleteFolder(path, recursive),
-    onSuccess: () => invalidateListings(qc, space),
+    onSuccess: () => Promise.all([invalidateListings(qc, space), qc.invalidateQueries({ queryKey: ['space', space, 'views'] })]),
   })
 }
 
@@ -631,13 +644,15 @@ function withPartial<T extends { partialProps?: string[] }>(row: T, partial: str
 // it, without reading anything again (a table of thousands of rows is not
 // refetched for one cell).
 export function putTableRow(qc: QueryClient, space: string, page: Page) {
-  qc.setQueriesData<{ pages: PageList[]; pageParams: unknown[] }>({ queryKey: [...keys.pages(space), 'table'] }, (prev) => {
+  const put = (prev: { pages: PageList[]; pageParams: unknown[] } | undefined) => {
     if (!prev || !prev.pages.some((p) => p.items.some((i) => i.id === page.id))) return prev
     return {
       ...prev,
       pages: prev.pages.map((p) => ({ ...p, items: p.items.map((i) => (i.id === page.id ? withPartial({ ...i, props: propsOfMeta(page.meta), rev: page.rev, updated: page.updated }, page.partialProps) : i)) })),
     }
-  })
+  }
+  // The cards of a board hold the same rows (with their props) as the table does.
+  for (const part of ['table', 'board']) qc.setQueriesData<{ pages: PageList[]; pageParams: unknown[] }>({ queryKey: [...keys.pages(space), part] }, put)
 }
 
 // Changes properties of one page (a table cell). The answer, or the page a 409
@@ -650,9 +665,89 @@ export function usePatchProps() {
     onSuccess: (page) => {
       putTableRow(qc, space, page)
       void qc.invalidateQueries({ queryKey: [...keys.pages(space), 'list'] })
+      // A card that changed its column: the columns and their counts are read again.
+      void qc.invalidateQueries({ queryKey: [...keys.pages(space), 'board'] })
+      void qc.invalidateQueries({ queryKey: [...keys.pages(space), 'groups'] })
     },
     onError: (e) => {
-      if (e instanceof ApiError && e.code === 'conflict' && e.current) putTableRow(qc, space, e.current)
+      if (e instanceof ApiError && e.code === 'conflict' && e.current) {
+        putTableRow(qc, space, e.current)
+        void qc.invalidateQueries({ queryKey: [...keys.pages(space), 'board'] })
+        void qc.invalidateQueries({ queryKey: [...keys.pages(space), 'groups'] })
+      }
     },
+  })
+}
+
+// --- saved views ---------------------------------------------------------------------
+
+// The views of a folder or a tag. Anyone who may read asks; only a writer saves.
+export function useViews(scope: ViewScope | null) {
+  const space = useSpaceId()
+  const { read } = useSpacePermissions()
+  return useQuery({
+    queryKey: keys.views(space, scope ?? { folder: '' }),
+    queryFn: ({ signal }) => spaceApi(space).views(scope!, signal),
+    enabled: scope !== null && space !== '' && read,
+    staleTime: 15_000,
+  })
+}
+
+// The views as the server has them after a change, put into the cache (a 409 brings them too).
+export function putViewList(qc: QueryClient, space: string, scope: ViewScope, list: ViewList) {
+  qc.setQueryData(keys.views(space, scope), list)
+}
+
+// Replaces the whole list. The error of a stale `baseRev` carries the views as they are, which are what the cache
+// holds from then on; the caller says so to the person.
+export function useSaveViews(scope: ViewScope) {
+  const qc = useQueryClient()
+  const space = useSpaceId()
+  return useMutation({
+    mutationFn: (input: PutViewsInput) => spaceApi(space).putViews(scope, input),
+    onSuccess: (list) => putViewList(qc, space, scope, list),
+    onError: (e) => {
+      const current = e instanceof ApiError && e.code === 'conflict' ? (e.current as unknown as ViewList | undefined) : undefined
+      if (current && Array.isArray(current.views)) putViewList(qc, space, scope, current)
+      else if (e instanceof ApiError && e.code === 'conflict') void qc.invalidateQueries({ queryKey: keys.views(space, scope) })
+    },
+  })
+}
+
+// --- board and reading ---------------------------------------------------------------
+
+// How many pages hold each value of a property, for the heads of a board's columns.
+export function useGroups(params: GroupsParams, enabled = true) {
+  const space = useSpaceId()
+  return useQuery({ queryKey: keys.groups(space, params), queryFn: ({ signal }) => spaceApi(space).groups(params, signal), enabled: enabled && space !== '', staleTime: 10_000, placeholderData: keepPreviousData })
+}
+
+// One column of a board: its cards, twenty at a time.
+export function useBoardColumn(params: Omit<ListParams, 'cursor' | 'limit' | 'props'>, enabled = true) {
+  const space = useSpaceId()
+  const full = { ...params, props: true }
+  return useInfiniteQuery({
+    enabled: enabled && space !== '',
+    queryKey: keys.column(space, full),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => spaceApi(space).listPages({ ...full, limit: BOARD_PAGE_SIZE, cursor: pageParam || undefined }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    staleTime: 10_000,
+  })
+}
+
+// The pages of continuous reading, with their texts, a batch at a time.
+export function useReadingPages(params: Omit<ListParams, 'cursor' | 'limit' | 'body'>, enabled = true) {
+  const space = useSpaceId()
+  const full = { ...params, body: true }
+  return useInfiniteQuery({
+    enabled: enabled && space !== '',
+    queryKey: keys.reading(space, full),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => spaceApi(space).listPages({ ...full, limit: READING_PAGE_SIZE, cursor: pageParam || undefined }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    gcTime: 0,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
   })
 }

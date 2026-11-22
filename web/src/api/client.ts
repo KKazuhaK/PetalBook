@@ -35,6 +35,11 @@ import type {
   PageType,
   TypesResponse,
   FolderBinding,
+  GroupsParams,
+  GroupsResponse,
+  PutViewsInput,
+  ViewList,
+  ViewScope,
   TreeResponse,
   UploadedAsset,
   User,
@@ -256,6 +261,18 @@ export function listParamsToQuery(p: ListParams): string {
 
 export const enc = encodeURIComponent
 
+export function groupsParamsToQuery(p: GroupsParams): string {
+  const q = new URLSearchParams()
+  q.set('key', p.key)
+  if (p.folder !== undefined) q.set('folder', p.folder)
+  if (p.recursive) q.set('recursive', 'true')
+  for (const tag of p.tag ?? []) q.append('tag', tag)
+  if (p.filter?.length) q.set('filter', JSON.stringify(p.filter))
+  return `?${q.toString()}`
+}
+
+const scopeQuery = (s: ViewScope) => ('folder' in s ? `folder=${enc(s.folder)}` : `tag=${enc(s.tag)}`)
+
 // Where the bytes of a file of a space are served (docs/api.md, "Files"): `path`
 // is from the root of the space, and each segment is percent-encoded.
 export function fileUrl(space: string, path: string): string {
@@ -270,6 +287,11 @@ export function spaceApi(space: string) {
   const pageBase = (id: string, rest = '') => base(`/pages/${enc(id)}${rest}`)
   return {
     listPages: (params: ListParams = {}, signal?: AbortSignal) => request<PageList>(base(`/pages${listParamsToQuery(params)}`), { signal }),
+    // How many pages have each value of a property (the heads of a board's columns).
+    groups: (params: GroupsParams, signal?: AbortSignal) => request<GroupsResponse>(base(`/pages/groups${groupsParamsToQuery(params)}`), { signal }),
+    // The saved views of a folder or a tag; a save replaces the whole list and 409s (with `current`) on a stale `baseRev`.
+    views: (scope: ViewScope, signal?: AbortSignal) => request<ViewList>(base(`/views?${scopeQuery(scope)}`), { signal }),
+    putViews: (scope: ViewScope, input: PutViewsInput) => request<ViewList>(base('/views'), { method: 'PUT', body: { ...scope, ...input } }),
     getPage: (id: string, signal?: AbortSignal) => request<Page>(pageBase(id), { signal }),
     createPage: (input: CreatePageInput = {}) => request<Page>(base('/pages'), { method: 'POST', body: input }),
     savePage: (id: string, input: SavePageInput, opts: { keepalive?: boolean } = {}) => request<Page>(pageBase(id), { method: 'PUT', body: input, keepalive: opts.keepalive }),

@@ -2069,6 +2069,32 @@ function suite(target: Target) {
       expect((await getViews(`folder=${enc(`${root}/vmoved/sub`)}`)).views).toEqual([])
     })
 
+    it('is reachable through the typed client: views, a save, a stale save with the views as they are, and the groups', async () => {
+      const place = `${root}/typed${run}`
+      await S.createFolder(place)
+      const none = await S.views({ folder: place })
+      expect(none.views).toEqual([])
+      const saved = await S.putViews({ folder: place }, { baseRev: none.rev, views: [{ name: '一', layout: 'list', sort: '', group: '', filter: [], hidden: [] }, { name: '二', layout: 'board', sort: '', group: 'status', filter: [{ key: 'status', op: 'notIn', values: ['draft'] }], hidden: [], cardFields: ['points'] }] })
+      expect(saved.views.map((v) => v.name)).toEqual(['一', '二'])
+      expect(saved.views[1]).toMatchObject({ group: 'status', cardFields: ['points'], filter: [{ key: 'status', op: 'notIn', values: ['draft'] }] })
+      expect(await S.views({ folder: place })).toEqual(saved)
+      // A save from the rev before is refused, and the error carries the views as they are.
+      const stale = await S.putViews({ folder: place }, { baseRev: none.rev, views: [] }).then(() => null, (e: unknown) => e as ApiError)
+      expect([stale?.status, stale?.code]).toEqual([409, 'conflict'])
+      expect((stale?.current as unknown as { views: unknown[]; rev: string }).rev).toBe(saved.rev)
+      expect((stale?.current as unknown as { views: unknown[] }).views).toHaveLength(2)
+      // A view of a tag is kept under the tag.
+      const tag = `typedtag${run}`
+      const tagViews = await S.putViews({ tag }, { baseRev: (await S.views({ tag })).rev, views: [{ name: '读', layout: 'read', sort: '', group: '', filter: [], hidden: [] }] })
+      expect((await S.views({ tag })).views[0].id).toBe(tagViews.views[0].id)
+      // The groups of a folder: how many pages hold each value.
+      await mk(place, { title: 'g1', status: 'draft' }, '')
+      await mk(place, { title: 'g2', status: 'draft' }, '')
+      await mk(place, { title: 'g3' }, '')
+      expect(await S.groups({ folder: place, key: 'status' })).toEqual({ groups: [{ value: 'draft', count: 2 }], empty: 1, truncated: false })
+      expect((await S.groups({ tag: [tag], key: 'status' })).groups).toEqual([])
+    })
+
     describe('a board over a select field', () => {
       const pages: Record<string, Page> = {}
       const filter = (f: unknown[]) => `filter=${enc(JSON.stringify(f))}`

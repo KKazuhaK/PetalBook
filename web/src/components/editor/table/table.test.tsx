@@ -131,6 +131,27 @@ describe('column alignment', () => {
     expect(markdownOf(editor)).toBe('| 甲 | 乙 |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n')
   })
 
+  it('answers "none" for a table that was replaced while its menu was open, as the size does, instead of throwing', () => {
+    const editor = pageEditor(SOURCE)
+    const open = ref(1, 1)
+    editor.commands.setContent('只剩一段话')
+    // What was a table at that position is a paragraph now.
+    expect(editor.state.doc.nodeAt(0)!.type.name).toBe('paragraph')
+    expect(() => columnAlign(editor.state, open)).not.toThrow()
+    expect(columnAlign(editor.state, open)).toBeNull()
+    expect(tableSize(editor.state, 0)).toBeNull()
+    // The action on it does nothing and does not throw either.
+    expect(() => setColumnAlign(editor, open, 'center')).not.toThrow()
+    expect(markdownOf(editor)).toBe('只剩一段话\n')
+  })
+
+  it('answers "none" for a column that the replacing table does not have', () => {
+    const editor = pageEditor(SOURCE)
+    editor.commands.setContent('| 甲 |\n| - |\n| 1 |\n')
+    expect(columnAlign(editor.state, ref(0, 1))).toBeNull()
+    expect(() => setColumnAlign(editor, ref(0, 1), 'right')).not.toThrow()
+  })
+
   it('reads back from Markdown', () => {
     const editor = pageEditor('| a | b | c |\n| :- | :-: | -: |\n| 1 | 2 | 3 |\n')
     expect([0, 1, 2].map((c) => columnAlign(editor.state, ref(1, c)))).toEqual(['left', 'center', 'right'])
