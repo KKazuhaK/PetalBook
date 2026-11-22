@@ -122,6 +122,16 @@ describe('a request refused for access or not found inside a space', () => {
     vi.advanceTimersByTime(2_000)
     expect(stale()).toEqual([false, false])
   })
+  it('still makes the recheck when the timer goes off a little before the clock says the window is over', () => {
+    const { qc, stale } = setup()
+    refreshSpaceAccess(qc, 'sp1', true)
+    // The event loop counts from when it last looked at the time, so a timer can run early by the clock.
+    vi.setSystemTime(Date.now() - 3)
+    vi.advanceTimersByTime(5_000)
+    expect(stale()).toEqual([false, false])
+    vi.advanceTimersByTime(3)
+    expect(stale()).toEqual([true, true])
+  })
   it('counts the window from a failed fetch as well', async () => {
     vi.useFakeTimers()
     const qc = new QueryClient()

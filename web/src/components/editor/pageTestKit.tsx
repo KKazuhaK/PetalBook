@@ -66,14 +66,22 @@ export async function mount(editor: Editor, extra?: React.ReactNode) {
   return { host, unmount }
 }
 
-// A click as the browser delivers it to a menu trigger.
+// A click as the browser delivers it to a menu trigger: the pointer events say
+// they are a mouse's, as they do in a browser. The menu then opens on the animation
+// frame after the press (not on the click, which it ignores), so the click waits
+// for that frame. Without the pointer type the menu opened on the click and the
+// frame's own open came later, after whatever the test had done meanwhile (an item
+// that closed the menu): and opened it again.
 export async function click(el: Element) {
+  const pointer = (type: string) =>
+    typeof PointerEvent === 'function' ? new PointerEvent(type, { bubbles: true, pointerType: 'mouse', button: 0, isPrimary: true }) : new MouseEvent(type, { bubbles: true })
   await act(async () => {
-    el.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+    el.dispatchEvent(pointer('pointerdown'))
     el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-    el.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }))
+    el.dispatchEvent(pointer('pointerup'))
     el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
     el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    if (el.hasAttribute('aria-haspopup')) await new Promise<void>((done) => requestAnimationFrame(() => done()))
   })
 }
 
