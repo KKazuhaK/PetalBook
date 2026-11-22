@@ -251,12 +251,13 @@ jobs:
           latest=false
           if [[ "$TAG" != *-* ]]; then
             final='^v[0-9]+\.[0-9]+\.[0-9]+$'
-            published="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 100 --json tagName --jq '.[].tagName' | { grep -E "$final" || true; })"
-            on_main=""
-            for t in $(git tag -l 'v*' | { grep -E "$final" || true; }); do
-              if git merge-base --is-ancestor "$t" origin/main; then on_main="$on_main $t"; fi
-            done
-            highest="$(printf '%s\n' $published $on_main "$TAG" | sort -V | tail -n 1)"
+            # One version per line: the published final releases, the final
+            # tags on main, and this tag.
+            versions="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 100 --json tagName --jq '.[].tagName' | { grep -E "$final" || true; })"
+            while IFS= read -r t; do
+              if git merge-base --is-ancestor "$t" origin/main; then versions="$versions"$'\n'"$t"; fi
+            done < <(git tag -l 'v*' | { grep -E "$final" || true; })
+            highest="$(printf '%s\n%s\n' "$versions" "$TAG" | grep -v '^$' | sort -V | tail -n 1)"
             if [ "$highest" = "$TAG" ]; then latest=true; fi
           fi
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
