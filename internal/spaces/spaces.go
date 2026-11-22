@@ -164,6 +164,8 @@ type Manager struct {
 	listGen uint64
 	closed  bool
 
+	authors authorCache // names for commits, by user id (see AuthorByID)
+
 	syncs    map[string]string // space id -> state of its remote, for Info.Sync (guarded by mu; nil until first needed)
 	remoteMu sync.Mutex        // one connect, disconnect or key change at a time
 	pullWake chan struct{}     // a space with a remote was just opened: pull it now
@@ -718,6 +720,7 @@ func (m *Manager) UserChanged(ctx context.Context, u store.User) {
 	if m.single != nil {
 		return
 	}
+	m.forgetAuthor(u.ID)
 	l, err := m.List(ctx, u.ID)
 	if err != nil {
 		return

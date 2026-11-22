@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,7 +21,7 @@ func crash(s *Space) {
 	s.cm.once.Do(func() { close(s.cm.stop) })
 	<-s.cm.done
 	s.cm.mu.Lock()
-	s.cm.paths = map[string]bool{} // what a dead process cannot commit later
+	s.cm.paths = map[string]Author{} // what a dead process cannot commit later
 	s.cm.mu.Unlock()
 	s.cm.j.close()
 	s.idx.Close()
@@ -67,7 +68,7 @@ func TestDuplicateBecomesAPageWhenTheTwinIsDeleted(t *testing.T) {
 	if probs, _ := s.Problems(); len(probs) != 1 || probs[0].Code != "duplicate_id" {
 		t.Fatalf("%+v", probs)
 	}
-	if err := s.Delete(a.ID); err != nil {
+	if err := s.Delete(Author{}, a.ID); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.Get(a.ID); err != nil || got.Path != "twin.md" || got.Body != "two\n" {
@@ -108,7 +109,7 @@ func TestUncommittedWritesSurviveACrash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s3.Delete(p.ID); err != nil {
+	if err := s3.Delete(Author{}, p.ID); err != nil {
 		t.Fatal(err)
 	}
 	s3.Close()
@@ -132,7 +133,7 @@ func TestCrashBetweenLinkAndRemoveLeavesOnePage(t *testing.T) {
 	s.Flush()
 	// The crash: the new name is linked, the old one never removed.
 	s.ops.Remove = func(string) error { return errors.New("crash") }
-	if _, err := s.Move(p.ID, "y"); err == nil {
+	if _, err := s.Move(Author{}, p.ID, "y"); err == nil {
 		t.Fatal("the move should have failed")
 	}
 	if !exists(s, "x/半途.md") || !exists(s, "y/半途.md") {
@@ -262,9 +263,9 @@ func TestUnknownIDsCauseOneWalkPerInterval(t *testing.T) {
 		}
 	}
 	for i := 0; i < 20; i++ {
-		s.Delete("ZZZZZZZZZZ")
-		s.Save("YYYYYYYYYY", "x", nil, "")
-		s.Move("XXXXXXXXXX", "f")
+		s.Delete(Author{}, "ZZZZZZZZZZ")
+		s.Save(Author{}, "YYYYYYYYYY", "x", nil, "")
+		s.Move(Author{}, "XXXXXXXXXX", "f")
 	}
 	if n := s.walks.Load(); n != 1 {
 		t.Fatalf("%d directory walks for repeated unknown ids, want 1", n)
@@ -297,12 +298,12 @@ func TestSavesProceedWhileAWalkIsRunning(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		n, err := s.Save(p.ID, p.Rev, meta("title", "忙着"), "v2\n")
+		n, err := s.Save(Author{}, p.ID, p.Rev, meta("title", "忙着"), "v2\n")
 		if err == nil {
-			_, err = s.Create(CreateInput{Meta: meta("title", "另一页")})
+			_, err = s.Create(Author{}, CreateInput{Meta: meta("title", "另一页")})
 		}
 		if err == nil {
-			err = s.Delete(n.ID)
+			err = s.Delete(Author{}, n.ID)
 		}
 		done <- err
 	}()
@@ -434,7 +435,7 @@ func TestRecoveryOfAFolderRespellingListsOnlyFiles(t *testing.T) {
 		{Op: "r", From: "notes", To: "Notes", Path: "Notes (renaming 1)", Dir: true},
 		{Op: "t", Path: "Notes (renaming 1)/a.md"},
 	})
-	if strings.Join(got, ",") != "Notes (renaming 1)/a.md,Notes/a.md,notes/a.md" {
+	if strings.Join(pathsOf(got), ",") != "Notes (renaming 1)/a.md,Notes/a.md,notes/a.md" {
 		t.Fatalf("%q", got)
 	}
 }
@@ -528,7 +529,7 @@ func TestRespellingThroughTheSpaceSurvivesACrash(t *testing.T) {
 				t.Fatal(err)
 			}
 			s.ops = foldingOps(stop)
-			if _, err := s.Save(p.ID, p.Rev, meta("title", "apple"), "fruit\n"); err == nil {
+			if _, err := s.Save(Author{}, p.ID, p.Rev, meta("title", "apple"), "fruit\n"); err == nil {
 				t.Fatal("the save went through although the rename did not")
 			}
 			if keepRunning {
@@ -568,7 +569,7 @@ func TestRespellingThroughTheSpaceSurvivesACrash(t *testing.T) {
 			t.Fatal(err)
 		}
 		s.ops = foldingOps(stop)
-		if _, err := s.MoveFolder("notes", "Notes"); err == nil {
+		if _, err := s.MoveFolder(Author{}, "notes", "Notes"); err == nil {
 			t.Fatal("the move went through although the rename did not")
 		}
 		crash(s)
@@ -585,4 +586,14 @@ func TestRespellingThroughTheSpaceSurvivesACrash(t *testing.T) {
 			t.Fatalf("the page is lost: %v", err)
 		}
 	})
+}
+
+// pathsOf lists the paths of a pending set, sorted.
+func pathsOf(m map[string]Author) []string {
+	out := make([]string, 0, len(m))
+	for p := range m {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
 }

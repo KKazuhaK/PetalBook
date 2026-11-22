@@ -223,7 +223,7 @@ func (s *Space) newRemote(o *RemoteOptions) *remote {
 // network: what a crash left behind is committed here, and what has to be
 // pushed (or, if the remote moved, set aside) is done by the first sync, which
 // every change and every pull starts with.
-func (s *Space) initRemote(o *RemoteOptions, recovered []string) error {
+func (s *Space) initRemote(o *RemoteOptions, recovered map[string]Author) error {
 	r := s.newRemote(o)
 	ctx := s.ctx
 	if r.st.LastGood = r.repo.ReadLastGood(ctx, r.branch); r.st.LastGood == "" {
@@ -248,12 +248,16 @@ func (s *Space) initRemote(o *RemoteOptions, recovered []string) error {
 	// committed now, on top of whatever the clone was at; the first sync pushes
 	// them or, if the remote has moved on, keeps them under a ref.
 	if len(recovered) > 0 && r.blocked == "" {
-		author, committer := s.cm.git.identities()
-		made, err := r.repo.CommitPaths(ctx, recovered, commitMessage, author, committer)
-		if err != nil {
-			r.blocked = "could not commit what an earlier run left uncommitted: " + gitstore.Scrub(err.Error())
-		} else if made {
-			s.log.Info("committed changes an earlier run had not committed", "paths", len(recovered))
+		// One commit per person, as the background committer makes them.
+		_, committer := s.cm.git.identities(Author{})
+		for _, grp := range s.cm.git.groupByAuthor(recovered) {
+			made, err := r.repo.CommitPaths(ctx, grp.paths, commitMessage, grp.id, committer)
+			if err != nil {
+				r.blocked = "could not commit what an earlier run left uncommitted: " + gitstore.Scrub(err.Error())
+				break
+			} else if made {
+				s.log.Info("committed changes an earlier run had not committed", "paths", len(grp.paths), "author", grp.id.Name)
+			}
 		}
 	}
 	if r.blocked == "" {
@@ -587,6 +591,7 @@ func (s *Space) Accept(ctx context.Context, commit string) error {
 // committer; in remote mode it collects them for the commit that follows.
 type txn struct {
 	s       *Space
+	by      Author // who is making the change
 	remote  bool
 	paths   []string // files the change wrote, moved or deleted
 	dirs    []string // directories whose folder rows may change
@@ -603,9 +608,12 @@ type txn struct {
 	undoFailed string
 }
 
+// record journals what the change is about to do, as the change of its author.
+func (t *txn) record(recs ...jrec) error { return t.s.cm.Record(t.by, recs...) }
+
 func (t *txn) touch(paths ...string) {
 	if !t.remote {
-		t.s.cm.Touch(paths...)
+		t.s.cm.Touch(t.by, paths...)
 		return
 	}
 	for _, p := range paths {
@@ -614,8 +622,9 @@ func (t *txn) touch(paths ...string) {
 	}
 }
 
-// mutate runs op under the space lock the way the space's mode requires.
-func mutate[T any](s *Space, op func(*txn) (T, error)) (T, error) {
+// mutate runs op, a change made by by, under the space lock the way the
+// space's mode requires.
+func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 	var zero T
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -624,7 +633,7 @@ func mutate[T any](s *Space, op func(*txn) (T, error)) (T, error) {
 	}
 	r := s.rem.Load()
 	if r == nil {
-		return op(&txn{s: s})
+		return op(&txn{s: s, by: by})
 	}
 	ctx := s.ctx
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
@@ -632,7 +641,7 @@ func mutate[T any](s *Space, op func(*txn) (T, error)) (T, error) {
 			return zero, err
 		}
 		parent := r.repo.Head(ctx)
-		tx := &txn{s: s, remote: true}
+		tx := &txn{s: s, by: by, remote: true}
 		res, err := op(tx)
 		if err != nil {
 			s.undoLocked(ctx, r, tx, parent)
@@ -643,7 +652,7 @@ func mutate[T any](s *Space, op func(*txn) (T, error)) (T, error) {
 			s.cm.clearJournal()
 			return res, nil
 		}
-		author, committer := s.cm.git.identities()
+		author, committer := s.cm.git.identities(by)
 		made, err := r.repo.CommitPaths(ctx, tx.paths, commitMessage, author, committer)
 		if err != nil {
 			s.undoLocked(ctx, r, tx, parent)
@@ -997,7 +1006,7 @@ func (s *Space) ensureConfigLocked(ctx context.Context, r *remote) error {
 	if _, _, err := ensureSpaceConfig(file, s.name); err != nil {
 		return err
 	}
-	author, committer := s.cm.git.identities()
+	author, committer := s.cm.git.identities(Author{})
 	made, err := r.repo.CommitPaths(ctx, []string{".petalbook/space.yml"}, commitMessage, author, committer)
 	if err != nil || !made {
 		return err
@@ -1029,8 +1038,8 @@ func (s *Space) Disconnect() error {
 	if changed, err := ensureLines(filepath.Join(pb, ".gitignore"), "cache/", "tmp/"); err != nil {
 		s.log.Warn("could not write .petalbook/.gitignore", "error", err)
 	} else if changed {
-		if err := s.cm.Record(jrec{Op: "t", Path: ".petalbook/.gitignore"}); err == nil {
-			s.cm.Touch(".petalbook/.gitignore")
+		if err := s.cm.Record(Author{}, jrec{Op: "t", Path: ".petalbook/.gitignore"}); err == nil {
+			s.cm.Touch(Author{}, ".petalbook/.gitignore")
 		}
 	}
 	return nil

@@ -81,7 +81,7 @@ func AssetName(given string, data []byte) string {
 // that follows a remote. Storing the same bytes under the same name again
 // changes nothing. ErrNotFound when the page does not exist; ErrExists when
 // another file already has the name.
-func (s *Space) PutAsset(id, name string, data []byte) (Asset, error) {
+func (s *Space) PutAsset(by Author, id, name string, data []byte) (Asset, error) {
 	if !page.ValidID(id) {
 		return Asset{}, ErrNotFound
 	}
@@ -93,7 +93,7 @@ func (s *Space) PutAsset(id, name string, data []byte) (Asset, error) {
 	}
 	stored := AssetName(name, data)
 	s.refresh(id)
-	return mutate(s, func(tx *txn) (Asset, error) { return s.putAssetLocked(tx, id, stored, data) })
+	return mutate(s, by, func(tx *txn) (Asset, error) { return s.putAssetLocked(tx, id, stored, data) })
 }
 
 func (s *Space) putAssetLocked(tx *txn, id, name string, data []byte) (Asset, error) {
@@ -119,7 +119,7 @@ func (s *Space) putAssetLocked(tx *txn, id, name string, data []byte) (Asset, er
 	if !same {
 		// Journal the name before taking it; recovery only believes this record
 		// if the file has our content.
-		if err := s.cm.Record(jrec{Op: "w", Path: rel, Rev: page.Rev(data)}); err != nil {
+		if err := tx.record(jrec{Op: "w", Path: rel, Rev: page.Rev(data)}); err != nil {
 			return Asset{}, err
 		}
 		tmp, err := newTemp(s.tmpDir(), data, 0o644)

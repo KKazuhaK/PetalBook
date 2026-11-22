@@ -218,7 +218,7 @@ func TestConnectWithTwoHistoriesIsAConflictAndChangesNothing(t *testing.T) {
 	s2 := localSpace(t)
 	p := mustCreate(t, s2, "", meta("title", "Made then deleted"), "m\n")
 	s2.Flush() // Git has seen it
-	if err := s2.Delete(p.ID); err != nil {
+	if err := s2.Delete(Author{}, p.ID); err != nil {
 		t.Fatal(err)
 	}
 	s2.Flush()
@@ -227,7 +227,7 @@ func TestConnectWithTwoHistoriesIsAConflictAndChangesNothing(t *testing.T) {
 	}
 	// A folder counts too.
 	s3 := localSpace(t)
-	if _, err := s3.CreateFolder("Drafts"); err != nil {
+	if _, err := s3.CreateFolder(Author{}, "Drafts"); err != nil {
 		t.Fatal(err)
 	}
 	s3.Flush()
@@ -321,7 +321,7 @@ func TestDisconnectMakesTheSpaceLocalAgain(t *testing.T) {
 func TestSpaceListsFoldersOfARemoteSpaceAfterReconnect(t *testing.T) {
 	// Folders made while local (with .gitkeep) are pushed like anything else.
 	s := localSpace(t)
-	if _, err := s.CreateFolder("Drafts/2027"); err != nil {
+	if _, err := s.CreateFolder(Author{}, "Drafts/2027"); err != nil {
 		t.Fatal(err)
 	}
 	remote := bareRepo(t)

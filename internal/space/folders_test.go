@@ -41,7 +41,7 @@ func TestMoveFolder(t *testing.T) {
 	a := mustCreate(t, s, "随笔/2026", meta("title", "一"), "x\n")
 	b := mustCreate(t, s, "随笔/2026/深", meta("title", "二"), "y\n")
 	keep := mustCreate(t, s, "别处", meta("title", "三"), "z\n")
-	if _, err := s.CreateFolder("随笔/2026/空"); err != nil {
+	if _, err := s.CreateFolder(Author{}, "随笔/2026/空"); err != nil {
 		t.Fatal(err)
 	}
 	// A file that is not a page and that Git has, and one that merely lies there.
@@ -59,7 +59,7 @@ func TestMoveFolder(t *testing.T) {
 	// A page written and not committed yet moves, and is committed where it lands.
 	c := mustCreate(t, s, "随笔/2026", meta("title", "四"), "w\n")
 
-	got, err := s.MoveFolder("随笔/2026", "归档/旧/2026")
+	got, err := s.MoveFolder(Author{}, "随笔/2026", "归档/旧/2026")
 	if err != nil || got != "归档/旧/2026" {
 		t.Fatalf("%q %v", got, err)
 	}
@@ -122,7 +122,7 @@ func TestMoveFolderRenamesByCase(t *testing.T) {
 	if err := s.Flush(); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.MoveFolder("notes", "Notes")
+	got, err := s.MoveFolder(Author{}, "notes", "Notes")
 	if err != nil || got != "Notes" {
 		t.Fatalf("%q %v", got, err)
 	}
@@ -157,24 +157,24 @@ func TestMoveFolderRefusals(t *testing.T) {
 	for _, c := range []struct{ from, to string }{
 		{"", "x"}, {"a", ""}, {"a", "a"}, {"a", "a/b/c"}, {"a", "a/inside"}, {"a", "x.md"}, {"a", ".hidden"}, {"a", "assets"}, {"a", "new.md/x"},
 	} {
-		if _, err := s.MoveFolder(c.from, c.to); !errors.As(err, &inv) {
+		if _, err := s.MoveFolder(Author{}, c.from, c.to); !errors.As(err, &inv) {
 			t.Errorf("%q -> %q: %v", c.from, c.to, err)
 		}
 	}
-	if _, err := s.MoveFolder("nope", "x"); !errors.Is(err, ErrNoFolder) {
+	if _, err := s.MoveFolder(Author{}, "nope", "x"); !errors.Is(err, ErrNoFolder) {
 		t.Errorf("a folder that is not there: %v", err)
 	}
-	if _, err := s.MoveFolder("a/b/P.md", "x"); !errors.Is(err, ErrNoFolder) {
+	if _, err := s.MoveFolder(Author{}, "a/b/P.md", "x"); !errors.Is(err, ErrNoFolder) {
 		t.Errorf("a page as the folder: %v", err)
 	}
-	if _, err := s.MoveFolder("a", "c"); !errors.Is(err, ErrExists) {
+	if _, err := s.MoveFolder(Author{}, "a", "c"); !errors.Is(err, ErrExists) {
 		t.Errorf("an existing target: %v", err)
 	}
 	// A link inside the folder: it could lead anywhere.
 	if err := os.Symlink(t.TempDir(), filepath.Join(s.Root(), "a", "link")); err != nil {
 		t.Skip("no symbolic links here")
 	}
-	if _, err := s.MoveFolder("a", "moved"); !errors.As(err, &inv) {
+	if _, err := s.MoveFolder(Author{}, "a", "moved"); !errors.As(err, &inv) {
 		t.Errorf("a folder holding a link: %v", err)
 	}
 	if got := strings.Join(folderPaths(t, s), "|"); got != "|a|a/b|c" {
@@ -203,7 +203,7 @@ func TestMoveFolderIsJournaledBeforeTheRename(t *testing.T) {
 		seen = string(b)
 		return rename(from, to)
 	}
-	if _, err := s.MoveFolder("old", "new"); err != nil {
+	if _, err := s.MoveFolder(Author{}, "old", "new"); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(seen, `"old/Doc.md"`) || !strings.Contains(seen, `"new/Doc.md"`) {
@@ -234,31 +234,31 @@ func TestDeleteFolder(t *testing.T) {
 	s := open(t)
 	a := mustCreate(t, s, "f", meta("title", "A"), "x\n")
 	b := mustCreate(t, s, "f/sub", meta("title", "B"), "y\n")
-	if _, err := s.CreateFolder("f/empty/deeper"); err != nil {
+	if _, err := s.CreateFolder(Author{}, "f/empty/deeper"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateFolder("g/h"); err != nil {
+	if _, err := s.CreateFolder(Author{}, "g/h"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Flush(); err != nil {
 		t.Fatal(err)
 	}
 	var inv *InvalidError
-	if _, err := s.DeleteFolder("", true); !errors.As(err, &inv) {
+	if _, err := s.DeleteFolder(Author{}, "", true); !errors.As(err, &inv) {
 		t.Fatal(err)
 	}
-	if _, err := s.DeleteFolder("nope", true); !errors.Is(err, ErrNoFolder) {
+	if _, err := s.DeleteFolder(Author{}, "nope", true); !errors.Is(err, ErrNoFolder) {
 		t.Fatal(err)
 	}
 	// Pages inside: refused unless they are to go too.
-	if _, err := s.DeleteFolder("f", false); !errors.Is(err, ErrNotEmpty) {
+	if _, err := s.DeleteFolder(Author{}, "f", false); !errors.Is(err, ErrNotEmpty) {
 		t.Fatal(err)
 	}
 	if _, err := s.Get(a.ID); err != nil {
 		t.Fatal("a refused removal deleted a page")
 	}
 	// No pages: the folder and its empty subfolders go.
-	if ids, err := s.DeleteFolder("g", false); err != nil || len(ids) != 0 {
+	if ids, err := s.DeleteFolder(Author{}, "g", false); err != nil || len(ids) != 0 {
 		t.Fatalf("%v %v", ids, err)
 	}
 	if _, err := os.Stat(filepath.Join(s.Root(), "g")); !os.IsNotExist(err) {
@@ -268,7 +268,7 @@ func TestDeleteFolder(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(s.Root(), "f", "sub", "note.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ids, err := s.DeleteFolder("f", true)
+	ids, err := s.DeleteFolder(Author{}, "f", true)
 	sort.Strings(ids)
 	want := []string{a.ID, b.ID}
 	sort.Strings(want)
@@ -307,25 +307,25 @@ func TestBatch(t *testing.T) {
 	}
 	var inv *InvalidError
 	for _, ids := range [][]string{nil, {a.ID, a.ID}, {"not an id"}, make([]string, MaxBatch+1)} {
-		if err := s.BatchMove(ids, "dest"); !errors.As(err, &inv) {
+		if err := s.BatchMove(Author{}, ids, "dest"); !errors.As(err, &inv) {
 			t.Errorf("%v: %v", ids, err)
 		}
-		if _, err := s.BatchDelete(ids); !errors.As(err, &inv) {
+		if _, err := s.BatchDelete(Author{}, ids); !errors.As(err, &inv) {
 			t.Errorf("%v: %v", ids, err)
 		}
 	}
 	// An id that is not a page: nothing moves.
-	if err := s.BatchMove([]string{a.ID, "ZZZZZZZZZZ", b.ID}, "dest"); !errors.Is(err, ErrNotFound) {
+	if err := s.BatchMove(Author{}, []string{a.ID, "ZZZZZZZZZZ", b.ID}, "dest"); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
 	if pathOf(t, s, a.ID) != "x/A.md" {
 		t.Fatal("a page moved although the batch was refused")
 	}
-	if err := s.BatchMove([]string{a.ID, b.ID}, "bad.md"); !errors.As(err, &inv) {
+	if err := s.BatchMove(Author{}, []string{a.ID, b.ID}, "bad.md"); !errors.As(err, &inv) {
 		t.Fatal(err)
 	}
 	head := git(t, s.Root(), "rev-parse", "HEAD")
-	if err := s.BatchMove([]string{a.ID, b.ID, c.ID}, "dest"); err != nil {
+	if err := s.BatchMove(Author{}, []string{a.ID, b.ID, c.ID}, "dest"); err != nil {
 		t.Fatal(err)
 	}
 	for id, want := range map[string]string{a.ID: "dest/A.md", b.ID: "dest/B.md", c.ID: "dest/C.md"} {
@@ -339,13 +339,13 @@ func TestBatch(t *testing.T) {
 	if n := git(t, s.Root(), "rev-list", "--count", head+"..HEAD"); n != "1" {
 		t.Fatalf("%s commits for one batch", n)
 	}
-	if _, err := s.BatchDelete([]string{a.ID, "ZZZZZZZZZZ"}); !errors.Is(err, ErrNotFound) {
+	if _, err := s.BatchDelete(Author{}, []string{a.ID, "ZZZZZZZZZZ"}); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
 	if _, err := s.Get(a.ID); err != nil {
 		t.Fatal("a page was deleted although the batch was refused")
 	}
-	if _, err := s.BatchDelete([]string{a.ID, c.ID}); err != nil {
+	if _, err := s.BatchDelete(Author{}, []string{a.ID, c.ID}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Get(a.ID); !errors.Is(err, ErrNotFound) {
@@ -363,14 +363,14 @@ func TestTagColors(t *testing.T) {
 	mustCreate(t, s, "", meta("title", "A", "tags", []any{"栀子"}), "x\n")
 	var inv *InvalidError
 	for _, c := range []struct{ tag, color string }{{"栀子", "mauve"}, {"", "red"}, {"  ", "red"}, {strings.Repeat("长", 100), "red"}, {"a\nb", "red"}} {
-		if err := s.SetTagColor(c.tag, c.color); !errors.As(err, &inv) {
+		if err := s.SetTagColor(Author{}, c.tag, c.color); !errors.As(err, &inv) {
 			t.Errorf("%q %q: %v", c.tag, c.color, err)
 		}
 	}
-	if err := s.SetTagColor("栀子", "rose"); err != nil {
+	if err := s.SetTagColor(Author{}, "栀子", "rose"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetTagColor("not in use", "blue"); err != nil {
+	if err := s.SetTagColor(Author{}, "not in use", "blue"); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.TagColors(); got["栀子"] != "rose" || got["not in use"] != "blue" {
@@ -390,7 +390,7 @@ func TestTagColors(t *testing.T) {
 	if got := s.TagColors(); len(got) != 1 || got["栀子"] != "rose" {
 		t.Fatalf("%v", got)
 	}
-	if err := s.SetTagColor("栀子", ""); err != nil {
+	if err := s.SetTagColor(Author{}, "栀子", ""); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(file)
@@ -401,7 +401,7 @@ func TestTagColors(t *testing.T) {
 		t.Fatal(err)
 	}
 	s2 := openAt(t, root)
-	if err := s2.SetTagColor("冬", "teal"); err != nil {
+	if err := s2.SetTagColor(Author{}, "冬", "teal"); err != nil {
 		t.Fatal(err)
 	}
 	if got := s2.TagColors(); got["冬"] != "teal" || got["栀子"] != "" {
@@ -417,7 +417,7 @@ func TestTagColors(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 	var inv2 *InvalidError
-	if err := s2.SetTagColor("冬", "teal"); !errors.As(err, &inv2) {
+	if err := s2.SetTagColor(Author{}, "冬", "teal"); !errors.As(err, &inv2) {
 		t.Fatalf("a broken file was written over: %v", err)
 	}
 	if data, _ := os.ReadFile(file); !bytes.Equal(data, broken) {
@@ -434,7 +434,7 @@ func TestTagColors(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 	for _, c := range [][2]string{{"冬", "teal"}, {"2026", "blue"}, {"空", "green"}, {"栀子", ""}} {
-		if err := s2.SetTagColor(c[0], c[1]); err != nil {
+		if err := s2.SetTagColor(Author{}, c[0], c[1]); err != nil {
 			t.Fatalf("%v: %v", c, err)
 		}
 	}
@@ -455,7 +455,7 @@ func TestTagColors(t *testing.T) {
 	if err := os.WriteFile(file, append([]byte("tags: {}\n# "), bytes.Repeat([]byte("x"), 1<<20)...), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := s2.SetTagColor("冬", "teal"); !errors.As(err, &inv2) {
+	if err := s2.SetTagColor(Author{}, "冬", "teal"); !errors.As(err, &inv2) {
 		t.Fatalf("%v", err)
 	}
 }
@@ -471,10 +471,10 @@ func TestRenamesByCaseAreCommitted(t *testing.T) {
 	if err := s.Flush(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Save(p.ID, p.Rev, meta("id", p.ID, "title", "apple"), "x\n"); err != nil {
+	if _, err := s.Save(Author{}, p.ID, p.Rev, meta("id", p.ID, "title", "apple"), "x\n"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.MoveFolder("notes", "Notes"); err != nil {
+	if _, err := s.MoveFolder(Author{}, "notes", "Notes"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Flush(); err != nil {
@@ -483,7 +483,7 @@ func TestRenamesByCaseAreCommitted(t *testing.T) {
 	if got, _ := gitTry(root, "ls-tree", "-r", "--name-only", "HEAD"); !strings.Contains(got, "Notes/apple.md") || strings.Contains(got, "notes/") || strings.Contains(got, "Apple.md") {
 		t.Fatalf("HEAD has:\n%s", got)
 	}
-	if _, err := s.MoveFolder("Notes", "Other"); err != nil {
+	if _, err := s.MoveFolder(Author{}, "Notes", "Other"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Flush(); err != nil {
@@ -508,11 +508,11 @@ func TestMoveFolderOntoAnotherSpellingOfAnExistingOne(t *testing.T) {
 	mustCreate(t, s, "c", meta("title", "In c"), "x\n")
 	mustCreate(t, s, "deep/c", meta("title", "In deep c"), "x\n")
 	for _, to := range []string{"C", "deep/C"} {
-		if _, err := s.MoveFolder("a", to); !errors.Is(err, ErrExists) {
+		if _, err := s.MoveFolder(Author{}, "a", to); !errors.Is(err, ErrExists) {
 			t.Fatalf("a -> %s: %v", to, err)
 		}
 	}
-	if _, err := s.MoveFolder("a", "A"); err != nil {
+	if _, err := s.MoveFolder(Author{}, "a", "A"); err != nil {
 		t.Fatalf("its own respelling: %v", err)
 	}
 }
@@ -535,7 +535,7 @@ func TestDeleteFolderWithFilesSharingAnID(t *testing.T) {
 	if _, err := s.Reindex(); err != nil {
 		t.Fatal(err)
 	}
-	ids, err := s.DeleteFolder("twins", true)
+	ids, err := s.DeleteFolder(Author{}, "twins", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -561,7 +561,7 @@ func TestTagColorsOfOnesOwn(t *testing.T) {
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
-	if err := s.SetTagColor("栀子", "#A1b2C3"); err != nil {
+	if err := s.SetTagColor(Author{}, "栀子", "#A1b2C3"); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.TagColors(); got["栀子"] != "#a1b2c3" {
@@ -569,7 +569,7 @@ func TestTagColorsOfOnesOwn(t *testing.T) {
 	}
 	var inv *InvalidError
 	for _, bad := range []string{"#abc", "#gggggg", "abcdef", "rgb(1,2,3)", "#a1b2c3d", "# a1b2c", "＃a1b2c3"} {
-		if err := s.SetTagColor("栀子", bad); !errors.As(err, &inv) {
+		if err := s.SetTagColor(Author{}, "栀子", bad); !errors.As(err, &inv) {
 			t.Fatalf("%q: %v", bad, err)
 		}
 	}
@@ -619,11 +619,11 @@ func TestMoveFolderAcrossUnicodeFolds(t *testing.T) {
 				}
 				// And the folder cannot be moved into itself under its other name.
 				var inv *InvalidError
-				if _, err := s.MoveFolder(c[0], c[1]+"/inner"); !errors.As(err, &inv) {
+				if _, err := s.MoveFolder(Author{}, c[0], c[1]+"/inner"); !errors.As(err, &inv) {
 					t.Fatalf("into itself: %v", err)
 				}
 			}
-			got, err := s.MoveFolder(c[0], c[1])
+			got, err := s.MoveFolder(Author{}, c[0], c[1])
 			if err != nil || got != c[1] {
 				t.Fatalf("%q %v", got, err)
 			}
@@ -660,7 +660,7 @@ func TestTagsFileWithSeveralDocumentsOrRepeatedKeys(t *testing.T) {
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
-	if err := s.SetTagColor("a", "red"); err != nil {
+	if err := s.SetTagColor(Author{}, "a", "red"); err != nil {
 		t.Fatal(err)
 	}
 	file := filepath.Join(root, ".petalbook", "tags.yml")
@@ -669,7 +669,7 @@ func TestTagsFileWithSeveralDocumentsOrRepeatedKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	var inv *InvalidError
-	if err := s.SetTagColor("a", "blue"); !errors.As(err, &inv) {
+	if err := s.SetTagColor(Author{}, "a", "blue"); !errors.As(err, &inv) {
 		t.Fatalf("%v", err)
 	}
 	if data, _ := os.ReadFile(file); !bytes.Equal(data, two) {
@@ -685,7 +685,7 @@ func TestTagsFileWithSeveralDocumentsOrRepeatedKeys(t *testing.T) {
 	if got := s.TagColors(); got["a"] != "green" {
 		t.Fatalf("%v", got)
 	}
-	if err := s.SetTagColor("a", "blue"); err != nil {
+	if err := s.SetTagColor(Author{}, "a", "blue"); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.TagColors(); got["a"] != "blue" || got["b"] != "teal" {

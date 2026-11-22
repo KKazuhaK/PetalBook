@@ -324,17 +324,21 @@ func (s *Service) DeletePage(ctx context.Context, spaceID, pageID string) error 
 	return store.DeletePageDrafts(ctx, s.st.Q(), spaceID, pageID)
 }
 
-// DeletePageFile deletes a page and, in the same exclusion, every user's draft
-// of it. A draft store racing the delete either lands before it and is removed
+// DeletePageFile deletes a page, as userID, and, in the same exclusion, every
+// user's draft of it. A draft store racing the delete either lands before it and is removed
 // with the rest, or finds the page gone and is refused: it can never leave a
 // draft behind for a page that no longer exists.
-func (s *Service) DeletePageFile(ctx context.Context, sp *space.Space, spaceID, pageID string) error {
+func (s *Service) DeletePageFile(ctx context.Context, sp *space.Space, spaceID, userID, pageID string) error {
 	l := s.lock(spaceID, pageID, "")
 	l.Lock()
 	defer l.Unlock()
 	s.enter(l, spaceID, pageID)
+	by, err := s.spaces.AuthorByID(ctx, userID)
+	if err != nil {
+		return err
+	}
 	var derr error
-	s.remoteCall(l, sp, spaceID, pageID, func() { derr = sp.Delete(pageID) })
+	s.remoteCall(l, sp, spaceID, pageID, func() { derr = sp.Delete(by, pageID) })
 	if derr != nil {
 		return derr
 	}
@@ -366,8 +370,12 @@ func (s *Service) SaveFile(ctx context.Context, sp *space.Space, spaceID, userID
 	if err != nil {
 		return nil, err
 	}
+	by, err := s.spaces.AuthorByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	var p *space.Page
-	s.remoteCall(l, sp, spaceID, pageID, func() { p, err = sp.Save(pageID, baseRev, meta, body) })
+	s.remoteCall(l, sp, spaceID, pageID, func() { p, err = sp.Save(by, pageID, baseRev, meta, body) })
 	if err != nil {
 		return nil, err
 	}
@@ -443,9 +451,14 @@ func (s *Service) applyUnder(ctx context.Context, sp *space.Space, d *store.Draf
 	if err := meta.UnmarshalJSON([]byte(d.Meta)); err != nil {
 		return nil, err
 	}
+	// The file is written as the person whose draft it is, not as whoever
+	// happens to be using the space when the sweeper gets to it.
+	by, err := s.spaces.AuthorByID(ctx, d.UserID)
+	if err != nil {
+		return nil, err
+	}
 	var p *space.Page
-	var err error
-	s.remoteCall(l, sp, d.SpaceID, d.PageID, func() { p, err = sp.Save(d.PageID, d.BaseRev, meta, d.Body) })
+	s.remoteCall(l, sp, d.SpaceID, d.PageID, func() { p, err = sp.Save(by, d.PageID, d.BaseRev, meta, d.Body) })
 	var ce *space.ConflictError
 	if errors.As(err, &ce) {
 		if cur, same, eerr := sp.Equivalent(d.PageID, meta, d.Body); eerr == nil && same {

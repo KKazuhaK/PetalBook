@@ -66,7 +66,7 @@ func meta(kv ...any) page.Meta {
 
 func mustCreate(t *testing.T, s *Space, folder string, m page.Meta, body string) *Page {
 	t.Helper()
-	p, err := s.Create(CreateInput{Folder: folder, Meta: m, Body: body})
+	p, err := s.Create(Author{}, CreateInput{Folder: folder, Meta: m, Body: body})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -197,13 +197,13 @@ func TestUntitledPage(t *testing.T) {
 	// Adding a title renames the file to it; the id and the links to it stay.
 	m := p.Meta.Clone()
 	m = append(m, page.Field{Key: "title", Value: "有了标题"})
-	q, err := s.Save(p.ID, p.Rev, m, p.Body)
+	q, err := s.Save(Author{}, p.ID, p.Rev, m, p.Body)
 	if err != nil || q.Path != "有了标题.md" || q.ID != p.ID || exists(s, p.Path) {
 		t.Fatalf("%v %+v", err, q)
 	}
 	// Removing it again goes back to the date-and-id name.
 	m2 := page.Meta{{Key: "id", Value: p.ID}}
-	q2, err := s.Save(p.ID, q.Rev, m2, p.Body)
+	q2, err := s.Save(Author{}, p.ID, q.Rev, m2, p.Body)
 	if err != nil || q2.Path != wantName {
 		t.Fatalf("%v %+v", err, q2)
 	}
@@ -245,18 +245,18 @@ func TestNamingAndCollisions(t *testing.T) {
 	// Another page is saved with a title that collides: gets a number.
 	a := mustCreate(t, s, "b", meta("title", "甲"), "")
 	b := mustCreate(t, s, "b", meta("title", "乙"), "")
-	got, err := s.Save(b.ID, b.Rev, meta("id", b.ID, "title", "甲"), "")
+	got, err := s.Save(Author{}, b.ID, b.Rev, meta("id", b.ID, "title", "甲"), "")
 	if err != nil || got.Path != "b/甲 2.md" || !exists(s, a.Path) {
 		t.Fatalf("%v %+v", err, got)
 	}
 	// Saving again with the same title does not rename it once more.
-	again, err := s.Save(b.ID, got.Rev, meta("id", b.ID, "title", "甲", "extra", "x"), "")
+	again, err := s.Save(Author{}, b.ID, got.Rev, meta("id", b.ID, "title", "甲", "extra", "x"), "")
 	if err != nil || again.Path != "b/甲 2.md" {
 		t.Fatalf("%v %+v", err, again)
 	}
 	// Case-only change of its own name is allowed.
 	c := mustCreate(t, s, "", meta("title", "case"), "")
-	c2, err := s.Save(c.ID, c.Rev, meta("title", "CASE"), "")
+	c2, err := s.Save(Author{}, c.ID, c.Rev, meta("title", "CASE"), "")
 	if err != nil || c2.Path != "CASE.md" {
 		t.Fatalf("%v %+v", err, c2)
 	}
@@ -265,7 +265,7 @@ func TestNamingAndCollisions(t *testing.T) {
 func TestSaveRenamesButKeepsID(t *testing.T) {
 	s := open(t)
 	p := mustCreate(t, s, "Tang", meta("title", "旧名", "series", "冬季"), "正文\n")
-	n, err := s.Save(p.ID, p.Rev, meta("id", p.ID, "title", "新名", "series", "冬季"), "正文改\n")
+	n, err := s.Save(Author{}, p.ID, p.Rev, meta("id", p.ID, "title", "新名", "series", "冬季"), "正文改\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +286,7 @@ func TestSaveKeepsUnknownFieldsInOrder(t *testing.T) {
 	s := open(t)
 	p := mustCreate(t, s, "", meta("title", "T"), "b")
 	m := meta("zeta", int64(1), "id", p.ID, "title", "T", "alpha", page.Meta{{Key: "k", Value: "v"}}, "created", p.Meta.Created(), "status", "定稿")
-	n, err := s.Save(p.ID, p.Rev, m, "b")
+	n, err := s.Save(Author{}, p.ID, p.Rev, m, "b")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +305,7 @@ func TestSaveKeepsUnknownFieldsInOrder(t *testing.T) {
 	cur, _ := s.Reindex()
 	_ = cur
 	g, _ := s.Get(p.ID)
-	out, err := s.Save(p.ID, g.Rev, g.Meta, "new\n")
+	out, err := s.Save(Author{}, p.ID, g.Rev, g.Meta, "new\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,11 +317,11 @@ func TestSaveKeepsUnknownFieldsInOrder(t *testing.T) {
 func TestStaleBaseRevConflicts(t *testing.T) {
 	s := open(t)
 	p := mustCreate(t, s, "", meta("title", "T"), "v1\n")
-	if _, err := s.Save(p.ID, p.Rev, p.Meta, "v2\n"); err != nil {
+	if _, err := s.Save(Author{}, p.ID, p.Rev, p.Meta, "v2\n"); err != nil {
 		t.Fatal(err)
 	}
 	before := readDisk(t, s, "T.md")
-	_, err := s.Save(p.ID, p.Rev, p.Meta, "mine\n") // p.Rev is stale now
+	_, err := s.Save(Author{}, p.ID, p.Rev, p.Meta, "mine\n") // p.Rev is stale now
 	var ce *ConflictError
 	if !errors.As(err, &ce) {
 		t.Fatalf("want a conflict, got %v", err)
@@ -333,14 +333,14 @@ func TestStaleBaseRevConflicts(t *testing.T) {
 		t.Fatal("a refused save changed the file")
 	}
 	// A missing baseRev is not the current rev either.
-	if _, err := s.Save(p.ID, "", p.Meta, "x"); !errors.As(err, &ce) {
+	if _, err := s.Save(Author{}, p.ID, "", p.Meta, "x"); !errors.As(err, &ce) {
 		t.Fatalf("empty baseRev: %v", err)
 	}
 	// A change made outside the server is noticed the same way.
 	if err := os.WriteFile(filepath.Join(s.Root(), "T.md"), []byte("---\nid: "+p.ID+"\n---\nedited elsewhere\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Save(p.ID, ce.Current.Rev, p.Meta, "x"); !errors.As(err, &ce) || ce.Current.Body != "edited elsewhere\n" {
+	if _, err := s.Save(Author{}, p.ID, ce.Current.Rev, p.Meta, "x"); !errors.As(err, &ce) || ce.Current.Body != "edited elsewhere\n" {
 		t.Fatalf("external edit: %v", err)
 	}
 }
@@ -349,22 +349,22 @@ func TestSaveValidation(t *testing.T) {
 	s := open(t)
 	p := mustCreate(t, s, "", meta("title", "T"), "b")
 	var inv *InvalidError
-	if _, err := s.Save(p.ID, p.Rev, meta("id", "ZZZZZZZZZZ"), "b"); !errors.As(err, &inv) {
+	if _, err := s.Save(Author{}, p.ID, p.Rev, meta("id", "ZZZZZZZZZZ"), "b"); !errors.As(err, &inv) {
 		t.Fatalf("id mismatch: %v", err)
 	}
-	if _, err := s.Save(p.ID, p.Rev, nil, "bad \xff utf8"); !errors.As(err, &inv) {
+	if _, err := s.Save(Author{}, p.ID, p.Rev, nil, "bad \xff utf8"); !errors.As(err, &inv) {
 		t.Fatalf("invalid utf-8: %v", err)
 	}
-	if _, err := s.Create(CreateInput{Body: "bad \xff"}); !errors.As(err, &inv) {
+	if _, err := s.Create(Author{}, CreateInput{Body: "bad \xff"}); !errors.As(err, &inv) {
 		t.Fatalf("create invalid utf-8: %v", err)
 	}
-	if _, err := s.Save("0000000000", "x", nil, ""); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Save(Author{}, "0000000000", "x", nil, ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown page: %v", err)
 	}
 	// An unchanged save is not a write.
 	st1, _ := os.Stat(filepath.Join(s.Root(), p.Path))
 	time.Sleep(10 * time.Millisecond)
-	same, err := s.Save(p.ID, p.Rev, p.Meta, p.Body)
+	same, err := s.Save(Author{}, p.ID, p.Rev, p.Meta, p.Body)
 	st2, _ := os.Stat(filepath.Join(s.Root(), p.Path))
 	if err != nil || same.Rev != p.Rev || !st1.ModTime().Equal(st2.ModTime()) {
 		t.Fatalf("no-op save wrote the file: %v", err)
@@ -375,18 +375,18 @@ func TestMoveAndDelete(t *testing.T) {
 	s := open(t)
 	a := mustCreate(t, s, "x", meta("title", "A"), "")
 	mustCreate(t, s, "y/z", meta("title", "A"), "") // the name is taken there
-	m, err := s.Move(a.ID, "y/z")
+	m, err := s.Move(Author{}, a.ID, "y/z")
 	if err != nil || m.Path != "y/z/A 2.md" || m.Folder != "y/z" || exists(s, a.Path) {
 		t.Fatalf("%v %+v", err, m)
 	}
 	if m.ID != a.ID || m.Rev != a.Rev { // moving does not change the bytes
 		t.Fatalf("%+v", m)
 	}
-	n, err := s.Move(a.ID, "")
+	n, err := s.Move(Author{}, a.ID, "")
 	if err != nil || n.Path != "A.md" {
 		t.Fatalf("%v %+v", err, n)
 	}
-	same, err := s.Move(a.ID, "")
+	same, err := s.Move(Author{}, a.ID, "")
 	if err != nil || same.Path != "A.md" {
 		t.Fatalf("%v %+v", err, same)
 	}
@@ -401,11 +401,11 @@ func TestMoveAndDelete(t *testing.T) {
 	if len(want) != 0 {
 		t.Fatalf("missing folders %v", want)
 	}
-	if _, err := s.Move("0000000000", "q"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Move(Author{}, "0000000000", "q"); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
 
-	if err := s.Delete(a.ID); err != nil {
+	if err := s.Delete(Author{}, a.ID); err != nil {
 		t.Fatal(err)
 	}
 	if exists(s, "A.md") {
@@ -414,7 +414,7 @@ func TestMoveAndDelete(t *testing.T) {
 	if _, err := s.Get(a.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("%v", err)
 	}
-	if err := s.Delete(a.ID); !errors.Is(err, ErrNotFound) {
+	if err := s.Delete(Author{}, a.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second delete: %v", err)
 	}
 	if r, _ := s.List(index.Query{Text: "A"}); len(r.Items) != 1 { // the other "A" page
@@ -424,13 +424,13 @@ func TestMoveAndDelete(t *testing.T) {
 
 func TestFolders(t *testing.T) {
 	s := open(t)
-	if _, err := s.CreateFolder("随笔/2027"); err != nil {
+	if _, err := s.CreateFolder(Author{}, "随笔/2027"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateFolder("随笔/2027"); !errors.Is(err, ErrExists) {
+	if _, err := s.CreateFolder(Author{}, "随笔/2027"); !errors.Is(err, ErrExists) {
 		t.Fatalf("%v", err)
 	}
-	if _, err := s.CreateFolder(""); !errors.Is(err, ErrExists) {
+	if _, err := s.CreateFolder(Author{}, ""); !errors.Is(err, ErrExists) {
 		t.Fatalf("root: %v", err)
 	}
 	tree, _ := s.Tree()
@@ -466,13 +466,13 @@ func TestPathTraversalIsRejected(t *testing.T) {
 	bad := []string{"..", "../x", "a/../../x", "a/..", "/abs", "/", "a//b", "a/", "./a", "a/./b", ".git", ".petalbook/x", ".hidden", "assets", "assets/x", `a\..\b`, "a/b\x00c", "C:/x", "a/b?", "x ", "..."}
 	for _, f := range bad {
 		var inv *InvalidError
-		if _, err := s.Create(CreateInput{Folder: f}); !errors.As(err, &inv) {
+		if _, err := s.Create(Author{}, CreateInput{Folder: f}); !errors.As(err, &inv) {
 			t.Errorf("Create(%q): %v", f, err)
 		}
-		if _, err := s.Move(p.ID, f); !errors.As(err, &inv) {
+		if _, err := s.Move(Author{}, p.ID, f); !errors.As(err, &inv) {
 			t.Errorf("Move(%q): %v", f, err)
 		}
-		if _, err := s.CreateFolder(f); !errors.As(err, &inv) {
+		if _, err := s.CreateFolder(Author{}, f); !errors.As(err, &inv) {
 			t.Errorf("CreateFolder(%q): %v", f, err)
 		}
 	}
@@ -488,16 +488,16 @@ func TestPathTraversalIsRejected(t *testing.T) {
 		t.Skip("symlinks not available")
 	}
 	var inv *InvalidError
-	if _, err := s.Create(CreateInput{Folder: "link"}); !errors.As(err, &inv) {
+	if _, err := s.Create(Author{}, CreateInput{Folder: "link"}); !errors.As(err, &inv) {
 		t.Errorf("create through link: %v", err)
 	}
-	if _, err := s.Create(CreateInput{Folder: "link/sub"}); !errors.As(err, &inv) {
+	if _, err := s.Create(Author{}, CreateInput{Folder: "link/sub"}); !errors.As(err, &inv) {
 		t.Errorf("create through link/sub: %v", err)
 	}
-	if _, err := s.Move(p.ID, "link"); !errors.As(err, &inv) {
+	if _, err := s.Move(Author{}, p.ID, "link"); !errors.As(err, &inv) {
 		t.Errorf("move through link: %v", err)
 	}
-	if _, err := s.CreateFolder("link/new"); !errors.As(err, &inv) {
+	if _, err := s.CreateFolder(Author{}, "link/new"); !errors.As(err, &inv) {
 		t.Errorf("folder through link: %v", err)
 	}
 	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
@@ -591,7 +591,7 @@ func TestRevMatchesGitAndKeepsCRLFFilesReadable(t *testing.T) {
 		t.Fatalf("%+v", g)
 	}
 	// Saving normalises the line ends and gives the new blob id.
-	n, err := s.Save(g.ID, g.Rev, g.Meta, g.Body+"三\n")
+	n, err := s.Save(Author{}, g.ID, g.Rev, g.Meta, g.Body+"三\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -607,7 +607,7 @@ func TestWritesLeaveNothingBehind(t *testing.T) {
 	s := open(t)
 	for i := 0; i < 5; i++ {
 		p := mustCreate(t, s, "f", meta("title", fmt.Sprint("t", i)), "x")
-		if _, err := s.Save(p.ID, p.Rev, meta("title", fmt.Sprint("u", i)), "y"); err != nil {
+		if _, err := s.Save(Author{}, p.ID, p.Rev, meta("title", fmt.Sprint("u", i)), "y"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -648,7 +648,7 @@ func TestConcurrentWritersAndReaders(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := s.Save(base.ID, base.Rev, meta("title", "共享"), fmt.Sprintf("writer %d\n", i))
+			_, err := s.Save(Author{}, base.ID, base.Rev, meta("title", "共享"), fmt.Sprintf("writer %d\n", i))
 			var ce *ConflictError
 			switch {
 			case err == nil:
@@ -671,16 +671,16 @@ func TestConcurrentWritersAndReaders(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < 8; i++ {
-				p, err := s.Create(CreateInput{Folder: fmt.Sprint("f", w%2), Meta: meta("title", "同名", "tags", []any{"x"}), Body: "栀子\n"})
+				p, err := s.Create(Author{}, CreateInput{Folder: fmt.Sprint("f", w%2), Meta: meta("title", "同名", "tags", []any{"x"}), Body: "栀子\n"})
 				if err != nil {
 					t.Errorf("create: %v", err)
 					return
 				}
-				if p, err = s.Save(p.ID, p.Rev, meta("title", fmt.Sprint("改", w, i)), "改\n"); err != nil {
+				if p, err = s.Save(Author{}, p.ID, p.Rev, meta("title", fmt.Sprint("改", w, i)), "改\n"); err != nil {
 					t.Errorf("save: %v", err)
 					return
 				}
-				if _, err := s.Move(p.ID, "g"); err != nil {
+				if _, err := s.Move(Author{}, p.ID, "g"); err != nil {
 					t.Errorf("move: %v", err)
 					return
 				}

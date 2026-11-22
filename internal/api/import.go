@@ -73,7 +73,7 @@ func (s *server) importMarkdown(c *call) {
 		}
 		items[i] = it
 	}
-	pages, files, err := c.sp.Space.Import(folder, items)
+	pages, files, err := c.sp.Space.Import(s.author(c), folder, items)
 	if err != nil {
 		s.fail(c.w, err)
 		return

@@ -280,10 +280,10 @@ func Open(opt Options) (*Space, error) {
 		for i, p := range ours {
 			recs[i] = jrec{Op: "t", Path: p}
 		}
-		if err := s.cm.Record(recs...); err != nil {
+		if err := s.cm.Record(Author{}, recs...); err != nil {
 			return nil, err
 		}
-		s.cm.Touch(ours...) // commit the files we just made, and nothing else
+		s.cm.Touch(Author{}, ours...) // commit the files we just made, and nothing else
 	}
 	return s, nil
 }
@@ -301,7 +301,8 @@ func (s *Space) Root() string { return s.root }
 // StateDir is where the index and the commit journal are kept.
 func (s *Space) StateDir() string { return s.stateDir }
 
-// SetAuthor changes the Git author of later commits. The committer stays the service.
+// SetAuthor changes the default author: whom later commits are for when the
+// change names nobody (the zero Author). The committer stays the service.
 func (s *Space) SetAuthor(name, email string) { s.cm.git.setAuthor(name, email) }
 
 // Close commits what is still uncommitted, stops the committer and closes the

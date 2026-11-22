@@ -36,7 +36,14 @@ type jrec struct {
 	// Dir marks an "r" record of a folder: its files are journaled one by
 	// one, and the folder's own names are not paths to commit.
 	Dir bool `json:"dir,omitempty"`
+	// AuthorName and AuthorEmail say who made the change, so a commit after a
+	// crash is still theirs. Journals from before authors were recorded have
+	// neither: those changes get the space's default author.
+	AuthorName  string `json:"an,omitempty"`
+	AuthorEmail string `json:"ae,omitempty"`
 }
+
+func (r jrec) author() Author { return Author{r.AuthorName, r.AuthorEmail} }
 
 // journal is an append-only file in the state directory. Every append is
 // fsynced before the write it announces. After a successful commit it is
@@ -85,12 +92,18 @@ func (j *journal) append(recs ...jrec) error {
 	return j.f.Sync()
 }
 
-// rewrite replaces the journal by a list of pending paths, atomically.
-func (j *journal) rewrite(paths []string) error {
+// rewrite replaces the journal by the pending paths, each with its author,
+// atomically.
+func (j *journal) rewrite(pending map[string]Author) error {
+	paths := make([]string, 0, len(pending))
+	for p := range pending {
+		paths = append(paths, p)
+	}
 	sort.Strings(paths)
 	var buf bytes.Buffer
 	for _, p := range paths {
-		b, _ := json.Marshal(jrec{Op: "t", Path: p})
+		by := pending[p]
+		b, _ := json.Marshal(jrec{Op: "t", Path: p, AuthorName: by.Name, AuthorEmail: by.Email})
 		buf.Write(b)
 		buf.WriteByte('\n')
 	}
@@ -125,19 +138,22 @@ func (j *journal) close() error {
 }
 
 // recoverPending turns the records of an earlier run into the paths the next
-// commit must cover, and finishes a move the crash interrupted. Paths that no
-// longer exist are fine: they become deletions. A record naming a path outside
-// the space (the journal is a file on disk) is ignored.
-func recoverPending(root string, recs []jrec) []string {
-	set := map[string]bool{}
+// commit must cover, each with the author of the last record that names it
+// (as in the committer: the latest change to a path is the one that counts),
+// and finishes a move the crash interrupted. Paths that no longer exist are
+// fine: they become deletions. A record naming a path outside the space (the
+// journal is a file on disk) is ignored.
+func recoverPending(root string, recs []jrec) map[string]Author {
+	set := map[string]Author{}
 	ok := func(p string) bool {
 		return p != "" && fs.ValidPath(p) && !strings.HasPrefix(p, ".git/") && p != ".git"
 	}
 	for _, r := range recs {
+		by := r.author()
 		switch r.Op {
 		case "t", "d":
 			if ok(r.Path) {
-				set[r.Path] = true
+				set[r.Path] = by
 			}
 		case "w":
 			if !ok(r.Path) {
@@ -145,30 +161,25 @@ func recoverPending(root string, recs []jrec) []string {
 			}
 			data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(r.Path)))
 			if err == nil && page.Rev(data) == r.Rev {
-				set[r.Path] = true
+				set[r.Path] = by
 			}
 		case "m":
 			if !ok(r.From) || !ok(r.To) {
 				continue
 			}
 			finishMove(root, r.From, r.To)
-			set[r.From], set[r.To] = true, true
+			set[r.From], set[r.To] = by, by
 		case "r":
 			if !ok(r.From) || !ok(r.To) || !ok(r.Path) {
 				continue
 			}
 			finishRespell(root, r.Path, r.To)
 			if !r.Dir {
-				set[r.From], set[r.To], set[r.Path] = true, true, true
+				set[r.From], set[r.To], set[r.Path] = by, by, by
 			}
 		}
 	}
-	out := make([]string, 0, len(set))
-	for p := range set {
-		out = append(out, p)
-	}
-	sort.Strings(out)
-	return out
+	return set
 }
 
 // listed reports whether dir has an entry named exactly name.

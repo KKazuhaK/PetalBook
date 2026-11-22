@@ -30,7 +30,7 @@ type ImportPage struct {
 // commit, and in a space that follows a remote one push, or nothing at all.
 // Nothing that exists is replaced. It returns how many pages and files it
 // made.
-func (s *Space) Import(folder string, items []ImportPage) (pages, files int, err error) {
+func (s *Space) Import(by Author, folder string, items []ImportPage) (pages, files int, err error) {
 	if err := checkRel(folder); err != nil {
 		return 0, 0, err
 	}
@@ -55,7 +55,7 @@ func (s *Space) Import(folder string, items []ImportPage) (pages, files int, err
 		}
 	}
 	type made struct{ pages, files int }
-	m, err := mutate(s, func(tx *txn) (made, error) {
+	m, err := mutate(s, by, func(tx *txn) (made, error) {
 		var m made
 		for _, it := range items {
 			in := CreateInput{Folder: path.Join(folder, it.Folder)}

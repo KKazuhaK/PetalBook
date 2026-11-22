@@ -60,7 +60,7 @@ func (s *server) putAsset(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "the file is empty")
 		return
 	}
-	a, err := c.sp.Space.PutAsset(id, name, data)
+	a, err := c.sp.Space.PutAsset(s.author(c), id, name, data)
 	if err != nil {
 		s.fail(c.w, err)
 		return

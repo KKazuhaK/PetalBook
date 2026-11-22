@@ -7,6 +7,7 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/auth"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/perm"
+	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
@@ -71,6 +72,10 @@ type call struct {
 }
 
 func (c *call) user() store.User { return c.p.User }
+
+// author is who a change by the caller is credited to in the space's history
+// (see spaces.Manager.AuthorOf).
+func (s *server) author(c *call) space.Author { return s.spaces.AuthorOf(c.user()) }
 
 type route struct {
 	method, pattern string

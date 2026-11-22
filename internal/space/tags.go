@@ -165,7 +165,7 @@ func (s *Space) TagColors() map[string]string {
 // tag need not be in use. Everything else in the file stays as it is. A file
 // that cannot be read is not replaced: the answer says it must be fixed by
 // hand. The change is committed like any other.
-func (s *Space) SetTagColor(tag, color string) error {
+func (s *Space) SetTagColor(by Author, tag, color string) error {
 	switch {
 	case strings.TrimSpace(tag) == "" || !utf8.ValidString(tag) || len(tag) > MaxTagBytes || strings.ContainsAny(tag, "\x00\n\r"):
 		return invalidf("that is not a tag")
@@ -176,7 +176,7 @@ func (s *Space) SetTagColor(tag, color string) error {
 		}
 		color = c
 	}
-	_, err := mutate(s, func(tx *txn) (struct{}, error) {
+	_, err := mutate(s, by, func(tx *txn) (struct{}, error) {
 		doc, err := s.loadTags()
 		if errors.Is(err, errTagsFile) {
 			return struct{}{}, invalidf("%s is not something the server can read (it must be YAML with keys at the top, a regular file, under 1 MiB); it was left as it is and has to be fixed by hand", tagsFile)
@@ -243,7 +243,7 @@ func (s *Space) SetTagColor(tag, color string) error {
 				return struct{}{}, err
 			}
 		}
-		if err := s.cm.Record(jrec{Op: "t", Path: tagsFile}); err != nil {
+		if err := tx.record(jrec{Op: "t", Path: tagsFile}); err != nil {
 			return struct{}{}, err
 		}
 		tx.touch(tagsFile)

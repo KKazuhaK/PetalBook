@@ -277,7 +277,7 @@ func TestCloseCommitsAndRefusesFurtherOpens(t *testing.T) {
 	u := addUser(t, st, "U1", "kazuha")
 	a, _ := m.Create(ctx, u.ID, "A")
 	h, _ := m.Open(ctx, u, a.ID)
-	if _, err := h.Space.Create(space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Unsaved"}}}); err != nil {
+	if _, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Unsaved"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.Close(); err != nil {
@@ -501,7 +501,7 @@ func TestIdleSpacesAreClosedFlushedAndReopened(t *testing.T) {
 		u := addUser(t, st, "U1", "kazuha")
 		a, _ := m.Create(ctx, u.ID, "A")
 		h, _ := m.Open(ctx, u, a.ID)
-		pg, err := h.Space.Create(space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Written"}}, Body: "x\n"})
+		pg, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Written"}}, Body: "x\n"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -553,7 +553,7 @@ func TestASpaceThatCannotFlushStaysOpenWithItsPendingChanges(t *testing.T) {
 	a, _ := m.Create(ctx, u.ID, "A")
 	root, _ := m.paths(a.ID)
 	h, _ := m.Open(ctx, u, a.ID)
-	if _, err := h.Space.Create(space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Pending"}}}); err != nil {
+	if _, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Pending"}}}); err != nil {
 		t.Fatal(err)
 	}
 	h.Release()
@@ -611,7 +611,7 @@ func TestACloseNeverRunsAlongsideAnOpenOfTheSameSpace(t *testing.T) {
 					t.Error(err)
 					return
 				}
-				if _, err := h.Space.Create(space.CreateInput{Meta: page.Meta{{Key: "title", Value: "x"}}}); err != nil {
+				if _, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "x"}}}); err != nil {
 					t.Error(err)
 				}
 				h.Release()
@@ -652,7 +652,7 @@ func TestCloseWaitsForSpacesThatRequestsStillHold(t *testing.T) {
 	released := make(chan struct{})
 	go func() {
 		time.Sleep(200 * time.Millisecond) // a request that is still working
-		if _, err := h.Space.Create(space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Finished"}}}); err != nil {
+		if _, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Finished"}}}); err != nil {
 			t.Error(err) // the space must still be open while the request holds it
 		}
 		close(released)
@@ -699,7 +699,7 @@ func TestCloseGivesUpOnAStuckRequestAndItsLaterWritesFailCleanly(t *testing.T) {
 		t.Fatalf("giving up was not logged:\n%s", logs.String())
 	}
 	// The request that arrives late is refused, and nothing is written.
-	if _, err := h.Space.Create(space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Late"}}}); !errors.Is(err, space.ErrClosed) {
+	if _, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Late"}}}); !errors.Is(err, space.ErrClosed) {
 		t.Fatalf("%v", err)
 	}
 	root, _ := m.paths(a.ID)

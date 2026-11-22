@@ -204,7 +204,7 @@ func TestConnectStoresTheCredentialEncryptedAndReopensAsARemoteSpace(t *testing.
 			t.Fatalf("%+v", l)
 		}
 		// A page made now is pushed; then the server restarts.
-		p, err := h.Space.Create(space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Pushed"}}})
+		p, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Pushed"}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -417,7 +417,7 @@ func TestRewrittenHistoryThroughTheManager(t *testing.T) {
 		if _, err := f.m.Connect(ctx, h, tokenReq(remote)); err != nil {
 			t.Fatal(err)
 		}
-		p, _ := h.Space.Create(space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Old"}}})
+		p, _ := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Old"}}})
 		other := filepath.Join(t.TempDir(), "o")
 		runGit(t, t.TempDir(), "clone", "-q", remote, other)
 		runGit(t, other, "checkout", "-q", "--orphan", "fresh")
@@ -435,7 +435,7 @@ func TestRewrittenHistoryThroughTheManager(t *testing.T) {
 		if l, _ := f.m.List(ctx, f.user.ID); l[0].Sync != "rewritten" {
 			t.Fatal(l[0].Sync)
 		}
-		if _, err := h.Space.Create(space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Nope"}}}); err == nil {
+		if _, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Nope"}}}); err == nil {
 			t.Fatal("a change was accepted while paused")
 		}
 		if got, err := h.Space.Get(p.ID); err != nil || got.Meta.Title() != "Old" {

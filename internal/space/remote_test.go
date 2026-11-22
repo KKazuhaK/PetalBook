@@ -298,7 +298,7 @@ func TestEveryChangeIsPushedBeforeItIsAnswered(t *testing.T) {
 	if who := git(t, f.remote, "log", "-1", "--format=%an <%ae>|%cn <%ce>"); who != "Ann <ann@example.test>|Service <svc@example.test>" {
 		t.Fatalf("author and committer: %q", who)
 	}
-	p2, err := f.s.Save(p.ID, p.Rev, meta("title", "暮雪"), "v2\n")
+	p2, err := f.s.Save(Author{}, p.ID, p.Rev, meta("title", "暮雪"), "v2\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,14 +306,14 @@ func TestEveryChangeIsPushedBeforeItIsAnswered(t *testing.T) {
 		t.Fatalf("save: %v", got)
 	}
 	// A rename by a new title is one commit that moves the file.
-	p3, err := f.s.Save(p.ID, p2.Rev, meta("title", "夜雪"), "v2\n")
+	p3, err := f.s.Save(Author{}, p.ID, p2.Rev, meta("title", "夜雪"), "v2\n")
 	if err != nil || p3.Path != "Tang/夜雪.md" {
 		t.Fatalf("%v %v", p3, err)
 	}
 	if got := f.remoteLog(); len(got) != 4 {
 		t.Fatalf("rename: %v", got)
 	}
-	if _, err := f.s.Move(p.ID, "随笔"); err != nil {
+	if _, err := f.s.Move(Author{}, p.ID, "随笔"); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.remoteLog(); len(got) != 5 || got[0] != "Move 夜雪" {
@@ -322,7 +322,7 @@ func TestEveryChangeIsPushedBeforeItIsAnswered(t *testing.T) {
 	if files := git(t, f.remote, "-c", "core.quotepath=false", "ls-tree", "-r", "--name-only", "main"); !strings.Contains(files, "随笔/夜雪.md") || strings.Contains(files, "Tang") {
 		t.Fatalf("remote files:\n%s", files)
 	}
-	if err := f.s.Delete(p.ID); err != nil {
+	if err := f.s.Delete(Author{}, p.ID); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.remoteLog(); len(got) != 6 || got[0] != "Delete 夜雪" {
@@ -401,7 +401,7 @@ func TestReplayThatConflictsAnswersTheOrdinaryConflict(t *testing.T) {
 		})
 	}
 	before := snapshot(t, f.s)
-	_, err := f.s.Save(p.ID, p.Rev, meta("title", "Shared"), "my edit\n")
+	_, err := f.s.Save(Author{}, p.ID, p.Rev, meta("title", "Shared"), "my edit\n")
 	var ce *ConflictError
 	if !errors.As(err, &ce) {
 		t.Fatalf("want a conflict, got %v", err)
@@ -426,7 +426,7 @@ func TestReplayThatConflictsAnswersTheOrdinaryConflict(t *testing.T) {
 func TestPushWhoseAnswerWasLostIsNotAFailureAndNotRepeated(t *testing.T) {
 	f := newRemoteSpace(t)
 	f.net.losePush = true
-	p, err := f.s.Create(CreateInput{Meta: meta("title", "Lost answer"), Body: "x\n"})
+	p, err := f.s.Create(Author{}, CreateInput{Meta: meta("title", "Lost answer"), Body: "x\n"})
 	f.net.losePush = false
 	if err != nil {
 		t.Fatalf("the change landed, so it must succeed: %v", err)
@@ -474,13 +474,13 @@ func TestUnreachableRemoteUndoesTheChangeCompletely(t *testing.T) {
 				}
 				consistent(t, f.s)
 			}
-			_, err := f.s.Create(CreateInput{Folder: "New/Deep", Meta: meta("title", "Fresh"), Body: "n\n"})
+			_, err := f.s.Create(Author{}, CreateInput{Folder: "New/Deep", Meta: meta("title", "Fresh"), Body: "n\n"})
 			unavailable("create into a new folder", err)
-			_, err = f.s.Save(a.ID, a.Rev, meta("title", "Alpha edited"), "a2\n") // content and file name
+			_, err = f.s.Save(Author{}, a.ID, a.Rev, meta("title", "Alpha edited"), "a2\n") // content and file name
 			unavailable("save with a rename", err)
-			_, err = f.s.Move(b.ID, "Moved/To/Here")
+			_, err = f.s.Move(Author{}, b.ID, "Moved/To/Here")
 			unavailable("move into a new folder", err)
-			unavailable("delete", f.s.Delete(c.ID))
+			unavailable("delete", f.s.Delete(Author{}, c.ID))
 			// Reads kept working all along, and the status says why.
 			if p, err := f.s.Get(a.ID); err != nil || p.Body != "a\n" {
 				t.Fatal("a read failed while the remote was down")
@@ -491,7 +491,7 @@ func TestUnreachableRemoteUndoesTheChangeCompletely(t *testing.T) {
 			// When the remote is back the same changes go through.
 			f.net.beforePush = nil
 			f.net.setDown(false)
-			if _, err := f.s.Save(a.ID, a.Rev, meta("title", "Alpha edited"), "a2\n"); err != nil {
+			if _, err := f.s.Save(Author{}, a.ID, a.Rev, meta("title", "Alpha edited"), "a2\n"); err != nil {
 				t.Fatal(err)
 			}
 			if st := f.last(); st.State != RemoteOK || st.Error != "" {
@@ -515,7 +515,7 @@ func TestFetchIsSkippedRightAfterAnotherAndFailuresAreAnsweredFast(t *testing.T)
 	f.s.Pull(context.Background(), true)
 	n := f.net.count("fetch")
 	for i := 0; i < 3; i++ {
-		if _, err := f.s.Create(CreateInput{Meta: meta("title", "x")}); err == nil {
+		if _, err := f.s.Create(Author{}, CreateInput{Meta: meta("title", "x")}); err == nil {
 			t.Fatal("no error")
 		}
 	}
@@ -548,10 +548,10 @@ func TestRewrittenHistoryPausesChangesAndAcceptingResumesThem(t *testing.T) {
 		t.Fatalf("status %+v", st)
 	}
 	// Writes are refused; reads keep serving what the server had.
-	if _, err := f.s.Create(CreateInput{Meta: meta("title", "Nope")}); !errors.As(err, &ue) {
+	if _, err := f.s.Create(Author{}, CreateInput{Meta: meta("title", "Nope")}); !errors.As(err, &ue) {
 		t.Fatalf("create while paused: %v", err)
 	}
-	if _, err := f.s.Save(p.ID, p.Rev, meta("title", "Kept"), "x\n"); !errors.As(err, &ue) {
+	if _, err := f.s.Save(Author{}, p.ID, p.Rev, meta("title", "Kept"), "x\n"); !errors.As(err, &ue) {
 		t.Fatalf("save while paused: %v", err)
 	}
 	if got, err := f.s.Get(p.ID); err != nil || got.Body != "old\n" {
@@ -585,7 +585,7 @@ func TestRewrittenHistoryPausesChangesAndAcceptingResumesThem(t *testing.T) {
 	if err := f.s.Accept(context.Background(), newTip); !errors.Is(err, ErrNothingToAccept) {
 		t.Fatalf("a second accept: %v", err)
 	}
-	if _, err := f.s.Create(CreateInput{Meta: meta("title", "After")}); err != nil {
+	if _, err := f.s.Create(Author{}, CreateInput{Meta: meta("title", "After")}); err != nil {
 		t.Fatalf("writes did not resume: %v", err)
 	}
 	consistent(t, f.s)
@@ -701,7 +701,7 @@ func TestReadsDoNotWaitForTheNetwork(t *testing.T) {
 	f.net.beforePush = func() { once.Do(func() { close(reached) }); <-release }
 	done := make(chan error, 1)
 	go func() {
-		_, err := f.s.Create(CreateInput{Meta: meta("title", "Slow push")})
+		_, err := f.s.Create(Author{}, CreateInput{Meta: meta("title", "Slow push")})
 		done <- err
 	}()
 	select {
@@ -745,7 +745,7 @@ func TestReadsDoNotWaitForTheNetwork(t *testing.T) {
 	}
 	// A second change does wait for the first.
 	second := make(chan error, 1)
-	go func() { _, err := f.s.Create(CreateInput{Meta: meta("title", "Second")}); second <- err }()
+	go func() { _, err := f.s.Create(Author{}, CreateInput{Meta: meta("title", "Second")}); second <- err }()
 	select {
 	case <-second:
 		t.Fatal("a second change did not wait for the push in progress")
@@ -793,7 +793,7 @@ func TestEmptyFoldersStayOnTheServer(t *testing.T) {
 	f := newRemoteSpace(t)
 	before := f.remoteLog()
 	subs := len(f.net.subs)
-	got, err := f.s.CreateFolder("Drafts/2027")
+	got, err := f.s.CreateFolder(Author{}, "Drafts/2027")
 	if err != nil || got != "Drafts/2027" {
 		t.Fatalf("%q %v", got, err)
 	}
@@ -814,7 +814,7 @@ func TestEmptyFoldersStayOnTheServer(t *testing.T) {
 	if !found {
 		t.Fatal("the folder is not listed")
 	}
-	if _, err := f.s.CreateFolder("Drafts/2027"); !errors.Is(err, ErrExists) {
+	if _, err := f.s.CreateFolder(Author{}, "Drafts/2027"); !errors.Is(err, ErrExists) {
 		t.Fatalf("%v", err)
 	}
 	// A page can be made in it, and then it is carried like any folder.
@@ -823,7 +823,7 @@ func TestEmptyFoldersStayOnTheServer(t *testing.T) {
 		t.Fatalf("%s", files)
 	}
 	// A server-only folder survives a reopen.
-	f.s.CreateFolder("Only here")
+	f.s.CreateFolder(Author{}, "Only here")
 	f.reopen()
 	tree, _ = f.s.Tree()
 	found = false
@@ -874,7 +874,7 @@ func TestFolderThatCannotBeMovedBackIsLeftWhereItIsAndTheSpaceBlocked(t *testing
 		}
 		return rename(from, to)
 	}
-	_, err := f.s.MoveFolder("old", "new")
+	_, err := f.s.MoveFolder(Author{}, "old", "new")
 	var ue *UnavailableError
 	if !errors.As(err, &ue) {
 		t.Fatalf("%v", err)
@@ -890,7 +890,7 @@ func TestFolderThatCannotBeMovedBackIsLeftWhereItIsAndTheSpaceBlocked(t *testing
 	}
 	f.net.setDown(false)
 	f.net.beforePush = nil
-	if _, err := f.s.Create(CreateInput{Meta: meta("title", "Later")}); err == nil {
+	if _, err := f.s.Create(Author{}, CreateInput{Meta: meta("title", "Later")}); err == nil {
 		t.Fatal("a change was accepted in a space that could not undo the last one")
 	}
 }
