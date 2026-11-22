@@ -44,8 +44,12 @@ func gitTry(dir string, args ...string) (string, error) {
 func TestCommitAfterQuietPeriod(t *testing.T) {
 	needGit(t)
 	root := t.TempDir()
+	// The quiet period is long next to the 40 ms between the saves below: a save
+	// journals and syncs to disk, which on a slow disk under -race (CI's
+	// case-folding image) took longer than a shorter period, and the burst
+	// was split in two.
 	s := openAt(t, root, func(o *Options) {
-		o.CommitIdle, o.CommitMax = 150*time.Millisecond, time.Hour
+		o.CommitIdle, o.CommitMax = time.Second, time.Hour
 		o.Committer = "Ann Lee <ann@example.com>"
 	})
 	// Opening a new space commits the files the server made.
@@ -62,8 +66,9 @@ func TestCommitAfterQuietPeriod(t *testing.T) {
 		}
 		rev = n.Rev
 	}
-	eventually(t, "commit after the quiet period", 5*time.Second, func() bool { return len(commits(t, root)) == 2 })
-	time.Sleep(400 * time.Millisecond)
+	eventually(t, "commit after the quiet period", 10*time.Second, func() bool { return len(commits(t, root)) == 2 })
+	// Longer than the quiet period: nothing else is committed.
+	time.Sleep(1500 * time.Millisecond)
 	log := commits(t, root)
 	if len(log) != 2 || log[0] != "Add 暮雪" {
 		t.Fatalf("commits %q", log)
@@ -77,7 +82,7 @@ func TestCommitAfterQuietPeriod(t *testing.T) {
 
 	// The next edit is described as an edit; a rename and a move too.
 	n, _ := s.Save(p.ID, rev, meta("title", "暮雪"), "again\n")
-	eventually(t, "edit commit", 5*time.Second, func() bool { return len(commits(t, root)) == 3 })
+	eventually(t, "edit commit", 10*time.Second, func() bool { return len(commits(t, root)) == 3 })
 	if got := commits(t, root)[0]; got != "Edit 暮雪" {
 		t.Fatalf("%q", got)
 	}
@@ -85,7 +90,7 @@ func TestCommitAfterQuietPeriod(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "move commit", 5*time.Second, func() bool { return len(commits(t, root)) == 4 })
+	eventually(t, "move commit", 10*time.Second, func() bool { return len(commits(t, root)) == 4 })
 	if got := commits(t, root)[0]; got != "Move 暮雪" {
 		t.Fatalf("%q", got)
 	}
@@ -93,7 +98,7 @@ func TestCommitAfterQuietPeriod(t *testing.T) {
 	if err := s.Delete(m.ID); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "delete commit", 5*time.Second, func() bool { return len(commits(t, root)) == 5 })
+	eventually(t, "delete commit", 10*time.Second, func() bool { return len(commits(t, root)) == 5 })
 	if got := commits(t, root)[0]; got != "Delete 暮雪" {
 		t.Fatalf("%q", got)
 	}
