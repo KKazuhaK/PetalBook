@@ -633,7 +633,7 @@ Query parameters, all optional:
 |---|---|
 | `folder` | only pages directly in this folder (empty string = root) |
 | `recursive` | `true` to include subfolders of `folder` |
-| `tag` | only pages with this tag (repeatable: all must match) |
+| `tag` | only pages with this tag (repeatable: all must match; at most 10 different tags, repeats count once, more is `400 invalid`) |
 | `q` | full-text search over title, subtitle, source and body |
 | `in` | with `q`: `title` searches titles only |
 | `updatedFrom`, `updatedTo` | only pages last written on or after / on or before this day (`2026-11-01`, UTC) |
@@ -732,7 +732,7 @@ the server since the index looked) has `""`.
 
 Needs `read`. How many pages of a folder or a tag have each value of a
 property, for the heads of the columns of a board. Parameters: `key` (required,
-the property), `folder` and `recursive`, `tag` (repeatable), `filter` (as for a
+the property), `folder` and `recursive`, `tag` (repeatable, at most 10 different), `filter` (as for a
 listing); a folder or a tag is required.
 
 ```json
@@ -752,7 +752,7 @@ follows the scope: the pages of the folder, or the pages of the (first) tag
 when there is no folder (about 60 ms for 50 000 pages in one folder, 100 ms for
 a list; under a millisecond for a small folder, or for a tag of a hundred
 pages, among them).
-`400 invalid` for a missing `key`, no folder and no tag, or a bad `filter`.
+`400 invalid` for a missing `key`, no folder and no tag, more than 10 different tags, or a bad `filter`.
 
 ### `GET /api/spaces/{space}/pages/{id}`
 

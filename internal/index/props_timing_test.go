@@ -264,3 +264,91 @@ func TestOptionOrderAndBoardInALargeFolder(t *testing.T) {
 	// A rare tag (100 pages) in the space of 50 000: its cost follows the tag.
 	measure("groups of status of a rare tag (100 pages)", groups(GroupQuery{Tags: []string{"rare"}, Key: "status"}))
 }
+
+// TestInAndGroupCostsInALargeSpace measures, in a space of 50 000 pages that
+// carry the tag "all", what the filters in and notIn with many values, the
+// groups of a board and a sort in option order cost, with the cache of groups
+// out of it: every write to the index clears the cache, so this is what a board
+// costs after each save. It runs only when asked for:
+//
+//	PETALBOOK_TIMING=1 go test -run Large -v ./internal/index/
+func TestInAndGroupCostsInALargeSpace(t *testing.T) {
+	if os.Getenv("PETALBOOK_TIMING") == "" {
+		t.Skip("set PETALBOOK_TIMING=1 to measure")
+	}
+	const pages = 50_000
+	x := openIndex(t)
+	m := newMem()
+	options := []string{"idea", "draft", "review", "done", "dropped"}
+	for i := 0; i < pages; i++ {
+		tags := "all"
+		if i%500 == 0 {
+			tags = "all, rare"
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "---\nid: %010d\ntitle: 页 %d\ntags: [%s]\nstatus: %s\nuid: u%d\nlabels: [%s, %s]\nname: n%d\n", i, i, tags, options[i*7%5], i%6556, options[i%5], options[(i*3+1)%5], i)
+		if i%9 != 0 {
+			fmt.Fprintf(&b, "points: %d\n", i%1000)
+		}
+		fmt.Fprintf(&b, "---\n正文 %d\n", i)
+		m.files[fmt.Sprintf("tasks/g%d/%05d.md", i%10, i)] = memFile{[]byte(b.String()), clock + int64(i)}
+	}
+	if _, err := x.Sync(m, false); err != nil {
+		t.Fatal(err)
+	}
+	folder := "tasks"
+	many := func(n int, prefix string) []any {
+		v := make([]any, n)
+		for i := range v {
+			v[i] = fmt.Sprintf("%s%d", prefix, i)
+		}
+		return v
+	}
+	measure := func(name string, f func() (int, error)) {
+		t.Helper()
+		var ds []time.Duration
+		n := 0
+		for i := 0; i < 7; i++ {
+			start := time.Now()
+			var err error
+			if n, err = f(); err != nil {
+				t.Fatal(err)
+			}
+			ds = append(ds, time.Since(start))
+		}
+		sortDurations(ds)
+		t.Logf("%-62s median %8v  worst %8v  (%d)", name, ds[len(ds)/2], ds[len(ds)-1], n)
+	}
+	list := func(q Query) func() (int, error) {
+		return func() (int, error) {
+			r, err := x.List(q)
+			return len(r.Items), err
+		}
+	}
+	groups := func(q GroupQuery) func() (int, error) {
+		return func() (int, error) {
+			r, err := x.countGroups(q)
+			return len(r.Groups) + r.Empty, err
+		}
+	}
+	notIn := []Filter{{Key: "status", Op: "notIn", Values: many(100, "x")}}
+	in := []Filter{{Key: "status", Op: "in", Values: many(100, "x")}}
+	rng := []Filter{{Key: "points", Op: "range", Values: []any{100, 200}}}
+	measure("recursive folder, status notIn 100 values", list(Query{Folder: &folder, Recursive: true, Limit: 20, Filters: notIn}))
+	measure("recursive folder, status in 100 values (no match)", list(Query{Folder: &folder, Recursive: true, Limit: 20, Filters: in}))
+	measure("recursive folder, name in 100 values (no match), sort title", list(Query{Folder: &folder, Recursive: true, Limit: 20, Sort: "title", Filters: []Filter{{Key: "name", Op: "in", Values: many(100, "x")}}}))
+	measure("tag all, status notIn 100 values", list(Query{Tags: []string{"all"}, Limit: 20, Filters: notIn}))
+	measure("groups of status, tag all + notIn 100 values", groups(GroupQuery{Tags: []string{"all"}, Key: "status", Filters: notIn}))
+	measure("groups of status, recursive folder + notIn 100 values", groups(GroupQuery{Folder: &folder, Recursive: true, Key: "status", Filters: notIn}))
+	measure("groups of status, recursive folder", groups(GroupQuery{Folder: &folder, Recursive: true, Key: "status"}))
+	measure("groups of status, tag all", groups(GroupQuery{Tags: []string{"all"}, Key: "status"}))
+	measure("groups of labels, tag all + points range", groups(GroupQuery{Tags: []string{"all"}, Key: "labels", Filters: rng}))
+	measure("groups of uid (6 556 values), recursive folder", groups(GroupQuery{Folder: &folder, Recursive: true, Key: "uid"}))
+	measure("groups of uid (6 556 values), tag all", groups(GroupQuery{Tags: []string{"all"}, Key: "uid"}))
+	contains := []Filter{{Key: "name", Op: "contains", Values: []any{"zzz"}}}
+	for _, sort := range []string{"prop:status", "-prop:status"} {
+		measure("option order "+sort+", contains (none), recursive folder", list(Query{Folder: &folder, Recursive: true, Limit: 20, Sort: sort, PropOptions: options, Filters: contains}))
+	}
+	measure("(for comparison) default sort, contains (none)", list(Query{Folder: &folder, Recursive: true, Limit: 20, Filters: contains}))
+	measure("option order prop:status, empty on uid (none)", list(Query{Folder: &folder, Recursive: true, Limit: 20, Sort: "prop:status", PropOptions: options, Filters: []Filter{{Key: "uid", Op: "empty"}}}))
+}

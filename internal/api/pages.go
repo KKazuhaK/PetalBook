@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -17,9 +18,35 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/space"
 )
 
+// maxQueryTags is the most different tags a listing or a count may ask for:
+// each is a condition in the query.
+const maxQueryTags = 10
+
+// queryTags reads the repeated tag parameter without its duplicates, and
+// reports false when more than maxQueryTags different tags are given.
+func queryTags(v url.Values) ([]string, bool) {
+	var out []string
+	seen := map[string]bool{}
+	for _, t := range v["tag"] {
+		if seen[t] {
+			continue
+		}
+		if seen[t] = true; len(out) == maxQueryTags {
+			return nil, false
+		}
+		out = append(out, t)
+	}
+	return out, true
+}
+
 func (s *server) listPages(c *call) {
 	v := c.r.URL.Query()
-	q := index.Query{Tags: v["tag"], Text: v.Get("q"), Sort: v.Get("sort"), Cursor: v.Get("cursor")}
+	tags, ok := queryTags(v)
+	if !ok {
+		writeError(c.w, http.StatusBadRequest, "invalid", fmt.Sprintf("at most %d different tags", maxQueryTags))
+		return
+	}
+	q := index.Query{Tags: tags, Text: v.Get("q"), Sort: v.Get("sort"), Cursor: v.Get("cursor")}
 	if v.Has("folder") {
 		f := v.Get("folder")
 		if err := space.ValidFolder(f); err != nil {

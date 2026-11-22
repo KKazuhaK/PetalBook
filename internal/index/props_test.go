@@ -460,7 +460,7 @@ func TestFilterSubqueriesLookUpByPrimaryKey(t *testing.T) {
 	f := func(key, op string, v ...any) Filter { return Filter{Key: key, Op: op, Values: v} }
 	for _, fl := range []Filter{
 		f("points", "range", 5, 20), f("points", "range", 5, nil), f("points", "range", nil, 20),
-		f("status", "in", "draft"), f("status", "notIn", "done"), f("status", "empty"),
+		f("status", "in", "draft"), f("status", "in", "draft", "done", "x"), f("status", "notIn", "done"), f("status", "notIn", "done", "idea"), f("status", "empty"),
 		f("status", "notEmpty"), f("name", "contains", "n1"),
 	} {
 		fs := []Filter{fl}
@@ -468,23 +468,32 @@ func TestFilterSubqueriesLookUpByPrimaryKey(t *testing.T) {
 			t.Fatalf("%+v: %v", fl, err)
 		}
 		cond, args := fs[0].sql()
-		rows, err := x.db.Query(`EXPLAIN QUERY PLAN SELECT p.rowid FROM pages p WHERE `+cond, args...)
-		if err != nil {
-			t.Fatalf("%+v: %v", fl, err)
-		}
-		var plan []string
-		for rows.Next() {
-			var id, parent, unused int
-			var detail string
-			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
-				t.Fatal(err)
+		folder := "f"
+		for name, sc := range map[string]struct {
+			folder *string
+			rec    bool
+			tags   []string
+		}{"no scope": {}, "folder": {&folder, false, nil}, "recursive": {&folder, true, nil}, "tag": {nil, false, []string{"a"}}, "folder and tag": {&folder, true, []string{"a", "b"}}} {
+			where, wargs := scopeConds(sc.folder, sc.rec, sc.tags)
+			where = append(where, cond)
+			rows, err := x.db.Query(`EXPLAIN QUERY PLAN SELECT p.rowid FROM pages p WHERE `+strings.Join(where, ` AND `), append(wargs, args...)...)
+			if err != nil {
+				t.Fatalf("%+v: %v", fl, err)
 			}
-			plan = append(plan, detail)
-		}
-		rows.Close()
-		all := strings.Join(plan, "\n")
-		if strings.Contains(all, "props_skey") || !strings.Contains(all, "page=?") {
-			t.Errorf("%s %+v: the subquery is not a lookup by page:\n%s", fl.Op, fl.Values, all)
+			var plan []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+					t.Fatal(err)
+				}
+				plan = append(plan, detail)
+			}
+			rows.Close()
+			all := strings.Join(plan, "\n")
+			if strings.Contains(all, "props_skey") || strings.Contains(all, "props_val") || !strings.Contains(all, "page=?") {
+				t.Errorf("%s %+v (%s): the subquery is not a lookup by page:\n%s", fl.Op, fl.Values, name, all)
+			}
 		}
 	}
 }

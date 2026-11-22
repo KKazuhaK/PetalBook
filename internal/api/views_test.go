@@ -214,6 +214,33 @@ func viewsScenario(t *testing.T, base string, owner, editor, viewer caller, refu
 		t.Errorf("a tag: %d %v", code, gr)
 	}
 
+	// Only so many different tags are a scope; repeats are one tag.
+	tagQ := func(n int, dup bool) string {
+		var b strings.Builder
+		for i := 0; i < n; i++ {
+			fmt.Fprintf(&b, "&tag=t%d", i)
+			if dup {
+				fmt.Fprintf(&b, "&tag=t%d", i)
+			}
+		}
+		return b.String()
+	}
+	if code, r := g(viewer, "key=status"+tagQ(10, true)); code != 200 {
+		t.Errorf("10 different tags, each twice: %d %v", code, r)
+	}
+	if code, r := g(viewer, "key=status"+tagQ(11, false)); code != 400 || r["error"] != "invalid" {
+		t.Errorf("11 tags for groups: %d %v", code, r)
+	}
+	if code, r := g(viewer, "key=status"+tagQ(1000, false)); code != 400 || r["error"] != "invalid" {
+		t.Errorf("1000 tags for groups: %d %v", code, r)
+	}
+	if code, r := viewer("GET", base+"/pages?limit=5"+tagQ(10, true), nil); code != 200 {
+		t.Errorf("10 different tags, each twice, listed: %d %v", code, r)
+	}
+	if code, r := viewer("GET", base+"/pages?limit=5"+tagQ(11, false), nil); code != 400 || r["error"] != "invalid" {
+		t.Errorf("11 tags for a listing: %d %v", code, r)
+	}
+
 	// --- the columns of a board are listings
 	items, _ := list(t, viewer, base, "folder="+url.QueryEscape("文案")+"&limit=20&filter="+url.QueryEscape(`[{"key":"status","op":"notIn","values":["草稿","修改中","定稿"]}]`))
 	if titlesOf(items) != "丁" {

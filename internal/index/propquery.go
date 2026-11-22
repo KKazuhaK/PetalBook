@@ -187,7 +187,9 @@ func boundKey(v any) (kind, key string, open, ok bool) {
 	return "", "", false, false
 }
 
-// sql is the condition on the page row p that the filter stands for.
+// sql is the condition on the page row p that the filter stands for. The
+// plus before f.val (and f.skey) keeps the props_val and props_skey indexes
+// out of the subquery: it is a lookup by (page, key), once per page in scope.
 func (f Filter) sql() (string, []any) {
 	const has = `EXISTS (SELECT 1 FROM props f WHERE f.page = p.rowid AND f.key = ?`
 	switch f.Op {
@@ -197,14 +199,14 @@ func (f Filter) sql() (string, []any) {
 		for _, v := range f.vals {
 			args = append(args, v)
 		}
-		return has + ` AND f.val IN (` + marks + `))`, args
+		return has + ` AND +f.val IN (` + marks + `))`, args
 	case "notIn":
 		marks := strings.TrimSuffix(strings.Repeat("?,", len(f.vals)), ",")
 		args := []any{f.Key, f.Key}
 		for _, v := range f.vals {
 			args = append(args, v)
 		}
-		return has + `) AND NOT ` + has + ` AND f.val IN (` + marks + `))`, args
+		return has + `) AND NOT ` + has + ` AND +f.val IN (` + marks + `))`, args
 	case "range":
 		cond, args := has, []any{f.Key}
 		if f.lo != nil {
@@ -538,7 +540,7 @@ func driver(fs []Filter) (from, cond string, args []any, ok bool) {
 // one query. The cost follows the pages that match, not the folder: the read
 // starts from the rows of the most selective filter when there is one that an
 // index serves, and from the folder's pages otherwise (which the count of a
-// folder first shows to be small). ok is false for any other scope or when it
+// folder first shows to be small, or, with filters, the walk shows few matches). ok is false for any other scope or when it
 // cannot tell.
 func (x *Index) smallMatches(q Query, key string, where []string, args []any) (rows []smallRow, ok bool) {
 	if q.Folder == nil {
@@ -546,16 +548,19 @@ func (x *Index) smallMatches(q Query, key string, where []string, args []any) (r
 	}
 	from, cond, dargs, hasDriver := driver(q.Filters)
 	if !hasDriver {
-		// Nothing to start from but the folder: a folder too large to be read
-		// whole is not looked at further (its filters would be walked page by
-		// page to count the matches).
+		// Nothing to start from but the folder. A large folder with no filter is
+		// not looked at further. With filters (contains, empty, ...) that no
+		// index serves, its pages are walked once for the matches, the read
+		// stopping at the limit below: a filter that matches few pages (or none)
+		// costs one walk, where the read of each group of the options would
+		// walk the folder again.
 		sw, sa := scopeConds(q.Folder, q.Recursive, q.Tags)
 		w := ""
 		if len(sw) > 0 {
 			w = ` WHERE ` + strings.Join(sw, ` AND `)
 		}
 		var n int
-		if err := x.db.QueryRow(`SELECT count(*) FROM (SELECT 1 FROM pages p`+w+` LIMIT ?)`, append(sa, maxSmallScope+1)...).Scan(&n); err != nil || n > maxSmallScope {
+		if err := x.db.QueryRow(`SELECT count(*) FROM (SELECT 1 FROM pages p`+w+` LIMIT ?)`, append(sa, maxSmallScope+1)...).Scan(&n); err != nil || (n > maxSmallScope && len(q.Filters) == 0) {
 			return nil, false
 		}
 		from = `pages p`

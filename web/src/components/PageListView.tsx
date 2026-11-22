@@ -19,7 +19,7 @@ import { SelectionBar } from '@/components/files/SelectionBar'
 import { childFolders, itemKey, type FileItem } from '@/lib/folders'
 import { loadView, saveView, viewKey, type ListViewMode } from '@/lib/listView'
 import { folderTypeName } from '@/lib/pageTypes'
-import { DEFAULT_STATE, groupFieldsOf, loadViewId, pickView, sameState, saveViewId, SORT_WORDS, stateOfView, viewIdKey, type ViewState } from '@/lib/savedViews'
+import { DEFAULT_STATE, groupFieldsOf, loadViewId, pickView, sameState, saveViewId, SORT_WORDS, stateOfView, viewAtMark, viewIdKey, type ViewState } from '@/lib/savedViews'
 import { applyClick, emptySelection, prune, type Selection } from '@/lib/selection'
 import { t } from '@/i18n'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
@@ -201,6 +201,10 @@ function Listing({ source }: { source: ListSource }) {
     saveViewId(idKey, to)
     setEdits((e) => (e.id === from ? { ...e, id: to } : e))
   }
+
+  // The view shown was "@n" and another person's write (seen by a refetch or by a refused save) has named it: the
+  // remembered id, the stored one and the working copy follow it, rather than the first tab being shown.
+  if (active && remembered !== active.id && viewAtMark(saved, remembered)?.id === active.id) remap(remembered, active.id)
 
   // What the layouts need: the table and the board a folder with a type (the board a single-choice field of it), a tag's
   // board a field a view named, reading any folder or tag. While the types are on their way the choice is kept.

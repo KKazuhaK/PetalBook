@@ -101,7 +101,12 @@ func (s *server) putViews(c *call) {
 // getGroups counts the pages of a folder or a tag by the values of a property.
 func (s *server) getGroups(c *call) {
 	v := c.r.URL.Query()
-	q := index.GroupQuery{Tags: v["tag"], Key: v.Get("key")}
+	tags, ok := queryTags(v)
+	if !ok {
+		writeError(c.w, http.StatusBadRequest, "invalid", fmt.Sprintf("at most %d different tags", maxQueryTags))
+		return
+	}
+	q := index.GroupQuery{Tags: tags, Key: v.Get("key")}
 	if q.Key == "" {
 		writeError(c.w, http.StatusBadRequest, "invalid", "key is the property to count by")
 		return

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PageType, SavedView } from '../api/types.ts'
-import { boardColumns, cardFieldsOf, cardMovable, columnDroppable, columnFilter, MAX_COLUMNS, DEFAULT_STATE, freshName, groupFieldsOf, loadViewId, moveView, pickView, sameState, saveViewId, stateOfView, viewIdKey, withState } from './savedViews.ts'
+import { boardColumns, cardFieldsOf, cardMovable, columnDroppable, columnFilter, MAX_COLUMNS, DEFAULT_STATE, freshName, groupFieldsOf, loadViewId, moveView, pickView, sameState, viewAtMark, saveViewId, stateOfView, viewIdKey, withState } from './savedViews.ts'
 
 const view = (id: string, extra: Partial<SavedView> = {}): SavedView => ({ id, name: id, layout: 'list', sort: '', group: '', filter: [], hidden: [], ...extra })
 
@@ -53,6 +53,15 @@ describe('the tabs', () => {
     expect(pickView(views, 'gone')?.id).toBe('a')
     expect(pickView(views, '')?.id).toBe('a')
     expect(pickView([], 'a')).toBeNull()
+  })
+  it('finds a remembered "@n" by its place once the views have real ids, and no other id', () => {
+    const views = [view('a'), view('b'), view('c')]
+    expect(pickView(views, '@1')?.id).toBe('b')
+    expect(pickView(views, '@7')?.id).toBe('a')
+    expect(pickView(views, 'x@1')?.id).toBe('a')
+    expect(viewAtMark(views, '@2')?.id).toBe('c')
+    expect(viewAtMark(views, 'b')).toBeNull()
+    expect(viewAtMark(views, '@3')).toBeNull()
   })
 })
 

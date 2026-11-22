@@ -4,6 +4,7 @@ import { act } from 'react'
 import { byLabel, click, installDomShims, locationText, mount, settle, shareSpace, type, type Mounted } from '@/testing/harness'
 import { listShell, putViews, seedWork, sender, TASK, viewsOf } from '@/testing/listKit'
 import type { MockServer } from '@/api/mock/server'
+import { keys } from '@/api/hooks'
 import { viewIdKey } from '@/lib/savedViews'
 import { viewKey } from '@/lib/listView'
 import { t } from '@/i18n'
@@ -480,6 +481,47 @@ describe('a view written by hand', () => {
     expect(modifiedMark()).not.toBeNull()
     expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('true')
     expect(localStorage.getItem(viewIdKey('default', 'folder', 'Work'))).not.toMatch(/^@/)
+  })
+
+  // Another person writes the list: every "@n" gets a real id, in the same order, and a third view is added.
+  const otherWrites = async () => {
+    putViews(sender(m!.server), FOLDER, [{ name: '甲', layout: 'list' }, { name: '乙', layout: 'list' }, { name: '丙', layout: 'cards' }])
+    expect((await saved()).views.map((v) => v.id).some((id) => id.startsWith('@'))).toBe(false)
+  }
+  const stillInTheSecond = async () => {
+    const id = (await saved()).views[1].id
+    expect(selected()).toBe('乙')
+    expect(modifiedMark()).not.toBeNull()
+    expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('true')
+    await settle(() => localStorage.getItem(viewIdKey('default', 'folder', 'Work')) === id, 'the remembered id follows')
+  }
+
+  it('keeps its unsaved changes when a save is refused after another person named every view', async () => {
+    await open('/s/default/f/Work', hand)
+    await settle(() => tabs().length === 2, 'the tabs')
+    await click(tab('乙'))
+    await click(button(t.view.cards))
+    await otherWrites()
+    await click(textButton(t.views.save))
+    await settle(() => document.body.textContent!.includes(t.views.conflict) && tabs().length === 3, 'the conflict')
+    await stillInTheSecond()
+    // And the change can be saved on the next try.
+    await click(textButton(t.views.save))
+    await settle(() => modifiedMark() === null, 'saved')
+    expect((await saved()).views[1]).toMatchObject({ name: '乙', layout: 'cards' })
+  })
+
+  it('keeps its unsaved changes when the views are read again after another person named every view', async () => {
+    await open('/s/default/f/Work', hand)
+    await settle(() => tabs().length === 2, 'the tabs')
+    await click(tab('乙'))
+    await click(button(t.view.cards))
+    await otherWrites()
+    await act(async () => {
+      await m!.qc.invalidateQueries({ queryKey: keys.views('default', FOLDER) })
+    })
+    await settle(() => tabs().length === 3, 'the refetched tabs')
+    await stillInTheSecond()
   })
 })
 

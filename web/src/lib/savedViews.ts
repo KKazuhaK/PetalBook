@@ -100,9 +100,18 @@ export function saveViewId(key: string, id: string): void {
   }
 }
 
-// The view to show: the remembered one if it is still there, else the first (the default one), else none.
+// The view a remembered "@n" stands for once the views have real ids: a view written by hand is served as "@n"
+// (its place in the list) until a write names it, and a write keeps the order. null for any other id, or a place with
+// no view.
+export function viewAtMark(views: readonly SavedView[], remembered: string): SavedView | null {
+  const m = /^@(\d+)$/.exec(remembered)
+  return m ? (views[Number(m[1])] ?? null) : null
+}
+
+// The view to show: the remembered one if it is still there (a hand-written "@n" that a write has named, by its
+// place), else the first (the default one), else none.
 export function pickView(views: readonly SavedView[], remembered: string): SavedView | null {
-  return views.find((v) => v.id === remembered) ?? views[0] ?? null
+  return views.find((v) => v.id === remembered) ?? viewAtMark(views, remembered) ?? views[0] ?? null
 }
 
 // --- board ------------------------------------------------------------------------------

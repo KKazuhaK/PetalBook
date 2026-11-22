@@ -560,3 +560,54 @@ func TestGroupCountsAreRememberedUntilTheIndexChanges(t *testing.T) {
 		t.Errorf("after a write: %d, before %d", total(got), total(first))
 	}
 }
+
+// A folder too large to be read whole, whose filters no index serves (contains,
+// empty, ...) and keep few pages: the matches are found in one walk of the
+// folder, not one per group of the options.
+func TestOptionOrderWithAFilterNoIndexServesWalksTheFolderOnce(t *testing.T) {
+	old := maxSmallScope
+	maxSmallScope = 15
+	t.Cleanup(func() { maxSmallScope = old })
+	x := openIndex(t)
+	opts := make([]string, 40)
+	for i := range opts {
+		opts[i] = fmt.Sprintf("o%02d", i)
+	}
+	for i := 0; i < 60; i++ {
+		h := fmt.Sprintf("status: %s\nname: n%d\n", opts[i%40], i)
+		if i%7 == 0 {
+			h = fmt.Sprintf("name: n%d\n", i) // no status
+		}
+		putProps(t, x, "big", fmt.Sprintf("P%03d", i), h)
+	}
+	for _, c := range []struct {
+		name  string
+		f     Filter
+		sort  string
+		paths string
+	}{
+		{"nothing", Filter{Key: "name", Op: "contains", Values: []any{"zzz"}}, "prop:status", ""},
+		{"few", Filter{Key: "name", Op: "contains", Values: []any{"n5"}}, "prop:status", "n5"},
+		{"few, reversed", Filter{Key: "name", Op: "contains", Values: []any{"n5"}}, "-prop:status", "n5"},
+		{"empty", Filter{Key: "nothing", Op: "empty"}, "prop:status", ""}, // every page: more than the small scope, read by groups
+	} {
+		q := Query{Folder: strp("big"), Sort: c.sort, PropOptions: opts, Filters: []Filter{c.f}}
+		before := x.queries.Load()
+		got := listAll(t, x, q, 100)
+		n := x.queries.Load() - before
+		switch c.name {
+		case "empty":
+			if len(got) != 60 {
+				t.Errorf("%s: %d pages", c.name, len(got))
+			}
+		case "nothing":
+			if len(got) != 0 || n > 2 {
+				t.Errorf("%s: %v in %d queries", c.name, got, n)
+			}
+		default:
+			if len(got) != 11 || n > 4 { // n5, n50..n59
+				t.Errorf("%s: %d pages in %d queries", c.name, len(got), n)
+			}
+		}
+	}
+}
