@@ -1,0 +1,168 @@
+package spaces
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/KKazuhaK/PetalBook/internal/perm"
+	"github.com/KKazuhaK/PetalBook/internal/store"
+)
+
+// Members are who belong to a space and in what role. Every change checks the
+// caller's permission itself (the route asks for it too) and, once it is
+// committed, drops the membership cache of exactly the people it touched, so the
+// next request of a removed member is refused rather than served from memory.
+
+func (m *Manager) needMembers(h *Handle) error {
+	if m.single != nil {
+		return ErrNotFound
+	}
+	if !h.Info.Perms.Has(perm.Members) {
+		return ErrForbidden
+	}
+	return nil
+}
+
+func checkRole(role string) error {
+	if !perm.ValidRole(role) {
+		return fmt.Errorf("%w: a role is one of %s", ErrInvalid, strings.Join(perm.RoleNames(), ", "))
+	}
+	return nil
+}
+
+// Members lists the members of the open space, owners first.
+func (m *Manager) Members(ctx context.Context, h *Handle) ([]store.Member, error) {
+	if m.single != nil {
+		return nil, ErrNotFound
+	}
+	return store.ListMembers(ctx, m.opt.Store.Q(), h.Info.ID)
+}
+
+// AddMember makes the enabled user with this username a member in role.
+func (m *Manager) AddMember(ctx context.Context, h *Handle, username, role string) (*store.Member, error) {
+	if err := m.needMembers(h); err != nil {
+		return nil, err
+	}
+	if err := checkRole(role); err != nil {
+		return nil, err
+	}
+	if h.Info.Personal {
+		return nil, ErrPersonal
+	}
+	u, err := store.GetUserByUsername(ctx, m.opt.Store.Q(), asciiLower(strings.TrimSpace(username)))
+	if errors.Is(err, store.ErrNotFound) || (err == nil && u.Disabled) {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	now := m.opt.Now()
+	if err := store.AddMember(ctx, m.opt.Store.Q(), h.Info.ID, u.ID, role, now); err != nil {
+		if store.IsUnique(err) {
+			return nil, ErrAlreadyMember
+		}
+		return nil, err
+	}
+	m.MembershipChanged(u.ID)
+	return &store.Member{UserID: u.ID, Username: u.Username, Name: u.Name, Role: role, Created: now}, nil
+}
+
+// SetMemberRole changes a member's role. The last owner cannot be demoted.
+func (m *Manager) SetMemberRole(ctx context.Context, h *Handle, userID, role string) (*store.Member, error) {
+	if err := m.needMembers(h); err != nil {
+		return nil, err
+	}
+	if err := checkRole(role); err != nil {
+		return nil, err
+	}
+	var out *store.Member
+	err := m.opt.Store.Tx(ctx, func(q store.Q) error {
+		if err := store.LockSpace(ctx, q, h.Info.ID); err != nil {
+			return err
+		}
+		cur, err := store.MemberRole(ctx, q, h.Info.ID, userID)
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrNotMember
+		}
+		if err != nil {
+			return err
+		}
+		if cur != role {
+			if err := m.keepOneOwner(ctx, q, h.Info.ID, cur); err != nil {
+				return err
+			}
+			if err := store.SetMemberRole(ctx, q, h.Info.ID, userID, role); err != nil {
+				return err
+			}
+		}
+		out, err = store.GetMember(ctx, q, h.Info.ID, userID)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	m.MembershipChanged(userID)
+	return out, nil
+}
+
+// RemoveMember removes a member, or lets a member leave (userID is the caller's
+// own): leaving needs no more than being a member. The last owner cannot go.
+func (m *Manager) RemoveMember(ctx context.Context, actor store.User, h *Handle, userID string) error {
+	if m.single != nil {
+		return ErrNotFound
+	}
+	if userID != actor.ID || h.Info.ViaAdmin {
+		if err := m.needMembers(h); err != nil {
+			return err
+		}
+	}
+	err := m.opt.Store.Tx(ctx, func(q store.Q) error {
+		if err := store.LockSpace(ctx, q, h.Info.ID); err != nil {
+			return err
+		}
+		cur, err := store.MemberRole(ctx, q, h.Info.ID, userID)
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrNotMember
+		}
+		if err != nil {
+			return err
+		}
+		if err := m.keepOneOwner(ctx, q, h.Info.ID, cur); err != nil {
+			return err
+		}
+		return store.RemoveMember(ctx, q, h.Info.ID, userID)
+	})
+	if err != nil {
+		return err
+	}
+	m.MembershipChanged(userID)
+	return nil
+}
+
+// keepOneOwner refuses to take owner role away (as demotion or removal) from
+// the only owner. Call it inside a transaction that holds LockSpace.
+func (m *Manager) keepOneOwner(ctx context.Context, q store.Q, spaceID, leaving string) error {
+	if leaving != perm.Owner {
+		return nil
+	}
+	n, err := store.CountOwners(ctx, q, spaceID)
+	if err != nil {
+		return err
+	}
+	if n <= 1 {
+		return ErrLastOwner
+	}
+	return nil
+}
+
+// asciiLower folds only A-Z, as usernames are stored.
+func asciiLower(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= 'A' && r <= 'Z' {
+			return r + 'a' - 'A'
+		}
+		return r
+	}, s)
+}

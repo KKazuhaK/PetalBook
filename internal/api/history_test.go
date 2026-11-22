@@ -152,7 +152,7 @@ func TestHistoryEndpoints(t *testing.T) {
 
 func TestHistoryInAccountsModeIsForEveryMember(t *testing.T) {
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
-		boss := a.setup("kazuha", pw)
+		a.setup("kazuha", pw)
 		tang := a.addUser("tang", pw, "member")
 		sid := tang.personalSpace()
 		p := tang.do("POST", "/api/spaces/"+sid+"/pages", map[string]any{"meta": map[string]any{"title": "Mine"}, "body": "x\n"}).want(t, 201, "")
@@ -173,8 +173,9 @@ func TestHistoryInAccountsModeIsForEveryMember(t *testing.T) {
 		commit := items[0].(map[string]any)["commit"].(string)
 		tang.do("GET", url+"/versions/"+commit, nil).want(t, 200, "")
 		// Someone who is not a member is told the space is not there.
-		boss.do("GET", url+"/history", nil).want(t, 404, "not_found")
-		boss.do("GET", url+"/versions/"+commit, nil).want(t, 404, "not_found")
+		stranger := a.addUser("stranger", pw, "member")
+		stranger.do("GET", url+"/history", nil).want(t, 404, "not_found")
+		stranger.do("GET", url+"/versions/"+commit, nil).want(t, 404, "not_found")
 		// The author on the commit is the space's owner.
 		if items[0].(map[string]any)["author"] != "tang" {
 			t.Fatalf("%v", items[0])

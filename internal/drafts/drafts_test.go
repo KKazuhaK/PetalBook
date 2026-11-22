@@ -642,7 +642,7 @@ func TestASlowSpaceOpenInTheSweeperDoesNotBlockOtherDrafts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hb, err := mgr.Open(ctx, "U1", b.ID)
+	hb, err := mgr.Open(ctx, store.User{ID: "U1"}, b.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

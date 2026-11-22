@@ -368,7 +368,7 @@ func TestApplyingAnUnchangedDraftWritesNothing(t *testing.T) {
 		c := a.setup("kazuha", pw)
 		url, p := draftPage(t, c, "T", "same\n")
 		sid := c.personalSpace()
-		h, err := a.mgr.Open(ctx, mustUserID(t, a, "kazuha"), sid)
+		h, err := a.mgr.Open(ctx, mustUser(t, a, "kazuha"), sid)
 		if err != nil {
 			t.Fatal(err)
 		}

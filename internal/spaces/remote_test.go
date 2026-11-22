@@ -120,7 +120,7 @@ func (f *rm) space(name string) (Info, *Handle) {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	h, err := f.m.Open(ctx, f.user.ID, in.ID)
+	h, err := f.m.Open(ctx, f.user, in.ID)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func TestConnectStoresTheCredentialEncryptedAndReopensAsARemoteSpace(t *testing.
 		f.m.Close()
 
 		m2 := f.open()
-		h2, err := m2.Open(ctx, f.user.ID, in.ID)
+		h2, err := m2.Open(ctx, f.user, in.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -510,7 +510,7 @@ func TestPullerPullsOpenSpacesOnlyAndNeverCountsAsUse(t *testing.T) {
 			t.Fatal("a closed space was pulled")
 		}
 		// Opening it again pulls it, once, soon.
-		h2, err := f.m.Open(ctx, f.user.ID, in.ID)
+		h2, err := f.m.Open(ctx, f.user, in.ID)
 		if err != nil {
 			t.Fatal(err)
 		}

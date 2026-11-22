@@ -18,6 +18,7 @@ import (
 
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/perm"
 	"github.com/KKazuhaK/PetalBook/internal/secret"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/store"
@@ -33,8 +34,18 @@ var (
 	// ErrNotFound is the answer for a space that does not exist and for one the
 	// user is not a member of: the two must look the same.
 	ErrNotFound = errors.New("no such space")
-	// ErrForbidden: a member who may not do this.
+	// ErrForbidden: a member whose role does not allow this.
 	ErrForbidden = errors.New("not allowed")
+	// ErrUserNotFound: no enabled user has that username.
+	ErrUserNotFound = errors.New("no such user")
+	// ErrNotMember: the user is not a member of the space.
+	ErrNotMember = errors.New("not a member of this space")
+	// ErrAlreadyMember: the user is a member already.
+	ErrAlreadyMember = errors.New("already a member of this space")
+	// ErrPersonal: a personal space is its person's alone.
+	ErrPersonal = errors.New("a personal space cannot be shared")
+	// ErrLastOwner: a space always keeps one owner.
+	ErrLastOwner = errors.New("a space needs at least one owner")
 	// ErrInvalid wraps a refused name.
 	ErrInvalid = errors.New("invalid")
 	// ErrLimit: the user owns as many spaces as the server allows.
@@ -42,11 +53,18 @@ var (
 	errClosed = errors.New("the server is shutting down")
 )
 
-// Info is a space as a member sees it.
+// Info is a space as one user sees it.
 type Info struct {
-	ID       string
-	Name     string
-	Role     string
+	ID   string
+	Name string
+	// Role is the user's role as a member; "" for an administrator who is not one.
+	Role string
+	// Perms is what the user may do here. Everything that decides access reads
+	// this, never Role.
+	Perms perm.Set
+	// ViaAdmin: the user is no member but an instance administrator, who may do
+	// everything in every space without belonging to any (so it is in no list).
+	ViaAdmin bool
 	Personal bool
 	// Inbox is the folder quick notes go to: a folder path, never empty.
 	Inbox string
@@ -137,10 +155,14 @@ type Manager struct {
 	singleInbox string
 	log         *slog.Logger
 
-	mu     sync.Mutex
-	open   map[string]*opening
-	lists  map[string][]Info // membership cache: user id -> spaces, personal first
-	closed bool
+	mu    sync.Mutex
+	open  map[string]*opening
+	lists map[string][]Info // membership cache: user id -> spaces, personal first
+	// listGen counts membership changes. A list read from the database is cached
+	// only if no change happened while it was being read, so a read that began
+	// before a removal cannot put the removed member back.
+	listGen uint64
+	closed  bool
 
 	syncs    map[string]string // space id -> state of its remote, for Info.Sync (guarded by mu; nil until first needed)
 	remoteMu sync.Mutex        // one connect, disconnect or key change at a time
@@ -244,10 +266,11 @@ func (m *Manager) list(ctx context.Context, userID string) ([]Info, error) {
 		if userID != store.LocalUserID {
 			return nil, nil
 		}
-		return []Info{{ID: SingleID, Name: m.single.Name(), Role: "owner", Personal: true, Inbox: m.singleInbox, Sync: "local"}}, nil
+		return []Info{{ID: SingleID, Name: m.single.Name(), Role: perm.Owner, Perms: perm.All, Personal: true, Inbox: m.singleInbox, Sync: "local"}}, nil
 	}
 	m.mu.Lock()
 	l, ok := m.lists[userID]
+	gen := m.listGen
 	m.mu.Unlock()
 	if ok {
 		return l, nil
@@ -258,7 +281,10 @@ func (m *Manager) list(ctx context.Context, userID string) ([]Info, error) {
 	}
 	l = make([]Info, len(rows))
 	for i, r := range rows {
-		l[i] = Info{ID: r.ID, Name: r.Name, Role: r.Role, Personal: r.Personal, Inbox: r.Inbox}
+		// A role this build does not know holds nothing: the member sees the
+		// space in their list and is refused everywhere in it.
+		ps, _ := perm.ForRole(r.Role)
+		l[i] = Info{ID: r.ID, Name: r.Name, Role: r.Role, Perms: ps, Personal: r.Personal, Inbox: r.Inbox}
 	}
 	sort.Slice(l, func(i, j int) bool {
 		a, b := l[i], l[j]
@@ -274,35 +300,59 @@ func (m *Manager) list(ctx context.Context, userID string) ([]Info, error) {
 		return a.ID < b.ID
 	})
 	m.mu.Lock()
-	if len(m.lists) >= maxCachedUsers {
-		for k := range m.lists { // bounded: drop an arbitrary entry
-			delete(m.lists, k)
-			break
+	if m.listGen == gen {
+		if len(m.lists) >= maxCachedUsers {
+			for k := range m.lists { // bounded: drop an arbitrary entry
+				delete(m.lists, k)
+				break
+			}
 		}
+		m.lists[userID] = l
 	}
-	m.lists[userID] = l
 	m.mu.Unlock()
 	return l, nil
 }
 
-// Open returns the space if the user is a member of it, and ErrNotFound
-// otherwise. This is the one place space access is decided. The caller must
-// Release the handle.
-func (m *Manager) Open(ctx context.Context, userID, spaceID string) (*Handle, error) {
-	l, err := m.List(ctx, userID)
+// Open returns the space with what the user may do in it, and ErrNotFound if
+// they may not even know it exists. This is the one place space access is
+// decided. The caller must Release the handle.
+//
+// A member is answered from the cached list: no database query, and a scan of
+// the spaces that one person belongs to. An administrator who is not a member
+// costs one primary-key query to learn that the space exists; that is the only
+// path that touches the database, and only administrators take it.
+func (m *Manager) Open(ctx context.Context, user store.User, spaceID string) (*Handle, error) {
+	l, err := m.list(ctx, user.ID)
 	if err != nil {
 		return nil, err
 	}
-	for _, in := range l {
-		if in.ID == spaceID {
-			sp, release, err := m.Acquire(ctx, spaceID)
-			if err != nil {
-				return nil, err
-			}
-			return &Handle{Space: sp, Info: in, release: release}, nil
+	var in Info
+	found := false
+	for _, x := range l {
+		if x.ID == spaceID {
+			in, found = x, true
+			break
 		}
 	}
-	return nil, ErrNotFound
+	if !found {
+		if m.single != nil || user.Role != "admin" || !page.ValidID(spaceID) {
+			return nil, ErrNotFound
+		}
+		sp, err := store.GetSpace(ctx, m.opt.Store.Q(), spaceID)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, ErrNotFound
+		}
+		if err != nil {
+			return nil, err
+		}
+		in = Info{ID: sp.ID, Name: sp.Name, Perms: perm.All, ViaAdmin: true, Personal: sp.Personal, Inbox: sp.Inbox}
+	}
+	in = m.withSync(ctx, []Info{in})[0]
+	sp, release, err := m.Acquire(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	return &Handle{Space: sp, Info: in, release: release}, nil
 }
 
 // Acquire opens a space by id without asking who is looking: for the draft
@@ -534,7 +584,7 @@ func (s *Staged) Commit(ownerID string) {
 	if !closed {
 		m.open[s.id] = e
 	}
-	delete(m.lists, ownerID)
+	m.dropListsLocked(ownerID)
 	m.mu.Unlock()
 	if closed {
 		s.sp.Close()
@@ -598,33 +648,34 @@ func (m *Manager) CreateWith(ctx context.Context, userID, name, inbox string) (I
 		if err := store.InsertSpace(ctx, q, stg.ID(), stg.Name(), "", inbox, now); err != nil {
 			return err
 		}
-		return store.AddMember(ctx, q, stg.ID(), userID, "owner", now)
+		return store.AddMember(ctx, q, stg.ID(), userID, perm.Owner, now)
 	})
 	if err != nil {
 		stg.Abort()
 		return Info{}, err
 	}
 	stg.Commit(userID)
-	return Info{ID: stg.ID(), Name: stg.Name(), Role: "owner", Inbox: inbox, Sync: "local"}, nil
+	return Info{ID: stg.ID(), Name: stg.Name(), Role: perm.Owner, Perms: perm.All, Inbox: inbox, Sync: "local"}, nil
 }
 
-// Rename changes a space's display name; only an owner may.
-func (m *Manager) Rename(ctx context.Context, userID, spaceID, name string) (Info, error) {
-	return m.Update(ctx, userID, spaceID, &name, nil)
+// Rename changes a space's display name; whoever may manage the space.
+func (m *Manager) Rename(ctx context.Context, user store.User, spaceID, name string) (Info, error) {
+	return m.Update(ctx, user, spaceID, &name, nil)
 }
 
 // Update changes a space's display name, its inbox folder, or both (nil
-// leaves one as it is); only an owner may. Changing the inbox moves nothing.
-func (m *Manager) Update(ctx context.Context, userID, spaceID string, newName, newInbox *string) (Info, error) {
+// leaves one as it is); whoever may manage the space may. Changing the inbox
+// moves nothing.
+func (m *Manager) Update(ctx context.Context, user store.User, spaceID string, newName, newInbox *string) (Info, error) {
 	if m.single != nil {
 		return Info{}, ErrNotFound
 	}
-	h, err := m.Open(ctx, userID, spaceID)
+	h, err := m.Open(ctx, user, spaceID)
 	if err != nil {
 		return Info{}, err
 	}
 	defer h.Release()
-	if h.Info.Role != "owner" {
+	if !h.Info.Perms.Has(perm.Manage) {
 		return Info{}, ErrForbidden
 	}
 	name, inbox := h.Info.Name, h.Info.Inbox
@@ -656,11 +707,7 @@ func (m *Manager) Update(ctx context.Context, userID, spaceID string, newName, n
 	if err != nil {
 		return Info{}, err
 	}
-	m.mu.Lock()
-	for _, id := range members {
-		delete(m.lists, id)
-	}
-	m.mu.Unlock()
+	m.MembershipChanged(members...)
 	h.Info.Name, h.Info.Inbox = name, inbox
 	return h.Info, nil
 }
@@ -676,7 +723,7 @@ func (m *Manager) UserChanged(ctx context.Context, u store.User) {
 		return
 	}
 	for _, in := range l {
-		if in.Role != "owner" {
+		if in.Role != perm.Owner {
 			continue
 		}
 		m.mu.Lock()
@@ -696,13 +743,22 @@ func (m *Manager) UserChanged(ctx context.Context, u store.User) {
 	}
 }
 
-// Forget drops what is cached about a user's spaces, so the next look reads
-// the database. Memberships change only through this package; this is for the
-// command-line tool's sake and for tests that change them directly.
-func (m *Manager) Forget(userID string) {
+// MembershipChanged drops what is cached about these users' spaces, so the
+// next request of theirs reads the database. Call it after anything that adds,
+// removes or re-roles a membership, or renames a space, with exactly the users
+// it touched: no one else's cache is lost, so a change costs the people in the
+// space one query each and everyone else nothing.
+func (m *Manager) MembershipChanged(userIDs ...string) {
 	m.mu.Lock()
-	delete(m.lists, userID)
+	m.dropListsLocked(userIDs...)
 	m.mu.Unlock()
+}
+
+func (m *Manager) dropListsLocked(userIDs ...string) {
+	m.listGen++
+	for _, id := range userIDs {
+		delete(m.lists, id)
+	}
 }
 
 // Close commits what the open spaces have pending and closes them. Call it

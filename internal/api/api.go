@@ -462,7 +462,17 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	case errors.Is(err, spaces.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "no such space")
 	case errors.Is(err, spaces.ErrForbidden):
-		writeError(w, http.StatusForbidden, "forbidden", "only an owner of the space may do that")
+		writeError(w, http.StatusForbidden, "forbidden", "your role in this space does not allow that")
+	case errors.Is(err, spaces.ErrUserNotFound):
+		writeError(w, http.StatusNotFound, "user_not_found", "there is no user with that username")
+	case errors.Is(err, spaces.ErrNotMember):
+		writeError(w, http.StatusNotFound, "not_found", "that user is not a member of this space")
+	case errors.Is(err, spaces.ErrAlreadyMember):
+		writeError(w, http.StatusConflict, "exists", "that user is a member of this space already")
+	case errors.Is(err, spaces.ErrPersonal):
+		writeError(w, http.StatusConflict, "personal_space", "a personal space belongs to one person and cannot be shared")
+	case errors.Is(err, spaces.ErrLastOwner):
+		writeError(w, http.StatusConflict, "last_owner", "a space needs at least one owner; make someone else an owner first")
 	case errors.Is(err, spaces.ErrInvalid):
 		writeError(w, http.StatusBadRequest, "invalid", strings.TrimPrefix(err.Error(), spaces.ErrInvalid.Error()+": "))
 	case errors.Is(err, space.ErrClosed):

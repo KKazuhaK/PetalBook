@@ -73,7 +73,10 @@ The server runs in one of two modes, chosen at start-up.
   `DIR/spaces/<space id>/`. Every endpoint except `GET /api/meta`,
   `GET /api/session` and the ones under "Signing in" needs a session and
   answers `401 unauthenticated` without one. A space the user is not a member
-  of answers `404 not_found`, the same as a space that does not exist.
+  of answers `404 not_found`, the same as a space that does not exist, unless
+  the user is an administrator: an administrator may do everything in every
+  space (see "Members"). A member whose role lacks the permission a route needs
+  answers `403 forbidden`.
 
 ## Meta
 
@@ -87,7 +90,7 @@ not signed in), in the shape of `GET /api/spaces`.
   "version": "dev",
   "maxUpload": 10485760,
   "maxImport": 104857600,
-  "spaces": [{"id": "default", "name": "My notes", "role": "owner", "personal": true, "sync": "local", "inbox": "Inbox"}]
+  "spaces": [{"id": "default", "name": "My notes", "role": "owner", "permissions": ["read", "write", "members", "manage"], "personal": true, "sync": "local", "inbox": "Inbox"}]
 }
 ```
 
@@ -299,10 +302,23 @@ taken (the invite stays usable).
 ### Space
 
 ```json
-{"id": "01JD3K8Q7Z", "name": "My notes", "role": "owner", "personal": true, "sync": "local", "inbox": "Inbox"}
+{"id": "01JD3K8Q7Z", "name": "My notes", "role": "owner", "permissions": ["read", "write", "members", "manage"], "personal": true, "sync": "local", "inbox": "Inbox"}
 ```
 
-`role` is the caller's role in the space; in this milestone always `owner`.
+`role` is the caller's role in the space: `owner`, `editor` or `viewer`, and
+empty for an administrator who is not a member. `permissions` is what the
+caller may do in the space, so a client shows or hides controls by it and never
+by the name of a role:
+
+| Permission | Allows |
+|---|---|
+| `read` | seeing pages, history, attachments and search |
+| `write` | creating, changing, moving and deleting pages and folders; tags, attachments, imports, drafts |
+| `members` | adding, changing and removing members |
+| `manage` | renaming the space, its inbox, its remote and sync, rebuilding the index |
+
+An `owner` has all four, an `editor` `read` and `write`, a `viewer` `read`.
+In single-user mode the one user has all of them.
 `personal` marks the space made together with the account. `sync` is `local`
 (the repository exists only on the server) or the `state` of its remote (see
 "Remote repository"). `inbox` is the folder that quick notes go to: a folder
@@ -326,12 +342,54 @@ the caller already owns as many spaces as the server allows (`--max-spaces`,
 
 ### `PATCH /api/spaces/{space}`
 
-Accounts mode, owners only. `{"name": "…", "inbox": "…"}`, each optional; at
+Accounts mode, needs `manage`. `{"name": "…", "inbox": "…"}`, each optional; at
 least one must be given. `200` with the space.
+
+## Members
+
+Accounts mode; single-user mode answers `404`. The people who belong to a
+space, each with a role (`owner`, `editor` or `viewer`, see "Space"). A space
+always keeps at least one owner. A personal space (`personal: true`) belongs to
+its person alone and never has other members. An administrator is not a member
+of the spaces they open, so they are not listed here and not in `GET /api/spaces`,
+but may use these endpoints as if they were an owner.
+
+### Member
+
+```json
+{"userId": "01JD3K8Q7Z", "username": "tang", "name": "Tang", "role": "editor", "you": false}
+```
+
+`you` is true for the caller.
+
+### `GET /api/spaces/{space}/members`
+
+Needs `read`. `{"members": [{…}]}`: owners first, then by name.
+
+### `POST /api/spaces/{space}/members`
+
+Needs `members`. `{"username": "tang", "role": "editor"}`. `201` with the member.
+`404 user_not_found` when no enabled user has that username; `409 exists` when
+they are a member already; `409 personal_space` for a personal space;
+`400 invalid` for a role that is not one of the three.
+
+### `PATCH /api/spaces/{space}/members/{user}`
+
+Needs `members`. `{"role": "viewer"}`, `{user}` being the member's `userId`.
+`200` with the member. `404 not_found` when they are not a member;
+`409 last_owner` when it would leave the space without an owner. The change
+applies to the member's very next request.
+
+### `DELETE /api/spaces/{space}/members/{user}`
+
+Needs `members`, except that a member may remove themself (leave the space)
+with no more than `read`. `204`. `409 last_owner` for the only owner: make
+someone else an owner first. The removed member's very next request to the
+space answers `404 not_found`.
 
 ## Remote repository
 
-Accounts mode; the space's owner only (`403 forbidden` for anyone else who can
+Accounts mode; needs `manage` (`403 forbidden` for anyone else who can
 open the space). A space either keeps its repository on the server only, or
 follows a remote: then the remote branch is the truth.
 

@@ -286,5 +286,5 @@ func (w testWriter) Write(p []byte) (int, error) {
 // memberships behind its back).
 func (a *acc) dropMembershipCache(t *testing.T, username string) {
 	t.Helper()
-	a.mgr.Forget(mustUserID(t, a, username))
+	a.mgr.MembershipChanged(mustUserID(t, a, username))
 }
