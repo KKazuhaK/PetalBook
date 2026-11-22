@@ -69,14 +69,38 @@ export function useSpaces() {
 // said the space is not there: what the app holds about the space is out of date,
 // the list and the space an administrator views alike. A 404 may only be a page
 // that is gone, so each of the two looks again at most every few seconds, counted
-// from when that query last got an answer.
+// from the last time that query asked (answered or failed). A 404 inside that
+// window is not dropped, since the viewed space is not read again by itself: one
+// recheck waits for the end of the window, whatever number of 404s come meanwhile.
 const NOT_FOUND_RECHECK_MS = 5_000
+const pendingRechecks = new WeakMap<QueryClient, Map<string, ReturnType<typeof setTimeout>>>()
+function recheck(qc: QueryClient, key: readonly unknown[], notFound: boolean) {
+  const asked = () => {
+    const s = qc.getQueryState(key)
+    return Math.max(s?.dataUpdatedAt ?? 0, s?.errorUpdatedAt ?? 0)
+  }
+  const wait = NOT_FOUND_RECHECK_MS - (Date.now() - asked())
+  if (!notFound || wait <= 0) {
+    void qc.invalidateQueries({ queryKey: key })
+    return
+  }
+  const timers = pendingRechecks.get(qc) ?? new Map<string, ReturnType<typeof setTimeout>>()
+  pendingRechecks.set(qc, timers)
+  const id = JSON.stringify(key)
+  if (timers.has(id)) return
+  timers.set(
+    id,
+    setTimeout(() => {
+      timers.delete(id)
+      // Asked again meanwhile (by anything): that answer is newer than the 404.
+      if (Date.now() - asked() >= NOT_FOUND_RECHECK_MS) void qc.invalidateQueries({ queryKey: key })
+    }, wait),
+  )
+}
 export function refreshSpaceAccess(qc: QueryClient, space: string | null, notFound: boolean) {
-  const recent = (key: readonly unknown[]) => Date.now() - (qc.getQueryState(key)?.dataUpdatedAt ?? 0) < NOT_FOUND_RECHECK_MS
   // The viewed space is only ever asked for by an administrator, and is one request.
-  if (space && !(notFound && recent(keys.viewedSpace(space)))) void qc.invalidateQueries({ queryKey: keys.viewedSpace(space) })
-  if (notFound && recent(keys.spaces)) return
-  void qc.invalidateQueries({ queryKey: keys.spaces })
+  if (space) recheck(qc, keys.viewedSpace(space), notFound)
+  recheck(qc, keys.spaces, notFound)
 }
 
 const LAST_SPACE_KEY = 'pb.space'

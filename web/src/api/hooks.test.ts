@@ -71,23 +71,66 @@ describe('a mutation that carries a secret', () => {
 
 describe('a request refused for access or not found inside a space', () => {
   afterEach(() => vi.useRealTimers())
-  it('looks at the viewed space again at most every five seconds when it is only a 404, like the list', () => {
+  const setup = () => {
     vi.useFakeTimers()
     const qc = new QueryClient()
-    const stale = (key: readonly unknown[]) => qc.getQueryState(key)?.isInvalidated
+    const stale = () => [qc.getQueryState(keys.spaces)?.isInvalidated, qc.getQueryState(keys.viewedSpace('sp1'))?.isInvalidated]
     const answered = () => {
       qc.setQueryData(keys.spaces, { spaces: [] })
       qc.setQueryData(keys.viewedSpace('sp1'), null)
     }
     answered()
+    return { qc, stale, answered }
+  }
+  it('looks at the viewed space again at most every five seconds when it is only a 404, like the list', () => {
+    const { qc, stale, answered } = setup()
     refreshSpaceAccess(qc, 'sp1', true)
-    expect([stale(keys.spaces), stale(keys.viewedSpace('sp1'))]).toEqual([false, false])
+    expect(stale()).toEqual([false, false])
+    // Not dropped: it is made once the window is over.
+    vi.advanceTimersByTime(4_999)
+    expect(stale()).toEqual([false, false])
+    vi.advanceTimersByTime(1)
+    expect(stale()).toEqual([true, true])
+    // After the window it is asked at once.
+    answered()
     vi.advanceTimersByTime(5_000)
     refreshSpaceAccess(qc, 'sp1', true)
-    expect([stale(keys.spaces), stale(keys.viewedSpace('sp1'))]).toEqual([true, true])
+    expect(stale()).toEqual([true, true])
     // A refusal for access is never throttled.
     answered()
     refreshSpaceAccess(qc, 'sp1', false)
-    expect([stale(keys.spaces), stale(keys.viewedSpace('sp1'))]).toEqual([true, true])
+    expect(stale()).toEqual([true, true])
+  })
+  it('makes one recheck at the end of the window however many 404s come inside it', () => {
+    const { qc } = setup()
+    const spy = vi.spyOn(qc, 'invalidateQueries')
+    for (let i = 0; i < 20; i++) {
+      refreshSpaceAccess(qc, 'sp1', true)
+      vi.advanceTimersByTime(100)
+    }
+    expect(spy).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(5_000)
+    expect(spy).toHaveBeenCalledTimes(2)
+    vi.advanceTimersByTime(20_000)
+    expect(spy).toHaveBeenCalledTimes(2)
+  })
+  it('leaves the recheck out when the query was asked again meanwhile', () => {
+    const { qc, stale, answered } = setup()
+    refreshSpaceAccess(qc, 'sp1', true)
+    vi.advanceTimersByTime(3_000)
+    answered()
+    vi.advanceTimersByTime(2_000)
+    expect(stale()).toEqual([false, false])
+  })
+  it('counts the window from a failed fetch as well', async () => {
+    vi.useFakeTimers()
+    const qc = new QueryClient()
+    await qc.fetchQuery({ queryKey: keys.viewedSpace('sp1'), queryFn: () => Promise.reject(new Error('down')), retry: false }).catch(() => {})
+    await qc.fetchQuery({ queryKey: keys.spaces, queryFn: () => Promise.reject(new Error('down')), retry: false }).catch(() => {})
+    const spy = vi.spyOn(qc, 'invalidateQueries')
+    refreshSpaceAccess(qc, 'sp1', true)
+    expect(spy).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(5_000)
+    expect(spy).toHaveBeenCalledTimes(2)
   })
 })

@@ -250,12 +250,9 @@ describe('what the app knows of a space it is showing', () => {
     let space = ''
     const server = await boot(() => `/s/${space}/recent`, { mode: 'accounts', scene: (s) => void (space = frankSpace(s).space) })
     await settle(() => text().includes('别人写的页面'), 'the pages')
-    // The space was last read a while ago (a 404 right after a read is not asked about again).
-    const { queryClient } = await import('@/App')
-    queryClient.setQueryData(keys.viewedSpace(space), queryClient.getQueryData(keys.viewedSpace(space)), { updatedAt: Date.now() - 10_000 })
     adminRequests(server)('DELETE', `/api/admin/spaces/${space}`)
     await ask(space)
-    await settle(() => text().includes(t.editor.spaceMissing), 'not found')
+    await settle(() => text().includes(t.editor.spaceMissing), 'not found', 400)
   })
 
   // A member of a space, who is removed from it (or whose space is deleted) by someone else.
