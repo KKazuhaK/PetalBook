@@ -801,7 +801,7 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 		if u != nil {
 			return u, false, nil
 		}
-		if err := s.ambiguousEmail(ctx, c.email); err != nil {
+		if err := s.ambiguousEmail(ctx, rt.row.TenantID, c.email); err != nil {
 			return nil, false, err
 		}
 	}
@@ -816,11 +816,12 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 	return u, true, err
 }
 
-// mergeByEmail attaches the identity to the one account whose address it is,
-// when that account's address is verified too. Never to an administrator, a
+// mergeByEmail attaches the identity to the one account of the provider's
+// tenant whose address it is, when that account's address is verified too,
+// and not by a tenant administrator alone. Never to an administrator, a
 // disabled account, or one that has an identity from this provider already.
 func (s *Service) mergeByEmail(ctx context.Context, rt *providerRT, c claimed, ip string) (*store.User, error) {
-	users, err := store.UsersByEmail(ctx, s.st.Q(), s.st.Dialect(), store.AllTenants(), c.email, 2)
+	users, err := store.UsersByEmail(ctx, s.st.Q(), s.st.Dialect(), store.InTenant(rt.row.TenantID), c.email, 2)
 	if err != nil {
 		return nil, err
 	}
@@ -829,6 +830,11 @@ func (s *Service) mergeByEmail(ctx context.Context, rt *providerRT, c claimed, i
 	}
 	u := users[0]
 	if !u.EmailVerified || u.Role == "admin" || u.Disabled {
+		return nil, nil
+	}
+	if by, err := store.EmailVerifiedBy(ctx, s.st.Q(), u.ID); err != nil {
+		return nil, err
+	} else if by == store.VerifiedByTenantAdmin {
 		return nil, nil
 	}
 	if has, err := store.UserHasIdentityOf(ctx, s.st.Q(), u.ID, rt.row.Issuer); err != nil {
@@ -848,9 +854,10 @@ func (s *Service) mergeByEmail(ctx context.Context, rt *providerRT, c claimed, i
 }
 
 // ambiguousEmail is where an address that matched nobody (or somebody the
-// rules above kept out) stops: no_account, never a new account.
-func (s *Service) ambiguousEmail(ctx context.Context, email string) error {
-	users, err := store.UsersByEmail(ctx, s.st.Q(), s.st.Dialect(), store.AllTenants(), email, 1)
+// rules above kept out) of the provider's tenant stops: no_account, never a
+// new account. Another tenant's accounts are not looked at.
+func (s *Service) ambiguousEmail(ctx context.Context, tenantID, email string) error {
+	users, err := store.UsersByEmail(ctx, s.st.Q(), s.st.Dialect(), store.InTenant(tenantID), email, 1)
 	if err != nil {
 		return err
 	}

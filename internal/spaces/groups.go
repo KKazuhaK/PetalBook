@@ -123,12 +123,12 @@ func (m *Manager) CreateGroup(ctx context.Context, tenantID, name, description, 
 	for try := 0; ; try++ {
 		g.ID = m.newGroupID(now)
 		err = m.opt.Store.Tx(ctx, func(q store.Q) error {
-			n, err := store.CountGroups(ctx, q, store.AllTenants())
+			n, err := store.CountGroups(ctx, q, store.InTenant(tenantID))
 			if err != nil {
 				return err
 			}
 			if n >= MaxGroups {
-				return limitErr("a server has at most %d groups", MaxGroups)
+				return limitErr("a tenant has at most %d groups; this one has %d", MaxGroups, n)
 			}
 			return store.InsertGroup(ctx, q, g)
 		})

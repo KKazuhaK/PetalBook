@@ -292,6 +292,7 @@ func TestOpeningAnOlderDatabaseFillsNameKeys(t *testing.T) {
 		`DROP TABLE layered_settings`,
 		`ALTER TABLE users DROP COLUMN tenant_id`,
 		`ALTER TABLE users DROP COLUMN site_admin`,
+		`ALTER TABLE users DROP COLUMN email_verified_by`,
 		`ALTER TABLE spaces DROP COLUMN tenant_id`,
 		`ALTER TABLE invites DROP COLUMN tenant_id`,
 		`ALTER TABLE invites DROP COLUMN site_admin`,

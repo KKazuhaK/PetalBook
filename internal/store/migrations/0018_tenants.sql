@@ -1,8 +1,8 @@
 -- Milestone 3.3: tenants. Every user, space, group, invite and audit row
 -- belongs to one tenant; the default tenant (0000000000, slug default) holds
--- everything that existed before, and every existing administrator becomes a
--- site administrator. A constant DEFAULT on ADD COLUMN rewrites no row on
--- SQLite or on PostgreSQL 11 and later.
+-- everything that existed before, and every existing administrator (and invite
+-- of one) becomes a site administrator. A constant DEFAULT on ADD COLUMN
+-- rewrites no row on SQLite or on PostgreSQL 11 and later.
 --
 -- The tenants row of the default tenant, the groups table (name unique per
 -- tenant) and the check at the end are made by the step of this version (see
@@ -28,8 +28,14 @@ ALTER TABLE invites ADD COLUMN site_admin BIGINT NOT NULL DEFAULT 0;
 -- Where a provider's autoCreate puts new accounts.
 ALTER TABLE sign_in_providers ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '0000000000';
 ALTER TABLE audit_log ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '0000000000';
+-- Who vouched for a verified address: '' is the person, a provider or a site
+-- administrator (everyone who could before 3.3); 'tenant_admin' is a tenant
+-- administrator alone, which does not count for merging a sign-in by address.
+ALTER TABLE users ADD COLUMN email_verified_by TEXT NOT NULL DEFAULT '';
 
 UPDATE users SET site_admin = 1 WHERE role = 'admin';
+-- An administrator's invite made before keeps its promise: a site administrator.
+UPDATE invites SET site_admin = 1 WHERE role = 'admin';
 
 CREATE INDEX users_tenant ON users(tenant_id, created);
 CREATE INDEX spaces_tenant ON spaces(tenant_id, created);

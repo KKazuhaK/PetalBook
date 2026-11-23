@@ -186,4 +186,19 @@ describe('administrators and tenants in the Users page and the navigation', () =
     expect(navLabels()).toEqual([ta.sections.users, ta.sections.groups, ta.sections.spaces, ta.sections.settings])
     expect(t.appName).not.toBe('')
   })
+
+  it('the Users page of a tenant administrator never asks for the server\'s security settings', async () => {
+    await open('users', (server) => {
+      const admin = adminRequests(server)
+      makePerson(server, 'second', 'admin')
+      const me = (admin('GET', '/api/users').body as { users: { id: string; username: string }[] }).users.find((u) => u.username === 'admin')!
+      admin('PATCH', `/api/users/${me.id}`, { siteAdmin: false })
+    })
+    await settle(() => document.querySelectorAll('[data-slot="admin-kind"]').length === 2, 'the list')
+    expect(m!.requests.filter((r) => r.url.startsWith('/api/admin/security'))).toEqual([])
+    await m!.unmount()
+    // A site administrator's does: it holds the roles a passkey is required of.
+    await open('users')
+    await settle(() => m!.requests.some((r) => r.method === 'GET' && r.url.startsWith('/api/admin/security')), 'the security settings')
+  })
 })

@@ -131,7 +131,9 @@ account an identity signs in to, with one exception the administrators switch on
 per provider (see "Which account an identity signs in to"), and then only when
 `emailVerified` is `true`: the address came from a provider that vouched for it,
 or an administrator set or confirmed it. A user changing their own `email`
-clears `emailVerified`.
+clears `emailVerified`. From 3.3 an address that only a tenant administrator
+(not a site administrator) set or confirmed shows `emailVerified: true` but does
+not count for that exception.
 
 From 3.3 a User also has `siteAdmin` and `tenant` (see "Administrators" under
 "Tenants, registration and mail").
@@ -563,12 +565,17 @@ For `intent: login`, in this order:
 
 1. The account that has this identity (by issuer and subject: one query).
 2. With `mergeVerifiedEmail` on for this provider, and only then: the one
-   account whose `email` equals the address the provider sent (ignoring case),
+   account of the provider's tenant (from 3.3; another tenant's accounts are
+   not looked at, here or in the `no_account` check below) whose `email`
+   equals the address the provider sent (ignoring case),
    when the provider said the address is verified (`email_verified: true` in
    OpenID Connect; a verified primary address on GitHub; for SAML, which has no
    such claim, turning the option on means the administrators vouch for every
    address the identity provider sends), and the account's `emailVerified` is
-   `true`. It is never an administrator's account, a disabled one, or one that
+   `true` because a provider vouched for the address, the person confirmed it,
+   or a site administrator set or confirmed it: an address that only a tenant
+   administrator set or confirmed does not count (they could give a person of
+   their tenant someone else's address). It is never an administrator's account, a disabled one, or one that
    already has an identity from this provider. The identity is then attached to
    it, and this is recorded in the audit log. Two accounts with the address:
    `no_account`.
@@ -826,7 +833,11 @@ leave no enabled administrator, when an administrator tries to disable themself,
 or, while `ssoOnly` is in effect, when it would leave no enabled administrator
 with a password. `passkeyRequired: true` is refused with
 `400 passkey_unavailable` while passkeys cannot be used (see "Passkeys").
-Setting `email` without `emailVerified` makes it unverified.
+Setting `email` without `emailVerified` makes it unverified. From 3.3,
+`emailVerified: true` sent by a tenant administrator (not a site administrator)
+is stored and shown, but the address does not count for merging a sign-in by
+address (see "Which account an identity signs in to") until a site
+administrator confirms it or the person does.
 
 An administrator cannot open another user's space through the API. Whoever
 can read the server's disk can read every file.
@@ -1196,7 +1207,7 @@ value given twice.
 
 | What | Limit |
 |---|---|
-| groups on the server | 10,000 |
+| groups of a tenant (from 3.3; before, of the server) | 10,000 |
 | people in a group | 100,000 |
 | groups a person is in | 1,000 |
 | groups that are members of one space | 200 |
@@ -4082,7 +4093,8 @@ The User object gains:
   The upgrade makes every existing administrator a site administrator, so
   nobody loses anything. Only a site administrator can set `siteAdmin`
   (`PATCH /api/users/{id}`); the rule "at least one enabled administrator" of
-  1.7 and 2.8 now counts enabled site administrators.
+  1.7 and 2.8 now counts enabled site administrators of tenants that are not
+  disabled (one of a disabled tenant cannot sign in).
 - A **tenant administrator** (`role: "admin"`, `siteAdmin: false`) has, inside
   their tenant, everything an administrator had before 3.3 except what is the
   server's own. A site administrator has all of it, in every tenant.
@@ -4140,7 +4152,7 @@ administrator of the tenant; the link is shown once, and nothing is mailed
 tenant administrator may send `name` only (`403 forbidden` for the rest).
 `200` with the tenant. `409 default_tenant` for disabling the default tenant;
 `409 exists` for a slug taken; `409 conflict` when disabling the tenant of the
-caller.
+caller, or when no enabled site administrator would be left outside the tenant.
 
 ### `DELETE /api/admin/tenants/{tenant}`
 
@@ -5002,7 +5014,8 @@ One group; `404 not_found`.
 
 `{"name": "Engineering", "description": "", "source": "local"}`; `source` is
 required. `201` with the group. `409 exists` for a name taken, `409 group_limit`
-at 10,000 groups. A synced group starts empty; map it from a provider's
+at 10,000 groups in the tenant (each tenant has its own 10,000; the message
+says how many the tenant has). A synced group starts empty; map it from a provider's
 `groups` setting.
 
 #### `PATCH /api/admin/groups/{group}`

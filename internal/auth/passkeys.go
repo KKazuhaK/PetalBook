@@ -536,10 +536,15 @@ func (s *Service) DeletePasskey(ctx context.Context, actor *Principal, userID, i
 	if actor.User.ID != userID {
 		by = "admin"
 		// A person of another tenant is no person at all.
-		if _, err := store.GetUser(ctx, s.st.Q(), store.ScopeOf(actor.User), userID); errors.Is(err, store.ErrNotFound) {
+		u, err := store.GetUser(ctx, s.st.Q(), store.ScopeOf(actor.User), userID)
+		if errors.Is(err, store.ErrNotFound) {
 			return errf(NotFound, "no such user")
 		} else if err != nil {
 			return err
+		}
+		// The rule of UpdateUser: a site administrator is changed by site administrators only.
+		if u.SiteAdmin && !(actor.User.SiteAdmin && actor.User.Role == "admin") {
+			return errf(Forbidden, "only a site administrator may change a site administrator")
 		}
 	}
 	s.credMu.Lock()

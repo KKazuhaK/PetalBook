@@ -2620,7 +2620,8 @@ registration and mail」一节，以及「Signing in」（`GET /api/auth/provide
 - **迁移**：
   - 0017 已经是 3.1 的 `0017_assets.sql`，所以用 0018，文档里原来写 0017 的地方都改了。
   - 整个里程碑一个迁移文件：这一部分只放租户表、五张表的 `tenant_id`、`users.site_admin`、
-    `invites.site_admin`、`sign_in_providers.tenant_id` 和 `layered_settings`；后面几部分要的表和列
+    `invites.site_admin`（升级前的管理员邀请也置 1）、`users.email_verified_by`、`sign_in_providers.tenant_id`
+    和 `layered_settings`；后面几部分要的表和列
     在合并前往同一个文件里加。
   - SQLite 上组名改成「租户内唯一」要重建 `groups`，重建要先关外键。`PRAGMA foreign_keys` 在事务里
     不起作用，所以 `migrate.go` 里凡是要这样的版本（`foreignKeysOff`），SQLite 就把整个迁移放到
@@ -2651,8 +2652,11 @@ registration and mail」一节，以及「Signing in」（`GET /api/auth/provide
   - 没说「去哪个租户」的地方：`setup`、命令行 `user add --admin`、默认租户里由全站管理员邀请或升的管理员，
     都是全站管理员（升级前的管理员本来就都是服务器的）；别的租户里、或者租户管理员邀请的不是。
     `POST /api/invites` 因此多了 `tenant`、`siteAdmin`。这一条合同里没写，是实现时补的。
-  - 「至少一个可用的管理员」数全站管理员；降级、停用、取消 `siteAdmin` 都要查；租户管理员碰全站管理员
-    是 `403`。
+  - 「至少一个可用的管理员」数全站管理员，不数停用租户里的（他们登不进来）；降级、停用、取消
+    `siteAdmin`、停用租户都要查；租户管理员碰全站管理员（包括删他的通行密钥）是 `403`。
+  - 2.8 按已验证邮箱合并只在提供方所在的租户里找；租户管理员自己设的「已验证」照样显示，但记成
+    `email_verified_by = 'tenant_admin'`，不算合并的依据（否则他可以给本租户的人填别人的地址，等那人
+    第一次单点登录时把身份合进来）。本人确认、提供方担保、全站管理员设的才算。
   - 审计：每行有租户（按这行说的人，再按动手的人）；租户管理员看不到服务器自己的那些种类（包括升级前
     写在默认租户里的 `security_changed` 之类，靠种类滤掉）。
 - **分层设置**（`internal/settings`）：
@@ -2697,6 +2701,9 @@ registration and mail」一节，以及「Signing in」（`GET /api/auth/provide
   导航里（开关就在里面），关着的时候页上没有列表；合同写的「关着的时候界面上看不到租户的入口」
   指的是租户列表和各处的租户字样，开关本身总得有地方放。中英文、mock 服务器、契约测试（对 mock 和
   真服务器都跑过）、手机宽度（行会换行、列可以缩）都做了。
+- **已知问题**：全站管理员在默认租户里升级或邀请管理员时，不带 `siteAdmin: false` 就得到全站管理员。
+  这是有意的（和升级前「管理员就是服务器的管理员」一致，`docs/api.md` 写了），但容易让人意外：想要
+  默认租户的租户管理员，必须明确发 `siteAdmin: false`。
 - **还没做的**见上面「给后面几部分留的接缝」。
 
 ### 第 4 期：离线与客户端

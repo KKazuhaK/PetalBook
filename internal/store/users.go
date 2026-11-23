@@ -18,7 +18,8 @@ type User struct {
 	Disabled bool
 	Created  time.Time
 	// EmailVerified: the address came from a provider that vouched for it, or an
-	// administrator set or confirmed it.
+	// administrator set or confirmed it (see EmailVerifiedBy for whether it
+	// counts for merging a sign-in).
 	EmailVerified bool
 	// PasskeyRequired: this person must sign in with a passkey (set for them
 	// alone; a requirement of their role is in the security settings).
@@ -150,15 +151,32 @@ func UpdateProfile(ctx context.Context, q Q, id, name, email string, verified bo
 	return oneRow(res, err)
 }
 
-// SetEmail sets a user's address and whether it is verified.
-func SetEmail(ctx context.Context, q Q, id, email string, verified bool) error {
-	res, err := q.Exec(ctx, `UPDATE users SET email = ?, email_verified = ? WHERE id = ?`, email, b2i(verified), id)
+// VerifiedByTenantAdmin is the email_verified_by of an address only a tenant
+// administrator vouched for.
+const VerifiedByTenantAdmin = "tenant_admin"
+
+// SetEmail sets a user's address, whether it is verified, and who vouched for
+// it ("" or VerifiedByTenantAdmin).
+func SetEmail(ctx context.Context, q Q, id, email string, verified bool, by string) error {
+	res, err := q.Exec(ctx, `UPDATE users SET email = ?, email_verified = ?, email_verified_by = ? WHERE id = ?`, email, b2i(verified), by, id)
 	return oneRow(res, err)
 }
 
-// SetEmailVerified marks the address verified or not.
+// EmailVerifiedBy is who vouched for a user's verified address ("" or
+// VerifiedByTenantAdmin).
+func EmailVerifiedBy(ctx context.Context, q Q, id string) (string, error) {
+	var by string
+	err := q.QueryRow(ctx, `SELECT email_verified_by FROM users WHERE id = ?`, id).Scan(&by)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return by, err
+}
+
+// SetEmailVerified marks the address verified or not, by the person
+// themself: it counts for merging a sign-in.
 func SetEmailVerified(ctx context.Context, q Q, id string, verified bool) error {
-	res, err := q.Exec(ctx, `UPDATE users SET email_verified = ? WHERE id = ?`, b2i(verified), id)
+	res, err := q.Exec(ctx, `UPDATE users SET email_verified = ?, email_verified_by = '' WHERE id = ?`, b2i(verified), id)
 	return oneRow(res, err)
 }
 
@@ -198,9 +216,14 @@ func UsersByEmail(ctx context.Context, q Q, d Dialect, sc Scope, email string, l
 	return out, rows.Err()
 }
 
-// CountEnabledPasswordAdmins counts the enabled site administrators who have a password.
+// inEnabledTenant is the condition on a users row (alias u) of a tenant that is
+// not disabled: a disabled tenant signs nobody in.
+const inEnabledTenant = `u.tenant_id NOT IN (SELECT id FROM tenants WHERE disabled = 1)`
+
+// CountEnabledPasswordAdmins counts the enabled site administrators of enabled
+// tenants who have a password.
 func CountEnabledPasswordAdmins(ctx context.Context, q Q) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM users u JOIN passwords p ON p.user_id = u.id WHERE u.role = 'admin' AND u.site_admin = 1 AND u.disabled = 0`).Scan(&n)
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM users u JOIN passwords p ON p.user_id = u.id WHERE u.role = 'admin' AND u.site_admin = 1 AND u.disabled = 0 AND `+inEnabledTenant).Scan(&n)
 	return
 }
 
@@ -225,10 +248,16 @@ func SetDisabled(ctx context.Context, q Q, id string, disabled bool) error {
 	return oneRow(res, err)
 }
 
-// CountEnabledAdmins counts the site administrators who can sign in: the rule
-// "keep one administrator" is about the server.
+// CountEnabledAdmins counts the site administrators who can sign in (enabled,
+// in an enabled tenant): the rule "keep one administrator" is about the server.
 func CountEnabledAdmins(ctx context.Context, q Q) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE role = 'admin' AND site_admin = 1 AND disabled = 0`).Scan(&n)
+	return CountEnabledAdminsOutside(ctx, q, "")
+}
+
+// CountEnabledAdminsOutside is CountEnabledAdmins leaving out one tenant's
+// (the one about to be disabled; "" leaves out none).
+func CountEnabledAdminsOutside(ctx context.Context, q Q, tenantID string) (n int, err error) {
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM users u WHERE u.role = 'admin' AND u.site_admin = 1 AND u.disabled = 0 AND u.tenant_id <> ? AND `+inEnabledTenant, tenantID).Scan(&n)
 	return
 }
 

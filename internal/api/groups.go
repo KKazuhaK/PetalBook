@@ -144,6 +144,17 @@ func (s *server) auditGroup(c *call, tenant, kind, user string, detail map[strin
 	s.audit(c, auth.AuditEvent{Kind: kind, Actor: c.user().ID, User: user, Detail: detail, Tenant: tenant})
 }
 
+// groupTenant is the tenant of a group the caller has just changed (or whose
+// place in a space they changed: a space and its groups share a tenant), for
+// its audit row. "" (the caller's) only if it is gone meanwhile.
+func (s *server) groupTenant(c *call, id string) string {
+	g, err := s.spaces.Group(c.r.Context(), store.AllTenants(), id)
+	if err != nil {
+		return ""
+	}
+	return g.TenantID
+}
+
 // --- administrators ------------------------------------------------------------------
 
 func (s *server) adminListGroups(c *call) {
@@ -247,6 +258,13 @@ func (s *server) adminDeleteGroup(c *call) {
 	}
 	id := c.r.PathValue("group")
 	ctx := c.r.Context()
+	sc := store.ScopeOf(c.user())
+	// The group is looked up in the caller's scope before its mappings are read
+	// or removed: another tenant's group answers as one that does not exist.
+	if _, err := s.spaces.Group(ctx, sc, id); err != nil {
+		s.failAdminGroup(c.w, err)
+		return
+	}
 	mappings := s.auth.GroupMappings(id)
 	if force && mappings > 0 {
 		if err := s.auth.UnmapGroup(ctx, id); err != nil {
@@ -254,7 +272,7 @@ func (s *server) adminDeleteGroup(c *call) {
 			return
 		}
 	}
-	g, err := s.spaces.DeleteGroup(ctx, store.ScopeOf(c.user()), id, force, mappings)
+	g, err := s.spaces.DeleteGroup(ctx, sc, id, force, mappings)
 	if err != nil {
 		s.failAdminGroup(c.w, err)
 		return
@@ -314,7 +332,7 @@ func (s *server) adminAddGroupMembers(c *call) {
 		return
 	}
 	if added > 0 {
-		s.auditGroup(c, "", "group_member_added", "", map[string]any{"group": id, "users": ids})
+		s.auditGroup(c, s.groupTenant(c, id), "group_member_added", "", map[string]any{"group": id, "users": ids})
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Added   int `json:"added"`
@@ -328,7 +346,7 @@ func (s *server) adminRemoveGroupMember(c *call) {
 		s.failAdminGroup(c.w, err)
 		return
 	}
-	s.auditGroup(c, "", "group_member_removed", user, map[string]any{"group": id, "users": []string{user}})
+	s.auditGroup(c, s.groupTenant(c, id), "group_member_removed", user, map[string]any{"group": id, "users": []string{user}})
 	c.w.WriteHeader(http.StatusNoContent)
 }
 
@@ -433,7 +451,7 @@ func (s *server) addSpaceGroup(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	s.auditGroup(c, "", "space_group_added", "", map[string]any{"space": c.sp.Info.ID, "group": g.GroupID, "role": g.Role})
+	s.auditGroup(c, s.groupTenant(c, g.GroupID), "space_group_added", "", map[string]any{"space": c.sp.Info.ID, "group": g.GroupID, "role": g.Role})
 	writeJSON(c.w, http.StatusCreated, toGroupMember(*g))
 }
 
@@ -450,7 +468,7 @@ func (s *server) patchSpaceGroup(c *call) {
 		return
 	}
 	if old != g.Role {
-		s.auditGroup(c, "", "space_group_changed", "", map[string]any{"space": c.sp.Info.ID, "group": g.GroupID, "role": map[string]string{"old": old, "new": g.Role}})
+		s.auditGroup(c, s.groupTenant(c, g.GroupID), "space_group_changed", "", map[string]any{"space": c.sp.Info.ID, "group": g.GroupID, "role": map[string]string{"old": old, "new": g.Role}})
 	}
 	writeJSON(c.w, http.StatusOK, toGroupMember(*g))
 }
@@ -462,6 +480,6 @@ func (s *server) deleteSpaceGroup(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	s.auditGroup(c, "", "space_group_removed", "", map[string]any{"space": c.sp.Info.ID, "group": id, "role": old})
+	s.auditGroup(c, s.groupTenant(c, id), "space_group_removed", "", map[string]any{"space": c.sp.Info.ID, "group": id, "role": old})
 	c.w.WriteHeader(http.StatusNoContent)
 }

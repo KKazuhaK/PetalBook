@@ -326,7 +326,7 @@ export function useAdminGroups(q: string, source: GroupSource | '', enabled = tr
 }
 
 // The synced groups whose names contain `q`, for the mapping of a sign-in provider: the first 200 by name (the
-// server has at most 10,000 groups, so the picker searches rather than loading them all).
+// tenant has at most 10,000 groups, so the picker searches rather than loading them all).
 export function useSyncedGroups(q = '', enabled = true) {
   return useQuery({
     queryKey: keys.adminGroupList(q, 'synced-all'),

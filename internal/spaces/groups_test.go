@@ -3,6 +3,7 @@ package spaces
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -989,6 +990,35 @@ func TestCreateGroupRetriesAnIDClash(t *testing.T) {
 		f.m.testID = nil
 		if _, err := f.m.CreateGroup(ctx, store.DefaultTenantID, "first", "", "local"); !errors.Is(err, ErrGroupExists) {
 			t.Fatalf("a taken name: %v", err)
+		}
+	})
+}
+
+// MaxGroups is a tenant's: one tenant at the limit leaves the others free, and
+// the refusal says how many that tenant has.
+func TestTheGroupLimitIsPerTenant(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := newGfix(t, st)
+		now := time.Now()
+		const tenB = "T000000002"
+		if err := st.CreateTenant(ctx, store.Tenant{ID: tenB, Slug: "acme", Name: "Acme", Created: now, Updated: now}); err != nil {
+			t.Fatal(err)
+		}
+		// B at the limit, in one statement.
+		if _, err := st.Q().Exec(ctx, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?)
+INSERT INTO groups(id, tenant_id, name, name_key, description, source, created, updated)
+SELECT 'g' || i, ?, 'g' || i, 'g' || i, '', 'local', ?, ? FROM n`, MaxGroups, tenB, now.UnixMilli(), now.UnixMilli()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.m.CreateGroup(ctx, store.DefaultTenantID, "Writers", "", store.GroupLocal); err != nil {
+			t.Fatalf("another tenant's groups count against this one: %v", err)
+		}
+		_, err := f.m.CreateGroup(ctx, tenB, "One more", "", store.GroupLocal)
+		if !errors.Is(err, ErrGroupLimit) {
+			t.Fatalf("%v", err)
+		}
+		if want := fmt.Sprintf("a tenant has at most %d groups; this one has %d", MaxGroups, MaxGroups); !strings.HasSuffix(err.Error(), want) {
+			t.Fatalf("%q, want %q", err, want)
 		}
 	})
 }

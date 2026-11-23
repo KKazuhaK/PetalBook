@@ -128,7 +128,7 @@ export function createGroupBook(o: GroupBookOptions) {
       if (source !== 'local' && source !== 'synced') bad('source is local or synced')
       const name = checkName(body.name)
       const description = body.description === undefined ? '' : checkDescription(body.description)
-      if (groups.size >= GROUP_LIMITS.groups) throw new HttpError(409, 'group_limit', `a server has at most ${GROUP_LIMITS.groups} groups`)
+      if (groups.size >= GROUP_LIMITS.groups) throw new HttpError(409, 'group_limit', `a tenant has at most ${GROUP_LIMITS.groups} groups; this one has ${groups.size}`)
       const at = o.now()
       const g: GroupRec = { id: o.newId((x) => groups.has(x)), name, description, source: source as GroupSource, created: at, updated: at, people: new Map(), addedAt: new Map() }
       groups.set(g.id, g)

@@ -370,6 +370,16 @@ func (s *server) adminPatchTenant(c *call) {
 			writeError(c.w, http.StatusConflict, "conflict", "you cannot disable your own tenant")
 			return
 		}
+		if v && !t.Disabled {
+			// Its site administrators stop counting: some other one must stay.
+			if n, err := store.CountEnabledAdminsOutside(c.r.Context(), s.opt.Store.Q(), t.ID); err != nil {
+				s.fail(c.w, err)
+				return
+			} else if n < 1 {
+				writeError(c.w, http.StatusConflict, "conflict", "there must be at least one enabled administrator of the server outside this tenant")
+				return
+			}
+		}
 		if v != t.Disabled {
 			changed["disabled"], t.Disabled = v, v
 		}

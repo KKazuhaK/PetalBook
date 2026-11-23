@@ -6,8 +6,10 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/auth"
+	"github.com/KKazuhaK/PetalBook/internal/auth/testidp"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
@@ -345,6 +347,131 @@ func TestTenantAdminsSeeTheirAuditRowsWithoutTheServersOwn(t *testing.T) {
 		}
 		if k := kinds(f.admA); k["security_changed"] != 0 {
 			t.Fatalf("tenant A's administrator sees %v", k)
+		}
+	})
+}
+
+// A tenant administrator can set a person's address and say it is verified;
+// that must never let them catch someone else's first sign-in: not across
+// tenants (a provider merges in its own tenant only), and not in their own
+// tenant (an address only a tenant administrator vouched for is not verified
+// for merging).
+func TestAPuppetAccountNeverCatchesASignIn(t *testing.T) {
+	t.Parallel()
+	idp := newIDPFor(t, "home")
+	idpB := newIDPFor(t, "corp")
+	for _, f := range []*fakeIDP{idp, idpB} {
+		f.addUser("victim", testidp.Claims{"sub": "s-victim", "preferred_username": "victim", "email": "victim@example.test", "email_verified": true, "name": "Victim"})
+	}
+	eachAccounts(t, accOpts{httpc: anyTLSClient()}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		puppet := func(name string) string {
+			id := f.admB.do("POST", "/api/invites", map[string]any{"role": "member"}).want(t, 201, "").body["token"].(string)
+			c := a.newClient("")
+			c.do("POST", "/api/invites/accept", map[string]any{"token": id, "username": name, "name": name, "password": pw}).want(t, 201, "")
+			uid := mustUserID(t, a, name)
+			u := f.admB.do("PATCH", "/api/users/"+uid, map[string]any{"email": "Victim@example.test", "emailVerified": true}).want(t, 200, "").user()
+			if u["emailVerified"] != true {
+				t.Fatal(u)
+			}
+			return uid
+		}
+		puppet("puppet-1")
+		// A provider of the default tenant: B's puppet is not in its tenant.
+		f.root.do("POST", "/api/admin/auth/providers", idp.providerBody("home", map[string]any{"mergeVerifiedEmail": true, "autoCreate": true})).want(t, 201, "")
+		c := a.newClient("")
+		loc := idp.signIn2(t, c, "home", "victim", map[string]any{})
+		if who := signedInAs(t, c); who == "puppet-1" {
+			t.Fatalf("the sign-in of a default-tenant provider merged into tenant B's puppet (%s)", loc)
+		}
+		// A provider of B: the puppet is in its tenant, but only B's administrator vouched for the address.
+		f.root.do("POST", "/api/admin/auth/providers", idpB.providerBody("corp", map[string]any{"mergeVerifiedEmail": true, "tenant": f.tenB})).want(t, 201, "")
+		c = a.newClient("")
+		loc = idpB.signIn2(t, c, "corp", "victim", map[string]any{})
+		if who := signedInAs(t, c); who == "puppet-1" {
+			t.Fatalf("the sign-in merged into an account whose address only a tenant administrator verified (%s)", loc)
+		}
+		if loc != "/login?sso_error=no_account" {
+			t.Fatal(loc)
+		}
+		// A site administrator vouching for the address makes it count.
+		f.root.do("PATCH", "/api/users/"+mustUserID(t, a, "puppet-1"), map[string]any{"emailVerified": false}).want(t, 200, "")
+		f.root.do("PATCH", "/api/users/"+mustUserID(t, a, "puppet-1"), map[string]any{"emailVerified": true}).want(t, 200, "")
+		c = a.newClient("")
+		idpB.signIn2(t, c, "corp", "victim", map[string]any{})
+		if who := signedInAs(t, c); who != "puppet-1" {
+			t.Fatalf("a site administrator's verification did not count: %q", who)
+		}
+	})
+}
+
+// A site administrator of a disabled tenant cannot sign in: they do not count
+// as the one that must stay.
+func TestASiteAdministratorOfADisabledTenantIsNotTheLastOne(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		x, err := a.auth.CreateUser(context.Background(), auth.CreateParams{Username: "adm-x", Role: "admin", Password: pw, TenantID: f.tenB})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.root.do("PATCH", "/api/users/"+x.ID, map[string]any{"siteAdmin": true}).want(t, 200, "")
+		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"disabled": true}).want(t, 200, "")
+		rootID := mustUserID(t, a, "root")
+		f.root.do("PATCH", "/api/users/"+rootID, map[string]any{"role": "member"}).want(t, 409, "conflict")
+		f.root.do("PATCH", "/api/users/"+rootID, map[string]any{"siteAdmin": false}).want(t, 409, "conflict")
+		// With X enabled again, adm-x is one: root may step down.
+		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"disabled": false}).want(t, 200, "")
+		f.root.do("PATCH", "/api/users/"+rootID, map[string]any{"siteAdmin": false}).want(t, 200, "")
+	})
+}
+
+// A site administrator's passkeys are theirs and other site administrators':
+// a tenant administrator of the same tenant cannot delete them (as with
+// PATCH /api/users/{id}).
+func TestATenantAdministratorCannotDeleteASiteAdministratorsPasskey(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		rootID := mustUserID(t, a, "root")
+		if err := store.InsertPasskey(context.Background(), a.st.Q(), store.PasskeyRow{ID: "PKROOT0001", UserID: rootID, CredentialID: "cm9vdA", Credential: `{"id":"cm9vdA"}`, Name: "Root key", RPID: "notes.example.test", Created: time.Now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
+		f.admA.do("DELETE", "/api/users/"+rootID+"/passkeys/PKROOT0001", nil).want(t, 403, "forbidden")
+		if n := f.countOf(`SELECT COUNT(*) FROM passkeys WHERE id = 'PKROOT0001'`); n != 1 {
+			t.Fatal("a tenant administrator deleted a site administrator's passkey")
+		}
+	})
+}
+
+// A site administrator changing tenant B's group or the groups of B's space
+// writes the audit rows in B (the group's or space's tenant), not their own.
+func TestGroupAuditRowsTakeTheGroupsTenant(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		kinds := func(c *client) map[string]int {
+			a.auth.FlushAudit(context.Background())
+			out := map[string]int{}
+			for _, it := range c.do("GET", "/api/admin/audit?limit=200", nil).want(t, 200, "").body["items"].([]any) {
+				out[it.(map[string]any)["kind"].(string)]++
+			}
+			return out
+		}
+		before := kinds(f.admB)
+		f.root.do("DELETE", "/api/admin/groups/"+f.groupB+"/members/"+f.userB, nil).want(t, 204, "")
+		f.groupAdd(t, f.root, f.groupB, f.userB)
+		f.root.do("PATCH", "/api/spaces/"+f.spaceB+"/groups/"+f.groupB, map[string]any{"role": "editor"}).want(t, 200, "")
+		f.root.do("DELETE", "/api/spaces/"+f.spaceB+"/groups/"+f.groupB, nil).want(t, 204, "")
+		f.root.do("POST", "/api/spaces/"+f.spaceB+"/groups", map[string]any{"groupId": f.groupB, "role": "viewer"}).want(t, 201, "")
+		after := kinds(f.admB)
+		for _, k := range []string{"group_member_removed", "group_member_added", "space_group_changed", "space_group_removed", "space_group_added"} {
+			if after[k] != before[k]+1 {
+				t.Errorf("%s: tenant B's administrator sees %d rows, want %d", k, after[k], before[k]+1)
+			}
+		}
+		if a := kinds(f.admA); a["group_member_added"] != 1 || a["space_group_added"] != 1 {
+			t.Errorf("tenant A's administrator sees B's rows: %v", a)
 		}
 	})
 }

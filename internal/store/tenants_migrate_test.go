@@ -31,6 +31,7 @@ func seedBefore3_3(t *testing.T, st *store.Store) {
 	exec(`INSERT INTO group_members(group_id, user_id, provider, value, created) VALUES ('G1', 'M1', '', '', ?), ('G1', 'M2', '', '', ?), ('G2', 'M2', 'sso', 'readers', ?)`, now, now, now)
 	exec(`INSERT INTO space_groups(space_id, group_id, role, created) VALUES ('S1', 'G1', 'editor', ?), ('S1', 'G2', 'viewer', ?)`, now, now)
 	exec(`INSERT INTO invites(id, token_hash, role, created_by, created, expires) VALUES ('I1', 'hash1', 'member', 'A1', ?, ?)`, now, now+86400000)
+	exec(`INSERT INTO invites(id, token_hash, role, created_by, created, expires) VALUES ('I2', 'hash2', 'admin', 'A1', ?, ?)`, now, now+86400000)
 	exec(`INSERT INTO audit_log(id, at, kind, actor, user_id, username, ip, detail) VALUES ('R1', ?, 'login', '', 'M1', 'tang', '', '{}'), ('R2', ?, 'security_changed', 'A1', '', '', '', '{}')`, now, now)
 	exec(`INSERT INTO sessions(id, user_id, created, last_used) VALUES ('T1', 'M1', ?, ?)`, now, now)
 }
@@ -70,6 +71,14 @@ func TestTenantsMigrationOnAnExistingDatabase(t *testing.T) {
 		}
 		if n := count(t, st, `SELECT COUNT(*) FROM users WHERE site_admin = 1 AND role <> 'admin'`); n != 0 {
 			t.Errorf("%d members became site administrators", n)
+		}
+		// An administrator's invite made before 3.3 makes what it promised: an
+		// administrator of the server.
+		if n := count(t, st, `SELECT COUNT(*) FROM invites WHERE site_admin = 1 AND role = 'admin'`); n != 1 {
+			t.Errorf("%d administrator invites are of a site administrator, want 1", n)
+		}
+		if n := count(t, st, `SELECT COUNT(*) FROM invites WHERE site_admin = 1 AND role <> 'admin'`); n != 0 {
+			t.Errorf("%d member invites became of a site administrator", n)
 		}
 		// What hangs under the groups survived the rebuild.
 		for q, want := range map[string]int{

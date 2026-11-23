@@ -304,3 +304,45 @@ func TestSiteAdminFlagFollowsTheRole(t *testing.T) {
 		}
 	})
 }
+
+func TestSiteAdministratorsOfADisabledTenantAreNotCounted(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		twoTenants(t, st)
+		now := time.Now()
+		for _, u := range []store.User{
+			{ID: "Ra", Username: "root", Role: "admin", SiteAdmin: true, Created: now, TenantID: tenA},
+			{ID: "Xb", Username: "adm-x", Role: "admin", SiteAdmin: true, Created: now, TenantID: tenB},
+		} {
+			if err := store.InsertUser(ctx, st.Q(), u); err != nil {
+				t.Fatal(err)
+			}
+		}
+		count := func() (all, outsideB, outsideA int) {
+			var err error
+			if all, err = store.CountEnabledAdmins(ctx, st.Q()); err != nil {
+				t.Fatal(err)
+			}
+			if outsideB, err = store.CountEnabledAdminsOutside(ctx, st.Q(), tenB); err != nil {
+				t.Fatal(err)
+			}
+			if outsideA, err = store.CountEnabledAdminsOutside(ctx, st.Q(), tenA); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+		if a, b, c := count(); a != 2 || b != 1 || c != 1 {
+			t.Fatalf("%d %d %d", a, b, c)
+		}
+		tb, err := store.GetTenant(ctx, st.Q(), tenB)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tb.Disabled = true
+		if err := st.UpdateTenant(ctx, *tb); err != nil {
+			t.Fatal(err)
+		}
+		if a, b, c := count(); a != 1 || b != 1 || c != 0 {
+			t.Fatalf("with B disabled: %d %d %d", a, b, c)
+		}
+	})
+}

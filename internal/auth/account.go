@@ -264,7 +264,9 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 		if patch.SiteAdmin != nil && *patch.SiteAdmin && role != "admin" {
 			return errf(Invalid, "a site administrator must be an administrator")
 		}
-		losesAdmin := u.SiteAdmin && !u.Disabled && (!site || disabled)
+		// One of a disabled tenant cannot sign in, so is not counted: losing
+		// them loses no one.
+		losesAdmin := u.SiteAdmin && !u.Disabled && !s.st.TenantDisabled(u.TenantID) && (!site || disabled)
 		if losesAdmin {
 			if n, err := store.CountEnabledAdmins(ctx, q); err != nil {
 				return err
@@ -325,8 +327,15 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 			if patch.EmailVerified != nil {
 				verified = *patch.EmailVerified && newEmail != ""
 			}
+			// An address a tenant administrator alone says is verified does not
+			// count for merging a sign-in (see mergeByEmail): they could give a
+			// person of their tenant someone else's address.
+			by := ""
+			if verified && !isSite {
+				by = store.VerifiedByTenantAdmin
+			}
 			if newEmail != u.Email || verified != u.EmailVerified {
-				if err := store.SetEmail(ctx, q, u.ID, newEmail, verified); err != nil {
+				if err := store.SetEmail(ctx, q, u.ID, newEmail, verified, by); err != nil {
 					return err
 				}
 				if newEmail != u.Email {

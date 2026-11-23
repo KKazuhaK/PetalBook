@@ -53,7 +53,8 @@ function UserList({ users, meId, meSite }: { users: User[]; meId: string; meSite
   const [open, setOpen] = useState<string | null>(null)
   const messageRef = useRef<HTMLParagraphElement>(null)
   // The roles a passkey is required of: for them the switch is on and cannot be turned off here.
-  const requireRoles = useSecuritySettings().data?.passkeys.requireRoles ?? []
+  // The security settings are the server's: only a site administrator may read them.
+  const requireRoles = useSecuritySettings(meSite).data?.passkeys.requireRoles ?? []
 
   const change = async (u: User, patch: { role?: Role; disabled?: boolean; passkeyRequired?: boolean; email?: string; emailVerified?: boolean; siteAdmin?: boolean }) => {
     setBusy(u.id)

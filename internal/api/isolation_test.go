@@ -32,6 +32,9 @@ type tenFx struct {
 	userB, spaceB, groupB, inviteB, tokenB, grantB string
 	userA, spaceA, groupA, inviteA                 string
 	secretB                                        string
+
+	// syncedB is a synced group of B that a provider of B maps (addMappedB).
+	syncedB string
 }
 
 // fakeID is an id of the right form that nothing has.
@@ -108,7 +111,26 @@ func (f *tenFx) groupAdd(t *testing.T, c *client, g string, ids ...string) {
 
 // bIDs are everything of tenant B that must never show in an answer to A.
 func (f *tenFx) bIDs() []string {
-	return []string{f.tenB, f.userB, f.spaceB, f.groupB, f.inviteB, f.tokenB, f.grantB, "adm-b", "mem-b", "Space B", "Group B", "Acme", f.secretB}
+	l := []string{f.tenB, f.userB, f.spaceB, f.groupB, f.inviteB, f.tokenB, f.grantB, "adm-b", "mem-b", "Space B", "Group B", "Acme", f.secretB}
+	if f.syncedB != "" {
+		l = append(l, f.syncedB, "Synced B")
+	}
+	return l
+}
+
+// addMappedB gives B a synced group that a provider of B (acme-sso) maps.
+func (f *tenFx) addMappedB(t *testing.T, idp *fakeIDP) {
+	t.Helper()
+	f.syncedB = f.admB.mkGroup(t, "Synced B", "synced")
+	f.root.do("POST", "/api/admin/auth/providers", idp.providerBody("acme-sso", map[string]any{"tenant": f.tenB})).want(t, 201, "")
+	f.root.do("PATCH", "/api/admin/auth/providers/acme-sso", map[string]any{"groups": map[string]any{"enabled": true, "map": gmap("staff", f.syncedB)}}).want(t, 200, "")
+}
+
+// mappingsOfB is how many entries of acme-sso's map there are.
+func (f *tenFx) mappingsOfB(t *testing.T) int {
+	t.Helper()
+	g := f.root.do("GET", "/api/admin/auth/providers/acme-sso", nil).want(t, 200, "").body["groups"].(map[string]any)
+	return len(g["map"].([]any))
 }
 
 // --- the table of routes -----------------------------------------------------------
@@ -129,6 +151,8 @@ type isoEntry struct {
 	// uses the pattern's parameters by name.
 	body func(f *tenFx, id string) any
 	ids  func(f *tenFx) map[string]string // parameters of the path (name -> B's id)
+	// query is added to the path, the same for B's id and a made-up one.
+	query string
 }
 
 // isolationRoutes has an entry for every route that is not a space route (those
@@ -196,7 +220,7 @@ var isolationRoutes = map[string]isoEntry{
 	"POST /api/admin/groups":                          {kind: isoList},
 	"GET /api/admin/groups/{group}":                   {kind: isoParam},
 	"PATCH /api/admin/groups/{group}":                 {kind: isoParam, body: func(f *tenFx, id string) any { return map[string]any{"name": "renamed"} }},
-	"DELETE /api/admin/groups/{group}":                {kind: isoParam},
+	"DELETE /api/admin/groups/{group}":                {kind: isoParam, query: "?force=1", ids: func(f *tenFx) map[string]string { return map[string]string{"group": f.syncedB} }},
 	"GET /api/admin/groups/{group}/members":           {kind: isoParam},
 	"POST /api/admin/groups/{group}/members":          {kind: isoParam, body: func(f *tenFx, id string) any { return map[string]any{"userIds": []string{f.userB}} }},
 	"DELETE /api/admin/groups/{group}/members/{user}": {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"group": f.groupB, "user": f.userB} }},
@@ -281,6 +305,7 @@ func (f *tenFx) build(rt api.RouteInfo, e isoEntry, other bool) (path string, bo
 		}
 		path = strings.ReplaceAll(path, "{path...}", "x.md")
 	}
+	path += e.query
 	body = map[string]any{}
 	if e.body != nil {
 		body = e.body(f, val("id", f.tenB))
@@ -305,8 +330,10 @@ func shape(r result) string {
 
 func TestTenantsAreIsolatedOnEveryRoute(t *testing.T) {
 	t.Parallel()
-	eachAccounts(t, accOpts{oauth: true}, func(t *testing.T, a *acc) {
+	idp := newIDPFor(t, "acme-sso")
+	eachAccounts(t, accOpts{oauth: true, httpc: anyTLSClient()}, func(t *testing.T, a *acc) {
 		f := newTenFx(t, a)
+		f.addMappedB(t, idp)
 		callers := []struct {
 			name string
 			c    *client
@@ -395,6 +422,7 @@ func TestTenantsAreIsolatedOnEveryRoute(t *testing.T) {
 		for q, want := range map[string]int{
 			`SELECT COUNT(*) FROM spaces WHERE id = '` + f.spaceB + `' AND disabled = 0`:     1,
 			`SELECT COUNT(*) FROM groups WHERE id = '` + f.groupB + `' AND name = 'Group B'`: 1,
+			`SELECT COUNT(*) FROM groups WHERE id = '` + f.syncedB + `'`:                     1,
 			`SELECT COUNT(*) FROM users WHERE id = '` + f.userB + `' AND disabled = 0`:       1,
 			`SELECT COUNT(*) FROM tenants WHERE id = '` + f.tenB + `' AND name = 'Acme'`:     1,
 			`SELECT COUNT(*) FROM invites WHERE id = '` + f.inviteB + `'`:                    1,
@@ -403,6 +431,9 @@ func TestTenantsAreIsolatedOnEveryRoute(t *testing.T) {
 			if err := a.st.Q().QueryRow(context.Background(), q).Scan(&n); err != nil || n != want {
 				t.Errorf("%s: %d %v", q, n, err)
 			}
+		}
+		if n := f.mappingsOfB(t); n != 1 {
+			t.Errorf("acme-sso maps %d values: B's mapping was removed by another tenant", n)
 		}
 		assertNoCrossTenantMemberships(t, a)
 		if n := f.countOf(`SELECT COUNT(*) FROM api_tokens WHERE id = '` + f.tokenB + `' AND revoked = 0`); n != 1 {
