@@ -44,7 +44,8 @@ var (
 	ErrLastOwner = errors.New("a space needs at least one owner")
 	// ErrInvalid wraps a refused name.
 	ErrInvalid = errors.New("invalid")
-	// ErrLimit: the user owns as many spaces as the server allows.
+	// ErrLimit: the user owns as many spaces as they may (see QuotaError, which
+	// is one).
 	ErrLimit = errors.New("space limit reached")
 	// ErrDisabled: an administrator has disabled the space; it is in its
 	// members' lists, but nothing in it can be opened.
@@ -117,7 +118,9 @@ type Options struct {
 	// CacheEntries bounds the membership cache by entries, one per space a
 	// cached person can reach (default DefaultCacheEntries).
 	CacheEntries int
-	// MaxSpaces is how many spaces one user may own; 0 means no limit.
+	// MaxSpaces is how many spaces one user may own; 0 means no limit. The server
+	// replaces it with the quota settings (SetQuota); it is what applies until
+	// then, and what the tests of this package use.
 	MaxSpaces int
 	// IdleAfter is how long an open space may go unused before it is closed
 	// (default 15 minutes), and MaxOpen how many may be open at once (default
@@ -136,6 +139,11 @@ type Options struct {
 	// measurement must be before it is measured again (default DefaultSizeAge).
 	// See sizes.go for what that costs.
 	SizeEvery, SizeAge time.Duration
+
+	// RecountEvery is how often every usage row is recounted from the rows it
+	// summarises (default DefaultRecountEvery; negative turns it off). The first
+	// pass is made when the manager starts running.
+	RecountEvery time.Duration
 
 	// Secrets encrypts the credentials of remotes; by default a box keyed from
 	// DataDir/secret.key or PETALBOOK_SECRET_KEY.
@@ -201,6 +209,8 @@ type Manager struct {
 	trimMu   sync.Mutex // one trim at a time
 	trimming bool       // a background trim is queued or running (guarded by mu)
 	createMu sync.Mutex // space creation is one at a time, so the limit cannot be passed by racing
+
+	quota quotaHooks // see SetQuota
 
 	// testHook, set by tests only, runs at named points inside transactions.
 	testHook func(point string)
@@ -705,14 +715,8 @@ func (m *Manager) CreateWith(ctx context.Context, userID, name, inbox string) (I
 	if err != nil {
 		return Info{}, err
 	}
-	if m.opt.MaxSpaces > 0 {
-		n, err := store.CountOwnedSpaces(ctx, m.opt.Store.Q(), userID)
-		if err != nil {
-			return Info{}, err
-		}
-		if n >= m.opt.MaxSpaces {
-			return Info{}, fmt.Errorf("%w: you already own %d spaces, the most this server allows", ErrLimit, n)
-		}
+	if err := m.checkSpaceQuota(ctx, *u); err != nil {
+		return Info{}, err
 	}
 	stg, err := m.Stage(name, IdentityOf(*u))
 	if err != nil {
@@ -898,9 +902,10 @@ func (m *Manager) Run(ctx context.Context) {
 	if m.single != nil {
 		return
 	}
-	sized := make(chan struct{})
+	sized, counted := make(chan struct{}), make(chan struct{})
 	go func() { defer close(sized); m.runSizer(ctx) }()
-	defer func() { <-sized }()
+	go func() { defer close(counted); m.runRecount(ctx) }()
+	defer func() { <-sized; <-counted }()
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for {

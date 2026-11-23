@@ -290,6 +290,10 @@ func TransferOwnership(ctx context.Context, q Q, spaceID, newOwner string, now t
 	if _, err := q.Exec(ctx, `UPDATE space_members SET role = 'editor' WHERE space_id = ? AND role = 'owner' AND user_id <> ?`, spaceID, newOwner); err != nil {
 		return nil, err
 	}
+	// The space is now counted for its new owner.
+	if err := settleOwner(ctx, q, spaceID); err != nil {
+		return nil, err
+	}
 	return append(touched, newOwner), nil
 }
 
@@ -309,6 +313,9 @@ func DeleteSpace(ctx context.Context, q Q, sc Scope, id string) (members []strin
 		return nil, err
 	}
 	members = append(members, viaGroups...)
+	if err := forgetSpaceUsage(ctx, q, id); err != nil {
+		return nil, err
+	}
 	for _, stmt := range []string{
 		`DELETE FROM drafts WHERE space_id = ?`,
 		`DELETE FROM remotes WHERE space_id = ?`,

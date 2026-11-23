@@ -182,3 +182,35 @@ func TestFreshDatabaseHasTheDefaultTenant(t *testing.T) {
 		}
 	})
 }
+
+// The usage rows of a database that existed before quotas start right: the
+// bytes of the 1.7 measurement are the first usage_bytes, a space counts for its
+// first owner (the earliest owner, as the administration's list shows it), a
+// space nobody owns counts for its tenant only, and every person and the
+// tenant have a row.
+func TestQuotaMigrationStartsTheUsageRowsRight(t *testing.T) {
+	storetest.EachAtVersion(t, 17, func(t *testing.T, st *store.Store) {
+		seedBefore3_3(t, st)
+		for _, q := range []string{
+			`UPDATE spaces SET size_bytes = 700, size_at = 1 WHERE id = 'P1'`,
+			`UPDATE spaces SET size_bytes = 5000, size_at = 1 WHERE id = 'S1'`,
+			// S1's earliest owner is A1; a second owner later does not take it.
+			`INSERT INTO space_members(space_id, user_id, role, created) VALUES ('S1', 'M2', 'owner', 9999999999999)`,
+		} {
+			if _, err := st.Q().Exec(ctx, q); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := st.Migrate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		usageIs(t, st, store.UsageUser, "M1", 1, 700, 0)
+		usageIs(t, st, store.UsageUser, "A1", 1, 5000, 0)
+		usageIs(t, st, store.UsageUser, "M2", 0, 0, 0)
+		u := usageIs(t, st, store.UsageTenant, store.DefaultTenantID, 2, 5700, 0)
+		if u.People != 4 {
+			t.Fatalf("people %d", u.People)
+		}
+		consistent(t, st)
+	})
+}

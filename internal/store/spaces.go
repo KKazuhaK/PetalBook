@@ -38,8 +38,10 @@ func InsertSpace(ctx context.Context, q Q, tenantID, id, name, personalOf, inbox
 	if tenantID == "" {
 		tenantID = DefaultTenantID
 	}
-	_, err := q.Exec(ctx, `INSERT INTO spaces(id, name, name_key, personal_of, inbox, created, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?)`, id, name, FoldName(name), owner, inbox, ms(now), tenantID)
-	return err
+	if _, err := q.Exec(ctx, `INSERT INTO spaces(id, name, name_key, personal_of, inbox, created, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?)`, id, name, FoldName(name), owner, inbox, ms(now), tenantID); err != nil {
+		return err
+	}
+	return usageOfNewSpace(ctx, q, tenantID)
 }
 
 // AddMember makes a user a member of a space. The statement joins the two rows
@@ -49,7 +51,13 @@ func InsertSpace(ctx context.Context, q Q, tenantID, id, name, personalOf, inbox
 func AddMember(ctx context.Context, q Q, spaceID, userID, role string, now time.Time) error {
 	res, err := q.Exec(ctx, `INSERT INTO space_members(space_id, user_id, role, created)
 		SELECT s.id, u.id, ?, ? FROM spaces s JOIN users u ON u.tenant_id = s.tenant_id WHERE s.id = ? AND u.id = ?`, role, ms(now), spaceID, userID)
-	return oneRow(res, err)
+	if err := oneRow(res, err); err != nil {
+		return err
+	}
+	if role != "owner" {
+		return nil
+	}
+	return settleOwner(ctx, q, spaceID)
 }
 
 // ListUserSpaces returns the spaces a user is a member of, the personal one
@@ -176,13 +184,19 @@ func MemberRole(ctx context.Context, q Q, spaceID, userID string) (string, error
 // SetMemberRole changes a member's role.
 func SetMemberRole(ctx context.Context, q Q, spaceID, userID, role string) error {
 	res, err := q.Exec(ctx, `UPDATE space_members SET role = ? WHERE space_id = ? AND user_id = ?`, role, spaceID, userID)
-	return oneRow(res, err)
+	if err := oneRow(res, err); err != nil {
+		return err
+	}
+	return settleOwner(ctx, q, spaceID)
 }
 
 // RemoveMember removes a member from a space.
 func RemoveMember(ctx context.Context, q Q, spaceID, userID string) error {
 	res, err := q.Exec(ctx, `DELETE FROM space_members WHERE space_id = ? AND user_id = ?`, spaceID, userID)
-	return oneRow(res, err)
+	if err := oneRow(res, err); err != nil {
+		return err
+	}
+	return settleOwner(ctx, q, spaceID)
 }
 
 // CountOwners counts the owners of a space.

@@ -15,6 +15,10 @@ const (
 	DailyOwn            = "daily.own"
 	DailyAPI            = "daily.api"
 	DailyDefault        = "daily.default"
+
+	QuotaSpacesPerPerson = "quota.spacesPerPerson"
+	QuotaBytesPerPerson  = "quota.bytesPerPerson"
+	QuotaPagesPerPerson  = "quota.pagesPerPerson"
 )
 
 // Definitions are the settings that exist, in the order the pages show them.
@@ -23,9 +27,10 @@ const (
 // later part of 3.3: 3.1's storage.remotes.require (choice, ordered null <
 // any < github), storage.remotes.graceDays and storage.localSpaces.maxBytes
 // (limits) join with layers site and tenant and a site Lower of lock, and a
-// tenant may only tighten them; the quota.* limits of the next part (spaces,
-// bytes and pages per person, with a person layer). 2.7's GitHub App settings
-// have no tenant layer and never appear here.
+// tenant may only tighten them. 2.7's GitHub App settings have no tenant layer
+// and never appear here. The person layer of the quota.* limits is an
+// administrator's override on the user (users.quota), read by internal/quota,
+// not something a person sets for themselves.
 func Definitions() []*Def {
 	return []*Def{
 		{Key: RegistrationOpen, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: false, Lower: Lower{Mode: Lock}},
@@ -42,6 +47,11 @@ func Definitions() []*Def {
 		// the tenant's comes between the space's and the site's. Validated by
 		// the daily text's code (see Service.BindCheck).
 		{Key: DailyDefault, Kind: Doc, Layers: []Layer{Site, Tenant}, Default: nil, Lower: Lower{Mode: Allow}},
+		// What one person may use. Only the number of spaces is refused (0 is no
+		// limit, as --max-spaces 0 was); bytes and pages warn. null is no limit.
+		{Key: QuotaSpacesPerPerson, Kind: Limit, Layers: []Layer{Site, Tenant, Person}, Default: int64(20), Min: 0, Max: 10000, Lower: Lower{Mode: Allow}},
+		{Key: QuotaBytesPerPerson, Kind: Limit, Layers: []Layer{Site, Tenant, Person}, Default: nil, Min: 1, Max: 1 << 50, Nullable: true, Lower: Lower{Mode: Allow}},
+		{Key: QuotaPagesPerPerson, Kind: Limit, Layers: []Layer{Site, Tenant, Person}, Default: nil, Min: 1, Max: 1 << 40, Nullable: true, Lower: Lower{Mode: Allow}},
 	}
 }
 

@@ -92,3 +92,42 @@ CREATE TABLE email_tokens (
 );
 CREATE INDEX email_tokens_user ON email_tokens(user_id, kind);
 CREATE INDEX email_tokens_expires ON email_tokens(expires);
+
+-- Quotas and usage (the third part of 3.3).
+-- A person's own limits (JSON: spaces, bytes, pages; '' follows the tenant and
+-- the site).
+ALTER TABLE users ADD COLUMN quota TEXT NOT NULL DEFAULT '';
+-- What the background measurement found in a space: its pages (a COUNT on its
+-- index) and the bytes of its files, and the person its numbers are counted
+-- for now (its first owner; '' when it has none), so that moving a space moves
+-- exactly what was added.
+ALTER TABLE spaces ADD COLUMN page_count BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE spaces ADD COLUMN usage_bytes BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE spaces ADD COLUMN usage_user TEXT NOT NULL DEFAULT '';
+CREATE INDEX spaces_usage_user ON spaces(usage_user);
+-- What an invite fills in on the form that accepts it.
+ALTER TABLE invites ADD COLUMN username TEXT NOT NULL DEFAULT '';
+ALTER TABLE invites ADD COLUMN name TEXT NOT NULL DEFAULT '';
+ALTER TABLE invites ADD COLUMN email TEXT NOT NULL DEFAULT '';
+
+-- One row per person ('user') and per tenant ('tenant'): what they use, so that
+-- reading anyone's usage is one row. Kept in step by the statements that change
+-- a space, a member or a measurement, and recounted from the rows themselves
+-- once a day. 'over' lists the quotas the row is over (so that crossing one is
+-- audited once), 'measured' is when a measurement last changed it.
+CREATE TABLE usage (
+  kind      TEXT NOT NULL,
+  id        TEXT NOT NULL,
+  tenant_id TEXT NOT NULL,
+  spaces    BIGINT NOT NULL DEFAULT 0,
+  bytes     BIGINT NOT NULL DEFAULT 0,
+  pages     BIGINT NOT NULL DEFAULT 0,
+  people    BIGINT NOT NULL DEFAULT 0,
+  over      TEXT NOT NULL DEFAULT '',
+  measured  BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (kind, id)
+);
+CREATE INDEX usage_rank ON usage(kind, tenant_id, bytes DESC, id);
+
+-- What the 1.7 measurement found is the first value of usage_bytes.
+UPDATE spaces SET usage_bytes = size_bytes WHERE size_bytes IS NOT NULL;

@@ -341,6 +341,9 @@ func (s *Store) DeleteTenant(ctx context.Context, id string) error {
 		if _, err := q.Exec(ctx, `UPDATE sign_in_providers SET tenant_id = ? WHERE tenant_id = ?`, DefaultTenantID, id); err != nil {
 			return err
 		}
+		if _, err := q.Exec(ctx, `DELETE FROM usage WHERE tenant_id = ?`, id); err != nil {
+			return err
+		}
 		res, err := q.Exec(ctx, `DELETE FROM tenants WHERE id = ?`, id)
 		return oneRow(res, err)
 	})

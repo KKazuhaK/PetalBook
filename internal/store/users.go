@@ -142,7 +142,10 @@ func InsertUser(ctx context.Context, q Q, u User) error {
 	}
 	_, err := q.Exec(ctx, `INSERT INTO users(`+userCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		u.ID, u.Username, u.Name, u.Email, u.Role, b2i(u.Disabled), ms(u.Created), b2i(u.EmailVerified), b2i(u.PasskeyRequired), u.TenantID, b2i(u.SiteAdmin))
-	return err
+	if err != nil {
+		return err
+	}
+	return usageOfNewUser(ctx, q, u.ID, u.TenantID)
 }
 
 // UpdateProfile sets the name and email, and whether the email is verified.

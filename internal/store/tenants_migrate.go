@@ -63,7 +63,10 @@ func tenantsStep(d Dialect) func(ctx context.Context, q Q) error {
 				}
 			}
 		}
-		return nil
+		// What everyone uses, from the rows that exist: the usage rows start
+		// right (the same pass that corrects them every day).
+		_, err := recountUsage(ctx, q)
+		return err
 	}
 }
 
