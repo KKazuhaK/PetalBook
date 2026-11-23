@@ -266,6 +266,9 @@ type BeginParams struct {
 type BeginResult struct {
 	URL    string
 	Cookie *http.Cookie
+	// Binding is set too for a SAML link: the host-only cookie that ties the
+	// attempt to the signed-in browser.
+	Binding *http.Cookie
 }
 
 func (s *Service) ssoCookie(binding string) *http.Cookie {
@@ -285,6 +288,15 @@ func samlCookieName(slug string) string { return "__Secure-petalbook_saml_" + sl
 
 func (s *Service) samlCookie(slug, binding string, maxAge int) *http.Cookie {
 	return &http.Cookie{Name: samlCookieName(slug), Value: binding, Path: "/api/auth/saml/" + slug + "/acs", MaxAge: maxAge,
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteNoneMode}
+}
+
+// samlLinkCookie is __Host-petalbook_saml_link_<slug>, set when a signed-in
+// user starts linking a SAML identity. The attempt cookie is __Secure-, which a
+// sibling subdomain can set; a __Host- cookie it cannot, so the ACS knows the
+// post comes from the browser that asked. The post is cross-site: SameSite=None.
+func (s *Service) samlLinkCookie(slug, value string, maxAge int) *http.Cookie {
+	return &http.Cookie{Name: "__Host-petalbook_saml_link_" + slug, Value: value, Path: "/", MaxAge: maxAge,
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteNoneMode}
 }
 
@@ -358,8 +370,14 @@ func (s *Service) SSOBegin(ctx context.Context, kind, slug string, p BeginParams
 			return nil, unavailable(err)
 		}
 		e.samlID = req.ID
+		out := &BeginResult{URL: req.RedirectURL, Cookie: s.samlCookie(rt.row.Slug, binding, int(pendingTTL/time.Second))}
+		if e.intent == "link" {
+			tie := randomToken()
+			e.linkBinding = hashToken(tie)
+			out.Binding = s.samlLinkCookie(rt.row.Slug, tie, int(pendingTTL/time.Second))
+		}
 		s.pending.putAs(binding, e)
-		return &BeginResult{URL: req.RedirectURL, Cookie: s.samlCookie(rt.row.Slug, binding, int(pendingTTL/time.Second))}, nil
+		return out, nil
 	}
 	return nil, errf(NotFound, "single sign-on is not configured")
 }
@@ -505,6 +523,11 @@ func (s *Service) SAMLComplete(ctx context.Context, slug string, r *http.Request
 		return s.ssoFail(KindSAML, slug, "", "provider_unavailable", ip)
 	}
 	clear := []*http.Cookie{s.samlCookie(slug, "", -1)}
+	linkTie := ""
+	if ck, err := r.Cookie(s.samlLinkCookie(slug, "", 0).Name); err == nil {
+		linkTie = ck.Value
+		clear = append(clear, s.samlLinkCookie(slug, "", -1))
+	}
 	if err := r.ParseForm(); err != nil {
 		return s.ssoFail(KindSAML, slug, "", "saml_assertion_rejected", ip)
 	}
@@ -536,6 +559,10 @@ func (s *Service) SAMLComplete(ctx context.Context, slug string, r *http.Request
 		}
 		if e.slug != slug || e.kind != KindSAML {
 			return s.ssoFail(KindSAML, slug, "", "expired", ip, clear...)
+		}
+		// A link is answered only in the browser that started it.
+		if e.intent == "link" && (e.linkBinding == "" || linkTie == "" || !ctEqual(hashToken(linkTie), e.linkBinding)) {
+			return s.ssoFail(KindSAML, slug, e.intent, "expired", ip, clear...)
 		}
 		ids = []string{e.samlID}
 	case rt.cfg.AllowIDPInitiated:
@@ -853,8 +880,8 @@ func (s *Service) ssoLink(ctx context.Context, rt *providerRT, c claimed, userID
 	// The browser must still be signed in as the user who asked. A SAML
 	// response comes in a post from the identity provider's site, where the
 	// session cookie (SameSite=Lax) is not sent: there the attempt, which only
-	// a signed-in user could start and which is tied to this browser by its own
-	// cookie, says who asked.
+	// a signed-in user could start and which SAMLComplete has checked is tied
+	// to this browser by its host-only binding cookie, says who asked.
 	var p *Principal
 	var err error
 	if rt.row.Kind == KindSAML {

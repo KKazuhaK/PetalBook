@@ -120,6 +120,9 @@ func (s *server) ssoStartJSON(c *call, kind, slug string) {
 		return
 	}
 	http.SetCookie(c.w, res.Cookie)
+	if res.Binding != nil {
+		http.SetCookie(c.w, res.Binding)
+	}
 	writeJSON(c.w, http.StatusOK, struct {
 		URL string `json:"url"`
 	}{res.URL})

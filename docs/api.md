@@ -448,6 +448,13 @@ The browser cookie of a SAML attempt is `__Secure-petalbook_saml_<slug>`,
 `SameSite=None`, scoped to this path: the post comes from another site, and a
 `Lax` cookie would not be sent with it. So SAML needs an `https` public URL.
 
+A `link` started over SAML also sets `__Host-petalbook_saml_link_<slug>`
+(`SameSite=None; Secure; Path=/`, host-only), and the attempt keeps a hash of
+it. The session cookie is not sent with the cross-site post, and a sibling
+subdomain could set the `__Secure-` attempt cookie in someone else's browser,
+so the ACS links only when this cookie matches; otherwise it answers
+`sso_error=expired`.
+
 The server checks that `RelayState` equals the cookie, finds the attempt, and
 has the response validated against the provider's metadata (signature with
 SHA-256 or stronger, exactly one assertion, audience, destination, the

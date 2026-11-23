@@ -339,6 +339,12 @@ func (c *client) postACS(slug string, response []byte, relay string, ck *http.Co
 		req.AddCookie(&http.Cookie{Name: ck.Name, Value: ck.Value})
 	}
 	// The session cookie is SameSite=Lax: a browser does not send it with a post from another site.
+	// A SameSite=None cookie of the client (the link binding) is sent.
+	for _, x := range c.cookies {
+		if x.SameSite == http.SameSiteNoneMode && (ck == nil || x.Name != ck.Name) {
+			req.AddCookie(&http.Cookie{Name: x.Name, Value: x.Value})
+		}
+	}
 	rec := httptest.NewRecorder()
 	c.a.h.ServeHTTP(rec, req)
 	resp := rec.Result()

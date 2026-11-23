@@ -29,14 +29,17 @@ type pendingEntry struct {
 	// verifier is the PKCE verifier of a GitHub attempt.
 	verifier string
 	// samlID is the ID of the AuthnRequest a SAML response must answer.
-	samlID  string
-	intent  string
-	token   string // setup or invite token, held in memory only
-	userID  string // link: the user who asked
-	ret     string
-	expires time.Time
-	elem    *list.Element
-	id      string
+	samlID string
+	intent string
+	token  string // setup or invite token, held in memory only
+	userID string // link: the user who asked
+	// linkBinding is the hash of the host-only cookie a SAML link set in the
+	// browser that started it (see samlLinkCookie).
+	linkBinding string
+	ret         string
+	expires     time.Time
+	elem        *list.Element
+	id          string
 }
 
 // pendingStore keeps the protocol state of sign-ins in progress: in memory,

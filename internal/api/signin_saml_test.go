@@ -112,11 +112,31 @@ func TestSAMLSignIn(t *testing.T) {
 		if r := e.postACS(samlSlug, at.response, at.relay, at.cookie); r.resp.Header.Get("Location") != "/login?sso_error=expired" {
 			t.Fatalf("%s", r.resp.Header.Get("Location"))
 		}
-		// Linking works although the session cookie is not sent with the post.
+		// Linking works although the session cookie is not sent with the post: the
+		// browser that started it has a host-only binding cookie, sent cross-site.
 		tang := a.addUser("tang", pw, "member")
 		idp.setSession(func(s *crewjamsaml.Session) { s.NameID = "subject-tang" })
 		at = idp.begin(t, tang, samlSlug, map[string]any{"intent": "link", "return": "/settings"})
-		lr := a.newClient("").postACS(samlSlug, at.response, at.relay, at.cookie)
+		bind := tang.cookies["__Host-petalbook_saml_link_campus"]
+		if bind == nil || bind.SameSite != http.SameSiteNoneMode || !bind.Secure || !bind.HttpOnly || bind.Path != "/" || bind.Domain != "" || bind.Value == "" {
+			t.Fatalf("binding cookie %+v", bind)
+		}
+		// An attempt cookie planted in another browser (a sibling subdomain can
+		// set a __Secure- cookie) has no binding: refused, and nothing is linked.
+		planted := idp.begin(t, tang, samlSlug, map[string]any{"intent": "link", "return": "/settings"})
+		if lr := a.newClient("").postACS(samlSlug, planted.response, planted.relay, planted.cookie); lr.resp.Header.Get("Location") != "/settings?sso_error=expired" {
+			t.Fatalf("planted: %s", lr.resp.Header.Get("Location"))
+		}
+		other := a.newClient("")
+		other.cookies[bind.Name] = &http.Cookie{Name: bind.Name, Value: "not-the-binding", SameSite: http.SameSiteNoneMode}
+		if lr := other.postACS(samlSlug, at.response, at.relay, at.cookie); lr.resp.Header.Get("Location") != "/settings?sso_error=expired" {
+			t.Fatalf("wrong binding: %s", lr.resp.Header.Get("Location"))
+		}
+		if ids := tang.do("GET", "/api/account", nil).body["identities"].([]any); len(ids) != 0 {
+			t.Fatal(ids)
+		}
+		at = idp.begin(t, tang, samlSlug, map[string]any{"intent": "link", "return": "/settings"})
+		lr := tang.postACS(samlSlug, at.response, at.relay, at.cookie)
 		if lr.resp.Header.Get("Location") != "/settings" {
 			t.Fatalf("%s", lr.resp.Header.Get("Location"))
 		}
@@ -125,7 +145,7 @@ func TestSAMLSignIn(t *testing.T) {
 		}
 		// Which another account has.
 		at = idp.begin(t, admin, samlSlug, map[string]any{"intent": "link", "return": "/settings"})
-		if lr := a.newClient("").postACS(samlSlug, at.response, at.relay, at.cookie); lr.resp.Header.Get("Location") != "/settings?sso_error=identity_in_use" {
+		if lr := admin.postACS(samlSlug, at.response, at.relay, at.cookie); lr.resp.Header.Get("Location") != "/settings?sso_error=identity_in_use" {
 			t.Fatalf("%s", lr.resp.Header.Get("Location"))
 		}
 		idp.reset()
