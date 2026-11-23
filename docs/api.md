@@ -395,8 +395,10 @@ From milestone 3.1 (see "Server storage"):
 - `github.assets` asks for an attachment repository made with it, on the same
   owner, with the same visibility and credential: `true` names it
   `<name>-assets`, `{"name": "tang-notes-assets"}` names it.
-- `remote`, shaped like the body of `PUT …/remote`, connects the new space to
-  an existing repository on any allowed host before it becomes visible, under
+- `remote`, shaped like the body of `PUT …/remote` but with a `token`
+  credential only (an SSH key has to be added to the repository first, which
+  needs a space to hold it: `400 invalid`), connects the new space to an
+  existing repository on any allowed host before it becomes visible, under
   the same all-or-nothing rule. `remote` and `github` cannot both be given
   (`400 invalid`).
 - While the storage policy requires a remote of new spaces, a request without
@@ -1234,6 +1236,8 @@ so that nothing can open it:
   the space is on the remote;
 - it holds no rescued commits (`refs/petalbook/unpushed/…`): those exist
   nowhere else;
+- it has no draft, in the state database, of anyone's (a draft is safe there,
+  but an eviction never sits between a person and what they were typing);
 - it is not pinned, and it was not used for `minIdleHours`.
 
 When any of these fails, the space stays and is tried again at the next
