@@ -1601,6 +1601,71 @@ GitHub App 和用户授权，自动建仓库；passkey；SAML。
   MCP 用它连。
 - 经 MCPHub 的接入放在这之后，单独确认 MCPHub 那边的令牌格式再做。
 
+2.6 的约定（2026-11-23）：接口、工具和错误码先写进 `docs/api.md` 的「API tokens」
+「OAuth for MCP clients」「MCP」三节和「Administration」里的「Machine access」，
+前后端照它做。定下来的：
+
+- **token**：`pbk_` 加 32 字节随机数（base62），状态库只存 SHA-256 和前 12 个
+  字符；一个 token 限定 1～100 个空间（没有「全部空间」），`read` 或 `write`，
+  默认 90 天过期（1～365 天，或不过期），每人最多 50 个有效的。吊销和过期的保留
+  90 天再删，期间答 `token_revoked`／`token_expired`。
+- **权限**：每次请求取主人现在在这个空间的权限（1.7 的成员缓存，不查库），和
+  token 的 `access` 取交集；token 永远拿不到 `members`、`manage`，也不走管理员
+  进入非成员空间的路。不在 token 里的空间答 `403 token_scope`，主人已不是成员的
+  答 `404`，和网页一致；主人被停用答 `401 token_owner_disabled`。
+- **查找的开销**：和会话一样，哈希后先查内存；没见过的哈希一次唯一索引查询，
+  查不到的记 30 秒；内存里的记录最多 30 秒重读一次（命令行在另一个进程里吊销，
+  30 秒内生效；经服务吊销立即生效）；最后使用时间每小时最多写一次。缓存命中的
+  请求不查库。连续失败按客户端地址限速（每分钟 10 次）。
+- **token 能用的接口**：空间内要 `read`／`write` 的路由、`GET /api/spaces`、
+  `/api/meta`、`/api/session`（多一个 `token` 字段）和 `/mcp`；账号、用户、管理、
+  token 自身的管理都不行，所以 token 不能再签 token。
+- **单用户模式**：只有命令行 `petalbook token create|list|revoke`，直接读写状态库，
+  服务运行时也能用；不带 token 的 `/api` 请求照旧，`/mcp` 必须带 token。OAuth 只在
+  账号模式、且给了 `--public-url` 时有。
+- **OAuth**：照搬 Rackbook 的授权服务（OAuth 2.1、只支持 S256 的 PKCE、RFC 8707、
+  RFC 9207、客户端元数据文档优先、动态注册兜底、公开客户端），客户端和授权记录从
+  JSON 文件改存状态库（SQLite 和 PostgreSQL 都测）。scope 只有 `read`、`write`，
+  空间在同意页上勾选（默认只勾个人空间）；一次授权之后的行为和同样范围的 token
+  完全一样。访问令牌是 10 分钟的 ES256 JWT，只在本进程里验，验过的按哈希缓存到
+  过期；刷新令牌每次轮换，60 秒内重发拿到同一个答复，之后重用就结束整个授权；
+  90 天没刷新的授权失效。OAuth 访问令牌只能用在 `/mcp`。
+- **MCP 传输**：Streamable HTTP，无状态、只回 JSON（不开 SSE，没有 MCP 会话），
+  空闲的客户端不占任何资源。`Origin` 检查照旧，防 DNS 重绑定。
+- **工具**：`spaces_list`、`folders_list`、`tags_list`、`types_list`、
+  `pages_search`、`pages_query`（2.1 的按类型字段过滤和排序，参数同 REST 列表）、
+  `page_get`、`page_history`、`page_version`、`page_create`、`page_update`、
+  `page_move`、`page_tag`。列表全部分页、走索引；搜索每次最多 50 条，查询最多
+  200 条，条目不带正文、摘录最多 400 字；正文每次最多 128 KiB，按字节偏移续读；
+  一个结果最多 1 MiB，超了答 `too_large` 并给出建议的条数。写入正文最多 1 MiB。
+- **改正文**：`page_update` 可以整篇替换，也可以给一串「原文→新文」的精确替换
+  （每段原文必须恰好出现一次），这样改一篇几十万字的长文不用把全文传来传去。
+- **写入和草稿**：MCP 的写入和 REST 的保存一样（`baseRev` 冲突检查、记日志、
+  提交、远端空间先推送再回答），**不经过主人的草稿**：一页一人只有一份草稿，
+  MCP 写进去会和本人正在打的字互相覆盖，所以照 `PUT` 的规矩不碰草稿，草稿在网页
+  里显示为落后。`page_tag`、`page_move` 的 `baseRev` 可选（加减标签、移动不会
+  覆盖别人的文字）；`page_update` 必须带。`page_create` 可带 `requestId`，一小时内
+  重发不会建两篇（只在内存里）。
+- **提交信息**：作者是主人；MCP 的改动不和别的来源的改动合在一次提交里（来源
+  变了就先提交，和 1.7 换作者一样），提交信息末尾加 trailer `Changed-via: MCP`；
+  用 API token 走 `/api` 的改动加 `Changed-via: API token`。历史条目多一个
+  `via` 字段（`mcp`／`token`）。trailer 里不写 token 的名字（名字是用户随便起的）。
+- **管理员**：`/api/admin/access` 两个开关（token、MCP，默认都开；关掉不删数据），
+  列出和吊销所有人的 token、授权。单用户模式用 `serve --mcp=false` 关 MCP。
+
+故意不做的：删除页面和文件夹、移动文件夹、改类型／模板／设置／成员的工具；MCP
+的资源（resources）和提示（prompts）；反向链接工具；JWKS 端点（只有本进程验令牌）；
+按 token 的请求频率限制（只限失败）；「所有空间」的 token；单用户模式下的 token
+接口和设置页；经 MCPHub 的接入（2.6 之后）。
+
+要所有者定的（先按括号里的默认做）：
+
+- token 能不能不过期（能，要明确选；默认 90 天）。
+- 单用户模式的 token 默认只读还是读写（默认只读）。
+- MCP 写入不经草稿（按上面做）；还是要先存成主人的草稿再提交。
+- trailer 的写法 `Changed-via: MCP`／`Changed-via: API token`。
+- 要不要按 token 限制请求频率（先不限）。
+
 **2.7 GitHub App、用户授权、自动建仓库**
 
 - 新建空间时选「在 GitHub 上建一个仓库」：组织下用 GitHub App 的安装令牌，
