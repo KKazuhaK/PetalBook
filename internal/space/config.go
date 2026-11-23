@@ -69,11 +69,12 @@ func bindingsOf(doc *yaml.Node) []Binding {
 		entries = append(entries, entry{key, v})
 	})
 	var out []Binding
+	var r reading
 	for i, e := range entries {
 		if last[e.key] != i {
 			continue
 		}
-		if t := typeOf(e.val); t != "" {
+		if t := r.typeOf(e.val); t != "" {
 			out = append(out, Binding{e.key, t})
 		}
 	}
@@ -82,7 +83,12 @@ func bindingsOf(doc *yaml.Node) []Binding {
 
 // typeOf is the type an entry of the folders mapping binds its folder to, or "".
 func typeOf(entry *yaml.Node) string {
-	t, _ := mapValue(entry, "type")
+	var r reading
+	return r.typeOf(entry)
+}
+
+func (r *reading) typeOf(entry *yaml.Node) string {
+	t, _ := r.value(entry, "type")
 	if t == nil || t.Kind != yaml.ScalarNode || t.Tag == "!!null" {
 		return ""
 	}
@@ -93,6 +99,7 @@ func typeOf(entry *yaml.Node) string {
 // so a listing does not parse it again for every request.
 type configCache struct {
 	valid    bool
+	mode     fs.FileMode
 	size     int64
 	mtimeNs  int64
 	bindings []Binding
@@ -101,26 +108,27 @@ type configCache struct {
 }
 
 // config returns what is known of the settings file, read again when the file
-// looks different. A file that cannot be read says nothing: a page then has no
-// type but its own.
+// looks different. A file that cannot be used is read as the settings restored
+// for it (see restore.go).
 func (s *Space) config() configCache {
 	abs := filepath.Join(s.root, filepath.FromSlash(spaceFile))
 	fi, err := os.Lstat(abs)
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
-	if err != nil || !fi.Mode().IsRegular() {
+	if errors.Is(err, fs.ErrNotExist) {
+		s.heal.fine(spaceSettings)
 		s.cfg = configCache{}
-		if errors.Is(err, fs.ErrNotExist) {
-			// No file: no folder has settings.
-			s.settled, s.settledKnown = nil, true
-		}
 		return s.cfg
 	}
-	if c := s.cfg; c.valid && c.size == fi.Size() && c.mtimeNs == fi.ModTime().UnixNano() {
+	if err != nil {
+		s.cfg = configCache{}
+		return s.cfg
+	}
+	if c := s.cfg; c.valid && c.mode == fi.Mode() && c.size == fi.Size() && c.mtimeNs == fi.ModTime().UnixNano() {
 		return c
 	}
-	doc, err := s.loadYAMLFile(spaceFile, maxSpaceFile, errSpaceFile)
-	c := configCache{valid: true, size: fi.Size(), mtimeNs: fi.ModTime().UnixNano()}
+	doc, err := s.loadSettings(spaceSettings)
+	c := configCache{valid: true, mode: fi.Mode(), size: fi.Size(), mtimeNs: fi.ModTime().UnixNano()}
 	if err == nil {
 		c.bindings = bindingsOf(doc)
 		c.byFolder = make(map[string]string, len(c.bindings))
@@ -128,14 +136,6 @@ func (s *Space) config() configCache {
 			c.byFolder[b.Folder] = b.Type
 		}
 		c.views = viewsOf(doc, "folders", bindingKey)
-		// Kept when the file later cannot be read: see mayHaveSettings.
-		s.settled, s.settledKnown = make(map[string]bool, len(c.byFolder)+len(c.views)), true
-		for f := range c.byFolder {
-			s.settled[f] = true
-		}
-		for f := range c.views {
-			s.settled[f] = true
-		}
 	}
 	s.cfg = c
 	return c
@@ -191,16 +191,14 @@ func (r TypeResolver) For(folder, headerType string) string {
 // editSpaceFile reads the settings, lets edit change the document, and
 // writes it back if edit says it changed. It is for use inside a change (tx):
 // the write is journaled and part of the commit like any other file. A file
-// that cannot be read is not replaced.
+// that cannot be used is put aside in the same change, and the settings
+// restored for it are written with the edit (see restore.go).
 func (s *Space) editSpaceFile(tx *txn, edit func(root *yaml.Node) (changed bool, err error)) error {
-	_, err := editSpaceYAML(s.root, s.name, s.tmpDir(), edit, func() error {
-		if err := tx.record(jrec{Op: "t", Path: spaceFile}); err != nil {
+	_, err := editSpaceYAML(s.heal, s.root, s.name, s.tmpDir(), edit, func(rel string) error {
+		if err := tx.record(jrec{Op: "t", Path: rel}); err != nil {
 			return err
 		}
-		tx.touch(spaceFile)
-		// Written from here on (or half written): what was known of the
-		// folders with settings is not what the file says any more.
-		s.forgetSettled()
+		tx.touch(rel)
 		return nil
 	})
 	s.cfgMu.Lock()
@@ -209,104 +207,18 @@ func (s *Space) editSpaceFile(tx *txn, edit func(root *yaml.Node) (changed bool,
 	return err
 }
 
-// forgetSettled is for when space.yml is written by something other than a
-// reading of it can follow: the folders that had settings are not known again
-// until the file is read.
-func (s *Space) forgetSettled() {
-	s.cfgMu.Lock()
-	s.settled, s.settledKnown = nil, false
-	s.cfgMu.Unlock()
-}
-
-// writtenFolders is the folders a space.yml has an entry for, as the file is
-// written, for a file that cannot be read by the rule (see anchors.go): one
-// whose aliases stand for more than the budget still says, without following
-// any of them, which folders it names. ok is false when not even that can be
-// told: the file is not YAML with keys at the top, is too large or not a
-// regular file, or brings the folders in with a merge key.
-func writtenFolders(root string) (folders []string, ok bool) {
-	abs := filepath.Join(root, filepath.FromSlash(spaceFile))
-	fi, err := os.Lstat(abs)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, true
-	}
-	if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxSpaceFile {
-		return nil, false
-	}
-	data, err := os.ReadFile(abs)
-	if err != nil || len(data) > maxSpaceFile {
-		return nil, false
-	}
-	doc, err := parseYAMLWritten(data, errSpaceFile)
-	if err != nil {
-		return nil, false
-	}
-	if doc == nil {
-		return nil, true
-	}
-	top := doc.Content[0]
-	if hasMerge(top) {
-		return nil, false
-	}
-	var list *yaml.Node
-	for i := 0; i+1 < len(top.Content); i += 2 {
-		if k, isText := keyText(top.Content[i]); isText && k == "folders" {
-			list = deref(top.Content[i+1])
-		}
-	}
-	if list == nil || list.Kind != yaml.MappingNode {
-		return nil, true // no list of folders: nothing is bound when the file is mended either
-	}
-	if hasMerge(list) {
-		return nil, false
-	}
-	for i := 0; i+1 < len(list.Content); i += 2 {
-		if k, isText := keyText(list.Content[i]); isText {
-			folders = append(folders, bindingKey(k))
-		}
-	}
-	return folders, true
-}
-
-// mayHaveSettings is asked when space.yml cannot be read and a folder is about
-// to be moved or deleted: does the file hold settings for one of the folders
-// that affects names? The move or delete could not take them along, and once
-// the file is mended they would be under a name that is another folder's, or
-// nobody's until a new folder takes it.
-//
-// It goes by the entries the file has as it is written when that can still be
-// told (writtenFolders); else by the folders that had a type or views when the
-// file was last read, if it was read since the server started and not written
-// since; else it is not known, and the answer is yes.
-func (s *Space) mayHaveSettings(affects func(folder string) bool) bool {
-	if folders, ok := writtenFolders(s.root); ok {
-		for _, f := range folders {
-			if affects(f) {
-				return true
-			}
-		}
-		return false
-	}
-	s.cfgMu.Lock()
-	defer s.cfgMu.Unlock()
-	if !s.settledKnown {
-		return true
-	}
-	for f := range s.settled {
-		if affects(f) {
-			return true
-		}
-	}
-	return false
-}
-
-var spaceSettings = settingsFile{rel: spaceFile, max: maxSpaceFile, bad: errSpaceFile, problem: spaceFileProblem}
+var spaceSettings = settingsFile{rel: spaceFile, section: "folders", max: maxSpaceFile, bad: errSpaceFile, problem: spaceFileProblem}
 
 // planSpaceYAML is the text space.yml would have after edit, without writing
 // it: see planSettingsEdit. Comments in the file stay, also when they are all
 // there is.
 func planSpaceYAML(root, name string, edit func(root *yaml.Node) (bool, error)) ([]byte, bool, error) {
-	return planSettingsEdit(root, spaceSettings, func(top *yaml.Node) (bool, error) {
+	data, changed, _, err := planSpaceYAMLWith(nil, root, name, edit)
+	return data, changed, err
+}
+
+func planSpaceYAMLWith(h *healer, root, name string, edit func(root *yaml.Node) (bool, error)) ([]byte, bool, *restored, error) {
+	return planSettingsEdit(root, spaceSettings, h, func(top *yaml.Node) (bool, error) {
 		fresh := len(top.Content) == 0
 		changed, err := edit(top)
 		if err != nil || !changed {
@@ -332,23 +244,40 @@ func planSpaceYAML(root, name string, edit func(root *yaml.Node) (bool, error)) 
 }
 
 // editSpaceYAML is the editing of the settings file of the space at root,
-// without a Space: before runs once, just ahead of the write, when there is
-// something to write. It reports whether the file was written.
-func editSpaceYAML(root, name, tmpDir string, edit func(root *yaml.Node) (bool, error), before func() error) (bool, error) {
-	data, changed, err := planSpaceYAML(root, name, edit)
+// without a Space: before runs just ahead of the write of each file that is
+// written, when there is something to write. It returns the files written:
+// space.yml, and the copy of a file that could not be used, put aside first.
+func editSpaceYAML(h *healer, root, name, tmpDir string, edit func(root *yaml.Node) (bool, error), before func(rel string) error) ([]string, error) {
+	data, changed, from, err := planSpaceYAMLWith(h, root, name, edit)
 	if err != nil || !changed {
-		return false, err
+		return nil, err
 	}
-	if before != nil {
-		if err := before(); err != nil {
-			return false, err
+	if before == nil {
+		before = func(string) error { return nil }
+	}
+	var written []string
+	kept := ""
+	if from != nil {
+		if kept, err = h.keep(spaceSettings, before); err != nil {
+			return nil, err
 		}
+		written = append(written, kept)
+	}
+	if err := before(spaceFile); err != nil {
+		return written, err
 	}
 	abs := filepath.Join(root, filepath.FromSlash(spaceFile))
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-		return false, err
+		return written, err
 	}
-	return true, writeAtomic(tmpDir, abs, data)
+	if err := writeAtomic(tmpDir, abs, data); err != nil {
+		return written, err
+	}
+	h.wroteGood(spaceSettings, data)
+	if from != nil {
+		h.repaired(spaceSettings, from, kept)
+	}
+	return append(written, spaceFile), nil
 }
 
 // foldersNode returns the folders mapping of the settings, the writer's own to
@@ -417,32 +346,33 @@ func dropEmpty(root, folders *yaml.Node, i int) {
 // entry that is an alias, or that has its type from a merge key, gets its own
 // copy first: what else refers to the anchor keeps its type. An entry of any
 // other shape holds no type to remove, and stays as it is.
-func untype(root, folders *yaml.Node, match func(folder string) bool) bool {
+func untype(root, folders *yaml.Node, match func(folder string) bool) (bool, error) {
 	removed := false
+	st := stripper{file: spaceSettings, keys: []string{"type"}}
 	kept := make([]*yaml.Node, 0, len(folders.Content))
 	for i := 0; i+1 < len(folders.Content); i += 2 {
-		if key, ok := folderAt(folders, i); ok && match(key) {
-			if e := deref(folders.Content[i+1]); e != nil && e.Kind == yaml.MappingNode && hasKey(e, "type") {
-				// A key written twice is all removed: the last was the one that counted.
-				removeKey(own(folders, i+1), "type")
-				removed = true
-				if emptied(folders.Content[i+1]) {
-					continue
-				}
+		if key, ok := folderAt(folders, i); ok && match(key) && st.has(folders.Content[i+1]) {
+			// A key written twice is all removed: the last was the one that counted.
+			if err := st.strip(folders, i+1); err != nil {
+				return false, err
+			}
+			removed = true
+			if emptied(folders.Content[i+1]) {
+				continue
 			}
 		}
 		kept = append(kept, folders.Content[i], folders.Content[i+1])
 	}
 	folders.Content = kept
 	dropEmpty(root, folders, -1)
-	return removed
+	return removed, nil
 }
 
 // removeBinding takes the type off every entry written for folder (there is
 // one unless the file was edited by hand into having two; the last would count,
 // and an earlier one must not come back to life when it goes). It reports
 // whether there was one.
-func removeBinding(root, folders *yaml.Node, folder string) bool {
+func removeBinding(root, folders *yaml.Node, folder string) (bool, error) {
 	return untype(root, folders, func(key string) bool { return key == folder })
 }
 
@@ -454,7 +384,7 @@ func setBinding(root *yaml.Node, folder, typ string) (bool, error) {
 	}
 	i := entryAt(folders, folder)
 	if typ == "" {
-		return removeBinding(root, folders, folder), nil
+		return removeBinding(root, folders, folder)
 	}
 	if i < 0 {
 		folders.Content = append(folders.Content, textNode(folder),
@@ -565,15 +495,16 @@ func unbindWhere(root *yaml.Node, drop func(folder, typ string) bool) (bool, err
 		}
 	}
 	gone := map[string]bool{}
+	var r reading
 	for _, key := range order {
-		if t := typeOf(folders.Content[last[key]+1]); t != "" && drop(key, t) {
+		if t := r.typeOf(folders.Content[last[key]+1]); t != "" && drop(key, t) {
 			gone[key] = true
 		}
 	}
 	if len(gone) == 0 {
 		return false, nil
 	}
-	return untype(root, folders, func(key string) bool { return gone[key] }), nil
+	return untype(root, folders, func(key string) bool { return gone[key] })
 }
 
 // forgetFolders takes the settings the server keeps for a folder (its type and
@@ -590,14 +521,15 @@ func forgetFolders(root *yaml.Node, gone func(folder string) bool) (bool, error)
 	// One pass, whatever the number of folders that go: what stays is
 	// collected, not what goes cut out one at a time.
 	changed := false
+	st := stripper{file: spaceSettings, keys: []string{"type", "views"}}
 	kept := make([]*yaml.Node, 0, len(folders.Content))
 	for i := 0; i+1 < len(folders.Content); i += 2 {
 		key, ok := folderAt(folders, i)
 		if e := deref(folders.Content[i+1]); ok && e != nil && e.Kind == yaml.MappingNode && gone(key) {
-			if hasKey(e, "type") || hasKey(e, "views") {
-				e = own(folders, i+1)
-				removeKey(e, "type")
-				removeKey(e, "views")
+			if st.has(folders.Content[i+1]) {
+				if err := st.strip(folders, i+1); err != nil {
+					return false, err
+				}
 				changed = true
 			}
 			if emptied(folders.Content[i+1]) {
@@ -632,45 +564,26 @@ func settingsReason(err error) (reason string, ok bool) {
 	return "", false
 }
 
-// folderSettingsReason is settingsReason for the move or delete of a folder,
-// which a settings file that cannot be read stops too when it has, or may
-// have, settings for one of the folders that affects names (see
-// mayHaveSettings): they could not follow the folder or go with it. A file
-// that cannot be read and has none for them stops nothing: people go on
-// working in a space whose space.yml a pull broke.
-func (s *Space) folderSettingsReason(err error, affects func(folder string) bool) (reason string, ok bool) {
-	if reason, ok := settingsReason(err); ok {
-		return reason, true
-	}
-	var unreadable *unreadableFileError
-	if errors.As(err, &unreadable) && s.mayHaveSettings(affects) {
-		return "space.yml cannot be read as it is (it must be YAML with keys at the top, a regular file, under 1 MiB, its aliases within what the server follows), and it has, or may have, settings for this folder or one in it; fix space.yml by hand and try again", true
-	}
-	return "", false
-}
-
 // bindingsWouldFail makes the edit of space.yml that a move or a delete of a
 // folder will need, without writing it, and says why it cannot be made if so:
 // asked before the folder is touched, so that such a change is refused with
-// nothing done. affects names the folders whose entries the edit is about.
-func (s *Space) bindingsWouldFail(edit func(root *yaml.Node) (bool, error), affects func(folder string) bool) (reason string, fails bool) {
-	_, _, err := planSpaceYAML(s.root, s.name, edit)
-	return s.folderSettingsReason(err, affects)
+// nothing done. A settings file that cannot be used is no reason: the edit is
+// made on the settings restored for it.
+func (s *Space) bindingsWouldFail(edit func(root *yaml.Node) (bool, error)) (reason string, fails bool) {
+	_, _, _, err := planSpaceYAMLWith(s.heal, s.root, s.name, edit)
+	return settingsReason(err)
 }
 
 // editBindings is editSpaceFile for a change whose business is something else
 // (moving or deleting a folder).
 //
-// When the settings cannot follow the folder, refused is why, and the caller
-// refuses the move or delete (and undoes what it can), or the folder's type
-// and views would stay under a key that a new folder of that name then
-// inherits: the file would be too full, its anchors stand in the way, or it
-// cannot be read and has (or may have) entries for the folders that affects
-// names. A file that cannot be read and has no such entry has no bindings to
-// keep in step: it does not stop the change, and is left as it is.
-func (s *Space) editBindings(tx *txn, edit func(root *yaml.Node) (bool, error), affects func(folder string) bool) (refused string, err error) {
+// When the settings cannot follow the folder (the file would be too full, or
+// its anchors stand in the way), refused is why, and the caller refuses the
+// move or delete (and undoes what it can), or the folder's type and views
+// would stay under a key that a new folder of that name then inherits.
+func (s *Space) editBindings(tx *txn, edit func(root *yaml.Node) (bool, error)) (refused string, err error) {
 	err = s.editSpaceFile(tx, edit)
-	if reason, ok := s.folderSettingsReason(err, affects); ok {
+	if reason, ok := settingsReason(err); ok {
 		return reason, nil
 	}
 	var inv *InvalidError
@@ -686,7 +599,7 @@ func (s *Space) editBindings(tx *txn, edit func(root *yaml.Node) (bool, error), 
 // been looked at. Both are safe to run again and again: a move's bindings are
 // moved only if the folder is at its new place and no longer at the old one,
 // and a deleted folder's are dropped only if the folder is not there.
-func recoverBindings(root string, recs []jrec) (changed bool) {
+func recoverBindings(h *healer, root string, recs []jrec) (written []string) {
 	tmp := filepath.Join(root, ".petalbook", "tmp")
 	gone := func(rel string) bool {
 		_, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel)))
@@ -715,17 +628,15 @@ func recoverBindings(root string, recs []jrec) (changed bool) {
 		default:
 			continue
 		}
-		// A file that cannot be read (one whose aliases stand for more than
-		// the server reads is such a file) is left alone, as when the change
-		// was made. Each record is looked at once, and the edit costs no more
+		// A file that cannot be used is put aside and the settings restored for
+		// it are written with the edit, as when a change is made (see
+		// restore.go). Each record is looked at once, and the edit costs no more
 		// than the file is large, so a file cannot keep the space from opening.
-		ok, err := editSpaceYAML(root, "", tmp, edit, nil)
-		if err == nil && ok {
-			changed = true
-		}
+		paths, err := editSpaceYAML(h, root, "", tmp, edit, nil)
+		written = append(written, paths...)
 		if _, refused := settingsReason(err); !refused {
 			if err != nil {
-				slog.Warn("recovery: space.yml was left as it is; the settings of a folder that was moved or deleted may still be under its old name",
+				slog.Warn("recovery: space.yml could not be written; the settings of a folder that was moved or deleted may still be under its old name",
 					"folder", r.From+r.Path, "moved_to", r.To, "error", err)
 			}
 			continue
@@ -743,8 +654,8 @@ func recoverBindings(root string, recs []jrec) (changed bool) {
 			}
 			err = errors.Join(err, rerr)
 		}
-		slog.Error("recovery: the settings of a folder in space.yml were not moved or removed; fix space.yml by hand",
+		slog.Error("recovery: the settings of a folder in space.yml were not moved or removed",
 			"folder", r.From+r.Path, "moved_to", r.To, "error", err)
 	}
-	return changed
+	return written
 }

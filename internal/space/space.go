@@ -83,11 +83,8 @@ type Space struct {
 	// cfg is what was last read of the bindings in space.yml (see config.go).
 	cfgMu sync.Mutex
 	cfg   configCache
-	// settled is the folders that had a type or views when space.yml was last
-	// read; settledKnown is false until it was, and from a write of the file
-	// until it is read again (see mayHaveSettings).
-	settled      map[string]bool
-	settledKnown bool
+	// heal restores a settings file that cannot be used (see restore.go).
+	heal *healer
 	// tagCfg is what was last read of the views in tags.yml (see views.go).
 	tagCfg tagCache
 	// typeCache are the type files parsed, by name (see listing.go).
@@ -235,7 +232,8 @@ func Open(opt Options) (*Space, error) {
 	if err != nil {
 		return nil, err
 	}
-	recovered := recoverPending(root, recs)
+	heal := &healer{root: root, stateDir: stateDir, repo: g.r, log: log}
+	recovered := recoverPendingWith(heal, root, recs)
 	for _, r := range recs {
 		if r.Op == "b" || r.Op == "u" {
 			// What the records asked for is done now; they must not be made
@@ -254,7 +252,7 @@ func Open(opt Options) (*Space, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Space{root: root, stateDir: stateDir, name: name, idx: idx, log: log, now: time.Now, ops: osOps(), src: dirSource{root}, syncEvery: opt.ResyncInterval}
+	s := &Space{root: root, stateDir: stateDir, name: name, idx: idx, log: log, now: time.Now, ops: osOps(), src: dirSource{root}, syncEvery: opt.ResyncInterval, heal: heal}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	if s.syncEvery <= 0 {
 		s.syncEvery = 2 * time.Second

@@ -48,7 +48,9 @@ func (s *server) getTypes(c *call) {
 	writeJSON(c.w, http.StatusOK, struct {
 		Types    []typeResp      `json:"types"`
 		Bindings []space.Binding `json:"bindings"`
-	}{out, bindings})
+		// What the server did about a settings file it could not use.
+		SettingsNotices []space.SettingsNotice `json:"settingsNotices,omitempty"`
+	}{out, bindings, c.sp.Space.SettingsNotices()})
 }
 
 // putType makes a type or changes one.

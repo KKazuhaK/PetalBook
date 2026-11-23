@@ -127,9 +127,27 @@ func viewNames(t *testing.T, s *Space, scope ViewScope) string {
 	return names(l)
 }
 
-// --- the budget of a document ------------------------------------------------
+// --- the limits of a document ------------------------------------------------
 
-func TestTheBudgetCountsWhatAliasesStandForOnceForTheDocument(t *testing.T) {
+func TestOnlyWhatNoFileAPersonKeepsCanReachMakesADocumentUnusable(t *testing.T) {
+	// A mapping of 1000 keys merged into 5000 others: five million keys brought in.
+	var merged strings.Builder
+	merged.WriteString("a: &a {")
+	for i := 0; i < 1000; i++ {
+		fmt.Fprintf(&merged, "k%d: 1, ", i)
+	}
+	merged.WriteString("}\nfolders:\n")
+	for i := 0; i < 5000; i++ {
+		fmt.Fprintf(&merged, "  f%d: {<<: *a}\n", i)
+	}
+	// Merge keys nested thirty deep, each merging the one below twice: 2^30
+	// ways down, and two keys.
+	var nested strings.Builder
+	nested.WriteString("m0: &m0 {type: t, color: red}\n")
+	for i := 1; i <= 30; i++ {
+		fmt.Fprintf(&nested, "m%d: &m%d {<<: [*m%d, *m%d]}\n", i, i, i-1, i-1)
+	}
+	nested.WriteString("folders:\n  A: *m30\n")
 	for _, c := range []struct {
 		name string
 		text string
@@ -137,61 +155,91 @@ func TestTheBudgetCountsWhatAliasesStandForOnceForTheDocument(t *testing.T) {
 	}{
 		{"no aliases", "folders:\n  A: {type: t}\n", true},
 		{"an alias and a merge key", "d: &d {type: t}\nfolders:\n  A: *d\n  B: {<<: *d}\n", true},
-		{"nested, within the budget", aliasBomb("", "defs", 3), true},
-		{"nested, far over it", aliasBomb("", "defs", 7), false},
+		{"nested aliases", aliasBomb("", "defs", 3), true},
+		{"nested aliases that stand for 10^8 elements", aliasBomb("", "defs", 7), true},
+		{"many uses of a large anchor", "a: &a [" + strings.Repeat("x, ", 5000) + "x]\nb: [" + strings.Repeat("*a, ", 30) + "*a]\n", true},
+		{"merge keys nested deep", nested.String(), true},
 		{"an alias inside its own anchor", "a: &a [*a]\n", false},
-		{"many small uses of a large anchor", "a: &a [" + strings.Repeat("x, ", 5000) + "x]\nb: [" + strings.Repeat("*a, ", 30) + "*a]\n", false},
 		{"deeper than the server goes", "a: " + strings.Repeat("[", maxDocDepth+5) + strings.Repeat("]", maxDocDepth+5) + "\n", false},
+		{"merge keys that bring in millions of keys", merged.String(), false},
 	} {
 		start := time.Now()
 		doc, err := parseYAMLDoc([]byte(c.text), errSpaceFile)
 		if (err == nil) != c.ok {
-			t.Errorf("%s: err = %v, want readable = %v", c.name, err, c.ok)
+			t.Errorf("%s: err = %v, want usable = %v", c.name, err, c.ok)
 		}
 		if err == nil && doc == nil {
 			t.Errorf("%s: no document", c.name)
 		}
-		if d := time.Since(start); d > time.Second {
+		if d := time.Since(start); d > 2*time.Second+8*plainParse() {
 			t.Errorf("%s: took %v", c.name, d)
 		}
 	}
-}
-
-func TestAFileWhoseAliasesStandForTooMuchIsUnreadableNotSlow(t *testing.T) {
-	s := open(t)
-	mustCreate(t, s, "F", meta("title", "x"), "x\n")
-	// Round 1 and round 4: nested aliases in space.yml.
-	writeSpaceYML(t, s, "folders:\n  F:\n    type: wenan\n    views:\n      - {id: aaaaaa, name: v, layout: list}\n"+aliasBomb("", "defs", 7))
-	bounded(t, "reading space.yml", func() {
-		if l, err := s.Views(folderScope("F")); err != nil || len(l.Views) != 0 {
-			t.Errorf("views of an unreadable file: %v %+v", err, l)
+	doc, _ := parseYAMLDoc([]byte(nested.String()), errSpaceFile)
+	bounded(t, "reading through nested merge keys", func() {
+		if b := bindingsOf(doc); len(b) != 1 || b[0].Type != "t" {
+			t.Errorf("%v", b)
 		}
-		if len(s.Bindings()) != 0 {
-			t.Errorf("bindings of an unreadable file: %v", s.Bindings())
+		n := 0
+		eachPair(first(mapValue(first(mapValue(doc.Content[0], "folders")), "A")), func(string, *yaml.Node, int) { n++ })
+		if n != 2 {
+			t.Errorf("%d keys", n)
 		}
 	})
-	_, err := s.PutViews(Author{}, folderScope("F"), newViewList(nil).Rev, []View{{Name: "n", Layout: "list"}})
-	wantInvalid(t, "saving views into it", err, "fixed by hand")
+}
 
-	// The same budget for tags.yml: one anchor of 10^4 nodes, used by 61,664
-	// views of one tag in a file of 1 MiB.
+func TestAFileWhoseAliasesStandForMuchIsReadAsItIsWritten(t *testing.T) {
+	s := open(t)
+	mustCreate(t, s, "F", meta("title", "x"), "x\n")
+	// Nested aliases in space.yml that stand for 10^8 elements: nothing the
+	// server reads follows them, so the file is read like any other.
+	src := "folders:\n  F:\n    type: wenan\n    views:\n      - {id: aaaaaa, name: v, layout: list}\n" + aliasBomb("", "defs", 7)
+	writeSpaceYML(t, s, src)
+	var l ViewList
+	bounded(t, "reading space.yml", func() {
+		var err error
+		if l, err = s.Views(folderScope("F")); err != nil || len(l.Views) != 1 {
+			t.Errorf("views: %v %+v", err, l)
+		}
+		if len(s.Bindings()) != 1 {
+			t.Errorf("bindings: %v", s.Bindings())
+		}
+	})
+	bounded(t, "saving views into it", func() {
+		if _, err := s.PutViews(Author{}, folderScope("F"), l.Rev, []View{{Name: "n", Layout: "list"}}); err != nil {
+			t.Error(err)
+		}
+	})
+	if got := spaceYML(s.Root()); !strings.Contains(got, "*l6") || viewNames(t, s, folderScope("F")) != "n" {
+		t.Errorf("after the write:\n%s", got)
+	}
+	if n := s.SettingsNotices(); len(n) != 0 {
+		t.Errorf("the file was taken for one that cannot be used: %+v", n)
+	}
+
+	// tags.yml: one anchor of 10^4 nodes, used by thousands of views of a tag.
 	var b strings.Builder
 	b.WriteString("big: &a4 [" + strings.Repeat("x,", 9999) + "x]\ntags:\n  t:\n    color: red\n    views:\n")
-	for b.Len() < maxTagsFile-64 {
+	for i := 0; i < 5000; i++ {
 		b.WriteString("      - {q: *a4}\n")
 	}
 	setTagsYML(t, s.Root(), b.String())
 	bounded(t, "reading tags.yml", func() {
-		if l, err := s.Views(tagScope("t")); err != nil || len(l.Views) != 0 {
-			t.Errorf("views of an unreadable tags file: %v, %d views", err, len(l.Views))
+		if l, err := s.Views(tagScope("t")); err != nil || len(l.Views) != MaxViews {
+			t.Errorf("views of the tag: %v, %d views", err, len(l.Views))
 		}
-		if len(s.TagColors()) != 0 {
-			t.Errorf("colours of an unreadable file: %v", s.TagColors())
+		if c := s.TagColors(); c["t"] != "red" {
+			t.Errorf("colours: %v", c)
 		}
 	})
 	bounded(t, "writing a colour into it", func() {
-		wantInvalid(t, "a colour", s.SetTagColor(Author{}, "t", "blue"), "fixed by hand")
+		if err := s.SetTagColor(Author{}, "t", "blue"); err != nil {
+			t.Error(err)
+		}
 	})
+	if c := s.TagColors(); c["t"] != "blue" {
+		t.Errorf("colours: %v", c)
+	}
 }
 
 func TestAtMostMaxViewsAreReadOfAnEntry(t *testing.T) {
@@ -704,34 +752,29 @@ func TestWritesToAFileWithNestedAliasesCostNoMoreThanTheFile(t *testing.T) {
 			}
 		})
 	}
-	// Over the budget the file is not read, so a delete or a move leaves it as
-	// it is, at once (it took seconds at depth 5 and all memory at depth 7).
-	// The folders it has entries for are not moved or deleted, since their
-	// settings could not follow; a folder it does not name is.
+	// Aliases that stand for 10^6 and 10^8 elements cost a delete and a move
+	// no more than what is written (it took seconds at depth 5 and all memory
+	// at depth 7).
 	for _, depth := range []int{5, 7} {
 		s := open(t)
-		for _, f := range []string{"A", "B", "C", "D"} {
+		for _, f := range []string{"A", "B"} {
 			mustCreate(t, s, f, meta("title", f), "x\n")
 		}
 		src := "folders:\n  A:\n    type: wenan\n" + aliasBomb("    ", "views", depth) + "  B:\n    type: wenan\n    big: *l" + fmt.Sprint(depth) + "\n"
 		writeSpaceYML(t, s, src)
-		bounded(t, "a delete and a move over the budget", func() {
-			_, err := s.DeleteFolder(Author{}, "A", true)
-			wantInvalid(t, "the delete", err, "space.yml cannot be read")
-			_, err = s.MoveFolder(Author{}, "B", "B2")
-			wantInvalid(t, "the move", err, "space.yml cannot be read")
-			if _, err := s.DeleteFolder(Author{}, "C", true); err != nil {
+		bounded(t, "a delete and a move", func() {
+			if _, err := s.DeleteFolder(Author{}, "A", true); err != nil {
 				t.Error(err)
 			}
-			if _, err := s.MoveFolder(Author{}, "D", "D2"); err != nil {
+			if _, err := s.MoveFolder(Author{}, "B", "B2"); err != nil {
 				t.Error(err)
 			}
 		})
-		if !exists(s, "A") || !exists(s, "B") || exists(s, "B2") || exists(s, "C") || !exists(s, "D2") {
-			t.Errorf("depth %d: the folders are not where they should be: %v", depth, folderPaths(t, s))
+		if m := bindingMap(s); !reflect.DeepEqual(m, map[string]string{"B2": "wenan"}) {
+			t.Errorf("depth %d: %v\n%s", depth, m, spaceYML(s.Root()))
 		}
-		if spaceYML(s.Root()) != src {
-			t.Errorf("depth %d: an unreadable file was written", depth)
+		if got := spaceYML(s.Root()); len(got) > 2*len(src) || !strings.Contains(got, "big: ") {
+			t.Errorf("depth %d: the file is now %d bytes", depth, len(got))
 		}
 	}
 }
@@ -770,7 +813,7 @@ func TestTagWritesToAFileWithNestedAliasesCostNoMoreThanTheFile(t *testing.T) {
 
 // --- recovery ------------------------------------------------------------------
 
-func TestRecoveryLeavesAFileOverTheBudgetAloneAndTheSpaceOpens(t *testing.T) {
+func TestRecoveryCostsNoMoreThanTheFileIsLarge(t *testing.T) {
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -781,41 +824,26 @@ func TestRecoveryLeavesAFileOverTheBudgetAloneAndTheSpaceOpens(t *testing.T) {
 	crash(s)
 	// A delete and a move were made on disk; space.yml was not edited, and it
 	// is a file that used to take all memory to edit.
-	src := "folders:\n  G:\n    type: wenan\n" + aliasBomb("    ", "views", 7) + "  A:\n    type: wenan\n    big: *l7\n  Keep: {type: wenan}\n"
-	setSpaceYML(t, root, src)
-	if err := os.RemoveAll(filepath.Join(root, "G")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(filepath.Join(root, "A"), filepath.Join(root, "A2")); err != nil {
-		t.Fatal(err)
-	}
 	recs := `{"op":"u","p":"G"}` + "\n" + `{"op":"b","f":"A","to":"A2"}` + "\n"
-	for round := 0; round < 2; round++ { // and again at the next start
+	for _, src := range []string{
+		"folders:\n  G:\n    type: wenan\n" + aliasBomb("    ", "views", 7) + "  A:\n    type: wenan\n    big: *l7\n  Keep: {type: wenan}\n",
+		aliasBomb("", "defs", 3) + "folders:\n  G: {type: &t wenan, big: *l3}\n  A: {type: *t, big: *l3}\n  Keep: {type: *t}\n",
+	} {
+		os.RemoveAll(filepath.Join(root, "G"))
+		os.Rename(filepath.Join(root, "A"), filepath.Join(root, "A2"))
+		setSpaceYML(t, root, src)
 		if err := os.WriteFile(journalFile(root), []byte(recs), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		var s2 *Space
-		bounded(t, "opening the space", func() { s2 = openAt(t, root) })
-		if spaceYML(root) != src {
-			t.Fatalf("recovery wrote a file it cannot read")
+		bounded(t, "recovery", func() { s2 = openAt(t, root) })
+		if m := bindingMap(s2); !reflect.DeepEqual(m, map[string]string{"A2": "wenan", "Keep": "wenan"}) {
+			t.Errorf("after recovery: %v\n%.400s", m, spaceYML(root))
 		}
-		// The space works: pages can be made and folders changed.
-		p := mustCreate(t, s2, "Keep", meta("title", fmt.Sprint("after ", round)), "x\n")
-		if _, err := s2.Get(p.ID); err != nil {
-			t.Error(err)
-		}
+		// Back to where it was, for the next file.
 		crash(s2)
-	}
-	// Within the budget, recovery finishes both and keeps what others mean.
-	src = aliasBomb("", "defs", 3) + "folders:\n  G: {type: &t wenan, big: *l3}\n  A: {type: *t, big: *l3}\n  Keep: {type: *t}\n"
-	setSpaceYML(t, root, src)
-	if err := os.WriteFile(journalFile(root), []byte(recs), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var s3 *Space
-	bounded(t, "recovery", func() { s3 = openAt(t, root) })
-	if m := bindingMap(s3); !reflect.DeepEqual(m, map[string]string{"A2": "wenan", "Keep": "wenan"}) {
-		t.Errorf("after recovery: %v\n%s", m, spaceYML(root))
+		os.Rename(filepath.Join(root, "A2"), filepath.Join(root, "A"))
+		os.MkdirAll(filepath.Join(root, "G"), 0o755)
 	}
 }
 

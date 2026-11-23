@@ -407,21 +407,27 @@ func TestTagColors(t *testing.T) {
 	if got := s2.TagColors(); got["冬"] != "teal" || got["栀子"] != "" {
 		t.Fatalf("%v", got)
 	}
-	// A file that does not parse reads as empty, and is NOT replaced: what
-	// someone wrote there by hand is theirs to fix.
+	// A file that does not parse is nobody's to fix: the colours are those of
+	// the newest version in the history that can be used, and the next write
+	// puts the file right, keeping what it was beside it.
+	if err := s2.Flush(); err != nil {
+		t.Fatal(err)
+	}
 	broken := []byte("tags: [unclosed\n")
 	if err := os.WriteFile(file, broken, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := s2.TagColors(); len(got) != 0 {
+	if got := s2.TagColors(); got["冬"] != "teal" {
 		t.Fatalf("%v", got)
 	}
-	var inv2 *InvalidError
-	if err := s2.SetTagColor(Author{}, "冬", "teal"); !errors.As(err, &inv2) {
-		t.Fatalf("a broken file was written over: %v", err)
+	if err := s2.SetTagColor(Author{}, "冬", "rose"); err != nil {
+		t.Fatalf("a broken file stopped a write: %v", err)
 	}
-	if data, _ := os.ReadFile(file); !bytes.Equal(data, broken) {
-		t.Fatalf("%q", data)
+	if got := s2.TagColors(); got["冬"] != "rose" {
+		t.Fatalf("%v", got)
+	}
+	if kept := copiesOf(root, tagsSettings); len(kept) != 1 || readDisk(t, s2, kept[0]) != string(broken) {
+		t.Fatalf("what the file was is not kept: %v", kept)
 	}
 
 	// Keys that are not text to YAML, other settings of an entry, comments
@@ -451,12 +457,18 @@ func TestTagColors(t *testing.T) {
 		t.Fatalf("the tag 2026 is there twice:\n%s", data)
 	}
 
-	// Too large, or not a file: left alone.
+	// Too large: put aside like any file that cannot be used.
+	if err := s2.Flush(); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(file, append([]byte("tags: {}\n# "), bytes.Repeat([]byte("x"), 1<<20)...), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := s2.SetTagColor(Author{}, "冬", "teal"); !errors.As(err, &inv2) {
+	if err := s2.SetTagColor(Author{}, "冬", "pink"); err != nil {
 		t.Fatalf("%v", err)
+	}
+	if got := s2.TagColors(); got["2026"] != "blue" || got["冬"] != "pink" {
+		t.Fatalf("%v", got)
 	}
 }
 
@@ -663,20 +675,27 @@ func TestTagsFileWithSeveralDocumentsOrRepeatedKeys(t *testing.T) {
 	if err := s.SetTagColor(Author{}, "a", "red"); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
 	file := filepath.Join(root, ".petalbook", "tags.yml")
 	two := []byte("tags:\n  a: {color: red}\n---\nsecond: document\n")
 	if err := os.WriteFile(file, two, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	var inv *InvalidError
-	if err := s.SetTagColor(Author{}, "a", "blue"); !errors.As(err, &inv) {
+	// Such a file cannot be used: the write is made on the last version that
+	// can, and the file with its second document is kept beside it.
+	if got := s.TagColors(); got["a"] != "red" {
+		t.Fatalf("%v", got)
+	}
+	if err := s.SetTagColor(Author{}, "a", "blue"); err != nil {
 		t.Fatalf("%v", err)
 	}
-	if data, _ := os.ReadFile(file); !bytes.Equal(data, two) {
-		t.Fatalf("%q", data)
-	}
-	if got := s.TagColors(); len(got) != 0 {
+	if got := s.TagColors(); got["a"] != "blue" {
 		t.Fatalf("%v", got)
+	}
+	if kept := copiesOf(root, tagsSettings); len(kept) != 1 || readDisk(t, s, kept[0]) != string(two) {
+		t.Fatalf("what the file was is not kept: %v", kept)
 	}
 
 	if err := os.WriteFile(file, []byte("tags:\n  a: {color: red}\n  b: {color: teal}\n  a: {color: green}\n"), 0o644); err != nil {

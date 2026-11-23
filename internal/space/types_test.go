@@ -516,30 +516,55 @@ func TestBindFolderRefusals(t *testing.T) {
 	if after, _ := os.ReadFile(file); !bytes.Equal(before, after) {
 		t.Errorf("the file changed:\n%s\n%s", before, after)
 	}
-	// A settings file that cannot be read is not written over, and no page has
-	// a type from it.
+	// A settings file that cannot be used does not stop a binding: it is made
+	// on the last version that can be used, and what the file was is kept.
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	big := string(append([]byte("name: x\n# "), bytes.Repeat([]byte("x"), maxSpaceFile)...))
+	n := 0
 	for name, content := range map[string]string{
 		"syntax":          "name: x\nfolders: [unclosed\n",
 		"folders a list":  "name: x\nfolders: [a, b]\n",
-		"entry a scalar":  "name: x\nfolders:\n  F: yes\n",
 		"top-level a seq": "- a\n",
+		"too large":       big,
 	} {
 		if err := os.WriteFile(file, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := s.BindFolder(Author{}, "F", "t")
-		wantInvalid(t, name, err, "fixed by hand")
-		if got, _ := os.ReadFile(file); string(got) != content {
-			t.Errorf("%s: the file was replaced:\n%s", name, got)
+		n++
+		g := fmt.Sprintf("G%d", n)
+		mustCreate(t, s, g, meta("title", g), "x\n")
+		if _, err := s.BindFolder(Author{}, g, "t"); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+		if m := bindingMap(s); m["F"] != "t" || m[g] != "t" {
+			t.Errorf("%s: the bindings are %v", name, m)
+		}
+		if got, _ := os.ReadFile(file); string(got) == content {
+			t.Errorf("%s: the file was not put right", name)
+		}
+		kept := false
+		for _, c := range copiesOf(s.Root(), spaceSettings) {
+			kept = kept || readDisk(t, s, c) == content
+		}
+		if !kept {
+			t.Errorf("%s: what the file was is not kept", name)
+		}
+		if err := s.Flush(); err != nil {
+			t.Fatal(err)
 		}
 	}
-	// A settings file that is too large is left alone as well.
-	big := append([]byte("name: x\n# "), bytes.Repeat([]byte("x"), maxSpaceFile)...)
-	os.WriteFile(file, big, 0o644)
+	// An entry that is not a list of settings is the one thing left to a
+	// person: the file reads, and the server does not write over the entry.
+	content := "name: x\nfolders:\n  F: yes\n"
+	if err := os.WriteFile(file, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	_, err = s.BindFolder(Author{}, "F", "t")
-	wantInvalid(t, "too large", err, "fixed by hand")
-	if bs := s.Bindings(); len(bs) != 0 {
-		t.Errorf("%+v", bs)
+	wantInvalid(t, "entry a scalar", err, "fixed by hand")
+	if got, _ := os.ReadFile(file); string(got) != content {
+		t.Errorf("the file was replaced:\n%s", got)
 	}
 }
 

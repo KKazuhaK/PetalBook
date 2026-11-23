@@ -156,6 +156,12 @@ func (j *journal) close() error {
 // fine: they become deletions. A record naming a path outside the space (the
 // journal is a file on disk) is ignored.
 func recoverPending(root string, recs []jrec) map[string]Author {
+	return recoverPendingWith(nil, root, recs)
+}
+
+// recoverPendingWith is recoverPending; h restores a space.yml that cannot be
+// used when the bindings of a folder are to be finished in it.
+func recoverPendingWith(h *healer, root string, recs []jrec) map[string]Author {
 	set := map[string]Author{}
 	ok := func(p string) bool {
 		return p != "" && fs.ValidPath(p) && !strings.HasPrefix(p, ".git/") && p != ".git"
@@ -205,9 +211,11 @@ func recoverPending(root string, recs []jrec) map[string]Author {
 			}
 		}
 	}
-	if len(bindRecs) > 0 && recoverBindings(root, bindRecs) {
+	if len(bindRecs) > 0 {
 		by := bindRecs[len(bindRecs)-1].author()
-		set[spaceFile] = by
+		for _, p := range recoverBindings(h, root, bindRecs) {
+			set[p] = by
+		}
 	}
 	return set
 }

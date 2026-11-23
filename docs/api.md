@@ -1046,8 +1046,8 @@ that does to anchors and aliases is under Anchors, aliases and merge keys below.
 A move that a crash interrupted and whose
 bindings then do not fit in `space.yml` is taken back at the next start: the
 folder goes back to its old name, and the error is logged. A `space.yml` that
-cannot be read at the next start (see the budget below) is left as it is and
-the space opens; that is logged too.
+cannot be used at the next start is restored there as it is by any other
+change (see Settings files that cannot be used), and the space opens.
 Nothing was at the place a folder is moved to, so every binding at that place
 and under it is stale and is dropped (the moved folder takes the bindings it
 had, and none it did not); the journal of the move is kept until the bindings
@@ -1069,33 +1069,77 @@ are one name. The key rules are for a field that is new: a field the file
 already has keeps its key whatever it is (written by hand, say), and a request
 may list it as it is.
 
-A type file or `space.yml` that someone damaged by hand (not JSON or YAML, not
-an object, too large, a link, over the alias budget below) is never
-overwritten: a request that would
-write it is `400 invalid` and says it has to be fixed by hand. Reads still
-work: such a type is listed with an `error`, and a `space.yml` that cannot be
-read binds nothing.
+A type file that someone damaged by hand (not JSON, not an object, too large, a
+link) is never overwritten: a request that would write it is `400 invalid` and
+says it has to be fixed by hand. Reads still work: such a type is listed with
+an `error`.
 
-While `space.yml` cannot be read, a folder that has settings in it is not moved
-and not deleted: its type and views could not follow it or go with it, and once
-the file is mended they would belong to whatever folder then has the old name.
-Such a request is `400 invalid` with nothing renamed and nothing deleted ("the
-folder was not moved: …" or "the folder was not deleted: …, because space.yml
-cannot be read as it is …; fix space.yml by hand and try again"). Everything
-else goes on: pages are made, changed, moved and deleted, folders are made, and
-a folder the file has nothing for is moved and deleted as always. Which folders
-have settings is told, for a move, from the folder, the folders in it and the
-place it is moved to (settings left there would become the moved folder's), and
-for a delete from the folder and the folders in it:
+#### Settings files that cannot be used
 
-- from the file as it is written, when it is still YAML with keys at the top
-  (a file over the alias budget is): the folders `folders` has an entry for,
-  whatever is in the entry;
-- else from the folders that had a `type` or `views` when the server last read
-  the file, if it has read it since it started and not written it since;
-- else it is not known, and no folder is moved or deleted until the file is
-  mended. That is the case for a file that is not YAML when the server starts,
-  and for one whose `folders` come in through a merge key.
+`space.yml` and `tags.yml` are written by hand too, and come in with a pull. One
+that cannot be used (it is not YAML with keys at the top, has a second
+document, its `folders` or `tags` is not a list of entries, an alias is inside
+its own anchor, it is over a limit below, larger than 1 MiB, or not a regular
+file) is nobody's to fix before the space works again, and no request is
+refused because of it:
+
+- **Reading.** The settings are those of the newest version of the file in the
+  history of the space that can be used, looked for among the last 50 commits
+  that changed the file; with none, the space has no settings, like one that
+  never had the file. Bindings, views and colours are read from that version
+  until the file is put right. What was found is remembered for the file as it
+  is, so the history is searched once, not for every request.
+- **Repair.** The next change that writes the file (a binding, views, a
+  colour, a folder with settings moved or deleted, a type deleted) is made on
+  those settings and written in its place. In the same commit the file as it
+  was is kept beside it as `.petalbook/space.yml.unreadable-{time}` (or
+  `tags.yml.unreadable-{time}`; the time is UTC, `20261122T163159Z`), so
+  nothing is lost. A read writes nothing, so it makes no commit and, in a
+  space that follows a remote, no push; a change that needs nothing written
+  (a folder without settings is moved or deleted) leaves the file as it is.
+  A content that is already kept is not kept again: a pull that brings the
+  same file back adds no second copy.
+- **Folders.** Moving or deleting a folder is never refused because of such a
+  file, and never leaves settings behind: they follow the folder, or go with
+  it, in the restored settings.
+- **After a crash.** The start that finishes an interrupted move or delete
+  goes the same way: it restores, writes and keeps the copy, and commits both.
+
+What happened is told in `settingsNotices` of `GET /api/spaces/{space}/types`
+(the web shows it to those who look after the space; nobody is asked to do
+anything):
+
+```json
+{"settingsNotices": [
+  {"file": ".petalbook/space.yml", "unreadable": true,
+   "since": {"commit": "9f2c…", "time": "2026-11-22T16:20:11Z"},
+   "restoredFrom": {"commit": "41ab…", "time": "2026-11-20T09:02:40Z"}},
+  {"file": ".petalbook/tags.yml", "unreadable": false,
+   "since": {"time": "2026-11-21T08:00:00Z"},
+   "restoredFrom": {"commit": "77d0…", "time": "2026-11-19T12:00:00Z"},
+   "copy": ".petalbook/tags.yml.unreadable-20261121T081502Z",
+   "repairedAt": "2026-11-21T08:15:02Z"}
+]}
+```
+
+`unreadable` is `true` while the file in the space is still the one that cannot
+be used (the server reads the restored settings, and the next change puts the
+file right), and `false` for a file that was put right. `since` is the oldest
+version in a row that could not be used (without `commit`: the file was changed
+in the folder and is in no commit; `time` is then when it was changed).
+`restoredFrom` is the version the settings were taken from; it is absent when
+the history has none that can be used and the settings started empty, and has
+no `commit` when they are what the server itself wrote last and had not
+committed yet. `copy` is where the file as it was is kept. A notice of a
+repair stays for as long as its copy is in the space: deleting the copy puts
+the notice away. `since`, `restoredFrom` and `repairedAt` of a repair are kept
+by the server that made it; a copy that came with a pull from another server
+is listed with `file` and `copy` only. The list is empty, or absent, when
+there is nothing to tell.
+
+An entry of a file that reads but is not a list of settings (`Tang: yes`) is
+left as the person wrote it: binding that folder or saving its views is `400
+invalid` and names the entry, and everything else in the file works.
 
 #### Anchors, aliases and merge keys
 
@@ -1108,15 +1152,17 @@ every change it makes to them:
   key has the keys it merges, wherever the server looks: `folders` and `tags`,
   an entry, its `type` or `color`, its `views`, a view, a filter, a value. With
   `A: {type: &t wenan}` and `B: {type: *t}`, both folders are bound to `wenan`.
-- **Budget.** What the aliases of a file stand for is bounded for the file as a
-  whole: at most 100 000 YAML nodes beyond the ones written (every use of an
-  alias counts what it stands for), at most 100 levels deep with the aliases
-  followed, and no alias inside its own anchor. A file over that is not
-  readable, exactly like one that is not YAML: it binds nothing, has no views
-  and no colours, is never overwritten, and a request that would write it is
-  `400 invalid` (fix it by hand). It is refused when it is loaded, in time
-  that grows with the size of the file only, so no request is slow because of
-  it.
+- **Cost and limits.** What an anchor means is worked out once, however many
+  aliases refer to it, so reading a file costs what is written in it: an entry
+  that ten thousand folders share by alias (`Tang: *chapter`) is read as fast
+  as one written once, and no number of aliases makes a file unusable. The
+  only limits are ones a file that a person keeps does not reach: 100 levels
+  deep with the aliases followed, no alias inside its own anchor, and
+  4 194 304 keys brought in by merge keys (each mapping with a merge key
+  counted by itself: ten thousand folders that each merge a template of four
+  hundred keys). A file over one of them cannot be used; see Settings files
+  that cannot be used. That is found when the file is loaded, in time that
+  grows with its size only. The server itself never writes an alias.
 - **Writing.** A change changes what it targets and nothing else. An entry, a
   list of views or a view that is an alias, carries an anchor or has keys from
   a merge key is first written out in its own place (aliases inside it stay
@@ -1131,9 +1177,12 @@ every change it makes to them:
 - **Check.** Before the file is written the server checks that every alias
   left in it stands for what it stood for, and that the text reads back as
   what was meant. If not (an anchor name used twice can do that), the change is
-  made again with every alias of the file written out, which the budget keeps
-  small. If that does not fit in 1 MiB the request is `400 invalid` and nothing
-  is changed, on disk or in the file.
+  made again with every alias of the file written out. If that does not fit in
+  1 MiB the request is `400 invalid` and nothing is changed, on disk or in the
+  file; no more is written out to find that than 1 MiB holds. The same holds
+  for a change that gives many entries a copy of what they shared (deleting
+  the type of ten thousand folders that are aliases of one entry with views
+  leaves each its own views).
 
 ### Type
 
@@ -1169,7 +1218,9 @@ Needs `read`.
 {"types": [/* types, in name order */], "bindings": [{"folder": "Work", "type": "task"}]}
 ```
 
-`bindings` are all the folders that are bound, in the order of the file. Only
+`bindings` are all the folders that are bound, in the order of the file.
+`settingsNotices` is there when a settings file could not be used (see Settings
+files that cannot be used). Only
 the first 100 type files are read; more than that (put there by hand) are
 listed with an `error`.
 
@@ -1233,8 +1284,8 @@ Needs `manage`.
 Binds a folder (and, by inheritance, the folders below it) to a type, or
 removes the binding when `type` is `""`. `200` with `{"folder": "Work",
 "type": "task"}`, the folder as it is spelled on disk. `404 not_found` when
-the folder does not exist; `400 invalid` when the type does not exist, or
-`space.yml` has to be fixed by hand. Pages are not changed: their
+the folder does not exist; `400 invalid` when the type does not exist, or the
+entry of the folder in `space.yml` is not a list of settings. Pages are not changed: their
 `effectiveType` is.
 
 ## Saved views
@@ -1267,9 +1318,9 @@ pages, keeps them). Deleting a type keeps the views of the folders that were
 bound to it; unbinding a folder keeps its views. Comments, keys the server does
 not know (in a view, in the entry) and other settings stay in the file: a
 view that is saved again is changed in its own YAML. The settings files are
-read and written the way bindings and tag colours are (a file damaged by hand
-is never overwritten: a save is `400 invalid` and says it has to be fixed by
-hand), and a change is journaled and committed like any other, in a space that
+read and written the way bindings and tag colours are (a file that cannot be
+used is restored from the history, see Settings files that cannot be used),
+and a change is journaled and committed like any other, in a space that
 follows a remote too. There is no tag rename in the API, so nothing carries a
 tag's views to another name.
 
@@ -1305,8 +1356,8 @@ the first 20 views of an entry are read (the rest of a longer list written by
 hand stays in the file, after the views, and is not in any answer). A value
 of a key the server does not know that stands for more than 10 000 YAML nodes
 (aliases counted each time they are used) is left out of the answer, and stays
-in the file. Aliases and merge keys are read as what they stand for, within
-the budget of the file (see Anchors, aliases and merge keys).
+in the file. Aliases and merge keys are read as what they stand for (see
+Anchors, aliases and merge keys).
 
 ### `GET /api/spaces/{space}/views?folder={path}` or `?tag={tag}`
 
@@ -1319,7 +1370,7 @@ Needs `read`. Exactly one of `folder` (the root is `folder=`) and `tag`.
 `rev` is a digest of the views as the server reads them (a list with none has
 one too), so a change to the file by hand is a new rev as well. A folder that
 does not exist has no views (it is not looked for on disk). A settings file
-that cannot be read gives none. `400 invalid` for neither or both of `folder`
+that cannot be used gives those of its last version that can. `400 invalid` for neither or both of `folder`
 and `tag`, or a path that cannot be a folder.
 
 ### `PUT /api/spaces/{space}/views`
@@ -1349,7 +1400,7 @@ conflict` with `current` the same object as a `GET` answers:
 tag, more than 20 views, any view out of the limits above, an `id` the folder
 or tag does not have, an `id` twice, a change that would make `space.yml` or
 `tags.yml` larger than the 1 MiB the server reads (nothing is written, so the
-settings stay readable), or settings that have to be fixed by hand. A view
+settings stay readable), or an entry that is not a list of settings. A view
 that carries an anchor, or is written with an alias or a merge key, can be
 changed and removed like any other: what else in the file refers to the anchor
 keeps what it means (see Anchors, aliases and merge keys). The body of the request is
@@ -1568,8 +1619,8 @@ and follows its theme), or a colour of the person's own as `#rrggbb` (six
 hexadecimal digits; stored in lower case). `200`
 with `{"tag": "栀子", "color": "rose"}` (`color` absent when removed).
 `400 invalid` for another value, for a tag that is empty, longer than 200
-bytes or has a line break in it, and when `.petalbook/tags.yml` exists but
-cannot be read as YAML (it is then left as it is, for a person to fix). The
+bytes or has a line break in it. A `.petalbook/tags.yml` that cannot be used
+does not stop the change (see Settings files that cannot be used). The
 tag in the address is percent-encoded, so it may contain `/`. The tag need
 not be in use (it is listed, with its colour, once a page uses it). Colours are
 kept in `.petalbook/tags.yml` in the space, so they travel with the

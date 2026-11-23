@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -497,6 +498,47 @@ func viewsIn(entry *yaml.Node) []View {
 	return readable(out)
 }
 
+// viewsIn is viewsIn, read once for a list of views however many entries have
+// it (by alias, or through a merge key). The views are not the caller's to
+// change.
+func (r *reading) viewsIn(entry *yaml.Node) []View {
+	seq, _ := r.value(entry, "views")
+	if seq == nil || seq.Kind != yaml.SequenceNode {
+		return nil
+	}
+	if vs, ok := r.views[seq]; ok {
+		return vs
+	}
+	vs := viewsIn(entry)
+	if r.views == nil {
+		r.views = map[*yaml.Node][]View{}
+	}
+	r.views[seq] = vs
+	return vs
+}
+
+// viewIDs is the ids written in the views of an entry, read once for a list.
+func (r *reading) viewIDs(entry *yaml.Node) []string {
+	seq, _ := r.value(entry, "views")
+	if seq == nil || seq.Kind != yaml.SequenceNode {
+		return nil
+	}
+	if ids, ok := r.ids[seq]; ok {
+		return ids
+	}
+	var ids []string
+	for _, n := range viewNodes(entry) {
+		if id, ok := scalarText(first(mapValue(n, "id"))); ok {
+			ids = append(ids, id)
+		}
+	}
+	if r.ids == nil {
+		r.ids = map[*yaml.Node][]string{}
+	}
+	r.ids[seq] = ids
+	return ids
+}
+
 // viewsOf reads the views of every entry of the mapping `section` of a
 // settings document (folders in space.yml, tags in tags.yml), by the key norm
 // makes of the entry's. An entry written twice counts as its last.
@@ -509,10 +551,11 @@ func viewsOf(doc *yaml.Node, section string, norm func(string) string) map[strin
 		return nil
 	}
 	out := map[string][]View{}
+	var r reading
 	eachPair(m, func(k string, entry *yaml.Node, _ int) {
 		key := norm(k)
 		delete(out, key)
-		if vs := viewsIn(entry); len(vs) > 0 {
+		if vs := r.viewsIn(entry); len(vs) > 0 {
 			out[key] = vs
 		}
 	})
@@ -522,6 +565,7 @@ func viewsOf(doc *yaml.Node, section string, norm func(string) string) map[strin
 // tagCache is the views of tags.yml for as long as the file looks the same.
 type tagCache struct {
 	valid   bool
+	mode    fs.FileMode
 	size    int64
 	mtimeNs int64
 	views   map[string][]View
@@ -532,14 +576,17 @@ func (s *Space) tagViews() map[string][]View {
 	fi, err := os.Lstat(abs)
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
-	if err != nil || !fi.Mode().IsRegular() {
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			s.heal.fine(tagsSettings)
+		}
 		s.tagCfg = tagCache{}
 		return nil
 	}
-	if c := s.tagCfg; c.valid && c.size == fi.Size() && c.mtimeNs == fi.ModTime().UnixNano() {
+	if c := s.tagCfg; c.valid && c.mode == fi.Mode() && c.size == fi.Size() && c.mtimeNs == fi.ModTime().UnixNano() {
 		return c.views
 	}
-	c := tagCache{valid: true, size: fi.Size(), mtimeNs: fi.ModTime().UnixNano()}
+	c := tagCache{valid: true, mode: fi.Mode(), size: fi.Size(), mtimeNs: fi.ModTime().UnixNano()}
 	if doc, err := s.loadTags(); err == nil {
 		c.views = viewsOf(doc, "tags", func(k string) string { return k })
 	}
@@ -548,7 +595,7 @@ func (s *Space) tagViews() map[string][]View {
 }
 
 // Views returns the views of a folder or a tag, in order, the first being the
-// default. A file that cannot be read has none to show. The folder is not
+// default. A file that cannot be used shows those restored for it. The folder is not
 // looked for on disk: one that is not there has no views.
 func (s *Space) Views(scope ViewScope) (ViewList, error) {
 	if err := checkScope(scope); err != nil {
@@ -744,14 +791,13 @@ func idsOf(doc *yaml.Node, section string, skip func(key string) bool, into map[
 	if m == nil || m.Kind != yaml.MappingNode {
 		return
 	}
+	var r reading
 	eachPair(m, func(k string, entry *yaml.Node, _ int) {
 		if skip(k) {
 			return
 		}
-		for _, n := range viewNodes(entry) {
-			if id, ok := scalarText(first(mapValue(n, "id"))); ok {
-				into[id] = true
-			}
+		for _, id := range r.viewIDs(entry) {
+			into[id] = true
 		}
 	})
 }
@@ -765,7 +811,7 @@ func idsOf(doc *yaml.Node, section string, skip func(key string) bool, into map[
 // request does not mention, a view that is gone is removed.
 //
 // The change is journaled and committed like any other. A folder that is not
-// there is ErrNoFolder; settings that cannot be read are not replaced.
+// there is ErrNoFolder.
 func (s *Space) PutViews(by Author, scope ViewScope, baseRev string, views []View) (ViewList, error) {
 	if err := checkScope(scope); err != nil {
 		return ViewList{}, err
@@ -797,7 +843,7 @@ func (s *Space) PutViews(by Author, scope ViewScope, baseRev string, views []Vie
 			return out, err
 		}
 		taken := map[string]bool{}
-		if sdoc, err := s.loadYAMLFile(spaceFile, maxSpaceFile, errSpaceFile); err == nil {
+		if sdoc, err := s.loadSettings(spaceSettings); err == nil {
 			idsOf(sdoc, "folders", func(string) bool { return false }, taken)
 		}
 		err := s.editTagsFile(tx, func(root *yaml.Node) (bool, error) {
@@ -927,11 +973,18 @@ func putViewsInto(top *yaml.Node, section string, section2 func(*yaml.Node, bool
 		// left would be the entry and bring its views back.
 		// One pass, whatever the number of entries: what stays is collected,
 		// not what goes cut out one at a time.
+		file := spaceSettings
+		if section != "folders" {
+			file = tagsSettings
+		}
+		st := stripper{file: file, keys: []string{"views"}}
 		kept := make([]*yaml.Node, 0, len(cont.Content))
 		for i := 0; i+1 < len(cont.Content); i += 2 {
 			if isEntry(i) {
-				if e := deref(cont.Content[i+1]); e != nil && e.Kind == yaml.MappingNode && hasKey(e, "views") {
-					removeKey(own(cont, i+1), "views")
+				if st.has(cont.Content[i+1]) {
+					if err := st.strip(cont, i+1); err != nil {
+						return false, ViewList{}, err
+					}
 				}
 				if emptied(cont.Content[i+1]) {
 					continue

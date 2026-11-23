@@ -54,20 +54,11 @@ const maxTagsFile = 1 << 20
 var errTagsFile = errors.New("the tags file cannot be read")
 
 // loadTags reads the file as a YAML document, keeping everything in it
-// (comments, keys the server does not know, keys that are not text). It
-// returns nil when there is no file or nothing in it, and errTagsFile for a
-// file that is too large, is not a regular file, does not parse, is not a
-// mapping at the top, or whose aliases stand for more than the server reads
-// (see anchors.go).
+// (comments too) so that a write changes only what it means to. It
+// returns nil when there is no file or nothing in it. A file that cannot be
+// used is read as the settings restored for it (see restore.go).
 func (s *Space) loadTags() (*yaml.Node, error) {
-	return s.loadYAMLFile(tagsFile, maxTagsFile, errTagsFile)
-}
-
-// loadYAMLFile is loadTags for any of the space's YAML files: rel is the path
-// in the space, max the most that is read, and bad what is returned for a file
-// that cannot be used as it is.
-func (s *Space) loadYAMLFile(rel string, max int64, bad error) (*yaml.Node, error) {
-	return loadYAMLAt(s.root, rel, max, bad)
+	return s.loadSettings(tagsSettings)
 }
 
 // emptyDoc is a document with an empty mapping, carrying head as its comment
@@ -98,53 +89,20 @@ func commentLines(data []byte) string {
 	return strings.TrimRight(strings.Join(out, "\n"), "\n")
 }
 
-// loadYAMLAt is loadYAMLFile for the space at root. A file with nothing but
-// comments gives an empty document that has them as its head comment, so
-// that writing to it does not lose them.
-func loadYAMLAt(root, rel string, max int64, bad error) (*yaml.Node, error) {
-	abs := filepath.Join(root, filepath.FromSlash(rel))
-	fi, err := os.Lstat(abs)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	// A link in the way could lead out of the space.
-	if !fi.Mode().IsRegular() || fi.Size() > max {
-		return nil, bad
-	}
-	f, err := os.Open(abs)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, max+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > max {
-		return nil, bad
-	}
-	return parseYAMLDoc(data, bad)
-}
-
 // parseYAMLDoc reads the text of a settings file by the rules of loadYAMLAt.
 // It is also what a file about to be written is checked with: a document the
 // server could not read again must not be written.
 func parseYAMLDoc(data []byte, bad error) (*yaml.Node, error) {
 	doc, err := parseYAMLWritten(data, bad)
-	// What its aliases stand for is bounded here, once, for every reader and
-	// writer of the document (see anchors.go).
-	if err == nil && doc != nil && !withinBudget(doc) {
+	// The limits of a document are looked at here, once, for every reader and
+	// writer of it (see anchors.go).
+	if err == nil && doc != nil && !usableDoc(doc) {
 		return nil, bad
 	}
 	return doc, err
 }
 
-// parseYAMLWritten is parseYAMLDoc without the budget: the document as it is
-// written, its aliases not followed. Nothing may be read from it that follows
-// an alias further than one step.
+// parseYAMLWritten is parseYAMLDoc before the limits are looked at.
 func parseYAMLWritten(data []byte, bad error) (*yaml.Node, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var doc yaml.Node
@@ -184,8 +142,8 @@ func textNode(v string) *yaml.Node {
 
 // TagColors returns the colour of every tag that has one. Colours the server
 // does not know (written by hand) are left out, and a file that cannot be
-// read says nothing. It reads the file each time: it is small, and may have
-// come in with a pull.
+// used is read as the settings restored for it (see restore.go). It reads the
+// file each time: it is small, and may have come in with a pull.
 func (s *Space) TagColors() map[string]string {
 	out := map[string]string{}
 	doc, err := s.loadTags()
@@ -197,9 +155,10 @@ func (s *Space) TagColors() map[string]string {
 		return out
 	}
 	// A tag written twice counts as its last writing, as it does to a write.
+	var r reading
 	eachPair(tags, func(tag string, entry *yaml.Node, _ int) {
 		delete(out, tag)
-		if c, _ := mapValue(entry, "color"); c != nil && c.Kind == yaml.ScalarNode {
+		if c, _ := r.value(entry, "color"); c != nil && c.Kind == yaml.ScalarNode {
 			// A value written by hand that is no colour leaves the tag without one.
 			if v, ok := NormalTagColor(c.Value); ok {
 				out[tag] = v
@@ -247,14 +206,15 @@ func tagsNode(root *yaml.Node, create bool) (*yaml.Node, error) {
 	return tags, nil
 }
 
-var tagsSettings = settingsFile{rel: tagsFile, max: maxTagsFile, bad: errTagsFile, problem: tagsFileProblem}
+var tagsSettings = settingsFile{rel: tagsFile, section: "tags", max: maxTagsFile, bad: errTagsFile, problem: tagsFileProblem}
 
 // editTagsFile reads the tags file, lets edit change the document, and writes
 // it back if edit says it changed (inside a change: the write is journaled and
 // part of the commit). With nothing left to say, and no comment worth keeping,
-// the file goes. A file that cannot be read is not replaced.
+// the file goes. A file that cannot be used is put aside in the same change,
+// and the settings restored for it are written with the edit (see restore.go).
 func (s *Space) editTagsFile(tx *txn, edit func(root *yaml.Node) (changed bool, err error)) error {
-	data, changed, err := planSettingsEdit(s.root, tagsSettings, edit, func(doc *yaml.Node) ([]byte, error) {
+	data, changed, from, err := planSettingsEdit(s.root, tagsSettings, s.heal, edit, func(doc *yaml.Node) ([]byte, error) {
 		root := doc.Content[0]
 		if len(root.Content) == 0 && doc.HeadComment == "" && doc.FootComment == "" && root.HeadComment == "" && root.FootComment == "" {
 			return nil, nil
@@ -265,10 +225,13 @@ func (s *Space) editTagsFile(tx *txn, edit func(root *yaml.Node) (changed bool, 
 		return err
 	}
 	abs := filepath.Join(s.root, filepath.FromSlash(tagsFile))
-	if err := tx.record(jrec{Op: "t", Path: tagsFile}); err != nil {
-		return err
+	record := func(rel string) error {
+		if err := tx.record(jrec{Op: "t", Path: rel}); err != nil {
+			return err
+		}
+		tx.touch(rel)
+		return nil
 	}
-	tx.touch(tagsFile)
 	// The cache is dropped after the write, as with space.yml: a reading in
 	// between would otherwise keep the old content under the size and time of
 	// the new file.
@@ -277,13 +240,31 @@ func (s *Space) editTagsFile(tx *txn, edit func(root *yaml.Node) (changed bool, 
 		s.tagCfg = tagCache{}
 		s.cfgMu.Unlock()
 	}()
+	// A file that could not be used is put aside before the restored settings
+	// with this change take its place.
+	kept := ""
+	if from != nil {
+		if kept, err = s.heal.keep(tagsSettings, record); err != nil {
+			return err
+		}
+	}
+	if err := record(tagsFile); err != nil {
+		return err
+	}
 	if len(data) == 0 {
 		if err := os.Remove(abs); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
-		return nil
+	} else if err := writeAtomic(s.tmpDir(), abs, data); err != nil {
+		return err
 	}
-	return writeAtomic(s.tmpDir(), abs, data)
+	if len(data) > 0 {
+		s.heal.wroteGood(tagsSettings, data)
+	}
+	if from != nil {
+		s.heal.repaired(tagsSettings, from, kept)
+	}
+	return nil
 }
 
 // tagEntry finds the settings of a tag in the tags mapping: what the entry
@@ -306,8 +287,7 @@ func tagEntry(tags *yaml.Node, tag string) (entry *yaml.Node, at int, err error)
 // SetTagColor gives a tag a colour (see NormalTagColor; it is stored in its
 // normal form), or takes it away when color is "". The
 // tag need not be in use. Everything else in the file stays as it is (the
-// views of the tag too). A file that cannot be read is not replaced: the answer
-// says it must be fixed by hand. The change is committed like any other.
+// views of the tag too). The change is committed like any other.
 func (s *Space) SetTagColor(by Author, tag, color string) error {
 	if err := checkTagName(tag); err != nil {
 		return err

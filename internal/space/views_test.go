@@ -447,7 +447,7 @@ func TestViewsOfATagLiveBesideItsColour(t *testing.T) {
 	}
 }
 
-func TestViewsInSettingsThatCannotBeReadAreNotWrittenOver(t *testing.T) {
+func TestViewsAreSavedThoughTheSettingsCannotBeUsed(t *testing.T) {
 	s := open(t)
 	mustCreate(t, s, "F", meta("title", "x"), "x\n")
 	broken := []byte("name: x\nfolders: [unclosed\n")
@@ -458,18 +458,28 @@ func TestViewsInSettingsThatCannotBeReadAreNotWrittenOver(t *testing.T) {
 	if len(cur.Views) != 0 {
 		t.Errorf("%+v", cur)
 	}
-	_, err := s.PutViews(Author{}, folderScope("F"), cur.Rev, []View{{Name: "v", Layout: "list"}})
-	wantInvalid(t, "space.yml", err, "fixed by hand")
-	if got, _ := os.ReadFile(file); string(got) != string(broken) {
-		t.Errorf("the file was written: %s", got)
+	// The views are saved into the last version that can be used (here: none
+	// with views), and the file as it was is kept beside it.
+	l, err := s.PutViews(Author{}, folderScope("F"), cur.Rev, []View{{Name: "v", Layout: "list"}})
+	if err != nil || names(l) != "v" || viewNames(t, s, folderScope("F")) != "v" {
+		t.Fatalf("%v %s", err, names(l))
+	}
+	if kept := copiesOf(s.Root(), spaceSettings); len(kept) != 1 || readDisk(t, s, kept[0]) != string(broken) {
+		t.Errorf("what space.yml was is not kept: %v", kept)
 	}
 	setTagsYML(t, s.Root(), "tags: [unclosed\n")
-	_, err = s.PutViews(Author{}, tagScope("t"), cur.Rev, []View{{Name: "v", Layout: "list"}})
-	wantInvalid(t, "tags.yml", err, "fixed by hand")
-	// `folders` or an entry that is not a mapping.
+	if _, err = putViews(s, tagScope("t"), View{Name: "w", Layout: "list"}); err != nil || viewNames(t, s, tagScope("t")) != "w" {
+		t.Errorf("tags.yml: %v", err)
+	}
+	if kept := copiesOf(s.Root(), tagsSettings); len(kept) != 1 {
+		t.Errorf("what tags.yml was is not kept: %v", kept)
+	}
+	// `folders` that is not a list of folders is a file that cannot be used.
 	os.WriteFile(file, []byte("folders: 5\n"), 0o644)
-	_, err = putViews(s, folderScope("F"), View{Name: "v", Layout: "list"})
-	wantInvalid(t, "folders is a number", err, "fixed by hand")
+	if _, err = putViews(s, folderScope("F"), View{Name: "v", Layout: "list"}); err != nil {
+		t.Errorf("folders is a number: %v", err)
+	}
+	// An entry that is not a mapping is the person's own.
 	os.WriteFile(file, []byte("folders:\n  F: 5\n"), 0o644)
 	_, err = putViews(s, folderScope("F"), View{Name: "v", Layout: "list"})
 	wantInvalid(t, "an entry that is a number", err, "fixed by hand")
@@ -1132,14 +1142,17 @@ func TestNestedAliasesInAViewAreNotExpanded(t *testing.T) {
 	if b, _ := json.Marshal(l); len(b) > 1<<20 {
 		t.Errorf("the answer is %d bytes", len(b))
 	}
-	// Beyond it the file is not read at all: it says nothing, at once.
+	// However much the aliases stand for, the file is read as it is written.
 	writeSpaceYML(t, s, settings(8))
 	start = time.Now()
 	l, err = s.Views(folderScope("F"))
-	if err != nil || len(l.Views) != 0 || len(s.Bindings()) != 0 {
-		t.Errorf("a file that stands for 10^9 elements was read: %v %+v %v", err, l, s.Bindings())
+	if err != nil || len(l.Views) != 1 || len(s.Bindings()) != 1 {
+		t.Errorf("a file whose aliases stand for 10^9 elements: %v %+v %v", err, l, s.Bindings())
+	}
+	if _, ok := l.Views[0].Extra["l8"]; ok {
+		t.Error("a value that stands for 10^9 elements was read")
 	}
 	if d := time.Since(start); d > 2*time.Second {
-		t.Errorf("refusing the file took %v", d)
+		t.Errorf("reading the file took %v", d)
 	}
 }

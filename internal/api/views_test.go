@@ -363,11 +363,15 @@ func TestViewsAndBoardsInSingleUserMode(t *testing.T) {
 	}
 }
 
-// A settings file damaged by hand is not overwritten by saving views, and the
-// views it cannot give are none.
-func TestViewsAreNotSavedOverDamagedSettings(t *testing.T) {
+// A settings file that cannot be used does not stop views from being saved:
+// they go into the last version that can be used, what the file was is kept
+// beside it, and the answer of the types says so.
+func TestViewsAreSavedThoughTheSettingsCannotBeUsed(t *testing.T) {
 	f := newFixture(t)
 	if code, r, _ := f.do("POST", base+"/folders", map[string]any{"path": "F"}); code != 201 {
+		t.Fatalf("%d %v", code, r)
+	}
+	if code, r, _ := f.do("GET", base+"/types", nil); code != 200 || r["settingsNotices"] != nil {
 		t.Fatalf("%d %v", code, r)
 	}
 	file := filepath.Join(f.dir, ".petalbook", "space.yml")
@@ -378,12 +382,29 @@ func TestViewsAreNotSavedOverDamagedSettings(t *testing.T) {
 	if code != 200 || len(viewsOf(t, r)) != 0 {
 		t.Fatalf("%d %v", code, r)
 	}
+	notices := func() []any {
+		t.Helper()
+		code, r, _ := f.do("GET", base+"/types", nil)
+		if code != 200 {
+			t.Fatalf("%d %v", code, r)
+		}
+		list, _ := r["settingsNotices"].([]any)
+		return list
+	}
+	if n := notices(); len(n) != 1 || n[0].(map[string]any)["unreadable"] != true || n[0].(map[string]any)["file"] != ".petalbook/space.yml" {
+		t.Errorf("the notice while the file cannot be used: %v", n)
+	}
 	code, r, _ = f.do("PUT", base+"/views", map[string]any{"folder": "F", "baseRev": r["rev"], "views": []any{map[string]any{"name": "v", "layout": "list"}}})
-	if code != 400 || !strings.Contains(r["message"].(string), "fixed by hand") {
+	if code != 200 || len(viewsOf(t, r)) != 1 {
 		t.Errorf("%d %v", code, r)
 	}
-	if got, _ := os.ReadFile(file); string(got) != string(broken) {
-		t.Errorf("the file was written: %s", got)
+	n := notices()
+	if len(n) != 1 || n[0].(map[string]any)["unreadable"] != false {
+		t.Fatalf("the notice after the repair: %v", n)
+	}
+	kept, _ := n[0].(map[string]any)["copy"].(string)
+	if got, _ := os.ReadFile(filepath.Join(f.dir, filepath.FromSlash(kept))); !strings.HasPrefix(kept, ".petalbook/space.yml.unreadable-") || string(got) != string(broken) {
+		t.Errorf("what the file was is not kept at %q", kept)
 	}
 }
 

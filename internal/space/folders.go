@@ -198,12 +198,7 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	notMoved := func(reason string) error {
 		return invalidf("the folder was not moved: its type and views cannot follow it in space.yml, because %s", reason)
 	}
-	// The entries the edit is about: the folder's and those below it, and the
-	// stale ones at the target.
-	movedKeys := func(folder string) bool {
-		return folder == canonFrom || strings.HasPrefix(folder, canonFrom+"/") || folder == target || strings.HasPrefix(folder, target+"/")
-	}
-	if reason, fails := s.bindingsWouldFail(moveSettings, movedKeys); fails {
+	if reason, fails := s.bindingsWouldFail(moveSettings); fails {
 		if !tx.remote {
 			s.dropCreated(tx) // the folders made on the way to the target
 		}
@@ -273,7 +268,7 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	// it is as it was. (Finishing the edit instead would only repeat what just
 	// failed.) Should the rename not go back either, the "b" record above has
 	// the next start move the bindings to where the folder now is.
-	refused, err := s.editBindings(tx, moveSettings, movedKeys)
+	refused, err := s.editBindings(tx, moveSettings)
 	if err == nil && refused != "" {
 		err = notMoved(refused)
 	}
@@ -431,7 +426,7 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 			}
 			// Refused before anything is deleted: a delete whose settings
 			// cannot be taken out of space.yml.
-			if reason, fails := s.bindingsWouldFail(forget(willGo), under); fails {
+			if reason, fails := s.bindingsWouldFail(forget(willGo)); fails {
 				return invalidf("the folder was not deleted: its type and views cannot be taken out of space.yml, because %s", reason)
 			}
 			u := jrec{Op: "u", Path: canon}
@@ -515,7 +510,7 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 		}
 		// A folder that is gone has no type or views to keep. One that stays (it holds
 		// files that are not pages) keeps its binding.
-		refused, err := s.editBindings(tx, forget(s.fileGone), under)
+		refused, err := s.editBindings(tx, forget(s.fileGone))
 		if err == nil && refused != "" && willGo != nil {
 			// The edit that was tried before the first deletion (startU) could
 			// be made, and this one is another: a folder went or stayed that
@@ -525,7 +520,7 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 			// is less than the settings of every folder staying behind.
 			s.log.Warn("the settings of a deleted folder could not be taken out of space.yml as the folders are now; taking them out as planned before the delete",
 				"folder", canon, "reason", refused)
-			refused, err = s.editBindings(tx, forget(willGo), under)
+			refused, err = s.editBindings(tx, forget(willGo))
 		}
 		if err != nil {
 			return struct{}{}, err

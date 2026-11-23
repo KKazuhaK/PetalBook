@@ -4,6 +4,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"hash/maphash"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strconv"
 
 	"go.yaml.in/yaml/v3"
@@ -17,12 +21,15 @@ import (
 // Reading. An alias means exactly what its anchor means, and a mapping with a
 // merge key has the keys of what it merges, wherever the server looks: the
 // `folders` and `tags` lists, an entry, its type or colour, its views, a view,
-// a filter, a value. What that costs is bounded for the document as a whole,
-// when it is loaded (withinBudget): the nodes its aliases stand for beyond the
-// ones written, how deep it goes with the aliases followed, and no alias inside
-// its own anchor. A document over that is not readable, like one that does not
-// parse; nothing is ever read from it, so no reader needs a budget of its own to
-// stay fast, and no writer can be made to expand more than the budget.
+// a filter, a value. What an anchor means is worked out once however many
+// aliases refer to it (reading), so reading costs what is written in the file,
+// not what its aliases stand for: an entry that ten thousand folders share by
+// alias is as cheap as one that is written once. The only limits are ones a
+// file a person keeps cannot reach (usableDoc): how deep it goes with the
+// aliases followed, no alias inside its own anchor, and how many keys its
+// merge keys bring in, each mapping that has one counted by itself. A document
+// over them is not usable, like one that does not parse (see restore.go for
+// what happens then).
 //
 // Writing. A write changes what it targets and nothing else:
 //
@@ -40,15 +47,16 @@ import (
 // Before the text is written it is checked: every alias still in the document
 // stands for what it stood for before the edit, and the text reads back as the
 // document that was meant. If not (an anchor name used twice can do that), the
-// edit is made again on the document with every alias written out, which the
-// budget keeps small. If that does not fit the file either, the write is
-// refused and nothing is changed.
+// edit is made again on the document with every alias written out. If that
+// does not fit the file, the write is refused and nothing is changed; no more
+// is written out to find that than a file can hold (textOf).
 const (
-	// maxAliasNodes is the most nodes the aliases of a settings file may stand
-	// for, beyond the nodes written in it.
-	maxAliasNodes = 100000
 	// maxDocDepth is how deep a settings file may go, aliases followed.
 	maxDocDepth = 100
+	// maxMergedKeys is the most keys the merge keys of a settings file may
+	// bring in, the keys each mapping with a merge key gets added up: ten
+	// thousand folders that each merge a template of four hundred keys.
+	maxMergedKeys = 4 << 20
 )
 
 // deref is what a node means when it is an alias: the node of its anchor.
@@ -85,35 +93,113 @@ func keyText(k *yaml.Node) (string, bool) {
 	return k.Value, true
 }
 
-// eachPair calls f for every text key of a mapping with what its value means,
-// in the order "the last one counts": first what the merge keys bring in (what
-// weighs least first), then the keys written in the mapping itself, in their
-// order. at is the position of a key written in the mapping itself, and -1 for
-// one that a merge key brought in.
-func eachPair(m *yaml.Node, f func(key string, val *yaml.Node, at int)) {
-	eachPairAt(deref(m), f, 0)
+// pair is a key of a mapping with what its value means.
+type pair struct {
+	key string
+	val *yaml.Node
 }
 
-func eachPairAt(m *yaml.Node, f func(key string, val *yaml.Node, at int), depth int) {
-	if m == nil || m.Kind != yaml.MappingNode || depth > maxDocDepth {
+// merges works out what merge keys bring in, each mapping once however often
+// it is merged. work counts the keys looked at; with a limit, it stops there.
+type merges struct {
+	brought map[*yaml.Node][]pair
+	whole   map[*yaml.Node][]pair
+	work    int
+	limit   int
+}
+
+func (g *merges) over() bool { return g.limit > 0 && g.work > g.limit }
+
+// keysInto adds pairs to a list that has each key once, at the place it was
+// first seen, with the value that came last.
+func keysInto(out []pair, at map[string]int, ps ...pair) []pair {
+	for _, p := range ps {
+		if i, ok := at[p.key]; ok {
+			out[i].val = p.val
+		} else {
+			at[p.key] = len(out)
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// from is the keys the merge keys of the mapping m bring in: what weighs
+// least first, each key once with the value that counts.
+func (g *merges) from(m *yaml.Node, depth int) []pair {
+	if ps, ok := g.brought[m]; ok {
+		return ps
+	}
+	if depth > maxDocDepth || g.over() {
+		return nil
+	}
+	var out []pair
+	at := map[string]int{}
+	source := func(v *yaml.Node) {
+		if v == nil || v.Kind != yaml.MappingNode || g.over() {
+			return
+		}
+		ps := g.all(v, depth+1)
+		g.work += len(ps) + 1
+		out = keysInto(out, at, ps...)
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if !isMerge(m.Content[i]) {
+			continue
+		}
+		switch v := deref(m.Content[i+1]); {
+		case v == nil:
+		case v.Kind == yaml.MappingNode:
+			source(v)
+		case v.Kind == yaml.SequenceNode:
+			// The first of a list of mappings weighs most.
+			for j := len(v.Content) - 1; j >= 0; j-- {
+				source(deref(v.Content[j]))
+			}
+		}
+	}
+	if g.brought == nil {
+		g.brought = map[*yaml.Node][]pair{}
+	}
+	g.brought[m] = out
+	return out
+}
+
+// all is every text key of the mapping m, merged ones first, each once.
+func (g *merges) all(m *yaml.Node, depth int) []pair {
+	if ps, ok := g.whole[m]; ok {
+		return ps
+	}
+	var out []pair
+	at := map[string]int{}
+	if hasMerge(m) {
+		out = keysInto(out, at, g.from(m, depth)...)
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if key, ok := keyText(m.Content[i]); ok {
+			out = keysInto(out, at, pair{key, deref(m.Content[i+1])})
+		}
+	}
+	if g.whole == nil {
+		g.whole = map[*yaml.Node][]pair{}
+	}
+	g.whole[m] = out
+	return out
+}
+
+// eachPair calls f for every text key of a mapping with what its value means,
+// in the order "the last one counts": first what the merge keys bring in (each
+// key once, what weighs least first), then the keys written in the mapping
+// itself, in their order. at is the position of a key written in the mapping
+// itself, and -1 for one that a merge key brought in.
+func eachPair(m *yaml.Node, f func(key string, val *yaml.Node, at int)) {
+	if m = deref(m); m == nil || m.Kind != yaml.MappingNode {
 		return
 	}
 	if hasMerge(m) {
-		merged := func(key string, val *yaml.Node, _ int) { f(key, val, -1) }
-		for i := 0; i+1 < len(m.Content); i += 2 {
-			if !isMerge(m.Content[i]) {
-				continue
-			}
-			switch v := deref(m.Content[i+1]); {
-			case v == nil:
-			case v.Kind == yaml.MappingNode:
-				eachPairAt(v, merged, depth+1)
-			case v.Kind == yaml.SequenceNode:
-				// The first of a list of mappings weighs most.
-				for j := len(v.Content) - 1; j >= 0; j-- {
-					eachPairAt(deref(v.Content[j]), merged, depth+1)
-				}
-			}
+		var g merges
+		for _, p := range g.from(m, 0) {
+			f(p.key, p.val, -1)
 		}
 	}
 	for i := 0; i+1 < len(m.Content); i += 2 {
@@ -122,6 +208,89 @@ func eachPairAt(m *yaml.Node, f func(key string, val *yaml.Node, at int), depth 
 		}
 	}
 }
+
+// reading remembers what was found in a document while it is read, so that
+// what an anchor means is worked out once, not once for every alias of it. It
+// is for one pass over a document; the zero value is ready. In a writer it
+// remembers only what it found in nodes that carry an anchor, which a writer
+// never changes in place (see the rule above).
+type reading struct {
+	vals  map[keyIn]found
+	views map[*yaml.Node][]View
+	ids   map[*yaml.Node][]string
+}
+
+type keyIn struct {
+	m   *yaml.Node
+	key string
+}
+
+type found struct {
+	v  *yaml.Node
+	at int
+	ok bool
+}
+
+// find is value, and whether the mapping has the key at all.
+func (r *reading) find(m *yaml.Node, key string, depth int) found {
+	if m = deref(m); m == nil || m.Kind != yaml.MappingNode || depth > maxDocDepth {
+		return found{at: -1}
+	}
+	if m.Anchor != "" {
+		if x, ok := r.vals[keyIn{m, key}]; ok {
+			return x
+		}
+	}
+	x := found{at: -1}
+	merge := false
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		k := m.Content[i]
+		if isMerge(k) {
+			merge = true
+		} else if t, ok := keyText(k); ok && t == key {
+			x = found{deref(m.Content[i+1]), i, true}
+		}
+	}
+	if !x.ok && merge {
+		// What weighs most first: the last merge key, and in a list the first.
+	search:
+		for i := len(m.Content) - 2; i >= 0; i -= 2 {
+			if !isMerge(m.Content[i]) {
+				continue
+			}
+			switch v := deref(m.Content[i+1]); {
+			case v == nil:
+			case v.Kind == yaml.MappingNode:
+				if y := r.find(v, key, depth+1); y.ok {
+					x = found{y.v, -1, true}
+					break search
+				}
+			case v.Kind == yaml.SequenceNode:
+				for _, c := range v.Content {
+					if y := r.find(c, key, depth+1); y.ok {
+						x = found{y.v, -1, true}
+						break search
+					}
+				}
+			}
+		}
+	}
+	if m.Anchor != "" {
+		if r.vals == nil {
+			r.vals = map[keyIn]found{}
+		}
+		r.vals[keyIn{m, key}] = x
+	}
+	return x
+}
+
+// value is mapValue with what was found before remembered.
+func (r *reading) value(m *yaml.Node, key string) (*yaml.Node, int) {
+	x := r.find(m, key, 0)
+	return x.v, x.at
+}
+
+func (r *reading) has(m *yaml.Node, key string) bool { return r.find(m, key, 0).ok }
 
 // mapValue finds a key of a mapping by its text, whatever YAML made of it
 // (a tag written 2026 is a number to YAML and the tag "2026" to us). It
@@ -132,88 +301,81 @@ func eachPairAt(m *yaml.Node, f func(key string, val *yaml.Node, at int), depth 
 // A key written twice counts as its last writing, which is what a reader of
 // the file as a map sees too.
 func mapValue(m *yaml.Node, key string) (*yaml.Node, int) {
-	m = deref(m)
-	if m == nil || m.Kind != yaml.MappingNode {
-		return nil, -1
-	}
-	var v *yaml.Node
-	at := -1
-	merge := false
-	for i := 0; i+1 < len(m.Content); i += 2 {
-		k := m.Content[i]
-		if isMerge(k) {
-			merge = true
-		} else if t, ok := keyText(k); ok && t == key {
-			v, at = deref(m.Content[i+1]), i
-		}
-	}
-	if at < 0 && merge {
-		eachPair(m, func(k string, val *yaml.Node, _ int) {
-			if k == key {
-				v = val
-			}
-		})
-	}
-	return v, at
+	var r reading
+	return r.value(m, key)
 }
 
 // hasKey reports whether a mapping has a key, its own or merged in.
 func hasKey(m *yaml.Node, key string) bool {
-	v, at := mapValue(m, key)
-	return v != nil || at >= 0
+	var r reading
+	return r.has(m, key)
 }
 
-// withinBudget reports whether a settings document can be read: see the rule
-// at the top. It looks at every written node once.
-func withinBudget(doc *yaml.Node) bool {
-	m := docMeasure{size: map[*yaml.Node]int{}, height: map[*yaml.Node]int{}}
+// usableDoc reports whether a settings document can be read: see the rule at
+// the top. It looks at every written node once, and at no more keys of merge
+// keys than the limit.
+func usableDoc(doc *yaml.Node) bool {
+	m := docMeasure{height: map[*yaml.Node]int{}, open: map[*yaml.Node]bool{}}
 	m.walk(doc, 0)
-	return !m.bad
+	if m.bad {
+		return false
+	}
+	g := merges{limit: maxMergedKeys}
+	var each func(n *yaml.Node) bool
+	each = func(n *yaml.Node) bool {
+		if n.Kind == yaml.MappingNode && hasMerge(n) {
+			if g.from(n, 0); g.over() {
+				return false
+			}
+		}
+		for _, c := range n.Content {
+			if !each(c) {
+				return false
+			}
+		}
+		return true
+	}
+	return each(doc)
 }
 
 type docMeasure struct {
-	// size and height of every anchored node seen so far, aliases followed;
-	// the size is -1 while the node is being measured.
-	size, height map[*yaml.Node]int
-	extra        int
-	bad          bool
+	// height of every anchored node seen so far, aliases followed; open while
+	// the node is being measured.
+	height map[*yaml.Node]int
+	open   map[*yaml.Node]bool
+	bad    bool
 }
 
-func (m *docMeasure) walk(n *yaml.Node, depth int) (size, height int) {
+func (m *docMeasure) walk(n *yaml.Node, depth int) (height int) {
 	if m.bad || n == nil || depth > maxDocDepth {
 		m.bad = true
-		return 0, 0
+		return 0
 	}
 	if n.Kind == yaml.AliasNode {
 		// An anchor that is not known yet, or that the alias is inside of.
-		s, ok := m.size[n.Alias]
-		if n.Alias == nil || !ok || s < 0 || depth+m.height[n.Alias] > maxDocDepth {
+		h, ok := m.height[n.Alias]
+		if n.Alias == nil || !ok || m.open[n.Alias] || depth+h > maxDocDepth {
 			m.bad = true
-			return 0, 0
+			return 0
 		}
-		if m.extra += s - 1; m.extra > maxAliasNodes {
-			m.bad = true
-		}
-		return s, m.height[n.Alias]
+		return h
 	}
 	if n.Anchor != "" {
-		m.size[n] = -1
+		m.open[n], m.height[n] = true, 0
 	}
-	size = 1
 	for _, c := range n.Content {
-		cs, ch := m.walk(c, depth+1)
+		ch := m.walk(c, depth+1)
 		if m.bad {
-			return 0, 0
+			return 0
 		}
-		size += cs
 		if ch+1 > height {
 			height = ch + 1
 		}
 	}
 	if n.Anchor != "" {
-		m.size[n], m.height[n] = size, height
+		m.open[n], m.height[n] = false, height
 	}
-	return size, height
+	return height
 }
 
 // hasAlias reports whether a document has an alias anywhere.
@@ -422,32 +584,124 @@ func settle(doc *yaml.Node) {
 }
 
 // inlineAliases writes every alias of a document out as a copy of what it
-// stands for and takes the anchors away. The budget of a document that was
-// loaded bounds what that makes.
-func inlineAliases(n *yaml.Node) {
+// stands for and takes the anchors away. left is how many bytes of text the
+// copies may still come to (see textOf); below zero it has given up, and the
+// document is not to be used.
+func inlineAliases(n *yaml.Node, left *int) {
 	n.Anchor = ""
 	for i, c := range n.Content {
+		if *left < 0 {
+			return
+		}
 		if c.Kind == yaml.AliasNode && c.Alias != nil {
-			n.Content[i] = expanded(c.Alias, 0)
+			n.Content[i] = expanded(c.Alias, 0, left)
 		} else {
-			inlineAliases(c)
+			inlineAliases(c, left)
 		}
 	}
 }
 
-func expanded(n *yaml.Node, depth int) *yaml.Node {
-	if n = deref(n); n == nil || depth > maxDocDepth {
+func expanded(n *yaml.Node, depth int, left *int) *yaml.Node {
+	if n = deref(n); n == nil || depth > maxDocDepth || *left < 0 {
 		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!null", Value: "null"}
 	}
+	*left -= 1 + len(n.Value) // as textOf counts
 	c := *n
 	c.Anchor = ""
 	if len(n.Content) > 0 {
 		c.Content = make([]*yaml.Node, len(n.Content))
 		for i, k := range n.Content {
-			c.Content[i] = expanded(k, depth+1)
+			c.Content[i] = expanded(k, depth+1, left)
 		}
 	}
 	return &c
+}
+
+// textOf is the least text n can be written as, in bytes: its scalars and the
+// names of its aliases, and for every node something to tell it from the next. What
+// is written is never shorter, so an edit whose copies come to more than a
+// file may hold cannot fit, and need not be made to find that out.
+func textOf(n *yaml.Node) int {
+	switch n.Kind {
+	case yaml.ScalarNode:
+		return len(n.Value) + 1
+	case yaml.AliasNode:
+		return len(n.Value) + 2
+	}
+	c := 1
+	for _, k := range n.Content {
+		c += textOf(k)
+	}
+	return c
+}
+
+// stripper takes keys off many entries of a mapping in one pass, for a writer:
+// each entry is made the writer's own first (see owned). What an anchor is
+// without the keys is worked out once, however many of the entries are aliases
+// of it, and an entry that would be left empty costs nothing; the text the
+// copies for the others come to is added up (textOf), and when that is more
+// than the file may hold the edit is given up, before the next copy is made.
+type stripper struct {
+	file settingsFile
+	keys []string
+	r    reading
+	bare map[*yaml.Node]*yaml.Node
+	size map[*yaml.Node]int // textOf what is in bare
+	made int
+}
+
+// has reports whether the value of an entry is a mapping with one of the keys.
+func (s *stripper) has(v *yaml.Node) bool {
+	e := deref(v)
+	if e == nil || e.Kind != yaml.MappingNode {
+		return false
+	}
+	for _, k := range s.keys {
+		if s.r.has(e, k) {
+			return true
+		}
+	}
+	return false
+}
+
+// strip makes the value at position i of cont the writer's own, without the keys.
+func (s *stripper) strip(cont *yaml.Node, i int) error {
+	v := cont.Content[i]
+	if v.Kind == yaml.AliasNode && v.Alias != nil {
+		b := s.bare[v.Alias]
+		if b == nil {
+			b = owned(&yaml.Node{Kind: yaml.AliasNode, Value: v.Value, Alias: v.Alias})
+			for _, k := range s.keys {
+				removeKey(b, k)
+			}
+			if s.bare == nil {
+				s.bare, s.size = map[*yaml.Node]*yaml.Node{}, map[*yaml.Node]int{}
+			}
+			s.bare[v.Alias], s.size[v.Alias] = b, textOf(b)
+		}
+		if s.made += s.size[v.Alias]; s.made > s.file.max {
+			return tooFull(s.file)
+		}
+		n := &yaml.Node{Kind: b.Kind, Tag: b.Tag, Style: b.Style}
+		if len(b.Content) > 0 {
+			n = cloneNode(b)
+		}
+		n.HeadComment, n.LineComment, n.FootComment = v.HeadComment, v.LineComment, v.FootComment
+		cont.Content[i] = n
+	} else {
+		copied := v.Anchor != "" || (v.Kind == yaml.MappingNode && hasMerge(v))
+		n := own(cont, i)
+		for _, k := range s.keys {
+			removeKey(n, k)
+		}
+		if copied {
+			s.made += textOf(n)
+		}
+	}
+	if s.made > s.file.max {
+		return tooFull(s.file)
+	}
+	return nil
 }
 
 var meaningSeed = maphash.MakeSeed()
@@ -548,9 +802,67 @@ func sameNodes(a, b *yaml.Node, seen map[[2]*yaml.Node]bool) bool {
 // settingsFile is one of the two settings files, as the editing of it needs it.
 type settingsFile struct {
 	rel     string
+	section string // the key of its list of entries: `folders`, `tags`
 	max     int
 	bad     error        // what loading returns for a file that cannot be used
-	problem func() error // what is said of such a file
+	problem func() error // what is said of such a file where nothing can restore it
+}
+
+// parse reads the text of the file: parseYAMLDoc, and its list of entries is a
+// list of entries (or is not there). A file whose `folders` is a line of text
+// can no more be used than one that is not YAML.
+func (f settingsFile) parse(data []byte) (*yaml.Node, error) {
+	doc, err := parseYAMLDoc(data, f.bad)
+	if err != nil || doc == nil {
+		return doc, err
+	}
+	if v, _ := mapValue(doc.Content[0], f.section); v != nil && v.Kind != yaml.MappingNode && !(v.Kind == yaml.ScalarNode && v.Tag == "!!null") {
+		return nil, f.bad
+	}
+	return doc, nil
+}
+
+// loadSettingsAt reads a settings file of the space at root: nil when there is
+// none or nothing in it, f.bad for one that cannot be used.
+func loadSettingsAt(root string, f settingsFile) (*yaml.Node, error) {
+	data, err := readSettingsAt(root, f)
+	if err != nil || data == nil {
+		return nil, err
+	}
+	return f.parse(data)
+}
+
+// readSettingsAt is the text of a settings file: nil when there is no file,
+// f.bad for one that is not a regular file or is larger than the server reads.
+func readSettingsAt(root string, f settingsFile) ([]byte, error) {
+	abs := filepath.Join(root, filepath.FromSlash(f.rel))
+	fi, err := os.Lstat(abs)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	// A link in the way could lead out of the space.
+	if !fi.Mode().IsRegular() || fi.Size() > int64(f.max) {
+		return nil, f.bad
+	}
+	file, err := os.Open(abs)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, int64(f.max)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > f.max {
+		return nil, f.bad
+	}
+	if data == nil {
+		data = []byte{}
+	}
+	return data, nil
 }
 
 // settingsFullError is the refusal of a change that would make a settings file
@@ -565,41 +877,49 @@ type unreadableEditError struct{ *InvalidError }
 
 func (e *unreadableEditError) Unwrap() error { return e.InvalidError }
 
-// unreadableFileError is the refusal of a change to a settings file that cannot
-// be read as it is. It is an *InvalidError too.
-type unreadableFileError struct{ *InvalidError }
-
-func (e *unreadableFileError) Unwrap() error { return e.InvalidError }
+// tooFull is the refusal of a change that would make a settings file too large.
+func tooFull(f settingsFile) error {
+	return &settingsFullError{&InvalidError{"the change would make " + f.rel + " larger than " + strconv.Itoa(f.max) + " bytes, more than the server reads; nothing was changed"}}
+}
 
 // planSettingsEdit reads a settings file, lets edit change the document and
 // returns the text to write in its place. Nothing is written here. changed is
 // false when edit says there is nothing to write. render makes the text of the
 // document; text of no bytes stands for a file that is to go.
 //
+// A file that cannot be used is not edited: the edit is made on the settings
+// h restores for it (see restore.go), and from says so; whoever writes the
+// text then puts the file as it is aside first. Without h such a file is the
+// problem of f.
+//
 // edit gets the top mapping, its own to change, and must go by the rule at the
 // top of this file. It may run twice (the second time on the document with its
 // aliases written out), so what it leaves outside the document must be right
 // when the last run is the one that counts.
-func planSettingsEdit(root string, f settingsFile, edit func(top *yaml.Node) (bool, error), render func(doc *yaml.Node) ([]byte, error)) (data []byte, changed bool, err error) {
+func planSettingsEdit(root string, f settingsFile, h *healer, edit func(top *yaml.Node) (bool, error), render func(doc *yaml.Node) ([]byte, error)) (data []byte, changed bool, from *restored, err error) {
 	for attempt := 0; ; attempt++ {
-		doc, err := loadYAMLAt(root, f.rel, int64(f.max), f.bad)
+		doc, err := loadSettingsAt(root, f)
 		if errors.Is(err, f.bad) {
-			perr := f.problem()
-			var inv *InvalidError
-			if errors.As(perr, &inv) {
-				return nil, false, &unreadableFileError{inv}
+			if h == nil {
+				return nil, false, nil, f.problem()
 			}
-			return nil, false, perr
+			if from, err = h.restore(f); err != nil {
+				return nil, false, nil, err
+			}
+			doc, err = from.doc(f)
 		}
 		if err != nil {
-			return nil, false, err
+			return nil, false, nil, err
 		}
 		if doc == nil {
 			doc = emptyDoc("")
 		}
 		aliased := hasAlias(doc)
 		if aliased && attempt > 0 {
-			inlineAliases(doc)
+			left := f.max
+			if inlineAliases(doc, &left); left < 0 {
+				return nil, false, nil, tooFull(f)
+			}
 			aliased = false
 		}
 		var before map[*yaml.Node]uint64
@@ -608,30 +928,30 @@ func planSettingsEdit(root string, f settingsFile, edit func(top *yaml.Node) (bo
 		}
 		changed, err := edit(own(doc, 0))
 		if err != nil || !changed {
-			return nil, false, err
+			return nil, false, nil, err
 		}
 		if aliased {
 			settle(doc)
 		}
 		data, err := render(doc)
 		if err != nil {
-			return nil, false, err
+			return nil, false, nil, err
 		}
 		if len(data) > f.max {
 			// A file this large would not be read again, and every setting in it
 			// would be lost with it.
-			return nil, false, &settingsFullError{&InvalidError{"the change would make " + f.rel + " larger than " + strconv.Itoa(f.max) + " bytes, more than the server reads; nothing was changed"}}
+			return nil, false, nil, tooFull(f)
 		}
 		ok := true
 		if len(data) > 0 {
-			back, perr := parseYAMLDoc(data, f.bad)
+			back, perr := f.parse(data)
 			ok = perr == nil && (!aliased || (back != nil && aliasesMeanTheSame(doc, before) && sameMeaning(doc.Content[0], back.Content[0])))
 		}
 		if ok {
-			return data, true, nil
+			return data, true, from, nil
 		}
 		if !aliased {
-			return nil, false, &unreadableEditError{&InvalidError{"the change cannot be written to " + f.rel + " in a form the server can read again without changing what other entries of the file mean (its anchors and aliases stand in the way); nothing was changed; write the aliases (*name) of the entry out by hand and try again"}}
+			return nil, false, nil, &unreadableEditError{&InvalidError{"the change cannot be written to " + f.rel + " in a form the server can read again without changing what other entries of the file mean (its anchors and aliases stand in the way); nothing was changed; write the aliases (*name) of the entry out by hand and try again"}}
 		}
 	}
 }
