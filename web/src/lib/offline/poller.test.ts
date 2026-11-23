@@ -111,6 +111,45 @@ describe('polling the heads', () => {
     expect(hasCopy(me, b)).toBe(false)
   })
 
+  it('a space whose sync fails waits longer each time, up to 30 minutes, and is asked at once again when it works', async () => {
+    const { b } = await twoSpaces()
+    await make(b, 'moved')
+    const real = globalThis.fetch
+    let broken = true
+    let tries = 0
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes(`/spaces/${b}/changes`)) tries++
+      if (broken && String(input).includes(`/spaces/${b}/changes`)) return new Response(JSON.stringify({ error: 'internal', message: 'boom' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+      return real(input, init)
+    }) as typeof fetch
+    try {
+      let t = 1_000_000
+      const now = () => t
+      const asked = () => tries
+      // Every round, with the clock moving by one poll period: when was the space asked?
+      const rounds: number[] = []
+      for (let i = 0; i < 80; i++) {
+        const n = asked()
+        await pollOnce(me, undefined, now)
+        if (asked() > n) rounds.push(i)
+        t += 60_000
+      }
+      // 1, 2, 4, 8, 16 and then 30 periods apart.
+      const gaps = rounds.slice(1).map((r, i) => r - rounds[i])
+      expect(gaps.slice(0, 6)).toEqual([1, 2, 4, 8, 16, 30])
+      expect(Math.max(...gaps)).toBe(30)
+      // Asked by hand, it is tried at once; once it works the next round asks as usual.
+      broken = false
+      expect((await syncNow(me, b, { now })).outcome).toBe('ok')
+      await make(b, 'again')
+      const n = asked()
+      await pollOnce(me, undefined, now)
+      expect(asked()).toBe(n + 1)
+    } finally {
+      globalThis.fetch = real
+    }
+  })
+
   it('syncNow is one at a time per space', async () => {
     const { b } = await twoSpaces()
     await make(b, 'more')

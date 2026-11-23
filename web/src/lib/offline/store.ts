@@ -6,13 +6,14 @@
 //   pages    the pages whose text is kept: the page as the server gave it, with the caller's draft
 //   textmeta the rev and size of each page kept, so nothing reads whole pages to know what it has
 //   opened    the pages opened most recently (at most RECENT_KEPT), for the default scope
+//   walk      the ids a walk of the catalogue that has not finished has seen, so a walk that is cut off goes on
 
 import type { CatalogEntry, Page, TagsResponse, TreeResponse } from '@/api/types'
 import { committed, deleteDb, eachRecord, openDb, req } from './idb'
 import { dbName, dropEntry, setEntry } from './registry'
 
 export const RECENT_KEPT = 200
-const DB_VERSION = 1
+const DB_VERSION = 2
 
 export type OfflineMode = 'catalog' | 'text'
 
@@ -51,6 +52,12 @@ export interface SyncState {
   error: string
 }
 export const EMPTY_STATE: SyncState = { cursor: '', tree: '', settings: '', syncedAt: 0, complete: false, disabled: false, inbox: '', favourites: { pages: [], folders: [] }, overCap: false, error: '' }
+
+export interface WalkProgress {
+  changes: string
+  next: string
+  seen: number
+}
 
 export interface PageRecord {
   id: string
@@ -104,12 +111,15 @@ export class OfflineStore {
   }
 
   static async open(user: string, space: string): Promise<OfflineStore> {
-    const db = await openDb(dbName(user, space), DB_VERSION, (d) => {
-      d.createObjectStore('meta', { keyPath: 'key' })
-      d.createObjectStore('catalog', { keyPath: 'id' })
-      d.createObjectStore('pages', { keyPath: 'id' })
-      d.createObjectStore('textmeta', { keyPath: 'id' })
-      d.createObjectStore('opened', { keyPath: 'id' }).createIndex('at', 'at')
+    const db = await openDb(dbName(user, space), DB_VERSION, (d, old) => {
+      if (old < 1) {
+        d.createObjectStore('meta', { keyPath: 'key' })
+        d.createObjectStore('catalog', { keyPath: 'id' })
+        d.createObjectStore('pages', { keyPath: 'id' })
+        d.createObjectStore('textmeta', { keyPath: 'id' })
+        d.createObjectStore('opened', { keyPath: 'id' }).createIndex('at', 'at')
+      }
+      if (old < 2) d.createObjectStore('walk', { keyPath: 'id' })
     })
     return new OfflineStore(user, space, db)
   }
@@ -189,9 +199,9 @@ export class OfflineStore {
   // bounded, and only pages in the catalogue are kept for it): a page that comes back, as one in a folder that moved
   // can when a poll falls between two writes, is still among the recent ones. The sync
   // state (the cursor) is written in the same transaction, so a catalogue and its cursor are never apart.
-  async applyCatalog(upserts: CatalogEntry[], removed: string[], state?: Partial<SyncState>) {
+  async applyCatalog(upserts: CatalogEntry[], removed: string[], state?: Partial<SyncState>, endWalk = false) {
     const cur = state ? { ...(await this.state()), ...state } : undefined
-    const names = ['catalog', 'pages', 'textmeta', 'meta']
+    const names = ['catalog', 'pages', 'textmeta', 'meta', ...(endWalk ? ['walk'] : [])]
     const tx = this.db.transaction(names, 'readwrite')
     const cat = tx.objectStore('catalog')
     for (const e of upserts) cat.put(e)
@@ -207,6 +217,10 @@ export class OfflineStore {
     }
     if (delta !== 0) await this.addBytes(tx, delta)
     if (cur) tx.objectStore('meta').put({ key: 'state', value: cur })
+    if (endWalk) {
+      tx.objectStore('walk').clear()
+      tx.objectStore('meta').delete('walk')
+    }
     await committed(tx)
     this.cache = null
     await this.refreshRegistry()
@@ -217,6 +231,42 @@ export class OfflineStore {
     const gone = (await this.catalogIds()).filter((id) => !keep.has(id))
     if (gone.length) await this.applyCatalog([], gone)
     return gone.length
+  }
+
+  // --- a walk of the catalogue -------------------------------------------------------
+
+  // Where a walk that has not finished is: the change cursor of its first batch, the cursor of the next batch
+  // ("" when every batch is in) and how many pages it has seen. Undefined when no walk is under way.
+  walkProgress() {
+    return this.get<WalkProgress>('walk')
+  }
+  // A walk from the first batch: what an earlier one saw is forgotten.
+  async startWalk() {
+    const tx = this.db.transaction(['walk', 'meta'], 'readwrite')
+    tx.objectStore('walk').clear()
+    tx.objectStore('meta').delete('walk')
+    await committed(tx)
+  }
+  // One batch of a walk, with where the walk is now, in one step: a walk cut off after it goes on from the next.
+  async applyWalkBatch(items: CatalogEntry[], progress: WalkProgress) {
+    const tx = this.db.transaction(['catalog', 'walk', 'meta'], 'readwrite')
+    const cat = tx.objectStore('catalog')
+    const walk = tx.objectStore('walk')
+    for (const e of items) {
+      cat.put(e)
+      walk.put({ id: e.id })
+    }
+    tx.objectStore('meta').put({ key: 'walk', value: progress })
+    await committed(tx)
+    this.cache = null
+    await this.refreshRegistry()
+  }
+  // The end of a walk: what it did not see is gone (with its text), and the catalogue takes the walk's cursor, in
+  // one step with forgetting the walk.
+  async finishWalk(state: Partial<SyncState>) {
+    const seen = new Set(await req(this.db.transaction('walk').objectStore('walk').getAllKeys() as IDBRequest<string[]>))
+    const gone = (await this.catalogIds()).filter((id) => !seen.has(id))
+    await this.applyCatalog([], gone, state, true)
   }
 
   // --- the text ------------------------------------------------------------------

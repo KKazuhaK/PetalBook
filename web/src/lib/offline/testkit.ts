@@ -7,6 +7,7 @@ import { mockFetch } from '@/api/mock/fetch'
 import { createMockServer, type MockOptions, type MockServer } from '@/api/mock/server'
 import { installOffline } from './index'
 import { forgetOpenStores } from './manager'
+import { resetBackoff } from './poller'
 import { resetStatus } from './status'
 
 export interface Net {
@@ -23,6 +24,7 @@ export function freshDevice(): void {
   globalThis.indexedDB = new IDBFactory()
   localStorage.clear()
   forgetOpenStores()
+  resetBackoff()
   resetStatus(false)
 }
 

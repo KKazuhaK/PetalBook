@@ -10,6 +10,21 @@ import { noteNetworkFailure, noteNetworkOk } from './status'
 
 export const POLL_MS = 60_000
 const HEADS_AT_ONCE = 100
+// A space whose sync fails (not for want of a network) is asked again after a poll period, then after twice as
+// long each time, up to this; one that works is asked as usual again.
+export const BACKOFF_MAX_MS = 30 * 60_000
+
+const failing = new Map<string, { fails: number; until: number }>()
+const failKey = (user: string, space: string) => `${user}\u0000${space}`
+// For the tests: every space as if it had never failed.
+export const resetBackoff = () => failing.clear()
+const noteOutcome = (user: string, space: string, r: SyncResult, now: number) => {
+  const k = failKey(user, space)
+  if (r.outcome === 'error') {
+    const fails = (failing.get(k)?.fails ?? 0) + 1
+    failing.set(k, { fails, until: now + Math.min(BACKOFF_MAX_MS, POLL_MS * 2 ** (fails - 1)) })
+  } else if (r.outcome !== 'offline') failing.delete(k)
+}
 
 export interface SyncEvent {
   space: string
@@ -47,6 +62,7 @@ export async function syncNow(user: string, space: string, opts: SyncOptions = {
     const store = await existingStore(user, space)
     if (!store) return { outcome: 'ok', changed: false }
     const result = await syncSpace(store, opts)
+    noteOutcome(user, space, result, (opts.now ?? Date.now)())
     if (result.outcome === 'ok') noteNetworkOk()
     else if (result.outcome === 'offline') noteNetworkFailure()
     listeners.forEach((l) => l({ space, result }))
@@ -56,8 +72,8 @@ export async function syncNow(user: string, space: string, opts: SyncOptions = {
   }
 }
 
-// One round: the heads, then the changes of the spaces that moved.
-export async function pollOnce(user: string, signal?: AbortSignal): Promise<void> {
+// One round: the heads, then the changes of the spaces that moved (and are not waiting after a failure).
+export async function pollOnce(user: string, signal?: AbortSignal, now: () => number = Date.now): Promise<void> {
   const spaces = spacesOf(user)
   if (!spaces.length) return
   const heads: Record<string, string> = {}
@@ -74,15 +90,16 @@ export async function pollOnce(user: string, signal?: AbortSignal): Promise<void
   }
   noteNetworkOk()
   for (const space of spaces) {
+    if ((failing.get(failKey(user, space))?.until ?? 0) > now()) continue
     const store = await existingStore(user, space)
     if (!store) continue
     const state = await store.state()
     if (space in heads) {
       // Back in the heads: a space that was switched off is on again.
-      if (heads[space] !== state.cursor || state.disabled || !state.complete) await syncNow(user, space, { signal })
+      if (heads[space] !== state.cursor || state.disabled || !state.complete) await syncNow(user, space, { signal, now })
     } else if (missing.includes(space) && !state.disabled) {
       // Not readable now: gone for this person (404: the copy is deleted), or switched off (kept, read only).
-      await syncNow(user, space, { signal })
+      await syncNow(user, space, { signal, now })
     }
   }
 }

@@ -307,6 +307,40 @@ describe('what the server says about the space', () => {
     expect((await s.state()).error).toBe('')
   })
 
+  it('a walk of the catalogue that is cut off goes on from its last batch, and still forgets what is gone', async () => {
+    const pages = []
+    for (let i = 0; i < 6; i++) pages.push(await make('', `页${i}`))
+    const s = await open()
+    await syncSpace(s, { catalogBatch: 2 })
+    // The index is built again and a page goes: the next sync walks again (five pages, three batches), and the
+    // network fails at the third batch.
+    await S().deletePage(pages[5].id)
+    await S().reindex()
+    const real = globalThis.fetch
+    let batches = 0
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (/sync\/catalog/.test(String(input)) && ++batches === 3) throw new TypeError('Failed to fetch')
+      return real(input, init)
+    }) as typeof fetch
+    expect((await syncSpace(s, { catalogBatch: 2 })).outcome).toBe('offline')
+    globalThis.fetch = real
+    const before = net.requests.length
+    const r = await syncSpace(s, { catalogBatch: 2 })
+    expect(r.outcome).toBe('ok')
+    const walked = net.requests.slice(before).filter((q) => /sync\/catalog/.test(q))
+    // One batch was left: the walk asks for it with the cursor it had, not from the first page again.
+    expect(walked).toHaveLength(1)
+    expect(walked[0]).toContain('cursor=')
+    expect(await ids(s)).toEqual(pages.slice(0, 5).map((p) => p.id).sort())
+    expect((await s.state()).cursor).toBe((await S().syncCatalog({})).changes)
+    // A later walk starts from the first batch again.
+    await S().reindex()
+    const again = net.requests.length
+    await syncSpace(s, { catalogBatch: 2 })
+    expect(net.requests.slice(again).filter((q) => /sync\/catalog/.test(q))[0]).not.toContain('cursor=')
+    expect(await ids(s)).toEqual(pages.slice(0, 5).map((p) => p.id).sort())
+  })
+
   it('is told a 410 only through the client: ApiError carries the code', async () => {
     const s = await open()
     await syncSpace(s)

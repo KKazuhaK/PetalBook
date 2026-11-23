@@ -29,6 +29,8 @@ export interface SyncOptions {
   now?: () => number
   // Called while the catalogue is walked, with the pages seen so far.
   progress?: (seen: number) => void
+  // The size of a batch of the catalogue (tests make it small).
+  catalogBatch?: number
 }
 
 export function classify(e: unknown): { outcome: Outcome; message: string } {
@@ -73,26 +75,40 @@ async function run(store: OfflineStore, cfg: Awaited<ReturnType<OfflineStore['co
   let state = await store.state()
   let changed = false
 
-  // The catalogue, from the first batch's cursor on.
-  const walk = async () => {
-    const seen = new Set<string>()
-    const first = await sp.syncCatalog({ limit: CATALOG_BATCH }, signal)
-    let batch = first
-    for (;;) {
-      await store.applyCatalog(batch.items, [])
-      for (const e of batch.items) seen.add(e.id)
-      opts.progress?.(seen.size)
-      if (!batch.next) break
-      batch = await sp.syncCatalog({ limit: CATALOG_BATCH, cursor: batch.next }, signal)
+  // The catalogue, from the first batch's cursor on. Each batch is written with where the walk is, so a walk that
+  // is cut off (the network, a closed tab) goes on from its next batch; one whose cursor the server no longer
+  // takes (the index was built again) starts from the first.
+  const limit = opts.catalogBatch ?? CATALOG_BATCH
+  const walk = async (fresh: boolean) => {
+    let p = fresh ? undefined : await store.walkProgress()
+    let batch: Awaited<ReturnType<typeof sp.syncCatalog>> | undefined
+    if (p?.next) {
+      try {
+        batch = await sp.syncCatalog({ limit, cursor: p.next }, signal)
+      } catch (e) {
+        if (!isExpired(e) && !(e instanceof ApiError && e.status === 400)) throw e
+        p = undefined
+      }
+    }
+    if (!p) {
+      await store.startWalk()
+      batch = await sp.syncCatalog({ limit }, signal)
+      p = { changes: batch.changes ?? '', next: '', seen: 0 }
+    }
+    while (batch) {
+      p = { ...p, next: batch.next, seen: p.seen + batch.items.length }
+      await store.applyWalkBatch(batch.items, p)
+      opts.progress?.(p.seen)
+      batch = batch.next ? await sp.syncCatalog({ limit, cursor: batch.next }, signal) : undefined
     }
     // What the catalogue has no more is gone; text with the same rev as before stays, only the rest is fetched.
-    await store.dropCatalogExcept(seen)
     // The tree and the tags are read again by the catch-up below (their stamps are unknown now).
-    await store.applyCatalog([], [], { cursor: first.changes ?? '', tree: '', settings: '', complete: true })
+    await store.finishWalk({ cursor: p.changes, tree: '', settings: '', complete: true })
     state = await store.state()
     changed = true
   }
-  if (!state.cursor) await walk()
+  // A walk under way (the first, or one after a 410) goes on before anything else.
+  if (!state.cursor || (await store.walkProgress())) await walk(false)
 
   for (let guard = 0; ; guard++) {
     if (guard > 10_000) throw new Error('the changes never ended')
@@ -101,7 +117,7 @@ async function run(store: OfflineStore, cfg: Awaited<ReturnType<OfflineStore['co
       r = await sp.changes(state.cursor, CHANGES_BATCH, signal)
     } catch (e) {
       if (!isExpired(e)) throw e
-      await walk()
+      await walk(true)
       continue
     }
     const ups = r.items.filter((i): i is CatalogEntry => !isRemoved(i))
