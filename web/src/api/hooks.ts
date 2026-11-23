@@ -21,6 +21,8 @@ export const keys = {
   providers: ['auth', 'providers'] as const,
   adminSecurity: ['admin', 'security'] as const,
   adminProviders: ['admin', 'providers'] as const,
+  accountUsage: ['account', 'usage'] as const,
+  adminUsage: (tenant: string, over: boolean) => ['admin', 'usage', tenant, over] as const,
   adminGroups: ['admin', 'groups'] as const,
   adminGroupList: (q: string, source: string) => ['admin', 'groups', 'list', q, source] as const,
   adminGroupPeople: (id: string, q: string) => ['admin', 'groups', 'people', id, q] as const,
@@ -38,6 +40,12 @@ export const keys = {
   adminSpaces: ['admin', 'spaces'] as const,
   adminSpaceList: (q: string) => ['admin', 'spaces', 'list', q] as const,
   adminStatus: ['admin', 'status'] as const,
+  tenancy: ['admin', 'tenancy'] as const,
+  adminMail: ['admin', 'mail'] as const,
+  tenants: ['admin', 'tenants'] as const,
+  siteSettings: ['admin', 'settings', 'site'] as const,
+  tenantSettings: (id: string) => ['admin', 'settings', 'tenant', id] as const,
+  mySettings: (space: string) => ['settings', space] as const,
   adminDaily: ['admin', 'daily'] as const,
   adminGitHub: ['admin', 'github'] as const,
   adminGitHubInstallations: ['admin', 'github', 'installations'] as const,
@@ -544,10 +552,13 @@ export function useCreateSpace() {
   return useMutation({
     mutationFn: (input: string | CreateSpaceInput) => (typeof input === 'string' ? api.createSpace(input) : api.createSpace(input.name, input.inbox, input.github)),
     // Another space, in the same list order the server gives: personal first, then by name.
-    onSuccess: (space) =>
+    onSuccess: (space) => {
       qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => ({
         spaces: [...(prev?.spaces ?? []), space].sort((a, b) => Number(b.personal) - Number(a.personal) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
-      })),
+      }))
+      // One more space of theirs.
+      void qc.invalidateQueries({ queryKey: keys.accountUsage })
+    },
   })
 }
 
@@ -577,6 +588,11 @@ function spaceChanged(qc: QueryClient, space: SpaceInfo) {
 
 export function useAccount(enabled = true) {
   return useQuery({ queryKey: keys.account, queryFn: ({ signal }) => api.account(signal), staleTime: Infinity, enabled })
+}
+
+// The caller's own usage. Measurements are made in the background, so a minute is as fresh as it gets.
+export function useAccountUsage(enabled = true) {
+  return useQuery({ queryKey: keys.accountUsage, queryFn: ({ signal }) => api.accountUsage(signal), staleTime: 60_000, enabled })
 }
 
 // What a person is told about a failed request, for the pages that show errors inline.

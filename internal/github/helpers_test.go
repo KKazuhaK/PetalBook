@@ -88,7 +88,7 @@ func (h *harness) user(id, username string) {
 // space makes a space with a github remote row, as the manager would.
 func (h *harness) space(id string, r store.Remote) {
 	h.t.Helper()
-	if err := store.InsertSpace(ctx, h.st.Q(), id, id, "", "", h.now); err != nil {
+	if err := store.InsertSpace(ctx, h.st.Q(), store.DefaultTenantID, id, id, "", "", h.now); err != nil {
 		h.t.Fatal(err)
 	}
 	r.SpaceID, r.URL, r.Branch, r.CredType, r.State, r.Updated = id, "https://github.com/x/y.git", "main", "github", "ok", h.now

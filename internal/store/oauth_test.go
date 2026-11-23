@@ -75,7 +75,7 @@ func TestOAuthGrantsAndRefreshRotation(t *testing.T) {
 		if err := st.Tx(ctx, func(q store.Q) error { return store.AddMember(ctx, q, "S1", "A", "owner", now) }); err != nil {
 			t.Fatal(err)
 		}
-		rows, err := store.ListOAuthGrants(ctx, st.Q(), store.GrantFilter{})
+		rows, err := store.ListOAuthGrants(ctx, st.Q(), store.AllTenants(), store.GrantFilter{})
 		if err != nil || len(rows) != 2 || rows[0].ID != "G2" || rows[1].ID != "G1" || rows[1].Username != "a" {
 			t.Fatalf("%+v %v", rows, err)
 		}
@@ -86,12 +86,12 @@ func TestOAuthGrantsAndRefreshRotation(t *testing.T) {
 		if names["S1"] != "one" || names["S2"] != "" || len(names) != 2 || rows[0].Spaces[0].Name != "" {
 			t.Fatalf("%v", names)
 		}
-		page, _ := store.ListOAuthGrants(ctx, st.Q(), store.GrantFilter{Limit: 1})
-		after, _ := store.ListOAuthGrants(ctx, st.Q(), store.GrantFilter{AfterCreated: page[0].Created, AfterID: page[0].ID})
+		page, _ := store.ListOAuthGrants(ctx, st.Q(), store.AllTenants(), store.GrantFilter{Limit: 1})
+		after, _ := store.ListOAuthGrants(ctx, st.Q(), store.AllTenants(), store.GrantFilter{AfterCreated: page[0].Created, AfterID: page[0].ID})
 		if len(page) != 1 || len(after) != 1 || after[0].ID != "G1" {
 			t.Fatalf("%v %v", page, after)
 		}
-		if one, _ := store.ListOAuthGrants(ctx, st.Q(), store.GrantFilter{UserID: "B"}); len(one) != 1 || one[0].ID != "G2" {
+		if one, _ := store.ListOAuthGrants(ctx, st.Q(), store.AllTenants(), store.GrantFilter{UserID: "B"}); len(one) != 1 || one[0].ID != "G2" {
 			t.Fatal(one)
 		}
 

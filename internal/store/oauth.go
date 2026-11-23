@@ -239,9 +239,11 @@ type GrantFilter struct {
 // ListOAuthGrants returns grants newest first with their owners and the spaces
 // they name, in one query. A space's Name is its name while the grant's owner
 // is a member of it, "" otherwise.
-func ListOAuthGrants(ctx context.Context, q Q, f GrantFilter) ([]OAuthGrantRow, error) {
+func ListOAuthGrants(ctx context.Context, q Q, sc Scope, f GrantFilter) ([]OAuthGrantRow, error) {
 	var where []string
 	var args []any
+	sCond, sArgs := sc.ofUser("user_id")
+	where, args = append(where, sCond), append(args, sArgs...)
 	if f.UserID != "" {
 		where = append(where, "user_id = ?")
 		args = append(args, f.UserID)

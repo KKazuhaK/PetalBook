@@ -26,6 +26,12 @@ const PageEditor = lazy(() => import('@/pages/PageEditor'))
 const LoginPage = lazy(() => import('@/pages/auth/LoginPage'))
 const SetupPage = lazy(() => import('@/pages/auth/SetupPage'))
 const InvitePage = lazy(() => import('@/pages/auth/InvitePage'))
+const MailPage = (name: 'RegisterPage' | 'RegisterConfirmPage' | 'VerifyEmailPage' | 'ForgotPage' | 'ResetPasswordPage') => lazy(() => import('@/pages/auth/MailPages').then((m) => ({ default: m[name] })))
+const RegisterPage = MailPage('RegisterPage')
+const RegisterConfirmPage = MailPage('RegisterConfirmPage')
+const VerifyEmailPage = MailPage('VerifyEmailPage')
+const ForgotPage = MailPage('ForgotPage')
+const ResetPasswordPage = MailPage('ResetPasswordPage')
 const HeldPage = lazy(() => import('@/pages/auth/HeldPage'))
 const ConsentPage = lazy(() => import('@/pages/auth/ConsentPage'))
 const SettingsRoute = lazy(() => import('@/components/settings/SettingsRoute'))
@@ -98,6 +104,11 @@ const router = createBrowserRouter([
   { path: 'login', element: later(<LoginPage />) },
   { path: 'setup', element: later(<SetupPage />) },
   { path: 'invite', element: later(<InvitePage />) },
+  { path: 'register', element: later(<RegisterPage />) },
+  { path: 'register/confirm', element: later(<RegisterConfirmPage />) },
+  { path: 'verify-email', element: later(<VerifyEmailPage />) },
+  { path: 'forgot', element: later(<ForgotPage />) },
+  { path: 'reset-password', element: later(<ResetPasswordPage />) },
   { path: 'oauth/authorize', element: <ToTheServer /> },
   {
     element: <AuthGate />,

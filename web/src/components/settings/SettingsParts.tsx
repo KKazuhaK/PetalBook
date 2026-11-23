@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from 'react'
-import { Download, GitBranch, House, KeyRound, LayoutTemplate, Link2, Settings, Shapes, ShieldCheck, SlidersHorizontal, User, Users } from 'lucide-react'
+import { Download, Gauge, GitBranch, House, KeyRound, LayoutTemplate, Link2, Settings, Shapes, ShieldCheck, SlidersHorizontal, User, Users } from 'lucide-react'
 import type { SectionId } from './sections'
 import { RequiredMark } from '@/components/ui/field-mark'
 
@@ -71,6 +71,7 @@ const ICONS: Record<Exclude<SectionId, 'profile'>, typeof User> = {
   security: ShieldCheck,
   tokens: KeyRound,
   github: Link2,
+  usage: Gauge,
   general: Settings,
   types: Shapes,
   templates: LayoutTemplate,

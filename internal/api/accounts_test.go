@@ -122,7 +122,7 @@ func TestConcurrentSetupHasOneWinner(t *testing.T) {
 		if wins != 1 || exists != n-1 {
 			t.Fatalf("codes %v", codes)
 		}
-		users, _ := store.ListUsers(context.Background(), a.st.Q())
+		users, _ := store.ListUsers(context.Background(), a.st.Q(), store.AllTenants())
 		if len(users) != 1 {
 			t.Fatalf("%d users", len(users))
 		}

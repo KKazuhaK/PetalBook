@@ -589,6 +589,24 @@ export interface ReasonCode {
 
 export type ErrorCode =
   | 'token_limit'
+  | 'quota_exceeded'
+  | 'tenants_off'
+  | 'tenant_limit'
+  | 'tenant_not_empty'
+  | 'default_tenant'
+  | 'setting_locked'
+  | 'setting_restricted'
+  | 'mail_not_configured'
+  | 'mail_insecure'
+  | 'mail_from_required'
+  | 'mail_needs_public_url'
+  | 'registration_closed'
+  | 'password_reset_off'
+  | 'email_domain_not_allowed'
+  | 'terms_required'
+  | 'email_verified'
+  | 'email_unverified'
+  | 'sso_only_with_registration'
   | 'bad_language'
   | 'api_not_found'
   | 'builtin'
@@ -660,6 +678,12 @@ export interface User {
   disabled: boolean
   // Whether this person must sign in with a passkey.
   passkeyRequired: boolean
+  // An administrator of the whole server (3.3); false for one of a tenant. Absent in single-user mode.
+  siteAdmin?: boolean
+  // The tenant the person belongs to; absent in single-user mode, which has none.
+  tenant?: TenantRef
+  // The person's own limits (null follows the tenant); only the administrators' list and PATCH answer have it.
+  quota?: OwnQuota
   created: string
   // The users list only: how many passkeys and single sign-on identities the person has.
   passkeys?: number
@@ -796,10 +820,56 @@ export interface AuthProviders {
   local: boolean
   sso: boolean
   passkey: boolean
+  // 3.3: whether the page links to registration and to password reset.
+  register?: boolean
+  forgot?: boolean
+}
+
+// --- mail, registration, email verification and password reset (3.3) ---
+export type MailSecurity = 'starttls' | 'tls' | 'none'
+export interface MailSettings {
+  enabled: boolean
+  host: string
+  port: number
+  security: MailSecurity
+  username: string
+  hasPassword: boolean
+  from: string
+  fromName: string
+  replyTo: string
+  status: { ok: boolean; checked: string | null; message: string }
+  queue: { waiting: number; sentLastHour: number; failedLastHour: number }
+}
+export interface MailPatch {
+  enabled?: boolean
+  host?: string
+  port?: number
+  security?: MailSecurity
+  username?: string
+  // Write only: absent keeps the stored one, '' clears it.
+  password?: string
+  from?: string
+  fromName?: string
+  replyTo?: string
+}
+export interface MailTestResult {
+  ok: boolean
+  message?: string
+}
+export type RegisterInfo = { open: false } | { open: true; tenant: { slug: string; name: string }; domains: string[]; termsUrl: string; privacyUrl: string; password: { minLength: number } }
+export interface RegisterInput {
+  tenant?: string
+  username: string
+  name: string
+  email: string
+  password: string
+  acceptTerms?: boolean
+  captcha?: CaptchaAnswer
+  lang?: string
 }
 
 export type CaptchaProvider = 'image' | 'turnstile' | 'recaptcha' | 'hcaptcha'
-export type CaptchaContext = 'login' | 'invite' | 'setup'
+export type CaptchaContext = 'login' | 'invite' | 'setup' | 'forgot' | 'register'
 export interface CaptchaChallenge {
   required: boolean
   provider?: CaptchaProvider
@@ -829,10 +899,18 @@ export interface CreatedInvite {
   role: Role
   created: string
   expires: string
+  // What a new tenant's first administrator's invite fills in (see InviteCheck).
+  username?: string
+  name?: string
+  email?: string
 }
 export interface InviteCheck {
   role: Role
   expires: string
+  // What the invite starts the form with ("" when it says nothing); the address becomes the account's, not verified.
+  username?: string
+  name?: string
+  email?: string
 }
 
 export type OidcIntent = 'login' | 'setup' | 'invite' | 'link'
@@ -1275,4 +1353,111 @@ export interface AuditItem {
 export interface AuditList {
   items: AuditItem[]
   next: string
+}
+
+// --- tenants and layered settings (3.3, docs/api.md "Tenants, registration and mail") ---
+
+export interface TenantRef {
+  id: string
+  slug: string
+  name: string
+}
+export type TenantQuotaKey = 'people' | 'spaces' | 'bytes' | 'pages'
+// What a tenant uses, as measured (docs/api.md, "Quotas"); `over` lists the totals it is over.
+export interface TenantUsage {
+  people: number
+  spaces: number
+  bytes: number
+  pages: number
+  measuredAt: string | null
+  over: TenantQuotaKey[]
+}
+export interface Tenant extends TenantRef {
+  default: boolean
+  disabled: boolean
+  registration: { open: boolean }
+  quota: Record<TenantQuotaKey, number | null>
+  usage: TenantUsage
+  created: string
+  updated: string
+}
+export interface TenantList {
+  items: Tenant[]
+  next: string
+}
+export interface Tenancy {
+  enabled: boolean
+  tenants: number
+}
+export type CreatedTenant = Tenant & { invite?: CreatedInvite }
+
+// --- quotas and usage (3.3) ---
+
+export type PersonQuotaKey = 'spaces' | 'bytes' | 'pages'
+// A person's own limits: a number, or null to follow the tenant and the site.
+export type OwnQuota = Record<PersonQuotaKey, number | null>
+// A quota that is over: the person's own (scope person) or the tenant's total (scope tenant).
+export interface UsageNotice {
+  quota: TenantQuotaKey
+  scope: 'person' | 'tenant'
+  limit: number
+  used: number
+}
+// GET /api/account/usage. limit null is none.
+export interface AccountUsage {
+  spaces: { used: number; limit: number | null }
+  bytes: { used: number; limit: number | null }
+  pages: { used: number; limit: number | null }
+  measuredAt: string | null
+  notices: UsageNotice[]
+}
+export interface PersonUsage {
+  user: { id: string; username: string; name: string }
+  tenant: string
+  spaces: number
+  bytes: number
+  pages: number
+  limits: Record<PersonQuotaKey, number | null>
+  // The person's own limits (null follows the tenant), what the edit form starts with.
+  own: OwnQuota
+  // false for an own limit a lock or restriction put on the setting later forbids (kept, in force again when lifted).
+  ownInEffect: Record<PersonQuotaKey, boolean>
+  over: PersonQuotaKey[]
+  measuredAt: string | null
+}
+export interface AdminUsageList {
+  items: PersonUsage[]
+  next: string
+}
+
+export type SettingLayer = 'site' | 'tenant' | 'space' | 'person'
+export type SettingKind = 'boolean' | 'choice' | 'limit' | 'list' | 'text' | 'doc'
+// What a layer lets the layers below it do.
+export interface SettingLower {
+  mode: 'allow' | 'restrict' | 'lock'
+  options?: (string | boolean)[]
+  max?: number
+}
+export interface SiteSetting {
+  key: string
+  kind: SettingKind
+  layers: SettingLayer[]
+  site: { value: unknown; lower: SettingLower; fromFlag?: boolean }
+  // Set by PUT when the new rule makes this many tenants' values ineffective.
+  affected?: number
+}
+export interface TenantSetting {
+  key: string
+  kind: SettingKind
+  layers: SettingLayer[]
+  site: { value: unknown; lower: SettingLower }
+  tenant: { value: unknown; lower: SettingLower | null; inEffect: boolean } | null
+  effective: unknown
+}
+// What GET /api/settings says of a setting that a space or a person can change.
+export interface MySetting {
+  key: string
+  effective: unknown
+  space?: { canChange: boolean; inEffect: boolean; source?: 'site' | 'tenant' }
+  person?: { canChange: boolean; inEffect: boolean; source?: 'site' | 'tenant' }
 }

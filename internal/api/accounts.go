@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -22,6 +23,13 @@ type userResp struct {
 	// EmailVerified and PasskeyRequired: see docs/api.md, "User".
 	EmailVerified   bool `json:"emailVerified"`
 	PasskeyRequired bool `json:"passkeyRequired"`
+	// SiteAdmin is an administrator of the whole server; Tenant is the tenant
+	// the user belongs to (absent in single-user mode, which has none).
+	SiteAdmin bool           `json:"siteAdmin"`
+	Tenant    *tenantRefResp `json:"tenant,omitempty"`
+	// Quota is the person's own limits (null follows the tenant); the
+	// administrators' lists and PATCH answer have it, nothing else does.
+	Quota *ownQuotaResp `json:"quota,omitempty"`
 }
 
 // toUser is the user as the API shows it. passkeyRequired is whether the
@@ -31,7 +39,11 @@ func (s *server) toUser(u store.User) userResp {
 	if s.auth != nil {
 		req = s.auth.PasskeyRequiredOf(u)
 	}
-	return userResp{u.ID, u.Username, u.Name, u.Email, u.Role, u.Disabled, rfc3339(u.Created), u.EmailVerified, req}
+	r := userResp{u.ID, u.Username, u.Name, u.Email, u.Role, u.Disabled, rfc3339(u.Created), u.EmailVerified, req, u.Role == "admin" && u.SiteAdmin, nil, nil}
+	if !s.single {
+		r.Tenant = s.toTenantRef(u.TenantID)
+	}
+	return r
 }
 
 type spaceResp struct {
@@ -204,9 +216,12 @@ func (s *server) checkInvite(c *call) {
 		return
 	}
 	writeJSON(c.w, http.StatusOK, struct {
-		Role    string `json:"role"`
-		Expires string `json:"expires"`
-	}{inv.Role, rfc3339(inv.Expires)})
+		Role     string `json:"role"`
+		Expires  string `json:"expires"`
+		Username string `json:"username"`
+		Name     string `json:"name"`
+		Email    string `json:"email"`
+	}{inv.Role, rfc3339(inv.Expires), inv.Username, inv.Name, inv.Email})
 }
 
 func (s *server) acceptInvite(c *call) {
@@ -299,10 +314,15 @@ func (s *server) patchAccount(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	u, err := s.auth.UpdateProfile(c.r.Context(), c.user(), req.Name, req.Email)
+	old := c.user()
+	u, err := s.auth.UpdateProfile(c.r.Context(), old, req.Name, req.Email)
 	if err != nil {
 		s.fail(c.w, err)
 		return
+	}
+	if u.Email != old.Email {
+		// The verified old address is told, with no link in the note.
+		s.auth.NoteEmailChange(old, langOf(c, ""), s.auth.ClientAddr(c.r))
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		User userResp `json:"user"`
@@ -335,6 +355,10 @@ func (s *server) unlinkIdentity(c *call) {
 // --- users and invites (administrators) --------------------------------------
 
 func (s *server) listUsers(c *call) {
+	sc, ok := s.adminScope(c)
+	if !ok {
+		return
+	}
 	q := c.r.URL.Query()
 	var us []store.User
 	var err error
@@ -359,9 +383,9 @@ func (s *server) listUsers(c *call) {
 			}
 			limit = n
 		}
-		us, err = s.auth.FindUsers(c.r.Context(), strings.TrimSpace(q.Get("q")), enabledOnly, limit)
+		us, err = s.auth.FindUsers(c.r.Context(), sc, strings.TrimSpace(q.Get("q")), enabledOnly, limit)
 	} else {
-		us, err = s.auth.Users(c.r.Context())
+		us, err = s.auth.Users(c.r.Context(), sc)
 	}
 	if err != nil {
 		s.fail(c.w, err)
@@ -377,9 +401,15 @@ func (s *server) listUsers(c *call) {
 		Passkeys int `json:"passkeys"`
 		SSO      int `json:"sso"`
 	}
+	own, err := store.UsersWithQuota(c.r.Context(), s.opt.Store.Q(), sc) // one query, the few who have limits of their own
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
 	out := make([]userEx, len(us))
 	for i, u := range us {
 		out[i] = userEx{s.toUser(u), counts.Passkeys[u.ID], counts.SSO[u.ID]}
+		out[i].Quota = toOwnQuota(own[u.ID])
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Users []userEx `json:"users"`
@@ -388,50 +418,75 @@ func (s *server) listUsers(c *call) {
 
 func (s *server) patchUser(c *call) {
 	var req struct {
-		Role            *string `json:"role"`
-		Disabled        *bool   `json:"disabled"`
-		PasskeyRequired *bool   `json:"passkeyRequired"`
-		Email           *string `json:"email"`
-		EmailVerified   *bool   `json:"emailVerified"`
+		Role            *string         `json:"role"`
+		Disabled        *bool           `json:"disabled"`
+		PasskeyRequired *bool           `json:"passkeyRequired"`
+		Email           *string         `json:"email"`
+		EmailVerified   *bool           `json:"emailVerified"`
+		SiteAdmin       *bool           `json:"siteAdmin"`
+		Quota           json.RawMessage `json:"quota"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	u, err := s.auth.UpdateUser(c.r.Context(), c.user().ID, s.auth.ClientAddr(c.r), c.r.PathValue("id"), auth.UserPatch{Role: req.Role, Disabled: req.Disabled,
-		PasskeyRequired: req.PasskeyRequired, Email: req.Email, EmailVerified: req.EmailVerified})
+	// A refused quota changes nothing, so it is checked before the rest is applied.
+	var applyQuota func() bool
+	if req.Quota != nil {
+		var ok bool
+		if applyQuota, ok = s.checkQuotaPatch(c, c.r.PathValue("id"), req.Quota); !ok {
+			return
+		}
+	}
+	u, err := s.auth.UpdateUser(c.r.Context(), c.user(), s.auth.ClientAddr(c.r), c.r.PathValue("id"), auth.UserPatch{Role: req.Role, Disabled: req.Disabled,
+		PasskeyRequired: req.PasskeyRequired, Email: req.Email, EmailVerified: req.EmailVerified, SiteAdmin: req.SiteAdmin})
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
+	if applyQuota != nil && !applyQuota() {
+		return
+	}
+	out := s.toUser(*u)
+	if raw, err := store.UserQuota(c.r.Context(), s.opt.Store.Q(), store.AllTenants(), u.ID); err == nil {
+		out.Quota = toOwnQuota(raw)
+	}
 	writeJSON(c.w, http.StatusOK, struct {
 		User userResp `json:"user"`
-	}{s.toUser(*u)})
+	}{out})
 }
 
 func (s *server) createInvite(c *call) {
 	var req struct {
-		Role string `json:"role"`
-		Days *int   `json:"days"`
+		Role      string `json:"role"`
+		Days      *int   `json:"days"`
+		Tenant    string `json:"tenant"`
+		SiteAdmin *bool  `json:"siteAdmin"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, true, authBodyLimit) {
 		return
 	}
-	inv, err := s.auth.CreateInvite(c.r.Context(), c.user().ID, req.Role, req.Days)
+	inv, err := s.auth.CreateInvite(c.r.Context(), c.user(), req.Tenant, req.Role, req.Days, req.SiteAdmin)
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
 	writeJSON(c.w, http.StatusCreated, struct {
-		ID      string `json:"id"`
-		Token   string `json:"token"`
-		Role    string `json:"role"`
-		Created string `json:"created"`
-		Expires string `json:"expires"`
-	}{inv.ID, inv.Token, inv.Role, rfc3339(inv.Created), rfc3339(inv.Expires)})
+		ID        string `json:"id"`
+		Token     string `json:"token"`
+		Role      string `json:"role"`
+		Created   string `json:"created"`
+		Expires   string `json:"expires"`
+		Tenant    string `json:"tenant"`
+		SiteAdmin bool   `json:"siteAdmin"`
+	}{inv.ID, inv.Token, inv.Role, rfc3339(inv.Created), rfc3339(inv.Expires), inv.TenantID, inv.SiteAdmin})
 }
 
 func (s *server) listInvites(c *call) {
-	l, err := s.auth.OpenInvites(c.r.Context())
+	sc, ok := s.adminScope(c)
+	if !ok {
+		return
+	}
+	l, err := s.auth.OpenInvites(c.r.Context(), sc)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -442,10 +497,11 @@ func (s *server) listInvites(c *call) {
 		Created   string `json:"created"`
 		Expires   string `json:"expires"`
 		CreatedBy string `json:"createdBy"`
+		Tenant    string `json:"tenant"`
 	}
 	out := make([]inv, len(l))
 	for i, x := range l {
-		out[i] = inv{x.ID, x.Role, rfc3339(x.Created), rfc3339(x.Expires), x.CreatedBy}
+		out[i] = inv{x.ID, x.Role, rfc3339(x.Created), rfc3339(x.Expires), x.CreatedBy, x.TenantID}
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Invites []inv `json:"invites"`
@@ -453,7 +509,7 @@ func (s *server) listInvites(c *call) {
 }
 
 func (s *server) deleteInvite(c *call) {
-	if err := s.auth.DeleteInvite(c.r.Context(), c.r.PathValue("id")); err != nil {
+	if err := s.auth.DeleteInvite(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("id")); err != nil {
 		s.fail(c.w, err)
 		return
 	}

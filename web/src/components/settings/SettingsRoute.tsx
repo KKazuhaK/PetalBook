@@ -29,6 +29,8 @@ const HomePanel = lazy(() => import('./HomePanel'))
 const TemplatesPanel = lazy(() => import('./TemplatesPanel'))
 // And the API tokens', which have their own words.
 const TokensPanel = lazy(() => import('./TokensPanel'))
+// Usage has the words of quotas with it.
+const UsagePanel = lazy(() => import('./UsagePanel'))
 
 // The settings surface: one dialog, reached from `/settings/<section>`. It is a
 // route so a link, a reload and the old addresses all work; what is behind it is
@@ -99,6 +101,13 @@ export default function SettingsRoute() {
         break
       case 'github':
         body = <GitHubPanel />
+        break
+      case 'usage':
+        body = (
+          <Suspense fallback={<PageFallback />}>
+            <UsagePanel />
+          </Suspense>
+        )
         break
       case 'preferences':
         body = <PreferencesPanel />

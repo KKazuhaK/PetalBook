@@ -367,7 +367,7 @@ func TestMaxSpacesAppliesToSpacesWithRepositories(t *testing.T) {
 	eachAccounts(t, o, func(t *testing.T, a *acc) {
 		_, member := ghSetup(t, a)
 		before := a.fake.Count("POST", "/orgs/kazuhahub/repos")
-		member.do("POST", "/api/spaces", map[string]any{"name": "S", "github": map[string]any{"owner": "kazuhahub", "name": "x"}}).want(t, 403, "forbidden")
+		member.do("POST", "/api/spaces", map[string]any{"name": "S", "github": map[string]any{"owner": "kazuhahub", "name": "x"}}).want(t, 403, "quota_exceeded")
 		if a.fake.Count("POST", "/orgs/kazuhahub/repos") != before {
 			t.Fatal("a repository was made for a refused space")
 		}

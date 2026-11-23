@@ -90,7 +90,7 @@ func (s *Service) Authenticate(ctx context.Context, raw, ip string) (*auth.Princ
 	if err != nil {
 		return nil, err
 	}
-	if u.Disabled {
+	if u.Disabled || s.cfg.Store != nil && s.cfg.Store.TenantDisabled(u.TenantID) { // a disabled tenant is a disabled account
 		return nil, refuse(http.StatusUnauthorized, "token_owner_disabled", "the account this authorization belongs to is disabled")
 	}
 	g := e.grant
@@ -235,8 +235,8 @@ func (s *Service) markGoneLocked(gid string, now time.Time) {
 // --- listing and revoking ----------------------------------------------------
 
 // List returns grants as store.ListOAuthGrants does.
-func (s *Service) List(ctx context.Context, f store.GrantFilter) ([]store.OAuthGrantRow, error) {
-	return store.ListOAuthGrants(ctx, s.st.Q(), f)
+func (s *Service) List(ctx context.Context, sc store.Scope, f store.GrantFilter) ([]store.OAuthGrantRow, error) {
+	return store.ListOAuthGrants(ctx, s.st.Q(), sc, f)
 }
 
 // Revoke ends a grant and reports whether it existed. Its refresh token stops

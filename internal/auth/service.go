@@ -26,9 +26,11 @@ import (
 	"github.com/KazuhaHub/authcore/captcha"
 	authsaml "github.com/KazuhaHub/authcore/saml"
 
+	"github.com/KKazuhaK/PetalBook/internal/mail"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/perm"
 	"github.com/KKazuhaK/PetalBook/internal/secret"
+	"github.com/KKazuhaK/PetalBook/internal/settings"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
@@ -77,8 +79,11 @@ type Config struct {
 	Secrets *secret.Box
 	// CaptchaEndpoint replaces the siteverify address of the third-party captcha (tests).
 	CaptchaEndpoint string
-	Logger          *slog.Logger
-	Now             func() time.Time
+	// Mail is for tests: the clock, backoff and trusted roots of the mail
+	// service. Mail is off until an administrator enables it, whatever this says.
+	Mail   mail.Options
+	Logger *slog.Logger
+	Now    func() time.Time
 }
 
 // Service is safe for concurrent use.
@@ -116,6 +121,10 @@ type Service struct {
 	capSecretErr atomic.Bool
 	flagsIgnored atomic.Bool
 
+	// onNewUser is told whose usage rows a new account reached (its own and its
+	// tenant's people), after it is made; nil: nobody is told.
+	onNewUser func(ctx context.Context, touched []store.Touched)
+
 	// adminMu serialises changes that must keep one enabled administrator.
 	adminMu sync.Mutex
 	// credMu serialises changes that must keep one way to sign in.
@@ -128,6 +137,15 @@ type Service struct {
 	negative map[string]time.Time
 
 	pending *pendingStore
+
+	// Mail (see mailcfg.go): the sender, the caps of an hour, and the settings
+	// that say whether registration is open (set by the API's constructor).
+	mail     *mail.Service
+	mailMu   sync.Mutex
+	mailCaps *hourCaps // messages per address and per caller
+	testCaps *hourCaps // test messages
+	regCaps  *hourCaps // registrations per tenant
+	settings atomic.Pointer[settings.Service]
 }
 
 type cachedSession struct {
@@ -242,8 +260,17 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		starts:   newBucketLimiter(10_000, 30, 20, cfg.Now),
 		audit:    newAuditLog(), provs: newProviderSet(), replay: authsaml.NewMemoryReplayCache(authsaml.DefaultReplayCacheCapacity),
 		sessions: map[string]*cachedSession{}, users: map[string]*cachedUser{}, negative: map[string]time.Time{},
-		pending: newPendingStore(cfg.Now),
+		pending:  newPendingStore(cfg.Now),
+		mailCaps: newHourCaps(maxLimitKeys), testCaps: newHourCaps(4), regCaps: newHourCaps(2000),
 	}
+	mo := cfg.Mail
+	if mo.Now == nil {
+		mo.Now = cfg.Now
+	}
+	if mo.Logger == nil {
+		mo.Logger = cfg.Logger
+	}
+	s.mail = mail.New(mo)
 	s.initCaptcha()
 	if cfg.PublicURL != "" {
 		u, err := url.Parse(cfg.PublicURL)
@@ -253,6 +280,9 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		s.secure = u.Scheme == "https"
 	}
 	s.sec(ctx) // reads the settings, and builds what depends on them
+	if err := s.loadMail(ctx); err != nil {
+		return nil, err
+	}
 	if err := s.reloadProviders(ctx); err != nil {
 		return nil, err
 	}
@@ -300,6 +330,10 @@ func (s *Service) SetupOpen(ctx context.Context) (bool, error) {
 	}
 	return !ok, nil
 }
+
+// OnNewUser installs what is told whose usage a new account reached (the quotas
+// look at the person and at the tenant's people). Call it before serving.
+func (s *Service) OnNewUser(fn func(ctx context.Context, touched []store.Touched)) { s.onNewUser = fn }
 
 func (s *Service) markUsersExist() {
 	s.setupMu.Lock()
@@ -428,7 +462,8 @@ func cleanEmail(in string) (string, error) {
 		return "", nil
 	}
 	at := strings.Index(e, "@")
-	if len(e) > 254 || at < 1 || at == len(e)-1 || strings.ContainsFunc(e, func(r rune) bool { return r <= 0x20 || r == 0x7f || r == '<' || r == '>' }) || !utf8.ValidString(e) {
+	// ASCII only: Unicode case mapping makes look-alikes equal (see store.EmailKey).
+	if len(e) > 254 || at < 1 || at == len(e)-1 || strings.ContainsFunc(e, func(r rune) bool { return r <= 0x20 || r >= 0x7f || r == '<' || r == '>' }) {
 		return "", errf(Invalid, "that does not look like an email address")
 	}
 	return e, nil
@@ -461,6 +496,18 @@ type CreateParams struct {
 	// RetryUsername lets the name get a numeric suffix when it is taken (accounts made from an
 	// identity provider's claims).
 	RetryUsername bool
+	// TenantID is the tenant the account is made in (the default tenant when
+	// empty); SiteAdmin makes an administrator one of the whole server. An
+	// invite decides both (see AcceptInvite), and the first account is always a
+	// site administrator of the default tenant.
+	TenantID  string
+	SiteAdmin bool
+	// PasswordHash is a hash already made (a confirmed registration); it is
+	// used instead of Password. RegistrationID is the pending registration the
+	// account uses up, and Terms what the person accepted ("" for none).
+	PasswordHash   string
+	RegistrationID string
+	Terms          string
 }
 
 // IdentityParams is an external identity to attach.
@@ -495,7 +542,7 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 	if err := checkRole(p.Role); err != nil {
 		return nil, err
 	}
-	var pwHash string
+	pwHash := p.PasswordHash
 	if p.Password != "" {
 		if err := CheckPassword(p.Password); err != nil {
 			return nil, err
@@ -520,7 +567,18 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 		return nil, err
 	}
 
-	u := store.User{Username: username, Name: name, Email: email, EmailVerified: p.EmailVerified && email != "", Role: p.Role, Created: s.now().UTC()}
+	// An account made without saying where (setup, the command line) is in the
+	// default tenant, and an administrator of it is one of the server, as every
+	// administrator was before tenants. An invite or a provider says where, and
+	// whether.
+	if p.Setup {
+		p.TenantID, p.SiteAdmin = store.DefaultTenantID, true
+	}
+	if p.TenantID == "" {
+		p.TenantID, p.SiteAdmin = store.DefaultTenantID, p.Role == "admin"
+	}
+	u := store.User{Username: username, Name: name, Email: email, EmailVerified: p.EmailVerified && email != "", Role: p.Role, Created: s.now().UTC(),
+		TenantID: p.TenantID, SiteAdmin: p.SiteAdmin && p.Role == "admin"}
 	stg, err := s.cfg.Spaces.Stage("My notes", spaces.IdentityOf(u))
 	if err != nil {
 		return nil, err
@@ -549,11 +607,30 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 					return errf(NotFound, "that invite is not valid")
 				}
 			}
+			if p.RegistrationID != "" {
+				if ok, err := store.DeleteRegistration(ctx, q, p.RegistrationID); err != nil {
+					return err
+				} else if !ok {
+					return errf(NotFound, "that link is not valid, or has expired")
+				}
+			}
+			// The tenant must exist, and take new people: an invite of a disabled
+			// tenant is no invite.
+			if t, err := store.GetTenant(ctx, q, cand.TenantID); errors.Is(err, store.ErrNotFound) || err == nil && t.Disabled {
+				return errf(NotFound, "that invite is not valid")
+			} else if err != nil {
+				return err
+			}
 			if err := store.InsertUser(ctx, q, cand); err != nil {
 				return err
 			}
 			if pwHash != "" {
 				if err := store.SetPasswordHash(ctx, q, cand.ID, pwHash, s.now()); err != nil {
+					return err
+				}
+			}
+			if p.Terms != "" {
+				if err := store.SetTermsAccepted(ctx, q, cand.ID, p.Terms); err != nil {
 					return err
 				}
 			}
@@ -563,7 +640,7 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 					return err
 				}
 			}
-			if err := store.InsertSpace(ctx, q, stg.ID(), stg.Name(), cand.ID, "", s.now()); err != nil {
+			if err := store.InsertSpace(ctx, q, cand.TenantID, stg.ID(), stg.Name(), cand.ID, "", s.now()); err != nil {
 				return err
 			}
 			return store.AddMember(ctx, q, stg.ID(), cand.ID, "owner", s.now())
@@ -593,6 +670,9 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 	}
 	stg.Commit(u.ID)
 	s.markUsersExist()
+	if s.onNewUser != nil {
+		s.onNewUser(context.WithoutCancel(ctx), []store.Touched{{UserID: u.ID, TenantID: u.TenantID}})
+	}
 	return &u, nil
 }
 
@@ -641,6 +721,9 @@ func (s *Service) SetPassword(ctx context.Context, username, password string) er
 		if err := store.SetPasswordHash(ctx, q, u.ID, hash, s.now()); err != nil {
 			return err
 		}
+		if err := store.DeleteEmailTokens(ctx, q, u.ID, store.TokenReset); err != nil {
+			return err
+		}
 		return store.DeleteUserSessions(ctx, q, u.ID, "")
 	})
 	if err == nil {
@@ -649,14 +732,14 @@ func (s *Service) SetPassword(ctx context.Context, username, password string) er
 	return err
 }
 
-// Users lists every account, oldest first (administrators only; the API checks).
-func (s *Service) Users(ctx context.Context) ([]store.User, error) {
-	return store.ListUsers(ctx, s.st.Q())
+// Users lists the accounts in the scope, oldest first (administrators only; the API checks).
+func (s *Service) Users(ctx context.Context, sc store.Scope) ([]store.User, error) {
+	return store.ListUsers(ctx, s.st.Q(), sc)
 }
 
 // FindUsers lists the accounts whose username or name contains query (ignoring
 // case), oldest first, at most limit of them (limit <= 0: no limit). enabledOnly
 // leaves the disabled accounts out before the limit counts.
-func (s *Service) FindUsers(ctx context.Context, query string, enabledOnly bool, limit int) ([]store.User, error) {
-	return store.SearchUsers(ctx, s.st.Q(), s.st.Dialect(), query, enabledOnly, limit)
+func (s *Service) FindUsers(ctx context.Context, sc store.Scope, query string, enabledOnly bool, limit int) ([]store.User, error) {
+	return store.SearchUsers(ctx, s.st.Q(), s.st.Dialect(), sc, query, enabledOnly, limit)
 }

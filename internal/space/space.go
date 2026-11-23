@@ -723,3 +723,7 @@ func (d dirSource) DirExists(rel string) bool {
 func (d dirSource) Read(rel string) ([]byte, error) {
 	return os.ReadFile(filepath.Join(d.root, filepath.FromSlash(rel)))
 }
+
+// PageCount is the number of pages in the space's index: one COUNT of its pages
+// table, milliseconds whatever the size (the quotas count pages with it).
+func (s *Space) PageCount() (int, error) { return s.idx.Count() }

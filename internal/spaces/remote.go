@@ -268,11 +268,15 @@ func (m *Manager) githubView(r *store.Remote) *GitHubView {
 	if r.GHVia == github.ViaUser && r.GHUserID != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if u, err := store.GetUser(ctx, m.opt.Store.Q(), r.GHUserID); err == nil {
-			g.Username = u.Username
-		}
-		if a, err := store.GetGitHubAuthorization(ctx, m.opt.Store.Q(), r.GHUserID); err == nil {
-			g.Login = a.Login
+		// The person is looked up in the space's tenant only: a credential of
+		// someone elsewhere (which connecting refuses) shows no name.
+		if sp, err := store.GetSpace(ctx, m.opt.Store.Q(), store.AllTenants(), r.SpaceID); err == nil { // the space being viewed, by id
+			if u, err := store.GetUser(ctx, m.opt.Store.Q(), store.InTenant(sp.TenantID), r.GHUserID); err == nil {
+				g.Username = u.Username
+				if a, err := store.GetGitHubAuthorization(ctx, m.opt.Store.Q(), r.GHUserID); err == nil {
+					g.Login = a.Login
+				}
+			}
 		}
 	}
 	return g

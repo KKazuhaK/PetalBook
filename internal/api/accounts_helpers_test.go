@@ -163,6 +163,11 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The mail queue is delivered (to a fake server of the test; mail stays off
+	// until a test enables it).
+	mailCtx, stopMail := context.WithCancel(ctx)
+	t.Cleanup(stopMail)
+	go svc.RunMail(mailCtx)
 	// Nearly every test signs in from one address, many times: the allowance of
 	// a minute is lifted here, and the tests of the limits set it back.
 	var lift auth.SecurityPatch
@@ -193,6 +198,10 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 		}
 	}
 	opts := api.Options{Logger: log, Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tok, OAuth: oa, PublicURL: o.public, Version: "test-1", DailyFetch: o.dailyFetch, GitHub: ghsvc}
+	if o.maxSpaces > 0 {
+		n := o.maxSpaces // --max-spaces given: the site's quota.spacesPerPerson
+		opts.MaxSpaces = &n
+	}
 	h := api.New(opts)
 	return &acc{t: t, dir: dir, st: st, mgr: mgr, auth: svc, drafts: drf, tokens: tok, oauth: oa, clock: clk, h: h, public: o.public, fake: fake, ghsvc: ghsvc}
 }

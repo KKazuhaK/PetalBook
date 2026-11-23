@@ -129,7 +129,7 @@ func TestGitHubInstallationsAndSpaces(t *testing.T) {
 		}
 		// Spaces by installation and by user.
 		for _, id := range []string{"S1", "S2", "S3"} {
-			if err := store.InsertSpace(ctx, q, id, id, "", "", now); err != nil {
+			if err := store.InsertSpace(ctx, q, store.DefaultTenantID, id, id, "", "", now); err != nil {
 				t.Fatal(err)
 			}
 		}

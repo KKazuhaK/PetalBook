@@ -73,7 +73,9 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 		}
 		return nil, err
 	}
-	if u.Disabled {
+	// A disabled tenant is a disabled account: one atomic load, and a map lookup
+	// only while some tenant is disabled.
+	if u.Disabled || s.st.TenantDisabled(u.TenantID) {
 		s.endSession(ctx, id)
 		return nil, errf(Unauthenticated, "sign in to continue")
 	}
@@ -137,7 +139,7 @@ func (s *Service) cachedUser(ctx context.Context, id string) (*store.User, error
 	}
 	gen := s.gen
 	s.cmu.Unlock()
-	u, err := store.GetUser(ctx, s.st.Q(), id)
+	u, err := store.GetUser(ctx, s.st.Q(), store.AllTenants(), id) // by session or token: the account decides the tenant
 	if err != nil {
 		return nil, err
 	}

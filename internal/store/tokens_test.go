@@ -57,7 +57,7 @@ func TestAPITokens(t *testing.T) {
 		})
 
 		t.Run("listing: newest first, names only while the owner is a member", func(t *testing.T) {
-			rows, err := store.ListAPITokens(ctx, st.Q(), store.TokenFilter{UserID: "A"})
+			rows, err := store.ListAPITokens(ctx, st.Q(), store.AllTenants(), store.TokenFilter{UserID: "A"})
 			if err != nil || len(rows) != 2 || rows[0].ID != "T2" || rows[1].ID != "T1" {
 				t.Fatalf("%+v %v", rows, err)
 			}
@@ -71,7 +71,7 @@ func TestAPITokens(t *testing.T) {
 			if len(names) != 3 || names["S1"] != "one" || names["S2"] != "" || names["GONE"] != "" {
 				t.Fatalf("%v", names)
 			}
-			all, err := store.ListAPITokens(ctx, st.Q(), store.TokenFilter{})
+			all, err := store.ListAPITokens(ctx, st.Q(), store.AllTenants(), store.TokenFilter{})
 			if err != nil || len(all) != 3 || all[0].ID != "T3" {
 				t.Fatalf("%+v %v", all, err)
 			}
@@ -84,7 +84,7 @@ func TestAPITokens(t *testing.T) {
 			var seen []string
 			f := store.TokenFilter{UserID: "A", Limit: 3}
 			for pages := 0; pages < 10; pages++ {
-				rows, err := store.ListAPITokens(ctx, st.Q(), f)
+				rows, err := store.ListAPITokens(ctx, st.Q(), store.AllTenants(), f)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -104,11 +104,11 @@ func TestAPITokens(t *testing.T) {
 		})
 
 		t.Run("filters by id and prefix", func(t *testing.T) {
-			rows, err := store.ListAPITokens(ctx, st.Q(), store.TokenFilter{ID: "T3"})
+			rows, err := store.ListAPITokens(ctx, st.Q(), store.AllTenants(), store.TokenFilter{ID: "T3"})
 			if err != nil || len(rows) != 1 || rows[0].UserID != "B" {
 				t.Fatalf("%+v %v", rows, err)
 			}
-			rows, err = store.ListAPITokens(ctx, st.Q(), store.TokenFilter{Prefix: "pbk_T1"})
+			rows, err = store.ListAPITokens(ctx, st.Q(), store.AllTenants(), store.TokenFilter{Prefix: "pbk_T1"})
 			if err != nil || len(rows) != 1 || rows[0].ID != "T1" {
 				t.Fatalf("%+v %v", rows, err)
 			}
@@ -174,7 +174,7 @@ func TestAPITokens(t *testing.T) {
 			if _, err := st.Q().Exec(ctx, `DELETE FROM users WHERE id = 'A'`); err != nil {
 				t.Fatal(err)
 			}
-			rows, _ := store.ListAPITokens(ctx, st.Q(), store.TokenFilter{UserID: "A"})
+			rows, _ := store.ListAPITokens(ctx, st.Q(), store.AllTenants(), store.TokenFilter{UserID: "A"})
 			if len(rows) != 0 {
 				t.Fatalf("%+v", rows)
 			}

@@ -114,32 +114,38 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 		return Info{}, fmt.Errorf("%w: github.description is at most 350 characters, without control characters", ErrInvalid)
 	}
 	// The limit counts the spaces being made as well as the ones that exist.
+	// The space is the creator's tenant's, as Create's is.
 	m.createMu.Lock()
-	u, err := store.GetUser(ctx, m.opt.Store.Q(), userID)
+	u, err := store.GetUser(ctx, m.opt.Store.Q(), store.AllTenants(), userID) // the creator, by id
 	if err != nil {
 		m.createMu.Unlock()
 		return Info{}, err
 	}
-	if m.opt.MaxSpaces > 0 {
-		n, err := store.CountOwnedSpaces(ctx, m.opt.Store.Q(), userID)
-		if err != nil {
-			m.createMu.Unlock()
-			return Info{}, err
-		}
-		if n+m.reserved[userID] >= m.opt.MaxSpaces {
-			m.createMu.Unlock()
-			return Info{}, fmt.Errorf("%w: you already own %d spaces, the most this server allows", ErrLimit, n)
-		}
+	if err := m.checkSpaceQuota(ctx, *u); err != nil {
+		m.createMu.Unlock()
+		return Info{}, err
 	}
+	tenantID := u.TenantID
 	m.reserved[userID]++
+	m.reservedT[tenantID]++
 	m.createMu.Unlock()
 	held := true
+	unreserve := func() { // under createMu
+		m.reserved[userID]--
+		if m.reserved[userID] == 0 {
+			delete(m.reserved, userID)
+		}
+		m.reservedT[tenantID]--
+		if m.reservedT[tenantID] == 0 {
+			delete(m.reservedT, tenantID)
+		}
+		held = false
+	}
 	release := func() { // gives the place back: under createMu, once
 		if held {
 			m.createMu.Lock()
-			m.reserved[userID]--
+			unreserve()
 			m.createMu.Unlock()
-			held = false
 		}
 	}
 	defer release()
@@ -214,10 +220,9 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 	row.State, row.LastGood, row.LastSync = st.State, st.LastGood, st.LastSync
 	now := m.opt.Now()
 	m.createMu.Lock()
-	m.reserved[userID]-- // the row below takes the place
-	held = false
+	unreserve() // the row below takes the place
 	err = m.opt.Store.Tx(ctx, func(q store.Q) error {
-		if err := store.InsertSpace(ctx, q, id, stg.Name(), "", inbox, now); err != nil {
+		if err := store.InsertSpace(ctx, q, tenantID, id, stg.Name(), "", inbox, now); err != nil {
 			return err
 		}
 		if err := store.AddMember(ctx, q, id, userID, perm.Owner, now); err != nil {
@@ -234,6 +239,7 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 	endStaging() // the space has its member now: the checks apply from here on
 	committed = true
 	stg.Commit(userID)
+	m.usageAdded(ctx, store.Touched{UserID: userID, TenantID: tenantID})
 	m.setSync(id, row.State)
 	m.schedulePull(id)
 	return Info{ID: id, Name: stg.Name(), Role: perm.Owner, Perms: perm.All, Inbox: inbox, Sync: row.State}, nil

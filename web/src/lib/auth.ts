@@ -7,7 +7,7 @@ export function safeReturn(raw: string | null | undefined): string {
   if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.includes('\\')) return '/'
   // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001f\u007f]/.test(raw)) return '/'
-  if (/^\/(login|setup|invite)([/?#]|$)/.test(raw)) return '/'
+  if (/^\/(login|setup|invite|register|forgot|reset-password|verify-email)([/?#]|$)/.test(raw)) return '/'
   return raw
 }
 

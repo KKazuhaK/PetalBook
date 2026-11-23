@@ -45,7 +45,8 @@ var (
 	ErrLastOwner = errors.New("a space needs at least one owner")
 	// ErrInvalid wraps a refused name.
 	ErrInvalid = errors.New("invalid")
-	// ErrLimit: the user owns as many spaces as the server allows.
+	// ErrLimit: the user owns as many spaces as they may (see QuotaError, which
+	// is one).
 	ErrLimit = errors.New("space limit reached")
 	// ErrDisabled: an administrator has disabled the space; it is in its
 	// members' lists, but nothing in it can be opened.
@@ -118,7 +119,9 @@ type Options struct {
 	// CacheEntries bounds the membership cache by entries, one per space a
 	// cached person can reach (default DefaultCacheEntries).
 	CacheEntries int
-	// MaxSpaces is how many spaces one user may own; 0 means no limit.
+	// MaxSpaces is how many spaces one user may own; 0 means no limit. The server
+	// replaces it with the quota settings (SetQuota); it is what applies until
+	// then, and what the tests of this package use.
 	MaxSpaces int
 	// IdleAfter is how long an open space may go unused before it is closed
 	// (default 15 minutes), and MaxOpen how many may be open at once (default
@@ -137,6 +140,11 @@ type Options struct {
 	// measurement must be before it is measured again (default DefaultSizeAge).
 	// See sizes.go for what that costs.
 	SizeEvery, SizeAge time.Duration
+
+	// RecountEvery is how often every usage row is recounted from the rows it
+	// summarises (default DefaultRecountEvery; negative turns it off). The first
+	// pass is made when the manager starts running.
+	RecountEvery time.Duration
 
 	// Secrets encrypts the credentials of remotes; by default a box keyed from
 	// DataDir/secret.key or PETALBOOK_SECRET_KEY.
@@ -216,11 +224,14 @@ type Manager struct {
 	remoteMu sync.Mutex        // one connect, disconnect or key change at a time
 	pullWake chan struct{}     // a space with a remote was just opened: pull it now
 
-	trimMu   sync.Mutex      // one trim at a time
-	trimming bool            // a background trim is queued or running (guarded by mu)
-	createMu sync.Mutex      // space creation is one at a time, so the limit cannot be passed by racing
-	staging  map[string]bool // spaces being made with a GitHub repository, whose first push needs no member yet (guarded by mu)
-	reserved map[string]int  // spaces being made with a new GitHub repository, by owner (guarded by createMu)
+	trimMu    sync.Mutex      // one trim at a time
+	trimming  bool            // a background trim is queued or running (guarded by mu)
+	createMu  sync.Mutex      // space creation is one at a time, so the limit cannot be passed by racing
+	staging   map[string]bool // spaces being made with a GitHub repository, whose first push needs no member yet (guarded by mu)
+	reserved  map[string]int  // spaces being made with a GitHub repository, by owner (guarded by createMu)
+	reservedT map[string]int  // the same, by tenant (guarded by createMu)
+
+	quota quotaHooks // see SetQuota
 
 	// testHook, set by tests only, runs at named points inside transactions.
 	testHook func(point string)
@@ -304,7 +315,7 @@ func newManager(opt Options, single *space.Space) *Manager {
 	if opt.PushDeadline <= 0 {
 		opt.PushDeadline = 15 * time.Second
 	}
-	return &Manager{staging: map[string]bool{}, reserved: map[string]int{}, opt: opt, single: single, singleInbox: store.DefaultInbox, log: log, open: map[string]*opening{}, cache: newAccessCache(opt.CacheEntries), pullWake: make(chan struct{}, 1), sizeSem: make(chan struct{}, 1)}
+	return &Manager{staging: map[string]bool{}, reserved: map[string]int{}, reservedT: map[string]int{}, opt: opt, single: single, singleInbox: store.DefaultInbox, log: log, open: map[string]*opening{}, cache: newAccessCache(opt.CacheEntries), pullWake: make(chan struct{}, 1), sizeSem: make(chan struct{}, 1)}
 }
 
 // SetSingleInbox sets the inbox folder of single-user mode (the --inbox flag).
@@ -409,12 +420,15 @@ func (m *Manager) openFor(ctx context.Context, user store.User, spaceID string, 
 		if m.single != nil || !viaAdmin || user.Role != "admin" || !page.ValidID(spaceID) {
 			return nil, ErrNotFound
 		}
-		sp, err := store.GetSpace(ctx, m.opt.Store.Q(), spaceID)
+		sp, err := store.GetSpace(ctx, m.opt.Store.Q(), store.ScopeOf(user), spaceID)
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, ErrNotFound
 		}
 		if err != nil {
 			return nil, err
+		}
+		if m.opt.Store.TenantDisabled(sp.TenantID) {
+			return nil, ErrDisabled // the spaces of a disabled tenant cannot be opened, by anyone
 		}
 		in = Info{ID: sp.ID, Name: sp.Name, Perms: perm.All, ViaAdmin: true, Personal: sp.Personal, Inbox: sp.Inbox}
 	}
@@ -768,7 +782,7 @@ func (m *Manager) SweepStaged(ctx context.Context) (int, error) {
 		if err != nil || time.Since(fi.ModTime()) < stagedSweepAge {
 			continue
 		}
-		_, err = store.GetSpace(ctx, m.opt.Store.Q(), id)
+		_, err = store.GetSpace(ctx, m.opt.Store.Q(), store.AllTenants(), id) // background sweep: a staged id of any tenant
 		switch {
 		case err == nil:
 			os.Remove(m.stagedMark(id))
@@ -810,18 +824,12 @@ func (m *Manager) CreateWith(ctx context.Context, userID, name, inbox string) (I
 	}
 	m.createMu.Lock()
 	defer m.createMu.Unlock()
-	u, err := store.GetUser(ctx, m.opt.Store.Q(), userID)
+	u, err := store.GetUser(ctx, m.opt.Store.Q(), store.AllTenants(), userID) // the creator, by id
 	if err != nil {
 		return Info{}, err
 	}
-	if m.opt.MaxSpaces > 0 {
-		n, err := store.CountOwnedSpaces(ctx, m.opt.Store.Q(), userID)
-		if err != nil {
-			return Info{}, err
-		}
-		if n+m.reserved[userID] >= m.opt.MaxSpaces {
-			return Info{}, fmt.Errorf("%w: you already own %d spaces, the most this server allows", ErrLimit, n)
-		}
+	if err := m.checkSpaceQuota(ctx, *u); err != nil {
+		return Info{}, err
 	}
 	stg, err := m.Stage(name, IdentityOf(*u))
 	if err != nil {
@@ -829,7 +837,7 @@ func (m *Manager) CreateWith(ctx context.Context, userID, name, inbox string) (I
 	}
 	now := m.opt.Now()
 	err = m.opt.Store.Tx(ctx, func(q store.Q) error {
-		if err := store.InsertSpace(ctx, q, stg.ID(), stg.Name(), "", inbox, now); err != nil {
+		if err := store.InsertSpace(ctx, q, u.TenantID, stg.ID(), stg.Name(), "", inbox, now); err != nil {
 			return err
 		}
 		return store.AddMember(ctx, q, stg.ID(), userID, perm.Owner, now)
@@ -839,6 +847,7 @@ func (m *Manager) CreateWith(ctx context.Context, userID, name, inbox string) (I
 		return Info{}, err
 	}
 	stg.Commit(userID)
+	m.usageAdded(ctx, store.Touched{UserID: userID, TenantID: u.TenantID})
 	return Info{ID: stg.ID(), Name: stg.Name(), Role: perm.Owner, DirectRole: perm.Owner, Perms: perm.All, Inbox: inbox, Sync: "local"}, nil
 }
 
@@ -1007,9 +1016,10 @@ func (m *Manager) Run(ctx context.Context) {
 	if m.single != nil {
 		return
 	}
-	sized := make(chan struct{})
+	sized, counted := make(chan struct{}), make(chan struct{})
 	go func() { defer close(sized); m.runSizer(ctx) }()
-	defer func() { <-sized }()
+	go func() { defer close(counted); m.runRecount(ctx) }()
+	defer func() { <-sized; <-counted }()
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for {

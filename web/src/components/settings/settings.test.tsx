@@ -51,7 +51,7 @@ describe('the settings dialog, accounts mode, administrator', () => {
 
   it('lists the sections in groups', async () => {
     await open('/settings/profile')
-    expect(navLinks()).toEqual([t.settingsUi.sections.profile, t.settingsUi.sections.preferences, t.settingsUi.sections.security, t.settingsUi.sections.tokens, t.settingsUi.sections.github, t.settingsUi.sections.general, t.settingsUi.sections.types, t.settingsUi.sections.templates, t.settingsUi.sections.home, t.settingsUi.sections.members, t.settingsUi.sections.sync, t.settingsUi.sections.import])
+    expect(navLinks()).toEqual([t.settingsUi.sections.profile, t.settingsUi.sections.preferences, t.settingsUi.sections.security, t.settingsUi.sections.tokens, t.settingsUi.sections.github, t.settingsUi.sections.usage, t.settingsUi.sections.general, t.settingsUi.sections.types, t.settingsUi.sections.templates, t.settingsUi.sections.home, t.settingsUi.sections.members, t.settingsUi.sections.sync, t.settingsUi.sections.import])
     const groups = [...dialog()!.querySelectorAll('nav [role="group"]')].map((g) => g.getAttribute('aria-label'))
     expect(groups).toEqual([t.settingsUi.groups.account, t.settingsUi.groups.space])
   })

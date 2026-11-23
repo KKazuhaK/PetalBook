@@ -114,7 +114,7 @@ func TestSpaceDailyChoice(t *testing.T) {
 			}
 		}
 		store.SetSpaceDaily(ctx, st.Q(), "S1", store.SpaceDaily{APIs: `["x"]`})
-		if err := st.Tx(ctx, func(q store.Q) error { _, err := store.DeleteSpace(ctx, q, "S1"); return err }); err != nil {
+		if err := st.Tx(ctx, func(q store.Q) error { _, err := store.DeleteSpace(ctx, q, store.AllTenants(), "S1"); return err }); err != nil {
 			t.Fatal(err)
 		}
 		var n int
