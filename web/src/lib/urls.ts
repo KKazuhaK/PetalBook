@@ -14,6 +14,8 @@ export function spaceUrls(space: string) {
     tag: (tag: string) => `${base}/t/${encodePath(tag)}`,
     page: (id: string) => `${base}/p/${encodeURIComponent(id)}`,
     settings: () => `${base}/settings`,
+    // The check page: what is wrong with the files of the space.
+    check: (kind = '') => (kind === '' ? `${base}/check` : `${base}/check?kind=${encodeURIComponent(kind)}`),
     import: (folder = '') => (folder === '' ? `${base}/import` : `${base}/import?folder=${encodeURIComponent(folder)}`),
     search: (q: string) => `${base}/search?q=${encodeURIComponent(q)}`,
   }

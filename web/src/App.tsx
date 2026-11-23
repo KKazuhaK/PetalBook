@@ -28,6 +28,7 @@ const SetupPage = lazy(() => import('@/pages/auth/SetupPage'))
 const InvitePage = lazy(() => import('@/pages/auth/InvitePage'))
 const SettingsRoute = lazy(() => import('@/components/settings/SettingsRoute'))
 const ImportPage = lazy(() => import('@/pages/ImportPage'))
+const CheckPage = lazy(() => import('@/pages/CheckPage'))
 // The home page of a space: the default landing, in a chunk of its own so the lists do not carry it.
 const HomePage = lazy(() => import('@/components/home/HomePage'))
 
@@ -113,6 +114,7 @@ const router = createBrowserRouter([
               { path: 'search', element: <SearchList /> },
               { path: 'settings', element: <SpaceSettingsRedirect /> },
               { path: 'import', element: later(<ImportPage />) },
+              { path: 'check', element: later(<CheckPage />) },
               { path: 'p/:id', element: later(<PageEditor />) },
               { path: '*', element: <NotFoundPage /> },
             ],

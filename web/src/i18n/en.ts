@@ -20,6 +20,7 @@ export const en: Messages = {
     inbox: 'Inbox',
     quickNote: 'Quick note',
     recent: 'Recent',
+    check: 'Check',
     folders: 'Folders',
     tags: 'Tags',
     rootFolder: 'Top level',
@@ -510,6 +511,9 @@ export const en: Messages = {
     nameSaved: 'Space name changed',
     nameReadOnly: 'In single-user mode the space name cannot be changed here.',
     noManage: 'Only an owner can change the name and the inbox of the space.',
+    checkTitle: 'Check',
+    checkHelp: 'Files with a problem: no or repeated ids, headers that cannot be read, fields that do not fit, broken links, missing attachments and titles that repeat.',
+    checkLink: 'Open the check page…',
   },
   // The search dialog (⌘K) and the tag colour menu.
   search: {

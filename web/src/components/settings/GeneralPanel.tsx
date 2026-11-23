@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { Link } from 'react-router'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import { useActiveSpace, useSession, useUpdateSpace } from '@/api/hooks'
@@ -7,6 +8,7 @@ import type { SpaceInfo } from '@/api/types'
 import { Field } from '@/components/auth/Field'
 import { PageFallback, Spinner } from '@/components/common'
 import { Button } from '@/components/ui/button'
+import { spaceUrls } from '@/lib/urls'
 import { t } from '@/i18n'
 import { SettingsNote, SettingsSection } from './SettingsParts'
 import { InboxSection } from './SyncPanel'
@@ -28,6 +30,7 @@ export function GeneralPanel({ space }: { space: string }) {
     <div className="space-y-8">
       <NameSection space={current} readOnly={readOnly} why={why} />
       <InboxSection space={current} readOnly={readOnly} why={why} />
+      <CheckSection space={current.id} />
     </div>
   )
 }
@@ -67,6 +70,19 @@ function NameSection({ space, readOnly, why }: { space: SpaceInfo; readOnly: boo
           </div>
         )}
       </form>
+    </SettingsSection>
+  )
+}
+
+// The way to the check page of the space, for whoever can read it.
+function CheckSection({ space }: { space: string }) {
+  return (
+    <SettingsSection title={t.general.checkTitle} id="space-check-title" description={t.general.checkHelp}>
+      <div>
+        <Button variant="outline" render={<Link to={spaceUrls(space).check()} />}>
+          {t.general.checkLink}
+        </Button>
+      </div>
     </SettingsSection>
   )
 }

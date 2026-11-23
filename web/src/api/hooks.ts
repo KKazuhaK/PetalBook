@@ -10,7 +10,7 @@ import { api, ApiError, spaceApi } from './client'
 import { parseTagColor } from '../lib/tagColors.ts'
 import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
 import { propsOfMeta } from '../lib/pageTypes.ts'
-import type { BatchPagesInput, ConnectRemoteInput, DailyPrefs, DailySettings, Favorite, FavoriteList, FavoriteRef, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, PutTemplateInput, PutViewsInput, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
+import type { BatchPagesInput, ChecksResponse, FixCheckInput, ConnectRemoteInput, DailyPrefs, DailySettings, Favorite, FavoriteList, FavoriteRef, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, ProblemKind, PutTemplateInput, PutViewsInput, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
 
 // Everything of one space is under ['space', id, …], so switching space never
 // shows another space's data and one invalidation covers a space.
@@ -35,6 +35,8 @@ export const keys = {
   // The templates of the space with its default templates; one template (with its body) is under it.
   templates: (space: string) => ['space', space, 'templates'] as const,
   template: (space: string, name: string) => ['space', space, 'templates', name] as const,
+  // The check page: one listing for each kind (or all of them), read a cursor page at a time.
+  checks: (space: string, kind: ProblemKind | '') => ['space', space, 'checks', kind] as const,
   // The table view's listing: kept apart from the list and card listings, which
   // ask for less, and which an edit of a cell does not read again.
   table: (space: string, params: ListParams) => ['space', space, 'pages', 'table', params] as const,
@@ -1079,5 +1081,35 @@ export function useTopPages(params: Omit<ListParams, 'cursor' | 'limit'>, limit:
     queryFn: ({ signal }) => spaceApi(space).listPages({ ...params, limit }, signal),
     enabled: enabled && space !== '' && read,
     staleTime: 10_000,
+  })
+}
+
+// --- the check page ----------------------------------------------------------------
+
+// The problems of the space, a cursor page at a time; `counts` of every kind come with each page. Read again each
+// time the page is opened: a save somewhere else can change them.
+export function useChecks(kind: ProblemKind | '') {
+  const space = useSpaceId()
+  const { read } = useSpacePermissions()
+  return useInfiniteQuery({
+    queryKey: keys.checks(space, kind),
+    queryFn: ({ pageParam, signal }): Promise<ChecksResponse> => spaceApi(space).checks({ kind: kind || undefined, cursor: pageParam || undefined }, signal),
+    initialPageParam: '',
+    getNextPageParam: (last) => last.next || undefined,
+    staleTime: 0,
+    enabled: space !== '' && read,
+  })
+}
+
+// A fix writes a file: the problems, the pages and the tree all change (a file without an id becomes a page). A 409
+// or a 404 says the file is not as it was listed: read the problems again.
+export function useFixCheck() {
+  const qc = useQueryClient()
+  const space = useSpaceId()
+  const changed = () => Promise.all([qc.invalidateQueries({ queryKey: ['space', space, 'checks'] }), invalidateListings(qc, space)])
+  return useMutation({
+    mutationFn: (input: FixCheckInput) => spaceApi(space).fixCheck(input),
+    onSuccess: changed,
+    onError: (e) => (e instanceof ApiError && (e.code === 'conflict' || e.code === 'not_found') ? void changed() : undefined),
   })
 }
