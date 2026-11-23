@@ -115,6 +115,24 @@ describe('the sign-in page, in each mode', () => {
     expect(other.getAttribute('href')).toBe('/login?local=1')
   })
 
+  it('sso_redirect with several providers: the link to the form opens the form', async () => {
+    const assign = stubLocation()
+    await open('/login', { providers: [company, campus], security: { login: { mode: 'sso_redirect' } } })
+    await settle(() => links().length === 2, 'the buttons')
+    await click([...document.querySelectorAll('a')].find((a) => a.textContent === ts.login.usePassword))
+    await settle(() => passwordForm() !== null, 'the form')
+    expect(assign).not.toHaveBeenCalled()
+  })
+
+  it('sso_redirect with one provider after ?sso_error=: the link to the form opens the form and does not redirect', async () => {
+    const assign = stubLocation()
+    await open('/login?sso_error=no_account', { providers: [company], security: { login: { mode: 'sso_redirect' } } })
+    await settle(() => text().includes(ts.ssoErrors.no_account), 'the message')
+    await click([...document.querySelectorAll('a')].find((a) => a.textContent === ts.login.usePassword))
+    await settle(() => passwordForm() !== null, 'the form')
+    expect(assign).not.toHaveBeenCalled()
+  })
+
   it('with no provider the page is the form alone, whatever mode is stored', async () => {
     const assign = stubLocation()
     await open('/login', { security: { login: { mode: 'sso_redirect' } } })

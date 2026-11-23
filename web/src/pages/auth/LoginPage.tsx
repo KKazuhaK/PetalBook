@@ -49,7 +49,9 @@ function LoginForm({ ret, providers, ssoError, local }: { ret: string; providers
   const redirecting = mode === 'sso_redirect' && list.length === 1 && !local && !ssoError
   // `sso_first` folds the form behind a link; `sso_redirect` has it only on `?local=1`.
   const formByDefault = mode === 'dual' || mode === 'local_only' || (mode === 'sso_redirect' && local) || local
-  const [formOpen, setFormOpen] = useState(formByDefault)
+  // Derived, not stored: the same form stays mounted when `?local=1` is added to the address.
+  const [openedByClick, setOpenedByClick] = useState(false)
+  const formOpen = formByDefault || openedByClick
 
   useEffect(() => {
     if (redirecting) window.location.assign(providerStartUrl(list[0].kind, list[0].slug, ret))
@@ -178,7 +180,7 @@ function LoginForm({ ret, providers, ssoError, local }: { ret: string; providers
         <>
           {sso}
           {passkey}
-          <button type="button" className="self-start text-sm text-brand underline underline-offset-4" onClick={() => setFormOpen(true)}>
+          <button type="button" className="self-start text-sm text-brand underline underline-offset-4" onClick={() => setOpenedByClick(true)}>
             {ts.login.usePassword}
           </button>
         </>
