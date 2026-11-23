@@ -212,7 +212,7 @@ func Open(opt Options) (*Space, error) {
 			},
 			commitNow: func(paths []string) error {
 				id, _ := g.identities(Author{})
-				_, err := g.commitPaths(id, paths)
+				_, err := g.commitPaths(id, "", paths)
 				var skipped *gitstore.SkippedError
 				if errors.As(err, &skipped) {
 					err = nil

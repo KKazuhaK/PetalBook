@@ -251,7 +251,7 @@ func (s *Space) initRemote(o *RemoteOptions, recovered map[string]Author) error 
 		// One commit per person, as the background committer makes them.
 		_, committer := s.cm.git.identities(Author{})
 		for _, grp := range s.cm.git.groupByAuthor(recovered) {
-			made, err := r.repo.CommitPaths(ctx, grp.paths, commitMessage, grp.id, committer)
+			made, err := r.repo.CommitPaths(ctx, grp.paths, messageVia(grp.via), grp.id, committer)
 			if err != nil {
 				r.blocked = "could not commit what an earlier run left uncommitted: " + gitstore.Scrub(err.Error())
 				break
@@ -787,7 +787,7 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 			return res, nil
 		}
 		author, committer := s.cm.git.identities(by)
-		made, err := r.repo.CommitPaths(ctx, tx.paths, commitMessage, author, committer)
+		made, err := r.repo.CommitPaths(ctx, tx.paths, messageVia(by.Via), author, committer)
 		if err != nil {
 			s.undoLocked(ctx, r, tx, tx.parent)
 			return zero, err
