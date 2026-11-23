@@ -169,6 +169,10 @@ export interface CreatePageInput {
   folder?: string
   meta?: PageMeta
   body?: string
+  // The template to start from: left out for the folder's (or the quick-note) default, "" for none.
+  template?: string
+  // The browser's offset in minutes east of UTC, for {{date}}, {{time}} and {{datetime}} (UTC when left out).
+  tz?: number
 }
 export interface SavePageInput {
   baseRev: string
@@ -203,6 +207,29 @@ export interface PageType {
   fields: TypeField[]
   // Set when the file cannot be used; the fields are then empty.
   error?: string
+}
+// A template page of .petalbook/templates (docs/api.md, "Templates"). The list leaves `body` out.
+export interface PageTemplate {
+  // The file name without .md; the template's id.
+  name: string
+  path: string
+  rev: string
+  meta: PageMeta
+  body?: string
+}
+export interface TemplateDefaults {
+  folders: Record<string, string>
+  quickNote: string
+}
+export interface TemplatesResponse {
+  templates: PageTemplate[]
+  defaults: TemplateDefaults
+}
+export interface PutTemplateInput {
+  // "" makes the template; otherwise the rev it was read at.
+  baseRev: string
+  meta: PageMeta
+  body: string
 }
 export interface FolderBinding {
   folder: string

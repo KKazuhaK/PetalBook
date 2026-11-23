@@ -779,7 +779,7 @@ function suite(target: Target) {
         const base = `/api/spaces/${sp.id}`
         const page = await call(owner.browser, 'POST', `${base}/pages`, { meta: { title: '读得到' }, body: '正文\n' })
         expect(page.status).toBe(201)
-        for (const path of [`${base}/pages`, `${base}/pages/${page.json.id}`, `${base}/tree`, `${base}/tags`, `${base}/members`, `${base}/views?folder=`, `${base}/pages/groups?folder=&key=status`]) {
+        for (const path of [`${base}/pages`, `${base}/pages/${page.json.id}`, `${base}/tree`, `${base}/tags`, `${base}/members`, `${base}/views?folder=`, `${base}/pages/groups?folder=&key=status`, `${base}/templates`]) {
           expect((await call(viewer.browser, 'GET', path)).status, `viewer GET ${path}`).toBe(200)
         }
         const writes: [string, string, unknown][] = [
@@ -796,6 +796,9 @@ function suite(target: Target) {
           ['DELETE', `${base}/types/task`, undefined],
           ['PUT', `${base}/folders/type`, { folder: '', type: '' }],
           ['PUT', `${base}/views`, { folder: '', baseRev: '0'.repeat(40), views: [] }],
+          ['PUT', `${base}/templates/日记`, { baseRev: '', meta: {}, body: '' }],
+          ['DELETE', `${base}/templates/日记?baseRev=x`, undefined],
+          ['PUT', `${base}/templates/defaults`, { quickNote: '' }],
           ['PATCH', base, { name: '改名' }],
           ['POST', `${base}/reindex`, undefined],
           ['POST', `${base}/members`, { username: owner.user.username, role: 'viewer' }],
@@ -815,6 +818,12 @@ function suite(target: Target) {
         const patched = await call(editor.browser, 'PATCH', `${base}/pages/${page.json.id}/props`, { baseRev: page.json.rev, set: { status: 'x' } })
         expect([patched.status, patched.json.meta.status]).toEqual([200, 'x'])
         expect((await call(editor.browser, 'GET', `${base}/types`)).status).toBe(200)
+        // Templates are made by those who manage; whoever writes pages makes pages from them.
+        const tpl = await call(owner.browser, 'PUT', `${base}/templates/日记`, { baseRev: '', meta: { title: '日记 {{date}}' }, body: '今天\n' })
+        expect(tpl.status).toBe(200)
+        expect((await call(viewer.browser, 'GET', `${base}/templates/日记`)).json.rev).toBe(tpl.json.rev)
+        const fromTemplate = await call(editor.browser, 'POST', `${base}/pages`, { template: '日记', tz: 0 })
+        expect([fromTemplate.status, fromTemplate.json.body]).toEqual([201, '今天\n'])
         // Views are a shared arrangement of pages: whoever may write pages may save them.
         const noViews = await call(editor.browser, 'GET', `${base}/views?folder=`)
         const savedViews = await call(editor.browser, 'PUT', `${base}/views`, { folder: '', baseRev: noViews.json.rev, views: [{ name: '全部', layout: 'cards' }] })
@@ -824,6 +833,9 @@ function suite(target: Target) {
           ['PUT', `${base}/types/task`, { title: '任务', fields: [] }],
           ['DELETE', `${base}/types/task`, {}],
           ['PUT', `${base}/folders/type`, { folder: '', type: '' }],
+          ['PUT', `${base}/templates/日记`, { baseRev: '', meta: {}, body: '' }],
+          ['DELETE', `${base}/templates/日记?baseRev=x`, {}],
+          ['PUT', `${base}/templates/defaults`, { quickNote: '' }],
           ['PATCH', base, { name: '改名' }],
           ['POST', `${base}/reindex`, {}],
           ['POST', `${base}/members`, { username: viewer.user.username, role: 'editor' }],
@@ -2603,6 +2615,168 @@ function suite(target: Target) {
       const rest = (await call(admin, 'GET', `${SP_PAGES}?folder=${enc(`${folder}/long`)}&sort=title&body=1&cursor=${enc(first.next)}`)).json
       expect(rest.items.map((i: any) => i.body)).toEqual(['第 20 篇\n', '第 21 篇\n'])
       expect(rest.next).toBe('')
+    })
+  })
+
+  describe('templates', () => {
+    const enc = encodeURIComponent
+    const folder = `${root}/tpl`
+    const names = { diary: `日记${run}`, quick: `随记${run}`, tiny: `小${run}` }
+    const url = (name = '') => `/api/spaces/${spaceId}/templates${name ? '/' + enc(name) : ''}`
+    const put = (name: string, baseRev: string, meta: Record<string, unknown>, body: string) => call(admin, 'PUT', url(name), { baseRev, meta, body })
+    const list = async () => (await call(admin, 'GET', url())).json as { templates: Record<string, any>[]; defaults: { folders: Record<string, string>; quickNote: string } }
+    const defaults = (body: Record<string, unknown>) => call(admin, 'PUT', url('defaults'), body)
+    const day = (tz: number) => new Date(Date.now() + tz * 60_000).toISOString().slice(0, 10)
+    let rev = ''
+
+    it('makes a template and reads it back: path, rev, header and body; the list has no body; a stale or repeated create is a 409 with the current one', async () => {
+      const meta = { title: '{{date}} 日记', tags: ['日记', 'd-{{date}}'], type: `diary${run}`, mood: '{{time}}' }
+      const body = '## 今天 {{time}}\n{{datetime}} {{nope}} {{ date }}\n'
+      const made = await put(names.diary, '', meta, body)
+      expect(made.status).toBe(200)
+      expect(made.json).toMatchObject({ name: names.diary, path: `.petalbook/templates/${names.diary}.md`, meta, body })
+      expect(made.json.rev).toMatch(/^[0-9a-f]{40}$/)
+      rev = made.json.rev
+      expect((await call(admin, 'GET', url(names.diary))).json).toEqual(made.json)
+      const listed = (await list()).templates.find((t) => t.name === names.diary)
+      expect(listed).toEqual({ name: names.diary, path: made.json.path, rev, meta })
+      for (const baseRev of ['', '0'.repeat(40)]) {
+        const again = await put(names.diary, baseRev, meta, 'x')
+        expect([again.status, again.json.error]).toEqual([409, 'conflict'])
+        expect(again.json.current).toEqual(made.json)
+      }
+      const gone = await put(`没有${run}`, '0'.repeat(40), {}, '')
+      expect([gone.status, gone.json.error, gone.json.current]).toEqual([409, 'conflict', undefined])
+      const changed = await put(names.diary, rev, meta, body + '更多\n')
+      expect(changed.status).toBe(200)
+      expect(changed.json.rev).not.toBe(rev)
+      rev = changed.json.rev
+      expect((await put(names.diary, rev, meta, body + '更多\n')).json.rev).toBe(rev)
+      const missing = await call(admin, 'GET', url(`没有${run}`))
+      expect([missing.status, missing.json.error]).toEqual([404, 'not_found'])
+    })
+
+    it('checks names and size: a name that is not a file name 400 invalid, over 256 KiB 400 template_too_large', async () => {
+      for (const bad of ['a:b', '.hidden', 'con', 'x'.repeat(90).replaceAll('x', '长'), 'defaults']) {
+        const r = await call(admin, 'PUT', url(bad), { baseRev: '', meta: {}, body: '' })
+        expect([r.status, r.json.error], bad).toEqual([400, 'invalid'])
+      }
+      const big = await put(names.tiny, '', {}, 'x'.repeat((256 << 10) + 1))
+      expect([big.status, big.json.error]).toEqual([400, 'template_too_large'])
+      expect((await call(admin, 'GET', url(names.tiny))).status).toBe(404)
+      const fits = await put(names.tiny, '', {}, 'x'.repeat(200 << 10))
+      expect(fits.status).toBe(200)
+      expect((await call(admin, 'DELETE', `${url(names.tiny)}?baseRev=${fits.json.rev}`)).status).toBe(204)
+    })
+
+    it('has at most 200 templates: the 201st is 400 template_limit, one that is there can still be changed', async () => {
+      const have = (await list()).templates.length
+      const made: Record<string, string> = {}
+      try {
+        for (let i = have; i < 200; i++) {
+          const r = await put(`限${run}-${i}`, '', {}, 'x')
+          expect(r.status).toBe(200)
+          made[`限${run}-${i}`] = r.json.rev
+        }
+        const over = await put(`限${run}-over`, '', {}, 'x')
+        expect([over.status, over.json.error]).toEqual([400, 'template_limit'])
+        const first = Object.keys(made)[0]
+        expect((await put(first, made[first], {}, 'y')).status).toBe(200)
+        made[first] = (await call(admin, 'GET', url(first))).json.rev
+      } finally {
+        for (const [name, r] of Object.entries(made)) await call(admin, 'DELETE', `${url(name)}?baseRev=${r}`)
+      }
+    })
+
+    it('sets the default template of a folder and of quick notes; an unknown template is 400 template_not_found, a folder that is not there 404', async () => {
+      await S.createFolder(folder)
+      const missing = await defaults({ folder, template: `没有${run}` })
+      expect([missing.status, missing.json.error]).toEqual([400, 'template_not_found'])
+      expect([(await defaults({ quickNote: `没有${run}` })).json.error]).toEqual(['template_not_found'])
+      const noFolder = await defaults({ folder: `${root}/nowhere`, template: names.diary })
+      expect(noFolder.status).toBe(404)
+      for (const body of [{}, { folder }, { folder, template: names.diary, quickNote: names.diary }]) expect((await defaults(body)).json.error).toBe('invalid')
+      const set = await defaults({ folder, template: names.diary })
+      expect(set.status).toBe(200)
+      expect(set.json.folders[folder]).toBe(names.diary)
+      await put(names.quick, '', { title: '随记 {{time}}' }, '')
+      const quick = await defaults({ quickNote: names.quick })
+      expect(quick.json.quickNote).toBe(names.quick)
+      expect((await list()).defaults).toEqual(quick.json)
+    })
+
+    it('makes a page from a template: variables in the title, header values and body in the client time zone; templates are not pages and not found by search', async () => {
+      for (const tz of [0, 480, -480, 840, -840]) {
+        const before = day(tz)
+        const p = await S.createPage({ folder: `${folder}/tz`, template: names.diary, tz })
+        const after = day(tz)
+        expect([`${before} 日记`, `${after} 日记`]).toContain(p.meta.title)
+        expect(p.meta.type).toBe(`diary${run}`)
+        expect(p.meta.mood).toMatch(/^\d\d:\d\d$/)
+        expect((p.meta.tags as string[])[0]).toBe('日记')
+        expect([`d-${before}`, `d-${after}`]).toContain((p.meta.tags as string[])[1])
+        expect(p.body).toMatch(/^## 今天 \d\d:\d\d\n\d{4}-\d\d-\d\d \d\d:\d\d \{\{nope\}\} \{\{ date \}\}\n更多\n$/)
+      }
+      const bad = await call(admin, 'POST', SP_PAGES, { folder, template: names.diary, tz: 841 })
+      expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
+      const unknown = await call(admin, 'POST', SP_PAGES, { folder, template: `没有${run}` })
+      expect([unknown.status, unknown.json.error]).toEqual([400, 'template_not_found'])
+      const all = await walk({ folder: '', recursive: true }, 100)
+      expect(all.filter((i) => i.path.includes('.petalbook') || i.path.includes('templates'))).toEqual([])
+      expect((await S.listPages({ q: 'nope' })).items.filter((i) => i.path.includes('.petalbook'))).toEqual([])
+    })
+
+    it('the request wins field by field and the template\'s type is kept; a folder\'s default applies unless "" is sent; quick notes use the quick-note default', async () => {
+      const mine = await S.createPage({ folder: `${folder}/p`, template: names.diary, meta: { title: '我的', type: 'other', extra: 1, tags: [] }, body: '自己的\n' })
+      expect(mine.meta).toMatchObject({ title: '我的', type: `diary${run}`, extra: 1 })
+      expect(mine.meta.tags).toHaveLength(2)
+      expect(mine.body).toBe('自己的\n')
+      const tags = await S.createPage({ folder: `${folder}/p`, template: names.diary, meta: { tags: ['我的'] } })
+      expect(tags.meta.tags).toEqual(['我的'])
+      expect(tags.body).toContain('## 今天')
+      const byDefault = await S.createPage({ folder })
+      expect(byDefault.meta.type).toBe(`diary${run}`)
+      const blank = await S.createPage({ folder, template: '' })
+      expect([blank.meta.type, blank.body]).toEqual([undefined, ''])
+      const inbox = (await call(admin, 'GET', '/api/spaces')).json.spaces.find((s: SpaceInfo) => s.id === spaceId).inbox as string
+      const note = await S.createPage({ folder: inbox, body: '想到的\n' })
+      expect(String(note.meta.title)).toMatch(/^随记 \d\d:\d\d$/)
+      expect(note.body).toBe('想到的\n')
+      const plain = await S.createPage({ folder: inbox, template: '' })
+      expect(plain.meta.title).toBeUndefined()
+      expect((await defaults({ quickNote: '' })).json.quickNote).toBe('')
+    })
+
+    it('the defaults follow their folder when it is moved, and go when it is deleted', async () => {
+      const a = `${root}/tplmv`
+      await S.createFolder(`${a}/in`)
+      await defaults({ folder: a, template: names.diary })
+      await defaults({ folder: `${a}/in`, template: names.quick })
+      const moved = `${root}/tplmoved`
+      expect((await call(admin, 'POST', `/api/spaces/${spaceId}/folders/move`, { from: a, to: moved })).status).toBe(200)
+      const d = (await list()).defaults.folders
+      expect([d[a], d[`${a}/in`], d[moved], d[`${moved}/in`]]).toEqual([undefined, undefined, names.diary, names.quick])
+      expect((await S.createPage({ folder: moved })).meta.type).toBe(`diary${run}`)
+      expect((await call(admin, 'DELETE', `/api/spaces/${spaceId}/folders?path=${enc(moved)}&recursive=true`)).status).toBe(204)
+      const after = (await list()).defaults.folders
+      expect([after[moved], after[`${moved}/in`]]).toEqual([undefined, undefined])
+    })
+
+    it('deleting a template needs its rev, and takes the defaults that name it away in the same change', async () => {
+      const stale = await call(admin, 'DELETE', `${url(names.diary)}?baseRev=${'0'.repeat(40)}`)
+      expect([stale.status, stale.json.error]).toEqual([409, 'conflict'])
+      expect(stale.json.current.rev).toBe(rev)
+      await defaults({ quickNote: names.diary })
+      expect((await list()).defaults.folders[folder]).toBe(names.diary)
+      expect((await call(admin, 'DELETE', `${url(names.diary)}?baseRev=${rev}`)).status).toBe(204)
+      const l = await list()
+      expect(l.templates.map((t) => t.name)).not.toContain(names.diary)
+      expect(l.defaults.folders[folder]).toBeUndefined()
+      expect(l.defaults.quickNote).toBe('')
+      expect((await call(admin, 'GET', url(names.diary))).status).toBe(404)
+      expect((await call(admin, 'DELETE', `${url(names.diary)}?baseRev=${rev}`)).status).toBe(404)
+      const q = (await call(admin, 'GET', url(names.quick))).json
+      expect((await call(admin, 'DELETE', `${url(names.quick)}?baseRev=${q.rev}`)).status).toBe(204)
     })
   })
 

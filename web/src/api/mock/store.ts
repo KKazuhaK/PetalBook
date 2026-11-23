@@ -8,6 +8,7 @@ import { matches, parseFilter, sortValue, valuesOf } from './propQuery.ts'
 import { createTypeBook } from './typeBook.ts'
 import { createHomeBook } from './homeBook.ts'
 import { createViewBook } from './viewBook.ts'
+import { createTemplateBook } from './templateBook.ts'
 import { TAG_COLORS, parseTagColor } from '../../lib/tagColors.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
 import { gitBlobId } from './sha1.ts'
@@ -137,9 +138,11 @@ export interface StoreOptions {
   // A reason why writes must fail with 503 `unavailable` right now (the space
   // follows a remote that cannot be reached, or is paused), or null.
   blocked?: () => string | null
+  // The folder quick notes go to (the space's `inbox`).
+  inbox?: () => string
 }
 
-export function createSpaceStore({ now, random, seed, author = () => 'Local user', blocked = () => null }: StoreOptions) {
+export function createSpaceStore({ now, random, seed, author = () => 'Local user', blocked = () => null, inbox = () => 'Inbox' }: StoreOptions) {
   const pages = new Map<string, Stored>()
   // Every page's commits, oldest first; kept after the page is deleted.
   const histories = new Map<string, VersionRec[]>()
@@ -155,6 +158,7 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
   const spelledFolder = (path: string): string | null => (folders.has(path) ? path : ([...folders].find((f) => f.toLowerCase() === path.toLowerCase()) ?? null))
   const book = createTypeBook(spelledFolder)
   const viewBook = createViewBook({ random, spelledFolder, validFolder })
+  const templateBook = createTemplateBook({ now, spelledFolder, validFolder })
   const home = createHomeBook({
     now,
     spelledFolder,
@@ -516,8 +520,13 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     guard()
     const folder = typeof body.folder === 'string' ? body.folder : ''
     if (!validFolder(folder)) throw new HttpError(400, 'invalid', '文件夹路径不合法')
-    const given = parseMeta(body.meta)
+    let given = parseMeta(body.meta)
     if (body.body !== undefined && typeof body.body !== 'string') throw new HttpError(400, 'invalid', 'body 必须是字符串')
+    // A page made in the inbox is a quick note.
+    const quick = folder !== '' && folder.replace(/^\/+|\/+$/g, '').toLowerCase() === inbox().toLowerCase()
+    const filled = templateBook.apply({ folder, template: body.template, tz: body.tz, meta: given, body: body.body }, quick)
+    given = filled.meta
+    body = { ...body, body: filled.body }
     const id = newId()
     const created = new Date(now()).toISOString().slice(0, 10)
     // The server owns id and created; any the client sent are ignored. Id goes
@@ -847,6 +856,7 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     for (const f of inside) addFolder(rename(f))
     book.folderMoved(from, to)
     viewBook.folderMoved(from, to)
+    templateBook.folderMoved(from, to)
     home.folderMoved(from, to)
     addFolder(to)
     for (const p of [...pages.values()].filter((x) => isUnder(x.folder, from))) {
@@ -868,6 +878,7 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     for (const f of [...folders]) if (isUnder(f, path)) folders.delete(f)
     book.folderRemoved(path)
     viewBook.folderRemoved(path)
+    templateBook.folderRemoved(path)
   }
 
   // Mock only: change a page behind the app's back, as another editor or a
@@ -895,6 +906,20 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     create,
     save,
     patchProps,
+    templates: () => templateBook.list(),
+    template: (name: string) => templateBook.get(name),
+    putTemplate: (name: string, input: Record<string, unknown>) => {
+      guard()
+      return templateBook.put(name, input)
+    },
+    deleteTemplate: (name: string, baseRev: string) => {
+      guard()
+      templateBook.remove(name, baseRev)
+    },
+    setTemplateDefault: (body: Record<string, unknown>) => {
+      guard()
+      return templateBook.setDefault(body)
+    },
     types: () => book.list(),
     putType: (name: string, input: Parameters<typeof book.put>[1]) => {
       guard()

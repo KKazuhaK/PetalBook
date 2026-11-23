@@ -247,7 +247,7 @@ export function createMockServer(options: MockOptions = {}) {
       key: null,
       reachable: true,
     }
-    rec.store = createSpaceStore({ now, random, seed, author: () => ownerOf(rec)?.name ?? 'Local user', blocked: () => blockedReason(rec) })
+    rec.store = createSpaceStore({ now, random, seed, author: () => ownerOf(rec)?.name ?? 'Local user', blocked: () => blockedReason(rec), inbox: () => rec.inbox })
     spaces.set(id, rec)
     return rec
   }
@@ -567,6 +567,7 @@ export function createMockServer(options: MockOptions = {}) {
   // What a route on a space asks of the caller (the route table of the real server).
   const needOf = (me: UserRec, method: string, rest: string): Permission => {
     // Types and their bindings are for those who manage the space; reading them is reading.
+    if (rest.startsWith('/templates/') && method !== 'GET') return 'manage'
     if ((rest.startsWith('/types/') && method !== 'GET') || (rest === '/folders/type' && method === 'PUT')) return 'manage'
     if ((rest === '/daily/settings' && method === 'PUT') || (rest === '/daily/prefs' && method === 'PUT') || (rest === '/favorites' && method !== 'GET') || rest === '/favorites/order') return rest.startsWith('/favorites') ? 'read' : 'manage'
     if ((rest === '' && method === 'PATCH') || rest === '/reindex' || rest === '/remote' || rest.startsWith('/remote/')) return 'manage'
@@ -1204,6 +1205,23 @@ export function createMockServer(options: MockOptions = {}) {
       // Only for those who manage the space; for anyone else the key is absent.
       const notices = settingsNotices.get(space.id) ?? []
       return { status: 200, body: notices.length > 0 && spaceInfo(space, u).permissions.includes('manage') ? { ...st.types(), settingsNotices: notices } : st.types() }
+    }
+    if (rest === '/templates' && method === 'GET') return { status: 200, body: st.templates() }
+    if (rest === '/templates/defaults' && method === 'PUT') return { status: 200, body: st.setTemplateDefault(body) }
+    const tplOne = /^\/templates\/(.+)$/.exec(rest)
+    if (tplOne && (method === 'GET' || method === 'PUT' || method === 'DELETE')) {
+      let name: string
+      try {
+        name = decodeURIComponent(tplOne[1])
+      } catch {
+        throw new HttpError(400, 'invalid', '模板名不合法')
+      }
+      if (method === 'GET') return { status: 200, body: st.template(name) }
+      if (method === 'DELETE') {
+        st.deleteTemplate(name, url.searchParams.get('baseRev') ?? '')
+        return { status: 204 }
+      }
+      return { status: 200, body: st.putTemplate(name, body) }
     }
     const typeOne = /^\/types\/(.+)$/.exec(rest)
     if (typeOne && (method === 'PUT' || method === 'DELETE')) {

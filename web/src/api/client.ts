@@ -27,6 +27,10 @@ import type {
   Page,
   PageDraft,
   PageList,
+  PageTemplate,
+  PutTemplateInput,
+  TemplateDefaults,
+  TemplatesResponse,
   PatchPropsInput,
   PageVersion,
   Remote,
@@ -372,6 +376,14 @@ export function spaceApi(space: string) {
     types: (signal?: AbortSignal) => request<TypesResponse>(base('/types'), { signal }),
     putType: (name: string, input: TypeInput) => request<PageType>(base(`/types/${enc(name)}`), { method: 'PUT', body: input }),
     deleteType: (name: string, baseRev: string) => request<void>(base(`/types/${enc(name)}?baseRev=${enc(baseRev)}`), { method: 'DELETE' }),
+    // Templates (docs/api.md, "Templates"). Writing needs `manage`.
+    templates: (signal?: AbortSignal) => request<TemplatesResponse>(base('/templates'), { signal }),
+    template: (name: string, signal?: AbortSignal) => request<PageTemplate>(base(`/templates/${enc(name)}`), { signal }),
+    putTemplate: (name: string, input: PutTemplateInput) => request<PageTemplate>(base(`/templates/${enc(name)}`), { method: 'PUT', body: input }),
+    deleteTemplate: (name: string, baseRev: string) => request<void>(base(`/templates/${enc(name)}?baseRev=${enc(baseRev)}`), { method: 'DELETE' }),
+    // `template` "" removes the default.
+    setFolderTemplate: (folder: string, template: string) => request<TemplateDefaults>(base('/templates/defaults'), { method: 'PUT', body: { folder, template } }),
+    setQuickNoteTemplate: (quickNote: string) => request<TemplateDefaults>(base('/templates/defaults'), { method: 'PUT', body: { quickNote } }),
     // `type` "" removes the binding.
     bindFolder: (folder: string, type: string) => request<FolderBinding>(base('/folders/type'), { method: 'PUT', body: { folder, type } }),
 
