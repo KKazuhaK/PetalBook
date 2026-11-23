@@ -428,3 +428,49 @@ func (r *Repo) MissingEverything(ctx context.Context, commit string) ([]string, 
 	}
 	return ids, nil
 }
+
+// MissingAll lists the ids of every object reachable from any ref that the
+// clone lacks.
+func (r *Repo) MissingAll(ctx context.Context) ([]string, error) {
+	out, err := r.run(ctx, Cmd{Args: []string{"rev-list", "--objects", "--missing=print", "--all"}})
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, l := range strings.Split(out, "\n") {
+		if id, ok := strings.CutPrefix(l, "?"); ok && hexRe.MatchString(id) {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
+// StopFilter makes the fetches from origin bring every object again: a fetch
+// of a partial clone otherwise keeps the filter the clone was made with.
+// Nothing already fetched changes, and the clone stays partial.
+func (r *Repo) StopFilter(ctx context.Context) error {
+	return r.unsetConfig(ctx, "remote.origin.partialclonefilter")
+}
+
+// LeavePartial makes a partial clone that has every object an ordinary one:
+// origin is no longer a promisor remote. The caller has checked (MissingAll)
+// that nothing is missing; Git never fetches by itself here anyway.
+func (r *Repo) LeavePartial(ctx context.Context) error {
+	for _, k := range []string{"remote.origin.partialclonefilter", "remote.origin.promisor", "extensions.partialclone"} {
+		if err := r.unsetConfig(ctx, k); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// unsetConfig removes a key of the repository's configuration; a key that is
+// not set is fine (git config exits with 5 for it).
+func (r *Repo) unsetConfig(ctx context.Context, key string) error {
+	_, err := r.git(ctx, "config", "--local", "--unset-all", key)
+	var ge *GitError
+	if errors.As(err, &ge) && ge.ExitCode() == 5 {
+		return nil
+	}
+	return err
+}

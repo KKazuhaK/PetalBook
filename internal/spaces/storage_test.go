@@ -1390,3 +1390,51 @@ func TestAFailedRestoreIsRememberedAndAHangingOneEnds(t *testing.T) {
 		ih.Release()
 	})
 }
+
+// A pinned space is made full once, and stays full: the pulls after that bring
+// every version, not only the commits.
+func TestAPinnedSpaceStaysFullAfterLaterPulls(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := remoteManager(t, st)
+		remote := filterBare(t)
+		seedRemote(t, remote, 3)
+		in, h := f.connected("Notes", remote)
+		defer h.Release()
+		if !h.Space.Partial() {
+			t.Skip("the server's Git makes no partial clones")
+		}
+		if err := f.m.SetPinned(ctx, in.ID, true); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(10 * time.Second)
+		for cacheOf(t, st, in.ID) != store.CacheFull {
+			if time.Now().After(deadline) {
+				t.Fatalf("the pinned space is recorded %q", cacheOf(t, st, in.ID))
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		// New versions on the remote, then a pull.
+		for i := 4; i <= 6; i++ {
+			push(t, remote, "Tang/Snow.md", pageFile("SNAP000001", "Snow", fmt.Sprintf("version %d\n", i)))
+		}
+		if err := h.Space.Pull(ctx, true); err != nil {
+			t.Fatal(err)
+		}
+		if p, err := h.Space.Get("SNAP000001"); err != nil || p.Body != "version 6\n" {
+			t.Fatalf("not pulled: %v %v", p, err)
+		}
+		root := f.root(in.ID)
+		if out := runGit(t, root, "rev-list", "--objects", "--missing=print", "--all"); strings.Contains(out, "\n?") || strings.HasPrefix(out, "?") {
+			t.Fatal("a pull of a pinned space left versions on the remote only")
+		}
+		if h.Space.Partial() {
+			t.Fatal("the pinned space is still partial")
+		}
+		// Every version reads with the remote down.
+		f.r.setDown(true)
+		items, _, err := h.Space.History(ctx, "SNAP000001", 30, "")
+		if err != nil || len(items) != 6 {
+			t.Fatalf("%d versions, %v", len(items), err)
+		}
+	})
+}

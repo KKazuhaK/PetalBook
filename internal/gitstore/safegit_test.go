@@ -266,6 +266,9 @@ func TestRuntimeGuardRefusesDestructiveCommands(t *testing.T) {
 		{"rev-parse", "--git-dir", "--exec-path"},
 		{"config", "user.name", "evil"},
 		{"config", "--global", "user.name"},
+		{"config", "--local", "--unset-all", "core.hooksPath"},
+		{"config", "--local", "remote.origin.promisor", "true"},
+		{"config", "--global", "--unset-all", "remote.origin.promisor"},
 		{"checkout", "--quiet", "-B", "x"},
 		{"checkout", "--quiet", "--orphan", "x"},
 		{"rm", "-f", "x"},
@@ -304,6 +307,8 @@ func TestRuntimeGuardRefusesDestructiveCommands(t *testing.T) {
 		{"ls-tree", "-r", "-z", "--name-only", sha, "--", "-f"},
 		{"rev-list", "--left-right", "--count", "HEAD...refs/remotes/origin/main"},
 		{"init", "--quiet", "--initial-branch=main"},
+		{"config", "--local", "--unset-all", "remote.origin.partialclonefilter"},
+		{"config", "--local", "--unset-all", "extensions.partialclone"},
 	} {
 		if err := refuseDestructive(args); err != nil {
 			t.Errorf("%v refused: %v", args, err)

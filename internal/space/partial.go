@@ -219,10 +219,16 @@ func bytesTrim(b []byte) []byte {
 	return b
 }
 
-// MakeFull fetches every version of every file the partial clone lacks, so
-// that the clone is a full one (a pinned space keeps everything on the server).
-// It runs in the background and can be repeated: what is there is not fetched
-// again.
+// MakeFull fetches every version of every file the partial clone lacks, and
+// makes the clone a full one (a pinned space keeps everything on the server):
+// the pulls after it bring every version too. It runs in the background and
+// can be repeated: what is there is not fetched again.
+//
+// The order keeps the clone usable at every step: first the fetches stop
+// being filtered (under fetchMu, so no pull is half way), so that nothing
+// fetched from then on lacks contents; then what is missing is fetched,
+// without holding up the pulls; last, under fetchMu again, nothing may be
+// missing from any ref before the clone stops being partial.
 func (s *Space) MakeFull(ctx context.Context) error {
 	r := s.rem.Load()
 	if r == nil || !r.partial.Load() {
@@ -232,20 +238,43 @@ func (s *Space) MakeFull(ctx context.Context) error {
 	defer cancel()
 	stop := context.AfterFunc(s.ctx, cancel)
 	defer stop()
-	tip := r.repo.RemoteTip(ctx, r.branch)
-	if tip == "" {
-		return errors.New("the remote's branch is not known yet")
-	}
-	ids, err := r.repo.MissingEverything(ctx, tip)
+	r.fetchMu.Lock()
+	err := r.repo.StopFilter(ctx)
+	r.fetchMu.Unlock()
 	if err != nil {
 		return err
 	}
-	if len(ids) == 0 {
-		return nil
+	ids, err := r.repo.MissingAll(ctx)
+	if err != nil {
+		return err
 	}
-	if err := r.repo.FetchBlobs(ctx, ids); err != nil {
-		return s.netFailure(r, err)
+	if len(ids) > 0 {
+		if err := r.repo.FetchBlobs(ctx, ids); err != nil {
+			return s.netFailure(r, err)
+		}
+		r.markOK()
 	}
-	r.markOK()
+	r.fetchMu.Lock()
+	defer r.fetchMu.Unlock()
+	if ids, err = r.repo.MissingAll(ctx); err != nil {
+		return err
+	}
+	if len(ids) > 0 {
+		if err := r.repo.FetchBlobs(ctx, ids); err != nil {
+			return s.netFailure(r, err)
+		}
+		if ids, err = r.repo.MissingAll(ctx); err != nil {
+			return err
+		}
+		if len(ids) > 0 {
+			return fmt.Errorf("%d objects of the clone could not be fetched", len(ids))
+		}
+	}
+	if err := r.repo.LeavePartial(ctx); err != nil {
+		return err
+	}
+	r.partial.Store(false)
+	r.repo.SetEnsure(nil)
+	s.cm.git.r().SetEnsure(nil)
 	return nil
 }
