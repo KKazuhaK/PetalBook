@@ -73,12 +73,40 @@ func TestServeHasNoAuthorizationServerWithoutOne(t *testing.T) {
 
 func TestWhichPathsAreTheAPIs(t *testing.T) {
 	for p, want := range map[string]bool{
-		"/api/spaces": true, "/oauth/token": true, "/oauth/register": true, "/oauth/authorize": true,
+		"/api/spaces": true, "/mcp": true, "/mcp/x": false, "/oauth/token": true, "/oauth/register": true, "/oauth/authorize": true,
 		"/.well-known/oauth-authorization-server": true, "/.well-known/oauth-protected-resource": true, "/.well-known/oauth-protected-resource/mcp": true,
 		"/oauth/consent": false, "/oauth/": false, "/": false, "/login": false, "/.well-known/security.txt": false, "/oauth/token/x": false,
 	} {
 		if got := api.HandlesPath(p); got != want {
 			t.Errorf("%s: %v", p, got)
 		}
+	}
+}
+
+// /mcp is the API's, in both modes; --mcp=false switches it off in single-user
+// mode, and is refused in accounts mode, where an administrator decides.
+func TestServeMCP(t *testing.T) {
+	needGit(t)
+	for name, c := range map[string]serveConfig{
+		"accounts": {data: filepath.Join(tempDir(t), "data")},
+		"single":   {space: filepath.Join(tempDir(t), "space")},
+		"off":      {space: filepath.Join(tempDir(t), "space"), noMCP: true},
+	} {
+		c.committer, c.commitIdle, c.commitMax = "Svc <svc@example.test>", time.Hour, time.Hour
+		srv := start(t, c)
+		want := 401 // there, and wants a token
+		if name == "off" {
+			want = 404
+		}
+		code, m := call(t, srv.base, "", "POST", "/mcp", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+		if code != want || (want == 401 && m["error"] != "unauthenticated") || (want == 404 && m["error"] != "not_found") {
+			t.Errorf("%s: %d %v", name, code, m)
+		}
+	}
+	if _, err := (serveConfig{data: filepath.Join(tempDir(t), "data"), mcpSet: true}).check(); err == nil || !strings.Contains(err.Error(), "--mcp") {
+		t.Fatalf("%v", err)
+	}
+	if _, err := (serveConfig{space: filepath.Join(tempDir(t), "space"), mcpSet: true, noMCP: true}).check(); err != nil {
+		t.Fatal(err)
 	}
 }
