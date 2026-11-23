@@ -22,6 +22,11 @@ const BOARD = { name: '看板', layout: 'board', group: 'status', cardFields: ['
 const col = (id: string) => document.querySelector<HTMLElement>(`[data-column="${id}"]`)!
 const cardsIn = (id: string) => [...(col(id) ?? document.createElement('div')).querySelectorAll<HTMLElement>('[data-card]')].map((c) => c.getAttribute('aria-label'))
 const card = (title: string) => [...document.querySelectorAll<HTMLElement>('[data-card]')].find((c) => c.getAttribute('aria-label') === title)!
+// A card once it is drawn: the columns fill in one by one, so a card in another column may not be there yet.
+const shown = async (title: string) => {
+  await settle(() => [...document.querySelectorAll('[data-card]')].some((c) => c.getAttribute('aria-label') === title), `the card ${title}`)
+  return card(title)
+}
 const count = (id: string) => col(id).querySelector('[data-slot="column-count"]')!.textContent
 const columnIds = () => [...document.querySelectorAll('[data-column]')].map((c) => c.getAttribute('data-column'))
 const listRequests = () => m!.requests.filter((r) => r.method === 'GET' && /\/pages\?/.test(r.url)).map((r) => new URL(r.url, 'http://x').searchParams)
@@ -84,7 +89,7 @@ describe('the columns', () => {
     expect(col('other').textContent).toContain(tb.board.other)
     const q = listRequests().find((s) => filterOf(s).some((f) => f.op === 'notIn'))!
     expect(filterOf(q)).toEqual([{ key: 'status', op: 'notIn', values: ['todo', 'doing', 'done'] }])
-    await drag(card('B'), col('other'))
+    await drag(await shown('B'), col('other'))
     expect(patches()).toHaveLength(0)
   })
 
@@ -169,7 +174,7 @@ describe('moving a card', () => {
     const ids = await openBoard()
     await settle(() => cardsIn('o:todo').length === 1, 'cards')
     expect(card('B').getAttribute('draggable')).toBe('true')
-    await drag(card('B'), col('o:doing'))
+    await drag(await shown('B'), col('o:doing'))
     await settle(() => patches().length === 1, 'the request')
     expect(patches()[0].url).toContain(`/pages/${ids.B.id}/props`)
     expect(JSON.parse(patches()[0].body!)).toEqual({ baseRev: ids.B.rev, set: { status: 'doing' } })
@@ -182,7 +187,7 @@ describe('moving a card', () => {
   it('to "empty" takes the property away', async () => {
     const ids = await openBoard()
     await settle(() => cardsIn('o:todo').length === 1, 'cards')
-    await drag(card('A'), col('empty'))
+    await drag(await shown('A'), col('empty'))
     await settle(() => patches().length === 1, 'the request')
     expect(JSON.parse(patches()[0].body!)).toEqual({ baseRev: ids.A.rev, unset: ['status'] })
     expect(m!.server.peek(ids.A.id)!.meta.status).toBeUndefined()
@@ -192,9 +197,9 @@ describe('moving a card', () => {
   it('from "empty" to an option sets it, and onto its own column does nothing', async () => {
     const ids = await openBoard()
     await settle(() => cardsIn('empty').length === 1, 'cards')
-    await drag(card('C'), col('o:doing'))
+    await drag(await shown('C'), col('o:doing'))
     expect(patches()).toHaveLength(0)
-    await drag(card('D'), col('o:done'))
+    await drag(await shown('D'), col('o:done'))
     await settle(() => patches().length === 1, 'the request')
     expect(JSON.parse(patches()[0].body!)).toEqual({ baseRev: ids.D.rev, set: { status: 'done' } })
   })
@@ -202,7 +207,7 @@ describe('moving a card', () => {
   it('does nothing when the drag is not dropped on a column', async () => {
     await openBoard()
     await settle(() => cardsIn('o:todo').length === 1, 'cards')
-    await drag(card('B'), col('o:doing'), { drop: false })
+    await drag(await shown('B'), col('o:doing'), { drop: false })
     expect(patches()).toHaveLength(0)
   })
 
@@ -211,14 +216,14 @@ describe('moving a card', () => {
     await settle(() => cardsIn('o:todo').length === 1, 'cards')
     // Someone else changed B after the board was read.
     sender(m!.server)('PATCH', `/pages/${ids.B.id}/props`, { baseRev: ids.B.rev, set: { points: 99 } })
-    await drag(card('B'), col('o:done'))
+    await drag(await shown('B'), col('o:done'))
     await settle(() => document.body.textContent!.includes(tb.board.conflict('B')), 'the message')
     expect(m!.server.peek(ids.B.id)!.meta.status).toBe('todo')
     // The card shows the page as it is now (the new points), in the column it was in.
     await settle(() => card('B').querySelector('[data-field="points"]')?.textContent === '点数99', 'the refreshed card')
     expect(cardsIn('o:todo')).toEqual(['B'])
     // With the new rev the same move goes through.
-    await drag(card('B'), col('o:done'))
+    await drag(await shown('B'), col('o:done'))
     await settle(() => m!.server.peek(ids.B.id)!.meta.status === 'done', 'the second try')
     await settle(() => cardsIn('o:done').includes('B'), 'moved')
   })
@@ -228,8 +233,8 @@ describe('moving a card', () => {
     await settle(() => cardsIn('o:todo').length === 1 && cardsIn('o:doing').length === 1, 'cards')
     // B is changed elsewhere, so its move is refused; C is dragged before B has been answered.
     sender(m!.server)('PATCH', `/pages/${ids.B.id}/props`, { baseRev: ids.B.rev, set: { points: 99 } })
-    await drag(card('B'), col('o:done'))
-    await drag(card('C'), col('o:done'))
+    await drag(await shown('B'), col('o:done'))
+    await drag(await shown('C'), col('o:done'))
     expect(card('B').getAttribute('aria-busy')).toBe('true')
     await settle(() => patches().length === 2, 'both requests')
     await settle(() => document.body.textContent!.includes(tb.board.conflict('B')), 'the message for B')
@@ -275,7 +280,7 @@ describe('moving a card', () => {
     })
     await settle(() => cardsIn('o:done').length === 1, 'the card')
     expect(card('A').getAttribute('draggable')).toBe('false')
-    await drag(card('A'), col('o:todo'))
+    await drag(await shown('A'), col('o:todo'))
     expect(m.requests.filter((r) => r.method !== 'GET' && r.url !== '/api/login')).toEqual([])
     expect(cardsIn('o:done')).toEqual(['A'])
   })
@@ -380,11 +385,11 @@ describe('the board of a tag', () => {
     expect(['o:done', 'empty'].map(count)).toEqual(['2', '1'])
     expect(cardsIn('empty')).toEqual(['F'])
     // The values are text from the index, not what the page holds (a number, a cut value): nothing is written into them.
-    await drag(card('F'), col('o:done'))
+    await drag(await shown('F'), col('o:done'))
     expect(patches()).toHaveLength(0)
     expect(document.body.textContent).toContain(tb.board.valuesReadOnly)
     // Taking the value away is typed whatever the property is.
-    await drag(card('E'), col('empty'))
+    await drag(await shown('E'), col('empty'))
     await settle(() => patches().length === 1, 'the request')
     expect(JSON.parse(patches()[0].body!)).toMatchObject({ unset: ['status'] })
     expect(m!.server.peek(ids.A.id)).toBeTruthy()
@@ -449,7 +454,7 @@ describe('a board with many columns', () => {
     await openBoard()
     await settle(() => cardsIn('o:todo').length === 1 && cardsIn('o:done').length === 1 && cardsIn('o:doing').length === 1, 'cards')
     const before = listRequests().filter((q) => q.get('props') === '1').length
-    await drag(card('B'), col('o:done'))
+    await drag(await shown('B'), col('o:done'))
     await settle(() => cardsIn('o:done').length === 2, 'moved')
     // todo (left) and done (joined) are asked for again; doing and empty are not.
     const again = listRequests().filter((q) => q.get('props') === '1').slice(before)
