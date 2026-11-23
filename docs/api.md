@@ -1455,7 +1455,7 @@ uses both:
 
 Each optional. `pin` keeps everything of the space on the server: it is never
 evicted, its clone becomes a full one (all versions are fetched in the
-background) and its attachments are all kept in the cache, outside
+background, and from then on every pull brings every version) and its attachments are all kept in the cache, outside
 `assetsBytes`. A pinned local space is the same as an unpinned one.
 `exempt` leaves the space out of the requirement of a remote. `200` with the
 item of `GET /api/admin/spaces`. Pinning while the remote cannot be reached is
