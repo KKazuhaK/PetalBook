@@ -546,6 +546,10 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		w.Header().Set("Retry-After", "5")
 		writeJSON(w, http.StatusServiceUnavailable, errorBody{Error: "restoring", Message: rst.Error(), Phase: rst.Phase})
 	case errors.As(err, &rf):
+		if rf.RetryAfter > 0 {
+			// A restore failed a moment ago and is not tried again before this.
+			w.Header().Set("Retry-After", strconv.Itoa(int((rf.RetryAfter+time.Second-1)/time.Second)))
+		}
 		writeJSON(w, http.StatusServiceUnavailable, errorBody{Error: "unavailable", Message: rf.Msg, ErrorCode: rf.Code})
 	case errors.Is(err, spaces.ErrNotEvictable):
 		writeError(w, http.StatusConflict, "conflict", strings.TrimPrefix(err.Error(), spaces.ErrNotEvictable.Error()+": "))

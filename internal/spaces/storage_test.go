@@ -1335,3 +1335,58 @@ func TestAnIndexOnlyHandleHeldThroughARestoreIsClosedOnItsLastRelease(t *testing
 		release2()
 	})
 }
+
+// A remote that hangs does not hold a restore's turn for long: each restore
+// has a deadline, and a space whose restore failed is not tried again at once
+// (requests meanwhile answer unavailable, with when to try again).
+func TestAFailedRestoreIsRememberedAndAHangingOneEnds(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := remoteManager(t, st, func(o *Options) { o.FailFast = time.Hour })
+		remote := filterBare(t)
+		seedRemote(t, remote, 1)
+		in, root := f.evictable(remote)
+		if err := f.m.Evict(ctx, in.ID, EvictOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		oldWait, oldDeadline := RestoreWait, RestoreDeadline
+		RestoreWait, RestoreDeadline = 50*time.Millisecond, 300*time.Millisecond
+		defer func() { RestoreWait, RestoreDeadline = oldWait, oldDeadline }()
+		hold := make(chan struct{})
+		f.r.mu.Lock()
+		f.r.hold = hold
+		f.r.mu.Unlock()
+		defer close(hold)
+		var rs *RestoringError
+		if _, err := f.m.Open(ctx, f.user, in.ID); !errors.As(err, &rs) {
+			t.Fatalf("want restoring, got %v", err)
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if running, waiting := f.m.RestoreCounts(); running == 0 && waiting == 0 {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("a restore from a remote that hangs does not end")
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		fetches := f.r.fetchCount()
+		_, err := f.m.Open(ctx, f.user, in.ID)
+		var rf *RestoreFailed
+		if !errors.As(err, &rf) || rf.RetryAfter <= 0 || rf.RetryAfter > time.Hour {
+			t.Fatalf("want unavailable with a time to try again, got %v", err)
+		}
+		if f.r.fetchCount() != fetches {
+			t.Fatal("a restore that failed a moment ago was started again")
+		}
+		if exists(root) {
+			t.Fatal("a half clone is in place")
+		}
+		// The index answers meanwhile.
+		ih, err := f.m.OpenIndex(ctx, f.user, in.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ih.Release()
+	})
+}

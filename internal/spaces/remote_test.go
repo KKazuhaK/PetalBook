@@ -54,7 +54,11 @@ func (r *runner) Run(c context.Context, cmd gitstore.Cmd) (string, string, error
 				if entered != nil {
 					entered <- struct{}{}
 				}
-				<-hold
+				select { // a git that hangs is killed when its context ends
+				case <-hold:
+				case <-c.Done():
+					return "", "fatal: the command was stopped", c.Err()
+				}
 			}
 		}
 		if down {

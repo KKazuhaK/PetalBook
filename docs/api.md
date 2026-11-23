@@ -1281,7 +1281,11 @@ still waiting after 10 seconds answer:
 does not work, the restore fails at once: `503 unavailable` with the remote's
 `errorCode` where there is one (a GitHub authorisation that expired is fixed
 as in "When a GitHub credential stops working"), and the index-only answers
-above go on working. A failed restore leaves no half clone: the clone is made
+above go on working. One restore is given 5 minutes once it has its turn; a
+remote that does not answer in that time fails it the same way. After a
+failure the space is not tried again for a while (3 seconds, doubled with each
+failure in a row, at most 2 minutes): requests meanwhile answer `503
+unavailable` at once, with `Retry-After` set to the seconds left. A failed restore leaves no half clone: the clone is made
 in a directory of its own and moved into place when it is complete.
 
 What a crash leaves (an eviction cut short, a restore's directory) is finished
@@ -1512,7 +1516,7 @@ case.
 | `not_cached` | 503 | an old version or an attachment is not on the server and cannot be fetched now; `fetching` says whether a fetch is still running; `Retry-After` |
 | `restoring` | 503 | an evicted space is still being restored after the request's wait; `phase`; `Retry-After` |
 | `space_full` | 507 | an upload or import would take a local space over `localSpaces.maxBytes` |
-| `unavailable` | 503 | as everywhere: the remote cannot be reached or refuses the credential; for an evicted space, it cannot be restored now |
+| `unavailable` | 503 | as everywhere: the remote cannot be reached or refuses the credential; for an evicted space, it cannot be restored now (`Retry-After` while a failed restore is not tried again) |
 | `busy` | 409 | an eviction asked for while the space is in use or holds what its remote does not |
 | `conflict` | 409 | a second move; a change of the attachment repository during a move or after files went to it; `hosts` set by the flag; partial clones without Git 2.44 |
 | `invalid` | 400 | a setting outside its range, `remote` and `github` together |

@@ -518,3 +518,27 @@ func TestEveryIndexOnlyRouteAnswersOnAnEvictedSpace(t *testing.T) {
 		}
 	})
 }
+
+// A space whose restore failed a moment ago is not tried again at once: the
+// requests meanwhile answer 503 unavailable with Retry-After.
+func TestAFailedRestoreAnswersUnavailableWithRetryAfter(t *testing.T) {
+	t.Parallel()
+	n := &netSwitch{}
+	eachAccounts(t, storageOpts(n, func(o *spaces.Options) { o.EvictEvery, o.FailFast = -1, time.Hour }), func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		remote := filterRemote(t)
+		pushVersions(t, remote, 1)
+		sid := admin.do("POST", "/api/spaces", map[string]any{"name": "Followed", "remote": connectBody("file://" + remote)}).want(t, 201, "").body["id"].(string)
+		base := "/api/spaces/" + sid
+		pid := admin.do("GET", base+"/pages", nil).body["items"].([]any)[0].(map[string]any)["id"].(string)
+		a.clock.Advance(48 * time.Hour)
+		admin.do("POST", "/api/admin/spaces/"+sid+"/evict", nil).want(t, 204, "")
+		n.set(true)
+		admin.do("GET", base+"/pages/"+pid, nil).want(t, 503, "unavailable")
+		n.set(false)
+		r := admin.do("GET", base+"/pages/"+pid, nil).want(t, 503, "unavailable")
+		if ra := r.resp.Header.Get("Retry-After"); ra == "" || ra == "0" {
+			t.Fatalf("no Retry-After while a failed restore is not tried again: %v", r.resp.Header)
+		}
+	})
+}

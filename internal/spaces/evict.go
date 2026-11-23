@@ -44,6 +44,10 @@ import (
 // waits for its restore (10 seconds) before it answers 503 restoring.
 var RestoreWait = 10 * time.Second
 
+// RestoreDeadline bounds one restore once it has its turn (5 minutes): a
+// remote that hangs does not hold one of the two turns for longer.
+var RestoreDeadline = 5 * time.Minute
+
 var (
 	// ErrNotEvictable: a local or pinned space, or one already evicted (409 conflict).
 	ErrNotEvictable = errors.New("the space cannot be evicted")
@@ -61,6 +65,9 @@ func (e *RestoringError) Error() string {
 type RestoreFailed struct {
 	Msg, Code string
 	Err       error
+	// RetryAfter is set while the space is not tried again: a restore failed
+	// a moment ago (see restoreBackoff).
+	RetryAfter time.Duration
 }
 
 func (e *RestoreFailed) Error() string { return e.Msg }
@@ -96,6 +103,32 @@ func (o *restoreOp) getPhase() string {
 	return "waiting"
 }
 
+// restoreFail is the last failed restore of a space: when, how many in a row,
+// and what people are told meanwhile.
+type restoreFail struct {
+	at  time.Time
+	n   int
+	err *RestoreFailed
+}
+
+// restoreBackoffMax is the longest a space whose restores keep failing waits
+// before the next try.
+const restoreBackoffMax = 2 * time.Minute
+
+// restoreBackoff is how long after its n-th failure in a row a space is not
+// tried again: FailFast (3 seconds by default), doubled with each failure, at
+// most restoreBackoffMax.
+func (m *Manager) restoreBackoff(n int) time.Duration {
+	d := m.opt.FailFast
+	if d <= 0 {
+		d = 3 * time.Second
+	}
+	for i := 1; i < n && d < restoreBackoffMax; i++ {
+		d *= 2
+	}
+	return min(d, restoreBackoffMax)
+}
+
 type idxEntry struct {
 	sp   *space.Space
 	refs int
@@ -112,9 +145,10 @@ type evictState struct {
 	restores map[string]*restoreOp
 	waiting  int // restores that wait for a turn
 	sem      chan struct{}
-	idx      map[string]*idxEntry // index-only handles of evicted spaces
-	roundMu  sync.Mutex           // one round of eviction at a time
-	filling  map[string]bool      // pinned spaces being made full
+	idx      map[string]*idxEntry    // index-only handles of evicted spaces
+	failed   map[string]*restoreFail // spaces whose last restore failed, not tried again for a while
+	roundMu  sync.Mutex              // one round of eviction at a time
+	filling  map[string]bool         // pinned spaces being made full
 }
 
 func (m *Manager) evictDir() string     { return filepath.Join(m.opt.DataDir, "evicting") }
@@ -151,6 +185,7 @@ func (m *Manager) loadEvicted(ctx context.Context) error {
 		}
 		m.ev.restores = map[string]*restoreOp{}
 		m.ev.idx = map[string]*idxEntry{}
+		m.ev.failed = map[string]*restoreFail{}
 		m.ev.sem = make(chan struct{}, maxRestoresAtOnce)
 		m.ev.loaded = true
 	}
@@ -432,6 +467,15 @@ func (m *Manager) trimIndexOnly() {
 func (m *Manager) ensureRestored(ctx context.Context, id string) error {
 	m.ev.mu.Lock()
 	op := m.ev.restores[id]
+	if f := m.ev.failed[id]; op == nil && f != nil {
+		// A restore failed a moment ago: it is not tried again yet.
+		if left := m.restoreBackoff(f.n) - time.Since(f.at); left > 0 {
+			m.ev.mu.Unlock()
+			e := *f.err
+			e.RetryAfter = left
+			return &e
+		}
+	}
 	if op == nil {
 		op = &restoreOp{done: make(chan struct{})}
 		op.setPhase("waiting")
@@ -453,26 +497,38 @@ func (m *Manager) ensureRestored(ctx context.Context, id string) error {
 }
 
 func (m *Manager) runRestore(id string, op *restoreOp) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	stop := make(chan struct{})
-	go func() {
-		select {
-		case <-stop:
-		case <-time.After(30 * time.Minute):
-			cancel()
-		}
-	}()
 	// Taking a turn: at most two restores run at a time.
 	m.ev.sem <- struct{}{}
 	m.ev.mu.Lock()
 	m.ev.waiting--
 	m.ev.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), RestoreDeadline)
 	op.err = m.restore(ctx, id, op)
+	if op.err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		op.err = &RestoreFailed{Msg: "the remote repository did not answer in time", Err: op.err}
+	}
+	cancel()
 	<-m.ev.sem
-	close(stop)
 	m.ev.mu.Lock()
 	delete(m.ev.restores, id)
+	if op.err == nil {
+		delete(m.ev.failed, id)
+	} else {
+		// Remembered, so that requests meanwhile answer at once instead of
+		// starting a restore that is likely to fail again.
+		f := m.ev.failed[id]
+		if f == nil {
+			f = &restoreFail{}
+			m.ev.failed[id] = f
+		}
+		f.at, f.n = time.Now(), f.n+1
+		var rf *RestoreFailed
+		if errors.As(op.err, &rf) {
+			f.err = &RestoreFailed{Msg: rf.Msg, Code: rf.Code, Err: rf.Err}
+		} else {
+			f.err = &RestoreFailed{Msg: "the space could not be restored", Err: op.err}
+		}
+	}
 	m.ev.mu.Unlock()
 	close(op.done)
 	if op.err != nil {
