@@ -1180,9 +1180,24 @@ refused because of it:
   single-user mode, the state database are kept in the Git directory
   (`.git/petalbook-state/`, `.git/petalbook-tmp/`; `--state-dir` puts the
   state elsewhere), where no pull or checkout writes, so a pull that brings a
-  link where `.petalbook` was takes none of it away. A space last opened by an
-  earlier version, which kept its state in `.petalbook/cache/`, has it moved
-  there once when it starts (a link there is neither followed nor moved).
+  link where `.petalbook` was takes none of it away. The Git directory is the
+  one git uses for the space: for a checkout made with `git worktree add` its
+  own one (two checkouts of one repository never share state), and for a
+  submodule, a `--separate-git-dir` repository or a `.git` link, the folder
+  their `.git` names. When that folder is on another file system than the
+  space, temporary files are written in `.petalbook-tmp/` of the space
+  instead (kept out of the repository by `info/exclude`). A space last opened
+  by an earlier version, which kept its state in `.petalbook/cache/`, has the
+  server's own files moved there once when it starts: the index, the journal,
+  the notices and the state database, and only those the repository does not
+  have. A file of `.petalbook/cache/` that is committed is the repository's: it
+  is neither moved nor used. A link there is neither followed nor moved. When
+  the state directory is in use already (an earlier version ran after this
+  one), the earlier journal is replayed, its state database is kept beside the
+  current one as `state-earlier-<UTC>.db` and its drafts are imported where
+  the current database has none for that page and person; one that differs
+  from the current draft stays in that file, held, for `petalbook draft list
+  --database <file>`.
 
 What happened is told in `settingsNotices` of `GET /api/spaces/{space}/types`,
 to callers who have `manage` in the space (in single-user mode, always); for

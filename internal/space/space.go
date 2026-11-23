@@ -160,7 +160,7 @@ func Open(opt Options) (*Space, error) {
 		}
 		g.setAuthor(an, ae)
 	}
-	if _, err := os.Stat(filepath.Join(root, ".git")); errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Lstat(filepath.Join(root, ".git")); errors.Is(err, fs.ErrNotExist) {
 		if opt.Remote != nil {
 			// Making an empty repository here would hide pages that were never
 			// pushed. Putting the clone back is for an administrator.
@@ -173,11 +173,17 @@ func Open(opt Options) (*Space, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	if fi, err := os.Lstat(filepath.Join(root, ".git")); err != nil || !fi.IsDir() {
-		return nil, fmt.Errorf("the Git directory of this space (%s) is not a folder", filepath.Join(root, ".git"))
+	// .git is a folder, or a file or a link that names one (a checkout made
+	// with `git worktree add`, a submodule, --separate-git-dir): git says
+	// where it is.
+	dirs, err := resolveGitDirs(hookRunner{g}, root)
+	if err != nil {
+		return nil, err
 	}
+	g.dirs = dirs
+	tmp, tmpInTree := tmpDirFor(root, dirs.git)
 
-	heal := &healer{root: root, repo: g.r, log: log}
+	heal := &healer{root: root, repo: g.r, log: log, gitDir: dirs.git, tmp: tmp, tmpInTree: tmpInTree}
 	// A local space writes space.yml at the start when there is none: a link
 	// or a file where .petalbook belongs is put right before (see
 	// settingspath.go): what is in its place is moved aside and that is
@@ -241,8 +247,8 @@ func Open(opt Options) (*Space, error) {
 
 	stateDir := opt.StateDir
 	if stateDir == "" {
-		stateDir = DefaultStateDir(root)
-		if err := moveOldState(root, stateDir, log); err != nil {
+		stateDir = stateDirIn(dirs.git)
+		if err := moveOldState(root, stateDir, g, log); err != nil {
 			return nil, err
 		}
 	}
@@ -257,11 +263,21 @@ func Open(opt Options) (*Space, error) {
 	if stateDir, err = filepath.EvalSymlinks(stateDir); err != nil {
 		return nil, err
 	}
-	if rel, err := filepath.Rel(root, stateDir); err == nil && filepath.IsLocal(rel) && !strings.HasPrefix(filepath.ToSlash(rel)+"/", ".git/") {
+	inTree := func(dir string) (string, bool) {
+		rel, err := filepath.Rel(root, dir)
+		return filepath.ToSlash(rel), err == nil && filepath.IsLocal(rel) && !within(dirs.git, dir)
+	}
+	if rel, ok := inTree(stateDir); ok {
 		// A state directory given inside the work tree must not be committed.
-		if err := g.exclude(filepath.ToSlash(rel) + "/"); err != nil {
+		if err := g.exclude(rel + "/"); err != nil {
 			return nil, err
 		}
+	}
+	if tmpInTree {
+		if err := g.exclude(treeTmp + "/"); err != nil {
+			return nil, err
+		}
+		log.Info("the Git directory is on another file system than the space: temporary files are written in the space", "folder", treeTmp)
 	}
 	// Half-written files from a crash, and the temporary folder of earlier
 	// versions, never through a link.
@@ -273,7 +289,14 @@ func Open(opt Options) (*Space, error) {
 	}
 	removeTemps(root, ".petalbook")
 	removeTemps(root, typesDir)
-	os.RemoveAll(filepath.Join(root, ".git", "petalbook-tmp"))
+	if !tmpInTree {
+		os.RemoveAll(tmp)
+	} else if isRealDir(root, treeTmp) {
+		if d, _, err := openDirIn(root, ""); err == nil && d != nil {
+			d.RemoveAll(treeTmp)
+			d.Close()
+		}
+	}
 
 	// What an earlier run changed but did not get to commit, and any move it
 	// left half done, before the index looks at the files.
@@ -281,11 +304,11 @@ func Open(opt Options) (*Space, error) {
 	if err != nil {
 		return nil, err
 	}
-	if rel, err := filepath.Rel(root, stateDir); err == nil && filepath.IsLocal(rel) {
+	if rel, ok := inTree(stateDir); ok {
 		// A state directory inside the space is never written through
 		// something that is not a folder there.
 		jrn.guard = func() error {
-			if b, err := wayBlocked(root, filepath.ToSlash(rel)+"/x"); err != nil || b != "" {
+			if b, err := wayBlocked(root, rel+"/x"); err != nil || b != "" {
 				return errors.Join(err, fmt.Errorf("%s is not a folder", b))
 			}
 			return nil
@@ -376,52 +399,6 @@ func Open(opt Options) (*Space, error) {
 		s.cm.Touch(Author{}, ours...) // commit the files we just made, and nothing else
 	}
 	return s, nil
-}
-
-// DefaultStateDir is where the space at root keeps its state (index,
-// journal, notices; in single-user mode the state database too) when no
-// other place is given: in its Git directory, which no pull or checkout ever
-// writes to, so nothing a pull brings can take its place.
-func DefaultStateDir(root string) string { return filepath.Join(root, ".git", "petalbook-state") }
-
-// oldStateDir is where versions before 2.2 kept the state by default.
-const oldStateDir = ".petalbook/cache"
-
-// moveOldState moves the state an earlier version kept in .petalbook/cache to
-// dir, once: the index, the journal of what is not committed yet, the
-// notices, the state database. Only a folder reached through folders is
-// moved; a link there is left alone (and never followed).
-func moveOldState(root, dir string, log *slog.Logger) error {
-	if _, err := os.Lstat(dir); err == nil || !errors.Is(err, fs.ErrNotExist) {
-		return nil // there already (or not to be looked at): nothing to move
-	}
-	if !isRealDir(root, oldStateDir) {
-		return nil
-	}
-	fi, blocked, err := lstatIn(root, oldStateDir)
-	if err != nil || blocked != "" || !fi.IsDir() {
-		return nil
-	}
-	rel, err := filepath.Rel(root, dir)
-	if err != nil || !filepath.IsLocal(rel) {
-		return nil
-	}
-	// The folder is renamed (one step, so a crash leaves it in one place or the
-	// other) within the space opened as a root: nothing outside it is moved,
-	// whatever is put on the way meanwhile.
-	r, err := os.OpenRoot(root)
-	if err != nil {
-		return err
-	}
-	defer r.Close()
-	if err := r.Rename(oldStateDir, filepath.ToSlash(rel)); err != nil {
-		return fmt.Errorf("the state of the space could not be moved from %s to %s: %w", oldStateDir, dir, err)
-	}
-	if st, err := os.Lstat(dir); err != nil || !os.SameFile(fi, st) {
-		return fmt.Errorf("the state of the space was replaced while it was moved to %s", dir)
-	}
-	log.Info("moved the state of the space into the Git directory", "from", oldStateDir, "to", dir)
-	return nil
 }
 
 type discard struct{}

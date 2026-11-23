@@ -387,6 +387,9 @@ func runServe(ctx context.Context, c serveConfig) error {
 		if mgr, err = spaces.NewSingle(ctx, st, sp, log); err != nil {
 			return err
 		}
+		for _, f := range sp.EarlierStateDBs() {
+			importEarlierDrafts(ctx, st, f, c.draftIdle, c.draftMax, log)
+		}
 		if c.inbox != "" {
 			if err := mgr.SetSingleInbox(c.inbox); err != nil {
 				return err

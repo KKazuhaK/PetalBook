@@ -35,12 +35,28 @@ import (
 //     had (the settings as they are read), so that the change is made on all of
 //     it and nothing is lost (clearWay).
 
-// tmpDirAt is where files of the space at root are written before they are
-// renamed into place: a folder in the Git directory, on the same file system
-// as the space, which no pull or checkout ever writes to. (A settings file is
-// written in its own folder instead, see writeIn.)
-func tmpDirAt(root string) string {
-	return filepath.Join(root, ".git", "petalbook-tmp")
+// tmpDir is where files of the space are written before they are renamed
+// into place: a folder in the Git directory, which no pull or checkout ever
+// writes to, when that is on the same file system as the space (tmpDirFor).
+// Else it is treeTmp in the work tree, and never a link or a file in its
+// place: then the folder in the Git directory is given, where a rename into
+// the space fails, so nothing is written through what is there. (A settings
+// file is written in its own folder instead, see writeIn.)
+func (h *healer) tmpDir() string {
+	if !h.tmpInTree {
+		return h.tmp
+	}
+	fi, err := os.Lstat(h.tmp)
+	if err == nil && fi.IsDir() {
+		return h.tmp
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		if d, err := mkdirIn(h.root, treeTmp); err == nil {
+			d.Close()
+			return h.tmp
+		}
+	}
+	return filepath.Join(h.gitDir, "petalbook-tmp")
 }
 
 // firstBlockedOwn is .petalbook when it is there and is not a folder: the

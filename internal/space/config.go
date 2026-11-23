@@ -628,7 +628,7 @@ func (s *Space) editBindings(tx *txn, edit func(root *yaml.Node) (bool, error)) 
 // moved only if the folder is at its new place and no longer at the old one,
 // and a deleted folder's are dropped only if the folder is not there.
 func recoverBindings(h *healer, root string, recs []jrec) (written []string) {
-	tmp := tmpDirAt(root)
+	tmp := h.tmpDir()
 	gone := func(rel string) bool {
 		_, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel)))
 		return errors.Is(err, fs.ErrNotExist)

@@ -36,10 +36,10 @@ func osOps() fileOps {
 	}
 }
 
-// tmpDir is where files are written before being renamed into place. It is
-// inside the space (same file system, so rename is atomic) and git-ignored.
-// Never through something on the way that is not a folder (tmpDirAt).
-func (s *Space) tmpDir() string { return tmpDirAt(s.root) }
+// tmpDir is where files are written before being renamed into place: on the
+// same file system as the space, so a rename is atomic, and out of the repository.
+// Never through something on the way that is not a folder (healer.tmpDir).
+func (s *Space) tmpDir() string { return s.heal.tmpDir() }
 
 // takenKeys lists the names in dir by NameKey (NFC, case-folded). It is a
 // hint only to skip names quickly: the file system has the last word, through

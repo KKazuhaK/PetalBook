@@ -117,8 +117,13 @@ func (r *restored) doc(f settingsFile) (*yaml.Node, error) {
 // healer restores the settings files of one space.
 type healer struct {
 	root, stateDir string
-	repo           func() *gitstore.Repo
-	log            *slog.Logger
+	// gitDir is the Git directory of the space (resolveGitDirs); tmp is
+	// where its files are written before they are renamed into place, in the
+	// work tree (treeTmp) when tmpInTree.
+	gitDir, tmp string
+	tmpInTree   bool
+	repo        func() *gitstore.Repo
+	log         *slog.Logger
 
 	mu sync.Mutex
 	// found is what was found for an unusable file, by what the file is
@@ -178,7 +183,7 @@ func (h *healer) committed(paths []string) {
 
 // historyMark changes whenever the history of the space gets a commit.
 func (h *healer) historyMark() string {
-	if fi, err := os.Stat(filepath.Join(h.root, ".git", "logs", "HEAD")); err == nil {
+	if fi, err := os.Stat(filepath.Join(h.gitDir, "logs", "HEAD")); err == nil {
 		return fmt.Sprintf("%d:%d", fi.Size(), fi.ModTime().UnixNano())
 	}
 	if h.repo == nil {
@@ -535,6 +540,9 @@ func (h *healer) noticesFile() string { return filepath.Join(h.stateDir, "settin
 // space (under .petalbook, say) is not, through something on its way that is
 // not a folder.
 func (h *healer) stateOK() bool {
+	if h.gitDir != "" && within(h.gitDir, h.stateDir) {
+		return true // nothing in the work tree is on its way
+	}
 	if rel, err := filepath.Rel(h.root, h.stateDir); err == nil && filepath.IsLocal(rel) {
 		if b, err := wayBlocked(h.root, filepath.ToSlash(rel)+"/x"); err != nil || b != "" {
 			return false
