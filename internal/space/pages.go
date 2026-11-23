@@ -397,6 +397,27 @@ func (s *Space) Save(by Author, id, baseRev string, meta page.Meta, body string)
 }
 
 func (s *Space) saveLocked(tx *txn, id, baseRev string, meta page.Meta, body string) (*Page, error) {
+	return s.saveWith(tx, id, baseRev, true, func(page.Meta, string) (page.Meta, string, error) { return meta, body, nil })
+}
+
+// Update changes a page by what edit makes of its header and body as the file
+// has them now, in one write, so nothing can change in between. edit gets a
+// copy of the header and the body and returns the whole header and body the
+// page is to have (what is left out of the header is removed, as in Save). A
+// baseRev that is not "" must be the rev the caller read: a page that has
+// changed since is a *ConflictError, unless only the service's own link
+// rewrites changed it (edit then sees the file with them made). With a baseRev
+// of "" nothing is checked. The file is not written when nothing would change.
+// edit may be called more than once, and must give the same answer.
+func (s *Space) Update(by Author, id, baseRev string, edit func(meta page.Meta, body string) (page.Meta, string, error)) (*Page, error) {
+	s.refresh(id)
+	return mutate(s, by, func(tx *txn) (*Page, error) { return s.saveWith(tx, id, baseRev, false, edit) })
+}
+
+// saveWith is the write of Save and Update. With rebase the caller's text is
+// based on baseRev, and the link rewrites made since are made to it; without,
+// produce works on the file as it is.
+func (s *Space) saveWith(tx *txn, id, baseRev string, rebase bool, produce func(old page.Meta, body string) (page.Meta, string, error)) (*Page, error) {
 	rel, data, mtime, err := s.load(id, false)
 	if err != nil {
 		return nil, err
@@ -405,15 +426,25 @@ func (s *Space) saveLocked(tx *txn, id, baseRev string, meta page.Meta, body str
 	// file (a page it links to moved, or it did) is no conflict: the same
 	// rewrites are made to what is saved.
 	var steps []rebaseStep
-	if cur := page.Rev(data); baseRev != cur {
+	if cur := page.Rev(data); baseRev != cur && (rebase || baseRev != "") {
 		var ok bool
 		if steps, ok = s.rebaseTo(id, baseRev, cur); !ok {
 			return nil, &ConflictError{Current: s.pageFrom(rel, data, mtime)}
 		}
+		if !rebase {
+			steps = nil
+		}
 	}
 	doc := page.Parse(data)
 	old := doc.Meta()
-	newMeta, err := saveMeta(id, old, meta)
+	reqMeta, body, err := produce(old.Clone(), doc.Body)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkBody(body); err != nil {
+		return nil, err
+	}
+	newMeta, err := saveMeta(id, old, reqMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -504,17 +535,28 @@ func (s *Space) Equivalent(id, baseRev string, meta page.Meta, body string) (*Pa
 // Move puts a page in another folder, creating it if needed. A folder that
 // differs only in case from an existing one is the existing one.
 func (s *Space) Move(by Author, id, folder string) (*Page, error) {
+	return s.MoveIf(by, id, folder, "")
+}
+
+// MoveIf is Move that, given a baseRev, is a *ConflictError when the page has
+// changed since that rev (unless only the service's own link rewrites did).
+func (s *Space) MoveIf(by Author, id, folder, baseRev string) (*Page, error) {
 	if err := checkRel(folder); err != nil {
 		return nil, err
 	}
 	s.refresh(id)
-	return mutate(s, by, func(tx *txn) (*Page, error) { return s.moveLocked(tx, id, folder) })
+	return mutate(s, by, func(tx *txn) (*Page, error) { return s.moveLocked(tx, id, folder, baseRev) })
 }
 
-func (s *Space) moveLocked(tx *txn, id, folder string) (*Page, error) {
+func (s *Space) moveLocked(tx *txn, id, folder, baseRev string) (*Page, error) {
 	rel, data, mtime, err := s.load(id, false)
 	if err != nil {
 		return nil, err
+	}
+	if cur := page.Rev(data); baseRev != "" && baseRev != cur {
+		if _, ok := s.rebaseTo(id, baseRev, cur); !ok {
+			return nil, &ConflictError{Current: s.pageFrom(rel, data, mtime)}
+		}
 	}
 	canon, dirAbs, err := s.ensureFolder(tx, folder)
 	if err != nil {
@@ -700,26 +742,69 @@ func checkPropKey(key string) error {
 // the client read, as for Save; a page that has changed since is a
 // *ConflictError. The file is not written when nothing would change.
 func (s *Space) PatchProps(by Author, id, baseRev string, set page.Meta, unset []string) (*Page, error) {
+	if err := checkProps(set, unset); err != nil {
+		return nil, err
+	}
+	return s.patchProps(by, id, baseRev, set, unset, nil)
+}
+
+// checkProps is the checks of PatchProps on what it is asked to change.
+func checkProps(set page.Meta, unset []string) error {
 	if len(set)+len(unset) > MaxPatchProps {
-		return nil, invalidf("at most %d properties can be changed at once", MaxPatchProps)
+		return invalidf("at most %d properties can be changed at once", MaxPatchProps)
 	}
 	seen := map[string]bool{}
 	for _, f := range set {
 		if err := checkPropKey(f.Key); err != nil {
-			return nil, err
+			return err
 		}
 		seen[f.Key] = true
 	}
 	for _, k := range unset {
 		if err := checkPropKey(k); err != nil {
-			return nil, err
+			return err
 		}
 		if seen[k] {
-			return nil, invalidf("%q is both set and unset", k)
+			return invalidf("%q is both set and unset", k)
 		}
 		seen[k] = true
 	}
-	return s.patchProps(by, id, baseRev, set, unset, nil)
+	return nil
+}
+
+// PatchMeta is what PatchProps makes of a header, for callers that write the
+// whole header themselves: the same checks, the same rules for a value that is
+// no value (it removes the property) and for where a new property goes.
+func PatchMeta(meta page.Meta, set page.Meta, unset []string) (page.Meta, error) {
+	if err := checkProps(set, unset); err != nil {
+		return nil, err
+	}
+	return applyProps(meta.Clone(), set, unset), nil
+}
+
+// applyProps changes meta, which it may take apart, as PatchProps says.
+func applyProps(meta page.Meta, set page.Meta, unset []string) page.Meta {
+	for _, k := range unset {
+		if i := meta.Index(k); i >= 0 {
+			meta = append(meta[:i], meta[i+1:]...)
+		}
+	}
+	for _, f := range set {
+		i := meta.Index(f.Key)
+		switch {
+		case propCleared(f.Value):
+			if i >= 0 {
+				meta = append(meta[:i], meta[i+1:]...)
+			}
+		case i >= 0:
+			if !page.ValuesEqual(meta[i].Value, f.Value) {
+				meta[i].Value = f.Value
+			}
+		default:
+			meta = append(meta, f)
+		}
+	}
+	return meta
 }
 
 // patchProps is PatchProps; unsetOf, when given, names more properties to
@@ -739,26 +824,7 @@ func (s *Space) patchProps(by Author, id, baseRev string, set page.Meta, unset [
 		if unsetOf != nil {
 			unset = unsetOf(rel, doc)
 		}
-		for _, k := range unset {
-			if i := meta.Index(k); i >= 0 {
-				meta = append(meta[:i], meta[i+1:]...)
-			}
-		}
-		for _, f := range set {
-			i := meta.Index(f.Key)
-			switch {
-			case propCleared(f.Value):
-				if i >= 0 {
-					meta = append(meta[:i], meta[i+1:]...)
-				}
-			case i >= 0:
-				if !page.ValuesEqual(meta[i].Value, f.Value) {
-					meta[i].Value = f.Value
-				}
-			default:
-				meta = append(meta, f)
-			}
-		}
+		meta = applyProps(meta, set, unset)
 		if err := doc.SetMeta(meta); err != nil {
 			return nil, invalidf("%v", err)
 		}

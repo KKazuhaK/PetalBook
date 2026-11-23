@@ -454,6 +454,14 @@ func (s *Service) FixNotInType(ctx context.Context, sp *space.Space, spaceID, us
 	})
 }
 
+// Write runs write, a change of one page's file made as the user, the way
+// SaveFile saves a page: the page is excluded from other writes while it is
+// written, and the user's draft of it is kept unless the file now says what the
+// draft says. It is for changes that work on the file as it is (space.Update).
+func (s *Service) Write(ctx context.Context, sp *space.Space, spaceID, userID, pageID string, write func(by space.Author) (*space.Page, error)) (*space.Page, error) {
+	return s.writeHeader(ctx, sp, spaceID, userID, pageID, write)
+}
+
 // writeHeader runs a change of a page's header as the user: the page is
 // excluded from other writes while it is written, and the user's draft of it
 // is kept unless the file now says what the draft says.
