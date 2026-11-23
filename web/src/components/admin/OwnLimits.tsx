@@ -29,6 +29,9 @@ export function ownLimitsError(e: unknown): string {
 // A person's own limits: what overrides the tenant's and the site's for them alone. Empty follows them; for spaces, 0 is no limit.
 export function OwnLimits({ userId, own, onSaved }: { userId: string; own: OwnQuota; onSaved?: (user: User) => void }) {
   const qc = useQueryClient()
+  // What the fields started from (the last saved values): a field left as it was is not sent, so a disk
+  // limit that is no whole number of GB keeps its exact bytes, and a limit nobody touched stays as it is.
+  const [base, setBase] = useState(own)
   const [spaces, setSpaces] = useState(countToText(own.spaces))
   const [bytes, setBytes] = useState(bytesToGb(own.bytes))
   const [pages, setPages] = useState(countToText(own.pages))
@@ -42,9 +45,14 @@ export function OwnLimits({ userId, own, onSaved }: { userId: string; own: OwnQu
     const b = gbToBytes(bytes)
     const p = parseCount(pages)
     if (s === undefined || b === undefined || p === undefined || (p !== null && p < 1) || (s !== null && s > 10000)) return setMessage({ tone: 'error', text: tu.own.invalid })
+    const quota: Partial<OwnQuota> = {}
+    if (spaces !== countToText(base.spaces)) quota.spaces = s
+    if (bytes !== bytesToGb(base.bytes)) quota.bytes = b
+    if (pages !== countToText(base.pages)) quota.pages = p
     setBusy(true)
     try {
-      const { user } = await adminApi.updateUser(userId, { quota: { spaces: s, bytes: b, pages: p } })
+      const { user } = await adminApi.updateUser(userId, { quota })
+      setBase(user.quota ?? { ...base, ...quota })
       void qc.invalidateQueries({ queryKey: keys.users })
       void qc.invalidateQueries({ queryKey: ['admin', 'usage'] })
       setMessage({ tone: 'info', text: tu.own.saved })

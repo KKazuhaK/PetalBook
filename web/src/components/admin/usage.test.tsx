@@ -116,7 +116,7 @@ describe('the Usage page', () => {
     await click(button(tu.own.save, dlg()))
     await settle(() => dlg().textContent?.includes(tu.own.saved) === true, 'saved')
     const patch = m!.requests.find((r) => r.method === 'PATCH' && r.url.startsWith('/api/users/'))!
-    expect(JSON.parse(patch.body!)).toEqual({ quota: { spaces: 40, bytes: Math.round(1.5 * 1024 ** 3), pages: null } })
+    expect(JSON.parse(patch.body!)).toEqual({ quota: { spaces: 40, bytes: Math.round(1.5 * 1024 ** 3) } })
     // The page reads the list again: the person's limit is on their row now.
     await settle(() => personRow('名 p03').querySelector('[data-quota="spaces"]')!.textContent?.includes('/ 40') === true, 'the limit on the row')
   })
@@ -201,7 +201,33 @@ describe('limits on a user, and the usage of a tenant', () => {
     await click(button(tu.own.save))
     await settle(() => text().includes(tu.own.saved), 'saved')
     const patch = m!.requests.find((r) => r.method === 'PATCH' && r.url.startsWith('/api/users/'))!
-    expect(JSON.parse(patch.body!)).toEqual({ quota: { spaces: null, bytes: null, pages: 5000 } })
+    expect(JSON.parse(patch.body!)).toEqual({ quota: { pages: 5000 } })
+  })
+
+  it('sends only the limits the administrator changed, so a disk limit that is no whole number of GB is kept to the byte', async () => {
+    const exact = 1234567891
+    await open('users', (server) => {
+      const amy = makePerson(server, 'amy')
+      adminRequests(server)('PATCH', `/api/users/${amy.id}`, { quota: { spaces: 7, bytes: exact } })
+    })
+    await settle(() => button(t.fmt.labelled(t.users.disable, '名 amy')) !== null, 'the users')
+    const edit = [...document.querySelectorAll('button')].find((b) => b.getAttribute('aria-label')?.includes('名 amy') && b.textContent === '编辑')!
+    await click(edit)
+    await settle(() => document.querySelector('[data-slot="own-limits"]') !== null, 'the limits form')
+    const fields = [...document.querySelectorAll<HTMLInputElement>('[data-slot="own-limits"] input')]
+    expect(fields.map((f) => f.value)).toEqual(['7', '1.15', ''])
+    await type(fields[2], '5000')
+    await click(button(tu.own.save))
+    await settle(() => text().includes(tu.own.saved), 'saved')
+    const patches = () => m!.requests.filter((r) => r.method === 'PATCH' && r.url.startsWith('/api/users/'))
+    expect(JSON.parse(patches()[0].body!)).toEqual({ quota: { pages: 5000 } })
+    // Saving again with nothing changed sends nothing to change; clearing a field sends null for it alone.
+    await type(fields[0], '')
+    await click(button(tu.own.save))
+    await settle(() => patches().length === 2, 'the second save')
+    expect(JSON.parse(patches()[1].body!)).toEqual({ quota: { spaces: null } })
+    const users = adminRequests(m!.server)('GET', '/api/users').body as { users: { username: string; quota: { bytes: number | null } }[] }
+    expect(users.users.find((u) => u.username === 'amy')!.quota.bytes).toBe(exact)
   })
 
   it('says what a refusal means: only a site administrator goes above the tenant', async () => {
