@@ -132,7 +132,7 @@ func TestMetaAndRouting(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	code, r, raw := f.do("GET", "/api/meta", nil)
-	if code != 200 || r["version"] != "test-1" || raw != "{\"version\":\"test-1\",\"maxUpload\":10485760,\"maxImport\":104857600,\"spaces\":[{\"id\":\"default\",\"name\":\"测试空间\",\"role\":\"owner\",\"permissions\":[\"read\",\"write\",\"members\",\"manage\"],\"personal\":true,\"sync\":\"local\",\"inbox\":\"Inbox\",\"disabled\":false}]}\n" {
+	if code != 200 || r["version"] != "test-1" || raw != "{\"version\":\"test-1\",\"maxUpload\":10485760,\"maxImport\":104857600,\"spaces\":[{\"id\":\"default\",\"name\":\"测试空间\",\"role\":\"owner\",\"permissions\":[\"read\",\"write\",\"members\",\"manage\"],\"personal\":true,\"sync\":\"local\",\"inbox\":\"Inbox\",\"disabled\":false,\"directRole\":\"owner\",\"viaGroups\":false}]}\n" {
 		t.Fatalf("%d %s", code, raw)
 	}
 	code, r, raw = f.do("GET", "/api/spaces/other/pages", nil)

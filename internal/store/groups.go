@@ -761,3 +761,46 @@ func ListUserAccess(ctx context.Context, q Q, userID string) ([]UserAccess, erro
 	}
 	return out, rows.Err()
 }
+
+// LockGroup makes the rest of the transaction the only one changing the people
+// of the group (a no-op write, as LockSpace does).
+func LockGroup(ctx context.Context, q Q, groupID string) error {
+	res, err := q.Exec(ctx, `UPDATE groups SET id = id WHERE id = ?`, groupID)
+	return oneRow(res, err)
+}
+
+// UserGroupIDs lists the groups a person is in.
+func UserGroupIDs(ctx context.Context, q Q, userID string) ([]string, error) {
+	return strCol(ctx, q, `SELECT DISTINCT group_id FROM group_members WHERE user_id = ?`, userID)
+}
+
+// GroupSources returns the source of each of ids that is a group.
+func GroupSources(ctx context.Context, q Q, ids []string) (map[string]string, error) {
+	out := map[string]string{}
+	for i := 0; i < len(ids); i += 200 {
+		chunk := ids[i:min(i+200, len(ids))]
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")
+		args := make([]any, len(chunk))
+		for j, id := range chunk {
+			args[j] = id
+		}
+		rows, err := q.Query(ctx, `SELECT id, source FROM groups WHERE id IN (`+ph+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id, src string
+			if err := rows.Scan(&id, &src); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[id] = src
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}

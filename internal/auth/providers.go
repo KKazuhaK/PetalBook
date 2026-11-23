@@ -71,6 +71,8 @@ type provCfg struct {
 	AllowIDPInitiated  bool      `json:"allowIdpInitiated,omitempty"`
 	Certificate        string    `json:"certificate,omitempty"`
 	CertificateExpires time.Time `json:"certificateExpires,omitempty"`
+	// Groups (any kind, from 3.2): the groups claim and what it maps to.
+	Groups *GroupsCfg `json:"groups,omitempty"`
 }
 
 // SAMLAttrs name where the email, display name and username come from.
@@ -87,6 +89,9 @@ type providerRT struct {
 	cfg       provCfg
 	secret    string
 	secretErr error
+
+	idxOnce sync.Once
+	idx     map[string]string // the groups map by claim value (see groupIdx)
 
 	mu       sync.Mutex
 	oidc     *authoidc.Provider
@@ -259,6 +264,7 @@ type ProviderView struct {
 	OIDC               *OIDCView    `json:"oidc,omitempty"`
 	SAML               *SAMLView    `json:"saml,omitempty"`
 	GitHub             *GitHubView  `json:"github,omitempty"`
+	Groups             GroupsCfg    `json:"groups"`
 	Status             ProviderStat `json:"status"`
 	People             int          `json:"people"`
 	Created            string       `json:"created"`
@@ -326,7 +332,7 @@ func (s *Service) viewOf(rt *providerRT, people int) ProviderView {
 	row := rt.row
 	ok, checked, msg := rt.status()
 	v := ProviderView{Slug: row.Slug, Kind: row.Kind, Name: row.Name, Icon: row.Icon, Enabled: row.Enabled, Order: row.Position,
-		AutoCreate: row.AutoCreate, MergeVerifiedEmail: row.MergeVerifiedEmail, People: people,
+		AutoCreate: row.AutoCreate, MergeVerifiedEmail: row.MergeVerifiedEmail, People: people, Groups: groupsView(row.Kind, rt.cfg.Groups),
 		Status:  ProviderStat{OK: ok, Message: msg},
 		Created: rfc3339(row.Created), Updated: rfc3339(row.Updated), SecretUnreadable: rt.secretErr != nil}
 	if !checked.IsZero() {
@@ -424,6 +430,7 @@ type ProviderInput struct {
 		ClientSecret  *string   `json:"clientSecret"`
 		Organizations *[]string `json:"organizations"`
 	} `json:"github"`
+	Groups *groupsInput `json:"groups"`
 }
 
 func providerInvalid(format string, a ...any) *Error { return coded(400, "invalid", format, a...) }
@@ -514,7 +521,7 @@ var providerMu sync.Mutex // serialises changes: the checks and the write are on
 
 // applyInput checks input against the current provider (nil when creating) and
 // returns what to store. Nothing is changed or fetched here.
-func (s *Service) applyInput(cur *providerRT, in ProviderInput, rows []store.ProviderRow) (*built, error) {
+func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderInput, rows []store.ProviderRow) (*built, error) {
 	creating := cur == nil
 	b := &built{}
 	if creating {
@@ -533,6 +540,11 @@ func (s *Service) applyInput(cur *providerRT, in ProviderInput, rows []store.Pro
 		b.row, b.cfg, b.curSecret = cur.row, cur.cfg, cur.secret
 		b.cfg.Scopes = slices.Clone(cur.cfg.Scopes)
 		b.cfg.Organizations = slices.Clone(cur.cfg.Organizations)
+		if cur.cfg.Groups != nil {
+			g := *cur.cfg.Groups
+			g.Map = slices.Clone(g.Map)
+			b.cfg.Groups = &g
+		}
 		if in.Slug != nil && *in.Slug != cur.row.Slug || in.Kind != nil && *in.Kind != cur.row.Kind {
 			return nil, providerInvalid("slug and kind cannot be changed")
 		}
@@ -795,6 +807,11 @@ func (s *Service) applyInput(cur *providerRT, in ProviderInput, rows []store.Pro
 		}
 		b.row.Issuer = b.cfg.IDPEntityID
 	}
+	if in.Groups != nil {
+		if err := s.applyGroups(ctx, b, in.Groups); err != nil {
+			return nil, err
+		}
+	}
 	if creating {
 		b.changed = nil
 	}
@@ -839,7 +856,7 @@ func (s *Service) CreateProvider(ctx context.Context, actorID, ip string, in Pro
 			return nil, coded(409, "exists", "that slug is taken")
 		}
 	}
-	b, err := s.applyInput(nil, in, rows)
+	b, err := s.applyInput(ctx, nil, in, rows)
 	if err != nil {
 		return nil, err
 	}
@@ -906,7 +923,7 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID, ip, slug string, 
 	if err != nil {
 		return nil, err
 	}
-	b, err := s.applyInput(cur, in, rows)
+	b, err := s.applyInput(ctx, cur, in, rows)
 	if err != nil {
 		return nil, err
 	}
@@ -954,6 +971,7 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID, ip, slug string, 
 	if err := s.reloadProviders(ctx, slug); err != nil {
 		return nil, err
 	}
+	s.dropUnmapped(ctx, slug, cur.cfg.Groups, b.cfg.Groups)
 	if len(b.changed) > 0 {
 		d := map[string]any{"slug": slug, "kind": b.row.Kind}
 		for _, f := range b.changed {
@@ -1034,6 +1052,10 @@ func (s *Service) DeleteProvider(ctx context.Context, actorID, ip, slug string, 
 	}
 	if err := s.reloadProviders(ctx); err != nil {
 		return err
+	}
+	// What the provider brought goes with it; the identities stay.
+	if err := s.cfg.Spaces.DropProvider(ctx, slug); err != nil {
+		s.log.Error("could not remove the group memberships of a deleted provider", "provider", slug, "error", err)
 	}
 	s.Audit(AuditEvent{Kind: "provider_deleted", Actor: actorID, IP: ip, Detail: map[string]any{"slug": slug, "kind": cur.row.Kind}})
 	return nil
@@ -1362,6 +1384,14 @@ func changedValue(b *built, field string) any {
 		return b.cfg.SignRequests
 	case "saml.allowIdpInitiated":
 		return b.cfg.AllowIDPInitiated
+	case "groups.enabled":
+		return b.cfg.Groups.Enabled
+	case "groups.claim":
+		return b.cfg.Groups.Claim
+	case "groups.missing":
+		return orKeep(b.cfg.Groups.Missing)
+	case "groups.map":
+		return len(b.cfg.Groups.Map)
 	}
 	return "changed" // clientSecret, metadataXml
 }

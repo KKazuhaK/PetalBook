@@ -498,7 +498,7 @@ func (s *Service) OIDCComplete(ctx context.Context, slug, binding, sessionToken 
 			s.log.Warn("sign-in failed: the code or ID token was rejected", "provider", slug, "reason", oidcReason(err))
 			return fail("idp_error")
 		}
-		if c, err = identityFromAssertion(a); err != nil {
+		if c, err = identityFromAssertion(rt, a); err != nil {
 			s.log.Warn("sign-in failed: unusable claims", "provider", slug, "reason", err.Error())
 			return fail("idp_error")
 		}
@@ -644,6 +644,9 @@ func samlClaims(rt *providerRT, a *authsaml.Assertion) (claimed, error) {
 	if c.labelOverride == "" {
 		c.labelOverride = sub
 	}
+	if g, on := rt.groupsOn(); on {
+		c.groups = samlGroupClaim(g, a.Attributes)
+	}
 	return c, nil
 }
 
@@ -658,6 +661,8 @@ type claimed struct {
 	emailVerified   bool
 	// labelOverride, when set, is the label shown for the identity.
 	labelOverride string
+	// groups is what the sign-in said about the person's groups (3.2).
+	groups groupClaim
 }
 
 func (c claimed) label() string {
@@ -674,7 +679,7 @@ func (c claimed) params() *IdentityParams {
 	return &IdentityParams{Issuer: c.issuer, Subject: c.subject, Label: c.label()}
 }
 
-func identityFromAssertion(a *authoidc.Assertion) (claimed, error) {
+func identityFromAssertion(rt *providerRT, a *authoidc.Assertion) (claimed, error) {
 	var raw map[string]json.RawMessage
 	if err := a.Claims(&raw); err != nil {
 		return claimed{}, errors.New("the claims are not a JSON object")
@@ -699,7 +704,11 @@ func identityFromAssertion(a *authoidc.Assertion) (claimed, error) {
 	}
 	// The issuer is the verified token's: the library checked it equals the configured one.
 	email := clip(str("email"), 254)
-	return claimed{issuer: a.Issuer, subject: sub, name: str("name"), preferred: str("preferred_username"), email: email, emailVerified: verified && email != ""}, nil
+	c := claimed{issuer: a.Issuer, subject: sub, name: str("name"), preferred: str("preferred_username"), email: email, emailVerified: verified && email != ""}
+	if g, on := rt.groupsOn(); on {
+		c.groups = oidcGroupClaim(g, raw)
+	}
+	return c, nil
 }
 
 func clip(s string, n int) string {
@@ -748,8 +757,12 @@ func (s *Service) finishSSO(ctx context.Context, rt *providerRT, e *pendingEntry
 		return s.ssoFail(kind, slug, e.intent, "internal", ip, clear...)
 	}
 	out := Outcome{Redirect: e.ret, Clear: clear}
-	if e.intent == "link" {
+	switch e.intent {
+	case "link":
+		s.syncGroups(ctx, rt, e.userID, "", ip, c.groups)
 		return out // the session stays as it is
+	case "login", "invite":
+		s.syncGroups(ctx, rt, user.ID, user.Username, ip, c.groups)
 	}
 	tok, err := s.issueSession(ctx, user.ID, false)
 	if err != nil {
@@ -1082,17 +1095,27 @@ func (s *Service) githubClaims(ctx context.Context, rt *providerRT, code, verifi
 			}
 		}
 	}
-	if len(rt.cfg.Organizations) > 0 {
-		member := false
-		for page := 1; page <= 5 && !member; page++ {
+	_, wantGroups := rt.groupsOn()
+	var gc groupClaim
+	if len(rt.cfg.Organizations) > 0 || wantGroups {
+		member := len(rt.cfg.Organizations) == 0
+		gc.read, gc.present = wantGroups, true
+		for page := 1; page <= 5 && (!member || wantGroups); page++ {
 			var orgs []struct {
 				Login string `json:"login"`
 			}
 			if err := s.ghGet(hctx, tok.AccessToken, api, "/user/orgs?per_page=100&page="+strconv.Itoa(page), &orgs); err != nil {
 				s.log.Warn("could not read the GitHub organisations", "provider", rt.row.Slug)
-				return claimed{}, "idp_error"
+				if len(rt.cfg.Organizations) > 0 {
+					return claimed{}, "idp_error"
+				}
+				gc.present = false // groups only: the sign-in goes on, the claim is missing
+				break
 			}
 			for _, o := range orgs {
+				if wantGroups && len(gc.values) < maxGitHubOrgs {
+					gc.add(o.Login)
+				}
 				for _, want := range rt.cfg.Organizations {
 					member = member || strings.EqualFold(o.Login, want)
 				}
@@ -1107,5 +1130,5 @@ func (s *Service) githubClaims(ctx context.Context, rt *providerRT, code, verifi
 	}
 	login := clip(u.Login, 100)
 	return claimed{issuer: rt.cfg.BaseURL, subject: strconv.FormatInt(u.ID, 10), name: clip(u.Name, 100), preferred: login, email: email,
-		emailVerified: verified && email != "", labelOverride: login}, ""
+		emailVerified: verified && email != "", labelOverride: login, groups: gc}, ""
 }
