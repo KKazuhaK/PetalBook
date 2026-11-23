@@ -9,12 +9,15 @@ import (
 )
 
 type problemResp struct {
-	Kind    string          `json:"kind"`
-	Path    string          `json:"path"`
-	ID      string          `json:"id,omitempty"`
-	Message string          `json:"message"`
-	Detail  json.RawMessage `json:"detail,omitempty"`
-	Fix     *string         `json:"fix"`
+	Kind    string `json:"kind"`
+	Path    string `json:"path"`
+	ID      string `json:"id,omitempty"`
+	Message string `json:"message"`
+	// Rev is the current rev of the file the problem is in: the baseRev of a
+	// fix (a file without an id has no page to read it from).
+	Rev    string          `json:"rev,omitempty"`
+	Detail json.RawMessage `json:"detail,omitempty"`
+	Fix    *string         `json:"fix"`
 }
 
 // getChecks lists what is wrong in the space, from the index (docs/api.md,
@@ -28,7 +31,7 @@ func (s *server) getChecks(c *call) {
 	}
 	out := make([]problemResp, len(items))
 	for i, it := range items {
-		out[i] = problemResp{Kind: it.Kind, Path: it.Path, ID: it.ID, Message: it.Message, Detail: it.Detail}
+		out[i] = problemResp{Kind: it.Kind, Path: it.Path, ID: it.ID, Message: it.Message, Rev: it.Rev, Detail: it.Detail}
 		if it.Fix != "" {
 			f := it.Fix
 			out[i].Fix = &f

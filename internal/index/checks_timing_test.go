@@ -20,7 +20,11 @@ import (
 // must not be noticeably slower than it was without the checks (the same pages
 // took about 5.0 seconds before they were added, 3.7 after: the statements
 // that look a page up are prepared once, and a rebuild no longer deletes the
-// rows of a table it has just emptied).
+// rows of a table it has just emptied). With the links of 2.4, every page
+// links to another: the broken_link rows of a rebuild are one query over about
+// 101 000 links (40 to 46 ms of the rebuild), and a page that 1 000 others link
+// to by path costs about 25 ms to remove or add (their rows are looked at
+// again), a save of a page alone well under a millisecond.
 func TestCheckPageInALargeSpace(t *testing.T) {
 	if os.Getenv("PETALBOOK_TIMING") == "" {
 		t.Skip("set PETALBOOK_TIMING=1 to measure")
@@ -34,7 +38,8 @@ func TestCheckPageInALargeSpace(t *testing.T) {
 		var b strings.Builder
 		extra := "status: done\n"
 		title := fmt.Sprintf("页 %d", i)
-		body := fmt.Sprintf("正文 %d [x](/assets/a/b.png) 更多的文字\n", i)
+		// Every page links to the one before it, by id and path.
+		body := fmt.Sprintf("正文 %d [x](/assets/a/b.png) 更多的文字 [前](/lib/f%02d/%05d.md \"%010d\")\n", i, (i+49)%50, (i+pages-1)%pages, (i+pages-1)%pages)
 		switch {
 		case i%20 == 1: // 2 500 pages with a field the type does not have
 			extra = "type: poem\nstatus: done\ncolour: red\n"
@@ -44,10 +49,16 @@ func TestCheckPageInALargeSpace(t *testing.T) {
 			body = "![](/assets/gone/x.png)\n"
 		case i%10 == 4: // 5 000 that share their title with one more
 			title = fmt.Sprintf("同名 %d", (i%50)*1000+i/100)
+		case i%40 == 5: // 1 250 with a link to a page that does not exist
+			body += fmt.Sprintf("[无](/lib/none/%05d.md)\n", i)
+		case i%50 == 6: // 1 000 that link to the hub page by path
+			body += "[中](/hub.md)\n"
 		}
 		fmt.Fprintf(&b, "---\nid: %010d\ntitle: %s\ntags: [a]\n%s---\n%s", i, title, extra, body)
 		m.files[fmt.Sprintf("lib/f%02d/%05d.md", i%50, i)] = memFile{[]byte(b.String()), clock() + int64(i)}
 	}
+	hub := []byte("---\nid: 9999999999\ntitle: 中\n---\nhub\n")
+	m.files["hub.md"] = memFile{hub, clock()}
 	for i := 0; i < 3000; i++ {
 		m.files[fmt.Sprintf("bad/%04d.md", i)] = memFile{[]byte("---\ntitle: x\n---\nno id\n"), clock() + int64(pages+i)}
 	}
@@ -83,7 +94,7 @@ func TestCheckPageInALargeSpace(t *testing.T) {
 		}
 	}
 	measure("first page and the counts, all kinds", func() int { return len(listChecks(t, x, "", "").items) })
-	for _, k := range []string{KindNoID, KindNotInType, KindTypeMismatch, KindMissingAsset, KindDuplicateTitle} {
+	for _, k := range []string{KindNoID, KindNotInType, KindTypeMismatch, KindBrokenLink, KindMissingAsset, KindDuplicateTitle} {
 		first := listChecks(t, x, k, "")
 		if len(first.items) != CheckPage || first.next == "" {
 			t.Fatalf("%s: %d items", k, len(first.items))
@@ -108,4 +119,41 @@ func TestCheckPageInALargeSpace(t *testing.T) {
 	}
 	sortDurations(ds)
 	t.Logf("%-52s median %8v  worst %8v", "one save into a title group", ds[len(ds)/2], ds[len(ds)-1])
+
+	// A page that 1 000 others link to by path goes away and comes back: each
+	// time their broken_link rows are looked at again.
+	if n := listChecks(t, x, "", "").counts[KindBrokenLink]; n != 1250 {
+		t.Fatalf("broken links before: %d", n)
+	}
+	var gone, back []time.Duration
+	for i := 0; i < 10; i++ {
+		start := time.Now()
+		if err := x.Remove("9999999999"); err != nil {
+			t.Fatal(err)
+		}
+		gone = append(gone, time.Since(start))
+		if n := listChecks(t, x, "", "").counts[KindBrokenLink]; n != 2250 {
+			t.Fatalf("broken links without the hub: %d", n)
+		}
+		start = time.Now()
+		if _, err := x.Put("hub.md", hub, clock()+int64(i)); err != nil {
+			t.Fatal(err)
+		}
+		back = append(back, time.Since(start))
+	}
+	sortDurations(gone)
+	sortDurations(back)
+	t.Logf("%-52s median %8v  worst %8v", "remove a page 1 000 pages link to", gone[len(gone)/2], gone[len(gone)-1])
+	t.Logf("%-52s median %8v  worst %8v", "add it back", back[len(back)/2], back[len(back)-1])
+	// One save of a page with a broken link (its own links only).
+	ds = ds[:0]
+	for i := 0; i < 20; i++ {
+		start := time.Now()
+		if _, err := x.Put("lib/f05/00005.md", []byte(fmt.Sprintf("---\nid: %010d\ntitle: 页 5\n---\n[无](/lib/none/x%d.md)\n", 5, i)), clock()+int64(i)); err != nil {
+			t.Fatal(err)
+		}
+		ds = append(ds, time.Since(start))
+	}
+	sortDurations(ds)
+	t.Logf("%-52s median %8v  worst %8v", "one save of a page with a broken link", ds[len(ds)/2], ds[len(ds)-1])
 }

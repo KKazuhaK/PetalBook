@@ -2816,6 +2816,7 @@ function suite(target: Target) {
       for (const p of items) {
         expect(typeof p.message).toBe('string')
         expect(p.fix === null || p.fix === 'add_id' || p.fix === 'remove_fields').toBe(true)
+        expect(p.rev).toMatch(/^[0-9a-f]{40}$/)
       }
     })
 
@@ -2830,7 +2831,7 @@ function suite(target: Target) {
       const items = await walkChecks()
       expect(mine(items).filter((p) => p.id === fine.id)).toEqual([])
       const s = at(items, 'not_in_type', stray.path)!
-      expect(s).toMatchObject({ id: stray.id, fix: 'remove_fields' })
+      expect(s).toMatchObject({ id: stray.id, fix: 'remove_fields', rev: stray.rev })
       expect(s.detail).toEqual({ fields: ['colour', 'size'] })
       expect(s.message).not.toBe('')
       const m = at(items, 'type_mismatch', bad.path)!
@@ -2878,6 +2879,24 @@ function suite(target: Target) {
       expect((await S.checks()).counts.missing_asset - before).toBe(2)
       await S.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: 'no pictures\n' })
       expect((await S.checks()).counts.missing_asset).toBe(before)
+    })
+
+    it('finds links to pages that do not exist, by id or by path, and forgets them when the page appears or the link goes', async () => {
+      const before = (await S.checks()).counts.broken_link
+      const p = await mk(folder, { title: `断${run}` }, `[无](没有${run}.md)\n\n[别](别处${run}.md "01JZZZZZZZ")\n`)
+      const items = of(await walkChecks('broken_link'), 'broken_link').filter((x) => x.path === p.path)
+      expect(items.map((x) => x.detail!.target)).toEqual([`${folder}/没有${run}.md`, `${folder}/别处${run}.md`])
+      expect(items.every((x) => x.id === p.id && x.rev === p.rev && x.fix === null && x.message !== '')).toBe(true)
+      const [l1, l2] = items.map((x) => x.detail!.line as number)
+      expect(Number.isInteger(l1) && l1 > 1 && l2 === l1 + 2).toBe(true)
+      expect((await S.checks()).counts.broken_link - before).toBe(2)
+      // The page the path names is made: that link is fine; an id is not found by its path.
+      await mk(folder, { title: `没有${run}` }, 'y\n')
+      await mk(folder, { title: `别处${run}` }, 'y\n')
+      const left = of(await walkChecks('broken_link'), 'broken_link').filter((x) => x.path === p.path)
+      expect(left.map((x) => x.detail!.target)).toEqual([`${folder}/别处${run}.md`])
+      await S.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: 'no links\n' })
+      expect((await S.checks()).counts.broken_link).toBe(before)
     })
 
     it('pages 50 at a time with a cursor, one kind or all of them; a kind or cursor it does not know is 400', async () => {
@@ -2935,12 +2954,13 @@ function suite(target: Target) {
       const n = at(items, 'no_id', `${folder}/noid.md`)!
       expect(n).toMatchObject({ fix: 'add_id' })
       expect(n.id).toBeUndefined()
-      expect(n.detail!.rev).toMatch(/^[0-9a-f]{40}$/)
+      expect(n.rev).toMatch(/^[0-9a-f]{40}$/)
+      expect(n.detail).toBeUndefined()
       expect(at(items, 'bad_header', `${folder}/broken.md`)).toMatchObject({ fix: null, detail: { line: 3 } })
       expect(at(items, 'duplicate_id', `${folder}/twin.md`)).toMatchObject({ id: taken.id, fix: null, detail: { paths: [taken.path, `${folder}/twin.md`] } })
       const stale = await failure(S.fixCheck({ kind: 'no_id', path: n.path, baseRev: '0'.repeat(40) }))
       expect([stale.status, stale.code]).toEqual([409, 'conflict'])
-      const made = await S.fixCheck({ kind: 'no_id', path: n.path, baseRev: n.detail!.rev as string })
+      const made = await S.fixCheck({ kind: 'no_id', path: n.path, baseRev: n.rev })
       expect(made.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{10}$/)
       expect(made).toMatchObject({ path: n.path, body: 'orphan\n' })
       expect(made.meta).toMatchObject({ id: made.id, title: `无id${run}`, custom: 1 })

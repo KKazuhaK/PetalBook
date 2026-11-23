@@ -114,12 +114,12 @@ func TestCheckKindsOfFilesThatAreNotPages(t *testing.T) {
 		switch c.Path {
 		case "z.md":
 			d := detailOf(t, c)
-			if c.ID != "0000000001" || fmt.Sprint(d["paths"]) != "[a.md z.md]" {
+			if c.ID != "0000000001" || fmt.Sprint(d["paths"]) != "[a.md z.md]" || c.Rev != page.Rev(m.files["z.md"].data) {
 				t.Errorf("duplicate: id %q detail %v", c.ID, d)
 			}
 		case "noid.md":
-			if d := detailOf(t, c); d["rev"] != page.Rev([]byte("---\ntitle: x\n---\nbody\n")) {
-				t.Errorf("no_id detail: %v", d)
+			if c.Rev != page.Rev([]byte("---\ntitle: x\n---\nbody\n")) || c.Detail != nil {
+				t.Errorf("no_id: rev %q detail %s", c.Rev, c.Detail)
 			}
 		case "yaml.md":
 			if d := detailOf(t, c); d["line"] != float64(2) {
@@ -441,5 +441,102 @@ func TestCheckRowsFollowAPageThatMoves(t *testing.T) {
 	}
 	if c := listChecks(t, x, "", "").counts["not_in_type"]; c != 0 {
 		t.Fatalf("after forget: %d", c)
+	}
+}
+
+func brokenOf(t *testing.T, x *Index) []string {
+	t.Helper()
+	var out []string
+	for _, c := range listChecks(t, x, KindBrokenLink, "").items {
+		d := detailOf(t, c)
+		out = append(out, fmt.Sprintf("%s>%v@%v", c.Path, d["target"], d["line"]))
+	}
+	return out
+}
+
+func TestCheckBrokenLinksFollowTheLinksIndex(t *testing.T) {
+	x := openIndex(t)
+	m := newMem()
+	m.put("a.md", page8("0000000001", "A", "", "x\n"))
+	// An id link to a, an id link to an unknown id, a path-only link to b.md
+	// (not there yet), a link to a by path.
+	m.put("s.md", page8("0000000002", "S", "", "[a](a.md \"0000000001\")\n\n[z](z.md \"0000000009\")\n\n[b](b.md)\n[a](a.md)\n"))
+	syncAll(t, x, m, false)
+	want := "s.md>z.md@7 s.md>b.md@9"
+	if got := strings.Join(brokenOf(t, x), " "); got != want {
+		t.Fatalf("after the sync: %s", got)
+	}
+	c := listChecks(t, x, KindBrokenLink, "").items[0]
+	if c.ID != "0000000002" || c.Fix != "" || !strings.Contains(c.Message, "0000000009") || c.Rev != page.Rev(m.files["s.md"].data) {
+		t.Fatalf("%+v", c)
+	}
+	// The page b appears (a save): its link is fine now.
+	if _, err := x.Put("b.md", []byte(page8("0000000003", "B", "", "y\n")), clock()); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(brokenOf(t, x), " "); got != "s.md>z.md@7" {
+		t.Fatalf("after b: %s", got)
+	}
+	// a moves: the id link still finds it, the path-only one does not.
+	m.put("b.md", page8("0000000003", "B", "", "y\n"))
+	m.put("n/a.md", page8("0000000001", "A", "", "x\n"))
+	delete(m.files, "a.md")
+	if _, err := x.Refresh(m, []string{"a.md", "n/a.md"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(brokenOf(t, x), " "); got != "s.md>z.md@7 s.md>a.md@10" {
+		t.Fatalf("after the move: %s", got)
+	}
+	// The page with id 0000000009 appears; b is removed.
+	m.put("z.md", page8("0000000009", "Z", "", "z\n"))
+	delete(m.files, "b.md")
+	if _, err := x.Refresh(m, []string{"z.md", "b.md"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(brokenOf(t, x), " "); got != "s.md>b.md@9 s.md>a.md@10" {
+		t.Fatalf("after z and b: %s", got)
+	}
+	if err := x.Remove("0000000009"); err != nil {
+		t.Fatal(err)
+	}
+	// The page with the links is fixed by a save, then removed.
+	m.put("s.md", page8("0000000002", "S", "", "[a](n/a.md)\n"))
+	if _, err := x.Put("s.md", m.files["s.md"].data, clock()); err != nil {
+		t.Fatal(err)
+	}
+	if got := brokenOf(t, x); len(got) != 0 {
+		t.Fatalf("after the fix: %v", got)
+	}
+	m.put("s.md", page8("0000000002", "S", "", "[q](q.md)\n"))
+	syncAll(t, x, m, false)
+	if got := strings.Join(brokenOf(t, x), " "); got != "s.md>q.md@5" {
+		t.Fatalf("after a sync: %s", got)
+	}
+	delete(m.files, "s.md")
+	if err := x.Forget([]string{"s.md"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if n := listChecks(t, x, "", "").counts[KindBrokenLink]; n != 0 {
+		t.Fatalf("after forget: %d", n)
+	}
+	// A rebuild records them in one go, at most maxRowsPerKind a page; a
+	// reference link is on the line of its paragraph.
+	var b strings.Builder
+	for i := 0; i < 25; i++ {
+		fmt.Fprintf(&b, "[x%d](gone%d.md)\n", i, i)
+	}
+	b.WriteString("\n[r][d]\n\n[d]: r.md\n")
+	m.put("many.md", page8("0000000004", "M", "", b.String()))
+	syncAll(t, x, m, true)
+	got := brokenOf(t, x)
+	if len(got) != maxRowsPerKind || got[0] != "many.md>gone0.md@5" || got[19] != "many.md>gone19.md@24" {
+		t.Fatalf("after the rebuild: %v", got)
+	}
+	// The same through the incremental path.
+	if _, err := x.Put("many.md", []byte(page8("0000000004", "M", "", "a\n\n[r][d]\n\n[d]: r.md\n")), clock()); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(brokenOf(t, x), " "); got != "many.md>r.md@7" {
+		t.Fatalf("a reference link: %s", got)
 	}
 }

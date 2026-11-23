@@ -177,7 +177,7 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 				}
 				if conflict != "" {
 					r.prob = &page.Problem{Code: "duplicate_id", Message: fmt.Sprintf("id %s is already used by %s", r.entry.ID, conflict)}
-					r.dupID = r.entry.ID
+					r.dupID, r.rev = r.entry.ID, r.entry.Rev
 					r.entry = nil
 				}
 			}
@@ -196,7 +196,7 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 	if err := w.replaceFolders(dirSet, src.DirExists); err != nil {
 		return Stats{}, err
 	}
-	if err := w.finishTitles(); err != nil {
+	if err := w.finish(); err != nil {
 		return Stats{}, err
 	}
 	if full && rules != nil {
@@ -268,7 +268,7 @@ type loaded struct {
 	gone  bool
 	// dupID is the id a file that is a duplicate shares.
 	dupID string
-	// rev is the rev of a file that is not a page.
+	// rev is the rev of a file that is not a page (or not served: a duplicate).
 	rev string
 }
 
@@ -348,7 +348,7 @@ func (x *Index) Put(rel string, data []byte, mtimeNs int64) (bool, error) {
 	} else if err := w.setProblem(FileInfo{Rel: rel, Size: int64(len(data)), MtimeNs: mtimeNs}, prob, "", page.Rev(data)); err != nil {
 		return false, err
 	}
-	if err := w.finishTitles(); err != nil {
+	if err := w.finish(); err != nil {
 		return false, err
 	}
 	return ok, x.commit(tx)
@@ -375,7 +375,7 @@ func (x *Index) Remove(id string) error {
 	if err := w.removePath(rel); err != nil {
 		return err
 	}
-	if err := w.finishTitles(); err != nil {
+	if err := w.finish(); err != nil {
 		return err
 	}
 	return x.commit(tx)
@@ -423,7 +423,7 @@ func (x *Index) Forget(paths, dirs []string) error {
 			return err
 		}
 	}
-	if err := w.finishTitles(); err != nil {
+	if err := w.finish(); err != nil {
 		return err
 	}
 	return x.commit(tx)
@@ -483,6 +483,12 @@ type writer struct {
 	// of them are (see finishTitles).
 	dirty     map[titleGroup]bool
 	allTitles bool
+	// linkSrcs are the pages whose broken_link problems are to be looked at
+	// again, linkIDs and linkPaths the targets whose links are (see
+	// finishLinks); allLinks says all of them are.
+	linkSrcs           map[int64]bool
+	linkIDs, linkPaths map[string]bool
+	allLinks           bool
 	// fresh says the tables were emptied in this transaction (a full
 	// rebuild): there is nothing to replace.
 	fresh bool
@@ -530,7 +536,7 @@ func (w *writer) clearAll() error {
 			return err
 		}
 	}
-	w.allTitles, w.fresh = true, true
+	w.allTitles, w.allLinks, w.fresh = true, true, true
 	return nil
 }
 
@@ -547,6 +553,15 @@ func (w *writer) removePath(rel string) error {
 }
 
 func (w *writer) deleteRow(rowid int64) error {
+	if !w.allLinks {
+		// The links to the page are broken now.
+		var id, p string
+		if err := w.queryRow(`SELECT id, path FROM pages WHERE rowid = ?`, rowid).Scan(&id, &p); err == nil {
+			w.markLinkTarget(id, p)
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+	}
 	for _, q := range []string{`DELETE FROM tags WHERE page = ?`, `DELETE FROM props WHERE page = ?`, `DELETE FROM links WHERE src = ?`, `DELETE FROM fts WHERE rowid = ?`, `DELETE FROM pages WHERE rowid = ?`} {
 		if _, err := w.exec(q, rowid); err != nil {
 			return err
@@ -651,9 +666,22 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 		}
 	}
 	for i, l := range e.links {
-		if _, err := w.exec(`INSERT INTO links(src, dst_id, dst_path, anchor, text, pos) VALUES (?,?,?,?,?,?)`, rowid, l.ID, l.Path, l.Anchor, l.Text, i); err != nil {
+		line := 0
+		if i < len(e.linkLines) {
+			line = e.linkLines[i]
+		}
+		if _, err := w.exec(`INSERT INTO links(src, dst_id, dst_path, anchor, text, pos, line) VALUES (?,?,?,?,?,?,?)`, rowid, l.ID, l.Path, l.Anchor, l.Text, i, line); err != nil {
 			return "", err
 		}
+	}
+	// Its own links are looked at again, and the links that a new page, or a
+	// page at a new path, may now resolve or have stopped resolving.
+	w.markLinkSrc(rowid)
+	if !found {
+		w.markLinkTarget(e.ID, e.Path)
+	} else if oldPath != e.Path {
+		w.markLinkTarget("", oldPath)
+		w.markLinkTarget("", e.Path)
 	}
 	if _, err := w.exec(`INSERT INTO fts(rowid, title, subtitle, source, body) VALUES (?,?,?,?,?)`, rowid, e.ftsTitle, e.ftsSubtitle, e.ftsSource, e.ftsBody); err != nil {
 		return "", err
@@ -800,12 +828,12 @@ func (x *Index) RetryDuplicates(src Source) error {
 			return err
 		}
 		if conflict != "" {
-			if err := w.setProblem(info, &page.Problem{Code: "duplicate_id", Message: fmt.Sprintf("id %s is already used by %s", e.ID, conflict)}, e.ID, ""); err != nil {
+			if err := w.setProblem(info, &page.Problem{Code: "duplicate_id", Message: fmt.Sprintf("id %s is already used by %s", e.ID, conflict)}, e.ID, e.Rev); err != nil {
 				return err
 			}
 		}
 	}
-	if err := w.finishTitles(); err != nil {
+	if err := w.finish(); err != nil {
 		return err
 	}
 	return x.commit(tx)
@@ -877,7 +905,7 @@ func (x *Index) Refresh(src Source, paths, dirs []string) (Stats, error) {
 			}
 			if conflict != "" {
 				r.prob = &page.Problem{Code: "duplicate_id", Message: fmt.Sprintf("id %s is already used by %s", r.entry.ID, conflict)}
-				r.dupID = r.entry.ID
+				r.dupID, r.rev = r.entry.ID, r.entry.Rev
 				r.entry = nil
 			}
 		}
@@ -906,7 +934,7 @@ func (x *Index) Refresh(src Source, paths, dirs []string) (Stats, error) {
 			}
 		}
 	}
-	if err := w.finishTitles(); err != nil {
+	if err := w.finish(); err != nil {
 		return Stats{}, err
 	}
 	if err := x.commit(tx); err != nil {

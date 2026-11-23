@@ -33,6 +33,9 @@ export interface CheckPageView {
   folder: string
   meta: PageMeta
   body: string
+  rev: string
+  // The links to other pages, in the order of the text, with the line of the file each is on.
+  links: { id: string; path: string; line: number }[]
 }
 
 export interface CheckInput {
@@ -42,6 +45,8 @@ export interface CheckInput {
   fieldsOf: (folder: string, headerType: string) => TypeField[] | null
   // Whether a file of the space exists, by its path from the root, with no leading slash.
   fileExists: (path: string) => boolean
+  // Whether a link leads to a page: by its id when it has one, else by its path.
+  linkResolves: (link: { id: string; path: string }) => boolean
 }
 
 const compare = (a: string, b: string): number => {
@@ -131,11 +136,12 @@ function addressesOf(body: string): string[] {
 export function problemsOf(input: CheckInput): Problem[] {
   const out: Problem[] = []
   const add = (p: Omit<Problem, 'fix'> & { fix?: Problem['fix'] }) => out.push({ fix: null, ...p })
+  // Every problem names the rev of its file, which a fix is based on.
   const pageAt = new Map(input.pages.map((p) => [p.id, p]))
 
   for (const o of input.orphans) {
-    if (o.kind === 'no_id') add({ kind: 'no_id', path: o.path, message: 'The header has no id', detail: { rev: o.rev }, fix: 'add_id' })
-    else if (o.kind === 'bad_header') add({ kind: 'bad_header', path: o.path, message: 'The header is not valid YAML', ...(o.line ? { detail: { line: o.line } } : {}) })
+    if (o.kind === 'no_id') add({ kind: 'no_id', path: o.path, rev: o.rev, message: 'The header has no id', fix: 'add_id' })
+    else if (o.kind === 'bad_header') add({ kind: 'bad_header', path: o.path, rev: o.rev, message: 'The header is not valid YAML', ...(o.line ? { detail: { line: o.line } } : {}) })
     else {
       const served = o.id ? pageAt.get(o.id) : undefined
       const same = input.orphans.filter((x) => x.kind === 'duplicate_id' && x.id === o.id).map((x) => x.path)
@@ -143,6 +149,7 @@ export function problemsOf(input: CheckInput): Problem[] {
         kind: 'duplicate_id',
         path: o.path,
         ...(o.id ? { id: o.id } : {}),
+        rev: o.rev,
         message: `id ${o.id} is already used by ${served?.path ?? 'another file'}`,
         detail: { paths: [...(served ? [served.path] : []), ...same.sort(compare)].slice(0, MAX_PATHS) },
       })
@@ -158,16 +165,21 @@ export function problemsOf(input: CheckInput): Problem[] {
         const f = fields.find((x) => x.key === k)
         return f !== undefined && !isNone(p.meta[k]) && !fits(f, p.meta[k])
       })
-      if (bad.length) add({ kind: 'type_mismatch', path: p.path, id: p.id, message: 'These fields do not fit their type: ' + bad.join(', '), detail: { fields: bad } })
+      if (bad.length) add({ kind: 'type_mismatch', path: p.path, id: p.id, rev: p.rev, message: 'These fields do not fit their type: ' + bad.join(', '), detail: { fields: bad } })
       const stray = strayKeys(p.meta, fields)
-      if (stray.length) add({ kind: 'not_in_type', path: p.path, id: p.id, message: "These fields are not in the page's type: " + stray.join(', '), detail: { fields: stray }, fix: 'remove_fields' })
+      if (stray.length) add({ kind: 'not_in_type', path: p.path, id: p.id, rev: p.rev, message: "These fields are not in the page's type: " + stray.join(', '), detail: { fields: stray }, fix: 'remove_fields' })
+    }
+    const broken = p.links.filter((l) => !input.linkResolves(l)).slice(0, MAX_PATHS)
+    for (const l of broken) {
+      const message = l.id ? `No page has the id ${l.id}` : `No page is at ${l.path}`
+      add({ kind: 'broken_link', path: p.path, id: p.id, rev: p.rev, message, detail: { target: l.path, line: l.line } })
     }
     const seen = new Set<string>()
     for (const address of addressesOf(p.body)) {
       const rel = assetOf(address, p.folder)
       if (rel === null || seen.has(rel) || seen.size >= MAX_PATHS) continue
       seen.add(rel)
-      if (!input.fileExists(rel)) add({ kind: 'missing_asset', path: p.path, id: p.id, message: `The file ${address} does not exist`, detail: { target: address } })
+      if (!input.fileExists(rel)) add({ kind: 'missing_asset', path: p.path, id: p.id, rev: p.rev, message: `The file ${address} does not exist`, detail: { target: address } })
     }
     if (title) {
       const key = p.folder + '\u0000' + title.toLowerCase()
@@ -177,7 +189,7 @@ export function problemsOf(input: CheckInput): Problem[] {
   for (const group of titled.values()) {
     if (group.length < 2) continue
     const paths = group.map((p) => p.path).sort(compare).slice(0, MAX_PATHS)
-    for (const p of group) add({ kind: 'duplicate_title', path: p.path, id: p.id, message: 'Another page in this folder has the same title', detail: { paths } })
+    for (const p of group) add({ kind: 'duplicate_title', path: p.path, id: p.id, rev: p.rev, message: 'Another page in this folder has the same title', detail: { paths } })
   }
 
   const rank = (k: ProblemKind) => PROBLEM_KINDS.indexOf(k)

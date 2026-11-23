@@ -268,9 +268,11 @@ export interface Problem {
   // The page, when the file is one.
   id?: string
   message: string
-  // no_id: {rev}, the rev of the file, which a fix is based on; bad_header: {line};
-  // duplicate_id and duplicate_title: {paths}; type_mismatch and not_in_type: {fields};
-  // broken_link: {target, line}; missing_asset: {target}.
+  // The current rev of the file the problem is in: the baseRev of POST .../checks/fix
+  // (a file without an id has no page to read it from).
+  rev: string
+  // bad_header: {line}; duplicate_id and duplicate_title: {paths}; type_mismatch and
+  // not_in_type: {fields}; broken_link: {target, line}; missing_asset: {target}.
   detail?: Record<string, unknown>
   fix: ProblemFix | null
 }

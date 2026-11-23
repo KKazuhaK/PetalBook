@@ -10,6 +10,8 @@ export interface FoundLink {
   path: string
   id: string
   anchor: string
+  // Where the link starts in the body.
+  at: number
   // Where the paragraph that holds it starts and ends in the body.
   from: number
   to: number
@@ -37,7 +39,7 @@ export function linksOf(srcFolder: string, body: string): FoundLink[] {
     const from = text.lastIndexOf('\n\n', at) + 1
     const end = text.indexOf('\n\n', at)
     const title = m[4] ?? m[5] ?? ''
-    out.push({ text: m[2].replace(/\\(.)/g, '$1').replace(/\s+/g, ' ').trim(), path: r.path, id: isPageId(title) ? title : '', anchor: r.anchor, from, to: end < 0 ? body.length : end })
+    out.push({ text: m[2].replace(/\\(.)/g, '$1').replace(/\s+/g, ' ').trim(), path: r.path, id: isPageId(title) ? title : '', anchor: r.anchor, at, from, to: end < 0 ? body.length : end })
   }
   return out
 }

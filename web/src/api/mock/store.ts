@@ -891,10 +891,21 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
   const orphans = new Map<string, Orphan>()
   const problems = () =>
     problemsOf({
-      pages: [...pages.values()].map((p) => ({ id: p.id, path: pathOf(p), folder: p.folder, meta: p.meta, body: p.body })),
+      pages: [...pages.values()].map((p) => {
+        // The body starts after the header: the fences and one line a key (see serializeFile).
+        const first = Object.keys(p.meta).length + 3
+        const lineAt = (at: number) => first + (p.body.slice(0, at).match(/\n/g)?.length ?? 0)
+        const path = pathOf(p)
+        const links = linksOf(p.folder, p.body)
+          .filter((l) => (l.id ? l.id !== p.id : l.path !== path))
+          .map((l) => ({ id: l.id, path: l.path, line: lineAt(l.at) }))
+        return { id: p.id, path, folder: p.folder, meta: p.meta, body: p.body, rev: p.rev, links }
+      }),
       orphans: [...orphans.values()],
       fieldsOf: (folder, headerType) => book.fieldsOf(folder, headerType),
       fileExists,
+      // As the server's index: an id is looked up by id only, a path by path.
+      linkResolves: (l) => (l.id ? pages.has(l.id) : [...pages.values()].some((p) => pathOf(p) === l.path)),
     })
 
   const checks = (kind: string | null, cursor: string | null) => checksPage(problems(), kind, cursor)

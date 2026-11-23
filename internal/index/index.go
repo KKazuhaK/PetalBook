@@ -69,8 +69,9 @@ CREATE INDEX props_skey ON props(key, skey, page);
 -- resolved when it is read (by path), so that it stays right when the target is
 -- added, moved or deleted. dst_path is the file the path names, always; a link
 -- whose id is known to be at another path is one to be repaired. The primary
--- key serves the links of one page.
-CREATE TABLE links (src INTEGER NOT NULL, dst_id TEXT NOT NULL, dst_path TEXT NOT NULL, anchor TEXT NOT NULL, text TEXT NOT NULL, pos INTEGER NOT NULL, PRIMARY KEY (src, pos)) WITHOUT ROWID;
+-- key serves the links of one page. line is the line of the file the link is
+-- on (from 1; 0 when it is not known), for the broken_link problems.
+CREATE TABLE links (src INTEGER NOT NULL, dst_id TEXT NOT NULL, dst_path TEXT NOT NULL, anchor TEXT NOT NULL, text TEXT NOT NULL, pos INTEGER NOT NULL, line INTEGER NOT NULL, PRIMARY KEY (src, pos)) WITHOUT ROWID;
 CREATE INDEX links_dst_id ON links(dst_id, src);
 CREATE INDEX links_dst_path ON links(dst_path, src);
 CREATE TABLE folders (path TEXT PRIMARY KEY);

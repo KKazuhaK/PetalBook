@@ -113,9 +113,12 @@ func checksScenario(t *testing.T, base, root string, owner, editor, viewer calle
 		if _, ok := it["fix"]; !ok {
 			t.Errorf("fix is always there: %v", it)
 		}
+		if r, _ := it["rev"].(string); len(r) != 40 {
+			t.Errorf("every problem has the rev of its file: %v", it)
+		}
 	}
-	rev := func(it map[string]any) string { return it["detail"].(map[string]any)["rev"].(string) }
-	if by["no_id"]["fix"] != "add_id" || len(rev(by["no_id"])) != 40 || by["no_id"]["id"] != nil {
+	rev := func(it map[string]any) string { return it["rev"].(string) }
+	if by["no_id"]["fix"] != "add_id" || len(rev(by["no_id"])) != 40 || by["no_id"]["id"] != nil || by["no_id"]["detail"] != nil {
 		t.Errorf("no_id: %v", by["no_id"])
 	}
 	if by["bad_header"]["fix"] != nil || !reflect.DeepEqual(by["bad_header"]["detail"], map[string]any{"line": float64(2)}) {
@@ -160,6 +163,9 @@ func checksScenario(t *testing.T, base, root string, owner, editor, viewer calle
 		t.Fatalf("%d %v", code, pg)
 	}
 	brev, header := pg["rev"].(string), pg["header"].(string)
+	if by["not_in_type"]["rev"] != brev {
+		t.Errorf("the rev listed is not the page's: %v, %s", by["not_in_type"], brev)
+	}
 	// The owner has a draft of the page; a fix keeps it, as a save does.
 	if code, r := owner("PUT", base+"/pages/"+bid+"/draft", map[string]any{"baseRev": brev, "meta": pg["meta"], "body": "body of beta, edited\n"}); code != 200 {
 		t.Fatalf("draft: %d %v", code, r)

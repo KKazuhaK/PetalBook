@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -499,14 +500,6 @@ func linkAddress(s string) (string, int) {
 	return s[start:i], i
 }
 
-// brokenLinkChecks returns the broken_link problems of a page: links to a
-// page that does not exist. The kind is plumbed everywhere (listing, counts,
-// order); the links of a page are not indexed yet, so there are none to find.
-// It is filled in when the links index of milestone 2.4 is merged into this
-// branch, and each row it returns is {kind: KindBrokenLink, message, detail:
-// {"target", "line"}}.
-func brokenLinkChecks(e *Entry) []checkRow { return nil }
-
 // annotate computes the problems of a page that is served, from what is
 // already known of it, with the rules r.
 func (x *Index) annotate(e *Entry, r *TypeRules) {
@@ -523,7 +516,6 @@ func (x *Index) annotate(e *Entry, r *TypeRules) {
 			}
 		}
 	}
-	rows = append(rows, brokenLinkChecks(e)...)
 	e.checks = rows
 }
 
@@ -545,6 +537,140 @@ func (x *Index) AssetAppeared(rel string) error {
 		return err
 	}
 	return x.commit(tx)
+}
+
+// --- links ---------------------------------------------------------------------
+
+// A link is broken when it carries an id that no page has, or, written with a
+// path only, names a file that holds no page (the rule of OutLinks). Whether
+// it is depends on other pages than its own, so the broken_link rows (one per
+// link, seq the link's place in its page, at most maxRowsPerKind a page) are
+// kept up to date from the links table: the writer notes the pages whose links
+// changed and the ids and paths that appeared or went away (markLinkSrc,
+// markLinkTarget), and finishLinks looks again at the pages that have links to
+// those, through the indexes on links. A rebuild does them all with one query.
+
+// markLinkSrc notes that the links of the page rowid changed.
+func (w *writer) markLinkSrc(rowid int64) {
+	if w.allLinks {
+		return
+	}
+	if w.linkSrcs == nil {
+		w.linkSrcs = map[int64]bool{}
+	}
+	w.linkSrcs[rowid] = true
+}
+
+// markLinkTarget notes that a page with this id ("" for none), at this path
+// ("" for none), appeared or went away.
+func (w *writer) markLinkTarget(id, path string) {
+	if w.allLinks {
+		return
+	}
+	if id != "" {
+		if w.linkIDs == nil {
+			w.linkIDs = map[string]bool{}
+		}
+		w.linkIDs[id] = true
+	}
+	if path != "" {
+		if w.linkPaths == nil {
+			w.linkPaths = map[string]bool{}
+		}
+		w.linkPaths[path] = true
+	}
+}
+
+// brokenRows selects the broken_link rows of the links l, joined with their
+// page s. The detail is {"target": the path the link names, "line": n}.
+const brokenRows = `SELECT 'broken_link', s.path, l.pos, s.id,
+	CASE WHEN l.dst_id <> '' THEN 'No page has the id ' || l.dst_id ELSE 'No page is at ' || l.dst_path END,
+	json_object('target', l.dst_path, 'line', l.line), ''`
+
+const linkResolves = `CASE WHEN l.dst_id <> '' THEN EXISTS (SELECT 1 FROM pages t WHERE t.id = l.dst_id)
+	ELSE EXISTS (SELECT 1 FROM pages t WHERE t.path = l.dst_path) END`
+
+// maxLinkSrcs is the most pages finishLinks looks at one by one; past it, one
+// query over all links is cheaper.
+const maxLinkSrcs = 2000
+
+// finishLinks brings the broken_link rows in line with what was noted.
+func (w *writer) finishLinks() error {
+	all := w.allLinks
+	srcs := w.linkSrcs
+	if !all && (len(w.linkIDs) > 0 || len(w.linkPaths) > 0) {
+		if srcs == nil {
+			srcs = map[int64]bool{}
+		}
+		add := func(q string, keys map[string]bool) error {
+			for k := range keys {
+				rows, err := w.tx.QueryContext(w.ctx, q, k)
+				if err != nil {
+					return err
+				}
+				for rows.Next() {
+					var src int64
+					if err := rows.Scan(&src); err != nil {
+						rows.Close()
+						return err
+					}
+					srcs[src] = true
+				}
+				rows.Close()
+				if err := rows.Err(); err != nil {
+					return err
+				}
+				if len(srcs) > maxLinkSrcs {
+					return nil
+				}
+			}
+			return nil
+		}
+		if err := add(`SELECT src FROM links WHERE dst_id = ?`, w.linkIDs); err != nil {
+			return err
+		}
+		if len(srcs) <= maxLinkSrcs {
+			if err := add(`SELECT src FROM links WHERE dst_id = '' AND dst_path = ?`, w.linkPaths); err != nil {
+				return err
+			}
+		}
+	}
+	w.linkSrcs, w.linkIDs, w.linkPaths, w.allLinks = nil, nil, nil, false
+	if all || len(srcs) > maxLinkSrcs {
+		if _, err := w.exec(`DELETE FROM checks WHERE kind = 'broken_link'`); err != nil {
+			return err
+		}
+		_, err := w.exec(`INSERT INTO checks(kind, path, seq, id, message, detail, target) ` + brokenRows + `
+			FROM (SELECT l.*, row_number() OVER (PARTITION BY l.src ORDER BY l.pos) AS n FROM links l WHERE NOT (` + linkResolves + `)) l
+			JOIN pages s ON s.rowid = l.src WHERE l.n <= ` + strconv.Itoa(maxRowsPerKind))
+		return err
+	}
+	for src := range srcs {
+		var p string
+		switch err := w.queryRow(`SELECT path FROM pages WHERE rowid = ?`, src).Scan(&p); {
+		case errors.Is(err, sql.ErrNoRows):
+			continue // gone: its rows went with its path
+		case err != nil:
+			return err
+		}
+		if _, err := w.exec(`DELETE FROM checks WHERE kind = 'broken_link' AND path = ?`, p); err != nil {
+			return err
+		}
+		if _, err := w.exec(`INSERT INTO checks(kind, path, seq, id, message, detail, target) `+brokenRows+`
+			FROM links l JOIN pages s ON s.rowid = l.src WHERE l.src = ? AND NOT (`+linkResolves+`) ORDER BY l.pos LIMIT `+strconv.Itoa(maxRowsPerKind), src); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// finish brings the problems that depend on other pages than their own in
+// line with the writes of the transaction, before it commits.
+func (w *writer) finish() error {
+	if err := w.finishTitles(); err != nil {
+		return err
+	}
+	return w.finishLinks()
 }
 
 // --- titles ------------------------------------------------------------------
@@ -619,6 +745,9 @@ func (w *writer) finishTitles() error {
 type Check struct {
 	Kind, Path, ID, Message string
 	Detail                  json.RawMessage // nil for none
+	// Rev is the rev of the file the problem is in, as indexed: the baseRev of
+	// a fix ("" when it is not known).
+	Rev string
 	// Fix is "add_id", "remove_fields" or "" (not fixable).
 	Fix string
 }
@@ -756,13 +885,13 @@ func (r *read) readKind(kind, path string, seq int, after bool, limit int) ([]Ch
 		}
 		rows, err = r.db.Query(q+` ORDER BY path LIMIT ?`, append(args, limit)...)
 	} else {
-		q := `SELECT path, id, message, detail, seq FROM checks WHERE kind = ?`
+		q := `SELECT c.path, c.id, c.message, c.detail, c.seq, coalesce(p.rev, '') FROM checks c LEFT JOIN pages p ON p.path = c.path WHERE c.kind = ?`
 		args := []any{kind}
 		if after {
-			q += ` AND (path, seq) > (?, ?)`
+			q += ` AND (c.path, c.seq) > (?, ?)`
 			args = append(args, path, seq)
 		}
-		rows, err = r.db.Query(q+` ORDER BY path, seq LIMIT ?`, append(args, limit)...)
+		rows, err = r.db.Query(q+` ORDER BY c.path, c.seq LIMIT ?`, append(args, limit)...)
 	}
 	if err != nil {
 		return nil, nil, err
@@ -775,21 +904,15 @@ func (r *read) readKind(kind, path string, seq int, after bool, limit int) ([]Ch
 		var n int
 		if fileKinds[kind] {
 			var line int
-			var rev string
-			if err := rows.Scan(&c.Path, &c.ID, &c.Message, &line, &rev); err != nil {
+			if err := rows.Scan(&c.Path, &c.ID, &c.Message, &line, &c.Rev); err != nil {
 				return nil, nil, err
 			}
 			if kind == KindBadHeader && line > 0 {
 				c.Detail = json.RawMessage(`{"line":` + strconv.Itoa(line) + `}`)
 			}
-			if kind == KindNoID && rev != "" {
-				// The file is not a page, so its rev cannot be had from a page;
-				// a fix of it is based on this one.
-				c.Detail = json.RawMessage(`{"rev":"` + rev + `"}`)
-			}
 		} else {
 			var detail string
-			if err := rows.Scan(&c.Path, &c.ID, &c.Message, &detail, &n); err != nil {
+			if err := rows.Scan(&c.Path, &c.ID, &c.Message, &detail, &n, &c.Rev); err != nil {
 				return nil, nil, err
 			}
 			if detail != "" {

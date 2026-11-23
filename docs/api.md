@@ -2355,7 +2355,12 @@ Needs `read`. `{"counts": {"no_id": 2, …}, "items": [Problem], "next": "…"}`
 
 ### Problem
 
-`{"kind": "…", "path": "…", "id": "…"?, "message": "…", "detail": {…}?, "fix": "add_id" | "remove_fields" | null}`
+`{"kind": "…", "path": "…", "id": "…"?, "rev": "…", "message": "…", "detail": {…}?, "fix": "add_id" | "remove_fields" | null}`
+
+Every problem concerns one file, `path`, and `rev` is that file's current rev
+as the index has it: the `baseRev` of `POST …/checks/fix`. A file without an
+`id` is not a page, so this is the only place a client can read its rev from.
+`id` is the page's (or, for `duplicate_id`, the id the file shares).
 
 Kinds:
 
@@ -2366,13 +2371,14 @@ Kinds:
 | `bad_header` | the header is not valid YAML | `{"line": n}` |
 | `type_mismatch` | type fields that do not fit the type's schema | `{"fields": […]}` |
 | `not_in_type` | header fields that are not in the page's type | `{"fields": […]}` |
-| `broken_link` | a link to a page that does not exist (after 2.4) | `{"target": "…", "line": n}` |
+| `broken_link` | a link to a page that does not exist: its id is no page's, or, written with a path only, no page is at the path | `{"target": "…", "line": n}`: the path the link names, from the space root, and the line of the file it is on; at most 20 a page |
 | `missing_asset` | an image or attachment that does not exist | `{"target": "…"}` |
 | `duplicate_title` | two pages in one folder with the same title | `{"paths": […]}` |
 
 ### `POST /api/spaces/{space}/checks/fix`
 
-`{"kind": "no_id" | "not_in_type", "path": "…", "baseRev": "…"}`. Needs
+`{"kind": "no_id" | "not_in_type", "path": "…", "baseRev": "…"}` (`baseRev`
+the problem's `rev`). Needs
 `write`. `no_id` gives the page a new id; `not_in_type` removes the listed
 fields (only those, the rest of the header byte-for-byte). Answers the page
 like a save; `409 conflict` on a stale `baseRev`; `400 invalid` with
