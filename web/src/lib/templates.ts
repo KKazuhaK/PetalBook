@@ -4,7 +4,8 @@
 import type { PageMeta, PageTemplate, TemplateDefaults } from '@/api/types'
 
 // Minutes east of UTC, for {{date}}, {{time}} and {{datetime}} (the server's `tz`).
-export const tzOffset = (): number => -new Date().getTimezoneOffset()
+// `|| 0` turns -0 (UTC, where the offset is 0) into 0, the number JSON sends.
+export const tzOffset = (): number => -new Date().getTimezoneOffset() || 0
 
 export type NameProblem = 'empty' | 'long' | 'chars' | 'reserved' | 'exists'
 

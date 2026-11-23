@@ -8,6 +8,7 @@ import { QuickCaptureFab, QuickCaptureProvider } from '@/components/layout/Quick
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/i18n'
 import { tt } from '@/i18n/templates'
+import { tzOffset } from '@/lib/templates'
 import { click, installDomShims, locationText, LocationProbe, mount, settle, shareSpace, type, type Mounted } from '@/testing/harness'
 import { FileOpsProvider } from './FileOps'
 
@@ -53,7 +54,7 @@ async function open(folder: string, scene: (s: MockServer) => void = seed) {
 const newButton = () => document.querySelector<HTMLButtonElement>(`button[aria-label="${t.list.newPage}"]`)
 const picker = () => document.querySelector<HTMLSelectElement>('#new-page-template')
 const posts = () => m!.requests.filter((r) => r.method === 'POST' && r.url === '/api/spaces/default/pages').map((r) => JSON.parse(r.body!) as Record<string, unknown>)
-const tz = -new Date().getTimezoneOffset()
+const tz = tzOffset()
 const confirmButton = () => [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === tt.pick.confirm)
 
 describe('a new page', () => {

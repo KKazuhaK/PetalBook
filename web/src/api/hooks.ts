@@ -1004,7 +1004,7 @@ export const useOrderFavorites = () =>
 // The day the browser is in, as the server wants it, and how far east of UTC it is.
 export function dayOf(now: Date): { date: string; tz: number } {
   const p = (n: number) => String(n).padStart(2, '0')
-  return { date: `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`, tz: -now.getTimezoneOffset() }
+  return { date: `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`, tz: -now.getTimezoneOffset() || 0 }
 }
 
 // The text of the day. `skip` is "another one", and only this browser sees it. The server says how long the answer
