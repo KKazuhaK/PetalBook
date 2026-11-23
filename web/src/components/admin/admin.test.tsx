@@ -107,7 +107,7 @@ describe('all spaces', () => {
     expect(team.textContent).not.toContain(ta.spaces.personal)
     expect(rows().filter((r) => r.textContent?.includes(ta.spaces.personal))).toHaveLength(2)
     // The way into a space's content.
-    expect(team.querySelector('a')!.getAttribute('href')).toMatch(/^\/s\/[^/]+\/recent$/)
+    expect(team.querySelector('a')!.getAttribute('href')).toMatch(/^\/s\/[^/]+\/$/)
     expect(text()).toContain(ta.spaces.allLoaded(3))
   })
 
