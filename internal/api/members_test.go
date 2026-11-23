@@ -3,6 +3,8 @@ package api_test
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -352,5 +354,32 @@ func TestMembershipDoesNotCountAgainstTheSpaceLimit(t *testing.T) {
 		// Becoming an owner of one counts.
 		tm.owner.do("PATCH", "/api/spaces/"+tm.sid+"/members/"+tm.viewerID, map[string]any{"role": "owner"}).want(t, 200, "")
 		tm.viewer.do("POST", "/api/spaces", map[string]any{"name": "More"}).want(t, 403, "forbidden")
+	})
+}
+
+// What the server did about a settings file it could not use is told to those
+// who may manage the space, and to nobody else.
+func TestSettingsNoticesAreForThoseWhoManageTheSpace(t *testing.T) {
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		tm := newTeam(t, a)
+		base := "/api/spaces/" + tm.sid
+		tm.editor.do("POST", base+"/folders", map[string]any{"path": "F"}).want(t, 201, "")
+		file := filepath.Join(a.dir, "spaces", tm.sid, ".petalbook", "space.yml")
+		if err := os.WriteFile(file, []byte("folders: [unclosed\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for who, c := range map[string]*client{"owner": tm.owner, "editor": tm.editor, "viewer": tm.viewer} {
+			r := c.do("GET", base+"/types", nil).want(t, 200, "")
+			list, has := r.body["settingsNotices"]
+			if who == "owner" {
+				if l, _ := list.([]any); len(l) != 1 || l[0].(map[string]any)["unreadable"] != true {
+					t.Errorf("the owner is told %v", list)
+				}
+			} else if has {
+				t.Errorf("the %s is told %v", who, list)
+			}
+		}
+		// Everyone goes on working all the same.
+		tm.editor.do("POST", base+"/pages", map[string]any{"folder": "F", "meta": map[string]any{"title": "one"}}).want(t, 201, "")
 	})
 }

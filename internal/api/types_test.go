@@ -159,7 +159,7 @@ func typesScenario(t *testing.T, base string, owner, editor, viewer caller, refu
 		"sort=-prop:points": "B C A D",
 		"sort=prop:due":     "B A C D",
 		"sort=-prop:due":    "A B C D",
-		"sort=prop:status":  "C A B D",
+		"sort=prop:status":  "B C A D", // a select: the order of its options (todo, doing, done), not of the text
 		"sort=prop:labels":  "A B C D",
 		"sort=prop:zzz":     "A B C D",
 	} {
@@ -357,9 +357,9 @@ func TestTypesAndTableViewInSingleUserMode(t *testing.T) {
 	}
 }
 
-// A type file that was damaged by hand is listed with what is wrong, and is
-// not overwritten by a request to change it.
-func TestDamagedTypeFileIsReportedNotReplaced(t *testing.T) {
+// A type file that cannot be used and has no earlier version is no type; the
+// notice says so, and a request that makes the type keeps what the file was.
+func TestATypeFileThatCannotBeUsedIsPutAside(t *testing.T) {
 	f := newFixture(t)
 	if err := os.MkdirAll(filepath.Join(f.dir, ".petalbook", "types"), 0o755); err != nil {
 		t.Fatal(err)
@@ -370,13 +370,21 @@ func TestDamagedTypeFileIsReportedNotReplaced(t *testing.T) {
 	}
 	code, r, raw := f.do("GET", base+"/types", nil)
 	types, _ := r["types"].([]any)
-	if code != 200 || len(types) != 1 || !strings.Contains(fmt.Sprint(types[0].(map[string]any)["error"]), "fixed by hand") || len(types[0].(map[string]any)["fields"].([]any)) != 0 {
+	notices, _ := r["settingsNotices"].([]any)
+	if code != 200 || len(types) != 0 || len(notices) != 1 || notices[0].(map[string]any)["file"] != ".petalbook/types/broken.json" || notices[0].(map[string]any)["unreadable"] != true {
 		t.Fatalf("%d %s", code, raw)
 	}
 	code, r, _ = f.do("PUT", base+"/types/broken", map[string]any{"fields": []any{map[string]any{"key": "a", "kind": "text"}}})
-	if code != 400 || r["error"] != "invalid" || !strings.Contains(r["message"].(string), "fixed by hand") {
+	if code != 200 || len(r["fields"].([]any)) != 1 {
 		t.Errorf("%d %v", code, r)
 	}
+	_, r, raw = f.do("GET", base+"/types", nil)
+	notices, _ = r["settingsNotices"].([]any)
+	if len(r["types"].([]any)) != 1 || len(notices) != 1 || notices[0].(map[string]any)["unreadable"] != false {
+		t.Fatalf("%s", raw)
+	}
+	kept, _ := notices[0].(map[string]any)["copy"].(string)
+	file = filepath.Join(f.dir, filepath.FromSlash(kept))
 	if b, _ := os.ReadFile(file); string(b) != `{"properties": {` {
 		t.Errorf("the file was replaced: %s", b)
 	}

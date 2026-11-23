@@ -15,13 +15,14 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	_ "modernc.org/sqlite" // pure-Go driver, keeps the binary static
 )
 
 // schemaVersion changes whenever the tables or the way text is tokenised
 // change; an index with another version is thrown away and rebuilt.
-const schemaVersion = 6
+const schemaVersion = 7
 
 const schema = `
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -62,6 +63,7 @@ CREATE INDEX tags_page ON tags(page);
 CREATE TABLE props (page INTEGER NOT NULL, key TEXT NOT NULL, pos INTEGER NOT NULL, val TEXT NOT NULL, skey TEXT NOT NULL, PRIMARY KEY (page, key, pos)) WITHOUT ROWID;
 CREATE INDEX props_sort ON props(key, pos, skey, page);
 CREATE INDEX props_val ON props(key, val, page);
+CREATE INDEX props_skey ON props(key, skey, page);
 CREATE TABLE folders (path TEXT PRIMARY KEY);
 -- Files that are not pages (no usable id). They are remembered with their size
 -- and mtime so that start-up does not read them again.
@@ -72,11 +74,62 @@ INSERT INTO folders(path) VALUES ('');
 
 // Index is safe for concurrent use. Reads run in parallel (SQLite WAL); writes
 // are serialised.
+//
+// Writes have a connection of their own (wdb), taken only under wmu, so a
+// write never waits for a connection behind reads; reads use db and aux, which
+// writes never touch.
+//
+// The write-ahead log can only be cut back to its start when no read uses a
+// snapshot older than its last frame, and with reads that follow one another
+// without a pause there is always one: the log would grow for as long as
+// writes go on. So when it passes walCheckpointAt after a commit, the
+// checkpointer waits for the write under way, closes the gate to new reads,
+// lets those under way end (a request is short), and checkpoints the whole log
+// and truncates it while no read holds a snapshot. Reads and writes wait at
+// most for the reads under way and the checkpoint.
 type Index struct {
 	db   *sql.DB
+	wdb  *sql.DB
 	path string
 	root string
 	wmu  sync.Mutex
+
+	// gate is held shared by every read from the pin of its snapshot to its
+	// end, and alone by the checkpointer (see above).
+	gate sync.RWMutex
+	// ckpt asks the checkpointer to run; stop ends it, and ckptDone is
+	// closed when it has ended.
+	ckpt     chan struct{}
+	stop     chan struct{}
+	ckptDone chan struct{}
+	closing  sync.Once
+	// checkpoints counts the checkpoints made (read by tests).
+	checkpoints atomic.Int64
+	// walMax is walCheckpointAt as it was at Open.
+	walMax int64
+
+	// aux holds the connections a read uses beside its own to read several
+	// index ranges at the same time (see read.go); auxFree has a token for
+	// each, taken without waiting, so a read never waits for one while it
+	// holds a connection of db.
+	aux     *sql.DB
+	auxFree chan struct{}
+
+	// gen is a sequence lock on the content of the index: odd while a write
+	// commits, moved to the next even value as soon as the commit is done (not
+	// after the work that follows it). A read whose snapshot was taken while
+	// gen held one even value has the content of that generation, and a result
+	// computed from it is good for as long as gen has not changed (see Groups).
+	gen    atomic.Uint64
+	groups groupCache
+
+	// queries counts the queries of listings with conditions and of counts
+	// (read by tests); trace, when a test sets it, is called with each.
+	queries atomic.Int64
+	trace   func(query string, args []any)
+	// shared and serial count the times a read had other connections share
+	// its snapshot, and the times it read in turn because none could (tests).
+	shared, serial atomic.Int64
 }
 
 // Open opens or creates the index at dbPath for the space at root. An index
@@ -106,37 +159,72 @@ func removeDB(p string) {
 	}
 }
 
+// walCheckpointAt is the size of the write-ahead log past which it is
+// checkpointed and truncated after a commit; it is also the size a log that
+// SQLite starts again from the beginning is cut back to (journal_size_limit).
+// It is read at Open; tests make it smaller.
+var walCheckpointAt int64 = 16 << 20
+
+// readConns is the number of connections of db: the requests reading at the
+// same time, each on one (and maybe others of aux).
+const readConns = 8
+
 func open(dbPath, root string) (*Index, error) {
-	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(10000)&_pragma=cache_size(-65536)"
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
+	x := &Index{path: dbPath, root: root, walMax: walCheckpointAt}
+	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(10000)&_pragma=cache_size(-65536)" +
+		fmt.Sprintf("&_pragma=journal_size_limit(%d)", x.walMax)
+	var err error
+	if x.wdb, err = sql.Open("sqlite", dsn); err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(8)
-	x := &Index{db: db, path: dbPath, root: root}
+	// One connection, used under wmu only: a write finds it free.
+	x.wdb.SetMaxOpenConns(1)
+	x.wdb.SetMaxIdleConns(1)
 	if err := x.init(); err != nil {
-		db.Close()
+		x.wdb.Close()
 		return nil, err
 	}
+	// Reads cannot change the database: no write can end up on their
+	// connections by mistake.
+	rdsn := dsn + "&_pragma=query_only(1)"
+	if x.db, err = sql.Open("sqlite", rdsn); err != nil {
+		x.wdb.Close()
+		return nil, err
+	}
+	x.db.SetMaxOpenConns(readConns)
+	x.db.SetMaxIdleConns(readConns)
+	if x.aux, err = sql.Open("sqlite", rdsn); err != nil {
+		x.db.Close()
+		x.wdb.Close()
+		return nil, err
+	}
+	x.aux.SetMaxOpenConns(auxConns)
+	x.aux.SetMaxIdleConns(auxConns)
+	x.auxFree = make(chan struct{}, auxConns)
+	for range auxConns {
+		x.auxFree <- struct{}{}
+	}
+	x.ckpt, x.stop, x.ckptDone = make(chan struct{}, 1), make(chan struct{}), make(chan struct{})
+	go x.checkpointer()
 	return x, nil
 }
 
 func (x *Index) init() error {
 	ctx := context.Background()
 	var version int
-	if err := x.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+	if err := x.wdb.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		return err
 	}
 	fresh := version == 0
 	if !fresh {
 		var root string
-		err := x.db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = 'root'`).Scan(&root)
+		err := x.wdb.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = 'root'`).Scan(&root)
 		if version != schemaVersion || err != nil || root != x.root {
 			return errors.New("index does not match this space or version")
 		}
 		return nil
 	}
-	tx, err := x.db.BeginTx(ctx, nil)
+	tx, err := x.wdb.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -155,7 +243,84 @@ func (x *Index) init() error {
 }
 
 // Close closes the database.
-func (x *Index) Close() error { return x.db.Close() }
+func (x *Index) Close() error {
+	var err error
+	x.closing.Do(func() {
+		close(x.stop)
+		<-x.ckptDone
+		x.aux.Close()
+		x.db.Close()
+		err = x.wdb.Close()
+	})
+	return err
+}
 
 // Path is where the database file lives.
 func (x *Index) Path() string { return x.path }
+
+// unlockWrite ends a write. The generation has moved already, at the commit.
+func (x *Index) unlockWrite() { x.wmu.Unlock() }
+
+// commit commits a write, with gen odd for as long as the commit may be under
+// way: a read that took its snapshot while gen held one even value cannot have
+// seen a part of what it changed.
+func (x *Index) commit(tx *sql.Tx) error {
+	err := func() error {
+		x.gen.Add(1)
+		defer x.gen.Add(1)
+		return tx.Commit()
+	}()
+	if err == nil {
+		x.checkWAL()
+	}
+	return err
+}
+
+// checkWAL asks the checkpointer to run when the log has grown past
+// walCheckpointAt. It does not wait.
+func (x *Index) checkWAL() {
+	if fi, err := os.Stat(x.path + "-wal"); err == nil && fi.Size() > x.walMax {
+		x.askCheckpoint()
+	}
+}
+
+func (x *Index) askCheckpoint() {
+	select {
+	case x.ckpt <- struct{}{}:
+	default: // asked already
+	}
+}
+
+// checkpointer checkpoints the whole log and truncates it, each time it is
+// asked, with no read holding a snapshot and no write under way. It takes the
+// write lock first, between two writes, and then closes the gate, so new reads
+// wait and those under way end. Writes wait for the reads under way (a request
+// is short) and the checkpoint; reads for the same. The other order would make
+// reads wait for whole writes, and a full Sync takes seconds.
+func (x *Index) checkpointer() {
+	defer close(x.ckptDone)
+	for {
+		select {
+		case <-x.stop:
+			return
+		case <-x.ckpt:
+		}
+		x.wmu.Lock()
+		x.gate.Lock()
+		// No read holds a snapshot and no write is under way: the checkpoint
+		// does not wait. The busy timeout is short all the same, so that a
+		// read from outside (a tool opening the file) cannot hold writes back.
+		ctx := context.Background()
+		if c, err := x.wdb.Conn(ctx); err == nil {
+			c.ExecContext(ctx, `PRAGMA busy_timeout = 100`)
+			var busy, log, done int
+			if c.QueryRowContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&busy, &log, &done) == nil && busy == 0 {
+				x.checkpoints.Add(1)
+			}
+			c.ExecContext(ctx, `PRAGMA busy_timeout = 10000`)
+			c.Close()
+		}
+		x.gate.Unlock()
+		x.wmu.Unlock()
+	}
+}

@@ -120,7 +120,7 @@ func TestUncommittedWritesSurviveACrash(t *testing.T) {
 		t.Fatalf("history lost the page: %q", body)
 	}
 	// The journal is empty after a clean commit.
-	if b, _ := os.ReadFile(filepath.Join(root, ".petalbook", "cache", "pending.journal")); len(b) != 0 {
+	if b, _ := os.ReadFile(filepath.Join(DefaultStateDir(root), "pending.journal")); len(b) != 0 {
 		t.Fatalf("journal not trimmed: %q", b)
 	}
 }
@@ -164,7 +164,7 @@ func TestJournalWithMissingOrForeignPathsIsTolerated(t *testing.T) {
 	needGit(t)
 	root := t.TempDir()
 	git(t, root, "init", "-q")
-	state := filepath.Join(root, ".petalbook", "cache")
+	state := DefaultStateDir(root)
 	os.MkdirAll(state, 0o755)
 	os.WriteFile(filepath.Join(root, "other.txt"), []byte("someone else's file\n"), 0o644)
 	os.WriteFile(filepath.Join(root, "taken.md"), []byte("not ours\n"), 0o644)
@@ -284,7 +284,7 @@ func TestSavesProceedWhileAWalkIsRunning(t *testing.T) {
 	s := open(t, func(o *Options) { o.ResyncInterval = time.Millisecond })
 	p := mustCreate(t, s, "", meta("title", "忙着"), "v1\n")
 	time.Sleep(5 * time.Millisecond)
-	blk := &blockingSource{dirSource: dirSource{s.root}, entered: make(chan struct{}), release: make(chan struct{})}
+	blk := &blockingSource{dirSource: dirSource{root: s.root}, entered: make(chan struct{}), release: make(chan struct{})}
 	s.src = blk
 	var walked atomic.Bool
 	go func() {
@@ -394,7 +394,7 @@ func TestRespellingStoppedByACrashIsFinished(t *testing.T) {
 			if c.take {
 				os.WriteFile(filepath.Join(root, st.to), []byte("someone else's\n"), 0o644)
 			}
-			os.WriteFile(filepath.Join(root, ".petalbook", "cache", "pending.journal"), []byte(strings.Join(recs, "\n")+"\n"), 0o644)
+			os.WriteFile(filepath.Join(DefaultStateDir(root), "pending.journal"), []byte(strings.Join(recs, "\n")+"\n"), 0o644)
 
 			s2 := openAt(t, root)
 			defer s2.Close()

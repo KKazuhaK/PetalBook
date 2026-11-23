@@ -3,8 +3,9 @@
 
 import type { PageSummary } from '@/api/types'
 
-// The table is only offered for a folder that has a type.
-export type ListViewMode = 'list' | 'cards' | 'table'
+// The table is only offered for a folder that has a type, the board for a grouping field, reading for folders and tags.
+// This is what a folder that has no saved view remembers in the browser: it is the layout of the implicit view.
+export type ListViewMode = 'list' | 'cards' | 'table' | 'board' | 'read'
 
 // What a listing shows is told apart by its kind and, for a folder or a tag,
 // by which one; the space is in the key too. A search is one setting for all
@@ -17,7 +18,7 @@ export function viewKey(space: string, kind: string, name = ''): string {
 export function loadView(key: string): ListViewMode {
   try {
     const v = localStorage.getItem(key)
-    return v === 'cards' || v === 'table' ? v : 'list'
+    return v === 'cards' || v === 'table' || v === 'board' || v === 'read' ? v : 'list'
   } catch {
     return 'list'
   }

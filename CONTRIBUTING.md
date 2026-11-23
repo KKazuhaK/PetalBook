@@ -24,10 +24,10 @@ make check-full
 
 它在 `check` 之外还有 PostgreSQL 测试（需要 `initdb`、`pg_ctl`、`psql`）、
 大小写折叠的 tmpfs 上的测试（只在 Linux 上，内核 6.13 以上；CI 用 ext4 镜像代替）、`make release`、
-契约测试和六个平台的交叉编译。
+契约测试（SQLite 和 PostgreSQL 各跑一遍账号模式，`make contract-postgres`）和六个平台的交叉编译。
 That adds the PostgreSQL tests (needs `initdb`, `pg_ctl` and `psql`), the tests on
 a case-folding tmpfs (Linux only, kernel 6.13 or newer; CI uses an ext4 image instead), `make release`, the
-contract tests, and a cross-compile for six platforms.
+contract tests (accounts mode runs on SQLite and on PostgreSQL, `make contract-postgres`), and a cross-compile for six platforms.
 
 每一项检查都只定义在 `Makefile` 里，CI 只是调用这些目标，所以本地通过的，CI 上也通过。
 Every check is defined in the `Makefile` only; CI just calls those targets.
@@ -37,9 +37,9 @@ Every check is defined in the `Makefile` only; CI just calls those targets.
 - **拉取请求 / Pull request**：`make check-go` 和 `make vuln`（只在改了 Go 相关文件时）、
   `make check-web`（只在改了网页端、`Makefile` 或 `.github/` 时）、actionlint。
   Go and web jobs are skipped when a change cannot affect them.
-- **合并到 main / Push to main**：以上全部，再加 PostgreSQL、大小写折叠、契约测试、
+- **合并到 main / Push to main**：以上全部，再加 PostgreSQL（含 PostgreSQL 上的契约测试）、大小写折叠、契约测试、
   单文件构建（`make release`）加交叉编译、容器镜像构建。
-  Everything above, plus PostgreSQL, case folding, contract tests, the
+  Everything above, plus PostgreSQL (including the contract tests on it), case folding, contract tests, the
   single-binary build with cross-compile, and the image build.
 - **发布 / Release**（推送 `v*` 标签）：标签必须在 main 上，且 ci 在该提交上已通过；
   然后在 Linux amd64、arm64 和 macOS 上再跑 `make check-go`，构建四个平台的二进制和

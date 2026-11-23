@@ -58,6 +58,9 @@ type journal struct {
 	path string
 	mu   sync.Mutex
 	f    *os.File
+	// guard, when set, says whether the folder of the journal can be written
+	// in: it is not, through something that is not a folder (settingspath.go).
+	guard func() error
 }
 
 // openJournal reads the records an earlier run left and opens the file for
@@ -121,6 +124,11 @@ func (j *journal) rewrite(pending map[string]Author, keep []jrec) error {
 	}
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if j.guard != nil {
+		if err := j.guard(); err != nil {
+			return err
+		}
+	}
 	tmp := j.path + ".new"
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
@@ -156,6 +164,12 @@ func (j *journal) close() error {
 // fine: they become deletions. A record naming a path outside the space (the
 // journal is a file on disk) is ignored.
 func recoverPending(root string, recs []jrec) map[string]Author {
+	return recoverPendingWith(nil, root, recs)
+}
+
+// recoverPendingWith is recoverPending; h restores a space.yml that cannot be
+// used when the bindings of a folder are to be finished in it.
+func recoverPendingWith(h *healer, root string, recs []jrec) map[string]Author {
 	set := map[string]Author{}
 	ok := func(p string) bool {
 		return p != "" && fs.ValidPath(p) && !strings.HasPrefix(p, ".git/") && p != ".git"
@@ -205,9 +219,11 @@ func recoverPending(root string, recs []jrec) map[string]Author {
 			}
 		}
 	}
-	if len(bindRecs) > 0 && recoverBindings(root, bindRecs) {
+	if len(bindRecs) > 0 {
 		by := bindRecs[len(bindRecs)-1].author()
-		set[spaceFile] = by
+		for _, p := range recoverBindings(h, root, bindRecs) {
+			set[p] = by
+		}
 	}
 	return set
 }

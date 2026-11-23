@@ -75,6 +75,8 @@ export interface PageSummary {
   // holds (cut text, a list that lost elements, an object). Absent when none. A
   // cell must not write such a copy back.
   partialProps?: string[]
+  // Only with `body: true` in the listing (continuous reading): the Markdown.
+  body?: string
 }
 
 // The page header as the server serves it. Fields the app does not know about
@@ -129,7 +131,9 @@ export type PropSort = `prop:${string}` | `-prop:${string}`
 export type FilterOp = 'in' | 'range' | 'empty' | 'notEmpty' | 'contains'
 export interface PropFilter {
   key: string
-  op: FilterOp
+  // `notIn` is the server's too (has a value and none of the given ones); the table's own form never makes it,
+  // a board's "other values" column and a saved view do.
+  op: FilterOp | 'notIn'
   values?: (string | number | boolean | null)[]
 }
 
@@ -151,6 +155,8 @@ export interface ListParams {
   filter?: PropFilter[]
   // Put `props` and `rev` in the summaries (the table view does).
   props?: boolean
+  // Put the Markdown `body` in the summaries; the limit is then at most 20.
+  body?: boolean
   limit?: number
   cursor?: string
 }
@@ -205,6 +211,29 @@ export interface FolderBinding {
 export interface TypesResponse {
   types: PageType[]
   bindings: FolderBinding[]
+  // What the server did about a settings file it could not use (docs/api.md, "Settings files that cannot be used").
+  // Only for those who manage the space; absent for anyone else, and when there is nothing to tell.
+  settingsNotices?: SettingsNotice[]
+}
+// A version of a settings file: a commit, or (without one) a change in the folder that is in no commit yet.
+export interface SettingsVersion {
+  commit?: string
+  time: string
+}
+export interface SettingsNotice {
+  // The settings file or type file, as a path in the space.
+  file: string
+  // One entry of it (`Tang`, `Tang: views`), or "not a folder" for a link or a file where a folder belongs.
+  entry?: string
+  // The file in the space is still the one that cannot be used; false once it was put right.
+  unreadable: boolean
+  since?: SettingsVersion
+  restoredFrom?: SettingsVersion
+  // Where the file as it was is kept.
+  copy?: string
+  repairedAt?: string
+  // The entries that could not be read even one by one ("*": none of it).
+  lost?: string[]
 }
 // What `PUT .../types/{name}` takes: the whole of what the type is to be.
 export interface TypeInput {
@@ -217,6 +246,50 @@ export interface PatchPropsInput {
   baseRev: string
   set?: Record<string, unknown>
   unset?: string[]
+}
+
+// --- saved views (docs/api.md, "Saved views") -------------------------------------------
+
+export type ViewLayout = 'list' | 'cards' | 'table' | 'board' | 'read'
+// One saved view. The server always answers with every key; keys it does not know come back as they were
+// sent (the app keeps `cardFields` there: the fields a board's card shows).
+export interface SavedView {
+  id: string
+  name: string
+  layout: ViewLayout
+  // "" is the listing's default order.
+  sort: string
+  // The field a board is grouped by.
+  group: string
+  filter: PropFilter[]
+  // The keys of the columns a table hides.
+  hidden: string[]
+  [extra: string]: unknown
+}
+export interface ViewList {
+  views: SavedView[]
+  rev: string
+}
+// A view belongs to a folder ("" is the root) or to a tag.
+export type ViewScope = { folder: string } | { tag: string }
+export interface PutViewsInput {
+  baseRev: string
+  // New views have no `id`; the server makes one.
+  views: (Omit<SavedView, 'id'> & { id?: string })[]
+}
+
+// The answer of `GET .../pages/groups`: how many pages hold each value of a property, for a board's headers.
+export interface GroupsResponse {
+  groups: { value: string; count: number }[]
+  empty: number
+  truncated: boolean
+}
+export interface GroupsParams {
+  key: string
+  folder?: string
+  recursive?: boolean
+  tag?: string[]
+  filter?: PropFilter[]
 }
 
 export interface TreeResponse {
@@ -312,6 +385,8 @@ export type ErrorCode =
   | 'unavailable'
   | 'internal'
   | 'network'
+  // No answer in the time given (the request was called off; what it did on the server is not known).
+  | 'timeout'
   | 'unknown'
 
 // --- accounts -----------------------------------------------------------------

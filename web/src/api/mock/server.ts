@@ -3,7 +3,7 @@
 // cookie stand-in), invites, spaces per user and a fake OpenID Connect
 // provider. It has no DOM or Node dependencies.
 
-import type { AdminSpace, ConnectRemoteInput, FieldKind, Identity, Invite, Member, Page, Permission, Remote, RemoteKey, RemoteState, Role, ServerStatus, SpaceInfo, SpaceRole, User } from '../types.ts'
+import type { AdminSpace, ConnectRemoteInput, FieldKind, Identity, Invite, Member, Page, Permission, Remote, RemoteKey, RemoteState, Role, ServerStatus, SettingsNotice, SpaceInfo, SpaceRole, User } from '../types.ts'
 import { gitBlobId } from './sha1.ts'
 import { ALPHABET, HttpError, compareCodePoints, createSpaceStore, isRecord, rfc3339, validFolder, type SpaceStore } from './store.ts'
 import { SPACE_NAME } from './seed.ts'
@@ -184,6 +184,8 @@ export function createMockServer(options: MockOptions = {}) {
   const sessions = new Map<string, string>()
   const invites = new Map<string, InviteRec>()
   const spaces = new Map<string, SpaceRec>()
+  // What the server says about settings files it could not use, by space (set by tests).
+  const settingsNotices = new Map<string, SettingsNotice[]>()
   const oidcAttempts = new Map<string, OidcAttempt>()
   const failures = new Map<string, { count: number; first: number }>()
 
@@ -907,6 +909,12 @@ export function createMockServer(options: MockOptions = {}) {
       if (method === 'GET') return { status: 200, body: st.listPages(url.searchParams) }
       if (method === 'POST') return { status: 201, body: st.create(body) }
     }
+    if (rest === '/pages/groups' && method === 'GET') return { status: 200, body: st.groups(url.searchParams) }
+    if (rest === '/views' && method === 'GET') {
+      const v = url.searchParams
+      return { status: 200, body: st.views(v.has('folder') ? (v.get('folder') ?? '') : undefined, v.get('tag') ?? undefined) }
+    }
+    if (rest === '/views' && method === 'PUT') return { status: 200, body: st.putViews(body) }
     if (rest === '/pages/batch' && method === 'POST') return { status: 200, body: st.batch(body) }
     const hist = /^\/pages\/([^/]+)\/history$/.exec(rest)
     if (hist && method === 'GET') return { status: 200, body: st.history(decodeURIComponent(hist[1]), url.searchParams) }
@@ -915,7 +923,11 @@ export function createMockServer(options: MockOptions = {}) {
     if (rest === '/remote' || rest.startsWith('/remote/')) return routeRemote(space, method, rest, body)
     const props = /^\/pages\/([^/]+)\/props$/.exec(rest)
     if (props && method === 'PATCH') return { status: 200, body: st.patchProps(u.id, decodeURIComponent(props[1]), body) }
-    if (rest === '/types' && method === 'GET') return { status: 200, body: st.types() }
+    if (rest === '/types' && method === 'GET') {
+      // Only for those who manage the space; for anyone else the key is absent.
+      const notices = settingsNotices.get(space.id) ?? []
+      return { status: 200, body: notices.length > 0 && spaceInfo(space, u).permissions.includes('manage') ? { ...st.types(), settingsNotices: notices } : st.types() }
+    }
     const typeOne = /^\/types\/(.+)$/.exec(rest)
     if (typeOne && (method === 'PUT' || method === 'DELETE')) {
       let name: string
@@ -1248,6 +1260,10 @@ export function createMockServer(options: MockOptions = {}) {
     spaceIds: () => [...spaces.keys()],
     peekDraft: (userId: string, id: string, space = 'default') => spaces.get(space)?.store.peekDraft(userId, id),
     userId: (username: string) => [...users.values()].find((u) => u.username === username)?.id,
+    // Views of a folder as written by hand in space.yml: served as "@n" until a write names them.
+    // What GET .../types says to managers about settings files that could not be used.
+    seedSettingsNotices: (notices: SettingsNotice[], space = 'default') => void settingsNotices.set(space, notices),
+    seedHandWrittenViews: (folder: string, views: Record<string, unknown>[], space = 'default') => spaces.get(space)!.store.seedHandWrittenViews(folder, views as never),
     // Let the server's own draft commits run now (they also run on every request).
     sweep: sweepAll,
     // Put a space's remote in a state, as the dev route does.

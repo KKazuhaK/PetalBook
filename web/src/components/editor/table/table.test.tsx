@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Editor } from '@tiptap/core'
+import { markdownToDoc } from '@/markdown'
 import { cursorIn, markdownOf, pageEditor } from '../pageTestKit'
 import { cellAtSelection, columnAlign, insertColumn, insertRow, insertTable, removeColumn, removeRow, removeTable, setColumnAlign, tableFixes, tableSize, type CellRef } from './tableOps'
 
@@ -129,6 +130,33 @@ describe('column alignment', () => {
     expect(markdownOf(editor)).toContain('| :--- | --- |')
     setColumnAlign(editor, ref(0, 0), null)
     expect(markdownOf(editor)).toBe('| 甲 | 乙 |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n')
+  })
+
+  it('answers "none" for a table that was replaced while its menu was open, as the size does, instead of throwing', () => {
+    const editor = pageEditor(SOURCE)
+    const open = ref(1, 1)
+    editor.commands.setContent('只剩一段话')
+    // What was a table at that position is a paragraph now.
+    expect(editor.state.doc.nodeAt(0)!.type.name).toBe('paragraph')
+    expect(() => columnAlign(editor.state, open)).not.toThrow()
+    expect(columnAlign(editor.state, open)).toBeNull()
+    expect(tableSize(editor.state, 0)).toBeNull()
+    // The action on it does nothing and does not throw either.
+    expect(() => setColumnAlign(editor, open, 'center')).not.toThrow()
+    expect(markdownOf(editor)).toBe('只剩一段话\n')
+  })
+
+  it('answers "none" for a column that the replacing table does not have', () => {
+    const editor = pageEditor('| 甲 | 乙 | 丙 |\n| - | - | - |\n| 1 | 2 | 3 |\n')
+    editor.commands.setContent(markdownToDoc('| 甲 |\n| - |\n| 1 |\n'))
+    expect(editor.state.doc.nodeAt(0)!.type.name).toBe('table')
+    const before = markdownOf(editor)
+    expect(columnAlign(editor.state, ref(0, 2))).toBeNull()
+    expect(() => setColumnAlign(editor, ref(0, 2), 'right')).not.toThrow()
+    expect(setColumnAlign(editor, ref(0, 2), 'right')).toBe(false)
+    expect(() => insertRow(editor, ref(1, 2), 'after')).not.toThrow()
+    expect(() => removeColumn(editor, ref(0, 2))).not.toThrow()
+    expect(markdownOf(editor)).toBe(before)
   })
 
   it('reads back from Markdown', () => {

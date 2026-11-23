@@ -44,6 +44,9 @@ type committer struct {
 	open  []jrec     // "b" and "u" records whose edit of space.yml is not done yet (under mu)
 	runMu sync.Mutex // one git run at a time
 
+	// onCommit is told the paths of each commit made (under mu).
+	onCommit func(paths []string)
+
 	wake chan struct{}
 	stop chan struct{}
 	done chan struct{}
@@ -64,6 +67,13 @@ func newCommitter(g *gitRepo, idle, max time.Duration, log *slog.Logger, j *jour
 	}
 	go c.loop()
 	return c
+}
+
+// setOnCommit sets what is told the paths of each commit made.
+func (c *committer) setOnCommit(f func(paths []string)) {
+	c.mu.Lock()
+	c.onCommit = f
+	c.mu.Unlock()
 }
 
 // Record journals what is about to happen to files, durably, as a change by
@@ -273,6 +283,12 @@ func (c *committer) commit() error {
 			continue
 		}
 		committed++
+		c.mu.Lock()
+		tell := c.onCommit
+		c.mu.Unlock()
+		if tell != nil {
+			tell(grp.paths)
+		}
 	}
 	if len(failed) > 0 {
 		now := time.Now()

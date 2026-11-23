@@ -158,6 +158,14 @@ export function createTypeBook(folderExists: (path: string) => string | null) {
 
     effective: (folder: string): string => folderTypeName(bindings, folder),
 
+    // The options of a select or multiselect field of the type a folder has: the
+    // order a sort by that field follows. null for any other field, or no type.
+    optionsOf(folder: string, key: string): string[] | null {
+      const t = types.get(folderTypeName(bindings, folder))
+      const f = t && !t.error ? t.fields.find((x) => x.key === key) : undefined
+      return f && (f.kind === 'select' || f.kind === 'multiselect') && f.options?.length ? [...f.options] : null
+    },
+
     // Renaming or moving a folder moves the bindings of it and of the folders in it.
     folderMoved(from: string, to: string) {
       bindings = bindings.map((b) => (isUnder(b.folder, from) ? { ...b, folder: to + b.folder.slice(from.length) } : b))

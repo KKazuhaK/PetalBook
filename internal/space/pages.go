@@ -428,7 +428,7 @@ func (s *Space) saveLocked(tx *txn, id, baseRev string, meta page.Meta, body str
 		if err := tx.record(jrec{Op: "w", Path: rel, Rev: page.Rev(newData)}); err != nil {
 			return nil, err
 		}
-		if err := writeAtomic(s.tmpDir(), abs, newData); err != nil {
+		if err := writeAtomic(abs, newData); err != nil {
 			return nil, err
 		}
 	}
@@ -638,9 +638,6 @@ func (s *Space) createFolderRemoteLocked(rel string) (string, error) {
 	return canon, nil
 }
 
-// List queries the index. See index.Query.
-func (s *Space) List(q index.Query) (index.Result, error) { return s.idx.List(q) }
-
 // Tree lists every folder with its page count.
 func (s *Space) Tree() ([]index.FolderCount, error) { return s.idx.Tree() }
 
@@ -746,7 +743,7 @@ func (s *Space) PatchProps(by Author, id, baseRev string, set page.Meta, unset [
 		if err := tx.record(jrec{Op: "w", Path: rel, Rev: page.Rev(newData)}); err != nil {
 			return nil, err
 		}
-		if err := writeAtomic(s.tmpDir(), abs, newData); err != nil {
+		if err := writeAtomic(abs, newData); err != nil {
 			return nil, err
 		}
 		return s.afterWrite(tx, rel, newData)

@@ -4,8 +4,9 @@
 
 import type { DraftReceipt, HistoryList, Page, PageDraft, PageMeta, PageSummary, PageVersion, TagColor, VersionChange } from '../types.ts'
 import { BUILTIN_KEYS, RESERVED_KEYS, partialPropsOf, propsOfMeta } from '../../lib/pageTypes.ts'
-import { matches, parseFilter, sortValue } from './propQuery.ts'
+import { matches, parseFilter, sortValue, valuesOf } from './propQuery.ts'
 import { createTypeBook } from './typeBook.ts'
+import { createViewBook } from './viewBook.ts'
 import { TAG_COLORS, parseTagColor } from '../../lib/tagColors.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
 import { gitBlobId } from './sha1.ts'
@@ -152,6 +153,7 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
   // The folder as it is spelled here, for a name that may differ in case; null when there is none.
   const spelledFolder = (path: string): string | null => (folders.has(path) ? path : ([...folders].find((f) => f.toLowerCase() === path.toLowerCase()) ?? null))
   const book = createTypeBook(spelledFolder)
+  const viewBook = createViewBook({ random, spelledFolder, validFolder })
   // The type a page has: its header's, else its folder's.
   const effectiveOf = (p: Stored): string => stringField(p.meta, 'type')?.trim() || book.effective(p.folder)
   // userId + page id -> draft
@@ -304,7 +306,9 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     return { ...toPage(p), ...(draft ? { draft } : {}) }
   }
 
-  const sortItems = (items: Stored[], sort: string, relevance?: Map<string, number>) => {
+  // `options`: the options of the select field sorted by (docs/api.md, "Sorting by a
+  // select field"): the options in turn, then the other values, then no value.
+  const sortItems = (items: Stored[], sort: string, relevance?: Map<string, number>, options?: string[]) => {
     const desc = sort.startsWith('-')
     const key = desc ? sort.slice(1) : sort
     const dir = desc ? -1 : 1
@@ -314,6 +318,22 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     return [...items].sort((a, b) => {
       if (key.startsWith('prop:')) {
         const prop = key.slice(5)
+        if (options) {
+          const group = (p: Stored): number => {
+            const first = valuesOf(p.meta, prop)[0]
+            if (first === undefined) return options.length + 1
+            const at = typeof first === 'string' ? options.indexOf(first) : -1
+            if (at < 0) return desc ? 0 : options.length
+            return desc ? options.length - at : at
+          }
+          const ga = group(a)
+          const gb = group(b)
+          if (ga !== gb) return ga - gb
+          if (ga === options.length + 1) return held.get(a.id)! - held.get(b.id)!
+          const other = desc ? ga === 0 : ga === options.length
+          const c = other ? compareCodePoints(String(sortValue(a.meta, prop)), String(sortValue(b.meta, prop))) : 0
+          return dir * c || dir * (held.get(a.id)! - held.get(b.id)!)
+        }
         const va = sortValue(a.meta, prop)
         const vb = sortValue(b.meta, prop)
         // No value: after every page that has one, in both directions.
@@ -357,9 +377,13 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     const updatedTo = day('updatedTo')
     const createdFrom = day('createdFrom')
     const createdTo = day('createdTo')
+    const bodyParam = q.get('body')
+    if (bodyParam !== null && bodyParam !== '0' && bodyParam !== '1') throw new HttpError(400, 'invalid', 'body 只能是 0 或 1')
+    const withBody = bodyParam === '1'
     const limitRaw = q.get('limit')
-    const limit = limitRaw === null ? 50 : Number(limitRaw)
-    if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new HttpError(400, 'invalid', 'limit 要在 1 到 200 之间')
+    // With body=1 every item is a file read: at most 20, and 20 unless said.
+    const limit = limitRaw === null ? (withBody ? 20 : 50) : Number(limitRaw)
+    if (!Number.isInteger(limit) || limit < 1 || limit > (withBody ? 20 : 200)) throw new HttpError(400, 'invalid', withBody ? 'body=1 时 limit 要在 1 到 20 之间' : 'limit 要在 1 到 200 之间')
     const sortParam = q.get('sort')
     if (sortParam !== null && !/^-?(updated|created|title|prop:.+)$/.test(sortParam)) throw new HttpError(400, 'invalid', '不支持的排序')
     const propsParam = q.get('props')
@@ -407,18 +431,56 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
       })
     }
     const sort = sortParam ?? (text ? 'relevance' : '-updated')
-    items = sortItems(items, sort, relevance)
+    const propSort = /^-?prop:(.+)$/.exec(sort)
+    items = sortItems(items, sort, relevance, propSort && folder !== null ? (book.optionsOf(folder, propSort[1]) ?? undefined) : undefined)
 
     let offset = 0
     const cursor = q.get('cursor')
     if (cursor) {
-      const m = /^o(\d+)$/.exec(atob(cursor))
+      let decoded = ''
+      try {
+        decoded = atob(cursor)
+      } catch {
+        // not base64: refused below
+      }
+      const m = /^o(\d+)\|(.*)$/s.exec(decoded)
       if (!m) throw new HttpError(400, 'invalid', 'cursor 不合法')
+      // A cursor is for the order it was made in, as on the server.
+      if (decodeURIComponent(m[2]) !== sort) throw new HttpError(400, 'invalid', 'cursor 是另一种排序的')
       offset = Number(m[1])
     }
     const slice = items.slice(offset, offset + limit)
     const end = offset + slice.length
-    return { items: slice.map((p) => toSummary(p, propsParam === '1')), next: end < items.length ? btoa(`o${end}`) : '' }
+    return { items: slice.map((p) => ({ ...toSummary(p, propsParam === '1'), ...(withBody ? { body: p.body } : {}) })), next: end < items.length ? btoa(`o${end}|${encodeURIComponent(sort)}`) : '' }
+  }
+
+  // How many pages of a folder or tags have each value of a key (docs/api.md,
+  // "GET …/pages/groups"), from the same selection a listing makes.
+  const groups = (q: URLSearchParams) => {
+    const key = q.get('key') ?? ''
+    if (key === '') throw new HttpError(400, 'invalid', 'key 是要按它分组的字段')
+    const folder = q.get('folder')
+    const tags = q.getAll('tag')
+    if (folder === null && tags.length === 0) throw new HttpError(400, 'invalid', '要给出文件夹或标签')
+    const rec = q.get('recursive')
+    if (rec !== null && rec !== 'true' && rec !== 'false') throw new HttpError(400, 'invalid', 'recursive 只能是 true 或 false')
+    const filters = q.get('filter') === null ? [] : parseFilter(q.get('filter')!)
+    let items = [...pages.values()]
+    if (folder !== null) {
+      if (!validFolder(folder)) throw new HttpError(400, 'invalid', '文件夹路径不合法')
+      items = items.filter((p) => (rec === 'true' ? folder === '' || isUnder(p.folder, folder) : p.folder === folder))
+    }
+    if (tags.length) items = items.filter((p) => tags.every((t) => tagsOf(p.meta).includes(t)))
+    for (const f of filters) items = items.filter((p) => matches(p.meta, f))
+    const counts = new Map<string, number>()
+    let empty = 0
+    for (const p of items) {
+      const vals = new Set(valuesOf(p.meta, key).map(String))
+      if (vals.size === 0) empty++
+      for (const v of vals) counts.set(v, (counts.get(v) ?? 0) + 1)
+    }
+    const all = [...counts].map(([value, count]) => ({ value, count })).sort((a, b) => b.count - a.count || compareCodePoints(a.value, b.value))
+    return { groups: all.slice(0, 1000), empty, truncated: all.length > 1000 }
   }
 
   const parseMeta = (raw: unknown): PageMeta => {
@@ -761,6 +823,7 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     for (const f of inside) folders.delete(f)
     for (const f of inside) addFolder(rename(f))
     book.folderMoved(from, to)
+    viewBook.folderMoved(from, to)
     addFolder(to)
     for (const p of [...pages.values()].filter((x) => isUnder(x.folder, from))) {
       const moved: Stored = { ...p, folder: rename(p.folder) }
@@ -780,6 +843,7 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     for (const p of doomed) remove(p.id)
     for (const f of [...folders]) if (isUnder(f, path)) folders.delete(f)
     book.folderRemoved(path)
+    viewBook.folderRemoved(path)
   }
 
   // Mock only: change a page behind the app's back, as another editor or a
@@ -795,6 +859,13 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
 
   return {
     listPages,
+    groups,
+    views: (folder: string | undefined, tag: string | undefined) => viewBook.get(folder, tag),
+    seedHandWrittenViews: (folder: string, views: Parameters<typeof viewBook.seedHandWritten>[1]) => viewBook.seedHandWritten(folder, views),
+    putViews: (body: Record<string, unknown>) => {
+      guard()
+      return viewBook.put(body)
+    },
     getPage,
     create,
     save,

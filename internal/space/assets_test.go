@@ -24,7 +24,7 @@ func TestAssetIsJournaledBeforeItIsWrittenAndSurvivesACrash(t *testing.T) {
 		t.Fatal(err)
 	}
 	data := []byte("\x89PNG picture")
-	journal := filepath.Join(root, ".petalbook", "cache", "pending.journal")
+	journal := filepath.Join(DefaultStateDir(root), "pending.journal")
 
 	// The record is on disk at the moment the file gets its name.
 	link := s.ops.Link

@@ -400,6 +400,10 @@ func (s *Space) reconcileLocked(ctx context.Context, r *remote) error {
 				r.set(func(st *RemoteStatus) { st.State, st.Kind, st.Error = RemoteError, KindClone, msg })
 				return unavailable(err, "%s", msg)
 			}
+			// A pull may put a link or a file where a folder of .petalbook
+			// belongs: nothing of the server's own is kept there (its state is
+			// in the Git directory), and the settings behind it are read as
+			// restored until a change writes there and puts it right.
 			s.applyDelta(ctx, r, head, tip)
 		case behind == 0:
 			// Commits that were never pushed (a crash). Push them as they are.
@@ -680,7 +684,13 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 		tx := &txn{s: s, by: by, remote: true, parent: parent}
 		res, err := op(tx)
 		if err != nil {
-			s.undoLocked(ctx, r, tx, parent)
+			s.undoLocked(ctx, r, tx, tx.parent)
+			if errors.Is(err, errRemoteMoved) {
+				// A repair the change needed first could not be pushed: it
+				// was taken back, and the change is made again on the new tip.
+				s.log.Info("push rejected, making the change again on the new tip", "attempt", attempt)
+				continue
+			}
 			return zero, err
 		}
 		tx.paths = uniq(tx.paths)
@@ -692,9 +702,10 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 		author, committer := s.cm.git.identities(by)
 		made, err := r.repo.CommitPaths(ctx, tx.paths, commitMessage, author, committer)
 		if err != nil {
-			s.undoLocked(ctx, r, tx, parent)
+			s.undoLocked(ctx, r, tx, tx.parent)
 			return zero, err
 		}
+		s.heal.committed(tx.paths)
 		if !made { // the change netted out to nothing
 			tx.finishBindings()
 			s.cm.clearJournal()
@@ -714,7 +725,7 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 			return res, nil
 		}
 		moved := lerr == nil && r.repo.RemoteTip(ctx, r.branch) != parent
-		s.undoLocked(ctx, r, tx, parent)
+		s.undoLocked(ctx, r, tx, tx.parent)
 		switch {
 		case lerr != nil:
 			return zero, s.netFailure(r, lerr)
@@ -830,6 +841,8 @@ func (s *Space) undoLocked(ctx context.Context, r *remote, tx *txn, parent strin
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	paths := uniq(tx.paths)
+	// What the change wrote is taken back: it is not newer than the history.
+	defer s.heal.committed(paths)
 	settled := map[string]bool{}
 	for i := len(tx.undo) - 1; i >= 0; i-- {
 		for _, p := range tx.undo[i]() {
@@ -1025,10 +1038,6 @@ func (s *Space) Connect(ctx context.Context, o RemoteOptions) error {
 			}
 		}
 	}
-	// The set-up of the space that the server keeps out of Git's way.
-	if err := os.MkdirAll(filepath.Join(s.root, ".petalbook"), 0o755); err == nil {
-		ensureLines(filepath.Join(s.root, ".git", "info", "exclude"), "/.petalbook/tmp/", "/.petalbook/cache/")
-	}
 	head := repo.Head(ctx)
 	if err := repo.WriteLastGood(ctx, o.Branch, head); err != nil {
 		return err
@@ -1070,14 +1079,10 @@ func (s *Space) pristineLocked(ctx context.Context, repo *gitstore.Repo) (bool, 
 // taking a remote's content: when the remote has none, it is made, committed
 // and pushed as part of connecting (never left untracked).
 func (s *Space) ensureConfigLocked(ctx context.Context, r *remote) error {
-	file := filepath.Join(s.root, ".petalbook", "space.yml")
-	if _, err := os.Lstat(file); err == nil {
-		return nil
+	if _, blocked, err := lstatIn(s.root, spaceFile); err == nil || blocked != "" {
+		return nil // there (or behind what is put right with the next change)
 	}
-	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
-		return err
-	}
-	if _, _, err := ensureSpaceConfig(file, s.name); err != nil {
+	if _, _, err := ensureSpaceConfig(s.root, s.name); err != nil {
 		return err
 	}
 	author, committer := s.cm.git.identities(Author{})
@@ -1107,14 +1112,7 @@ func (s *Space) Disconnect() error {
 		return err
 	}
 	s.rem.Store(nil)
-	// Local mode puts its own files in order again.
-	pb := filepath.Join(s.root, ".petalbook")
-	if changed, err := ensureLines(filepath.Join(pb, ".gitignore"), "cache/", "tmp/"); err != nil {
-		s.log.Warn("could not write .petalbook/.gitignore", "error", err)
-	} else if changed {
-		if err := s.cm.Record(Author{}, jrec{Op: "t", Path: ".petalbook/.gitignore"}); err == nil {
-			s.cm.Touch(Author{}, ".petalbook/.gitignore")
-		}
-	}
+	// Nothing of the server's own is in the work tree to put in order: its
+	// state is in the Git directory, in local mode as in this one.
 	return nil
 }

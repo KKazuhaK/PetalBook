@@ -237,7 +237,7 @@ func TestPutTypeChangingAKindKeepsTheOtherKeywords(t *testing.T) {
 	wantInvalid(t, "a field changed to other", err, "other")
 }
 
-func TestTypeFilesThatCannotBeReadAreNotReplaced(t *testing.T) {
+func TestTypeFilesThatCannotBeUsedArePutAsideByTheNextWrite(t *testing.T) {
 	s := open(t)
 	root := s.Root()
 	tooMany := `{"properties":{` + strings.TrimSuffix(strings.Repeat(`"k",`, 0), ",")
@@ -264,27 +264,43 @@ func TestTypeFilesThatCannotBeReadAreNotReplaced(t *testing.T) {
 	}
 	for name, content := range cases {
 		writeType(t, root, "bad", content)
-		_, err := putCurrent(s, "bad", TypeInput{Fields: []FieldInput{{Key: "a", Kind: KindText}}})
-		wantInvalid(t, name, err, "fixed by hand")
-		if got := readType(t, root, "bad"); got != content {
-			t.Errorf("%s: the file was replaced", name)
+		_, err := putCurrent(s, "bad", TypeInput{Fields: []FieldInput{{Key: "a", Kind: KindText}}, Title: name})
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
 		}
 		types, _, err := s.Types()
-		if err != nil || len(types) != 1 || types[0].Name != "bad" || !strings.Contains(types[0].Error, "fixed by hand") || len(types[0].Fields) != 0 {
+		if err != nil || len(types) != 1 || types[0].Name != "bad" || types[0].Error != "" || len(types[0].Fields) != 1 || types[0].Title != name {
 			t.Errorf("%s: listed as %+v %v", name, types, err)
 		}
+		kept := false
+		for _, c := range copiesOf(root, typeSettings("bad")) {
+			kept = kept || readDisk(t, s, c) == content
+		}
+		if !kept {
+			t.Errorf("%s: what the file was is not kept", name)
+		}
 	}
-	// Not a regular file: a folder or a link out of the space.
+	if types, _, _ := s.Types(); len(types) != 1 {
+		t.Errorf("the copies are listed as types: %+v", types)
+	}
+	// Not a regular file: a link out of the space is put aside as a link.
 	os.Remove(typeFile(root, "bad"))
 	outside := filepath.Join(t.TempDir(), "outside.json")
 	os.WriteFile(outside, []byte(`{"properties":{}}`), 0o644)
 	if err := os.Symlink(outside, typeFile(root, "bad")); err != nil {
 		t.Skip("no symbolic links here")
 	}
-	_, err := putCurrent(s, "bad", TypeInput{})
-	wantInvalid(t, "a link", err, "fixed by hand")
+	if _, err := putCurrent(s, "bad", TypeInput{Title: "after the link"}); err != nil {
+		t.Errorf("a link: %v", err)
+	}
 	if b, _ := os.ReadFile(outside); string(b) != `{"properties":{}}` {
 		t.Error("a file outside the space was written through a link")
+	}
+	if fi, err := os.Lstat(typeFile(root, "bad")); err != nil || !fi.Mode().IsRegular() {
+		t.Errorf("the type is not a file of its own: %v", err)
+	}
+	if err := s.Flush(); err != nil {
+		t.Error(err)
 	}
 	// The way out is to delete it.
 	if err := deleteCurrent(s, "bad"); err != nil {
@@ -516,30 +532,66 @@ func TestBindFolderRefusals(t *testing.T) {
 	if after, _ := os.ReadFile(file); !bytes.Equal(before, after) {
 		t.Errorf("the file changed:\n%s\n%s", before, after)
 	}
-	// A settings file that cannot be read is not written over, and no page has
-	// a type from it.
+	// A settings file that cannot be used does not stop a binding: it is made
+	// on the last version that can be used, and what the file was is kept.
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	big := string(append([]byte("name: x\n# "), bytes.Repeat([]byte("x"), maxSpaceFile)...))
+	n := 0
 	for name, content := range map[string]string{
 		"syntax":          "name: x\nfolders: [unclosed\n",
 		"folders a list":  "name: x\nfolders: [a, b]\n",
-		"entry a scalar":  "name: x\nfolders:\n  F: yes\n",
 		"top-level a seq": "- a\n",
+		"too large":       big,
 	} {
 		if err := os.WriteFile(file, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := s.BindFolder(Author{}, "F", "t")
-		wantInvalid(t, name, err, "fixed by hand")
-		if got, _ := os.ReadFile(file); string(got) != content {
-			t.Errorf("%s: the file was replaced:\n%s", name, got)
+		n++
+		g := fmt.Sprintf("G%d", n)
+		mustCreate(t, s, g, meta("title", g), "x\n")
+		if _, err := s.BindFolder(Author{}, g, "t"); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+		if m := bindingMap(s); m["F"] != "t" || m[g] != "t" {
+			t.Errorf("%s: the bindings are %v", name, m)
+		}
+		if got, _ := os.ReadFile(file); string(got) == content {
+			t.Errorf("%s: the file was not put right", name)
+		}
+		kept := false
+		for _, c := range copiesOf(s.Root(), spaceSettings) {
+			kept = kept || readDisk(t, s, c) == content
+		}
+		if !kept {
+			t.Errorf("%s: what the file was is not kept", name)
+		}
+		if err := s.Flush(); err != nil {
+			t.Fatal(err)
 		}
 	}
-	// A settings file that is too large is left alone as well.
-	big := append([]byte("name: x\n# "), bytes.Repeat([]byte("x"), maxSpaceFile)...)
-	os.WriteFile(file, big, 0o644)
-	_, err = s.BindFolder(Author{}, "F", "t")
-	wantInvalid(t, "too large", err, "fixed by hand")
-	if bs := s.Bindings(); len(bs) != 0 {
-		t.Errorf("%+v", bs)
+	// An entry that is not a list of settings reads as none, and is written
+	// over by the binding; the file as it was is kept.
+	content := "name: x\nfolders:\n  F: yes\n"
+	if err := os.WriteFile(file, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Bindings()) != 0 {
+		t.Errorf("%v", s.Bindings())
+	}
+	if _, err = s.BindFolder(Author{}, "F", "t"); err != nil {
+		t.Errorf("entry a scalar: %v", err)
+	}
+	if m := bindingMap(s); m["F"] != "t" {
+		t.Errorf("%v", m)
+	}
+	kept := false
+	for _, c := range copiesOf(s.Root(), spaceSettings) {
+		kept = kept || readDisk(t, s, c) == content
+	}
+	if !kept {
+		t.Error("what the file was is not kept")
 	}
 }
 

@@ -12,6 +12,11 @@
 #                "petalbook user add"; the tests sign in with them and use the
 #                first space from GET /api/spaces.
 #
+# With PETALBOOK_CONTRACT_ACCOUNTS_ONLY set only the accounts-mode run is made,
+# and the servers (and "petalbook user add") take their state database from
+# PETALBOOK_DATABASE when that is set; scripts/contract-postgres.sh uses this to
+# run against PostgreSQL.
+#
 # Usage: scripts/contract.sh [path-to-binary]
 set -euo pipefail
 
@@ -62,16 +67,17 @@ wait_ready() {
 }
 
 # --- single-user ---------------------------------------------------------------
-
-echo "contract tests: single-user server" >&2
-mkdir "$work/space"
-name="contract-$$-$RANDOM" # a space name only this run knows
-log="$work/single.log"
-"$bin" serve --space "$work/space" --state-dir "$work/state" --name "$name" --listen "127.0.0.1:$port" >"$log" 2>&1 &
-pid=$!
-wait_ready "$log" sh -c "curl -fsS 'http://127.0.0.1:$port/api/meta' | grep -q '\"$name\"'"
-PETALBOOK_API="http://127.0.0.1:$port" npm --prefix web run --silent test:contract
-stop_server
+if [ -z "${PETALBOOK_CONTRACT_ACCOUNTS_ONLY:-}" ]; then
+  echo "contract tests: single-user server" >&2
+  mkdir "$work/space"
+  name="contract-$$-$RANDOM" # a space name only this run knows
+  log="$work/single.log"
+  "$bin" serve --space "$work/space" --state-dir "$work/state" --name "$name" --listen "127.0.0.1:$port" >"$log" 2>&1 &
+  pid=$!
+  wait_ready "$log" sh -c "curl -fsS 'http://127.0.0.1:$port/api/meta' | grep -q '\"$name\"'"
+  PETALBOOK_API="http://127.0.0.1:$port" npm --prefix web run --silent test:contract
+  stop_server
+fi
 
 # --- accounts ------------------------------------------------------------------
 

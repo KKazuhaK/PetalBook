@@ -59,8 +59,13 @@ type Query struct {
 	Filters []Filter
 	// Props asks for the properties and the rev of every page in the summaries.
 	Props bool
-	Sort  string // "", updated, created, title, prop:<key>; a leading "-" reverses
-	Limit int    // 1-200, default 50
+	// PropOptions, with a sort by a property, puts the pages in the order of
+	// these options (the options of a select or multiselect field) instead of
+	// the order of the text: the options in turn, then the other values by
+	// text, then the pages without a value. Empty: the order of the text.
+	PropOptions []string
+	Sort        string // "", updated, created, title, prop:<key>; a leading "-" reverses
+	Limit       int    // 1-200, default 50
 	// Cursor is Result.Next of the previous page.
 	Cursor string
 }
@@ -82,10 +87,11 @@ const (
 type cursor struct {
 	Sort string `json:"s"`
 	Off  int    `json:"o,omitempty"`
-	G    int    `json:"g,omitempty"` // prop sorts: 1 once the pages without the property are being listed
+	G    int    `json:"g,omitempty"` // prop sorts: 1 once the pages without the property are being listed; in an option order, the group
 	M    int64  `json:"m,omitempty"` // mtime_ns
 	C    int64  `json:"c,omitempty"` // created_key
 	U    int    `json:"u,omitempty"` // untitled
+	N    int    `json:"n,omitempty"` // option-order prop sorts: the number of options plus one
 	T    string `json:"t,omitempty"` // title_key; skey in a prop sort
 	R    int64  `json:"r,omitempty"` // rowid
 }
@@ -110,10 +116,14 @@ type sortKey struct {
 	desc bool
 }
 
-// List returns pages matching q. Cost: with a folder or tag filter or none, it
-// walks an index in sort order and stops after limit rows; with Text it is
-// bounded by the number of matching pages (ranking), which is the one
-// O(matches) case; sorting by title descending walks its own index.
+// List returns pages matching q. Cost: with no condition but a folder and the
+// order of time of writing, or none at all, it walks the index of the order
+// and stops after limit rows. With tags, filters, dates, a recursive folder or
+// an order by a property it is read in the cheapest of three ways (plan.go):
+// from the smallest condition, by a bounded walk of the order, or as the
+// intersection of the conditions' index ranges, whose cost is the size of
+// those ranges and not the number of pages looked up. With Text and no sort it
+// is bounded by the number of matching pages (ranking).
 func (x *Index) List(q Query) (Result, error) {
 	limit := q.Limit
 	if limit == 0 {
@@ -162,70 +172,96 @@ func (x *Index) List(q Query) (Result, error) {
 		cur = &c
 	}
 
-	var (
-		from  = `FROM pages p`
-		where []string
-		args  []any
-	)
 	if err := checkFilters(q.Filters); err != nil {
 		return Result{}, err
 	}
-	if searching {
-		if relevance {
-			from = `FROM fts JOIN pages p ON p.rowid = fts.rowid`
-			where = append(where, `fts MATCH ?`)
-		} else {
-			where = append(where, `p.rowid IN (SELECT rowid FROM fts WHERE fts MATCH ?)`)
+	conds := conditions(q.Folder, q.Recursive, q.Tags, q.Filters)
+	if q.UpdatedFrom != 0 || q.UpdatedTo != 0 {
+		c := cond{sets: []pageSet{{sql: `SELECT rowid AS id FROM pages WHERE 1 = 1`}}}
+		var w []string
+		if q.UpdatedFrom != 0 {
+			w, c.args = append(w, `p.mtime_ns >= ?`), append(c.args, q.UpdatedFrom)
+			c.sets[0].sql += ` AND mtime_ns >= ?`
 		}
-		args = append(args, match)
-	}
-	if q.Folder != nil {
-		f := *q.Folder
-		switch {
-		case !q.Recursive:
-			where = append(where, `p.folder = ?`)
-			args = append(args, f)
-		case f != "":
-			// Subfolders are the range "f/" .. "f0" ('0' follows '/'), which
-			// the (folder, mtime) index can serve.
-			where = append(where, `(p.folder = ? OR (p.folder >= ? AND p.folder < ?))`)
-			args = append(args, f, f+"/", f+"0")
+		if q.UpdatedTo != 0 {
+			w, c.args = append(w, `p.mtime_ns < ?`), append(c.args, q.UpdatedTo)
+			c.sets[0].sql += ` AND mtime_ns < ?`
 		}
-	}
-	for _, t := range q.Tags {
-		where = append(where, `EXISTS (SELECT 1 FROM tags t WHERE t.page = p.rowid AND t.tag = ?)`)
-		args = append(args, t)
-	}
-	if q.UpdatedFrom != 0 {
-		where = append(where, `p.mtime_ns >= ?`)
-		args = append(args, q.UpdatedFrom)
-	}
-	if q.UpdatedTo != 0 {
-		where = append(where, `p.mtime_ns < ?`)
-		args = append(args, q.UpdatedTo)
+		c.where, c.sets[0].args = strings.Join(w, ` AND `), c.args
+		conds = append(conds, c)
 	}
 	// `created` holds a date or nothing; dates in this form compare as text.
 	if q.CreatedFrom != "" || q.CreatedTo != "" {
-		where = append(where, `p.created <> ''`)
+		c := cond{where: `p.created <> ''`}
+		// The index is of created_key, which for a page with a date is that
+		// date, and for one without is something else: its range holds the
+		// pages that match and maybe others, so it is a place to start only.
+		lead := pageSet{sql: `SELECT rowid AS id FROM pages WHERE 1 = 1`}
+		for _, b := range []struct{ day, op string }{{q.CreatedFrom, `>=`}, {q.CreatedTo, `<=`}} {
+			if b.day == "" {
+				continue
+			}
+			c.where += ` AND p.created ` + b.op + ` ?`
+			c.args = append(c.args, b.day)
+			if t, err := time.Parse("2006-01-02", b.day); err == nil && lead.sql != "" {
+				lead.sql += ` AND created_key ` + b.op + ` ?`
+				lead.args = append(lead.args, t.UnixNano())
+			} else {
+				lead.sql = ""
+			}
+		}
+		if lead.sql != "" {
+			c.lead = &lead
+		}
+		conds = append(conds, c)
 	}
-	if q.CreatedFrom != "" {
-		where = append(where, `p.created >= ?`)
-		args = append(args, q.CreatedFrom)
+	if relevance {
+		return x.listDirect(q, limit, sortName, nil, cur, match, conds)
 	}
-	if q.CreatedTo != "" {
-		where = append(where, `p.created <= ?`)
-		args = append(args, q.CreatedTo)
-	}
-
-	for _, f := range q.Filters {
-		cond, cargs := f.sql()
-		where = append(where, cond)
-		args = append(args, cargs...)
-	}
+	o := &ordering{name: sortName, keys: order, key: propKey, desc: propDesc}
 	if byProp {
-		return x.listByProp(q, limit, propKey, propDesc, sortName, cur, where, args)
+		o.opts = q.PropOptions
 	}
+	// The order of time of writing inside one folder is an index of its own.
+	inFolder := q.Folder != nil && !q.Recursive && strings.TrimPrefix(sortName, "-") == "updated"
+	if inFolder {
+		o.folder = q.Folder
+	}
+	if !byProp && !searching && (len(conds) == 0 || (len(conds) == 1 && inFolder)) {
+		// Nothing to look up: the walk of the index is the listing.
+		return x.listDirect(q, limit, sortName, order, cur, "", conds)
+	}
+	if searching {
+		// The words of a search are a set of pages like any other condition,
+		// but finding them is not a lookup by page: they are read once.
+		conds = append([]cond{{where: `p.rowid IN (SELECT rowid FROM fts WHERE fts MATCH ?)`, args: []any{match},
+			sets: []pageSet{{sql: `SELECT rowid AS id FROM fts WHERE fts MATCH ?`, args: []any{match}}}}}, conds...)
+	}
+	// The queries of the listing all read one snapshot (read.go).
+	r, err := x.begin()
+	if err != nil {
+		return Result{}, err
+	}
+	defer r.end()
+	return r.listPlanned(q, limit, o, cur, conds, searching)
+}
 
+// listDirect reads a page of a listing as one query: the index of the order
+// is walked and each row checked. It is for a listing with no condition but
+// the one its index holds (the cost is the page), and for a search in order
+// of relevance, whose cost is the number of pages that match the words.
+func (x *Index) listDirect(q Query, limit int, sortName string, order []sortKey, cur *cursor, match string, conds []cond) (Result, error) {
+	relevance := order == nil
+	from := `FROM pages p`
+	var where []string
+	var args []any
+	if relevance {
+		from = `FROM fts JOIN pages p ON p.rowid = fts.rowid`
+		where, args = append(where, `fts MATCH ?`), append(args, match)
+	}
+	if w, a := whereOf(conds); w != "" {
+		where, args = append(where, w), append(args, a...)
+	}
 	var orderBy string
 	offset := 0
 	if relevance {
@@ -257,17 +293,29 @@ func (x *Index) List(q Query) (Result, error) {
 		args = append(args, offset)
 	}
 
-	rows, err := x.db.Query(query, args...)
+	res := Result{Items: []Summary{}}
+	err := x.one(func(db querier) error { // one query, read like the others (read.go)
+		rows, err := db.Query(query, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		return res.fill(rows, q.Props, limit, relevance, offset, sortName)
+	})
 	if err != nil {
 		return Result{}, err
 	}
-	defer rows.Close()
-	res := Result{Items: []Summary{}}
+	return res, nil
+}
+
+// fill reads the rows of a listing of one query into res: limit of them, and
+// the cursor of the next page when there is one more.
+func (res *Result) fill(rows *sql.Rows, props bool, limit int, relevance bool, offset int, sortName string) error {
 	var last cursor
 	for rows.Next() {
-		s, rowid, mtime, ckey, untitled, titleKey, err := scanSummary(rows, q.Props)
+		s, rowid, mtime, ckey, untitled, titleKey, err := scanSummary(rows, props)
 		if err != nil {
-			return Result{}, err
+			return err
 		}
 		if len(res.Items) == limit {
 			// One more row than asked for: there is a next page.
@@ -282,7 +330,7 @@ func (x *Index) List(q Query) (Result, error) {
 		last = cursor{M: mtime, C: ckey, U: untitled, T: titleKey, R: rowid}
 		res.Items = append(res.Items, s)
 	}
-	return res, rows.Err()
+	return rows.Err()
 }
 
 // selectCols are the columns of a summary, in the order scanSummary reads them.
@@ -411,20 +459,26 @@ type FolderCount struct {
 // Tree returns every known folder, empty ones included. Cost: O(folders), each
 // count served by the (folder, mtime) index.
 func (x *Index) Tree() ([]FolderCount, error) {
-	rows, err := x.db.Query(`SELECT f.path, (SELECT count(*) FROM pages p WHERE p.folder = f.path) FROM folders f ORDER BY f.path`)
+	out := []FolderCount{}
+	err := x.one(func(db querier) error { // one query, read like the others (read.go)
+		rows, err := db.Query(`SELECT f.path, (SELECT count(*) FROM pages p WHERE p.folder = f.path) FROM folders f ORDER BY f.path`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var f FolderCount
+			if err := rows.Scan(&f.Path, &f.Pages); err != nil {
+				return err
+			}
+			out = append(out, f)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []FolderCount{}
-	for rows.Next() {
-		var f FolderCount
-		if err := rows.Scan(&f.Path, &f.Pages); err != nil {
-			return nil, err
-		}
-		out = append(out, f)
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // TagCount is a tag with the number of pages using it.
@@ -436,24 +490,32 @@ type TagCount struct {
 // Tags returns every tag by use, most used first. Cost: O(tag assignments),
 // measured at 15 ms for 50,000 pages in spikes/search-scale.
 func (x *Index) Tags() ([]TagCount, error) {
-	rows, err := x.db.Query(`SELECT tag, count(*) AS n FROM tags GROUP BY tag ORDER BY n DESC, tag`)
+	out := []TagCount{}
+	err := x.one(func(db querier) error { // one query, read like the others (read.go)
+		rows, err := db.Query(`SELECT tag, count(*) AS n FROM tags GROUP BY tag ORDER BY n DESC, tag`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var t TagCount
+			if err := rows.Scan(&t.Tag, &t.Pages); err != nil {
+				return err
+			}
+			out = append(out, t)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []TagCount{}
-	for rows.Next() {
-		var t TagCount
-		if err := rows.Scan(&t.Tag, &t.Pages); err != nil {
-			return nil, err
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // Count returns the number of indexed pages.
 func (x *Index) Count() (n int, err error) {
-	err = x.db.QueryRow(`SELECT count(*) FROM pages`).Scan(&n)
+	err = x.one(func(db querier) error { // one query, read like the others (read.go)
+		return db.QueryRow(`SELECT count(*) FROM pages`).Scan(&n)
+	})
 	return
 }

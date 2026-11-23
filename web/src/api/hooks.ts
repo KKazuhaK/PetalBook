@@ -2,14 +2,14 @@
 
 import { useMemo } from 'react'
 import { useMatch } from 'react-router'
-import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery, useIsMutating, useMutation, useQuery, useQueryClient, type Query, type QueryClient } from '@tanstack/react-query'
 import { waitForSaves } from '@/editor/saveController'
 import { spaceUrls } from '@/lib/urls'
 import { api, ApiError, spaceApi } from './client'
 import { parseTagColor } from '../lib/tagColors.ts'
 import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
 import { propsOfMeta } from '../lib/pageTypes.ts'
-import type { BatchPagesInput, ConnectRemoteInput, CreatePageInput, ListParams, Member, Page, PageList, PatchPropsInput, Permission, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User } from './types'
+import type { BatchPagesInput, ConnectRemoteInput, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, PutViewsInput, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
 
 // Everything of one space is under ['space', id, …], so switching space never
 // shows another space's data and one invalidation covers a space.
@@ -34,6 +34,14 @@ export const keys = {
   // ask for less, and which an edit of a cell does not read again.
   table: (space: string, params: ListParams) => ['space', space, 'pages', 'table', params] as const,
   list: (space: string, params: ListParams) => ['space', space, 'pages', 'list', params] as const,
+  // The saved views of a folder or a tag.
+  views: (space: string, scope: ViewScope) => ['space', space, 'views', scope] as const,
+  // A board's counts and the cards of one of its columns; under `pages`, so a write of a page reads them again.
+  groups: (space: string, params: GroupsParams) => ['space', space, 'pages', 'groups', params] as const,
+  column: (space: string, params: ListParams) => ['space', space, 'pages', 'board', params] as const,
+  // Continuous reading: outside `pages`, since reading again every batch loaded (they hold whole texts) for each
+  // change somewhere would be heavy; it is a snapshot that is taken afresh when the reading is opened.
+  reading: (space: string, params: ListParams) => ['space', space, 'reading', params] as const,
   page: (space: string, id: string) => ['space', space, 'page', id] as const,
   history: (space: string, id: string) => ['space', space, 'history', id, 'list'] as const,
   version: (space: string, id: string, commit: string) => ['space', space, 'history', id, 'version', commit] as const,
@@ -45,6 +53,10 @@ export const PAGE_SIZE = 50
 // The table view reads its rows in batches of this many.
 export const TABLE_PAGE_SIZE = 100
 export const HISTORY_PAGE_SIZE = 30
+// A column of a board is read this many cards at a time.
+export const BOARD_PAGE_SIZE = 20
+// Continuous reading takes the most the server gives with the bodies.
+export const READING_PAGE_SIZE = 20
 
 export const syncOf = (s: SpaceInfo | undefined): SyncState => s?.sync ?? 'local'
 
@@ -381,7 +393,8 @@ export function useMoveFolder() {
   const space = useSpaceId()
   return useMutation({
     mutationFn: ({ from, to }: { from: string; to: string }) => spaceApi(space).moveFolder(from, to),
-    onSuccess: () => invalidateListings(qc, space),
+    // The views of a folder go with it.
+    onSuccess: () => Promise.all([invalidateListings(qc, space), qc.invalidateQueries({ queryKey: ['space', space, 'views'] })]),
   })
 }
 
@@ -390,7 +403,7 @@ export function useDeleteFolder() {
   const space = useSpaceId()
   return useMutation({
     mutationFn: ({ path, recursive }: { path: string; recursive?: boolean }) => spaceApi(space).deleteFolder(path, recursive),
-    onSuccess: () => invalidateListings(qc, space),
+    onSuccess: () => Promise.all([invalidateListings(qc, space), qc.invalidateQueries({ queryKey: ['space', space, 'views'] })]),
   })
 }
 
@@ -631,11 +644,37 @@ function withPartial<T extends { partialProps?: string[] }>(row: T, partial: str
 // it, without reading anything again (a table of thousands of rows is not
 // refetched for one cell).
 export function putTableRow(qc: QueryClient, space: string, page: Page) {
-  qc.setQueriesData<{ pages: PageList[]; pageParams: unknown[] }>({ queryKey: [...keys.pages(space), 'table'] }, (prev) => {
+  const put = (prev: { pages: PageList[]; pageParams: unknown[] } | undefined) => {
     if (!prev || !prev.pages.some((p) => p.items.some((i) => i.id === page.id))) return prev
     return {
       ...prev,
       pages: prev.pages.map((p) => ({ ...p, items: p.items.map((i) => (i.id === page.id ? withPartial({ ...i, props: propsOfMeta(page.meta), rev: page.rev, updated: page.updated }, page.partialProps) : i)) })),
+    }
+  }
+  // The cards of a board hold the same rows (with their props) as the table does.
+  for (const part of ['table', 'board']) qc.setQueriesData<{ pages: PageList[]; pageParams: unknown[] }>({ queryKey: [...keys.pages(space), part] }, put)
+}
+
+// Whether a loaded column of a board can be changed by the patch: it holds the page, or its filters would now pick it.
+// What the filters of a column cannot be told to exclude is taken to be affected.
+function columnAffected(q: Query, id: string, input: PatchPropsInput): boolean {
+  const data = q.state.data as { pages: PageList[] } | undefined
+  if (data?.pages.some((p) => p.items.some((i) => i.id === id))) return true
+  const params = q.queryKey[4] as ListParams | undefined
+  const set = input.set ?? {}
+  const keysChanged = new Set([...Object.keys(set), ...(input.unset ?? [])])
+  return (params?.filter ?? []).some((f) => {
+    if (!keysChanged.has(f.key)) return false
+    const now = f.key in set ? String(set[f.key]) : undefined
+    switch (f.op) {
+      case 'in':
+        return now !== undefined && (f.values ?? []).map(String).includes(now)
+      case 'notIn':
+        return now !== undefined && !(f.values ?? []).map(String).includes(now)
+      case 'empty':
+        return now === undefined
+      default:
+        return true
     }
   })
 }
@@ -647,12 +686,165 @@ export function usePatchProps() {
   const space = useSpaceId()
   return useMutation({
     mutationFn: ({ id, ...input }: { id: string } & PatchPropsInput) => spaceApi(space).patchProps(id, input),
-    onSuccess: (page) => {
+    onSuccess: (page, input) => {
       putTableRow(qc, space, page)
       void qc.invalidateQueries({ queryKey: [...keys.pages(space), 'list'] })
+      // A card that changed its column: the column it left and the one it joined are read again, and the counts.
+      void qc.invalidateQueries({ queryKey: [...keys.pages(space), 'board'], predicate: (q) => columnAffected(q, page.id, input) })
+      // The counts of the column heads change only when the property they count by, or one they filter by, was changed.
+      const changed = new Set([...Object.keys(input.set ?? {}), ...(input.unset ?? [])])
+      void qc.invalidateQueries({
+        queryKey: [...keys.pages(space), 'groups'],
+        predicate: (q) => {
+          const p = q.queryKey[4] as GroupsParams | undefined
+          return !p || changed.has(p.key) || (p.filter ?? []).some((f) => changed.has(f.key))
+        },
+      })
     },
     onError: (e) => {
-      if (e instanceof ApiError && e.code === 'conflict' && e.current) putTableRow(qc, space, e.current)
+      if (e instanceof ApiError && e.code === 'conflict' && e.current) {
+        putTableRow(qc, space, e.current)
+        void qc.invalidateQueries({ queryKey: [...keys.pages(space), 'board'] })
+        void qc.invalidateQueries({ queryKey: [...keys.pages(space), 'groups'] })
+      }
     },
+  })
+}
+
+// --- saved views ---------------------------------------------------------------------
+
+// The views of a folder or a tag. Anyone who may read asks; only a writer saves.
+export function useViews(scope: ViewScope | null) {
+  const space = useSpaceId()
+  const { read } = useSpacePermissions()
+  return useQuery({
+    queryKey: keys.views(space, scope ?? { folder: '' }),
+    queryFn: ({ signal }) => spaceApi(space).views(scope!, signal),
+    enabled: scope !== null && space !== '' && read,
+    staleTime: 15_000,
+  })
+}
+
+// What a write of the views of one folder or tag is known by: while one is on its way, the page takes nothing in and
+// lets nothing be changed (see useWorkingCopy).
+export const viewsWriteKey = (space: string, scope: ViewScope) => ['saveViews', space, scope] as const
+
+// Whether a write of these views is on its way (also one started before the page was opened again).
+export function useViewsBusy(scope: ViewScope | null) {
+  const space = useSpaceId()
+  return useIsMutating({ mutationKey: viewsWriteKey(space, scope ?? { folder: '' }) }) > 0 && scope !== null
+}
+
+// How long the person's own write of the views, and the read made after it, may take before it is called off (a
+// connection that hangs must not keep the tabs off); and how the views are read again in the background when that read
+// did not come: `retries` times, the first after `retryMs`, each wait twice the one before. Tests shorten them.
+export const viewsTiming = { timeoutMs: 20_000, retryMs: 1_000, retries: 5 }
+
+// The views read again after a write of the person's (with or without an answer): a read on its way is called off
+// first (it may have been served before the write), so what arrives from then on was served after it. When the read
+// does not come and the write was answered, the answer is the views as they are now: it is newer than what the cache
+// has, unless a read made after it arrived meanwhile. Gives what went wrong with the read, or null.
+async function readViewsAfter(qc: QueryClient, space: string, scope: ViewScope, answer: ViewList | null): Promise<unknown> {
+  const key = keys.views(space, scope)
+  await qc.cancelQueries({ queryKey: key })
+  const count = qc.getQueryState(key)?.dataUpdateCount ?? 0
+  try {
+    qc.setQueryData(key, await spaceApi(space).views(scope, AbortSignal.timeout(viewsTiming.timeoutMs)))
+    return null
+  } catch (e) {
+    if (answer && (qc.getQueryState(key)?.dataUpdateCount ?? 0) === count) qc.setQueryData(key, answer)
+    return e
+  }
+}
+
+// Reads the views again in the background, a few times with growing waits, until a read arrives. Never while a write
+// of these views is on its way (it reads after itself, and calls off a read on its way); not at all when nothing shows
+// these views any more (they are marked stale, and read when shown).
+function readViewsLater(qc: QueryClient, space: string, scope: ViewScope, attempt = 0) {
+  if (attempt >= viewsTiming.retries) return
+  setTimeout(() => {
+    void (async () => {
+      const key = keys.views(space, scope)
+      if (qc.isMutating({ mutationKey: viewsWriteKey(space, scope) }) > 0) return
+      const before = qc.getQueryState(key)?.dataUpdateCount ?? 0
+      await qc.invalidateQueries({ queryKey: key, exact: true })
+      if ((qc.getQueryState(key)?.dataUpdateCount ?? 0) > before) return
+      if (!qc.getQueryCache().find({ queryKey: key, exact: true })?.isActive()) return
+      readViewsLater(qc, space, scope, attempt + 1)
+    })()
+  }, viewsTiming.retryMs * 2 ** attempt)
+}
+
+// What a write of the views gives: the answer, and what went wrong with the read made after it (null: none). When that
+// read did not come, the answer is in the cache as the views (see readViewsAfter), and they are read again later.
+export interface ViewsWritten {
+  list: ViewList
+  readFailed: unknown
+}
+
+// Replaces the whole list. Exclusive and short: a read of the views on its way is called off first (its answer could
+// come after the write's), and when the answer is there (or a refusal, or no answer at all) the views are read again;
+// the write settles once they are, or once that read failed or ran out of time. Either way the cache then has the views
+// as they are after the write, as far as is known. The write and that read each have `viewsTiming.timeoutMs`; a write
+// that ran out of time may have been made or not (and may still be), so the views are read again later too.
+export function useSaveViews(scope: ViewScope) {
+  const qc = useQueryClient()
+  const space = useSpaceId()
+  return useMutation({
+    mutationKey: viewsWriteKey(space, scope),
+    mutationFn: async (input: PutViewsInput): Promise<ViewsWritten> => {
+      await qc.cancelQueries({ queryKey: keys.views(space, scope) })
+      let list: ViewList
+      try {
+        list = await spaceApi(space).putViews(scope, input, AbortSignal.timeout(viewsTiming.timeoutMs))
+      } catch (e) {
+        // No answer from the server at all (no connection, or out of time): whether it wrote is not known.
+        const unknown = !(e instanceof ApiError) || e.status === 0
+        const readFailed = await readViewsAfter(qc, space, scope, null)
+        if (readFailed !== null || unknown) readViewsLater(qc, space, scope)
+        throw e
+      }
+      const readFailed = await readViewsAfter(qc, space, scope, list)
+      if (readFailed !== null) readViewsLater(qc, space, scope)
+      return { list, readFailed }
+    },
+  })
+}
+
+// --- board and reading ---------------------------------------------------------------
+
+// How many pages hold each value of a property, for the heads of a board's columns.
+export function useGroups(params: GroupsParams, enabled = true) {
+  const space = useSpaceId()
+  return useQuery({ queryKey: keys.groups(space, params), queryFn: ({ signal }) => spaceApi(space).groups(params, signal), enabled: enabled && space !== '', staleTime: 10_000, placeholderData: keepPreviousData })
+}
+
+// One column of a board: its cards, twenty at a time.
+export function useBoardColumn(params: Omit<ListParams, 'cursor' | 'limit' | 'props'>, enabled = true) {
+  const space = useSpaceId()
+  const full = { ...params, props: true }
+  return useInfiniteQuery({
+    enabled: enabled && space !== '',
+    queryKey: keys.column(space, full),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => spaceApi(space).listPages({ ...full, limit: BOARD_PAGE_SIZE, cursor: pageParam || undefined }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    staleTime: 10_000,
+  })
+}
+
+// The pages of continuous reading, with their texts, a batch at a time.
+export function useReadingPages(params: Omit<ListParams, 'cursor' | 'limit' | 'body'>, enabled = true) {
+  const space = useSpaceId()
+  const full = { ...params, body: true }
+  return useInfiniteQuery({
+    enabled: enabled && space !== '',
+    queryKey: keys.reading(space, full),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => spaceApi(space).listPages({ ...full, limit: READING_PAGE_SIZE, cursor: pageParam || undefined }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    gcTime: 0,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
   })
 }

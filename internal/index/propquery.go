@@ -11,6 +11,8 @@ import (
 // Filter keeps the pages whose property Key matches. Op is one of:
 //
 //	in        the property equals one of Values (a list property: holds one of them)
+//	notIn     the page has a value for the property and none of them is one of
+//	          Values (a board's "other values" column: not empty, not an option)
 //	range     Values is [from, to], either end null or "" for none; numbers or
 //	          dates (text); a list property matches when an element is in the range
 //	empty     the page has no value for the property
@@ -31,15 +33,23 @@ type Filter struct {
 }
 
 const (
-	maxFilters      = 10
-	maxFilterValues = 100
+	// MaxViewFilters is the most filters a saved view has. A listing takes one
+	// more (maxFilters): a board's column adds its own condition to the view's.
+	MaxViewFilters = 10
+	maxFilters     = MaxViewFilters + 1
+	// maxFilterValues is the most values of an in or notIn filter: as many as a
+	// select field has options, so that a board's "other values" column can
+	// exclude them all.
+	maxFilterValues = 500
 	maxFilterKey    = 256
 )
 
 // checkFilters validates the filters and prepares them for use.
-func checkFilters(fs []Filter) error {
-	if len(fs) > maxFilters {
-		return invalid("at most %d filters", maxFilters)
+func checkFilters(fs []Filter) error { return checkFiltersMax(fs, maxFilters) }
+
+func checkFiltersMax(fs []Filter, max int) error {
+	if len(fs) > max {
+		return invalid("at most %d filters", max)
 	}
 	for i := range fs {
 		f := &fs[i]
@@ -48,14 +58,14 @@ func checkFilters(fs []Filter) error {
 		}
 		f.vals, f.lo, f.hi = nil, nil, nil
 		switch f.Op {
-		case "in":
+		case "in", "notIn":
 			if len(f.Values) == 0 || len(f.Values) > maxFilterValues {
-				return invalid("an in filter needs 1 to %d values", maxFilterValues)
+				return invalid("an %s filter needs 1 to %d values", f.Op, maxFilterValues)
 			}
 			for _, v := range f.Values {
 				t, ok := valText(v)
 				if !ok {
-					return invalid("the values of an in filter must be text, numbers or true/false")
+					return invalid("the values of an %s filter must be text, numbers or true/false", f.Op)
 				}
 				f.vals = append(f.vals, t)
 			}
@@ -99,7 +109,7 @@ func checkFilters(fs []Filter) error {
 			}
 			f.vals = []string{asciiLower(t)}
 		default:
-			return invalid("unknown filter op %q (use in, range, empty, notEmpty or contains)", f.Op)
+			return invalid("unknown filter op %q (use in, notIn, range, empty, notEmpty or contains)", f.Op)
 		}
 	}
 	return nil
@@ -175,7 +185,9 @@ func boundKey(v any) (kind, key string, open, ok bool) {
 	return "", "", false, false
 }
 
-// sql is the condition on the page row p that the filter stands for.
+// sql is the condition on the page row p that the filter stands for. The
+// plus before f.val (and f.skey) keeps the props_val and props_skey indexes
+// out of the subquery: it is a lookup by (page, key), once per page in scope.
 func (f Filter) sql() (string, []any) {
 	const has = `EXISTS (SELECT 1 FROM props f WHERE f.page = p.rowid AND f.key = ?`
 	switch f.Op {
@@ -185,15 +197,20 @@ func (f Filter) sql() (string, []any) {
 		for _, v := range f.vals {
 			args = append(args, v)
 		}
-		return has + ` AND f.val IN (` + marks + `))`, args
+		return has + ` AND +f.val IN (` + marks + `))`, args
+	case "notIn":
+		// One lookup of the page's rows of the property: no row, nothing
+		// (NULL); a row whose value is on the list, 1; otherwise 0.
+		args := anys(f.vals)
+		return `(SELECT max(+f.val IN (` + marks(len(f.vals)) + `)) FROM props f WHERE f.page = p.rowid AND f.key = ?) = 0`, append(args, f.Key)
 	case "range":
 		cond, args := has, []any{f.Key}
 		if f.lo != nil {
-			cond += ` AND f.skey >= ?`
+			cond += ` AND +f.skey >= ?` // the plus keeps props_skey out of it: a lookup by (page, key) is what this needs
 			args = append(args, *f.lo)
 		}
 		if f.hi != nil {
-			cond += ` AND f.skey <= ?`
+			cond += ` AND +f.skey <= ?`
 			args = append(args, *f.hi)
 		}
 		return cond + `)`, args
@@ -202,8 +219,45 @@ func (f Filter) sql() (string, []any) {
 	case "notEmpty":
 		return has + `)`, []any{f.Key}
 	default: // contains
-		return has + ` AND instr(lower(f.val), ?) > 0)`, []any{f.Key, f.vals[0]}
+		return has + ` AND +f.val LIKE ? ESCAPE '\')`, []any{f.Key, likePattern(f.vals[0])}
 	}
+}
+
+// likePattern is the pattern of LIKE that matches the texts that contain s.
+// LIKE takes the ASCII letters in either case and every other character as it
+// is written, which is what contains promises; and unlike lower() it does not
+// make a copy of every value it looks at.
+func likePattern(s string) string {
+	var b strings.Builder
+	b.WriteByte('%')
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c == '%' || c == '_' || c == '\\' {
+			b.WriteByte('\\')
+		}
+		b.WriteByte(s[i])
+	}
+	b.WriteByte('%')
+	return b.String()
+}
+
+// CheckFilters validates filters the way a listing does, for a caller that
+// stores them (a saved view).
+func CheckFilters(fs []Filter) error {
+	cp := append([]Filter(nil), fs...)
+	return checkFiltersMax(cp, MaxViewFilters)
+}
+
+// ValidSort reports whether name is a sort a listing accepts: "", updated,
+// created, title or prop:<key>, each with an optional leading -.
+func ValidSort(name string) error {
+	if name == "" {
+		return nil
+	}
+	if _, _, byProp, err := propSort(name); err != nil || byProp {
+		return err
+	}
+	_, err := sortKeys(name)
+	return err
 }
 
 // propSort reads a sort name of the form prop:<key>, with a leading - to
@@ -218,100 +272,4 @@ func propSort(name string) (key string, desc, byProp bool, err error) {
 		return "", false, false, invalid("sort=prop: needs the key of a property")
 	}
 	return key, rest != name, true, nil
-}
-
-// listByProp lists the pages sorted by the first value of a property: those
-// that have one, in the order of the values, then those that have none, by
-// rowid. The two groups are read one after the other (the cursor says which
-// is being read) so that each is an index range scan that stops at the limit:
-// no sort of the folder's pages, however many there are.
-func (x *Index) listByProp(q Query, limit int, key string, desc bool, sortName string, cur *cursor, where []string, args []any) (Result, error) {
-	res := Result{Items: []Summary{}}
-	phase := 0
-	if cur != nil {
-		phase = cur.G
-		if phase != 0 && phase != 1 {
-			return Result{}, invalid("bad cursor")
-		}
-	}
-	var last cursor
-	if phase == 0 {
-		d := ""
-		op := ">"
-		if desc {
-			d, op = " DESC", "<"
-		}
-		w := append([]string{`s.key = ?`, `s.pos = 0`}, where...)
-		a := append([]any{key}, args...)
-		if cur != nil {
-			w = append(w, `(s.skey, s.page) `+op+` (?, ?)`)
-			a = append(a, cur.T, cur.R)
-		}
-		// CROSS JOIN fixes the order of the loops: the index of the property
-		// drives, and each row looks its page up.
-		query := `SELECT ` + selectCols(q.Props) + `, s.skey FROM props s CROSS JOIN pages p ON p.rowid = s.page WHERE ` +
-			strings.Join(w, ` AND `) + ` ORDER BY s.skey` + d + `, s.page` + d + ` LIMIT ?`
-		a = append(a, limit+1)
-		more, err := x.scanInto(&res, query, a, q.Props, true, limit, func(rowid int64, skey string) {
-			last = cursor{Sort: sortName, T: skey, R: rowid}
-		})
-		if err != nil {
-			return Result{}, err
-		}
-		if more {
-			res.Next = last.encode()
-			return res, nil
-		}
-		last = cursor{Sort: sortName, G: 1}
-	} else {
-		last = *cur
-	}
-	// Pages without the property, by rowid.
-	w := append([]string{`NOT EXISTS (SELECT 1 FROM props s WHERE s.page = p.rowid AND s.key = ?)`}, where...)
-	a := append([]any{key}, args...)
-	if phase == 1 && cur != nil {
-		w = append(w, `p.rowid > ?`)
-		a = append(a, cur.R)
-	}
-	query := `SELECT ` + selectCols(q.Props) + ` FROM pages p WHERE ` + strings.Join(w, ` AND `) + ` ORDER BY p.rowid LIMIT ?`
-	a = append(a, limit-len(res.Items)+1)
-	more, err := x.scanInto(&res, query, a, q.Props, false, limit, func(rowid int64, _ string) {
-		last = cursor{Sort: sortName, G: 1, R: rowid}
-	})
-	if err != nil {
-		return Result{}, err
-	}
-	if more {
-		res.Next = last.encode()
-	}
-	return res, nil
-}
-
-// scanInto appends the rows of query to res until it holds limit items, and
-// reports whether there was a row beyond. seen is called for each item added;
-// withKey says the query selects the sort key as a last column, which seen
-// gets.
-func (x *Index) scanInto(res *Result, query string, args []any, props, withKey bool, limit int, seen func(rowid int64, skey string)) (more bool, err error) {
-	rows, err := x.db.Query(query, args...)
-	if err != nil {
-		return false, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		if len(res.Items) == limit {
-			return true, nil
-		}
-		var skey string
-		var extra []any
-		if withKey {
-			extra = []any{&skey}
-		}
-		s, rowid, _, _, _, _, err := scanSummary(rows, props, extra...)
-		if err != nil {
-			return false, err
-		}
-		res.Items = append(res.Items, s)
-		seen(rowid, skey)
-	}
-	return false, rows.Err()
 }

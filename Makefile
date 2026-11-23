@@ -5,7 +5,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 SPACE   ?= ./space
 
-.PHONY: build web release test test-postgres test-casefold vet run clean contract \
+.PHONY: build web release test test-postgres test-casefold vet run clean contract contract-postgres \
 	fmt-check tidy-check actionlint vuln check-go check-web check check-full cross-compile
 
 # Go binary only, no Node needed: it serves the API, and the web app is run
@@ -50,6 +50,12 @@ clean:
 # the mock they use by default. Installs the web dependencies if missing.
 contract: build web/node_modules/.package-lock.json
 	bash scripts/contract.sh ./petalbook
+
+# The accounts-mode half of the contract tests, with PostgreSQL as the state
+# database: a throwaway cluster (needs initdb, pg_ctl and psql on PATH), or the
+# server in PETALBOOK_TEST_POSTGRES with a fresh database made for the run.
+contract-postgres: build web/node_modules/.package-lock.json
+	bash scripts/contract-postgres.sh ./petalbook
 
 # Every check is defined here and nowhere else: CI only calls these targets,
 # so what passes on a laptop is what passes on the runner.
@@ -118,4 +124,4 @@ cross-compile:
 
 # The postsubmit: everything main runs after a merge. Needs the PostgreSQL
 # tools (initdb, pg_ctl, psql) and a Linux kernel with tmpfs casefold.
-check-full: check test-postgres test-casefold release contract cross-compile
+check-full: check test-postgres test-casefold release contract contract-postgres cross-compile

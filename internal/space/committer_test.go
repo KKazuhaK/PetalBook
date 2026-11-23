@@ -110,7 +110,7 @@ func TestCommitAfterQuietPeriod(t *testing.T) {
 			t.Fatalf("committed %q", f)
 		}
 	}
-	if !strings.Contains(files, ".petalbook/space.yml") || !strings.Contains(files, ".petalbook/.gitignore") {
+	if !strings.Contains(files, ".petalbook/space.yml") {
 		t.Fatalf("tracked files:\n%s", files)
 	}
 }

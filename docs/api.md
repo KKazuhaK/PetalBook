@@ -549,6 +549,10 @@ null, blank text and an empty list are left out, as is anything inside a list
 that is not a plain value. Without `props=1` the summary is as small as it
 was.
 
+`body` is there only when the listing was asked for it with `body=1` (the
+continuous reading does): the page's Markdown as the file has it now, without
+the header, `""` for a page with no body. See `GET …/pages`.
+
 `partialProps` comes with `props` and lists, in header order, the keys whose
 value in `props` is not exactly what the file holds: text that was cut, a list
 that was cut or lost an element, a value that is an object (it has no entry in
@@ -629,7 +633,7 @@ Query parameters, all optional:
 |---|---|
 | `folder` | only pages directly in this folder (empty string = root) |
 | `recursive` | `true` to include subfolders of `folder` |
-| `tag` | only pages with this tag (repeatable: all must match) |
+| `tag` | only pages with this tag (repeatable: all must match; at most 10 different tags, repeats count once, more is `400 invalid`) |
 | `q` | full-text search over title, subtitle, source and body |
 | `in` | with `q`: `title` searches titles only |
 | `updatedFrom`, `updatedTo` | only pages last written on or after / on or before this day (`2026-11-01`, UTC) |
@@ -638,9 +642,10 @@ Query parameters, all optional:
 A date that is not a day written `YYYY-MM-DD`, or lies outside the years 1970
 to 2261, is `400 invalid`.
 | `sort` | `updated` (default), `created`, `title`, or `prop:{key}` for a property of the header; prefix `-` for descending. Default is `-updated`. With `q` and no `sort`, results are ordered by relevance |
-| `filter` | a JSON array of conditions on properties, all of which must hold (see below), at most 10, at most 16 KiB |
+| `filter` | a JSON array of conditions on properties, all of which must hold (see below), at most 11 (a saved view has at most 10: a board's column adds its own condition), at most 128 KiB (room for a board's "other values" column on a field with the most options a type may give) |
 | `props` | `1` to put `props` and `rev` in the summaries (see Page summary); default `0` |
-| `limit` | 1–200, default 50 |
+| `body` | `1` to put the Markdown `body` of each page in the summaries (see below); default `0` |
+| `limit` | 1–200, default 50; with `body=1` at most 20, default 20 |
 | `cursor` | the `next` value of the previous response |
 
 ```json
@@ -666,12 +671,37 @@ position, not an offset, and a cursor made for one sort is refused for
 another. Every page of such a listing is read from an index, however many
 pages the folder holds.
 
+**Sorting by a select field.** When the listing has a `folder`, and the
+folder's effective type (the type of the folder, or of the nearest folder above
+it that is bound; see Page types) has a `select` or `multiselect` field with
+the key sorted by and at least one option, `sort=prop:{key}` follows the order
+of the field's options instead of the order of the text: the options in turn,
+then the values that are not options (by text, as above), then the pages
+without a value. `sort=-prop:{key}` is the reverse of the first two groups
+(the other values first, then the options from the last) and still puts the
+pages without a value last. A multiselect counts by its first value. Within an
+option the pages are in the order the server holds them, reversed for `-`. The
+listing is read from the index one option at a time, with a cursor that names
+the option and the place in it, so a page costs the same however many pages
+the folder holds (measured: about a millisecond in a folder of 50 000, in
+either direction, with 5 options or 500). With filters, or in a small folder
+among many pages, it is read like any filtered listing (see "What a filtered
+listing costs" below). A field that lists an option twice (a type file edited by hand) has
+it once, the first writing counting, and at most 500 options count.
+The cursor also says how many options there were: a cursor made for another
+list of options, or from a listing that was not in option order (the type was
+changed, or the folder has none), is `400 invalid` and the client starts over.
+Pages of subfolders listed with `recursive=true` follow the order of the
+options of the folder asked for, whatever type they have. Without `folder`,
+or for any other field, the order is that of the text.
+
 **Filtering by properties.** `filter` is a JSON array, sent as the value of
 the parameter (percent-encoded), each item `{"key", "op", "values"}`:
 
 | `op` | `values` | keeps pages whose property |
 |---|---|---|
-| `in` | up to 100 texts, numbers or booleans | equals one of them (a list: holds one of them) |
+| `in` | up to 500 texts, numbers or booleans | equals one of them (a list: holds one of them) |
+| `notIn` | up to 500 texts (as many as a select field has options), numbers or booleans | has a value and none of its values (a list has several) is one of them: not empty, and not an option; the "other values" column of a board |
 | `range` | `[from, to]`, both numbers or both texts (dates), either end `null` or `""`, not both; ends are included | has a value in the range (a list: an element is in it) |
 | `empty` | none | has no value |
 | `notEmpty` | none | has a value (`false` and `0` are values) |
@@ -681,8 +711,74 @@ Several items must all hold. An unknown `op`, a missing key, the wrong number
 or kind of `values`, or text that is not that JSON is `400 invalid`. The
 filter works together with every other parameter (`folder`, `tag`, `q`, the
 sort and the cursor). A text is compared as the first 300 characters of it.
-Both `sort` and `filter` answer from the index: nothing reads the page files,
-so a folder of 50 000 pages answers in milliseconds.
+Both `sort` and `filter` answer from the index: nothing reads the page files.
+
+**What a filtered listing costs.** A listing with filters, tags, dates, a
+recursive folder or a sort by a property is read in the cheapest of three
+ways, each bounded, so that no combination reads a folder page by page.
+Measured in a space of 50 000 pages, the median of a page of the listing:
+
+- *From the smallest condition.* When a folder, a tag, or an `in`, `range`,
+  `notEmpty` or `notIn` filter keeps at most 2000 pages, the read starts from
+  those and checks the rest for each: a folder of 100 among 50 000 in any
+  order, a filter few pages match, the "other values" column of a board,
+  about 1 ms; 1100 matches put in option order, 6 ms. A filter no page
+  matches (`in` with 500 values none of which exists, a column for an option
+  nobody uses) answers in under a millisecond.
+- *By walking the order.* When every condition keeps many pages, the order is
+  walked from the cursor and each page checked, for at most 1000 pages (or 5
+  per item asked for): a column of a board for an option in use, a sort with
+  a filter half the pages meet, any page of it by cursor, 1 to 3 ms.
+- *As sets.* When the walk does not fill the page (few pages match and no
+  one condition says so, as with `contains` or `empty`; or the matches come
+  last in the order), each condition is read as one range of its index and
+  the ranges are intersected, about 6 ms for each 50 000 rows, four at a
+  time: `contains` that nothing matches 15 ms, a sort by a property with a
+  filter on the same property 20 ms, a search with a sort 25 ms, ten
+  `contains` filters at once 50 ms.
+
+The dear case is a request whose every condition keeps most of the pages
+while together they keep few: ten tags and ten filters (with lists of 500
+values), each on nine pages in ten, 200 items asked for, took 40 to 140 ms.
+
+**Bodies.** With `body=1` each summary has `body`, the page's Markdown, read
+from its file. That is a file read per item, so `limit` is at most 20 (also
+the default) and a larger one is `400 invalid`; the other parameters work as
+usual, so the reading of a folder, a tag or a set of filters goes on with the
+`next` cursor. A page whose file is not that page any more (it changed outside
+the server since the index looked) has `""`.
+
+### `GET /api/spaces/{space}/pages/groups`
+
+Needs `read`. How many pages of a folder or a tag have each value of a
+property, for the heads of the columns of a board. Parameters: `key` (required,
+the property), `folder` and `recursive`, `tag` (repeatable, at most 10 different), `filter` (as for a
+listing); a folder or a tag is required.
+
+```json
+{"groups": [{"value": "草稿", "count": 12}, {"value": "定稿", "count": 7}, {"value": "已废弃", "count": 1}],
+ "empty": 4, "truncated": false}
+```
+
+`groups` are the values the pages have, most pages first, then by the text of
+the value (numbers and booleans as the index holds them: `"3"`, `"true"`); a
+list property counts a page once for each distinct value it holds. `empty` is
+the number of pages in the scope that have no value for the key (the same pages
+as the filter `empty`). Both come from the index, no file is read; the answer
+is kept for as long as the index is not written to, so a board opened again
+costs nothing. At most 1000
+values are returned, the rarest left out, and `truncated` says so. The cost,
+when the answer is not a kept one, is one read of the index range of each
+condition and one of the rows of the property, no lookup page by page.
+Measured in a space of 50 000 pages: 25 ms for a recursive folder or a tag
+that holds them all, 30 ms for a list property, 40 to 50 ms for a property
+with thousands of distinct values; 15 to 35 ms with a `range`, `contains` or
+`notIn` filter (100 or 500 values alike); 10 ms for one folder of 5000; under
+a millisecond for a small folder or a tag of a hundred pages; 3 ms for the
+"other values" of a board. With ten tags and ten filters that each keep
+most of the pages it took 100 to 135 ms: twenty ranges of the size of the
+space.
+`400 invalid` for a missing `key`, no folder and no tag, more than 10 different tags, or a bad `filter`.
 
 ### `GET /api/spaces/{space}/pages/{id}`
 
@@ -957,10 +1053,27 @@ folders:
 A folder takes the type of the nearest folder above it that is bound (the
 root, `""`, may be bound too); a page whose header has a `type` has that.
 Renaming or moving a folder changes its bindings, and those of the folders in
-it, in the same commit; deleting one removes them. Other settings an entry has
-stay. The move and the change of the bindings are one change: if the server
+it, in the same commit; deleting one removes them (and its views, see Saved
+views). Other settings an entry has stay. The move and the change of the bindings are one change: if the server
 stops between the two, it finishes the bindings when it starts again, and if
-the bindings cannot be written the folder is not moved and the request fails.
+the bindings cannot be written the folder is not moved and the request fails
+(also when `space.yml` is so full that the new key would make it larger than the
+1 MiB the server reads). Whether the settings can follow is found out before
+the folder is touched: a move or a delete whose edit of `space.yml` cannot be
+made is `400 invalid` with nothing renamed and nothing deleted, and the message
+says which it was ("the folder was not moved: …", "the folder was not
+deleted: …"). For a delete that is found out for the folders that will be
+gone afterwards: a folder that holds files that are not pages stays, and so
+does its entry. Should the folders turn out otherwise than was worked out
+before the delete (a file came to lie in one meanwhile) and the settings then
+cannot be taken out as the folders are, they are taken out as was worked out.
+Moving or deleting a folder removes entries of `space.yml`; what
+that does to anchors and aliases is under Anchors, aliases and merge keys below.
+A move that a crash interrupted and whose
+bindings then do not fit in `space.yml` is taken back at the next start: the
+folder goes back to its old name, and the error is logged. A `space.yml` that
+cannot be used at the next start is restored there as it is by any other
+change (see Settings files that cannot be used), and the space opens.
 Nothing was at the place a folder is moved to, so every binding at that place
 and under it is stale and is dropped (the moved folder takes the bindings it
 had, and none it did not); the journal of the move is kept until the bindings
@@ -982,11 +1095,217 @@ are one name. The key rules are for a field that is new: a field the file
 already has keeps its key whatever it is (written by hand, say), and a request
 may list it as it is.
 
-A type file or `space.yml` that someone damaged by hand (not JSON or YAML, not
-an object, too large, a link) is never overwritten: a request that would
-write it is `400 invalid` and says it has to be fixed by hand. Reads still
-work: such a type is listed with an `error`, and a `space.yml` that cannot be
-read binds nothing. Moving or deleting a folder is not stopped by one.
+#### Settings files that cannot be used
+
+`space.yml`, `tags.yml` and the type files are written by hand too, and come in
+with a pull. A type file that cannot be used (not JSON, not an object, its
+`properties` not an object, more than 200 fields, too large, not a regular
+file) is treated as below, like the two settings files: it is read as its
+newest version in the history that can be used (with none, there is no such
+type), the next change of the type writes it and keeps the file as it was as
+`.petalbook/types/{name}.json.unreadable-{time}`, and so does deleting the
+type. A field whose schema
+is not an object is kept as it is until a request gives the field a kind;
+then the schema is written anew and the file as it was is kept.
+
+A settings file that cannot be used (it is not YAML with keys at the top, has a second
+document, its `folders` or `tags` is not a list of entries, an alias is inside
+its own anchor, it is over a limit below, larger than 1 MiB, or not a regular
+file) is nobody's to fix before the space works again, and no request is
+refused because of it:
+
+- **Reading.** The settings are those of the newest version of the file in the
+  history of the space that can be used, looked for among the last 50 commits
+  that changed the file, in the order of the commits (the clocks of the
+  machines that made them are never compared); with none, the space has no
+  settings, like one that never had the file. What the server wrote itself
+  and has not committed yet counts as newer than any commit, until it is
+  committed. Onto that version goes what can still be read of the file as it
+  is, entry by entry, the file winning for each entry it has: in a file that
+  is YAML but cannot be used, every top-level key and every entry of
+  `folders` or `tags` that can be used by itself (with its aliases written
+  out); in a file that is not YAML, every top-level key, and every entry of
+  `folders` or `tags`, that reads by itself when the text is cut by its
+  indentation (a leading byte order mark is not part of the first key, and
+  the lines of a quoted value that runs over several lines stay with it,
+  wherever they start, so a line `folders:` inside a value never makes up
+  entries; a quote never closed is a typo and closes nothing). This takes
+  time in proportion to the file, also at the 4 MiB most that is read of
+  it. So thirty new bindings and one typo keep the thirty; only the
+  entry with the typo is not read (`lost` in the notice), and it is in the
+  file and in the copy kept of it. A type file is one JSON document and is
+  read as the version restored. Bindings, views and colours are read from
+  those settings until the file is put right. What was found is remembered for
+  the file as it is and the newest commit that changed it, so the history is
+  searched once, not for every request, and not again for commits of other
+  files.
+- **Repair.** The next change that writes the file (a binding, views, a
+  colour, a folder with settings moved or deleted, a type deleted) is made on
+  those settings and written in its place. In the same commit the file as it
+  was is kept beside it as `.petalbook/space.yml.unreadable-{time}` (or
+  `tags.yml.unreadable-{time}`; the time is UTC, `20261122T163159Z`), so
+  nothing is lost. A read writes nothing, so it makes no commit and, in a
+  space that follows a remote, no push; a change that needs nothing written
+  (a folder without settings is moved or deleted) leaves the file as it is.
+  A content that is already kept is not kept again: a pull that brings the
+  same file back adds no second copy.
+- **Folders.** Moving or deleting a folder is never refused because of such a
+  file, and never leaves settings behind: they follow the folder, or go with
+  it, in the restored settings.
+- **After a crash.** The start that finishes an interrupted move or delete
+  goes the same way: it restores, writes and keeps the copy, and commits both.
+- **A link or a file in the place of a folder.** Nothing is ever read or
+  written through a link, or a file, where `.petalbook` or `.petalbook/types`
+  belongs (a pull can bring one, or a person put it there), wherever it leads.
+  The settings files and types behind it read as restored from the history
+  above (the commit that put the link there does not count as deleting them),
+  and the types listed are those the folder had. The next change that writes
+  there moves what is in the place of the folder aside, inside the space, as
+  `.petalbook.unreadable-{time}` (or `.petalbook/types.unreadable-{time}`),
+  commits that, makes the folder again with everything it had (the settings
+  as they are read, the other files as they were), and makes the change in
+  it. Every read and write there is made in the folder as it was opened, so
+  a link put in its place while a file is being read or written is not
+  followed either. In a space that follows a remote, that repair is pushed
+  before the change that needed it; when its push does not go through (the
+  remote moved on, or cannot be reached) it is taken back, the clone is as
+  the remote again, and the change is made again on the new tip (or fails as
+  any change fails without the network), so a repair is never kept as a
+  change made here that was not pushed. A local space puts a link where
+  `.petalbook` belongs right that way when it starts, before it writes
+  `space.yml`.
+- **The server's own files are not in `.petalbook`.** `.petalbook` holds the
+  settings and the types only: repository content. The index, the journal of
+  what is not committed yet, the notices below and, in single-user mode, the
+  state database are kept in the Git directory (`.git/petalbook-state/`;
+  `--state-dir` puts the state elsewhere), where no pull or checkout writes,
+  so a pull that brings a link where `.petalbook` was takes none of it away.
+  The Git directory is the one git uses for the space: for a checkout made
+  with `git worktree add` its own one (two checkouts of one repository never
+  share state), and for a submodule, a `--separate-git-dir` repository or a
+  `.git` link, the folder their `.git` names; it may be on another file
+  system than the space. A file of the space (a page, an attachment, a
+  setting) is written in its own folder under a new hidden name
+  (`.petalbook-w-<random>`, made exclusively, never through a link) and then
+  renamed into place, so a save works wherever the Git directory is and
+  whatever a pull put anywhere else. Those names are not pages, are kept out
+  of the repository by `info/exclude` and are never committed; one a crash
+  left is removed when the space starts, unless the repository has a file of
+  that name. A space last opened by an earlier version, which kept its state
+  in `.petalbook/cache/`, has the server's own files moved there once when it
+  starts: the index, the journal, the notices and the state database, and
+  only those the repository does not have. A file of `.petalbook/cache/` that
+  is committed is the repository's: it is neither moved nor used, and neither
+  is the log or shared memory file SQLite keeps beside a database the
+  repository has, or beside none. A link there is neither followed nor moved.
+  When the state directory is in use already (an earlier version ran after
+  this one), the earlier journal is replayed, its state database is kept
+  beside the current one as `state-earlier-<UTC>.db` (copied with its log, the
+  database last, so a crash never leaves one without the other; what a crash
+  left of a copy is removed at the next start, which copies it again from the
+  originals) and its drafts are imported where
+  the current database has none for that page and person; one that differs
+  from the current draft stays in that file, held, for `petalbook draft list
+  --database <file>`.
+
+What happened is told in `settingsNotices` of `GET /api/spaces/{space}/types`,
+to callers who have `manage` in the space (in single-user mode, always); for
+anyone else the key is absent. Nobody is asked to do anything:
+
+```json
+{"settingsNotices": [
+  {"file": ".petalbook/space.yml", "unreadable": true,
+   "since": {"commit": "9f2c…", "time": "2026-11-22T16:20:11Z"},
+   "restoredFrom": {"commit": "41ab…", "time": "2026-11-20T09:02:40Z"}},
+  {"file": ".petalbook/tags.yml", "unreadable": false,
+   "since": {"time": "2026-11-21T08:00:00Z"},
+   "restoredFrom": {"commit": "77d0…", "time": "2026-11-19T12:00:00Z"},
+   "copy": ".petalbook/tags.yml.unreadable-20261121T081502Z",
+   "repairedAt": "2026-11-21T08:15:02Z"}
+]}
+```
+
+`unreadable` is `true` while the file in the space is still the one that cannot
+be used (the server reads the restored settings, and the next change puts the
+file right), and `false` for a file that was put right. `since` is the oldest
+version in a row that could not be used (without `commit`: the file was changed
+in the folder and is in no commit; `time` is then when it was changed).
+`restoredFrom` is the version the settings were taken from; it is absent when
+the history has none that can be used and the settings started empty, and has
+no `commit` when they are what the server itself wrote last and had not
+committed yet. `lost` lists the entries of the file as it is (was) that could
+not be read even one by one, so they are not in the settings in use and are
+only in the file and its copy (`"*"`: nothing of it could be read, as for a
+file more than four times as large as the server reads); it is absent when
+everything that could be read was kept. `copy` is where the file as it was is
+kept. A link or a file that was in the place of `.petalbook` or
+`.petalbook/types` has a notice with that `file`, `entry`
+`"not a folder"` and its `copy`. A notice of a
+repair stays for as long as its copy is in the space: deleting the copy puts
+the notice away. `since`, `restoredFrom` and `repairedAt` of a repair are kept
+by the server that made it; a copy that came with a pull from another server
+is listed with `file` and `copy` only. The list is empty, or absent, when
+there is nothing to tell.
+
+One entry of a file that reads can be unusable by itself: an entry that is
+not a list of settings (`Tang: yes`), `views` that is not a list, a `type` or
+`color` that is not text. It reads as not there, everything else in the file
+works, and the change that puts something in its place (binding the folder,
+saving its views, setting the colour) writes over it and keeps the file as it
+was, as a copy like the ones above. Such a notice has `entry`: `"Tang"` for the
+entry, `"Tang: views"` or `"Tang: type"` for a setting of it (`"properties: {key}"`
+for a field of a type), with `unreadable` `true` until it is written over and
+`false`, with `copy` and `repairedAt`, afterwards.
+
+#### Anchors, aliases and merge keys
+
+`space.yml` and `tags.yml` are written by hand too, and come in with a pull, so
+they may hold YAML anchors (`&name`), aliases (`*name`) and merge keys (`<<`).
+One rule holds for both files, for everything the server reads from them and
+every change it makes to them:
+
+- **Reading.** An alias means what its anchor means, and a mapping with a merge
+  key has the keys it merges, wherever the server looks: `folders` and `tags`,
+  an entry, its `type` or `color`, its `views`, a view, a filter, a value. With
+  `A: {type: &t wenan}` and `B: {type: *t}`, both folders are bound to `wenan`.
+- **Cost and limits.** What an anchor means is worked out once, however many
+  aliases refer to it, so reading a file costs what is written in it: an entry
+  that ten thousand folders share by alias (`Tang: *chapter`) is read as fast
+  as one written once, and no number of aliases makes a file unusable. The
+  only limits are ones a file that a person keeps does not reach: 100 levels
+  deep with the aliases followed, no alias inside its own anchor, and
+  4 194 304 keys brought in by merge keys (each mapping with a merge key
+  counted by itself: ten thousand folders that each merge a template of four
+  hundred keys). A file over one of them cannot be used; see Settings files
+  that cannot be used. That is found when the file is loaded, in time that
+  grows with its size only.
+- **Writing.** A change changes what it targets and nothing else. An entry, a
+  list of views or a view that is an alias, carries an anchor or has keys from
+  a merge key is first written out in its own place (aliases inside it stay
+  aliases), and the change is made there; what else refers to the anchor keeps
+  what it had. When the node that carries an anchor is removed or replaced (a
+  folder deleted or moved onto, a view removed, a type or colour changed) and
+  aliases of it remain, the anchor moves to the first of them and the others
+  refer to it there; nothing is copied. Deleting `A` above leaves `B: {type: &t
+  wenan}`. The comments of a merge key that is written out stay where it was:
+  the one above it above the first key written in its place, the one on its
+  line on the line of that key, the one below it below the last of them.
+- **Check.** Before the file is written the server checks that every alias
+  left in it stands for what it stood for, and that the text reads back as
+  what was meant. If not (an anchor name used twice can do that), the change is
+  made again with every alias of the file written out. If that does not fit in
+  1 MiB the request is `400 invalid` and nothing is changed, on disk or in the
+  file; no more is written out to find that than 1 MiB holds.
+- **Shared entries stay shared.** When one change takes a setting off many
+  entries that are aliases of one anchor (a type is deleted that ten thousand
+  folders have through `Tang: *chapter`), the first of them gets what the
+  anchor is without that setting, under an anchor of its own (`&chapter-no-type`,
+  with a number after it if that name is taken), and the others become aliases
+  of that: the file stays as small as it was, and what else refers to the old
+  anchor keeps what it had. These are the only aliases the server writes.
+  Entries that share through a merge key (`{<<: *chapter}`) are written out
+  each for itself, and such a change is `400 invalid` when the result would not
+  fit in 1 MiB.
 
 ### Type
 
@@ -1005,14 +1324,15 @@ read binds nothing. Moving or deleting a folder is not stopped by one.
 
 `rev` is the Git blob id of the type's file, as the `rev` of a page is: it
 changes whenever the file does, and a change or a delete of the type is made
-from it (`baseRev`, below). A file too large or not a regular file has the
-`rev` `"unreadable"`. `title` is `""` when the file gives none or gives
+from it (`baseRev`, below). A file that cannot be used is the type of its last
+version that can, with that version's `rev`. `title` is `""` when the file gives none or gives
 something that is not text (show the name or key); a `title` that is not text
 stays in the file when a request leaves the title empty. `options` is
 there for `select` and `multiselect`. `schema` is the field's schema as the
-file has it. A type whose file cannot be used is
-`{"name": "…", "title": "", "fields": [], "error": "…"}` and the error says
-how to fix it.
+file has it. A type listed as
+`{"name": "…", "title": "", "fields": [], "error": "…"}` is a file beyond the
+first 100, or one that cannot be used while the history could not be read for
+its earlier version just now.
 
 ### `GET /api/spaces/{space}/types`
 
@@ -1022,7 +1342,9 @@ Needs `read`.
 {"types": [/* types, in name order */], "bindings": [{"folder": "Work", "type": "task"}]}
 ```
 
-`bindings` are all the folders that are bound, in the order of the file. Only
+`bindings` are all the folders that are bound, in the order of the file.
+`settingsNotices` is there when a settings file could not be used (see Settings
+files that cannot be used). Only
 the first 100 type files are read; more than that (put there by hand) are
 listed with an `error`.
 
@@ -1055,8 +1377,8 @@ to it. `options` goes with `select` and `multiselect` only. Renaming a field
 is removing one and adding another; the pages are not rewritten. `200` with
 the type.
 
-Errors: `400 invalid` for anything above that is out of limits or malformed,
-and for a file that has to be fixed by hand; `409 conflict` when `baseRev` is
+Errors: `400 invalid` for anything above that is out of limits or malformed;
+`409 conflict` when `baseRev` is
 not the file's current rev, or the type is there and `baseRev` is empty, or
 the type is not there and `baseRev` is not: `{"error": "conflict", "message":
 "…", "current": {/* type */}}`, `current` being the type as it is now (absent
@@ -1072,8 +1394,9 @@ type. `baseRev` is the `rev` of the type the request was made from, as for
 current rev. For a type whose file is gone and only bindings are left, it is
 `""`. The headers of pages that name the type are not touched. `204`;
 `404 not_found` when there is no such type and no folder is bound to it. The
-file of a type that cannot be read can be deleted too. Deleting a folder, not a
-file, in its place is `400 invalid`.
+file of a type that cannot be used is kept as a copy when the type is deleted
+(see Settings files that cannot be used); with no version that can be used it
+is no type, and is deleted with `baseRev` `""`.
 
 ### `PUT /api/spaces/{space}/folders/type`
 
@@ -1086,9 +1409,134 @@ Needs `manage`.
 Binds a folder (and, by inheritance, the folders below it) to a type, or
 removes the binding when `type` is `""`. `200` with `{"folder": "Work",
 "type": "task"}`, the folder as it is spelled on disk. `404 not_found` when
-the folder does not exist; `400 invalid` when the type does not exist, or
-`space.yml` has to be fixed by hand. Pages are not changed: their
+the folder does not exist; `400 invalid` when the type does not exist, or the
+entry of the folder in `space.yml` is not a list of settings. Pages are not changed: their
 `effectiveType` is.
+
+## Saved views
+
+A view is a saved way of looking at the pages of a folder or of a tag: a
+layout, a sort, filters, the field a board is grouped by, the hidden columns of
+a table. A folder's views are written under its entry in
+`.petalbook/space.yml`, next to its type; a tag's under its entry in
+`.petalbook/tags.yml`, next to its colour. The root folder is the key `""`.
+
+```yaml
+folders:
+  文案:
+    type: wenan
+    views:
+      - id: k3f9
+        name: 按状态
+        layout: board
+        group: status
+        sort: -prop:written
+        filter: [{key: series, op: in, values: [冬季]}]
+```
+
+The first view is the default one; a folder or tag with none shows the
+implicit default. Moving or renaming a folder carries its views, and those of
+the folders in it, in the same commit and the same journal record as its
+bindings (a crash in between is finished when the server starts); deleting a
+folder removes them (a folder that stays, because it holds files that are not
+pages, keeps them). Deleting a type keeps the views of the folders that were
+bound to it; unbinding a folder keeps its views. Comments, keys the server does
+not know (in a view, in the entry) and other settings stay in the file: a
+view that is saved again is changed in its own YAML. The settings files are
+read and written the way bindings and tag colours are (a file that cannot be
+used is restored from the history, see Settings files that cannot be used),
+and a change is journaled and committed like any other, in a space that
+follows a remote too. There is no tag rename in the API, so nothing carries a
+tag's views to another name.
+
+### View
+
+```json
+{"id": "k3f9a1", "name": "按状态", "layout": "board", "sort": "-prop:written", "group": "status",
+ "filter": [{"key": "series", "op": "in", "values": ["冬季"]}], "hidden": []}
+```
+
+Every key is always there when the server answers (`sort` and `group` as `""`,
+`filter` and `hidden` as `[]` when empty). `id` is made by the server: six
+lower-case letters and digits, unique in the space (folders and tags together).
+`name` is one line of 1 to 200 bytes. `layout` is `list`, `cards`, `table`,
+`board` or `read`. `sort` is `""` (the default order of the listing), `updated`,
+`created`, `title` or `prop:{key}`, each with an optional leading `-`, as for a
+listing. `filter` is written as the `filter` of a listing (at most 10, each
+checked the same way, `notIn` included). `group` is the field a board is
+grouped by, at most 256 bytes; it is kept whatever the layout. `hidden` are the
+keys of the columns a table hides, each once, at most 200. A key that is not
+one of these is kept as it is (`"color": "teal"` comes back) and is written to
+the file; the server does not look at its meaning, but it limits its size: at
+most 16 such keys, each value at most 4 KiB as JSON, and a view at most 16 KiB
+as JSON (the views a request changes, 128 KiB together). A view that a request
+gives back exactly as it is stored is not checked again.
+
+Views written by hand are read so that a client can work with them: a view
+whose `id` is missing, malformed or repeated has the id `@{n}`, `n` its
+position (from 0) in the folder's list, and a missing or unknown `layout` reads
+as `list`; every view in an answer therefore has a unique id and a layout. A
+write that names such an id changes that view and gives it a new one. Only
+the first 20 views of an entry are read (the rest of a longer list written by
+hand stays in the file, after the views, and is not in any answer). A value
+of a key the server does not know that stands for more than 10 000 YAML nodes
+(aliases counted each time they are used) is left out of the answer, and stays
+in the file. Aliases and merge keys are read as what they stand for (see
+Anchors, aliases and merge keys).
+
+### `GET /api/spaces/{space}/views?folder={path}` or `?tag={tag}`
+
+Needs `read`. Exactly one of `folder` (the root is `folder=`) and `tag`.
+
+```json
+{"views": [/* views, the first being the default */], "rev": "6a6d14f7db61e4f5578c38cad4f75dfc5a97a9a6"}
+```
+
+`rev` is a digest of the views as the server reads them (a list with none has
+one too), so a change to the file by hand is a new rev as well. A folder that
+does not exist has no views (it is not looked for on disk). A settings file
+that cannot be used gives those of its last version that can. `400 invalid` for neither or both of `folder`
+and `tag`, or a path that cannot be a folder.
+
+### `PUT /api/spaces/{space}/views`
+
+Needs `write`: views are a shared way of arranging pages, and whoever can write
+pages can change them. A member who can only read can switch between views and
+change the sort and filter for themselves; they cannot save them.
+
+```json
+{"folder": "文案", "baseRev": "6a6d…", "views": [/* the whole list */]}
+```
+
+`folder` (or, instead, `tag`) says whose views; `baseRev` is the `rev` of the
+views the request was made from; `views` is the whole list the folder or tag is
+to have, in order (`[]` removes them all, and the entry of the folder when
+nothing else is left in it). A view with an `id` must be one of the views the
+folder or tag has now (`@{n}` ids included, see above); one without gets a new id. A view that keeps its `id`
+keeps what the request does not mention: its comments, and the keys the server
+does not know that the request leaves out. A view that is not listed is
+removed.
+
+`200` with `{"views": […], "rev": "…"}`, the views as they are now. When the
+views are not as `baseRev` says nothing is written and the answer is `409
+conflict` with `current` the same object as a `GET` answers:
+`{"error": "conflict", "message": "…", "current": {"views": […], "rev": "…"}}`.
+`400 invalid` for a missing `baseRev`, `views` or scope, both a folder and a
+tag, more than 20 views, any view out of the limits above, an `id` the folder
+or tag does not have, an `id` twice, a change that would make `space.yml` or
+`tags.yml` larger than the 1 MiB the server reads (nothing is written, so the
+settings stay readable), or an entry that is not a list of settings. A view
+that carries an anchor, or is written with an alias or a merge key, can be
+changed and removed like any other: what else in the file refers to the anchor
+keeps what it means (see Anchors, aliases and merge keys). The body of the request is
+at most 20 views at their largest and 512 KiB more (`413` above that), and the
+list is refused as soon as it has a 21st entry, before any of them is built.
+A view that the request gives back as it is stored is left as it is in the file,
+also what the server could not read of it (a scalar where a list
+belongs), and what is written as an alias stays one; a key is removed or rewritten only when the request changes it. `[]` removes
+the views from every writing of the folder in `space.yml`, so none comes back.
+`404 not_found` for a folder that does not exist (a tag need not be in use).
+A write that changes nothing writes nothing.
 
 ## Files
 
@@ -1296,12 +1744,16 @@ and follows its theme), or a colour of the person's own as `#rrggbb` (six
 hexadecimal digits; stored in lower case). `200`
 with `{"tag": "栀子", "color": "rose"}` (`color` absent when removed).
 `400 invalid` for another value, for a tag that is empty, longer than 200
-bytes or has a line break in it, and when `.petalbook/tags.yml` exists but
-cannot be read as YAML (it is then left as it is, for a person to fix). The
+bytes or has a line break in it. A `.petalbook/tags.yml` that cannot be used
+does not stop the change (see Settings files that cannot be used). The
 tag in the address is percent-encoded, so it may contain `/`. The tag need
 not be in use (it is listed, with its colour, once a page uses it). Colours are
 kept in `.petalbook/tags.yml` in the space, so they travel with the
-repository; a change is committed like any other.
+repository; a change is committed like any other. The same entry of the file
+holds the tag's saved views (see Saved views), which setting or removing the
+colour leaves alone. A colour written as an alias (`color: *c`) is the colour
+of its anchor, and changing or removing the colour of one tag never changes
+another's (see Anchors, aliases and merge keys).
 
 ## Maintenance
 

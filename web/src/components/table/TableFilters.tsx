@@ -24,6 +24,8 @@ export function describeFilter(f: PropFilter, fields: readonly TypeField[]): str
       return tp.filter.describeNotEmpty(name)
     case 'in':
       return tp.filter.describeIn(name, values.map((v) => (v === true ? tp.filter.yes : v === false ? tp.filter.no : String(v))).join(', '))
+    case 'notIn':
+      return tp.filter.describeNotIn(name, values.map(String).join(', '))
     case 'contains':
       return tp.filter.describeContains(name, String(values[0] ?? ''))
     case 'range': {

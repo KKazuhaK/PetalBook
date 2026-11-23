@@ -372,7 +372,7 @@ func TestSingleUserStateDatabaseNextToTheIndex(t *testing.T) {
 	if err := srv.stop(); err != nil {
 		t.Fatal(err)
 	}
-	state := filepath.Join(dir, ".petalbook", "cache", "state.db")
+	state := filepath.Join(dir, ".git", "petalbook-state", "state.db")
 	if _, err := os.Stat(state); err != nil {
 		t.Fatal("no state database next to the index:", err)
 	}

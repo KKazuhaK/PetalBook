@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useSearchParams } from 'react-router'
+import { Link } from 'react-router'
 import { observeElementRect, useVirtualizer } from '@tanstack/react-virtual'
 import { ArrowDown, ArrowUp, ArrowUpDown, ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
@@ -8,6 +8,7 @@ import { usePatchProps, useSpacePermissions, useTablePages, useUrls } from '@/ap
 import type { ListParams, PageSummary, PageType, PropFilter, TypeField } from '@/api/types'
 import { ErrorState, Spinner } from '@/components/common'
 import { CheckboxControl, DateControl, isWrong, NumberControl, SelectControl } from '@/components/props/PropControls'
+import { columnsOf, hiddenKeyOf, type Column } from './columns'
 import { TagChip } from '@/components/TagChip'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -16,7 +17,6 @@ import { hasValue, showValue } from '@/lib/pageTypes'
 import { absoluteTime, relativeTime } from '@/lib/time'
 import { t } from '@/i18n'
 import { tp } from '@/i18n/props'
-import { TableFilters } from './TableFilters'
 
 // The table view of a folder that has a type: a row per page, the type's fields
 // as columns, with sorting and filtering done by the server and a hundred rows
@@ -32,26 +32,8 @@ const AHEAD = 20
 // What the scrolling box counts as when it has no size yet (not laid out, or hidden): a screenful.
 const FALLBACK_RECT = { width: 960, height: 640 }
 
-const WIDTHS: Record<TypeField['kind'], number> = { text: 200, longtext: 240, select: 150, multiselect: 220, date: 150, number: 120, checkbox: 90, url: 220, other: 180 }
-
-interface Column {
-  id: string
-  label: string
-  width: number
-  // The sort a click starts with (ascending); none for a column the server cannot sort by.
-  sort?: string
-  field?: TypeField
-  base?: 'title' | 'tags' | 'updated'
-}
-
-export function columnsOf(type: PageType | undefined): Column[] {
-  return [
-    { id: 'title', label: tp.table.title, width: 280, sort: 'title', base: 'title' },
-    ...(type?.fields ?? []).map((f): Column => ({ id: `f:${f.key}`, label: f.title || f.key, width: WIDTHS[f.kind], sort: `prop:${f.key}`, field: f })),
-    { id: 'tags', label: tp.table.tags, width: 200, base: 'tags' },
-    { id: 'updated', label: tp.table.updated, width: 140, sort: 'updated', base: 'updated' },
-  ]
-}
+// The columns are in a module of their own (the view's settings need them too); the table's tests know them from here.
+export { columnsOf, hiddenKeyOf }
 
 // The sort in the address when it is one the table understands.
 const TABLE_SORT = /^-?(updated|title|prop:.+)$/
@@ -64,30 +46,18 @@ export function nextSort(current: string | undefined, asc: string): string {
   return now === asc ? `-${asc}` : asc
 }
 
-export default function TableView({ folder, typeName, type }: { folder: string; typeName: string; type: PageType | undefined }) {
-  const [params, setParams] = useSearchParams()
+// `sort`, `filters` and `hidden` are the view's: the listing above chooses them (and shows the filters).
+export default function TableView({ folder, typeName, type, sort, onSort, sortDisabled, filters, hidden = [] }: { folder: string; typeName: string; type: PageType | undefined; sort?: string; onSort: (to: string) => void; sortDisabled?: boolean; filters: PropFilter[]; hidden?: readonly string[] }) {
   const { write } = useSpacePermissions()
   const urls = useUrls()
-  const sort = tableSortOf(params.get('sort'))
-  const [filters, setFilters] = useState<PropFilter[]>([])
-  const columns = useMemo(() => columnsOf(type), [type])
-  const fields = type?.fields ?? []
+  const all = useMemo(() => columnsOf(type), [type])
+  // The title is always there; the other columns can be hidden by the view.
+  const columns = useMemo(() => all.filter((c) => c.id === 'title' || !hidden.includes(hiddenKeyOf(c))), [all, hidden])
 
   const query = useTablePages({ folder, ...(sort ? { sort: sort as ListParams['sort'] } : {}), ...(filters.length ? { filter: filters } : {}) })
   const rows = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data])
 
-  const setSort = (asc: string) =>
-    setParams(
-      (prev) => {
-        const next = new URLSearchParams(prev)
-        const to = nextSort(sort, asc)
-        // The default needs no word in the address.
-        if (to === '-updated') next.delete('sort')
-        else next.set('sort', to)
-        return next
-      },
-      { replace: true },
-    )
+  const setSort = (asc: string) => onSort(nextSort(sort, asc))
 
   const patch = usePatchProps()
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set())
@@ -102,18 +72,17 @@ export default function TableView({ folder, typeName, type }: { folder: string; 
           return next
         })
       mark(true)
-      patch.mutate(
-        { id: row.id, baseRev: row.rev, ...(value === undefined ? { unset: [key] } : { set: { [key]: value } }) },
-        {
-          onError: (e) => {
-            const name = row.title || row.label || t.editor.untitled
-            // The row has been read again by the hook; nothing of the change was kept.
-            if (e instanceof ApiError && e.code === 'conflict') toast.error(tp.table.conflict(name))
-            else toast.error(t.fmt.labelled(tp.table.changeFailed(name), e instanceof Error ? e.message : ''))
-          },
-          onSettled: () => mark(false),
-        },
-      )
+      // Not the callbacks of mutate(): the observer keeps only those of its latest call, so a row whose change was
+      // overtaken by another would stay marked as busy, and its failure would not be told.
+      patch
+        .mutateAsync({ id: row.id, baseRev: row.rev, ...(value === undefined ? { unset: [key] } : { set: { [key]: value } }) })
+        .then(undefined, (e: unknown) => {
+          const name = row.title || row.label || t.editor.untitled
+          // The row has been read again by the hook; nothing of the change was kept.
+          if (e instanceof ApiError && e.code === 'conflict') toast.error(tp.table.conflict(name))
+          else toast.error(t.fmt.labelled(tp.table.changeFailed(name), e instanceof Error ? e.message : ''))
+        })
+        .finally(() => mark(false))
     },
     [patch],
   )
@@ -137,7 +106,6 @@ export default function TableView({ folder, typeName, type }: { folder: string; 
 
   return (
     <div className="grid gap-3" data-slot="table-view" data-type={typeName}>
-      <TableFilters fields={fields} filters={filters} onChange={setFilters} />
       {!type && <p className="text-xs text-muted-foreground">{tp.table.noType(typeName)}</p>}
       {type?.error && <p className="text-xs text-destructive">{type.error}</p>}
       {query.isPending ? (
@@ -162,7 +130,7 @@ export default function TableView({ folder, typeName, type }: { folder: string; 
                   return (
                     <div key={c.id} role="columnheader" aria-sort={active ? dir : asc ? 'none' : undefined} className="flex h-9 min-w-0 items-center border-r px-3 last:border-r-0">
                       {asc ? (
-                        <button type="button" onClick={() => setSort(asc)} title={tp.table.sortBy(c.label)} className="flex min-w-0 items-center gap-1 rounded outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50">
+                        <button type="button" disabled={sortDisabled} onClick={() => setSort(asc)} title={tp.table.sortBy(c.label)} className="flex min-w-0 items-center gap-1 rounded outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50">
                           <span className="truncate">{c.label}</span>
                           {active ? dir === 'ascending' ? <ArrowUp className="size-3.5 shrink-0" /> : <ArrowDown className="size-3.5 shrink-0" /> : <ArrowUpDown className="size-3.5 shrink-0 opacity-40" />}
                         </button>

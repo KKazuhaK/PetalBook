@@ -2,6 +2,7 @@ package space
 
 import (
 	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -36,10 +37,6 @@ func osOps() fileOps {
 	}
 }
 
-// tmpDir is where files are written before being renamed into place. It is
-// inside the space (same file system, so rename is atomic) and git-ignored.
-func (s *Space) tmpDir() string { return filepath.Join(s.root, ".petalbook", "tmp") }
-
 // takenKeys lists the names in dir by NameKey (NFC, case-folded). It is a
 // hint only to skip names quickly: the file system has the last word, through
 // the exclusive link in createNamed and moveNamed. Cost: O(files in that folder).
@@ -69,7 +66,7 @@ func (s *Space) createNamed(by Author, folder, dir, stem string, data []byte) (s
 	if err != nil {
 		return "", err
 	}
-	tmp, err := newTemp(s.tmpDir(), data, 0o644)
+	tmp, err := newTempIn(dir, data, 0o644)
 	if err != nil {
 		return "", err
 	}
@@ -420,11 +417,38 @@ func ValidNewFolder(rel string) error {
 	return notPageNames(strings.Split(rel, "/"))
 }
 
-func newTemp(tmpDir string, data []byte, mode os.FileMode) (string, error) {
-	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
-		return "", err
+// tempName is a new name for a file written in a folder of the space before
+// it is renamed or linked into place there: hidden (a dot name is no page,
+// and is not listed), unpredictable, and marked as the server's (tempMark), so
+// one a crash left is known at the next start (removeLeftTemps). Git never
+// sees one: they are excluded in info/exclude, and the committer names its
+// paths one by one.
+func tempName() string {
+	var rnd [8]byte
+	rand.Read(rnd[:])
+	return tempMark + hex.EncodeToString(rnd[:])
+}
+
+// isTempName reports whether name is one tempName or writeIn gives.
+func isTempName(name string) bool {
+	return strings.HasPrefix(name, ".") && strings.Contains(name, tempMark)
+}
+
+// newTempIn writes data to a new file in dir, the folder the file is to be
+// renamed or linked into, so that it is always on one file system with it (a
+// folder elsewhere may not be, whatever device numbers say). The file is made
+// exclusively under a new name, so nothing that is there (a link a pull
+// brought, a file) is ever written through or replaced; it is removed again
+// when anything fails.
+func newTempIn(dir string, data []byte, mode os.FileMode) (string, error) {
+	var f *os.File
+	var err error
+	for range 8 {
+		f, err = os.OpenFile(filepath.Join(dir, tempName()), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if !errors.Is(err, fs.ErrExist) {
+			break
+		}
 	}
-	f, err := os.CreateTemp(tmpDir, "w-*")
 	if err != nil {
 		return "", err
 	}
@@ -451,13 +475,14 @@ func newTemp(tmpDir string, data []byte, mode os.FileMode) (string, error) {
 }
 
 // writeAtomic replaces target with data so a reader or a crash sees either the
-// old file or the new one, never half of it.
-func writeAtomic(tmpDir, target string, data []byte) error {
+// old file or the new one, never half of it. The new file is written in the
+// folder of target (newTempIn).
+func writeAtomic(target string, data []byte) error {
 	mode := os.FileMode(0o644)
-	if st, err := os.Stat(target); err == nil {
+	if st, err := os.Lstat(target); err == nil && st.Mode().IsRegular() {
 		mode = st.Mode().Perm()
 	}
-	tmp, err := newTemp(tmpDir, data, mode)
+	tmp, err := newTempIn(filepath.Dir(target), data, mode)
 	if err != nil {
 		return err
 	}

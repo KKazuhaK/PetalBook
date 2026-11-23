@@ -20,6 +20,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/index"
 )
 
@@ -40,7 +41,8 @@ type Options struct {
 	// Name is the display name. When empty it is read from .petalbook/space.yml,
 	// else DefaultName. It is written to space.yml only when that file is created.
 	Name string
-	// StateDir holds the index. Default: <Root>/.petalbook/cache.
+	// StateDir holds the index, the journal and the notices. Default:
+	// DefaultStateDir(Root), in the Git directory.
 	StateDir string
 	// Committer is the Git committer of automatic commits, "Name <email>"; it
 	// is their author too unless Author is given.
@@ -83,6 +85,12 @@ type Space struct {
 	// cfg is what was last read of the bindings in space.yml (see config.go).
 	cfgMu sync.Mutex
 	cfg   configCache
+	// heal restores a settings file that cannot be used (see restore.go).
+	heal *healer
+	// tagCfg is what was last read of the views in tags.yml (see views.go).
+	tagCfg tagCache
+	// typeCache are the type files parsed, by name (see listing.go).
+	typeCache map[string]typeCacheEntry
 
 	// src is the file tree the index mirrors. syncEvery throttles the
 	// re-sync a missed lookup triggers, so ids that do not exist (a stale
@@ -152,7 +160,7 @@ func Open(opt Options) (*Space, error) {
 		}
 		g.setAuthor(an, ae)
 	}
-	if _, err := os.Stat(filepath.Join(root, ".git")); errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Lstat(filepath.Join(root, ".git")); errors.Is(err, fs.ErrNotExist) {
 		if opt.Remote != nil {
 			// Making an empty repository here would hide pages that were never
 			// pushed. Putting the clone back is for an administrator.
@@ -165,30 +173,70 @@ func Open(opt Options) (*Space, error) {
 	} else if err != nil {
 		return nil, err
 	}
-
-	pb := filepath.Join(root, ".petalbook")
-	if err := os.MkdirAll(pb, 0o755); err != nil {
+	// .git is a folder, or a file or a link that names one (a checkout made
+	// with `git worktree add`, a submodule, --separate-git-dir): git says
+	// where it is.
+	dirs, err := resolveGitDirs(hookRunner{g}, root)
+	if err != nil {
 		return nil, err
 	}
-	var ours []string // files under .petalbook the server made, for the first commit
+	g.dirs = dirs
+
+	heal := &healer{root: root, repo: g.r, log: log, gitDir: dirs.git}
+	// A local space writes space.yml at the start when there is none: a link
+	// or a file where .petalbook belongs is put right before (see
+	// settingspath.go): what is in its place is moved aside and that is
+	// committed, and the folder is made again with what it had. What is put
+	// back is committed with the first commit. A space that follows a remote
+	// writes nothing there by itself; the first change that does puts it
+	// right, and pushes that first.
+	var refilled []string
+	if opt.Remote == nil && firstBlockedOwn(root) != "" {
+		b := firstBlockedOwn(root)
+		w := wayWriter{
+			record: func(rel string, deleted bool) error {
+				if !deleted {
+					refilled = append(refilled, rel)
+				}
+				return nil
+			},
+			commitNow: func(paths []string) error {
+				id, _ := g.identities(Author{})
+				_, err := g.commitPaths(id, paths)
+				var skipped *gitstore.SkippedError
+				if errors.As(err, &skipped) {
+					err = nil
+				}
+				for _, p := range paths {
+					for j, r := range refilled {
+						if r == p {
+							refilled = append(refilled[:j], refilled[j+1:]...)
+							break
+						}
+					}
+				}
+				return err
+			},
+		}
+		if _, err := heal.clearWay(b+"/x", "", w); err != nil {
+			return nil, fmt.Errorf("%s is not a folder and could not be put right: %w", b, err)
+		}
+	}
+	ours := refilled // files under .petalbook the server made, for the first commit
 	var name string
 	if opt.Remote != nil {
 		// A space that follows a remote never makes tracked files of its own
-		// here: they would be commits nobody pushes. Its temporary files are
-		// kept out of Git's way through the clone's own exclude file, and its
-		// name is read, not written.
-		if _, err := ensureLines(filepath.Join(root, ".git", "info", "exclude"), "/.petalbook/tmp/", "/.petalbook/cache/"); err != nil {
-			return nil, err
-		}
-		name = readSpaceName(filepath.Join(pb, "space.yml"), opt.Name)
+		// here: they would be commits nobody pushes. Its name is read, not
+		// written.
+		name = readSpaceName(root, opt.Name)
 	} else {
-		if changed, err := ensureLines(filepath.Join(pb, ".gitignore"), "cache/", "tmp/"); err != nil {
+		d, err := mkdirIn(root, ".petalbook")
+		if err != nil {
 			return nil, err
-		} else if changed {
-			ours = append(ours, ".petalbook/.gitignore")
 		}
+		d.Close()
 		var madeConfig bool
-		if name, madeConfig, err = ensureSpaceConfig(filepath.Join(pb, "space.yml"), opt.Name); err != nil {
+		if name, madeConfig, err = ensureSpaceConfig(root, opt.Name); err != nil {
 			return nil, err
 		}
 		if madeConfig {
@@ -198,7 +246,11 @@ func Open(opt Options) (*Space, error) {
 
 	stateDir := opt.StateDir
 	if stateDir == "" {
-		stateDir = filepath.Join(pb, "cache")
+		stateDir = stateDirIn(dirs.git)
+		tidyEarlier(stateDir)
+		if err := moveOldState(root, stateDir, g, log); err != nil {
+			return nil, err
+		}
 	}
 	if stateDir, err = filepath.Abs(stateDir); err != nil {
 		return nil, err
@@ -211,14 +263,28 @@ func Open(opt Options) (*Space, error) {
 	if stateDir, err = filepath.EvalSymlinks(stateDir); err != nil {
 		return nil, err
 	}
-	if rel, err := filepath.Rel(root, stateDir); err == nil && !strings.HasPrefix(rel, "..") && !strings.HasPrefix(filepath.ToSlash(rel), ".petalbook/") {
-		// A state directory elsewhere inside the repository must not be committed.
-		if err := g.exclude(filepath.ToSlash(rel) + "/"); err != nil {
+	inTree := func(dir string) (string, bool) {
+		rel, err := filepath.Rel(root, dir)
+		return filepath.ToSlash(rel), err == nil && filepath.IsLocal(rel) && !within(dirs.git, dir)
+	}
+	if rel, ok := inTree(stateDir); ok {
+		// A state directory given inside the work tree must not be committed.
+		if err := g.exclude(rel + "/"); err != nil {
 			return nil, err
 		}
 	}
-	// Half-written files from a crash.
-	os.RemoveAll(filepath.Join(pb, "tmp"))
+	// A file of the space is written next to where it goes, under a hidden
+	// name of the server's (newTempIn, writeIn), which git is told to leave
+	// out. Nothing goes through a folder of temporary files that a pull can
+	// replace, or that can be on another file system than the file.
+	if err := g.excludeLine(tempPattern); err != nil {
+		return nil, err
+	}
+	// The temporary folder of earlier versions, when the repository has
+	// nothing in it, never through a link; and the one an earlier build kept
+	// in the Git directory.
+	removeOldTmp(root, g, log)
+	os.RemoveAll(filepath.Join(dirs.git, "petalbook-tmp"))
 
 	// What an earlier run changed but did not get to commit, and any move it
 	// left half done, before the index looks at the files.
@@ -226,7 +292,18 @@ func Open(opt Options) (*Space, error) {
 	if err != nil {
 		return nil, err
 	}
-	recovered := recoverPending(root, recs)
+	if rel, ok := inTree(stateDir); ok {
+		// A state directory inside the space is never written through
+		// something that is not a folder there.
+		jrn.guard = func() error {
+			if b, err := wayBlocked(root, rel+"/x"); err != nil || b != "" {
+				return errors.Join(err, fmt.Errorf("%s is not a folder", b))
+			}
+			return nil
+		}
+	}
+	heal.setStateDir(stateDir)
+	recovered := recoverPendingWith(heal, root, recs)
 	for _, r := range recs {
 		if r.Op == "b" || r.Op == "u" {
 			// What the records asked for is done now; they must not be made
@@ -245,16 +322,20 @@ func Open(opt Options) (*Space, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Space{root: root, stateDir: stateDir, name: name, idx: idx, log: log, now: time.Now, ops: osOps(), src: dirSource{root}, syncEvery: opt.ResyncInterval}
+	s := &Space{root: root, stateDir: stateDir, name: name, idx: idx, log: log, now: time.Now, ops: osOps(), src: dirSource{root: root}, syncEvery: opt.ResyncInterval, heal: heal}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	if s.syncEvery <= 0 {
 		s.syncEvery = 2 * time.Second
 	}
-	st, err := idx.Sync(s.src, false)
+	// The first sync walks every folder of pages, and the attachments, anyway:
+	// it notes what a crash left of a write there (isTempName) on the way.
+	temps := append(tempsIn(root, ".petalbook"), tempsIn(root, typesDir)...)
+	st, err := idx.Sync(dirSource{root: root, temps: &temps}, false)
 	if err != nil {
 		idx.Close()
 		return nil, err
 	}
+	removeLeftTemps(root, g, temps, log)
 	log.Info("index ready", "pages", st.Pages, "added", st.Added, "updated", st.Updated, "removed", st.Removed,
 		"problems", st.Problems, "ms", st.Elapsed.Milliseconds())
 	if st.Problems > 0 {
@@ -280,7 +361,16 @@ func Open(opt Options) (*Space, error) {
 	if opt.Remote != nil {
 		// What the journal says was written but not committed is handled by
 		// initRemote, not by the background committer.
+		for _, p := range refilled {
+			if recovered == nil {
+				recovered = map[string]Author{}
+			}
+			if _, ok := recovered[p]; !ok {
+				recovered[p] = Author{}
+			}
+		}
 		s.cm = newCommitter(g, idle, max, log, jrn, nil)
+		s.cm.setOnCommit(heal.committed)
 		if err := s.initRemote(opt.Remote, recovered); err != nil {
 			s.cm.Close()
 			idx.Close()
@@ -289,6 +379,7 @@ func Open(opt Options) (*Space, error) {
 		return s, nil
 	}
 	s.cm = newCommitter(g, idle, max, log, jrn, recovered)
+	s.cm.setOnCommit(heal.committed)
 	if len(ours) > 0 {
 		recs := make([]jrec, len(ours))
 		for i, p := range ours {
@@ -367,13 +458,38 @@ func ensureLines(file string, lines ...string) (bool, error) {
 	return true, os.WriteFile(file, []byte(out), 0o644)
 }
 
+// removeOldTmp removes .petalbook/tmp, where versions before 2.2 wrote files
+// before they were renamed into place, when it is a folder reached through
+// folders and the repository has nothing in it: a file of the repository is
+// never removed. The repository is asked only when the folder is there.
+func removeOldTmp(root string, g *gitRepo, log *slog.Logger) {
+	const old = ".petalbook/tmp"
+	if !isRealDir(root, old) {
+		return
+	}
+	tracked, err := g.trackedLower()
+	if err != nil {
+		return
+	}
+	for p := range tracked {
+		if strings.HasPrefix(p, old+"/") {
+			log.Warn("the repository has files where an earlier version wrote its temporary files; they are left as they are", "folder", old)
+			return
+		}
+	}
+	if d, b, err := openDirIn(root, ".petalbook"); err == nil && b == "" && d != nil {
+		d.RemoveAll("tmp")
+		d.Close()
+	}
+}
+
 // readSpaceName is ensureSpaceConfig that never writes.
-func readSpaceName(file, name string) string {
+func readSpaceName(root, name string) string {
 	if name != "" {
 		return name
 	}
-	data, err := os.ReadFile(file)
-	if err != nil {
+	data, _, _, err := readIn(root, spaceFile, maxSpaceFile)
+	if err != nil || data == nil {
 		return DefaultName
 	}
 	var cfg struct {
@@ -388,8 +504,8 @@ func readSpaceName(file, name string) string {
 
 // ensureSpaceConfig creates space.yml with the name if it is missing, and
 // returns the name in effect.
-func ensureSpaceConfig(file, name string) (string, bool, error) {
-	data, err := os.ReadFile(file)
+func ensureSpaceConfig(root, name string) (string, bool, error) {
+	data, _, _, err := readIn(root, spaceFile, maxSpaceFile)
 	if errors.Is(err, fs.ErrNotExist) {
 		if name == "" {
 			name = DefaultName
@@ -398,7 +514,7 @@ func ensureSpaceConfig(file, name string) (string, bool, error) {
 		if err != nil {
 			return "", false, err
 		}
-		return name, true, os.WriteFile(file, out, 0o644)
+		return name, true, writeIn(root, spaceFile, out)
 	}
 	if err != nil {
 		return "", false, err
@@ -484,7 +600,13 @@ func (s *Space) abs(rel string) (string, error) {
 
 // --- file tree as the index's source ----------------------------------------
 
-type dirSource struct{ root string }
+type dirSource struct {
+	root string
+	// temps, when set, collects the names of files a crash left of a write
+	// (isTempName), in the folders of pages and in the attachments, which
+	// are then walked too, for that only.
+	temps *[]string
+}
 
 // ignoredDir reports folders that never hold pages: Git's and our own
 // directories, the attachments folder at the root, and any dot-directory.
@@ -509,13 +631,25 @@ func (d dirSource) Walk(file func(index.FileInfo) error, dir func(string) error)
 		if e.Type()&fs.ModeSymlink != 0 {
 			return nil // never follow links out of the space
 		}
+		inAssets := d.temps != nil && strings.HasPrefix(rel, "assets/")
 		if e.IsDir() {
-			if ignoredDir(rel, name) {
+			switch {
+			case d.temps != nil && rel == "assets":
+				return nil // looked into for what a crash left only
+			case inAssets && strings.HasPrefix(name, "."):
+				return filepath.SkipDir
+			case inAssets:
+				return nil
+			case ignoredDir(rel, name):
 				return filepath.SkipDir
 			}
 			return dir(rel)
 		}
-		if strings.HasPrefix(name, ".") || !strings.EqualFold(path.Ext(name), ".md") || !e.Type().IsRegular() {
+		if d.temps != nil && isTempName(name) && e.Type().IsRegular() {
+			*d.temps = append(*d.temps, rel)
+			return nil
+		}
+		if inAssets || strings.HasPrefix(name, ".") || !strings.EqualFold(path.Ext(name), ".md") || !e.Type().IsRegular() {
 			return nil
 		}
 		info, err := e.Info()

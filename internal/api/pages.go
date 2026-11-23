@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -17,9 +18,35 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/space"
 )
 
+// maxQueryTags is the most different tags a listing or a count may ask for:
+// each is a condition in the query.
+const maxQueryTags = 10
+
+// queryTags reads the repeated tag parameter without its duplicates, and
+// reports false when more than maxQueryTags different tags are given.
+func queryTags(v url.Values) ([]string, bool) {
+	var out []string
+	seen := map[string]bool{}
+	for _, t := range v["tag"] {
+		if seen[t] {
+			continue
+		}
+		if seen[t] = true; len(out) == maxQueryTags {
+			return nil, false
+		}
+		out = append(out, t)
+	}
+	return out, true
+}
+
 func (s *server) listPages(c *call) {
 	v := c.r.URL.Query()
-	q := index.Query{Tags: v["tag"], Text: v.Get("q"), Sort: v.Get("sort"), Cursor: v.Get("cursor")}
+	tags, ok := queryTags(v)
+	if !ok {
+		writeError(c.w, http.StatusBadRequest, "invalid", fmt.Sprintf("at most %d different tags", maxQueryTags))
+		return
+	}
+	q := index.Query{Tags: tags, Text: v.Get("q"), Sort: v.Get("sort"), Cursor: v.Get("cursor")}
 	if v.Has("folder") {
 		f := v.Get("folder")
 		if err := space.ValidFolder(f); err != nil {
@@ -88,6 +115,15 @@ func (s *server) listPages(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "props must be 1 or 0")
 		return
 	}
+	body := false
+	switch v.Get("body") {
+	case "", "0", "false":
+	case "1", "true":
+		body = true
+	default:
+		writeError(c.w, http.StatusBadRequest, "invalid", "body must be 1 or 0")
+		return
+	}
 	if raw := v.Get("filter"); raw != "" {
 		fs, err := parseFilters(raw)
 		if err != nil {
@@ -107,6 +143,16 @@ func (s *server) listPages(c *call) {
 			q.Limit = -1
 		}
 	}
+	if body {
+		// Every body is a file to read: only a few at a time.
+		if q.Limit == 0 {
+			q.Limit = space.MaxBodies
+		}
+		if q.Limit > space.MaxBodies {
+			writeError(c.w, http.StatusBadRequest, "invalid", "with body=1 the limit is at most "+strconv.Itoa(space.MaxBodies))
+			return
+		}
+	}
 	res, err := c.sp.Space.List(q)
 	if err != nil {
 		s.fail(c.w, err)
@@ -117,18 +163,33 @@ func (s *server) listPages(c *call) {
 	for i, it := range res.Items {
 		items[i] = toSummary(it, types)
 	}
+	if body {
+		bodies, err := c.sp.Space.Bodies(res.Items)
+		if err != nil {
+			s.fail(c.w, err)
+			return
+		}
+		for i := range items {
+			items[i].Body = &bodies[i]
+		}
+	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Items []summaryResp `json:"items"`
 		Next  string        `json:"next"`
 	}{items, res.Next})
 }
 
+// maxFilterParam is the most a filter parameter may be.
+const maxFilterParam = 128 << 10
+
 // parseFilters reads the filter parameter: a JSON array of
 // {"key", "op", "values"}. The values keep their JSON types (a number is a
 // number, not text).
 func parseFilters(raw string) ([]index.Filter, error) {
 	const bad = "filter must be a JSON array of {\"key\", \"op\", \"values\"}"
-	if len(raw) > 16<<10 {
+	// Room for a board's "other values" column on a select field with as many
+	// options as one may have (500 of 200 bytes), all excluded.
+	if len(raw) > maxFilterParam {
 		return nil, errors.New("filter is too long")
 	}
 	dec := json.NewDecoder(strings.NewReader(raw))

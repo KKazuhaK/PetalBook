@@ -1,15 +1,17 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
-import { ArrowUpDown, FilePlus2, FolderPlus, LayoutGrid, List as ListIcon, PenLine, Table2, Tag as TagIcon } from 'lucide-react'
+import { ArrowUpDown, BookOpen, Columns3, FilePlus2, FolderPlus, LayoutGrid, List as ListIcon, PenLine, Table2, Tag as TagIcon } from 'lucide-react'
 import { toast } from 'sonner'
-import { useActiveSpace, useCreatePage, usePageList, useSpacePermissions, useTypes, useUrls } from '@/api/hooks'
-import type { ListParams, SortKey } from '@/api/types'
+import { useActiveSpace, useCreatePage, usePageList, useSpacePermissions, useTypes, useUrls, useViews, useViewsBusy } from '@/api/hooks'
+import type { ListParams, PropFilter, SortKey, ViewScope } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ErrorState, Spinner } from '@/components/common'
 import { QuickCaptureFab, useQuickCapture } from '@/components/layout/QuickCapture'
 import { TopBar } from '@/components/layout/TopBar'
+import { ViewBar } from '@/components/views/ViewBar'
+import { useWorkingCopy } from '@/components/views/useWorkingCopy'
 import { Breadcrumbs } from '@/components/files/Breadcrumbs'
 import { FolderCard, FolderRow, PageCard, PageRow, folderItem, pageItem, type EntryState } from '@/components/files/Entries'
 import { FileContextMenu } from '@/components/files/FileContextMenu'
@@ -18,12 +20,17 @@ import { SelectionBar } from '@/components/files/SelectionBar'
 import { childFolders, itemKey, type FileItem } from '@/lib/folders'
 import { loadView, saveView, viewKey, type ListViewMode } from '@/lib/listView'
 import { folderTypeName } from '@/lib/pageTypes'
+import { DEFAULT_STATE, groupFieldsOf, sameState, SORT_WORDS, stateOfView, viewAtMark, viewIdKey, type ViewState } from '@/lib/savedViews'
 import { applyClick, emptySelection, prune, type Selection } from '@/lib/selection'
 import { t } from '@/i18n'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 
 // The table view, with the virtual list it needs, is a chunk of its own: it loads when a table is first shown.
 const TableView = lazy(() => import('@/components/table/TableView'))
+// So are the board, continuous reading and the tools of a view: each is fetched when first shown.
+const BoardView = lazy(() => import('@/components/board/BoardView'))
+const ReadingView = lazy(() => import('@/components/reading/ReadingView'))
+const ViewTools = lazy(() => import('@/components/views/ViewTools'))
 
 export type ListSource =
   | { kind: 'recent' }
@@ -84,27 +91,32 @@ function useViewMode(space: string, source: ListSource): [ListViewMode, (m: List
   ]
 }
 
-function ViewSwitch({ mode, onChange, table }: { mode: ListViewMode; onChange: (m: ListViewMode) => void; table: boolean }) {
+function ViewSwitch({ mode, onChange, table, board, read, disabled }: { mode: ListViewMode; onChange: (m: ListViewMode) => void; table: boolean; board: boolean; read: boolean; disabled?: boolean }) {
   const item = (m: ListViewMode, label: string, Icon: typeof ListIcon) => (
     <button
       type="button"
       aria-pressed={mode === m}
       aria-label={label}
       title={label}
+      disabled={disabled}
       onClick={() => onChange(m)}
-      className={`flex size-7 items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 ${mode === m ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+      className={`flex size-7 disabled:opacity-60 items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 ${mode === m ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
     >
       <Icon className="size-4" />
     </button>
   )
   return (
-    <div role="group" aria-label={t.view.label} className="flex items-center rounded-lg border p-0.5">
+    <div role="group" aria-label={t.view.label} aria-busy={disabled || undefined} className="flex items-center rounded-lg border p-0.5">
       {item('list', t.view.list, ListIcon)}
       {item('cards', t.view.cards, LayoutGrid)}
       {table && item('table', t.view.table, Table2)}
+      {board && item('board', t.view.board, Columns3)}
+      {read && item('read', t.view.read, BookOpen)}
     </div>
   )
 }
+
+const normSort = (s: string) => s || '-updated'
 
 // What is in a folder is shown like a file manager: its subfolders first, then
 // its pages. The other listings (recent, a tag, a search) hold pages only.
@@ -122,20 +134,103 @@ function Listing({ source }: { source: ListSource }) {
   const { write } = useSpacePermissions()
   const [creating, setCreating] = useState(false)
   const { id: spaceId, spaces } = useActiveSpace()
-  const [chosen, setMode] = useViewMode(spaceId ?? '', source)
-  // The types are only asked for in a folder: the table is a view of a folder that has one.
+  // What a folder that has no saved view remembers in the browser (the 2.1 choice): the layout of the implicit view.
+  const [chosen, setImplicit] = useViewMode(spaceId ?? '', source)
+  // The types are only asked for in a folder: the table and the board are views of a folder that has one.
   const types = useTypes(source.kind === 'folder')
   const typeName = source.kind === 'folder' && types.data ? folderTypeName(types.data.bindings, source.folder) : ''
-  // A table remembered for a folder that has no type (any more) shows as a list.
-  // While the types are still on their way the choice is kept, and nothing is loaded for it.
-  const mode: ListViewMode = chosen === 'table' && typeName === '' && !types.isPending ? 'list' : chosen
+  const type = typeName ? types.data?.types.find((x) => x.name === typeName) : undefined
+
+  // --- the view being shown ---
+  // A folder or a tag has saved views; the one last used here is shown, else the first. Without any, the implicit
+  // view is shown: the layout remembered above and what is adjusted on the page.
+  const scope: ViewScope | null = source.kind === 'folder' ? { folder: source.folder } : source.kind === 'tag' ? { tag: source.tag } : null
+  const views = useViews(scope)
+  const writingViews = useViewsBusy(scope)
+  const viewsPending = scope !== null && views.isPending
+  const idKey = viewIdKey(spaceId ?? '', source.kind, source.kind === 'folder' ? source.folder : source.kind === 'tag' ? source.tag : '')
+  const sortParam = params.get('sort')
+  // In a folder or a tag "sort=" is a change too: the listing's default order on a view that sorts otherwise (a sort set
+  // back to what the view said before a save of the person).
+  const urlSort = sortParam !== null && (SORTS.includes(sortParam as SortKey) || (scope !== null && (sortParam === '' || SORT_WORDS.test(sortParam)))) ? sortParam : null
+  const implicit: ViewState = { ...DEFAULT_STATE, layout: chosen }
+  // The working copy of the view shown, and the tabs as they go with it (see useWorkingCopy and lib/workingCopy).
+  const working = useWorkingCopy(scope !== null, idKey, views.data, { view: params.get('view'), sort: urlSort }, writingViews, (list, wc) => {
+    const v = list.find((x) => x.id === wc.viewKey)
+    return v ? stateOfView(v) : implicit
+  })
+  const saved = useMemo(() => working.list?.views ?? [], [working.list])
+  const wc = working.wc
+  // While the person's own write of the views is on its way, the tabs, the tools of the view and the sort are off.
+  const busy = scope !== null && working.busy
+  // The view of the working copy; when the views read cannot place it (they did not come after a write), another view
+  // may be shown, without the working copy (it is never put on another view).
+  const own = scope ? (saved.find((v) => v.id === wc.viewKey) ?? null) : null
+  const active = scope ? (own ?? viewAtMark(saved, wc.viewKey) ?? saved[0] ?? null) : null
+  const base: ViewState = active ? stateOfView(active) : implicit
+  const mine = own !== null || (active === null && wc.viewKey === '')
+  const patch = scope && mine ? wc.patch : {}
+  const state: ViewState = scope ? { ...base, ...patch } : { ...base, sort: urlSort ?? base.sort }
+  const modified = active !== null && !sameState(state, base)
+
+  const setPatch = (p: Partial<ViewState>) => {
+    if (mine) working.edit(p, base)
+  }
+  const setSort = (to: string) => {
+    if (scope) return setPatch({ sort: to })
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        // What the listing already does needs no word in the address.
+        if (to === base.sort || (source.kind !== 'search' && normSort(to) === normSort(base.sort))) next.delete('sort')
+        else next.set('sort', to)
+        return next
+      },
+      { replace: true },
+    )
+  }
+  // The address shows the sort of the working copy, with the view it belongs to, so a reload or "back" finds it again
+  // and never puts it on another view.
+  const scoped = scope !== null
+  const wantSort = wc.patch.sort ?? null
+  const wantView = wantSort !== null && wc.viewKey !== '' ? wc.viewKey : null
+  useEffect(() => {
+    if (!scoped || (params.get('sort') === wantSort && params.get('view') === wantView)) return
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        for (const [k, v] of [['sort', wantSort], ['view', wantView]] as const) {
+          if (v === null) next.delete(k)
+          else next.set(k, v)
+        }
+        return next
+      },
+      { replace: true },
+    )
+  }, [scoped, params, setParams, wantSort, wantView])
+
+  // What the layouts need: the table and the board a folder with a type (the board a single-choice field of it), a tag's
+  // board a field a view named, reading any folder or tag. While the types are on their way the choice is kept.
+  const groupFields = groupFieldsOf(type)
+  const group = state.group || groupFields[0]?.key || ''
+  const typesPending = source.kind === 'folder' && types.isPending
+  const tableOk = typeName !== ''
+  const boardOk = source.kind === 'folder' ? group !== '' : source.kind === 'tag' && state.group !== ''
+  const readOk = scope !== null
+  const mode: ListViewMode = state.layout === 'table' && !tableOk && !typesPending ? 'list' : state.layout === 'board' && !boardOk && !typesPending ? 'list' : state.layout === 'read' && !readOk ? 'list' : state.layout
+  const setMode = (m: ListViewMode) => {
+    if (active) setPatch({ layout: m })
+    else setImplicit(m)
+  }
   const isTable = mode === 'table'
+  const listLike = mode === 'list' || mode === 'cards'
+  // Which parts of the sort are sent: the listing's own default needs no word.
+  const sortQ = source.kind === 'search' ? state.sort : normSort(state.sort) === '-updated' ? '' : state.sort
+  const filters: PropFilter[] = state.filter
   const capture = useQuickCapture()
   const isInbox = source.kind === 'folder' && source.folder === spaces.find((s) => s.id === spaceId)?.inbox
   const [rawSelection, setSelection] = useState<Selection>(emptySelection)
 
-  const sortParam = params.get('sort') as SortKey | null
-  const sort = sortParam && SORTS.includes(sortParam) ? sortParam : undefined
   const isSearch = source.kind === 'search'
 
   const query = usePageList({
@@ -144,8 +239,9 @@ function Listing({ source }: { source: ListSource }) {
     ...(source.kind === 'recent' ? { folder: '', recursive: true } : {}),
     ...(source.kind === 'tag' ? { tag: [source.tag] } : {}),
     ...(source.kind === 'search' ? { ...source.filters, q: source.q } : {}),
-    ...(sort ? { sort } : {}),
-  }, !isTable)
+    ...(sortQ ? { sort: sortQ as ListParams['sort'] } : {}),
+    ...(filters.length ? { filter: filters } : {}),
+  }, listLike && !viewsPending)
   // Read before the status checks below narrow `query` (a failed "load more" leaves the list in place).
   const nextError = query.isFetchNextPageError ? query.error : null
   const fetchNext = query.fetchNextPage
@@ -214,7 +310,7 @@ function Listing({ source }: { source: ListSource }) {
   const Icon = source.kind === 'tag' ? TagIcon : null
   const empty = emptyText(source, write)
   const treeReady = source.kind !== 'folder' || !ops || ops.ready
-  const nothing = !isTable && !query.isPending && !query.isError && items.length === 0 && folders.length === 0 && treeReady
+  const nothing = listLike && !query.isPending && !query.isError && items.length === 0 && folders.length === 0 && treeReady
 
   return (
     <>
@@ -232,18 +328,9 @@ function Listing({ source }: { source: ListSource }) {
             <NativeSelect
               className="h-7 text-[0.8rem] max-sm:h-8 max-sm:opacity-0"
               aria-label={t.list.sort}
-              value={sort ?? ''}
-              onChange={(e) =>
-                setParams(
-                  (prev) => {
-                    const next = new URLSearchParams(prev)
-                    if (e.target.value) next.set('sort', e.target.value)
-                    else next.delete('sort')
-                    return next
-                  },
-                  { replace: true },
-                )
-              }
+              disabled={busy}
+              value={isSearch ? state.sort : normSort(state.sort) === '-updated' ? '' : state.sort}
+              onChange={(e) => setSort(isSearch ? e.target.value : e.target.value || '-updated')}
             >
               {/* Search defaults to relevance; everything else to newest first. */}
               <option value="">{isSearch ? t.list.sorts.relevance : t.list.sorts['-updated']}</option>
@@ -252,10 +339,12 @@ function Listing({ source }: { source: ListSource }) {
                   {t.list.sorts[s]}
                 </option>
               ))}
+              {/* A view can sort by a property, which the plain choices do not name. */}
+              {state.sort !== '' && !SORTS.includes(state.sort as SortKey) && <option value={state.sort}>{t.views.customSort(state.sort.replace(/^-?(prop:)?/, ''))}</option>}
             </NativeSelect>
             </div>
             )}
-            <ViewSwitch mode={mode} onChange={setMode} table={typeName !== ''} />
+            <ViewSwitch mode={mode} onChange={setMode} table={tableOk} board={boardOk || typesPending} read={readOk} disabled={busy} />
             {write && source.kind === 'folder' && ops && (
               <Button variant="outline" size="icon-sm" className="max-sm:hidden" onClick={() => ops.newFolder(source.folder)} title={t.manage.newFolder} aria-label={t.manage.newFolder}>
                 <FolderPlus />
@@ -291,7 +380,29 @@ function Listing({ source }: { source: ListSource }) {
         onSelect={(key) => setSelection({ keys: new Set([key]), anchor: key })}
         afterAction={clear}
       >
-        <div className={`mx-auto w-full flex-1 px-2 py-4 max-md:pb-20 sm:px-4 ${mode === 'cards' ? 'max-w-7xl' : isTable ? 'max-w-[96rem]' : 'max-w-3xl'}`}>
+        <div className={`mx-auto w-full flex-1 px-2 py-4 max-md:pb-20 sm:px-4 ${mode === 'cards' ? 'max-w-7xl' : isTable || mode === 'board' ? 'max-w-[96rem]' : 'max-w-3xl'}`}>
+          {scope && !viewsPending && (
+            <ViewBar
+              scope={scope}
+              views={saved}
+              rev={working.list?.rev ?? ''}
+              active={active}
+              working={state}
+              modified={modified && mine}
+              write={write && working.list !== null}
+              busy={busy}
+              onPick={working.pick}
+              onBegin={working.begin}
+              onEnd={working.end}
+              onRevert={working.revert}
+            />
+          )}
+          {views.isError && <p className="mb-2 text-xs text-muted-foreground">{t.views.loadFailed}</p>}
+          {scope && !viewsPending && (typeName !== '' || source.kind === 'tag' || filters.length > 0) && (
+            <Suspense fallback={null}>
+              <ViewTools isTag={source.kind === 'tag'} type={type} state={{ ...state, layout: mode }} group={group} onChange={setPatch} disabled={busy} />
+            </Suspense>
+          )}
           {folders.length > 0 &&
             (mode === 'cards' ? (
               <ul className="mb-4 grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -307,14 +418,24 @@ function Listing({ source }: { source: ListSource }) {
               </ul>
             ))}
 
-          {isTable && source.kind === 'folder' ? (
+          {viewsPending || (typesPending && !listLike) ? (
+            <Skeleton className="h-40 w-full" />
+          ) : isTable && source.kind === 'folder' ? (
             typeName === '' ? (
               <Skeleton className="h-40 w-full" />
             ) : (
               <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                <TableView folder={source.folder} typeName={typeName} type={types.data?.types.find((x) => x.name === typeName)} />
+                <TableView folder={source.folder} typeName={typeName} type={type} sort={sortQ || undefined} onSort={setSort} sortDisabled={busy} filters={filters} hidden={state.hidden} />
               </Suspense>
             )
+          ) : mode === 'board' && scope ? (
+            <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+              <BoardView scope={scope} type={type} group={source.kind === 'folder' ? group : state.group} sort={sortQ || undefined} filters={filters} cardFields={state.cardFields} />
+            </Suspense>
+          ) : mode === 'read' && scope ? (
+            <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+              <ReadingView params={{ ...('folder' in scope ? { folder: scope.folder } : { tag: [scope.tag] }), ...(sortQ ? { sort: sortQ as ListParams['sort'] } : {}), ...(filters.length ? { filter: filters } : {}) }} />
+            </Suspense>
           ) : query.isPending ? (
             <div className="space-y-2 px-3" aria-busy="true">
               {[0, 1, 2, 3, 4, 5].map((i) => (

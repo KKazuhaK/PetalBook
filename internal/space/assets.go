@@ -122,7 +122,7 @@ func (s *Space) putAssetLocked(tx *txn, id, name string, data []byte) (Asset, er
 		if err := tx.record(jrec{Op: "w", Path: rel, Rev: page.Rev(data)}); err != nil {
 			return Asset{}, err
 		}
-		tmp, err := newTemp(s.tmpDir(), data, 0o644)
+		tmp, err := newTempIn(dir, data, 0o644)
 		if err != nil {
 			return Asset{}, err
 		}
