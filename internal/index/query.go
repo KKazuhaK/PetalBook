@@ -293,6 +293,8 @@ func (x *Index) listDirect(q Query, limit int, sortName string, order []sortKey,
 		args = append(args, offset)
 	}
 
+	x.gate.RLock() // one query, read like the others (read.go)
+	defer x.gate.RUnlock()
 	rows, err := x.db.Query(query, args...)
 	if err != nil {
 		return Result{}, err
@@ -447,6 +449,8 @@ type FolderCount struct {
 // Tree returns every known folder, empty ones included. Cost: O(folders), each
 // count served by the (folder, mtime) index.
 func (x *Index) Tree() ([]FolderCount, error) {
+	x.gate.RLock() // one query, read like the others (read.go)
+	defer x.gate.RUnlock()
 	rows, err := x.db.Query(`SELECT f.path, (SELECT count(*) FROM pages p WHERE p.folder = f.path) FROM folders f ORDER BY f.path`)
 	if err != nil {
 		return nil, err
@@ -472,6 +476,8 @@ type TagCount struct {
 // Tags returns every tag by use, most used first. Cost: O(tag assignments),
 // measured at 15 ms for 50,000 pages in spikes/search-scale.
 func (x *Index) Tags() ([]TagCount, error) {
+	x.gate.RLock() // one query, read like the others (read.go)
+	defer x.gate.RUnlock()
 	rows, err := x.db.Query(`SELECT tag, count(*) AS n FROM tags GROUP BY tag ORDER BY n DESC, tag`)
 	if err != nil {
 		return nil, err
@@ -490,6 +496,8 @@ func (x *Index) Tags() ([]TagCount, error) {
 
 // Count returns the number of indexed pages.
 func (x *Index) Count() (n int, err error) {
+	x.gate.RLock() // one query, read like the others (read.go)
+	defer x.gate.RUnlock()
 	err = x.db.QueryRow(`SELECT count(*) FROM pages`).Scan(&n)
 	return
 }

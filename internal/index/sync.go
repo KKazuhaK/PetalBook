@@ -121,7 +121,7 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 	sort.Strings(removed)
 	sort.Slice(todo, func(i, j int) bool { return todo[i].Rel < todo[j].Rel })
 
-	tx, err := x.db.BeginTx(ctx, nil)
+	tx, err := x.wdb.BeginTx(ctx, nil)
 	if err != nil {
 		return Stats{}, err
 	}
@@ -196,11 +196,11 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 	}
 	if len(todo) > 1000 {
 		// After a big load, compact the full-text index and shrink the WAL.
-		x.db.ExecContext(ctx, `INSERT INTO fts(fts) VALUES ('optimize')`)
-		x.db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`)
+		x.wdb.ExecContext(ctx, `INSERT INTO fts(fts) VALUES ('optimize')`)
+		x.askCheckpoint()
 	}
-	x.db.QueryRowContext(ctx, `SELECT count(*) FROM pages`).Scan(&st.Pages)
-	x.db.QueryRowContext(ctx, `SELECT count(*) FROM problems`).Scan(&st.Problems)
+	x.wdb.QueryRowContext(ctx, `SELECT count(*) FROM pages`).Scan(&st.Pages)
+	x.wdb.QueryRowContext(ctx, `SELECT count(*) FROM problems`).Scan(&st.Problems)
 	st.Elapsed = time.Since(start)
 	return st, nil
 }
@@ -213,7 +213,7 @@ func (x *Index) loadKnown(ctx context.Context, into map[string]known) (recheck [
 		`SELECT path, size, mtime_ns FROM pages`,
 		`SELECT path, size, mtime_ns FROM problems WHERE code NOT IN ('duplicate_id', 'unreadable')`,
 	} {
-		rows, err := x.db.QueryContext(ctx, q)
+		rows, err := x.wdb.QueryContext(ctx, q)
 		if err != nil {
 			return nil, err
 		}
@@ -232,7 +232,7 @@ func (x *Index) loadKnown(ctx context.Context, into map[string]known) (recheck [
 		}
 		rows.Close()
 	}
-	rows, err := x.db.QueryContext(ctx, `SELECT path FROM problems WHERE code IN ('duplicate_id', 'unreadable')`)
+	rows, err := x.wdb.QueryContext(ctx, `SELECT path FROM problems WHERE code IN ('duplicate_id', 'unreadable')`)
 	if err != nil {
 		return nil, err
 	}
@@ -306,7 +306,7 @@ func (x *Index) Put(rel string, data []byte, mtimeNs int64) (bool, error) {
 	x.wmu.Lock()
 	defer x.unlockWrite()
 	ctx := context.Background()
-	tx, err := x.db.BeginTx(ctx, nil)
+	tx, err := x.wdb.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
 	}
@@ -333,7 +333,7 @@ func (x *Index) Remove(id string) error {
 	x.wmu.Lock()
 	defer x.unlockWrite()
 	ctx := context.Background()
-	tx, err := x.db.BeginTx(ctx, nil)
+	tx, err := x.wdb.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -356,7 +356,7 @@ func (x *Index) Remove(id string) error {
 func (x *Index) AddFolder(rel string) error {
 	x.wmu.Lock()
 	defer x.unlockWrite()
-	tx, err := x.db.Begin()
+	tx, err := x.wdb.Begin()
 	if err != nil {
 		return err
 	}
@@ -377,7 +377,7 @@ func (x *Index) Forget(paths, dirs []string) error {
 	ctx := context.Background()
 	x.wmu.Lock()
 	defer x.unlockWrite()
-	tx, err := x.db.BeginTx(ctx, nil)
+	tx, err := x.wdb.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -399,6 +399,8 @@ func (x *Index) Forget(paths, dirs []string) error {
 
 // PathByID returns the file path of a page.
 func (x *Index) PathByID(id string) (string, bool) {
+	x.gate.RLock() // a read like the others (read.go)
+	defer x.gate.RUnlock()
 	var p string
 	err := x.db.QueryRow(`SELECT path FROM pages WHERE id = ?`, id).Scan(&p)
 	return p, err == nil
@@ -417,6 +419,8 @@ type Problem struct {
 
 // Problems lists the files that are not usable pages, by path.
 func (x *Index) Problems() ([]Problem, error) {
+	x.gate.RLock()
+	defer x.gate.RUnlock()
 	rows, err := x.db.Query(`SELECT path, code, message FROM problems ORDER BY path`)
 	if err != nil {
 		return nil, err
@@ -658,7 +662,7 @@ func (x *Index) RetryDuplicates(src Source) error {
 	x.wmu.Lock()
 	defer x.unlockWrite()
 	ctx := context.Background()
-	rows, err := x.db.QueryContext(ctx, `SELECT path FROM problems WHERE code = 'duplicate_id' ORDER BY path`)
+	rows, err := x.wdb.QueryContext(ctx, `SELECT path FROM problems WHERE code = 'duplicate_id' ORDER BY path`)
 	if err != nil {
 		return err
 	}
@@ -675,7 +679,7 @@ func (x *Index) RetryDuplicates(src Source) error {
 	if len(paths) == 0 {
 		return nil
 	}
-	tx, err := x.db.BeginTx(ctx, nil)
+	tx, err := x.wdb.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -751,7 +755,7 @@ func (x *Index) Refresh(src Source, paths, dirs []string) (Stats, error) {
 
 	x.wmu.Lock()
 	defer x.unlockWrite()
-	tx, err := x.db.BeginTx(ctx, nil)
+	tx, err := x.wdb.BeginTx(ctx, nil)
 	if err != nil {
 		return Stats{}, err
 	}
@@ -815,8 +819,8 @@ func (x *Index) Refresh(src Source, paths, dirs []string) (Stats, error) {
 	if err := x.commit(tx); err != nil {
 		return Stats{}, err
 	}
-	x.db.QueryRowContext(ctx, `SELECT count(*) FROM pages`).Scan(&st.Pages)
-	x.db.QueryRowContext(ctx, `SELECT count(*) FROM problems`).Scan(&st.Problems)
+	x.wdb.QueryRowContext(ctx, `SELECT count(*) FROM pages`).Scan(&st.Pages)
+	x.wdb.QueryRowContext(ctx, `SELECT count(*) FROM problems`).Scan(&st.Problems)
 	st.Elapsed = time.Since(start)
 	return st, nil
 }

@@ -59,14 +59,20 @@ func pin(tx *sql.Tx) error {
 }
 
 // begin opens a read of the index as it is now. end must be called.
+//
+// The read holds the gate from before its snapshot is pinned to its end, so
+// the checkpointer knows when no snapshot is held (index.go). It takes its
+// connection first: waiting for one, it holds nothing back.
 func (x *Index) begin() (*read, error) {
 	tx, err := x.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		return nil, err
 	}
+	x.gate.RLock()
 	before := x.gen.Load()
 	if err := pin(tx); err != nil {
 		tx.Rollback()
+		x.gate.RUnlock()
 		return nil, err
 	}
 	after := x.gen.Load()
@@ -74,7 +80,21 @@ func (x *Index) begin() (*read, error) {
 }
 
 // end closes the read.
-func (r *read) end() { r.tx.Rollback() }
+func (r *read) end() {
+	r.tx.Rollback()
+	r.gate.RUnlock()
+}
+
+// view runs f on a read of the index as it is now: the reads that are one
+// query go through the gate like the others.
+func (x *Index) view(f func(r *read) error) error {
+	r, err := x.begin()
+	if err != nil {
+		return err
+	}
+	defer r.end()
+	return f(r)
+}
 
 // parallel is up to n reads that hold the snapshot of r, r itself first, for
 // queries to run at the same time; done must be called when they are no longer
