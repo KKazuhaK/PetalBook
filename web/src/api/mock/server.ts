@@ -274,6 +274,9 @@ export function createMockServer(options: MockOptions = {}) {
     random,
     spacesUsing: (uid) => [...spaces.values()].filter((s) => s.remote?.credential.type === 'github' && s.remote.credential.via === 'user' && s.remote.credential.userId === uid).length,
     spacesOnApp: () => [...spaces.values()].filter((s) => s.remote?.credential.type === 'github').length,
+    // The mock has one world: everyone is in the default tenant.
+    tenantOf: () => DEFAULT_TENANT,
+    tenantExists: (id) => tenantBook.exists(id),
   })
   // Sessions held until a passkey is registered, and when each session began (registering needs a recent sign-in).
   const held = new Set<string>()
@@ -1153,6 +1156,7 @@ export function createMockServer(options: MockOptions = {}) {
     onRegistrationChanged: () => mailBook.cancelClosed(),
     usageOf: () => quotaBook.tenantUsage(),
     onQuotaChanged: () => quotaBook.evaluate(),
+    onTenantDeleted: (id) => github.tenantDeleted(id),
     maxSpacesFlag: options.maxSpaces,
     makeInvite: (by, tenant, fill) => {
       const id = newId((x) => invites.has(x))
@@ -2180,8 +2184,8 @@ export function createMockServer(options: MockOptions = {}) {
     if (path === '/admin/github/installations' && method === 'GET') return j(github.installations(url.searchParams.get('cursor')))
     const inst = /^\/admin\/github\/installations\/(\d+)$/.exec(path)
     if (inst && method === 'PUT') {
-      if (typeof body.shared !== 'boolean') throw new HttpError(400, 'invalid', '给 shared: true 或 false')
-      return j(github.share(Number(inst[1]), body.shared))
+      if (body.tenants === undefined) throw new HttpError(400, 'invalid', '给 tenants：要共享给的租户 id（不共享就是 []）')
+      return j(github.share(Number(inst[1]), body.tenants))
     }
     throw new HttpError(404, 'not_found', '没有这个接口')
   }

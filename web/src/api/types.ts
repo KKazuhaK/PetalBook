@@ -563,7 +563,8 @@ export interface GitHubInstallation {
   suspended: boolean
   permissions: Record<string, string>
   htmlUrl: string
-  shared: boolean
+  // The ids of the tenants it is shared with, sorted; none: not shared.
+  tenants: string[]
   spaces: number
 }
 

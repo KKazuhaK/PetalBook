@@ -1632,7 +1632,7 @@ function suite(target: Target) {
           ['GET', '/api/github/owners'],
           ['GET', '/api/github/repos?mine=true'],
           ['GET', '/api/admin/github/installations'],
-          ['PUT', '/api/admin/github/installations/5001', { shared: true }],
+          ['PUT', '/api/admin/github/installations/5001', { tenants: [] }],
         ] as const) {
           const r = await call(method.startsWith('P') && path.startsWith('/api/admin') ? admin : path.startsWith('/api/admin') ? admin : m.browser, method, path, body)
           expect([r.status, codeOf(r)], `${method} ${path}`).toEqual([409, 'github_not_configured'])
@@ -1708,15 +1708,17 @@ function suite(target: Target) {
         expect(codeOf(await call(m.browser, 'GET', '/api/github/owners?cursor=zzz'))).toBe('invalid')
       })
 
-      it('shares an organisation\'s installation, and a member without a GitHub account can then use it', async () => {
+      it('shares an organisation\'s installation with a tenant, and a member without a GitHub account there can then use it', async () => {
         const list = await call(admin, 'GET', '/api/admin/github/installations')
         expect(list.status).toBe(200)
         const item = list.json.items.find((i: any) => i.account.login === 'petal-team')
-        expect(item).toMatchObject({ account: { type: 'Organization' }, repositorySelection: 'selected', suspended: false, shared: false, spaces: 0 })
+        expect(item).toMatchObject({ account: { type: 'Organization' }, repositorySelection: 'selected', suspended: false, tenants: [], spaces: 0 })
         expect(codeOf(await call(admin, 'PUT', `/api/admin/github/installations/${item.id}`, {}))).toBe('invalid')
-        expect((await call(admin, 'PUT', '/api/admin/github/installations/424242', { shared: true })).status).toBe(404)
-        const put = await call(admin, 'PUT', `/api/admin/github/installations/${item.id}`, { shared: true })
-        expect(put.json).toMatchObject({ id: item.id, shared: true })
+        expect(codeOf(await call(admin, 'PUT', `/api/admin/github/installations/${item.id}`, { shared: true }))).toBe('invalid')
+        expect(codeOf(await call(admin, 'PUT', `/api/admin/github/installations/${item.id}`, { tenants: ['01ZZZZZZZZ'] }))).toBe('invalid')
+        expect((await call(admin, 'PUT', '/api/admin/github/installations/424242', { tenants: [] })).status).toBe(404)
+        const put = await call(admin, 'PUT', `/api/admin/github/installations/${item.id}`, { tenants: ['0000000000'] })
+        expect(put.json).toMatchObject({ id: item.id, tenants: ['0000000000'] })
         const m = await newMember(uniq('gh5'))
         const owners = await call(m.browser, 'GET', '/api/github/owners')
         expect(owners.json.items).toEqual([{ login: 'petal-team', type: 'Organization', via: 'app', installationId: item.id }])
@@ -1727,7 +1729,7 @@ function suite(target: Target) {
         // The App cannot be removed while a space syncs through it.
         expect(codeOf(await call(admin, 'DELETE', '/api/admin/github'))).toBe('github_app_in_use')
         await call(m.browser, 'DELETE', `/api/spaces/${made.json.id}/remote`)
-        await call(admin, 'PUT', `/api/admin/github/installations/${item.id}`, { shared: false })
+        expect((await call(admin, 'PUT', `/api/admin/github/installations/${item.id}`, { tenants: [] })).json.tenants).toEqual([])
       })
 
       it('creates a space with a new repository, or connects it to one that is there, and says why it could not', async () => {

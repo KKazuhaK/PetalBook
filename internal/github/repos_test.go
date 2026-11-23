@@ -56,11 +56,11 @@ func TestOwnersAreListedOnePageAtATime(t *testing.T) {
 		peti := w.f.Install("petal-team", "all")
 		w.f.AddOrg("other")
 		w.f.Install("other", "all")
-		if _, err := w.svc.SetShared(ctx, peti, true); err != nil {
+		if _, err := w.svc.SetTenants(ctx, peti, []string{store.DefaultTenantID}); err != nil {
 			t.Fatal(err)
 		}
 		// Sharing kazuhahub too must not list it twice.
-		if _, err := w.svc.SetShared(ctx, w.kazuhahub, true); err != nil {
+		if _, err := w.svc.SetTenants(ctx, w.kazuhahub, []string{store.DefaultTenantID}); err != nil {
 			t.Fatal(err)
 		}
 		got, _ := owners(t, w.harness, "U1")
@@ -111,7 +111,7 @@ func TestSharedOwnersPageFromTheDatabase(t *testing.T) {
 		for i := 0; i < 35; i++ {
 			login := fmt.Sprintf("shared-%02d", i)
 			w.f.AddOrg(login)
-			if _, err := w.svc.SetShared(ctx, w.f.Install(login, "all"), true); err != nil {
+			if _, err := w.svc.SetTenants(ctx, w.f.Install(login, "all"), []string{store.DefaultTenantID}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -133,7 +133,7 @@ func TestPlanCreate(t *testing.T) {
 		peti := w.f.Install("petal-team", "all")
 		w.f.AddOrg("other")
 		w.f.Install("other", "all")
-		w.svc.SetShared(ctx, peti, true)
+		w.svc.SetTenants(ctx, peti, []string{store.DefaultTenantID})
 
 		p, err := w.svc.PlanCreate(ctx, "U1", "TANG")
 		if err != nil || p.Via != "user" || p.Org != "" || p.Owner != "tang" {
@@ -230,7 +230,7 @@ func TestCreateWithTheInstallationOfASharedOrganisation(t *testing.T) {
 		w := newWorld(t, st)
 		w.f.AddOrg("petal-team")
 		peti := w.f.Install("petal-team", "all")
-		w.svc.SetShared(ctx, peti, true)
+		w.svc.SetTenants(ctx, peti, []string{store.DefaultTenantID})
 		w.user("U2", "nobody") // no GitHub connection at all
 		r, p, err := create(t, w, "U2", "petal-team", "wiki")
 		if err != nil || r.FullName != "petal-team/wiki" || p.Via != "app" {
@@ -348,7 +348,7 @@ func TestExistingRepositories(t *testing.T) {
 		if _, _, err := w.svc.ResolveExisting(ctx, "U2", "petal-team", "docs", "app"); code(err) != "github_not_authorized" || status(err) != 409 {
 			t.Fatalf("%v", err)
 		}
-		w.svc.SetShared(ctx, peti, true)
+		w.svc.SetTenants(ctx, peti, []string{store.DefaultTenantID})
 		if c, _, err := w.svc.ResolveExisting(ctx, "U2", "petal-team", "docs", "app"); err != nil || c.Via != "app" {
 			t.Fatalf("%+v %v", c, err)
 		}
@@ -415,7 +415,7 @@ func TestRepositoryListsArePaged(t *testing.T) {
 		}
 		// Shared: every repository, through the installation's token.
 		w.f.AddRepo("other", "pub", false)
-		w.svc.SetShared(ctx, other, true)
+		w.svc.SetTenants(ctx, other, []string{store.DefaultTenantID})
 		items, _, err := w.svc.Repos(ctx, "U1", other, false, "")
 		if err != nil || len(items) != 1 || items[0].FullName != "other/pub" || !items[0].CanPush {
 			t.Fatalf("%+v %v", items, err)
@@ -545,5 +545,66 @@ func TestGitTokenOfASpace(t *testing.T) {
 		store.DeleteRemote(ctx, st.Q(), "S2")
 		store.DeleteRemote(ctx, st.Q(), "S1")
 		w.mustNotLeak()
+	})
+}
+
+// An installation is shared per tenant: only the people of the tenants it was
+// shared with can list it, create in it and connect to its repositories.
+func TestSharingIsPerTenant(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		w := newWorld(t, st)
+		w.f.AddOrg("petal-team")
+		peti := w.f.Install("petal-team", "all")
+		w.f.AddRepo("petal-team", "docs", true)
+		w.tenantUser("T2", "U2", "two")   // in a tenant it is shared with
+		w.tenantUser("T3", "U3", "three") // in a tenant it is not
+		if _, err := w.svc.SetTenants(ctx, peti, []string{"T2"}); err != nil {
+			t.Fatal(err)
+		}
+		names := func(user string) string {
+			var s []string
+			got, _ := owners(t, w.harness, user)
+			for _, o := range got {
+				s = append(s, o.Login)
+			}
+			return strings.Join(s, ",")
+		}
+		if got := names("U2"); got != "petal-team" {
+			t.Fatalf("U2 sees %q", got)
+		}
+		if got := names("U3"); got != "" {
+			t.Fatalf("U3 sees %q", got)
+		}
+		// U1 (default tenant) has its own connection, which does not reach petal-team.
+		if got := names("U1"); strings.Contains(got, "petal-team") {
+			t.Fatalf("U1 sees %q", got)
+		}
+		if p, err := w.svc.PlanCreate(ctx, "U2", "petal-team"); err != nil || p.Via != "app" || p.InstallationID != peti {
+			t.Fatalf("%+v %v", p, err)
+		}
+		for _, u := range []string{"U1", "U3"} {
+			if _, err := w.svc.PlanCreate(ctx, u, "petal-team"); code(err) != "github_owner_not_allowed" {
+				t.Fatalf("%s: %v", u, err)
+			}
+			if _, _, err := w.svc.ResolveExisting(ctx, u, "petal-team", "docs", "app"); err == nil {
+				t.Fatalf("%s connected to an installation not shared with their tenant", u)
+			}
+			if _, _, err := w.svc.Repos(ctx, u, peti, false, ""); code(err) != "not_found" {
+				t.Fatalf("%s: %v", u, err)
+			}
+		}
+		if c, _, err := w.svc.ResolveExisting(ctx, "U2", "petal-team", "docs", "app"); err != nil || c.Via != "app" {
+			t.Fatalf("%+v %v", c, err)
+		}
+		if items, _, err := w.svc.Repos(ctx, "U2", peti, false, ""); err != nil || len(items) != 1 {
+			t.Fatalf("%+v %v", items, err)
+		}
+		// Un-sharing takes it away again; a deleted tenant takes its share.
+		if _, err := w.svc.SetTenants(ctx, peti, nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.svc.PlanCreate(ctx, "U2", "petal-team"); code(err) != "github_owner_not_allowed" {
+			t.Fatalf("%v", err)
+		}
 	})
 }

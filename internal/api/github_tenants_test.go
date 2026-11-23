@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"strings"
 	"testing"
@@ -35,7 +36,7 @@ func TestATenantAdministratorCannotReachTheApp(t *testing.T) {
 			c.do("PUT", "/api/admin/github", map[string]any{"appId": "1"}).want(t, 403, "forbidden")
 			c.do("DELETE", "/api/admin/github", nil).want(t, 403, "forbidden")
 			c.do("GET", "/api/admin/github/installations", nil).want(t, 403, "forbidden")
-			c.do("PUT", "/api/admin/github/installations/1", map[string]any{"shared": true}).want(t, 403, "forbidden")
+			c.do("PUT", "/api/admin/github/installations/1", map[string]any{"tenants": []string{}}).want(t, 403, "forbidden")
 		}
 		f.root.do("GET", "/api/admin/github/installations", nil).want(t, 200, "")
 	})
@@ -121,5 +122,52 @@ func TestAGitHubAccountIsLinkedOnceAcrossTenants(t *testing.T) {
 		if g := f.memA.do("GET", "/api/github", nil).want(t, 200, ""); g.body["authorization"] != nil {
 			t.Fatalf("%s", g.raw)
 		}
+	})
+}
+
+// An installation is shared with chosen tenants: only their people can use it,
+// and a site administrator is the only one who chooses.
+func TestAnInstallationIsSharedWithChosenTenantsOnly(t *testing.T) {
+	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
+		f := ghTenFx(t, a)
+		a.fake.AddOrg("petal-team")
+		inst := a.fake.Install("petal-team", "all")
+		a.fake.AddRepo("petal-team", "docs", true)
+		path := "/api/admin/github/installations/" + itoa(inst)
+		put := f.root.do("PUT", path, map[string]any{"tenants": []string{f.tenB}}).want(t, 200, "")
+		if fmt.Sprint(put.body["tenants"]) != "["+f.tenB+"]" {
+			t.Fatalf("%s", put.raw)
+		}
+		owners := func(c *client) string {
+			var s []string
+			for _, o := range c.do("GET", "/api/github/owners", nil).want(t, 200, "").body["items"].([]any) {
+				s = append(s, o.(map[string]any)["login"].(string))
+			}
+			return strings.Join(s, ",")
+		}
+		if got := owners(f.memB); !strings.Contains(got, "petal-team") {
+			t.Fatalf("B's member sees %q", got)
+		}
+		if got := owners(f.memA); strings.Contains(got, "petal-team") {
+			t.Fatalf("A's member sees %q", got)
+		}
+		// B creates in it without a connection of its own to that organisation; A's member cannot.
+		before := a.fake.Count("POST", "/orgs/petal-team/repos")
+		f.memA.do("POST", "/api/spaces", map[string]any{"name": "Docs A", "github": map[string]any{"owner": "petal-team", "name": "docs-a"}}).want(t, 403, "github_owner_not_allowed")
+		f.memA.do("GET", "/api/github/repos?installation="+itoa(inst), nil).want(t, 404, "not_found")
+		if a.fake.Count("POST", "/orgs/petal-team/repos") != before {
+			t.Fatal("a repository was made for a tenant the installation is not shared with")
+		}
+		f.memB.do("POST", "/api/spaces", map[string]any{"name": "Docs B", "github": map[string]any{"owner": "petal-team", "name": "docs-b"}}).want(t, 201, "")
+		// The list of installations tells the administrator who has it.
+		for _, it := range f.root.do("GET", "/api/admin/github/installations", nil).want(t, 200, "").body["items"].([]any) {
+			m := it.(map[string]any)
+			if m["id"] == float64(inst) && fmt.Sprint(m["tenants"]) != "["+f.tenB+"]" {
+				t.Fatalf("%v", m)
+			}
+		}
+		// Deleting a tenant (it must be empty first) is covered by the store; un-sharing here.
+		f.root.do("PUT", path, map[string]any{"tenants": []string{}}).want(t, 200, "")
+		f.memB.do("POST", "/api/spaces", map[string]any{"name": "Docs B2", "github": map[string]any{"owner": "petal-team", "name": "docs-b2"}}).want(t, 403, "github_owner_not_allowed")
 	})
 }

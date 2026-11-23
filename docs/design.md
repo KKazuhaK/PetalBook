@@ -1860,8 +1860,8 @@ access」。分三部分各审了一次（token、授权服务、MCP）。第三
 - **谁的令牌建仓库**：能用用户自己的令牌就用（个人账号下 `POST /user/repos`、
   用户连接能看到的组织下 `POST /orgs/{org}/repos`），这样 GitHub 自己会检查
   这个人在这个组织里能不能建仓库、能不能建私有仓库。管理员可以把某个组织的
-  安装标成「共享」，这时没连 GitHub 的成员也能用安装令牌在那里建仓库和连接
-  仓库；默认不共享，否则任何成员都能借 App 在组织里建仓库。
+  安装共享给某几个租户，这些租户的成员即使没连 GitHub，也能用安装令牌在那里
+  建仓库和连接仓库；默认不共享，否则任何成员都能借 App 在组织里建仓库。
 - **谁的令牌同步**：组织下的仓库用安装令牌（`via: "app"`），不依赖某个人一直
   在、一直连着；个人账号下，App 装在这个账号上且能访问新仓库时也用安装令牌，
   否则用这个人的用户令牌（`via: "user"`）。用户令牌同步的空间，绑定的人不能
@@ -1878,6 +1878,19 @@ access」。分三部分各审了一次（token、授权服务、MCP）。第三
   （从不删除远端的东西，而且可能本来就没有删除权限），错误回答里带 `repo`，
   同一个请求改成 `create: false` 就能把新空间连到这个空仓库上。进程在中间崩溃
   也一样，只是没有回答。
+- **留下的空仓库有提醒（所有者定，2026-11-23）**：建仓库之后失败时，仓库照旧
+  留着，同时给这个人记一条提醒，之后在账号页的 GitHub 一栏里看得到（也可以放
+  在空间列表旁），写着仓库名和链接，有两个动作：「连上它再试一次」（就是用
+  `POST /api/spaces` 带 `create: false`，名字和仓库取自提醒，不另开接口）和
+  「我已经删了」（`DELETE /api/github/leftovers/{repoId}`，没有这条提醒也回
+  `204`）。按用户存：`github_leftovers(user_id, repo_id, full_name, html_url,
+  space_name, created)`，主键是 `(user_id, repo_id)`，用户删了跟着删；同一个
+  仓库再失败只换成新的一条；每人最多留最新的 20 条。清掉的时机：本人处理，
+  或者**任何空间连上了这个仓库**（`PutRemote` 在同一个事务里按 `gh_repo_id`
+  删掉所有人的这条提醒，所以重试成功、手动 `PUT …/remote` 都会清）。提醒放在
+  `GET /api/github` 的 `leftovers` 里，这个接口本来就是账号页和建空间对话框
+  要读的，不多一次请求。崩溃没有回答，也记不下来，所以崩溃留下的仓库不在
+  其中（见上）。
 - **「仅选定仓库」的安装**：不赌 GitHub 会不会自动把 App 建的仓库加进安装。
   建完就为新仓库单独换一次令牌试；够不着、而调用者的连接能看到这个安装时，
   用用户令牌把仓库加进安装（`PUT /user/installations/{id}/repositories/{repoId}`）
@@ -1890,7 +1903,7 @@ access」。分三部分各审了一次（token、授权服务、MCP）。第三
   `{"type": "github", "via": "app" | "user"}`；已经在跟随远端的空间 `PUT` 时
   原地换地址和凭据，同一个仓库历史相同，只换凭据，旧的密钥或令牌删掉。SSH
   形式的 github.com 地址接受，存成 https 形式。`via: "app"` 要求调用者的连接
-  能推送到这个仓库或安装已共享，否则任何有 `manage` 的人都能把空间接到 App
+  能推送到这个仓库或安装已共享给自己的租户，否则任何有 `manage` 的人都能把空间接到 App
   够得着的任意仓库。
 - **Remote 对象**加 `errorCode`：把现有的内部分类（`auth`、`hostkey`、`clone`、
   `rescued`）露出来，再加四个 GitHub 的（`github_authorization_expired`、
@@ -1904,7 +1917,8 @@ access」。分三部分各审了一次（token、授权服务、MCP）。第三
   和 `gh_via`、`gh_installation_id`、`gh_repo_id`、`gh_user_id` 几列；新表
   `github_authorizations`（每个用户一行，GitHub 账号 id 唯一，两个令牌加密，
   过期时间、状态、版本号用来做「只替换续期前的那一对」）；
-  `github_installations`（安装 id、账号、`shared`）；App 的配置放 `site_settings`。
+  `github_installations`（安装 id、账号）和 `github_installation_tenants`（安装 ×
+  租户：共享给了哪些租户）；App 的配置放 `site_settings`。
 - **给 3.1 留的位置**：`GET/PUT /api/admin/storage` 的
   `remotes: {require: null | "any" | "github", scope: "new" | "all", graceDays}`
   和错误码 `409 remote_required` 只在 `docs/api.md` 里预留，不实现。建空间和
@@ -1914,9 +1928,25 @@ access」。分三部分各审了一次（token、授权服务、MCP）。第三
   - App 的设置和安装列表是全站的：`/api/admin/github…` 只给全站管理员，租户
     管理员和其他全站专属的接口一样得到 `403 forbidden`；管理后台的「GitHub」
     页也只对全站管理员显示。设置照旧在 `site_settings`，没有租户层。
-  - **共享安装按全站算**：全站管理员把某个组织的安装标成共享后，**所有租户**
-    的成员都能用安装令牌在那里建仓库、连接仓库。`github_installations` 不加
-    `tenant_id`。
+  - **共享安装按租户算（所有者定，2026-11-23，取代之前的全站共享）**：全站管理员
+    把某个组织的安装共享给**挑出来的几个租户**（`PUT /api/admin/github/installations/{id}`，
+    `{tenants: [id]}`，整组替换，`[]` 不共享），只有这些租户的成员能用安装令牌在
+    那里建仓库、连接仓库，也只有他们在 `GET /api/github/owners` 和 `repos` 里看
+    得到它；别的租户只有自己的 GitHub 连接够得着时才能用这个组织。共享的决定
+    仍在全站管理员手里，租户管理员碰不到（`/api/admin/github…` 全站专属）。
+    存在状态库里：0013 里 `github_installations` 没有共享列，另有
+    `github_installation_tenants(installation_id, tenant_id)`，主键是两列，
+    `tenant_id` 有索引，安装被忘掉时（删除 App）跟着删；`tenant_id` 不是外键，
+    因为 `tenants` 表在 0018 里，两个迁移顺序都要成立，删租户时由代码删它的
+    共享行（`DeleteTenant`）。SQLite 和 PostgreSQL 都测。库里的查询走
+    `Scope`（`ListGitHubInstallationsOf`、`GitHubInstallationOf`、
+    `GitHubInstallationShared`：零值作用域什么也看不到），服务按用户所在的租户
+    取作用域；作用域测试的白名单里旧的「全站共享」三条去掉，换成两条给全站
+    管理员用的写和读（`SetGitHubInstallationTenants`、`GitHubInstallationTenants`），
+    和 `UserTenant`；扫描的表里加了 `github_installation_tenants`。隔离测试
+    加了一个真正的跨租户用例：共享给 B 之后，B 的成员看得到、能建，A 的成员
+    看不到、建不了（`github_owner_not_allowed`）、列仓库 `404`，也没有仓库被建。
+    管理后台的安装行上挑租户。
   - 用户的 GitHub 连接属于用户，所以跟着用户落在它的租户里，不另加
     `tenant_id`。一个 GitHub 账号只能连一个 PetalBook 用户，这条**跨租户**
     检查（GitHub 账号 id 在全站唯一）；回答只有 `account_in_use`，不说是谁、
@@ -1933,11 +1963,7 @@ access」。分三部分各审了一次（token、授权服务、MCP）。第三
     所以两种顺序都对：本分支上迁移过的库合并后补跑 0014、0016、0018；main 上
     迁移过的库补跑 0013。两种顺序都有测试（SQLite 和 PostgreSQL）。
   - 隔离测试里每个 2.7 的路由都有条目：`/api/admin/github…` 按全站专属测，
-    `/api/github…` 是调用者自己的连接或全站共享的安装。
-  - **待所有者定：共享要不要按租户分？**现在是全站共享（上面那条）。如果要
-    按租户，`github_installations` 加一张「安装 × 租户」的表，共享开关挪到
-    租户管理员手里或由全站管理员按租户勾选；接口要改的是
-    `PUT /api/admin/github/installations/{id}` 和 `GET /api/github/owners`。
+    `/api/github…` 是调用者自己的连接，或共享给调用者租户的安装。
 
 **2.7 做出来的样子**：
 
@@ -2001,9 +2027,10 @@ access」。分三部分各审了一次（token、授权服务、MCP）。第三
    生效。**这次没有在 GitHub 上建任何东西**；接口照两种结果都能用来写，实测
    结论写回 4.3。（默认：实现完成、合并前做一次，做之前再问。）
 2. 建仓库之后失败时，空仓库留着还是尽量删掉？（默认留着，回答里给出仓库，
-   用 `create: false` 重试。）
+   用 `create: false` 重试；2026-11-23 定：留着，并给这个人留一条之后看得到
+   的提醒，见上。）
 3. 组织的安装默认不共享，只有自己连了 GitHub、GitHub 也允许的人才能在组织下
-   建仓库，可以吗？（默认不共享，管理员逐个打开。）
+   建仓库，可以吗？（默认不共享，管理员逐个打开；2026-11-23 定：共享按租户挑。）
 4. 新建仓库默认私有，是否允许建公开仓库？（默认允许选，默认私有。）
 5. 同步用的安装令牌按单个仓库收窄（更安全），而不是一个安装一个令牌（换得
    更少）。空间很多时前者每个在用的空间每小时换一次。（默认按单个仓库。）

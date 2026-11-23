@@ -1462,9 +1462,9 @@ do `POST /api/spaces` and `PUT …/remote`.
 | Fetching and pushing a space with `via: "user"` | the user token of the PetalBook user the remote names |
 | Creating a repository in the user's account | user token (`POST /user/repos`) |
 | Creating a repository in an organisation the user's authorisation lists | user token (`POST /orgs/{org}/repos`) |
-| Creating a repository in an organisation an administrator shared | installation token, `administration: write` (`POST /orgs/{org}/repos`) |
+| Creating a repository in an organisation an administrator shared with the caller's tenant | installation token, `administration: write` (`POST /orgs/{org}/repos`) |
 | Listing installations (administrators) | the App's JWT |
-| Listing the caller's owners and repositories | user token; installation token for a shared installation |
+| Listing the caller's owners and repositories | user token; installation token for an installation shared with the caller's tenant |
 
 ### Tokens, and how they reach Git
 
@@ -1506,7 +1506,10 @@ Any signed-in user. What the client needs to show GitHub choices:
          "installUrl": "https://github.com/apps/petalbook-notes/installations/new"},
  "userAuthorization": true,
  "authorization": {"login": "tang-gh", "githubId": 1234567, "state": "ok",
-                   "connected": "2026-11-23T08:30:00Z", "refreshExpires": "2027-05-23T08:30:00Z", "spaces": 2}}
+                   "connected": "2026-11-23T08:30:00Z", "refreshExpires": "2027-05-23T08:30:00Z", "spaces": 2},
+ "leftovers": [{"repoId": 881234567, "fullName": "kazuhahub/tang-notes",
+                "htmlUrl": "https://github.com/kazuhahub/tang-notes",
+                "spaceName": "Tang notes", "created": "2026-11-23T08:45:00Z"}]}
 ```
 
 - `app` is `null` when no App is configured; then nothing else here works and
@@ -1517,6 +1520,12 @@ Any signed-in user. What the client needs to show GitHub choices:
   `expired` (see "Renewal"). `refreshExpires` is absent when the App does not
   expire user tokens. `spaces` counts the spaces that sync through it
   (`via: "user"` naming the caller), so a client can warn before a disconnect.
+- `leftovers` are the caller's reminders of empty repositories a failed attempt
+  to make a space left on GitHub (see "Creating a space with a GitHub
+  repository", and "Leftover repositories" below): newest first, at most 20,
+  `[]` when there are none and always present (also when `app` is `null`).
+  `spaceName` is the name the space was to have; `created` is when the
+  repository was made.
 
 ### `POST /api/github/authorization/start`
 
@@ -1607,10 +1616,11 @@ The accounts the caller can create a repository in, one page at a time:
 In this order: the caller's own GitHub account, when connected; the
 organisations among the installations GitHub lists for the caller's
 connection (`GET /user/installations`, 30 to a page); the organisations whose
-installation an administrator shared and that are not already listed. `via`
+installation a site administrator shared with the caller's tenant and that are not
+already listed. `via`
 says which token creates the repository there. Each page is at most one call
 to GitHub. `cursor` is opaque; `next` is `""` after the last page. Without a
-connection only shared installations are listed. A repository is created with
+connection only the installations shared with the caller's tenant are listed. A repository is created with
 the caller's own token wherever it can be, so GitHub's rules for that person
 in that organisation (who may create repositories, whether private ones are
 allowed) apply.
@@ -1620,7 +1630,7 @@ allowed) apply.
 Repositories the caller can connect a space to, 30 to a page, for choosing one
 in `PUT …/remote` or `POST /api/spaces` with `create: false`. `installation`:
 the repositories of that installation the caller's connection reaches
-(`GET /user/installations/{id}/repositories`), or for a shared installation
+(`GET /user/installations/{id}/repositories`), or for an installation shared with the caller's tenant
 all of its repositories (installation token). `mine=true`: the caller's own
 repositories (`GET /user/repos?affiliation=owner`).
 
@@ -1631,7 +1641,7 @@ repositories (`GET /user/repos?affiliation=owner`).
 ```
 
 `404 not_found` for an installation the caller can neither reach nor use as
-shared. GitHub cannot filter these lists by name, so there is no `q`: a client
+shared with their tenant. GitHub cannot filter these lists by name, so there is no `q`: a client
 filters the page it has, and the user can type `owner/name` instead.
 
 ### Creating a space with a GitHub repository
@@ -1650,7 +1660,8 @@ filters the page it has, and the user can type `owner/name` instead.
   gets the space's history; one with content gives it to the new space, which
   is pristine. The credential is chosen as `PUT …/remote` would with no `via`
   given: the App when the caller may use its installation on that repository
-  (their connection can push there, or the installation is shared), otherwise
+  (their connection can push there, or the installation is shared with their
+  tenant), otherwise
   the caller's own connection.
 
 The repository is created empty (`auto_init: false`), so the space's first
@@ -1708,7 +1719,8 @@ When a step fails:
 - Steps 4 to 6: the space on disk is removed. The repository stays on GitHub,
   empty: the server never deletes anything on a remote, and may not even be
   allowed to. The answer names it, so the same request with `create: false`
-  connects a new space to it once the cause is fixed:
+  connects a new space to it once the cause is fixed, and the server keeps a
+  reminder of it for the caller (see "Leftover repositories"):
 
   ```json
   {"error": "github_push_failed", "message": "…",
@@ -1724,6 +1736,38 @@ When a step fails:
 
 Two requests for the same name: the second gets `409 github_name_taken`. The
 server finishes the work when the client goes away, as `PUT …/remote` does.
+
+#### Leftover repositories
+
+The repository a failed attempt leaves is kept (the server never deletes on a
+remote). So that the person does not have to remember it, the server also
+records a reminder, per user, when the failure came after the repository was
+made (steps 4 to 6, the same cases that put `repo` in the answer; a crash has
+no answer and no reminder). A client shows the reminders in
+`GET /api/github`'s `leftovers`, for instance on the account page or beside the
+list of spaces, with the repository's name and link and two actions:
+
+- **Connect it and try again**: `POST /api/spaces` with the reminder's
+  `spaceName` as `name` and `github: {"owner", "name", "create": false}` taken
+  from `fullName`. Nothing else is needed; the reminder is cleared by the
+  space connecting (below). When it fails again the reminder stays, and the
+  answer says why.
+- **I deleted it**: `DELETE /api/github/leftovers/{repoId}`.
+
+A reminder is cleared when the person dismisses it, and by itself when any
+space connects to that repository (by `create: false`, by `PUT …/remote`, in
+any way), whoever made the reminder. Only the newest 20 per user are kept; a
+second failure on the same repository replaces its reminder rather than adding
+one. Reminders are the user's own: they are deleted with the user and no one
+else sees them, in any tenant.
+
+### `DELETE /api/github/leftovers/{repoId}`
+
+`204`. Dismisses the caller's reminder of that repository (the id from
+`leftovers[].repoId`). Nothing happens on GitHub. It is `204` also when there
+is no such reminder (it was cleared meanwhile), as for `DELETE
+/api/github/authorization`. `repoId` that is not a positive number is
+`404 not_found`.
 
 ### Switching an existing space to GitHub
 
@@ -1760,7 +1804,8 @@ Errors, besides those of `PUT …/remote`: `409 github_not_configured`;
 `409 github_not_authorized` (the caller has no connection, or it is
 `expired`); `409 github_repo_not_in_installation` (`via: "app"` and no
 installation reaches the repository); `403 github_owner_not_allowed` (the
-installation is not shared and the caller's connection cannot push there);
+installation is not shared with the caller's tenant and the caller's connection
+cannot push there);
 `403 forbidden` (`via: "user"` and the caller is not in the space's tenant).
 
 ### When a GitHub credential stops working
@@ -1789,7 +1834,7 @@ fixed (a user connects again, an administrator saves the App).
 |---|---|---|
 | `github_not_configured` | 409 | no App, or (for user flows) no client id and secret or no `--public-url` |
 | `github_not_authorized` | 409 | the request needs the caller's GitHub connection and there is none, or it is `expired` |
-| `github_owner_not_allowed` | 403 | the owner is not one of the caller's owners; the installation is not shared and the caller's connection does not reach the repository |
+| `github_owner_not_allowed` | 403 | the owner is not one of the caller's owners; the installation is not shared with the caller's tenant and the caller's connection does not reach the repository |
 | `github_name_taken` | 409 | the owner has a repository of that name |
 | `github_no_permission` | 403 | GitHub refused to create the repository (`message` says what GitHub said) |
 | `github_repo_not_in_installation` | 409 | no installation reaches the repository and it could not be added; the answer has `repo` when the server made it |
@@ -6034,7 +6079,7 @@ Before anything is saved: `{"configured": false, "callbackUrl": "…"}`.
 The first save needs `appId` and `privateKey`. Later, a `privateKey` or a
 `clientSecret` that is left out keeps the one stored. `clientId` and
 `clientSecret` go together; without them users cannot connect their GitHub
-accounts, and only shared installations can be used. `"clientId": ""` removes
+accounts, and only installations shared with a tenant can be used. `"clientId": ""` removes
 both (`409 github_app_in_use` while a user is connected; spaces that sync
 through an installation do not stand in the way).
 
@@ -6059,8 +6104,8 @@ user is connected; another or no `clientId` only while any user is connected.
 #### `DELETE /api/admin/github`
 
 `204`. The App's details are deleted, the users' connections with them
-(GitHub is asked to revoke each grant first, best effort), and the shared marks
-of installations. `409 github_app_in_use` while any space has a `github`
+(GitHub is asked to revoke each grant first, best effort), and what was shared of
+the installations. `409 github_app_in_use` while any space has a `github`
 credential (`message` says how many): switch or disconnect those first.
 
 #### `GET /api/admin/github/installations?cursor={cursor}`
@@ -6073,23 +6118,28 @@ The App's installations, one page at a time; each page is one call to GitHub
             "repositorySelection": "selected", "suspended": false,
             "permissions": {"administration": "write", "contents": "write", "metadata": "read"},
             "htmlUrl": "https://github.com/organizations/kazuhahub/settings/installations/51234567",
-            "shared": true, "spaces": 3}],
+            "tenants": ["01J8Z3X5K2"], "spaces": 3}],
  "next": "…"}
 ```
 
-`repositorySelection` is `all` or `selected`. `shared` is set below. `spaces`
+`repositorySelection` is `all` or `selected`. `tenants` are the ids of the
+tenants the installation is shared with, sorted (`[]`: none), set below. `spaces`
 counts the spaces syncing through that installation. `409 github_not_configured`
 when there is no App.
 
 #### `PUT /api/admin/github/installations/{id}`
 
-`{"shared": true}`. Sharing is site-wide: a shared installation lets every
-member of every tenant create
-repositories in that organisation and connect spaces to its repositories with
-the installation token, without a GitHub account of their own; GitHub then
-does not know who asked (the commits still name the PetalBook user as
-author). `false` (the default) leaves the organisation to those whose own
-GitHub connection reaches it. Spaces already connected are not affected either
-way. Only organisations can be shared: `400 invalid` for a user's account.
-`404 not_found` when GitHub does not know the installation. `200` with the
-item.
+`{"tenants": ["01J8Z3X5K2", "01J8Z3X5K3"]}`. Sharing is per tenant: the
+installation is shared with exactly these tenants, replacing what it was shared
+with before (`[]` stops sharing; it is the default). The people of a tenant it is shared
+with can create repositories in that organisation and connect spaces to its
+repositories with the installation token, without a GitHub account of their
+own; GitHub then does not know who asked (the commits still name the PetalBook
+user as author). People of any other tenant can use the organisation only when
+their own GitHub connection reaches it, and the installation does not appear
+in their owners or repositories. `tenants` is required; the old `{"shared":
+true}` is `400 invalid`. A tenant that does not exist is `400 invalid`, and
+more than 500 tenants too. A tenant that is deleted stops being shared with.
+Spaces already connected are not affected either way. Only organisations can be
+shared: `400 invalid` for a user's account. `404 not_found` when GitHub does not
+know the installation. `200` with the item.

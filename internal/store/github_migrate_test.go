@@ -38,7 +38,7 @@ func appliedVersions(t *testing.T, st *store.Store) string {
 
 // checkGitHubAfterMerge checks what both orders must leave: every version
 // applied, the user in the default tenant with their connection, the remote with
-// its GitHub columns, the shared installation, the space counted for its owner,
+// its GitHub columns, the installation shared with the default tenant, the space counted for its owner,
 // and the connection deleted with its user.
 func checkGitHubAfterMerge(t *testing.T, st *store.Store) {
 	t.Helper()
@@ -64,9 +64,8 @@ func checkGitHubAfterMerge(t *testing.T, st *store.Store) {
 	if n, err := store.CountUserGitHubSpaces(ctx, st.Q(), "U1"); err != nil || n != 1 {
 		t.Fatalf("%d %v", n, err)
 	}
-	shared, err := store.SharedGitHubInstallationIDs(ctx, st.Q(), []int64{9001})
-	if err != nil || !shared[9001] {
-		t.Fatalf("%v %v", shared, err)
+	if ok, err := store.GitHubInstallationShared(ctx, st.Q(), store.InTenant(store.DefaultTenantID), 9001); err != nil || !ok {
+		t.Fatalf("%v %v", ok, err)
 	}
 	if sp, err := store.GetSpace(ctx, st.Q(), store.InTenant(store.DefaultTenantID), "S1"); err != nil || sp.TenantID != store.DefaultTenantID {
 		t.Fatalf("%+v %v", sp, err)
@@ -95,7 +94,8 @@ func seedGitHub(t *testing.T, exec func(q string, a ...any)) {
 	t.Helper()
 	now := time.Now().UnixMilli()
 	exec(`INSERT INTO github_authorizations(user_id, github_id, login, connected, updated) VALUES ('U1', 4242, 'tang-gh', ?, ?)`, now, now)
-	exec(`INSERT INTO github_installations(id, account, shared, updated) VALUES (9001, 'kazuhahub', 1, ?)`, now)
+	exec(`INSERT INTO github_installations(id, account, updated) VALUES (9001, 'kazuhahub', ?)`, now)
+	exec(`INSERT INTO github_installation_tenants(installation_id, tenant_id) VALUES (9001, ?)`, store.DefaultTenantID)
 	exec(`INSERT INTO remotes(space_id, url, branch, cred_type, state, gh_via, gh_repo_id, gh_user_id, updated) VALUES ('S1', 'https://github.com/tang-gh/notes.git', 'main', 'github', 'ok', 'user', 77, 'U1', ?)`, now)
 }
 

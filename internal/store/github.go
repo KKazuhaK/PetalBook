@@ -241,27 +241,27 @@ func GitHubSpaceCounts(ctx context.Context, q Q, ids []int64) (map[int64]int, er
 }
 
 // GitHubInstallation is an installation the administrator has looked at: its
-// account (to list it without asking GitHub) and whether it is shared.
+// account, to list it without asking GitHub. Who it is shared with is in
+// github_installation_tenants.
 type GitHubInstallation struct {
 	ID          int64
 	Account     string
 	AccountType string
-	Shared      bool
 	Updated     time.Time
 }
 
-const ghInstCols = `id, account, account_type, shared, updated`
+const ghInstCols = `id, account, account_type, updated`
 
 func scanGitHubInstallation(row interface{ Scan(...any) error }) (*GitHubInstallation, error) {
 	var i GitHubInstallation
-	var sh, up int64
-	if err := row.Scan(&i.ID, &i.Account, &i.AccountType, &sh, &up); err != nil {
+	var up int64
+	if err := row.Scan(&i.ID, &i.Account, &i.AccountType, &up); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	i.Shared, i.Updated = sh != 0, fromMS(up)
+	i.Updated = fromMS(up)
 	return &i, nil
 }
 
@@ -270,21 +270,32 @@ func GetGitHubInstallation(ctx context.Context, q Q, id int64) (*GitHubInstallat
 	return scanGitHubInstallation(q.QueryRow(ctx, `SELECT `+ghInstCols+` FROM github_installations WHERE id = ?`, id))
 }
 
-// PutGitHubInstallation stores an installation with its shared mark.
+// PutGitHubInstallation stores an installation. Its sharing is left as it is.
 func PutGitHubInstallation(ctx context.Context, q Q, i GitHubInstallation) error {
-	sh := 0
-	if i.Shared {
-		sh = 1
-	}
-	_, err := q.Exec(ctx, `INSERT INTO github_installations(`+ghInstCols+`) VALUES (?,?,?,?,?)
-		ON CONFLICT (id) DO UPDATE SET account = excluded.account, account_type = excluded.account_type, shared = excluded.shared, updated = excluded.updated`,
-		i.ID, i.Account, i.AccountType, sh, ms(i.Updated))
+	_, err := q.Exec(ctx, `INSERT INTO github_installations(`+ghInstCols+`) VALUES (?,?,?,?)
+		ON CONFLICT (id) DO UPDATE SET account = excluded.account, account_type = excluded.account_type, updated = excluded.updated`,
+		i.ID, i.Account, i.AccountType, ms(i.Updated))
 	return err
 }
 
-// SharedGitHubInstallationIDs says which of the installations are shared.
-func SharedGitHubInstallationIDs(ctx context.Context, q Q, ids []int64) (map[int64]bool, error) {
-	out := map[int64]bool{}
+// SetGitHubInstallationTenants replaces the set of tenants an installation is
+// shared with (an empty set stops sharing). Callers run it in a transaction.
+func SetGitHubInstallationTenants(ctx context.Context, q Q, id int64, tenants []string) error {
+	if _, err := q.Exec(ctx, `DELETE FROM github_installation_tenants WHERE installation_id = ?`, id); err != nil {
+		return err
+	}
+	for _, t := range tenants {
+		if _, err := q.Exec(ctx, `INSERT INTO github_installation_tenants(installation_id, tenant_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, id, t); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// GitHubInstallationTenants says which tenants each of the installations is
+// shared with (sorted); an installation shared with none is not in the map.
+func GitHubInstallationTenants(ctx context.Context, q Q, ids []int64) (map[int64][]string, error) {
+	out := map[int64][]string{}
 	if len(ids) == 0 {
 		return out, nil
 	}
@@ -293,25 +304,45 @@ func SharedGitHubInstallationIDs(ctx context.Context, q Q, ids []int64) (map[int
 	for i, id := range ids {
 		args[i], marks[i] = id, "?"
 	}
-	rows, err := q.Query(ctx, `SELECT id FROM github_installations WHERE shared = 1 AND id IN (`+strings.Join(marks, ",")+`)`, args...)
+	rows, err := q.Query(ctx, `SELECT installation_id, tenant_id FROM github_installation_tenants
+		WHERE installation_id IN (`+strings.Join(marks, ",")+`) ORDER BY installation_id, tenant_id`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var t string
+		if err := rows.Scan(&id, &t); err != nil {
 			return nil, err
 		}
-		out[id] = true
+		out[id] = append(out[id], t)
 	}
 	return out, rows.Err()
 }
 
-// ListSharedGitHubInstallations lists shared installations with an id above
-// after, in id order, at most limit.
-func ListSharedGitHubInstallations(ctx context.Context, q Q, after int64, limit int) ([]GitHubInstallation, error) {
-	rows, err := q.Query(ctx, `SELECT `+ghInstCols+` FROM github_installations WHERE shared = 1 AND id > ? ORDER BY id LIMIT ?`, after, limit)
+// sharedWith is the condition that installation column col is shared with a
+// tenant in the scope.
+func sharedWith(sc Scope, col string) (string, []any) {
+	c, a := sc.cond("tenant_id")
+	return col + ` IN (SELECT installation_id FROM github_installation_tenants WHERE ` + c + `)`, a
+}
+
+// GitHubInstallationShared says whether an installation is shared with the
+// tenant of the scope.
+func GitHubInstallationShared(ctx context.Context, q Q, sc Scope, id int64) (bool, error) {
+	c, a := sharedWith(sc, "id")
+	var n int
+	err := q.QueryRow(ctx, `SELECT COUNT(*) FROM github_installations WHERE id = ? AND `+c, append([]any{id}, a...)...).Scan(&n)
+	return n > 0, err
+}
+
+// ListGitHubInstallationsOf lists the installations shared with the tenant of
+// the scope, with an id above after, in id order, at most limit.
+func ListGitHubInstallationsOf(ctx context.Context, q Q, sc Scope, after int64, limit int) ([]GitHubInstallation, error) {
+	c, a := sharedWith(sc, "id")
+	rows, err := q.Query(ctx, `SELECT `+ghInstCols+` FROM github_installations WHERE id > ? AND `+c+` ORDER BY id LIMIT ?`,
+		append(append([]any{after}, a...), limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -327,11 +358,22 @@ func ListSharedGitHubInstallations(ctx context.Context, q Q, after int64, limit 
 	return out, rows.Err()
 }
 
-// SharedGitHubInstallationOf returns the shared installation on an account (by
-// login, case ignored), or ErrNotFound.
-func SharedGitHubInstallationOf(ctx context.Context, q Q, login string) (*GitHubInstallation, error) {
+// GitHubInstallationOf returns the installation on an account (by login, case
+// ignored) shared with the tenant of the scope, or ErrNotFound.
+func GitHubInstallationOf(ctx context.Context, q Q, sc Scope, login string) (*GitHubInstallation, error) {
+	c, a := sharedWith(sc, "id")
 	return scanGitHubInstallation(q.QueryRow(ctx, `SELECT `+ghInstCols+` FROM github_installations
-		WHERE shared = 1 AND lower(account) = ? ORDER BY id LIMIT 1`, strings.ToLower(login)))
+		WHERE lower(account) = ? AND `+c+` ORDER BY id LIMIT 1`, append([]any{strings.ToLower(login)}, a...)...))
+}
+
+// UserTenant returns the tenant of a user, or ErrNotFound.
+func UserTenant(ctx context.Context, q Q, userID string) (string, error) {
+	var t string
+	err := q.QueryRow(ctx, `SELECT tenant_id FROM users WHERE id = ?`, userID).Scan(&t)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return t, err
 }
 
 // DeleteGitHubInstallations forgets every installation (the App was deleted).

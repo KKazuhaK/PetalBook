@@ -205,14 +205,14 @@ var isolationRoutes = map[string]isoEntry{
 	"PATCH /api/account/passkeys/{id}":    {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
 	"DELETE /api/account/passkeys/{id}":   {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
 
-	// 2.7: a GitHub connection is the caller's own; the App and the installations a
-	// site administrator shared are the server's, the same for every tenant.
+	// 2.7: a GitHub connection is the caller's own; the App is the server's; an installation
+	// is shared by a site administrator with chosen tenants, and only their people use it.
 	"GET /api/github":                        {kind: isoList},
 	"POST /api/github/authorization/start":   {kind: isoExempt, reason: "starts a connection of the caller's own account"},
 	"GET /api/github/authorization/callback": {kind: isoExempt, reason: "needs the session of the user who started it; account_in_use names nobody, in no tenant"},
 	"DELETE /api/github/authorization":       {kind: isoExempt, reason: "the caller's own connection"},
 	"GET /api/github/owners":                 {kind: isoList},
-	"GET /api/github/repos":                  {kind: isoExempt, reason: "what the caller's own connection or a shared installation (site-wide by design) reaches on GitHub; names no PetalBook id"},
+	"GET /api/github/repos":                  {kind: isoExempt, reason: "what the caller's own connection, or an installation shared with the caller's tenant, reaches on GitHub; names no PetalBook id (tested in github_tenants_test.go)"},
 
 	"GET /api/groups":   {kind: isoList},
 	"GET /api/settings": {kind: isoList},

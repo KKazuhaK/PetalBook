@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -293,7 +294,7 @@ type Installation struct {
 	Suspended           bool
 	Permissions         map[string]string
 	HTMLURL             string
-	Shared              bool
+	Tenants             []string // the tenants it is shared with, sorted
 	Spaces              int
 }
 
@@ -345,7 +346,7 @@ func (s *Service) Installations(ctx context.Context, cur string) ([]Installation
 		ids[i] = in.ID
 	}
 	q := s.opt.Store.Q()
-	shared, err := store.SharedGitHubInstallationIDs(ctx, q, ids)
+	shared, err := store.GitHubInstallationTenants(ctx, q, ids)
 	if err != nil {
 		return nil, "", err
 	}
@@ -356,7 +357,7 @@ func (s *Service) Installations(ctx context.Context, cur string) ([]Installation
 	out := make([]Installation, len(list))
 	for i, in := range list {
 		out[i] = Installation{ID: in.ID, Account: in.Account, RepositorySelection: in.RepositorySelection, Suspended: in.Suspended(),
-			Permissions: in.Permissions, HTMLURL: in.HTMLURL, Shared: shared[in.ID], Spaces: counts[in.ID]}
+			Permissions: in.Permissions, HTMLURL: in.HTMLURL, Tenants: shared[in.ID], Spaces: counts[in.ID]}
 	}
 	nc := ""
 	if next > 0 {
@@ -372,12 +373,28 @@ func (s *Service) listError(err error) error {
 	return s.unreachable(err)
 }
 
-// SetShared marks an installation of an organisation as shared (or not).
-func (s *Service) SetShared(ctx context.Context, id int64, shared bool) (*Installation, error) {
+// maxShareTenants bounds how many tenants one installation is shared with in a request.
+const maxShareTenants = 500
+
+// SetTenants shares an installation of an organisation with exactly these
+// tenants (none: stop sharing). Every tenant must exist.
+func (s *Service) SetTenants(ctx context.Context, id int64, tenants []string) (*Installation, error) {
 	st, err := s.need(ctx)
 	if err != nil {
 		return nil, err
 	}
+	if len(tenants) > maxShareTenants {
+		return nil, errf(http.StatusBadRequest, CodeInvalid, "share with at most %d tenants", maxShareTenants)
+	}
+	set := make([]string, 0, len(tenants))
+	seen := map[string]bool{}
+	for _, t := range tenants {
+		if t != "" && !seen[t] {
+			seen[t] = true
+			set = append(set, t)
+		}
+	}
+	sort.Strings(set)
 	in, err := st.app.Installation(ctx, id)
 	if err != nil {
 		if githubapp.IsStatus(err, http.StatusNotFound) {
@@ -385,11 +402,25 @@ func (s *Service) SetShared(ctx context.Context, id int64, shared bool) (*Instal
 		}
 		return nil, s.listError(err)
 	}
-	if shared && in.Account.Type != "Organization" {
+	if len(set) > 0 && in.Account.Type != "Organization" {
 		return nil, errf(http.StatusBadRequest, CodeInvalid, "only the installation of an organisation can be shared")
 	}
-	if err := store.PutGitHubInstallation(ctx, s.opt.Store.Q(), store.GitHubInstallation{ID: id, Account: in.Account.Login,
-		AccountType: in.Account.Type, Shared: shared, Updated: s.opt.Now()}); err != nil {
+	err = s.opt.Store.Tx(ctx, func(q store.Q) error {
+		for _, t := range set {
+			if _, err := store.GetTenant(ctx, q, t); err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					return errf(http.StatusBadRequest, CodeInvalid, "no such tenant: %s", t)
+				}
+				return err
+			}
+		}
+		if err := store.PutGitHubInstallation(ctx, q, store.GitHubInstallation{ID: id, Account: in.Account.Login,
+			AccountType: in.Account.Type, Updated: s.opt.Now()}); err != nil {
+			return err
+		}
+		return store.SetGitHubInstallationTenants(ctx, q, id, set)
+	})
+	if err != nil {
 		return nil, err
 	}
 	counts, err := store.GitHubSpaceCounts(ctx, s.opt.Store.Q(), []int64{id})
@@ -397,5 +428,5 @@ func (s *Service) SetShared(ctx context.Context, id int64, shared bool) (*Instal
 		return nil, err
 	}
 	return &Installation{ID: in.ID, Account: in.Account, RepositorySelection: in.RepositorySelection, Suspended: in.Suspended(),
-		Permissions: in.Permissions, HTMLURL: in.HTMLURL, Shared: shared, Spaces: counts[id]}, nil
+		Permissions: in.Permissions, HTMLURL: in.HTMLURL, Tenants: set, Spaces: counts[id]}, nil
 }

@@ -85,6 +85,19 @@ func (h *harness) user(id, username string) {
 	}
 }
 
+// tenantUser makes a user in a tenant of their own (made if need be).
+func (h *harness) tenantUser(tenant, id, username string) {
+	h.t.Helper()
+	if _, err := store.GetTenant(ctx, h.st.Q(), tenant); err != nil {
+		if err := h.st.CreateTenant(ctx, store.Tenant{ID: tenant, Slug: strings.ToLower(tenant), Name: tenant, Created: h.now}); err != nil {
+			h.t.Fatal(err)
+		}
+	}
+	if err := store.InsertUser(ctx, h.st.Q(), store.User{ID: id, TenantID: tenant, Username: username, Name: username, Role: "member", Created: h.now}); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
 // space makes a space with a github remote row, as the manager would.
 func (h *harness) space(id string, r store.Remote) {
 	h.t.Helper()

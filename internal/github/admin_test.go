@@ -1,6 +1,7 @@
 package github_test
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -169,32 +170,46 @@ func TestInstallationsListAndSharing(t *testing.T) {
 			t.Fatalf("%v", err)
 		}
 		// Share one organisation; a user's account cannot be shared; GitHub must know the installation.
-		it, err := h.svc.SetShared(ctx, orgInst, true)
-		if err != nil || !it.Shared {
+		it, err := h.svc.SetTenants(ctx, orgInst, []string{store.DefaultTenantID})
+		if err != nil || fmt.Sprint(it.Tenants) != "["+store.DefaultTenantID+"]" {
 			t.Fatalf("%+v %v", it, err)
 		}
-		if _, err := h.svc.SetShared(ctx, userInst, true); code(err) != "invalid" {
+		if _, err := h.svc.SetTenants(ctx, userInst, []string{store.DefaultTenantID}); code(err) != "invalid" {
 			t.Fatalf("%v", err)
 		}
-		if _, err := h.svc.SetShared(ctx, 12345, true); code(err) != "not_found" || status(err) != 404 {
+		if _, err := h.svc.SetTenants(ctx, 12345, []string{store.DefaultTenantID}); code(err) != "not_found" || status(err) != 404 {
 			t.Fatalf("%v", err)
 		}
 		list, _, _ := h.svc.Installations(ctx, next)
 		shared := 0
 		all, _, _ := h.svc.Installations(ctx, "")
 		for _, x := range append(all, list...) {
-			if x.Shared {
+			if len(x.Tenants) > 0 {
 				shared++
 			}
 		}
 		if shared != 1 {
 			t.Fatalf("%d shared", shared)
 		}
+		// Sharing with a tenant that does not exist, or twice with one, or with none.
+		if _, err := h.svc.SetTenants(ctx, orgInst, []string{"no-such-tenant"}); code(err) != "invalid" || status(err) != 400 {
+			t.Fatalf("%v", err)
+		}
+		if err := st.CreateTenant(ctx, store.Tenant{ID: "T2", Slug: "two", Name: "Two", Created: h.now}); err != nil {
+			t.Fatal(err)
+		}
+		it, err = h.svc.SetTenants(ctx, orgInst, []string{"T2", store.DefaultTenantID, "T2"})
+		if err != nil || fmt.Sprint(it.Tenants) != "["+store.DefaultTenantID+" T2]" {
+			t.Fatalf("%+v %v", it, err)
+		}
+		if _, err := h.svc.SetTenants(ctx, userInst, nil); err != nil {
+			t.Fatalf("stopping to share a user's account is allowed: %v", err)
+		}
 		// A space counts toward its installation.
 		h.user("U1", "kazuha")
 		h.space("S1", store.Remote{GHVia: "app", GHInstallationID: orgInst, GHRepoID: 1})
-		it, err = h.svc.SetShared(ctx, orgInst, false)
-		if err != nil || it.Shared || it.Spaces != 1 {
+		it, err = h.svc.SetTenants(ctx, orgInst, nil)
+		if err != nil || len(it.Tenants) != 0 || it.Spaces != 1 {
 			t.Fatalf("%+v %v", it, err)
 		}
 	})

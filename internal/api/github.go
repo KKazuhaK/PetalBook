@@ -316,16 +316,19 @@ type installationResp struct {
 	Suspended           bool              `json:"suspended"`
 	Permissions         map[string]string `json:"permissions"`
 	HTMLURL             string            `json:"htmlUrl"`
-	Shared              bool              `json:"shared"`
+	Tenants             []string          `json:"tenants"`
 	Spaces              int               `json:"spaces"`
 }
 
 func toInstallation(i github.Installation) installationResp {
 	r := installationResp{ID: i.ID, RepositorySelection: i.RepositorySelection, Suspended: i.Suspended, Permissions: i.Permissions,
-		HTMLURL: i.HTMLURL, Shared: i.Shared, Spaces: i.Spaces}
+		HTMLURL: i.HTMLURL, Tenants: i.Tenants, Spaces: i.Spaces}
 	r.Account.Login, r.Account.Type, r.Account.ID = i.Account.Login, i.Account.Type, i.Account.ID
 	if r.Permissions == nil {
 		r.Permissions = map[string]string{}
+	}
+	if r.Tenants == nil {
+		r.Tenants = []string{}
 	}
 	return r
 }
@@ -361,16 +364,16 @@ func (s *server) adminPutGitHubInstallation(c *call) {
 		return
 	}
 	var req struct {
-		Shared *bool `json:"shared"`
+		Tenants *[]string `json:"tenants"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	if req.Shared == nil {
-		writeError(c.w, http.StatusBadRequest, "invalid", "give shared: true or false")
+	if req.Tenants == nil {
+		writeError(c.w, http.StatusBadRequest, "invalid", "give tenants: the ids of the tenants to share with (none: [])")
 		return
 	}
-	it, err := gh.SetShared(c.r.Context(), id, *req.Shared)
+	it, err := gh.SetTenants(c.r.Context(), id, *req.Tenants)
 	if err != nil {
 		s.fail(c.w, err)
 		return

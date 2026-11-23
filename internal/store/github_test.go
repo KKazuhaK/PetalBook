@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -104,28 +105,73 @@ func TestGitHubInstallationsAndSpaces(t *testing.T) {
 		mkUser(t, st, "A", "a", "member")
 		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
 		q := st.Q()
-		for _, i := range []store.GitHubInstallation{{ID: 30, Account: "Zeta", AccountType: "Organization", Shared: true}, {ID: 10, Account: "Alpha", AccountType: "Organization", Shared: true},
+		for _, i := range []store.GitHubInstallation{{ID: 30, Account: "Zeta", AccountType: "Organization"}, {ID: 10, Account: "Alpha", AccountType: "Organization"},
 			{ID: 20, Account: "Mid", AccountType: "Organization"}} {
 			i.Updated = now
 			if err := store.PutGitHubInstallation(ctx, q, i); err != nil {
 				t.Fatal(err)
 			}
 		}
-		list, err := store.ListSharedGitHubInstallations(ctx, q, 0, 10)
+		// Shared per tenant: 30 with t1 and t2, 10 with t1, 20 with nobody.
+		for id, ts := range map[int64][]string{30: {"t2", "t1"}, 10: {"t1"}} {
+			if err := store.SetGitHubInstallationTenants(ctx, q, id, ts); err != nil {
+				t.Fatal(err)
+			}
+		}
+		t1, t2, t3 := store.InTenant("t1"), store.InTenant("t2"), store.InTenant("t3")
+		list, err := store.ListGitHubInstallationsOf(ctx, q, t1, 0, 10)
 		if err != nil || len(list) != 2 || list[0].ID != 10 || list[1].ID != 30 {
 			t.Fatalf("%+v %v", list, err)
 		}
-		if list, _ = store.ListSharedGitHubInstallations(ctx, q, 10, 10); len(list) != 1 || list[0].ID != 30 {
+		if list, _ = store.ListGitHubInstallationsOf(ctx, q, t1, 10, 10); len(list) != 1 || list[0].ID != 30 {
 			t.Fatalf("%+v", list)
 		}
-		if i, err := store.SharedGitHubInstallationOf(ctx, q, "ZETA"); err != nil || i.ID != 30 {
+		if list, _ = store.ListGitHubInstallationsOf(ctx, q, t2, 0, 10); len(list) != 1 || list[0].ID != 30 {
+			t.Fatalf("%+v", list)
+		}
+		if list, _ = store.ListGitHubInstallationsOf(ctx, q, t3, 0, 10); len(list) != 0 {
+			t.Fatalf("a tenant nothing is shared with sees %+v", list)
+		}
+		if list, _ = store.ListGitHubInstallationsOf(ctx, q, store.Scope{}, 0, 10); len(list) != 0 {
+			t.Fatalf("the zero scope sees %+v", list)
+		}
+		if i, err := store.GitHubInstallationOf(ctx, q, t2, "ZETA"); err != nil || i.ID != 30 {
 			t.Fatalf("%+v %v", i, err)
 		}
-		if _, err := store.SharedGitHubInstallationOf(ctx, q, "mid"); !errors.Is(err, store.ErrNotFound) {
+		if _, err := store.GitHubInstallationOf(ctx, q, t2, "alpha"); !errors.Is(err, store.ErrNotFound) {
 			t.Fatal(err)
 		}
-		if m, _ := store.SharedGitHubInstallationIDs(ctx, q, []int64{10, 20, 30, 40}); len(m) != 2 || !m[10] || !m[30] {
+		if _, err := store.GitHubInstallationOf(ctx, q, t1, "mid"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatal(err)
+		}
+		if ok, err := store.GitHubInstallationShared(ctx, q, t1, 10); err != nil || !ok {
+			t.Fatal(ok, err)
+		}
+		if ok, _ := store.GitHubInstallationShared(ctx, q, t2, 10); ok {
+			t.Fatal("shared with the wrong tenant")
+		}
+		if ok, _ := store.GitHubInstallationShared(ctx, q, store.Scope{}, 10); ok {
+			t.Fatal("the zero scope reaches an installation")
+		}
+		m, err := store.GitHubInstallationTenants(ctx, q, []int64{10, 20, 30, 40})
+		if err != nil || len(m) != 2 || fmt.Sprint(m[10]) != "[t1]" || fmt.Sprint(m[30]) != "[t1 t2]" {
+			t.Fatalf("%v %v", m, err)
+		}
+		// Setting replaces the whole set; an empty set stops sharing.
+		if err := store.SetGitHubInstallationTenants(ctx, q, 30, []string{"t3", "t3"}); err != nil {
+			t.Fatal(err)
+		}
+		if m, _ = store.GitHubInstallationTenants(ctx, q, []int64{30}); fmt.Sprint(m[30]) != "[t3]" {
 			t.Fatalf("%v", m)
+		}
+		if err := store.SetGitHubInstallationTenants(ctx, q, 30, nil); err != nil {
+			t.Fatal(err)
+		}
+		if m, _ = store.GitHubInstallationTenants(ctx, q, []int64{30}); len(m) != 0 {
+			t.Fatalf("%v", m)
+		}
+		if err := store.SetGitHubInstallationTenants(ctx, q, 30, []string{"t1"}); err != nil {
+			t.Fatal(err)
 		}
 		// Spaces by installation and by user.
 		for _, id := range []string{"S1", "S2", "S3"} {
@@ -257,6 +303,41 @@ func TestConnectingAnAccountTakenMeanwhileIsErrExists(t *testing.T) {
 		}
 		if u, _ := store.GitHubAccountUser(ctx, q, 77); u != "A" {
 			t.Fatalf("%q", u)
+		}
+	})
+}
+
+// Forgetting the installations forgets who they were shared with; deleting a
+// tenant takes its shares.
+func TestGitHubInstallationSharesGoWithTheirOwners(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		q := st.Q()
+		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+		for _, id := range []int64{1, 2} {
+			if err := store.PutGitHubInstallation(ctx, q, store.GitHubInstallation{ID: id, Account: fmt.Sprint("org", id), AccountType: "Organization", Updated: now}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := st.CreateTenant(ctx, store.Tenant{ID: "T1", Slug: "one", Name: "One", Created: now}); err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range []int64{1, 2} {
+			if err := store.SetGitHubInstallationTenants(ctx, q, id, []string{"T1", store.DefaultTenantID}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := st.DeleteTenant(ctx, "T1"); err != nil {
+			t.Fatal(err)
+		}
+		m, _ := store.GitHubInstallationTenants(ctx, q, []int64{1, 2})
+		if fmt.Sprint(m[1]) != "["+store.DefaultTenantID+"]" || len(m[2]) != 1 {
+			t.Fatalf("a deleted tenant is still shared with: %v", m)
+		}
+		if err := store.DeleteGitHubInstallations(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+		if n := count(t, st, `SELECT COUNT(*) FROM github_installation_tenants`); n != 0 {
+			t.Fatalf("%d shares outlived their installations", n)
 		}
 	})
 }

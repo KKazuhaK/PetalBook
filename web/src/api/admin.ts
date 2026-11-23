@@ -180,7 +180,8 @@ export const adminApi = {
   putAdminGitHub: (input: PutAdminGitHubInput) => request<AdminGitHub>('/admin/github', { method: 'PUT', body: input }),
   deleteAdminGitHub: () => request<void>('/admin/github', { method: 'DELETE' }),
   adminGitHubInstallations: (cursor?: string, signal?: AbortSignal) => request<GitHubCursorPage<GitHubInstallation>>(`/admin/github/installations${cursor ? `?cursor=${enc(cursor)}` : ''}`, { signal }),
-  putAdminGitHubInstallation: (id: number, shared: boolean) => request<GitHubInstallation>(`/admin/github/installations/${id}`, { method: 'PUT', body: { shared } }),
+  // Shares the installation with exactly these tenants; none stops sharing.
+  putAdminGitHubInstallation: (id: number, tenants: string[]) => request<GitHubInstallation>(`/admin/github/installations/${id}`, { method: 'PUT', body: { tenants } }),
   putDailyLines: (input: { lang: string; text: string; format: LinesFormat }) => request<AdminDaily>('/admin/daily/lines', { method: 'PUT', body: input }),
   deleteDailyLines: (lang: string) => request<AdminDaily>(`/admin/daily/lines?lang=${enc(lang)}`, { method: 'DELETE' }),
 }
@@ -578,7 +579,7 @@ export function useAdminGitHubInstallations(enabled = true) {
 export function useShareGitHubInstallation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, shared }: { id: number; shared: boolean }) => adminApi.putAdminGitHubInstallation(id, shared),
+    mutationFn: ({ id, tenants }: { id: number; tenants: string[] }) => adminApi.putAdminGitHubInstallation(id, tenants),
     onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: keys.adminGitHubInstallations }), qc.invalidateQueries({ queryKey: ['github', 'owners'] })]),
   })
 }

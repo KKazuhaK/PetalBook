@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
-import { useAdminGitHub, useAdminGitHubInstallations, useDeleteAdminGitHub, useSaveAdminGitHub, useShareGitHubInstallation } from '@/api/admin'
+import { useAdminGitHub, useAdminGitHubInstallations, useDeleteAdminGitHub, useSaveAdminGitHub, useShareGitHubInstallation, useTenants } from '@/api/admin'
 import { ApiError } from '@/api/client'
 import type { AdminGitHub, GitHubInstallation } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
@@ -11,13 +11,13 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { t } from '@/i18n'
 import { tg } from '@/i18n/github'
 
 // The server's one GitHub App: its settings, and where it is installed with the
-// switch that shares an organisation's installation (docs/api.md, "Administration").
+// tenants each organisation's installation is shared with (docs/api.md, "Administration").
 export function GitHubPanel() {
   const app = useAdminGitHub()
   if (app.isPending) return <PageFallback />
@@ -208,16 +208,10 @@ function Installations() {
 }
 
 function Installation({ installation: i }: { installation: GitHubInstallation }) {
-  const share = useShareGitHubInstallation()
+  const tenants = useTenants()
+  const [choosing, setChoosing] = useState(false)
   const org = i.account.type === 'Organization'
-  const toggle = async (shared: boolean) => {
-    try {
-      await share.mutateAsync({ id: i.id, shared })
-      toast.success(shared ? tg.admin.sharedOn(i.account.login) : tg.admin.sharedOff(i.account.login))
-    } catch (err) {
-      toast.error(explain(err))
-    }
-  }
+  const names = t.fmt.list(i.tenants.map((id) => tenants.data?.find((x) => x.id === id)?.name ?? id))
   return (
     <li className="grid grid-cols-1 gap-2 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
       <div className="min-w-0">
@@ -231,14 +225,76 @@ function Installation({ installation: i }: { installation: GitHubInstallation })
         </p>
         <p className="text-xs text-muted-foreground">{tg.admin.spacesUsing(i.spaces)}</p>
       </div>
-      <div className="flex items-center gap-2">
-        <Label htmlFor={`share-${i.id}`} className="text-xs">
-          {tg.admin.shared}
-        </Label>
-        <Switch id={`share-${i.id}`} checked={i.shared} disabled={!org || share.isPending} onCheckedChange={(v) => void toggle(v)} aria-label={tg.admin.sharedFor(i.account.login)} />
-      </div>
+      {org && (
+        <div className="flex items-center gap-2">
+          <Button type="button" variant="outline" size="sm" data-testid="share-choose" aria-label={tg.admin.chooseFor(i.account.login)} onClick={() => setChoosing(true)}>
+            {tg.admin.choose}
+          </Button>
+        </div>
+      )}
       {!org && <p className="text-xs text-muted-foreground sm:col-span-2">{tg.admin.notShareable}</p>}
-      {org && <p className="text-xs text-muted-foreground sm:col-span-2">{i.shared ? tg.admin.sharedHelpOn : tg.admin.sharedHelpOff}</p>}
+      {org && <p className="text-xs text-muted-foreground sm:col-span-2">{i.tenants.length > 0 ? t.fmt.sentences(tg.admin.sharedWith(names), tg.admin.sharedHelpOn) : t.fmt.sentences(tg.admin.notShared, tg.admin.sharedHelpOff)}</p>}
+      {choosing && <ShareDialog installation={i} onClose={() => setChoosing(false)} />}
     </li>
+  )
+}
+
+// Ticks the tenants an installation is shared with; Save replaces the whole set.
+function ShareDialog({ installation: i, onClose }: { installation: GitHubInstallation; onClose: () => void }) {
+  const tenants = useTenants()
+  const share = useShareGitHubInstallation()
+  const [picked, setPicked] = useState<Set<string>>(() => new Set(i.tenants))
+  const toggle = (id: string, on: boolean) =>
+    setPicked((prev) => {
+      const next = new Set(prev)
+      if (on) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  const save = async () => {
+    try {
+      await share.mutateAsync({ id: i.id, tenants: [...picked] })
+      toast.success(tg.admin.sharedSaved(i.account.login))
+      onClose()
+    } catch (err) {
+      toast.error(explain(err))
+    }
+  }
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{tg.admin.chooseTitle(i.account.login)}</DialogTitle>
+          <DialogDescription>{tg.admin.chooseHelp}</DialogDescription>
+        </DialogHeader>
+        {tenants.isPending ? (
+          <p className="text-sm text-muted-foreground">{tg.admin.chooseLoading}</p>
+        ) : tenants.isError ? (
+          <ErrorState message={explain(tenants.error)} onRetry={() => void tenants.refetch()} />
+        ) : tenants.data.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{tg.admin.chooseNone}</p>
+        ) : (
+          <ul className="max-h-72 space-y-1 overflow-y-auto">
+            {tenants.data.map((x) => (
+              <li key={x.id}>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" className="size-4" checked={picked.has(x.id)} onChange={(e) => toggle(x.id, e.target.checked)} />
+                  <span>{x.name}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        )}
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>
+            {tg.admin.shareCancel}
+          </Button>
+          <Button type="button" disabled={share.isPending || tenants.isPending} onClick={() => void save()}>
+            {share.isPending && <Spinner />}
+            {tg.admin.shareSave}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

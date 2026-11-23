@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/githubapp/githubapptest"
+	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
 var ghOpts = accOpts{github: true}
@@ -118,7 +120,7 @@ func TestTheAdministratorsSaveTheApp(t *testing.T) {
 	})
 }
 
-func TestInstallationsAndTheSharedSwitch(t *testing.T) {
+func TestInstallationsAndTheirSharing(t *testing.T) {
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin, member := ghSetup(t, a)
 		for i := 0; i < 35; i++ {
@@ -133,7 +135,7 @@ func TestInstallationsAndTheSharedSwitch(t *testing.T) {
 		}
 		first := items[0].(map[string]any)
 		acct := first["account"].(map[string]any)
-		if acct["login"] != "kazuhahub" || acct["type"] != "Organization" || first["repositorySelection"] != "all" || first["shared"] != false || first["suspended"] != false {
+		if acct["login"] != "kazuhahub" || acct["type"] != "Organization" || first["repositorySelection"] != "all" || fmt.Sprint(first["tenants"]) != "[]" || first["suspended"] != false {
 			t.Fatalf("%v", first)
 		}
 		r2 := admin.do("GET", "/api/admin/github/installations?cursor="+url.QueryEscape(next), nil).want(t, 200, "")
@@ -144,17 +146,25 @@ func TestInstallationsAndTheSharedSwitch(t *testing.T) {
 		id := int64(first["id"].(float64))
 		path := "/api/admin/github/installations/" + itoa(id)
 		admin.do("PUT", path, map[string]any{}).want(t, 400, "invalid")
-		put := admin.do("PUT", path, map[string]any{"shared": true}).want(t, 200, "")
-		if put.body["shared"] != true || put.body["id"] != float64(id) {
+		admin.do("PUT", path, map[string]any{"shared": true}).want(t, 400, "invalid") // the old shape
+		admin.do("PUT", path, map[string]any{"tenants": []string{"nope"}}).want(t, 400, "invalid")
+		put := admin.do("PUT", path, map[string]any{"tenants": []string{store.DefaultTenantID}}).want(t, 200, "")
+		if fmt.Sprint(put.body["tenants"]) != "["+store.DefaultTenantID+"]" || put.body["id"] != float64(id) {
 			t.Fatalf("%s", put.raw)
 		}
-		admin.do("PUT", "/api/admin/github/installations/999999", map[string]any{"shared": true}).want(t, 404, "not_found")
-		admin.do("PUT", "/api/admin/github/installations/nope", map[string]any{"shared": true}).want(t, 404, "not_found")
+		admin.do("PUT", "/api/admin/github/installations/999999", map[string]any{"tenants": []string{store.DefaultTenantID}}).want(t, 404, "not_found")
+		admin.do("PUT", "/api/admin/github/installations/nope", map[string]any{"tenants": []string{store.DefaultTenantID}}).want(t, 404, "not_found")
 		// A member without a GitHub connection can then create in the shared organisation.
 		other := a.addUser("nobody", pw, "member")
 		o := other.do("GET", "/api/github/owners", nil).want(t, 200, "")
 		list := o.body["items"].([]any)
 		if len(list) != 1 || list[0].(map[string]any)["login"] != "kazuhahub" || list[0].(map[string]any)["via"] != "app" {
+			t.Fatalf("%s", o.raw)
+		}
+		// Stopping to share takes it away again.
+		admin.do("PUT", path, map[string]any{"tenants": []string{}}).want(t, 200, "")
+		o = other.do("GET", "/api/github/owners", nil).want(t, 200, "")
+		if len(o.body["items"].([]any)) != 0 {
 			t.Fatalf("%s", o.raw)
 		}
 		_ = member

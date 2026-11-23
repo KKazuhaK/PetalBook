@@ -42,7 +42,8 @@ interface InstRec {
   login: string
   type: 'User' | 'Organization'
   selection: 'all' | 'selected'
-  shared: boolean
+  // The tenants it is shared with.
+  tenants: string[]
   // The people who are members of the organisation (by the login of their GitHub account); `*` is everyone.
   members: string[]
 }
@@ -53,7 +54,7 @@ const NAME_RE = /^[A-Za-z0-9._-]{1,100}$/
 
 export const MOCK_GITHUB_APP = { name: 'PetalBook Notes', slug: 'petalbook-notes', htmlUrl: 'https://github.com/apps/petalbook-notes' } as const
 
-export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => number; random: () => number; spacesUsing: (userId: string) => number; spacesOnApp: () => number }) {
+export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => number; random: () => number; spacesUsing: (userId: string) => number; spacesOnApp: () => number; tenantOf: (userId: string) => string; tenantExists: (id: string) => boolean }) {
   let app: AppRec | null = opts.configured
     ? { appId: '1234567', clientId: 'Iv23liMockClientId', clientSecret: true, fingerprint: 'SHA256:mockFingerprint0123456789abcdefghijklmnopqrs', permissions: { administration: 'write', contents: 'write', metadata: 'read' }, checked: deps.now() }
     : null
@@ -62,9 +63,9 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
   let nextId = 5000
   let repoId = 880_000_000
   const insts: InstRec[] = [
-    { id: 5001, login: 'kazuhahub', type: 'Organization', selection: 'all', shared: false, members: ['*'] },
-    { id: 5002, login: 'petal-team', type: 'Organization', selection: 'selected', shared: false, members: [] },
-    { id: 5003, login: 'tang-poetry', type: 'Organization', selection: 'all', shared: false, members: ['*'] },
+    { id: 5001, login: 'kazuhahub', type: 'Organization', selection: 'all', tenants: [], members: ['*'] },
+    { id: 5002, login: 'petal-team', type: 'Organization', selection: 'selected', tenants: [], members: [] },
+    { id: 5003, login: 'tang-poetry', type: 'Organization', selection: 'all', tenants: [], members: ['*'] },
   ]
   const repos: RepoRec[] = [
     { id: ++repoId, owner: 'kazuhahub', name: 'notes', private: true },
@@ -92,6 +93,7 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     const a = connection(userId)
     return a && a.state === 'ok' ? a : null
   }
+  const sharedWith = (i: InstRec, userId: string) => i.tenants.includes(deps.tenantOf(userId))
   const member = (i: InstRec, login: string | undefined) => !!login && (i.members.includes('*') || i.members.map(key).includes(key(login)))
 
   const authOf = (userId: string): GitHubAuthorization | null => {
@@ -167,7 +169,7 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
         }
       }
     }
-    for (const i of insts) if (i.shared && i.type === 'Organization' && !seen.has(i.id)) out.push({ login: i.login, type: 'Organization', via: 'app', installationId: i.id })
+    for (const i of insts) if (sharedWith(i, userId) && i.type === 'Organization' && !seen.has(i.id)) out.push({ login: i.login, type: 'Organization', via: 'app', installationId: i.id })
     return page(out, cursor)
   }
 
@@ -182,7 +184,7 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     }
     const i = insts.find((x) => x.id === which.installation)
     const a = usable(userId)
-    if (!i || !(i.shared || (a && member(i, a.login)))) throw new HttpError(404, 'not_found', '没有这个安装')
+    if (!i || !(sharedWith(i, userId) || (a && member(i, a.login)))) throw new HttpError(404, 'not_found', '没有这个安装')
     return page(repos.filter((r) => key(r.owner) === key(i.login)).map(asRepo), cursor)
   }
 
@@ -195,7 +197,7 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     if (a && key(a.login) === key(owner)) return { login: a.login, via: 'user', installation: null }
     const i = insts.find((x) => key(x.login) === key(owner) && x.type === 'Organization')
     if (i && a && member(i, a.login)) return { login: i.login, via: 'user', installation: i }
-    if (i && i.shared) return { login: i.login, via: 'app', installation: i }
+    if (i && sharedWith(i, userId)) return { login: i.login, via: 'app', installation: i }
     const c = connection(userId)
     if (c && c.state === 'expired' && key(c.login) === key(owner)) throw notAuthorized()
     throw new HttpError(403, 'github_owner_not_allowed', `不能在 ${owner} 下建仓库`)
@@ -230,7 +232,7 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     const i = insts.find((x) => key(x.login) === key(owner))
     const tryApp = () => {
       if (!repo || !i || (i.selection === 'selected' && traps.notInInstallation)) throw new HttpError(409, 'github_repo_not_in_installation', 'App 没有装在这个仓库上，或者它的安装够不着这个仓库')
-      if (!i.shared) {
+      if (!sharedWith(i, userId)) {
         if (!a) throw notAuthorized()
         if (!member(i, a.login)) throw new HttpError(403, 'github_owner_not_allowed', '这个安装没有共享，而你的 GitHub 连接不能推送到这个仓库')
       }
@@ -310,7 +312,7 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     if (deps.spacesOnApp() > 0) throw new HttpError(409, 'github_app_in_use', `还有 ${deps.spacesOnApp()} 个空间在用这个 App：先改掉它们`)
     app = null
     auths.clear()
-    for (const i of insts) i.shared = false
+    for (const i of insts) i.tenants = []
   }
 
   const asInstallation = (i: InstRec): GitHubInstallation => ({
@@ -320,7 +322,7 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     suspended: false,
     permissions: app?.permissions ?? {},
     htmlUrl: `https://github.com/organizations/${i.login}/settings/installations/${i.id}`,
-    shared: i.shared,
+    tenants: [...i.tenants].sort(),
     spaces: 0,
   })
 
@@ -329,13 +331,21 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     return page(insts.map(asInstallation), cursor)
   }
 
-  const share = (id: number, shared: boolean): GitHubInstallation => {
+  const share = (id: number, tenants: unknown): GitHubInstallation => {
     requireApp()
+    if (!Array.isArray(tenants) || tenants.some((x) => typeof x !== 'string')) throw invalid('给 tenants：要共享给的租户 id（不共享就是 []）')
     const i = insts.find((x) => x.id === id)
     if (!i) throw new HttpError(404, 'not_found', 'GitHub 不认识这个安装')
-    if (shared && i.type !== 'Organization') throw invalid('只有组织的安装可以共享')
-    i.shared = shared
+    const set = [...new Set(tenants as string[])].filter((x) => x !== '')
+    if (set.length > 0 && i.type !== 'Organization') throw invalid('只有组织的安装可以共享')
+    for (const x of set) if (!deps.tenantExists(x)) throw invalid(`没有这个租户：${x}`)
+    i.tenants = set
     return asInstallation(i)
+  }
+
+  // A deleted tenant stops being shared with.
+  const tenantDeleted = (id: string) => {
+    for (const i of insts) i.tenants = i.tenants.filter((x) => x !== id)
   }
 
   return {
@@ -352,6 +362,7 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     deleteAdmin,
     installations,
     share,
+    tenantDeleted,
     // The attempt a browser holds: the cookie carries the state.
     // Mock only: what a test or a person playing with the mock can switch.
     expire: (userId: string) => {

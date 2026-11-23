@@ -74,9 +74,14 @@ func (s *Service) userFailed(ctx context.Context, userID string, err error) erro
 // Owners lists the accounts the caller can create a repository in, one page of
 // GitHub's list (one request) at a time: the caller's own account, the
 // organisations among the installations GitHub lists for them, then the
-// organisations an administrator shared that are not listed yet.
+// organisations an administrator shared with the caller's tenant that are not
+// listed yet.
 func (s *Service) Owners(ctx context.Context, userID, cur string) ([]Owner, string, error) {
 	if _, err := s.need(ctx); err != nil {
+		return nil, "", err
+	}
+	sc, err := s.scopeOf(ctx, userID)
+	if err != nil {
 		return nil, "", err
 	}
 	c, err := decodeCursor(cur)
@@ -124,7 +129,7 @@ func (s *Service) Owners(ctx context.Context, userID, cur string) ([]Owner, stri
 		skip[id] = true
 	}
 	const limit = 30
-	rows, err := store.ListSharedGitHubInstallations(ctx, s.opt.Store.Q(), c.After, limit+1)
+	rows, err := store.ListGitHubInstallationsOf(ctx, s.opt.Store.Q(), sc, c.After, limit+1)
 	if err != nil {
 		return nil, "", err
 	}
@@ -150,7 +155,7 @@ func capSeen(seen []int64) []int64 {
 }
 
 // Repos lists repositories the caller can connect a space to: those of an
-// installation (shared: all of them; otherwise the ones the caller's own
+// installation (shared with the caller's tenant: all of them; otherwise the ones the caller's own
 // connection reaches), or, with mine, the caller's own. One request per page.
 func (s *Service) Repos(ctx context.Context, userID string, installation int64, mine bool, cur string) ([]RepoItem, string, error) {
 	st, err := s.need(ctx)
@@ -180,11 +185,15 @@ func (s *Service) Repos(ctx context.Context, userID string, installation int64, 
 			return nil, "", s.userFailed(ctx, userID, err)
 		}
 	case installation > 0:
-		inst, err := store.GetGitHubInstallation(ctx, s.opt.Store.Q(), installation)
-		if err != nil && !errors.Is(err, store.ErrNotFound) {
+		sc, err := s.scopeOf(ctx, userID)
+		if err != nil {
 			return nil, "", err
 		}
-		if inst != nil && inst.Shared {
+		shared, err := store.GitHubInstallationShared(ctx, s.opt.Store.Q(), sc, installation)
+		if err != nil {
+			return nil, "", err
+		}
+		if shared {
 			tok, err := st.app.Token(ctx, githubapp.TokenSpec{Installation: installation, Perms: map[string]string{"metadata": "read"}})
 			if err != nil {
 				if githubapp.IsStatus(err, http.StatusNotFound, http.StatusForbidden, http.StatusUnprocessableEntity) && !limited(err) {
@@ -248,7 +257,7 @@ const maxOwnerPages = 10
 // PlanCreate decides, without creating anything, whose token creates a
 // repository for owner: the caller's own when the owner is their account or an
 // organisation GitHub lists for them, else the installation's when an
-// administrator shared it. It needs the App and, for the first, the caller's
+// administrator shared it with the caller's tenant. It needs the App and, for the first, the caller's
 // connection (github_not_authorized when it has expired).
 func (s *Service) PlanCreate(ctx context.Context, userID, owner string) (*Plan, error) {
 	if _, err := s.need(ctx); err != nil {
@@ -282,7 +291,11 @@ func (s *Service) PlanCreate(ctx context.Context, userID, owner string) (*Plan, 
 			page = next
 		}
 	}
-	sh, err := store.SharedGitHubInstallationOf(ctx, s.opt.Store.Q(), owner)
+	sc, err := s.scopeOf(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	sh, err := store.GitHubInstallationOf(ctx, s.opt.Store.Q(), sc, owner)
 	if err == nil && sh.AccountType == "Organization" {
 		return &Plan{Owner: sh.Account, Org: sh.Account, Via: ViaApp, UserID: userID, InstallationID: sh.ID}, nil
 	}
@@ -479,7 +492,7 @@ func (s *Service) ChooseCredential(ctx context.Context, p *Plan, repo *Repo) (*C
 // is "app", "user" or "" (the server picks: the App when the caller may use
 // it, else the caller's own connection). The caller must be allowed to use the
 // repository: with via "app" their connection can push to it or the
-// installation is shared; with via "user" their connection can push.
+// installation is shared with their tenant; with via "user" their connection can push.
 func (s *Service) ResolveExisting(ctx context.Context, userID, owner, name, via string) (*Cred, *Repo, error) {
 	st, err := s.need(ctx)
 	if err != nil {
@@ -539,11 +552,13 @@ func (s *Service) existingApp(ctx context.Context, st *appState, userID, owner, 
 		return nil, nil, s.listError(err)
 	}
 	var repo *githubapp.Repo
-	shared := false
-	if row, serr := store.GetGitHubInstallation(ctx, s.opt.Store.Q(), inst); serr == nil {
-		shared = row.Shared
-	} else if !errors.Is(serr, store.ErrNotFound) {
-		return nil, nil, serr
+	sc, err := s.scopeOf(ctx, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	shared, err := store.GitHubInstallationShared(ctx, s.opt.Store.Q(), sc, inst)
+	if err != nil {
+		return nil, nil, err
 	}
 	if shared {
 		tok, err := st.app.Token(ctx, githubapp.TokenSpec{Installation: inst, Perms: map[string]string{"metadata": "read"}})
@@ -628,4 +643,17 @@ func (s *Service) ParseRepoURL(raw string) (owner, name string, ok bool) {
 		return "", "", false
 	}
 	return o, n, true
+}
+
+// scopeOf is the scope of the tenant a user belongs to: what an installation
+// shared with that tenant may be used for. A user that is gone sees nothing.
+func (s *Service) scopeOf(ctx context.Context, userID string) (store.Scope, error) {
+	t, err := store.UserTenant(ctx, s.opt.Store.Q(), userID)
+	if errors.Is(err, store.ErrNotFound) {
+		return store.Scope{}, nil
+	}
+	if err != nil {
+		return store.Scope{}, err
+	}
+	return store.InTenant(t), nil
 }

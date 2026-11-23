@@ -7,6 +7,11 @@
 -- A user's access and refresh tokens are stored sealed (see the secret
 -- package). version counts replacements: a renewal replaces the pair it was
 -- made from and nothing newer. The App's own settings are in site_settings.
+--
+-- An installation is shared per tenant: github_installation_tenants has a row
+-- for each tenant a site administrator shared it with. tenant_id is a plain
+-- column, not a foreign key: the tenants table belongs to 0018, which may run
+-- before or after this file. Deleting a tenant deletes its rows in code.
 
 CREATE TABLE github_authorizations (
   user_id         TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -27,10 +32,15 @@ CREATE TABLE github_installations (
   id           BIGINT PRIMARY KEY,
   account      TEXT NOT NULL,
   account_type TEXT NOT NULL DEFAULT 'Organization',
-  shared       BIGINT NOT NULL DEFAULT 0,
   updated      BIGINT NOT NULL
 );
-CREATE INDEX github_installations_shared ON github_installations(shared, id);
+
+CREATE TABLE github_installation_tenants (
+  installation_id BIGINT NOT NULL REFERENCES github_installations(id) ON DELETE CASCADE,
+  tenant_id       TEXT NOT NULL,
+  PRIMARY KEY (installation_id, tenant_id)
+);
+CREATE INDEX github_installation_tenants_tenant ON github_installation_tenants(tenant_id, installation_id);
 
 ALTER TABLE remotes ADD COLUMN gh_via TEXT NOT NULL DEFAULT '';
 ALTER TABLE remotes ADD COLUMN gh_installation_id BIGINT NOT NULL DEFAULT 0;

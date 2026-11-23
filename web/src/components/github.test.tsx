@@ -347,16 +347,33 @@ describe('the GitHub section of the administration', () => {
     await settle(() => text().includes(tg.admin.errors.codes.github_client_rejected), 'the secret refusal')
   })
 
-  it('lists the installations a page at a time and shares an organisation\'s', async () => {
+  it('lists the installations and shares an organisation\'s with the tenants picked', async () => {
     m = await mount(routes, { entries: ['/admin/github'], signIn: true, server: { mode: 'accounts', github: { configured: true } } })
-    await settle(() => document.querySelectorAll('li [role="switch"]').length === 3, 'the installations')
-    const sw = (login: string) => byLabel(tg.admin.sharedFor(login))!
-    expect(sw('kazuhahub').getAttribute('aria-checked')).toBe('false')
-    await click(sw('kazuhahub'))
-    await settle(() => sw('kazuhahub').getAttribute('aria-checked') === 'true', 'the switch')
-    expect(m.requests.some((r) => r.method === 'PUT' && r.url === '/api/admin/github/installations/5001' && r.body === '{"shared":true}')).toBe(true)
-    // A member who has no GitHub account can then create there: the owner list shows it.
+    const admin = adminRequests(m.server)
+    admin('PUT', '/api/admin/tenancy', { enabled: true })
+    const second = (admin('POST', '/api/admin/tenants', { slug: 'acme', name: 'Acme' }).body as { id: string }).id
+    await settle(() => document.querySelectorAll('li [data-testid="share-choose"]').length === 3, 'the installations')
+    const choose = (login: string) => byLabel(tg.admin.chooseFor(login))!
+    expect(text()).toContain(tg.admin.notShared)
+    await click(choose('kazuhahub'))
+    await settle(() => dialog() !== null && dialog()!.querySelectorAll('input[type="checkbox"]').length === 2, 'the tenants to pick from')
+    const box = (name: string) => [...dialog()!.querySelectorAll('label')].find((l) => l.textContent?.includes(name))!.querySelector<HTMLInputElement>('input[type="checkbox"]')!
+    expect(box('Acme').checked).toBe(false)
+    await click(box('Acme'))
+    await click(button(tg.admin.shareSave, dialog()!)!)
+    await settle(() => dialog() === null, 'the dialog closing')
+    expect(m.requests.some((r) => r.method === 'PUT' && r.url === '/api/admin/github/installations/5001' && r.body === JSON.stringify({ tenants: [second] }))).toBe(true)
+    await settle(() => text().includes(tg.admin.sharedWith('Acme')), 'the row naming the tenant')
+    // A member of the default tenant cannot use it; one of a tenant it is shared with could.
     const person = makePerson(m.server, 'carol')
+    expect((person.request('GET', '/api/github/owners').body as { items: unknown[] }).items).toEqual([])
+    // Share it with the default tenant as well: carol's owner list shows it.
+    await click(choose('kazuhahub'))
+    await settle(() => dialog() !== null && dialog()!.querySelectorAll('input[type="checkbox"]').length === 2, 'the tenants again')
+    expect(box('Acme').checked).toBe(true)
+    await click(box('Default'))
+    await click(button(tg.admin.shareSave, dialog()!)!)
+    await settle(() => dialog() === null, 'the dialog closing again')
     const owners = person.request('GET', '/api/github/owners').body as { items: { login: string; via: string }[] }
     expect(owners.items).toEqual([{ login: 'kazuhahub', type: 'Organization', via: 'app', installationId: 5001 }])
     expect(MOCK_ADMIN.username).toBeTruthy()
