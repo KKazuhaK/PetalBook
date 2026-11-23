@@ -3,6 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { act } from 'react'
 import { Route, Routes } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
+import { t } from '@/i18n'
 import { ta } from '@/i18n/admin'
 import { adminRequests, click, installDomShims, makePerson, mount, settle, type, type Mounted } from '@/testing/harness'
 import { AdminGate } from './AdminGate'
@@ -282,18 +283,100 @@ describe('the administrators\' daily text page', () => {
       expect(sent.date).toMatch(/^\d{4}-\d{2}-\d{2}$/)
     })
 
-    it('a path that finds nothing is said, by field; the others are still shown', async () => {
+    it('a text path that finds nothing is said; the others are still shown', async () => {
       await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', GOOD))
       await settle(() => api('quotes') !== null, 'the interface')
       await click(api('quotes')!.querySelector('button'))
-      await settle(() => input('api-source') !== null, 'form')
-      await type(input('api-source'), 'missing')
+      await settle(() => input('api-text') !== null, 'form')
+      await type(input('api-text'), 'missing')
       await click(byText('button', d.tryButton))
       await settle(() => document.querySelector('[data-slot="try-result"]') !== null, 'the result')
       const r = document.querySelector<HTMLElement>('[data-slot="try-result"]')!
-      expect(r.textContent).toContain(d.pathError(d.fieldSource))
-      expect(r.textContent).toContain('山色空蒙雨亦奇')
+      expect(r.textContent).toContain(d.pathError(d.fieldText))
       expect(r.textContent).not.toContain(d.tryOk(200))
+    })
+
+    it('a source or author with no value (a null) is no error: the text and the rest are shown', async () => {
+      await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', GOOD))
+      await settle(() => api('quotes') !== null, 'the interface')
+      await click(api('quotes')!.querySelector('button'))
+      await settle(() => input('api-author') !== null, 'form')
+      await type(input('api-author'), 'null')
+      await click(byText('button', d.tryButton))
+      await settle(() => document.querySelector('[data-slot="try-result"]') !== null, 'the result')
+      const r = document.querySelector<HTMLElement>('[data-slot="try-result"]')!
+      expect(r.textContent).toContain(d.tryOk(200))
+      expect(r.textContent).toContain('山色空蒙雨亦奇')
+      expect(r.textContent).not.toContain(d.pathError(d.fieldAuthor))
+      expect(r.querySelector('.text-destructive')).toBeNull()
+    })
+
+    it('an optional path error from the server is shown as no value, and a refusal for one is no refusal', async () => {
+      const { TryResult } = await import('./DailyPanel')
+      const { createRoot } = await import('react-dom/client')
+      const host = document.createElement('div')
+      document.body.append(host)
+      const root = createRoot(host)
+      await act(async () => {
+        root.render(
+          <TryResult
+            result={{ ok: false, status: 200, error: 'path_error', field: 'author', message: 'no text or number at from_who', quote: { text: 'x' }, pathErrors: [{ field: 'author', code: 'path_error', message: 'no text or number at from_who' }] }}
+          />,
+        )
+      })
+      expect(host.textContent).toContain(d.tryOk(200))
+      expect(host.textContent).not.toContain(d.pathError(d.fieldAuthor))
+      expect(host.querySelector('.text-destructive')).toBeNull()
+      await act(async () => root.unmount())
+      host.remove()
+    })
+
+    it('marks what is required with a star and aria-required, and what is optional in words', async () => {
+      await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', GOOD))
+      await settle(() => api('quotes') !== null, 'the interface')
+      await click(api('quotes')!.querySelector('button'))
+      await settle(() => input('api-text') !== null, 'form')
+      const label = (id: string) => document.querySelector<HTMLElement>(`label[for="${id}"]`)!
+      for (const id of ['api-id', 'api-name', 'api-url', 'api-text']) {
+        expect(label(id).querySelector('[data-slot="required-mark"]')?.textContent).toBe('*')
+        expect(label(id).querySelector('[data-slot="optional-mark"]')).toBeNull()
+        expect(input(id).getAttribute('aria-required')).toBe('true')
+      }
+      for (const id of ['api-source', 'api-author', 'api-link']) {
+        expect(label(id).querySelector('[data-slot="optional-mark"]')?.textContent).toBe(t.common.optionalMark)
+        expect(label(id).querySelector('[data-slot="required-mark"]')).toBeNull()
+        expect(input(id).getAttribute('aria-required')).toBeNull()
+      }
+      expect(document.querySelector('[data-slot="api-form"] legend [data-slot="optional-mark"]')).not.toBeNull()
+      // The other forms of the page: the language code, the interface-independent default's space.
+      expect(document.getElementById('daily-lang')!.getAttribute('aria-required')).toBe('true')
+      expect(label('daily-lang').querySelector('[data-slot="required-mark"]')).not.toBeNull()
+    })
+
+    it('nothing on the page can be wider than a phone: long text wraps and the raw answer scrolls inside itself', async () => {
+      const long = 'https://example.org/' + 'a'.repeat(300)
+      await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', { ...GOOD, url: long }))
+      await settle(() => api('quotes') !== null, 'the interface')
+      await click(api('quotes')!.querySelector('button'))
+      await settle(() => byText('button', d.tryButton) !== null, 'try')
+      await click(byText('button', d.tryButton))
+      await settle(() => document.querySelector('[data-slot="try-result"]') !== null, 'the result')
+      const page = document.querySelector<HTMLElement>('[data-slot="admin-daily"]')!
+      expect(page.className).toContain('min-w-0')
+      const has = (el: Element | null, ...c: string[]) => c.every((x) => el?.classList.contains(x))
+      // The address the trial used, and the raw answer.
+      expect(has(document.querySelector('[data-slot="try-result"] p.font-mono'), 'break-all')).toBe(true)
+      expect(has(document.querySelector('[data-slot="try-result"] pre'), 'max-w-full', 'overflow-auto', 'whitespace-pre')).toBe(true)
+      // The inputs fill their column and may shrink; the editor's grids have a column that may shrink.
+      for (const id of ['api-id', 'api-name', 'api-url', 'api-text', 'api-source', 'api-author', 'api-link']) expect(has(input(id), 'w-full', 'min-w-0')).toBe(true)
+      expect(has(document.querySelector('[data-slot="api-form"]'), 'grid-cols-1', 'min-w-0')).toBe(true)
+      expect(has(document.querySelector('[data-slot="api-try"]'), 'grid-cols-1', 'min-w-0')).toBe(true)
+      // Help texts wrap.
+      const helps = [...document.querySelectorAll('[data-slot="api-form"] p.text-xs.text-muted-foreground:not(.font-mono)')]
+      expect(helps.length).toBeGreaterThan(2)
+      for (const h of helps) expect(h.classList.contains('break-words')).toBe(true)
+      expect(has(page.querySelector(':scope > p'), 'break-words')).toBe(true)
+      for (const s of page.querySelectorAll('section')) expect(s.classList.contains('grid-cols-1')).toBe(true)
     })
 
     it('an interface that did not answer says why', async () => {

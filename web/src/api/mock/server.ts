@@ -778,7 +778,7 @@ export function createMockServer(options: MockOptions = {}) {
     }
     if (path === '/admin/daily/try' && method === 'POST') {
       // The mock asks nobody: the address says what would have come back ("down": an error; a text path of
-      // "missing": the path finds nothing).
+      // "missing" or "null": the path finds nothing, which is an error for the text only).
       const a = (isRecord(body.api) ? body.api : {}) as Record<string, unknown>
       const url = String(a.url ?? '')
       const tryHost = /^https?:\/\/([^/?#]+)/i.exec(url)?.[1]?.toLowerCase()
@@ -790,7 +790,15 @@ export function createMockServer(options: MockOptions = {}) {
       if (url.includes('down')) return { status: 200, body: { ok: false, message: 'status 503', status: 503, url } }
       const raw = '{"hitokoto": "山色空蒙雨亦奇", "from": "饮湖上初晴后雨", "from_who": "苏轼"}'
       const pathErrors: { field: string; code: string; message: string }[] = []
-      const pick = (k: string, v: string) => (a[k] === 'missing' ? (pathErrors.push({ field: k, code: 'path_error', message: `no text or number at ${v}` }), undefined) : a[k] ? v : undefined)
+      // Only the text is required: a source or an author whose path finds nothing (or a null, like "from_who": null)
+      // is no value, not an error.
+      const pick = (k: string, v: string) => {
+        if (a[k] === 'missing' || a[k] === 'null') {
+          if (k === 'text') pathErrors.push({ field: k, code: 'path_error', message: `no text or number at ${v}` })
+          return undefined
+        }
+        return a[k] ? v : undefined
+      }
       const quote = { text: pick('text', '山色空蒙雨亦奇'), source: pick('source', '饮湖上初晴后雨'), author: pick('author', '苏轼') }
       const clean = Object.fromEntries(Object.entries(quote).filter(([, v]) => v !== undefined))
       if (pathErrors.length) return refused('path_error', pathErrors[0].message, { field: pathErrors[0].field }, { status: 200, raw, rawTruncated: false, quote: clean, pathErrors })

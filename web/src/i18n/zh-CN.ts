@@ -12,7 +12,7 @@ export const zhCN = {
     quoted: (text: string, rest: string) => `「${text}」${rest}`,
     sentences: (a: string, b: string) => `${a}。${b}`,
   },
-  common: { close: '关闭' },
+  common: { close: '关闭', required: '必填', optionalMark: '（可选）' },
   nav: {
     home: '首页',
     inbox: '收件箱',

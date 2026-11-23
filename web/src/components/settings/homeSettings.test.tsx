@@ -29,7 +29,7 @@ const navLinks = () => [...(dialog()?.querySelectorAll('nav a') ?? [])].map((a) 
 const panel = () => dialog()?.querySelector<HTMLElement>('[role="tabpanel"]') ?? null
 const tab = (lang: string) => dialog()!.querySelector<HTMLElement>(`[role="tab"][data-lang="${lang}"]`)!
 const mode = (label: string) => [...dialog()!.querySelectorAll<HTMLInputElement>('input[name="daily-mode"]')].find((r) => r.parentElement?.textContent?.includes(label))!
-const select = (label: string) => [...dialog()!.querySelectorAll<HTMLSelectElement>('select')].find((s) => s.parentElement?.parentElement?.querySelector('label')?.textContent === label)!
+const select = (label: string) => [...dialog()!.querySelectorAll<HTMLSelectElement>('select')].find((s) => s.parentElement?.parentElement?.querySelector('label')?.textContent?.replace(/\*$/, '') === label)!
 const save = () => [...dialog()!.querySelectorAll('button')].find((b) => b.textContent === th.settings.save)!
 const writes = () => m!.requests.filter((r) => r.method === 'PUT' && r.url.includes('/daily/')).map((r) => ({ url: r.url.replace(/^\/api\/spaces\/[^/]+/, ''), body: JSON.parse(r.body!) }))
 const loaded = () => settle(() => panel() !== null, 'the home settings')

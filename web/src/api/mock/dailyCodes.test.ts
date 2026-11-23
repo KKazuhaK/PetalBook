@@ -45,12 +45,22 @@ describe('the mock gives the stable codes', () => {
     expect(tryIt('https://quotes.example.org/down')).toMatchObject({ status: 200, body: { ok: false, status: 503 } })
   })
 
-  it('a try reports a path that finds nothing as path_error with the field, and pathErrors in result', () => {
+  it('a try reports a text path that finds nothing as path_error with the field, and pathErrors in result', () => {
     const call = admin()
     put(call, {})
-    const r = call('POST', '/api/admin/daily/try', { api: { ...GOOD, author: 'missing' }, lang: 'en', date: '2026-11-23' })
-    expect(r).toMatchObject({ status: 400, body: { error: 'path_error', field: 'author', result: { ok: false, raw: expect.any(String) } } })
-    expect((r.body as { result: { pathErrors: unknown } }).result.pathErrors).toEqual([{ field: 'author', code: 'path_error', message: expect.any(String) }])
+    const r = call('POST', '/api/admin/daily/try', { api: { ...GOOD, text: 'missing' }, lang: 'en', date: '2026-11-23' })
+    expect(r).toMatchObject({ status: 400, body: { error: 'path_error', field: 'text', result: { ok: false, raw: expect.any(String) } } })
+    expect((r.body as { result: { pathErrors: unknown } }).result.pathErrors).toEqual([{ field: 'text', code: 'path_error', message: expect.any(String) }])
+  })
+
+  it('a source or author path with no value (null or missing) is no error', () => {
+    const call = admin()
+    put(call, {})
+    for (const v of ['missing', 'null']) {
+      const r = call('POST', '/api/admin/daily/try', { api: { ...GOOD, author: v, source: v }, lang: 'en', date: '2026-11-23' })
+      expect(r).toMatchObject({ status: 200, body: { ok: true } })
+      expect((r.body as { pathErrors?: unknown }).pathErrors).toBeUndefined()
+    }
   })
 
   it('a skip beyond the limit is skip_too_large; a malformed date stays invalid; out_of_range is for another day with an external source', () => {

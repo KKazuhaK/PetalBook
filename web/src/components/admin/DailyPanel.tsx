@@ -10,6 +10,7 @@ import { SettingsRow, SettingsRows, SettingsSection } from '@/components/setting
 import { SourceFields } from '@/components/settings/SourceFields'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { OptionalMark, RequiredMark } from '@/components/ui/field-mark'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
@@ -41,8 +42,8 @@ export function DailyPanel() {
   if (q.isError) return <ErrorState message={t.fmt.labelled(d.loadFailed, q.error.message)} onRetry={() => void q.refetch()} />
   const data = q.data
   return (
-    <div className="space-y-10" data-slot="admin-daily">
-      <p className="text-sm text-muted-foreground">{d.help}</p>
+    <div className="min-w-0 space-y-10" data-slot="admin-daily">
+      <p className="text-sm break-words text-muted-foreground">{d.help}</p>
       <AllowSection data={data} />
       <LanguagesSection data={data} />
       <DefaultSection data={data} />
@@ -95,7 +96,7 @@ function LanguagesSection({ data }: { data: AdminDaily }) {
         ))}
       </ul>
       <form
-        className="flex items-end gap-2"
+        className="flex flex-wrap items-end gap-2"
         onSubmit={(e) => {
           e.preventDefault()
           const c = code.trim().toLowerCase()
@@ -105,8 +106,11 @@ function LanguagesSection({ data }: { data: AdminDaily }) {
         }}
       >
         <div className="grid gap-1.5">
-          <Label htmlFor="daily-lang">{d.languageCode}</Label>
-          <Input id="daily-lang" value={code} onChange={(e) => setCode(e.target.value)} placeholder="pt-br" className="w-40" autoComplete="off" />
+          <Label htmlFor="daily-lang">
+            {d.languageCode}
+            <RequiredMark />
+          </Label>
+          <Input id="daily-lang" value={code} onChange={(e) => setCode(e.target.value)} placeholder="pt-br" className="w-40 max-w-full" autoComplete="off" aria-required="true" />
         </div>
         <Button type="submit" variant="outline" size="sm" disabled={save.isPending}>
           <Plus />
@@ -165,13 +169,16 @@ function DefaultSection({ data }: { data: AdminDaily }) {
           </label>
         ))}
       </div>
-      {kind === 'list' && <p className="text-xs text-muted-foreground">{d.defaultListHelp}</p>}
+      {kind === 'list' && <p className="text-xs break-words text-muted-foreground">{d.defaultListHelp}</p>}
       {kind === 'space' && (
-        <div className="grid gap-4 rounded-lg border p-4">
+        <div className="grid grid-cols-1 gap-4 rounded-lg border p-4">
           <FormMessage tone="info">{d.spaceWarning}</FormMessage>
           <div className="grid gap-1.5">
-            <Label htmlFor="daily-default-space">{d.spaceLabel}</Label>
-            <NativeSelect id="daily-default-space" value={space} onChange={(e) => setSpace(e.target.value)}>
+            <Label htmlFor="daily-default-space">
+              {d.spaceLabel}
+              <RequiredMark />
+            </Label>
+            <NativeSelect id="daily-default-space" aria-required="true" value={space} onChange={(e) => setSpace(e.target.value)}>
               <option value="">{d.spaceChoose}</option>
               {space !== '' && !items.some((s) => s.id === space) && <option value={space}>{space}</option>}
               {items.map((s) => (
@@ -182,7 +189,7 @@ function DefaultSection({ data }: { data: AdminDaily }) {
             </NativeSelect>
           </div>
           <LangTabs langs={tabs} value={tab} onChange={setTab} label={d.languagesTitle} />
-          <p className="text-xs text-muted-foreground">{d.sourceHelp}</p>
+          <p className="text-xs break-words text-muted-foreground">{d.sourceHelp}</p>
           <SourceFields draft={draft} onChange={(next) => setDrafts((all) => ({ ...all, [tab]: { ...(all[tab] ?? emptyDraft()), ...next, mode: 'own' } }))} />
           {drafts[tab] && (
             <div>
@@ -304,8 +311,8 @@ function ApisSection({ data }: { data: AdminDaily }) {
   const [open, setOpen] = useState<{ id: string; form: Form } | null>(null)
   return (
     <SettingsSection title={d.apisTitle} description={d.apisHelp}>
-      {data.apis.length === 0 && !open && <p className="text-sm text-muted-foreground">{d.noApis}</p>}
-      <ul className="grid gap-2">
+      {data.apis.length === 0 && !open && <p className="text-sm break-words text-muted-foreground">{d.noApis}</p>}
+      <ul className="grid grid-cols-1 gap-2">
         {data.apis.map((a) => (
           <li key={a.id} data-api={a.id} className="rounded-lg border">
             <button type="button" aria-expanded={open?.id === a.id} onClick={() => setOpen(open?.id === a.id ? null : { id: a.id, form: formOf(a) })} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50">
@@ -329,7 +336,7 @@ function ApisSection({ data }: { data: AdminDaily }) {
         </div>
       )}
       {open?.id !== 'new' && (
-        <div className="grid gap-2">
+        <div className="grid grid-cols-1 gap-2">
           <div>
             <Button variant="outline" size="sm" onClick={() => setOpen({ id: 'new', form: blankForm() })}>
               <Plus />
@@ -337,8 +344,8 @@ function ApisSection({ data }: { data: AdminDaily }) {
             </Button>
           </div>
           {data.presets.length > 0 && (
-            <div className="grid gap-1.5" data-slot="presets">
-              <p className="text-xs text-muted-foreground">{d.presetHelp}</p>
+            <div className="grid grid-cols-1 gap-1.5" data-slot="presets">
+              <p className="text-xs break-words text-muted-foreground">{d.presetHelp}</p>
               <div className="flex flex-wrap gap-2">
                 {data.presets.map((p) => (
                   <Button key={p.id} variant="outline" size="sm" onClick={() => setOpen({ id: 'new', form: formOf({ ...p, enabled: true }) })}>
@@ -371,17 +378,21 @@ function ApiEditor({ initial, existing, languages, hosts, onClose }: { initial: 
   const set = (patch: Partial<Form>) => setF((x) => ({ ...x, ...patch }))
   const setHeader = (i: number, patch: Partial<HeaderRow>) => setF((x) => ({ ...x, headers: x.headers.map((h, j) => (j === i ? { ...h, ...patch } : h)) }))
   const langs = ['', ...languages, ...(f.lang !== '' && !languages.includes(f.lang) ? [f.lang] : [])]
-  const field = (key: 'id' | 'name' | 'url' | 'text' | 'source' | 'author' | 'link', label: string, help?: string, extra?: Partial<React.ComponentProps<'input'>>) => (
-    <div className="grid gap-1.5">
-      <Label htmlFor={`api-${key}`}>{label}</Label>
-      <Input id={`api-${key}`} value={f[key]} onChange={(e) => set({ [key]: e.target.value })} autoComplete="off" {...extra} />
-      {help && <p className="text-xs text-muted-foreground">{help}</p>}
+  // `required` marks the label with a star and the input aria-required; the others say (optional).
+  const field = (key: 'id' | 'name' | 'url' | 'text' | 'source' | 'author' | 'link', label: string, required: boolean, help?: string, extra?: Partial<React.ComponentProps<'input'>>) => (
+    <div className="grid min-w-0 grid-cols-1 gap-1.5">
+      <Label htmlFor={`api-${key}`}>
+        {label}
+        {required ? <RequiredMark /> : <OptionalMark />}
+      </Label>
+      <Input id={`api-${key}`} value={f[key]} onChange={(e) => set({ [key]: e.target.value })} autoComplete="off" aria-required={required ? 'true' : undefined} className="w-full min-w-0" {...extra} />
+      {help && <p className="text-xs break-words text-muted-foreground">{help}</p>}
     </div>
   )
 
   return (
     <form
-      className="grid gap-4"
+      className="grid min-w-0 grid-cols-1 gap-4"
       data-slot="api-form"
       onSubmit={(e) => {
         e.preventDefault()
@@ -391,11 +402,11 @@ function ApiEditor({ initial, existing, languages, hosts, onClose }: { initial: 
         save.mutate(payloadOf(f, initial.url), { onSuccess: () => { toast.success(d.saved); onClose() }, onError: (err) => setError(message(err)) })
       }}
     >
-      <div className="grid gap-3 sm:grid-cols-2">
-        {field('id', d.fieldId, d.fieldIdHelp, { readOnly: existing })}
-        {field('name', d.fieldName)}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {field('id', d.fieldId, true, d.fieldIdHelp, { readOnly: existing })}
+        {field('name', d.fieldName, true)}
       </div>
-      <div className="grid gap-1.5 sm:max-w-xs">
+      <div className="grid grid-cols-1 gap-1.5 sm:max-w-xs">
         <Label htmlFor="api-lang">{d.fieldLang}</Label>
         <NativeSelect id="api-lang" value={f.lang} onChange={(e) => set({ lang: e.target.value })}>
           {langs.map((l) => (
@@ -405,15 +416,17 @@ function ApiEditor({ initial, existing, languages, hosts, onClose }: { initial: 
           ))}
         </NativeSelect>
       </div>
-      {field('url', d.fieldUrl, d.fieldUrlHelp)}
+      {field('url', d.fieldUrl, true, d.fieldUrlHelp)}
 
-      <fieldset className="grid gap-2">
-        <legend className="text-sm font-medium">{d.headers}</legend>
-        <p className="text-xs text-muted-foreground">{d.headersHelp}</p>
-        {urlChanged && f.headers.some((h) => h.set) && <p className="text-xs text-muted-foreground" data-slot="header-again">{d.headerAgain}</p>}
+      <fieldset className="grid min-w-0 grid-cols-1 gap-2">
+        <legend className="text-sm font-medium">
+          {d.headers} <OptionalMark />
+        </legend>
+        <p className="text-xs break-words text-muted-foreground">{d.headersHelp}</p>
+        {urlChanged && f.headers.some((h) => h.set) && <p className="text-xs break-words text-muted-foreground" data-slot="header-again">{d.headerAgain}</p>}
         {f.headers.map((h, i) => (
           <div key={i} className="flex flex-wrap items-center gap-2" data-slot="api-header">
-            <Input aria-label={d.headerName} placeholder="X-Api-Key" value={h.name} readOnly={h.set} onChange={(e) => setHeader(i, { name: e.target.value })} className="w-44" autoComplete="off" />
+            <Input aria-label={d.headerName} placeholder="X-Api-Key" value={h.name} readOnly={h.set} onChange={(e) => setHeader(i, { name: e.target.value })} className="w-full min-w-0 sm:w-44" autoComplete="off" />
             {h.set && !h.changing && !urlChanged ? (
               <>
                 <span className="text-sm text-muted-foreground">{d.headerSet}</span>
@@ -422,7 +435,7 @@ function ApiEditor({ initial, existing, languages, hosts, onClose }: { initial: 
                 </Button>
               </>
             ) : (
-              <Input aria-label={d.headerValue} type="password" placeholder={h.set && !urlChanged ? d.headerKeep : d.headerValue} value={h.value} onChange={(e) => setHeader(i, { value: e.target.value })} className="w-60" autoComplete="off" />
+              <Input aria-label={d.headerValue} type="password" placeholder={h.set && !urlChanged ? d.headerKeep : d.headerValue} value={h.value} onChange={(e) => setHeader(i, { value: e.target.value })} className="w-full min-w-0 sm:w-60" autoComplete="off" />
             )}
             <Button type="button" variant="ghost" size="icon-sm" aria-label={d.headerRemove} title={d.headerRemove} onClick={() => setF((x) => ({ ...x, headers: x.headers.filter((_, j) => j !== i) }))}>
               <Trash2 />
@@ -437,15 +450,15 @@ function ApiEditor({ initial, existing, languages, hosts, onClose }: { initial: 
         </div>
       </fieldset>
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        {field('text', d.fieldText, d.fieldTextHelp)}
-        {field('source', d.fieldSource)}
-        {field('author', d.fieldAuthor)}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {field('text', d.fieldText, true, d.fieldTextHelp)}
+        {field('source', d.fieldSource, false)}
+        {field('author', d.fieldAuthor, false)}
       </div>
-      {field('link', d.fieldLink, `${d.fieldLinkHelp} ${d.fieldLinkNoHeaders}`)}
+      {field('link', d.fieldLink, false, `${d.fieldLinkHelp} ${d.fieldLinkNoHeaders}`)}
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div className="grid gap-1.5">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid min-w-0 gap-1.5">
           <Label htmlFor="api-refresh">{d.fieldRefresh}</Label>
           <NativeSelect id="api-refresh" value={f.refresh} onChange={(e) => set({ refresh: e.target.value as Form['refresh'] })}>
             <option value="daily">{d.refreshDaily}</option>
@@ -462,14 +475,14 @@ function ApiEditor({ initial, existing, languages, hosts, onClose }: { initial: 
         <div className="grid gap-1.5">
           <Label htmlFor="api-rps">{d.fieldRps}</Label>
           <Input id="api-rps" type="number" min={0.01} max={100} step="any" value={f.rps} onChange={(e) => set({ rps: Number(e.target.value) })} />
-          <p className="text-xs text-muted-foreground">{d.fieldRpsHelp}</p>
+          <p className="text-xs break-words text-muted-foreground">{d.fieldRpsHelp}</p>
         </div>
       </div>
       <label className="flex items-center gap-2 text-sm">
         <Switch checked={f.skipNew} onCheckedChange={(on) => set({ skipNew: on })} aria-label={d.fieldSkipNew} />
         <span>
           {d.fieldSkipNew}
-          <span className="block text-xs text-muted-foreground">{d.fieldSkipNewHelp}</span>
+          <span className="block text-xs break-words text-muted-foreground">{d.fieldSkipNewHelp}</span>
         </span>
       </label>
       <label className="flex items-center gap-2 text-sm">
@@ -477,7 +490,7 @@ function ApiEditor({ initial, existing, languages, hosts, onClose }: { initial: 
         {d.fieldEnabled}
       </label>
 
-      <div className="grid gap-2 rounded-lg border bg-muted/30 p-3" data-slot="api-try">
+      <div className="grid min-w-0 grid-cols-1 gap-2 rounded-lg border bg-muted/30 p-3" data-slot="api-try">
         <div className="flex flex-wrap items-center gap-2">
           <NativeSelect aria-label={d.tryLang} value={tryLang} onChange={(e) => setTryLang(e.target.value)} className="w-32">
             {langs.filter((l) => l !== '').map((l) => (
@@ -504,7 +517,7 @@ function ApiEditor({ initial, existing, languages, hosts, onClose }: { initial: 
         </div>
         {hostMissing && (
           <div className="flex flex-wrap items-center gap-2 text-sm" data-slot="try-host">
-            <span>{d.tryHostHint(tryHost)}</span>
+            <span className="min-w-0 break-words">{d.tryHostHint(tryHost)}</span>
             <Button type="button" size="xs" variant="outline" disabled={addHost.isPending} onClick={() => addHost.mutate({ hosts: [...hosts, tryHost] }, { onError: (e) => setError(message(e)) })}>
               {d.tryAddHost}
             </Button>
@@ -538,8 +551,12 @@ function ApiEditor({ initial, existing, languages, hosts, onClose }: { initial: 
   )
 }
 
-// What the interface answered, as it came and as the paths read it; a path that found nothing says so.
-function TryResult({ result }: { result: DailyTryResult }) {
+// A source, an author and a link are optional: a path that finds nothing there is no value, not a problem. Only the
+// text is required, and a path that would show a secret is always one.
+const optionalGap = (e: { field: string; code: string }) => e.field !== 'text' && e.code === 'path_error'
+
+// What the interface answered, as it came and as the paths read it; a path that found nothing in the text says so.
+export function TryResult({ result }: { result: DailyTryResult }) {
   const q = result.quote
   const rows: [string, string | undefined, string][] = [
     [d.fieldText, q?.text, 'text'],
@@ -547,26 +564,30 @@ function TryResult({ result }: { result: DailyTryResult }) {
     [d.fieldAuthor, q?.author, 'author'],
     [d.fieldLink, q?.link, 'link'],
   ]
+  const errors = (result.pathErrors ?? []).filter((e) => !optionalGap(e))
+  // The refusal of a trial with only such gaps (an older server) is no refusal.
+  const gapOnly = !result.ok && result.error === 'path_error' && result.field !== 'text' && errors.length === 0 && !!q?.text
+  const ok = result.ok || gapOnly
   return (
-    <div className="grid gap-2 text-sm" data-slot="try-result" role="status">
-      <p className={result.ok ? 'text-green-700 dark:text-green-400' : 'text-destructive'}>{result.ok ? d.tryOk(result.status ?? 200) : (localised(result.error ? { ...result, code: result.error } : undefined) ?? result.message ?? d.tryFailed)}</p>
-      {result.url && <p className="truncate font-mono text-xs text-muted-foreground">{result.url}</p>}
+    <div className="grid min-w-0 grid-cols-1 gap-2 text-sm" data-slot="try-result" role="status">
+      <p className={`break-words ${ok ? 'text-green-700 dark:text-green-400' : 'text-destructive'}`}>{ok ? d.tryOk(result.status ?? 200) : (localised(result.error ? { ...result, code: result.error } : undefined) ?? result.message ?? d.tryFailed)}</p>
+      {result.url && <p className="font-mono text-xs break-all text-muted-foreground">{result.url}</p>}
       {result.raw !== undefined && (
-        <div>
+        <div className="min-w-0">
           <p className="text-xs font-medium">{d.tryRaw}</p>
-          <pre className="max-h-48 overflow-auto rounded-md border bg-background p-2 text-xs whitespace-pre-wrap">{result.raw}{result.rawTruncated ? ' …' : ''}</pre>
+          <pre className="max-h-48 max-w-full overflow-auto rounded-md border bg-background p-2 text-xs whitespace-pre">{result.raw}{result.rawTruncated ? ' …' : ''}</pre>
         </div>
       )}
-      {(q || result.pathErrors) && (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+      {(q || errors.length > 0) && (
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
           {rows.map(([label, value, key]) => {
-            const pe = result.pathErrors?.find((x) => x.field === key)
+            const pe = errors.find((x) => x.field === key)
             const err = pe ? (localised(pe) ?? pe.message) : undefined
             if (value === undefined && !err) return null
             return (
               <div key={key} className="contents">
                 <dt className="text-muted-foreground">{label}</dt>
-                <dd className={err ? 'text-destructive' : ''}>{err ?? value}</dd>
+                <dd className={`break-words ${err ? 'text-destructive' : ''}`}>{err ?? value}</dd>
               </div>
             )
           })}
