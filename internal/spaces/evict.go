@@ -190,15 +190,38 @@ func (m *Manager) recoverEvictions(ctx context.Context) error {
 	for id := range evicted {
 		root, _ := m.paths(id)
 		if fi, err := os.Stat(root); err == nil && fi.IsDir() {
-			state := store.CachePartial
-			if st, err := store.GetSpaceStorage(ctx, m.opt.Store.Q(), id); err == nil && st.Cache == store.CacheEvicted {
-				state = ""
+			state := store.CacheFull
+			if gitstore.New(gitstore.Options{Dir: root}).IsPartial(ctx) {
+				state = store.CachePartial
 			}
 			if err := store.SetSpaceCache(ctx, m.opt.Store.Q(), id, state); err != nil {
 				return err
 			}
-			m.log.Warn("a space was marked evicted but its clone is in place; it is whole again", "space", id)
+			m.log.Warn("a space was marked evicted but its clone is in place; it is whole again", "space", id, "cache", state)
 		}
+	}
+	// A space that follows a remote and has no clone, whatever its record says
+	// (the record overwritten, the directory removed by hand): it is evicted,
+	// and is restored when it is needed, rather than refused.
+	remotes, err := store.RemoteStates(ctx, m.opt.Store.Q())
+	if err != nil {
+		return err
+	}
+	for id := range remotes {
+		if evicted[id] != "" || !page.ValidID(id) {
+			continue
+		}
+		root, _ := m.paths(id)
+		if _, err := os.Lstat(root); !errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err := store.SetSpaceCache(ctx, m.opt.Store.Q(), id, store.CacheEvicted); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				continue // a remote's row without its space
+			}
+			return err
+		}
+		m.log.Warn("a space that follows a remote has no clone; it is restored when it is needed", "space", id)
 	}
 	// What was set aside is removed; a half restored clone is removed.
 	for _, dir := range []string{m.evictDir(), m.restoringDir()} {

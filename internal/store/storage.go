@@ -64,6 +64,19 @@ func SetSpaceCache(ctx context.Context, q Q, id, state string) error {
 	return oneRow(res, err)
 }
 
+// SetSpaceCacheKept records the state of the space's copy unless the space is
+// evicted or being evicted: the record that a clone is partial or full, which
+// is written after the space opens, never undoes an eviction marked
+// meanwhile. It reports whether it wrote.
+func SetSpaceCacheKept(ctx context.Context, q Q, id, state string) (bool, error) {
+	res, err := q.Exec(ctx, `UPDATE spaces SET cache_state = ? WHERE id = ? AND cache_state NOT IN (?, ?)`, state, id, CacheEvicted, CacheEvicting)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 // SetSpacePinned sets the pin of a space.
 func SetSpacePinned(ctx context.Context, q Q, id string, v bool) error {
 	res, err := q.Exec(ctx, `UPDATE spaces SET pinned = ? WHERE id = ?`, b2i(v), id)

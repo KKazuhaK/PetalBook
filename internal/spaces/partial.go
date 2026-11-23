@@ -17,26 +17,30 @@ func (m *Manager) markCache(id string, sp *space.Space) {
 	if sp.Partial() {
 		want = store.CachePartial
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		st, err := store.GetSpaceStorage(ctx, m.opt.Store.Q(), id)
-		if err != nil {
+	go m.recordCache(id, want)
+}
+
+// recordCache is the write of markCache.
+func (m *Manager) recordCache(id, want string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	st, err := store.GetSpaceStorage(ctx, m.opt.Store.Q(), id)
+	if err != nil {
+		return
+	}
+	if st.Pinned && want == store.CachePartial {
+		m.makeFullSoon(id)
+		if st.Cache == store.CacheFull {
 			return
 		}
-		if st.Pinned && want == store.CachePartial {
-			m.makeFullSoon(id)
-			if st.Cache == store.CacheFull {
-				return
-			}
-		}
-		if st.Cache == want || st.Cache == store.CacheEvicted || st.Cache == store.CacheEvicting {
-			return
-		}
-		if err := m.setCacheState(ctx, id, want); err != nil {
-			m.log.Warn("could not record what a space's clone is", "space", id, "error", err)
-		}
-	}()
+	}
+	if st.Cache == want || st.Cache == store.CacheEvicted || st.Cache == store.CacheEvicting {
+		return
+	}
+	m.evictHook("cache:read")
+	if err := m.keepCacheState(ctx, id, want); err != nil {
+		m.log.Warn("could not record what a space's clone is", "space", id, "error", err)
+	}
 }
 
 // makeFullSoon fetches the old versions of a pinned partial space in the
@@ -71,7 +75,7 @@ func (m *Manager) makeFullSoon(id string) {
 			m.log.Warn("could not fetch every version of a pinned space", "space", id, "error", err)
 			return
 		}
-		if err := m.setCacheState(ctx, id, store.CacheFull); err != nil {
+		if err := m.keepCacheState(ctx, id, store.CacheFull); err != nil {
 			m.log.Warn("could not record that a pinned space is full", "space", id, "error", err)
 		}
 	}()
@@ -111,6 +115,24 @@ func (m *Manager) cacheOf(id string, hasRemote bool) string {
 	stored := m.cs.m[id]
 	m.cs.mu.Unlock()
 	return m.CacheState(stored, true, id)
+}
+
+// keepCacheState is setCacheState for the record of what an open space's clone
+// is (partial or full): it is written only if the space is not evicted or being
+// evicted, decided by the database in the same statement, so an eviction marked
+// after the space was looked at is never undone.
+func (m *Manager) keepCacheState(ctx context.Context, id, state string) error {
+	wrote, err := store.SetSpaceCacheKept(ctx, m.opt.Store.Q(), id, state)
+	if err != nil || !wrote {
+		return err
+	}
+	m.loadCacheStates()
+	m.cs.mu.Lock()
+	if cur := m.cs.m[id]; cur != store.CacheEvicted && cur != store.CacheEvicting {
+		m.cs.m[id] = state
+	}
+	m.cs.mu.Unlock()
+	return nil
 }
 
 // setCacheState records what a space's copy is, in the database and in memory.

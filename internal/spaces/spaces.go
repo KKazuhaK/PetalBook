@@ -546,6 +546,7 @@ func (m *Manager) Acquire(ctx context.Context, id string) (*space.Space, func(),
 
 // acquire is Acquire; admin lets the administration reach a disabled space.
 func (m *Manager) acquire(ctx context.Context, id string, admin bool) (*space.Space, func(), error) {
+	noClone := false // the space was found without its clone once: restored, and tried once more
 	for {
 		// An evicted space has no files: they are restored first, outside the
 		// lock (it waits for the network), and the request goes on as for any
@@ -554,7 +555,10 @@ func (m *Manager) acquire(ctx context.Context, id string, admin bool) (*space.Sp
 			if err := m.loadEvicted(ctx); err != nil {
 				return nil, nil, err
 			}
-			if m.isEvicted(id) && !(admin && m.disabled[id]) {
+			m.mu.Lock()
+			disabled := m.disabled[id]
+			m.mu.Unlock()
+			if m.isEvicted(id) && !(admin && disabled) {
 				if err := m.ensureRestored(ctx, id); err != nil {
 					return nil, nil, err
 				}
@@ -622,6 +626,17 @@ func (m *Manager) acquire(ctx context.Context, id string, admin bool) (*space.Sp
 			return nil, nil, ctx.Err()
 		}
 		if e.err != nil {
+			if errors.Is(e.err, errNoClone) && !noClone {
+				// It follows a remote and its clone is gone without being
+				// recorded as evicted: it is evicted, and restored as such.
+				noClone = true
+				m.ev.mu.Lock()
+				if m.ev.evicted != nil {
+					m.ev.evicted[id] = true
+				}
+				m.ev.mu.Unlock()
+				continue
+			}
 			return nil, nil, e.err
 		}
 		var once sync.Once
@@ -640,13 +655,21 @@ func (m *Manager) paths(id string) (root, state string) {
 	return filepath.Join(m.opt.DataDir, "spaces", id), filepath.Join(m.opt.DataDir, "cache", id)
 }
 
+// errNoClone: a space that follows a remote has no clone on disk, and is not
+// recorded as evicted. acquire restores it.
+var errNoClone = errors.New("the clone of a space that follows a remote is missing")
+
 func (m *Manager) openSpace(ctx context.Context, id string) (*space.Space, error) {
 	if m.opt.OpenHook != nil {
 		m.opt.OpenHook(id)
 	}
 	root, state := m.paths(id)
 	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
-		// space.Open would quietly make an empty repository here.
+		// space.Open would quietly make an empty repository here. A space that
+		// follows a remote is restored from it instead (see acquire).
+		if r, rerr := store.GetRemote(ctx, m.opt.Store.Q(), id); rerr == nil && r.Connected() && errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("%w: space %s", errNoClone, id)
+		}
 		return nil, fmt.Errorf("the directory of space %s is missing", id)
 	}
 	owner, name, err := store.SpaceOwner(ctx, m.opt.Store.Q(), id)

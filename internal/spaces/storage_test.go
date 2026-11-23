@@ -699,8 +699,11 @@ func TestAtMostTwoRestoresRunAtOnce(t *testing.T) {
 				time.Sleep(20 * time.Millisecond)
 			}
 		}
-		if f.r.max > 2 {
-			t.Fatalf("%d fetches at once", f.r.max)
+		f.r.mu.Lock()
+		most := f.r.max
+		f.r.mu.Unlock()
+		if most > 2 {
+			t.Fatalf("%d fetches at once", most)
 		}
 	})
 }
@@ -1133,3 +1136,157 @@ func TestPinningFetchesEveryVersionAndKeepsTheSpace(t *testing.T) {
 }
 
 var _ = context.Background
+
+// --- the record of what a space's copy is ----------------------------------------------
+
+// The record that a clone is partial or full is written after the space opens,
+// in the background; an eviction that marks the space in between wins.
+func TestRecordingTheCloneNeverUndoesAnEviction(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		var f *rm
+		var id string
+		f = remoteManager(t, st, func(o *Options) {
+			o.EvictHook = func(step string) error {
+				if step == "cache:read" && id != "" {
+					// An eviction marks the space between the read and the write.
+					if err := store.SetSpaceCache(ctx, st.Q(), id, store.CacheEvicting); err != nil {
+						t.Error(err)
+					}
+				}
+				return nil
+			}
+		})
+		remote := filterBare(t)
+		seedRemote(t, remote, 2)
+		in, _ := f.evictable(remote)
+		time.Sleep(100 * time.Millisecond) // the record of the open is written
+		if err := store.SetSpaceCache(ctx, st.Q(), in.ID, ""); err != nil {
+			t.Fatal(err)
+		}
+		id = in.ID
+		f.m.recordCache(in.ID, store.CachePartial)
+		if c := cacheOf(t, st, in.ID); c != store.CacheEvicting {
+			t.Fatalf("the record of the clone overwrote an eviction: %q", c)
+		}
+	})
+}
+
+// A space that follows a remote and has no clone on disk is an evicted one,
+// whatever its record says (a record overwritten, a directory removed by
+// hand): it is restored, not refused.
+func TestASpaceWithARemoteAndNoCloneIsRestored(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := remoteManager(t, st)
+		remote := filterBare(t)
+		seedRemote(t, remote, 2)
+		in, root := f.evictable(remote)
+		f.m.Close()
+		if err := os.RemoveAll(root); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetSpaceCache(ctx, st.Q(), in.ID, store.CachePartial); err != nil {
+			t.Fatal(err)
+		}
+		m2 := f.open(serving)
+		if c := cacheOf(t, st, in.ID); c != store.CacheEvicted {
+			t.Fatalf("a space with a remote and no clone is recorded %q at the start", c)
+		}
+		h, err := m2.Open(ctx, f.user, in.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer h.Release()
+		if p, err := h.Space.Get("SNAP000001"); err != nil || p.Body != "version 2\n" {
+			t.Fatalf("%v %v", p, err)
+		}
+	})
+}
+
+// A space recorded as evicted whose clone is in place (the record of a restore
+// was not written) is recorded as what its clone is: a partial clone is partial.
+func TestARestoredCloneRecordedAsEvictedIsRecordedAsWhatItIs(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := remoteManager(t, st)
+		remote := filterBare(t)
+		seedRemote(t, remote, 2)
+		in, root := f.evictable(remote)
+		if err := f.m.Evict(ctx, in.ID, EvictOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		h, err := f.m.Open(ctx, f.user, in.ID) // restored, as a partial clone
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.Release()
+		f.m.Close()
+		if !exists(root) {
+			t.Fatal("not restored")
+		}
+		if err := store.SetSpaceCache(ctx, st.Q(), in.ID, store.CacheEvicted); err != nil {
+			t.Fatal(err)
+		}
+		f.open(serving)
+		if c := cacheOf(t, st, in.ID); c != store.CachePartial {
+			t.Fatalf("a partial clone in place is recorded %q", c)
+		}
+	})
+}
+
+// The same while the server runs: a space that follows a remote, whose clone
+// is not on disk and is not recorded as evicted, is restored when it is opened.
+func TestOpeningASpaceWithARemoteAndNoCloneRestoresIt(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := remoteManager(t, st)
+		remote := filterBare(t)
+		seedRemote(t, remote, 2)
+		in, root := f.evictable(remote)
+		f.m.Close()
+		if err := os.RemoveAll(root); err != nil {
+			t.Fatal(err)
+		}
+		m2 := f.open() // no clean-up at the start: the space is found missing when opened
+		h, err := m2.Open(ctx, f.user, in.ID)
+		if err != nil {
+			t.Fatalf("a space with a remote and no clone is refused: %v", err)
+		}
+		defer h.Release()
+		if p, err := h.Space.Get("SNAP000001"); err != nil || p.Body != "version 2\n" {
+			t.Fatalf("%v %v", p, err)
+		}
+	})
+}
+
+// The administration reaches a disabled space without restoring it; whether
+// the space is disabled is read under the lock that guards it (run with -race).
+func TestAnAdministratorOpeningAnEvictedSpaceReadsDisabledUnderTheLock(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := remoteManager(t, st)
+		remote := filterBare(t)
+		seedRemote(t, remote, 1)
+		in, _ := f.evictable(remote)
+		if err := f.m.Evict(ctx, in.ID, EvictOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.m.loadDisabled(ctx); err != nil {
+			t.Fatal(err)
+		}
+		f.r.setDown(true) // every restore fails at once
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				f.m.markDisabled(in.ID, i%2 == 0)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				if _, release, err := f.m.acquire(ctx, in.ID, true); err == nil {
+					release()
+				}
+			}
+		}()
+		wg.Wait()
+	})
+}
