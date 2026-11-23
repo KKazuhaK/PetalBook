@@ -1702,9 +1702,69 @@ GitHub App 和用户授权，自动建仓库；passkey；SAML。
 - 60 秒宽限期内重发拿到同一个答复，这份答复只在内存里。PostgreSQL 上跑多个进程
   时，重试落到另一个进程就拿不到，答 `invalid_grant`（客户端要重新授权）。
 
-第三部分（MCP）要注意的，先记下，这次不做：只读的 token 在 `handle` 的路由上
-拒绝一切非 GET 请求（`internal/api/routes.go:281`）。`/mcp` 每次都是 POST，所以
-不能挂在 `handle` 下，要单独挂一个路径，按每个工具自己判断要读还是要写。
+**2.6 的现状（2026-11-23）**：上面的方案都做了，接口见 `docs/api.md` 的
+「API tokens」「OAuth for MCP clients」「MCP」和「Administration」里的「Machine
+access」。分三部分各审了一次（token、授权服务、MCP）。第三部分（MCP）实现时定下
+来的：
+
+- **位置和 SDK**：工具在 `internal/api/mcp*.go`，和 REST 共用同一套查询解析
+  （`parseListQuery`）、错误映射和摘要，所以同一个失败在两边是同一个码和同一句
+  话（工具的错误就是 `fail` 写出的那个）。MCP SDK 用 v1.8.0（和 Rackbook 同一个
+  版本，写本文时的最新正式版），无状态、只回 JSON，GET／DELETE 等一律 405。
+- **挂载**：`/mcp` 单独挂在 mux 上，不走 `handle`。`handle` 对只读 token 拒绝
+  一切非 GET（`routes.go` 里），而 `/mcp` 每次都是 POST。认证（API token、OAuth
+  访问令牌）在 `serveMCP` 里做一次，之后每个工具自己判断读还是写
+  （`mcpCall.open`）。空间权限和网页是同一条路：`OpenMember` 取主人现在的成员权限，
+  与凭据的 `access` 取交集，永远没有 `members`／`manage`。
+- **错误**：工具失败返回 `isError` 加结构化内容。SDK 自己的参数校验失败也是
+  `isError` 结果，但没有结构化内容；中间件把这种结果改成 JSON-RPC 的 `-32602`，
+  合同要的就是这样。参数类型对、取值不行的（`limit` 越界、游标坏了）是 `invalid`。
+- **`tools/list`**：凭据在自己的所有空间里都不能写时（`read` 的 token，或主人在
+  这些空间都只是查看者），不列写工具；这一步查一次成员缓存，不查库。
+- **上限**：结果在序列化后量一次，超过 1 MiB 就改答 `too_large`，列表类的附上
+  `suggestedLimit`（按比例再打九折，且一定小于这次返回的条数，照着做一定有进展）。
+  正文按字节偏移分块（128 KiB，在字符边界上截）。写入的 `body` 最多 1 MiB；
+  `edits` 只限制 `old` 和 `new` 加起来的大小，所以几十万字的长文也能改。
+- **改正文**：新增 `space.Update`，在持有空间锁的那一次里读文件、交给调用方改、
+  再写，所以 `edits` 总是对当前的文件做，没有「先读后写」之间的空档；`baseRev`
+  冲突检查和 `Save` 一样（只有服务自己改写链接造成的差别不算冲突）。
+  `page_move` 的 `baseRev` 用新增的 `space.MoveIf`，`page_create`／`page_update`
+  的其他字段用 `space.PatchMeta`（`PATCH …/props` 的规则，只是写整个头）。
+  `drafts.Service.Write` 让这类写入和 `PUT` 一样排在同一页的草稿锁里，主人的草稿
+  不动，网页里显示为落后；草稿写出来的内容正好和文件一样时才顺手删掉。
+- **提交和来源**：作者是主人，`Changed-via: MCP` 在最后一行；MCP 的改动不和
+  别的来源合在一起，但连着的几次 MCP 改动（同一个人）仍是一次提交，和同一个人
+  连着打字一样。
+- **`requestId`**：一小时、最多 1 万条、只在内存里；同一个键同时来两次，第二次
+  等第一次做完再拿同一个答复；失败的不记。键里有凭据的 id，所以换一个 token
+  不会拿到别人的答复。
+- **单用户**：`serve --mcp=false` 关掉 `/mcp`（答 404）；账号模式下给了这个选项
+  会报错，因为开关是管理员在界面里的。
+- **测试**：第二部分的 `NewWithMCPStandIn`（让 `/api` 收 OAuth 访问令牌）去掉了，
+  它的权限测试改成走 `/mcp`；`/api` 收到访问令牌仍然答 `403 token_scope`。
+
+偏离或补充合同的地方：`types_list` 的结果是 `{"types": [...]}`（合同没写键名，
+已补进 `docs/api.md`）；所有非 `POST` 的方法在看凭据之前就答 405；`folders_list`
+的 `parent` 像网页一样不分大小写找文件夹；`page_update` 的 `edits` 的大小限制
+改成只算 `old`＋`new`（合同只说了 `body`）。SDK 会把响应头 `Cache-Control` 写成
+`no-cache, no-transform`，没有 `no-store`；结果里没有密钥，所以没有改它。
+
+2.6 第三部分（MCP）的已知问题，暂不处理：
+
+- `tags_list`、`folders_list` 每一页都重读整张表再切（和 `GET …/tags`、`…/tree`
+  同样的一次查询，按标签数、文件夹数算，不按页数算）。标签或文件夹有几万个时
+  翻页会重复这个开销；没有实测过。
+- 结果的结构化内容和文本各带一份 JSON，传输上是 1 MiB 上限的两倍。
+- 中间件把「`isError` 而没有结构化内容」都当成参数错误。现在只有 SDK 的校验会
+  这样；将来 SDK 在别处返回这种结果会被误报成 `-32602`。
+- `page_tag` 遇到 `tags` 里有非文字项（手改过的文件）时，写回会丢掉这些项；
+  `tags: x`（单个文字）写回成列表。
+- `requestId` 只在本进程内存里：PostgreSQL 上跑多个进程时，重试落到另一个进程
+  就不认得，会建第二篇。
+- `page_get` 按 `path` 找页面靠索引：在服务之外改过文件的，要重建索引后才找得到
+  （按 `id` 取时会像 REST 一样先修索引）。
+- 远端空间里一次写入可能重试几次，`page_update` 的改动函数因此会被调用多次
+  （结果相同，只是重复算一遍）。
 
 **2.7 GitHub App、用户授权、自动建仓库**
 

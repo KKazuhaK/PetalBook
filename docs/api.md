@@ -2775,7 +2775,8 @@ deferred to after 2.6, until MCPHub's token format is confirmed.
 `/mcp` serves the Model Context Protocol over the Streamable HTTP transport,
 stateless: every `POST /mcp` carries one JSON-RPC message and is answered with
 one JSON response (`Content-Type: application/json`), with no MCP session and
-no event stream (`GET /mcp` and `DELETE /mcp` answer `405`). Nothing is kept
+no event stream (every method but `POST` answers `405` with `Allow: POST`,
+before any credential is looked at). Nothing is kept
 per client between calls, so any number of clients cost nothing while idle.
 It is on in both modes unless switched off (`404` then): `serve --mcp=false` in
 single-user mode, the administrators' setting in accounts mode (see
@@ -2802,7 +2803,9 @@ with the codes of this API: `not_found`, `invalid`, `conflict`,
 `rate_limited`, `internal`, and three of its own, `too_large`,
 `edit_no_match` and `edit_ambiguous` (below). A space the credential does not
 name is `token_scope`; one whose member the owner no longer is, `not_found`.
-Malformed arguments are JSON-RPC errors (`-32602`).
+Malformed arguments (a missing or unknown argument, one of the wrong type)
+are JSON-RPC errors (`-32602`); an argument of the right type that is refused
+(a `limit` out of range, a bad `cursor`, an unknown `sort`) is `invalid`.
 
 **Limits.** No tool returns everything: lists are paged with a `cursor` (the
 `next` of the previous result, `""` after the last), and each list has its own
@@ -2865,9 +2868,10 @@ never paged.
 ### `folders_list`
 
 `{"space", "parent": "", "recursive": false, "cursor", "limit"}`: the folders
-directly in `parent` (or, with `recursive`, all below it, in path order), each
-`{"path", "pages"}` with the number of pages directly in it. `limit` 1–1000,
-default 200. `not_found` for a `parent` that is no folder.
+directly in `parent` (or, with `recursive`, all below it, in path order), as
+`{"items": [{"path", "pages"}], "next"}` with the number of pages directly in
+each. `limit` 1–1000, default 200. `not_found` for a `parent` that is no
+folder (found as the app finds a folder, whatever its case).
 
 ### `tags_list`
 
@@ -2876,9 +2880,9 @@ used first. `limit` 1–500, default 100.
 
 ### `types_list`
 
-`{"space"}`: the page types of the space (at most 100), each
-`{"name", "title", "fields": [{"key", "title", "kind", "options"?}]}`, and the
-folders bound to each (`"folders": ["…"]`), so a client knows which fields
+`{"space"}`: `{"types": [...]}`, the page types of the space (at most 100), each
+`{"name", "title", "fields": [{"key", "title", "kind", "options"?}], "folders": ["…"]}`
+with the folders bound to the type, so a client knows which fields
 `pages_query` can filter on. `options` at most 500 per field.
 
 ### `pages_search`
@@ -2959,7 +2963,8 @@ says what changes, and what is not given stays as the file has it, byte for
 byte. Built-in fields are replaced when given (`""` or `[]` removes them);
 `set`/`unset` change other header fields as `PATCH …/props` does; the body is
 either replaced whole (`body`, at most 1 MiB) or changed by `edits` (not both):
-at most 50, applied in order, each `old` (not empty) replaced by `new`, and each
+at most 50, the `old` and `new` texts together at most 1 MiB (the page itself
+may be larger), applied in order, each `old` (not empty) replaced by `new`, and each
 `old` must occur exactly once in the body as it is by then (`edit_no_match`,
 `edit_ambiguous`, with `details.index`; nothing is written). Changing the title
 renames the file and the links to it follow (see "Links between pages"). A
