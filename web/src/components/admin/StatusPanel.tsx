@@ -30,6 +30,7 @@ export function StatusPanel() {
     [ts.status.spaces, ts.status.spacesValue(s.storage.spaces.local, s.storage.spaces.full, s.storage.spaces.partial, s.storage.spaces.evicted, s.storage.spaces.restoring)],
     [ts.status.clones, formatBytes(s.storage.cloneBytes)],
     [ts.status.indexes, formatBytes(s.storage.indexBytes)],
+    [ts.status.assetCache, ts.status.assetCacheValue(formatBytes(s.storage.assetCacheBytes), s.storage.assetsBudget === null ? ts.status.noBudget : formatBytes(s.storage.assetsBudget))],
     [ts.status.budget, s.storage.clonesBudget === null ? ts.status.noBudget : formatBytes(s.storage.clonesBudget)],
     [ts.status.restoresWaiting, String(s.storage.restoresWaiting)],
     [ts.status.remotes, ts.status.remotesValue(s.storage.remotes.inGrace, s.storage.remotes.overdue)],

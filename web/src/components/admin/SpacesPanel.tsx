@@ -231,6 +231,7 @@ function CacheCell({ space: s }: { space: AdminSpace }) {
       </div>
       <span className="text-xs text-muted-foreground">{st.lastUsed ? c.lastUsed(absoluteTime(st.lastUsed)) : c.neverUsed}</span>
       {st.cache !== 'local' && <span className="text-xs text-muted-foreground">{c.sizes(formatBytes(st.cloneBytes), formatBytes(st.indexBytes))}</span>}
+      {st.assets === 'repository' && <span className="text-xs text-muted-foreground">{c.assetsIn(formatBytes(st.assetCacheBytes))}</span>}
       {st.remote && <span className={`text-xs ${st.remote.overdue ? 'text-destructive' : 'text-warning'}`}>{c.deadline(absoluteTime(st.remote.deadline), st.remote.overdue)}</span>}
     </div>
   )

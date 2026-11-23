@@ -14,6 +14,7 @@ import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { can } from '@/lib/permissions'
 import { SettingsNote, SettingsSection } from './SettingsParts'
+import { AssetsSection } from './AssetsSection'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -38,6 +39,7 @@ export function SyncPanel({ space }: { space: string }) {
   return (
     <div className="space-y-8">
       <RemoteSection space={space} />
+      <AssetsSection space={space} />
     </div>
   )
 }

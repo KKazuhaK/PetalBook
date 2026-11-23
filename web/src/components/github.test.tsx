@@ -7,6 +7,7 @@ import { adminRequests, byLabel, click, installDomShims, locationText, makePerso
 import { MOCK_ADMIN } from '@/api/mock/server'
 import { t } from '@/i18n'
 import { tg } from '@/i18n/github'
+import { ts } from '@/i18n/storage'
 import { ta } from '@/i18n/admin'
 import SettingsRoute from '@/components/settings/SettingsRoute'
 import { AdminGate } from '@/components/admin/AdminGate'
@@ -91,6 +92,19 @@ describe('the new-space dialog', () => {
     expect(JSON.parse(posts()[0].body!)).toEqual({ name: 'Tang Notes', inbox: t.inbox.folderName, github: { owner: 'kazuhahub', name: 'tang-notes', private: true, description: 'Notes on Tang poetry', create: true } })
     expect(created[0].sync).toBe('ok')
     await settle(() => dialog() === null, 'the dialog closing')
+  })
+
+  it('can also ask for an attachment repository next to the space\'s', async () => {
+    const created = await openNewSpace('connected')
+    await settle(() => text().includes(tg.newSpace.option), 'the option')
+    await type(nameField(), 'Tang Notes')
+    await click(checkbox(tg.newSpace.option))
+    await settle(() => dialog()!.querySelector('select') !== null, 'the owners')
+    expect(checkbox(ts.assets.newSpace).checked).toBe(false)
+    await click(checkbox(ts.assets.newSpace))
+    await click(button(t.spaces.create))
+    await settle(() => created.length === 1, 'the space')
+    expect(JSON.parse(posts()[0].body!).github).toMatchObject({ create: true, assets: true })
   })
 
   it('checks the repository name before asking', async () => {

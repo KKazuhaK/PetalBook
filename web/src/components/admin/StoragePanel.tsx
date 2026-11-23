@@ -57,6 +57,8 @@ function StorageForm({ data }: { data: AdminStorage }) {
   const [idle, setIdle] = useState(String(data.cache.minIdleHours))
   const [clones, setClones] = useState(text(data.cache.clonesBytes, GIB))
   const [free, setFree] = useState(text(data.cache.minFreeBytes, GIB))
+  const [assetCache, setAssetCache] = useState(text(data.cache.assetsBytes, MIB))
+  const [newAssets, setNewAssets] = useState(data.assets.newSpaces)
   const [error, setError] = useState('')
 
   const submit = async (e: FormEvent) => {
@@ -70,7 +72,8 @@ function StorageForm({ data }: { data: AdminStorage }) {
     const max = parse(maxMiB, MIB, MIB, true)
     const budget = parse(clones, GIB, GIB, true)
     const floor = parse(free, GIB, 0, true)
-    if (g === undefined || g === null || g > 365 || idleH === undefined || idleH === null || idleH > 720 || days === undefined || (days !== null && days > 365) || max === undefined || budget === undefined || floor === undefined) {
+    const assetsBudget = parse(assetCache, MIB, 64 * MIB, false)
+    if (g === undefined || g === null || g > 365 || idleH === undefined || idleH === null || idleH > 720 || days === undefined || (days !== null && days > 365) || max === undefined || budget === undefined || floor === undefined || assetsBudget === undefined || assetsBudget === null) {
       return setError(a.cache.invalid)
     }
     const list = hosts.split('\n').map((h) => h.trim()).filter(Boolean)
@@ -89,7 +92,9 @@ function StorageForm({ data }: { data: AdminStorage }) {
     if (data.cache.minIdleHours !== idleH) cache.minIdleHours = idleH
     if (data.cache.clonesBytes !== budget) cache.clonesBytes = budget
     if (data.cache.minFreeBytes !== floor) cache.minFreeBytes = floor
+    if (data.cache.assetsBytes !== assetsBudget) cache.assetsBytes = assetsBudget
     if (Object.keys(cache).length > 0) body.cache = cache
+    if (data.assets.newSpaces !== newAssets) body.assets = { newSpaces: newAssets }
     if (Object.keys(body).length === 0) return toast(a.unchanged)
     try {
       await save.mutateAsync(body)
@@ -162,6 +167,17 @@ function StorageForm({ data }: { data: AdminStorage }) {
           </SettingsRow>
           <SettingsRow title={a.cache.minFree} help={a.cache.minFreeHelp}>
             <Input aria-label={a.cache.minFree} inputMode="numeric" value={free} onChange={(e) => setFree(e.target.value)} className="w-28" />
+          </SettingsRow>
+        </SettingsRows>
+      </SettingsSection>
+
+      <SettingsSection title={a.assets.title} description={a.assets.help}>
+        <SettingsRows>
+          <SettingsRow title={a.cache.assetsBytes} help={a.cache.assetsBytesHelp}>
+            <Input aria-label={a.cache.assetsBytes} inputMode="numeric" value={assetCache} onChange={(e) => setAssetCache(e.target.value)} className="w-28" />
+          </SettingsRow>
+          <SettingsRow title={a.assets.newSpaces} help={a.assets.newSpacesHelp}>
+            <Switch aria-label={a.assets.newSpaces} checked={newAssets} onCheckedChange={setNewAssets} />
           </SettingsRow>
         </SettingsRows>
       </SettingsSection>

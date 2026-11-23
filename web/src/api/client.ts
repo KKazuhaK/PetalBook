@@ -21,6 +21,8 @@ import type {
   DraftInput,
   DraftReceipt,
   BatchPagesInput,
+  AssetsRemote,
+  ConnectAssetsInput,
   ConnectRemoteInput,
   GitHubCursorPage,
   GitHubInfo,
@@ -431,6 +433,11 @@ export function spaceApi(space: string) {
     connectRemote: (input: ConnectRemoteInput) => request<Remote>(base('/remote'), { method: 'PUT', body: input }),
     disconnectRemote: () => request<void>(base('/remote'), { method: 'DELETE' }),
     syncRemote: () => request<Remote>(base('/remote/sync'), { method: 'POST' }),
+    // The attachment repository (docs/api.md, "Server storage"); 404 when the space has none.
+    getAssetsRemote: (signal?: AbortSignal) => request<AssetsRemote>(base('/remote/assets'), { signal }),
+    connectAssets: (input: ConnectAssetsInput) => request<AssetsRemote>(base('/remote/assets'), { method: 'PUT', body: input }),
+    disconnectAssets: () => request<void>(base('/remote/assets'), { method: 'DELETE' }),
+    moveAssets: () => request<AssetsRemote>(base('/remote/assets/move'), { method: 'POST' }),
     acceptRemote: (commit: string) => request<Remote>(base('/remote/accept'), { method: 'POST', body: { commit } }),
 
     // The day's text. `date` is the day where the browser is and `tz` its offset in minutes east of UTC; `skip` asks for another.

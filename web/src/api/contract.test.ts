@@ -1461,6 +1461,54 @@ function suite(target: Target) {
         }
       })
 
+      it('has the attachment cache and the default for new spaces among the settings', async () => {
+        await reset()
+        const g = await settings()
+        expect(g.json).toMatchObject({ cache: { assetsBytes: expect.any(Number) }, assets: { newSpaces: expect.any(Boolean) } })
+        const put = await call(admin, 'PUT', '/api/admin/storage', { cache: { assetsBytes: 64 * 1024 ** 2 }, assets: { newSpaces: true } })
+        expect(put.status).toBe(200)
+        expect(put.json).toMatchObject({ cache: { assetsBytes: 64 * 1024 ** 2 }, assets: { newSpaces: true } })
+        for (const bad of [{ cache: { assetsBytes: 1024 ** 2 } }, { assets: { newSpaces: 'yes' } }, { assets: { other: true } }]) {
+          const r = await call(admin, 'PUT', '/api/admin/storage', bad)
+          expect([r.status, r.json.error], JSON.stringify(bad)).toEqual([400, 'invalid'])
+        }
+        await call(admin, 'PUT', '/api/admin/storage', { cache: { assetsBytes: 5 * 1024 ** 3 }, assets: { newSpaces: false } })
+      })
+
+      it('has an attachment repository only for a space that follows a remote', async () => {
+        const sp = await ownedSpace({ browser: admin }, 'Plain')
+        const base = `/api/spaces/${sp.id}/remote/assets`
+        expect((await call(admin, 'GET', base)).status).toBe(404)
+        const put = await call(admin, 'PUT', base, { url: 'https://github.com/a/b-assets.git', credential: { type: 'token', token: 'x' } })
+        expect([put.status, put.json.error]).toEqual([409, 'remote_required'])
+        expect((await call(admin, 'POST', base + '/move')).status).toBe(404)
+        expect((await call(admin, 'DELETE', base)).status).toBe(404)
+      })
+
+      it.skipIf(!!REAL)('mock only: connects one, moves the attachments with progress, and cannot take it away after', async () => {
+        const sp = await ownedSpace({ browser: admin }, 'Followed')
+        await call(admin, 'PUT', `/api/spaces/${sp.id}/remote`, { url: 'https://github.com/a/b.git', credential: { type: 'token', token: 'x' } })
+        const base = `/api/spaces/${sp.id}/remote/assets`
+        const put = await call(admin, 'PUT', base, { url: 'https://github.com/a/b-assets.git', credential: { type: 'token', token: 'x' } })
+        expect(put.status).toBe(200)
+        expect(put.json).toMatchObject({ url: 'https://github.com/a/b-assets.git', state: 'ok', move: null })
+        const listed = (await call(admin, 'GET', '/api/spaces')).json.spaces.find((x: SpaceInfo) => x.id === sp.id)
+        expect(listed.storage.assets).toBe('repository')
+        // Nothing in assets/: nothing to move.
+        expect((await call(admin, 'POST', base + '/move')).status).toBe(200)
+        const page = (await call(admin, 'POST', `/api/spaces/${sp.id}/pages`, { title: 'P' })).json
+        await spaceApi(sp.id).uploadAsset(page.id, new Blob(['PNG']), 'a.png')
+        const mv = await call(admin, 'POST', base + '/move')
+        expect(mv.status).toBe(202)
+        expect(mv.json.move).toMatchObject({ state: 'copying', files: 1, filesDone: 0, error: '' })
+        expect((await call(admin, 'POST', base + '/move')).status).toBe(409)
+        let state = 'copying'
+        for (let i = 0; i < 6 && state !== 'done'; i++) state = (await call(admin, 'GET', base)).json.move.state
+        expect(state).toBe('done')
+        const del = await call(admin, 'DELETE', base)
+        expect([del.status, del.json.error]).toEqual([409, 'conflict'])
+      })
+
       it('is for administrators only', async () => {
         const m = await newMember(uniq('stad'))
         for (const [method, path, body] of [

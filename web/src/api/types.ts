@@ -471,6 +471,25 @@ export interface Remote {
   rewritten: { lastGood: string; remote: string } | null
 }
 
+// How far moving the attachments of a space into its attachment repository has come.
+export type AssetMoveState = 'copying' | 'switching' | 'done' | 'failed'
+export interface AssetMove {
+  state: AssetMoveState
+  files: number
+  filesDone: number
+  bytes: number
+  bytesDone: number
+  error: string
+}
+// The attachment repository of a space: a Remote, and the move.
+export interface AssetsRemote extends Remote {
+  move: AssetMove | null
+}
+// What `PUT .../remote/assets` takes: a Remote's body, or a repository to make or find on GitHub.
+export type ConnectAssetsInput =
+  | ConnectRemoteInput
+  | { github: { owner: string; name: string; private?: boolean; description?: string; create?: boolean; via?: GitHubVia } }
+
 export interface RemoteKey {
   publicKey: string
   fingerprint: string
@@ -537,6 +556,9 @@ export interface NewGitHubRepo {
   description?: string
   // False connects the space to the repository that exists already.
   create?: boolean
+  // Also make an attachment repository, on the same owner and with the same credential (docs/api.md,
+  // "Server storage"): `true` names it `<name>-assets`. Left out, the administrator's default applies.
+  assets?: boolean | { name: string }
 }
 
 export interface CreateSpaceInput {
@@ -832,7 +854,8 @@ export interface AdminStorage {
   remotes: { require: 'any' | 'github' | null; scope: 'new' | 'all'; graceDays: number; since: string | null }
   hosts: { allowed: string[]; fromFlag: boolean }
   localSpaces: { maxBytes: number | null }
-  cache: { partial: boolean; evictAfterDays: number | null; minIdleHours: number; clonesBytes: number | null; minFreeBytes: number | null }
+  cache: { partial: boolean; evictAfterDays: number | null; minIdleHours: number; clonesBytes: number | null; minFreeBytes: number | null; assetsBytes: number }
+  assets: { newSpaces: boolean }
   git: { version: string; partialClone: boolean }
   affected: { inGrace: number; overdue: number; exempt: number }
 }
@@ -842,6 +865,7 @@ export interface PutAdminStorage {
   hosts?: { allowed?: string[] }
   localSpaces?: { maxBytes?: number | null }
   cache?: Partial<AdminStorage['cache']>
+  assets?: Partial<AdminStorage['assets']>
 }
 export interface StorageStatus {
   spaces: { local: number; full: number; partial: number; evicted: number; restoring: number }
