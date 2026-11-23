@@ -236,8 +236,8 @@ func TestSpacesPerUserAreLimited(t *testing.T) {
 		c := a.setup("kazuha", pw) // the personal space is the first of three
 		c.do("POST", "/api/spaces", map[string]any{"name": "B"}).want(t, 201, "")
 		c.do("POST", "/api/spaces", map[string]any{"name": "C"}).want(t, 201, "")
-		r := c.do("POST", "/api/spaces", map[string]any{"name": "D"}).want(t, 403, "forbidden")
-		if !strings.Contains(r.body["message"].(string), "3") {
+		r := c.do("POST", "/api/spaces", map[string]any{"name": "D"}).want(t, 403, "quota_exceeded")
+		if !strings.Contains(r.body["message"].(string), "3") || r.body["quota"] != "spaces" || r.body["limit"] != float64(3) || r.body["used"] != float64(3) {
 			t.Fatalf("the message does not say what the limit is: %s", r.raw)
 		}
 		if len(c.do("GET", "/api/spaces", nil).body["spaces"].([]any)) != 3 {

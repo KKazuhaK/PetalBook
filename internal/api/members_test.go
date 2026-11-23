@@ -360,10 +360,15 @@ func TestMembershipDoesNotCountAgainstTheSpaceLimit(t *testing.T) {
 		tm := newTeam(t, a)
 		// edith owns her personal space only; being an editor of Team is not owning it.
 		tm.editor.do("POST", "/api/spaces", map[string]any{"name": "Mine"}).want(t, 201, "")
-		tm.editor.do("POST", "/api/spaces", map[string]any{"name": "Too many"}).want(t, 403, "forbidden")
-		// Becoming an owner of one counts.
+		tm.editor.do("POST", "/api/spaces", map[string]any{"name": "Too many"}).want(t, 403, "quota_exceeded")
+		// A space counts for its first owner: a second owner counts nothing...
 		tm.owner.do("PATCH", "/api/spaces/"+tm.sid+"/members/"+tm.viewerID, map[string]any{"role": "owner"}).want(t, 200, "")
-		tm.viewer.do("POST", "/api/spaces", map[string]any{"name": "More"}).want(t, 403, "forbidden")
+		tm.viewer.do("POST", "/api/spaces", map[string]any{"name": "More"}).want(t, 201, "")
+		// ...until it is handed over: then it is the new owner's, and they are at the limit.
+		root := a.addUser("root", pw, "admin")
+		tm.editor.do("POST", "/api/spaces", map[string]any{"name": "x"}).want(t, 403, "quota_exceeded")
+		root.do("POST", "/api/admin/spaces/"+tm.sid+"/transfer", map[string]any{"userId": tm.editorID}).want(t, 204, "")
+		tm.editor.do("POST", "/api/spaces", map[string]any{"name": "Again"}).want(t, 403, "quota_exceeded")
 	})
 }
 

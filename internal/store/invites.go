@@ -20,14 +20,18 @@ type Invite struct {
 	// administrator account a site administrator.
 	TenantID  string
 	SiteAdmin bool
+	// Username, Name and Email start the form that accepts the invite (the
+	// first administrator of a new tenant); an Email also becomes the account's
+	// (not verified). All may be empty.
+	Username, Name, Email string
 }
 
 func InsertInvite(ctx context.Context, q Q, i Invite) error {
 	if i.TenantID == "" {
 		i.TenantID = DefaultTenantID
 	}
-	_, err := q.Exec(ctx, `INSERT INTO invites(id, token_hash, role, created_by, created, expires, tenant_id, site_admin) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		i.ID, i.TokenHash, i.Role, i.CreatedBy, ms(i.Created), ms(i.Expires), i.TenantID, b2i(i.SiteAdmin))
+	_, err := q.Exec(ctx, `INSERT INTO invites(id, token_hash, role, created_by, created, expires, tenant_id, site_admin, username, name, email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		i.ID, i.TokenHash, i.Role, i.CreatedBy, ms(i.Created), ms(i.Expires), i.TenantID, b2i(i.SiteAdmin), i.Username, i.Name, i.Email)
 	return err
 }
 
@@ -36,9 +40,9 @@ func InsertInvite(ctx context.Context, q Q, i Invite) error {
 func FindUsableInvite(ctx context.Context, q Q, tokenHash string, now time.Time) (*Invite, error) {
 	var i Invite
 	var created, expires, siteAdmin int64
-	err := q.QueryRow(ctx, `SELECT id, token_hash, role, created_by, created, expires, tenant_id, site_admin FROM invites
+	err := q.QueryRow(ctx, `SELECT id, token_hash, role, created_by, created, expires, tenant_id, site_admin, username, name, email FROM invites
 		WHERE token_hash = ? AND used = 0 AND expires > ?`, tokenHash, ms(now)).
-		Scan(&i.ID, &i.TokenHash, &i.Role, &i.CreatedBy, &created, &expires, &i.TenantID, &siteAdmin)
+		Scan(&i.ID, &i.TokenHash, &i.Role, &i.CreatedBy, &created, &expires, &i.TenantID, &siteAdmin, &i.Username, &i.Name, &i.Email)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

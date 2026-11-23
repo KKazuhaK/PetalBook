@@ -387,6 +387,37 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 
 // --- invites -----------------------------------------------------------------
 
+// InviteFill is what an invite fills in on the form that accepts it: the
+// username and name it starts with, and the address the account gets (not
+// verified). Any may be empty.
+type InviteFill struct {
+	Username, Name, Email string
+}
+
+func cleanInviteFill(f InviteFill) (InviteFill, error) {
+	var out InviteFill
+	if strings.TrimSpace(f.Username) != "" {
+		u, err := NormalizeUsername(f.Username)
+		if err != nil {
+			return out, err
+		}
+		out.Username = u
+	}
+	if strings.TrimSpace(f.Name) != "" {
+		n, err := cleanDisplayName(f.Name)
+		if err != nil {
+			return out, err
+		}
+		out.Name = n
+	}
+	e, err := cleanEmail(f.Email)
+	if err != nil {
+		return out, err
+	}
+	out.Email = e
+	return out, nil
+}
+
 // NewInvite is an invite just made; Token is shown once.
 type NewInvite struct {
 	store.Invite
@@ -399,7 +430,7 @@ type NewInvite struct {
 // administrator is a site administrator (what every administrator of the
 // server was before tenants), unless siteAdmin says otherwise; nobody else
 // can make one.
-func (s *Service) CreateInvite(ctx context.Context, actor store.User, tenantID, role string, daysGiven *int, siteAdmin *bool) (*NewInvite, error) {
+func (s *Service) CreateInvite(ctx context.Context, actor store.User, tenantID, role string, daysGiven *int, siteAdmin *bool, fill ...InviteFill) (*NewInvite, error) {
 	if role == "" {
 		role = "member"
 	}
@@ -438,6 +469,13 @@ func (s *Service) CreateInvite(ctx context.Context, actor store.User, tenantID, 
 	}
 	inv := store.Invite{TokenHash: hashToken(token), Role: role, CreatedBy: actor.ID, Created: now, TenantID: tenantID, SiteAdmin: site,
 		Expires: now.Add(time.Duration(days) * 24 * time.Hour)}
+	if len(fill) > 0 {
+		f, err := cleanInviteFill(fill[0])
+		if err != nil {
+			return nil, err
+		}
+		inv.Username, inv.Name, inv.Email = f.Username, f.Name, f.Email
+	}
 	for attempt := 0; ; attempt++ {
 		inv.ID = s.newID()
 		err := store.InsertInvite(ctx, s.st.Q(), inv)

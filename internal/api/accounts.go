@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -26,6 +27,9 @@ type userResp struct {
 	// the user belongs to (absent in single-user mode, which has none).
 	SiteAdmin bool           `json:"siteAdmin"`
 	Tenant    *tenantRefResp `json:"tenant,omitempty"`
+	// Quota is the person's own limits (null follows the tenant); the
+	// administrators' lists and PATCH answer have it, nothing else does.
+	Quota *ownQuotaResp `json:"quota,omitempty"`
 }
 
 // toUser is the user as the API shows it. passkeyRequired is whether the
@@ -35,7 +39,7 @@ func (s *server) toUser(u store.User) userResp {
 	if s.auth != nil {
 		req = s.auth.PasskeyRequiredOf(u)
 	}
-	r := userResp{u.ID, u.Username, u.Name, u.Email, u.Role, u.Disabled, rfc3339(u.Created), u.EmailVerified, req, u.Role == "admin" && u.SiteAdmin, nil}
+	r := userResp{u.ID, u.Username, u.Name, u.Email, u.Role, u.Disabled, rfc3339(u.Created), u.EmailVerified, req, u.Role == "admin" && u.SiteAdmin, nil, nil}
 	if !s.single {
 		r.Tenant = s.toTenantRef(u.TenantID)
 	}
@@ -212,9 +216,12 @@ func (s *server) checkInvite(c *call) {
 		return
 	}
 	writeJSON(c.w, http.StatusOK, struct {
-		Role    string `json:"role"`
-		Expires string `json:"expires"`
-	}{inv.Role, rfc3339(inv.Expires)})
+		Role     string `json:"role"`
+		Expires  string `json:"expires"`
+		Username string `json:"username"`
+		Name     string `json:"name"`
+		Email    string `json:"email"`
+	}{inv.Role, rfc3339(inv.Expires), inv.Username, inv.Name, inv.Email})
 }
 
 func (s *server) acceptInvite(c *call) {
@@ -394,9 +401,15 @@ func (s *server) listUsers(c *call) {
 		Passkeys int `json:"passkeys"`
 		SSO      int `json:"sso"`
 	}
+	own, err := store.UsersWithQuota(c.r.Context(), s.opt.Store.Q(), sc) // one query, the few who have limits of their own
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
 	out := make([]userEx, len(us))
 	for i, u := range us {
 		out[i] = userEx{s.toUser(u), counts.Passkeys[u.ID], counts.SSO[u.ID]}
+		out[i].Quota = toOwnQuota(own[u.ID])
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Users []userEx `json:"users"`
@@ -405,15 +418,24 @@ func (s *server) listUsers(c *call) {
 
 func (s *server) patchUser(c *call) {
 	var req struct {
-		Role            *string `json:"role"`
-		Disabled        *bool   `json:"disabled"`
-		PasskeyRequired *bool   `json:"passkeyRequired"`
-		Email           *string `json:"email"`
-		EmailVerified   *bool   `json:"emailVerified"`
-		SiteAdmin       *bool   `json:"siteAdmin"`
+		Role            *string         `json:"role"`
+		Disabled        *bool           `json:"disabled"`
+		PasskeyRequired *bool           `json:"passkeyRequired"`
+		Email           *string         `json:"email"`
+		EmailVerified   *bool           `json:"emailVerified"`
+		SiteAdmin       *bool           `json:"siteAdmin"`
+		Quota           json.RawMessage `json:"quota"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
+	}
+	// A refused quota changes nothing, so it is checked before the rest is applied.
+	var applyQuota func() bool
+	if req.Quota != nil {
+		var ok bool
+		if applyQuota, ok = s.checkQuotaPatch(c, c.r.PathValue("id"), req.Quota); !ok {
+			return
+		}
 	}
 	u, err := s.auth.UpdateUser(c.r.Context(), c.user(), s.auth.ClientAddr(c.r), c.r.PathValue("id"), auth.UserPatch{Role: req.Role, Disabled: req.Disabled,
 		PasskeyRequired: req.PasskeyRequired, Email: req.Email, EmailVerified: req.EmailVerified, SiteAdmin: req.SiteAdmin})
@@ -421,9 +443,16 @@ func (s *server) patchUser(c *call) {
 		s.fail(c.w, err)
 		return
 	}
+	if applyQuota != nil && !applyQuota() {
+		return
+	}
+	out := s.toUser(*u)
+	if raw, err := store.UserQuota(c.r.Context(), s.opt.Store.Q(), store.AllTenants(), u.ID); err == nil {
+		out.Quota = toOwnQuota(raw)
+	}
 	writeJSON(c.w, http.StatusOK, struct {
 		User userResp `json:"user"`
-	}{s.toUser(*u)})
+	}{out})
 }
 
 func (s *server) createInvite(c *call) {

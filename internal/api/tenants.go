@@ -39,6 +39,7 @@ type tenantResp struct {
 		Open bool `json:"open"`
 	} `json:"registration"`
 	Quota   map[string]*int64 `json:"quota"`
+	Usage   tenantUsageResp   `json:"usage"`
 	Created string            `json:"created"`
 	Updated string            `json:"updated"`
 }
@@ -59,9 +60,11 @@ func parseQuota(raw string) map[string]*int64 {
 	return out
 }
 
-func (s *server) toTenant(ctx context.Context, t store.Tenant) (tenantResp, error) {
+// toTenant is the tenant as the API shows it, with the usage row u (one
+// lookup of its own, or one query for a page: see usageOf).
+func (s *server) toTenant(ctx context.Context, t store.Tenant, u store.Usage) (tenantResp, error) {
 	r := tenantResp{ID: t.ID, Slug: t.Slug, Name: t.Name, Default: t.IsDefault(), Disabled: t.Disabled, Quota: parseQuota(t.Quota),
-		Created: rfc3339(t.Created), Updated: rfc3339(t.Updated)}
+		Usage: toTenantUsage(u), Created: rfc3339(t.Created), Updated: rfc3339(t.Updated)}
 	e, err := s.settings.Get(ctx, t.ID, "registration.open")
 	if err != nil {
 		return r, err
@@ -69,6 +72,11 @@ func (s *server) toTenant(ctx context.Context, t store.Tenant) (tenantResp, erro
 	r.Registration.Open, _ = e.Value.(bool)
 	r.Registration.Open = r.Registration.Open && s.registrationReady()
 	return r, nil
+}
+
+// usageOf reads a tenant's usage row.
+func (s *server) usageOf(ctx context.Context, id string) (store.Usage, error) {
+	return store.GetUsage(ctx, s.opt.Store.Q(), store.UsageTenant, id)
 }
 
 // registrationReady says whether registration can work at all: it needs mail
@@ -158,9 +166,18 @@ func (s *server) adminListTenants(c *call) {
 		s.fail(c.w, err)
 		return
 	}
+	ids := make([]string, len(rows))
+	for i, t := range rows {
+		ids[i] = t.ID
+	}
+	usage, err := store.UsageOfTenants(c.r.Context(), s.opt.Store.Q(), ids) // one query for the page
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
 	items := make([]tenantResp, len(rows))
 	for i, t := range rows {
-		if items[i], err = s.toTenant(c.r.Context(), t); err != nil {
+		if items[i], err = s.toTenant(c.r.Context(), t, usage[t.ID]); err != nil {
 			s.fail(c.w, err)
 			return
 		}
@@ -197,12 +214,15 @@ func (s *server) adminGetTenant(c *call) {
 	if !ok {
 		return
 	}
-	r, err := s.toTenant(c.r.Context(), *t)
-	if err != nil {
-		s.fail(c.w, err)
-		return
+	u, err := s.usageOf(c.r.Context(), t.ID)
+	if err == nil {
+		var r tenantResp
+		if r, err = s.toTenant(c.r.Context(), *t, u); err == nil {
+			writeJSON(c.w, http.StatusOK, r)
+			return
+		}
 	}
-	writeJSON(c.w, http.StatusOK, r)
+	s.fail(c.w, err)
 }
 
 func cleanTenantName(in string) (string, bool) {
@@ -275,7 +295,7 @@ func (s *server) adminCreateTenant(c *call) {
 		return
 	}
 	s.audit(c, auth.AuditEvent{Kind: "tenant_created", Actor: c.user().ID, Tenant: t.ID, Detail: map[string]any{"tenant": t.ID, "slug": t.Slug}})
-	resp, err := s.toTenant(ctx, t)
+	resp, err := s.toTenant(ctx, t, store.Usage{})
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -285,7 +305,9 @@ func (s *server) adminCreateTenant(c *call) {
 		Invite any `json:"invite,omitempty"`
 	}{tenantResp: resp}
 	if req.Admin != nil {
-		inv, err := s.auth.CreateInvite(ctx, c.user(), t.ID, "admin", nil, nil)
+		// The first administrator's invite carries the account's name, username
+		// and address, which the form that accepts it starts with. Nothing is mailed.
+		inv, err := s.auth.CreateInvite(ctx, c.user(), t.ID, "admin", nil, nil, auth.InviteFill{Username: req.Admin.Username, Name: req.Admin.Name, Email: req.Admin.Email})
 		if err != nil {
 			s.fail(c.w, err)
 			return
@@ -298,7 +320,10 @@ func (s *server) adminCreateTenant(c *call) {
 			Expires   string `json:"expires"`
 			Tenant    string `json:"tenant"`
 			SiteAdmin bool   `json:"siteAdmin"`
-		}{inv.ID, inv.Token, inv.Role, rfc3339(inv.Created), rfc3339(inv.Expires), inv.TenantID, inv.SiteAdmin}
+			Username  string `json:"username"`
+			Name      string `json:"name"`
+			Email     string `json:"email"`
+		}{inv.ID, inv.Token, inv.Role, rfc3339(inv.Created), rfc3339(inv.Expires), inv.TenantID, inv.SiteAdmin, inv.Username, inv.Name, inv.Email}
 	}
 	c.w.Header().Set("Location", "/api/admin/tenants/"+t.ID)
 	writeJSON(c.w, http.StatusCreated, out)
@@ -421,12 +446,18 @@ func (s *server) adminPatchTenant(c *call) {
 		changed["tenant"], changed["slug"] = t.ID, t.Slug
 		s.audit(c, auth.AuditEvent{Kind: "tenant_changed", Actor: c.user().ID, Tenant: t.ID, Detail: changed})
 	}
-	r, err := s.toTenant(c.r.Context(), t)
-	if err != nil {
-		s.fail(c.w, err)
-		return
+	if _, ok := changed["quota"]; ok && s.quota != nil {
+		_ = s.quota.Evaluate(c.r.Context(), []store.Touched{{TenantID: t.ID}})
 	}
-	writeJSON(c.w, http.StatusOK, r)
+	u, err := s.usageOf(c.r.Context(), t.ID)
+	if err == nil {
+		var r tenantResp
+		if r, err = s.toTenant(c.r.Context(), t, u); err == nil {
+			writeJSON(c.w, http.StatusOK, r)
+			return
+		}
+	}
+	s.fail(c.w, err)
 }
 
 func (s *server) adminDeleteTenant(c *call) {

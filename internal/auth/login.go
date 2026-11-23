@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/store"
@@ -326,10 +327,18 @@ func (s *Service) AcceptInvite(ctx context.Context, token, username, name, passw
 	if err != nil {
 		return nil, "", err
 	}
+	// What the invite fills in is what the form starts with: a field left empty
+	// takes it.
+	if strings.TrimSpace(username) == "" {
+		username = inv.Username
+	}
+	if strings.TrimSpace(name) == "" {
+		name = inv.Name
+	}
 	if s.ssoOnlyInEffect(st) && inv.Role != "admin" {
 		return nil, "", errLocalRefused()
 	}
-	u, err := s.CreateUser(ctx, CreateParams{Username: username, Name: name, Role: inv.Role, Password: password, InviteID: inv.ID, TenantID: inv.TenantID, SiteAdmin: inv.SiteAdmin})
+	u, err := s.CreateUser(ctx, CreateParams{Username: username, Name: name, Email: inv.Email, Role: inv.Role, Password: password, InviteID: inv.ID, TenantID: inv.TenantID, SiteAdmin: inv.SiteAdmin})
 	if err != nil {
 		return nil, "", err
 	}

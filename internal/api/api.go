@@ -27,6 +27,7 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/index"
 	"github.com/KKazuhaK/PetalBook/internal/oauth"
 	"github.com/KKazuhaK/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/quota"
 	"github.com/KKazuhaK/PetalBook/internal/settings"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
@@ -91,6 +92,9 @@ type Options struct {
 	// DailyFetch gets the daily text from the external interfaces an
 	// administrator configured; the one that refuses private addresses when nil.
 	DailyFetch *dailyfetch.Fetcher
+	// MaxSpaces is --max-spaces when the flag was given: then it is the site's
+	// quota.spacesPerPerson, read only. Nil leaves the stored setting (20).
+	MaxSpaces *int
 	// NoMCP switches /mcp off in single-user mode (serve --mcp=false). In
 	// accounts mode the administrators' setting decides.
 	NoMCP bool
@@ -106,10 +110,12 @@ type server struct {
 	oauth  *oauth.Service
 	// settings are the layered settings (site, tenant; see internal/settings).
 	settings *settings.Service
-	single   bool
-	started  time.Time
-	local    store.User // the built-in user of single-user mode
-	origins  map[string]bool
+	// quota knows which limits apply and notices crossings (accounts mode).
+	quota   *quota.Service
+	single  bool
+	started time.Time
+	local   store.User // the built-in user of single-user mode
+	origins map[string]bool
 	// importing lets one import run at a time (see importMarkdown).
 	importing chan struct{}
 	// originHosts are the hosts of the allowed origins: a request addressed to
@@ -161,6 +167,7 @@ func New(opt Options) http.Handler {
 	s.bindDailySettings()
 	if s.auth != nil {
 		s.auth.UseSettings(s.settings)
+		s.bindQuota()
 	}
 	mux := http.NewServeMux()
 	uploads := map[string]bool{}
@@ -457,6 +464,11 @@ type errorBody struct {
 	Spaces   *int     `json:"spaces,omitempty"`
 	Mappings *int     `json:"mappings,omitempty"`
 	Missing  []string `json:"missing,omitempty"`
+	// What a refused quota is about (quota_exceeded): which one, its limit, and
+	// what is used.
+	Quota string `json:"quota,omitempty"`
+	Limit *int64 `json:"limit,omitempty"`
+	Used  *int64 `json:"used,omitempty"`
 }
 
 // codedError is a 400 whose error code is code, with what it is about.
@@ -548,6 +560,7 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		ue    *space.UnavailableError
 		urle  *gitstore.URLError
 		hoste *gitstore.HostError
+		qe    *spaces.QuotaError
 	)
 	var coded *codedError
 	switch {
@@ -578,6 +591,9 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "conflict", err.Error())
 	case errors.Is(err, spaces.ErrConnected):
 		writeError(w, http.StatusConflict, "conflict", err.Error())
+	case errors.As(err, &qe):
+		writeJSON(w, http.StatusForbidden, errorBody{Error: "quota_exceeded", Message: strings.TrimPrefix(qe.Error(), spaces.ErrLimit.Error()+": "),
+			Quota: qe.Quota, Limit: &qe.Limit, Used: &qe.Used})
 	case errors.Is(err, spaces.ErrLimit):
 		writeError(w, http.StatusForbidden, "forbidden", strings.TrimPrefix(err.Error(), spaces.ErrLimit.Error()+": "))
 	case s.failGroup(w, err):

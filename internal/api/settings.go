@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/KKazuhaK/PetalBook/internal/auth"
 	"github.com/KKazuhaK/PetalBook/internal/settings"
@@ -168,6 +169,7 @@ func (s *server) adminPutSetting(c *call) {
 		return
 	}
 	s.closedRegistration(ctx, key)
+	s.quotaSettingChanged(ctx, key, store.AllTenants())
 	after, err := s.settings.Get(ctx, "", key)
 	if err != nil {
 		s.failSetting(c, err)
@@ -245,6 +247,7 @@ func (s *server) adminPutTenantSetting(c *call) {
 		return
 	}
 	s.closedRegistration(ctx, key)
+	s.quotaSettingChanged(ctx, key, store.InTenant(t.ID))
 	after, err := s.settings.Get(ctx, t.ID, key)
 	if err != nil {
 		s.failSetting(c, err)
@@ -290,8 +293,8 @@ func (s *server) mySettings(c *call) {
 	}
 	out := []item{}
 	for _, d := range s.settings.Defs() {
-		if !d.Has(settings.Space) && !d.Has(settings.Person) {
-			continue
+		if !d.Has(settings.Space) && !d.Has(settings.Person) || strings.HasPrefix(d.Key, "quota.") {
+			continue // the quotas' person layer is an administrator's override, not the person's own
 		}
 		e := eff[d.Key]
 		it := item{Key: d.Key, Effective: e.Value}

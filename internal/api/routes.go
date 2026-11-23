@@ -120,6 +120,7 @@ var routeTable = []route{
 	{"PATCH", "/api/account", signedIn, true, false, false, (*server).patchAccount},
 	{"POST", "/api/account/password", signedIn, true, false, false, (*server).changePassword},
 	{"DELETE", "/api/account/identities/{id}", signedIn, true, false, false, (*server).unlinkIdentity},
+	{"GET", "/api/account/usage", signedIn, true, false, false, (*server).accountUsage},
 	{"GET", "/api/account/tokens", signedIn, true, false, false, (*server).listMyTokens},
 	{"POST", "/api/account/tokens", signedIn, true, false, false, (*server).createToken},
 	{"DELETE", "/api/account/tokens/{id}", signedIn, true, false, false, (*server).revokeMyToken},
@@ -137,6 +138,7 @@ var routeTable = []route{
 	{"GET", "/api/invites", admin, true, false, false, (*server).listInvites},
 	{"DELETE", "/api/invites/{id}", admin, true, false, false, (*server).deleteInvite},
 
+	{"GET", "/api/admin/usage", admin, true, false, false, (*server).adminUsage},
 	{"GET", "/api/admin/spaces", admin, true, false, false, (*server).adminListSpaces},
 	{"GET", "/api/admin/spaces/{space}", admin, true, false, false, (*server).adminGetSpace},
 	{"POST", "/api/admin/spaces/{space}/size", admin, true, false, false, (*server).adminResizeSpace},

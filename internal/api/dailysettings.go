@@ -23,7 +23,10 @@ func (s *server) bindDailySettings() {
 		return settings.SiteBinding{
 			Get: func(ctx context.Context, q store.Q) (any, error) {
 				d, err := s.loadSiteQ(ctx, q)
-				return *pick(d.Allow), err
+				if err != nil {
+					return nil, err // d is empty then (a context that ended, say)
+				}
+				return *pick(d.Allow), nil
 			},
 			Set: func(ctx context.Context, q store.Q, v any) error {
 				return s.editSiteQ(ctx, q, func(_ store.Q, d *siteDaily) error {
