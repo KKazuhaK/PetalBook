@@ -59,7 +59,14 @@ type attempt struct {
 
 func (f *fakeIDP) begin(t *testing.T, c *client, who string, body map[string]any) attempt {
 	t.Helper()
-	r := c.do("POST", "/api/auth/oidc/start", body).want(t, 200, "")
+	return f.beginAt(t, c, "/api/auth/oidc/start", "/api/auth/oidc/callback", who, body)
+}
+
+// beginAt starts a sign-in at startPath and follows the provider's redirect back
+// to callbackPath.
+func (f *fakeIDP) beginAt(t *testing.T, c *client, startPath, callbackPath, who string, body map[string]any) attempt {
+	t.Helper()
+	r := c.do("POST", startPath, body).want(t, 200, "")
 	authURL := r.body["url"].(string)
 	if !strings.HasPrefix(authURL, f.srv.URL+"/authorize?") {
 		t.Fatalf("authorization URL %s", authURL)
@@ -75,7 +82,7 @@ func (f *fakeIDP) begin(t *testing.T, c *client, who string, body map[string]any
 		t.Fatalf("the provider answered %d", resp.StatusCode)
 	}
 	loc, err := url.Parse(resp.Header.Get("Location"))
-	if err != nil || loc.Scheme+"://"+loc.Host != testPublic || loc.Path != "/api/auth/oidc/callback" {
+	if err != nil || loc.Scheme+"://"+loc.Host != testPublic || loc.Path != callbackPath {
 		t.Fatalf("redirect back to %v", resp.Header.Get("Location"))
 	}
 	return attempt{start: r, cb: loc.RequestURI(), state: loc.Query().Get("state")}
@@ -171,13 +178,13 @@ func TestOIDCSetupCreatesTheAdministrator(t *testing.T) {
 		c := a.newClient("")
 		tok := a.auth.SetupToken()
 		// Auto-create never makes the first account: a plain sign-in finds nobody.
-		if loc := f.signIn(t, c, "alice", map[string]any{}); loc != "/login?error=no_account" {
+		if loc := f.signIn(t, c, "alice", map[string]any{}); loc != "/login?sso_error=no_account" {
 			t.Fatal(loc)
 		}
-		if loc := f.signIn(t, c, "alice", map[string]any{"intent": "setup", "token": "wrong"}); loc != "/login?error=setup_invalid" {
+		if loc := f.signIn(t, c, "alice", map[string]any{"intent": "setup", "token": "wrong"}); loc != "/login?sso_error=setup_invalid" {
 			t.Fatal(loc)
 		}
-		if loc := f.signIn(t, c, "alice", map[string]any{"intent": "setup"}); loc != "/login?error=setup_invalid" {
+		if loc := f.signIn(t, c, "alice", map[string]any{"intent": "setup"}); loc != "/login?sso_error=setup_invalid" {
 			t.Fatal(loc)
 		}
 		if signedInAs(t, c) != "" {
@@ -202,7 +209,7 @@ func TestOIDCSetupCreatesTheAdministrator(t *testing.T) {
 		}
 		s := c.do("GET", "/api/session", nil).want(t, 200, "")
 		u := s.user()
-		if u["username"] != "alice" || u["name"] != "Alice A" || u["role"] != "admin" || u["email"] != "" || s.body["setup"] != false {
+		if u["username"] != "alice" || u["name"] != "Alice A" || u["role"] != "admin" || u["email"] != "alice@example.test" || u["emailVerified"] != false || s.body["setup"] != false {
 			t.Fatal(s.raw)
 		}
 		c.personalSpace()
@@ -215,7 +222,7 @@ func TestOIDCSetupCreatesTheAdministrator(t *testing.T) {
 			t.Fatal(acct.raw)
 		}
 		// Over: the token is dead and so is the endpoint.
-		if loc := f.signIn(t, a.newClient(""), "bob", map[string]any{"intent": "setup", "token": tok}); loc != "/login?error=setup_invalid" {
+		if loc := f.signIn(t, a.newClient(""), "bob", map[string]any{"intent": "setup", "token": tok}); loc != "/login?sso_error=setup_invalid" {
 			t.Fatal(loc)
 		}
 		a.newClient("").do("POST", "/api/setup", map[string]any{"token": tok, "username": "x1", "password": pw}).want(t, 409, "exists")
@@ -232,7 +239,7 @@ func TestOIDCLoginAndAutoCreate(t *testing.T) {
 			c := a.newClient("")
 			loc := f.signIn(t, c, "alice", map[string]any{})
 			if !auto {
-				if loc != "/login?error=no_account" || signedInAs(t, c) != "" {
+				if loc != "/login?sso_error=no_account" || signedInAs(t, c) != "" {
 					t.Fatalf("auto-create off: %s", loc)
 				}
 				return
@@ -316,10 +323,10 @@ func TestOIDCInvite(t *testing.T) {
 		token := admin.do("POST", "/api/invites", map[string]any{"role": "admin"}).want(t, 201, "").body["token"].(string)
 
 		c := a.newClient("")
-		if loc := f.signIn(t, c, "bob", map[string]any{"intent": "invite", "token": "wrong"}); loc != "/login?error=invite_invalid" {
+		if loc := f.signIn(t, c, "bob", map[string]any{"intent": "invite", "token": "wrong"}); loc != "/login?sso_error=invite_invalid" {
 			t.Fatal(loc)
 		}
-		if loc := f.signIn(t, c, "bob", map[string]any{"intent": "invite"}); loc != "/login?error=invite_invalid" {
+		if loc := f.signIn(t, c, "bob", map[string]any{"intent": "invite"}); loc != "/login?sso_error=invite_invalid" {
 			t.Fatal(loc)
 		}
 		if loc := f.signIn(t, c, "bob", map[string]any{"intent": "invite", "token": token, "return": "/welcome"}); loc != "/welcome" {
@@ -331,12 +338,12 @@ func TestOIDCInvite(t *testing.T) {
 		}
 		c.personalSpace()
 		// It worked once.
-		if loc := f.signIn(t, a.newClient(""), "alice", map[string]any{"intent": "invite", "token": token}); loc != "/login?error=invite_invalid" {
+		if loc := f.signIn(t, a.newClient(""), "alice", map[string]any{"intent": "invite", "token": token}); loc != "/login?sso_error=invite_invalid" {
 			t.Fatal(loc)
 		}
 		// A person who already has an identity cannot use an invite with it.
 		t2 := admin.do("POST", "/api/invites", nil).want(t, 201, "").body["token"].(string)
-		if loc := f.signIn(t, a.newClient(""), "bob", map[string]any{"intent": "invite", "token": t2}); loc != "/login?error=identity_in_use" {
+		if loc := f.signIn(t, a.newClient(""), "bob", map[string]any{"intent": "invite", "token": t2}); loc != "/login?sso_error=identity_in_use" {
 			t.Fatal(loc)
 		}
 		// ... and the invite is still good for someone else.
@@ -347,7 +354,7 @@ func TestOIDCInvite(t *testing.T) {
 		// Expired.
 		t3 := admin.do("POST", "/api/invites", map[string]any{"days": 1}).want(t, 201, "").body["token"].(string)
 		a.clock.Advance(25 * time.Hour)
-		if loc := f.signIn(t, a.newClient(""), "noname", map[string]any{"intent": "invite", "token": t3}); loc != "/login?error=invite_invalid" {
+		if loc := f.signIn(t, a.newClient(""), "noname", map[string]any{"intent": "invite", "token": t3}); loc != "/login?sso_error=invite_invalid" {
 			t.Fatal(loc)
 		}
 	})
@@ -386,7 +393,7 @@ func TestOIDCLinkAndUnlink(t *testing.T) {
 			t.Fatal(ids)
 		}
 		// Someone else cannot take it.
-		if loc := f.signIn(t, tang, "alice", map[string]any{"intent": "link"}); loc != "/settings?error=identity_in_use" {
+		if loc := f.signIn(t, tang, "alice", map[string]any{"intent": "link"}); loc != "/settings?sso_error=identity_in_use" {
 			t.Fatal(loc)
 		}
 		// Signing in with it reaches the linked account.
@@ -398,21 +405,21 @@ func TestOIDCLinkAndUnlink(t *testing.T) {
 		// The browser must still be signed in as the one who asked.
 		at = f.begin(t, tang, "bob", map[string]any{"intent": "link"})
 		tang.do("POST", "/api/logout", nil).want(t, 204, "")
-		if loc, _ := finish(t, tang, at.cb); loc != "/settings?error=expired" {
+		if loc, _ := finish(t, tang, at.cb); loc != "/settings?sso_error=expired" {
 			t.Fatal(loc)
 		}
 		at = f.begin(t, kazuha, "bob", map[string]any{"intent": "link"})
 		swap := a.newClient("")
 		swap.do("POST", "/api/login", map[string]any{"username": "tang", "password": pw}).want(t, 200, "")
 		swap.cookies["__Host-petalbook_oidc"] = kazuha.cookies["__Host-petalbook_oidc"] // the same browser binding, another account's session
-		if loc, _ := finish(t, swap, at.cb); loc != "/settings?error=expired" {
+		if loc, _ := finish(t, swap, at.cb); loc != "/settings?sso_error=expired" {
 			t.Fatal(loc)
 		}
 		// Unlinking: the account has a password, so the identity can go.
 		idn := kazuha.do("GET", "/api/account", nil).body["identities"].([]any)[0].(map[string]any)["id"].(string)
 		kazuha.do("DELETE", "/api/account/identities/"+idn, nil).want(t, 204, "")
 		d := a.newClient("")
-		if loc := f.signIn(t, d, "alice", map[string]any{}); loc != "/login?error=no_account" {
+		if loc := f.signIn(t, d, "alice", map[string]any{}); loc != "/login?sso_error=no_account" {
 			t.Fatal(loc)
 		}
 	})
@@ -434,7 +441,7 @@ func TestOIDCDisabledUser(t *testing.T) {
 		admin.do("PATCH", "/api/users/"+id, map[string]any{"disabled": true}).want(t, 200, "")
 		c.do("GET", "/api/account", nil).want(t, 401, "unauthenticated") // existing sessions end
 		d := a.newClient("")
-		if loc := f.signIn(t, d, "alice", map[string]any{}); loc != "/login?error=disabled" || signedInAs(t, d) != "" {
+		if loc := f.signIn(t, d, "alice", map[string]any{}); loc != "/login?sso_error=disabled" || signedInAs(t, d) != "" {
 			t.Fatal(loc)
 		}
 	})
@@ -454,7 +461,7 @@ func TestOIDCReplayExpiryAndForgery(t *testing.T) {
 		}
 		replayer := a.newClient("")
 		replayer.cookies["__Host-petalbook_oidc"] = &http.Cookie{Name: "__Host-petalbook_oidc", Value: "stolen-or-stale"}
-		if loc, _ := finish(t, replayer, at.cb); loc != "/login?error=expired" {
+		if loc, _ := finish(t, replayer, at.cb); loc != "/login?sso_error=expired" {
 			t.Fatal(loc)
 		}
 		// Even with the right cookie: it was used.
@@ -463,7 +470,7 @@ func TestOIDCReplayExpiryAndForgery(t *testing.T) {
 			again.cookies[k] = v
 		}
 		again.cookies["__Host-petalbook_oidc"] = &http.Cookie{Name: "__Host-petalbook_oidc", Value: at.start.resp.Cookies()[0].Value}
-		if loc, r := finish(t, again, at.cb); loc != "/login?error=expired" {
+		if loc, r := finish(t, again, at.cb); loc != "/login?sso_error=expired" {
 			t.Fatalf("%s %v", loc, r.resp.Cookies())
 		}
 
@@ -471,7 +478,7 @@ func TestOIDCReplayExpiryAndForgery(t *testing.T) {
 		c = a.newClient("")
 		at = f.begin(t, c, "bob", map[string]any{})
 		a.clock.Advance(10*time.Minute + time.Second)
-		if loc, _ := finish(t, c, at.cb); loc != "/login?error=expired" || signedInAs(t, c) != "" {
+		if loc, _ := finish(t, c, at.cb); loc != "/login?sso_error=expired" || signedInAs(t, c) != "" {
 			t.Fatal(loc)
 		}
 		// Just inside ten minutes is fine.
@@ -486,13 +493,13 @@ func TestOIDCReplayExpiryAndForgery(t *testing.T) {
 		c = a.newClient("")
 		at = f.begin(t, c, "alice2", map[string]any{})
 		stranger := a.newClient("")
-		if loc, _ := finish(t, stranger, at.cb); loc != "/login?error=expired" || signedInAs(t, stranger) != "" {
+		if loc, _ := finish(t, stranger, at.cb); loc != "/login?sso_error=expired" || signedInAs(t, stranger) != "" {
 			t.Fatal(loc)
 		}
 		// A browser with its own attempt cannot finish someone else's, and does not burn it.
 		own := a.newClient("")
 		f.begin(t, own, "bob", map[string]any{})
-		if loc, r := finish(t, own, at.cb); loc != "/login?error=idp_error" || signedInAs(t, own) != "" {
+		if loc, r := finish(t, own, at.cb); loc != "/login?sso_error=idp_error" || signedInAs(t, own) != "" {
 			t.Fatalf("%s %v", loc, r.resp.Cookies())
 		}
 		if loc, _ := finish(t, c, at.cb); loc != "/" || signedInAs(t, c) != "alice-2" {
@@ -502,16 +509,16 @@ func TestOIDCReplayExpiryAndForgery(t *testing.T) {
 		// Repeated, missing and malformed parameters.
 		c = a.newClient("")
 		at = f.begin(t, c, "alice", map[string]any{})
-		if loc, _ := finish(t, c, at.cb+"&state=other"); loc != "/login?error=idp_error" {
+		if loc, _ := finish(t, c, at.cb+"&state=other"); loc != "/login?sso_error=idp_error" {
 			t.Fatal(loc)
 		}
-		if loc, _ := finish(t, c, at.cb+"&code=other"); loc != "/login?error=idp_error" {
+		if loc, _ := finish(t, c, at.cb+"&code=other"); loc != "/login?sso_error=idp_error" {
 			t.Fatal(loc)
 		}
-		if loc, _ := finish(t, c, "/api/auth/oidc/callback"); loc != "/login?error=idp_error" {
+		if loc, _ := finish(t, c, "/api/auth/oidc/callback"); loc != "/login?sso_error=idp_error" {
 			t.Fatal(loc)
 		}
-		if loc, _ := finish(t, c, "/api/auth/oidc/callback?state="+at.state); loc != "/login?error=idp_error" {
+		if loc, _ := finish(t, c, "/api/auth/oidc/callback?state="+at.state); loc != "/login?sso_error=idp_error" {
 			t.Fatal(loc)
 		}
 		// The real one still works after all of that.
@@ -522,20 +529,20 @@ func TestOIDCReplayExpiryAndForgery(t *testing.T) {
 		// The provider refuses: only the matching browser's attempt is ended.
 		c = a.newClient("")
 		at = f.begin(t, c, "alice", map[string]any{})
-		if loc, _ := finish(t, a.newClient(""), "/api/auth/oidc/callback?error=access_denied&state="+at.state); loc != "/login?error=idp_error" {
+		if loc, _ := finish(t, a.newClient(""), "/api/auth/oidc/callback?error=access_denied&state="+at.state); loc != "/login?sso_error=idp_error" {
 			t.Fatal(loc)
 		}
-		if loc, _ := finish(t, c, "/api/auth/oidc/callback?error=access_denied&state="+at.state); loc != "/login?error=idp_error" {
+		if loc, _ := finish(t, c, "/api/auth/oidc/callback?error=access_denied&state="+at.state); loc != "/login?sso_error=idp_error" {
 			t.Fatal(loc)
 		}
-		if loc, _ := finish(t, c, at.cb); loc != "/login?error=expired" {
+		if loc, _ := finish(t, c, at.cb); loc != "/login?sso_error=expired" {
 			t.Fatalf("a provider error did not end the attempt: %s", loc)
 		}
 		// A refusal during a link goes back to settings.
 		k := a.newClient("")
 		k.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 200, "")
 		at = f.begin(t, k, "bob", map[string]any{"intent": "link"})
-		if loc, _ := finish(t, k, "/api/auth/oidc/callback?error=access_denied&state="+at.state); loc != "/settings?error=idp_error" {
+		if loc, _ := finish(t, k, "/api/auth/oidc/callback?error=access_denied&state="+at.state); loc != "/settings?sso_error=idp_error" {
 			t.Fatal(loc)
 		}
 	})
@@ -555,14 +562,14 @@ func TestOIDCRejectsTokensThatDoNotVerify(t *testing.T) {
 		} {
 			f.idp.Mutate = mutate
 			c := a.newClient("")
-			if loc := f.signIn(t, c, "alice", map[string]any{}); loc != "/login?error=idp_error" || signedInAs(t, c) != "" {
+			if loc := f.signIn(t, c, "alice", map[string]any{}); loc != "/login?sso_error=idp_error" || signedInAs(t, c) != "" {
 				t.Errorf("%s: %s", name, loc)
 			}
 		}
 		f.idp.Mutate = nil
 		f.idp.TokenStatus = 500
 		c := a.newClient("")
-		if loc := f.signIn(t, c, "alice", map[string]any{}); loc != "/login?error=idp_error" {
+		if loc := f.signIn(t, c, "alice", map[string]any{}); loc != "/login?sso_error=idp_error" {
 			t.Error(loc)
 		}
 		f.idp.TokenStatus = 0

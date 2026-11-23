@@ -1,6 +1,7 @@
 import { useId, type ComponentProps, type Ref } from 'react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { RequiredMark } from '@/components/ui/field-mark'
 
 // A labelled input with its help and error text tied to it, so a screen reader
 // reads them with the field and an invalid field says so.
@@ -9,16 +10,20 @@ export function Field({
   help,
   error,
   inputRef,
+  requiredMark,
   ...input
-}: { label: string; help?: string; error?: string; inputRef?: Ref<HTMLInputElement> } & Omit<ComponentProps<'input'>, 'ref'>) {
+}: { label: string; help?: string; error?: string; inputRef?: Ref<HTMLInputElement>; requiredMark?: boolean } & Omit<ComponentProps<'input'>, 'ref'>) {
   const id = useId()
   const helpId = `${id}-help`
   const errorId = `${id}-error`
   const described = [help ? helpId : '', error ? errorId : ''].filter(Boolean).join(' ') || undefined
   return (
     <div className="grid gap-1.5">
-      <Label htmlFor={id}>{label}</Label>
-      <Input id={id} ref={inputRef} aria-describedby={described} aria-invalid={error ? true : undefined} {...input} />
+      <Label htmlFor={id}>
+        {label}
+        {requiredMark && <RequiredMark />}
+      </Label>
+      <Input id={id} ref={inputRef} aria-describedby={described} aria-invalid={error ? true : undefined} aria-required={requiredMark ? true : undefined} {...input} />
       {help && (
         <p id={helpId} className="text-xs text-muted-foreground">
           {help}

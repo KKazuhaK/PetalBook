@@ -22,7 +22,9 @@ The web app talks to the server only through this API.
   administrator has disabled the space, see "Administration"), `rate_limited` (429, with a
   `Retry-After` header in seconds), `unavailable` (503: the space follows a
   remote repository that cannot be reached or is paused, see "Remote
-  repository"; nothing was changed), `internal` (500).
+  repository"; nothing was changed), `internal` (500). Signing in has codes
+  of its own (see "Sign-in error codes"), as do some sections; a section's own
+  code takes the place of the general one in `error`, with the status given.
   Requests with an API token or an OAuth access token have codes of their
   own: `token_invalid`, `token_expired`, `token_revoked`,
   `token_owner_disabled` (401), `token_scope` and `tokens_off` (403); see
@@ -53,10 +55,15 @@ The web app talks to the server only through this API.
     nor the host of an allowed origin gets `403 forbidden`.
   - Requests with no `Origin` and no `Sec-Fetch-Site`, such as `curl` or
     scripts, are not refused by these checks.
-  - One exception: `GET /api/auth/oidc/callback` is reached by a redirect from
-    the identity provider, so the `Sec-Fetch-Site` and `Origin` rules do not
-    apply to it. It changes nothing unless its `state` matches a sign-in this
-    browser started.
+  - The exceptions are reached from an identity provider, so the
+    `Sec-Fetch-Site` and `Origin` rules do not apply to them:
+    `GET /api/auth/oidc/callback`, `GET /api/auth/oidc/{slug}/callback` and
+    `GET /api/auth/github/{slug}/callback` (a redirect), and
+    `POST /api/auth/saml/{slug}/acs` (a form the identity provider posts, so it
+    is `application/x-www-form-urlencoded`, not JSON). Each changes nothing
+    unless it matches a sign-in this browser started (its `state`, or for SAML
+    its `RelayState` and the attempt's cookie). `GET /api/auth/saml/{slug}/metadata`
+    is read by the identity provider and changes nothing.
 - A **space** is one tree of pages backed by one Git repository. Every page URL
   carries the space id. In single-user mode there is exactly one space, with
   the id `default`; in accounts mode a space id has the same form as a page id.
@@ -114,13 +121,23 @@ not signed in), in the shape of `GET /api/spaces`.
 ### User
 
 ```json
-{"id": "01JD3K8Q7Z", "username": "kazuha", "name": "Kazuha", "email": "", "role": "admin", "disabled": false, "created": "2026-11-21T08:30:00Z"}
+{"id": "01JD3K8Q7Z", "username": "kazuha", "name": "Kazuha", "email": "", "emailVerified": false, "role": "admin", "disabled": false, "passkeyRequired": false, "created": "2026-11-21T08:30:00Z"}
 ```
 
 `role` is `admin` or `member`. `username` is 2–32 characters of `a-z`, `0-9`,
 `.`, `_`, `-`, starting with a letter or digit; it is stored in lower case and
-upper case in a request is folded. `email` may be empty; it is never used to
-match an account.
+upper case in a request is folded. `email` may be empty. It never decides which
+account an identity signs in to, with one exception the administrators switch on
+per provider (see "Which account an identity signs in to"), and then only when
+`emailVerified` is `true`: the address came from a provider that vouched for it,
+or an administrator set or confirmed it. A user changing their own `email`
+clears `emailVerified`.
+
+`passkeyRequired` is whether this person must sign in with a passkey: set for
+them alone (`PATCH /api/users/{id}`) or for their role (the 安全 settings,
+`passkeys.requireRoles`). In a response it is the effective value, so it is
+`true` for everyone of a required role; `PATCH` changes only the person's own
+mark. See "When a passkey is required".
 
 ### `GET /api/session`
 
@@ -131,6 +148,7 @@ Never an error; no session needed. `Cache-Control: no-store`.
   "mode": "accounts",
   "user": null,
   "setup": false,
+  "hold": null,
   "methods": {"password": true, "oidc": {"name": "Company SSO"}}
 }
 ```
@@ -140,19 +158,91 @@ Never an error; no session needed. `Cache-Control: no-store`.
   built-in user: `{"id": "local", "username": "local", "name": "Local user", "role": "admin", …}`.
 - `setup`: `true` while there is no user at all; the app then shows the
   first-run page.
-- `methods.oidc` is `null` when no provider is configured. `methods` is absent
-  in single-user mode.
+- `hold`: `null`, or `"passkey"` when the signed-in user must register a passkey
+  before they can do anything else (see "When a passkey is required").
+- `methods` is kept for clients older than 2.8 and is absent in single-user
+  mode. `methods.oidc` is the provider that answers the pre-2.8 endpoints (see
+  "The pre-2.8 endpoints"), or `null` when there is none. The sign-in page reads
+  `GET /api/auth/providers` instead.
 
 ## Signing in
 
-Accounts mode only. The session is a cookie (`HttpOnly`, `SameSite=Lax`,
-`Secure` when `--public-url` is `https`); its value means nothing to the
-client. A session ends after 30 days without use and at the latest 90 days
-after sign-in. Changing a password ends the user's other sessions; disabling a
-user ends all of them.
+Accounts mode only. Single-user mode has no sign-in: every endpoint in this
+section, in "Account" and the security settings of "Administration" answers
+`404` there.
+
+The session is a cookie (`HttpOnly`, `SameSite=Lax`, `Secure` when
+`--public-url` is `https`); its value means nothing to the client. A session
+ends after `sessionIdleDays` without use (30 by default) and at the latest
+`sessionMaxDays` after sign-in (90 by default); both are security settings, and
+a change applies to the sessions that already exist at their next request.
+Changing a password ends the user's other sessions; disabling a user ends all
+of them.
 
 A password is at least 8 characters and at most 1024 bytes; nothing else is
 required of it.
+
+Every way of signing in ends in the same place: a session for an enabled
+account. They differ in what proves who the person is (a password, a passkey,
+an identity provider) and in what the server checks before it spends any work
+on that proof (the per-address request limit, the captcha, the failure caps;
+see "Rate limit, failure caps and lockout").
+
+### `GET /api/auth/providers`
+
+Public; what the sign-in page draws. `Cache-Control: no-store`. Answered from
+memory, without a database query.
+
+```json
+{
+  "providers": [
+    {"slug": "company", "kind": "oidc", "name": "Company SSO", "icon": "preset:microsoft"},
+    {"slug": "campus", "kind": "saml", "name": "Campus login", "icon": ""},
+    {"slug": "github", "kind": "github", "name": "GitHub", "icon": "preset:github"}
+  ],
+  "loginMode": "dual",
+  "local": true,
+  "sso": true,
+  "passkey": true
+}
+```
+
+- `providers` are the enabled ones, in the administrators' order. `kind` is
+  `oidc`, `saml` or `github`. `icon` is `""` (none) or `preset:<name>`, one of
+  the icons the web app ships (`google`, `microsoft`, `github`, `gitlab`,
+  `okta`, `keycloak`, `authentik`, `key`); never an address, so the sign-in page
+  never makes the browser ask another site for anything.
+- `loginMode` is the mode in effect: `dual`, `sso_first`, `sso_redirect` or
+  `local_only`. With no enabled provider it is `local_only`, whatever is stored.
+- `local`: whether the page shows the password form without being asked
+  (`false` only for `sso_redirect`).
+- `sso`: whether the page shows the provider buttons (`false` for `local_only`,
+  and whenever no provider is enabled).
+- `passkey`: whether passkey sign-in is available (passkeys are switched on and
+  the server has a public URL they can work with, see "Passkeys").
+
+Whether password sign-in is refused (`ssoOnly`) is never in this answer, nor
+anything about a particular account: neither may help someone choose which
+accounts to guess.
+
+#### The sign-in page
+
+What the page draws comes only from the answer above:
+
+1. `dual`: username, password, the captcha when one is needed, "Sign in"; below
+   it "or sign in with" and one "Sign in with {name}" button per provider; the
+   passkey button when `passkey`.
+2. `sso_first`: the provider buttons first; the password form is folded into a
+   link "Use a password instead" and opens when it is clicked.
+3. `sso_redirect`: with exactly one provider the page goes straight to its
+   `start` and shows "Going to {name}…"; with several it does not go anywhere
+   and lists the buttons. Either way there is a link "Use a password instead"
+   (it loads `/login?local=1`, which shows the form). The page never goes to the
+   provider when the address carries `?local=1` or `?sso_error=`, so a failed
+   sign-in does not bounce back and forth.
+4. `local_only`: the form only.
+
+A button is a full-page navigation to `GET /api/auth/{kind}/{slug}/start`.
 
 ### `POST /api/setup`
 
@@ -160,34 +250,159 @@ Creates the first administrator. Works only while there are no users; after
 that `409 exists`.
 
 ```json
-{"token": "…", "username": "kazuha", "name": "Kazuha", "password": "…"}
+{"token": "…", "username": "kazuha", "name": "Kazuha", "password": "…", "captcha": {"id": "…", "answer": "…"}}
 ```
 
 `token` is the setup token the server prints in its log at start-up while
 there are no users (it also prints a link of the form
-`<public url>/setup#<token>`). Wrong token: `403 forbidden`. `name` defaults to
-the username. `201` with `{"user": {…}}` and a session cookie. The user gets a
-personal space.
+`<public url>/setup#<token>`). Wrong token: `403 forbidden`, counted as a
+failure of the address. `name` defaults to the username. `captcha` is needed
+only when the `setup` context asks for one (see "Captcha"). `201` with
+`{"user": {…}}` and a session cookie. The user gets a personal space.
 
 ### `POST /api/login`
 
 ```json
-{"username": "kazuha", "password": "…"}
+{"username": "kazuha", "password": "…", "captcha": {"id": "…", "answer": "…"}}
 ```
 
-`200` with `{"user": {…}}` and a session cookie. Wrong username or password,
-or a disabled user: `401 unauthenticated`, with the same message in every
-case. Too many attempts from one address or against one username:
-`429 rate_limited`.
+`captcha` is `{"id", "answer"}` for the self-hosted image, `{"token"}` for a
+third-party one, and left out when `GET /api/captcha` said none is required.
+
+`200` with `{"user": {…}}` and a session cookie. The server checks, in this
+order, and stops at the first refusal:
+
+1. The address's requests this minute: `429 rate_limited`.
+2. The captcha, when the `login` context requires one for this address or this
+   username: `400 captcha_failed`. Nothing is counted against the password.
+3. The address's failures: `429 rate_limited`.
+4. With lockout on, the key the lockout scope names (see "Lockout"):
+   `429 rate_limited`.
+5. The password, against the stored hash (or a dummy hash for a username nobody
+   has, so both take as long).
+6. A wrong password (or no such user, or a user with no password) counts one
+   failure against the address, the username and the pair. If the username or
+   the pair has now reached the cap: `429 rate_limited`; otherwise
+   `401 unauthenticated`. A disabled user is `401 unauthenticated` too; the
+   message is the same in every case.
+7. With the password right: password sign-in refused for this account
+   (`ssoOnly`, see "Security settings"): `403 local_login_refused`; a passkey is
+   required and the user has one: `403 passkey_required` (the page offers the
+   passkey button).
+8. Success clears the username's and the pair's failures and gives back the
+   address's. A user who must have a passkey and has none gets the session with
+   `hold: "passkey"`.
+
+So the password is checked before anything that depends on the username, and a
+person who types their password right is not stopped by someone else's
+failures against their name, unless the administrators chose the lockout scope
+`account`.
 
 ### `POST /api/logout`
 
 `204`; ends the session if there is one.
 
-### `POST /api/auth/oidc/start`
+### Passkeys
 
-Begins sign-in with the configured OpenID Connect provider. `404` when none is
-configured.
+A passkey is a WebAuthn credential. It signs in on its own (no password), for
+local accounts and accounts made through a provider alike; a person can have up
+to 20. The relying party is the host of `--public-url`, so passkeys need a
+public URL that is `https` (or `http` on a loopback name for trying things out);
+without one `passkey` is `false` in `GET /api/auth/providers` and these
+endpoints answer `404`. Changing the host of `--public-url` makes every passkey
+registered before unusable; the server logs a warning at start-up when it sees
+the host change.
+
+Sign-in asks the authenticator for user verification (a PIN or biometric), and
+the server checks that it was given, because the passkey is the only factor.
+Registration prefers a discoverable credential (one the browser can offer
+without a username).
+
+#### `POST /api/auth/passkey/begin`
+
+Public. `{"username": "kazuha"}`, or `{}` for a discoverable sign-in (the
+browser offers the passkeys it has for this site). Counts against the
+address's requests this minute.
+
+`200` with `{"ceremony": "…", "options": {…}}`: `options` is the
+`PublicKeyCredentialRequestOptions` to pass to `navigator.credentials.get`. With
+a username, `allowCredentials` lists that user's passkeys. A username nobody has,
+or one with no passkey, gets one made-up credential id (derived from the
+username and a server key, so it is the same every time), and the answer looks
+the same as for a user with one passkey. A ceremony lasts 5 minutes and is used
+once; at most 10,000 are open at a time (the oldest are dropped first).
+
+#### `POST /api/auth/passkey/finish?ceremony={id}&return={path}`
+
+Public. The body is the credential the browser returned
+(`PublicKeyCredential` as JSON). Counts against the address's requests this
+minute. `200` with `{"user": {…}, "return": "/s/01JD3K8Q7Z"}` and a session
+cookie; `return` is made safe as for single sign-on.
+
+- `401 passkey_failed`: the ceremony is unknown, used or expired, the
+  credential is not registered, the signature or user verification does not
+  check out, the authenticator's counter went backwards (a sign that the key was
+  copied: refused, recorded in the audit log, and the stored counter is not
+  moved), or the account is disabled. One code and one message for all.
+- `403 local_login_refused`: `ssoOnly` is in effect and the account is not an
+  administrator (see "Security settings").
+
+A passkey sign-in costs two indexed queries (the credential, by its id or by
+the named user's handle, and the user, by its id: a browser that is signing in
+has no session whose cache could answer), one write (the credential's counter
+and last use) and the insert of the new session.
+
+#### When a passkey is required
+
+The administrators can require a passkey of chosen people
+(`PATCH /api/users/{id}` with `passkeyRequired`) or of a role
+(`passkeys.requireRoles` in the security settings). For such a person:
+
+- With a passkey registered, password sign-in answers
+  `403 passkey_required` after the password was checked (a wrong password gets
+  the ordinary answers, so the code says nothing to someone who does not know
+  it). The page then shows "Your account signs in with a passkey" and the
+  passkey button.
+- With no passkey yet, password sign-in succeeds into a held session:
+  `GET /api/session` has `hold: "passkey"`, and the app shows only "Set up a
+  passkey to continue" (the passkey part of the account's security page) and
+  "Sign out". Every request answers `403 passkey_required` except
+  `GET /api/session`, `GET /api/meta`, `GET /api/auth/providers`,
+  `GET /api/account`, the account's passkey endpoints and `POST /api/logout`.
+  The first registered passkey lifts the hold for the session at once.
+- A held session makes no API token and approves no OAuth consent: those
+  endpoints answer `403 passkey_required` like the rest (see "Held sessions,
+  API tokens and OAuth grants").
+- Sign-in through an identity provider is not held: the provider decides how
+  its people prove who they are.
+- If they lose every passkey, an administrator deletes the lost ones
+  (`DELETE /api/users/{id}/passkeys/{passkey}`); the next password sign-in is
+  held again until a new one is registered.
+
+Whether a person is required and whether they have a passkey are kept with the
+cached user, so the hold costs no query per request.
+
+### Single sign-on
+
+The administrators configure any number of providers (see "Sign-in
+providers"), each with a `slug` that is part of its addresses. `kind` is `oidc`
+(OpenID Connect: Google, Microsoft Entra ID, Keycloak, Authentik, …), `saml`
+(SAML 2.0) or `github` (GitHub's OAuth sign-in, which is not OpenID Connect:
+there is no ID token, so the server reads the user from GitHub's API). A
+disabled or unknown provider answers `404` (for a navigation: a redirect to
+`/login?sso_error=provider_unavailable`). SSO has no captcha: the provider
+guards its own sign-in.
+
+#### Starting: `GET /api/auth/{kind}/{slug}/start?return={path}`
+
+A navigation from the sign-in page. Redirects (`303`) to the provider and sets
+the short-lived cookie that ties the attempt to this browser. Only for signing
+in (`intent: login`); the cross-site rules apply, so another site cannot start
+one. Counts against the address's sign-in starts (30 a minute).
+
+#### Starting: `POST /api/auth/{kind}/{slug}/start`
+
+The same as `POST /api/auth/oidc/start` before 2.8, for every kind:
 
 ```json
 {"intent": "login", "token": "", "return": "/s/01JD3K8Q7Z"}
@@ -200,28 +415,305 @@ configured.
 - `return`: a path inside the app to end up on. Anything that is not a plain
   absolute path (`/…`, not `//…`, no backslash) is replaced by `/`.
 
-`200` with `{"url": "https://idp.example/authorize?…"}` and a short-lived
-cookie that ties the attempt to this browser. The client navigates to `url`.
+`200` with `{"url": "https://idp.example/authorize?…"}` and the cookie. The
+client navigates to `url`. Tokens never travel in an address: that is why
+`setup`, `invite` and `link` use this form.
 
-### `GET /api/auth/oidc/callback`
+An attempt lasts 10 minutes and is used once; at most 10,000 are open (the
+oldest go first). It is held in memory: a restart in the middle of a sign-in
+sends the person back to `/login?sso_error=expired`.
 
-The provider redirects here. The server finishes the sign-in and answers with
-a redirect (`303`) into the app, never JSON:
+#### OpenID Connect: `GET /api/auth/oidc/{slug}/callback`
+
+The provider redirects here (the redirect URI to register at the provider is
+`<public url>/api/auth/oidc/{slug}/callback`; the provider settings show it).
+The server checks `state`, the browser's cookie, the code exchange with PKCE,
+the ID token's signature, issuer, audience and nonce, and answers with a
+redirect (`303`) into the app, never JSON:
 
 - success: to the `return` path, with a session cookie (for `link`, the
   session stays as it is);
-- failure: to `/login?error=<code>` (for `link`: `/settings?error=<code>`).
-  Codes: `idp_error` (the provider refused or the answer did not verify),
-  `expired` (the attempt is unknown, used, or older than 10 minutes),
-  `no_account` (nobody has this identity and accounts are not created
-  automatically), `disabled`, `identity_in_use` (`link`: another user has it),
-  `invite_invalid`, `setup_invalid`.
+- failure: to `/login?sso_error=<code>` (for `link`:
+  `/settings?sso_error=<code>`).
 
-An identity is the pair of the provider's issuer and the `sub` claim. With
-`intent: "login"`, an identity nobody has creates a member account only when
-the server runs with `--oidc-auto-create`. New accounts take their name from
-the `name` claim and their username from `preferred_username` (or the part of
-`email` before `@`), made valid and unique.
+An OpenID Connect identity is the provider's issuer and the `sub` claim.
+
+#### GitHub: `GET /api/auth/github/{slug}/callback`
+
+The same flow and outcomes as OpenID Connect. The server exchanges the code,
+then reads `GET /user` (and `GET /user/emails` for a verified address, and
+`GET /user/orgs` when the provider names organisations) with the user's token,
+which it keeps only for the length of the request. The identity is the
+provider's base URL (`https://github.com`, or a GitHub Enterprise Server
+address) and the numeric user id, never the login name, which a GitHub user can
+change. The scopes asked for are `read:user` and `user:email`, plus `read:org`
+when organisations are named.
+
+#### SAML: `POST /api/auth/saml/{slug}/acs`
+
+The identity provider posts the browser here (`application/x-www-form-urlencoded`,
+`SAMLResponse` and `RelayState`; at most 1 MiB). The JSON-only and cross-site
+rules do not apply to it (see "Conventions"). Counts against the address's
+requests this minute.
+
+The browser cookie of a SAML attempt is `__Secure-petalbook_saml_<slug>`,
+`SameSite=None`, scoped to this path: the post comes from another site, and a
+`Lax` cookie would not be sent with it. So SAML needs an `https` public URL.
+
+A `link` started over SAML also sets `__Host-petalbook_saml_link_<slug>`
+(`SameSite=None; Secure; Path=/`, host-only), and the attempt keeps a hash of
+it. The session cookie is not sent with the cross-site post, and a sibling
+subdomain could set the `__Secure-` attempt cookie in someone else's browser,
+so the ACS links only when this cookie matches; otherwise it answers
+`sso_error=expired`.
+
+The server checks that `RelayState` equals the cookie, finds the attempt, and
+has the response validated against the provider's metadata (signature with
+SHA-256 or stronger, exactly one assertion, audience, destination, the
+`InResponseTo` of this attempt, time window, not seen before). Then it answers
+as the OpenID Connect callback does, with a `303`.
+
+A SAML identity is the identity provider's entity ID and the `NameID`. A
+transient `NameID` (a new value at every sign-in) is refused, because it cannot
+name an account. Responses the identity provider sends without being asked
+(IdP-initiated) are refused unless the provider allows them
+(`allowIdpInitiated`); they can then only sign in, to `/`.
+
+Validating a response needs no database query: the metadata is held in memory,
+and the assertion ids already used are kept in memory (at most 65,536, each
+until its assertion expires).
+
+#### SAML: `GET /api/auth/saml/{slug}/metadata`
+
+Public. The service provider metadata to give the identity provider
+(`application/samlmetadata+xml`): entity ID, the ACS address, the signing
+certificate (no encryption key is offered: encrypted assertions are refused). It is served for a provider that is not enabled yet, so it can be
+set up at the identity provider first.
+
+#### The pre-2.8 endpoints
+
+`POST /api/auth/oidc/start` and `GET /api/auth/oidc/callback` keep working,
+unchanged, for the one OpenID Connect provider marked `legacyCallback` (`404`
+when none is). That provider's redirect URI is the old one,
+`<public url>/api/auth/oidc/callback`, so what is registered at the identity
+provider does not have to change. Its failures now redirect with `sso_error=`
+like the others.
+
+The provider given with `--oidc-*` before 2.8 becomes that provider on the
+first start of 2.8:
+
+- If the command line has `--oidc-issuer` and the state database has never
+  imported one, the server stores an OpenID Connect provider with slug `sso`,
+  the name of `--oidc-name` (default "Single sign-on"), the issuer, client id,
+  scopes and `--oidc-auto-create` of the command line, the client secret sealed,
+  `legacyCallback` on, enabled. The login mode stays `dual` (what the page was
+  before) and `ssoOnly` off. It logs that it did so.
+- The identities people linked keep working without any change: an identity is
+  stored by issuer and subject, and the issuer is the same.
+- From then on the state database is what counts. When `--oidc-*` is still given
+  and differs from the stored provider (or that provider was deleted), the
+  server logs a warning at start-up and the security settings show a notice
+  `flags_ignored`; the flags change nothing. They are accepted, and ignored this
+  way, until they are removed in a later version.
+- Nothing in this import can stop anyone from signing in: passwords are
+  accepted as before, and an administrator can always use their password.
+
+#### `?sso_error=` codes
+
+The codes a failed sign-in or link sends to `/login?sso_error=` or
+`/settings?sso_error=`. The page shows a sentence for each and offers to try
+again. None says anything about an account that the person did not prove they
+own.
+
+| Code | Meaning |
+|---|---|
+| `provider_unavailable` | the provider is disabled or unknown, its discovery document or metadata cannot be fetched, or its stored secret cannot be opened with this server's key |
+| `idp_error` | the provider refused, or its answer did not verify (OpenID Connect, GitHub) |
+| `expired` | the attempt is unknown, used, older than 10 minutes, or was started in another browser |
+| `no_account` | nobody has this identity and the provider does not create accounts; also when an address match is ambiguous |
+| `not_allowed` | GitHub: the person is in none of the organisations the provider requires |
+| `disabled` | the account is disabled |
+| `identity_in_use` | `link`: another account has this identity |
+| `invite_invalid` | `invite`: the invite is unknown, used or expired |
+| `setup_invalid` | `setup`: setup is done, or the token is wrong |
+| `rate_limited` | the address made too many requests (SAML ACS, starts) |
+| `saml_destination` | the response has no `Destination`, or another one |
+| `saml_weak_signature` | the response is signed or digested with something weaker than SHA-256 |
+| `saml_encrypted` | the response carries an encrypted assertion, which the provider does not allow |
+| `saml_replay` | the assertion was used before |
+| `saml_multiple_assertions` | the response carries more than one assertion |
+| `saml_attributes` | an attribute is declared more than once |
+| `saml_transient_nameid` | the `NameID` is transient; set the identity provider to persistent, emailAddress or unspecified |
+| `saml_no_nameid` | the assertion has no `NameID` |
+| `saml_assertion_rejected` | any other reason the response did not validate (signature, audience, time) |
+| `internal` | something failed on the server; it is in the log |
+
+Before 2.8 the parameter was `error=`; the web app shipped with 2.8 reads
+`sso_error=`.
+
+#### Which account an identity signs in to
+
+For `intent: login`, in this order:
+
+1. The account that has this identity (by issuer and subject: one query).
+2. With `mergeVerifiedEmail` on for this provider, and only then: the one
+   account whose `email` equals the address the provider sent (ignoring case),
+   when the provider said the address is verified (`email_verified: true` in
+   OpenID Connect; a verified primary address on GitHub; for SAML, which has no
+   such claim, turning the option on means the administrators vouch for every
+   address the identity provider sends), and the account's `emailVerified` is
+   `true`. It is never an administrator's account, a disabled one, or one that
+   already has an identity from this provider. The identity is then attached to
+   it, and this is recorded in the audit log. Two accounts with the address:
+   `no_account`.
+3. With `autoCreate` on for this provider: a new member account, named as
+   before 2.8 (the `name` claim; the username from `preferred_username` or the
+   part of `email` before `@`, made valid and unique; for SAML, the attributes
+   the provider maps). Its `email` is the provider's address, and
+   `emailVerified` is whether the provider vouched for it. Never the first
+   account: that is made with the setup token. A GitHub provider can only create
+   accounts when it names organisations.
+4. Otherwise `no_account`.
+
+An address alone never merges accounts: the same address signing in from two
+providers makes two identities, and they are on one account only if the person
+linked the second one from their account (or the option above is on).
+
+Two providers may not share an issuer (see "Sign-in providers"), so an identity
+belongs to exactly one provider, and deleting a provider and adding it again
+with the same issuer brings its people's identities back.
+
+### Captcha
+
+The server's own image captcha (the default: nothing leaves the server), or
+Cloudflare Turnstile, Google reCAPTCHA (v2) or hCaptcha. Each context is
+switched on by itself:
+
+| Context | Form | Counted failures |
+|---|---|---|
+| `login` | `POST /api/login` | wrong passwords, by address and by username |
+| `invite` | `POST /api/invites/check`, `POST /api/invites/accept` | the address's failures |
+| `setup` | `POST /api/setup` | the address's failures |
+| `forgot`, `register` | reserved for password recovery and public registration; always `required: false` until they exist | |
+
+Each context asks for a captcha either `always` or `after_failures` (the
+default, after 3): once the address, or for `login` the username, has that many
+failures in the current window. Passkey sign-in and single sign-on have no
+captcha.
+
+#### `GET /api/captcha?ctx={context}&account={username}`
+
+Public. `Cache-Control: no-store`. Counts against the address's requests this
+minute. `account` matters only for `login`; the page asks again when the
+username changes (when the field loses focus, not at every key).
+
+```json
+{"required": true, "provider": "image", "siteKey": "", "id": "…", "image": "data:image/png;base64,…"}
+```
+
+- `required: false`: send nothing; the other fields are absent.
+- `provider: "image"`: show `image`; send `{"id", "answer"}`.
+- `turnstile`, `recaptcha`, `hcaptcha`: render the provider's widget with
+  `siteKey`; send `{"token"}`.
+- An unknown `ctx`: `400 invalid`.
+
+An image challenge lasts 5 minutes and can be answered once, right or wrong; at
+most 10,000 are held in memory (the oldest are dropped first). A wrong answer is
+`400 captcha_failed`; the page asks for a new challenge.
+
+The captcha is checked before anything else costs work: before the failure
+caps, the password hash and the token lookups, and a wrong captcha is not a
+wrong password. A third-party provider that cannot be reached, answers
+something unreadable, or reports a host name other than the host of
+`--public-url` is a failure (`captcha_failed`): the form is not let through
+when the check could not be made.
+
+### Rate limit, failure caps and lockout
+
+Every count is in memory, in this one process, and starts again from zero when
+the server restarts. Each table holds at most 10,000 keys and drops the one
+seen longest ago first (a key under lockout goes only when every other key is
+locked too), so made-up addresses and names cannot grow memory. Addresses are
+those of "Conventions" (`--trusted-proxy`; an IPv6 address counts by its /64).
+
+**Requests per minute, per address** (`limits.perMinute`, 10 by default). One
+allowance per address shared by `POST /api/login`, `POST /api/setup`,
+`POST /api/invites/check`, `POST /api/invites/accept`, `GET /api/captcha`,
+`POST /api/auth/passkey/begin`, `POST /api/auth/passkey/finish` and
+`POST /api/auth/saml/{slug}/acs`. Over it: `429 rate_limited` with
+`Retry-After` (for the ACS, a redirect to `/login?sso_error=rate_limited`). The
+starts of single sign-on keep their own allowance (30 a minute per address).
+
+**Failure caps** (`limits.maxFailures`, 10 by default, in a window of
+`limits.windowMinutes`, 15 by default). Failures are counted three ways: by
+address, by username, and by the pair. A window starts at a key's first failure
+and ends `windowMinutes` later. The address's count is checked before any hash
+or token is looked at; the username's and the pair's only after the password
+turned out wrong. Over a cap: `429 rate_limited`, `Retry-After` until the
+window ends. Wrong setup and invite tokens count against the address.
+
+**Lockout** (`lockout.enabled`, off by default). When a key reaches the cap it
+is locked for `lockout.minutes` (15 by default, 1 to 10,080), however the window
+goes on, and the lock is checked before the password. `lockout.scope` decides
+which key is locked:
+
+- `ip_account` (the default, and the one to use): the address and the username
+  together. Someone elsewhere cannot lock a person out, and an office behind one
+  address is not locked out for one person's mistakes.
+- `ip`: the address, for every username.
+- `account`: the username, from every address. This refuses the right password
+  for the length of the lock, so anyone who knows a username can keep that
+  person out. The security page says so next to the choice and asks to confirm.
+
+A locked attempt is `429 rate_limited` with `Retry-After` until the lock ends,
+and is recorded in the audit log.
+
+### Audit log
+
+Sign-in events, security changes, API tokens made or revoked and OAuth grants
+revoked go to the audit log in the state database (see `GET /api/admin/audit`).
+Rows are written in batches in the background, from a queue of at most 10,000;
+when the queue is full, rows are dropped and counted, and a `dropped` row says
+how many. At most 100,000 rows or 90 days are kept.
+
+| `kind` | When | `detail` |
+|---|---|---|
+| `login` | a session was started | `method` (`password`, `passkey`, `oidc`, `saml`, `github`), `provider` (slug), `created` (an account was made) |
+| `login_failed` | a sign-in was refused | `method`, `reason` (`bad_password`, `disabled`, `local_login_refused`, `passkey_required`, `passkey_failed`, `captcha_failed`, `rate_limited` for an attempt turned away by a lockout or by the address's failure cap, an `sso_error` code), `provider`; the username as typed, also for a name nobody has. `captcha_failed` and an address's `rate_limited` are written at most once a minute per address (IPv6 by /64) and reason; a passkey sign-in whose ceremony was never begun, like a single sign-on callback that matches no sign-in, is not written |
+| `rate_limited` | a key first went over the per-minute limit or a failure cap in a window (once per key and window, not per request) | `limit` (`per_minute`, `ip`, `username`, `pair`) |
+| `lockout` | a key was locked | `scope`, `minutes` |
+| `passkey_clone` | a passkey's counter went backwards | `passkey` (id) |
+| `identity_linked`, `identity_unlinked` | an identity was attached or removed | `provider`, `by` (`user`, `email`, `admin`) |
+| `passkey_added`, `passkey_removed` | a passkey was registered or deleted | `passkey`, `by` (`user`, `admin`) |
+| `security_changed` | `PUT /api/admin/security` changed something | `from`, `to`: the changed fields only, never a secret (a secret shows as `"changed"`) |
+| `provider_created`, `provider_changed`, `provider_deleted` | a sign-in provider changed | `slug`, `kind`, the changed fields (secrets as `"changed"`) |
+| `user_changed` | an administrator changed `role`, `disabled`, `passkeyRequired`, `email` or `emailVerified` | the changed fields |
+| `token_created` | an API token was made (`POST /api/account/tokens`) | `token` (id), `name`, `access`, `spaces` (ids); never the secret |
+| `token_revoked` | an API token was revoked through the server (once: revoking one already revoked writes nothing) | `token`, `name`, `by` (`user`, `admin`) |
+| `grant_revoked` | an OAuth grant was revoked through the server | `grant`, `client` (its name), `by` (`user`, `admin`) |
+| `dropped` | rows were lost because the queue was full | `count` |
+
+Each row has `at`, `kind`, `actor` (the user who acted, if any), `user` (the
+account it is about, if any), `username` (as typed, for refused sign-ins), `ip`
+and `detail`.
+
+### Sign-in error codes
+
+The codes of this section, besides those of "Conventions":
+
+| Code | Status | When |
+|---|---|---|
+| `captcha_failed` | 400 | a captcha was required and missing, wrong, expired or used, or a third-party check failed |
+| `rate_limited` | 429 | the per-minute limit, a failure cap or a lockout; `Retry-After` in seconds |
+| `local_login_refused` | 403 | `ssoOnly` is in effect and a non-administrator signed in with a password or a passkey, or accepted an invite with a password |
+| `passkey_required` | 403 | the password was right but this person must use a passkey; or the session is held until a passkey is registered |
+| `passkey_failed` | 401 (sign-in), 400 (registration) | the ceremony is unknown or expired, or the credential did not verify |
+| `recent_login_required` | 403 | registering a passkey needs a sign-in in the last 10 minutes |
+| `too_many_passkeys` | 409 | the account has 20 passkeys |
+| `unauthenticated` | 401 | wrong username or password, or a disabled account |
+
+The codes of the security settings and the provider settings are listed with
+them in "Administration".
 
 ## Account
 
@@ -233,16 +725,24 @@ Accounts mode, signed in.
 {
   "user": {…},
   "hasPassword": true,
-  "identities": [{"id": "01JD3M2A4C", "provider": "Company SSO", "label": "kazuha@example.com", "created": "2026-11-21T08:30:00Z"}]
+  "identities": [{"id": "01JD3M2A4C", "provider": "Company SSO", "providerSlug": "company", "kind": "oidc", "label": "kazuha@example.com", "created": "2026-11-21T08:30:00Z"}],
+  "passkeys": [{"id": "01JD3N7X2B", "name": "MacBook", "created": "2026-11-21T08:30:00Z", "lastUsed": "2026-11-22T09:10:00Z", "synced": true}]
 }
 ```
 
-`label` is the `email` or `preferred_username` claim seen when the identity
-was attached, for display only.
+`label` is the `email` or `preferred_username` claim (for SAML the mapped email
+or the `NameID`; for GitHub the login name) seen when the identity was attached,
+for display only. `providerSlug` and `kind` are `""` for an identity whose
+provider was deleted; `provider` is then the issuer's host. `synced` is whether
+the authenticator says the passkey is backed up (synced between devices).
+
+The page offers "Link" for every enabled provider of `GET /api/auth/providers`
+that the user has no identity from.
 
 ### `PATCH /api/account`
 
-`{"name": "…", "email": "…"}`, each optional. `200` with `{"user": {…}}`.
+`{"name": "…", "email": "…"}`, each optional. `200` with `{"user": {…}}`. A
+changed `email` makes `emailVerified` `false`.
 
 ### `POST /api/account/password`
 
@@ -250,10 +750,48 @@ was attached, for display only.
 password and must be left out when they have none (an account made through
 single sign-on). Wrong `current`: `403 forbidden`. `204`.
 
+### Linking an identity
+
+`POST /api/auth/{kind}/{slug}/start` with `{"intent": "link"}`, then the
+provider's callback, which returns to `/settings` (or
+`/settings?sso_error=<code>`). Linking an identity the user already has changes
+nothing; one another account has is `identity_in_use`. Linking ignores
+addresses: it attaches exactly the identity the person proved.
+
 ### `DELETE /api/account/identities/{id}`
 
 `204`. Refused with `409 conflict` when it would leave the user with no way to
-sign in (no password and no other identity).
+sign in (no password, no other identity, no passkey).
+
+### Account passkeys
+
+`GET /api/account/passkeys` is `{"passkeys": […]}` as in `GET /api/account`.
+
+#### `POST /api/account/passkeys/begin`
+
+`{"name": "MacBook"}` (1 to 64 characters; default "Passkey"). Needs a session
+signed in within the last 10 minutes, by any method: otherwise
+`403 recent_login_required`, and the page sends the person through sign-in again
+with `return` back to this page. `409 too_many_passkeys` at 20. `200` with
+`{"ceremony": "…", "options": {…}}`: the `PublicKeyCredentialCreationOptions` for
+`navigator.credentials.create`, which already excludes the user's passkeys.
+
+#### `POST /api/account/passkeys/finish?ceremony={id}`
+
+The body is the credential the browser returned. `201` with
+`{"passkeys": […]}`. `400 passkey_failed` when it does not verify,
+`409 exists` when that credential is already registered. A held session
+(`hold: "passkey"`) is released.
+
+#### `PATCH /api/account/passkeys/{id}`
+
+`{"name": "…"}`. `200` with the passkey. `404` for another user's.
+
+#### `DELETE /api/account/passkeys/{id}`
+
+`204`. `409 conflict` when it would leave the user with no way to sign in.
+Deleting the last passkey of someone who must have one is allowed: their next
+sign-in is held until they register another.
 
 ## Users and invites
 
@@ -271,14 +809,26 @@ leaves out the disabled accounts, before the limit counts (`enabled=0`, the
 default, keeps them; `400 invalid` for anything else). A picker that looks for
 one person sends `q` and `limit`, so it never loads every account.
 
+Each user here also has `passkeys` (how many) and `sso` (how many identities).
+
 ### `PATCH /api/users/{id}`
 
-`{"role": "member", "disabled": true}`, each optional. `200` with
-`{"user": {…}}`. `409 conflict` when the change would leave no enabled
-administrator, or when an administrator tries to disable themself.
+`{"role": "member", "disabled": true, "passkeyRequired": true, "email": "…", "emailVerified": true}`,
+each optional. `200` with `{"user": {…}}`. `409 conflict` when the change would
+leave no enabled administrator, when an administrator tries to disable themself,
+or, while `ssoOnly` is in effect, when it would leave no enabled administrator
+with a password. `passkeyRequired: true` is refused with
+`400 passkey_unavailable` while passkeys cannot be used (see "Passkeys").
+Setting `email` without `emailVerified` makes it unverified.
 
 An administrator cannot open another user's space through the API. Whoever
 can read the server's disk can read every file.
+
+### `GET /api/users/{id}/passkeys`, `DELETE /api/users/{id}/passkeys/{passkey}`
+
+The user's passkeys as in `GET /api/account` (names, dates, no key material),
+and deleting one (`204`), for a person who lost a device. Deleting is recorded
+in the audit log.
 
 ### `POST /api/invites`
 
@@ -302,18 +852,22 @@ neither used nor expired.
 
 ### `POST /api/invites/check` (public)
 
-`{"token": "…"}`. `200` with `{"role": "member", "expires": "…"}`, or
-`404 not_found` for a token that is unknown, used or expired.
+`{"token": "…", "captcha": {…}}`. `200` with `{"role": "member", "expires": "…"}`, or
+`404 not_found` for a token that is unknown, used or expired (a failure of the
+address). `captcha` as for the `invite` context.
 
 ### `POST /api/invites/accept` (public)
 
 ```json
-{"token": "…", "username": "tang", "name": "Tang", "password": "…"}
+{"token": "…", "username": "tang", "name": "Tang", "password": "…", "captcha": {…}}
 ```
 
 `201` with `{"user": {…}}` and a session cookie; the user gets a personal
 space. `404 not_found` for a bad token, `409 exists` when the username is
-taken (the invite stays usable).
+taken (the invite stays usable). While `ssoOnly` is in effect, an invite for
+the `member` role cannot be accepted with a password: `403 local_login_refused`
+(the page offers the providers instead, which accept it with
+`intent: "invite"`); an account made that way could never sign in.
 
 ## Spaces
 
@@ -2465,6 +3019,29 @@ a few of their spaces, without that person's password or session. It is never
 more than its owner: what a request with a token may do is what the owner may
 do now, narrowed by the token.
 
+### Held sessions, API tokens and OAuth grants
+
+A hold (see "Passkeys") belongs to a session, not to the person: tokens and
+grants are independent of it. A person who is held cannot make a token or
+approve a consent (`403 passkey_required`), so nobody who only has the
+password gets a new credential that way. The tokens and grants the person
+made before a passkey was required of them keep working, with the same rules
+as always; requiring a passkey does not revoke them. Revoke them
+(`DELETE /api/admin/tokens/{id}`, `DELETE /api/admin/grants/{id}`) to stop
+them. This keeps a token request free of the passkey check (no query per
+request) and leaves running scripts and MCP clients alone when an
+administrator raises the sign-in requirements.
+
+The same holds for a lockout and for `ssoOnly`: both govern signing in, not
+credentials already made. A locked-out account, or a non-administrator under
+`ssoOnly`, keeps its tokens and grants; revoke them as above. Only a disabled
+owner is refused at once (`token_owner_disabled`, `invalid_grant`).
+
+`GET /oauth/authorize` with a held session goes on to the consent page as
+usual; the web app shows the passkey page there instead, and the consent page
+once a passkey is registered (the address is kept, also through the fresh
+sign-in that registering may ask for).
+
 ### How a token is presented
 
 `Authorization: Bearer pbk_…` on the request. Nothing else carries one (no
@@ -3212,6 +3789,231 @@ again. `409 personal_space` for a personal space, which goes with its person.
 in memory now (idle ones are closed, see `--space-idle`). `diskFreeBytes` is
 the room left for the server on the disk of the data directory; it is absent
 on platforms that cannot say (anything but Linux, macOS and FreeBSD).
+
+### Security settings
+
+The 安全 page of `/admin`. The settings are in the state database. The server
+reads them once and keeps them in memory: a `PUT` takes effect at the next
+request, without a restart, and a change made by the command-line tool
+(`petalbook security reset`) within `CacheTTL` (5 minutes; one small query of a
+revision number, not one per request).
+
+#### `GET /api/admin/security`
+
+```json
+{
+  "login": {"mode": "dual", "effectiveMode": "dual", "ssoOnly": false, "ssoOnlyInEffect": false, "ssoAvailable": true},
+  "passkeys": {"enabled": true, "available": true, "requireRoles": [], "required": 2, "requiredWithout": 1},
+  "captcha": {
+    "provider": "image", "siteKey": "", "hasSecret": false,
+    "contexts": {
+      "login":  {"on": false, "when": "after_failures", "failures": 3},
+      "invite": {"on": false, "when": "after_failures", "failures": 3},
+      "setup":  {"on": false, "when": "after_failures", "failures": 3}
+    }
+  },
+  "lockout": {"enabled": false, "minutes": 15, "scope": "ip_account"},
+  "limits": {"perMinute": 10, "maxFailures": 10, "windowMinutes": 15, "sessionIdleDays": 30, "sessionMaxDays": 90},
+  "passwordAdmins": 1,
+  "notices": []
+}
+```
+
+- `login.mode` is what is stored; `effectiveMode` what the sign-in page uses
+  (`local_only` with no enabled provider: the page says so, and the choice is
+  kept for when one is added). `ssoAvailable`: some provider is enabled.
+- `login.ssoOnly`: refuse password and passkey sign-in for everyone who is not
+  an administrator (`403 local_login_refused`, checked after the password, so
+  it tells nothing to someone who does not know it). Administrators are never
+  refused: when the identity provider breaks, they can still sign in and fix
+  it. `ssoOnlyInEffect` is `false` while the page offers no provider
+  (`effectiveMode` is `local_only`): refusing passwords then would leave people
+  a form that always fails and nothing else.
+- `passkeys.enabled` (default `true`) switches passkeys on for the whole
+  server; `available` is whether they can work (see "Passkeys"). `requireRoles`
+  is `[]`, `["admin"]` or `["admin", "member"]`. `required` counts the people a
+  passkey is required of (by role or by themselves), `requiredWithout` those of
+  them who have none yet and will be held at their next sign-in.
+- `captcha.provider` is `image`, `turnstile`, `recaptcha` or `hcaptcha`.
+  `siteKey` is public (it goes into the page). The secret is never returned:
+  `hasSecret` says whether one is stored. `contexts.*.when` is `always` or
+  `after_failures`; `failures` is 1 to 100.
+- `lockout` and `limits` as in "Rate limit, failure caps and lockout".
+  `sessionIdleDays` is 1 to 365, `sessionMaxDays` 1 to 3650 and at least
+  `sessionIdleDays`.
+- `passwordAdmins` counts the enabled administrators with a password: the ones
+  who can still sign in if every provider fails.
+- `notices`: things the administrators should know, each `{"code", "message"}`:
+  `flags_ignored` (the `--oidc-*` flags differ from the stored provider),
+  `secret_unreadable` (a stored secret cannot be opened with this server's key,
+  with `slug` or `field`), `passkey_host_changed`.
+
+#### `PUT /api/admin/security`
+
+Takes any of the blocks `login`, `passkeys`, `captcha`, `lockout`, `limits`,
+and within a block any of its fields; what is left out stays. A secret is
+`captcha.secret`: absent keeps the stored one, `""` clears it. Everything sent
+is checked before anything is stored, so a refusal changes nothing. A value out
+of range is refused, never clamped. `200` with the settings as `GET` answers,
+and one `security_changed` row in the audit log.
+
+Refusals (`400` unless stated):
+
+| `error` | When |
+|---|---|
+| `invalid` | an unknown field value: a mode, scope, provider, context or role that does not exist, or a number out of range (the message names the field) |
+| `local_admin_required` | `ssoOnly: true`, or a `mode` other than `local_only` while `ssoOnly` is on and the stored mode is `local_only`, while no enabled administrator has a password. Creating or enabling a provider while `ssoOnly` is on is refused the same way, and while `ssoOnly` is stored (in effect or not) the last enabled administrator with a password cannot be made a member or disabled (`409 conflict`) |
+| `sso_only_with_registration` | `ssoOnly: true` while public registration is open (reserved: there is no public registration yet) |
+| `captcha_site_key_required` | a third-party provider with a context switched on and no `siteKey` |
+| `captcha_secret_required` | a third-party provider with a context switched on and no secret; a secret stored for another provider does not count, so changing provider needs the new secret in the same request |
+| `captcha_needs_public_url` | a third-party provider without `--public-url` (its host name is what the answer is checked against) |
+| `passkey_unavailable` | `requireRoles` not empty, or `passkeys.enabled: true` with requirements, while passkeys cannot work (no suitable public URL) |
+| `passkey_requirement_unsatisfiable` | `passkeys.enabled: false` while passkeys are required of someone (lift the requirements first) |
+
+### Sign-in providers
+
+At most 50. Each has a `slug`: 1 to 32 characters of `a-z`, `0-9` and `-`,
+starting with a letter or digit, unique and fixed once made (it is in the
+addresses registered at the identity provider). All providers are read into
+memory once; a change re-reads them and rebuilds only the changed provider's
+client. OpenID Connect discovery documents and SAML metadata are kept in the
+state database and in memory, so a sign-in does not fetch them; SAML metadata
+given by address is fetched again every 24 hours in the background and on
+`refresh`.
+
+Secrets (an OpenID Connect or GitHub client secret, the SAML signing key) are
+sealed with the server's key (`secret.key`, as remote credentials are) and are
+never returned: `hasSecret` says whether one is stored.
+
+#### Provider
+
+```json
+{
+  "slug": "company", "kind": "oidc", "name": "Company SSO", "icon": "preset:microsoft",
+  "enabled": true, "order": 0,
+  "autoCreate": false, "mergeVerifiedEmail": false,
+  "oidc": {"issuer": "https://login.microsoftonline.com/<tenant>/v2.0", "clientId": "…", "hasSecret": true,
+           "scopes": ["profile", "email"], "legacyCallback": false,
+           "redirectUrl": "https://notes.example.com/api/auth/oidc/company/callback"},
+  "status": {"ok": true, "checked": "2026-11-23T08:00:00Z", "message": ""},
+  "people": 12,
+  "created": "…", "updated": "…"
+}
+```
+
+- `kind` is fixed once made. Exactly one of `oidc`, `saml`, `github` is present,
+  matching it.
+- `name` is 1 to 60 characters; `icon` as in `GET /api/auth/providers`.
+- `order` sorts the buttons (then `name`).
+- `autoCreate`: an identity nobody has makes a member account at its first
+  sign-in (see "Which account an identity signs in to"). Off by default.
+- `mergeVerifiedEmail`: the verified-address match of the same section. Off by
+  default; the page explains that it lets this provider sign people in to
+  existing accounts.
+- `status` is the last discovery or metadata fetch; `people` how many accounts
+  have an identity from this provider.
+
+`oidc`: `issuer` (an `https` address), `clientId`, the secret (write-only
+`clientSecret`; may be empty for a public client: PKCE is always used),
+`scopes` besides `openid` (default `profile`, `email`), `legacyCallback` (at most
+one provider has it, see "The pre-2.8 endpoints"), and the read-only
+`redirectUrl` to register.
+
+`saml`:
+
+```json
+{"metadataUrl": "https://idp.example/metadata", "metadataXml": "", "idpEntityId": "https://idp.example",
+ "entityId": "https://notes.example.com/api/auth/saml/campus/metadata",
+ "acsUrl": "https://notes.example.com/api/auth/saml/campus/acs",
+ "metadataPath": "/api/auth/saml/campus/metadata",
+ "attributes": {"email": "mail", "name": "displayName", "username": "uid"},
+ "nameIdFormat": "", "signRequests": false, "allowIdpInitiated": false, "certificate": "-----BEGIN CERTIFICATE-----…", "certificateExpires": "2036-11-23T00:00:00Z"}
+```
+
+One of `metadataUrl` (`https`) or `metadataXml` is given; `idpEntityId` is read
+from the metadata. `entityId` defaults to the metadata address shown. The
+signing key and certificate are made by the server when the provider is
+created (RSA 2048, 10 years); the key is never shown. `nameIdFormat` `""` lets
+the identity provider choose (transient is refused at sign-in). `attributes`
+name where the email, display name and username come from (empty: the
+`NameID`).
+
+`github`:
+
+```json
+{"baseUrl": "https://github.com", "clientId": "…", "hasSecret": true, "organizations": ["KazuhaHub"],
+ "redirectUrl": "https://notes.example.com/api/auth/github/github/callback"}
+```
+
+`baseUrl` is `https://github.com` or a GitHub Enterprise Server address.
+`organizations`: when not empty, only members of one of them may sign in
+(`sso_error=not_allowed` otherwise).
+
+#### `GET /api/admin/auth/providers`, `GET /api/admin/auth/providers/{slug}`
+
+`{"providers": [{…}]}` in `order`, and one provider.
+
+#### `POST /api/admin/auth/providers`
+
+A provider as above, with `slug`, `kind`, `name` and the kind's required
+fields; for `oidc` and `github` the secret as `clientSecret`. `201` with the
+provider. The server fetches the discovery document or the metadata before it
+answers; a provider that cannot be reached is still stored, `enabled: false`
+unless asked otherwise, with `status.ok: false`.
+
+#### `PATCH /api/admin/auth/providers/{slug}`
+
+Any fields but `slug` and `kind`. `clientSecret` absent keeps the stored one,
+`""` clears it. `200` with the provider.
+
+#### `DELETE /api/admin/auth/providers/{slug}?force=1`
+
+`204`. The identities of its people stay (they come back if a provider with the
+same issuer is added). Without `force=1`, refused with `409 provider_in_use`
+(and `{"accounts": n}`) when some account has no other way to sign in: no
+password, no passkey, no identity from another provider.
+
+#### `POST /api/admin/auth/providers/{slug}/refresh`
+
+Fetches the discovery document or the metadata now. `200` with the provider
+(its `status` says how it went).
+
+#### Provider refusals
+
+| `error` | Status | When |
+|---|---|---|
+| `invalid` | 400 | a field is missing, too long or not of its form (the message names it) |
+| `exists` | 409 | the slug is taken |
+| `provider_issuer_in_use` | 409 | another provider has this issuer (OpenID Connect issuer, SAML entity ID, GitHub base URL) |
+| `provider_limit` | 409 | there are 50 providers |
+| `legacy_callback_in_use` | 409 | another provider has `legacyCallback` |
+| `oidc_issuer_invalid` | 400 | the issuer is not an `https` address |
+| `saml_needs_https` | 400 | SAML without an `https` `--public-url` (the cookie that crosses from the identity provider must be `Secure`) |
+| `saml_metadata_invalid` | 400 | the metadata cannot be parsed, has no signing certificate or no redirect binding for sign-in |
+| `github_auto_create_needs_org` | 400 | `autoCreate` on a GitHub provider that names no organisation: anyone with a GitHub account could make one |
+| `public_url_required` | 400 | any provider without `--public-url` |
+| `provider_in_use` | 409 | `DELETE` without `force=1`, see above |
+
+### `GET /api/admin/audit?kind={kind}&user={id}&cursor={cursor}&limit={n}`
+
+The audit log (see "Audit log" under "Signing in"), newest first:
+
+```json
+{"items": [{"id": "01JD3P…", "at": "2026-11-23T08:30:00Z", "kind": "lockout", "actor": null,
+            "user": null, "username": "kazuha", "ip": "203.0.113.7", "detail": {"scope": "ip_account", "minutes": 15}}],
+ "next": "01JD3O…"}
+```
+
+`kind` and `user` filter; `limit` is 1 to 200 (default 50). One query per page.
+
+### `petalbook security reset --data DIR`
+
+The command-line rescue for settings that keep everyone out: sets the login
+mode to `dual`, `ssoOnly` off, lockout off, every captcha context off and
+`passkeys.requireRoles` to `[]`. Providers, people and per-person
+requirements are untouched (`petalbook user passwd` sets a password). A
+running server sees it within 5 minutes; it is recorded in the audit log with
+`actor` `null` and `detail.by` `"cli"`.
 
 ### Machine access
 

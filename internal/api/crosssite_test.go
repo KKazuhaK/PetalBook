@@ -60,7 +60,7 @@ func TestOIDCCallbackIsExemptFromTheCrossSiteRules(t *testing.T) {
 		// The provider's redirect is cross-site by nature: it must get through to
 		// the handler (here no provider is configured, so the handler refuses).
 		r := c.do("GET", "/api/auth/oidc/callback?state=x&code=y", nil, "Sec-Fetch-Site", "cross-site", "Origin", "https://idp.example")
-		if r.code != 303 || r.resp.Header.Get("Location") != "/login?error=idp_error" {
+		if r.code != 303 || r.resp.Header.Get("Location") != "/login?sso_error=provider_unavailable" {
 			t.Fatalf("%d %s %s", r.code, r.resp.Header.Get("Location"), r.raw)
 		}
 		// Only that one route is exempt.

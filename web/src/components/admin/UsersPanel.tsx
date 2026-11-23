@@ -1,20 +1,23 @@
-import { useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { adminApi, useInvites, useUsers } from '@/api/admin'
+import { adminApi, useInvites, useSecuritySettings, useUsers } from '@/api/admin'
 import { keys, useSession } from '@/api/hooks'
-import type { CreatedInvite, Role, User } from '@/api/types'
+import type { CreatedInvite, Passkey, Role, User } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { SettingsSection } from '@/components/settings/SettingsParts'
 import { ErrorState, PageFallback } from '@/components/common'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { absoluteTime } from '@/lib/time'
 import { t } from '@/i18n'
+import { tsec } from '@/i18n/security'
 
 // Users and invites, for administrators. Moved from the old users page; the
 // lists and forms are as they were.
@@ -37,6 +40,7 @@ export function UsersPanel() {
 
 // What a 409 from changing a user means, in plain words.
 function conflictMessage(e: unknown, disabling: boolean): string {
+  if (e instanceof ApiError && e.code === 'passkey_unavailable') return tsec.users.passkeyUnavailableCode
   if (e instanceof ApiError && e.code === 'conflict') return disabling && /自己|themself|yourself/i.test(e.message) ? t.users.selfDisable : e.message || t.users.lastAdmin
   return e instanceof ApiError ? e.message : t.users.changeFailed
 }
@@ -45,21 +49,27 @@ function UserList({ users, meId }: { users: User[]; meId: string }) {
   const qc = useQueryClient()
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<{ id: string; message: string } | null>(null)
+  const [open, setOpen] = useState<string | null>(null)
   const messageRef = useRef<HTMLParagraphElement>(null)
+  // The roles a passkey is required of: for them the switch is on and cannot be turned off here.
+  const requireRoles = useSecuritySettings().data?.passkeys.requireRoles ?? []
 
-  const change = async (u: User, patch: { role?: Role; disabled?: boolean }) => {
+  const change = async (u: User, patch: { role?: Role; disabled?: boolean; passkeyRequired?: boolean; email?: string; emailVerified?: boolean }) => {
     setBusy(u.id)
     setError(null)
     try {
       const { user } = await adminApi.updateUser(u.id, patch)
-      qc.setQueryData<{ users: User[] }>(keys.users, (prev) => prev && { users: prev.users.map((x) => (x.id === user.id ? user : x)) })
+      qc.setQueryData<{ users: User[] }>(keys.users, (prev) => prev && { users: prev.users.map((x) => (x.id === user.id ? { ...x, ...user } : x)) })
     } catch (e) {
       // Whatever the server refused, the list may be out of date: ask again.
       void qc.invalidateQueries({ queryKey: keys.users })
       setError({ id: u.id, message: conflictMessage(e, patch.disabled === true) })
       setTimeout(() => messageRef.current?.focus(), 0)
+      setBusy(null)
+      return false
     }
     setBusy(null)
+    return true
   }
 
   return (
@@ -79,8 +89,22 @@ function UserList({ users, meId }: { users: User[]; meId: string }) {
                 <div className="truncate text-xs text-muted-foreground">
                   {u.username}
                   {u.email ? ` · ${u.email}` : ''}
+                  {u.email && u.emailVerified ? ` · ${tsec.users.verified}` : ''}
+                </div>
+                <div className="text-xs break-words text-muted-foreground" data-slot="user-counts">
+                  {tsec.users.counts(u.passkeys ?? 0, u.sso ?? 0)}
                 </div>
               </div>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Switch
+                  checked={u.passkeyRequired}
+                  disabled={busy === u.id || requireRoles.includes(u.role)}
+                  aria-label={tsec.users.passkeyRequiredFor(u.name)}
+                  onCheckedChange={(on) => void change(u, { passkeyRequired: on })}
+                />
+                {tsec.users.passkeyRequired}
+                {requireRoles.includes(u.role) && <span data-slot="passkey-by-role">{tsec.users.passkeyByRole}</span>}
+              </label>
               <div className="w-28">
                 <NativeSelect
                   className="h-8"
@@ -96,11 +120,123 @@ function UserList({ users, meId }: { users: User[]; meId: string }) {
               <Button type="button" variant="outline" size="sm" disabled={busy === u.id} onClick={() => void change(u, { disabled: !u.disabled })} aria-label={t.fmt.labelled(u.disabled ? t.users.enable : t.users.disable, u.name)}>
                 {u.disabled ? t.users.enable : t.users.disable}
               </Button>
+              <Button type="button" variant="ghost" size="sm" aria-expanded={open === u.id} aria-label={tsec.users.editFor(u.name)} onClick={() => setOpen(open === u.id ? null : u.id)}>
+                {open === u.id ? tsec.users.close : tsec.users.edit}
+              </Button>
+              {open === u.id && <UserDetails u={u} busy={busy === u.id} save={(patch) => change(u, patch)} />}
             </li>
           )
         })}
       </ul>
     </SettingsSection>
+  )
+}
+
+// What an administrator can do for one person beyond the row: their address, and the passkeys of someone who lost a device.
+function UserDetails({ u, busy, save }: { u: User; busy: boolean; save: (patch: { email?: string; emailVerified?: boolean }) => Promise<boolean> }) {
+  const qc = useQueryClient()
+  const [email, setEmail] = useState(u.email)
+  const [saved, setSaved] = useState(false)
+  const [passkeys, setPasskeys] = useState<Passkey[] | null>(null)
+  const [error, setError] = useState('')
+  const [removing, setRemoving] = useState<Passkey | null>(null)
+
+  // The person's passkeys are read when the details open, and not before.
+  useEffect(() => {
+    const ctl = new AbortController()
+    adminApi.userPasskeys(u.id, ctl.signal).then(
+      (r) => setPasskeys(r.passkeys),
+      (e: unknown) => {
+        if (e instanceof DOMException && e.name === 'AbortError') return
+        setError(tsec.users.loadPasskeysFailed)
+      },
+    )
+    return () => ctl.abort()
+  }, [u.id])
+
+  const saveEmail = async (e: FormEvent) => {
+    e.preventDefault()
+    setSaved(false)
+    // An address set on its own is not verified; saying so is the next switch.
+    if (await save({ email: email.trim() })) setSaved(true)
+  }
+  const remove = async () => {
+    if (!removing) return
+    const target = removing
+    try {
+      await adminApi.deleteUserPasskey(u.id, target.id)
+      setPasskeys((list) => list && list.filter((p) => p.id !== target.id))
+      qc.setQueryData<{ users: User[] }>(keys.users, (prev) => prev && { users: prev.users.map((x) => (x.id === u.id ? { ...x, passkeys: Math.max(0, (x.passkeys ?? 1) - 1) } : x)) })
+      toast.success(tsec.users.passkeyDeleted)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : t.auth.failed)
+    }
+    setRemoving(null)
+  }
+
+  return (
+    <div className="grid min-w-0 basis-full grid-cols-1 gap-4 border-t pt-3" data-slot="user-details">
+      <form className="grid min-w-0 grid-cols-1 gap-2 sm:flex sm:items-end" onSubmit={(e) => void saveEmail(e)}>
+        <div className="grid min-w-0 gap-1.5 sm:flex-1">
+          <Label htmlFor={`email-${u.id}`}>{tsec.users.email}</Label>
+          <Input id={`email-${u.id}`} type="email" value={email} onChange={(e) => { setEmail(e.target.value); setSaved(false) }} autoComplete="off" />
+        </div>
+        <Button type="submit" variant="outline" disabled={busy || email.trim() === u.email}>
+          {tsec.users.saveEmail}
+        </Button>
+        <span role="status" className="text-xs text-muted-foreground">
+          {saved ? tsec.users.emailSaved : ''}
+        </span>
+      </form>
+      <label className="flex min-w-0 items-start gap-3 text-sm">
+        <Switch checked={u.emailVerified} disabled={busy || !u.email} aria-label={tsec.users.emailVerified} onCheckedChange={(on) => void save({ emailVerified: on })} className="mt-0.5" />
+        <span className="min-w-0">
+          {tsec.users.emailVerified}
+          <span className="block text-xs break-words text-muted-foreground">{tsec.users.emailVerifiedHelp}</span>
+        </span>
+      </label>
+      <div className="grid min-w-0 gap-2">
+        <h4 className="text-sm font-medium">{tsec.users.passkeys}</h4>
+        <p className="text-xs break-words text-muted-foreground">{tsec.users.passkeysHelp}</p>
+        {passkeys === null ? (
+          error ? null : <div aria-busy="true" className="h-8 animate-pulse rounded-md bg-muted" />
+        ) : passkeys.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{tsec.users.noPasskeys}</p>
+        ) : (
+          <ul className="divide-y rounded-lg border">
+            {passkeys.map((p) => (
+              <li key={p.id} className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2" data-passkey={p.id}>
+                <div className="min-w-0 flex-1 basis-40">
+                  <div className="truncate text-sm">{p.name}</div>
+                  <div className="text-xs break-words text-muted-foreground">
+                    {absoluteTime(p.created)}
+                    {p.lastUsed ? ` · ${absoluteTime(p.lastUsed)}` : ''}
+                  </div>
+                </div>
+                <Button type="button" variant="outline" size="sm" aria-label={tsec.users.deletePasskeyFor(p.name)} onClick={() => setRemoving(p)}>
+                  {tsec.users.deletePasskey}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <FormMessage>{error}</FormMessage>
+      </div>
+      <AlertDialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{tsec.users.deletePasskeyTitle}</AlertDialogTitle>
+            <AlertDialogDescription>{removing ? tsec.users.deletePasskeyHelp(removing.name, u.name) : ''}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t.settings.cancel}</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={() => void remove()}>
+              {tsec.users.deletePasskey}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
   )
 }
 

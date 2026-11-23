@@ -1891,6 +1891,240 @@ access」。分三部分各审了一次（token、授权服务、MCP）。第三
     状态库，改了立即生效，不用重启；现在只能用命令行参数配的 OIDC 也搬过来。
   - 单用户模式没有登录，以上都不涉及。
 
+**2.8 的约定**（2026-11-23）：接口和错误码写在 `docs/api.md` 的「Signing in」
+「Account」「Users and invites」和「Administration」的「Security settings」
+「Sign-in providers」里，前后端照它做。
+
+定下来的：
+
+- **身份的键不变**：仍是「签发方 + 主体」（OIDC 的 issuer + `sub`，SAML 的
+  IdP entity ID + `NameID`，GitHub 的地址 + 数字 id，不用可改的登录名）。所以
+  现有的 `identities` 表不用迁移，命令行配的那个 OIDC 搬进库后，大家已绑的身份
+  照样能用。两个提供方不能用同一个签发方（`provider_issuer_in_use`），一个
+  身份只属于一个提供方；删了再用同一签发方加回来，身份也回来。
+- **旧接口保留**：`POST /api/auth/oidc/start` 和 `GET /api/auth/oidc/callback`
+  不变，只服务标了 `legacyCallback` 的那一个 OIDC 提供方，它的回调地址还是
+  旧的，IdP 那边不用改。2.8 第一次启动时，若带着 `--oidc-*` 且库里从没导入过，
+  就建一个 slug 为 `sso` 的提供方（密钥加密存库、`legacyCallback` 开、自动建号
+  沿用 `--oidc-auto-create`），登录方式保持 `dual`、`sso_only` 关，所以没人会被
+  挡在外面。之后以库为准：参数和库里不一致（或那个提供方被删了）只在日志和
+  安全页提示 `flags_ignored`，参数不再起作用，后面的版本删掉这些参数。
+- **开始登录两种写法**：登录页的按钮整页跳到
+  `GET /api/auth/{oidc|saml|github}/{slug}/start`（只用于登录，跨站规则照旧）；
+  首次设置、接受邀请、关联身份要带令牌或会话，用 `POST …/start` 拿地址（和
+  2.8 之前的 `POST /api/auth/oidc/start` 一样），令牌不进地址栏。
+- **SAML**：ACS 收的是 IdP 从别的站点提交的表单，`Lax` 的 cookie 不会带上，
+  所以这次登录的 cookie 是 `__Secure-petalbook_saml_<slug>`、`SameSite=None`、
+  只限 ACS 路径，SAML 因此必须是 `https` 的公开地址。ACS 不受「只收 JSON」和
+  跨站规则限制，靠 `RelayState` 等于 cookie、`InResponseTo` 对得上这次登录来防
+  伪造。临时（transient）`NameID` 拒绝。IdP 发起的登录默认关。
+- **GitHub 适配放进 2.8**：2.8 的计划里本来就写了，它也不依赖 2.7（只是一次
+  OAuth 授权码交换加读 `/user`、`/user/emails`、`/user/orgs`，用户令牌只在这次
+  请求里用）；2.7 先合进来的话共用它的 HTTP 客户端。GitHub 提供方开自动建号时
+  必须指定组织，否则任何有 GitHub 账号的人都能建号。
+- **邮箱合并**：默认从不按邮箱合并。提供方开了 `mergeVerifiedEmail` 时，只有
+  提供方声明已验证（OIDC 的 `email_verified`、GitHub 的已验证主邮箱；SAML 没有
+  这个声明，开了就等于管理员担保 IdP 给的每个邮箱），**而且本地账号的邮箱也是
+  已验证的**（来自担保过的提供方，或管理员设置、确认过；用户自己改邮箱会清掉
+  这个标记），才合并到唯一的那个账号；从不合并到管理员账号、停用的账号、已有
+  同一提供方身份的账号；对上两个账号时按 `no_account`。不然别人把自己账号的
+  邮箱改成某人的，等那人第一次用 SSO 登录就进了别人的账号。
+- **`sso_only`**：开了以后非管理员用密码**和 passkey** 都拒绝
+  （`local_login_refused`，在核对密码之后才判断），接受 `member` 邀请时也不能
+  用密码（否则建出来的账号永远登不进）。只有登录页真的给出了 SSO 按钮时才
+  生效（照 Report Portal：`local_only` 下按钮被藏起来，再拒绝密码就是把门锁死）。
+  开着的时候，改角色、停用导致没有「有密码的启用管理员」也拒绝（409）。
+- **passkey**：本地账号和外部账号都能用，单独就能登录（不是第二因子），所以
+  登录时要求用户验证（PIN 或生物识别），注册时优先可发现凭据。用户句柄就是
+  用户 id。每人最多 20 个。注册要求 10 分钟内登录过（照 Rackbook）。按用户名
+  开始时，不存在或没有 passkey 的用户返回一个由用户名和服务器密钥算出的假
+  凭据 id，看起来和有一个 passkey 的人一样。计数器倒退（疑似被复制）直接拒绝，
+  不更新存的计数，记审计日志。公开地址的主机名就是 RP ID，换了主机名旧的
+  passkey 都不能用，启动时提示。
+- **要求 passkey**：可以按人（`PATCH /api/users/{id}` 的 `passkeyRequired`）或按
+  角色（`passkeys.requireRoles`）。这样的人有 passkey 时，密码对了也回
+  `403 passkey_required`，登录页让他用 passkey；还没有 passkey 时，密码登录
+  进到一个被扣住的会话（`GET /api/session` 的 `hold: "passkey"`），只能注册
+  passkey 和退出，其他请求都是 `403 passkey_required`，注册第一个后立即放开。
+  经 SSO 登录不扣（由 IdP 决定怎么验证）。丢了 passkey 由管理员删掉，下次密码
+  登录再被扣住去注册新的。
+- **验证码**：四种提供方里自托管图片不出网，是默认。上下文是登录、接受邀请
+  （检查和接受都算）、首次设置，`forgot`、`register` 先占名字，一直回
+  `required: false`。每处单独开关，各自选「每次」或「错 N 次后」（默认后者、
+  3 次），按 IP 算，登录还按用户名算。默认都关（两个参考项目都是默认关）。
+- **频率限制和失败上限**：现在的 `failLimiter`（免费次数加翻倍等待）和
+  首次设置、邀请用的 120 次每分钟换成新的做法：按 IP 每分钟 10 次，登录、首次
+  设置、检查和接受邀请、取验证码、passkey 开始和完成、SAML ACS 共用一份额度；
+  失败按 IP、用户名、IP+用户名各数一份，固定窗口从第一次失败算起；SSO 的开始
+  沿用自己的每分钟 30 次。登录的判断顺序：每分钟次数 → 验证码 → IP 失败数 →
+  锁定 → 密码哈希 → 错了才看用户名和组合的失败数 → `sso_only` → 要求 passkey。
+  错的首次设置令牌、邀请令牌算 IP 的失败。
+- **内存有上限**：每分钟计数、三张失败表各最多 1 万个键，按最久未见先丢
+  （被锁定的最后才丢）；验证码题目、passkey 仪式各最多 1 万个、5 分钟；SSO
+  进行中的登录 1 万个、10 分钟；SAML 用过的断言 id 最多 65536 个。全在一个
+  进程里，重启清零。
+- **设置和提供方缓存在内存里**：启动读一次，管理员改了立刻重读，只重建改了的
+  那个提供方；命令行改的（`petalbook security reset`）最迟 5 分钟内生效（每 5
+  分钟查一次修订号，不是每个请求查）。`GET /api/auth/providers` 不查库。OIDC
+  发现文档和 SAML 元数据存库也放内存，登录时不去取；按地址配的元数据每 24 小时
+  后台重取一次。
+- **每次登录的查询**：passkey 登录一次查询（按凭据 id）加一次写（计数器和最后
+  使用时间），用户来自会话缓存；SAML 校验不查库（元数据、重放缓存在内存），
+  之后和 OIDC 一样一次身份查询。是否被要求 passkey、有没有 passkey 跟着缓存的
+  用户走，扣住会话不需要每个请求查库。
+- **审计日志是新加的**（之前没有）：状态库里一张表，登录成功和失败（不存在的
+  用户名也记）、超限（每个键每个窗口只记一次）、锁定、计数器倒退、身份绑定和
+  解除（注明是用户、邮箱匹配还是管理员）、passkey 增删、安全设置和提供方的
+  修改（只记改了的字段，密钥只写 `"changed"`）、管理员改用户。后台批量写，队列
+  最多 1 万条，满了丢弃并记一条 `dropped`；保留 10 万条或 90 天。
+  `GET /api/admin/audit` 分页读。
+- **保存时检查**：`sso_only` 没有带密码的启用管理员时拒绝
+  （`local_admin_required`），开放注册时拒绝（注册还没有，先留着这条）；第三方
+  验证码要站点密钥和密钥（换提供方要在同一次请求里给新密钥，不沿用旧的），
+  还要有 `--public-url`（核对主机名用）；passkey 用不了时不能要求 passkey，
+  有人被要求时不能关掉 passkey。所有字段先全部校验再存，超出范围拒绝而不是
+  改成边界值。
+- **救急命令** `petalbook security reset --data DIR`：登录方式改回 `dual`，关掉
+  `sso_only`、锁定、所有验证码，清空按角色的 passkey 要求；提供方和人不动。
+- JSON 字段按 `docs/api.md` 的惯例用 camelCase（`loginMode`、`ssoOnly`），取值
+  还是 `dual`、`sso_first` 这些；SSO 失败的参数从 `error=` 改成 `sso_error=`，
+  关联失败回 `/settings?sso_error=`。
+
+照搬的：
+
+- **Report Portal**：登录方式和 `sso_only` 分成两个轴，及其退化规则（没有提供方
+  按 `local_only`、`sso_only` 不生效、管理员不受限）；`local_admin_required`、
+  `sso_only_with_registration` 两个保存检查；`GET /api/auth/providers` 的形状；
+  图标只能是内置的，不能是外部地址；`/api/auth/{oidc|saml}/{slug}/…` 的路径；
+  `sso_error` 的码（包括 `saml_*` 那一组）；SAML 的 `SameSite=None`、只限 ACS
+  路径的 cookie 和拒绝临时 `NameID`；`GET /api/captcha` 的形状、`captcha_failed`
+  回 400、验证码在哈希之前查、出错按失败处理、核对主机名、密钥不跨提供方沿用；
+  失败按 IP、用户名、组合三份计数，IP 的在哈希之前、用户名的在密码错之后；锁定
+  的三种范围和对「只按用户名」的警告；不存在的用户名也记审计；passkey 计数器
+  倒退时拒绝且不写回；「被要求但还没有」时扣住会话、只放行一张固定的路由表，
+  以及「要求了却没法满足」时拒绝保存；部分更新、先全部校验再存。
+- **Passwall-Sub-Panel**：按 IP 每分钟请求数，登录相关接口（含取验证码、
+  passkey、SAML ACS）共用一份，默认 10，改了立即生效。另外加了它没有的
+  `Retry-After`。
+- **Rackbook**：passkey 仪式 id 放在查询参数里、完成时请求体就是浏览器给的凭据；
+  要求可发现凭据和用户验证（无密码登录）；注册前要 10 分钟内登录过；用 authcore
+  自带的有上限的内存仪式存储。Rackbook 没有接 SAML，SAML 只参考 Report Portal。
+- 两个项目不一致、按 Report Portal 的：计数放内存（Passwall 每次登录查审计
+  事件表）；锁定沿用失败上限（Passwall 另有一个阈值）；验证码按处开关（Passwall
+  只有一个开关）；要求了却没有可用方式时不放行（Passwall 会自动放开）。和
+  Report Portal 不同、按本文上面所有者定的：验证码每处都能选「错 N 次后」
+  （Report Portal 只有登录能选）；锁定默认 15 分钟（Report Portal 是 30）。
+
+不做的：
+
+- TOTP 等第二因子（passkey 在这里是独立的登录方式）；SCIM；SAML 单点登出、
+  加密断言、签名密钥轮换的接口；按 IdP 的组或属性分配角色（第 3 期的组）；按
+  提供方设会话时长；reCAPTCHA v3 的分数；OIDC 多租户的 `common` 签发方（要填
+  具体租户）；多实例之间共享计数；找回密码和公开注册本身（只占上下文名）。
+
+待所有者确认（括号里是现在按的默认）：
+
+1. `sso_only` 开着时，非管理员的 passkey 登录也拒绝吗？（拒绝：`sso_only` 的
+   意思是由 IdP 决定谁能进，passkey 会绕过 IdP 那边的停用。）
+2. 被要求 passkey 的人经 SSO 登录时也要扣住吗？（不扣，两个参考项目都只管
+   本地密码账号。）
+3. 按 IP 每分钟 10 次、这几个接口共用，办公室共用一个出口地址时会不会太紧？
+   一次登录是取验证码加提交两次请求。（按设计定的 10；`--trusted-proxy` 要配对。）
+4. 验证码各处默认关？（关，两个参考项目一致；开了以后默认错 3 次才要。）
+5. GitHub 登录放进 2.8？（放进，自动建号必须指定组织。）
+6. 邮箱合并还要求本地账号的邮箱是已验证的，并且从不合并到管理员账号？
+   （要求；这样现有账号要合并，得由管理员在用户管理里确认邮箱。）
+7. `--oidc-*` 导入一次后以库为准，参数只告警不生效？（是，后面的版本删参数。）
+8. 按用户名开始 passkey 登录时，有多个 passkey 的人能被看出数量，可以接受吗？
+   （接受；不接受的话只留免用户名的方式。）
+9. 审计日志保留 10 万条或 90 天？（是。）
+10. JSON 里用 `loginMode`、`ssoOnly` 而不是设计里写的 `login_mode`？
+    （用 camelCase，和其余接口一致。）
+
+**2.8 的现状（2026-11-23）**：上面的方案都做了，接口见 `docs/api.md` 的
+「Signing in」「Account」「Users and invites」和「Administration」。「待所有者
+确认」里的十条都按括号里的默认做了。实现时定下来的：
+
+- **库**：passkey、SAML、验证码、OIDC 都用 authcore 的 `passkey`、`saml`、
+  `captcha`、`oidc`，版本没变（`f3886de`）。authcore 的 `saml` 要求使用方在自己的
+  `go.mod` 里重复它对 `crewjam/saml` 的 `replace`（换成 `openctemio/saml` 的固定
+  提交），已经加上；测试里的虚拟认证器用 `descope/virtualwebauthn`，假 IdP 用
+  `crewjam/saml` 的 `IdentityProvider`。
+- **存储**：迁移 `0014_signin.sql`（主线到 0010，`feat/mcp` 用 0011、0012，
+  `feat/github-app` 用 0013）。新表 `sign_in_providers`（密钥用 `secret.Box` 加密，
+  发现文档和元数据存 `cache` 列）、`passkeys`（凭据 JSON、`rp_id`、`synced`）、
+  `audit_log`；`users` 加 `email_verified`、`passkey_required`，`sessions` 加
+  `held`。安全设置是 `site_settings` 里键为 `security` 的一行，它的 `updated` 就是
+  修订号：命令行改了之后，运行中的服务最迟 `CacheTTL`（5 分钟）读到，每个请求
+  只比较内存里的时间，不查库。迁移数量的测试改成数文件。
+- **旧参数**：第一次启动时 `--oidc-*` 建出 slug 为 `sso` 的提供方（`legacyCallback`
+  开、启用、`autoCreate` 沿用参数），并在 `site_settings` 记一行 `oidc_imported`。
+  以后参数和库里不一致、或那个提供方被删了，只写日志并在安全页提示
+  `flags_ignored`；删了之后再带着参数启动也不会重新建。身份表没改，原来绑定的
+  身份照样能用。登录方式保持 `dual`、`ssoOnly` 关，没有人会被挡在外面。
+- **登录的判断顺序**照合同：每分钟次数、验证码、IP 失败数、锁定、密码哈希、
+  错了才记用户名和组合的失败、`sso_only`、要求 passkey。IP 那一项是「先占位、
+  成功了退回」（和以前一样），所以一批同时来的错误密码最多只有上限个进到哈希。
+  验证码答错、要求 passkey、`sso_only` 都不算密码错。被锁住的请求在审计日志里记
+  `login_failed`，原因 `rate_limited`；锁定本身记 `lockout`。谁都能编出来的失败
+  不让它刷满审计日志：验证码答错、地址被锁或到了上限，每个地址（IPv6 按 /64）
+  每种原因每分钟最多记一行；没开始过的 passkey 仪式和对不上任何登录的 SSO 回调
+  不记。
+- **SAML**：元数据里只给签名证书，不给加密证书，因为我们拒绝加密断言，而 IdP
+  看到加密证书就会加密。关联（`link`）时 ACS 收到的是别的站点的 POST，会话
+  cookie（`Lax`）不会带上，所以由发起这次尝试的记录里的用户 id 决定是谁，那条
+  记录只有已登录的人才能建。尝试的 cookie 是 `__Secure-`，兄弟子域名也能种，
+  所以关联时另发一个只属于本主机的 `__Host-petalbook_saml_link_<slug>`
+  （`SameSite=None; Secure; Path=/`），记录里存它的哈希，ACS 对上了才关联。
+  按地址配的元数据每 24 小时（从启动算起）后台重取，取不到时继续用库里上一次
+  好的那份。
+- **passkey**：按用户名开始的仪式记在内存里（和仪式一样 5 分钟、最多一万条），
+  结束时才知道是哪个用户；假凭据 id 用 HMAC 算，密钥第一次用时随机生成并加密存
+  在 `site_settings`，重启后不变。计数器倒退由凭据存储的写回拒绝，写审计
+  `passkey_clone`，存的计数不动。每个 passkey 记着注册时的主机（`rp_id`），
+  换了主机名之后安全页提示 `passkey_host_changed`，启动时也写日志。
+- **用户的 `passkeyRequired`**：响应里是有效值（本人被要求，或者角色被要求），
+  `PATCH` 改的只是本人的标记。
+- **GitHub**：用授权码加 PKCE；组织只看 `/user/orgs` 的前 500 个（5 页）。
+- **提供方创建**：够得着就按请求里的 `enabled`（默认开）；够不着照合同存下来、
+  默认关。两个提供方不能用同一个签发方，SAML 的签发方在取到元数据之后才知道，
+  所以那时再检查。
+- **内存**：每分钟计数、三张失败表各一万个键（被锁的最后才丢）；验证码题目、
+  passkey 仪式各一万个、5 分钟（authcore 自带的有界存储）；SSO 进行中的登录
+  一万个、10 分钟；SAML 用过的断言 id 65536 个；审计队列一万条，满了丢弃并在
+  下一批写一行 `dropped`。
+
+测试：每条流程在 SQLite 和 PostgreSQL 上都跑（`scripts/test-postgres.sh`），
+用假的 OIDC 提供方、假的 SAML IdP、假的 GitHub、假的 siteverify 和虚拟认证器。
+覆盖：从旧参数升级不锁人、`sso_only` 的保存检查和各种拒绝、验证码在哈希之前、
+限制的顺序和三种锁定范围、SAML 的攻击用例（RelayState 或 cookie 不对、另一个
+`Destination`、没签名或被改过、SHA-1、两个或加密的断言、重复属性、临时或没有
+`NameID`、重放、IdP 发起）、邮箱合并的每个排除条件、要求 passkey 的扣住和放开、
+发现文档不在登录时去取。
+
+**2.8 已知问题**
+
+- 真浏览器里的 WebAuthn 和第三方验证码的真实脚本没有测过，只有虚拟认证器和
+  假的 siteverify。
+- `sso_only_with_registration` 这条保存检查先留着，公开注册还没有。
+- SAML 的签名密钥不能轮换（合同里本来就不做），证书 10 年后过期要重建提供方。
+- OIDC 提供方的发现文档存库之后不会自己更新，要点「刷新」。
+- `GET /api/captcha?account=` 的回答能看出某个用户名最近是不是错了好几次（要不要
+  验证码按用户名的失败数定）。透露的东西不多，接受。
+- `ssoOnly` 开着时新建一个会启用的提供方（`enabled` 没给或是 `true`），而且没有
+  带密码的启用管理员，会直接以 `400 local_admin_required` 拒绝，而不是先存成停用
+  的。用 `PATCH` 启用已有提供方的那条有测试，新建的这条没有。
+- 合并主线（2.6）时定下：被扣住的会话（要先注册 passkey）不能建 API 令牌，也不能
+  在授权页同意（都是 `403 passkey_required`）；之前建好的令牌和 OAuth 授权不受
+  扣住影响，照常可用，要停就撤销（见 `docs/api.md`「Held sessions, API tokens and
+  OAuth grants」）。这样令牌请求不用每次查 passkey。审计日志加了 `token_created`、
+  `token_revoked`、`grant_revoked`；OAuth 授权是在换令牌（`/oauth/token`）时才建的，
+  不在接口层，`grant_created` 留到以后。
+- passkey 和单点登录把返回地址（`return`）交给服务器，服务器只收 2048 字节以内的，
+  超过就回首页（密码登录在页面里跳转，没有这个限制）。`/oauth/authorize`
+  的地址一般远短于此，但客户端用很长的 `client_id`（元数据文档地址）和 `state`
+  时可能超过，那时登录后不会回到授权流程，要在客户端重新开始。
+
 **第 2 期之外，但 1.7 之后要记着的**
 
 - 1.7 的已知问题（见上文「1.7 的现状」），各自碰到相关代码时再处理。

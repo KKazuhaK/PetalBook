@@ -495,6 +495,14 @@ export type ErrorCode =
   | 'personal_space'
   | 'busy'
   | 'rate_limited'
+  | 'captcha_failed'
+  | 'local_login_refused'
+  | 'passkey_required'
+  | 'passkey_failed'
+  | 'recent_login_required'
+  | 'too_many_passkeys'
+  | 'passkey_unavailable'
+  | 'provider_in_use'
   | 'unavailable'
   | 'internal'
   | 'network'
@@ -511,9 +519,15 @@ export interface User {
   username: string
   name: string
   email: string
+  emailVerified: boolean
   role: Role
   disabled: boolean
+  // Whether this person must sign in with a passkey.
+  passkeyRequired: boolean
   created: string
+  // The users list only: how many passkeys and single sign-on identities the person has.
+  passkeys?: number
+  sso?: number
 }
 
 export interface SessionInfo {
@@ -521,6 +535,8 @@ export interface SessionInfo {
   user: User | null
   // True while there is no user at all: the app shows the first-run page.
   setup: boolean
+  // `passkey`: the signed-in person must register a passkey before anything else.
+  hold?: 'passkey' | null
   // Absent in single-user mode.
   methods?: { password: boolean; oidc: { name: string } | null }
   // The API token the request was made with; the app's own requests have none.
@@ -601,16 +617,64 @@ export interface MachineAccess {
   oauth: boolean
 }
 
+export type ProviderKind = 'oidc' | 'saml' | 'github'
+
 export interface Identity {
   id: string
   provider: string
+  // `''` for an identity whose provider was deleted.
+  providerSlug: string
+  kind: ProviderKind | ''
   label: string
   created: string
+}
+export interface Passkey {
+  id: string
+  name: string
+  created: string
+  lastUsed?: string | null
+  synced: boolean
 }
 export interface AccountInfo {
   user: User
   hasPassword: boolean
   identities: Identity[]
+  passkeys: Passkey[]
+}
+
+// --- signing in (docs/api.md, "Signing in") -------------------------------------------
+
+export type LoginMode = 'dual' | 'sso_first' | 'sso_redirect' | 'local_only'
+export interface PublicProvider {
+  slug: string
+  kind: ProviderKind
+  name: string
+  // `''` or `preset:<name>`.
+  icon: string
+}
+export interface AuthProviders {
+  providers: PublicProvider[]
+  loginMode: LoginMode
+  local: boolean
+  sso: boolean
+  passkey: boolean
+}
+
+export type CaptchaProvider = 'image' | 'turnstile' | 'recaptcha' | 'hcaptcha'
+export type CaptchaContext = 'login' | 'invite' | 'setup'
+export interface CaptchaChallenge {
+  required: boolean
+  provider?: CaptchaProvider
+  siteKey?: string
+  id?: string
+  image?: string
+}
+// What a form sends back: the typed answer of an image, or a widget's token.
+export type CaptchaAnswer = { id: string; answer: string } | { token: string }
+
+export interface PasskeyCeremony {
+  ceremony: string
+  options: Record<string, unknown>
 }
 
 export interface Invite {
@@ -634,6 +698,7 @@ export interface InviteCheck {
 }
 
 export type OidcIntent = 'login' | 'setup' | 'invite' | 'link'
+export type ProviderIntent = OidcIntent
 
 export type BatchPagesInput = { op: 'move'; ids: string[]; folder: string } | { op: 'delete'; ids: string[] }
 
@@ -850,3 +915,131 @@ export interface DailyTryResult {
   pathErrors?: { field: string; code: string; message: string }[]
 }
 export type LinesFormat = 'lines' | 'markdown'
+
+// --- security settings, providers and the audit log (docs/api.md, "Administration") ------------
+
+export type LockoutScope = 'ip_account' | 'ip' | 'account'
+export type CaptchaWhen = 'always' | 'after_failures'
+export interface CaptchaContextSettings {
+  on: boolean
+  when: CaptchaWhen
+  failures: number
+}
+export interface SecurityNotice {
+  code: 'flags_ignored' | 'secret_unreadable' | 'passkey_host_changed' | (string & {})
+  message: string
+  slug?: string
+  field?: string
+}
+export interface SecuritySettings {
+  login: { mode: LoginMode; effectiveMode: LoginMode; ssoOnly: boolean; ssoOnlyInEffect: boolean; ssoAvailable: boolean }
+  passkeys: { enabled: boolean; available: boolean; requireRoles: Role[]; required: number; requiredWithout: number }
+  captcha: { provider: CaptchaProvider; siteKey: string; hasSecret: boolean; contexts: Record<CaptchaContext, CaptchaContextSettings> }
+  lockout: { enabled: boolean; minutes: number; scope: LockoutScope }
+  limits: { perMinute: number; maxFailures: number; windowMinutes: number; sessionIdleDays: number; sessionMaxDays: number }
+  passwordAdmins: number
+  notices: SecurityNotice[]
+}
+// What `PUT /api/admin/security` takes: any block, any field of it; `captcha.secret` is write-only.
+export interface SecurityPatch {
+  login?: Partial<{ mode: LoginMode; ssoOnly: boolean }>
+  passkeys?: Partial<{ enabled: boolean; requireRoles: Role[] }>
+  captcha?: Partial<{ provider: CaptchaProvider; siteKey: string; secret: string; contexts: Partial<Record<CaptchaContext, Partial<CaptchaContextSettings>>> }>
+  lockout?: Partial<{ enabled: boolean; minutes: number; scope: LockoutScope }>
+  limits?: Partial<SecuritySettings['limits']>
+}
+
+export interface OidcSettings {
+  issuer: string
+  clientId: string
+  hasSecret: boolean
+  scopes: string[]
+  legacyCallback: boolean
+  redirectUrl: string
+}
+export interface SamlSettings {
+  metadataUrl: string
+  metadataXml: string
+  idpEntityId: string
+  entityId: string
+  acsUrl: string
+  metadataPath: string
+  attributes: { email: string; name: string; username: string }
+  nameIdFormat: string
+  signRequests: boolean
+  allowIdpInitiated: boolean
+  certificate: string
+  certificateExpires: string
+}
+export interface GithubSettings {
+  baseUrl: string
+  clientId: string
+  hasSecret: boolean
+  organizations: string[]
+  redirectUrl: string
+}
+export interface AuthProvider {
+  slug: string
+  kind: ProviderKind
+  name: string
+  icon: string
+  enabled: boolean
+  order: number
+  autoCreate: boolean
+  mergeVerifiedEmail: boolean
+  oidc?: OidcSettings
+  saml?: SamlSettings
+  github?: GithubSettings
+  status: { ok: boolean; checked: string; message: string }
+  people: number
+  created: string
+  updated: string
+}
+// What a create or a patch sends: the common fields and the kind's own block, with `clientSecret` where there is one.
+export interface ProviderInput {
+  slug?: string
+  kind?: ProviderKind
+  name?: string
+  icon?: string
+  enabled?: boolean
+  order?: number
+  autoCreate?: boolean
+  mergeVerifiedEmail?: boolean
+  oidc?: Partial<Pick<OidcSettings, 'issuer' | 'clientId' | 'scopes' | 'legacyCallback'>> & { clientSecret?: string }
+  saml?: Partial<Pick<SamlSettings, 'metadataUrl' | 'metadataXml' | 'entityId' | 'attributes' | 'nameIdFormat' | 'signRequests' | 'allowIdpInitiated'>>
+  github?: Partial<Pick<GithubSettings, 'baseUrl' | 'clientId' | 'organizations'>> & { clientSecret?: string }
+}
+
+export type AuditKind =
+  | 'login'
+  | 'login_failed'
+  | 'rate_limited'
+  | 'lockout'
+  | 'passkey_clone'
+  | 'identity_linked'
+  | 'identity_unlinked'
+  | 'passkey_added'
+  | 'passkey_removed'
+  | 'security_changed'
+  | 'provider_created'
+  | 'provider_changed'
+  | 'provider_deleted'
+  | 'user_changed'
+  | 'token_created'
+  | 'token_revoked'
+  | 'grant_revoked'
+  | 'dropped'
+export interface AuditItem {
+  id: string
+  at: string
+  kind: AuditKind | (string & {})
+  actor: string | null
+  user: string | null
+  username: string | null
+  ip: string
+  detail: Record<string, unknown>
+}
+export interface AuditList {
+  items: AuditItem[]
+  next: string
+}

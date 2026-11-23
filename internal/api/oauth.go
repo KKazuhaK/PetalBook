@@ -326,9 +326,14 @@ func (s *server) revokeGrant(c *call, owner string) {
 	if owner == "" {
 		who = "an administrator"
 	}
-	if _, err := s.oauth.Revoke(c.r.Context(), id, "revoked by "+who); err != nil {
+	done, err := s.oauth.Revoke(c.r.Context(), id, "revoked by "+who)
+	if err != nil {
 		s.fail(c.w, err)
 		return
+	}
+	if done {
+		s.audit(c, auth.AuditEvent{Kind: "grant_revoked", Actor: c.user().ID, User: rows[0].UserID,
+			Detail: map[string]any{"grant": id, "client": rows[0].ClientName, "by": revokedBy(owner)}})
 	}
 	c.w.WriteHeader(http.StatusNoContent)
 }

@@ -41,6 +41,9 @@ func TestSingleUserHasNoAccountEndpoints(t *testing.T) {
 		}
 		n++
 		path := strings.NewReplacer("{space}", "default", "{id}", "01JD3K8Q7Z").Replace(rt.Pattern)
+		if rt.Method == "POST" && strings.HasSuffix(rt.Pattern, "/acs") {
+			continue // a form post, answered 404 in single-user mode too (the next test)
+		}
 		code, r, raw := f.do(rt.Method, path, "{}")
 		if code != 404 || r["error"] != "not_found" {
 			t.Errorf("%s %s: %d %s", rt.Method, rt.Pattern, code, raw)

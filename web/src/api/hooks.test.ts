@@ -3,7 +3,7 @@ import { MutationObserver, QueryClient } from '@tanstack/react-query'
 import { applySession, keys, putTableRow, lastSpace, refreshSpaceAccess, rememberSpace, secretMutation } from './hooks'
 import type { Page, SessionInfo, User } from './types'
 
-const user = (over: Partial<User> = {}): User => ({ id: 'u1', username: 'ada', name: 'Ada', email: '', role: 'member', disabled: false, created: '2026-11-21T08:30:00Z', ...over })
+const user = (over: Partial<User> = {}): User => ({ id: 'u1', username: 'ada', name: 'Ada', email: '', emailVerified: false, role: 'member', disabled: false, passkeyRequired: false, created: '2026-11-21T08:30:00Z', ...over })
 const session = (over: Partial<SessionInfo> = {}): SessionInfo => ({ mode: 'accounts', user: null, setup: false, methods: { password: true, oidc: null }, ...over })
 
 describe('signing in and out', () => {
