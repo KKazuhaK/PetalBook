@@ -29,6 +29,7 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
+	"github.com/KKazuhaK/PetalBook/internal/tokens"
 )
 
 // SpaceID is the id of the one space of single-user mode.
@@ -79,6 +80,9 @@ type Options struct {
 	// proxies to this one. Cross-site checks stay on whatever else is set.
 	AllowOrigins []string
 	Logger       *slog.Logger
+	// Tokens is the service of API tokens (NewTokens); made with the defaults
+	// when nil. The caller runs its Run.
+	Tokens *tokens.Service
 	// DailyFetch gets the daily text from the external interfaces an
 	// administrator configured; the one that refuses private addresses when nil.
 	DailyFetch *dailyfetch.Fetcher
@@ -90,6 +94,7 @@ type server struct {
 	auth    *auth.Service
 	spaces  *spaces.Manager
 	drafts  *drafts.Service
+	tokens  *tokens.Service
 	single  bool
 	started time.Time
 	local   store.User // the built-in user of single-user mode
@@ -115,10 +120,13 @@ func New(opt Options) http.Handler {
 	if opt.Version == "" {
 		opt.Version = "dev"
 	}
+	if opt.Tokens == nil {
+		opt.Tokens = NewTokens(tokens.Config{Store: opt.Store, Logger: opt.Logger}, opt.Auth)
+	}
 	if opt.DailyFetch == nil {
 		opt.DailyFetch = dailyfetch.New(NewDailyBacking(opt.Store))
 	}
-	s := &server{opt: opt, log: opt.Logger, auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, single: opt.Auth == nil, started: time.Now(),
+	s := &server{opt: opt, log: opt.Logger, auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, single: opt.Auth == nil, started: time.Now(),
 		origins: map[string]bool{}, originHosts: map[string]bool{}, importing: make(chan struct{}, 1)}
 	if s.log == nil {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -457,6 +465,7 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		fixe  *space.FixError
 		vce   *space.ViewsConflictError
 		ae    *auth.Error
+		te    *tokens.Error
 		dc    *drafts.Conflict
 		ue    *space.UnavailableError
 		urle  *gitstore.URLError
@@ -466,6 +475,8 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	switch {
 	case errors.As(err, &coded):
 		writeCoded(w, coded)
+	case errors.As(err, &te):
+		s.failToken(w, te)
 	case errors.As(err, &ae):
 		s.failAuth(w, ae)
 	case errors.As(err, &dc):

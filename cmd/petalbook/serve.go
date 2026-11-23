@@ -26,6 +26,7 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
+	"github.com/KKazuhaK/PetalBook/internal/tokens"
 	"github.com/KKazuhaK/PetalBook/internal/webui"
 )
 
@@ -401,7 +402,8 @@ func runServe(ctx context.Context, c serveConfig) error {
 		return err
 	}
 
-	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, PublicURL: cfg.publicURL, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
+	tokenSvc := api.NewTokens(tokens.Config{Store: st, Logger: log}, svc)
+	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tokenSvc, PublicURL: cfg.publicURL, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
 		RestrictHost: loopback, AllowOrigins: cfg.origins, Logger: log})
 	webApp, webBuilt := webui.Handler()
 	if !webBuilt {
@@ -437,6 +439,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 		go func() { defer wg.Done(); f(bg) }()
 	}
 	run(drf.Run)
+	run(tokenSvc.Run)
 	if cfg.accounts {
 		run(mgr.Run)
 		run(mgr.RunPull)
