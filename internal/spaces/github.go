@@ -226,19 +226,23 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 		}
 		return he
 	}
+	// Both repositories are made before either is checked for the credential, so
+	// that a failure of the check names both and the retry can use them.
+	if assetsName != "" && g.Create {
+		if arepo, err = gh.CreateRepo(ctx, plan, github.NewRepoSpec{Name: assetsName, Private: g.Private, Description: "Attachments of " + g.Name}); err != nil {
+			return Info{}, failed(github.CodePushFailed, http.StatusBadGateway, err)
+		}
+		acreated = true
+	}
 	if created {
 		if cred, err = gh.ChooseCredential(ctx, plan, repo); err != nil {
 			return Info{}, failed(github.CodePushFailed, http.StatusBadGateway, err)
 		}
 	}
 	if assetsName != "" {
-		// The attachment repository goes the same way: made, then checked for the
-		// credential (an installation with selected repositories gets it added).
+		// The credential of the attachment repository is chosen the same way (an
+		// installation with selected repositories gets it added).
 		if g.Create {
-			if arepo, err = gh.CreateRepo(ctx, plan, github.NewRepoSpec{Name: assetsName, Private: g.Private, Description: "Attachments of " + g.Name}); err != nil {
-				return Info{}, failed(github.CodePushFailed, http.StatusBadGateway, err)
-			}
-			acreated = true
 			if acred, err = gh.ChooseCredential(ctx, plan, arepo); err != nil {
 				return Info{}, failed(github.CodePushFailed, http.StatusBadGateway, err)
 			}

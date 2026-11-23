@@ -859,3 +859,99 @@ func TestWhatTheFirstPushTriesAgain(t *testing.T) {
 		}
 	}
 }
+
+// Milestone 3.1, part 2: a space made on GitHub can get its attachment
+// repository in the same request, by the same path and credential.
+func TestCreateASpaceWithAnAttachmentRepositoryOnGitHub(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		in, err := e.m.CreateWithGitHub(ctx, e.user.ID, "Tang", "", GitHubCreate{Owner: "kazuhahub", Name: "tang-notes", Private: true, Create: true, Assets: &GitHubAssets{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if in.Assets != "repository" {
+			t.Fatalf("%+v", in)
+		}
+		ar := e.f.RepoByName("kazuhahub/tang-notes-assets")
+		if ar == nil || !ar.Private {
+			t.Fatalf("%+v", ar)
+		}
+		abare := e.f.BareDir("kazuhahub/tang-notes-assets")
+		gitCmd(t, abare, "config", "uploadpack.allowFilter", "true")
+		gitCmd(t, abare, "config", "uploadpack.allowAnySHA1InWant", "true")
+		row, err := store.GetAssetRemote(ctx, st.Q(), in.ID)
+		if err != nil || row.CredType != "github" || row.GHVia != "app" || row.GHInstallationID != e.kazuhub || row.GHRepoID != ar.ID ||
+			row.TokenEnc != "" || row.URL != e.f.URL+"/kazuhahub/tang-notes-assets.git" {
+			t.Fatalf("%+v %v", row, err)
+		}
+		h, err := e.m.Open(ctx, e.user, in.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer h.Release()
+		p, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "P"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		as, err := h.Space.PutAsset(space.Author{}, p.ID, "a.png", []byte("PNG"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := gitCmd(t, abare, "ls-tree", "-r", "--name-only", "main"); got != p.ID+"/"+as.Name {
+			t.Fatalf("the attachment repository has %q", got)
+		}
+		if strings.Contains(gitCmd(t, e.f.BareDir("kazuhahub/tang-notes"), "ls-tree", "-r", "--name-only", "main"), "assets/") {
+			t.Fatal("the space's repository has the attachment")
+		}
+		// After the cache loses it, it comes back by its id through the same credential.
+		e.m.AssetCache().DropSpace(in.ID)
+		if body, _, err := readAsset(t, h.Space, as.Rel); err != nil || body != "PNG" {
+			t.Fatalf("%q %v", body, err)
+		}
+		e.noLeak()
+	})
+}
+
+func TestTheAdministratorsDefaultAddsAnAttachmentRepositoryToNewSpaces(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		if _, _, err := e.m.SetStorage(ctx, func(s *StorageSettings) error { s.Assets.NewSpaces = true; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		in, err := e.m.CreateWithGitHub(ctx, e.user.ID, "A", "", GitHubCreate{Owner: "kazuhahub", Name: "a", Private: true, Create: true, Assets: &GitHubAssets{Default: true}})
+		if err != nil || in.Assets != "repository" || e.f.RepoByName("kazuhahub/a-assets") == nil {
+			t.Fatalf("%+v %v", in, err)
+		}
+		// A request that says false makes none.
+		in, err = e.m.CreateWithGitHub(ctx, e.user.ID, "B", "", GitHubCreate{Owner: "kazuhahub", Name: "b", Private: true, Create: true})
+		if err != nil || in.Assets == "repository" || e.f.RepoByName("kazuhahub/b-assets") != nil {
+			t.Fatalf("%+v %v", in, err)
+		}
+		if _, _, err := e.m.SetStorage(ctx, func(s *StorageSettings) error { s.Cache.AssetsBytes = 1 << 20; return nil }); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("a cache under 64 MiB: %v", err)
+		}
+	})
+}
+
+func TestBothRepositoriesAreNamedWhenTheSelectedInstallationCannotTakeTheSecond(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		e.f.AddOrg("sel", "tang")
+		sel := e.f.Install("sel", "selected")
+		e.f.SetInstall(sel, func(i *githubapptest.Install) { i.NoAdd = true })
+		_, err := e.m.CreateWithGitHub(ctx, e.user.ID, "S", "", GitHubCreate{Owner: "sel", Name: "notes", Private: true, Create: true, Assets: &GitHubAssets{}})
+		var he *github.Error
+		if !errors.As(err, &he) || he.Code != "github_repo_not_in_installation" || he.Repo == nil && he.AssetsRepo == nil {
+			t.Fatalf("%v", err)
+		}
+		if l, _ := e.m.List(ctx, e.user.ID); len(l) != 0 {
+			t.Fatalf("a space was left: %+v", l)
+		}
+		// The retry with create false uses what was made.
+		e.f.SetInstall(sel, func(i *githubapptest.Install) { i.NoAdd = false })
+		in, err := e.m.CreateWithGitHub(ctx, e.user.ID, "S", "", GitHubCreate{Owner: "sel", Name: "notes", Private: true, Create: false, Assets: &GitHubAssets{}})
+		if err != nil || in.Assets != "repository" {
+			t.Fatalf("%+v %v", in, err)
+		}
+	})
+}
