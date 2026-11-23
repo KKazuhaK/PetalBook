@@ -1196,6 +1196,10 @@ export function createMockServer(options: MockOptions = {}) {
     if (rest === '/pages/batch' && method === 'POST') return { status: 200, body: st.batch(body) }
     const hist = /^\/pages\/([^/]+)\/history$/.exec(rest)
     if (hist && method === 'GET') return { status: 200, body: st.history(decodeURIComponent(hist[1]), url.searchParams) }
+    const bl = /^\/pages\/([^/]+)\/backlinks$/.exec(rest)
+    if (bl && method === 'GET') return { status: 200, body: st.backlinks(decodeURIComponent(bl[1]), url.searchParams) }
+    const ln = /^\/pages\/([^/]+)\/links$/.exec(rest)
+    if (ln && method === 'GET') return { status: 200, body: st.links(decodeURIComponent(ln[1])) }
     const ver = /^\/pages\/([^/]+)\/versions\/([^/]+)$/.exec(rest)
     if (ver && method === 'GET') return { status: 200, body: st.version(decodeURIComponent(ver[1]), decodeURIComponent(ver[2])) }
     if (rest === '/remote' || rest.startsWith('/remote/')) return routeRemote(space, method, rest, body)

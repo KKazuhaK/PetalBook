@@ -22,7 +22,7 @@ import (
 
 // schemaVersion changes whenever the tables or the way text is tokenised
 // change; an index with another version is thrown away and rebuilt.
-const schemaVersion = 8
+const schemaVersion = 9
 
 const schema = `
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -64,6 +64,15 @@ CREATE TABLE props (page INTEGER NOT NULL, key TEXT NOT NULL, pos INTEGER NOT NU
 CREATE INDEX props_sort ON props(key, pos, skey, page);
 CREATE INDEX props_val ON props(key, val, page);
 CREATE INDEX props_skey ON props(key, skey, page);
+-- The links from a page to other pages (see internal/links). dst_id is the id
+-- the link carries, or '' for a link written with a path only, which is
+-- resolved when it is read (by path), so that it stays right when the target is
+-- added, moved or deleted. dst_path is the file the path names, always; a link
+-- whose id is known to be at another path is one to be repaired. The primary
+-- key serves the links of one page.
+CREATE TABLE links (src INTEGER NOT NULL, dst_id TEXT NOT NULL, dst_path TEXT NOT NULL, anchor TEXT NOT NULL, text TEXT NOT NULL, pos INTEGER NOT NULL, PRIMARY KEY (src, pos)) WITHOUT ROWID;
+CREATE INDEX links_dst_id ON links(dst_id, src);
+CREATE INDEX links_dst_path ON links(dst_path, src);
 CREATE TABLE folders (path TEXT PRIMARY KEY);
 -- Files that are not pages (no usable id). They are remembered with their size
 -- and mtime so that start-up does not read them again.

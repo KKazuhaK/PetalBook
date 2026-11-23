@@ -179,6 +179,18 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 			newPages = append(newPages, n)
 		}
 	}
+	// Which pages are in the folder is read before anything moves: the links
+	// to them (and from them, which are relative) are made right afterwards.
+	pageIDs, err := s.idx.PagesAt(oldPages)
+	if err != nil {
+		return "", err
+	}
+	mv := make([]movedPage, 0, len(pageIDs))
+	for _, o := range oldPages {
+		if id, ok := pageIDs[o]; ok {
+			mv = append(mv, movedPage{id, o, path.Join(target, strings.TrimPrefix(o, canonFrom+"/"))})
+		}
+	}
 	sort.Strings(oldPaths)
 	sort.Strings(newPaths)
 	inHead := make(map[string]bool, len(tracked))
@@ -226,11 +238,15 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	// part of the move, so it is journaled with it and a crash between the
 	// rename and the edit of space.yml is finished at recovery (see "b").
 	bind := jrec{Op: "b", From: canonFrom, To: target}
-	recs = append(recs, bind)
+	// The links of the pages that moved are part of it as well (see "l"): a
+	// crash after the rename has the next start make them right.
+	linkRec := jrec{Op: "l", From: canonFrom, To: target, Dir: true}
+	recs = append(recs, bind, linkRec)
 	if err := tx.record(recs...); err != nil {
 		return "", err
 	}
 	tx.bind = append(tx.bind, bind)
+	tx.links = append(tx.links, linkRec)
 	inside := make([]string, 0, len(ours))
 	for f := range ours {
 		inside = append(inside, f)
@@ -304,12 +320,22 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	if tx.remote {
 		tx.dirs = append(append(tx.dirs, oldDirs...), newDirs...)
 	}
+	// The links to the pages of the folder, and the links of those pages to
+	// the pages outside it, in the same change (the index still has the old state).
+	edits, rerr := s.planLinks(mv, []stepMove{{From: canonFrom, To: target, Dir: true}})
+	var edited []string
+	if rerr == nil {
+		edited, rerr = s.writeEdits(tx, edits)
+	}
+	if err := s.afterRelink(tx, rerr); err != nil {
+		return "", err
+	}
 	// The old names are forgotten outright rather than looked up: under a
 	// change of case they still answer on a file system that ignores it.
 	if err := s.idx.Forget(oldPages, visibleDirs(oldDirs)); err != nil {
 		return "", err
 	}
-	if _, err := s.idx.Refresh(s.src, newPages, visibleDirs(newDirs)); err != nil {
+	if _, err := s.idx.Refresh(s.src, append(newPages, edited...), visibleDirs(newDirs)); err != nil {
 		return "", err
 	}
 	if err := s.idx.RetryDuplicates(s.src); err != nil {

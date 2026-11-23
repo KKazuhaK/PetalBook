@@ -275,6 +275,27 @@ export const zhCN = {
     remove: '去掉链接',
     edit: '修改网址',
   },
+  // Links between pages: the picker after `[[`, the hover text and the backlinks panel.
+  pageLinks: {
+    pickerLabel: '链接到页面',
+    pickerHint: '输入页面标题，↑↓ 选择，回车插入，Esc 关闭',
+    pickerEmpty: '没有找到这样的页面',
+    pickerError: '搜索失败了，请重试。',
+    pickerLoading: '正在找…',
+    broken: '找不到这个页面，它可能已被删除或移走了。',
+    hover: (title: string) => `链接到：${title}`,
+    openHint: '按住 Ctrl/⌘ 点击，在应用里打开',
+    openInApp: '打开页面',
+    backlinks: '反向链接',
+    backlinksOpen: '显示反向链接',
+    backlinksClose: '收起反向链接',
+    backlinksTotal: (n: number) => `${n} 个页面链到这一篇`,
+    backlinksEmpty: '还没有页面链到这一篇。在别的页面里输入 [[ 就能链过来。',
+    backlinksError: '反向链接读取失败。',
+    backlinksMore: '再看 20 个',
+    backlinksLoading: '正在读取…',
+    backlinksNoExcerpt: '（原文里已经没有这个链接）',
+  },
   // Images and attachments in the page body.
   files: {
     imageMenu: '图片',

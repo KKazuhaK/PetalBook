@@ -13,6 +13,7 @@ import { checksPage, problemsOf, strayKeys, type Orphan } from './checkBook.ts'
 import { TAG_COLORS, parseTagColor } from '../../lib/tagColors.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
 import { gitBlobId } from './sha1.ts'
+import { excerptAround, linksOf } from './linkBook.ts'
 import { SEED_EMPTY_FOLDERS, seedPages } from './seed.ts'
 
 export class HttpError extends Error {
@@ -944,7 +945,62 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     return toPage(s)
   }
 
+  // The page a link names: by its id when it has one, else by the path of the file.
+  const targetOf = (l: { id: string; path: string }): Stored | undefined => (l.id && pages.get(l.id)) || [...pages.values()].find((p) => pathOf(p) === l.path)
+
+  // The links of a page, in the order of the text, with where they lead now.
+  const links = (id: string) => {
+    const p = lookup(id)
+    return {
+      items: linksOf(p.folder, p.body).map((l) => {
+        const t = targetOf(l)
+        return {
+          text: l.text,
+          path: l.path,
+          ...(l.id ? { id: l.id } : {}),
+          ...(l.anchor ? { anchor: l.anchor } : {}),
+          broken: !t,
+          ...(t ? { target: { id: t.id, path: pathOf(t), title: toSummary(t).label, untitled: !stringField(t.meta, 'title') } } : {}),
+        }
+      }),
+    }
+  }
+
+  // The pages that link to this one, the most recently changed first, 20 at a time; once each, never itself.
+  const backlinks = (id: string, q: URLSearchParams) => {
+    const me = lookup(id)
+    const found = [...pages.values()]
+      .filter((p) => p.id !== me.id)
+      .map((p) => ({ p, link: linksOf(p.folder, p.body).find((l) => targetOf(l)?.id === me.id) }))
+      .filter((x): x is { p: Stored; link: NonNullable<typeof x.link> } => x.link !== undefined)
+      .sort((a, b) => b.p.updated - a.p.updated)
+    let offset = 0
+    const cursor = q.get('cursor')
+    if (cursor) {
+      let m: RegExpExecArray | null = null
+      try {
+        m = /^b(\d+)$/.exec(atob(cursor))
+      } catch {
+        // Not base64 at all.
+      }
+      if (!m) throw new HttpError(400, 'invalid', 'cursor 不合法')
+      offset = Number(m[1])
+    }
+    const slice = found.slice(offset, offset + 20)
+    const end = offset + slice.length
+    return {
+      items: slice.map(({ p, link }) => {
+        const sum = toSummary(p)
+        return { id: p.id, path: pathOf(p), title: sum.label, untitled: sum.untitled, excerpt: excerptAround(p.body, link) }
+      }),
+      next: end < found.length ? btoa(`b${end}`) : '',
+      total: found.length,
+    }
+  }
+
   return {
+    links,
+    backlinks,
     listPages,
     groups,
     views: (folder: string | undefined, tag: string | undefined) => viewBook.get(folder, tag),

@@ -2,10 +2,10 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalSt
 import { Link, useBlocker, useNavigate, useParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { EditorContent, useEditor } from '@tiptap/react'
-import { Code, Columns2, History, MoreHorizontal, Save, Trash2, FolderInput, Type } from 'lucide-react'
+import { Code, Columns2, History, Link2, MoreHorizontal, Save, Trash2, FolderInput, Type } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError, isUnauthenticated, spaceApi, type SpaceApi } from '@/api/client'
-import { invalidateListings, keys, useActiveSpace, usePage, useSession, useSpacePermissions, useTags, useTree, useUrls } from '@/api/hooks'
+import { invalidateListings, keys, useActiveSpace, usePage, usePageLinks, useSession, useSpacePermissions, useTags, useTree, useUrls } from '@/api/hooks'
 import type { Page, PageMeta } from '@/api/types'
 import type { VersionContent } from '@/diff'
 import { docToMarkdown, markdownToDoc } from '@/markdown'
@@ -32,6 +32,8 @@ import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { TableControls } from '@/components/editor/table/TableControls'
 import { MovePageDialog } from '@/components/editor/MovePageDialog'
 import { createPageExtensions } from '@/components/editor/pageExtensions'
+import { findLink, LinkReport, pageLinksOf, type PageLinkTarget } from '@/components/editor/pageLinks'
+import { PageLinkPicker } from '@/components/editor/PageLinkPicker'
 import { SaveIndicator } from '@/components/editor/SaveIndicator'
 import { TagsEditor } from '@/components/editor/TagsEditor'
 import { useMaxUpload } from '@/components/editor/useMaxUpload'
@@ -49,6 +51,29 @@ const HistoryMode = lazy(loadHistory)
 const SourceEditor = lazy(() => import('@/source/SourceEditor'))
 // The properties of a page's type: a chunk of its own, asked for only by a page that has a type.
 const PropertyPanel = lazy(() => import('@/components/editor/PropertyPanel'))
+// Who links to the page: a chunk of its own, loaded when the panel is first opened.
+const BacklinksPanel = lazy(() => import('@/components/editor/BacklinksPanel'))
+
+// The id of the page at `path` (from the root of the space), from the listing of its folder; undefined when there
+// is none. The name is matched as written first, then without regard to case (as a file system may).
+async function pageAtPath(client: SpaceApi, path: string): Promise<string | undefined> {
+  const slash = path.lastIndexOf('/')
+  const folder = slash < 0 ? '' : path.slice(0, slash)
+  const lower = path.toLowerCase()
+  let loose: string | undefined
+  let cursor: string | undefined
+  // A folder of thousands of pages is not listed to its end for one click.
+  for (let round = 0; round < 10; round++) {
+    const list = await client.listPages({ folder, limit: 200, ...(cursor ? { cursor } : {}) })
+    for (const p of list.items) {
+      if (p.path === path) return p.id
+      if (!loose && p.path.toLowerCase() === lower) loose = p.id
+    }
+    if (!list.next) break
+    cursor = list.next
+  }
+  return loose
+}
 
 // Side by side needs room: on a narrow screen that choice shows the editor alone.
 const WIDE = '(min-width: 768px)'
@@ -58,6 +83,14 @@ const subscribeWide = (cb: () => void) => {
   return () => mq.removeEventListener('change', cb)
 }
 const isWide = () => window.matchMedia(WIDE).matches
+// From `lg` on the backlinks stand beside the page; below it they cover it.
+const BESIDE = '(min-width: 1024px)'
+const subscribeBeside = (cb: () => void) => {
+  const mq = window.matchMedia(BESIDE)
+  mq.addEventListener('change', cb)
+  return () => mq.removeEventListener('change', cb)
+}
+const isBeside = () => window.matchMedia(BESIDE).matches
 
 function ModeSwitch({ mode, wide, onChange }: { mode: EditMode; wide: boolean; onChange: (m: EditMode) => void }) {
   const item = (m: EditMode, label: string, Icon: typeof Type) => (
@@ -382,18 +415,29 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
   // The page's own extensions (see pageExtensions.ts). A page that is open always
   // exists on the server, so it always has an id to upload files under.
   const getMaxUpload = useMaxUpload()
+  // What the server knows of the links of this page (broken ones, current titles).
+  const pageLinks = usePageLinks(initial.id)
+  const [linkReport] = useState(() => new LinkReport())
+  const [openLink] = useState(() => new LateBound<[PageLinkTarget]>())
   const [extensions] = useState(() =>
-    createPageExtensions({
-      space,
-      pageId: initial.id,
-      getFolder: () => controller.page.folder,
-      getMaxUpload,
-      upload: (file, name) => client.uploadAsset(initial.id, file, name),
-      getOriginal: getUploadOriginal,
-      notify: (message) => void toast.error(message),
-      beforeInsert: settleRich.call,
-      afterInsert: uploadLanded.call,
-    }),
+    createPageExtensions(
+      {
+        space,
+        pageId: initial.id,
+        getFolder: () => controller.page.folder,
+        getMaxUpload,
+        upload: (file, name) => client.uploadAsset(initial.id, file, name),
+        getOriginal: getUploadOriginal,
+        notify: (message) => void toast.error(message),
+        beforeInsert: settleRich.call,
+        afterInsert: uploadLanded.call,
+      },
+      {
+        getFolder: () => controller.page.folder,
+        getLinks: linkReport.get,
+        open: openLink.call,
+      },
+    ),
   )
 
   const editor = useEditor({
@@ -419,6 +463,59 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
   useEffect(() => {
     if (editor) setEditableQuietly(editor, !readOnly)
   }, [editor, readOnly])
+
+  // The links the server reports are drawn on the editor's links (broken ones, hover text).
+  useEffect(() => {
+    linkReport.set(pageLinks.data?.items)
+    if (editor) pageLinksOf(editor)?.refresh()
+  }, [editor, pageLinks.data, linkReport])
+  // A link to a page opens it in the app (Ctrl/⌘-click, or any click on a page that cannot be edited).
+  useEffect(() => {
+    openLink.bind((target) => {
+      const found = findLink(pageLinks.data?.items ?? [], target.id, target.path)
+      const dest = found?.broken ? undefined : (target.id ?? found?.target?.id)
+      if (dest) {
+        void navigate(urls.page(dest))
+        return
+      }
+      // A link the report does not list yet (typed since the page was last saved) is looked up by its file
+      // before it is called broken.
+      if (found) {
+        toast.error(t.pageLinks.broken)
+        return
+      }
+      void pageAtPath(client, target.path).then(
+        (id) => (id ? void navigate(urls.page(id)) : void toast.error(t.pageLinks.broken)),
+        () => void toast.error(t.pageLinks.broken),
+      )
+    })
+  })
+  // The backlinks panel on the right; whether it is open is a choice of this browser. Below `lg` it covers the
+  // page, so there it starts shut and shuts again when another page opens.
+  const beside = useSyncExternalStore(subscribeBeside, isBeside)
+  const [backlinksOpen, setBacklinksOpen] = useState(() => {
+    if (!isBeside()) return false
+    try {
+      return localStorage.getItem('pb.backlinks') === '1'
+    } catch {
+      return false
+    }
+  })
+  const [backlinksFor, setBacklinksFor] = useState(initial.id)
+  if (backlinksFor !== initial.id) {
+    setBacklinksFor(initial.id)
+    if (!beside) setBacklinksOpen(false)
+  }
+  const toggleBacklinks = () => {
+    setBacklinksOpen((open) => {
+      try {
+        localStorage.setItem('pb.backlinks', open ? '0' : '1')
+      } catch {
+        // not kept
+      }
+      return !open
+    })
+  }
 
   // Leaving with a conflict open, or with text that never reached the server,
   // asks first. (Signed out: the sign-in page takes over, and the browser keeps the text.)
@@ -748,6 +845,11 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
             <StarButton target={{ kind: 'page', target: page.id }} labels={{ add: t.fav.addPage, remove: t.fav.removePage }} />
             {!historyOpen && <ModeSwitch mode={mode} wide={wide} onChange={changeMode} />}
             {!historyOpen && (
+              <Button variant="ghost" size="icon-sm" aria-pressed={backlinksOpen} onClick={toggleBacklinks} title={backlinksOpen ? t.pageLinks.backlinksClose : t.pageLinks.backlinksOpen} aria-label={backlinksOpen ? t.pageLinks.backlinksClose : t.pageLinks.backlinksOpen} className={backlinksOpen ? 'bg-muted' : undefined}>
+                <Link2 />
+              </Button>
+            )}
+            {!historyOpen && (
               <Button variant="ghost" size="sm" onClick={() => setHistoryOpen(true)} onPointerEnter={() => void loadHistory()} onFocus={() => void loadHistory()} title={t.history.openHint} aria-label={t.history.open}>
                 <History />
                 <span className="hidden sm:inline">{t.history.open}</span>
@@ -791,6 +893,8 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
         <Breadcrumbs folder={page.folder} currentLast={false} />
       </TopBar>
 
+      {/* On a wide screen the backlinks stand to the right of the page and make room for themselves. */}
+      <div className={backlinksOpen && !historyOpen ? 'lg:pr-80' : undefined}>
       {historyOpen && (
         <Suspense fallback={<PageFallback />}>
           <HistoryMode space={space} pageId={page.id} folder={page.folder} getCurrent={currentContent} saveState={snapshot.state} onClose={() => setHistoryOpen(false)} onRestore={restoreVersion} readOnly={readOnly} />
@@ -906,6 +1010,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
             {!readOnly && (
               <>
                 <SelectionBubble editor={editor} />
+                <PageLinkPicker editor={editor} space={space} pageId={initial.id} getFolder={() => controller.page.folder} />
                 <LinkPopover editor={editor} />
                 <ImagePopover editor={editor} />
                 <TableControls editor={editor} />
@@ -917,6 +1022,13 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
       </div>
       </div>
       </div>
+      </div>
+
+      {backlinksOpen && !historyOpen && (
+        <Suspense fallback={null}>
+          <BacklinksPanel pageId={initial.id} onClose={toggleBacklinks} overlay={!beside} />
+        </Suspense>
+      )}
 
       {conflict && <ConflictDialog open={conflictOpen} onOpenChange={setConflictOpen} info={conflict} onKeepMine={keepMine} onUseTheirs={useTheirs} />}
       {!readOnly && <MovePageDialog open={moveOpen} onOpenChange={setMoveOpen} current={page.folder} folders={(tree.data?.folders ?? []).map((f) => f.path)} onMove={move} />}

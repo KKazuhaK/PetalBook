@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/KKazuhaK/PetalBook/internal/links"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 )
 
@@ -37,6 +38,9 @@ type Entry struct {
 	// problems of the page (see annotate).
 	refs   []assetRef
 	checks []checkRow
+	// links are the links to other pages (see internal/links), without the
+	// ones to the page itself.
+	links []links.Link
 
 	// Text fed to the full-text index, already tokenised.
 	ftsTitle, ftsSubtitle, ftsSource, ftsBody string
@@ -71,6 +75,12 @@ func BuildEntry(rel string, data []byte, mtimeNs int64) (*Entry, *page.Problem) 
 		e.PartialJSON = string(b)
 	}
 	e.refs = assetRefs(doc.Body, e.Folder)
+	for _, l := range links.Extract(rel, data) {
+		if (l.ID != "" && l.ID == e.ID) || (l.ID == "" && l.Path == rel) {
+			continue
+		}
+		e.links = append(e.links, l)
+	}
 	e.CreatedKey = mtimeNs
 	if t, err := time.Parse("2006-01-02", e.Created); err == nil {
 		e.CreatedKey = t.UnixNano()

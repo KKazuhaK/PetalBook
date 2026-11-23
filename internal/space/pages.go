@@ -401,8 +401,15 @@ func (s *Space) saveLocked(tx *txn, id, baseRev string, meta page.Meta, body str
 	if err != nil {
 		return nil, err
 	}
-	if baseRev != page.Rev(data) {
-		return nil, &ConflictError{Current: s.pageFrom(rel, data, mtime)}
+	// A base that is behind only because the service rewrote links in the
+	// file (a page it links to moved, or it did) is no conflict: the same
+	// rewrites are made to what is saved.
+	var steps []rebaseStep
+	if cur := page.Rev(data); baseRev != cur {
+		var ok bool
+		if steps, ok = s.rebaseTo(id, baseRev, cur); !ok {
+			return nil, &ConflictError{Current: s.pageFrom(rel, data, mtime)}
+		}
 	}
 	doc := page.Parse(data)
 	old := doc.Meta()
@@ -414,7 +421,7 @@ func (s *Space) saveLocked(tx *txn, id, baseRev string, meta page.Meta, body str
 		return nil, invalidf("%v", err)
 	}
 	doc.SetBody(body)
-	newData := doc.Bytes()
+	newData := s.withIDs(rel, s.rebaseFile(steps, doc.Bytes()))
 
 	wantRename := old.Title() != newMeta.Title()
 	if bytes.Equal(newData, data) && !wantRename {
@@ -441,12 +448,17 @@ func (s *Space) saveLocked(tx *txn, id, baseRev string, meta page.Meta, body str
 		cur := strings.TrimSuffix(path.Base(rel), path.Ext(rel))
 		if !page.SameStem(cur, stem) {
 			dirAbs := filepath.Dir(abs)
-			name, err := s.moveNamed(tx.by, abs, dirAbs, stem, s.moveIntent(tx.by, rel, folderOf(rel)))
+			name, err := s.moveNamed(tx.by, abs, dirAbs, stem, s.moveIntent(tx, rel, folderOf(rel)))
 			if err != nil {
 				// The content is saved; only the name is left as it was.
 				s.log.Warn("could not rename page file", "from", rel, "stem", stem, "error", err)
 			} else {
 				newRel = path.Join(folderOf(rel), name)
+				// The pages that link to this one name the file: they follow it.
+				var rerr error
+				if newData, rerr = s.relink(tx, []movedPage{{id, rel, newRel}}, nil, newRel, newData); s.afterRelink(tx, rerr) != nil {
+					return nil, rerr
+				}
 			}
 		}
 	}
@@ -458,14 +470,16 @@ func (s *Space) saveLocked(tx *txn, id, baseRev string, meta page.Meta, body str
 // the draft's base is still current. It answers ErrNotFound for a page that is
 // not there.
 func (s *Space) CheckDraft(id string, meta page.Meta, body string) (*Page, error) {
-	p, _, err := s.Equivalent(id, meta, body)
+	p, _, err := s.Equivalent(id, "", meta, body)
 	return p, err
 }
 
 // Equivalent is CheckDraft that also reports whether saving this header and
 // body would leave the file exactly as it is, whatever the rev they started
-// from: a draft of that kind has nothing to conflict with.
-func (s *Space) Equivalent(id string, meta page.Meta, body string) (*Page, bool, error) {
+// from: a draft of that kind has nothing to conflict with. baseRev, when not
+// "", is the rev the draft started from: the service's link rewrites since then
+// are made to it first (rebase.go), so a draft that only lacks them is the same.
+func (s *Space) Equivalent(id, baseRev string, meta page.Meta, body string) (*Page, bool, error) {
 	if err := checkBody(body); err != nil {
 		return nil, false, err
 	}
@@ -483,7 +497,7 @@ func (s *Space) Equivalent(id string, meta page.Meta, body string) (*Page, bool,
 		return nil, false, invalidf("%v", err)
 	}
 	doc.SetBody(body)
-	same := bytes.Equal(doc.Bytes(), data) && old.Title() == newMeta.Title()
+	same := bytes.Equal(s.withIDs(rel, s.rebaseFile(s.rb.chain(id, baseRev), doc.Bytes())), data) && old.Title() == newMeta.Title()
 	return s.pageFrom(rel, data, mtime), same, nil
 }
 
@@ -520,11 +534,17 @@ func (s *Space) moveLocked(tx *txn, id, folder string) (*Page, error) {
 	if err != nil {
 		return nil, err
 	}
-	name, err := s.moveNamed(tx.by, src, dirAbs, stem, s.moveIntent(tx.by, rel, canon))
+	name, err := s.moveNamed(tx.by, src, dirAbs, stem, s.moveIntent(tx, rel, canon))
 	if err != nil {
 		return nil, err
 	}
-	return s.afterWrite(tx, path.Join(canon, name), data, rel)
+	newRel := path.Join(canon, name)
+	// The pages that link to this one, and the links of this one, follow the file.
+	data, rerr := s.relink(tx, []movedPage{{id, rel, newRel}}, nil, newRel, data)
+	if err := s.afterRelink(tx, rerr); err != nil {
+		return nil, err
+	}
+	return s.afterWrite(tx, newRel, data, rel)
 }
 
 // Delete removes the page file; Git history keeps it.
