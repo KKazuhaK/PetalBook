@@ -1,6 +1,6 @@
 import { Link, Navigate, useParams } from 'react-router'
 import { lazy, Suspense } from 'react'
-import { ArrowLeft, HardDrive, Layers, Link2, Quote, Users } from 'lucide-react'
+import { ArrowLeft, HardDrive, KeyRound, Layers, Link2, Quote, Users } from 'lucide-react'
 import { TopBar } from '@/components/layout/TopBar'
 import { useActiveSpace } from '@/api/hooks'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
@@ -15,9 +15,10 @@ import { UsersPanel } from './UsersPanel'
 
 // The daily text's page is a chunk of its own: it is the biggest of the administration's and the least visited.
 const DailyPanel = lazy(() => import('./DailyPanel').then((m) => ({ default: m.DailyPanel })))
+const AccessPanel = lazy(() => import('./AccessPanel').then((m) => ({ default: m.AccessPanel })))
 
-const ICONS: Record<AdminSection, typeof Users> = { users: Users, spaces: Layers, daily: Quote, github: Link2, status: HardDrive }
-const SECTIONS: readonly AdminSection[] = ['users', 'spaces', 'daily', 'github', 'status']
+const ICONS: Record<AdminSection, typeof Users> = { users: Users, spaces: Layers, daily: Quote, access: KeyRound, github: Link2, status: HardDrive }
+const SECTIONS: readonly AdminSection[] = ['users', 'spaces', 'daily', 'access', 'github', 'status']
 
 // The administration: users and invites, every space, the state of the server.
 // It is a route of its own, loaded only when an administrator goes there (see
@@ -34,7 +35,7 @@ export default function AdminRoute() {
       <TopBar>
         <h1 className="truncate text-sm font-medium">{ta.title}</h1>
       </TopBar>
-      <div className="mx-auto w-full max-w-5xl flex-1 px-4 py-5 md:px-8 md:py-7">
+      <div className="mx-auto w-full max-w-5xl min-w-0 flex-1 px-4 py-5 md:px-8 md:py-7">
         <div className="mb-6 flex flex-wrap items-center gap-x-6 gap-y-2">
           <nav aria-label={ta.nav}>
             <ul className="flex flex-wrap gap-1">
@@ -65,6 +66,11 @@ export default function AdminRoute() {
         {section === 'daily' && (
           <Suspense fallback={<PageFallback />}>
             <DailyPanel />
+          </Suspense>
+        )}
+        {section === 'access' && (
+          <Suspense fallback={<PageFallback />}>
+            <AccessPanel />
           </Suspense>
         )}
         {section === 'github' && <GitHubPanel />}

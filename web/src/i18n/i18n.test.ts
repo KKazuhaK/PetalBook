@@ -12,6 +12,10 @@ import { githubEn } from './github/en'
 import { githubZhCN } from './github/zh-CN'
 import { homeEn } from './home/en'
 import { homeZhCN } from './home/zh-CN'
+import { tokensEn } from './tokens/en'
+import { tokensZhCN } from './tokens/zh-CN'
+import { oauthEn } from './oauth/en'
+import { oauthZhCN } from './oauth/zh-CN'
 
 describe('decideLanguage', () => {
   it('uses a saved choice over the browser', () => {
@@ -121,6 +125,8 @@ describe('dictionaries', () => {
     walk(boardsZhCN, boardsEn, 'boards', problems)
     walk(githubZhCN, githubEn, 'github', problems)
     walk(homeZhCN, homeEn, 'home', problems, true)
+    walk(tokensZhCN, tokensEn, 'tokens', problems)
+    walk(oauthZhCN, oauthEn, 'oauth', problems)
     expect(problems).toEqual([])
   })
   it('English has no Chinese text in it', () => {
@@ -142,6 +148,8 @@ describe('dictionaries', () => {
     scan(boardsEn, 'boards')
     scan(githubEn, 'github')
     scan(homeEn, 'home')
+    scan(tokensEn, 'tokens')
+    scan(oauthEn, 'oauth')
     expect(found).toEqual([])
   })
   it('the sentences of the greeting use only the placeholders the code fills, in both languages', () => {

@@ -3,6 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { act } from 'react'
 import { Route, Routes } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
+import { t } from '@/i18n'
 import { ta } from '@/i18n/admin'
 import { adminRequests, click, installDomShims, makePerson, mount, settle, type, type Mounted } from '@/testing/harness'
 import { AdminGate } from './AdminGate'
@@ -42,7 +43,7 @@ const byText = (selector: string, text: string) => [...document.querySelectorAll
 const formSave = () => document.querySelector<HTMLElement>('[data-slot="api-form"] button[type="submit"]') ?? byText('button', d.save)
 const api = (id: string) => document.querySelector<HTMLElement>(`[data-api="${id}"]`)
 const input = (id: string) => document.getElementById(id) as HTMLInputElement
-const GOOD = { id: 'quotes', name: '语录', lang: 'zh', url: 'https://example.org/q?l={lang}', text: 'hitokoto', source: 'from', author: 'from_who', link: '', refresh: 'daily', refreshMinutes: 0, skipNew: true, rps: 2, enabled: true }
+const GOOD = { id: 'quotes', name: '语录', lang: 'zh-Hans', url: 'https://example.org/q?l={lang}', text: 'hitokoto', source: 'from', author: 'from_who', link: '', refresh: 'daily', refreshMinutes: 0, skipNew: true, rps: 2, enabled: true }
 
 describe('the administrators\' daily text page', () => {
   it('is a section of the administration with its own address, for administrators only', async () => {
@@ -66,18 +67,55 @@ describe('the administrators\' daily text page', () => {
     expect(document.body.textContent).toContain(d.allowApi)
   })
 
-  it('the languages are tabs: add one, take one away', async () => {
+  it('says what the server changed by itself on an upgrade, until it is dismissed', async () => {
+    m = await mount(routes, {
+      entries: (server) => {
+        server.seedDailyNotices([
+          { code: 'builtin_renamed', id: 'quotable', to: 'quotable-custom', message: 'renamed' },
+          { code: 'dropped_language', lang: 'cn', field: 'source', message: 'dropped' },
+        ])
+        return ['/admin/daily']
+      },
+      signIn: true,
+      server: { mode: 'accounts' },
+    })
+    await settle(() => document.querySelector('[data-slot="daily-notices"]') !== null, 'the notices')
+    const text = document.querySelector('[data-slot="daily-notices"]')!.textContent
+    expect(text).toContain(d.noticeRenamed('quotable', 'quotable-custom'))
+    expect(text).toContain(d.noticeDropped('cn'))
+    await click(byText('button', d.noticesDismiss))
+    await settle(() => document.querySelector('[data-slot="daily-notices"]') === null, 'dismissed')
+    expect(calls().at(-1)).toEqual({ method: 'PUT', url: '/api/admin/daily', body: { notices: [] } })
+  })
+
+  it('the languages are tabs: pick one from the known ones, search them, type any valid tag, take one away', async () => {
     await open()
-    expect([...document.querySelectorAll('[data-slot="admin-daily"] ul[aria-label="' + d.languagesTitle + '"] li')].map((l) => l.textContent?.trim())).toEqual([d.allLanguages, 'zh', 'en'])
-    await type(input('daily-lang'), 'pt-BR')
-    await click(byText('button', d.addLanguage))
-    await settle(() => calls().some((c) => c.method === 'PUT' && c.url === '/api/admin/daily' && c.body.languages?.includes('pt-br')), 'saved')
-    await settle(() => document.querySelector('button[aria-label="' + d.removeLanguage('pt-br') + '"]') !== null, 'the new one')
+    expect([...document.querySelectorAll('[data-slot="admin-daily"] ul[aria-label="' + d.languagesTitle + '"]:not([role="listbox"]) li')].map((l) => l.textContent?.trim())).toEqual([d.allLanguages, 'zh-Hans', 'en'])
+    // The known languages are offered by tag, native name and English name, searchable.
+    const picker = () => document.querySelector<HTMLElement>('[data-slot="admin-daily"] [data-slot="language-picker"]')!
+    expect(picker().querySelector('[data-tag="pt-BR"]')).not.toBeNull()
+    expect(picker().querySelector('[data-tag="en"]')).toBeNull() // already a tab
+    await type(input('daily-lang'), 'portug')
+    expect([...picker().querySelectorAll('[data-tag]')].map((b) => b.getAttribute('data-tag'))).toEqual(['pt-BR', 'pt-PT'])
+    await type(input('daily-lang'), '繁體')
+    expect([...picker().querySelectorAll('[data-tag]')].map((b) => b.getAttribute('data-tag'))).toEqual(['zh-Hant', 'yue-Hant'])
+    await type(input('daily-lang'), 'pt-br')
+    await click(picker().querySelector('[data-tag="pt-BR"]'))
+    await settle(() => calls().some((c) => c.method === 'PUT' && c.url === '/api/admin/daily' && c.body.languages?.includes('pt-BR')), 'saved')
+    await settle(() => document.querySelector('button[aria-label="' + d.removeLanguage('pt-BR') + '"]') !== null, 'the new one')
+    // A valid tag that is not among the known ones may be typed, and is offered canonically.
+    await type(input('daily-lang'), 'SV-fi')
+    expect(picker().querySelector('[data-tag="sv-FI"]')!.textContent).toBe(d.languageTyped('sv-FI'))
+    await click(picker().querySelector('[data-tag="sv-FI"]'))
+    await settle(() => document.querySelector('button[aria-label="' + d.removeLanguage('sv-FI') + '"]') !== null, 'the typed one')
+    // What is no tag is not offered.
+    await type(input('daily-lang'), 'zz_q')
+    expect(picker().querySelector('[data-slot="language-none"]')!.textContent).toBe(d.languageBad)
     await click(document.querySelector('button[aria-label="' + d.removeLanguage('en') + '"]'))
     await settle(() => document.querySelector('button[aria-label="' + d.removeLanguage('en') + '"]') === null, 'gone')
-    expect(calls().at(-1)!.body).toEqual({ languages: ['zh', 'pt-br'] })
+    expect(calls().at(-1)!.body).toEqual({ languages: ['zh-Hans', 'pt-BR', 'sv-FI'] })
     // A tab for the new language is among those of the lines.
-    expect(document.querySelector('[role="tablist"] [data-lang="pt-br"]')).not.toBeNull()
+    expect(document.querySelector('[role="tablist"] [data-lang="pt-BR"]')).not.toBeNull()
   })
 
   it('the pasted lines are saved for the language of the tab, and deleted', async () => {
@@ -106,21 +144,55 @@ describe('the administrators\' daily text page', () => {
     await settle(() => document.body.textContent!.includes(d.defaultSpaceIncomplete), 'asked for more')
   })
 
-  describe('an interface', () => {
-    it('the presets are only offered: nothing exists until saved, and the form is filled in', async () => {
-      await open()
-      expect(document.querySelectorAll('[data-api]')).toHaveLength(0)
-      await click(byText('button', d.usePreset('一言')))
-      expect(input('api-url').value).toContain('international.v1.hitokoto.cn')
-      expect(input('api-id').value).toBe('hitokoto')
-      expect(input('api-rps').value).toBe('20')
-      expect(calls()).toEqual([])
-      await click(formSave())
-      await settle(() => api('hitokoto') !== null, 'saved')
-      expect(calls()[0]).toMatchObject({ method: 'PUT', url: '/api/admin/daily/apis/hitokoto' })
+  it('the default can be an interface for each language, with one for the rest', async () => {
+    await open((admin) => {
+      admin('PUT', '/api/admin/daily/apis/quotes', GOOD)
+      admin('PUT', '/api/admin/daily/apis/english', { ...GOOD, id: 'english', name: 'English quotes', lang: 'en' })
     })
+    await settle(() => api('english') !== null, 'the interfaces')
+    const radios = () => [...document.querySelectorAll<HTMLInputElement>('input[name="daily-default"]')]
+    await click(radios()[3])
+    const select = (l: string) => document.getElementById(`daily-default-api-${l}`) as unknown as HTMLSelectElement
+    // Nothing chosen is not sent.
+    await click(formSave())
+    await settle(() => document.body.textContent!.includes(d.defaultApiIncomplete), 'asked for more')
+    await type(select('zh-Hans'), 'quotes')
+    await type(select('rest'), 'english')
+    await click(formSave())
+    await settle(() => calls().some((c) => c.body?.default?.kind === 'api'), 'saved')
+    expect(calls().find((c) => c.body?.default?.kind === 'api')!.body).toEqual({ default: { kind: 'api', apis: { 'zh-Hans': 'quotes', '': 'english' } } })
+    await settle(() => document.getElementById('daily-default-api-zh-Hans') !== null, 'still there')
+    expect(select('zh-Hans').value).toBe('quotes')
+  })
 
-    it('makes any number of them, edits and deletes, and the host is put on the list', async () => {
+  describe('the built-in interfaces', () => {
+    it('are listed with switches, off until switched on, and nothing is edited in them', async () => {
+      await open()
+      const rows = [...document.querySelectorAll<HTMLElement>('[data-slot="builtin"] [data-provider]')]
+      expect(rows.map((r) => r.getAttribute('data-provider'))).toEqual(['hitokoto', 'quotable'])
+      expect(rows[0].textContent).toContain('一言')
+      expect(rows[0].textContent).toContain(d.builtinLanguages('zh-Hans, zh-Hant'))
+      expect(rows[0].querySelector('a')!.getAttribute('href')).toBe('https://hitokoto.cn')
+      const sw = (id: string) => document.querySelector<HTMLElement>(`[data-provider="${id}"] [role="switch"]`)!
+      expect(sw('hitokoto').getAttribute('aria-checked')).toBe('false')
+      expect(document.querySelectorAll('[data-api]')).toHaveLength(0)
+      expect(byText('button', d.addApi)).not.toBeNull()
+      expect(document.body.textContent).not.toContain('usePreset')
+      expect(calls()).toEqual([])
+      await click(sw('hitokoto'))
+      await settle(() => sw('hitokoto').getAttribute('aria-checked') === 'true', 'on')
+      expect(calls()).toEqual([{ method: 'PUT', url: '/api/admin/daily/providers/hitokoto', body: { enabled: true } }])
+      // It is an interface among the others for the default, and not one to edit.
+      expect(document.querySelectorAll('[data-api]')).toHaveLength(0)
+      await click(sw('hitokoto'))
+      await settle(() => sw('hitokoto').getAttribute('aria-checked') === 'false', 'off')
+      expect(calls().at(-1)!.body).toEqual({ enabled: false })
+    })
+  })
+
+  describe('an interface', () => {
+
+    it('makes any number of them, edits and deletes', async () => {
       await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', GOOD))
       await settle(() => api('quotes') !== null, 'the interface')
       await click(byText('button', d.addApi))
@@ -131,9 +203,8 @@ describe('the administrators\' daily text page', () => {
       await click(formSave())
       await settle(() => api('second') !== null, 'the second')
       expect(calls().at(-1)!.body).toMatchObject({ id: 'second', name: '第二个', url: 'https://example.net/x', text: '[0].q', refresh: 'daily', enabled: true })
-      // The allowed hosts have both.
-      const hosts = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="' + d.hostsTitle + '"]')!
-      await settle(() => hosts.value.includes('example.net') || [...document.querySelectorAll('textarea')].some((t) => t.value.includes('example.net')), 'host listed')
+      // There is no list of hosts to keep.
+      expect(document.querySelector('textarea[aria-label]')?.getAttribute('aria-label')).not.toBe('hosts')
       // Edit one.
       await click(api('quotes')!.querySelector('button'))
       await settle(() => input('api-name') !== null && input('api-name').value === '语录', 'opened')
@@ -244,26 +315,48 @@ describe('the administrators\' daily text page', () => {
       await settle(() => document.body.textContent!.includes(d.linkUsesHeader), 'the refusal')
     })
 
-    it('a host that is not allowed yet is said before trying, can be added in one click, and a try says it in the page\'s language', async () => {
+    it('needs no list of hosts: a trial of another address is just made, and a refusal by code is said in the page\'s language', async () => {
       await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', GOOD))
       await settle(() => api('quotes') !== null, 'the interface')
       await click(api('quotes')!.querySelector('button'))
       await settle(() => input('api-url') !== null, 'form')
-      expect(document.querySelector('[data-slot="try-host"]')).toBeNull()
       await type(input('api-url'), 'https://new.example.net/q')
-      expect(document.querySelector('[data-slot="try-host"]')!.textContent).toContain(d.tryHostHint('new.example.net'))
-      // Trying anyway: the server's English is not shown as it is.
+      expect(document.querySelector('[data-slot="try-host"]')).toBeNull()
+      expect(document.body.textContent).not.toContain('允许列表')
       await click(byText('button', d.tryButton))
       await settle(() => document.querySelector('[data-slot="try-result"]') !== null, 'the result')
-      expect(document.querySelector('[data-slot="try-result"]')!.textContent).toContain(d.tryHostNotAllowed('new.example.net'))
-      expect(document.querySelector('[data-slot="try-result"]')!.textContent).not.toContain('is not on the list of hosts')
-      await click(byText('button', d.tryAddHost))
-      await settle(() => document.querySelector('[data-slot="try-host"]') === null, 'the host added')
-      const put = calls().find((c) => c.method === 'PUT' && c.url === '/api/admin/daily')!
-      expect(put.body.hosts).toContain('new.example.net')
-      expect(put.body.hosts).toContain('example.org')
-      // The form still has what was typed.
-      expect(input('api-url').value).toBe('https://new.example.net/q')
+      expect(document.querySelector('[data-slot="try-result"]')!.textContent).toContain(d.tryOk(200))
+      expect(calls().some((c) => c.url === '/api/admin/daily' && c.body?.hosts)).toBe(false)
+    })
+
+    it('the language is picked from the known ones (or typed), and a language mapping turns tags into codes', async () => {
+      await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', { ...GOOD, langMap: { 'zh-Hans': 'zh' } }))
+      await settle(() => api('quotes') !== null, 'the interface')
+      await click(api('quotes')!.querySelector('button'))
+      await settle(() => input('api-url') !== null, 'form')
+      const form = () => document.querySelector<HTMLElement>('[data-slot="api-form"]')!
+      expect(form().querySelector('[data-slot="api-lang-value"]')!.textContent).toBe('zh-Hans')
+      await type(input('api-lang'), 'japan')
+      await click(form().querySelector('[data-slot="language-picker"] [data-tag="ja"]'))
+      expect(form().querySelector('[data-slot="api-lang-value"]')!.textContent).toBe('ja')
+      // The mapping, as rows; one is there already, and a row with nothing in it is left out.
+      const rows = () => [...form().querySelectorAll<HTMLElement>('[data-slot="api-langmap-row"]')]
+      expect(rows()).toHaveLength(1)
+      expect(rows()[0].querySelectorAll('input')[0].value).toBe('zh-Hans')
+      expect(rows()[0].querySelectorAll('input')[1].value).toBe('zh')
+      await click(byText('button', d.langMapAdd))
+      await type(rows()[1].querySelectorAll('input')[0], 'ZH-hant')
+      await type(rows()[1].querySelectorAll('input')[1], 'zh_tw')
+      await click(byText('button', d.langMapAdd))
+      await click(formSave())
+      await settle(() => calls().some((c) => c.url === '/api/admin/daily/apis/quotes'), 'saved')
+      expect(calls().find((c) => c.url === '/api/admin/daily/apis/quotes')!.body).toMatchObject({ lang: 'ja', langMap: { 'zh-Hans': 'zh', 'zh-Hant': 'zh_tw' } })
+      // A language that is not a tag is refused by code, in the page's words.
+      await click(api('quotes')!.querySelector('button'))
+      await settle(() => rows().length > 0, 'form again')
+      await type(rows()[0].querySelectorAll('input')[0], 'chinese')
+      await click(formSave())
+      await settle(() => form().textContent!.includes(d.badLanguage), 'the refusal')
     })
 
     it('"Try it" shows the raw answer and the fields the paths found, for the form as it is', async () => {
@@ -278,22 +371,108 @@ describe('the administrators\' daily text page', () => {
       expect(r.textContent).toContain('饮湖上初晴后雨')
       expect(r.textContent).toContain('苏轼')
       const sent = calls().find((c) => c.url === '/api/admin/daily/try')!.body
-      expect(sent).toMatchObject({ lang: 'zh', api: { id: 'quotes', url: GOOD.url, text: 'hitokoto' } })
+      expect(sent).toMatchObject({ lang: 'zh-Hans', api: { id: 'quotes', url: GOOD.url, text: 'hitokoto' } })
       expect(sent.date).toMatch(/^\d{4}-\d{2}-\d{2}$/)
     })
 
-    it('a path that finds nothing is said, by field; the others are still shown', async () => {
+    it('a text path that finds nothing is said; the others are still shown', async () => {
       await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', GOOD))
       await settle(() => api('quotes') !== null, 'the interface')
       await click(api('quotes')!.querySelector('button'))
-      await settle(() => input('api-source') !== null, 'form')
-      await type(input('api-source'), 'missing')
+      await settle(() => input('api-text') !== null, 'form')
+      await type(input('api-text'), 'missing')
       await click(byText('button', d.tryButton))
       await settle(() => document.querySelector('[data-slot="try-result"]') !== null, 'the result')
       const r = document.querySelector<HTMLElement>('[data-slot="try-result"]')!
-      expect(r.textContent).toContain(d.pathError(d.fieldSource))
-      expect(r.textContent).toContain('山色空蒙雨亦奇')
+      expect(r.textContent).toContain(d.pathError(d.fieldText))
       expect(r.textContent).not.toContain(d.tryOk(200))
+    })
+
+    it('a source or author with no value (a null) is no error: the text and the rest are shown', async () => {
+      await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', GOOD))
+      await settle(() => api('quotes') !== null, 'the interface')
+      await click(api('quotes')!.querySelector('button'))
+      await settle(() => input('api-author') !== null, 'form')
+      await type(input('api-author'), 'null')
+      await click(byText('button', d.tryButton))
+      await settle(() => document.querySelector('[data-slot="try-result"]') !== null, 'the result')
+      const r = document.querySelector<HTMLElement>('[data-slot="try-result"]')!
+      expect(r.textContent).toContain(d.tryOk(200))
+      expect(r.textContent).toContain('山色空蒙雨亦奇')
+      expect(r.textContent).not.toContain(d.pathError(d.fieldAuthor))
+      expect(r.querySelector('.text-destructive')).toBeNull()
+    })
+
+    it('an optional path error from the server is shown as no value, and a refusal for one is no refusal', async () => {
+      const { TryResult } = await import('./DailyPanel')
+      const { createRoot } = await import('react-dom/client')
+      const host = document.createElement('div')
+      document.body.append(host)
+      const root = createRoot(host)
+      await act(async () => {
+        root.render(
+          <TryResult
+            result={{ ok: false, status: 200, error: 'path_error', field: 'author', message: 'no text or number at from_who', quote: { text: 'x' }, pathErrors: [{ field: 'author', code: 'path_error', message: 'no text or number at from_who' }] }}
+          />,
+        )
+      })
+      expect(host.textContent).toContain(d.tryOk(200))
+      expect(host.textContent).not.toContain(d.pathError(d.fieldAuthor))
+      expect(host.querySelector('.text-destructive')).toBeNull()
+      await act(async () => root.unmount())
+      host.remove()
+    })
+
+    it('marks what is required with a star and aria-required, and what is optional in words', async () => {
+      await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', GOOD))
+      await settle(() => api('quotes') !== null, 'the interface')
+      await click(api('quotes')!.querySelector('button'))
+      await settle(() => input('api-text') !== null, 'form')
+      const label = (id: string) => document.querySelector<HTMLElement>(`label[for="${id}"]`)!
+      for (const id of ['api-id', 'api-name', 'api-url', 'api-text']) {
+        expect(label(id).querySelector('[data-slot="required-mark"]')?.textContent).toBe('*')
+        expect(label(id).querySelector('[data-slot="optional-mark"]')).toBeNull()
+        expect(input(id).getAttribute('aria-required')).toBe('true')
+      }
+      for (const id of ['api-source', 'api-author', 'api-link']) {
+        expect(label(id).querySelector('[data-slot="optional-mark"]')?.textContent).toBe(t.common.optionalMark)
+        expect(label(id).querySelector('[data-slot="required-mark"]')).toBeNull()
+        expect(input(id).getAttribute('aria-required')).toBeNull()
+      }
+      expect(document.querySelector('[data-slot="api-form"] legend [data-slot="optional-mark"]')).not.toBeNull()
+      // The other forms of the page: the language tag, the interface-independent default's space.
+      expect(document.getElementById('daily-lang')!.getAttribute('aria-required')).toBe('true')
+      expect(label('daily-lang').querySelector('[data-slot="required-mark"]')).not.toBeNull()
+    })
+
+    it('nothing on the page can be wider than a phone: long text wraps and the raw answer scrolls inside itself', async () => {
+      const long = 'https://example.org/' + 'a'.repeat(300)
+      await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', { ...GOOD, url: long }))
+      await settle(() => api('quotes') !== null, 'the interface')
+      await click(api('quotes')!.querySelector('button'))
+      await settle(() => byText('button', d.tryButton) !== null, 'try')
+      await click(byText('button', d.tryButton))
+      await settle(() => document.querySelector('[data-slot="try-result"]') !== null, 'the result')
+      const page = document.querySelector<HTMLElement>('[data-slot="admin-daily"]')!
+      expect(page.className).toContain('min-w-0')
+      const has = (el: Element | null, ...c: string[]) => c.every((x) => el?.classList.contains(x))
+      // The address the trial used, and the raw answer.
+      expect(has(document.querySelector('[data-slot="try-result"] p.font-mono'), 'break-all')).toBe(true)
+      expect(has(document.querySelector('[data-slot="try-result"] pre'), 'max-w-full', 'overflow-auto', 'whitespace-pre')).toBe(true)
+      // The inputs fill their column and may shrink; the editor's grids have a column that may shrink.
+      for (const id of ['api-id', 'api-name', 'api-url', 'api-text', 'api-source', 'api-author', 'api-link']) expect(has(input(id), 'w-full', 'min-w-0')).toBe(true)
+      expect(has(document.querySelector('[data-slot="api-form"]'), 'grid-cols-1', 'min-w-0')).toBe(true)
+      expect(has(document.querySelector('[data-slot="api-try"]'), 'grid-cols-1', 'min-w-0')).toBe(true)
+      // Help texts wrap.
+      const helps = [...document.querySelectorAll('[data-slot="api-form"] p.text-xs.text-muted-foreground:not(.font-mono)')]
+      expect(helps.length).toBeGreaterThan(2)
+      for (const h of helps) expect(h.classList.contains('break-words')).toBe(true)
+      expect(has(page.querySelector(':scope > p'), 'break-words')).toBe(true)
+      for (const s of page.querySelectorAll('section')) expect(s.classList.contains('grid-cols-1')).toBe(true)
+      // The language pickers and the built-in interfaces wrap and shrink too.
+      for (const l of page.querySelectorAll('[data-slot="language-picker"] ul')) expect(has(l, 'min-w-0', 'max-w-sm')).toBe(true)
+      for (const li of page.querySelectorAll('[data-slot="builtin"] li')) expect(has(li, 'min-w-0')).toBe(true)
+      for (const b of page.querySelectorAll('[data-slot="builtin"] a')) expect(b.classList.contains('break-all')).toBe(true)
     })
 
     it('an interface that did not answer says why', async () => {

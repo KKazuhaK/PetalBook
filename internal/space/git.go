@@ -34,12 +34,49 @@ func ParseCommitter(s string) (name, email string, err error) {
 // accounts: whoever calls a change (the API, the drafts sweeper) passes the
 // identity of the person acting. The zero value is the space's default author
 // (the owner set at open), which is what a single-user server passes.
-type Author struct{ Name, Email string }
+//
+// Via says by what means the change was made when it was not the person typing
+// in the app (for example "API token"): the commit ends with a
+// "Changed-via: <Via>" trailer, and a change made by one means is never
+// committed together with a change made by another.
+type Author struct{ Name, Email, Via string }
 
-// authorGroup is the paths one identity gets credit for in one commit.
+// ViaToken is the Via of a change made on the API with an API token.
+const ViaToken = "API token"
+
+// ViaMCP is the Via of a change made through MCP.
+const ViaMCP = "MCP"
+
+type viaKey struct{}
+
+// ContextWithVia carries a Via down to the code that learns the author of a
+// change only by the id of the person (the drafts service).
+func ContextWithVia(ctx context.Context, via string) context.Context {
+	return context.WithValue(ctx, viaKey{}, via)
+}
+
+// ViaFrom is the Via ContextWithVia put in ctx, or "".
+func ViaFrom(ctx context.Context) string {
+	v, _ := ctx.Value(viaKey{}).(string)
+	return v
+}
+
+// cleanVia makes a Via fit a trailer: one line, no surrounding space.
+func cleanVia(via string) string {
+	return strings.TrimSpace(strings.NewReplacer("\n", " ", "\r", " ", "\x00", "").Replace(via))
+}
+
+// authorGroup is the paths one identity gets credit for in one commit, made by
+// one means (via).
 type authorGroup struct {
 	id    gitstore.Identity
+	via   string
 	paths []string // sorted
+}
+
+type groupKey struct {
+	id  gitstore.Identity
+	via string
 }
 
 // groupByAuthor splits pending paths into one group per resulting author, in
@@ -48,18 +85,19 @@ type authorGroup struct {
 // and the owner spelled out are one person and one commit. With a single
 // author, the common case, this is one group and no extra work.
 func (g *gitRepo) groupByAuthor(pending map[string]Author) []authorGroup {
-	byID := map[gitstore.Identity]*authorGroup{}
-	resolved := map[Author]gitstore.Identity{}
+	byID := map[groupKey]*authorGroup{}
+	resolved := map[Author]groupKey{}
 	for p, by := range pending {
-		id, ok := resolved[by]
+		k, ok := resolved[by]
 		if !ok {
-			id, _ = g.identities(by)
-			resolved[by] = id
+			id, _ := g.identities(by)
+			k = groupKey{id, cleanVia(by.Via)}
+			resolved[by] = k
 		}
-		grp := byID[id]
+		grp := byID[k]
 		if grp == nil {
-			grp = &authorGroup{id: id}
-			byID[id] = grp
+			grp = &authorGroup{id: k.id, via: k.via}
+			byID[k] = grp
 		}
 		grp.paths = append(grp.paths, p)
 	}
@@ -72,7 +110,10 @@ func (g *gitRepo) groupByAuthor(pending map[string]Author) []authorGroup {
 		if out[i].id.Name != out[j].id.Name {
 			return out[i].id.Name < out[j].id.Name
 		}
-		return out[i].id.Email < out[j].id.Email
+		if out[i].id.Email != out[j].id.Email {
+			return out[i].id.Email < out[j].id.Email
+		}
+		return out[i].via < out[j].via
 	})
 	return out
 }
@@ -175,9 +216,19 @@ var parseNameStatus = gitstore.ParseNameStatus
 // and anything the user staged, stay as they are. The commit is authored by
 // author (already resolved, see identities). It reports whether a commit was
 // made.
-func (g *gitRepo) commitPaths(author gitstore.Identity, paths []string) (bool, error) {
+func (g *gitRepo) commitPaths(author gitstore.Identity, via string, paths []string) (bool, error) {
 	_, committer := g.identities(Author{})
-	return g.r().CommitPaths(context.Background(), paths, commitMessage, author, committer)
+	return g.r().CommitPaths(context.Background(), paths, messageVia(via), author, committer)
+}
+
+// messageVia is commitMessage with the trailer of a change made by means other
+// than the app (none when via is empty).
+func messageVia(via string) func([]gitstore.Change) string {
+	via = cleanVia(via)
+	if via == "" {
+		return commitMessage
+	}
+	return func(cs []gitstore.Change) string { return commitMessage(cs) + "\n\nChanged-via: " + via }
 }
 
 // commitMessage summarises a change set in a short English line: "Edit 暮雪",

@@ -8,7 +8,6 @@ import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { apisOfTab, draftsFrom, emptyDraft, settingsFrom, tabsOf, type Drafts, type LangDraft, type Mode } from '@/lib/dailySettings'
-import { languages as appLanguages } from '@/i18n'
 import { th } from '@/i18n/home'
 import { SettingsNote, SettingsRow, SettingsRows, SettingsSection } from './SettingsParts'
 import { SourceFields, type SourceChoices } from './SourceFields'
@@ -18,6 +17,9 @@ import { SourceFields, type SourceChoices } from './SourceFields'
 // pages of this space (a folder, a tag or a type, with filters), an interface the administrators set up, or nothing,
 // in which case the server's default is used when the space is set to take it. For those who manage the space; it is
 // a chunk of its own, loaded when the section is opened.
+// The languages with a tab when the server gives none (single-user mode): canonical language tags.
+const DEFAULT_LANGUAGES = ['zh-Hans', 'en']
+
 export default function HomePanel({ canManage }: { canManage: boolean }) {
   const settings = useDailySettings()
   const prefs = useDailyPrefs()
@@ -48,7 +50,7 @@ function Editor({ saved, prefs, choices }: { saved: DailySettings | null; prefs:
   })
   const [apis, setApis] = useState<Set<string>>(() => new Set(prefs?.apis ?? []))
   const [inherit, setInherit] = useState(prefs?.inherit ?? true)
-  const known = useMemo(() => (prefs?.languages ?? appLanguages.map((l) => l.code.split('-')[0])).map((l) => l.toLowerCase()), [prefs])
+  const known = useMemo(() => prefs?.languages ?? DEFAULT_LANGUAGES, [prefs])
   const tabs = useMemo(() => tabsOf(known, saved, prefs), [known, saved, prefs])
   const [tab, setTab] = useState('')
   const [error, setError] = useState('')

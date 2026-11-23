@@ -29,7 +29,7 @@ const navLinks = () => [...(dialog()?.querySelectorAll('nav a') ?? [])].map((a) 
 const panel = () => dialog()?.querySelector<HTMLElement>('[role="tabpanel"]') ?? null
 const tab = (lang: string) => dialog()!.querySelector<HTMLElement>(`[role="tab"][data-lang="${lang}"]`)!
 const mode = (label: string) => [...dialog()!.querySelectorAll<HTMLInputElement>('input[name="daily-mode"]')].find((r) => r.parentElement?.textContent?.includes(label))!
-const select = (label: string) => [...dialog()!.querySelectorAll<HTMLSelectElement>('select')].find((s) => s.parentElement?.parentElement?.querySelector('label')?.textContent === label)!
+const select = (label: string) => [...dialog()!.querySelectorAll<HTMLSelectElement>('select')].find((s) => s.parentElement?.parentElement?.querySelector('label')?.textContent?.replace(/\*$/, '') === label)!
 const save = () => [...dialog()!.querySelectorAll('button')].find((b) => b.textContent === th.settings.save)!
 const writes = () => m!.requests.filter((r) => r.method === 'PUT' && r.url.includes('/daily/')).map((r) => ({ url: r.url.replace(/^\/api\/spaces\/[^/]+/, ''), body: JSON.parse(r.body!) }))
 const loaded = () => settle(() => panel() !== null, 'the home settings')
@@ -49,7 +49,7 @@ describe('the Home section, single-user mode', () => {
   it('is a section of the space, with a tab for all languages and one for each language of the list', async () => {
     await open()
     expect(navLinks()).toContain(t.settingsUi.sections.home)
-    expect([...dialog()!.querySelectorAll('[role="tab"]')].map((x) => x.textContent)).toEqual([th.settings.all, 'zh', 'en'])
+    expect([...dialog()!.querySelectorAll('[role="tab"]')].map((x) => x.textContent)).toEqual([th.settings.all, 'zh-Hans', 'en'])
     // Nothing of an interface or the server's default in a server with one user.
     expect(dialog()!.querySelector('input[name="daily-mode"][type="radio"]:nth-of-type(3)')).toBeNull()
     expect(dialog()!.textContent).not.toContain(th.settings.inheritTitle)
@@ -81,7 +81,7 @@ describe('the Home section, single-user mode', () => {
       s('POST', '/folders', { path: '中文' })
       s('POST', '/pages', { folder: '', meta: { tags: ['quotes'] }, body: 'q\n' })
     })
-    await click(tab('zh'))
+    await click(tab('zh-Hans'))
     await click(mode(th.settings.modes.own))
     await type(select(th.settings.valueLabel.folder), '中文')
     await click(tab('en'))
@@ -93,8 +93,8 @@ describe('the Home section, single-user mode', () => {
     await type(select(th.settings.valueLabel.tag), 'quotes')
     await click(save())
     await settle(() => writes().length === 1, 'saved')
-    expect(writes()[0].body).toEqual({ daily: { zh: { folder: '中文' }, en: { tag: 'quotes' } } })
-    expect(tab('zh').textContent).toContain('zh')
+    expect(writes()[0].body).toEqual({ daily: { 'zh-Hans': { folder: '中文' }, en: { tag: 'quotes' } } })
+    expect(tab('zh-Hans').textContent).toContain('zh-Hans')
   })
 
   it('what is stored shows on its tab, and "not set" on a language takes its source away', async () => {
@@ -118,7 +118,7 @@ describe('the Home section, single-user mode', () => {
       s('POST', '/folders', { path: 'A' })
       s('PUT', '/daily/settings', { daily: { 'pt-br': { folder: 'A' } } })
     })
-    expect([...dialog()!.querySelectorAll('[role="tab"]')].map((x) => x.textContent)).toEqual([th.settings.all, 'zh', 'en', 'pt-br'])
+    expect([...dialog()!.querySelectorAll('[role="tab"]')].map((x) => x.textContent)).toEqual([th.settings.all, 'zh-Hans', 'en', 'pt-BR'])
   })
 
   it('the choices follow the kind: folders, tags or the types of the space', async () => {
@@ -154,15 +154,15 @@ describe('the Home section, accounts mode', () => {
 
   it('the interfaces made for a language are on its tab; choosing them is saved as the space\'s choice', async () => {
     await asOwner((admin) => {
-      admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh'))
+      admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans'))
       admin('PUT', '/api/admin/daily/apis/enone', API('enone', 'en'))
       admin('PUT', '/api/admin/daily/apis/anyone', API('anyone', ''))
     })
-    await click(tab('zh'))
+    await click(tab('zh-Hans'))
     await click(mode(th.settings.modes.api))
     const boxes = () => [...dialog()!.querySelectorAll<HTMLInputElement>('[data-slot="daily-apis"] input[type="checkbox"]')]
     expect(boxes()).toHaveLength(1)
-    expect(boxes()[0].parentElement!.textContent).toBe(th.settings.apiFor('接口zhone', 'zh'))
+    expect(boxes()[0].parentElement!.textContent).toBe(th.settings.apiFor('接口zhone', 'zh-Hans'))
     await click(boxes()[0])
     await click(save())
     await settle(() => writes().some((w) => w.url === '/daily/prefs'), 'saved')
@@ -176,10 +176,10 @@ describe('the Home section, accounts mode', () => {
 
   it('an interface left chosen on a language that no longer uses one is let go', async () => {
     await asOwner((admin, space) => {
-      admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh'))
+      admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans'))
       admin('PUT', `/api/spaces/${space}/daily/prefs`, { inherit: true, apis: ['zhone'] })
     })
-    await click(tab('zh'))
+    await click(tab('zh-Hans'))
     expect(mode(th.settings.modes.api).checked).toBe(true)
     await click(mode(th.settings.modes.default))
     await click(save())
@@ -229,7 +229,7 @@ describe('the Home section, accounts mode', () => {
 
   it('what the administrators decided for everyone is shown, not changeable, and says by whom', async () => {
     const space = await asOwner((admin) => {
-      admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh'))
+      admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans'))
     })
     const prefs = m!.qc.getQueryData<DailyPrefs | null>(keys.dailyPrefs(space))!
     await act(async () => void m!.qc.setQueryData(keys.dailyPrefs(space), { ...prefs, allowed: { own: false, api: false } }))

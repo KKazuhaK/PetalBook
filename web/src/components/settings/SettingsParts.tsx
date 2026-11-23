@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from 'react'
-import { Download, GitBranch, House, LayoutTemplate, Link2, Settings, Shapes, ShieldCheck, SlidersHorizontal, User, Users } from 'lucide-react'
+import { Download, GitBranch, House, KeyRound, LayoutTemplate, Link2, Settings, Shapes, ShieldCheck, SlidersHorizontal, User, Users } from 'lucide-react'
 import type { SectionId } from './sections'
 
 // The building blocks every settings section is made of, so spacing and rows
@@ -10,7 +10,7 @@ export function SettingsSection({ title, children, id, description }: { title: s
   const auto = useId()
   const headingId = id ?? auto
   return (
-    <section aria-labelledby={headingId} className="grid gap-3">
+    <section aria-labelledby={headingId} className="grid grid-cols-1 gap-3">
       <div className="grid gap-0.5 border-b pb-2">
         <h3 id={headingId} className="text-sm font-semibold">
           {title}
@@ -63,6 +63,7 @@ export function SettingsRow({ title, help, children, controlId }: { title: strin
 const ICONS: Record<Exclude<SectionId, 'profile'>, typeof User> = {
   preferences: SlidersHorizontal,
   security: ShieldCheck,
+  tokens: KeyRound,
   github: Link2,
   general: Settings,
   types: Shapes,

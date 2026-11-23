@@ -385,6 +385,18 @@ func (m *Manager) list(ctx context.Context, userID string) ([]Info, error) {
 // costs one primary-key query to learn that the space exists; that is the only
 // path that touches the database, and only administrators take it.
 func (m *Manager) Open(ctx context.Context, user store.User, spaceID string) (*Handle, error) {
+	return m.openFor(ctx, user, spaceID, true)
+}
+
+// OpenMember is Open for a credential that is not the person's own session
+// (an API token): the administrator's way into spaces they are not a member of
+// is not open to it, so a space the user is not a member of is ErrNotFound
+// whatever their role. No query: the membership comes from the cached list.
+func (m *Manager) OpenMember(ctx context.Context, user store.User, spaceID string) (*Handle, error) {
+	return m.openFor(ctx, user, spaceID, false)
+}
+
+func (m *Manager) openFor(ctx context.Context, user store.User, spaceID string, viaAdmin bool) (*Handle, error) {
 	l, err := m.list(ctx, user.ID)
 	if err != nil {
 		return nil, err
@@ -398,7 +410,7 @@ func (m *Manager) Open(ctx context.Context, user store.User, spaceID string) (*H
 		}
 	}
 	if !found {
-		if m.single != nil || user.Role != "admin" || !page.ValidID(spaceID) {
+		if m.single != nil || !viaAdmin || user.Role != "admin" || !page.ValidID(spaceID) {
 			return nil, ErrNotFound
 		}
 		sp, err := store.GetSpace(ctx, m.opt.Store.Q(), spaceID)

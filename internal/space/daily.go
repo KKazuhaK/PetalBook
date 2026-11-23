@@ -14,6 +14,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/KKazuhaK/PetalBook/internal/index"
+	"github.com/KKazuhaK/PetalBook/internal/langtag"
 )
 
 // The daily text of a space (milestone 2.3): one page a day, picked from the
@@ -115,55 +116,43 @@ type DailyConfig struct {
 // maxDailyLangs is the most languages a space may give a source of its own.
 const maxDailyLangs = 20
 
-// ValidLang reports whether s can be a language code: `zh`, `en`, `zh-CN`.
+// ValidLang reports whether s can be a language: a well-formed BCP 47 tag
+// (`zh-Hans`, `en`, `pt-BR`, in any case) whose language is in the IANA registry.
 func ValidLang(s string) bool {
-	if len(s) < 2 || len(s) > 16 {
-		return false
-	}
-	for i, part := range strings.Split(s, "-") {
-		if part == "" || len(part) > 8 || (i == 0 && (len(part) > 3 || len(part) < 2)) {
-			return false
-		}
-		for _, r := range part {
-			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || (i > 0 && r >= '0' && r <= '9')) {
-				return false
-			}
-		}
-	}
-	return true
+	_, ok := langtag.Canonical(s)
+	return ok
 }
 
-// NormalLang is a language code as it is compared: lower case.
-func NormalLang(s string) string { return strings.ToLower(s) }
+// NormalLang is a language tag in canonical form (`ZH-cn` is `zh-CN`, `zh`
+// is `zh-Hans`); text that is no tag is left in lower case, so that a value
+// saved before the rule is still read.
+func NormalLang(s string) string { return langtag.Read(s) }
 
-// For is the source for a language: that of the language itself, or of the
-// language without its region (`zh` for `zh-CN`); else the one for every
-// language ("all languages", the fallback entry); else, so that a language nobody wrote a source for still gets a
-// text, the first of the sources by the order of their codes.
+// For is the source for a language: that of the language the reader's is
+// matched to the BCP 47 way (`zh-Hans` for `zh-CN`, `en` for `en-GB`); else the
+// one for every language ("all languages", the fallback entry); else, so that
+// a language nobody wrote a source for still gets a text, the first of the
+// sources by the order of their codes.
 func (c *DailyConfig) For(lang string) *DailySource {
 	if c == nil {
 		return nil
 	}
-	lang = NormalLang(lang)
-	if d, ok := c.ByLang[lang]; ok {
-		return &d
+	keys := make([]string, 0, len(c.ByLang))
+	for k := range c.ByLang {
+		keys = append(keys, k)
 	}
-	if i := strings.IndexByte(lang, '-'); i > 0 {
-		if d, ok := c.ByLang[lang[:i]]; ok {
+	sort.Strings(keys)
+	if m, ok := langtag.Match(lang, keys); ok {
+		if d, ok := c.ByLang[m]; ok {
 			return &d
 		}
 	}
 	if c.All != nil {
 		return c.All
 	}
-	keys := make([]string, 0, len(c.ByLang))
-	for k := range c.ByLang {
-		keys = append(keys, k)
-	}
 	if len(keys) == 0 {
 		return nil
 	}
-	sort.Strings(keys)
 	d := c.ByLang[keys[0]]
 	return &d
 }
@@ -220,7 +209,7 @@ func (c *DailyConfig) UnmarshalJSON(data []byte) error {
 			continue
 		}
 		if !ValidLang(k) {
-			return fmt.Errorf("%q is not a language code (zh, en, zh-CN)", k)
+			return BadLanguage(k)
 		}
 		var d DailySource
 		if err := json.Unmarshal(raw, &d); err != nil {
@@ -236,6 +225,67 @@ func (c *DailyConfig) UnmarshalJSON(data []byte) error {
 	}
 	*c = out
 	return nil
+}
+
+// ReadStoredDailyConfig reads a configuration that was saved earlier, under
+// rules that may have been looser (the site's default in the state database):
+// a language that is a tag is read as its canonical tag; one that is not
+// (`cn`), a second spelling of a language (`zh` beside `zh-Hans`; the
+// canonical key wins, else the first by order), a source that cannot be read
+// and the languages past the most there may be are dropped, and their keys are
+// returned. The rest is kept. It is nil when nothing is left.
+func ReadStoredDailyConfig(data []byte) (*DailyConfig, []string) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, []string{"(all)"}
+	}
+	var dropped []string
+	out := DailyConfig{}
+	whole := map[string]json.RawMessage{}
+	for k, raw := range m {
+		if k == "folder" || k == "tag" || k == "type" || k == "filter" {
+			whole[k] = raw
+		}
+	}
+	if len(whole) > 0 {
+		b, _ := json.Marshal(whole)
+		var d DailySource
+		if err := json.Unmarshal(b, &d); err != nil {
+			dropped = append(dropped, "(all languages)")
+		} else {
+			out.All = &d
+		}
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		if _, ok := whole[k]; !ok {
+			keys = append(keys, k)
+		}
+	}
+	// The canonical spelling of a language first, then the others by order.
+	sort.Slice(keys, func(i, j int) bool {
+		ci, cj := NormalLang(keys[i]) == keys[i], NormalLang(keys[j]) == keys[j]
+		if ci != cj {
+			return ci
+		}
+		return keys[i] < keys[j]
+	})
+	for _, k := range keys {
+		var d DailySource
+		_, taken := out.ByLang[NormalLang(k)]
+		if !ValidLang(k) || taken || len(out.ByLang) >= maxDailyLangs || json.Unmarshal(m[k], &d) != nil {
+			dropped = append(dropped, k)
+			continue
+		}
+		if out.ByLang == nil {
+			out.ByLang = map[string]DailySource{}
+		}
+		out.ByLang[NormalLang(k)] = d
+	}
+	if out.All == nil && out.ByLang == nil {
+		return nil, dropped
+	}
+	return &out, dropped
 }
 
 // key identifies the configuration, for what is remembered of a pick.
@@ -294,6 +344,11 @@ func dailyIn(top *yaml.Node) *DailyConfig {
 		if d := sourceIn(val); d != nil {
 			if out.ByLang == nil {
 				out.ByLang = map[string]DailySource{}
+			}
+			// `zh` and `zh-Hans` are the same language: the one written in
+			// canonical form wins, else the first.
+			if _, dup := out.ByLang[NormalLang(k)]; dup && NormalLang(k) != k {
+				return
 			}
 			out.ByLang[NormalLang(k)] = *d
 		}
@@ -431,7 +486,7 @@ func (s *Space) checkDaily(c DailyConfig) (DailyConfig, error) {
 	}
 	for lang, d := range c.ByLang {
 		if !ValidLang(lang) {
-			return c, invalidf("%q is not a language code", lang)
+			return c, BadLanguage(lang)
 		}
 		checked, err := s.CheckDailySource(d)
 		if err != nil {
@@ -549,6 +604,28 @@ func setDailyIn(top *yaml.Node, d *DailyConfig) (bool, error) {
 	}
 	sort.Strings(langs)
 	for _, l := range langs {
+		// Two spellings of the language (`zh` beside `zh-Hans`) become one key:
+		// the entry under the canonical key, else the first, stays (as it is
+		// read, see dailyIn); the others go.
+		keep, canon := -1, false
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if k, ok := keyText(n.Content[i]); ok && ValidLang(k) && NormalLang(k) == l && (keep < 0 || k == l && !canon) {
+				keep, canon = i, k == l
+			}
+		}
+		if keep >= 0 {
+			kept := n.Content[keep]
+			out := n.Content[:0:0]
+			for i := 0; i+1 < len(n.Content); i += 2 {
+				if k, ok := keyText(n.Content[i]); ok && ValidLang(k) && NormalLang(k) == l && n.Content[i] != kept {
+					continue
+				}
+				out = append(out, n.Content[i], n.Content[i+1])
+			}
+			if len(out) != len(n.Content) {
+				n.Content = out
+			}
+		}
 		found := false
 		for i := 0; i+1 < len(n.Content); i += 2 {
 			if k, ok := keyText(n.Content[i]); ok && ValidLang(k) && NormalLang(k) == l {
@@ -559,6 +636,9 @@ func setDailyIn(top *yaml.Node, d *DailyConfig) (bool, error) {
 					n.Content[i+1] = sub
 				}
 				writeSource(sub, d.ByLang[l])
+				if kn := n.Content[i]; kn.Kind == yaml.ScalarNode && kn.Value != l {
+					kn.Value = l // a key saved before the rule is written back as the tag
+				}
 				found = true
 			}
 		}

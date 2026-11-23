@@ -636,7 +636,7 @@ func (s *Space) BatchMove(by Author, ids []string, folder string) error {
 			return struct{}{}, err
 		}
 		for _, id := range ids {
-			if _, err := s.moveLocked(tx, id, folder); err != nil {
+			if _, err := s.moveLocked(tx, id, folder, ""); err != nil {
 				return struct{}{}, err
 			}
 		}

@@ -23,6 +23,10 @@ The web app talks to the server only through this API.
   `Retry-After` header in seconds), `unavailable` (503: the space follows a
   remote repository that cannot be reached or is paused, see "Remote
   repository"; nothing was changed), `internal` (500).
+  Requests with an API token or an OAuth access token have codes of their
+  own: `token_invalid`, `token_expired`, `token_revoked`,
+  `token_owner_disabled` (401), `token_scope` and `tokens_off` (403); see
+  "API tokens".
 - **Cross-site requests.** These rules keep other web sites from using a
   browser to change pages, and in loopback-only mode from reading them. They
   apply to every request. With `--insecure-no-auth` a site that controls a DNS
@@ -82,6 +86,9 @@ The server runs in one of two modes, chosen at start-up.
   space (see "Members"). A member whose role lacks the permission a route needs
   answers `403 no_permission`, a code of its own: it is never confused with the
   cross-site refusal, which is `403 forbidden`.
+
+In either mode a request may carry an API token instead of a session (see "API
+tokens"); `/mcp` takes only tokens (see "MCP").
 
 ## Meta
 
@@ -578,6 +585,10 @@ App"); only `github.com` is supported. Three things come from it:
   what both the user and the App may do: GitHub checks the user's own rights.
 - **Spaces made with a new repository** (`POST /api/spaces` with `github`),
   and existing spaces switched to the App (`PUT …/remote`).
+
+Every route here is a person's, not a token's: with an API token, `/api/github/…`
+and `/api/admin/github…` answer `403 token_scope` (see "API tokens"), and so
+do `POST /api/spaces` and `PUT …/remote`.
 
 | Work | Token |
 |---|---|
@@ -1381,7 +1392,8 @@ Query: `limit` (1–100, default 30), `cursor`.
 Newest first. `author` is the name on the commit. `rev` is the rev of the
 file in that version. `change` is `add`, `edit` (content changed), `move`
 (only the path changed) or `delete`. A version in which the page was deleted
-has no `rev`.
+has no `rev`. `via` is `mcp` or `token` for a commit made through MCP or with an API
+token (its `Changed-via` trailer, see "MCP"), and absent otherwise.
 
 #### `GET /api/spaces/{space}/pages/{id}/versions/{commit}`
 
@@ -2057,7 +2069,9 @@ for the languages that have none of their own; written alone it is the source
 of every language. For a language the source is that of the language, else
 that of the language without its region (`zh` for `zh-CN`), else "all
 languages", else, so that a language nobody wrote a source for still gets a
-text, the first by the order of the codes. Moving or renaming a folder carries the `folder` of
+text, the first by the order of the codes. Two spellings of one language
+(`zh:` beside `zh-Hans:`) are read as the one under the canonical key, and the
+next save writes that one key only. Moving or renaming a folder carries the `folder` of
 every source with it, in the same commit as its bindings (and, after a crash,
 at the next start). Deleting a folder leaves the source as it is; it then meets
 no page.
@@ -2150,14 +2164,17 @@ administrators' settings. Owners never enter addresses; they choose among the
 interfaces that are set up.
 
 ```json
-{"inherit": true, "apis": ["hitokoto"], "available": [{"id": "hitokoto", "name": "一言", "lang": "zh"}],
- "languages": ["zh", "en"], "allowed": {"own": true, "api": true}, "default": {"kind": "list"}}
+{"inherit": true, "apis": ["hitokoto"],
+ "available": [{"id": "hitokoto", "name": "一言", "lang": "zh-Hans", "languages": ["zh-Hans", "zh-Hant"]},
+               {"id": "quotes", "name": "Quotes", "lang": "en"}],
+ "languages": ["zh-Hans", "en"], "allowed": {"own": true, "api": true}, "default": {"kind": "list"}}
 ```
 
 `inherit` is whether the space shows the server's default when it has nothing
 else; `apis` are the ids of the interfaces it uses (for a language, the one
 made for it, else one that takes any language, else any); `available` are all
-that are set up (never their addresses); `default` is `null` when the
+that are set up (never their addresses), a built-in one with each of the
+languages it answers in (`languages`; `lang` is the first of them); `default` is `null` when the
 administrators set none. `languages` are the language codes the settings pages
 have a tab for (the administrators' `languages`, below; nothing is limited to
 them). `allowed` is what the administrators let spaces do (below): a field that
@@ -2177,29 +2194,70 @@ protection of the network is in one place).
 #### `GET /api/admin/daily`, `PUT /api/admin/daily`
 
 ```json
-{"default": {"kind": "space", "space": "01JD3K8Q7Z", "source": {"folder": "文案", "zh": {"tag": "诗"}}},
+{"default": {"kind": "space", "space": "01JD3K8Q7Z", "source": {"folder": "文案", "zh-Hans": {"tag": "诗"}}},
  "allow": {"own": true, "api": true},
- "hosts": ["international.v1.hitokoto.cn", "api.quotable.io"],
- "languages": ["zh", "en"],
+ "languages": ["zh-Hans", "en"],
  "apis": [ /* interfaces, below */ ],
- "presets": [ /* interfaces to start a form from, below */ ],
- "lines": {"total": 6, "byLang": {"zh": 3, "en": 2, "": 1}, "max": 5000}}
+ "providers": [ /* built-in interfaces, below */ ],
+ "lines": {"total": 6, "byLang": {"zh-Hans": 3, "en": 2, "": 1}, "max": 5000},
+ "notices": []}
 ```
 
-`PUT` takes any of `default`, `hosts`, `languages` and `allow` (what it leaves out stays)
-and answers as `GET`; `lines`, `apis` and `presets` are read-only here.
+`PUT` takes any of `default`, `languages` and `allow` (what it leaves out stays)
+and answers as `GET`; `lines`, `apis` and `providers` are read-only here. A
+`hosts` field sent by an older client is ignored.
 
-- `default` is `null`, `{"kind": "list"}` (the lines below) or
+`notices` are what the server changed by itself in settings an earlier
+version saved, so that nothing has to be repaired by hand; they stay until
+`PUT` is sent `{"notices": []}`. Each is `{"code", "message"}` with what it is
+about (`id`, `to`, `lang`, `field`). The settings are read part by part, so
+that one part that cannot be read (`unreadable`, logged with its value) loses
+nothing else, and the repairs are saved once, at the first read:
+
+- An interface saved by 2.3's "use preset" with the id of a built-in one
+  (`hitokoto`, `quotable`) becomes the built-in one when its address, paths and
+  link are the built-in's and it has no headers: switched on or off as it was,
+  with its `refresh`, `rps` (at most the service's limit) and `skipNew`; the
+  spaces that chose it and the default keep the id. One the administrators
+  changed stays theirs as `<id>-custom` (`builtin_renamed`, with `to`), its
+  header values sealed again for the new id, and every space's choice and the
+  default follow the new id. One whose header values cannot be sealed again
+  keeps its id (`builtin_kept`); `PUT` and `DELETE` of `…/apis/{id}` then act on
+  it before the built-in one, so it can be changed or deleted and the built-in
+  one switched on after that.
+- A code in the default that is not a language tag (`cn`, which 2.3 accepted),
+  or a second spelling of one (`zh` beside `zh-Hans`: the canonical key wins),
+  is dropped (`dropped_language`, with `lang` and `field`); the rest of the
+  default, the interfaces and their header values are kept.
+
+- `default` is `null`, `{"kind": "list"}` (the lines below),
   `{"kind": "space", "space": id, "source": …}` where `source` is a source or
-  sources by language as above, checked in that space. Choosing a space shows
-  its content to everybody; a client says so.
-- `hosts` are the hosts (with a port when it is not the usual one) the server
-  may fetch from, at most 100. Saving an interface adds its host; removing a host
-  here stops the interfaces that use it (they are not asked until it is back).
-- `languages` are the language codes the settings pages have a tab for besides
-  "all languages" (`zh`, `en`, `pt-br`; lower-cased, each once, at most 30). It
-  is a list the administrators keep, `["zh", "en"]` to begin with; nothing is
-  limited to it: a source or an interface may name any code.
+  sources by language as above, checked in that space (choosing a space shows
+  its content to everybody; a client says so), or
+  `{"kind": "api", "apis": {"": "quotable", "zh": "hitokoto"}}`: an
+  interface id per language, `""` for all languages not listed. Each must be an
+  interface of `apis` (`400 invalid` with `error: "api_not_found"` otherwise);
+  a disabled or unanswering interface gives the daily reason `unavailable`.
+  The interface is used exactly as when a space picks it (same cache, refresh
+  and rate limit), and the `allow.api` lock does not apply to it: it limits
+  what spaces may choose, not the administrators' own default.
+- `languages` are the languages the settings pages have a tab for besides
+  "all languages", as BCP 47 language tags in canonical form (`zh-Hans`,
+  `zh-Hant`, `en`, `pt-BR`; each once, at most 30), `["zh-Hans", "en"]` to begin
+  with. Every language tag anywhere in the daily text (this list, per-language
+  sources, interfaces, lines, the `lang` of `GET …/daily`) must be a well-formed
+  tag whose language subtag is in the IANA registry: `cn`, `english` or
+  `zh_CN` are refused with `400 invalid`, `error: "bad_language"`. The server
+  writes tags in canonical form (`ZH-cn` is stored as `zh-CN`). A reader's
+  language is matched to the configured ones the usual BCP 47 way (`zh-CN` and
+  `zh-SG` find `zh-Hans`, `zh-TW` and `zh-HK` find `zh-Hant`, `en-GB` finds
+  `en`); another script of the same language is tried before "all languages"
+  (`zh-TW` finds `zh-Hans` when there is no `zh-Hant`), then "all languages". `GET /api/admin/daily` also returns
+  `knownLanguages`: `[{"tag": "zh-Hans", "name": "中文（简体）", "english": "Chinese (Simplified)"}, …]`,
+  the common languages a client offers to pick from (any valid tag may still be
+  typed). Values saved before this rule (`zh`, `pt-br`) are read as their
+  canonical tags (`zh` → `zh-Hans`, `pt-br` → `pt-BR`) and written back in
+  that form on the next save.
 - `allow` is what the spaces may do: `own` is whether a space may have a source
   of its own (`daily` in its `space.yml`), `api` whether it may choose an
   external interface. Both are `true` until set; `PUT` takes either or both
@@ -2239,8 +2297,10 @@ Any number of interfaces (at most 50). An interface in `apis`:
   (the language asked for, `en` when none) and `{date}` (the day, `2026-11-23`)
   may be in its path or query, not in its scheme, user, host or port (as the
   address is written, in any case); they are filled in only as a checked
-  language code and day, escaped, and the host of the address really used is
-  checked against `hosts` again. An address that is an IP address
+  language code and day, escaped, and the request may go only to the host
+  (and port) of `url` as written: **there is no separate list of trusted
+  hosts** — saving an interface is what trusts its host, and only for that
+  interface. An address that is an IP address
   that is not public, `localhost` and its subdomains are refused when it is saved;
   whatever a name resolves to is checked again when the connection is made (below).
 - `headers` are request headers, at most 10. A value is **never returned**, and
@@ -2290,20 +2350,35 @@ second line only.
   is used. `enabled` (true when a new interface leaves it out) says whether it may
   be chosen by spaces and is used.
 
-`PUT` makes the interface or replaces it, adds its host to `hosts`, and answers as
+`PUT` makes the interface or replaces it, and answers as
 `GET /api/admin/daily`. Changes of the settings (these, `PUT /api/admin/daily`
 and `DELETE`) are made one at a time, in a transaction that holds the
-settings: two administrators saving at once both keep their change. `DELETE` removes it (its host stays on the list) and
+settings: two administrators saving at once both keep their change. `DELETE` removes it and
 answers the same; `404` for an id that is not there. `400 invalid` for anything
 above that breaks a rule (the message says which), or one of the codes of
 "Daily text refusals".
 
-`presets` are interfaces a form can be filled in with (the same fields, with a
-`note`): they are **only offered**, none is created or used until an
-administrator saves it, and a service of a preset is not contacted until then.
-Today: `hitokoto` (zh; the international line, `max_length=80`, 20 requests a
-second, with the link back the service asks for) and `quotable` (en; Quotable's
-random quote, 3 requests a second).
+**Built-in interfaces** (`providers`): services the server knows how to ask,
+so an administrator only switches one on — no address, paths or language
+codes to fill in. `GET /api/admin/daily` lists them as
+`{"id": "hitokoto", "name": "一言", "languages": ["zh-Hans", "zh-Hant"], "site": "https://hitokoto.cn", "note": "…", "enabled": false, "refresh": "daily", "minutes": 0, "rps": 20, "maxRps": 20, "skipNew": true}`
+(`minutes` is set when `refresh` is `"minutes"`; `maxRps` is the service's own limit, the most `rps` may be).
+`PUT /api/admin/daily/providers/{id}` takes `{"enabled": true}` and optionally
+`refresh`, `minutes`, `rps` (not above the service's own limit) and
+`skipNew`; needs admin; answers as `GET /api/admin/daily`. An enabled built-in
+interface appears in `apis` with `"builtin": true` and can be chosen by spaces
+and as the site default like any other; its address, paths, link and language
+mapping cannot be changed (`400 invalid`, `error: "builtin"`). None is enabled
+until an administrator enables it, and no service is contacted before that.
+Today: `hitokoto` (一言, the international line; `zh-Hans`, `zh-Hant`; link
+back to the sentence as the service asks) and `quotable` (Quotable; `en`).
+
+**Language codes in the address**: `{lang}` is filled with the reader's
+language as matched (a canonical BCP 47 tag, e.g. `zh-Hans`). Services that
+want another form are given a `langMap` on the interface,
+`{"zh-Hans": "zh", "en": "en"}`, applied before filling in (built-in
+interfaces have theirs set; custom interfaces may set one, keys checked as
+language tags, values 1–35 characters of `[A-Za-z0-9_-]`).
 
 #### `POST /api/admin/daily/try`
 
@@ -2314,9 +2389,8 @@ random quote, 3 requests a second).
 
 Makes one request now with the interface as it is in the form (saved or not;
 a header without a value uses the value saved for that `id` and that exact
-`url` only), at the same rules as any request, and shows what came back. The
-host must be on `hosts` already (else `400 host_not_allowed`, and nothing is
-sent): an interface on a new host is tried once the host is on the list. It
+`url` only), at the same rules as any request, and shows what came back. It goes only to
+the host of the address in the form, under the same public-address checks. It
 keeps nothing and is limited to a few a second (`429`). `400 invalid`, or a
 code of "Daily text refusals", when the interface itself breaks a rule.
 
@@ -2339,19 +2413,21 @@ a `path_reveals_secret` before a `path_error`, in the order text, source,
 author, link.
 
 ```json
-{"error": "path_error", "message": "no text or number at from_x", "field": "source",
- "result": {"ok": false, "status": 200, "url": "…", "raw": "…", "quote": {"text": "…"},
-            "pathErrors": [{"field": "source", "code": "path_error", "message": "no text or number at from_x"},
-                           {"field": "link", "code": "path_error", "message": "a value the link needs is not in the answer"}]}}
-{"error": "host_not_allowed", "message": "the host api.example.org is not on the list of hosts", "host": "api.example.org",
- "result": {"ok": false, "url": "…", "message": "…"}}
+{"error": "path_error", "message": "no text or number at hitokoto", "field": "text",
+ "result": {"ok": false, "status": 200, "url": "…", "raw": "…",
+            "pathErrors": [{"field": "text", "code": "path_error", "message": "no text or number at hitokoto"}]}}
+{"error": "not_json", "message": "the answer is not JSON",
+ "result": {"ok": false, "status": 200, "url": "…", "message": "…"}}
 ```
 
 `raw` is the start of the answer (4 000 characters), shown only when it is
 valid JSON and none of its decoded texts, names and numbers repeats a request
 header's value (see above); otherwise it is left out, and `message` says why.
+Only the `text` path is required: a `source`, `author` or `link` whose path
+finds a null, nothing or an empty text (or whose link needs a value that is
+missing) gives no value for that field, and is no error.
 `pathErrors` is a list of `{field, code, message}` (`field` one of `text`,
-`source`, `author`, `link`; `code` `path_error` or `path_reveals_secret`); the
+`source`, `author`, `link`; `code` `path_error`, for `text` only, or `path_reveals_secret`); the
 fields that were found are still in `quote`. `message` says what went wrong
 with the request or the answer.
 
@@ -2362,12 +2438,11 @@ it. All are `400`.
 
 | `error` | beside it | when |
 |---|---|---|
-| `host_not_allowed` | `host` | a trial of an address whose host is not on `hosts` |
 | `header_reenter` | `header` | a header without a value whose kept value was given for another `url` |
 | `header_missing` | `header` | a header without a value, and none is kept for it (for this `id`) |
 | `not_json` | | a trial's answer does not declare JSON, or is not valid JSON |
 | `too_large` | | a trial's answer is larger than 64 KB |
-| `path_error` | `field` | a trial's path (or a value the link needs) finds no text or number |
+| `path_error` | `field` (`"text"`) | a trial's text path finds no text or number |
 | `path_reveals_secret` | `field` | a trial's path (or a value of the link) would show a request header's value |
 | `link_uses_header` | `field` (`"link"`) | a link template with a request header in it (saving or trying) |
 | `skip_too_large` | | `GET …/daily` with a `skip` above 1 000 |
@@ -2377,7 +2452,7 @@ interface, is not a refusal: `GET …/daily` answers `200` with `"reason":
 "out_of_range"`. A `date` that is not a day is `400 invalid`.
 
 **How it is fetched.** Only the interfaces the administrators wrote, only from
-`https`, only to hosts on the list. The address a name resolves to is checked
+`https`, only to the host of the interface's own address. The address a name resolves to is checked
 when the connection is made, for every address (so a name that answers
 differently the second time is no way round it): loopback, private, link-local
 (the cloud metadata address included), unspecified, multicast, carrier-grade
@@ -2422,6 +2497,9 @@ text from where it is from) or `markdown` (entries are cut at the lines that
 are `---`, or at the blank lines when there are none). Entries are at most 8 000
 bytes, their source 200 characters, and the server keeps at most 5 000 in all.
 `DELETE` removes the lines of one language. Both answer as `GET /api/admin/daily`.
+Lines saved by 2.3 under a code that is not a language tag (`cn`) are shown
+under that code in `byLang`, and `PUT` and `DELETE` take that code exactly as
+it is stored, so they can still be replaced or deleted.
 For a language the lines used are those of the language, else of its
 language without region, else those for any language, else the first
 language that has some; the line is picked as a page is (from the day and
@@ -2796,6 +2874,624 @@ fields (only those, the rest of the header byte-for-byte). Answers the page
 like a save; `409 conflict` on a stale `baseRev`; `400 invalid` with
 `error: "not_fixable"` for other kinds.
 
+## API tokens
+
+Milestone 2.6. A token lets a script or an MCP client act for one person in
+a few of their spaces, without that person's password or session. It is never
+more than its owner: what a request with a token may do is what the owner may
+do now, narrowed by the token.
+
+### How a token is presented
+
+`Authorization: Bearer pbk_…` on the request. Nothing else carries one (no
+query parameter, no cookie). A request with an `Authorization: Bearer` header
+(even one with nothing after the word, which is a token that is not valid) is
+judged by that header alone: a session cookie sent with it is ignored, and a
+token that does not work never falls back to the cookie. The cross-site rules of
+"Conventions" apply unchanged (`Content-Type: application/json` on changes; no
+CORS on `/api`).
+
+The secret is `pbk_` and 43 characters of `0-9A-Za-z` (32 random bytes). The
+server keeps only its SHA-256, never the secret; the first 12 characters
+(`pbk_` and 8 more, the `prefix`) are kept to tell tokens apart in lists.
+
+**What a token reaches.** A token is accepted on:
+
+- every route under `/api/spaces/{space}/…` whose permission is `read` or
+  `write` (see "Space"), for a space the token names;
+- `GET /api/spaces` and `GET /api/meta`: only the token's spaces, with the
+  permissions the token has in them (below);
+- `GET /api/session`: the owner as `user`, plus
+  `"token": {"id", "name", "access", "spaces": ["…"]}` (`null` for a session);
+- `/mcp` (see "MCP").
+
+The drafts are not among them: `PUT` and `DELETE …/pages/{id}/draft` and
+`POST …/pages/{id}/commit` answer `403 token_scope` to a token. A draft is a
+person's, kept for the browser; what a token writes goes straight to a commit
+(with its own `via`, like `/mcp`), so the server never commits a token's draft
+under no name, and a token never commits a browser draft as "API token".
+
+Everything else, a route that needs `members` or `manage` (the remote of a
+space among them), and anything under `/api/account`, `/api/github`,
+`/api/users`, `/api/invites`, `/api/admin`, `/api/oauth` and the sign-in
+routes, answers `403 token_scope`: a token cannot make tokens, change members,
+settings of a space, types, templates or remotes, connect or use its owner's
+GitHub account, or act as an administrator.
+
+**Permission of a request.** For a space the token names, the permissions are
+those the owner has in the space now (through the cached memberships of 1.7:
+no query per request), intersected with the token's `access`: `read` gives
+`read`; `write` gives `read` and `write`. An administrator's token reaches only
+the spaces its owner is a member of: the administrator's way into other spaces
+is not open to tokens. So:
+
+- a space the token does not name: `403 token_scope`;
+- a space it names but whose member the owner no longer is (or that no longer
+  exists): `404 not_found`, the same as for a session, from the owner's very
+  next request after the removal;
+- a write with a `read` token: `403 token_scope`. Any request that is not
+  `GET` or `HEAD` is a write here, whatever permission the route asks: a
+  `read` token cannot delete a draft, add or remove a favourite or reorder
+  them either;
+- a write with a `write` token whose owner is now a viewer there:
+  `403 no_permission`, from the next request after the change of role;
+- a disabled space: `403 space_disabled`.
+
+**Refusals of the token itself** answer `401` with
+`WWW-Authenticate: Bearer error="invalid_token"`:
+
+| code | when |
+|---|---|
+| `token_invalid` | not a token this server issued (malformed, unknown, or revoked or expired more than 90 days ago and removed) |
+| `token_expired` | past its `expires` |
+| `token_revoked` | revoked by its owner or an administrator |
+| `token_owner_disabled` | the owner's account is disabled; the token works again if it is enabled |
+
+`403 tokens_off` when an administrator has switched tokens off (see
+"Machine access" under "Administration"); the tokens are kept. After 10
+failed tokens (`token_invalid`, `token_expired`, `token_revoked`) from one
+client address in a minute, further token requests from it answer
+`429 rate_limited` with `Retry-After`, as sign-in does. OAuth access tokens on
+`/mcp` are counted on their own, so one address may try up to 10 of each in a
+minute.
+
+A token is checked once, when a request arrives: revoking it, or demoting its
+owner, while a request is already being handled lets that request finish (at
+most one write), and the next one is refused.
+
+**What a lookup costs.** The server hashes the secret and looks the hash up in
+memory; a hash not seen yet costs one query on a unique index of the state
+database, and an unknown one is remembered as unknown for 30 seconds. A
+token found is kept in memory for at most 30 seconds before it is read again,
+so a revocation made by another process (the `petalbook token` command) takes
+effect within 30 seconds; one made through the server takes effect at once.
+The owner and their memberships come from the caches sessions use. When the
+token was last used is written at most once an hour. A request with a token
+that is in memory costs no query.
+
+### Token
+
+```json
+{"id": "01JD3M9T2B", "name": "Desktop notes", "prefix": "pbk_3fK9a2Lq", "access": "write",
+ "spaces": [{"id": "01JD3K8Q7Z", "name": "My notes"}],
+ "created": "2026-11-23T08:30:00Z", "expires": "2027-02-21T08:30:00Z", "lastUsed": null,
+ "revoked": null, "state": "active"}
+```
+
+- `name`: 1–80 characters, for the owner to recognise it; need not be unique.
+- `access`: `read` or `write`.
+- `spaces`: 1–100 spaces, each by id with its current name (`""` for a space
+  that no longer exists or the owner has left; it stays listed, and does
+  nothing). There is no "all my spaces": a token names its spaces.
+- `expires`: a time, or `null` for never.
+- `lastUsed`: when it was last used; it is updated at most once an hour, so it
+  is right within an hour; `null` if never.
+- `revoked`: when it was revoked, or `null`.
+- `state`: `active`, `expired` or `revoked`.
+
+Revoked and expired tokens stay listed for 90 days, then are removed.
+
+### `GET /api/account/tokens`
+
+Accounts mode, signed in with a session. `{"tokens": [Token]}`, newest first:
+the caller's tokens, including revoked and expired ones still kept.
+
+### `POST /api/account/tokens`
+
+```json
+{"name": "Desktop notes", "access": "write", "spaces": ["01JD3K8Q7Z"], "expiresInDays": 90}
+```
+
+`access` defaults to `read`. `expiresInDays` is 1–365, default 90; `0` means
+never. Every space must be one the caller is a member of now
+(`404 not_found` naming the first that is not); `write` is accepted for a
+space where the caller is only a viewer, since what counts is the role when the
+token is used.
+
+`201` with `{"token": Token, "secret": "pbk_…"}` and `Cache-Control: no-store`.
+The secret is in this answer only; it cannot be shown again.
+
+`400 invalid` for a bad name, access, list of spaces or expiry;
+`400 token_limit` when the caller has 50 tokens that are not revoked or
+expired.
+
+### `DELETE /api/account/tokens/{id}`
+
+Revokes one of the caller's tokens. `204`, also when it was revoked already.
+The next request with it answers `401 token_revoked`. `404 not_found` for a
+token that is not the caller's.
+
+### `petalbook token` (single-user mode)
+
+Single-user mode has no accounts and no token endpoints (they answer `404`).
+A token is made on the command line, for the built-in user and the one space
+`default`. The commands read and write the state database directly and work
+while the server runs. Requests without a token to `/api` keep working as
+before; `/mcp` always needs one.
+
+```
+petalbook token create --space DIR [--state-dir DIR] [--database URL] --name NAME [--access read|write] [--expires 90d|never]
+petalbook token list   --space DIR [--state-dir DIR] [--database URL] [--all]
+petalbook token revoke --space DIR [--state-dir DIR] [--database URL] ID|PREFIX
+```
+
+The three flags that find the state database are those of `petalbook draft`.
+For a server in accounts mode, `--data DIR [--database URL]` with
+`--user USERNAME` lists or revokes that user's tokens (for an administrator who
+cannot sign in); tokens in accounts mode are created through the app.
+
+- `create`: `--access` defaults to `read`, `--expires` to `90d` (`Nd` with `N`
+  from 1 to 365, or `never`). Prints the secret alone on one line on standard
+  output, and what it is on standard error:
+
+  ```
+  pbk_3fK9a2LqV0eXw7Ty1MbN4cRj8sHk2Gd6Pz5uQaYo
+  token 01JD3M9T2B "Desktop notes" (write, expires 2027-02-21): shown once, keep it now
+  ```
+
+- `list`: one line per token, active ones only unless `--all`:
+
+  ```
+  ID          PREFIX        NAME           ACCESS  EXPIRES     LAST USED         STATE
+  01JD3M9T2B  pbk_3fK9a2Lq  Desktop notes  write   2027-02-21  2026-11-23 09:00  active
+  ```
+
+- `revoke`: by id, or by prefix when exactly one token has it; a prefix must be
+  the full 12 characters (a shorter one is an error that says so, and revokes
+  nothing). Prints `revoked 01JD3M9T2B "Desktop notes"`; the running server
+  refuses the token within 30 seconds. An id or prefix that matches no token,
+  or a prefix that matches several, exits with status 1 and says so.
+
+## OAuth for MCP clients
+
+Accounts mode only, and only with `--public-url` (it is the issuer and the
+address tokens are bound to). It lets an MCP client be connected by pasting the
+address of `/mcp`: the client discovers this server, the person signs in and
+approves, and the client gets tokens. It follows what the MCP authorization
+specification asks of a server: OAuth 2.1 with PKCE (`S256` only), resource
+indicators (RFC 8707), the `iss` parameter in the response (RFC 9207), client
+ID metadata documents, and dynamic client registration (RFC 7591) as the
+fallback. Clients are public (no client secret); the only grants are
+`authorization_code` and `refresh_token`. It is Rackbook's authorization
+server with grants and clients kept in the state database (SQLite or
+PostgreSQL) instead of a file.
+
+These endpoints answer errors in the OAuth shape,
+`{"error": "<code>", "error_description": "…"}`, not the API's, and with the
+OAuth codes (`invalid_request`, `invalid_client`, `invalid_grant`,
+`invalid_scope`, `invalid_target`, `unsupported_grant_type`,
+`unsupported_response_type`, `access_denied`, `temporarily_unavailable`,
+`server_error`). The discovery documents, `/oauth/token` and `/oauth/register`
+take no cookies and answer every origin (`Access-Control-Allow-Origin: *`, and
+the cross-site rules of `/api` do not apply to them), so a browser-based MCP
+client can use them. When MCP is switched off (see "Machine access") all of
+them, the authorization and consent endpoints included, answer `404`; the
+grants (below) are kept and can still be listed and revoked. In single-user
+mode, and in accounts mode without `--public-url`, there is no authorization
+server: the same paths answer `404`.
+
+### Scopes and what a grant may do
+
+| scope | gives |
+|---|---|
+| `read` | `read` in the spaces of the grant |
+| `write` | `read` and `write` in the spaces of the grant |
+
+The spaces are not in the scope: the person picks them on the consent page. A
+grant then works exactly as an API token with that `access` and those spaces
+(see "API tokens": same narrowing by the owner's current role, same codes,
+same reach on `/mcp`). An OAuth access token is accepted on `/mcp` only; on
+`/api` it answers `403 token_scope`. A request without `scope` asks for
+`read write`; the person may still approve read only.
+
+### Discovery
+
+- `GET /.well-known/oauth-protected-resource/mcp` and
+  `GET /.well-known/oauth-protected-resource` (RFC 9728):
+
+  ```json
+  {"resource": "https://notes.example.com/mcp", "authorization_servers": ["https://notes.example.com"],
+   "bearer_methods_supported": ["header"], "scopes_supported": ["read", "write"]}
+  ```
+
+- `GET /.well-known/oauth-authorization-server` (RFC 8414): `issuer`,
+  `authorization_endpoint` (`/oauth/authorize`), `token_endpoint`
+  (`/oauth/token`), `registration_endpoint` (`/oauth/register`), `response_types_supported: ["code"]`,
+  `grant_types_supported: ["authorization_code", "refresh_token"]`,
+  `code_challenge_methods_supported: ["S256"]`,
+  `token_endpoint_auth_methods_supported: ["none"]`,
+  `client_id_metadata_document_supported: true`,
+  `authorization_response_iss_parameter_supported: true`, `scopes_supported`.
+
+Both are cacheable for 5 minutes. A request to `/mcp` without a token answers
+`401` with
+`WWW-Authenticate: Bearer resource_metadata="https://notes.example.com/.well-known/oauth-protected-resource/mcp", scope="read write"`.
+
+### `POST /oauth/register`
+
+RFC 7591, for clients that have no client ID metadata document.
+`{"client_name": "…", "redirect_uris": ["…"], "token_endpoint_auth_method": "none", "grant_types": [...], "response_types": ["code"]}`
+(body at most 16 KiB; 1–10 redirect URIs, each `https`, `http` on a loopback
+address with any port, or the private-use scheme of a native app such as
+`cursor://…`, RFC 8252; never a fragment, credentials, `javascript:`, `data:`
+and the like, nor a host with look-alike letters). `201` with the client
+(`client_id` is `pbc_…`); `200` with the existing client when the same name and
+redirect URIs are registered again, which costs nothing. At most 30 new
+registrations per client address in 10 minutes (`429 temporarily_unavailable`
+with `Retry-After`) and 1000 clients in all; a client never authorized is
+removed after a day, one with no grant left after 30 days.
+`400 invalid_client_metadata` (also for a body that is not sent as
+`application/json`) or `invalid_redirect_uri` for a bad request. When
+the 1000 are all in use, `503 temporarily_unavailable` with `Retry-After`;
+otherwise the oldest client nobody authorized makes room. Clients are kept in the
+state database.
+
+A `client_id` that is an `https` URL is a client ID metadata document: the
+server fetches it (at most 8 KiB, no private or loopback addresses, cached as
+its `Cache-Control` says, between 1 minute and 1 hour; a fetch that failed is
+remembered for 1 minute, and requests for the same `client_id` at the same
+moment share one fetch) and takes the name and redirect URIs from it. Nothing
+is registered.
+
+### `GET /oauth/authorize`
+
+The browser is sent here by the client with `response_type=code`,
+`client_id`, `redirect_uri`, `code_challenge`, `code_challenge_method=S256`,
+`resource` (the URL of `/mcp`), `scope` and `state`. Without a session it
+redirects to the sign-in page, which comes back here. With a bad `client_id` or
+a `redirect_uri` the client did not register, it shows an error page and
+redirects nowhere (the page is in English or, for a browser that asks for it,
+Chinese). Any other bad parameter is shown on the same page, with its OAuth
+code, and is not sent back to the client either: `400` with
+`invalid_request` for missing or non-`S256` PKCE, `invalid_target` for a
+missing or other `resource`, `invalid_scope`, `unsupported_response_type`.
+Before the person has consented the server never redirects with an error, so
+a client that registered itself, or that names any metadata document, cannot
+use it as an open redirector (RFC 9700 section 4.11.2); the only error that
+goes back to the client's `redirect_uri` is `access_denied`, once the request
+was well-formed and the person refused it on the consent page. Otherwise it
+redirects to the consent page, `/oauth/consent?req=…`; the request is kept 10
+minutes, in memory, for this person only. One person may have at most 20
+requests waiting for a decision, and the server 1000 in all: past either, the
+page shows `temporarily_unavailable` (`429` for the person's own 20, `503` for
+the server's 1000) until one is decided or expires. The browser of someone who is not signed in is sent to
+`/login?return=<this address>`; the web app turns that return into a full page
+load of `/oauth/authorize`, which the server answers. A link from another site
+may open `/oauth/authorize` (it only asks the person); the rest of `/api` never
+accepts requests from other sites.
+
+### Consent
+
+The consent page reads `GET /api/oauth/consent?req=…`:
+
+```json
+{"client": {"name": "Notes helper", "id": "https://app.example/client.json", "host": "app.example"},
+ "redirectHost": "localhost", "punycode": false, "scopes": ["read", "write"],
+ "spaces": [{"id": "01JD3K8Q7Z", "name": "My notes", "permissions": ["read", "write", "members", "manage"], "personal": true}],
+ "user": {"id": "01JD3K7A2M", "name": "Kazuha"}}
+```
+
+The page shows who asks (the name is the client's own claim; the host is what
+can be trusted, and `punycode` warns of a host that may look like another), where
+the answer goes, and the person's spaces to choose from (none chosen at first
+except the personal one), and offers read or read-and-write when `write` was
+asked for. It answers with `POST /api/oauth/consent`:
+
+```json
+{"req": "…", "approve": true, "spaces": ["01JD3K8Q7Z"], "access": "write"}
+```
+
+`200` with `{"redirect": "https://…?code=…&state=…&iss=…"}` (or
+`error=access_denied` when `approve` is false), to which the page sends the
+browser. `404 not_found` when the request has expired, was decided already or
+is someone else's; `400 invalid` for no space, a space the person is not a
+member of, or `write` when only `read` was asked for. The code is good once,
+for 60 seconds. These two are ordinary API routes: they need a session, never
+take a token, and follow the cross-site rules.
+
+### `POST /oauth/token`
+
+`application/x-www-form-urlencoded`, at most 16 KiB, with `client_id` and no
+secret.
+
+- `grant_type=authorization_code` with `code`, `redirect_uri`,
+  `code_verifier`, `resource`. A code used twice ends the grant made with it.
+- `grant_type=refresh_token` with `refresh_token` (and optionally `resource`,
+  `scope` no wider than the grant's).
+
+`200`:
+
+```json
+{"access_token": "…", "token_type": "Bearer", "expires_in": 600, "refresh_token": "pbr_…", "scope": "read write"}
+```
+
+The access token is a JWT signed with the server's ES256 key (made at the first
+start and kept in the state database, sealed with the server key like the other
+secrets: `DATA/secret.key` or `PETALBOOK_SECRET_KEY`; with another server key it
+cannot be opened and the server does not start), valid 10 minutes, bound to the
+`/mcp` URL and to the grant. There is no JWKS endpoint: only this server checks
+it, in process. A token whose signature was checked is kept in memory by its
+hash until it expires, and the grant it names is looked up in the same cache
+as API tokens (30 seconds), so a check costs no query, and revoking a grant
+through this server stops its access tokens at once (one made by another
+process, within 30 seconds). A refused access token answers with the codes of
+"API tokens": `token_invalid`, `token_expired`, `token_revoked` (the grant is
+gone), `token_owner_disabled`. The refresh token is replaced at every refresh; the
+replaced one, sent again within 60 seconds, gets the same answer (a response
+that was lost), and after that ends the grant. A grant not refreshed for 90
+days ends. The refresh token is `pbr_<grant id>.<secret>`; only its SHA-256 is kept.
+`invalid_grant` for a bad, used or ended code or refresh token, a verifier that
+does not match, and when the owner is disabled or the grant was revoked (the
+client must authorize again). A disabled owner does not end the grant: it works
+again when the account does.
+
+### Grants
+
+A grant is one approval of one client by one person. They are listed and
+revoked like tokens:
+
+- `GET /api/account/grants`: `{"grants": [{"id", "client": {"name", "id"}, "access", "spaces": [{"id", "name"}], "created", "lastUsed"}]}`,
+  newest first. `lastUsed` is the last refresh (the creation until the first
+  one); `name` of a space is `""` as for tokens.
+- `DELETE /api/account/grants/{id}`: `204`; the client's access and refresh
+  tokens stop working at once.
+
+## MCP
+
+Access through MCPHub (its tokens, its users bound as an external identity) is
+deferred to after 2.6, until MCPHub's token format is confirmed.
+
+`/mcp` serves the Model Context Protocol over the Streamable HTTP transport,
+stateless: every `POST /mcp` carries one JSON-RPC message and is answered with
+one JSON response (`Content-Type: application/json`), with no MCP session and
+no event stream (every method but `POST` answers `405` with `Allow: POST`,
+before any credential is looked at). Nothing is kept
+per client between calls, so any number of clients cost nothing while idle.
+It is on in both modes unless switched off (`404` then): `serve --mcp=false` in
+single-user mode, the administrators' setting in accounts mode (see
+"Machine access").
+
+**Authentication.** Every request needs `Authorization: Bearer` with an API
+token or (accounts mode) an OAuth access token; a session cookie is not
+accepted. Without one: `401` and the `WWW-Authenticate` challenge of
+"Discovery" (in single-user mode without `resource_metadata`, since there is no
+authorization server). A token refused for itself answers `401` with the codes
+of "API tokens" as an HTTP response, before any tool runs. The `Origin` and
+`Sec-Fetch-Site` rules of "Conventions" apply (they guard against DNS
+rebinding); a client that is not a browser sends neither.
+
+**Tools** are the same for both kinds of credential. Each works in one space,
+named by `space` (in single-user mode `default`, which may be left out). What a
+tool may do is the permission of "API tokens": `tools/list` leaves out the
+write tools when the credential cannot write in any of its spaces.
+
+**Errors.** A failing tool returns a result with `isError: true` and, as
+`structuredContent` (and its JSON as text), `{"error": "<code>", "message": "…", "details": {…}?}`
+with the codes of this API: `not_found`, `invalid`, `conflict`,
+`no_permission`, `token_scope`, `space_disabled`, `unavailable`,
+`rate_limited`, `internal`, and three of its own, `too_large`,
+`edit_no_match` and `edit_ambiguous` (below). A space the credential does not
+name is `token_scope`; one whose member the owner no longer is, `not_found`.
+Malformed arguments (a missing or unknown argument, one of the wrong type)
+are JSON-RPC errors (`-32602`); an argument of the right type that is refused
+(a `limit` out of range, a bad `cursor`, an unknown `sort`) is `invalid`.
+
+**Limits.** No tool returns everything: lists are paged with a `cursor` (the
+`next` of the previous result, `""` after the last), and each list has its own
+default and largest `limit`. The structured result (`structuredContent`) is
+at most 1 MiB as JSON; a larger one is refused with `too_large` and
+`details: {"limitBytes", "sizeBytes", "suggestedLimit"?}`, to repeat with the
+same cursor and a smaller limit. The cap is that of the structured result
+only: the response also carries the same JSON as text (escaped once more, as
+a JSON string), so the whole JSON-RPC response is about twice the result, a
+little over 2 MiB at most for most results, and never more than three times
+the result (a result made only of quotes and backslashes) and the envelope. A page body is returned at
+most 128 KiB at a time (see `page_get`). A request is at most 2 MiB (`413`).
+Lists and search are read from the index, never by scanning files, so they
+cost the same in a space of 50 000 pages as the matching REST listing.
+
+**Writes** are made as the REST saves make them (`PUT …/pages/{id}`,
+`PATCH …/props`, `move`): checked against `baseRev`, journaled, committed
+(and pushed, in a space that follows a remote, before the tool answers). They
+do not go through the owner's drafts: a write by MCP leaves the owner's draft of
+the page alone, as a `PUT` does, and the draft shows as stale in the app. The
+author of the commit is the owner of the credential, as for their own saves.
+Changes made through MCP are never committed together with changes made another
+way: when the source of the pending changes of a space changes, what is pending
+is committed first, as when the author changes (1.7). The commit message ends
+with a trailer:
+
+```
+Edit 暮雪
+
+Changed-via: MCP
+```
+
+A change made on `/api` with an API token ends with `Changed-via: API token`
+in the same way. History items carry `"via": "mcp"` or `"via": "token"` for
+such commits (absent otherwise), in `GET …/history` and in `page_history`.
+
+### Page item
+
+Lists and search return page items: the "Page summary" with the space, the
+rev, and `props` (as with `props=1`: text cut to 300 characters, lists to 100
+elements, `partialProps` naming what was cut):
+
+```json
+{"space": "01JD3K8Q7Z", "id": "01JD3K8Q7Z", "path": "Tang/暮雪.md", "folder": "Tang", "label": "暮雪", "title": "暮雪",
+ "tags": ["玉兰"], "type": "", "effectiveType": "文案", "created": "2025-12-03", "updated": "2026-11-21T08:30:00Z",
+ "excerpt": "…", "props": {"status": "draft"}, "rev": "3b18e5…"}
+```
+
+`excerpt` is at most 400 characters. No item carries a body.
+
+### `spaces_list`
+
+No arguments. What the credential reaches and the limits:
+
+```json
+{"user": {"id": "01JD3K7A2M", "name": "Kazuha"}, "credential": {"kind": "token", "access": "write"},
+ "spaces": [{"id": "01JD3K8Q7Z", "name": "My notes", "permissions": ["read", "write"], "inbox": "Inbox"}],
+ "limits": {"maxResultBytes": 1048576, "maxBodyChunk": 131072, "maxWriteBody": 1048576}}
+```
+
+`kind` is `token` or `oauth`. `permissions` is the narrowed set. A space named
+by the credential that the owner has left is not listed. At most 100 spaces, so
+never paged.
+
+### `folders_list`
+
+`{"space", "parent": "", "recursive": false, "cursor", "limit"}`: the folders
+directly in `parent` (or, with `recursive`, all below it, in path order), as
+`{"items": [{"path", "pages"}], "next"}` with the number of pages directly in
+each. `limit` 1–1000, default 200. `not_found` for a `parent` that is no
+folder (found as the app finds a folder, whatever its case).
+
+### `tags_list`
+
+`{"space", "cursor", "limit"}`: `{"items": [{"tag", "pages"}], "next"}`, most
+used first. `limit` 1–500, default 100.
+
+### `types_list`
+
+`{"space"}`: `{"types": [...]}`, the page types of the space (at most 100), each
+`{"name", "title", "fields": [{"key", "title", "kind", "options"?}], "folders": ["…"]}`
+with the folders bound to the type, so a client knows which fields
+`pages_query` can filter on. `options` at most 500 per field.
+
+### `pages_search`
+
+`{"space", "q", "in": "title"?, "folder"?, "recursive"?, "tag": [...]?, "cursor", "limit"}`:
+full-text search, as `GET …/pages?q=` (same matching, ordered by relevance).
+`q` is required, at most 500 characters. `limit` 1–50, default 20.
+`{"items": [Page item], "next"}`.
+
+### `pages_query`
+
+`{"space", "folder"?, "recursive"?, "tag": [...]?, "filter": [...]?, "sort"?, "updatedFrom"?, "updatedTo"?, "createdFrom"?, "createdTo"?, "cursor", "limit"}`:
+the listing of `GET …/pages` with its parameters and meanings, `filter` given as
+a JSON array (not text): by folder, tags, dates, and conditions on type fields
+(`in`, `notIn`, `range`, `empty`, `notEmpty`, `contains`), sorted by
+`updated`, `created`, `title` or `prop:{key}`. Each is bounded as the REST
+listing is (at most 10 tags, 11 conditions, 500 values each). `limit` 1–200,
+default 50. `{"items": [Page item], "next"}`. `invalid` for what the REST
+listing refuses.
+
+### `page_get`
+
+`{"space", "id"?, "path"?, "offset": 0}`: one page, by `id` or by `path`
+(as links name it, from the space root; one of the two). The answer is the
+"Page" of REST without `header` and without the caller's draft, with the body
+in pieces:
+
+```json
+{"space": "…", "id": "…", "path": "Tang/暮雪.md", "rev": "3b18e5…", "updated": "…", "meta": {…},
+ "effectiveType": "文案", "body": "…", "bodyBytes": 523114, "offset": 0, "next": 131072}
+```
+
+`body` holds at most 128 KiB of the body from byte `offset` (cut on a
+character boundary), less when the header leaves less room in the 1 MiB of a
+result; `next` is the offset of the rest, or `null` when this is the end;
+`bodyBytes` is the size of the whole body. A header so large that no part of
+the body fits beside it in 1 MiB is `too_large` (the page cannot be read
+through MCP; the app and REST read it). The rev is the same in
+every piece; if the file changed between two reads, a later piece with a
+different `rev` means to start over. `not_found`; `invalid` for an `offset`
+that is not a character boundary within the body; `too_large` as above.
+
+### `page_history`
+
+`{"space", "id", "cursor", "limit"}`: as `GET …/history`, newest first, with
+`via`. `limit` 1–100, default 20.
+
+### `page_version`
+
+`{"space", "id", "commit", "offset": 0}`: the page as it was in that version,
+as `GET …/versions/{commit}`, with the body in pieces as `page_get`.
+`not_found` when the commit is not a version of the page.
+
+### `page_create`
+
+```json
+{"space": "…", "folder": "Tang", "title": "暮雪", "subtitle": "…", "source": "…", "tags": ["玉兰"], "type": "文案",
+ "props": {"status": "draft"}, "body": "…", "template": "日记", "tz": 480, "requestId": "…"}
+```
+
+Everything but `space` optional; as `POST …/pages` (the server picks the id,
+`created` and the file name; templates and folder defaults apply the same way).
+`body` at most 1 MiB (`too_large`). `props` are header fields that are not
+built in, with the value rules of `PATCH …/props`. `requestId` (at most 100
+characters): a second call with the same `requestId` by the same credential
+within an hour returns the first result instead of making another page
+(remembered in memory, at most 10 000, not across a restart). Returns
+`{"page": Page item, "replayed": false}`. Needs `write`.
+
+### `page_update`
+
+```json
+{"space": "…", "id": "…", "baseRev": "3b18e5…",
+ "title": "…", "subtitle": "…", "source": "…", "tags": ["…"], "type": "…",
+ "set": {"status": "done"}, "unset": ["old"],
+ "body": "…", "edits": [{"old": "黄昏", "new": "暮色"}]}
+```
+
+`baseRev` is required (the `rev` from `page_get` or a page item); the rest
+says what changes, and what is not given stays as the file has it, byte for
+byte. Built-in fields are replaced when given (`""` or `[]` removes them);
+`set`/`unset` change other header fields as `PATCH …/props` does; the body is
+either replaced whole (`body`, at most 1 MiB) or changed by `edits` (not both):
+at most 50, the `old` and `new` texts together at most 1 MiB (the page itself
+may be larger), applied in order, each `old` (not empty) replaced by `new`, and each
+`old` must occur exactly once in the body as it is by then (`edit_no_match`,
+`edit_ambiguous`, with `details.index`; nothing is written). Changing the title
+renames the file and the links to it follow (see "Links between pages"). A
+change that leaves the file as it is writes nothing and returns the same
+`rev`. Returns `{"page": Page item}`. Needs `write`.
+
+`conflict` when `baseRev` is not the file's rev (unless only the server's link
+rewrites changed it), with `details.current` holding the current `rev`,
+`path` and `meta` but not the body: read it again with `page_get`.
+`invalid` for an update that changes nothing named, built-in fields in `set`,
+both `body` and `edits`.
+
+### `page_move`
+
+`{"space", "id", "folder", "baseRev"?}`: as `POST …/move`; the folder is made
+if needed and links follow. With `baseRev`, `conflict` if the page changed
+since. Returns `{"page": Page item}`. Needs `write`.
+
+### `page_tag`
+
+`{"space", "id", "add": ["…"], "remove": ["…"], "baseRev"?}`: adds and removes
+tags (at most 50 each, the rules of tag names of `PUT …/tags/{tag}`), keeping
+the other tags in their order and everything else byte for byte. Without
+`baseRev` it applies to the file as it is now (adding a tag twice, or removing
+one that is not there, changes nothing); with it, `conflict` if the page
+changed since. Returns `{"page": Page item}`. Needs `write`.
+
+There is no tool to delete pages or folders, move folders, or change types,
+templates, settings or members.
+
 ## Maintenance
 
 ### `POST /api/spaces/{space}/reindex`
@@ -2933,6 +3629,39 @@ again. `409 personal_space` for a personal space, which goes with its person.
 in memory now (idle ones are closed, see `--space-idle`). `diskFreeBytes` is
 the room left for the server on the disk of the data directory; it is absent
 on platforms that cannot say (anything but Linux, macOS and FreeBSD).
+
+### Machine access
+
+#### `GET /api/admin/access`, `PUT /api/admin/access`
+
+```json
+{"tokens": true, "mcp": true, "oauth": true}
+```
+
+`tokens`: API tokens are accepted (off: every API token answers
+`403 tokens_off`; nothing is deleted, and turning it on again brings them back).
+OAuth grants are not API tokens: they keep working on `/mcp` until `mcp` is
+switched off. `mcp`: `/mcp`
+and the OAuth endpoints are served (off: `404`; grants are kept). Both are on
+by default. `oauth` is read only: whether the authorization server is there,
+which needs `mcp` and `--public-url`. `PUT` takes `tokens` and `mcp`, each
+optional, and answers the same object; the change applies to the next request.
+Kept in the state database.
+
+#### `GET /api/admin/tokens?user={id}&cursor={cursor}&limit={n}`
+
+Every token on the server, newest first, revoked and expired ones still kept
+included: `{"items": [Token + "owner": {"id", "username", "name"}], "next": "…"}`.
+`user` keeps one user's. `limit` 1–200, default 50; one query a page.
+
+#### `DELETE /api/admin/tokens/{id}`
+
+Revokes any token. `204`, also when it was revoked already; `404 not_found`.
+
+#### `GET /api/admin/grants?user={id}&cursor={cursor}&limit={n}`, `DELETE /api/admin/grants/{id}`
+
+The same for OAuth grants (items as in `GET /api/account/grants`, with
+`owner`).
 
 ### GitHub App
 

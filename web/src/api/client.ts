@@ -5,6 +5,12 @@ import { t } from '@/i18n'
 import type {
   AccountInfo,
   AdminSpace,
+  ApiToken,
+  ConsentDecision,
+  ConsentInfo,
+  CreatedToken,
+  Grant,
+  TokenAccess,
   BacklinkList,
   DailyAnswer,
   DailyPrefs,
@@ -70,10 +76,9 @@ export const API_BASE = '/api'
 export const DEFAULT_SPACE = 'default'
 
 // The codes the daily-text endpoints put in `error` (with what they are about next to it).
-const DAILY_CODES = new Set(['host_not_allowed', 'header_reenter', 'header_missing', 'not_json', 'too_large', 'path_error', 'path_reveals_secret', 'link_uses_header', 'skip_too_large'])
-const reasonOf = (b: { error: string; host?: unknown; header?: unknown; field?: unknown }): ReasonCode => ({
+const DAILY_CODES = new Set(['bad_language', 'api_not_found', 'builtin', 'header_reenter', 'header_missing', 'not_json', 'too_large', 'path_error', 'path_reveals_secret', 'link_uses_header', 'skip_too_large'])
+const reasonOf = (b: { error: string; header?: unknown; field?: unknown }): ReasonCode => ({
   code: b.error,
-  ...(typeof b.host === 'string' ? { host: b.host } : {}),
   ...(typeof b.header === 'string' ? { header: b.header } : {}),
   ...(typeof b.field === 'string' ? { field: b.field } : {}),
 })
@@ -281,7 +286,7 @@ export async function request<T>(path: string, { method = 'GET', body, keepalive
       err.current,
       res.status === 429 && Number.isFinite(retry) && retry > 0 ? retry : undefined,
       err.draft,
-      typeof err.error === 'string' && DAILY_CODES.has(err.error) ? reasonOf(err as { error: string; host?: unknown; header?: unknown; field?: unknown }) : undefined,
+      typeof err.error === 'string' && DAILY_CODES.has(err.error) ? reasonOf(err as { error: string; header?: unknown; field?: unknown }) : undefined,
       json ?? undefined,
     )
   }
@@ -488,6 +493,19 @@ export const api = {
   // `current` is left out when the account has no password yet.
   changePassword: (input: { current?: string; new: string }) => request<void>('/account/password', { method: 'POST', body: input }),
   removeIdentity: (id: string) => request<void>(`/account/identities/${enc(id)}`, { method: 'DELETE' }),
+
+  // --- API tokens ---
+  tokens: (signal?: AbortSignal) => request<{ tokens: ApiToken[] }>('/account/tokens', { signal }),
+  // `expiresInDays` 0 is a token that never expires; left out, 90 days.
+  createToken: (input: { name: string; access: TokenAccess; spaces: string[]; expiresInDays?: number }) => request<CreatedToken>('/account/tokens', { method: 'POST', body: input }),
+  revokeToken: (id: string) => request<void>(`/account/tokens/${enc(id)}`, { method: 'DELETE' }),
+
+  // --- connected apps (OAuth grants) and the consent page ---
+  // 404 when the server has no authorization server (no public address, or MCP is off).
+  grants: (signal?: AbortSignal) => request<{ grants: Grant[] }>('/account/grants', { signal }),
+  revokeGrant: (id: string) => request<void>(`/account/grants/${enc(id)}`, { method: 'DELETE' }),
+  consent: (req: string, signal?: AbortSignal) => request<ConsentInfo>(`/oauth/consent?req=${enc(req)}`, { signal }),
+  decideConsent: (input: ConsentDecision) => request<{ redirect: string }>('/oauth/consent', { method: 'POST', body: input }),
 
   // --- users and invites (administrators) ---
   checkInvite: (token: string, signal?: AbortSignal) => request<InviteCheck>('/invites/check', { method: 'POST', body: { token }, signal }),

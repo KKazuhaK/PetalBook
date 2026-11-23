@@ -405,6 +405,8 @@ export interface HistoryItem {
   // Absent for the version in which the page was deleted.
   rev?: string
   change: VersionChange
+  // How the change was made, when it did not come from the web app.
+  via?: 'mcp' | 'token'
 }
 export interface HistoryList {
   items: HistoryItem[]
@@ -570,17 +572,21 @@ export interface PutAdminGitHubInput {
 
 
 // A refusal of the daily-text endpoints says why with a stable code in `error`, next to `message`, and the
-// thing it is about: host_not_allowed (host), header_reenter / header_missing (header), not_json, too_large,
-// path_error / path_reveals_secret (field: text|source|author|link), link_uses_header, skip_too_large.
+// thing it is about: header_reenter / header_missing (header), not_json, too_large, path_error /
+// path_reveals_secret (field: text|source|author|link), link_uses_header, skip_too_large, bad_language (a language
+// tag that is not one), api_not_found (an interface of the default that is not set up), builtin (what a built-in
+// interface fixes; field).
 export interface ReasonCode {
   code: string
-  host?: string
   header?: string
   field?: string
 }
 
 export type ErrorCode =
-  | 'host_not_allowed'
+  | 'token_limit'
+  | 'bad_language'
+  | 'api_not_found'
+  | 'builtin'
   | 'header_reenter'
   | 'header_missing'
   | 'not_json'
@@ -642,6 +648,82 @@ export interface SessionInfo {
   setup: boolean
   // Absent in single-user mode.
   methods?: { password: boolean; oidc: { name: string } | null }
+  // The API token the request was made with; the app's own requests have none.
+  token?: { id: string; name: string; access: TokenAccess; spaces: string[] } | null
+}
+
+// An API token (docs/api.md, "API tokens"). The secret is never in one of these.
+export type TokenAccess = 'read' | 'write'
+export type TokenState = 'active' | 'expired' | 'revoked'
+export interface ApiTokenSpace {
+  id: string
+  // "" for a space that is gone or that the owner has left.
+  name: string
+}
+export interface ApiToken {
+  id: string
+  name: string
+  prefix: string
+  access: TokenAccess
+  spaces: ApiTokenSpace[]
+  created: string
+  expires: string | null
+  lastUsed: string | null
+  revoked: string | null
+  state: TokenState
+}
+// The secret is in the response of the creating request only.
+export interface CreatedToken {
+  token: ApiToken
+  secret: string
+}
+export interface AdminToken extends ApiToken {
+  owner: { id: string; username: string; name: string }
+}
+export interface AdminTokenList {
+  items: AdminToken[]
+  next: string
+}
+// An OAuth grant: one approval of one client (an MCP client, say) by one person
+// (docs/api.md, "OAuth for MCP clients"). It works like a token of that access
+// and those spaces.
+export interface Grant {
+  id: string
+  client: { name: string; id: string }
+  access: TokenAccess
+  spaces: ApiTokenSpace[]
+  created: string
+  // The last refresh; the creation until the first.
+  lastUsed: string | null
+}
+export interface AdminGrant extends Grant {
+  owner: { id: string; username: string; name: string }
+}
+export interface AdminGrantList {
+  items: AdminGrant[]
+  next: string
+}
+// What the consent page shows of an authorization request.
+export interface ConsentInfo {
+  client: { name: string; id: string; host: string }
+  redirectHost: string
+  // The host may show as letters that look like others.
+  punycode: boolean
+  scopes: TokenAccess[]
+  spaces: { id: string; name: string; permissions: Permission[]; personal: boolean }[]
+  user: { id: string; name: string }
+}
+export interface ConsentDecision {
+  req: string
+  approve: boolean
+  spaces?: string[]
+  access?: TokenAccess
+}
+export interface MachineAccess {
+  tokens: boolean
+  mcp: boolean
+  // Whether the authorization server is there; read only.
+  oauth: boolean
 }
 
 export interface Identity {
@@ -775,7 +857,8 @@ export interface DailyAnswer {
 export interface DailyPrefs {
   inherit: boolean
   apis: string[]
-  available: { id: string; name: string; lang: string }[]
+  // A built-in interface that answers in more than one language lists them in `languages`.
+  available: { id: string; name: string; lang: string; languages?: string[] }[]
   // The languages the settings pages have a tab for (besides "all languages").
   languages?: string[]
   default: { kind: string } | null
@@ -829,16 +912,51 @@ export interface DailyApi {
   skipNew: boolean
   rps: number
   enabled: boolean
-  note?: string
+  // How a language is written in {lang} for this service: {"zh-Hans": "zh"}.
+  langMap?: Record<string, string>
+  // A built-in interface: its address, paths, link and language mapping are fixed.
+  builtin?: boolean
+  // The languages a built-in interface answers in (lang is the first).
+  languages?: string[]
 }
-export type DailyDefault = null | { kind: 'list' } | { kind: 'space'; space: string; source: DailySettings }
+// A service the server knows how to ask: switched on and off, no address to fill in.
+export interface DailyProvider {
+  id: string
+  name: string
+  languages: string[]
+  site: string
+  note: string
+  enabled: boolean
+  refresh: 'daily' | 'hourly' | 'minutes'
+  minutes: number
+  rps: number
+  maxRps?: number
+  skipNew: boolean
+}
+export interface KnownLanguage {
+  tag: string
+  name: string
+  english: string
+}
+export type DailyDefault = null | { kind: 'list' } | { kind: 'space'; space: string; source: DailySettings } | { kind: 'api'; apis: Record<string, string> }
+export interface DailyNotice {
+  code: 'builtin_adopted' | 'builtin_renamed' | 'builtin_kept' | 'dropped_language' | 'unreadable' | (string & {})
+  id?: string
+  to?: string
+  lang?: string
+  field?: string
+  message: string
+}
 export interface AdminDaily {
   default: DailyDefault
-  hosts: string[]
   languages: string[]
+  // The common languages to pick from; any valid tag may still be typed.
+  knownLanguages: KnownLanguage[]
   apis: DailyApi[]
-  presets: DailyApi[]
+  providers: DailyProvider[]
   lines: { total: number; byLang: Record<string, number>; max: number }
+  // What the server changed in the settings by itself, reading what an earlier version saved; absent from older servers.
+  notices?: DailyNotice[]
   // Whether spaces may use a source of their own and pick an external interface; absent until the server has them.
   allow?: DailyAllow
 }
@@ -849,7 +967,6 @@ export interface DailyTryResult {
   message?: string
   // Why it did not work, as a code (see ReasonCode), with what it is about.
   error?: string
-  host?: string
   header?: string
   field?: string
   raw?: string

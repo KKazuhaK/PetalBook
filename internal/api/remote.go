@@ -169,6 +169,8 @@ type historyItemResp struct {
 	Path   string `json:"path"`
 	Rev    string `json:"rev,omitempty"`
 	Change string `json:"change"`
+	// Via is "token" or "mcp" for a change made with an API token or through MCP.
+	Via string `json:"via,omitempty"`
 }
 
 func (s *server) getHistory(c *call) {
@@ -192,7 +194,7 @@ func (s *server) getHistory(c *call) {
 	}
 	out := make([]historyItemResp, len(items))
 	for i, it := range items {
-		out[i] = historyItemResp{Commit: it.Commit, Time: rfc3339(it.Time), Author: it.Author, Path: it.Path, Rev: it.Rev, Change: it.Change}
+		out[i] = historyItemResp{Commit: it.Commit, Time: rfc3339(it.Time), Author: it.Author, Path: it.Path, Rev: it.Rev, Change: it.Change, Via: it.Via}
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Items []historyItemResp `json:"items"`

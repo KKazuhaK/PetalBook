@@ -126,11 +126,24 @@ var (
 )
 
 // InvalidError is a request the space refuses because of its content.
-type InvalidError struct{ Msg string }
+type InvalidError struct {
+	Msg string
+	// Code is a stable error code (docs/api.md) when the refusal has one, else "".
+	Code string
+}
 
 func (e *InvalidError) Error() string { return e.Msg }
 
-func invalidf(format string, a ...any) error { return &InvalidError{fmt.Sprintf(format, a...)} }
+func invalidf(format string, a ...any) error { return &InvalidError{Msg: fmt.Sprintf(format, a...)} }
+
+// CodeBadLanguage is the error code of a language tag that is not one.
+const CodeBadLanguage = "bad_language"
+
+// BadLanguage is the refusal of a language tag that is not well formed or
+// whose language is not in the IANA registry.
+func BadLanguage(tag string) error {
+	return &InvalidError{Msg: fmt.Sprintf("%q is not a language tag like zh-Hans, en or pt-BR", tag), Code: CodeBadLanguage}
+}
 
 // ConflictError means the page changed since the client read it.
 type ConflictError struct{ Current *Page }
@@ -212,7 +225,7 @@ func Open(opt Options) (*Space, error) {
 			},
 			commitNow: func(paths []string) error {
 				id, _ := g.identities(Author{})
-				_, err := g.commitPaths(id, paths)
+				_, err := g.commitPaths(id, "", paths)
 				var skipped *gitstore.SkippedError
 				if errors.As(err, &skipped) {
 					err = nil

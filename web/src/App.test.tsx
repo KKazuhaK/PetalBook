@@ -6,6 +6,7 @@ import { markSignedIn } from '@/api/client'
 import { mockFetch } from '@/api/mock/fetch'
 import { createMockServer, MOCK_ADMIN, type MockServer } from '@/api/mock/server'
 import { t } from '@/i18n'
+import { oa } from '@/i18n/oauth'
 import { keys } from '@/api/hooks'
 import { adminRequests, click, installDomShims, makePerson, PERSON_PASSWORD, settle, shareSpace } from '@/testing/harness'
 
@@ -33,8 +34,8 @@ afterEach(async () => {
 
 // Starts the app at `path`, as a person signed in already (or in single-user mode). The router is made
 // when the module loads, so each start loads it afresh, with the address already in place.
-async function boot(path: string | (() => string), options: { mode: 'single' | 'accounts'; as?: string; scene?: (server: MockServer) => void }) {
-  const server = createMockServer({ now: () => Date.now(), mode: options.mode })
+async function boot(path: string | (() => string), options: { mode: 'single' | 'accounts'; as?: string; oauth?: boolean; scene?: (server: MockServer) => void }) {
+  const server = createMockServer({ now: () => Date.now(), mode: options.mode, oauth: options.oauth })
   globalThis.fetch = mockFetch(server)
   options.scene?.(server)
   if (options.mode === 'accounts') {
@@ -75,6 +76,36 @@ describe('the addresses of users and invites', () => {
     vi.resetModules()
     await boot('/admin/spaces', { mode: 'single' })
     await settle(() => text().includes(t.notFound), 'single-user')
+  })
+})
+
+describe('the page an MCP client sends a person to', () => {
+  it('is /oauth/consent: the page alone, with no app around it', async () => {
+    let req = ''
+    await boot(() => `/oauth/consent?req=${req}`, { mode: 'accounts', oauth: true, scene: (server) => void (req = server.startAuthorization(MOCK_ADMIN.username, { clientName: 'Notes helper' })) })
+    await settle(() => text().includes(oa.consent.titleFor('Notes helper')), 'the consent page')
+    expect(where()).toBe('/oauth/consent')
+    expect(document.querySelector('[data-sidebar]')).toBeNull()
+  })
+
+  it('/oauth/authorize, which the server answers, is asked of the server again with a page load', async () => {
+    const replace = vi.fn()
+    const loc = window.location
+    // jsdom does not navigate; what is asked of it is what is checked.
+    Object.defineProperty(window, 'location', { configurable: true, value: { ...loc, pathname: '/oauth/authorize', search: '?client_id=x', replace } })
+    try {
+      const { default: App } = await import('@/App')
+      globalThis.fetch = mockFetch(createMockServer({ now: () => Date.now(), mode: 'accounts' }))
+      host = document.createElement('div')
+      document.body.appendChild(host)
+      root = createRoot(host)
+      window.history.pushState({}, '', '/oauth/authorize?client_id=x')
+      await act(async () => root!.render(<App />))
+      await settle(() => replace.mock.calls.length > 0, 'the page load')
+      expect(replace).toHaveBeenCalledWith('/oauth/authorize?client_id=x')
+    } finally {
+      Object.defineProperty(window, 'location', { configurable: true, value: loc })
+    }
   })
 })
 

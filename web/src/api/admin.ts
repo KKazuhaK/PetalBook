@@ -6,7 +6,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, enc, request } from './client'
 import { keys } from './hooks'
-import type { AdminDaily, AdminGitHub, GitHubCursorPage, GitHubInstallation, PutAdminGitHubInput, AdminSpaceList, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User } from './types'
+import type { AdminDaily, AdminGrantList, AdminTokenList, MachineAccess, AdminGitHub, GitHubCursorPage, GitHubInstallation, PutAdminGitHubInput, AdminSpaceList, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User } from './types'
 
 export const adminApi = {
   // --- users and invites ---
@@ -42,19 +42,41 @@ export const adminApi = {
   adminDeleteSpace: (id: string) => request<DeletedSpace>(`/admin/spaces/${enc(id)}`, { method: 'DELETE' }),
   adminStatus: (signal?: AbortSignal) => request<ServerStatus>('/admin/status', { signal }),
 
+  // --- machine access: API tokens ---
+  access: (signal?: AbortSignal) => request<MachineAccess>('/admin/access', { signal }),
+  putAccess: (input: { tokens?: boolean; mcp?: boolean }) => request<MachineAccess>('/admin/access', { method: 'PUT', body: input }),
+  adminTokens: (params: { cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<AdminTokenList>(`/admin/tokens${qs ? `?${qs}` : ''}`, { signal })
+  },
+  adminRevokeToken: (id: string) => request<void>(`/admin/tokens/${enc(id)}`, { method: 'DELETE' }),
+  adminGrants: (params: { cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<AdminGrantList>(`/admin/grants${qs ? `?${qs}` : ''}`, { signal })
+  },
+  adminRevokeGrant: (id: string) => request<void>(`/admin/grants/${enc(id)}`, { method: 'DELETE' }),
+
   // --- the daily text of the whole server ---
   daily: (signal?: AbortSignal) => request<AdminDaily>('/admin/daily', { signal }),
-  putDaily: (input: { default?: DailyDefault; hosts?: string[]; languages?: string[]; allow?: DailyAllow }) => request<AdminDaily>('/admin/daily', { method: 'PUT', body: input }),
+  putDaily: (input: { default?: DailyDefault; languages?: string[]; allow?: DailyAllow; notices?: [] }) => request<AdminDaily>('/admin/daily', { method: 'PUT', body: input }),
   // A header with a `value` sets it; one with only a `name` keeps what is saved; a header left out is removed.
   putDailyApi: (api: Omit<DailyApi, 'note'>) => request<AdminDaily>(`/admin/daily/apis/${enc(api.id)}`, { method: 'PUT', body: api }),
+  putDailyProvider: (id: string, input: { enabled: boolean; refresh?: DailyProvider['refresh']; minutes?: number; rps?: number; skipNew?: boolean }) =>
+    request<AdminDaily>(`/admin/daily/providers/${enc(id)}`, { method: 'PUT', body: input }),
   deleteDailyApi: (id: string) => request<AdminDaily>(`/admin/daily/apis/${enc(id)}`, { method: 'DELETE' }),
   // A refused trial is a 400 that carries what the trial showed in `result`; it reads as a trial with errors.
   tryDailyApi: async (api: Omit<DailyApi, 'note'>, lang: string, date: string): Promise<DailyTryResult> => {
     try {
       return await request<DailyTryResult>('/admin/daily/try', { method: 'POST', body: { api, lang, date } })
     } catch (e) {
-      const b = e instanceof ApiError && e.status === 400 ? (e.body as { result?: unknown; error?: string; field?: string; host?: string; header?: string } | undefined) : undefined
-      if (b && typeof b.result === 'object' && b.result !== null) return { ...(b.result as DailyTryResult), error: b.error, field: b.field, host: b.host, header: b.header }
+      const b = e instanceof ApiError && e.status === 400 ? (e.body as { result?: unknown; error?: string; field?: string; header?: string } | undefined) : undefined
+      if (b && typeof b.result === 'object' && b.result !== null) return { ...(b.result as DailyTryResult), error: b.error, field: b.field, header: b.header }
       throw e
     }
   },
@@ -169,13 +191,54 @@ function useDailyWrite<V>(write: (v: V) => Promise<AdminDaily>) {
     },
   })
 }
-export const useSaveDailySite = () => useDailyWrite((input: { default?: DailyDefault; hosts?: string[]; languages?: string[]; allow?: DailyAllow }) => adminApi.putDaily(input))
+export const useSaveDailySite = () => useDailyWrite((input: { default?: DailyDefault; languages?: string[]; allow?: DailyAllow; notices?: [] }) => adminApi.putDaily(input))
 export const useSaveDailyApi = () => useDailyWrite((api: Omit<DailyApi, 'note'>) => adminApi.putDailyApi(api))
+export const useSaveDailyProvider = () => useDailyWrite(({ id, ...input }: { id: string; enabled: boolean; refresh?: DailyProvider['refresh']; minutes?: number; rps?: number; skipNew?: boolean }) => adminApi.putDailyProvider(id, input))
 export const useDeleteDailyApi = () => useDailyWrite((id: string) => adminApi.deleteDailyApi(id))
 export const useSaveDailyLines = () => useDailyWrite((input: { lang: string; text: string; format: LinesFormat }) => adminApi.putDailyLines(input))
 export const useDeleteDailyLines = () => useDailyWrite((lang: string) => adminApi.deleteDailyLines(lang))
 export function useTryDailyApi() {
   return useMutation({ mutationFn: ({ api, lang, date }: { api: Omit<DailyApi, 'note'>; lang: string; date: string }) => adminApi.tryDailyApi(api, lang, date) })
+}
+
+// --- machine access ------------------------------------------------------------------
+
+export function useMachineAccess(enabled = true) {
+  return useQuery({ queryKey: keys.adminAccess, queryFn: ({ signal }) => adminApi.access(signal), enabled, staleTime: 15_000 })
+}
+
+export function useSetMachineAccess() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { tokens?: boolean; mcp?: boolean }) => adminApi.putAccess(input),
+    onSuccess: (a) => qc.setQueryData(keys.adminAccess, a),
+  })
+}
+
+export const ADMIN_TOKENS_PAGE = 50
+
+// Every person's tokens, a cursor page at a time.
+export function useAdminTokens(enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.adminTokens,
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => adminApi.adminTokens({ cursor: pageParam || undefined, limit: ADMIN_TOKENS_PAGE }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled,
+    staleTime: 15_000,
+  })
+}
+
+// Every person's OAuth grants, a cursor page at a time.
+export function useAdminGrants(enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.adminGrants,
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => adminApi.adminGrants({ cursor: pageParam || undefined, limit: ADMIN_TOKENS_PAGE }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled,
+    staleTime: 15_000,
+  })
 }
 
 // --- the GitHub App ----------------------------------------------------------------

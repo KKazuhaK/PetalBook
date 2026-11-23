@@ -78,9 +78,15 @@ func (x *Index) Pick(q PickQuery, at func(total int) int) (total int, s Summary,
 }
 
 // Summary returns the summary of a page by its id, false when it is not indexed.
-func (x *Index) Summary(id string) (s Summary, ok bool, err error) {
+func (x *Index) Summary(id string) (s Summary, ok bool, err error) { return x.summaryOf(id, false) }
+
+// SummaryWithProps is Summary with the page's properties and rev, as a listing
+// asked for them (Query.Props) has them.
+func (x *Index) SummaryWithProps(id string) (Summary, bool, error) { return x.summaryOf(id, true) }
+
+func (x *Index) summaryOf(id string, props bool) (s Summary, ok bool, err error) {
 	err = x.one(func(db querier) error {
-		rows, err := db.Query(`SELECT `+selectCols(false)+` FROM pages p WHERE p.id = ?`, id)
+		rows, err := db.Query(`SELECT `+selectCols(props)+` FROM pages p WHERE p.id = ?`, id)
 		if err != nil {
 			return err
 		}
@@ -89,7 +95,7 @@ func (x *Index) Summary(id string) (s Summary, ok bool, err error) {
 			return rows.Err()
 		}
 		ok = true
-		s, _, _, _, _, _, err = scanSummary(rows, false)
+		s, _, _, _, _, _, err = scanSummary(rows, props)
 		return err
 	})
 	return

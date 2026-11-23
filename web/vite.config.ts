@@ -21,7 +21,8 @@ export default defineConfig(async ({ mode }) => {
     server: {
       port: 5173,
       strictPort: true,
-      ...(mode === 'mock' ? {} : { proxy: { '/api': { target: backend, changeOrigin: true } } }),
+      // The pages of the web app stay here, /oauth/consent among them.
+      ...(mode === 'mock' ? {} : { proxy: { '/api': { target: backend, changeOrigin: true }, '^/oauth/(authorize|token|register)$': { target: backend, changeOrigin: true }, '/.well-known': { target: backend, changeOrigin: true } } }),
     },
     build: {
       outDir: 'dist',

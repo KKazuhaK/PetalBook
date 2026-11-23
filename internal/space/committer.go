@@ -83,7 +83,7 @@ func (c *committer) Record(by Author, recs ...jrec) error {
 		return nil
 	}
 	for i := range recs {
-		recs[i].AuthorName, recs[i].AuthorEmail = by.Name, by.Email
+		recs[i].AuthorName, recs[i].AuthorEmail, recs[i].Via = by.Name, by.Email, by.Via
 	}
 	// A record of a folder move or delete is the only trace of the bindings
 	// still to be changed: the trim after a commit keeps it until Done.
@@ -172,10 +172,11 @@ func (c *committer) SwitchTo(by Author) {
 		return
 	}
 	id, _ := c.git.identities(by)
+	via := cleanVia(by.Via)
 	c.mu.Lock()
 	other := false
 	for _, a := range c.paths {
-		if x, _ := c.git.identities(a); x != id {
+		if x, _ := c.git.identities(a); x != id || cleanVia(a.Via) != via {
 			other = true
 			break
 		}
@@ -271,7 +272,7 @@ func (c *committer) commit() error {
 			failed = append(failed, grp.paths...)
 			continue
 		}
-		made, err := c.git.commitPaths(grp.id, grp.paths)
+		made, err := c.git.commitPaths(grp.id, grp.via, grp.paths)
 		if made {
 			c.log.Info("committed changes", "files", len(grp.paths), "author", grp.id.Name)
 		}

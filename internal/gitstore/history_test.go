@@ -160,11 +160,11 @@ func TestFileHistoryKeepsLookingWhenVersionsAreRefused(t *testing.T) {
 func TestParseLogSurvivesStrangeNamesAndPaths(t *testing.T) {
 	h := strings.Repeat("a", 40)
 	h2 := strings.Repeat("b", 40)
-	out := h + "\x00" + "1700000000" + "\x00" + "Mallory\x1e" + h2 + "\x1f x" + "\x00" + "\nR090\x00old name.md\x00new\nline.md\x00" +
-		h2 + "\x00" + "1600000000" + "\x00" + "Ann" + "\x00" + "\nA\x00weird\x00path.md\x00"
+	out := h + "\x00" + "1700000000" + "\x00" + "Mallory\x1e" + h2 + "\x1f x" + "\x00" + "API token\x00" + "\nR090\x00old name.md\x00new\nline.md\x00" +
+		h2 + "\x00" + "1600000000" + "\x00" + "Ann" + "\x00" + "\x00" + "\nA\x00weird\x00path.md\x00"
 	vs := parseLog(out)
 	if len(vs) != 2 || vs[0].Commit != h || vs[0].Status != 'R' || vs[0].Similarity != 90 || vs[0].Path != "new\nline.md" ||
-		vs[1].Commit != h2 || vs[1].Path != "weird\x00path.md"[:5] {
+		vs[1].Commit != h2 || vs[1].Path != "weird\x00path.md"[:5] || vs[0].Via != "API token" || vs[1].Via != "" {
 		t.Fatalf("%+v", vs)
 	}
 }

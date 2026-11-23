@@ -3,12 +3,13 @@
 // cookie stand-in), invites, spaces per user and a fake OpenID Connect
 // provider. It has no DOM or Node dependencies.
 
-import type { AdminSpace, ConnectRemoteInput, FieldKind, Identity, Invite, Member, Page, Permission, Remote, RemoteKey, RemoteState, Role, ServerStatus, SettingsNotice, SpaceInfo, SpaceRole, User } from '../types.ts'
+import type { AdminGrant, AdminSpace, AdminToken, ApiToken, ConsentInfo, Grant, ConnectRemoteInput, DailyNotice, FieldKind, Identity, Invite, Member, Page, Permission, Remote, RemoteKey, RemoteState, Role, ServerStatus, SettingsNotice, SpaceInfo, SpaceRole, User } from '../types.ts'
 import { gitBlobId } from './sha1.ts'
 import { ALPHABET, HttpError, compareCodePoints, createSpaceStore, isRecord, rfc3339, validFolder, type SpaceStore } from './store.ts'
 import { SPACE_NAME } from './seed.ts'
 import { createGitHubBook, type MockGitHubOptions } from './githubBook.ts'
-import { pickNumber, validLang } from './homeBook.ts'
+import { pickNumber } from './homeBook.ts'
+import { canonicalTag, matchTag } from '../../lib/langTags.ts'
 import { createFileStore, DEFAULT_MAX_UPLOAD, type FileStore } from './files.ts'
 import { DEFAULT_MAX_IMPORT, runImport } from './importer.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
@@ -58,6 +59,9 @@ export interface MockOptions {
   maxUpload?: number
   // The largest import in bytes (`--max-import`); 100 MiB by default.
   maxImport?: number
+  // Accounts mode: the server has an authorization server for MCP clients (it was given
+  // --public-url), so the consent endpoints and the grants answer; otherwise they are 404.
+  oauth?: boolean
 }
 
 // What the mock plays for the remote endpoints.
@@ -100,6 +104,44 @@ interface InviteRec {
   expires: number
   createdBy: string
   used: boolean
+}
+interface TokenRec {
+  id: string
+  userId: string
+  name: string
+  prefix: string
+  access: 'read' | 'write'
+  spaces: string[]
+  created: number
+  expires: number | null
+  revoked: number | null
+}
+interface GrantRec {
+  id: string
+  userId: string
+  clientId: string
+  clientName: string
+  access: 'read' | 'write'
+  spaces: string[]
+  created: number
+  lastUsed: number
+}
+// An authorization request waiting on the consent page.
+interface PendingRec {
+  userId: string
+  clientName: string
+  clientId: string
+  redirectUri: string
+  state: string
+  scopes: ('read' | 'write')[]
+  expires: number
+}
+interface StartOptions {
+  clientName?: string
+  clientId?: string
+  redirectUri?: string
+  state?: string
+  scopes?: ('read' | 'write')[]
 }
 interface RemoteRec {
   url: string
@@ -194,6 +236,11 @@ export function createMockServer(options: MockOptions = {}) {
   const users = new Map<string, UserRec>()
   const sessions = new Map<string, string>()
   const invites = new Map<string, InviteRec>()
+  const apiTokens = new Map<string, TokenRec>()
+  // What an administrator allows machines (docs/api.md, "Machine access").
+  const machine = { tokens: true, mcp: true }
+  const grants = new Map<string, GrantRec>()
+  const pending = new Map<string, PendingRec>()
   const spaces = new Map<string, SpaceRec>()
   // What the server says about settings files it could not use, by space (set by tests).
   const settingsNotices = new Map<string, SettingsNotice[]>()
@@ -568,6 +615,157 @@ export function createMockServer(options: MockOptions = {}) {
       .filter((i) => !i.used && i.expires > now())
       .map((i) => ({ id: i.id, role: i.role, created: rfc3339(i.created), expires: rfc3339(i.expires), createdBy: i.createdBy }))
 
+  // --- API tokens ---
+  const TOKEN_LIMIT = 50
+  const tokenState = (t: TokenRec): ApiToken['state'] => (t.revoked !== null ? 'revoked' : t.expires !== null && t.expires <= now() ? 'expired' : 'active')
+  const publicToken = (t: TokenRec): ApiToken => {
+    const owner = users.get(t.userId)
+    return {
+      id: t.id,
+      name: t.name,
+      prefix: t.prefix,
+      access: t.access,
+      // A space is named only while its owner is a member of it.
+      spaces: t.spaces.map((id) => ({ id, name: spaces.get(id)?.members.has(t.userId) && owner ? spaces.get(id)!.name : '' })),
+      created: rfc3339(t.created),
+      expires: t.expires === null ? null : rfc3339(t.expires),
+      lastUsed: null,
+      revoked: t.revoked === null ? null : rfc3339(t.revoked),
+      state: tokenState(t),
+    }
+  }
+  const newestFirst = (a: TokenRec, b: TokenRec) => b.created - a.created || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)
+  const createToken = (me: UserRec, body: Record<string, unknown>): MockResponse => {
+    const name = typeof body.name === 'string' ? body.name.trim() : ''
+    if (codePoints(name) < 1 || codePoints(name) > 80) throw new HttpError(400, 'invalid', '名称要 1 到 80 个字')
+    const access = body.access === undefined || body.access === '' ? 'read' : body.access
+    if (access !== 'read' && access !== 'write') throw new HttpError(400, 'invalid', 'access 要是 read 或 write')
+    const days = body.expiresInDays === undefined ? 90 : body.expiresInDays
+    if (typeof days !== 'number' || !Number.isInteger(days) || days < 0 || days > 365) throw new HttpError(400, 'invalid', 'expiresInDays 要在 1 到 365 之间，0 是永不过期')
+    if (!Array.isArray(body.spaces) || body.spaces.length < 1 || body.spaces.length > 100 || !body.spaces.every((x) => typeof x === 'string')) throw new HttpError(400, 'invalid', '要选 1 到 100 个空间')
+    const ids = [...new Set(body.spaces as string[])]
+    for (const id of ids) if (!spaces.get(id)?.members.has(me.id)) throw new HttpError(404, 'not_found', `没有这个空间：${id}`)
+    const live = [...apiTokens.values()].filter((t) => t.userId === me.id && tokenState(t) === 'active').length
+    if (live >= TOKEN_LIMIT) throw new HttpError(400, 'token_limit', '有效的令牌已有 50 个，先吊销一个')
+    const secret = 'pbk_' + randomString(43)
+    const rec: TokenRec = {
+      id: newId((x) => apiTokens.has(x)),
+      userId: me.id,
+      name,
+      prefix: secret.slice(0, 12),
+      access,
+      spaces: ids,
+      created: now(),
+      expires: days === 0 ? null : now() + days * 86_400_000,
+      revoked: null,
+    }
+    apiTokens.set(rec.id, rec)
+    return { status: 201, body: { token: publicToken(rec), secret } }
+  }
+  const revokeToken = (id: string, owner: string | null) => {
+    const t = apiTokens.get(id)
+    if (!t || (owner !== null && t.userId !== owner)) throw new HttpError(404, 'not_found', '没有这个令牌')
+    if (t.revoked === null) t.revoked = now()
+  }
+  const adminTokens = (url: URL): MockResponse => {
+    let limit = 50
+    if (url.searchParams.has('limit')) {
+      const raw = url.searchParams.get('limit') ?? ''
+      const n = /^\d+$/.test(raw) ? Number(raw) : NaN
+      if (!(n >= 1 && n <= 200)) throw new HttpError(400, 'invalid', 'limit 要在 1 到 200 之间')
+      limit = n
+    }
+    const user = url.searchParams.get('user')
+    const after = url.searchParams.get('cursor') ?? ''
+    const all = [...apiTokens.values()].filter((t) => !user || t.userId === user).sort(newestFirst)
+    const from = after ? all.findIndex((t) => t.id === after) + 1 : 0
+    const rest = all.slice(from)
+    const page = rest.slice(0, limit)
+    const items: AdminToken[] = page.map((t) => {
+      const o = users.get(t.userId)
+      return { ...publicToken(t), owner: { id: t.userId, username: o?.username ?? '', name: o?.name ?? '' } }
+    })
+    return { status: 200, body: { items, next: rest.length > limit ? page[page.length - 1].id : '' } }
+  }
+
+  // --- OAuth for MCP clients: grants and the consent page ---
+  const oauthHere = () => accounts && options.oauth === true
+  // The consent endpoints are off with MCP; the grants are only there with an authorization server.
+  const requireOAuth = () => {
+    if (!oauthHere() || !machine.mcp) throw new HttpError(404, 'not_found', 'no such endpoint')
+  }
+  const requireGrants = () => {
+    if (!oauthHere()) throw new HttpError(404, 'not_found', 'no such endpoint')
+  }
+  const publicGrant = (g: GrantRec): Grant => ({
+    id: g.id,
+    client: { name: g.clientName, id: g.clientId },
+    access: g.access,
+    spaces: g.spaces.map((id) => ({ id, name: spaces.get(id)?.members.has(g.userId) ? spaces.get(id)!.name : '' })),
+    created: rfc3339(g.created),
+    lastUsed: rfc3339(g.lastUsed),
+  })
+  const grantsOf = (userId: string | null) =>
+    [...grants.values()]
+      .filter((g) => userId === null || g.userId === userId)
+      .sort((a, b) => b.created - a.created || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
+  const startPending = (u: UserRec, o: StartOptions): string => {
+    const req = randomString(32)
+    pending.set(req, {
+      userId: u.id,
+      clientName: o.clientName ?? 'Notes helper',
+      clientId: o.clientId ?? 'pbc_mock',
+      redirectUri: o.redirectUri ?? 'http://localhost:7777/callback',
+      state: o.state ?? 'st4te',
+      scopes: o.scopes ?? ['read', 'write'],
+      expires: now() + 600_000,
+    })
+    return req
+  }
+  const takePending = (me: UserRec, id: string | null, keep: boolean): PendingRec => {
+    const p = id ? pending.get(id) : undefined
+    if (!id || !p || p.expires <= now() || p.userId !== me.id) throw new HttpError(404, 'not_found', 'this authorization request has expired, was decided already or is not yours; start again from the client')
+    if (!keep) pending.delete(id)
+    return p
+  }
+  const consentInfo = (me: UserRec, p: PendingRec): ConsentInfo => ({
+    client: { name: p.clientName, id: p.clientId, host: /^https:\/\/([^/:]+)/.exec(p.clientId)?.[1] ?? '' },
+    redirectHost: new URL(p.redirectUri).host || p.redirectUri,
+    punycode: /(^|\.)xn--/i.test(new URL(p.redirectUri).hostname),
+    scopes: p.scopes,
+    spaces: callerSpaces(me).map((s) => {
+      const info = spaceInfo(s, me)
+      return { id: s.id, name: s.name, permissions: info.permissions, personal: info.personal }
+    }),
+    user: { id: me.id, name: me.name },
+  })
+  const decideConsent = (me: UserRec, body: Record<string, unknown>): MockResponse => {
+    const id = typeof body.req === 'string' ? body.req : null
+    const p = takePending(me, id, true)
+    const back = (params: Record<string, string>) => {
+      const u = new URL(p.redirectUri)
+      for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v)
+      if (p.state) u.searchParams.set('state', p.state)
+      u.searchParams.set('iss', 'https://notes.example.test')
+      return u.toString()
+    }
+    if (body.approve !== true) {
+      pending.delete(id!)
+      return { status: 200, body: { redirect: back({ error: 'access_denied', error_description: 'the user denied the request' }) } }
+    }
+    const access = body.access === undefined || body.access === '' ? 'read' : body.access
+    if (access !== 'read' && access !== 'write') throw new HttpError(400, 'invalid', 'access must be read or write')
+    if (access === 'write' && !p.scopes.includes('write')) throw new HttpError(400, 'invalid', 'the client asked for read only')
+    if (!Array.isArray(body.spaces) || body.spaces.length < 1 || body.spaces.length > 100 || !body.spaces.every((x) => typeof x === 'string')) throw new HttpError(400, 'invalid', 'choose 1 to 100 spaces')
+    const ids = [...new Set(body.spaces as string[])]
+    for (const sid of ids) if (!spaces.get(sid)?.members.has(me.id)) throw new HttpError(400, 'invalid', `you are not a member of the space ${sid}`)
+    pending.delete(id!)
+    // The real server makes the grant when the client exchanges the code; the mock has no client.
+    const g: GrantRec = { id: newId((x) => grants.has(x)), userId: me.id, clientId: p.clientId, clientName: p.clientName, access, spaces: ids, created: now(), lastUsed: now() }
+    grants.set(g.id, g)
+    return { status: 200, body: { redirect: back({ code: randomString(43) }) } }
+  }
+
   // --- spaces ---
   // Opening a space (the real server's `handle`): someone who is no member, and
   // no administrator, is told it does not exist, the same as for a space that
@@ -597,30 +795,112 @@ export function createMockServer(options: MockOptions = {}) {
   }
 
   // --- the daily text of the whole server (what administrators give) ---
-  // Only the default that is a list of lines is kept here: the real server also
-  // takes a space as the default, which a mock does not need.
+  // The default that is a space is not kept here: the real server also takes a space as the default, which a
+  // mock does not need. Languages are canonical BCP 47 tags, as on the server.
   interface SiteApi {
     id: string
     name: string
     lang: string
+    languages?: string[]
     url: string
     headers: { name: string; value: string }[]
     text: string
     source: string
     author: string
     link: string
+    langMap: Record<string, string>
     refresh: string
     refreshMinutes: number
     skipNew: boolean
     rps: number
     enabled: boolean
+    builtin?: boolean
   }
-  const site = { lines: new Map<string, { body: string; source: string }[]>(), listDefault: false, allow: { own: true, api: true }, hosts: [] as string[], languages: ['zh', 'en'], apis: [] as SiteApi[] }
+  type SiteDefault = null | { kind: 'list' } | { kind: 'api'; apis: Record<string, string> }
+  interface ProviderState {
+    enabled: boolean
+    refresh?: string
+    minutes?: number
+    rps?: number
+    skipNew?: boolean
+  }
+  const site = { lines: new Map<string, { body: string; source: string }[]>(), default: null as SiteDefault, allow: { own: true, api: true }, languages: ['zh-Hans', 'en'], apis: [] as SiteApi[], providers: {} as Record<string, ProviderState>, notices: [] as DailyNotice[] }
   const spaceDaily = new Map<string, { inherit: boolean; apis: string[] }>()
-  const PRESETS = [
-    { id: 'hitokoto', name: '一言', lang: 'zh', url: 'https://international.v1.hitokoto.cn/?max_length=80', text: 'hitokoto', source: 'from', author: 'from_who', link: 'https://hitokoto.cn?uuid={uuid}', refresh: 'daily', refreshMinutes: 0, skipNew: true, rps: 20, enabled: true, note: '' },
-    { id: 'quotable', name: 'Quotable', lang: 'en', url: 'https://api.quotable.io/quotes/random', text: '[0].content', source: '', author: '[0].author', link: '', refresh: 'daily', refreshMinutes: 0, skipNew: true, rps: 3, enabled: true, note: '' },
+  const KNOWN_LANGUAGES = [
+    { tag: 'zh-Hans', name: '中文（简体）', english: 'Chinese (Simplified)' },
+    { tag: 'zh-Hant', name: '中文（繁體）', english: 'Chinese (Traditional)' },
+    { tag: 'en', name: 'English', english: 'English' },
+    { tag: 'ja', name: '日本語', english: 'Japanese' },
+    { tag: 'ko', name: '한국어', english: 'Korean' },
+    { tag: 'fr', name: 'français', english: 'French' },
+    { tag: 'de', name: 'Deutsch', english: 'German' },
+    { tag: 'es', name: 'español', english: 'Spanish' },
+    { tag: 'pt-BR', name: 'português (Brasil)', english: 'Portuguese (Brazil)' },
+    { tag: 'pt-PT', name: 'português (Portugal)', english: 'Portuguese (Portugal)' },
+    { tag: 'ru', name: 'русский', english: 'Russian' },
+    { tag: 'it', name: 'italiano', english: 'Italian' },
+    { tag: 'nl', name: 'Nederlands', english: 'Dutch' },
+    { tag: 'pl', name: 'polski', english: 'Polish' },
+    { tag: 'tr', name: 'Türkçe', english: 'Turkish' },
+    { tag: 'uk', name: 'українська', english: 'Ukrainian' },
+    { tag: 'cs', name: 'čeština', english: 'Czech' },
+    { tag: 'sv', name: 'svenska', english: 'Swedish' },
+    { tag: 'da', name: 'dansk', english: 'Danish' },
+    { tag: 'nb', name: 'norsk bokmål', english: 'Norwegian Bokmål' },
+    { tag: 'fi', name: 'suomi', english: 'Finnish' },
+    { tag: 'el', name: 'Ελληνικά', english: 'Greek' },
+    { tag: 'he', name: 'עברית', english: 'Hebrew' },
+    { tag: 'ar', name: 'العربية', english: 'Arabic' },
+    { tag: 'fa', name: 'فارسی', english: 'Persian' },
+    { tag: 'hi', name: 'हिन्दी', english: 'Hindi' },
+    { tag: 'bn', name: 'বাংলা', english: 'Bengali' },
+    { tag: 'ta', name: 'தமிழ்', english: 'Tamil' },
+    { tag: 'th', name: 'ไทย', english: 'Thai' },
+    { tag: 'vi', name: 'Tiếng Việt', english: 'Vietnamese' },
+    { tag: 'id', name: 'Indonesia', english: 'Indonesian' },
+    { tag: 'ms', name: 'Melayu', english: 'Malay' },
+    { tag: 'fil', name: 'Filipino', english: 'Filipino' },
+    { tag: 'ro', name: 'română', english: 'Romanian' },
+    { tag: 'hu', name: 'magyar', english: 'Hungarian' },
+    { tag: 'bg', name: 'български', english: 'Bulgarian' },
+    { tag: 'ca', name: 'català', english: 'Catalan' },
+    { tag: 'la', name: 'Latina', english: 'Latin' },
+    { tag: 'en-GB', name: 'English (United Kingdom)', english: 'English (United Kingdom)' },
+    { tag: 'es-419', name: 'español (Latinoamérica)', english: 'Spanish (Latin America)' },
+    { tag: 'yue-Hant', name: '粵語（繁體）', english: 'Cantonese (Traditional)' },
   ]
+  const PROVIDERS = [
+    { id: 'hitokoto', name: '一言', languages: ['zh-Hans', 'zh-Hant'], site: 'https://hitokoto.cn', note: 'Free, no key.', url: 'https://international.v1.hitokoto.cn/?max_length=80', text: 'hitokoto', source: 'from', author: 'from_who', link: 'https://hitokoto.cn?uuid={uuid}', rps: 20 },
+    { id: 'quotable', name: 'Quotable', languages: ['en'], site: 'https://github.com/lukePeavey/quotable', note: 'Open source, no key.', url: 'https://api.quotable.io/quotes/random', text: '[0].content', source: '', author: '[0].author', link: '', rps: 3 },
+  ]
+  const badLang = (tag: string) => new HttpError(400, 'bad_language', `“${tag}” 不是 zh-Hans、en、pt-BR 这样的语言标签`)
+  const tagOf = (raw: unknown): string => {
+    const tag = typeof raw === 'string' ? canonicalTag(raw) : null
+    if (tag === null) throw badLang(String(raw))
+    return tag
+  }
+  const providerApi = (p: (typeof PROVIDERS)[number], st: ProviderState): SiteApi => ({
+    id: p.id,
+    name: p.name,
+    lang: p.languages[0],
+    languages: p.languages,
+    url: p.url,
+    headers: [],
+    text: p.text,
+    source: p.source,
+    author: p.author,
+    link: p.link,
+    langMap: {},
+    refresh: st.refresh ?? 'daily',
+    refreshMinutes: st.refresh === 'minutes' ? (st.minutes ?? 0) : 0,
+    skipNew: st.skipNew ?? true,
+    rps: st.rps ?? p.rps,
+    enabled: true,
+    builtin: true,
+  })
+  // The interfaces that are set up: the administrators' own, and the built-in ones that are switched on.
+  const allApis = (): SiteApi[] => [...site.apis, ...PROVIDERS.filter((p) => site.providers[p.id]?.enabled).map((p) => providerApi(p, site.providers[p.id]))]
+  const apiTags = (a: SiteApi): string[] => a.languages ?? (a.lang === '' ? [] : [a.lang])
   const siteView = () => {
     const byLang: Record<string, number> = {}
     let total = 0
@@ -629,14 +909,33 @@ export function createMockServer(options: MockOptions = {}) {
       total += list.length
     }
     return {
-      default: site.listDefault ? { kind: 'list' } : null,
-      hosts: [...site.hosts],
+      default: site.default === null ? null : { ...site.default },
       languages: [...site.languages],
+      knownLanguages: KNOWN_LANGUAGES,
       allow: { ...site.allow },
-      apis: site.apis.map(({ headers, ...rest }) => ({ ...rest, headers: headers.map((h) => ({ name: h.name, set: true })) })),
-      presets: PRESETS,
+      apis: allApis().map(({ headers, ...rest }) => ({ ...rest, headers: headers.map((h) => ({ name: h.name, set: true })) })),
+      providers: PROVIDERS.map((p) => {
+        const st = site.providers[p.id] ?? { enabled: false }
+        const a = providerApi(p, st)
+        return { id: p.id, name: p.name, languages: p.languages, site: p.site, note: p.note, enabled: st.enabled, refresh: a.refresh, minutes: a.refreshMinutes, rps: a.rps, maxRps: p.rps, skipNew: a.skipNew }
+      }),
       lines: { total, byLang, max: 5000 },
+      notices: site.notices.map((n) => ({ ...n })),
     }
+  }
+  // The interface for a language of a space's choice: the one made for the language the reader's is matched to, else
+  // one for every language, else any.
+  const chooseApi = (chosen: SiteApi[], lang: string): SiteApi | undefined => {
+    const m = matchTag(lang, chosen.flatMap(apiTags))
+    return (m !== null ? chosen.find((a) => apiTags(a).includes(m)) : undefined) ?? chosen.find((a) => a.lang === '') ?? chosen[0]
+  }
+  const quoteFrom = (api: SiteApi, date: string, skip: number): Record<string, unknown> => {
+    // An external interface knows only today and the days next to it: another date is no error, there is just no text.
+    if (Math.abs(Date.parse(date + 'T00:00:00Z') - Date.parse(new Date(now()).toISOString().slice(0, 10) + 'T00:00:00Z')) > 86400_000) return { page: null, reason: 'out_of_range' }
+    const quote: Record<string, unknown> = { text: `${api.name} ${date}${skip ? ` #${skip}` : ''}`, ...(api.source ? { source: 'src' } : {}), ...(api.author ? { author: 'au' } : {}) }
+    if (api.link) quote.link = api.link.replaceAll('{uuid}', 'u1')
+    if (api.id.includes('stale')) Object.assign(quote, { stale: true, fetched: '2026-11-20T08:00:00Z' })
+    return { page: null, quote, origin: 'external' }
   }
   const dailyText = (space: SpaceRec, q: URLSearchParams): Record<string, unknown> => {
     const home = space.store.home
@@ -644,21 +943,25 @@ export function createMockServer(options: MockOptions = {}) {
     const locked = accounts ? site.allow : { own: true, api: true } // a locked source or choice is kept, and not used
     const own = locked.own ? home.sourceOf(lang) : undefined
     if (own) return home.pick(space.id, q, own) ?? { page: null, reason: 'no_match' }
-    // An interface the space chose (the one for the language, else one for every language). The mock makes no
-    // requests: the text names the interface, and an id with "stale" in it plays one that did not answer.
-    const chosen = site.apis.filter((a) => a.enabled && locked.api && (spaceDaily.get(space.id)?.apis ?? []).includes(a.id))
-    const api = chosen.find((a) => a.lang !== '' && lang.startsWith(a.lang)) ?? chosen.find((a) => a.lang === '') ?? chosen[0]
-    if (accounts && api) {
-      // An external interface knows only today and the days next to it: another date is no error, there is just no text.
-      if (Math.abs(Date.parse(date + 'T00:00:00Z') - Date.parse(new Date(now()).toISOString().slice(0, 10) + 'T00:00:00Z')) > 86400_000) return { page: null, reason: 'out_of_range' }
-      const quote: Record<string, unknown> = { text: `${api.name} ${date}${skip ? ` #${skip}` : ''}`, ...(api.source ? { source: 'src' } : {}), ...(api.author ? { author: 'au' } : {}) }
-      if (api.link) quote.link = api.link.replaceAll('{uuid}', 'u1')
-      if (api.id.includes('stale')) Object.assign(quote, { stale: true, fetched: '2026-11-20T08:00:00Z' })
-      return { page: null, quote, origin: 'external' }
-    }
-    if (accounts && site.listDefault && (spaceDaily.get(space.id)?.inherit ?? true)) {
-      const base = lang.split('-')[0]
-      const use = [lang, base, ''].find((l) => (site.lines.get(l)?.length ?? 0) > 0) ?? [...site.lines.keys()].filter((l) => (site.lines.get(l)?.length ?? 0) > 0).sort()[0]
+    // An interface the space chose. The mock makes no requests: the text names the interface, and an id with
+    // "stale" in it plays one that did not answer.
+    const apis = allApis()
+    const chosen = apis.filter((a) => a.enabled && locked.api && (spaceDaily.get(space.id)?.apis ?? []).includes(a.id))
+    const api = chooseApi(chosen, lang)
+    if (accounts && api) return quoteFrom(api, date, skip)
+    if (accounts && site.default !== null && (spaceDaily.get(space.id)?.inherit ?? true)) {
+      if (site.default.kind === 'api') {
+        // The administrators' own choice, not limited by what spaces may choose.
+        const map = site.default.apis
+        const m = matchTag(lang, Object.keys(map).filter((k) => k !== ''))
+        const id = m !== null ? map[m] : map['']
+        if (id === undefined) return { page: null, reason: 'no_source' }
+        const one = apis.find((a) => a.id === id && a.enabled)
+        return one ? quoteFrom(one, date, skip) : { page: null, reason: 'unavailable' }
+      }
+      const have = [...site.lines.keys()].filter((l) => l !== '' && (site.lines.get(l)?.length ?? 0) > 0)
+      const m = matchTag(lang, have)
+      const use = m ?? ((site.lines.get('')?.length ?? 0) > 0 ? '' : have.sort()[0])
       const list = use === undefined ? [] : (site.lines.get(use) ?? [])
       if (list.length) {
         const line = list[pickNumber('site:' + use, date, skip, list.length)]
@@ -668,35 +971,61 @@ export function createMockServer(options: MockOptions = {}) {
     return { page: null, reason: 'no_source' }
   }
   const routeDailyPrefs = (space: SpaceRec, method: string, body: Record<string, unknown>): MockResponse => {
+    const available = allApis().filter((a) => a.enabled)
     if (method === 'PUT') {
       if (typeof body.inherit !== 'boolean' || !Array.isArray(body.apis)) throw new HttpError(400, 'invalid', '给 inherit 和 apis')
-      const usable = new Set(site.apis.filter((a) => a.enabled).map((a) => a.id))
+      const usable = new Set(available.map((a) => a.id))
       for (const id of body.apis) if (typeof id !== 'string' || !usable.has(id)) throw new HttpError(400, 'invalid', `没有接口 ${String(id)}：只能用管理员设好并启用的`)
       spaceDaily.set(space.id, { inherit: body.inherit, apis: [...new Set(body.apis as string[])] })
     } else if (method !== 'GET') throw new HttpError(404, 'not_found', '没有这个接口')
     const now = spaceDaily.get(space.id) ?? { inherit: true, apis: [] }
-    const available = site.apis.filter((a) => a.enabled)
     return {
       status: 200,
       body: {
         inherit: now.inherit,
         apis: now.apis.filter((id) => available.some((a) => a.id === id)),
-        available: available.map((a) => ({ id: a.id, name: a.name, lang: a.lang })),
+        available: available.map((a) => ({ id: a.id, name: a.name, lang: a.lang, ...(a.builtin ? { languages: PROVIDERS.find((p) => p.id === a.id)?.languages } : {}) })),
         languages: [...site.languages],
         allowed: { ...site.allow },
-        default: site.listDefault ? { kind: 'list' } : null,
+        default: site.default === null ? null : { kind: site.default.kind },
       },
     }
+  }
+  // A built-in interface is switched and tuned; what is fixed in it is not for changing.
+  const putProvider = (p: (typeof PROVIDERS)[number], body: Record<string, unknown>, fromApi: boolean): void => {
+    const bad = (m: string) => new HttpError(400, 'invalid', m)
+    const st: ProviderState = { ...(site.providers[p.id] ?? { enabled: false }) }
+    if (typeof body.enabled === 'boolean') st.enabled = body.enabled
+    else if (fromApi && !st.enabled) st.enabled = true
+    else if (!fromApi) throw bad('给 enabled（true 或 false）')
+    if (body.refresh !== undefined && body.refresh !== '') {
+      if (!['daily', 'hourly', 'minutes'].includes(String(body.refresh))) throw bad('refresh 是 daily、hourly 或 minutes')
+      st.refresh = String(body.refresh)
+      st.minutes = 0
+      if (st.refresh === 'minutes') {
+        const m = Number(body.minutes ?? body.refreshMinutes)
+        if (!(Number.isInteger(m) && m >= 1 && m <= 1440)) throw bad('minutes 是 1 到 1440')
+        st.minutes = m
+      }
+    }
+    if (body.rps !== undefined && body.rps !== 0) {
+      const r = Number(body.rps)
+      if (!(r >= 0.01 && r <= p.rps)) throw bad(`rps 是 0.01 到 ${p.rps}，是 ${p.name} 允许的最多`)
+      st.rps = r
+    }
+    if (typeof body.skipNew === 'boolean') st.skipNew = body.skipNew
+    site.providers[p.id] = st
   }
   const routeSiteDaily = (method: string, path: string, url: URL, body: Record<string, unknown>): MockResponse => {
     if (path === '/admin/daily' && method === 'GET') return { status: 200, body: siteView() }
     if (path === '/admin/daily' && method === 'PUT') {
-      for (const k of Object.keys(body)) if (!['default', 'hosts', 'languages', 'allow'].includes(k)) throw new HttpError(400, 'invalid', `不认识 ${k}`)
-      if ('hosts' in body && !(Array.isArray(body.hosts) && body.hosts.every((h) => typeof h === 'string'))) throw new HttpError(400, 'invalid', 'hosts 是主机名的列表')
+      // A `hosts` sent by an older client is ignored: there is no list of hosts.
+      for (const k of Object.keys(body)) if (!['default', 'hosts', 'languages', 'allow', 'notices'].includes(k)) throw new HttpError(400, 'invalid', `不认识 ${k}`)
       let languages = site.languages
       if ('languages' in body) {
-        if (!Array.isArray(body.languages) || body.languages.some((l) => typeof l !== 'string' || !validLang(l.toLowerCase()))) throw new HttpError(400, 'invalid', 'languages 是 zh、en 这样的语言代码的列表')
-        languages = [...new Set((body.languages as string[]).map((l) => l.toLowerCase()))]
+        if (!Array.isArray(body.languages)) throw new HttpError(400, 'invalid', 'languages 是 zh-Hans、en 这样的语言标签的列表')
+        if (body.languages.length > 30) throw new HttpError(400, 'invalid', '最多 30 种语言')
+        languages = [...new Set((body.languages as unknown[]).map(tagOf))]
       }
       let allow = site.allow
       if ('allow' in body) {
@@ -704,22 +1033,44 @@ export function createMockServer(options: MockOptions = {}) {
         if (!isRecord(a) || (a.own === undefined && a.api === undefined) || (a.own !== undefined && typeof a.own !== 'boolean') || (a.api !== undefined && typeof a.api !== 'boolean')) throw new HttpError(400, 'invalid', 'allow 是 {own: true 或 false, api: true 或 false}')
         allow = { own: typeof a.own === 'boolean' ? a.own : allow.own, api: typeof a.api === 'boolean' ? a.api : allow.api }
       }
-      let listDefault = site.listDefault
+      let next = site.default
       if ('default' in body) {
         const d = body.default
-        if (d === null) listDefault = false
-        else if (isRecord(d) && d.kind === 'list' && d.space === undefined && d.source === undefined) listDefault = true
-        else throw new HttpError(400, 'invalid', 'the mock takes a default that is a list, or null')
+        if (d === null) next = null
+        else if (isRecord(d) && d.kind === 'list' && d.space === undefined && d.source === undefined && d.apis === undefined) next = { kind: 'list' }
+        else if (isRecord(d) && d.kind === 'api' && d.space === undefined && d.source === undefined && isRecord(d.apis) && Object.keys(d.apis).length > 0) {
+          const ids = new Set(allApis().map((a) => a.id))
+          const apis: Record<string, string> = {}
+          for (const [k, id] of Object.entries(d.apis)) {
+            const tag = k === '' ? '' : tagOf(k)
+            if (tag in apis) throw new HttpError(400, 'invalid', `${tag} 写了两次`)
+            if (typeof id !== 'string' || !ids.has(id)) throw new HttpError(400, 'api_not_found', `没有接口 ${String(id)}`)
+            apis[tag] = id
+          }
+          next = { kind: 'api', apis }
+        } else throw new HttpError(400, 'invalid', 'the mock takes a default that is a list or interfaces, or null')
       }
-      if ('hosts' in body) site.hosts = (body.hosts as string[]).map((h) => h.trim().toLowerCase())
-      site.listDefault = listDefault
+      // The notices are dismissed with an empty list.
+      if ('notices' in body) {
+        if (!Array.isArray(body.notices) || body.notices.length !== 0) throw new HttpError(400, 'invalid', 'notices 只能是 []（表示知道了）')
+        site.notices = []
+      }
+      site.default = next
       site.languages = languages
       site.allow = allow
+      return { status: 200, body: siteView() }
+    }
+    const providerOne = /^\/admin\/daily\/providers\/([^/]+)$/.exec(path)
+    if (providerOne && method === 'PUT') {
+      const p = PROVIDERS.find((x) => x.id === decodeURIComponent(providerOne[1]))
+      if (!p) throw new HttpError(404, 'not_found', '没有这个内置接口')
+      putProvider(p, body, false)
       return { status: 200, body: siteView() }
     }
     const apiOne = /^\/admin\/daily\/apis\/([^/]+)$/.exec(path)
     if (apiOne && method === 'DELETE') {
       const id = decodeURIComponent(apiOne[1])
+      if (PROVIDERS.some((p) => p.id === id)) throw new HttpError(400, 'builtin', '内置接口不能删除，请关闭它', { field: '' })
       if (!site.apis.some((a) => a.id === id)) throw new HttpError(404, 'not_found', '没有这个接口')
       site.apis = site.apis.filter((a) => a.id !== id)
       return { status: 200, body: siteView() }
@@ -729,12 +1080,31 @@ export function createMockServer(options: MockOptions = {}) {
       const old = site.apis.find((a) => a.id === id)
       const bad = (m: string) => new HttpError(400, 'invalid', m)
       if (body.id !== undefined && body.id !== id) throw bad('body 里的 id 和地址里的不一样')
+      const provider = PROVIDERS.find((p) => p.id === id)
+      if (provider) {
+        // What is fixed must be as it is; the rest is what a provider takes.
+        const fixed: [string, unknown][] = [['name', provider.name], ['lang', provider.languages[0]], ['url', provider.url], ['text', provider.text], ['source', provider.source], ['author', provider.author], ['link', provider.link]]
+        for (const [f, want] of fixed) if (body[f] !== undefined && body[f] !== '' && body[f] !== want) throw new HttpError(400, 'builtin', `内置接口 ${id} 的 ${f} 不能改`, { field: f })
+        if (Array.isArray(body.headers) && body.headers.length > 0) throw new HttpError(400, 'builtin', '内置接口不能有请求头', { field: 'headers' })
+        if (isRecord(body.langMap) && Object.keys(body.langMap).length > 0) throw new HttpError(400, 'builtin', '内置接口的语言对照不能改', { field: 'langMap' })
+        putProvider(provider, { enabled: body.enabled, refresh: body.refresh, minutes: body.refreshMinutes, rps: body.rps, skipNew: body.skipNew }, true)
+        return { status: 200, body: siteView() }
+      }
       if (!/^[a-z0-9_-]{1,32}$/.test(id)) throw bad('接口 id 是 1 到 32 个小写字母、数字、- 或 _')
       const str = (k: string) => (typeof body[k] === 'string' ? (body[k] as string).trim() : '')
       const name = str('name')
       if (name === '' || Array.from(name).length > 100) throw bad('接口要有名字')
-      const lang = str('lang').toLowerCase()
-      if (lang !== '' && !validLang(lang)) throw bad('lang 是语言代码，或空')
+      const lang = str('lang') === '' ? '' : tagOf(str('lang'))
+      const langMap: Record<string, string> = {}
+      if (body.langMap !== undefined && body.langMap !== null) {
+        if (!isRecord(body.langMap)) throw bad('langMap 是 {语言: 代码}')
+        for (const [k, v] of Object.entries(body.langMap)) {
+          const tag = tagOf(k)
+          if (typeof v !== 'string' || !/^[A-Za-z0-9_-]{1,35}$/.test(v)) throw bad(`langMap 里 ${tag} 的代码是 1 到 35 个字母、数字、- 或 _`)
+          if (tag in langMap) throw bad(`langMap 里 ${tag} 写了两次`)
+          langMap[tag] = v
+        }
+      }
       const url = str('url')
       let u: URL
       try {
@@ -783,6 +1153,7 @@ export function createMockServer(options: MockOptions = {}) {
         source: str('source'),
         author: str('author'),
         link: str('link'),
+        langMap,
         refresh,
         refreshMinutes,
         skipNew: body.skipNew === true,
@@ -790,32 +1161,37 @@ export function createMockServer(options: MockOptions = {}) {
         enabled: typeof body.enabled === 'boolean' ? body.enabled : (old?.enabled ?? true),
       }
       site.apis = old ? site.apis.map((a) => (a.id === id ? made : a)) : [...site.apis, made]
-      if (!site.hosts.includes(u.host)) site.hosts.push(u.host)
       return { status: 200, body: siteView() }
     }
     if (path === '/admin/daily/try' && method === 'POST') {
       // The mock asks nobody: the address says what would have come back ("down": an error; a text path of
-      // "missing": the path finds nothing).
+      // "missing" or "null": the path finds nothing, which is an error for the text only).
       const a = (isRecord(body.api) ? body.api : {}) as Record<string, unknown>
       const url = String(a.url ?? '')
-      const tryHost = /^https?:\/\/([^/?#]+)/i.exec(url)?.[1]?.toLowerCase()
+      if (typeof body.lang === 'string' && body.lang !== '') tagOf(body.lang)
       // Like the server: a refusal with a code is a 400, the trial's output in `result`.
       const refused = (error: string, message: string, extra: Record<string, unknown> = {}, result: Record<string, unknown> = {}) => ({ status: 400, body: { error, message, ...extra, result: { ok: false, url, message, ...result } } })
-      if (tryHost && !site.hosts.includes(tryHost)) return refused('host_not_allowed', `the host ${tryHost} is not on the list of hosts`, { host: tryHost })
       if (url.includes('html')) return refused('not_json', 'the answer is not JSON')
       if (url.includes('huge')) return refused('too_large', 'the answer is too large')
       if (url.includes('down')) return { status: 200, body: { ok: false, message: 'status 503', status: 503, url } }
       const raw = '{"hitokoto": "山色空蒙雨亦奇", "from": "饮湖上初晴后雨", "from_who": "苏轼"}'
       const pathErrors: { field: string; code: string; message: string }[] = []
-      const pick = (k: string, v: string) => (a[k] === 'missing' ? (pathErrors.push({ field: k, code: 'path_error', message: `no text or number at ${v}` }), undefined) : a[k] ? v : undefined)
+      // Only the text is required: a source or an author whose path finds nothing (or a null, like "from_who": null)
+      // is no value, not an error.
+      const pick = (k: string, v: string) => {
+        if (a[k] === 'missing' || a[k] === 'null') {
+          if (k === 'text') pathErrors.push({ field: k, code: 'path_error', message: `no text or number at ${v}` })
+          return undefined
+        }
+        return a[k] ? v : undefined
+      }
       const quote = { text: pick('text', '山色空蒙雨亦奇'), source: pick('source', '饮湖上初晴后雨'), author: pick('author', '苏轼') }
       const clean = Object.fromEntries(Object.entries(quote).filter(([, v]) => v !== undefined))
       if (pathErrors.length) return refused('path_error', pathErrors[0].message, { field: pathErrors[0].field }, { status: 200, raw, rawTruncated: false, quote: clean, pathErrors })
       return { status: 200, body: { ok: true, status: 200, url, raw, rawTruncated: false, quote: clean } }
     }
     if (path === '/admin/daily/lines' && method === 'PUT') {
-      const lang = typeof body.lang === 'string' ? body.lang.toLowerCase() : ''
-      if (lang !== '' && !validLang(lang)) throw new HttpError(400, 'invalid', 'lang 要是语言代码，或空')
+      const lang = body.lang === undefined || body.lang === '' ? '' : tagOf(body.lang)
       const format = body.format ?? 'lines'
       if (format !== 'lines' && format !== 'markdown') throw new HttpError(400, 'invalid', 'format 是 lines 或 markdown')
       const text = typeof body.text === 'string' ? body.text.replace(/\r\n/g, '\n') : ''
@@ -839,9 +1215,8 @@ export function createMockServer(options: MockOptions = {}) {
       return { status: 200, body: siteView() }
     }
     if (path === '/admin/daily/lines' && method === 'DELETE') {
-      const lang = (url.searchParams.get('lang') ?? '').toLowerCase()
-      if (lang !== '' && !validLang(lang)) throw new HttpError(400, 'invalid', 'lang 要是语言代码，或空')
-      site.lines.delete(lang)
+      const raw = url.searchParams.get('lang') ?? ''
+      site.lines.delete(raw === '' ? '' : tagOf(raw))
       return { status: 200, body: siteView() }
     }
     throw new HttpError(404, 'not_found', '没有这个接口')
@@ -1452,7 +1827,7 @@ export function createMockServer(options: MockOptions = {}) {
       return j({ version: 'mock', maxUpload, maxImport, spaces: u ? callerSpaces(u).map((s) => spaceInfo(s, u)) : [] })
     }
     if (method === 'GET' && path === '/session') {
-      const base = { mode, user: ctx.user ? publicUser(ctx.user) : null, setup: accounts && users.size === 0 }
+      const base = { mode, user: ctx.user ? publicUser(ctx.user) : null, setup: accounts && users.size === 0, token: null }
       return {
         status: 200,
         // Never cached: it says who is signed in.
@@ -1499,6 +1874,13 @@ export function createMockServer(options: MockOptions = {}) {
       return j(spaceInfo(target, ownerOf(target) ?? [...users.values()][0]))
     }
 
+    // Mock only: what an MCP client's link to /oauth/authorize does, for looking at the consent page by hand.
+    if (path === '/_mock/oauth' && method === 'GET') {
+      accountsOnly()
+      requireOAuth()
+      return { status: 303, headers: { Location: `/oauth/consent?req=${startPending(requireUser(ctx), {})}` } }
+    }
+
     // --- signing in (accounts mode) ---
     if (path === '/setup' && method === 'POST') {
       accountsOnly()
@@ -1532,9 +1914,16 @@ export function createMockServer(options: MockOptions = {}) {
     }
 
     // --- account ---
-    if (path === '/account' || path === '/account/password' || path.startsWith('/account/identities/')) {
+    if (path === '/account' || path === '/account/password' || path.startsWith('/account/identities/') || path === '/account/tokens' || path.startsWith('/account/tokens/')) {
       accountsOnly()
       const me = requireUser(ctx)
+      if (path === '/account/tokens' && method === 'GET') return j({ tokens: [...apiTokens.values()].filter((t) => t.userId === me.id).sort(newestFirst).map(publicToken) })
+      if (path === '/account/tokens' && method === 'POST') return createToken(me, body)
+      const tok = /^\/account\/tokens\/([^/]+)$/.exec(path)
+      if (tok && method === 'DELETE') {
+        revokeToken(decodeURIComponent(tok[1]), me.id)
+        return { status: 204 }
+      }
       if (path === '/account' && method === 'GET') return j(accountInfo(me))
       if (path === '/account' && method === 'PATCH') return j(patchAccount(me, body))
       if (path === '/account/password' && method === 'POST') {
@@ -1582,6 +1971,27 @@ export function createMockServer(options: MockOptions = {}) {
       }
     }
 
+    if (path === '/account/grants' || path.startsWith('/account/grants/')) {
+      accountsOnly()
+      const me = requireUser(ctx)
+      requireGrants()
+      if (path === '/account/grants' && method === 'GET') return j({ grants: grantsOf(me.id).map(publicGrant) })
+      const gr = /^\/account\/grants\/([^/]+)$/.exec(path)
+      if (gr && method === 'DELETE') {
+        const g = grants.get(decodeURIComponent(gr[1]))
+        if (!g || g.userId !== me.id) throw new HttpError(404, 'not_found', 'no such grant')
+        grants.delete(g.id)
+        return { status: 204 }
+      }
+    }
+    if (path === '/oauth/consent') {
+      accountsOnly()
+      const me = requireUser(ctx)
+      requireOAuth()
+      if (method === 'GET') return j(consentInfo(me, takePending(me, url.searchParams.get('req'), true)))
+      if (method === 'POST') return decideConsent(me, body)
+    }
+
     // --- GitHub ---
     if (path === '/github' || path.startsWith('/github/')) {
       accountsOnly()
@@ -1598,6 +2008,54 @@ export function createMockServer(options: MockOptions = {}) {
       accountsOnly()
       requireAdmin(ctx)
       return routeAdmin(method, path, url, body)
+    }
+    if (path === '/admin/grants' || path.startsWith('/admin/grants/')) {
+      accountsOnly()
+      requireAdmin(ctx)
+      requireGrants()
+      if (path === '/admin/grants' && method === 'GET') {
+        let limit = 50
+        if (url.searchParams.has('limit')) {
+          const raw = url.searchParams.get('limit') ?? ''
+          const n = /^\d+$/.test(raw) ? Number(raw) : NaN
+          if (!(n >= 1 && n <= 200)) throw new HttpError(400, 'invalid', 'limit 要在 1 到 200 之间')
+          limit = n
+        }
+        const after = url.searchParams.get('cursor') ?? ''
+        const all = grantsOf(url.searchParams.get('user') || null)
+        const rest = all.slice(after ? all.findIndex((g) => g.id === after) + 1 : 0)
+        const page = rest.slice(0, limit)
+        const items: AdminGrant[] = page.map((g) => {
+          const o = users.get(g.userId)
+          return { ...publicGrant(g), owner: { id: g.userId, username: o?.username ?? '', name: o?.name ?? '' } }
+        })
+        return j({ items, next: rest.length > limit ? page[page.length - 1].id : '' })
+      }
+      const one = /^\/admin\/grants\/([^/]+)$/.exec(path)
+      if (one && method === 'DELETE') {
+        if (!grants.delete(decodeURIComponent(one[1]))) throw new HttpError(404, 'not_found', 'no such grant')
+        return { status: 204 }
+      }
+    }
+    if (path === '/admin/access' || path === '/admin/tokens' || path.startsWith('/admin/tokens/')) {
+      accountsOnly()
+      requireAdmin(ctx)
+      if (path === '/admin/access') {
+        if (method === 'PUT') {
+          for (const k of ['tokens', 'mcp'] as const) {
+            const v = body[k]
+            if (v !== undefined && typeof v !== 'boolean') throw new HttpError(400, 'invalid', `${k} 要是布尔值`)
+            if (typeof v === 'boolean') machine[k] = v
+          }
+        }
+        return j({ tokens: machine.tokens, mcp: machine.mcp, oauth: oauthHere() && machine.mcp })
+      }
+      if (path === '/admin/tokens' && method === 'GET') return adminTokens(url)
+      const one = /^\/admin\/tokens\/([^/]+)$/.exec(path)
+      if (one && method === 'DELETE') {
+        revokeToken(decodeURIComponent(one[1]), null)
+        return { status: 204 }
+      }
     }
     if (path === '/admin/daily' || path.startsWith('/admin/daily/')) {
       accountsOnly()
@@ -1731,7 +2189,15 @@ export function createMockServer(options: MockOptions = {}) {
     userId: (username: string) => [...users.values()].find((u) => u.username === username)?.id,
     // Views of a folder as written by hand in space.yml: served as "@n" until a write names them.
     // What GET .../types says to managers about settings files that could not be used.
+    // Mock only: an MCP client sent this person to the authorization page; the id is what the consent page's address carries.
+    startAuthorization: (username: string, o: StartOptions = {}): string => {
+      const u = [...users.values()].find((x) => x.username === username)
+      if (!u) throw new Error(`no user ${username}`)
+      return startPending(u, o)
+    },
     seedSettingsNotices: (notices: SettingsNotice[], space = 'default') => void settingsNotices.set(space, notices),
+    // What GET /admin/daily says the server changed by itself in the daily text settings on an upgrade.
+    seedDailyNotices: (notices: DailyNotice[]) => void (site.notices = notices.map((n) => ({ ...n }))),
     seedHandWrittenViews: (folder: string, views: Record<string, unknown>[], space = 'default') => spaces.get(space)!.store.seedHandWrittenViews(folder, views as never),
     // Let the server's own draft commits run now (they also run on every request).
     sweep: sweepAll,

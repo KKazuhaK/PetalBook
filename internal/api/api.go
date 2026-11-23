@@ -26,10 +26,12 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/github"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/index"
+	"github.com/KKazuhaK/PetalBook/internal/oauth"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
+	"github.com/KKazuhaK/PetalBook/internal/tokens"
 )
 
 // SpaceID is the id of the one space of single-user mode.
@@ -80,12 +82,21 @@ type Options struct {
 	// proxies to this one. Cross-site checks stay on whatever else is set.
 	AllowOrigins []string
 	Logger       *slog.Logger
+	// Tokens is the service of API tokens (NewTokens); made with the defaults
+	// when nil. The caller runs its Run.
+	Tokens *tokens.Service
+	// OAuth is the authorization server for MCP clients; nil when there is none
+	// (single-user mode, or no public URL). The caller runs its Run.
+	OAuth *oauth.Service
 	// DailyFetch gets the daily text from the external interfaces an
 	// administrator configured; the one that refuses private addresses when nil.
 	DailyFetch *dailyfetch.Fetcher
 	// GitHub is the server's use of its GitHub App (accounts mode); nil when
 	// there is none, and the GitHub endpoints then answer github_not_configured.
 	GitHub *github.Service
+	// NoMCP switches /mcp off in single-user mode (serve --mcp=false). In
+	// accounts mode the administrators' setting decides.
+	NoMCP bool
 }
 
 type server struct {
@@ -94,6 +105,8 @@ type server struct {
 	auth    *auth.Service
 	spaces  *spaces.Manager
 	drafts  *drafts.Service
+	tokens  *tokens.Service
+	oauth   *oauth.Service
 	single  bool
 	started time.Time
 	local   store.User // the built-in user of single-user mode
@@ -119,10 +132,13 @@ func New(opt Options) http.Handler {
 	if opt.Version == "" {
 		opt.Version = "dev"
 	}
+	if opt.Tokens == nil {
+		opt.Tokens = NewTokens(tokens.Config{Store: opt.Store, Logger: opt.Logger}, opt.Auth)
+	}
 	if opt.DailyFetch == nil {
 		opt.DailyFetch = dailyfetch.New(NewDailyBacking(opt.Store))
 	}
-	s := &server{opt: opt, log: opt.Logger, auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, single: opt.Auth == nil, started: time.Now(),
+	s := &server{opt: opt, log: opt.Logger, auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, oauth: opt.OAuth, single: opt.Auth == nil, started: time.Now(),
 		origins: map[string]bool{}, originHosts: map[string]bool{}, importing: make(chan struct{}, 1)}
 	if s.log == nil {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -151,6 +167,8 @@ func New(opt Options) http.Handler {
 			uploads[rt.method+" "+rt.pattern] = true
 		}
 	}
+	s.mountOAuth(mux)
+	s.mountMCP(mux)
 	// A path that exists with other methods is 405 in the API's error shape
 	// (the mux would answer in plain text), anything else 404. This cannot be
 	// method-less patterns in the mux: they conflict with wildcard routes such
@@ -251,9 +269,13 @@ func (s *server) wrap(next http.Handler, bodyType func(*http.Request) string) ht
 		// The identity provider's redirect is a cross-site navigation by
 		// nature. It changes nothing unless its state matches a sign-in this
 		// browser started, so the cross-site rules do not apply to it.
-		if !(r.Method == http.MethodGet && (r.URL.Path == oidcCallbackPath || r.URL.Path == githubCallbackPath)) {
+		// The endpoints of the authorization server are called, or the browser is
+		// sent to them, by other sites by design (see oauthCrossSite).
+		if !(r.Method == http.MethodGet && (r.URL.Path == oidcCallbackPath || r.URL.Path == githubCallbackPath)) && !oauthCrossSite(r) {
 			if why := s.crossSite(r); why != "" {
-				writeError(sw, http.StatusForbidden, "forbidden", why)
+				if !oauthRefuse(sw, r, http.StatusForbidden, "invalid_request", why) {
+					writeError(sw, http.StatusForbidden, "forbidden", why)
+				}
 				return
 			}
 		}
@@ -263,12 +285,23 @@ func (s *server) wrap(next http.Handler, bodyType func(*http.Request) string) ht
 			// requiring it keeps pages on other sites from making changes.
 			// A file upload is the one exception, and its type cannot be sent by a form either.
 			want := bodyType(r)
+			if oauthForm(r) {
+				// The token endpoint takes a form, as RFC 6749 says; it checks the type itself.
+				next.ServeHTTP(sw, r)
+				return
+			}
 			if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != want {
 				msg := "send Content-Type: application/json with every request that changes something"
 				if want != "application/json" {
 					msg = "send the file with Content-Type: " + want
 				}
-				writeError(sw, http.StatusUnsupportedMediaType, "invalid", msg)
+				if r.URL.Path == oauth.PathRegister {
+					oauthRefuse(sw, r, http.StatusBadRequest, "invalid_client_metadata", "send the client metadata with Content-Type: application/json")
+					return
+				}
+				if !oauthRefuse(sw, r, http.StatusUnsupportedMediaType, "invalid_request", msg) {
+					writeError(sw, http.StatusUnsupportedMediaType, "invalid", msg)
+				}
 				return
 			}
 		}
@@ -379,19 +412,18 @@ type errorBody struct {
 	// Repo is the empty repository a failed space creation left on GitHub.
 	Repo *githubRepoResp `json:"repo,omitempty"`
 	// What some refusals are about (docs/api.md, "Daily text refusals"): a
-	// request header, a field of an interface, a host.
+	// request header, a field of an interface.
 	Header string `json:"header,omitempty"`
 	Field  string `json:"field,omitempty"`
-	Host   string `json:"host,omitempty"`
 }
 
 // codedError is a 400 whose error code is code, with what it is about.
-type codedError struct{ code, header, field, host, msg string }
+type codedError struct{ code, header, field, msg string }
 
 func (e *codedError) Error() string { return e.msg }
 
 func (e *codedError) body() errorBody {
-	return errorBody{Error: e.code, Message: e.msg, Header: e.header, Field: e.field, Host: e.host}
+	return errorBody{Error: e.code, Message: e.msg, Header: e.header, Field: e.field}
 }
 
 func writeCoded(w http.ResponseWriter, e *codedError) { writeJSON(w, http.StatusBadRequest, e.body()) }
@@ -441,6 +473,11 @@ func (s *server) readJSONMax(w http.ResponseWriter, r *http.Request, v any, opti
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	if err := dec.Decode(v); err != nil {
+		var inv *space.InvalidError
+		if errors.As(err, &inv) && inv.Code != "" {
+			writeCoded(w, &codedError{code: inv.Code, msg: inv.Msg})
+			return false
+		}
 		writeError(w, http.StatusBadRequest, "invalid", "the request body is not valid JSON for this endpoint: "+err.Error())
 		return false
 	}
@@ -456,6 +493,7 @@ func (s *server) readJSONMax(w http.ResponseWriter, r *http.Request, v any, opti
 func (s *server) fail(w http.ResponseWriter, err error) {
 	var (
 		inv   *space.InvalidError
+		bq    badQuery
 		ce    *space.ConflictError
 		tce   *space.TypeConflictError
 		tpce  *space.TemplateConflictError
@@ -463,6 +501,7 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		fixe  *space.FixError
 		vce   *space.ViewsConflictError
 		ae    *auth.Error
+		te    *tokens.Error
 		dc    *drafts.Conflict
 		ue    *space.UnavailableError
 		urle  *gitstore.URLError
@@ -475,6 +514,8 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		s.failGitHub(w, ghe)
 	case errors.As(err, &coded):
 		writeCoded(w, coded)
+	case errors.As(err, &te):
+		s.failToken(w, te)
 	case errors.As(err, &ae):
 		s.failAuth(w, ae)
 	case errors.As(err, &dc):
@@ -557,7 +598,13 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	case errors.As(err, &ce):
 		writeJSON(w, http.StatusConflict, errorBody{Error: "conflict",
 			Message: "the page changed since you opened it; here is the current version", Current: toPage(ce.Current)})
+	case errors.As(err, &bq):
+		writeError(w, http.StatusBadRequest, "invalid", bq.Error())
 	case errors.As(err, &inv):
+		if inv.Code != "" {
+			writeCoded(w, &codedError{code: inv.Code, msg: inv.Msg})
+			break
+		}
 		writeError(w, http.StatusBadRequest, "invalid", inv.Msg)
 	case errors.Is(err, index.ErrInvalidQuery):
 		writeError(w, http.StatusBadRequest, "invalid", strings.TrimPrefix(err.Error(), index.ErrInvalidQuery.Error()+": "))
