@@ -14,7 +14,7 @@ export const en: Messages = {
     quoted: (text, rest) => `“${text}” ${rest}`,
     sentences: (a, b) => `${a}. ${b}`,
   },
-  common: { close: 'Close' },
+  common: { close: 'Close', required: 'Required', optionalMark: '(optional)' },
   nav: {
     home: 'Home',
     inbox: 'Inbox',

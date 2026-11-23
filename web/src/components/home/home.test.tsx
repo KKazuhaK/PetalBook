@@ -238,7 +238,7 @@ describe('the text of the day', () => {
     }
 
     it('an external text with who said it and a link back, drawn as a web link', async () => {
-      m = await open(withApi('hitokoto'))
+      m = await open(withApi('yiyan'))
       await ready()
       await settle(() => daily() !== null, 'the text')
       expect(daily()!.textContent).toContain('一言')
@@ -258,7 +258,7 @@ describe('the text of the day', () => {
     })
 
     it('another text from an interface is asked for with skip', async () => {
-      m = await open(withApi('hitokoto'))
+      m = await open(withApi('yiyan'))
       await ready()
       await settle(() => another() !== null, 'the button')
       await click(another())

@@ -10,7 +10,7 @@ export function SettingsSection({ title, children, id, description }: { title: s
   const auto = useId()
   const headingId = id ?? auto
   return (
-    <section aria-labelledby={headingId} className="grid gap-3">
+    <section aria-labelledby={headingId} className="grid grid-cols-1 gap-3">
       <div className="grid gap-0.5 border-b pb-2">
         <h3 id={headingId} className="text-sm font-semibold">
           {title}

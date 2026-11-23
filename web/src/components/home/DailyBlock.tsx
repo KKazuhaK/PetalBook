@@ -10,9 +10,14 @@ import type { DailyAnswer, DailyQuote } from '@/api/types'
 import { useOpenSettings } from '@/components/settings/useSettings'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import { lang } from '@/i18n'
+import { lang as uiLang } from '@/i18n'
+import { canonicalTag } from '@/lib/langTags'
 import { th } from '@/i18n/home'
 import { shortDate } from '@/lib/time'
+
+// The interface language as the server wants it: a canonical language tag (zh-CN, en), what the server matches to the
+// languages that are set up (zh-CN finds zh-Hans, en-GB finds en).
+const lang = canonicalTag(uiLang) ?? 'en'
 
 // A link is only drawn for an address that is a web address: what an interface says is not taken on trust.
 const webLink = (link: string | undefined): URL | null => {

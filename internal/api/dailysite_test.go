@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -97,15 +98,14 @@ func TestDailyFromTheAdministrators(t *testing.T) {
 			}
 		}
 		code, r := adm("GET", "/api/admin/daily", nil)
-		if code != 200 || r["default"] != nil || len(r["hosts"].([]any)) != 0 || len(r["apis"].([]any)) != 0 || r["lines"].(map[string]any)["total"] != float64(0) {
+		if code != 200 || r["default"] != nil || r["hosts"] != nil || len(r["apis"].([]any)) != 0 || r["lines"].(map[string]any)["total"] != float64(0) {
 			t.Fatalf("%d %v", code, r)
 		}
 
 		// --- the settings are checked
 		for name, body := range map[string]map[string]any{
 			"an unknown key":                 {"extra": 1},
-			"a host with a path":             {"hosts": []any{"a.example/x"}},
-			"hosts that are not":             {"hosts": "a.example"},
+			"a language that is none":        {"languages": []any{"cn"}},
 			"a default of nowhere":           {"default": map[string]any{"kind": "space", "space": "0000000000", "source": map[string]any{"tag": "x"}}},
 			"a default with no kind":         {"default": map[string]any{}},
 			"a space default with no source": {"default": map[string]any{"kind": "space", "space": tm.sid}},
@@ -116,7 +116,7 @@ func TestDailyFromTheAdministrators(t *testing.T) {
 				t.Errorf("%s: %d %v", name, code, r)
 			}
 		}
-		if _, r := adm("GET", "/api/admin/daily", nil); len(r["apis"].([]any)) != 0 || len(r["presets"].([]any)) != 2 {
+		if _, r := adm("GET", "/api/admin/daily", nil); len(r["apis"].([]any)) != 0 || len(r["providers"].([]any)) != 2 {
 			t.Fatalf("a refused change changed something: %v", r)
 		}
 
@@ -264,12 +264,12 @@ func TestSingleUserHasNoSiteDailySettings(t *testing.T) {
 
 func TestDailyLangIsChecked(t *testing.T) {
 	f := newFixture(t)
-	for _, l := range []string{"中文", "x", "en_US", "toolongcode", "en-"} {
-		if code, _, raw := f.do("GET", base+"/daily?date=2026-11-23&lang="+l, nil); code != 400 {
+	for _, l := range []string{"中文", "x", "en_US", "toolongcode", "en-", "cn", "english", "zh_CN"} {
+		if code, _, raw := f.do("GET", base+"/daily?date=2026-11-23&lang="+url.QueryEscape(l), nil); code != 400 || !strings.Contains(raw, `"bad_language"`) {
 			t.Errorf("%s: %d %s", l, code, raw)
 		}
 	}
-	for _, l := range []string{"en", "zh-CN", "EN", ""} {
+	for _, l := range []string{"en", "zh-CN", "EN", "", "zh-Hans", "pt-br", "en-GB"} {
 		if code, _, raw := f.do("GET", base+"/daily?date=2026-11-23&lang="+l, nil); code != 200 {
 			t.Errorf("%s: %d %s", l, code, raw)
 		}
@@ -290,7 +290,7 @@ func TestDailySettingsPerLanguageThroughTheAPI(t *testing.T) {
 		t.Fatalf("%d %v", code, r)
 	}
 	d := r["daily"].(map[string]any)
-	if d["zh"].(map[string]any)["folder"] != "zh" || d["en-us"].(map[string]any)["folder"] != "en" || d["folder"] != nil {
+	if d["zh-Hans"].(map[string]any)["folder"] != "zh" || d["en-US"].(map[string]any)["folder"] != "en" || d["folder"] != nil {
 		t.Fatalf("%v", r)
 	}
 	if code, g := c("GET", base+"/daily/settings", nil); code != 200 || fmt.Sprint(g) != fmt.Sprint(r) {
@@ -302,8 +302,10 @@ func TestDailySettingsPerLanguageThroughTheAPI(t *testing.T) {
 			t.Errorf("%s: %v", lang, r)
 		}
 	}
-	for name, bad := range map[string]any{"a bad code": map[string]any{"chinese!": map[string]any{"folder": "zh"}}, "a source that is not": map[string]any{"zh": "folder"}} {
-		if code, r := c("PUT", base+"/daily/settings", map[string]any{"daily": bad}); code != 400 {
+	for name, bad := range map[string]any{"a bad code": map[string]any{"chinese!": map[string]any{"folder": "zh"}}, "no language": map[string]any{"cn": map[string]any{"folder": "zh"}},
+		"an underscore": map[string]any{"zh_CN": map[string]any{"folder": "zh"}}, "a source that is not": map[string]any{"zh": "folder"}} {
+		code, r := c("PUT", base+"/daily/settings", map[string]any{"daily": bad})
+		if code != 400 || (name != "a source that is not" && r["error"] != "bad_language") {
 			t.Errorf("%s: %d %v", name, code, r)
 		}
 	}
@@ -378,9 +380,9 @@ func TestAdministratorsConfigureExternalInterfaces(t *testing.T) {
 			got["enabled"] != true || got["link"] != "https://example.org/q/{data.0.id}" {
 			t.Fatalf("%v", got)
 		}
-		// Its host is on the list now; the value of the header is never given back, only that it is set.
-		if hs := r["hosts"].([]any); len(hs) != 1 || hs[0] != qs.host {
-			t.Fatalf("%v", r["hosts"])
+		// The value of the header is never given back, only that it is set.
+		if r["hosts"] != nil {
+			t.Fatalf("there is no list of hosts: %v", r["hosts"])
 		}
 		if hv := got["headers"].([]any); len(hv) != 1 || fmt.Sprint(hv[0]) != "map[name:X-Api-Key set:true]" {
 			t.Fatalf("%v", got["headers"])
@@ -466,34 +468,38 @@ func TestAdministratorsConfigureExternalInterfaces(t *testing.T) {
 			t.Fatalf("a disabled interface is chosen: %d %v", code, r)
 		}
 		// Deleting.
-		if code, r := x.adm("DELETE", "/api/admin/daily/apis/any", nil); code != 200 || len(r["apis"].([]any)) != 0 || len(r["hosts"].([]any)) != 1 {
+		if code, r := x.adm("DELETE", "/api/admin/daily/apis/any", nil); code != 200 || len(r["apis"].([]any)) != 0 {
 			t.Fatalf("%d %v", code, r)
 		}
 		if code, _ := x.adm("DELETE", "/api/admin/daily/apis/any", nil); code != 404 {
 			t.Fatalf("%d", code)
 		}
-		// The list of languages is the administrators' own, and the presets are only offered.
+		// The list of languages is the administrators' own: BCP 47 tags in canonical form.
 		code, r = x.adm("GET", "/api/admin/daily", nil)
-		if fmt.Sprint(r["languages"]) != "[zh en]" {
+		if fmt.Sprint(r["languages"]) != "[zh-Hans en]" {
 			t.Fatalf("%v", r["languages"])
 		}
-		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"languages": []any{"zh", "en", "ja", "EN", "pt-BR"}}); code != 200 || fmt.Sprint(r["languages"]) != "[zh en ja pt-br]" {
+		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"languages": []any{"zh", "en", "ja", "EN", "pt-br", "ZH-hant"}}); code != 200 || fmt.Sprint(r["languages"]) != "[zh-Hans en ja pt-BR zh-Hant]" {
 			t.Fatalf("%d %v", code, r["languages"])
 		}
-		if _, pr := x.own("GET", x.base+"/daily/prefs", nil); fmt.Sprint(pr["languages"]) != "[zh en ja pt-br]" {
+		if _, pr := x.own("GET", x.base+"/daily/prefs", nil); fmt.Sprint(pr["languages"]) != "[zh-Hans en ja pt-BR zh-Hant]" {
 			t.Fatalf("%v", pr["languages"])
 		}
-		for _, bad := range []any{[]any{"chinese!"}, "zh", nil} {
+		for _, bad := range []any{[]any{"chinese!"}, []any{"cn"}, []any{"english"}, []any{"zh_CN"}, []any{"en", ""}} {
+			if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"languages": bad}); code != 400 || r["error"] != "bad_language" {
+				t.Errorf("%v: %d %v", bad, code, r)
+			}
+		}
+		for _, bad := range []any{"zh", nil} {
 			if code, _ := x.adm("PUT", "/api/admin/daily", map[string]any{"languages": bad}); code != 400 {
 				t.Errorf("%v: %d", bad, code)
 			}
 		}
-		ps := r["presets"].([]any)
-		if len(ps) != 2 || ps[0].(map[string]any)["id"] != "hitokoto" || ps[0].(map[string]any)["rps"] != float64(20) || ps[1].(map[string]any)["id"] != "quotable" || ps[1].(map[string]any)["text"] != "[0].content" {
-			t.Fatalf("%v", ps)
+		if fmt.Sprint(r["knownLanguages"].([]any)[0]) != "map[english:Chinese (Simplified) name:中文（简体） tag:zh-Hans]" {
+			t.Errorf("%v", r["knownLanguages"].([]any)[0])
 		}
 		if len(r["apis"].([]any)) != 0 {
-			t.Fatal("a preset is on without being asked for")
+			t.Fatal("a built-in interface is on without being asked for")
 		}
 	})
 }
@@ -508,36 +514,29 @@ func TestAdministratorsTryAnInterface(t *testing.T) {
 			x.now = x.now.Add(time.Second)
 			return x.adm("POST", "/api/admin/daily/try", map[string]any{"api": api, "lang": "en", "date": "2026-11-23"})
 		}
-		// A trial is held to the list of hosts, like any request.
-		code, r := try(body)
-		if code != 400 || r["error"] != "host_not_allowed" || r["host"] != qs.host || !strings.Contains(fmt.Sprint(r["message"]), "not on the list") || r["result"].(map[string]any)["ok"] != false || qs.hits.Load() != 0 {
-			t.Fatalf("%d %v", code, r)
-		}
-		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"hosts": []any{qs.host}}); code != 200 {
-			t.Fatalf("%d %v", code, r)
-		}
+		// A trial needs no list of hosts: it goes to the host of the address in the form.
+		var code int
+		var r map[string]any
 		// An interface that is not saved can be tried, the secret never comes back.
 		code, r = try(body)
 		if code != 200 || r["ok"] != true || r["status"] != float64(200) || !strings.Contains(r["raw"].(string), "quote 1 in en") || r["quote"].(map[string]any)["text"] != "quote 1 in en" ||
 			r["quote"].(map[string]any)["link"] != "https://example.org/q/id1" || strings.Contains(fmt.Sprint(r), "key-try") || qs.key.Load() != "key-try" {
 			t.Fatalf("%d %v", code, r)
 		}
-		if _, g := x.adm("GET", "/api/admin/daily", nil); len(g["apis"].([]any)) != 0 || len(g["hosts"].([]any)) != 1 {
+		if _, g := x.adm("GET", "/api/admin/daily", nil); len(g["apis"].([]any)) != 0 {
 			t.Fatalf("a trial saved something: %v", g)
 		}
-		// A path that finds nothing is refused, naming the first such field, with
-		// the raw answer and the rest taken out beside it.
+		// Source, author and link are optional: a path that finds nothing (or a
+		// link value that is missing) is no value, not an error.
 		body["source"], body["link"] = "nope.x", "https://example.org/{missing}"
 		code, r = try(body)
-		res, _ := r["result"].(map[string]any)
-		pe := map[string]any{"source": pathErr(res, "source"), "link": pathErr(res, "link"), "text": pathErr(res, "text")}
-		if code != 400 || r["error"] != "path_error" || r["field"] != "source" || res["ok"] != false || pe["source"] == nil || pe["link"] == nil || pe["text"] != nil ||
-			res["quote"].(map[string]any)["text"] == "" || res["raw"] == "" {
+		if code != 200 || r["ok"] != true || r["pathErrors"] != nil || r["quote"].(map[string]any)["text"] == "" || r["quote"].(map[string]any)["link"] != nil {
 			t.Fatalf("%d %v", code, r)
 		}
+		// The text path is required: refused, with the raw answer beside it.
 		body["text"] = "wrong"
 		code, r = try(body)
-		res, _ = r["result"].(map[string]any)
+		res, _ := r["result"].(map[string]any)
 		if code != 400 || r["error"] != "path_error" || r["field"] != "text" || res["quote"] != nil || pathErr(res, "text") == nil || res["raw"] == "" {
 			t.Fatalf("%d %v", code, r)
 		}
@@ -550,12 +549,9 @@ func TestAdministratorsTryAnInterface(t *testing.T) {
 		if code, r := try(good); code != 200 || r["ok"] != true || qs.key.Load() != "key-saved" {
 			t.Fatalf("%d %v (%v)", code, r, qs.key.Load())
 		}
-		// A kept value goes only where it went: to another host, even one on the
-		// list, it is given again, for a trial and for a save.
+		// A kept value goes only where it went: to another host it is given
+		// again, for a trial and for a save.
 		evil := newQuoteServer(t)
-		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"hosts": []any{qs.host, evil.host}}); code != 200 {
-			t.Fatalf("%d %v", code, r)
-		}
 		moved := qs.api("saved", "en")
 		moved["url"] = evil.URL + "/q?lang={lang}"
 		moved["headers"] = []any{map[string]any{"name": "X-Api-Key"}}
@@ -659,7 +655,7 @@ func TestAdministratorsSaveAtOnce(t *testing.T) {
 		}()
 		wg.Wait()
 		_, r := x.adm("GET", "/api/admin/daily", nil)
-		if len(r["apis"].([]any)) != n || fmt.Sprint(r["languages"]) != "[zh en ja]" {
+		if len(r["apis"].([]any)) != n || fmt.Sprint(r["languages"]) != "[zh-Hans en ja]" {
 			t.Fatalf("changes were lost: %d interfaces, languages %v", len(r["apis"].([]any)), r["languages"])
 		}
 	})
@@ -903,7 +899,7 @@ func TestPrivateAddressesAreNeverConfigured(t *testing.T) {
 				t.Errorf("a trial of %s: %d %v", u, code, r)
 			}
 		}
-		if _, g := boss("GET", "/api/admin/daily", nil); len(g["apis"].([]any)) != 0 || len(g["hosts"].([]any)) != 0 {
+		if _, g := boss("GET", "/api/admin/daily", nil); len(g["apis"].([]any)) != 0 {
 			t.Fatalf("%v", g)
 		}
 		if code, r := put("https://example.org/q"); code != 200 {
@@ -1081,7 +1077,6 @@ func TestAKeptKeyCannotBeReadBack(t *testing.T) {
 			w.Write([]byte(strings.ReplaceAll(string(b), "/", `\/`)))
 		}))
 		defer echo.Close()
-		host := strings.TrimPrefix(echo.URL, "http://")
 		body := map[string]any{"name": "Echo", "url": echo.URL + "/q?lang={lang}", "text": "text", "rps": 100,
 			"headers": []any{map[string]any{"name": "Authorization", "value": key}}}
 		if code, r := x.putAPI("echo", body); code != 200 {
@@ -1148,19 +1143,10 @@ func TestAKeptKeyCannotBeReadBack(t *testing.T) {
 			b["url"] = echo.URL + "/other"
 			b["headers"] = []any{map[string]any{"name": "Authorization", "value": "Bearer sk-live-fedcba9876543210"}}
 		})
-		if code, r := x.putAPI("echo", moved); code != 200 || leaks(r) || !hostIn(r["hosts"], host) {
+		if code, r := x.putAPI("echo", moved); code != 200 || leaks(r) {
 			t.Fatalf("%d %v", code, r)
 		}
 	})
-}
-
-func hostIn(hosts any, h string) bool {
-	for _, x := range hosts.([]any) {
-		if x == h {
-			return true
-		}
-	}
-	return false
 }
 
 // pathErr is the entry of a trial's pathErrors for a field, nil when there is none.

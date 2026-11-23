@@ -92,7 +92,8 @@ func dailyScenario(t *testing.T, base string, owner, editor, viewer caller, refu
 		"a bad filter op": map[string]any{"folder": "文案", "filter": []any{map[string]any{"key": "status", "op": "like", "values": []any{"a"}}}},
 		"too many":        map[string]any{"folder": "文案", "filter": manyFilters(11)},
 	} {
-		if code, r := set(owner, bad); code != 400 || r["error"] != "invalid" {
+		// A key that is no setting is read as a language, and is none.
+		if code, r := set(owner, bad); code != 400 || (r["error"] != "invalid" && !(name == "an unknown key" && r["error"] == "bad_language")) {
 			t.Errorf("%s: %d %v", name, code, r)
 		}
 	}

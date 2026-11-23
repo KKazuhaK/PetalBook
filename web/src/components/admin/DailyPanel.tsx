@@ -2,20 +2,22 @@ import { useMemo, useState } from 'react'
 import { Plus, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { useAdminDaily, useAdminSpaces, useDeleteDailyApi, useDeleteDailyLines, useSaveDailyApi, useSaveDailyLines, useSaveDailySite, useTryDailyApi } from '@/api/admin'
-import type { AdminDaily, DailyApi, DailyDefault, DailySettings, DailyTryResult, LinesFormat } from '@/api/types'
+import { useAdminDaily, useAdminSpaces, useDeleteDailyApi, useDeleteDailyLines, useSaveDailyApi, useSaveDailyLines, useSaveDailyProvider, useSaveDailySite, useTryDailyApi } from '@/api/admin'
+import type { AdminDaily, DailyApi, DailyDefault, DailyNotice, DailySettings, DailyTryResult, KnownLanguage, LinesFormat } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { SettingsRow, SettingsRows, SettingsSection } from '@/components/settings/SettingsParts'
 import { SourceFields } from '@/components/settings/SourceFields'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { OptionalMark, RequiredMark } from '@/components/ui/field-mark'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { draftsFrom, emptyDraft, settingsFrom, tabsOf, type Drafts } from '@/lib/dailySettings'
 import { dayOf } from '@/api/hooks'
+import { canonicalTag } from '@/lib/langTags'
 import { dailyCodeMessage } from './dailyCodes'
 import { t } from '@/i18n'
 import { ta } from '@/i18n/admin'
@@ -26,14 +28,8 @@ const d = ta.daily
 const localised = (r: Parameters<typeof dailyCodeMessage>[0]) => dailyCodeMessage(r, d)
 const message = (e: unknown) => (e instanceof ApiError && (e.reason || e.code === 'invalid' || e.code === 'not_found' || e.code === 'rate_limited') ? (localised(e.reason) ?? e.message) : t.fmt.labelled(d.failed, e instanceof Error ? e.message : ''))
 
-// The host an address goes to, as the server reads it (lower case), or null while it is not an address yet.
-export function hostOfUrl(url: string): string | null {
-  const m = /^https?:\/\/(?:[^/?#@]*@)?([^/?#]+)/i.exec(url.trim())
-  return m ? m[1].toLowerCase() : null
-}
-
 // What administrators decide about the daily text of every space: what spaces may do, the languages, the default,
-// the pasted lines, the hosts the server may fetch from, and the external interfaces (any number, with a button to
+// the pasted lines, the built-in interfaces (switches) and the external interfaces (any number, with a button to
 // try each). It is a chunk of its own, loaded by the administration.
 export function DailyPanel() {
   const q = useAdminDaily()
@@ -41,14 +37,47 @@ export function DailyPanel() {
   if (q.isError) return <ErrorState message={t.fmt.labelled(d.loadFailed, q.error.message)} onRetry={() => void q.refetch()} />
   const data = q.data
   return (
-    <div className="space-y-10" data-slot="admin-daily">
-      <p className="text-sm text-muted-foreground">{d.help}</p>
+    <div className="min-w-0 space-y-10" data-slot="admin-daily">
+      <p className="text-sm break-words text-muted-foreground">{d.help}</p>
+      <NoticesSection data={data} />
       <AllowSection data={data} />
       <LanguagesSection data={data} />
       <DefaultSection data={data} />
       <LinesSection data={data} />
-      <HostsSection key={data.hosts.join("\n")} data={data} />
+      <BuiltinSection data={data} />
       <ApisSection data={data} />
+    </div>
+  )
+}
+
+// What the server changed by itself in settings an earlier version saved, until an administrator dismisses it.
+const noticeText = (n: DailyNotice) => {
+  switch (n.code) {
+    case 'builtin_renamed':
+      return d.noticeRenamed(n.id ?? '', n.to ?? '')
+    case 'builtin_kept':
+      return d.noticeKept(n.id ?? '')
+    case 'dropped_language':
+      return d.noticeDropped(n.lang ?? '')
+  }
+  return n.message
+}
+
+function NoticesSection({ data }: { data: AdminDaily }) {
+  const save = useSaveDailySite()
+  const notices = data.notices ?? []
+  if (notices.length === 0) return null
+  return (
+    <div role="status" data-slot="daily-notices" className="min-w-0 space-y-2 rounded-md border p-4 text-sm">
+      <p className="font-medium">{d.noticesTitle}</p>
+      <ul className="list-disc space-y-1 ps-5 break-words">
+        {notices.map((n, i) => (
+          <li key={i}>{noticeText(n)}</li>
+        ))}
+      </ul>
+      <Button size="sm" variant="outline" disabled={save.isPending} onClick={() => save.mutate({ notices: [] }, { onError: (e) => void toast.error(message(e)) })}>
+        {d.noticesDismiss}
+      </Button>
     </div>
   )
 }
@@ -76,9 +105,71 @@ function AllowSection({ data }: { data: AdminDaily }) {
   )
 }
 
+// A language to pick: the common ones, searchable by tag, native name or English name; any other valid language tag
+// may be typed (and is offered as it is written canonically). Pressing Enter takes the typed tag, else the first match.
+function LanguagePicker({ id, known, taken = [], onPick, disabled, required }: { id: string; known: readonly KnownLanguage[]; taken?: readonly string[]; onPick: (tag: string) => void; disabled?: boolean; required?: boolean }) {
+  const [text, setText] = useState('')
+  const q = text.trim().toLowerCase()
+  const typed = q === '' ? null : canonicalTag(text)
+  const matches = known.filter((k) => !taken.includes(k.tag) && (q === '' || k.tag.toLowerCase().includes(q) || k.name.toLowerCase().includes(q) || k.english.toLowerCase().includes(q)))
+  const extra = typed !== null && !known.some((k) => k.tag === typed) && !taken.includes(typed) ? typed : null
+  const pick = (tag: string) => {
+    onPick(tag)
+    setText('')
+  }
+  return (
+    <div className="grid min-w-0 grid-cols-1 gap-1.5" data-slot="language-picker">
+      <Input
+        id={id}
+        role="combobox"
+        aria-expanded="true"
+        aria-controls={`${id}-list`}
+        aria-label={d.languageSearch}
+        aria-required={required ? 'true' : undefined}
+        placeholder={d.languagePick}
+        value={text}
+        disabled={disabled}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter') return
+          e.preventDefault()
+          const first = typed ?? matches[0]?.tag
+          if (first && !taken.includes(first)) pick(first)
+        }}
+        autoComplete="off"
+        className="w-full max-w-sm min-w-0"
+      />
+      <ul id={`${id}-list`} role="listbox" aria-label={d.languagesTitle} className="grid max-h-44 max-w-sm min-w-0 grid-cols-1 overflow-y-auto rounded-lg border">
+        {extra !== null && (
+          <li role="option" aria-selected="false">
+            <button type="button" data-tag={extra} disabled={disabled} onClick={() => pick(extra)} className="flex w-full min-w-0 items-center justify-between gap-2 px-3 py-1.5 text-left text-sm break-words outline-none hover:bg-muted focus-visible:bg-muted">
+              {d.languageTyped(extra)}
+            </button>
+          </li>
+        )}
+        {matches.map((k) => (
+          <li key={k.tag} role="option" aria-selected="false">
+            <button type="button" data-tag={k.tag} disabled={disabled} onClick={() => pick(k.tag)} className="flex w-full min-w-0 items-center justify-between gap-3 px-3 py-1.5 text-left text-sm outline-none hover:bg-muted focus-visible:bg-muted">
+              <span className="min-w-0 break-words">
+                {k.name}
+                {k.english !== k.name && <span className="text-muted-foreground"> · {k.english}</span>}
+              </span>
+              <span className="shrink-0 font-mono text-xs text-muted-foreground">{k.tag}</span>
+            </button>
+          </li>
+        ))}
+        {matches.length === 0 && extra === null && (
+          <li className="px-3 py-2 text-xs break-words text-muted-foreground" data-slot="language-none">
+            {q !== '' && typed === null ? d.languageBad : d.languageNone}
+          </li>
+        )}
+      </ul>
+    </div>
+  )
+}
+
 function LanguagesSection({ data }: { data: AdminDaily }) {
   const save = useSaveDailySite()
-  const [code, setCode] = useState('')
   const [error, setError] = useState('')
   const write = (languages: string[]) => save.mutate({ languages }, { onSuccess: () => setError(''), onError: (e) => setError(message(e)) })
   return (
@@ -94,25 +185,13 @@ function LanguagesSection({ data }: { data: AdminDaily }) {
           </li>
         ))}
       </ul>
-      <form
-        className="flex items-end gap-2"
-        onSubmit={(e) => {
-          e.preventDefault()
-          const c = code.trim().toLowerCase()
-          if (c === '' || data.languages.includes(c)) return
-          write([...data.languages, c])
-          setCode('')
-        }}
-      >
-        <div className="grid gap-1.5">
-          <Label htmlFor="daily-lang">{d.languageCode}</Label>
-          <Input id="daily-lang" value={code} onChange={(e) => setCode(e.target.value)} placeholder="pt-br" className="w-40" autoComplete="off" />
-        </div>
-        <Button type="submit" variant="outline" size="sm" disabled={save.isPending}>
-          <Plus />
-          {d.addLanguage}
-        </Button>
-      </form>
+      <div className="grid gap-1.5">
+        <Label htmlFor="daily-lang">
+          {d.languageCode}
+          <RequiredMark />
+        </Label>
+        <LanguagePicker id="daily-lang" required known={data.knownLanguages} taken={data.languages} disabled={save.isPending} onPick={(tag) => write([...data.languages, tag])} />
+      </div>
       <FormMessage>{error}</FormMessage>
     </SettingsSection>
   )
@@ -135,7 +214,8 @@ function DefaultSection({ data }: { data: AdminDaily }) {
   const save = useSaveDailySite()
   const spaces = useAdminSpaces('')
   const initial = data.default
-  const [kind, setKind] = useState<'none' | 'list' | 'space'>(initial === null ? 'none' : initial.kind)
+  const [kind, setKind] = useState<'none' | 'list' | 'space' | 'api'>(initial === null ? 'none' : initial.kind)
+  const [apis, setApis] = useState<Record<string, string>>(() => (initial?.kind === 'api' ? { ...initial.apis } : {}))
   const [space, setSpace] = useState(initial?.kind === 'space' ? initial.space : '')
   const [drafts, setDrafts] = useState<Drafts>(() => (initial?.kind === 'space' ? draftsFrom(initial.source) : {}))
   const [tab, setTab] = useState('')
@@ -148,6 +228,11 @@ function DefaultSection({ data }: { data: AdminDaily }) {
     setError('')
     let value: DailyDefault = null
     if (kind === 'list') value = { kind: 'list' }
+    if (kind === 'api') {
+      const chosen = Object.fromEntries(Object.entries(apis).filter(([, id]) => id !== ''))
+      if (Object.keys(chosen).length === 0) return setError(d.defaultApiIncomplete)
+      value = { kind: 'api', apis: chosen }
+    }
     if (kind === 'space') {
       const source = settingsFrom(Object.fromEntries(Object.entries(drafts).map(([k, v]) => [k, { ...v, mode: 'own' as const }])))
       if (space === '' || !source) return setError(d.defaultSpaceIncomplete)
@@ -158,20 +243,45 @@ function DefaultSection({ data }: { data: AdminDaily }) {
   return (
     <SettingsSection title={d.defaultTitle} description={d.defaultHelp}>
       <div role="radiogroup" aria-label={d.defaultTitle} className="grid gap-2">
-        {(['none', 'list', 'space'] as const).map((k) => (
+        {(['none', 'list', 'space', 'api'] as const).map((k) => (
           <label key={k} className="flex items-center gap-2 text-sm">
             <input type="radio" name="daily-default" checked={kind === k} onChange={() => setKind(k)} />
             {d.defaultKinds[k]}
           </label>
         ))}
       </div>
-      {kind === 'list' && <p className="text-xs text-muted-foreground">{d.defaultListHelp}</p>}
+      {kind === 'list' && <p className="text-xs break-words text-muted-foreground">{d.defaultListHelp}</p>}
+      {kind === 'api' && (
+        <div className="grid grid-cols-1 gap-3 rounded-lg border p-4" data-slot="default-apis">
+          <p className="text-xs break-words text-muted-foreground">{d.defaultApiHelp}</p>
+          {[...data.languages, ...Object.keys(apis).filter((l) => l !== '' && !data.languages.includes(l)), ''].map((l) => (
+            <div key={l || 'rest'} className="grid min-w-0 grid-cols-1 items-center gap-1.5 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)]">
+              <Label htmlFor={`daily-default-api-${l || 'rest'}`} className="break-words">
+                {l === '' ? d.defaultApiRest : d.defaultApiFor(l)}
+              </Label>
+              <NativeSelect id={`daily-default-api-${l || 'rest'}`} value={apis[l] ?? ''} onChange={(e) => setApis((all) => ({ ...all, [l]: e.target.value }))}>
+                <option value="">{d.defaultApiNone}</option>
+                {apis[l] !== undefined && apis[l] !== '' && !data.apis.some((a) => a.id === apis[l]) && <option value={apis[l]}>{apis[l]} ({d.defaultApiOff})</option>}
+                {data.apis.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                    {a.enabled ? '' : ` (${d.enabledOff})`}
+                  </option>
+                ))}
+              </NativeSelect>
+            </div>
+          ))}
+        </div>
+      )}
       {kind === 'space' && (
-        <div className="grid gap-4 rounded-lg border p-4">
+        <div className="grid grid-cols-1 gap-4 rounded-lg border p-4">
           <FormMessage tone="info">{d.spaceWarning}</FormMessage>
           <div className="grid gap-1.5">
-            <Label htmlFor="daily-default-space">{d.spaceLabel}</Label>
-            <NativeSelect id="daily-default-space" value={space} onChange={(e) => setSpace(e.target.value)}>
+            <Label htmlFor="daily-default-space">
+              {d.spaceLabel}
+              <RequiredMark />
+            </Label>
+            <NativeSelect id="daily-default-space" aria-required="true" value={space} onChange={(e) => setSpace(e.target.value)}>
               <option value="">{d.spaceChoose}</option>
               {space !== '' && !items.some((s) => s.id === space) && <option value={space}>{space}</option>}
               {items.map((s) => (
@@ -182,7 +292,7 @@ function DefaultSection({ data }: { data: AdminDaily }) {
             </NativeSelect>
           </div>
           <LangTabs langs={tabs} value={tab} onChange={setTab} label={d.languagesTitle} />
-          <p className="text-xs text-muted-foreground">{d.sourceHelp}</p>
+          <p className="text-xs break-words text-muted-foreground">{d.sourceHelp}</p>
           <SourceFields draft={draft} onChange={(next) => setDrafts((all) => ({ ...all, [tab]: { ...(all[tab] ?? emptyDraft()), ...next, mode: 'own' } }))} />
           {drafts[tab] && (
             <div>
@@ -263,50 +373,75 @@ function LinesSection({ data }: { data: AdminDaily }) {
   )
 }
 
-function HostsSection({ data }: { data: AdminDaily }) {
-  const save = useSaveDailySite()
-  const [text, setText] = useState(data.hosts.join('\n'))
-  const [error, setError] = useState('')
-  return (
-    <SettingsSection title={d.hostsTitle} description={d.hostsHelp}>
-      <Textarea value={text} onChange={(e) => setText(e.target.value)} aria-label={d.hostsTitle} className="min-h-20 font-mono" />
-      <FormMessage>{error}</FormMessage>
-      <div>
-        <Button
-          disabled={save.isPending}
-          onClick={() => {
-            setError('')
-            save.mutate({ hosts: text.split('\n').map((h) => h.trim()).filter(Boolean) }, { onSuccess: () => toast.success(d.saved), onError: (e) => setError(message(e)) })
-          }}
-        >
-          {d.save}
-        </Button>
-      </div>
-    </SettingsSection>
-  )
-}
-
 type HeaderRow = { name: string; set: boolean; value: string; changing: boolean }
-type Form = Omit<DailyApi, 'headers' | 'note'> & { headers: HeaderRow[] }
+type MapRow = { tag: string; code: string }
+type Form = Omit<DailyApi, 'headers' | 'note' | 'langMap' | 'builtin' | 'languages'> & { headers: HeaderRow[]; langMap: MapRow[] }
 
-const blankForm = (): Form => ({ id: '', name: '', lang: '', url: 'https://', headers: [], text: '', source: '', author: '', link: '', refresh: 'daily', refreshMinutes: 60, skipNew: true, rps: 1, enabled: true })
-const formOf = (a: DailyApi): Form => ({ ...a, headers: (a.headers ?? []).map((h) => ({ name: h.name, set: h.set === true, value: '', changing: false })) })
+const blankForm = (): Form => ({ id: '', name: '', lang: '', url: 'https://', headers: [], langMap: [], text: '', source: '', author: '', link: '', refresh: 'daily', refreshMinutes: 60, skipNew: true, rps: 1, enabled: true })
+const formOf = (a: DailyApi): Form => ({
+  id: a.id,
+  name: a.name,
+  lang: a.lang,
+  url: a.url,
+  text: a.text,
+  source: a.source,
+  author: a.author,
+  link: a.link,
+  refresh: a.refresh,
+  refreshMinutes: a.refreshMinutes,
+  skipNew: a.skipNew,
+  rps: a.rps,
+  enabled: a.enabled,
+  headers: (a.headers ?? []).map((h) => ({ name: h.name, set: h.set === true, value: '', changing: false })),
+  langMap: Object.entries(a.langMap ?? {}).map(([tag, code]) => ({ tag, code })),
+})
 // What is sent: a header whose value was not typed has only its name, which keeps the saved value.
 // When the address is not the saved one the server keeps no header value, so every header is typed again.
+// A row of the language mapping with a tag and a code is a mapping; the others are left out.
 const payloadOf = (f: Form, saved: string): Omit<DailyApi, 'note'> => ({
   ...f,
   refreshMinutes: f.refresh === 'minutes' ? f.refreshMinutes : 0,
   headers: f.headers.filter((h) => h.name.trim() !== '').map((h) => (h.set && f.url === saved && (!h.changing || h.value === '') ? { name: h.name.trim() } : { name: h.name.trim(), value: h.value })),
+  langMap: Object.fromEntries(f.langMap.filter((r) => r.tag.trim() !== '' && r.code.trim() !== '').map((r) => [canonicalTag(r.tag) ?? r.tag.trim(), r.code.trim()])),
 })
+
+// The built-in interfaces: services the server knows how to ask, switched on and off. Nothing is asked of one until it
+// is on; an address, paths and language codes are not for filling in.
+function BuiltinSection({ data }: { data: AdminDaily }) {
+  const save = useSaveDailyProvider()
+  const [error, setError] = useState('')
+  return (
+    <SettingsSection title={d.builtinTitle} description={d.builtinHelp}>
+      <ul className="grid grid-cols-1 gap-2" data-slot="builtin">
+        {data.providers.map((p) => (
+          <li key={p.id} data-provider={p.id} className="flex min-w-0 items-start justify-between gap-3 rounded-lg border p-3">
+            <div className="grid min-w-0 gap-0.5">
+              <span className="text-sm font-medium break-words">{p.name}</span>
+              <span className="text-xs break-words text-muted-foreground">{d.builtinLanguages(p.languages.join(', '))}</span>
+              <span className="text-xs break-words text-muted-foreground">{p.note}</span>
+              <a href={p.site} target="_blank" rel="noreferrer noopener" className="text-xs break-all text-muted-foreground underline">
+                {d.builtinSite}: {p.site}
+              </a>
+            </div>
+            <Switch checked={p.enabled} disabled={save.isPending} aria-label={d.builtinOn(p.name)} onCheckedChange={(on) => save.mutate({ id: p.id, enabled: on }, { onError: (e) => setError(message(e)) })} />
+          </li>
+        ))}
+      </ul>
+      <FormMessage>{error}</FormMessage>
+    </SettingsSection>
+  )
+}
 
 function ApisSection({ data }: { data: AdminDaily }) {
   // The interface being made or edited: its id, or `new` with a form to start from.
   const [open, setOpen] = useState<{ id: string; form: Form } | null>(null)
+  // The built-in interfaces have their switches above; this list is those the administrators wrote.
+  const custom = data.apis.filter((a) => !a.builtin)
   return (
     <SettingsSection title={d.apisTitle} description={d.apisHelp}>
-      {data.apis.length === 0 && !open && <p className="text-sm text-muted-foreground">{d.noApis}</p>}
-      <ul className="grid gap-2">
-        {data.apis.map((a) => (
+      {custom.length === 0 && !open && <p className="text-sm break-words text-muted-foreground">{d.noApis}</p>}
+      <ul className="grid grid-cols-1 gap-2">
+        {custom.map((a) => (
           <li key={a.id} data-api={a.id} className="rounded-lg border">
             <button type="button" aria-expanded={open?.id === a.id} onClick={() => setOpen(open?.id === a.id ? null : { id: a.id, form: formOf(a) })} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50">
               <span className="min-w-0">
@@ -317,7 +452,7 @@ function ApisSection({ data }: { data: AdminDaily }) {
             </button>
             {open?.id === a.id && (
               <div className="border-t p-3">
-                <ApiEditor key={JSON.stringify(a)} initial={open.form} existing languages={data.languages} hosts={data.hosts} onClose={() => setOpen(null)} />
+                <ApiEditor key={JSON.stringify(a)} initial={open.form} existing languages={data.languages} known={data.knownLanguages} onClose={() => setOpen(null)} />
               </div>
             )}
           </li>
@@ -325,36 +460,24 @@ function ApisSection({ data }: { data: AdminDaily }) {
       </ul>
       {open?.id === 'new' && (
         <div className="rounded-lg border p-3">
-          <ApiEditor initial={open.form} existing={false} languages={data.languages} hosts={data.hosts} onClose={() => setOpen(null)} />
+          <ApiEditor initial={open.form} existing={false} languages={data.languages} known={data.knownLanguages} onClose={() => setOpen(null)} />
         </div>
       )}
       {open?.id !== 'new' && (
-        <div className="grid gap-2">
+        <div className="grid grid-cols-1 gap-2">
           <div>
             <Button variant="outline" size="sm" onClick={() => setOpen({ id: 'new', form: blankForm() })}>
               <Plus />
               {d.addApi}
             </Button>
           </div>
-          {data.presets.length > 0 && (
-            <div className="grid gap-1.5" data-slot="presets">
-              <p className="text-xs text-muted-foreground">{d.presetHelp}</p>
-              <div className="flex flex-wrap gap-2">
-                {data.presets.map((p) => (
-                  <Button key={p.id} variant="outline" size="sm" onClick={() => setOpen({ id: 'new', form: formOf({ ...p, enabled: true }) })}>
-                    {d.usePreset(p.name)}
-                  </Button>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
     </SettingsSection>
   )
 }
 
-function ApiEditor({ initial, existing, languages, hosts, onClose }: { initial: Form; existing: boolean; languages: string[]; hosts: string[]; onClose: () => void }) {
+function ApiEditor({ initial, existing, languages, known, onClose }: { initial: Form; existing: boolean; languages: string[]; known: readonly KnownLanguage[]; onClose: () => void }) {
   const [f, setF] = useState<Form>(initial)
   const [error, setError] = useState('')
   const [confirming, setConfirming] = useState(false)
@@ -363,25 +486,27 @@ function ApiEditor({ initial, existing, languages, hosts, onClose }: { initial: 
   const save = useSaveDailyApi()
   const del = useDeleteDailyApi()
   const tryIt = useTryDailyApi()
-  const addHost = useSaveDailySite()
-  const tryHost = hostOfUrl(f.url)
-  const hostMissing = tryHost !== null && !hosts.includes(tryHost)
   // The saved values go with the saved address: with another one they are typed again.
   const urlChanged = f.url !== initial.url
   const set = (patch: Partial<Form>) => setF((x) => ({ ...x, ...patch }))
   const setHeader = (i: number, patch: Partial<HeaderRow>) => setF((x) => ({ ...x, headers: x.headers.map((h, j) => (j === i ? { ...h, ...patch } : h)) }))
   const langs = ['', ...languages, ...(f.lang !== '' && !languages.includes(f.lang) ? [f.lang] : [])]
-  const field = (key: 'id' | 'name' | 'url' | 'text' | 'source' | 'author' | 'link', label: string, help?: string, extra?: Partial<React.ComponentProps<'input'>>) => (
-    <div className="grid gap-1.5">
-      <Label htmlFor={`api-${key}`}>{label}</Label>
-      <Input id={`api-${key}`} value={f[key]} onChange={(e) => set({ [key]: e.target.value })} autoComplete="off" {...extra} />
-      {help && <p className="text-xs text-muted-foreground">{help}</p>}
+  const setMapRow = (i: number, patch: Partial<MapRow>) => setF((x) => ({ ...x, langMap: x.langMap.map((r, j) => (j === i ? { ...r, ...patch } : r)) }))
+  // `required` marks the label with a star and the input aria-required; the others say (optional).
+  const field = (key: 'id' | 'name' | 'url' | 'text' | 'source' | 'author' | 'link', label: string, required: boolean, help?: string, extra?: Partial<React.ComponentProps<'input'>>) => (
+    <div className="grid min-w-0 grid-cols-1 gap-1.5">
+      <Label htmlFor={`api-${key}`}>
+        {label}
+        {required ? <RequiredMark /> : <OptionalMark />}
+      </Label>
+      <Input id={`api-${key}`} value={f[key]} onChange={(e) => set({ [key]: e.target.value })} autoComplete="off" aria-required={required ? 'true' : undefined} className="w-full min-w-0" {...extra} />
+      {help && <p className="text-xs break-words text-muted-foreground">{help}</p>}
     </div>
   )
 
   return (
     <form
-      className="grid gap-4"
+      className="grid min-w-0 grid-cols-1 gap-4"
       data-slot="api-form"
       onSubmit={(e) => {
         e.preventDefault()
@@ -391,29 +516,60 @@ function ApiEditor({ initial, existing, languages, hosts, onClose }: { initial: 
         save.mutate(payloadOf(f, initial.url), { onSuccess: () => { toast.success(d.saved); onClose() }, onError: (err) => setError(message(err)) })
       }}
     >
-      <div className="grid gap-3 sm:grid-cols-2">
-        {field('id', d.fieldId, d.fieldIdHelp, { readOnly: existing })}
-        {field('name', d.fieldName)}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {field('id', d.fieldId, true, d.fieldIdHelp, { readOnly: existing })}
+        {field('name', d.fieldName, true)}
       </div>
-      <div className="grid gap-1.5 sm:max-w-xs">
-        <Label htmlFor="api-lang">{d.fieldLang}</Label>
-        <NativeSelect id="api-lang" value={f.lang} onChange={(e) => set({ lang: e.target.value })}>
-          {langs.map((l) => (
-            <option key={l} value={l}>
-              {l === '' ? d.allLanguages : l}
-            </option>
-          ))}
-        </NativeSelect>
+      <div className="grid min-w-0 grid-cols-1 gap-1.5" data-slot="api-lang">
+        <Label htmlFor="api-lang">
+          {d.fieldLang} <OptionalMark />
+        </Label>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full border px-2.5 py-0.5 text-sm break-all" data-slot="api-lang-value">
+            {f.lang === '' ? d.allLanguages : f.lang}
+          </span>
+          {f.lang !== '' && (
+            <Button type="button" variant="ghost" size="xs" onClick={() => set({ lang: '' })}>
+              {d.allLanguages}
+            </Button>
+          )}
+        </div>
+        <LanguagePicker id="api-lang" known={known} onPick={(tag) => set({ lang: tag })} />
+        <p className="text-xs break-words text-muted-foreground">{d.fieldLangHelp}</p>
       </div>
-      {field('url', d.fieldUrl, d.fieldUrlHelp)}
+      {field('url', d.fieldUrl, true, d.fieldUrlHelp)}
+      <fieldset className="grid min-w-0 grid-cols-1 gap-2" data-slot="api-langmap">
+        <legend className="text-sm font-medium">
+          {d.fieldLangMap} <OptionalMark />
+        </legend>
+        <p className="text-xs break-words text-muted-foreground">{d.fieldLangMapHelp}</p>
+        {f.langMap.map((r, i) => (
+          <div key={i} className="flex flex-wrap items-center gap-2" data-slot="api-langmap-row">
+            <Input aria-label={d.langMapTag} placeholder="zh-Hans" value={r.tag} onChange={(e) => setMapRow(i, { tag: e.target.value })} className="w-full min-w-0 sm:w-40" autoComplete="off" />
+            <span aria-hidden="true">→</span>
+            <Input aria-label={d.langMapCode} placeholder="zh" value={r.code} onChange={(e) => setMapRow(i, { code: e.target.value })} className="w-full min-w-0 sm:w-40" autoComplete="off" />
+            <Button type="button" variant="ghost" size="icon-sm" aria-label={d.langMapRemove} title={d.langMapRemove} onClick={() => setF((x) => ({ ...x, langMap: x.langMap.filter((_, j) => j !== i) }))}>
+              <Trash2 />
+            </Button>
+          </div>
+        ))}
+        <div>
+          <Button type="button" variant="outline" size="sm" onClick={() => setF((x) => ({ ...x, langMap: [...x.langMap, { tag: '', code: '' }] }))}>
+            <Plus />
+            {d.langMapAdd}
+          </Button>
+        </div>
+      </fieldset>
 
-      <fieldset className="grid gap-2">
-        <legend className="text-sm font-medium">{d.headers}</legend>
-        <p className="text-xs text-muted-foreground">{d.headersHelp}</p>
-        {urlChanged && f.headers.some((h) => h.set) && <p className="text-xs text-muted-foreground" data-slot="header-again">{d.headerAgain}</p>}
+      <fieldset className="grid min-w-0 grid-cols-1 gap-2">
+        <legend className="text-sm font-medium">
+          {d.headers} <OptionalMark />
+        </legend>
+        <p className="text-xs break-words text-muted-foreground">{d.headersHelp}</p>
+        {urlChanged && f.headers.some((h) => h.set) && <p className="text-xs break-words text-muted-foreground" data-slot="header-again">{d.headerAgain}</p>}
         {f.headers.map((h, i) => (
           <div key={i} className="flex flex-wrap items-center gap-2" data-slot="api-header">
-            <Input aria-label={d.headerName} placeholder="X-Api-Key" value={h.name} readOnly={h.set} onChange={(e) => setHeader(i, { name: e.target.value })} className="w-44" autoComplete="off" />
+            <Input aria-label={d.headerName} placeholder="X-Api-Key" value={h.name} readOnly={h.set} onChange={(e) => setHeader(i, { name: e.target.value })} className="w-full min-w-0 sm:w-44" autoComplete="off" />
             {h.set && !h.changing && !urlChanged ? (
               <>
                 <span className="text-sm text-muted-foreground">{d.headerSet}</span>
@@ -422,7 +578,7 @@ function ApiEditor({ initial, existing, languages, hosts, onClose }: { initial: 
                 </Button>
               </>
             ) : (
-              <Input aria-label={d.headerValue} type="password" placeholder={h.set && !urlChanged ? d.headerKeep : d.headerValue} value={h.value} onChange={(e) => setHeader(i, { value: e.target.value })} className="w-60" autoComplete="off" />
+              <Input aria-label={d.headerValue} type="password" placeholder={h.set && !urlChanged ? d.headerKeep : d.headerValue} value={h.value} onChange={(e) => setHeader(i, { value: e.target.value })} className="w-full min-w-0 sm:w-60" autoComplete="off" />
             )}
             <Button type="button" variant="ghost" size="icon-sm" aria-label={d.headerRemove} title={d.headerRemove} onClick={() => setF((x) => ({ ...x, headers: x.headers.filter((_, j) => j !== i) }))}>
               <Trash2 />
@@ -437,15 +593,15 @@ function ApiEditor({ initial, existing, languages, hosts, onClose }: { initial: 
         </div>
       </fieldset>
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        {field('text', d.fieldText, d.fieldTextHelp)}
-        {field('source', d.fieldSource)}
-        {field('author', d.fieldAuthor)}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {field('text', d.fieldText, true, d.fieldTextHelp)}
+        {field('source', d.fieldSource, false)}
+        {field('author', d.fieldAuthor, false)}
       </div>
-      {field('link', d.fieldLink, `${d.fieldLinkHelp} ${d.fieldLinkNoHeaders}`)}
+      {field('link', d.fieldLink, false, `${d.fieldLinkHelp} ${d.fieldLinkNoHeaders}`)}
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div className="grid gap-1.5">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid min-w-0 gap-1.5">
           <Label htmlFor="api-refresh">{d.fieldRefresh}</Label>
           <NativeSelect id="api-refresh" value={f.refresh} onChange={(e) => set({ refresh: e.target.value as Form['refresh'] })}>
             <option value="daily">{d.refreshDaily}</option>
@@ -462,14 +618,14 @@ function ApiEditor({ initial, existing, languages, hosts, onClose }: { initial: 
         <div className="grid gap-1.5">
           <Label htmlFor="api-rps">{d.fieldRps}</Label>
           <Input id="api-rps" type="number" min={0.01} max={100} step="any" value={f.rps} onChange={(e) => set({ rps: Number(e.target.value) })} />
-          <p className="text-xs text-muted-foreground">{d.fieldRpsHelp}</p>
+          <p className="text-xs break-words text-muted-foreground">{d.fieldRpsHelp}</p>
         </div>
       </div>
       <label className="flex items-center gap-2 text-sm">
         <Switch checked={f.skipNew} onCheckedChange={(on) => set({ skipNew: on })} aria-label={d.fieldSkipNew} />
         <span>
           {d.fieldSkipNew}
-          <span className="block text-xs text-muted-foreground">{d.fieldSkipNewHelp}</span>
+          <span className="block text-xs break-words text-muted-foreground">{d.fieldSkipNewHelp}</span>
         </span>
       </label>
       <label className="flex items-center gap-2 text-sm">
@@ -477,7 +633,7 @@ function ApiEditor({ initial, existing, languages, hosts, onClose }: { initial: 
         {d.fieldEnabled}
       </label>
 
-      <div className="grid gap-2 rounded-lg border bg-muted/30 p-3" data-slot="api-try">
+      <div className="grid min-w-0 grid-cols-1 gap-2 rounded-lg border bg-muted/30 p-3" data-slot="api-try">
         <div className="flex flex-wrap items-center gap-2">
           <NativeSelect aria-label={d.tryLang} value={tryLang} onChange={(e) => setTryLang(e.target.value)} className="w-32">
             {langs.filter((l) => l !== '').map((l) => (
@@ -502,14 +658,6 @@ function ApiEditor({ initial, existing, languages, hosts, onClose }: { initial: 
             {tryIt.isPending ? d.trying : d.tryButton}
           </Button>
         </div>
-        {hostMissing && (
-          <div className="flex flex-wrap items-center gap-2 text-sm" data-slot="try-host">
-            <span>{d.tryHostHint(tryHost)}</span>
-            <Button type="button" size="xs" variant="outline" disabled={addHost.isPending} onClick={() => addHost.mutate({ hosts: [...hosts, tryHost] }, { onError: (e) => setError(message(e)) })}>
-              {d.tryAddHost}
-            </Button>
-          </div>
-        )}
         {result && <TryResult result={result} />}
       </div>
 
@@ -538,8 +686,12 @@ function ApiEditor({ initial, existing, languages, hosts, onClose }: { initial: 
   )
 }
 
-// What the interface answered, as it came and as the paths read it; a path that found nothing says so.
-function TryResult({ result }: { result: DailyTryResult }) {
+// A source, an author and a link are optional: a path that finds nothing there is no value, not a problem. Only the
+// text is required, and a path that would show a secret is always one.
+const optionalGap = (e: { field: string; code: string }) => e.field !== 'text' && e.code === 'path_error'
+
+// What the interface answered, as it came and as the paths read it; a path that found nothing in the text says so.
+export function TryResult({ result }: { result: DailyTryResult }) {
   const q = result.quote
   const rows: [string, string | undefined, string][] = [
     [d.fieldText, q?.text, 'text'],
@@ -547,26 +699,30 @@ function TryResult({ result }: { result: DailyTryResult }) {
     [d.fieldAuthor, q?.author, 'author'],
     [d.fieldLink, q?.link, 'link'],
   ]
+  const errors = (result.pathErrors ?? []).filter((e) => !optionalGap(e))
+  // The refusal of a trial with only such gaps (an older server) is no refusal.
+  const gapOnly = !result.ok && result.error === 'path_error' && result.field !== 'text' && errors.length === 0 && !!q?.text
+  const ok = result.ok || gapOnly
   return (
-    <div className="grid gap-2 text-sm" data-slot="try-result" role="status">
-      <p className={result.ok ? 'text-green-700 dark:text-green-400' : 'text-destructive'}>{result.ok ? d.tryOk(result.status ?? 200) : (localised(result.error ? { ...result, code: result.error } : undefined) ?? result.message ?? d.tryFailed)}</p>
-      {result.url && <p className="truncate font-mono text-xs text-muted-foreground">{result.url}</p>}
+    <div className="grid min-w-0 grid-cols-1 gap-2 text-sm" data-slot="try-result" role="status">
+      <p className={`break-words ${ok ? 'text-green-700 dark:text-green-400' : 'text-destructive'}`}>{ok ? d.tryOk(result.status ?? 200) : (localised(result.error ? { ...result, code: result.error } : undefined) ?? result.message ?? d.tryFailed)}</p>
+      {result.url && <p className="font-mono text-xs break-all text-muted-foreground">{result.url}</p>}
       {result.raw !== undefined && (
-        <div>
+        <div className="min-w-0">
           <p className="text-xs font-medium">{d.tryRaw}</p>
-          <pre className="max-h-48 overflow-auto rounded-md border bg-background p-2 text-xs whitespace-pre-wrap">{result.raw}{result.rawTruncated ? ' …' : ''}</pre>
+          <pre className="max-h-48 max-w-full overflow-auto rounded-md border bg-background p-2 text-xs whitespace-pre">{result.raw}{result.rawTruncated ? ' …' : ''}</pre>
         </div>
       )}
-      {(q || result.pathErrors) && (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+      {(q || errors.length > 0) && (
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
           {rows.map(([label, value, key]) => {
-            const pe = result.pathErrors?.find((x) => x.field === key)
+            const pe = errors.find((x) => x.field === key)
             const err = pe ? (localised(pe) ?? pe.message) : undefined
             if (value === undefined && !err) return null
             return (
               <div key={key} className="contents">
                 <dt className="text-muted-foreground">{label}</dt>
-                <dd className={err ? 'text-destructive' : ''}>{err ?? value}</dd>
+                <dd className={`break-words ${err ? 'text-destructive' : ''}`}>{err ?? value}</dd>
               </div>
             )
           })}

@@ -456,17 +456,20 @@ export interface ConnectRemoteInput {
 }
 
 // A refusal of the daily-text endpoints says why with a stable code in `error`, next to `message`, and the
-// thing it is about: host_not_allowed (host), header_reenter / header_missing (header), not_json, too_large,
-// path_error / path_reveals_secret (field: text|source|author|link), link_uses_header, skip_too_large.
+// thing it is about: header_reenter / header_missing (header), not_json, too_large, path_error /
+// path_reveals_secret (field: text|source|author|link), link_uses_header, skip_too_large, bad_language (a language
+// tag that is not one), api_not_found (an interface of the default that is not set up), builtin (what a built-in
+// interface fixes; field).
 export interface ReasonCode {
   code: string
-  host?: string
   header?: string
   field?: string
 }
 
 export type ErrorCode =
-  | 'host_not_allowed'
+  | 'bad_language'
+  | 'api_not_found'
+  | 'builtin'
   | 'header_reenter'
   | 'header_missing'
   | 'not_json'
@@ -650,7 +653,8 @@ export interface DailyAnswer {
 export interface DailyPrefs {
   inherit: boolean
   apis: string[]
-  available: { id: string; name: string; lang: string }[]
+  // A built-in interface that answers in more than one language lists them in `languages`.
+  available: { id: string; name: string; lang: string; languages?: string[] }[]
   // The languages the settings pages have a tab for (besides "all languages").
   languages?: string[]
   default: { kind: string } | null
@@ -704,16 +708,51 @@ export interface DailyApi {
   skipNew: boolean
   rps: number
   enabled: boolean
-  note?: string
+  // How a language is written in {lang} for this service: {"zh-Hans": "zh"}.
+  langMap?: Record<string, string>
+  // A built-in interface: its address, paths, link and language mapping are fixed.
+  builtin?: boolean
+  // The languages a built-in interface answers in (lang is the first).
+  languages?: string[]
 }
-export type DailyDefault = null | { kind: 'list' } | { kind: 'space'; space: string; source: DailySettings }
+// A service the server knows how to ask: switched on and off, no address to fill in.
+export interface DailyProvider {
+  id: string
+  name: string
+  languages: string[]
+  site: string
+  note: string
+  enabled: boolean
+  refresh: 'daily' | 'hourly' | 'minutes'
+  minutes: number
+  rps: number
+  maxRps?: number
+  skipNew: boolean
+}
+export interface KnownLanguage {
+  tag: string
+  name: string
+  english: string
+}
+export type DailyDefault = null | { kind: 'list' } | { kind: 'space'; space: string; source: DailySettings } | { kind: 'api'; apis: Record<string, string> }
+export interface DailyNotice {
+  code: 'builtin_adopted' | 'builtin_renamed' | 'builtin_kept' | 'dropped_language' | 'unreadable' | (string & {})
+  id?: string
+  to?: string
+  lang?: string
+  field?: string
+  message: string
+}
 export interface AdminDaily {
   default: DailyDefault
-  hosts: string[]
   languages: string[]
+  // The common languages to pick from; any valid tag may still be typed.
+  knownLanguages: KnownLanguage[]
   apis: DailyApi[]
-  presets: DailyApi[]
+  providers: DailyProvider[]
   lines: { total: number; byLang: Record<string, number>; max: number }
+  // What the server changed in the settings by itself, reading what an earlier version saved; absent from older servers.
+  notices?: DailyNotice[]
   // Whether spaces may use a source of their own and pick an external interface; absent until the server has them.
   allow?: DailyAllow
 }
@@ -724,7 +763,6 @@ export interface DailyTryResult {
   message?: string
   // Why it did not work, as a code (see ReasonCode), with what it is about.
   error?: string
-  host?: string
   header?: string
   field?: string
   raw?: string

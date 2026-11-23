@@ -1645,7 +1645,9 @@ for the languages that have none of their own; written alone it is the source
 of every language. For a language the source is that of the language, else
 that of the language without its region (`zh` for `zh-CN`), else "all
 languages", else, so that a language nobody wrote a source for still gets a
-text, the first by the order of the codes. Moving or renaming a folder carries the `folder` of
+text, the first by the order of the codes. Two spellings of one language
+(`zh:` beside `zh-Hans:`) are read as the one under the canonical key, and the
+next save writes that one key only. Moving or renaming a folder carries the `folder` of
 every source with it, in the same commit as its bindings (and, after a crash,
 at the next start). Deleting a folder leaves the source as it is; it then meets
 no page.
@@ -1738,14 +1740,17 @@ administrators' settings. Owners never enter addresses; they choose among the
 interfaces that are set up.
 
 ```json
-{"inherit": true, "apis": ["hitokoto"], "available": [{"id": "hitokoto", "name": "一言", "lang": "zh"}],
- "languages": ["zh", "en"], "allowed": {"own": true, "api": true}, "default": {"kind": "list"}}
+{"inherit": true, "apis": ["hitokoto"],
+ "available": [{"id": "hitokoto", "name": "一言", "lang": "zh-Hans", "languages": ["zh-Hans", "zh-Hant"]},
+               {"id": "quotes", "name": "Quotes", "lang": "en"}],
+ "languages": ["zh-Hans", "en"], "allowed": {"own": true, "api": true}, "default": {"kind": "list"}}
 ```
 
 `inherit` is whether the space shows the server's default when it has nothing
 else; `apis` are the ids of the interfaces it uses (for a language, the one
 made for it, else one that takes any language, else any); `available` are all
-that are set up (never their addresses); `default` is `null` when the
+that are set up (never their addresses), a built-in one with each of the
+languages it answers in (`languages`; `lang` is the first of them); `default` is `null` when the
 administrators set none. `languages` are the language codes the settings pages
 have a tab for (the administrators' `languages`, below; nothing is limited to
 them). `allowed` is what the administrators let spaces do (below): a field that
@@ -1765,29 +1770,70 @@ protection of the network is in one place).
 #### `GET /api/admin/daily`, `PUT /api/admin/daily`
 
 ```json
-{"default": {"kind": "space", "space": "01JD3K8Q7Z", "source": {"folder": "文案", "zh": {"tag": "诗"}}},
+{"default": {"kind": "space", "space": "01JD3K8Q7Z", "source": {"folder": "文案", "zh-Hans": {"tag": "诗"}}},
  "allow": {"own": true, "api": true},
- "hosts": ["international.v1.hitokoto.cn", "api.quotable.io"],
- "languages": ["zh", "en"],
+ "languages": ["zh-Hans", "en"],
  "apis": [ /* interfaces, below */ ],
- "presets": [ /* interfaces to start a form from, below */ ],
- "lines": {"total": 6, "byLang": {"zh": 3, "en": 2, "": 1}, "max": 5000}}
+ "providers": [ /* built-in interfaces, below */ ],
+ "lines": {"total": 6, "byLang": {"zh-Hans": 3, "en": 2, "": 1}, "max": 5000},
+ "notices": []}
 ```
 
-`PUT` takes any of `default`, `hosts`, `languages` and `allow` (what it leaves out stays)
-and answers as `GET`; `lines`, `apis` and `presets` are read-only here.
+`PUT` takes any of `default`, `languages` and `allow` (what it leaves out stays)
+and answers as `GET`; `lines`, `apis` and `providers` are read-only here. A
+`hosts` field sent by an older client is ignored.
 
-- `default` is `null`, `{"kind": "list"}` (the lines below) or
+`notices` are what the server changed by itself in settings an earlier
+version saved, so that nothing has to be repaired by hand; they stay until
+`PUT` is sent `{"notices": []}`. Each is `{"code", "message"}` with what it is
+about (`id`, `to`, `lang`, `field`). The settings are read part by part, so
+that one part that cannot be read (`unreadable`, logged with its value) loses
+nothing else, and the repairs are saved once, at the first read:
+
+- An interface saved by 2.3's "use preset" with the id of a built-in one
+  (`hitokoto`, `quotable`) becomes the built-in one when its address, paths and
+  link are the built-in's and it has no headers: switched on or off as it was,
+  with its `refresh`, `rps` (at most the service's limit) and `skipNew`; the
+  spaces that chose it and the default keep the id. One the administrators
+  changed stays theirs as `<id>-custom` (`builtin_renamed`, with `to`), its
+  header values sealed again for the new id, and every space's choice and the
+  default follow the new id. One whose header values cannot be sealed again
+  keeps its id (`builtin_kept`); `PUT` and `DELETE` of `…/apis/{id}` then act on
+  it before the built-in one, so it can be changed or deleted and the built-in
+  one switched on after that.
+- A code in the default that is not a language tag (`cn`, which 2.3 accepted),
+  or a second spelling of one (`zh` beside `zh-Hans`: the canonical key wins),
+  is dropped (`dropped_language`, with `lang` and `field`); the rest of the
+  default, the interfaces and their header values are kept.
+
+- `default` is `null`, `{"kind": "list"}` (the lines below),
   `{"kind": "space", "space": id, "source": …}` where `source` is a source or
-  sources by language as above, checked in that space. Choosing a space shows
-  its content to everybody; a client says so.
-- `hosts` are the hosts (with a port when it is not the usual one) the server
-  may fetch from, at most 100. Saving an interface adds its host; removing a host
-  here stops the interfaces that use it (they are not asked until it is back).
-- `languages` are the language codes the settings pages have a tab for besides
-  "all languages" (`zh`, `en`, `pt-br`; lower-cased, each once, at most 30). It
-  is a list the administrators keep, `["zh", "en"]` to begin with; nothing is
-  limited to it: a source or an interface may name any code.
+  sources by language as above, checked in that space (choosing a space shows
+  its content to everybody; a client says so), or
+  `{"kind": "api", "apis": {"": "quotable", "zh": "hitokoto"}}`: an
+  interface id per language, `""` for all languages not listed. Each must be an
+  interface of `apis` (`400 invalid` with `error: "api_not_found"` otherwise);
+  a disabled or unanswering interface gives the daily reason `unavailable`.
+  The interface is used exactly as when a space picks it (same cache, refresh
+  and rate limit), and the `allow.api` lock does not apply to it: it limits
+  what spaces may choose, not the administrators' own default.
+- `languages` are the languages the settings pages have a tab for besides
+  "all languages", as BCP 47 language tags in canonical form (`zh-Hans`,
+  `zh-Hant`, `en`, `pt-BR`; each once, at most 30), `["zh-Hans", "en"]` to begin
+  with. Every language tag anywhere in the daily text (this list, per-language
+  sources, interfaces, lines, the `lang` of `GET …/daily`) must be a well-formed
+  tag whose language subtag is in the IANA registry: `cn`, `english` or
+  `zh_CN` are refused with `400 invalid`, `error: "bad_language"`. The server
+  writes tags in canonical form (`ZH-cn` is stored as `zh-CN`). A reader's
+  language is matched to the configured ones the usual BCP 47 way (`zh-CN` and
+  `zh-SG` find `zh-Hans`, `zh-TW` and `zh-HK` find `zh-Hant`, `en-GB` finds
+  `en`); another script of the same language is tried before "all languages"
+  (`zh-TW` finds `zh-Hans` when there is no `zh-Hant`), then "all languages". `GET /api/admin/daily` also returns
+  `knownLanguages`: `[{"tag": "zh-Hans", "name": "中文（简体）", "english": "Chinese (Simplified)"}, …]`,
+  the common languages a client offers to pick from (any valid tag may still be
+  typed). Values saved before this rule (`zh`, `pt-br`) are read as their
+  canonical tags (`zh` → `zh-Hans`, `pt-br` → `pt-BR`) and written back in
+  that form on the next save.
 - `allow` is what the spaces may do: `own` is whether a space may have a source
   of its own (`daily` in its `space.yml`), `api` whether it may choose an
   external interface. Both are `true` until set; `PUT` takes either or both
@@ -1827,8 +1873,10 @@ Any number of interfaces (at most 50). An interface in `apis`:
   (the language asked for, `en` when none) and `{date}` (the day, `2026-11-23`)
   may be in its path or query, not in its scheme, user, host or port (as the
   address is written, in any case); they are filled in only as a checked
-  language code and day, escaped, and the host of the address really used is
-  checked against `hosts` again. An address that is an IP address
+  language code and day, escaped, and the request may go only to the host
+  (and port) of `url` as written: **there is no separate list of trusted
+  hosts** — saving an interface is what trusts its host, and only for that
+  interface. An address that is an IP address
   that is not public, `localhost` and its subdomains are refused when it is saved;
   whatever a name resolves to is checked again when the connection is made (below).
 - `headers` are request headers, at most 10. A value is **never returned**, and
@@ -1878,20 +1926,35 @@ second line only.
   is used. `enabled` (true when a new interface leaves it out) says whether it may
   be chosen by spaces and is used.
 
-`PUT` makes the interface or replaces it, adds its host to `hosts`, and answers as
+`PUT` makes the interface or replaces it, and answers as
 `GET /api/admin/daily`. Changes of the settings (these, `PUT /api/admin/daily`
 and `DELETE`) are made one at a time, in a transaction that holds the
-settings: two administrators saving at once both keep their change. `DELETE` removes it (its host stays on the list) and
+settings: two administrators saving at once both keep their change. `DELETE` removes it and
 answers the same; `404` for an id that is not there. `400 invalid` for anything
 above that breaks a rule (the message says which), or one of the codes of
 "Daily text refusals".
 
-`presets` are interfaces a form can be filled in with (the same fields, with a
-`note`): they are **only offered**, none is created or used until an
-administrator saves it, and a service of a preset is not contacted until then.
-Today: `hitokoto` (zh; the international line, `max_length=80`, 20 requests a
-second, with the link back the service asks for) and `quotable` (en; Quotable's
-random quote, 3 requests a second).
+**Built-in interfaces** (`providers`): services the server knows how to ask,
+so an administrator only switches one on — no address, paths or language
+codes to fill in. `GET /api/admin/daily` lists them as
+`{"id": "hitokoto", "name": "一言", "languages": ["zh-Hans", "zh-Hant"], "site": "https://hitokoto.cn", "note": "…", "enabled": false, "refresh": "daily", "minutes": 0, "rps": 20, "maxRps": 20, "skipNew": true}`
+(`minutes` is set when `refresh` is `"minutes"`; `maxRps` is the service's own limit, the most `rps` may be).
+`PUT /api/admin/daily/providers/{id}` takes `{"enabled": true}` and optionally
+`refresh`, `minutes`, `rps` (not above the service's own limit) and
+`skipNew`; needs admin; answers as `GET /api/admin/daily`. An enabled built-in
+interface appears in `apis` with `"builtin": true` and can be chosen by spaces
+and as the site default like any other; its address, paths, link and language
+mapping cannot be changed (`400 invalid`, `error: "builtin"`). None is enabled
+until an administrator enables it, and no service is contacted before that.
+Today: `hitokoto` (一言, the international line; `zh-Hans`, `zh-Hant`; link
+back to the sentence as the service asks) and `quotable` (Quotable; `en`).
+
+**Language codes in the address**: `{lang}` is filled with the reader's
+language as matched (a canonical BCP 47 tag, e.g. `zh-Hans`). Services that
+want another form are given a `langMap` on the interface,
+`{"zh-Hans": "zh", "en": "en"}`, applied before filling in (built-in
+interfaces have theirs set; custom interfaces may set one, keys checked as
+language tags, values 1–35 characters of `[A-Za-z0-9_-]`).
 
 #### `POST /api/admin/daily/try`
 
@@ -1902,9 +1965,8 @@ random quote, 3 requests a second).
 
 Makes one request now with the interface as it is in the form (saved or not;
 a header without a value uses the value saved for that `id` and that exact
-`url` only), at the same rules as any request, and shows what came back. The
-host must be on `hosts` already (else `400 host_not_allowed`, and nothing is
-sent): an interface on a new host is tried once the host is on the list. It
+`url` only), at the same rules as any request, and shows what came back. It goes only to
+the host of the address in the form, under the same public-address checks. It
 keeps nothing and is limited to a few a second (`429`). `400 invalid`, or a
 code of "Daily text refusals", when the interface itself breaks a rule.
 
@@ -1927,19 +1989,21 @@ a `path_reveals_secret` before a `path_error`, in the order text, source,
 author, link.
 
 ```json
-{"error": "path_error", "message": "no text or number at from_x", "field": "source",
- "result": {"ok": false, "status": 200, "url": "…", "raw": "…", "quote": {"text": "…"},
-            "pathErrors": [{"field": "source", "code": "path_error", "message": "no text or number at from_x"},
-                           {"field": "link", "code": "path_error", "message": "a value the link needs is not in the answer"}]}}
-{"error": "host_not_allowed", "message": "the host api.example.org is not on the list of hosts", "host": "api.example.org",
- "result": {"ok": false, "url": "…", "message": "…"}}
+{"error": "path_error", "message": "no text or number at hitokoto", "field": "text",
+ "result": {"ok": false, "status": 200, "url": "…", "raw": "…",
+            "pathErrors": [{"field": "text", "code": "path_error", "message": "no text or number at hitokoto"}]}}
+{"error": "not_json", "message": "the answer is not JSON",
+ "result": {"ok": false, "status": 200, "url": "…", "message": "…"}}
 ```
 
 `raw` is the start of the answer (4 000 characters), shown only when it is
 valid JSON and none of its decoded texts, names and numbers repeats a request
 header's value (see above); otherwise it is left out, and `message` says why.
+Only the `text` path is required: a `source`, `author` or `link` whose path
+finds a null, nothing or an empty text (or whose link needs a value that is
+missing) gives no value for that field, and is no error.
 `pathErrors` is a list of `{field, code, message}` (`field` one of `text`,
-`source`, `author`, `link`; `code` `path_error` or `path_reveals_secret`); the
+`source`, `author`, `link`; `code` `path_error`, for `text` only, or `path_reveals_secret`); the
 fields that were found are still in `quote`. `message` says what went wrong
 with the request or the answer.
 
@@ -1950,12 +2014,11 @@ it. All are `400`.
 
 | `error` | beside it | when |
 |---|---|---|
-| `host_not_allowed` | `host` | a trial of an address whose host is not on `hosts` |
 | `header_reenter` | `header` | a header without a value whose kept value was given for another `url` |
 | `header_missing` | `header` | a header without a value, and none is kept for it (for this `id`) |
 | `not_json` | | a trial's answer does not declare JSON, or is not valid JSON |
 | `too_large` | | a trial's answer is larger than 64 KB |
-| `path_error` | `field` | a trial's path (or a value the link needs) finds no text or number |
+| `path_error` | `field` (`"text"`) | a trial's text path finds no text or number |
 | `path_reveals_secret` | `field` | a trial's path (or a value of the link) would show a request header's value |
 | `link_uses_header` | `field` (`"link"`) | a link template with a request header in it (saving or trying) |
 | `skip_too_large` | | `GET …/daily` with a `skip` above 1 000 |
@@ -1965,7 +2028,7 @@ interface, is not a refusal: `GET …/daily` answers `200` with `"reason":
 "out_of_range"`. A `date` that is not a day is `400 invalid`.
 
 **How it is fetched.** Only the interfaces the administrators wrote, only from
-`https`, only to hosts on the list. The address a name resolves to is checked
+`https`, only to the host of the interface's own address. The address a name resolves to is checked
 when the connection is made, for every address (so a name that answers
 differently the second time is no way round it): loopback, private, link-local
 (the cloud metadata address included), unspecified, multicast, carrier-grade
@@ -2010,6 +2073,9 @@ text from where it is from) or `markdown` (entries are cut at the lines that
 are `---`, or at the blank lines when there are none). Entries are at most 8 000
 bytes, their source 200 characters, and the server keeps at most 5 000 in all.
 `DELETE` removes the lines of one language. Both answer as `GET /api/admin/daily`.
+Lines saved by 2.3 under a code that is not a language tag (`cn`) are shown
+under that code in `byLang`, and `PUT` and `DELETE` take that code exactly as
+it is stored, so they can still be replaced or deleted.
 For a language the lines used are those of the language, else of its
 language without region, else those for any language, else the first
 language that has some; the line is picked as a page is (from the day and

@@ -7,6 +7,7 @@ import { HttpError, ID_RE } from './store.ts'
 import { parseFilter, MAX_VIEW_FILTERS } from './propQuery.ts'
 import { sha256Hex } from './sha256.ts'
 import type { PageSummary } from '../types.ts'
+import { canonicalTag, matchTag } from '../../lib/langTags.ts'
 
 const invalid = (message: string) => new HttpError(400, 'invalid', message)
 const isUnder = (path: string, parent: string) => path === parent || path.startsWith(parent + '/')
@@ -52,7 +53,8 @@ interface Fav {
   created: number
 }
 
-export const validLang = (s: string): boolean => /^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$/.test(s) && s.length <= 16
+export const validLang = (s: string): boolean => canonicalTag(s) !== null
+const badLanguage = (tag: string) => new HttpError(400, 'bad_language', `“${tag}” 不是 zh-Hans、en、pt-BR 这样的语言标签`)
 
 // The number a day starts at: the first 8 bytes of a hash of the space and the day.
 const dayNumber = (key: string, date: string): bigint => {
@@ -74,10 +76,8 @@ export function createHomeBook(env: HomeEnv) {
   const favs = new Map<string, Fav[]>()
 
   const sourceFor = (c: DailyConfig, lang: string): DailySource | null => {
-    const l = lang.toLowerCase()
-    if (c.by[l]) return c.by[l]
-    const base = l.split('-')[0]
-    if (l.includes('-') && c.by[base]) return c.by[base]
+    const m = matchTag(lang, Object.keys(c.by))
+    if (m !== null && c.by[m]) return c.by[m]
     if (c.all) return c.all
     const keys = Object.keys(c.by).sort()
     return keys.length ? c.by[keys[0]] : null
@@ -121,9 +121,10 @@ export function createHomeBook(env: HomeEnv) {
     const keys = Object.keys(raw).filter((k) => !(k in whole))
     if (keys.length > MAX_LANGS) throw invalid(`最多 ${MAX_LANGS} 种语言`)
     for (const k of keys) {
-      if (!validLang(k)) throw invalid(`“${k}” 不是语言代码`)
-      if (out.by[k.toLowerCase()]) throw invalid(`“${k}” 写了两次`)
-      out.by[k.toLowerCase()] = checkSource(raw[k], k)
+      const tag = canonicalTag(k)
+      if (tag === null) throw badLanguage(k)
+      if (out.by[tag]) throw invalid(`“${k}” 写了两次`)
+      out.by[tag] = checkSource(raw[k], k)
     }
     return out
   }
@@ -208,8 +209,9 @@ export function createHomeBook(env: HomeEnv) {
         if (Number(rawSkip) > MAX_SKIP) throw new HttpError(400, 'skip_too_large', `skip 最大是 ${MAX_SKIP}`)
         skip = Number(rawSkip)
       }
-      const lang = (q.get('lang') ?? '').toLowerCase()
-      if (lang !== '' && !validLang(lang)) throw invalid('lang 要是语言代码，比如 zh 或 en')
+      const rawLang = q.get('lang') ?? ''
+      const lang = rawLang === '' ? '' : (canonicalTag(rawLang) ?? '')
+      if (rawLang !== '' && lang === '') throw badLanguage(rawLang)
       return { date, skip, lang }
     },
 

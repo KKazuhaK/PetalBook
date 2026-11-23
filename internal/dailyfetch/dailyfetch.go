@@ -5,8 +5,9 @@
 //
 // The server must not become a way to reach what only it can reach. So the
 // interfaces are named by an administrator and never by a space owner or a
-// reader; the address may only be a host on the administrators' list (saving an
-// interface adds its host); and the connection itself is checked: the address
+// reader; an interface may only contact the host and port of its own address
+// (saving an interface is what trusts its host, for that interface only); and
+// the connection itself is checked: the address
 // a name resolves to, at the moment of connecting (so a name that answers
 // differently the second time is no way round it), must be a public one,
 // never a loopback, private, link-local, unspecified, multicast or
@@ -42,6 +43,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"github.com/KKazuhaK/PetalBook/internal/langtag"
 )
 
 // Limits.
@@ -51,8 +54,6 @@ const (
 	MaxTextChars = 2000
 	// MaxAPIs is how many interfaces an administrator may configure.
 	MaxAPIs = 50
-	// MaxHosts is how many hosts may be allowed.
-	MaxHosts = 100
 	// MaxHeaders is how many request headers an interface may have.
 	MaxHeaders = 10
 	// MaxSkip is the largest skip that asks an interface for a new item.
@@ -99,6 +100,9 @@ type API struct {
 	// Lang is the language the interface answers in; "" for every language
 	// (an address that takes {lang}, or an interface that has no language).
 	Lang string `json:"lang"`
+	// Languages are the languages a built-in interface answers in when it is
+	// more than one (Lang is then the first); empty for the others.
+	Languages []string `json:"languages,omitempty"`
 	// URL is the address, fetched with GET; {lang} stands for the language asked
 	// for and {date} for the day.
 	URL     string   `json:"url"`
@@ -109,6 +113,9 @@ type API struct {
 	Text   string `json:"text"`
 	Source string `json:"source"`
 	Author string `json:"author"`
+	// LangMap turns the language asked for (a canonical BCP 47 tag) into the
+	// code the service wants in {lang}: {"zh-Hans": "zh"}.
+	LangMap map[string]string `json:"langMap"`
 	// Link is a template of a link to show with the text (an attribution): {x}
 	// is the value at the path x of the answer, `https://hitokoto.cn?uuid={uuid}`,
 	// and {lang} and {date} those of the request. A request header is never one
@@ -124,6 +131,9 @@ type API struct {
 	RPS float64 `json:"rps"`
 	// Enabled interfaces are used.
 	Enabled bool `json:"enabled"`
+	// Builtin marks an interface the program knows how to ask (see Providers):
+	// its address, paths, link and language mapping cannot be changed.
+	Builtin bool `json:"builtin,omitempty"`
 }
 
 // Quote is what an interface said.
@@ -164,20 +174,6 @@ func ValidID(s string) bool {
 	return true
 }
 
-// CheckHost validates an entry of the list of hosts: a name or an address
-// with an optional port, no scheme, no path.
-func CheckHost(h string) (string, error) {
-	h = strings.ToLower(strings.TrimSpace(h))
-	if h == "" || len(h) > 253 || strings.ContainsAny(h, "/@?# \t\n") {
-		return "", fmt.Errorf("%q is not a host name", h)
-	}
-	u, err := url.Parse("https://" + h)
-	if err != nil || u.Host != h || u.Hostname() == "" {
-		return "", fmt.Errorf("%q is not a host name", h)
-	}
-	return h, nil
-}
-
 var forbiddenHeaders = map[string]bool{"host": true, "content-length": true, "transfer-encoding": true, "connection": true, "upgrade": true,
 	"te": true, "trailer": true, "proxy-authorization": true, "proxy-connection": true, "keep-alive": true, "content-type": true}
 
@@ -200,65 +196,72 @@ func CheckHeader(h Header) error {
 	return nil
 }
 
-// CheckAPI validates an interface and says which host it is to be fetched
-// from (what saving adds to the list). allowHTTP is for tests. The headers'
-// names and values are checked too.
-func CheckAPI(a API, allowHTTP bool) (API, string, error) {
+// CheckAPI validates an interface and returns it as it is kept. allowHTTP is
+// for tests. The headers' names and values are checked too.
+func CheckAPI(a API, allowHTTP bool) (API, error) {
 	a.Name = strings.TrimSpace(a.Name)
-	a.Lang = strings.ToLower(strings.TrimSpace(a.Lang))
+	a.Lang = strings.TrimSpace(a.Lang)
 	if !ValidID(a.ID) {
-		return a, "", errors.New("an interface id is 1 to 32 letters, digits, - or _")
+		return a, errors.New("an interface id is 1 to 32 letters, digits, - or _")
 	}
 	if a.Name == "" || utf8.RuneCountInString(a.Name) > 100 {
-		return a, "", errors.New("an interface needs a name of at most 100 characters")
+		return a, errors.New("an interface needs a name of at most 100 characters")
 	}
-	if a.Lang != "" && !validLang(a.Lang) {
-		return a, "", errors.New("lang is a language code like zh or en, or empty for every language")
+	if a.Lang != "" {
+		c, ok := langtag.Canonical(a.Lang)
+		if !ok {
+			return a, &CodedError{Code: CodeBadLanguage, Field: "lang", Msg: fmt.Sprintf("%q is not a language tag like zh-Hans, en or pt-BR; lang may also be empty for every language", a.Lang)}
+		}
+		a.Lang = c
+	}
+	var err error
+	if a.LangMap, err = checkLangMap(a.LangMap); err != nil {
+		return a, err
 	}
 	if len(a.URL) > 2000 || strings.ContainsAny(a.URL, " \t\r\n") {
-		return a, "", errors.New("that is not an address")
+		return a, errors.New("that is not an address")
 	}
 	// The scheme and the host are read from the address as it is written, before
 	// anything is filled in: a placeholder there would let the language or the
 	// day a reader asks for choose where the server connects to.
 	scheme, auth, ok := splitRaw(a.URL)
 	if !ok {
-		return a, "", errors.New("that is not an address")
+		return a, errors.New("that is not an address")
 	}
 	if strings.ContainsAny(scheme+auth, "{}") {
-		return a, "", errors.New("{lang} and {date} may be in the path or the query, not in the scheme or the host")
+		return a, errors.New("{lang} and {date} may be in the path or the query, not in the scheme or the host")
 	}
 	probe := strings.NewReplacer("{lang}", "en", "{date}", "2026-01-01").Replace(a.URL)
-	u, err := url.Parse(probe)
-	if err != nil || u.Host == "" || u.User != nil || u.Fragment != "" || strings.ToLower(u.Host) != auth {
-		return a, "", errors.New("that is not an address")
+	u, perr := url.Parse(probe)
+	if perr != nil || u.Host == "" || u.User != nil || u.Fragment != "" || strings.ToLower(u.Host) != auth {
+		return a, errors.New("that is not an address")
 	}
 	if u.Scheme != "https" && !(allowHTTP && u.Scheme == "http") {
-		return a, "", errors.New("the address must be https")
+		return a, errors.New("the address must be https")
 	}
 	if ip, err := netip.ParseAddr(u.Hostname()); err == nil && !allowHTTP && !Public(ip) {
-		return a, "", fmt.Errorf("%s is not a public address; the server never connects to one", ip)
+		return a, fmt.Errorf("%s is not a public address; the server never connects to one", ip)
 	}
 	if !allowHTTP && numericHost(u.Hostname()) {
-		return a, "", fmt.Errorf("%s is not a public address; the server never connects to one", u.Hostname())
+		return a, fmt.Errorf("%s is not a public address; the server never connects to one", u.Hostname())
 	}
 	if h := strings.ToLower(u.Hostname()); !allowHTTP && (h == "localhost" || strings.HasSuffix(h, ".localhost")) {
-		return a, "", errors.New("the server never connects to this machine")
+		return a, errors.New("the server never connects to this machine")
 	}
 	for _, p := range []*string{&a.Text, &a.Source, &a.Author} {
 		*p = strings.TrimSpace(*p)
 		if len(*p) > 200 || strings.ContainsAny(*p, "\r\n") {
-			return a, "", errors.New("a JSON path is names and positions with dots, like data.0.q or [0].q")
+			return a, errors.New("a JSON path is names and positions with dots, like data.0.q or [0].q")
 		}
 	}
 	if a.Text == "" {
-		return a, "", errors.New("text is the JSON path of the text; it is needed")
+		return a, errors.New("text is the JSON path of the text; it is needed")
 	}
 	a.Link = strings.TrimSpace(a.Link)
 	if a.Link != "" {
 		lu, err := url.Parse(linkTemplate(a.Link, func(string) string { return "x" }))
 		if err != nil || (lu.Scheme != "https" && lu.Scheme != "http") || lu.Host == "" || len(a.Link) > 500 {
-			return a, "", errors.New("the link is an http or https address, with {path} where a value of the answer goes")
+			return a, errors.New("the link is an http or https address, with {path} where a value of the answer goes")
 		}
 		// The link may take values of the answer and the request's {lang} and
 		// {date}, never a request header.
@@ -270,7 +273,7 @@ func CheckAPI(a API, allowHTTP bool) (API, string, error) {
 			return ""
 		})
 		if refused != "" {
-			return a, "", &CodedError{Code: CodeLinkUsesHeader, Msg: fmt.Sprintf("the link cannot take {%s}: a link takes values of the answer, {lang} and {date}, never a request header", refused)}
+			return a, &CodedError{Code: CodeLinkUsesHeader, Field: "link", Msg: fmt.Sprintf("the link cannot take {%s}: a link takes values of the answer, {lang} and {date}, never a request header", refused)}
 		}
 	}
 	switch a.Refresh {
@@ -279,10 +282,10 @@ func CheckAPI(a API, allowHTTP bool) (API, string, error) {
 	case RefreshDaily, RefreshHourly:
 	case RefreshMinutes:
 		if a.RefreshMinutes < 1 || a.RefreshMinutes > 1440 {
-			return a, "", errors.New("refreshMinutes is 1 to 1440")
+			return a, errors.New("refreshMinutes is 1 to 1440")
 		}
 	default:
-		return a, "", errors.New("refresh is daily, hourly or minutes")
+		return a, errors.New("refresh is daily, hourly or minutes")
 	}
 	if a.Refresh != RefreshMinutes {
 		a.RefreshMinutes = 0
@@ -291,22 +294,22 @@ func CheckAPI(a API, allowHTTP bool) (API, string, error) {
 		a.RPS = DefaultRPS
 	}
 	if a.RPS < 0.01 || a.RPS > MaxRPS {
-		return a, "", errors.New("rps is the most requests a second, 0.01 to 100")
+		return a, errors.New("rps is the most requests a second, 0.01 to 100")
 	}
 	if len(a.Headers) > MaxHeaders {
-		return a, "", fmt.Errorf("at most %d headers", MaxHeaders)
+		return a, fmt.Errorf("at most %d headers", MaxHeaders)
 	}
 	seen := map[string]bool{}
 	for _, h := range a.Headers {
 		if err := CheckHeader(h); err != nil {
-			return a, "", err
+			return a, err
 		}
 		if seen[strings.ToLower(h.Name)] {
-			return a, "", fmt.Errorf("the header %s is given twice", h.Name)
+			return a, fmt.Errorf("the header %s is given twice", h.Name)
 		}
 		seen[strings.ToLower(h.Name)] = true
 	}
-	return a, auth, nil
+	return a, nil
 }
 
 // splitRaw cuts an address as it is written, placeholders and all, into its
@@ -326,8 +329,8 @@ func splitRaw(raw string) (scheme, authority string, ok bool) {
 // LaneLang is the language an interface is asked in for a reader who asks in
 // lang, so that languages the answer cannot differ in are not asked for apart:
 // "" when the address does not take {lang}; the interface's own language when
-// it has one; else lang, or its base language, when it is one of langs (the
-// languages the server has), else the first of langs.
+// it has one; else the one of langs (the languages the server has) lang is
+// matched to the BCP 47 way, else the first of langs.
 func (a API) LaneLang(lang string, langs []string) string {
 	if !strings.Contains(a.URL, "{lang}") {
 		return ""
@@ -335,16 +338,8 @@ func (a API) LaneLang(lang string, langs []string) string {
 	if a.Lang != "" {
 		return a.Lang
 	}
-	base := lang
-	if i := strings.IndexByte(lang, '-'); i > 0 {
-		base = lang[:i]
-	}
-	for _, want := range []string{lang, base} {
-		for _, l := range langs {
-			if want != "" && l == want {
-				return l
-			}
-		}
+	if m, ok := langtag.Match(lang, langs); ok {
+		return m
 	}
 	if len(langs) > 0 {
 		return langs[0]
@@ -352,26 +347,64 @@ func (a API) LaneLang(lang string, langs []string) string {
 	return ""
 }
 
-func validLang(s string) bool {
-	if len(s) < 2 || len(s) > 16 {
+// validCode reports whether s can be put in {lang}: 1 to 35 letters, digits,
+// - and _.
+func validCode(s string) bool {
+	if s == "" || len(s) > langtag.MaxLen {
 		return false
 	}
 	for _, r := range s {
-		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-') {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
 			return false
 		}
 	}
 	return true
 }
 
-func hostAllowed(host string, hosts []string) bool {
-	host = strings.ToLower(host)
-	for _, h := range hosts {
-		if h == host {
-			return true
+// checkLangMap validates a language mapping: keys are language tags (written
+// in canonical form), values are codes of 1 to 35 characters of [A-Za-z0-9_-].
+func checkLangMap(m map[string]string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(m) > 50 {
+		return nil, errors.New("langMap maps at most 50 languages")
+	}
+	for k, v := range m {
+		c, ok := langtag.Canonical(k)
+		if !ok {
+			return nil, &CodedError{Code: CodeBadLanguage, Field: "langMap", Msg: fmt.Sprintf("%q in langMap is not a language tag like zh-Hans, en or pt-BR", k)}
+		}
+		if !validCode(v) {
+			return nil, fmt.Errorf("langMap gives %q for %s: a code is 1 to 35 letters, digits, - or _", v, c)
+		}
+		if _, dup := out[c]; dup {
+			return nil, fmt.Errorf("langMap names %s twice", c)
+		}
+		out[c] = v
+	}
+	return out, nil
+}
+
+// code is what {lang} is filled with for a language asked for: through the
+// language mapping (the language itself, else the one it is matched to), and
+// "en" for none.
+func (a API) code(lang string) string {
+	if lang == "" {
+		lang = "en"
+	}
+	if len(a.LangMap) > 0 {
+		if v, ok := a.LangMap[lang]; ok {
+			return v
+		}
+		keys := make([]string, 0, len(a.LangMap))
+		for k := range a.LangMap {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		if m, ok := langtag.Match(lang, keys); ok {
+			return a.LangMap[m]
 		}
 	}
-	return false
+	return lang
 }
 
 // key identifies the interface as it is asked: what makes another answer
@@ -379,6 +412,16 @@ func hostAllowed(host string, hosts []string) bool {
 func (a API) key() string {
 	h := sha256.New()
 	fmt.Fprint(h, a.ID, "\x00", a.URL, "\x00", a.Text, "\x00", a.Source, "\x00", a.Author, "\x00", a.Link)
+	if len(a.LangMap) > 0 {
+		keys := make([]string, 0, len(a.LangMap))
+		for k := range a.LangMap {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		for _, k := range keys {
+			fmt.Fprint(h, "\x00", k, "=", a.LangMap[k])
+		}
+	}
 	for _, hd := range a.Headers {
 		fmt.Fprint(h, "\x00", hd.Name)
 	}
@@ -509,6 +552,10 @@ func newFetcher(c *http.Client, allowHTTP bool, backing Backing) *Fetcher {
 // AllowHTTP reports whether plain http addresses are accepted (tests only).
 func (f *Fetcher) AllowHTTP() bool { return f.allowHTTP }
 
+// SetTransport replaces what carries the requests (tests: a service that is
+// not reached over the network).
+func (f *Fetcher) SetTransport(rt http.RoundTripper) { f.client.Transport = rt }
+
 // SetTimeout shortens the time an answer may take (tests).
 func (f *Fetcher) SetTimeout(d time.Duration) { f.timeout = d; f.client.Timeout = d }
 
@@ -594,8 +641,8 @@ func Public(ip netip.Addr) bool {
 // else it is the same item. When the interface cannot be asked (it failed
 // lately and the wait has not passed, its rate limit is used up, it fails now)
 // the last thing it said is returned, marked Stale; with none, ErrUnavailable
-// or ErrRateLimited. hosts are the hosts allowed now.
-func (f *Fetcher) Get(ctx context.Context, a API, hosts []string, lang, date string, skip int) (Result, error) {
+// or ErrRateLimited.
+func (f *Fetcher) Get(ctx context.Context, a API, lang, date string, skip int) (Result, error) {
 	if !a.SkipNew {
 		skip = 0
 	}
@@ -632,7 +679,7 @@ func (f *Fetcher) Get(ctx context.Context, a API, hosts []string, lang, date str
 	// happened to start it goes away (which would count as a failure of the
 	// interface and make everybody wait), only by its own time.
 	lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*f.timeout)
-	r, err := f.lead(lctx, a, hosts, lang, date, skip, key)
+	r, err := f.lead(lctx, a, lang, date, skip, key)
 	cancel()
 
 	f.mu.Lock()
@@ -733,7 +780,7 @@ func (f *Fetcher) Lanes() (last, fails, buckets int) {
 }
 
 // lead does what the one request in flight for a key does.
-func (f *Fetcher) lead(ctx context.Context, a API, hosts []string, lang, date string, skip int, key cacheKey) (Result, error) {
+func (f *Fetcher) lead(ctx context.Context, a API, lang, date string, skip int, key cacheKey) (Result, error) {
 	// The state database: what was got before a restart, or by another process.
 	if f.backing != nil {
 		if r, ok, err := f.backing.Get(ctx, key.api, lang, key.period, skip); err == nil && ok {
@@ -758,14 +805,11 @@ func (f *Fetcher) lead(ctx context.Context, a API, hosts []string, lang, date st
 	f.sent++
 	f.mu.Unlock()
 
-	if !hostAllowed(hostOf(a.URL), hosts) {
-		return f.fallback(ctx, lane, fmt.Errorf("%w: the host is not allowed", ErrUnavailable))
-	}
 	reqDate := date
 	if a.Refresh != RefreshDaily {
 		reqDate = now.UTC().Format("2006-01-02")
 	}
-	q, err := f.fetch(ctx, a, hosts, lang, reqDate)
+	q, err := f.fetch(ctx, a, lang, reqDate)
 	f.mu.Lock()
 	now = f.now()
 	if err != nil {
@@ -824,8 +868,10 @@ func hostOf(raw string) string {
 // fill puts the language and the day in an address. Both are checked to be
 // what they say (a language code, a day) and escaped, so they stay a piece of
 // the path or the query.
-func fill(raw, lang, date string) string {
-	if lang == "" || !validLang(lang) {
+func (a API) fill(lang, date string) string {
+	raw := a.URL
+	lang = a.code(lang)
+	if !validCode(lang) {
 		lang = "en"
 	}
 	if _, err := time.Parse("2006-01-02", date); err != nil {
@@ -834,15 +880,15 @@ func fill(raw, lang, date string) string {
 	return strings.NewReplacer("{lang}", url.PathEscape(lang), "{date}", url.PathEscape(date)).Replace(raw)
 }
 
-func (f *Fetcher) request(ctx context.Context, a API, hosts []string, lang, date string) (*http.Request, error) {
-	u, err := url.Parse(fill(a.URL, lang, date))
+func (f *Fetcher) request(ctx context.Context, a API, lang, date string) (*http.Request, error) {
+	u, err := url.Parse(a.fill(lang, date))
 	if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "https" && !(f.allowHTTP && u.Scheme == "http")) {
 		return nil, fmt.Errorf("%w: bad address", ErrUnavailable)
 	}
-	// Where the request goes is where the address as written goes, and it is
-	// allowed: checked again on the address really used.
-	if h := strings.ToLower(u.Host); h != hostOf(a.URL) || !hostAllowed(h, hosts) {
-		return nil, fmt.Errorf("%w: the host %s is not on the list of hosts", ErrUnavailable, u.Host)
+	// Where the request goes is where the address as written goes (its host
+	// and port, and no other): checked again on the address really used.
+	if h := strings.ToLower(u.Host); h != hostOf(a.URL) {
+		return nil, fmt.Errorf("%w: the host %s is not the one of the address", ErrUnavailable, u.Host)
 	}
 	if !f.allowHTTP && numericHost(u.Hostname()) {
 		return nil, fmt.Errorf("%w: %s is not a public address", ErrUnavailable, u.Hostname())
@@ -861,10 +907,10 @@ func (f *Fetcher) request(ctx context.Context, a API, hosts []string, lang, date
 
 // do sends the request and reads the answer: status, the body (at most
 // MaxResponse) and whether it is JSON.
-func (f *Fetcher) do(ctx context.Context, a API, hosts []string, lang, date string) (status int, body []byte, isJSON bool, err error) {
+func (f *Fetcher) do(ctx context.Context, a API, lang, date string) (status int, body []byte, isJSON bool, err error) {
 	ctx, cancel := context.WithTimeout(ctx, f.timeout)
 	defer cancel()
-	req, err := f.request(ctx, a, hosts, lang, date)
+	req, err := f.request(ctx, a, lang, date)
 	if err != nil {
 		return 0, nil, false, err
 	}
@@ -881,8 +927,8 @@ func (f *Fetcher) do(ctx context.Context, a API, hosts []string, lang, date stri
 	return resp.StatusCode, body, isJSON, nil
 }
 
-func (f *Fetcher) fetch(ctx context.Context, a API, hosts []string, lang, date string) (Quote, error) {
-	status, body, isJSON, err := f.do(ctx, a, hosts, lang, date)
+func (f *Fetcher) fetch(ctx context.Context, a API, lang, date string) (Quote, error) {
+	status, body, isJSON, err := f.do(ctx, a, lang, date)
 	switch {
 	case err != nil:
 		return Quote{}, err
@@ -911,10 +957,9 @@ type ProbeResult struct {
 	// PathErrors say, by field, in the order text, source, author, link, what
 	// a path found no value at, or found a request header's value at.
 	PathErrors []PathError `json:"pathErrors,omitempty"`
-	// Code says, as one of the Code constants, what Message says; Host is the
-	// host of the address. The caller turns them into its answer.
+	// Code says, as one of the Code constants, what Message says. The caller
+	// turns it into its answer.
 	Code string `json:"-"`
-	Host string `json:"-"`
 }
 
 // PathError is what the path of a field (text, source, author or link) did
@@ -939,7 +984,7 @@ func (r ProbeResult) PathError(field string) *PathError {
 // own words. The API sends those of the first group (docs/api.md); the second
 // are only for the caller to tell the cases apart.
 const (
-	CodeHostNotAllowed    = "host_not_allowed"
+	CodeBadLanguage       = "bad_language"
 	CodeNotJSON           = "not_json"
 	CodeTooLarge          = "too_large"
 	CodePathError         = "path_error"
@@ -953,7 +998,7 @@ const (
 )
 
 // CodedError is a refusal with a stable code.
-type CodedError struct{ Code, Msg string }
+type CodedError struct{ Code, Msg, Field string }
 
 func (e *CodedError) Error() string { return e.Msg }
 
@@ -961,25 +1006,21 @@ func (e *CodedError) Error() string { return e.Msg }
 // of a request header: such an answer is not shown.
 const MsgRepeatsHeader = "the answer repeats the value of a request header, so it is not shown"
 
-// Probe makes one request now, at the same rules as any other (the host must be
-// one of hosts, and the address is checked when the connection is made) and
+// Probe makes one request now, at the same rules as any other (only the host
+// and port of the interface's own address, checked again when the connection is made) and
 // shows the answer as it came and what the paths take out of it. An answer
 // any decoded text of which repeats a request header's value (see secrets) is
 // not shown at all, and no path may take such a value out. It is not kept,
 // and is limited to a few a second whatever the interface says.
-func (f *Fetcher) Probe(ctx context.Context, a API, hosts []string, lang, date string) (ProbeResult, error) {
+func (f *Fetcher) Probe(ctx context.Context, a API, lang, date string) (ProbeResult, error) {
 	f.mu.Lock()
 	ok := f.probe.take(f.now(), 2)
 	f.mu.Unlock()
 	if !ok {
 		return ProbeResult{}, ErrRateLimited
 	}
-	res := ProbeResult{URL: fill(a.URL, lang, date), Host: hostOf(a.URL)}
-	if !hostAllowed(hostOf(a.URL), hosts) {
-		res.Code, res.Message = CodeHostNotAllowed, "the host "+hostOf(a.URL)+" is not on the list of hosts"
-		return res, nil
-	}
-	status, body, isJSON, err := f.do(ctx, a, hosts, lang, date)
+	res := ProbeResult{URL: a.fill(lang, date)}
+	status, body, isJSON, err := f.do(ctx, a, lang, date)
 	res.Status = status
 	if err != nil {
 		res.Code, res.Message = CodeRequestFailed, strings.TrimPrefix(err.Error(), ErrUnavailable.Error()+": ")
@@ -1210,8 +1251,12 @@ func takeOut(a API, doc any, lang, date string, sec *secrets) (q Quote, errs, co
 		s, found := pathText(doc, f.path)
 		s = strings.TrimSpace(s)
 		switch {
-		case !found || (f.need && s == ""):
-			errs[f.name], codes[f.name] = "no text or number at "+f.path, CodePathError
+		case !found || s == "":
+			// Only the text is required; a source or author with no value
+			// (null, missing, empty) is simply left out.
+			if f.need {
+				errs[f.name], codes[f.name] = "no text or number at "+f.path, CodePathError
+			}
 		case sec.in(s):
 			errs[f.name], codes[f.name] = "the value at "+f.path+" repeats a request header's value; it is never shown", CodePathRevealsSecret
 			leaked = true
@@ -1220,13 +1265,13 @@ func takeOut(a API, doc any, lang, date string, sec *secrets) (q Quote, errs, co
 		}
 	}
 	if a.Link != "" {
-		link, why, bad := expandLink(a.Link, doc, lang, date, sec)
+		link, why, bad := expandLink(a.Link, doc, a.code(lang), date, sec)
 		switch {
 		case bad:
 			errs["link"], codes["link"] = why, CodePathRevealsSecret
 			leaked = true
 		case link == "":
-			errs["link"], codes["link"] = "a value the link needs is not in the answer", CodePathError
+			// A value the link needs is missing: no link, not an error.
 		default:
 			q.Link = link
 		}
@@ -1281,7 +1326,7 @@ func headerish(path string, headers []Header) bool {
 // or the result is not an http(s) address; bad, with why, when a value
 // repeats a request header's value.
 func expandLink(tpl string, doc any, lang, date string, sec *secrets) (link, why string, bad bool) {
-	if lang == "" || !validLang(lang) {
+	if !validCode(lang) {
 		lang = "en"
 	}
 	if _, err := time.Parse("2006-01-02", date); err != nil {
@@ -1368,27 +1413,44 @@ func pathText(doc any, path string) (string, bool) {
 	return "", false
 }
 
-// Preset is an interface a form can be filled in with: a starting point, not
-// something that is on until an administrator saves it.
-type Preset struct {
+// Provider is a service the program knows how to ask: an administrator only
+// switches it on. Its API is the interface as it is asked (address, paths,
+// link and language mapping are fixed); RPS is the most the service allows.
+type Provider struct {
 	API
+	// Site is the service's own page.
+	Site string `json:"site"`
 	// Note says what to know of the service.
 	Note string `json:"note"`
 }
 
-// Presets are the interfaces the program knows how to fill in. They are only
-// offered; none is created or used until an administrator saves one.
-func Presets() []Preset {
-	return []Preset{
-		{API: API{ID: "hitokoto", Name: "一言", Lang: "zh", URL: "https://international.v1.hitokoto.cn/?max_length=80",
-			Text: "hitokoto", Source: "from", Author: "from_who", Link: "https://hitokoto.cn?uuid={uuid}",
-			Refresh: RefreshDaily, SkipNew: true, RPS: 20, Enabled: true},
+// Providers are the services the program knows how to ask. None is used, and
+// none is contacted, until an administrator switches it on.
+func Providers() []Provider {
+	return []Provider{
+		{API: API{ID: "hitokoto", Name: "一言", Lang: "zh-Hans", Languages: []string{"zh-Hans", "zh-Hant"},
+			URL:  "https://international.v1.hitokoto.cn/?max_length=80",
+			Text: "hitokoto", Source: "from", Author: "from_who", Link: "https://hitokoto.cn?uuid={uuid}", LangMap: map[string]string{},
+			Refresh: RefreshDaily, SkipNew: true, RPS: 20, Enabled: true, Builtin: true},
+			Site: "https://hitokoto.cn",
 			Note: "Free, no key. The international line allows 20 requests a second; the service asks for a link back, which is filled in."},
-		{API: API{ID: "quotable", Name: "Quotable", Lang: "en", URL: "https://api.quotable.io/quotes/random",
-			Text: "[0].content", Author: "[0].author",
-			Refresh: RefreshDaily, SkipNew: true, RPS: 3, Enabled: true},
-			Note: "Open source, no key; 180 requests a minute for each address. It can also be hosted by yourself."},
+		{API: API{ID: "quotable", Name: "Quotable", Lang: "en", Languages: []string{"en"},
+			URL:  "https://api.quotable.io/quotes/random",
+			Text: "[0].content", Author: "[0].author", LangMap: map[string]string{},
+			Refresh: RefreshDaily, SkipNew: true, RPS: 3, Enabled: true, Builtin: true},
+			Site: "https://github.com/lukePeavey/quotable",
+			Note: "Open source, no key; 180 requests a minute for each address."},
 	}
+}
+
+// ProviderByID is the built-in interface with the id.
+func ProviderByID(id string) (Provider, bool) {
+	for _, p := range Providers() {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return Provider{}, false
 }
 
 // numericHost reports whether a host name is written only with numbers, in a
