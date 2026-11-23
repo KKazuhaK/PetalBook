@@ -1,6 +1,8 @@
 -- The GitHub App, users' GitHub authorisations and shared installations.
--- 0011 is left to the API tokens of the MCP milestone (feat/mcp); migrations
--- are applied by number in any order, so the two merge in either order.
+-- 0011 and 0012 belong to the MCP milestone (feat/mcp: API tokens and OAuth).
+-- Each migration is recorded by its own number and the missing ones run at the
+-- next start, so a database migrated on this branch alone picks up 0011 and
+-- 0012 after the merge; the numbers must not collide, which is why this is 0013.
 --
 -- A user's access and refresh tokens are stored sealed (see the secret
 -- package). version counts replacements: a renewal replaces the pair it was
@@ -19,7 +21,7 @@ CREATE TABLE github_authorizations (
   connected       BIGINT NOT NULL,
   updated         BIGINT NOT NULL
 );
-CREATE INDEX github_authorizations_renew ON github_authorizations(state, refresh_expires);
+CREATE INDEX github_authorizations_renew ON github_authorizations(state, refresh_expires, user_id);
 
 CREATE TABLE github_installations (
   id           BIGINT PRIMARY KEY,

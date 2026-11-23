@@ -154,17 +154,27 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (*AppView, error) {
 	if len(keyPEM) > 16<<10 || len(secret) > 1024 || len(clientID) > 256 {
 		return nil, errf(http.StatusBadRequest, CodeInvalid, "a value is too long")
 	}
-	if old != nil && (appID != old.rec.AppID || (old.rec.ClientID != "" && clientID != old.rec.ClientID)) {
+	// Another App strands everything made with this one. Another (or no)
+	// client id only strands the users' connections: spaces syncing through an
+	// installation need the key alone, and a space via a user needs a connection.
+	appChanged := old != nil && appID != old.rec.AppID
+	clientChanged := old != nil && old.rec.ClientID != "" && clientID != old.rec.ClientID
+	if appChanged || clientChanged {
 		q := s.opt.Store.Q()
-		spaces, err := store.CountGitHubSpaces(ctx, q)
-		if err != nil {
-			return nil, err
+		spaces := 0
+		if appChanged {
+			if spaces, err = store.CountGitHubSpaces(ctx, q); err != nil {
+				return nil, err
+			}
 		}
 		auths, err := store.CountGitHubAuthorizations(ctx, q)
 		if err != nil {
 			return nil, err
 		}
 		if spaces > 0 || auths > 0 {
+			if !appChanged {
+				return nil, errf(http.StatusConflict, CodeAppInUse, "the client id cannot be changed or removed while %d user(s) are connected: they disconnect first", auths)
+			}
 			return nil, appInUse(spaces, auths)
 		}
 	}
@@ -209,9 +219,7 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (*AppView, error) {
 		return nil, err
 	}
 	s.forget()
-	s.mu.Lock()
-	s.tokens = map[string]cachedUser{}
-	s.mu.Unlock()
+	s.dropAllTokens()
 	s.changed("")
 	return s.View(ctx)
 }
@@ -271,9 +279,7 @@ func (s *Service) Delete(ctx context.Context) error {
 		return err
 	}
 	s.forget()
-	s.mu.Lock()
-	s.tokens = map[string]cachedUser{}
-	s.mu.Unlock()
+	s.dropAllTokens()
 	return nil
 }
 

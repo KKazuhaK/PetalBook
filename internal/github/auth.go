@@ -243,9 +243,7 @@ func (s *Service) CompleteAuthorization(ctx context.Context, binding, userID str
 		s.log.Error("could not store a GitHub authorisation", "error", err)
 		return fail(cbError)
 	}
-	s.mu.Lock()
-	delete(s.tokens, userID)
-	s.mu.Unlock()
+	s.bump(userID)
 	s.changed(userID)
 	return a.ret, true
 }
@@ -327,9 +325,7 @@ func (s *Service) Disconnect(ctx context.Context, userID string) error {
 	if err := store.DeleteGitHubAuthorization(ctx, db, userID); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	delete(s.tokens, userID)
-	s.mu.Unlock()
+	s.bump(userID)
 	return nil
 }
 
@@ -405,9 +401,44 @@ func (s *Service) renew(ctx context.Context, userID string, force bool) (string,
 	return r.access, r.err
 }
 
-func (s *Service) cacheToken(userID, access string, expires time.Time, version int64) {
+// tokenGen is how many times a user's connection was replaced or removed in
+// this process (user), and the whole cache dropped (all). A renewal notes it
+// before it reads the database and caches what it read only if it is unchanged.
+type tokenGen struct{ all, user uint64 }
+
+func (s *Service) generation(userID string) tokenGen {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return tokenGen{all: s.genAll, user: s.gens[userID]}
+}
+
+// bump says the user's connection was replaced or removed (after the database
+// was written): the cached token goes, and a renewal that read before it does
+// not cache. One counter per user who connected or disconnected since the start.
+func (s *Service) bump(userID string) {
+	s.mu.Lock()
+	s.gens[userID]++
+	delete(s.tokens, userID)
+	s.mu.Unlock()
+}
+
+// dropAllTokens empties the cache (the App changed or went away).
+func (s *Service) dropAllTokens() {
+	s.mu.Lock()
+	s.genAll++
+	s.tokens = map[string]cachedUser{}
+	s.mu.Unlock()
+}
+
+// testHookAfterRenewRead, when set, runs after a renewal read the connection.
+var testHookAfterRenewRead func(userID string)
+
+func (s *Service) cacheToken(userID string, gen tokenGen, access string, expires time.Time, version int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if gen != (tokenGen{all: s.genAll, user: s.gens[userID]}) {
+		return // the connection changed after this was read
+	}
 	if len(s.tokens) >= maxUserTokens {
 		for k := range s.tokens {
 			delete(s.tokens, k)
@@ -426,7 +457,11 @@ func (s *Service) dropToken(userID string) {
 func (s *Service) doRenew(ctx context.Context, userID string, force bool) (string, error) {
 	db := s.opt.Store.Q()
 	for pass := 0; pass < 3; pass++ {
+		gen := s.generation(userID)
 		row, err := store.GetGitHubAuthorization(ctx, db, userID)
+		if testHookAfterRenewRead != nil {
+			testHookAfterRenewRead(userID)
+		}
 		if errors.Is(err, store.ErrNotFound) {
 			s.dropToken(userID)
 			return "", ErrNoAuthorization
@@ -445,12 +480,12 @@ func (s *Service) doRenew(ctx context.Context, userID string, force bool) (strin
 		}
 		good := row.AccessExpires.IsZero() || now.Add(renewBefore).Before(row.AccessExpires)
 		if good && !force {
-			s.cacheToken(userID, string(access), row.AccessExpires, row.Version)
+			s.cacheToken(userID, gen, string(access), row.AccessExpires, row.Version)
 			return string(access), nil
 		}
 		if row.RefreshEnc == "" {
 			if row.AccessExpires.IsZero() || now.Before(row.AccessExpires) {
-				s.cacheToken(userID, string(access), row.AccessExpires, row.Version) // no refresh token: use it to the end
+				s.cacheToken(userID, gen, string(access), row.AccessExpires, row.Version) // no refresh token: use it to the end
 				return string(access), nil
 			}
 			s.expire(ctx, row)
@@ -511,7 +546,7 @@ func (s *Service) doRenew(ctx context.Context, userID string, force bool) (strin
 		if !replaced {
 			continue // reconnected or renewed elsewhere meanwhile: use what is there now
 		}
-		s.cacheToken(userID, tok.Access, tok.AccessExpires, row.Version+1)
+		s.cacheToken(userID, gen, tok.Access, tok.AccessExpires, row.Version+1)
 		return tok.Access, nil
 	}
 	return "", errf(http.StatusServiceUnavailable, CodeUnavailable, "the GitHub authorisation keeps changing; try again")
@@ -533,20 +568,24 @@ func (s *Service) RenewDue(ctx context.Context) int {
 		return 0
 	}
 	n := 0
+	// Pages by (refresh end, user id), so connections that keep failing do not
+	// hold up the ones after them. A renewed one moves past the window; one
+	// seen twice in a run (its new end still inside it) is not tried again.
+	before := s.opt.Now().Add(s.opt.RenewWithin)
+	var cur store.DueCursor
 	tried := map[string]bool{}
 	for {
-		due, err := store.DueGitHubRenewals(ctx, s.opt.Store.Q(), s.opt.Now().Add(s.opt.RenewWithin), 50)
+		due, err := store.DueGitHubRenewals(ctx, s.opt.Store.Q(), before, cur, 50)
 		if err != nil {
 			s.log.Error("could not look for GitHub authorisations to renew", "error", err)
 			return n
 		}
-		progress := false
 		for _, a := range due {
+			cur = a.Next()
 			if tried[a.UserID] {
 				continue
 			}
 			tried[a.UserID] = true
-			progress = true
 			if ctx.Err() != nil {
 				return n
 			}
@@ -556,7 +595,7 @@ func (s *Service) RenewDue(ctx context.Context) int {
 			}
 			n++
 		}
-		if !progress {
+		if len(due) < 50 {
 			return n
 		}
 	}

@@ -3,6 +3,7 @@ package github_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp"
 	"net/url"
 	"strings"
@@ -435,6 +436,79 @@ func TestTheDailyJobRuns(t *testing.T) {
 		}
 		if h.f.RefreshTokenOf("gh-a") == old {
 			t.Fatal("the job did not renew the connection")
+		}
+	})
+}
+
+// A renewal that read the connection before a disconnect or a reconnect must
+// not leave the old access token in the cache afterwards.
+func TestARenewalDoesNotCacheATokenFromBeforeADisconnectOrReconnect(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		h := newHarness(t, st)
+		h.configure()
+		h.user("U1", "a")
+		h.f.AddUser("gh-a")
+		h.connect("U1", "gh-a")
+		t.Cleanup(func() { github.SetRenewReadHook(nil) })
+
+		// Disconnect between the read and the cache.
+		once := sync.Once{}
+		github.SetRenewReadHook(func(string) {
+			once.Do(func() {
+				if err := h.svc.Disconnect(ctx, "U1"); err != nil {
+					t.Error(err)
+				}
+			})
+		})
+		h.svc.UserToken(ctx, "U1")
+		github.SetRenewReadHook(nil)
+		if tok, err := h.svc.UserToken(ctx, "U1"); !errors.Is(err, github.ErrNoAuthorization) {
+			t.Fatalf("after a disconnect: %q %v", tok, err)
+		}
+
+		// Reconnect between the read and the cache.
+		h.connect("U1", "gh-a")
+		h.clk.Advance(time.Second)
+		once = sync.Once{}
+		github.SetRenewReadHook(func(string) {
+			once.Do(func() {
+				h.svc.Disconnect(ctx, "U1")
+				h.connect("U1", "gh-a")
+			})
+		})
+		h.svc.UserToken(ctx, "U1")
+		github.SetRenewReadHook(nil)
+		if tok, err := h.svc.UserToken(ctx, "U1"); err != nil || tok != h.f.AccessTokenOf("gh-a") {
+			t.Fatalf("after a reconnect: %v, the cache kept an old token", err)
+		}
+	})
+}
+
+// Connections that are due but keep failing (still in good standing) must not
+// keep the daily job from the ones after them, however many there are.
+func TestDailyRenewalIsNotStarvedByFailingConnections(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		h := newHarness(t, st)
+		h.configure()
+		h.user("U-good", "good")
+		h.f.AddUser("gh-good")
+		h.connect("U-good", "gh-good")
+		h.clk.Advance(155 * 24 * time.Hour)
+		now := h.clk.Now()
+		// 120 connections that end sooner, with tokens this server cannot open.
+		for i := 0; i < 120; i++ {
+			id := fmt.Sprintf("U-bad-%03d", i)
+			h.user(id, fmt.Sprintf("bad%03d", i))
+			err := store.PutGitHubAuthorization(ctx, st.Q(), store.GitHubAuthorization{UserID: id, GitHubID: int64(90000 + i), Login: id,
+				AccessEnc: "not-sealed", RefreshEnc: "not-sealed", AccessExpires: now.Add(-time.Hour), RefreshExpires: now.Add(time.Duration(i) * time.Minute),
+				State: store.GitHubOK, Connected: now, Updated: now})
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		old := h.f.RefreshTokenOf("gh-good")
+		if n := h.svc.RenewDue(ctx); n != 1 || h.f.RefreshTokenOf("gh-good") == old {
+			t.Fatalf("%d renewed; the good connection was not reached", n)
 		}
 	})
 }

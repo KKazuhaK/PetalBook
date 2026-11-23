@@ -84,13 +84,23 @@ func PutGitHubAuthorization(ctx context.Context, q Q, a GitHubAuthorization) err
 	} else if err != nil && !errors.Is(err, ErrNotFound) {
 		return err
 	}
+	if testHookBeforeGitHubPut != nil {
+		testHookBeforeGitHubPut()
+	}
 	_, err := q.Exec(ctx, `INSERT INTO github_authorizations(`+ghAuthCols+`) VALUES (?,?,?,?,?,?,?,?,1,?,?)
 		ON CONFLICT (user_id) DO UPDATE SET github_id = excluded.github_id, login = excluded.login, access_enc = excluded.access_enc,
 		refresh_enc = excluded.refresh_enc, access_expires = excluded.access_expires, refresh_expires = excluded.refresh_expires,
 		state = excluded.state, version = github_authorizations.version + 1, connected = excluded.connected, updated = excluded.updated`,
 		a.UserID, a.GitHubID, a.Login, a.AccessEnc, a.RefreshEnc, syncOrZero(a.AccessExpires), syncOrZero(a.RefreshExpires), a.State, ms(a.Connected), ms(a.Updated))
+	if on, ok := UniqueOn(err); ok && strings.Contains(on, "github_id") {
+		return ErrExists // another user connected the account since the check
+	}
 	return err
 }
+
+// testHookBeforeGitHubPut is called between PutGitHubAuthorization's check and
+// its write (tests).
+var testHookBeforeGitHubPut func()
 
 // ReplaceGitHubTokens stores a renewed pair, but only if the connection is
 // still at version from (nothing else replaced the pair meanwhile). It reports
@@ -148,11 +158,27 @@ func ListGitHubAuthorizations(ctx context.Context, q Q) ([]GitHubAuthorization, 
 	return out, rows.Err()
 }
 
+// DueCursor is where a listing of due renewals goes on from: after the row
+// with this refresh end and user id. The zero value starts at the beginning.
+type DueCursor struct {
+	RefreshExpires time.Time
+	UserID         string
+}
+
+// Next is the cursor after a row.
+func (a *GitHubAuthorization) Next() DueCursor {
+	return DueCursor{RefreshExpires: a.RefreshExpires, UserID: a.UserID}
+}
+
 // DueGitHubRenewals lists the connections in good standing whose refresh token
-// ends before the given time, soonest first, at most limit of them.
-func DueGitHubRenewals(ctx context.Context, q Q, before time.Time, limit int) ([]GitHubAuthorization, error) {
+// ends before the given time, soonest first (then by user id), at most limit of
+// them, after the cursor.
+func DueGitHubRenewals(ctx context.Context, q Q, before time.Time, after DueCursor, limit int) ([]GitHubAuthorization, error) {
+	ae := syncOrZero(after.RefreshExpires)
 	rows, err := q.Query(ctx, `SELECT `+ghAuthCols+` FROM github_authorizations
-		WHERE state = 'ok' AND refresh_enc <> '' AND refresh_expires > 0 AND refresh_expires < ? ORDER BY refresh_expires LIMIT ?`, ms(before), limit)
+		WHERE state = 'ok' AND refresh_enc <> '' AND refresh_expires > 0 AND refresh_expires < ?
+		AND (refresh_expires > ? OR (refresh_expires = ? AND user_id > ?))
+		ORDER BY refresh_expires, user_id LIMIT ?`, ms(before), ae, ae, after.UserID, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -777,8 +777,10 @@ filters the page it has, and the user can type `owner/name` instead.
 The repository is created empty (`auto_init: false`), so the space's first
 commit is the repository's first commit, on `main`. The order:
 
-1. Checks that need no network: the fields, `--max-spaces`, the owner, and
-   that the tokens it needs exist (App configured, caller connected and not
+1. Checks that need no network: the fields, that `github.com` is among the
+   hosts the administrator allows (`--remote-host`; otherwise `403 forbidden`,
+   as for any other remote on a host that is not allowed), `--max-spaces`, the
+   owner, and that the tokens it needs exist (App configured, caller connected and not
    `expired` when `via` is `user`).
 2. The space is made on disk (`git init`, `space.yml`, the first commit). No
    one can see it and there is no record of it yet.
@@ -796,8 +798,15 @@ commit is the repository's first commit, on `main`. The order:
    `409 github_repo_not_in_installation`. This works whether or not GitHub adds
    a repository an App created to its installation by itself.
 5. `main` is pushed. A repository GitHub has just made is sometimes not found
-   for a few seconds, so "not found" and `5xx` are tried up to 4 times within
-   15 seconds; a refused credential is not retried.
+   for a few seconds, so "not found", GitHub's `5xx` and an unreachable GitHub
+   are tried again after 1, 3 and 7 seconds (up to 4 tries). One deadline of
+   15 seconds covers the tries, the waits and each push itself: a push still
+   running then is stopped, and no try starts that could not finish before it.
+   GitHub also says "Repository not found" for a credential it does not accept
+   on a private repository, which looks the same; the deadline is what bounds
+   that case. Every other refusal of the credential (`401`, `403`,
+   "Authentication failed") and a credential the server could not get at all
+   are not retried.
 6. In one transaction: the space, the caller as its owner, and its remote
    (`github`, `via`, the installation, the repository id, the user). Then the
    space becomes visible.
@@ -826,8 +835,9 @@ When a step fails:
   Codes: `409 github_repo_not_in_installation`, `502 github_push_failed`,
   `500 internal` (the transaction failed).
 - A crash between steps 3 and 6 is the same failure without an answer: the
-  directory on disk has no record and no one sees it, and the empty repository
-  is on GitHub, ready for `create: false`.
+  directory on disk has no record and no one sees it (the next start removes
+  it once it is a quarter of an hour old), and the empty repository is on
+  GitHub, ready for `create: false`.
 
 Two requests for the same name: the second gets `409 github_name_taken`. The
 server finishes the work when the client goes away, as `PUT …/remote` does.
@@ -855,6 +865,10 @@ token is deleted.
   space then syncs as the caller on GitHub. Someone else with `manage` who
   `PUT`s it again ties it to themself. It keeps working only while that user
   can sign in, still has `manage` in the space, and is connected.
+
+A `github` credential does not get around `--remote-host`: when `github.com`
+is not an allowed host the answer is `403 forbidden`, as for any other remote
+on a host that is not allowed, and GitHub is not asked.
 
 Errors, besides those of `PUT …/remote`: `409 github_not_configured`;
 `409 github_not_authorized` (the caller has no connection, or it is
@@ -2976,7 +2990,8 @@ The first save needs `appId` and `privateKey`. Later, a `privateKey` or a
 `clientSecret` that is left out keeps the one stored. `clientId` and
 `clientSecret` go together; without them users cannot connect their GitHub
 accounts, and only shared installations can be used. `"clientId": ""` removes
-both (`409 github_app_in_use` while a user is connected).
+both (`409 github_app_in_use` while a user is connected; spaces that sync
+through an installation do not stand in the way).
 
 The server checks with GitHub before it saves anything, and saves nothing when
 a check fails:
@@ -2991,9 +3006,10 @@ a check fails:
 - GitHub cannot be reached: `503 unavailable`.
 
 A new key or secret for the same App replaces the old one and drops the
-cached tokens. Another App (`appId` or `clientId` different from the saved
-one) is refused with `409 github_app_in_use` while any space has a `github`
-credential or any user is connected. `200` as `GET`.
+cached tokens. Another App (`appId` different from the saved one) is refused
+with `409 github_app_in_use` while any space has a `github` credential or any
+user is connected; another or no `clientId` only while any user is connected.
+`200` as `GET`.
 
 #### `DELETE /api/admin/github`
 

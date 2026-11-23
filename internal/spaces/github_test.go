@@ -745,3 +745,117 @@ func runGitQuiet(dir string, args ...string) string {
 	out, _ := cmd.Output()
 	return strings.TrimSpace(string(out))
 }
+
+// A github credential is held to --remote-host like any other remote: when the
+// GitHub host is not allowed, neither connecting nor creating gets past it, and
+// GitHub is not asked.
+func TestAGitHubCredentialObeysTheRemoteHostPolicy(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st, func(o *Options) { o.RemotePolicy = gitstore.Policy{Hosts: []string{"gitlab.com"}, AllowUnsafe: true} })
+		e.f.AddRepo("kazuhahub", "wiki", true)
+		before := len(e.f.Requests())
+		var he *gitstore.HostError
+		if _, err := e.create("Notes", "kazuhahub", "notes", true); !errors.As(err, &he) {
+			t.Fatalf("creating: %v", err)
+		}
+		e.nothingLeft()
+		in, err := e.m.Create(ctx, e.user.ID, "Wiki")
+		if err != nil {
+			t.Fatal(err)
+		}
+		h, _ := e.m.Open(ctx, e.user, in.ID)
+		defer h.Release()
+		if _, err := e.m.Connect(ctx, h, ConnectRequest{URL: e.f.URL + "/kazuhahub/wiki.git", CredType: CredGitHub, Via: "app", UserID: e.user.ID}); !errors.As(err, &he) {
+			t.Fatalf("connecting: %v", err)
+		}
+		if n := len(e.f.Requests()) - before; n != 0 {
+			t.Fatalf("GitHub was asked %d times", n)
+		}
+	})
+}
+
+// hangingPush is a runner whose pushes hang until their context ends.
+type hangingPush struct{ argvRunner }
+
+func (r *hangingPush) Run(c context.Context, cmd gitstore.Cmd) (string, string, error) {
+	for _, a := range cmd.Args {
+		if a == "push" {
+			<-c.Done()
+			return "", "", c.Err()
+		}
+	}
+	return r.argvRunner.Run(c, cmd)
+}
+
+// firstPushWithin makes a space with a new repository and fails the test when
+// it takes much longer than a 300 ms deadline.
+func firstPushWithin(t *testing.T, e *ghEnv, repo string) error {
+	t.Helper()
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() { _, err := e.create("D", "kazuhahub", repo, true); done <- err }()
+	select {
+	case err := <-done:
+		if d := time.Since(start); d > 2*time.Second {
+			t.Fatalf("took %v", d)
+		}
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first push went past its deadline")
+		return nil
+	}
+}
+
+// The first push keeps to one overall deadline: the waits between tries count
+// against it ...
+func TestTheFirstPushWaitsKeepToItsDeadline(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st, func(o *Options) {
+			o.PushRetry = []time.Duration{time.Second, 3 * time.Second, 7 * time.Second}
+			o.PushDeadline = 300 * time.Millisecond
+		})
+		e.f.HiddenGit = 100
+		if err := firstPushWithin(t, e, "slow"); ghCode(err) != "github_push_failed" || ghRepo(err) == nil {
+			t.Fatalf("%v", err)
+		}
+		e.nothingLeft()
+	})
+}
+
+// ... and so does a push that hangs.
+func TestAHangingFirstPushKeepsToItsDeadline(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st, func(o *Options) {
+			o.RemoteRunner = &hangingPush{}
+			o.PushDeadline = 300 * time.Millisecond
+		})
+		if err := firstPushWithin(t, e, "hang"); ghCode(err) != "github_push_failed" || ghRepo(err) == nil {
+			t.Fatalf("%v", err)
+		}
+		e.nothingLeft()
+	})
+}
+
+// What is tried again: only the brand-new repository's "not found", GitHub's
+// own failures and an unreachable GitHub; never another refusal, nor a
+// credential that could not be had (even one whose message says "not found").
+func TestWhatTheFirstPushTriesAgain(t *testing.T) {
+	git := func(stderr string) error {
+		return &space.UnavailableError{Msg: "x", Err: &gitstore.GitError{Stderr: stderr}}
+	}
+	for _, c := range []struct {
+		err   error
+		retry bool
+	}{
+		{git("remote: Repository not found.\nfatal: repository 'https://github.com/o/n.git/' not found"), true},
+		{git("fatal: unable to access 'https://github.com/o/n.git/': The requested URL returned error: 502"), true},
+		{git("fatal: Authentication failed for 'https://github.com/o/n.git/'"), false},
+		{git("fatal: unable to access 'https://github.com/o/n.git/': The requested URL returned error: 403"), false},
+		{&space.UnavailableError{Msg: "the installation was not found", Err: &gitstore.CredentialError{Code: "github_installation_missing", Msg: "the installation was not found"}}, false},
+		{errors.New("not found"), false},
+	} {
+		if got := retryable(c.err); got != c.retry {
+			t.Errorf("%v: retryable %v, want %v", c.err, got, c.retry)
+		}
+	}
+}

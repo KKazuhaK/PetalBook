@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,10 +57,10 @@ func TestGitHubAuthorizations(t *testing.T) {
 			t.Fatalf("%+v", got)
 		}
 		// Due: refresh tokens ending before the given time, in good standing.
-		if due, _ := store.DueGitHubRenewals(ctx, q, now.Add(30*24*time.Hour), 10); len(due) != 0 {
+		if due, _ := store.DueGitHubRenewals(ctx, q, now.Add(30*24*time.Hour), store.DueCursor{}, 10); len(due) != 0 {
 			t.Fatalf("%+v", due)
 		}
-		if due, _ := store.DueGitHubRenewals(ctx, q, now.Add(200*24*time.Hour), 10); len(due) != 1 {
+		if due, _ := store.DueGitHubRenewals(ctx, q, now.Add(200*24*time.Hour), store.DueCursor{}, 10); len(due) != 1 {
 			t.Fatalf("%+v", due)
 		}
 		// Expiring drops the tokens, only for the version it was asked about.
@@ -73,7 +74,7 @@ func TestGitHubAuthorizations(t *testing.T) {
 		if got.State != "expired" || got.AccessEnc != "" || got.RefreshEnc != "" {
 			t.Fatalf("%+v", got)
 		}
-		if due, _ := store.DueGitHubRenewals(ctx, q, now.Add(400*24*time.Hour), 10); len(due) != 0 {
+		if due, _ := store.DueGitHubRenewals(ctx, q, now.Add(400*24*time.Hour), store.DueCursor{}, 10); len(due) != 0 {
 			t.Fatalf("an expired connection is due: %+v", due)
 		}
 		if n, _ := store.CountGitHubAuthorizations(ctx, q); n != 1 {
@@ -168,6 +169,70 @@ func TestGitHubInstallationsAndSpaces(t *testing.T) {
 		}
 		if _, _, err := store.MemberStanding(ctx, q, "S1", "A"); !errors.Is(err, store.ErrNotFound) {
 			t.Fatal(err)
+		}
+	})
+}
+
+// Due renewals page by (refresh end, user id), ties included.
+func TestDueGitHubRenewalsPageByKeyset(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+		q := st.Q()
+		ends := map[string]time.Duration{"A": 2, "B": 1, "C": 1, "D": 1, "E": 3}
+		var i int64
+		for _, id := range []string{"A", "B", "C", "D", "E"} {
+			i++
+			mkUser(t, st, id, "u"+id, "member")
+			err := store.PutGitHubAuthorization(ctx, q, store.GitHubAuthorization{UserID: id, GitHubID: i, Login: id, AccessEnc: "ae", RefreshEnc: "re",
+				State: "ok", RefreshExpires: now.Add(ends[id] * time.Hour), Connected: now, Updated: now})
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		var got []string
+		var cur store.DueCursor
+		for pages := 0; pages < 10; pages++ {
+			due, err := store.DueGitHubRenewals(ctx, q, now.Add(24*time.Hour), cur, 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, a := range due {
+				got = append(got, a.UserID)
+				cur = a.Next()
+			}
+			if len(due) < 2 {
+				break
+			}
+		}
+		if strings.Join(got, "") != "BCDAE" {
+			t.Fatalf("%v", got)
+		}
+	})
+}
+
+// Two users connecting one GitHub account at once: the one that loses the race
+// gets ErrExists from the unique index, not a database error.
+func TestConnectingAnAccountTakenMeanwhileIsErrExists(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		mkUser(t, st, "A", "a", "member")
+		mkUser(t, st, "B", "b", "member")
+		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+		q := st.Q()
+		a := store.GitHubAuthorization{UserID: "A", GitHubID: 77, Login: "gh", AccessEnc: "ae", State: "ok", Connected: now, Updated: now}
+		b := a
+		b.UserID = "B"
+		store.SetGitHubPutRaceHook(func() {
+			store.SetGitHubPutRaceHook(nil)
+			if err := store.PutGitHubAuthorization(ctx, q, a); err != nil {
+				t.Error(err)
+			}
+		})
+		t.Cleanup(func() { store.SetGitHubPutRaceHook(nil) })
+		if err := store.PutGitHubAuthorization(ctx, q, b); !errors.Is(err, store.ErrExists) {
+			t.Fatalf("%v", err)
+		}
+		if u, _ := store.GitHubAccountUser(ctx, q, 77); u != "A" {
+			t.Fatalf("%q", u)
 		}
 	})
 }

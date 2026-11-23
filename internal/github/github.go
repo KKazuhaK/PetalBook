@@ -110,6 +110,8 @@ type Service struct {
 	curAt    time.Time
 	tokens   map[string]cachedUser // by PetalBook user id
 	renewing map[string]*renewal
+	gens     map[string]uint64 // see tokenGen
+	genAll   uint64
 	attempts *attemptStore
 	onChange func(userID string)
 }
@@ -135,7 +137,7 @@ func New(opt Options) (*Service, error) {
 		opt.SettingsTTL = time.Minute
 	}
 	opt.PublicURL = strings.TrimRight(opt.PublicURL, "/")
-	return &Service{opt: opt, log: opt.Logger, c: opt.Client, tokens: map[string]cachedUser{}, renewing: map[string]*renewal{},
+	return &Service{opt: opt, log: opt.Logger, c: opt.Client, tokens: map[string]cachedUser{}, renewing: map[string]*renewal{}, gens: map[string]uint64{},
 		attempts: newAttemptStore(opt.Now)}, nil
 }
 

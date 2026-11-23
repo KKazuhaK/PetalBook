@@ -27,6 +27,21 @@ func (m *Manager) needGitHub() (*github.Service, error) {
 	return m.opt.GitHub, nil
 }
 
+// githubHostAllowed holds the server's GitHub to --remote-host, as every other
+// remote is: a github credential is no way around the administrator's list.
+// Only the host is checked here (the address itself is GitHub's own).
+func (m *Manager) githubHostAllowed(gh *github.Service) error {
+	_, err := gitstore.ParseURL("https://"+gh.Client().Host()+"/owner/name.git", gitstore.Policy{Hosts: m.opt.RemotePolicy.Hosts})
+	var he *gitstore.HostError
+	if errors.As(err, &he) {
+		return he
+	}
+	if err != nil {
+		return fmt.Errorf("%w: the GitHub address of this server is not usable", ErrInvalid)
+	}
+	return nil
+}
+
 // resolveGitHub reads the address of a space's repository and decides how it
 // syncs: the address is stored in https form on the server's GitHub.
 func (m *Manager) resolveGitHub(ctx context.Context, req ConnectRequest) (gitstore.Remote, *github.Cred, error) {
@@ -40,6 +55,9 @@ func (m *Manager) resolveGitHub(ctx context.Context, req ConnectRequest) (gitsto
 	}
 	if req.Via != github.ViaApp && req.Via != github.ViaUser {
 		return gitstore.Remote{}, nil, fmt.Errorf("%w: credential.via must be app or user", ErrInvalid)
+	}
+	if err := m.githubHostAllowed(gh); err != nil {
+		return gitstore.Remote{}, nil, err
 	}
 	cred, repo, err := gh.ResolveExisting(ctx, req.UserID, owner, name, req.Via)
 	if err != nil {
@@ -83,6 +101,9 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 		return Info{}, err
 	}
 	if name, err = ValidName(name); err != nil {
+		return Info{}, err
+	}
+	if err := m.githubHostAllowed(gh); err != nil {
 		return Info{}, err
 	}
 	if !github.ValidRepoName(g.Name) {
@@ -226,14 +247,24 @@ func (m *Manager) hook(step string) {
 
 // connectRetry connects a new space to its repository. A repository GitHub has
 // just made is sometimes not found for a few seconds, so "not found" and a
-// failure of GitHub's own are tried again, four tries in all within the delays
-// of Options.PushRetry; a credential GitHub refuses is not.
+// failure of GitHub's own are tried again after the delays of
+// Options.PushRetry, all within Options.PushDeadline: the deadline covers each
+// push as well as the waits, and a try that would start after it is not made.
+// GitHub also answers "not found" for a credential it does not accept on a
+// private repository, which cannot be told apart here; the deadline is what
+// bounds that case. Every other refusal of the credential, and a credential
+// that could not be had at all, is not tried again.
 func (m *Manager) connectRetry(ctx context.Context, sp *space.Space, ro space.RemoteOptions) error {
+	ctx, cancel := context.WithTimeout(ctx, m.opt.PushDeadline)
+	defer cancel()
 	delays := m.opt.PushRetry
 	for i := 0; ; i++ {
 		err := sp.Connect(ctx, ro)
 		if err == nil || i >= len(delays) || !retryable(err) {
 			return err
+		}
+		if dl, ok := ctx.Deadline(); ok && time.Until(dl) <= delays[i] {
+			return err // the next try would start after the deadline
 		}
 		t := time.NewTimer(delays[i])
 		select {
@@ -245,8 +276,13 @@ func (m *Manager) connectRetry(ctx context.Context, sp *space.Space, ro space.Re
 	}
 }
 
-// retryable: the repository is "not found" (not yet there), or GitHub failed.
+// retryable: the repository is "not found" (perhaps not yet there), GitHub
+// failed, or it could not be reached. Never a credential that could not be had.
 func retryable(err error) bool {
+	var ce *gitstore.CredentialError
+	if errors.As(err, &ce) {
+		return false
+	}
 	var ue *space.UnavailableError
 	if !errors.As(err, &ue) {
 		return false

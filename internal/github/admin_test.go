@@ -199,3 +199,27 @@ func TestInstallationsListAndSharing(t *testing.T) {
 		}
 	})
 }
+
+// Removing the client id only ends users' connections: spaces that sync
+// through the App's installations do not need it, so only connected users
+// stand in the way.
+func TestRemovingTheClientIDCountsOnlyConnectedUsers(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		h := newHarness(t, st)
+		h.configure()
+		h.user("U1", "kazuha")
+		h.space("S1", store.Remote{GHVia: "app", GHInstallationID: 7, GHRepoID: 5})
+		empty := ""
+		v, err := h.svc.Save(ctx, github.SaveRequest{ClientID: &empty})
+		if err != nil {
+			t.Fatalf("removing the client id while only App spaces exist: %v", err)
+		}
+		if v.ClientID != "" {
+			t.Fatalf("%+v", v)
+		}
+		// Another App is still refused while the space syncs through this one.
+		if _, err := h.svc.Save(ctx, github.SaveRequest{AppID: "999", PrivateKey: githubapptestKeyPEM(h)}); code(err) != "github_app_in_use" {
+			t.Fatalf("another App id: %v", err)
+		}
+	})
+}
