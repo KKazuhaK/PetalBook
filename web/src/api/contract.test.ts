@@ -161,7 +161,7 @@ function suite(target: Target) {
   beforeAll(async () => {
     if (REAL) base = (input, init) => realFetch(REAL + String(input), init)
     else {
-      server = createMockServer({ empty: true, mode: target.mode, now: () => clock, oidc: null })
+      server = createMockServer({ empty: true, mode: target.mode, now: () => clock, oidc: null, oauth: true })
       base = mockFetch(server, { jar: false })
     }
     admin = browser()
@@ -276,6 +276,11 @@ function suite(target: Target) {
         ['DELETE', '/api/account/tokens/NOSUCHTOKN'],
         ['GET', '/api/admin/access'],
         ['GET', '/api/admin/tokens'],
+        ['GET', '/api/account/grants'],
+        ['DELETE', '/api/account/grants/NOSUCHGRANT'],
+        ['GET', '/api/oauth/consent?req=x'],
+        ['POST', '/api/oauth/consent', { req: 'x', approve: false }],
+        ['GET', '/api/admin/grants'],
         ['POST', '/api/invites/check', { token: 'x' }],
         ['POST', '/api/invites/accept', { token: 'x', username: 'ab', password: 'password1' }],
         ['POST', '/api/spaces', { name: 'Other' }],
@@ -424,6 +429,97 @@ function suite(target: Target) {
         const fresh = browser()
         expect((await call(fresh, 'POST', '/api/login', { username: m.user.username, password: m.password })).status).toBe(401)
         expect((await call(fresh, 'POST', '/api/login', { username: m.user.username, password: 'another-password' })).status).toBe(200)
+      })
+    })
+
+    describe('OAuth consent and grants', () => {
+      // A real server needs an MCP client to start a request, and --public-url: the mock plays both.
+      const start = (username: string, o?: Parameters<MockServer['startAuthorization']>[1]) => server!.startAuthorization(username, o)
+
+      it.skipIf(!!REAL)('mock only: a person approves a request with the spaces they pick, and the grant is theirs to see and to revoke', async () => {
+        const m = await newMember(uniq('oa1'))
+        const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0]
+        const req = start(m.user.username, { clientName: 'Notes helper' })
+        const info = await call(m.browser, 'GET', `/api/oauth/consent?req=${req}`)
+        expect(info.status).toBe(200)
+        expect(info.json).toMatchObject({ client: { name: 'Notes helper', id: 'pbc_mock' }, redirectHost: 'localhost:7777', punycode: false, scopes: ['read', 'write'], user: { id: m.user.id } })
+        expect(info.json.spaces.find((s: { id: string }) => s.id === mine.id)).toMatchObject({ personal: true })
+        const done = await call(m.browser, 'POST', '/api/oauth/consent', { req, approve: true, spaces: [mine.id], access: 'write' })
+        expect(done.status).toBe(200)
+        const back = new URL(done.json.redirect)
+        expect([back.origin + back.pathname, back.searchParams.get('state')]).toEqual(['http://localhost:7777/callback', 'st4te'])
+        expect(back.searchParams.get('code')).toBeTruthy()
+        expect(back.searchParams.get('iss')).toBeTruthy()
+        // Decided once.
+        expect((await call(m.browser, 'POST', '/api/oauth/consent', { req, approve: true, spaces: [mine.id] })).json.error).toBe('not_found')
+        const list = (await call(m.browser, 'GET', '/api/account/grants')).json.grants
+        expect(list).toHaveLength(1)
+        expect(list[0]).toMatchObject({ client: { name: 'Notes helper', id: 'pbc_mock' }, access: 'write', spaces: [{ id: mine.id, name: mine.name }] })
+        expect(typeof list[0].created).toBe('string')
+        const other = await newMember(uniq('oa2'))
+        expect((await call(other.browser, 'GET', '/api/account/grants')).json.grants).toEqual([])
+        expect((await call(other.browser, 'DELETE', `/api/account/grants/${list[0].id}`)).json.error).toBe('not_found')
+        expect((await call(m.browser, 'DELETE', `/api/account/grants/${list[0].id}`)).status).toBe(204)
+        expect((await call(m.browser, 'GET', '/api/account/grants')).json.grants).toEqual([])
+      })
+
+      it.skipIf(!!REAL)('mock only: a request is the one person\'s, and a bad answer is 400 and keeps it', async () => {
+        const m = await newMember(uniq('oa3'))
+        const other = await newMember(uniq('oa4'))
+        const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0].id
+        const theirs = (await call(other.browser, 'GET', '/api/spaces')).json.spaces[0].id
+        const req = start(m.user.username, { scopes: ['read'] })
+        expect((await call(other.browser, 'GET', `/api/oauth/consent?req=${req}`)).json.error).toBe('not_found')
+        expect((await call(other.browser, 'POST', '/api/oauth/consent', { req, approve: true, spaces: [theirs] })).json.error).toBe('not_found')
+        for (const bad of [{ spaces: [] }, { spaces: [theirs] }, { spaces: [mine], access: 'write' }, { spaces: [mine], access: 'root' }]) {
+          const r = await call(m.browser, 'POST', '/api/oauth/consent', { req, approve: true, ...bad })
+          expect([r.status, r.json.error], JSON.stringify(bad)).toEqual([400, 'invalid'])
+        }
+        expect((await call(m.browser, 'GET', `/api/oauth/consent?req=${req}`)).status).toBe(200)
+        const denied = await call(m.browser, 'POST', '/api/oauth/consent', { req, approve: false })
+        expect(denied.status).toBe(200)
+        expect(new URL(denied.json.redirect).searchParams.get('error')).toBe('access_denied')
+        expect((await call(m.browser, 'GET', '/api/account/grants')).json.grants).toEqual([])
+      })
+
+      it.skipIf(!!REAL)('mock only: an administrator lists everyone\'s grants a page at a time and revokes one; others are refused', async () => {
+        const m = await newMember(uniq('oa5'))
+        const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0].id
+        for (let i = 0; i < 3; i++) {
+          const req = start(m.user.username, { clientName: `app ${i}` })
+          await call(m.browser, 'POST', '/api/oauth/consent', { req, approve: true, spaces: [mine] })
+          clock += 1000
+        }
+        const first = await call(admin, 'GET', `/api/admin/grants?user=${m.user.id}&limit=2`)
+        expect(first.status).toBe(200)
+        expect(first.json.items).toHaveLength(2)
+        expect(first.json.items[0].owner).toMatchObject({ id: m.user.id, username: m.user.username })
+        expect(first.json.next).not.toBe('')
+        const rest = await call(admin, 'GET', `/api/admin/grants?user=${m.user.id}&limit=2&cursor=${first.json.next}`)
+        expect(rest.json.items).toHaveLength(1)
+        expect(rest.json.next).toBe('')
+        expect((await call(m.browser, 'GET', '/api/admin/grants')).json.error).toBe('forbidden')
+        expect((await call(admin, 'GET', '/api/admin/grants?limit=0')).status).toBe(400)
+        expect((await call(admin, 'DELETE', `/api/admin/grants/${first.json.items[0].id}`)).status).toBe(204)
+        expect((await call(admin, 'DELETE', `/api/admin/grants/${first.json.items[0].id}`)).status).toBe(404)
+        expect((await call(m.browser, 'GET', '/api/account/grants')).json.grants).toHaveLength(2)
+      })
+
+      it.skipIf(!!REAL)('mock only: with MCP off the consent endpoints are 404, the grants are kept and listed, and oauth reads false', async () => {
+        const m = await newMember(uniq('oa6'))
+        const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0].id
+        await call(m.browser, 'POST', '/api/oauth/consent', { req: start(m.user.username), approve: true, spaces: [mine] })
+        const before = (await call(admin, 'GET', '/api/admin/access')).json
+        expect(before).toMatchObject({ mcp: true, oauth: true })
+        try {
+          await call(admin, 'PUT', '/api/admin/access', { mcp: false })
+          expect((await call(admin, 'GET', '/api/admin/access')).json).toMatchObject({ mcp: false, oauth: false })
+          expect((await call(m.browser, 'GET', '/api/oauth/consent?req=x')).json.error).toBe('not_found')
+          expect((await call(m.browser, 'POST', '/api/oauth/consent', { req: 'x', approve: false })).status).toBe(404)
+          expect((await call(m.browser, 'GET', '/api/account/grants')).json.grants).toHaveLength(1)
+        } finally {
+          await call(admin, 'PUT', '/api/admin/access', { mcp: before.mcp })
+        }
       })
     })
 

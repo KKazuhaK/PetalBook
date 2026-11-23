@@ -554,6 +554,41 @@ export interface AdminTokenList {
   items: AdminToken[]
   next: string
 }
+// An OAuth grant: one approval of one client (an MCP client, say) by one person
+// (docs/api.md, "OAuth for MCP clients"). It works like a token of that access
+// and those spaces.
+export interface Grant {
+  id: string
+  client: { name: string; id: string }
+  access: TokenAccess
+  spaces: ApiTokenSpace[]
+  created: string
+  // The last refresh; the creation until the first.
+  lastUsed: string | null
+}
+export interface AdminGrant extends Grant {
+  owner: { id: string; username: string; name: string }
+}
+export interface AdminGrantList {
+  items: AdminGrant[]
+  next: string
+}
+// What the consent page shows of an authorization request.
+export interface ConsentInfo {
+  client: { name: string; id: string; host: string }
+  redirectHost: string
+  // The host may show as letters that look like others.
+  punycode: boolean
+  scopes: TokenAccess[]
+  spaces: { id: string; name: string; permissions: Permission[]; personal: boolean }[]
+  user: { id: string; name: string }
+}
+export interface ConsentDecision {
+  req: string
+  approve: boolean
+  spaces?: string[]
+  access?: TokenAccess
+}
 export interface MachineAccess {
   tokens: boolean
   mcp: boolean

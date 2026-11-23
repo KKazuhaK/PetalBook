@@ -3,7 +3,7 @@
 // cookie stand-in), invites, spaces per user and a fake OpenID Connect
 // provider. It has no DOM or Node dependencies.
 
-import type { AdminSpace, AdminToken, ApiToken, ConnectRemoteInput, FieldKind, Identity, Invite, Member, Page, Permission, Remote, RemoteKey, RemoteState, Role, ServerStatus, SettingsNotice, SpaceInfo, SpaceRole, User } from '../types.ts'
+import type { AdminGrant, AdminSpace, AdminToken, ApiToken, ConsentInfo, Grant, ConnectRemoteInput, FieldKind, Identity, Invite, Member, Page, Permission, Remote, RemoteKey, RemoteState, Role, ServerStatus, SettingsNotice, SpaceInfo, SpaceRole, User } from '../types.ts'
 import { gitBlobId } from './sha1.ts'
 import { ALPHABET, HttpError, compareCodePoints, createSpaceStore, isRecord, rfc3339, validFolder, type SpaceStore } from './store.ts'
 import { SPACE_NAME } from './seed.ts'
@@ -55,6 +55,9 @@ export interface MockOptions {
   maxUpload?: number
   // The largest import in bytes (`--max-import`); 100 MiB by default.
   maxImport?: number
+  // Accounts mode: the server has an authorization server for MCP clients (it was given
+  // --public-url), so the consent endpoints and the grants answer; otherwise they are 404.
+  oauth?: boolean
 }
 
 // What the mock plays for the remote endpoints.
@@ -107,6 +110,33 @@ interface TokenRec {
   created: number
   expires: number | null
   revoked: number | null
+}
+interface GrantRec {
+  id: string
+  userId: string
+  clientId: string
+  clientName: string
+  access: 'read' | 'write'
+  spaces: string[]
+  created: number
+  lastUsed: number
+}
+// An authorization request waiting on the consent page.
+interface PendingRec {
+  userId: string
+  clientName: string
+  clientId: string
+  redirectUri: string
+  state: string
+  scopes: ('read' | 'write')[]
+  expires: number
+}
+interface StartOptions {
+  clientName?: string
+  clientId?: string
+  redirectUri?: string
+  state?: string
+  scopes?: ('read' | 'write')[]
 }
 interface RemoteRec {
   url: string
@@ -198,6 +228,8 @@ export function createMockServer(options: MockOptions = {}) {
   const apiTokens = new Map<string, TokenRec>()
   // What an administrator allows machines (docs/api.md, "Machine access").
   const machine = { tokens: true, mcp: true }
+  const grants = new Map<string, GrantRec>()
+  const pending = new Map<string, PendingRec>()
   const spaces = new Map<string, SpaceRec>()
   // What the server says about settings files it could not use, by space (set by tests).
   const settingsNotices = new Map<string, SettingsNotice[]>()
@@ -637,6 +669,84 @@ export function createMockServer(options: MockOptions = {}) {
       return { ...publicToken(t), owner: { id: t.userId, username: o?.username ?? '', name: o?.name ?? '' } }
     })
     return { status: 200, body: { items, next: rest.length > limit ? page[page.length - 1].id : '' } }
+  }
+
+  // --- OAuth for MCP clients: grants and the consent page ---
+  const oauthHere = () => accounts && options.oauth === true
+  // The consent endpoints are off with MCP; the grants are only there with an authorization server.
+  const requireOAuth = () => {
+    if (!oauthHere() || !machine.mcp) throw new HttpError(404, 'not_found', 'no such endpoint')
+  }
+  const requireGrants = () => {
+    if (!oauthHere()) throw new HttpError(404, 'not_found', 'no such endpoint')
+  }
+  const publicGrant = (g: GrantRec): Grant => ({
+    id: g.id,
+    client: { name: g.clientName, id: g.clientId },
+    access: g.access,
+    spaces: g.spaces.map((id) => ({ id, name: spaces.get(id)?.members.has(g.userId) ? spaces.get(id)!.name : '' })),
+    created: rfc3339(g.created),
+    lastUsed: rfc3339(g.lastUsed),
+  })
+  const grantsOf = (userId: string | null) =>
+    [...grants.values()]
+      .filter((g) => userId === null || g.userId === userId)
+      .sort((a, b) => b.created - a.created || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
+  const startPending = (u: UserRec, o: StartOptions): string => {
+    const req = randomString(32)
+    pending.set(req, {
+      userId: u.id,
+      clientName: o.clientName ?? 'Notes helper',
+      clientId: o.clientId ?? 'pbc_mock',
+      redirectUri: o.redirectUri ?? 'http://localhost:7777/callback',
+      state: o.state ?? 'st4te',
+      scopes: o.scopes ?? ['read', 'write'],
+      expires: now() + 600_000,
+    })
+    return req
+  }
+  const takePending = (me: UserRec, id: string | null, keep: boolean): PendingRec => {
+    const p = id ? pending.get(id) : undefined
+    if (!id || !p || p.expires <= now() || p.userId !== me.id) throw new HttpError(404, 'not_found', 'this authorization request has expired, was decided already or is not yours; start again from the client')
+    if (!keep) pending.delete(id)
+    return p
+  }
+  const consentInfo = (me: UserRec, p: PendingRec): ConsentInfo => ({
+    client: { name: p.clientName, id: p.clientId, host: /^https:\/\/([^/:]+)/.exec(p.clientId)?.[1] ?? '' },
+    redirectHost: new URL(p.redirectUri).host || p.redirectUri,
+    punycode: /(^|\.)xn--/i.test(new URL(p.redirectUri).hostname),
+    scopes: p.scopes,
+    spaces: callerSpaces(me).map((s) => {
+      const info = spaceInfo(s, me)
+      return { id: s.id, name: s.name, permissions: info.permissions, personal: info.personal }
+    }),
+    user: { id: me.id, name: me.name },
+  })
+  const decideConsent = (me: UserRec, body: Record<string, unknown>): MockResponse => {
+    const id = typeof body.req === 'string' ? body.req : null
+    const p = takePending(me, id, true)
+    const back = (params: Record<string, string>) => {
+      const u = new URL(p.redirectUri)
+      for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v)
+      if (p.state) u.searchParams.set('state', p.state)
+      u.searchParams.set('iss', 'https://notes.example.test')
+      return u.toString()
+    }
+    if (body.approve !== true) {
+      pending.delete(id!)
+      return { status: 200, body: { redirect: back({ error: 'access_denied', error_description: 'the user denied the request' }) } }
+    }
+    const access = body.access === undefined || body.access === '' ? 'read' : body.access
+    if (access !== 'read' && access !== 'write') throw new HttpError(400, 'invalid', 'access must be read or write')
+    if (access === 'write' && !p.scopes.includes('write')) throw new HttpError(400, 'invalid', 'the client asked for read only')
+    if (!Array.isArray(body.spaces) || body.spaces.length < 1 || body.spaces.length > 100 || !body.spaces.every((x) => typeof x === 'string')) throw new HttpError(400, 'invalid', 'choose 1 to 100 spaces')
+    const ids = [...new Set(body.spaces as string[])]
+    for (const sid of ids) if (!spaces.get(sid)?.members.has(me.id)) throw new HttpError(400, 'invalid', `you are not a member of the space ${sid}`)
+    pending.delete(id!)
+    // The real server makes the grant when the client exchanges the code; the mock has no client.
+    const g: GrantRec = { id: newId((x) => grants.has(x)), userId: me.id, clientId: p.clientId, clientName: p.clientName, access, spaces: ids, created: now(), lastUsed: now() }
+    grants.set(g.id, g)
+    return { status: 200, body: { redirect: back({ code: randomString(43) }) } }
   }
 
   // --- spaces ---
@@ -1454,6 +1564,13 @@ export function createMockServer(options: MockOptions = {}) {
       return j(spaceInfo(target, ownerOf(target) ?? [...users.values()][0]))
     }
 
+    // Mock only: what an MCP client's link to /oauth/authorize does, for looking at the consent page by hand.
+    if (path === '/_mock/oauth' && method === 'GET') {
+      accountsOnly()
+      requireOAuth()
+      return { status: 303, headers: { Location: `/oauth/consent?req=${startPending(requireUser(ctx), {})}` } }
+    }
+
     // --- signing in (accounts mode) ---
     if (path === '/setup' && method === 'POST') {
       accountsOnly()
@@ -1544,11 +1661,60 @@ export function createMockServer(options: MockOptions = {}) {
       }
     }
 
+    if (path === '/account/grants' || path.startsWith('/account/grants/')) {
+      accountsOnly()
+      const me = requireUser(ctx)
+      requireGrants()
+      if (path === '/account/grants' && method === 'GET') return j({ grants: grantsOf(me.id).map(publicGrant) })
+      const gr = /^\/account\/grants\/([^/]+)$/.exec(path)
+      if (gr && method === 'DELETE') {
+        const g = grants.get(decodeURIComponent(gr[1]))
+        if (!g || g.userId !== me.id) throw new HttpError(404, 'not_found', 'no such grant')
+        grants.delete(g.id)
+        return { status: 204 }
+      }
+    }
+    if (path === '/oauth/consent') {
+      accountsOnly()
+      const me = requireUser(ctx)
+      requireOAuth()
+      if (method === 'GET') return j(consentInfo(me, takePending(me, url.searchParams.get('req'), true)))
+      if (method === 'POST') return decideConsent(me, body)
+    }
+
     // --- administration (administrators only; accounts mode) ---
     if (path === '/admin/status' || path === '/admin/spaces' || path.startsWith('/admin/spaces/')) {
       accountsOnly()
       requireAdmin(ctx)
       return routeAdmin(method, path, url, body)
+    }
+    if (path === '/admin/grants' || path.startsWith('/admin/grants/')) {
+      accountsOnly()
+      requireAdmin(ctx)
+      requireGrants()
+      if (path === '/admin/grants' && method === 'GET') {
+        let limit = 50
+        if (url.searchParams.has('limit')) {
+          const raw = url.searchParams.get('limit') ?? ''
+          const n = /^\d+$/.test(raw) ? Number(raw) : NaN
+          if (!(n >= 1 && n <= 200)) throw new HttpError(400, 'invalid', 'limit 要在 1 到 200 之间')
+          limit = n
+        }
+        const after = url.searchParams.get('cursor') ?? ''
+        const all = grantsOf(url.searchParams.get('user') || null)
+        const rest = all.slice(after ? all.findIndex((g) => g.id === after) + 1 : 0)
+        const page = rest.slice(0, limit)
+        const items: AdminGrant[] = page.map((g) => {
+          const o = users.get(g.userId)
+          return { ...publicGrant(g), owner: { id: g.userId, username: o?.username ?? '', name: o?.name ?? '' } }
+        })
+        return j({ items, next: rest.length > limit ? page[page.length - 1].id : '' })
+      }
+      const one = /^\/admin\/grants\/([^/]+)$/.exec(path)
+      if (one && method === 'DELETE') {
+        if (!grants.delete(decodeURIComponent(one[1]))) throw new HttpError(404, 'not_found', 'no such grant')
+        return { status: 204 }
+      }
     }
     if (path === '/admin/access' || path === '/admin/tokens' || path.startsWith('/admin/tokens/')) {
       accountsOnly()
@@ -1561,8 +1727,7 @@ export function createMockServer(options: MockOptions = {}) {
             if (typeof v === 'boolean') machine[k] = v
           }
         }
-        // The authorization server is not part of the mock.
-        return j({ tokens: machine.tokens, mcp: machine.mcp, oauth: false })
+        return j({ tokens: machine.tokens, mcp: machine.mcp, oauth: oauthHere() && machine.mcp })
       }
       if (path === '/admin/tokens' && method === 'GET') return adminTokens(url)
       const one = /^\/admin\/tokens\/([^/]+)$/.exec(path)
@@ -1685,6 +1850,12 @@ export function createMockServer(options: MockOptions = {}) {
     userId: (username: string) => [...users.values()].find((u) => u.username === username)?.id,
     // Views of a folder as written by hand in space.yml: served as "@n" until a write names them.
     // What GET .../types says to managers about settings files that could not be used.
+    // Mock only: an MCP client sent this person to the authorization page; the id is what the consent page's address carries.
+    startAuthorization: (username: string, o: StartOptions = {}): string => {
+      const u = [...users.values()].find((x) => x.username === username)
+      if (!u) throw new Error(`no user ${username}`)
+      return startPending(u, o)
+    },
     seedSettingsNotices: (notices: SettingsNotice[], space = 'default') => void settingsNotices.set(space, notices),
     seedHandWrittenViews: (folder: string, views: Record<string, unknown>[], space = 'default') => spaces.get(space)!.store.seedHandWrittenViews(folder, views as never),
     // Let the server's own draft commits run now (they also run on every request).

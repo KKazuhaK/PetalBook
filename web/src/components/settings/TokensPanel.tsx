@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { t } from '@/i18n'
 import { tk } from '@/i18n/tokens'
+import GrantsSection from './GrantsSection'
 import { SettingsSection } from './SettingsParts'
 
 const EXPIRY_CHOICES = [30, 90, 365, 0] as const
@@ -92,6 +93,7 @@ export default function TokensPanel() {
           </ul>
         )}
       </SettingsSection>
+      <GrantsSection />
       <AlertDialog open={revoking !== null} onOpenChange={(open) => !open && setRevoking(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
