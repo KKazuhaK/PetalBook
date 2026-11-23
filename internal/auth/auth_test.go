@@ -123,7 +123,9 @@ func TestUsernames(t *testing.T) {
 }
 
 func TestSafeReturn(t *testing.T) {
-	keep := []string{"/", "/s/01JD3K8Q7Z", "/s/01JD3K8Q7Z/p/01JD3K8Q7Z?x=1#top", "/settings"}
+	keep := []string{"/", "/s/01JD3K8Q7Z", "/s/01JD3K8Q7Z/p/01JD3K8Q7Z?x=1#top", "/settings",
+		// Where /oauth/authorize sends a browser without a session back to.
+		"/oauth/authorize?response_type=code&client_id=https%3A%2F%2Fclient.example%2Fmeta.json&redirect_uri=http%3A%2F%2F127.0.0.1%3A3334%2Fcb&state=s1&code_challenge=abc&code_challenge_method=S256&resource=https%3A%2F%2Fnotes.example%2Fmcp"}
 	for _, s := range keep {
 		if got := SafeReturn(s); got != s {
 			t.Errorf("%q became %q", s, got)

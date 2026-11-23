@@ -370,6 +370,9 @@ The administrators can require a passkey of chosen people
   `GET /api/session`, `GET /api/meta`, `GET /api/auth/providers`,
   `GET /api/account`, the account's passkey endpoints and `POST /api/logout`.
   The first registered passkey lifts the hold for the session at once.
+- A held session makes no API token and approves no OAuth consent: those
+  endpoints answer `403 passkey_required` like the rest (see "Held sessions,
+  API tokens and OAuth grants").
 - Sign-in through an identity provider is not held: the provider decides how
   its people prove who they are.
 - If they lose every passkey, an administrator deletes the lost ones
@@ -667,11 +670,11 @@ and is recorded in the audit log.
 
 ### Audit log
 
-Sign-in events and security changes go to the audit log in the state database
-(see `GET /api/admin/audit`). Rows are written in batches in the background,
-from a queue of at most 10,000; when the queue is full, rows are dropped and
-counted, and a `dropped` row says how many. At most 100,000 rows or 90 days are
-kept.
+Sign-in events, security changes, API tokens made or revoked and OAuth grants
+revoked go to the audit log in the state database (see `GET /api/admin/audit`).
+Rows are written in batches in the background, from a queue of at most 10,000;
+when the queue is full, rows are dropped and counted, and a `dropped` row says
+how many. At most 100,000 rows or 90 days are kept.
 
 | `kind` | When | `detail` |
 |---|---|---|
@@ -685,6 +688,9 @@ kept.
 | `security_changed` | `PUT /api/admin/security` changed something | `from`, `to`: the changed fields only, never a secret (a secret shows as `"changed"`) |
 | `provider_created`, `provider_changed`, `provider_deleted` | a sign-in provider changed | `slug`, `kind`, the changed fields (secrets as `"changed"`) |
 | `user_changed` | an administrator changed `role`, `disabled`, `passkeyRequired`, `email` or `emailVerified` | the changed fields |
+| `token_created` | an API token was made (`POST /api/account/tokens`) | `token` (id), `name`, `access`, `spaces` (ids); never the secret |
+| `token_revoked` | an API token was revoked through the server (once: revoking one already revoked writes nothing) | `token`, `name`, `by` (`user`, `admin`) |
+| `grant_revoked` | an OAuth grant was revoked through the server | `grant`, `client` (its name), `by` (`user`, `admin`) |
 | `dropped` | rows were lost because the queue was full | `count` |
 
 Each row has `at`, `kind`, `actor` (the user who acted, if any), `user` (the
@@ -3012,6 +3018,24 @@ Milestone 2.6. A token lets a script or an MCP client act for one person in
 a few of their spaces, without that person's password or session. It is never
 more than its owner: what a request with a token may do is what the owner may
 do now, narrowed by the token.
+
+### Held sessions, API tokens and OAuth grants
+
+A hold (see "Passkeys") belongs to a session, not to the person: tokens and
+grants are independent of it. A person who is held cannot make a token or
+approve a consent (`403 passkey_required`), so nobody who only has the
+password gets a new credential that way. The tokens and grants the person
+made before a passkey was required of them keep working, with the same rules
+as always; requiring a passkey does not revoke them. Revoke them
+(`DELETE /api/admin/tokens/{id}`, `DELETE /api/admin/grants/{id}`) to stop
+them. This keeps a token request free of the passkey check (no query per
+request) and leaves running scripts and MCP clients alone when an
+administrator raises the sign-in requirements.
+
+`GET /oauth/authorize` with a held session goes on to the consent page as
+usual; the web app shows the passkey page there instead, and the consent page
+once a passkey is registered (the address is kept, also through the fresh
+sign-in that registering may ask for).
 
 ### How a token is presented
 

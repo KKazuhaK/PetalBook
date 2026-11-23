@@ -464,3 +464,46 @@ describe('a session held until a passkey is registered', () => {
     void keys
   })
 })
+
+// GET /oauth/authorize sends a browser without a session to /login?return=/oauth/authorize?…; every way of signing
+// in must bring it back there, query and all (the app then reloads that address from the server).
+describe('the return to the authorization server', () => {
+  const authorize = '/oauth/authorize?response_type=code&client_id=pbc_x&state=s1&code_challenge=c&code_challenge_method=S256'
+  const login = `/login?return=${encodeURIComponent(authorize)}`
+
+  it('sso_redirect sends the provider the whole address to come back to', async () => {
+    const assign = stubLocation()
+    await open(login, { providers: [company], security: { login: { mode: 'sso_redirect' } } })
+    await settle(() => assign.mock.calls.length > 0, 'the redirect')
+    expect(assign).toHaveBeenCalledWith(`/api/auth/oidc/company/start?return=${encodeURIComponent(authorize)}`)
+  })
+
+  it('the provider buttons carry it too', async () => {
+    await open(login, { providers: [company, campus] })
+    await settle(() => links().length === 2, 'the buttons')
+    for (const a of links()) expect(a.getAttribute('href')).toContain(`return=${encodeURIComponent(authorize)}`)
+  })
+
+  it('a password sign-in goes back to it', async () => {
+    await open(login)
+    await settle(() => passwordForm() !== null, 'the form')
+    await type(usernameInput(), MOCK_ADMIN.username)
+    await type(document.querySelector<HTMLInputElement>('input[type="password"]')!, MOCK_ADMIN.password)
+    await click(document.querySelector('form button[type="submit"]'))
+    await settle(() => locationText() === authorize, 'the authorization address')
+  })
+
+  it('a passkey sign-in sends it to the server and goes back to it', async () => {
+    await open(login)
+    await settle(() => buttonWith(ts.login.passkeyButton) !== undefined, 'the button')
+    const person = makePerson(m!.server, 'carol')
+    const ceremony = (person.request('POST', '/api/account/passkeys/begin', { name: 'Key' }).body as { ceremony: string }).ceremony
+    person.request('POST', `/api/account/passkeys/finish?ceremony=${ceremony}`, { id: 'cred-carol' })
+    vi.stubGlobal('PublicKeyCredential', function PublicKeyCredential() {})
+    vi.stubGlobal('navigator', { ...navigator, credentials: { get: vi.fn(async () => ({ toJSON: () => ({ id: 'cred-carol', type: 'public-key', response: {} }) })) }, languages: ['zh-CN'], language: 'zh-CN' })
+    await click(buttonWith(ts.login.passkeyButton))
+    await settle(() => locationText() === authorize, 'the authorization address')
+    const finish = m!.requests.find((r) => r.url.startsWith('/api/auth/passkey/finish'))!
+    expect(finish.url).toContain(`return=${encodeURIComponent(authorize)}`)
+  })
+})

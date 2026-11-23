@@ -2111,6 +2111,19 @@ access」。分三部分各审了一次（token、授权服务、MCP）。第三
 - OIDC 提供方的发现文档存库之后不会自己更新，要点「刷新」。
 - `GET /api/captcha?account=` 的回答能看出某个用户名最近是不是错了好几次（要不要
   验证码按用户名的失败数定）。透露的东西不多，接受。
+- `ssoOnly` 开着时新建一个会启用的提供方（`enabled` 没给或是 `true`），而且没有
+  带密码的启用管理员，会直接以 `400 local_admin_required` 拒绝，而不是先存成停用
+  的。用 `PATCH` 启用已有提供方的那条有测试，新建的这条没有。
+- 合并主线（2.6）时定下：被扣住的会话（要先注册 passkey）不能建 API 令牌，也不能
+  在授权页同意（都是 `403 passkey_required`）；之前建好的令牌和 OAuth 授权不受
+  扣住影响，照常可用，要停就撤销（见 `docs/api.md`「Held sessions, API tokens and
+  OAuth grants」）。这样令牌请求不用每次查 passkey。审计日志加了 `token_created`、
+  `token_revoked`、`grant_revoked`；OAuth 授权是在换令牌（`/oauth/token`）时才建的，
+  不在接口层，`grant_created` 留到以后。
+- passkey 和单点登录把返回地址（`return`）交给服务器，服务器只收 2048 字节以内的，
+  超过就回首页（密码登录在页面里跳转，没有这个限制）。`/oauth/authorize`
+  的地址一般远短于此，但客户端用很长的 `client_id`（元数据文档地址）和 `state`
+  时可能超过，那时登录后不会回到授权流程，要在客户端重新开始。
 
 **第 2 期之外，但 1.7 之后要记着的**
 

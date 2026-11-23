@@ -872,13 +872,17 @@ export function createMockServer(options: MockOptions = {}) {
       revoked: null,
     }
     apiTokens.set(rec.id, rec)
+    book.record('token_created', { actor: me.id, user: me.id, detail: { token: rec.id, name, access, spaces: ids } })
     return { status: 201, body: { token: publicToken(rec), secret } }
   }
-  const revokeToken = (id: string, owner: string | null) => {
+  const revokeToken = (id: string, owner: string | null, actor: string) => {
     const t = apiTokens.get(id)
     if (!t || (owner !== null && t.userId !== owner)) throw new HttpError(404, 'not_found', '没有这个令牌')
-    if (t.revoked === null) t.revoked = now()
+    if (t.revoked !== null) return
+    t.revoked = now()
+    book.record('token_revoked', { actor, user: t.userId, detail: { token: t.id, name: t.name, by: owner === null ? 'admin' : 'user' } })
   }
+  const recordGrantRevoked = (g: GrantRec, actor: string, by: 'user' | 'admin') => book.record('grant_revoked', { actor, user: g.userId, detail: { grant: g.id, client: g.clientName, by } })
   const adminTokens = (url: URL): MockResponse => {
     let limit = 50
     if (url.searchParams.has('limit')) {
@@ -2067,7 +2071,7 @@ export function createMockServer(options: MockOptions = {}) {
       if (path === '/account/tokens' && method === 'POST') return createToken(me, body)
       const tok = /^\/account\/tokens\/([^/]+)$/.exec(path)
       if (tok && method === 'DELETE') {
-        revokeToken(decodeURIComponent(tok[1]), me.id)
+        revokeToken(decodeURIComponent(tok[1]), me.id, me.id)
         return { status: 204 }
       }
       if (path === '/account' && method === 'GET') return j(accountInfo(me))
@@ -2159,6 +2163,7 @@ export function createMockServer(options: MockOptions = {}) {
         const g = grants.get(decodeURIComponent(gr[1]))
         if (!g || g.userId !== me.id) throw new HttpError(404, 'not_found', 'no such grant')
         grants.delete(g.id)
+        recordGrantRevoked(g, me.id, 'user')
         return { status: 204 }
       }
     }
@@ -2205,7 +2210,7 @@ export function createMockServer(options: MockOptions = {}) {
     }
     if (path === '/admin/grants' || path.startsWith('/admin/grants/')) {
       accountsOnly()
-      requireAdmin(ctx)
+      const me = requireAdmin(ctx)
       requireGrants()
       if (path === '/admin/grants' && method === 'GET') {
         let limit = 50
@@ -2227,13 +2232,16 @@ export function createMockServer(options: MockOptions = {}) {
       }
       const one = /^\/admin\/grants\/([^/]+)$/.exec(path)
       if (one && method === 'DELETE') {
-        if (!grants.delete(decodeURIComponent(one[1]))) throw new HttpError(404, 'not_found', 'no such grant')
+        const g = grants.get(decodeURIComponent(one[1]))
+        if (!g) throw new HttpError(404, 'not_found', 'no such grant')
+        grants.delete(g.id)
+        recordGrantRevoked(g, me.id, 'admin')
         return { status: 204 }
       }
     }
     if (path === '/admin/access' || path === '/admin/tokens' || path.startsWith('/admin/tokens/')) {
       accountsOnly()
-      requireAdmin(ctx)
+      const me = requireAdmin(ctx)
       if (path === '/admin/access') {
         if (method === 'PUT') {
           for (const k of ['tokens', 'mcp'] as const) {
@@ -2247,7 +2255,7 @@ export function createMockServer(options: MockOptions = {}) {
       if (path === '/admin/tokens' && method === 'GET') return adminTokens(url)
       const one = /^\/admin\/tokens\/([^/]+)$/.exec(path)
       if (one && method === 'DELETE') {
-        revokeToken(decodeURIComponent(one[1]), null)
+        revokeToken(decodeURIComponent(one[1]), null, me.id)
         return { status: 204 }
       }
     }

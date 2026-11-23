@@ -1025,6 +1025,9 @@ export type AuditKind =
   | 'provider_changed'
   | 'provider_deleted'
   | 'user_changed'
+  | 'token_created'
+  | 'token_revoked'
+  | 'grant_revoked'
   | 'dropped'
 export interface AuditItem {
   id: string

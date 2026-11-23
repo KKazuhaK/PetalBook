@@ -13,7 +13,7 @@ import { t } from '@/i18n'
 import { tsec } from '@/i18n/security'
 
 const ta = tsec.audit
-const KINDS = ['login', 'login_failed', 'rate_limited', 'lockout', 'passkey_clone', 'identity_linked', 'identity_unlinked', 'passkey_added', 'passkey_removed', 'security_changed', 'provider_created', 'provider_changed', 'provider_deleted', 'user_changed', 'dropped']
+const KINDS = ['login', 'login_failed', 'rate_limited', 'lockout', 'passkey_clone', 'identity_linked', 'identity_unlinked', 'passkey_added', 'passkey_removed', 'security_changed', 'provider_created', 'provider_changed', 'provider_deleted', 'user_changed', 'token_created', 'token_revoked', 'grant_revoked', 'dropped']
 
 const show = (v: unknown): string => (typeof v === 'string' ? v : JSON.stringify(v))
 

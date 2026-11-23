@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useLocation, useNavigate } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '@/api/client'
 import { applySession, useAccount } from '@/api/hooks'
@@ -12,8 +12,11 @@ import { t } from '@/i18n'
 import { ts } from '@/i18n/signin'
 
 // A session held until a passkey is registered (`hold: "passkey"`): the person sees this and nothing else, and
-// can sign out. The first passkey added lifts the hold (the session is read again).
+// can sign out. The first passkey added lifts the hold (the session is read again), and the page it stood in for
+// shows: the address is kept, so a consent page an MCP client sent the person to (/oauth/consent?req=…) comes back,
+// also after the fresh sign-in that registering may ask for.
 export default function HeldPage() {
+  const { pathname, search } = useLocation()
   const account = useAccount(true)
   const qc = useQueryClient()
   const navigate = useNavigate()
@@ -40,7 +43,7 @@ export default function HeldPage() {
       ) : account.isError ? (
         <ErrorState message={t.fmt.labelled(ts.passkeys.loadFailed, account.error.message)} onRetry={() => void account.refetch()} />
       ) : (
-        <PasskeysSection account={account.data} returnTo="/" />
+        <PasskeysSection account={account.data} returnTo={pathname + search} />
       )}
       <FormMessage>{error}</FormMessage>
       <Button type="button" variant="outline" className="self-start" disabled={busy} onClick={() => void signOut()}>
