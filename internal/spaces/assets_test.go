@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -56,6 +57,9 @@ func (a *assetFixture) connectAssets() *AssetsView {
 // remoteFiles lists the files of a remote's main branch.
 func remoteFiles(t *testing.T, remote string) []string {
 	t.Helper()
+	if exec.Command("git", "-C", remote, "rev-parse", "-q", "--verify", "refs/heads/main").Run() != nil {
+		return nil // nothing was ever pushed
+	}
 	out := runGit(t, remote, "ls-tree", "-r", "--name-only", "main")
 	if out == "" {
 		return nil
@@ -198,5 +202,400 @@ func TestAttachmentsThatAreNotCachedAreFetchedOrAnswerNotCached(t *testing.T) {
 		_ = os.Stat
 		_ = page.ValidID
 		_ = time.Second
+	})
+}
+
+// uploadBeforeMove puts attachments in assets/ of the space, as a space that
+// never had an attachment repository does.
+func (a *assetFixture) uploadBeforeMove() map[string]string {
+	a.t.Helper()
+	want := map[string]string{}
+	for _, up := range []struct{ id, name, data string }{
+		{pageA, "one.png", "ONE-" + strings.Repeat("x", 3000)},
+		{pageA, "two.pdf", "TWO-" + strings.Repeat("y", 5000)},
+		{pageB, "three.txt", "THREE"},
+	} {
+		as, err := a.h.Space.PutAsset(space.Author{}, up.id, up.name, []byte(up.data))
+		if err != nil {
+			a.t.Fatal(err)
+		}
+		want[as.Rel] = up.data
+	}
+	return want
+}
+
+func (a *assetFixture) waitMove(state string) *MoveView {
+	a.t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		v, err := a.m.AssetsRemote(ctx, a.h)
+		if err == nil && v.Move != nil && v.Move.State == state {
+			return v.Move
+		}
+		if time.Now().After(deadline) {
+			a.t.Fatalf("the move did not reach %s: %+v %v", state, v, err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// nothingLost checks that every attachment is on a remote, in one place at
+// least: the space's repository (assets/) or the attachment repository.
+func nothingLost(t *testing.T, a *assetFixture, want map[string]string) {
+	t.Helper()
+	for rel, data := range want {
+		inSpace := hasFile(t, a.remote, rel)
+		inAssets := hasFile(t, a.aRemote, strings.TrimPrefix(rel, "assets/"))
+		if !inSpace && !inAssets {
+			t.Fatalf("%s is on neither remote", rel)
+		}
+		if inAssets {
+			id := runGit(t, a.aRemote, "rev-parse", "main:"+strings.TrimPrefix(rel, "assets/"))
+			if id != gitstore.BlobID([]byte(data)) {
+				t.Fatalf("%s has other contents in the attachment repository", rel)
+			}
+		}
+	}
+}
+
+func TestMovingAttachmentsIntoTheAttachmentRepository(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		a := newAssetFixture(t, st)
+		defer a.h.Release()
+		want := a.uploadBeforeMove()
+		for rel := range want {
+			if !hasFile(t, a.remote, rel) {
+				t.Fatalf("%s is not in the space's repository", rel)
+			}
+		}
+		a.connectAssets()
+		// Connecting moves nothing.
+		if len(remoteFiles(t, a.aRemote)) != 0 {
+			t.Fatal("connecting moved files")
+		}
+		for rel, data := range want { // served from assets/ of the space until moved
+			if body, etag, err := readAsset(t, a.h.Space, rel); err != nil || body != data || etag != "" {
+				t.Fatalf("%s: %v etag %q", rel, err, etag)
+			}
+		}
+		if _, err := a.m.ConnectAssets(ctx, a.h, fileTokenReq(a.aRemote)); err != nil {
+			t.Fatalf("the same repository with the same credential: %v", err)
+		}
+		v, started, err := a.m.StartMove(ctx, a.h)
+		if err != nil || !started || v.Move == nil || v.Move.Files != 3 {
+			t.Fatalf("%+v %v %v", v, started, err)
+		}
+		if _, _, err := a.m.StartMove(ctx, a.h); err != nil && !errors.Is(err, ErrAssetsConflict) {
+			t.Fatalf("%v", err)
+		}
+		mv := a.waitMove(store.MoveDone)
+		if mv.Files != 3 || mv.FilesDone != 3 || mv.Bytes == 0 || mv.BytesDone != mv.Bytes {
+			t.Fatalf("%+v", mv)
+		}
+		nothingLost(t, a, want)
+		for rel := range want {
+			if hasFile(t, a.remote, rel) {
+				t.Fatalf("%s is still in the space's HEAD", rel)
+			}
+			if !hasFile(t, a.aRemote, strings.TrimPrefix(rel, "assets/")) {
+				t.Fatalf("%s is not in the attachment repository", rel)
+			}
+		}
+		// The history of the space still has them, and .gitignore keeps assets/ out.
+		if log := runGit(t, a.remote, "log", "--all", "--name-only", "--format="); !strings.Contains(log, "assets/"+pageA+"/") {
+			t.Fatalf("history lost the attachments:\n%s", log)
+		}
+		if gi := runGit(t, a.remote, "cat-file", "-p", "main:.gitignore"); !strings.Contains(gi, "/assets/") {
+			t.Fatalf(".gitignore: %q", gi)
+		}
+		if runGit(t, a.remote, "log", "-n1", "--format=%s", "main") != space.SwitchMessage {
+			t.Fatal("the last commit is not the switch")
+		}
+		if exists(filepath.Join(a.root(a.in.ID), "assets")) {
+			t.Fatal("assets/ is still on disk")
+		}
+		// The same links, now from the repository, with a tag.
+		for rel, data := range want {
+			body, etag, err := readAsset(t, a.h.Space, rel)
+			if err != nil || body != data || etag != gitstore.BlobID([]byte(data)) {
+				t.Fatalf("%s: %q %v", rel, etag, err)
+			}
+		}
+		// The pages are unchanged and the space is writable and in sync.
+		if p, err := a.h.Space.Get(pageA); err != nil || p.Body != "version 1\n" {
+			t.Fatalf("%v %v", p, err)
+		}
+		if _, err := a.h.Space.PutAsset(space.Author{}, pageB, "four.txt", []byte("FOUR")); err != nil {
+			t.Fatal(err)
+		}
+		// A second move has nothing to do; the repository cannot be taken away.
+		if v, started, err := a.m.StartMove(ctx, a.h); err != nil || started {
+			t.Fatalf("%+v %v %v", v, started, err)
+		}
+		if err := a.m.DisconnectAssets(ctx, a.h); !errors.Is(err, ErrAssetsConflict) {
+			t.Fatalf("%v", err)
+		}
+		// Step 3: the clone is replaced by a partial one that lacks the old
+		// attachments; they are read from the repository after the restore.
+		a.h.Release()
+		a.idle(72 * time.Hour)
+		if err := a.m.Evict(ctx, a.in.ID, EvictOptions{}); err != nil && !errors.Is(err, ErrNotEvictable) {
+			t.Fatal(err)
+		}
+		h2, err := a.m.Open(ctx, a.user, a.in.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer h2.Release()
+		for rel, data := range want {
+			if body, _, err := readAsset(t, h2.Space, rel); err != nil || body != data {
+				t.Fatalf("after the restore %s: %v", rel, err)
+			}
+		}
+		if exists(filepath.Join(a.root(a.in.ID), "assets")) {
+			t.Fatal("the restored clone has assets/")
+		}
+	})
+}
+
+func TestACrashAtEveryStepOfMovingAttachmentsLosesNone(t *testing.T) {
+	steps := []string{"copied", "copied-all", "switching", "switch-verified", "switch-committed", "switch-reset", "switch-pushed"}
+	for _, step := range steps {
+		t.Run(step, func(t *testing.T) {
+			storetest.Each(t, func(t *testing.T, st *store.Store) {
+				old := assetrepoChunk(1500) // so that the copy takes several commits
+				defer old()
+				var crash string
+				crashed := make(chan struct{}, 1)
+				a := newAssetFixture(t, st, func(o *Options) {
+					o.AssetsHook = func(s string) error {
+						if s == crash {
+							select {
+							case crashed <- struct{}{}:
+							default:
+							}
+							return errors.New("crash at " + s)
+						}
+						return nil
+					}
+				})
+				want := a.uploadBeforeMove()
+				a.connectAssets()
+				crash = step
+				if _, _, err := a.m.StartMove(ctx, a.h); err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case <-crashed:
+				case <-time.After(20 * time.Second):
+					t.Fatalf("the move never reached %s", step)
+				}
+				// Wait until the run has ended, as a stopped process would have.
+				deadline := time.Now().Add(10 * time.Second)
+				for a.m.moveRunning(a.in.ID) && time.Now().Before(deadline) {
+					time.Sleep(10 * time.Millisecond)
+				}
+				nothingLost(t, a, want)
+				// The move was not recorded as a failure: it goes on at the next start.
+				row, err := store.GetAssetRemote(ctx, st.Q(), a.in.ID)
+				if err != nil || !row.Move.Running() {
+					t.Fatalf("the move after a crash at %s: %+v %v", step, row, err)
+				}
+				a.h.Release()
+				a.m.Close()
+				crash = ""
+				m2 := a.open(serving)
+				h, err := m2.Open(ctx, a.user, a.in.ID)
+				if err != nil {
+					t.Fatalf("the space does not open after a crash at %s: %v", step, err)
+				}
+				defer h.Release()
+				a.m, a.h = m2, h
+				a.waitMove(store.MoveDone)
+				nothingLost(t, a, want)
+				for rel, data := range want {
+					if body, _, err := readAsset(t, h.Space, rel); err != nil || body != data {
+						t.Fatalf("after a crash at %s, %s: %v", step, rel, err)
+					}
+					if hasFile(t, a.remote, rel) {
+						t.Fatalf("%s is still in the space's repository after the move", rel)
+					}
+				}
+				if p, err := h.Space.Get(pageA); err != nil || p.Body != "version 1\n" {
+					t.Fatalf("%v %v", p, err)
+				}
+				// The space is in good order: writable, in sync with its remote.
+				if _, err := h.Space.PutAsset(space.Author{}, pageB, "after.txt", []byte("AFTER")); err != nil {
+					t.Fatalf("not writable after a crash at %s: %v", step, err)
+				}
+				if st, _ := h.Space.Remote(); st.State != "ok" {
+					t.Fatalf("remote %+v", st)
+				}
+			})
+		})
+	}
+}
+
+func assetrepoChunk(n int64) func() {
+	old := assetrepoMaxCommit()
+	setAssetrepoMaxCommit(n)
+	return func() { setAssetrepoMaxCommit(old) }
+}
+
+// movedFixture is a space whose attachments have moved to the attachment
+// repository, idle and ready to be evicted.
+func movedFixture(t *testing.T, st *store.Store, mod ...func(*Options)) (*assetFixture, map[string]string) {
+	t.Helper()
+	a := newAssetFixture(t, st, mod...)
+	want := a.uploadBeforeMove()
+	a.connectAssets()
+	if _, _, err := a.m.StartMove(ctx, a.h); err != nil {
+		t.Fatal(err)
+	}
+	a.waitMove(store.MoveDone)
+	a.h.Release()
+	a.idle(72 * time.Hour)
+	return a, want
+}
+
+func TestACrashAtEveryStepOfAnEvictionWithAnAttachmentRepositoryLosesNone(t *testing.T) {
+	for _, step := range []string{"held", "verified", "marked", "moved", "recorded", "removed"} {
+		t.Run(step, func(t *testing.T) {
+			storetest.Each(t, func(t *testing.T, st *store.Store) {
+				var crash string
+				a, want := movedFixture(t, st, func(o *Options) {
+					o.EvictHook = func(s string) error {
+						if s == crash {
+							return errors.New("crash at " + s)
+						}
+						return nil
+					}
+				})
+				// The move's own attempt to replace the clone may already have done it.
+				_ = a.m.Evict(ctx, a.in.ID, EvictOptions{})
+				a.m.Close()
+				a = reopen(t, a, serving)
+				// An evicted space is restored first; evict it again with a crash.
+				h, err := a.m.Open(ctx, a.user, a.in.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for rel, data := range want {
+					if body, _, err := readAsset(t, h.Space, rel); err != nil || body != data {
+						t.Fatalf("%s: %v", rel, err)
+					}
+				}
+				h.Release()
+				a.idle(72 * time.Hour)
+				crash = step
+				a.m.Close()
+				a = reopen(t, a, serving, func(o *Options) {
+					o.EvictHook = func(s string) error {
+						if s == crash {
+							return errors.New("crash at " + s)
+						}
+						return nil
+					}
+				})
+				if err := a.m.Evict(ctx, a.in.ID, EvictOptions{}); err == nil || !strings.Contains(err.Error(), "crash at "+step) {
+					t.Fatalf("%v", err)
+				}
+				a.m.Close()
+				crash = ""
+				a = reopen(t, a, serving)
+				h, err = a.m.Open(ctx, a.user, a.in.ID)
+				if err != nil {
+					t.Fatalf("the space does not open after a crash at %s: %v", step, err)
+				}
+				defer h.Release()
+				for rel, data := range want {
+					if body, etag, err := readAsset(t, h.Space, rel); err != nil || body != data || etag == "" {
+						t.Fatalf("after a crash at %s, %s: %q %v", step, rel, etag, err)
+					}
+				}
+				nothingLost(t, a, want)
+			})
+		})
+	}
+}
+
+// reopen starts another manager on the same data, as a restarted server does.
+func reopen(t *testing.T, a *assetFixture, mod ...func(*Options)) *assetFixture {
+	t.Helper()
+	b := *a
+	b.rm = &rm{t: a.t, st: a.st, r: a.r, clk: a.clk, user: a.user, dir: a.dir}
+	b.m = b.rm.open(mod...)
+	return &b
+}
+
+func TestNothingIsEvictedWhileTheAttachmentRepositoryMayHoldTheOnlyCopy(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		// A move that has not ended: the space's assets/ is the only complete copy.
+		hold := make(chan struct{})
+		var once bool
+		a := newAssetFixture(t, st, func(o *Options) {
+			o.AssetsHook = func(s string) error {
+				if s == "copied-all" && !once {
+					once = true
+					<-hold
+				}
+				return nil
+			}
+		})
+		a.uploadBeforeMove()
+		a.connectAssets()
+		if _, _, err := a.m.StartMove(ctx, a.h); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(200 * time.Millisecond)
+		a.h.Release()
+		a.idle(72 * time.Hour)
+		err := a.m.Evict(ctx, a.in.ID, EvictOptions{})
+		mustBusy(t, err, a.root(a.in.ID), "being moved")
+		close(hold)
+		a.waitMove(store.MoveDone)
+		time.Sleep(100 * time.Millisecond)
+	})
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		a, _ := movedFixture(t, st)
+		a.m.Close()
+		a = reopen(t, a, serving)
+		h, err := a.m.Open(ctx, a.user, a.in.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.Release()
+		a.idle(72 * time.Hour)
+		root := a.root(a.in.ID)
+		// A file left in assets/ after the move would go with the clone.
+		os.MkdirAll(filepath.Join(root, "assets", pageA), 0o755)
+		os.WriteFile(filepath.Join(root, "assets", pageA, "stray.png"), []byte("stray"), 0o644)
+		mustBusy(t, a.m.Evict(ctx, a.in.ID, EvictOptions{}), root, "assets/")
+		os.RemoveAll(filepath.Join(root, "assets"))
+		// An upload that was cut short left its scratch repository.
+		scratch := filepath.Join(a.m.assetsDir(a.in.ID), ".git", "petalbook-scratch", "1-x")
+		os.MkdirAll(scratch, 0o755)
+		mustBusy(t, a.m.Evict(ctx, a.in.ID, EvictOptions{}), root, "not finished")
+		os.RemoveAll(scratch)
+		// The attachment repository cannot be reached: not evicted without checking it.
+		a.r.setDown(true)
+		err = a.m.Evict(ctx, a.in.ID, EvictOptions{})
+		a.r.setDown(false)
+		var ue *space.UnavailableError
+		if !errors.As(err, &ue) && !errors.Is(err, ErrBusy) {
+			t.Fatalf("%v", err)
+		}
+		if !exists(root) {
+			t.Fatal("the space was evicted without checking the attachment repository")
+		}
+		if err := a.m.Evict(ctx, a.in.ID, EvictOptions{}); err != nil {
+			t.Fatalf("%v", err)
+		}
+		if exists(root) {
+			t.Fatal("not evicted")
+		}
+		if a.m.AssetBytes(a.in.ID) != 0 {
+			t.Fatal("the cached attachments of an evicted space stayed")
+		}
 	})
 }

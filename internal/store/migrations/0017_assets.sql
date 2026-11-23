@@ -4,7 +4,7 @@
 -- taken away) and the progress of moving the attachments of the space into it.
 -- At most one row per space. The credential is stored as in remotes.
 --
--- 0014 is the sign-in milestone's and 0015 the storage policy's; each
+-- 0014 is the sign-in milestone's, 0015 the storage policy's and 0016 the groups'; each
 -- migration is recorded by its own number.
 
 CREATE TABLE asset_remotes (
