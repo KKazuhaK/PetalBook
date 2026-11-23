@@ -671,6 +671,7 @@ func (s *Space) Reindex() (index.Stats, error) {
 	if s.closed {
 		return index.Stats{}, ErrClosed
 	}
+	s.syncTypes() // the rules the rebuild checks against are the ones of now
 	return s.idx.Sync(s.src, true)
 }
 
@@ -718,6 +719,12 @@ func (s *Space) PatchProps(by Author, id, baseRev string, set page.Meta, unset [
 		}
 		seen[k] = true
 	}
+	return s.patchProps(by, id, baseRev, set, unset, nil)
+}
+
+// patchProps is PatchProps; unsetOf, when given, names more properties to
+// remove, from the page as it is (rel is its path).
+func (s *Space) patchProps(by Author, id, baseRev string, set page.Meta, unset []string, unsetOf func(rel string, doc *page.Doc) []string) (*Page, error) {
 	s.refresh(id)
 	return mutate(s, by, func(tx *txn) (*Page, error) {
 		rel, data, mtime, err := s.load(id, false)
@@ -729,6 +736,9 @@ func (s *Space) PatchProps(by Author, id, baseRev string, set page.Meta, unset [
 		}
 		doc := page.Parse(data)
 		meta := doc.Meta().Clone()
+		if unsetOf != nil {
+			unset = unsetOf(rel, doc)
+		}
 		for _, k := range unset {
 			if i := meta.Index(k); i >= 0 {
 				meta = append(meta[:i], meta[i+1:]...)

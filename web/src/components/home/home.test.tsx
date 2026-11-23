@@ -6,6 +6,7 @@ import { th } from '@/i18n/home'
 import { adminRequests, click, installDomShims, locationText, mount, settle, shareSpace, type, type Mounted } from '@/testing/harness'
 import { sender, type Send } from '@/testing/listKit'
 import { noteWrote, wroteKey } from '@/lib/homePrefs'
+import { tzOffset } from '@/lib/templates'
 import HomePage from './HomePage'
 
 beforeAll(installDomShims)
@@ -91,7 +92,7 @@ describe('the home page, single-user mode', () => {
     await click([...section(th.quick.title)!.querySelectorAll('button')].find((b) => b.textContent === th.quick.save))
     await settle(() => m!.requests.some((r) => r.method === 'POST' && r.url === '/api/spaces/default/pages'), 'the note is sent')
     const post = m.requests.find((r) => r.method === 'POST' && r.url === '/api/spaces/default/pages')!
-    expect(JSON.parse(post.body!)).toEqual({ folder: 'Inbox', body: '路上想到的一句\n' })
+    expect(JSON.parse(post.body!)).toEqual({ folder: 'Inbox', body: '路上想到的一句\n', tz: tzOffset() })
     await settle(() => box.value === '', 'the box is empty')
     await settle(() => section(th.inbox.title)?.textContent?.includes('路上想到的一句') === true, 'the inbox shows it')
     expect(m.requests.filter((r) => r.url.includes('/pages?folder=Inbox')).length).toBeGreaterThan(before)

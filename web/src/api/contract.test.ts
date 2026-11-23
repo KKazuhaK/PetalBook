@@ -44,7 +44,7 @@ import { adminApi } from './admin'
 import { mockFetch } from './mock/fetch'
 import { sha256Hex } from './mock/sha256'
 import { createMockServer, MOCK_ADMIN, type MockServer } from './mock/server'
-import type { AdminSpace, ListParams, Member, Page, PageSummary, SpaceInfo, User } from './types'
+import type { AdminSpace, ListParams, Member, Page, PageSummary, Problem, ProblemKind, SpaceInfo, User } from './types'
 
 declare const process: { env: Record<string, string | undefined> }
 const REAL = process.env.PETALBOOK_API?.replace(/\/+$/, '')
@@ -779,7 +779,7 @@ function suite(target: Target) {
         const base = `/api/spaces/${sp.id}`
         const page = await call(owner.browser, 'POST', `${base}/pages`, { meta: { title: '读得到' }, body: '正文\n' })
         expect(page.status).toBe(201)
-        for (const path of [`${base}/pages`, `${base}/pages/${page.json.id}`, `${base}/tree`, `${base}/tags`, `${base}/members`, `${base}/views?folder=`, `${base}/pages/groups?folder=&key=status`]) {
+        for (const path of [`${base}/pages`, `${base}/pages/${page.json.id}`, `${base}/tree`, `${base}/tags`, `${base}/members`, `${base}/views?folder=`, `${base}/pages/groups?folder=&key=status`, `${base}/templates`]) {
           expect((await call(viewer.browser, 'GET', path)).status, `viewer GET ${path}`).toBe(200)
         }
         const writes: [string, string, unknown][] = [
@@ -796,6 +796,9 @@ function suite(target: Target) {
           ['DELETE', `${base}/types/task`, undefined],
           ['PUT', `${base}/folders/type`, { folder: '', type: '' }],
           ['PUT', `${base}/views`, { folder: '', baseRev: '0'.repeat(40), views: [] }],
+          ['PUT', `${base}/templates/日记`, { baseRev: '', meta: {}, body: '' }],
+          ['DELETE', `${base}/templates/日记?baseRev=x`, undefined],
+          ['PUT', `${base}/templates/defaults`, { quickNote: '' }],
           ['PATCH', base, { name: '改名' }],
           ['POST', `${base}/reindex`, undefined],
           ['POST', `${base}/members`, { username: owner.user.username, role: 'viewer' }],
@@ -815,6 +818,12 @@ function suite(target: Target) {
         const patched = await call(editor.browser, 'PATCH', `${base}/pages/${page.json.id}/props`, { baseRev: page.json.rev, set: { status: 'x' } })
         expect([patched.status, patched.json.meta.status]).toEqual([200, 'x'])
         expect((await call(editor.browser, 'GET', `${base}/types`)).status).toBe(200)
+        // Templates are made by those who manage; whoever writes pages makes pages from them.
+        const tpl = await call(owner.browser, 'PUT', `${base}/templates/日记`, { baseRev: '', meta: { title: '日记 {{date}}' }, body: '今天\n' })
+        expect(tpl.status).toBe(200)
+        expect((await call(viewer.browser, 'GET', `${base}/templates/日记`)).json.rev).toBe(tpl.json.rev)
+        const fromTemplate = await call(editor.browser, 'POST', `${base}/pages`, { template: '日记', tz: 0 })
+        expect([fromTemplate.status, fromTemplate.json.body]).toEqual([201, '今天\n'])
         // Views are a shared arrangement of pages: whoever may write pages may save them.
         const noViews = await call(editor.browser, 'GET', `${base}/views?folder=`)
         const savedViews = await call(editor.browser, 'PUT', `${base}/views`, { folder: '', baseRev: noViews.json.rev, views: [{ name: '全部', layout: 'cards' }] })
@@ -824,6 +833,9 @@ function suite(target: Target) {
           ['PUT', `${base}/types/task`, { title: '任务', fields: [] }],
           ['DELETE', `${base}/types/task`, {}],
           ['PUT', `${base}/folders/type`, { folder: '', type: '' }],
+          ['PUT', `${base}/templates/日记`, { baseRev: '', meta: {}, body: '' }],
+          ['DELETE', `${base}/templates/日记?baseRev=x`, {}],
+          ['PUT', `${base}/templates/defaults`, { quickNote: '' }],
           ['PATCH', base, { name: '改名' }],
           ['POST', `${base}/reindex`, {}],
           ['POST', `${base}/members`, { username: viewer.user.username, role: 'editor' }],
@@ -2603,6 +2615,364 @@ function suite(target: Target) {
       const rest = (await call(admin, 'GET', `${SP_PAGES}?folder=${enc(`${folder}/long`)}&sort=title&body=1&cursor=${enc(first.next)}`)).json
       expect(rest.items.map((i: any) => i.body)).toEqual(['第 20 篇\n', '第 21 篇\n'])
       expect(rest.next).toBe('')
+    })
+  })
+
+  describe('templates', () => {
+    const enc = encodeURIComponent
+    const folder = `${root}/tpl`
+    const names = { diary: `日记${run}`, quick: `随记${run}`, tiny: `小${run}` }
+    const url = (name = '') => `/api/spaces/${spaceId}/templates${name ? '/' + enc(name) : ''}`
+    const put = (name: string, baseRev: string, meta: Record<string, unknown>, body: string) => call(admin, 'PUT', url(name), { baseRev, meta, body })
+    const list = async () => (await call(admin, 'GET', url())).json as { templates: Record<string, any>[]; defaults: { folders: Record<string, string>; quickNote: string } }
+    const defaults = (body: Record<string, unknown>) => call(admin, 'PUT', url('defaults'), body)
+    const day = (tz: number) => new Date(Date.now() + tz * 60_000).toISOString().slice(0, 10)
+    let rev = ''
+
+    it('makes a template and reads it back: path, rev, header and body; the list has no body; a stale or repeated create is a 409 with the current one', async () => {
+      const meta = { title: '{{date}} 日记', tags: ['日记', 'd-{{date}}'], type: `diary${run}`, mood: '{{time}}' }
+      const body = '## 今天 {{time}}\n{{datetime}} {{nope}} {{ date }}\n'
+      const made = await put(names.diary, '', meta, body)
+      expect(made.status).toBe(200)
+      expect(made.json).toMatchObject({ name: names.diary, path: `.petalbook/templates/${names.diary}.md`, meta, body })
+      expect(made.json.rev).toMatch(/^[0-9a-f]{40}$/)
+      rev = made.json.rev
+      expect((await call(admin, 'GET', url(names.diary))).json).toEqual(made.json)
+      const listed = (await list()).templates.find((t) => t.name === names.diary)
+      expect(listed).toEqual({ name: names.diary, path: made.json.path, rev, meta })
+      for (const baseRev of ['', '0'.repeat(40)]) {
+        const again = await put(names.diary, baseRev, meta, 'x')
+        expect([again.status, again.json.error]).toEqual([409, 'conflict'])
+        expect(again.json.current).toEqual(made.json)
+      }
+      const gone = await put(`没有${run}`, '0'.repeat(40), {}, '')
+      expect([gone.status, gone.json.error, gone.json.current]).toEqual([409, 'conflict', undefined])
+      const changed = await put(names.diary, rev, meta, body + '更多\n')
+      expect(changed.status).toBe(200)
+      expect(changed.json.rev).not.toBe(rev)
+      rev = changed.json.rev
+      expect((await put(names.diary, rev, meta, body + '更多\n')).json.rev).toBe(rev)
+      const missing = await call(admin, 'GET', url(`没有${run}`))
+      expect([missing.status, missing.json.error]).toEqual([404, 'not_found'])
+    })
+
+    it('checks names and size: a name that is not a file name 400 invalid, over 256 KiB 400 template_too_large', async () => {
+      for (const bad of ['a:b', '.hidden', 'con', 'x'.repeat(90).replaceAll('x', '长'), 'defaults']) {
+        const r = await call(admin, 'PUT', url(bad), { baseRev: '', meta: {}, body: '' })
+        expect([r.status, r.json.error], bad).toEqual([400, 'invalid'])
+      }
+      const big = await put(names.tiny, '', {}, 'x'.repeat((256 << 10) + 1))
+      expect([big.status, big.json.error]).toEqual([400, 'template_too_large'])
+      expect((await call(admin, 'GET', url(names.tiny))).status).toBe(404)
+      const fits = await put(names.tiny, '', {}, 'x'.repeat(200 << 10))
+      expect(fits.status).toBe(200)
+      expect((await call(admin, 'DELETE', `${url(names.tiny)}?baseRev=${fits.json.rev}`)).status).toBe(204)
+    })
+
+    it('has at most 200 templates: the 201st is 400 template_limit, one that is there can still be changed', async () => {
+      const have = (await list()).templates.length
+      const made: Record<string, string> = {}
+      try {
+        for (let i = have; i < 200; i++) {
+          const r = await put(`限${run}-${i}`, '', {}, 'x')
+          expect(r.status).toBe(200)
+          made[`限${run}-${i}`] = r.json.rev
+        }
+        const over = await put(`限${run}-over`, '', {}, 'x')
+        expect([over.status, over.json.error]).toEqual([400, 'template_limit'])
+        const first = Object.keys(made)[0]
+        expect((await put(first, made[first], {}, 'y')).status).toBe(200)
+        made[first] = (await call(admin, 'GET', url(first))).json.rev
+      } finally {
+        for (const [name, r] of Object.entries(made)) await call(admin, 'DELETE', `${url(name)}?baseRev=${r}`)
+      }
+    })
+
+    it('sets the default template of a folder and of quick notes; an unknown template is 400 template_not_found, a folder that is not there 404', async () => {
+      await S.createFolder(folder)
+      const missing = await defaults({ folder, template: `没有${run}` })
+      expect([missing.status, missing.json.error]).toEqual([400, 'template_not_found'])
+      expect([(await defaults({ quickNote: `没有${run}` })).json.error]).toEqual(['template_not_found'])
+      const noFolder = await defaults({ folder: `${root}/nowhere`, template: names.diary })
+      expect(noFolder.status).toBe(404)
+      for (const body of [{}, { folder }, { folder, template: names.diary, quickNote: names.diary }]) expect((await defaults(body)).json.error).toBe('invalid')
+      const set = await defaults({ folder, template: names.diary })
+      expect(set.status).toBe(200)
+      expect(set.json.folders[folder]).toBe(names.diary)
+      await put(names.quick, '', { title: '随记 {{time}}' }, '')
+      const quick = await defaults({ quickNote: names.quick })
+      expect(quick.json.quickNote).toBe(names.quick)
+      expect((await list()).defaults).toEqual(quick.json)
+    })
+
+    it('makes a page from a template: variables in the title, header values and body in the client time zone; templates are not pages and not found by search', async () => {
+      for (const tz of [0, 480, -480, 840, -840]) {
+        const before = day(tz)
+        const p = await S.createPage({ folder: `${folder}/tz`, template: names.diary, tz })
+        const after = day(tz)
+        expect([`${before} 日记`, `${after} 日记`]).toContain(p.meta.title)
+        expect(p.meta.type).toBe(`diary${run}`)
+        expect(p.meta.mood).toMatch(/^\d\d:\d\d$/)
+        expect((p.meta.tags as string[])[0]).toBe('日记')
+        expect([`d-${before}`, `d-${after}`]).toContain((p.meta.tags as string[])[1])
+        expect(p.body).toMatch(/^## 今天 \d\d:\d\d\n\d{4}-\d\d-\d\d \d\d:\d\d \{\{nope\}\} \{\{ date \}\}\n更多\n$/)
+      }
+      const bad = await call(admin, 'POST', SP_PAGES, { folder, template: names.diary, tz: 841 })
+      expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
+      const unknown = await call(admin, 'POST', SP_PAGES, { folder, template: `没有${run}` })
+      expect([unknown.status, unknown.json.error]).toEqual([400, 'template_not_found'])
+      const all = await walk({ folder: '', recursive: true }, 100)
+      expect(all.filter((i) => i.path.includes('.petalbook') || i.path.includes('templates'))).toEqual([])
+      expect((await S.listPages({ q: 'nope' })).items.filter((i) => i.path.includes('.petalbook'))).toEqual([])
+    })
+
+    it('the request wins field by field and the template\'s type is kept; a folder\'s default applies unless "" is sent; quick notes use the quick-note default', async () => {
+      const mine = await S.createPage({ folder: `${folder}/p`, template: names.diary, meta: { title: '我的', type: 'other', extra: 1, tags: [] }, body: '自己的\n' })
+      expect(mine.meta).toMatchObject({ title: '我的', type: `diary${run}`, extra: 1 })
+      expect(mine.meta.tags).toHaveLength(2)
+      expect(mine.body).toBe('自己的\n')
+      const tags = await S.createPage({ folder: `${folder}/p`, template: names.diary, meta: { tags: ['我的'] } })
+      expect(tags.meta.tags).toEqual(['我的'])
+      expect(tags.body).toContain('## 今天')
+      const byDefault = await S.createPage({ folder })
+      expect(byDefault.meta.type).toBe(`diary${run}`)
+      const blank = await S.createPage({ folder, template: '' })
+      expect([blank.meta.type, blank.body]).toEqual([undefined, ''])
+      const inbox = (await call(admin, 'GET', '/api/spaces')).json.spaces.find((s: SpaceInfo) => s.id === spaceId).inbox as string
+      const note = await S.createPage({ folder: inbox, body: '想到的\n' })
+      expect(String(note.meta.title)).toMatch(/^随记 \d\d:\d\d$/)
+      expect(note.body).toBe('想到的\n')
+      const plain = await S.createPage({ folder: inbox, template: '' })
+      expect(plain.meta.title).toBeUndefined()
+      expect((await defaults({ quickNote: '' })).json.quickNote).toBe('')
+    })
+
+    it('the defaults follow their folder when it is moved, and go when it is deleted', async () => {
+      const a = `${root}/tplmv`
+      await S.createFolder(`${a}/in`)
+      await defaults({ folder: a, template: names.diary })
+      await defaults({ folder: `${a}/in`, template: names.quick })
+      const moved = `${root}/tplmoved`
+      expect((await call(admin, 'POST', `/api/spaces/${spaceId}/folders/move`, { from: a, to: moved })).status).toBe(200)
+      const d = (await list()).defaults.folders
+      expect([d[a], d[`${a}/in`], d[moved], d[`${moved}/in`]]).toEqual([undefined, undefined, names.diary, names.quick])
+      expect((await S.createPage({ folder: moved })).meta.type).toBe(`diary${run}`)
+      expect((await call(admin, 'DELETE', `/api/spaces/${spaceId}/folders?path=${enc(moved)}&recursive=true`)).status).toBe(204)
+      const after = (await list()).defaults.folders
+      expect([after[moved], after[`${moved}/in`]]).toEqual([undefined, undefined])
+    })
+
+    it('deleting a template needs its rev, and takes the defaults that name it away in the same change', async () => {
+      const stale = await call(admin, 'DELETE', `${url(names.diary)}?baseRev=${'0'.repeat(40)}`)
+      expect([stale.status, stale.json.error]).toEqual([409, 'conflict'])
+      expect(stale.json.current.rev).toBe(rev)
+      await defaults({ quickNote: names.diary })
+      expect((await list()).defaults.folders[folder]).toBe(names.diary)
+      expect((await call(admin, 'DELETE', `${url(names.diary)}?baseRev=${rev}`)).status).toBe(204)
+      const l = await list()
+      expect(l.templates.map((t) => t.name)).not.toContain(names.diary)
+      expect(l.defaults.folders[folder]).toBeUndefined()
+      expect(l.defaults.quickNote).toBe('')
+      expect((await call(admin, 'GET', url(names.diary))).status).toBe(404)
+      expect((await call(admin, 'DELETE', `${url(names.diary)}?baseRev=${rev}`)).status).toBe(404)
+      const q = (await call(admin, 'GET', url(names.quick))).json
+      expect((await call(admin, 'DELETE', `${url(names.quick)}?baseRev=${q.rev}`)).status).toBe(204)
+    })
+  })
+
+  describe('the check page', () => {
+    const folder = `${root}/checks`
+    const typeName = `chk${run}`
+    const mine = (items: Problem[]) => items.filter((p) => p.path.startsWith(`${folder}/`))
+    const walkChecks = async (kind?: ProblemKind) => {
+      const items: Problem[] = []
+      let cursor = ''
+      for (let guard = 0; guard < 100; guard++) {
+        const r = await S.checks({ kind, cursor: cursor || undefined })
+        expect(r.items.length).toBeLessThanOrEqual(50)
+        items.push(...r.items)
+        cursor = r.next
+        if (!cursor) return items
+      }
+      throw new Error('cursor never ended')
+    }
+    const of = (items: Problem[], kind: ProblemKind) => mine(items).filter((p) => p.kind === kind)
+    const at = (items: Problem[], kind: ProblemKind, path: string) => mine(items).find((p) => p.kind === kind && p.path === path)
+    let rev = ''
+    let strayId = ''
+
+    it('counts every kind, listed or not, and lists in the order of the kinds, then paths', async () => {
+      await S.createFolder(folder)
+      const t = await S.putType(typeName, { title: '检查', fields: [{ key: 'status', kind: 'select', options: ['todo', 'done'] }, { key: 'points', kind: 'number' }] })
+      expect(t.rev).toMatch(/^[0-9a-f]{40}$/)
+      await S.bindFolder(folder, typeName)
+      const r = await S.checks()
+      expect(Object.keys(r.counts).sort()).toEqual(['bad_header', 'broken_link', 'duplicate_id', 'duplicate_title', 'missing_asset', 'no_id', 'not_in_type', 'type_mismatch'])
+      for (const n of Object.values(r.counts)) expect(Number.isInteger(n)).toBe(true)
+      const order = ['no_id', 'duplicate_id', 'bad_header', 'type_mismatch', 'not_in_type', 'broken_link', 'missing_asset', 'duplicate_title']
+      const items = await walkChecks()
+      const keys = items.map((p) => [order.indexOf(p.kind), p.path] as const)
+      for (let i = 1; i < keys.length; i++) expect(keys[i - 1][0] < keys[i][0] || (keys[i - 1][0] === keys[i][0] && keys[i - 1][1] <= keys[i][1])).toBe(true)
+      for (const p of items) {
+        expect(typeof p.message).toBe('string')
+        expect(p.fix === null || p.fix === 'add_id' || p.fix === 'remove_fields').toBe(true)
+        expect(p.rev).toMatch(/^[0-9a-f]{40}$/)
+      }
+    })
+
+    it('finds fields a type does not have and values that do not fit it, per page, and says what fixes what', async () => {
+      const before = (await S.checks()).counts
+      const fine = await mk(folder, { title: `好${run}`, status: 'todo', points: 3 }, 'x\n')
+      const stray = await mk(folder, { title: `多${run}`, status: 'todo', colour: 'red', size: 3, slug: 's' }, 'x\n')
+      const bad = await mk(folder, { title: `错${run}`, status: 'later', points: 'many' }, 'x\n')
+      const both = await mk(folder, { title: `两${run}`, status: 'nope', extra: 1 }, 'x\n')
+      strayId = stray.id
+      rev = stray.rev
+      const items = await walkChecks()
+      expect(mine(items).filter((p) => p.id === fine.id)).toEqual([])
+      const s = at(items, 'not_in_type', stray.path)!
+      expect(s).toMatchObject({ id: stray.id, fix: 'remove_fields', rev: stray.rev })
+      expect(s.detail).toEqual({ fields: ['colour', 'size'] })
+      expect(s.message).not.toBe('')
+      const m = at(items, 'type_mismatch', bad.path)!
+      expect(m).toMatchObject({ id: bad.id, fix: null })
+      expect((m.detail!.fields as string[]).sort()).toEqual(['points', 'status'])
+      expect(at(items, 'type_mismatch', both.path)!.detail).toEqual({ fields: ['status'] })
+      expect(at(items, 'not_in_type', both.path)!.detail).toEqual({ fields: ['extra'] })
+      expect(of(items, 'not_in_type').map((p) => p.path)).toEqual([both.path, stray.path].sort())
+      const after = (await S.checks()).counts
+      expect(after.not_in_type - before.not_in_type).toBe(2)
+      expect(after.type_mismatch - before.type_mismatch).toBe(2)
+      // A save that repairs one page and breaks another moves the counts at once.
+      const repaired = await S.savePage(bad.id, { baseRev: bad.rev, meta: { ...bad.meta, status: 'done', points: 4 }, body: bad.body })
+      await S.savePage(fine.id, { baseRev: fine.rev, meta: { ...fine.meta, odd: true }, body: fine.body })
+      const next = await walkChecks()
+      expect(at(next, 'type_mismatch', repaired.path)).toBeUndefined()
+      expect(at(next, 'not_in_type', fine.path)!.detail).toEqual({ fields: ['odd'] })
+      expect((await S.checks()).counts.not_in_type - before.not_in_type).toBe(3)
+    })
+
+    it('finds two pages of one folder with one title, not in two folders, not untitled ones', async () => {
+      const before = (await S.checks()).counts.duplicate_title
+      const a = await mk(`${folder}/dup`, { title: `同名${run}` }, '1\n')
+      const b = await mk(`${folder}/dup`, { title: `同名${run}` }, '2\n')
+      await mk(`${folder}/other`, { title: `同名${run}` }, '3\n')
+      await mk(`${folder}/dup`, {}, '无题 一\n')
+      await mk(`${folder}/dup`, {}, '无题 二\n')
+      const items = of(await walkChecks('duplicate_title'), 'duplicate_title')
+      expect(items.map((p) => p.path)).toEqual([a.path, b.path].sort())
+      expect(items[0].detail).toEqual({ paths: [a.path, b.path].sort() })
+      expect(items[0].fix).toBeNull()
+      expect((await S.checks()).counts.duplicate_title - before).toBe(2)
+      // One of them is retitled: the group is gone.
+      await S.savePage(b.id, { baseRev: b.rev, meta: { ...b.meta, title: `另一个${run}` }, body: b.body })
+      expect(of(await walkChecks('duplicate_title'), 'duplicate_title')).toEqual([])
+      expect((await S.checks()).counts.duplicate_title).toBe(before)
+    })
+
+    it('finds an image or attachment of assets/ that is not there, and forgets it when the page stops pointing at it', async () => {
+      const before = (await S.checks()).counts.missing_asset
+      const p = await mk(folder, { title: `图${run}` }, '![x](/assets/NOSUCHPAGE/gone.png) [f](/assets/NOSUCHPAGE/gone.pdf) [web](https://example.test/assets/a/b.png)\n')
+      const items = of(await walkChecks('missing_asset'), 'missing_asset')
+      expect(items.map((x) => x.detail)).toEqual([{ target: '/assets/NOSUCHPAGE/gone.png' }, { target: '/assets/NOSUCHPAGE/gone.pdf' }])
+      expect(items.every((x) => x.id === p.id && x.path === p.path && x.fix === null)).toBe(true)
+      expect((await S.checks()).counts.missing_asset - before).toBe(2)
+      await S.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: 'no pictures\n' })
+      expect((await S.checks()).counts.missing_asset).toBe(before)
+    })
+
+    it('finds links to pages that do not exist, by id or by path, and forgets them when the page appears or the link goes', async () => {
+      const before = (await S.checks()).counts.broken_link
+      const p = await mk(folder, { title: `断${run}` }, `[无](没有${run}.md)\n\n[别](别处${run}.md "01JZZZZZZZ")\n`)
+      const items = of(await walkChecks('broken_link'), 'broken_link').filter((x) => x.path === p.path)
+      expect(items.map((x) => x.detail!.target)).toEqual([`${folder}/没有${run}.md`, `${folder}/别处${run}.md`])
+      expect(items.every((x) => x.id === p.id && x.rev === p.rev && x.fix === null && x.message !== '')).toBe(true)
+      const [l1, l2] = items.map((x) => x.detail!.line as number)
+      expect(Number.isInteger(l1) && l1 > 1 && l2 === l1 + 2).toBe(true)
+      expect((await S.checks()).counts.broken_link - before).toBe(2)
+      // The page the path names is made: that link is fine; an id is not found by its path.
+      await mk(folder, { title: `没有${run}` }, 'y\n')
+      await mk(folder, { title: `别处${run}` }, 'y\n')
+      const left = of(await walkChecks('broken_link'), 'broken_link').filter((x) => x.path === p.path)
+      expect(left.map((x) => x.detail!.target)).toEqual([`${folder}/别处${run}.md`])
+      await S.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: 'no links\n' })
+      expect((await S.checks()).counts.broken_link).toBe(before)
+    })
+
+    it('pages 50 at a time with a cursor, one kind or all of them; a kind or cursor it does not know is 400', async () => {
+      const before = (await S.checks()).counts.not_in_type
+      const made: string[] = []
+      for (let i = 0; i < 55; i++) made.push((await mk(`${folder}/many`, { title: `多${i}-${run}`, stray: i + 1 }, 'x\n')).path)
+      const first = await S.checks({ kind: 'not_in_type' })
+      expect(first.items).toHaveLength(50)
+      expect(first.next).not.toBe('')
+      expect(first.counts.not_in_type - before).toBe(55)
+      const all = await walkChecks('not_in_type')
+      expect(all.length).toBe(first.counts.not_in_type)
+      expect(of(all, 'not_in_type').filter((p) => p.path.startsWith(`${folder}/many/`)).map((p) => p.path)).toEqual([...made].sort())
+      const every = await walkChecks()
+      expect(every.length).toBe(Object.values((await S.checks()).counts).reduce((a, b) => a + b, 0))
+      for (const query of ['?kind=nope', '?cursor=nope']) {
+        const r = await call(admin, 'GET', `/api/spaces/${spaceId}/checks${query}`)
+        expect([r.status, r.json.error]).toEqual([400, 'invalid'])
+      }
+    })
+
+    it('fixes not_in_type: only the listed fields go and the rest of the header stays; a stale rev is 409; other kinds are 400 not_fixable', async () => {
+      const cur = await S.getPage(strayId)
+      expect(cur.rev).toBe(rev)
+      const stale = await failure(S.fixCheck({ kind: 'not_in_type', path: cur.path, baseRev: '0'.repeat(40) }))
+      expect([stale.status, stale.code]).toEqual([409, 'conflict'])
+      expect(stale.current).toMatchObject({ id: strayId, rev })
+      for (const kind of ['type_mismatch', 'duplicate_id', 'bad_header', 'broken_link', 'missing_asset', 'duplicate_title', 'nope']) {
+        const e = await failure(S.fixCheck({ kind: kind as 'no_id', path: cur.path, baseRev: cur.rev }))
+        expect([e.status, e.code], kind).toEqual([400, 'not_fixable'])
+      }
+      const gone = await failure(S.fixCheck({ kind: 'not_in_type', path: `${folder}/nowhere.md`, baseRev: cur.rev }))
+      expect(gone.status).toBe(404)
+      const fixed = await S.fixCheck({ kind: 'not_in_type', path: cur.path, baseRev: cur.rev })
+      expect(fixed).toMatchObject({ id: strayId, path: cur.path, body: cur.body })
+      expect(fixed.rev).not.toBe(cur.rev)
+      expect(fixed.meta.colour).toBeUndefined()
+      expect(fixed.meta.size).toBeUndefined()
+      expect(fixed.meta).toMatchObject({ title: cur.meta.title, status: 'todo', slug: 's' })
+      expect((await S.getPage(strayId)).rev).toBe(fixed.rev)
+      expect(at(await walkChecks(), 'not_in_type', cur.path)).toBeUndefined()
+      // The page has nothing left to remove, and the old rev is stale.
+      expect((await failure(S.fixCheck({ kind: 'not_in_type', path: cur.path, baseRev: cur.rev }))).status).toBe(409)
+      expect((await S.fixCheck({ kind: 'not_in_type', path: cur.path, baseRev: fixed.rev })).rev).toBe(fixed.rev)
+    })
+
+    // Only a server whose files are written by hand can have these: the mock is given them.
+    it('mock only: a file without an id, with a broken header or with an id that is taken; no_id is fixed with the rev it lists', async () => {
+      if (REAL) return
+      const taken = await mk(folder, { title: `占了${run}` }, 'x\n')
+      server!.addOrphan(spaceId, { path: `${folder}/noid.md`, kind: 'no_id', meta: { title: `无id${run}`, custom: 1 }, body: 'orphan\n' })
+      server!.addOrphan(spaceId, { path: `${folder}/broken.md`, kind: 'bad_header', line: 3 })
+      server!.addOrphan(spaceId, { path: `${folder}/twin.md`, kind: 'duplicate_id', id: taken.id })
+      const items = await walkChecks()
+      const n = at(items, 'no_id', `${folder}/noid.md`)!
+      expect(n).toMatchObject({ fix: 'add_id' })
+      expect(n.id).toBeUndefined()
+      expect(n.rev).toMatch(/^[0-9a-f]{40}$/)
+      expect(n.detail).toBeUndefined()
+      expect(at(items, 'bad_header', `${folder}/broken.md`)).toMatchObject({ fix: null, detail: { line: 3 } })
+      expect(at(items, 'duplicate_id', `${folder}/twin.md`)).toMatchObject({ id: taken.id, fix: null, detail: { paths: [taken.path, `${folder}/twin.md`] } })
+      const stale = await failure(S.fixCheck({ kind: 'no_id', path: n.path, baseRev: '0'.repeat(40) }))
+      expect([stale.status, stale.code]).toEqual([409, 'conflict'])
+      const made = await S.fixCheck({ kind: 'no_id', path: n.path, baseRev: n.rev })
+      expect(made.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{10}$/)
+      expect(made).toMatchObject({ path: n.path, body: 'orphan\n' })
+      expect(made.meta).toMatchObject({ id: made.id, title: `无id${run}`, custom: 1 })
+      expect((await S.getPage(made.id)).path).toBe(n.path)
+      expect(at(await walkChecks(), 'no_id', n.path)).toBeUndefined()
+      const again = await failure(S.fixCheck({ kind: 'no_id', path: `${folder}/broken.md`, baseRev: '0'.repeat(40) }))
+      expect([400, 409]).toContain(again.status)
+    })
+
+    it('needs write to fix and read to list: the mock and a real server answer 400 invalid for a fix with no path or rev', async () => {
+      const r = await call(admin, 'POST', `/api/spaces/${spaceId}/checks/fix`, { kind: 'no_id' })
+      expect([r.status, r.json.error]).toEqual([400, 'invalid'])
     })
   })
 

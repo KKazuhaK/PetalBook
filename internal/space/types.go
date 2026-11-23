@@ -405,24 +405,30 @@ func (s *Space) readTypeFile(name string) ([]byte, error) {
 // typeNow is readTypeFile; from is set when the file cannot be used and data
 // is what stands in for it.
 func (s *Space) typeNow(name string) (data []byte, from *restored, err error) {
+	data, from, _, err = s.typeNowSeen(name)
+	return data, from, err
+}
+
+// typeNowSeen is typeNow, with what the read found in the place of the file.
+func (s *Space) typeNowSeen(name string) (data []byte, from *restored, saw seen, err error) {
 	f := typeSettings(name)
-	data, err = s.readTypeRaw(name)
+	data, saw, err = s.readTypeRaw(name)
 	if err == nil && (data == nil || f.usable(data)) {
 		s.heal.fine(f)
-		return data, nil, nil
+		return data, nil, saw, nil
 	}
 	if err != nil && !errors.Is(err, errTypeFile) {
-		return nil, nil, err
+		return nil, nil, saw, err
 	}
 	if s.heal == nil {
-		return nil, nil, errTypeFile
+		return nil, nil, saw, errTypeFile
 	}
 	from, rerr := s.heal.restore(f)
 	if rerr != nil {
-		return nil, nil, errTypeFile
+		return nil, nil, saw, errTypeFile
 	}
 	s.heal.inUse(f, from)
-	return from.text, from, nil
+	return from.text, from, saw, nil
 }
 
 // asideType is for a change that writes or removes the file of a type that
@@ -445,22 +451,23 @@ func (s *Space) asideType(tx *txn, name string, from *restored, entries []string
 	return func() { s.heal.repaired(f, &repair{from, entries}, copy) }, nil
 }
 
-func (s *Space) readTypeRaw(name string) ([]byte, error) {
+func (s *Space) readTypeRaw(name string) ([]byte, seen, error) {
 	data, fi, blocked, err := readIn(s.root, typesDir+"/"+name+".json", MaxTypeFile)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+		return nil, seen{}, nil
 	}
 	if errors.Is(err, errChanged) {
-		return nil, errTypeFile
+		return nil, seen{}, errTypeFile
 	}
 	if err != nil {
-		return nil, err
+		return nil, seen{}, err
 	}
+	saw := seen{fi, blocked}
 	// Behind a link or a file in the place of a folder, it is read as restored.
 	if blocked != "" || !fi.Mode().IsRegular() || data == nil || len(data) > MaxTypeFile {
-		return nil, errTypeFile
+		return nil, saw, errTypeFile
 	}
-	return data, nil
+	return data, saw, nil
 }
 
 // typeDirOK reports whether the folder of the types is a folder, not a link
@@ -822,6 +829,7 @@ func (s *Space) PutType(by Author, name, baseRev string, in TypeInput) (TypeInfo
 			return TypeInfo{}, err
 		}
 		tx.touch(rel)
+		s.typesDirty.Store(true)
 		if err := writeIn(s.root, rel, out.Bytes()); err != nil {
 			return TypeInfo{}, err
 		}
@@ -911,6 +919,7 @@ func (s *Space) DeleteType(by Author, name, baseRev string) error {
 				return struct{}{}, err
 			}
 			tx.touch(rel)
+			s.typesDirty.Store(true)
 			if err := removeIn(s.root, rel); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				return struct{}{}, err
 			}

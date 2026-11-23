@@ -415,22 +415,30 @@ func (h *healer) inUse(f settingsFile, r *restored) {
 // it. f.bad only when not even those can be had (the history cannot be read
 // just now), or in a Space that has nothing to restore with.
 func (s *Space) loadSettings(f settingsFile) (*yaml.Node, error) {
-	doc, err := loadSettingsAt(s.root, f)
+	doc, _, err := s.loadSettingsSeen(f)
+	return doc, err
+}
+
+// loadSettingsSeen is loadSettings, with what the read found in the place of
+// the file (see seen).
+func (s *Space) loadSettingsSeen(f settingsFile) (*yaml.Node, seen, error) {
+	doc, saw, err := loadSettingsSeen(s.root, f)
 	if !errors.Is(err, f.bad) {
 		if err == nil {
 			s.heal.fine(f)
 		}
-		return doc, err
+		return doc, saw, err
 	}
 	if s.heal == nil {
-		return nil, err
+		return nil, saw, err
 	}
 	r, rerr := s.heal.restore(f)
 	if rerr != nil {
-		return nil, err
+		return nil, saw, err
 	}
 	s.heal.inUse(f, r)
-	return r.doc(f)
+	doc, err = r.doc(f)
+	return doc, saw, err
 }
 
 // copiesOf lists the copies kept of f, as paths in the space, oldest first.

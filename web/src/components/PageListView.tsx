@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { ArrowUpDown, BookOpen, Columns3, FilePlus2, FolderPlus, LayoutGrid, List as ListIcon, PenLine, Table2, Tag as TagIcon } from 'lucide-react'
 import { toast } from 'sonner'
+import { tzOffset } from '@/lib/templates'
 import { useActiveSpace, useCreatePage, usePageList, useSpacePermissions, useTypes, useUrls, useViews, useViewsBusy } from '@/api/hooks'
 import type { ListParams, PropFilter, SortKey, ViewScope } from '@/api/types'
 import { Button } from '@/components/ui/button'
@@ -294,12 +295,19 @@ function Listing({ source }: { source: ListSource }) {
 
   const newPage = async () => {
     setCreating(true)
+    const folder = source.kind === 'folder' ? source.folder : ''
+    const meta = source.kind === 'tag' ? { tags: [source.tag] } : undefined
+    // With the file operations the person may be asked for a template first; they open the page (and tell a failure).
+    if (ops) {
+      try {
+        await ops.newPage(folder, meta)
+      } finally {
+        setCreating(false)
+      }
+      return
+    }
     try {
-      const page = await create.mutateAsync({
-        folder: source.kind === 'folder' ? source.folder : '',
-        ...(source.kind === 'tag' ? { meta: { tags: [source.tag] } } : {}),
-        body: '',
-      })
+      const page = await create.mutateAsync({ folder, ...(meta ? { meta } : {}), body: '', tz: tzOffset() })
       navigate(urls.page(page.id))
     } catch (e) {
       toast.error(t.fmt.labelled(t.list.createFailed, e instanceof Error ? e.message : ''))

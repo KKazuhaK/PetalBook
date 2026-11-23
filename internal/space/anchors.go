@@ -954,32 +954,46 @@ func (f settingsFile) parse(data []byte) (*yaml.Node, error) {
 // loadSettingsAt reads a settings file of the space at root: nil when there is
 // none or nothing in it, f.bad for one that cannot be used.
 func loadSettingsAt(root string, f settingsFile) (*yaml.Node, error) {
-	data, err := readSettingsAt(root, f)
+	doc, _, err := loadSettingsSeen(root, f)
+	return doc, err
+}
+
+// loadSettingsSeen is loadSettingsAt, with what the read found there.
+func loadSettingsSeen(root string, f settingsFile) (*yaml.Node, seen, error) {
+	data, saw, err := readSettingsSeen(root, f)
 	if err != nil || data == nil {
-		return nil, err
+		return nil, saw, err
 	}
-	return f.parse(data)
+	doc, err := f.parse(data)
+	return doc, saw, err
 }
 
 // readSettingsAt is the text of a settings file: nil when there is no file,
 // f.bad for one that is not a regular file, is larger than the server reads,
 // or is behind something on its way that is not a folder (see settingspath.go).
 func readSettingsAt(root string, f settingsFile) ([]byte, error) {
+	data, _, err := readSettingsSeen(root, f)
+	return data, err
+}
+
+// readSettingsSeen is readSettingsAt, with what the read found there.
+func readSettingsSeen(root string, f settingsFile) ([]byte, seen, error) {
 	data, fi, blocked, err := readIn(root, f.rel, int64(f.max))
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+		return nil, seen{}, nil
 	}
 	if errors.Is(err, errChanged) {
-		return nil, f.bad // replaced while it was read: not used as it is
+		return nil, seen{}, f.bad // replaced while it was read: not used as it is
 	}
+	saw := seen{fi, blocked}
 	if err != nil {
-		return nil, err
+		return nil, seen{}, err
 	}
 	// A link in the way could lead out of the space.
 	if blocked != "" || !fi.Mode().IsRegular() || data == nil || len(data) > f.max {
-		return nil, f.bad
+		return nil, saw, f.bad
 	}
-	return data, nil
+	return data, saw, nil
 }
 
 // settingsFullError is the refusal of a change that would make a settings file

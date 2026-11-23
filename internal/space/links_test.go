@@ -387,3 +387,68 @@ func TestTimingRenameWithManyReferrers(t *testing.T) {
 	s.Backlinks(tid, "")
 	t.Logf("first page of backlinks: %v", time.Since(start))
 }
+
+func brokenLinks(t *testing.T, s *Space) []string {
+	t.Helper()
+	_, items, _, err := s.Checks("broken_link", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, c := range items {
+		out = append(out, c.Path+">"+string(c.Detail))
+	}
+	return out
+}
+
+func TestBrokenLinksOnTheCheckPage(t *testing.T) {
+	s := open(t)
+	a := mustCreate(t, s, "", meta("title", "甲"), "x\n")
+	b := mustCreate(t, s, "", meta("title", "乙"), "[a](甲.md) [gone](没有.md)\n")
+	if got := strings.Join(brokenLinks(t, s), " "); !strings.Contains(got, `"target":"没有.md"`) || strings.Count(got, b.Path) != 1 {
+		t.Fatalf("after a save: %s", got)
+	}
+	// A rename rewrites the link to a: it does not break.
+	mustSave(t, s, a, "丙", "x\n")
+	if got := brokenLinks(t, s); len(got) != 1 {
+		t.Fatalf("after the rename: %v", got)
+	}
+	// The missing page is made: nothing is broken.
+	mustCreate(t, s, "", meta("title", "没有"), "y\n")
+	if got := brokenLinks(t, s); len(got) != 0 {
+		t.Fatalf("after the page appeared: %v", got)
+	}
+	if err := s.Delete(Author{}, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	line := 1 + strings.Count(strings.SplitN(readDisk(t, s, b.Path), "[a]", 2)[0], "\n")
+	want := []string{fmt.Sprintf(`%s>{"target":"丙.md","line":%d}`, b.Path, line)}
+	if got := brokenLinks(t, s); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("after the delete: %v", got)
+	}
+	if _, err := s.Reindex(); err != nil {
+		t.Fatal(err)
+	}
+	if got := brokenLinks(t, s); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("after a rebuild: %v", got)
+	}
+}
+
+func TestPullThatDeletesATargetBreaksItsLinks(t *testing.T) {
+	t.Parallel()
+	f := newRemoteSpace(t)
+	mustCreate(t, f.s, "", meta("title", "目标"), "x\n")
+	mustCreate(t, f.s, "", meta("title", "引"), "[t](目标.md)\n")
+	if got := brokenLinks(t, f.s); len(got) != 0 {
+		t.Fatalf("before: %v", got)
+	}
+	o := f.theirs()
+	os.Remove(filepath.Join(o.dir, "目标.md"))
+	o.push("delete outside")
+	if err := f.s.Pull(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if got := brokenLinks(t, f.s); len(got) != 1 || !strings.Contains(got[0], `"target":"目标.md"`) {
+		t.Fatalf("after the pull: %v", got)
+	}
+}

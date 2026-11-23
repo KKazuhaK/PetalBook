@@ -158,6 +158,12 @@ export function createTypeBook(folderExists: (path: string) => string | null) {
 
     effective: (folder: string): string => folderTypeName(bindings, folder),
 
+    // The fields of the type a page has (its header's, else its folder's), null when there is none or its file cannot be used.
+    fieldsOf(folder: string, headerType: string): TypeField[] | null {
+      const t = types.get(headerType || folderTypeName(bindings, folder))
+      return t && !t.error ? view(t).fields : null
+    },
+
     // The options of a select or multiselect field of the type a folder has: the
     // order a sort by that field follows. null for any other field, or no type.
     optionsOf(folder: string, key: string): string[] | null {

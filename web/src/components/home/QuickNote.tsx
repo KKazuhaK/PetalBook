@@ -1,3 +1,4 @@
+import { tzOffset } from '@/lib/templates'
 import { useState, type FormEvent, type KeyboardEvent } from 'react'
 import { toast } from 'sonner'
 import { useCreatePage, useSession } from '@/api/hooks'
@@ -26,7 +27,7 @@ export function QuickNote({ space, inbox }: { space: string; inbox: string }) {
     if (body === null || create.isPending) return
     setError('')
     try {
-      await create.mutateAsync({ folder: inbox, body })
+      await create.mutateAsync({ folder: inbox, body, tz: tzOffset() })
       saveCapture(key, '')
       setText('')
       toast.success(th.quick.saved)

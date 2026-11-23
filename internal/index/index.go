@@ -22,7 +22,7 @@ import (
 
 // schemaVersion changes whenever the tables or the way text is tokenised
 // change; an index with another version is thrown away and rebuilt.
-const schemaVersion = 8
+const schemaVersion = 9
 
 const schema = `
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -69,14 +69,28 @@ CREATE INDEX props_skey ON props(key, skey, page);
 -- resolved when it is read (by path), so that it stays right when the target is
 -- added, moved or deleted. dst_path is the file the path names, always; a link
 -- whose id is known to be at another path is one to be repaired. The primary
--- key serves the links of one page.
-CREATE TABLE links (src INTEGER NOT NULL, dst_id TEXT NOT NULL, dst_path TEXT NOT NULL, anchor TEXT NOT NULL, text TEXT NOT NULL, pos INTEGER NOT NULL, PRIMARY KEY (src, pos)) WITHOUT ROWID;
+-- key serves the links of one page. line is the line of the file the link is
+-- on (from 1; 0 when it is not known), for the broken_link problems.
+CREATE TABLE links (src INTEGER NOT NULL, dst_id TEXT NOT NULL, dst_path TEXT NOT NULL, anchor TEXT NOT NULL, text TEXT NOT NULL, pos INTEGER NOT NULL, line INTEGER NOT NULL, PRIMARY KEY (src, pos)) WITHOUT ROWID;
 CREATE INDEX links_dst_id ON links(dst_id, src);
 CREATE INDEX links_dst_path ON links(dst_path, src);
 CREATE TABLE folders (path TEXT PRIMARY KEY);
 -- Files that are not pages (no usable id). They are remembered with their size
 -- and mtime so that start-up does not read them again.
-CREATE TABLE problems (path TEXT PRIMARY KEY, code TEXT NOT NULL, message TEXT NOT NULL, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL);
+-- kind is what the check page calls the problem ('' for a file that could not
+-- be read: not listed), id the id a duplicate shares, line where a bad header
+-- is wrong (0 when not known), rev the rev of the file (what a fix is based on).
+CREATE TABLE problems (path TEXT PRIMARY KEY, code TEXT NOT NULL, message TEXT NOT NULL, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
+	kind TEXT NOT NULL DEFAULT '', id TEXT NOT NULL DEFAULT '', line INTEGER NOT NULL DEFAULT 0, rev TEXT NOT NULL DEFAULT '');
+CREATE INDEX problems_kind ON problems(kind, path);
+CREATE INDEX problems_id ON problems(id) WHERE id <> '';
+-- The problems of pages that are served (see checks.go). target is the file a
+-- missing_asset is about, as a path from the root of the space.
+CREATE TABLE checks (kind TEXT NOT NULL, path TEXT NOT NULL, seq INTEGER NOT NULL, id TEXT NOT NULL, message TEXT NOT NULL, detail TEXT NOT NULL, target TEXT NOT NULL,
+	PRIMARY KEY (kind, path, seq)) WITHOUT ROWID;
+CREATE INDEX checks_path ON checks(path);
+CREATE INDEX checks_target ON checks(target) WHERE target <> '';
+CREATE INDEX pages_folder_title ON pages(folder, title_key) WHERE untitled = 0;
 CREATE VIRTUAL TABLE fts USING fts5(title, subtitle, source, body, content='', contentless_delete=1, tokenize='unicode61');
 INSERT INTO folders(path) VALUES ('');
 `
@@ -119,6 +133,11 @@ type Index struct {
 	checkpoints atomic.Int64
 	// walMax is walCheckpointAt as it was at Open.
 	walMax int64
+
+	// rules are what the type problems of a page are judged by, assetExists
+	// how an attachment is looked for (see checks.go).
+	rules       atomic.Pointer[TypeRules]
+	assetExists atomic.Pointer[func(string) bool]
 
 	// aux holds the connections a read uses beside its own to read several
 	// index ranges at the same time (see read.go); auxFree has a token for

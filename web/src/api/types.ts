@@ -197,6 +197,10 @@ export interface CreatePageInput {
   folder?: string
   meta?: PageMeta
   body?: string
+  // The template to start from: left out for the folder's (or the quick-note) default, "" for none.
+  template?: string
+  // The browser's offset in minutes east of UTC, for {{date}}, {{time}} and {{datetime}} (UTC when left out).
+  tz?: number
 }
 export interface SavePageInput {
   baseRev: string
@@ -231,6 +235,62 @@ export interface PageType {
   fields: TypeField[]
   // Set when the file cannot be used; the fields are then empty.
   error?: string
+}
+// A template page of .petalbook/templates (docs/api.md, "Templates"). The list leaves `body` out.
+export interface PageTemplate {
+  // The file name without .md; the template's id.
+  name: string
+  path: string
+  rev: string
+  meta: PageMeta
+  body?: string
+}
+export interface TemplateDefaults {
+  folders: Record<string, string>
+  quickNote: string
+}
+export interface TemplatesResponse {
+  templates: PageTemplate[]
+  defaults: TemplateDefaults
+}
+export interface PutTemplateInput {
+  // "" makes the template; otherwise the rev it was read at.
+  baseRev: string
+  meta: PageMeta
+  body: string
+}
+// What the check page lists (docs/api.md, "Checks"), in this order.
+export type ProblemKind = 'no_id' | 'duplicate_id' | 'bad_header' | 'type_mismatch' | 'not_in_type' | 'broken_link' | 'missing_asset' | 'duplicate_title'
+export type ProblemFix = 'add_id' | 'remove_fields'
+export interface Problem {
+  kind: ProblemKind
+  path: string
+  // The page, when the file is one.
+  id?: string
+  message: string
+  // The current rev of the file the problem is in: the baseRev of POST .../checks/fix
+  // (a file without an id has no page to read it from).
+  rev: string
+  // bad_header: {line}; duplicate_id and duplicate_title: {paths}; type_mismatch and
+  // not_in_type: {fields}; broken_link: {target, line}; missing_asset: {target}.
+  detail?: Record<string, unknown>
+  fix: ProblemFix | null
+}
+export interface ChecksParams {
+  kind?: ProblemKind
+  cursor?: string
+}
+export interface ChecksResponse {
+  // Every kind, listed or not.
+  counts: Record<ProblemKind, number>
+  items: Problem[]
+  next: string
+}
+export interface FixCheckInput {
+  kind: 'no_id' | 'not_in_type'
+  path: string
+  // The rev of the file as it was listed.
+  baseRev: string
 }
 export interface FolderBinding {
   folder: string

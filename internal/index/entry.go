@@ -3,6 +3,7 @@ package index
 import (
 	"encoding/json"
 	"path"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -34,9 +35,15 @@ type Entry struct {
 	PartialJSON string
 
 	props []propRow
+	// refs are the addresses of the body that point into assets/, checks the
+	// problems of the page (see annotate).
+	refs   []assetRef
+	checks []checkRow
 	// links are the links to other pages (see internal/links), without the
 	// ones to the page itself.
 	links []links.Link
+	// linkLines are the lines of the file the links are on (see linkLine).
+	linkLines []int
 
 	// Text fed to the full-text index, already tokenised.
 	ftsTitle, ftsSubtitle, ftsSource, ftsBody string
@@ -70,11 +77,24 @@ func BuildEntry(rel string, data []byte, mtimeNs int64) (*Entry, *page.Problem) 
 		b, _ := json.Marshal(partial)
 		e.PartialJSON = string(b)
 	}
+	e.refs = assetRefs(doc.Body, e.Folder)
 	for _, l := range links.Extract(rel, data) {
 		if (l.ID != "" && l.ID == e.ID) || (l.ID == "" && l.Path == rel) {
 			continue
 		}
 		e.links = append(e.links, l)
+	}
+	if len(e.links) > 0 {
+		var nl []int // the offsets of the newlines of the file
+		for i, c := range data {
+			if c == '\n' {
+				nl = append(nl, i)
+			}
+		}
+		e.linkLines = make([]int, len(e.links))
+		for i, l := range e.links {
+			e.linkLines[i] = linkLine(l, nl)
+		}
 	}
 	e.CreatedKey = mtimeNs
 	if t, err := time.Parse("2006-01-02", e.Created); err == nil {
@@ -177,4 +197,22 @@ func MatchQuery(q string) (match string, ok bool) {
 		return "", false
 	}
 	return strings.Join(parts, " AND "), true
+}
+
+// linkLine is the line of the file (from 1) a link is on, given the offsets of
+// the newlines of the file: where its destination is written, or, for a link
+// whose destination is in a reference definition, where its paragraph starts.
+// It is 0 when the link could not be located.
+func linkLine(l links.Link, newlines []int) int {
+	at := l.DestStart
+	if l.Def || at < 0 {
+		at = l.BlockStart
+	}
+	if at < 0 {
+		at = l.DestStart
+	}
+	if at < 0 {
+		return 0
+	}
+	return sort.SearchInts(newlines, at) + 1
 }

@@ -2,6 +2,7 @@ package space
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -284,6 +285,114 @@ func TestALinkSwappedInWhileTheSettingsAreReadIsNeverFollowed(t *testing.T) {
 	}
 	if m := bindingMap(s); !reflect.DeepEqual(m, map[string]string{"A": "wenan"}) {
 		t.Errorf("the bindings are %v", m)
+	}
+}
+
+// swapAfterLook, armed, swaps the folder rel of root for what swap puts there
+// once, between the look at file and the read of it; back puts it again.
+func swapAfterLook(t *testing.T, root, file string, swap func()) (arm func()) {
+	t.Helper()
+	var armed atomic.Bool
+	f := func(r, rel string) {
+		if r == root && rel == file && armed.CompareAndSwap(true, false) {
+			swap()
+		}
+	}
+	lookedAt.Store(&f)
+	t.Cleanup(func() { lookedAt.Store(nil) })
+	return func() { armed.Store(true) }
+}
+
+func TestWhatIsReadWhileAFolderOfTheSettingsIsSwappedIsNotKept(t *testing.T) {
+	s := settled(t)
+	root := s.Root()
+	mustPutViews(t, s, tagScope("x"), View{Name: "one", Layout: "list"})
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	out := outsideDir(t)
+	for _, way := range []string{"gone", "link"} {
+		for _, which := range []string{".petalbook", typesDir} {
+			at := filepath.Join(root, filepath.FromSlash(which))
+			aside := at + "-real"
+			target := out
+			if which == typesDir {
+				target = filepath.Join(out, "types")
+			}
+			swapped := false
+			swap := func() {
+				swapped = true
+				if err := os.Rename(at, aside); err != nil {
+					t.Error(err)
+				}
+				if way == "link" {
+					os.Symlink(target, at)
+				}
+			}
+			back := func() {
+				if !swapped {
+					t.Fatalf("%s %s: nothing was read", way, which)
+				}
+				swapped = false
+				os.Remove(at)
+				if err := os.Rename(aside, at); err != nil {
+					t.Fatal(err)
+				}
+			}
+			name := way + " " + which
+			// The file changed since it was last read, so it is read again.
+			changed := func(rel string) {
+				p := filepath.Join(root, filepath.FromSlash(rel))
+				when := time.Now().Add(time.Duration(len(name)) * time.Minute)
+				if err := os.Chtimes(p, when, when); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if which == ".petalbook" {
+				arm := swapAfterLook(t, root, spaceFile, swap)
+				changed(spaceFile)
+				arm()
+				bindingMap(s)
+				back()
+				if m := bindingMap(s); !reflect.DeepEqual(m, map[string]string{"A": "wenan"}) {
+					t.Errorf("%s: the bindings are %v", name, m)
+				}
+				arm = swapAfterLook(t, root, tagsFile, swap)
+				changed(tagsFile)
+				arm()
+				s.Views(tagScope("x"))
+				back()
+				if vs, err := s.Views(tagScope("x")); err != nil || len(vs.Views) != 1 {
+					t.Errorf("%s: the views of the tag are %v, %v", name, vs, err)
+				}
+			}
+			// A type file as it is on disk, newer than the history: what is
+			// restored in its place while the way is not clear is not it.
+			p := filepath.Join(root, filepath.FromSlash(typesDir), "wenan.json")
+			b, err := os.ReadFile(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			title := "Hand " + name
+			var doc map[string]any
+			if err := json.Unmarshal(b, &doc); err != nil {
+				t.Fatal(err)
+			}
+			doc["title"] = title
+			if b, err = json.Marshal(doc); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, b, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			arm := swapAfterLook(t, root, typesDir+"/wenan.json", swap)
+			arm()
+			s.typeInfoCached("wenan")
+			back()
+			if info, ok := s.typeInfoCached("wenan"); !ok || info.Title != title {
+				t.Errorf("%s: the type is %q, %v", name, info.Title, ok)
+			}
+		}
 	}
 }
 
