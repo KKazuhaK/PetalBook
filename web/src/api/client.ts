@@ -5,6 +5,9 @@ import { t } from '@/i18n'
 import type {
   AccountInfo,
   AdminSpace,
+  ApiToken,
+  CreatedToken,
+  TokenAccess,
   BacklinkList,
   DailyAnswer,
   DailyPrefs,
@@ -483,6 +486,12 @@ export const api = {
   // `current` is left out when the account has no password yet.
   changePassword: (input: { current?: string; new: string }) => request<void>('/account/password', { method: 'POST', body: input }),
   removeIdentity: (id: string) => request<void>(`/account/identities/${enc(id)}`, { method: 'DELETE' }),
+
+  // --- API tokens ---
+  tokens: (signal?: AbortSignal) => request<{ tokens: ApiToken[] }>('/account/tokens', { signal }),
+  // `expiresInDays` 0 is a token that never expires; left out, 90 days.
+  createToken: (input: { name: string; access: TokenAccess; spaces: string[]; expiresInDays?: number }) => request<CreatedToken>('/account/tokens', { method: 'POST', body: input }),
+  revokeToken: (id: string) => request<void>(`/account/tokens/${enc(id)}`, { method: 'DELETE' }),
 
   // --- users and invites (administrators) ---
   checkInvite: (token: string, signal?: AbortSignal) => request<InviteCheck>('/invites/check', { method: 'POST', body: { token }, signal }),

@@ -487,7 +487,7 @@ export const zhCN = {
     close: '关闭设置',
     nav: '设置导航',
     groups: { account: '账号', space: '空间' },
-    sections: { profile: '个人资料', preferences: '偏好设置', security: '安全', general: '常规', types: '类型', templates: '模板', home: '首页', members: '成员', sync: '同步', import: '导入' },
+    sections: { profile: '个人资料', preferences: '偏好设置', security: '安全', tokens: 'API 令牌', general: '常规', types: '类型', templates: '模板', home: '首页', members: '成员', sync: '同步', import: '导入' },
   },
   prefs: {
     appearance: '外观',

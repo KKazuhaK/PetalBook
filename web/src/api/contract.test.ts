@@ -271,6 +271,11 @@ function suite(target: Target) {
         ['GET', '/api/account'],
         ['GET', '/api/users'],
         ['GET', '/api/invites'],
+        ['GET', '/api/account/tokens'],
+        ['POST', '/api/account/tokens', { name: 'x', spaces: [spaceId] }],
+        ['DELETE', '/api/account/tokens/NOSUCHTOKN'],
+        ['GET', '/api/admin/access'],
+        ['GET', '/api/admin/tokens'],
         ['POST', '/api/invites/check', { token: 'x' }],
         ['POST', '/api/invites/accept', { token: 'x', username: 'ab', password: 'password1' }],
         ['POST', '/api/spaces', { name: 'Other' }],
@@ -419,6 +424,81 @@ function suite(target: Target) {
         const fresh = browser()
         expect((await call(fresh, 'POST', '/api/login', { username: m.user.username, password: m.password })).status).toBe(401)
         expect((await call(fresh, 'POST', '/api/login', { username: m.user.username, password: 'another-password' })).status).toBe(200)
+      })
+    })
+
+    describe('API tokens', () => {
+      it('a person makes one, sees it without its secret, and revokes it', async () => {
+        const m = await newMember(uniq('apk1'))
+        const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0]
+        const made = await call(m.browser, 'POST', '/api/account/tokens', { name: '  Desktop notes ', access: 'write', spaces: [mine.id] })
+        expect(made.status).toBe(201)
+        expect(made.json.secret).toMatch(/^pbk_[0-9A-Za-z]{43}$/)
+        expect(made.json.token).toMatchObject({ name: 'Desktop notes', access: 'write', prefix: made.json.secret.slice(0, 12), state: 'active', lastUsed: null, revoked: null })
+        expect(made.json.token.spaces).toEqual([{ id: mine.id, name: mine.name }])
+        expect(typeof made.json.token.expires).toBe('string')
+        const list = await call(m.browser, 'GET', '/api/account/tokens')
+        expect(list.status).toBe(200)
+        expect(list.json.tokens.map((t: { id: string }) => t.id)).toEqual([made.json.token.id])
+        expect(JSON.stringify(list.json)).not.toContain(made.json.secret)
+        expect((await call(m.browser, 'DELETE', `/api/account/tokens/${made.json.token.id}`)).status).toBe(204)
+        expect((await call(m.browser, 'DELETE', `/api/account/tokens/${made.json.token.id}`)).status).toBe(204)
+        expect((await call(m.browser, 'GET', '/api/account/tokens')).json.tokens[0]).toMatchObject({ state: 'revoked' })
+      })
+
+      it('read is the default, 0 days is never, and a bad request is 400 or 404', async () => {
+        const m = await newMember(uniq('apk2'))
+        const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0].id
+        const forever = await call(m.browser, 'POST', '/api/account/tokens', { name: 'forever', spaces: [mine], expiresInDays: 0 })
+        expect(forever.status).toBe(201)
+        expect(forever.json.token).toMatchObject({ access: 'read', expires: null })
+        for (const bad of [{ name: ' ', spaces: [mine] }, { name: 'n', spaces: [] }, { name: 'n', spaces: [mine], access: 'admin' }, { name: 'n', spaces: [mine], expiresInDays: 366 }]) {
+          const r = await call(m.browser, 'POST', '/api/account/tokens', bad)
+          expect([r.status, r.json.error], JSON.stringify(bad)).toEqual([400, 'invalid'])
+        }
+        const elsewhere = await call(m.browser, 'POST', '/api/account/tokens', { name: 'n', spaces: ['01JD3K8Q7Z'] })
+        expect([elsewhere.status, elsewhere.json.error]).toEqual([404, 'not_found'])
+      })
+
+      it("someone else's token is not theirs to revoke or to see", async () => {
+        const a = await newMember(uniq('apk3'))
+        const b = await newMember(uniq('apk4'))
+        const space = (await call(a.browser, 'GET', '/api/spaces')).json.spaces[0].id
+        const t = (await call(a.browser, 'POST', '/api/account/tokens', { name: 'mine', spaces: [space] })).json.token.id
+        expect((await call(b.browser, 'GET', '/api/account/tokens')).json.tokens).toEqual([])
+        const r = await call(b.browser, 'DELETE', `/api/account/tokens/${t}`)
+        expect([r.status, r.json.error]).toEqual([404, 'not_found'])
+      })
+
+      it('an administrator lists everyone\'s tokens and revokes one; others are refused', async () => {
+        const m = await newMember(uniq('apk5'))
+        const space = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0].id
+        const t = (await call(m.browser, 'POST', '/api/account/tokens', { name: 'theirs', spaces: [space] })).json.token.id
+        const all = await call(admin, 'GET', `/api/admin/tokens?user=${m.user.id}`)
+        expect(all.status).toBe(200)
+        expect(all.json.items.map((i: { id: string }) => i.id)).toEqual([t])
+        expect(all.json.items[0].owner).toMatchObject({ id: m.user.id, username: m.user.username })
+        expect(all.json.next).toBe('')
+        expect((await call(m.browser, 'GET', '/api/admin/tokens')).json.error).toBe('forbidden')
+        expect((await call(m.browser, 'GET', '/api/admin/access')).json.error).toBe('forbidden')
+        expect((await call(admin, 'DELETE', `/api/admin/tokens/${t}`)).status).toBe(204)
+        expect((await call(m.browser, 'GET', '/api/account/tokens')).json.tokens[0].state).toBe('revoked')
+        expect((await call(admin, 'DELETE', '/api/admin/tokens/NOSUCHTOKN')).status).toBe(404)
+        expect((await call(admin, 'GET', '/api/admin/tokens?limit=0')).status).toBe(400)
+      })
+
+      it('the machine access switches are on, may be changed, and are put back', async () => {
+        const before = await call(admin, 'GET', '/api/admin/access')
+        expect(before.status).toBe(200)
+        expect(Object.keys(before.json).sort()).toEqual(['mcp', 'oauth', 'tokens'])
+        try {
+          const off = await call(admin, 'PUT', '/api/admin/access', { tokens: false })
+          expect(off.json).toMatchObject({ tokens: false, mcp: before.json.mcp })
+          expect((await call(admin, 'GET', '/api/admin/access')).json.tokens).toBe(false)
+        } finally {
+          await call(admin, 'PUT', '/api/admin/access', { tokens: before.json.tokens, mcp: before.json.mcp })
+        }
+        expect((await call(admin, 'GET', '/api/admin/access')).json).toEqual(before.json)
       })
     })
 

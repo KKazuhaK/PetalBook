@@ -466,6 +466,7 @@ export interface ReasonCode {
 }
 
 export type ErrorCode =
+  | 'token_limit'
   | 'host_not_allowed'
   | 'header_reenter'
   | 'header_missing'
@@ -517,6 +518,47 @@ export interface SessionInfo {
   setup: boolean
   // Absent in single-user mode.
   methods?: { password: boolean; oidc: { name: string } | null }
+  // The API token the request was made with; the app's own requests have none.
+  token?: { id: string; name: string; access: TokenAccess; spaces: string[] } | null
+}
+
+// An API token (docs/api.md, "API tokens"). The secret is never in one of these.
+export type TokenAccess = 'read' | 'write'
+export type TokenState = 'active' | 'expired' | 'revoked'
+export interface ApiTokenSpace {
+  id: string
+  // "" for a space that is gone or that the owner has left.
+  name: string
+}
+export interface ApiToken {
+  id: string
+  name: string
+  prefix: string
+  access: TokenAccess
+  spaces: ApiTokenSpace[]
+  created: string
+  expires: string | null
+  lastUsed: string | null
+  revoked: string | null
+  state: TokenState
+}
+// The secret is in the response of the creating request only.
+export interface CreatedToken {
+  token: ApiToken
+  secret: string
+}
+export interface AdminToken extends ApiToken {
+  owner: { id: string; username: string; name: string }
+}
+export interface AdminTokenList {
+  items: AdminToken[]
+  next: string
+}
+export interface MachineAccess {
+  tokens: boolean
+  mcp: boolean
+  // Whether the authorization server is there; read only.
+  oauth: boolean
 }
 
 export interface Identity {

@@ -3,7 +3,7 @@
 // cookie stand-in), invites, spaces per user and a fake OpenID Connect
 // provider. It has no DOM or Node dependencies.
 
-import type { AdminSpace, ConnectRemoteInput, FieldKind, Identity, Invite, Member, Page, Permission, Remote, RemoteKey, RemoteState, Role, ServerStatus, SettingsNotice, SpaceInfo, SpaceRole, User } from '../types.ts'
+import type { AdminSpace, AdminToken, ApiToken, ConnectRemoteInput, FieldKind, Identity, Invite, Member, Page, Permission, Remote, RemoteKey, RemoteState, Role, ServerStatus, SettingsNotice, SpaceInfo, SpaceRole, User } from '../types.ts'
 import { gitBlobId } from './sha1.ts'
 import { ALPHABET, HttpError, compareCodePoints, createSpaceStore, isRecord, rfc3339, validFolder, type SpaceStore } from './store.ts'
 import { SPACE_NAME } from './seed.ts'
@@ -97,6 +97,17 @@ interface InviteRec {
   createdBy: string
   used: boolean
 }
+interface TokenRec {
+  id: string
+  userId: string
+  name: string
+  prefix: string
+  access: 'read' | 'write'
+  spaces: string[]
+  created: number
+  expires: number | null
+  revoked: number | null
+}
 interface RemoteRec {
   url: string
   branch: string
@@ -184,6 +195,9 @@ export function createMockServer(options: MockOptions = {}) {
   const users = new Map<string, UserRec>()
   const sessions = new Map<string, string>()
   const invites = new Map<string, InviteRec>()
+  const apiTokens = new Map<string, TokenRec>()
+  // What an administrator allows machines (docs/api.md, "Machine access").
+  const machine = { tokens: true, mcp: true }
   const spaces = new Map<string, SpaceRec>()
   // What the server says about settings files it could not use, by space (set by tests).
   const settingsNotices = new Map<string, SettingsNotice[]>()
@@ -551,6 +565,79 @@ export function createMockServer(options: MockOptions = {}) {
     [...invites.values()]
       .filter((i) => !i.used && i.expires > now())
       .map((i) => ({ id: i.id, role: i.role, created: rfc3339(i.created), expires: rfc3339(i.expires), createdBy: i.createdBy }))
+
+  // --- API tokens ---
+  const TOKEN_LIMIT = 50
+  const tokenState = (t: TokenRec): ApiToken['state'] => (t.revoked !== null ? 'revoked' : t.expires !== null && t.expires <= now() ? 'expired' : 'active')
+  const publicToken = (t: TokenRec): ApiToken => {
+    const owner = users.get(t.userId)
+    return {
+      id: t.id,
+      name: t.name,
+      prefix: t.prefix,
+      access: t.access,
+      // A space is named only while its owner is a member of it.
+      spaces: t.spaces.map((id) => ({ id, name: spaces.get(id)?.members.has(t.userId) && owner ? spaces.get(id)!.name : '' })),
+      created: rfc3339(t.created),
+      expires: t.expires === null ? null : rfc3339(t.expires),
+      lastUsed: null,
+      revoked: t.revoked === null ? null : rfc3339(t.revoked),
+      state: tokenState(t),
+    }
+  }
+  const newestFirst = (a: TokenRec, b: TokenRec) => b.created - a.created || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)
+  const createToken = (me: UserRec, body: Record<string, unknown>): MockResponse => {
+    const name = typeof body.name === 'string' ? body.name.trim() : ''
+    if (codePoints(name) < 1 || codePoints(name) > 80) throw new HttpError(400, 'invalid', '名称要 1 到 80 个字')
+    const access = body.access === undefined || body.access === '' ? 'read' : body.access
+    if (access !== 'read' && access !== 'write') throw new HttpError(400, 'invalid', 'access 要是 read 或 write')
+    const days = body.expiresInDays === undefined ? 90 : body.expiresInDays
+    if (typeof days !== 'number' || !Number.isInteger(days) || days < 0 || days > 365) throw new HttpError(400, 'invalid', 'expiresInDays 要在 1 到 365 之间，0 是永不过期')
+    if (!Array.isArray(body.spaces) || body.spaces.length < 1 || body.spaces.length > 100 || !body.spaces.every((x) => typeof x === 'string')) throw new HttpError(400, 'invalid', '要选 1 到 100 个空间')
+    const ids = [...new Set(body.spaces as string[])]
+    for (const id of ids) if (!spaces.get(id)?.members.has(me.id)) throw new HttpError(404, 'not_found', `没有这个空间：${id}`)
+    const live = [...apiTokens.values()].filter((t) => t.userId === me.id && tokenState(t) === 'active').length
+    if (live >= TOKEN_LIMIT) throw new HttpError(400, 'token_limit', '有效的令牌已有 50 个，先吊销一个')
+    const secret = 'pbk_' + randomString(43)
+    const rec: TokenRec = {
+      id: newId((x) => apiTokens.has(x)),
+      userId: me.id,
+      name,
+      prefix: secret.slice(0, 12),
+      access,
+      spaces: ids,
+      created: now(),
+      expires: days === 0 ? null : now() + days * 86_400_000,
+      revoked: null,
+    }
+    apiTokens.set(rec.id, rec)
+    return { status: 201, body: { token: publicToken(rec), secret } }
+  }
+  const revokeToken = (id: string, owner: string | null) => {
+    const t = apiTokens.get(id)
+    if (!t || (owner !== null && t.userId !== owner)) throw new HttpError(404, 'not_found', '没有这个令牌')
+    if (t.revoked === null) t.revoked = now()
+  }
+  const adminTokens = (url: URL): MockResponse => {
+    let limit = 50
+    if (url.searchParams.has('limit')) {
+      const raw = url.searchParams.get('limit') ?? ''
+      const n = /^\d+$/.test(raw) ? Number(raw) : NaN
+      if (!(n >= 1 && n <= 200)) throw new HttpError(400, 'invalid', 'limit 要在 1 到 200 之间')
+      limit = n
+    }
+    const user = url.searchParams.get('user')
+    const after = url.searchParams.get('cursor') ?? ''
+    const all = [...apiTokens.values()].filter((t) => !user || t.userId === user).sort(newestFirst)
+    const from = after ? all.findIndex((t) => t.id === after) + 1 : 0
+    const rest = all.slice(from)
+    const page = rest.slice(0, limit)
+    const items: AdminToken[] = page.map((t) => {
+      const o = users.get(t.userId)
+      return { ...publicToken(t), owner: { id: t.userId, username: o?.username ?? '', name: o?.name ?? '' } }
+    })
+    return { status: 200, body: { items, next: rest.length > limit ? page[page.length - 1].id : '' } }
+  }
 
   // --- spaces ---
   // Opening a space (the real server's `handle`): someone who is no member, and
@@ -1400,9 +1487,16 @@ export function createMockServer(options: MockOptions = {}) {
     }
 
     // --- account ---
-    if (path === '/account' || path === '/account/password' || path.startsWith('/account/identities/')) {
+    if (path === '/account' || path === '/account/password' || path.startsWith('/account/identities/') || path === '/account/tokens' || path.startsWith('/account/tokens/')) {
       accountsOnly()
       const me = requireUser(ctx)
+      if (path === '/account/tokens' && method === 'GET') return j({ tokens: [...apiTokens.values()].filter((t) => t.userId === me.id).sort(newestFirst).map(publicToken) })
+      if (path === '/account/tokens' && method === 'POST') return createToken(me, body)
+      const tok = /^\/account\/tokens\/([^/]+)$/.exec(path)
+      if (tok && method === 'DELETE') {
+        revokeToken(decodeURIComponent(tok[1]), me.id)
+        return { status: 204 }
+      }
       if (path === '/account' && method === 'GET') return j(accountInfo(me))
       if (path === '/account' && method === 'PATCH') return j(patchAccount(me, body))
       if (path === '/account/password' && method === 'POST') {
@@ -1455,6 +1549,27 @@ export function createMockServer(options: MockOptions = {}) {
       accountsOnly()
       requireAdmin(ctx)
       return routeAdmin(method, path, url, body)
+    }
+    if (path === '/admin/access' || path === '/admin/tokens' || path.startsWith('/admin/tokens/')) {
+      accountsOnly()
+      requireAdmin(ctx)
+      if (path === '/admin/access') {
+        if (method === 'PUT') {
+          for (const k of ['tokens', 'mcp'] as const) {
+            const v = body[k]
+            if (v !== undefined && typeof v !== 'boolean') throw new HttpError(400, 'invalid', `${k} 要是布尔值`)
+            if (typeof v === 'boolean') machine[k] = v
+          }
+        }
+        // The authorization server is not part of the mock.
+        return j({ tokens: machine.tokens, mcp: machine.mcp, oauth: false })
+      }
+      if (path === '/admin/tokens' && method === 'GET') return adminTokens(url)
+      const one = /^\/admin\/tokens\/([^/]+)$/.exec(path)
+      if (one && method === 'DELETE') {
+        revokeToken(decodeURIComponent(one[1]), null)
+        return { status: 204 }
+      }
     }
     if (path === '/admin/daily' || path.startsWith('/admin/daily/')) {
       accountsOnly()

@@ -6,7 +6,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, enc, request } from './client'
 import { keys } from './hooks'
-import type { AdminDaily, AdminSpaceList, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User } from './types'
+import type { AdminDaily, AdminTokenList, MachineAccess, AdminSpaceList, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User } from './types'
 
 export const adminApi = {
   // --- users and invites ---
@@ -41,6 +41,18 @@ export const adminApi = {
   adminEnableSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/enable`, { method: 'POST' }),
   adminDeleteSpace: (id: string) => request<DeletedSpace>(`/admin/spaces/${enc(id)}`, { method: 'DELETE' }),
   adminStatus: (signal?: AbortSignal) => request<ServerStatus>('/admin/status', { signal }),
+
+  // --- machine access: API tokens ---
+  access: (signal?: AbortSignal) => request<MachineAccess>('/admin/access', { signal }),
+  putAccess: (input: { tokens?: boolean; mcp?: boolean }) => request<MachineAccess>('/admin/access', { method: 'PUT', body: input }),
+  adminTokens: (params: { cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<AdminTokenList>(`/admin/tokens${qs ? `?${qs}` : ''}`, { signal })
+  },
+  adminRevokeToken: (id: string) => request<void>(`/admin/tokens/${enc(id)}`, { method: 'DELETE' }),
 
   // --- the daily text of the whole server ---
   daily: (signal?: AbortSignal) => request<AdminDaily>('/admin/daily', { signal }),
@@ -170,4 +182,32 @@ export const useSaveDailyLines = () => useDailyWrite((input: { lang: string; tex
 export const useDeleteDailyLines = () => useDailyWrite((lang: string) => adminApi.deleteDailyLines(lang))
 export function useTryDailyApi() {
   return useMutation({ mutationFn: ({ api, lang, date }: { api: Omit<DailyApi, 'note'>; lang: string; date: string }) => adminApi.tryDailyApi(api, lang, date) })
+}
+
+// --- machine access ------------------------------------------------------------------
+
+export function useMachineAccess(enabled = true) {
+  return useQuery({ queryKey: keys.adminAccess, queryFn: ({ signal }) => adminApi.access(signal), enabled, staleTime: 15_000 })
+}
+
+export function useSetMachineAccess() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { tokens?: boolean; mcp?: boolean }) => adminApi.putAccess(input),
+    onSuccess: (a) => qc.setQueryData(keys.adminAccess, a),
+  })
+}
+
+export const ADMIN_TOKENS_PAGE = 50
+
+// Every person's tokens, a cursor page at a time.
+export function useAdminTokens(enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.adminTokens,
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => adminApi.adminTokens({ cursor: pageParam || undefined, limit: ADMIN_TOKENS_PAGE }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled,
+    staleTime: 15_000,
+  })
 }

@@ -10,6 +10,8 @@ import { boardsEn } from './boards/en'
 import { boardsZhCN } from './boards/zh-CN'
 import { homeEn } from './home/en'
 import { homeZhCN } from './home/zh-CN'
+import { tokensEn } from './tokens/en'
+import { tokensZhCN } from './tokens/zh-CN'
 
 describe('decideLanguage', () => {
   it('uses a saved choice over the browser', () => {
@@ -118,6 +120,7 @@ describe('dictionaries', () => {
     walk(propsZhCN, propsEn, 'props', problems)
     walk(boardsZhCN, boardsEn, 'boards', problems)
     walk(homeZhCN, homeEn, 'home', problems, true)
+    walk(tokensZhCN, tokensEn, 'tokens', problems)
     expect(problems).toEqual([])
   })
   it('English has no Chinese text in it', () => {
@@ -138,6 +141,7 @@ describe('dictionaries', () => {
     scan(propsEn, 'props')
     scan(boardsEn, 'boards')
     scan(homeEn, 'home')
+    scan(tokensEn, 'tokens')
     expect(found).toEqual([])
   })
   it('the sentences of the greeting use only the placeholders the code fills, in both languages', () => {
