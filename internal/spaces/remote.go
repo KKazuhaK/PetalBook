@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -333,6 +334,23 @@ func (m *Manager) SSHKey(ctx context.Context, h *Handle, rotate bool) (publicKey
 	return k.Public, k.Fingerprint, nil
 }
 
+// sameTenant refuses a via "user" credential of someone outside the space's
+// tenant: a person's GitHub connection syncs only spaces of their own tenant.
+// It can only come up for a site administrator, who may open a space of any
+// tenant; everyone else reaches only spaces of their own. Two lookups by key.
+func (m *Manager) sameTenant(ctx context.Context, spaceID, userID string) error {
+	sp, err := store.GetSpace(ctx, m.opt.Store.Q(), store.AllTenants(), spaceID) // the space the caller has open, by id
+	if err != nil {
+		return err
+	}
+	_, err = store.GetUser(ctx, m.opt.Store.Q(), store.InTenant(sp.TenantID), userID)
+	if errors.Is(err, store.ErrNotFound) {
+		return &github.Error{Code: github.CodeForbidden, Status: http.StatusForbidden,
+			Msg: "a GitHub connection syncs only spaces of its own tenant: use the App (via app), or let someone of the space's tenant connect it"}
+	}
+	return err
+}
+
 // Connect makes the space follow a remote repository. It does not return
 // until the space and the remote agree (see space.Connect).
 func (m *Manager) Connect(ctx context.Context, h *Handle, req ConnectRequest) (*RemoteView, error) {
@@ -348,6 +366,11 @@ func (m *Manager) Connect(ctx context.Context, h *Handle, req ConnectRequest) (*
 	var ghCred *github.Cred
 	if req.CredType == CredGitHub {
 		var err error
+		if req.Via == github.ViaUser {
+			if err := m.sameTenant(ctx, id, req.UserID); err != nil {
+				return nil, err
+			}
+		}
 		if remote, ghCred, err = m.resolveGitHub(ctx, req); err != nil {
 			return nil, err
 		}

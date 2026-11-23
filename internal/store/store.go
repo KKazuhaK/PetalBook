@@ -141,6 +141,28 @@ func OpenAtVersion(ctx context.Context, target string, max int) (*Store, error) 
 	return s, nil
 }
 
+// OpenWithoutVersion is OpenAtVersion for a database that has every version
+// but skip, as one migrated on a branch that did not have that file yet; the
+// tenant state is not loaded. Migrate then applies the missing version, as the
+// first start after a merge does. It is for the tests of migrations.
+func OpenWithoutVersion(ctx context.Context, target string, skip int) (*Store, error) {
+	var s *Store
+	var err error
+	if strings.HasPrefix(target, "postgres://") || strings.HasPrefix(target, "postgresql://") {
+		s, err = openPostgres(target)
+	} else {
+		s, err = openSQLite(target)
+	}
+	if err != nil {
+		return nil, redact(err, target)
+	}
+	if err := s.migrateWhere(ctx, func(v int) bool { return v != skip }); err != nil {
+		s.Close()
+		return nil, redact(err, target)
+	}
+	return s, nil
+}
+
 // Migrate brings the schema up to date, as Open does at every start.
 func (s *Store) Migrate(ctx context.Context) error {
 	if err := s.migrate(ctx); err != nil {

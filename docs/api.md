@@ -1442,6 +1442,16 @@ App"); only `github.com` is supported. Three things come from it:
 - **Spaces made with a new repository** (`POST /api/spaces` with `github`),
   and existing spaces switched to the App (`PUT …/remote`).
 
+**Tenants (3.3).** The App and its installations are the server's: only site
+administrators reach `/api/admin/github…` (a tenant administrator gets
+`403 forbidden`, as for the other site-only routes), and an installation a site
+administrator shares is shared with the people of **every** tenant (see
+`PUT /api/admin/github/installations/{id}`). A GitHub connection is its user's,
+so it is in the user's tenant: it syncs only spaces of that tenant. One GitHub
+account links to one PetalBook user on the whole server, whatever their
+tenants; `account_in_use` says only that it is taken. A space made with a
+repository is the creator's tenant's and counts toward its quotas.
+
 Every route here is a person's, not a token's: with an API token, `/api/github/…`
 and `/api/admin/github…` answer `403 token_scope` (see "API tokens"), and so
 do `POST /api/spaces` and `PUT …/remote`.
@@ -1536,7 +1546,9 @@ account with `GET /user`.
 Codes: `denied` (the user cancelled on GitHub), `expired` (the attempt is
 unknown, used, older than 10 minutes, or of another user), `github_error`
 (GitHub refused the exchange or could not be reached), `account_in_use`
-(another PetalBook user has connected this GitHub account), `different_account`
+(another PetalBook user has connected this GitHub account, in any tenant: the
+GitHub account id is unique on the server; the answer names neither the user
+nor the tenant), `different_account`
 (the caller has spaces syncing through another GitHub account: disconnect
 first, or switch those spaces).
 
@@ -1646,7 +1658,10 @@ commit is the repository's first commit, on `main`. The order:
 
 1. Checks that need no network: the fields, that `github.com` is among the
    hosts the administrator allows (`--remote-host`; otherwise `403 forbidden`,
-   as for any other remote on a host that is not allowed), `--max-spaces`, the
+   as for any other remote on a host that is not allowed), the spaces quota
+   (the person's and the tenant's, as for any `POST /api/spaces`:
+   `403 quota_exceeded`; spaces still being made with a repository count as
+   made, so parallel requests cannot pass it), the
    owner, and that the tokens it needs exist (App configured, caller connected and not
    `expired` when `via` is `user`).
 2. The space is made on disk (`git init`, `space.yml`, the first commit). No
@@ -1674,9 +1689,10 @@ commit is the repository's first commit, on `main`. The order:
    that case. Every other refusal of the credential (`401`, `403`,
    "Authentication failed") and a credential the server could not get at all
    are not retried.
-6. In one transaction: the space, the caller as its owner, and its remote
-   (`github`, `via`, the installation, the repository id, the user). Then the
-   space becomes visible.
+6. In one transaction: the space (in the caller's tenant), the caller as its
+   owner, and its remote (`github`, `via`, the installation, the repository id,
+   the user); the usage rows count it as any new space. Then the space becomes
+   visible.
 
 When a step fails:
 
@@ -1732,7 +1748,9 @@ token is deleted.
   space then syncs as the caller on GitHub. Someone else with `manage` who
   `PUT`s it again ties it to themself. It keeps working only while that user
   can sign in, still has `manage` in the space (directly or through a group:
-  the union of their roles counts), and is connected.
+  the union of their roles counts), and is connected. The caller must be in the
+  space's tenant (which only a site administrator, who may open a space of any
+  tenant, can fail): otherwise `403 forbidden`, before GitHub is asked.
 
 A `github` credential does not get around `--remote-host`: when `github.com`
 is not an allowed host the answer is `403 forbidden`, as for any other remote
@@ -1742,7 +1760,8 @@ Errors, besides those of `PUT …/remote`: `409 github_not_configured`;
 `409 github_not_authorized` (the caller has no connection, or it is
 `expired`); `409 github_repo_not_in_installation` (`via: "app"` and no
 installation reaches the repository); `403 github_owner_not_allowed` (the
-installation is not shared and the caller's connection cannot push there).
+installation is not shared and the caller's connection cannot push there);
+`403 forbidden` (`via: "user"` and the caller is not in the space's tenant).
 
 ### When a GitHub credential stops working
 
@@ -4678,6 +4697,11 @@ reviewed and tested):
   administrator); a method without one does not compile. The few that must look
   across tenants say why next to the code: a session or token by its id, a
   sign-in by username or identity, the background jobs.
+  2.7's tables follow the same rule: a GitHub connection hangs off its user and
+  a remote off its space, so they carry no `tenant_id`; the methods that reach
+  across users (the daily renewal, the App's counts and the revocation when the
+  App is removed, both site administrators only) and the App's installations
+  (site-wide) are on the same list with their reasons.
 - **Links between rows are checked by the database write itself**: adding a
   member, a group to a space, a person to a group, or transferring a space is an
   `INSERT … SELECT` that joins both rows on the same `tenant_id`, so a missed
@@ -4735,7 +4759,7 @@ The User object gains:
 | `/api/admin/spaces…`, `/api/admin/groups…`, `/api/admin/tokens…`, `/api/admin/grants…`, `/api/admin/usage` | their tenant | every tenant (`?tenant=`) |
 | `GET /api/admin/audit` | their tenant's rows, without the site's kinds (security, providers, mail, tenants, site settings) | every row (`?tenant=`) |
 | `GET /api/admin/tenants/{own}`, `PATCH` of its `name`, `…/settings` of their tenant | yes | every tenant |
-| `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/access`, `/api/admin/daily…`, `/api/admin/status`, `/api/admin/settings…` (site layer), `/api/admin/tenancy`, the tenant list, create, delete, `disabled`, `slug`, `quota`, and 3.1's `/api/admin/storage` | `403 forbidden` | yes |
+| `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/access`, `/api/admin/daily…`, `/api/admin/github…` (2.7), `/api/admin/status`, `/api/admin/settings…` (site layer), `/api/admin/tenancy`, the tenant list, create, delete, `disabled`, `slug`, `quota`, and 3.1's `/api/admin/storage` | `403 forbidden` | yes |
 
 The daily text's tenant default is a tenant setting (see "Settings by layer"),
 not `/api/admin/daily`, which stays the site's.
@@ -6059,7 +6083,8 @@ when there is no App.
 
 #### `PUT /api/admin/github/installations/{id}`
 
-`{"shared": true}`. A shared installation lets every member create
+`{"shared": true}`. Sharing is site-wide: a shared installation lets every
+member of every tenant create
 repositories in that organisation and connect spaces to its repositories with
 the installation token, without a GitHub account of their own; GitHub then
 does not know who asked (the commits still name the PetalBook user as

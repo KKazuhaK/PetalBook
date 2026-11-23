@@ -38,6 +38,7 @@ const (
 	CodeClientRejected   = "github_client_rejected"
 	CodeAppInUse         = "github_app_in_use"
 	CodeInvalid          = "invalid"
+	CodeForbidden        = "forbidden"
 	CodeNotFound         = "not_found"
 	CodeRateLimited      = "rate_limited"
 	CodeUnavailable      = "unavailable"

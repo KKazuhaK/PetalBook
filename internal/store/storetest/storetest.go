@@ -32,6 +32,26 @@ func EachAtVersion(t *testing.T, max int, fn func(t *testing.T, st *store.Store)
 	}
 }
 
+// EachWithoutVersion runs fn per available database, on a schema that has every
+// version but skip (see store.OpenWithoutVersion).
+func EachWithoutVersion(t *testing.T, skip int, fn func(t *testing.T, st *store.Store)) {
+	t.Helper()
+	open := func(ctx context.Context, target string) (*store.Store, error) {
+		return store.OpenWithoutVersion(ctx, target, skip)
+	}
+	t.Run("sqlite", func(t *testing.T) {
+		st, err := open(context.Background(), filepath.Join(t.TempDir(), "state.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { st.Close() })
+		fn(t, st)
+	})
+	if postgresDSN() != "" {
+		t.Run("postgres", func(t *testing.T) { fn(t, openPostgresWith(context.Background(), t, open)) })
+	}
+}
+
 // Each runs fn as a subtest per available database.
 func Each(t *testing.T, fn func(t *testing.T, st *store.Store)) {
 	t.Helper()
@@ -82,6 +102,17 @@ func openPostgres(ctx context.Context, t testing.TB) *store.Store {
 }
 
 func openPostgresAt(ctx context.Context, t testing.TB, max int) *store.Store {
+	return openPostgresWith(ctx, t, func(ctx context.Context, target string) (*store.Store, error) {
+		if max > 0 {
+			return store.OpenAtVersion(ctx, target, max)
+		}
+		return store.Open(ctx, target)
+	})
+}
+
+// openPostgresWith opens a store with open in a schema of its own, dropped when
+// the test ends.
+func openPostgresWith(ctx context.Context, t testing.TB, open func(ctx context.Context, target string) (*store.Store, error)) *store.Store {
 	dsn := postgresDSN()
 	if dsn == "" {
 		t.Skip(EnvPostgres + " is not set")
@@ -104,12 +135,7 @@ func openPostgresAt(ctx context.Context, t testing.TB, max int) *store.Store {
 	q := u.Query()
 	q.Set("search_path", schema)
 	u.RawQuery = q.Encode()
-	var st *store.Store
-	if max > 0 {
-		st, err = store.OpenAtVersion(ctx, u.String(), max)
-	} else {
-		st, err = store.Open(ctx, u.String())
-	}
+	st, err := open(ctx, u.String())
 	if err != nil {
 		admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
 		admin.Close()
