@@ -189,7 +189,12 @@ func TestARetrySucceeds(t *testing.T) {
 	}
 	srv.SetFailData("")
 	srv.Wait(1)
-	if st := s.Stats(); st.SentLastHour != 1 {
+	// The server has the message before the sender counts it: poll the count.
+	st := s.Stats()
+	for deadline := time.Now().Add(5 * time.Second); st.SentLastHour != 1 && time.Now().Before(deadline); st = s.Stats() {
+		time.Sleep(time.Millisecond)
+	}
+	if st.SentLastHour != 1 {
 		t.Fatalf("%+v", st)
 	}
 }

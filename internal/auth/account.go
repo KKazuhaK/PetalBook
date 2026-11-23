@@ -89,8 +89,8 @@ func (s *Service) UpdateProfile(ctx context.Context, u store.User, name, email *
 		return nil, err
 	}
 	if e != u.Email {
-		// A link sent to the old address does not confirm the new one.
-		if err := store.DeleteEmailTokens(ctx, s.st.Q(), u.ID, store.TokenVerify); err != nil {
+		// A link sent to the old address neither confirms the new one nor resets the password.
+		if err := store.DeleteEmailTokens(ctx, s.st.Q(), u.ID, ""); err != nil {
 			return nil, err
 		}
 	}
@@ -361,6 +361,10 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 				}
 				if newEmail != u.Email {
 					changed["email"] = newEmail
+					// Links sent to the old address stop working.
+					if err := store.DeleteEmailTokens(ctx, q, u.ID, ""); err != nil {
+						return err
+					}
 				}
 				if verified != u.EmailVerified {
 					changed["emailVerified"] = verified

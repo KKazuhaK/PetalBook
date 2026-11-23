@@ -4381,7 +4381,8 @@ The server checks, in this order, and stops at the first refusal:
 3. The `register` captcha context: `400 captcha_failed`.
 4. The fields: `400 invalid` (username form as for a User, name 1 to 80
    characters, the password rule of "Signing in", an address of at most 254
-   bytes that parses as one plain `local@domain`).
+   bytes, ASCII only, that parses as one plain `local@domain`; see "Email
+   addresses are ASCII").
 5. `registration.domains` not empty and the address's domain not in it (a
    domain also allows its subdomains): `400 email_domain_not_allowed`.
 6. A terms or privacy address set and `acceptTerms` not `true`:
@@ -4394,9 +4395,13 @@ The server checks, in this order, and stops at the first refusal:
 Then `202` with `{"sent": true}`, **always the same** whether or not a message
 goes out, so the answer never tells whether an address has an account:
 
-- if an enabled account of the tenant already has this verified address, no
-  registration is made and the address gets "you already have an account" with
-  a link to reset the password;
+- if an enabled account of the tenant already has this verified address (not
+  verified by a tenant administrator alone, see "Password reset"), no account
+  is made: the username is held for 24 hours by a registration whose link is
+  never sent, as it would be for a free address, so asking for the same
+  username again answers `409 exists` either way; and the account's stored
+  address (not the one typed) gets "you already have an account" with a link
+  to reset the password;
 - if the address got 3 messages of this server in the last hour, or the caller's
   address 5, nothing is sent (and nothing is said);
 - otherwise a **pending registration** is stored (the password already hashed,
@@ -4427,7 +4432,7 @@ password reset and for 2.8's merge by verified address.
 Signed in. `{"lang": "zh-Hans"}`. Sends a link
 `<public url>/verify-email#<token>` (valid 24 hours) to the account's current
 `email`. `202 {"sent": true}`. `409 mail_not_configured`; `400 invalid` when
-the account has no email; `409 email_verified` when it is verified already;
+the account has no email, or one stored with characters outside ASCII; `409 email_verified` when it is verified already;
 `429 rate_limited` after 3 in an hour.
 
 #### `POST /api/email/confirm`
@@ -4440,6 +4445,24 @@ for an address the account no longer has. Audit `email_verified`.
 `PATCH /api/account` with a new `email` (which clears `emailVerified`, as
 before) also sends a note to the old address when that one was verified ("the
 address of your account was changed"), with no link in it.
+
+Any change of an account's `email` (the person's `PATCH /api/account`, an
+administrator's `PATCH /api/users/{id}`) makes every verification and reset
+link sent before it unusable; a reset link also answers `404 not_found` once
+the account's `email` is no longer the one it was sent to.
+
+#### Email addresses are ASCII
+
+An `email` (registration, `PATCH /api/account`, an administrator's
+`PATCH /api/users/{id}`, a provider's claim) with any character
+outside ASCII is refused with `400 invalid` (from a provider: the account gets
+no address). Addresses are compared with A to Z made lower case and nothing
+else, in every lookup (registration, password reset, the merge by verified
+address of 2.8, `registration.domains`). Unicode case mapping would make
+look-alikes equal: `İ` (U+0130) and the Kelvin sign (U+212A) lower to `i` and
+`k`. An address stored before 3.3 with such characters is kept as it is, but
+matches no lookup and gets no account mail (no reset link, no verification
+link): the person or an administrator sets an ASCII address.
 
 ### Password reset
 
@@ -4454,7 +4477,11 @@ minute (`429 rate_limited`), on (`403 password_reset_off`), the `forgot`
 captcha context (`400 captcha_failed`). Then `202 {"sent": true}`, always the
 same. A message goes out only to an enabled account of the tenant (any tenant
 for a username) with a verified address, at most 3 an hour per account and 5
-per caller's address:
+per caller's address. An address only a tenant administrator marked verified
+(`email_verified_by` is `tenant_admin`) does not count here, as it does not for
+2.8's merge: a tenant administrator could give a member their own address and
+reset the password. The person verifies it with the link, or a site
+administrator marks it.
 
 - an account with a password gets a link `<public url>/reset-password#<token>`,
   valid 1 hour, usable once; asking again makes the earlier links unusable;
@@ -4485,7 +4512,8 @@ sign-in. `404 not_found` for a bad token (a failure of the address);
 #### `POST /api/users/{id}/password-reset`
 
 Administrators (in their scope). Sends the same link to the user's verified
-address. `202`. `409 email_unverified`, `409 mail_not_configured`,
+address. `202`. `409 email_unverified` (also for an address only a tenant
+administrator marked verified, whoever asks), `409 mail_not_configured`,
 `409 conflict` for an account without a password.
 
 ### Quotas

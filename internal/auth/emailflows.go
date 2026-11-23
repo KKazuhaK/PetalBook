@@ -211,7 +211,7 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 		return errf(Invalid, "a name is 1 to 80 characters")
 	}
 	email := strings.TrimSpace(p.Email)
-	if email == "" || !plainAddress(email) {
+	if _, ascii := store.EmailKey(email); email == "" || !ascii || !plainAddress(email) {
 		return errf(Invalid, "that does not look like an email address")
 	}
 	if err := CheckPassword(p.Password); err != nil {
@@ -252,11 +252,14 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 		return err
 	}
 	lang := mail.PickLang(p.Lang, "")
-	if exists, err := s.verifiedAccountOf(ctx, p.TenantID, email); err != nil {
+	exists, err := s.verifiedAccountOf(ctx, p.TenantID, email)
+	if err != nil {
 		return err
-	} else if exists != nil {
-		return s.mailExisting(ctx, *exists, email, lang, p.IP)
 	}
+	// The address's allowance, then the username is held, whether or not the
+	// address has an account: for one that has, the registration is a decoy
+	// whose link is never sent, so a second request for the username gets the
+	// same answer either way.
 	if _, ok := s.mailSlot(email, p.IP); !ok {
 		return nil
 	}
@@ -285,15 +288,23 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 		}
 		return err
 	}
+	if exists != nil {
+		return s.mailExisting(ctx, *exists, lang, p.IP)
+	}
 	if err := s.sendMail(mail.KindRegister, lang, email, mail.Vars{Username: username, Link: s.link("/register/confirm", tok), Hours: 24}); err != nil {
 		s.log.Warn("could not queue a registration message", "reason", err.Error())
 	}
 	return nil
 }
 
+// domainAllowed compares in EmailKey form: an address that is not ASCII is
+// in no domain.
 func domainAllowed(email string, domains []string) bool {
-	at := strings.LastIndex(email, "@")
-	d := strings.ToLower(email[at+1:])
+	key, ok := store.EmailKey(email)
+	if !ok {
+		return false
+	}
+	d := key[strings.LastIndex(key, "@")+1:]
 	for _, a := range domains {
 		if d == a || strings.HasSuffix(d, "."+a) {
 			return true
@@ -303,26 +314,47 @@ func domainAllowed(email string, domains []string) bool {
 }
 
 // verifiedAccountOf finds an enabled account of the tenant that has this
-// address verified.
+// address verified, in a way that may be sent account mail (resetAddressOK).
 func (s *Service) verifiedAccountOf(ctx context.Context, tenant, email string) (*store.User, error) {
 	us, err := store.UsersByEmail(ctx, s.st.Q(), s.st.Dialect(), store.InTenant(tenant), email, 20)
 	if err != nil {
 		return nil, err
 	}
 	for _, u := range us {
-		if u.EmailVerified && !u.Disabled {
+		if u.Disabled {
+			continue
+		}
+		if ok, err := s.resetAddressOK(ctx, u); err != nil {
+			return nil, err
+		} else if ok {
 			return &u, nil
 		}
 	}
 	return nil, nil
 }
 
-// mailExisting tells an address that already has an account so, with a link
-// to reset the password (or to sign in with the provider).
-func (s *Service) mailExisting(ctx context.Context, u store.User, email, lang, ip string) error {
-	if _, ok := s.mailSlot(email, ip); !ok {
-		return nil
+// resetAddressOK says whether an account's address may be sent a link that
+// signs in to it: there is one, it is ASCII (see store.EmailKey; one stored
+// before is kept but gets no such mail), and it is verified by the person, a
+// provider or a site administrator. A tenant administrator's mark alone does
+// not count, as for merging a sign-in: they could give a person of their
+// tenant their own address.
+func (s *Service) resetAddressOK(ctx context.Context, u store.User) (bool, error) {
+	if _, ascii := store.EmailKey(u.Email); u.Email == "" || !ascii || !u.EmailVerified {
+		return false, nil
 	}
+	by, err := store.EmailVerifiedBy(ctx, s.st.Q(), u.ID)
+	if err != nil {
+		return false, err
+	}
+	return by != store.VerifiedByTenantAdmin, nil
+}
+
+// mailExisting tells an account's stored address, never the address typed,
+// that it already has an account, with a link to reset the password (or to
+// sign in with the provider). The caller has spent the address's allowance.
+func (s *Service) mailExisting(ctx context.Context, u store.User, lang, ip string) error {
+	email := u.Email
 	links, sso, err := s.resetLinks(ctx, []store.User{u}, "user", "", ip)
 	if err != nil {
 		return err
@@ -392,6 +424,9 @@ func (s *Service) RequestEmailVerify(ctx context.Context, u store.User, lang, ip
 	if u.Email == "" {
 		return errf(Invalid, "this account has no email address; set one first")
 	}
+	if _, ascii := store.EmailKey(u.Email); !ascii {
+		return errf(Invalid, "this address has characters other than ASCII; set it again")
+	}
 	if u.EmailVerified {
 		return coded(409, "email_verified", "this address is already verified")
 	}
@@ -426,7 +461,8 @@ func (s *Service) ConfirmEmail(ctx context.Context, token, ip string) error {
 		return err
 	}
 	u, err := store.GetUser(ctx, s.st.Q(), store.AllTenants(), t.UserID)
-	if errors.Is(err, store.ErrNotFound) || err == nil && (u.Disabled || s.st.TenantDisabled(u.TenantID) || u.Email != t.Email || !ctEqual(t.Hash, hash)) {
+	_, ascii := store.EmailKey(t.Email)
+	if errors.Is(err, store.ErrNotFound) || err == nil && (u.Disabled || s.st.TenantDisabled(u.TenantID) || u.Email != t.Email || !ascii || !ctEqual(t.Hash, hash)) {
 		return errBadLink()
 	} else if err != nil {
 		return err
@@ -454,7 +490,7 @@ func (s *Service) ConfirmEmail(ctx context.Context, token, ip string) error {
 // was changed. The note has no link; nothing is said when mail is off or the
 // address has had its messages for the hour.
 func (s *Service) NoteEmailChange(old store.User, lang, ip string) {
-	if !s.MailEnabled() || old.Email == "" || !old.EmailVerified {
+	if _, ascii := store.EmailKey(old.Email); !s.MailEnabled() || old.Email == "" || !ascii || !old.EmailVerified {
 		return
 	}
 	if _, ok := s.mailSlot(old.Email, ip); !ok {
@@ -500,15 +536,24 @@ func (s *Service) Forgot(ctx context.Context, p ForgotParams) error {
 			return err
 		}
 		for _, u := range us {
-			if u.EmailVerified && !u.Disabled && !s.st.TenantDisabled(u.TenantID) && len(accounts) < maxResetLinks {
+			if u.Disabled || s.st.TenantDisabled(u.TenantID) || len(accounts) >= maxResetLinks {
+				continue
+			}
+			if ok, err := s.resetAddressOK(ctx, u); err != nil {
+				return err
+			} else if ok {
 				accounts = append(accounts, u)
 			}
 		}
 	} else if un, err := NormalizeUsername(login); err == nil {
 		switch u, err := store.GetUserByUsername(ctx, s.st.Q(), un); {
 		case err == nil:
-			if u.EmailVerified && u.Email != "" && !u.Disabled && !s.st.TenantDisabled(u.TenantID) {
-				accounts = append(accounts, *u)
+			if !u.Disabled && !s.st.TenantDisabled(u.TenantID) {
+				if ok, err := s.resetAddressOK(ctx, *u); err != nil {
+					return err
+				} else if ok {
+					accounts = append(accounts, *u)
+				}
 			}
 		case !errors.Is(err, store.ErrNotFound):
 			return err
@@ -629,7 +674,9 @@ func (s *Service) findReset(ctx context.Context, token string) (*store.EmailToke
 	} else if err != nil {
 		return nil, nil, err
 	}
-	if u.Disabled || s.st.TenantDisabled(u.TenantID) {
+	// The link is for the address it was sent to: once the address changes it
+	// is no good, however the change was made.
+	if u.Disabled || s.st.TenantDisabled(u.TenantID) || t.Email != u.Email {
 		return nil, nil, errBadLink()
 	}
 	if ok, err := s.canUsePassword(ctx, s.st.Q(), *u); err != nil {
@@ -712,7 +759,9 @@ func (s *Service) AdminPasswordReset(ctx context.Context, actor store.User, ip, 
 	if err := s.needMail(); err != nil {
 		return err
 	}
-	if u.Email == "" || !u.EmailVerified {
+	if ok, err := s.resetAddressOK(ctx, *u); err != nil {
+		return err
+	} else if !ok {
 		return coded(409, "email_unverified", "this account has no verified email address")
 	}
 	ok, err := s.canUsePassword(ctx, s.st.Q(), *u)

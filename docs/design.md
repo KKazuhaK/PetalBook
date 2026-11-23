@@ -2768,12 +2768,32 @@ registration and mail」一节，以及「Signing in」（`GET /api/auth/provide
   `none` 只能回环、头注入、重试和丢弃、队列上限）、`internal/api` 里每个流程和每个错误码；web 用 Vitest。
   只跑了相关的包，没有跑 `make check-full`。
 - **已知问题**：
-  - 找回密码在「账号存在」和「不存在」两条路径上的数据库工作量略有不同（存在时多写一行令牌），理论上
-    能从响应时间猜到；没有做成固定耗时。
+  - 找回密码的时间差：回答完全一样（测试逐字节比较），但账号存在时多一次写（存一行重置令牌）、多一次查
+    （`email_verified_by`），理论上能从响应时间猜出账号存不存在；没有做成固定耗时。
   - 发信状态（`status`）在内存里，重启后是「还没有发过」。
   - 邮件模板在 Go 代码里（`internal/mail/templates.go`），只有 `en` 和 `zh-Hans` 两种；合同说的「i18n 文件」
     指这里，web 的 i18n 文件不管服务器发的信。
   - 注册确认时若用户名在这期间被管理员占用，答 `409 exists`，待确认的行随事务回滚而保留，到期才清。
+- **第一轮审查的修复**（每条先写失败的测试，`internal/api/emailsafety_test.go` 等）：
+  - **邮箱地址只收 ASCII**：Go 的 `strings.ToLower` 把 `İ`（U+0130）变成 `i`、开尔文符号 `K`（U+212A）
+    变成 `k`，所以 `tom@gİthub.test` 能匹配上 `tom@github.test` 的账号，「你已经有账号」和重置链接会发到
+    长得像的地址；同样的折叠能绕过 `registration.domains`，也能经 2.8 的按邮箱合并接管账号。现在
+    `cleanEmail` 和注册拒绝任何非 ASCII 字符（`400 invalid`），比较一律用 `store.EmailKey`（只把 A–Z 变小写），
+    数据库里也只折叠 ASCII（PostgreSQL 用 `translate`，SQLite 用注册的 `petalbook_ascii_lower`，不受
+    数据库 locale 影响）；账号邮件一律发到库里存的 `u.Email`，不发到用户输入的地址。
+  - **已有的非 ASCII 地址**（2.8 及以前存下的）：不迁移、不改写，原样保留；但它们不匹配任何查找（注册、
+    找回、合并、域名白名单），也收不到任何账号邮件（找回链接、管理员发的重置答 `409 email_unverified`、
+    要验证邮件答 `400 invalid`、改邮箱的提醒不发）。本人或管理员改成 ASCII 地址后一切照常。只改名字时
+    地址不动。测试：`TestAStoredNonASCIIAddressGetsNoAccountMail`、`TestUsersByEmailNeverFoldsBeyondASCII`。
+  - **注册探测**：地址已有账号时也占住用户名（一行不发链接的待确认注册，同样 24 小时），所以「同一个用户名、
+    换个地址再来一次」在两种情况下都答 `409 exists`。先过地址的每小时额度再占用户名，两条路径顺序一样。
+  - **改邮箱作废重置链接**：本人改、管理员改都删掉这个人的全部邮件令牌；`findReset` 还要求令牌的地址等于
+    账号当前的地址。
+  - **租户管理员的标记不算**：`email_verified_by = tenant_admin` 的地址在找回、管理员发重置、「你已经有
+    账号」里都当成未验证，和 2.8 合并一样；否则租户管理员给成员设上自己的邮箱并标成已验证，就能重置密码。
+  - **每小时额度表满了就拒绝**，不再挤掉最久没用的那一项（挤掉会让被限的地址重新有额度）；一小时没用过的
+    项才腾出位置。
+  - `TestARetrySucceeds` 在 `-race` 下不稳：服务器收到信比发送方计数早，改成在期限内轮询 `Stats()`。
 - **还没做的**：配额和用量（`usage` 表、`quota.*` 设置、`users.quota`、租户的 `usage`、
   `GET /api/account/usage`、`GET /api/admin/usage`、`quota_exceeded`），`POST /api/admin/tenants` 的 `admin`
   预填邀请。
