@@ -73,6 +73,17 @@ describe('normalizeUrl', () => {
     expect(normalizeUrl('javascript:alert(1)')).toBeNull()
     expect(normalizeUrl('  ')).toBeNull()
   })
+  it('keeps a bare address of a Markdown file as a page path', async () => {
+    const { normalizeUrl } = await import('./url')
+    expect(normalizeUrl('Other.md')).toBe('Other.md')
+    expect(normalizeUrl('子目录/页.md')).toBe('子目录/页.md')
+    expect(normalizeUrl('Other.md#节')).toBe('Other.md#节')
+    expect(normalizeUrl('../a.md')).toBe('../a.md')
+    expect(normalizeUrl('example.com')).toBe('https://example.com')
+    expect(normalizeUrl('foo.md.example.com')).toBe('https://foo.md.example.com')
+    expect(normalizeUrl('https://x.md')).toBe('https://x.md')
+    expect(normalizeUrl('//x.md')).toBe('//x.md')
+  })
 })
 
 describe('sign-in return paths', () => {

@@ -564,9 +564,29 @@ describe('a link changed or typed by hand', () => {
     )
     await act(async () => cursorInText('暮雪'))
     const input = await linkInput()
-    await type(input, './Other.md')
+    await type(input, 'Other.md')
     await press(input, 'Enter')
-    expect(markdown()).toBe('见[暮雪](./Other.md)。')
+    expect(markdown()).toBe('见[暮雪](Other.md)。')
+  })
+
+  it('a bare page path typed in the popover takes the id of that page when the report knows it', async () => {
+    let ids = { muxue: '', there: '' }
+    await openPage(
+      'editor',
+      ({ make }) => {
+        const muxue = make('暮雪', 'Tang').id
+        const there = make('别处', '').id
+        ids = { muxue, there }
+        return make('主页', '', `见[暮雪](Tang/暮雪.md "${muxue}")和[别处](别处.md "${there}")。`).id
+      },
+      '见',
+    )
+    await settle(() => body().querySelectorAll('.pb-page-link[title]').length === 2, 'the links report')
+    await act(async () => cursorInText('暮雪'))
+    const input = await linkInput()
+    await type(input, '别处.md')
+    await press(input, 'Enter')
+    expect(markdown()).toBe(`见[暮雪](别处.md "${ids.there}")和[别处](别处.md "${ids.there}")。`)
   })
 
   it('Ctrl-click on a link the report does not list yet finds the page by its file', async () => {
