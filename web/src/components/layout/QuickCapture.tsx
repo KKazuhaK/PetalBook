@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useNavigate } from 'react-router'
 import { PenLine } from 'lucide-react'
 import { toast } from 'sonner'
+import { tzOffset } from '@/lib/templates'
 import { useActiveSpace, useCreatePage, useSession, useUrls } from '@/api/hooks'
 import { can } from '@/lib/permissions'
 import { FormMessage } from '@/components/auth/Field'
@@ -98,7 +99,7 @@ function CaptureForm({ space, inbox, onClose, onDone, onBusy }: { space: string;
     setError('')
     try {
       // An untitled page: the text is all there is (docs/design.md, 3.2).
-      const page = await create.mutateAsync({ folder: inbox, body })
+      const page = await create.mutateAsync({ folder: inbox, body, tz: tzOffset() })
       saveCapture(key, '')
       onDone()
       toast.success(t.capture.saved, { action: { label: t.capture.open, onClick: () => navigate(urls.page(page.id)) } })

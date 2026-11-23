@@ -24,6 +24,8 @@ import { MembersPanel } from './MembersPanel'
 const TypesPanel = lazy(() => import('./TypesPanel'))
 // So is the home page's setup, which has the words of the home page with it.
 const HomePanel = lazy(() => import('./HomePanel'))
+// And the templates', which have the words of templates with them.
+const TemplatesPanel = lazy(() => import('./TemplatesPanel'))
 
 // The settings surface: one dialog, reached from `/settings/<section>`. It is a
 // route so a link, a reload and the old addresses all work; what is behind it is
@@ -88,6 +90,13 @@ export default function SettingsRoute() {
         body = (
           <Suspense fallback={<PageFallback />}>
             <TypesPanel canManage={can(current, 'manage')} />
+          </Suspense>
+        )
+        break
+      case 'templates':
+        body = (
+          <Suspense fallback={<PageFallback />}>
+            <TemplatesPanel canManage={can(current, 'manage')} />
           </Suspense>
         )
         break

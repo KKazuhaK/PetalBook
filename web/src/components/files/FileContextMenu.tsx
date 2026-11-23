@@ -1,5 +1,5 @@
 import { createContext, useContext, useRef, useState, type MouseEvent, type ReactNode, type TouchEvent } from 'react'
-import { FilePlus2, FolderInput, FolderPlus, ListChecks, MoreHorizontal, PenLine, Shapes, SquareArrowOutUpRight, Star, StarOff, Trash2 } from 'lucide-react'
+import { FilePlus2, FolderInput, FolderPlus, LayoutTemplate, ListChecks, MoreHorizontal, PenLine, Shapes, SquareArrowOutUpRight, Star, StarOff, Trash2 } from 'lucide-react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { useCanFavorite, useSpacePermissions } from '@/api/hooks'
 import { useToggleFavorite } from '@/components/favorites/StarButton'
@@ -97,6 +97,12 @@ export function FileContextMenu({
                 <ContextMenuItem onClick={() => ops.setType(one.path)}>
                   <Shapes />
                   {t.manage.setType}
+                </ContextMenuItem>
+              )}
+              {one?.kind === 'folder' && manage && (
+                <ContextMenuItem onClick={() => ops.setTemplate(one.path)}>
+                  <LayoutTemplate />
+                  {t.manage.setTemplate}
                 </ContextMenuItem>
               )}
               {write && one && target && onSelect && (

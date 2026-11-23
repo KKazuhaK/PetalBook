@@ -120,6 +120,7 @@ export const en: Messages = {
     rename: 'Rename',
     move: 'Move to…',
     setType: 'Set type…',
+    setTemplate: 'Set default template…',
     delete: 'Delete',
     select: 'Select',
     newPage: 'New page',
@@ -483,7 +484,7 @@ export const en: Messages = {
     close: 'Close settings',
     nav: 'Settings sections',
     groups: { account: 'Account', space: 'Space' },
-    sections: { profile: 'Profile', preferences: 'Preferences', security: 'Security', general: 'General', types: 'Types', home: 'Home', members: 'Members', sync: 'Sync', import: 'Import' },
+    sections: { profile: 'Profile', preferences: 'Preferences', security: 'Security', general: 'General', types: 'Types', templates: 'Templates', home: 'Home', members: 'Members', sync: 'Sync', import: 'Import' },
   },
   prefs: {
     appearance: 'Appearance',

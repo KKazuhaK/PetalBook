@@ -112,7 +112,7 @@ describe('the folder listing', () => {
       entry('f:随笔')!.querySelector('a')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }))
     })
     await settle(() => menuItems().length > 0, 'folder menu')
-    expect(menuItems()).toEqual([t.manage.open, t.fav.addFolder, t.manage.rename, t.manage.setType, t.manage.select, t.manage.move, t.manage.delete])
+    expect(menuItems()).toEqual([t.manage.open, t.fav.addFolder, t.manage.rename, t.manage.setType, t.manage.setTemplate, t.manage.select, t.manage.move, t.manage.delete])
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
@@ -277,7 +277,7 @@ describe('the sidebar tree', () => {
       rowFor('随笔')!.querySelector('a')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 200 }))
     })
     await settle(() => menuItems().length > 0, 'tree menu')
-    expect(menuItems()).toEqual([t.manage.open, t.fav.addFolder, t.manage.rename, t.manage.setType, t.manage.move, t.manage.delete])
+    expect(menuItems()).toEqual([t.manage.open, t.fav.addFolder, t.manage.rename, t.manage.setType, t.manage.setTemplate, t.manage.move, t.manage.delete])
   })
 })
 

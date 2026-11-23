@@ -6,7 +6,10 @@ import { createContext, lazy, Suspense, useContext, useEffect, useMemo, useRef, 
 import { useLocation, useNavigate } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { useActiveSpace, useCreatePage, useSpaceApi, useTree, useUrls, invalidateListings, useSpaceId } from '@/api/hooks'
+import { useActiveSpace, useCreatePage, useSpaceApi, useTree, useUrls, invalidateListings, keys, useSpaceId } from '@/api/hooks'
+import type { PageMeta, PageTemplate } from '@/api/types'
+import { defaultFor, tzOffset } from '@/lib/templates'
+import { ApiError } from '@/api/client'
 import { baseName, buildFolderIndex, isSameOrUnder, joinPath, pagesInside, parentOf, pathAfter, planDrop, type FileItem, type FolderIndex } from '@/lib/folders'
 import { t } from '@/i18n'
 import { DeleteItemsDialog } from './DeleteItemsDialog'
@@ -16,11 +19,16 @@ import { NewFolderDialog } from '@/components/layout/NewFolderDialog'
 
 // Binding a folder to a type: loaded when the dialog is first opened.
 const SetTypeDialog = lazy(() => import('./SetTypeDialog'))
+// So are the choice of a template for a new page and a folder's default template (with the words of templates).
+const NewPageDialog = lazy(() => import('./NewPageDialog'))
+const SetTemplateDialog = lazy(() => import('./SetTemplateDialog'))
 
 type Dialog =
   | { kind: 'newFolder'; parent: string }
   | { kind: 'rename'; path: string }
   | { kind: 'setType'; path: string }
+  | { kind: 'setTemplate'; path: string }
+  | { kind: 'newPage'; folder: string; meta?: PageMeta; templates: PageTemplate[]; initial: string }
   | { kind: 'move'; items: FileItem[]; onDone?: () => void }
   | { kind: 'delete'; items: FileItem[]; onDone?: () => void }
 
@@ -30,11 +38,15 @@ export interface FileOps {
   ready: boolean
   spaceName: string
   open: (item: FileItem) => void
-  newPage: (folder: string) => Promise<void>
+  // Makes a page in the folder and opens it; when the space has templates (and the folder is not the inbox, whose
+  // pages are quick notes) the person first chooses one. `meta` is what the page starts with (a tag's page, say).
+  newPage: (folder: string, meta?: PageMeta) => Promise<void>
   newFolder: (parent: string) => void
   rename: (path: string) => void
   // Opens the choice of a type for a folder (needs `manage`).
   setType: (path: string) => void
+  // Opens the choice of a folder's default template (needs `manage`).
+  setTemplate: (path: string) => void
   // Opens the folder picker.
   chooseMove: (items: FileItem[], onDone?: () => void) => void
   // Asks, then deletes.
@@ -165,22 +177,42 @@ export function FileOpsProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // `template` is left out for the server's choice (the folder's default, or the quick note's), "" is a blank page.
+  const makePage = async (folder: string, meta?: PageMeta, template?: string) => {
+    try {
+      const page = await createPage.mutateAsync({ folder, body: '', tz: tzOffset(), ...(meta ? { meta } : {}), ...(template === undefined ? {} : { template }) })
+      navigate(urls.page(page.id))
+    } catch (e) {
+      // A refusal with a code of its own is told in the words of templates (loaded only now).
+      const code = e instanceof ApiError ? (e.code as string) : ''
+      const text = code.startsWith('template_') ? (await import('@/lib/templateErrors')).templateMessage(e, failureText(e)) : failureText(e)
+      toast.error(t.fmt.labelled(t.list.createFailed, text))
+    }
+  }
+
   const ops: FileOps = {
     index,
     ready: !tree.isPending,
     spaceName,
     open: (item) => navigate(item.kind === 'page' ? urls.page(item.id) : urls.folder(item.path)),
-    newPage: async (folder) => {
-      try {
-        const page = await createPage.mutateAsync({ folder, body: '' })
-        navigate(urls.page(page.id))
-      } catch (e) {
-        toast.error(t.fmt.labelled(t.list.createFailed, failureText(e)))
+    newPage: async (folder, meta) => {
+      const inbox = spaces.find((s) => s.id === spaceId)?.inbox ?? ''
+      // A page made in the inbox is a quick note: the server uses the quick note default, nothing is asked.
+      const quick = inbox !== '' && folder.toLowerCase() === inbox.toLowerCase()
+      if (!quick) {
+        // Read now, not from what was read a while ago: the folder's default may have changed since.
+        const list = await qc.fetchQuery({ queryKey: keys.templates(space), queryFn: ({ signal }) => api.templates(signal), staleTime: 0 }).catch(() => null)
+        if (list && list.templates.length > 0) {
+          setDialog({ kind: 'newPage', folder, meta, templates: list.templates, initial: defaultFor(folder, list.defaults, list.templates) })
+          return
+        }
       }
+      await makePage(folder, meta)
     },
     newFolder: (parent) => setDialog({ kind: 'newFolder', parent }),
     rename: (path) => setDialog({ kind: 'rename', path }),
     setType: (path) => setDialog({ kind: 'setType', path }),
+    setTemplate: (path) => setDialog({ kind: 'setTemplate', path }),
     chooseMove: (items, onDone) => setDialog({ kind: 'move', items, onDone }),
     confirmDelete: (items, onDone) => setDialog({ kind: 'delete', items, onDone }),
     moveTo,
@@ -199,6 +231,16 @@ export function FileOpsProvider({ children }: { children: ReactNode }) {
       {dialog?.kind === 'setType' && (
         <Suspense fallback={null}>
           <SetTypeDialog path={dialog.path} spaceName={spaceName} onClose={close} />
+        </Suspense>
+      )}
+      {dialog?.kind === 'setTemplate' && (
+        <Suspense fallback={null}>
+          <SetTemplateDialog path={dialog.path} spaceName={spaceName} onClose={close} />
+        </Suspense>
+      )}
+      {dialog?.kind === 'newPage' && (
+        <Suspense fallback={null}>
+          <NewPageDialog where={dialog.folder === '' ? spaceName : baseName(dialog.folder)} templates={dialog.templates} initial={dialog.initial} onCreate={(template) => makePage(dialog.folder, dialog.meta, template)} onClose={close} />
         </Suspense>
       )}
       {dialog?.kind === 'move' && (
