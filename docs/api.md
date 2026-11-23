@@ -4324,7 +4324,7 @@ A change writes `mail_changed` to the audit log (the password as `"changed"`).
 
 #### `POST /api/admin/mail/test`
 
-`{"to": "admin@example.com"}`. Sends one message now, waiting up to 15 seconds,
+`{"to": "admin@example.com", "lang": "en"}` (`lang` optional). Sends one message now, waiting up to 15 seconds,
 to the address the administrator typed, and answers `200` with
 `{"ok": false, "message": "535 authentication failed"}` (the SMTP server's
 answer, never the password) or `{"ok": true}`, and updates `status`. Works also
@@ -4626,10 +4626,14 @@ before the milestone is released.
   nowhere fails the migration, which rolls back, and foreign keys are switched
   on again whatever happened).
 - New: `layered_settings` (layer, layer id, key, value, lower, updated).
-- Added by the later parts: `registrations` (pending), `email_tokens` (kind,
-  hash, user, address, expires, used), `usage` (person or tenant, spaces, bytes,
-  pages), and the columns `users.quota`, `users.terms_accepted`,
-  `spaces.page_count`, `spaces.usage_bytes`.
+- Added by the second part: `registrations` (pending: id, tenant, username
+  unique, name, email, the password as a hash, the SHA-256 of the token, the
+  terms accepted as JSON, created, expires), `email_tokens` (the SHA-256 of the
+  token, kind `verify` or `reset`, user, address, created, expires, used) and the
+  column `users.terms_accepted` (JSON: `at`, `termsUrl`, `privacyUrl`). The mail
+  settings are a record of `site_settings` (key `mail`, the password sealed).
+- Added by the later parts: `usage` (person or tenant, spaces, bytes, pages), and
+  the columns `users.quota`, `spaces.page_count`, `spaces.usage_bytes`.
 - `UPDATE users SET site_admin = 1 WHERE role = 'admin'`.
 
 ### What the first part of 3.3 does and does not do
@@ -4639,15 +4643,60 @@ administrator split, `/api/admin/tenancy`, the tenants, layered settings with
 locks (`/api/admin/settings`, the tenants' settings, `GET /api/settings`), the
 daily text's switches and default on that mechanism, and a provider's `tenant`.
 
-Not yet (the next parts of 3.3): mail, registration and its endpoints, email
-verification, password reset, quotas and usage (the `quota.*` settings, the
+Not yet (the next part of 3.3): quotas and usage (the `quota.*` settings, the
 tenant's `usage`, `/api/account/usage`, `/api/admin/usage`, `quota_exceeded`).
-Until then: `registration.open` exists as a setting but cannot be opened
-(`409 mail_not_configured`, as it would be with mail off); `GET
-/api/auth/providers` answers `register: false` and `forgot: false` and
-validates `?tenant=`; the Tenant object has no `usage`; the settings table above
-lacks the `quota.*` rows; and the `admin` object of `POST /api/admin/tenants` is
-checked but does not prefill the invite.
+Until then the Tenant object has no `usage`, the settings table above lacks the
+`quota.*` rows, and the `admin` object of `POST /api/admin/tenants` is checked
+but does not prefill the invite.
+
+### What the second part of 3.3 does
+
+Done: mail (`/api/admin/mail`, the test message, the queue), registration,
+email verification, password reset, the `register` and `forgot` flags of
+`GET /api/auth/providers`, the captcha contexts `register` and `forgot` (in
+`captcha.contexts`, off by default, like the others), and both directions of
+`sso_only_with_registration`. Details the implementation settled, which refine
+the text above:
+
+- **Nothing is sent by default.** Mail is off until `PUT /api/admin/mail` has
+  `enabled: true`; the tests of this repository talk to an SMTP server in the
+  test's own process and to no other.
+- `GET /api/admin/mail`'s `status.checked` is `null` until a delivery or a test
+  has happened (the status is kept in memory). `POST /api/admin/mail/test`
+  takes an optional `lang`, answers `409 mail_not_configured` while no `host`
+  is set and `400 mail_from_required` while no `from` is, and the 10 an hour are
+  counted by the server (all administrators together).
+- `PUT /api/admin/mail` checks in this order: field forms and ranges
+  (`invalid`), `mail_insecure`, then, when enabling, a missing host (`invalid`),
+  `mail_from_required`, `mail_needs_public_url`. Switching mail off drops what is
+  waiting in the queue and cancels the pending registrations.
+- The queue tries a message at once, again after 1 minute and again after 5,
+  and drops it after the third failure or 10 minutes, whichever comes first; the
+  log says why (never the address or the text, which hold a link).
+- **Closing registration deletes the pending registrations** (a change of
+  `registration.open` or of its `lower` at the site or the tenant, switching mail
+  off, deleting the tenant, and an hourly check), so their links answer
+  `404 not_found`; `403 registration_closed` at `POST /api/register/confirm` is
+  what a link of a registration that is still stored gets when its tenant is not
+  open (for instance the instant between the change and the deletion).
+- **The tenant's hour** of `registration.perHour` counts every `POST
+  /api/register` that passes the field checks, whether or not the address has an
+  account, and the pending cap of 1,000 is checked the same way, so those answers
+  do not tell either. The password is hashed in every case.
+- `GET /api/register` counts against the address's requests this minute.
+- A tenant administrator's changes of an address: `emailVerified: true` sent by a
+  site administrator always clears the `email_verified_by` mark of a tenant
+  administrator, also when the address was already shown as verified; so does the
+  person's own `POST /api/email/confirm`.
+- `POST /api/users/{id}/password-reset` answers `404 not_found` for a person
+  outside the caller's scope, `403 forbidden` for a tenant administrator and a
+  site administrator's account, and `409 conflict` also for a disabled account or
+  one whose password `ssoOnly` refuses. It counts against the address's 3 an hour
+  (`429 rate_limited`) but not against any caller's 5.
+- A reset link of an account that can no longer use a password (it is disabled,
+  or `ssoOnly` came on since) answers `404 not_found` and changes nothing.
+- A message that cannot be queued because 1,000 wait answers `503 unavailable`
+  to a signed-in person (verification) and is not said to a public caller.
 
 Details the first part settled:
 
