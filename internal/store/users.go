@@ -17,23 +17,29 @@ type User struct {
 	Role     string // "admin" or "member"
 	Disabled bool
 	Created  time.Time
+	// EmailVerified: the address came from a provider that vouched for it, or an
+	// administrator set or confirmed it.
+	EmailVerified bool
+	// PasskeyRequired: this person must sign in with a passkey (set for them
+	// alone; a requirement of their role is in the security settings).
+	PasskeyRequired bool
 }
 
 // LocalUserID is the built-in user of single-user mode.
 const LocalUserID = "local"
 
-const userCols = `id, username, name, email, role, disabled, created`
+const userCols = `id, username, name, email, role, disabled, created, email_verified, passkey_required`
 
 func scanUser(sc interface{ Scan(...any) error }) (*User, error) {
 	var u User
-	var disabled, created int64
-	if err := sc.Scan(&u.ID, &u.Username, &u.Name, &u.Email, &u.Role, &disabled, &created); err != nil {
+	var disabled, created, verified, required int64
+	if err := sc.Scan(&u.ID, &u.Username, &u.Name, &u.Email, &u.Role, &disabled, &created, &verified, &required); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	u.Disabled, u.Created = disabled != 0, fromMS(created)
+	u.Disabled, u.Created, u.EmailVerified, u.PasskeyRequired = disabled != 0, fromMS(created), verified != 0, required != 0
 	return &u, nil
 }
 
@@ -120,15 +126,68 @@ func SearchUsers(ctx context.Context, q Q, d Dialect, query string, enabledOnly 
 
 // InsertUser adds a user. A taken username or id is a unique violation (see UniqueOn).
 func InsertUser(ctx context.Context, q Q, u User) error {
-	_, err := q.Exec(ctx, `INSERT INTO users(`+userCols+`) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		u.ID, u.Username, u.Name, u.Email, u.Role, b2i(u.Disabled), ms(u.Created))
+	_, err := q.Exec(ctx, `INSERT INTO users(`+userCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		u.ID, u.Username, u.Name, u.Email, u.Role, b2i(u.Disabled), ms(u.Created), b2i(u.EmailVerified), b2i(u.PasskeyRequired))
 	return err
 }
 
-// UpdateProfile sets the name and email.
-func UpdateProfile(ctx context.Context, q Q, id, name, email string) error {
-	res, err := q.Exec(ctx, `UPDATE users SET name = ?, email = ? WHERE id = ?`, name, email, id)
+// UpdateProfile sets the name and email, and whether the email is verified.
+func UpdateProfile(ctx context.Context, q Q, id, name, email string, verified bool) error {
+	res, err := q.Exec(ctx, `UPDATE users SET name = ?, email = ?, email_verified = ? WHERE id = ?`, name, email, b2i(verified), id)
 	return oneRow(res, err)
+}
+
+// SetEmail sets a user's address and whether it is verified.
+func SetEmail(ctx context.Context, q Q, id, email string, verified bool) error {
+	res, err := q.Exec(ctx, `UPDATE users SET email = ?, email_verified = ? WHERE id = ?`, email, b2i(verified), id)
+	return oneRow(res, err)
+}
+
+// SetEmailVerified marks the address verified or not.
+func SetEmailVerified(ctx context.Context, q Q, id string, verified bool) error {
+	res, err := q.Exec(ctx, `UPDATE users SET email_verified = ? WHERE id = ?`, b2i(verified), id)
+	return oneRow(res, err)
+}
+
+// SetPasskeyRequired sets whether this person must use a passkey.
+func SetPasskeyRequired(ctx context.Context, q Q, id string, required bool) error {
+	res, err := q.Exec(ctx, `UPDATE users SET passkey_required = ? WHERE id = ?`, b2i(required), id)
+	return oneRow(res, err)
+}
+
+// UsersByEmail returns the users whose address equals email, ignoring case
+// (at most limit; limit <= 0: all).
+func UsersByEmail(ctx context.Context, q Q, d Dialect, email string, limit int) ([]User, error) {
+	lower := "LOWER"
+	if d == SQLite {
+		lower = sqliteLower
+	}
+	sqlText := `SELECT ` + userCols + ` FROM users WHERE email <> '' AND ` + lower + `(email) = ? ORDER BY created, id`
+	args := []any{strings.ToLower(email)}
+	if limit > 0 {
+		sqlText += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := q.Query(ctx, sqlText, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *u)
+	}
+	return out, rows.Err()
+}
+
+// CountEnabledPasswordAdmins counts the enabled administrators who have a password.
+func CountEnabledPasswordAdmins(ctx context.Context, q Q) (n int, err error) {
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM users u JOIN passwords p ON p.user_id = u.id WHERE u.role = 'admin' AND u.disabled = 0`).Scan(&n)
+	return
 }
 
 // SetRole changes a user's instance role.

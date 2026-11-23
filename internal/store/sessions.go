@@ -13,21 +13,23 @@ type Session struct {
 	UserID   string
 	Created  time.Time
 	LastUsed time.Time
+	// Held: the session may only register a passkey and sign out.
+	Held bool
 }
 
 func InsertSession(ctx context.Context, q Q, s Session) error {
-	_, err := q.Exec(ctx, `INSERT INTO sessions(id, user_id, created, last_used) VALUES (?, ?, ?, ?)`, s.ID, s.UserID, ms(s.Created), ms(s.LastUsed))
+	_, err := q.Exec(ctx, `INSERT INTO sessions(id, user_id, created, last_used, held) VALUES (?, ?, ?, ?, ?)`, s.ID, s.UserID, ms(s.Created), ms(s.LastUsed), b2i(s.Held))
 	return err
 }
 
 func GetSession(ctx context.Context, q Q, id string) (*Session, error) {
 	var s Session
-	var created, used int64
-	err := q.QueryRow(ctx, `SELECT id, user_id, created, last_used FROM sessions WHERE id = ?`, id).Scan(&s.ID, &s.UserID, &created, &used)
+	var created, used, held int64
+	err := q.QueryRow(ctx, `SELECT id, user_id, created, last_used, held FROM sessions WHERE id = ?`, id).Scan(&s.ID, &s.UserID, &created, &used, &held)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
-	s.Created, s.LastUsed = fromMS(created), fromMS(used)
+	s.Created, s.LastUsed, s.Held = fromMS(created), fromMS(used), held != 0
 	return &s, err
 }
 
@@ -75,4 +77,16 @@ func DeleteExpiredSessions(ctx context.Context, q Q, idleBefore, createdBefore t
 		total += n
 	}
 	return total, nil
+}
+
+// ReleaseSession lifts the hold of one session.
+func ReleaseSession(ctx context.Context, q Q, id string) error {
+	_, err := q.Exec(ctx, `UPDATE sessions SET held = 0 WHERE id = ?`, id)
+	return err
+}
+
+// ReleaseUserSessions lifts the hold of every session of the user.
+func ReleaseUserSessions(ctx context.Context, q Q, userID string) error {
+	_, err := q.Exec(ctx, `UPDATE sessions SET held = 0 WHERE user_id = ?`, userID)
+	return err
 }

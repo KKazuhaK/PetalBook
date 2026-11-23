@@ -269,6 +269,12 @@ func TestOpeningAnOlderDatabaseFillsNameKeys(t *testing.T) {
 		`DROP TABLE daily_lines`,
 		`DROP TABLE space_daily`,
 		`ALTER TABLE spaces DROP COLUMN name_key`,
+		`DROP TABLE sign_in_providers`,
+		`DROP TABLE passkeys`,
+		`DROP TABLE audit_log`,
+		`ALTER TABLE users DROP COLUMN email_verified`,
+		`ALTER TABLE users DROP COLUMN passkey_required`,
+		`ALTER TABLE sessions DROP COLUMN held`,
 		`DELETE FROM schema_migrations WHERE version >= 6`,
 		`INSERT INTO spaces(id, name, created) VALUES ('S1', 'Straße', 0)`,
 	} {
