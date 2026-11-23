@@ -2611,6 +2611,93 @@ registration and mail」一节，以及「Signing in」（`GET /api/auth/provide
 16. 租户管理员能看本租户的审计日志，但看不到全站一类的条目（能）。
 17. 注册开关的全站默认是「关，并对租户锁定」（是；要全站管理员先放开）。
 
+**3.3 的现状（第一部分，2026-11-23）**：上面约定里的租户模型、分层设置和数据隔离做了，
+邮件、注册、邮箱验证、找回密码、配额留给下面几部分（接缝都留好了，见最后一条）。接口见
+`docs/api.md` 的「Tenants, registration and mail」（「Storage」下面写了这一部分做了什么、
+没做什么），迁移是 `0018_tenants.sql`（SQLite 和 PostgreSQL 都测）。所有者问题按括号里的默认做。
+实现时定下来的：
+
+- **迁移**：
+  - 0017 已经是 3.1 的 `0017_assets.sql`，所以用 0018，文档里原来写 0017 的地方都改了。
+  - 整个里程碑一个迁移文件：这一部分只放租户表、五张表的 `tenant_id`、`users.site_admin`、
+    `invites.site_admin`、`sign_in_providers.tenant_id` 和 `layered_settings`；后面几部分要的表和列
+    在合并前往同一个文件里加。
+  - SQLite 上组名改成「租户内唯一」要重建 `groups`，重建要先关外键。`PRAGMA foreign_keys` 在事务里
+    不起作用，所以 `migrate.go` 里凡是要这样的版本（`foreignKeysOff`），SQLite 就把整个迁移放到
+    **同一条固定的连接**上跑：事务之前关外键，Go 步骤重建表，事务结束前
+    `PRAGMA foreign_key_check`（有悬空的行就报错，整个迁移回滚），不管成败最后都把外键开回来。
+    PostgreSQL 不需要这些，走原来的单事务，`ALTER TABLE` 删约束、建新索引。
+  - 测试在一个 3.2 结构、带数据的库上跑迁移（`storetest.EachAtVersion`）：默认租户在、所有行在默认
+    租户、两个管理员成了全站管理员、成员没有、重建后组成员和组在空间里的位置一条没少、同名组可以在
+    另一个租户里再建、外键照样拦；另一个测试放进一行悬空的组成员，断言迁移失败、回滚、`foreign_keys`
+    开回来。
+- **范围（`Scope`）**：存储层的 `Scope` 是「一个租户」或「全部」，零值什么都看不到（忘了给就是空）。
+  凡是读、列、按 id 改那五张表的函数都带它；`store/scope_test.go` 用 `go/parser` 找出所有查询里碰这
+  五张表却没有 `Scope` 参数的导出函数，不在带理由的允许表里就失败，允许表里已经带了范围或者已经
+  不碰这些表的条目也失败，所以它不会过时。允许表里是：按用户名、身份、令牌哈希登录这类「账号决定
+  租户」的、后台任务、已经在范围内找到了的行再往下走的、写入时自己带租户的。
+- **关联由语句把关**：`AddMember`、`AddSpaceGroup`、`AddLocalMembers`、`ApplySynced`、
+  `TransferOwnership` 都是 `INSERT … SELECT`，两边按 `tenant_id` 连；跨租户的什么都不写，答复和 id 不
+  存在一样。`ApplySynced`（登录同步）里指向别的租户的组映射因此对这个人什么都不带来。
+- **每个请求的成本**：权限判断和 3.2 的按人缓存没动，没有租户比较。会话读出来之后只多一次
+  `TenantDisabled`：一次原子读，没有租户停用时直接返回。实测（`PETALBOOK_PERF=1 go test
+  ./internal/api -run PerRequestCost`，SQLite，一个租户，各跑两次，和 3.2 的提交 `64684cb` 比）：
+  `GET /api/spaces/{id}/tags`（会话加权限判断）75.4 / 76.2 µs 对 77.3 / 76.0 µs，108 次分配对 108 次，
+  内存 11.9 KB 对 12.0 KB，噪声以内；`GET /api/session` 35.7 / 35.1 µs 对 37.0 / 38.1 µs，多出来的
+  13 次分配和 1 KB 是答复里多了 `siteAdmin` 和 `tenant` 两个字段，不是判断。
+- **管理员**：
+  - `role` 的意思变成「在自己的租户里」，`siteAdmin` 另加；全站管理员才有 `kindSiteAdmin` 的路由
+    （安全、登录提供方、发信、机器访问、每日文案的全站设置、服务器状态、全站设置、租户的建删）。
+  - 没说「去哪个租户」的地方：`setup`、命令行 `user add --admin`、默认租户里由全站管理员邀请或升的管理员，
+    都是全站管理员（升级前的管理员本来就都是服务器的）；别的租户里、或者租户管理员邀请的不是。
+    `POST /api/invites` 因此多了 `tenant`、`siteAdmin`。这一条合同里没写，是实现时补的。
+  - 「至少一个可用的管理员」数全站管理员；降级、停用、取消 `siteAdmin` 都要查；租户管理员碰全站管理员
+    是 `403`。
+  - 审计：每行有租户（按这行说的人，再按动手的人）；租户管理员看不到服务器自己的那些种类（包括升级前
+    写在默认租户里的 `security_changed` 之类，靠种类滤掉）。
+- **分层设置**（`internal/settings`）：
+  - 站点这一层放 `layered_settings`，租户这一层也在那里；空间层是 `space.yml`、个人层在各自的表里，
+    由各自的代码读（这一部分只有每日文案的两个开关有空间层）。生效值按（租户、代数）缓存成一张表，
+    任何写入把代数加一；请求时一次映射查找，不逐层走。
+  - 每日文案的 `daily.own`、`daily.api`、`daily.default` 的全站值**还放在原来的每日文案记录里**
+    （`SiteBinding`），所以 `/api/admin/daily` 和 `/api/admin/settings` 是同一条记录，2.3 的行为和原来
+    一样：既有的测试一条没改（只有路由表里「管理员」和「全站管理员」的区别要改一行）。租户层的
+    `daily.default` 插在空间和全站之间；只能选本租户的空间或接口，贴的文案仍在全站。
+  - 布尔的 `restrict` 只能是「只许关」（`options: [false]`）。限制比较的是严格程度：租户的规则要比
+    全站的至少一样严；被挡住的值留着标 `inEffect: false`，规则放松后又生效；全站收紧时回答里的
+    `affected` 是受影响的租户数。
+  - 先查锁再查「能不能开」：租户改被全站锁住的 `registration.open` 是 `setting_locked`，解锁后才轮到
+    `mail_not_configured`（现在永远是它，见下）。
+  - `GET /api/settings` 多了 `source`（`site` 或 `tenant`）：是谁的锁、或谁的值把它关了，客户端灰掉
+    控件时写「由谁设定」。
+- **预留给 3.1、2.7**：注册表里没有它们的键（代码在别的分支上）：定义文件里的注释写了 3.1 的三个键的
+  层、种类、严格程度（`null` < `any` < `github`）和全站默认 `lock`，2.7 没有租户层。以后加进
+  `Definitions()` 就行，别的地方不用动。
+- **给后面几部分留的接缝**：
+  - 邮件：`registrationReady()` 现在永远是 `false`，所以开 `registration.open` 一律
+    `409 mail_not_configured`，租户的 `registration.open` 读出来永远是 `false`；`ssoOnly` 的反向检查和
+    它放在同一处（`beforeOpening`）。
+  - 注册、找回密码、邮箱验证的路由、`registrations`、`email_tokens`、`usage` 表、`users.quota` 等列、
+    `quota.*` 设置、`GET /api/auth/providers` 的 `register`/`forgot`（现在恒为 `false`，`?tenant=`
+    已经会校验）、租户对象的 `usage`、`POST /api/admin/tenants` 的 `admin` 预填邀请（现在只校验）都
+    还没做。
+  - `audit` 的事件可以直接指定租户（`"-"` 表示服务器自己的）。
+- **隔离测试**（SQLite 和 PostgreSQL 都跑）：`api/isolation_test.go` 的两个租户夹具有管理员、成员、
+  令牌、OAuth 授权、组、邀请、空间；`isolationRoutes` 对每条不是空间路由的路由写明怎么隔离（空间路由
+  按 `{space}` 自动全测），`TestEveryRouteIsInTheIsolationTable` 在路由表里多了没登记的路由时失败；
+  `TestTenantsAreIsolatedOnEveryRoute` 由 A 的租户管理员、成员、令牌拿 B 的 id 去调每一条，要求回答和
+  一个不存在的 id 完全一样（状态码和错误码），而且回答里不能出现 B 的任何 id 或名字，列表里也不能；
+  结束时断言 B 的东西没动、没有跨租户的成员、组成员、空间组、令牌空间。把 `ScopeOf` 临时改成总是
+  全部，这个测试立刻在审计、授权、组成员等十几处失败，所以它是真的在拦。
+- **界面**：管理后台多了「租户」（开关；开关打开或已经有多个租户时才有列表，能建、改名、停用、
+  删除、领第一个管理员的邀请链接）和「分层设置」（全站管理员看全站层，加上选一个租户的租户层；
+  租户管理员看自己租户的层；每项显示全站的锁／限制、没有生效的值和规则编辑）；用户行写明全站管理员
+  还是租户管理员，全站管理员能改；租户管理员看不到服务器自己的那几页。「租户」页对全站管理员一直在
+  导航里（开关就在里面），关着的时候页上没有列表；合同写的「关着的时候界面上看不到租户的入口」
+  指的是租户列表和各处的租户字样，开关本身总得有地方放。中英文、mock 服务器、契约测试（对 mock 和
+  真服务器都跑过）、手机宽度（行会换行、列可以缩）都做了。
+- **还没做的**见上面「给后面几部分留的接缝」。
+
 ### 第 4 期：离线与客户端
 
 PWA 本地存储和同步；桌面版（同一个 Go 程序加壳，对本地仓库运行）；
