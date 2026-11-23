@@ -49,6 +49,10 @@ import (
 // driver's cost for each row it hands over is what a listing cannot pay 50 000
 // times, several times over.
 //
+// Every query of one listing or count reads the same snapshot of the index,
+// those run at the same time included (read.go): the queries never disagree,
+// whatever is written meanwhile.
+//
 // What stays dear is a request whose every condition keeps most pages while
 // together they keep few, or a count under such conditions: each of them is a
 // range of the size of the space, and all must be read (twenty of them, the
@@ -63,11 +67,15 @@ var (
 	// conditions are read as sets instead.
 	walkBudget = func(limit int) int { return max(1000, 5*(limit+1)) }
 	// scanWorkers is the most sets read, and the most parts of a long list of
-	// pages looked up, at the same time, each on a connection of its own.
+	// pages looked up, at the same time, each on a connection of its own that
+	// holds the snapshot of the request (read.go).
 	scanWorkers = 4
 	// walkTime is the most a walk that goes past walkBudget may be expected
 	// to take in all.
 	walkTime = 50 * time.Millisecond
+	// lookupPart is the number of pages looked up in one query, when many are
+	// looked up in several at the same time.
+	lookupPart = 500
 )
 
 const (
@@ -75,9 +83,6 @@ const (
 	// notIn filter or a list of options names, that are listed to see which
 	// of them the filter keeps, or which options have pages.
 	maxDistinct = 100
-	// lookupPart is the number of pages looked up in one query, when many are
-	// looked up in several at the same time.
-	lookupPart = 500
 	// maxRowid bounds the ids a set holds; the page table numbers its rows from 1.
 	maxRowid = 1 << 28
 )
@@ -249,7 +254,7 @@ func (x *Index) ran(query string, args []any) {
 }
 
 // countUpTo counts the rows of s, stopping after max+1.
-func (x *Index) countUpTo(s *pageSet, max int) (n int, err error) {
+func (x *read) countUpTo(s *pageSet, max int) (n int, err error) {
 	query := `SELECT count(*) FROM (` + s.sql + ` LIMIT ?)`
 	args := append(append([]any{}, s.args...), max+1)
 	x.ran(query, args)
@@ -261,7 +266,7 @@ func (x *Index) countUpTo(s *pageSet, max int) (n int, err error) {
 // with commas between: the query is read as one row.
 // (group_concat keeps the order of the rows of a subquery that has one; SQLite
 // leaves such a subquery's ORDER BY alone for exactly this function.)
-func (x *Index) idsText(query string, args []any, use func(text []byte) error) error {
+func (x *read) idsText(query string, args []any, use func(text []byte) error) error {
 	query = `SELECT group_concat(id) FROM (` + query + `)`
 	x.ran(query, args)
 	rows, err := x.db.Query(query, args...)
@@ -282,7 +287,7 @@ func (x *Index) idsText(query string, args []any, use func(text []byte) error) e
 }
 
 // idsOf is every id of the query, in the order of its rows.
-func (x *Index) idsOf(query string, args []any) (ids []int64, err error) {
+func (x *read) idsOf(query string, args []any) (ids []int64, err error) {
 	err = x.idsText(query, args, func(text []byte) error {
 		ids = make([]int64, 0, len(text)/6+1)
 		return parseIDs(text, func(id int64) { ids = append(ids, id) })
@@ -291,14 +296,14 @@ func (x *Index) idsOf(query string, args []any) (ids []int64, err error) {
 }
 
 // setOfQuery is the ids of the query as a set.
-func (x *Index) setOfQuery(query string, args []any) (*idSet, error) {
+func (x *read) setOfQuery(query string, args []any) (*idSet, error) {
 	s := &idSet{}
 	err := x.idsText(query, args, func(text []byte) error { return parseIDs(text, s.add) })
 	return s, err
 }
 
 // firstIDs is the first n ids of the query, in the order of its rows.
-func (x *Index) firstIDs(query string, args []any, n int) ([]int64, error) {
+func (x *read) firstIDs(query string, args []any, n int) ([]int64, error) {
 	query += ` LIMIT ?`
 	args = append(append([]any{}, args...), n)
 	x.ran(query, args)
@@ -434,7 +439,7 @@ func (s *idSet) ids() []int64 {
 
 // valuesOf lists the distinct values of a property, at most max of them, each
 // a seek in the index of values; whole is false when there are more.
-func (x *Index) valuesOf(key string, max int) (vals []string, whole bool, err error) {
+func (x *read) valuesOf(key string, max int) (vals []string, whole bool, err error) {
 	const query = `WITH RECURSIVE d(v) AS (
 		SELECT min(val) FROM props WHERE key = ?1
 		UNION ALL
@@ -465,7 +470,7 @@ func (x *Index) valuesOf(key string, max int) (vals []string, whole bool, err er
 // distinct values (a select field), those other values are known from a few
 // seeks, and their rows are the place: the "other values" column of a board
 // costs the pages in it, and no page at all when every value is an option.
-func (x *Index) setLeads(conds []cond) error {
+func (x *read) setLeads(conds []cond) error {
 	for i := range conds {
 		f := conds[i].notIn
 		if f == nil {
@@ -500,7 +505,7 @@ func (x *Index) setLeads(conds []cond) error {
 // a condition keeps few enough pages to start from, or none: ok is false
 // otherwise. Without it, it always answers, reading the conditions as sets
 // when none is small.
-func (x *Index) match(conds []cond, onlySmall bool) (m *idSet, ok bool, err error) {
+func (x *read) match(conds []cond, onlySmall bool) (m *idSet, ok bool, err error) {
 	if err := x.setLeads(conds); err != nil {
 		return nil, false, err
 	}
@@ -534,7 +539,7 @@ func (x *Index) match(conds []cond, onlySmall bool) (m *idSet, ok bool, err erro
 
 // matchFrom reads the pages of the condition at lead, which are few, and keeps
 // those that meet the others, each a lookup by page.
-func (x *Index) matchFrom(conds []cond, lead int) (*idSet, error) {
+func (x *read) matchFrom(conds []cond, lead int) (*idSet, error) {
 	s, exact := conds[lead].start()
 	ids, err := x.idsOf(s.sql, s.args)
 	if err != nil {
@@ -552,18 +557,23 @@ func (x *Index) matchFrom(conds []cond, lead int) (*idSet, error) {
 
 // among is those of the pages that meet the conditions, each looked up. Many
 // pages are looked up in a few parts at the same time.
-func (x *Index) among(ids []int64, conds []cond) ([]int64, error) {
+func (x *read) among(ids []int64, conds []cond) ([]int64, error) {
 	where, wargs := whereOf(conds)
 	if where == "" || len(ids) == 0 {
 		return ids, nil
 	}
 	query := `SELECT p.rowid AS id FROM json_each(?) j CROSS JOIN pages p ON p.rowid = j.value WHERE ` + where
-	look := func(part []int64) ([]int64, error) {
-		return x.idsOf(query, append([]any{jsonIDs(part)}, wargs...))
+	look := func(r *read, part []int64) ([]int64, error) {
+		return r.idsOf(query, append([]any{jsonIDs(part)}, wargs...))
 	}
 	parts := min(scanWorkers, len(ids)/lookupPart+1)
 	if parts == 1 {
-		return look(ids)
+		return look(x, ids)
+	}
+	reads, done := x.parallel(parts)
+	defer done()
+	if parts = len(reads); parts == 1 {
+		return look(x, ids)
 	}
 	got := make([][]int64, parts)
 	errs := make([]error, parts)
@@ -572,7 +582,7 @@ func (x *Index) among(ids []int64, conds []cond) ([]int64, error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			got[i], errs[i] = look(ids[i*len(ids)/parts : (i+1)*len(ids)/parts])
+			got[i], errs[i] = look(reads[i], ids[i*len(ids)/parts:(i+1)*len(ids)/parts])
 		}()
 	}
 	wg.Wait()
@@ -593,7 +603,7 @@ const sampleSize = 64
 // as a sample of the pages of the space says: every condition is looked up for
 // each page of the sample. The order changes what is read first and nothing
 // else.
-func (x *Index) fewestFirst(conds []cond) error {
+func (x *read) fewestFirst(conds []cond) error {
 	var last int64
 	const top = `SELECT ifnull(max(rowid), 0) FROM pages`
 	x.ran(top, nil)
@@ -642,7 +652,7 @@ func (x *Index) fewestFirst(conds []cond) error {
 // by page, whatever the conditions keep. It stops when no page is left, and
 // when few are left (smallLead) it looks the remaining conditions up for those,
 // which then costs less than the scans of their ranges.
-func (x *Index) matchAll(conds []cond) (*idSet, error) {
+func (x *read) matchAll(conds []cond) (*idSet, error) {
 	// The conditions an index says exactly, each with what it takes to read
 	// it, and those none does: looked up at the end for what is left.
 	var order, rest []cond
@@ -699,21 +709,23 @@ func (x *Index) matchAll(conds []cond) (*idSet, error) {
 			}
 		}
 	}
+	// Each read of the snapshot takes the next range not yet begun; with one
+	// read (no other connection could share the snapshot) they are read in turn.
 	var stop atomic.Bool
-	if len(queue) == 1 {
-		queue[0].ids, queue[0].err = x.setOfQuery(queue[0].set.sql, queue[0].set.args)
-		close(queue[0].done)
-	} else {
-		sem := make(chan struct{}, scanWorkers)
+	var next atomic.Int64
+	reads, done := x.parallel(min(scanWorkers, len(queue)))
+	for _, r := range reads {
 		go func() {
-			for _, sc := range queue {
-				sem <- struct{}{}
-				go func() {
-					defer func() { <-sem; close(sc.done) }()
-					if !stop.Load() {
-						sc.ids, sc.err = x.setOfQuery(sc.set.sql, sc.set.args)
-					}
-				}()
+			for {
+				i := int(next.Add(1)) - 1
+				if i >= len(queue) {
+					return
+				}
+				sc := queue[i]
+				if !stop.Load() {
+					sc.ids, sc.err = r.setOfQuery(sc.set.sql, sc.set.args)
+				}
+				close(sc.done)
 			}
 		}()
 	}
@@ -754,6 +766,7 @@ func (x *Index) matchAll(conds []cond) (*idSet, error) {
 	for _, sc := range queue {
 		<-sc.done // none is left running
 	}
+	done()
 	if failed != nil {
 		return nil, failed
 	}

@@ -80,8 +80,18 @@ type Index struct {
 	root string
 	wmu  sync.Mutex
 
-	// gen counts the writes that are done: a result computed from the index is
-	// good for as long as it has not changed (see Groups).
+	// aux holds the connections a read uses beside its own to read several
+	// index ranges at the same time (see read.go); auxFree has a token for
+	// each, taken without waiting, so a read never waits for one while it
+	// holds a connection of db.
+	aux     *sql.DB
+	auxFree chan struct{}
+
+	// gen is a sequence lock on the content of the index: odd while a write
+	// commits, moved to the next even value as soon as the commit is done (not
+	// after the work that follows it). A read whose snapshot was taken while
+	// gen held one even value has the content of that generation, and a result
+	// computed from it is good for as long as gen has not changed (see Groups).
 	gen    atomic.Uint64
 	groups groupCache
 
@@ -89,6 +99,9 @@ type Index struct {
 	// (read by tests); trace, when a test sets it, is called with each.
 	queries atomic.Int64
 	trace   func(query string, args []any)
+	// shared and serial count the times a read had other connections share
+	// its snapshot, and the times it read in turn because none could (tests).
+	shared, serial atomic.Int64
 }
 
 // Open opens or creates the index at dbPath for the space at root. An index
@@ -130,6 +143,16 @@ func open(dbPath, root string) (*Index, error) {
 		db.Close()
 		return nil, err
 	}
+	if x.aux, err = sql.Open("sqlite", dsn); err != nil {
+		db.Close()
+		return nil, err
+	}
+	x.aux.SetMaxOpenConns(auxConns)
+	x.aux.SetMaxIdleConns(auxConns)
+	x.auxFree = make(chan struct{}, auxConns)
+	for range auxConns {
+		x.auxFree <- struct{}{}
+	}
 	return x, nil
 }
 
@@ -167,14 +190,22 @@ func (x *Index) init() error {
 }
 
 // Close closes the database.
-func (x *Index) Close() error { return x.db.Close() }
+func (x *Index) Close() error {
+	x.aux.Close()
+	return x.db.Close()
+}
 
 // Path is where the database file lives.
 func (x *Index) Path() string { return x.path }
 
-// unlockWrite ends a write. The generation moves after the write is committed,
-// so a reader that sees the new generation sees the write.
-func (x *Index) unlockWrite() {
+// unlockWrite ends a write. The generation has moved already, at the commit.
+func (x *Index) unlockWrite() { x.wmu.Unlock() }
+
+// commit commits a write, with gen odd for as long as the commit may be under
+// way: a read that took its snapshot while gen held one even value cannot have
+// seen a part of what it changed.
+func (x *Index) commit(tx *sql.Tx) error {
 	x.gen.Add(1)
-	x.wmu.Unlock()
+	defer x.gen.Add(1)
+	return tx.Commit()
 }

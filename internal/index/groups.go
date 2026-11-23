@@ -47,16 +47,22 @@ type GroupResult struct {
 // file. Cost: one scan of the index range of each condition of a large scope
 // and one of the rows of the property; for a small scope, its pages.
 func (x *Index) Groups(q GroupQuery) (GroupResult, error) {
-	gen := x.gen.Load()
 	ck, cacheable := q.cacheKey()
-	if cacheable {
+	if gen := x.gen.Load(); cacheable && gen%2 == 0 {
 		if res, ok := x.groups.get(ck, gen); ok {
 			return res, nil
 		}
 	}
-	res, err := x.countGroups(q)
-	if err == nil && cacheable {
-		x.groups.put(ck, gen, res)
+	r, err := x.begin()
+	if err != nil {
+		return GroupResult{}, err
+	}
+	defer r.end()
+	res, err := r.countGroups(q)
+	// Only a count whose snapshot is known to be of one generation is
+	// remembered, under that generation.
+	if err == nil && cacheable && r.known {
+		x.groups.put(ck, r.at, res)
 	}
 	return res, err
 }
@@ -90,6 +96,9 @@ func (c *groupCache) get(key string, gen uint64) (GroupResult, bool) {
 func (c *groupCache) put(key string, gen uint64, res GroupResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if gen < c.gen {
+		return // a count of an older state: those of the newer are kept
+	}
 	if c.gen != gen || c.m == nil || len(c.m) >= maxGroupCache {
 		c.gen, c.m = gen, map[string]GroupResult{}
 	}
@@ -125,6 +134,16 @@ func (q GroupQuery) cacheKey() (string, bool) {
 // property's values for many. No lookup by page is made for a large scope,
 // so the cost is the size of the index ranges read.
 func (x *Index) countGroups(q GroupQuery) (GroupResult, error) {
+	r, err := x.begin()
+	if err != nil {
+		return GroupResult{}, err
+	}
+	defer r.end()
+	return r.countGroups(q)
+}
+
+// countGroups counts in the snapshot of the read.
+func (x *read) countGroups(q GroupQuery) (GroupResult, error) {
 	if q.Key == "" || len(q.Key) > maxFilterKey || !utf8.ValidString(q.Key) {
 		return GroupResult{}, invalid("groups needs the key of a property")
 	}
@@ -132,22 +151,15 @@ func (x *Index) countGroups(q GroupQuery) (GroupResult, error) {
 		return GroupResult{}, err
 	}
 	conds := conditions(q.Folder, q.Recursive, q.Tags, q.Filters)
-	for try := 0; ; try++ {
-		// A write between the queries can make them disagree: count once more.
-		gen := x.gen.Load()
-		m, _, err := x.match(conds, false)
-		if err != nil {
-			return GroupResult{}, err
-		}
-		res, err := x.countBy(q.Key, m)
-		if err != nil || try == 1 || x.gen.Load() == gen {
-			return res, err
-		}
+	m, _, err := x.match(conds, false)
+	if err != nil {
+		return GroupResult{}, err
 	}
+	return x.countBy(q.Key, m)
 }
 
 // countBy counts the pages of m by their values of the property.
-func (x *Index) countBy(key string, m *idSet) (GroupResult, error) {
+func (x *read) countBy(key string, m *idSet) (GroupResult, error) {
 	res := GroupResult{Groups: []Group{}}
 	total := m.count()
 	if total == 0 {
@@ -200,7 +212,7 @@ func (x *Index) countBy(key string, m *idSet) (GroupResult, error) {
 // property, in one scan of the property's rows in the index of values: no
 // lookup by page. It returns the values with their counts, and how many pages
 // of m have a value at all.
-func (x *Index) countMany(key string, m *idSet) (with int, all []Group, err error) {
+func (x *read) countMany(key string, m *idSet) (with int, all []Group, err error) {
 	seen := &idSet{w: make([]uint64, len(m.w))} // the pages of m that have a value
 	count := func(g *Group, page, last int64) {
 		if !m.has(page) {

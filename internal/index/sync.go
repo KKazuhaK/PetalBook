@@ -191,7 +191,7 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 	if err := w.replaceFolders(dirSet, src.DirExists); err != nil {
 		return Stats{}, err
 	}
-	if err := tx.Commit(); err != nil {
+	if err := x.commit(tx); err != nil {
 		return Stats{}, err
 	}
 	if len(todo) > 1000 {
@@ -325,7 +325,7 @@ func (x *Index) Put(rel string, data []byte, mtimeNs int64) (bool, error) {
 	} else if err := w.setProblem(FileInfo{Rel: rel, Size: int64(len(data)), MtimeNs: mtimeNs}, prob); err != nil {
 		return false, err
 	}
-	return ok, tx.Commit()
+	return ok, x.commit(tx)
 }
 
 // Remove drops a page from the index by id.
@@ -349,19 +349,24 @@ func (x *Index) Remove(id string) error {
 	if err := w.removePath(rel); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return x.commit(tx)
 }
 
 // AddFolder records a folder and its ancestors.
 func (x *Index) AddFolder(rel string) error {
 	x.wmu.Lock()
 	defer x.unlockWrite()
+	tx, err := x.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	for ; rel != "" && rel != "."; rel = path.Dir(rel) {
-		if _, err := x.db.Exec(`INSERT OR IGNORE INTO folders(path) VALUES (?)`, rel); err != nil {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO folders(path) VALUES (?)`, rel); err != nil {
 			return err
 		}
 	}
-	return nil
+	return x.commit(tx)
 }
 
 // Forget drops the rows of these file paths and these folders, whatever is on
@@ -389,7 +394,7 @@ func (x *Index) Forget(paths, dirs []string) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	return x.commit(tx)
 }
 
 // PathByID returns the file path of a page.
@@ -710,7 +715,7 @@ func (x *Index) RetryDuplicates(src Source) error {
 			}
 		}
 	}
-	return tx.Commit()
+	return x.commit(tx)
 }
 
 // Refresh brings the index in line with the source for exactly these page
@@ -807,7 +812,7 @@ func (x *Index) Refresh(src Source, paths, dirs []string) (Stats, error) {
 			}
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := x.commit(tx); err != nil {
 		return Stats{}, err
 	}
 	x.db.QueryRowContext(ctx, `SELECT count(*) FROM pages`).Scan(&st.Pages)

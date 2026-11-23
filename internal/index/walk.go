@@ -237,7 +237,7 @@ type row struct {
 // leaving out those that do not meet conds, and stops after max. The loop over
 // ids is the outer one (CROSS JOIN fixes that), so the rows come in its order
 // and the read ends as soon as max pages are found.
-func (x *Index) pagesOf(ids []int64, conds []cond, props bool, key string, max int) ([]row, error) {
+func (x *read) pagesOf(ids []int64, conds []cond, props bool, key string, max int) ([]row, error) {
 	if len(ids) == 0 || max <= 0 {
 		return nil, nil
 	}
@@ -260,7 +260,7 @@ func (x *Index) pagesOf(ids []int64, conds []cond, props bool, key string, max i
 }
 
 // readRows runs a query of selectCols, and of the sort key when withKey.
-func (x *Index) readRows(query string, args []any, props, withKey bool) ([]row, error) {
+func (x *read) readRows(query string, args []any, props, withKey bool) ([]row, error) {
 	x.ran(query, args)
 	rs, err := x.db.Query(query, args...)
 	if err != nil {
@@ -291,7 +291,7 @@ func (x *Index) readRows(query string, args []any, props, withKey bool) ([]row, 
 // the other values from the rows of those values when they are few: the
 // "other values" that come first in a descending order are then not looked for
 // among every page that has an option.
-func (x *Index) prune(o *ordering, segs []segment) ([]segment, error) {
+func (x *read) prune(o *ordering, segs []segment) ([]segment, error) {
 	n := len(o.opts)
 	if n == 0 {
 		return segs, nil
@@ -354,7 +354,7 @@ func (x *Index) prune(o *ordering, segs []segment) ([]segment, error) {
 // costs less than walkTime (conditions that most pages fail at the first
 // lookup): then it goes on to there. ok is false when the walk is given up,
 // and nothing is returned then.
-func (x *Index) walk(q Query, limit int, o *ordering, segs []segment, conds []cond) (res Result, ok bool, err error) {
+func (x *read) walk(q Query, limit int, o *ordering, segs []segment, conds []cond) (res Result, ok bool, err error) {
 	start := time.Now()
 	allowed := walkBudget(limit) // pages that may be looked at
 	looked, stretches := 0, 0
@@ -415,7 +415,7 @@ func (x *Index) walk(q Query, limit int, o *ordering, segs []segment, conds []co
 // walkSet reads a page of the listing whose matching pages are known (m, many
 // of them): each segment's order is read from the cursor on, one scan of its
 // index range, and the pages of m are picked out of it.
-func (x *Index) walkSet(q Query, limit int, o *ordering, segs []segment, m *idSet) (Result, error) {
+func (x *read) walkSet(q Query, limit int, o *ordering, segs []segment, m *idSet) (Result, error) {
 	var picked []int64
 	var from []*segment
 	var has, optFirst *idSet // read when a segment needs them
@@ -486,7 +486,7 @@ func (x *Index) walkSet(q Query, limit int, o *ordering, segs []segment, m *idSe
 // listFew reads a page of the listing whose matching pages are known and few
 // (m): what the order depends on is looked up for each, they are put in order,
 // and the summaries of the one page are read.
-func (x *Index) listFew(q Query, limit int, o *ordering, cur *cursor, m *idSet) (Result, error) {
+func (x *read) listFew(q Query, limit int, o *ordering, cur *cursor, m *idSet) (Result, error) {
 	ids := m.ids()
 	if o.keys != nil {
 		query := `SELECT ` + selectCols(q.Props) + ` FROM json_each(?) j CROSS JOIN pages p ON p.rowid = j.value`
@@ -603,7 +603,7 @@ func (x *Index) listFew(q Query, limit int, o *ordering, cur *cursor, m *idSet) 
 // property, in whichever of the three ways costs least (see the top of
 // plan.go). sets says the order must not be walked: a condition is too dear to
 // look up page by page (the words of a search).
-func (x *Index) listPlanned(q Query, limit int, o *ordering, cur *cursor, conds []cond, sets bool) (Result, error) {
+func (x *read) listPlanned(q Query, limit int, o *ordering, cur *cursor, conds []cond, sets bool) (Result, error) {
 	segs, err := o.segments(cur)
 	if err != nil {
 		return Result{}, err

@@ -237,15 +237,13 @@ func (x *Index) List(q Query) (Result, error) {
 		conds = append([]cond{{where: `p.rowid IN (SELECT rowid FROM fts WHERE fts MATCH ?)`, args: []any{match},
 			sets: []pageSet{{sql: `SELECT rowid AS id FROM fts WHERE fts MATCH ?`, args: []any{match}}}}}, conds...)
 	}
-	// A write between two of the queries of a listing can make them disagree;
-	// the listing is then read once more.
-	for try := 0; ; try++ {
-		gen := x.gen.Load()
-		res, err := x.listPlanned(q, limit, o, cur, conds, searching)
-		if err != nil || try == 1 || x.gen.Load() == gen {
-			return res, err
-		}
+	// The queries of the listing all read one snapshot (read.go).
+	r, err := x.begin()
+	if err != nil {
+		return Result{}, err
 	}
+	defer r.end()
+	return r.listPlanned(q, limit, o, cur, conds, searching)
 }
 
 // listDirect reads a page of a listing as one query: the index of the order
