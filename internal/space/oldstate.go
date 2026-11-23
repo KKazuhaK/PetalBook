@@ -112,6 +112,14 @@ func moveOldState(root, dir string, g *gitRepo, log *slog.Logger) error {
 			log.Warn("a file of the repository is where an earlier version kept its state; it is left as it is and not used", "path", oldStateDir+"/"+n)
 			continue
 		}
+		if f := familyOf(n); f != "" && !isPresent[f] && !isTracked(f) && movedCopy(dir, f) {
+			// What a crash left after the database itself was removed from
+			// the old place: its copy is in the state directory, the
+			// repository does not have the file, and the log is of no use.
+			// Root.Remove removes a link, it does not follow it.
+			old.Remove(n)
+			continue
+		}
 		if f := familyOf(n); f != "" && (isTracked(f) || !isPresent[f]) {
 			// The log of a database the repository has, or of none: it is
 			// neither moved nor replayed into another database.
@@ -121,6 +129,7 @@ func moveOldState(root, dir string, g *gitRepo, log *slog.Logger) error {
 		names = append(names, n)
 	}
 	if len(names) == 0 {
+		tidyOldFolder(root)
 		return nil
 	}
 	if _, err = os.Lstat(dir); errors.Is(err, fs.ErrNotExist) {
@@ -129,13 +138,37 @@ func moveOldState(root, dir string, g *gitRepo, log *slog.Logger) error {
 		err = mergeOld(old, names, dir, time.Now().UTC(), log)
 	}
 	if err == nil {
-		// The folder goes when nothing else is in it.
-		if p, b, perr := openDirIn(root, ".petalbook"); perr == nil && b == "" && p != nil {
-			p.Remove("cache")
-			p.Close()
-		}
+		tidyOldFolder(root)
 	}
 	return err
+}
+
+// tidyOldFolder removes the old state folder when nothing is in it (Remove
+// fails on a folder that is not empty, and on one that is not a folder).
+func tidyOldFolder(root string) {
+	if p, b, perr := openDirIn(root, ".petalbook"); perr == nil && b == "" && p != nil {
+		p.Remove("cache")
+		p.Close()
+	}
+}
+
+// movedCopy tells whether the database family of an earlier version has
+// been taken over into the state directory dir: moved there as it was, kept
+// beside the current one, imported, or (the index) dropped to be made again.
+func movedCopy(dir, family string) bool {
+	if _, err := os.Lstat(filepath.Join(dir, family)); err == nil {
+		return true
+	}
+	if family == "state.db" {
+		for _, p := range []string{"state-earlier-*.db", "state-imported-*.db"} {
+			if ms, _ := filepath.Glob(filepath.Join(dir, p)); len(ms) > 0 {
+				return true
+			}
+		}
+		return false
+	}
+	_, err := os.Lstat(dir)
+	return err == nil
 }
 
 // moveFresh copies names from old into a new folder renamed to dir, then
