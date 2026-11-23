@@ -32,10 +32,24 @@ type runner struct {
 	hold        chan struct{}
 	// entered, if set, is told each time a fetch starts waiting on hold.
 	entered chan struct{}
+	// loseAnswer, if set, lets the next push through and then answers it as
+	// failed, with the remote down from then on: an answer lost on the way.
+	loseAnswer bool
 }
 
 func (r *runner) Run(c context.Context, cmd gitstore.Cmd) (string, string, error) {
 	sub, _ := gitstore.Subcommand(cmd.Args)
+	if sub == "push" {
+		r.mu.Lock()
+		lose := r.loseAnswer && !r.down
+		r.loseAnswer = false
+		r.mu.Unlock()
+		if lose {
+			gitstore.RunReal(c, cmd)
+			r.setDown(true)
+			return "", "fatal: the remote end hung up unexpectedly", errors.New("exit status 128")
+		}
+	}
 	if sub == "fetch" || sub == "push" || sub == "ls-remote" {
 		r.mu.Lock()
 		down, hold := r.down, r.hold

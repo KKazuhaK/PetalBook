@@ -200,15 +200,21 @@ func CountGitHubAuthorizations(ctx context.Context, q Q) (n int, err error) {
 	return
 }
 
-// CountGitHubSpaces is how many spaces have a github credential.
+// githubRemotes is every remote of a space that uses a github credential: the
+// space's own repository and its attachment repository.
+const githubRemotes = `(SELECT space_id, gh_via, gh_installation_id, gh_user_id FROM remotes WHERE url <> '' AND cred_type = 'github'
+	UNION ALL SELECT space_id, gh_via, gh_installation_id, gh_user_id FROM asset_remotes WHERE url <> '' AND cred_type = 'github')`
+
+// CountGitHubSpaces is how many spaces have a github credential, for their
+// own repository or their attachment repository.
 func CountGitHubSpaces(ctx context.Context, q Q) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM remotes WHERE url <> '' AND cred_type = 'github'`).Scan(&n)
+	err = q.QueryRow(ctx, `SELECT COUNT(DISTINCT space_id) FROM `+githubRemotes+` g`).Scan(&n)
 	return
 }
 
 // CountUserGitHubSpaces is how many spaces sync through a user's authorisation.
 func CountUserGitHubSpaces(ctx context.Context, q Q, userID string) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM remotes WHERE url <> '' AND cred_type = 'github' AND gh_via = 'user' AND gh_user_id = ?`, userID).Scan(&n)
+	err = q.QueryRow(ctx, `SELECT COUNT(DISTINCT space_id) FROM `+githubRemotes+` g WHERE gh_via = 'user' AND gh_user_id = ?`, userID).Scan(&n)
 	return
 }
 
@@ -223,8 +229,8 @@ func GitHubSpaceCounts(ctx context.Context, q Q, ids []int64) (map[int64]int, er
 	for i, id := range ids {
 		args[i], marks[i] = id, "?"
 	}
-	rows, err := q.Query(ctx, `SELECT gh_installation_id, COUNT(*) FROM remotes
-		WHERE url <> '' AND cred_type = 'github' AND gh_via = 'app' AND gh_installation_id IN (`+strings.Join(marks, ",")+`) GROUP BY gh_installation_id`, args...)
+	rows, err := q.Query(ctx, `SELECT gh_installation_id, COUNT(DISTINCT space_id) FROM `+githubRemotes+` g
+		WHERE gh_via = 'app' AND gh_installation_id IN (`+strings.Join(marks, ",")+`) GROUP BY gh_installation_id`, args...)
 	if err != nil {
 		return nil, err
 	}

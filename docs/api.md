@@ -1447,6 +1447,17 @@ uses both:
  "assetsRepo": {"id": 881234568, "fullName": "kazuhahub/tang-notes-assets", "htmlUrl": "…"}}
 ```
 
+When GitHub refuses to make the attachment repository after the space's was
+made, the answer is GitHub's own refusal as step 3 gives it (`409
+github_name_taken`, `403 github_no_permission`, `429 rate_limited` with its
+`Retry-After`, …), with `repo` naming the space's repository and no
+`assetsRepo`. The same request with `create: false` then finds the space's
+repository but not the attachment one, and fails with the error of
+connecting to it (`403 github_owner_not_allowed`, `409
+github_repo_not_in_installation`, …), whose `message` names the attachment
+repository that is missing and whose `repo` names the space's: make that
+repository on GitHub (or drop `github.assets`) and send the request again.
+
 ### Administrators: per space
 
 #### `PUT /api/admin/spaces/{space}/storage`

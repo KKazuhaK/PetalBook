@@ -87,6 +87,11 @@ type Space struct {
 	rem atomic.Pointer[remote]
 	// assets is the attachment repository (see attachments.go).
 	assets atomic.Pointer[AssetBackend]
+	// assetsOurs caches assetsDirIsOurs: a generation times 4, plus 0 not
+	// known, 1 yes, 2 no. A change of the space, a pull, a walk and a switch of
+	// the attachments forget it (the next generation), so that an answer looked
+	// up before one of them is never kept after it.
+	assetsOurs atomic.Int64
 	// ctx ends when the space is closed; network commands run under it so that
 	// a hung remote cannot keep Close waiting.
 	ctx    context.Context

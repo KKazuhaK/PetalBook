@@ -110,6 +110,16 @@ func sizeText(n int64) string {
 
 func (s *server) getFile(c *call) {
 	rel := c.r.PathValue("path")
+	// A browser that has the file of the attachment repository already is told
+	// so from the table, before anything is fetched: also when the repository
+	// cannot be reached.
+	if tag := c.sp.Space.AssetTag(rel); tag != "" && noneMatch(c.r.Header.Get("If-None-Match"), tag) {
+		h := c.w.Header()
+		h.Set("ETag", `"`+tag+`"`)
+		h.Set("Cache-Control", "private, no-cache")
+		c.w.WriteHeader(http.StatusNotModified)
+		return
+	}
 	f, st, etag, err := c.sp.Space.OpenFileTag(c.r.Context(), rel)
 	if err != nil {
 		if errors.Is(err, space.ErrNotFound) {
@@ -144,4 +154,16 @@ func (s *server) getFile(c *call) {
 		modTime = time.Time{}
 	}
 	http.ServeContent(c.w, c.r, "", modTime, f)
+}
+
+// noneMatch reports whether an If-None-Match header names the tag (weakly, as
+// RFC 9110 has it for If-None-Match), or is "*".
+func noneMatch(header, tag string) bool {
+	for _, t := range strings.Split(header, ",") {
+		t = strings.TrimSpace(t)
+		if t == "*" || strings.TrimPrefix(t, "W/") == `"`+tag+`"` {
+			return true
+		}
+	}
+	return false
 }

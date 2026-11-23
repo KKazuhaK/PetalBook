@@ -214,8 +214,14 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 		if !created && !acreated {
 			return err
 		}
+		// GitHub's own refusal (with its code and its wait) is passed on as it
+		// is; anything else is the step's failure.
+		var ge *github.Error
 		var he *github.Error
-		if !errors.As(err, &he) || he.Code != github.CodeRepoNotInInstall {
+		if errors.As(err, &ge) {
+			c := *ge
+			he = &c
+		} else {
 			he = &github.Error{Code: code, Status: status, Msg: err.Error(), Err: err}
 		}
 		if created && he.Repo == nil {
@@ -247,7 +253,16 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 				return Info{}, failed(github.CodePushFailed, http.StatusBadGateway, err)
 			}
 		} else if acred, arepo, err = gh.ResolveExisting(ctx, userID, g.Owner, assetsName, ""); err != nil {
-			return Info{}, err
+			// The space's repository is there; say which one is not (a retry
+			// after the attachment repository could not be made).
+			var ge *github.Error
+			if !errors.As(err, &ge) {
+				return Info{}, err
+			}
+			c := *ge
+			c.Msg = fmt.Sprintf("the attachment repository %s/%s cannot be used (%s); the space's repository %s can", g.Owner, assetsName, ge.Msg, repo.FullName)
+			c.Repo = repo.Ref()
+			return Info{}, &c
 		}
 	}
 	id := stg.ID()

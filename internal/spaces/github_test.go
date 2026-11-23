@@ -955,3 +955,29 @@ func TestBothRepositoriesAreNamedWhenTheSelectedInstallationCannotTakeTheSecond(
 		}
 	})
 }
+
+// GitHub refuses to make the attachment repository after the space's was made:
+// the answer keeps GitHub's own error (and its wait), names the space's
+// repository, and the retry with create false says which repository is missing.
+func TestAFailureToMakeTheAttachmentRepositoryKeepsGitHubsError(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		e.hook = func(step string) {
+			if step == "repo-created" {
+				e.f.LimitUntil(e.clk.Now().Add(time.Minute))
+			}
+		}
+		_, err := e.m.CreateWithGitHub(ctx, e.user.ID, "Tang", "", GitHubCreate{Owner: "kazuhahub", Name: "tang-notes", Private: true, Create: true, Assets: &GitHubAssets{}})
+		var he *github.Error
+		if !errors.As(err, &he) || he.Code != github.CodeRateLimited || he.RetryAfter <= 0 || he.Repo == nil || he.Repo.FullName != "kazuhahub/tang-notes" || he.AssetsRepo != nil {
+			t.Fatalf("%+v", err)
+		}
+		e.hook = nil
+		e.f.LimitUntil(time.Time{})
+		_, err = e.m.CreateWithGitHub(ctx, e.user.ID, "Tang", "", GitHubCreate{Owner: "kazuhahub", Name: "tang-notes", Private: true, Create: false, Assets: &GitHubAssets{}})
+		if !errors.As(err, &he) || !strings.Contains(he.Msg, "kazuhahub/tang-notes-assets") || he.Repo == nil || he.Repo.FullName != "kazuhahub/tang-notes" {
+			t.Fatalf("the retry does not say which repository is missing: %+v", err)
+		}
+		e.nothingLeft()
+	})
+}

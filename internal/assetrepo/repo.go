@@ -38,6 +38,19 @@ import (
 // 2 GB, so the files of a move go in commits of at most this much.
 var MaxCommitBytes int64 = 500 << 20
 
+// How many fetches by id run at once: for one space, and for the server.
+const (
+	fetchesPerSpace = 4
+	fetchesOverall  = 16
+)
+
+// fetchSlots bounds the fetches by id of every space together.
+var fetchSlots = make(chan struct{}, fetchesOverall)
+
+// fetchBatch is how many files a pinned space fetches in one request: the
+// scratch repository holds a batch at a time.
+const fetchBatch = 1000
+
 // Options configures Open.
 type Options struct {
 	Space  string // the id of the space: the cache's folder for it
@@ -50,8 +63,9 @@ type Options struct {
 	Status space.RemoteStatus
 	// OnStatus is told when the state changes; it persists it.
 	OnStatus func(space.RemoteStatus)
-	// OnUsed is told when the first file has gone to the repository.
-	OnUsed func()
+	// OnUsed is told when the first file has gone to the repository; when it
+	// fails it is told again at the next push.
+	OnUsed func() error
 	// Runner and AllowUnsafe are for tests.
 	Runner      gitstore.Runner
 	AllowUnsafe bool
@@ -86,6 +100,7 @@ type Repo struct {
 
 	fmu     sync.Mutex
 	flights map[string]*flight
+	slots   chan struct{} // bounds the fetches by id of this space
 
 	used atomic.Bool
 	seq  atomic.Int64
@@ -122,7 +137,7 @@ func Open(ctx context.Context, o Options) (*Repo, error) {
 			return nil, err
 		}
 	}
-	r := &Repo{o: o, meta: meta, log: o.Logger, table: map[string]entry{}, flights: map[string]*flight{}, st: o.Status}
+	r := &Repo{o: o, meta: meta, log: o.Logger, table: map[string]entry{}, flights: map[string]*flight{}, slots: make(chan struct{}, fetchesPerSpace), st: o.Status}
 	if r.st.State == "" {
 		r.st.State = space.RemoteOK
 	}
@@ -304,10 +319,19 @@ func (r *Repo) refreshLocked(ctx context.Context, force bool) (added, removed []
 		return nil, nil, err
 	}
 	if !has {
-		// A new repository with nothing in it.
+		// A new repository with nothing in it, or one whose branch is gone
+		// (deleted, or the repository made again, empty): it has no files, so
+		// the table has none either, whatever it had before.
+		r.mu.Lock()
+		for p := range r.table {
+			removed = append(removed, p)
+		}
+		r.table, r.tip = map[string]entry{}, ""
+		r.mu.Unlock()
+		sort.Strings(removed)
 		r.lastFresh = time.Now()
 		r.markOK()
-		return nil, nil, nil
+		return nil, removed, nil
 	}
 	old := r.Tip()
 	if err := r.meta.FetchFiltered(ctx, r.o.Branch, old == ""); err != nil {
@@ -425,25 +449,56 @@ func (r *Repo) ensure(ctx context.Context, id string) error {
 func (r *Repo) fetchOne(id string) error {
 	ctx, cancel := context.WithTimeout(r.ctx, 30*time.Minute)
 	defer cancel()
+	return r.fetchIDs(ctx, []string{id})
+}
+
+// slot waits for a fetch to be allowed: one of the space's, then one of the
+// server's. The answer gives them back.
+func (r *Repo) slot(ctx context.Context) (func(), error) {
+	select {
+	case r.slots <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	select {
+	case fetchSlots <- struct{}{}:
+	case <-ctx.Done():
+		<-r.slots
+		return nil, ctx.Err()
+	}
+	return func() { <-fetchSlots; <-r.slots }, nil
+}
+
+// fetchIDs fetches these contents in one request into a scratch repository
+// and copies them into the cache.
+func (r *Repo) fetchIDs(ctx context.Context, ids []string) error {
+	done, err := r.slot(ctx)
+	if err != nil {
+		return err
+	}
+	defer done()
 	s, dir, err := r.newScratch(ctx)
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	if err := s.FetchBlobs(ctx, []string{id}); err != nil {
+	if err := s.FetchBlobs(ctx, ids); err != nil {
 		if isNet(err) {
 			return r.fail(err)
 		}
 		return err
 	}
-	pr, pw := io.Pipe()
-	go func() { pw.CloseWithError(s.CatBlob(ctx, id, pw)) }()
-	_, err = r.o.Cache.Put(r.o.Space, id, pr)
-	pr.CloseWithError(err)
-	if err == nil {
-		r.markOK()
+	for _, id := range ids {
+		pr, pw := io.Pipe()
+		go func() { pw.CloseWithError(s.CatBlob(ctx, id, pw)) }()
+		_, err = r.o.Cache.Put(r.o.Space, id, pr)
+		pr.CloseWithError(err)
+		if err != nil {
+			return err
+		}
 	}
-	return err
+	r.markOK()
+	return nil
 }
 
 // --- writing ------------------------------------------------------------------------
@@ -579,8 +634,15 @@ func (r *Repo) putOnce(ctx context.Context, files []File, author, committer gits
 		}
 		return false, err
 	}
-	if r.used.CompareAndSwap(false, true) && r.o.OnUsed != nil {
-		r.o.OnUsed()
+	// Under opMu: one push at a time records it.
+	if !r.used.Load() {
+		if r.o.OnUsed == nil {
+			r.used.Store(true)
+		} else if err := r.o.OnUsed(); err != nil {
+			r.log.Warn("could not record that a file went to the attachment repository; it is tried again at the next push", "error", err)
+		} else {
+			r.used.Store(true)
+		}
 	}
 	// What was uploaded from memory is in the cache from the start.
 	for i, f := range todo {
@@ -596,18 +658,33 @@ func (r *Repo) putOnce(ctx context.Context, files []File, author, committer gits
 // Contains reports which of the files (path to content id) the table has with
 // exactly those contents, after a refresh from the remote: what a move checks
 // before the space's own copy is taken away.
+// The check reads the tree of the commit the remote's branch is at, fetched
+// just now, not the table: the table is kept up to date by differences and
+// must not be what lets the space's own copy go.
 func (r *Repo) Missing(ctx context.Context, want map[string]string) ([]string, error) {
 	r.opMu.Lock()
-	_, _, err := r.refreshLocked(ctx, true)
-	r.opMu.Unlock()
-	if err != nil {
+	defer r.opMu.Unlock()
+	if _, _, err := r.refreshLocked(ctx, true); err != nil {
 		return nil, err
 	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	have := map[string]string{}
+	if tip := r.Tip(); tip != "" {
+		if remote := r.meta.RemoteTip(ctx, r.o.Branch); remote != tip {
+			return nil, fmt.Errorf("the attachment repository's branch is at %s, the table at %s", remote, tip)
+		}
+		es, err := r.meta.ListTree(ctx, tip)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range es {
+			if e.Type == "blob" {
+				have[e.Path] = e.ID
+			}
+		}
+	}
 	var miss []string
 	for p, id := range want {
-		if e, ok := r.table[p]; !ok || e.id != id {
+		if have[p] != id {
 			miss = append(miss, p)
 		}
 	}
@@ -637,17 +714,27 @@ var _ = fs.ErrNotExist
 
 // FetchAll fetches the contents of every file of the table that is not in the
 // cache: a pinned space keeps all its attachments.
+// They are fetched in batches of fetchBatch, one request each.
 func (r *Repo) FetchAll(ctx context.Context) error {
-	for rel, id := range r.Files() {
-		if r.o.Cache.Has(r.o.Space, id) {
-			continue
+	seen := map[string]bool{}
+	var todo []string
+	for _, id := range r.Files() {
+		if !seen[id] && !r.o.Cache.Has(r.o.Space, id) {
+			seen[id] = true
+			todo = append(todo, id)
 		}
-		if err := ctx.Err(); err != nil {
+	}
+	sort.Strings(todo)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stop := context.AfterFunc(r.ctx, cancel)
+	defer stop()
+	for len(todo) > 0 {
+		n := min(len(todo), fetchBatch)
+		if err := r.fetchIDs(ctx, todo[:n]); err != nil {
 			return err
 		}
-		if err := r.fetchOne(id); err != nil {
-			return fmt.Errorf("%s: %w", rel, err)
-		}
+		todo = todo[n:]
 	}
 	return nil
 }

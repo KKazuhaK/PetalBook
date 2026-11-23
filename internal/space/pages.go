@@ -147,6 +147,7 @@ func (s *Space) resyncNow() bool {
 	s.lastSync = time.Now()
 	s.syncMu.Unlock()
 	s.walks.Add(1)
+	s.forgetAssetsDir() // the walk looks for changes made outside the server
 	if _, err := s.idx.Sync(s.src, false); err != nil {
 		s.log.Warn("re-sync of the index failed", "error", err)
 		return false
@@ -751,6 +752,7 @@ func (s *Space) Reindex() (index.Stats, error) {
 		return index.Stats{}, ErrClosed
 	}
 	s.syncTypes() // the rules the rebuild checks against are the ones of now
+	s.forgetAssetsDir()
 	return s.idx.Sync(s.src, true)
 }
 

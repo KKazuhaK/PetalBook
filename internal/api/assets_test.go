@@ -133,6 +133,12 @@ func TestNotCachedAttachmentAnswers503WithRetryAfter(t *testing.T) {
 		if r.body["fetching"] != false || r.resp.Header.Get("Retry-After") != "60" {
 			t.Fatalf("%s %v", r.raw, r.resp.Header)
 		}
+		// A browser that has it is told so without the contents being fetched.
+		tag := `"` + gitstore.BlobID([]byte("AAA")) + `"`
+		if code, h, _ := fileGet(admin, path, "If-None-Match", tag); code != 304 || h.Get("ETag") != tag {
+			t.Fatalf("a browser that has it, offline: %d %v", code, h)
+		}
+		admin.do("GET", path, nil, "If-None-Match", `"`+gitstore.BlobID([]byte("other"))+`"`).want(t, 503, "not_cached")
 		// The page text is read as usual; an upload answers unavailable and stores nothing.
 		admin.do("GET", base+"/pages/"+pid, nil).want(t, 200, "")
 		admin.upload(base, pid, "b.txt", []byte("BBB")).want(t, 503, "unavailable")

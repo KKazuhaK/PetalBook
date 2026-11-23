@@ -664,3 +664,184 @@ func TestAnImportPushesItsAttachmentsBeforeItsPages(t *testing.T) {
 		}
 	})
 }
+
+// The attachment repository loses its branch while the move is switching (the
+// branch deleted, or the repository made again, empty): the switch must not take
+// assets/ out of the space on the strength of the table the server had.
+func TestAMoveWhoseAttachmentRepositoryLostItsBranchLosesNone(t *testing.T) {
+	cases := map[string]func(remote string){
+		"branch deleted": func(remote string) { runGitQuiet(remote, "update-ref", "-d", "refs/heads/main") },
+		"recreated empty": func(remote string) {
+			os.RemoveAll(remote)
+			os.MkdirAll(remote, 0o755)
+			runGitQuiet(remote, "init", "--bare", "-q", "-b", "main")
+			runGitQuiet(remote, "config", "uploadpack.allowFilter", "true")
+			runGitQuiet(remote, "config", "uploadpack.allowAnySHA1InWant", "true")
+		},
+	}
+	for name, lose := range cases {
+		t.Run(name, func(t *testing.T) {
+			storetest.Each(t, func(t *testing.T, st *store.Store) {
+				var aRemote string
+				var once bool
+				a := newAssetFixture(t, st, func(o *Options) {
+					o.AssetsHook = func(s string) error {
+						if s == "switching" && !once {
+							once = true
+							lose(aRemote)
+						}
+						return nil
+					}
+				})
+				defer a.h.Release()
+				aRemote = a.aRemote
+				want := a.uploadBeforeMove()
+				a.connectAssets()
+				if _, _, err := a.m.StartMove(ctx, a.h); err != nil {
+					t.Fatal(err)
+				}
+				deadline := time.Now().Add(20 * time.Second)
+				for a.m.moveRunning(a.in.ID) && time.Now().Before(deadline) {
+					time.Sleep(10 * time.Millisecond)
+				}
+				if !once {
+					t.Fatal("the move never reached switching")
+				}
+				nothingLost(t, a, want)
+				for rel, data := range want {
+					if body, _, err := readAsset(t, a.h.Space, rel); err != nil || body != data {
+						t.Fatalf("%s: %q %v", rel, body, err)
+					}
+				}
+			})
+		})
+	}
+}
+
+// An upload whose attachment repository is gone answers unavailable and says
+// nothing about the space's own remote, which is fine.
+func TestAFailedAttachmentPushLeavesTheSpaceRemoteAlone(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		a := newAssetFixture(t, st)
+		defer a.h.Release()
+		a.connectAssets()
+		if err := os.RemoveAll(a.aRemote); err != nil {
+			t.Fatal(err)
+		}
+		_, err := a.h.Space.PutAsset(space.Author{}, pageA, "gone.png", []byte("GONE"))
+		var ue *space.UnavailableError
+		if !errors.As(err, &ue) {
+			t.Fatalf("want unavailable, got %v", err)
+		}
+		if rs, _ := a.h.Space.Remote(); rs.State != "ok" {
+			t.Fatalf("the space's remote: %+v", rs)
+		}
+		if _, err := a.h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Still writable"}}}); err != nil {
+			t.Fatalf("the space is not writable: %v", err)
+		}
+	})
+}
+
+// Whether assets/ at the root is the space's own is looked up once, not on
+// every read: it is looked at again after a change of the space and a pull.
+func TestWhetherAssetsIsOursIsKeptUntilTheSpaceChanges(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		a := newAssetFixture(t, st)
+		defer a.h.Release()
+		a.connectAssets()
+		as, err := a.h.Space.PutAsset(space.Author{}, pageA, "kept.png", []byte("KEPT"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if body, _, err := readAsset(t, a.h.Space, as.Rel); err != nil || body != "KEPT" {
+			t.Fatalf("%q %v", body, err)
+		}
+		// A folder made behind the space's back is not looked for on each read.
+		other := filepath.Join(a.root(a.in.ID), "ASSETS")
+		if err := os.Mkdir(other, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if body, _, err := readAsset(t, a.h.Space, as.Rel); err != nil || body != "KEPT" {
+			t.Fatalf("the answer was looked up again: %q %v", body, err)
+		}
+		os.Remove(other)
+		// A pull that brings a folder in the way is seen.
+		push(t, a.remote, "ASSETS/readme.txt", "in the way\n")
+		if err := a.h.Space.Pull(ctx, true); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := readAsset(t, a.h.Space, as.Rel); !errors.Is(err, space.ErrNotFound) {
+			t.Fatalf("a folder in the way after a pull: %v", err)
+		}
+	})
+}
+
+// A space whose attachment repository has files (taken when it was connected)
+// may refer to them: the repository cannot be swapped for another address.
+func TestAnAttachmentRepositoryWithFilesIsNotSwappedForAnother(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		a := newAssetFixture(t, st)
+		defer a.h.Release()
+		push(t, a.aRemote, pageA+"/theirs.png", "THEIRS")
+		a.connectAssets()
+		if _, err := a.m.AssetsRemote(ctx, a.h); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if _, ok := a.h.Space.Assets().Lookup(pageA + "/theirs.png"); ok {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the table never had the file")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		other := filterBare(t)
+		if _, err := a.m.ConnectAssets(ctx, a.h, fileTokenReq(other)); !errors.Is(err, ErrAssetsConflict) {
+			t.Fatalf("swapped for another repository: %v", err)
+		}
+	})
+}
+
+// The switch was pushed but its answer was lost (and the check whether it
+// landed could not be made): the move says failed for now, and once the space
+// has the switch at its HEAD the move is done.
+func TestASwitchWhoseAnswerWasLostEndsDone(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		var r *runner
+		a := newAssetFixture(t, st, func(o *Options) {
+			o.AssetsHook = func(s string) error {
+				if s == "switch-reset" {
+					r.mu.Lock()
+					r.loseAnswer = true
+					r.mu.Unlock()
+				}
+				return nil
+			}
+		})
+		r = a.r
+		defer a.h.Release()
+		want := a.uploadBeforeMove()
+		a.connectAssets()
+		if _, _, err := a.m.StartMove(ctx, a.h); err != nil {
+			t.Fatal(err)
+		}
+		a.waitMove(store.MoveFailed)
+		a.r.setDown(false)
+		if runGit(t, a.remote, "log", "-n1", "--format=%s", "main") != space.SwitchMessage {
+			t.Fatal("the switch did not land")
+		}
+		if err := a.h.Space.Pull(ctx, true); err != nil {
+			t.Fatal(err)
+		}
+		v, started, err := a.m.StartMove(ctx, a.h)
+		if err != nil || started || v.Move == nil || v.Move.State != store.MoveDone {
+			t.Fatalf("%+v %v %v", v, started, err)
+		}
+		if v, err := a.m.AssetsRemote(ctx, a.h); err != nil || v.Move.State != store.MoveDone {
+			t.Fatalf("%+v %v", v, err)
+		}
+		nothingLost(t, a, want)
+	})
+}

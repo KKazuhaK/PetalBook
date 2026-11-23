@@ -497,6 +497,7 @@ func (s *Space) reconcileLocked(ctx context.Context, r *remote) error {
 // to them; all is true when the delta was too big to list (or could not be) and
 // every link has to be looked at.
 func (s *Space) applyDelta(ctx context.Context, r *remote, from, to string) (ids []string, all bool) {
+	defer s.forgetAssetsDir()
 	if from == "" || from == to {
 		return nil, false
 	}
@@ -802,6 +803,8 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 			return zero, err
 		}
 	}
+	// A change may make or take away a folder at the root.
+	defer s.forgetAssetsDir()
 	// A change to the types or to the folders they are bound to changes which
 	// pages have problems with their type (see checks.go).
 	defer func() {
@@ -825,10 +828,9 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 		if err == nil {
 			// The attachments go first: a page committed after this never
 			// refers to one that is not on its remote.
+			// A failure there is the attachment repository's, never the
+			// space remote's: its state is left as it is.
 			err = s.pushAssets(ctx, tx)
-			if err != nil && gitstore.KindOf(err) != gitstore.KindOther {
-				err = s.netFailure(r, err)
-			}
 		}
 		if err != nil {
 			s.undoLocked(ctx, r, tx, tx.parent)

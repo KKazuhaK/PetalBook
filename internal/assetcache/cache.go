@@ -12,8 +12,12 @@
 package assetcache
 
 import (
+	"crypto/sha1"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"os"
@@ -63,7 +67,9 @@ type Options struct {
 }
 
 // Open prepares the directory and counts what is in it (once: the total is
-// kept in memory from then on). Files a crash left half written are removed.
+// kept in memory from then on). Files a crash left half written are removed,
+// and so is a file whose contents are not the ones its name says (read once
+// here: a write the disk lost part of is never served).
 func Open(o Options) (*Cache, error) {
 	if o.Dir == "" {
 		return nil, errors.New("the directory of the attachment cache is not given")
@@ -93,13 +99,41 @@ func Open(o Options) (*Cache, error) {
 				os.RemoveAll(p) // a write that was cut short
 				continue
 			}
-			if fi, err := f.Info(); err == nil && fi.Mode().IsRegular() {
-				c.space[sp.Name()] += fi.Size()
-				c.total += fi.Size()
+			fi, err := f.Info()
+			if err != nil || !fi.Mode().IsRegular() {
+				continue
 			}
+			if !matches(p, f.Name(), fi.Size()) {
+				os.Remove(p)
+				continue
+			}
+			c.space[sp.Name()] += fi.Size()
+			c.total += fi.Size()
 		}
 	}
 	return c, nil
+}
+
+// matches reports whether the file at p, of size bytes, has the content id id
+// (Git's: SHA-1 of 40 digits or SHA-256 of 64, over a "blob <size>" header
+// and the contents).
+func matches(p, id string, size int64) bool {
+	var h hash.Hash
+	if len(id) == 64 {
+		h = sha256.New()
+	} else {
+		h = sha1.New()
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	fmt.Fprintf(h, "blob %d\x00", size)
+	if n, err := io.Copy(h, f); err != nil || n != size {
+		return false
+	}
+	return hex.EncodeToString(h.Sum(nil)) == id
 }
 
 func (c *Cache) path(space, id string) string { return filepath.Join(c.dir, space, id) }
@@ -158,6 +192,11 @@ func (c *Cache) Put(space, id string, r io.Reader) (int64, error) {
 		return 0, err
 	}
 	n, err := io.Copy(tmp, r)
+	if err == nil {
+		// On the disk before it has its name: a crash never leaves a file
+		// under a content id that is not all there.
+		err = tmp.Sync()
+	}
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}

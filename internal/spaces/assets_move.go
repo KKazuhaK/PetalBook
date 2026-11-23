@@ -67,6 +67,7 @@ func (m *Manager) StartMove(ctx context.Context, h *Handle) (v *AssetsView, star
 	if row.Move.Running() || m.moveRunning(id) {
 		return nil, false, assetsConflict("the attachments are being moved already")
 	}
+	m.settleMove(ctx, h, row)
 	files, err := h.Space.AssetsAtHead(ctx)
 	if err != nil {
 		return nil, false, err
@@ -90,6 +91,27 @@ func (m *Manager) StartMove(ctx context.Context, h *Handle) (v *AssetsView, star
 	go func() { defer m.as.wg.Done(); m.runMove(id) }()
 	row.Move = mv
 	return m.assetsView(h, row), true, nil
+}
+
+// settleMove records as done a move that failed although its switch was
+// pushed (the answer was lost, and whether it landed could not be checked):
+// once the space's HEAD is past the switch there is nothing left to move.
+func (m *Manager) settleMove(ctx context.Context, h *Handle, row *store.AssetRemote) {
+	if row.Move.State != store.MoveFailed || m.moveRunning(h.Info.ID) {
+		return
+	}
+	if ok, err := h.Space.AssetsSwitched(ctx); err != nil || !ok {
+		return
+	}
+	mv := row.Move
+	mv.State, mv.Error = store.MoveDone, ""
+	mv.FilesDone, mv.BytesDone = mv.Files, mv.Bytes
+	if err := store.SetAssetMove(ctx, m.opt.Store.Q(), h.Info.ID, mv, m.opt.Now()); err != nil {
+		m.log.Warn("could not record a move of attachments whose switch landed", "space", h.Info.ID, "error", err)
+		return
+	}
+	m.log.Info("a move of attachments that was taken for failed had landed; it is done", "space", h.Info.ID)
+	row.Move = mv
 }
 
 // ResumeMoves goes on with the moves a stop of the server cut short.

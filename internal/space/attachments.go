@@ -120,6 +120,10 @@ func (s *Space) pushAssets(ctx context.Context, tx *txn) error {
 	}
 	author, committer := s.cm.git.identities(tx.by)
 	if err := b.Put(ctx, files, author, committer); err != nil {
+		var ue *UnavailableError
+		if !errors.As(err, &ue) && gitstore.KindOf(err) != gitstore.KindOther {
+			err = &UnavailableError{Msg: "the attachment repository: " + gitstore.Scrub(err.Error()), Err: err}
+		}
 		return err
 	}
 	tx.assets = nil
@@ -158,42 +162,66 @@ func (s *Space) putAssetRepo(tx *txn, b AssetBackend, id, name string, data []by
 	return out, true, nil
 }
 
+// repoAsset finds the file at rel (a path of the space) in the attachment
+// repository: below is its path there, and ok is false when the file is not
+// read from the repository (no repository, a path outside assets/, a folder in
+// the way, or not in the table). direct is false while the attachments are
+// being copied, when the space's own file is read first.
+func (s *Space) repoAsset(rel string) (b AssetBackend, below string, info AssetInfo, direct, ok bool) {
+	b = s.Assets()
+	if b == nil || rel == "" || !utf8.ValidString(rel) || len(rel) > 4096 {
+		return nil, "", AssetInfo{}, false, false
+	}
+	below, found := strings.CutPrefix(rel, AssetsDir+"/")
+	if !found || below == "" || !s.assetsDirIsOurs() {
+		return nil, "", AssetInfo{}, false, false
+	}
+	for _, seg := range strings.Split(below, "/") {
+		if seg == "" || seg == "." || seg == ".." || strings.HasPrefix(seg, ".") || strings.ContainsRune(seg, 0) || strings.ContainsRune(seg, filepath.Separator) {
+			return nil, "", AssetInfo{}, false, false
+		}
+	}
+	info, found = b.Lookup(below)
+	return b, below, info, b.Direct(), found
+}
+
+// AssetTag is the entity tag OpenFileTag would give the file at rel, from the
+// table in memory: no network and no cache. "" when the file is not read from
+// the attachment repository (or, while a move copies, may be read from the
+// space's own folder).
+func (s *Space) AssetTag(rel string) string {
+	_, _, info, direct, ok := s.repoAsset(rel)
+	if !ok || !direct {
+		return ""
+	}
+	return info.ID
+}
+
 // OpenFileTag is OpenFile with a context and the entity tag of a file that
 // comes from the attachment repository (its content id), "" for the files of
 // the work tree. For a file that is in the repository but not in the cache,
 // the contents are fetched first: *NotCachedError when that cannot be done now.
 func (s *Space) OpenFileTag(ctx context.Context, rel string) (*os.File, fs.FileInfo, string, error) {
-	if b := s.Assets(); b != nil && rel != "" && utf8.ValidString(rel) && len(rel) <= 4096 {
-		if below, ok := strings.CutPrefix(rel, AssetsDir+"/"); ok && below != "" && s.assetsDirIsOurs() {
-			ok := true
-			for _, seg := range strings.Split(below, "/") {
-				if seg == "" || seg == "." || seg == ".." || strings.HasPrefix(seg, ".") || strings.ContainsRune(seg, 0) || strings.ContainsRune(seg, filepath.Separator) {
-					ok = false
-				}
-			}
-			if ok && !b.Direct() {
-				// While the attachments are being copied, the space's own files
-				// are the ones to read: no network.
-				if f, st, err := s.OpenFile(rel); err == nil {
-					return f, st, "", nil
-				}
-			}
-			if ok {
-				if _, found := b.Lookup(below); found {
-					f, info, err := b.Open(ctx, below)
-					if err != nil {
-						return nil, nil, "", err
-					}
-					st, err := f.Stat()
-					if err != nil {
-						f.Close()
-						return nil, nil, "", err
-					}
-					return f, st, info.ID, nil
-				}
-			}
+	b, below, _, direct, ok := s.repoAsset(rel)
+	if !ok {
+		f, st, err := s.OpenFile(rel)
+		return f, st, "", err
+	}
+	if !direct {
+		// While the attachments are being copied, the space's own files
+		// are the ones to read: no network.
+		if f, st, err := s.OpenFile(rel); err == nil {
+			return f, st, "", nil
 		}
 	}
-	f, st, err := s.OpenFile(rel)
-	return f, st, "", err
+	f, info, err := b.Open(ctx, below)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	st, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, nil, "", err
+	}
+	return f, st, info.ID, nil
 }

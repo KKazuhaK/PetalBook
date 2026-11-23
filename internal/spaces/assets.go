@@ -186,12 +186,23 @@ func (m *Manager) openAssetRepo(ctx context.Context, id string, row *store.Asset
 		Space: id, Dir: m.assetsDir(id), URL: row.URL, Branch: row.Branch,
 		Cred: m.credential(id, &row.Remote), Cache: cache, Status: assetStatusOf(row),
 		OnStatus: m.persistAssetStatus(id),
-		OnUsed: func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			if err := store.MarkAssetsUsed(ctx, m.opt.Store.Q(), id); err != nil {
-				m.log.Warn("could not record that an attachment went to the attachment repository", "space", id, "error", err)
+		OnUsed: func() error {
+			// Tried a few times here; the repository tries again at its next
+			// push when it still fails.
+			var err error
+			for try := 0; try < 3; try++ {
+				if try > 0 {
+					time.Sleep(time.Duration(try) * 200 * time.Millisecond)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				err = store.MarkAssetsUsed(ctx, m.opt.Store.Q(), id)
+				cancel()
+				if err == nil {
+					return nil
+				}
 			}
+			m.log.Warn("could not record that an attachment went to the attachment repository", "space", id, "error", err)
+			return err
 		},
 		Runner: m.opt.RemoteRunner, AllowUnsafe: m.opt.RemotePolicy.AllowUnsafe,
 		NetTimeout: m.opt.NetTimeout, FetchFresh: m.opt.FetchFresh, Logger: m.log.With("space", id, "repository", "assets"),
@@ -371,6 +382,7 @@ func (m *Manager) AssetsRemote(ctx context.Context, h *Handle) (*AssetsView, err
 	if err != nil {
 		return nil, err
 	}
+	m.settleMove(ctx, h, row)
 	return m.assetsView(h, row), nil
 }
 
@@ -442,6 +454,13 @@ func (m *Manager) connectAssetsWith(ctx context.Context, h *Handle, req ConnectR
 	}
 	if old != nil && (old.Used || old.Move.State == store.MoveDone) && old.URL != remote.URL {
 		return nil, assetsConflict("attachments are in the attachment repository already; it cannot be replaced by another one")
+	}
+	if old != nil && old.URL != remote.URL {
+		// Files it had when it was connected (or that went to it without being
+		// recorded): the space may refer to them.
+		if r, _, _ := m.assetRepo(ctx, id); r != nil && r.Count() > 0 {
+			return nil, assetsConflict("the attachment repository has files; it cannot be replaced by another one")
+		}
 	}
 	row := store.Remote{SpaceID: id, URL: remote.URL, Branch: branch, State: store.RemoteOK, Updated: m.opt.Now()}
 	switch req.CredType {

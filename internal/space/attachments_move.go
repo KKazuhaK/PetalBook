@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -94,6 +95,7 @@ func (s *Space) SwitchAssets(ctx context.Context, ensure func(context.Context, [
 	if s.closed {
 		return ErrClosed
 	}
+	defer s.forgetAssetsDir()
 	r := s.rem.Load()
 	if r == nil {
 		return ErrNoRemote
@@ -166,6 +168,38 @@ func (s *Space) SwitchAssets(ctx context.Context, ensure func(context.Context, [
 	return step("pushed")
 }
 
+// AssetsSwitched reports whether the space's HEAD is past a switch of its
+// attachments: assets/ is out of its tree and /assets/ is in its .gitignore.
+// A move whose switch was pushed although its answer was lost is done once the
+// space has it.
+func (s *Space) AssetsSwitched(ctx context.Context) (bool, error) {
+	r := s.rem.Load()
+	if r == nil {
+		return false, nil
+	}
+	head := r.repo.Head(ctx)
+	if head == "" {
+		return false, nil
+	}
+	es, err := r.repo.ListTreeUnder(ctx, head, AssetsDir)
+	if err != nil || len(es) > 0 {
+		return false, err
+	}
+	b, err := os.ReadFile(filepath.Join(s.root, ".gitignore"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.TrimSpace(line) == "/"+AssetsDir+"/" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // removeEmptyAssetDirs removes what is left of assets/ when it holds no file.
 // Files that are in it (untracked, now ignored) stay: nothing here deletes a
 // file nobody committed.
@@ -211,6 +245,7 @@ func (s *Space) LocalAssets(limit int) int {
 func (s *Space) RecoverSwitch(ctx context.Context) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.forgetAssetsDir()
 	r := s.rem.Load()
 	if r == nil || s.closed {
 		return false, nil
