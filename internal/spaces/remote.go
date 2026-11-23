@@ -153,6 +153,7 @@ func (m *Manager) remoteOptions(id string, r *store.Remote) *space.RemoteOptions
 		OnStatus:   m.persistStatus(id),
 		NetTimeout: m.opt.NetTimeout, FetchFresh: m.opt.FetchFresh, FailFast: m.opt.FailFast,
 		Runner: m.opt.RemoteRunner, AllowUnsafe: m.opt.RemotePolicy.AllowUnsafe,
+		Partial: m.single == nil && m.Storage().Cache.Partial,
 	}
 }
 
@@ -228,6 +229,12 @@ func (m *Manager) withSync(ctx context.Context, in []Info) []Info {
 		out[i] = x
 	}
 	m.mu.Unlock()
+	for i := range out {
+		out[i].Cache = m.cacheOf(out[i].ID, out[i].Sync != "local")
+		if n, err := m.Notice(ctx, out[i].ID); err == nil {
+			out[i].RemoteNotice = n
+		}
+	}
 	return out
 }
 
@@ -340,6 +347,9 @@ func (m *Manager) Connect(ctx context.Context, h *Handle, req ConnectRequest) (*
 		return nil, err
 	}
 	id := h.Info.ID
+	if err := m.CheckCredential(ctx, id, req.CredType); err != nil {
+		return nil, err
+	}
 	var remote gitstore.Remote
 	var ghCred *github.Cred
 	if req.CredType == CredGitHub {
@@ -347,7 +357,7 @@ func (m *Manager) Connect(ctx context.Context, h *Handle, req ConnectRequest) (*
 		if remote, ghCred, err = m.resolveGitHub(ctx, req); err != nil {
 			return nil, err
 		}
-	} else if remote, err = gitstore.ParseURL(req.URL, m.opt.RemotePolicy); err != nil {
+	} else if remote, err = gitstore.ParseURL(req.URL, m.hostPolicy()); err != nil {
 		return nil, err
 	}
 	branch := strings.TrimSpace(req.Branch)
@@ -391,7 +401,7 @@ func (m *Manager) Connect(ctx context.Context, h *Handle, req ConnectRequest) (*
 			}
 		} else if old == nil || old.TokenEnc == "" {
 			return nil, fmt.Errorf("%w: a token is required", ErrInvalid)
-		} else if prev, perr := gitstore.ParseURL(old.URL, m.opt.RemotePolicy); perr != nil || prev.Scheme != remote.Scheme || prev.Host != remote.Host || gitstore.CredentialScope(prev.URL) != gitstore.CredentialScope(remote.URL) {
+		} else if prev, perr := gitstore.ParseURL(old.URL, m.hostPolicy()); perr != nil || prev.Scheme != remote.Scheme || prev.Host != remote.Host || gitstore.CredentialScope(prev.URL) != gitstore.CredentialScope(remote.URL) {
 			// A stored token was given for one host and port. It is not sent to
 			// another because the address was edited.
 			return nil, fmt.Errorf("%w: the address is on another host now; enter the token for it", ErrInvalid)
@@ -462,6 +472,8 @@ func (m *Manager) Connect(ctx context.Context, h *Handle, req ConnectRequest) (*
 		return nil, err
 	}
 	m.setSync(id, row.State)
+	m.dropFacts(id) // it follows a remote now: the requirement may be met
+	m.markCache(id, h.Space)
 	m.schedulePull(id)
 	return m.viewOf(h, &row), nil
 }
@@ -483,8 +495,17 @@ func (m *Manager) Disconnect(ctx context.Context, h *Handle) error {
 		return ErrNotFound
 	}
 	id := h.Info.ID
+	if err := m.CheckRemoval(ctx, id); err != nil {
+		return err
+	}
 	m.remoteMu.Lock()
 	defer m.remoteMu.Unlock()
+	// A local space is the complete copy: a partial clone is made whole first
+	// (it waits for the fetch like any restore, and fails with the space still
+	// following its remote).
+	if err := h.Space.MakeFull(ctx); err != nil {
+		return err
+	}
 	if err := h.Space.Disconnect(); err != nil {
 		return err
 	}
@@ -493,6 +514,7 @@ func (m *Manager) Disconnect(ctx context.Context, h *Handle) error {
 	}
 	os.Remove(m.knownHosts(id))
 	m.setSync(id, "")
+	m.dropFacts(id)
 	return nil
 }
 

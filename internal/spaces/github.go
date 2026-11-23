@@ -31,7 +31,7 @@ func (m *Manager) needGitHub() (*github.Service, error) {
 // remote is: a github credential is no way around the administrator's list.
 // Only the host is checked here (the address itself is GitHub's own).
 func (m *Manager) githubHostAllowed(gh *github.Service) error {
-	_, err := gitstore.ParseURL("https://"+gh.Client().Host()+"/owner/name.git", gitstore.Policy{Hosts: m.opt.RemotePolicy.Hosts})
+	_, err := gitstore.ParseURL("https://"+gh.Client().Host()+"/owner/name.git", gitstore.Policy{Hosts: m.hostPolicy().Hosts})
 	var he *gitstore.HostError
 	if errors.As(err, &he) {
 		return he
@@ -89,6 +89,9 @@ type GitHubCreate struct {
 func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox string, g GitHubCreate) (Info, error) {
 	if m.single != nil {
 		return Info{}, ErrNotFound
+	}
+	if err := m.CheckNewSpace(ctx, userID, CredGitHub); err != nil {
+		return Info{}, err
 	}
 	gh, err := m.needGitHub()
 	if err != nil {
@@ -235,6 +238,7 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 	committed = true
 	stg.Commit(userID)
 	m.setSync(id, row.State)
+	m.markCache(id, stg.sp)
 	m.schedulePull(id)
 	return Info{ID: id, Name: stg.Name(), Role: perm.Owner, Perms: perm.All, Inbox: inbox, Sync: row.State}, nil
 }
@@ -341,4 +345,118 @@ func (m *Manager) GitHubFixed(userID string) {
 			}
 		}()
 	}
+}
+
+// CreateWithRemote makes a space that follows an existing repository on an
+// allowed host from its first moment (milestone 3.1, POST /api/spaces with
+// "remote"): the repository is connected before the space becomes visible,
+// under the same all-or-nothing rule as a space made with a GitHub repository.
+// Only a token can be given here: an SSH key has to be added to the repository
+// first, which needs a space to hold the key.
+func (m *Manager) CreateWithRemote(ctx context.Context, userID, name, inbox string, req ConnectRequest) (Info, error) {
+	if m.single != nil {
+		return Info{}, ErrNotFound
+	}
+	if req.CredType != CredToken {
+		return Info{}, fmt.Errorf("%w: a new space can be connected with a token; make the space first to use an SSH key", ErrInvalid)
+	}
+	if err := m.CheckNewSpace(ctx, userID, CredToken); err != nil {
+		return Info{}, err
+	}
+	box, err := m.box()
+	if err != nil {
+		return Info{}, err
+	}
+	if inbox == "" {
+		inbox = store.DefaultInbox
+	}
+	if inbox, err = ValidInbox(inbox); err != nil {
+		return Info{}, err
+	}
+	if name, err = ValidName(name); err != nil {
+		return Info{}, err
+	}
+	remote, err := gitstore.ParseURL(req.URL, m.hostPolicy())
+	if err != nil {
+		return Info{}, err
+	}
+	if remote.Scheme != "https" && remote.Scheme != "http" && remote.Scheme != "file" {
+		return Info{}, fmt.Errorf("%w: a token goes with an https address", ErrInvalid)
+	}
+	branch := strings.TrimSpace(req.Branch)
+	if branch == "" {
+		branch = "main"
+	}
+	if err := gitstore.ValidBranch(branch); err != nil {
+		return Info{}, fmt.Errorf("%w: %s is not a usable branch name", ErrInvalid, branch)
+	}
+	user := strings.TrimSpace(req.Username)
+	if user == "" {
+		user = "x-access-token"
+	}
+	if strings.ContainsAny(user, " \t\r\n:\x00") || req.Token == "" || strings.ContainsAny(req.Token, "\r\n\x00") || len(req.Token) > 4096 {
+		return Info{}, fmt.Errorf("%w: the user name or the token is not usable", ErrInvalid)
+	}
+	m.createMu.Lock()
+	u, err := store.GetUser(ctx, m.opt.Store.Q(), userID)
+	if err != nil {
+		m.createMu.Unlock()
+		return Info{}, err
+	}
+	if m.opt.MaxSpaces > 0 {
+		n, err := store.CountOwnedSpaces(ctx, m.opt.Store.Q(), userID)
+		if err != nil {
+			m.createMu.Unlock()
+			return Info{}, err
+		}
+		if n+m.reserved[userID] >= m.opt.MaxSpaces {
+			m.createMu.Unlock()
+			return Info{}, fmt.Errorf("%w: you already own %d spaces, the most this server allows", ErrLimit, n)
+		}
+	}
+	m.createMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
+	defer cancel()
+	stg, err := m.Stage(name, IdentityOf(*u))
+	if err != nil {
+		return Info{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			stg.Abort()
+		}
+	}()
+	id := stg.ID()
+	enc, err := box.Seal(id, "token", []byte(req.Token))
+	if err != nil {
+		return Info{}, err
+	}
+	row := store.Remote{SpaceID: id, URL: remote.URL, Branch: branch, CredType: CredToken, Username: user, TokenEnc: enc, State: store.RemoteOK, Updated: m.opt.Now()}
+	if err := stg.sp.Connect(ctx, *m.remoteOptions(id, &row)); err != nil {
+		return Info{}, err
+	}
+	st, _ := stg.sp.Remote()
+	row.State, row.LastGood, row.LastSync = st.State, st.LastGood, st.LastSync
+	now := m.opt.Now()
+	m.createMu.Lock()
+	err = m.opt.Store.Tx(ctx, func(q store.Q) error {
+		if err := store.InsertSpace(ctx, q, id, stg.Name(), "", inbox, now); err != nil {
+			return err
+		}
+		if err := store.AddMember(ctx, q, id, userID, perm.Owner, now); err != nil {
+			return err
+		}
+		return store.PutRemote(ctx, q, row)
+	})
+	m.createMu.Unlock()
+	if err != nil {
+		return Info{}, err
+	}
+	committed = true
+	stg.Commit(userID)
+	m.setSync(id, row.State)
+	m.markCache(id, stg.sp)
+	m.schedulePull(id)
+	return Info{ID: id, Name: stg.Name(), Role: perm.Owner, Perms: perm.All, Inbox: inbox, Sync: row.State}, nil
 }

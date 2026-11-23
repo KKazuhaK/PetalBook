@@ -667,6 +667,11 @@ func (s *Space) CreateFolder(by Author, rel string) (string, error) {
 	if s.closed {
 		return "", ErrClosed
 	}
+	if s.gate != nil {
+		if err := s.gate(); err != nil {
+			return "", err
+		}
+	}
 	if s.rem.Load() != nil {
 		return s.createFolderRemoteLocked(rel)
 	}

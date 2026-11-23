@@ -85,6 +85,11 @@ type Info struct {
 	// Sync is "local", or the state of the remote the space follows (ok,
 	// offline, rewritten, error). It is read when the list is asked for, not cached.
 	Sync string
+	// Cache is what the space's copy on the server is: local, full, partial,
+	// evicted or restoring; RemoteNotice is what the storage policy asks of it
+	// that it does not have yet (nil if nothing). Both are read with Sync.
+	Cache        string
+	RemoteNotice *RemoteNotice
 }
 
 // Handle is an open space together with the caller's view of it. Release it
@@ -93,6 +98,9 @@ type Handle struct {
 	Space   *space.Space
 	Info    Info
 	release func()
+	// IndexOnly: the space is evicted and was opened for a request that only
+	// needs what its index answers (see OpenIndex); Space has no files.
+	IndexOnly bool
 }
 
 // Release says the caller is done with the space.
@@ -125,6 +133,18 @@ type Options struct {
 	CloseWait time.Duration
 	// OpenHook, if set, runs before a space is opened from disk (tests).
 	OpenHook func(id string)
+
+	// HostsFromFlag: the allowed hosts (RemotePolicy.Hosts) were given on the
+	// command line, which wins over the setting of the administration page.
+	HostsFromFlag bool
+	// GitSupportsPartial, when set, replaces what the server's Git version says
+	// about partial clones (tests).
+	GitSupportsPartial *bool
+	// EvictEvery is how often the eviction looks (default 10 minutes; negative
+	// turns it off). EvictHook, if set, is called at each step of an eviction
+	// and of a restore; an error it returns stops there as a crash would (tests).
+	EvictEvery time.Duration
+	EvictHook  func(step string) error
 
 	// SizeEvery is how often the background sizer measures one space (default
 	// DefaultSizeEvery; negative turns it off), and SizeAge how old a space's
@@ -210,6 +230,11 @@ type Manager struct {
 	remoteMu sync.Mutex        // one connect, disconnect or key change at a time
 	pullWake chan struct{}     // a space with a remote was just opened: pull it now
 
+	st        storageState // the storage policy (storage.go) and its caches
+	storageMu sync.Mutex   // one change of the settings at a time
+	ev        evictState   // eviction and restoring (evict.go)
+	cs        cacheStates  // cache states in memory (partial.go)
+
 	trimMu   sync.Mutex      // one trim at a time
 	trimming bool            // a background trim is queued or running (guarded by mu)
 	createMu sync.Mutex      // space creation is one at a time, so the limit cannot be passed by racing
@@ -239,6 +264,10 @@ func NewAccounts(opt Options) (*Manager, error) {
 		opt.Secrets = secret.NewBox(abs)
 	}
 	m := newManager(opt, nil)
+	m.initStorage(context.Background())
+	if err := m.loadEvicted(context.Background()); err != nil {
+		m.log.Warn("could not look at the spaces whose clone was removed", "error", err)
+	}
 	if n, err := m.SweepStaged(context.Background()); err != nil {
 		m.log.Warn("could not remove the spaces a crash left half made", "error", err)
 	} else if n > 0 {
@@ -397,6 +426,22 @@ func (m *Manager) OpenMember(ctx context.Context, user store.User, spaceID strin
 }
 
 func (m *Manager) openFor(ctx context.Context, user store.User, spaceID string, viaAdmin bool) (*Handle, error) {
+	return m.openForIndex(ctx, user, spaceID, viaAdmin, false)
+}
+
+// OpenIndex is Open for a request that only reads what the index answers (a
+// list, the tree, tags, links, checks): an evicted space is opened by its
+// index and is not restored. The handle says IndexOnly in that case.
+func (m *Manager) OpenIndex(ctx context.Context, user store.User, spaceID string) (*Handle, error) {
+	return m.openForIndex(ctx, user, spaceID, true, true)
+}
+
+// OpenMemberIndex is OpenMember for such a request.
+func (m *Manager) OpenMemberIndex(ctx context.Context, user store.User, spaceID string) (*Handle, error) {
+	return m.openForIndex(ctx, user, spaceID, false, true)
+}
+
+func (m *Manager) openForIndex(ctx context.Context, user store.User, spaceID string, viaAdmin, indexOnly bool) (*Handle, error) {
 	l, err := m.list(ctx, user.ID)
 	if err != nil {
 		return nil, err
@@ -423,11 +468,18 @@ func (m *Manager) openFor(ctx context.Context, user store.User, spaceID string, 
 		in = Info{ID: sp.ID, Name: sp.Name, Perms: perm.All, ViaAdmin: true, Personal: sp.Personal, Inbox: sp.Inbox}
 	}
 	in = m.withSync(ctx, []Info{in})[0]
-	sp, release, err := m.Acquire(ctx, spaceID)
+	var sp *space.Space
+	var release func()
+	if indexOnly {
+		sp, release, err = m.acquireIndex(ctx, spaceID)
+	} else {
+		sp, release, err = m.Acquire(ctx, spaceID)
+	}
 	if err != nil {
 		return nil, err
 	}
-	return &Handle{Space: sp, Info: in, release: release}, nil
+	m.noteUse(spaceID)
+	return &Handle{Space: sp, Info: in, release: release, IndexOnly: sp != nil && sp.Evicted()}, nil
 }
 
 // OpenMembership is Open without opening the space: the handle carries what
@@ -470,6 +522,19 @@ func (m *Manager) Acquire(ctx context.Context, id string) (*space.Space, func(),
 // acquire is Acquire; admin lets the administration reach a disabled space.
 func (m *Manager) acquire(ctx context.Context, id string, admin bool) (*space.Space, func(), error) {
 	for {
+		// An evicted space has no files: they are restored first, outside the
+		// lock (it waits for the network), and the request goes on as for any
+		// space once they are there.
+		if m.single == nil {
+			if err := m.loadEvicted(ctx); err != nil {
+				return nil, nil, err
+			}
+			if m.isEvicted(id) && !(admin && m.disabled[id]) {
+				if err := m.ensureRestored(ctx, id); err != nil {
+					return nil, nil, err
+				}
+			}
+		}
 		m.mu.Lock()
 		if m.closed {
 			m.mu.Unlock()
@@ -574,10 +639,15 @@ func (m *Manager) openSpace(ctx context.Context, id string) (*space.Space, error
 	case err != nil && !errors.Is(err, store.ErrNotFound):
 		return nil, err
 	}
-	return space.Open(space.Options{
+	sp, err := space.Open(space.Options{
 		Root: root, Name: name, StateDir: state, Committer: m.opt.Committer, Author: author,
 		CommitIdle: m.opt.CommitIdle, CommitMax: m.opt.CommitMax, Logger: m.log.With("space", id), Remote: rem,
+		WriteGate: func() error { return m.CheckWritable(id) },
 	})
+	if err == nil && rem != nil {
+		m.markCache(id, sp)
+	}
+	return sp, err
 }
 
 // ValidName checks a space name: 1-80 characters once trimmed, no control characters.
@@ -682,6 +752,7 @@ func (m *Manager) Stage(name string, author Identity) (*Staged, error) {
 	sp, err := space.Open(space.Options{
 		Root: root, Name: name, StateDir: state, Committer: m.opt.Committer, Author: author.String(),
 		CommitIdle: m.opt.CommitIdle, CommitMax: m.opt.CommitMax, Logger: m.log.With("space", id),
+		WriteGate: func() error { return m.CheckWritable(id) },
 	})
 	if err != nil {
 		os.RemoveAll(root)
@@ -799,6 +870,9 @@ func (m *Manager) Create(ctx context.Context, userID, name string) (Info, error)
 func (m *Manager) CreateWith(ctx context.Context, userID, name, inbox string) (Info, error) {
 	if m.single != nil {
 		return Info{}, errors.New("single-user mode has one space")
+	}
+	if err := m.CheckNewSpace(ctx, userID, ""); err != nil {
+		return Info{}, err
 	}
 	if inbox == "" {
 		inbox = store.DefaultInbox
@@ -1009,6 +1083,9 @@ func (m *Manager) Run(ctx context.Context) {
 	sized := make(chan struct{})
 	go func() { defer close(sized); m.runSizer(ctx) }()
 	defer func() { <-sized }()
+	evicted := make(chan struct{})
+	go func() { defer close(evicted); m.RunEvict(ctx) }()
+	defer func() { <-evicted }()
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for {
@@ -1056,6 +1133,7 @@ func (m *Manager) Trim() {
 	if m.single != nil {
 		return
 	}
+	m.trimIndexOnly()
 	m.trimMu.Lock()
 	defer m.trimMu.Unlock()
 	now := m.opt.Now()

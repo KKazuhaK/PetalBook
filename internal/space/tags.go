@@ -144,6 +144,9 @@ func textNode(v string) *yaml.Node {
 // file each time: it is small, and may have come in with a pull.
 func (s *Space) TagColors() map[string]string {
 	out := map[string]string{}
+	if s.evicted {
+		return out
+	}
 	doc, err := s.loadTags()
 	if err != nil || doc == nil {
 		return out

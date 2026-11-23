@@ -213,6 +213,13 @@ func (s *Space) History(ctx context.Context, id string, limit int, cursor string
 }
 
 func (s *Space) historyErr(err error) error {
+	var nc *NotCachedError
+	if errors.As(err, &nc) {
+		return err
+	}
+	if errors.Is(err, gitstore.ErrMissing) {
+		return &NotCachedError{Err: err}
+	}
 	var ge *gitstore.GitError
 	if errors.As(err, &ge) {
 		s.log.Warn("reading the history failed", "error", err)

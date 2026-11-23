@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
@@ -76,6 +77,10 @@ type RemoteOptions struct {
 	// Runner and AllowUnsafe are for tests (a recorder, local paths as remotes).
 	Runner      gitstore.Runner
 	AllowUnsafe bool
+	// Partial asks for a partial clone (milestone 3.1) when connecting makes
+	// the space take the remote's content. It does not change a clone that is
+	// full already, and a space that is partial is found out by its clone.
+	Partial bool
 }
 
 // Errors of remote mode the API maps.
@@ -127,6 +132,11 @@ type remote struct {
 	lastFetch time.Time
 	failedAt  time.Time
 	failErr   error
+
+	// partial is set while the clone is partial; pstate is the fetches of
+	// contents that are under way (partial.go).
+	partial atomic.Bool
+	pstate  partialState
 
 	mu          sync.Mutex
 	st          RemoteStatus
@@ -239,6 +249,7 @@ func (s *Space) initRemote(o *RemoteOptions, recovered map[string]Author) error 
 		r.repo.WriteLastGood(ctx, r.branch, r.st.LastGood)
 	}
 	s.rem.Store(r)
+	s.enterPartial(ctx, r)
 	// origin must be the address the database has.
 	if cur := r.repo.RemoteURL(ctx); cur != o.URL {
 		if err := r.repo.SetRemote(ctx, o.URL); err != nil {
@@ -362,6 +373,15 @@ func (s *Space) netFailure(r *remote, err error) error {
 	return unavailable(err, "%s", msg)
 }
 
+// netFailureOr is netFailure for an error that may or may not come from the
+// network: other errors are returned as they are.
+func (s *Space) netFailureOr(r *remote, err error) error {
+	if gitstore.KindOf(err) != gitstore.KindOther || errors.Is(err, context.Canceled) {
+		return s.netFailure(r, err)
+	}
+	return err
+}
+
 // --- the state of the clone ------------------------------------------------------
 
 // syncTipLocked makes the clone exactly the remote's tip, or fails with an
@@ -409,6 +429,9 @@ func (s *Space) reconcileLocked(ctx context.Context, r *remote) error {
 		switch {
 		case ahead == 0 && behind == 0:
 		case ahead == 0:
+			if err := s.prefetchMove(ctx, r, head, tip); err != nil {
+				return s.netFailureOr(r, err)
+			}
 			if err := repo.FastForward(ctx, r.branch); err != nil {
 				msg := "the clone could not be moved to the remote: " + gitstore.Scrub(err.Error())
 				r.blocked = msg
@@ -440,6 +463,9 @@ func (s *Space) reconcileLocked(ctx context.Context, r *remote) error {
 			r.noteFetched()
 			s.log.Info("pushed commits an earlier run had left unpushed", "commits", ahead)
 		default:
+			if err := s.prefetchMove(ctx, r, head, tip); err != nil {
+				return s.netFailureOr(r, err)
+			}
 			ref, err := repo.KeepUnpushed(ctx, head, time.Now())
 			if err != nil {
 				return err
@@ -632,6 +658,9 @@ func (s *Space) Accept(ctx context.Context, commit string) error {
 	}
 	r.noteFetched()
 	old := r.repo.Head(ctx)
+	if err := s.prefetchMove(ctx, r, old, tip); err != nil {
+		return s.netFailureOr(r, err)
+	}
 	note := ""
 	if lg := r.lastGood(); old != "" && lg != "" {
 		if n, err := r.repo.CountNotIn(ctx, lg); err == nil && n > 0 {
@@ -764,6 +793,11 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 	defer s.mu.Unlock()
 	if s.closed {
 		return zero, ErrClosed
+	}
+	if s.gate != nil {
+		if err := s.gate(); err != nil {
+			return zero, err
+		}
 	}
 	// A change to the types or to the folders they are bound to changes which
 	// pages have problems with their type (see checks.go).
@@ -1103,7 +1137,21 @@ func (s *Space) Connect(ctx context.Context, o RemoteOptions) error {
 			return fail(err)
 		}
 	} else {
-		if err := repo.Fetch(ctx, o.Branch, true); err != nil {
+		// A space that has nothing of its own takes the remote's content: it
+		// is cloned partially when that is asked for, so only the current
+		// version's files come over. A space with history of its own keeps its
+		// full clone.
+		partial := false
+		if o.Partial && prev == nil {
+			if p, err := s.pristineLocked(ctx, repo); err == nil && p {
+				partial = true
+			}
+		}
+		if partial {
+			if err := repo.FetchFiltered(ctx, o.Branch, true); err != nil {
+				return fail(err)
+			}
+		} else if err := repo.Fetch(ctx, o.Branch, true); err != nil {
 			return fail(err)
 		}
 		tip := repo.RemoteTip(ctx, o.Branch)
@@ -1111,9 +1159,21 @@ func (s *Space) Connect(ctx context.Context, o RemoteOptions) error {
 		if err != nil {
 			return err
 		}
+		prefetch := func() error {
+			if !partial {
+				return nil
+			}
+			if err := repo.PrefetchMove(ctx, oldHead, tip); err != nil {
+				return fail(err)
+			}
+			return nil
+		}
 		switch {
 		case ahead == 0 && behind == 0:
 		case ahead == 0: // the remote contains the space: move it forward
+			if err := prefetch(); err != nil {
+				return err
+			}
 			if err := repo.FastForward(ctx, o.Branch); err != nil {
 				return err
 			}
@@ -1129,6 +1189,9 @@ func (s *Space) Connect(ctx context.Context, o RemoteOptions) error {
 			}
 			if !pristine {
 				return ErrDiverged
+			}
+			if err := prefetch(); err != nil {
+				return err
 			}
 			// Nothing of the space's own: it takes the remote's content and history.
 			if err := repo.ResetHard(ctx, tip); err != nil {
@@ -1151,6 +1214,7 @@ func (s *Space) Connect(ctx context.Context, o RemoteOptions) error {
 		return err
 	}
 	s.rem.Store(nr)
+	s.enterPartial(ctx, nr)
 	ok = true
 	return nil
 }
