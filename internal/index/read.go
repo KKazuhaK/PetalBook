@@ -5,6 +5,26 @@ import (
 	"database/sql"
 )
 
+// Lock order. Every path takes what it needs in this order and never the other
+// way round, which is what keeps the index free of deadlock:
+//
+//	read:          a connection of db, then gate (shared), then aux tokens
+//	write:         wmu, then the connection of wdb
+//	checkpointer:  wmu, then gate (alone), then the connection of wdb
+//
+// A read waits for a connection while it holds nothing, so all the reads that
+// hold the gate have their connection and end. This matters because sync.RWMutex
+// stops new shared holders as soon as the checkpointer waits for the gate: a
+// read that held the gate while it waited for a connection could wait for ever
+// behind reads that hold every connection and wait for the gate. A read never
+// waits for an aux connection (it takes a free token or reads serially), never
+// takes wmu, and never starts a second read while it holds one (the gate is not
+// reentrant once a writer waits). A write never takes the gate or a connection
+// of db or aux. Close waits for the checkpointer (ckptDone), which waits only
+// for the reads under way and the write under way; nothing in the index calls
+// out to code that may hold a lock of its own while it holds one of these,
+// except Source in a write, and a Source must not call into the index.
+
 // A listing with conditions and a count by values are several queries (see
 // plan.go), some of them run at the same time on connections of their own.
 // Each query on a connection of its own would read the index as it was when
@@ -85,15 +105,31 @@ func (r *read) end() {
 	r.gate.RUnlock()
 }
 
-// view runs f on a read of the index as it is now: the reads that are one
-// query go through the gate like the others.
-func (x *Index) view(f func(r *read) error) error {
-	r, err := x.begin()
+// connQuerier runs the queries of a read that is one query on a connection
+// of its own, outside a transaction: the statement holds its snapshot.
+type connQuerier struct{ c *sql.Conn }
+
+func (q connQuerier) Query(query string, args ...any) (*sql.Rows, error) {
+	return q.c.QueryContext(context.Background(), query, args...)
+}
+
+func (q connQuerier) QueryRow(query string, args ...any) *sql.Row {
+	return q.c.QueryRowContext(context.Background(), query, args...)
+}
+
+// one runs f, a read that is one query, on a connection of db under the gate,
+// in the lock order above: the connection first. It costs no transaction and
+// no pin, which a read of one statement does not need; f must close its rows
+// before it returns.
+func (x *Index) one(f func(q querier) error) error {
+	c, err := x.db.Conn(context.Background())
 	if err != nil {
 		return err
 	}
-	defer r.end()
-	return f(r)
+	defer c.Close()
+	x.gate.RLock()
+	defer x.gate.RUnlock()
+	return f(connQuerier{c})
 }
 
 // parallel is up to n reads that hold the snapshot of r, r itself first, for

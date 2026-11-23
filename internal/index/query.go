@@ -293,19 +293,29 @@ func (x *Index) listDirect(q Query, limit int, sortName string, order []sortKey,
 		args = append(args, offset)
 	}
 
-	x.gate.RLock() // one query, read like the others (read.go)
-	defer x.gate.RUnlock()
-	rows, err := x.db.Query(query, args...)
+	res := Result{Items: []Summary{}}
+	err := x.one(func(db querier) error { // one query, read like the others (read.go)
+		rows, err := db.Query(query, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		return res.fill(rows, q.Props, limit, relevance, offset, sortName)
+	})
 	if err != nil {
 		return Result{}, err
 	}
-	defer rows.Close()
-	res := Result{Items: []Summary{}}
+	return res, nil
+}
+
+// fill reads the rows of a listing of one query into res: limit of them, and
+// the cursor of the next page when there is one more.
+func (res *Result) fill(rows *sql.Rows, props bool, limit int, relevance bool, offset int, sortName string) error {
 	var last cursor
 	for rows.Next() {
-		s, rowid, mtime, ckey, untitled, titleKey, err := scanSummary(rows, q.Props)
+		s, rowid, mtime, ckey, untitled, titleKey, err := scanSummary(rows, props)
 		if err != nil {
-			return Result{}, err
+			return err
 		}
 		if len(res.Items) == limit {
 			// One more row than asked for: there is a next page.
@@ -320,7 +330,7 @@ func (x *Index) listDirect(q Query, limit int, sortName string, order []sortKey,
 		last = cursor{M: mtime, C: ckey, U: untitled, T: titleKey, R: rowid}
 		res.Items = append(res.Items, s)
 	}
-	return res, rows.Err()
+	return rows.Err()
 }
 
 // selectCols are the columns of a summary, in the order scanSummary reads them.
@@ -449,22 +459,26 @@ type FolderCount struct {
 // Tree returns every known folder, empty ones included. Cost: O(folders), each
 // count served by the (folder, mtime) index.
 func (x *Index) Tree() ([]FolderCount, error) {
-	x.gate.RLock() // one query, read like the others (read.go)
-	defer x.gate.RUnlock()
-	rows, err := x.db.Query(`SELECT f.path, (SELECT count(*) FROM pages p WHERE p.folder = f.path) FROM folders f ORDER BY f.path`)
+	out := []FolderCount{}
+	err := x.one(func(db querier) error { // one query, read like the others (read.go)
+		rows, err := db.Query(`SELECT f.path, (SELECT count(*) FROM pages p WHERE p.folder = f.path) FROM folders f ORDER BY f.path`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var f FolderCount
+			if err := rows.Scan(&f.Path, &f.Pages); err != nil {
+				return err
+			}
+			out = append(out, f)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []FolderCount{}
-	for rows.Next() {
-		var f FolderCount
-		if err := rows.Scan(&f.Path, &f.Pages); err != nil {
-			return nil, err
-		}
-		out = append(out, f)
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // TagCount is a tag with the number of pages using it.
@@ -476,28 +490,32 @@ type TagCount struct {
 // Tags returns every tag by use, most used first. Cost: O(tag assignments),
 // measured at 15 ms for 50,000 pages in spikes/search-scale.
 func (x *Index) Tags() ([]TagCount, error) {
-	x.gate.RLock() // one query, read like the others (read.go)
-	defer x.gate.RUnlock()
-	rows, err := x.db.Query(`SELECT tag, count(*) AS n FROM tags GROUP BY tag ORDER BY n DESC, tag`)
+	out := []TagCount{}
+	err := x.one(func(db querier) error { // one query, read like the others (read.go)
+		rows, err := db.Query(`SELECT tag, count(*) AS n FROM tags GROUP BY tag ORDER BY n DESC, tag`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var t TagCount
+			if err := rows.Scan(&t.Tag, &t.Pages); err != nil {
+				return err
+			}
+			out = append(out, t)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []TagCount{}
-	for rows.Next() {
-		var t TagCount
-		if err := rows.Scan(&t.Tag, &t.Pages); err != nil {
-			return nil, err
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // Count returns the number of indexed pages.
 func (x *Index) Count() (n int, err error) {
-	x.gate.RLock() // one query, read like the others (read.go)
-	defer x.gate.RUnlock()
-	err = x.db.QueryRow(`SELECT count(*) FROM pages`).Scan(&n)
+	err = x.one(func(db querier) error { // one query, read like the others (read.go)
+		return db.QueryRow(`SELECT count(*) FROM pages`).Scan(&n)
+	})
 	return
 }

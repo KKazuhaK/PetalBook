@@ -399,10 +399,10 @@ func (x *Index) Forget(paths, dirs []string) error {
 
 // PathByID returns the file path of a page.
 func (x *Index) PathByID(id string) (string, bool) {
-	x.gate.RLock() // a read like the others (read.go)
-	defer x.gate.RUnlock()
 	var p string
-	err := x.db.QueryRow(`SELECT path FROM pages WHERE id = ?`, id).Scan(&p)
+	err := x.one(func(db querier) error { // one query, read like the others (read.go)
+		return db.QueryRow(`SELECT path FROM pages WHERE id = ?`, id).Scan(&p)
+	})
 	return p, err == nil
 }
 
@@ -419,22 +419,26 @@ type Problem struct {
 
 // Problems lists the files that are not usable pages, by path.
 func (x *Index) Problems() ([]Problem, error) {
-	x.gate.RLock()
-	defer x.gate.RUnlock()
-	rows, err := x.db.Query(`SELECT path, code, message FROM problems ORDER BY path`)
+	var out []Problem
+	err := x.one(func(db querier) error { // one query, read like the others (read.go)
+		rows, err := db.Query(`SELECT path, code, message FROM problems ORDER BY path`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var p Problem
+			if err := rows.Scan(&p.Path, &p.Code, &p.Message); err != nil {
+				return err
+			}
+			out = append(out, p)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Problem
-	for rows.Next() {
-		var p Problem
-		if err := rows.Scan(&p.Path, &p.Code, &p.Message); err != nil {
-			return nil, err
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // writer holds the prepared statements of one write transaction.

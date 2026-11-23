@@ -368,7 +368,9 @@ func TestInAndGroupCostsInALargeSpace(t *testing.T) {
 // other tests running, a failure of the machine and not of the cost. So for
 // them the fastest of the runs is held to 150 ms: load only adds time, the
 // fastest run is the cost, and a reading that lost its parallelism still
-// fails. It runs only when asked for:
+// fails. A burst of load can cover all the runs too, so when the fastest is
+// over the bound two more series are run after a pause and the fastest of all
+// is what is held (see measure). It runs only when asked for:
 //
 //	PETALBOOK_TIMING=1 go test -run Large -v ./internal/index/
 func TestEveryKindOfListingAndCountInALargeSpace(t *testing.T) {
@@ -432,21 +434,38 @@ func TestEveryKindOfListingAndCountInALargeSpace(t *testing.T) {
 	fastest := false // the bound is of the median; of the fastest run when set
 	measure := func(name string, f func() (int, error)) {
 		t.Helper()
-		var ds []time.Duration
 		n := 0
-		for i := 0; i < 9; i++ {
-			start := time.Now()
-			var err error
-			if n, err = f(); err != nil {
-				t.Fatal(err)
+		runs := func() []time.Duration {
+			var ds []time.Duration
+			for i := 0; i < 9; i++ {
+				start := time.Now()
+				var err error
+				if n, err = f(); err != nil {
+					t.Fatal(err)
+				}
+				ds = append(ds, time.Since(start))
 			}
-			ds = append(ds, time.Since(start))
+			sortDurations(ds)
+			return ds
 		}
-		sortDurations(ds)
+		ds := runs()
 		t.Logf("%-66s median %7.1f ms  worst %7.1f ms  (%d)", name, float64(ds[len(ds)/2].Microseconds())/1000, float64(ds[len(ds)-1].Microseconds())/1000, n)
 		if fastest {
-			if ds[0] > bound {
-				t.Errorf("%s: fastest %v, over %v", name, ds[0], bound)
+			// Load only adds time; a burst of it (other tests, other builds on
+			// the machine) can cover all nine runs, and it did: 267 to 337 ms
+			// for a reading whose cost is 40 to 115 ms, with the same figures
+			// before and after the gate of read.go. So two more series are run
+			// after a pause when the first is over the bound, and the fastest
+			// of all is held to it: a quiet moment shows the cost, and a cost
+			// that grew is over the bound in every series.
+			best := ds[0]
+			for retry := 0; retry < 2 && best > bound; retry++ {
+				time.Sleep(500 * time.Millisecond)
+				best = min(best, runs()[0])
+				t.Logf("%-66s again: fastest %7.1f ms", name, float64(best.Microseconds())/1000)
+			}
+			if best > bound {
+				t.Errorf("%s: fastest %v in three series, over %v", name, best, bound)
 			}
 		} else if ds[len(ds)/2] > bound {
 			t.Errorf("%s: median %v, over %v", name, ds[len(ds)/2], bound)
