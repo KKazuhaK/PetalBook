@@ -1140,9 +1140,9 @@ A sign-in provider (see "Sign-in providers") may carry a `groups` setting:
                    {"value": "/staff", "groupId": "01JD4A3B7Q"}]}
 ```
 
-- `claim`: where the values are read. OpenID Connect: a claim of the ID token or,
-  when absent there, of the userinfo response, holding a string or an array of
-  strings (default `groups`). SAML: an attribute name, every value of it
+- `claim`: where the values are read. OpenID Connect: a claim of the ID token
+  (the userinfo response is not read), holding a string or an array of strings
+  (default `groups`). SAML: an attribute name, every value of it
   (`memberOf`, or `http://schemas.microsoft.com/ws/2008/06/identity/claims/groups`
   for Entra ID). GitHub: not settable; the values are the organisations the
   person belongs to (the logins 2.8 already reads, at most 500).
