@@ -3957,6 +3957,12 @@ Every endpoint here works in both modes (in single-user mode the space is
 `default`) and with an API token; an OAuth access token is still for `/mcp`
 only (`403 token_scope`).
 
+They follow the rules of reads, tenants included (see "Tenants, registration
+and mail"): a space of another tenant answers as one that does not exist, and
+a person of a disabled tenant, or their token, is refused as on every other
+route (`401`). The spaces of a disabled tenant are `403 space_disabled` to
+everyone, as for their pages, and are never in `heads`.
+
 The server keeps no record of devices. A client holds a **change cursor** per
 space and asks what changed after it; nothing is registered, and a device that
 is never seen again leaves nothing behind.
@@ -4117,7 +4123,8 @@ ask once and then read changes only where something changed. 1 to 100
 
 - `heads` holds every space the caller may `read`; `missing` (left out when
   empty) every other one, not telling a space that does not exist from one the
-  caller may not see. A disabled space is in `missing`.
+  caller may not see. A disabled space is in `missing`, and so is every space
+  of a disabled tenant.
 - A head equal to the client's cursor means nothing changed; a different one
   means the client calls `GET …/changes`. A head is not a promise that there are
   changes: comparing it is cheap, reading the changes settles it.

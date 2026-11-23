@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"testing"
@@ -35,6 +36,8 @@ type tenFx struct {
 
 	// syncedB is a synced group of B that a provider of B maps (addMappedB).
 	syncedB string
+	// cursorB is a change cursor of spaceB, as its member's device holds it.
+	cursorB string
 }
 
 // fakeID is an id of the right form that nothing has.
@@ -100,6 +103,8 @@ func newTenFx(t *testing.T, a *acc) *tenFx {
 		Resource: "https://notes.example.test/mcp", Created: now, LastUsed: now, RefreshHash: "rh", Spaces: []store.TokenSpace{{ID: f.spaceB}}}); err != nil {
 		t.Fatal(err)
 	}
+	// A change cursor of B's space, as B's member's device would hold one.
+	f.cursorB = f.memB.do("GET", "/api/spaces/"+f.spaceB+"/sync/catalog", nil).want(t, 200, "").body["changes"].(string)
 	a.auth.FlushAudit(ctx)
 	return f
 }
@@ -142,6 +147,7 @@ const (
 	isoList                      // a list: nothing of B in it, and ?tenant=B as for a made-up tenant
 	isoSite                      // the server's own: a tenant administrator is refused
 	isoExempt                    // nothing of another tenant can be named, with the reason
+	isoEcho                      // ids of the query that are answered back: B's id must answer exactly as a made-up one
 )
 
 type isoEntry struct {
@@ -153,11 +159,14 @@ type isoEntry struct {
 	ids  func(f *tenFx) map[string]string // parameters of the path (name -> B's id)
 	// query is added to the path, the same for B's id and a made-up one.
 	query string
+	// queryOf, for isoEcho, is the query for an id (B's, or a made-up one).
+	queryOf func(f *tenFx, id string) string
 }
 
 // isolationRoutes has an entry for every route that is not a space route (those
-// are all isoParam by their {space}). A route added to the API without an entry
-// here fails TestEveryRouteIsInTheIsolationTable.
+// are all isoParam by their {space}; an entry here for one only adds its query).
+// A route added to the API without an entry here fails
+// TestEveryRouteIsInTheIsolationTable.
 var isolationRoutes = map[string]isoEntry{
 	"GET /api/meta":                        {kind: isoList},
 	"GET /api/session":                     {kind: isoExempt, reason: "the caller's own user"},
@@ -245,6 +254,16 @@ var isolationRoutes = map[string]isoEntry{
 	"PATCH /api/admin/tenants/{tenant}":               {kind: isoParam, body: func(f *tenFx, id string) any { return map[string]any{"name": "taken over"} }},
 	"GET /api/admin/tenants/{tenant}/settings":        {kind: isoParam},
 	"PUT /api/admin/tenants/{tenant}/settings/{key}":  {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"tenant": f.tenB, "key": "legal.termsUrl"} }, body: func(f *tenFx, id string) any { return map[string]any{"value": "https://evil.example"} }},
+
+	// Offline sync (4.1). heads names spaces in its query and answers each back,
+	// in heads or in missing: B's space must be in missing as a made-up one is.
+	// The other three are space routes; their queries make the request one that
+	// would be answered (a cursor of B's space, page ids of the right form), so
+	// it is the {space} that refuses it.
+	"GET /api/sync/heads":                  {kind: isoEcho, queryOf: func(f *tenFx, id string) string { return "?space=" + id + "&space=" + f.spaceA }},
+	"GET /api/spaces/{space}/sync/catalog": {kind: isoParam, query: "?limit=10"},
+	"GET /api/spaces/{space}/changes":      {kind: isoParam, queryOf: func(f *tenFx, _ string) string { return "?since=" + url.QueryEscape(f.cursorB) }},
+	"GET /api/spaces/{space}/sync/pages":   {kind: isoParam, query: "?ids=0000000AAA,0000000AAB"},
 }
 
 func init() {
@@ -317,6 +336,9 @@ func (f *tenFx) build(rt api.RouteInfo, e isoEntry, other bool) (path string, bo
 		path = strings.ReplaceAll(path, "{path...}", "x.md")
 	}
 	path += e.query
+	if e.queryOf != nil {
+		path += e.queryOf(f, val("space", f.spaceB))
+	}
 	body = map[string]any{}
 	if e.body != nil {
 		body = e.body(f, val("id", f.tenB))
@@ -357,7 +379,9 @@ func TestTenantsAreIsolatedOnEveryRoute(t *testing.T) {
 			key := rt.Method + " " + rt.Pattern
 			e, ok := isolationRoutes[key]
 			if rt.Space {
-				e, ok = isoEntry{kind: isoParam}, true
+				// By its {space}; an entry of the table only adds a query.
+				e = isoEntry{kind: isoParam, query: e.query, queryOf: e.queryOf}
+				ok = true
 			}
 			if !ok {
 				continue
@@ -365,6 +389,20 @@ func TestTenantsAreIsolatedOnEveryRoute(t *testing.T) {
 			switch e.kind {
 			case isoExempt:
 				continue
+			case isoEcho:
+				for _, cl := range callers {
+					rb := cl.c.do(rt.Method, rt.Pattern+e.queryOf(f, f.spaceB), nil)
+					rf := cl.c.do(rt.Method, rt.Pattern+e.queryOf(f, fakeID), nil)
+					if shape(rb) != shape(rf) || strings.ReplaceAll(rb.raw, f.spaceB, fakeID) != rf.raw {
+						t.Errorf("%s as %s: B's id answered %s, a made-up id %s", key, cl.name, rb.raw, rf.raw)
+					}
+					for _, id := range b {
+						if id != f.spaceB && strings.Contains(rb.raw, id) {
+							t.Errorf("%s as %s: the answer names %q of tenant B: %s", key, cl.name, id, rb.raw)
+						}
+					}
+					checked++
+				}
 			case isoSite:
 				for _, cl := range callers[:2] {
 					path := strings.NewReplacer("{tenant}", f.tenB, "{key}", "legal.termsUrl", "{id}", "x", "{slug}", "x").Replace(rt.Pattern)
