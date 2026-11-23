@@ -140,9 +140,17 @@ func (g *gitRepo) setAuthor(name, email string) {
 
 func (g *gitRepo) init() error { return g.r().Init(context.Background(), "main") }
 
-// exclude keeps a path out of the repository without touching a tracked
-// file: in info/exclude of the repository, which every checkout of it reads.
-func (g *gitRepo) exclude(pattern string) error {
+// exclude keeps a path (from the top of the work tree) out of the
+// repository without touching a tracked file: in info/exclude of the
+// repository, which every checkout of it reads.
+func (g *gitRepo) exclude(pattern string) error { return g.excludeLine("/" + pattern) }
+
+// tempPattern, in info/exclude, matches every name tempName and writeIn give,
+// in any folder: git status lists none, and `git add` of a folder takes none.
+const tempPattern = ".*petalbook-w-*"
+
+// excludeLine adds the pattern line to info/exclude as it is.
+func (g *gitRepo) excludeLine(line string) error {
 	file := filepath.Join(g.dirs.common, "info", "exclude")
 	if g.dirs.common == "" {
 		file = filepath.Join(g.dir, ".git", "info", "exclude")
@@ -150,7 +158,7 @@ func (g *gitRepo) exclude(pattern string) error {
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		return nil // a read-only repository: not fatal
 	}
-	_, err := ensureLines(file, "/"+pattern)
+	_, err := ensureLines(file, line)
 	return err
 }
 

@@ -75,6 +75,10 @@ func importEarlierDrafts(ctx context.Context, st *store.Store, file string, idle
 		return
 	}
 	done := filepath.Join(filepath.Dir(file), strings.Replace(filepath.Base(file), "state-earlier-", "state-imported-", 1))
+	// The database first: it is what marks the family as imported. A crash
+	// before its log follows leaves the log under the old name with no
+	// database of that name, which the space moves after it when it opens
+	// (tidyEarlier); the database is never left without its log.
 	for _, ext := range []string{"", "-wal", "-shm", "-journal"} {
 		if _, err := os.Lstat(file + ext); err == nil {
 			os.Rename(file+ext, done+ext)

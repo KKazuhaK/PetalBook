@@ -181,9 +181,8 @@ func Open(opt Options) (*Space, error) {
 		return nil, err
 	}
 	g.dirs = dirs
-	tmp, tmpInTree := tmpDirFor(root, dirs.git)
 
-	heal := &healer{root: root, repo: g.r, log: log, gitDir: dirs.git, tmp: tmp, tmpInTree: tmpInTree}
+	heal := &healer{root: root, repo: g.r, log: log, gitDir: dirs.git}
 	// A local space writes space.yml at the start when there is none: a link
 	// or a file where .petalbook belongs is put right before (see
 	// settingspath.go): what is in its place is moved aside and that is
@@ -248,6 +247,7 @@ func Open(opt Options) (*Space, error) {
 	stateDir := opt.StateDir
 	if stateDir == "" {
 		stateDir = stateDirIn(dirs.git)
+		tidyEarlier(stateDir)
 		if err := moveOldState(root, stateDir, g, log); err != nil {
 			return nil, err
 		}
@@ -273,30 +273,18 @@ func Open(opt Options) (*Space, error) {
 			return nil, err
 		}
 	}
-	if tmpInTree {
-		if err := g.exclude(treeTmp + "/"); err != nil {
-			return nil, err
-		}
-		log.Info("the Git directory is on another file system than the space: temporary files are written in the space", "folder", treeTmp)
+	// A file of the space is written next to where it goes, under a hidden
+	// name of the server's (newTempIn, writeIn), which git is told to leave
+	// out. Nothing goes through a folder of temporary files that a pull can
+	// replace, or that can be on another file system than the file.
+	if err := g.excludeLine(tempPattern); err != nil {
+		return nil, err
 	}
-	// Half-written files from a crash, and the temporary folder of earlier
-	// versions, never through a link.
-	if isRealDir(root, ".petalbook/tmp") {
-		if d, _, err := openDirIn(root, ".petalbook"); err == nil && d != nil {
-			d.RemoveAll("tmp")
-			d.Close()
-		}
-	}
-	removeTemps(root, ".petalbook")
-	removeTemps(root, typesDir)
-	if !tmpInTree {
-		os.RemoveAll(tmp)
-	} else if isRealDir(root, treeTmp) {
-		if d, _, err := openDirIn(root, ""); err == nil && d != nil {
-			d.RemoveAll(treeTmp)
-			d.Close()
-		}
-	}
+	// The temporary folder of earlier versions, when the repository has
+	// nothing in it, never through a link; and the one an earlier build kept
+	// in the Git directory.
+	removeOldTmp(root, g, log)
+	os.RemoveAll(filepath.Join(dirs.git, "petalbook-tmp"))
 
 	// What an earlier run changed but did not get to commit, and any move it
 	// left half done, before the index looks at the files.
@@ -334,16 +322,20 @@ func Open(opt Options) (*Space, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Space{root: root, stateDir: stateDir, name: name, idx: idx, log: log, now: time.Now, ops: osOps(), src: dirSource{root}, syncEvery: opt.ResyncInterval, heal: heal}
+	s := &Space{root: root, stateDir: stateDir, name: name, idx: idx, log: log, now: time.Now, ops: osOps(), src: dirSource{root: root}, syncEvery: opt.ResyncInterval, heal: heal}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	if s.syncEvery <= 0 {
 		s.syncEvery = 2 * time.Second
 	}
-	st, err := idx.Sync(s.src, false)
+	// The first sync walks every folder of pages, and the attachments, anyway:
+	// it notes what a crash left of a write there (isTempName) on the way.
+	temps := append(tempsIn(root, ".petalbook"), tempsIn(root, typesDir)...)
+	st, err := idx.Sync(dirSource{root: root, temps: &temps}, false)
 	if err != nil {
 		idx.Close()
 		return nil, err
 	}
+	removeLeftTemps(root, g, temps, log)
 	log.Info("index ready", "pages", st.Pages, "added", st.Added, "updated", st.Updated, "removed", st.Removed,
 		"problems", st.Problems, "ms", st.Elapsed.Milliseconds())
 	if st.Problems > 0 {
@@ -466,6 +458,31 @@ func ensureLines(file string, lines ...string) (bool, error) {
 	return true, os.WriteFile(file, []byte(out), 0o644)
 }
 
+// removeOldTmp removes .petalbook/tmp, where versions before 2.2 wrote files
+// before they were renamed into place, when it is a folder reached through
+// folders and the repository has nothing in it: a file of the repository is
+// never removed. The repository is asked only when the folder is there.
+func removeOldTmp(root string, g *gitRepo, log *slog.Logger) {
+	const old = ".petalbook/tmp"
+	if !isRealDir(root, old) {
+		return
+	}
+	tracked, err := g.trackedLower()
+	if err != nil {
+		return
+	}
+	for p := range tracked {
+		if strings.HasPrefix(p, old+"/") {
+			log.Warn("the repository has files where an earlier version wrote its temporary files; they are left as they are", "folder", old)
+			return
+		}
+	}
+	if d, b, err := openDirIn(root, ".petalbook"); err == nil && b == "" && d != nil {
+		d.RemoveAll("tmp")
+		d.Close()
+	}
+}
+
 // readSpaceName is ensureSpaceConfig that never writes.
 func readSpaceName(root, name string) string {
 	if name != "" {
@@ -583,7 +600,13 @@ func (s *Space) abs(rel string) (string, error) {
 
 // --- file tree as the index's source ----------------------------------------
 
-type dirSource struct{ root string }
+type dirSource struct {
+	root string
+	// temps, when set, collects the names of files a crash left of a write
+	// (isTempName), in the folders of pages and in the attachments, which
+	// are then walked too, for that only.
+	temps *[]string
+}
 
 // ignoredDir reports folders that never hold pages: Git's and our own
 // directories, the attachments folder at the root, and any dot-directory.
@@ -608,13 +631,25 @@ func (d dirSource) Walk(file func(index.FileInfo) error, dir func(string) error)
 		if e.Type()&fs.ModeSymlink != 0 {
 			return nil // never follow links out of the space
 		}
+		inAssets := d.temps != nil && strings.HasPrefix(rel, "assets/")
 		if e.IsDir() {
-			if ignoredDir(rel, name) {
+			switch {
+			case d.temps != nil && rel == "assets":
+				return nil // looked into for what a crash left only
+			case inAssets && strings.HasPrefix(name, "."):
+				return filepath.SkipDir
+			case inAssets:
+				return nil
+			case ignoredDir(rel, name):
 				return filepath.SkipDir
 			}
 			return dir(rel)
 		}
-		if strings.HasPrefix(name, ".") || !strings.EqualFold(path.Ext(name), ".md") || !e.Type().IsRegular() {
+		if d.temps != nil && isTempName(name) && e.Type().IsRegular() {
+			*d.temps = append(*d.temps, rel)
+			return nil
+		}
+		if inAssets || strings.HasPrefix(name, ".") || !strings.EqualFold(path.Ext(name), ".md") || !e.Type().IsRegular() {
 			return nil
 		}
 		info, err := e.Info()

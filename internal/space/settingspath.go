@@ -18,8 +18,9 @@ import (
 // .petalbook holds the settings files and the types, and nothing else: it is
 // a folder of the repository, and a pull, or a person, can put a link or a
 // file in its place, or in the place of .petalbook/types. The server's own
-// state (index, journal, notices, temporary files) is kept in the Git
-// directory, where no pull writes (see DefaultStateDir). Nothing is ever read
+// state (index, journal, notices) is kept in the Git directory, where no pull
+// writes (see DefaultStateDir); a file of the space is written next to where
+// it goes, under a new hidden name (newTempIn, writeIn). Nothing is ever read
 // or written through a link or a file in the place of a folder, wherever it
 // leads, and every read and write there is made in the folder as it was
 // opened (inroot.go), so a link put there meanwhile is never followed either:
@@ -34,30 +35,6 @@ import (
 //     that on its own, makes the folder again and puts back into it what it
 //     had (the settings as they are read), so that the change is made on all of
 //     it and nothing is lost (clearWay).
-
-// tmpDir is where files of the space are written before they are renamed
-// into place: a folder in the Git directory, which no pull or checkout ever
-// writes to, when that is on the same file system as the space (tmpDirFor).
-// Else it is treeTmp in the work tree, and never a link or a file in its
-// place: then the folder in the Git directory is given, where a rename into
-// the space fails, so nothing is written through what is there. (A settings
-// file is written in its own folder instead, see writeIn.)
-func (h *healer) tmpDir() string {
-	if !h.tmpInTree {
-		return h.tmp
-	}
-	fi, err := os.Lstat(h.tmp)
-	if err == nil && fi.IsDir() {
-		return h.tmp
-	}
-	if errors.Is(err, fs.ErrNotExist) {
-		if d, err := mkdirIn(h.root, treeTmp); err == nil {
-			d.Close()
-			return h.tmp
-		}
-	}
-	return filepath.Join(h.gitDir, "petalbook-tmp")
-}
 
 // firstBlockedOwn is .petalbook when it is there and is not a folder: the
 // folder a local space writes in by itself when it starts (space.yml).

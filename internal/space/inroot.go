@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path"
 	"strings"
@@ -357,22 +358,49 @@ func linkIn(root, from, to string) error {
 	return out.Close()
 }
 
-// removeTemps removes what a crash left of writeIn in the folder dir of root.
-func removeTemps(root, dir string) {
-	d, blocked, err := openDirIn(root, dir)
-	if err != nil || blocked != "" {
-		return
-	}
-	defer d.Close()
-	f, err := d.Open(".")
+// tempsIn lists what a crash may have left of writeIn and newTempIn in the
+// folder dir of root (isTempName, regular files), as slash paths of the space.
+func tempsIn(root, dir string) []string {
+	entries, err := readDirIn(root, dir)
 	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if isTempName(e.Name()) && e.Type().IsRegular() {
+			out = append(out, path.Join(dir, e.Name()))
+		}
+	}
+	return out
+}
+
+// removeLeftTemps removes the files in rels (tempsIn, or found by the walk
+// of the first index sync) that the repository does not have: a file of the
+// repository is never removed, whatever its name. Each is removed in its
+// folder, never through a link. The repository is asked only when there is
+// something to remove, which is after a crash.
+func removeLeftTemps(root string, g *gitRepo, rels []string, log *slog.Logger) {
+	if len(rels) == 0 {
 		return
 	}
-	entries, _ := f.ReadDir(-1)
-	f.Close()
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".") && strings.Contains(e.Name(), tempMark) && e.Type().IsRegular() {
-			d.Remove(e.Name())
+	tracked, err := g.trackedLower()
+	if err != nil {
+		log.Warn("files a crash left could not be told from the repository's; they are left", "files", len(rels), "error", err)
+		return
+	}
+	n := 0
+	for _, rel := range rels {
+		if tracked[strings.ToLower(rel)] {
+			continue
 		}
+		if fi, blocked, err := lstatIn(root, rel); err != nil || blocked != "" || !fi.Mode().IsRegular() {
+			continue
+		}
+		if removeIn(root, rel) == nil {
+			n++
+		}
+	}
+	if n > 0 {
+		log.Info("removed half-written files a crash left", "files", n)
 	}
 }

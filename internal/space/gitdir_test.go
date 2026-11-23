@@ -149,41 +149,6 @@ func TestAGitFileThatLeadsNowhereIsRefused(t *testing.T) {
 	}
 }
 
-func TestAGitDirectoryOnAnotherFileSystemWritesTemporaryFilesInTheSpace(t *testing.T) {
-	needGit(t)
-	root := filepath.Join(t.TempDir(), "space")
-	os.MkdirAll(root, 0o755)
-	other, err := os.MkdirTemp("/dev/shm", "petalbook-gitdir-")
-	if err != nil {
-		t.Skip("no /dev/shm")
-	}
-	t.Cleanup(func() { os.RemoveAll(other) })
-	if sameDevice(root, other) {
-		t.Skip("/dev/shm is on the same file system as the temporary folder")
-	}
-	gd := filepath.Join(other, "repo.git")
-	git(t, t.TempDir(), "init", "-q", "--separate-git-dir", gd, root)
-	s := openAt(t, root)
-	works(t, s, filepath.Join(gd, "petalbook-state"))
-	if got := s.tmpDir(); got != filepath.Join(root, treeTmp) {
-		t.Errorf("temporary files go to %s", got)
-	}
-	// A link put in its place is not written through.
-	s.Close()
-	out := outsideDir(t)
-	before := treeOf(t, out)
-	os.RemoveAll(filepath.Join(root, treeTmp))
-	s = openAt(t, root)
-	os.RemoveAll(filepath.Join(root, treeTmp))
-	if err := os.Symlink(out, filepath.Join(root, treeTmp)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Create(Author{}, CreateInput{Meta: meta("title", "Through a link"), Body: "x\n"}); err == nil {
-		t.Log("written (beside the link)")
-	}
-	untouched(t, out, before)
-}
-
 // --- files of the repository where an earlier version kept its state ----------------------
 
 const otherJournal = `{"op":"t","p":"Other.md"}` + "\n"

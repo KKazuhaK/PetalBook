@@ -11,11 +11,11 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 )
 
-// The server's own state and its temporary files are kept in the Git
-// directory of the space. That is not always <space>/.git: a checkout made
-// with `git worktree add`, a submodule and a repository made with
-// --separate-git-dir have a .git file that names it, and .git can be a link
-// to a folder elsewhere. Git itself says where it is.
+// The server's own state is kept in the Git directory of the space. That is
+// not always <space>/.git: a checkout made with `git worktree add`, a
+// submodule and a repository made with --separate-git-dir have a .git file
+// that names it, and .git can be a link to a folder elsewhere. Git itself
+// says where it is.
 
 // gitDirs is where the Git directory of a space is.
 type gitDirs struct {
@@ -100,20 +100,4 @@ func (realRunner) Run(ctx context.Context, c gitstore.Cmd) (string, string, erro
 func within(dir, p string) bool {
 	rel, err := filepath.Rel(dir, p)
 	return err == nil && filepath.IsLocal(rel)
-}
-
-// treeTmp is the folder of temporary files in the work tree, used only when
-// the Git directory is on another file system than the space (a rename from
-// there into the space cannot be made). It is kept out of the repository by
-// info/exclude, and never written through a link (healer.tmpDir).
-const treeTmp = ".petalbook-tmp"
-
-// tmpDirFor is where the files of the space at root are written before they
-// are renamed into place: petalbook-tmp in the Git directory gd when that is
-// on the same file system as root, else treeTmp in the space (inTree).
-func tmpDirFor(root, gd string) (dir string, inTree bool) {
-	if sameDevice(root, gd) {
-		return filepath.Join(gd, "petalbook-tmp"), false
-	}
-	return filepath.Join(root, treeTmp), true
 }

@@ -284,7 +284,7 @@ func TestSavesProceedWhileAWalkIsRunning(t *testing.T) {
 	s := open(t, func(o *Options) { o.ResyncInterval = time.Millisecond })
 	p := mustCreate(t, s, "", meta("title", "忙着"), "v1\n")
 	time.Sleep(5 * time.Millisecond)
-	blk := &blockingSource{dirSource: dirSource{s.root}, entered: make(chan struct{}), release: make(chan struct{})}
+	blk := &blockingSource{dirSource: dirSource{root: s.root}, entered: make(chan struct{}), release: make(chan struct{})}
 	s.src = blk
 	var walked atomic.Bool
 	go func() {

@@ -117,13 +117,10 @@ func (r *restored) doc(f settingsFile) (*yaml.Node, error) {
 // healer restores the settings files of one space.
 type healer struct {
 	root, stateDir string
-	// gitDir is the Git directory of the space (resolveGitDirs); tmp is
-	// where its files are written before they are renamed into place, in the
-	// work tree (treeTmp) when tmpInTree.
-	gitDir, tmp string
-	tmpInTree   bool
-	repo        func() *gitstore.Repo
-	log         *slog.Logger
+	// gitDir is the Git directory of the space (resolveGitDirs).
+	gitDir string
+	repo   func() *gitstore.Repo
+	log    *slog.Logger
 
 	mu sync.Mutex
 	// found is what was found for an unusable file, by what the file is

@@ -35,6 +35,26 @@ var oldStateFiles = []string{
 	"index.db", "index.db-wal", "index.db-shm", "index.db-journal",
 }
 
+// dbFamilies are the databases among oldStateFiles, each with the files
+// SQLite keeps beside it (dbCompanions). The main file says what the others
+// are: a log without its database is nothing to replay into another one, and
+// one whose database the repository has is the repository's too.
+var dbFamilies = []string{"state.db", "index.db"}
+
+var dbCompanions = []string{"-wal", "-shm", "-journal"}
+
+// familyOf is the database whose companion n is, "" when n is none.
+func familyOf(n string) string {
+	for _, f := range dbFamilies {
+		for _, c := range dbCompanions {
+			if n == f+c {
+				return f
+			}
+		}
+	}
+	return ""
+}
+
 // EarlierStatePattern matches, in a state directory, the state databases of
 // an earlier version that were found when the state directory was already in
 // use (see moveOldState): their drafts are to be imported by the caller that
@@ -81,10 +101,21 @@ func moveOldState(root, dir string, g *gitRepo, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("could not tell which files of %s the repository has: %w", oldStateDir, err)
 	}
+	isTracked := func(n string) bool { return tracked[strings.ToLower(oldStateDir+"/"+n)] }
+	isPresent := map[string]bool{}
+	for _, n := range present {
+		isPresent[n] = true
+	}
 	var names []string
 	for _, n := range present {
-		if tracked[strings.ToLower(oldStateDir+"/"+n)] {
+		if isTracked(n) {
 			log.Warn("a file of the repository is where an earlier version kept its state; it is left as it is and not used", "path", oldStateDir+"/"+n)
+			continue
+		}
+		if f := familyOf(n); f != "" && (isTracked(f) || !isPresent[f]) {
+			// The log of a database the repository has, or of none: it is
+			// neither moved nor replayed into another database.
+			log.Warn("a file an earlier version kept beside a database that is the repository's, or that is not there, is left as it is and not used", "path", oldStateDir+"/"+n)
 			continue
 		}
 		names = append(names, n)
@@ -126,9 +157,7 @@ func moveFresh(old *os.Root, names []string, dir string, log *slog.Logger) error
 		return fmt.Errorf("the state of the space could not be moved from %s to %s: %w", oldStateDir, dir, err)
 	}
 	syncDir(filepath.Dir(dir))
-	for _, n := range names {
-		old.Remove(n)
-	}
+	removeFamilies(old, names)
 	log.Info("moved the state of the space into the Git directory", "from", oldStateDir, "to", dir, "files", len(names))
 	return nil
 }
@@ -153,9 +182,15 @@ func mergeOld(old *os.Root, names []string, dir string, now time.Time, log *slog
 		}
 		old.Remove("pending.journal")
 	}
+	// aside copies a file, or a database with its companions, beside the
+	// current state. The main file is copied last, and is the only name
+	// EarlierStatePattern matches: a crash on the way leaves companions
+	// without it, which tidyEarlier removes (the originals are still in old),
+	// and never a database without its log.
 	aside := func(base, ext string, members ...string) error {
 		var moved []string
-		for _, m := range members {
+		for i := len(members) - 1; i >= 0; i-- {
+			m := members[i]
 			if !has[m] {
 				continue
 			}
@@ -163,13 +198,11 @@ func mergeOld(old *os.Root, names []string, dir string, now time.Time, log *slog
 			if err := copyOut(old, m, to); err != nil {
 				return fmt.Errorf("%s/%s could not be kept in %s: %w", oldStateDir, m, dir, err)
 			}
-			moved = append(moved, m)
+			moved = append([]string{m}, moved...)
 		}
 		if len(moved) > 0 {
 			syncDir(dir)
-			for _, m := range moved {
-				old.Remove(m)
-			}
+			removeFamilies(old, moved)
 			log.Warn("an earlier version left its own state where it kept it before; it is kept beside the current one", "from", oldStateDir, "files", moved,
 				"as", filepath.Join(dir, base+"-earlier-"+stamp+ext))
 		}
@@ -189,6 +222,59 @@ func mergeOld(old *os.Root, names []string, dir string, now time.Time, log *slog
 		}
 	}
 	return nil
+}
+
+// removeFamilies removes names from old, each database before its
+// companions: once the main file is gone the family counts as moved, and a
+// crash after that leaves only companions, which are never used without it.
+func removeFamilies(old *os.Root, names []string) {
+	for _, n := range names {
+		if familyOf(n) == "" {
+			old.Remove(n)
+		}
+	}
+	for _, n := range names {
+		if familyOf(n) != "" {
+			old.Remove(n)
+		}
+	}
+}
+
+// tidyEarlier finishes, in the state directory dir, what a crash left of a
+// database kept beside the current one (EarlierStatePattern) or of its
+// import: a companion whose database was renamed to state-imported-* goes
+// after it; one whose database was never copied (its original is still where
+// it was copied from) is removed, as is a half-written copy. Cost: one look at
+// the names in dir.
+func tidyEarlier(dir string) {
+	ms, _ := filepath.Glob(filepath.Join(dir, "state-earlier-*.db*"))
+	for _, m := range ms {
+		name := filepath.Base(m)
+		if strings.HasSuffix(name, ".copying") {
+			os.Remove(m)
+			continue
+		}
+		main, comp := "", ""
+		for _, c := range dbCompanions {
+			if strings.HasSuffix(name, ".db"+c) {
+				main, comp = strings.TrimSuffix(m, c), c
+			}
+		}
+		if main == "" {
+			continue
+		}
+		if _, err := os.Lstat(main); err == nil {
+			continue
+		}
+		done := filepath.Join(dir, strings.Replace(filepath.Base(main), "state-earlier-", "state-imported-", 1))
+		if _, err := os.Lstat(done); err == nil {
+			if _, err := os.Lstat(done + comp); errors.Is(err, fs.ErrNotExist) {
+				os.Rename(m, done+comp)
+				continue
+			}
+		}
+		os.Remove(m)
+	}
 }
 
 // readOut reads the regular file name of old, never through a link.
