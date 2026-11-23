@@ -22,7 +22,10 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/api"
 	"github.com/KKazuhaK/PetalBook/internal/auth"
 	"github.com/KKazuhaK/PetalBook/internal/drafts"
+	"github.com/KKazuhaK/PetalBook/internal/github"
+	"github.com/KKazuhaK/PetalBook/internal/githubapp"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"github.com/KKazuhaK/PetalBook/internal/secret"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
@@ -67,6 +70,13 @@ type serveConfig struct {
 	onReady func(addr net.Addr)
 	// oidcHTTPClient reaches the identity provider (tests).
 	oidcHTTPClient *http.Client
+	// githubAPI and githubWeb are the base URLs of GitHub (the defaults are
+	// api.github.com and github.com; tests point them at a fake), githubHTTP
+	// reaches it, and githubRenewEvery is how often the GitHub connections are
+	// renewed (tests shorten it).
+	githubAPI, githubWeb string
+	githubHTTP           *http.Client
+	githubRenewEvery     time.Duration
 }
 
 // passwordParams are the password hashing parameters; zero means the default.
@@ -146,6 +156,10 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 	f.DurationVar(&c.pullInterval, "pull-interval", spaces.DefaultPullInterval, "accounts mode: fetch the remote of every open space that follows one this often, jittered (0: never by itself; a space is also fetched when it is opened)")
 	f.StringSliceVar(&c.remoteHosts, "remote-host", gitstore.DefaultHosts, "accounts mode: a host a space's remote repository may be on (repeatable, or comma-separated; * allows any host); giving it replaces the default list")
 	f.DurationVar(&c.remoteTimeout, "remote-timeout", 60*time.Second, "accounts mode: how long one fetch or push may take before the remote counts as unreachable")
+	f.StringVar(&c.githubAPI, "github-api-url", "", "accounts mode: the REST address of GitHub (default "+githubapp.DefaultAPI+"; for tests)")
+	f.StringVar(&c.githubWeb, "github-url", "", "accounts mode: the web address of GitHub (default "+githubapp.DefaultWeb+"; for tests)")
+	f.MarkHidden("github-api-url")
+	f.MarkHidden("github-url")
 	f.Int64Var(&c.maxUpload, "max-upload", api.DefaultMaxUpload, "largest file accepted as an upload, in bytes (0: the default, 10 MiB)")
 	f.Int64Var(&c.maxImport, "max-import", api.DefaultMaxImport, "largest Markdown file or zip accepted as an import, in bytes (0: the default, 100 MiB)")
 	f.StringVar(&c.inbox, "inbox", store.DefaultInbox, "single-user mode: the folder quick notes go to")
@@ -239,6 +253,9 @@ func (c serveConfig) check() (*checked, error) {
 	} else {
 		if c.remoteSet {
 			return nil, errors.New("--pull-interval, --remote-host and --remote-timeout are for accounts mode (--data): a single-user space stays local")
+		}
+		if c.githubAPI != "" || c.githubWeb != "" {
+			return nil, errors.New("--github-api-url and --github-url are for accounts mode (--data)")
 		}
 		if c.publicURL != "" || len(c.trustedProxies) > 0 || c.oidcIssuer != "" || c.oidcClientID != "" || c.oidcClientSecretFile != "" || c.oidcClientSecret != "" || c.oidcName != "" || len(c.oidcScopes) > 0 || c.oidcAutoCreate {
 			return nil, errors.New("--public-url, --trusted-proxy and --oidc-* are for accounts mode (--data)")
@@ -335,6 +352,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 		mgr      *spaces.Manager
 		sp       *space.Space
 		svc      *auth.Service
+		ghs      *github.Service
 		spClosed bool
 	)
 	defer func() {
@@ -359,13 +377,22 @@ func runServe(ctx context.Context, c serveConfig) error {
 		if st, err = store.Open(ctx, target); err != nil {
 			return err
 		}
+		box := secret.NewBox(c.data)
+		ghc, err := githubapp.New(githubapp.Config{API: c.githubAPI, Web: c.githubWeb, HTTP: c.githubHTTP})
+		if err != nil {
+			return err
+		}
+		if ghs, err = github.New(github.Options{Store: st, Secrets: box, Client: ghc, PublicURL: cfg.publicURL, Logger: log, RenewEvery: c.githubRenewEvery}); err != nil {
+			return err
+		}
 		if mgr, err = spaces.NewAccounts(spaces.Options{Store: st, DataDir: c.data, Committer: c.committer,
 			CommitIdle: c.commitIdle, CommitMax: c.commitMax, Logger: log,
 			MaxSpaces: c.maxSpaces, IdleAfter: c.spaceIdle, MaxOpen: c.maxOpenSpaces,
-			PullInterval: c.pullInterval, NetTimeout: c.remoteTimeout,
+			PullInterval: c.pullInterval, NetTimeout: c.remoteTimeout, Secrets: box, GitHub: ghs,
 			RemotePolicy: gitstore.Policy{Hosts: c.remoteHosts, AllowUnsafe: c.remoteUnsafe}}); err != nil {
 			return err
 		}
+		ghs.OnChange(mgr.GitHubFixed)
 		if svc, err = auth.New(ctx, auth.Config{Store: st, Spaces: mgr, PublicURL: cfg.publicURL, TrustedProxies: cfg.proxies,
 			OIDC: cfg.oidc, HTTPClient: c.oidcHTTPClient, Password: passwordParams, Logger: log}); err != nil {
 			return err
@@ -401,7 +428,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 		return err
 	}
 
-	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, PublicURL: cfg.publicURL, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
+	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, GitHub: ghs, PublicURL: cfg.publicURL, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
 		RestrictHost: loopback, AllowOrigins: cfg.origins, Logger: log})
 	webApp, webBuilt := webui.Handler()
 	if !webBuilt {
@@ -440,6 +467,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 	if cfg.accounts {
 		run(mgr.Run)
 		run(mgr.RunPull)
+		run(ghs.RunRenew)
 	}
 	if svc != nil {
 		run(svc.Run)

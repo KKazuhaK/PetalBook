@@ -432,7 +432,8 @@ func TestStaticOnlyOneGitRunnerAndOnePushBuilder(t *testing.T) {
 			continue
 		}
 		for i, line := range strings.Split(string(src), "\n") {
-			if strings.Contains(line, `"push"`) {
+			// (A field of GitHub's repository answer, `json:"push"`, is not a command.)
+			if strings.Contains(strings.ReplaceAll(line, "`json:\"push\"`", ""), `"push"`) {
 				t.Errorf("%s:%d: a push command line must be built by pushArgs in safegit.go", f, i+1)
 			}
 		}

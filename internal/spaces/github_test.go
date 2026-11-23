@@ -1,0 +1,747 @@
+package spaces
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io/fs"
+	"log/slog"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/KKazuhaK/PetalBook/internal/github"
+	"github.com/KKazuhaK/PetalBook/internal/githubapp"
+	"github.com/KKazuhaK/PetalBook/internal/githubapp/githubapptest"
+	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"github.com/KKazuhaK/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/secret"
+	"github.com/KKazuhaK/PetalBook/internal/space"
+	"github.com/KKazuhaK/PetalBook/internal/store"
+	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
+)
+
+// argvRunner runs the real git and remembers every command line and the logs.
+type argvRunner struct {
+	mu   sync.Mutex
+	argv [][]string
+}
+
+func (r *argvRunner) Run(c context.Context, cmd gitstore.Cmd) (string, string, error) {
+	r.mu.Lock()
+	r.argv = append(r.argv, append([]string(nil), cmd.Args...))
+	r.mu.Unlock()
+	return gitstore.RunReal(c, cmd)
+}
+
+func (r *argvRunner) all() [][]string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([][]string(nil), r.argv...)
+}
+
+type syncBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Write(p) }
+func (s *syncBuf) String() string              { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+
+// ghEnv is a manager of accounts mode with a configured GitHub App, the user
+// U1 ("kazuha") connected as the GitHub user "tang" (a member of the
+// organisation "kazuhahub"), and the fake GitHub behind it.
+type ghEnv struct {
+	t       *testing.T
+	st      *store.Store
+	f       *githubapptest.Fake
+	clk     *githubapptest.Clock
+	svc     *github.Service
+	m       *Manager
+	run     *argvRunner
+	logs    *syncBuf
+	dir     string
+	user    store.User
+	hook    func(step string)
+	kazuhub int64
+}
+
+func newGHEnv(t *testing.T, st *store.Store, mod ...func(*Options)) *ghEnv {
+	t.Helper()
+	needGit(t)
+	base, err := os.MkdirTemp("", "petalbook-github-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(base) })
+	clk := githubapptest.NewClock()
+	f := githubapptest.New(t, clk)
+	c, err := githubapp.New(githubapp.Config{API: f.URL, Web: f.URL, Now: clk.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs := &syncBuf{}
+	log := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	box := secret.NewBoxWithKey([32]byte{9, 9, 9})
+	svc, err := github.New(github.Options{Store: st, Secrets: box, Client: c, PublicURL: "https://notes.example.com", Now: clk.Now, Logger: log, SettingsTTL: time.Nanosecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &ghEnv{t: t, st: st, f: f, clk: clk, svc: svc, run: &argvRunner{}, logs: logs, dir: filepath.Join(base, "data")}
+	opt := Options{Store: st, DataDir: e.dir, Committer: "Svc <svc@example.test>", CloseWait: 200 * time.Millisecond, CommitIdle: time.Hour, CommitMax: time.Hour,
+		Now: clk.Now, PullInterval: time.Minute, RemoteRunner: e.run, FetchFresh: time.Nanosecond, FailFast: time.Nanosecond, Logger: log, Secrets: box,
+		RemotePolicy: gitstore.Policy{Hosts: []string{"*"}, AllowUnsafe: true}, GitHub: svc, PushRetry: []time.Duration{5 * time.Millisecond, 5 * time.Millisecond, 5 * time.Millisecond},
+		GitHubHook: func(step string) {
+			if e.hook != nil {
+				e.hook(step)
+			}
+		}}
+	for _, m := range mod {
+		m(&opt)
+	}
+	if e.m, err = NewAccounts(opt); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { e.m.Close() })
+	svc.OnChange(e.m.GitHubFixed)
+	id := f.ClientID
+	if _, err := svc.Save(ctx, github.SaveRequest{AppID: "424242", PrivateKey: f.KeyPEM(), ClientID: &id, ClientSecret: f.ClientSecret}); err != nil {
+		t.Fatal(err)
+	}
+	e.user = addUser(t, st, "U1", "kazuha")
+	f.AddUser("tang")
+	f.AddOrg("kazuhahub", "tang")
+	e.kazuhub = f.Install("kazuhahub", "all")
+	e.connect()
+	return e
+}
+
+func (e *ghEnv) connect() {
+	e.t.Helper()
+	authURL, binding, err := e.svc.StartAuthorization(ctx, e.user.ID, "/")
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	back, _ := url.Parse(e.f.Authorize(authURL, "tang"))
+	if to, _ := e.svc.CompleteAuthorization(ctx, binding, e.user.ID, back.Query()); to != "/" {
+		e.t.Fatalf("connecting: %s", to)
+	}
+}
+
+func (e *ghEnv) create(name, owner, repo string, create bool) (Info, error) {
+	return e.m.CreateWithGitHub(ctx, e.user.ID, name, "", GitHubCreate{Owner: owner, Name: repo, Private: true, Description: "Notes", Create: create})
+}
+
+func (e *ghEnv) spaceDirs() []string {
+	var out []string
+	ents, _ := os.ReadDir(filepath.Join(e.dir, "spaces"))
+	for _, d := range ents {
+		out = append(out, d.Name())
+	}
+	return out
+}
+
+func (e *ghEnv) rows() int {
+	var n int
+	if err := e.st.Q().QueryRow(ctx, `SELECT COUNT(*) FROM spaces`).Scan(&n); err != nil {
+		e.t.Fatal(err)
+	}
+	return n
+}
+
+// nothingLeft says no space exists anywhere on the server: not as a row, not as a directory, not in a list.
+func (e *ghEnv) nothingLeft() {
+	e.t.Helper()
+	if d := e.spaceDirs(); len(d) != 0 {
+		e.t.Fatalf("directories left behind: %v", d)
+	}
+	if st, _ := os.ReadDir(filepath.Join(e.dir, "cache")); len(st) != 0 {
+		e.t.Fatalf("state left behind: %v", st)
+	}
+	if n := e.rows(); n != 0 {
+		e.t.Fatalf("%d rows left behind", n)
+	}
+	if l, _ := e.m.List(ctx, e.user.ID); len(l) != 0 {
+		e.t.Fatalf("listed: %v", l)
+	}
+}
+
+func ghCode(err error) string {
+	var he *github.Error
+	if errors.As(err, &he) {
+		return he.Code
+	}
+	return ""
+}
+
+func ghRepo(err error) *github.RepoRef {
+	var he *github.Error
+	if errors.As(err, &he) {
+		return he.Repo
+	}
+	return nil
+}
+
+// noLeak looks for every token the fake handed out in the command lines Git
+// was started with, in every file of every clone's .git directory (its
+// configuration included), and in the log.
+func (e *ghEnv) noLeak() {
+	e.t.Helper()
+	tokens := e.f.AllTokens()
+	for _, cmd := range e.run.all() {
+		line := strings.Join(cmd, " ")
+		for _, tk := range tokens {
+			if strings.Contains(line, tk) {
+				e.t.Fatalf("a token is on a command line: %q", cmd)
+			}
+		}
+		if strings.Contains(line, "x-access-token@") || strings.Contains(line, "://x-access-token:") {
+			e.t.Fatalf("a user name and secret in an address: %q", cmd)
+		}
+	}
+	root := filepath.Join(e.dir, "spaces")
+	filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.Contains(p, string(filepath.Separator)+".git"+string(filepath.Separator)) {
+			return nil
+		}
+		b, _ := os.ReadFile(p)
+		for _, tk := range tokens {
+			if bytes.Contains(b, []byte(tk)) {
+				e.t.Fatalf("a token is stored in %s", p)
+			}
+		}
+		return nil
+	})
+	if cfg, err := os.ReadFile(filepath.Join(root, e.onlySpace(), ".git", "config")); err == nil {
+		if strings.Contains(string(cfg), "credential") || strings.Contains(string(cfg), "@") {
+			e.t.Fatalf(".git/config holds credential settings:\n%s", cfg)
+		}
+	}
+	logs := e.logs.String()
+	for _, tk := range tokens {
+		if strings.Contains(logs, tk) {
+			e.t.Fatalf("a token reached the log: %q", tk)
+		}
+	}
+	if strings.Contains(logs, e.f.ClientSecret) || strings.Contains(logs, "PRIVATE KEY") {
+		e.t.Fatal("the App's secret reached the log")
+	}
+}
+
+func (e *ghEnv) onlySpace() string {
+	if d := e.spaceDirs(); len(d) > 0 {
+		return d[0]
+	}
+	return "none"
+}
+
+func TestCreateASpaceWithAnOrganisationsNewRepository(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		in, err := e.create("Tang", "kazuhahub", "tang-notes", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if in.Name != "Tang" || in.Sync != "ok" || in.Role != "owner" {
+			t.Fatalf("%+v", in)
+		}
+		// The repository was made private, with the description, and the space's first commit is its first.
+		repo := e.f.RepoByName("kazuhahub/tang-notes")
+		if repo == nil || !repo.Private || repo.Desc != "Notes" {
+			t.Fatalf("%+v", repo)
+		}
+		bare := e.f.BareDir("kazuhahub/tang-notes")
+		if got := gitCmd(t, bare, "rev-list", "--count", "main"); got != "1" {
+			t.Fatalf("%s commits on the repository's main", got)
+		}
+		// The space follows it: the organisation's repository syncs with the installation's token.
+		row, err := store.GetRemote(ctx, st.Q(), in.ID)
+		if err != nil || row.CredType != "github" || row.GHVia != "app" || row.GHInstallationID != e.kazuhub || row.GHRepoID != repo.ID ||
+			row.TokenEnc != "" || row.PrivKeyEnc != "" || row.URL != e.f.URL+"/kazuhahub/tang-notes.git" || row.State != "ok" || row.Branch != "main" {
+			t.Fatalf("%+v %v", row, err)
+		}
+		if l, _ := e.m.List(ctx, e.user.ID); len(l) != 1 || l[0].Sync != "ok" {
+			t.Fatalf("%+v", l)
+		}
+		// A change made in the space is pushed before it is acknowledged.
+		h, err := e.m.Open(ctx, e.user, in.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer h.Release()
+		if _, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Pushed"}}}); err != nil {
+			t.Fatal(err)
+		}
+		if got := gitCmd(t, bare, "rev-list", "--count", "main"); got != "2" {
+			t.Fatalf("%s commits after a change", got)
+		}
+		v, err := e.m.Remote(ctx, h)
+		if err != nil || v.CredType != "github" || v.GitHub == nil || v.GitHub.Via != "app" || v.GitHub.Account != "kazuhahub" || v.GitHub.RepoID != repo.ID || v.ErrorCode != "" {
+			t.Fatalf("%+v %v", v, err)
+		}
+		// One repository made, with the caller's token; the installation's token was narrowed to it.
+		if n := e.f.Count("POST", "/orgs/kazuhahub/repos"); n != 1 {
+			t.Fatalf("%d repository creations", n)
+		}
+		e.noLeak()
+	})
+}
+
+func TestCreateASpaceInTheUsersOwnAccount(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		in, err := e.create("Mine", "tang", "notes", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, _ := store.GetRemote(ctx, st.Q(), in.ID)
+		if row.GHVia != "user" || row.GHUserID != "U1" || row.GHInstallationID != 0 {
+			t.Fatalf("%+v", row)
+		}
+		h, _ := e.m.Open(ctx, e.user, in.ID)
+		defer h.Release()
+		v, _ := e.m.Remote(ctx, h)
+		if v.GitHub.Via != "user" || v.GitHub.Username != "kazuha" || v.GitHub.Login != "tang" {
+			t.Fatalf("%+v", v.GitHub)
+		}
+		if _, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Pushed"}}}); err != nil {
+			t.Fatal(err)
+		}
+		if got := gitCmd(t, e.f.BareDir("tang/notes"), "rev-list", "--count", "main"); got != "2" {
+			t.Fatalf("%s", got)
+		}
+		e.noLeak()
+		// Installed on the personal account later: new spaces there use the installation.
+		inst := e.f.Install("tang", "all")
+		in2, err := e.create("Mine 2", "tang", "notes2", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, _ = store.GetRemote(ctx, st.Q(), in2.ID)
+		if row.GHVia != "app" || row.GHInstallationID != inst {
+			t.Fatalf("%+v", row)
+		}
+	})
+}
+
+func TestNothingIsLeftWhenGitHubRefusesTheRepository(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		e.f.AddRepo("kazuhahub", "taken", true)
+		_, err := e.create("A", "kazuhahub", "taken", true)
+		if ghCode(err) != "github_name_taken" || ghRepo(err) != nil {
+			t.Fatalf("%v", err)
+		}
+		e.nothingLeft()
+		e.f.SetAccount("kazuhahub", func(a *githubapptest.Account) { a.NoCreate = true })
+		_, err = e.create("A", "kazuhahub", "fresh", true)
+		if ghCode(err) != "github_no_permission" || ghRepo(err) != nil || !strings.Contains(err.Error(), "permission") {
+			t.Fatalf("%v", err)
+		}
+		e.nothingLeft()
+		// Not an owner of the caller's.
+		if _, err = e.create("A", "someone-else", "fresh", true); ghCode(err) != "github_owner_not_allowed" {
+			t.Fatalf("%v", err)
+		}
+		// A bad name never reaches GitHub.
+		before := len(e.f.Requests())
+		for _, name := range []string{"", "a b", "x.git", "..", strings.Repeat("a", 101)} {
+			if _, err = e.create("A", "tang", name, true); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("%q: %v", name, err)
+			}
+		}
+		if _, err = e.m.CreateWithGitHub(ctx, e.user.ID, "A", "", GitHubCreate{Owner: "tang", Name: "ok", Description: "bad\x01", Create: true}); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("%v", err)
+		}
+		if len(e.f.Requests()) != before {
+			t.Fatal("GitHub was asked about a name that was refused locally")
+		}
+		e.nothingLeft()
+		// Without an App there is nothing to do, and no directory is made.
+		if err := e.svc.Delete(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = e.create("A", "tang", "x", true); ghCode(err) != "github_not_configured" {
+			t.Fatalf("%v", err)
+		}
+		e.nothingLeft()
+	})
+}
+
+func TestARepositoryThatIsNotFoundForAFewSeconds(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		e.f.HiddenGit = 2 // the first two tries with credentials find nothing
+		in, err := e.create("Slow", "kazuhahub", "slow", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.f.HiddenServed() != 2 {
+			t.Fatalf("%d not-found answers", e.f.HiddenServed())
+		}
+		if got := gitCmd(t, e.f.BareDir("kazuhahub/slow"), "rev-list", "--count", "main"); got != "1" {
+			t.Fatal(got)
+		}
+		if in.Sync != "ok" {
+			t.Fatalf("%+v", in)
+		}
+		e.noLeak()
+	})
+}
+
+func TestAnEmptyRepositoryIsLeftAndNamedWhenThePushNeverWorks(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		e.f.HiddenGit = 100 // more than the four tries
+		_, err := e.create("Slow", "kazuhahub", "slow", true)
+		repo := ghRepo(err)
+		if ghCode(err) != "github_push_failed" || repo == nil || repo.FullName != "kazuhahub/slow" || repo.ID == 0 || repo.HTMLURL == "" {
+			t.Fatalf("%v %+v", err, repo)
+		}
+		var he *github.Error
+		if !errors.As(err, &he) || he.Status != 502 {
+			t.Fatalf("%v", err)
+		}
+		// Four tries, not more.
+		if n := e.f.HiddenServed(); n != 4 {
+			t.Fatalf("%d tries", n)
+		}
+		e.nothingLeft()
+		// The repository stays, empty, and nothing was deleted.
+		if e.f.RepoByName("kazuhahub/slow") == nil || e.f.Count("DELETE", "/repos") != 0 {
+			t.Fatal("the repository is gone")
+		}
+		if out := gitCmd(t, e.f.BareDir("kazuhahub/slow"), "rev-parse", "--verify", "-q", "main"); out != "" {
+			t.Fatalf("the repository has a commit: %q", out)
+		}
+		// Once GitHub finds it, the same request with create: false connects a new space to it.
+		e.f.HideRepo("kazuhahub/slow", 0)
+		in, err := e.create("Slow", "kazuhahub", "slow", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if in.Sync != "ok" || e.f.Count("POST", "/orgs/kazuhahub/repos") != 1 {
+			t.Fatalf("%+v", in)
+		}
+		if got := gitCmd(t, e.f.BareDir("kazuhahub/slow"), "rev-list", "--count", "main"); got != "1" {
+			t.Fatal(got)
+		}
+		e.noLeak()
+	})
+}
+
+func TestARefusedCredentialIsNotRetried(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		e.f.RejectGit = true
+		before := e.f.Count("GET", "/kazuhahub/refused.git")
+		_, err := e.create("R", "kazuhahub", "refused", true)
+		if ghCode(err) != "github_push_failed" || ghRepo(err) == nil {
+			t.Fatalf("%v", err)
+		}
+		// One try: one request without credentials, one with.
+		if n := e.f.Count("GET", "/kazuhahub/refused.git") - before; n != 2 {
+			t.Fatalf("%d requests: the push was tried again", n)
+		}
+		e.nothingLeft()
+	})
+}
+
+func TestSelectedRepositoriesInstallation(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		e.f.AddOrg("sel", "tang")
+		sel := e.f.Install("sel", "selected")
+		in, err := e.create("Sel", "sel", "notes", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, _ := store.GetRemote(ctx, st.Q(), in.ID)
+		if row.GHVia != "app" || row.GHInstallationID != sel {
+			t.Fatalf("%+v", row)
+		}
+		// Where the repository cannot be added: a 409 that names it, and no space.
+		e.f.SetInstall(sel, func(i *githubapptest.Install) { i.NoAdd = true })
+		_, err = e.create("Sel2", "sel", "stuck", true)
+		repo := ghRepo(err)
+		if ghCode(err) != "github_repo_not_in_installation" || repo == nil || repo.FullName != "sel/stuck" {
+			t.Fatalf("%v", err)
+		}
+		if l, _ := e.m.List(ctx, e.user.ID); len(l) != 1 {
+			t.Fatalf("%+v", l)
+		}
+		if e.rows() != 1 || len(e.spaceDirs()) != 1 {
+			t.Fatalf("%d rows, %v", e.rows(), e.spaceDirs())
+		}
+		// The administrator adds it, and the retry works.
+		e.f.SetInstall(sel, func(i *githubapptest.Install) { i.NoAdd = false })
+		if _, err = e.create("Sel2", "sel", "stuck", false); err != nil {
+			t.Fatal(err)
+		}
+		e.noLeak()
+	})
+}
+
+func TestAFailureAfterTheRepositoryLeavesNoSpace(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		// The record of the space cannot be written.
+		e.hook = func(step string) {
+			if step == "connected" {
+				if _, err := st.Q().Exec(ctx, `ALTER TABLE remotes RENAME TO remotes_away`); err != nil {
+					t.Error(err)
+				}
+			}
+		}
+		_, err := e.create("Late", "kazuhahub", "late", true)
+		repo := ghRepo(err)
+		var he *github.Error
+		if !errors.As(err, &he) || he.Code != "internal" || he.Status != 500 || repo == nil || repo.FullName != "kazuhahub/late" {
+			t.Fatalf("%v", err)
+		}
+		e.hook = nil
+		if _, err := st.Q().Exec(ctx, `ALTER TABLE remotes_away RENAME TO remotes`); err != nil {
+			t.Fatal(err)
+		}
+		e.nothingLeft()
+		// The repository has the first commit by now: a new space takes its content.
+		in, err := e.create("Late", "kazuhahub", "late", false)
+		if err != nil || in.Sync != "ok" {
+			t.Fatalf("%+v %v", in, err)
+		}
+	})
+}
+
+func TestTheLimitCountsSpacesBeingMade(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st, func(o *Options) { o.MaxSpaces = 1 })
+		var wg sync.WaitGroup
+		errs := make([]error, 2)
+		for i := range errs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, errs[i] = e.create("S"+string(rune('A'+i)), "kazuhahub", "r"+string(rune('a'+i)), true)
+			}()
+		}
+		wg.Wait()
+		ok, limited := 0, 0
+		for _, err := range errs {
+			switch {
+			case err == nil:
+				ok++
+			case errors.Is(err, ErrLimit):
+				limited++
+			default:
+				t.Fatal(err)
+			}
+		}
+		if ok != 1 || limited != 1 {
+			t.Fatalf("%d made, %d refused: %v", ok, limited, errs)
+		}
+		// Refused before anything was asked of GitHub, or made: one repository exists.
+		if e.rows() != 1 {
+			t.Fatalf("%d rows", e.rows())
+		}
+	})
+}
+
+func TestSwitchingASpaceToTheApp(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		// A space that follows a repository with a token, as before.
+		repo := e.f.AddRepo("kazuhahub", "wiki", true)
+		in, err := e.m.Create(ctx, e.user.ID, "Wiki")
+		if err != nil {
+			t.Fatal(err)
+		}
+		h, _ := e.m.Open(ctx, e.user, in.ID)
+		defer h.Release()
+		const tok = "ghp_ClassicToken0123456789abcdef"
+		pushTok := e.f.ClientSecret // any string the fake would accept is not available: use a user token
+		_ = pushTok
+		userTok, err := e.svc.UserToken(ctx, e.user.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v, err := e.m.Connect(ctx, h, ConnectRequest{URL: e.f.URL + "/kazuhahub/wiki.git", Branch: "main", CredType: CredToken, Token: userTok})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.CredType != CredToken {
+			t.Fatalf("%+v", v)
+		}
+		_ = tok
+		before, _ := store.GetRemote(ctx, st.Q(), in.ID)
+		if before.TokenEnc == "" {
+			t.Fatal("no token stored")
+		}
+		// The same repository, now through the App: the address and credential are replaced in place.
+		v, err = e.m.Connect(ctx, h, ConnectRequest{URL: "git@" + strings.Split(strings.TrimPrefix(e.f.URL, "http://"), ":")[0] + ":kazuhahub/wiki.git", CredType: CredGitHub, Via: "app", UserID: e.user.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.CredType != CredGitHub || v.GitHub == nil || v.GitHub.Via != "app" || v.URL != e.f.URL+"/kazuhahub/wiki.git" || v.State != "ok" {
+			t.Fatalf("%+v", v)
+		}
+		row, _ := store.GetRemote(ctx, st.Q(), in.ID)
+		if row.TokenEnc != "" || row.Username != "" || row.GHRepoID != repo.ID || row.GHInstallationID != e.kazuhub {
+			t.Fatalf("the old token was kept: %+v", row)
+		}
+		// It syncs with the installation's token now.
+		h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Through the App"}}})
+		if got := gitCmd(t, e.f.BareDir("kazuhahub/wiki"), "rev-list", "--count", "main"); got < "2" {
+			t.Fatalf("%s", got)
+		}
+		if e.f.Minted() == 0 {
+			t.Fatal("no installation token was used")
+		}
+		// Back to a token, and to the App again, through the same call.
+		if v, err = e.m.Connect(ctx, h, ConnectRequest{URL: e.f.URL + "/kazuhahub/wiki.git", Branch: "main", CredType: CredToken, Token: userTok}); err != nil || v.CredType != CredToken {
+			t.Fatalf("%+v %v", v, err)
+		}
+		row, _ = store.GetRemote(ctx, st.Q(), in.ID)
+		if row.GHVia != "" || row.GHInstallationID != 0 || row.GHRepoID != 0 {
+			t.Fatalf("%+v", row)
+		}
+		// A repository outside GitHub, or one the App does not reach, is refused.
+		if _, err = e.m.Connect(ctx, h, ConnectRequest{URL: "https://example.com/a/b.git", CredType: CredGitHub, Via: "app", UserID: e.user.ID}); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("%v", err)
+		}
+		e.f.AddOrg("none")
+		e.f.AddRepo("none", "x", true)
+		if _, err = e.m.Connect(ctx, h, ConnectRequest{URL: e.f.URL + "/none/x.git", CredType: CredGitHub, Via: "app", UserID: e.user.ID}); ghCode(err) != "github_repo_not_in_installation" {
+			t.Fatalf("%v", err)
+		}
+		if _, err = e.m.Connect(ctx, h, ConnectRequest{URL: e.f.URL + "/kazuhahub/wiki.git", CredType: CredGitHub, Via: "both", UserID: e.user.ID}); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("%v", err)
+		}
+		e.noLeak()
+	})
+}
+
+func TestAnExpiredAuthorizationPutsTheSpaceInErrorAndKeepsEverything(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		in, err := e.create("Mine", "tang", "notes", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h, _ := e.m.Open(ctx, e.user, in.ID)
+		defer h.Release()
+		keep, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Before"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Eight hours on, with the refresh token revoked.
+		e.f.ExpireRefresh("tang")
+		e.clk.Advance(9 * time.Hour)
+		var ue *space.UnavailableError
+		if err := h.Space.Pull(ctx, true); !errors.As(err, &ue) {
+			t.Fatalf("%v", err)
+		}
+		v, _ := e.m.Remote(ctx, h)
+		if v.State != "error" || v.ErrorCode != "github_authorization_expired" || v.Error == "" {
+			t.Fatalf("%+v", v)
+		}
+		if l, _ := e.m.List(ctx, e.user.ID); l[0].Sync != "error" {
+			t.Fatalf("%+v", l)
+		}
+		// Reads go on, writes are refused and change nothing.
+		if _, err := h.Space.Get(keep.ID); err != nil {
+			t.Fatalf("a read failed: %v", err)
+		}
+		headBefore := gitCmd(t, e.f.BareDir("tang/notes"), "rev-parse", "main")
+		if _, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "During"}}}); !errors.As(err, &ue) {
+			t.Fatalf("a write was not refused: %v", err)
+		}
+		if _, err := h.Space.Save(space.Author{}, keep.ID, keep.Rev, page.Meta{{Key: "title", Value: "Edited"}}, "x"); !errors.As(err, &ue) {
+			t.Fatalf("a save was not refused: %v", err)
+		}
+		if got, _ := h.Space.Get(keep.ID); got.Meta.String("title") != "Before" {
+			t.Fatalf("a refused write changed the page: %+v", got.Meta)
+		}
+		if gitCmd(t, e.f.BareDir("tang/notes"), "rev-parse", "main") != headBefore {
+			t.Fatal("the remote moved")
+		}
+		// Connecting again fixes it at once: the space is fetched without waiting.
+		e.connect()
+		waitFor(t, func() bool { v, _ := e.m.Remote(ctx, h); return v.State == "ok" && v.ErrorCode == "" })
+		if _, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "After"}}}); err != nil {
+			t.Fatalf("a write after reconnecting: %v", err)
+		}
+		e.noLeak()
+	})
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	for i := 0; i < 300; i++ {
+		if cond() {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("it did not happen")
+}
+
+func TestASpaceWhoseCredentialIsMissingIsTriedAgainEveryTenMinutes(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st, func(o *Options) { o.GitHubRetry = 10 * time.Minute })
+		in, err := e.create("Mine", "tang", "notes", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h, _ := e.m.Open(ctx, e.user, in.ID)
+		defer h.Release()
+		if err := e.svc.Disconnect(ctx, e.user.ID); err != nil {
+			t.Fatal(err)
+		}
+		e.clk.Advance(9 * time.Hour)
+		h.Space.Pull(ctx, true)
+		v, _ := e.m.Remote(ctx, h)
+		if v.State != "error" || v.ErrorCode != "github_authorization_missing" {
+			t.Fatalf("%+v", v)
+		}
+		// The puller looked at it once more and then waits ten minutes (jittered), not one.
+		e.m.pullDue(ctx)
+		e.clk.Advance(time.Minute + 30*time.Second)
+		e.m.pullDue(ctx)
+		if d := e.m.nextPullOf(in.ID).Sub(e.clk.Now()); d < 6*time.Minute || d > 13*time.Minute {
+			t.Fatalf("the next try is in %v", d)
+		}
+	})
+}
+
+// nextPullOf is when the puller looks at an open space next.
+func (m *Manager) nextPullOf(id string) time.Time {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if e := m.open[id]; e != nil {
+		return e.nextPull
+	}
+	return time.Time{}
+}
+
+func newGit(dir string, args ...string) *exec.Cmd {
+	c := exec.Command("git", args...)
+	c.Dir = dir
+	c.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+	return c
+}
+
+func gitCmd(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	return runGitQuiet(dir, args...)
+}
+
+func runGitQuiet(dir string, args ...string) string {
+	cmd := newGit(dir, args...)
+	out, _ := cmd.Output()
+	return strings.TrimSpace(string(out))
+}

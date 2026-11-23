@@ -30,6 +30,16 @@ func offlineErr(err error) *gitstore.CredentialError {
 // with a Code when the credential cannot be had until someone fixes something,
 // Offline when GitHub could not be asked.
 func (s *Service) GitToken(ctx context.Context, r *store.Remote) (string, error) {
+	return s.gitToken(ctx, r, true)
+}
+
+// GitTokenStaging is GitToken for a space that is being made: it has no member
+// yet (it is made for the user the remote names), so that is not asked.
+func (s *Service) GitTokenStaging(ctx context.Context, r *store.Remote) (string, error) {
+	return s.gitToken(ctx, r, false)
+}
+
+func (s *Service) gitToken(ctx context.Context, r *store.Remote, checkMember bool) (string, error) {
 	st, err := s.state(ctx)
 	if err != nil {
 		return "", offlineErr(err)
@@ -53,13 +63,15 @@ func (s *Service) GitToken(ctx context.Context, r *store.Remote) (string, error)
 		}
 		return "", offlineErr(s.wrap(err))
 	case ViaUser:
-		role, disabled, err := store.MemberStanding(ctx, s.opt.Store.Q(), r.SpaceID, r.GHUserID)
-		if err != nil && !errors.Is(err, store.ErrNotFound) {
-			return "", offlineErr(err)
-		}
-		ps, _ := perm.ForRole(role)
-		if errors.Is(err, store.ErrNotFound) || disabled || !ps.Has(perm.Manage) {
-			return "", credErr(CodeAuthorizationMissing, "the GitHub connection this space syncs with belongs to someone who can no longer manage it; connect another", nil)
+		if checkMember {
+			role, disabled, err := store.MemberStanding(ctx, s.opt.Store.Q(), r.SpaceID, r.GHUserID)
+			if err != nil && !errors.Is(err, store.ErrNotFound) {
+				return "", offlineErr(err)
+			}
+			ps, _ := perm.ForRole(role)
+			if errors.Is(err, store.ErrNotFound) || disabled || !ps.Has(perm.Manage) {
+				return "", credErr(CodeAuthorizationMissing, "the GitHub connection this space syncs with belongs to someone who can no longer manage it; connect another", nil)
+			}
 		}
 		tok, err := s.UserToken(ctx, r.GHUserID)
 		switch {

@@ -1,7 +1,9 @@
 package github_test
 
 import (
+	"context"
 	"errors"
+	"github.com/KKazuhaK/PetalBook/internal/githubapp"
 	"net/url"
 	"strings"
 	"sync"
@@ -406,6 +408,33 @@ func TestAnAppThatDoesNotExpireTokensGivesNoRefreshToken(t *testing.T) {
 		}
 		if n := h.svc.RenewDue(ctx); n != 0 {
 			t.Fatal(n)
+		}
+	})
+}
+
+func TestTheDailyJobRuns(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		h := newHarness(t, st)
+		h.configure()
+		h.user("U1", "a")
+		h.f.AddUser("gh-a")
+		h.connect("U1", "gh-a")
+		h.clk.Advance(160 * 24 * time.Hour)
+		old := h.f.RefreshTokenOf("gh-a")
+		c, _ := githubapp.New(githubapp.Config{API: h.f.URL, Web: h.f.URL, Now: h.clk.Now})
+		svc, err := github.New(github.Options{Store: st, Secrets: h.box, Client: c, PublicURL: publicURL, Now: h.clk.Now, RenewEvery: 20 * time.Millisecond, SettingsTTL: time.Nanosecond})
+		if err != nil {
+			t.Fatal(err)
+		}
+		runCtx, stop := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() { svc.RunRenew(runCtx); close(done) }()
+		defer func() { stop(); <-done }()
+		for i := 0; i < 200 && h.f.RefreshTokenOf("gh-a") == old; i++ {
+			time.Sleep(20 * time.Millisecond)
+		}
+		if h.f.RefreshTokenOf("gh-a") == old {
+			t.Fatal("the job did not renew the connection")
 		}
 	})
 }

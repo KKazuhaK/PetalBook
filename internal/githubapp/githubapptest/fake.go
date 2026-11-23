@@ -28,7 +28,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -36,7 +35,20 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 )
+
+// Clocker is a source of time; tests give the fake the one the service under
+// test uses.
+type Clocker interface{ Now() time.Time }
+
+type systemClock struct{}
+
+func (systemClock) Now() time.Time { return time.Now() }
+
+// SystemClock is the real time, for a test that runs a whole server.
+func SystemClock() Clocker { return systemClock{} }
 
 // Clock is a clock tests move by hand; the fake, the client and the service
 // under test share one.
@@ -120,6 +132,13 @@ type Repo struct {
 	hide    int // Git requests still answered "not found"
 }
 
+// repoPerms is the "permissions" of a repository in GitHub's answers.
+type repoPerms struct {
+	Push  bool `json:"push"`
+	Admin bool `json:"admin"`
+	Pull  bool `json:"pull"`
+}
+
 type instToken struct {
 	token   string
 	install int64
@@ -160,7 +179,7 @@ type Request struct {
 type Fake struct {
 	*httptest.Server
 	t     testing.TB
-	Clock *Clock
+	Clock Clocker
 
 	AppID        int64
 	Slug, Name   string
@@ -178,6 +197,8 @@ type Fake struct {
 	HiddenGit int
 	// NoRefresh: user tokens never expire and no refresh token is given.
 	NoRefresh bool
+	// RejectGit makes Git refuse every credential (a revoked token).
+	RejectGit bool
 	// BreakRefreshReply makes the answer to a renewal one the client cannot use
 	// (after the old refresh token was spent), to test that a pair is kept.
 	BreakRefreshReply bool
@@ -195,11 +216,12 @@ type Fake struct {
 	reqs     []Request
 	gitRoot  string
 	gitUsed  []string
+	hidden   int // Git requests answered "not found" because a repository was new
 	git      *cgi.Handler
 }
 
 // New starts the fake. Git must be installed for the Git side; tests that use it skip otherwise.
-func New(t testing.TB, clock *Clock) *Fake {
+func New(t testing.TB, clock Clocker) *Fake {
 	t.Helper()
 	if clock == nil {
 		clock = NewClock()
@@ -210,7 +232,7 @@ func New(t testing.TB, clock *Clock) *Fake {
 		accounts: map[string]*Account{}, installs: map[int64]*Install{}, repos: map[string]*Repo{},
 		inst: map[string]*instToken{}, users: map[string]*userToken{}, refresh: map[string]*refreshToken{}, codes: map[string]*code{},
 		gitRoot: t.TempDir()}
-	if gitBin, err := exec.LookPath("git"); err == nil {
+	if gitBin, err := gitstore.Path(); err == nil {
 		f.git = &cgi.Handler{Path: gitBin, Args: []string{"http-backend"}, Root: "/", InheritEnv: []string{"PATH"},
 			Env: []string{"GIT_PROJECT_ROOT=" + f.gitRoot, "GIT_HTTP_EXPORT_ALL=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1"}}
 	}
@@ -310,12 +332,19 @@ func (f *Fake) newRepoLocked(owner, name string, private bool, desc string, hide
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		f.t.Fatal(err)
 	}
-	for _, args := range [][]string{{"init", "--bare", "-q", "-b", "main"}, {"config", "http.receivepack", "true"}} {
-		c := exec.Command("git", args...)
-		c.Dir = dir
-		c.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
-		if out, err := c.CombinedOutput(); err != nil {
-			f.t.Fatalf("git %v: %v\n%s", args, err, out)
+	// A bare repository is a few files; making it by hand keeps git itself out of this package.
+	for _, d := range []string{"objects", "refs/heads", "refs/tags"} {
+		if err := os.MkdirAll(filepath.Join(dir, filepath.FromSlash(d)), 0o755); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+	files := map[string]string{
+		"HEAD":   "ref: refs/heads/main\n",
+		"config": "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = true\n[http]\n\treceivepack = true\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			f.t.Fatal(err)
 		}
 	}
 	return r
@@ -436,6 +465,17 @@ func (f *Fake) AllTokens() []string {
 	sort.Strings(out)
 	return out
 }
+
+// HideRepo makes a repository answer "not found" to its next n Git requests
+// that carry credentials.
+func (f *Fake) HideRepo(full string, n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.repos[strings.ToLower(full)].hide = n
+}
+
+// HiddenServed counts the Git requests answered "not found" on that account.
+func (f *Fake) HiddenServed() int { f.mu.Lock(); defer f.mu.Unlock(); return f.hidden }
 
 // Requests are the requests served so far.
 func (f *Fake) Requests() []Request {
@@ -677,7 +717,7 @@ func (f *Fake) repoJSON(repo *Repo, push bool) map[string]any {
 	}
 	return map[string]any{"id": repo.ID, "name": repo.Name, "full_name": repo.Owner + "/" + repo.Name, "private": repo.Private,
 		"default_branch": "main", "html_url": f.URL + "/" + repo.Owner + "/" + repo.Name,
-		"owner": map[string]any{"id": id, "login": repo.Owner, "type": typ}, "permissions": map[string]bool{"push": push, "admin": push, "pull": true}}
+		"owner": map[string]any{"id": id, "login": repo.Owner, "type": typ}, "permissions": repoPerms{Push: push, Admin: push, Pull: true}}
 }
 
 // canPush reports whether the user has write access to the repository.
@@ -1183,7 +1223,9 @@ func (f *Fake) serveGit(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusNotFound
 	default:
 		allowed := false
-		if it, ok := f.inst[pw]; ok && now.Before(it.expires) {
+		if f.RejectGit {
+			// nothing is allowed
+		} else if it, ok := f.inst[pw]; ok && now.Before(it.expires) {
 			in := f.installs[it.install]
 			narrowed := len(it.repos) == 0
 			for _, id := range it.repos {
@@ -1199,6 +1241,7 @@ func (f *Fake) serveGit(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusUnauthorized
 		case repo.hide > 0:
 			repo.hide--
+			f.hidden++
 			status = http.StatusNotFound
 		}
 	}

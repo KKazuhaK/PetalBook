@@ -104,6 +104,13 @@ var routeTable = []route{
 	{"POST", "/api/invites/check", public, true, false, false, (*server).checkInvite},
 	{"POST", "/api/invites/accept", public, true, false, false, (*server).acceptInvite},
 
+	{"GET", "/api/github", signedIn, true, false, false, (*server).getGitHub},
+	{"POST", "/api/github/authorization/start", signedIn, true, false, false, (*server).githubAuthStart},
+	{"GET", githubCallbackPath, public, true, true, false, (*server).githubAuthCallback},
+	{"DELETE", "/api/github/authorization", signedIn, true, false, false, (*server).githubDisconnect},
+	{"GET", "/api/github/owners", signedIn, true, false, false, (*server).githubOwners},
+	{"GET", "/api/github/repos", signedIn, true, false, false, (*server).githubRepos},
+
 	{"GET", "/api/account", signedIn, true, false, false, (*server).getAccount},
 	{"PATCH", "/api/account", signedIn, true, false, false, (*server).patchAccount},
 	{"POST", "/api/account/password", signedIn, true, false, false, (*server).changePassword},
@@ -129,6 +136,11 @@ var routeTable = []route{
 	{"PUT", "/api/admin/daily/apis/{id}", admin, true, false, false, (*server).adminPutDailyAPI},
 	{"DELETE", "/api/admin/daily/apis/{id}", admin, true, false, false, (*server).adminDeleteDailyAPI},
 	{"POST", "/api/admin/daily/try", admin, true, false, false, (*server).adminTryDailyAPI},
+	{"GET", "/api/admin/github", admin, true, false, false, (*server).adminGetGitHub},
+	{"PUT", "/api/admin/github", admin, true, false, false, (*server).adminPutGitHub},
+	{"DELETE", "/api/admin/github", admin, true, false, false, (*server).adminDeleteGitHub},
+	{"GET", "/api/admin/github/installations", admin, true, false, false, (*server).adminGitHubInstallations},
+	{"PUT", "/api/admin/github/installations/{id}", admin, true, false, false, (*server).adminPutGitHubInstallation},
 	{"GET", "/api/admin/status", admin, true, false, false, (*server).adminStatus},
 
 	{"GET", "/api/spaces", signedIn, false, false, false, (*server).listSpaces},

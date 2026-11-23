@@ -16,6 +16,18 @@ type credentialResp struct {
 	Username    string `json:"username,omitempty"`
 	PublicKey   string `json:"publicKey,omitempty"`
 	Fingerprint string `json:"fingerprint,omitempty"`
+	// A github credential: how it syncs, and what it syncs.
+	Via            string          `json:"via,omitempty"`
+	InstallationID *int64          `json:"installationId,omitempty"`
+	Account        string          `json:"account,omitempty"`
+	RepoID         *int64          `json:"repoId,omitempty"`
+	User           *githubUserResp `json:"user,omitempty"`
+	Login          string          `json:"login,omitempty"`
+}
+
+type githubUserResp struct {
+	ID       string `json:"id"`
+	Username string `json:"username"`
 }
 
 type rewrittenResp struct {
@@ -30,13 +42,26 @@ type remoteResp struct {
 	State      string         `json:"state"`
 	LastSync   string         `json:"lastSync,omitempty"`
 	Error      string         `json:"error"`
+	ErrorCode  string         `json:"errorCode"`
 	HostKey    string         `json:"hostKey,omitempty"`
 	Rewritten  *rewrittenResp `json:"rewritten"`
 }
 
 func toRemote(v *spaces.RemoteView) remoteResp {
-	r := remoteResp{URL: v.URL, Branch: v.Branch, State: v.State, Error: v.Error, HostKey: v.HostKey,
+	r := remoteResp{URL: v.URL, Branch: v.Branch, State: v.State, Error: v.Error, ErrorCode: v.ErrorCode, HostKey: v.HostKey,
 		Credential: credentialResp{Type: v.CredType, Username: v.Username, PublicKey: v.PublicKey, Fingerprint: v.Fingerprint}}
+	if g := v.GitHub; g != nil {
+		c := &r.Credential
+		c.Via, c.Account, c.Login = g.Via, g.Account, g.Login
+		repo := g.RepoID
+		c.RepoID = &repo
+		if g.Via == "app" {
+			inst := g.InstallationID
+			c.InstallationID = &inst
+		} else {
+			c.User = &githubUserResp{ID: g.UserID, Username: g.Username}
+		}
+	}
 	if !v.LastSync.IsZero() {
 		r.LastSync = rfc3339(v.LastSync)
 	}
@@ -81,6 +106,7 @@ func (s *server) putRemote(c *call) {
 			Type     string `json:"type"`
 			Username string `json:"username"`
 			Token    string `json:"token"`
+			Via      string `json:"via"`
 		} `json:"credential"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, remoteBodyLimit) {
@@ -89,7 +115,8 @@ func (s *server) putRemote(c *call) {
 	// Connecting reaches the network and may clone a whole repository; the
 	// client going away must not leave it half done.
 	v, err := s.spaces.Connect(c.r.Context(), c.sp, spaces.ConnectRequest{URL: req.URL, Branch: req.Branch,
-		CredType: req.Credential.Type, Username: req.Credential.Username, Token: req.Credential.Token})
+		CredType: req.Credential.Type, Username: req.Credential.Username, Token: req.Credential.Token,
+		Via: req.Credential.Via, UserID: c.user().ID})
 	if err != nil {
 		s.fail(c.w, err)
 		return

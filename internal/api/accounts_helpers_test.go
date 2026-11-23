@@ -20,6 +20,11 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/auth"
 	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
 	"github.com/KKazuhaK/PetalBook/internal/drafts"
+	"github.com/KKazuhaK/PetalBook/internal/github"
+	"github.com/KKazuhaK/PetalBook/internal/githubapp"
+	"github.com/KKazuhaK/PetalBook/internal/githubapp/githubapptest"
+	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"github.com/KKazuhaK/PetalBook/internal/secret"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
@@ -56,6 +61,9 @@ type acc struct {
 	clock  *clock
 	h      http.Handler
 	public string
+	// With accOpts.github: the fake GitHub and the server's use of it.
+	fake  *githubapptest.Fake
+	ghsvc *github.Service
 }
 
 type accOpts struct {
@@ -71,6 +79,8 @@ type accOpts struct {
 	draftCfg func(*drafts.Config)
 	// dailyFetch replaces the fetcher of external daily text (tests talk to a server of their own).
 	dailyFetch *dailyfetch.Fetcher
+	// github gives the server a GitHub service that talks to a fake GitHub.
+	github bool
 }
 
 func needGit(t *testing.T) {
@@ -108,6 +118,22 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	dir := filepath.Join(base, "data")
 	sopt := spaces.Options{Store: st, DataDir: dir, Committer: "PetalBook Test <svc@example.test>", CloseWait: 200 * time.Millisecond,
 		CommitIdle: time.Hour, CommitMax: 2 * time.Hour, Now: clk.Now, MaxSpaces: o.maxSpaces}
+	var fake *githubapptest.Fake
+	var ghsvc *github.Service
+	if o.github {
+		fake = githubapptest.New(t, clk)
+		gc, err := githubapp.New(githubapp.Config{API: fake.URL, Web: fake.URL, Now: clk.Now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		box := secret.NewBoxWithKey([32]byte{4, 5, 6})
+		if ghsvc, err = github.New(github.Options{Store: st, Secrets: box, Client: gc, PublicURL: o.public, Now: clk.Now, SettingsTTL: time.Nanosecond}); err != nil {
+			t.Fatal(err)
+		}
+		sopt.Secrets, sopt.GitHub = box, ghsvc
+		sopt.RemotePolicy = gitstore.Policy{Hosts: []string{"*"}, AllowUnsafe: true}
+		sopt.PushRetry = []time.Duration{5 * time.Millisecond, 5 * time.Millisecond, 5 * time.Millisecond}
+	}
 	if o.spaces != nil {
 		o.spaces(&sopt)
 	}
@@ -138,8 +164,11 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := api.New(api.Options{Logger: log, Store: st, Spaces: mgr, Drafts: drf, Auth: svc, PublicURL: o.public, Version: "test-1", DailyFetch: o.dailyFetch})
-	return &acc{t: t, dir: dir, st: st, mgr: mgr, auth: svc, drafts: drf, clock: clk, h: h, public: o.public}
+	if ghsvc != nil {
+		ghsvc.OnChange(mgr.GitHubFixed)
+	}
+	h := api.New(api.Options{Logger: log, Store: st, Spaces: mgr, Drafts: drf, Auth: svc, PublicURL: o.public, Version: "test-1", DailyFetch: o.dailyFetch, GitHub: ghsvc})
+	return &acc{t: t, dir: dir, st: st, mgr: mgr, auth: svc, drafts: drf, clock: clk, h: h, public: o.public, fake: fake, ghsvc: ghsvc}
 }
 
 // client is a browser: it keeps cookies and has an address.

@@ -564,7 +564,11 @@ func (s *Service) RenewDue(ctx context.Context) int {
 
 // RunRenew renews the connections that need it now and then once every RenewEvery, until ctx ends.
 func (s *Service) RunRenew(ctx context.Context) {
-	t := time.NewTimer(time.Minute)
+	first := time.Minute
+	if s.opt.RenewEvery < first {
+		first = s.opt.RenewEvery
+	}
+	t := time.NewTimer(first)
 	defer t.Stop()
 	for {
 		select {

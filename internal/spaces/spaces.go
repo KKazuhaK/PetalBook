@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/KKazuhaK/PetalBook/internal/github"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/perm"
@@ -143,6 +144,20 @@ type Options struct {
 	NetTimeout, FetchFresh, FailFast time.Duration
 	// RemoteRunner replaces the git runner of remote spaces (tests).
 	RemoteRunner gitstore.Runner
+
+	// GitHub is the server's use of its GitHub App; nil when this server has
+	// none to offer (spaces with a github credential then show
+	// github_not_configured).
+	GitHub *github.Service
+	// GitHubRetry is how often a space whose GitHub credential does not work is
+	// tried again (default 10 minutes); a fix triggers it at once.
+	GitHubRetry time.Duration
+	// PushRetry are the waits between the tries of the first push of a space
+	// made with a new repository (default 1 s, 3 s, 7 s: four tries in 15 s).
+	PushRetry []time.Duration
+	// GitHubHook, if set, is told the steps of making a space with a GitHub
+	// repository ("repo-created", "connected"), before the next one (tests).
+	GitHubHook func(step string)
 }
 
 // Defaults for closing spaces that are not in use.
@@ -192,9 +207,11 @@ type Manager struct {
 	remoteMu sync.Mutex        // one connect, disconnect or key change at a time
 	pullWake chan struct{}     // a space with a remote was just opened: pull it now
 
-	trimMu   sync.Mutex // one trim at a time
-	trimming bool       // a background trim is queued or running (guarded by mu)
-	createMu sync.Mutex // space creation is one at a time, so the limit cannot be passed by racing
+	trimMu   sync.Mutex      // one trim at a time
+	trimming bool            // a background trim is queued or running (guarded by mu)
+	createMu sync.Mutex      // space creation is one at a time, so the limit cannot be passed by racing
+	staging  map[string]bool // spaces being made with a GitHub repository, whose first push needs no member yet (guarded by mu)
+	reserved map[string]int  // spaces being made with a new GitHub repository, by owner (guarded by createMu)
 }
 
 // NewAccounts returns the manager of accounts mode.
@@ -251,7 +268,13 @@ func newManager(opt Options, single *space.Space) *Manager {
 	if opt.CloseWait <= 0 {
 		opt.CloseWait = 5 * time.Second
 	}
-	return &Manager{opt: opt, single: single, singleInbox: store.DefaultInbox, log: log, open: map[string]*opening{}, lists: map[string][]Info{}, pullWake: make(chan struct{}, 1), sizeSem: make(chan struct{}, 1)}
+	if opt.GitHubRetry <= 0 {
+		opt.GitHubRetry = 10 * time.Minute
+	}
+	if opt.PushRetry == nil {
+		opt.PushRetry = []time.Duration{time.Second, 3 * time.Second, 7 * time.Second}
+	}
+	return &Manager{staging: map[string]bool{}, reserved: map[string]int{}, opt: opt, single: single, singleInbox: store.DefaultInbox, log: log, open: map[string]*opening{}, lists: map[string][]Info{}, pullWake: make(chan struct{}, 1), sizeSem: make(chan struct{}, 1)}
 }
 
 // SetSingleInbox sets the inbox folder of single-user mode (the --inbox flag).
@@ -694,7 +717,7 @@ func (m *Manager) CreateWith(ctx context.Context, userID, name, inbox string) (I
 		if err != nil {
 			return Info{}, err
 		}
-		if n >= m.opt.MaxSpaces {
+		if n+m.reserved[userID] >= m.opt.MaxSpaces {
 			return Info{}, fmt.Errorf("%w: you already own %d spaces, the most this server allows", ErrLimit, n)
 		}
 	}

@@ -18,12 +18,14 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/KKazuhaK/PetalBook/internal/github"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/store"
@@ -44,8 +46,9 @@ var (
 
 // Credential types.
 const (
-	CredSSH   = "ssh"
-	CredToken = "token"
+	CredSSH    = "ssh"
+	CredToken  = "token"
+	CredGitHub = store.CredGitHub
 )
 
 // RemoteView is a remote as the API shows it.
@@ -59,7 +62,20 @@ type RemoteView struct {
 	State       string
 	LastSync    time.Time
 	Error       string
+	ErrorCode   string // what an error state needs, for programs
 	Rewritten   *Rewritten
+	GitHub      *GitHubView // CredType "github"
+}
+
+// GitHubView is the GitHub credential of a remote, as the API shows it.
+type GitHubView struct {
+	Via            string
+	InstallationID int64
+	Account        string
+	RepoID         int64
+	UserID         string
+	Username       string
+	Login          string
 }
 
 // Rewritten says which commits the paused remote is about.
@@ -71,6 +87,9 @@ type ConnectRequest struct {
 	CredType    string
 	Username    string
 	Token       string // empty keeps the stored one
+	// GitHub: Via is "app" or "user" (or "" to let the server choose, for a new
+	// space), UserID the caller.
+	Via, UserID string
 }
 
 func (m *Manager) knownHosts(id string) string {
@@ -101,6 +120,23 @@ func (m *Manager) credential(id string, r *store.Remote) gitstore.Credential {
 		enc := r.PrivKeyEnc
 		return gitstore.SSH{KnownHosts: m.knownHosts(id), Key: func() ([]byte, error) {
 			return m.opt.Secrets.Open(id, "ssh-key", enc)
+		}}
+	case CredGitHub:
+		row := *r
+		gh := m.opt.GitHub
+		return gitstore.Token{Username: "x-access-token", URL: r.URL, Get: func() (string, error) {
+			if gh == nil {
+				return "", &gitstore.CredentialError{Code: github.CodeNotConfigured, Msg: "this server has no GitHub App any more"}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			m.mu.Lock()
+			staging := m.staging[id]
+			m.mu.Unlock()
+			if staging {
+				return gh.GitTokenStaging(ctx, &row)
+			}
+			return gh.GitToken(ctx, &row)
 		}}
 	}
 	return nil
@@ -199,11 +235,21 @@ func (m *Manager) withSync(ctx context.Context, in []Info) []Info {
 
 func (m *Manager) viewOf(h *Handle, r *store.Remote) *RemoteView {
 	v := &RemoteView{URL: r.URL, Branch: r.Branch, CredType: r.CredType, Username: r.Username, State: r.State, LastSync: r.LastSync, Error: r.LastError}
+	if r.State == store.RemoteError {
+		v.ErrorCode = r.ErrorKind
+	}
 	if st, ok := h.Space.Remote(); ok {
 		v.State, v.LastSync, v.Error = st.State, st.LastSync, st.Error
+		v.ErrorCode = ""
+		if st.State == space.RemoteError {
+			v.ErrorCode = st.Kind
+		}
 		if st.State == space.RemoteRewritten {
 			v.Rewritten = &Rewritten{LastGood: st.LastGood, Remote: st.RemoteTip}
 		}
+	}
+	if r.CredType == CredGitHub {
+		v.GitHub = m.githubView(r)
 	}
 	if r.CredType == CredSSH {
 		v.PublicKey = r.PubKey
@@ -211,6 +257,25 @@ func (m *Manager) viewOf(h *Handle, r *store.Remote) *RemoteView {
 		v.HostKey = gitstore.HostKeyFingerprint(m.knownHosts(r.SpaceID))
 	}
 	return v
+}
+
+// githubView says what a github credential is: no secret, only where it points.
+func (m *Manager) githubView(r *store.Remote) *GitHubView {
+	g := &GitHubView{Via: r.GHVia, InstallationID: r.GHInstallationID, RepoID: r.GHRepoID, UserID: r.GHUserID}
+	if u, err := url.Parse(r.URL); err == nil {
+		g.Account, _, _ = strings.Cut(strings.TrimPrefix(u.Path, "/"), "/")
+	}
+	if r.GHVia == github.ViaUser && r.GHUserID != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if u, err := store.GetUser(ctx, m.opt.Store.Q(), r.GHUserID); err == nil {
+			g.Username = u.Username
+		}
+		if a, err := store.GetGitHubAuthorization(ctx, m.opt.Store.Q(), r.GHUserID); err == nil {
+			g.Login = a.Login
+		}
+	}
+	return g
 }
 
 // Remote returns the remote of the space, or ErrNoRemote when it is local.
@@ -275,8 +340,14 @@ func (m *Manager) Connect(ctx context.Context, h *Handle, req ConnectRequest) (*
 		return nil, err
 	}
 	id := h.Info.ID
-	remote, err := gitstore.ParseURL(req.URL, m.opt.RemotePolicy)
-	if err != nil {
+	var remote gitstore.Remote
+	var ghCred *github.Cred
+	if req.CredType == CredGitHub {
+		var err error
+		if remote, ghCred, err = m.resolveGitHub(ctx, req); err != nil {
+			return nil, err
+		}
+	} else if remote, err = gitstore.ParseURL(req.URL, m.opt.RemotePolicy); err != nil {
 		return nil, err
 	}
 	branch := strings.TrimSpace(req.Branch)
@@ -364,8 +435,17 @@ func (m *Manager) Connect(ctx context.Context, h *Handle, req ConnectRequest) (*
 				dropOldHosts = func() { os.Remove(kh + ".old") }
 			}
 		}
+	case CredGitHub:
+		// The credential holds no secret of its own: whatever the space had
+		// before (a deploy key, a token) goes, once the new connection works.
+		row.CredType, row.Username = CredGitHub, ""
+		row.PrivKeyEnc, row.PubKey, row.TokenEnc = "", "", ""
+		row.GHVia, row.GHInstallationID, row.GHRepoID, row.GHUserID = ghCred.Via, ghCred.InstallationID, ghCred.RepoID, ghCred.UserID
+		if old != nil && old.CredType == CredSSH {
+			dropOldHosts = func() { os.Remove(m.knownHosts(id)) }
+		}
 	default:
-		return nil, fmt.Errorf("%w: credential.type must be ssh or token", ErrInvalid)
+		return nil, fmt.Errorf("%w: credential.type must be ssh, token or github", ErrInvalid)
 	}
 	row.Updated = m.opt.Now()
 	if err := h.Space.Connect(ctx, *m.remoteOptions(id, &row)); err != nil {
@@ -545,6 +625,13 @@ func (m *Manager) pullDue(ctx context.Context) {
 			var ue *space.UnavailableError
 			if err := e.sp.Pull(ctx, false); err != nil && !errors.As(err, &ue) && ctx.Err() == nil && !errors.Is(err, space.ErrClosed) {
 				m.log.Warn("pulling a remote failed", "error", err)
+			}
+			// A space whose GitHub credential does not work is looked at again
+			// only now and then; fixing the cause wakes it (GitHubFixed).
+			if st, ok := e.sp.Remote(); ok && st.State == space.RemoteError && space.IsGitHubKind(st.Kind) {
+				m.mu.Lock()
+				e.nextPull = m.opt.Now().Add(jittered(m.opt.GitHubRetry))
+				m.mu.Unlock()
 			}
 		}()
 	}

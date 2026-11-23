@@ -433,13 +433,27 @@ func (s *server) listSpaces(c *call) {
 
 func (s *server) createSpace(c *call) {
 	var req struct {
-		Name  string `json:"name"`
-		Inbox string `json:"inbox"`
+		Name   string `json:"name"`
+		Inbox  string `json:"inbox"`
+		GitHub *struct {
+			Owner       string `json:"owner"`
+			Name        string `json:"name"`
+			Private     *bool  `json:"private"`
+			Description string `json:"description"`
+			Create      *bool  `json:"create"`
+		} `json:"github"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	in, err := s.spaces.CreateWith(c.r.Context(), c.user().ID, req.Name, req.Inbox)
+	var in spaces.Info
+	var err error
+	if g := req.GitHub; g != nil {
+		gc := spaces.GitHubCreate{Owner: g.Owner, Name: g.Name, Private: g.Private == nil || *g.Private, Description: g.Description, Create: g.Create == nil || *g.Create}
+		in, err = s.spaces.CreateWithGitHub(c.r.Context(), c.user().ID, req.Name, req.Inbox, gc)
+	} else {
+		in, err = s.spaces.CreateWith(c.r.Context(), c.user().ID, req.Name, req.Inbox)
+	}
 	if err != nil {
 		s.fail(c.w, err)
 		return

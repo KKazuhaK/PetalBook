@@ -47,6 +47,11 @@ type Runner interface {
 // Runner that wraps another one (a test hook) ends in this.
 func RunReal(ctx context.Context, c Cmd) (string, string, error) { return execRunner{}.Run(ctx, c) }
 
+// Path is where the git program is, for a caller that has to hand it to
+// something else (a test server that serves repositories with it); the
+// application itself starts git only through a Runner.
+func Path() (string, error) { return exec.LookPath("git") }
+
 // MaxOutput bounds what one git command may print into memory.
 const MaxOutput = 64 << 20
 

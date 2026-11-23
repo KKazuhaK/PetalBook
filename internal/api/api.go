@@ -23,6 +23,7 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/auth"
 	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
 	"github.com/KKazuhaK/PetalBook/internal/drafts"
+	"github.com/KKazuhaK/PetalBook/internal/github"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/index"
 	"github.com/KKazuhaK/PetalBook/internal/page"
@@ -82,6 +83,9 @@ type Options struct {
 	// DailyFetch gets the daily text from the external interfaces an
 	// administrator configured; the one that refuses private addresses when nil.
 	DailyFetch *dailyfetch.Fetcher
+	// GitHub is the server's use of its GitHub App (accounts mode); nil when
+	// there is none, and the GitHub endpoints then answer github_not_configured.
+	GitHub *github.Service
 }
 
 type server struct {
@@ -247,7 +251,7 @@ func (s *server) wrap(next http.Handler, bodyType func(*http.Request) string) ht
 		// The identity provider's redirect is a cross-site navigation by
 		// nature. It changes nothing unless its state matches a sign-in this
 		// browser started, so the cross-site rules do not apply to it.
-		if !(r.Method == http.MethodGet && r.URL.Path == oidcCallbackPath) {
+		if !(r.Method == http.MethodGet && (r.URL.Path == oidcCallbackPath || r.URL.Path == githubCallbackPath)) {
 			if why := s.crossSite(r); why != "" {
 				writeError(sw, http.StatusForbidden, "forbidden", why)
 				return
@@ -372,6 +376,8 @@ type errorBody struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
 	Current any    `json:"current,omitempty"`
+	// Repo is the empty repository a failed space creation left on GitHub.
+	Repo *githubRepoResp `json:"repo,omitempty"`
 	// What some refusals are about (docs/api.md, "Daily text refusals"): a
 	// request header, a field of an interface, a host.
 	Header string `json:"header,omitempty"`
@@ -463,7 +469,10 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		hoste *gitstore.HostError
 	)
 	var coded *codedError
+	var ghe *github.Error
 	switch {
+	case errors.As(err, &ghe):
+		s.failGitHub(w, ghe)
 	case errors.As(err, &coded):
 		writeCoded(w, coded)
 	case errors.As(err, &ae):
@@ -556,6 +565,27 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		s.log.Error("request failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal", "something went wrong on the server")
 	}
+}
+
+type githubRepoResp struct {
+	ID       int64  `json:"id"`
+	FullName string `json:"fullName"`
+	HTMLURL  string `json:"htmlUrl"`
+}
+
+func (s *server) failGitHub(w http.ResponseWriter, e *github.Error) {
+	body := errorBody{Error: e.Code, Message: e.Msg}
+	if e.Repo != nil {
+		body.Repo = &githubRepoResp{e.Repo.ID, e.Repo.FullName, e.Repo.HTMLURL}
+	}
+	if e.Code == github.CodeRateLimited {
+		secs := int((e.RetryAfter + time.Second - 1) / time.Second)
+		w.Header().Set("Retry-After", strconv.Itoa(max(secs, 1)))
+	}
+	if e.Status >= 500 && e.Code == github.CodeInternal {
+		s.log.Error("a space made with a GitHub repository could not be recorded", "error", e.Err)
+	}
+	writeJSON(w, e.Status, body)
 }
 
 func (s *server) failAuth(w http.ResponseWriter, e *auth.Error) {
