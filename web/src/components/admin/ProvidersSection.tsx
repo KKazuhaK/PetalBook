@@ -19,6 +19,7 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { absoluteTime } from '@/lib/time'
+import { useDebounced } from '@/lib/useDebounced'
 import { t } from '@/i18n'
 import { tsec } from '@/i18n/security'
 import { tg } from '@/i18n/groups'
@@ -386,10 +387,23 @@ function ProviderForm({ initial, onDone }: { initial: AuthProvider | null; onDon
 // How the provider's groups claim becomes synced groups (see "Groups from sign-in").
 function GroupsFields({ f, set }: { f: F; set: (p: Partial<F>) => void }) {
   const tgp = tg.provider
-  const synced = useSyncedGroups()
+  const [find, setFind] = useState('')
+  const q = useDebounced(find.trim(), 200)
+  const synced = useSyncedGroups(q)
+  // The names of the groups seen in any search, so a chosen group keeps its name when the search moves on.
+  const [names, setNames] = useState<Record<string, string>>({})
+  const items = synced.data?.items
+  const [seen, setSeen] = useState(items)
+  if (items !== seen) {
+    setSeen(items)
+    if (items) setNames((old) => ({ ...old, ...Object.fromEntries(items.map((c) => [c.id, c.name])) }))
+  }
   const g = f.groups
   const up = (p: Partial<F['groups']>) => set({ groups: { ...g, ...p } })
-  const choices = synced.data?.items ?? []
+  const choices = items ?? []
+  // Every synced group is in the list only when nothing was searched and there is no further page.
+  const complete = synced.isSuccess && q === '' && !synced.data.next
+  const labelOf = (id: string) => names[id] ?? (complete ? tgp.unknownGroup : id)
   const setRow = (i: number, p: Partial<{ value: string; groupId: string }>) => up({ map: g.map.map((e, j) => (j === i ? { ...e, ...p } : e)) })
   const claimHelp = f.kind === 'oidc' ? tgp.claimOidcHelp : f.kind === 'saml' ? tgp.claimSamlHelp : tgp.claimGithubHelp
   return (
@@ -413,7 +427,15 @@ function GroupsFields({ f, set }: { f: F; set: (p: Partial<F>) => void }) {
           </span>
         </div>
         <p className="text-xs text-muted-foreground">{tgp.mapHelp}</p>
-        {synced.isSuccess && choices.length === 0 && g.map.length === 0 && <p className="text-xs text-muted-foreground">{tgp.noSynced}</p>}
+        {complete && choices.length === 0 && g.map.length === 0 && <p className="text-xs text-muted-foreground">{tgp.noSynced}</p>}
+        {!(complete && choices.length === 0) && (
+          <div className="grid gap-1">
+            <Input type="search" value={find} onChange={(e) => setFind(e.target.value)} aria-label={tgp.findGroup} placeholder={tgp.findGroup} autoComplete="off" spellCheck={false} className="sm:max-w-xs" />
+            <p className="text-xs text-muted-foreground" aria-live="polite">
+              {synced.isSuccess && q !== '' && choices.length === 0 ? tgp.findNone : synced.data?.next ? tgp.findMore : ''}
+            </p>
+          </div>
+        )}
         {g.map.map((e, i) => (
           <div key={i} className="grid min-w-0 gap-2 rounded-md border p-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end" data-row={i}>
             <div className="grid gap-1">
@@ -428,7 +450,7 @@ function GroupsFields({ f, set }: { f: F; set: (p: Partial<F>) => void }) {
               </Label>
               <NativeSelect id={`groups-group-${i}`} value={e.groupId} onChange={(ev) => setRow(i, { groupId: ev.target.value })}>
                 <option value="">{tgp.chooseGroup}</option>
-                {e.groupId !== '' && !choices.some((c) => c.id === e.groupId) && <option value={e.groupId}>{synced.isSuccess ? tgp.unknownGroup : e.groupId}</option>}
+                {e.groupId !== '' && !choices.some((c) => c.id === e.groupId) && <option value={e.groupId}>{labelOf(e.groupId)}</option>}
                 {choices.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}

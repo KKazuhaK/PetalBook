@@ -236,9 +236,16 @@ export function useAdminGroups(q: string, source: GroupSource | '', enabled = tr
   })
 }
 
-// The synced groups, for the mapping of a sign-in provider (a page of 200; the server has at most 10,000 groups).
-export function useSyncedGroups(enabled = true) {
-  return useQuery({ queryKey: keys.adminGroupList('', 'synced-all'), queryFn: ({ signal }) => adminApi.adminGroups({ source: 'synced', limit: 200 }, signal), enabled, staleTime: 15_000 })
+// The synced groups whose names contain `q`, for the mapping of a sign-in provider: the first 200 by name (the
+// server has at most 10,000 groups, so the picker searches rather than loading them all).
+export function useSyncedGroups(q = '', enabled = true) {
+  return useQuery({
+    queryKey: keys.adminGroupList(q, 'synced-all'),
+    queryFn: ({ signal }) => adminApi.adminGroups({ q: q || undefined, source: 'synced', limit: 200 }, signal),
+    enabled,
+    staleTime: 15_000,
+    placeholderData: (prev) => prev,
+  })
 }
 
 export function useGroupPeople(id: string, q: string, enabled = true) {

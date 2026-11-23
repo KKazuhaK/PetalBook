@@ -157,6 +157,9 @@ export const groupsZhCN = {
     addRow: '添加一项',
     removeRow: '删除这一项',
     noSynced: '还没有同步组。先到「组」页新建一个来源为「同步组」的组。',
+    findGroup: '查找同步组',
+    findMore: '按名称只列出前 200 个；输入名称的一部分来找其余的。',
+    findNone: '没有名称包含这些字的同步组。',
     unknownGroup: '（已不存在的组）',
     rows: (n: number) => `${n} 项`,
     errors: {

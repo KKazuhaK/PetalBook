@@ -201,4 +201,33 @@ describe('the groups mapping of a sign-in provider', () => {
     expect(body.groups.map).toEqual([{ value: '/staff', groupId: expect.any(String) }])
     expect(body.oidc).toBeUndefined()
   })
+
+  it('finds a synced group past the first 200 by its name', async () => {
+    m = await mount(routes, {
+      signIn: true,
+      server: { mode: 'accounts', providers: [{ slug: 'company', kind: 'oidc', name: 'Company SSO', oidc: { issuer: 'https://sso.example', clientId: 'x' } }] },
+      entries: (server) => {
+        const admin = adminRequests(server)
+        for (let i = 0; i < 200; i++) admin('POST', '/api/admin/groups', { name: `A${String(i).padStart(3, '0')}`, source: 'synced' })
+        admin('POST', '/api/admin/groups', { name: 'Staff', source: 'synced' })
+        return ['/admin/security']
+      },
+    })
+    await settle(() => text().includes('Company SSO'), 'the providers')
+    await click(byLabel(tsec.providers.editFor('Company SSO')))
+    await settle(() => document.querySelector('[data-slot="groups-fields"]') !== null, 'the form')
+    const fields = () => document.querySelector<HTMLElement>('[data-slot="groups-fields"]')!
+    await click(button(tg.provider.addRow, fields()))
+    const offered = () => [...fields().querySelectorAll<HTMLOptionElement>('#groups-group-0 option')].map((o) => o.textContent)
+    await settle(() => offered().includes('A000'), 'the first page')
+    expect(offered()).not.toContain('Staff')
+    await type(byLabel(tg.provider.findGroup) as HTMLInputElement, 'staf')
+    await settle(() => offered().includes('Staff'), 'the search finds it')
+    const select = fields().querySelector<HTMLSelectElement>('#groups-group-0')!
+    await type(select, [...select.options].find((o) => o.textContent === 'Staff')!.value)
+    // Its name stays once the search changes.
+    await type(byLabel(tg.provider.findGroup) as HTMLInputElement, 'A00')
+    await settle(() => offered().includes('A001'), 'another search')
+    expect(offered()).toContain('Staff')
+  })
 })

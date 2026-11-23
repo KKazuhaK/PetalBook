@@ -155,6 +155,9 @@ export const groupsEn: GroupsMessages = {
     addRow: 'Add an entry',
     removeRow: 'Remove this entry',
     noSynced: 'There is no synced group yet. Make one on the Groups page with the source "Synced group".',
+    findGroup: 'Find a synced group',
+    findMore: 'Showing the first 200 by name; type part of a name to find the others.',
+    findNone: 'No synced group has that in its name.',
     unknownGroup: '(a group that no longer exists)',
     rows: (n: number) => (n === 1 ? '1 entry' : `${n} entries`),
     errors: {
