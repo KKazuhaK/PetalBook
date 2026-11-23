@@ -782,3 +782,95 @@ func BenchmarkCacheHit(b *testing.B) {
 		}
 	}
 }
+
+// A change that takes access away from a group's people and a change that adds
+// someone to the group race: the removal has read the group's people, then the
+// add commits and the newcomer's list is read again, then the removal commits.
+// The newcomer must not keep the access (on PostgreSQL, READ COMMITTED lets the
+// add through unless the group is locked; SQLite has one writer at a time).
+func TestRevokingRacesAnAddToTheGroup(t *testing.T) {
+	type grant struct {
+		name, source string
+		add          func(f *gfix, g string) error
+	}
+	grants := []grant{
+		{"local add", store.GroupLocal, func(f *gfix, g string) error {
+			_, _, _, err := f.m.AddGroupPeople(ctx, g, []string{"x"})
+			return err
+		}},
+		{"sync", store.GroupSynced, func(f *gfix, g string) error {
+			_, err := f.m.SyncProviderGroups(ctx, "x", "co", []store.SyncedMembership{{GroupID: g, Value: "v"}})
+			return err
+		}},
+	}
+	type revoke struct {
+		name string
+		do   func(f *gfix, h *Handle, g string) error
+	}
+	revokes := []revoke{
+		{"remove from space", func(f *gfix, h *Handle, g string) error {
+			_, err := f.m.RemoveSpaceGroup(ctx, h, g)
+			return err
+		}},
+		{"downgrade", func(f *gfix, h *Handle, g string) error {
+			_, _, err := f.m.SetSpaceGroupRole(ctx, h, "boss", g, perm.Viewer)
+			return err
+		}},
+		{"delete group", func(f *gfix, h *Handle, g string) error {
+			_, err := f.m.DeleteGroup(ctx, g, true, 0)
+			return err
+		}},
+	}
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		if st.Dialect() != store.Postgres {
+			t.Skip("SQLite has one writer at a time")
+		}
+		for _, gr := range grants {
+			for _, rv := range revokes {
+				t.Run(gr.name+"/"+rv.name, func(t *testing.T) {
+					st := storetest.Open(t, "postgres")
+					f := newGfix(t, st)
+					boss := f.user("boss")
+					f.user("x")
+					f.space("S1", "Alpha", "boss")
+					h := f.handle(boss, "S1")
+					g := f.group("G", gr.source)
+					if _, err := f.m.AddSpaceGroup(ctx, h, "boss", g, perm.Editor); err != nil {
+						t.Fatal(err)
+					}
+					done := make(chan error, 1)
+					var once sync.Once
+					f.m.testHook = func(point string) {
+						if point != "group-people-read" {
+							return
+						}
+						once.Do(func() {
+							go func() { done <- gr.add(f, g) }()
+							select {
+							case err := <-done:
+								// The add went through: the newcomer's list is read now.
+								done <- err
+								f.info("x", "S1")
+							case <-time.After(300 * time.Millisecond):
+								// The add waits for the group: as it should.
+							}
+						})
+					}
+					if err := rv.do(f, h, g); err != nil {
+						t.Fatal(err)
+					}
+					// An add that waited for a deleted group finds it gone.
+					if err := <-done; err != nil && !(rv.name == "delete group" && errors.Is(err, ErrGroupNotFound)) {
+						t.Fatal(err)
+					}
+					f.m.testHook = nil
+					got, ok := f.info("x", "S1")
+					want := dbPerms(t, st, "x", "S1")
+					if ok != (want != 0) || (ok && got.Perms != want) {
+						t.Fatalf("x: cache %v %v, database %v", got.Perms, ok, want)
+					}
+				})
+			}
+		}
+	})
+}

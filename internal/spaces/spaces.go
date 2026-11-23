@@ -201,6 +201,16 @@ type Manager struct {
 	trimMu   sync.Mutex // one trim at a time
 	trimming bool       // a background trim is queued or running (guarded by mu)
 	createMu sync.Mutex // space creation is one at a time, so the limit cannot be passed by racing
+
+	// testHook, set by tests only, runs at named points inside transactions.
+	testHook func(point string)
+}
+
+// at runs the test hook, if any, at a named point.
+func (m *Manager) at(point string) {
+	if m.testHook != nil {
+		m.testHook(point)
+	}
 }
 
 // NewAccounts returns the manager of accounts mode.

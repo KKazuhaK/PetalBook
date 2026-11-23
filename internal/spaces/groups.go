@@ -213,6 +213,10 @@ func (m *Manager) DeleteGroup(ctx context.Context, id string, force bool, mappin
 	var g *store.Group
 	var people []string
 	err := m.opt.Store.Tx(ctx, func(q store.Q) error {
+		// Locked before its people are read: no one joins it until this commits.
+		if err := store.LockGroup(ctx, q, id); err != nil {
+			return err
+		}
 		var err error
 		if g, err = store.GetGroup(ctx, q, id); err != nil {
 			return err
@@ -223,6 +227,7 @@ func (m *Manager) DeleteGroup(ctx context.Context, id string, force bool, mappin
 		if people, err = store.GroupUserIDs(ctx, q, id); err != nil {
 			return err
 		}
+		m.at("group-people-read")
 		return store.DeleteGroup(ctx, q, id)
 	})
 	if errors.Is(err, store.ErrNotFound) {
@@ -462,6 +467,10 @@ func (m *Manager) AddSpaceGroup(ctx context.Context, h *Handle, userID, groupID,
 		if n >= MaxSpaceGroups {
 			return limitErr("a space has at most %d groups", MaxSpaceGroups)
 		}
+		// The space first, then the group: the order every change here takes.
+		if err := store.LockGroup(ctx, q, groupID); err != nil {
+			return err
+		}
 		if err := store.AddSpaceGroup(ctx, q, h.Info.ID, groupID, role, m.opt.Now()); err != nil {
 			return err
 		}
@@ -496,6 +505,10 @@ func (m *Manager) SetSpaceGroupRole(ctx context.Context, h *Handle, userID, grou
 		if err := store.LockSpace(ctx, q, h.Info.ID); err != nil {
 			return err
 		}
+		// Locked before its people are read: no one joins it until this commits.
+		if err := store.LockGroup(ctx, q, groupID); err != nil {
+			return err
+		}
 		var err error
 		if old, err = store.SpaceGroupRole(ctx, q, h.Info.ID, groupID); err != nil {
 			return err
@@ -506,6 +519,7 @@ func (m *Manager) SetSpaceGroupRole(ctx context.Context, h *Handle, userID, grou
 			}
 		}
 		people, err = store.GroupUserIDs(ctx, q, groupID)
+		m.at("group-people-read")
 		return err
 	})
 	if errors.Is(err, store.ErrNotFound) {
@@ -532,6 +546,10 @@ func (m *Manager) RemoveSpaceGroup(ctx context.Context, h *Handle, groupID strin
 		if err := store.LockSpace(ctx, q, h.Info.ID); err != nil {
 			return err
 		}
+		// Locked before its people are read: no one joins it until this commits.
+		if err := store.LockGroup(ctx, q, groupID); err != nil {
+			return err
+		}
 		var err error
 		if old, err = store.SpaceGroupRole(ctx, q, h.Info.ID, groupID); err != nil {
 			return err
@@ -539,6 +557,7 @@ func (m *Manager) RemoveSpaceGroup(ctx context.Context, h *Handle, groupID strin
 		if people, err = store.GroupUserIDs(ctx, q, groupID); err != nil {
 			return err
 		}
+		m.at("group-people-read")
 		return store.RemoveSpaceGroup(ctx, q, h.Info.ID, groupID)
 	})
 	if errors.Is(err, store.ErrNotFound) {
@@ -594,6 +613,15 @@ func (m *Manager) SyncProviderGroups(ctx context.Context, userID, provider strin
 	err = m.opt.Store.Tx(ctx, func(q store.Q) error {
 		res = SyncResult{}
 		held := map[string]bool{}
+		// Every group this touches, locked at once in id order (ApplySynced
+		// locks again what it touches, which is already held).
+		var touched []string
+		for _, c := range append(slices.Clone(rem), add...) {
+			touched = append(touched, c.GroupID)
+		}
+		if err := store.LockGroups(ctx, q, touched); err != nil {
+			return err
+		}
 		if err := store.ApplySynced(ctx, q, userID, provider, rem, nil, m.opt.Now()); err != nil {
 			return err
 		}

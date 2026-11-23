@@ -475,8 +475,20 @@ func UserInGroup(ctx context.Context, q Q, userID, groupID string) (bool, error)
 }
 
 // ApplySynced removes and adds a person's memberships from one provider. A
-// group that has been deleted meanwhile is skipped, not an error.
+// group that has been deleted meanwhile is skipped, not an error. The groups
+// are locked first (see LockGroups), so a change that is taking a group's
+// access away and has read its people commits before anyone joins it.
 func ApplySynced(ctx context.Context, q Q, userID, provider string, remove, add []SyncedMembership, now time.Time) error {
+	ids := make([]string, 0, len(remove)+len(add))
+	for _, m := range remove {
+		ids = append(ids, m.GroupID)
+	}
+	for _, m := range add {
+		ids = append(ids, m.GroupID)
+	}
+	if err := LockGroups(ctx, q, ids); err != nil {
+		return err
+	}
 	for _, m := range remove {
 		if _, err := q.Exec(ctx, `DELETE FROM group_members WHERE group_id = ? AND user_id = ? AND provider = ? AND value = ?`, m.GroupID, userID, provider, m.Value); err != nil {
 			return err
@@ -767,6 +779,22 @@ func ListUserAccess(ctx context.Context, q Q, userID string) ([]UserAccess, erro
 func LockGroup(ctx context.Context, q Q, groupID string) error {
 	res, err := q.Exec(ctx, `UPDATE groups SET id = id WHERE id = ?`, groupID)
 	return oneRow(res, err)
+}
+
+// LockGroups locks several groups, in the order of their ids so that two
+// transactions never wait for each other. A group that does not exist is skipped.
+func LockGroups(ctx context.Context, q Q, groupIDs []string) error {
+	ids := append([]string(nil), groupIDs...)
+	sort.Strings(ids)
+	for i, id := range ids {
+		if i > 0 && ids[i-1] == id {
+			continue
+		}
+		if err := LockGroup(ctx, q, id); err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+	}
+	return nil
 }
 
 // UserGroupIDs lists the groups a person is in.
