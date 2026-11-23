@@ -1054,6 +1054,190 @@ function suite(target: Target) {
         if (st.diskFreeBytes !== undefined) expect(st.diskFreeBytes).toBeGreaterThanOrEqual(0)
       })
     })
+
+    // GitHub (docs/api.md, "GitHub"). There is no GitHub behind a real server in this setup: the mock plays it.
+    describe.skipIf(!!REAL)('GitHub (mock only)', () => {
+      const KEY = '-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu\n-----END RSA PRIVATE KEY-----\n'
+      const CLIENT = 'Iv23liMockClientId'
+      const putApp = (b: Browser, body: unknown) => call(b, 'PUT', '/api/admin/github', body)
+      const mockHook = (body: unknown) => call(admin, 'POST', '/api/_mock/github', body)
+      const codeOf = (r: { json: any }) => r.json?.error
+
+      // Plays the browser through connecting a GitHub account.
+      const connectAccount = async (b: Browser, ret = '/settings/github') => {
+        const start = await call(b, 'POST', '/api/github/authorization/start', { return: ret })
+        expect(start.status).toBe(200)
+        const cb = await call(b, 'GET', start.json.url, undefined, {})
+        return cb
+      }
+
+      it('starts with no App: everyone is told so, and every other endpoint answers 409 github_not_configured', async () => {
+        const m = await newMember(uniq('gh0'))
+        const info = await call(m.browser, 'GET', '/api/github')
+        expect([info.status, info.json]).toEqual([200, { app: null, userAuthorization: false, authorization: null }])
+        const off = await call(admin, 'GET', '/api/admin/github')
+        expect(off.json).toMatchObject({ configured: false })
+        expect(off.json.callbackUrl).toMatch(/\/api\/github\/authorization\/callback$/)
+        for (const [method, path, body] of [
+          ['POST', '/api/github/authorization/start', {}],
+          ['GET', '/api/github/owners'],
+          ['GET', '/api/github/repos?mine=true'],
+          ['GET', '/api/admin/github/installations'],
+          ['PUT', '/api/admin/github/installations/5001', { shared: true }],
+        ] as const) {
+          const r = await call(method.startsWith('P') && path.startsWith('/api/admin') ? admin : path.startsWith('/api/admin') ? admin : m.browser, method, path, body)
+          expect([r.status, codeOf(r)], `${method} ${path}`).toEqual([409, 'github_not_configured'])
+        }
+        const sp = await call(m.browser, 'POST', '/api/spaces', { name: 'Gh', github: { owner: 'kazuhahub', name: 'x' } })
+        expect([sp.status, codeOf(sp)]).toEqual([409, 'github_not_configured'])
+      })
+
+      it('is for administrators to set up: a member gets 403, a refused check saves nothing, and no secret is ever returned', async () => {
+        const m = await newMember(uniq('gh1'))
+        for (const [method, path, body] of [
+          ['GET', '/api/admin/github'],
+          ['PUT', '/api/admin/github', {}],
+          ['DELETE', '/api/admin/github'],
+          ['GET', '/api/admin/github/installations'],
+        ] as const) {
+          const r = await call(m.browser, method, path, body)
+          expect([r.status, codeOf(r)], `${method} ${path}`).toEqual([403, 'forbidden'])
+        }
+        expect(codeOf(await putApp(admin, { appId: '1234567' }))).toBe('invalid')
+        expect(codeOf(await putApp(admin, { appId: '1234567', privateKey: 'nonsense' }))).toBe('github_key_invalid')
+        expect(codeOf(await putApp(admin, { appId: '1234567', privateKey: KEY, clientId: CLIENT, clientSecret: 'wrong' }))).toBe('github_client_rejected')
+        expect(((await call(admin, 'GET', '/api/admin/github')).json as any).configured).toBe(false)
+        const saved = await putApp(admin, { appId: '1234567', privateKey: KEY, clientId: CLIENT, clientSecret: 'a-secret' })
+        expect(saved.status).toBe(200)
+        expect(saved.json).toMatchObject({ configured: true, appId: '1234567', clientId: CLIENT, slug: 'petalbook-notes', privateKey: { set: true }, clientSecret: { set: true }, userAuthorization: true, missing: [], spaces: 0 })
+        expect(saved.json.privateKey.fingerprint).toMatch(/^SHA256:/)
+        expect(JSON.stringify(saved.json)).not.toContain('a-secret')
+        expect(JSON.stringify(saved.json)).not.toContain('PRIVATE KEY')
+        // Saving again with the key and the secret left out keeps them.
+        const again = await putApp(admin, { appId: '1234567' })
+        expect(again.json).toMatchObject({ privateKey: { set: true }, clientSecret: { set: true } })
+        const seen = await call(m.browser, 'GET', '/api/github')
+        expect(seen.json).toMatchObject({ app: { name: 'PetalBook Notes', slug: 'petalbook-notes', htmlUrl: expect.any(String), installUrl: expect.stringContaining('/installations/new') }, userAuthorization: true, authorization: null })
+      })
+
+      it('connects an account only from the browser that started it, once, and disconnects', async () => {
+        const m = await newMember(uniq('gh2'))
+        const other = await newMember(uniq('gh3'))
+        const start = await call(m.browser, 'POST', '/api/github/authorization/start', { return: '/settings/github' })
+        expect(start.json.url).toContain('/api/github/authorization/callback')
+        // Another browser, or no session: expired, nothing is connected.
+        const stray = await call(other.browser, 'GET', start.json.url, undefined, {})
+        expect([stray.status, stray.headers.get('Location')]).toEqual([303, '/settings?github_error=expired'])
+        const ok = await call(m.browser, 'GET', start.json.url, undefined, {})
+        expect([ok.status, ok.headers.get('Location')]).toEqual([303, '/settings/github'])
+        const replay = await call(m.browser, 'GET', start.json.url, undefined, {})
+        expect(replay.headers.get('Location')).toBe('/settings?github_error=expired')
+        const info = await call(m.browser, 'GET', '/api/github')
+        expect(info.json.authorization).toMatchObject({ state: 'ok', spaces: 0 })
+        expect(typeof info.json.authorization.login).toBe('string')
+        expect((await call(m.browser, 'DELETE', '/api/github/authorization')).status).toBe(204)
+        expect((await call(m.browser, 'GET', '/api/github')).json.authorization).toBeNull()
+        expect((await call(m.browser, 'DELETE', '/api/github/authorization')).status).toBe(204)
+      })
+
+      it('lists the accounts to create in and the repositories to connect, a page at a time', async () => {
+        const m = await newMember(uniq('gh4'))
+        expect(codeOf(await call(m.browser, 'GET', '/api/github/repos?mine=true'))).toBe('github_not_authorized')
+        await connectAccount(m.browser)
+        const owners = await call(m.browser, 'GET', '/api/github/owners')
+        expect(owners.status).toBe(200)
+        expect(owners.json.items[0]).toMatchObject({ type: 'User', via: 'user', installationId: null })
+        const org = owners.json.items.find((o: any) => o.login === 'kazuhahub')
+        expect(org).toMatchObject({ type: 'Organization', via: 'user', installationId: expect.any(Number) })
+        expect(typeof owners.json.next).toBe('string')
+        const repos = await call(m.browser, 'GET', `/api/github/repos?installation=${org.installationId}`)
+        expect(repos.status).toBe(200)
+        expect(repos.json.items[0]).toMatchObject({ id: expect.any(Number), fullName: expect.stringContaining('kazuhahub/'), private: expect.any(Boolean), defaultBranch: 'main', canPush: true })
+        expect(codeOf(await call(m.browser, 'GET', '/api/github/repos'))).toBe('invalid')
+        expect(codeOf(await call(m.browser, 'GET', `/api/github/repos?installation=${org.installationId}&mine=true`))).toBe('invalid')
+        expect((await call(m.browser, 'GET', '/api/github/repos?installation=99')).status).toBe(404)
+        expect(codeOf(await call(m.browser, 'GET', '/api/github/owners?cursor=zzz'))).toBe('invalid')
+      })
+
+      it('shares an organisation\'s installation, and a member without a GitHub account can then use it', async () => {
+        const list = await call(admin, 'GET', '/api/admin/github/installations')
+        expect(list.status).toBe(200)
+        const item = list.json.items.find((i: any) => i.account.login === 'petal-team')
+        expect(item).toMatchObject({ account: { type: 'Organization' }, repositorySelection: 'selected', suspended: false, shared: false, spaces: 0 })
+        expect(codeOf(await call(admin, 'PUT', `/api/admin/github/installations/${item.id}`, {}))).toBe('invalid')
+        expect((await call(admin, 'PUT', '/api/admin/github/installations/424242', { shared: true })).status).toBe(404)
+        const put = await call(admin, 'PUT', `/api/admin/github/installations/${item.id}`, { shared: true })
+        expect(put.json).toMatchObject({ id: item.id, shared: true })
+        const m = await newMember(uniq('gh5'))
+        const owners = await call(m.browser, 'GET', '/api/github/owners')
+        expect(owners.json.items).toEqual([{ login: 'petal-team', type: 'Organization', via: 'app', installationId: item.id }])
+        const made = await call(m.browser, 'POST', '/api/spaces', { name: `Shared ${run}`, github: { owner: 'petal-team', name: `shared-${run}`, private: false, description: 'd' } })
+        expect(made.status).toBe(201)
+        const remote = await call(m.browser, 'GET', `/api/spaces/${made.json.id}/remote`)
+        expect(remote.json).toMatchObject({ state: 'ok', errorCode: '', credential: { type: 'github', via: 'app', installationId: item.id, account: 'petal-team' } })
+        // The App cannot be removed while a space syncs through it.
+        expect(codeOf(await call(admin, 'DELETE', '/api/admin/github'))).toBe('github_app_in_use')
+        await call(m.browser, 'DELETE', `/api/spaces/${made.json.id}/remote`)
+        await call(admin, 'PUT', `/api/admin/github/installations/${item.id}`, { shared: false })
+      })
+
+      it('creates a space with a new repository, or connects it to one that is there, and says why it could not', async () => {
+        const m = await newMember(uniq('gh6'))
+        await connectAccount(m.browser)
+        const body = (extra: Record<string, unknown>) => ({ name: `Repo ${run}`, github: { owner: 'kazuhahub', name: `notes-${run}`, ...extra } })
+        const made = await call(m.browser, 'POST', '/api/spaces', body({ private: true, description: 'Notes' }))
+        expect(made.status).toBe(201)
+        expect(made.headers.get('Location')).toBe(`/api/spaces/${made.json.id}`)
+        expect(made.json.sync).toBe('ok')
+        const remote = await call(m.browser, 'GET', `/api/spaces/${made.json.id}/remote`)
+        expect(remote.json).toMatchObject({ url: `https://github.com/kazuhahub/notes-${run}.git`, branch: 'main', state: 'ok', errorCode: '', credential: { type: 'github', via: 'app', account: 'kazuhahub', repoId: expect.any(Number) } })
+        expect(JSON.stringify(remote.json)).not.toMatch(/token|secret/i)
+        // The same name again: taken; create: false uses it.
+        expect(codeOf(await call(m.browser, 'POST', '/api/spaces', body({})))).toBe('github_name_taken')
+        expect((await call(m.browser, 'POST', '/api/spaces', body({ create: false }))).status).toBe(201)
+        expect(codeOf(await call(m.browser, 'POST', '/api/spaces', { name: 'x', github: { owner: 'nobody-here', name: 'x' } }))).toBe('github_owner_not_allowed')
+        expect(codeOf(await call(m.browser, 'POST', '/api/spaces', body({ name: 'bad name' })))).toBe('invalid')
+        expect((await mockHook({ trap: 'noPermission' })).status).toBe(200)
+        const refused = await call(m.browser, 'POST', '/api/spaces', body({ name: `other-${run}` }))
+        expect([refused.status, codeOf(refused)]).toEqual([403, 'github_no_permission'])
+        await mockHook({ trap: 'noPermission', on: false })
+        const spaces = (await call(m.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]
+        expect(spaces.filter((x) => x.name === `Repo ${run}`).length).toBe(2)
+      })
+
+      it('switches a space to the App or to the user\'s connection with PUT .../remote', async () => {
+        const m = await newMember(uniq('gh7'))
+        await connectAccount(m.browser)
+        const sp = await ownedSpace(m, 'Switch')
+        const put = (credential: unknown, url = 'https://github.com/kazuhahub/wiki.git') => call(m.browser, 'PUT', `/api/spaces/${sp.id}/remote`, { url, credential })
+        expect(codeOf(await put({ type: 'github' }))).toBe('invalid')
+        expect(codeOf(await put({ type: 'github', via: 'app' }, 'https://example.com/a/b.git'))).toBe('invalid')
+        const app = await put({ type: 'github', via: 'app' }, 'git@github.com:kazuhahub/wiki.git')
+        expect(app.status).toBe(200)
+        expect(app.json).toMatchObject({ url: 'https://github.com/kazuhahub/wiki.git', credential: { type: 'github', via: 'app' } })
+        const mine = await call(m.browser, 'GET', '/api/github')
+        expect(mine.json.authorization.spaces).toBe(0)
+        const user = await put({ type: 'github', via: 'user' }, 'https://github.com/kazuhahub/notes.git')
+        expect(user.json).toMatchObject({ credential: { type: 'github', via: 'user', user: { id: m.user.id, username: m.user.username }, login: expect.any(String) } })
+        expect((await call(m.browser, 'GET', '/api/github')).json.authorization.spaces).toBe(1)
+        expect([(await put({ type: 'github', via: 'app' }, 'https://github.com/none/x.git')).status]).toEqual([409])
+        // An expired connection puts the space in error with a code that says why; connecting again and syncing fixes it.
+        await mockHook({ expire: true, user: m.user.id })
+        const bad = await call(m.browser, 'GET', `/api/spaces/${sp.id}/remote`)
+        expect(bad.json).toMatchObject({ state: 'error', errorCode: 'github_authorization_expired' })
+        expect((await call(m.browser, 'GET', '/api/github')).json.authorization.state).toBe('expired')
+        await connectAccount(m.browser)
+        const fixed = await call(m.browser, 'POST', `/api/spaces/${sp.id}/remote/sync`)
+        expect(fixed.json).toMatchObject({ state: 'ok', errorCode: '' })
+      })
+
+      it('puts other remotes\' error states under errorCode too', async () => {
+        const sp = await ownedSpace({ browser: admin }, 'Plain')
+        await call(admin, 'PUT', `/api/spaces/${sp.id}/remote`, { url: 'https://github.com/a/b.git', credential: { type: 'token', token: 'x' } })
+        const r = await call(admin, 'GET', `/api/spaces/${sp.id}/remote`)
+        expect(r.json.errorCode).toBe('')
+      })
+    })
   })
 
   describe('the daily text and favourites', () => {

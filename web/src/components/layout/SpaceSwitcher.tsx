@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { NavLink, useNavigate } from 'react-router'
 import { ChevronsUpDown } from 'lucide-react'
-import { syncOf, useActiveSpace, useCreateSpace, useRenameSpace } from '@/api/hooks'
+import { syncOf, useActiveSpace, useRenameSpace } from '@/api/hooks'
 import { can } from '@/lib/permissions'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { spaceUrls } from '@/lib/urls'
 import { t } from '@/i18n'
 import { useOpenSettings } from '@/components/settings/useSettings'
 import { NameDialog } from './NameDialog'
+import { NewSpaceDialog } from './NewSpaceDialog'
 import { SyncIndicator } from './SyncIndicator'
 
 // Accounts mode only: the space in use, the others to switch to, and making or
@@ -16,7 +17,6 @@ export function SpaceSwitcher() {
   const { id, spaces } = useActiveSpace()
   const navigate = useNavigate()
   const openSettings = useOpenSettings()
-  const create = useCreateSpace()
   const rename = useRenameSpace()
   const [dialog, setDialog] = useState<'new' | 'rename' | null>(null)
   const current = spaces.find((s) => s.id === id)
@@ -59,18 +59,7 @@ export function SpaceSwitcher() {
         </DropdownMenu>
         {id && <SyncIndicator space={id} sync={syncOf(current)} />}
       </div>
-      <NameDialog
-        open={dialog === 'new'}
-        onOpenChange={(o) => !o && setDialog(null)}
-        title={t.spaces.newTitle}
-        initial=""
-        submitLabel={t.spaces.create}
-        onSubmit={async (name) => {
-          // A Chinese-language app names the inbox folder in Chinese.
-          const space = await create.mutateAsync({ name, inbox: t.inbox.folderName })
-          navigate(spaceUrls(space.id).home())
-        }}
-      />
+      <NewSpaceDialog open={dialog === 'new'} onOpenChange={(o) => !o && setDialog(null)} onCreated={(space) => navigate(spaceUrls(space.id).home())} />
       <NameDialog
         open={dialog === 'rename'}
         onOpenChange={(o) => !o && setDialog(null)}

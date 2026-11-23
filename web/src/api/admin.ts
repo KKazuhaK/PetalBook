@@ -6,7 +6,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, enc, request } from './client'
 import { keys } from './hooks'
-import type { AdminDaily, AdminSpaceList, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User } from './types'
+import type { AdminDaily, AdminGitHub, GitHubCursorPage, GitHubInstallation, PutAdminGitHubInput, AdminSpaceList, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User } from './types'
 
 export const adminApi = {
   // --- users and invites ---
@@ -58,6 +58,12 @@ export const adminApi = {
       throw e
     }
   },
+  // --- the GitHub App of the whole server ---
+  adminGitHub: (signal?: AbortSignal) => request<AdminGitHub>('/admin/github', { signal }),
+  putAdminGitHub: (input: PutAdminGitHubInput) => request<AdminGitHub>('/admin/github', { method: 'PUT', body: input }),
+  deleteAdminGitHub: () => request<void>('/admin/github', { method: 'DELETE' }),
+  adminGitHubInstallations: (cursor?: string, signal?: AbortSignal) => request<GitHubCursorPage<GitHubInstallation>>(`/admin/github/installations${cursor ? `?cursor=${enc(cursor)}` : ''}`, { signal }),
+  putAdminGitHubInstallation: (id: number, shared: boolean) => request<GitHubInstallation>(`/admin/github/installations/${id}`, { method: 'PUT', body: { shared } }),
   putDailyLines: (input: { lang: string; text: string; format: LinesFormat }) => request<AdminDaily>('/admin/daily/lines', { method: 'PUT', body: input }),
   deleteDailyLines: (lang: string) => request<AdminDaily>(`/admin/daily/lines?lang=${enc(lang)}`, { method: 'DELETE' }),
 }
@@ -170,4 +176,46 @@ export const useSaveDailyLines = () => useDailyWrite((input: { lang: string; tex
 export const useDeleteDailyLines = () => useDailyWrite((lang: string) => adminApi.deleteDailyLines(lang))
 export function useTryDailyApi() {
   return useMutation({ mutationFn: ({ api, lang, date }: { api: Omit<DailyApi, 'note'>; lang: string; date: string }) => adminApi.tryDailyApi(api, lang, date) })
+}
+
+// --- the GitHub App ----------------------------------------------------------------
+
+export function useAdminGitHub(enabled = true) {
+  return useQuery({ queryKey: keys.adminGitHub, queryFn: ({ signal }) => adminApi.adminGitHub(signal), enabled, staleTime: 15_000 })
+}
+
+// What an administrator changes about the App changes what everyone is offered.
+function useGitHubChanged() {
+  const qc = useQueryClient()
+  return () => Promise.all([qc.invalidateQueries({ queryKey: keys.adminGitHub }), qc.invalidateQueries({ queryKey: keys.github }), qc.invalidateQueries({ queryKey: ['github', 'owners'] })])
+}
+
+export function useSaveAdminGitHub() {
+  const changed = useGitHubChanged()
+  return useMutation({ mutationFn: (input: PutAdminGitHubInput) => adminApi.putAdminGitHub(input), onSuccess: () => changed() })
+}
+
+export function useDeleteAdminGitHub() {
+  const changed = useGitHubChanged()
+  return useMutation({ mutationFn: () => adminApi.deleteAdminGitHub(), onSuccess: () => changed() })
+}
+
+// The App's installations, a page (one call to GitHub) at a time.
+export function useAdminGitHubInstallations(enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.adminGitHubInstallations,
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }): Promise<GitHubCursorPage<GitHubInstallation>> => adminApi.adminGitHubInstallations(pageParam || undefined, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled,
+    staleTime: 15_000,
+  })
+}
+
+export function useShareGitHubInstallation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, shared }: { id: number; shared: boolean }) => adminApi.putAdminGitHubInstallation(id, shared),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: keys.adminGitHubInstallations }), qc.invalidateQueries({ queryKey: ['github', 'owners'] })]),
+  })
 }

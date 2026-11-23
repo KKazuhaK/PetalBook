@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from 'react'
-import { Download, GitBranch, House, LayoutTemplate, Settings, Shapes, ShieldCheck, SlidersHorizontal, User, Users } from 'lucide-react'
+import { Download, GitBranch, House, LayoutTemplate, Link2, Settings, Shapes, ShieldCheck, SlidersHorizontal, User, Users } from 'lucide-react'
 import type { SectionId } from './sections'
 
 // The building blocks every settings section is made of, so spacing and rows
@@ -63,6 +63,7 @@ export function SettingsRow({ title, help, children, controlId }: { title: strin
 const ICONS: Record<Exclude<SectionId, 'profile'>, typeof User> = {
   preferences: SlidersHorizontal,
   security: ShieldCheck,
+  github: Link2,
   general: Settings,
   types: Shapes,
   templates: LayoutTemplate,

@@ -8,6 +8,8 @@ import { propsEn } from './props/en'
 import { propsZhCN } from './props/zh-CN'
 import { boardsEn } from './boards/en'
 import { boardsZhCN } from './boards/zh-CN'
+import { githubEn } from './github/en'
+import { githubZhCN } from './github/zh-CN'
 import { homeEn } from './home/en'
 import { homeZhCN } from './home/zh-CN'
 
@@ -117,6 +119,7 @@ describe('dictionaries', () => {
     walk(adminZhCN, adminEn, 'admin', problems)
     walk(propsZhCN, propsEn, 'props', problems)
     walk(boardsZhCN, boardsEn, 'boards', problems)
+    walk(githubZhCN, githubEn, 'github', problems)
     walk(homeZhCN, homeEn, 'home', problems, true)
     expect(problems).toEqual([])
   })
@@ -137,6 +140,7 @@ describe('dictionaries', () => {
     scan(adminEn, 'admin')
     scan(propsEn, 'props')
     scan(boardsEn, 'boards')
+    scan(githubEn, 'github')
     scan(homeEn, 'home')
     expect(found).toEqual([])
   })

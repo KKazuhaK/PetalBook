@@ -426,7 +426,12 @@ export interface PageVersion {
 export type RemoteState = 'ok' | 'offline' | 'rewritten' | 'error'
 export type SyncState = 'local' | RemoteState
 
-export type RemoteCredential = { type: 'ssh'; publicKey: string; fingerprint: string } | { type: 'token'; username: string }
+export type RemoteCredential =
+  | { type: 'ssh'; publicKey: string; fingerprint: string }
+  | { type: 'token'; username: string }
+  // The server's GitHub App (docs/api.md, "GitHub"): no secret is stored for the space or returned.
+  | { type: 'github'; via: 'app'; installationId: number; account: string; repoId: number }
+  | { type: 'github'; via: 'user'; user: { id: string; username: string }; login: string; account?: string; repoId: number }
 
 export interface Remote {
   url: string
@@ -437,6 +442,9 @@ export interface Remote {
   lastSync?: string
   // In words fit to show; empty when all is well.
   error: string
+  // What `error` state needs, for choosing what to offer: `auth`, `hostkey`, `clone`, `rescued` or a
+  // `github_…` code (see GitHubErrorCode). A code this client does not know is treated like `auth`.
+  errorCode: string
   // SSH only: the host key trusted on first connection.
   hostKey?: string
   // Set when `state` is `rewritten`.
@@ -452,8 +460,114 @@ export interface ConnectRemoteInput {
   url: string
   branch?: string
   // A token left out while the space already has one keeps it.
-  credential: { type: 'ssh' } | { type: 'token'; username?: string; token?: string }
+  credential: { type: 'ssh' } | { type: 'token'; username?: string; token?: string } | { type: 'github'; via: GitHubVia }
 }
+
+// --- GitHub (docs/api.md, "GitHub") ----------------------------------------------------
+
+export type GitHubVia = 'app' | 'user'
+export type GitHubErrorCode = 'github_authorization_expired' | 'github_authorization_missing' | 'github_installation_gone' | 'github_not_configured'
+
+export interface GitHubAuthorization {
+  login: string
+  githubId: number
+  state: 'ok' | 'expired'
+  connected: string
+  // Absent when the App does not expire user tokens.
+  refreshExpires?: string
+  // How many spaces sync through this connection.
+  spaces: number
+}
+
+export interface GitHubInfo {
+  app: { name: string; slug: string; htmlUrl: string; installUrl: string } | null
+  // Whether people can connect their GitHub account.
+  userAuthorization: boolean
+  authorization: GitHubAuthorization | null
+}
+
+export interface GitHubOwner {
+  login: string
+  type: 'User' | 'Organization'
+  // Whose token creates the repository: the caller's own, or the installation's.
+  via: GitHubVia
+  installationId: number | null
+}
+
+export interface GitHubRepo {
+  id: number
+  fullName: string
+  private: boolean
+  defaultBranch: string
+  htmlUrl: string
+  canPush: boolean
+}
+
+export interface GitHubCursorPage<T> {
+  items: T[]
+  // Opaque; empty after the last page.
+  next: string
+}
+
+// A new space with its own repository on GitHub (`POST /api/spaces`, `github`).
+export interface NewGitHubRepo {
+  owner: string
+  name: string
+  private?: boolean
+  description?: string
+  // False connects the space to the repository that exists already.
+  create?: boolean
+}
+
+export interface CreateSpaceInput {
+  name: string
+  inbox?: string
+  github?: NewGitHubRepo
+}
+
+// The settings of the server's one GitHub App as an administrator sees them: never a secret.
+export type AdminGitHub =
+  | { configured: false; callbackUrl: string }
+  | {
+      configured: true
+      appId: string
+      clientId: string
+      slug: string
+      name: string
+      owner: string
+      htmlUrl: string
+      installUrl: string
+      privateKey: { set: boolean; fingerprint: string }
+      clientSecret: { set: boolean }
+      callbackUrl: string
+      permissions: Record<string, string>
+      // Of administration, contents and metadata: what the App lacks. A warning only.
+      missing: string[]
+      userAuthorization: boolean
+      checked: string
+      spaces: number
+      authorizations: number
+    }
+
+export interface GitHubInstallation {
+  id: number
+  account: { login: string; type: 'User' | 'Organization'; id: number }
+  repositorySelection: 'all' | 'selected'
+  suspended: boolean
+  permissions: Record<string, string>
+  htmlUrl: string
+  shared: boolean
+  spaces: number
+}
+
+export interface PutAdminGitHubInput {
+  appId?: string
+  privateKey?: string
+  // "" removes the client id and the secret.
+  clientId?: string
+  clientSecret?: string
+}
+
 
 // A refusal of the daily-text endpoints says why with a stable code in `error`, next to `message`, and the
 // thing it is about: host_not_allowed (host), header_reenter / header_missing (header), not_json, too_large,
@@ -488,6 +602,17 @@ export type ErrorCode =
   | 'last_owner'
   | 'personal_space'
   | 'busy'
+  | 'github_not_configured'
+  | 'github_not_authorized'
+  | 'github_owner_not_allowed'
+  | 'github_name_taken'
+  | 'github_no_permission'
+  | 'github_repo_not_in_installation'
+  | 'github_push_failed'
+  | 'github_key_invalid'
+  | 'github_app_rejected'
+  | 'github_client_rejected'
+  | 'github_app_in_use'
   | 'rate_limited'
   | 'unavailable'
   | 'internal'

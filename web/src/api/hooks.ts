@@ -10,7 +10,7 @@ import { api, ApiError, spaceApi } from './client'
 import { parseTagColor } from '../lib/tagColors.ts'
 import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
 import { propsOfMeta } from '../lib/pageTypes.ts'
-import type { BatchPagesInput, ChecksResponse, FixCheckInput, ConnectRemoteInput, DailyPrefs, DailySettings, Favorite, FavoriteList, FavoriteRef, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, ProblemKind, PutTemplateInput, PutViewsInput, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
+import type { CreateSpaceInput, BatchPagesInput, ChecksResponse, FixCheckInput, ConnectRemoteInput, DailyPrefs, DailySettings, Favorite, FavoriteList, FavoriteRef, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, ProblemKind, PutTemplateInput, PutViewsInput, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
 
 // Everything of one space is under ['space', id, …], so switching space never
 // shows another space's data and one invalidation covers a space.
@@ -25,6 +25,12 @@ export const keys = {
   adminSpaceList: (q: string) => ['admin', 'spaces', 'list', q] as const,
   adminStatus: ['admin', 'status'] as const,
   adminDaily: ['admin', 'daily'] as const,
+  adminGitHub: ['admin', 'github'] as const,
+  adminGitHubInstallations: ['admin', 'github', 'installations'] as const,
+  // GitHub, for everyone: the App and the caller's connection; the accounts to make a repository in; a repository list.
+  github: ['github'] as const,
+  githubOwners: ['github', 'owners'] as const,
+  githubRepos: (which: string) => ['github', 'repos', which] as const,
   // A space an administrator opens without being a member of it.
   viewedSpace: (space: string) => ['admin', 'spaces', 'view', space] as const,
   space: (space: string) => ['space', space] as const,
@@ -465,10 +471,50 @@ export function useCreateFolder() {
 
 // --- spaces, account, users ----------------------------------------------------
 
+// --- GitHub ---------------------------------------------------------------------
+
+// The App and the caller's connection. Accounts mode only; a server with no App answers with `app: null`.
+export function useGitHub(enabled = true) {
+  return useQuery({ queryKey: keys.github, queryFn: ({ signal }) => api.github(signal), enabled, staleTime: 15_000 })
+}
+
+// The accounts a repository can be made in, a page at a time (one call to GitHub each).
+export function useGitHubOwners(enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.githubOwners,
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => api.githubOwners(pageParam || undefined, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled,
+    staleTime: 30_000,
+  })
+}
+
+// The repositories of an installation (or the caller's own), a page at a time.
+export function useGitHubRepos(which: { installation: number } | { mine: true } | null) {
+  return useInfiniteQuery({
+    queryKey: keys.githubRepos(which === null ? 'none' : 'installation' in which ? `i${which.installation}` : 'mine'),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => api.githubRepos(which!, pageParam || undefined, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled: which !== null,
+    staleTime: 30_000,
+  })
+}
+
+// Disconnecting ends every sync that used the connection: the spaces and the remotes read again.
+export function useDisconnectGitHub() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.githubDisconnect(),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: keys.github }), qc.invalidateQueries({ queryKey: keys.spaces }), qc.invalidateQueries({ queryKey: ['space'] })]),
+  })
+}
+
 export function useCreateSpace() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: string | { name: string; inbox?: string }) => (typeof input === 'string' ? api.createSpace(input) : api.createSpace(input.name, input.inbox)),
+    mutationFn: (input: string | CreateSpaceInput) => (typeof input === 'string' ? api.createSpace(input) : api.createSpace(input.name, input.inbox, input.github)),
     // Another space, in the same list order the server gives: personal first, then by name.
     onSuccess: (space) =>
       qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => ({

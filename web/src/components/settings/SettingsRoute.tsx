@@ -10,6 +10,7 @@ import { DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { t } from '@/i18n'
 import { GeneralPanel } from './GeneralPanel'
+import { GitHubPanel } from './GitHubPanel'
 import { ImportPanel } from './ImportPanel'
 import { PreferencesPanel } from './PreferencesPanel'
 import { ProfilePanel } from './ProfilePanel'
@@ -65,7 +66,14 @@ export default function SettingsRoute() {
   // `?error=`) and where to return to are kept.
   // A link that failed comes back to plain `/settings?error=…`: its message is
   // shown where the linked sign-ins are.
-  const landing = requested === undefined && new URLSearchParams(location.search).has('error') && shown.some((s) => s.id === 'security') ? 'security' : section
+  // A GitHub connection that failed comes back to plain `/settings?github_error=…`, and is explained on its own section.
+  const query = new URLSearchParams(location.search)
+  const landing =
+    requested === undefined && query.has('github_error') && shown.some((s) => s.id === 'github')
+      ? 'github'
+      : requested === undefined && query.has('error') && shown.some((s) => s.id === 'security')
+        ? 'security'
+        : section
   if (session && spacesReady && requested !== landing) return <Navigate to={{ pathname: settingsPath(landing), search: location.search }} state={location.state} replace />
 
   // The sections that need a space are only offered while there is one, so
@@ -79,6 +87,9 @@ export default function SettingsRoute() {
         break
       case 'security':
         body = <SecurityPanel />
+        break
+      case 'github':
+        body = <GitHubPanel />
         break
       case 'preferences':
         body = <PreferencesPanel />

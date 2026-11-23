@@ -1,6 +1,6 @@
 import { Link, Navigate, useParams } from 'react-router'
 import { lazy, Suspense } from 'react'
-import { ArrowLeft, HardDrive, Layers, Quote, Users } from 'lucide-react'
+import { ArrowLeft, HardDrive, Layers, Link2, Quote, Users } from 'lucide-react'
 import { TopBar } from '@/components/layout/TopBar'
 import { useActiveSpace } from '@/api/hooks'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
@@ -9,14 +9,15 @@ import { t } from '@/i18n'
 import { ta } from '@/i18n/admin'
 import { PageFallback } from '@/components/common'
 import { SpacesPanel } from './SpacesPanel'
+import { GitHubPanel } from './GitHubPanel'
 import { StatusPanel } from './StatusPanel'
 import { UsersPanel } from './UsersPanel'
 
 // The daily text's page is a chunk of its own: it is the biggest of the administration's and the least visited.
 const DailyPanel = lazy(() => import('./DailyPanel').then((m) => ({ default: m.DailyPanel })))
 
-const ICONS: Record<AdminSection, typeof Users> = { users: Users, spaces: Layers, daily: Quote, status: HardDrive }
-const SECTIONS: readonly AdminSection[] = ['users', 'spaces', 'daily', 'status']
+const ICONS: Record<AdminSection, typeof Users> = { users: Users, spaces: Layers, daily: Quote, github: Link2, status: HardDrive }
+const SECTIONS: readonly AdminSection[] = ['users', 'spaces', 'daily', 'github', 'status']
 
 // The administration: users and invites, every space, the state of the server.
 // It is a route of its own, loaded only when an administrator goes there (see
@@ -66,6 +67,7 @@ export default function AdminRoute() {
             <DailyPanel />
           </Suspense>
         )}
+        {section === 'github' && <GitHubPanel />}
         {section === 'status' && <StatusPanel />}
       </div>
     </>

@@ -16,6 +16,11 @@ import type {
   DraftReceipt,
   BatchPagesInput,
   ConnectRemoteInput,
+  GitHubCursorPage,
+  GitHubInfo,
+  GitHubOwner,
+  GitHubRepo,
+  NewGitHubRepo,
   ErrorCode,
   ReasonCode,
   HistoryList,
@@ -494,7 +499,20 @@ export const api = {
 
   // --- spaces ---
   spaces: (signal?: AbortSignal) => request<{ spaces: SpaceInfo[] }>('/spaces', { signal }),
-  createSpace: (name: string, inbox?: string) => request<SpaceInfo>('/spaces', { method: 'POST', body: { name, ...(inbox === undefined ? {} : { inbox }) } }),
+  createSpace: (name: string, inbox?: string, github?: NewGitHubRepo) =>
+    request<SpaceInfo>('/spaces', { method: 'POST', body: { name, ...(inbox === undefined ? {} : { inbox }), ...(github === undefined ? {} : { github }) } }),
+
+  // --- GitHub (accounts mode) ---
+  github: (signal?: AbortSignal) => request<GitHubInfo>('/github', { signal }),
+  // The address to send the browser to; GitHub sends it back to `return` (a path of this site).
+  githubStart: (ret?: string) => request<{ url: string }>('/github/authorization/start', { method: 'POST', body: ret ? { return: ret } : {} }),
+  githubDisconnect: () => request<void>('/github/authorization', { method: 'DELETE' }),
+  githubOwners: (cursor?: string, signal?: AbortSignal) => request<GitHubCursorPage<GitHubOwner>>(`/github/owners${cursor ? `?cursor=${enc(cursor)}` : ''}`, { signal }),
+  githubRepos: (which: { installation: number } | { mine: true }, cursor?: string, signal?: AbortSignal) => {
+    const q = new URLSearchParams('installation' in which ? { installation: String(which.installation) } : { mine: 'true' })
+    if (cursor) q.set('cursor', cursor)
+    return request<GitHubCursorPage<GitHubRepo>>(`/github/repos?${q.toString()}`, { signal })
+  },
   renameSpace: (id: string, name: string) => request<SpaceInfo>(`/spaces/${enc(id)}`, { method: 'PATCH', body: { name } }),
   // Either field or both; the server refuses a body with neither.
   updateSpace: (id: string, patch: { name?: string; inbox?: string }) => request<SpaceInfo>(`/spaces/${enc(id)}`, { method: 'PATCH', body: patch }),
