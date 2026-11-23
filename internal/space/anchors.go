@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -636,18 +638,24 @@ func textOf(n *yaml.Node) int {
 }
 
 // stripper takes keys off many entries of a mapping in one pass, for a writer:
-// each entry is made the writer's own first (see owned). What an anchor is
-// without the keys is worked out once, however many of the entries are aliases
-// of it, and an entry that would be left empty costs nothing; the text the
-// copies for the others come to is added up (textOf), and when that is more
-// than the file may hold the edit is given up, before the next copy is made.
+// each entry is made the writer's own first (see owned). Entries that are
+// aliases of one anchor stay one entry written once: the first of them gets
+// what the anchor is without the keys, under an anchor of its own, and the
+// others are aliases of that. So taking the type off ten thousand folders that
+// share an entry leaves a file as small as it was, and what else refers to the
+// old anchor keeps what it had. An entry that would be left empty costs
+// nothing. The text of what is copied is added up (textOf), and when that is
+// more than the file may hold the edit is given up before the next copy.
+//
+// These are the only aliases the server writes.
 type stripper struct {
-	file settingsFile
-	keys []string
-	r    reading
-	bare map[*yaml.Node]*yaml.Node
-	size map[*yaml.Node]int // textOf what is in bare
-	made int
+	file  settingsFile
+	top   *yaml.Node // the top of the document, for the anchor names in use
+	keys  []string
+	r     reading
+	bare  map[*yaml.Node]*yaml.Node // by anchor: what it is without the keys, where it was first written
+	names map[string]bool
+	made  int
 }
 
 // has reports whether the value of an entry is a mapping with one of the keys.
@@ -664,27 +672,59 @@ func (s *stripper) has(v *yaml.Node) bool {
 	return false
 }
 
+// name is an anchor name that is not in use, made from the one an entry was
+// an alias of.
+func (s *stripper) name(of string) string {
+	if s.names == nil {
+		s.names = map[string]bool{}
+		var walk func(n *yaml.Node)
+		walk = func(n *yaml.Node) {
+			if n.Anchor != "" {
+				s.names[n.Anchor] = true
+			}
+			for _, c := range n.Content {
+				walk(c)
+			}
+		}
+		if s.top != nil {
+			walk(s.top)
+		}
+	}
+	base := of + "-no-" + strings.Join(s.keys, "-")
+	name := base
+	for n := 2; s.names[name]; n++ {
+		name = base + "-" + strconv.Itoa(n)
+	}
+	s.names[name] = true
+	return name
+}
+
 // strip makes the value at position i of cont the writer's own, without the keys.
 func (s *stripper) strip(cont *yaml.Node, i int) error {
 	v := cont.Content[i]
 	if v.Kind == yaml.AliasNode && v.Alias != nil {
-		b := s.bare[v.Alias]
-		if b == nil {
+		b, seen := s.bare[v.Alias]
+		var n *yaml.Node
+		switch {
+		case !seen:
 			b = owned(&yaml.Node{Kind: yaml.AliasNode, Value: v.Value, Alias: v.Alias})
 			for _, k := range s.keys {
 				removeKey(b, k)
 			}
 			if s.bare == nil {
-				s.bare, s.size = map[*yaml.Node]*yaml.Node{}, map[*yaml.Node]int{}
+				s.bare = map[*yaml.Node]*yaml.Node{}
 			}
-			s.bare[v.Alias], s.size[v.Alias] = b, textOf(b)
-		}
-		if s.made += s.size[v.Alias]; s.made > s.file.max {
-			return tooFull(s.file)
-		}
-		n := &yaml.Node{Kind: b.Kind, Tag: b.Tag, Style: b.Style}
-		if len(b.Content) > 0 {
-			n = cloneNode(b)
+			s.bare[v.Alias] = b
+			s.made += textOf(b)
+			n = b
+		case len(b.Content) == 0:
+			n = &yaml.Node{Kind: b.Kind, Tag: b.Tag, Style: b.Style}
+		default:
+			if b.Anchor == "" {
+				b.Anchor = s.name(v.Value)
+			}
+			n = &yaml.Node{Kind: yaml.AliasNode, Value: b.Anchor, Alias: b}
+			s.made += len(b.Anchor) + 2
 		}
 		n.HeadComment, n.LineComment, n.FootComment = v.HeadComment, v.LineComment, v.FootComment
 		cont.Content[i] = n
@@ -702,6 +742,78 @@ func (s *stripper) strip(cont *yaml.Node, i int) error {
 		return tooFull(s.file)
 	}
 	return nil
+}
+
+// replaced collects, for the document an edit is working on, the entries it
+// found unusable and wrote over (an entry that is a line of text, `views` that
+// is not a list, a `type` that is not text). Whoever writes the document keeps
+// the file as it was beside it, so what was there is not lost (see
+// restore.go). It is keyed by the top of the document.
+var replaced sync.Map
+
+// noteReplaced says an edit wrote over something unusable at what, in the
+// document whose top is top.
+func noteReplaced(top *yaml.Node, what string) {
+	list, _ := replaced.Load(top)
+	l, _ := list.([]string)
+	replaced.Store(top, append(l, what))
+}
+
+func takeReplaced(top *yaml.Node) []string {
+	list, ok := replaced.LoadAndDelete(top)
+	if !ok {
+		return nil
+	}
+	return list.([]string)
+}
+
+// unusable reports whether the value of an entry, or of one of its settings,
+// is something where kind (a mapping, a list, a scalar) should be: there, not
+// empty, and not that.
+func unusable(v *yaml.Node, kind yaml.Kind) bool {
+	if v == nil || v.Kind == kind {
+		return false
+	}
+	return !(v.Kind == yaml.ScalarNode && (v.Tag == "!!null" || v.Value == ""))
+}
+
+// oddEntries lists the entries of the file's section that cannot be used as
+// they are, and the settings of entries that cannot (`Tang: views`): they read
+// as not there. At most 20 are listed.
+func oddEntries(doc *yaml.Node, f settingsFile) []string {
+	if doc == nil {
+		return nil
+	}
+	m, _ := mapValue(doc.Content[0], f.section)
+	if m == nil || m.Kind != yaml.MappingNode {
+		return nil
+	}
+	var r reading
+	odd := map[string]bool{}
+	var order []string
+	eachPair(m, func(k string, e *yaml.Node, _ int) {
+		say := func(what string, is bool) {
+			switch {
+			case is && !odd[what]:
+				odd[what] = true
+				order = append(order, what)
+			case !is:
+				delete(odd, what) // a later writing of the entry counts
+			}
+		}
+		say(k, unusable(e, yaml.MappingNode))
+		views, _ := r.value(e, "views")
+		say(k+": views", unusable(views, yaml.SequenceNode))
+		val, _ := r.value(e, f.setting)
+		say(k+": "+f.setting, val != nil && val.Kind != yaml.ScalarNode)
+	})
+	var out []string
+	for _, what := range order {
+		if odd[what] && len(out) < 20 {
+			out = append(out, what)
+		}
+	}
+	return out
 }
 
 var meaningSeed = maphash.MakeSeed()
@@ -753,8 +865,9 @@ func aliasesMeanTheSame(doc *yaml.Node, before map[*yaml.Node]uint64) bool {
 		return false
 	}
 	for _, t := range used {
-		was, known := before[t]
-		if !known || was != now[t] {
+		// An anchor that was not there before is one the edit made (stripper):
+		// whether its aliases read back as it is what sameMeaning looks at.
+		if was, known := before[t]; known && was != now[t] {
 			return false
 		}
 	}
@@ -802,10 +915,29 @@ func sameNodes(a, b *yaml.Node, seen map[[2]*yaml.Node]bool) bool {
 // settingsFile is one of the two settings files, as the editing of it needs it.
 type settingsFile struct {
 	rel     string
-	section string // the key of its list of entries: `folders`, `tags`
+	section string            // the key of its list of entries: `folders`, `tags`
+	setting string            // the setting of an entry besides its views: `type`, `color`
+	good    func([]byte) bool // for a file that is not YAML settings (a type): whether its text can be used
 	max     int
 	bad     error        // what loading returns for a file that cannot be used
 	problem func() error // what is said of such a file where nothing can restore it
+}
+
+// usable reports whether text can be the file.
+func (f settingsFile) usable(data []byte) bool {
+	if f.good != nil {
+		return f.good(data)
+	}
+	_, err := f.parse(data)
+	return err == nil
+}
+
+// repair is what a writer of a settings file has to do besides writing it,
+// because of what the edit found: the file could not be used and from stands
+// in for it, or entries of it could not and were written over.
+type repair struct {
+	from    *restored
+	entries []string
 }
 
 // parse reads the text of the file: parseYAMLDoc, and its list of entries is a
@@ -896,8 +1028,9 @@ func tooFull(f settingsFile) error {
 // top of this file. It may run twice (the second time on the document with its
 // aliases written out), so what it leaves outside the document must be right
 // when the last run is the one that counts.
-func planSettingsEdit(root string, f settingsFile, h *healer, edit func(top *yaml.Node) (bool, error), render func(doc *yaml.Node) ([]byte, error)) (data []byte, changed bool, from *restored, err error) {
+func planSettingsEdit(root string, f settingsFile, h *healer, edit func(top *yaml.Node) (bool, error), render func(doc *yaml.Node) ([]byte, error)) (data []byte, changed bool, rep *repair, err error) {
 	for attempt := 0; ; attempt++ {
+		var from *restored
 		doc, err := loadSettingsAt(root, f)
 		if errors.Is(err, f.bad) {
 			if h == nil {
@@ -926,7 +1059,9 @@ func planSettingsEdit(root string, f settingsFile, h *healer, edit func(top *yam
 		if aliased {
 			before, _, _ = meanings(doc)
 		}
-		changed, err := edit(own(doc, 0))
+		top := own(doc, 0)
+		changed, err := edit(top)
+		entries := takeReplaced(top)
 		if err != nil || !changed {
 			return nil, false, nil, err
 		}
@@ -948,10 +1083,13 @@ func planSettingsEdit(root string, f settingsFile, h *healer, edit func(top *yam
 			ok = perr == nil && (!aliased || (back != nil && aliasesMeanTheSame(doc, before) && sameMeaning(doc.Content[0], back.Content[0])))
 		}
 		if ok {
-			return data, true, from, nil
+			if from != nil || len(entries) > 0 {
+				rep = &repair{from, entries}
+			}
+			return data, true, rep, nil
 		}
 		if !aliased {
-			return nil, false, nil, &unreadableEditError{&InvalidError{"the change cannot be written to " + f.rel + " in a form the server can read again without changing what other entries of the file mean (its anchors and aliases stand in the way); nothing was changed; write the aliases (*name) of the entry out by hand and try again"}}
+			return nil, false, nil, &unreadableEditError{&InvalidError{"the change cannot be written to " + f.rel + " in a form the server can read again without changing what other entries of the file mean (its anchors and aliases stand in the way); nothing was changed"}}
 		}
 	}
 }

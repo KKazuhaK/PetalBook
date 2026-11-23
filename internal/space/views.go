@@ -589,6 +589,7 @@ func (s *Space) tagViews() map[string][]View {
 	c := tagCache{valid: true, mode: fi.Mode(), size: fi.Size(), mtimeNs: fi.ModTime().UnixNano()}
 	if doc, err := s.loadTags(); err == nil {
 		c.views = viewsOf(doc, "tags", func(k string) string { return k })
+		s.heal.setOdd(tagsSettings, oddEntries(doc, tagsSettings))
 	}
 	s.tagCfg = c
 	return c.views
@@ -883,10 +884,11 @@ func putViewsInto(top *yaml.Node, section string, section2 func(*yaml.Node, bool
 			entry = deref(cont.Content[at+1])
 		}
 	}
+	oddEntry := false
 	if entry != nil && entry.Kind != yaml.MappingNode {
-		if !(entry.Kind == yaml.ScalarNode && (entry.Tag == "!!null" || entry.Value == "")) {
-			return false, ViewList{}, invalidf("the entry of %q in the settings is not a list of settings; it was left as it is and has to be fixed by hand", key)
-		}
+		// Not settings (`Tang: yes`): it reads as none, and a write that puts
+		// views there writes over it; the file as it was is kept.
+		oddEntry = unusable(entry, yaml.MappingNode)
 		entry = nil
 	}
 	var slots []int // where the views are in the list of the entry
@@ -977,7 +979,7 @@ func putViewsInto(top *yaml.Node, section string, section2 func(*yaml.Node, bool
 		if section != "folders" {
 			file = tagsSettings
 		}
-		st := stripper{file: file, keys: []string{"views"}}
+		st := stripper{file: file, top: top, keys: []string{"views"}}
 		kept := make([]*yaml.Node, 0, len(cont.Content))
 		for i := 0; i+1 < len(cont.Content); i += 2 {
 			if isEntry(i) {
@@ -1008,6 +1010,9 @@ func putViewsInto(top *yaml.Node, section string, section2 func(*yaml.Node, bool
 	if entry == nil {
 		entry = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 		if at >= 0 {
+			if oddEntry {
+				noteReplaced(top, key)
+			}
 			cont.Content[at+1] = entry
 		} else {
 			cont.Content = append(cont.Content, textNode(key), entry)
@@ -1023,6 +1028,9 @@ func putViewsInto(top *yaml.Node, section string, section2 func(*yaml.Node, bool
 		seq = own(entry, vat+1)
 	} else {
 		seq = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+		if unusable(cur, yaml.SequenceNode) {
+			noteReplaced(top, key+": views")
+		}
 		if vat >= 0 {
 			entry.Content[vat+1] = seq
 		} else {

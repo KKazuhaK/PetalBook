@@ -479,10 +479,24 @@ func TestViewsAreSavedThoughTheSettingsCannotBeUsed(t *testing.T) {
 	if _, err = putViews(s, folderScope("F"), View{Name: "v", Layout: "list"}); err != nil {
 		t.Errorf("folders is a number: %v", err)
 	}
-	// An entry that is not a mapping is the person's own.
-	os.WriteFile(file, []byte("folders:\n  F: 5\n"), 0o644)
-	_, err = putViews(s, folderScope("F"), View{Name: "v", Layout: "list"})
-	wantInvalid(t, "an entry that is a number", err, "fixed by hand")
+	// An entry that is not a mapping, or views that are not a list, read as
+	// none and are written over.
+	for _, content := range []string{"folders:\n  F: 5\n", "folders:\n  F: {views: 7, note: mine}\n"} {
+		os.WriteFile(file, []byte(content), 0o644)
+		if _, err = putViews(s, folderScope("F"), View{Name: "v", Layout: "list"}); err != nil || viewNames(t, s, folderScope("F")) != "v" {
+			t.Errorf("%q: %v", content, err)
+		}
+		kept := false
+		for _, c := range copiesOf(s.Root(), spaceSettings) {
+			kept = kept || readDisk(t, s, c) == content
+		}
+		if !kept {
+			t.Errorf("%q: what the file was is not kept", content)
+		}
+	}
+	if !strings.Contains(spaceYML(s.Root()), "note: mine") {
+		t.Errorf("the rest of the entry is gone:\n%s", spaceYML(s.Root()))
+	}
 	// An entry with nothing under it is made a mapping.
 	os.WriteFile(file, []byte("folders:\n  F:\n"), 0o644)
 	if _, err = putViews(s, folderScope("F"), View{Name: "v", Layout: "list"}); err != nil {
@@ -896,9 +910,9 @@ func TestAListingSortedByASelectFollowsTheOrderOfItsOptions(t *testing.T) {
 	if got := order(index.Query{Folder: &work, Sort: "prop:status", Limit: 20}); got != "ACBDE" {
 		t.Errorf("after reordering the options: %s", got)
 	}
-	// A type that is broken by hand leaves the order of the text.
+	// A type file that cannot be used is read as its last version that can.
 	writeType(t, s.Root(), "task", "{not json")
-	if got := order(index.Query{Folder: &work, Sort: "prop:status", Limit: 20}); got != "CABDE" {
+	if got := order(index.Query{Folder: &work, Sort: "prop:status", Limit: 20}); got != "ACBDE" {
 		t.Errorf("a broken type: %s", got)
 	}
 }

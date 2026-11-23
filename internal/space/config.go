@@ -31,7 +31,7 @@ const maxSpaceFile = 1 << 20
 var errSpaceFile = errors.New("the space settings file cannot be read")
 
 func spaceFileProblem() error {
-	return invalidf("%s is not something the server can read (it must be YAML with keys at the top, a regular file, under 1 MiB); it was left as it is and has to be fixed by hand", spaceFile)
+	return unavailable(nil, "%s cannot be used as it is, and there is nothing here to restore it with", spaceFile)
 }
 
 // Binding says a folder is bound to a page type.
@@ -136,6 +136,7 @@ func (s *Space) config() configCache {
 			c.byFolder[b.Folder] = b.Type
 		}
 		c.views = viewsOf(doc, "folders", bindingKey)
+		s.heal.setOdd(spaceSettings, oddEntries(doc, spaceSettings))
 	}
 	s.cfg = c
 	return c
@@ -207,7 +208,7 @@ func (s *Space) editSpaceFile(tx *txn, edit func(root *yaml.Node) (changed bool,
 	return err
 }
 
-var spaceSettings = settingsFile{rel: spaceFile, section: "folders", max: maxSpaceFile, bad: errSpaceFile, problem: spaceFileProblem}
+var spaceSettings = settingsFile{rel: spaceFile, section: "folders", setting: "type", max: maxSpaceFile, bad: errSpaceFile, problem: spaceFileProblem}
 
 // planSpaceYAML is the text space.yml would have after edit, without writing
 // it: see planSettingsEdit. Comments in the file stay, also when they are all
@@ -217,7 +218,7 @@ func planSpaceYAML(root, name string, edit func(root *yaml.Node) (bool, error)) 
 	return data, changed, err
 }
 
-func planSpaceYAMLWith(h *healer, root, name string, edit func(root *yaml.Node) (bool, error)) ([]byte, bool, *restored, error) {
+func planSpaceYAMLWith(h *healer, root, name string, edit func(root *yaml.Node) (bool, error)) ([]byte, bool, *repair, error) {
 	return planSettingsEdit(root, spaceSettings, h, func(top *yaml.Node) (bool, error) {
 		fresh := len(top.Content) == 0
 		changed, err := edit(top)
@@ -248,7 +249,7 @@ func planSpaceYAMLWith(h *healer, root, name string, edit func(root *yaml.Node) 
 // written, when there is something to write. It returns the files written:
 // space.yml, and the copy of a file that could not be used, put aside first.
 func editSpaceYAML(h *healer, root, name, tmpDir string, edit func(root *yaml.Node) (bool, error), before func(rel string) error) ([]string, error) {
-	data, changed, from, err := planSpaceYAMLWith(h, root, name, edit)
+	data, changed, rep, err := planSpaceYAMLWith(h, root, name, edit)
 	if err != nil || !changed {
 		return nil, err
 	}
@@ -257,7 +258,7 @@ func editSpaceYAML(h *healer, root, name, tmpDir string, edit func(root *yaml.No
 	}
 	var written []string
 	kept := ""
-	if from != nil {
+	if rep != nil && h != nil {
 		if kept, err = h.keep(spaceSettings, before); err != nil {
 			return nil, err
 		}
@@ -274,8 +275,8 @@ func editSpaceYAML(h *healer, root, name, tmpDir string, edit func(root *yaml.No
 		return written, err
 	}
 	h.wroteGood(spaceSettings, data)
-	if from != nil {
-		h.repaired(spaceSettings, from, kept)
+	if rep != nil && h != nil {
+		h.repaired(spaceSettings, rep, kept)
 	}
 	return append(written, spaceFile), nil
 }
@@ -297,7 +298,17 @@ func foldersNode(root *yaml.Node, create bool) (*yaml.Node, error) {
 		}
 		return nil, nil
 	case folders != nil:
-		return nil, invalidf("`folders` in %s is not a list of folders with their settings; it was left as it is and has to be fixed by hand", spaceFile)
+		// Not a list of folders: a file with that is not loaded (see
+		// settingsFile.parse), so this is only for a document made otherwise.
+		if !create {
+			return nil, nil
+		}
+		noteReplaced(root, "folders")
+		folders = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		if at >= 0 {
+			root.Content[at+1] = folders
+			return folders, nil
+		}
 	case !create:
 		return nil, nil
 	}
@@ -348,7 +359,7 @@ func dropEmpty(root, folders *yaml.Node, i int) {
 // other shape holds no type to remove, and stays as it is.
 func untype(root, folders *yaml.Node, match func(folder string) bool) (bool, error) {
 	removed := false
-	st := stripper{file: spaceSettings, keys: []string{"type"}}
+	st := stripper{file: spaceSettings, top: root, keys: []string{"type"}}
 	kept := make([]*yaml.Node, 0, len(folders.Content))
 	for i := 0; i+1 < len(folders.Content); i += 2 {
 		if key, ok := folderAt(folders, i); ok && match(key) && st.has(folders.Content[i+1]) {
@@ -397,10 +408,18 @@ func setBinding(root *yaml.Node, folder, typ string) (bool, error) {
 		folders.Content[i+1] = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{textNode("type"), textNode(typ)}}
 		return true, nil
 	case e.Kind != yaml.MappingNode:
-		return false, invalidf("the entry of the folder %q in %s is not a list of settings; it was left as it is and has to be fixed by hand", folder, spaceFile)
+		// `Tang: yes`: not settings. It read as none, and is written over; the
+		// file as it was is kept (noteReplaced).
+		noteReplaced(root, folder)
+		folders.Content[i+1] = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{textNode("type"), textNode(typ)}}
+		return true, nil
 	}
-	if cur, _ := mapValue(e, "type"); cur != nil && cur.Kind == yaml.ScalarNode && cur.Value == typ && cur.Tag == "!!str" {
+	cur, _ := mapValue(e, "type")
+	if cur != nil && cur.Kind == yaml.ScalarNode && cur.Value == typ && cur.Tag == "!!str" {
 		return false, nil
+	}
+	if cur != nil && cur.Kind != yaml.ScalarNode {
+		noteReplaced(root, folder+": type")
 	}
 	setKey(own(folders, i+1), "type", textNode(typ))
 	return true, nil
@@ -521,7 +540,7 @@ func forgetFolders(root *yaml.Node, gone func(folder string) bool) (bool, error)
 	// One pass, whatever the number of folders that go: what stays is
 	// collected, not what goes cut out one at a time.
 	changed := false
-	st := stripper{file: spaceSettings, keys: []string{"type", "views"}}
+	st := stripper{file: spaceSettings, top: root, keys: []string{"type", "views"}}
 	kept := make([]*yaml.Node, 0, len(folders.Content))
 	for i := 0; i+1 < len(folders.Content); i += 2 {
 		key, ok := folderAt(folders, i)
@@ -555,11 +574,11 @@ func (s *Space) fileGone(rel string) bool {
 func settingsReason(err error) (reason string, ok bool) {
 	var full *settingsFullError
 	if errors.As(err, &full) {
-		return fmt.Sprintf("the file would become larger than %d bytes, more than the server reads; remove some views or comments from space.yml and try again", maxSpaceFile), true
+		return fmt.Sprintf("the file would become larger than %d bytes, more than the server reads; remove some saved views and try again", maxSpaceFile), true
 	}
 	var unreadable *unreadableEditError
 	if errors.As(err, &unreadable) {
-		return "the anchors and aliases around its entry stand in the way; write the aliases (*name) there out by hand and try again", true
+		return "the anchors and aliases around its entry stand in the way", true
 	}
 	return "", false
 }

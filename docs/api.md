@@ -1069,15 +1069,21 @@ are one name. The key rules are for a field that is new: a field the file
 already has keeps its key whatever it is (written by hand, say), and a request
 may list it as it is.
 
-A type file that someone damaged by hand (not JSON, not an object, too large, a
-link) is never overwritten: a request that would write it is `400 invalid` and
-says it has to be fixed by hand. Reads still work: such a type is listed with
-an `error`.
-
 #### Settings files that cannot be used
 
-`space.yml` and `tags.yml` are written by hand too, and come in with a pull. One
-that cannot be used (it is not YAML with keys at the top, has a second
+`space.yml`, `tags.yml` and the type files are written by hand too, and come in
+with a pull. A type file that cannot be used (not JSON, not an object, its
+`properties` not an object, more than 200 fields, too large, not a regular
+file) is treated as below, like the two settings files: it is read as its
+newest version in the history that can be used (with none, there is no such
+type), the next change of the type writes it and keeps the file as it was as
+`.petalbook/types/{name}.json.unreadable-{time}`, and so does deleting the
+type. Something that is not a folder where `.petalbook/types` belongs holds no
+types and is put aside the same way when a type is made. A field whose schema
+is not an object is kept as it is until a request gives the field a kind;
+then the schema is written anew and the file as it was is kept.
+
+A settings file that cannot be used (it is not YAML with keys at the top, has a second
 document, its `folders` or `tags` is not a list of entries, an alias is inside
 its own anchor, it is over a limit below, larger than 1 MiB, or not a regular
 file) is nobody's to fix before the space works again, and no request is
@@ -1105,9 +1111,9 @@ refused because of it:
 - **After a crash.** The start that finishes an interrupted move or delete
   goes the same way: it restores, writes and keeps the copy, and commits both.
 
-What happened is told in `settingsNotices` of `GET /api/spaces/{space}/types`
-(the web shows it to those who look after the space; nobody is asked to do
-anything):
+What happened is told in `settingsNotices` of `GET /api/spaces/{space}/types`,
+to callers who have `manage` in the space (in single-user mode, always); for
+anyone else the key is absent. Nobody is asked to do anything:
 
 ```json
 {"settingsNotices": [
@@ -1137,9 +1143,15 @@ by the server that made it; a copy that came with a pull from another server
 is listed with `file` and `copy` only. The list is empty, or absent, when
 there is nothing to tell.
 
-An entry of a file that reads but is not a list of settings (`Tang: yes`) is
-left as the person wrote it: binding that folder or saving its views is `400
-invalid` and names the entry, and everything else in the file works.
+One entry of a file that reads can be unusable by itself: an entry that is
+not a list of settings (`Tang: yes`), `views` that is not a list, a `type` or
+`color` that is not text. It reads as not there, everything else in the file
+works, and the change that puts something in its place (binding the folder,
+saving its views, setting the colour) writes over it and keeps the file as it
+was, as a copy like the ones above. Such a notice has `entry`: `"Tang"` for the
+entry, `"Tang: views"` or `"Tang: type"` for a setting of it (`"properties: {key}"`
+for a field of a type), with `unreadable` `true` until it is written over and
+`false`, with `copy` and `repairedAt`, afterwards.
 
 #### Anchors, aliases and merge keys
 
@@ -1162,7 +1174,7 @@ every change it makes to them:
   counted by itself: ten thousand folders that each merge a template of four
   hundred keys). A file over one of them cannot be used; see Settings files
   that cannot be used. That is found when the file is loaded, in time that
-  grows with its size only. The server itself never writes an alias.
+  grows with its size only.
 - **Writing.** A change changes what it targets and nothing else. An entry, a
   list of views or a view that is an alias, carries an anchor or has keys from
   a merge key is first written out in its own place (aliases inside it stay
@@ -1179,10 +1191,17 @@ every change it makes to them:
   what was meant. If not (an anchor name used twice can do that), the change is
   made again with every alias of the file written out. If that does not fit in
   1 MiB the request is `400 invalid` and nothing is changed, on disk or in the
-  file; no more is written out to find that than 1 MiB holds. The same holds
-  for a change that gives many entries a copy of what they shared (deleting
-  the type of ten thousand folders that are aliases of one entry with views
-  leaves each its own views).
+  file; no more is written out to find that than 1 MiB holds.
+- **Shared entries stay shared.** When one change takes a setting off many
+  entries that are aliases of one anchor (a type is deleted that ten thousand
+  folders have through `Tang: *chapter`), the first of them gets what the
+  anchor is without that setting, under an anchor of its own (`&chapter-no-type`,
+  with a number after it if that name is taken), and the others become aliases
+  of that: the file stays as small as it was, and what else refers to the old
+  anchor keeps what it had. These are the only aliases the server writes.
+  Entries that share through a merge key (`{<<: *chapter}`) are written out
+  each for itself, and such a change is `400 invalid` when the result would not
+  fit in 1 MiB.
 
 ### Type
 
@@ -1201,14 +1220,15 @@ every change it makes to them:
 
 `rev` is the Git blob id of the type's file, as the `rev` of a page is: it
 changes whenever the file does, and a change or a delete of the type is made
-from it (`baseRev`, below). A file too large or not a regular file has the
-`rev` `"unreadable"`. `title` is `""` when the file gives none or gives
+from it (`baseRev`, below). A file that cannot be used is the type of its last
+version that can, with that version's `rev`. `title` is `""` when the file gives none or gives
 something that is not text (show the name or key); a `title` that is not text
 stays in the file when a request leaves the title empty. `options` is
 there for `select` and `multiselect`. `schema` is the field's schema as the
-file has it. A type whose file cannot be used is
-`{"name": "…", "title": "", "fields": [], "error": "…"}` and the error says
-how to fix it.
+file has it. A type listed as
+`{"name": "…", "title": "", "fields": [], "error": "…"}` is a file beyond the
+first 100, or one that cannot be used while the history could not be read for
+its earlier version just now.
 
 ### `GET /api/spaces/{space}/types`
 
@@ -1253,8 +1273,8 @@ to it. `options` goes with `select` and `multiselect` only. Renaming a field
 is removing one and adding another; the pages are not rewritten. `200` with
 the type.
 
-Errors: `400 invalid` for anything above that is out of limits or malformed,
-and for a file that has to be fixed by hand; `409 conflict` when `baseRev` is
+Errors: `400 invalid` for anything above that is out of limits or malformed;
+`409 conflict` when `baseRev` is
 not the file's current rev, or the type is there and `baseRev` is empty, or
 the type is not there and `baseRev` is not: `{"error": "conflict", "message":
 "…", "current": {/* type */}}`, `current` being the type as it is now (absent
@@ -1270,8 +1290,9 @@ type. `baseRev` is the `rev` of the type the request was made from, as for
 current rev. For a type whose file is gone and only bindings are left, it is
 `""`. The headers of pages that name the type are not touched. `204`;
 `404 not_found` when there is no such type and no folder is bound to it. The
-file of a type that cannot be read can be deleted too. Deleting a folder, not a
-file, in its place is `400 invalid`.
+file of a type that cannot be used is kept as a copy when the type is deleted
+(see Settings files that cannot be used); with no version that can be used it
+is no type, and is deleted with `baseRev` `""`.
 
 ### `PUT /api/spaces/{space}/folders/type`
 

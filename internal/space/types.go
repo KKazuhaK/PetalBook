@@ -136,7 +136,7 @@ type TypeInput struct {
 var errTypeFile = errors.New("the type file cannot be read")
 
 func typeFileProblem(name string) error {
-	return invalidf("%s/%s.json is not something the server can read (it must be a JSON object with a properties object, a regular file, under %d KiB, with at most %d fields); it was left as it is and has to be fixed by hand",
+	return unavailable(nil, "%s/%s.json cannot be used as it is (it must be a JSON object with a properties object, a regular file, under %d KiB, with at most %d fields), and an earlier version of it could not be looked up just now; try again",
 		typesDir, name, MaxTypeFile>>10, MaxTypeFields)
 }
 
@@ -389,8 +389,69 @@ func parseType(name string, data []byte) (TypeInfo, []kv, error) {
 	return t, top, nil
 }
 
-// readTypeFile reads the file of a type: nil data when there is none.
+// typeSettings is the file of a type as the healer of the space knows it.
+func typeSettings(name string) settingsFile {
+	return settingsFile{rel: typesDir + "/" + name + ".json", max: MaxTypeFile, bad: errTypeFile,
+		good: func(data []byte) bool { _, _, err := parseType(name, data); return err == nil }}
+}
+
+// readTypeFile reads the file of a type: nil data when there is none. A file
+// that cannot be used (not a type, too large, not a regular file) is read as
+// the newest version of it in the history that can, like a settings file (see
+// restore.go); with none, there is no such type.
 func (s *Space) readTypeFile(name string) ([]byte, error) {
+	data, _, err := s.typeNow(name)
+	return data, err
+}
+
+// typeNow is readTypeFile; from is set when the file cannot be used and data
+// is what stands in for it.
+func (s *Space) typeNow(name string) (data []byte, from *restored, err error) {
+	f := typeSettings(name)
+	data, err = s.readTypeRaw(name)
+	if err == nil && (data == nil || f.usable(data)) {
+		s.heal.fine(f)
+		return data, nil, nil
+	}
+	if err != nil && !errors.Is(err, errTypeFile) {
+		// Something that is not a folder where the types belong holds none.
+		if ok, derr := s.typeDirOK(); derr == nil && !ok {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	if s.heal == nil {
+		return nil, nil, errTypeFile
+	}
+	from, rerr := s.heal.restore(f)
+	if rerr != nil {
+		return nil, nil, errTypeFile
+	}
+	s.heal.inUse(f, from)
+	return from.text, from, nil
+}
+
+// asideType is for a change that writes or removes the file of a type that
+// cannot be used: the file as it is is kept beside it, in the same change.
+func (s *Space) asideType(tx *txn, name string, from *restored, entries []string) (done func(), err error) {
+	if (from == nil && len(entries) == 0) || s.heal == nil {
+		return func() {}, nil
+	}
+	f := typeSettings(name)
+	copy, err := s.heal.keep(f, func(rel string) error {
+		if err := tx.record(jrec{Op: "t", Path: rel}); err != nil {
+			return err
+		}
+		tx.touch(rel)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return func() { s.heal.repaired(f, &repair{from, entries}, copy) }, nil
+}
+
+func (s *Space) readTypeRaw(name string) ([]byte, error) {
 	abs := filepath.Join(s.root, filepath.FromSlash(typesDir), name+".json")
 	fi, err := os.Lstat(abs)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -417,27 +478,59 @@ func (s *Space) readTypeFile(name string) ([]byte, error) {
 	return data, nil
 }
 
-// typeDirOK checks that the folder of the types is a folder, not a link out of
-// the space. A missing folder is fine.
-func (s *Space) typeDirOK() error {
+// typeDirOK reports whether the folder of the types is a folder, not a link
+// out of the space or a file. A missing folder is fine.
+func (s *Space) typeDirOK() (bool, error) {
 	for _, rel := range []string{".petalbook", typesDir} {
 		fi, err := os.Lstat(filepath.Join(s.root, filepath.FromSlash(rel)))
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil
+			return true, nil
 		}
+		if err != nil {
+			return false, err
+		}
+		if !fi.IsDir() {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// typesFolder is the folder of the types as the healer knows it: what is in
+// its place when it is not a folder is put aside like a file that cannot be
+// used.
+var typesFolder = settingsFile{rel: typesDir, bad: errTypeFile, good: func([]byte) bool { return false }}
+
+// makeTypeDir is for a change that writes a type: something that is not a
+// folder where the folder of the types belongs is put aside, in the same
+// change, and the folder is made.
+func (s *Space) makeTypeDir(tx *txn) error {
+	abs := filepath.Join(s.root, filepath.FromSlash(typesDir))
+	if ok, err := s.typeDirOK(); err != nil {
+		return err
+	} else if !ok && s.heal != nil {
+		copy, err := s.heal.keep(typesFolder, func(rel string) error {
+			if err := tx.record(jrec{Op: "t", Path: rel}, jrec{Op: "d", Path: typesDir}); err != nil {
+				return err
+			}
+			tx.touch(rel, typesDir)
+			return nil
+		})
 		if err != nil {
 			return err
 		}
-		if !fi.IsDir() {
-			return invalidf("%s is not a folder; it has to be fixed by hand", rel)
+		if err := os.Remove(abs); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
 		}
+		s.heal.repaired(typesFolder, &repair{entries: []string{"not a folder"}}, copy)
 	}
-	return nil
+	return os.MkdirAll(abs, 0o755)
 }
 
 // typeNames lists the names of the type files, in name order.
 func (s *Space) typeNames() ([]string, error) {
-	if err := s.typeDirOK(); err != nil {
+	// Something that is not a folder in its place holds no types.
+	if ok, err := s.typeDirOK(); err != nil || !ok {
 		return nil, err
 	}
 	entries, err := os.ReadDir(filepath.Join(s.root, filepath.FromSlash(typesDir)))
@@ -601,7 +694,8 @@ func mergeField(cur []kv, exists bool, in FieldInput) ([]kv, error) {
 // PutType makes the type name, or changes it: the file is read, the title and
 // the fields of the request are merged into it, and it is written back. What
 // the file has that the server does not understand stays. A file that cannot be
-// read is not replaced: the answer says it has to be fixed by hand.
+// used is read as its last version that can, and is kept beside the one
+// written here (see restore.go).
 //
 // baseRev is the Rev of the type the request was made from, "" to make one. A
 // type that is not as that says (changed, made or removed since) is a
@@ -652,7 +746,8 @@ func (s *Space) PutType(by Author, name, baseRev string, in TypeInput) (TypeInfo
 		if !have && len(names) >= MaxTypes {
 			return TypeInfo{}, invalidf("a space has at most %d types", MaxTypes)
 		}
-		data, err := s.readTypeFile(name)
+		data, from, err := s.typeNow(name)
+		var replacedFields []string
 		var top, props []kv
 		switch {
 		case errors.Is(err, errTypeFile):
@@ -685,11 +780,14 @@ func (s *Space) PutType(by Author, name, baseRev string, in TypeInput) (TypeInfo
 				// A schema that is not an object (true, say) is kept as it is
 				// and has no keys to merge into.
 				if cur, err = decodeObject(raw); err != nil {
-					if f.Kind != "" && f.Kind != KindOther {
-						return TypeInfo{}, invalidf("field %q: its schema is not something the server can change; it has to be fixed by hand", f.Key)
+					if f.Kind == "" || f.Kind == KindOther {
+						next = append(next, kv{f.Key, raw})
+						continue
 					}
-					next = append(next, kv{f.Key, raw})
-					continue
+					// The request gives the field a kind: the schema is written
+					// anew, and the file as it was is kept.
+					cur, i = nil, -1
+					replacedFields = append(replacedFields, "properties: "+f.Key)
 				}
 			}
 			merged, err := mergeField(cur, i >= 0, f)
@@ -719,14 +817,20 @@ func (s *Space) PutType(by Author, name, baseRev string, in TypeInput) (TypeInfo
 		if out.Len() > MaxTypeFile {
 			return TypeInfo{}, invalidf("the type would be larger than %d KiB", MaxTypeFile>>10)
 		}
-		if bytes.Equal(out.Bytes(), data) {
+		if bytes.Equal(out.Bytes(), data) && from == nil {
 			t, _, _ := parseType(name, data)
 			t.Rev = page.Rev(data)
 			return t, nil
 		}
 		rel := typesDir + "/" + name + ".json"
 		abs := filepath.Join(s.root, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		if err := s.makeTypeDir(tx); err != nil {
+			return TypeInfo{}, err
+		}
+		// A file that could not be used, or whose field could not, is kept as
+		// it was beside the one written now.
+		done, err := s.asideType(tx, name, from, replacedFields)
+		if err != nil {
 			return TypeInfo{}, err
 		}
 		if err := tx.record(jrec{Op: "t", Path: rel}); err != nil {
@@ -736,6 +840,8 @@ func (s *Space) PutType(by Author, name, baseRev string, in TypeInput) (TypeInfo
 		if err := writeAtomic(s.tmpDir(), abs, out.Bytes()); err != nil {
 			return TypeInfo{}, err
 		}
+		s.heal.wroteGood(typeSettings(name), out.Bytes())
+		done()
 		t, _, err := parseType(name, out.Bytes())
 		t.Rev = page.Rev(out.Bytes())
 		return t, err
@@ -755,19 +861,17 @@ func (s *Space) DeleteType(by Author, name, baseRev string) error {
 		return err
 	}
 	_, err := mutate(s, by, func(tx *txn) (struct{}, error) {
-		if err := s.typeDirOK(); err != nil {
+		dirOK, err := s.typeDirOK()
+		if err != nil {
 			return struct{}{}, err
 		}
 		rel := typesDir + "/" + name + ".json"
 		abs := filepath.Join(s.root, filepath.FromSlash(rel))
-		fi, err := os.Lstat(abs)
-		have := err == nil
-		switch {
-		case err != nil && !errors.Is(err, fs.ErrNotExist):
+		// A link in its place is removed as a link, never followed.
+		_, err = os.Lstat(abs)
+		have := err == nil && dirOK
+		if err != nil && !errors.Is(err, fs.ErrNotExist) && dirOK {
 			return struct{}{}, err
-		case have && fi.IsDir():
-			// A link in its place is removed as a link, never followed.
-			return struct{}{}, invalidf("%s is a folder, not a file; it has to be removed by hand", rel)
 		}
 		bound := false
 		for _, b := range s.Bindings() {
@@ -781,14 +885,20 @@ func (s *Space) DeleteType(by Author, name, baseRev string) error {
 		if !have && baseRev != "" {
 			return struct{}{}, &TypeConflictError{}
 		}
+		var from *restored
 		if have {
-			data, err := s.readTypeFile(name)
-			if err != nil && !errors.Is(err, errTypeFile) {
+			var data []byte
+			if data, from, err = s.typeNow(name); err != nil && !errors.Is(err, errTypeFile) {
 				return struct{}{}, err
 			}
 			cur := typeNow(name, data, err)
-			if cur == nil || cur.Rev != baseRev {
+			// A file that cannot be used and has no version that can is no
+			// type: it goes like one that is not there, from the rev "".
+			if (cur == nil && baseRev != "") || (cur != nil && cur.Rev != baseRev) {
 				return struct{}{}, &TypeConflictError{cur}
+			}
+			if cur == nil && !bound && from == nil {
+				return struct{}{}, ErrNotFound
 			}
 		}
 		if bound {
@@ -799,6 +909,11 @@ func (s *Space) DeleteType(by Author, name, baseRev string) error {
 			}
 		}
 		if have {
+			// What the file was, when it could not be used, is kept.
+			done, err := s.asideType(tx, name, from, nil)
+			if err != nil {
+				return struct{}{}, err
+			}
 			if err := tx.record(jrec{Op: "d", Path: rel}); err != nil {
 				return struct{}{}, err
 			}
@@ -806,6 +921,7 @@ func (s *Space) DeleteType(by Author, name, baseRev string) error {
 			if err := os.Remove(abs); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				return struct{}{}, err
 			}
+			done()
 		}
 		return struct{}{}, nil
 	})
@@ -833,7 +949,7 @@ func (s *Space) BindFolder(by Author, folder, typ string) (string, error) {
 			return "", err
 		}
 		if typ != "" {
-			if err := s.typeDirOK(); err != nil {
+			if _, err := s.typeDirOK(); err != nil {
 				return "", err
 			}
 			switch data, err := s.readTypeFile(typ); {

@@ -73,17 +73,35 @@ func TestAnEntrySharedByTenThousandFoldersCostsWhatIsWritten(t *testing.T) {
 			if got := viewNames(t, s, folderScope("f00003")); got != "" {
 				t.Errorf("the views of the folder that was deleted: %q", got)
 			}
-			// The type goes from all of them. Each folder then has the views
-			// for itself, written out: here that is more than the file holds,
-			// and the answer says so.
+			// The type goes from all of them, and what they shared stays shared:
+			// by alias, the first of them carries it under an anchor of its own
+			// and the others refer to that; through a merge key, each folder
+			// has the views written out for itself, which here is more than
+			// the file holds.
+			before := len(spaceYML(s.Root()))
+			if c.entry == "*tmpl" {
+				timed(t, "deleting the type of all of them", func() {
+					if err := deleteCurrent(s, "wenan"); err != nil {
+						t.Error(err)
+					}
+				})
+				got := spaceYML(s.Root())
+				if len(s.Bindings()) != 0 || viewNames(t, s, folderScope("f09999")) != "one,two" || viewNames(t, s, folderScope("f00004")) != "one,two" {
+					t.Errorf("%d bindings are left; views %q", len(s.Bindings()), viewNames(t, s, folderScope("f09999")))
+				}
+				if len(got) > before+before/2 || !strings.Contains(got, "*tmpl-no-type") {
+					t.Errorf("the file went from %d to %d bytes", before, len(got))
+				}
+				if !reflect.DeepEqual(meaningOf(t, got)["shared"], meaningOf(t, shared)["shared"]) {
+					t.Error("what the entry was shared from changed")
+				}
+				return
+			}
 			timed(t, "deleting the type of all of them", func() {
 				wantInvalid(t, "deleting the type", deleteCurrent(s, "wenan"), "larger than")
 			})
 			// With an entry that is the type and nothing else, it fits.
 			writeSpaceYML(t, s, strings.Replace(spaceYML(s.Root()), shared, "shared: &tmpl\n  type: wenan\n", 1))
-			if got := len(s.Bindings()); got != n-2 {
-				t.Fatalf("%d bindings", got)
-			}
 			timed(t, "deleting the type of all of them, with nothing else shared", func() {
 				if err := deleteCurrent(s, "wenan"); err != nil {
 					t.Error(err)
@@ -309,6 +327,11 @@ func TestEveryKindOfUnusableFileIsRestored(t *testing.T) {
 		{"larger than the server reads", func(t *testing.T, file string) {
 			os.WriteFile(file, []byte("name: x\n# "+strings.Repeat("x", maxSpaceFile)+"\n"), 0o644)
 		}},
+		{"a folder", func(t *testing.T, file string) {
+			os.Remove(file)
+			os.Mkdir(file, 0o755)
+			os.WriteFile(filepath.Join(file, "inside.txt"), []byte("x\n"), 0o644)
+		}},
 		{"a link", func(t *testing.T, file string) {
 			os.Remove(file)
 			if err := os.Symlink(filepath.Join(t.TempDir(), "elsewhere.yml"), file); err != nil {
@@ -483,4 +506,178 @@ func TestAnUnusableFileThatAPullKeepsBringingIsPutRightAndPushed(t *testing.T) {
 		}
 	}
 	consistent(t, s)
+}
+
+// --- one entry that cannot be used ------------------------------------------------
+
+func entriesOfNotices(s *Space, file string, unreadable bool) []string {
+	var out []string
+	for _, n := range s.SettingsNotices() {
+		if n.File == file && n.Entry != "" && n.Unreadable == unreadable {
+			out = append(out, n.Entry)
+		}
+	}
+	return out
+}
+
+func TestAnEntryThatIsNotSettingsReadsAsNoneAndIsWrittenOver(t *testing.T) {
+	s := settled(t)
+	root := s.Root()
+	src := "folders:\n  A: yes\n  B: {type: [x], views: 7, note: mine}\n  C: {type: wenan}\n"
+	writeSpaceYML(t, s, src)
+	if m := bindingMap(s); !reflect.DeepEqual(m, map[string]string{"C": "wenan"}) || viewNames(t, s, folderScope("B")) != "" {
+		t.Fatalf("%v", m)
+	}
+	if got := entriesOfNotices(s, spaceFile, true); !reflect.DeepEqual(got, []string{"A", "B: views", "B: type"}) {
+		t.Errorf("the notices: %v", got)
+	}
+	// Nothing about them stops anything.
+	if _, err := s.MoveFolder(Author{}, "D", "D2"); err != nil {
+		t.Error(err)
+	}
+	if _, err := s.BindFolder(Author{}, "A", "wenan"); err != nil {
+		t.Fatal(err)
+	}
+	mustPutViews(t, s, folderScope("B"), View{Name: "v", Layout: "list"})
+	if _, err := s.BindFolder(Author{}, "B", "wenan"); err != nil {
+		t.Fatal(err)
+	}
+	if m := bindingMap(s); !reflect.DeepEqual(m, map[string]string{"A": "wenan", "B": "wenan", "C": "wenan"}) || viewNames(t, s, folderScope("B")) != "v" {
+		t.Errorf("%v\n%s", m, spaceYML(root))
+	}
+	if !strings.Contains(spaceYML(root), "note: mine") {
+		t.Errorf("the rest of the entry is gone:\n%s", spaceYML(root))
+	}
+	// What was written over is kept, the first copy being the file as it was.
+	kept := copiesOf(root, spaceSettings)
+	if len(kept) != 3 || readDisk(t, s, kept[0]) != src {
+		t.Fatalf("the copies: %v", kept)
+	}
+	if got := entriesOfNotices(s, spaceFile, false); !reflect.DeepEqual(got, []string{"A", "B: views", "B: type"}) || len(entriesOfNotices(s, spaceFile, true)) != 0 {
+		t.Errorf("the notices after the writes: %v %+v", got, s.SettingsNotices())
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The same for a tag.
+	setTagsYML(t, root, "tags:\n  a: rose\n  b: {color: [1], views: no}\n")
+	if c := s.TagColors(); len(c) != 0 {
+		t.Errorf("%v", c)
+	}
+	if got := entriesOfNotices(s, tagsFile, true); !reflect.DeepEqual(got, []string{"a", "b: views", "b: color"}) {
+		t.Errorf("the notices: %v", got)
+	}
+	for _, tag := range []string{"a", "b"} {
+		if err := s.SetTagColor(Author{}, tag, "red"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustPutViews(t, s, tagScope("b"), View{Name: "w", Layout: "list"})
+	if c := s.TagColors(); c["a"] != "red" || c["b"] != "red" || viewNames(t, s, tagScope("b")) != "w" {
+		t.Errorf("%v\n%s", c, tagsYML(root))
+	}
+	if got := entriesOfNotices(s, tagsFile, false); !reflect.DeepEqual(got, []string{"a", "b: color", "b: views"}) {
+		t.Errorf("the notices after the writes: %v", got)
+	}
+}
+
+// --- type files -------------------------------------------------------------------
+
+func TestATypeFileThatCannotBeUsedIsRestoredFromTheHistory(t *testing.T) {
+	s := settled(t)
+	root := s.Root()
+	made, err := putCurrent(s, "task", TypeInput{Title: "Task", Fields: []FieldInput{{Key: "status", Kind: KindSelect, Options: []string{"todo", "done"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s = restart(t, s)
+	good := git(t, root, "rev-parse", "HEAD")
+	writeType(t, root, "task", "{not json")
+
+	typeOf := func() *TypeInfo {
+		types, _, err := s.Types()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range types {
+			if types[i].Name == "task" {
+				return &types[i]
+			}
+		}
+		return nil
+	}
+	rel := ".petalbook/types/task.json"
+	if ti := typeOf(); ti == nil || ti.Error != "" || ti.Title != "Task" || len(ti.Fields) != 1 || ti.Rev != made.Rev {
+		t.Fatalf("the type is read as %+v", ti)
+	}
+	if n := noticeOf(s, rel, true); n == nil || n.RestoredFrom == nil || n.RestoredFrom.Commit != good {
+		t.Fatalf("the notice: %+v", s.SettingsNotices())
+	}
+	if _, err := s.BindFolder(Author{}, "B", "task"); err != nil {
+		t.Errorf("binding to it: %v", err)
+	}
+	// A change from the rev that is read writes the file, and keeps what it was.
+	next, err := s.PutType(Author{}, "task", made.Rev, TypeInput{Title: "Task", Fields: []FieldInput{{Key: "status", Kind: KindSelect, Options: []string{"todo", "done"}}, {Key: "due", Kind: KindDate}}})
+	if err != nil || len(next.Fields) != 2 {
+		t.Fatalf("%+v %v", next, err)
+	}
+	if ti := typeOf(); ti == nil || len(ti.Fields) != 2 || ti.Fields[0].Kind != KindSelect {
+		t.Errorf("after the change: %+v", ti)
+	}
+	kept := copiesOf(root, typeSettings("task"))
+	if len(kept) != 1 || readDisk(t, s, kept[0]) != "{not json" || !strings.HasPrefix(kept[0], rel+".unreadable-") {
+		t.Fatalf("what the file was: %v", kept)
+	}
+	if n := noticeOf(s, rel, false); n == nil || n.Copy != kept[0] || noticeOf(s, rel, true) != nil {
+		t.Errorf("the notice after the repair: %+v", s.SettingsNotices())
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if st := git(t, root, "status", "--porcelain"); strings.Contains(st, "types") {
+		t.Errorf("not committed:\n%s", st)
+	}
+	// Deleting a type whose file cannot be used keeps what the file was too.
+	writeType(t, root, "task", "[]")
+	if err := deleteCurrent(s, "task"); err != nil {
+		t.Fatal(err)
+	}
+	if typeOf() != nil || len(copiesOf(root, typeSettings("task"))) != 2 || len(s.Bindings()) != 1 {
+		t.Errorf("after the delete: %v %v", copiesOf(root, typeSettings("task")), s.Bindings())
+	}
+
+	// A field whose schema is not one is written anew when it is given a kind.
+	writeType(t, root, "odd", `{"properties":{"a":true}}`)
+	if _, err := putCurrent(s, "odd", TypeInput{Fields: []FieldInput{{Key: "a", Kind: KindNumber}}}); err != nil {
+		t.Fatal(err)
+	}
+	if kept := copiesOf(root, typeSettings("odd")); len(kept) != 1 || readDisk(t, s, kept[0]) != `{"properties":{"a":true}}` {
+		t.Errorf("what the file was: %v", kept)
+	}
+
+	// Something that is not a folder where the types belong holds no types,
+	// and is put aside when one is made.
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	os.RemoveAll(filepath.Join(root, ".petalbook", "types"))
+	if err := os.WriteFile(filepath.Join(root, ".petalbook", "types"), []byte("not a folder\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if types, _, err := s.Types(); err != nil || len(types) != 0 {
+		t.Errorf("%v %v", types, err)
+	}
+	if _, err := putCurrent(s, "fresh", TypeInput{Title: "Fresh"}); err != nil {
+		t.Fatal(err)
+	}
+	if types, _, err := s.Types(); err != nil || len(types) != 1 {
+		t.Errorf("%v %v", types, err)
+	}
+	if kept := copiesIn(root, ".petalbook"); len(kept) == 0 || readDisk(t, s, kept[len(kept)-1].rel) != "not a folder\n" {
+		t.Errorf("what was in the place of the folder: %v", kept)
+	}
+	if err := s.Flush(); err != nil {
+		t.Error(err)
+	}
 }

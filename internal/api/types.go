@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/KKazuhaK/PetalBook/internal/perm"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 )
 
@@ -45,12 +46,17 @@ func (s *server) getTypes(c *call) {
 	if bindings == nil {
 		bindings = []space.Binding{}
 	}
+	// What the server did about a settings file it could not use is for those
+	// who look after the space.
+	var notices []space.SettingsNotice
+	if c.sp.Info.Perms.Has(perm.Manage) {
+		notices = c.sp.Space.SettingsNotices()
+	}
 	writeJSON(c.w, http.StatusOK, struct {
-		Types    []typeResp      `json:"types"`
-		Bindings []space.Binding `json:"bindings"`
-		// What the server did about a settings file it could not use.
+		Types           []typeResp             `json:"types"`
+		Bindings        []space.Binding        `json:"bindings"`
 		SettingsNotices []space.SettingsNotice `json:"settingsNotices,omitempty"`
-	}{out, bindings, c.sp.Space.SettingsNotices()})
+	}{out, bindings, notices})
 }
 
 // putType makes a type or changes one.

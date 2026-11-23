@@ -178,7 +178,7 @@ func checkTagName(tag string) error {
 
 // tagsFileProblem is what is said of a tags file that cannot be used as it is.
 func tagsFileProblem() error {
-	return invalidf("%s is not something the server can read (it must be YAML with keys at the top, a regular file, under 1 MiB); it was left as it is and has to be fixed by hand", tagsFile)
+	return unavailable(nil, "%s cannot be used as it is, and there is nothing here to restore it with", tagsFile)
 }
 
 // tagsNode returns the tags mapping of the file, made when create is set; nil
@@ -197,7 +197,16 @@ func tagsNode(root *yaml.Node, create bool) (*yaml.Node, error) {
 		}
 		return nil, nil
 	case tags != nil:
-		return nil, invalidf("`tags` in %s is not a list of tags with their settings; it was left as it is and has to be fixed by hand", tagsFile)
+		// Not a list of tags: see foldersNode.
+		if !create {
+			return nil, nil
+		}
+		noteReplaced(root, "tags")
+		tags = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		if at >= 0 {
+			root.Content[at+1] = tags
+			return tags, nil
+		}
 	case !create:
 		return nil, nil
 	}
@@ -206,7 +215,7 @@ func tagsNode(root *yaml.Node, create bool) (*yaml.Node, error) {
 	return tags, nil
 }
 
-var tagsSettings = settingsFile{rel: tagsFile, section: "tags", max: maxTagsFile, bad: errTagsFile, problem: tagsFileProblem}
+var tagsSettings = settingsFile{rel: tagsFile, section: "tags", setting: "color", max: maxTagsFile, bad: errTagsFile, problem: tagsFileProblem}
 
 // editTagsFile reads the tags file, lets edit change the document, and writes
 // it back if edit says it changed (inside a change: the write is journaled and
@@ -214,7 +223,7 @@ var tagsSettings = settingsFile{rel: tagsFile, section: "tags", max: maxTagsFile
 // the file goes. A file that cannot be used is put aside in the same change,
 // and the settings restored for it are written with the edit (see restore.go).
 func (s *Space) editTagsFile(tx *txn, edit func(root *yaml.Node) (changed bool, err error)) error {
-	data, changed, from, err := planSettingsEdit(s.root, tagsSettings, s.heal, edit, func(doc *yaml.Node) ([]byte, error) {
+	data, changed, rep, err := planSettingsEdit(s.root, tagsSettings, s.heal, edit, func(doc *yaml.Node) ([]byte, error) {
 		root := doc.Content[0]
 		if len(root.Content) == 0 && doc.HeadComment == "" && doc.FootComment == "" && root.HeadComment == "" && root.FootComment == "" {
 			return nil, nil
@@ -243,7 +252,7 @@ func (s *Space) editTagsFile(tx *txn, edit func(root *yaml.Node) (changed bool, 
 	// A file that could not be used is put aside before the restored settings
 	// with this change take its place.
 	kept := ""
-	if from != nil {
+	if rep != nil && s.heal != nil {
 		if kept, err = s.heal.keep(tagsSettings, record); err != nil {
 			return err
 		}
@@ -261,27 +270,23 @@ func (s *Space) editTagsFile(tx *txn, edit func(root *yaml.Node) (changed bool, 
 	if len(data) > 0 {
 		s.heal.wroteGood(tagsSettings, data)
 	}
-	if from != nil {
-		s.heal.repaired(tagsSettings, from, kept)
+	if rep != nil && s.heal != nil {
+		s.heal.repaired(tagsSettings, rep, kept)
 	}
 	return nil
 }
 
 // tagEntry finds the settings of a tag in the tags mapping: what the entry
 // means (nil if there is none or it holds nothing; to change it, own it first)
-// and the position of its key (-1 if none).
-// An entry that is not a mapping and not empty is the person's to fix.
-func tagEntry(tags *yaml.Node, tag string) (entry *yaml.Node, at int, err error) {
+// and the position of its key (-1 if none). An entry that is not settings
+// (`栀子: rose`) reads as holding nothing; odd says so, for a write that puts
+// settings in its place.
+func tagEntry(tags *yaml.Node, tag string) (entry *yaml.Node, at int, odd bool) {
 	entry, at = mapValue(tags, tag)
 	if entry != nil && entry.Kind != yaml.MappingNode {
-		// `栀子: rose` or an empty value written by hand: the entry becomes
-		// a mapping only when something is set.
-		if entry.Kind == yaml.ScalarNode && (entry.Tag == "!!null" || entry.Value == "") {
-			return nil, at, nil
-		}
-		return nil, at, invalidf("the entry of %q in %s is not a list of settings; it was left as it is and has to be fixed by hand", tag, tagsFile)
+		return nil, at, unusable(entry, yaml.MappingNode)
 	}
-	return entry, at, nil
+	return entry, at, false
 }
 
 // SetTagColor gives a tag a colour (see NormalTagColor; it is stored in its
@@ -305,10 +310,7 @@ func (s *Space) SetTagColor(by Author, tag, color string) error {
 			if err != nil {
 				return false, err
 			}
-			entry, entryAt, err := tagEntry(tags, tag)
-			if err != nil {
-				return false, err
-			}
+			entry, entryAt, odd := tagEntry(tags, tag)
 			if color == "" {
 				if !hasKey(entry, "color") {
 					return false, nil // nothing to take away
@@ -326,9 +328,16 @@ func (s *Space) SetTagColor(by Author, tag, color string) error {
 			case cur != nil && cur.Kind == yaml.ScalarNode && cur.Value == color:
 				return false, nil
 			case entry != nil:
+				if cur != nil && cur.Kind != yaml.ScalarNode {
+					noteReplaced(root, tag+": color")
+				}
 				setKey(own(tags, entryAt+1), "color", textNode(color))
 			case entryAt >= 0:
-				// The key is there with nothing under it.
+				// The key is there with nothing under it, or with something
+				// that is not settings, which is written over (and kept).
+				if odd {
+					noteReplaced(root, tag)
+				}
 				tags.Content[entryAt+1] = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{textNode("color"), textNode(color)}}
 			default:
 				tags.Content = append(tags.Content, textNode(tag),

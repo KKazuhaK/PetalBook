@@ -69,8 +69,12 @@ type SettingsVersion struct {
 // SettingsNotice says that a settings file could not be used and what the
 // server did about it.
 type SettingsNotice struct {
-	// File is the settings file, as a path in the space.
+	// File is the settings file or type file, as a path in the space.
 	File string `json:"file"`
+	// Entry is set when it is not the file but one entry of it that could not
+	// be used (`Tang`), or one setting of an entry (`Tang: views`): it read as
+	// not there, and was written over by the change that put settings there.
+	Entry string `json:"entry,omitempty"`
 	// Unreadable is true while the file in the space is still the one that
 	// cannot be used (the server reads the restored settings; the next change
 	// to the settings writes them), and false once it was put right.
@@ -110,6 +114,7 @@ type healer struct {
 	mu    sync.Mutex
 	found map[string]*restored // by what the unusable file is (stateOf) and where the history stands
 	using map[string]*restored // by file: what is read in its place now
+	odd   map[string][]string  // by file: the entries of it that cannot be used
 	wrote map[string]lastWrite // by file: what this server last wrote there
 }
 
@@ -195,7 +200,7 @@ func (h *healer) restore(f settingsFile) (*restored, error) {
 	// What this server wrote after the newest usable commit, and has not
 	// committed yet, is newer than that commit.
 	if w, ok := h.wrote[f.rel]; ok && (r.from == nil || w.at.Truncate(time.Second).After(r.from.Time)) {
-		if _, perr := f.parse(w.text); perr == nil {
+		if f.usable(w.text) {
 			r.text, r.from = w.text, &SettingsVersion{Time: w.at.UTC()}
 		}
 	}
@@ -243,18 +248,33 @@ func (h *healer) search(f settingsFile) (*restored, error) {
 		if err != nil && !errors.Is(err, gitstore.ErrNoSuchFile) {
 			return nil, err
 		}
-		if err == nil && len(data) <= f.max {
-			if _, perr := f.parse(data); perr == nil {
-				if data == nil {
-					data = []byte{}
-				}
-				r.text, r.from = data, at
-				return r, nil
+		if err == nil && len(data) <= f.max && f.usable(data) {
+			if data == nil {
+				data = []byte{}
 			}
+			r.text, r.from = data, at
+			return r, nil
 		}
 		r.since = at
 	}
 	return r, nil
+}
+
+// setOdd says which entries of f cannot be used, as it was just read.
+func (h *healer) setOdd(f settingsFile, entries []string) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	if len(entries) == 0 {
+		delete(h.odd, f.rel)
+	} else {
+		if h.odd == nil {
+			h.odd = map[string][]string{}
+		}
+		h.odd[f.rel] = entries
+	}
+	h.mu.Unlock()
 }
 
 // fine says the file f is read as it is.
@@ -301,16 +321,28 @@ func (s *Space) loadSettings(f settingsFile) (*yaml.Node, error) {
 
 // copiesOf lists the copies kept of f, as paths in the space, oldest first.
 func copiesOf(root string, f settingsFile) []string {
-	dir := filepath.Dir(filepath.Join(root, filepath.FromSlash(f.rel)))
-	entries, _ := os.ReadDir(dir)
-	prefix := filepath.Base(f.rel) + unreadableMark
 	var out []string
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), prefix) {
-			out = append(out, filepath.ToSlash(filepath.Join(filepath.Dir(f.rel), e.Name())))
+	for _, c := range copiesIn(root, filepath.ToSlash(filepath.Dir(f.rel))) {
+		if c.file == f.rel {
+			out = append(out, c.rel)
 		}
 	}
-	sort.Strings(out)
+	return out
+}
+
+// kept is a copy of a file that could not be used: where it is, and of what.
+type kept struct{ rel, file string }
+
+// copiesIn lists the copies kept in the folder dir of the space, by name.
+func copiesIn(root, dir string) []kept {
+	entries, _ := os.ReadDir(filepath.Join(root, filepath.FromSlash(dir)))
+	var out []kept
+	for _, e := range entries {
+		if i := strings.Index(e.Name(), unreadableMark); i > 0 {
+			out = append(out, kept{dir + "/" + e.Name(), dir + "/" + e.Name()[:i]})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].rel < out[j].rel })
 	return out
 }
 
@@ -404,10 +436,17 @@ func (h *healer) readRepairs() []SettingsNotice {
 	return out
 }
 
-// repaired writes down that f was put right from r, its old content kept at copy.
-func (h *healer) repaired(f settingsFile, r *restored, copy string) {
+// repaired writes down that f was put right (rep says of what), its old
+// content kept at copy.
+func (h *healer) repaired(f settingsFile, rep *repair, copy string) {
 	now := time.Now().UTC()
-	n := SettingsNotice{File: f.rel, Since: r.since, RestoredFrom: r.from, Copy: copy, RepairedAt: &now}
+	var made []SettingsNotice
+	if rep.from != nil {
+		made = append(made, SettingsNotice{File: f.rel, Since: rep.from.since, RestoredFrom: rep.from.from, Copy: copy, RepairedAt: &now})
+	}
+	for _, e := range rep.entries {
+		made = append(made, SettingsNotice{File: f.rel, Entry: e, Copy: copy, RepairedAt: &now})
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(h.using, f.rel)
@@ -417,12 +456,12 @@ func (h *healer) repaired(f settingsFile, r *restored, copy string) {
 			list = append(list, o)
 		}
 	}
-	list = append(list, n)
-	if len(list) > 50 {
-		list = list[len(list)-50:]
+	list = append(list, made...)
+	if len(list) > 100 {
+		list = list[len(list)-100:]
 	}
 	if h.log != nil {
-		h.log.Warn("a settings file that could not be used was put right; the file as it was is kept", "file", f.rel, "copy", copy)
+		h.log.Warn("a file that could not be used, or entries of it, were put right; the file as it was is kept", "file", f.rel, "entries", rep.entries, "copy", copy)
 	}
 	data, err := json.Marshal(list)
 	if err != nil || h.stateDir == "" {
@@ -450,24 +489,41 @@ func (s *Space) SettingsNotices() []SettingsNotice {
 	var out []SettingsNotice
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	var repairs map[string]SettingsNotice // read when there is a copy to tell of
-	for _, f := range []settingsFile{spaceSettings, tagsSettings} {
-		if r := h.using[f.rel]; r != nil {
-			out = append(out, SettingsNotice{File: f.rel, Unreadable: true, Since: r.since, RestoredFrom: r.from})
+	// What is read restored now, and what is read as not there.
+	var files []string
+	for rel := range h.using {
+		files = append(files, rel)
+	}
+	sort.Strings(files)
+	for _, rel := range files {
+		if _, err := os.Lstat(filepath.Join(s.root, filepath.FromSlash(rel))); err != nil {
+			delete(h.using, rel) // gone since it was read
+			continue
 		}
-		for _, c := range copiesOf(s.root, f) {
+		r := h.using[rel]
+		out = append(out, SettingsNotice{File: rel, Unreadable: true, Since: r.since, RestoredFrom: r.from})
+	}
+	for _, f := range []settingsFile{spaceSettings, tagsSettings} {
+		for _, e := range h.odd[f.rel] {
+			out = append(out, SettingsNotice{File: f.rel, Entry: e, Unreadable: true})
+		}
+	}
+	// What was put right, for as long as the copy is there.
+	var repairs map[string][]SettingsNotice // read when there is a copy to tell of
+	for _, dir := range []string{".petalbook", typesDir} {
+		for _, c := range copiesIn(s.root, dir) {
 			if repairs == nil {
-				repairs = map[string]SettingsNotice{}
+				repairs = map[string][]SettingsNotice{}
 				for _, n := range h.readRepairs() {
-					repairs[n.Copy] = n
+					repairs[n.Copy] = append(repairs[n.Copy], n)
 				}
 			}
-			n, ok := repairs[c]
-			if !ok {
+			if ns := repairs[c.rel]; len(ns) > 0 {
+				out = append(out, ns...)
+			} else {
 				// Put right by another server, or before this one lost its notes.
-				n = SettingsNotice{File: f.rel, Copy: c}
+				out = append(out, SettingsNotice{File: c.file, Copy: c.rel})
 			}
-			out = append(out, n)
 		}
 	}
 	return out

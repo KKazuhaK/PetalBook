@@ -87,20 +87,21 @@ func TestTypeChangesNeedTheRevTheyWereBasedOn(t *testing.T) {
 	if !exists(s, ".petalbook/types/t.json") {
 		t.Fatal("a refused delete removed the file")
 	}
-	// A type that cannot be read is deleted from the rev the listing gave it.
+	// A type file that cannot be used and has no earlier version is no type:
+	// it is not listed, and deleting it (from no rev) keeps what it was.
 	writeType(t, root, "bad", `{"properties": {`)
 	types, _, _ = s.Types()
-	var bad TypeInfo
 	for _, ti := range types {
 		if ti.Name == "bad" {
-			bad = ti
+			t.Errorf("listed: %+v", ti)
 		}
 	}
-	if bad.Error == "" || bad.Rev == "" {
-		t.Errorf("%+v", bad)
-	}
-	if err := s.DeleteType(Author{}, "bad", bad.Rev); err != nil {
+	conflict("delete from a rev it does not have", s.DeleteType(Author{}, "bad", made.Rev), false)
+	if err := s.DeleteType(Author{}, "bad", ""); err != nil {
 		t.Errorf("%v", err)
+	}
+	if kept := copiesOf(root, typeSettings("bad")); exists(s, ".petalbook/types/bad.json") || len(kept) != 1 || readDisk(t, s, kept[0]) != `{"properties": {` {
+		t.Errorf("after the delete: %v", kept)
 	}
 	if err := s.DeleteType(Author{}, "t", next.Rev); err != nil {
 		t.Errorf("%v", err)
