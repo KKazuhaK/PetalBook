@@ -223,6 +223,8 @@ function suite(target: Target) {
       expect(r.status).toBe(200)
       expect(r.json.mode).toBe(target.mode)
       expect(r.json.setup).toBe(false)
+      // A session, not an API token: the field is there and null.
+      expect(r.json.token).toBeNull()
       expect(r.headers.get('Cache-Control')).toMatch(/no-store/)
       expect(r.json.user).toMatchObject({ role: 'admin', disabled: false })
       expect(typeof r.json.user.id).toBe('string')

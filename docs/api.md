@@ -2534,7 +2534,13 @@ is not open to tokens. So:
 "Machine access" under "Administration"); the tokens are kept. After 10
 failed tokens (`token_invalid`, `token_expired`, `token_revoked`) from one
 client address in a minute, further token requests from it answer
-`429 rate_limited` with `Retry-After`, as sign-in does.
+`429 rate_limited` with `Retry-After`, as sign-in does. OAuth access tokens on
+`/mcp` are counted on their own, so one address may try up to 10 of each in a
+minute.
+
+A token is checked once, when a request arrives: revoking it, or demoting its
+owner, while a request is already being handled lets that request finish (at
+most one write), and the next one is refused.
 
 **What a lookup costs.** The server hashes the secret and looks the hash up in
 memory; a hash not seen yet costs one query on a unique index of the state
@@ -3215,8 +3221,10 @@ on platforms that cannot say (anything but Linux, macOS and FreeBSD).
 {"tokens": true, "mcp": true, "oauth": true}
 ```
 
-`tokens`: API tokens are accepted (off: every token answers `403 tokens_off`;
-nothing is deleted, and turning it on again brings them back). `mcp`: `/mcp`
+`tokens`: API tokens are accepted (off: every API token answers
+`403 tokens_off`; nothing is deleted, and turning it on again brings them back).
+OAuth grants are not API tokens: they keep working on `/mcp` until `mcp` is
+switched off. `mcp`: `/mcp`
 and the OAuth endpoints are served (off: `404`; grants are kept). Both are on
 by default. `oauth` is read only: whether the authorization server is there,
 which needs `mcp` and `--public-url`. `PUT` takes `tokens` and `mcp`, each

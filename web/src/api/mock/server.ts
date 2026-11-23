@@ -1714,7 +1714,7 @@ export function createMockServer(options: MockOptions = {}) {
       return j({ version: 'mock', maxUpload, maxImport, spaces: u ? callerSpaces(u).map((s) => spaceInfo(s, u)) : [] })
     }
     if (method === 'GET' && path === '/session') {
-      const base = { mode, user: ctx.user ? publicUser(ctx.user) : null, setup: accounts && users.size === 0 }
+      const base = { mode, user: ctx.user ? publicUser(ctx.user) : null, setup: accounts && users.size === 0, token: null }
       return {
         status: 200,
         // Never cached: it says who is signed in.

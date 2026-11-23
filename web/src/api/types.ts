@@ -405,6 +405,8 @@ export interface HistoryItem {
   // Absent for the version in which the page was deleted.
   rev?: string
   change: VersionChange
+  // How the change was made, when it did not come from the web app.
+  via?: 'mcp' | 'token'
 }
 export interface HistoryList {
   items: HistoryItem[]

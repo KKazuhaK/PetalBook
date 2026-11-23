@@ -268,13 +268,7 @@ func (s *server) handle(rt route) http.HandlerFunc {
 				writeError(w, http.StatusForbidden, "token_scope", "an API token cannot use this endpoint")
 				return
 			}
-			var p *auth.Principal
-			var err error
-			if viaOAuth {
-				p, err = s.oauthPrincipal(r, secret)
-			} else {
-				p, err = s.tokenPrincipal(r, secret)
-			}
+			p, err := s.tokenPrincipal(r, secret)
 			if err != nil {
 				s.fail(w, err)
 				return

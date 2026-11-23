@@ -53,7 +53,7 @@ export const tokensEn: TokensMessages = {
   admin: {
     title: 'Machine access',
     switchTitle: 'API tokens',
-    switchHelp: 'Off, every token is refused (403 tokens_off) but none is deleted; on again, they work again.',
+    switchHelp: 'Off, every API token is refused (403 tokens_off) but none is deleted; on again, they work again. Connected apps (OAuth) keep working on MCP until MCP is switched off.',
     switchLabel: 'Accept API tokens',
     switchFailed: 'Could not change the switch',
     loadFailed: 'Could not load the machine access settings',
