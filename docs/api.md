@@ -2403,7 +2403,8 @@ do now, narrowed by the token.
 
 `Authorization: Bearer pbk_…` on the request. Nothing else carries one (no
 query parameter, no cookie). A request with an `Authorization: Bearer` header
-is judged by that header alone: a session cookie sent with it is ignored, and a
+(even one with nothing after the word, which is a token that is not valid) is
+judged by that header alone: a session cookie sent with it is ignored, and a
 token that does not work never falls back to the cookie. The cross-site rules of
 "Conventions" apply unchanged (`Content-Type: application/json` on changes; no
 CORS on `/api`).
