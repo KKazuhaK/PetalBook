@@ -129,7 +129,8 @@ func (s *Space) config() configCache {
 	if c := s.cfg; c.valid && c.blocked == blocked && c.mode == fi.Mode() && c.size == fi.Size() && c.mtimeNs == fi.ModTime().UnixNano() {
 		return c
 	}
-	doc, err := s.loadSettings(spaceSettings)
+	afterLook(s.root, spaceFile)
+	doc, saw, err := s.loadSettingsSeen(spaceSettings)
 	c := configCache{valid: true, mode: fi.Mode(), size: fi.Size(), mtimeNs: fi.ModTime().UnixNano(), blocked: blocked}
 	if err == nil {
 		c.bindings = bindingsOf(doc)
@@ -142,7 +143,14 @@ func (s *Space) config() configCache {
 		c.templates = templatesOf(doc)
 		s.heal.setOdd(spaceSettings, oddEntries(doc, spaceSettings))
 	}
-	s.cfg = c
+	// Kept only when the read found the file the look did; else the next
+	// look, which finds the file as before, would be given what was read in
+	// the meantime for as long as the file stays as it is.
+	if saw.is(fi, blocked) {
+		s.cfg = c
+	} else {
+		s.cfg = configCache{}
+	}
 	return c
 }
 
