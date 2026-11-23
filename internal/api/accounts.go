@@ -19,10 +19,13 @@ type userResp struct {
 	Role     string `json:"role"`
 	Disabled bool   `json:"disabled"`
 	Created  string `json:"created"`
+	// RemoteExempt: the storage policy does not ask the spaces this user owns
+	// for a remote (absent when false).
+	RemoteExempt bool `json:"remoteExempt,omitempty"`
 }
 
 func toUser(u store.User) userResp {
-	return userResp{u.ID, u.Username, u.Name, u.Email, u.Role, u.Disabled, rfc3339(u.Created)}
+	return userResp{u.ID, u.Username, u.Name, u.Email, u.Role, u.Disabled, rfc3339(u.Created), u.RemoteExempt}
 }
 
 type spaceResp struct {
@@ -38,12 +41,39 @@ type spaceResp struct {
 	Inbox       string   `json:"inbox"`
 	// Disabled: an administrator switched the space off; it is listed but cannot be opened.
 	Disabled bool `json:"disabled"`
+	// Storage is what the space's copy on the server is and what the storage
+	// policy asks of it (see "Server storage"); absent in single-user mode.
+	Storage *spaceStorageResp `json:"storage,omitempty"`
+}
+
+// spaceStorageResp is the storage block of a Space.
+type spaceStorageResp struct {
+	Cache  string      `json:"cache"`
+	Assets string      `json:"assets"`
+	Remote *remoteNote `json:"remote"`
+}
+
+// remoteNote is a requirement a space does not meet yet.
+type remoteNote struct {
+	Required string `json:"required"`
+	Deadline string `json:"deadline"`
+	Overdue  bool   `json:"overdue"`
+}
+
+func toNote(n *spaces.RemoteNotice) *remoteNote {
+	if n == nil {
+		return nil
+	}
+	return &remoteNote{n.Required, rfc3339(n.Deadline), n.Overdue}
 }
 
 func toSpaces(in []spaces.Info) []spaceResp {
 	out := make([]spaceResp, len(in))
 	for i, s := range in {
-		out[i] = spaceResp{s.ID, s.Name, s.Role, s.Perms.Names(), s.Personal, s.Sync, s.Inbox, s.Disabled}
+		out[i] = spaceResp{ID: s.ID, Name: s.Name, Role: s.Role, Permissions: s.Perms.Names(), Personal: s.Personal, Sync: s.Sync, Inbox: s.Inbox, Disabled: s.Disabled}
+		if s.Cache != "" {
+			out[i].Storage = &spaceStorageResp{Cache: s.Cache, Assets: "space", Remote: toNote(s.RemoteNotice)}
+		}
 	}
 	return out
 }
@@ -365,13 +395,14 @@ func (s *server) listUsers(c *call) {
 
 func (s *server) patchUser(c *call) {
 	var req struct {
-		Role     *string `json:"role"`
-		Disabled *bool   `json:"disabled"`
+		Role         *string `json:"role"`
+		Disabled     *bool   `json:"disabled"`
+		RemoteExempt *bool   `json:"remoteExempt"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	u, err := s.auth.UpdateUser(c.r.Context(), c.user().ID, c.r.PathValue("id"), auth.UserPatch{Role: req.Role, Disabled: req.Disabled})
+	u, err := s.auth.UpdateUser(c.r.Context(), c.user().ID, c.r.PathValue("id"), auth.UserPatch{Role: req.Role, Disabled: req.Disabled, RemoteExempt: req.RemoteExempt})
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -457,13 +488,31 @@ func (s *server) createSpace(c *call) {
 			Description string `json:"description"`
 			Create      *bool  `json:"create"`
 		} `json:"github"`
+		// Remote connects the new space to an existing repository (milestone
+		// 3.1): the body of PUT …/remote.
+		Remote *struct {
+			URL        string `json:"url"`
+			Branch     string `json:"branch"`
+			Credential struct {
+				Type     string `json:"type"`
+				Username string `json:"username"`
+				Token    string `json:"token"`
+			} `json:"credential"`
+		} `json:"remote"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
 	var in spaces.Info
 	var err error
-	if g := req.GitHub; g != nil {
+	if req.Remote != nil && req.GitHub != nil {
+		writeError(c.w, http.StatusBadRequest, "invalid", "give remote or github, not both")
+		return
+	}
+	if r := req.Remote; r != nil {
+		in, err = s.spaces.CreateWithRemote(c.r.Context(), c.user().ID, req.Name, req.Inbox,
+			spaces.ConnectRequest{URL: r.URL, Branch: r.Branch, CredType: r.Credential.Type, Username: r.Credential.Username, Token: r.Credential.Token})
+	} else if g := req.GitHub; g != nil {
 		gc := spaces.GitHubCreate{Owner: g.Owner, Name: g.Name, Private: g.Private == nil || *g.Private, Description: g.Description, Create: g.Create == nil || *g.Create}
 		in, err = s.spaces.CreateWithGitHub(c.r.Context(), c.user().ID, req.Name, req.Inbox, gc)
 	} else {

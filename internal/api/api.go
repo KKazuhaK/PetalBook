@@ -415,6 +415,15 @@ type errorBody struct {
 	// request header, a field of an interface.
 	Header string `json:"header,omitempty"`
 	Field  string `json:"field,omitempty"`
+	// What the storage refusals say (see "Server storage"): remote_required has
+	// the requirement and, for an existing space, its deadline; not_cached says
+	// whether a fetch goes on; restoring says how far the restore is; an
+	// unavailable restore carries the remote's errorCode.
+	Require   string `json:"require,omitempty"`
+	Deadline  string `json:"deadline,omitempty"`
+	Fetching  *bool  `json:"fetching,omitempty"`
+	Phase     string `json:"phase,omitempty"`
+	ErrorCode string `json:"errorCode,omitempty"`
 }
 
 // codedError is a 400 whose error code is code, with what it is about.
@@ -509,9 +518,39 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	)
 	var coded *codedError
 	var ghe *github.Error
+	var req *spaces.RequiredError
+	var full *spaces.SpaceFullError
+	var nc *space.NotCachedError
+	var rst *spaces.RestoringError
+	var rf *spaces.RestoreFailed
 	switch {
 	case errors.As(err, &ghe):
 		s.failGitHub(w, ghe)
+	case errors.As(err, &req):
+		body := errorBody{Error: "remote_required", Message: req.Msg, Require: req.Require}
+		if !req.Deadline.IsZero() {
+			body.Deadline = rfc3339(req.Deadline)
+		}
+		writeJSON(w, http.StatusConflict, body)
+	case errors.As(err, &full):
+		writeError(w, http.StatusInsufficientStorage, "space_full", full.Error())
+	case errors.As(err, &nc):
+		retry := "60"
+		if nc.Fetching {
+			retry = "5"
+		}
+		w.Header().Set("Retry-After", retry)
+		f := nc.Fetching
+		writeJSON(w, http.StatusServiceUnavailable, errorBody{Error: "not_cached", Message: nc.Error(), Fetching: &f})
+	case errors.As(err, &rst):
+		w.Header().Set("Retry-After", "5")
+		writeJSON(w, http.StatusServiceUnavailable, errorBody{Error: "restoring", Message: rst.Error(), Phase: rst.Phase})
+	case errors.As(err, &rf):
+		writeJSON(w, http.StatusServiceUnavailable, errorBody{Error: "unavailable", Message: rf.Msg, ErrorCode: rf.Code})
+	case errors.Is(err, spaces.ErrNotEvictable):
+		writeError(w, http.StatusConflict, "conflict", strings.TrimPrefix(err.Error(), spaces.ErrNotEvictable.Error()+": "))
+	case errors.Is(err, spaces.ErrGitTooOld), errors.Is(err, spaces.ErrConflictFlag):
+		writeError(w, http.StatusConflict, "conflict", err.Error())
 	case errors.As(err, &coded):
 		writeCoded(w, coded)
 	case errors.As(err, &te):
@@ -546,7 +585,11 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	case errors.Is(err, spaces.ErrDisabled):
 		writeError(w, http.StatusForbidden, "space_disabled", "this space has been disabled by an administrator")
 	case errors.Is(err, spaces.ErrBusy):
-		writeError(w, http.StatusConflict, "busy", "the space is in use right now; try again in a moment")
+		msg := "the space is in use right now; try again in a moment"
+		if why := spaces.BusyMessage(err); why != "" {
+			msg = "The space is not evicted: " + why + "."
+		}
+		writeError(w, http.StatusConflict, "busy", msg)
 	case errors.Is(err, spaces.ErrPersonalSpace):
 		writeError(w, http.StatusConflict, "personal_space", "a personal space belongs to one person and cannot be transferred or deleted")
 	case errors.Is(err, spaces.ErrUserDisabled):

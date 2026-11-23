@@ -66,6 +66,9 @@ type serveConfig struct {
 	pullInterval, remoteTimeout time.Duration
 	remoteHosts                 []string
 	remoteSet, remoteUnsafe     bool
+	// hostsSet: --remote-host was given, which wins over the setting of the
+	// administration page (milestone 3.1).
+	hostsSet bool
 	// draftTick is how often due drafts are looked for (tests shorten it).
 	draftTick         time.Duration
 	nameSet, insecure bool
@@ -133,6 +136,7 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 			c.nameSet = cmd.Flags().Changed("name")
 			c.mcpSet = cmd.Flags().Changed("mcp")
 			c.noMCP = !mcpOn
+			c.hostsSet = cmd.Flags().Changed("remote-host")
 			c.remoteSet = cmd.Flags().Changed("pull-interval") || cmd.Flags().Changed("remote-host") || cmd.Flags().Changed("remote-timeout")
 			c.oidcClientSecret = os.Getenv("PETALBOOK_OIDC_CLIENT_SECRET")
 			c.logger = slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), nil))
@@ -401,7 +405,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 			CommitIdle: c.commitIdle, CommitMax: c.commitMax, Logger: log,
 			MaxSpaces: c.maxSpaces, IdleAfter: c.spaceIdle, MaxOpen: c.maxOpenSpaces,
 			PullInterval: c.pullInterval, NetTimeout: c.remoteTimeout, Secrets: box, GitHub: ghs,
-			RemotePolicy: gitstore.Policy{Hosts: c.remoteHosts, AllowUnsafe: c.remoteUnsafe}}); err != nil {
+			RemotePolicy: gitstore.Policy{Hosts: c.remoteHosts, AllowUnsafe: c.remoteUnsafe}, HostsFromFlag: c.hostsSet}); err != nil {
 			return err
 		}
 		ghs.OnChange(mgr.GitHubFixed)

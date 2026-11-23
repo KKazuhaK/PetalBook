@@ -41,6 +41,8 @@ type adminSpaceResp struct {
 	// Sync is "local", or the state of the remote the space follows, as far as
 	// the server knows without opening the space.
 	Sync string `json:"sync"`
+	// Storage is what the space's copy on the server is (milestone 3.1).
+	Storage *adminStorageResp `json:"storage"`
 }
 
 func (s *server) adminListSpaces(c *call) {
@@ -54,7 +56,17 @@ func (s *server) adminListSpaces(c *call) {
 		}
 		limit = n
 	}
-	rows, next, err := store.ListAllSpaces(c.r.Context(), s.opt.Store.Q(), store.SpaceFilter{Query: q.Get("q"), After: q.Get("cursor"), Limit: limit})
+	f := store.SpaceFilter{Query: q.Get("q"), After: q.Get("cursor"), Limit: limit, Cache: q.Get("cache")}
+	switch q.Get("overdue") {
+	case "", "0":
+	case "1":
+		p := s.spaces.RemotePolicy()
+		f.Overdue = &p
+	default:
+		writeError(c.w, http.StatusBadRequest, "invalid", "overdue is 1 or 0")
+		return
+	}
+	rows, next, err := store.ListAllSpaces(c.r.Context(), s.opt.Store.Q(), f)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -76,7 +88,7 @@ func (s *server) adminSpaceItems(c *call, rows []store.AdminSpace) []adminSpaceR
 	items := make([]adminSpaceResp, len(rows))
 	for i, r := range rows {
 		it := adminSpaceResp{ID: r.ID, Name: r.Name, Personal: r.Personal, Inbox: r.Inbox, Created: rfc3339(r.Created), Disabled: r.Disabled,
-			Members: r.Members, SizeBytes: r.SizeBytes, Sync: syncs[i]}
+			Members: r.Members, SizeBytes: r.SizeBytes, Sync: syncs[i], Storage: s.adminStorageOf(c.r.Context(), r)}
 		if r.Owner != nil {
 			it.Owner = &adminOwner{r.Owner.ID, r.Owner.Username, r.Owner.Name}
 		}
@@ -182,8 +194,14 @@ func (s *server) adminStatus(c *call) {
 		// absent where the platform cannot say.
 		DiskFreeBytes *uint64 `json:"diskFreeBytes,omitempty"`
 		GoVersion     string  `json:"goVersion"`
+		Storage       any     `json:"storage"`
 	}{s.opt.Version, rfc3339(s.started), int64(time.Since(s.started) / time.Second), string(s.opt.Store.Dialect()),
-		nSpaces, nUsers, s.spaces.OpenCount(), nil, runtime.Version()}
+		nSpaces, nUsers, s.spaces.OpenCount(), nil, runtime.Version(), nil}
+	var serr error
+	if out.Storage, serr = s.storageStatus(ctx); serr != nil {
+		s.fail(c.w, serr)
+		return
+	}
 	if free, ok := diskFree(s.spaces.DataDir()); ok {
 		out.DiskFreeBytes = &free
 	}

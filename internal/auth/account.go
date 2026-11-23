@@ -162,6 +162,9 @@ func (s *Service) UnlinkIdentity(ctx context.Context, userID, identityID string)
 type UserPatch struct {
 	Role     *string
 	Disabled *bool
+	// RemoteExempt leaves the spaces the user owns out of the storage policy's
+	// requirement of a remote (milestone 3.1).
+	RemoteExempt *bool
 }
 
 // UpdateUser applies a patch. It refuses to leave the instance without an
@@ -175,6 +178,7 @@ func (s *Service) UpdateUser(ctx context.Context, actorID, targetID string, patc
 	s.adminMu.Lock()
 	defer s.adminMu.Unlock()
 	var out *store.User
+	exemptChanged := false
 	err := s.st.Tx(ctx, func(q store.Q) error {
 		u, err := store.GetUser(ctx, q, targetID)
 		if err != nil {
@@ -216,6 +220,13 @@ func (s *Service) UpdateUser(ctx context.Context, actorID, targetID string, patc
 				}
 			}
 		}
+		if patch.RemoteExempt != nil && *patch.RemoteExempt != u.RemoteExempt {
+			if err := store.SetRemoteExempt(ctx, q, u.ID, *patch.RemoteExempt); err != nil {
+				return err
+			}
+			u.RemoteExempt = *patch.RemoteExempt
+			exemptChanged = true
+		}
 		u.Role, u.Disabled = role, disabled
 		out = u
 		return nil
@@ -227,6 +238,9 @@ func (s *Service) UpdateUser(ctx context.Context, actorID, targetID string, patc
 	// The space manager remembers a user's role and whether they are disabled
 	// for a minute (the drafts sweeper asks it); a change here applies at once.
 	s.cfg.Spaces.UserChanged(ctx, *out)
+	if exemptChanged {
+		s.cfg.Spaces.PolicyChanged()
+	}
 	return out, nil
 }
 
