@@ -34,8 +34,7 @@ interface Props {
   onPick: (id: string) => void
   // A write starts; it has settled, with what was sent and what came back (in the same order) when it was written.
   onBegin: () => void
-  // read: the views were read after the answer.
-  onEnd: (w: Written | null, read: boolean) => void
+  onEnd: (w: Written | null) => void
   onRevert: () => void
 }
 
@@ -47,21 +46,22 @@ export function ViewBar({ scope, views, rev, active, working, modified, write, b
   const full = views.length >= MAX_VIEWS
 
   // Writes the whole list. Nothing is thrown: the person is told what happened. Whatever the answer, the views are read
-  // again before the write settles, so after a 409 the tabs show what the other person made.
+  // again before the write settles, so after a 409 the tabs show what the other person made. A write that ran out of
+  // time may or may not have been made: the person is told so, and sees the views as read again.
   const run = async (op: ViewOp, on: string, next: Draft[]): Promise<SavedView[] | null> => {
     if (busy) return null
     onBegin()
     let got: SavedView[] | null = null
-    let read = false
     try {
       const done = await save.mutateAsync({ baseRev: rev, views: next } satisfies PutViewsInput)
       got = done.list.views
-      read = done.read
+      if (done.readFailed !== null) toast.warning(t.views.readLate)
     } catch (e) {
       if (e instanceof ApiError && e.code === 'conflict') toast.error(t.views.conflict)
+      else if (e instanceof ApiError && e.code === 'timeout') toast.error(t.views.unknown)
       else toast.error(t.views.failed(e instanceof Error ? e.message : ''))
     } finally {
-      onEnd(got ? { op, on, sent: next, got } : null, read)
+      onEnd(got ? { op, on, sent: next, got } : null)
     }
     return got
   }

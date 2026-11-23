@@ -307,6 +307,7 @@ export const en: Messages = {
   },
   errors: {
     network: 'Cannot reach the server',
+    timeout: 'The server did not answer in time',
     unknown: 'Something went wrong',
     signedOut: 'You have been signed out. Please sign in again.',
     badResponse: 'The server sent something that could not be read',
@@ -380,6 +381,8 @@ export const en: Messages = {
     lostUnnamed: 'Your unsaved changes here could not be kept, because someone else changed the views.',
     linkGone: 'The sort in this link was not applied: the view it belongs to is no longer here.',
     failed: (message: string) => `The view was not saved: ${message}`,
+    unknown: 'The server did not answer in time, so it is not known whether the views were saved. The views here are read again from the server: check that they are what you wanted.',
+    readLate: 'The views were saved, but could not be read again here; they will be read again shortly.',
     tooMany: (n: number) => `At most ${n} views`,
     readOnly: 'You can only look: you can switch views and change the sort and filters for yourself, but not save them.',
     loadFailed: 'Could not read the views here.',

@@ -174,6 +174,10 @@ interface RequestOptions {
   blob?: Blob
 }
 
+// Called off for taking too long (AbortSignal.timeout), as opposed to called off on purpose.
+const isTimeout = (e: unknown) => typeof e === 'object' && e !== null && (e as { name?: unknown }).name === 'TimeoutError'
+const timedOut = (e: unknown, signal: AbortSignal | undefined) => isTimeout(e) || (signal?.aborted === true && isTimeout(signal.reason))
+
 export async function request<T>(path: string, { method = 'GET', body, keepalive, signal, blob }: RequestOptions = {}): Promise<T> {
   const barePath = path.split('?')[0]
   const isSignIn = SIGN_IN_PATHS.test(barePath)
@@ -197,11 +201,19 @@ export async function request<T>(path: string, { method = 'GET', body, keepalive
       keepalive: keepalive && typeof payload === 'string' && byteLength(payload) < KEEPALIVE_LIMIT ? true : undefined,
     })
   } catch (e) {
+    if (timedOut(e, signal)) throw new ApiError(0, 'timeout', t.errors.timeout)
     if (e instanceof DOMException && e.name === 'AbortError') throw e
     throw new ApiError(0, 'network', t.errors.network)
   }
   if (res.status === 204) return undefined as T
-  const text = await res.text()
+  let text: string
+  try {
+    text = await res.text()
+  } catch (e) {
+    // The time ran out while the body was on its way.
+    if (timedOut(e, signal)) throw new ApiError(0, 'timeout', t.errors.timeout)
+    throw e
+  }
   let json: unknown = null
   if (text) {
     try {
@@ -291,7 +303,7 @@ export function spaceApi(space: string) {
     groups: (params: GroupsParams, signal?: AbortSignal) => request<GroupsResponse>(base(`/pages/groups${groupsParamsToQuery(params)}`), { signal }),
     // The saved views of a folder or a tag; a save replaces the whole list and 409s (with `current`) on a stale `baseRev`.
     views: (scope: ViewScope, signal?: AbortSignal) => request<ViewList>(base(`/views?${scopeQuery(scope)}`), { signal }),
-    putViews: (scope: ViewScope, input: PutViewsInput) => request<ViewList>(base('/views'), { method: 'PUT', body: { ...scope, ...input } }),
+    putViews: (scope: ViewScope, input: PutViewsInput, signal?: AbortSignal) => request<ViewList>(base('/views'), { method: 'PUT', body: { ...scope, ...input }, signal }),
     getPage: (id: string, signal?: AbortSignal) => request<Page>(pageBase(id), { signal }),
     createPage: (input: CreatePageInput = {}) => request<Page>(base('/pages'), { method: 'POST', body: input }),
     savePage: (id: string, input: SavePageInput, opts: { keepalive?: boolean } = {}) => request<Page>(pageBase(id), { method: 'PUT', body: input, keepalive: opts.keepalive }),

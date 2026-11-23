@@ -178,14 +178,13 @@ export function reduceWorkingCopy(wc: WorkingCopy, e: WorkingEvent): Outcome {
 }
 
 // What the tabs show and the working copy, as a page keeps them. `list` is what the tabs show; `seen`, the views last
-// taken in; `answer`, the answer of the person's own write, kept until the write has settled; `unread`: the views
-// could not be read after that answer, so the views there now are older than it and are not taken in.
+// taken in; `answer`, the answer of the person's own write, kept until the write has settled. The views there when it
+// has settled are never older than the answer: read after it, or, when that read did not come, the answer itself.
 export interface Tabs<L extends { views: readonly SavedView[] }> {
   list: L | null
   wc: WorkingCopy
   seen: L | undefined
   answer: Written | null
-  unread?: boolean
 }
 
 // Takes in what came while nothing of the person's is on its way (never call it while a write is): first where the
@@ -196,8 +195,7 @@ export function catchUp<L extends { views: readonly SavedView[] }>(tabs: Tabs<L>
   let remember: string | null = null
   let lost: Lost | null = null
   if (tabs.answer) ({ wc, remember } = reduceWorkingCopy(wc, { kind: 'written', ...tabs.answer }))
-  const skip = tabs.answer !== null && tabs.unread === true
-  const fresh = data !== undefined && data !== tabs.seen && !skip
+  const fresh = data !== undefined && data !== tabs.seen
   if (fresh) {
     const r = reduceWorkingCopy(wc, { kind: 'list', views: data.views })
     wc = r.wc
@@ -205,5 +203,5 @@ export function catchUp<L extends { views: readonly SavedView[] }>(tabs: Tabs<L>
     remember = r.remember ?? remember
   }
   if (!tabs.answer && !fresh) return { tabs, lost, remember }
-  return { tabs: { list: fresh ? data : tabs.list, wc, seen: fresh || skip ? data : tabs.seen, answer: null }, lost, remember }
+  return { tabs: { list: fresh ? data : tabs.list, wc, seen: fresh ? data : tabs.seen, answer: null }, lost, remember }
 }

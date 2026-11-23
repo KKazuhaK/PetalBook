@@ -385,6 +385,8 @@ export type ErrorCode =
   | 'unavailable'
   | 'internal'
   | 'network'
+  // No answer in the time given (the request was called off; what it did on the server is not known).
+  | 'timeout'
   | 'unknown'
 
 // --- accounts -----------------------------------------------------------------

@@ -83,6 +83,6 @@ export function useWorkingCopy(on: boolean, idKey: string, data: ViewList | unde
     revert: () => apply({ kind: 'revert' }),
     // A write of the person starts, and settles (with its answer when there is one).
     begin: () => setBox((b) => ({ ...b, writing: b.writing + 1 })),
-    end: (w: Written | null, read: boolean) => setBox((b) => ({ ...b, writing: b.writing - 1, ...(w ? { answer: w, unread: !read } : {}) })),
+    end: (w: Written | null) => setBox((b) => ({ ...b, writing: b.writing - 1, ...(w ? { answer: w } : {}) })),
   }
 }

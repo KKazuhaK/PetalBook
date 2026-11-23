@@ -9,7 +9,11 @@ import { catchUp, hasEdits, initialWorkingCopy, reduceWorkingCopy, type Lost, ty
 // people's writes, reads of the views that are served at one moment and arrive later, a read called off when a write
 // starts and the read made after its answer, address changes (back, forward, a link), and leaving and coming back while
 // a write is on its way. While a write is on its way the page has the tabs and the tools off: an edit, a revert or a
-// pick, or an address change, tried then is refused by the guard modelled here, and nothing of the views read is taken in. After every step:
+// pick, or an address change, tried then is refused by the guard modelled here, and nothing of the views read is taken in.
+// The read made after a write may fail or run out of time (a slow read is one that times out): when the write was
+// answered, the answer is put in the cache as the views (unless a read made after it arrived), and the views are read
+// again in the background a bounded number of times. A write that ran out of time may still be made by the server later.
+// After every step:
 //  (a) every value of the change is one the person set on the view it is shown on;
 //  (b) a change is never dropped without a notice, unless by the person's own revert, pick or delete of that view, and
 //      the answer of the person's own write never changes what is shown;
@@ -60,10 +64,13 @@ interface Mutation {
   baseRev: number
   // The page that started it (a page opened again is another).
   page: number
-  result: { ok: true; got: Listing } | { ok: false } | null
+  result: { ok: true; got: Listing } | { ok: false; unknown?: boolean } | null
   // After the answer: the read made then, which the write waits for.
   refetch: Get | null
+  // How many times the cache had taken a list when the answer came.
+  cacheAtAnswer: number
 }
+// A write whose time ran out before the server made it: the server may still make it (if nothing was written since).
 interface Box {
   tabs: Tabs<Listing>
   writing: number
@@ -85,6 +92,11 @@ class Sim {
   private names = 0
   private idents = new Map<string, string>()
   private cache: Listing | undefined
+  // How many times the cache took a list (dataUpdateCount).
+  private cacheN = 0
+  // Background reads left after a read that did not come after a write.
+  private retries = 0
+  private late: { sent: Draft[]; baseRev: number } | null = null
   private get: Get | null = { served: null }
   private mutation: Mutation | null = null
   private page = 0
@@ -205,7 +217,7 @@ class Sim {
   }
 
   // (b): what the person changed is still shown on the same view, unless a notice said it was dropped.
-  private checkKept(before: WorkingCopy, after: WorkingCopy, afterList: readonly SavedView[] | undefined, lost: Lost | null, how: { unread?: boolean } = {}) {
+  private checkKept(before: WorkingCopy, after: WorkingCopy, afterList: readonly SavedView[] | undefined, lost: Lost | null) {
     if (lost) {
       ok(hasEdits(before.patch), () => `a notice with nothing dropped${this.where()}`)
       return ok(this.gone(before, afterList ?? []), () => `a notice for a view that is there${this.where()}`)
@@ -213,8 +225,6 @@ class Sim {
     if (after === before || !hasEdits(before.patch)) return
     ok(this.ident(after.viewKey) === this.ident(before.viewKey), () => `(b) the change left its view silently${this.where()}`)
     const shownAfter = this.shown(afterList, after)
-    // The views could not be read after a write: the change is kept, and shown once they are.
-    if (shownAfter === null && how.unread) return ok(JSON.stringify(after.patch) === JSON.stringify(before.patch), () => `(b) changed while unread${this.where()}`)
     ok(shownAfter !== null, () => `(b) the view shown is not in the list${this.where()}`)
     const full = { ...DEFAULT_STATE, ...before.patch }
     for (const k of Object.keys(before.patch) as (typeof KEYS)[number][]) ok(sameKey(k, shownAfter, full), () => `(b) ${k} dropped silently${this.where()}`)
@@ -244,7 +254,10 @@ class Sim {
 
   private catchUp() {
     const t = this.box.tabs
-    const fresh = this.cache !== undefined && this.cache !== t.seen && !(t.answer && t.unread)
+    const fresh = this.cache !== undefined && this.cache !== t.seen
+    // After an answer the cache always has views at least as new as it (read after it, or the answer itself): the tabs
+    // never show the list from before the write with the working copy on what the write made.
+    if (t.answer) ok(fresh, () => `(b) an answer taken in without the views after it${this.where()}`)
     if (!t.answer && !fresh) return
     const before = t.wc
     let mid = before
@@ -278,7 +291,10 @@ class Sim {
     this.log.push(`catch up${t.answer ? ` ${t.answer.op}` : ''}${fresh ? ` + list rev ${this.cache!.rev}` : ''}`)
     this.box = { ...this.box, tabs: r.tabs }
     this.outcome(r)
-    if (!exempt) this.checkKept(mid, r.tabs.wc, r.tabs.list?.views, r.lost, { unread: !fresh })
+    if (!exempt) this.checkKept(mid, r.tabs.wc, r.tabs.list?.views, r.lost)
+    // What is shown is a view of the list shown (or the implicit view when there is none), and it is the person's own.
+    const shownNow = this.shown(r.tabs.list?.views, r.tabs.wc)
+    ok(shownNow !== null || (r.tabs.list?.views.length ?? 0) === 0, () => `(b) the view shown is not among the tabs${this.where()}`)
     this.checkChange()
   }
 
@@ -322,6 +338,9 @@ class Sim {
       [this.get && !this.get.served ? 8 : 0, () => this.serve()],
       [this.get?.served ? 8 : 0, () => this.arrive()],
       [this.get ? 2 : 0, () => this.failGet()],
+      [m?.refetch && this.get === m.refetch ? 4 : 0, () => this.failGet()],
+      [this.retries > 0 && !m ? 5 : 0, () => this.readLater()],
+      [this.late ? 3 : 0, () => this.lateWrite()],
       [4, () => this.address()],
       [2, () => this.reopen()],
     ]
@@ -411,16 +430,23 @@ class Sim {
     } else sent = views.filter((v) => v.id !== active!.id)
     const on = active?.id ?? ''
     this.box = { ...this.box, writing: this.box.writing + 1 }
-    this.mutation = { op, on, sent, baseRev: this.box.tabs.list!.rev, page: this.page, result: null, refetch: null }
+    this.mutation = { op, on, sent, baseRev: this.box.tabs.list!.rev, page: this.page, result: null, refetch: null, cacheAtAnswer: 0 }
     this.get = null
     this.log.push(`own ${op} on ${on} (rev ${this.box.tabs.list!.rev}) state ${JSON.stringify(state)}`)
   }
   private commit() {
     const m = this.mutation!
     const fate = this.r()
-    if (fate < 0.1) {
-      m.result = { ok: false }
+    if (fate < 0.05) {
+      m.result = { ok: false, unknown: true }
       this.log.push('put: network error, nothing written')
+      return
+    }
+    if (fate < 0.1) {
+      // Out of time before the server got to it: it may still write it.
+      m.result = { ok: false, unknown: true }
+      this.late = { sent: m.sent, baseRev: m.baseRev }
+      this.log.push('put: timed out, not written yet')
       return
     }
     if (m.baseRev !== this.rev) {
@@ -428,33 +454,50 @@ class Sim {
       this.log.push('put: 409')
       return
     }
-    this.server = m.sent.map((d): ServerView => {
+    this.apply(m.sent)
+    // Written, but the answer may be lost on the way back (or come too late).
+    m.result = fate < 0.2 ? { ok: false, unknown: true } : { ok: true, got: this.serverList() }
+    this.log.push(`put: written${m.result.ok ? '' : ', answer lost'} ${JSON.stringify(this.server)}`)
+  }
+  private apply(sent: Draft[]) {
+    this.server = sent.map((d): ServerView => {
       const w = { name: d.name as string, layout: d.layout as ViewLayout, sort: d.sort as string }
       if (d.id !== undefined) return { ...this.server.find((x) => x.id === d.id)!, ...w }
       const uid = this.uid++
       return { uid, id: `r${uid}`, ...w }
     })
     this.written()
-    // Written, but the answer may be lost on the way back.
-    m.result = fate < 0.2 ? { ok: false } : { ok: true, got: this.serverList() }
-    this.log.push(`put: written${m.result.ok ? '' : ', answer lost'} ${JSON.stringify(this.server)}`)
+  }
+  // The server makes a write whose time ran out, if nothing was written since it was sent (else a 409 nobody sees).
+  private lateWrite() {
+    const l = this.late!
+    this.late = null
+    if (l.baseRev !== this.rev) return void this.log.push('late put: 409')
+    this.apply(l.sent)
+    this.log.push(`late put: written ${JSON.stringify(this.server)}`)
   }
   // The answer is there (or a refusal, or an error): the views are read again, a read on its way called off, and the
-  // write settles when that read does.
+  // write settles when that read does (or fails, or runs out of time).
   private answer() {
     const m = this.mutation!
     this.log.push(`answer ${m.result!.ok ? m.op : 'error'}`)
     this.get = { served: null }
     m.refetch = this.get
+    m.cacheAtAnswer = this.cacheN
   }
-  // read: the read made after the answer arrived (else what the cache has may be older than the answer).
-  private settle(m: Mutation, read: boolean) {
+  // A read in the background after a read that did not come (useSaveViews).
+  private readLater() {
+    this.retries--
+    this.log.push('read again in the background')
+    this.startGet()
+  }
+  private settle(m: Mutation) {
     this.mutation = null
     this.log.push('settled')
     if (m.page === this.page) {
       const w: Written | null = m.result?.ok ? { op: m.op, on: m.on, sent: m.sent, got: m.result.got.views } : null
       if (w && m.result?.ok) this.revOf.set(w, m.result.got.rev)
-      if (w) this.box = { ...this.box, tabs: { ...this.box.tabs, answer: w, unread: !read } }
+      if (w) this.box = { ...this.box, tabs: { ...this.box.tabs, answer: w } }
       this.box = { ...this.box, writing: this.box.writing - 1 }
     }
   }
@@ -474,14 +517,31 @@ class Sim {
     if (!g?.served) return
     this.get = null
     this.cache = g.served
+    this.cacheN++
+    this.retries = 0
     this.log.push(`read arrived rev ${g.served.rev}`)
-    if (this.mutation?.refetch === g) this.settle(this.mutation, true)
+    const m = this.mutation
+    if (m?.refetch === g) {
+      // No answer at all: the write may still be made, so the views are read again later too.
+      if (m.result && !m.result.ok && m.result.unknown) this.retries = 5
+      this.settle(m)
+    }
   }
   private failGet() {
     const g = this.get!
     this.get = null
-    this.log.push('read failed')
-    if (this.mutation?.refetch === g) this.settle(this.mutation, false)
+    this.log.push('read failed or ran out of time')
+    const m = this.mutation
+    if (m?.refetch === g) {
+      // The answer is newer than the cache, unless a read made after it arrived; the views are read again later.
+      if (m.result?.ok && this.cacheN === m.cacheAtAnswer) {
+        this.cache = { ...m.result.got }
+        this.cacheN++
+        this.log.push(`the answer taken as the views, rev ${m.result.got.rev}`)
+      }
+      this.retries = 5
+      this.settle(m)
+    } else if (this.retries > 0) this.log.push(`${this.retries} background reads left`)
   }
 
   // Someone else writes the views.

@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { byLabel, click, installDomShims, locationText, mount, settle, shareSpace, type, type Mounted } from '@/testing/harness'
 import { listShell, putViews, seedWork, sender, TASK, viewsOf } from '@/testing/listKit'
 import type { MockServer } from '@/api/mock/server'
-import { keys } from '@/api/hooks'
+import { keys, viewsTiming } from '@/api/hooks'
 import { viewIdKey } from '@/lib/savedViews'
 import { viewKey } from '@/lib/listView'
 import { t } from '@/i18n'
@@ -1107,5 +1107,194 @@ describe('the sort of a view that someone else removes or renames', () => {
     expect(sortShown()).toBe('')
     expect(modifiedMark()).toBeNull()
     await settle(() => !locationText().includes('sort='), 'the address without the sort')
+  })
+})
+
+describe('when the views cannot be read after the person\'s own write, or an answer does not come', () => {
+  const timing = { ...viewsTiming }
+  beforeEach(() => {
+    toast.dismiss()
+    Object.assign(viewsTiming, { timeoutMs: 300, retryMs: 50, retries: 5 })
+  })
+  afterEach(() => Object.assign(viewsTiming, timing))
+  const two = (send: ReturnType<typeof sender>) => putViews(send, FOLDER, [{ name: '全部', layout: 'list' }, { name: '看板', layout: 'board', group: 'status' }])
+  const sortSelect = () => document.querySelector<HTMLSelectElement>(`select[aria-label="${t.list.sort}"]`)!
+  const bar = () => document.querySelector('[data-slot="view-bar"]')
+  const on = () => bar() !== null && bar()!.getAttribute('aria-busy') === null && tabs().every((e) => !(e as HTMLButtonElement).disabled) && !sortSelect().disabled
+  const said = (text: string) => document.body.textContent!.includes(text)
+  const viewsReads = () => m!.requests.filter((r) => r.method === 'GET' && /\/views\?/.test(r.url)).length
+  const urlOf = (input: RequestInfo | URL) => String(input instanceof Request ? input.url : input)
+  // Never answers; called off only by its signal (as a fetch is when its time runs out).
+  const never = (init?: RequestInit) =>
+    new Promise<Response>((_, reject) => {
+      const s = init?.signal
+      s?.addEventListener('abort', () => reject(s.reason))
+    })
+  // From the first PUT of the views on, reads of the views fail (`how: 'fail'`, offline) or never answer (`'hang'`),
+  // until `back()`.
+  const readsAfterPut = (how: 'fail' | 'hang') => {
+    const real = globalThis.fetch
+    let put = false
+    let down = true
+    globalThis.fetch = async (input, init) => {
+      const method = init?.method ?? 'GET'
+      const views = /\/views(\?|$)/.test(urlOf(input))
+      if (views && method === 'PUT') {
+        const res = await real(input, init)
+        put = true
+        return res
+      }
+      if (views && method === 'GET' && put && down) {
+        if (how === 'hang') return never(init)
+        throw new TypeError('offline')
+      }
+      return real(input, init)
+    }
+    return {
+      back: () => (down = false),
+      restore: () => (globalThis.fetch = real),
+    }
+  }
+  // The PUT of the views never answers: before the server has it (`written: false`), or after it wrote it.
+  const putHangs = (written: boolean) => {
+    const real = globalThis.fetch
+    globalThis.fetch = async (input, init) => {
+      if ((init?.method ?? 'GET') === 'PUT' && /\/views$/.test(urlOf(input))) {
+        if (written) await real(input, init)
+        return never(init)
+      }
+      return real(input, init)
+    }
+    return { restore: () => (globalThis.fetch = real) }
+  }
+
+  it('a save written, the read after it offline: the saved settings are shown, nothing is off, and the views are read again later', async () => {
+    await open('/s/default/f/Work', two)
+    await settle(() => tabs().length === 2, 'the tabs')
+    await click(button(t.view.cards))
+    const r = readsAfterPut('fail')
+    await click(textButton(t.views.save))
+    await settle(() => on() && said(t.views.readLate), 'on again, and told')
+    expect(selected()).toBe('全部')
+    expect(modifiedMark()).toBeNull()
+    expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('true')
+    expect(tabNames()).toEqual(['全部', '看板'])
+    expect((await saved()).views[0].layout).toBe('cards')
+    // A later Save writes nothing old: there is nothing to save, and the next change goes on the saved settings.
+    expect(textButton(t.views.save)).toBeNull()
+    // Online again: a read in the background, without anything going off.
+    const before = viewsReads()
+    r.back()
+    await settle(() => viewsReads() > before && on(), 'read again in the background')
+    r.restore()
+    await type(sortSelect(), 'title')
+    await click(textButton(t.views.save))
+    await settle(() => on() && modifiedMark() === null && puts().length === 2, 'saved again')
+    expect((await saved()).views[0]).toMatchObject({ layout: 'cards', sort: 'title' })
+  })
+
+  it('a new view written, the read after it offline: its tab is there and shown, and it can be changed and saved', async () => {
+    await open('/s/default/f/Work', two)
+    await settle(() => tabs().length === 2, 'the tabs')
+    const r = readsAfterPut('fail')
+    await click(button(t.views.add))
+    const input = document.querySelector<HTMLInputElement>(`input[aria-label="${t.views.name}"]`)!
+    await type(input, '新的')
+    await act(async () => input.form!.requestSubmit())
+    await settle(() => on() && tabNames().join() === '全部,看板,新的', 'the new tab')
+    expect(selected()).toBe('新的')
+    await settle(() => said(t.views.readLate), 'told')
+    expect(localStorage.getItem(viewIdKey('default', 'folder', 'Work'))).toBe((await saved()).views[2].id)
+    // Its own: a change shows as a change of it, and is saved on it.
+    await click(button(t.view.cards))
+    expect(modifiedMark()).not.toBeNull()
+    r.back()
+    r.restore()
+    await click(textButton(t.views.save))
+    await settle(() => on() && modifiedMark() === null && puts().length === 2, 'saved')
+    expect((await saved()).views.map((v) => [v.name, v.layout])).toEqual([['全部', 'list'], ['看板', 'board'], ['新的', 'cards']])
+  })
+
+  it('a copy written, the read after it offline: its tab is there and shown, with what was shown in it', async () => {
+    await open('/s/default/f/Work', two)
+    await settle(() => tabs().length === 2, 'the tabs')
+    await click(button(t.view.cards))
+    const r = readsAfterPut('fail')
+    await click(button(t.views.duplicate))
+    await settle(() => on() && tabs().length === 3, 'the copy')
+    r.restore()
+    expect(tabNames()).toEqual(['全部', '看板', t.views.copyName('全部')])
+    expect(selected()).toBe(t.views.copyName('全部'))
+    expect(modifiedMark()).toBeNull()
+    expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('true')
+    await type(sortSelect(), 'title')
+    expect(modifiedMark()).not.toBeNull()
+    await click(textButton(t.views.save))
+    await settle(() => on() && modifiedMark() === null && puts().length === 2, 'saved')
+    expect((await saved()).views.map((v) => [v.name, v.layout, v.sort])).toEqual([
+      ['全部', 'list', ''],
+      ['看板', 'board', ''],
+      [t.views.copyName('全部'), 'cards', 'title'],
+    ])
+  })
+
+  it('a delete written, the read after it offline: the tab is gone and the first view is shown', async () => {
+    await open('/s/default/f/Work', two)
+    await settle(() => tabs().length === 2, 'the tabs')
+    await click(tab('看板'))
+    const r = readsAfterPut('fail')
+    await click(button(t.views.remove))
+    await click(textButton(t.views.deleteConfirm))
+    await settle(() => on() && tabs().length === 1, 'the tab gone')
+    r.restore()
+    expect(tabNames()).toEqual(['全部'])
+    expect(selected()).toBe('全部')
+    await settle(() => said(t.views.readLate), 'told')
+    await click(button(t.view.cards))
+    expect(modifiedMark()).not.toBeNull()
+  })
+
+  it('the read after a save never answers: once its time is out the saved settings are shown and nothing is off', async () => {
+    await open('/s/default/f/Work', two)
+    await settle(() => tabs().length === 2, 'the tabs')
+    await click(button(t.view.cards))
+    const r = readsAfterPut('hang')
+    await click(textButton(t.views.save))
+    await settle(() => on() && said(t.views.readLate), 'on again after the time ran out')
+    expect(modifiedMark()).toBeNull()
+    expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('true')
+    r.back()
+    r.restore()
+  })
+
+  it('a save that never answers, not written: once its time is out the person is told it is not known, nothing is off, and the change is still there', async () => {
+    await open('/s/default/f/Work', two)
+    await settle(() => tabs().length === 2, 'the tabs')
+    await click(button(t.view.cards))
+    const h = putHangs(false)
+    await click(textButton(t.views.save))
+    await settle(() => on() && said(t.views.unknown), 'on again, and told')
+    h.restore()
+    expect(selected()).toBe('全部')
+    expect(modifiedMark()).not.toBeNull()
+    expect((await saved()).views[0].layout).toBe('list')
+    // It can be saved again.
+    await click(textButton(t.views.save))
+    await settle(() => on() && modifiedMark() === null, 'saved')
+    expect((await saved()).views[0].layout).toBe('cards')
+  })
+
+  it('a save that never answers, written: the views are read again, so the saved settings are shown', async () => {
+    await open('/s/default/f/Work', two)
+    await settle(() => tabs().length === 2, 'the tabs')
+    await click(button(t.view.cards))
+    const before = viewsReads()
+    const h = putHangs(true)
+    await click(textButton(t.views.save))
+    await settle(() => on() && said(t.views.unknown), 'on again, and told')
+    h.restore()
+    expect(viewsReads()).toBeGreaterThan(before)
+    await settle(() => modifiedMark() === null, 'the views read again')
+    expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('true')
   })
 })

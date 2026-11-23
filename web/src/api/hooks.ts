@@ -735,30 +735,78 @@ export function useViewsBusy(scope: ViewScope | null) {
   return useIsMutating({ mutationKey: viewsWriteKey(space, scope ?? { folder: '' }) }) > 0 && scope !== null
 }
 
+// How long the person's own write of the views, and the read made after it, may take before it is called off (a
+// connection that hangs must not keep the tabs off); and how the views are read again in the background when that read
+// did not come: `retries` times, the first after `retryMs`, each wait twice the one before. Tests shorten them.
+export const viewsTiming = { timeoutMs: 20_000, retryMs: 1_000, retries: 5 }
+
+// The views read again after a write of the person's (with or without an answer): a read on its way is called off
+// first (it may have been served before the write), so what arrives from then on was served after it. When the read
+// does not come and the write was answered, the answer is the views as they are now: it is newer than what the cache
+// has, unless a read made after it arrived meanwhile. Gives what went wrong with the read, or null.
+async function readViewsAfter(qc: QueryClient, space: string, scope: ViewScope, answer: ViewList | null): Promise<unknown> {
+  const key = keys.views(space, scope)
+  await qc.cancelQueries({ queryKey: key })
+  const count = qc.getQueryState(key)?.dataUpdateCount ?? 0
+  try {
+    qc.setQueryData(key, await spaceApi(space).views(scope, AbortSignal.timeout(viewsTiming.timeoutMs)))
+    return null
+  } catch (e) {
+    if (answer && (qc.getQueryState(key)?.dataUpdateCount ?? 0) === count) qc.setQueryData(key, answer)
+    return e
+  }
+}
+
+// Reads the views again in the background, a few times with growing waits, until a read arrives. Never while a write
+// of these views is on its way (it reads after itself, and calls off a read on its way); not at all when nothing shows
+// these views any more (they are marked stale, and read when shown).
+function readViewsLater(qc: QueryClient, space: string, scope: ViewScope, attempt = 0) {
+  if (attempt >= viewsTiming.retries) return
+  setTimeout(() => {
+    void (async () => {
+      const key = keys.views(space, scope)
+      if (qc.isMutating({ mutationKey: viewsWriteKey(space, scope) }) > 0) return
+      const before = qc.getQueryState(key)?.dataUpdateCount ?? 0
+      await qc.invalidateQueries({ queryKey: key, exact: true })
+      if ((qc.getQueryState(key)?.dataUpdateCount ?? 0) > before) return
+      if (!qc.getQueryCache().find({ queryKey: key, exact: true })?.isActive()) return
+      readViewsLater(qc, space, scope, attempt + 1)
+    })()
+  }, viewsTiming.retryMs * 2 ** attempt)
+}
+
+// What a write of the views gives: the answer, and what went wrong with the read made after it (null: none). When that
+// read did not come, the answer is in the cache as the views (see readViewsAfter), and they are read again later.
+export interface ViewsWritten {
+  list: ViewList
+  readFailed: unknown
+}
+
 // Replaces the whole list. Exclusive and short: a read of the views on its way is called off first (its answer could
 // come after the write's), and when the answer is there (or a refusal, or no answer at all) the views are read again;
-// the write settles once they are. The answer is never put in the cache: a read made after it may be there already.
-// `read`: the views were read after the answer (else what the cache has may be older than it).
+// the write settles once they are, or once that read failed or ran out of time. Either way the cache then has the views
+// as they are after the write, as far as is known. The write and that read each have `viewsTiming.timeoutMs`; a write
+// that ran out of time may have been made or not (and may still be), so the views are read again later too.
 export function useSaveViews(scope: ViewScope) {
   const qc = useQueryClient()
   const space = useSpaceId()
-  const key = keys.views(space, scope)
-  const count = () => qc.getQueryState(key)?.dataUpdateCount ?? 0
   return useMutation({
     mutationKey: viewsWriteKey(space, scope),
-    mutationFn: async (input: PutViewsInput): Promise<{ list: ViewList; read: boolean }> => {
-      await qc.cancelQueries({ queryKey: key })
-      const readAgain = () => qc.invalidateQueries({ queryKey: key })
+    mutationFn: async (input: PutViewsInput): Promise<ViewsWritten> => {
+      await qc.cancelQueries({ queryKey: keys.views(space, scope) })
       let list: ViewList
       try {
-        list = await spaceApi(space).putViews(scope, input)
+        list = await spaceApi(space).putViews(scope, input, AbortSignal.timeout(viewsTiming.timeoutMs))
       } catch (e) {
-        await readAgain()
+        // No answer from the server at all (no connection, or out of time): whether it wrote is not known.
+        const unknown = !(e instanceof ApiError) || e.status === 0
+        const readFailed = await readViewsAfter(qc, space, scope, null)
+        if (readFailed !== null || unknown) readViewsLater(qc, space, scope)
         throw e
       }
-      const before = count()
-      await readAgain()
-      return { list, read: count() > before }
+      const readFailed = await readViewsAfter(qc, space, scope, list)
+      if (readFailed !== null) readViewsLater(qc, space, scope)
+      return { list, readFailed }
     },
   })
 }

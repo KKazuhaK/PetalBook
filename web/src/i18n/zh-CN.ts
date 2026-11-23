@@ -306,6 +306,7 @@ export const zhCN = {
   },
   errors: {
     network: '无法连接到服务器',
+    timeout: '服务器没有及时回应',
     unknown: '出错了',
     signedOut: '登录已失效，请重新登录',
     badResponse: '服务器返回了无法识别的内容',
@@ -380,6 +381,8 @@ export const zhCN = {
     lostUnnamed: '你在这里的未保存改动没有保留，因为别人改过这里的视图。',
     linkGone: '链接里的排序没有用上：它所属的视图已经不在了。',
     failed: (message: string) => `视图没有保存：${message}`,
+    unknown: '服务器没有及时回应，不知道视图有没有保存。这里会重新读取服务器上的视图，请看一下是否是你要的。',
+    readLate: '视图已保存，但没能重新读取这里的视图；稍后会再读。',
     tooMany: (n: number) => `最多 ${n} 个视图`,
     readOnly: '你只能查看：可以切换视图、临时改排序和筛选，但存不回去。',
     loadFailed: '读不到这里的视图。',
