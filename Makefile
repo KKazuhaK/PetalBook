@@ -10,6 +10,7 @@ SPACE   ?= ./space
 # and for the web tests.
 NCPU    := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
 HALF    := $(shell n=$(NCPU); echo $$(( (n + 1) / 2 )))
+THIRD   := $(shell n=$(NCPU); echo $$(( (n + 2) / 3 > 2 ? (n + 2) / 3 : 2 )))
 QUARTER := $(shell n=$(NCPU); echo $$(( n / 4 > 2 ? n / 4 : 2 )))
 ifneq ($(SHARE),)
 export GOMAXPROCS := $(SHARE)
@@ -179,10 +180,10 @@ cross-compile:
 # "check" it runs in lanes: first the checks, the full-size tests, PostgreSQL and
 # the case-folding file system side by side, then the release build (which puts
 # the web app into internal/webui, so it must not run beside the Go tests) with the
-# contract tests that use its binary, and the cross-compile.
+# contract tests that use its binary.
 check-full:
 	@bash scripts/lanes.sh \
-	  go:$(QUARTER)='fmt-check tidy-check vet test test-full' web:$(QUARTER)='web-typecheck web-lint web-test' vuln actionlint \
-	  postgres:$(QUARTER)=test-postgres casefold:$(QUARTER)=test-casefold \
-	  -- release='release contract contract-postgres' cross-compile
+	  go:$(THIRD)='fmt-check tidy-check vet test test-full' web:$(QUARTER)='web-typecheck web-lint web-test' static='vuln actionlint cross-compile' \
+	  postgres:$(QUARTER)=test-postgres casefold:$(THIRD)=test-casefold \
+	  -- release='release contract contract-postgres'
 
