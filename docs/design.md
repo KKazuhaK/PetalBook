@@ -2409,10 +2409,100 @@ PostgreSQL 都跑了测试。和约定不一样的地方和实现时定下的细
 才在；服务器上除了索引什么都没有，取回的是远端现在的样子，空间显示
 `rewritten`，由所有者接受。被改写掉、只在旧历史里的版本就找不回了。
 
-还没做（第二部分）：`assets` 相关的设置（`cache.assetsBytes`、`assets.newSpaces`、
-`GET/PUT/DELETE …/remote/assets`、搬迁）、附件缓存和附件仓库；管理后台的页面和
-接口里与之对应的字段现在是固定值（`assets: "space"`、`assetCacheBytes: 0`），
-`PUT /api/admin/storage` 带 `assets` 时回 `400`。
+**3.1 的现状（第二部分，2026-11-23）**：做了独立的附件仓库和附件缓存：
+`GET/PUT/DELETE /api/spaces/{space}/remote/assets`、`POST …/remote/assets/move`
+（后台、`202`、断电后接着做）、`github.assets`（`POST /api/spaces` 和
+`PUT …/remote/assets` 的 `github`）、`cache.assetsBytes` 和 `assets.newSpaces`、
+Space 和管理后台里的 `assets` / `assetCacheBytes`、`ETag`、`503 not_cached`，
+以及设置页、管理后台、新建空间里的界面。问题 4 照默认：搬完后空间仓库不再有
+`assets/`。和约定不一样的地方和实现时定下的细节：
+
+- **状态库用新表 `asset_remotes`，不是给 `remotes` 加一列**：`remotes` 的主键是
+  `space_id`，一堆查询（管理后台的计数、GitHub 安装的引用数、`UPDATE … WHERE
+  space_id`）都靠它，改主键两个数据库都要改动所有这些查询。新表是同样的列加
+  `used`（有附件进过它）和搬迁进度的几列，迁移是 `0017_assets.sql`（0016 留给 3.2
+  的组）。删空间时一起删。
+- **表里没有文件大小**：部分克隆里读不到没取过的文件的大小（`ls-tree -l` 在缺内容
+  时给 `BAD`），所以表是（路径、内容 id），大小在内容进缓存时才知道（上传时就知道）。
+  `Lookup` 的大小是 `-1` 表示不知道；发出文件时用缓存文件自己的大小。
+- **服务器上的附件仓库**：`DATA/assetrepos/<空间>`，一个只有提交和目录树的克隆
+  （`--filter=blob:none`），工作区永远是空的。内容不进这个克隆：上传和搬迁在一个
+  借用它的对象的临时仓库（`objects/info/alternates`）里用 Git 的底层命令做提交
+  （`hash-object -w`、`ls-tree`、`mktree --missing`、`commit-tree`、`update-ref HEAD`），
+  推送完就删掉；读缺的内容时按 id 取进另一个临时仓库，复制进缓存后删掉。所以
+  服务器上附件的内容只在缓存里一份，受 `cache.assetsBytes` 约束。受限 git 执行器
+  只多放开了 `hash-object -w --no-filters --stdin-paths`、`mktree -z --missing` 和
+  `cat-file blob <id>`。没有 `write-tree`：它在缺内容时报「invalid object」。
+- **表**：打开空间时由本地克隆的目录树建（2 万个文件：50 毫秒，3.2 MB 内存），
+  拉取（每分钟）时用 `diff --raw` 的差异增量更新，上传后重新取一次；一个请求不会
+  走全部附件。校验用同一张表（`assetExists` 先查表，再看空间自己的 `assets/`），
+  附件仓库连不上时表仍是最后一张。
+- **上传**：回答前推送（一次提交，推送被拒绝说明远端动了就在新的头上重做，最多 4 次）；
+  导入在页面那次提交之前把附件推完（`mutate` 里 `op` 之后、提交之前），页面推送失败
+  时附件留在远端、没人引用（有测试用 `pre-receive` 拒绝页面那次推送）。**所以「页面提交前
+  先确保附件已推送」靠顺序成立，没有别的待推送队列**：附件仓库里从来没有没推送的东西。
+- **搬迁的步骤和崩溃**（`internal/spaces/assets_move.go`，在每一步之间有 `AssetsHook`，
+  测试在每一步「崩溃」，换一个新的管理器，空间照常打开、搬迁接着做、没有附件丢失；
+  每一步之后都检查每个附件至少在一个远端里，内容 id 对得上）：复制（分块，每块最多
+  `MaxCommitBytes`）→ 切换时按住空间的写入、再复制新增的、**`refresh` 之后按内容 id
+  逐个核对附件仓库的远端有这些文件**，才用底层命令做删掉 `assets/` 的提交（不碰
+  文件）→ `reset --hard` 让工作区跟上 → 推送。提交之后推送之前崩溃：下次打开时
+  那个提交按「从没推送的提交」推出去；提交后、`reset` 前崩溃：`RecoverSwitch` 认出
+  HEAD 就是切换提交（按消息和 `assets/` 已不在树里）才收尾。推送失败：`reset --hard` 回到
+  原来的提交，文件原样回来。第 3 步（新的部分克隆）用清掉空间来做：搬完后试一次
+  `Evict`，空间在用就留给以后的清掉，下次取回时就是不含附件的部分克隆。
+  搬的时候上传进空间自己的 `assets/`（`Direct()` 为假），读先看空间自己的文件，
+  不走网络；切换一完成（还按着空间的写入时）就改为直接上传到仓库。
+- **清掉空间要多查的**（`verifyAssets`）：搬迁没在进行、附件仓库的状态是 `ok`、搬完后
+  克隆的 `assets/` 里没有文件（被 `.gitignore` 忽略的文件，普通的「没有提交的文件」检查
+  看不到，删克隆时会一起没）、没有正在推送的上传、没有上次上传留下的临时仓库、附件
+  仓库的远端当场 fetch 得通；连不上回 `503 unavailable`，不清。清掉时一起清掉
+  缓存里这个空间的文件。测试：每一步崩溃之后所有附件还读得出，并且两个远端里都有。
+- **连接**：令牌、SSH（用空间自己的那对密钥，要把公钥也加到附件仓库）、GitHub（已有的
+  仓库，或 `github: {create: true}` 现建）。先在一个试用目录里 fetch 一次（证明凭据能用），
+  再套用有内容仓库的规则，通过了才存库、挪到位置上，所以连不上或不能收留的什么都不改。
+  **约定之外加的**：空间有附件仓库时 `DELETE …/remote`（断开空间的远端）回
+  `409 conflict`，因为断开后本地空间读不到附件。
+- **GitHub 自动建**：空间仓库和附件仓库先都建出来，再分别做第 4 步的检查，所以失败的回答
+  同时列 `repo` 和 `assetsRepo`（`github.Error` 多了 `AssetsRepo`），同一个请求
+  `create: false` 两个都接上（测试用 2.7 的假 GitHub，包括「仅选定仓库」的安装补加不上）。
+  `github.assets` 没给时看 `assets.newSpaces`，给了 `false` 就不建。
+- **常驻**：附件缓存里属于常驻空间的文件不被清掉、不算进 `assetsBytes`（`assetcache` 的
+  `Pinned` 回调），常驻时在后台把表里的文件都取进缓存。
+- **缓存**：一个文件一份，按内容 id 命名，修改时间是最后一次读（每小时最多改一次）；
+  总量在内存里，启动时数一次（O(文件数)，只有这一次）；超出预算按最久没读的先删，
+  清到 90%，免得满了之后每加一个文件就扫一遍。同一个文件同时被多个请求要时共用一次取。
+
+接口以外没有变：`503 not_cached` 带 `fetching` 和 `Retry-After`，`ETag` 是内容 id
+（`If-None-Match` 回 `304`），表里没有的路径 `404` 而且不问远端。
+
+测试：`internal/spaces/assets_test.go`（上传、离线、搬迁、搬迁每一步崩溃、清掉每一步崩溃
+和各种不清的理由、导入的顺序）、`github_test.go`（自动建）、`internal/api/assets_test.go`、
+`internal/assetcache`、`internal/gitstore/assets_test.go`；SQLite 和 PostgreSQL 都跑
+（`scripts/test-postgres.sh`）。前端：`assets.test.tsx`、`storage.test.tsx`、`github.test.tsx`、
+contract 测试（mock 一步一步播放搬迁）。
+
+实测（`PETALBOOK_MEASURE=20000 go test ./internal/assetrepo -run Measure -v`，2 万个
+100 KiB 的文件放在 2000 个文件夹里，本机 SSD，`file://` 远端，内容是重复的所以远端和
+克隆的磁盘大小没有参考价值）：
+
+| 项 | 实测 |
+|---|---|
+| 第一次取提交和目录树并建表 | 145 毫秒 |
+| 重新打开（从本地克隆建表） | 49 毫秒，表占 3.2 MB 内存 |
+| 在表里查一个路径 | 27 纳秒 |
+| 读一个在缓存里的文件（打开） | 11 微秒 |
+| 读一个不在缓存里的 100 KiB 文件（按 id 取，包括建临时仓库） | 44 毫秒 |
+| 上传一个 100 KiB 的文件（哈希、改树、提交、推送、刷新表） | 172 毫秒 |
+
+缓存里的附件和以前读工作区一样（一次 `open`），不在缓存里的第一次多一次网络请求。
+还没在 `spikes/search-scale` 的 5 万篇语料上量过空间的大小，还欠一次 5 GB 附件的
+搬迁时间。
+
+和 2.7、第一部分留下的、这里仍然没做的：
+`GET /api/admin/status` 的各个计数仍是已存的测量值加内存里的数；
+`cloneBytes` 不含 `DATA/assetrepos`（每个只有几百 KB 到几 MB 的提交和目录树）；
+GitHub 安装被引用的仓库数（`github_installations` 的统计）不算附件仓库。
 
 ### 第 4 期：离线与客户端
 

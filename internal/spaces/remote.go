@@ -501,6 +501,11 @@ func (m *Manager) Disconnect(ctx context.Context, h *Handle) error {
 	}
 	m.remoteMu.Lock()
 	defer m.remoteMu.Unlock()
+	// Attachments in their own repository are read through the space's remote;
+	// without one the space could not serve them.
+	if row, err := store.GetAssetRemote(ctx, m.opt.Store.Q(), id); err == nil && row.URL != "" {
+		return assetsConflict("the space has an attachment repository; disconnect that first")
+	}
 	// A local space is the complete copy: a partial clone is made whole first
 	// (it waits for the fetch like any restore, and fails with the space still
 	// following its remote).

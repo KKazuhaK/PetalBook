@@ -1337,7 +1337,9 @@ attachment repository instead of the working tree: the path is looked up in
 a table of the repository's current files (path, content id, size) that the
 server keeps in memory, made when the space opens (20 000 files: about 2 MB,
 some 50 ms) and updated by each pull and upload; then the file is sent from
-the attachment cache. A file that is not in the cache is fetched by its id
+the attachment cache. The size of a file is known to the table only once its
+contents have been in the cache (a partial clone cannot say how large a file
+it does not have); the answer's `Content-Length` is that of the cached file. A file that is not in the cache is fetched by its id
 first (as for an old version), and later readers share that fetch. The answer
 is the same as now except that it carries `ETag` (the content id) instead of
 `Last-Modified`, so a browser revalidates with `If-None-Match` and gets `304`
