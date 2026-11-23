@@ -1,6 +1,7 @@
 package github_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -599,6 +600,13 @@ func TestSharingIsPerTenant(t *testing.T) {
 		if items, _, err := w.svc.Repos(ctx, "U2", peti, false, ""); err != nil || len(items) != 1 {
 			t.Fatalf("%+v %v", items, err)
 		}
+		// The share is checked against the tenant of the space, not the caller's.
+		if c, _, err := w.svc.ResolveExistingIn(ctx, "T2", "U1", "petal-team", "docs", "app"); err != nil || c.Via != "app" {
+			t.Fatalf("a caller of another tenant, for a space of T2: %+v %v", c, err)
+		}
+		if _, _, err := w.svc.ResolveExistingIn(ctx, "T3", "U2", "petal-team", "docs", "app"); err == nil {
+			t.Fatal("a caller of T2 used the share for a space of T3")
+		}
 		// Un-sharing takes it away again; a deleted tenant takes its share.
 		if _, err := w.svc.SetTenants(ctx, peti, nil); err != nil {
 			t.Fatal(err)
@@ -623,6 +631,18 @@ func TestLeftoversAreListedWithInfoAndDismissedOneByOne(t *testing.T) {
 		info, err := w.svc.Info(ctx, "U1")
 		if err != nil || len(info.Leftovers) != 1 || info.Leftovers[0].RepoID != 77 || info.Leftovers[0].FullName != "kazuhahub/left" || info.Leftovers[0].SpaceName != "Notes" {
 			t.Fatalf("%+v %v", info, err)
+		}
+		// A parent context that has run out (a slow create) does not lose the reminder.
+		dead, cancel := context.WithCancel(ctx)
+		cancel()
+		if err := w.svc.RecordLeftover(dead, "U1", &github.Repo{ID: 78, FullName: "kazuhahub/late", HTMLURL: "https://github.com/kazuhahub/late"}, "Late"); err != nil {
+			t.Fatalf("a reminder was lost with its context: %v", err)
+		}
+		if info, err := w.svc.Info(ctx, "U1"); err != nil || len(info.Leftovers) != 2 {
+			t.Fatalf("%+v %v", info, err)
+		}
+		if err := w.svc.DismissLeftover(ctx, "U1", 78); err != nil {
+			t.Fatal(err)
 		}
 		// Per user.
 		if info, _ := w.svc.Info(ctx, "U2"); len(info.Leftovers) != 0 {

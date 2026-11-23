@@ -494,17 +494,32 @@ func (s *Service) ChooseCredential(ctx context.Context, p *Plan, repo *Repo) (*C
 // repository: with via "app" their connection can push to it or the
 // installation is shared with their tenant; with via "user" their connection can push.
 func (s *Service) ResolveExisting(ctx context.Context, userID, owner, name, via string) (*Cred, *Repo, error) {
+	sc, err := s.scopeOf(ctx, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s.resolveExisting(ctx, sc, userID, owner, name, via)
+}
+
+// ResolveExistingIn is ResolveExisting for a space of the given tenant: an
+// installation counts as shared when it is shared with that tenant, whichever
+// tenant the caller belongs to (a site admin may connect another tenant's space).
+func (s *Service) ResolveExistingIn(ctx context.Context, tenantID, userID, owner, name, via string) (*Cred, *Repo, error) {
+	return s.resolveExisting(ctx, store.InTenant(tenantID), userID, owner, name, via)
+}
+
+func (s *Service) resolveExisting(ctx context.Context, sc store.Scope, userID, owner, name, via string) (*Cred, *Repo, error) {
 	st, err := s.need(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 	switch via {
 	case ViaApp:
-		return s.existingApp(ctx, st, userID, owner, name)
+		return s.existingApp(ctx, st, sc, userID, owner, name)
 	case ViaUser:
 		return s.existingUser(ctx, userID, owner, name)
 	}
-	cred, repo, aerr := s.existingApp(ctx, st, userID, owner, name)
+	cred, repo, aerr := s.existingApp(ctx, st, sc, userID, owner, name)
 	if aerr == nil {
 		return cred, repo, nil
 	}
@@ -543,7 +558,7 @@ func (s *Service) existingUser(ctx context.Context, userID, owner, name string) 
 	return &Cred{Via: ViaUser, UserID: userID, RepoID: r.ID}, repoOf(r), nil
 }
 
-func (s *Service) existingApp(ctx context.Context, st *appState, userID, owner, name string) (*Cred, *Repo, error) {
+func (s *Service) existingApp(ctx context.Context, st *appState, sc store.Scope, userID, owner, name string) (*Cred, *Repo, error) {
 	inst, err := st.app.RepoInstallation(ctx, owner, name)
 	if err != nil {
 		if githubapp.IsStatus(err, http.StatusNotFound) {
@@ -552,10 +567,6 @@ func (s *Service) existingApp(ctx context.Context, st *appState, userID, owner, 
 		return nil, nil, s.listError(err)
 	}
 	var repo *githubapp.Repo
-	sc, err := s.scopeOf(ctx, userID)
-	if err != nil {
-		return nil, nil, err
-	}
 	shared, err := store.GitHubInstallationShared(ctx, s.opt.Store.Q(), sc, inst)
 	if err != nil {
 		return nil, nil, err

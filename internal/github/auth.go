@@ -677,9 +677,15 @@ func (s *Service) Leftovers(ctx context.Context, userID string) ([]Leftover, err
 	return out, nil
 }
 
+const leftoverTimeout = 10 * time.Second
+
 // RecordLeftover remembers, for the user, a repository that was made for a
-// space that then could not be made.
+// space that then could not be made. It is written even when ctx has run out
+// or was cancelled (the create that failed may have used all its time), under
+// a short timeout of its own.
 func (s *Service) RecordLeftover(ctx context.Context, userID string, repo *Repo, spaceName string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leftoverTimeout)
+	defer cancel()
 	return store.PutGitHubLeftover(ctx, s.opt.Store.Q(), store.GitHubLeftover{UserID: userID, RepoID: repo.ID, FullName: repo.FullName,
 		HTMLURL: repo.HTMLURL, SpaceName: spaceName, Created: s.opt.Now()})
 }

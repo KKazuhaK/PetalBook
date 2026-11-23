@@ -4,6 +4,7 @@ import { Route, Routes } from 'react-router'
 import { useState } from 'react'
 import type { SpaceInfo } from '@/api/types'
 import { adminRequests, byLabel, click, installDomShims, locationText, makePerson, mount, settle, type, type Mounted } from '@/testing/harness'
+import { keys } from '@/api/hooks'
 import { MOCK_ADMIN } from '@/api/mock/server'
 import { t } from '@/i18n'
 import { tg } from '@/i18n/github'
@@ -407,9 +408,12 @@ describe('the GitHub section of the administration', () => {
   it('lists the installations and shares an organisation\'s with the tenants picked', async () => {
     m = await mount(routes, { entries: ['/admin/github'], signIn: true, server: { mode: 'accounts', github: { configured: true } } })
     const admin = adminRequests(m.server)
+    await settle(() => document.querySelectorAll('li [data-testid="share-choose"]').length === 3, 'the installations')
+    // The rows have cached the tenants (just the default one); a tenant made after that
+    // must still be offered when the dialog opens.
+    await settle(() => m!.qc.getQueryData(keys.tenants) !== undefined, 'the tenants cached by the rows')
     admin('PUT', '/api/admin/tenancy', { enabled: true })
     const second = (admin('POST', '/api/admin/tenants', { slug: 'acme', name: 'Acme' }).body as { id: string }).id
-    await settle(() => document.querySelectorAll('li [data-testid="share-choose"]').length === 3, 'the installations')
     const choose = (login: string) => byLabel(tg.admin.chooseFor(login))!
     expect(text()).toContain(tg.admin.notShared)
     await click(choose('kazuhahub'))

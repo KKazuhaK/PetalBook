@@ -338,12 +338,8 @@ func (m *Manager) SSHKey(ctx context.Context, h *Handle, rotate bool) (publicKey
 // tenant: a person's GitHub connection syncs only spaces of their own tenant.
 // It can only come up for a site administrator, who may open a space of any
 // tenant; everyone else reaches only spaces of their own. Two lookups by key.
-func (m *Manager) sameTenant(ctx context.Context, spaceID, userID string) error {
-	sp, err := store.GetSpace(ctx, m.opt.Store.Q(), store.AllTenants(), spaceID) // the space the caller has open, by id
-	if err != nil {
-		return err
-	}
-	_, err = store.GetUser(ctx, m.opt.Store.Q(), store.InTenant(sp.TenantID), userID)
+func (m *Manager) sameTenant(ctx context.Context, tenantID, userID string) error {
+	_, err := store.GetUser(ctx, m.opt.Store.Q(), store.InTenant(tenantID), userID)
 	if errors.Is(err, store.ErrNotFound) {
 		return &github.Error{Code: github.CodeForbidden, Status: http.StatusForbidden,
 			Msg: "a GitHub connection syncs only spaces of its own tenant: use the App (via app), or let someone of the space's tenant connect it"}
@@ -365,13 +361,16 @@ func (m *Manager) Connect(ctx context.Context, h *Handle, req ConnectRequest) (*
 	var remote gitstore.Remote
 	var ghCred *github.Cred
 	if req.CredType == CredGitHub {
-		var err error
+		sp, err := store.GetSpace(ctx, m.opt.Store.Q(), store.AllTenants(), id) // the space the caller has open, by id
+		if err != nil {
+			return nil, err
+		}
 		if req.Via == github.ViaUser {
-			if err := m.sameTenant(ctx, id, req.UserID); err != nil {
+			if err := m.sameTenant(ctx, sp.TenantID, req.UserID); err != nil {
 				return nil, err
 			}
 		}
-		if remote, ghCred, err = m.resolveGitHub(ctx, req); err != nil {
+		if remote, ghCred, err = m.resolveGitHub(ctx, sp.TenantID, req); err != nil {
 			return nil, err
 		}
 	} else if remote, err = gitstore.ParseURL(req.URL, m.opt.RemotePolicy); err != nil {

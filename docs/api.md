@@ -1755,8 +1755,9 @@ list of spaces, with the repository's name and link and two actions:
 - **I deleted it**: `DELETE /api/github/leftovers/{repoId}`.
 
 A reminder is cleared when the person dismisses it, and by itself when any
-space connects to that repository (by `create: false`, by `PUT …/remote`, in
-any way), whoever made the reminder. Only the newest 20 per user are kept; a
+space is connected to that repository with a `github` credential (by
+`create: false`, or by `PUT …/remote`), whoever made the reminder. A space
+connected with a plain URL and a token or key does not clear it. Only the newest 20 per user are kept; a
 second failure on the same repository replaces its reminder rather than adding
 one. Reminders are the user's own: they are deleted with the user and no one
 else sees them, in any tenant.

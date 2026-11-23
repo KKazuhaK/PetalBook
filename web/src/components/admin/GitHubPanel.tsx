@@ -241,7 +241,7 @@ function Installation({ installation: i }: { installation: GitHubInstallation })
 
 // Ticks the tenants an installation is shared with; Save replaces the whole set.
 function ShareDialog({ installation: i, onClose }: { installation: GitHubInstallation; onClose: () => void }) {
-  const tenants = useTenants()
+  const tenants = useTenants(true, true)
   const share = useShareGitHubInstallation()
   const [picked, setPicked] = useState<Set<string>>(() => new Set(i.tenants))
   const toggle = (id: string, on: boolean) =>

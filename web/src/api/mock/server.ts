@@ -1831,7 +1831,6 @@ export function createMockServer(options: MockOptions = {}) {
     if (via !== 'app' && via !== 'user') throw new HttpError(400, 'invalid', 'credential.via 是 app 或 user')
     const { owner, name } = githubRepoOf(input.url)
     const found = github.existing(userId, owner, name, via)
-    github.repoConnected(found.repo.id)
     const branch = input.branch === undefined || input.branch === '' ? 'main' : input.branch
     if (typeof branch !== 'string' || /\s/.test(branch)) throw new HttpError(400, 'invalid', '分支名不合法')
     space.remote = {
@@ -1844,6 +1843,7 @@ export function createMockServer(options: MockOptions = {}) {
       rewritten: null,
     }
     space.reachable = true
+    github.repoConnected(found.repo.id) // only once everything is valid
     return remoteInfo(space)
   }
 

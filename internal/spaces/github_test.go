@@ -551,6 +551,53 @@ func TestTheLimitCountsSpacesBeingMade(t *testing.T) {
 	})
 }
 
+// A site administrator connecting another tenant's space through the App is
+// judged by the space's tenant: the share must reach it, whichever tenant the
+// administrator belongs to.
+func TestConnectingAnotherTenantsSpaceChecksTheSpacesTenant(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		e.f.AddRepo("kazuhahub", "wiki", true)
+		now := time.Now()
+		const tenB = "T000000002"
+		if err := st.CreateTenant(ctx, store.Tenant{ID: tenB, Slug: "acme", Name: "Acme", Created: now, Updated: now}); err != nil {
+			t.Fatal(err)
+		}
+		owner := store.User{ID: "UB", Username: "bee", Name: "bee", Role: "member", Created: now, TenantID: tenB}
+		if err := store.InsertUser(ctx, st.Q(), owner); err != nil {
+			t.Fatal(err)
+		}
+		admin := store.User{ID: "UA", Username: "root", Name: "root", Role: "admin", Created: now, TenantID: store.DefaultTenantID}
+		if err := store.InsertUser(ctx, st.Q(), admin); err != nil {
+			t.Fatal(err)
+		}
+		in, err := e.m.Create(ctx, owner.ID, "Acme wiki")
+		if err != nil {
+			t.Fatal(err)
+		}
+		h, err := e.m.Open(ctx, owner, in.ID) // the handle is the space's; the request names the administrator
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer h.Release()
+		req := ConnectRequest{URL: e.f.URL + "/kazuhahub/wiki.git", CredType: CredGitHub, Via: "app", UserID: admin.ID}
+		// Shared with the administrator's tenant only: the space's tenant has no right to it.
+		if _, err := e.svc.SetTenants(ctx, e.kazuhub, []string{store.DefaultTenantID}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.m.Connect(ctx, h, req); err == nil {
+			t.Fatal("the share of the administrator's tenant was used for another tenant's space")
+		}
+		// Shared with the space's tenant: allowed, although the administrator's own tenant has no share.
+		if _, err := e.svc.SetTenants(ctx, e.kazuhub, []string{tenB}); err != nil {
+			t.Fatal(err)
+		}
+		if v, err := e.m.Connect(ctx, h, req); err != nil || v.GitHub == nil || v.GitHub.Via != "app" {
+			t.Fatalf("%+v %v", v, err)
+		}
+	})
+}
+
 func TestSwitchingASpaceToTheApp(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)

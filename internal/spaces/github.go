@@ -44,7 +44,7 @@ func (m *Manager) githubHostAllowed(gh *github.Service) error {
 
 // resolveGitHub reads the address of a space's repository and decides how it
 // syncs: the address is stored in https form on the server's GitHub.
-func (m *Manager) resolveGitHub(ctx context.Context, req ConnectRequest) (gitstore.Remote, *github.Cred, error) {
+func (m *Manager) resolveGitHub(ctx context.Context, tenantID string, req ConnectRequest) (gitstore.Remote, *github.Cred, error) {
 	gh, err := m.needGitHub()
 	if err != nil {
 		return gitstore.Remote{}, nil, err
@@ -59,7 +59,7 @@ func (m *Manager) resolveGitHub(ctx context.Context, req ConnectRequest) (gitsto
 	if err := m.githubHostAllowed(gh); err != nil {
 		return gitstore.Remote{}, nil, err
 	}
-	cred, repo, err := gh.ResolveExisting(ctx, req.UserID, owner, name, req.Via)
+	cred, repo, err := gh.ResolveExistingIn(ctx, tenantID, req.UserID, owner, name, req.Via)
 	if err != nil {
 		return gitstore.Remote{}, nil, err
 	}
@@ -162,7 +162,7 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 			return Info{}, err
 		}
 	} else {
-		if cred, repo, err = gh.ResolveExisting(ctx, userID, g.Owner, g.Name, ""); err != nil {
+		if cred, repo, err = gh.ResolveExistingIn(ctx, tenantID, userID, g.Owner, g.Name, ""); err != nil {
 			return Info{}, err
 		}
 	}

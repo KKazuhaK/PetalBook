@@ -263,11 +263,13 @@ export function useSetTenancy() {
   })
 }
 // Every tenant, the default one first; there are at most 1,000, so the pages are followed to the end.
-export function useTenants(enabled = true) {
+// `fresh` asks again on mounting even when the list is cached: a dialog that offers tenants to pick must not miss a new one.
+export function useTenants(enabled = true, fresh = false) {
   return useQuery({
     queryKey: keys.tenants,
     enabled,
     staleTime: 15_000,
+    refetchOnMount: fresh ? 'always' : true,
     queryFn: async ({ signal }) => {
       const out: Tenant[] = []
       let cursor = ''

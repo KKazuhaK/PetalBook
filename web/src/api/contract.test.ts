@@ -1773,6 +1773,11 @@ function suite(target: Target) {
         // Newest first, and only the person's own.
         expect(list[0].repoId).toBe(second.json.repo.id)
         expect((await call(other.browser, 'GET', '/api/github')).json.leftovers).toEqual([])
+        // A connection that is refused (a branch name that cannot be used) leaves the reminder.
+        const sp = await ownedSpace(m, 'Refused')
+        const refused = await call(m.browser, 'PUT', `/api/spaces/${sp.id}/remote`, { url: `https://github.com/kazuhahub/left2-${run}.git`, branch: 'bad branch', credential: { type: 'github', via: 'user' } })
+        expect([refused.status, codeOf(refused)]).toEqual([400, 'invalid'])
+        expect((await call(m.browser, 'GET', '/api/github')).json.leftovers).toHaveLength(2)
         // A space connecting to the repository (here by create: false) answers its reminder.
         expect((await call(m.browser, 'POST', '/api/spaces', body(`left-${run}`, false))).status).toBe(201)
         expect((await call(m.browser, 'GET', '/api/github')).json.leftovers.map((l: any) => l.repoId)).toEqual([second.json.repo.id])

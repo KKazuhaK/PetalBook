@@ -70,27 +70,30 @@ func GetRemote(ctx context.Context, q Q, spaceID string) (*Remote, error) {
 	return scanRemote(q.QueryRow(ctx, `SELECT `+remoteCols+` FROM remotes WHERE space_id = ?`, spaceID))
 }
 
-// PutRemote inserts or replaces a remote row. When the space follows a GitHub
-// repository, the reminders of that repository as an empty leftover are cleared.
+// PutRemote inserts or replaces a remote row. When the space is connected with
+// a github credential, the reminders of its repository as an empty leftover are
+// cleared, in the same transaction.
 func PutRemote(ctx context.Context, q Q, r Remote) error {
-	var sync int64
-	if !r.LastSync.IsZero() {
-		sync = ms(r.LastSync)
-	}
-	_, err := q.Exec(ctx, `INSERT INTO remotes(`+remoteCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-		ON CONFLICT (space_id) DO UPDATE SET url = excluded.url, branch = excluded.branch, cred_type = excluded.cred_type,
-		username = excluded.username, token_enc = excluded.token_enc, privkey_enc = excluded.privkey_enc, pubkey = excluded.pubkey,
-		last_good = excluded.last_good, state = excluded.state, error_kind = excluded.error_kind, last_error = excluded.last_error,
-		remote_tip = excluded.remote_tip, last_sync = excluded.last_sync, updated = excluded.updated,
-		gh_via = excluded.gh_via, gh_installation_id = excluded.gh_installation_id, gh_repo_id = excluded.gh_repo_id, gh_user_id = excluded.gh_user_id`,
-		r.SpaceID, r.URL, r.Branch, r.CredType, r.Username, r.TokenEnc, r.PrivKeyEnc, r.PubKey, r.LastGood,
-		r.State, r.ErrorKind, r.LastError, r.RemoteTip, sync, ms(r.Updated), r.GHVia, r.GHInstallationID, r.GHRepoID, r.GHUserID)
-	if err != nil || r.URL == "" || r.GHRepoID == 0 {
+	return atomically(ctx, q, func(q Q) error {
+		var sync int64
+		if !r.LastSync.IsZero() {
+			sync = ms(r.LastSync)
+		}
+		_, err := q.Exec(ctx, `INSERT INTO remotes(`+remoteCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			ON CONFLICT (space_id) DO UPDATE SET url = excluded.url, branch = excluded.branch, cred_type = excluded.cred_type,
+			username = excluded.username, token_enc = excluded.token_enc, privkey_enc = excluded.privkey_enc, pubkey = excluded.pubkey,
+			last_good = excluded.last_good, state = excluded.state, error_kind = excluded.error_kind, last_error = excluded.last_error,
+			remote_tip = excluded.remote_tip, last_sync = excluded.last_sync, updated = excluded.updated,
+			gh_via = excluded.gh_via, gh_installation_id = excluded.gh_installation_id, gh_repo_id = excluded.gh_repo_id, gh_user_id = excluded.gh_user_id`,
+			r.SpaceID, r.URL, r.Branch, r.CredType, r.Username, r.TokenEnc, r.PrivKeyEnc, r.PubKey, r.LastGood,
+			r.State, r.ErrorKind, r.LastError, r.RemoteTip, sync, ms(r.Updated), r.GHVia, r.GHInstallationID, r.GHRepoID, r.GHUserID)
+		if err != nil || r.URL == "" || r.GHRepoID == 0 {
+			return err
+		}
+		// A space that follows the repository answers every reminder of it.
+		_, err = q.Exec(ctx, `DELETE FROM github_leftovers WHERE repo_id = ?`, r.GHRepoID)
 		return err
-	}
-	// A space that follows the repository answers every reminder of it.
-	_, err = q.Exec(ctx, `DELETE FROM github_leftovers WHERE repo_id = ?`, r.GHRepoID)
-	return err
+	})
 }
 
 // RemoteStatus is what changes while a space follows its remote.
