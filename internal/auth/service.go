@@ -96,6 +96,7 @@ type Service struct {
 	// failures by address, by username and by the pair; the starts of single
 	// sign-on have their own allowance.
 	perMin                     *minuteLimiter
+	auditIP                    *minuteLimiter // auditThrottled: one row per address, reason and minute
 	failIP, failUser, failPair *failTable
 	starts                     *bucketLimiter
 
@@ -179,6 +180,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	s := &Service{
 		cfg: cfg, st: cfg.Store, log: cfg.Logger, now: cfg.Now, hasher: h,
 		perMin:   newMinuteLimiter(maxLimitKeys, cfg.Now),
+		auditIP:  newMinuteLimiter(maxLimitKeys, cfg.Now),
 		failIP:   newFailTable(maxLimitKeys, cfg.Now),
 		failUser: newFailTable(maxLimitKeys, cfg.Now),
 		failPair: newFailTable(maxLimitKeys, cfg.Now),

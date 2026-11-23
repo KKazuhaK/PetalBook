@@ -286,3 +286,76 @@ func TestLoginOrderAndAudit(t *testing.T) {
 		}
 	})
 }
+
+// reasons counts the login_failed rows by reason.
+func failedReasons(t *testing.T, admin *client) map[string]int {
+	t.Helper()
+	out := map[string]int{}
+	for _, r := range admin.audit(t, "login_failed") {
+		d := r["detail"].(map[string]any)
+		out[d["method"].(string)+":"+d["reason"].(string)]++
+	}
+	return out
+}
+
+// Refusals anyone can make up cost a row of the audit log at most once a
+// minute per address: a wrong captcha, and an attempt from a locked address.
+// A passkey ceremony that never existed costs none.
+func TestMadeUpFailuresDoNotFloodTheAuditLog(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		admin.putSecurity(t, map[string]any{
+			"captcha": map[string]any{"contexts": map[string]any{"login": map[string]any{"on": true, "when": "always"}}},
+			"limits":  map[string]any{"perMinute": 100},
+		})
+		c := a.newClient("203.0.113.100")
+		for range 5 {
+			c.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw, "captcha": map[string]any{"id": "made-up", "answer": "1"}}).want(t, 400, "captcha_failed")
+		}
+		if n := failedReasons(t, admin)["password:captcha_failed"]; n != 1 {
+			t.Fatalf("%d captcha rows from one address in a minute", n)
+		}
+		a.newClient("203.0.113.101").do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 400, "captcha_failed")
+		a.clock.Advance(time.Minute)
+		c.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 400, "captcha_failed")
+		if n := failedReasons(t, admin)["password:captcha_failed"]; n != 3 {
+			t.Fatalf("%d captcha rows, want one per address and minute", n)
+		}
+
+		// Passkey sign-ins: a ceremony nobody began is not written down.
+		for range 3 {
+			c.do("POST", "/api/auth/passkey/finish?ceremony=made-up", map[string]any{"id": "x", "rawId": "eA", "type": "public-key", "response": map[string]any{}}).want(t, 401, "")
+		}
+		if n := failedReasons(t, admin)["passkey:passkey_failed"]; n != 0 {
+			t.Fatalf("%d rows for made-up ceremonies", n)
+		}
+		// One that was begun and failed is.
+		begin := c.do("POST", "/api/auth/passkey/begin", map[string]any{}).want(t, 200, "")
+		c.do("POST", "/api/auth/passkey/finish?ceremony="+begin.body["ceremony"].(string), map[string]any{"id": "x", "rawId": "eA", "type": "public-key", "response": map[string]any{}}).want(t, 401, "")
+		if n := failedReasons(t, admin)["passkey:passkey_failed"]; n != 1 {
+			t.Fatalf("%d rows for a failed ceremony", n)
+		}
+
+		// A locked address: each refusal is login_failed rate_limited, once a minute.
+		admin.putSecurity(t, map[string]any{
+			"captcha": map[string]any{"contexts": map[string]any{"login": map[string]any{"on": false}}},
+			"limits":  map[string]any{"maxFailures": 2, "windowMinutes": 5},
+			"lockout": map[string]any{"enabled": true, "minutes": 30, "scope": "ip"},
+		})
+		l := a.newClient("203.0.113.102")
+		l.do("POST", "/api/login", bad("kazuha")).want(t, 401, "")
+		l.do("POST", "/api/login", bad("kazuha")).want(t, 429, "rate_limited")
+		for range 4 {
+			l.do("POST", "/api/login", good("kazuha")).want(t, 429, "rate_limited")
+		}
+		if n := failedReasons(t, admin)["password:rate_limited"]; n != 1 {
+			t.Fatalf("%d rate_limited rows from a locked address in a minute", n)
+		}
+		a.clock.Advance(time.Minute)
+		l.do("POST", "/api/login", good("kazuha")).want(t, 429, "rate_limited")
+		if n := failedReasons(t, admin)["password:rate_limited"]; n != 2 {
+			t.Fatalf("%d rate_limited rows after a minute", n)
+		}
+	})
+}

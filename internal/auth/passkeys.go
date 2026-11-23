@@ -352,6 +352,11 @@ func (s *Service) PasskeyFinish(ctx context.Context, ceremony, ip string, r *htt
 		if errors.Is(err, errClone) {
 			return nil, "", fail("passkey_failed", nil)
 		}
+		// A ceremony that was never begun (or is spent) is not written down:
+		// anyone can send one, and the log is not for them to fill.
+		if errors.Is(err, passkey.ErrSessionNotFound) {
+			return nil, "", errPasskeyFailed()
+		}
 		var db error
 		if !errors.Is(err, passkey.ErrSessionNotFound) && !errors.Is(err, passkey.ErrCredentialNotFound) && !isWebAuthnError(err) {
 			db = err

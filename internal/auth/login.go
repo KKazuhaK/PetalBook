@@ -38,6 +38,15 @@ func (s *Service) gateIP(st *secState, ip string) error {
 
 func (s *Service) refundIP(ip string) { s.failIP.refund("ip:" + ip) }
 
+// auditThrottled writes a refusal that anyone can make up (a wrong captcha, an
+// attempt from a locked address) at most once a minute per address (an IPv6
+// /64, see ClientAddr) and reason, so the log cannot be flooded with them.
+func (s *Service) auditThrottled(ev AuditEvent, reason string) {
+	if _, ok, _ := s.auditIP.take(reason+"|"+ev.IP, 1); ok {
+		s.Audit(ev)
+	}
+}
+
 // wrongToken is what a wrong setup or invite token costs: the reservation of
 // the address stays.
 func pairKey(ip, ukey string) string { return "p:" + ip + "|" + ukey }
@@ -68,10 +77,12 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 	}
 	st := s.sec(ctx)
 	if err := s.checkCaptcha(ctx, st, CtxLogin, p.Username, ip, p.Captcha); err != nil {
-		s.Audit(AuditEvent{Kind: "login_failed", Username: p.Username, IP: ip, Detail: map[string]any{"method": "password", "reason": "captcha_failed"}})
+		s.auditThrottled(AuditEvent{Kind: "login_failed", Username: p.Username, IP: ip, Detail: map[string]any{"method": "password", "reason": "captcha_failed"}}, "captcha_failed")
 		return nil, err
 	}
 	if err := s.gateIP(st, ip); err != nil {
+		// The address is at its cap or locked (scope ip).
+		s.auditThrottled(AuditEvent{Kind: "login_failed", Username: p.Username, IP: ip, Detail: map[string]any{"method": "password", "reason": "rate_limited"}}, "rate_limited")
 		return nil, err
 	}
 	reserved := true
