@@ -19,7 +19,7 @@ import { SelectionBar } from '@/components/files/SelectionBar'
 import { childFolders, itemKey, type FileItem } from '@/lib/folders'
 import { loadView, saveView, viewKey, type ListViewMode } from '@/lib/listView'
 import { folderTypeName } from '@/lib/pageTypes'
-import { DEFAULT_STATE, groupFieldsOf, loadViewId, pickView, sameState, saveViewId, SORT_WORDS, stateOfView, viewAtMark, viewIdKey, type ViewState } from '@/lib/savedViews'
+import { DEFAULT_STATE, groupFieldsOf, loadViewId, pickView, sameState, saveViewId, SORT_WORDS, snapshotOf, stateOfView, followSnapshot, isHandMark, viewIdKey, type ViewSnapshot, type ViewState } from '@/lib/savedViews'
 import { applyClick, emptySelection, prune, type Selection } from '@/lib/selection'
 import { t } from '@/i18n'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
@@ -155,9 +155,20 @@ function Listing({ source }: { source: ListSource }) {
   const saved = useMemo(() => views.data?.views ?? [], [views.data])
   const idKey = viewIdKey(spaceId ?? '', source.kind, source.kind === 'folder' ? source.folder : source.kind === 'tag' ? source.tag : '')
   const [remembered, setRemembered] = useState(() => loadViewId(idKey))
-  const active = scope ? pickView(saved, remembered) : null
-  const base: ViewState = active ? stateOfView(active) : { ...DEFAULT_STATE, layout: chosen }
+  // The view shown, when it is one written by hand ("@n"), as it was read: where it is once the list changes is found by
+  // its name and what it saves, never by its place (another person may delete, move or add views).
+  const [snap, setSnap] = useState<ViewSnapshot | null>(null)
+  // Where the person's own write put the view shown (the answer lists the views in the order sent, so this is exact where
+  // the name and settings are not enough, for two views alike). It waits until the views of the answer are in the cache.
+  const [hint, setHint] = useState<{ from: string; to: string } | null>(null)
+  const [lostNotice, setLostNotice] = useState<{ name: string } | null>(null)
   const [edits, setEdits] = useState<Edits>({ id: '', patch: {} })
+  const follow = scope && snap && views.data ? followSnapshot(saved, snap) : null
+  const gone = (follow?.gone ?? false) || (hint !== null && snap !== null && hint.from === snap.id && saved.some((v) => v.id === hint.to))
+  const hinted = hint && snap && hint.from === snap.id ? (saved.find((v) => v.id === hint.to) ?? null) : null
+  const moved = hinted ?? follow?.to ?? null
+  const active = scope ? (gone ? (moved ?? saved[0] ?? null) : pickView(saved, remembered)) : null
+  const base: ViewState = active ? stateOfView(active) : { ...DEFAULT_STATE, layout: chosen }
   const patch = edits.id === (active?.id ?? '') ? edits.patch : {}
   const sortParam = params.get('sort')
   const urlSort = sortParam !== null && (SORTS.includes(sortParam as SortKey) || (scope !== null && SORT_WORDS.test(sortParam))) ? sortParam : null
@@ -202,9 +213,28 @@ function Listing({ source }: { source: ListSource }) {
     setEdits((e) => (e.id === from ? { ...e, id: to } : e))
   }
 
-  // The view shown was "@n" and another person's write (seen by a refetch or by a refused save) has named it: the
-  // remembered id, the stored one and the working copy follow it, rather than the first tab being shown.
-  if (active && remembered !== active.id && viewAtMark(saved, remembered)?.id === active.id) remap(remembered, active.id)
+  // The view shown was "@n" and the list changed under it (a write of the person, another person's write seen by a
+  // refetch, or a refused save): the one view with its name and settings is the same view, and the remembered id, the
+  // stored one and the working copy follow it. With none or several there is no telling, so the working copy is
+  // dropped, the person is told, and the first view is shown.
+  if (snap && gone) {
+    if (moved) {
+      remap(snap.id, moved.id)
+      setHint(null)
+      setSnap(isHandMark(moved.id) ? snapshotOf(moved) : null)
+    } else {
+      setRemembered('')
+      saveViewId(idKey, '')
+      if (edits.id === snap.id && Object.keys(edits.patch).length > 0) setLostNotice({ name: snap.name })
+      setEdits({ id: '', patch: {} })
+      setSnap(null)
+    }
+  } else if (active && isHandMark(active.id)) {
+    if (snap?.id !== active.id) setSnap(snapshotOf(active))
+  } else if (snap) setSnap(null)
+  useEffect(() => {
+    if (lostNotice) toast.error(t.views.lost(lostNotice.name))
+  }, [lostNotice])
 
   // What the layouts need: the table and the board a folder with a type (the board a single-choice field of it), a tag's
   // board a field a view named, reading any folder or tag. While the types are on their way the choice is kept.
@@ -388,7 +418,7 @@ function Listing({ source }: { source: ListSource }) {
               write={write && views.data !== undefined}
               onPick={pick}
               onSaved={select}
-              onRemap={remap}
+              onRemap={(from, to) => setHint({ from, to })}
               onRevert={clearEdits}
             />
           )}

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PageType, SavedView } from '../api/types.ts'
-import { boardColumns, cardFieldsOf, cardMovable, columnDroppable, columnFilter, MAX_COLUMNS, DEFAULT_STATE, freshName, groupFieldsOf, loadViewId, moveView, pickView, sameState, viewAtMark, saveViewId, stateOfView, viewIdKey, withState } from './savedViews.ts'
+import { boardColumns, cardFieldsOf, cardMovable, columnDroppable, columnFilter, MAX_COLUMNS, DEFAULT_STATE, freshName, groupFieldsOf, loadViewId, moveView, pickView, sameState, followSnapshot, snapshotOf, viewAtMark, saveViewId, stateOfView, viewIdKey, withState } from './savedViews.ts'
 
 const view = (id: string, extra: Partial<SavedView> = {}): SavedView => ({ id, name: id, layout: 'list', sort: '', group: '', filter: [], hidden: [], ...extra })
 
@@ -62,6 +62,26 @@ describe('the tabs', () => {
     expect(viewAtMark(views, '@2')?.id).toBe('c')
     expect(viewAtMark(views, 'b')).toBeNull()
     expect(viewAtMark(views, '@3')).toBeNull()
+  })
+})
+
+describe('finding a hand-written view again by what it was', () => {
+  const v = (id: string, name: string, layout = 'list') => ({ ...view(id), name, layout }) as ReturnType<typeof view>
+  it('is not gone while its id still has its name and settings', () => {
+    const snap = snapshotOf(v('@1', '乙'))
+    expect(followSnapshot([v('@0', '甲'), v('@1', '乙')], snap)).toEqual({ gone: false, to: null })
+  })
+  it('finds the one view that has its name and settings under another id, wherever it is', () => {
+    const snap = snapshotOf(v('@1', '乙'))
+    expect(followSnapshot([v('x', '乙'), v('y', '丙')], snap).to?.id).toBe('x')
+    expect(followSnapshot([v('y', '丙'), v('z', '甲'), v('x', '乙')], snap).to?.id).toBe('x')
+  })
+  it('is lost when the name or the settings differ, or when two views have them', () => {
+    const snap = snapshotOf(v('@1', '乙'))
+    expect(followSnapshot([v('x', '乙乙'), v('y', '丙')], snap)).toEqual({ gone: true, to: null })
+    expect(followSnapshot([v('x', '乙', 'cards')], snap)).toEqual({ gone: true, to: null })
+    expect(followSnapshot([v('x', '乙'), v('y', '乙')], snap)).toEqual({ gone: true, to: null })
+    expect(followSnapshot([v('@1', '丙'), v('y', '甲')], snap)).toEqual({ gone: true, to: null })
   })
 })
 

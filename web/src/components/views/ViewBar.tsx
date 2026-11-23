@@ -9,7 +9,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/common'
-import { cutBytes, freshName, MAX_NAME_BYTES, MAX_VIEWS, moveView, nameBytes, withState, type ViewState } from '@/lib/savedViews'
+import { cutBytes, freshName, MAX_NAME_BYTES, MAX_VIEWS, isHandMark, moveView, nameBytes, withState, type ViewState } from '@/lib/savedViews'
 import { t } from '@/i18n'
 
 // The tabs above the listing of a folder or a tag: its saved views, one of them shown. What is done to the list of
@@ -32,13 +32,16 @@ interface Props {
   // The working copy was written (or the view it belonged to is gone): nothing is left of it.
   onSaved: (id: string) => void
   // A view written by hand has the id "@n" until a write gives it a real one: the view shown (and what was changed in
-  // it) goes on under the new id.
+  // it) goes on under the new id. Said before the views of the answer are in place.
   onRemap: (from: string, to: string) => void
   onRevert: () => void
 }
 
 export function ViewBar({ scope, views, rev, active, working, modified, write, onPick, onSaved, onRemap, onRevert }: Props) {
-  const save = useSaveViews(scope)
+  // What the write in flight has to do with the view shown, when the answer comes: set by `run`, from the view as it was
+  // when the write began.
+  const answer = useRef<((list: SavedView[]) => void) | null>(null)
+  const save = useSaveViews(scope, (list) => answer.current?.(list.views))
   const [dialog, setDialog] = useState<null | { kind: 'create' } | { kind: 'rename'; view: SavedView }>(null)
   const [removing, setRemoving] = useState<SavedView | null>(null)
   const drag = useRef<string | null>(null)
@@ -51,15 +54,21 @@ export function ViewBar({ scope, views, rev, active, working, modified, write, o
   const run = async (next: Draft[]): Promise<SavedView[] | null> => {
     try {
       const input: PutViewsInput = { baseRev: rev, views: next }
-      const list = (await save.mutateAsync(input)).views
-      // Every write gives the "@n" views a new id, the one shown too: find it again by its place in what was sent.
-      const at = active && active.id.startsWith('@') ? next.findIndex((v) => v.id === active.id) : -1
-      if (active && at >= 0 && list[at] && list[at].id !== active.id) {
-        onRemap(active.id, list[at].id)
-        movedTo.current = list[at].id
+      // Every write gives the "@n" views a new id, the one shown too. The answer lists the views in the order sent, so
+      // the one shown is the one at its place in what was sent; the name it was sent with is checked all the same, and if it is not the
+      // same view the page finds it again by its name and settings.
+      const shown = active && isHandMark(active.id) ? active : null
+      const at = shown ? next.findIndex((v) => v.id === shown.id) : -1
+      answer.current = (got) => {
+        if (shown && at >= 0 && got[at] && got[at].name === next[at].name && got[at].id !== shown.id) {
+          onRemap(shown.id, got[at].id)
+          movedTo.current = got[at].id
+        }
       }
+      const list = (await save.mutateAsync(input)).views
       return list
     } catch (e) {
+      answer.current = null
       if (e instanceof ApiError && e.code === 'conflict') toast.error(t.views.conflict)
       else toast.error(t.views.failed(e instanceof Error ? e.message : ''))
       return null

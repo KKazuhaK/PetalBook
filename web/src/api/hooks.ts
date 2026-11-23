@@ -732,11 +732,17 @@ export function putViewList(qc: QueryClient, space: string, scope: ViewScope, li
 
 // Replaces the whole list. The error of a stale `baseRev` carries the views as they are, which are what the cache
 // holds from then on; the caller says so to the person.
-export function useSaveViews(scope: ViewScope) {
+// `written` is called with the answer before the cache takes it, so what follows the views (the view shown, its working
+// copy) is moved in the same step as the tabs.
+export function useSaveViews(scope: ViewScope, written?: (list: ViewList) => void) {
   const qc = useQueryClient()
   const space = useSpaceId()
   return useMutation({
-    mutationFn: (input: PutViewsInput) => spaceApi(space).putViews(scope, input),
+    mutationFn: async (input: PutViewsInput) => {
+      const list = await spaceApi(space).putViews(scope, input)
+      written?.(list)
+      return list
+    },
     onSuccess: (list) => putViewList(qc, space, scope, list),
     onError: (e) => {
       const current = e instanceof ApiError && e.code === 'conflict' ? (e.current as unknown as ViewList | undefined) : undefined

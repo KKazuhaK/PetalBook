@@ -376,6 +376,7 @@ export const en: Messages = {
     cancel: 'Cancel',
     saved: 'View saved',
     conflict: 'Someone just changed the views here, so they were read again. Your change was not saved; you can make it again on the new views.',
+    lost: (name: string) => `Your unsaved changes to "${name}" could not be kept, because someone else changed the views.`,
     failed: (message: string) => `The view was not saved: ${message}`,
     tooMany: (n: number) => `At most ${n} views`,
     readOnly: 'You can only look: you can switch views and change the sort and filters for yourself, but not save them.',

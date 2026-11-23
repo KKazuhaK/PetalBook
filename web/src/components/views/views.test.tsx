@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
+import { toast } from 'sonner'
 import { byLabel, click, installDomShims, locationText, mount, settle, shareSpace, type, type Mounted } from '@/testing/harness'
 import { listShell, putViews, seedWork, sender, TASK, viewsOf } from '@/testing/listKit'
 import type { MockServer } from '@/api/mock/server'
@@ -522,6 +523,159 @@ describe('a view written by hand', () => {
     })
     await settle(() => tabs().length === 3, 'the refetched tabs')
     await stillInTheSecond()
+  })
+})
+
+// Views written by hand are "@n" by place; another person's write may delete, reorder, insert or rename views before
+// this person's own write names them. The changes of a person never land on another view: they follow the view by its
+// name and settings, or they are dropped with a message.
+describe('a view written by hand while another person changes the list', () => {
+  beforeEach(() => {
+    toast.dismiss()
+  })
+  const three = (_send: unknown, _ids: unknown, server: MockServer) => server.seedHandWrittenViews('Work', [{ name: '甲', layout: 'list' }, { name: '乙', layout: 'list' }, { name: '丙', layout: 'list' }])
+  const list = (...names: string[]) => names.map((name) => ({ name, layout: 'list' }))
+  const other = (views: Record<string, unknown>[]) => putViews(sender(m!.server), FOLDER, views)
+  const refetch = async () => {
+    await act(async () => {
+      await m!.qc.invalidateQueries({ queryKey: keys.views('default', FOLDER) })
+    })
+  }
+  const editSecond = async (scene = three) => {
+    await open('/s/default/f/Work', scene)
+    await settle(() => tabs().length >= 2, 'the tabs')
+    await click(tabs()[1])
+    await click(button(t.view.cards))
+    expect(modifiedMark()).not.toBeNull()
+  }
+  const layouts = async () => Object.fromEntries((await saved()).views.map((v) => [v.name, v.layout]))
+  const lostMessage = (name: string) => document.body.textContent!.includes(t.views.lost(name))
+  const staysOnSecond = async () => {
+    await settle(() => !(localStorage.getItem(viewIdKey('default', 'folder', 'Work')) ?? '').startsWith('@'), 'the remembered id follows')
+    expect(selected()).toBe('乙')
+    expect(modifiedMark()).not.toBeNull()
+    expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('true')
+    expect(document.body.textContent!.includes(t.views.lost('乙'))).toBe(false)
+    await click(textButton(t.views.save))
+    await settle(() => modifiedMark() === null && puts().length === 1, 'saved')
+    expect(await layouts()).toMatchObject({ 乙: 'cards' })
+    expect((await saved()).views.filter((v) => v.layout === 'cards')).toHaveLength(1)
+  }
+  const dropped = async (names: string) => {
+    await settle(() => tabNames().join() === names && lostMessage('乙'), 'the message')
+    expect(modifiedMark()).toBeNull()
+    expect(selected()).toBe(tabNames()[0])
+    expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('false')
+    expect(localStorage.getItem(viewIdKey('default', 'folder', 'Work'))).toBeNull()
+    expect(puts()).toHaveLength(0)
+    expect((await saved()).views.every((v) => v.layout === 'list')).toBe(true)
+  }
+
+  it('follows the view when the first view is deleted', async () => {
+    await editSecond()
+    other(list('乙', '丙'))
+    await refetch()
+    await settle(() => tabNames().join() === '乙,丙', 'the new tabs')
+    await staysOnSecond()
+    expect((await saved()).views.map((v) => v.name)).toEqual(['乙', '丙'])
+  })
+
+  it('follows the view when the order is swapped', async () => {
+    await editSecond()
+    other(list('乙', '甲', '丙'))
+    await refetch()
+    await settle(() => tabNames().join() === '乙,甲,丙', 'the new tabs')
+    await staysOnSecond()
+    expect((await saved()).views.map((v) => v.name)).toEqual(['乙', '甲', '丙'])
+  })
+
+  it('follows the view when another is inserted before it', async () => {
+    await editSecond()
+    other(list('新', '甲', '乙', '丙'))
+    await refetch()
+    await settle(() => tabs().length === 4, 'the new tabs')
+    await staysOnSecond()
+    expect((await saved()).views.map((v) => v.name)).toEqual(['新', '甲', '乙', '丙'])
+  })
+
+  it('drops the changes, and says so, when the other person renamed the view', async () => {
+    await editSecond()
+    other(list('甲', '乙乙', '丙'))
+    await refetch()
+    await dropped('甲,乙乙,丙')
+    expect(selected()).toBe('甲')
+  })
+
+  it('drops the changes when two views have the same name and settings, rather than guess', async () => {
+    await editSecond((_s, _i, server) => server.seedHandWrittenViews('Work', [{ name: '甲', layout: 'list' }, { name: '乙', layout: 'list' }]))
+    other(list('丙', '乙', '乙'))
+    await refetch()
+    await dropped('丙,乙,乙')
+    expect(selected()).toBe('丙')
+  })
+
+  it('drops the changes when the other person deleted the view', async () => {
+    await editSecond()
+    other(list('甲', '丙'))
+    await refetch()
+    await dropped('甲,丙')
+  })
+
+  it('on a refused save: follows the view, and the next save lands on it', async () => {
+    await editSecond()
+    other(list('乙', '丙'))
+    await click(textButton(t.views.save))
+    await settle(() => document.body.textContent!.includes(t.views.conflict) && tabNames().join() === '乙,丙', 'the conflict')
+    expect(puts()).toHaveLength(1)
+    expect((await saved()).views.every((v) => v.layout === 'list')).toBe(true)
+    await staysOnSecondAfterRefusal()
+  })
+  // The refused attempt was one PUT; the next one is the second.
+  const staysOnSecondAfterRefusal = async () => {
+    await settle(() => !(localStorage.getItem(viewIdKey('default', 'folder', 'Work')) ?? '').startsWith('@'), 'the remembered id follows')
+    expect(selected()).toBe('乙')
+    expect(modifiedMark()).not.toBeNull()
+    await click(textButton(t.views.save))
+    await settle(() => modifiedMark() === null && puts().length === 2, 'saved')
+    expect(await layouts()).toEqual({ 乙: 'cards', 丙: 'list' })
+  }
+
+  it('on a refused save: drops the changes and says so when the view was renamed, and saves nothing on another view', async () => {
+    await editSecond()
+    other(list('甲', '乙乙', '丙'))
+    await click(textButton(t.views.save))
+    await settle(() => tabNames().join() === '甲,乙乙,丙' && lostMessage('乙'), 'the message')
+    expect(modifiedMark()).toBeNull()
+    expect(selected()).toBe('甲')
+    expect(puts()).toHaveLength(1)
+    expect((await saved()).views.every((v) => v.layout === 'list')).toBe(true)
+  })
+
+  it('keeps the view the person moved: the write answers in the order sent, even for views with the same name', async () => {
+    await editSecond((_s, _i, server) => server.seedHandWrittenViews('Work', [{ name: '乙', layout: 'list' }, { name: '乙', layout: 'list' }, { name: '丙', layout: 'list' }]))
+    await click(button(t.views.moveLeft))
+    await settle(() => puts().length === 1 && tabs().map((e) => e.getAttribute('aria-selected')).join() === 'true,false,false', 'moved to the first place')
+    expect(modifiedMark()).not.toBeNull()
+    expect(document.body.textContent!.includes(t.views.lost('乙'))).toBe(false)
+    expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('true')
+    await click(textButton(t.views.save))
+    await settle(() => modifiedMark() === null && puts().length === 2, 'saved')
+    expect((await saved()).views.map((v) => v.layout)).toEqual(['cards', 'list', 'list'])
+  })
+
+  it('keeps the changes of a view that the person renamed', async () => {
+    await editSecond()
+    await click(button(t.views.rename))
+    const input = document.querySelector<HTMLInputElement>(`input[aria-label="${t.views.name}"]`)!
+    await type(input, '乙二')
+    await act(async () => input.form!.requestSubmit())
+    await settle(() => puts().length === 1 && tabNames().includes('乙二'), 'renamed')
+    expect(selected()).toBe('乙二')
+    expect(modifiedMark()).not.toBeNull()
+    expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('true')
+    await click(textButton(t.views.save))
+    await settle(() => modifiedMark() === null && puts().length === 2, 'saved')
+    expect(await layouts()).toEqual({ 甲: 'list', 乙二: 'cards', 丙: 'list' })
   })
 })
 
