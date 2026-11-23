@@ -125,6 +125,8 @@ type Index struct {
 	path string
 	root string
 	wmu  sync.Mutex
+	// synced: a sync has been committed since the index was opened (under wmu).
+	synced bool
 
 	// head is where the change feed is (see feed.go), moved by every commit.
 	head atomic.Pointer[headState]
@@ -229,6 +231,10 @@ func open(dbPath, root string) (*Index, error) {
 		x.wdb.Close()
 		return nil, err
 	}
+	if err := x.markOpen(); err != nil {
+		x.wdb.Close()
+		return nil, err
+	}
 	if err := x.loadHead(); err != nil {
 		x.wdb.Close()
 		return nil, err
@@ -294,7 +300,50 @@ func (x *Index) init() error {
 	return tx.Commit()
 }
 
-// Close closes the database.
+// markOpen starts a new epoch of the change feed when the index was not closed
+// since it was last opened, and notes that it is open now. The commits are not
+// synced one by one (synchronous NORMAL): a power cut can take the last of them
+// and leave the epoch, and the sequence numbers they handed out would then be
+// handed out again. The note is synced before any other write, so an index
+// whose last commits can have been lost always says so.
+func (x *Index) markOpen() error {
+	ctx := context.Background()
+	conn, err := x.wdb.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `PRAGMA synchronous = FULL`); err != nil {
+		return err
+	}
+	defer conn.ExecContext(ctx, `PRAGMA synchronous = NORMAL`)
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var clean string
+	if err := tx.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = 'clean'`).Scan(&clean); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if clean != "1" {
+		w := x.newWriter(ctx, tx)
+		defer w.close()
+		if err := w.newEpoch(); err != nil {
+			return err
+		}
+		if err := w.flushFeed(); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO meta(key, value) VALUES ('clean', '0')`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Close closes the database. The last thing written is the note that it was
+// closed (see markOpen); no write can come after it.
 func (x *Index) Close() error {
 	var err error
 	x.closing.Do(func() {
@@ -302,6 +351,10 @@ func (x *Index) Close() error {
 		<-x.ckptDone
 		x.aux.Close()
 		x.db.Close()
+		x.wmu.Lock()
+		defer x.wmu.Unlock()
+		// When this fails the next open starts a new epoch, which is safe.
+		x.wdb.Exec(`INSERT OR REPLACE INTO meta(key, value) VALUES ('clean', '1')`)
 		err = x.wdb.Close()
 	})
 	return err

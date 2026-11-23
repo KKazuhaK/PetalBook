@@ -2,7 +2,9 @@ package index
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -472,5 +474,98 @@ func TestFeedGoneCountThatDriftedNeverFailsAWrite(t *testing.T) {
 	}
 	if gone() > 3 {
 		t.Fatalf("%d records after the sync", gone())
+	}
+}
+
+// copyFiles copies the database files as they are on disk now, as a power cut
+// would leave them (the shared-memory file is rebuilt from the log).
+func copyFiles(t *testing.T, from, to string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"", "-wal"} {
+		b, err := os.ReadFile(from + suffix)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(to+suffix, b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// An index that was not closed (a crash, a power cut that may have taken its
+// last commits) starts a new epoch when it is opened again: a sequence number
+// that was handed out before can be handed out again, so no old cursor may be
+// answered.
+func TestFeedNewEpochAfterAnUncleanShutdown(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a", "index.db")
+	x, err := Open(p, "/space")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer x.Close()
+	putPage(t, x, "a.md", pageID(1), "A")
+	head := x.Head()
+	// The files as the machine stopped, with the index still open.
+	crashed := filepath.Join(dir, "b", "index.db")
+	copyFiles(t, p, crashed)
+	y, err := Open(crashed, "/space")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if y.Head() == head || strings.SplitN(y.Head(), "-", 2)[0] == strings.SplitN(head, "-", 2)[0] {
+		t.Fatalf("same epoch after an unclean shutdown: %s, was %s", y.Head(), head)
+	}
+	if _, err := y.Changes(head, 10); err != ErrExpired {
+		t.Fatalf("an old cursor after an unclean shutdown: %v", err)
+	}
+	// Closed cleanly, it keeps its head.
+	after := y.Head()
+	y.Close()
+	y, err = Open(crashed, "/space")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer y.Close()
+	if y.Head() != after {
+		t.Fatalf("head %s after a clean close, was %s", y.Head(), after)
+	}
+}
+
+// The first sync after an open that finds files that differ from the index
+// starts a new epoch: what the index held may have been rolled back.
+func TestFeedNewEpochWhenTheStartupSyncFindsChanges(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "state", "index.db")
+	x, err := Open(p, "/space")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := newMem()
+	src.put("a.md", pageFile(pageID(1), "A", "", nil, "", "x"))
+	syncAll(t, x, src, false)
+	head := x.Head()
+	x.Close()
+	src.put("b.md", pageFile(pageID(2), "B", "", nil, "", "y"))
+	x, err = Open(p, "/space")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer x.Close()
+	syncAll(t, x, src, false)
+	if _, err := x.Changes(head, 10); err != ErrExpired {
+		t.Fatalf("an old cursor after a startup sync that found changes: %v", err)
+	}
+	// A later sync that finds changes is an ordinary write.
+	cur := x.Head()
+	src.put("c.md", pageFile(pageID(3), "C", "", nil, "", "z"))
+	syncAll(t, x, src, false)
+	if items, _ := changesAll(t, x, cur, 10); len(items) != 1 {
+		t.Fatalf("%+v", items)
 	}
 }

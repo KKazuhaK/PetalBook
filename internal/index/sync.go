@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"path"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -105,15 +106,22 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 			removed = append(removed, p)
 		}
 	}
+	gone := len(removed)
 	for _, p := range recheck {
 		if _, ok := disk[p]; !ok {
 			removed = append(removed, p)
 		}
 	}
 	var todo []FileInfo
+	// differs: the files are not what the index recorded (files looked at again on
+	// every sync do not count).
+	differs := gone > 0
 	for p, f := range disk {
 		if k, ok := have[p]; !ok || k.size != f.Size || k.mtimeNs != f.MtimeNs {
 			todo = append(todo, f)
+			if !differs && (ok || !slices.Contains(recheck, p)) {
+				differs = true
+			}
 		}
 	}
 	// A fixed order makes the outcome independent of map order, e.g. which of
@@ -134,6 +142,12 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 	st := Stats{}
 	if full {
 		if err := w.clearAll(); err != nil {
+			return Stats{}, err
+		}
+	} else if !x.synced && differs {
+		// The first sync after an open found files the index did not record: its
+		// last commits may have been lost, with the sequence numbers they handed out.
+		if err := w.newEpoch(); err != nil {
 			return Stats{}, err
 		}
 	}
@@ -209,6 +223,7 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 	if err := x.commitW(tx, w); err != nil {
 		return Stats{}, err
 	}
+	x.synced = true
 	if len(todo) > 1000 {
 		// After a big load, compact the full-text index and shrink the WAL.
 		x.wdb.ExecContext(ctx, `INSERT INTO fts(fts) VALUES ('optimize')`)
