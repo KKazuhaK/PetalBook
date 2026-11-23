@@ -450,21 +450,46 @@ func seedUsage(ctx context.Context, q Q) error {
 
 // RecountUsage puts the usage table right from the rows it summarises: the
 // first owner of every space, the spaces, bytes and pages of every person and
-// every tenant, and the people of every tenant. It is the daily pass (and the
-// last step of the migration). Each table is read once, grouped, and only the
-// rows that differ are written, by the difference, so a change made between the
-// read and the write is kept. It reports how many rows it had to correct.
+// every tenant, and the people of every tenant. It is the daily pass (the
+// migration makes the rows with seedUsage). Each table is read once, grouped, and only the
+// rows that differ are written. It reports how many rows it had to correct.
+//
+// The reads must see one state of the tables, the one the usage rows describe.
+// On SQLite the transaction holds the only write connection, so they do. On
+// PostgreSQL each statement has its own snapshot, so a write committed between
+// two reads would be undone (or a new row deleted as stale); the recount
+// therefore takes the usage table in SHARE ROW EXCLUSIVE mode before it reads.
+// Every change of what is counted writes its usage rows in its own transaction,
+// so once the lock is held no such change is half done, and none can commit
+// until the recount does: they wait, as they wait for the write connection on
+// SQLite. The lock is the only one the recount takes before its own writes to
+// usage, so it cannot be part of a cycle with the writers' order (space, tenant,
+// people, then usage): the first step (whom each space is counted for), which
+// locks space rows, is its own transaction before it.
 func (s *Store) RecountUsage(ctx context.Context) (corrected int, err error) {
+	var moved int
 	err = s.Tx(ctx, func(q Q) error {
+		moved, err = settleUsageUsers(ctx, q)
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+	err = s.Tx(ctx, func(q Q) error {
+		if s.dialect == Postgres {
+			if _, err := q.Exec(ctx, `LOCK TABLE usage IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+				return err
+			}
+		}
 		corrected, err = recountUsage(ctx, q)
 		return err
 	})
-	return
+	return moved + corrected, err
 }
 
-func recountUsage(ctx context.Context, q Q) (int, error) {
-	n := 0
-	// Whom each space is counted for.
+// settleUsageUsers sets whom each space is counted for to its first owner, where
+// it says someone else. The usage rows are put right by recountUsage after it.
+func settleUsageUsers(ctx context.Context, q Q) (int, error) {
 	res, err := q.Exec(ctx, `UPDATE spaces SET usage_user = COALESCE((SELECT m.user_id FROM space_members m WHERE m.space_id = spaces.id AND m.role = 'owner'
 			ORDER BY m.created, m.user_id LIMIT 1), '')
 		WHERE usage_user <> COALESCE((SELECT m.user_id FROM space_members m WHERE m.space_id = spaces.id AND m.role = 'owner'
@@ -472,9 +497,12 @@ func recountUsage(ctx context.Context, q Q) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if c, _ := res.RowsAffected(); c > 0 {
-		n += int(c)
-	}
+	c, err := res.RowsAffected()
+	return int(c), err
+}
+
+func recountUsage(ctx context.Context, q Q) (int, error) {
+	n := 0
 	type sum struct{ spaces, bytes, pages, people int64 }
 	want := map[string]*sum{} // by usageDelta key
 	tenantOf := map[string]string{}

@@ -417,3 +417,95 @@ func TestDeletingATenantDeletesItsUsage(t *testing.T) {
 		consistent(t, st)
 	})
 }
+
+// A recount that runs while people make, measure and hand over spaces, and new
+// people arrive, must not undo what they wrote: when they are all done, a recount
+// from scratch finds nothing to correct. On PostgreSQL the recount's reads are
+// several statements, so without a lock a write committed between them would be
+// counted twice or undone; the test repeats the race to make that likely.
+func TestARecountDuringWritesLeavesTheCountersExact(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		now := time.Now()
+		for round := 0; round < 8; round++ {
+			const writers, perWriter = 8, 6
+			var wg sync.WaitGroup
+			errs := make(chan error, 1000)
+			stop := make(chan struct{})
+			recounts := make(chan int, 1)
+			go func() {
+				n := 0
+				defer func() { recounts <- n }()
+				for {
+					select {
+					case <-stop:
+						return
+					default:
+					}
+					if _, err := st.RecountUsage(ctx); err != nil {
+						errs <- err
+						return
+					}
+					n++
+				}
+			}()
+			for w := 0; w < writers; w++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					owner := fmt.Sprintf("R%d-%d", round, w)
+					next := owner + "b"
+					for _, id := range []string{owner, next} {
+						if err := store.InsertUser(ctx, st.Q(), store.User{ID: id, Username: id, Name: id, Role: "member", Created: now, TenantID: tenA}); err != nil {
+							errs <- err
+							return
+						}
+					}
+					for i := 0; i < perWriter; i++ {
+						sid := fmt.Sprintf("%s-S%d", owner, i)
+						if err := st.Tx(ctx, func(q store.Q) error {
+							if err := store.InsertSpace(ctx, q, tenA, sid, sid, "", "", now); err != nil {
+								return err
+							}
+							return store.AddMember(ctx, q, sid, owner, "owner", now)
+						}); err != nil {
+							errs <- err
+							return
+						}
+						if _, err := st.RecordMeasurement(ctx, sid, store.Measurement{Bytes: int64(100 * (i + 1)), Pages: int64(i + 1), HavePages: true, At: now}); err != nil {
+							errs <- err
+							return
+						}
+						if i%3 == 1 {
+							if err := st.Tx(ctx, func(q store.Q) error {
+								if err := store.LockSpace(ctx, q, sid); err != nil {
+									return err
+								}
+								_, err := store.TransferOwnership(ctx, q, sid, next, now)
+								return err
+							}); err != nil {
+								errs <- err
+							}
+						}
+					}
+				}()
+			}
+			wg.Wait()
+			close(stop)
+			n := <-recounts
+			close(errs)
+			for err := range errs {
+				t.Fatal(err)
+			}
+			if n == 0 {
+				t.Fatal("no recount ran during the writes")
+			}
+			c, err := st.RecountUsage(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c != 0 {
+				t.Fatalf("round %d: after %d recounts during the writes, a recount from scratch corrected %d rows", round, n, c)
+			}
+		}
+	})
+}
