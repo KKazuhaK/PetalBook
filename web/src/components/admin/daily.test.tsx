@@ -184,6 +184,18 @@ describe('the administrators\' daily text page', () => {
       expect(calls().find((c) => c.url === '/api/admin/daily/apis/quotes')!.body.headers).toEqual([{ name: 'X-Api-Key', value: 'new-one' }])
     })
 
+    it('pressing Change and saving without typing keeps the stored value: only the name is sent', async () => {
+      await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', { ...GOOD, headers: [{ name: 'X-Api-Key', value: 'old' }] }))
+      await settle(() => api('quotes') !== null, 'the interface')
+      await click(api('quotes')!.querySelector('button'))
+      await settle(() => byText('button', d.headerChange) !== null, 'change')
+      await click(byText('button', d.headerChange))
+      expect(document.querySelector<HTMLInputElement>('input[aria-label="' + d.headerValue + '"]')!.placeholder).toBe(d.headerKeep)
+      await click(formSave())
+      await settle(() => calls().some((c) => c.url === '/api/admin/daily/apis/quotes'), 'saved')
+      expect(calls().find((c) => c.url === '/api/admin/daily/apis/quotes')!.body.headers).toEqual([{ name: 'X-Api-Key' }])
+    })
+
     it('"Try it" shows the raw answer and the fields the paths found, for the form as it is', async () => {
       await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', GOOD))
       await click(await (async () => { await settle(() => api('quotes') !== null, 'the interface'); return api('quotes')!.querySelector('button') })())

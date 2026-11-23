@@ -281,11 +281,11 @@ type Form = Omit<DailyApi, 'headers' | 'note'> & { headers: HeaderRow[] }
 
 const blankForm = (): Form => ({ id: '', name: '', lang: '', url: 'https://', headers: [], text: '', source: '', author: '', link: '', refresh: 'daily', refreshMinutes: 60, skipNew: true, rps: 1, enabled: true })
 const formOf = (a: DailyApi): Form => ({ ...a, headers: (a.headers ?? []).map((h) => ({ name: h.name, set: h.set === true, value: '', changing: false })) })
-// What is sent: a header whose value was not touched has only its name, which keeps the saved value.
+// What is sent: a header whose value was not typed has only its name, which keeps the saved value.
 const payloadOf = (f: Form): Omit<DailyApi, 'note'> => ({
   ...f,
   refreshMinutes: f.refresh === 'minutes' ? f.refreshMinutes : 0,
-  headers: f.headers.filter((h) => h.name.trim() !== '').map((h) => (h.set && !h.changing ? { name: h.name.trim() } : { name: h.name.trim(), value: h.value })),
+  headers: f.headers.filter((h) => h.name.trim() !== '').map((h) => (h.set && (!h.changing || h.value === '') ? { name: h.name.trim() } : { name: h.name.trim(), value: h.value })),
 })
 
 function ApisSection({ data }: { data: AdminDaily }) {
@@ -403,7 +403,7 @@ function ApiEditor({ initial, existing, languages, onClose }: { initial: Form; e
                 </Button>
               </>
             ) : (
-              <Input aria-label={d.headerValue} type="password" placeholder={d.headerValue} value={h.value} onChange={(e) => setHeader(i, { value: e.target.value })} className="w-60" autoComplete="off" />
+              <Input aria-label={d.headerValue} type="password" placeholder={h.set ? d.headerKeep : d.headerValue} value={h.value} onChange={(e) => setHeader(i, { value: e.target.value })} className="w-60" autoComplete="off" />
             )}
             <Button type="button" variant="ghost" size="icon-sm" aria-label={d.headerRemove} title={d.headerRemove} onClick={() => setF((x) => ({ ...x, headers: x.headers.filter((_, j) => j !== i) }))}>
               <Trash2 />

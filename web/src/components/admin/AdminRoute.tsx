@@ -54,7 +54,7 @@ export default function AdminRoute() {
               })}
             </ul>
           </nav>
-          <Link to={id ? spaceUrls(id).recent() : '/'} className="ml-auto flex items-center gap-1 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
+          <Link to={id ? spaceUrls(id).home() : '/'} className="ml-auto flex items-center gap-1 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
             <ArrowLeft className="size-3.5" />
             {ta.back}
           </Link>

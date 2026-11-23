@@ -7,8 +7,8 @@ import { t } from '@/i18n'
 
 // What the favourites of the space (the sidebar's group and the home page's block) share: the list, moving one
 // (by dragging or by the keyboard) and clearing one that is gone.
-export function useFavoriteList() {
-  const list = useFavorites()
+export function useFavoriteList(enabled = true) {
+  const list = useFavorites(enabled)
   const order = useOrderFavorites()
   const remove = useRemoveFavorite()
   const items: Favorite[] = useMemo(() => list.data?.items ?? [], [list.data])

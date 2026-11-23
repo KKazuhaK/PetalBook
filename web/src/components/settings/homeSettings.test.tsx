@@ -187,6 +187,35 @@ describe('the Home section, accounts mode', () => {
     expect(writes()[0]).toEqual({ url: '/daily/prefs', body: { inherit: true, apis: [] } })
   })
 
+  it('a source and the switch saved together: if the second request fails, the choices, the tab and an error stay', async () => {
+    await asOwner((admin, space) => {
+      admin('PUT', '/api/admin/daily', { default: { kind: 'list' } })
+      admin('POST', `/api/spaces/${space}/folders`, { path: '文案' })
+    })
+    await click(tab('en'))
+    await click(mode(th.settings.modes.own))
+    await settle(() => select(th.settings.valueLabel.folder) !== undefined, 'the folder box')
+    await type(select(th.settings.valueLabel.folder), '文案')
+    await click(dialog()!.querySelector<HTMLElement>('[role="switch"]'))
+    const real = globalThis.fetch
+    globalThis.fetch = async (input, init) => {
+      if (init?.method === 'PUT' && String(input instanceof Request ? input.url : input).includes('/daily/prefs')) {
+        return new Response(JSON.stringify({ error: { code: 'internal', message: 'boom' } }), { status: 500, headers: { 'content-type': 'application/json' } })
+      }
+      return real(input, init)
+    }
+    try {
+      await click(save())
+      await settle(() => dialog()!.textContent!.includes(th.settings.failed), 'the error')
+    } finally {
+      globalThis.fetch = real
+    }
+    expect(writes().map((w) => w.url)).toEqual(['/daily/settings'])
+    expect(tab('en').getAttribute('aria-selected')).toBe('true')
+    expect((mode(th.settings.modes.own) as HTMLInputElement).checked).toBe(true)
+    expect(dialog()!.querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('false')
+  })
+
   it('the server\'s default is the last resort, a switch the owner may turn off', async () => {
     await asOwner((admin) => admin('PUT', '/api/admin/daily', { default: { kind: 'list' } }))
     expect(dialog()!.textContent).toContain(th.settings.inheritHelp)

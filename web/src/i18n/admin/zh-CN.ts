@@ -144,6 +144,7 @@ export const adminZhCN = {
     headerValue: '值',
     headerSet: '已保存',
     headerChange: '更换',
+    headerKeep: '留空则保留已保存的值',
     headerAdd: '添加请求头',
     headerRemove: '去掉这个请求头',
     fieldText: '正文路径',

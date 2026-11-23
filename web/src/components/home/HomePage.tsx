@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { ArrowRight, Inbox as InboxIcon } from 'lucide-react'
 import { useActiveSpace, useSession, useSpacePermissions, useTopPages, useTree, useUrls } from '@/api/hooks'
@@ -6,7 +6,7 @@ import type { PageSummary } from '@/api/types'
 import { ErrorState } from '@/components/common'
 import { TopBar } from '@/components/layout/TopBar'
 import { Skeleton } from '@/components/ui/skeleton'
-import { getVariety, localDay, noteVisit, visitKey } from '@/lib/homePrefs'
+import { getVariety, visitKey, wroteKey } from '@/lib/homePrefs'
 import { relativeTime } from '@/lib/time'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { t } from '@/i18n'
@@ -68,7 +68,6 @@ export default function HomePage() {
   const [now] = useState(() => new Date())
   const user = session?.user
   const accounts = session?.mode === 'accounts'
-  const [visit] = useState(() => noteVisit(visitKey(user?.id, space ?? ''), localDay(now)))
   const [variety] = useState(getVariety)
 
   const recent = useTopPages(RECENT, CONTINUE_COUNT)
@@ -77,11 +76,7 @@ export default function HomePage() {
   const inboxPages = useTopPages({ folder: inbox }, INBOX_COUNT, inbox !== '')
   const inboxCount = tree.data?.folders.find((f) => f.path === inbox)?.pages ?? 0
 
-  const updated = useMemo(() => (recent.data?.items ?? []).map((p) => new Date(p.updated)).filter((d) => !Number.isNaN(d.getTime())), [recent.data])
-
   if (!current || !read) return null
-  // The greeting waits for the pages it goes by (a page just written changes it), a moment at most.
-  const ready = !recent.isPending
 
   return (
     <>
@@ -91,7 +86,7 @@ export default function HomePage() {
       </TopBar>
       <div className="mx-auto grid w-full max-w-3xl flex-1 content-start gap-8 px-4 py-8 md:px-8 md:py-10" data-slot="home">
         <header className="grid gap-4">
-          {ready ? <Greeting now={now} name={accounts ? user?.name : undefined} registered={accounts ? user?.created : undefined} firstToday={visit.first} absentDays={visit.absentDays} recentUpdated={updated} variety={variety} /> : <Skeleton className="h-9 w-2/3" />}
+          <Greeting now={now} name={accounts ? user?.name : undefined} registered={accounts ? user?.created : undefined} visitKey={visitKey(user?.id, space ?? '')} wroteKey={wroteKey(user?.id, space ?? '')} variety={variety} />
           <DailyBlock now={now} />
         </header>
 

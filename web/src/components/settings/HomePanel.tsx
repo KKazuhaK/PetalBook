@@ -32,8 +32,9 @@ export default function HomePanel({ canManage }: { canManage: boolean }) {
     tags: (tags.data?.tags ?? []).map((x) => x.tag),
     types: (types.data?.types ?? []).filter((x) => !x.error).map((x) => ({ name: x.name, title: x.title })),
   }
-  // Starts again from what the server has after every save, so the page shows what is stored.
-  return <Editor key={JSON.stringify([settings.data.daily, prefs.data])} saved={settings.data.daily} prefs={prefs.data} choices={choices} />
+  // Made once, from what the server had on first load: a save goes in two requests, and starting the editor again
+  // between them would lose the choices not yet saved, the tab and the error of the second.
+  return <Editor saved={settings.data.daily} prefs={prefs.data} choices={choices} />
 }
 
 function Editor({ saved, prefs, choices }: { saved: DailySettings | null; prefs: DailyPrefs | null; choices: SourceChoices }) {

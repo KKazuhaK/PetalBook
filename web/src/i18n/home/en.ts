@@ -22,7 +22,7 @@ export const homeEn: HomeMessages = {
       justWrote: ['Just finished a page, {name}? Take a breather', 'Nicely done, {name}. Have a look back'],
       manyToday: ['{n} pages already today, {name}. Diligent', '{n} pages, {name}. You are on a roll'],
     },
-    anniversary: ['{name}, it is {years} years since you came here', 'Happy {years}-year anniversary, {name}'],
+    anniversary: ['Happy anniversary, {name}: this is year {years} for you here', 'Happy {years}-year anniversary, {name}'],
     festivals: {
       newYear: ['Happy New Year, {name}', 'New Year, {name}. The year starts on this page'],
       valentine: ['Happy Valentine\'s Day, {name}', 'It is Valentine\'s Day, {name}. Be kind to yourself too'],

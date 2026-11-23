@@ -23,7 +23,7 @@ export const homeZhCN = {
       justWrote: ['刚写完一篇呀，{name}，歇一歇', '写得不错，{name}，回来看看'],
       manyToday: ['今天已经写了 {n} 篇了，{name}，真勤快', '{n} 篇了，{name}，今天状态很好'],
     },
-    anniversary: ['{name}，今天是你来到这里的第 {years} 年', '{years} 周年快乐，{name}'],
+    anniversary: ['{name}，你来到这里满 {years} 年了', '{years} 周年快乐，{name}'],
     festivals: {
       newYear: ['新年快乐，{name}', '元旦好，{name}，新的一年从这一页开始'],
       valentine: ['情人节快乐，{name}', '今天是情人节，{name}，也别忘了好好对自己'],

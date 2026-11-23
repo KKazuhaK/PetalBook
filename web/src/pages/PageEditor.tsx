@@ -36,6 +36,7 @@ import { SaveIndicator } from '@/components/editor/SaveIndicator'
 import { TagsEditor } from '@/components/editor/TagsEditor'
 import { useMaxUpload } from '@/components/editor/useMaxUpload'
 import { failureText } from '@/lib/failure'
+import { noteWrote, wroteKey } from '@/lib/homePrefs'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { getUploadOriginal } from '@/lib/uploadPrefs'
 import { t } from '@/i18n'
@@ -292,7 +293,10 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
         readDraft: live.readStorable,
         // The lists show the file, so they change only when the file does. This
         // also runs when the commit lands after the editor was left.
-        onCommitted: () => void invalidateListings(qc, space),
+        onCommitted: () => {
+          noteWrote(wroteKey(userId, space))
+          void invalidateListings(qc, space)
+        },
         onConflict: (info) => {
           setConflict(info)
           setConflictOpen(true)

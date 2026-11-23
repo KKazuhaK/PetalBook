@@ -74,7 +74,7 @@ export interface GreetingInput {
   firstToday: boolean
   // Days since the visit before today's first (0 when there was none).
   absentDays: number
-  // When the pages the person works on were last saved, newest first.
+  // When the person last saved a page themselves (not anyone else in the space), newest first.
   recentUpdated: Date[]
   // False: only the plain good morning, good afternoon, good evening.
   variety: boolean
@@ -89,7 +89,7 @@ export function fill(sentence: string, vars: Record<string, string | number | un
   let out = sentence
   for (const [k, v] of Object.entries(vars)) {
     if (v === undefined || v === '') out = out.replace(new RegExp(`^\\{${k}\\}\\s*[，,、]\\s*`), '').replace(new RegExp(`\\s*[，,、]?\\s*\\{${k}\\}`, 'g'), '')
-    else out = out.replaceAll(`{${k}}`, String(v))
+    else out = out.replaceAll(`{${k}}`, () => String(v))
   }
   return out
 }

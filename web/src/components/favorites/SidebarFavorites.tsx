@@ -29,7 +29,7 @@ export function SidebarFavorites() {
   const [open, setOpen] = useState(loadOpen)
   const urls = useUrls()
   const { pathname, search } = useLocation()
-  const { items, moveBy, clear, dragProps, keyProps } = useFavoriteList()
+  const { items, moveBy, clear, dragProps, keyProps } = useFavoriteList(allowed)
   if (!allowed || items.length === 0) return null
   const toggle = () =>
     setOpen((o) => {

@@ -29,7 +29,7 @@ export function SpaceDisabled({ space }: { space: SpaceInfo }) {
             </Link>
           )}
           {other && (
-            <Link to={spaceUrls(other.id).recent()} className="text-sm text-brand underline underline-offset-4">
+            <Link to={spaceUrls(other.id).home()} className="text-sm text-brand underline underline-offset-4">
               {t.spaces.disabledBack}
             </Link>
           )}

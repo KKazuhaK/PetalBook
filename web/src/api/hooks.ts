@@ -4,6 +4,7 @@ import { useMemo } from 'react'
 import { useMatch } from 'react-router'
 import { keepPreviousData, useInfiniteQuery, useIsMutating, useMutation, useQuery, useQueryClient, type Query, type QueryClient } from '@tanstack/react-query'
 import { waitForSaves } from '@/editor/saveController'
+import { noteWrote, wroteKey } from '@/lib/homePrefs'
 import { spaceUrls } from '@/lib/urls'
 import { api, ApiError, spaceApi } from './client'
 import { parseTagColor } from '../lib/tagColors.ts'
@@ -361,9 +362,14 @@ export const invalidateFavorites = (qc: QueryClient, space: string) => qc.invali
 export function useCreatePage() {
   const qc = useQueryClient()
   const space = useSpaceId()
+  const user = useSession().data?.user?.id
   return useMutation({
     mutationFn: (input: CreatePageInput) => spaceApi(space).createPage(input),
-    onSuccess: () => invalidateListings(qc, space),
+    onSuccess: () => {
+      // The greeting's "just wrote" goes by what this browser saved, not by the space's recent pages.
+      noteWrote(wroteKey(user, space))
+      return invalidateListings(qc, space)
+    },
   })
 }
 

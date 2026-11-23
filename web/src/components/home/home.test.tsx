@@ -5,6 +5,7 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import { th } from '@/i18n/home'
 import { adminRequests, click, installDomShims, locationText, mount, settle, shareSpace, type, type Mounted } from '@/testing/harness'
 import { sender, type Send } from '@/testing/listKit'
+import { noteWrote, wroteKey } from '@/lib/homePrefs'
 import HomePage from './HomePage'
 
 beforeAll(installDomShims)
@@ -306,7 +307,7 @@ describe('the greeting', () => {
     m = await opens()
     await ready()
     expect(greeting()).toMatch(/55 天|好久不见|你回来啦/)
-    expect(JSON.parse(localStorage.getItem('pb.home.visit.local.default')!)).toEqual({ date: '2026-11-25', first: true, absentDays: 55 })
+    expect(JSON.parse(localStorage.getItem('pb.home.visit.local.default')!)).toMatchObject({ date: '2026-11-25', first: true, absentDays: 55, seen: true })
     const first = greeting()
     await m.unmount()
     fixed(2026, 11, 25, 16)
@@ -319,10 +320,19 @@ describe('the greeting', () => {
     fixed(2026, 11, 25, 15)
     m = await opens()
     await m.unmount()
-    // The mock's clock is the fixed one: the page was written just now.
-    m = await mount(routes, { entries: (s) => { sender(s)('POST', '/pages', { folder: '', body: '刚写的\n' }); return ['/s/default'] }, server: { mode: 'single', empty: true } })
+    // This browser saved a page a few minutes ago.
+    noteWrote(wroteKey(undefined, 'default'), new Date(Date.now() - 5 * 60_000))
+    m = await opens()
     await ready()
     expect(greeting()).toMatch(/刚写完|写得不错/)
+  })
+
+  it('does not take another person\'s save for the person\'s own', async () => {
+    fixed(2026, 11, 25, 15)
+    // Pages written just now by someone else in the space; this browser wrote nothing.
+    m = await mount(routes, { entries: (s) => { for (let i = 0; i < 4; i++) sender(s)('POST', '/pages', { folder: '', body: `别人写的${i}\n` }); return ['/s/default'] }, server: { mode: 'single', empty: true } })
+    await ready()
+    expect(greeting()).not.toMatch(/刚写完|写得不错|今天写了/)
   })
 
   it('the plain greeting when variety is off', async () => {

@@ -39,33 +39,78 @@ export function daysBetween(from: string, to: string): number {
 export interface Visit {
   // The day this was worked out for.
   date: string
-  // The first time the home page was opened on that day (it stays true all day, so the greeting does not change
-  // under the person's eyes when they come back to it).
+  // The first time the home page was opened on that day. Only the call that makes the record gets true.
   first: boolean
   // Days since the visit before this one; 0 when there was none or this is not the first of the day.
   absentDays: number
+  // The page has been opened today (stored true from the first call on).
+  seen?: boolean
+  // What the greeting said today, with what it went by, so coming back to the page does not change it.
+  greeting?: { text: string; wrote: number; variety: boolean }
 }
 
 export const visitKey = (user: string | undefined, space: string) => `pb.home.visit.${user ?? 'local'}.${space}`
 
-// Notes that the home page is being opened `today` and says what kind of visit it is. Writing is part of reading:
-// the first call of a day records the day, and every later call that day gives the same answer.
-export function noteVisit(key: string, today: string): Visit {
-  let stored: Visit | null = null
+function readVisit(key: string): Visit | null {
   try {
     const raw = JSON.parse(localStorage.getItem(key) ?? 'null') as Partial<Visit> | null
-    if (raw && typeof raw.date === 'string' && typeof raw.first === 'boolean' && typeof raw.absentDays === 'number') stored = raw as Visit
+    if (raw && typeof raw.date === 'string' && typeof raw.first === 'boolean' && typeof raw.absentDays === 'number') return raw as Visit
   } catch {
-    stored = null
+    // Unreadable: as if there were none.
   }
-  if (stored?.date === today) return stored
-  // A clock that went back is not a long absence.
-  const absentDays = stored ? Math.max(0, daysBetween(stored.date, today)) : 0
-  const visit: Visit = { date: today, first: true, absentDays }
+  return null
+}
+
+function writeVisit(key: string, v: Visit) {
   try {
-    localStorage.setItem(key, JSON.stringify(visit))
+    localStorage.setItem(key, JSON.stringify(v))
   } catch {
     // Not kept: the next visit looks like the first of its day, which is only a greeting.
   }
+}
+
+// Notes that the home page is being opened `today` and says what kind of visit it is. Writing is part of reading:
+// the first call of a day records the day and is the only one that is "the first visit"; every later call that
+// day says it is not, and carries what the greeting said.
+export function noteVisit(key: string, today: string): Visit {
+  const stored = readVisit(key)
+  if (stored?.date === today) return { ...stored, first: stored.seen === true ? false : stored.first }
+  // A clock that went back is not a long absence.
+  const absentDays = stored ? Math.max(0, daysBetween(stored.date, today)) : 0
+  const visit: Visit = { date: today, first: true, absentDays, seen: true }
+  writeVisit(key, visit)
   return visit
+}
+
+// Keeps what the greeting said today (only if the visit of `today` is the one on record).
+export function rememberGreeting(key: string, today: string, greeting: NonNullable<Visit['greeting']>) {
+  const stored = readVisit(key)
+  if (stored?.date === today) writeVisit(key, { ...stored, greeting })
+}
+
+// --- the person's own writing ---------------------------------------------------------
+
+// When this browser saved a page, per person and space (the newest few): the greeting's "just wrote" goes by
+// these and not by the space's recent pages, which in a shared space are other people's too.
+export const wroteKey = (user: string | undefined, space: string) => `pb.home.wrote.${user ?? 'local'}.${space}`
+const WROTE_KEEP = 20
+
+export function noteWrote(key: string, at: Date = new Date()) {
+  try {
+    const list = loadWrote(key)
+    localStorage.setItem(key, JSON.stringify([at, ...list].slice(0, WROTE_KEEP).map((d) => d.getTime())))
+  } catch {
+    // Not kept: the greeting just does not notice this one.
+  }
+}
+
+// Newest first.
+export function loadWrote(key: string): Date[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(key) ?? '[]') as unknown
+    if (!Array.isArray(raw)) return []
+    return raw.filter((n): n is number => typeof n === 'number').map((n) => new Date(n)).filter((d) => !Number.isNaN(d.getTime())).sort((a, b) => b.getTime() - a.getTime())
+  } catch {
+    return []
+  }
 }

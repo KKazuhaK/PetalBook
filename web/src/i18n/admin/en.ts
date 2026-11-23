@@ -143,6 +143,7 @@ export const adminEn: AdminMessages = {
     headerValue: 'Value',
     headerSet: 'Saved',
     headerChange: 'Change',
+    headerKeep: 'Leave empty to keep the saved value',
     headerAdd: 'Add a header',
     headerRemove: 'Remove this header',
     fieldText: 'Path of the text',

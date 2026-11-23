@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { bucketOf, dayNumber, fill, FESTIVALS, greetingFor, hasCalendar, namesOn, TERMS, type GreetingInput } from './greeting'
 import { CALENDAR_YEARS } from './calendarTable'
-import { daysBetween, getVariety, localDay, noteVisit, setVariety, visitKey } from './homePrefs'
+import { daysBetween, getVariety, loadWrote, localDay, noteVisit, noteWrote, setVariety, visitKey, wroteKey } from './homePrefs'
 import { homeEn } from '@/i18n/home/en'
 import { homeZhCN } from '@/i18n/home/zh-CN'
 
@@ -170,18 +170,36 @@ describe('rotation', () => {
   })
 })
 
+describe('filling in a sentence', () => {
+  it('takes a name with dollar signs as it is', () => {
+    expect(fill('你好，{name}', { name: "$& $' $1 $$" })).toBe("你好，$& $' $1 $$")
+  })
+  it('the anniversary says full years, also the first', () => {
+    for (const sentence of zh.anniversary) expect(fill(sentence, { name: '小花', years: 1 })).not.toMatch(/第 1 年/)
+    expect(zh.anniversary).toContain('{name}，你来到这里满 {years} 年了')
+  })
+})
+
 describe('what is remembered of visits', () => {
   beforeEach(() => localStorage.clear())
-  it('the first call of a day is the first visit and every later one the same, all day', () => {
+  it('only the first call of a day is the first visit; the tenth is not', () => {
     const key = visitKey('u1', 's1')
-    const first = noteVisit(key, '2026-11-24')
-    expect(first).toEqual({ date: '2026-11-24', first: true, absentDays: 0 })
-    expect(noteVisit(key, '2026-11-24')).toEqual(first)
+    expect(noteVisit(key, '2026-11-24')).toEqual({ date: '2026-11-24', first: true, absentDays: 0, seen: true })
+    for (let i = 0; i < 9; i++) expect(noteVisit(key, '2026-11-24')).toMatchObject({ first: false, seen: true })
+    expect(noteVisit(key, '2026-11-25').first).toBe(true)
+  })
+  it('keeps what this browser wrote, newest first, per person and space', () => {
+    const key = wroteKey('u1', 's1')
+    noteWrote(key, new Date(2026, 10, 24, 9))
+    noteWrote(key, new Date(2026, 10, 24, 10))
+    expect(loadWrote(key).map((d) => d.getHours())).toEqual([10, 9])
+    expect(loadWrote(wroteKey('u2', 's1'))).toEqual([])
+    expect(loadWrote(wroteKey('u1', 's2'))).toEqual([])
   })
   it('counts the days since the visit before', () => {
     const key = visitKey('u1', 's1')
     noteVisit(key, '2026-11-01')
-    expect(noteVisit(key, '2026-11-24')).toEqual({ date: '2026-11-24', first: true, absentDays: 23 })
+    expect(noteVisit(key, '2026-11-24')).toEqual({ date: '2026-11-24', first: true, absentDays: 23, seen: true })
     // A clock that went back is no absence.
     expect(noteVisit(key, '2026-11-10').absentDays).toBe(0)
   })
@@ -196,7 +214,7 @@ describe('what is remembered of visits', () => {
       throw new Error('blocked')
     }
     try {
-      expect(noteVisit('k', '2026-11-24')).toEqual({ date: '2026-11-24', first: true, absentDays: 0 })
+      expect(noteVisit('k', '2026-11-24')).toEqual({ date: '2026-11-24', first: true, absentDays: 0, seen: true })
       expect(getVariety()).toBe(true)
     } finally {
       Storage.prototype.getItem = real

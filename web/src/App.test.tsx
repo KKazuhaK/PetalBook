@@ -131,6 +131,21 @@ describe('a space that an administrator switched off', () => {
     expect(entry.textContent).toContain(t.spaces.disabledMark)
   })
 
+  it('choosing a space in the switcher opens its home page', async () => {
+    let other = ''
+    await boot(() => '/', {
+      mode: 'accounts',
+      scene: (server) => {
+        other = (adminRequests(server)('POST', '/api/spaces', { name: '另一个空间' }).body as { id: string }).id
+      },
+    })
+    await settle(() => document.querySelector(`[aria-label^="${t.spaces.switcher}"]`) !== null, 'the switcher')
+    await click(document.querySelector(`[aria-label^="${t.spaces.switcher}"]`))
+    await settle(() => document.querySelectorAll('[role="menuitemradio"]').length > 1, 'the switcher')
+    await click([...document.querySelectorAll('[role="menuitemradio"]')].find((e) => e.textContent?.includes('另一个空间')))
+    await settle(() => window.location.pathname === `/s/${other}/` || window.location.pathname === `/s/${other}`, 'its home page')
+  })
+
   it('an administrator is told where to switch it on again', async () => {
     let space = ''
     await boot(() => `/s/${space}/recent`, {
@@ -156,11 +171,11 @@ describe('an administrator opens a space they are not a member of', () => {
         owner.request('POST', `/api/spaces/${space}/pages`, { meta: { title: '别人写的页面' }, body: 'x\n' })
       },
     })
-    await settle(() => document.querySelector(`a[href="/s/${space}/recent"]`) !== null, 'the table')
-    await click(document.querySelector(`a[href="/s/${space}/recent"]`))
+    await settle(() => document.querySelector(`a[href="/s/${space}/"]`) !== null, 'the table')
+    await click(document.querySelector(`a[href="/s/${space}/"]`))
     await settle(() => text().includes('别人写的页面'), 'the pages')
-    expect(where()).toBe(`/s/${space}/recent`)
-    expect(document.querySelector(`[aria-label="${t.list.newPage}"]`)).not.toBeNull()
+    expect(where()).toBe(`/s/${space}/`)
+    expect(document.querySelector(`[data-slot="home"]`)).not.toBeNull()
   })
 
   it('a member is told it does not exist', async () => {
@@ -239,10 +254,10 @@ describe('what the app knows of a space it is showing', () => {
   it('a space opened from the administration is read as it is now, not as an older search left it', async () => {
     let space = ''
     const server = await boot('/admin/spaces', { mode: 'accounts', scene: (s) => void (space = frankSpace(s).space) })
-    await settle(() => document.querySelector(`a[href="/s/${space}/recent"]`) !== null, 'the table')
+    await settle(() => document.querySelector(`a[href="/s/${space}/"]`) !== null, 'the table')
     // Switched off by someone else; the table on screen does not know.
     adminRequests(server)('POST', `/api/admin/spaces/${space}/disable`)
-    await click(document.querySelector(`a[href="/s/${space}/recent"]`))
+    await click(document.querySelector(`a[href="/s/${space}/"]`))
     await settle(() => text().includes(t.spaces.disabledTitle), 'the notice')
   })
 

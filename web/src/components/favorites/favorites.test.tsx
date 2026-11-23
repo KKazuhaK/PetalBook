@@ -281,7 +281,9 @@ describe('who can have favourites', () => {
       },
     })
     await settle(() => document.querySelector('[data-slot="home"]') !== null, 'home')
-    await settle(() => document.body.textContent!.includes(th.favorites.empty), 'empty')
+    await settle(() => document.querySelector('[aria-busy="true"]') === null, 'loaded')
+    expect(document.body.textContent).not.toContain(th.favorites.empty)
+    expect(m.requests.some((r) => r.url.includes('/favorites'))).toBe(false)
     expect(group()).toBeNull()
     expect(document.querySelector('[data-slot="favorite-star"]')).toBeNull()
     expect(document.querySelector('[role="status"]')).toBeNull()

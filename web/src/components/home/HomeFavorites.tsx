@@ -1,5 +1,5 @@
 import { Link } from 'react-router'
-import { favoriteKey, useUrls } from '@/api/hooks'
+import { favoriteKey, useCanFavorite, useUrls } from '@/api/hooks'
 import type { Favorite } from '@/api/types'
 import { FavoriteActions } from '@/components/favorites/FavoriteActions'
 import { KIND_ICON } from '@/components/favorites/SidebarFavorites'
@@ -11,8 +11,11 @@ import { th } from '@/i18n/home'
 
 // The person's own favourites, in their order (the same list and the same moves as in the sidebar).
 export function HomeFavorites() {
-  const { list, items, moveBy, clear, dragProps, keyProps } = useFavoriteList()
+  const allowed = useCanFavorite()
+  const { list, items, moveBy, clear, dragProps, keyProps } = useFavoriteList(allowed)
   const urls = useUrls()
+  // Not a member: no star anywhere, so no list and no hint about stars.
+  if (!allowed) return null
   if (list.isPending) return <Skeleton className="h-16 w-full" />
   if (items.length === 0) return <p className="text-sm text-muted-foreground">{th.favorites.empty}</p>
   return (
