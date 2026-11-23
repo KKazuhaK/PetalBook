@@ -23,8 +23,12 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/KazuhaHub/authcore/captcha"
+	authsaml "github.com/KazuhaHub/authcore/saml"
+
 	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/perm"
+	"github.com/KKazuhaK/PetalBook/internal/secret"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
@@ -53,8 +57,10 @@ type Config struct {
 	// loopback or testing) unless OIDC is configured.
 	PublicURL      string
 	TrustedProxies []netip.Prefix
-	OIDC           *OIDCConfig
-	Password       PasswordParams // zero: DefaultPasswordParams
+	// OIDC is the provider of the old --oidc-* flags: read once, to make the
+	// provider "sso" of the state database (see importFlags).
+	OIDC     *OIDCConfig
+	Password PasswordParams // zero: DefaultPasswordParams
 	// HashConcurrency is how many password hashes may run at once (default 4).
 	HashConcurrency int
 	SessionIdle     time.Duration
@@ -62,10 +68,17 @@ type Config struct {
 	// CacheTTL bounds how long a cached session or user is trusted without
 	// asking the database again: changes made by another process (the
 	// command-line tool) take effect within it. Default 5 minutes.
-	CacheTTL   time.Duration
-	HTTPClient *http.Client // for the OIDC provider (tests)
-	Logger     *slog.Logger
-	Now        func() time.Time
+	CacheTTL time.Duration
+	// HTTPClient reaches the identity providers, the SAML metadata, GitHub and
+	// the captcha providers; a default client when nil (tests give their own).
+	HTTPClient *http.Client
+	// Secrets seals what is kept in the state database; the space manager's
+	// box when nil.
+	Secrets *secret.Box
+	// CaptchaEndpoint replaces the siteverify address of the third-party captcha (tests).
+	CaptchaEndpoint string
+	Logger          *slog.Logger
+	Now             func() time.Time
 }
 
 // Service is safe for concurrent use.
@@ -81,11 +94,27 @@ type Service struct {
 	setupMu    sync.Mutex
 	setupToken string // in memory only; "" once a user exists
 
-	// Rate limits: failures per client address and per username; calls per
-	// address for endpoints that cannot fail.
-	byIP, byUser *failLimiter
-	calls        *bucketLimiter
-	starts       *bucketLimiter
+	// Limits, all in memory and bounded: requests per address per minute, and
+	// failures by address, by username and by the pair; the starts of single
+	// sign-on have their own allowance.
+	perMin                     *minuteLimiter
+	auditIP                    *minuteLimiter // auditThrottled: one row per address, reason and minute
+	failIP, failUser, failPair *failTable
+	starts                     *bucketLimiter
+
+	// The security settings in force (see security.go), the audit log, the
+	// providers, passkeys and captcha.
+	secPtr       atomic.Pointer[secState]
+	secMu        sync.Mutex
+	audit        *auditLog
+	provs        *providerSet
+	replay       *authsaml.MemoryReplayCache
+	pk           *passkeyState
+	capImg       *captcha.ImageGenerator
+	capStore     *captcha.MemoryStore
+	capTok       atomic.Pointer[tokenChecker]
+	capSecretErr atomic.Bool
+	flagsIgnored atomic.Bool
 
 	// adminMu serialises changes that must keep one enabled administrator.
 	adminMu sync.Mutex
@@ -98,7 +127,6 @@ type Service struct {
 	users    map[string]*cachedUser
 	negative map[string]time.Time
 
-	oidc    *oidcState
 	pending *pendingStore
 }
 
@@ -107,6 +135,7 @@ type cachedSession struct {
 	created   time.Time
 	lastUsed  time.Time
 	persisted time.Time // the last_used the database has
+	held      bool
 	loaded    time.Time
 }
 
@@ -119,6 +148,10 @@ type cachedUser struct {
 type Principal struct {
 	User      store.User
 	SessionID string // hash of the session cookie; "" for the built-in user
+	// SessionCreated is when the session began (the sign-in).
+	SessionCreated time.Time
+	// Held: the session may only register a passkey and sign out.
+	Held bool
 	// Grant is set when the request is made with a credential of narrower
 	// reach than the person (an API token, later an OAuth access token); nil
 	// for a session and for the built-in user.
@@ -201,16 +234,17 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	}
 	s := &Service{
 		cfg: cfg, st: cfg.Store, log: cfg.Logger, now: cfg.Now, hasher: h,
-		byIP:   newFailLimiter(10_000, 10, time.Second, 5*time.Minute, 15*time.Minute, cfg.Now),
-		byUser: newFailLimiter(10_000, 5, 2*time.Second, 5*time.Minute, 15*time.Minute, cfg.Now),
-		// Setup and invite tokens are unguessable, so these calls are only worth
-		// slowing down against abuse, not guessing; a shared address (an office)
-		// must still be able to onboard several people at once.
-		calls:    newBucketLimiter(10_000, 120, 60, cfg.Now),
+		perMin:   newMinuteLimiter(maxLimitKeys, cfg.Now),
+		auditIP:  newMinuteLimiter(maxLimitKeys, cfg.Now),
+		failIP:   newFailTable(maxLimitKeys, cfg.Now),
+		failUser: newFailTable(maxLimitKeys, cfg.Now),
+		failPair: newFailTable(maxLimitKeys, cfg.Now),
 		starts:   newBucketLimiter(10_000, 30, 20, cfg.Now),
+		audit:    newAuditLog(), provs: newProviderSet(), replay: authsaml.NewMemoryReplayCache(authsaml.DefaultReplayCacheCapacity),
 		sessions: map[string]*cachedSession{}, users: map[string]*cachedUser{}, negative: map[string]time.Time{},
 		pending: newPendingStore(cfg.Now),
 	}
+	s.initCaptcha()
 	if cfg.PublicURL != "" {
 		u, err := url.Parse(cfg.PublicURL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
@@ -218,10 +252,15 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		}
 		s.secure = u.Scheme == "https"
 	}
-	if cfg.OIDC != nil {
-		if s.oidc, err = newOIDCState(cfg); err != nil {
-			return nil, err
-		}
+	s.sec(ctx) // reads the settings, and builds what depends on them
+	if err := s.reloadProviders(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.importFlags(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.initPasskeys(ctx); err != nil {
+		return nil, err
 	}
 	exists, err := store.HasUsers(ctx, s.st.Q())
 	if err != nil {
@@ -269,12 +308,13 @@ func (s *Service) markUsersExist() {
 	s.setupMu.Unlock()
 }
 
-// OIDCName is the provider's display name, or "" when none is configured.
-func (s *Service) OIDCName() string {
-	if s.oidc == nil {
-		return ""
+// LegacyOIDCName is the display name of the provider that answers the pre-2.8
+// endpoints, or "" when there is none.
+func (s *Service) LegacyOIDCName() string {
+	if rt := s.provs.legacy(); rt != nil && rt.row.Enabled {
+		return rt.row.Name
 	}
-	return s.oidc.cfg.Name
+	return ""
 }
 
 // ClientAddr is the client address used for rate limits.
@@ -315,7 +355,7 @@ func (s *Service) ClearFlowCookie(base string) *http.Cookie {
 
 // SessionCookie carries a new session token to the browser.
 func (s *Service) SessionCookie(token string) *http.Cookie {
-	return s.newCookie(s.SessionCookieName(), token, int(s.cfg.SessionMax/time.Second))
+	return s.newCookie(s.SessionCookieName(), token, int(s.secPtr.Load().max/time.Second))
 }
 
 // ClearSessionCookie tells the browser to drop its session.
@@ -342,14 +382,6 @@ func ctEqual(a, b string) bool { return subtle.ConstantTimeCompare([]byte(a), []
 
 func retryAfter(d time.Duration) *Error {
 	return &Error{Kind: RateLimited, Msg: "too many attempts; wait a little and try again", RetryAfter: d}
-}
-
-// throttle spends one of the client's calls on an endpoint anyone can reach.
-func (s *Service) throttle(ip string) error {
-	if d, ok := s.calls.take(ip); !ok {
-		return retryAfter(d)
-	}
-	return nil
 }
 
 // newID makes an id for a row; callers retry on a unique violation.
@@ -424,6 +456,8 @@ type CreateParams struct {
 	// account exists, even when two setups run at once. FirstOK is the
 	// command-line form: it also records that an account exists, but never refuses.
 	Setup, FirstOK bool
+	// EmailVerified: the address came from a provider that vouched for it.
+	EmailVerified bool
 	// RetryUsername lets the name get a numeric suffix when it is taken (accounts made from an
 	// identity provider's claims).
 	RetryUsername bool
@@ -486,7 +520,7 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 		return nil, err
 	}
 
-	u := store.User{Username: username, Name: name, Email: email, Role: p.Role, Created: s.now().UTC()}
+	u := store.User{Username: username, Name: name, Email: email, EmailVerified: p.EmailVerified && email != "", Role: p.Role, Created: s.now().UTC()}
 	stg, err := s.cfg.Spaces.Stage("My notes", spaces.IdentityOf(u))
 	if err != nil {
 		return nil, err

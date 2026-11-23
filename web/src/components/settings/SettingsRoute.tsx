@@ -65,15 +65,15 @@ export default function SettingsRoute() {
 
   // An address that names no section, or one this person does not have, goes
   // to the section they would get; the query (a failed sign-in link says why in
-  // `?error=`) and where to return to are kept.
-  // A link that failed comes back to plain `/settings?error=…`: its message is
-  // shown where the linked sign-ins are.
-  // A GitHub connection that failed comes back to plain `/settings?github_error=…`, and is explained on its own section.
+  // `?sso_error=`) and where to return to are kept.
+  // A link that failed comes back to plain `/settings?sso_error=…`: its message is
+  // shown where the linked sign-ins are. A GitHub connection for repos that
+  // failed comes back to `/settings?github_error=…`, explained on its own section.
   const query = new URLSearchParams(location.search)
   const landing =
     requested === undefined && query.has('github_error') && shown.some((s) => s.id === 'github')
       ? 'github'
-      : requested === undefined && query.has('error') && shown.some((s) => s.id === 'security')
+      : requested === undefined && query.has('sso_error') && shown.some((s) => s.id === 'security')
         ? 'security'
         : section
   if (session && spacesReady && requested !== landing) return <Navigate to={{ pathname: settingsPath(landing), search: location.search }} state={location.state} replace />

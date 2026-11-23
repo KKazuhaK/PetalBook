@@ -308,6 +308,10 @@ func (s *server) handle(rt route) http.HandlerFunc {
 				return
 			}
 		}
+		if c.p != nil && c.p.Held && !heldAllowed[rt.method+" "+rt.pattern] {
+			writeError(w, http.StatusForbidden, "passkey_required", "register a passkey to continue")
+			return
+		}
 		if rt.access.kind == kindAdmin && c.p.User.Role != "admin" {
 			writeError(w, http.StatusForbidden, "forbidden", "only an administrator may do that")
 			return

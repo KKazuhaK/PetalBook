@@ -275,6 +275,12 @@ func (s *server) createToken(c *call) {
 			}
 		}
 	}
+	ids := make([]string, len(t.Spaces))
+	for i, sp := range t.Spaces {
+		ids[i] = sp.ID
+	}
+	s.audit(c, auth.AuditEvent{Kind: "token_created", Actor: c.user().ID, User: c.user().ID,
+		Detail: map[string]any{"token": t.ID, "name": t.Name, "access": t.Access, "spaces": ids}})
 	c.w.Header().Set("Location", "/api/account/tokens")
 	writeJSON(c.w, http.StatusCreated, struct {
 		Token  tokenResp `json:"token"`
@@ -317,11 +323,34 @@ func (s *server) revokeToken(c *call, owner string) {
 		writeError(c.w, http.StatusNotFound, "not_found", "no such token")
 		return
 	}
-	if _, err := s.tokens.Revoke(c.r.Context(), id); err != nil {
+	done, err := s.tokens.Revoke(c.r.Context(), id)
+	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
+	if done && rows[0].Revoked.IsZero() { // one row per revocation, not per request
+		s.audit(c, auth.AuditEvent{Kind: "token_revoked", Actor: c.user().ID, User: rows[0].UserID,
+			Detail: map[string]any{"token": id, "name": rows[0].Name, "by": revokedBy(owner)}})
+	}
 	c.w.WriteHeader(http.StatusNoContent)
+}
+
+// revokedBy is the "by" of a revocation's audit row: owner "" is an administrator.
+func revokedBy(owner string) string {
+	if owner == "" {
+		return "admin"
+	}
+	return "user"
+}
+
+// audit records an event in the audit log of the sign-in service, when there
+// is one (not with the built-in user), with the caller's address.
+func (s *server) audit(c *call, ev auth.AuditEvent) {
+	if s.auth == nil {
+		return
+	}
+	ev.IP = s.auth.ClientAddr(c.r)
+	s.auth.Audit(ev)
 }
 
 // --- administration -----------------------------------------------------------

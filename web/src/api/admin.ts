@@ -6,7 +6,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, enc, request } from './client'
 import { keys } from './hooks'
-import type { AdminDaily, AdminGrantList, AdminTokenList, MachineAccess, AdminGitHub, GitHubCursorPage, GitHubInstallation, PutAdminGitHubInput, AdminSpaceList, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User } from './types'
+import type { AdminDaily, AdminSpaceList, AuditList, AuthProvider, Passkey, ProviderInput, SecurityPatch, SecuritySettings, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User, AdminGrantList, AdminTokenList, MachineAccess, AdminGitHub, GitHubCursorPage, GitHubInstallation, PutAdminGitHubInput } from './types'
 
 export const adminApi = {
   // --- users and invites ---
@@ -20,7 +20,10 @@ export const adminApi = {
     const query = q.toString()
     return request<{ users: User[] }>(`/users${query ? `?${query}` : ''}`, { signal })
   },
-  updateUser: (id: string, input: { role?: Role; disabled?: boolean }) => request<{ user: User }>(`/users/${enc(id)}`, { method: 'PATCH', body: input }),
+  updateUser: (id: string, input: { role?: Role; disabled?: boolean; passkeyRequired?: boolean; email?: string; emailVerified?: boolean }) => request<{ user: User }>(`/users/${enc(id)}`, { method: 'PATCH', body: input }),
+  // The passkeys of one person, for an administrator who removes a lost one.
+  userPasskeys: (id: string, signal?: AbortSignal) => request<{ passkeys: Passkey[] }>(`/users/${enc(id)}/passkeys`, { signal }),
+  deleteUserPasskey: (id: string, passkey: string) => request<void>(`/users/${enc(id)}/passkeys/${enc(passkey)}`, { method: 'DELETE' }),
   createInvite: (input: { role?: Role; days?: number } = {}) => request<CreatedInvite>('/invites', { method: 'POST', body: input }),
   invites: (signal?: AbortSignal) => request<{ invites: Invite[] }>('/invites', { signal }),
   revokeInvite: (id: string) => request<void>(`/invites/${enc(id)}`, { method: 'DELETE' }),
@@ -41,6 +44,25 @@ export const adminApi = {
   adminEnableSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/enable`, { method: 'POST' }),
   adminDeleteSpace: (id: string) => request<DeletedSpace>(`/admin/spaces/${enc(id)}`, { method: 'DELETE' }),
   adminStatus: (signal?: AbortSignal) => request<ServerStatus>('/admin/status', { signal }),
+
+  // --- security: settings, sign-in providers and the audit log ---
+  security: (signal?: AbortSignal) => request<SecuritySettings>('/admin/security', { signal }),
+  // Only the blocks and fields that changed; `captcha.secret` is write-only ("" clears it).
+  putSecurity: (patch: SecurityPatch) => request<SecuritySettings>('/admin/security', { method: 'PUT', body: patch }),
+  authProviders: (signal?: AbortSignal) => request<{ providers: AuthProvider[] }>('/admin/auth/providers', { signal }),
+  createAuthProvider: (input: ProviderInput) => request<AuthProvider>('/admin/auth/providers', { method: 'POST', body: input }),
+  patchAuthProvider: (slug: string, input: ProviderInput) => request<AuthProvider>(`/admin/auth/providers/${enc(slug)}`, { method: 'PATCH', body: input }),
+  deleteAuthProvider: (slug: string, force = false) => request<void>(`/admin/auth/providers/${enc(slug)}${force ? '?force=1' : ''}`, { method: 'DELETE' }),
+  refreshAuthProvider: (slug: string) => request<AuthProvider>(`/admin/auth/providers/${enc(slug)}/refresh`, { method: 'POST' }),
+  audit: (params: { kind?: string; user?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.kind) q.set('kind', params.kind)
+    if (params.user) q.set('user', params.user)
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<AuditList>(`/admin/audit${qs ? `?${qs}` : ''}`, { signal })
+  },
 
   // --- machine access: API tokens ---
   access: (signal?: AbortSignal) => request<MachineAccess>('/admin/access', { signal }),
@@ -199,6 +221,28 @@ export const useSaveDailyLines = () => useDailyWrite((input: { lang: string; tex
 export const useDeleteDailyLines = () => useDailyWrite((lang: string) => adminApi.deleteDailyLines(lang))
 export function useTryDailyApi() {
   return useMutation({ mutationFn: ({ api, lang, date }: { api: Omit<DailyApi, 'note'>; lang: string; date: string }) => adminApi.tryDailyApi(api, lang, date) })
+}
+
+// --- security ----------------------------------------------------------------------------
+
+export function useSecuritySettings(enabled = true) {
+  return useQuery({ queryKey: keys.adminSecurity, queryFn: ({ signal }) => adminApi.security(signal), enabled, staleTime: 15_000 })
+}
+
+export function useAuthProviders() {
+  return useQuery({ queryKey: keys.adminProviders, queryFn: ({ signal }) => adminApi.authProviders(signal), staleTime: 15_000 })
+}
+
+export const AUDIT_PAGE_SIZE = 50
+// The audit log, newest first, a cursor page at a time; `kind` and `user` filter.
+export function useAuditLog(kind: string, user: string) {
+  return useInfiniteQuery({
+    queryKey: keys.adminAudit(kind, user),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => adminApi.audit({ kind: kind || undefined, user: user || undefined, cursor: pageParam || undefined, limit: AUDIT_PAGE_SIZE }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    staleTime: 5_000,
+  })
 }
 
 // --- machine access ------------------------------------------------------------------

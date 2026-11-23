@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/store"
@@ -14,12 +15,17 @@ type AccountView struct {
 	User        store.User
 	HasPassword bool
 	Identities  []IdentityView
+	Passkeys    []PasskeyView
+	// PasskeyRequired: the person must have a passkey (by themselves or by their role).
+	PasskeyRequired bool
 }
 
 // IdentityView is an attached identity as shown to its owner.
 type IdentityView struct {
 	ID       string
 	Provider string
+	Slug     string
+	Kind     string
 	Label    string
 	Created  time.Time
 }
@@ -38,19 +44,27 @@ func (s *Service) Account(ctx context.Context, u store.User) (*AccountView, erro
 	}
 	v.Identities = make([]IdentityView, len(ids))
 	for i, id := range ids {
-		v.Identities[i] = IdentityView{ID: id.ID, Provider: s.providerName(id.Issuer), Label: id.Label, Created: id.Created}
+		name, slug, kind := s.providerOf(id.Issuer)
+		v.Identities[i] = IdentityView{ID: id.ID, Provider: name, Slug: slug, Kind: kind, Label: id.Label, Created: id.Created}
+	}
+	if v.Passkeys, err = s.Passkeys(ctx, u.ID); err != nil {
+		return nil, err
 	}
 	return v, nil
 }
 
-func (s *Service) providerName(issuer string) string {
-	if s.oidc != nil && s.oidc.cfg.Issuer == issuer {
-		return s.oidc.cfg.Name
+// providerOf names the provider an issuer belongs to; for one that was deleted
+// it is the issuer's host, with no slug and no kind.
+func (s *Service) providerOf(issuer string) (name, slug, kind string) {
+	for _, rt := range s.provs.all() {
+		if rt.row.Issuer == issuer {
+			return rt.row.Name, rt.row.Slug, rt.row.Kind
+		}
 	}
 	if u, err := url.Parse(issuer); err == nil && u.Host != "" {
-		return u.Host
+		return u.Host, "", ""
 	}
-	return issuer
+	return issuer, "", ""
 }
 
 // UpdateProfile changes the signed-in user's name and email; a nil field is left alone.
@@ -62,16 +76,20 @@ func (s *Service) UpdateProfile(ctx context.Context, u store.User, name, email *
 			return nil, err
 		}
 	}
+	verified := u.EmailVerified
 	if email != nil {
 		if e, err = cleanEmail(*email); err != nil {
 			return nil, err
 		}
+		if !strings.EqualFold(e, u.Email) || e != u.Email {
+			verified = false // a person changing their own address clears the mark
+		}
 	}
-	if err := store.UpdateProfile(ctx, s.st.Q(), u.ID, n, e); err != nil {
+	if err := store.UpdateProfile(ctx, s.st.Q(), u.ID, n, e, verified); err != nil {
 		return nil, err
 	}
 	s.dropUser(u.ID)
-	u.Name, u.Email = n, e
+	u.Name, u.Email, u.EmailVerified = n, e, verified
 	s.cfg.Spaces.UserChanged(ctx, u)
 	return &u, nil
 }
@@ -93,23 +111,21 @@ func (s *Service) ChangePassword(ctx context.Context, p *Principal, current *str
 		if current == nil || *current == "" {
 			return errf(Invalid, "current is required: send the password you use now")
 		}
-		ukey := userKey(p.User.Username)
-		if wait := s.reserve("ip:"+ip, ukey); wait > 0 {
-			return retryAfter(wait)
+		st := s.sec(ctx)
+		if err := s.gateIP(st, ip); err != nil {
+			return err
 		}
 		ok := false
 		if len(*current) <= MaxPasswordBytes {
 			if ok, _, err = s.hasher.verify(ctx, hash, *current); err != nil {
-				s.byIP.refund("ip:" + ip)
-				s.byUser.refund(ukey)
+				s.refundIP(ip)
 				return err
 			}
 		}
 		if !ok {
 			return errf(Forbidden, "the current password is wrong")
 		}
-		s.byIP.refund("ip:" + ip)
-		s.byUser.refund(ukey)
+		s.refundIP(ip)
 	} else if current != nil && *current != "" {
 		return errf(Invalid, "this account has no password yet; leave current out")
 	}
@@ -149,9 +165,19 @@ func (s *Service) UnlinkIdentity(ctx context.Context, userID, identityID string)
 		}
 		if len(ids) == 1 {
 			if _, err := store.GetPasswordHash(ctx, q, userID); errors.Is(err, store.ErrNotFound) {
-				return errf(Conflict, "this is the only way you can sign in; set a password first")
+				if n, err := store.CountPasskeys(ctx, q, userID); err != nil {
+					return err
+				} else if n == 0 {
+					return errf(Conflict, "this is the only way you can sign in; set a password or a passkey first")
+				}
 			} else if err != nil {
 				return err
+			}
+		}
+		for _, i := range ids {
+			if i.ID == identityID {
+				_, slug, _ := s.providerOf(i.Issuer)
+				defer s.Audit(AuditEvent{Kind: "identity_unlinked", Actor: userID, User: userID, Detail: map[string]any{"provider": slug, "by": "user"}})
 			}
 		}
 		return store.DeleteIdentity(ctx, q, identityID, userID)
@@ -160,21 +186,39 @@ func (s *Service) UnlinkIdentity(ctx context.Context, userID, identityID string)
 
 // UserPatch is a change an administrator makes to another account.
 type UserPatch struct {
-	Role     *string
-	Disabled *bool
+	Role            *string
+	Disabled        *bool
+	PasskeyRequired *bool
+	Email           *string
+	EmailVerified   *bool
 }
 
 // UpdateUser applies a patch. It refuses to leave the instance without an
-// enabled administrator, and an administrator disabling themself.
-func (s *Service) UpdateUser(ctx context.Context, actorID, targetID string, patch UserPatch) (*store.User, error) {
+// enabled administrator, an administrator disabling themself, and, while
+// password sign-in is refused to everyone else, leaving no enabled
+// administrator with a password.
+func (s *Service) UpdateUser(ctx context.Context, actorID, ip, targetID string, patch UserPatch) (*store.User, error) {
 	if patch.Role != nil {
 		if err := checkRole(*patch.Role); err != nil {
 			return nil, err
 		}
 	}
+	var email string
+	if patch.Email != nil {
+		e, err := cleanEmail(*patch.Email)
+		if err != nil {
+			return nil, err
+		}
+		email = e
+	}
+	st := s.sec(ctx)
+	if patch.PasskeyRequired != nil && *patch.PasskeyRequired && !s.passkeysOn(st) {
+		return nil, coded(400, "passkey_unavailable", "passkeys cannot be used here: they need a --public-url that is https, and passkeys switched on")
+	}
 	s.adminMu.Lock()
 	defer s.adminMu.Unlock()
 	var out *store.User
+	changed := map[string]any{}
 	err := s.st.Tx(ctx, func(q store.Q) error {
 		u, err := store.GetUser(ctx, q, targetID)
 		if err != nil {
@@ -200,11 +244,23 @@ func (s *Service) UpdateUser(ctx context.Context, actorID, targetID string, patc
 			} else if n <= 1 {
 				return errf(Conflict, "there must be at least one enabled administrator")
 			}
+			// Whenever ssoOnly is stored, not only while in effect: a provider
+			// enabled later, or the page leaving local_only, puts it in effect.
+			if st.Login.SSOOnly {
+				if _, err := store.GetPasswordHash(ctx, q, u.ID); err == nil {
+					if n, err := store.CountEnabledPasswordAdmins(ctx, q); err != nil {
+						return err
+					} else if n <= 1 {
+						return errf(Conflict, "password sign-in is refused to everyone but administrators: keep at least one enabled administrator with a password")
+					}
+				}
+			}
 		}
 		if role != u.Role {
 			if err := store.SetRole(ctx, q, u.ID, role); err != nil {
 				return err
 			}
+			changed["role"] = role
 		}
 		if disabled != u.Disabled {
 			if err := store.SetDisabled(ctx, q, u.ID, disabled); err != nil {
@@ -214,6 +270,38 @@ func (s *Service) UpdateUser(ctx context.Context, actorID, targetID string, patc
 				if err := store.DeleteUserSessions(ctx, q, u.ID, ""); err != nil {
 					return err
 				}
+			}
+			changed["disabled"] = disabled
+		}
+		if patch.PasskeyRequired != nil && *patch.PasskeyRequired != u.PasskeyRequired {
+			if err := store.SetPasskeyRequired(ctx, q, u.ID, *patch.PasskeyRequired); err != nil {
+				return err
+			}
+			u.PasskeyRequired = *patch.PasskeyRequired
+			changed["passkeyRequired"] = u.PasskeyRequired
+		}
+		if patch.Email != nil || patch.EmailVerified != nil {
+			newEmail, verified := u.Email, u.EmailVerified
+			if patch.Email != nil {
+				newEmail = email
+				if newEmail != u.Email {
+					verified = false // setting an address without saying it is verified leaves it unverified
+				}
+			}
+			if patch.EmailVerified != nil {
+				verified = *patch.EmailVerified && newEmail != ""
+			}
+			if newEmail != u.Email || verified != u.EmailVerified {
+				if err := store.SetEmail(ctx, q, u.ID, newEmail, verified); err != nil {
+					return err
+				}
+				if newEmail != u.Email {
+					changed["email"] = newEmail
+				}
+				if verified != u.EmailVerified {
+					changed["emailVerified"] = verified
+				}
+				u.Email, u.EmailVerified = newEmail, verified
 			}
 		}
 		u.Role, u.Disabled = role, disabled
@@ -227,6 +315,9 @@ func (s *Service) UpdateUser(ctx context.Context, actorID, targetID string, patc
 	// The space manager remembers a user's role and whether they are disabled
 	// for a minute (the drafts sweeper asks it); a change here applies at once.
 	s.cfg.Spaces.UserChanged(ctx, *out)
+	if len(changed) > 0 {
+		s.Audit(AuditEvent{Kind: "user_changed", Actor: actorID, User: out.ID, Username: out.Username, IP: ip, Detail: changed})
+	}
 	return out, nil
 }
 
@@ -284,56 +375,54 @@ func (s *Service) DeleteInvite(ctx context.Context, id string) error {
 	}
 }
 
-// CheckInvite tells whether a token names an invite that can still be used.
-func (s *Service) CheckInvite(ctx context.Context, token, ip string) (*store.Invite, error) {
-	if err := s.throttle(ip); err != nil {
-		return nil, err
-	}
-	if wait := s.byIP.reserve("ip:" + ip); wait > 0 {
-		return nil, retryAfter(wait)
-	}
-	inv, err := s.findInvite(ctx, token)
-	if err == nil {
-		s.byIP.refund("ip:" + ip)
-	}
-	return inv, err
-}
-
-func (s *Service) findInvite(ctx context.Context, token string) (*store.Invite, error) {
-	if token == "" || len(token) > 256 {
-		return nil, errf(NotFound, "that invite is not valid")
-	}
-	inv, err := store.FindUsableInvite(ctx, s.st.Q(), hashToken(token), s.now())
-	if errors.Is(err, store.ErrNotFound) {
-		return nil, errf(NotFound, "that invite is not valid")
-	}
-	return inv, err
-}
-
-// AcceptInvite makes the account an invite is for, and signs it in.
-func (s *Service) AcceptInvite(ctx context.Context, token, username, name, password, ip string) (*store.User, string, error) {
-	inv, err := s.CheckInvite(ctx, token, ip)
-	if err != nil {
-		return nil, "", err
-	}
-	u, err := s.CreateUser(ctx, CreateParams{Username: username, Name: name, Role: inv.Role, Password: password, InviteID: inv.ID})
-	if err != nil {
-		return nil, "", err
-	}
-	tok, err := s.issueSession(ctx, u.ID)
-	return u, tok, err
-}
-
 // Run keeps the tables tidy until ctx ends: expired sessions and invites go.
 func (s *Service) Run(ctx context.Context) {
-	t := time.NewTicker(time.Hour)
-	defer t.Stop()
+	hourly := time.NewTicker(time.Hour)
+	defer hourly.Stop()
+	flush := time.NewTicker(time.Second)
+	defer flush.Stop()
+	daily := time.NewTicker(24 * time.Hour)
+	defer daily.Stop()
+	s.Sweep(ctx)
+	s.trimAudit(ctx)
 	for {
-		s.Sweep(ctx)
 		select {
 		case <-ctx.Done():
+			s.FlushAudit(context.WithoutCancel(ctx))
 			return
-		case <-t.C:
+		case <-flush.C:
+			s.FlushAudit(ctx)
+			s.sec(ctx) // notices a change made by another process within CacheTTL
+		case <-hourly.C:
+			s.Sweep(ctx)
+			s.trimAudit(ctx)
+		case <-daily.C:
+			s.refreshSAMLMetadata(ctx)
+		}
+	}
+}
+
+// refreshSAMLMetadata fetches the metadata given by address again, every 24 hours.
+func (s *Service) refreshSAMLMetadata(ctx context.Context) {
+	providerMu.Lock()
+	defer providerMu.Unlock()
+	changed := false
+	for _, rt := range s.provs.all() {
+		if rt.row.Kind != KindSAML || rt.cfg.MetadataURL == "" {
+			continue
+		}
+		if err := s.refresh(ctx, rt); err != nil && !errors.Is(err, errUnreachable) {
+			s.log.Warn("the SAML metadata could not be used", "provider", rt.row.Slug, "reason", sanitizeLog(err.Error()))
+		}
+		changed = true
+	}
+	if changed {
+		var slugs []string
+		for _, rt := range s.provs.all() {
+			slugs = append(slugs, rt.row.Slug)
+		}
+		if err := s.reloadProviders(ctx, slugs...); err != nil {
+			s.log.Warn("could not reload the providers", "error", err)
 		}
 	}
 }
@@ -341,7 +430,8 @@ func (s *Service) Run(ctx context.Context) {
 // Sweep deletes expired sessions and long-expired invites once.
 func (s *Service) Sweep(ctx context.Context) {
 	now := s.now()
-	if n, err := store.DeleteExpiredSessions(ctx, s.st.Q(), now.Add(-s.cfg.SessionIdle), now.Add(-s.cfg.SessionMax)); err != nil {
+	sec := s.sec(ctx)
+	if n, err := store.DeleteExpiredSessions(ctx, s.st.Q(), now.Add(-sec.idle), now.Add(-sec.max)); err != nil {
 		s.log.Warn("could not delete expired sessions", "error", err)
 	} else if n > 0 {
 		s.log.Info("deleted expired sessions", "count", n)
@@ -349,4 +439,55 @@ func (s *Service) Sweep(ctx context.Context) {
 	if _, err := store.DeleteOldInvites(ctx, s.st.Q(), now.Add(-30*24*time.Hour)); err != nil {
 		s.log.Warn("could not delete old invites", "error", err)
 	}
+}
+
+// PasskeyRequiredOf says whether the person must use a passkey, by themselves
+// or by their role (for showing it; sign-in also needs passkeys to work).
+func (s *Service) PasskeyRequiredOf(u store.User) bool {
+	st := s.secPtr.Load()
+	return u.PasskeyRequired || (st != nil && st.roles[u.Role])
+}
+
+// Counts are how many passkeys and identities each user has.
+type Counts struct{ Passkeys, SSO map[string]int }
+
+// UserCounts counts the passkeys and identities of every user: two queries.
+func (s *Service) UserCounts(ctx context.Context) (*Counts, error) {
+	p, err := store.PasskeyCounts(ctx, s.st.Q())
+	if err != nil {
+		return nil, err
+	}
+	i, err := store.IdentityCounts(ctx, s.st.Q())
+	if err != nil {
+		return nil, err
+	}
+	return &Counts{Passkeys: p, SSO: i}, nil
+}
+
+// UserPasskeys lists a user's passkeys for an administrator.
+func (s *Service) UserPasskeys(ctx context.Context, userID string) ([]PasskeyView, error) {
+	if _, err := store.GetUser(ctx, s.st.Q(), userID); errors.Is(err, store.ErrNotFound) {
+		return nil, errf(NotFound, "no such user")
+	} else if err != nil {
+		return nil, err
+	}
+	return s.Passkeys(ctx, userID)
+}
+
+// PublicInfo is what GET /api/auth/providers says, from memory.
+type PublicInfo struct {
+	Providers []PublicProvider
+	Mode      string
+	Local     bool
+	SSO       bool
+	Passkey   bool
+}
+
+// PublicInfo describes the sign-in page. It asks the database nothing.
+func (s *Service) PublicInfo() PublicInfo {
+	st := s.secPtr.Load()
+	info := PublicInfo{Providers: s.provs.publicList(), Mode: s.effectiveMode(st)}
+	info.Local, info.SSO = info.Mode != ModeSSORedirect, info.Mode != ModeLocalOnly
+	info.Passkey = s.passkeysOn(st)
+	return info
 }

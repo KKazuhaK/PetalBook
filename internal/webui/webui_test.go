@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -222,5 +223,55 @@ func TestEmbeddedPlaceholder(t *testing.T) {
 	}
 	if !built && !strings.Contains(rec.Body.String(), "not built") {
 		t.Errorf("not built, but / is %q", rec.Body.String())
+	}
+}
+
+// The page's policy lets the configured captcha provider's widget load, and only that one.
+func TestCSPAllowsTheConfiguredCaptchaOnly(t *testing.T) {
+	// The sources each provider needs: [directive, source].
+	origins := map[string][][2]string{
+		"turnstile": {{"script-src", "https://challenges.cloudflare.com"}, {"frame-src", "https://challenges.cloudflare.com"}},
+		"recaptcha": {{"script-src", "https://www.google.com/recaptcha/"}, {"script-src", "https://www.gstatic.com/recaptcha/"},
+			{"frame-src", "https://www.google.com/recaptcha/"}, {"frame-src", "https://recaptcha.google.com/recaptcha/"}},
+		"hcaptcha": {{"script-src", "https://hcaptcha.com"}, {"script-src", "https://*.hcaptcha.com"}, {"frame-src", "https://*.hcaptcha.com"}, {"connect-src", "https://*.hcaptcha.com"}},
+	}
+	directive := func(csp, name string) string {
+		for _, d := range strings.Split(csp, ";") {
+			if f := strings.Fields(d); len(f) > 0 && f[0] == name {
+				return strings.Join(f[1:], " ")
+			}
+		}
+		return ""
+	}
+	for _, provider := range []string{"", "image", "turnstile", "recaptcha", "hcaptcha", "unknown"} {
+		calls := 0
+		h := New(app(), WithCaptcha(func(*http.Request) string { calls++; return provider }))
+		csp := do(h, "GET", "/").Header().Get("Content-Security-Policy")
+		if calls != 1 {
+			t.Errorf("%q: provider asked %d times", provider, calls)
+		}
+		for p, want := range origins {
+			for _, o := range want {
+				if p == provider {
+					if !slices.Contains(strings.Fields(directive(csp, o[0])), o[1]) {
+						t.Errorf("%s: %s missing from %s: %q", p, o[1], o[0], csp)
+					}
+				} else if strings.Contains(csp, strings.TrimPrefix(o[1], "https://*.")) {
+					t.Errorf("provider %q: policy has %s of %s: %q", provider, o[1], p, csp)
+				}
+			}
+		}
+		if _, ok := origins[provider]; ok {
+			if !strings.HasPrefix(directive(csp, "script-src"), "'self' ") {
+				t.Errorf("%s: script-src %q", provider, directive(csp, "script-src"))
+			}
+		} else if strings.Contains(csp, "script-src") || strings.Contains(csp, "frame-src") || directive(csp, "connect-src") != "'self'" {
+			t.Errorf("provider %q: policy %q", provider, csp)
+		}
+		// Only the page carries the policy, so other files do not ask.
+		do(h, "GET", "/favicon.svg")
+		if calls != 1 {
+			t.Errorf("%q: provider asked for a file", provider)
+		}
 	}
 }

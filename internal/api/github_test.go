@@ -457,3 +457,42 @@ func TestRemoteObjectsOfOtherKindsHaveAnErrorCode(t *testing.T) {
 		}
 	})
 }
+
+// A session held until a passkey is registered reaches none of GitHub: it may
+// not connect or disconnect an account for repos, list what it could use, or
+// create a space with a repository. An attempt started before the hold does
+// not finish under it either.
+func TestAHeldSessionCannotUseGitHub(t *testing.T) {
+	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
+		admin, member := ghSetup(t, a)
+		start := member.do("POST", "/api/github/authorization/start", map[string]any{}).want(t, 200, "")
+		back, _ := url.Parse(a.fake.Authorize(start.body["url"].(string), "tang-gh"))
+		admin.putSecurity(t, map[string]any{"passkeys": map[string]any{"requireRoles": []string{"member"}}})
+
+		held := a.newClient("")
+		held.do("POST", "/api/login", map[string]any{"username": "tang", "password": pw}).want(t, 200, "")
+		if s := held.do("GET", "/api/session", nil).want(t, 200, ""); s.body["hold"] != "passkey" {
+			t.Fatal(s.raw)
+		}
+		for k, v := range member.cookies {
+			if strings.Contains(k, "petalbook_github") {
+				held.cookies[k] = v
+			}
+		}
+		for _, p := range []string{"/api/github", "/api/github/owners", "/api/github/repos?mine=1"} {
+			held.do("GET", p, nil).want(t, 403, "passkey_required")
+		}
+		held.do("POST", "/api/github/authorization/start", map[string]any{}).want(t, 403, "passkey_required")
+		held.do("GET", back.Path+"?"+back.RawQuery, nil, "Sec-Fetch-Site", "cross-site").want(t, 403, "passkey_required")
+		held.do("DELETE", "/api/github/authorization", nil).want(t, 403, "passkey_required")
+		held.do("POST", "/api/spaces", map[string]any{"name": "Tang", "github": map[string]any{
+			"owner": "kazuhahub", "name": "tang-notes", "private": true, "create": true}}).want(t, 403, "passkey_required")
+		if a.fake.RepoByName("kazuhahub/tang-notes") != nil {
+			t.Fatal("a repository was made")
+		}
+		// The connection made before the hold is untouched.
+		if g := member.do("GET", "/api/github", nil).want(t, 200, ""); g.body["authorization"].(map[string]any)["login"] != "tang-gh" {
+			t.Fatal(g.raw)
+		}
+	})
+}

@@ -1,6 +1,6 @@
 import { Link, Navigate, useParams } from 'react-router'
 import { lazy, Suspense } from 'react'
-import { ArrowLeft, HardDrive, KeyRound, Layers, Link2, Quote, Users } from 'lucide-react'
+import { ArrowLeft, HardDrive, KeyRound, Layers, Link2, Quote, ShieldCheck, Users } from 'lucide-react'
 import { TopBar } from '@/components/layout/TopBar'
 import { useActiveSpace } from '@/api/hooks'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
@@ -16,9 +16,11 @@ import { UsersPanel } from './UsersPanel'
 // The daily text's page is a chunk of its own: it is the biggest of the administration's and the least visited.
 const DailyPanel = lazy(() => import('./DailyPanel').then((m) => ({ default: m.DailyPanel })))
 const AccessPanel = lazy(() => import('./AccessPanel').then((m) => ({ default: m.AccessPanel })))
+// The security page, with the providers and the audit log, is another.
+const SecurityPanel = lazy(() => import('./AdminSecurityPanel').then((m) => ({ default: m.AdminSecurityPanel })))
 
-const ICONS: Record<AdminSection, typeof Users> = { users: Users, spaces: Layers, daily: Quote, access: KeyRound, github: Link2, status: HardDrive }
-const SECTIONS: readonly AdminSection[] = ['users', 'spaces', 'daily', 'access', 'github', 'status']
+const ICONS: Record<AdminSection, typeof Users> = { users: Users, spaces: Layers, daily: Quote, access: KeyRound, github: Link2, security: ShieldCheck, status: HardDrive }
+const SECTIONS: readonly AdminSection[] = ['users', 'spaces', 'daily', 'access', 'github', 'security', 'status']
 
 // The administration: users and invites, every space, the state of the server.
 // It is a route of its own, loaded only when an administrator goes there (see
@@ -74,6 +76,11 @@ export default function AdminRoute() {
           </Suspense>
         )}
         {section === 'github' && <GitHubPanel />}
+        {section === 'security' && (
+          <Suspense fallback={<PageFallback />}>
+            <SecurityPanel />
+          </Suspense>
+        )}
         {section === 'status' && <StatusPanel />}
       </div>
     </>

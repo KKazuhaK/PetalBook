@@ -19,10 +19,19 @@ type userResp struct {
 	Role     string `json:"role"`
 	Disabled bool   `json:"disabled"`
 	Created  string `json:"created"`
+	// EmailVerified and PasskeyRequired: see docs/api.md, "User".
+	EmailVerified   bool `json:"emailVerified"`
+	PasskeyRequired bool `json:"passkeyRequired"`
 }
 
-func toUser(u store.User) userResp {
-	return userResp{u.ID, u.Username, u.Name, u.Email, u.Role, u.Disabled, rfc3339(u.Created)}
+// toUser is the user as the API shows it. passkeyRequired is whether the
+// person must use a passkey, by themselves or by their role.
+func (s *server) toUser(u store.User) userResp {
+	req := u.PasskeyRequired
+	if s.auth != nil {
+		req = s.auth.PasskeyRequiredOf(u)
+	}
+	return userResp{u.ID, u.Username, u.Name, u.Email, u.Role, u.Disabled, rfc3339(u.Created), u.EmailVerified, req}
 }
 
 type spaceResp struct {
@@ -69,6 +78,7 @@ func (s *server) getMeta(c *call) {
 }
 
 func (s *server) getSession(c *call) {
+	c.w.Header().Set("Cache-Control", "no-store")
 	type methods struct {
 		Password bool `json:"password"`
 		OIDC     *struct {
@@ -79,6 +89,7 @@ func (s *server) getSession(c *call) {
 		Mode    string    `json:"mode"`
 		User    *userResp `json:"user"`
 		Setup   bool      `json:"setup"`
+		Hold    *string   `json:"hold"`
 		Methods *methods  `json:"methods,omitempty"`
 		// Token is the API token the request was made with; null for a session.
 		Token *struct {
@@ -89,8 +100,12 @@ func (s *server) getSession(c *call) {
 		} `json:"token"`
 	}{Mode: "single"}
 	if c.p != nil {
-		u := toUser(c.user())
+		u := s.toUser(c.user())
 		out.User = &u
+		if c.p.Held {
+			h := "passkey"
+			out.Hold = &h
+		}
 		if g := c.p.Grant; g != nil {
 			out.Token = &struct {
 				ID     string   `json:"id"`
@@ -109,7 +124,7 @@ func (s *server) getSession(c *call) {
 		}
 		out.Setup = setup
 		m := &methods{Password: true}
-		if name := s.auth.OIDCName(); name != "" {
+		if name := s.auth.LegacyOIDCName(); name != "" {
 			m.OIDC = &struct {
 				Name string `json:"name"`
 			}{name}
@@ -127,10 +142,11 @@ func (s *server) startSession(c *call, token string) {
 }
 
 type credentials struct {
-	Token    string `json:"token"`
-	Username string `json:"username"`
-	Name     string `json:"name"`
-	Password string `json:"password"`
+	Token    string              `json:"token"`
+	Username string              `json:"username"`
+	Name     string              `json:"name"`
+	Password string              `json:"password"`
+	Captcha  *auth.CaptchaAnswer `json:"captcha"`
 }
 
 func (s *server) setup(c *call) {
@@ -138,7 +154,7 @@ func (s *server) setup(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	u, tok, err := s.auth.Setup(c.r.Context(), req.Token, req.Username, req.Name, req.Password, s.auth.ClientAddr(c.r))
+	u, tok, err := s.auth.Setup(c.r.Context(), req.Token, req.Username, req.Name, req.Password, s.auth.ClientAddr(c.r), req.Captcha)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -146,7 +162,7 @@ func (s *server) setup(c *call) {
 	s.startSession(c, tok)
 	writeJSON(c.w, http.StatusCreated, struct {
 		User userResp `json:"user"`
-	}{toUser(*u)})
+	}{s.toUser(*u)})
 }
 
 func (s *server) login(c *call) {
@@ -154,15 +170,15 @@ func (s *server) login(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	u, tok, err := s.auth.Login(c.r.Context(), req.Username, req.Password, s.auth.ClientAddr(c.r))
+	res, err := s.auth.Login(c.r.Context(), auth.LoginParams{Username: req.Username, Password: req.Password, IP: s.auth.ClientAddr(c.r), Captcha: req.Captcha})
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	s.startSession(c, tok)
+	s.startSession(c, res.Token)
 	writeJSON(c.w, http.StatusOK, struct {
 		User userResp `json:"user"`
-	}{toUser(*u)})
+	}{s.toUser(*res.User)})
 }
 
 func (s *server) logout(c *call) {
@@ -174,13 +190,11 @@ func (s *server) logout(c *call) {
 }
 
 func (s *server) checkInvite(c *call) {
-	var req struct {
-		Token string `json:"token"`
-	}
+	var req credentials
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	inv, err := s.auth.CheckInvite(c.r.Context(), req.Token, s.auth.ClientAddr(c.r))
+	inv, err := s.auth.CheckInvite(c.r.Context(), req.Token, s.auth.ClientAddr(c.r), req.Captcha)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -196,7 +210,7 @@ func (s *server) acceptInvite(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	u, tok, err := s.auth.AcceptInvite(c.r.Context(), req.Token, req.Username, req.Name, req.Password, s.auth.ClientAddr(c.r))
+	u, tok, err := s.auth.AcceptInvite(c.r.Context(), req.Token, req.Username, req.Name, req.Password, s.auth.ClientAddr(c.r), req.Captcha)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -204,56 +218,42 @@ func (s *server) acceptInvite(c *call) {
 	s.startSession(c, tok)
 	writeJSON(c.w, http.StatusCreated, struct {
 		User userResp `json:"user"`
-	}{toUser(*u)})
+	}{s.toUser(*u)})
 }
 
-// --- OpenID Connect ----------------------------------------------------------
+// --- the pre-2.8 OpenID Connect endpoints ------------------------------------
 
+// oidcStart is POST /api/auth/oidc/start: unchanged, for the provider with the legacy callback.
 func (s *server) oidcStart(c *call) {
-	var req struct {
-		Intent string `json:"intent"`
-		Token  string `json:"token"`
-		Return string `json:"return"`
-	}
-	if !s.readJSONMax(c.w, c.r, &req, true, authBodyLimit) {
-		return
-	}
-	bp := auth.BeginParams{Intent: req.Intent, Token: req.Token, Return: req.Return}
-	if c.p != nil {
-		u := c.user()
-		bp.User = &u
-	}
-	authURL, binding, err := s.auth.OIDCBegin(c.r.Context(), bp, s.auth.ClientAddr(c.r))
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	http.SetCookie(c.w, s.auth.OIDCCookie(binding))
-	writeJSON(c.w, http.StatusOK, struct {
-		URL string `json:"url"`
-	}{authURL})
+	s.ssoStartJSON(c, auth.KindOIDC, "")
 }
 
+// oidcCallback is GET /api/auth/oidc/callback, for the same provider.
 func (s *server) oidcCallback(c *call) {
-	c.w.Header().Set("Cache-Control", "no-store")
-	binding, sessionTok := "", ""
-	if ck, err := c.r.Cookie(s.auth.OIDCCookieName()); err == nil {
-		binding = ck.Value
-	}
-	if ck, err := c.r.Cookie(s.auth.SessionCookieName()); err == nil {
-		sessionTok = ck.Value
-	}
-	out := s.auth.OIDCComplete(c.r.Context(), binding, sessionTok, c.r.URL.Query(), s.auth.ClientAddr(c.r))
-	if out.ClearBinding {
-		http.SetCookie(c.w, s.auth.ClearOIDCCookie())
-	}
-	if out.Session != "" {
-		s.startSession(c, out.Session)
-	}
-	http.Redirect(c.w, c.r, out.Redirect, http.StatusSeeOther)
+	s.oidcCallbackOf(c, "")
 }
 
 // --- account -----------------------------------------------------------------
+
+type passkeyResp struct {
+	ID       string  `json:"id"`
+	Name     string  `json:"name"`
+	Created  string  `json:"created"`
+	LastUsed *string `json:"lastUsed"`
+	Synced   bool    `json:"synced"`
+}
+
+func toPasskeys(in []auth.PasskeyView) []passkeyResp {
+	out := make([]passkeyResp, len(in))
+	for i, p := range in {
+		out[i] = passkeyResp{ID: p.ID, Name: p.Name, Created: rfc3339(p.Created), Synced: p.Synced}
+		if !p.LastUsed.IsZero() {
+			t := rfc3339(p.LastUsed)
+			out[i].LastUsed = &t
+		}
+	}
+	return out
+}
 
 func (s *server) getAccount(c *call) {
 	v, err := s.auth.Account(c.r.Context(), c.user())
@@ -262,20 +262,23 @@ func (s *server) getAccount(c *call) {
 		return
 	}
 	type ident struct {
-		ID       string `json:"id"`
-		Provider string `json:"provider"`
-		Label    string `json:"label"`
-		Created  string `json:"created"`
+		ID           string `json:"id"`
+		Provider     string `json:"provider"`
+		ProviderSlug string `json:"providerSlug"`
+		Kind         string `json:"kind"`
+		Label        string `json:"label"`
+		Created      string `json:"created"`
 	}
 	ids := make([]ident, len(v.Identities))
 	for i, x := range v.Identities {
-		ids[i] = ident{x.ID, x.Provider, x.Label, rfc3339(x.Created)}
+		ids[i] = ident{x.ID, x.Provider, x.Slug, x.Kind, x.Label, rfc3339(x.Created)}
 	}
 	writeJSON(c.w, http.StatusOK, struct {
-		User        userResp `json:"user"`
-		HasPassword bool     `json:"hasPassword"`
-		Identities  []ident  `json:"identities"`
-	}{toUser(v.User), v.HasPassword, ids})
+		User        userResp      `json:"user"`
+		HasPassword bool          `json:"hasPassword"`
+		Identities  []ident       `json:"identities"`
+		Passkeys    []passkeyResp `json:"passkeys"`
+	}{s.toUser(v.User), v.HasPassword, ids, toPasskeys(v.Passkeys)})
 }
 
 func (s *server) patchAccount(c *call) {
@@ -293,7 +296,7 @@ func (s *server) patchAccount(c *call) {
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		User userResp `json:"user"`
-	}{toUser(*u)})
+	}{s.toUser(*u)})
 }
 
 func (s *server) changePassword(c *call) {
@@ -354,31 +357,45 @@ func (s *server) listUsers(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	out := make([]userResp, len(us))
+	counts, err := s.auth.UserCounts(c.r.Context())
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	type userEx struct {
+		userResp
+		Passkeys int `json:"passkeys"`
+		SSO      int `json:"sso"`
+	}
+	out := make([]userEx, len(us))
 	for i, u := range us {
-		out[i] = toUser(u)
+		out[i] = userEx{s.toUser(u), counts.Passkeys[u.ID], counts.SSO[u.ID]}
 	}
 	writeJSON(c.w, http.StatusOK, struct {
-		Users []userResp `json:"users"`
+		Users []userEx `json:"users"`
 	}{out})
 }
 
 func (s *server) patchUser(c *call) {
 	var req struct {
-		Role     *string `json:"role"`
-		Disabled *bool   `json:"disabled"`
+		Role            *string `json:"role"`
+		Disabled        *bool   `json:"disabled"`
+		PasskeyRequired *bool   `json:"passkeyRequired"`
+		Email           *string `json:"email"`
+		EmailVerified   *bool   `json:"emailVerified"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	u, err := s.auth.UpdateUser(c.r.Context(), c.user().ID, c.r.PathValue("id"), auth.UserPatch{Role: req.Role, Disabled: req.Disabled})
+	u, err := s.auth.UpdateUser(c.r.Context(), c.user().ID, s.auth.ClientAddr(c.r), c.r.PathValue("id"), auth.UserPatch{Role: req.Role, Disabled: req.Disabled,
+		PasskeyRequired: req.PasskeyRequired, Email: req.Email, EmailVerified: req.EmailVerified})
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		User userResp `json:"user"`
-	}{toUser(*u)})
+	}{s.toUser(*u)})
 }
 
 func (s *server) createInvite(c *call) {

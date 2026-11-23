@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -27,13 +28,9 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		// Open already migrated once; running again must change nothing. The
 		// count follows the files, so a branch that adds one need not edit it.
-		files, err := store.MigrationVersions()
-		if err != nil {
-			t.Fatal(err)
-		}
 		var n int
-		if err := st.Q().QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil || n != len(files) {
-			t.Fatalf("%d %v, want %d", n, err, len(files))
+		if err := st.Q().QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil || n != migrationFiles(t) {
+			t.Fatalf("%d %v, want %d", n, err, migrationFiles(t))
 		}
 		mkUser(t, st, "A", "a", "admin")
 	})
@@ -592,4 +589,21 @@ func TestSpaceInbox(t *testing.T) {
 			t.Fatalf("%v %v", got, err)
 		}
 	})
+}
+
+// migrationFiles counts the migration files, so the test needs no editing when
+// a migration is added (branches number theirs apart, and gaps are fine).
+func migrationFiles(t *testing.T) int {
+	t.Helper()
+	entries, err := os.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".sql") {
+			n++
+		}
+	}
+	return n
 }

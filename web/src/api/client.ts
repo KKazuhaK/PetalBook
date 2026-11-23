@@ -22,12 +22,20 @@ import type {
   DraftReceipt,
   BatchPagesInput,
   ConnectRemoteInput,
+  AuthProviders,
+  CaptchaAnswer,
+  CaptchaChallenge,
+  CaptchaContext,
   GitHubCursorPage,
   GitHubInfo,
   GitHubOwner,
   GitHubRepo,
   NewGitHubRepo,
   ErrorCode,
+  Passkey,
+  PasskeyCeremony,
+  ProviderIntent,
+  ProviderKind,
   ReasonCode,
   HistoryList,
   ImportReport,
@@ -152,9 +160,22 @@ function markSignedOut() {
   signedOutListeners.forEach((fn) => fn())
 }
 
+// --- a session held until a passkey is registered ---------------------------------------
+//
+// While `GET /api/session` has `hold: "passkey"` every other request answers 403
+// `passkey_required`. The app learns of it once, from whichever request hit it, and
+// shows the passkey page (a hold that began after the session was read).
+
+type HoldListener = () => void
+const holdListeners = new Set<HoldListener>()
+export function onHold(fn: HoldListener): () => void {
+  holdListeners.add(fn)
+  return () => void holdListeners.delete(fn)
+}
+
 // Paths where a 401 is an answer to the request itself (wrong password), not
 // a lost session.
-const SIGN_IN_PATHS = /^\/(login|logout|setup|session|meta|invites\/(check|accept)|auth\/oidc\/start)$/
+const SIGN_IN_PATHS = /^\/(login|logout|setup|session|meta|captcha|invites\/(check|accept)|auth\/(providers|passkey\/(begin|finish)|oidc\/start|(oidc|saml|github)\/[^/]+\/start))$/
 // Paths where 403 is an answer about the request itself (a wrong setup token,
 // a wrong current password, a member asking for admin things), not a refused
 // origin. Page and space endpoints have no such 403: a space of someone else
@@ -272,6 +293,7 @@ export async function request<T>(path: string, { method = 'GET', body, keepalive
       throw new ApiError(res.status, 'forbidden', message)
     }
     if (res.status === 401 && !isSignIn) markSignedOut()
+    if (res.status === 403 && err.error === 'passkey_required' && !isSignIn) holdListeners.forEach((fn) => fn())
     if (err.error === 'unavailable') unavailableListeners.forEach((fn) => fn())
     if (err.error === 'space_disabled' || err.error === 'no_permission' || err.error === 'not_found') {
       const space = /^\/spaces\/([^/]+)/.exec(barePath)?.[1]
@@ -474,18 +496,32 @@ export const api = {
     if (s.user) markSignedIn()
     return s
   },
-  setup: async (input: { token: string; username: string; name?: string; password: string }) => {
+  setup: async (input: { token: string; username: string; name?: string; password: string; captcha?: CaptchaAnswer }) => {
     const r = await request<{ user: User }>('/setup', { method: 'POST', body: input })
     markSignedIn()
     return r
   },
-  login: async (input: { username: string; password: string }) => {
+  login: async (input: { username: string; password: string; captcha?: CaptchaAnswer }) => {
     const r = await request<{ user: User }>('/login', { method: 'POST', body: input })
     markSignedIn()
     return r
   },
   logout: () => request<void>('/logout', { method: 'POST' }),
+  // What the sign-in page draws: the enabled providers, the mode in effect and whether passkeys work.
+  providers: (signal?: AbortSignal) => request<AuthProviders>('/auth/providers', { signal }),
+  // Whether a captcha is needed now, and the challenge when it is. `account` matters for `login` only.
+  captcha: (ctx: CaptchaContext, account?: string, signal?: AbortSignal) =>
+    request<CaptchaChallenge>(`/captcha?ctx=${enc(ctx)}${account ? `&account=${enc(account)}` : ''}`, { signal }),
+  // Setup, invite and link carry a token or a session, so they ask for the address with a POST; a login is a plain navigation (see `providerStartUrl`).
+  providerStart: (kind: ProviderKind, slug: string, input: { intent: ProviderIntent; token?: string; return?: string }) =>
+    request<{ url: string }>(`/auth/${enc(kind)}/${enc(slug)}/start`, { method: 'POST', body: input }),
   oidcStart: (input: { intent: OidcIntent; token?: string; return?: string }) => request<{ url: string }>('/auth/oidc/start', { method: 'POST', body: input }),
+  passkeyBegin: (username?: string) => request<PasskeyCeremony>('/auth/passkey/begin', { method: 'POST', body: username ? { username } : {} }),
+  passkeyFinish: async (ceremony: string, ret: string, credential: unknown) => {
+    const r = await request<{ user: User; return: string }>(`/auth/passkey/finish?ceremony=${enc(ceremony)}&return=${enc(ret)}`, { method: 'POST', body: credential })
+    markSignedIn()
+    return r
+  },
 
   // --- account ---
   account: (signal?: AbortSignal) => request<AccountInfo>('/account', { signal }),
@@ -493,6 +529,11 @@ export const api = {
   // `current` is left out when the account has no password yet.
   changePassword: (input: { current?: string; new: string }) => request<void>('/account/password', { method: 'POST', body: input }),
   removeIdentity: (id: string) => request<void>(`/account/identities/${enc(id)}`, { method: 'DELETE' }),
+  // Registering a passkey: a ceremony, the browser's credential, then the list as it is.
+  passkeyRegisterBegin: (name: string) => request<PasskeyCeremony>('/account/passkeys/begin', { method: 'POST', body: { name } }),
+  passkeyRegisterFinish: (ceremony: string, credential: unknown) => request<{ passkeys: Passkey[] }>(`/account/passkeys/finish?ceremony=${enc(ceremony)}`, { method: 'POST', body: credential }),
+  renamePasskey: (id: string, name: string) => request<Passkey>(`/account/passkeys/${enc(id)}`, { method: 'PATCH', body: { name } }),
+  removePasskey: (id: string) => request<void>(`/account/passkeys/${enc(id)}`, { method: 'DELETE' }),
 
   // --- API tokens ---
   tokens: (signal?: AbortSignal) => request<{ tokens: ApiToken[] }>('/account/tokens', { signal }),
@@ -508,8 +549,8 @@ export const api = {
   decideConsent: (input: ConsentDecision) => request<{ redirect: string }>('/oauth/consent', { method: 'POST', body: input }),
 
   // --- users and invites (administrators) ---
-  checkInvite: (token: string, signal?: AbortSignal) => request<InviteCheck>('/invites/check', { method: 'POST', body: { token }, signal }),
-  acceptInvite: async (input: { token: string; username: string; name?: string; password: string }) => {
+  checkInvite: (token: string, captcha?: CaptchaAnswer, signal?: AbortSignal) => request<InviteCheck>('/invites/check', { method: 'POST', body: { token, ...(captcha ? { captcha } : {}) }, signal }),
+  acceptInvite: async (input: { token: string; username: string; name?: string; password: string; captcha?: CaptchaAnswer }) => {
     const r = await request<{ user: User }>('/invites/accept', { method: 'POST', body: input })
     markSignedIn()
     return r
@@ -539,3 +580,6 @@ export const api = {
   // One space as the list has it; 404 for an id that is no space.
   adminSpace: (id: string, signal?: AbortSignal) => request<AdminSpace>(`/admin/spaces/${enc(id)}`, { signal }),
 }
+
+// Where a sign-in button goes: a full-page navigation (docs/api.md, "Starting").
+export const providerStartUrl = (kind: ProviderKind, slug: string, ret: string) => `${API_BASE}/auth/${enc(kind)}/${enc(slug)}/start?return=${enc(ret)}`

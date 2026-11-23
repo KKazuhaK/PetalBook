@@ -187,6 +187,8 @@ func New(opt Options) http.Handler {
 	bodyType := func(r *http.Request) string {
 		if _, pattern := mux.Handler(r); uploads[pattern] {
 			return "application/octet-stream"
+		} else if pattern == "POST "+samlACSPattern {
+			return "application/x-www-form-urlencoded"
 		}
 		return "application/json"
 	}
@@ -270,8 +272,10 @@ func (s *server) wrap(next http.Handler, bodyType func(*http.Request) string) ht
 		// nature. It changes nothing unless its state matches a sign-in this
 		// browser started, so the cross-site rules do not apply to it.
 		// The endpoints of the authorization server are called, or the browser is
-		// sent to them, by other sites by design (see oauthCrossSite).
-		if !(r.Method == http.MethodGet && (r.URL.Path == oidcCallbackPath || r.URL.Path == githubCallbackPath)) && !oauthCrossSite(r) {
+		// sent to them, by other sites by design (see oauthCrossSite), and so are
+		// the sign-in endpoints an identity provider sends the browser to, and
+		// GitHub's return from connecting an account for repos (githubCallbackPath).
+		if !fromIdentityProvider(r) && !githubAuthorizationReturn(r) && !oauthCrossSite(r) {
 			if why := s.crossSite(r); why != "" {
 				if !oauthRefuse(sw, r, http.StatusForbidden, "invalid_request", why) {
 					writeError(sw, http.StatusForbidden, "forbidden", why)
@@ -292,7 +296,9 @@ func (s *server) wrap(next http.Handler, bodyType func(*http.Request) string) ht
 			}
 			if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != want {
 				msg := "send Content-Type: application/json with every request that changes something"
-				if want != "application/json" {
+				if want == "application/x-www-form-urlencoded" {
+					msg = "send the form with Content-Type: " + want
+				} else if want != "application/json" {
 					msg = "send the file with Content-Type: " + want
 				}
 				if r.URL.Path == oauth.PathRegister {
@@ -310,6 +316,43 @@ func (s *server) wrap(next http.Handler, bodyType func(*http.Request) string) ht
 }
 
 const oidcCallbackPath = "/api/auth/oidc/callback"
+
+// githubAuthorizationReturn is true for GitHub's redirect back after a person
+// connects their GitHub account for repos. It is not a sign-in (that is
+// /api/auth/github/{slug}/callback, in fromIdentityProvider) and changes
+// nothing unless its state matches an attempt this browser started.
+func githubAuthorizationReturn(r *http.Request) bool {
+	return r.Method == http.MethodGet && r.URL.Path == githubCallbackPath
+}
+
+// fromIdentityProvider is true for the requests an identity provider's site
+// sends the browser to, or the provider itself makes: the redirects of
+// OpenID Connect and GitHub, the form posted to a SAML ACS, and the metadata.
+// None changes anything unless it matches a sign-in this browser started.
+func fromIdentityProvider(r *http.Request) bool {
+	p := r.URL.Path
+	switch r.Method {
+	case http.MethodGet:
+		if p == oidcCallbackPath {
+			return true
+		}
+		if rest, ok := strings.CutPrefix(p, "/api/auth/"); ok {
+			parts := strings.Split(rest, "/")
+			if len(parts) == 3 && parts[1] != "" && (parts[0] == "oidc" || parts[0] == "github") && parts[2] == "callback" {
+				return true
+			}
+			if len(parts) == 3 && parts[0] == "saml" && parts[1] != "" && parts[2] == "metadata" {
+				return true
+			}
+		}
+	case http.MethodPost:
+		if rest, ok := strings.CutPrefix(p, "/api/auth/saml/"); ok {
+			parts := strings.Split(rest, "/")
+			return len(parts) == 2 && parts[0] != "" && parts[1] == "acs"
+		}
+	}
+	return false
+}
 
 // NormalizeOrigin lower-cases an origin and drops a trailing slash.
 func NormalizeOrigin(o string) string {
@@ -415,6 +458,8 @@ type errorBody struct {
 	// request header, a field of an interface.
 	Header string `json:"header,omitempty"`
 	Field  string `json:"field,omitempty"`
+	// Accounts is how many accounts a refused provider deletion would have left without a way in.
+	Accounts *int `json:"accounts,omitempty"`
 }
 
 // codedError is a 400 whose error code is code, with what it is about.
@@ -637,6 +682,11 @@ func (s *server) failGitHub(w http.ResponseWriter, e *github.Error) {
 
 func (s *server) failAuth(w http.ResponseWriter, e *auth.Error) {
 	switch e.Kind {
+	case auth.Coded:
+		if e.Status == http.StatusTooManyRequests {
+			w.Header().Set("Retry-After", strconv.Itoa(max(int((e.RetryAfter+time.Second-1)/time.Second), 1)))
+		}
+		writeJSON(w, e.Status, errorBody{Error: e.Code, Message: e.Msg, Accounts: e.Accounts})
 	case auth.Invalid:
 		writeError(w, http.StatusBadRequest, "invalid", e.Msg)
 	case auth.Unauthenticated:

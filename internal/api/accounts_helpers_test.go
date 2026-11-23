@@ -163,6 +163,15 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Nearly every test signs in from one address, many times: the allowance of
+	// a minute is lifted here, and the tests of the limits set it back.
+	var lift auth.SecurityPatch
+	if err := json.Unmarshal([]byte(`{"limits":{"perMinute":100000}}`), &lift); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateSecurity(ctx, "", "", lift); err != nil {
+		t.Fatal(err)
+	}
 	dcfg := drafts.Config{Now: clk.Now}
 	if o.draftCfg != nil {
 		o.draftCfg(&dcfg)

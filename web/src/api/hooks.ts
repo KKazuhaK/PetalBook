@@ -18,6 +18,11 @@ export const keys = {
   session: ['session'] as const,
   spaces: ['spaces'] as const,
   account: ['account'] as const,
+  providers: ['auth', 'providers'] as const,
+  adminSecurity: ['admin', 'security'] as const,
+  adminProviders: ['admin', 'providers'] as const,
+  adminAudit: (kind: string, user: string) => ['admin', 'audit', kind, user] as const,
+  userPasskeys: (id: string) => ['users', 'passkeys', id] as const,
   users: ['users'] as const,
   userSearch: (q: string) => ['users', 'search', q] as const,
   invites: ['invites'] as const,
@@ -256,12 +261,24 @@ export function useUrls() {
   return useMemo(() => spaceUrls(space), [space])
 }
 
+// What the sign-in pages draw: the enabled providers and what is available (read again each time a page opens).
+export function useAuthProviders(enabled = true) {
+  return useQuery({ queryKey: keys.providers, queryFn: ({ signal }) => api.providers(signal), staleTime: 0, gcTime: 0, enabled })
+}
+
 // What changes when someone signs in or out: nothing cached may carry over to
 // another person.
 export function applySession(qc: QueryClient, user: User | null) {
   const prev = qc.getQueryData<SessionInfo>(keys.session)
   qc.clear()
   qc.setQueryData<SessionInfo>(keys.session, { ...(prev ?? { mode: 'accounts' as const }), user, setup: false })
+}
+
+// After a sign-in: the cache starts over for the new person, and the session is read again, because
+// whether it is held until a passkey is registered (`hold`) is only in the server's answer.
+export async function applySignIn(qc: QueryClient, user: User) {
+  applySession(qc, user)
+  await qc.fetchQuery({ queryKey: keys.session, queryFn: ({ signal }) => api.session(signal), staleTime: 0 }).catch(() => undefined)
 }
 
 // --- space data ----------------------------------------------------------------

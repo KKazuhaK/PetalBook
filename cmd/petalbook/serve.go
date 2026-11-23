@@ -101,14 +101,17 @@ func newServe() *cobra.Command {
 and the server listens on a loopback address only unless --insecure-no-auth
 says that is acceptable.
 
---data DIR is accounts mode: people sign in with a password or an OpenID
-Connect provider, each has a personal space and may make more, and the server
+--data DIR is accounts mode: people sign in with a password, a passkey or a
+provider (OpenID Connect, SAML or GitHub) that the administrators set up on the
+安全 page, each has a personal space and may make more, and the server
 may listen on any address. Spaces live in DIR/spaces/<id>, their indexes in
 DIR/cache/<id>, and the state database (users, sessions, drafts) in
 DIR/petalbook.db unless --database says otherwise. The first run prints a
 set-up link in the log; open it to create the administrator. If nobody can
-sign in, "petalbook user add" and "petalbook user passwd" work on the data
-directory directly.
+sign in, "petalbook user add", "petalbook user passwd" and "petalbook security
+reset" work on the data directory directly. The --oidc-* flags of earlier
+versions are read once, at the first start, and become the provider "sso" of the
+state database; from then on the database counts and the flags only warn.
 
 Either way a space is a Git repository. Typing is kept as a draft in the state
 database; a draft becomes the file after --draft-idle without changes (or
@@ -148,7 +151,7 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 	f.StringVar(&c.database, "database", "", "state database: a SQLite file path or a postgres:// URL (default: DATA/petalbook.db, or state.db in the state directory)")
 	f.StringVar(&c.publicURL, "public-url", "", "accounts mode: the address people use, e.g. https://notes.example.com (decides whether cookies are Secure, and is accepted as the server's own origin; required with OIDC)")
 	f.StringSliceVar(&c.trustedProxies, "trusted-proxy", nil, "address or CIDR of a reverse proxy whose X-Forwarded-For is believed when limiting sign-in attempts (repeatable, or comma-separated)")
-	f.StringVar(&c.oidcIssuer, "oidc-issuer", "", "OpenID Connect issuer URL (https); turns single sign-on on")
+	f.StringVar(&c.oidcIssuer, "oidc-issuer", "", "OpenID Connect issuer URL (https); imported once as the provider \"sso\" of the state database, which counts from then on")
 	f.StringVar(&c.oidcClientID, "oidc-client-id", "", "OpenID Connect client id")
 	f.StringVar(&c.oidcClientSecretFile, "oidc-client-secret-file", "", "file holding the OpenID Connect client secret (or set PETALBOOK_OIDC_CLIENT_SECRET)")
 	f.StringVar(&c.oidcName, "oidc-name", "", "name of the provider on the sign-in page (default \"Single sign-on\")")
@@ -452,7 +455,12 @@ func runServe(ctx context.Context, c serveConfig) error {
 	}
 	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tokenSvc, OAuth: oauthSvc, GitHub: ghs, PublicURL: cfg.publicURL, NoMCP: c.noMCP, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
 		RestrictHost: loopback, AllowOrigins: cfg.origins, Logger: log})
-	webApp, webBuilt := webui.Handler()
+	var webOpts []webui.Option
+	if svc != nil {
+		// The page's policy lets the configured captcha provider's widget load.
+		webOpts = append(webOpts, webui.WithCaptcha(func(r *http.Request) string { return svc.CaptchaProvider(r.Context()) }))
+	}
+	webApp, webBuilt := webui.Handler(webOpts...)
 	if !webBuilt {
 		log.Warn("this binary has no web app built in (build it with make release); only the API is served")
 	}
@@ -497,7 +505,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 	}
 	if svc != nil {
 		run(svc.Run)
-		run(svc.WarmOIDC)
+		run(svc.WarmProviders)
 	}
 
 	errc := make(chan error, 1)
@@ -557,9 +565,9 @@ func withWebApp(apiHandler, app http.Handler) http.Handler {
 
 func signInMethods(cfg *checked) string {
 	if cfg.oidc != nil {
-		return "password, " + cfg.oidc.Issuer
+		return "password, passkeys, providers of the state database (--oidc-* is imported once: " + cfg.oidc.Issuer + ")"
 	}
-	return "password"
+	return "password, passkeys, providers of the state database"
 }
 
 func originOf(u string) []string {
