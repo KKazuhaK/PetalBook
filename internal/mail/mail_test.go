@@ -152,17 +152,23 @@ func TestTheQueueRetriesThreeTimesThenDrops(t *testing.T) {
 	if err := s.Enqueue(msg("a@example.test")); err != nil {
 		t.Fatal(err)
 	}
-	// Three attempts, each a connection; the clock is moved past each backoff.
+	// Three attempts, each a connection. The clock is moved past a backoff only
+	// once the failure is counted and the mail is back in the queue: the server
+	// sees the connection before the sender has set the next attempt's time,
+	// and a clock moved before that would put the next attempt out of reach.
 	for i := 0; i < 3; i++ {
-		for end := time.Now().Add(5 * time.Second); srv.Connections() <= i && time.Now().Before(end); time.Sleep(2 * time.Millisecond) {
+		requeued := 1
+		if i == 2 {
+			requeued = 0 // the last attempt drops it
 		}
-		if srv.Connections() <= i {
-			t.Fatalf("attempt %d never came", i+1)
+		done := func() bool { return s.Stats().FailedLastHour == i+1 && s.Waiting() == requeued }
+		for end := time.Now().Add(10 * time.Second); !done() && time.Now().Before(end); time.Sleep(time.Millisecond) {
+		}
+		if !done() {
+			t.Fatalf("attempt %d: connections %d, %+v", i+1, srv.Connections(), s.Stats())
 		}
 		ck.Advance(time.Minute)
-		time.Sleep(60 * time.Millisecond)
 	}
-	time.Sleep(100 * time.Millisecond)
 	if srv.Connections() != 3 || s.Waiting() != 0 {
 		t.Fatalf("connections %d, waiting %d", srv.Connections(), s.Waiting())
 	}

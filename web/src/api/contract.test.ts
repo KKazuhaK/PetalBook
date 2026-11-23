@@ -19,10 +19,10 @@
 // a real server would have to be waited on, or locked out, to run them.
 //
 // A real accounts server throttles failed sign-ins and bad invite tokens per
-// client address (ten free, then growing waits). The suite makes about seven such
-// failures a run and waits out any 429 it gets, so run it again straight away
-// and it slows down rather than fails; start from a fresh data directory when
-// that matters.
+// client address (ten in a window, then a wait until the window ends). The suite
+// makes more failures than that, so it raises the cap and the per-minute limit
+// for the run and puts them back afterwards. It waits out a short 429 and fails
+// at once on a long one, which means a cap was reached.
 //
 // History is written by Git commits, which a real server makes a few seconds
 // after the file is written and may join (two quick saves can be one commit),
@@ -118,6 +118,8 @@ function suite(target: Target) {
   let S: SpaceApi
   let SP_PAGES = ''
   const created: { users: string[] } = { users: [] }
+  // A real accounts server's sign-in limits as they were before the run.
+  let savedLimits: { perMinute: number; maxFailures: number } | undefined
 
   const browser = () => newBrowser(base)
   // Run `fn` as another browser (the client reads `globalThis.fetch`).
@@ -144,7 +146,10 @@ function suite(target: Target) {
   ): Promise<{ status: number; json: any; headers: Headers; res: Response }> => {
     const res = await b.fetch(path, { method, headers, body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body), redirect: 'manual' })
     if (res.status === 429 && !opts.expect429 && REAL) {
-      const wait = Math.min(Number(res.headers.get('Retry-After')) || 1, 20)
+      const wait = Number(res.headers.get('Retry-After')) || 1
+      // A wait longer than a test may take is a cap the run has used up, not a
+      // per-minute pause: say so at once instead of retrying until the timeout.
+      if (wait > 20) throw new Error(`${method} ${path}: 429 with Retry-After ${wait}s; the run has reached a failure cap`)
       await new Promise((r) => setTimeout(r, wait * 1000 + 100))
       return call(b, method, path, body, headers, opts)
     }
@@ -172,10 +177,17 @@ function suite(target: Target) {
       await api.login({ username: user, password })
       if (REAL) {
         // The suite signs in far more often than ten times a minute from one
-        // address, so a real server's per-minute limit is raised for the run
-        // and put back afterwards. The failure caps stay as they are.
-        const r = await fetch('/api/admin/security', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limits: { perMinute: 1000 } }) })
-        if (r.status !== 200) throw new Error(`could not raise the sign-in limit for the run: ${r.status} ${await r.text()}`)
+        // address, and makes more failures from it (wrong passwords, bad
+        // invite, email and reset tokens) than the per-address cap allows in
+        // its window. Once the cap is reached every public endpoint, invite
+        // accept included, answers 429 for the rest of the window, so both
+        // limits are raised for the run and put back afterwards.
+        const got = await fetch('/api/admin/security')
+        if (got.status !== 200) throw new Error(`could not read the security settings: ${got.status} ${await got.text()}`)
+        const { perMinute, maxFailures } = ((await got.json()) as { limits: { perMinute: number; maxFailures: number } }).limits
+        savedLimits = { perMinute, maxFailures }
+        const r = await fetch('/api/admin/security', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limits: { perMinute: 1000, maxFailures: 1000 } }) })
+        if (r.status !== 200) throw new Error(`could not raise the sign-in limits for the run: ${r.status} ${await r.text()}`)
       }
       spaceId = (await api.spaces()).spaces[0].id
     }
@@ -185,8 +197,8 @@ function suite(target: Target) {
   afterAll(async () => {
     globalThis.fetch = admin.fetch
     for (const id of created.users) await adminApi.updateUser(id, { disabled: true }).catch(() => undefined)
-    if (REAL && accounts) {
-      await fetch('/api/admin/security', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limits: { perMinute: 10 } }) }).catch(() => undefined)
+    if (REAL && accounts && savedLimits) {
+      await fetch('/api/admin/security', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limits: savedLimits }) }).catch(() => undefined)
     }
     globalThis.fetch = realFetch
     markSignedIn()
@@ -1013,7 +1025,7 @@ function suite(target: Target) {
         expect((await call(admin, 'PUT', '/api/admin/settings/registration.open', { value: true })).json.error).toBe('mail_not_configured')
         expect((await call(admin, 'PUT', '/api/admin/mail', { security: 'none', host: 'mail.example.test' })).json.error).toBe('mail_insecure')
         const m = await newMember(uniq('ml'))
-        for (const [method, path] of [['GET', '/api/admin/mail'], ['PUT', '/api/admin/mail'], ['POST', '/api/admin/mail/test']] as const) expect((await call(m.browser, method, path, {})).status, path).toBe(403)
+        for (const [method, path] of [['GET', '/api/admin/mail'], ['PUT', '/api/admin/mail'], ['POST', '/api/admin/mail/test']] as const) expect((await call(m.browser, method, path, method === 'GET' ? undefined : {})).status, path).toBe(403)
       })
 
       it('the switch gates making tenants; a tenant is made, listed, renamed, disabled and deleted; the default one is kept', async () => {
