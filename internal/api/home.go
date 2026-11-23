@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -141,7 +142,7 @@ func (s *server) getDaily(c *call) {
 	}
 	// 2 and 3. What the administrators gave (accounts mode only).
 	if !s.single {
-		q, reason, err := s.siteDaily(c, site, date, skip, lang)
+		q, reason, err := s.siteDaily(c, site, date, skip, lang, tz)
 		switch {
 		case errors.Is(err, dailyfetch.ErrRateLimited):
 			c.w.Header().Set("Retry-After", "10")
@@ -227,6 +228,7 @@ func (s *server) favoritesOf(c *call) (favoritesResp, error) {
 	if c.sp.Info.ViaAdmin {
 		return out, nil
 	}
+	s.settleFolderMoves(c)
 	favs, err := store.ListFavorites(c.r.Context(), s.opt.Store.Q(), c.user().ID, c.sp.Info.ID)
 	if err != nil {
 		return out, err
@@ -367,14 +369,78 @@ func (s *server) putFavoritesOrder(c *call) {
 	s.answerFavorites(c, err)
 }
 
+// The favourites of a folder follow it when it is moved. The move is recorded
+// in the state database before it is made (store.RecordFolderMove) and the
+// record goes in the same transaction as the favourites are changed; a record
+// left by a crash, a failure or a lost connection is settled the next time
+// the favourites of the space are read (settleFolderMoves).
+
+// pendingMoveAge is how long a recorded move whose folder is still where it
+// was is taken to be under way, before it is taken as not done.
+const pendingMoveAge = 10 * time.Minute
+
+// recordFolderMove notes a move about to be made; ok is false (and the move is
+// not to be made) when it cannot be noted.
+func (s *server) recordFolderMove(c *call, from, to string) bool {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.r.Context()), 5*time.Second)
+	defer cancel()
+	if err := store.RecordFolderMove(ctx, s.opt.Store.Q(), c.sp.Info.ID, from, to, time.Now()); err != nil {
+		s.fail(c.w, err)
+		return false
+	}
+	return true
+}
+
 // followFolder makes everybody's favourites of a folder that was moved follow
-// it. The move is done by then; what cannot be updated is logged, and the
-// favourites show as missing until someone takes them off.
-func (s *server) followFolder(c *call, from, to string) {
-	err := s.opt.Store.Tx(c.r.Context(), func(q store.Q) error {
-		return store.MoveFolderFavorites(c.r.Context(), q, c.sp.Info.ID, from, to)
+// it, and forgets the record of the move (to is the address the request gave,
+// as recorded; at is where the folder is now). It is not the request's
+// context: the folder is moved whether or not the client is still there.
+// What cannot be updated is logged, and the record stays to be settled later.
+func (s *server) followFolder(c *call, from, to, at string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.r.Context()), 10*time.Second)
+	defer cancel()
+	if err := s.finishFolderMove(ctx, c.sp.Info.ID, store.FolderMove{From: from, To: to}, at); err != nil {
+		s.log.Error("favourites of a moved folder were not updated", "space", c.sp.Info.ID, "from", from, "to", at, "error", err)
+	}
+}
+
+func (s *server) finishFolderMove(ctx context.Context, spaceID string, m store.FolderMove, at string) error {
+	return s.opt.Store.Tx(ctx, func(q store.Q) error {
+		if at != "" {
+			if err := store.MoveFolderFavorites(ctx, q, spaceID, m.From, at); err != nil {
+				return err
+			}
+		}
+		return store.DoneFolderMove(ctx, q, spaceID, m.From, m.To)
 	})
-	if err != nil {
-		s.log.Error("favourites of a moved folder were not updated", "space", c.sp.Info.ID, "from", from, "to", to, "error", err)
+}
+
+// settleFolderMoves deals with the recorded moves of a space: one whose
+// folder is at its new place and not at the old is finished; one whose folder
+// is not at its new place is forgotten (it did not happen, or the folder is
+// gone since), once it is old enough not to be under way. Cost: one query by
+// the index of the table, which is empty but for a crash or a failure.
+func (s *server) settleFolderMoves(c *call) {
+	ctx := context.WithoutCancel(c.r.Context())
+	moves, err := store.PendingFolderMoves(ctx, s.opt.Store.Q(), c.sp.Info.ID)
+	if err != nil || len(moves) == 0 {
+		return
+	}
+	for _, m := range moves {
+		cf, fromThere, _ := c.sp.Space.CanonicalFolder(m.From)
+		ct, toThere, _ := c.sp.Space.CanonicalFolder(m.To)
+		// A move that only changed the case of a name finds both on a file
+		// system that ignores it: it is done when the name on disk is the new one.
+		moved := toThere && (!fromThere || (cf == ct && cf != m.From))
+		var at string
+		switch {
+		case moved:
+			at = ct
+		case fromThere && time.Since(m.Created) < pendingMoveAge:
+			continue // maybe under way
+		}
+		if err := s.finishFolderMove(ctx, c.sp.Info.ID, m, at); err != nil {
+			s.log.Error("a folder move's favourites were not settled", "space", c.sp.Info.ID, "from", m.From, "to", m.To, "error", err)
+		}
 	}
 }

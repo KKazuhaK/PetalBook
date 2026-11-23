@@ -32,8 +32,9 @@ const (
 	// DailyBodyLimit is how many characters of a page the daily text carries.
 	DailyBodyLimit = 2000
 	// maxDailySkip is the largest skip a request may carry.
-	maxDailySkip = 1 << 20
-	// dailyMemoMax is how many picks the space remembers.
+	maxDailySkip = 1000
+	// dailyMemoMax is how many picks the space remembers of each kind: those
+	// everybody sees (skip 0) and the others.
 	dailyMemoMax = 512
 )
 
@@ -673,9 +674,84 @@ type dailyKey struct {
 }
 
 // dailyMemo is what a space remembers of its picks, so that pages added or
-// removed during a day do not change the page everybody was shown.
+// removed during a day do not change the page everybody was shown. The picks
+// everybody sees (skip 0) and the "another one"s (skip above 0) are kept
+// apart, so that asking for many others never pushes out the shared one; when
+// either is full, the half of it farthest from today goes (see evictFar).
 type dailyMemo struct {
-	picks map[dailyKey]dailyEntry
+	shared map[dailyKey]dailyEntry
+	other  map[dailyKey]dailyEntry
+	// today is the day by which "far" is measured (tests set it).
+	today func() time.Time
+}
+
+func (m *dailyMemo) of(k dailyKey) *map[dailyKey]dailyEntry {
+	if k.skip == 0 {
+		return &m.shared
+	}
+	return &m.other
+}
+
+func (m *dailyMemo) get(k dailyKey) (dailyEntry, bool) {
+	e, ok := (*m.of(k))[k]
+	return e, ok
+}
+
+func (m *dailyMemo) put(k dailyKey, e dailyEntry) {
+	p := m.of(k)
+	if *p == nil {
+		*p = map[dailyKey]dailyEntry{}
+	}
+	if _, ok := (*p)[k]; !ok && len(*p) >= dailyMemoMax {
+		today := time.Now()
+		if m.today != nil {
+			today = m.today()
+		}
+		evictFar(*p, today)
+	}
+	(*p)[k] = e
+}
+
+func (m *dailyMemo) forget(k dailyKey) { delete(*m.of(k), k) }
+
+// evictFar removes the half of the picks whose days are farthest from today
+// (at least one), keeping today's, yesterday's and tomorrow's while others
+// are there to go. Cost: a sort of the memo, once every dailyMemoMax/2 picks.
+func evictFar(picks map[dailyKey]dailyEntry, today time.Time) {
+	t := today.UTC().Truncate(24 * time.Hour)
+	dist := func(date string) time.Duration {
+		d, err := time.Parse("2006-01-02", date)
+		if err != nil {
+			return 1 << 62
+		}
+		return max(d.Sub(t), t.Sub(d))
+	}
+	ds := make([]time.Duration, 0, len(picks))
+	for k := range picks {
+		ds = append(ds, dist(k.date))
+	}
+	sort.Slice(ds, func(i, j int) bool { return ds[i] < ds[j] })
+	cut := ds[len(ds)/2]
+	if cut <= 24*time.Hour && ds[len(ds)-1] > 24*time.Hour {
+		cut = 24 * time.Hour // the days around today stay while others can go
+	}
+	removed := false
+	for k := range picks {
+		if dist(k.date) > cut {
+			delete(picks, k)
+			removed = true
+		}
+	}
+	if !removed { // all equally near: the half that comes first goes
+		n := len(picks) / 2
+		for k := range picks {
+			if n == 0 {
+				break
+			}
+			delete(picks, k)
+			n--
+		}
+	}
 }
 
 type dailyEntry struct {
@@ -748,7 +824,7 @@ func (s *Space) DailyFrom(spaceID, date string, skip int, source DailySource) (*
 	k := dailyKey{spaceID, src.key(), date, skip}
 
 	s.dailyMu.Lock()
-	memo, remembered := s.daily.picks[k]
+	memo, remembered := s.daily.get(k)
 	s.dailyMu.Unlock()
 	var sum index.Summary
 	count := 0
@@ -776,17 +852,14 @@ func (s *Space) DailyFrom(spaceID, date string, skip int, source DailySource) (*
 			return nil, 0, err
 		}
 		s.dailyMu.Lock()
-		if s.daily.picks == nil || len(s.daily.picks) >= dailyMemoMax {
-			s.daily.picks = map[dailyKey]dailyEntry{}
-		}
-		s.daily.picks[k] = dailyEntry{sum.ID, count}
+		s.daily.put(k, dailyEntry{sum.ID, count})
 		s.dailyMu.Unlock()
 	}
 	p, err := s.Get(sum.ID)
 	if errors.Is(err, ErrNotFound) {
 		// Gone since the index was read: the pick is made again.
 		s.dailyMu.Lock()
-		delete(s.daily.picks, k)
+		s.daily.forget(k)
 		s.dailyMu.Unlock()
 		if !remembered {
 			return nil, DailyNoMatch, nil

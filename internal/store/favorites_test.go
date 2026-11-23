@@ -187,13 +187,14 @@ func TestMoveFolderFavorites(t *testing.T) {
 		put("A", "S1", "view", "folder:Tang/Poems#v1")
 		put("A", "S1", "view", "tag:Tang#v1") // a tag, not a folder
 		put("A", "S1", "page", "Tang")        // a page id, whatever it looks like
-		put("A", "S1", "folder", "New/Stale") // nothing was at the target: stale
+		put("A", "S1", "folder", "New/Stale") // made after the move (or stale): kept
+		put("B", "S1", "folder", "New")       // B already has the new place: kept, and the old one goes
 		put("B", "S1", "folder", "Tang")
 		put("A", "S2", "folder", "Tang") // another space
 		if err := st.Tx(ctx, func(q store.Q) error { return store.MoveFolderFavorites(ctx, q, "S1", "Tang", "New") }); err != nil {
 			t.Fatal(err)
 		}
-		want := []string{"folder:New", "folder:New/Poems", "folder:Tangent", "view:folder:New/Poems#v1", "view:tag:Tang#v1", "page:Tang"}
+		want := []string{"folder:New", "folder:New/Poems", "folder:Tangent", "view:folder:New/Poems#v1", "view:tag:Tang#v1", "page:Tang", "folder:New/Stale"}
 		if got := favs(t, st, "A", "S1"); !same(got, want) {
 			t.Fatalf("%v", got)
 		}
@@ -202,6 +203,33 @@ func TestMoveFolderFavorites(t *testing.T) {
 		}
 		if got := favs(t, st, "A", "S2"); !same(got, []string{"folder:Tang"}) {
 			t.Fatalf("another space: %v", got)
+		}
+		// Done again (a recovery), it changes nothing.
+		if err := st.Tx(ctx, func(q store.Q) error { return store.MoveFolderFavorites(ctx, q, "S1", "Tang", "New") }); err != nil {
+			t.Fatal(err)
+		}
+		if got := favs(t, st, "A", "S1"); !same(got, want) {
+			t.Fatalf("again: %v", got)
+		}
+		// Moves are recorded until they are done.
+		if err := store.RecordFolderMove(ctx, st.Q(), "S1", "A", "B", time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.RecordFolderMove(ctx, st.Q(), "S1", "A", "B", time.Now()); err != nil {
+			t.Fatal("twice:", err)
+		}
+		store.RecordFolderMove(ctx, st.Q(), "S2", "C", "D", time.Now())
+		if l, err := store.PendingFolderMoves(ctx, st.Q(), "S1"); err != nil || len(l) != 1 || l[0].From != "A" || l[0].To != "B" || l[0].Created.IsZero() {
+			t.Fatalf("%v %v", l, err)
+		}
+		if err := store.DoneFolderMove(ctx, st.Q(), "S1", "A", "B"); err != nil {
+			t.Fatal(err)
+		}
+		if l, _ := store.PendingFolderMoves(ctx, st.Q(), "S1"); len(l) != 0 {
+			t.Fatalf("%v", l)
+		}
+		if l, _ := store.PendingFolderMoves(ctx, st.Q(), "S2"); len(l) != 1 {
+			t.Fatalf("%v", l)
 		}
 	})
 }
@@ -234,6 +262,7 @@ func TestOpeningAnOlderDatabaseFillsNameKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, stmt := range []string{
+		`DROP TABLE folder_moves`,
 		`DROP TABLE favorites`,
 		`DROP TABLE daily_cache`,
 		`DROP TABLE site_settings`,

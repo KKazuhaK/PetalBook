@@ -170,3 +170,23 @@ func PruneDailyCache(ctx context.Context, q Q, before time.Time) error {
 	_, err := q.Exec(ctx, `DELETE FROM daily_cache WHERE fetched < ?`, ms(before))
 	return err
 }
+
+// TrimDailyCache keeps the newest keep answers of an interface (and those
+// fetched at the same time as the last of them) and forgets the rest. Cost:
+// keep entries of an index.
+func TrimDailyCache(ctx context.Context, q Q, apiKey string, keep int) error {
+	_, err := q.Exec(ctx, `DELETE FROM daily_cache WHERE api_key = ? AND fetched < (
+		SELECT fetched FROM daily_cache WHERE api_key = ? ORDER BY fetched DESC LIMIT 1 OFFSET ?)`, apiKey, apiKey, keep-1)
+	return err
+}
+
+// LockSiteSetting holds a server-wide setting until the end of the
+// transaction q is in, so that one change at a time reads and writes it; a
+// setting never set is made, with the value "{}".
+func LockSiteSetting(ctx context.Context, q Q, key string, now time.Time) error {
+	if _, err := q.Exec(ctx, `INSERT INTO site_settings(key, value, updated) VALUES (?, '{}', ?) ON CONFLICT (key) DO NOTHING`, key, ms(now)); err != nil {
+		return err
+	}
+	res, err := q.Exec(ctx, `UPDATE site_settings SET key = key WHERE key = ?`, key)
+	return oneRow(res, err)
+}

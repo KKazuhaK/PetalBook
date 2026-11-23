@@ -68,8 +68,12 @@ func (d *siteDaily) fill() {
 }
 
 func (s *server) loadSite(ctx context.Context) (siteDaily, error) {
+	return s.loadSiteQ(ctx, s.opt.Store.Q())
+}
+
+func (s *server) loadSiteQ(ctx context.Context, q store.Q) (siteDaily, error) {
 	var d siteDaily
-	raw, ok, err := store.GetSiteSetting(ctx, s.opt.Store.Q(), siteDailyKey)
+	raw, ok, err := store.GetSiteSetting(ctx, q, siteDailyKey)
 	if err != nil {
 		return d, err
 	}
@@ -83,10 +87,27 @@ func (s *server) loadSite(ctx context.Context) (siteDaily, error) {
 	return d, nil
 }
 
-func (s *server) saveSite(ctx context.Context, d siteDaily) error {
-	d.fill()
-	b, _ := json.Marshal(d)
-	return store.SetSiteSetting(ctx, s.opt.Store.Q(), siteDailyKey, string(b), time.Now())
+// editSite changes the administrators' daily text settings: it reads them,
+// lets change change them and writes them, in one transaction that holds
+// them, so that two administrators saving at once both have their change. An
+// error from change leaves them as they were. change must use the state
+// database only through q.
+func (s *server) editSite(ctx context.Context, change func(q store.Q, d *siteDaily) error) error {
+	return s.opt.Store.Tx(ctx, func(q store.Q) error {
+		if err := store.LockSiteSetting(ctx, q, siteDailyKey, time.Now()); err != nil {
+			return err
+		}
+		d, err := s.loadSiteQ(ctx, q)
+		if err != nil {
+			return err
+		}
+		if err := change(q, &d); err != nil {
+			return err
+		}
+		d.fill()
+		b, _ := json.Marshal(d)
+		return store.SetSiteSetting(ctx, q, siteDailyKey, string(b), time.Now())
+	})
 }
 
 // apiView is an interface as the administrators see it: the headers only by
@@ -169,11 +190,15 @@ func (b dailyBacking) Prune(ctx context.Context, before time.Time) error {
 	return store.PruneDailyCache(ctx, b.st.Q(), before)
 }
 
+func (b dailyBacking) Trim(ctx context.Context, apiKey string, keep int) error {
+	return store.TrimDailyCache(ctx, b.st.Q(), apiKey, keep)
+}
+
 // siteDaily is what the administrators' settings give for a space with no
 // source of its own: the external interface the space chose, else the default
 // when the space takes it. A nil quote with a reason is a block that does not
 // show; with none, there is nothing set.
-func (s *server) siteDaily(c *call, site siteDaily, date string, skip int, lang string) (*dailyQuote, string, error) {
+func (s *server) siteDaily(c *call, site siteDaily, date string, skip int, lang string, tz *int) (*dailyQuote, string, error) {
 	ctx := c.r.Context()
 	prefs, err := store.GetSpaceDaily(ctx, s.opt.Store.Q(), c.sp.Info.ID)
 	if err != nil {
@@ -184,12 +209,17 @@ func (s *server) siteDaily(c *call, site siteDaily, date string, skip int, lang 
 		json.Unmarshal([]byte(prefs.APIs), &ids)
 	}
 	if a := chooseAPI(site.APIs, ids, lang); a != nil {
+		// An interface is asked about the days around today only: each other
+		// day would be a request, a row kept and a lane of its own.
+		if !nearToday(date, s.opt.DailyFetch.Now(), tz) {
+			return nil, "out_of_range", nil
+		}
 		rt, err := s.runtime(*a)
 		if err != nil {
 			s.log.Error("an external daily text interface cannot be set up", "interface", a.ID, "error", err)
 			return nil, "unavailable", nil
 		}
-		r, err := s.opt.DailyFetch.Get(ctx, rt, site.Hosts, lang, date, skip)
+		r, err := s.opt.DailyFetch.Get(ctx, rt, site.Hosts, rt.LaneLang(lang, site.Languages), date, skip)
 		switch {
 		case errors.Is(err, dailyfetch.ErrRateLimited):
 			return nil, "", err
@@ -292,6 +322,11 @@ func (s *server) build(b apiBody, old *storedAPI) (storedAPI, dailyfetch.API, st
 			if enc == "" {
 				return storedAPI{}, a, "", &space.InvalidError{Msg: "the header " + h.Name + " has no value yet; give one"}
 			}
+			// A kept value goes only where it went: to another scheme or host it
+			// is given again, by someone who knows it.
+			if o := dailyfetch.Origin(a.URL); o == "" || o != dailyfetch.Origin(old.URL) {
+				return storedAPI{}, a, "", &space.InvalidError{Msg: "the address goes to another host than before; give the value of the header " + h.Name + " again"}
+			}
 			box := s.spaces.Secrets()
 			if box == nil {
 				return storedAPI{}, a, "", errors.New("this server has no key for stored secrets")
@@ -344,24 +379,22 @@ func (s *server) adminPutDaily(c *call) {
 		}
 	}
 	ctx := c.r.Context()
-	site, err := s.loadSite(ctx)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
+	// Everything is checked first; the change is then made to the settings as
+	// they are at that moment (see editSite).
+	var hosts, langs []string
 	if raw, ok := req["hosts"]; ok {
-		var hosts []string
-		if err := json.Unmarshal(raw, &hosts); err != nil || hosts == nil {
+		var given []string
+		if err := json.Unmarshal(raw, &given); err != nil || given == nil {
 			bad(c, "hosts is a list of host names")
 			return
 		}
-		if len(hosts) > dailyfetch.MaxHosts {
+		if len(given) > dailyfetch.MaxHosts {
 			bad(c, "at most 100 hosts")
 			return
 		}
 		seen := map[string]bool{}
-		site.Hosts = []string{}
-		for _, h := range hosts {
+		hosts = []string{}
+		for _, h := range given {
 			h, err := dailyfetch.CheckHost(h)
 			if err != nil {
 				bad(c, err.Error())
@@ -369,23 +402,23 @@ func (s *server) adminPutDaily(c *call) {
 			}
 			if !seen[h] {
 				seen[h] = true
-				site.Hosts = append(site.Hosts, h)
+				hosts = append(hosts, h)
 			}
 		}
 	}
 	if raw, ok := req["languages"]; ok {
-		var langs []string
-		if err := json.Unmarshal(raw, &langs); err != nil || langs == nil {
+		var given []string
+		if err := json.Unmarshal(raw, &given); err != nil || given == nil {
 			bad(c, "languages is a list of language codes like zh and en")
 			return
 		}
-		if len(langs) > 30 {
+		if len(given) > 30 {
 			bad(c, "at most 30 languages")
 			return
 		}
 		seen := map[string]bool{}
-		site.Languages = []string{}
-		for _, l := range langs {
+		langs = []string{}
+		for _, l := range given {
 			l = space.NormalLang(l)
 			if !space.ValidLang(l) {
 				bad(c, l+" is not a language code")
@@ -393,42 +426,53 @@ func (s *server) adminPutDaily(c *call) {
 			}
 			if !seen[l] {
 				seen[l] = true
-				site.Languages = append(site.Languages, l)
+				langs = append(langs, l)
 			}
 		}
 	}
+	var allow struct {
+		Own *bool `json:"own"`
+		API *bool `json:"api"`
+	}
 	if raw, ok := req["allow"]; ok {
-		var a struct {
-			Own *bool `json:"own"`
-			API *bool `json:"api"`
-		}
-		if err := json.Unmarshal(raw, &a); err != nil || a.Own == nil && a.API == nil {
+		if err := json.Unmarshal(raw, &allow); err != nil || allow.Own == nil && allow.API == nil {
 			bad(c, "allow is {\"own\": true or false, \"api\": true or false}")
 			return
 		}
-		// What is left out stays.
-		if a.Own != nil {
-			site.Allow.Own = *a.Own
-		}
-		if a.API != nil {
-			site.Allow.API = *a.API
-		}
 	}
+	var def *siteDefault
 	if raw, ok := req["default"]; ok {
-		var d *siteDefault
-		if err := json.Unmarshal(raw, &d); err != nil {
+		if err := json.Unmarshal(raw, &def); err != nil {
 			bad(c, "default: "+err.Error())
 			return
 		}
-		if d != nil {
-			if err := s.checkSiteDefault(ctx, d); err != nil {
+		if def != nil {
+			if err := s.checkSiteDefault(ctx, def); err != nil {
 				s.fail(c.w, err)
 				return
 			}
 		}
-		site.Default = d
 	}
-	if err := s.saveSite(ctx, site); err != nil {
+	err := s.editSite(ctx, func(_ store.Q, site *siteDaily) error {
+		if hosts != nil {
+			site.Hosts = hosts
+		}
+		if langs != nil {
+			site.Languages = langs
+		}
+		// What is left out stays.
+		if allow.Own != nil {
+			site.Allow.Own = *allow.Own
+		}
+		if allow.API != nil {
+			site.Allow.API = *allow.API
+		}
+		if _, ok := req["default"]; ok {
+			site.Default = def
+		}
+		return nil
+	})
+	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
@@ -448,43 +492,37 @@ func (s *server) adminPutDailyAPI(c *call) {
 		return
 	}
 	b.ID = id
-	ctx := c.r.Context()
-	site, err := s.loadSite(ctx)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	at := -1
-	for i, a := range site.APIs {
-		if a.ID == id {
-			at = i
+	err := s.editSite(c.r.Context(), func(_ store.Q, site *siteDaily) error {
+		at := -1
+		for i, a := range site.APIs {
+			if a.ID == id {
+				at = i
+			}
 		}
-	}
-	var old *storedAPI
-	if at >= 0 {
-		old = &site.APIs[at]
-	} else if len(site.APIs) >= dailyfetch.MaxAPIs {
-		bad(c, "at most 50 interfaces")
-		return
-	}
-	made, _, host, err := s.build(b, old)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	if at >= 0 {
-		site.APIs[at] = made
-	} else {
-		site.APIs = append(site.APIs, made)
-	}
-	if !hostIn(site.Hosts, host) {
-		if len(site.Hosts) >= dailyfetch.MaxHosts {
-			bad(c, "the list of hosts is full")
-			return
+		var old *storedAPI
+		if at >= 0 {
+			old = &site.APIs[at]
+		} else if len(site.APIs) >= dailyfetch.MaxAPIs {
+			return &space.InvalidError{Msg: "at most 50 interfaces"}
 		}
-		site.Hosts = append(site.Hosts, host)
-	}
-	if err := s.saveSite(ctx, site); err != nil {
+		made, _, host, err := s.build(b, old)
+		if err != nil {
+			return err
+		}
+		if at >= 0 {
+			site.APIs[at] = made
+		} else {
+			site.APIs = append(site.APIs, made)
+		}
+		if !hostIn(site.Hosts, host) {
+			if len(site.Hosts) >= dailyfetch.MaxHosts {
+				return &space.InvalidError{Msg: "the list of hosts is full"}
+			}
+			site.Hosts = append(site.Hosts, host)
+		}
+		return nil
+	})
+	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
@@ -500,31 +538,33 @@ func hostIn(hosts []string, h string) bool {
 	return false
 }
 
+var errNoInterface = errors.New("no such interface")
+
 // adminDeleteDailyAPI removes an interface (its host stays on the list; the
 // list is the administrators' to change).
 func (s *server) adminDeleteDailyAPI(c *call) {
-	ctx := c.r.Context()
-	site, err := s.loadSite(ctx)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
 	id := c.r.PathValue("id")
-	kept := site.APIs[:0]
-	found := false
-	for _, a := range site.APIs {
-		if a.ID == id {
-			found = true
-			continue
+	err := s.editSite(c.r.Context(), func(_ store.Q, site *siteDaily) error {
+		kept := site.APIs[:0]
+		found := false
+		for _, a := range site.APIs {
+			if a.ID == id {
+				found = true
+				continue
+			}
+			kept = append(kept, a)
 		}
-		kept = append(kept, a)
-	}
-	if !found {
+		if !found {
+			return errNoInterface
+		}
+		site.APIs = kept
+		return nil
+	})
+	if errors.Is(err, errNoInterface) {
 		writeError(c.w, http.StatusNotFound, "not_found", "no such interface")
 		return
 	}
-	site.APIs = kept
-	if err := s.saveSite(ctx, site); err != nil {
+	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
@@ -533,7 +573,8 @@ func (s *server) adminDeleteDailyAPI(c *call) {
 
 // adminTryDailyAPI makes one request now with an interface as it is in the
 // form (saved or not) and shows what came back: the answer as it is, cut, and
-// what the paths take out of it.
+// what the paths take out of it. It is held to the list of hosts like any
+// request: an interface on a new host is tried once the host is on the list.
 func (s *server) adminTryDailyAPI(c *call) {
 	var req struct {
 		API  apiBody `json:"api"`
@@ -576,7 +617,7 @@ func (s *server) adminTryDailyAPI(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	res, err := s.opt.DailyFetch.Probe(ctx, rt, lang, date)
+	res, err := s.opt.DailyFetch.Probe(ctx, rt, site.Hosts, lang, date)
 	if errors.Is(err, dailyfetch.ErrRateLimited) {
 		c.w.Header().Set("Retry-After", "1")
 		writeError(c.w, http.StatusTooManyRequests, "rate_limited", "trying too often; wait a moment")
@@ -719,6 +760,22 @@ func maxAgeFor(date string, tz *int, now time.Time) int {
 }
 
 func clampAge(sec int) int { return max(60, min(sec, 86400)) }
+
+// nearToday reports whether date is today, yesterday or tomorrow where the
+// asker is (tz is minutes east of UTC; without it, in UTC).
+func nearToday(date string, now time.Time, tz *int) bool {
+	d, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return false
+	}
+	local := now.UTC()
+	if tz != nil {
+		local = local.Add(time.Duration(*tz) * time.Minute)
+	}
+	today := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
+	diff := d.Sub(today)
+	return diff >= -24*time.Hour && diff <= 24*time.Hour
+}
 
 func parseTZ(v url.Values) (*int, bool) {
 	raw := v.Get("tz")

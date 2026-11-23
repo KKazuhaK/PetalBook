@@ -128,6 +128,44 @@ func TestDailyKeepsTheDaysPickWhilePagesComeAndGo(t *testing.T) {
 	}
 }
 
+// Readers asking for many other texts, or for many other days, never push
+// today's shared pick out of the memory; skip has a sane bound.
+func TestDailyTodaysPickOutlastsOtherAsks(t *testing.T) {
+	s := open(t)
+	for i := 0; i < 5; i++ {
+		mustCreate(t, s, "f", meta("title", fmt.Sprint("p", i)), "x\n")
+	}
+	if _, err := s.SetDaily(Author{}, dailyFolder(s, "f")); err != nil {
+		t.Fatal(err)
+	}
+	today := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+	s.dailyMu.Lock()
+	s.daily.today = func() time.Time { return today }
+	s.dailyMu.Unlock()
+	was := mustDaily(t, s, "S", "2026-11-23", 0)
+	for skip := 1; skip <= maxDailySkip; skip++ {
+		mustDaily(t, s, "S", "2026-11-23", skip)
+	}
+	for d := 0; d < 3*dailyMemoMax; d++ {
+		mustDaily(t, s, "S", today.AddDate(0, 0, -2-d).Format("2006-01-02"), 0)
+	}
+	s.dailyMu.Lock()
+	kept := false
+	for k, e := range s.daily.shared {
+		if k.date == "2026-11-23" && k.skip == 0 && e.id == was.Page.ID {
+			kept = true
+		}
+	}
+	sizes := []int{len(s.daily.shared), len(s.daily.other)}
+	s.dailyMu.Unlock()
+	if !kept || sizes[0] > dailyMemoMax || sizes[1] > dailyMemoMax {
+		t.Fatalf("today's pick kept: %v; sizes %v", kept, sizes)
+	}
+	if _, _, err := s.DailyText("S", "2026-11-23", maxDailySkip+1, ""); err == nil {
+		t.Fatal("a skip beyond the bound is taken")
+	}
+}
+
 func TestDailyBodyIsCutAt2000Characters(t *testing.T) {
 	s := open(t)
 	mustCreate(t, s, "f", meta("title", "long"), strings.Repeat("字", 2001))

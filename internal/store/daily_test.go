@@ -3,6 +3,7 @@ package store_test
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -168,6 +169,59 @@ func TestDailyCache(t *testing.T) {
 		}
 		if _, ok, _ := store.LatestDailyCache(ctx, st.Q(), "a:1", "zh"); ok {
 			t.Fatal("a pruned row is still the latest")
+		}
+		// Trimming keeps the newest of an interface, and touches no other.
+		for i := 0; i < 10; i++ {
+			put("t:1", fmt.Sprint("l", i%3), fmt.Sprint("p", i), i, `{"text":"x"}`, at.Add(time.Duration(i)*time.Minute))
+		}
+		if err := store.TrimDailyCache(ctx, st.Q(), "t:1", 4); err != nil {
+			t.Fatal(err)
+		}
+		st.Q().QueryRow(ctx, `SELECT COUNT(*) FROM daily_cache WHERE api_key = 't:1'`).Scan(&n)
+		if n != 4 {
+			t.Fatalf("%d rows after trimming to 4", n)
+		}
+		if _, ok, _ := store.GetDailyCache(ctx, st.Q(), "t:1", "l0", "p9", 9); !ok {
+			t.Fatal("the newest went")
+		}
+		if err := store.TrimDailyCache(ctx, st.Q(), "a:2", 4); err != nil {
+			t.Fatal(err)
+		}
+		st.Q().QueryRow(ctx, `SELECT COUNT(*) FROM daily_cache`).Scan(&n)
+		if n != 6 {
+			t.Fatalf("%d rows", n)
+		}
+	})
+}
+
+// A setting is locked for the rest of a transaction: concurrent changes that
+// read, change and write it lose nothing.
+func TestLockSiteSetting(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		const n = 8
+		errs := make(chan error, n)
+		for i := 0; i < n; i++ {
+			go func() {
+				errs <- st.Tx(ctx, func(q store.Q) error {
+					if err := store.LockSiteSetting(ctx, q, "k", time.Now()); err != nil {
+						return err
+					}
+					v, _, err := store.GetSiteSetting(ctx, q, "k")
+					if err != nil {
+						return err
+					}
+					time.Sleep(5 * time.Millisecond)
+					return store.SetSiteSetting(ctx, q, "k", v+"x", time.Now())
+				})
+			}()
+		}
+		for i := 0; i < n; i++ {
+			if err := <-errs; err != nil {
+				t.Fatal(err)
+			}
+		}
+		if v, _, _ := store.GetSiteSetting(ctx, st.Q(), "k"); v != "{}"+strings.Repeat("x", n) {
+			t.Fatalf("%q", v)
 		}
 	})
 }

@@ -27,7 +27,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		// Open already migrated once; running again must change nothing.
 		var n int
-		if err := st.Q().QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil || n != 9 {
+		if err := st.Q().QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil || n != 10 {
 			t.Fatalf("%d %v", n, err)
 		}
 		mkUser(t, st, "A", "a", "admin")

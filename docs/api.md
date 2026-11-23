@@ -1600,7 +1600,7 @@ not there. A source that is already as asked writes nothing.
 #### `GET /api/spaces/{space}/daily?date=2026-11-23&skip=0&lang=zh`
 
 Needs `read`. `date` is the day in the browser's time zone (today in UTC when
-left out); `skip` (0 up to 1 048 576) asks for another text than the day's and
+left out); `skip` (0 up to 1 000) asks for another text than the day's and
 only affects what the asker is shown; `lang` is the language of the interface
 (`zh`, `en`, `zh-CN`; left out, no language); `tz` is the browser's offset in
 minutes east of UTC (`-480` for UTC-8, from -840 to 840).
@@ -1630,7 +1630,10 @@ the source, in the order of the index; both are read from the index (the
 cost is the pages that meet the condition, tens of milliseconds for 50 000
 pages). What a day showed is remembered in memory (per source, day and `skip`),
 so pages that are added or deleted during the day do not change it; a page that
-is gone is replaced by another pick.
+is gone is replaced by another pick. The picks everybody sees (`skip` 0) and the
+others are remembered apart, 512 of each in a space; when either is full, the
+half whose days are farthest from today is forgotten, so asking for other texts
+or other days never changes today's.
 
 From the administrators' settings the answer has no page but a `quote`:
 
@@ -1644,8 +1647,11 @@ From the administrators' settings the answer has no page but a `quote`:
 administrators pasted, or a page of the space they named: its body as `text`,
 its title as `source`; shown to everybody, members of that space or not).
 
-Nothing to show: `{"page": null, "reason": "no_source" | "no_match" | "unavailable"}`;
-`unavailable` is an interface that did not answer or a default space that is gone. A client
+Nothing to show: `{"page": null, "reason": "no_source" | "no_match" | "unavailable" | "out_of_range"}`;
+`unavailable` is an interface that did not answer or a default space that is gone;
+`out_of_range` is a `date` an interface is not asked about: only today,
+yesterday and tomorrow are (today where the browser is, by `tz`; in UTC
+without it), since each other day would be a request and a row kept. A client
 hides the block for any of them. `429 rate_limited` (with `Retry-After`) when
 another text from an interface is asked for too often. `400 invalid` for a
 `date` that is not a day from 1970 to 2261, a `skip` or a `lang` that cannot
@@ -1746,7 +1752,10 @@ Any number of interfaces (at most 50). An interface in `apis`:
   in, `""` for every language.
 - `url` is fetched with `GET`. It is `https`, with no user name, and `{lang}`
   (the language asked for, `en` when none) and `{date}` (the day, `2026-11-23`)
-  may be in its path or query, not its host. An address that is an IP address
+  may be in its path or query, not in its scheme, user, host or port (as the
+  address is written, in any case); they are filled in only as a checked
+  language code and day, escaped, and the host of the address really used is
+  checked against `hosts` again. An address that is an IP address
   that is not public, `localhost` and its subdomains are refused when it is saved;
   whatever a name resolves to is checked again when the connection is made (below).
 - `headers` are request headers, at most 10. A value is **never returned**: it is
@@ -1754,7 +1763,9 @@ Any number of interfaces (at most 50). An interface in `apis`:
   bound to the interface and the header, and the interface answers with
   `{"name": …, "set": true}`. In a request `{"name": "X-Api-Key", "value": "…"}`
   sets or replaces a value, `{"name": "X-Api-Key"}` keeps the one it has (`400` when it
-  has none), and a header that is left out is removed. `Host`, `Content-Length`, `Content-Type`,
+  has none, and when the scheme or the host and port of `url` are not those
+  saved: a kept value is sent only where it was, and to another host it is
+  given again), and a header that is left out is removed. `Host`, `Content-Length`, `Content-Type`,
   `Transfer-Encoding`, `Connection` and the like cannot be set.
 - `text` (needed), `source` and `author` are paths in the JSON answer: names
   and positions with dots and brackets (`hitokoto`, `data.0.q`, `[0].content`);
@@ -1775,7 +1786,9 @@ Any number of interfaces (at most 50). An interface in `apis`:
   be chosen by spaces and is used.
 
 `PUT` makes the interface or replaces it, adds its host to `hosts`, and answers as
-`GET /api/admin/daily`. `DELETE` removes it (its host stays on the list) and
+`GET /api/admin/daily`. Changes of the settings (these, `PUT /api/admin/daily`
+and `DELETE`) are made one at a time, in a transaction that holds the
+settings: two administrators saving at once both keep their change. `DELETE` removes it (its host stays on the list) and
 answers the same; `404` for an id that is not there. `400 invalid` for anything
 above that breaks a rule (the message says which).
 
@@ -1794,9 +1807,14 @@ random quote, 3 requests a second).
 ```
 
 Makes one request now with the interface as it is in the form (saved or not;
-a header without a value uses the value saved for that `id`), at the same rules
-as any request, and shows what came back. It keeps nothing and is limited to a few
-a second (`429`). `400 invalid` when the interface itself breaks a rule.
+a header without a value uses the value saved for that `id`, on the same
+scheme and host only), at the same rules as any request, and shows what came
+back. The host must be on `hosts` already (else `ok` is false and `message`
+says so, and nothing is sent): an interface on a new host is tried once the
+host is on the list. The values of the request's headers (of 4 characters and
+more) are blotted out (`•••`) wherever the answer repeats them, in `raw` and in
+`quote`. It keeps nothing and is limited to a few a second (`429`). `400
+invalid` when the interface itself breaks a rule.
 
 ```json
 {"ok": true, "status": 200, "url": "https://…?l=zh", "raw": "{\"hitokoto\": …", "rawTruncated": false,
@@ -1823,8 +1841,15 @@ seconds, be `200`, declare JSON, and be at most 64 KB.
 **What is kept.** (1) In memory, by interface (as it is asked: its id, address,
 paths and header names), language, refresh period and skip: inside a period
 nobody asks again, however many look; requests in flight for the same item are
-one. (2) In the state database, the same: a restart asks for nothing again (rows
-older than 7 days are removed). (3) In the browser, by `GET …/daily` (below).
+one, and that one request is not cut short (nor counted as a failure) when the
+reader who started it goes away. The language is the one the answer can differ
+in: none for an address without `{lang}`, the interface's own `lang` when it
+has one, else the reader's language or its base when it is one of
+`languages`, else the first of them. What is kept by interface and language
+(last answers, waits after failures, rate limits) is bounded (1 024 of each;
+the oldest go). (2) In the state database, the same: a restart asks for nothing
+again (rows older than 7 days are removed, and at most 2 000 rows of an
+interface are kept, the newest). (3) In the browser, by `GET …/daily` (below).
 When an interface fails (an error, a bad answer, no answer in time) the last
 text it said in that language is given, marked `"stale": true` with the time it
 was got (`"fetched"`); with none, or none from the last 7 days, the answer is
@@ -1893,9 +1918,14 @@ the index and the settings in one go: no page file is read.
 
 Moving or renaming a folder (see `POST …/folders/move`) changes, once it has
 succeeded, the paths of the favourites of every person in the space: of the
-folder, of the folders below it, and of the saved views of those folders;
-favourites that pointed at something that was never there under the new name
-are removed. Deleting a folder leaves the favourites, now `missing`.
+folder, of the folders below it, and of the saved views of those folders. A
+person who already has a favourite at the new path keeps it, and their old one
+goes. The move is recorded in the state database before it is made, and the
+record goes with the change of the favourites, whether or not the client is
+still there; a record left by a crash or a failure is settled the next time
+the favourites of the space are read (the favourites follow when the folder is
+at its new place; a record of a folder still where it was is forgotten after
+ten minutes). Deleting a folder leaves the favourites, now `missing`.
 
 ## Files
 

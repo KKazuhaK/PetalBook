@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -499,13 +500,21 @@ func TestAdministratorsTryAnInterface(t *testing.T) {
 			x.now = x.now.Add(time.Second)
 			return x.adm("POST", "/api/admin/daily/try", map[string]any{"api": api, "lang": "en", "date": "2026-11-23"})
 		}
-		// An interface that is not saved can be tried, the secret never comes back.
+		// A trial is held to the list of hosts, like any request.
 		code, r := try(body)
+		if code != 200 || r["ok"] != false || !strings.Contains(fmt.Sprint(r["message"]), "not on the list") || qs.hits.Load() != 0 {
+			t.Fatalf("%d %v", code, r)
+		}
+		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"hosts": []any{qs.host}}); code != 200 {
+			t.Fatalf("%d %v", code, r)
+		}
+		// An interface that is not saved can be tried, the secret never comes back.
+		code, r = try(body)
 		if code != 200 || r["ok"] != true || r["status"] != float64(200) || !strings.Contains(r["raw"].(string), "quote 1 in en") || r["quote"].(map[string]any)["text"] != "quote 1 in en" ||
 			r["quote"].(map[string]any)["link"] != "https://example.org/q/id1" || strings.Contains(fmt.Sprint(r), "key-try") || qs.key.Load() != "key-try" {
 			t.Fatalf("%d %v", code, r)
 		}
-		if _, g := x.adm("GET", "/api/admin/daily", nil); len(g["apis"].([]any)) != 0 || len(g["hosts"].([]any)) != 0 {
+		if _, g := x.adm("GET", "/api/admin/daily", nil); len(g["apis"].([]any)) != 0 || len(g["hosts"].([]any)) != 1 {
 			t.Fatalf("a trial saved something: %v", g)
 		}
 		// A path that finds nothing is said, with the raw answer, and the rest is taken out.
@@ -528,6 +537,32 @@ func TestAdministratorsTryAnInterface(t *testing.T) {
 		x.now = x.now.Add(time.Second)
 		if code, r := try(good); code != 200 || r["ok"] != true || qs.key.Load() != "key-saved" {
 			t.Fatalf("%d %v (%v)", code, r, qs.key.Load())
+		}
+		// A kept value goes only where it went: to another host, even one on the
+		// list, it is given again, for a trial and for a save.
+		evil := newQuoteServer(t)
+		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"hosts": []any{qs.host, evil.host}}); code != 200 {
+			t.Fatalf("%d %v", code, r)
+		}
+		moved := qs.api("saved", "en")
+		moved["url"] = evil.URL + "/q?lang={lang}"
+		moved["headers"] = []any{map[string]any{"name": "X-Api-Key"}}
+		if code, r := try(moved); code != 400 || evil.hits.Load() != 0 {
+			t.Fatalf("a kept value was sent to another host: %d %v (%v)", code, r, evil.key.Load())
+		}
+		if code, r := x.putAPI("saved", moved); code != 400 {
+			t.Fatalf("%d %v", code, r)
+		}
+		moved["headers"] = []any{map[string]any{"name": "X-Api-Key", "value": "key-evil"}}
+		if code, r := try(moved); code != 200 || evil.key.Load() != "key-evil" {
+			t.Fatalf("%d %v", code, r)
+		}
+		// The same host, however the scheme is written, keeps it.
+		same := qs.api("saved", "en")
+		same["url"] = "HTTP://" + qs.host + "/other?lang={lang}"
+		same["headers"] = []any{map[string]any{"name": "X-Api-Key"}}
+		if code, r := try(same); code != 200 || qs.key.Load() != "key-saved" {
+			t.Fatalf("%d %v", code, r)
 		}
 		// A service that is down, an address that is not allowed, an interface that is not valid.
 		qs.fail.Store(true)
@@ -560,6 +595,37 @@ func TestAdministratorsTryAnInterface(t *testing.T) {
 		}
 		if !limited {
 			t.Error("trying is never limited")
+		}
+	})
+}
+
+// Administrators who save at the same moment each keep their change.
+func TestAdministratorsSaveAtOnce(t *testing.T) {
+	withExternal(t, func(x *extFixture) {
+		t := x.t
+		const n = 8
+		var wg sync.WaitGroup
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				id := fmt.Sprint("api", i)
+				if code, r := x.putAPI(id, x.qs.api(id, "")); code != 200 {
+					t.Errorf("%d %v", code, r)
+				}
+			}()
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"languages": []any{"zh", "en", "ja"}}); code != 200 {
+				t.Errorf("%d %v", code, r)
+			}
+		}()
+		wg.Wait()
+		_, r := x.adm("GET", "/api/admin/daily", nil)
+		if len(r["apis"].([]any)) != n || fmt.Sprint(r["languages"]) != "[zh en ja]" {
+			t.Fatalf("changes were lost: %d interfaces, languages %v", len(r["apis"].([]any)), r["languages"])
 		}
 	})
 }
@@ -621,8 +687,22 @@ func TestExternalInterfacesAreCachedAndFallBack(t *testing.T) {
 		if cc := get("date=2026-11-22&lang=en&tz=0").Header().Get("Cache-Control"); cc != "private, max-age=60" {
 			t.Fatalf("a day that is over: %q", cc)
 		}
-		if cc := get("date=2026-12-30&lang=en&tz=0").Header().Get("Cache-Control"); cc != "private, max-age=86400" {
-			t.Fatalf("a day far ahead: %q", cc)
+		if cc := get("date=2026-11-24&lang=zh&tz=0").Header().Get("Cache-Control"); cc != "private, max-age=86400" {
+			t.Fatalf("a day ahead: %q", cc)
+		}
+		// A day far from today (where the reader is, give or take a day) is not
+		// asked for: each would be a request and a row kept.
+		before0 := qs.hits.Load()
+		for _, q := range []string{"date=2026-12-30&lang=en&tz=0", "date=1970-01-01&lang=en", "date=2026-11-21&lang=en&tz=840", "date=2026-11-25&lang=en&tz=-840"} {
+			if r := quoteOf(t, x.viewer, x.base, q); r["quote"] != nil || r["reason"] != "out_of_range" {
+				t.Fatalf("%s: %v", q, r)
+			}
+		}
+		if qs.hits.Load() != before0 {
+			t.Fatalf("%d requests for days far off", qs.hits.Load()-before0)
+		}
+		if r := quoteOf(t, x.viewer, x.base, "date=2026-11-22&lang=en&tz=-840"); r["quote"] == nil {
+			t.Fatalf("today where the reader is: %v", r)
 		}
 		// --- memory: once for the period, whoever asks and however often
 		asked := qs.hits.Load()
@@ -701,14 +781,14 @@ func TestExternalInterfacesAreCachedAndFallBack(t *testing.T) {
 		}
 		// Seven days after the last good answer there is nothing to give: the block is hidden.
 		x.now = x.now.Add(8 * 24 * time.Hour)
-		gone := quoteOf(t, restarted, x.base, "date=2026-12-10&lang=en")
+		gone := quoteOf(t, restarted, x.base, "date=2026-12-03&lang=en")
 		if gone["quote"] != nil || gone["reason"] != "unavailable" {
 			t.Fatalf("%v", gone)
 		}
 		// It comes back.
 		qs.fail.Store(false)
 		x.now = x.now.Add(2 * time.Hour)
-		back := quoteOf(t, restarted, x.base, "date=2026-12-10&lang=en")
+		back := quoteOf(t, restarted, x.base, "date=2026-12-03&lang=en")
 		if bq, _ := back["quote"].(map[string]any); bq == nil || bq["stale"] == true {
 			t.Fatalf("%v", back)
 		}
@@ -726,7 +806,7 @@ func TestExternalRefreshIntervalAndRateLimit(t *testing.T) {
 		text := func(date string) string { return quoteText(quoteOf(t, x.viewer, x.base, "date="+date+"&lang=en")) }
 		one := text("2026-11-23")
 		x.now = x.now.Add(30 * time.Minute)
-		if text("2026-11-29") != one {
+		if text("2026-11-24") != one {
 			t.Fatal("the same hour, another item")
 		}
 		// The browser may keep it until the hour is over.

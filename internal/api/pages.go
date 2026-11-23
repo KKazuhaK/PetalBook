@@ -525,14 +525,26 @@ func (s *server) moveFolder(c *call) {
 		return
 	}
 	// How the folder is spelled on disk: the favourites of it are under that.
+	// The move is recorded first, so that the favourites follow it even when
+	// what follows the move does not happen (see followFolder).
 	from, _, _ := c.sp.Space.CanonicalFolder(req.From)
+	if from != "" && !s.recordFolderMove(c, from, req.To) {
+		return
+	}
 	p, err := c.sp.Space.MoveFolder(s.author(c), req.From, req.To)
 	if err != nil {
+		// With the folder where it was, nothing moved; else the record is
+		// settled later (the move may be finished at recovery).
+		if from != "" {
+			if _, still, _ := c.sp.Space.CanonicalFolder(from); still {
+				s.followFolder(c, from, req.To, "")
+			}
+		}
 		s.fail(c.w, err)
 		return
 	}
 	if from != "" {
-		s.followFolder(c, from, p)
+		s.followFolder(c, from, req.To, p)
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Path string `json:"path"`

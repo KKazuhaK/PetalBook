@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
@@ -433,6 +434,70 @@ func favItems(t *testing.T, r map[string]any) []map[string]any {
 		out = append(out, it.(map[string]any))
 	}
 	return out
+}
+
+// A folder move whose request did not see the favourites through (a crash, a
+// lost connection, a failure of the state database) is finished the next time
+// the favourites are read; a recorded move that did not happen is forgotten.
+func TestFavoritesFollowAMoveTheRequestDidNotFinish(t *testing.T) {
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		a.setup("kazuha", pw)
+		tm := newTeam(t, a)
+		base := "/api/spaces/" + tm.sid
+		o, v := asClient(tm.owner), asClient(tm.viewer)
+		for _, p := range []string{"Poems", "Stays"} {
+			if code, r := o("POST", base+"/folders", map[string]any{"path": p}); code != 201 {
+				t.Fatalf("%d %v", code, r)
+			}
+		}
+		for _, p := range []string{"Poems", "Stays"} {
+			if code, r := v("POST", base+"/favorites", map[string]any{"kind": "folder", "target": p}); code != 200 {
+				t.Fatalf("%d %v", code, r)
+			}
+		}
+		// The move is recorded and made, and the server stops before the favourites follow.
+		ctx := context.Background()
+		if err := store.RecordFolderMove(ctx, a.st.Q(), tm.sid, "Poems", "Verse", time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		sp, release, err := a.mgr.Acquire(ctx, tm.sid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := sp.MoveFolder(space.Author{}, "Poems", "Verse"); err != nil {
+			t.Fatal(err)
+		}
+		release()
+		// A move recorded long ago whose folder is still where it was did not happen;
+		// one recorded just now may be under way.
+		old := time.Now().Add(-time.Hour)
+		store.RecordFolderMove(ctx, a.st.Q(), tm.sid, "Stays", "Gone", old)
+		store.RecordFolderMove(ctx, a.st.Q(), tm.sid, "Stays", "Soon", time.Now())
+		if got := favLine(favList(t, v, base)); got != "folder:Verse folder:Stays" {
+			t.Fatalf("%s", got)
+		}
+		l, err := store.PendingFolderMoves(ctx, a.st.Q(), tm.sid)
+		if err != nil || len(l) != 1 || l[0].To != "Soon" {
+			t.Fatalf("%v %v", l, err)
+		}
+		// A move through the request leaves no record behind.
+		if code, r := o("POST", base+"/folders/move", map[string]any{"from": "Verse", "to": "Rhyme"}); code != 200 {
+			t.Fatalf("%d %v", code, r)
+		}
+		if l, _ := store.PendingFolderMoves(ctx, a.st.Q(), tm.sid); len(l) != 1 {
+			t.Fatalf("%v", l)
+		}
+		// A move that is refused leaves none either.
+		if code, _ := o("POST", base+"/folders/move", map[string]any{"from": "Rhyme", "to": "Stays"}); code == 200 {
+			t.Fatal("a move onto a folder that is there")
+		}
+		if l, _ := store.PendingFolderMoves(ctx, a.st.Q(), tm.sid); len(l) != 1 {
+			t.Fatalf("%v", l)
+		}
+		if got := favLine(favList(t, v, base)); got != "folder:Rhyme folder:Stays" {
+			t.Fatalf("%s", got)
+		}
+	})
 }
 
 func favLine(items []map[string]any) string {

@@ -35,6 +35,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -64,6 +65,13 @@ const (
 	backoffBase = 30 * time.Second
 	backoffMax  = time.Hour
 	cacheMax    = 2048
+	// laneMax bounds the lanes (an interface in a language) kept in memory: the
+	// last answers, the failures and the rate limits.
+	laneMax = 1024
+	// MaxCachedRows is how many answers of one interface the Backing keeps
+	// (the oldest go first); it is trimmed every trimEvery answers.
+	MaxCachedRows = 2000
+	trimEvery     = 32
 	// DefaultRPS is the rate limit of an interface that has none set.
 	DefaultRPS = 1.0
 	// MaxRPS is the largest rate limit.
@@ -208,16 +216,23 @@ func CheckAPI(a API, allowHTTP bool) (API, string, error) {
 	if len(a.URL) > 2000 || strings.ContainsAny(a.URL, " \t\r\n") {
 		return a, "", errors.New("that is not an address")
 	}
+	// The scheme and the host are read from the address as it is written, before
+	// anything is filled in: a placeholder there would let the language or the
+	// day a reader asks for choose where the server connects to.
+	scheme, auth, ok := splitRaw(a.URL)
+	if !ok {
+		return a, "", errors.New("that is not an address")
+	}
+	if strings.ContainsAny(scheme+auth, "{}") {
+		return a, "", errors.New("{lang} and {date} may be in the path or the query, not in the scheme or the host")
+	}
 	probe := strings.NewReplacer("{lang}", "en", "{date}", "2026-01-01").Replace(a.URL)
 	u, err := url.Parse(probe)
-	if err != nil || u.Host == "" || u.User != nil || u.Fragment != "" {
+	if err != nil || u.Host == "" || u.User != nil || u.Fragment != "" || strings.ToLower(u.Host) != auth {
 		return a, "", errors.New("that is not an address")
 	}
 	if u.Scheme != "https" && !(allowHTTP && u.Scheme == "http") {
 		return a, "", errors.New("the address must be https")
-	}
-	if strings.Contains(strings.SplitN(strings.TrimPrefix(strings.TrimPrefix(a.URL, "https://"), "http://"), "/", 2)[0], "{") {
-		return a, "", errors.New("{lang} and {date} may be in the path or the query, not in the host")
 	}
 	if ip, err := netip.ParseAddr(u.Hostname()); err == nil && !allowHTTP && !Public(ip) {
 		return a, "", fmt.Errorf("%s is not a public address; the server never connects to one", ip)
@@ -274,7 +289,60 @@ func CheckAPI(a API, allowHTTP bool) (API, string, error) {
 		}
 		seen[strings.ToLower(h.Name)] = true
 	}
-	return a, strings.ToLower(u.Host), nil
+	return a, auth, nil
+}
+
+// splitRaw cuts an address as it is written, placeholders and all, into its
+// scheme and its authority (user, host and port), both in lower case.
+func splitRaw(raw string) (scheme, authority string, ok bool) {
+	i := strings.Index(raw, "://")
+	if i <= 0 {
+		return "", "", false
+	}
+	rest := raw[i+3:]
+	if j := strings.IndexAny(rest, "/?#"); j >= 0 {
+		rest = rest[:j]
+	}
+	return strings.ToLower(raw[:i]), strings.ToLower(rest), rest != ""
+}
+
+// Origin is the scheme and the host (with the port) of an address as it is
+// written, "" when it has none: where a header value is sent.
+func Origin(raw string) string {
+	scheme, auth, ok := splitRaw(raw)
+	if !ok {
+		return ""
+	}
+	return scheme + "://" + auth
+}
+
+// LaneLang is the language an interface is asked in for a reader who asks in
+// lang, so that languages the answer cannot differ in are not asked for apart:
+// "" when the address does not take {lang}; the interface's own language when
+// it has one; else lang, or its base language, when it is one of langs (the
+// languages the server has), else the first of langs.
+func (a API) LaneLang(lang string, langs []string) string {
+	if !strings.Contains(a.URL, "{lang}") {
+		return ""
+	}
+	if a.Lang != "" {
+		return a.Lang
+	}
+	base := lang
+	if i := strings.IndexByte(lang, '-'); i > 0 {
+		base = lang[:i]
+	}
+	for _, want := range []string{lang, base} {
+		for _, l := range langs {
+			if want != "" && l == want {
+				return l
+			}
+		}
+	}
+	if len(langs) > 0 {
+		return langs[0]
+	}
+	return ""
 }
 
 func validLang(s string) bool {
@@ -337,6 +405,11 @@ type Backing interface {
 	Prune(ctx context.Context, before time.Time) error
 }
 
+// Trimmer is a Backing that can keep only the newest answers of an interface.
+type Trimmer interface {
+	Trim(ctx context.Context, apiKey string, keep int) error
+}
+
 // Fetcher asks the interfaces. It is safe for concurrent use.
 type Fetcher struct {
 	client    *http.Client
@@ -379,6 +452,8 @@ type failure struct {
 type bucket struct {
 	tokens float64
 	at     time.Time
+	// puts counts the answers of the interface kept, for trimming.
+	puts int
 }
 
 // take uses one token of a bucket that holds up to max(1, rps) and fills at
@@ -518,6 +593,12 @@ func (f *Fetcher) Get(ctx context.Context, a API, hosts []string, lang, date str
 		skip = 0
 	}
 	skip = max(0, min(skip, MaxSkip))
+	// A language the answer cannot differ in is not another lane.
+	if !strings.Contains(a.URL, "{lang}") {
+		lang = ""
+	} else if a.Lang != "" {
+		lang = a.Lang
+	}
 	f.mu.Lock()
 	now := f.now()
 	period, _ := a.Period(now, date)
@@ -540,7 +621,12 @@ func (f *Fetcher) Get(ctx context.Context, a API, hosts []string, lang, date str
 	f.busy[key] = fl
 	f.mu.Unlock()
 
-	r, err := f.lead(ctx, a, hosts, lang, date, skip, key)
+	// The one request is everybody's: it is not cut short when the reader who
+	// happened to start it goes away (which would count as a failure of the
+	// interface and make everybody wait), only by its own time.
+	lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*f.timeout)
+	r, err := f.lead(lctx, a, hosts, lang, date, skip, key)
+	cancel()
 
 	f.mu.Lock()
 	delete(f.busy, key)
@@ -555,7 +641,88 @@ func (f *Fetcher) remember(key cacheKey, r Result) {
 		f.cache = map[cacheKey]Result{}
 	}
 	f.cache[key] = r
-	f.last[laneKey{key.api, key.lang}] = r
+	lane := laneKey{key.api, key.lang}
+	if _, ok := f.last[lane]; !ok && len(f.last) >= laneMax {
+		f.pruneLast()
+	}
+	f.last[lane] = r
+}
+
+// pruneLast makes room among the last answers (under mu): those past the
+// retention go, then, if that is not enough, the older half.
+func (f *Fetcher) pruneLast() {
+	now := f.now()
+	times := make([]int64, 0, len(f.last))
+	for k, v := range f.last {
+		if now.Sub(v.Fetched) >= Retention {
+			delete(f.last, k)
+			continue
+		}
+		times = append(times, v.Fetched.UnixNano())
+	}
+	if len(f.last) < laneMax {
+		return
+	}
+	slices.Sort(times)
+	cut := times[len(times)/2]
+	for k, v := range f.last {
+		if v.Fetched.UnixNano() <= cut {
+			delete(f.last, k)
+		}
+	}
+}
+
+// fail records a failure of a lane (under mu), making room when the lanes are
+// many: the failures whose wait is long over go, then those that end soonest.
+func (f *Fetcher) fail(lane laneKey, now time.Time) {
+	if _, ok := f.fails[lane]; !ok && len(f.fails) >= laneMax {
+		ends := make([]int64, 0, len(f.fails))
+		for k, v := range f.fails {
+			if now.Sub(v.next) > backoffMax {
+				delete(f.fails, k)
+				continue
+			}
+			ends = append(ends, v.next.UnixNano())
+		}
+		if len(f.fails) >= laneMax {
+			slices.Sort(ends)
+			cut := ends[len(ends)/2]
+			for k, v := range f.fails {
+				if v.next.UnixNano() <= cut {
+					delete(f.fails, k)
+				}
+			}
+		}
+	}
+	n := f.fails[lane].n + 1
+	f.fails[lane] = failure{n, now.Add(min(backoffMax, backoffBase<<min(n-1, 7)))}
+}
+
+// bucketOf is the rate limit of an interface (under mu). A bucket idle long
+// enough to be full again is the same as a new one, so those go when there
+// are many.
+func (f *Fetcher) bucketOf(api string, now time.Time) *bucket {
+	if b := f.buckets[api]; b != nil {
+		return b
+	}
+	if len(f.buckets) >= laneMax {
+		for k, v := range f.buckets {
+			if now.Sub(v.at) > 2*time.Minute {
+				delete(f.buckets, k)
+			}
+		}
+	}
+	b := &bucket{}
+	f.buckets[api] = b
+	return b
+}
+
+// Lanes is how many lanes the fetcher keeps in memory: last answers,
+// failures and rate limits (tests).
+func (f *Fetcher) Lanes() (last, fails, buckets int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.last), len(f.fails), len(f.buckets)
 }
 
 // lead does what the one request in flight for a key does.
@@ -576,11 +743,7 @@ func (f *Fetcher) lead(ctx context.Context, a API, hosts []string, lang, date st
 		f.mu.Unlock()
 		return f.fallback(ctx, lane, ErrUnavailable)
 	}
-	b := f.buckets[key.api]
-	if b == nil {
-		b = &bucket{}
-		f.buckets[key.api] = b
-	}
+	b := f.bucketOf(key.api, now)
 	if !b.take(now, a.RPS) {
 		f.mu.Unlock()
 		return f.fallback(ctx, lane, ErrRateLimited)
@@ -595,12 +758,11 @@ func (f *Fetcher) lead(ctx context.Context, a API, hosts []string, lang, date st
 	if a.Refresh != RefreshDaily {
 		reqDate = now.UTC().Format("2006-01-02")
 	}
-	q, err := f.fetch(ctx, a, lang, reqDate)
+	q, err := f.fetch(ctx, a, hosts, lang, reqDate)
 	f.mu.Lock()
 	now = f.now()
 	if err != nil {
-		n := f.fails[lane].n + 1
-		f.fails[lane] = failure{n, now.Add(min(backoffMax, backoffBase<<min(n-1, 7)))}
+		f.fail(lane, now)
 		f.mu.Unlock()
 		return f.fallback(ctx, lane, err)
 	}
@@ -611,10 +773,17 @@ func (f *Fetcher) lead(ctx context.Context, a API, hosts []string, lang, date st
 	if prune {
 		f.pruned = now
 	}
+	b.puts++
+	trim := b.puts%trimEvery == 0
 	f.mu.Unlock()
 	if f.backing != nil {
-		if err := f.backing.Put(ctx, key.api, lang, key.period, skip, r); err == nil && prune {
-			f.backing.Prune(ctx, now.Add(-Retention))
+		if err := f.backing.Put(ctx, key.api, lang, key.period, skip, r); err == nil {
+			if prune {
+				f.backing.Prune(ctx, now.Add(-Retention))
+			}
+			if t, ok := f.backing.(Trimmer); ok && trim {
+				t.Trim(ctx, key.api, MaxCachedRows)
+			}
 		}
 	}
 	return r, nil
@@ -639,22 +808,34 @@ func (f *Fetcher) fallback(ctx context.Context, lane laneKey, why error) (Result
 	return Result{}, why
 }
 
+// hostOf is the host (with the port) of an address as it is written.
 func hostOf(raw string) string {
-	u, err := url.Parse(strings.NewReplacer("{lang}", "en", "{date}", "2026-01-01").Replace(raw))
-	if err != nil {
-		return ""
-	}
-	return u.Host
+	_, auth, _ := splitRaw(raw)
+	return auth
 }
 
-func (f *Fetcher) request(ctx context.Context, a API, lang, date string) (*http.Request, error) {
+// fill puts the language and the day in an address. Both are checked to be
+// what they say (a language code, a day) and escaped, so they stay a piece of
+// the path or the query.
+func fill(raw, lang, date string) string {
 	if lang == "" || !validLang(lang) {
 		lang = "en"
 	}
-	raw := strings.NewReplacer("{lang}", url.QueryEscape(lang), "{date}", url.QueryEscape(date)).Replace(a.URL)
-	u, err := url.Parse(raw)
+	if _, err := time.Parse("2006-01-02", date); err != nil {
+		date = ""
+	}
+	return strings.NewReplacer("{lang}", url.PathEscape(lang), "{date}", url.PathEscape(date)).Replace(raw)
+}
+
+func (f *Fetcher) request(ctx context.Context, a API, hosts []string, lang, date string) (*http.Request, error) {
+	u, err := url.Parse(fill(a.URL, lang, date))
 	if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "https" && !(f.allowHTTP && u.Scheme == "http")) {
 		return nil, fmt.Errorf("%w: bad address", ErrUnavailable)
+	}
+	// Where the request goes is where the address as written goes, and it is
+	// allowed: checked again on the address really used.
+	if h := strings.ToLower(u.Host); h != hostOf(a.URL) || !hostAllowed(h, hosts) {
+		return nil, fmt.Errorf("%w: the host %s is not on the list of hosts", ErrUnavailable, u.Host)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
@@ -670,10 +851,10 @@ func (f *Fetcher) request(ctx context.Context, a API, lang, date string) (*http.
 
 // do sends the request and reads the answer: status, the body (at most
 // MaxResponse) and whether it is JSON.
-func (f *Fetcher) do(ctx context.Context, a API, lang, date string) (status int, body []byte, isJSON bool, err error) {
+func (f *Fetcher) do(ctx context.Context, a API, hosts []string, lang, date string) (status int, body []byte, isJSON bool, err error) {
 	ctx, cancel := context.WithTimeout(ctx, f.timeout)
 	defer cancel()
-	req, err := f.request(ctx, a, lang, date)
+	req, err := f.request(ctx, a, hosts, lang, date)
 	if err != nil {
 		return 0, nil, false, err
 	}
@@ -690,8 +871,8 @@ func (f *Fetcher) do(ctx context.Context, a API, lang, date string) (status int,
 	return resp.StatusCode, body, isJSON, nil
 }
 
-func (f *Fetcher) fetch(ctx context.Context, a API, lang, date string) (Quote, error) {
-	status, body, isJSON, err := f.do(ctx, a, lang, date)
+func (f *Fetcher) fetch(ctx context.Context, a API, hosts []string, lang, date string) (Quote, error) {
+	status, body, isJSON, err := f.do(ctx, a, hosts, lang, date)
 	switch {
 	case err != nil:
 		return Quote{}, err
@@ -721,19 +902,25 @@ type ProbeResult struct {
 	PathErrors map[string]string `json:"pathErrors,omitempty"`
 }
 
-// Probe makes one request now, at the same rules as any other (the address is
-// checked when the connection is made) and shows the answer as it came and what
-// the paths take out of it. It is not kept, and is limited to a few a second
-// whatever the interface says.
-func (f *Fetcher) Probe(ctx context.Context, a API, lang, date string) (ProbeResult, error) {
+// Probe makes one request now, at the same rules as any other (the host must be
+// one of hosts, and the address is checked when the connection is made) and
+// shows the answer as it came and what the paths take out of it, with the
+// values of the request's headers blotted out wherever the answer repeats
+// them. It is not kept, and is limited to a few a second whatever the
+// interface says.
+func (f *Fetcher) Probe(ctx context.Context, a API, hosts []string, lang, date string) (ProbeResult, error) {
 	f.mu.Lock()
 	ok := f.probe.take(f.now(), 2)
 	f.mu.Unlock()
 	if !ok {
 		return ProbeResult{}, ErrRateLimited
 	}
-	res := ProbeResult{URL: strings.NewReplacer("{lang}", url.QueryEscape(or(lang, "en")), "{date}", url.QueryEscape(date)).Replace(a.URL)}
-	status, body, isJSON, err := f.do(ctx, a, lang, date)
+	res := ProbeResult{URL: fill(a.URL, lang, date)}
+	if !hostAllowed(hostOf(a.URL), hosts) {
+		res.Message = "the host " + hostOf(a.URL) + " is not on the list of hosts"
+		return res, nil
+	}
+	status, body, isJSON, err := f.do(ctx, a, hosts, lang, date)
 	res.Status = status
 	if err != nil {
 		res.Message = strings.TrimPrefix(err.Error(), ErrUnavailable.Error()+": ")
@@ -747,7 +934,7 @@ func (f *Fetcher) Probe(ctx context.Context, a API, lang, date string) (ProbeRes
 		res.Message = fmt.Sprintf("the answer is larger than %d bytes", MaxResponse)
 		return res, nil
 	}
-	raw := string(body)
+	raw := scrub(a, string(body))
 	if utf8.RuneCountInString(raw) > RawLimit {
 		raw, res.RawTruncated = string([]rune(raw)[:RawLimit]), true
 	}
@@ -792,6 +979,7 @@ func (f *Fetcher) Probe(ctx context.Context, a API, lang, date string) (ProbeRes
 		res.PathErrors = nil
 	}
 	if q.Text != "" {
+		q = scrubQuote(a, q)
 		res.Quote = &q
 		res.OK = res.PathErrors == nil
 	} else if res.Message == "" {
@@ -800,11 +988,29 @@ func (f *Fetcher) Probe(ctx context.Context, a API, lang, date string) (ProbeRes
 	return res, nil
 }
 
-func or(a, b string) string {
-	if a == "" {
-		return b
+// minSecret is the shortest header value blotted out of answers: shorter ones
+// are not secrets, and blotting them would garble the answer.
+const minSecret = 4
+
+// scrub blots out of an answer the values of the request's headers, as they
+// are and as JSON writes them, so that a service that repeats what it was sent
+// does not show a key.
+func scrub(a API, s string) string {
+	for _, h := range a.Headers {
+		if len(h.Value) < minSecret {
+			continue
+		}
+		s = strings.ReplaceAll(s, h.Value, "•••")
+		if b, err := json.Marshal(h.Value); err == nil {
+			s = strings.ReplaceAll(s, string(b[1:len(b)-1]), "•••")
+		}
 	}
-	return a
+	return s
+}
+
+func scrubQuote(a API, q Quote) Quote {
+	q.Text, q.Source, q.Author, q.Link = scrub(a, q.Text), scrub(a, q.Source), scrub(a, q.Author), scrub(a, q.Link)
+	return q
 }
 
 func trimErr(err error) string {
@@ -838,7 +1044,7 @@ func Extract(a API, body []byte) (Quote, error) {
 	if a.Link != "" {
 		q.Link = expandLink(a.Link, doc)
 	}
-	return q, nil
+	return scrubQuote(a, q), nil
 }
 
 // linkTemplate fills {path} in a template with value(path).
