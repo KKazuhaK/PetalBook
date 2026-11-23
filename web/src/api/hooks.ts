@@ -38,6 +38,11 @@ export const keys = {
   adminSpaces: ['admin', 'spaces'] as const,
   adminSpaceList: (q: string) => ['admin', 'spaces', 'list', q] as const,
   adminStatus: ['admin', 'status'] as const,
+  tenancy: ['admin', 'tenancy'] as const,
+  tenants: ['admin', 'tenants'] as const,
+  siteSettings: ['admin', 'settings', 'site'] as const,
+  tenantSettings: (id: string) => ['admin', 'settings', 'tenant', id] as const,
+  mySettings: (space: string) => ['settings', space] as const,
   adminDaily: ['admin', 'daily'] as const,
   // A space an administrator opens without being a member of it.
   viewedSpace: (space: string) => ['admin', 'spaces', 'view', space] as const,

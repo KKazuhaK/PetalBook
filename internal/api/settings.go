@@ -201,14 +201,17 @@ func (s *server) adminPutTenantSetting(c *call) {
 		return
 	}
 	ctx := c.r.Context()
-	if err := s.beforeOpening(key, ch); err != nil {
-		s.failSetting(c, err)
-		return
-	}
 	before, err := s.settings.Get(ctx, t.ID, key)
 	if err != nil {
 		s.failSetting(c, err)
 		return
+	}
+	// What the site locks is refused as locked, before anything else is asked of it.
+	if before.Site.Lower.Mode != settings.Lock {
+		if err := s.beforeOpening(key, ch); err != nil {
+			s.failSetting(c, err)
+			return
+		}
 	}
 	if err := s.settings.SetTenant(ctx, t.ID, key, ch); err != nil {
 		s.failSetting(c, err)
@@ -247,6 +250,9 @@ func (s *server) mySettings(c *call) {
 	type layerView struct {
 		CanChange bool `json:"canChange"`
 		InEffect  bool `json:"inEffect"`
+		// Source is the layer that keeps it from changing: a lock, or a value that
+		// switches it off ("site" or "tenant"); absent when nothing does.
+		Source settings.Layer `json:"source,omitempty"`
 	}
 	type item struct {
 		Key       string     `json:"key"`
@@ -265,6 +271,12 @@ func (s *server) mySettings(c *call) {
 		// use it, and what they saved stays without effect.
 		on, _ := e.Value.(bool)
 		lv := &layerView{CanChange: on && e.Below.Mode != settings.Lock, InEffect: on}
+		switch {
+		case e.LockedBy != "":
+			lv.Source = e.LockedBy
+		case !on:
+			lv.Source = e.Source
+		}
 		if d.Has(settings.Space) {
 			it.Space = lv
 		}

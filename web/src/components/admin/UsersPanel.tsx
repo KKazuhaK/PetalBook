@@ -5,6 +5,7 @@ import { ApiError } from '@/api/client'
 import { adminApi, useInvites, useSecuritySettings, useUsers } from '@/api/admin'
 import { keys, useSession } from '@/api/hooks'
 import type { CreatedInvite, Passkey, Role, User } from '@/api/types'
+import { tt } from '@/i18n/tenants'
 import { FormMessage } from '@/components/auth/Field'
 import { SettingsSection } from '@/components/settings/SettingsParts'
 import { ErrorState, PageFallback } from '@/components/common'
@@ -32,7 +33,7 @@ export function UsersPanel() {
   if (users.isError) return <ErrorState message={t.fmt.labelled(t.users.loadFailed, users.error.message)} onRetry={() => void users.refetch()} />
   return (
     <div className="space-y-8">
-      <UserList users={users.data.users} meId={me!.id} />
+      <UserList users={users.data.users} meId={me!.id} meSite={me!.siteAdmin !== false} />
       <Invites users={users.data.users} />
     </div>
   )
@@ -45,7 +46,7 @@ function conflictMessage(e: unknown, disabling: boolean): string {
   return e instanceof ApiError ? e.message : t.users.changeFailed
 }
 
-function UserList({ users, meId }: { users: User[]; meId: string }) {
+function UserList({ users, meId, meSite }: { users: User[]; meId: string; meSite: boolean }) {
   const qc = useQueryClient()
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<{ id: string; message: string } | null>(null)
@@ -54,7 +55,7 @@ function UserList({ users, meId }: { users: User[]; meId: string }) {
   // The roles a passkey is required of: for them the switch is on and cannot be turned off here.
   const requireRoles = useSecuritySettings().data?.passkeys.requireRoles ?? []
 
-  const change = async (u: User, patch: { role?: Role; disabled?: boolean; passkeyRequired?: boolean; email?: string; emailVerified?: boolean }) => {
+  const change = async (u: User, patch: { role?: Role; disabled?: boolean; passkeyRequired?: boolean; email?: string; emailVerified?: boolean; siteAdmin?: boolean }) => {
     setBusy(u.id)
     setError(null)
     try {
@@ -85,9 +86,15 @@ function UserList({ users, meId }: { users: User[]; meId: string }) {
                   <span className="truncate text-sm font-medium">{u.name}</span>
                   {self && <span className="text-xs text-muted-foreground">{t.users.you}</span>}
                   {u.disabled && <Badge variant="secondary">{t.users.disabled}</Badge>}
+                  {u.role === 'admin' && u.siteAdmin !== undefined && (
+                    <Badge variant="outline" data-slot="admin-kind">
+                      {u.siteAdmin ? tt.adminKinds.site : tt.adminKinds.tenant}
+                    </Badge>
+                  )}
                 </div>
                 <div className="truncate text-xs text-muted-foreground">
                   {u.username}
+                  {u.tenant && u.tenant.slug !== 'default' ? ` · ${tt.tenantOf(u.tenant.name)}` : ''}
                   {u.email ? ` · ${u.email}` : ''}
                   {u.email && u.emailVerified ? ` · ${tsec.users.verified}` : ''}
                 </div>
@@ -105,6 +112,12 @@ function UserList({ users, meId }: { users: User[]; meId: string }) {
                 {tsec.users.passkeyRequired}
                 {requireRoles.includes(u.role) && <span data-slot="passkey-by-role">{tsec.users.passkeyByRole}</span>}
               </label>
+              {u.role === 'admin' && meSite && u.siteAdmin !== undefined && (
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Switch checked={u.siteAdmin} disabled={busy === u.id} aria-label={tt.siteAdminFor(u.name)} onCheckedChange={(on) => void change(u, { siteAdmin: on })} />
+                  {tt.siteAdminSwitch}
+                </label>
+              )}
               <div className="w-28">
                 <NativeSelect
                   className="h-8"

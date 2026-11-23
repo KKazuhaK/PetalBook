@@ -475,6 +475,14 @@ export interface ReasonCode {
 
 export type ErrorCode =
   | 'token_limit'
+  | 'tenants_off'
+  | 'tenant_limit'
+  | 'tenant_not_empty'
+  | 'default_tenant'
+  | 'setting_locked'
+  | 'setting_restricted'
+  | 'mail_not_configured'
+  | 'sso_only_with_registration'
   | 'bad_language'
   | 'api_not_found'
   | 'builtin'
@@ -535,6 +543,10 @@ export interface User {
   disabled: boolean
   // Whether this person must sign in with a passkey.
   passkeyRequired: boolean
+  // An administrator of the whole server (3.3); false for one of a tenant. Absent in single-user mode.
+  siteAdmin?: boolean
+  // The tenant the person belongs to; absent in single-user mode, which has none.
+  tenant?: TenantRef
   created: string
   // The users list only: how many passkeys and single sign-on identities the person has.
   passkeys?: number
@@ -1150,4 +1162,62 @@ export interface AuditItem {
 export interface AuditList {
   items: AuditItem[]
   next: string
+}
+
+// --- tenants and layered settings (3.3, docs/api.md "Tenants, registration and mail") ---
+
+export interface TenantRef {
+  id: string
+  slug: string
+  name: string
+}
+export type TenantQuotaKey = 'people' | 'spaces' | 'bytes' | 'pages'
+export interface Tenant extends TenantRef {
+  default: boolean
+  disabled: boolean
+  registration: { open: boolean }
+  quota: Record<TenantQuotaKey, number | null>
+  created: string
+  updated: string
+}
+export interface TenantList {
+  items: Tenant[]
+  next: string
+}
+export interface Tenancy {
+  enabled: boolean
+  tenants: number
+}
+export type CreatedTenant = Tenant & { invite?: CreatedInvite }
+
+export type SettingLayer = 'site' | 'tenant' | 'space' | 'person'
+export type SettingKind = 'boolean' | 'choice' | 'limit' | 'list' | 'text' | 'doc'
+// What a layer lets the layers below it do.
+export interface SettingLower {
+  mode: 'allow' | 'restrict' | 'lock'
+  options?: (string | boolean)[]
+  max?: number
+}
+export interface SiteSetting {
+  key: string
+  kind: SettingKind
+  layers: SettingLayer[]
+  site: { value: unknown; lower: SettingLower; fromFlag?: boolean }
+  // Set by PUT when the new rule makes this many tenants' values ineffective.
+  affected?: number
+}
+export interface TenantSetting {
+  key: string
+  kind: SettingKind
+  layers: SettingLayer[]
+  site: { value: unknown; lower: SettingLower }
+  tenant: { value: unknown; lower: SettingLower | null; inEffect: boolean } | null
+  effective: unknown
+}
+// What GET /api/settings says of a setting that a space or a person can change.
+export interface MySetting {
+  key: string
+  effective: unknown
+  space?: { canChange: boolean; inEffect: boolean; source?: 'site' | 'tenant' }
+  person?: { canChange: boolean; inEffect: boolean; source?: 'site' | 'tenant' }
 }

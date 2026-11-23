@@ -13,6 +13,7 @@ import { createFileStore, DEFAULT_MAX_UPLOAD, type FileStore } from './files.ts'
 import { DEFAULT_MAX_IMPORT, runImport } from './importer.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
 import { createGroupBook } from './groupBook.ts'
+import { createTenantBook, DEFAULT_TENANT } from './tenantBook.ts'
 import { createSignInBook, type PasskeyRec, type ProviderRec, type SignInBookOptions } from './signInBook.ts'
 
 const DEFAULT_INBOX = 'Inbox'
@@ -296,7 +297,9 @@ export function createMockServer(options: MockOptions = {}) {
     }
   }
 
-  const publicUser = (u: UserRec): User => ({ id: u.id, username: u.username, name: u.name, email: u.email, emailVerified: u.emailVerified, role: u.role, disabled: u.disabled, passkeyRequired: book.requiredOf(u), created: u.created })
+  // An administrator is one of the whole server unless a site administrator said otherwise (3.3).
+  const isSiteAdmin = (u: UserRec | undefined) => u?.role === 'admin' && u.siteAdmin !== false
+  const publicUser = (u: UserRec): User => ({ id: u.id, username: u.username, name: u.name, email: u.email, emailVerified: u.emailVerified, role: u.role, disabled: u.disabled, passkeyRequired: book.requiredOf(u), siteAdmin: isSiteAdmin(u), tenant: { id: DEFAULT_TENANT, slug: 'default', name: 'Default' }, created: u.created })
   // In the users list a person also has how many passkeys and sign-in identities.
   const listedUser = (u: UserRec): User => ({ ...publicUser(u), passkeys: u.passkeys.length, sso: u.identities.length })
   // The first owner: who the space's own commits are credited to.
@@ -793,6 +796,7 @@ export function createMockServer(options: MockOptions = {}) {
     if (body.disabled !== undefined && typeof body.disabled !== 'boolean') throw new HttpError(400, 'invalid', 'disabled 要是布尔值')
     if (body.passkeyRequired !== undefined && typeof body.passkeyRequired !== 'boolean') throw new HttpError(400, 'invalid', 'passkeyRequired 要是布尔值')
     if (body.emailVerified !== undefined && typeof body.emailVerified !== 'boolean') throw new HttpError(400, 'invalid', 'emailVerified 要是布尔值')
+    if (body.siteAdmin !== undefined && typeof body.siteAdmin !== 'boolean') throw new HttpError(400, 'invalid', 'siteAdmin 要是布尔值')
     if (body.email !== undefined && (typeof body.email !== 'string' || body.email.length > 254)) throw new HttpError(400, 'invalid', '邮箱不合法')
     const role = (body.role as Role | undefined) ?? u.role
     const disabled = (body.disabled as boolean | undefined) ?? u.disabled
@@ -805,6 +809,14 @@ export function createMockServer(options: MockOptions = {}) {
     if (body.passkeyRequired === true && !(book.security.passkeys.enabled && book.view().passkeys.available)) throw new HttpError(400, 'passkey_unavailable', '现在不能使用 passkey')
     const changed: Record<string, unknown> = {}
     const note = (k: string, v: unknown) => (changed[k] = v)
+    // A site administrator is an administrator of the whole server (3.3): only one may make or end another.
+    if ((body.siteAdmin !== undefined || isSiteAdmin(u)) && !isSiteAdmin(me)) throw new HttpError(403, 'forbidden', '只有全站管理员可以改全站管理员')
+    if (body.siteAdmin === true && role !== 'admin') throw new HttpError(400, 'invalid', '全站管理员必须是管理员')
+    const wasSite = isSiteAdmin(u)
+    const nowSite = role === 'admin' && (body.siteAdmin !== undefined ? body.siteAdmin === true : u.siteAdmin !== false)
+    if (wasSite && !u.disabled && (!nowSite || disabled) && [...users.values()].filter((x) => x.id !== u.id && isSiteAdmin(x) && !x.disabled).length === 0) throw new HttpError(409, 'conflict', '至少要留一个可用的全站管理员')
+    if (nowSite !== wasSite) note('siteAdmin', nowSite)
+    u.siteAdmin = nowSite
     if (role !== u.role) note('role', role)
     if (disabled !== u.disabled) note('disabled', disabled)
     u.role = role
@@ -1058,6 +1070,11 @@ export function createMockServer(options: MockOptions = {}) {
     rps?: number
     skipNew?: boolean
   }
+  const tenantBook = createTenantBook({
+    now: () => rfc3339(now()),
+    daily: { get: () => site.allow, set: (patch) => void Object.assign(site.allow, patch) },
+    isSiteAdmin: (id) => isSiteAdmin(users.get(id)),
+  })
   const site = { lines: new Map<string, { body: string; source: string }[]>(), default: null as SiteDefault, allow: { own: true, api: true }, languages: ['zh-Hans', 'en'], apis: [] as SiteApi[], providers: {} as Record<string, ProviderState>, notices: [] as DailyNotice[] }
   const spaceDaily = new Map<string, { inherit: boolean; apis: string[] }>()
   const KNOWN_LANGUAGES = [
@@ -2203,6 +2220,17 @@ export function createMockServer(options: MockOptions = {}) {
       accountsOnly()
       requireAdmin(ctx)
       return routeAdmin(method, path, url, body)
+    }
+    if (path === '/settings' && method === 'GET') {
+      accountsOnly()
+      requireUser(ctx)
+      return { status: 200, body: { settings: tenantBook.mine(DEFAULT_TENANT) } }
+    }
+    if (path.startsWith('/admin/tenan') || path.startsWith('/admin/settings')) {
+      accountsOnly()
+      const me = requireAdmin(ctx)
+      const r = tenantBook.route(me.id, method, path, url, body)
+      if (r) return r
     }
     if (path === '/groups' && method === 'GET') {
       accountsOnly()

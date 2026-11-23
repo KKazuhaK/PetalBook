@@ -4263,8 +4263,11 @@ every setting that has a space or person layer, and whether that layer can
 change it, so a client greys out "set by the administrators":
 
 ```json
-{"settings": [{"key": "daily.own", "effective": true, "space": {"canChange": false, "inEffect": false}}]}
+{"settings": [{"key": "daily.own", "effective": false, "space": {"canChange": false, "inEffect": false, "source": "tenant"}}]}
 ```
+
+`source` is the layer (`site` or `tenant`) whose lock, or whose value that
+switches it off, keeps the layer from changing it; absent when nothing does.
 
 ### Mail
 

@@ -107,6 +107,10 @@ type Effective struct {
 	// Below is what the layers under the tenant (space, person) may do: the
 	// stricter of the site's and the tenant's rules.
 	Below Lower
+	// Source is the layer the value in effect comes from (site or tenant), and
+	// LockedBy the layer whose lock keeps the layers below from changing it (""
+	// when none does): what a client names when it greys a control out.
+	Source, LockedBy Layer
 }
 
 // For returns every setting as the tenant sees it ("" for the site alone). It
@@ -168,7 +172,7 @@ func (s *Service) compute(ctx context.Context, tenant string) (map[string]*Effec
 		if e.Site, err = s.siteView(ctx, q, d, site[d.Key]); err != nil {
 			return nil, err
 		}
-		e.Value, e.Below = e.Site.Value, e.Site.Lower
+		e.Value, e.Below, e.Source = e.Site.Value, e.Site.Lower, Site
 		if tenant != "" && d.Has(Tenant) {
 			tv := &TenantView{InEffect: true}
 			if r := ten[d.Key]; r != nil {
@@ -193,11 +197,17 @@ func (s *Service) compute(ctx context.Context, tenant string) (map[string]*Effec
 			}
 			e.Tenant = tv
 			if tv.Value != nil && tv.InEffect {
-				e.Value = tv.Value
+				e.Value, e.Source = tv.Value, Tenant
 			}
 			if tv.Lower != nil {
 				e.Below = e.Site.Lower.Combine(d, *tv.Lower)
 			}
+		}
+		switch {
+		case e.Site.Lower.Mode == Lock:
+			e.LockedBy = Site
+		case e.Below.Mode == Lock:
+			e.LockedBy = Tenant
 		}
 		out[d.Key] = e
 	}

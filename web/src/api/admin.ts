@@ -6,7 +6,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, enc, request } from './client'
 import { keys } from './hooks'
-import type { Group, GroupList, GroupPersonList, GroupSource, GroupSpaceList, AdminDaily, AdminSpaceList, AuditList, AuthProvider, Passkey, ProviderInput, SecurityPatch, SecuritySettings, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User, AdminGrantList, AdminTokenList, MachineAccess } from './types'
+import type { CreatedTenant, SettingLower, SiteSetting, Tenancy, Tenant, TenantList, TenantQuotaKey, TenantSetting, Group, GroupList, GroupPersonList, GroupSource, GroupSpaceList, AdminDaily, AdminSpaceList, AuditList, AuthProvider, Passkey, ProviderInput, SecurityPatch, SecuritySettings, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User, AdminGrantList, AdminTokenList, MachineAccess } from './types'
 
 export const adminApi = {
   // --- users and invites ---
@@ -20,7 +20,7 @@ export const adminApi = {
     const query = q.toString()
     return request<{ users: User[] }>(`/users${query ? `?${query}` : ''}`, { signal })
   },
-  updateUser: (id: string, input: { role?: Role; disabled?: boolean; passkeyRequired?: boolean; email?: string; emailVerified?: boolean }) => request<{ user: User }>(`/users/${enc(id)}`, { method: 'PATCH', body: input }),
+  updateUser: (id: string, input: { role?: Role; disabled?: boolean; passkeyRequired?: boolean; email?: string; emailVerified?: boolean; siteAdmin?: boolean }) => request<{ user: User }>(`/users/${enc(id)}`, { method: 'PATCH', body: input }),
   // The passkeys of one person, for an administrator who removes a lost one.
   userPasskeys: (id: string, signal?: AbortSignal) => request<{ passkeys: Passkey[] }>(`/users/${enc(id)}/passkeys`, { signal }),
   deleteUserPasskey: (id: string, passkey: string) => request<void>(`/users/${enc(id)}/passkeys/${enc(passkey)}`, { method: 'DELETE' }),
@@ -44,6 +44,28 @@ export const adminApi = {
   adminEnableSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/enable`, { method: 'POST' }),
   adminDeleteSpace: (id: string) => request<DeletedSpace>(`/admin/spaces/${enc(id)}`, { method: 'DELETE' }),
   adminStatus: (signal?: AbortSignal) => request<ServerStatus>('/admin/status', { signal }),
+
+  // --- tenants (3.3) ---
+  tenancy: (signal?: AbortSignal) => request<Tenancy>('/admin/tenancy', { signal }),
+  setTenancy: (enabled: boolean) => request<Tenancy>('/admin/tenancy', { method: 'PUT', body: { enabled } }),
+  tenants: (params: { q?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.q) q.set('q', params.q)
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<TenantList>(`/admin/tenants${qs ? `?${qs}` : ''}`, { signal })
+  },
+  tenant: (id: string, signal?: AbortSignal) => request<Tenant>(`/admin/tenants/${enc(id)}`, { signal }),
+  createTenant: (input: { slug: string; name: string; admin?: { username: string; name?: string; email?: string } }) => request<CreatedTenant>('/admin/tenants', { method: 'POST', body: input }),
+  updateTenant: (id: string, input: { name?: string; slug?: string; disabled?: boolean; quota?: Partial<Record<TenantQuotaKey, number | null>> }) => request<Tenant>(`/admin/tenants/${enc(id)}`, { method: 'PATCH', body: input }),
+  deleteTenant: (id: string) => request<void>(`/admin/tenants/${enc(id)}`, { method: 'DELETE' }),
+
+  // --- layered settings (3.3) ---
+  siteSettings: (signal?: AbortSignal) => request<{ settings: SiteSetting[] }>('/admin/settings', { signal }),
+  putSiteSetting: (key: string, input: { value?: unknown; lower?: SettingLower | null }) => request<SiteSetting>(`/admin/settings/${enc(key)}`, { method: 'PUT', body: input }),
+  tenantSettings: (tenant: string, signal?: AbortSignal) => request<{ settings: TenantSetting[] }>(`/admin/tenants/${enc(tenant)}/settings`, { signal }),
+  putTenantSetting: (tenant: string, key: string, input: { value?: unknown; lower?: SettingLower | null }) => request<TenantSetting>(`/admin/tenants/${enc(tenant)}/settings/${enc(key)}`, { method: 'PUT', body: input }),
 
   // --- groups ---
   adminGroups: (params: { q?: string; source?: GroupSource | ''; user?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
@@ -170,6 +192,73 @@ export function useAdminSpaces(q: string, enabled = true) {
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 15_000,
+  })
+}
+
+// --- tenants and layered settings (3.3) ---
+
+export function useTenancy(enabled = true) {
+  return useQuery({ queryKey: keys.tenancy, queryFn: ({ signal }) => adminApi.tenancy(signal), enabled, staleTime: 15_000 })
+}
+export function useSetTenancy() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (on: boolean) => adminApi.setTenancy(on),
+    onSuccess: (data) => qc.setQueryData(keys.tenancy, data),
+  })
+}
+// Every tenant, the default one first; there are at most 1,000, so the pages are followed to the end.
+export function useTenants(enabled = true) {
+  return useQuery({
+    queryKey: keys.tenants,
+    enabled,
+    staleTime: 15_000,
+    queryFn: async ({ signal }) => {
+      const out: Tenant[] = []
+      let cursor = ''
+      do {
+        const page = await adminApi.tenants({ cursor, limit: 200 }, signal)
+        out.push(...page.items)
+        cursor = page.next
+      } while (cursor)
+      return out
+    },
+  })
+}
+export function useCreateTenant() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: Parameters<typeof adminApi.createTenant>[0]) => adminApi.createTenant(input),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: keys.tenants }), qc.invalidateQueries({ queryKey: keys.tenancy })]),
+  })
+}
+export function useUpdateTenant() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...input }: { id: string } & Parameters<typeof adminApi.updateTenant>[1]) => adminApi.updateTenant(id, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.tenants }),
+  })
+}
+export function useDeleteTenant() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => adminApi.deleteTenant(id),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: keys.tenants }), qc.invalidateQueries({ queryKey: keys.tenancy })]),
+  })
+}
+export function useSiteSettings(enabled = true) {
+  return useQuery({ queryKey: keys.siteSettings, queryFn: ({ signal }) => adminApi.siteSettings(signal), enabled, staleTime: 10_000 })
+}
+export function useTenantSettings(tenant: string, enabled = true) {
+  return useQuery({ queryKey: keys.tenantSettings(tenant), queryFn: ({ signal }) => adminApi.tenantSettings(tenant, signal), enabled: enabled && tenant !== '', staleTime: 10_000 })
+}
+// A change at one layer can change what every other layer shows (a lock, a restriction), so all of them are read again.
+export function usePutSetting() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ tenant, key, ...input }: { tenant?: string; key: string; value?: unknown; lower?: SettingLower | null }) =>
+      tenant ? adminApi.putTenantSetting(tenant, key, input) : adminApi.putSiteSetting(key, input),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: ['admin', 'settings'] }), qc.invalidateQueries({ queryKey: ['settings'] }), qc.invalidateQueries({ queryKey: keys.adminDaily })]),
   })
 }
 

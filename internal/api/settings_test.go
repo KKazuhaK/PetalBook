@@ -51,6 +51,8 @@ func TestSiteSettingsByLayer(t *testing.T) {
 		}
 		// Registration cannot be opened while mail is not enabled, at the site or in a tenant.
 		f.root.do("PUT", "/api/admin/settings/registration.open", map[string]any{"value": true}).want(t, 409, "mail_not_configured")
+		f.root.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/registration.open", map[string]any{"value": true}).want(t, 409, "setting_locked")
+		f.root.do("PUT", "/api/admin/settings/registration.open", map[string]any{"lower": map[string]any{"mode": "allow"}}).want(t, 200, "")
 		f.root.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/registration.open", map[string]any{"value": true}).want(t, 409, "mail_not_configured")
 		// The change is in the audit log with its layer.
 		a.auth.FlushAudit(ctxBG)
@@ -148,7 +150,7 @@ func TestDailyTextSwitchesAreTheSameRecordAsTheLayeredSettings(t *testing.T) {
 		}
 		// GET /api/settings says so, so a client can grey the control out.
 		r := f.memB.do("GET", "/api/settings?space="+f.spaceB, nil).want(t, 200, "")
-		if s := settingOf(t, r, "daily.own"); s["effective"] != false || s["space"].(map[string]any)["canChange"] != false || s["space"].(map[string]any)["inEffect"] != false {
+		if s := settingOf(t, r, "daily.own"); s["effective"] != false || s["space"].(map[string]any)["canChange"] != false || s["space"].(map[string]any)["inEffect"] != false || s["space"].(map[string]any)["source"] != "tenant" {
 			t.Fatal(s)
 		}
 		r = f.memA.do("GET", "/api/settings?space="+f.spaceA, nil).want(t, 200, "")
@@ -156,6 +158,12 @@ func TestDailyTextSwitchesAreTheSameRecordAsTheLayeredSettings(t *testing.T) {
 			t.Fatal(s)
 		}
 		f.memA.do("GET", "/api/settings?space="+f.spaceB, nil).want(t, 404, "not_found")
+		// A lock says whose it is.
+		f.root.do("PUT", "/api/admin/settings/daily.api", map[string]any{"lower": map[string]any{"mode": "lock"}}).want(t, 200, "")
+		if s := settingOf(t, f.memB.do("GET", "/api/settings", nil).want(t, 200, ""), "daily.api"); s["space"].(map[string]any)["canChange"] != false || s["space"].(map[string]any)["source"] != "site" {
+			t.Fatal(s)
+		}
+		f.root.do("PUT", "/api/admin/settings/daily.api", map[string]any{"lower": nil}).want(t, 200, "")
 		// With the site's lock on, a tenant cannot set it, and the value it kept stays.
 		f.root.do("PUT", "/api/admin/settings/daily.own", map[string]any{"lower": map[string]any{"mode": "lock"}}).want(t, 200, "")
 		f.admA.do("PUT", "/api/admin/tenants/"+store.DefaultTenantID+"/settings/daily.own", map[string]any{"value": false}).want(t, 409, "setting_locked")

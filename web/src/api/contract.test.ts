@@ -983,6 +983,105 @@ function suite(target: Target) {
       })
     })
 
+    describe('tenants and layered settings (3.3)', () => {
+      const slugOf = (p: string) => `${p}${run}`.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 24)
+
+      it('the user object says whether a person is a site administrator and which tenant they are in', async () => {
+        const me = (await call(admin, 'GET', '/api/session')).json.user as User
+        expect(me.siteAdmin).toBe(true)
+        expect(me.tenant?.slug).toBe('default')
+        const m = await newMember(uniq('tm'))
+        expect(m.user.siteAdmin).toBe(false)
+        expect(m.user.tenant?.id).toBe('0000000000')
+        // Only site administrators reach the server's own settings and the tenants.
+        for (const path of ['/api/admin/tenancy', '/api/admin/tenants', '/api/admin/settings']) expect((await call(m.browser, 'GET', path)).status, path).toBe(403)
+        expect((await call(m.browser, 'GET', '/api/settings')).status).toBe(200)
+      })
+
+      it('the switch gates making tenants; a tenant is made, listed, renamed, disabled and deleted; the default one is kept', async () => {
+        const was = ((await call(admin, 'GET', '/api/admin/tenancy')).json as { enabled: boolean }).enabled
+        try {
+          expect((await call(admin, 'PUT', '/api/admin/tenancy', { enabled: false })).status).toBe(200)
+          const slug = slugOf('tn')
+          expect((await call(admin, 'POST', '/api/admin/tenants', { slug, name: 'Acme' })).json.error).toBe('tenants_off')
+          expect((await call(admin, 'PUT', '/api/admin/tenancy', { enabled: true })).json.enabled).toBe(true)
+          const bad = await call(admin, 'POST', '/api/admin/tenants', { slug: 'A', name: 'x' })
+          expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
+          const made = await call(admin, 'POST', '/api/admin/tenants', { slug, name: ' Acme ' })
+          expect(made.status).toBe(201)
+          const t = made.json as { id: string; slug: string; name: string; default: boolean; disabled: boolean }
+          expect([t.slug, t.name, t.default, t.disabled]).toEqual([slug, 'Acme', false, false])
+          expect((await call(admin, 'POST', '/api/admin/tenants', { slug, name: 'Again' })).json.error).toBe('exists')
+          const list = (await call(admin, 'GET', '/api/admin/tenants?limit=200')).json as { items: { id: string; default: boolean }[] }
+          expect(list.items[0].default).toBe(true)
+          expect(list.items.some((x) => x.id === t.id)).toBe(true)
+          const renamed = await call(admin, 'PATCH', `/api/admin/tenants/${t.id}`, { name: 'Acme Two', disabled: true })
+          expect([renamed.json.name, renamed.json.disabled]).toEqual(['Acme Two', true])
+          expect((await call(admin, 'PATCH', `/api/admin/tenants/${t.id}`, { mood: 1 })).status).toBe(400)
+          expect((await call(admin, 'GET', '/api/admin/tenants/01ZZZZZZZZ')).json.error).toBe('not_found')
+          for (const body of [{ disabled: true }]) expect((await call(admin, 'PATCH', '/api/admin/tenants/0000000000', body)).json.error).toBe('default_tenant')
+          expect((await call(admin, 'DELETE', '/api/admin/tenants/0000000000')).json.error).toBe('default_tenant')
+          expect((await call(admin, 'DELETE', `/api/admin/tenants/${t.id}`)).status).toBe(204)
+          expect((await call(admin, 'GET', `/api/admin/tenants/${t.id}`)).status).toBe(404)
+        } finally {
+          await call(admin, 'PUT', '/api/admin/tenancy', { enabled: was })
+        }
+      })
+
+      it('settings by layer: values are checked, a lock refuses the tenant, a restriction caps it, and what a lock hides is kept', async () => {
+        const was = ((await call(admin, 'GET', '/api/admin/tenancy')).json as { enabled: boolean }).enabled
+        await call(admin, 'PUT', '/api/admin/tenancy', { enabled: true })
+        const t = (await call(admin, 'POST', '/api/admin/tenants', { slug: slugOf('ts'), name: 'Settings' })).json as { id: string }
+        const site = (key: string, body: unknown) => call(admin, 'PUT', `/api/admin/settings/${key}`, body)
+        const mine = (key: string, body: unknown) => call(admin, 'PUT', `/api/admin/tenants/${t.id}/settings/${key}`, body)
+        const view = async () => ((await call(admin, 'GET', `/api/admin/tenants/${t.id}/settings`)).json.settings as { key: string; effective: unknown; tenant: { value: unknown; inEffect: boolean }; site: { lower: { mode: string } } }[]).find((x) => x.key === 'registration.perHour')!
+        try {
+          expect((await site('registration.perHour', { value: 0 })).json.error).toBe('invalid')
+          expect((await site('no.such.setting', { value: 1 })).status).toBe(404)
+          // Registration cannot be opened while mail is not enabled; a tenant cannot touch what the site locks.
+          expect((await site('registration.open', { value: true })).json.error).toBe('mail_not_configured')
+          expect((await mine('registration.open', { value: true })).json.error).toBe('setting_locked')
+          // The site's rule for perHour: at most 50. A tenant above it is refused, below it is in effect.
+          expect((await site('registration.perHour', { lower: { mode: 'restrict', max: 50 } })).status).toBe(200)
+          expect((await mine('registration.perHour', { value: 80 })).json.error).toBe('setting_restricted')
+          expect((await mine('registration.perHour', { value: 30 })).status).toBe(200)
+          expect((await view()).effective).toBe(30)
+          // Tightened to 10: the tenant's 30 is kept, not in effect, and the answer counts the tenants.
+          const tight = await site('registration.perHour', { lower: { mode: 'restrict', max: 10 } })
+          expect(tight.json.affected).toBeGreaterThanOrEqual(1)
+          const v = await view()
+          expect([v.tenant.value, v.tenant.inEffect]).toEqual([30, false])
+          // Loosened again: it counts again.
+          await site('registration.perHour', { lower: { mode: 'restrict', max: 50 } })
+          expect((await view()).tenant.inEffect).toBe(true)
+          expect((await mine('registration.perHour', { value: null })).status).toBe(200)
+          expect((await mine('registration.perHour', { lower: { mode: 'restrict', max: 60 } })).json.error).toBe('setting_restricted')
+        } finally {
+          await site('registration.perHour', { lower: null })
+          await call(admin, 'DELETE', `/api/admin/tenants/${t.id}`)
+          await call(admin, 'PUT', '/api/admin/tenancy', { enabled: was })
+        }
+      })
+
+      it("the daily text's switches are the layered settings daily.own and daily.api; GET /api/settings says who keeps them off", async () => {
+        const m = await newMember(uniq('ts'))
+        const read = async (key: string) => (((await call(admin, 'GET', '/api/admin/settings')).json.settings as { key: string; site: { value: unknown } }[]).find((x) => x.key === key))!.site.value
+        const was = await read('daily.own')
+        try {
+          expect((await call(admin, 'PUT', '/api/admin/daily', { allow: { own: false } })).status).toBe(200)
+          expect(await read('daily.own')).toBe(false)
+          const mineAll = (await call(m.browser, 'GET', '/api/settings')).json.settings as { key: string; effective: unknown; space?: { canChange: boolean; inEffect: boolean; source?: string } }[]
+          const own = mineAll.find((x) => x.key === 'daily.own')!
+          expect([own.effective, own.space?.canChange, own.space?.inEffect, own.space?.source]).toEqual([false, false, false, 'site'])
+          expect((await call(admin, 'PUT', '/api/admin/settings/daily.own', { value: true })).status).toBe(200)
+          const back = (await call(admin, 'GET', '/api/admin/daily')).json as { allow: { own: boolean } }
+          expect(back.allow.own).toBe(true)
+        } finally {
+          await call(admin, 'PUT', '/api/admin/settings/daily.own', { value: was })
+        }
+      })
+    })
+
     describe('members and permissions', () => {
       it('adds a member by username with a role; lists owners first with `you`; the role and its permissions show in the member\'s own list', async () => {
         const owner = await newMember(uniq('mo'))

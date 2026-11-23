@@ -2,7 +2,7 @@
 
 import { t } from '@/i18n'
 
-import type { EffectiveMemberList, GroupMember, GroupRef, MembersResponse,
+import type { MySetting, EffectiveMemberList, GroupMember, GroupRef, MembersResponse,
   AccountInfo,
   AdminSpace,
   ApiToken,
@@ -546,6 +546,8 @@ export const api = {
   removePasskey: (id: string) => request<void>(`/account/passkeys/${enc(id)}`, { method: 'DELETE' }),
 
   // --- API tokens ---
+  // What each setting that a space or a person can change comes to for the caller, and who keeps it from changing (3.3).
+  settings: (space?: string, signal?: AbortSignal) => request<{ settings: MySetting[] }>(`/settings${space ? `?space=${enc(space)}` : ''}`, { signal }),
   tokens: (signal?: AbortSignal) => request<{ tokens: ApiToken[] }>('/account/tokens', { signal }),
   // `expiresInDays` 0 is a token that never expires; left out, 90 days.
   createToken: (input: { name: string; access: TokenAccess; spaces: string[]; expiresInDays?: number }) => request<CreatedToken>('/account/tokens', { method: 'POST', body: input }),
