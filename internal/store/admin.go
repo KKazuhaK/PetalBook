@@ -28,6 +28,13 @@ type AdminSpace struct {
 	// Owner is the first owner (the rule of SpaceOwner); nil if there is none.
 	Owner   *AdminOwner
 	Members int
+
+	// Storage is what milestone 3.1 records of the space; CredType is the type
+	// of the credential of the remote it follows ("" for a local space), and
+	// OwnerExempt says an owner is exempt from the requirement of a remote.
+	Storage     SpaceStorage
+	CredType    string
+	OwnerExempt bool
 }
 
 // AdminOwner is who owns a space.
@@ -44,6 +51,13 @@ type SpaceFilter struct {
 	// ID keeps only the space with this id: the same row the list has, found
 	// directly.
 	ID string
+	// Cache keeps the spaces in this cache state: "local" (no remote), "evicted",
+	// "partial" or "full" (a space that follows a remote and is neither of the
+	// others). "restoring" is not stored and keeps nothing.
+	Cache string
+	// Overdue, when set, keeps the spaces the policy asks for a remote that they
+	// lack and whose deadline has passed.
+	Overdue *RemotePolicy
 	// After is the id the page continues after ("" for the first page).
 	After string
 	// Limit is the page size; at most one more row is read to learn whether
@@ -128,13 +142,39 @@ func ListAllSpaces(ctx context.Context, q Q, f SpaceFilter) (out []AdminSpace, n
 		where = append(where, `s.name_key LIKE ? ESCAPE '\'`)
 		args = append(args, "%"+likeEscape(FoldName(f.Query))+"%")
 	}
+	hasRemote := `EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.url <> '')`
+	switch f.Cache {
+	case "":
+	case "local":
+		where = append(where, `NOT `+hasRemote)
+	case "evicted":
+		where = append(where, hasRemote+` AND s.cache_state = 'evicted'`)
+	case "partial":
+		where = append(where, hasRemote+` AND s.cache_state = 'partial'`)
+	case "full":
+		where = append(where, hasRemote+` AND s.cache_state NOT IN ('evicted', 'partial')`)
+	default:
+		where = append(where, `1 = 0`)
+	}
+	if f.Overdue != nil && f.Overdue.Active() {
+		asked, dl, dargs := policyConds(*f.Overdue)
+		where = append(where, asked+` AND `+dl+` < CAST(? AS BIGINT)`)
+		args = append(args, dargs...)
+		args = append(args, ms(f.Overdue.Now))
+	} else if f.Overdue != nil {
+		where = append(where, `1 = 0`)
+	}
 	cond := ""
 	if len(where) > 0 {
 		cond = "WHERE " + strings.Join(where, " AND ")
 	}
 	args = append(args, f.Limit+1)
-	rows, err := q.Query(ctx, `SELECT p.id, p.name, p.personal_of, p.inbox, p.created, p.disabled, p.size_bytes, p.size_at, p.members, u.id, u.username, u.name
+	rows, err := q.Query(ctx, `SELECT p.id, p.name, p.personal_of, p.inbox, p.created, p.disabled, p.size_bytes, p.size_at, p.members, u.id, u.username, u.name,
+			p.last_used, p.cache_state, p.pinned, p.exempt, p.index_bytes, p.cred_type, p.owner_exempt
 		FROM (SELECT s.id, s.name, s.personal_of, s.inbox, s.created, s.disabled, s.size_bytes, s.size_at,
+			s.last_used, s.cache_state, s.pinned, s.exempt, s.index_bytes,
+			COALESCE((SELECT r.cred_type FROM remotes r WHERE r.space_id = s.id AND r.url <> ''), '') AS cred_type,
+			(SELECT COUNT(*) FROM space_members om JOIN users ou ON ou.id = om.user_id WHERE om.space_id = s.id AND om.role = 'owner' AND ou.remote_exempt <> 0) AS owner_exempt,
 			(SELECT COUNT(*) FROM space_members m WHERE m.space_id = s.id) AS members,
 			(SELECT m.user_id FROM space_members m WHERE m.space_id = s.id AND m.role = 'owner' ORDER BY m.created, m.user_id LIMIT 1) AS owner_id
 			FROM spaces s `+cond+` ORDER BY s.id LIMIT ?) p
@@ -149,9 +189,15 @@ func ListAllSpaces(ctx context.Context, q Q, f SpaceFilter) (out []AdminSpace, n
 		var personal, ownerID, ownerUser, ownerName sql.NullString
 		var created, disabled int64
 		var size, sizeAt sql.NullInt64
-		if err := rows.Scan(&s.ID, &s.Name, &personal, &s.Inbox, &created, &disabled, &size, &sizeAt, &s.Members, &ownerID, &ownerUser, &ownerName); err != nil {
+		var used, pinned, exempt, ownerExempt int64
+		if err := rows.Scan(&s.ID, &s.Name, &personal, &s.Inbox, &created, &disabled, &size, &sizeAt, &s.Members, &ownerID, &ownerUser, &ownerName,
+			&used, &s.Storage.Cache, &pinned, &exempt, &s.Storage.IndexBytes, &s.CredType, &ownerExempt); err != nil {
 			return nil, "", err
 		}
+		if used > 0 {
+			s.Storage.LastUsed = fromMS(used)
+		}
+		s.Storage.Pinned, s.Storage.Exempt, s.OwnerExempt = pinned != 0, exempt != 0, ownerExempt != 0
 		s.Personal, s.Created, s.Disabled = personal.Valid, fromMS(created), disabled != 0
 		// A space whose first measurement failed has a size_at (it was put at the
 		// back of the queue, see SkipSpaceSize) but no size: it is reported as

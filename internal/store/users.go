@@ -17,23 +17,26 @@ type User struct {
 	Role     string // "admin" or "member"
 	Disabled bool
 	Created  time.Time
+	// RemoteExempt: the storage policy does not ask the spaces this user owns
+	// for a remote (milestone 3.1).
+	RemoteExempt bool
 }
 
 // LocalUserID is the built-in user of single-user mode.
 const LocalUserID = "local"
 
-const userCols = `id, username, name, email, role, disabled, created`
+const userCols = `id, username, name, email, role, disabled, created, remote_exempt`
 
 func scanUser(sc interface{ Scan(...any) error }) (*User, error) {
 	var u User
-	var disabled, created int64
-	if err := sc.Scan(&u.ID, &u.Username, &u.Name, &u.Email, &u.Role, &disabled, &created); err != nil {
+	var disabled, created, exempt int64
+	if err := sc.Scan(&u.ID, &u.Username, &u.Name, &u.Email, &u.Role, &disabled, &created, &exempt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	u.Disabled, u.Created = disabled != 0, fromMS(created)
+	u.Disabled, u.Created, u.RemoteExempt = disabled != 0, fromMS(created), exempt != 0
 	return &u, nil
 }
 
@@ -120,14 +123,20 @@ func SearchUsers(ctx context.Context, q Q, d Dialect, query string, enabledOnly 
 
 // InsertUser adds a user. A taken username or id is a unique violation (see UniqueOn).
 func InsertUser(ctx context.Context, q Q, u User) error {
-	_, err := q.Exec(ctx, `INSERT INTO users(`+userCols+`) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		u.ID, u.Username, u.Name, u.Email, u.Role, b2i(u.Disabled), ms(u.Created))
+	_, err := q.Exec(ctx, `INSERT INTO users(`+userCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		u.ID, u.Username, u.Name, u.Email, u.Role, b2i(u.Disabled), ms(u.Created), b2i(u.RemoteExempt))
 	return err
 }
 
 // UpdateProfile sets the name and email.
 func UpdateProfile(ctx context.Context, q Q, id, name, email string) error {
 	res, err := q.Exec(ctx, `UPDATE users SET name = ?, email = ? WHERE id = ?`, name, email, id)
+	return oneRow(res, err)
+}
+
+// SetRemoteExempt sets whether the storage policy leaves this user's spaces out.
+func SetRemoteExempt(ctx context.Context, q Q, id string, exempt bool) error {
+	res, err := q.Exec(ctx, `UPDATE users SET remote_exempt = ? WHERE id = ?`, b2i(exempt), id)
 	return oneRow(res, err)
 }
 
