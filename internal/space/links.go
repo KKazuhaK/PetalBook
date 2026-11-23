@@ -138,6 +138,111 @@ type movedPage struct{ id, from, to string }
 type fileEdit struct {
 	rel  string
 	data []byte
+	// step is the rewrite, for the drafts and open editors of the file (see
+	// rebase.go); nil when the file is not a page's.
+	step *rebaseStep
+}
+
+// relinker works out where the links of a file should point once pages have
+// moved, and the edits that make them.
+type relinker struct {
+	s     *Space
+	byID  map[string]string    // id -> the path the page moved to
+	byOld map[string]movedPage // old path -> the move
+	dirs  []stepMove           // folders that moved (a rebase; see applyStep)
+	// dup is the set of ids that two files claim: links that carry one are
+	// left as they are (which file is meant is for a person to say). Read
+	// when a link with an id is first met.
+	dup    map[string]bool
+	pathOf map[string]string // id -> path now, "" for none
+	idOf   map[string]string // path -> id, "" for none
+}
+
+func (s *Space) newRelinker(dup map[string]bool) *relinker {
+	return &relinker{s: s, byID: map[string]string{}, byOld: map[string]movedPage{}, dup: dup,
+		pathOf: map[string]string{}, idOf: map[string]string{}}
+}
+
+func (r *relinker) duplicated(id string) bool {
+	if r.dup == nil {
+		d, err := r.s.idx.DuplicateIDs()
+		if err != nil {
+			return true // not known: better left alone
+		}
+		r.dup = d
+	}
+	return r.dup[id]
+}
+
+func (r *relinker) pageByID(id string) string {
+	p, ok := r.pathOf[id]
+	if !ok {
+		p, _ = r.s.idx.PathByID(id)
+		r.pathOf[id] = p
+	}
+	return p
+}
+
+func (r *relinker) pageAt(p string) string {
+	id, ok := r.idOf[p]
+	if !ok {
+		id, _ = r.s.idx.IDAt(p)
+		r.idOf[p] = id
+	}
+	return id
+}
+
+// target is the page link l should name (tid "" when no page is known) and
+// its path; ok is false for a link to leave as it is.
+func (r *relinker) target(l links.Link) (tid, tpath string, ok bool) {
+	if l.ID != "" {
+		if r.duplicated(l.ID) {
+			return "", "", false
+		}
+		if p, ok := r.byID[l.ID]; ok {
+			return l.ID, p, true
+		}
+		if p := r.pageByID(l.ID); p != "" {
+			return l.ID, p, true
+		}
+		return "", l.Path, true // no such page: stays where it points
+	}
+	if m, ok := r.byOld[l.Path]; ok {
+		return m.id, m.to, true
+	}
+	for _, d := range r.dirs {
+		if under(l.Path, d.From) {
+			p := d.To + strings.TrimPrefix(l.Path, d.From)
+			return r.pageAt(p), p, true
+		}
+	}
+	return r.pageAt(l.Path), l.Path, true
+}
+
+// edits are the changes to data, a page file whose links were written from
+// oldAt and that is at newAt: only the paths of the links change (and, with
+// addIDs, the id is put into a link that has none); every other byte is kept.
+// A link that already points where it should is left alone.
+func (r *relinker) edits(data []byte, oldAt, newAt string, addIDs bool) []links.Edit {
+	var edits []links.Edit
+	for _, l := range links.Extract(oldAt, data) {
+		if l.DestStart < 0 {
+			continue
+		}
+		tid, tpath, ok := r.target(l)
+		if !ok || links.Target(newAt, l.Raw, l.Rooted) == tpath {
+			continue
+		}
+		if e, ok := l.DestEdit(data, newAt, tpath); ok {
+			edits = append(edits, e)
+			if addIDs && l.ID == "" && tid != "" {
+				if e, ok := l.IDEdit(tid); ok {
+					edits = append(edits, e)
+				}
+			}
+		}
+	}
+	return edits
 }
 
 // planLinks works out the files that change because pages have moved (the
@@ -146,19 +251,26 @@ type fileEdit struct {
 // somewhere else now and so name their targets differently. Only the paths of
 // the links are changed, and the id is added to a link that lacks one; every
 // other byte is kept. A link that already points where it should is left
-// alone, so planning again after a crash finds what is left to do.
+// alone, so planning again after a crash finds what is left to do. A link that
+// carries an id two files claim is left alone too (as repairStale does).
+// moves says what moved, for the rebase steps (rebase.go).
 //
 // Cost: the index tells which pages to read; nothing else is read.
-func (s *Space) planLinks(mv []movedPage) ([]fileEdit, error) {
+func (s *Space) planLinks(mv []movedPage, moves []stepMove) ([]fileEdit, error) {
 	if len(mv) == 0 {
 		return nil, nil
 	}
-	byID := make(map[string]movedPage, len(mv))
-	byOld := make(map[string]movedPage, len(mv))
+	dup, err := s.idx.DuplicateIDs()
+	if err != nil {
+		return nil, err
+	}
+	rl := s.newRelinker(dup)
 	ids := make([]string, 0, len(mv))
 	froms := make([]string, 0, len(mv))
+	byID := make(map[string]movedPage, len(mv))
 	for _, m := range mv {
-		byID[m.id], byOld[m.from] = m, m
+		byID[m.id] = m
+		rl.byID[m.id], rl.byOld[m.from] = m.to, m
 		ids = append(ids, m.id)
 		froms = append(froms, m.from)
 	}
@@ -180,25 +292,6 @@ func (s *Space) planLinks(mv []movedPage) ([]fileEdit, error) {
 	}
 	sort.Slice(sources, func(i, j int) bool { return sources[i].Path < sources[j].Path })
 
-	pathOf := map[string]string{} // id -> path now, "" for none
-	idOf := map[string]string{}   // path -> id, "" for none
-	pageByID := func(id string) string {
-		p, ok := pathOf[id]
-		if !ok {
-			p, _ = s.idx.PathByID(id)
-			pathOf[id] = p
-		}
-		return p
-	}
-	pageAt := func(p string) string {
-		id, ok := idOf[p]
-		if !ok {
-			id, _ = s.idx.IDAt(p)
-			idOf[p] = id
-		}
-		return id
-	}
-
 	var out []fileEdit
 	for _, src := range sources {
 		oldAt, newAt := src.Path, src.Path
@@ -212,42 +305,11 @@ func (s *Space) planLinks(mv []movedPage) ([]fileEdit, error) {
 			}
 			return nil, err
 		}
-		var edits []links.Edit
-		for _, l := range links.Extract(oldAt, data) {
-			if l.DestStart < 0 {
-				continue
-			}
-			var tid, tpath string
-			switch {
-			case l.ID != "":
-				if m, ok := byID[l.ID]; ok {
-					tid, tpath = m.id, m.to
-				} else if p := pageByID(l.ID); p != "" {
-					tid, tpath = l.ID, p
-				} else {
-					tpath = l.Path // no such page: stays where it points
-				}
-			default:
-				if m, ok := byOld[l.Path]; ok {
-					tid, tpath = m.id, m.to
-				} else {
-					tid, tpath = pageAt(l.Path), l.Path
-				}
-			}
-			if links.Target(newAt, l.Raw, l.Rooted) == tpath {
-				continue
-			}
-			if e, ok := l.DestEdit(data, newAt, tpath); ok {
-				edits = append(edits, e)
-				if l.ID == "" && tid != "" {
-					if e, ok := l.IDEdit(tid); ok {
-						edits = append(edits, e)
-					}
-				}
-			}
-		}
-		if len(edits) > 0 {
-			out = append(out, fileEdit{rel: newAt, data: links.Apply(data, edits)})
+		if edits := rl.edits(data, oldAt, newAt, true); len(edits) > 0 {
+			nd := links.Apply(data, edits)
+			out = append(out, fileEdit{rel: newAt, data: nd, step: &rebaseStep{
+				ID: src.ID, Old: page.Rev(data), New: page.Rev(nd), OldAt: oldAt, NewAt: newAt, Moves: moves,
+			}})
 		}
 	}
 	return out, nil
@@ -255,8 +317,9 @@ func (s *Space) planLinks(mv []movedPage) ([]fileEdit, error) {
 
 // writeEdits writes the new content of files as part of the change tx: each
 // is journaled (all with one sync) before it is replaced, and handed to the
-// commit. The index is not touched; the caller refreshes it for the paths
-// returned.
+// commit. The rewrites are remembered for the drafts and open editors of the
+// files (rebase.go). The index is not touched; the caller refreshes it for the
+// paths returned.
 func (s *Space) writeEdits(tx *txn, edits []fileEdit) ([]string, error) {
 	if len(edits) == 0 {
 		return nil, nil
@@ -273,6 +336,8 @@ func (s *Space) writeEdits(tx *txn, edits []fileEdit) ([]string, error) {
 	// The files are part of the change from the first replacement: an undo
 	// takes them back.
 	tx.touch(paths...)
+	var steps []rebaseStep
+	defer func() { s.rb.add(steps...) }()
 	for _, e := range edits {
 		abs, err := s.abs(e.rel)
 		if err != nil {
@@ -281,27 +346,41 @@ func (s *Space) writeEdits(tx *txn, edits []fileEdit) ([]string, error) {
 		if err := writeAtomic(abs, e.data); err != nil {
 			return paths, err
 		}
+		if e.step != nil {
+			steps = append(steps, *e.step)
+		}
 	}
 	return paths, nil
 }
 
+// pageMoves says, for the rebase steps, which pages moved.
+func pageMoves(mv []movedPage) []stepMove {
+	out := make([]stepMove, len(mv))
+	for i, m := range mv {
+		out[i] = stepMove{ID: m.id, From: m.from, To: m.to}
+	}
+	return out
+}
+
 // relink makes the links of the space right after pages moved: it plans and
 // writes the changes and brings the index up to date for the files it wrote.
-// own is the file of a moved page that the caller is about to index with data;
-// when the plan changes it, the new content is returned.
-func (s *Space) relink(tx *txn, mv []movedPage, own string, data []byte) ([]byte, error) {
-	edits, err := s.planLinks(mv)
+// moves says what moved (nil: the pages of mv). own is the file of a moved
+// page that the caller is about to index with data; when the plan changes it,
+// the new content is returned.
+func (s *Space) relink(tx *txn, mv []movedPage, moves []stepMove, own string, data []byte) ([]byte, error) {
+	if moves == nil {
+		moves = pageMoves(mv)
+	}
+	edits, err := s.planLinks(mv, moves)
 	if err != nil {
 		return data, err
 	}
-	var rest []fileEdit
 	for _, e := range edits {
 		if e.rel == own {
 			data = e.data
 		}
-		rest = append(rest, e)
 	}
-	paths, err := s.writeEdits(tx, rest)
+	paths, err := s.writeEdits(tx, edits)
 	if err != nil {
 		return data, err
 	}
@@ -335,20 +414,37 @@ func (s *Space) afterRelink(tx *txn, err error) error {
 	return nil
 }
 
-// withIDs adds the id of the target to the links in a page file that have none
-// and lead to a page of the space (a link with a title of its own is left
-// alone). rel is the path of the file.
+// withIDs puts right the links in a page file that is being saved: a link
+// without an id that leads to a page of the space gets the id of the target
+// (one with a title of its own is left alone), and a link whose id is that of
+// a page at another path is pointed at that path (only the path changes). A
+// link to an id that two files claim, or that no page has, is left as it is.
+// rel is the path of the file.
 func (s *Space) withIDs(rel string, data []byte) []byte {
 	ls := links.Extract(rel, data)
 	if len(ls) == 0 {
 		return data
 	}
+	rl := s.newRelinker(nil)
 	var edits []links.Edit
 	for _, l := range ls {
-		if l.ID != "" || l.DestStart < 0 || l.TitleStart >= 0 {
+		if l.DestStart < 0 {
 			continue
 		}
-		if id, ok := s.idx.IDAt(l.Path); ok {
+		if l.ID != "" {
+			p := rl.pageByID(l.ID)
+			if p == "" || p == l.Path || rl.duplicated(l.ID) {
+				continue
+			}
+			if e, ok := l.DestEdit(data, rel, p); ok {
+				edits = append(edits, e)
+			}
+			continue
+		}
+		if l.TitleStart >= 0 {
+			continue
+		}
+		if id := rl.pageAt(l.Path); id != "" {
 			if e, ok := l.IDEdit(id); ok {
 				edits = append(edits, e)
 			}
@@ -371,7 +467,11 @@ func (s *Space) repairStale(tx *txn, ids []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	bySrc := map[string]map[string]string{} // source path -> target id -> its path
+	type source struct {
+		id      string
+		targets map[string]string // target id -> its path
+	}
+	bySrc := map[string]*source{}
 	var order []string
 	for _, st := range stale {
 		if dup[st.Target.ID] {
@@ -379,11 +479,11 @@ func (s *Space) repairStale(tx *txn, ids []string) ([]string, error) {
 		}
 		m := bySrc[st.Src.Path]
 		if m == nil {
-			m = map[string]string{}
+			m = &source{id: st.Src.ID, targets: map[string]string{}}
 			bySrc[st.Src.Path] = m
 			order = append(order, st.Src.Path)
 		}
-		m[st.Target.ID] = st.Target.Path
+		m.targets[st.Target.ID] = st.Target.Path
 	}
 	sort.Strings(order)
 	var edits []fileEdit
@@ -394,7 +494,7 @@ func (s *Space) repairStale(tx *txn, ids []string) ([]string, error) {
 		}
 		var es []links.Edit
 		for _, l := range links.Extract(src, data) {
-			tpath, ok := bySrc[src][l.ID]
+			tpath, ok := bySrc[src].targets[l.ID]
 			if !ok || l.ID == "" || links.Target(src, l.Raw, l.Rooted) == tpath {
 				continue
 			}
@@ -403,7 +503,15 @@ func (s *Space) repairStale(tx *txn, ids []string) ([]string, error) {
 			}
 		}
 		if len(es) > 0 {
-			edits = append(edits, fileEdit{rel: src, data: links.Apply(data, es)})
+			nd := links.Apply(data, es)
+			var moves []stepMove
+			for id, p := range bySrc[src].targets {
+				moves = append(moves, stepMove{ID: id, To: p})
+			}
+			sort.Slice(moves, func(i, j int) bool { return moves[i].ID < moves[j].ID })
+			edits = append(edits, fileEdit{rel: src, data: nd, step: &rebaseStep{
+				ID: bySrc[src].id, Old: page.Rev(data), New: page.Rev(nd), OldAt: src, NewAt: src, Moves: moves,
+			}})
 		}
 	}
 	paths, err := s.writeEdits(tx, edits)
@@ -452,7 +560,11 @@ func (s *Space) finishLinkRecs(recs []jrec) {
 			if err != nil {
 				return struct{}{}, err
 			}
-			_, err = s.relink(tx, mv, "", nil)
+			var moves []stepMove
+			if r.Dir {
+				moves = []stepMove{{From: r.From, To: r.To, Dir: true}}
+			}
+			_, err = s.relink(tx, mv, moves, "", nil)
 			return struct{}{}, err
 		}
 		if _, err := mutate(s, r.author(), do); err != nil {

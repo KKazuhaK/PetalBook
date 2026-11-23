@@ -12,17 +12,22 @@ type Edit struct {
 	Text       string
 }
 
-// Apply returns data with the edits made. The edits must not overlap; they
-// need not be in order. Everything outside them is kept byte for byte.
+// Apply returns data with the edits made. The edits must not overlap, except
+// that the same edit may come more than once (the links that share a reference
+// definition each ask for it); they need not be in order. Everything outside
+// them is kept byte for byte.
 func Apply(data []byte, edits []Edit) []byte {
 	if len(edits) == 0 {
 		return data
 	}
 	es := append([]Edit(nil), edits...)
-	sort.Slice(es, func(i, j int) bool { return es[i].Start < es[j].Start })
+	sort.SliceStable(es, func(i, j int) bool { return es[i].Start < es[j].Start })
 	out := make([]byte, 0, len(data)+64)
 	at := 0
-	for _, e := range es {
+	for i, e := range es {
+		if i > 0 && e == es[i-1] {
+			continue
+		}
 		out = append(out, data[at:e.Start]...)
 		out = append(out, e.Text...)
 		at = e.End
@@ -132,8 +137,8 @@ func (l Link) DestEdit(data []byte, from, newTarget string) (Edit, bool) {
 }
 
 // IDEdit returns the edit that puts id in the title position of a link that has
-// no title; ok is false when the link has a title (it is left as it is) or
-// could not be located.
+// no title (for a reference-style link, of its definition); ok is false when
+// the link has a title (it is left as it is) or could not be located.
 func (l Link) IDEdit(id string) (Edit, bool) {
 	if l.DestStart < 0 || l.TitleStart >= 0 || l.TailPos < 0 {
 		return Edit{}, false

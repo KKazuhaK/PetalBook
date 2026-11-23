@@ -87,6 +87,9 @@ type Space struct {
 	cfg   configCache
 	// heal restores a settings file that cannot be used (see restore.go).
 	heal *healer
+	// rb remembers the service's rewrites of links, so that a save or a draft
+	// based on the rev before one is not a conflict (rebase.go).
+	rb *rebaseLog
 	// tagCfg is what was last read of the views in tags.yml (see views.go).
 	tagCfg tagCache
 	// typeCache are the type files parsed, by name (see listing.go).
@@ -325,7 +328,7 @@ func Open(opt Options) (*Space, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Space{root: root, stateDir: stateDir, name: name, idx: idx, log: log, now: time.Now, ops: osOps(), src: dirSource{root: root}, syncEvery: opt.ResyncInterval, heal: heal}
+	s := &Space{root: root, stateDir: stateDir, name: name, idx: idx, log: log, now: time.Now, ops: osOps(), src: dirSource{root: root}, syncEvery: opt.ResyncInterval, heal: heal, rb: openRebaseLog(rebaseLogPath(stateDir))}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	if s.syncEvery <= 0 {
 		s.syncEvery = 2 * time.Second

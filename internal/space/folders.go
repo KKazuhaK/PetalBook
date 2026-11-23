@@ -311,7 +311,7 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	}
 	// The links to the pages of the folder, and the links of those pages to
 	// the pages outside it, in the same change (the index still has the old state).
-	edits, rerr := s.planLinks(mv)
+	edits, rerr := s.planLinks(mv, []stepMove{{From: canonFrom, To: target, Dir: true}})
 	var edited []string
 	if rerr == nil {
 		edited, rerr = s.writeEdits(tx, edits)

@@ -255,7 +255,10 @@ func (s *Service) Put(ctx context.Context, sp *space.Space, spaceID, userID, pag
 	if err != nil {
 		return nil, err
 	}
-	return &Stored{Version: d.Version, BaseRev: d.BaseRev, Updated: d.Updated, Stale: d.BaseRev != cur.Rev}, nil
+	// A base that is behind only by the service's link rewrites is not stale:
+	// saving the draft makes the same rewrites (space.Rebase).
+	stale := d.BaseRev != cur.Rev && !sp.Rebasable(pageID, d.BaseRev, cur.Rev)
+	return &Stored{Version: d.Version, BaseRev: d.BaseRev, Updated: d.Updated, Stale: stale}, nil
 }
 
 func (s *Service) conflict(d *store.Draft, cur *space.Page) error {
@@ -270,8 +273,11 @@ func (s *Service) conflict(d *store.Draft, cur *space.Page) error {
 }
 
 // Get returns the user's draft of a page, or nil. currentRev is the file's rev
-// now, to tell whether the draft is stale.
-func (s *Service) Get(ctx context.Context, spaceID, pageID, userID, currentRev string) (*Draft, error) {
+// now, to tell whether the draft is stale. A draft whose base is behind only by
+// the service's link rewrites (a page it links to moved) comes with the same
+// rewrites made to its body and the file's rev as its base: not stale, and
+// with nothing for the person to choose.
+func (s *Service) Get(ctx context.Context, sp *space.Space, spaceID, pageID, userID, currentRev string) (*Draft, error) {
 	d, err := store.GetDraft(ctx, s.st.Q(), spaceID, pageID, userID)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, nil
@@ -279,7 +285,13 @@ func (s *Service) Get(ctx context.Context, spaceID, pageID, userID, currentRev s
 	if err != nil {
 		return nil, err
 	}
-	return toDraft(d, currentRev)
+	out, err := toDraft(d, currentRev)
+	if err == nil && out.Stale && sp != nil {
+		if rev, body, ok := sp.Rebase(pageID, d.BaseRev, d.Body); ok && rev == currentRev {
+			out.BaseRev, out.Body, out.Stale = rev, body, false
+		}
+	}
+	return out, err
 }
 
 // Delete discards the user's draft of a page, if any. With a version it
@@ -415,7 +427,7 @@ func (s *Service) dropIfSaved(ctx context.Context, sp *space.Space, spaceID, use
 	if err := dm.UnmarshalJSON([]byte(seen.Meta)); err != nil {
 		return
 	}
-	if _, same, err := sp.Equivalent(pageID, dm, seen.Body); err == nil && same {
+	if _, same, err := sp.Equivalent(pageID, seen.BaseRev, dm, seen.Body); err == nil && same {
 		bk, cancel := bookkeeping(ctx)
 		defer cancel()
 		if _, err := store.DeleteDraftVersion(bk, s.st.Q(), spaceID, pageID, userID, seen.Version); err != nil {
@@ -516,7 +528,7 @@ func (s *Service) applyUnder(ctx context.Context, sp *space.Space, d *store.Draf
 	s.remoteCall(l, sp, d.SpaceID, d.PageID, func() { p, err = sp.Save(by, d.PageID, d.BaseRev, meta, d.Body) })
 	var ce *space.ConflictError
 	if errors.As(err, &ce) {
-		if cur, same, eerr := sp.Equivalent(d.PageID, meta, d.Body); eerr == nil && same {
+		if cur, same, eerr := sp.Equivalent(d.PageID, d.BaseRev, meta, d.Body); eerr == nil && same {
 			p, err = cur, nil
 		}
 	}

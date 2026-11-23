@@ -15,7 +15,6 @@ import (
 	"html"
 	"net/url"
 	"path"
-	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 
 	"github.com/KKazuhaK/PetalBook/internal/page"
 )
@@ -51,24 +51,43 @@ type Link struct {
 	Ord int
 
 	// The positions below are byte offsets in the file. They are -1 when the
-	// link is not an inline link (a reference-style link has its destination
-	// in a definition elsewhere) or its syntax could not be located: such a
-	// link is found but never rewritten.
+	// syntax of the link could not be located: such a link is found but never
+	// rewritten. A reference-style link ([text][ref]) has its destination and
+	// title in the definition ([ref]: b.md "id"), and Def is set: every link
+	// that uses the definition has the same positions, so their edits are one.
 	DestStart, DestEnd   int  // the destination, with the <> when it has them
 	Angle                bool // the destination is written <like this>
 	TitleStart, TitleEnd int  // the title with its quotes; -1 when there is none
-	TailPos              int  // the closing parenthesis
+	TailPos              int  // the closing parenthesis (the end of the destination of a definition)
+	Def                  bool // the destination is in a link reference definition
 	// BlockStart and BlockEnd delimit the paragraph (or heading, or line of a
 	// table) the link is in; -1 when unknown.
 	BlockStart, BlockEnd int
 }
 
+// md parses what the editor's converter parses. Linkify is not among the
+// extensions: it only makes links of bare web addresses, which are never links
+// to pages, and it cost about a fifth of the time of a parse.
 var md = goldmark.New(goldmark.WithExtensions(
-	extension.Table, extension.TaskList, extension.Linkify, extension.Footnote,
+	extension.Table, extension.TaskList, extension.Footnote,
 	cjkfriendly.CJKFriendlyEmphasisAndStrikethrough,
 ))
 
-var scheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.\-]*:`)
+// hasScheme reports whether dest starts with a URL scheme ("https:", "mailto:").
+func hasScheme(dest string) bool {
+	for i := 0; i < len(dest); i++ {
+		c := dest[i]
+		switch {
+		case isAlpha(c):
+		case i > 0 && (c >= '0' && c <= '9' || c == '+' || c == '.' || c == '-'):
+		case i > 0 && c == ':':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
 
 // hasMD is a cheap test for a body that can hold a link to a page at all.
 func hasMD(b string) bool {
@@ -130,11 +149,21 @@ func Extract(src string, data []byte) []Link {
 	b := []byte(body)
 	root := md.Parser().Parse(text.NewReader(b))
 	var out []Link
+	var refs []*ast.Link                             // the node of each link of out that uses a definition, else nil
+	var defs map[string]*ast.LinkReferenceDefinition // by label; the first one counts
 	ast.Walk(root, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
 		}
 		switch v := n.(type) {
+		case *ast.LinkReferenceDefinition:
+			if defs == nil {
+				defs = map[string]*ast.LinkReferenceDefinition{}
+			}
+			if k := util.ToLinkReference(v.Label); defs[k] == nil {
+				defs[k] = v
+			}
+			return ast.WalkSkipChildren, nil
 		case *ast.Image:
 			return ast.WalkSkipChildren, nil
 		case *ast.Link:
@@ -143,16 +172,29 @@ func Extract(src string, data []byte) []Link {
 			}
 			if l, ok := fromNode(src, b, v); ok {
 				l.Ord = len(out)
-				l.DestStart, l.DestEnd = raw(l.DestStart), raw(l.DestEnd)
-				l.TitleStart, l.TitleEnd = raw(l.TitleStart), raw(l.TitleEnd)
-				l.TailPos = raw(l.TailPos)
-				l.BlockStart, l.BlockEnd = raw(l.BlockStart), raw(l.BlockEnd)
 				out = append(out, l)
+				if v.Reference != nil {
+					refs = append(refs, v)
+				} else {
+					refs = append(refs, nil)
+				}
 			}
 			return ast.WalkSkipChildren, nil
 		}
 		return ast.WalkContinue, nil
 	})
+	for i := range out {
+		l := &out[i]
+		if n := refs[i]; n != nil {
+			if d := defs[util.ToLinkReference(n.Reference.Value)]; d != nil {
+				locateDef(l, b, d)
+			}
+		}
+		l.DestStart, l.DestEnd = raw(l.DestStart), raw(l.DestEnd)
+		l.TitleStart, l.TitleEnd = raw(l.TitleStart), raw(l.TitleEnd)
+		l.TailPos = raw(l.TailPos)
+		l.BlockStart, l.BlockEnd = raw(l.BlockStart), raw(l.BlockEnd)
+	}
 	return out
 }
 
@@ -169,7 +211,7 @@ func Resolve(src, dest string) (target, raw string, rooted bool, anchor string, 
 	if i := strings.IndexByte(dest, '?'); i >= 0 {
 		dest = dest[:i]
 	}
-	if dest == "" || scheme.MatchString(dest) || strings.HasPrefix(dest, "//") {
+	if dest == "" || hasScheme(dest) || strings.HasPrefix(dest, "//") {
 		return "", "", false, "", false
 	}
 	if d, err := url.PathUnescape(dest); err == nil {
@@ -193,20 +235,75 @@ func Resolve(src, dest string) (target, raw string, rooted bool, anchor string, 
 	return target, raw, rooted, anchor, true
 }
 
-// unescape undoes backslash escapes of punctuation and character references.
+// unescape undoes backslash escapes and character references the way
+// CommonMark does, in one pass: a backslash before ASCII punctuation stands
+// for that character, which is then taken literally (so `\&amp;` is "&amp;",
+// not "&"); an entity or numeric reference with its semicolon ("&amp;",
+// "&#38;", "&#x26;") is decoded; anything else, such as a "&" that starts no
+// known reference, is kept as written.
 func unescape(s string) string {
 	var b strings.Builder
+	b.Grow(len(s))
 	for i := 0; i < len(s); i++ {
-		if s[i] == '\\' && i+1 < len(s) && isPunct(s[i+1]) {
+		c := s[i]
+		switch {
+		case c == '\\' && i+1 < len(s) && isPunct(s[i+1]):
 			i++
+			b.WriteByte(s[i])
+		case c == '&':
+			if n := entityLen(s[i:]); n > 0 {
+				if ref := s[i : i+n]; html.UnescapeString(ref) != ref {
+					b.WriteString(html.UnescapeString(ref))
+					i += n - 1
+					continue
+				}
+			}
+			b.WriteByte(c)
+		default:
+			b.WriteByte(c)
 		}
-		b.WriteByte(s[i])
 	}
-	s = b.String()
-	if strings.Contains(s, "&") {
-		s = html.UnescapeString(s)
+	return b.String()
+}
+
+// entityLen is the length of the character reference s starts with, in the
+// forms CommonMark knows (&name; &#digits; &#xhex;), or 0. Whether the name
+// is an entity is for the caller to find out.
+func entityLen(s string) int {
+	if len(s) < 3 || s[0] != '&' {
+		return 0
 	}
-	return s
+	digits := func(from, most int, ok func(byte) bool) int {
+		j := from
+		for j < len(s) && j-from < most && ok(s[j]) {
+			j++
+		}
+		if j == from {
+			return -1
+		}
+		return j
+	}
+	var i int
+	switch {
+	case s[1] == '#' && (s[2] == 'x' || s[2] == 'X'):
+		i = digits(3, 6, isHex)
+	case s[1] == '#':
+		i = digits(2, 7, func(c byte) bool { return c >= '0' && c <= '9' })
+	case isAlpha(s[1]):
+		i = digits(2, 31, func(c byte) bool { return isAlpha(c) || c >= '0' && c <= '9' })
+	default:
+		return 0
+	}
+	if i < 0 || i >= len(s) || s[i] != ';' {
+		return 0
+	}
+	return i + 1
+}
+
+func isAlpha(c byte) bool { return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' }
+
+func isHex(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'A' && c <= 'F' || c >= 'a' && c <= 'f'
 }
 
 func isPunct(c byte) bool {
@@ -317,7 +414,23 @@ func endOf(n ast.Node, b []byte) int {
 			p++
 		}
 		return p
-	case *ast.String, *ast.AutoLink:
+	case *ast.AutoLink:
+		// <https://example.com> in the text of a link: the label is a slice
+		// of the source, so its place is known.
+		lb := v.Label(b)
+		if len(lb) == 0 {
+			return -1
+		}
+		at := cap(b) - cap(lb)
+		if at < 0 || at+len(lb) > len(b) || &b[at] != &lb[0] {
+			return -1
+		}
+		p := at + len(lb)
+		if p < len(b) && b[p] == '>' {
+			p++
+		}
+		return p
+	case *ast.String:
 		return -1
 	case *ast.Link, *ast.Image:
 		var ref bool
@@ -484,4 +597,125 @@ func locate(l *Link, b []byte, n *ast.Link) {
 	}
 	l.DestStart, l.DestEnd, l.Angle = ds, de, angle
 	l.TitleStart, l.TitleEnd, l.TailPos = ts, te, tail
+}
+
+// locateDef finds where the destination and title of the link reference
+// definition d are written ([ref]: <dest> "title"), for a link that uses it,
+// and leaves the offsets at -1 unless the destination there is what the
+// parser read.
+func locateDef(l *Link, b []byte, d *ast.LinkReferenceDefinition) {
+	segs := d.Lines()
+	if segs == nil || segs.Len() == 0 {
+		return
+	}
+	p := segs.At(0).Start
+	if p < 0 || p >= len(b) || b[p] != '[' {
+		return
+	}
+	// The label, on one line.
+	for p++; p < len(b) && b[p] != ']'; p++ {
+		switch {
+		case b[p] == '\\' && p+1 < len(b) && isPunct(b[p+1]):
+			p++
+		case b[p] == '[' || b[p] == '\n':
+			return
+		}
+	}
+	if p+1 >= len(b) || b[p+1] != ':' {
+		return
+	}
+	p += 2
+	// White space, with at most one line end: the next line starts where its
+	// segment does (after the > of a block quote).
+	gap := func() bool {
+		for p < len(b) && (b[p] == ' ' || b[p] == '\t') {
+			p++
+		}
+		if p < len(b) && b[p] == '\n' {
+			next := -1
+			for i := 0; i < segs.Len(); i++ {
+				if s := segs.At(i).Start; s > p {
+					next = s
+					break
+				}
+			}
+			if next < 0 {
+				return false
+			}
+			p = next
+			for p < len(b) && (b[p] == ' ' || b[p] == '\t') {
+				p++
+			}
+		}
+		return p < len(b)
+	}
+	if !gap() {
+		return
+	}
+	ds := p
+	if b[p] == '<' {
+		for p++; p < len(b) && b[p] != '>'; p++ {
+			if b[p] == '\\' && p+1 < len(b) && isPunct(b[p+1]) {
+				p++
+			} else if b[p] == '\n' {
+				return
+			}
+		}
+		if p >= len(b) {
+			return
+		}
+		p++
+	} else {
+		open := 0
+	scan:
+		for ; p < len(b); p++ {
+			switch c := b[p]; {
+			case c == '\\' && p+1 < len(b) && isPunct(b[p+1]):
+				p++
+			case c == '(':
+				open++
+			case c == ')':
+				if open--; open < 0 {
+					break scan
+				}
+			case c == ' ' || c == '\t' || c == '\n':
+				break scan
+			}
+		}
+	}
+	de := p
+	rawDest := b[ds:de]
+	angle := len(rawDest) >= 2 && rawDest[0] == '<'
+	if angle {
+		rawDest = rawDest[1 : len(rawDest)-1]
+	}
+	if !bytes.Equal(rawDest, d.Destination) {
+		return
+	}
+	ts, te := -1, -1
+	if len(d.Title) > 0 {
+		if !gap() {
+			return
+		}
+		closer := b[p]
+		switch closer {
+		case '"', '\'':
+		case '(':
+			closer = ')'
+		default:
+			return
+		}
+		ts = p
+		for p++; p < len(b) && b[p] != closer; p++ {
+			if b[p] == '\\' && p+1 < len(b) && isPunct(b[p+1]) {
+				p++
+			}
+		}
+		if p >= len(b) {
+			return
+		}
+		te = p + 1
+	}
+	l.DestStart, l.DestEnd, l.Angle, l.Def = ds, de, angle, true
+	l.TitleStart, l.TitleEnd, l.TailPos = ts, te, de
 }

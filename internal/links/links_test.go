@@ -66,11 +66,8 @@ func TestOffsets(t *testing.T) {
 	for _, c := range loadFixtures(t) {
 		data := pageOf(c.Markdown)
 		for _, l := range Extract(c.Src, data) {
-			if strings.Contains(c.Name, "reference") {
-				if l.DestStart != -1 {
-					t.Errorf("%s: reference link located", c.Name)
-				}
-				continue
+			if strings.Contains(c.Name, "reference") != l.Def {
+				t.Errorf("%s: Def is %v", c.Name, l.Def)
 			}
 			if l.DestStart < 0 && c.Name == "empty text" {
 				continue // no text to find the end of: found, never rewritten
@@ -135,5 +132,88 @@ func TestOffsetsWithBOMAndCRLF(t *testing.T) {
 	}
 	if got := strings.TrimSpace(string(data[ls[0].BlockStart:ls[0].BlockEnd])); got != "see [x](x.md)" {
 		t.Fatalf("%q", got)
+	}
+}
+
+// rewriteAll points every link of data at its target as seen from to (the
+// file moved there), with ids added, as the space does after a move.
+func rewriteAll(t *testing.T, from, to string, data []byte, id string) string {
+	t.Helper()
+	var edits []Edit
+	for _, l := range Extract(from, data) {
+		e, ok := l.DestEdit(data, to, l.Path)
+		if !ok {
+			t.Fatalf("link %q not located", l.Text)
+		}
+		edits = append(edits, e)
+		if e, ok := l.IDEdit(id); ok {
+			edits = append(edits, e)
+		}
+	}
+	return string(Apply(data, edits))
+}
+
+// A reference-style link has its destination in the definition: that is what
+// is rewritten, once for all the links that use it, byte for byte otherwise.
+func TestReferenceDefinitionsAreRewritten(t *testing.T) {
+	body := "[a][r] and [again][r] and [b][] and [c] here.\n\n" +
+		"[r]: y.md\n" +
+		"[B]:   <sub/z z.md#top>   \"01JD3K8Q7Z\"\n" +
+		"> [c]:\n>   c.md\n" +
+		"```\n[r]: nope.md\n```\n"
+	data := pageOf(body)
+	ls := Extract("A/x.md", data)
+	if len(ls) != 4 {
+		t.Fatalf("%d links: %+v", len(ls), ls)
+	}
+	for _, l := range ls {
+		if !l.Def || l.DestStart < 0 {
+			t.Fatalf("not located: %+v", l)
+		}
+	}
+	got := rewriteAll(t, "A/x.md", "B/x.md", data, "01JD3K8Q11")
+	want := pageOf("[a][r] and [again][r] and [b][] and [c] here.\n\n" +
+		"[r]: ../A/y.md \"01JD3K8Q11\"\n" +
+		"[B]:   <../A/sub/z z.md#top>   \"01JD3K8Q7Z\"\n" +
+		"> [c]:\n>   ../A/c.md \"01JD3K8Q11\"\n" +
+		"```\n[r]: nope.md\n```\n")
+	if got != string(want) {
+		t.Fatalf("\n got %q\nwant %q", got, want)
+	}
+}
+
+// A link whose text ends in an autolink is located like any other.
+func TestLinkTextEndingInAutolink(t *testing.T) {
+	data := pageOf("see [the site <https://example.com>](y.md) now")
+	ls := Extract("A/x.md", data)
+	if len(ls) != 1 || ls[0].DestStart < 0 {
+		t.Fatalf("%+v", ls)
+	}
+	if got, want := rewriteAll(t, "A/x.md", "x.md", data, "01JD3K8Q11"), string(pageOf(`see [the site <https://example.com>](A/y.md "01JD3K8Q11") now`)); got != want {
+		t.Fatalf("\n got %q\nwant %q", got, want)
+	}
+}
+
+// Backslash escapes and character references are undone as CommonMark does: an
+// escaped & starts no reference.
+func TestUnescapeLikeCommonMark(t *testing.T) {
+	for in, want := range map[string]string{
+		`amp\&amp;.md`:  "amp&amp;.md",
+		`amp&amp;.md`:   "amp&.md",
+		`a&#38;b.md`:    "a&b.md",
+		`a&#x26;b.md`:   "a&b.md",
+		`a&amp b.md`:    "a&amp b.md", // no semicolon: not a reference
+		`a&nosuch;b.md`: "a&nosuch;b.md",
+		`a\(1\).md`:     "a(1).md",
+		`a\b.md`:        `a\b.md`, // not punctuation: the backslash stays
+		`\\&amp;.md`:    `\&.md`,
+	} {
+		if got := unescape(in); got != want {
+			t.Errorf("unescape(%q) = %q, want %q", in, got, want)
+		}
+	}
+	ls := Extract("x.md", pageOf(`[a](amp\&amp;.md)`))
+	if len(ls) != 1 || ls[0].Path != "amp&amp;.md" {
+		t.Fatalf("%+v", ls)
 	}
 }

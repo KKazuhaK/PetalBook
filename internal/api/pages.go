@@ -243,7 +243,7 @@ func (s *server) getPage(c *call) {
 		return
 	}
 	out := pageWithDraft{pageResp: toPage(p)}
-	d, err := s.drafts.Get(c.r.Context(), c.sp.Info.ID, id, c.user().ID, p.Rev)
+	d, err := s.drafts.Get(c.r.Context(), c.sp.Space, c.sp.Info.ID, id, c.user().ID, p.Rev)
 	if err != nil {
 		s.fail(c.w, err)
 		return

@@ -139,7 +139,7 @@ func TestAnEditDuringTheApplyIsKept(t *testing.T) {
 		if f.count() != 1 {
 			t.Fatal("the newer draft was deleted with the older one")
 		}
-		d, _ := f.svc.Get(ctx, spaces.SingleID, p.ID, store.LocalUserID, "")
+		d, _ := f.svc.Get(ctx, nil, spaces.SingleID, p.ID, store.LocalUserID, "")
 		if d.Body != "three\n" {
 			t.Fatalf("%q", d.Body)
 		}
@@ -248,7 +248,7 @@ func TestRunSweepsAndStopsWithoutForcingTheRest(t *testing.T) {
 		if got, _ := f.sp.Get(late.ID); got.Body != "x\n" {
 			t.Fatal("a draft that was not due was applied at shutdown")
 		}
-		if d, err := f.svc.Get(ctx, spaces.SingleID, late.ID, store.LocalUserID, late.Rev); err != nil || d == nil || d.Body != "not yet\n" {
+		if d, err := f.svc.Get(ctx, nil, spaces.SingleID, late.ID, store.LocalUserID, late.Rev); err != nil || d == nil || d.Body != "not yet\n" {
 			t.Fatalf("%v %v", d, err)
 		}
 	})
@@ -259,13 +259,13 @@ func TestGetReportsStaleness(t *testing.T) {
 		f := newFixture(t, st, Config{})
 		p := f.page("T", "x\n")
 		f.put(p, p.Rev, "y\n")
-		if d, _ := f.svc.Get(ctx, spaces.SingleID, p.ID, store.LocalUserID, p.Rev); d.Stale {
+		if d, _ := f.svc.Get(ctx, nil, spaces.SingleID, p.ID, store.LocalUserID, p.Rev); d.Stale {
 			t.Fatal("stale on the current rev")
 		}
-		if d, _ := f.svc.Get(ctx, spaces.SingleID, p.ID, store.LocalUserID, "other"); !d.Stale {
+		if d, _ := f.svc.Get(ctx, nil, spaces.SingleID, p.ID, store.LocalUserID, "other"); !d.Stale {
 			t.Fatal("not stale on another rev")
 		}
-		if d, err := f.svc.Get(ctx, spaces.SingleID, p.ID, "nobody", p.Rev); d != nil || err != nil {
+		if d, err := f.svc.Get(ctx, nil, spaces.SingleID, p.ID, "nobody", p.Rev); d != nil || err != nil {
 			t.Fatalf("%v %v", d, err)
 		}
 	})
@@ -391,7 +391,7 @@ func TestSaveFileKeepsADraftThatSaysSomethingElse(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		d, err := f.svc.Get(ctx, spaces.SingleID, p.ID, store.LocalUserID, saved.Rev)
+		d, err := f.svc.Get(ctx, nil, spaces.SingleID, p.ID, store.LocalUserID, saved.Rev)
 		if err != nil || d == nil || d.Body != "only in the draft\n" || !d.Stale {
 			t.Fatalf("the draft should stay, stale: %+v %v", d, err)
 		}
