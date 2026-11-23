@@ -20,7 +20,7 @@ interface Box {
   // The address (view and sort) last handed to the reducer.
   address: string
   remember: { id: string; n: number } | null
-  notice: { name: string; n: number } | null
+  notice: { name: string; link: boolean; n: number } | null
 }
 
 export interface Address {
@@ -48,7 +48,7 @@ export function useWorkingCopy(on: boolean, idKey: string, data: ViewList | unde
       wc: r.wc,
       list: r.adopt && list ? list : box.list,
       remember: r.remember === null ? box.remember : { id: r.remember, n: (box.remember?.n ?? 0) + 1 },
-      notice: r.lost ? { name: r.lost.name, n: (box.notice?.n ?? 0) + 1 } : box.notice,
+      notice: r.lost ? { name: r.lost.name, link: r.lost.link === true, n: (box.notice?.n ?? 0) + 1 } : box.notice,
     }
   }
 
@@ -64,7 +64,7 @@ export function useWorkingCopy(on: boolean, idKey: string, data: ViewList | unde
     if (stored.remember) saveViewId(idKey, stored.remember.id)
   }, [idKey, stored.remember])
   useEffect(() => {
-    if (stored.notice) toast.error(stored.notice.name ? t.views.lost(stored.notice.name) : t.views.lostUnnamed)
+    if (stored.notice) toast.error(stored.notice.link ? t.views.linkGone : stored.notice.name ? t.views.lost(stored.notice.name) : t.views.lostUnnamed)
   }, [stored.notice])
 
   const apply = (e: WorkingEvent, list?: ViewList) => setBox((b) => step(b, e, list))

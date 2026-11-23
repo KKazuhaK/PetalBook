@@ -116,6 +116,7 @@ export interface ViewSnapshot {
   name: string
   sig: string
 }
+export const stateSig = (s: ViewState): string => norm(s)
 export const viewSig = (v: SavedView): string => norm(stateOfView(v))
 export const snapshotOf = (v: SavedView): ViewSnapshot => ({ id: v.id, name: v.name, sig: viewSig(v) })
 export const isHandMark = (id: string): boolean => /^@\d+$/.test(id)

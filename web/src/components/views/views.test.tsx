@@ -305,6 +305,19 @@ describe('a change made while the person\'s own write is on its way', () => {
     expect(sortSelect().value).toBe('title')
     expect((await saved()).views[1].sort).toBe('')
   })
+
+  it('is not lost by a save: the sort set back to the default order meanwhile stays a change of the saved view', async () => {
+    await open('/s/default/f/Work', two, slow)
+    await settle(() => tabs().length === 2, 'the tabs')
+    await type(sortSelect(), 'title')
+    await click(textButton(t.views.save))
+    await type(sortSelect(), '')
+    await settle(() => puts().length === 1 && !(textButton(t.views.save) as HTMLButtonElement | null)?.disabled && textButton(t.views.revert) !== null, 'saved')
+    expect((await saved()).views[0].sort).toBe('title')
+    expect(sortSelect().value).toBe('')
+    expect(modifiedMark()).not.toBeNull()
+    expect(locationText()).toContain('sort=')
+  })
 })
 
 describe('when someone else changed the views', () => {

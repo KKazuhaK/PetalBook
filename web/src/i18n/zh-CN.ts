@@ -378,6 +378,7 @@ export const zhCN = {
     conflict: '别人刚改过这里的视图，已经重新读取。你的改动没有保存，可以在新的视图上再改一次。',
     lost: (name: string) => `你对“${name}”的未保存改动没有保留，因为别人改过这里的视图。`,
     lostUnnamed: '你在这里的未保存改动没有保留，因为别人改过这里的视图。',
+    linkGone: '链接里的排序没有用上：它所属的视图已经不在了。',
     failed: (message: string) => `视图没有保存：${message}`,
     tooMany: (n: number) => `最多 ${n} 个视图`,
     readOnly: '你只能查看：可以切换视图、临时改排序和筛选，但存不回去。',

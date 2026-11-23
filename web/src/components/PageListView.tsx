@@ -148,7 +148,9 @@ function Listing({ source }: { source: ListSource }) {
   const viewsPending = scope !== null && views.isPending
   const idKey = viewIdKey(spaceId ?? '', source.kind, source.kind === 'folder' ? source.folder : source.kind === 'tag' ? source.tag : '')
   const sortParam = params.get('sort')
-  const urlSort = sortParam !== null && (SORTS.includes(sortParam as SortKey) || (scope !== null && SORT_WORDS.test(sortParam))) ? sortParam : null
+  // In a folder or a tag "sort=" is a change too: the listing's default order on a view that sorts otherwise (a sort set
+  // back to what the view said before a save of the person).
+  const urlSort = sortParam !== null && (SORTS.includes(sortParam as SortKey) || (scope !== null && (sortParam === '' || SORT_WORDS.test(sortParam)))) ? sortParam : null
   const implicit: ViewState = { ...DEFAULT_STATE, layout: chosen }
   // The working copy of the view shown, and the tabs as they go with it (see useWorkingCopy and lib/workingCopy).
   const working = useWorkingCopy(scope !== null, idKey, views.data, { view: params.get('view'), sort: urlSort }, (list, wc) => {
@@ -381,6 +383,7 @@ function Listing({ source }: { source: ListSource }) {
               rev={working.list?.rev ?? ''}
               active={active}
               working={state}
+              base={base}
               modified={modified && mine}
               write={write && working.list !== null}
               onPick={working.pick}

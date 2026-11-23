@@ -178,16 +178,16 @@ describe('the sort in the address', () => {
     expect(run(wc, { kind: 'address', view: 'r1', sort: 'title', base: stateOfView(views[1]) }).wc).toBe(wc)
   })
   it('starts a listing with the sort of the view it names, else ignores it unless it is the implicit view', () => {
-    expect(initialWorkingCopy('r0', { view: 'r1', sort: 'title' })).toEqual({ viewKey: 'r1', snapshot: null, patch: { sort: 'title' } })
+    expect(initialWorkingCopy('r0', { view: 'r1', sort: 'title' })).toEqual({ viewKey: 'r1', snapshot: null, patch: { sort: 'title' }, fromAddress: true })
     expect(initialWorkingCopy('r0', { view: null, sort: 'title' })).toEqual({ viewKey: 'r0', snapshot: null, patch: {} })
-    expect(initialWorkingCopy('', { view: null, sort: 'title' })).toEqual({ viewKey: '', snapshot: null, patch: { sort: 'title' } })
+    expect(initialWorkingCopy('', { view: null, sort: 'title' })).toEqual({ viewKey: '', snapshot: null, patch: { sort: 'title' }, fromAddress: true })
   })
   it('at the first reading: kept on the view it names, dropped with a word when that view is gone', () => {
     const kept = run(initialWorkingCopy('r0', { view: 'r1', sort: 'title' }), list(views))
     expect([kept.wc.viewKey, kept.wc.patch, kept.lost]).toEqual(['r1', { sort: 'title' }, null])
     const gone = run(initialWorkingCopy('r0', { view: 'zz', sort: 'title' }), list(views))
-    // Nothing was changed in this visit (an old link, a reload): the sort is dropped without a word.
-    expect([gone.wc.viewKey, gone.wc.patch, gone.lost]).toEqual(['r0', {}, null])
+    // Only the address brought it (an old link, a reload): the sort is dropped, and the person is told the link's view is gone.
+    expect([gone.wc.viewKey, gone.wc.patch, gone.lost]).toEqual(['r0', {}, { name: '', link: true }])
   })
 })
 
@@ -266,5 +266,66 @@ describe('edits made while the person\'s own write is on its way', () => {
     const w = run(wc, edit({ layout: 'cards' }, views))
     const out = run(w.wc, { kind: 'written', op: 'create', on: views[1].id, sent: [...views, { name: '新' }], got: [...three(after('real')), mk('x', '新', { layout: 'cards' })], working: working(views, { layout: 'cards' }) })
     expect(out.wc.patch).toEqual({})
+  })
+})
+
+describe('round 9: the person\'s own write and what is changed meanwhile', () => {
+  const views = three(['a', 'b', 'c'])
+  const B = stateOfView(views[1])
+  const onB = run(initialWorkingCopy('b', { view: null, sort: null }), list(views)).wc
+  const edit = (patch: Patch, base = B): WorkingEvent => ({ kind: 'edit', patch, base })
+  const savedB = (sort: string) => views.map((v) => (v.id === 'b' ? { ...v, sort } : v))
+  const shownOf = (o: Outcome, got: SavedView[]) => ({ ...stateOfView(got.find((v) => v.id === o.wc.viewKey)!), ...o.wc.patch })
+
+  it('deleting the view shown: a change made while the delete is on its way is not put on the view shown next', () => {
+    const w = run(onB, edit({ sort: 'title' }))
+    const got = [views[0], views[2]]
+    const out = run(w.wc, { kind: 'written', op: 'delete', on: 'b', sent: got, got, working: { ...B }, base: B })
+    expect([out.wc.viewKey, out.wc.patch, out.lost]).toEqual(['a', {}, null])
+  })
+
+  for (const back of ['an edit back to the old sort', 'a revert'] as const)
+    it(`saving: ${back} made while the save is on its way is kept as a change of the saved view`, () => {
+      const w = run(onB, edit({ sort: 'title' })).wc
+      const working = { ...B, sort: 'title' }
+      const later = run(w, back === 'a revert' ? { kind: 'revert' } : edit({ sort: B.sort })).wc
+      const got = savedB('title')
+      const out = run(later, { kind: 'written', op: 'save', on: 'b', sent: got, got, working, base: B })
+      expect([out.wc.viewKey, out.wc.patch, out.lost]).toEqual(['b', { sort: '' }, null])
+      expect(shownOf(out, got).sort).toBe('')
+      // A list with the save in it, read before the answer came, waits for the answer instead of re-basing the change.
+      const early = reduceWorkingCopy(later, list(got, true))
+      expect([early.wc, early.adopt]).toEqual([later, false])
+      expect(run(early.wc, { kind: 'written', op: 'save', on: 'b', sent: got, got, working, base: B }).wc.patch).toEqual({ sort: '' })
+    })
+
+  it('saving: the view picked again from a list with the save in it keeps the change made on it as it is', () => {
+    const w = run(onB, edit({ sort: 'title' })).wc
+    const got = savedB('title')
+    const repicked = run(w, { kind: 'pick', id: 'a', views }, list(got, true), { kind: 'pick', id: 'b', views: got }, edit({ layout: 'cards' }, stateOfView(got[1]))).wc
+    const out = run(repicked, { kind: 'written', op: 'save', on: 'b', sent: got, got, working: { ...B, sort: 'title' }, base: B })
+    expect(out.wc.patch).toEqual({ layout: 'cards' })
+  })
+})
+
+describe('round 9: a change dropped at the first reading', () => {
+  const views = three(['a', 'b', 'c'])
+  it('the sort of an address whose view is gone (a reload, a link): dropped with a word that the link\'s view is gone', () => {
+    const out = run(initialWorkingCopy('a', { view: 'gone', sort: 'title' }), list(views))
+    expect([out.wc.viewKey, out.wc.patch, out.lost]).toEqual(['a', {}, { name: '', link: true }])
+  })
+  it('a change made in this visit before the views were read is not dropped silently', () => {
+    const wc = run(initialWorkingCopy('', { view: null, sort: null }), { kind: 'edit', patch: { sort: 'title' }, base: stateOfView(mk('', '')) }).wc
+    const out = run(wc, list(views))
+    expect([out.wc.viewKey, out.wc.patch, out.lost]).toEqual(['a', {}, { name: '' }])
+  })
+  it('the sort of an address changed in this visit before the views were read: dropped with the usual word', () => {
+    const wc = run(initialWorkingCopy('', { view: null, sort: 'title' }), { kind: 'edit', patch: { sort: '-title' }, base: stateOfView(mk('', '')) }).wc
+    expect(run(wc, list(views)).lost).toEqual({ name: '' })
+  })
+  it('the sort of an address whose view is there stays, and a later loss is said with the view\'s name', () => {
+    const kept = run(initialWorkingCopy('a', { view: 'b', sort: 'title' }), list(views))
+    expect([kept.wc.viewKey, kept.wc.patch, kept.lost]).toEqual(['b', { sort: 'title' }, null])
+    expect(run(kept.wc, list([views[0], views[2]])).lost).toEqual({ name: '乙' })
   })
 })

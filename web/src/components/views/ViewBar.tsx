@@ -27,6 +27,8 @@ interface Props {
   active: SavedView | null
   // The working copy of the view shown: what the layout, the sort, the filters, … are now.
   working: ViewState
+  // The view shown as it is saved, without the changes.
+  base: ViewState
   modified: boolean
   write: boolean
   onPick: (id: string) => void
@@ -36,7 +38,7 @@ interface Props {
   onRevert: () => void
 }
 
-export function ViewBar({ scope, views, rev, active, working, modified, write, onPick, onWritten, onRevert }: Props) {
+export function ViewBar({ scope, views, rev, active, working, base, modified, write, onPick, onWritten, onRevert }: Props) {
   // What the write in flight was, for its answer.
   const answer = useRef<((list: ViewList) => void) | null>(null)
   const save = useSaveViews(scope, (list) => answer.current?.(list))
@@ -49,7 +51,7 @@ export function ViewBar({ scope, views, rev, active, working, modified, write, o
   // has them in the cache (the hook puts them there), so the tabs show what the other person made.
   const run = async (op: ViewOp, on: string, next: Draft[]): Promise<SavedView[] | null> => {
     try {
-      answer.current = (list) => onWritten({ op, on, sent: next, got: list.views, working }, list)
+      answer.current = (list) => onWritten({ op, on, sent: next, got: list.views, working, base }, list)
       return (await save.mutateAsync({ baseRev: rev, views: next } satisfies PutViewsInput)).views
     } catch (e) {
       if (e instanceof ApiError && e.code === 'conflict') toast.error(t.views.conflict)
