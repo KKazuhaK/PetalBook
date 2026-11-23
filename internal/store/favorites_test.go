@@ -284,6 +284,8 @@ func TestOpeningAnOlderDatabaseFillsNameKeys(t *testing.T) {
 		`ALTER TABLE remotes DROP COLUMN gh_installation_id`,
 		`ALTER TABLE remotes DROP COLUMN gh_repo_id`,
 		`ALTER TABLE remotes DROP COLUMN gh_user_id`,
+		`DROP INDEX asset_remotes_move`,
+		`DROP TABLE asset_remotes`,
 		`DROP INDEX spaces_last_used`,
 		`ALTER TABLE spaces DROP COLUMN last_used`,
 		`ALTER TABLE spaces DROP COLUMN cache_state`,
