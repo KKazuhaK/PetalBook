@@ -2661,7 +2661,8 @@ registration and mail」一节，以及「Signing in」（`GET /api/auth/provide
     任何写入把代数加一；请求时一次映射查找，不逐层走。
   - 每日文案的 `daily.own`、`daily.api`、`daily.default` 的全站值**还放在原来的每日文案记录里**
     （`SiteBinding`），所以 `/api/admin/daily` 和 `/api/admin/settings` 是同一条记录，2.3 的行为和原来
-    一样：既有的测试一条没改（只有路由表里「管理员」和「全站管理员」的区别要改一行）。租户层的
+    一样：既有的断言一条没改（测试只因为存储函数多了范围参数改了调用，管理路由的测试把「管理员」
+    放宽成「管理员或全站管理员」）。租户层的
     `daily.default` 插在空间和全站之间；只能选本租户的空间或接口，贴的文案仍在全站。
   - 布尔的 `restrict` 只能是「只许关」（`options: [false]`）。限制比较的是严格程度：租户的规则要比
     全站的至少一样严；被挡住的值留着标 `inEffect: false`，规则放松后又生效；全站收紧时回答里的
