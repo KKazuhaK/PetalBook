@@ -3947,8 +3947,11 @@ A client typically:
 
 An opaque string. It names a point in the index of one space: an epoch, which
 is new every time the index is built from scratch (at an upgrade that changes
-the index, `POST …/reindex`, or when the index does not match the files), and
-a sequence number. Every write of a page to the index (added, its file changed,
+the index, `POST …/reindex`, or when the index does not match the files), when
+the server opens an index that was not closed cleanly (a crash or a power cut
+may have taken its last writes), and when the first look at the files after
+the space is opened finds changes the index did not record; and a sequence
+number. Every write of a page to the index (added, its file changed,
 renamed or moved, its links rewritten by the server, read again after a change
 made outside the server) gives the page a new sequence number, higher than any
 before; a page that is removed leaves a record of its removal. So "what changed
@@ -4090,17 +4093,21 @@ ask once and then read changes only where something changed. 1 to 100
 - A head equal to the client's cursor means nothing changed; a different one
   means the client calls `GET …/changes`. A head is not a promise that there are
   changes: comparing it is cheap, reading the changes settles it.
-- A space that has not been open since the server started has no head to give
-  yet: its head is `""`, which is never a cursor, so the client asks for its
+- A space that has not been open since the server started answers the head
+  its index was closed at, read from the index without opening the space. A
+  space with no index, or whose index was not closed cleanly, has no head to
+  give: its head is `""`, which is never a cursor, so the client asks for its
   changes (which opens it); from then on its head is known, also after it
-  closes.
+  closes. A head read this way can be followed, when the space is opened, by
+  a new epoch (see "Change cursor"): the client then gets `410` and walks the
+  catalogue again.
 - A person who reaches a space only as an administrator, without being a member
   of it, has no head for it (it is in `missing`): heads come from the
   membership the server holds in memory, and a client that can read such a
   space asks its changes directly.
-- The answer comes from memory and never opens or pulls a space: a space that
-  is closed (idle, or cleared from the disk by milestone 3.1) answers the
-  head it had when it closed. So a device polling heads keeps no space open, and
+- The answer never opens or pulls a space: a space that is closed (idle, or
+  cleared from the disk by milestone 3.1) answers the head it had when it
+  closed, from memory, or after a restart from its index as above. So a device polling heads keeps no space open, and
   a space that follows a remote and is closed shows the remote's changes only
   once someone opens it.
 
@@ -4114,7 +4121,11 @@ Not enforced by the server, but what it is built for:
   when it comes back to the foreground or the network returns. Do not poll
   `changes` for spaces whose head did not move.
 - Walk a catalogue in batches one after another, not in parallel; fetch bodies
-  at most 4 requests at a time.
+  at most 4 requests at a time. A walk that is cut off goes on with the `next`
+  it had (the batch cursor outlives changes to the space).
+- After a failure that is not the network (a `5xx`, say), wait before asking
+  that space again, longer each time (the web app: one poll period, doubling,
+  at most 30 minutes).
 - On `404` from any of these for a space, remove that space's copy from the
   device (the caller can no longer read it). On `403 space_disabled`, keep the
   copy, show it as read-only and stop asking until the space is in `heads`
@@ -4125,7 +4136,8 @@ Not enforced by the server, but what it is built for:
 the numbers are in docs/design.md, "4.1 的现状"): a `changes` with nothing new
 under a millisecond; a catalogue batch of 2000 about 15 to 20 ms; 100 bodies
 about 20 ms on an SSD; `heads` for 100 spaces a few microseconds each, and no
-disk. The index grows by one column and one small table, under 1% of its size.
+disk (after a restart, about a millisecond once for each closed space, to read
+its head from its index). The index grows by one column and one small table, under 1% of its size.
 The `settings` stamp of an answer is made from the names, sizes and times of
 the files in `.petalbook/`, `.petalbook/types/` and `.petalbook/templates/` (three
 directory listings, as many entries as the space has settings, not as many as
