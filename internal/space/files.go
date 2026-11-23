@@ -279,9 +279,20 @@ func (s *Space) journalRespell(by Author, from, mid, to string, inside []string)
 // moveIntent returns the journal call for moving the page at rel into folder:
 // it records from -> to before the link, so a crash between link and remove
 // can be finished at the next start.
-func (s *Space) moveIntent(by Author, rel, folder string) func(name string) error {
+//
+// The move is journaled together with an "l" record, which says that the links
+// to the page have to follow it: the record stays open until they have (see
+// relink), so a crash between the move and the last file rewritten is finished
+// at the next start.
+func (s *Space) moveIntent(tx *txn, rel, folder string) func(name string) error {
 	return func(name string) error {
-		return s.cm.Record(by, jrec{Op: "m", From: rel, To: path.Join(folder, name)})
+		to := path.Join(folder, name)
+		l := jrec{Op: "l", From: rel, To: to}
+		if err := tx.record(jrec{Op: "m", From: rel, To: to}, l); err != nil {
+			return err
+		}
+		tx.links = append(tx.links, l)
+		return nil
 	}
 }
 

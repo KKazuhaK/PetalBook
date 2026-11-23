@@ -1,0 +1,639 @@
+{
+ "about": "Cases for the extraction of page links: the Go parser (internal/links) and the editor's Markdown converter (web/src/markdown/links.test.ts) must find the same links. src is the page's own path in the space; links are in document order.",
+ "cases": [
+  {
+   "name": "relative path with id",
+   "src": "Notes/a.md",
+   "markdown": "见[暮雪](../Tang/暮雪.md \"01JD3K8Q7Z\")。",
+   "links": [
+    {
+     "text": "暮雪",
+     "path": "Tang/暮雪.md",
+     "id": "01JD3K8Q7Z",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "path only",
+   "src": "Notes/a.md",
+   "markdown": "[b](b.md)",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/b.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "dot slash",
+   "src": "Notes/a.md",
+   "markdown": "[b](./sub/b.md)",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/sub/b.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "dot dot",
+   "src": "Notes/a.md",
+   "markdown": "[b](../../x.md)",
+   "links": []
+  },
+  {
+   "name": "dot dot up one",
+   "src": "Notes/a.md",
+   "markdown": "[b](../x.md)",
+   "links": [
+    {
+     "text": "b",
+     "path": "x.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "anchor",
+   "src": "Notes/a.md",
+   "markdown": "[b](b.md#小标题)",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/b.md",
+     "id": "",
+     "anchor": "小标题"
+    }
+   ]
+  },
+  {
+   "name": "anchor only is not a link",
+   "src": "Notes/a.md",
+   "markdown": "[b](#小标题)",
+   "links": []
+  },
+  {
+   "name": "external",
+   "src": "Notes/a.md",
+   "markdown": "[w](https://example.com/a.md) [m](mailto:a@b.c) [n](//cdn/x.md)",
+   "links": []
+  },
+  {
+   "name": "not md",
+   "src": "Notes/a.md",
+   "markdown": "[img](a.png) [t](b.txt) [p](c)",
+   "links": []
+  },
+  {
+   "name": "uppercase extension",
+   "src": "Notes/a.md",
+   "markdown": "[b](B.MD)",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/B.MD",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "image is not a link",
+   "src": "Notes/a.md",
+   "markdown": "![alt](pic.md)",
+   "links": []
+  },
+  {
+   "name": "image inside link",
+   "src": "Notes/a.md",
+   "markdown": "[![alt](pic.png)](b.md)",
+   "links": [
+    {
+     "text": "",
+     "path": "Notes/b.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "inline code",
+   "src": "Notes/a.md",
+   "markdown": "`[b](b.md)` and [c](c.md)",
+   "links": [
+    {
+     "text": "c",
+     "path": "Notes/c.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "fenced code",
+   "src": "Notes/a.md",
+   "markdown": "```\n[b](b.md)\n```\n\n[c](c.md)",
+   "links": [
+    {
+     "text": "c",
+     "path": "Notes/c.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "indented code",
+   "src": "Notes/a.md",
+   "markdown": "para\n\n    [b](b.md)\n\n[c](c.md)",
+   "links": [
+    {
+     "text": "c",
+     "path": "Notes/c.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "title that is not an id",
+   "src": "Notes/a.md",
+   "markdown": "[b](b.md \"小说\")",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/b.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "title that is an id",
+   "src": "Notes/a.md",
+   "markdown": "[b](b.md \"01JD3K8Q7Z\")",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/b.md",
+     "id": "01JD3K8Q7Z",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "title with id and other text is not an id",
+   "src": "Notes/a.md",
+   "markdown": "[b](b.md \"01JD3K8Q7Z x\")",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/b.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "lowercase id is not an id",
+   "src": "Notes/a.md",
+   "markdown": "[b](b.md \"01jd3k8q7z\")",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/b.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "single quote title",
+   "src": "Notes/a.md",
+   "markdown": "[b](b.md '01JD3K8Q7Z')",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/b.md",
+     "id": "01JD3K8Q7Z",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "paren title",
+   "src": "Notes/a.md",
+   "markdown": "[b](b.md (01JD3K8Q7Z))",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/b.md",
+     "id": "01JD3K8Q7Z",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "escaped bracket in text",
+   "src": "Notes/a.md",
+   "markdown": "[a \\] b](b.md)",
+   "links": [
+    {
+     "text": "a ] b",
+     "path": "Notes/b.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "escaped link is text",
+   "src": "Notes/a.md",
+   "markdown": "\\[b\\](b.md)",
+   "links": []
+  },
+  {
+   "name": "escaped paren in path",
+   "src": "Notes/a.md",
+   "markdown": "[b](b\\(1\\).md)",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/b(1).md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "balanced parens in path",
+   "src": "Notes/a.md",
+   "markdown": "[b](b(1).md)",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/b(1).md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "CJK path",
+   "src": "Notes/a.md",
+   "markdown": "[暮雪](唐诗/暮雪.md)",
+   "links": [
+    {
+     "text": "暮雪",
+     "path": "Notes/唐诗/暮雪.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "percent encoded CJK",
+   "src": "Notes/a.md",
+   "markdown": "[暮雪](%E5%94%90%E8%AF%97/%E6%9A%AE%E9%9B%AA.md)",
+   "links": [
+    {
+     "text": "暮雪",
+     "path": "Notes/唐诗/暮雪.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "space as %20",
+   "src": "Notes/a.md",
+   "markdown": "[b](My%20Page.md)",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/My Page.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "space in angle brackets",
+   "src": "Notes/a.md",
+   "markdown": "[b](<My Page.md>)",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/My Page.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "space unencoded is not a link",
+   "src": "Notes/a.md",
+   "markdown": "[b](My Page.md)",
+   "links": []
+  },
+  {
+   "name": "percent sign",
+   "src": "Notes/a.md",
+   "markdown": "[b](100%25.md)",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/100%.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "hash and question in name",
+   "src": "Notes/a.md",
+   "markdown": "[b](C%23.md) [c](d.md?x=1#y)",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/C#.md",
+     "id": "",
+     "anchor": ""
+    },
+    {
+     "text": "c",
+     "path": "Notes/d.md",
+     "id": "",
+     "anchor": "y"
+    }
+   ]
+  },
+  {
+   "name": "rooted",
+   "src": "Notes/a.md",
+   "markdown": "[b](/Top/b.md)",
+   "links": [
+    {
+     "text": "b",
+     "path": "Top/b.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "formatted text",
+   "src": "Notes/a.md",
+   "markdown": "[**粗** `码` *斜*](b.md)",
+   "links": [
+    {
+     "text": "粗 码 斜",
+     "path": "Notes/b.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "emphasis around link",
+   "src": "Notes/a.md",
+   "markdown": "**[b](b.md)** and *[c](c.md)*",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/b.md",
+     "id": "",
+     "anchor": ""
+    },
+    {
+     "text": "c",
+     "path": "Notes/c.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "in heading and list",
+   "src": "Notes/a.md",
+   "markdown": "# [b](b.md)\n\n- [c](c.md)\n- 2. [d](d.md)",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/b.md",
+     "id": "",
+     "anchor": ""
+    },
+    {
+     "text": "c",
+     "path": "Notes/c.md",
+     "id": "",
+     "anchor": ""
+    },
+    {
+     "text": "d",
+     "path": "Notes/d.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "in table",
+   "src": "Notes/a.md",
+   "markdown": "| a | b |\n|---|---|\n| [x](x.md) | [y](y.md) |",
+   "links": [
+    {
+     "text": "x",
+     "path": "Notes/x.md",
+     "id": "",
+     "anchor": ""
+    },
+    {
+     "text": "y",
+     "path": "Notes/y.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "in blockquote",
+   "src": "Notes/a.md",
+   "markdown": "> see [b](b.md)",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/b.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "reference style",
+   "src": "Notes/a.md",
+   "markdown": "[b][r]\n\n[r]: b.md \"01JD3K8Q7Z\"",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/b.md",
+     "id": "01JD3K8Q7Z",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "collapsed reference",
+   "src": "Notes/a.md",
+   "markdown": "[b][]\n\n[b]: b.md",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/b.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "undefined reference",
+   "src": "Notes/a.md",
+   "markdown": "[b][nope]",
+   "links": []
+  },
+  {
+   "name": "autolink",
+   "src": "Notes/a.md",
+   "markdown": "<https://example.com/a.md> <b.md>",
+   "links": []
+  },
+  {
+   "name": "html is not a link",
+   "src": "Notes/a.md",
+   "markdown": "<a href=\"b.md\">b</a>",
+   "links": []
+  },
+  {
+   "name": "CJK emphasis next to link",
+   "src": "Notes/a.md",
+   "markdown": "**“[引文](b.md)”**。",
+   "links": [
+    {
+     "text": "引文",
+     "path": "Notes/b.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "same page twice",
+   "src": "Notes/a.md",
+   "markdown": "[b](b.md) and [b again](b.md#x)",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/b.md",
+     "id": "",
+     "anchor": ""
+    },
+    {
+     "text": "b again",
+     "path": "Notes/b.md",
+     "id": "",
+     "anchor": "x"
+    }
+   ]
+  },
+  {
+   "name": "empty destination",
+   "src": "Notes/a.md",
+   "markdown": "[b]()",
+   "links": []
+  },
+  {
+   "name": "empty text",
+   "src": "Notes/a.md",
+   "markdown": "[](b.md)",
+   "links": [
+    {
+     "text": "",
+     "path": "Notes/b.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "footnote-like",
+   "src": "Notes/a.md",
+   "markdown": "text[^1]\n\n[^1]: [b](b.md)",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/b.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "no body links",
+   "src": "Notes/a.md",
+   "markdown": "just text",
+   "links": []
+  },
+  {
+   "name": "root file",
+   "src": "a.md",
+   "markdown": "[b](b.md)",
+   "links": [
+    {
+     "text": "b",
+     "path": "b.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "dot dot from root escapes",
+   "src": "a.md",
+   "markdown": "[b](../b.md)",
+   "links": []
+  },
+  {
+   "name": "dot dot inside",
+   "src": "Notes/a.md",
+   "markdown": "[b](x/../b.md)",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/b.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  },
+  {
+   "name": "hidden folder",
+   "src": "Notes/a.md",
+   "markdown": "[b](.petalbook/x.md)",
+   "links": [
+    {
+     "text": "b",
+     "path": "Notes/.petalbook/x.md",
+     "id": "",
+     "anchor": ""
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,497 @@
+package space
+
+import (
+	"errors"
+	"io/fs"
+	"path"
+	"sort"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/KKazuhaK/PetalBook/internal/index"
+	"github.com/KKazuhaK/PetalBook/internal/links"
+	"github.com/KKazuhaK/PetalBook/internal/page"
+)
+
+// BacklinksPageSize is how many pages one request of backlinks lists.
+const BacklinksPageSize = 20
+
+// excerptRunes is the most characters of the paragraph a backlink shows.
+const excerptRunes = 240
+
+// Backlink is a page that links to another, with the paragraph of the link.
+type Backlink struct {
+	ID       string
+	Path     string
+	Title    string // the page's title, or what stands for it (see page.Label)
+	Untitled bool
+	// Excerpt is the paragraph the link is in, as plain text; "" when the file
+	// could not be read or no longer has the link.
+	Excerpt string
+}
+
+// Backlinks lists the pages that link to page id, BacklinksPageSize at a time,
+// the most recently changed first. It reads the files of the pages it lists
+// (for the excerpt) and no others. total is the number of pages that link to
+// it; next is "" at the end.
+func (s *Space) Backlinks(id, cursor string) (items []Backlink, next string, total int, err error) {
+	rel, _, _, err := s.load(id, true)
+	if err != nil {
+		return nil, "", 0, err
+	}
+	rows, next, total, err := s.idx.Backlinks(id, cursor, BacklinksPageSize)
+	if err != nil {
+		if errors.Is(err, index.ErrBadCursor) {
+			return nil, "", 0, invalidf("bad cursor")
+		}
+		return nil, "", 0, err
+	}
+	items = make([]Backlink, 0, len(rows))
+	for _, r := range rows {
+		b := Backlink{ID: r.ID, Path: r.Path, Title: r.Label, Untitled: r.Untitled}
+		if data, _, err := s.readFile(r.Path); err == nil {
+			for _, l := range links.Extract(r.Path, data) {
+				if (l.ID != "" && l.ID == id) || (l.ID == "" && l.Path == rel) {
+					b.Excerpt = excerptAround(data, l)
+					break
+				}
+			}
+		}
+		items = append(items, b)
+	}
+	return items, next, total, nil
+}
+
+// excerptAround is the paragraph a link is in, as plain text, cut to about
+// excerptRunes characters around the link.
+func excerptAround(data []byte, l links.Link) string {
+	if l.BlockStart < 0 || l.BlockEnd > len(data) || l.BlockStart > l.BlockEnd {
+		return ""
+	}
+	text := strings.Join(strings.Fields(page.PlainText(string(data[l.BlockStart:l.BlockEnd]))), " ")
+	r := []rune(text)
+	if len(r) <= excerptRunes {
+		return text
+	}
+	at := 0
+	if l.Text != "" {
+		if i := strings.Index(text, l.Text); i >= 0 {
+			at = utf8.RuneCountInString(text[:i])
+		}
+	}
+	start := max(0, min(at-excerptRunes/3, len(r)-excerptRunes))
+	out := strings.TrimSpace(string(r[start : start+excerptRunes]))
+	if start > 0 {
+		out = "…" + out
+	}
+	if start+excerptRunes < len(r) {
+		out += "…"
+	}
+	return out
+}
+
+// LinkTarget is the page a link leads to.
+type LinkTarget struct {
+	ID, Path, Title string
+	Untitled        bool
+}
+
+// OutLink is a link of a page.
+type OutLink struct {
+	Text   string
+	Path   string // the file the link names, in the space
+	ID     string // the id the link carries, or ""
+	Anchor string
+	// Target is the page it leads to now (by id when the link has one, else by
+	// its path), nil for a broken link.
+	Target *LinkTarget
+}
+
+// Links lists the links of page id to other pages, in the order of the text.
+func (s *Space) Links(id string) ([]OutLink, error) {
+	if _, _, _, err := s.load(id, true); err != nil {
+		return nil, err
+	}
+	rows, ok, err := s.idx.OutLinks(id)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrNotFound
+	}
+	out := make([]OutLink, len(rows))
+	for i, r := range rows {
+		out[i] = OutLink{Text: r.Text, Path: r.Path, ID: r.ID, Anchor: r.Anchor}
+		if r.Target != nil {
+			out[i].Target = &LinkTarget{ID: r.Target.ID, Path: r.Target.Path, Title: r.Target.Label, Untitled: r.Target.Untitled}
+		}
+	}
+	return out, nil
+}
+
+// --- keeping links right when pages move ---------------------------------------
+
+// movedPage is a page file that has a new path (or is about to).
+type movedPage struct{ id, from, to string }
+
+// fileEdit is the new content of a page file.
+type fileEdit struct {
+	rel  string
+	data []byte
+}
+
+// planLinks works out the files that change because pages have moved (the
+// files are at their new paths, the index still has the old state): the pages
+// that link to a moved page, and the moved pages themselves, which are
+// somewhere else now and so name their targets differently. Only the paths of
+// the links are changed, and the id is added to a link that lacks one; every
+// other byte is kept. A link that already points where it should is left
+// alone, so planning again after a crash finds what is left to do.
+//
+// Cost: the index tells which pages to read; nothing else is read.
+func (s *Space) planLinks(mv []movedPage) ([]fileEdit, error) {
+	if len(mv) == 0 {
+		return nil, nil
+	}
+	byID := make(map[string]movedPage, len(mv))
+	byOld := make(map[string]movedPage, len(mv))
+	ids := make([]string, 0, len(mv))
+	froms := make([]string, 0, len(mv))
+	for _, m := range mv {
+		byID[m.id], byOld[m.from] = m, m
+		ids = append(ids, m.id)
+		froms = append(froms, m.from)
+	}
+	refs, err := s.idx.Referrers(ids, froms)
+	if err != nil {
+		return nil, err
+	}
+	own, err := s.idx.WithLinks(ids)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var sources []index.PageRef
+	for _, r := range append(refs, own...) {
+		if !seen[r.ID] {
+			seen[r.ID] = true
+			sources = append(sources, r)
+		}
+	}
+	sort.Slice(sources, func(i, j int) bool { return sources[i].Path < sources[j].Path })
+
+	pathOf := map[string]string{} // id -> path now, "" for none
+	idOf := map[string]string{}   // path -> id, "" for none
+	pageByID := func(id string) string {
+		p, ok := pathOf[id]
+		if !ok {
+			p, _ = s.idx.PathByID(id)
+			pathOf[id] = p
+		}
+		return p
+	}
+	pageAt := func(p string) string {
+		id, ok := idOf[p]
+		if !ok {
+			id, _ = s.idx.IDAt(p)
+			idOf[p] = id
+		}
+		return id
+	}
+
+	var out []fileEdit
+	for _, src := range sources {
+		oldAt, newAt := src.Path, src.Path
+		if m, ok := byID[src.ID]; ok {
+			oldAt, newAt = m.from, m.to
+		}
+		data, _, err := s.readFile(newAt)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return nil, err
+		}
+		var edits []links.Edit
+		for _, l := range links.Extract(oldAt, data) {
+			if l.DestStart < 0 {
+				continue
+			}
+			var tid, tpath string
+			switch {
+			case l.ID != "":
+				if m, ok := byID[l.ID]; ok {
+					tid, tpath = m.id, m.to
+				} else if p := pageByID(l.ID); p != "" {
+					tid, tpath = l.ID, p
+				} else {
+					tpath = l.Path // no such page: stays where it points
+				}
+			default:
+				if m, ok := byOld[l.Path]; ok {
+					tid, tpath = m.id, m.to
+				} else {
+					tid, tpath = pageAt(l.Path), l.Path
+				}
+			}
+			if links.Target(newAt, l.Raw, l.Rooted) == tpath {
+				continue
+			}
+			if e, ok := l.DestEdit(data, newAt, tpath); ok {
+				edits = append(edits, e)
+				if l.ID == "" && tid != "" {
+					if e, ok := l.IDEdit(tid); ok {
+						edits = append(edits, e)
+					}
+				}
+			}
+		}
+		if len(edits) > 0 {
+			out = append(out, fileEdit{rel: newAt, data: links.Apply(data, edits)})
+		}
+	}
+	return out, nil
+}
+
+// writeEdits writes the new content of files as part of the change tx: each
+// is journaled (all with one sync) before it is replaced, and handed to the
+// commit. The index is not touched; the caller refreshes it for the paths
+// returned.
+func (s *Space) writeEdits(tx *txn, edits []fileEdit) ([]string, error) {
+	if len(edits) == 0 {
+		return nil, nil
+	}
+	recs := make([]jrec, len(edits))
+	paths := make([]string, len(edits))
+	for i, e := range edits {
+		recs[i] = jrec{Op: "w", Path: e.rel, Rev: page.Rev(e.data)}
+		paths[i] = e.rel
+	}
+	if err := tx.record(recs...); err != nil {
+		return nil, err
+	}
+	// The files are part of the change from the first replacement: an undo
+	// takes them back.
+	tx.touch(paths...)
+	for _, e := range edits {
+		abs, err := s.abs(e.rel)
+		if err != nil {
+			return paths, err
+		}
+		if err := writeAtomic(abs, e.data); err != nil {
+			return paths, err
+		}
+	}
+	return paths, nil
+}
+
+// relink makes the links of the space right after pages moved: it plans and
+// writes the changes and brings the index up to date for the files it wrote.
+// own is the file of a moved page that the caller is about to index with data;
+// when the plan changes it, the new content is returned.
+func (s *Space) relink(tx *txn, mv []movedPage, own string, data []byte) ([]byte, error) {
+	edits, err := s.planLinks(mv)
+	if err != nil {
+		return data, err
+	}
+	var rest []fileEdit
+	for _, e := range edits {
+		if e.rel == own {
+			data = e.data
+		}
+		rest = append(rest, e)
+	}
+	paths, err := s.writeEdits(tx, rest)
+	if err != nil {
+		return data, err
+	}
+	var others []string
+	for _, p := range paths {
+		if p != own {
+			others = append(others, p)
+		}
+	}
+	if len(others) > 0 {
+		if _, err := s.idx.Refresh(s.src, others, nil); err != nil {
+			return data, err
+		}
+	}
+	return data, nil
+}
+
+// afterRelink says what a change does when its links could not be made right:
+// a space that follows a remote undoes the whole change; a local one keeps it,
+// leaves the journal record open (so that the next start finishes it) and goes
+// on.
+func (s *Space) afterRelink(tx *txn, err error) error {
+	if err == nil {
+		tx.settleLinks()
+		return nil
+	}
+	if tx.remote {
+		return err
+	}
+	s.log.Error("could not update the links to a moved page; the next start will try again", "error", err)
+	return nil
+}
+
+// withIDs adds the id of the target to the links in a page file that have none
+// and lead to a page of the space (a link with a title of its own is left
+// alone). rel is the path of the file.
+func (s *Space) withIDs(rel string, data []byte) []byte {
+	ls := links.Extract(rel, data)
+	if len(ls) == 0 {
+		return data
+	}
+	var edits []links.Edit
+	for _, l := range ls {
+		if l.ID != "" || l.DestStart < 0 || l.TitleStart >= 0 {
+			continue
+		}
+		if id, ok := s.idx.IDAt(l.Path); ok {
+			if e, ok := l.IDEdit(id); ok {
+				edits = append(edits, e)
+			}
+		}
+	}
+	return links.Apply(data, edits)
+}
+
+// repairStale rewrites the paths of links that carry the id of a page that now
+// lies at another path (it was moved or renamed outside PetalBook), as part of
+// the change tx. ids limits it to the links to those pages, nil means all. A
+// link to an id that more than one file claims is not touched, and neither is
+// one whose id no page has. It returns the files it changed (already indexed).
+func (s *Space) repairStale(tx *txn, ids []string) ([]string, error) {
+	stale, err := s.idx.StaleLinks(ids)
+	if err != nil || len(stale) == 0 {
+		return nil, err
+	}
+	dup, err := s.idx.DuplicateIDs()
+	if err != nil {
+		return nil, err
+	}
+	bySrc := map[string]map[string]string{} // source path -> target id -> its path
+	var order []string
+	for _, st := range stale {
+		if dup[st.Target.ID] {
+			continue
+		}
+		m := bySrc[st.Src.Path]
+		if m == nil {
+			m = map[string]string{}
+			bySrc[st.Src.Path] = m
+			order = append(order, st.Src.Path)
+		}
+		m[st.Target.ID] = st.Target.Path
+	}
+	sort.Strings(order)
+	var edits []fileEdit
+	for _, src := range order {
+		data, _, err := s.readFile(src)
+		if err != nil {
+			continue
+		}
+		var es []links.Edit
+		for _, l := range links.Extract(src, data) {
+			tpath, ok := bySrc[src][l.ID]
+			if !ok || l.ID == "" || links.Target(src, l.Raw, l.Rooted) == tpath {
+				continue
+			}
+			if e, ok := l.DestEdit(data, src, tpath); ok {
+				es = append(es, e)
+			}
+		}
+		if len(es) > 0 {
+			edits = append(edits, fileEdit{rel: src, data: links.Apply(data, es)})
+		}
+	}
+	paths, err := s.writeEdits(tx, edits)
+	if err != nil {
+		return paths, err
+	}
+	if len(paths) > 0 {
+		if _, err := s.idx.Refresh(s.src, paths, nil); err != nil {
+			return paths, err
+		}
+	}
+	return paths, nil
+}
+
+// movedUnder works out which pages a "l" record of the journal moved: the pages
+// now at its target, with the paths they had.
+func (s *Space) movedUnder(r jrec) ([]movedPage, error) {
+	var refs []index.PageRef
+	if r.Dir {
+		var err error
+		if refs, err = s.idx.PagesUnder(r.To); err != nil {
+			return nil, err
+		}
+	} else if id, ok := s.idx.IDAt(r.To); ok {
+		refs = []index.PageRef{{ID: id, Path: r.To}}
+	}
+	out := make([]movedPage, 0, len(refs))
+	for _, p := range refs {
+		from := r.From
+		if r.Dir {
+			from = path.Join(r.From, strings.TrimPrefix(p.Path, r.To+"/"))
+		}
+		out = append(out, movedPage{id: p.ID, from: from, to: p.Path})
+	}
+	return out, nil
+}
+
+// finishLinkRecs completes the link changes of moves that a crash cut short:
+// what the "l" records say moved is looked for where it is now and the links to
+// it made right, as a change by the person who made the move.
+func (s *Space) finishLinkRecs(recs []jrec) {
+	for _, r := range recs {
+		r := r
+		do := func(tx *txn) (struct{}, error) {
+			mv, err := s.movedUnder(r)
+			if err != nil {
+				return struct{}{}, err
+			}
+			_, err = s.relink(tx, mv, "", nil)
+			return struct{}{}, err
+		}
+		if _, err := mutate(s, r.author(), do); err != nil {
+			s.log.Error("could not finish updating the links of a move an earlier run began", "from", r.From, "to", r.To, "error", err)
+			continue
+		}
+		// Only now is it done: until then the journal keeps it.
+		s.cm.Done(r)
+	}
+}
+
+// pendingLinkRecs are the "l" records of a journal that no "ld" record closes.
+func pendingLinkRecs(recs []jrec) []jrec {
+	var open []jrec
+	for _, r := range recs {
+		switch r.Op {
+		case "l":
+			open = append(open, r)
+		case "ld":
+			for i, o := range open {
+				if o.From == r.From && o.To == r.To && o.Path == r.Path {
+					open = append(open[:i:i], open[i+1:]...)
+					break
+				}
+			}
+		}
+	}
+	return open
+}
+
+// RepairLinks puts right the links that carry the id of a page that was moved
+// or renamed outside PetalBook, as one change by the service. It returns the
+// number of files changed.
+func (s *Space) RepairLinks() (int, error) {
+	n := 0
+	_, err := mutate(s, Author{}, func(tx *txn) (struct{}, error) {
+		paths, err := s.repairStale(tx, nil)
+		n = len(paths)
+		return struct{}{}, err
+	})
+	return n, err
+}

@@ -140,6 +140,8 @@ var routeTable = []route{
 	{"DELETE", "/api/spaces/{space}/pages/{id}/draft", inSpace(perm.Read), false, false, false, (*server).deleteDraft},
 	{"POST", "/api/spaces/{space}/pages/{id}/commit", inSpace(perm.Write), false, false, false, (*server).commitDraft},
 	{"PATCH", "/api/spaces/{space}/pages/{id}/props", inSpace(perm.Write), false, false, false, (*server).patchProps},
+	{"GET", "/api/spaces/{space}/pages/{id}/backlinks", inSpace(perm.Read), false, false, false, (*server).getBacklinks},
+	{"GET", "/api/spaces/{space}/pages/{id}/links", inSpace(perm.Read), false, false, false, (*server).getLinks},
 	{"POST", "/api/spaces/{space}/pages/{id}/move", inSpace(perm.Write), false, false, false, (*server).movePage},
 	{"GET", "/api/spaces/{space}/tree", inSpace(perm.Read), false, false, false, (*server).getTree},
 	{"POST", "/api/spaces/{space}/folders", inSpace(perm.Write), false, false, false, (*server).createFolder},
