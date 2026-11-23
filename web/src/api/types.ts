@@ -1295,6 +1295,8 @@ export interface PersonUsage {
   limits: Record<PersonQuotaKey, number | null>
   // The person's own limits (null follows the tenant), what the edit form starts with.
   own: OwnQuota
+  // false for an own limit a lock or restriction put on the setting later forbids (kept, in force again when lifted).
+  ownInEffect: Record<PersonQuotaKey, boolean>
   over: PersonQuotaKey[]
   measuredAt: string | null
 }

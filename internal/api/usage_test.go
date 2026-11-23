@@ -567,3 +567,73 @@ func TestATenantsAdministratorMayPickTheUsernameAtAccept(t *testing.T) {
 		}
 	})
 }
+
+// A person's own limit answers to a lock or a restriction put on the setting
+// later, by the rule of the layer that set it: a site administrator's to the
+// site's, a tenant administrator's to the stricter of the site's and the
+// tenant's. Under a lock it is not in effect; under a restriction it counts up
+// to the restriction's max. Either way it is kept, shown with inEffect false.
+func TestAPersonsOwnLimitAnswersToALaterLockOrRestriction(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		mk := func(name string) result { return f.memB.do("POST", "/api/spaces", map[string]any{"name": name}) }
+		row := func() map[string]any {
+			for _, it := range f.root.do("GET", "/api/admin/usage?tenant="+f.tenB, nil).want(t, 200, "").body["items"].([]any) {
+				if m := it.(map[string]any); m["user"].(map[string]any)["id"] == f.userB {
+					return m
+				}
+			}
+			t.Fatal("no row for the person")
+			return nil
+		}
+		inEffect := func(m map[string]any, k string) any { return m["ownInEffect"].(map[string]any)[k] }
+		// The site's administrator gives the person 15; they make two more spaces.
+		f.root.do("PATCH", "/api/users/"+f.userB, map[string]any{"quota": map[string]any{"spaces": 15}}).want(t, 200, "")
+		mk("B2").want(t, 201, "")
+		mk("B3").want(t, 201, "")
+		if m := row(); m["limits"].(map[string]any)["spaces"] != float64(15) || inEffect(m, "spaces") != true {
+			t.Fatalf("%v", m)
+		}
+		// The site then locks the setting at 2: the own 15 is kept but not in effect.
+		f.root.do("PUT", "/api/admin/settings/quota.spacesPerPerson", map[string]any{"value": 2, "lower": map[string]any{"mode": "lock"}}).want(t, 200, "")
+		if u := usageOf(t, f.memB); limitOf(u, "spaces") != float64(2) {
+			t.Fatalf("%v", u)
+		}
+		if r := mk("B4").want(t, 403, "quota_exceeded"); r.body["limit"] != float64(2) {
+			t.Fatalf("%s", r.raw)
+		}
+		if m := row(); m["limits"].(map[string]any)["spaces"] != float64(2) || m["own"].(map[string]any)["spaces"] != float64(15) || inEffect(m, "spaces") != false {
+			t.Fatalf("%v", m)
+		}
+		// A restriction at 5 instead: the own 15 counts up to 5.
+		f.root.do("PUT", "/api/admin/settings/quota.spacesPerPerson", map[string]any{"lower": map[string]any{"mode": "restrict", "max": 5}}).want(t, 200, "")
+		if m := row(); m["limits"].(map[string]any)["spaces"] != float64(5) || inEffect(m, "spaces") != false {
+			t.Fatalf("%v", m)
+		}
+		mk("B4").want(t, 201, "")
+		mk("B5").want(t, 201, "")
+		mk("B6").want(t, 403, "quota_exceeded")
+		// The rule lifted, the own 15 is in effect again.
+		f.root.do("PUT", "/api/admin/settings/quota.spacesPerPerson", map[string]any{"lower": map[string]any{"mode": "allow"}}).want(t, 200, "")
+		if m := row(); m["limits"].(map[string]any)["spaces"] != float64(15) || inEffect(m, "spaces") != true {
+			t.Fatalf("%v", m)
+		}
+		// The tenant's administrator sets the person's pages; the tenant then locks
+		// the setting for its people: that value is not in effect, the site's is.
+		// The site administrator's 15 spaces do not answer to the tenant's lock.
+		f.admB.do("PATCH", "/api/users/"+f.userB, map[string]any{"quota": map[string]any{"pages": 100}}).want(t, 200, "")
+		if m := row(); m["limits"].(map[string]any)["pages"] != float64(100) || inEffect(m, "pages") != true {
+			t.Fatalf("%v", m)
+		}
+		f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/quota.pagesPerPerson", map[string]any{"lower": map[string]any{"mode": "lock"}}).want(t, 200, "")
+		f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/quota.spacesPerPerson", map[string]any{"lower": map[string]any{"mode": "lock"}}).want(t, 200, "")
+		m := row()
+		if m["limits"].(map[string]any)["pages"] != nil || inEffect(m, "pages") != false || m["own"].(map[string]any)["pages"] != float64(100) {
+			t.Fatalf("%v", m)
+		}
+		if m["limits"].(map[string]any)["spaces"] != float64(15) || inEffect(m, "spaces") != true {
+			t.Fatalf("%v", m)
+		}
+	})
+}

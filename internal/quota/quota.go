@@ -42,10 +42,40 @@ type Tenant struct {
 }
 
 // Own is a person's own limits (users.quota): a nil field follows the tenant.
+// The BySite flags say a site administrator set the field: such a value answers
+// to the site's rule (lock or restriction) alone; one a tenant administrator set
+// answers to the stricter of the site's and the tenant's.
 type Own struct {
 	Spaces *int64 `json:"spaces,omitempty"`
 	Bytes  *int64 `json:"bytes,omitempty"`
 	Pages  *int64 `json:"pages,omitempty"`
+
+	SpacesBySite bool `json:"spacesBySite,omitempty"`
+	BytesBySite  bool `json:"bytesBySite,omitempty"`
+	PagesBySite  bool `json:"pagesBySite,omitempty"`
+}
+
+// Set sets one field (spaces, bytes or pages; nil follows the tenant again) and
+// remembers who set it.
+func (o *Own) Set(k string, v *int64, bySite bool) {
+	bySite = bySite && v != nil
+	switch k {
+	case Spaces:
+		o.Spaces, o.SpacesBySite = v, bySite
+	case Bytes:
+		o.Bytes, o.BytesBySite = v, bySite
+	case Pages:
+		o.Pages, o.PagesBySite = v, bySite
+	}
+}
+
+// OwnInEffect says, for each of a person's own limits, whether it is the one in
+// force: false while a lock or a restriction above forbids it (it is kept, and
+// counts again when the rule is lifted). A field with no own value is true.
+type OwnInEffect struct {
+	Spaces bool `json:"spaces"`
+	Bytes  bool `json:"bytes"`
+	Pages  bool `json:"pages"`
 }
 
 // ParseOwn reads a person's stored limits ("" is none).
@@ -115,28 +145,57 @@ func asInt(v any) (int64, bool) {
 }
 
 // Limits are the limits of a person of a tenant with their own limits own: the
-// person's own over the tenant's setting over the site's.
+// person's own over the tenant's setting over the site's (see Layered).
 func (s *Service) Limits(ctx context.Context, tenant string, own Own) (Person, error) {
+	p, _, err := s.Layered(ctx, tenant, own)
+	return p, err
+}
+
+// Layered is Limits, and whether each own limit is in effect. An own value
+// answers to the rule of the layers above the one that set it (the site's for a
+// site administrator's, the stricter of the site's and the tenant's for a tenant
+// administrator's): under a lock it is not in effect and the tenant's value
+// applies; under a restriction it counts up to the restriction's max (no limit,
+// 0 for spaces, is above any max).
+func (s *Service) Layered(ctx context.Context, tenant string, own Own) (Person, OwnInEffect, error) {
 	eff, err := s.set.For(ctx, tenant)
 	if err != nil {
-		return Person{}, err
+		return Person{}, OwnInEffect{}, err
 	}
-	pick := func(key string, o *int64, zeroIsNone bool) *int64 {
-		if o == nil {
-			if n, ok := asInt(eff[key].Value); ok {
-				o = &n
+	pick := func(key string, o *int64, bySite, zeroIsNone bool) (*int64, bool) {
+		e := eff[key]
+		var above *int64
+		if n, ok := asInt(e.Value); ok {
+			above = &n
+		}
+		in := true
+		if o != nil {
+			rule := e.Below
+			if bySite {
+				rule = e.Site.Lower
+			}
+			switch {
+			case rule.Mode == settings.Lock:
+				o, in = nil, false
+			case rule.Mode == settings.Restrict && rule.Max != nil && (zeroIsNone && *o == 0 || *o > *rule.Max):
+				m := *rule.Max
+				o, in = &m, false
 			}
 		}
-		if o != nil && zeroIsNone && *o == 0 {
-			return nil
+		if o == nil {
+			o = above
 		}
-		return o
+		if o != nil && zeroIsNone && *o == 0 {
+			return nil, in
+		}
+		return o, in
 	}
-	return Person{
-		Spaces: pick(settings.QuotaSpacesPerPerson, own.Spaces, true),
-		Bytes:  pick(settings.QuotaBytesPerPerson, own.Bytes, false),
-		Pages:  pick(settings.QuotaPagesPerPerson, own.Pages, false),
-	}, nil
+	var p Person
+	var in OwnInEffect
+	p.Spaces, in.Spaces = pick(settings.QuotaSpacesPerPerson, own.Spaces, own.SpacesBySite, true)
+	p.Bytes, in.Bytes = pick(settings.QuotaBytesPerPerson, own.Bytes, own.BytesBySite, false)
+	p.Pages, in.Pages = pick(settings.QuotaPagesPerPerson, own.Pages, own.PagesBySite, false)
+	return p, in, nil
 }
 
 // SpaceLimits is what the space manager asks when someone makes a space: the

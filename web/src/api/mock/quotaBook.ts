@@ -146,6 +146,8 @@ export function createQuotaBook(o: QuotaBookOptions) {
           pages: row.pages,
           limits: l,
           own: ownOf(p.id),
+          // The mock has no locks or restrictions on a person's limits: an own value is always in force.
+          ownInEffect: { spaces: true, bytes: true, pages: true },
           over: over(row, l),
           measuredAt: row.measuredAt === null ? null : o.rfc3339(row.measuredAt),
         }

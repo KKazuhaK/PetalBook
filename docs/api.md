@@ -4611,12 +4611,15 @@ theirs or does not exist). People by usage, largest bytes first, then by id:
   "spaces": 3, "bytes": 52428800, "pages": 2100,
   "limits": {"spaces": 20, "bytes": null, "pages": 2000},
   "own": {"spaces": null, "bytes": null, "pages": 2000},
+  "ownInEffect": {"spaces": true, "bytes": true, "pages": true},
   "over": ["pages"], "measuredAt": "2026-11-23T02:10:00Z"}],
  "next": "52428800:01JD3K7A2M"}
 ```
 
 `limits` are the limits in force (`null` none) and `own` the person's own
-(what the edit form starts with). `over=1` keeps those over a limit (`over=0` or
+(what the edit form starts with). `ownInEffect` is `false` for an own limit
+that a lock or a restriction put on the setting later forbids (see `quota` on
+`PATCH /api/users/{id}`); it is `true` for one that is in force or not set. `over=1` keeps those over a limit (`over=0` or
 none keeps all; anything else is `400 invalid`). `limit` is 1 to 200 (default
 50). The cursor is what `next` says (`400 invalid` for any other). One query a
 page over the usage table's index; the people's names are looked up for the page
@@ -4637,6 +4640,14 @@ the user, whose `quota` is the person's own limits as they are now.
   put on the setting (`409 setting_locked`, `409 setting_restricted`): a tenant
   administrator to the stricter of the site's and the tenant's, a site
   administrator to the site's.
+- A lock or a restriction put on the setting **after** the value was saved
+  binds it by the same rule, that of the layer that saved it (a site
+  administrator's value answers to the site's rule, a tenant administrator's to
+  the stricter of the site's and the tenant's). Under a lock the own value is
+  not in effect: the tenant's value applies. Under a restriction it counts up
+  to the restriction's `max` (no limit is above any `max`). The value is kept,
+  shown with `inEffect: false` (`ownInEffect` in `GET /api/admin/usage`), and
+  counts again when the rule is lifted.
 - A person of another tenant is `404 not_found`, a member `403 forbidden`.
 - It is checked before anything else of the request is applied: a refused
   `quota` changes nothing, not the other fields either.

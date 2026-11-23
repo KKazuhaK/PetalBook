@@ -160,9 +160,11 @@ type personUsageResp struct {
 	Pages  int64  `json:"pages"`
 	Limits limits `json:"limits"`
 	// Own is the person's own limits (null follows the tenant): what the edit form starts with.
-	Own        *ownQuotaResp `json:"own"`
-	Over       []string      `json:"over"`
-	MeasuredAt *string       `json:"measuredAt"`
+	Own *ownQuotaResp `json:"own"`
+	// OwnInEffect is false for an own limit a lock or restriction above now forbids.
+	OwnInEffect quota.OwnInEffect `json:"ownInEffect"`
+	Over        []string          `json:"over"`
+	MeasuredAt  *string           `json:"measuredAt"`
 }
 
 type limits struct {
@@ -203,12 +205,12 @@ func (s *server) adminUsage(c *call) {
 	}
 	items := make([]personUsageResp, len(rows))
 	for i, r := range rows {
-		l, err := s.quota.Limits(ctx, r.TenantID, quota.ParseOwn(r.Quota))
+		l, in, err := s.quota.Layered(ctx, r.TenantID, quota.ParseOwn(r.Quota))
 		if err != nil {
 			s.fail(c.w, err)
 			return
 		}
-		it := personUsageResp{Tenant: r.TenantID, Spaces: r.Spaces, Bytes: r.Bytes, Pages: r.Pages, Limits: limits{l.Spaces, l.Bytes, l.Pages}, Own: toOwnQuota(r.Quota),
+		it := personUsageResp{Tenant: r.TenantID, Spaces: r.Spaces, Bytes: r.Bytes, Pages: r.Pages, Limits: limits{l.Spaces, l.Bytes, l.Pages}, Own: toOwnQuota(r.Quota), OwnInEffect: in,
 			Over: r.Over, MeasuredAt: measuredAt(r.Measured)}
 		if it.Over == nil {
 			it.Over = []string{}
@@ -264,14 +266,13 @@ func (s *server) mergeOwnQuota(c *call, target store.User, raw json.RawMessage, 
 	}
 	for k, v := range in {
 		var key string
-		var field **int64
 		switch k {
 		case "spaces":
-			key, field = settings.QuotaSpacesPerPerson, &own.Spaces
+			key = settings.QuotaSpacesPerPerson
 		case "bytes":
-			key, field = settings.QuotaBytesPerPerson, &own.Bytes
+			key = settings.QuotaBytesPerPerson
 		case "pages":
-			key, field = settings.QuotaPagesPerPerson, &own.Pages
+			key = settings.QuotaPagesPerPerson
 		default:
 			writeError(c.w, http.StatusBadRequest, "invalid", "quota has spaces, bytes and pages")
 			return "", false
@@ -282,7 +283,7 @@ func (s *server) mergeOwnQuota(c *call, target store.User, raw json.RawMessage, 
 			return "", false
 		}
 		if n == nil {
-			*field = nil
+			own.Set(k, nil, false)
 			continue
 		}
 		d, _ := s.settings.Def(key)
@@ -313,7 +314,7 @@ func (s *server) mergeOwnQuota(c *call, target store.User, raw json.RawMessage, 
 				return "", false
 			}
 		}
-		*field = n
+		own.Set(k, n, site)
 	}
 	return own.Encode(), true
 }
@@ -351,7 +352,7 @@ func (s *server) checkQuotaPatch(c *call, id string, raw json.RawMessage) (apply
 			return false
 		}
 		s.audit(c, auth.AuditEvent{Kind: "user_changed", Actor: c.user().ID, User: id, Tenant: target.TenantID,
-			Detail: map[string]any{"quota": quota.ParseOwn(next)}})
+			Detail: map[string]any{"quota": toOwnQuota(next)}})
 		_ = s.quota.Evaluate(ctx, []store.Touched{{UserID: id}})
 		return true
 	}, true
