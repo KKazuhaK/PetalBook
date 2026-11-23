@@ -1032,15 +1032,17 @@ views). Other settings an entry has stay. The move and the change of the binding
 stops between the two, it finishes the bindings when it starts again, and if
 the bindings cannot be written the folder is not moved and the request fails
 (also when `space.yml` is so full that the new key would make it larger than the
-1 MiB the server reads). Moving or deleting a folder removes entries of
-`space.yml`; an alias elsewhere in the file that pointed into a removed entry
-(a hand-written `*anchor` of another folder's view) is replaced by a copy of what
-it pointed to, so the other folder keeps its views and the removed folder's
-settings never stay behind under the old name. Should the file still not be
-readable after the edit, the move or delete is refused like a full file (`400
-invalid`, fix `space.yml` by hand). A move that a crash interrupted and whose
+1 MiB the server reads). Whether the settings can follow is found out before
+the folder is touched: a move or a delete whose edit of `space.yml` cannot be
+made is `400 invalid` with nothing renamed and nothing deleted, and the message
+says which it was ("the folder was not moved: …", "the folder was not
+deleted: …"). Moving or deleting a folder removes entries of `space.yml`; what
+that does to anchors and aliases is under Anchors, aliases and merge keys below.
+A move that a crash interrupted and whose
 bindings then do not fit in `space.yml` is taken back at the next start: the
-folder goes back to its old name, and the error is logged.
+folder goes back to its old name, and the error is logged. A `space.yml` that
+cannot be read at the next start (see the budget below) is left as it is and
+the space opens; that is logged too.
 Nothing was at the place a folder is moved to, so every binding at that place
 and under it is stale and is dropped (the moved folder takes the bindings it
 had, and none it did not); the journal of the move is kept until the bindings
@@ -1063,10 +1065,47 @@ already has keeps its key whatever it is (written by hand, say), and a request
 may list it as it is.
 
 A type file or `space.yml` that someone damaged by hand (not JSON or YAML, not
-an object, too large, a link) is never overwritten: a request that would
+an object, too large, a link, over the alias budget below) is never
+overwritten: a request that would
 write it is `400 invalid` and says it has to be fixed by hand. Reads still
 work: such a type is listed with an `error`, and a `space.yml` that cannot be
 read binds nothing. Moving or deleting a folder is not stopped by one.
+
+#### Anchors, aliases and merge keys
+
+`space.yml` and `tags.yml` are written by hand too, and come in with a pull, so
+they may hold YAML anchors (`&name`), aliases (`*name`) and merge keys (`<<`).
+One rule holds for both files, for everything the server reads from them and
+every change it makes to them:
+
+- **Reading.** An alias means what its anchor means, and a mapping with a merge
+  key has the keys it merges, wherever the server looks: `folders` and `tags`,
+  an entry, its `type` or `color`, its `views`, a view, a filter, a value. With
+  `A: {type: &t wenan}` and `B: {type: *t}`, both folders are bound to `wenan`.
+- **Budget.** What the aliases of a file stand for is bounded for the file as a
+  whole: at most 100 000 YAML nodes beyond the ones written (every use of an
+  alias counts what it stands for), at most 100 levels deep with the aliases
+  followed, and no alias inside its own anchor. A file over that is not
+  readable, exactly like one that is not YAML: it binds nothing, has no views
+  and no colours, is never overwritten, and a request that would write it is
+  `400 invalid` (fix it by hand). It is refused when it is loaded, in time
+  that grows with the size of the file only, so no request is slow because of
+  it.
+- **Writing.** A change changes what it targets and nothing else. An entry, a
+  list of views or a view that is an alias, carries an anchor or has keys from
+  a merge key is first written out in its own place (aliases inside it stay
+  aliases), and the change is made there; what else refers to the anchor keeps
+  what it had. When the node that carries an anchor is removed or replaced (a
+  folder deleted or moved onto, a view removed, a type or colour changed) and
+  aliases of it remain, the anchor moves to the first of them and the others
+  refer to it there; nothing is copied. Deleting `A` above leaves `B: {type: &t
+  wenan}`.
+- **Check.** Before the file is written the server checks that every alias
+  left in it stands for what it stood for, and that the text reads back as
+  what was meant. If not (an anchor name used twice can do that), the change is
+  made again with every alias of the file written out, which the budget keeps
+  small. If that does not fit in 1 MiB the request is `400 invalid` and nothing
+  is changed, on disk or in the file.
 
 ### Type
 
@@ -1233,10 +1272,13 @@ Views written by hand are read so that a client can work with them: a view
 whose `id` is missing, malformed or repeated has the id `@{n}`, `n` its
 position (from 0) in the folder's list, and a missing or unknown `layout` reads
 as `list`; every view in an answer therefore has a unique id and a layout. A
-write that names such an id changes that view and gives it a new one. A value
+write that names such an id changes that view and gives it a new one. Only
+the first 20 views of an entry are read (the rest of a longer list written by
+hand stays in the file, after the views, and is not in any answer). A value
 of a key the server does not know that stands for more than 10 000 YAML nodes
 (aliases counted each time they are used) is left out of the answer, and stays
-in the file.
+in the file. Aliases and merge keys are read as what they stand for, within
+the budget of the file (see Anchors, aliases and merge keys).
 
 ### `GET /api/spaces/{space}/views?folder={path}` or `?tag={tag}`
 
@@ -1278,15 +1320,16 @@ conflict` with `current` the same object as a `GET` answers:
 `400 invalid` for a missing `baseRev`, `views` or scope, both a folder and a
 tag, more than 20 views, any view out of the limits above, an `id` the folder
 or tag does not have, an `id` twice, a change that would make `space.yml` or
-`tags.yml` larger than the 1 MiB the server reads, or that would leave either
-in a form the server cannot read again (an anchor that something else in the
-file refers to would be removed; both: nothing is written, so the settings stay
-readable), or settings that have to be fixed by hand. The body of the request is
+`tags.yml` larger than the 1 MiB the server reads (nothing is written, so the
+settings stay readable), or settings that have to be fixed by hand. A view
+that carries an anchor, or is written with an alias or a merge key, can be
+changed and removed like any other: what else in the file refers to the anchor
+keeps what it means (see Anchors, aliases and merge keys). The body of the request is
 at most 20 views at their largest and 512 KiB more (`413` above that), and the
 list is refused as soon as it has a 21st entry, before any of them is built.
 A view that the request gives back as it is stored is left as it is in the file,
-also what the server could not read of it (an alias, a scalar where a list
-belongs); a key is removed or rewritten only when the request changes it. `[]` removes
+also what the server could not read of it (a scalar where a list
+belongs), and what is written as an alias stays one; a key is removed or rewritten only when the request changes it. `[]` removes
 the views from every writing of the folder in `space.yml`, so none comes back.
 `404 not_found` for a folder that does not exist (a tag need not be in use).
 A write that changes nothing writes nothing.
@@ -1504,7 +1547,9 @@ not be in use (it is listed, with its colour, once a page uses it). Colours are
 kept in `.petalbook/tags.yml` in the space, so they travel with the
 repository; a change is committed like any other. The same entry of the file
 holds the tag's saved views (see Saved views), which setting or removing the
-colour leaves alone.
+colour leaves alone. A colour written as an alias (`color: *c`) is the colour
+of its anchor, and changing or removing the colour of one tag never changes
+another's (see Anchors, aliases and merge keys).
 
 ## Maintenance
 

@@ -1,7 +1,6 @@
 package space
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,42 +10,41 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/index"
 )
 
-func TestAViewWriteThatWouldLeaveADanglingAliasIsRefused(t *testing.T) {
+func TestRemovingAViewThatCarriesAnAnchorKeepsWhatItsAliasesMean(t *testing.T) {
 	s := open(t)
 	mustCreate(t, s, "F", meta("title", "x"), "x\n")
 	src := `folders:
   F:
     type: wenan
     views:
-      - &base {id: aaaaaa, name: one, layout: list}
+      - &base {id: aaaaaa, name: one, layout: board}
       - {<<: *base, id: bbbbbb, name: two}
 `
 	writeSpaceYML(t, s, src)
 	l, err := s.Views(folderScope("F"))
-	if err != nil || len(l.Views) != 2 {
+	if err != nil || len(l.Views) != 2 || l.Views[1].Layout != "board" {
 		t.Fatalf("%v %+v", err, l)
 	}
-	// Delete the view that carries the anchor.
-	_, err = s.PutViews(Author{}, folderScope("F"), l.Rev, l.Views[1:])
-	var inv *InvalidError
-	if !errors.As(err, &inv) {
-		t.Fatalf("err = %v, want a refusal", err)
+	// Delete the view that carries the anchor: the anchor moves to its alias.
+	if _, err = s.PutViews(Author{}, folderScope("F"), l.Rev, l.Views[1:]); err != nil {
+		t.Fatal(err)
 	}
-	if got := spaceYML(s.Root()); got != src {
-		t.Errorf("the file was changed:\n%s", got)
+	got := spaceYML(s.Root())
+	if !strings.Contains(got, "<<: &base") {
+		t.Errorf("the anchor did not move to its alias:\n%s", got)
 	}
 	if len(s.Bindings()) != 1 {
 		t.Error("the bindings were lost")
 	}
-	if l2, _ := s.Views(folderScope("F")); len(l2.Views) != 2 {
-		t.Errorf("the views were lost: %+v", l2)
+	if l2, _ := s.Views(folderScope("F")); len(l2.Views) != 1 || l2.Views[0].ID != "bbbbbb" || l2.Views[0].Name != "two" || l2.Views[0].Layout != "board" {
+		t.Errorf("the view that is left changed: %+v", l2)
 	}
 	// The same for a tag's colour and views.
 	setTagsYML(t, s.Root(), `tags:
   one:
     color: &c red
     views:
-      - &v {id: aaaaaa, name: one, layout: list}
+      - &v {id: aaaaaa, name: one, layout: board}
   two:
     color: *c
     views: [{<<: *v, id: bbbbbb, name: two}]
@@ -55,15 +53,20 @@ func TestAViewWriteThatWouldLeaveADanglingAliasIsRefused(t *testing.T) {
 	if len(tl.Views) != 1 {
 		t.Fatalf("%+v", tl)
 	}
-	before := tagsYML(s.Root())
-	if _, err := s.PutViews(Author{}, tagScope("one"), tl.Rev, nil); !errors.As(err, &inv) {
-		t.Fatalf("err = %v, want a refusal", err)
+	if _, err := s.PutViews(Author{}, tagScope("one"), tl.Rev, nil); err != nil {
+		t.Fatal(err)
 	}
-	if tagsYML(s.Root()) != before {
-		t.Error("tags.yml was changed")
+	if err := s.SetTagColor(Author{}, "one", ""); err != nil {
+		t.Fatal(err)
 	}
-	if s.TagColors()["one"] != "red" {
-		t.Errorf("colours lost: %v", s.TagColors())
+	if c := s.TagColors(); c["one"] != "" || c["two"] != "red" {
+		t.Errorf("colours: %v\n%s", c, tagsYML(s.Root()))
+	}
+	if l2, _ := s.Views(tagScope("two")); len(l2.Views) != 1 || l2.Views[0].Name != "two" || l2.Views[0].Layout != "board" {
+		t.Errorf("the other tag's view changed: %+v\n%s", l2, tagsYML(s.Root()))
+	}
+	if strings.Contains(tagsYML(s.Root()), "one:") {
+		t.Errorf("the tag with nothing left is still in the file:\n%s", tagsYML(s.Root()))
 	}
 }
 

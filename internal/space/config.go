@@ -47,7 +47,8 @@ func bindingKey(folder string) string { return strings.Trim(folder, "/") }
 // bindingsOf reads the bindings of a settings document, in the order of the
 // file. Entries that are not a folder with a text type are not bindings. A
 // folder written twice counts as its last entry (as mapValue does for any
-// key), at the place of that entry.
+// key), at the place of that entry. A type written as an alias is the type of
+// its anchor, as everywhere in the file (see anchors.go).
 func bindingsOf(doc *yaml.Node) []Binding {
 	if doc == nil {
 		return nil
@@ -56,23 +57,36 @@ func bindingsOf(doc *yaml.Node) []Binding {
 	if folders == nil || folders.Kind != yaml.MappingNode {
 		return nil
 	}
-	last := map[string]int{}
-	for i := 0; i+1 < len(folders.Content); i += 2 {
-		if k := folders.Content[i]; k.Kind == yaml.ScalarNode {
-			last[bindingKey(k.Value)] = i
-		}
+	type entry struct {
+		key string
+		val *yaml.Node
 	}
+	var entries []entry
+	last := map[string]int{}
+	eachPair(folders, func(k string, v *yaml.Node, _ int) {
+		key := bindingKey(k)
+		last[key] = len(entries)
+		entries = append(entries, entry{key, v})
+	})
 	var out []Binding
-	for i := 0; i+1 < len(folders.Content); i += 2 {
-		k := folders.Content[i]
-		if k.Kind != yaml.ScalarNode || last[bindingKey(k.Value)] != i {
+	for i, e := range entries {
+		if last[e.key] != i {
 			continue
 		}
-		if t, _ := mapValue(folders.Content[i+1], "type"); t != nil && t.Kind == yaml.ScalarNode && t.Tag != "!!null" && strings.TrimSpace(t.Value) != "" {
-			out = append(out, Binding{bindingKey(k.Value), strings.TrimSpace(t.Value)})
+		if t := typeOf(e.val); t != "" {
+			out = append(out, Binding{e.key, t})
 		}
 	}
 	return out
+}
+
+// typeOf is the type an entry of the folders mapping binds its folder to, or "".
+func typeOf(entry *yaml.Node) string {
+	t, _ := mapValue(entry, "type")
+	if t == nil || t.Kind != yaml.ScalarNode || t.Tag == "!!null" {
+		return ""
+	}
+	return strings.TrimSpace(t.Value)
 }
 
 // configCache remembers the bindings for as long as the file looks the same,
@@ -180,114 +194,43 @@ func (s *Space) editSpaceFile(tx *txn, edit func(root *yaml.Node) (changed bool,
 	return err
 }
 
-// settingsFullError is the refusal of a change that would make space.yml too
-// large to be read. It is an *InvalidError too.
-type settingsFullError struct{ *InvalidError }
+var spaceSettings = settingsFile{rel: spaceFile, max: maxSpaceFile, bad: errSpaceFile, problem: spaceFileProblem}
 
-func (e *settingsFullError) Unwrap() error { return e.InvalidError }
-
-// unreadableEditError is the refusal of a change that would leave space.yml in
-// a form that cannot be read again. It is an *InvalidError too.
-type unreadableEditError struct{ *InvalidError }
-
-func (e *unreadableEditError) Unwrap() error { return e.InvalidError }
-
-// detachAnchors makes the nodes in doomed safe to remove: an alias anywhere
-// else in the document that points into them is replaced by a copy of what it
-// pointed to, so that no alias is left without its anchor. It reports whether
-// anything was replaced.
-func detachAnchors(top *yaml.Node, doomed []*yaml.Node) bool {
-	set := map[*yaml.Node]bool{}
-	anchored := false
-	var mark func(n *yaml.Node)
-	mark = func(n *yaml.Node) {
-		set[n] = true
-		if n.Anchor != "" {
-			anchored = true
+// planSpaceYAML is the text space.yml would have after edit, without writing
+// it: see planSettingsEdit. Comments in the file stay, also when they are all
+// there is.
+func planSpaceYAML(root, name string, edit func(root *yaml.Node) (bool, error)) ([]byte, bool, error) {
+	return planSettingsEdit(root, spaceSettings, func(top *yaml.Node) (bool, error) {
+		fresh := len(top.Content) == 0
+		changed, err := edit(top)
+		if err != nil || !changed {
+			return false, err
 		}
-		for _, c := range n.Content {
-			mark(c)
+		if fresh {
+			// A file made here still says what the space is called.
+			top.Content = append([]*yaml.Node{textNode("name"), textNode(name)}, top.Content...)
 		}
-	}
-	for _, n := range doomed {
-		mark(n)
-	}
-	if !anchored {
-		return false
-	}
-	var clone func(n *yaml.Node) *yaml.Node
-	clone = func(n *yaml.Node) *yaml.Node {
-		c := *n
-		c.Anchor = ""
-		c.Content = make([]*yaml.Node, len(n.Content))
-		for i, k := range n.Content {
-			c.Content[i] = clone(k)
+		return true, nil
+	}, func(doc *yaml.Node) ([]byte, error) {
+		var buf bytes.Buffer
+		enc := yaml.NewEncoder(&buf)
+		enc.SetIndent(2)
+		if err := enc.Encode(doc); err != nil {
+			return nil, err
 		}
-		return &c
-	}
-	changed := false
-	var walk func(n *yaml.Node)
-	walk = func(n *yaml.Node) {
-		if set[n] {
-			return
+		if err := enc.Close(); err != nil {
+			return nil, err
 		}
-		for i, c := range n.Content {
-			if c.Kind == yaml.AliasNode && c.Alias != nil && set[c.Alias] {
-				c = clone(c.Alias)
-				n.Content[i] = c
-				changed = true
-			}
-			walk(c)
-		}
-	}
-	walk(top)
-	return changed
+		return buf.Bytes(), nil
+	})
 }
 
 // editSpaceYAML is the editing of the settings file of the space at root,
 // without a Space: before runs once, just ahead of the write, when there is
-// something to write. It reports whether the file was written. Comments in the
-// file stay, also when they are all there is.
+// something to write. It reports whether the file was written.
 func editSpaceYAML(root, name, tmpDir string, edit func(root *yaml.Node) (bool, error), before func() error) (bool, error) {
-	doc, err := loadYAMLAt(root, spaceFile, maxSpaceFile, errSpaceFile)
-	if errors.Is(err, errSpaceFile) {
-		return false, spaceFileProblem()
-	}
-	if err != nil {
-		return false, err
-	}
-	if doc == nil {
-		doc = emptyDoc("")
-	}
-	top := doc.Content[0]
-	fresh := len(top.Content) == 0
-	changed, err := edit(top)
+	data, changed, err := planSpaceYAML(root, name, edit)
 	if err != nil || !changed {
-		return false, err
-	}
-	if fresh {
-		// A file made here still says what the space is called.
-		top.Content = append([]*yaml.Node{textNode("name"), textNode(name)}, top.Content...)
-	}
-	var buf bytes.Buffer
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(doc); err != nil {
-		return false, err
-	}
-	if err := enc.Close(); err != nil {
-		return false, err
-	}
-	if buf.Len() > maxSpaceFile {
-		// A file this large would not be read again, and every setting in it
-		// would be lost with it.
-		return false, &settingsFullError{&InvalidError{fmt.Sprintf("the change would make space.yml larger than %d bytes, more than the server reads; nothing was changed", maxSpaceFile)}}
-	}
-	if err := checkWritable(spaceFile, buf.Bytes(), errSpaceFile); err != nil {
-		var inv *InvalidError
-		if errors.As(err, &inv) {
-			return false, &unreadableEditError{inv}
-		}
 		return false, err
 	}
 	if before != nil {
@@ -299,21 +242,22 @@ func editSpaceYAML(root, name, tmpDir string, edit func(root *yaml.Node) (bool, 
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return false, err
 	}
-	return true, writeAtomic(tmpDir, abs, buf.Bytes())
+	return true, writeAtomic(tmpDir, abs, data)
 }
 
-// foldersNode returns the folders mapping of the settings, made when create is
-// set. nil when it is not there and not made. A `folders` that is not a mapping
-// is the person's to fix.
+// foldersNode returns the folders mapping of the settings, the writer's own to
+// change, made when create is set. nil when it is not there and not made. A
+// `folders` that is not a mapping is the person's to fix.
 func foldersNode(root *yaml.Node, create bool) (*yaml.Node, error) {
-	folders, _ := mapValue(root, "folders")
+	folders, at := mapValue(root, "folders")
 	switch {
 	case folders != nil && folders.Kind == yaml.MappingNode:
-		return folders, nil
+		return own(root, at+1), nil
 	case folders != nil && folders.Kind == yaml.ScalarNode && folders.Tag == "!!null":
 		// `folders:` with nothing under it.
 		if create {
-			*folders = yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			folders = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			root.Content[at+1] = folders
 			return folders, nil
 		}
 		return nil, nil
@@ -327,12 +271,19 @@ func foldersNode(root *yaml.Node, create bool) (*yaml.Node, error) {
 	return folders, nil
 }
 
+// folderAt is the folder the entry at position i of the folders mapping is
+// written for; ok is false for a key that is not text.
+func folderAt(folders *yaml.Node, i int) (string, bool) {
+	k, ok := keyText(folders.Content[i])
+	return bindingKey(k), ok
+}
+
 // entryAt finds the entry of a folder in the folders mapping. It returns the
 // position of its key, or -1.
 func entryAt(folders *yaml.Node, folder string) int {
 	at := -1
 	for i := 0; i+1 < len(folders.Content); i += 2 {
-		if k := folders.Content[i]; k.Kind == yaml.ScalarNode && bindingKey(k.Value) == folder {
+		if key, ok := folderAt(folders, i); ok && key == folder {
 			at = i
 		}
 	}
@@ -355,22 +306,15 @@ func dropEmpty(root, folders *yaml.Node, i int) {
 }
 
 // removeTypeKey takes the `type` out of the entry at i, dropping what is left
-// empty. It reports whether there was one.
+// empty. It reports whether there was one. An entry that is an alias, or that
+// has its type from a merge key, gets its own copy first: what else refers to
+// the anchor keeps its type.
 func removeTypeKey(root, folders *yaml.Node, i int) bool {
-	e := folders.Content[i+1]
-	if e.Kind != yaml.MappingNode {
-		return false
-	}
-	_, at := mapValue(e, "type")
-	if at < 0 {
+	if e := deref(folders.Content[i+1]); e == nil || e.Kind != yaml.MappingNode || !hasKey(e, "type") {
 		return false
 	}
 	// A key written twice is all removed: the last was the one that counted.
-	for j := len(e.Content) - 2; j >= 0; j -= 2 {
-		if k := e.Content[j]; k.Kind == yaml.ScalarNode && k.Value == "type" {
-			e.Content = append(e.Content[:j:j], e.Content[j+2:]...)
-		}
-	}
+	removeKey(own(folders, i+1), "type")
 	dropEmpty(root, folders, i)
 	return true
 }
@@ -382,7 +326,7 @@ func removeTypeKey(root, folders *yaml.Node, i int) bool {
 func removeBinding(root, folders *yaml.Node, folder string) bool {
 	removed := false
 	for i := len(folders.Content) - 2; i >= 0; i -= 2 {
-		if k := folders.Content[i]; k.Kind == yaml.ScalarNode && bindingKey(k.Value) == folder {
+		if key, ok := folderAt(folders, i); ok && key == folder {
 			if removeTypeKey(root, folders, i) {
 				removed = true
 			}
@@ -406,22 +350,18 @@ func setBinding(root *yaml.Node, folder, typ string) (bool, error) {
 			&yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{textNode("type"), textNode(typ)}})
 		return true, nil
 	}
-	e := folders.Content[i+1]
+	e := deref(folders.Content[i+1])
 	switch {
-	case e.Kind == yaml.ScalarNode && (e.Tag == "!!null" || e.Value == ""):
+	case e == nil || e.Kind == yaml.ScalarNode && (e.Tag == "!!null" || e.Value == ""):
 		folders.Content[i+1] = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{textNode("type"), textNode(typ)}}
 		return true, nil
 	case e.Kind != yaml.MappingNode:
 		return false, invalidf("the entry of the folder %q in %s is not a list of settings; it was left as it is and has to be fixed by hand", folder, spaceFile)
 	}
-	if cur, _ := mapValue(e, "type"); cur != nil {
-		if cur.Kind == yaml.ScalarNode && cur.Value == typ && cur.Tag == "!!str" {
-			return false, nil
-		}
-		*cur = *textNode(typ)
-		return true, nil
+	if cur, _ := mapValue(e, "type"); cur != nil && cur.Kind == yaml.ScalarNode && cur.Value == typ && cur.Tag == "!!str" {
+		return false, nil
 	}
-	e.Content = append(e.Content, textNode("type"), textNode(typ))
+	setKey(own(folders, i+1), "type", textNode(typ))
 	return true, nil
 }
 
@@ -431,6 +371,10 @@ func setBinding(root *yaml.Node, folder, typ string) (bool, error) {
 // goes, whether or not the folder has bindings of its own to bring: it must not
 // give the moved folder a type it never had. An entry written twice arrives as
 // its last one (the one that counted).
+//
+// An entry keeps its value as it is written, an alias too: only its key is
+// new. An anchor in an entry that goes moves to the first alias that is left
+// (settle).
 //
 // With onlyIfBound the stale entries go only when there are entries to move:
 // that is for the recovery of a move, where the old keys being still there is
@@ -445,11 +389,11 @@ func rebind(root *yaml.Node, from, to string, onlyIfBound bool) (bool, error) {
 	newKey := make([]string, n)  // "" for an entry that stays where it is
 	arriving := map[string]int{} // new key -> position of the last entry that arrives under it
 	for e := 0; e < n; e++ {
-		k := folders.Content[2*e]
-		if k.Kind != yaml.ScalarNode {
+		key, ok := folderAt(folders, 2*e)
+		if !ok {
 			continue
 		}
-		switch key := bindingKey(k.Value); {
+		switch {
 		case key == from:
 			newKey[e] = to
 		case strings.HasPrefix(key, from+"/"):
@@ -466,16 +410,17 @@ func rebind(root *yaml.Node, from, to string, onlyIfBound bool) (bool, error) {
 	out := make([]*yaml.Node, 0, len(folders.Content))
 	for e := 0; e < n; e++ {
 		k, v := folders.Content[2*e], folders.Content[2*e+1]
+		key, isText := folderAt(folders, 2*e)
 		switch {
 		case newKey[e] != "":
 			if arriving[newKey[e]] != e {
-				detachAnchors(root, []*yaml.Node{k, v})
 				continue // an earlier writing of the same folder
 			}
-			*k = *textNode(newKey[e])
-		case k.Kind == yaml.ScalarNode:
-			if key := bindingKey(k.Value); key == to || strings.HasPrefix(key, to+"/") {
-				detachAnchors(root, []*yaml.Node{k, v})
+			nk := textNode(newKey[e])
+			nk.HeadComment, nk.LineComment, nk.FootComment = k.HeadComment, k.LineComment, k.FootComment
+			k = nk
+		case isText:
+			if key == to || strings.HasPrefix(key, to+"/") {
 				changed = true
 				continue // stale: nothing was there
 			}
@@ -499,15 +444,18 @@ func unbindWhere(root *yaml.Node, drop func(folder, typ string) bool) (bool, err
 		return false, err
 	}
 	last := map[string]int{}
+	var order []string
 	for i := 0; i+1 < len(folders.Content); i += 2 {
-		if k := folders.Content[i]; k.Kind == yaml.ScalarNode {
-			last[bindingKey(k.Value)] = i
+		if key, ok := folderAt(folders, i); ok {
+			if _, seen := last[key]; !seen {
+				order = append(order, key)
+			}
+			last[key] = i
 		}
 	}
 	var gone []string
-	for key, i := range last {
-		t, _ := mapValue(folders.Content[i+1], "type")
-		if t != nil && t.Kind == yaml.ScalarNode && drop(key, strings.TrimSpace(t.Value)) {
+	for _, key := range order {
+		if t := typeOf(folders.Content[last[key]+1]); t != "" && drop(key, t) {
 			gone = append(gone, key)
 		}
 	}
@@ -523,7 +471,9 @@ func unbindWhere(root *yaml.Node, drop func(folder, typ string) bool) (bool, err
 // forgetFolders takes the settings the server keeps for a folder (its type and
 // its views) off every folder for which gone says it is no more. A folder's
 // entry is dropped when nothing else is left in it; what else a person wrote
-// there stays, as it does for a binding. It reports whether anything changed.
+// there stays, as it does for a binding. An entry that is an alias, or has its
+// settings from a merge key, gets its own copy first, so that what else refers
+// to the anchor keeps them. It reports whether anything changed.
 func forgetFolders(root *yaml.Node, gone func(folder string) bool) (bool, error) {
 	folders, err := foldersNode(root, false)
 	if err != nil || folders == nil {
@@ -531,16 +481,16 @@ func forgetFolders(root *yaml.Node, gone func(folder string) bool) (bool, error)
 	}
 	changed := false
 	for i := len(folders.Content) - 2; i >= 0; i -= 2 {
-		k, e := folders.Content[i], folders.Content[i+1]
-		if k.Kind != yaml.ScalarNode || e.Kind != yaml.MappingNode || !gone(bindingKey(k.Value)) {
+		key, ok := folderAt(folders, i)
+		e := deref(folders.Content[i+1])
+		if !ok || e == nil || e.Kind != yaml.MappingNode || !gone(key) {
 			continue
 		}
-		for j := len(e.Content) - 2; j >= 0; j -= 2 {
-			if kk := e.Content[j]; kk.Kind == yaml.ScalarNode && (kk.Value == "type" || kk.Value == "views") {
-				detachAnchors(root, e.Content[j:j+2])
-				e.Content = append(e.Content[:j:j], e.Content[j+2:]...)
-				changed = true
-			}
+		if hasKey(e, "type") || hasKey(e, "views") {
+			e = own(folders, i+1)
+			removeKey(e, "type")
+			removeKey(e, "views")
+			changed = true
 		}
 		dropEmpty(root, folders, i)
 	}
@@ -553,29 +503,51 @@ func (s *Space) fileGone(rel string) bool {
 	return errors.Is(err, fs.ErrNotExist)
 }
 
+// settingsReason says why a change of a folder cannot take its settings in
+// space.yml along, for an error that means so: the file would be too large, or
+// could not be read again. ok is false for any other error.
+func settingsReason(err error) (reason string, ok bool) {
+	var full *settingsFullError
+	if errors.As(err, &full) {
+		return fmt.Sprintf("the file would become larger than %d bytes, more than the server reads; remove some views or comments from space.yml and try again", maxSpaceFile), true
+	}
+	var unreadable *unreadableEditError
+	if errors.As(err, &unreadable) {
+		return "the anchors and aliases around its entry stand in the way; write the aliases (*name) there out by hand and try again", true
+	}
+	return "", false
+}
+
+// bindingsWouldFail makes the edit of space.yml that a move or a delete of a
+// folder will need, without writing it, and says why it cannot be made if so:
+// asked before the folder is touched, so that such a change is refused with
+// nothing done. A settings file that cannot be read does not stop the change
+// (see editBindings).
+func (s *Space) bindingsWouldFail(edit func(root *yaml.Node) (bool, error)) (reason string, fails bool) {
+	_, _, err := planSpaceYAML(s.root, s.name, edit)
+	return settingsReason(err)
+}
+
 // editBindings is editSpaceFile for a change whose business is something else
 // (moving or deleting a folder): a settings file that cannot be read has no
 // bindings to keep in step, so it does not stop the change, and is left as it
 // is.
-func (s *Space) editBindings(tx *txn, edit func(root *yaml.Node) (bool, error)) error {
-	err := s.editSpaceFile(tx, edit)
-	// A file that is too full is not the same as one that cannot be read: the
-	// move or delete is refused (and undone), or the folder's type and views
-	// would stay under a key that a new folder of that name then inherits.
-	var full *settingsFullError
-	if errors.As(err, &full) {
-		return invalidf("the folder's settings in space.yml could not be moved with it because the file is full (%d bytes at most); remove some views and try again", maxSpaceFile)
-	}
-	var unreadable *unreadableEditError
-	if errors.As(err, &unreadable) {
-		return invalidf("the folder's settings in space.yml could not be moved with it because the file would no longer be readable (an anchor that something else in it refers to); fix the anchors in space.yml by hand and try again")
+//
+// A file that is too full is not the same as one that cannot be read: then
+// refused is why, and the caller refuses the move or delete (and undoes what
+// it can), or the folder's type and views would stay under a key that a new
+// folder of that name then inherits.
+func (s *Space) editBindings(tx *txn, edit func(root *yaml.Node) (bool, error)) (refused string, err error) {
+	err = s.editSpaceFile(tx, edit)
+	if reason, ok := settingsReason(err); ok {
+		return reason, nil
 	}
 	var inv *InvalidError
 	if errors.As(err, &inv) {
 		s.log.Warn("the folder bindings in space.yml were not updated", "error", err)
-		return nil
+		return "", nil
 	}
-	return err
+	return "", err
 }
 
 // recoverBindings finishes what a crash left of the bindings of a folder that
@@ -612,14 +584,19 @@ func recoverBindings(root string, recs []jrec) (changed bool) {
 		default:
 			continue
 		}
-		// A file that cannot be read is left alone, as when the change was made.
+		// A file that cannot be read (one whose aliases stand for more than
+		// the server reads is such a file) is left alone, as when the change
+		// was made. Each record is looked at once, and the edit costs no more
+		// than the file is large, so a file cannot keep the space from opening.
 		ok, err := editSpaceYAML(root, "", tmp, edit, nil)
 		if err == nil && ok {
 			changed = true
 		}
-		var full *settingsFullError
-		var unreadable *unreadableEditError
-		if !errors.As(err, &full) && !errors.As(err, &unreadable) {
+		if _, refused := settingsReason(err); !refused {
+			if err != nil {
+				slog.Warn("recovery: space.yml was left as it is; the settings of a folder that was moved or deleted may still be under its old name",
+					"folder", r.From+r.Path, "moved_to", r.To, "error", err)
+			}
 			continue
 		}
 		// The online path refuses such a change and moves the folder back; do

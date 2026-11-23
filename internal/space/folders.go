@@ -192,6 +192,19 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 		}
 	}
 
+	// Refused before anything is renamed: a move whose settings cannot follow
+	// the folder in space.yml.
+	moveSettings := func(root *yaml.Node) (bool, error) { return rebind(root, canonFrom, target, false) }
+	notMoved := func(reason string) error {
+		return invalidf("the folder was not moved: its type and views cannot follow it in space.yml, because %s", reason)
+	}
+	if reason, fails := s.bindingsWouldFail(moveSettings); fails {
+		if !tx.remote {
+			s.dropCreated(tx) // the folders made on the way to the target
+		}
+		return "", notMoved(reason)
+	}
+
 	// Journal first: after a crash these paths are committed as they are then,
 	// moved or not.
 	recs := make([]jrec, 0, len(oldPaths)+len(newPaths))
@@ -255,7 +268,11 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	// it is as it was. (Finishing the edit instead would only repeat what just
 	// failed.) Should the rename not go back either, the "b" record above has
 	// the next start move the bindings to where the folder now is.
-	if err := s.editBindings(tx, func(root *yaml.Node) (bool, error) { return rebind(root, canonFrom, target, false) }); err != nil {
+	refused, err := s.editBindings(tx, moveSettings)
+	if err == nil && refused != "" {
+		err = notMoved(refused)
+	}
+	if err != nil {
 		if !tx.remote {
 			tx.runUndo()
 			s.dropCreated(tx)
@@ -338,9 +355,22 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 		}
 		// Journaled before the first deletion: the bindings of what is gone go
 		// too, at recovery if the crash comes before the edit of space.yml (see "u").
+		forget := func(gone func(folder string) bool) func(root *yaml.Node) (bool, error) {
+			return func(root *yaml.Node) (bool, error) {
+				return forgetFolders(root, func(folder string) bool {
+					return (folder == canon || strings.HasPrefix(folder, canon+"/")) && gone(folder)
+				})
+			}
+		}
 		startU := func() error {
 			if len(tx.bind) > 0 {
 				return nil
+			}
+			// Refused before anything is deleted: a delete whose settings
+			// cannot be taken out of space.yml. Asked for the most that can
+			// go, every folder below this one.
+			if reason, fails := s.bindingsWouldFail(forget(func(string) bool { return true })); fails {
+				return invalidf("the folder was not deleted: its type and views cannot be taken out of space.yml, because %s", reason)
 			}
 			u := jrec{Op: "u", Path: canon}
 			if err := tx.record(u); err != nil {
@@ -423,15 +453,20 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 		}
 		// A folder that is gone has no type or views to keep. One that stays (it holds
 		// files that are not pages) keeps its binding.
-		if err := s.editBindings(tx, func(root *yaml.Node) (bool, error) {
-			return forgetFolders(root, func(folder string) bool {
-				return (folder == canon || strings.HasPrefix(folder, canon+"/")) && s.fileGone(folder)
-			})
-		}); err != nil {
-			// Pages are deleted for good in a local space, so there is nothing
-			// to take back; the error says so (see the ids returned), and the
-			// "u" record has the next start drop the bindings of what is gone.
+		refused, err := s.editBindings(tx, forget(s.fileGone))
+		if err != nil {
 			return struct{}{}, err
+		}
+		if refused != "" {
+			// Asked before the first deletion (startU), so this is a file that
+			// changed its mind in between. A space that follows a remote takes
+			// the whole change back. A local space has no undo: its pages are
+			// deleted for good (see the ids returned), the error says what is
+			// left, and the "u" record has the next start try again.
+			if tx.remote {
+				return struct{}{}, invalidf("the folder was not deleted: its type and views cannot be taken out of space.yml, because %s", refused)
+			}
+			return struct{}{}, invalidf("the pages of the folder were deleted, but its type and views are still in space.yml, because %s; until its entry is taken out of space.yml, a new folder of that name gets them", refused)
 		}
 		tx.settleBindings()
 		if tx.remote {

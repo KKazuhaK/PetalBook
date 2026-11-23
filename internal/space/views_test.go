@@ -1090,20 +1090,25 @@ func TestEmptyingTheViewsOfAFolderWrittenTwiceLeavesNone(t *testing.T) {
 func TestNestedAliasesInAViewAreNotExpanded(t *testing.T) {
 	s := open(t)
 	mustCreate(t, s, "F", meta("title", "x"), "x\n")
-	var b strings.Builder
-	b.WriteString("folders:\n  F:\n    type: wenan\n    views:\n      - id: bomb1\n        name: v\n        layout: list\n        a: &a0 [x, x, x, x, x, x, x, x, x, x]\n")
-	for i := 1; i <= 8; i++ {
-		fmt.Fprintf(&b, "        l%d: &a%d [", i, i)
-		for j := 0; j < 10; j++ {
-			if j > 0 {
-				b.WriteString(", ")
+	settings := func(depth int) string {
+		var b strings.Builder
+		b.WriteString("folders:\n  F:\n    type: wenan\n    views:\n      - id: bomb1\n        name: v\n        layout: list\n        a: &a0 [x, x, x, x, x, x, x, x, x, x]\n")
+		for i := 1; i <= depth; i++ {
+			fmt.Fprintf(&b, "        l%d: &a%d [", i, i)
+			for j := 0; j < 10; j++ {
+				if j > 0 {
+					b.WriteString(", ")
+				}
+				fmt.Fprintf(&b, "*a%d", i-1)
 			}
-			fmt.Fprintf(&b, "*a%d", i-1)
+			b.WriteString("]\n")
 		}
-		b.WriteString("]\n")
+		b.WriteString("        keep: yes\n")
+		return b.String()
 	}
-	b.WriteString("        keep: yes\n")
-	writeSpaceYML(t, s, b.String())
+	// Within what the file may stand for, a value too large for an answer is
+	// left out of it and the rest is read.
+	writeSpaceYML(t, s, settings(3))
 	start := time.Now()
 	l, err := s.Views(folderScope("F"))
 	if err != nil {
@@ -1115,13 +1120,26 @@ func TestNestedAliasesInAViewAreNotExpanded(t *testing.T) {
 	if len(l.Views) != 1 {
 		t.Fatalf("%+v", l)
 	}
-	if _, ok := l.Views[0].Extra["l8"]; ok {
-		t.Error("a value that stands for 10^8 elements was read")
+	if _, ok := l.Views[0].Extra["l3"]; ok {
+		t.Error("a value that stands for 10^4 elements was read")
+	}
+	if _, ok := l.Views[0].Extra["l2"]; !ok {
+		t.Error("a value of 10^3 elements was left out")
 	}
 	if len(s.Bindings()) != 1 {
 		t.Error("the bindings were lost")
 	}
 	if b, _ := json.Marshal(l); len(b) > 1<<20 {
 		t.Errorf("the answer is %d bytes", len(b))
+	}
+	// Beyond it the file is not read at all: it says nothing, at once.
+	writeSpaceYML(t, s, settings(8))
+	start = time.Now()
+	l, err = s.Views(folderScope("F"))
+	if err != nil || len(l.Views) != 0 || len(s.Bindings()) != 0 {
+		t.Errorf("a file that stands for 10^9 elements was read: %v %+v %v", err, l, s.Bindings())
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("refusing the file took %v", d)
 	}
 }

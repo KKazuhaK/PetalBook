@@ -56,8 +56,9 @@ var errTagsFile = errors.New("the tags file cannot be read")
 // loadTags reads the file as a YAML document, keeping everything in it
 // (comments, keys the server does not know, keys that are not text). It
 // returns nil when there is no file or nothing in it, and errTagsFile for a
-// file that is too large, is not a regular file, does not parse, or is not a
-// mapping at the top.
+// file that is too large, is not a regular file, does not parse, is not a
+// mapping at the top, or whose aliases stand for more than the server reads
+// (see anchors.go).
 func (s *Space) loadTags() (*yaml.Node, error) {
 	return s.loadYAMLFile(tagsFile, maxTagsFile, errTagsFile)
 }
@@ -161,43 +162,12 @@ func parseYAMLDoc(data []byte, bad error) (*yaml.Node, error) {
 	if doc.Kind != yaml.DocumentNode || doc.Content[0].Kind != yaml.MappingNode {
 		return nil, bad
 	}
+	// What its aliases stand for is bounded here, once, for every reader and
+	// writer of the document (see anchors.go).
+	if !withinBudget(&doc) {
+		return nil, bad
+	}
 	return &doc, nil
-}
-
-// checkWritable refuses text that the server could not read again, which
-// is what an alias left without the anchor it pointed to makes of a file: the
-// edit dropped the node that carried the anchor. Nothing is then written, so
-// the settings stay as they were instead of being lost to a file that no
-// longer parses.
-func checkWritable(file string, data []byte, bad error) error {
-	if len(data) == 0 {
-		return nil
-	}
-	if _, err := parseYAMLDoc(data, bad); err != nil {
-		return invalidf("the change would leave %s in a form the server cannot read again (an anchor that something else in the file refers to would be removed); nothing was changed; fix the file by hand", file)
-	}
-	return nil
-}
-
-// mapValue finds a key of a mapping by its text, whatever YAML made of it
-// (a tag written 2026 is a number to YAML and the tag "2026" to us). It
-// returns the value and the index of the key in the mapping's content, or
-// nil and -1.
-//
-// A key written twice counts as its last writing, which is what a reader of
-// the file as a map sees too.
-func mapValue(m *yaml.Node, key string) (*yaml.Node, int) {
-	if m == nil || m.Kind != yaml.MappingNode {
-		return nil, -1
-	}
-	var v *yaml.Node
-	at := -1
-	for i := 0; i+1 < len(m.Content); i += 2 {
-		if k := m.Content[i]; k.Kind == yaml.ScalarNode && k.Value == key {
-			v, at = m.Content[i+1], i
-		}
-	}
-	return v, at
 }
 
 func textNode(v string) *yaml.Node {
@@ -218,18 +188,16 @@ func (s *Space) TagColors() map[string]string {
 	if tags == nil || tags.Kind != yaml.MappingNode {
 		return out
 	}
-	for i := 0; i+1 < len(tags.Content); i += 2 {
-		k := tags.Content[i]
-		if k.Kind != yaml.ScalarNode {
-			continue
-		}
-		if c, _ := mapValue(tags.Content[i+1], "color"); c != nil && c.Kind == yaml.ScalarNode {
+	// A tag written twice counts as its last writing, as it does to a write.
+	eachPair(tags, func(tag string, entry *yaml.Node, _ int) {
+		delete(out, tag)
+		if c, _ := mapValue(entry, "color"); c != nil && c.Kind == yaml.ScalarNode {
 			// A value written by hand that is no colour leaves the tag without one.
 			if v, ok := NormalTagColor(c.Value); ok {
-				out[k.Value] = v
+				out[tag] = v
 			}
 		}
-	}
+	})
 	return out
 }
 
@@ -250,13 +218,14 @@ func tagsFileProblem() error {
 // when it is not there and not made. A `tags` that is not a mapping is the
 // person's to fix.
 func tagsNode(root *yaml.Node, create bool) (*yaml.Node, error) {
-	tags, _ := mapValue(root, "tags")
+	tags, at := mapValue(root, "tags")
 	switch {
 	case tags != nil && tags.Kind == yaml.MappingNode:
-		return tags, nil
+		return own(root, at+1), nil
 	case tags != nil && tags.Kind == yaml.ScalarNode && tags.Tag == "!!null":
 		if create {
-			*tags = yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			tags = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			root.Content[at+1] = tags
 			return tags, nil
 		}
 		return nil, nil
@@ -270,40 +239,24 @@ func tagsNode(root *yaml.Node, create bool) (*yaml.Node, error) {
 	return tags, nil
 }
 
+var tagsSettings = settingsFile{rel: tagsFile, max: maxTagsFile, bad: errTagsFile, problem: tagsFileProblem}
+
 // editTagsFile reads the tags file, lets edit change the document, and writes
 // it back if edit says it changed (inside a change: the write is journaled and
 // part of the commit). With nothing left to say, and no comment worth keeping,
 // the file goes. A file that cannot be read is not replaced.
 func (s *Space) editTagsFile(tx *txn, edit func(root *yaml.Node) (changed bool, err error)) error {
-	doc, err := s.loadTags()
-	if errors.Is(err, errTagsFile) {
-		return tagsFileProblem()
-	}
-	if err != nil {
-		return err
-	}
-	if doc == nil {
-		doc = &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
-	}
-	root := doc.Content[0]
-	changed, err := edit(root)
+	data, changed, err := planSettingsEdit(s.root, tagsSettings, edit, func(doc *yaml.Node) ([]byte, error) {
+		root := doc.Content[0]
+		if len(root.Content) == 0 && doc.HeadComment == "" && doc.FootComment == "" && root.HeadComment == "" && root.FootComment == "" {
+			return nil, nil
+		}
+		return yaml.Marshal(doc)
+	})
 	if err != nil || !changed {
 		return err
 	}
 	abs := filepath.Join(s.root, filepath.FromSlash(tagsFile))
-	empty := len(root.Content) == 0 && doc.HeadComment == "" && doc.FootComment == "" && root.HeadComment == "" && root.FootComment == ""
-	var data []byte
-	if !empty {
-		if data, err = yaml.Marshal(doc); err != nil {
-			return err
-		}
-	}
-	if len(data) > maxTagsFile {
-		return invalidf("the change would make tags.yml larger than %d bytes, more than the server reads; nothing was changed", maxTagsFile)
-	}
-	if err := checkWritable(tagsFile, data, errTagsFile); err != nil {
-		return err
-	}
 	if err := tx.record(jrec{Op: "t", Path: tagsFile}); err != nil {
 		return err
 	}
@@ -316,7 +269,7 @@ func (s *Space) editTagsFile(tx *txn, edit func(root *yaml.Node) (changed bool, 
 		s.tagCfg = tagCache{}
 		s.cfgMu.Unlock()
 	}()
-	if empty {
+	if len(data) == 0 {
 		if err := os.Remove(abs); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
@@ -325,8 +278,9 @@ func (s *Space) editTagsFile(tx *txn, edit func(root *yaml.Node) (changed bool, 
 	return writeAtomic(s.tmpDir(), abs, data)
 }
 
-// tagEntry finds the settings of a tag in the tags mapping: the entry (nil if
-// there is none or it holds nothing) and the position of its key (-1 if none).
+// tagEntry finds the settings of a tag in the tags mapping: what the entry
+// means (nil if there is none or it holds nothing; to change it, own it first)
+// and the position of its key (-1 if none).
 // An entry that is not a mapping and not empty is the person's to fix.
 func tagEntry(tags *yaml.Node, tag string) (entry *yaml.Node, at int, err error) {
 	entry, at = mapValue(tags, tag)
@@ -359,39 +313,32 @@ func (s *Space) SetTagColor(by Author, tag, color string) error {
 	}
 	_, err := mutate(s, by, func(tx *txn) (struct{}, error) {
 		return struct{}{}, s.editTagsFile(tx, func(root *yaml.Node) (bool, error) {
-			tags, tagsAt := mapValue(root, "tags")
-			if tags != nil && tags.Kind != yaml.MappingNode {
-				return false, invalidf("`tags` in %s is not a list of tags with their settings; it was left as it is and has to be fixed by hand", tagsFile)
+			tags, err := tagsNode(root, false)
+			if err != nil {
+				return false, err
 			}
 			entry, entryAt, err := tagEntry(tags, tag)
 			if err != nil {
 				return false, err
 			}
 			if color == "" {
-				cur, colorAt := mapValue(entry, "color")
-				if cur == nil {
+				if !hasKey(entry, "color") {
 					return false, nil // nothing to take away
 				}
-				entry.Content = append(entry.Content[:colorAt:colorAt], entry.Content[colorAt+2:]...)
-				if len(entry.Content) == 0 {
-					tags.Content = append(tags.Content[:entryAt:entryAt], tags.Content[entryAt+2:]...)
-				}
-				if len(tags.Content) == 0 {
-					root.Content = append(root.Content[:tagsAt:tagsAt], root.Content[tagsAt+2:]...)
-				}
+				removeKey(own(tags, entryAt+1), "color")
+				dropEmptyTag(root, tags, entryAt)
 				return true, nil
 			}
 			if tags == nil {
-				tags = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-				root.Content = append(root.Content, textNode("tags"), tags)
+				if tags, err = tagsNode(root, true); err != nil {
+					return false, err
+				}
 			}
 			switch cur, _ := mapValue(entry, "color"); {
 			case cur != nil && cur.Kind == yaml.ScalarNode && cur.Value == color:
 				return false, nil
-			case cur != nil:
-				*cur = *textNode(color)
 			case entry != nil:
-				entry.Content = append(entry.Content, textNode("color"), textNode(color))
+				setKey(own(tags, entryAt+1), "color", textNode(color))
 			case entryAt >= 0:
 				// The key is there with nothing under it.
 				tags.Content[entryAt+1] = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{textNode("color"), textNode(color)}}

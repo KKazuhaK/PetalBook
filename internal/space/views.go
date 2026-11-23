@@ -63,9 +63,10 @@ const (
 	maxViewExtraKeys  = 16
 	maxViewExtraBytes = 4 << 10
 
-	// maxNodeBudget is the most YAML nodes read for the values of one view,
-	// aliases followed: a file written with nested aliases can stand for far
-	// more than its size.
+	// maxNodeBudget is the most YAML nodes read for one value of a view the
+	// server does not know, aliases followed; a larger one is left out. (What
+	// the aliases of the whole file may stand for is bounded when it is
+	// loaded: see anchors.go.)
 	maxNodeBudget = 10000
 	maxNodeDepth  = 32
 )
@@ -244,12 +245,18 @@ func newViewList(vs []View) ViewList {
 // value of more than maxNodeBudget nodes (aliases counted as often as they are
 // used) or deeper than maxNodeDepth is nil.
 func nodeValue(n *yaml.Node) any {
-	w := nodeWalk{left: maxNodeBudget}
-	v := w.value(n, 0)
-	if w.over {
-		return nil
-	}
+	v, _ := nodeValueWithin(n)
 	return v
+}
+
+// nodeValueWithin is nodeValue; ok is false for a value that is too large.
+func nodeValueWithin(n *yaml.Node) (v any, ok bool) {
+	w := nodeWalk{left: maxNodeBudget}
+	v = w.value(n, 0)
+	if w.over {
+		return nil, false
+	}
+	return v, true
 }
 
 // nodeWalk is the budget of a reading of YAML values.
@@ -261,6 +268,9 @@ type nodeWalk struct {
 func (w *nodeWalk) value(n *yaml.Node, depth int) any {
 	if w.left--; w.left < 0 || depth > maxNodeDepth {
 		w.over = true
+		return nil
+	}
+	if n == nil {
 		return nil
 	}
 	if n.Kind == yaml.AliasNode {
@@ -302,13 +312,13 @@ func (w *nodeWalk) value(n *yaml.Node, depth int) any {
 		return out
 	case yaml.MappingNode:
 		out := make(map[string]any, len(n.Content)/2)
-		for i := 0; i+1 < len(n.Content); i += 2 {
-			if k := n.Content[i]; k.Kind == yaml.ScalarNode {
-				out[k.Value] = w.value(n.Content[i+1], depth+1)
-				if w.over {
-					return nil
-				}
+		eachPair(n, func(key string, val *yaml.Node, _ int) {
+			if !w.over {
+				out[key] = w.value(val, depth+1)
 			}
+		})
+		if w.over {
+			return nil
 		}
 		return out
 	}
@@ -362,7 +372,8 @@ func scalarText(n *yaml.Node) (string, bool) {
 	return n.Value, true
 }
 
-// viewOf reads a view from its mapping node.
+// viewOf reads a view from its mapping node. An alias anywhere in it is read
+// as its anchor, and a merge key as the keys it brings in.
 func viewOf(n *yaml.Node) View {
 	w := &nodeWalk{left: maxNodeBudget}
 	var v View
@@ -373,7 +384,7 @@ func viewOf(n *yaml.Node) View {
 	v.Group, _ = scalarText(first(mapValue(n, "group")))
 	if f, _ := mapValue(n, "filter"); f != nil && f.Kind == yaml.SequenceNode {
 		for _, c := range f.Content {
-			if c.Kind != yaml.MappingNode {
+			if c = deref(c); c == nil || c.Kind != yaml.MappingNode {
 				continue
 			}
 			vf := ViewFilter{Values: []any{}}
@@ -389,29 +400,28 @@ func viewOf(n *yaml.Node) View {
 	}
 	if h, _ := mapValue(n, "hidden"); h != nil && h.Kind == yaml.SequenceNode {
 		for _, c := range h.Content {
-			if t, ok := scalarText(c); ok {
+			if t, ok := scalarText(deref(c)); ok {
 				v.Hidden = append(v.Hidden, t)
 			}
 		}
 	}
-	last := map[string]int{}
-	for i := 0; i+1 < len(n.Content); i += 2 {
-		if k := n.Content[i]; k.Kind == yaml.ScalarNode {
-			last[k.Value] = i
+	last := map[string]*yaml.Node{}
+	eachPair(n, func(key string, val *yaml.Node, _ int) {
+		if !viewKnown[key] {
+			last[key] = val
 		}
-	}
-	for k, i := range last {
-		if viewKnown[k] {
-			continue
-		}
-		val := w.value(n.Content[i+1], 0)
-		if w.over {
-			break // what is too large to read is left out (and left in the file)
+	})
+	for k, val := range last {
+		// Each value by itself, so that which ones are read does not depend
+		// on the order they are looked at in.
+		x, ok := nodeValueWithin(val)
+		if !ok {
+			continue // what is too large to read is left out (and left in the file)
 		}
 		if v.Extra == nil {
 			v.Extra = map[string]any{}
 		}
-		v.Extra[k] = val
+		v.Extra[k] = x
 	}
 	return v
 }
@@ -450,18 +460,31 @@ func readable(vs []View) []View {
 
 func first(n *yaml.Node, _ int) *yaml.Node { return n }
 
-// viewNodes are the mapping nodes of an entry's `views`, the views the server
-// reads. Anything else in the list (written by hand) is not a view.
-func viewNodes(entry *yaml.Node) []*yaml.Node {
-	seq, _ := mapValue(entry, "views")
+// viewSlots finds the views of an entry: the list under its `views` as it
+// reads (nil when there is none), and the positions in it of the views the
+// server reads. Those are the first MaxViews mappings of the list, aliases of
+// one included; anything else in it (written by hand) is not a view.
+func viewSlots(entry *yaml.Node) (seq *yaml.Node, at []int) {
+	seq, _ = mapValue(entry, "views")
 	if seq == nil || seq.Kind != yaml.SequenceNode {
-		return nil
+		return nil, nil
 	}
-	var out []*yaml.Node
-	for _, c := range seq.Content {
-		if c.Kind == yaml.MappingNode {
-			out = append(out, c)
+	for i, c := range seq.Content {
+		if c = deref(c); c != nil && c.Kind == yaml.MappingNode {
+			if at = append(at, i); len(at) == MaxViews {
+				break
+			}
 		}
+	}
+	return seq, at
+}
+
+// viewNodes are the views of an entry as they read: see viewSlots.
+func viewNodes(entry *yaml.Node) []*yaml.Node {
+	seq, at := viewSlots(entry)
+	out := make([]*yaml.Node, len(at))
+	for i, j := range at {
+		out[i] = deref(seq.Content[j])
 	}
 	return out
 }
@@ -486,17 +509,13 @@ func viewsOf(doc *yaml.Node, section string, norm func(string) string) map[strin
 		return nil
 	}
 	out := map[string][]View{}
-	for i := 0; i+1 < len(m.Content); i += 2 {
-		k := m.Content[i]
-		if k.Kind != yaml.ScalarNode {
-			continue
-		}
-		key := norm(k.Value)
+	eachPair(m, func(k string, entry *yaml.Node, _ int) {
+		key := norm(k)
 		delete(out, key)
-		if vs := viewsIn(m.Content[i+1]); len(vs) > 0 {
+		if vs := viewsIn(entry); len(vs) > 0 {
 			out[key] = vs
 		}
-	}
+	})
 	return out
 }
 
@@ -725,16 +744,16 @@ func idsOf(doc *yaml.Node, section string, skip func(key string) bool, into map[
 	if m == nil || m.Kind != yaml.MappingNode {
 		return
 	}
-	for i := 0; i+1 < len(m.Content); i += 2 {
-		if k := m.Content[i]; k.Kind != yaml.ScalarNode || skip(k.Value) {
-			continue
+	eachPair(m, func(k string, entry *yaml.Node, _ int) {
+		if skip(k) {
+			return
 		}
-		for _, n := range viewNodes(m.Content[i+1]) {
+		for _, n := range viewNodes(entry) {
 			if id, ok := scalarText(first(mapValue(n, "id"))); ok {
 				into[id] = true
 			}
 		}
-	}
+	})
 }
 
 // PutViews replaces the views of a folder or a tag. baseRev is the rev of the
@@ -800,16 +819,22 @@ func putViewsInto(top *yaml.Node, section string, section2 func(*yaml.Node, bool
 	if err != nil {
 		return false, ViewList{}, err
 	}
+	// The entry is read as it means here (an alias followed, merge keys
+	// counted) and made the writer's own only where it is changed, below.
+	isEntry := func(i int) bool {
+		k, ok := keyText(cont.Content[i])
+		return ok && norm(k) == key
+	}
 	var entry *yaml.Node
 	at := -1
 	if cont != nil {
 		for i := 0; i+1 < len(cont.Content); i += 2 {
-			if k := cont.Content[i]; k.Kind == yaml.ScalarNode && norm(k.Value) == key {
+			if isEntry(i) {
 				at = i
 			}
 		}
 		if at >= 0 {
-			entry = cont.Content[at+1]
+			entry = deref(cont.Content[at+1])
 		}
 	}
 	if entry != nil && entry.Kind != yaml.MappingNode {
@@ -818,9 +843,9 @@ func putViewsInto(top *yaml.Node, section string, section2 func(*yaml.Node, bool
 		}
 		entry = nil
 	}
-	var curNodes []*yaml.Node
+	var slots []int // where the views are in the list of the entry
 	if entry != nil {
-		curNodes = viewNodes(entry)
+		_, slots = viewSlots(entry)
 	}
 	var cur []View
 	if entry != nil {
@@ -847,7 +872,7 @@ func putViewsInto(top *yaml.Node, section string, section2 func(*yaml.Node, bool
 		}
 	}
 	result := make([]View, len(views))
-	matched := make([]*yaml.Node, len(views))
+	matched := make([]int, len(views)) // the position in slots of the view it was, or -1
 	// unchanged[i] says the request gives view i back exactly as it was read:
 	// its YAML node is then left as it is (it may hold what the reader could
 	// not interpret, written by hand).
@@ -859,12 +884,13 @@ func putViewsInto(top *yaml.Node, section string, section2 func(*yaml.Node, bool
 				return false, ViewList{}, err
 			}
 			v.ID = id
+			matched[i] = -1
 		} else {
 			j, ok := byID[v.ID]
 			if !ok {
 				return false, ViewList{}, invalidf("view %d: there is no view with the id %q here; leave the id out to make a new view", i+1, v.ID)
 			}
-			matched[i] = curNodes[j]
+			matched[i] = j
 			unchanged[i] = !strings.HasPrefix(v.ID, "@") && sameView(stored[v.ID], v)
 			if strings.HasPrefix(v.ID, "@") {
 				// A view whose written id was not usable gets a new one.
@@ -900,12 +926,11 @@ func putViewsInto(top *yaml.Node, section string, section2 func(*yaml.Node, bool
 		// Every writing of the entry loses its views, or the last one that is
 		// left would be the entry and bring its views back.
 		for i := len(cont.Content) - 2; i >= 0; i -= 2 {
-			k := cont.Content[i]
-			if k.Kind != yaml.ScalarNode || norm(k.Value) != key {
+			if !isEntry(i) {
 				continue
 			}
-			if e := cont.Content[i+1]; e.Kind == yaml.MappingNode {
-				removeViewNodes(e)
+			if e := deref(cont.Content[i+1]); e != nil && e.Kind == yaml.MappingNode && hasKey(e, "views") {
+				removeKey(own(cont, i+1), "views")
 			}
 			if section == "folders" {
 				dropEmpty(top, cont, i)
@@ -926,31 +951,48 @@ func putViewsInto(top *yaml.Node, section string, section2 func(*yaml.Node, bool
 			cont.Content[at+1] = entry
 		} else {
 			cont.Content = append(cont.Content, textNode(key), entry)
+			at = len(cont.Content) - 2
 		}
 	}
-	seq, _ := mapValue(entry, "views")
-	if seq == nil || seq.Kind != yaml.SequenceNode {
+	// From here the entry, its list and every view that changes are the
+	// writer's own: a copy where they were an alias, carried an anchor or had
+	// keys from a merge key. A copy has the views at the same positions.
+	entry = own(cont, at+1)
+	var seq *yaml.Node
+	if cur, vat := mapValue(entry, "views"); cur != nil && cur.Kind == yaml.SequenceNode {
+		seq = own(entry, vat+1)
+	} else {
 		seq = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
-		if v, vat := mapValue(entry, "views"); v != nil {
+		if vat >= 0 {
 			entry.Content[vat+1] = seq
 		} else {
 			entry.Content = append(entry.Content, textNode("views"), seq)
 		}
+		slots = nil
 	}
-	// What is in the list that is not a view (written by hand) stays, after the views.
+	// What is in the list that is not a view (written by hand, or beyond the
+	// views the server reads) stays, after the views.
+	isView := make(map[int]bool, len(slots))
+	for _, j := range slots {
+		isView[j] = true
+	}
 	var rest []*yaml.Node
-	for _, c := range seq.Content {
-		if c.Kind != yaml.MappingNode {
+	for j, c := range seq.Content {
+		if !isView[j] {
 			rest = append(rest, c)
 		}
 	}
 	nodes := make([]*yaml.Node, 0, len(result)+len(rest))
 	for i, v := range result {
-		n := matched[i]
-		if n == nil {
+		var n *yaml.Node
+		switch {
+		case matched[i] < 0:
 			n = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-		}
-		if !unchanged[i] {
+			applyView(n, v)
+		case unchanged[i]:
+			n = seq.Content[slots[matched[i]]] // as it is written, an alias too
+		default:
+			n = owned(seq.Content[slots[matched[i]]])
 			applyView(n, v)
 		}
 		nodes = append(nodes, n)
@@ -973,33 +1015,30 @@ func dropEmptyTag(root, tags *yaml.Node, i int) {
 	}
 }
 
-// removeViewNodes takes the views off an entry, all writings of the key.
-func removeViewNodes(entry *yaml.Node) {
-	for j := len(entry.Content) - 2; j >= 0; j -= 2 {
-		if k := entry.Content[j]; k.Kind == yaml.ScalarNode && k.Value == "views" {
-			entry.Content = append(entry.Content[:j:j], entry.Content[j+2:]...)
-		}
-	}
-}
-
-// setKey sets a key of a mapping to a node: the last writing of the key is
-// changed, a missing key added at the end. A scalar that is already the same
-// text is left alone (its comments and quoting stay).
+// setKey sets a key of a mapping that is the writer's own (see own) to a node:
+// the last writing of the key is changed, a missing key added at the end. A
+// scalar that already means the same text is left alone (its comments and
+// quoting stay, and an alias stays an alias). The value that was there leaves
+// the tree as it is: it is not written over, so an anchor on it stays good
+// for the aliases that remain.
 func setKey(m *yaml.Node, key string, val *yaml.Node) {
 	cur, at := mapValue(m, key)
 	switch {
-	case cur == nil:
+	case at < 0:
 		m.Content = append(m.Content, textNode(key), val)
-	case cur.Kind == yaml.ScalarNode && val.Kind == yaml.ScalarNode && cur.Tag == val.Tag && cur.Value == val.Value:
+	case cur != nil && cur.Kind == yaml.ScalarNode && val.Kind == yaml.ScalarNode && cur.Tag == val.Tag && cur.Value == val.Value:
 	default:
-		val.HeadComment, val.LineComment, val.FootComment = cur.HeadComment, cur.LineComment, cur.FootComment
+		was := m.Content[at+1]
+		val.HeadComment, val.LineComment, val.FootComment = was.HeadComment, was.LineComment, was.FootComment
 		m.Content[at+1] = val
 	}
 }
 
+// removeKey takes every writing of a key out of a mapping that is the
+// writer's own.
 func removeKey(m *yaml.Node, key string) {
 	for j := len(m.Content) - 2; j >= 0; j -= 2 {
-		if k := m.Content[j]; k.Kind == yaml.ScalarNode && k.Value == key {
+		if k, ok := keyText(m.Content[j]); ok && k == key {
 			m.Content = append(m.Content[:j:j], m.Content[j+2:]...)
 		}
 	}
@@ -1026,17 +1065,17 @@ func hiddenNode(hs []string) *yaml.Node {
 	return seq
 }
 
-// applyView writes v into the mapping node n of a view: keys are set in
-// place, and a new node gets them in the order id, name, layout, group, sort,
-// filter, hidden, the rest.
+// applyView writes v into the mapping node n of a view, which is the writer's
+// own (see owned): keys are set in place, and a new node gets them in the
+// order id, name, layout, group, sort, filter, hidden, the rest.
 func applyView(n *yaml.Node, v View) {
 	setKey(n, "id", textNode(v.ID))
 	setKey(n, "name", textNode(v.Name))
 	setKey(n, "layout", textNode(v.Layout))
 	// A key is removed or rewritten only when the request changes it from what
-	// was read: what the reader could not interpret (an alias, a scalar where a
-	// list belongs) reads as empty, and must not be taken for a request to
-	// remove it.
+	// was read: what the reader could not interpret (a scalar where a list
+	// belongs) reads as empty, and must not be taken for a request to remove
+	// it; and what is written as an alias and still means the same stays one.
 	old := viewOf(n)
 	for _, f := range []struct{ key, val, was string }{{"group", v.Group, old.Group}, {"sort", v.Sort, old.Sort}} {
 		switch {
