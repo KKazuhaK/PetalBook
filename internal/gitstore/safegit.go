@@ -162,6 +162,16 @@ func subcommand(args []string) (string, []string) {
 //	             work tree is read but those of the change; what grows with the
 //	             space is only the index in memory (about 60 ms for 20 000
 //	             files). Their arguments are checked exactly in refuseDestructive.
+//	fetch --filter=blob:none, --stdin, --no-write-fetch-head: a partial clone
+//	             (milestone 3.1) is made with a filter, and the contents of the
+//	             files that are missing are fetched by their ids, in the form
+//	             Git's own lazy fetch uses, with the server's credential.
+//	cat-file --batch-check: which of a list of ids are not in the clone.
+//	log, diff    --raw, --no-abbrev: the blob ids of a change, so that the
+//	             contents a partial clone lacks can be named; log -M100%: only
+//	             exact renames, which need no content (--follow would otherwise
+//	             read the files to compare them).
+//	status       --untracked-files=normal: files in the work tree that no commit has.
 //	status       --porcelain, -z, --untracked-files=no: modified tracked files when a space opens.
 //
 // Dropped from RackBook's list because nothing here needs them: --grep and
@@ -174,12 +184,12 @@ var allowedOptions = map[string][]string{
 	"commit-tree":  {},
 	"ls-files":     {"-s", "-z", "--"},
 	"rm":           {"--", "--cached", "-r", "-q", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"},
-	"cat-file":     {"--batch"},
+	"cat-file":     {"--batch", "--batch-check"},
 	"checkout":     {"--quiet", "--", "--pathspec-from-file=-", "--pathspec-file-nul"},
-	"diff":         {"--cached", "--name-status", "-z", "-M", "--no-renames", "--"},
-	"fetch":        {"--quiet", "--no-tags"},
+	"diff":         {"--cached", "--name-status", "-z", "-M", "--no-renames", "--raw", "--no-abbrev", "--"},
+	"fetch":        {"--quiet", "--no-tags", "--filter=blob:none", "--stdin", "--no-write-fetch-head"},
 	"init":         {"--quiet", "-q", "--initial-branch=*"},
-	"log":          {"-n", "--format=*", "--follow", "--name-status", "-z", "--no-color", "--"},
+	"log":          {"-n", "--format=*", "--follow", "--name-status", "-z", "--no-color", "-M100%", "--raw", "--no-abbrev", "--"},
 	"ls-remote":    {"--heads"},
 	"ls-tree":      {"-r", "-z", "--name-only", "--"},
 	"merge":        {"--quiet", "--ff-only"},
@@ -187,10 +197,12 @@ var allowedOptions = map[string][]string{
 	"push":         {},
 	"remote":       {},
 	"update-ref":   {},
+	"version":      {},
+	"for-each-ref": {"--format=*"},
 	"reset":        {"--quiet", "--hard"},
-	"rev-list":     {"--count", "--left-right", "--not"},
+	"rev-list":     {"--count", "--left-right", "--not", "--objects", "--missing=print"},
 	"rev-parse":    {"--is-inside-work-tree", "--abbrev-ref", "--absolute-git-dir", "--show-prefix", "--verify", "--quiet", "--short"},
-	"status":       {"--porcelain", "-z", "--untracked-files=no"},
+	"status":       {"--porcelain", "-z", "--untracked-files=no", "--untracked-files=normal"},
 }
 
 func optionAllowed(sub, opt string) bool {
