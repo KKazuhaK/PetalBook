@@ -5,6 +5,17 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 SPACE   ?= ./space
 
+# The cores of this machine, and shares of them for lanes that run side by side
+# (scripts/lanes.sh): a lane given SHARE=n uses n cores' worth of workers, for Go
+# and for the web tests.
+NCPU    := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
+HALF    := $(shell n=$(NCPU); echo $$(( (n + 1) / 2 )))
+QUARTER := $(shell n=$(NCPU); echo $$(( n / 4 > 2 ? n / 4 : 2 )))
+ifneq ($(SHARE),)
+export GOMAXPROCS := $(SHARE)
+export VITEST_MAX_WORKERS := $(SHARE)
+endif
+
 # Every Go package with tests but the two that "test-index" and "test-space" run.
 REST_PKGS = $(shell go list ./cmd/... ./internal/... | awk '!/\/internal\/(index|space)$$/')
 
@@ -145,7 +156,7 @@ check-web-static: web-typecheck web-lint
 # table of how long each took closes the run. "make check-go check-web vuln
 # actionlint" runs the same checks one after the other.
 check:
-	@bash scripts/lanes.sh go='fmt-check tidy-check vet test' web='web-typecheck web-lint web-test' vuln actionlint
+	@bash scripts/lanes.sh go:$(HALF)='fmt-check tidy-check vet test' web:$(HALF)='web-typecheck web-lint web-test' vuln actionlint
 
 # The tests on a case-folding tmpfs, the way macOS and Windows treat file
 # names (Linux only, needs a kernel with tmpfs casefold and user namespaces).
@@ -171,7 +182,7 @@ cross-compile:
 # contract tests that use its binary, and the cross-compile.
 check-full:
 	@bash scripts/lanes.sh \
-	  go='fmt-check tidy-check vet test test-full' web='web-typecheck web-lint web-test' vuln actionlint \
-	  test-postgres test-casefold \
+	  go:$(QUARTER)='fmt-check tidy-check vet test test-full' web:$(QUARTER)='web-typecheck web-lint web-test' vuln actionlint \
+	  postgres:$(QUARTER)=test-postgres casefold:$(QUARTER)=test-casefold \
 	  -- release='release contract contract-postgres' cross-compile
 

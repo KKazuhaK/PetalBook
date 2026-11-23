@@ -9,9 +9,13 @@
 # run. The exit status is 0 only when every target passed.
 #
 # Usage: scripts/lanes.sh LANE... [-- LANE...]
-#   LANE is NAME='target target ...', or a single target name.
+#   LANE is NAME='target target ...', or a single target name. NAME:N=... gives
+#   the lane N cores: its targets are run with SHARE=N, which the Makefile turns
+#   into GOMAXPROCS and the web test workers, so lanes that each want the whole
+#   machine do not starve one another (tests that measure time fail on a machine
+#   that is oversubscribed).
 #
-#   scripts/lanes.sh go='vet test' web vuln -- release
+#   scripts/lanes.sh go:4='vet test' web:4='web-test' vuln -- release
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
@@ -26,10 +30,10 @@ trap 'rm -rf "$work"' EXIT
 lock() { until mkdir "$work/lock" 2>/dev/null; do sleep 0.05; done; }
 unlock() { rmdir "$work/lock"; }
 
-# run_lane PHASE LANE TARGETS...
+# run_lane LANE SHARE TARGETS...
 run_lane() {
-  local lane="$1"
-  shift
+  local lane="$1" share="$2"
+  shift 2
   local target start end secs status failed=""
   for target in "$@"; do
     if [ -n "$failed" ]; then
@@ -37,7 +41,7 @@ run_lane() {
       continue
     fi
     start=$(date +%s)
-    "$make_cmd" --no-print-directory "$target" >"$work/out.$lane.$target" 2>&1
+    SHARE="$share" "$make_cmd" --no-print-directory "$target" >"$work/out.$lane.$target" 2>&1
     status=$?
     end=$(date +%s)
     secs=$((end - start))
@@ -63,17 +67,28 @@ overall=0
 began=$(date +%s)
 phase_lanes=()
 
+# parse_spec SPEC sets name, share and targets.
+parse_spec() {
+  local head="$1"
+  targets="$1"
+  case "$1" in
+    *=*) head="${1%%=*}" targets="${1#*=}" ;;
+  esac
+  name="${head%%:*}"
+  share=""
+  case "$head" in
+    *:*) share="${head#*:}" ;;
+  esac
+}
+
 run_phase() {
-  local spec name targets pids=() ok=0 lane
+  local spec name share targets pids=() ok=0 lane
   phase_lanes=()
   for spec in "$@"; do
-    case "$spec" in
-      *=*) name="${spec%%=*}" targets="${spec#*=}" ;;
-      *) name="$spec" targets="$spec" ;;
-    esac
+    parse_spec "$spec"
     phase_lanes+=("$name")
     # shellcheck disable=SC2086
-    run_lane "$name" $targets &
+    run_lane "$name" "$share" $targets &
     pids+=($!)
   done
   for pid in "${pids[@]}"; do
@@ -86,12 +101,9 @@ run_phase() {
 }
 
 skip_phase() {
-  local spec name targets target
+  local spec name share targets target
   for spec in "$@"; do
-    case "$spec" in
-      *=*) name="${spec%%=*}" targets="${spec#*=}" ;;
-      *) name="$spec" targets="$spec" ;;
-    esac
+    parse_spec "$spec"
     for target in $targets; do
       printf '%s\t%s\t-\tskipped\n' "$name" "$target" >>"$work/summary"
     done

@@ -41,8 +41,8 @@ export default defineConfig(async ({ mode }) => {
       // (isolate stays on: some files keep state in modules and in the window).
       pool: 'threads',
       // Vitest leaves one core free by default, which on a two-core runner means one
-      // worker and an idle core.
-      maxWorkers: Math.max(2, availableParallelism() - 1),
+      // worker and an idle core. VITEST_MAX_WORKERS (make's SHARE) says how many.
+      maxWorkers: Number(process.env.VITEST_MAX_WORKERS) || Math.max(2, availableParallelism() - 1),
       // Markdown conversion of the corpus under jsdom is CPU-heavy on slow machines.
       testTimeout: 30_000,
     },

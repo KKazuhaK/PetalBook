@@ -372,11 +372,21 @@ func TestSalvagingALargeFileWithOneTypoIsLinear(t *testing.T) {
 		small, large = full/32, full/8
 	}
 	salvageTime(t, typoFile(small)) // warm
-	ts := salvageTime(t, typoFile(small))
-	tl := salvageTime(t, typoFile(large))
 	// Four times the text takes about four times as long; quadratic, sixteen.
-	if tl > 8*ts+200*time.Millisecond {
-		t.Fatalf("%d bytes took %v, %d bytes %v", small, ts, large, tl)
+	// A machine that is busy with other work slows one of the two readings and
+	// not the other, so the comparison is made again before it fails: code that
+	// is quadratic fails every time.
+	var ts, tl time.Duration
+	for attempt := 1; ; attempt++ {
+		ts = salvageTime(t, typoFile(small))
+		tl = salvageTime(t, typoFile(large))
+		if tl <= 8*ts+200*time.Millisecond {
+			break
+		}
+		if attempt == 3 {
+			t.Fatalf("%d bytes took %v, %d bytes %v, three times", small, ts, large, tl)
+		}
+		t.Logf("attempt %d: %d bytes took %v, %d bytes %v", attempt, small, ts, large, tl)
 	}
 	t.Logf("%d bytes: %v; %d bytes: %v", small, ts, large, tl)
 	if raceDetector {
