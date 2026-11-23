@@ -373,19 +373,18 @@ type errorBody struct {
 	Message string `json:"message"`
 	Current any    `json:"current,omitempty"`
 	// What some refusals are about (docs/api.md, "Daily text refusals"): a
-	// request header, a field of an interface, a host.
+	// request header, a field of an interface.
 	Header string `json:"header,omitempty"`
 	Field  string `json:"field,omitempty"`
-	Host   string `json:"host,omitempty"`
 }
 
 // codedError is a 400 whose error code is code, with what it is about.
-type codedError struct{ code, header, field, host, msg string }
+type codedError struct{ code, header, field, msg string }
 
 func (e *codedError) Error() string { return e.msg }
 
 func (e *codedError) body() errorBody {
-	return errorBody{Error: e.code, Message: e.msg, Header: e.header, Field: e.field, Host: e.host}
+	return errorBody{Error: e.code, Message: e.msg, Header: e.header, Field: e.field}
 }
 
 func writeCoded(w http.ResponseWriter, e *codedError) { writeJSON(w, http.StatusBadRequest, e.body()) }
@@ -435,6 +434,11 @@ func (s *server) readJSONMax(w http.ResponseWriter, r *http.Request, v any, opti
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	if err := dec.Decode(v); err != nil {
+		var inv *space.InvalidError
+		if errors.As(err, &inv) && inv.Code != "" {
+			writeCoded(w, &codedError{code: inv.Code, msg: inv.Msg})
+			return false
+		}
 		writeError(w, http.StatusBadRequest, "invalid", "the request body is not valid JSON for this endpoint: "+err.Error())
 		return false
 	}
@@ -536,6 +540,10 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusConflict, errorBody{Error: "conflict",
 			Message: "the page changed since you opened it; here is the current version", Current: toPage(ce.Current)})
 	case errors.As(err, &inv):
+		if inv.Code != "" {
+			writeCoded(w, &codedError{code: inv.Code, msg: inv.Msg})
+			break
+		}
 		writeError(w, http.StatusBadRequest, "invalid", inv.Msg)
 	case errors.Is(err, index.ErrInvalidQuery):
 		writeError(w, http.StatusBadRequest, "invalid", strings.TrimPrefix(err.Error(), index.ErrInvalidQuery.Error()+": "))

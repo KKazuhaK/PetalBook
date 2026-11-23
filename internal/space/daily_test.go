@@ -1,6 +1,8 @@
 package space
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -374,7 +376,7 @@ func TestDailyConfigByLanguage(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 	y := spaceYML(root)
-	if !strings.Contains(y, "daily:") || !strings.Contains(y, "zh:") || !strings.Contains(y, "en:") || !strings.Contains(y, "folder: 文案") {
+	if !strings.Contains(y, "daily:") || !strings.Contains(y, "zh-Hans:") || !strings.Contains(y, "en:") || !strings.Contains(y, "folder: 文案") {
 		t.Fatalf("%s", y)
 	}
 	// Each language is picked from its own source; a region follows its language.
@@ -395,14 +397,14 @@ func TestDailyConfigByLanguage(t *testing.T) {
 	if _, err := s.MoveFolder(Author{}, "文案", "诗"); err != nil {
 		t.Fatal(err)
 	}
-	if d := s.Daily(); d == nil || *d.ByLang["zh"].Folder != "诗" || *d.ByLang["en"].Folder != "quotes" {
+	if d := s.Daily(); d == nil || *d.ByLang["zh-Hans"].Folder != "诗" || *d.ByLang["en"].Folder != "quotes" {
 		t.Fatalf("%+v\n%s", d, spaceYML(root))
 	}
 	// Dropping one language keeps the other; the same everywhere replaces them all.
 	if _, err := s.SetDaily(Author{}, &DailyConfig{ByLang: map[string]DailySource{"en": {Folder: &en}}}); err != nil {
 		t.Fatal(err)
 	}
-	if d := s.Daily(); len(d.ByLang) != 1 || strings.Contains(spaceYML(root), "zh:") {
+	if d := s.Daily(); len(d.ByLang) != 1 || strings.Contains(spaceYML(root), "zh-Hans:") {
 		t.Fatalf("%+v\n%s", d, spaceYML(root))
 	}
 	if _, err := s.SetDaily(Author{}, &DailyConfig{All: &DailySource{Tag: "q"}}); err != nil {
@@ -415,7 +417,7 @@ func TestDailyConfigByLanguage(t *testing.T) {
 	if _, err := s.SetDaily(Author{}, &DailyConfig{ByLang: map[string]DailySource{"zh": {Tag: "q"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if d := s.Daily(); d.All != nil || d.ByLang["zh"].Tag != "q" || strings.Contains(spaceYML(root), "\n  tag: q") {
+	if d := s.Daily(); d.All != nil || d.ByLang["zh-Hans"].Tag != "q" || strings.Contains(spaceYML(root), "\n  tag: q") {
 		t.Fatalf("%+v\n%s", d, spaceYML(root))
 	}
 	// "All languages" and some languages together: the first is the fallback.
@@ -428,11 +430,11 @@ func TestDailyConfigByLanguage(t *testing.T) {
 		t.Fatal(err)
 	}
 	y2 := spaceYML(root2)
-	if !strings.Contains(y2, "folder: any") || !strings.Contains(y2, "zh:") {
+	if !strings.Contains(y2, "folder: any") || !strings.Contains(y2, "zh-Hans:") {
 		t.Fatalf("%s", y2)
 	}
 	d2 := s2.Daily()
-	if d2.All == nil || *d2.All.Folder != "any" || *d2.ByLang["zh"].Folder != "zh" {
+	if d2.All == nil || *d2.All.Folder != "any" || *d2.ByLang["zh-Hans"].Folder != "zh" {
 		t.Fatalf("%+v", d2)
 	}
 	for lang, title := range map[string]string{"zh": "中文一", "zh-TW": "中文一", "en": "For all", "": "For all"} {
@@ -447,7 +449,7 @@ func TestDailyConfigByLanguage(t *testing.T) {
 	if _, err := s2.MoveFolder(Author{}, "any", "every"); err != nil {
 		t.Fatal(err)
 	}
-	if d := s2.Daily(); *d.All.Folder != "every" || *d.ByLang["zh"].Folder != "chinese" {
+	if d := s2.Daily(); *d.All.Folder != "every" || *d.ByLang["zh-Hans"].Folder != "chinese" {
 		t.Fatalf("%+v\n%s", d, spaceYML(root2))
 	}
 	// Taking the fallback away leaves the languages, and the other way round.
@@ -496,5 +498,59 @@ func TestDailyConfigJSON(t *testing.T) {
 		if err := c.UnmarshalJSON([]byte(in)); (err == nil) != ok {
 			t.Errorf("%s: %v", in, err)
 		}
+	}
+}
+
+func TestDailyLanguagesAreBCP47Tags(t *testing.T) {
+	needGit(t)
+	root := t.TempDir()
+	s := openAt(t, root)
+	mustCreate(t, s, "hans", meta("title", "Simplified"), "x\n")
+	mustCreate(t, s, "hant", meta("title", "Traditional"), "x\n")
+	mustCreate(t, s, "en", meta("title", "English"), "x\n")
+	mustCreate(t, s, "any", meta("title", "Any"), "x\n")
+	// Sources saved before the rule: `zh` is read as zh-Hans, `pt-br` as pt-BR.
+	os.WriteFile(filepath.Join(root, ".petalbook", "space.yml"), []byte("daily:\n  folder: any\n  zh:\n    folder: hans\n  zh-hant:\n    folder: hant\n  EN:\n    folder: en\n  pt-br:\n    folder: en\n"), 0o644)
+	d := s.Daily()
+	if d == nil || len(d.ByLang) != 4 || d.ByLang["zh-Hans"].Folder == nil || d.ByLang["zh-Hant"].Folder == nil || d.ByLang["en"].Folder == nil || d.ByLang["pt-BR"].Folder == nil {
+		t.Fatalf("%+v", d)
+	}
+	// A reader's language is matched the BCP 47 way.
+	for lang, title := range map[string]string{
+		"zh-CN": "Simplified", "zh-SG": "Simplified", "zh": "Simplified", "zh-Hans-CN": "Simplified",
+		"zh-TW": "Traditional", "zh-HK": "Traditional", "zh-Hant": "Traditional",
+		"en-GB": "English", "en-US": "English", "fr": "Any", "": "Any",
+	} {
+		if p := mustDailyLang(t, s, lang); p.Page.Title != title {
+			t.Errorf("%q: %s, want %s", lang, p.Page.Title, title)
+		}
+	}
+	// The next save writes the tags back in canonical form.
+	hans := "hans"
+	cfg := *d
+	cfg.ByLang = map[string]DailySource{"zh-Hans": {Folder: &hans}}
+	if _, err := s.SetDaily(Author{}, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	y := spaceYML(root)
+	if !strings.Contains(y, "zh-Hans:") || strings.Contains(y, "\n  zh:") || strings.Contains(y, "pt-br") || strings.Contains(y, "EN:") {
+		t.Fatalf("%s", y)
+	}
+	// What is not a tag is refused with its code.
+	for _, bad := range []string{"cn", "english", "zh_CN", "x-foo", "und"} {
+		_, err := s.SetDaily(Author{}, &DailyConfig{ByLang: map[string]DailySource{bad: {Folder: &hans}}})
+		var inv *InvalidError
+		if !errors.As(err, &inv) || inv.Code != CodeBadLanguage {
+			t.Errorf("%s: %v", bad, err)
+		}
+	}
+	var c DailyConfig
+	if err := json.Unmarshal([]byte(`{"zh_CN": {"folder": "x"}}`), &c); err == nil {
+		t.Error("a bad tag is read from JSON")
+	} else if inv := new(InvalidError); !errors.As(err, &inv) || inv.Code != CodeBadLanguage {
+		t.Errorf("%v", err)
+	}
+	if err := json.Unmarshal([]byte(`{"zh": {"folder": "x"}, "zh-hans": {"folder": "y"}}`), &c); err == nil {
+		t.Error("two spellings of one language")
 	}
 }

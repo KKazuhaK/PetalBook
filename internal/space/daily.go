@@ -14,6 +14,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/KKazuhaK/PetalBook/internal/index"
+	"github.com/KKazuhaK/PetalBook/internal/langtag"
 )
 
 // The daily text of a space (milestone 2.3): one page a day, picked from the
@@ -115,55 +116,43 @@ type DailyConfig struct {
 // maxDailyLangs is the most languages a space may give a source of its own.
 const maxDailyLangs = 20
 
-// ValidLang reports whether s can be a language code: `zh`, `en`, `zh-CN`.
+// ValidLang reports whether s can be a language: a well-formed BCP 47 tag
+// (`zh-Hans`, `en`, `pt-BR`, in any case) whose language is in the IANA registry.
 func ValidLang(s string) bool {
-	if len(s) < 2 || len(s) > 16 {
-		return false
-	}
-	for i, part := range strings.Split(s, "-") {
-		if part == "" || len(part) > 8 || (i == 0 && (len(part) > 3 || len(part) < 2)) {
-			return false
-		}
-		for _, r := range part {
-			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || (i > 0 && r >= '0' && r <= '9')) {
-				return false
-			}
-		}
-	}
-	return true
+	_, ok := langtag.Canonical(s)
+	return ok
 }
 
-// NormalLang is a language code as it is compared: lower case.
-func NormalLang(s string) string { return strings.ToLower(s) }
+// NormalLang is a language tag in canonical form (`ZH-cn` is `zh-CN`, `zh`
+// is `zh-Hans`); text that is no tag is left in lower case, so that a value
+// saved before the rule is still read.
+func NormalLang(s string) string { return langtag.Read(s) }
 
-// For is the source for a language: that of the language itself, or of the
-// language without its region (`zh` for `zh-CN`); else the one for every
-// language ("all languages", the fallback entry); else, so that a language nobody wrote a source for still gets a
-// text, the first of the sources by the order of their codes.
+// For is the source for a language: that of the language the reader's is
+// matched to the BCP 47 way (`zh-Hans` for `zh-CN`, `en` for `en-GB`); else the
+// one for every language ("all languages", the fallback entry); else, so that
+// a language nobody wrote a source for still gets a text, the first of the
+// sources by the order of their codes.
 func (c *DailyConfig) For(lang string) *DailySource {
 	if c == nil {
 		return nil
 	}
-	lang = NormalLang(lang)
-	if d, ok := c.ByLang[lang]; ok {
-		return &d
+	keys := make([]string, 0, len(c.ByLang))
+	for k := range c.ByLang {
+		keys = append(keys, k)
 	}
-	if i := strings.IndexByte(lang, '-'); i > 0 {
-		if d, ok := c.ByLang[lang[:i]]; ok {
+	sort.Strings(keys)
+	if m, ok := langtag.Match(lang, keys); ok {
+		if d, ok := c.ByLang[m]; ok {
 			return &d
 		}
 	}
 	if c.All != nil {
 		return c.All
 	}
-	keys := make([]string, 0, len(c.ByLang))
-	for k := range c.ByLang {
-		keys = append(keys, k)
-	}
 	if len(keys) == 0 {
 		return nil
 	}
-	sort.Strings(keys)
 	d := c.ByLang[keys[0]]
 	return &d
 }
@@ -220,7 +209,7 @@ func (c *DailyConfig) UnmarshalJSON(data []byte) error {
 			continue
 		}
 		if !ValidLang(k) {
-			return fmt.Errorf("%q is not a language code (zh, en, zh-CN)", k)
+			return BadLanguage(k)
 		}
 		var d DailySource
 		if err := json.Unmarshal(raw, &d); err != nil {
@@ -294,6 +283,11 @@ func dailyIn(top *yaml.Node) *DailyConfig {
 		if d := sourceIn(val); d != nil {
 			if out.ByLang == nil {
 				out.ByLang = map[string]DailySource{}
+			}
+			// `zh` and `zh-Hans` are the same language: the one written in
+			// canonical form wins, else the first.
+			if _, dup := out.ByLang[NormalLang(k)]; dup && NormalLang(k) != k {
+				return
 			}
 			out.ByLang[NormalLang(k)] = *d
 		}
@@ -431,7 +425,7 @@ func (s *Space) checkDaily(c DailyConfig) (DailyConfig, error) {
 	}
 	for lang, d := range c.ByLang {
 		if !ValidLang(lang) {
-			return c, invalidf("%q is not a language code", lang)
+			return c, BadLanguage(lang)
 		}
 		checked, err := s.CheckDailySource(d)
 		if err != nil {
@@ -559,6 +553,9 @@ func setDailyIn(top *yaml.Node, d *DailyConfig) (bool, error) {
 					n.Content[i+1] = sub
 				}
 				writeSource(sub, d.ByLang[l])
+				if kn := n.Content[i]; kn.Kind == yaml.ScalarNode && kn.Value != l {
+					kn.Value = l // a key saved before the rule is written back as the tag
+				}
 				found = true
 			}
 		}

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
+	"github.com/KKazuhaK/PetalBook/internal/langtag"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
@@ -24,11 +26,15 @@ import (
 const siteDailyKey = "daily"
 
 type siteDefault struct {
-	// Kind is "space" (the source is a folder, tag or type of that space) or
-	// "list" (the lines an administrator pasted or uploaded).
+	// Kind is "space" (the source is a folder, tag or type of that space),
+	// "list" (the lines an administrator pasted or uploaded) or "api" (an
+	// interface for each language).
 	Kind   string             `json:"kind"`
 	Space  string             `json:"space,omitempty"`
 	Source *space.DailyConfig `json:"source,omitempty"`
+	// APIs are the ids of the interfaces by language, "" for the languages not
+	// listed.
+	APIs map[string]string `json:"apis,omitempty"`
 }
 
 type dailyQuote struct {
@@ -47,46 +53,70 @@ type dailyQuote struct {
 	expires time.Time
 }
 
+// linesByLang groups what the table counts by canonical language tag (lines
+// saved before the rule are under `zh`, read as `zh-Hans`): the counts, and
+// for each tag the languages as saved, in order.
+func linesByLang(counts map[string]int) (map[string]int, map[string][]string) {
+	canon := map[string]int{}
+	raw := map[string][]string{}
+	for l, n := range counts {
+		if n <= 0 {
+			continue
+		}
+		c := langtag.Read(l)
+		if l == "" {
+			c = ""
+		}
+		canon[c] += n
+		raw[c] = append(raw[c], l)
+	}
+	for _, r := range raw {
+		sort.Strings(r)
+	}
+	return canon, raw
+}
+
 // dailyFromLines picks one of the lines the administrators gave: those in the
-// language, else those in its base language, else those for any language, else
-// the first language that has some.
+// language the reader's is matched to, else those for any language, else the
+// first language that has some.
 func (s *server) dailyFromLines(ctx context.Context, date string, skip int, lang string) (*dailyQuote, string, error) {
 	q := s.opt.Store.Q()
-	counts, err := store.DailyLineCounts(ctx, q)
+	rawCounts, err := store.DailyLineCounts(ctx, q)
 	if err != nil {
 		return nil, "", err
 	}
-	base := lang
-	if i := strings.IndexByte(lang, '-'); i > 0 {
-		base = lang[:i]
-	}
-	use, found := "", false
-	for _, l := range []string{lang, base, ""} {
-		if counts[l] > 0 {
-			use, found = l, true
-			break
+	counts, raw := linesByLang(rawCounts)
+	var langs []string
+	for l := range counts {
+		if l != "" {
+			langs = append(langs, l)
 		}
 	}
-	if !found {
-		var langs []string
-		for l, n := range counts {
-			if n > 0 {
-				langs = append(langs, l)
-			}
-		}
+	sort.Strings(langs)
+	use := ""
+	if m, ok := langtag.Match(lang, langs); ok {
+		use = m
+	} else if counts[""] == 0 {
 		if len(langs) == 0 {
 			return nil, "", nil
 		}
-		sort.Strings(langs)
 		use = langs[0]
 	}
 	n := int((space.DailyNumber("site:"+use, date) + uint64(skip)) % uint64(counts[use]))
-	line, err := store.NthDailyLine(ctx, q, use, n)
-	if errors.Is(err, store.ErrNotFound) {
-		return nil, "no_match", nil // the lines changed while this was read
+	var line store.DailyLine
+	found := false
+	for _, r := range raw[use] {
+		if n < rawCounts[r] {
+			if line, err = store.NthDailyLine(ctx, q, r, n); err != nil && !errors.Is(err, store.ErrNotFound) {
+				return nil, "", err
+			}
+			found = err == nil
+			break
+		}
+		n -= rawCounts[r]
 	}
-	if err != nil {
-		return nil, "", err
+	if !found {
+		return nil, "no_match", nil // the lines changed while this was read
 	}
 	return &dailyQuote{Text: line.Body, Source: line.Source, origin: "site"}, "", nil
 }
@@ -125,14 +155,29 @@ type dailyLinesInfo struct {
 	Max    int            `json:"max"`
 }
 
+// providerView is a built-in interface as the administrators see it.
+type providerView struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Languages []string `json:"languages"`
+	Site      string   `json:"site"`
+	Note      string   `json:"note"`
+	Enabled   bool     `json:"enabled"`
+	Refresh   string   `json:"refresh"`
+	Minutes   int      `json:"minutes"`
+	RPS       float64  `json:"rps"`
+	MaxRPS    float64  `json:"maxRps"`
+	SkipNew   bool     `json:"skipNew"`
+}
+
 type adminDailyResp struct {
-	Default   *siteDefault        `json:"default"`
-	Hosts     []string            `json:"hosts"`
-	Languages []string            `json:"languages"`
-	Allow     dailyAllow          `json:"allow"`
-	APIs      []apiView           `json:"apis"`
-	Presets   []dailyfetch.Preset `json:"presets"`
-	Lines     dailyLinesInfo      `json:"lines"`
+	Default        *siteDefault       `json:"default"`
+	Languages      []string           `json:"languages"`
+	KnownLanguages []langtag.Language `json:"knownLanguages"`
+	Allow          dailyAllow         `json:"allow"`
+	APIs           []apiView          `json:"apis"`
+	Providers      []providerView     `json:"providers"`
+	Lines          dailyLinesInfo     `json:"lines"`
 }
 
 func (s *server) adminDailyView(ctx context.Context) (adminDailyResp, error) {
@@ -140,19 +185,27 @@ func (s *server) adminDailyView(ctx context.Context) (adminDailyResp, error) {
 	if err != nil {
 		return adminDailyResp{}, err
 	}
-	counts, err := store.DailyLineCounts(ctx, s.opt.Store.Q())
+	rawCounts, err := store.DailyLineCounts(ctx, s.opt.Store.Q())
 	if err != nil {
 		return adminDailyResp{}, err
 	}
+	counts, _ := linesByLang(rawCounts)
 	total := 0
 	for _, n := range counts {
 		total += n
 	}
-	apis := make([]apiView, len(site.APIs))
-	for i, a := range site.APIs {
+	all := site.all()
+	apis := make([]apiView, len(all))
+	for i, a := range all {
 		apis[i] = viewOfAPI(a)
 	}
-	return adminDailyResp{site.Default, site.Hosts, site.Languages, *site.Allow, apis, dailyfetch.Presets(), dailyLinesInfo{total, counts, store.MaxDailyLines}}, nil
+	providers := make([]providerView, 0, 2)
+	for _, p := range dailyfetch.Providers() {
+		st := site.Providers[p.ID]
+		b := builtinAPI(p, st)
+		providers = append(providers, providerView{p.ID, p.Name, p.Languages, p.Site, p.Note, st.Enabled, b.Refresh, b.RefreshMinutes, b.RPS, p.RPS, b.SkipNew})
+	}
+	return adminDailyResp{site.Default, site.Languages, langtag.Known(), *site.Allow, apis, providers, dailyLinesInfo{total, counts, store.MaxDailyLines}}, nil
 }
 
 func (s *server) adminGetDaily(c *call) {
@@ -175,12 +228,54 @@ func (s *server) adminAnswerDaily(c *call) {
 	writeJSON(c.w, http.StatusOK, out)
 }
 
-func (s *server) checkSiteDefault(ctx context.Context, d *siteDefault) error {
+// checkDefaultAPIs checks a default that is an interface for each language:
+// the languages are tags (written in canonical form), the ids are those of
+// interfaces that are set up.
+func checkDefaultAPIs(d *siteDefault, site *siteDaily) error {
+	if d.Space != "" || d.Source != nil || len(d.APIs) == 0 {
+		return &space.InvalidError{Msg: "a default that is an interface needs apis, the id of an interface for each language (\"\" for all the others), and no space or source"}
+	}
+	if len(d.APIs) > 31 {
+		return &space.InvalidError{Msg: "at most 30 languages"}
+	}
+	known := map[string]bool{}
+	for _, a := range site.all() {
+		known[a.ID] = true
+	}
+	out := make(map[string]string, len(d.APIs))
+	for l, id := range d.APIs {
+		if l != "" {
+			cl, ok := langtag.Canonical(l)
+			if !ok {
+				return badLangError(l)
+			}
+			if _, dup := out[cl]; dup {
+				return &space.InvalidError{Msg: fmt.Sprintf("%s is given twice", cl)}
+			}
+			l = cl
+		}
+		if !known[id] {
+			return &codedError{code: codeAPINotFound, msg: fmt.Sprintf("there is no interface %q; choose one of the interfaces that are set up", id)}
+		}
+		out[l] = id
+	}
+	d.APIs = out
+	return nil
+}
+
+// checkSiteDefault checks a default against the interfaces that are set up
+// (site) and the spaces there are; apis are written as canonical tags.
+func (s *server) checkSiteDefault(ctx context.Context, d *siteDefault, site *siteDaily) error {
+	if d.Kind != "api" && d.APIs != nil {
+		return &space.InvalidError{Msg: "only a default that is an interface has apis"}
+	}
 	switch d.Kind {
 	case "list":
 		if d.Space != "" || d.Source != nil {
 			return &space.InvalidError{Msg: "a default that is a list has no space or source"}
 		}
+	case "api":
+		return checkDefaultAPIs(d, site)
 	case "space":
 		if !page.ValidID(d.Space) || d.Source == nil {
 			return &space.InvalidError{Msg: "a default that is a space needs the space and a source (folder, tag or type)"}
@@ -204,7 +299,7 @@ func (s *server) checkSiteDefault(ctx context.Context, d *siteDefault) error {
 		}
 		d.Source = &checked
 	default:
-		return &space.InvalidError{Msg: "kind is space or list"}
+		return &space.InvalidError{Msg: "kind is space, list or api"}
 	}
 	return nil
 }
@@ -221,9 +316,9 @@ func (s *server) adminPutDailyLines(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, false, maxLinesBody) {
 		return
 	}
-	lang := space.NormalLang(req.Lang)
-	if lang != "" && !space.ValidLang(lang) {
-		bad(c, "lang is a language code like zh or en, or empty for any")
+	lang, ok := lineLang(req.Lang)
+	if !ok {
+		s.fail(c.w, badLangError(req.Lang))
 		return
 	}
 	var texts []string
@@ -252,6 +347,10 @@ func (s *server) adminPutDailyLines(c *call) {
 	}
 	ctx := c.r.Context()
 	err := s.opt.Store.Tx(ctx, func(q store.Q) error {
+		// The lines of this language saved before the rule (as `zh`) are replaced too.
+		if err := deleteLangLines(ctx, q, lang); err != nil {
+			return err
+		}
 		_, err := store.ReplaceDailyLines(ctx, q, lang, lines)
 		return err
 	})
@@ -264,6 +363,30 @@ func (s *server) adminPutDailyLines(c *call) {
 		return
 	}
 	s.adminAnswerDaily(c)
+}
+
+// lineLang is the language of lines: a canonical tag, "" for any.
+func lineLang(s string) (string, bool) {
+	if s == "" {
+		return "", true
+	}
+	return langtag.Canonical(s)
+}
+
+// deleteLangLines removes the lines of a language, as saved in any form of its tag.
+func deleteLangLines(ctx context.Context, q store.Q, lang string) error {
+	counts, err := store.DailyLineCounts(ctx, q)
+	if err != nil {
+		return err
+	}
+	for l := range counts {
+		if l == lang || lang != "" && l != "" && langtag.Read(l) == lang {
+			if err := store.DeleteDailyLines(ctx, q, l); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func firstWords(s string) string {
@@ -326,12 +449,13 @@ func splitMarkdown(text string) []string {
 
 // adminDeleteDailyLines removes the lines of one language (`?lang=`, empty for those for any).
 func (s *server) adminDeleteDailyLines(c *call) {
-	lang := space.NormalLang(c.r.URL.Query().Get("lang"))
-	if lang != "" && !space.ValidLang(lang) {
-		bad(c, "lang is a language code like zh or en, or empty for any")
+	lang, ok := lineLang(c.r.URL.Query().Get("lang"))
+	if !ok {
+		s.fail(c.w, badLangError(c.r.URL.Query().Get("lang")))
 		return
 	}
-	if err := store.DeleteDailyLines(c.r.Context(), s.opt.Store.Q(), lang); err != nil {
+	ctx := c.r.Context()
+	if err := s.opt.Store.Tx(ctx, func(q store.Q) error { return deleteLangLines(ctx, q, lang) }); err != nil {
 		s.fail(c.w, err)
 		return
 	}

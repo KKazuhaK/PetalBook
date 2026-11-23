@@ -128,6 +128,7 @@ var routeTable = []route{
 	{"DELETE", "/api/admin/daily/lines", admin, true, false, false, (*server).adminDeleteDailyLines},
 	{"PUT", "/api/admin/daily/apis/{id}", admin, true, false, false, (*server).adminPutDailyAPI},
 	{"DELETE", "/api/admin/daily/apis/{id}", admin, true, false, false, (*server).adminDeleteDailyAPI},
+	{"PUT", "/api/admin/daily/providers/{id}", admin, true, false, false, (*server).adminPutDailyProvider},
 	{"POST", "/api/admin/daily/try", admin, true, false, false, (*server).adminTryDailyAPI},
 	{"GET", "/api/admin/status", admin, true, false, false, (*server).adminStatus},
 

@@ -996,7 +996,7 @@ func (e *unreadableEditError) Unwrap() error { return e.InvalidError }
 
 // tooFull is the refusal of a change that would make a settings file too large.
 func tooFull(f settingsFile) error {
-	return &settingsFullError{&InvalidError{"the change would make " + f.rel + " larger than " + strconv.Itoa(f.max) + " bytes, more than the server reads; nothing was changed"}}
+	return &settingsFullError{&InvalidError{Msg: "the change would make " + f.rel + " larger than " + strconv.Itoa(f.max) + " bytes, more than the server reads; nothing was changed"}}
 }
 
 // planSettingsEdit reads a settings file, lets edit change the document and
@@ -1074,7 +1074,7 @@ func planSettingsEdit(root string, f settingsFile, h *healer, edit func(top *yam
 			return data, true, rep, nil
 		}
 		if !aliased {
-			return nil, false, nil, &unreadableEditError{&InvalidError{"the change cannot be written to " + f.rel + " in a form the server can read again without changing what other entries of the file mean (its anchors and aliases stand in the way); nothing was changed"}}
+			return nil, false, nil, &unreadableEditError{&InvalidError{Msg: "the change cannot be written to " + f.rel + " in a form the server can read again without changing what other entries of the file mean (its anchors and aliases stand in the way); nothing was changed"}}
 		}
 	}
 }

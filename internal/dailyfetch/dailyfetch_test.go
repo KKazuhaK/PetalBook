@@ -38,12 +38,12 @@ func okAPI() API {
 }
 
 func TestCheckAPI(t *testing.T) {
-	a, host, err := CheckAPI(okAPI(), false)
-	if err != nil || host != "v1.hitokoto.cn" || a.Refresh != RefreshDaily || a.RPS != DefaultRPS {
-		t.Fatalf("%+v %q %v", a, host, err)
+	a, err := CheckAPI(okAPI(), false)
+	if err != nil || a.Refresh != RefreshDaily || a.RPS != DefaultRPS || a.Lang != "zh-Hans" || a.LangMap == nil {
+		t.Fatalf("%+v %v", a, err)
 	}
-	if _, host, err := CheckAPI(API{ID: "q", Name: "q", URL: "https://api.example.org:8443/q/{lang}?l={lang}", Text: "[0].q", Refresh: RefreshMinutes, RefreshMinutes: 15, RPS: 3}, false); err != nil || host != "api.example.org:8443" {
-		t.Fatalf("%q %v", host, err)
+	if _, err := CheckAPI(API{ID: "q", Name: "q", URL: "https://api.example.org:8443/q/{lang}?l={lang}", Text: "[0].q", Refresh: RefreshMinutes, RefreshMinutes: 15, RPS: 3}, false); err != nil {
+		t.Fatal(err)
 	}
 	for name, mod := range map[string]func(*API){
 		"http":                                func(a *API) { a.URL = "http://v1.hitokoto.cn/" },
@@ -68,6 +68,13 @@ func TestCheckAPI(t *testing.T) {
 		"a bad id":                            func(a *API) { a.ID = "A B" },
 		"no name":                             func(a *API) { a.Name = " " },
 		"a bad lang":                          func(a *API) { a.Lang = "中文" },
+		"a lang that is no language":          func(a *API) { a.Lang = "cn" },
+		"a lang with an underscore":           func(a *API) { a.Lang = "zh_CN" },
+		"a map from no language":              func(a *API) { a.LangMap = map[string]string{"chinese": "zh"} },
+		"a map to no code":                    func(a *API) { a.LangMap = map[string]string{"zh-Hans": ""} },
+		"a map to a long code":                func(a *API) { a.LangMap = map[string]string{"zh-Hans": strings.Repeat("a", 36)} },
+		"a map to a code with a slash":        func(a *API) { a.LangMap = map[string]string{"zh-Hans": "zh/../x"} },
+		"a map to the same language twice":    func(a *API) { a.LangMap = map[string]string{"zh": "a", "zh-Hans": "b"} },
 		"a link that is a path":               func(a *API) { a.Link = "/x/{uuid}" },
 		"a link to a script":                  func(a *API) { a.Link = "javascript:alert({uuid})" },
 		"refresh that is none":                func(a *API) { a.Refresh = "weekly" },
@@ -88,34 +95,54 @@ func TestCheckAPI(t *testing.T) {
 	} {
 		a := okAPI()
 		mod(&a)
-		if _, _, err := CheckAPI(a, false); err == nil {
+		if _, err := CheckAPI(a, false); err == nil {
 			t.Errorf("%s is accepted", name)
 		}
 	}
 	// Tests may use a server of their own.
 	a = okAPI()
 	a.URL = "http://127.0.0.1:1234/"
-	if _, _, err := CheckAPI(a, true); err != nil {
+	if _, err := CheckAPI(a, true); err != nil {
 		t.Fatal(err)
 	}
-	for _, h := range []string{"", "a/b", "https://x", "x y", "a@b", "x?y"} {
-		if _, err := CheckHost(h); err == nil {
-			t.Errorf("host %q is accepted", h)
+	// A bad language is refused with its code.
+	for _, l := range []string{"cn", "english", "zh_CN"} {
+		a := okAPI()
+		a.Lang = l
+		var ce *CodedError
+		if _, err := CheckAPI(a, false); !errors.As(err, &ce) || ce.Code != CodeBadLanguage {
+			t.Errorf("%s: %v", l, err)
 		}
 	}
-	if h, err := CheckHost(" Example.COM:8080 "); err != nil || h != "example.com:8080" {
-		t.Fatalf("%q %v", h, err)
+	// Tags are written in canonical form, and so are the keys of a language map.
+	a = okAPI()
+	a.Lang, a.LangMap = "ZH-cn", map[string]string{"zh": "zh_CN", "EN-gb": "en"}
+	if got, err := CheckAPI(a, false); err != nil || got.Lang != "zh-CN" || len(got.LangMap) != 2 || got.LangMap["zh-Hans"] != "zh_CN" || got.LangMap["en-GB"] != "en" {
+		t.Fatalf("%+v %v", got, err)
 	}
-	// The presets are valid as they are.
-	for _, p := range Presets() {
-		if _, _, err := CheckAPI(p.API, false); err != nil {
-			t.Errorf("preset %s: %v", p.ID, err)
+}
+
+// The built-in interfaces are valid as they are, and are what the contract says.
+func TestProviders(t *testing.T) {
+	ps := Providers()
+	for _, p := range ps {
+		if _, err := CheckAPI(p.API, false); err != nil {
+			t.Errorf("%s: %v", p.ID, err)
+		}
+		if !p.Builtin {
+			t.Errorf("%s is not built in", p.ID)
 		}
 	}
-	ps := Presets()
-	if len(ps) != 2 || ps[0].ID != "hitokoto" || ps[0].RPS != 20 || ps[0].Link != "https://hitokoto.cn?uuid={uuid}" || !strings.HasPrefix(ps[0].URL, "https://international.v1.hitokoto.cn/") ||
-		ps[1].ID != "quotable" || ps[1].Text != "[0].content" || ps[1].Author != "[0].author" || ps[1].RPS != 3 || ps[1].Link != "" || ps[1].URL != "https://api.quotable.io/quotes/random" {
+	if len(ps) != 2 || ps[0].ID != "hitokoto" || ps[0].RPS != 20 || ps[0].Link != "https://hitokoto.cn?uuid={uuid}" || ps[0].URL != "https://international.v1.hitokoto.cn/?max_length=80" ||
+		ps[0].Text != "hitokoto" || ps[0].Source != "from" || ps[0].Author != "from_who" || fmt.Sprint(ps[0].Languages) != "[zh-Hans zh-Hant]" || ps[0].Site != "https://hitokoto.cn" ||
+		ps[1].ID != "quotable" || ps[1].Text != "[0].content" || ps[1].Author != "[0].author" || ps[1].RPS != 3 || ps[1].Link != "" || ps[1].URL != "https://api.quotable.io/quotes/random" || ps[1].Lang != "en" {
 		t.Fatalf("%+v", ps)
+	}
+	if p, ok := ProviderByID("quotable"); !ok || p.ID != "quotable" {
+		t.Fatal("ProviderByID")
+	}
+	if _, ok := ProviderByID("nope"); ok {
+		t.Fatal("ProviderByID")
 	}
 }
 
@@ -306,9 +333,9 @@ func newSvc(t *testing.T) *svc {
 	return s
 }
 
-func (s *svc) api() (API, []string) {
+func (s *svc) api() API {
 	return API{ID: "t", Name: "t", URL: s.URL + "/q?lang={lang}&d={date}", Text: "text", Source: "from", Author: "who", Link: "https://example.org/{uuid}",
-		Refresh: RefreshDaily, SkipNew: true, RPS: 100, Enabled: true, Headers: []Header{{"X-Api-Key", "secret-1"}}}, []string{strings.TrimPrefix(s.URL, "http://")}
+		Refresh: RefreshDaily, SkipNew: true, RPS: 100, Enabled: true, Headers: []Header{{"X-Api-Key", "secret-1"}}}
 }
 
 func jsonOK(w http.ResponseWriter, body string) {
@@ -337,10 +364,10 @@ func fetcher(b Backing) (*Fetcher, *clk) {
 
 func TestMemoryAskedOncePerPeriodAndLanguage(t *testing.T) {
 	s := newSvc(t)
-	a, hosts := s.api()
+	a := s.api()
 	f, _ := fetcher(nil)
 	ctx := context.Background()
-	r1, err := f.Get(ctx, a, hosts, "zh", "2026-11-23", 0)
+	r1, err := f.Get(ctx, a, "zh", "2026-11-23", 0)
 	if err != nil || r1.Text != "item 1" || r1.Source != "src" || r1.Author != "me" || r1.Link != "https://example.org/u1" || r1.Stale {
 		t.Fatalf("%+v %v", r1, err)
 	}
@@ -356,7 +383,7 @@ func TestMemoryAskedOncePerPeriodAndLanguage(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if r, err := f.Get(ctx, a, hosts, "zh", "2026-11-23", 0); err != nil || r != r1 {
+			if r, err := f.Get(ctx, a, "zh", "2026-11-23", 0); err != nil || r != r1 {
 				t.Errorf("%+v %v", r, err)
 			}
 		}()
@@ -366,28 +393,28 @@ func TestMemoryAskedOncePerPeriodAndLanguage(t *testing.T) {
 		t.Fatalf("%d requests", s.hits.Load())
 	}
 	// Another language or day is asked for on its own.
-	if r, _ := f.Get(ctx, a, hosts, "en", "2026-11-23", 0); r.Text != "item 2" {
+	if r, _ := f.Get(ctx, a, "en", "2026-11-23", 0); r.Text != "item 2" {
 		t.Fatalf("%+v", r)
 	}
-	if r, _ := f.Get(ctx, a, hosts, "zh", "2026-11-24", 0); r.Text != "item 3" {
+	if r, _ := f.Get(ctx, a, "zh", "2026-11-24", 0); r.Text != "item 3" {
 		t.Fatalf("%+v", r)
 	}
 	// Another interface (a different path) does not share what was kept.
 	a2 := a
 	a2.Text = "from"
-	if r, _ := f.Get(ctx, a2, hosts, "zh", "2026-11-23", 0); r.Text != "src" {
+	if r, _ := f.Get(ctx, a2, "zh", "2026-11-23", 0); r.Text != "src" {
 		t.Fatalf("%+v", r)
 	}
 }
 
 func TestSkipAsksAgainOnlyWhenTheInterfaceSaysSo(t *testing.T) {
 	s := newSvc(t)
-	a, hosts := s.api()
+	a := s.api()
 	f, _ := fetcher(nil)
 	ctx := context.Background()
-	r0, _ := f.Get(ctx, a, hosts, "en", "2026-11-23", 0)
-	r1, _ := f.Get(ctx, a, hosts, "en", "2026-11-23", 1)
-	r1b, _ := f.Get(ctx, a, hosts, "en", "2026-11-23", 1)
+	r0, _ := f.Get(ctx, a, "en", "2026-11-23", 0)
+	r1, _ := f.Get(ctx, a, "en", "2026-11-23", 1)
+	r1b, _ := f.Get(ctx, a, "en", "2026-11-23", 1)
 	if r0.Text != "item 1" || r1.Text != "item 2" || r1b != r1 || s.hits.Load() != 2 {
 		t.Fatalf("%v %v %v %d", r0.Text, r1.Text, r1b.Text, s.hits.Load())
 	}
@@ -395,16 +422,16 @@ func TestSkipAsksAgainOnlyWhenTheInterfaceSaysSo(t *testing.T) {
 	a.SkipNew = false
 	a.URL += "&x=1" // another interface to the cache
 	f2, _ := fetcher(nil)
-	q0, _ := f2.Get(ctx, a, hosts, "en", "2026-11-23", 0)
+	q0, _ := f2.Get(ctx, a, "en", "2026-11-23", 0)
 	hits := s.hits.Load()
-	q5, _ := f2.Get(ctx, a, hosts, "en", "2026-11-23", 5)
+	q5, _ := f2.Get(ctx, a, "en", "2026-11-23", 5)
 	if q5.Text != q0.Text || s.hits.Load() != hits {
 		t.Fatalf("%v %v %d", q0.Text, q5.Text, s.hits.Load()-hits)
 	}
 	// A skip beyond what is kept as a request is clamped, not a way to ask for ever more.
 	a.SkipNew = true
 	for k := 0; k < 3; k++ {
-		f2.Get(ctx, a, hosts, "en", "2026-11-23", 100000+k)
+		f2.Get(ctx, a, "en", "2026-11-23", 100000+k)
 	}
 	if got := s.hits.Load() - hits; got != 1 {
 		t.Fatalf("%d requests for skips beyond the largest", got)
@@ -413,10 +440,10 @@ func TestSkipAsksAgainOnlyWhenTheInterfaceSaysSo(t *testing.T) {
 
 func TestRefreshPeriods(t *testing.T) {
 	s := newSvc(t)
-	a, hosts := s.api()
+	a := s.api()
 	ctx := context.Background()
 	text := func(f *Fetcher, date string) string {
-		r, err := f.Get(ctx, a, hosts, "en", date, 0)
+		r, err := f.Get(ctx, a, "en", date, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -461,35 +488,35 @@ func TestRefreshPeriods(t *testing.T) {
 
 func TestStateDatabaseKeepsWhatWasSaidAcrossARestart(t *testing.T) {
 	s := newSvc(t)
-	a, hosts := s.api()
+	a := s.api()
 	b := newMem()
 	ctx := context.Background()
 	f, c := fetcher(b)
-	r1, err := f.Get(ctx, a, hosts, "zh", "2026-11-23", 0)
+	r1, err := f.Get(ctx, a, "zh", "2026-11-23", 0)
 	if err != nil || b.puts != 1 {
 		t.Fatalf("%v %d", err, b.puts)
 	}
 	// A restart: nothing in memory. The same text, no request.
 	f2, _ := fetcher(b)
-	r2, err := f2.Get(ctx, a, hosts, "zh", "2026-11-23", 0)
+	r2, err := f2.Get(ctx, a, "zh", "2026-11-23", 0)
 	if err != nil || r2.Text != r1.Text || !r2.Fetched.Equal(r1.Fetched) || s.hits.Load() != 1 {
 		t.Fatalf("%+v %v %d", r2, err, s.hits.Load())
 	}
 	// The same through the first one with its memory gone.
 	f.ForgetMemory()
-	if r, _ := f.Get(ctx, a, hosts, "zh", "2026-11-23", 0); r.Text != r1.Text || s.hits.Load() != 1 {
+	if r, _ := f.Get(ctx, a, "zh", "2026-11-23", 0); r.Text != r1.Text || s.hits.Load() != 1 {
 		t.Fatalf("%+v %d", r, s.hits.Load())
 	}
 	// A change of the interface's address is another interface: it is asked.
 	a.URL += "&v=2"
-	if r, _ := f2.Get(ctx, a, hosts, "zh", "2026-11-23", 0); r.Text == r1.Text || s.hits.Load() != 2 {
+	if r, _ := f2.Get(ctx, a, "zh", "2026-11-23", 0); r.Text == r1.Text || s.hits.Load() != 2 {
 		t.Fatalf("%+v %d", r, s.hits.Load())
 	}
 	// Old rows are pruned, at most once an hour.
 	c.add(2 * time.Hour)
 	runs := len(b.prun)
-	f.Get(ctx, a, hosts, "zh", "2026-11-24", 0)
-	f.Get(ctx, a, hosts, "zh", "2026-11-25", 0)
+	f.Get(ctx, a, "zh", "2026-11-24", 0)
+	f.Get(ctx, a, "zh", "2026-11-25", 0)
 	if len(b.prun) != runs+1 {
 		t.Fatalf("%d prunes for two requests within an hour", len(b.prun)-runs)
 	}
@@ -500,18 +527,18 @@ func TestStateDatabaseKeepsWhatWasSaidAcrossARestart(t *testing.T) {
 
 func TestFailureServesTheLastThingSaidThenBacksOff(t *testing.T) {
 	s := newSvc(t)
-	a, hosts := s.api()
+	a := s.api()
 	b := newMem()
 	ctx := context.Background()
 	f, c := fetcher(b)
 	// Nothing was ever said and it fails: nothing to give.
 	s.mode.Store("500")
-	if _, err := f.Get(ctx, a, hosts, "zh", "2026-11-23", 0); !errors.Is(err, ErrUnavailable) {
+	if _, err := f.Get(ctx, a, "zh", "2026-11-23", 0); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("%v", err)
 	}
 	// While it waits, nothing is asked, however often it is looked at.
 	for i := 0; i < 10; i++ {
-		if _, err := f.Get(ctx, a, hosts, "zh", "2026-11-23", 0); !errors.Is(err, ErrUnavailable) {
+		if _, err := f.Get(ctx, a, "zh", "2026-11-23", 0); !errors.Is(err, ErrUnavailable) {
 			t.Fatal(err)
 		}
 	}
@@ -523,12 +550,12 @@ func TestFailureServesTheLastThingSaidThenBacksOff(t *testing.T) {
 	for i, w := range waits {
 		c.add(w - time.Second)
 		before := s.hits.Load()
-		f.Get(ctx, a, hosts, "zh", "2026-11-23", 0)
+		f.Get(ctx, a, "zh", "2026-11-23", 0)
 		if s.hits.Load() != before {
 			t.Fatalf("asked %d s early (round %d)", 1, i)
 		}
 		c.add(time.Second)
-		f.Get(ctx, a, hosts, "zh", "2026-11-23", 0)
+		f.Get(ctx, a, "zh", "2026-11-23", 0)
 		if s.hits.Load() != before+1 {
 			t.Fatalf("not asked when the wait was over (round %d)", i)
 		}
@@ -536,19 +563,19 @@ func TestFailureServesTheLastThingSaidThenBacksOff(t *testing.T) {
 	// The interface comes back: a success clears the wait.
 	s.mode.Store("ok")
 	c.add(time.Hour)
-	good, err := f.Get(ctx, a, hosts, "zh", "2026-11-23", 0)
+	good, err := f.Get(ctx, a, "zh", "2026-11-23", 0)
 	if err != nil || good.Stale || !strings.HasPrefix(good.Text, "item") {
 		t.Fatalf("%+v %v", good, err)
 	}
 	// Then it fails on the next day: the last thing it said, marked as such, with when.
 	s.mode.Store("500")
-	got, err := f.Get(ctx, a, hosts, "zh", "2026-11-24", 0)
+	got, err := f.Get(ctx, a, "zh", "2026-11-24", 0)
 	if err != nil || !got.Stale || got.Text != good.Text || !got.Fetched.Equal(good.Fetched) {
 		t.Fatalf("%+v %v", got, err)
 	}
 	// Also after a restart (from the state database), and for a skip.
 	f.ForgetMemory()
-	got, err = f.Get(ctx, a, hosts, "zh", "2026-11-25", 3)
+	got, err = f.Get(ctx, a, "zh", "2026-11-25", 3)
 	if err != nil || !got.Stale || got.Text != good.Text {
 		t.Fatalf("%+v %v", got, err)
 	}
@@ -557,58 +584,51 @@ func TestFailureServesTheLastThingSaidThenBacksOff(t *testing.T) {
 	f.ForgetMemory()
 	b2 := newMem() // what the old rows were is gone with the pruning
 	f2, _ := fetcher(b2)
-	if _, err := f2.Get(ctx, a, hosts, "zh", "2026-12-25", 0); !errors.Is(err, ErrUnavailable) {
+	if _, err := f2.Get(ctx, a, "zh", "2026-12-25", 0); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("%v", err)
 	}
 	old := newMem()
 	old.last[a.key()+"|zh"] = Result{Quote: Quote{Text: "old"}, Fetched: c.now().Add(-Retention - time.Minute)}
 	f3, _ := fetcher(old)
 	f3.SetClock(c.now)
-	if _, err := f3.Get(ctx, a, hosts, "zh", "2026-12-25", 0); !errors.Is(err, ErrUnavailable) {
+	if _, err := f3.Get(ctx, a, "zh", "2026-12-25", 0); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("an answer older than the retention was used: %v", err)
 	}
 }
 
 func TestEveryKindOfBadAnswerIsAFailure(t *testing.T) {
 	s := newSvc(t)
-	a, hosts := s.api()
+	a := s.api()
 	ctx := context.Background()
 	for _, m := range []string{"500", "html", "big", "redirect", "garbage"} {
 		s.mode.Store(m)
 		f, _ := fetcher(nil)
-		if _, err := f.Get(ctx, a, hosts, "en", "2026-11-23", 0); !errors.Is(err, ErrUnavailable) {
+		if _, err := f.Get(ctx, a, "en", "2026-11-23", 0); !errors.Is(err, ErrUnavailable) {
 			t.Errorf("%s: %v", m, err)
 		}
-	}
-	// A host taken off the list is not asked.
-	s.mode.Store("ok")
-	f, _ := fetcher(nil)
-	before := s.hits.Load()
-	if _, err := f.Get(ctx, a, []string{"other.example"}, "en", "2026-11-23", 0); !errors.Is(err, ErrUnavailable) || s.hits.Load() != before {
-		t.Fatalf("%v", err)
 	}
 }
 
 func TestOutgoingRateLimitServesWhatIsKeptInsteadOfWaiting(t *testing.T) {
 	s := newSvc(t)
-	a, hosts := s.api()
+	a := s.api()
 	a.RPS = 2 // a bucket of two, filling at two a second
 	ctx := context.Background()
 	f, c := fetcher(nil)
 	for skip := 0; skip < 2; skip++ {
-		if r, err := f.Get(ctx, a, hosts, "en", "2026-11-23", skip); err != nil || r.Stale {
+		if r, err := f.Get(ctx, a, "en", "2026-11-23", skip); err != nil || r.Stale {
 			t.Fatalf("%d: %+v %v", skip, r, err)
 		}
 	}
 	// The bucket is empty: the last thing it said is given, at once, no request.
 	start := time.Now()
-	r, err := f.Get(ctx, a, hosts, "en", "2026-11-23", 2)
+	r, err := f.Get(ctx, a, "en", "2026-11-23", 2)
 	if err != nil || !r.Stale || r.Text != "item 2" || s.hits.Load() != 2 || time.Since(start) > time.Second {
 		t.Fatalf("%+v %v %d", r, err, s.hits.Load())
 	}
 	// Half a second fills one token (2 a second): one more request.
 	c.add(500 * time.Millisecond)
-	if r, err := f.Get(ctx, a, hosts, "en", "2026-11-23", 3); err != nil || r.Stale || s.hits.Load() != 3 {
+	if r, err := f.Get(ctx, a, "en", "2026-11-23", 3); err != nil || r.Stale || s.hits.Load() != 3 {
 		t.Fatalf("%+v %v %d", r, err, s.hits.Load())
 	}
 	// With nothing kept at all there is nothing to give.
@@ -616,9 +636,9 @@ func TestOutgoingRateLimitServesWhatIsKeptInsteadOfWaiting(t *testing.T) {
 	a2 := a
 	a2.URL += "&other=1"
 	f2, _ := fetcher(b)
-	f2.Get(ctx, a2, hosts, "en", "2026-11-23", 0)
-	f2.Get(ctx, a2, hosts, "en", "2026-11-23", 1)
-	if _, err := f2.Get(ctx, a2, hosts, "fr", "2026-11-23", 2); !errors.Is(err, ErrRateLimited) {
+	f2.Get(ctx, a2, "en", "2026-11-23", 0)
+	f2.Get(ctx, a2, "en", "2026-11-23", 1)
+	if _, err := f2.Get(ctx, a2, "fr", "2026-11-23", 2); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("%v", err)
 	}
 	// The limit is for the interface, whoever asks, in every language: the French ask above used the same bucket.
@@ -628,7 +648,7 @@ func TestOutgoingRateLimitServesWhatIsKeptInsteadOfWaiting(t *testing.T) {
 	a3.RPS = 100
 	f3, _ := fetcher(nil)
 	for skip := 0; skip < 50; skip++ {
-		if r, err := f3.Get(ctx, a3, hosts, "en", "2026-11-23", skip); err != nil || r.Stale {
+		if r, err := f3.Get(ctx, a3, "en", "2026-11-23", skip); err != nil || r.Stale {
 			t.Fatalf("%d: %+v %v", skip, r, err)
 		}
 	}
@@ -637,21 +657,21 @@ func TestOutgoingRateLimitServesWhatIsKeptInsteadOfWaiting(t *testing.T) {
 func TestTimeout(t *testing.T) {
 	s := newSvc(t)
 	s.mode.Store("slow")
-	a, hosts := s.api()
+	a := s.api()
 	f, _ := fetcher(nil)
 	f.SetTimeout(150 * time.Millisecond)
 	start := time.Now()
-	if _, err := f.Get(context.Background(), a, hosts, "en", "2026-11-23", 0); !errors.Is(err, ErrUnavailable) || time.Since(start) > 2*time.Second {
+	if _, err := f.Get(context.Background(), a, "en", "2026-11-23", 0); !errors.Is(err, ErrUnavailable) || time.Since(start) > 2*time.Second {
 		t.Fatalf("%v after %v", err, time.Since(start))
 	}
 }
 
 func TestProbeShowsTheRawAnswerAndWhatThePathsTakeOut(t *testing.T) {
 	s := newSvc(t)
-	a, hosts := s.api()
+	a := s.api()
 	f, c := fetcher(nil)
 	ctx := context.Background()
-	res, err := f.Probe(ctx, a, hosts, "zh", "2026-11-23")
+	res, err := f.Probe(ctx, a, "zh", "2026-11-23")
 	if err != nil || !res.OK || res.Status != 200 || res.Quote == nil || res.Quote.Text != "item 1" || res.Quote.Link != "https://example.org/u1" || res.PathErrors != nil ||
 		!strings.Contains(res.Raw, `"item 1"`) || res.RawTruncated || !strings.Contains(res.URL, "lang=zh&d=2026-11-23") || strings.Contains(res.URL, "secret") {
 		t.Fatalf("%+v %v", res, err)
@@ -659,7 +679,7 @@ func TestProbeShowsTheRawAnswerAndWhatThePathsTakeOut(t *testing.T) {
 	// Wrong paths are said, by field, and the rest still comes out.
 	a.Text, a.Source, a.Author, a.Link = "text", "nope.x", "who", "https://example.org/{missing}"
 	c.add(time.Second)
-	res, _ = f.Probe(ctx, a, hosts, "", "2026-11-23")
+	res, _ = f.Probe(ctx, a, "", "2026-11-23")
 	// Source, author and link are optional: a path with no value there is no
 	// value, not a path error.
 	if !res.OK || res.Quote == nil || res.Quote.Text == "" || res.Quote.Source != "" || res.Quote.Link != "" || res.PathErrors != nil || res.Code != "" {
@@ -667,7 +687,7 @@ func TestProbeShowsTheRawAnswerAndWhatThePathsTakeOut(t *testing.T) {
 	}
 	a.Text = "wrong.path"
 	c.add(time.Second)
-	res, _ = f.Probe(ctx, a, hosts, "", "2026-11-23")
+	res, _ = f.Probe(ctx, a, "", "2026-11-23")
 	if res.OK || res.Quote != nil || res.PathError("text") == nil || res.Message == "" || res.Raw == "" {
 		t.Fatalf("%+v", res)
 	}
@@ -675,14 +695,14 @@ func TestProbeShowsTheRawAnswerAndWhatThePathsTakeOut(t *testing.T) {
 	long := API{ID: "l", Name: "l", URL: s.URL + "/", Text: "text"}
 	s.mode.Store("big")
 	c.add(time.Second)
-	res, _ = f.Probe(ctx, long, hosts, "", "")
+	res, _ = f.Probe(ctx, long, "", "")
 	if len(res.Message) == 0 || res.OK {
 		t.Fatalf("%+v", res)
 	}
 	for _, m := range []string{"html", "500", "garbage", "redirect"} {
 		s.mode.Store(m)
 		c.add(time.Second)
-		res, _ := f.Probe(ctx, long, hosts, "", "")
+		res, _ := f.Probe(ctx, long, "", "")
 		if res.OK || res.Message == "" || res.Quote != nil {
 			t.Errorf("%s: %+v", m, res)
 		}
@@ -690,7 +710,7 @@ func TestProbeShowsTheRawAnswerAndWhatThePathsTakeOut(t *testing.T) {
 	// It is limited: a few at a time.
 	limited := false
 	for i := 0; i < 10; i++ {
-		if _, err := f.Probe(ctx, long, hosts, "", ""); errors.Is(err, ErrRateLimited) {
+		if _, err := f.Probe(ctx, long, "", ""); errors.Is(err, ErrRateLimited) {
 			limited = true
 		}
 	}
@@ -713,10 +733,10 @@ func TestTheServersFetcherRefusesPrivateAddresses(t *testing.T) {
 	f := New(nil)
 	for _, h := range []string{hostport, "localhost" + port, "[::1]" + port, "0.0.0.0" + port, "127.1" + port} {
 		a := API{ID: "t", Name: "t", URL: "https://" + h + "/", Text: "text", Refresh: RefreshDaily, RPS: 100}
-		if _, err := f.Get(context.Background(), a, []string{h}, "en", "2026-11-23", 0); !errors.Is(err, ErrUnavailable) {
+		if _, err := f.Get(context.Background(), a, "en", "2026-11-23", 0); !errors.Is(err, ErrUnavailable) {
 			t.Errorf("%s: %v", h, err)
 		}
-		res, err := f.Probe(context.Background(), a, []string{h}, "en", "2026-11-23")
+		res, err := f.Probe(context.Background(), a, "en", "2026-11-23")
 		if err != nil && !errors.Is(err, ErrRateLimited) {
 			t.Fatal(err)
 		}
@@ -729,7 +749,7 @@ func TestTheServersFetcherRefusesPrivateAddresses(t *testing.T) {
 		t.Fatalf("the server inside was reached %d times", hit.Load())
 	}
 	a := API{ID: "t", Name: "t", URL: strings.Replace(srv.URL, "https://", "http://", 1) + "/", Text: "text", Refresh: RefreshDaily, RPS: 100}
-	if _, err := f.Get(context.Background(), a, []string{hostport}, "en", "2026-11-23", 0); !errors.Is(err, ErrUnavailable) {
+	if _, err := f.Get(context.Background(), a, "en", "2026-11-23", 0); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("%v", err)
 	}
 }
@@ -748,37 +768,32 @@ func TestValidID(t *testing.T) {
 func TestTheHostIsCheckedOnTheAddressUsed(t *testing.T) {
 	f, _ := fetcher(nil)
 	a := API{ID: "t", Name: "t", URL: "HTTP://h{lang}.test/q", Text: "text"}
-	if _, err := f.request(context.Background(), a, []string{"hen.test"}, "fr", "2026-11-23"); err == nil {
+	if _, err := f.request(context.Background(), a, "fr", "2026-11-23"); err == nil {
 		t.Fatal("a host made with the reader's language was asked")
 	}
-	if _, err := f.request(context.Background(), a, []string{"hfr.test"}, "fr", "2026-11-23"); err == nil {
+	if _, err := f.request(context.Background(), a, "fr", "2026-11-23"); err == nil {
 		t.Fatal("a host made with the reader's language was asked")
 	}
 	ok := API{ID: "t", Name: "t", URL: "http://h.test/q/{lang}?d={date}", Text: "text"}
-	req, err := f.request(context.Background(), ok, []string{"h.test"}, "zh-hant", "2026-11-23")
+	req, err := f.request(context.Background(), ok, "zh-hant", "2026-11-23")
 	if err != nil || req.URL.String() != "http://h.test/q/zh-hant?d=2026-11-23" {
 		t.Fatalf("%v %v", req, err)
 	}
 	// A day that is not one is not put in the address.
-	if req, err := f.request(context.Background(), ok, []string{"h.test"}, "en", "../x?"); err != nil || strings.Contains(req.URL.String(), "x") {
+	if req, err := f.request(context.Background(), ok, "en", "../x?"); err != nil || strings.Contains(req.URL.String(), "x") {
 		t.Fatalf("%v %v", req, err)
 	}
 }
 
-// A trial is held to the list of hosts, like any request, and an answer that
-// repeats a header's value does not show it.
-func TestProbeKeepsToTheHostsAndHidesHeaderValues(t *testing.T) {
+// An answer that repeats a header's value is not shown, in a trial or to readers.
+func TestProbeHidesHeaderValues(t *testing.T) {
 	s := newSvc(t)
-	a, hosts := s.api()
+	a := s.api()
 	f, c := fetcher(nil)
 	ctx := context.Background()
-	res, err := f.Probe(ctx, a, []string{"other.example"}, "en", "2026-11-23")
-	if err != nil || res.OK || !strings.Contains(res.Message, "not on the list") || s.hits.Load() != 0 {
-		t.Fatalf("%+v %v %d", res, err, s.hits.Load())
-	}
 	s.mode.Store("echo")
 	c.add(time.Second)
-	res, err = f.Probe(ctx, a, hosts, "en", "2026-11-23")
+	res, err := f.Probe(ctx, a, "en", "2026-11-23")
 	if err != nil || s.hits.Load() != 1 || res.OK || res.Raw != "" || res.Quote != nil || res.Message != MsgRepeatsHeader || res.PathError("text") == nil {
 		t.Fatalf("%+v %v", res, err)
 	}
@@ -786,7 +801,7 @@ func TestProbeKeepsToTheHostsAndHidesHeaderValues(t *testing.T) {
 		t.Fatalf("a header value is shown: %+v", res)
 	}
 	// Nor does what is fetched for the readers: such an answer is refused.
-	if r, err := f.Get(ctx, a, hosts, "en", "2026-11-23", 0); !errors.Is(err, ErrUnavailable) || strings.Contains(r.Text, "secret-1") {
+	if r, err := f.Get(ctx, a, "en", "2026-11-23", 0); !errors.Is(err, ErrUnavailable) || strings.Contains(r.Text, "secret-1") {
 		t.Fatalf("%+v %v", r, err)
 	}
 }
@@ -795,25 +810,25 @@ func TestProbeKeepsToTheHostsAndHidesHeaderValues(t *testing.T) {
 // in them costs no more requests and keeps nothing more.
 func TestLanguagesTheAnswerIgnoresAreOneLane(t *testing.T) {
 	s := newSvc(t)
-	a, hosts := s.api()
+	a := s.api()
 	a.URL = s.URL + "/q?d={date}"
 	f, _ := fetcher(nil)
 	ctx := context.Background()
 	for _, l := range []string{"en", "fr", "de", "zz-top", ""} {
-		if r, err := f.Get(ctx, a, hosts, l, "2026-11-23", 0); err != nil || r.Text != "item 1" {
+		if r, err := f.Get(ctx, a, l, "2026-11-23", 0); err != nil || r.Text != "item 1" {
 			t.Fatalf("%s: %+v %v", l, r, err)
 		}
 	}
 	// An interface in a language of its own is asked in it, whoever asks.
 	b := a
-	b.URL, b.Lang = s.URL+"/q?l={lang}&d={date}", "zh"
+	b.URL, b.Lang = s.URL+"/q?l={lang}&d={date}", "zh-Hans"
 	for _, l := range []string{"en", "fr"} {
-		f.Get(ctx, b, hosts, l, "2026-11-23", 0)
+		f.Get(ctx, b, l, "2026-11-23", 0)
 	}
 	if s.hits.Load() != 2 {
 		t.Fatalf("%d requests", s.hits.Load())
 	}
-	if _, ok := s.paths.Load("/q?l=zh&d=2026-11-23"); !ok {
+	if _, ok := s.paths.Load("/q?l=zh-Hans&d=2026-11-23"); !ok {
 		t.Fatal("not asked in its own language")
 	}
 	if l, _, _ := f.Lanes(); l != 2 {
@@ -821,8 +836,8 @@ func TestLanguagesTheAnswerIgnoresAreOneLane(t *testing.T) {
 	}
 	// For one that takes every language, the language is one the server has.
 	c := API{URL: "https://x/{lang}"}
-	for in, want := range map[string]string{"fr": "fr", "zh-hant": "zh", "xx": "zh", "": "zh"} {
-		if got := c.LaneLang(in, []string{"zh", "fr"}); got != want {
+	for in, want := range map[string]string{"fr": "fr", "fr-CA": "fr", "zh-CN": "zh-Hans", "zh-hant": "zh-Hant", "xx": "zh-Hans", "": "zh-Hans"} {
+		if got := c.LaneLang(in, []string{"zh-Hans", "zh-Hant", "fr"}); got != want {
 			t.Errorf("%q: %q, want %q", in, got, want)
 		}
 	}
@@ -861,12 +876,12 @@ func TestLanesAreBounded(t *testing.T) {
 func TestAReaderWhoLeavesIsNoFailure(t *testing.T) {
 	s := newSvc(t)
 	s.mode.Store("delay")
-	a, hosts := s.api()
+	a := s.api()
 	f, _ := fetcher(nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	f.Get(ctx, a, hosts, "en", "2026-11-23", 0)
-	r, err := f.Get(context.Background(), a, hosts, "en", "2026-11-23", 0)
+	f.Get(ctx, a, "en", "2026-11-23", 0)
+	r, err := f.Get(context.Background(), a, "en", "2026-11-23", 0)
 	if err != nil || r.Stale || r.Text != "item 1" || s.hits.Load() != 1 {
 		t.Fatalf("%+v %v %d", r, err, s.hits.Load())
 	}
@@ -891,11 +906,11 @@ func (m *trimMem) Trim(_ context.Context, _ string, keep int) error {
 // The answers kept of an interface are trimmed now and then.
 func TestTheKeptAnswersAreTrimmed(t *testing.T) {
 	s := newSvc(t)
-	a, hosts := s.api()
+	a := s.api()
 	b := &trimMem{mem: newMem()}
 	f, _ := fetcher(b)
 	for skip := 0; skip <= trimEvery; skip++ {
-		f.Get(context.Background(), a, hosts, "en", "2026-11-23", skip)
+		f.Get(context.Background(), a, "en", "2026-11-23", skip)
 	}
 	if b.trims.Load() != 1 {
 		t.Fatalf("%d trims", b.trims.Load())
@@ -906,13 +921,13 @@ func TestTheKeptAnswersAreTrimmed(t *testing.T) {
 func extract(a API, body []byte) (Quote, error) { return Extract(a, body, "", "") }
 
 // An echo service: it answers what body makes of the request's key.
-func newEcho(t *testing.T, body func(key string) string) (API, []string) {
+func newEcho(t *testing.T, body func(key string) string) API {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, body(r.Header.Get("Authorization")))
 	}))
 	t.Cleanup(srv.Close)
-	return API{ID: "e", Name: "e", URL: srv.URL + "/echo", Text: "text", Refresh: RefreshDaily, RPS: 100}, []string{strings.TrimPrefix(srv.URL, "http://")}
+	return API{ID: "e", Name: "e", URL: srv.URL + "/echo", Text: "text", Refresh: RefreshDaily, RPS: 100}
 }
 
 // Each way an answer can repeat a request header's value, through any path,
@@ -955,40 +970,40 @@ func TestNoPathOrLinkOrTrialRepeatsAHeaderValue(t *testing.T) {
 			func(k string) string { return `{"text":"fine","h":` + k + `}` }},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			a, hosts := newEcho(t, c.body)
+			a := newEcho(t, c.body)
 			a.Headers = []Header{{"Authorization", c.secret}}
 			if c.mod != nil {
 				c.mod(&a)
 			}
-			if _, _, err := CheckAPI(a, true); err != nil {
+			if _, err := CheckAPI(a, true); err != nil {
 				t.Fatal(err)
 			}
 			f, _ := fetcher(nil)
 			ctx := context.Background()
-			res, err := f.Probe(ctx, a, hosts, "en", "2026-11-23")
+			res, err := f.Probe(ctx, a, "en", "2026-11-23")
 			if err != nil || res.OK || res.Raw != "" || res.Message != MsgRepeatsHeader || len(res.PathErrors) == 0 {
 				t.Fatalf("%+v %v", res, err)
 			}
 			if shown := strings.ToLower(fmt.Sprint(res)); strings.Contains(shown, strings.ToLower(c.secret[7:15])) {
 				t.Fatalf("a piece of the value is shown: %s", shown)
 			}
-			if r, err := f.Get(ctx, a, hosts, "en", "2026-11-23", 0); !errors.Is(err, ErrUnavailable) || r.Text != "" {
+			if r, err := f.Get(ctx, a, "en", "2026-11-23", 0); !errors.Is(err, ErrUnavailable) || r.Text != "" {
 				t.Fatalf("%+v %v", r, err)
 			}
 		})
 	}
 	// An answer that is clean is shown as it came; one that repeats a value in
 	// a name given twice (only the last of which is decoded) is not.
-	a, hosts := newEcho(t, func(string) string { return `{"text":"fine","x":"\/a"}` })
+	a := newEcho(t, func(string) string { return `{"text":"fine","x":"\/a"}` })
 	a.Headers = []Header{{"Authorization", "Bearer sk-live-0123456789"}}
 	f, c := fetcher(nil)
-	if res, err := f.Probe(context.Background(), a, hosts, "en", "2026-11-23"); err != nil || !res.OK || res.Raw != `{"text":"fine","x":"\/a"}` {
+	if res, err := f.Probe(context.Background(), a, "en", "2026-11-23"); err != nil || !res.OK || res.Raw != `{"text":"fine","x":"\/a"}` {
 		t.Fatalf("%+v %v", res, err)
 	}
-	a, hosts = newEcho(t, func(k string) string { return `{"text":"fine","x":"B` + k[1:] + `","x":"y"}` })
+	a = newEcho(t, func(k string) string { return `{"text":"fine","x":"B` + k[1:] + `","x":"y"}` })
 	a.Headers = []Header{{"Authorization", "Bearer sk-live-0123456789"}}
 	c.add(time.Second)
-	if res, err := f.Probe(context.Background(), a, hosts, "en", "2026-11-23"); err != nil || res.OK || res.Raw != "" || res.Message != MsgRepeatsHeader || res.Quote == nil {
+	if res, err := f.Probe(context.Background(), a, "en", "2026-11-23"); err != nil || res.OK || res.Raw != "" || res.Message != MsgRepeatsHeader || res.Quote == nil {
 		t.Fatalf("%+v %v", res, err)
 	}
 }
@@ -1000,7 +1015,7 @@ func TestALinkNeverTakesAHeader(t *testing.T) {
 		"https://e.org/{header}", "https://e.org/{[0].Headers[1]}", "https://e.org/{x-api-key}"} {
 		a := okAPI()
 		a.Link = link
-		if _, _, err := CheckAPI(a, false); err == nil {
+		if _, err := CheckAPI(a, false); err == nil {
 			t.Errorf("%s is accepted", link)
 		}
 	}
@@ -1021,5 +1036,68 @@ func TestNumericHostShorthandsAreRefused(t *testing.T) {
 		if got := numericHost(h); got != want {
 			t.Errorf("numericHost(%q) = %v, want %v", h, got, want)
 		}
+	}
+}
+
+// The language mapping is applied before {lang} is filled in, in the address
+// and in the link; a language it does not name is matched to one it does, and
+// with no match the tag itself is used.
+func TestLangMapIsAppliedBeforeFilling(t *testing.T) {
+	s := newSvc(t)
+	a := s.api()
+	a.URL = s.URL + "/q?l={lang}&d={date}"
+	a.Link = "https://example.org/{lang}/{uuid}"
+	a.LangMap = map[string]string{"zh-Hans": "zh", "zh-Hant": "zh-tw"}
+	f, _ := fetcher(nil)
+	ctx := context.Background()
+	for lang, want := range map[string]string{"zh-Hans": "zh", "zh-Hant": "zh-tw", "zh-CN": "zh", "zh-HK": "zh-tw", "en": "en", "": "en", "pt-BR": "pt-BR"} {
+		req, err := f.request(ctx, a, lang, "2026-11-23")
+		if err != nil || req.URL.Query().Get("l") != want {
+			t.Errorf("%q: %v %v, want %q", lang, req, err, want)
+		}
+	}
+	r, err := f.Get(ctx, a, "zh-Hant", "2026-11-23", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.paths.Load("/q?l=zh-tw&d=2026-11-23"); !ok {
+		t.Fatal("the service was not asked in its own code")
+	}
+	if !strings.HasPrefix(r.Link, "https://example.org/zh-tw/") {
+		t.Fatalf("%q", r.Link)
+	}
+	res, err := f.Probe(ctx, a, "zh-Hans", "2026-11-23")
+	if err != nil || !strings.Contains(res.URL, "l=zh&") {
+		t.Fatalf("%+v %v", res, err)
+	}
+	// What the service is asked is part of what is kept: another mapping is another answer.
+	b := a
+	b.LangMap = map[string]string{"zh-Hant": "zh-hk"}
+	if a.key() == b.key() {
+		t.Fatal("two mappings share what is kept")
+	}
+}
+
+// An interface may contact only the host and port of its own address, whatever
+// is written in the rest of it, and nothing else needs to be allowed.
+func TestAnInterfaceContactsOnlyItsOwnHostAndPort(t *testing.T) {
+	s := newSvc(t)
+	a := s.api()
+	f, _ := fetcher(nil)
+	ctx := context.Background()
+	if _, err := f.Get(ctx, a, "en", "2026-11-23", 0); err != nil {
+		t.Fatalf("an address needs no list of hosts: %v", err)
+	}
+	for _, u := range []string{"http://h{lang}.test/q", "http://h.test:{date}/q", "http://{lang}@h.test/q"} {
+		b := API{ID: "t", Name: "t", URL: u, Text: "text"}
+		if _, err := f.request(ctx, b, "fr", "2026-11-23"); err == nil {
+			t.Errorf("%s was asked", u)
+		}
+	}
+	// Another port is another host: the one written is the only one.
+	b := a
+	b.URL = strings.Replace(a.URL, "127.0.0.1:", "127.0.0.1:{lang}", 1)
+	if _, err := f.request(ctx, b, "1", "2026-11-23"); err == nil {
+		t.Error("a port made with the language was asked")
 	}
 }

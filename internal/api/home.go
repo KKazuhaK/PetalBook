@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
+	"github.com/KKazuhaK/PetalBook/internal/langtag"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
@@ -54,6 +55,11 @@ func (s *server) putDailySettings(c *call) {
 	}
 	var cfg *space.DailyConfig
 	if err := json.Unmarshal(raw, &cfg); err != nil {
+		var inv *space.InvalidError
+		if errors.As(err, &inv) && inv.Code != "" {
+			writeCoded(c.w, &codedError{code: inv.Code, msg: "daily: " + inv.Msg})
+			return
+		}
 		writeError(c.w, http.StatusBadRequest, "invalid", "daily: "+err.Error())
 		return
 	}
@@ -98,10 +104,13 @@ func (s *server) getDaily(c *call) {
 		}
 		skip = n
 	}
-	lang := space.NormalLang(v.Get("lang"))
-	if lang != "" && !space.ValidLang(lang) {
-		writeError(c.w, http.StatusBadRequest, "invalid", "lang must be a language code like zh or en")
-		return
+	lang := ""
+	if raw := v.Get("lang"); raw != "" {
+		var ok bool
+		if lang, ok = langtag.Canonical(raw); !ok {
+			writeCoded(c.w, &codedError{code: space.CodeBadLanguage, msg: "lang is a language tag like zh-Hans, en or pt-BR"})
+			return
+		}
 	}
 	tz, ok := parseTZ(v)
 	if !ok {
