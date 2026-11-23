@@ -146,7 +146,9 @@ func TestAMeasurementCountsBytesAndPagesAndTellsTheHook(t *testing.T) {
 			t.Fatalf("%+v %+v (%d bytes)", u, tn, n)
 		}
 		mu.Lock()
-		if len(events) != 1 || events[0].Everyone || len(events[0].Touched) != 1 || events[0].Touched[0].UserID != owner.ID {
+		// One event for the new space (its owner and tenant), one for the measurement.
+		if len(events) != 2 || events[0].Everyone || len(events[0].Touched) != 1 || events[0].Touched[0] != (store.Touched{UserID: owner.ID, TenantID: store.DefaultTenantID}) ||
+			events[1].Everyone || len(events[1].Touched) != 1 || events[1].Touched[0].UserID != owner.ID {
 			t.Fatalf("%+v", events)
 		}
 		mu.Unlock()

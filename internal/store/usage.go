@@ -152,6 +152,14 @@ func settleOwner(ctx context.Context, q Q, spaceID string) error {
 	return addUsage(ctx, q, ds...)
 }
 
+// SpaceCountedFor is whom a space's usage is counted for: its first owner (""
+// when none) and its tenant. Code that changes who owns a space reads it before
+// and after, to tell the quotas whose rows the change reached.
+func SpaceCountedFor(ctx context.Context, q Q, spaceID string) (Touched, error) {
+	r, err := readSpaceUsage(ctx, q, spaceID)
+	return Touched{UserID: r.user, TenantID: r.tenant}, err
+}
+
 // forgetSpaceUsage takes a space that is about to be deleted out of the rows it
 // is counted in.
 func forgetSpaceUsage(ctx context.Context, q Q, spaceID string) error {

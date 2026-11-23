@@ -4579,8 +4579,11 @@ Measured per person and per tenant: spaces owned, bytes, pages.
   3.1's `507 space_full` for its own limit; a byte quota that refuses later will
   answer `507 quota_exceeded`.
 - **Over** means more than the limit (at it is not). Whether a row is over is
-  looked at after each measurement, after a change of a person's limits or a
-  tenant's totals, after a quota setting changes (everyone in its scope, one
+  looked at after each measurement; after a change of whom a space is counted
+  for (a space made or deleted, a transfer, an owner added, promoted, demoted or
+  removed: the person it was counted for, the person it is now, and the
+  tenant); after a new account (the person and the tenant's people); after a
+  change of a person's limits or a tenant's totals, after a quota setting changes (everyone in its scope, one
   read of the usage rows in pages of 500), and after the recount; it is stored
   (`usage.over`), so `over=1` is an index range and a crossing is reported once:
   a row that stays over, and is looked at again, writes nothing.

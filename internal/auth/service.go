@@ -121,6 +121,10 @@ type Service struct {
 	capSecretErr atomic.Bool
 	flagsIgnored atomic.Bool
 
+	// onNewUser is told whose usage rows a new account reached (its own and its
+	// tenant's people), after it is made; nil: nobody is told.
+	onNewUser func(ctx context.Context, touched []store.Touched)
+
 	// adminMu serialises changes that must keep one enabled administrator.
 	adminMu sync.Mutex
 	// credMu serialises changes that must keep one way to sign in.
@@ -326,6 +330,10 @@ func (s *Service) SetupOpen(ctx context.Context) (bool, error) {
 	}
 	return !ok, nil
 }
+
+// OnNewUser installs what is told whose usage a new account reached (the quotas
+// look at the person and at the tenant's people). Call it before serving.
+func (s *Service) OnNewUser(fn func(ctx context.Context, touched []store.Touched)) { s.onNewUser = fn }
 
 func (s *Service) markUsersExist() {
 	s.setupMu.Lock()
@@ -647,6 +655,9 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 	}
 	stg.Commit(u.ID)
 	s.markUsersExist()
+	if s.onNewUser != nil {
+		s.onNewUser(context.WithoutCancel(ctx), []store.Touched{{UserID: u.ID, TenantID: u.TenantID}})
+	}
 	return &u, nil
 }
 

@@ -734,6 +734,7 @@ func (m *Manager) CreateWith(ctx context.Context, userID, name, inbox string) (I
 		return Info{}, err
 	}
 	stg.Commit(userID)
+	m.usageAdded(ctx, store.Touched{UserID: userID, TenantID: u.TenantID})
 	return Info{ID: stg.ID(), Name: stg.Name(), Role: perm.Owner, DirectRole: perm.Owner, Perms: perm.All, Inbox: inbox, Sync: "local"}, nil
 }
 

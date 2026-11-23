@@ -637,3 +637,78 @@ func TestAPersonsOwnLimitAnswersToALaterLockOrRestriction(t *testing.T) {
 		}
 	})
 }
+
+// A transfer, a change of owners and a new person change whom usage is counted
+// for at once, so whether anyone is over is looked at then, not at the next
+// measurement or recount: the new owner's notices, the old owner's, the tenant's
+// people and the audit log are right straight away.
+func TestOverFollowsTransfersOwnersAndNewPeopleAtOnce(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		admB := mustUserID(t, a, "adm-b")
+		notices := func(c *client, scope string) []string {
+			var out []string
+			for _, n := range usageOf(t, c)["notices"].([]any) {
+				if m := n.(map[string]any); m["scope"] == scope {
+					out = append(out, m["quota"].(string))
+				}
+			}
+			return out
+		}
+		audited := func(user, quota string) int {
+			a.auth.FlushAudit(context.Background())
+			n := 0
+			for _, row := range f.root.audit(t, "quota_exceeded") {
+				d := row["detail"].(map[string]any)
+				if d["quota"] == quota && (user == "" && d["scope"] == "tenant" || row["user"] == user) {
+					n++
+				}
+			}
+			return n
+		}
+		f.root.do("PUT", "/api/admin/settings/quota.pagesPerPerson", map[string]any{"value": 3}).want(t, 200, "")
+		addPages(t, f.admB, f.spaceB, 4)
+		f.measure(t, f.root, f.spaceB)
+		if got := notices(f.admB, "person"); len(got) != 1 || got[0] != "pages" {
+			t.Fatalf("%v", got)
+		}
+		// The space is handed to mem-b: the pages are theirs now, and they are over.
+		f.root.do("POST", "/api/admin/spaces/"+f.spaceB+"/transfer", map[string]any{"userId": f.userB}).want(t, 204, "")
+		if got := notices(f.memB, "person"); len(got) != 1 || got[0] != "pages" {
+			t.Fatalf("the new owner: %v", got)
+		}
+		if got := notices(f.admB, "person"); len(got) != 0 {
+			t.Fatalf("the old owner: %v", got)
+		}
+		if audited(f.userB, "pages") != 1 {
+			t.Fatal("the new owner's crossing is not in the audit log")
+		}
+		// mem-b makes adm-b (an editor since the transfer) an owner again and
+		// leaves: adm-b is the one owner, and the space moves back.
+		f.memB.do("PATCH", "/api/spaces/"+f.spaceB+"/members/"+admB, map[string]any{"role": "owner"}).want(t, 200, "")
+		f.memB.do("DELETE", "/api/spaces/"+f.spaceB+"/members/"+f.userB, nil).want(t, 204, "")
+		if got := notices(f.memB, "person"); len(got) != 0 {
+			t.Fatalf("the old owner: %v", got)
+		}
+		if got := notices(f.admB, "person"); len(got) != 1 || got[0] != "pages" {
+			t.Fatalf("the new owner: %v", got)
+		}
+		if audited(admB, "pages") != 2 {
+			t.Fatal("the second crossing of adm-b is not in the audit log")
+		}
+		// The tenant may have 2 people; a third arrives and the tenant is over at once.
+		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"quota": map[string]any{"people": 2}}).want(t, 200, "")
+		if got := notices(f.memB, "tenant"); len(got) != 0 {
+			t.Fatalf("%v", got)
+		}
+		inv := f.admB.do("POST", "/api/invites", map[string]any{"role": "member"}).want(t, 201, "")
+		a.newClient("").do("POST", "/api/invites/accept", map[string]any{"token": inv.body["token"], "username": "third-b", "name": "Third", "password": pw}).want(t, 201, "")
+		if got := notices(f.memB, "tenant"); len(got) != 1 || got[0] != "people" {
+			t.Fatalf("the tenant's people: %v", got)
+		}
+		if audited("", "people") != 1 {
+			t.Fatal("the tenant's crossing is not in the audit log")
+		}
+	})
+}

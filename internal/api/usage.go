@@ -11,6 +11,7 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/auth"
 	"github.com/KKazuhaK/PetalBook/internal/quota"
 	"github.com/KKazuhaK/PetalBook/internal/settings"
+	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
@@ -27,6 +28,9 @@ func (s *server) bindQuota() {
 		s.auth.Audit(auth.AuditEvent{Kind: "quota_exceeded", User: user, Tenant: tenant, Detail: detail})
 	}, s.log)
 	s.spaces.SetQuota(s.quota.SpaceLimits, s.quota.Handle)
+	s.auth.OnNewUser(func(ctx context.Context, touched []store.Touched) {
+		s.quota.Handle(ctx, spaces.UsageEvent{Touched: touched})
+	})
 	if n := s.opt.MaxSpaces; n != nil {
 		v := int64(*n)
 		s.settings.Bind(settings.QuotaSpacesPerPerson, settings.SiteBinding{

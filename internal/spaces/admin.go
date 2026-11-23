@@ -190,11 +190,18 @@ func (m *Manager) Transfer(ctx context.Context, sc store.Scope, id, userID strin
 	m.adminMu.Lock()
 	defer m.adminMu.Unlock()
 	var touched []string
+	var before, after store.Touched
 	err = m.opt.Store.Tx(ctx, func(q store.Q) error {
 		if err := store.LockSpace(ctx, q, id); err != nil {
 			return err
 		}
-		touched, err = store.TransferOwnership(ctx, q, id, u.ID, m.opt.Now())
+		if before, err = store.SpaceCountedFor(ctx, q, id); err != nil {
+			return err
+		}
+		if touched, err = store.TransferOwnership(ctx, q, id, u.ID, m.opt.Now()); err != nil {
+			return err
+		}
+		after, err = store.SpaceCountedFor(ctx, q, id)
 		return err
 	})
 	if errors.Is(err, store.ErrNotFound) {
@@ -204,6 +211,7 @@ func (m *Manager) Transfer(ctx context.Context, sc store.Scope, id, userID strin
 		return err
 	}
 	m.MembershipChanged(touched...)
+	m.usageMoved(ctx, before, after)
 	m.forgetAuthor(u.ID)
 	m.mu.Lock()
 	e := m.open[id]
@@ -270,6 +278,7 @@ func (m *Manager) DeleteSpace(ctx context.Context, sc store.Scope, id string) (*
 	stamp := m.opt.Now().UTC().Format("20060102T150405Z")
 	trash := filepath.Join(m.opt.DataDir, "trash")
 	var members []string
+	var counted store.Touched
 	var draftsFile string
 	err = m.opt.Store.Tx(ctx, func(q store.Q) error {
 		if err := store.LockSpace(ctx, q, id); err != nil {
@@ -282,6 +291,9 @@ func (m *Manager) DeleteSpace(ctx context.Context, sc store.Scope, id string) (*
 		var err error
 		if draftsFile, err = m.saveDrafts(ctx, q, id, trash, stamp); err != nil {
 			return fmt.Errorf("could not keep the drafts of the space: %w", err)
+		}
+		if counted, err = store.SpaceCountedFor(ctx, q, id); err != nil {
+			return err
 		}
 		members, err = store.DeleteSpace(ctx, q, sc, id)
 		return err
@@ -297,6 +309,7 @@ func (m *Manager) DeleteSpace(ctx context.Context, sc store.Scope, id string) (*
 		return nil, err
 	}
 	m.MembershipChanged(members...)
+	m.usageAdded(ctx, counted)
 	m.spaceChanged(id)
 	m.setSync(id, "")
 

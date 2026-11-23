@@ -8,9 +8,10 @@ package spaces
 // tenant's, when the tenant has a limit), however many spaces there are.
 //
 // Bytes and pages are measured in the background (sizes.go) and only warn:
-// after each measurement, and after the daily recount of every row, a hook is
-// told whom the numbers reached, and the code that owns the limits (the API)
-// looks at them.
+// after each measurement, after a space is made, deleted or handed to another
+// first owner (a transfer, a change of members), and after the daily recount of
+// every row, a hook is told whom the numbers reached, and the code that owns the
+// limits (the API) looks at them.
 
 import (
 	"context"
@@ -97,6 +98,24 @@ func (m *Manager) checkSpaceQuota(ctx context.Context, u store.User) error {
 		}
 	}
 	return nil
+}
+
+// usageMoved tells the usage hook, after a change of who owns a space
+// committed, whom it reached: the person the space was counted for before and
+// the one after (nothing when they are the same), and its tenant.
+func (m *Manager) usageMoved(ctx context.Context, before, after store.Touched) {
+	if m.quota.usage == nil || before == after {
+		return
+	}
+	m.quota.usage(context.WithoutCancel(ctx), UsageEvent{Touched: []store.Touched{before, after}})
+}
+
+// usageAdded tells the usage hook that a change added to (or took from) the
+// rows of t: a new space, a deleted one.
+func (m *Manager) usageAdded(ctx context.Context, t store.Touched) {
+	if m.quota.usage != nil {
+		m.quota.usage(context.WithoutCancel(ctx), UsageEvent{Touched: []store.Touched{t}})
+	}
 }
 
 // RecountUsage puts the usage table right from the rows it summarises (the daily
