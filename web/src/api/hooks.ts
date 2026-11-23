@@ -10,7 +10,7 @@ import { api, ApiError, spaceApi } from './client'
 import { parseTagColor } from '../lib/tagColors.ts'
 import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
 import { propsOfMeta } from '../lib/pageTypes.ts'
-import type { BatchPagesInput, ConnectRemoteInput, DailyPrefs, DailySettings, Favorite, FavoriteList, FavoriteRef, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, PutViewsInput, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
+import type { BatchPagesInput, ConnectRemoteInput, DailyPrefs, DailySettings, Favorite, FavoriteList, FavoriteRef, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, PutTemplateInput, PutViewsInput, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
 
 // Everything of one space is under ['space', id, …], so switching space never
 // shows another space's data and one invalidation covers a space.
@@ -32,6 +32,9 @@ export const keys = {
   tags: (space: string) => ['space', space, 'tags'] as const,
   pages: (space: string) => ['space', space, 'pages'] as const,
   types: (space: string) => ['space', space, 'types'] as const,
+  // The templates of the space with its default templates; one template (with its body) is under it.
+  templates: (space: string) => ['space', space, 'templates'] as const,
+  template: (space: string, name: string) => ['space', space, 'templates', name] as const,
   // The table view's listing: kept apart from the list and card listings, which
   // ask for less, and which an edit of a cell does not read again.
   table: (space: string, params: ListParams) => ['space', space, 'pages', 'table', params] as const,
@@ -643,6 +646,51 @@ export function useBindFolder() {
   const space = useSpaceId()
   const changed = useTypesChanged()
   return useMutation({ mutationFn: ({ folder, type }: { folder: string; type: string }) => spaceApi(space).bindFolder(folder, type), onSuccess: changed })
+}
+
+// --- templates -------------------------------------------------------------------
+
+// The templates (without bodies) and the default templates of folders and of quick notes.
+export function useTemplates(enabled = true) {
+  const space = useSpaceId()
+  const { read } = useSpacePermissions()
+  return useQuery({ queryKey: keys.templates(space), queryFn: ({ signal }) => spaceApi(space).templates(signal), staleTime: 15_000, enabled: enabled && space !== '' && read })
+}
+
+// One template with its body, for the editor: never kept once it is not looked at.
+export function useTemplate(name: string) {
+  const space = useSpaceId()
+  return useQuery({ queryKey: keys.template(space, name), queryFn: ({ signal }) => spaceApi(space).template(name, signal), staleTime: 0, gcTime: 0, enabled: space !== '' })
+}
+
+// A change of a template, of the defaults or a 409 (the template is not as it was opened) reads them again.
+function useTemplatesChanged() {
+  const qc = useQueryClient()
+  const space = useSpaceId()
+  return () => qc.invalidateQueries({ queryKey: keys.templates(space) })
+}
+const isConflict = (e: unknown) => e instanceof ApiError && e.code === 'conflict'
+
+export function useSaveTemplate() {
+  const space = useSpaceId()
+  const changed = useTemplatesChanged()
+  return useMutation({ mutationFn: ({ name, input }: { name: string; input: PutTemplateInput }) => spaceApi(space).putTemplate(name, input), onSuccess: changed, onError: (e) => (isConflict(e) ? void changed() : undefined) })
+}
+export function useDeleteTemplate() {
+  const space = useSpaceId()
+  const changed = useTemplatesChanged()
+  return useMutation({ mutationFn: ({ name, baseRev }: { name: string; baseRev: string }) => spaceApi(space).deleteTemplate(name, baseRev), onSuccess: changed, onError: (e) => (isConflict(e) ? void changed() : undefined) })
+}
+// `template` "" takes the default away.
+export function useSetFolderTemplate() {
+  const space = useSpaceId()
+  const changed = useTemplatesChanged()
+  return useMutation({ mutationFn: ({ folder, template }: { folder: string; template: string }) => spaceApi(space).setFolderTemplate(folder, template), onSuccess: changed, onError: () => void changed() })
+}
+export function useSetQuickNoteTemplate() {
+  const space = useSpaceId()
+  const changed = useTemplatesChanged()
+  return useMutation({ mutationFn: (template: string) => spaceApi(space).setQuickNoteTemplate(template), onSuccess: changed, onError: () => void changed() })
 }
 
 // A row with `partialProps` as the server gave them for the page (a response leaves them out when there
