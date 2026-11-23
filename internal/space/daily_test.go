@@ -380,6 +380,45 @@ func TestDailyConfigByLanguage(t *testing.T) {
 	if d := s.Daily(); d.All != nil || d.ByLang["zh"].Tag != "q" || strings.Contains(spaceYML(root), "\n  tag: q") {
 		t.Fatalf("%+v\n%s", d, spaceYML(root))
 	}
+	// "All languages" and some languages together: the first is the fallback.
+	root2 := t.TempDir()
+	s2 := openAt(t, root2)
+	mustCreate(t, s2, "zh", meta("title", "中文一"), "中\n")
+	mustCreate(t, s2, "any", meta("title", "For all"), "all\n")
+	zh2, any2 := "zh", "any"
+	if _, err := s2.SetDaily(Author{}, &DailyConfig{All: &DailySource{Folder: &any2}, ByLang: map[string]DailySource{"zh": {Folder: &zh2}}}); err != nil {
+		t.Fatal(err)
+	}
+	y2 := spaceYML(root2)
+	if !strings.Contains(y2, "folder: any") || !strings.Contains(y2, "zh:") {
+		t.Fatalf("%s", y2)
+	}
+	d2 := s2.Daily()
+	if d2.All == nil || *d2.All.Folder != "any" || *d2.ByLang["zh"].Folder != "zh" {
+		t.Fatalf("%+v", d2)
+	}
+	for lang, title := range map[string]string{"zh": "中文一", "zh-TW": "中文一", "en": "For all", "": "For all"} {
+		if p := mustDailyLang(t, s2, lang); p.Page.Title != title {
+			t.Errorf("%q: %s", lang, p.Page.Title)
+		}
+	}
+	// A move carries both.
+	if _, err := s2.MoveFolder(Author{}, "zh", "chinese"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s2.MoveFolder(Author{}, "any", "every"); err != nil {
+		t.Fatal(err)
+	}
+	if d := s2.Daily(); *d.All.Folder != "every" || *d.ByLang["zh"].Folder != "chinese" {
+		t.Fatalf("%+v\n%s", d, spaceYML(root2))
+	}
+	// Taking the fallback away leaves the languages, and the other way round.
+	if _, err := s2.SetDaily(Author{}, &DailyConfig{ByLang: map[string]DailySource{"zh": {Tag: "t"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if d := s2.Daily(); d.All != nil || strings.Contains(spaceYML(root2), "folder: every") {
+		t.Fatalf("%+v\n%s", d, spaceYML(root2))
+	}
 	for name, c := range map[string]DailyConfig{
 		"a bad code": {ByLang: map[string]DailySource{"chinese!": {Tag: "q"}}},
 		"a bad one":  {ByLang: map[string]DailySource{"en": {}}},

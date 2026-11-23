@@ -581,10 +581,29 @@ export function createMockServer(options: MockOptions = {}) {
 
   // --- the daily text of the whole server (what administrators give) ---
   // Only the default that is a list of lines is kept here: the real server also
-  // takes a space as the default and fetches from external interfaces, which a
-  // mock has nothing to fetch for.
-  const site = { lines: new Map<string, { body: string; source: string }[]>(), listDefault: false, hosts: [] as string[] }
+  // takes a space as the default, which a mock does not need.
+  interface SiteApi {
+    id: string
+    name: string
+    lang: string
+    url: string
+    headers: { name: string; value: string }[]
+    text: string
+    source: string
+    author: string
+    link: string
+    refresh: string
+    refreshMinutes: number
+    skipNew: boolean
+    rps: number
+    enabled: boolean
+  }
+  const site = { lines: new Map<string, { body: string; source: string }[]>(), listDefault: false, hosts: [] as string[], languages: ['zh', 'en'], apis: [] as SiteApi[] }
   const spaceDaily = new Map<string, { inherit: boolean; apis: string[] }>()
+  const PRESETS = [
+    { id: 'hitokoto', name: '一言', lang: 'zh', url: 'https://international.v1.hitokoto.cn/?max_length=80', text: 'hitokoto', source: 'from', author: 'from_who', link: 'https://hitokoto.cn?uuid={uuid}', refresh: 'daily', refreshMinutes: 0, skipNew: true, rps: 20, enabled: true, note: '' },
+    { id: 'quotable', name: 'Quotable', lang: 'en', url: 'https://api.quotable.io/quotes/random', text: '[0].content', source: '', author: '[0].author', link: '', refresh: 'daily', refreshMinutes: 0, skipNew: true, rps: 3, enabled: true, note: '' },
+  ]
   const siteView = () => {
     const byLang: Record<string, number> = {}
     let total = 0
@@ -592,7 +611,14 @@ export function createMockServer(options: MockOptions = {}) {
       if (list.length) byLang[l] = list.length
       total += list.length
     }
-    return { default: site.listDefault ? { kind: 'list' } : null, hosts: [...site.hosts], apis: [], lines: { total, byLang, max: 5000 } }
+    return {
+      default: site.listDefault ? { kind: 'list' } : null,
+      hosts: [...site.hosts],
+      languages: [...site.languages],
+      apis: site.apis.map(({ headers, ...rest }) => ({ ...rest, headers: headers.map((h) => ({ name: h.name, set: true })) })),
+      presets: PRESETS,
+      lines: { total, byLang, max: 5000 },
+    }
   }
   const dailyText = (space: SpaceRec, q: URLSearchParams): Record<string, unknown> => {
     const home = space.store.home
@@ -611,21 +637,35 @@ export function createMockServer(options: MockOptions = {}) {
     return { page: null, reason: 'no_source' }
   }
   const routeDailyPrefs = (space: SpaceRec, method: string, body: Record<string, unknown>): MockResponse => {
-    const cur = spaceDaily.get(space.id) ?? { inherit: true, apis: [] }
     if (method === 'PUT') {
       if (typeof body.inherit !== 'boolean' || !Array.isArray(body.apis)) throw new HttpError(400, 'invalid', '给 inherit 和 apis')
-      if (body.apis.length) throw new HttpError(400, 'invalid', `没有接口 ${String(body.apis[0])}：只能用管理员设好的`)
-      spaceDaily.set(space.id, { inherit: body.inherit, apis: [] })
+      const usable = new Set(site.apis.filter((a) => a.enabled).map((a) => a.id))
+      for (const id of body.apis) if (typeof id !== 'string' || !usable.has(id)) throw new HttpError(400, 'invalid', `没有接口 ${String(id)}：只能用管理员设好并启用的`)
+      spaceDaily.set(space.id, { inherit: body.inherit, apis: [...new Set(body.apis as string[])] })
     } else if (method !== 'GET') throw new HttpError(404, 'not_found', '没有这个接口')
-    const now = spaceDaily.get(space.id) ?? cur
-    return { status: 200, body: { inherit: now.inherit, apis: now.apis, available: [], default: site.listDefault ? { kind: 'list' } : null } }
+    const now = spaceDaily.get(space.id) ?? { inherit: true, apis: [] }
+    const available = site.apis.filter((a) => a.enabled)
+    return {
+      status: 200,
+      body: {
+        inherit: now.inherit,
+        apis: now.apis.filter((id) => available.some((a) => a.id === id)),
+        available: available.map((a) => ({ id: a.id, name: a.name, lang: a.lang })),
+        languages: [...site.languages],
+        default: site.listDefault ? { kind: 'list' } : null,
+      },
+    }
   }
   const routeSiteDaily = (method: string, path: string, url: URL, body: Record<string, unknown>): MockResponse => {
     if (path === '/admin/daily' && method === 'GET') return { status: 200, body: siteView() }
     if (path === '/admin/daily' && method === 'PUT') {
-      for (const k of Object.keys(body)) if (!['default', 'hosts', 'apis'].includes(k)) throw new HttpError(400, 'invalid', `不认识 ${k}`)
-      if ('apis' in body && !(Array.isArray(body.apis) && body.apis.length === 0)) throw new HttpError(400, 'invalid', 'the mock has no external interfaces')
+      for (const k of Object.keys(body)) if (!['default', 'hosts', 'languages'].includes(k)) throw new HttpError(400, 'invalid', `不认识 ${k}`)
       if ('hosts' in body && !(Array.isArray(body.hosts) && body.hosts.every((h) => typeof h === 'string'))) throw new HttpError(400, 'invalid', 'hosts 是主机名的列表')
+      let languages = site.languages
+      if ('languages' in body) {
+        if (!Array.isArray(body.languages) || body.languages.some((l) => typeof l !== 'string' || !validLang(l.toLowerCase()))) throw new HttpError(400, 'invalid', 'languages 是 zh、en 这样的语言代码的列表')
+        languages = [...new Set((body.languages as string[]).map((l) => l.toLowerCase()))]
+      }
       let listDefault = site.listDefault
       if ('default' in body) {
         const d = body.default
@@ -635,8 +675,77 @@ export function createMockServer(options: MockOptions = {}) {
       }
       if ('hosts' in body) site.hosts = (body.hosts as string[]).map((h) => h.trim().toLowerCase())
       site.listDefault = listDefault
+      site.languages = languages
       return { status: 200, body: siteView() }
     }
+    const apiOne = /^\/admin\/daily\/apis\/([^/]+)$/.exec(path)
+    if (apiOne && method === 'DELETE') {
+      const id = decodeURIComponent(apiOne[1])
+      if (!site.apis.some((a) => a.id === id)) throw new HttpError(404, 'not_found', '没有这个接口')
+      site.apis = site.apis.filter((a) => a.id !== id)
+      return { status: 200, body: siteView() }
+    }
+    if (apiOne && method === 'PUT') {
+      const id = decodeURIComponent(apiOne[1])
+      const old = site.apis.find((a) => a.id === id)
+      const bad = (m: string) => new HttpError(400, 'invalid', m)
+      if (body.id !== undefined && body.id !== id) throw bad('body 里的 id 和地址里的不一样')
+      if (!/^[a-z0-9_-]{1,32}$/.test(id)) throw bad('接口 id 是 1 到 32 个小写字母、数字、- 或 _')
+      const str = (k: string) => (typeof body[k] === 'string' ? (body[k] as string).trim() : '')
+      const name = str('name')
+      if (name === '' || Array.from(name).length > 100) throw bad('接口要有名字')
+      const lang = str('lang').toLowerCase()
+      if (lang !== '' && !validLang(lang)) throw bad('lang 是语言代码，或空')
+      const url = str('url')
+      let u: URL
+      try {
+        u = new URL(url.replaceAll('{lang}', 'en').replaceAll('{date}', '2026-01-01'))
+      } catch {
+        throw bad('这不是网址')
+      }
+      if (u.protocol !== 'https:' || u.username || u.password || u.hash || /\s/.test(url)) throw bad('网址要是 https，不带用户名')
+      const host = u.hostname.replace(/^\[|\]$/g, '')
+      if (host === 'localhost' || host.endsWith('.localhost') || /^(127\.|10\.|192\.168\.|169\.254\.|0\.0\.0\.0)/.test(host) || host === '::1') throw bad('服务器不会连内网或本机地址')
+      if (str('text') === '') throw bad('text 是正文的 JSON 路径，必填')
+      const refresh = str('refresh') || 'daily'
+      if (!['daily', 'hourly', 'minutes'].includes(refresh)) throw bad('refresh 是 daily、hourly 或 minutes')
+      const refreshMinutes = refresh === 'minutes' ? Number(body.refreshMinutes) : 0
+      if (refresh === 'minutes' && !(Number.isInteger(refreshMinutes) && refreshMinutes >= 1 && refreshMinutes <= 1440)) throw bad('refreshMinutes 是 1 到 1440')
+      const rps = body.rps === undefined || body.rps === 0 ? 1 : Number(body.rps)
+      if (!(rps >= 0.01 && rps <= 100)) throw bad('rps 是 0.01 到 100')
+      if (body.headers !== undefined && !Array.isArray(body.headers)) throw bad('headers 是列表')
+      const headers: { name: string; value: string }[] = []
+      for (const h of (body.headers ?? []) as Record<string, unknown>[]) {
+        const hn = typeof h.name === 'string' ? h.name : ''
+        if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,100}$/.test(hn) || ['host', 'content-length', 'transfer-encoding', 'connection', 'content-type'].includes(hn.toLowerCase())) throw bad(`${hn} 不能作请求头`)
+        if (headers.some((x) => x.name.toLowerCase() === hn.toLowerCase())) throw bad(`请求头 ${hn} 写了两次`)
+        let value = typeof h.value === 'string' ? h.value : undefined
+        if (value === undefined) value = old?.headers.find((x) => x.name.toLowerCase() === hn.toLowerCase())?.value
+        if (value === undefined) throw bad(`请求头 ${hn} 还没有值`)
+        headers.push({ name: hn, value })
+      }
+      if (!old && site.apis.length >= 50) throw bad('最多 50 个接口')
+      const made: SiteApi = {
+        id,
+        name,
+        lang,
+        url,
+        headers,
+        text: str('text'),
+        source: str('source'),
+        author: str('author'),
+        link: str('link'),
+        refresh,
+        refreshMinutes,
+        skipNew: body.skipNew === true,
+        rps,
+        enabled: typeof body.enabled === 'boolean' ? body.enabled : (old?.enabled ?? true),
+      }
+      site.apis = old ? site.apis.map((a) => (a.id === id ? made : a)) : [...site.apis, made]
+      if (!site.hosts.includes(u.host)) site.hosts.push(u.host)
+      return { status: 200, body: siteView() }
+    }
+    if (path === '/admin/daily/try' && method === 'POST') throw new HttpError(400, 'invalid', 'the mock does not make requests')
     if (path === '/admin/daily/lines' && method === 'PUT') {
       const lang = typeof body.lang === 'string' ? body.lang.toLowerCase() : ''
       if (lang !== '' && !validLang(lang)) throw new HttpError(400, 'invalid', 'lang 要是语言代码，或空')
@@ -1009,7 +1118,20 @@ export function createMockServer(options: MockOptions = {}) {
       return { status: 200, body: st.views(v.has('folder') ? (v.get('folder') ?? '') : undefined, v.get('tag') ?? undefined) }
     }
     if (rest === '/views' && method === 'PUT') return { status: 200, body: st.putViews(body) }
-    if (rest === '/daily' && method === 'GET') return { status: 200, body: dailyText(space, url.searchParams) }
+    if (rest === '/daily' && method === 'GET') {
+      const body = dailyText(space, url.searchParams)
+      // How long a browser may keep it: until the day ends where the asker is (tz, minutes east of UTC).
+      const tzRaw = url.searchParams.get('tz')
+      let age = 300
+      if (tzRaw !== null && tzRaw !== '') {
+        const tz = Number(tzRaw)
+        if (!/^-?\d+$/.test(tzRaw) || tz < -840 || tz > 840) throw new HttpError(400, 'invalid', 'tz 是东偏 UTC 的分钟数，-840 到 840')
+        const date = url.searchParams.get('date') ?? new Date(now()).toISOString().slice(0, 10)
+        age = Math.max(60, Math.min(86400, Math.floor((Date.parse(date + 'T00:00:00Z') + 86400_000 - tz * 60_000 - now()) / 1000)))
+      }
+      if (body.page === null && body.quote === undefined) age = 60
+      return { status: 200, body, headers: { 'Cache-Control': `private, max-age=${age}`, ETag: `"${gitBlobId(JSON.stringify(body)).slice(0, 24)}"` } }
+    }
     if (rest === '/daily/settings' && method === 'GET') return { status: 200, body: { daily: st.home.config() } }
     if (rest === '/daily/settings' && method === 'PUT') return { status: 200, body: st.home.setConfig(body) }
     if (rest === '/daily/prefs') {

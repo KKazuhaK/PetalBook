@@ -21,8 +21,12 @@ export interface DailySource {
   type?: string
   filter: { key: string; op: string; values: unknown[] }[]
 }
-// One source for every language, or one for each.
-export type DailyConfig = DailySource | Record<string, DailySource>
+// One source for every language ("all"), one for each language (by), or both:
+// the one for every language is the fallback.
+export interface DailyConfig {
+  all?: DailySource
+  by: Record<string, DailySource>
+}
 
 export interface Candidate {
   summary: PageSummary
@@ -69,17 +73,17 @@ export function createHomeBook(env: HomeEnv) {
   const memo = new Map<string, string>()
   const favs = new Map<string, Fav[]>()
 
-  const single = (c: DailyConfig): c is DailySource => 'folder' in c || 'tag' in c || 'type' in c || 'filter' in c
   const sourceFor = (c: DailyConfig, lang: string): DailySource | null => {
-    if (single(c)) return c
-    const by = c as Record<string, DailySource>
     const l = lang.toLowerCase()
-    if (by[l]) return by[l]
+    if (c.by[l]) return c.by[l]
     const base = l.split('-')[0]
-    if (l.includes('-') && by[base]) return by[base]
-    const keys = Object.keys(by).sort()
-    return keys.length ? by[keys[0]] : null
+    if (l.includes('-') && c.by[base]) return c.by[base]
+    if (c.all) return c.all
+    const keys = Object.keys(c.by).sort()
+    return keys.length ? c.by[keys[0]] : null
   }
+  // The shape of the JSON: the source keys and the language keys side by side.
+  const jsonOf = (c: DailyConfig): Record<string, unknown> => ({ ...(c.all ?? {}), ...c.by })
 
   const checkSource = (raw: unknown, where = ''): DailySource => {
     const at = where ? `${where}: ` : ''
@@ -111,14 +115,15 @@ export function createHomeBook(env: HomeEnv) {
 
   const checkConfig = (raw: unknown): DailyConfig => {
     if (!isSource(raw) || Object.keys(raw).length === 0) throw invalid('给一个来源：folder、tag 或 type，或每种语言一个')
-    if (['folder', 'tag', 'type', 'filter'].some((k) => k in raw)) return checkSource(raw)
-    const keys = Object.keys(raw)
+    const out: DailyConfig = { by: {} }
+    const whole = Object.fromEntries(Object.entries(raw).filter(([k]) => ['folder', 'tag', 'type', 'filter'].includes(k)))
+    if (Object.keys(whole).length) out.all = checkSource(whole)
+    const keys = Object.keys(raw).filter((k) => !(k in whole))
     if (keys.length > MAX_LANGS) throw invalid(`最多 ${MAX_LANGS} 种语言`)
-    const out: Record<string, DailySource> = {}
     for (const k of keys) {
       if (!validLang(k)) throw invalid(`“${k}” 不是语言代码`)
-      if (out[k.toLowerCase()]) throw invalid(`“${k}” 写了两次`)
-      out[k.toLowerCase()] = checkSource(raw[k], k)
+      if (out.by[k.toLowerCase()]) throw invalid(`“${k}” 写了两次`)
+      out.by[k.toLowerCase()] = checkSource(raw[k], k)
     }
     return out
   }
@@ -167,7 +172,7 @@ export function createHomeBook(env: HomeEnv) {
   }
 
   return {
-    config: () => (daily ? structuredClone(daily) : null),
+    config: () => (daily ? structuredClone(jsonOf(daily)) : null),
     setConfig(body: Record<string, unknown>) {
       env.guard()
       if (!('daily' in body) || Object.keys(body).length !== 1) throw invalid('给 daily：每日文案的来源，或 null 来去掉它')
@@ -266,8 +271,8 @@ export function createHomeBook(env: HomeEnv) {
         if (n !== null) s.folder = n
       }
       if (daily) {
-        if (single(daily)) moveSource(daily)
-        else for (const s of Object.values(daily as Record<string, DailySource>)) moveSource(s)
+        if (daily.all) moveSource(daily.all)
+        for (const src of Object.values(daily.by)) moveSource(src)
       }
       for (const list of favs.values()) {
         const gone = new Set<Fav>()

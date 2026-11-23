@@ -1,23 +1,32 @@
 // Package dailyfetch gets the daily text from external JSON interfaces an
 // administrator configured (a quote service, say), on the server's behalf.
+// Browsers never call these interfaces: the server asks, keeps the answer, and
+// gives everybody the same one.
 //
 // The server must not become a way to reach what only it can reach. So the
 // interfaces are named by an administrator and never by a space owner or a
-// reader; the address may only be a host the administrator listed; and the
-// connection itself is checked: the address a name resolves to, at the moment
-// of connecting (so that a name which answers differently the second time is
-// no way round it), must be a public one, never a loopback, private,
-// link-local, unspecified, multicast or carrier-grade-NAT address. Redirects
-// are not followed. The answer is JSON only, at most 64 KB, within 5 seconds.
+// reader; the address may only be a host on the administrators' list (saving an
+// interface adds its host); and the connection itself is checked: the address
+// a name resolves to, at the moment of connecting (so a name that answers
+// differently the second time is no way round it), must be a public one,
+// never a loopback, private, link-local, unspecified, multicast or
+// carrier-grade-NAT address. Redirects are not followed and no proxy is used.
+// The answer is JSON only, at most 64 KB, within 5 seconds.
 //
-// Each interface is asked once a day for each language, and what it said is
-// kept, so everybody sees the same text; a further one ("another") is asked
-// for again at a limited rate; a failure is remembered for a few minutes so
-// that a service that is down is not asked for every page view.
+// What an interface said is kept in three places: in memory, by (interface,
+// language, refresh period, skip); in the state database (Backing), so that a
+// restart asks for nothing again; and, by the caller, in the browser. When an
+// interface does not answer, the last answer it gave is used, with its time,
+// and when it has none the block is hidden; it is asked again after a wait that
+// doubles with each failure, never at every request. Each interface has a rate
+// limit on what this server sends it; with the bucket empty, a kept answer is
+// used instead of waiting.
 package dailyfetch
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,31 +49,71 @@ const (
 	MaxResponse  = 64 << 10
 	MaxTextChars = 2000
 	// MaxAPIs is how many interfaces an administrator may configure.
-	MaxAPIs = 20
+	MaxAPIs = 50
 	// MaxHosts is how many hosts may be allowed.
-	MaxHosts = 50
-	// perMinute is how many requests one interface gets from this server in a
-	// minute, however many people ask.
-	perMinute = 12
-	// failureMemory is how long a failure is remembered.
-	failureMemory = 5 * time.Minute
-	cacheMax      = 512
+	MaxHosts = 100
+	// MaxHeaders is how many request headers an interface may have.
+	MaxHeaders = 10
+	// MaxSkip is the largest skip that asks an interface for a new item.
+	MaxSkip = 100
+	// Retention is how long what an interface said is kept.
+	Retention = 7 * 24 * time.Hour
+	// RawLimit is how much of an answer a trial shows.
+	RawLimit = 4000
+
+	backoffBase = 30 * time.Second
+	backoffMax  = time.Hour
+	cacheMax    = 2048
+	// DefaultRPS is the rate limit of an interface that has none set.
+	DefaultRPS = 1.0
+	// MaxRPS is the largest rate limit.
+	MaxRPS = 100.0
 )
+
+// Refresh periods.
+const (
+	RefreshDaily   = "daily"
+	RefreshHourly  = "hourly"
+	RefreshMinutes = "minutes"
+)
+
+// Header is a request header of an interface. The value is in the clear only
+// in memory: the caller keeps it encrypted.
+type Header struct {
+	Name  string
+	Value string
+}
 
 // API is an external interface of the daily text.
 type API struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
-	// Lang is the language the interface answers in; "" for one that takes
-	// {lang} in its address (or has no language).
+	// Lang is the language the interface answers in; "" for every language
+	// (an address that takes {lang}, or an interface that has no language).
 	Lang string `json:"lang"`
-	// URL is the address; {lang} stands for the language asked for.
-	URL string `json:"url"`
-	// Text, Source and Author are paths in the JSON answer: names and numbers
-	// with dots (`data.0.q`, `hitokoto`). Text is needed.
+	// URL is the address, fetched with GET; {lang} stands for the language asked
+	// for and {date} for the day.
+	URL     string   `json:"url"`
+	Headers []Header `json:"-"`
+	// Text, Source and Author are paths in the JSON answer: names and positions
+	// with dots and brackets (`data.0.q`, `[0].content`, `hitokoto`). Text is
+	// needed.
 	Text   string `json:"text"`
 	Source string `json:"source"`
 	Author string `json:"author"`
+	// Link is a template of a link to show with the text (an attribution): {x}
+	// is the value at the path x of the answer, `https://hitokoto.cn?uuid={uuid}`.
+	Link string `json:"link"`
+	// Refresh is how long the item everybody sees stays the same: "daily" (the
+	// day asked for), "hourly", or "minutes" (every RefreshMinutes).
+	Refresh        string `json:"refresh"`
+	RefreshMinutes int    `json:"refreshMinutes"`
+	// SkipNew says "another" asks the interface for a new item each time.
+	SkipNew bool `json:"skipNew"`
+	// RPS is how many requests a second this server sends the interface at most.
+	RPS float64 `json:"rps"`
+	// Enabled interfaces are used.
+	Enabled bool `json:"enabled"`
 }
 
 // Quote is what an interface said.
@@ -72,13 +121,23 @@ type Quote struct {
 	Text   string `json:"text"`
 	Source string `json:"source,omitempty"`
 	Author string `json:"author,omitempty"`
+	// Link is the attribution link, when the interface has a template.
+	Link string `json:"link,omitempty"`
+}
+
+// Result is a Quote with when it was got. Stale says the interface could not be
+// asked and this is the last thing it said.
+type Result struct {
+	Quote
+	Fetched time.Time `json:"fetched"`
+	Stale   bool      `json:"stale,omitempty"`
 }
 
 // Errors.
 var (
-	// ErrRateLimited: too many requests to the interface just now.
+	// ErrRateLimited: the interface's rate limit is used up and nothing is kept to give.
 	ErrRateLimited = errors.New("the interface was asked too often")
-	// ErrUnavailable: the interface did not give a usable answer.
+	// ErrUnavailable: the interface did not give a usable answer and nothing is kept to give.
 	ErrUnavailable = errors.New("the interface gave no usable answer")
 )
 
@@ -109,48 +168,113 @@ func CheckHost(h string) (string, error) {
 	return h, nil
 }
 
-// CheckAPI validates an interface against the hosts allowed. The address must
-// be https, with no user name, and its host (with the port when there is
-// one) one of hosts. {lang} may be in the path or the query, not in the host.
-func CheckAPI(a API, hosts []string, allowHTTP bool) (API, error) {
+var forbiddenHeaders = map[string]bool{"host": true, "content-length": true, "transfer-encoding": true, "connection": true, "upgrade": true,
+	"te": true, "trailer": true, "proxy-authorization": true, "proxy-connection": true, "keep-alive": true, "content-type": true}
+
+// CheckHeader validates a request header.
+func CheckHeader(h Header) error {
+	if h.Name == "" || len(h.Name) > 100 {
+		return errors.New("a header has a name of at most 100 characters")
+	}
+	for _, r := range h.Name {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("!#$%&'*+-.^_`|~", r)) {
+			return fmt.Errorf("%q is not a header name", h.Name)
+		}
+	}
+	if forbiddenHeaders[strings.ToLower(h.Name)] {
+		return fmt.Errorf("the header %s cannot be set", h.Name)
+	}
+	if len(h.Value) > 2000 || strings.ContainsAny(h.Value, "\r\n\x00") {
+		return fmt.Errorf("the value of %s is one line of at most 2000 bytes", h.Name)
+	}
+	return nil
+}
+
+// CheckAPI validates an interface and says which host it is to be fetched
+// from (what saving adds to the list). allowHTTP is for tests. The headers'
+// names and values are checked too.
+func CheckAPI(a API, allowHTTP bool) (API, string, error) {
 	a.Name = strings.TrimSpace(a.Name)
 	a.Lang = strings.ToLower(strings.TrimSpace(a.Lang))
 	if !ValidID(a.ID) {
-		return a, errors.New("an interface id is 1 to 32 letters, digits, - or _")
+		return a, "", errors.New("an interface id is 1 to 32 letters, digits, - or _")
 	}
 	if a.Name == "" || utf8.RuneCountInString(a.Name) > 100 {
-		return a, errors.New("an interface needs a name of at most 100 characters")
+		return a, "", errors.New("an interface needs a name of at most 100 characters")
 	}
 	if a.Lang != "" && !validLang(a.Lang) {
-		return a, errors.New("lang is a language code like zh or en, or empty")
+		return a, "", errors.New("lang is a language code like zh or en, or empty for every language")
 	}
 	if len(a.URL) > 2000 || strings.ContainsAny(a.URL, " \t\r\n") {
-		return a, errors.New("that is not an address")
+		return a, "", errors.New("that is not an address")
 	}
-	probe := strings.ReplaceAll(a.URL, "{lang}", "en")
+	probe := strings.NewReplacer("{lang}", "en", "{date}", "2026-01-01").Replace(a.URL)
 	u, err := url.Parse(probe)
 	if err != nil || u.Host == "" || u.User != nil || u.Fragment != "" {
-		return a, errors.New("that is not an address")
+		return a, "", errors.New("that is not an address")
 	}
 	if u.Scheme != "https" && !(allowHTTP && u.Scheme == "http") {
-		return a, errors.New("the address must be https")
+		return a, "", errors.New("the address must be https")
 	}
 	if strings.Contains(strings.SplitN(strings.TrimPrefix(strings.TrimPrefix(a.URL, "https://"), "http://"), "/", 2)[0], "{") {
-		return a, errors.New("{lang} may be in the path or the query, not in the host")
+		return a, "", errors.New("{lang} and {date} may be in the path or the query, not in the host")
 	}
-	if !hostAllowed(u.Host, hosts) {
-		return a, fmt.Errorf("%s is not in the list of hosts that may be fetched from; add it there first", u.Host)
+	if ip, err := netip.ParseAddr(u.Hostname()); err == nil && !allowHTTP && !Public(ip) {
+		return a, "", fmt.Errorf("%s is not a public address; the server never connects to one", ip)
+	}
+	if h := strings.ToLower(u.Hostname()); !allowHTTP && (h == "localhost" || strings.HasSuffix(h, ".localhost")) {
+		return a, "", errors.New("the server never connects to this machine")
 	}
 	for _, p := range []*string{&a.Text, &a.Source, &a.Author} {
 		*p = strings.TrimSpace(*p)
 		if len(*p) > 200 || strings.ContainsAny(*p, "\r\n") {
-			return a, errors.New("a JSON path is dots and names, like data.0.q")
+			return a, "", errors.New("a JSON path is names and positions with dots, like data.0.q or [0].q")
 		}
 	}
 	if a.Text == "" {
-		return a, errors.New("text is the JSON path of the text; it is needed")
+		return a, "", errors.New("text is the JSON path of the text; it is needed")
 	}
-	return a, nil
+	a.Link = strings.TrimSpace(a.Link)
+	if a.Link != "" {
+		lu, err := url.Parse(linkTemplate(a.Link, func(string) string { return "x" }))
+		if err != nil || (lu.Scheme != "https" && lu.Scheme != "http") || lu.Host == "" || len(a.Link) > 500 {
+			return a, "", errors.New("the link is an http or https address, with {path} where a value of the answer goes")
+		}
+	}
+	switch a.Refresh {
+	case "":
+		a.Refresh = RefreshDaily
+	case RefreshDaily, RefreshHourly:
+	case RefreshMinutes:
+		if a.RefreshMinutes < 1 || a.RefreshMinutes > 1440 {
+			return a, "", errors.New("refreshMinutes is 1 to 1440")
+		}
+	default:
+		return a, "", errors.New("refresh is daily, hourly or minutes")
+	}
+	if a.Refresh != RefreshMinutes {
+		a.RefreshMinutes = 0
+	}
+	if a.RPS == 0 {
+		a.RPS = DefaultRPS
+	}
+	if a.RPS < 0.01 || a.RPS > MaxRPS {
+		return a, "", errors.New("rps is the most requests a second, 0.01 to 100")
+	}
+	if len(a.Headers) > MaxHeaders {
+		return a, "", fmt.Errorf("at most %d headers", MaxHeaders)
+	}
+	seen := map[string]bool{}
+	for _, h := range a.Headers {
+		if err := CheckHeader(h); err != nil {
+			return a, "", err
+		}
+		if seen[strings.ToLower(h.Name)] {
+			return a, "", fmt.Errorf("the header %s is given twice", h.Name)
+		}
+		seen[strings.ToLower(h.Name)] = true
+	}
+	return a, strings.ToLower(u.Host), nil
 }
 
 func validLang(s string) bool {
@@ -175,58 +299,129 @@ func hostAllowed(host string, hosts []string) bool {
 	return false
 }
 
+// key identifies the interface as it is asked: what makes another answer
+// another thing. The value of a header is not part of it.
+func (a API) key() string {
+	h := sha256.New()
+	fmt.Fprint(h, a.ID, "\x00", a.URL, "\x00", a.Text, "\x00", a.Source, "\x00", a.Author, "\x00", a.Link)
+	for _, hd := range a.Headers {
+		fmt.Fprint(h, "\x00", hd.Name)
+	}
+	return a.ID + ":" + hex.EncodeToString(h.Sum(nil))[:12]
+}
+
+// Period is the refresh period of the item everybody sees at now: for "daily"
+// the day asked for, else the hour or the run of minutes that now is in. ends
+// is when the period is over, zero for a day (the caller knows the time zone).
+func (a API) Period(now time.Time, date string) (key string, ends time.Time) {
+	var d time.Duration
+	switch a.Refresh {
+	case RefreshHourly:
+		d = time.Hour
+	case RefreshMinutes:
+		d = time.Duration(a.RefreshMinutes) * time.Minute
+	default:
+		return "d:" + date, time.Time{}
+	}
+	idx := now.Unix() / int64(d/time.Second)
+	return "p:" + strconv.Itoa(int(d/time.Minute)) + ":" + strconv.FormatInt(idx, 10), time.Unix((idx+1)*int64(d/time.Second), 0)
+}
+
+// Backing keeps what interfaces said beyond a restart.
+type Backing interface {
+	Get(ctx context.Context, apiKey, lang, period string, skip int) (Result, bool, error)
+	Put(ctx context.Context, apiKey, lang, period string, skip int, r Result) error
+	// Latest is the newest thing the interface said in the language, whatever the period.
+	Latest(ctx context.Context, apiKey, lang string) (Result, bool, error)
+	// Prune forgets what was got before the time.
+	Prune(ctx context.Context, before time.Time) error
+}
+
 // Fetcher asks the interfaces. It is safe for concurrent use.
 type Fetcher struct {
 	client    *http.Client
 	timeout   time.Duration
 	allowHTTP bool
 	now       func() time.Time
+	backing   Backing
 
-	mu    sync.Mutex
-	cache map[cacheKey]cached
-	sent  map[string][]time.Time // by interface: when the last requests were made
-	busy  map[cacheKey]*flight
+	mu      sync.Mutex
+	cache   map[cacheKey]Result
+	last    map[laneKey]Result
+	buckets map[string]*bucket
+	fails   map[laneKey]failure
+	busy    map[cacheKey]*flight
+	pruned  time.Time
+	probe   bucket
+	// Sent counts the requests that went out (tests).
+	sent int
 }
 
 type cacheKey struct {
-	api, lang, date string
-	skip            int
+	api, lang, period string
+	skip              int
 }
 
-type cached struct {
-	q   Quote
-	err error
-	at  time.Time
-}
+// laneKey is one interface in one language.
+type laneKey struct{ api, lang string }
 
 type flight struct {
 	done chan struct{}
-	q    Quote
+	r    Result
 	err  error
 }
 
+type failure struct {
+	n    int
+	next time.Time
+}
+
+type bucket struct {
+	tokens float64
+	at     time.Time
+}
+
+// take uses one token of a bucket that holds up to max(1, rps) and fills at
+// rps a second.
+func (b *bucket) take(now time.Time, rps float64) bool {
+	capacity := max(1, rps)
+	if b.at.IsZero() {
+		b.tokens = capacity
+	} else if dt := now.Sub(b.at).Seconds(); dt > 0 {
+		b.tokens += dt * rps
+	}
+	b.tokens = min(capacity, b.tokens)
+	b.at = now
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
+}
+
 // New makes a Fetcher that refuses any address that is not a public one.
-func New() *Fetcher {
+func New(backing Backing) *Fetcher {
 	d := &net.Dialer{Timeout: Timeout, Control: refusePrivate}
 	return newFetcher(&http.Client{
 		Timeout:       Timeout,
 		Transport:     &http.Transport{DialContext: d.DialContext, Proxy: nil, DisableKeepAlives: true, ResponseHeaderTimeout: Timeout, MaxResponseHeaderBytes: 16 << 10},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}, false)
+	}, false, backing)
 }
 
 // NewForTests makes a Fetcher that may connect to any address and use plain
 // http, so a test can talk to a server of its own. Never use it in the server.
-func NewForTests() *Fetcher {
+func NewForTests(backing Backing) *Fetcher {
 	return newFetcher(&http.Client{
 		Timeout:       Timeout,
 		Transport:     &http.Transport{Proxy: nil, DisableKeepAlives: true},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}, true)
+	}, true, backing)
 }
 
-func newFetcher(c *http.Client, allowHTTP bool) *Fetcher {
-	return &Fetcher{client: c, timeout: Timeout, allowHTTP: allowHTTP, now: time.Now, cache: map[cacheKey]cached{}, sent: map[string][]time.Time{}, busy: map[cacheKey]*flight{}}
+func newFetcher(c *http.Client, allowHTTP bool, backing Backing) *Fetcher {
+	return &Fetcher{client: c, timeout: Timeout, allowHTTP: allowHTTP, backing: backing, now: time.Now,
+		cache: map[cacheKey]Result{}, last: map[laneKey]Result{}, buckets: map[string]*bucket{}, fails: map[laneKey]failure{}, busy: map[cacheKey]*flight{}}
 }
 
 // AllowHTTP reports whether plain http addresses are accepted (tests only).
@@ -236,7 +431,20 @@ func (f *Fetcher) AllowHTTP() bool { return f.allowHTTP }
 func (f *Fetcher) SetTimeout(d time.Duration) { f.timeout = d; f.client.Timeout = d }
 
 // SetClock replaces the clock (tests).
-func (f *Fetcher) SetClock(now func() time.Time) { f.now = now }
+func (f *Fetcher) SetClock(now func() time.Time) { f.mu.Lock(); f.now = now; f.mu.Unlock() }
+
+// Now is the time the fetcher works by.
+func (f *Fetcher) Now() time.Time { f.mu.Lock(); defer f.mu.Unlock(); return f.now() }
+
+// Sent is how many requests went out to interfaces.
+func (f *Fetcher) Sent() int { f.mu.Lock(); defer f.mu.Unlock(); return f.sent }
+
+// ForgetMemory drops what is kept in memory, as a restart would (tests).
+func (f *Fetcher) ForgetMemory() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cache, f.last, f.fails = map[cacheKey]Result{}, map[laneKey]Result{}, map[laneKey]failure{}
+}
 
 // refusePrivate is the Control of the dialer: it runs for every address a name
 // resolved to, just before the connection is made to it.
@@ -288,8 +496,6 @@ func Public(ip netip.Addr) bool {
 		return true
 	}
 	b := ip.As16()
-	// Unique local fc00::/7 is IsPrivate; documentation 2001:db8::/32; the
-	// NAT64 prefix and 6to4 carry an IPv4 address that is not checked here.
 	if b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x0d && b[3] == 0xb8 {
 		return false
 	}
@@ -299,124 +505,306 @@ func Public(ip netip.Addr) bool {
 	return true
 }
 
-// Get returns what the interface says for a language on a day. skip 0 is the
-// day's text, asked for once; a larger skip is another text, asked for again
-// (and kept for that skip), at a limited rate. hosts are the hosts allowed
-// now: an interface whose host was taken off the list is not asked.
-func (f *Fetcher) Get(ctx context.Context, a API, hosts []string, lang, date string, skip int) (Quote, error) {
-	key := cacheKey{a.ID + "\x00" + a.URL + "\x00" + a.Text + a.Source + a.Author, lang, date, skip}
-	for {
-		f.mu.Lock()
-		if c, ok := f.cache[key]; ok {
-			if c.err == nil || f.now().Sub(c.at) < failureMemory {
-				f.mu.Unlock()
-				return c.q, c.err
-			}
-			delete(f.cache, key)
-		}
-		if fl, ok := f.busy[key]; ok {
-			f.mu.Unlock()
-			select {
-			case <-fl.done:
-				return fl.q, fl.err
-			case <-ctx.Done():
-				return Quote{}, ctx.Err()
-			}
-		}
-		// The rate is counted for what goes out, not for what is answered from here.
-		if !f.allowLocked(a.ID) {
-			f.mu.Unlock()
-			return Quote{}, ErrRateLimited
-		}
-		fl := &flight{done: make(chan struct{})}
-		f.busy[key] = fl
-		f.mu.Unlock()
-
-		q, err := f.fetch(ctx, a, hosts, lang)
-
-		f.mu.Lock()
-		delete(f.busy, key)
-		if ctx.Err() == nil {
-			if len(f.cache) >= cacheMax {
-				f.cache = map[cacheKey]cached{}
-			}
-			f.cache[key] = cached{q, err, f.now()}
-		}
-		f.mu.Unlock()
-		fl.q, fl.err = q, err
-		close(fl.done)
-		return q, err
+// Get returns what the interface says for a language in the refresh period
+// that date (for a daily interface) or now (for the others) is in. The item is
+// asked for once a period and kept, in memory and in the Backing; "another"
+// (skip above 0) asks for a new item each time when the interface has SkipNew,
+// else it is the same item. When the interface cannot be asked (it failed
+// lately and the wait has not passed, its rate limit is used up, it fails now)
+// the last thing it said is returned, marked Stale; with none, ErrUnavailable
+// or ErrRateLimited. hosts are the hosts allowed now.
+func (f *Fetcher) Get(ctx context.Context, a API, hosts []string, lang, date string, skip int) (Result, error) {
+	if !a.SkipNew {
+		skip = 0
 	}
-}
-
-// Try asks the interface now, bypassing what is kept (an administrator
-// testing what they typed), at the same rate limit as any request.
-func (f *Fetcher) Try(ctx context.Context, a API, hosts []string, lang string) (Quote, error) {
+	skip = max(0, min(skip, MaxSkip))
 	f.mu.Lock()
-	ok := f.allowLocked(a.ID)
-	f.mu.Unlock()
-	if !ok {
-		return Quote{}, ErrRateLimited
-	}
-	return f.fetch(ctx, a, hosts, lang)
-}
-
-// allowLocked counts a request to the interface against its rate.
-func (f *Fetcher) allowLocked(id string) bool {
 	now := f.now()
-	l := f.sent[id][:0]
-	for _, t := range f.sent[id] {
-		if now.Sub(t) < time.Minute {
-			l = append(l, t)
+	period, _ := a.Period(now, date)
+	ak := a.key()
+	key := cacheKey{ak, lang, period, skip}
+	if r, ok := f.cache[key]; ok {
+		f.mu.Unlock()
+		return r, nil
+	}
+	if fl, ok := f.busy[key]; ok {
+		f.mu.Unlock()
+		select {
+		case <-fl.done:
+			return fl.r, fl.err
+		case <-ctx.Done():
+			return Result{}, ctx.Err()
 		}
 	}
-	if len(l) >= perMinute {
-		f.sent[id] = l
-		return false
-	}
-	f.sent[id] = append(l, now)
-	return true
+	fl := &flight{done: make(chan struct{})}
+	f.busy[key] = fl
+	f.mu.Unlock()
+
+	r, err := f.lead(ctx, a, hosts, lang, date, skip, key)
+
+	f.mu.Lock()
+	delete(f.busy, key)
+	f.mu.Unlock()
+	fl.r, fl.err = r, err
+	close(fl.done)
+	return r, err
 }
 
-func (f *Fetcher) fetch(ctx context.Context, a API, hosts []string, lang string) (Quote, error) {
+func (f *Fetcher) remember(key cacheKey, r Result) {
+	if len(f.cache) >= cacheMax {
+		f.cache = map[cacheKey]Result{}
+	}
+	f.cache[key] = r
+	f.last[laneKey{key.api, key.lang}] = r
+}
+
+// lead does what the one request in flight for a key does.
+func (f *Fetcher) lead(ctx context.Context, a API, hosts []string, lang, date string, skip int, key cacheKey) (Result, error) {
+	// The state database: what was got before a restart, or by another process.
+	if f.backing != nil {
+		if r, ok, err := f.backing.Get(ctx, key.api, lang, key.period, skip); err == nil && ok {
+			f.mu.Lock()
+			f.remember(key, r)
+			f.mu.Unlock()
+			return r, nil
+		}
+	}
+	lane := laneKey{key.api, lang}
+	f.mu.Lock()
+	now := f.now()
+	if fl := f.fails[lane]; now.Before(fl.next) {
+		f.mu.Unlock()
+		return f.fallback(ctx, lane, ErrUnavailable)
+	}
+	b := f.buckets[key.api]
+	if b == nil {
+		b = &bucket{}
+		f.buckets[key.api] = b
+	}
+	if !b.take(now, a.RPS) {
+		f.mu.Unlock()
+		return f.fallback(ctx, lane, ErrRateLimited)
+	}
+	f.sent++
+	f.mu.Unlock()
+
+	if !hostAllowed(hostOf(a.URL), hosts) {
+		return f.fallback(ctx, lane, fmt.Errorf("%w: the host is not allowed", ErrUnavailable))
+	}
+	reqDate := date
+	if a.Refresh != RefreshDaily {
+		reqDate = now.UTC().Format("2006-01-02")
+	}
+	q, err := f.fetch(ctx, a, lang, reqDate)
+	f.mu.Lock()
+	now = f.now()
+	if err != nil {
+		n := f.fails[lane].n + 1
+		f.fails[lane] = failure{n, now.Add(min(backoffMax, backoffBase<<min(n-1, 7)))}
+		f.mu.Unlock()
+		return f.fallback(ctx, lane, err)
+	}
+	delete(f.fails, lane)
+	r := Result{Quote: q, Fetched: now}
+	f.remember(key, r)
+	prune := f.backing != nil && now.Sub(f.pruned) > time.Hour
+	if prune {
+		f.pruned = now
+	}
+	f.mu.Unlock()
+	if f.backing != nil {
+		if err := f.backing.Put(ctx, key.api, lang, key.period, skip, r); err == nil && prune {
+			f.backing.Prune(ctx, now.Add(-Retention))
+		}
+	}
+	return r, nil
+}
+
+// fallback is the last thing the interface said in the language, if it is not
+// too old; else the error.
+func (f *Fetcher) fallback(ctx context.Context, lane laneKey, why error) (Result, error) {
+	f.mu.Lock()
+	r, ok := f.last[lane]
+	now := f.now()
+	f.mu.Unlock()
+	if !ok && f.backing != nil {
+		if got, found, err := f.backing.Latest(ctx, lane.api, lane.lang); err == nil && found {
+			r, ok = got, true
+		}
+	}
+	if ok && now.Sub(r.Fetched) < Retention {
+		r.Stale = true
+		return r, nil
+	}
+	return Result{}, why
+}
+
+func hostOf(raw string) string {
+	u, err := url.Parse(strings.NewReplacer("{lang}", "en", "{date}", "2026-01-01").Replace(raw))
+	if err != nil {
+		return ""
+	}
+	return u.Host
+}
+
+func (f *Fetcher) request(ctx context.Context, a API, lang, date string) (*http.Request, error) {
 	if lang == "" || !validLang(lang) {
 		lang = "en"
 	}
-	raw := strings.ReplaceAll(a.URL, "{lang}", url.QueryEscape(lang))
+	raw := strings.NewReplacer("{lang}", url.QueryEscape(lang), "{date}", url.QueryEscape(date)).Replace(a.URL)
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "https" && !(f.allowHTTP && u.Scheme == "http")) {
-		return Quote{}, fmt.Errorf("%w: bad address", ErrUnavailable)
+		return nil, fmt.Errorf("%w: bad address", ErrUnavailable)
 	}
-	if !hostAllowed(u.Host, hosts) {
-		return Quote{}, fmt.Errorf("%w: the host is not allowed", ErrUnavailable)
-	}
-	ctx, cancel := context.WithTimeout(ctx, f.timeout)
-	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return Quote{}, fmt.Errorf("%w: bad address", ErrUnavailable)
+		return nil, fmt.Errorf("%w: bad address", ErrUnavailable)
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "PetalBook")
+	for _, h := range a.Headers {
+		req.Header.Set(h.Name, h.Value)
+	}
+	return req, nil
+}
+
+// do sends the request and reads the answer: status, the body (at most
+// MaxResponse) and whether it is JSON.
+func (f *Fetcher) do(ctx context.Context, a API, lang, date string) (status int, body []byte, isJSON bool, err error) {
+	ctx, cancel := context.WithTimeout(ctx, f.timeout)
+	defer cancel()
+	req, err := f.request(ctx, a, lang, date)
+	if err != nil {
+		return 0, nil, false, err
+	}
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return Quote{}, fmt.Errorf("%w: %v", ErrUnavailable, trimErr(err))
+		return 0, nil, false, fmt.Errorf("%w: %v", ErrUnavailable, trimErr(err))
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return Quote{}, fmt.Errorf("%w: status %d", ErrUnavailable, resp.StatusCode)
-	}
-	if ct := strings.ToLower(resp.Header.Get("Content-Type")); !strings.Contains(ct, "json") {
-		return Quote{}, fmt.Errorf("%w: not JSON", ErrUnavailable)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponse+1))
+	body, err = io.ReadAll(io.LimitReader(resp.Body, MaxResponse+1))
 	if err != nil {
-		return Quote{}, fmt.Errorf("%w: %v", ErrUnavailable, trimErr(err))
+		return resp.StatusCode, nil, false, fmt.Errorf("%w: %v", ErrUnavailable, trimErr(err))
 	}
-	if len(body) > MaxResponse {
+	isJSON = strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "json")
+	return resp.StatusCode, body, isJSON, nil
+}
+
+func (f *Fetcher) fetch(ctx context.Context, a API, lang, date string) (Quote, error) {
+	status, body, isJSON, err := f.do(ctx, a, lang, date)
+	switch {
+	case err != nil:
+		return Quote{}, err
+	case status != http.StatusOK:
+		return Quote{}, fmt.Errorf("%w: status %d", ErrUnavailable, status)
+	case !isJSON:
+		return Quote{}, fmt.Errorf("%w: not JSON", ErrUnavailable)
+	case len(body) > MaxResponse:
 		return Quote{}, fmt.Errorf("%w: the answer is larger than %d bytes", ErrUnavailable, MaxResponse)
 	}
 	return Extract(a, body)
+}
+
+// ProbeResult is what one trial request showed.
+type ProbeResult struct {
+	OK     bool   `json:"ok"`
+	Status int    `json:"status,omitempty"`
+	URL    string `json:"url"`
+	// Raw is the start of the answer when it is JSON.
+	Raw          string `json:"raw,omitempty"`
+	RawTruncated bool   `json:"rawTruncated,omitempty"`
+	Quote        *Quote `json:"quote,omitempty"`
+	// Message says what went wrong with the request or the answer.
+	Message string `json:"message,omitempty"`
+	// PathErrors say, by field (text, source, author, link), what a path found
+	// no value at.
+	PathErrors map[string]string `json:"pathErrors,omitempty"`
+}
+
+// Probe makes one request now, at the same rules as any other (the address is
+// checked when the connection is made) and shows the answer as it came and what
+// the paths take out of it. It is not kept, and is limited to a few a second
+// whatever the interface says.
+func (f *Fetcher) Probe(ctx context.Context, a API, lang, date string) (ProbeResult, error) {
+	f.mu.Lock()
+	ok := f.probe.take(f.now(), 2)
+	f.mu.Unlock()
+	if !ok {
+		return ProbeResult{}, ErrRateLimited
+	}
+	res := ProbeResult{URL: strings.NewReplacer("{lang}", url.QueryEscape(or(lang, "en")), "{date}", url.QueryEscape(date)).Replace(a.URL)}
+	status, body, isJSON, err := f.do(ctx, a, lang, date)
+	res.Status = status
+	if err != nil {
+		res.Message = strings.TrimPrefix(err.Error(), ErrUnavailable.Error()+": ")
+		return res, nil
+	}
+	if !isJSON {
+		res.Message = "the answer is not JSON (its Content-Type does not say so)"
+		return res, nil
+	}
+	if len(body) > MaxResponse {
+		res.Message = fmt.Sprintf("the answer is larger than %d bytes", MaxResponse)
+		return res, nil
+	}
+	raw := string(body)
+	if utf8.RuneCountInString(raw) > RawLimit {
+		raw, res.RawTruncated = string([]rune(raw)[:RawLimit]), true
+	}
+	res.Raw = strings.ToValidUTF8(raw, "�")
+	if status != http.StatusOK {
+		res.Message = fmt.Sprintf("status %d", status)
+		return res, nil
+	}
+	var doc any
+	if err := json.Unmarshal(body, &doc); err != nil {
+		res.Message = "the answer is not valid JSON"
+		return res, nil
+	}
+	res.PathErrors = map[string]string{}
+	q := Quote{}
+	for _, f := range []struct {
+		name, path string
+		set        func(string)
+		need       bool
+	}{
+		{"text", a.Text, func(s string) { q.Text = cut(strings.TrimSpace(s), MaxTextChars) }, true},
+		{"source", a.Source, func(s string) { q.Source = cut(strings.TrimSpace(s), 200) }, false},
+		{"author", a.Author, func(s string) { q.Author = cut(strings.TrimSpace(s), 200) }, false},
+	} {
+		if f.path == "" {
+			continue
+		}
+		s, found := pathText(doc, f.path)
+		if !found || (f.need && strings.TrimSpace(s) == "") {
+			res.PathErrors[f.name] = "no text or number at " + f.path
+			continue
+		}
+		f.set(s)
+	}
+	if a.Link != "" {
+		q.Link = expandLink(a.Link, doc)
+		if q.Link == "" {
+			res.PathErrors["link"] = "a value the link needs is not in the answer"
+		}
+	}
+	if len(res.PathErrors) == 0 {
+		res.PathErrors = nil
+	}
+	if q.Text != "" {
+		res.Quote = &q
+		res.OK = res.PathErrors == nil
+	} else if res.Message == "" {
+		res.Message = "no text could be taken out of the answer"
+	}
+	return res, nil
+}
+
+func or(a, b string) string {
+	if a == "" {
+		return b
+	}
+	return a
 }
 
 func trimErr(err error) string {
@@ -427,7 +815,7 @@ func trimErr(err error) string {
 	return err.Error()
 }
 
-// Extract reads the text, source and author out of an answer.
+// Extract reads the text, source, author and link out of an answer.
 func Extract(a API, body []byte) (Quote, error) {
 	var doc any
 	if err := json.Unmarshal(body, &doc); err != nil {
@@ -447,7 +835,51 @@ func Extract(a API, body []byte) (Quote, error) {
 		s, _ := pathText(doc, a.Author)
 		q.Author = cut(strings.TrimSpace(s), 200)
 	}
+	if a.Link != "" {
+		q.Link = expandLink(a.Link, doc)
+	}
 	return q, nil
+}
+
+// linkTemplate fills {path} in a template with value(path).
+func linkTemplate(tpl string, value func(path string) string) string {
+	var b strings.Builder
+	for {
+		i := strings.IndexByte(tpl, '{')
+		if i < 0 {
+			b.WriteString(tpl)
+			return b.String()
+		}
+		j := strings.IndexByte(tpl[i:], '}')
+		if j < 0 {
+			b.WriteString(tpl)
+			return b.String()
+		}
+		b.WriteString(tpl[:i])
+		b.WriteString(value(tpl[i+1 : i+j]))
+		tpl = tpl[i+j+1:]
+	}
+}
+
+// expandLink makes the link of a template from the answer; "" when a value it
+// needs is not there or the result is not an http(s) address.
+func expandLink(tpl string, doc any) string {
+	missing := false
+	out := linkTemplate(tpl, func(path string) string {
+		s, ok := pathText(doc, path)
+		if !ok || strings.TrimSpace(s) == "" {
+			missing = true
+		}
+		return url.QueryEscape(strings.TrimSpace(s))
+	})
+	if missing {
+		return ""
+	}
+	u, err := url.Parse(out)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return ""
+	}
+	return out
 }
 
 func cut(s string, max int) string {
@@ -490,4 +922,27 @@ func pathText(doc any, path string) (string, bool) {
 		return strconv.FormatFloat(v, 'f', -1, 64), true
 	}
 	return "", false
+}
+
+// Preset is an interface a form can be filled in with: a starting point, not
+// something that is on until an administrator saves it.
+type Preset struct {
+	API
+	// Note says what to know of the service.
+	Note string `json:"note"`
+}
+
+// Presets are the interfaces the program knows how to fill in. They are only
+// offered; none is created or used until an administrator saves one.
+func Presets() []Preset {
+	return []Preset{
+		{API: API{ID: "hitokoto", Name: "一言", Lang: "zh", URL: "https://international.v1.hitokoto.cn/?max_length=80",
+			Text: "hitokoto", Source: "from", Author: "from_who", Link: "https://hitokoto.cn?uuid={uuid}",
+			Refresh: RefreshDaily, SkipNew: true, RPS: 20, Enabled: true},
+			Note: "Free, no key. The international line allows 20 requests a second; the service asks for a link back, which is filled in."},
+		{API: API{ID: "quotable", Name: "Quotable", Lang: "en", URL: "https://api.quotable.io/quotes/random",
+			Text: "[0].content", Author: "[0].author",
+			Refresh: RefreshDaily, SkipNew: true, RPS: 3, Enabled: true},
+			Note: "Open source, no key; 180 requests a minute for each address. It can also be hosted by yourself."},
+	}
 }

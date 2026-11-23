@@ -1182,6 +1182,41 @@ function suite(target: Target) {
       expect((await daily('date=2026-11-23&lang=en')).json.page).toBeNull()
     })
 
+    it('a source for every language and some languages together: the language wins, the fallback is for the rest', async () => {
+      const zh = await mk(`${folder}/mixzh`, { title: `中${run}` }, 'x\n')
+      const any = await mk(`${folder}/mixall`, { title: `全${run}` }, 'x\n')
+      const set = await setDaily({ folder: `${folder}/mixall`, zh: { folder: `${folder}/mixzh` } })
+      expect(set.status).toBe(200)
+      expect(set.json.daily).toEqual({ folder: `${folder}/mixall`, filter: [], zh: { folder: `${folder}/mixzh`, filter: [] } })
+      expect((await call(admin, 'GET', `${base()}/daily/settings`)).json).toEqual(set.json)
+      const id = async (lang: string) => (await daily(`date=2026-11-23&lang=${lang}`)).json.page.id
+      expect([await id('zh'), await id('zh-TW'), await id('en'), await id('')]).toEqual([zh.id, zh.id, any.id, any.id])
+      // A move carries both.
+      expect((await call(admin, 'POST', `${base()}/folders/move`, { from: `${folder}/mixall`, to: `${folder}/mixmoved` })).status).toBe(200)
+      expect((await call(admin, 'GET', `${base()}/daily/settings`)).json.daily.folder).toBe(`${folder}/mixmoved`)
+      // Without all languages, only the ones that have a source are asked for: another language gets one of them.
+      expect((await setDaily({ zh: { folder: `${folder}/mixzh` } })).json.daily).toEqual({ zh: { folder: `${folder}/mixzh`, filter: [] } })
+      expect(await id('fr')).toBe(zh.id)
+    })
+
+    it('tells a browser how long it may keep the daily text, and gives it a validator', async () => {
+      expect((await setDaily({ folder: `${folder}/mixzh` })).status).toBe(200)
+      const noTz = await daily('date=2026-11-23')
+      expect(noTz.headers.get('Cache-Control')).toBe('private, max-age=300')
+      expect(noTz.headers.get('ETag')).toMatch(/^"[0-9a-f]{8,}"$/)
+      const withTz = await daily('date=2100-01-01&tz=-480')
+      const age = Number(/max-age=(\d+)/.exec(withTz.headers.get('Cache-Control') ?? '')?.[1])
+      expect(withTz.headers.get('Cache-Control')).toMatch(/^private, max-age=\d+$/)
+      expect(age).toBeGreaterThanOrEqual(60)
+      expect(age).toBeLessThanOrEqual(86400)
+      // A day long past: the shortest.
+      expect((await daily('date=2001-01-01&tz=0')).headers.get('Cache-Control')).toBe('private, max-age=60')
+      for (const tz of ['9999', 'x', '-841']) expect([tz, (await daily(`date=2026-11-23&tz=${tz}`)).status]).toEqual([tz, 400])
+      expect((await setDaily({ tag: `nothing${run}` })).status).toBe(200)
+      expect((await daily('date=2026-11-23&tz=0')).headers.get('Cache-Control')).toBe('private, max-age=60')
+      await setDaily(null)
+    })
+
     it('keeps a person\'s favourites: pages, folders and views, in order, with their names, each once', async () => {
       const a = (await mk(`${folder}/fav`, { title: `暮雪${run}` }, 'x\n')).id
       const b = (await mk(`${folder}/fav`, { title: `春晓${run}` }, 'x\n')).id
@@ -1329,6 +1364,74 @@ function suite(target: Target) {
           expect((await call(outsider, 'GET', '/api/admin/daily')).status).toBe(401)
         } finally {
           await cleanup()
+        }
+      })
+      it('the administrators configure external interfaces themselves: any number, headers kept secret, the host added, a list of languages, presets only offered', async () => {
+        const adm = (method: string, path: string, body?: unknown) => call(admin, method, `/api/admin/daily${path}`, body)
+        const iface = (over: Record<string, unknown> = {}) => ({ name: `Quotes ${run}`, lang: 'en', url: 'https://quotes.example.org/api/{lang}/{date}', text: '[0].q', source: '[0].s', author: '[0].a', link: 'https://quotes.example.org/q/{[0].id}', refresh: 'hourly', skipNew: true, rps: 5, headers: [{ name: 'X-Api-Key', value: `secret-${run}` }], ...over })
+        const ids = [`c${run}a`, `c${run}b`]
+        try {
+          const start = await adm('GET', '')
+          expect(start.json.languages).toEqual(expect.any(Array))
+          expect(start.json.presets.map((p: any) => p.id)).toEqual(['hitokoto', 'quotable'])
+          expect(start.json.presets[0]).toMatchObject({ lang: 'zh', url: 'https://international.v1.hitokoto.cn/?max_length=80', text: 'hitokoto', source: 'from', author: 'from_who', rps: 20, link: 'https://hitokoto.cn?uuid={uuid}' })
+          expect(start.json.presets[1]).toMatchObject({ lang: 'en', url: 'https://api.quotable.io/quotes/random', text: '[0].content', author: '[0].author', rps: 3, link: '' })
+          // Making one: the value of a header is kept and never given back; the host is on the list.
+          const made = await adm('PUT', `/apis/${ids[0]}`, iface())
+          expect(made.status).toBe(200)
+          const got = made.json.apis.find((a: any) => a.id === ids[0])
+          expect(got).toMatchObject({ id: ids[0], lang: 'en', refresh: 'hourly', skipNew: true, rps: 5, enabled: true, text: '[0].q', link: 'https://quotes.example.org/q/{[0].id}', headers: [{ name: 'X-Api-Key', set: true }] })
+          expect(JSON.stringify(made.json)).not.toContain(`secret-${run}`)
+          expect(made.json.hosts).toContain('quotes.example.org')
+          // A header that comes without a value keeps what it has; one that is left out goes.
+          const kept = await adm('PUT', `/apis/${ids[0]}`, iface({ name: 'Renamed', headers: [{ name: 'x-api-key' }] }))
+          expect(kept.json.apis.find((a: any) => a.id === ids[0])).toMatchObject({ name: 'Renamed', headers: [{ name: 'x-api-key', set: true }] })
+          const bare = await adm('PUT', `/apis/${ids[0]}`, iface({ name: 'Renamed', headers: [] }))
+          expect(bare.json.apis.find((a: any) => a.id === ids[0]).headers).toEqual([])
+          // Any number of them, by language or for all of them.
+          const second = await adm('PUT', `/apis/${ids[1]}`, iface({ lang: '', refresh: 'minutes', refreshMinutes: 20, headers: [] }))
+          expect(second.json.apis.filter((a: any) => ids.includes(a.id)).map((a: any) => a.lang)).toEqual(['en', ''])
+          expect(second.json.apis.find((a: any) => a.id === ids[1])).toMatchObject({ refresh: 'minutes', refreshMinutes: 20 })
+          // What the rules refuse.
+          const refuse: [string, string, Record<string, unknown>][] = [
+            ['http', 'http://quotes.example.org/', { url: 'http://quotes.example.org/' }],
+            ['loopback', 'x', { url: 'https://127.0.0.1/' }],
+            ['localhost', 'x', { url: 'https://localhost:8443/' }],
+            ['the metadata address', 'x', { url: 'https://169.254.169.254/latest' }],
+            ['a private address', 'x', { url: 'https://10.0.0.1/' }],
+            ['no text path', 'x', { text: '' }],
+            ['a refresh that is none', 'x', { refresh: 'weekly' }],
+            ['minutes with none', 'x', { refresh: 'minutes' }],
+            ['a rate that is too high', 'x', { rps: 1000 }],
+            ['a header with no value', 'x', { headers: [{ name: 'X-New' }] }],
+            ['a header that cannot be set', 'x', { headers: [{ name: 'Host', value: 'x' }] }],
+            ['a bad language', 'x', { lang: '中文' }],
+          ]
+          for (const [what, , over] of refuse) expect([what, (await adm('PUT', `/apis/${ids[1]}`, iface(over))).status]).toEqual([what, 400])
+          expect((await adm('PUT', '/apis/BAD ID', iface())).status).toBe(400)
+          expect((await adm('PUT', `/apis/${ids[1]}`, iface({ id: 'another' }))).status).toBe(400)
+          // Spaces may choose the enabled ones, not enter addresses.
+          const sp = (await call(admin, 'POST', '/api/spaces', { name: `Ext ${run}` })).json.id as string
+          const prefs = await call(admin, 'GET', `/api/spaces/${sp}/daily/prefs`)
+          expect(prefs.json.available).toEqual(expect.arrayContaining([{ id: ids[0], name: 'Renamed', lang: 'en' }]))
+          expect(JSON.stringify(prefs.json)).not.toContain('quotes.example.org')
+          expect(prefs.json.languages).toEqual(start.json.languages)
+          const off = await adm('PUT', `/apis/${ids[0]}`, iface({ name: 'Renamed', enabled: false, headers: [] }))
+          expect(off.json.apis.find((a: any) => a.id === ids[0]).enabled).toBe(false)
+          expect((await call(admin, 'PUT', `/api/spaces/${sp}/daily/prefs`, { inherit: true, apis: [ids[0]] })).status).toBe(400)
+          const none = await call(admin, 'GET', `/api/spaces/${sp}/daily/prefs`)
+          expect(none.json.available.some((a: any) => a.id === ids[0])).toBe(false)
+          // Taking away.
+          expect((await adm('DELETE', `/apis/${ids[0]}`)).json.apis.some((a: any) => a.id === ids[0])).toBe(false)
+          expect((await adm('DELETE', `/apis/${ids[0]}`)).status).toBe(404)
+          // The languages are a list of the administrators' own.
+          const langs = await adm('PUT', '', { languages: ['zh', 'en', 'ja', 'JA', 'pt-BR'] })
+          expect(langs.json.languages).toEqual(['zh', 'en', 'ja', 'pt-br'])
+          for (const bad of [['chinese!'], 'zh', null]) expect([JSON.stringify(bad), (await adm('PUT', '', { languages: bad })).status]).toEqual([JSON.stringify(bad), 400])
+          await adm('PUT', '', { languages: start.json.languages })
+          expect((await call(browser(), 'PUT', `/api/admin/daily/apis/${ids[1]}`, iface())).status).toBe(401)
+        } finally {
+          for (const id of ids) await adm('DELETE', `/apis/${id}`)
         }
       })
     } else {

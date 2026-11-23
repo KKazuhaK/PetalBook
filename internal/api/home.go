@@ -1,10 +1,14 @@
 package api
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
@@ -79,6 +83,13 @@ func (s *server) getDaily(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "lang must be a language code like zh or en")
 		return
 	}
+	tz, ok := parseTZ(v)
+	if !ok {
+		writeError(c.w, http.StatusBadRequest, "invalid", "tz is minutes east of UTC, from -840 to 840")
+		return
+	}
+	now := s.opt.DailyFetch.Now()
+	day := maxAgeFor(date, tz, now)
 	type none struct {
 		Page   *dailyPageResp `json:"page"`
 		Reason string         `json:"reason"`
@@ -90,15 +101,15 @@ func (s *server) getDaily(c *call) {
 		return
 	}
 	if pick != nil {
-		writeJSON(c.w, http.StatusOK, struct {
+		s.writeDaily(c, struct {
 			Page   *dailyPageResp `json:"page"`
 			Count  int            `json:"count"`
 			Origin string         `json:"origin"`
-		}{&dailyPageResp{toSummary(pick.Page, c.sp.Space.TypeResolver()), pick.Body, pick.Truncated}, pick.Count, "space"})
+		}{&dailyPageResp{toSummary(pick.Page, c.sp.Space.TypeResolver()), pick.Body, pick.Truncated}, pick.Count, "space"}, day)
 		return
 	}
 	if why == space.DailyNoMatch {
-		writeJSON(c.w, http.StatusOK, none{nil, "no_match"})
+		s.writeDaily(c, none{nil, "no_match"}, 60)
 		return
 	}
 	// 2 and 3. What the administrators gave (accounts mode only).
@@ -113,18 +124,51 @@ func (s *server) getDaily(c *call) {
 			s.fail(c.w, err)
 			return
 		case q != nil:
-			writeJSON(c.w, http.StatusOK, struct {
+			age := day
+			if !q.expires.IsZero() {
+				age = clampAge(int(q.expires.Sub(now) / time.Second))
+			}
+			s.writeDaily(c, struct {
 				Page   *dailyPageResp `json:"page"`
 				Quote  *dailyQuote    `json:"quote"`
 				Origin string         `json:"origin"`
-			}{nil, q, q.origin})
+			}{nil, q, q.origin}, age)
 			return
 		case reason != "":
-			writeJSON(c.w, http.StatusOK, none{nil, reason})
+			s.writeDaily(c, none{nil, reason}, 60)
 			return
 		}
 	}
-	writeJSON(c.w, http.StatusOK, none{nil, "no_source"})
+	s.writeDaily(c, none{nil, "no_source"}, 60)
+}
+
+// writeDaily answers a request for the daily text: a browser may keep it for
+// maxAge seconds (it is the person's own to keep: private), and a request that
+// carries the ETag of what would be sent gets 304.
+func (s *server) writeDaily(c *call, v any, maxAge int) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	sum := sha256.Sum256(buf.Bytes())
+	etag := `"` + hex.EncodeToString(sum[:12]) + `"`
+	h := c.w.Header()
+	h.Set("ETag", etag)
+	h.Set("Cache-Control", "private, max-age="+strconv.Itoa(maxAge))
+	if match := c.r.Header.Get("If-None-Match"); match != "" {
+		for _, m := range strings.Split(match, ",") {
+			if strings.TrimPrefix(strings.TrimSpace(m), "W/") == etag {
+				c.w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
+	}
+	h.Set("Content-Type", "application/json; charset=utf-8")
+	c.w.WriteHeader(http.StatusOK)
+	c.w.Write(buf.Bytes())
 }
 
 // --- favourites ---------------------------------------------------------------------

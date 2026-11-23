@@ -100,10 +100,12 @@ func (d *DailySource) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// DailyConfig is the daily source of a space: one for every language, or one
-// per language (`daily: {zh: {folder: 文案}, en: {tag: quotes}}`).
+// DailyConfig is the daily source of a space: one for every language, one per
+// language (`daily: {zh: {folder: 文案}, en: {tag: quotes}}`), or both (the one
+// for every language is the fallback for the languages that have none).
 type DailyConfig struct {
-	// All is a source written without languages: it applies to every language.
+	// All is a source written without languages: it applies to every language
+	// that has none of its own.
 	All *DailySource
 	// ByLang are the sources by language code, in lower case.
 	ByLang map[string]DailySource
@@ -133,16 +135,13 @@ func ValidLang(s string) bool {
 // NormalLang is a language code as it is compared: lower case.
 func NormalLang(s string) string { return strings.ToLower(s) }
 
-// For is the source for a language: the one for every language; else that of
-// the language itself, or of the language without its region (`zh` for
-// `zh-CN`); else, so that a language nobody wrote a source for still gets a
+// For is the source for a language: that of the language itself, or of the
+// language without its region (`zh` for `zh-CN`); else the one for every
+// language ("all languages", the fallback entry); else, so that a language nobody wrote a source for still gets a
 // text, the first of the sources by the order of their codes.
 func (c *DailyConfig) For(lang string) *DailySource {
 	if c == nil {
 		return nil
-	}
-	if c.All != nil {
-		return c.All
 	}
 	lang = NormalLang(lang)
 	if d, ok := c.ByLang[lang]; ok {
@@ -152,6 +151,9 @@ func (c *DailyConfig) For(lang string) *DailySource {
 		if d, ok := c.ByLang[lang[:i]]; ok {
 			return &d
 		}
+	}
+	if c.All != nil {
+		return c.All
 	}
 	keys := make([]string, 0, len(c.ByLang))
 	for k := range c.ByLang {
@@ -167,13 +169,25 @@ func (c *DailyConfig) For(lang string) *DailySource {
 
 // MarshalJSON writes the one source, or the sources by language.
 func (c DailyConfig) MarshalJSON() ([]byte, error) {
-	if c.All != nil {
-		return json.Marshal(c.All)
+	out := map[string]any{}
+	for k, v := range c.ByLang {
+		out[k] = v
 	}
-	return json.Marshal(c.ByLang)
+	if c.All != nil {
+		out["filter"] = c.All.filters()
+		switch {
+		case c.All.Folder != nil:
+			out["folder"] = *c.All.Folder
+		case c.All.Tag != "":
+			out["tag"] = c.All.Tag
+		default:
+			out["type"] = c.All.Type
+		}
+	}
+	return json.Marshal(out)
 }
 
-// UnmarshalJSON reads either shape.
+// UnmarshalJSON reads the one source, the sources by language, or both.
 func (c *DailyConfig) UnmarshalJSON(data []byte) error {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(data, &m); err != nil {
@@ -182,27 +196,37 @@ func (c *DailyConfig) UnmarshalJSON(data []byte) error {
 	if len(m) == 0 {
 		return errors.New("give a source: folder, tag or type, or one for each language")
 	}
-	for _, k := range []string{"folder", "tag", "type", "filter"} {
-		if _, ok := m[k]; ok {
-			var d DailySource
-			if err := json.Unmarshal(data, &d); err != nil {
-				return err
-			}
-			*c = DailyConfig{All: &d}
-			return nil
+	out := DailyConfig{}
+	whole := map[string]json.RawMessage{}
+	for k, raw := range m {
+		if k == "folder" || k == "tag" || k == "type" || k == "filter" {
+			whole[k] = raw
 		}
 	}
-	if len(m) > maxDailyLangs {
+	if len(whole) > 0 {
+		b, _ := json.Marshal(whole)
+		var d DailySource
+		if err := json.Unmarshal(b, &d); err != nil {
+			return err
+		}
+		out.All = &d
+	}
+	if len(m)-len(whole) > maxDailyLangs {
 		return fmt.Errorf("at most %d languages", maxDailyLangs)
 	}
-	out := DailyConfig{ByLang: map[string]DailySource{}}
 	for k, raw := range m {
+		if _, ok := whole[k]; ok {
+			continue
+		}
 		if !ValidLang(k) {
 			return fmt.Errorf("%q is not a language code (zh, en, zh-CN)", k)
 		}
 		var d DailySource
 		if err := json.Unmarshal(raw, &d); err != nil {
 			return fmt.Errorf("%s: %w", k, err)
+		}
+		if out.ByLang == nil {
+			out.ByLang = map[string]DailySource{}
 		}
 		if _, dup := out.ByLang[NormalLang(k)]; dup {
 			return fmt.Errorf("%q is given twice", k)
@@ -258,15 +282,12 @@ func dailyIn(top *yaml.Node) *DailyConfig {
 	if v == nil || v.Kind != yaml.MappingNode {
 		return nil
 	}
-	if hasSourceKey(v) {
-		if d := sourceIn(v); d != nil {
-			return &DailyConfig{All: d}
-		}
-		return nil
-	}
 	var out DailyConfig
+	if hasSourceKey(v) {
+		out.All = sourceIn(v)
+	}
 	eachPair(v, func(k string, val *yaml.Node, _ int) {
-		if !ValidLang(k) || val == nil || val.Kind != yaml.MappingNode || len(out.ByLang) >= maxDailyLangs {
+		if isSourceKey(k) || k == "filter" || !ValidLang(k) || val == nil || val.Kind != yaml.MappingNode || len(out.ByLang) >= maxDailyLangs {
 			return
 		}
 		if d := sourceIn(val); d != nil {
@@ -276,7 +297,7 @@ func dailyIn(top *yaml.Node) *DailyConfig {
 			out.ByLang[NormalLang(k)] = *d
 		}
 	})
-	if out.ByLang == nil {
+	if out.All == nil && out.ByLang == nil {
 		return nil
 	}
 	return &out
@@ -394,21 +415,19 @@ func (s *Space) CheckDailySource(d DailySource) (DailySource, error) {
 
 func (s *Space) checkDaily(c DailyConfig) (DailyConfig, error) {
 	var out DailyConfig
+	if c.All == nil && len(c.ByLang) == 0 {
+		return c, invalidf("give a source: folder, tag or type, or one for each language")
+	}
 	if c.All != nil {
 		d, err := s.CheckDailySource(*c.All)
 		if err != nil {
 			return c, err
 		}
 		out.All = &d
-		return out, nil
-	}
-	if len(c.ByLang) == 0 {
-		return c, invalidf("give a source: folder, tag or type, or one for each language")
 	}
 	if len(c.ByLang) > maxDailyLangs {
 		return c, invalidf("at most %d languages", maxDailyLangs)
 	}
-	out.ByLang = map[string]DailySource{}
 	for lang, d := range c.ByLang {
 		if !ValidLang(lang) {
 			return c, invalidf("%q is not a language code", lang)
@@ -416,6 +435,9 @@ func (s *Space) checkDaily(c DailyConfig) (DailyConfig, error) {
 		checked, err := s.CheckDailySource(d)
 		if err != nil {
 			return c, err
+		}
+		if out.ByLang == nil {
+			out.ByLang = map[string]DailySource{}
 		}
 		out.ByLang[NormalLang(lang)] = checked
 	}
@@ -508,15 +530,11 @@ func setDailyIn(top *yaml.Node, d *DailyConfig) (bool, error) {
 		top.Content[at+1] = n
 	}
 	if d.All != nil {
-		// Sources by language that were there go: this one is for all of them.
-		for _, k := range langKeys(n) {
+		writeSource(n, *d.All)
+	} else {
+		for _, k := range []string{"folder", "tag", "type", "filter"} {
 			removeKey(n, k)
 		}
-		writeSource(n, *d.All)
-		return true, nil
-	}
-	for _, k := range []string{"folder", "tag", "type", "filter"} {
-		removeKey(n, k)
 	}
 	have := map[string]bool{}
 	for _, k := range langKeys(n) {
@@ -595,26 +613,25 @@ func rebindDaily(top *yaml.Node, from, to string) (bool, error) {
 	anyMoves := false
 	if hasSourceKey(cur) {
 		_, anyMoves = movedFolder(cur, from, to)
-	} else {
-		eachPair(cur, func(k string, v *yaml.Node, _ int) {
-			if v != nil && v.Kind == yaml.MappingNode {
-				if _, ok := movedFolder(v, from, to); ok {
-					anyMoves = true
-				}
-			}
-		})
 	}
+	eachPair(cur, func(k string, v *yaml.Node, _ int) {
+		if !isSourceKey(k) && ValidLang(k) && v != nil && v.Kind == yaml.MappingNode {
+			if _, ok := movedFolder(v, from, to); ok {
+				anyMoves = true
+			}
+		}
+	})
 	if !anyMoves {
 		return false, nil
 	}
 	n := own(top, at+1)
 	if hasSourceKey(n) {
-		nk, _ := movedFolder(n, from, to)
-		setKey(n, "folder", textNode(nk))
-		return true, nil
+		if nk, ok := movedFolder(n, from, to); ok {
+			setKey(n, "folder", textNode(nk))
+		}
 	}
 	for i := 0; i+1 < len(n.Content); i += 2 {
-		if k, ok := keyText(n.Content[i]); ok && ValidLang(k) {
+		if k, ok := keyText(n.Content[i]); ok && !isSourceKey(k) && ValidLang(k) {
 			if v := deref(n.Content[i+1]); v != nil && v.Kind == yaml.MappingNode {
 				if nk, ok := movedFolder(v, from, to); ok {
 					setKey(own(n, i+1), "folder", textNode(nk))

@@ -116,7 +116,7 @@ func New(opt Options) http.Handler {
 		opt.Version = "dev"
 	}
 	if opt.DailyFetch == nil {
-		opt.DailyFetch = dailyfetch.New()
+		opt.DailyFetch = dailyfetch.New(NewDailyBacking(opt.Store))
 	}
 	s := &server{opt: opt, log: opt.Logger, auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, single: opt.Auth == nil, started: time.Now(),
 		origins: map[string]bool{}, originHosts: map[string]bool{}, importing: make(chan struct{}, 1)}

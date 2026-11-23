@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
@@ -32,115 +31,20 @@ type siteDefault struct {
 	Source *space.DailyConfig `json:"source,omitempty"`
 }
 
-type siteDaily struct {
-	Default *siteDefault     `json:"default"`
-	Hosts   []string         `json:"hosts"`
-	APIs    []dailyfetch.API `json:"apis"`
-}
-
-func (d *siteDaily) fill() {
-	if d.Hosts == nil {
-		d.Hosts = []string{}
-	}
-	if d.APIs == nil {
-		d.APIs = []dailyfetch.API{}
-	}
-}
-
-func (s *server) loadSite(ctx context.Context) (siteDaily, error) {
-	var d siteDaily
-	raw, ok, err := store.GetSiteSetting(ctx, s.opt.Store.Q(), siteDailyKey)
-	if err != nil {
-		return d, err
-	}
-	if ok {
-		if err := json.Unmarshal([]byte(raw), &d); err != nil {
-			s.log.Error("the daily text settings of the server cannot be read; they are taken as not set", "error", err)
-			d = siteDaily{}
-		}
-	}
-	d.fill()
-	return d, nil
-}
-
 type dailyQuote struct {
 	Text   string `json:"text"`
 	Source string `json:"source,omitempty"`
 	Author string `json:"author,omitempty"`
-	origin string
-}
-
-// siteDaily is what the administrators' settings give for a space with no
-// source of its own: the external interface the space chose, else the default
-// when the space takes it. A nil quote with a reason is a block that does not
-// show; with none, there is nothing set.
-func (s *server) siteDaily(c *call, date string, skip int, lang string) (*dailyQuote, string, error) {
-	ctx := c.r.Context()
-	prefs, err := store.GetSpaceDaily(ctx, s.opt.Store.Q(), c.sp.Info.ID)
-	if err != nil {
-		return nil, "", err
-	}
-	site, err := s.loadSite(ctx)
-	if err != nil {
-		return nil, "", err
-	}
-	var ids []string
-	json.Unmarshal([]byte(prefs.APIs), &ids)
-	if a := chooseAPI(site.APIs, ids, lang); a != nil {
-		q, err := s.opt.DailyFetch.Get(ctx, *a, site.Hosts, lang, date, skip)
-		switch {
-		case errors.Is(err, dailyfetch.ErrRateLimited):
-			return nil, "", err
-		case err != nil:
-			return nil, "unavailable", nil
-		}
-		return &dailyQuote{Text: q.Text, Source: q.Source, Author: q.Author, origin: "external"}, "", nil
-	}
-	if !prefs.Inherit || site.Default == nil {
-		return nil, "", nil
-	}
-	switch site.Default.Kind {
-	case "list":
-		return s.dailyFromLines(ctx, date, skip, lang)
-	case "space":
-		return s.dailyFromSpace(ctx, *site.Default, date, skip, lang)
-	}
-	return nil, "", nil
-}
-
-// chooseAPI picks, among the interfaces a space chose, the one for the
-// language: made for it, else one that takes any language, else any.
-func chooseAPI(all []dailyfetch.API, ids []string, lang string) *dailyfetch.API {
-	chosen := map[string]bool{}
-	for _, id := range ids {
-		chosen[id] = true
-	}
-	var mine []dailyfetch.API
-	for _, a := range all {
-		if chosen[a.ID] {
-			mine = append(mine, a)
-		}
-	}
-	if len(mine) == 0 {
-		return nil
-	}
-	base := lang
-	if i := strings.IndexByte(lang, '-'); i > 0 {
-		base = lang[:i]
-	}
-	for _, want := range []func(a dailyfetch.API) bool{
-		func(a dailyfetch.API) bool { return a.Lang != "" && a.Lang == lang },
-		func(a dailyfetch.API) bool { return a.Lang != "" && a.Lang == base },
-		func(a dailyfetch.API) bool { return a.Lang == "" },
-		func(dailyfetch.API) bool { return true },
-	} {
-		for i := range mine {
-			if want(mine[i]) {
-				return &mine[i]
-			}
-		}
-	}
-	return nil
+	Link   string `json:"link,omitempty"`
+	// Fetched and Stale are set for an external interface: when the text was
+	// got, and that it is the last thing the interface said because it could
+	// not be asked now.
+	Fetched string `json:"fetched,omitempty"`
+	Stale   bool   `json:"stale,omitempty"`
+	origin  string
+	// expires is when what was answered stops being the same, zero when it is
+	// the end of the day asked for.
+	expires time.Time
 }
 
 // dailyFromLines picks one of the lines the administrators gave: those in the
@@ -222,8 +126,12 @@ type dailyLinesInfo struct {
 }
 
 type adminDailyResp struct {
-	siteDaily
-	Lines dailyLinesInfo `json:"lines"`
+	Default   *siteDefault        `json:"default"`
+	Hosts     []string            `json:"hosts"`
+	Languages []string            `json:"languages"`
+	APIs      []apiView           `json:"apis"`
+	Presets   []dailyfetch.Preset `json:"presets"`
+	Lines     dailyLinesInfo      `json:"lines"`
 }
 
 func (s *server) adminDailyView(ctx context.Context) (adminDailyResp, error) {
@@ -239,7 +147,11 @@ func (s *server) adminDailyView(ctx context.Context) (adminDailyResp, error) {
 	for _, n := range counts {
 		total += n
 	}
-	return adminDailyResp{site, dailyLinesInfo{total, counts, store.MaxDailyLines}}, nil
+	apis := make([]apiView, len(site.APIs))
+	for i, a := range site.APIs {
+		apis[i] = viewOfAPI(a)
+	}
+	return adminDailyResp{site.Default, site.Hosts, site.Languages, apis, dailyfetch.Presets(), dailyLinesInfo{total, counts, store.MaxDailyLines}}, nil
 }
 
 func (s *server) adminGetDaily(c *call) {
@@ -252,99 +164,6 @@ func (s *server) adminGetDaily(c *call) {
 }
 
 func bad(c *call, msg string) { writeError(c.w, http.StatusBadRequest, "invalid", msg) }
-
-// adminPutDaily changes the default, the hosts and the interfaces. What the
-// request leaves out stays as it is.
-func (s *server) adminPutDaily(c *call) {
-	var req map[string]json.RawMessage
-	if !s.readJSON(c.w, c.r, &req, false) {
-		return
-	}
-	for k := range req {
-		if k != "default" && k != "hosts" && k != "apis" {
-			bad(c, "unknown key "+k+": the settings are default, hosts and apis")
-			return
-		}
-	}
-	ctx := c.r.Context()
-	site, err := s.loadSite(ctx)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	if raw, ok := req["hosts"]; ok {
-		var hosts []string
-		if err := json.Unmarshal(raw, &hosts); err != nil || hosts == nil {
-			bad(c, "hosts is a list of host names")
-			return
-		}
-		if len(hosts) > dailyfetch.MaxHosts {
-			bad(c, "at most 50 hosts")
-			return
-		}
-		seen := map[string]bool{}
-		site.Hosts = []string{}
-		for _, h := range hosts {
-			h, err := dailyfetch.CheckHost(h)
-			if err != nil {
-				bad(c, err.Error())
-				return
-			}
-			if !seen[h] {
-				seen[h] = true
-				site.Hosts = append(site.Hosts, h)
-			}
-		}
-	}
-	// The interfaces are checked against the hosts as they will be.
-	if raw, ok := req["apis"]; ok {
-		var apis []dailyfetch.API
-		if err := json.Unmarshal(raw, &apis); err != nil || apis == nil {
-			bad(c, "apis is a list of interfaces")
-			return
-		}
-		site.APIs = apis
-	}
-	if len(site.APIs) > dailyfetch.MaxAPIs {
-		bad(c, "at most 20 interfaces")
-		return
-	}
-	seen := map[string]bool{}
-	for i, a := range site.APIs {
-		a, err := dailyfetch.CheckAPI(a, site.Hosts, s.opt.DailyFetch.AllowHTTP())
-		if err != nil {
-			bad(c, "interface "+a.ID+": "+err.Error())
-			return
-		}
-		if seen[a.ID] {
-			bad(c, "the interface id "+a.ID+" is used twice")
-			return
-		}
-		seen[a.ID] = true
-		site.APIs[i] = a
-	}
-	if raw, ok := req["default"]; ok {
-		var d *siteDefault
-		if err := json.Unmarshal(raw, &d); err != nil {
-			bad(c, "default: "+err.Error())
-			return
-		}
-		if d != nil {
-			if err := s.checkSiteDefault(ctx, d); err != nil {
-				s.fail(c.w, err)
-				return
-			}
-		}
-		site.Default = d
-	}
-	site.fill()
-	b, _ := json.Marshal(site)
-	if err := store.SetSiteSetting(ctx, s.opt.Store.Q(), siteDailyKey, string(b), time.Now()); err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	s.adminAnswerDaily(c)
-}
 
 func (s *server) adminAnswerDaily(c *call) {
 	out, err := s.adminDailyView(c.r.Context())
@@ -518,142 +337,4 @@ func (s *server) adminDeleteDailyLines(c *call) {
 	s.adminAnswerDaily(c)
 }
 
-// adminTestDailyAPI asks an interface now and says what came back.
-func (s *server) adminTestDailyAPI(c *call) {
-	var req struct {
-		Lang string `json:"lang"`
-	}
-	if !s.readJSON(c.w, c.r, &req, true) {
-		return
-	}
-	lang := space.NormalLang(req.Lang)
-	if lang != "" && !space.ValidLang(lang) {
-		bad(c, "lang is a language code like zh or en")
-		return
-	}
-	site, err := s.loadSite(c.r.Context())
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	id := c.r.PathValue("id")
-	for _, a := range site.APIs {
-		if a.ID != id {
-			continue
-		}
-		q, err := s.opt.DailyFetch.Try(c.r.Context(), a, site.Hosts, lang)
-		if err != nil {
-			writeJSON(c.w, http.StatusOK, struct {
-				OK      bool   `json:"ok"`
-				Message string `json:"message"`
-			}{false, err.Error()})
-			return
-		}
-		writeJSON(c.w, http.StatusOK, struct {
-			OK    bool             `json:"ok"`
-			Quote dailyfetch.Quote `json:"quote"`
-		}{true, q})
-		return
-	}
-	writeError(c.w, http.StatusNotFound, "not_found", "no such interface")
-}
-
 // --- what the owner of a space chooses ---------------------------------------------
-
-type dailyPrefsResp struct {
-	Inherit   bool       `json:"inherit"`
-	APIs      []string   `json:"apis"`
-	Available []availAPI `json:"available"`
-	Default   *struct {
-		Kind string `json:"kind"`
-	} `json:"default"`
-}
-
-type availAPI struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Lang string `json:"lang"`
-}
-
-func (s *server) dailyPrefs(c *call) (dailyPrefsResp, error) {
-	ctx := c.r.Context()
-	out := dailyPrefsResp{APIs: []string{}, Available: []availAPI{}}
-	prefs, err := store.GetSpaceDaily(ctx, s.opt.Store.Q(), c.sp.Info.ID)
-	if err != nil {
-		return out, err
-	}
-	site, err := s.loadSite(ctx)
-	if err != nil {
-		return out, err
-	}
-	out.Inherit = prefs.Inherit
-	var ids []string
-	json.Unmarshal([]byte(prefs.APIs), &ids)
-	known := map[string]bool{}
-	for _, a := range site.APIs {
-		known[a.ID] = true
-		out.Available = append(out.Available, availAPI{a.ID, a.Name, a.Lang})
-	}
-	for _, id := range ids {
-		if known[id] {
-			out.APIs = append(out.APIs, id)
-		}
-	}
-	if site.Default != nil {
-		out.Default = &struct {
-			Kind string `json:"kind"`
-		}{site.Default.Kind}
-	}
-	return out, nil
-}
-
-func (s *server) getDailyPrefs(c *call) {
-	out, err := s.dailyPrefs(c)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	writeJSON(c.w, http.StatusOK, out)
-}
-
-func (s *server) putDailyPrefs(c *call) {
-	var req struct {
-		Inherit *bool     `json:"inherit"`
-		APIs    *[]string `json:"apis"`
-	}
-	if !s.readJSON(c.w, c.r, &req, false) {
-		return
-	}
-	if req.Inherit == nil || req.APIs == nil {
-		bad(c, "give inherit (true or false) and apis (the ids of the interfaces to use)")
-		return
-	}
-	ctx := c.r.Context()
-	site, err := s.loadSite(ctx)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	known := map[string]bool{}
-	for _, a := range site.APIs {
-		known[a.ID] = true
-	}
-	seen := map[string]bool{}
-	ids := []string{}
-	for _, id := range *req.APIs {
-		if !known[id] {
-			bad(c, "there is no interface "+id+"; only those the administrators set up can be used")
-			return
-		}
-		if !seen[id] {
-			seen[id] = true
-			ids = append(ids, id)
-		}
-	}
-	b, _ := json.Marshal(ids)
-	if err := store.SetSpaceDaily(ctx, s.opt.Store.Q(), c.sp.Info.ID, store.SpaceDaily{Inherit: *req.Inherit, APIs: string(b)}); err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	s.getDailyPrefs(c)
-}

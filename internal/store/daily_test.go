@@ -123,3 +123,51 @@ func TestSpaceDailyChoice(t *testing.T) {
 		}
 	})
 }
+
+func TestDailyCache(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		at := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+		put := func(key, lang, period string, skip int, body string, when time.Time) {
+			t.Helper()
+			if err := store.PutDailyCache(ctx, st.Q(), key, lang, period, skip, store.DailyCached{Body: body, Fetched: when}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, ok, err := store.GetDailyCache(ctx, st.Q(), "a:1", "zh", "d:2026-11-23", 0); ok || err != nil {
+			t.Fatalf("%v %v", ok, err)
+		}
+		put("a:1", "zh", "d:2026-11-23", 0, `{"text":"one"}`, at)
+		put("a:1", "zh", "d:2026-11-23", 1, `{"text":"two"}`, at.Add(time.Minute))
+		put("a:1", "zh", "d:2026-11-24", 0, `{"text":"three"}`, at.Add(24*time.Hour))
+		put("a:1", "en", "d:2026-11-23", 0, `{"text":"english"}`, at.Add(48*time.Hour))
+		put("a:2", "zh", "d:2026-11-23", 0, `{"text":"other"}`, at.Add(72*time.Hour))
+		got, ok, err := store.GetDailyCache(ctx, st.Q(), "a:1", "zh", "d:2026-11-23", 1)
+		if err != nil || !ok || got.Body != `{"text":"two"}` || !got.Fetched.Equal(at.Add(time.Minute)) {
+			t.Fatalf("%+v %v %v", got, ok, err)
+		}
+		// Putting again replaces.
+		put("a:1", "zh", "d:2026-11-23", 1, `{"text":"two again"}`, at.Add(2*time.Minute))
+		if got, _, _ := store.GetDailyCache(ctx, st.Q(), "a:1", "zh", "d:2026-11-23", 1); got.Body != `{"text":"two again"}` {
+			t.Fatalf("%+v", got)
+		}
+		// The newest for an interface and a language, whatever the period.
+		if l, ok, err := store.LatestDailyCache(ctx, st.Q(), "a:1", "zh"); err != nil || !ok || l.Body != `{"text":"three"}` {
+			t.Fatalf("%+v %v %v", l, ok, err)
+		}
+		if _, ok, _ := store.LatestDailyCache(ctx, st.Q(), "a:3", "zh"); ok {
+			t.Fatal("another interface")
+		}
+		// Pruning removes what is older than the time.
+		if err := store.PruneDailyCache(ctx, st.Q(), at.Add(36*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		var n int
+		st.Q().QueryRow(ctx, `SELECT COUNT(*) FROM daily_cache`).Scan(&n)
+		if n != 2 {
+			t.Fatalf("%d rows after the pruning", n)
+		}
+		if _, ok, _ := store.LatestDailyCache(ctx, st.Q(), "a:1", "zh"); ok {
+			t.Fatal("a pruned row is still the latest")
+		}
+	})
+}

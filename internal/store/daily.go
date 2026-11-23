@@ -127,3 +127,46 @@ func SetSpaceDaily(ctx context.Context, q Q, spaceID string, d SpaceDaily) error
 		ON CONFLICT (space_id) DO UPDATE SET inherit = excluded.inherit, apis = excluded.apis`, spaceID, b2i(d.Inherit), d.APIs)
 	return err
 }
+
+// DailyCached is one thing an external interface said.
+type DailyCached struct {
+	Body    string // JSON
+	Fetched time.Time
+}
+
+// GetDailyCache returns what was kept for an interface, language, period and skip.
+func GetDailyCache(ctx context.Context, q Q, apiKey, lang, period string, skip int) (DailyCached, bool, error) {
+	var c DailyCached
+	var at int64
+	err := q.QueryRow(ctx, `SELECT body, fetched FROM daily_cache WHERE api_key = ? AND lang = ? AND period = ? AND skip = ?`, apiKey, lang, period, skip).Scan(&c.Body, &at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return c, false, nil
+	}
+	c.Fetched = fromMS(at)
+	return c, err == nil, err
+}
+
+// PutDailyCache keeps what an interface said.
+func PutDailyCache(ctx context.Context, q Q, apiKey, lang, period string, skip int, c DailyCached) error {
+	_, err := q.Exec(ctx, `INSERT INTO daily_cache(api_key, lang, period, skip, body, fetched) VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (api_key, lang, period, skip) DO UPDATE SET body = excluded.body, fetched = excluded.fetched`, apiKey, lang, period, skip, c.Body, ms(c.Fetched))
+	return err
+}
+
+// LatestDailyCache returns the newest thing kept for an interface and language.
+func LatestDailyCache(ctx context.Context, q Q, apiKey, lang string) (DailyCached, bool, error) {
+	var c DailyCached
+	var at int64
+	err := q.QueryRow(ctx, `SELECT body, fetched FROM daily_cache WHERE api_key = ? AND lang = ? ORDER BY fetched DESC LIMIT 1`, apiKey, lang).Scan(&c.Body, &at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return c, false, nil
+	}
+	c.Fetched = fromMS(at)
+	return c, err == nil, err
+}
+
+// PruneDailyCache forgets what was kept before the time.
+func PruneDailyCache(ctx context.Context, q Q, before time.Time) error {
+	_, err := q.Exec(ctx, `DELETE FROM daily_cache WHERE fetched < ?`, ms(before))
+	return err
+}
