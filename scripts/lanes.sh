@@ -23,6 +23,8 @@ make_cmd="${MAKE:-make}"
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/petalbook-lanes.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
+# On Ctrl-C stop the lanes first, so they do not write into a removed folder.
+trap 'trap - INT TERM; kill 0' INT TERM
 : >"$work/summary"
 
 # One writer at a time, so output of two targets does not interleave. (mkdir is
