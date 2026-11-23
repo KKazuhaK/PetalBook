@@ -776,6 +776,9 @@ func (m *Manager) Evict(ctx context.Context, id string, o EvictOptions) error {
 	if err := m.verifyOnRemote(ctx, id, root, state, rem); err != nil {
 		return err
 	}
+	if err := m.verifyAssets(ctx, id, root); err != nil {
+		return err
+	}
 	if err := m.evictHook("verified"); err != nil {
 		return err
 	}
@@ -814,6 +817,14 @@ func (m *Manager) Evict(ctx context.Context, id string, o EvictOptions) error {
 	}
 	if err := m.evictHook("removed"); err != nil {
 		return err
+	}
+	// The cached attachments of the space go with it, and its handle on the
+	// attachment repository; the repository's table stays for the next open.
+	m.forgetAssetRepo(id)
+	if c := m.AssetCache(); c != nil && m.single == nil {
+		if err := c.DropSpace(id); err != nil {
+			m.log.Warn("could not remove the cached attachments of an evicted space", "space", id, "error", err)
+		}
 	}
 	// What was measured of the clone is gone; the index is measured again.
 	m.noteEvictedSize(ctx, id)
@@ -1085,6 +1096,7 @@ func (m *Manager) SetPinned(ctx context.Context, id string, pinned bool) error {
 		}
 		return err
 	}
+	m.notePinned(id, pinned)
 	if pinned {
 		if rem, err := store.GetRemote(ctx, m.opt.Store.Q(), id); err == nil && rem.Connected() {
 			m.makeFullSoon(id)

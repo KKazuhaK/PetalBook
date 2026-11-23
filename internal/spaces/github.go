@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -79,6 +80,17 @@ type GitHubCreate struct {
 	// Create makes the repository; false connects the space to the one that is
 	// there already.
 	Create bool
+	// Assets asks for an attachment repository made (or found) beside the
+	// space's, with the same owner, visibility and credential; nil asks for none.
+	Assets *GitHubAssets
+}
+
+// GitHubAssets is the attachment repository of a new space on GitHub. Default
+// is for a request that did not say: the administrator's assets.newSpaces
+// decides. Name is "" for <name>-assets.
+type GitHubAssets struct {
+	Name    string
+	Default bool
 }
 
 // CreateWithGitHub makes a space together with its repository on GitHub, in the
@@ -115,6 +127,16 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 	if utf8.RuneCountInString(g.Description) > 350 || !utf8.ValidString(g.Description) ||
 		strings.IndexFunc(g.Description, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
 		return Info{}, fmt.Errorf("%w: github.description is at most 350 characters, without control characters", ErrInvalid)
+	}
+	assetsName := ""
+	if a := g.Assets; a != nil && (!a.Default || m.Storage().Assets.NewSpaces) {
+		assetsName = a.Name
+		if assetsName == "" {
+			assetsName = g.Name + "-assets"
+		}
+		if !github.ValidRepoName(assetsName) || strings.EqualFold(assetsName, g.Name) {
+			return Info{}, fmt.Errorf("%w: github.assets names a repository other than the space's, in the form of github.name", ErrInvalid)
+		}
 	}
 	// The limit counts the spaces being made as well as the ones that exist.
 	m.createMu.Lock()
@@ -184,21 +206,44 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 		m.hook("repo-created")
 	}
 	// From here on the repository exists: a failure leaves it empty on GitHub
-	// and says so.
+	// and says so (the attachment repository too, when one was made).
+	var arepo *github.Repo
+	var acred *github.Cred
+	acreated := false
 	failed := func(code string, status int, err error) error {
-		if !created {
+		if !created && !acreated {
 			return err
 		}
 		var he *github.Error
-		if errors.As(err, &he) && he.Code == github.CodeRepoNotInInstall {
-			he.Repo = repo.Ref()
-			return he
+		if !errors.As(err, &he) || he.Code != github.CodeRepoNotInInstall {
+			he = &github.Error{Code: code, Status: status, Msg: err.Error(), Err: err}
 		}
-		return &github.Error{Code: code, Status: status, Msg: err.Error(), Repo: repo.Ref(), Err: err}
+		if created && he.Repo == nil {
+			he.Repo = repo.Ref()
+		}
+		if acreated && he.AssetsRepo == nil {
+			he.AssetsRepo = arepo.Ref()
+		}
+		return he
 	}
 	if created {
 		if cred, err = gh.ChooseCredential(ctx, plan, repo); err != nil {
 			return Info{}, failed(github.CodePushFailed, http.StatusBadGateway, err)
+		}
+	}
+	if assetsName != "" {
+		// The attachment repository goes the same way: made, then checked for the
+		// credential (an installation with selected repositories gets it added).
+		if g.Create {
+			if arepo, err = gh.CreateRepo(ctx, plan, github.NewRepoSpec{Name: assetsName, Private: g.Private, Description: "Attachments of " + g.Name}); err != nil {
+				return Info{}, failed(github.CodePushFailed, http.StatusBadGateway, err)
+			}
+			acreated = true
+			if acred, err = gh.ChooseCredential(ctx, plan, arepo); err != nil {
+				return Info{}, failed(github.CodePushFailed, http.StatusBadGateway, err)
+			}
+		} else if acred, arepo, err = gh.ResolveExisting(ctx, userID, g.Owner, assetsName, ""); err != nil {
+			return Info{}, err
 		}
 	}
 	id := stg.ID()
@@ -213,6 +258,17 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 		return Info{}, failed(github.CodePushFailed, http.StatusBadGateway, err)
 	}
 	m.hook("connected")
+	var arow *store.Remote
+	if arepo != nil {
+		// The attachment repository is looked at with the credential it will keep:
+		// the first fetch proves it works, before the space is recorded.
+		arow = &store.Remote{SpaceID: id, URL: gh.Client().RepoURL(arepo.Owner, arepo.Name), Branch: "main", CredType: CredGitHub, State: store.RemoteOK,
+			GHVia: acred.Via, GHInstallationID: acred.InstallationID, GHRepoID: acred.RepoID, GHUserID: acred.UserID, Updated: m.opt.Now()}
+		if err := m.probeAssetsRepo(ctx, id, arow); err != nil {
+			os.RemoveAll(m.assetsDir(id))
+			return Info{}, failed(github.CodePushFailed, http.StatusBadGateway, err)
+		}
+	}
 	st, _ := stg.sp.Remote()
 	row.State, row.LastGood, row.LastSync = st.State, st.LastGood, st.LastSync
 	now := m.opt.Now()
@@ -226,9 +282,15 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 		if err := store.AddMember(ctx, q, id, userID, perm.Owner, now); err != nil {
 			return err
 		}
+		if arow != nil {
+			if err := store.PutAssetRemote(ctx, q, *arow); err != nil {
+				return err
+			}
+		}
 		return store.PutRemote(ctx, q, row)
 	})
 	if err != nil {
+		os.RemoveAll(m.assetsDir(id))
 		m.createMu.Unlock()
 		m.log.Error("could not record a space made with a GitHub repository", "error", err)
 		return Info{}, failed(github.CodeInternal, http.StatusInternalServerError, errors.New("the space could not be recorded; nothing was kept"))
@@ -239,8 +301,14 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 	stg.Commit(userID)
 	m.setSync(id, row.State)
 	m.markCache(id, stg.sp)
+	if arow != nil {
+		m.noteConnected(id, true)
+		if r, _, err := m.assetRepo(ctx, id); err == nil && r != nil {
+			stg.sp.SetAssets(backend{m, id, r})
+		}
+	}
 	m.schedulePull(id)
-	return Info{ID: id, Name: stg.Name(), Role: perm.Owner, Perms: perm.All, Inbox: inbox, Sync: row.State}, nil
+	return Info{ID: id, Name: stg.Name(), Role: perm.Owner, Perms: perm.All, Inbox: inbox, Sync: row.State, Assets: m.assetsModeOf(arow != nil)}, nil
 }
 
 func (m *Manager) hook(step string) {

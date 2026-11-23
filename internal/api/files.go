@@ -110,7 +110,7 @@ func sizeText(n int64) string {
 
 func (s *server) getFile(c *call) {
 	rel := c.r.PathValue("path")
-	f, st, err := c.sp.Space.OpenFile(rel)
+	f, st, etag, err := c.sp.Space.OpenFileTag(c.r.Context(), rel)
 	if err != nil {
 		if errors.Is(err, space.ErrNotFound) {
 			writeError(c.w, http.StatusNotFound, "not_found", "no such file")
@@ -136,5 +136,12 @@ func (s *server) getFile(c *call) {
 		h.Set("Content-Security-Policy", fileCSP)
 	}
 	h.Set("Cache-Control", "private, no-cache")
-	http.ServeContent(c.w, c.r, "", st.ModTime(), f)
+	modTime := st.ModTime()
+	if etag != "" {
+		// A file of the attachment repository: its content id is the tag, and it
+		// has no modification time (finding one would walk the history).
+		h.Set("ETag", `"`+etag+`"`)
+		modTime = time.Time{}
+	}
+	http.ServeContent(c.w, c.r, "", modTime, f)
 }

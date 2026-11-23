@@ -412,3 +412,42 @@ func blobSum(data []byte) string {
 	h.Write(data)
 	return hex.EncodeToString(h.Sum(nil))
 }
+
+// ListTreeUnder is ListTree for the files below one folder of the commit.
+func (r *Repo) ListTreeUnder(ctx context.Context, commit, dir string) ([]TreeEntry, error) {
+	if !commitRe.MatchString(commit) {
+		return nil, errors.New("not a commit id")
+	}
+	if dir == "" || strings.ContainsAny(dir, "\x00\n") || strings.HasPrefix(dir, "-") {
+		return nil, fmt.Errorf("unusable folder %q", dir)
+	}
+	out, err := r.run(ctx, Cmd{Args: []string{"ls-tree", "-r", "-z", commit, "--", dir}})
+	if err != nil {
+		return nil, err
+	}
+	var es []TreeEntry
+	for _, rec := range strings.Split(out, "\x00") {
+		if rec == "" {
+			continue
+		}
+		meta, p, ok := strings.Cut(rec, "\t")
+		f := strings.Fields(meta)
+		if !ok || len(f) != 3 {
+			return nil, fmt.Errorf("unexpected ls-tree output %q", rec)
+		}
+		es = append(es, TreeEntry{Mode: f[0], Type: f[1], ID: f[2], Path: p})
+	}
+	return es, nil
+}
+
+// CommitSubject is the first line of a commit's message.
+func (r *Repo) CommitSubject(ctx context.Context, commit string) string {
+	if !commitRe.MatchString(commit) {
+		return ""
+	}
+	out, err := r.git(ctx, "log", "-n", "1", "--format=%s", commit)
+	if err != nil {
+		return ""
+	}
+	return out
+}

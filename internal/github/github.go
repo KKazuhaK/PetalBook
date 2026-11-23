@@ -58,10 +58,13 @@ type RepoRef struct {
 
 // Error is a refusal with the code, status and message the API answers with.
 type Error struct {
-	Code       string
-	Status     int
-	Msg        string
-	Repo       *RepoRef
+	Code   string
+	Status int
+	Msg    string
+	Repo   *RepoRef
+	// AssetsRepo is the attachment repository that was made with the space's
+	// (milestone 3.1) when a later step failed.
+	AssetsRepo *RepoRef
 	RetryAfter time.Duration
 	Err        error
 }

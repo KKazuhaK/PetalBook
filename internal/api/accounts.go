@@ -1,6 +1,9 @@
 package api
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -72,7 +75,11 @@ func toSpaces(in []spaces.Info) []spaceResp {
 	for i, s := range in {
 		out[i] = spaceResp{ID: s.ID, Name: s.Name, Role: s.Role, Permissions: s.Perms.Names(), Personal: s.Personal, Sync: s.Sync, Inbox: s.Inbox, Disabled: s.Disabled}
 		if s.Cache != "" {
-			out[i].Storage = &spaceStorageResp{Cache: s.Cache, Assets: "space", Remote: toNote(s.RemoteNotice)}
+			assets := s.Assets
+			if assets == "" {
+				assets = "space"
+			}
+			out[i].Storage = &spaceStorageResp{Cache: s.Cache, Assets: assets, Remote: toNote(s.RemoteNotice)}
 		}
 	}
 	return out
@@ -487,6 +494,8 @@ func (s *server) createSpace(c *call) {
 			Private     *bool  `json:"private"`
 			Description string `json:"description"`
 			Create      *bool  `json:"create"`
+			// Assets asks for an attachment repository: true, false, or {"name": "…"}.
+			Assets json.RawMessage `json:"assets"`
 		} `json:"github"`
 		// Remote connects the new space to an existing repository (milestone
 		// 3.1): the body of PUT …/remote.
@@ -514,6 +523,12 @@ func (s *server) createSpace(c *call) {
 			spaces.ConnectRequest{URL: r.URL, Branch: r.Branch, CredType: r.Credential.Type, Username: r.Credential.Username, Token: r.Credential.Token})
 	} else if g := req.GitHub; g != nil {
 		gc := spaces.GitHubCreate{Owner: g.Owner, Name: g.Name, Private: g.Private == nil || *g.Private, Description: g.Description, Create: g.Create == nil || *g.Create}
+		assets, err := assetsAsked(g.Assets)
+		if err != nil {
+			s.fail(c.w, err)
+			return
+		}
+		gc.Assets = assets
 		in, err = s.spaces.CreateWithGitHub(c.r.Context(), c.user().ID, req.Name, req.Inbox, gc)
 	} else {
 		in, err = s.spaces.CreateWith(c.r.Context(), c.user().ID, req.Name, req.Inbox)
@@ -544,4 +559,27 @@ func (s *server) renameSpace(c *call) {
 		return
 	}
 	writeJSON(c.w, http.StatusOK, toSpaces([]spaces.Info{in})[0])
+}
+
+// assetsAsked reads github.assets: absent (the administrator's default
+// applies), true, false, or an object that names the repository.
+func assetsAsked(raw json.RawMessage) (*spaces.GitHubAssets, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return &spaces.GitHubAssets{Default: true}, nil
+	}
+	var b bool
+	if err := json.Unmarshal(raw, &b); err == nil {
+		if !b {
+			return nil, nil
+		}
+		return &spaces.GitHubAssets{}, nil
+	}
+	var o struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(raw, &o); err != nil || o.Name == "" {
+		return nil, fmt.Errorf("%w: github.assets is true, false or {\"name\": \"…\"}", spaces.ErrInvalid)
+	}
+	return &spaces.GitHubAssets{Name: o.Name}, nil
 }

@@ -312,3 +312,21 @@ func GetPolicyFacts(ctx context.Context, q Q, id string) (PolicyFacts, error) {
 	f.Created, f.Personal, f.Exempt, f.OwnerExempt = fromMS(created), personal.Valid, exempt != 0, ownerExempt != 0
 	return f, err
 }
+
+// PinnedSpaceIDs lists the spaces an administrator keeps on the server.
+func PinnedSpaceIDs(ctx context.Context, q Q) ([]string, error) {
+	rows, err := q.Query(ctx, `SELECT id FROM spaces WHERE pinned <> 0`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}

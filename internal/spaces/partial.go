@@ -75,6 +75,14 @@ func (m *Manager) makeFullSoon(id string) {
 			m.log.Warn("could not fetch every version of a pinned space", "space", id, "error", err)
 			return
 		}
+		// Its attachments stay in the cache too.
+		if r, _, _ := m.assetRepo(ctx, id); r != nil {
+			if _, _, err := r.Refresh(ctx, false); err == nil {
+				if err := r.FetchAll(ctx); err != nil {
+					m.log.Warn("could not fetch every attachment of a pinned space", "space", id, "error", err)
+				}
+			}
+		}
 		if err := m.keepCacheState(ctx, id, store.CacheFull); err != nil {
 			m.log.Warn("could not record that a pinned space is full", "space", id, "error", err)
 		}

@@ -713,6 +713,9 @@ type txn struct {
 	// bind are the "b" and "u" records of the change whose edit of space.yml
 	// is not yet final (see finishBindings).
 	bind []jrec
+	// assets are uploads that go to the attachment repository before the
+	// change is committed (attachments.go).
+	assets []pendingAsset
 	// links are the "l" records of the change: the moves whose links have to
 	// be made right (see relink). They are done when the change is final.
 	links []jrec
@@ -819,6 +822,14 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 		parent := r.repo.Head(ctx)
 		tx := &txn{s: s, by: by, remote: true, parent: parent}
 		res, err := op(tx)
+		if err == nil {
+			// The attachments go first: a page committed after this never
+			// refers to one that is not on its remote.
+			err = s.pushAssets(ctx, tx)
+			if err != nil && gitstore.KindOf(err) != gitstore.KindOther {
+				err = s.netFailure(r, err)
+			}
+		}
 		if err != nil {
 			s.undoLocked(ctx, r, tx, tx.parent)
 			if errors.Is(err, errRemoteMoved) {

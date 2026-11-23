@@ -103,6 +103,10 @@ func (s *Space) putAssetLocked(tx *txn, id, name string, data []byte) (Asset, er
 	if !s.assetsDirIsOurs() {
 		return Asset{}, invalidf("a folder whose name differs from %q only in case is in the way; attachments cannot be stored", AssetsDir)
 	}
+	if b := s.Assets(); b != nil && b.Direct() && tx.remote {
+		a, _, err := s.putAssetRepo(tx, b, id, name, data)
+		return a, err
+	}
 	dirRel := path.Join(AssetsDir, id)
 	dir, err := s.assetDir(tx, dirRel)
 	if err != nil {

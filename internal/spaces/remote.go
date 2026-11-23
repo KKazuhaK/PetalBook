@@ -231,6 +231,7 @@ func (m *Manager) withSync(ctx context.Context, in []Info) []Info {
 	m.mu.Unlock()
 	for i := range out {
 		out[i].Cache = m.cacheOf(out[i].ID, out[i].Sync != "local")
+		out[i].Assets = m.AssetsMode(ctx, out[i].ID)
 		if n, err := m.Notice(ctx, out[i].ID); err == nil {
 			out[i].RemoteNotice = n
 		}
@@ -599,12 +600,13 @@ func jittered(d time.Duration) time.Duration {
 func (m *Manager) pullDue(ctx context.Context) {
 	now := m.opt.Now()
 	var due []*opening
+	ids := map[*opening]string{}
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
 		return
 	}
-	for _, e := range m.open {
+	for id, e := range m.open {
 		if e.closing != nil || e.nextPull.IsZero() || now.Before(e.nextPull) {
 			continue
 		}
@@ -623,6 +625,7 @@ func (m *Manager) pullDue(ctx context.Context) {
 		e.nextPull = now.Add(jittered(m.opt.PullInterval))
 		e.refs++
 		due = append(due, e)
+		ids[e] = id
 	}
 	m.mu.Unlock()
 	if len(due) == 0 {
@@ -647,6 +650,9 @@ func (m *Manager) pullDue(ctx context.Context) {
 			var ue *space.UnavailableError
 			if err := e.sp.Pull(ctx, false); err != nil && !errors.As(err, &ue) && ctx.Err() == nil && !errors.Is(err, space.ErrClosed) {
 				m.log.Warn("pulling a remote failed", "error", err)
+			}
+			if e.sp.Assets() != nil {
+				m.refreshAssets(ids[e], e.sp)
 			}
 			// A space whose GitHub credential does not work is looked at again
 			// only now and then; fixing the cause wakes it (GitHubFixed).

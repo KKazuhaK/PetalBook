@@ -37,7 +37,11 @@ type storageResp struct {
 		MinIdleHours   int    `json:"minIdleHours"`
 		ClonesBytes    *int64 `json:"clonesBytes"`
 		MinFreeBytes   *int64 `json:"minFreeBytes"`
+		AssetsBytes    int64  `json:"assetsBytes"`
 	} `json:"cache"`
+	Assets struct {
+		NewSpaces bool `json:"newSpaces"`
+	} `json:"assets"`
 	Git struct {
 		Version      string `json:"version"`
 		PartialClone bool   `json:"partialClone"`
@@ -60,6 +64,7 @@ func (s *server) storageBody(set spaces.StorageSettings, aff spaces.Affected) st
 	r.LocalSpaces.MaxBytes = set.LocalSpaces.MaxBytes
 	c := set.Cache
 	r.Cache.Partial, r.Cache.EvictAfterDays, r.Cache.MinIdleHours, r.Cache.ClonesBytes, r.Cache.MinFreeBytes = c.Partial, c.EvictAfterDays, c.MinIdleHours, c.ClonesBytes, c.MinFreeBytes
+	r.Cache.AssetsBytes, r.Assets.NewSpaces = c.AssetsBytes, set.Assets.NewSpaces
 	r.Git.Version, r.Git.PartialClone = s.spaces.GitInfo()
 	r.Affected.InGrace, r.Affected.Overdue, r.Affected.Exempt = aff.InGrace, aff.Overdue, aff.Exempt
 	return r
@@ -116,15 +121,12 @@ func (s *server) adminPutStorage(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, true, authBodyLimit) {
 		return
 	}
-	if len(bytes.TrimSpace(req.Assets)) > 0 {
-		writeError(c.w, http.StatusBadRequest, "invalid", "the attachment cache settings are not available on this server yet")
-		return
-	}
 	remotes, err1 := section(req.Remotes, "require", "scope", "graceDays")
 	hosts, err2 := section(req.Hosts, "allowed")
 	local, err3 := section(req.LocalSpaces, "maxBytes")
-	cache, err4 := section(req.Cache, "partial", "evictAfterDays", "minIdleHours", "clonesBytes", "minFreeBytes")
-	for _, err := range []error{err1, err2, err3, err4} {
+	cache, err4 := section(req.Cache, "partial", "evictAfterDays", "minIdleHours", "clonesBytes", "minFreeBytes", "assetsBytes")
+	assets, err5 := section(req.Assets, "newSpaces")
+	for _, err := range []error{err1, err2, err3, err4, err5} {
 		if err != nil {
 			s.fail(c.w, err)
 			return
@@ -194,6 +196,8 @@ func (s *server) adminPutStorage(c *call) {
 				}
 			case "minIdleHours":
 				st.Cache.MinIdleHours, err = decodeAs[int](v, "cache.minIdleHours")
+			case "assetsBytes":
+				st.Cache.AssetsBytes, err = decodeAs[int64](v, "cache.assetsBytes")
 			case "clonesBytes", "minFreeBytes":
 				var p *int64
 				if !isNull(v) {
@@ -210,6 +214,15 @@ func (s *server) adminPutStorage(c *call) {
 			}
 			if err != nil {
 				return err
+			}
+		}
+		for k, v := range assets {
+			if k == "newSpaces" {
+				b, err := decodeAs[bool](v, "assets.newSpaces")
+				if err != nil {
+					return err
+				}
+				st.Assets.NewSpaces = b
 			}
 		}
 		return nil
@@ -240,8 +253,11 @@ func (s *server) adminStorageOf(ctx context.Context, r store.AdminSpace) *adminS
 	out := &adminStorageResp{
 		Cache:  s.spaces.CacheState(r.Storage.Cache, hasRemote, r.ID),
 		Pinned: r.Storage.Pinned, Exempt: r.Storage.Exempt,
-		IndexBytes: r.Storage.IndexBytes, Assets: "space",
+		IndexBytes: r.Storage.IndexBytes, Assets: "space", AssetCacheBytes: s.spaces.AssetBytes(r.ID),
 		Remote: toNote(s.spaces.NoticeOfRow(r)),
+	}
+	if r.Storage.AssetsRepo {
+		out.Assets = "repository"
 	}
 	if t := s.spaces.LastUsed(r.Storage.LastUsed, r.ID); !t.IsZero() {
 		v := rfc3339(t)
@@ -315,10 +331,11 @@ func (s *server) storageStatus(ctx context.Context) (any, error) {
 	}
 	restoring, waiting := s.spaces.RestoreCounts()
 	set := s.spaces.Storage()
+	assetTotal, assetBudget := s.spaces.AssetTotals()
 	return map[string]any{
 		"spaces":     map[string]int{"local": sums.Local, "full": sums.Full, "partial": sums.Partial, "evicted": sums.Evicted, "restoring": restoring},
-		"cloneBytes": sums.CloneBytes, "indexBytes": sums.IndexBytes, "assetCacheBytes": 0,
-		"clonesBudget": set.Cache.ClonesBytes, "assetsBudget": nil, "restoresWaiting": waiting,
+		"cloneBytes": sums.CloneBytes, "indexBytes": sums.IndexBytes, "assetCacheBytes": assetTotal,
+		"clonesBudget": set.Cache.ClonesBytes, "assetsBudget": assetBudget, "restoresWaiting": waiting,
 		"remotes": map[string]int{"inGrace": aff.InGrace, "overdue": aff.Overdue},
 	}, nil
 }

@@ -26,18 +26,20 @@ const storageKey = "storage"
 
 // Limits of the settings.
 const (
-	MinLocalMaxBytes  = 1 << 20
-	MinClonesBytes    = 1 << 30
-	DefaultEvictDays  = 14
-	DefaultIdleHours  = 24
-	DefaultFreeBytes  = 10 << 30
-	DefaultGraceDays  = 30
-	maxGraceDays      = 365
-	maxEvictDays      = 365
-	maxIdleHours      = 720
-	touchEvery        = time.Hour
-	evictRoundEvery   = 10 * time.Minute
-	maxRestoresAtOnce = 2
+	MinLocalMaxBytes   = 1 << 20
+	MinClonesBytes     = 1 << 30
+	DefaultEvictDays   = 14
+	DefaultIdleHours   = 24
+	DefaultFreeBytes   = 10 << 30
+	DefaultAssetsBytes = 5 << 30
+	MinAssetsBytes     = 64 << 20
+	DefaultGraceDays   = 30
+	maxGraceDays       = 365
+	maxEvictDays       = 365
+	maxIdleHours       = 720
+	touchEvery         = time.Hour
+	evictRoundEvery    = 10 * time.Minute
+	maxRestoresAtOnce  = 2
 )
 
 // StorageSettings is the site's storage policy.
@@ -60,7 +62,11 @@ type StorageSettings struct {
 		MinIdleHours   int    `json:"minIdleHours"`
 		ClonesBytes    *int64 `json:"clonesBytes"`
 		MinFreeBytes   *int64 `json:"minFreeBytes"`
+		AssetsBytes    int64  `json:"assetsBytes"`
 	} `json:"cache"`
+	Assets struct {
+		NewSpaces bool `json:"newSpaces"`
+	} `json:"assets"`
 }
 
 // DefaultStorage is the policy of a server whose administrator has not
@@ -76,6 +82,7 @@ func DefaultStorage(partialOK bool) StorageSettings {
 	s.Cache.MinIdleHours = DefaultIdleHours
 	f := int64(DefaultFreeBytes)
 	s.Cache.MinFreeBytes = &f
+	s.Cache.AssetsBytes = DefaultAssetsBytes
 	return s
 }
 
@@ -317,6 +324,9 @@ func (m *Manager) validateStorage(s *StorageSettings) error {
 	}
 	if c.MinFreeBytes != nil && *c.MinFreeBytes < 0 {
 		return bad("cache.minFreeBytes is null or at least 0")
+	}
+	if c.AssetsBytes < MinAssetsBytes {
+		return bad("cache.assetsBytes is at least 64 MiB")
 	}
 	if c.Partial && !m.st.gitPartial {
 		return ErrGitTooOld

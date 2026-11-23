@@ -298,6 +298,8 @@ func (m *Manager) DeleteSpace(ctx context.Context, id string) (*Deleted, error) 
 	}
 	m.MembershipChanged(members...)
 	m.setSync(id, "")
+	m.assetsGone(id)
+	m.noteConnected(id, false)
 
 	res := &Deleted{}
 	root, state := m.paths(id)

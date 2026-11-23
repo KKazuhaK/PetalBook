@@ -85,6 +85,8 @@ type Space struct {
 	// rem is set while the space follows a remote repository. It is switched
 	// under mu.
 	rem atomic.Pointer[remote]
+	// assets is the attachment repository (see attachments.go).
+	assets atomic.Pointer[AssetBackend]
 	// ctx ends when the space is closed; network commands run under it so that
 	// a hung remote cannot keep Close waiting.
 	ctx    context.Context

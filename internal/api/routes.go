@@ -234,6 +234,10 @@ var routeTable = []route{
 	{"DELETE", "/api/spaces/{space}/remote", inSpace(perm.Manage), true, false, false, (*server).deleteRemote},
 	{"POST", "/api/spaces/{space}/remote/sync", inSpace(perm.Manage), true, false, false, (*server).syncRemote},
 	{"POST", "/api/spaces/{space}/remote/accept", inSpace(perm.Manage), true, false, false, (*server).acceptRemote},
+	{"GET", "/api/spaces/{space}/remote/assets", inSpace(perm.Manage), true, false, false, (*server).getAssetsRemote},
+	{"PUT", "/api/spaces/{space}/remote/assets", inSpace(perm.Manage), true, false, false, (*server).putAssetsRemote},
+	{"DELETE", "/api/spaces/{space}/remote/assets", inSpace(perm.Manage), true, false, false, (*server).deleteAssetsRemote},
+	{"POST", "/api/spaces/{space}/remote/assets/move", inSpace(perm.Manage), true, false, false, (*server).moveAssets},
 }
 
 // RouteInfo describes a route for tests and tooling.

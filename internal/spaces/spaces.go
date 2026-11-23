@@ -92,6 +92,8 @@ type Info struct {
 	// that it does not have yet (nil if nothing). Both are read with Sync.
 	Cache        string
 	RemoteNotice *RemoteNotice
+	// Assets is "repository" when the space has an attachment repository, else "space".
+	Assets string
 }
 
 // Handle is an open space together with the caller's view of it. Release it
@@ -154,6 +156,10 @@ type Options struct {
 	// and of a restore; an error it returns stops there as a crash would (tests).
 	EvictEvery time.Duration
 	EvictHook  func(step string) error
+	// AssetsHook is called at each step of moving a space's attachments into
+	// its attachment repository; an error ends the move there, without
+	// recording a failure, as a crash would (tests).
+	AssetsHook func(step string) error
 
 	// SizeEvery is how often the background sizer measures one space (default
 	// DefaultSizeEvery; negative turns it off), and SizeAge how old a space's
@@ -243,12 +249,16 @@ type Manager struct {
 	storageMu sync.Mutex   // one change of the settings at a time
 	ev        evictState   // eviction and restoring (evict.go)
 	cs        cacheStates  // cache states in memory (partial.go)
+	as        assetState   // attachment repositories and their cache (assets.go)
 
 	trimMu   sync.Mutex      // one trim at a time
 	trimming bool            // a background trim is queued or running (guarded by mu)
 	createMu sync.Mutex      // space creation is one at a time, so the limit cannot be passed by racing
 	staging  map[string]bool // spaces being made with a GitHub repository, whose first push needs no member yet (guarded by mu)
 	reserved map[string]int  // spaces being made with a new GitHub repository, by owner (guarded by createMu)
+
+	closeCtx    context.Context // ends when the manager is closed (background work stops with it)
+	closeCancel context.CancelFunc
 
 	lock *os.File // DataDir/serve.lock, held while a server's manager runs (Options.Serve)
 }
@@ -289,6 +299,7 @@ func NewAccounts(opt Options) (*Manager, error) {
 		if err := m.recoverEvictions(context.Background()); err != nil {
 			m.log.Warn("could not finish the evictions and restores a crash cut short", "error", err)
 		}
+		m.ResumeMoves(context.Background())
 		if n, err := m.SweepStaged(context.Background()); err != nil {
 			m.log.Warn("could not remove the spaces a crash left half made", "error", err)
 		} else if n > 0 {
@@ -694,6 +705,7 @@ func (m *Manager) openSpace(ctx context.Context, id string) (*space.Space, error
 	})
 	if err == nil && rem != nil {
 		m.markCache(id, sp)
+		m.attachAssets(ctx, id, sp)
 	}
 	return sp, err
 }
@@ -1078,6 +1090,9 @@ func (m *Manager) dropListsLocked(userIDs ...string) {
 func (m *Manager) Close() error {
 	m.mu.Lock()
 	m.closed = true // from here on nothing new is acquired
+	if m.closeCancel != nil {
+		m.closeCancel()
+	}
 	m.mu.Unlock()
 	// Spaces that requests still hold are given a few seconds to be released:
 	// closing one under a running request would end it half done. If they are
@@ -1100,11 +1115,13 @@ func (m *Manager) Close() error {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	m.as.wg.Wait() // moves of attachments end when the manager is closed
 	m.mu.Lock()
 	open := m.open
 	m.open = map[string]*opening{}
 	m.mu.Unlock()
 	var errs []error
+	m.closeAssetRepos()
 	for _, e := range open {
 		if e.closing != nil {
 			<-e.closing // already on its way out

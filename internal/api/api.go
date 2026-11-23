@@ -411,6 +411,8 @@ type errorBody struct {
 	Current any    `json:"current,omitempty"`
 	// Repo is the empty repository a failed space creation left on GitHub.
 	Repo *githubRepoResp `json:"repo,omitempty"`
+	// AssetsRepo is the attachment repository made with the space's (milestone 3.1).
+	AssetsRepo *githubRepoResp `json:"assetsRepo,omitempty"`
 	// What some refusals are about (docs/api.md, "Daily text refusals"): a
 	// request header, a field of an interface.
 	Header string `json:"header,omitempty"`
@@ -551,6 +553,8 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 			w.Header().Set("Retry-After", strconv.Itoa(int((rf.RetryAfter+time.Second-1)/time.Second)))
 		}
 		writeJSON(w, http.StatusServiceUnavailable, errorBody{Error: "unavailable", Message: rf.Msg, ErrorCode: rf.Code})
+	case errors.Is(err, spaces.ErrAssetsConflict):
+		writeError(w, http.StatusConflict, "conflict", strings.TrimPrefix(err.Error(), spaces.ErrAssetsConflict.Error()+": "))
 	case errors.Is(err, spaces.ErrNotEvictable):
 		writeError(w, http.StatusConflict, "conflict", strings.TrimPrefix(err.Error(), spaces.ErrNotEvictable.Error()+": "))
 	case errors.Is(err, spaces.ErrGitTooOld), errors.Is(err, spaces.ErrConflictFlag):
@@ -574,6 +578,8 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid", urle.Msg)
 	case errors.As(err, &hoste):
 		writeError(w, http.StatusForbidden, "forbidden", hoste.Error())
+	case errors.Is(err, spaces.ErrNoAssets):
+		writeError(w, http.StatusNotFound, "not_found", "this space has no attachment repository")
 	case errors.Is(err, space.ErrNoRemote):
 		writeError(w, http.StatusNotFound, "not_found", "this space has no remote repository")
 	case errors.Is(err, space.ErrDiverged):
@@ -671,6 +677,9 @@ func (s *server) failGitHub(w http.ResponseWriter, e *github.Error) {
 	body := errorBody{Error: e.Code, Message: e.Msg}
 	if e.Repo != nil {
 		body.Repo = &githubRepoResp{e.Repo.ID, e.Repo.FullName, e.Repo.HTMLURL}
+	}
+	if e.AssetsRepo != nil {
+		body.AssetsRepo = &githubRepoResp{e.AssetsRepo.ID, e.AssetsRepo.FullName, e.AssetsRepo.HTMLURL}
 	}
 	if e.Code == github.CodeRateLimited {
 		secs := int((e.RetryAfter + time.Second - 1) / time.Second)

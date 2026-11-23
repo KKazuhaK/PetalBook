@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -40,10 +39,7 @@ func (s *Space) PageIDByPath(rel string) (string, bool) { return s.idx.IDByPath(
 // watchChecks tells the index how to find out whether an attachment exists and
 // what the types say, before it looks at any file.
 func (s *Space) watchChecks() {
-	s.idx.SetAssetExists(func(rel string) bool {
-		fi, err := os.Lstat(filepath.Join(s.root, filepath.FromSlash(rel)))
-		return err == nil && fi.Mode().IsRegular()
-	})
+	s.idx.SetAssetExists(s.assetExists)
 	if r, err := s.typeRules(); err == nil {
 		s.idx.UseTypes(r)
 	}
