@@ -1609,7 +1609,119 @@ GitHub App 和用户授权，自动建仓库；passkey；SAML。
   是在所有者的 GitHub 账号下的操作，到时先问。
 - 凭据照旧加密存库，令牌只经环境变量交给 `git`。
 
-**2.8 passkey、SAML、多个登录提供方、登录验证码**
+**2.7 的约定（2026-11-23）**：接口和错误码先写进 `docs/api.md` 的「GitHub」
+一节、「Spaces」的 `POST /api/spaces`、「Remote repository」的 Remote 对象和
+`PUT …/remote`，以及「Administration」的「GitHub App」，前后端照它并行做。
+
+- **一个服务器一个 App，只支持 github.com**。App 的配置存状态库（不用命令行
+  参数，和 2.8 把 OIDC 搬进管理后台的方向一致）：App ID、私钥、client id、
+  client secret；私钥和 secret 用服务器密钥加密（`Seal("site", …)`），任何
+  接口都不返回，只显示「已保存」和私钥公钥部分的指纹。保存前向 GitHub 核对
+  （`GET /app` 验私钥和 App ID，用一个编造的令牌问
+  `POST /applications/{client_id}/token` 验 client id 和 secret，`404` 表示
+  这对是对的），核对不过就不存。App 缺少的权限（Contents 写、Metadata 读、
+  Administration 写）只提示不拒绝。换成另一个 App 时，只要还有空间或用户在用
+  就拒绝（`409 github_app_in_use`）；同一个 App 换私钥或 secret 随时可以。
+- **令牌**：照搬 Rackbook `internal/githubapp`。安装令牌只在内存里，同步用的
+  按单个仓库收窄（`repository_ids`、`contents: write`），建仓库用的是
+  `administration: write`、不限仓库、只为这一次请求；到期前 5 分钟才换，同一
+  令牌的并发请求合成一次，网络请求时不持锁，缓存最多 1 万个。交给 `git` 的
+  方式和现有的 `token` 凭据完全一样（环境变量里的 credential helper，限定在
+  `https://github.com`），所以 `gitstore` 不用改。只有打开着的空间会被拉取，
+  一个在用的空间最多每 55 分钟换一次令牌，关着的空间不花钱。
+- **用户授权**：网页授权，`state` 加 PKCE（S256）。回调和 OIDC 回调一样是
+  跨站规则的例外，要求是同一个用户的会话。每个 PetalBook 用户最多一个连接，
+  一个 GitHub 账号只能连一个 PetalBook 用户。访问令牌和刷新令牌分别加密存库；
+  访问令牌在快到期（5 分钟内）用到时续期，每个用户同一时间只续一次，新的一对
+  先写库再用（GitHub 每次续期都换掉刷新令牌，旧的立即失效）；每天把 30 天内
+  要过期的刷新令牌续一次，所以几个月不打开空间的人也不会掉线。刷新令牌过期
+  或被撤销时，连接变成 `expired`，用它同步的空间进入 `error`、错误码
+  `github_authorization_expired`：读照常，写回 `503` 不改动任何东西，草稿照存，
+  重新连接后立即重试并补提交，不丢东西。断开连接时尽力向 GitHub 撤销授权，
+  库里和内存里的令牌无论如何都删掉。
+- **谁的令牌建仓库**：能用用户自己的令牌就用（个人账号下 `POST /user/repos`、
+  用户连接能看到的组织下 `POST /orgs/{org}/repos`），这样 GitHub 自己会检查
+  这个人在这个组织里能不能建仓库、能不能建私有仓库。管理员可以把某个组织的
+  安装标成「共享」，这时没连 GitHub 的成员也能用安装令牌在那里建仓库和连接
+  仓库；默认不共享，否则任何成员都能借 App 在组织里建仓库。
+- **谁的令牌同步**：组织下的仓库用安装令牌（`via: "app"`），不依赖某个人一直
+  在、一直连着；个人账号下，App 装在这个账号上且能访问新仓库时也用安装令牌，
+  否则用这个人的用户令牌（`via: "user"`）。用户令牌同步的空间，绑定的人不能
+  登录、没了 `manage` 或断开连接后就停（`github_authorization_missing`），
+  免得被移出空间的人的令牌还在被用。
+- **新建空间时建仓库**：扩展 `POST /api/spaces`，加 `github: {owner, name,
+  private, description, create}`，不另开接口。顺序：不联网的检查（字段、
+  `--max-spaces`、owner、令牌在不在）→ 在磁盘上建好空间（还没有记录、谁也
+  看不到）→ 在 GitHub 上建空仓库（`auto_init: false`，空间的第一个提交就是
+  仓库的第一个提交）→ 选定并验证同步用的凭据 → 推送 `main`（刚建的仓库有时
+  几秒内找不到，「找不到」和 5xx 在 15 秒内最多试 4 次，凭据被拒不重试）→
+  一个事务里写空间、所有者、远端，再让空间可见。建仓库之前失败：哪里都没留下
+  东西；建仓库之后失败：删掉磁盘上的空间，GitHub 上的空仓库**留着不删**
+  （从不删除远端的东西，而且可能本来就没有删除权限），错误回答里带 `repo`，
+  同一个请求改成 `create: false` 就能把新空间连到这个空仓库上。进程在中间崩溃
+  也一样，只是没有回答。
+- **「仅选定仓库」的安装**：不赌 GitHub 会不会自动把 App 建的仓库加进安装。
+  建完就为新仓库单独换一次令牌试；够不着、而调用者的连接能看到这个安装时，
+  用用户令牌把仓库加进安装（`PUT /user/installations/{id}/repositories/{repoId}`）
+  再试；还不行时，个人账号退回 `via: "user"`，组织下回
+  `409 github_repo_not_in_installation`（带 `repo`）。Administration 是组织级
+  还是仓库级：也不赌，GitHub 拒绝建仓库时原样回 `403 github_no_permission`，
+  `message` 转述 GitHub 的原因。两种结果下接口都不用改，实测只决定界面上
+  提示怎么写、默认走哪条路。
+- **已有空间切到 GitHub**：`PUT …/remote` 的凭据多一种
+  `{"type": "github", "via": "app" | "user"}`；已经在跟随远端的空间 `PUT` 时
+  原地换地址和凭据，同一个仓库历史相同，只换凭据，旧的密钥或令牌删掉。SSH
+  形式的 github.com 地址接受，存成 https 形式。`via: "app"` 要求调用者的连接
+  能推送到这个仓库或安装已共享，否则任何有 `manage` 的人都能把空间接到 App
+  够得着的任意仓库。
+- **Remote 对象**加 `errorCode`：把现有的内部分类（`auth`、`hostkey`、`clone`、
+  `rescued`）露出来，再加四个 GitHub 的（`github_authorization_expired`、
+  `github_authorization_missing`、`github_installation_gone`、
+  `github_not_configured`）。处于这几种状态的空间每 10 分钟重试一次，原因
+  消除时（重新连接、管理员保存 App）立即重试。
+- **列表都分页，从不全取**：安装列表、可建仓库的账号、可连接的仓库，每页最多
+  一次 GitHub 请求（30 条），游标不透明；仓库列表 GitHub 不能按名字筛，所以
+  不提供 `q`，界面上可以直接输入 `owner/name`。
+- **状态库**（SQLite 和 PostgreSQL 都要测）：`remotes` 加 `cred_type = 'github'`
+  和 `gh_via`、`gh_installation_id`、`gh_repo_id`、`gh_user_id` 几列；新表
+  `github_authorizations`（每个用户一行，GitHub 账号 id 唯一，两个令牌加密，
+  过期时间、状态、版本号用来做「只替换续期前的那一对」）；
+  `github_installations`（安装 id、账号、`shared`）；App 的配置放 `site_settings`。
+- **给 3.1 留的位置**：`GET/PUT /api/admin/storage` 的
+  `remotes: {require: null | "any" | "github", scope: "new" | "all", graceDays}`
+  和错误码 `409 remote_required` 只在 `docs/api.md` 里预留，不实现。建空间和
+  建仓库已经是「要么整个成功、要么不留空间」的一步，3.1 只要在第一步前加
+  检查。
+
+2.7 不做的：
+
+- 设备码流程（网页用不上，留给第 4 期的客户端）。
+- Webhook（App 被卸载要等下次换令牌被拒时才发现）；用推送事件代替每分钟
+  拉取，留给 3.1 一起看。
+- App manifest 流程（Rackbook 也没有）：管理员在 GitHub 上手动建 App，把
+  ID、私钥、client id 和 secret 填进来。
+- GitHub Enterprise Server、多个 App、GitHub 登录（登录在 2.8，和这里的
+  「连接 GitHub 账号」是两回事，库里分开存）。
+- 单用户模式：没有账号，这一节全部 `404`。
+- 崩溃留下的、没有记录的空间目录不在启动时清理（和现在暂存的空间一样，谁也
+  看不到，只占一点磁盘）。
+
+要问所有者的（括号里是没回复时的默认）：
+
+1. **实测那两点**（4.3 留下的）：要在所有者的 GitHub 账号下建一个测试 App，
+   装到一个测试组织上，分别试「全部仓库」和「仅选定仓库」两种安装，看建出来
+   的仓库能不能直接换到令牌、Administration 是组织级还是仓库级、PKCE 是否
+   生效。**这次没有在 GitHub 上建任何东西**；接口照两种结果都能用来写，实测
+   结论写回 4.3。（默认：实现完成、合并前做一次，做之前再问。）
+2. 建仓库之后失败时，空仓库留着还是尽量删掉？（默认留着，回答里给出仓库，
+   用 `create: false` 重试。）
+3. 组织的安装默认不共享，只有自己连了 GitHub、GitHub 也允许的人才能在组织下
+   建仓库，可以吗？（默认不共享，管理员逐个打开。）
+4. 新建仓库默认私有，是否允许建公开仓库？（默认允许选，默认私有。）
+5. 同步用的安装令牌按单个仓库收窄（更安全），而不是一个安装一个令牌（换得
+   更少）。空间很多时前者每个在用的空间每小时换一次。（默认按单个仓库。）
+6. 断开 GitHub 连接时，还有空间在用它也照样断开，只提前提示受影响的空间数，
+   可以吗？（默认可以：撤销是用户的权利，空间不丢东西。）
 
 - passkey 和 SAML 用 authcore 的 `passkey`、`saml`。passkey 本地账号和外部
   账号都能绑；管理员可以要求某些人必须用 passkey。
