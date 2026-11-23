@@ -1106,10 +1106,12 @@ func (s *Service) githubClaims(ctx context.Context, rt *providerRT, code, verifi
 			}
 			if err := s.ghGet(hctx, tok.AccessToken, api, "/user/orgs?per_page=100&page="+strconv.Itoa(page), &orgs); err != nil {
 				s.log.Warn("could not read the GitHub organisations", "provider", rt.row.Slug)
-				if len(rt.cfg.Organizations) > 0 {
-					return claimed{}, "idp_error"
+				if !member {
+					return claimed{}, "idp_error" // the organisation that lets them in was not read
 				}
-				gc.present = false // groups only: the sign-in goes on, the claim is missing
+				// Let in already (or no organisation needed): the sign-in goes
+				// on, and the groups claim is missing, not cut short.
+				gc.present = false
 				break
 			}
 			for _, o := range orgs {

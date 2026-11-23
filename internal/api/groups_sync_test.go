@@ -385,3 +385,38 @@ func TestGitHubGroupsAreOrganisations(t *testing.T) {
 		}
 	})
 }
+
+// The organisation that lets a person in is on the first page of /user/orgs and
+// a later page fails: the sign-in goes on, with the groups claim missing.
+func TestGitHubOrgsLaterPageFails(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		gh := newFakeGitHub(t)
+		orgs := []string{"KazuhaHub"}
+		for i := 0; i < 150; i++ {
+			orgs = append(orgs, fmt.Sprintf("org%03d", i))
+		}
+		gh.users["m"] = ghFake{ID: 7, Login: "mona", Email: "mona@example.test", Verified: true, Orgs: orgs}
+		gh.failOrgsFrom = 2
+		admin := a.setup("kazuha", pw)
+		hub := admin.mkGroup(t, "Hub", "synced")
+		body := gh.body("gh", map[string]any{"autoCreate": true, "groups": map[string]any{"enabled": true, "map": gmap("KazuhaHub", hub)}})
+		body["github"].(map[string]any)["organizations"] = []string{"KazuhaHub"}
+		admin.do("POST", "/api/admin/auth/providers", body).want(t, 201, "")
+		c := a.newClient("")
+		if end, _ := gh.signIn(t, c, "gh", "m", nil); end != "/" {
+			t.Fatal(end)
+		}
+		if got := groupNames(t, c); got != "" {
+			t.Fatal(got)
+		}
+		if d := lastAudit(t, admin, "groups_claim_missing")["detail"].(map[string]any); d["provider"] != "gh" {
+			t.Fatal(d)
+		}
+		// Without the organisation on a page that was read, a failure still refuses.
+		gh.users["n"] = ghFake{ID: 8, Login: "nemo", Email: "nemo@example.test", Verified: true, Orgs: append(orgs[1:], "KazuhaHub")}
+		if end, _ := gh.signIn(t, a.newClient(""), "gh", "n", nil); end == "/" {
+			t.Fatal("signed in without the organisation being read")
+		}
+	})
+}
