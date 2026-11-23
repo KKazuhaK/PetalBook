@@ -268,6 +268,14 @@ function suite(target: Target) {
         ['POST', '/api/login', { username: 'a', password: 'b' }],
         ['POST', '/api/setup', { token: 'x', username: 'ab', password: 'password1' }],
         ['POST', '/api/auth/oidc/start', { intent: 'login' }],
+        ['GET', '/api/auth/providers'],
+        ['GET', '/api/captcha?ctx=login'],
+        ['POST', '/api/auth/passkey/begin', {}],
+        ['POST', '/api/auth/oidc/company/start', { intent: 'login' }],
+        ['GET', '/api/account/passkeys'],
+        ['GET', '/api/admin/security'],
+        ['GET', '/api/admin/auth/providers'],
+        ['GET', '/api/admin/audit'],
         ['GET', '/api/account'],
         ['GET', '/api/users'],
         ['GET', '/api/invites'],
@@ -851,6 +859,11 @@ function suite(target: Target) {
       const adminPaths: [string, string, unknown?][] = [
         ['GET', '/api/admin/spaces'],
         ['GET', '/api/admin/status'],
+        ['GET', '/api/admin/security'],
+        ['PUT', '/api/admin/security', {}],
+        ['GET', '/api/admin/auth/providers'],
+        ['POST', '/api/admin/auth/providers', {}],
+        ['GET', '/api/admin/audit'],
         ['GET', '/api/admin/spaces/01ZZZZZZZZ'],
         ['POST', '/api/admin/spaces/01ZZZZZZZZ/size'],
         ['POST', '/api/admin/spaces/01ZZZZZZZZ/transfer', { userId: 'x' }],
@@ -4162,6 +4175,233 @@ function suite(target: Target) {
       expect(e.retryAfter).toBeGreaterThan(0)
       clock += 61_000
       expect((await call(b, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })).status).toBe(200)
+    })
+  })
+  // The sign-in providers, passkeys, captcha, security settings and audit log (milestone 2.8).
+  describe.skipIf(!accounts || !!REAL)('mock only (skipped on a real server: it starts from known settings): providers, passkeys, captcha, security settings and the audit log', () => {
+    let s28: MockServer
+    let f28: typeof fetch
+    const b28 = () => newBrowser(f28)
+    const inAs = async (user = MOCK_ADMIN.username, password = MOCK_ADMIN.password) => {
+      const b = b28()
+      expect((await call(b, 'POST', '/api/login', { username: user, password })).status).toBe(200)
+      return b
+    }
+    const company = { slug: 'company', kind: 'oidc', name: 'Company SSO', icon: 'preset:microsoft', oidc: { issuer: 'https://login.example/v2.0', clientId: 'id', clientSecret: 'x' } }
+
+    beforeAll(() => {
+      s28 = createMockServer({ empty: true, mode: 'accounts', now: () => clock, oidc: null })
+      f28 = mockFetch(s28, { jar: false })
+    })
+
+    it('the sign-in page\'s providers: none at first (local_only), then the enabled ones in order with their icon, and what the mode says', async () => {
+      const root = await inAs()
+      const none = await call(b28(), 'GET', '/api/auth/providers')
+      expect(none.headers.get('Cache-Control')).toBe('no-store')
+      expect(none.json).toEqual({ providers: [], loginMode: 'local_only', local: true, sso: false, passkey: true })
+      const made = await call(root, 'POST', '/api/admin/auth/providers', company)
+      expect(made.status).toBe(201)
+      expect(made.json).toMatchObject({ slug: 'company', kind: 'oidc', enabled: true, people: 0, status: { ok: true }, oidc: { hasSecret: true, redirectUrl: 'https://notes.example.com/api/auth/oidc/company/callback' } })
+      expect(made.json.oidc).not.toHaveProperty('clientSecret')
+      const list = (await call(b28(), 'GET', '/api/auth/providers')).json
+      expect(list).toEqual({ providers: [{ slug: 'company', kind: 'oidc', name: 'Company SSO', icon: 'preset:microsoft' }], loginMode: 'dual', local: true, sso: true, passkey: true })
+      await call(root, 'PUT', '/api/admin/security', { login: { mode: 'sso_redirect' } })
+      expect((await call(b28(), 'GET', '/api/auth/providers')).json).toMatchObject({ loginMode: 'sso_redirect', local: false, sso: true })
+      await call(root, 'PUT', '/api/admin/security', { login: { mode: 'dual' } })
+    })
+
+    it('a provider\'s start: GET is a 303 to the provider, a disabled or unknown one goes to /login?sso_error=provider_unavailable, POST gives {url}', async () => {
+      const go = await call(b28(), 'GET', '/api/auth/oidc/company/start?return=%2Fs%2Fabc')
+      expect(go.status).toBe(303)
+      expect(go.headers.get('Location')).toContain('/api/auth/oidc/company/callback')
+      expect(go.headers.get('Set-Cookie')).toBeTruthy()
+      const unknown = await call(b28(), 'GET', '/api/auth/oidc/nobody/start')
+      expect([unknown.status, unknown.headers.get('Location')]).toEqual([303, '/login?sso_error=provider_unavailable'])
+      expect((await call(b28(), 'POST', '/api/auth/oidc/nobody/start', { intent: 'login' })).status).toBe(404)
+      expect((await call(b28(), 'POST', '/api/auth/oidc/company/start', { intent: 'login' })).json.url).toContain('/api/auth/oidc/company/callback?state=')
+    })
+
+    it('the provider refusals have their own codes', async () => {
+      const root = await inAs()
+      const refused = async (body: Record<string, unknown>) => {
+        const r = await call(root, 'POST', '/api/admin/auth/providers', body)
+        return [r.status, r.json.error]
+      }
+      expect(await refused({ ...company })).toEqual([409, 'exists'])
+      expect(await refused({ ...company, slug: 'second' })).toEqual([409, 'provider_issuer_in_use'])
+      expect(await refused({ ...company, slug: 'http', oidc: { issuer: 'http://x.example', clientId: 'c' } })).toEqual([400, 'oidc_issuer_invalid'])
+      expect(await refused({ slug: 'gh', kind: 'github', name: 'GitHub', autoCreate: true, github: { clientId: 'c' } })).toEqual([400, 'github_auto_create_needs_org'])
+      expect(await refused({ slug: 'saml', kind: 'saml', name: 'S', saml: { metadataUrl: 'https://x.example/bad-metadata' } })).toEqual([400, 'saml_metadata_invalid'])
+      expect(await refused({ slug: 'Bad Slug', kind: 'oidc', name: 'S', oidc: { issuer: 'https://y.example', clientId: 'c' } })).toEqual([400, 'invalid'])
+    })
+
+    it('an unreachable provider is stored switched off with status.ok false; refresh looks again', async () => {
+      const root = await inAs()
+      const r = await call(root, 'POST', '/api/admin/auth/providers', { slug: 'dead', kind: 'oidc', name: 'Dead', oidc: { issuer: 'https://unreachable.example', clientId: 'c' } })
+      expect([r.status, r.json.enabled, r.json.status.ok]).toEqual([201, false, false])
+      const again = await call(root, 'POST', '/api/admin/auth/providers/dead/refresh')
+      expect([again.status, again.json.status.ok]).toEqual([200, false])
+      expect((await call(root, 'DELETE', '/api/admin/auth/providers/dead')).status).toBe(204)
+    })
+
+    it('deleting a provider that is somebody\'s only way in is 409 provider_in_use with the count, until force=1', async () => {
+      const root = await inAs()
+      await call(root, 'PATCH', '/api/admin/auth/providers/company', { autoCreate: true })
+      const b = b28()
+      const st = (await call(b, 'POST', '/api/auth/oidc/company/start', { intent: 'login' })).json
+      const cb = await call(b, 'GET', st.url)
+      expect(cb.status).toBe(303)
+      const refused = await call(root, 'DELETE', '/api/admin/auth/providers/company')
+      expect([refused.status, refused.json.error, refused.json.accounts]).toEqual([409, 'provider_in_use', 1])
+      const acct = (await call(b, 'GET', '/api/account')).json
+      expect(acct.identities).toEqual([expect.objectContaining({ provider: 'Company SSO', providerSlug: 'company', kind: 'oidc' })])
+      expect((await call(root, 'DELETE', '/api/admin/auth/providers/company?force=1')).status).toBe(204)
+      // The identity stays, with no provider.
+      expect((await call(b, 'GET', '/api/account')).json.identities[0]).toMatchObject({ providerSlug: '', kind: '' })
+    })
+
+    it('security: the defaults, a change that is kept, and each refusal; nothing is half saved', async () => {
+      const root = await inAs()
+      const got = (await call(root, 'GET', '/api/admin/security')).json
+      expect(got).toMatchObject({ login: { mode: 'dual', ssoOnly: false }, passkeys: { enabled: true, available: true, requireRoles: [] }, captcha: { provider: 'image', hasSecret: false }, lockout: { enabled: false, minutes: 15, scope: 'ip_account' }, limits: { perMinute: 10, maxFailures: 10, windowMinutes: 15, sessionIdleDays: 30, sessionMaxDays: 90 }, notices: [] })
+      const bad = async (body: unknown) => {
+        const r = await call(root, 'PUT', '/api/admin/security', body)
+        return [r.status, r.json.error]
+      }
+      expect(await bad({ login: { mode: 'nope' } })).toEqual([400, 'invalid'])
+      expect(await bad({ limits: { sessionIdleDays: 400 } })).toEqual([400, 'invalid'])
+      expect(await bad({ limits: { sessionIdleDays: 50, sessionMaxDays: 40 } })).toEqual([400, 'invalid'])
+      expect(await bad({ captcha: { provider: 'turnstile', contexts: { login: { on: true } } } })).toEqual([400, 'captcha_site_key_required'])
+      expect(await bad({ captcha: { provider: 'turnstile', siteKey: 'k', contexts: { login: { on: true } } } })).toEqual([400, 'captcha_secret_required'])
+      // Refused as a whole: the valid part of the last one was not stored.
+      expect(await bad({ lockout: { minutes: 20 }, limits: { perMinute: 0 } })).toEqual([400, 'invalid'])
+      expect((await call(root, 'GET', '/api/admin/security')).json.lockout.minutes).toBe(15)
+      const ok = await call(root, 'PUT', '/api/admin/security', { lockout: { enabled: true, minutes: 20, scope: 'ip' }, captcha: { provider: 'turnstile', siteKey: 'k', secret: 's', contexts: { login: { on: true, when: 'always' } } } })
+      expect(ok.status).toBe(200)
+      expect(ok.json).toMatchObject({ lockout: { enabled: true, minutes: 20, scope: 'ip' }, captcha: { provider: 'turnstile', siteKey: 'k', hasSecret: true } })
+      expect(JSON.stringify(ok.json)).not.toContain('"s"')
+      // A secret stored for another provider does not count.
+      expect(await bad({ captcha: { provider: 'hcaptcha', siteKey: 'k2', contexts: { invite: { on: true } } } })).toEqual([400, 'captcha_secret_required'])
+      // Clearing the secret while a context needs it is refused; with the context off it works.
+      expect(await bad({ captcha: { secret: '' } })).toEqual([400, 'captcha_secret_required'])
+      expect((await call(root, 'PUT', '/api/admin/security', { captcha: { secret: '', contexts: { login: { on: false } } } })).json.captcha.hasSecret).toBe(false)
+      expect((await call(root, 'PUT', '/api/admin/security', { captcha: { provider: 'image', contexts: { login: { on: false } } }, lockout: { enabled: false, minutes: 15, scope: 'ip_account' } })).status).toBe(200)
+    })
+
+    it('ssoOnly: in effect only while a provider is enabled; then a member\'s password is refused after it was checked, an administrator\'s is not', async () => {
+      const root = await inAs()
+      // With no provider the page offers no button, so refusing passwords would lock the door.
+      expect((await call(root, 'PUT', '/api/admin/security', { login: { ssoOnly: true } })).json.login).toMatchObject({ ssoOnly: true, ssoOnlyInEffect: false, effectiveMode: 'local_only', ssoAvailable: false })
+      await call(root, 'PUT', '/api/admin/security', { login: { ssoOnly: false } })
+      expect((await call(root, 'POST', '/api/admin/auth/providers', { ...company, slug: 'acme', oidc: { issuer: 'https://acme.example', clientId: 'c' } })).status).toBe(201)
+      const member = (await call(root, 'POST', '/api/invites', { role: 'member' })).json
+      const joined = await call(b28(), 'POST', '/api/invites/accept', { token: member.token, username: 'sso-m', password: 'a-long-password' })
+      expect(joined.status).toBe(201)
+      expect((await call(root, 'PUT', '/api/admin/security', { login: { ssoOnly: true } })).status).toBe(200)
+      const refused = await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'a-long-password' })
+      expect([refused.status, refused.json.error]).toEqual([403, 'local_login_refused'])
+      // A wrong password still gets the ordinary answer: the code says nothing to someone who does not know it.
+      expect((await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'wrong-wrong' })).status).toBe(401)
+      expect((await call(b28(), 'POST', '/api/login', { username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })).status).toBe(200)
+      // No invite for a member can be accepted with a password.
+      const inv2 = (await call(root, 'POST', '/api/invites', { role: 'member' })).json
+      expect((await call(b28(), 'POST', '/api/invites/accept', { token: inv2.token, username: 'sso-m2', password: 'a-long-password' })).json.error).toBe('local_login_refused')
+      await call(root, 'PUT', '/api/admin/security', { login: { ssoOnly: false } })
+    })
+
+    it('captcha: asked for by the context, an image is answered once, a wrong or missing answer is 400 captcha_failed; unknown contexts are 400', async () => {
+      const root = await inAs()
+      await call(root, 'PUT', '/api/admin/security', { captcha: { contexts: { login: { on: true, when: 'always' } } } })
+      expect((await call(b28(), 'GET', '/api/captcha?ctx=invite')).json).toEqual({ required: false })
+      expect((await call(b28(), 'GET', '/api/captcha?ctx=forgot')).json).toEqual({ required: false })
+      expect((await call(b28(), 'GET', '/api/captcha?ctx=nope')).status).toBe(400)
+      const c = (await call(b28(), 'GET', '/api/captcha?ctx=login&account=x')).json
+      expect(c).toMatchObject({ required: true, provider: 'image', id: expect.any(String), image: expect.stringMatching(/^data:image\//) })
+      const missing = await call(b28(), 'POST', '/api/login', { username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
+      expect([missing.status, missing.json.error]).toEqual([400, 'captcha_failed'])
+      const wrong = await call(b28(), 'POST', '/api/login', { username: MOCK_ADMIN.username, password: MOCK_ADMIN.password, captcha: { id: c.id, answer: 'zzzz' } })
+      expect([wrong.status, wrong.json.error]).toEqual([400, 'captcha_failed'])
+      // Used once, right or wrong: the same challenge cannot be answered again.
+      const reused = await call(b28(), 'POST', '/api/login', { username: MOCK_ADMIN.username, password: MOCK_ADMIN.password, captcha: { id: c.id, answer: '4821' } })
+      expect(reused.json.error).toBe('captcha_failed')
+      const fresh = (await call(b28(), 'GET', '/api/captcha?ctx=login')).json
+      expect((await call(b28(), 'POST', '/api/login', { username: MOCK_ADMIN.username, password: MOCK_ADMIN.password, captcha: { id: fresh.id, answer: '4821' } })).status).toBe(200)
+      await call(root, 'PUT', '/api/admin/security', { captcha: { contexts: { login: { on: false } } } })
+    })
+
+    it('after_failures: a name that failed enough asks for a captcha, others do not', async () => {
+      const root = await inAs()
+      await call(root, 'PUT', '/api/admin/security', { captcha: { contexts: { login: { on: true, when: 'after_failures', failures: 2 } } } })
+      expect((await call(b28(), 'GET', '/api/captcha?ctx=login&account=sso-m')).json.required).toBe(false)
+      for (let i = 0; i < 2; i++) await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'wrong-wrong' })
+      expect((await call(b28(), 'GET', '/api/captcha?ctx=login&account=sso-m')).json.required).toBe(true)
+      expect((await call(b28(), 'GET', '/api/captcha?ctx=login&account=someone-else')).json.required).toBe(false)
+      await call(root, 'PUT', '/api/admin/security', { captcha: { contexts: { login: { on: false } } } })
+    })
+
+    it('passkeys: register (named, a credential once), sign in with it, rename, delete; a ceremony is used once; a required person is held until they have one', async () => {
+      const root = await inAs()
+      const me = await inAs('sso-m', 'a-long-password')
+      const begin = await call(me, 'POST', '/api/account/passkeys/begin', { name: 'MacBook' })
+      expect(begin.status).toBe(200)
+      expect(begin.json.options).toMatchObject({ challenge: expect.any(String), user: { name: 'sso-m' }, excludeCredentials: [] })
+      const done = await call(me, 'POST', `/api/account/passkeys/finish?ceremony=${begin.json.ceremony}`, { id: 'cred-m', type: 'public-key', response: {} })
+      expect(done.status).toBe(201)
+      expect(done.json.passkeys).toEqual([expect.objectContaining({ name: 'MacBook', synced: false })])
+      expect((await call(me, 'POST', `/api/account/passkeys/finish?ceremony=${begin.json.ceremony}`, { id: 'cred-m2' })).json.error).toBe('passkey_failed')
+      const again = await call(me, 'POST', '/api/account/passkeys/begin', { name: 'Again' })
+      expect(again.json.options.excludeCredentials).toHaveLength(1)
+      expect((await call(me, 'POST', `/api/account/passkeys/finish?ceremony=${again.json.ceremony}`, { id: 'cred-m' })).json.error).toBe('exists')
+      // Sign in with it: discoverable, then by name.
+      const lg = await call(b28(), 'POST', '/api/auth/passkey/begin', {})
+      const ok = await call(b28(), 'POST', `/api/auth/passkey/finish?ceremony=${lg.json.ceremony}&return=%2Fs%2Fx`, { id: 'cred-m' })
+      expect([ok.status, ok.json.return, ok.json.user.username]).toEqual([200, '/s/x', 'sso-m'])
+      const bad = await call(b28(), 'POST', `/api/auth/passkey/finish?ceremony=${lg.json.ceremony}`, { id: 'cred-m' })
+      expect([bad.status, bad.json.error]).toEqual([401, 'passkey_failed'])
+      const named = await call(b28(), 'POST', '/api/auth/passkey/begin', { username: 'sso-m' })
+      expect(named.json.options.allowCredentials).toEqual([{ type: 'public-key', id: 'cred-m' }])
+      // A name nobody has looks the same: one made-up credential.
+      expect((await call(b28(), 'POST', '/api/auth/passkey/begin', { username: 'nobody-here' })).json.options.allowCredentials).toHaveLength(1)
+      // Required of this person: the password is right, so the answer says passkey_required.
+      const uid = (await call(me, 'GET', '/api/account')).json.user.id
+      expect((await call(root, 'PATCH', `/api/users/${uid}`, { passkeyRequired: true })).json.user.passkeyRequired).toBe(true)
+      const must = await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'a-long-password' })
+      expect([must.status, must.json.error]).toEqual([403, 'passkey_required'])
+      // Rename and delete; the admin sees them and can delete one.
+      const id = done.json.passkeys[0].id
+      expect((await call(me, 'PATCH', `/api/account/passkeys/${id}`, { name: 'Phone' })).json.name).toBe('Phone')
+      const list = (await call(root, 'GET', `/api/users/${uid}/passkeys`)).json.passkeys
+      expect(list.map((p: { name: string }) => p.name)).toEqual(['Phone'])
+      expect((await call(root, 'GET', '/api/users')).json.users.find((u: { id: string }) => u.id === uid)).toMatchObject({ passkeys: 1, sso: 0 })
+      expect((await call(root, 'DELETE', `/api/users/${uid}/passkeys/${id}`)).status).toBe(204)
+      // With none left and one required, the next password sign-in is held: only the passkey endpoints and sign-out work.
+      const held = b28()
+      expect((await call(held, 'POST', '/api/login', { username: 'sso-m', password: 'a-long-password' })).status).toBe(200)
+      expect((await call(held, 'GET', '/api/session')).json.hold).toBe('passkey')
+      expect((await call(held, 'GET', '/api/spaces')).json.error).toBe('passkey_required')
+      expect((await call(held, 'GET', '/api/account')).status).toBe(200)
+      const hb = await call(held, 'POST', '/api/account/passkeys/begin', { name: 'New' })
+      expect((await call(held, 'POST', `/api/account/passkeys/finish?ceremony=${hb.json.ceremony}`, { id: 'cred-new' })).status).toBe(201)
+      expect((await call(held, 'GET', '/api/session')).json.hold).toBe(null)
+      expect((await call(held, 'GET', '/api/spaces')).status).toBe(200)
+      await call(root, 'PATCH', `/api/users/${uid}`, { passkeyRequired: false })
+    })
+
+    it('the audit log: newest first, filtered by kind and user, with a cursor', async () => {
+      const root = await inAs()
+      const all = (await call(root, 'GET', '/api/admin/audit?limit=5')).json
+      expect(all.items).toHaveLength(5)
+      expect(all.next).toBeTruthy()
+      for (let i = 1; i < all.items.length; i++) expect(all.items[i - 1].id > all.items[i].id).toBe(true)
+      const more = (await call(root, 'GET', `/api/admin/audit?limit=5&cursor=${all.next}`)).json
+      expect(more.items[0].id).toBe(all.next)
+      const kinds = (await call(root, 'GET', '/api/admin/audit?kind=security_changed&limit=200')).json.items
+      expect(kinds.length).toBeGreaterThan(0)
+      expect(kinds.every((r: { kind: string }) => r.kind === 'security_changed')).toBe(true)
+      expect(kinds[0]).toMatchObject({ actor: expect.any(String), detail: { from: expect.any(Object), to: expect.any(Object) } })
+      // A secret is never in it.
+      expect(JSON.stringify(kinds)).not.toContain('"s"')
+      expect((await call(root, 'GET', '/api/admin/audit?limit=0')).status).toBe(400)
     })
   })
 }
