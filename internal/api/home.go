@@ -18,9 +18,26 @@ import (
 
 // getDailySettings tells where the daily text of the space comes from.
 func (s *server) getDailySettings(c *call) {
+	s.answerDailySettings(c, c.sp.Space.Daily())
+}
+
+// answerDailySettings gives the source of the space, and whether it is in
+// effect: not when the administrators do not let spaces use their own (what
+// was saved is kept, and works again when they do).
+func (s *server) answerDailySettings(c *call, d *space.DailyConfig) {
+	inEffect := true
+	if !s.single {
+		site, err := s.loadSite(c.r.Context())
+		if err != nil {
+			s.fail(c.w, err)
+			return
+		}
+		inEffect = site.Allow.Own
+	}
 	writeJSON(c.w, http.StatusOK, struct {
-		Daily *space.DailyConfig `json:"daily"`
-	}{c.sp.Space.Daily()})
+		Daily    *space.DailyConfig `json:"daily"`
+		InEffect bool               `json:"inEffect"`
+	}{d, inEffect})
 }
 
 // putDailySettings sets, or with null removes, where the daily text comes from.
@@ -44,9 +61,7 @@ func (s *server) putDailySettings(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	writeJSON(c.w, http.StatusOK, struct {
-		Daily *space.DailyConfig `json:"daily"`
-	}{d})
+	s.answerDailySettings(c, d)
 }
 
 type dailyPageResp struct {
@@ -94,11 +109,23 @@ func (s *server) getDaily(c *call) {
 		Page   *dailyPageResp `json:"page"`
 		Reason string         `json:"reason"`
 	}
-	// 1. The space's own.
-	pick, why, err := c.sp.Space.DailyText(c.sp.Info.ID, date, skip, lang)
-	if err != nil {
-		s.fail(c.w, err)
-		return
+	var site siteDaily
+	var err error
+	if !s.single {
+		if site, err = s.loadSite(c.r.Context()); err != nil {
+			s.fail(c.w, err)
+			return
+		}
+	}
+	// 1. The space's own, unless the administrators do not let spaces have one.
+	var pick *space.DailyPick
+	var why space.DailyNone
+	if s.single || site.Allow.Own {
+		pick, why, err = c.sp.Space.DailyText(c.sp.Info.ID, date, skip, lang)
+		if err != nil {
+			s.fail(c.w, err)
+			return
+		}
 	}
 	if pick != nil {
 		s.writeDaily(c, struct {
@@ -114,7 +141,7 @@ func (s *server) getDaily(c *call) {
 	}
 	// 2 and 3. What the administrators gave (accounts mode only).
 	if !s.single {
-		q, reason, err := s.siteDaily(c, date, skip, lang)
+		q, reason, err := s.siteDaily(c, site, date, skip, lang)
 		switch {
 		case errors.Is(err, dailyfetch.ErrRateLimited):
 			c.w.Header().Set("Retry-After", "10")

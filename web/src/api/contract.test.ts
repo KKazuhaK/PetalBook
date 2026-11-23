@@ -1065,7 +1065,7 @@ function suite(target: Target) {
       expect([r.status, r.json.page]).toEqual([200, null])
       // Another source may be there from the server's own settings; with none, this says so.
       expect(['no_source', undefined]).toContain(r.json.quote === undefined ? r.json.reason : undefined)
-      expect((await call(admin, 'GET', `${base()}/daily/settings`)).json).toEqual({ daily: null })
+      expect((await call(admin, 'GET', `${base()}/daily/settings`)).json).toEqual({ daily: null, inEffect: true })
     })
 
     it('picks one page of a folder, the same for a whole day, another by skip, and cuts a long body at 2000 characters', async () => {
@@ -1075,7 +1075,7 @@ function suite(target: Target) {
       pageIds.long = (await mk(`${folder}/long`, { title: `长${run}`, tags: [`long${run}`] }, '长'.repeat(1999) + 'AB' + 'x'.repeat(500) + '\n')).id
       const set = await setDaily({ folder: `${folder}/poems` })
       expect(set.status).toBe(200)
-      expect(set.json).toEqual({ daily: { folder: `${folder}/poems`, filter: [] } })
+      expect(set.json).toEqual({ daily: { folder: `${folder}/poems`, filter: [] }, inEffect: true })
       expect((await call(admin, 'GET', `${base()}/daily/settings`)).json).toEqual(set.json)
       const first = await daily('date=2026-11-23&skip=0')
       expect(first.status).toBe(200)
@@ -1177,8 +1177,8 @@ function suite(target: Target) {
       expect(moved.status).toBe(200)
       expect((await call(admin, 'GET', `${base()}/daily/settings`)).json.daily).toEqual({ zh: { folder: `${folder}/zh`, filter: [] }, en: { folder: `${folder}/verse`, filter: [] } })
       expect((await daily('date=2026-11-23&lang=en')).json.page.folder).toBe(`${folder}/verse`)
-      expect((await setDaily(null)).json).toEqual({ daily: null })
-      expect((await setDaily(null)).json).toEqual({ daily: null })
+      expect((await setDaily(null)).json).toEqual({ daily: null, inEffect: true })
+      expect((await setDaily(null)).json).toEqual({ daily: null, inEffect: true })
       expect((await daily('date=2026-11-23&lang=en')).json.page).toBeNull()
     })
 
@@ -1357,6 +1357,19 @@ function suite(target: Target) {
           expect((await call(admin, 'PUT', `/api/spaces/${sp}/daily/settings`, { daily: { folder: 'Own' } })).status).toBe(200)
           const mine = await dq('date=2026-11-23&lang=zh')
           expect([mine.json.origin, mine.json.page.title, mine.json.quote]).toEqual(['space', 'Mine', undefined])
+          // The administrators can lock the space's own source and its choice of an interface: what the space
+          // saved is kept and says it is not in effect, and counts again when they unlock it.
+          const locks = async (allow: unknown) => (await adm('PUT', '', { allow })).json.allow
+          expect(await locks({ own: false })).toEqual({ own: false, api: true })
+          expect((await dq('date=2026-11-23&lang=zh')).json.origin).toBe('site')
+          const kept = await call(admin, 'GET', `/api/spaces/${sp}/daily/settings`)
+          expect([kept.json.inEffect, kept.json.daily.folder]).toEqual([false, 'Own'])
+          expect((await call(admin, 'GET', `/api/spaces/${sp}/daily/prefs`)).json.allowed).toEqual({ own: false, api: true })
+          expect(await locks({ own: true, api: false })).toEqual({ own: true, api: false })
+          expect((await call(admin, 'GET', `/api/spaces/${sp}/daily/prefs`)).json.allowed).toEqual({ own: true, api: false })
+          expect((await dq('date=2026-11-23&lang=zh')).json.origin).toBe('space')
+          for (const bad of [{}, 'no', { own: 'no' }, null]) expect((await adm('PUT', '', { allow: bad })).status).toBe(400)
+          expect(await locks({ api: true })).toEqual({ own: true, api: true })
           // Taking the lines away.
           expect((await adm('DELETE', '/lines?lang=zh')).json.lines.byLang.zh).toBeUndefined()
           // Another person has no way in.

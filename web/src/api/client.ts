@@ -383,8 +383,8 @@ export function spaceApi(space: string) {
       if (q.tz !== undefined) p.set('tz', String(q.tz))
       return request<DailyAnswer>(base(`/daily?${p.toString()}`), { signal })
     },
-    dailySettings: (signal?: AbortSignal) => request<{ daily: DailySettings | null }>(base('/daily/settings'), { signal }),
-    putDailySettings: (daily: DailySettings | null) => request<{ daily: DailySettings | null }>(base('/daily/settings'), { method: 'PUT', body: { daily } }),
+    dailySettings: (signal?: AbortSignal) => request<{ daily: DailySettings | null; inEffect?: boolean }>(base('/daily/settings'), { signal }),
+    putDailySettings: (daily: DailySettings | null) => request<{ daily: DailySettings | null; inEffect?: boolean }>(base('/daily/settings'), { method: 'PUT', body: { daily } }),
     // Accounts mode only (the single-user server answers 404).
     dailyPrefs: (signal?: AbortSignal) => request<DailyPrefs>(base('/daily/prefs'), { signal }),
     putDailyPrefs: (input: { inherit: boolean; apis: string[] }) => request<DailyPrefs>(base('/daily/prefs'), { method: 'PUT', body: input }),

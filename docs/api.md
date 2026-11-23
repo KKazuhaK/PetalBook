@@ -1659,16 +1659,21 @@ administrators' settings. Owners never enter addresses; they choose among the
 interfaces that are set up.
 
 ```json
-{"inherit": true, "apis": ["hitokoto"], "available": [{"id": "hitokoto", "name": "一言", "lang": "zh"}], "default": {"kind": "list"}}
+{"inherit": true, "apis": ["hitokoto"], "available": [{"id": "hitokoto", "name": "一言", "lang": "zh"}],
+ "languages": ["zh", "en"], "allowed": {"own": true, "api": true}, "default": {"kind": "list"}}
 ```
 
 `inherit` is whether the space shows the server's default when it has nothing
 else; `apis` are the ids of the interfaces it uses (for a language, the one
 made for it, else one that takes any language, else any); `available` are all
 that are set up (never their addresses); `default` is `null` when the
-administrators set none. `PUT` takes `{"inherit": true, "apis": []}` (both are
+administrators set none. `languages` are the language codes the settings pages
+have a tab for (the administrators' `languages`, below; nothing is limited to
+them). `allowed` is what the administrators let spaces do (below): a field that
+is `false` is set for the whole server, and what the space has there is saved
+when asked but has no effect until it is `true` again. `PUT` takes `{"inherit": true, "apis": []}` (both are
 needed) and answers as `GET`; `400 invalid` for an id that is not in
-`available`.
+`available`; it saves `apis` even when `allowed.api` is `false`.
 
 ### The administrators' settings of the daily text
 
@@ -1682,6 +1687,7 @@ protection of the network is in one place).
 
 ```json
 {"default": {"kind": "space", "space": "01JD3K8Q7Z", "source": {"folder": "文案", "zh": {"tag": "诗"}}},
+ "allow": {"own": true, "api": true},
  "hosts": ["international.v1.hitokoto.cn", "api.quotable.io"],
  "languages": ["zh", "en"],
  "apis": [ /* interfaces, below */ ],
@@ -1689,7 +1695,7 @@ protection of the network is in one place).
  "lines": {"total": 6, "byLang": {"zh": 3, "en": 2, "": 1}, "max": 5000}}
 ```
 
-`PUT` takes any of `default`, `hosts` and `languages` (what it leaves out stays)
+`PUT` takes any of `default`, `hosts`, `languages` and `allow` (what it leaves out stays)
 and answers as `GET`; `lines`, `apis` and `presets` are read-only here.
 
 - `default` is `null`, `{"kind": "list"}` (the lines below) or
@@ -1703,6 +1709,18 @@ and answers as `GET`; `lines`, `apis` and `presets` are read-only here.
   "all languages" (`zh`, `en`, `pt-br`; lower-cased, each once, at most 30). It
   is a list the administrators keep, `["zh", "en"]` to begin with; nothing is
   limited to it: a source or an interface may name any code.
+- `allow` is what the spaces may do: `own` is whether a space may have a source
+  of its own (`daily` in its `space.yml`), `api` whether it may choose an
+  external interface. Both are `true` until set; `PUT` takes either or both
+  (`{"own": false}` leaves `api` as it is; `400 invalid` for neither, or a value
+  that is not a boolean). A lock does not remove anything: the space's `daily`
+  stays in `space.yml` and its choice of interfaces stays, they are ignored, and
+  the order of `GET …/daily` goes on to the next one (own, interface, default)
+  as if they were not set; unlocked, they count again. A space's
+  `PUT …/daily/settings` and `PUT …/daily/prefs` still save while locked.
+  `GET` and `PUT …/daily/settings` say whether the source is in effect:
+  `{"daily": …, "inEffect": false}`. In single-user mode there are no
+  administrators and everything is in effect.
 
 **Languages everywhere.** A space's `daily`, the default's `source`, the lines
 and the interfaces are all by language, with "all languages" (an unkeyed

@@ -254,6 +254,10 @@ func TestSingleUserHasNoSiteDailySettings(t *testing.T) {
 	if code, r, _ := f.do("GET", base+"/daily?date=2026-11-23&lang=en", nil); code != 200 || r["reason"] != "no_source" {
 		t.Fatalf("%d %v", code, r)
 	}
+	// With no administrators there is nothing to lock: everything is in effect.
+	if code, r, _ := f.do("GET", base+"/daily/settings", nil); code != 200 || r["inEffect"] != true {
+		t.Fatalf("%d %v", code, r)
+	}
 }
 
 func TestDailyLangIsChecked(t *testing.T) {
@@ -791,5 +795,156 @@ func TestPrivateAddressesAreNeverConfigured(t *testing.T) {
 			t.Fatalf("%d %v", code, r)
 		}
 		// A name that resolves to this machine is refused when the connection is made (see dailyfetch).
+	})
+}
+
+// --- what the administrators let the spaces do ----------------------------------------------
+
+func TestDailyAdminLocks(t *testing.T) {
+	withExternal(t, func(x *extFixture) {
+		day := "date=2026-11-23&lang=en"
+		origin := func() string { return quoteOf(t, x.viewer, x.base, day)["origin"].(string) }
+		allow := func(body map[string]any) map[string]any {
+			t.Helper()
+			code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"allow": body})
+			if code != 200 {
+				t.Fatalf("%v: %d %v", body, code, r)
+			}
+			return r["allow"].(map[string]any)
+		}
+		inEffect := func() (bool, map[string]any) {
+			code, r := x.own("GET", x.base+"/daily/settings", nil)
+			if code != 200 {
+				t.Fatalf("%d %v", code, r)
+			}
+			return r["inEffect"].(bool), r
+		}
+		prefs := func() map[string]any {
+			code, r := x.own("GET", x.base+"/daily/prefs", nil)
+			if code != 200 {
+				t.Fatalf("%d %v", code, r)
+			}
+			return r
+		}
+
+		// Everything is allowed until it is said otherwise.
+		if _, r := x.adm("GET", "/api/admin/daily", nil); fmt.Sprint(r["allow"]) != "map[api:true own:true]" {
+			t.Fatalf("%v", r["allow"])
+		}
+		if a := prefs()["allowed"]; fmt.Sprint(a) != "map[api:true own:true]" {
+			t.Fatalf("%v", a)
+		}
+		// Only the administrators change it, and it is checked.
+		for name, c := range map[string]caller{"owner": x.own, "viewer": x.viewer} {
+			if code, _ := c("PUT", "/api/admin/daily", map[string]any{"allow": map[string]any{"own": false}}); code != 403 {
+				t.Errorf("%s: %d", name, code)
+			}
+		}
+		for name, bad := range map[string]any{"empty": map[string]any{}, "a string": "no", "not a boolean": map[string]any{"own": "no"}, "null": nil} {
+			if code, _ := x.adm("PUT", "/api/admin/daily", map[string]any{"allow": bad}); code != 400 {
+				t.Errorf("%s: %d", name, code)
+			}
+		}
+
+		// Three sources: the space's own, an interface, the default.
+		x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "list"}})
+		x.adm("PUT", "/api/admin/daily/lines", map[string]any{"lang": "en", "text": "From the list"})
+		if code, r := x.putAPI("q1", x.qs.api("q1", "en")); code != 200 {
+			t.Fatalf("%d %v", code, r)
+		}
+		if code, r := x.own("POST", x.base+"/pages", map[string]any{"folder": "poems", "meta": map[string]any{"title": "Own poem"}, "body": "x\n"}); code != 201 {
+			t.Fatalf("%d %v", code, r)
+		}
+		own := map[string]any{"folder": "poems", "filter": []any{}}
+		if code, r := x.own("PUT", x.base+"/daily/settings", map[string]any{"daily": own}); code != 200 || r["inEffect"] != true {
+			t.Fatalf("%d %v", code, r)
+		}
+		x.choose("q1")
+		if o := origin(); o != "space" {
+			t.Fatalf("own first: %s", o)
+		}
+
+		// own is locked: the source stays in space.yml, is not used, and the interface is next.
+		if a := allow(map[string]any{"own": false}); fmt.Sprint(a) != "map[api:true own:false]" {
+			t.Fatalf("%v", a)
+		}
+		if o := origin(); o != "external" {
+			t.Fatalf("own locked: %s", o)
+		}
+		if ok, r := inEffect(); ok || fmt.Sprint(r["daily"]) != fmt.Sprint(own) {
+			t.Fatalf("a locked source is kept: %v", r)
+		}
+		if a := prefs()["allowed"]; fmt.Sprint(a) != "map[api:true own:false]" {
+			t.Fatalf("%v", a)
+		}
+		// It still saves, says it is not in effect, and does not show.
+		other := map[string]any{"folder": "poems", "filter": []any{map[string]any{"key": "status", "op": "in", "values": []any{"x"}}}}
+		code, r := x.own("PUT", x.base+"/daily/settings", map[string]any{"daily": other})
+		if code != 200 || r["inEffect"] != false || fmt.Sprint(r["daily"]) != fmt.Sprint(other) {
+			t.Fatalf("%d %v", code, r)
+		}
+		if o := origin(); o != "external" {
+			t.Fatalf("%s", o)
+		}
+		x.own("PUT", x.base+"/daily/settings", map[string]any{"daily": own})
+		// Unlocked, what was saved works again.
+		allow(map[string]any{"own": true})
+		if o := origin(); o != "space" {
+			t.Fatalf("unlocked: %s", o)
+		}
+		if ok, _ := inEffect(); !ok {
+			t.Fatal("in effect again")
+		}
+
+		// api is locked: the choice is kept and not used; the default is next.
+		if a := allow(map[string]any{"api": false}); fmt.Sprint(a) != "map[api:false own:true]" {
+			t.Fatalf("%v", a)
+		}
+		x.own("PUT", x.base+"/daily/settings", map[string]any{"daily": nil})
+		if o := origin(); o != "site" {
+			t.Fatalf("api locked: %s", o)
+		}
+		p := prefs()
+		if fmt.Sprint(p["apis"]) != "[q1]" || fmt.Sprint(p["allowed"]) != "map[api:false own:true]" {
+			t.Fatalf("a locked choice is kept: %v", p)
+		}
+		if code, r := x.own("PUT", x.base+"/daily/prefs", map[string]any{"inherit": true, "apis": []any{}}); code != 200 || fmt.Sprint(r["allowed"]) != "map[api:false own:true]" {
+			t.Fatalf("%d %v", code, r)
+		}
+		x.choose("q1")
+		if o := origin(); o != "site" {
+			t.Fatalf("%s", o)
+		}
+		hits := x.qs.hits.Load()
+		origin()
+		if x.qs.hits.Load() != hits {
+			t.Error("a locked interface was asked")
+		}
+		allow(map[string]any{"api": true})
+		if o := origin(); o != "external" {
+			t.Fatalf("unlocked: %s", o)
+		}
+
+		// Both locked: only the default is left; a partial change keeps the other flag.
+		x.own("PUT", x.base+"/daily/settings", map[string]any{"daily": own})
+		allow(map[string]any{"own": false, "api": false})
+		if o := origin(); o != "site" {
+			t.Fatalf("both locked: %s", o)
+		}
+		if a := allow(map[string]any{"own": true}); fmt.Sprint(a) != "map[api:false own:true]" {
+			t.Fatalf("%v", a)
+		}
+		if o := origin(); o != "space" {
+			t.Fatalf("%s", o)
+		}
+		// A source that matches nothing is "no_match" only when it is in effect.
+		x.own("PUT", x.base+"/daily/settings", map[string]any{"daily": other})
+		if r := quoteOf(t, x.viewer, x.base, day); r["reason"] != "no_match" {
+			t.Fatalf("%v", r)
+		}
+		allow(map[string]any{"own": false})
+		if o := origin(); o != "site" {
+			t.Fatalf("%s", o)
+		}
 	})
 }

@@ -598,7 +598,7 @@ export function createMockServer(options: MockOptions = {}) {
     rps: number
     enabled: boolean
   }
-  const site = { lines: new Map<string, { body: string; source: string }[]>(), listDefault: false, hosts: [] as string[], languages: ['zh', 'en'], apis: [] as SiteApi[] }
+  const site = { lines: new Map<string, { body: string; source: string }[]>(), listDefault: false, allow: { own: true, api: true }, hosts: [] as string[], languages: ['zh', 'en'], apis: [] as SiteApi[] }
   const spaceDaily = new Map<string, { inherit: boolean; apis: string[] }>()
   const PRESETS = [
     { id: 'hitokoto', name: '一言', lang: 'zh', url: 'https://international.v1.hitokoto.cn/?max_length=80', text: 'hitokoto', source: 'from', author: 'from_who', link: 'https://hitokoto.cn?uuid={uuid}', refresh: 'daily', refreshMinutes: 0, skipNew: true, rps: 20, enabled: true, note: '' },
@@ -615,6 +615,7 @@ export function createMockServer(options: MockOptions = {}) {
       default: site.listDefault ? { kind: 'list' } : null,
       hosts: [...site.hosts],
       languages: [...site.languages],
+      allow: { ...site.allow },
       apis: site.apis.map(({ headers, ...rest }) => ({ ...rest, headers: headers.map((h) => ({ name: h.name, set: true })) })),
       presets: PRESETS,
       lines: { total, byLang, max: 5000 },
@@ -623,11 +624,12 @@ export function createMockServer(options: MockOptions = {}) {
   const dailyText = (space: SpaceRec, q: URLSearchParams): Record<string, unknown> => {
     const home = space.store.home
     const { date, skip, lang } = home.checkQuery(q)
-    const own = home.sourceOf(lang)
+    const locked = accounts ? site.allow : { own: true, api: true } // a locked source or choice is kept, and not used
+    const own = locked.own ? home.sourceOf(lang) : undefined
     if (own) return home.pick(space.id, q, own) ?? { page: null, reason: 'no_match' }
     // An interface the space chose (the one for the language, else one for every language). The mock makes no
     // requests: the text names the interface, and an id with "stale" in it plays one that did not answer.
-    const chosen = site.apis.filter((a) => a.enabled && (spaceDaily.get(space.id)?.apis ?? []).includes(a.id))
+    const chosen = site.apis.filter((a) => a.enabled && locked.api && (spaceDaily.get(space.id)?.apis ?? []).includes(a.id))
     const api = chosen.find((a) => a.lang !== '' && lang.startsWith(a.lang)) ?? chosen.find((a) => a.lang === '') ?? chosen[0]
     if (accounts && api) {
       const quote: Record<string, unknown> = { text: `${api.name} ${date}${skip ? ` #${skip}` : ''}`, ...(api.source ? { source: 'src' } : {}), ...(api.author ? { author: 'au' } : {}) }
@@ -662,6 +664,7 @@ export function createMockServer(options: MockOptions = {}) {
         apis: now.apis.filter((id) => available.some((a) => a.id === id)),
         available: available.map((a) => ({ id: a.id, name: a.name, lang: a.lang })),
         languages: [...site.languages],
+        allowed: { ...site.allow },
         default: site.listDefault ? { kind: 'list' } : null,
       },
     }
@@ -669,12 +672,18 @@ export function createMockServer(options: MockOptions = {}) {
   const routeSiteDaily = (method: string, path: string, url: URL, body: Record<string, unknown>): MockResponse => {
     if (path === '/admin/daily' && method === 'GET') return { status: 200, body: siteView() }
     if (path === '/admin/daily' && method === 'PUT') {
-      for (const k of Object.keys(body)) if (!['default', 'hosts', 'languages'].includes(k)) throw new HttpError(400, 'invalid', `不认识 ${k}`)
+      for (const k of Object.keys(body)) if (!['default', 'hosts', 'languages', 'allow'].includes(k)) throw new HttpError(400, 'invalid', `不认识 ${k}`)
       if ('hosts' in body && !(Array.isArray(body.hosts) && body.hosts.every((h) => typeof h === 'string'))) throw new HttpError(400, 'invalid', 'hosts 是主机名的列表')
       let languages = site.languages
       if ('languages' in body) {
         if (!Array.isArray(body.languages) || body.languages.some((l) => typeof l !== 'string' || !validLang(l.toLowerCase()))) throw new HttpError(400, 'invalid', 'languages 是 zh、en 这样的语言代码的列表')
         languages = [...new Set((body.languages as string[]).map((l) => l.toLowerCase()))]
+      }
+      let allow = site.allow
+      if ('allow' in body) {
+        const a = body.allow
+        if (!isRecord(a) || (a.own === undefined && a.api === undefined) || (a.own !== undefined && typeof a.own !== 'boolean') || (a.api !== undefined && typeof a.api !== 'boolean')) throw new HttpError(400, 'invalid', 'allow 是 {own: true 或 false, api: true 或 false}')
+        allow = { own: typeof a.own === 'boolean' ? a.own : allow.own, api: typeof a.api === 'boolean' ? a.api : allow.api }
       }
       let listDefault = site.listDefault
       if ('default' in body) {
@@ -686,6 +695,7 @@ export function createMockServer(options: MockOptions = {}) {
       if ('hosts' in body) site.hosts = (body.hosts as string[]).map((h) => h.trim().toLowerCase())
       site.listDefault = listDefault
       site.languages = languages
+      site.allow = allow
       return { status: 200, body: siteView() }
     }
     const apiOne = /^\/admin\/daily\/apis\/([^/]+)$/.exec(path)
@@ -1154,8 +1164,8 @@ export function createMockServer(options: MockOptions = {}) {
       if (body.page === null && body.quote === undefined) age = 60
       return { status: 200, body, headers: { 'Cache-Control': `private, max-age=${age}`, ETag: `"${gitBlobId(JSON.stringify(body)).slice(0, 24)}"` } }
     }
-    if (rest === '/daily/settings' && method === 'GET') return { status: 200, body: { daily: st.home.config() } }
-    if (rest === '/daily/settings' && method === 'PUT') return { status: 200, body: st.home.setConfig(body) }
+    if (rest === '/daily/settings' && method === 'GET') return { status: 200, body: { daily: st.home.config(), inEffect: !accounts || site.allow.own } }
+    if (rest === '/daily/settings' && method === 'PUT') return { status: 200, body: { ...st.home.setConfig(body), inEffect: !accounts || site.allow.own } }
     if (rest === '/daily/prefs') {
       accountsOnly()
       return routeDailyPrefs(space, method, body)

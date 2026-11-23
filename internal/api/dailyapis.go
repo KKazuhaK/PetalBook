@@ -37,6 +37,17 @@ type siteDaily struct {
 	// "all languages"; the administrators' own list.
 	Languages []string    `json:"languages"`
 	APIs      []storedAPI `json:"apis"`
+	// Allow is what the administrators let the spaces do; absent is all of it.
+	Allow *dailyAllow `json:"allow"`
+}
+
+// dailyAllow is what the administrators let the spaces do. What a space wrote
+// or chose while it was not allowed is kept, and has no effect until it is.
+type dailyAllow struct {
+	// Own is whether a space may use a source of its own (daily in space.yml).
+	Own bool `json:"own"`
+	// API is whether a space may choose an external interface.
+	API bool `json:"api"`
 }
 
 var defaultLanguages = []string{"zh", "en"}
@@ -50,6 +61,9 @@ func (d *siteDaily) fill() {
 	}
 	if d.Languages == nil {
 		d.Languages = append([]string(nil), defaultLanguages...)
+	}
+	if d.Allow == nil {
+		d.Allow = &dailyAllow{Own: true, API: true}
 	}
 }
 
@@ -159,18 +173,16 @@ func (b dailyBacking) Prune(ctx context.Context, before time.Time) error {
 // source of its own: the external interface the space chose, else the default
 // when the space takes it. A nil quote with a reason is a block that does not
 // show; with none, there is nothing set.
-func (s *server) siteDaily(c *call, date string, skip int, lang string) (*dailyQuote, string, error) {
+func (s *server) siteDaily(c *call, site siteDaily, date string, skip int, lang string) (*dailyQuote, string, error) {
 	ctx := c.r.Context()
 	prefs, err := store.GetSpaceDaily(ctx, s.opt.Store.Q(), c.sp.Info.ID)
 	if err != nil {
 		return nil, "", err
 	}
-	site, err := s.loadSite(ctx)
-	if err != nil {
-		return nil, "", err
-	}
 	var ids []string
-	json.Unmarshal([]byte(prefs.APIs), &ids)
+	if site.Allow.API { // when it is not allowed, the choice is kept and not used
+		json.Unmarshal([]byte(prefs.APIs), &ids)
+	}
 	if a := chooseAPI(site.APIs, ids, lang); a != nil {
 		rt, err := s.runtime(*a)
 		if err != nil {
@@ -326,8 +338,8 @@ func (s *server) adminPutDaily(c *call) {
 		return
 	}
 	for k := range req {
-		if k != "default" && k != "hosts" && k != "languages" {
-			bad(c, "unknown key "+k+": the settings are default, hosts and languages (interfaces have their own requests)")
+		if k != "default" && k != "hosts" && k != "languages" && k != "allow" {
+			bad(c, "unknown key "+k+": the settings are default, hosts, languages and allow (interfaces have their own requests)")
 			return
 		}
 	}
@@ -383,6 +395,23 @@ func (s *server) adminPutDaily(c *call) {
 				seen[l] = true
 				site.Languages = append(site.Languages, l)
 			}
+		}
+	}
+	if raw, ok := req["allow"]; ok {
+		var a struct {
+			Own *bool `json:"own"`
+			API *bool `json:"api"`
+		}
+		if err := json.Unmarshal(raw, &a); err != nil || a.Own == nil && a.API == nil {
+			bad(c, "allow is {\"own\": true or false, \"api\": true or false}")
+			return
+		}
+		// What is left out stays.
+		if a.Own != nil {
+			site.Allow.Own = *a.Own
+		}
+		if a.API != nil {
+			site.Allow.API = *a.API
 		}
 	}
 	if raw, ok := req["default"]; ok {
@@ -568,7 +597,10 @@ type dailyPrefsResp struct {
 	Available []availAPI `json:"available"`
 	// Languages are the languages there is a settings tab for.
 	Languages []string `json:"languages"`
-	Default   *struct {
+	// Allowed is what the administrators let the spaces do; what is false here
+	// is saved when asked, and not in effect.
+	Allowed dailyAllow `json:"allowed"`
+	Default *struct {
 		Kind string `json:"kind"`
 	} `json:"default"`
 }
@@ -592,6 +624,7 @@ func (s *server) dailyPrefs(c *call) (dailyPrefsResp, error) {
 	}
 	out.Inherit = prefs.Inherit
 	out.Languages = site.Languages
+	out.Allowed = *site.Allow
 	var ids []string
 	json.Unmarshal([]byte(prefs.APIs), &ids)
 	known := map[string]bool{}

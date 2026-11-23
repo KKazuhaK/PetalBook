@@ -129,6 +129,7 @@ type adminDailyResp struct {
 	Default   *siteDefault        `json:"default"`
 	Hosts     []string            `json:"hosts"`
 	Languages []string            `json:"languages"`
+	Allow     dailyAllow          `json:"allow"`
 	APIs      []apiView           `json:"apis"`
 	Presets   []dailyfetch.Preset `json:"presets"`
 	Lines     dailyLinesInfo      `json:"lines"`
@@ -151,7 +152,7 @@ func (s *server) adminDailyView(ctx context.Context) (adminDailyResp, error) {
 	for i, a := range site.APIs {
 		apis[i] = viewOfAPI(a)
 	}
-	return adminDailyResp{site.Default, site.Hosts, site.Languages, apis, dailyfetch.Presets(), dailyLinesInfo{total, counts, store.MaxDailyLines}}, nil
+	return adminDailyResp{site.Default, site.Hosts, site.Languages, *site.Allow, apis, dailyfetch.Presets(), dailyLinesInfo{total, counts, store.MaxDailyLines}}, nil
 }
 
 func (s *server) adminGetDaily(c *call) {
