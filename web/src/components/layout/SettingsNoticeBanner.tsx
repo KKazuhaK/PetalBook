@@ -1,8 +1,10 @@
 import { useState } from 'react'
-import { Link } from 'react-router'
+import { Link, useLocation } from 'react-router'
 import { TriangleAlert, X } from 'lucide-react'
 import { useSpaceId, useSpacePermissions, useTypes } from '@/api/hooks'
 import type { SettingsNotice } from '@/api/types'
+import { settingsPath } from '@/components/settings/sections'
+import type { SettingsState } from '@/components/settings/useSettings'
 import { t } from '@/i18n'
 
 // A line above the pages of a space, for those who manage it, while a settings file of the space cannot be read or
@@ -25,6 +27,7 @@ function readDismissed(key: string): string | null {
 
 export function SettingsNoticeBanner() {
   const space = useSpaceId()
+  const location = useLocation()
   const { manage } = useSpacePermissions()
   const types = useTypes(manage)
   const key = dismissKey(space)
@@ -48,7 +51,7 @@ export function SettingsNoticeBanner() {
       <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
       <p className="min-w-0 flex-1">
         {list.some((n) => n.unreadable) ? t.settingsNotice.unreadable : t.settingsNotice.lost}{' '}
-        <Link to="/settings/types" className="font-medium underline underline-offset-2">
+        <Link to={settingsPath('types')} state={{ from: location.pathname + location.search + location.hash } satisfies SettingsState} className="font-medium underline underline-offset-2">
           {t.settingsNotice.details}
         </Link>
       </p>

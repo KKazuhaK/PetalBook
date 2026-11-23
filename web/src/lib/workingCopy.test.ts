@@ -186,7 +186,8 @@ describe('the sort in the address', () => {
     const kept = run(initialWorkingCopy('r0', { view: 'r1', sort: 'title' }), list(views))
     expect([kept.wc.viewKey, kept.wc.patch, kept.lost]).toEqual(['r1', { sort: 'title' }, null])
     const gone = run(initialWorkingCopy('r0', { view: 'zz', sort: 'title' }), list(views))
-    expect([gone.wc.viewKey, gone.wc.patch, gone.lost]).toEqual(['r0', {}, { name: '' }])
+    // Nothing was changed in this visit (an old link, a reload): the sort is dropped without a word.
+    expect([gone.wc.viewKey, gone.wc.patch, gone.lost]).toEqual(['r0', {}, null])
   })
 })
 
@@ -220,5 +221,50 @@ describe('a change', () => {
   it('keeps only what differs from the view (the default sort is no change)', () => {
     const base = stateOfView(mk('a', '甲'))
     expect(prune({ sort: '-updated', layout: 'list', group: 'x' }, base)).toEqual({ group: 'x' })
+  })
+})
+
+describe('edits made while the person\'s own write is on its way', () => {
+  const edit = (patch: Patch, views: SavedView[]): WorkingEvent => ({ kind: 'edit', patch, base: stateOfView(views[1]) })
+  const open = (k: Kind) => {
+    const views = three(before(k))
+    const wc = run(initialWorkingCopy(before(k)[1], { view: null, sort: null }), list(views)).wc
+    return { views, wc }
+  }
+  const working = (views: SavedView[], p: Patch) => ({ ...stateOfView(views[1]), ...p })
+
+  for (const k of KINDS) {
+    it(`save (${k}): what was saved is gone from the change, what was changed since stays`, () => {
+      const { views, wc } = open(k)
+      const sentPatch: Patch = { layout: 'cards' }
+      const w = run(wc, edit(sentPatch, views))
+      const later = run(w.wc, edit({ sort: 'title' }, views))
+      const got = three(after(k)).map((v, i) => (i === 1 ? { ...v, layout: 'cards' as const } : v))
+      const out = run(later.wc, { kind: 'written', op: 'save', on: views[1].id, sent: views, got, working: working(views, sentPatch) })
+      expect([out.wc.viewKey, out.wc.patch, out.lost]).toEqual([after(k)[1], { sort: 'title' }, null])
+    })
+    it(`save (${k}): a value changed again since is kept, one changed back to what was saved is not`, () => {
+      const { views, wc } = open(k)
+      const w = run(wc, edit({ layout: 'cards', sort: 'title' }, views), edit({ layout: 'board' as never }, views))
+      const got = three(after(k)).map((v, i) => (i === 1 ? { ...v, layout: 'cards' as const, sort: 'title' } : v))
+      const out = run(w.wc, { kind: 'written', op: 'save', on: views[1].id, sent: views, got, working: working(views, { layout: 'cards', sort: 'title' }) })
+      expect(out.wc.patch).toEqual({ layout: 'board' })
+    })
+    for (const op of ['create', 'duplicate'] as const) {
+      it(`${op} (${k}): the change made since is carried onto the view now shown`, () => {
+        const { views, wc } = open(k)
+        const w = run(wc, edit({ layout: 'cards' }, views))
+        const later = run(w.wc, edit({ sort: 'title' }, views))
+        const made = mk('x', '新', { layout: 'cards' })
+        const out = run(later.wc, { kind: 'written', op, on: views[1].id, sent: [...views, { name: '新' }], got: [...three(after(k)), made], working: working(views, { layout: 'cards' }) })
+        expect([out.wc.viewKey, out.wc.patch, out.lost, out.remember]).toEqual(['x', { sort: 'title' }, null, 'x'])
+      })
+    }
+  }
+  it('nothing changed since: nothing is carried', () => {
+    const { views, wc } = open('real')
+    const w = run(wc, edit({ layout: 'cards' }, views))
+    const out = run(w.wc, { kind: 'written', op: 'create', on: views[1].id, sent: [...views, { name: '新' }], got: [...three(after('real')), mk('x', '新', { layout: 'cards' })], working: working(views, { layout: 'cards' }) })
+    expect(out.wc.patch).toEqual({})
   })
 })

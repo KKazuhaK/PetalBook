@@ -6,7 +6,7 @@ import { SpaceGate } from '@/components/layout/SpaceGate'
 import { t } from '@/i18n'
 import { tp } from '@/i18n/props'
 import { absoluteTime } from '@/lib/time'
-import { byLabel, click, installDomShims, locationText, mount, settle, shareSpace, type Mounted } from '@/testing/harness'
+import { byLabel, click, installDomShims, locationState, locationText, mount, settle, shareSpace, type Mounted } from '@/testing/harness'
 import SettingsRoute from './SettingsRoute'
 
 // What the server says to those who manage a space about settings files it could not use: in the settings (Types),
@@ -144,6 +144,14 @@ describe('the line above the pages of a space', () => {
     await settle(() => banner() !== null, 'the line')
     await click(banner()!.querySelector('a'))
     await settle(() => locationText().startsWith('/settings/types') && noticeItems().length === 1, 'the details')
+  })
+
+  it('closing the settings opened from the line goes back to the page it was opened on', async () => {
+    await openSingle('/s/default/f/Work', [UNREADABLE])
+    await settle(() => banner() !== null, 'the line')
+    await click(banner()!.querySelector('a'))
+    await settle(() => locationText().startsWith('/settings/types'), 'the details')
+    expect(locationState()).toMatchObject({ from: '/s/default/f/Work' })
   })
 
   it('does not show for a file that was put right with nothing lost', async () => {

@@ -32,6 +32,9 @@ export interface Written {
   on: string
   sent: readonly { id?: string; name?: unknown }[]
   got: readonly SavedView[]
+  // How the view shown looked in what was sent (create, duplicate, save): what the person changed after that is not in
+  // the write, and is kept on the view shown when the answer comes.
+  working?: ViewState
 }
 
 export type WorkingEvent =
@@ -64,6 +67,13 @@ export function prune(patch: Patch, base: ViewState): Patch {
     const v = patch[k]
     if (v !== undefined && !sameState({ ...base, [k]: v } as ViewState, base)) out[k] = v
   }
+  return out as Patch
+}
+
+// What of the patch is not what was written.
+function unwritten(patch: Patch, written: ViewState): Patch {
+  const out: Record<string, unknown> = {}
+  for (const k of Object.keys(patch) as (keyof ViewState)[]) if (JSON.stringify(patch[k]) !== JSON.stringify(written[k])) out[k] = patch[k]
   return out as Patch
 }
 
@@ -116,7 +126,8 @@ function onList(wc: WorkingCopy, views: readonly SavedView[], pending: boolean):
   return {
     wc: showing(found.to, {}),
     adopt: true,
-    lost: hasEdits(wc.patch) ? { name: wc.snapshot?.name ?? '' } : null,
+    // Nothing was changed in this visit when the views are read for the first time (an old link, a reload): no notice.
+    lost: hasEdits(wc.patch) && wc.snapshot !== null ? { name: wc.snapshot?.name ?? '' } : null,
     remember: found.mark && found.to ? found.to.id : '',
   }
 }
@@ -129,12 +140,14 @@ function onWritten(wc: WorkingCopy, e: Written): Outcome {
     if (d.id !== undefined && g && g.name === d.name) map.set(d.id, g)
   })
   const mine = wc.viewKey === e.on
-  const show = (to: SavedView | null): Outcome => ({ wc: showing(to, {}), adopt: true, lost: null, remember: to ? to.id : '' })
-  // What was shown went into the new view, the copy or the saved view: nothing is left over, and nothing is lost.
+  // What was shown when the write was made went into the new view, the copy or the saved view; what was changed while
+  // it was on its way did not, and stays as a change of the view now shown: no edit is lost.
+  const left = e.working ? unwritten(wc.patch, e.working) : {}
+  const show = (to: SavedView | null): Outcome => ({ wc: showing(to, left), adopt: true, lost: null, remember: to ? to.id : '' })
   if (mine && (e.op === 'create' || e.op === 'duplicate')) return show(e.got.at(-1) ?? null)
   if (mine && e.op === 'save') {
     const to = map.get(e.on)
-    return to ? show(to) : onList({ ...wc, patch: {} }, e.got, false)
+    return to ? show(to) : onList({ ...wc, patch: left }, e.got, false)
   }
   if (mine && e.op === 'delete') return { ...show(e.got[0] ?? null), remember: '' }
   // A rename, a move, or a write about another view: the view shown goes on under the id the answer gave it.

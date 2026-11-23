@@ -276,6 +276,37 @@ describe('tabs', () => {
   })
 })
 
+describe('a change made while the person\'s own write is on its way', () => {
+  const two = (send: ReturnType<typeof sender>) => putViews(send, FOLDER, [{ name: '全部', layout: 'list' }, { name: '看板', layout: 'board', group: 'status' }])
+  const slow = { delay: (method: string, url: string) => (method === 'PUT' && url.endsWith('/views') ? 150 : 0) }
+  const sortSelect = () => document.querySelector<HTMLSelectElement>(`select[aria-label="${t.list.sort}"]`)!
+
+  it('is not lost by a save: the view shows what was saved and the sort chosen meanwhile is still a change', async () => {
+    await open('/s/default/f/Work', two, slow)
+    await settle(() => tabs().length === 2, 'the tabs')
+    await click(button(t.view.cards))
+    await click(textButton(t.views.save))
+    await type(sortSelect(), 'title')
+    await settle(() => puts().length === 1 && textButton(t.views.revert) !== null && !(textButton(t.views.save) as HTMLButtonElement).disabled, 'saved')
+    expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('true')
+    expect((await saved()).views[0]).toMatchObject({ layout: 'cards', sort: '' })
+    expect(modifiedMark()).not.toBeNull()
+    expect(locationText()).toContain('sort=title')
+    expect(sortSelect().value).toBe('title')
+  })
+
+  it('is not lost by a copy: the copy opens with the sort chosen meanwhile as a change', async () => {
+    await open('/s/default/f/Work', two, slow)
+    await settle(() => tabs().length === 2, 'the tabs')
+    await click(button(t.views.duplicate))
+    await type(sortSelect(), 'title')
+    await settle(() => puts().length === 1 && tabs().length === 3 && selected() !== '全部', 'copied')
+    expect(modifiedMark()).not.toBeNull()
+    expect(sortSelect().value).toBe('title')
+    expect((await saved()).views[1].sort).toBe('')
+  })
+})
+
 describe('when someone else changed the views', () => {
   const two = (send: ReturnType<typeof sender>) => putViews(send, FOLDER, [{ name: '全部', layout: 'list' }, { name: '看板', layout: 'board', group: 'status' }])
 
