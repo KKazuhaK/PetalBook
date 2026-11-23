@@ -1,3 +1,4 @@
+import { availableParallelism } from 'node:os'
 import path from 'node:path'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -35,6 +36,13 @@ export default defineConfig(async ({ mode }) => {
       // A test that passes waits no longer: polling stops as soon as it holds.
       expect: { poll: { timeout: 5_000 } },
       include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+      // Worker threads start faster and use less memory than forked processes, which
+      // matters most on a runner with two cores. Every file still gets a fresh jsdom
+      // (isolate stays on: some files keep state in modules and in the window).
+      pool: 'threads',
+      // Vitest leaves one core free by default, which on a two-core runner means one
+      // worker and an idle core.
+      maxWorkers: Math.max(2, availableParallelism() - 1),
       // Markdown conversion of the corpus under jsdom is CPU-heavy on slow machines.
       testTimeout: 30_000,
     },
