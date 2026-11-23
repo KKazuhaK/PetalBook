@@ -468,7 +468,6 @@ export interface ReasonCode {
 
 export type ErrorCode =
   | 'token_limit'
-  | 'host_not_allowed'
   | 'bad_language'
   | 'api_not_found'
   | 'builtin'
