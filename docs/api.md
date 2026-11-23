@@ -4588,25 +4588,70 @@ not fill the log).
 
 ### Storage
 
-Migration `0017_tenants.sql` (0013 is 2.7's and 0015 is 3.1's, both on other
-branches). SQLite and PostgreSQL both.
+Migration `0018_tenants.sql` (0013 is 2.7's, 0015 and 0017 are 3.1's, all on
+other branches). SQLite and PostgreSQL both. It is one migration for the whole
+milestone: the first part (tenants, layered settings, isolation) is below, and
+the parts that add registration, mail and quotas append their tables to it
+before the milestone is released.
 
-- `tenants` (id, slug unique, name, disabled, quota JSON, created, updated), with
-  the default row `0000000000` / `default`.
+- `tenants` (id, slug unique, name, name_key, disabled, quota JSON, created,
+  updated), with the default row `0000000000` / `default`, made by the Go step of
+  the migration.
 - `users`, `spaces`, `groups`, `invites`, `audit_log` gain
-  `tenant_id TEXT NOT NULL DEFAULT '0000000000'`; `users` gains `site_admin`,
-  `quota` and `terms_accepted`; `spaces` gains `page_count` and `usage_bytes`.
+  `tenant_id TEXT NOT NULL DEFAULT '0000000000'`; `users` gains `site_admin`;
+  `invites` gains `site_admin` (the invited administrator is one of the server);
+  `sign_in_providers` gains `tenant_id` (where `autoCreate` puts accounts).
 - Indexes `(tenant_id, created)` on users and spaces, `(tenant_id, id)` on
-  the audit log, `(tenant_id)` on groups and invites.
+  the audit log, `(tenant_id)` on invites; groups have the unique index below.
 - Group names unique per tenant: the unique `name_key` becomes unique
   `(tenant_id, name_key)` (a Go step of the migration: on PostgreSQL a dropped
   constraint and a new index; on SQLite the table is rebuilt, which needs
-  foreign keys off and so runs as its own step before the version's
-  transaction, ending with `PRAGMA foreign_key_check`).
-- New: `layered_settings` (layer, layer id, key, value, lower, updated),
-  `registrations` (pending), `email_tokens` (kind, hash, user, address,
-  expires, used), `usage` (person or tenant, spaces, bytes, pages).
+  foreign keys off and so runs on one pinned connection around the version's
+  transaction, which ends with `PRAGMA foreign_key_check`: a row that points
+  nowhere fails the migration, which rolls back, and foreign keys are switched
+  on again whatever happened).
+- New: `layered_settings` (layer, layer id, key, value, lower, updated).
+- Added by the later parts: `registrations` (pending), `email_tokens` (kind,
+  hash, user, address, expires, used), `usage` (person or tenant, spaces, bytes,
+  pages), and the columns `users.quota`, `users.terms_accepted`,
+  `spaces.page_count`, `spaces.usage_bytes`.
 - `UPDATE users SET site_admin = 1 WHERE role = 'admin'`.
+
+### What the first part of 3.3 does and does not do
+
+Done: the tenant model, `siteAdmin` and `tenant` on the User, data isolation, the
+administrator split, `/api/admin/tenancy`, the tenants, layered settings with
+locks (`/api/admin/settings`, the tenants' settings, `GET /api/settings`), the
+daily text's switches and default on that mechanism, and a provider's `tenant`.
+
+Not yet (the next parts of 3.3): mail, registration and its endpoints, email
+verification, password reset, quotas and usage (the `quota.*` settings, the
+tenant's `usage`, `/api/account/usage`, `/api/admin/usage`, `quota_exceeded`).
+Until then: `registration.open` exists as a setting but cannot be opened
+(`409 mail_not_configured`, as it would be with mail off); `GET
+/api/auth/providers` answers `register: false` and `forgot: false` and
+validates `?tenant=`; the Tenant object has no `usage`; the settings table above
+lacks the `quota.*` rows; and the `admin` object of `POST /api/admin/tenants` is
+checked but does not prefill the invite.
+
+Details the first part settled:
+
+- An administrator invited by a site administrator into the default tenant is a
+  site administrator (what every administrator was before tenants); in any other
+  tenant, or invited by a tenant administrator, they are not. `POST
+  /api/invites` takes `tenant` and `siteAdmin` (only a site administrator may
+  send either to anything but their own tenant, or `true`), and answers both.
+  `POST /api/admin/tenants`'s invite is not a site administrator's.
+- `PATCH /api/users/{id}` with `role: "admin"` in the default tenant by a site
+  administrator also makes a site administrator unless `siteAdmin: false` is
+  sent. A demotion ends the flag. A tenant administrator who targets a site
+  administrator, or sends `siteAdmin`, is `403 forbidden`; `siteAdmin: true` for
+  a member is `400 invalid`.
+- `GET /api/admin/spaces` items have `tenant` (an id), as invites have.
+- The server's own audit kinds (`security_changed`, `provider_*`, `mail_*`,
+  `tenant_*`, `dropped`, `rate_limited`, `lockout`) are hidden from tenant
+  administrators; rows of the site layer's settings have no tenant.
+- Deleting a tenant puts the providers that named it back on the default tenant.
 
 ## Administration
 

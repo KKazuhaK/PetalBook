@@ -73,7 +73,9 @@ func (m *Manager) AddMember(ctx context.Context, h *Handle, username, role strin
 			return nil, ErrAlreadyMember
 		}
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, ErrNotFound
+			// The statement joins the space and the user on one tenant: a person
+			// of another tenant is, as ever, a username nobody has.
+			return nil, ErrUserNotFound
 		}
 		return nil, err
 	}

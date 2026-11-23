@@ -2500,7 +2500,8 @@ registration and mail」一节，以及「Signing in」（`GET /api/auth/provide
     部分克隆和清掉的空间不改它（服务器上留了多少不是空间有多大），只有完整工作区
     的测量才写。
   - 2.7 的 GitHub App 设置没有租户层。
-  - 迁移编号用 `0017`，0013、0015 留给 2.7、3.1。
+  - 迁移编号用 `0018`：0013、0015 留给 2.7、3.1，0017 已被 3.1 的 `0017_assets.sql` 用掉
+    （2026-11-23 改，原来写的是 0017）。
 - **注册**：
   - 每个租户一个开关，全站默认 `false` 并且对租户 `lock`：要开，全站管理员先放开，
     再在租户上打开（或直接在全站打开）。
@@ -2551,7 +2552,7 @@ registration and mail」一节，以及「Signing in」（`GET /api/auth/provide
   不进 `Referer`），库里只存 SHA-256，只能用一次。计数在内存里，和 2.8 一样。
 - **条款和隐私**：全站和租户各可以设条款、隐私两个 `https` 地址；设了任何一个，
   注册页就有一个必须勾的框，账号上记同意的时间和当时的地址。
-- **迁移**（`0017_tenants.sql`，SQLite 和 PostgreSQL 都测）：
+- **迁移**（`0018_tenants.sql`，SQLite 和 PostgreSQL 都测）：
   - 建 `tenants`，插入默认租户；五张表 `ADD COLUMN tenant_id … DEFAULT '0000000000'`。
     带常量默认值的加列在 SQLite 上只改表结构，PostgreSQL 11 起只改元数据，都不重写
     已有的行。

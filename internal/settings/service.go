@@ -176,6 +176,11 @@ func (s *Service) compute(ctx context.Context, tenant string) (map[string]*Effec
 					if tv.Value, err = decode(r.Value); err != nil {
 						return nil, err
 					}
+					if d.Kind != Doc && tv.Value != nil {
+						if nv, err := d.Value(tv.Value); err == nil {
+							tv.Value = nv
+						}
+					}
 					tv.InEffect = tv.Value == nil || e.Site.Lower.Allows(d, tv.Value)
 				}
 				if r.Lower != "" {
