@@ -8,6 +8,7 @@ import (
 // Ann edits a page and Bo moves it in the same quiet window: the edit stays
 // Ann's, because Bo's change first commits what is pending for Ann.
 func TestAnotherAuthorsMoveDoesNotTakeOverEarlierEdit(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openTwoAuthors(t, root)
@@ -40,6 +41,7 @@ func TestAnotherAuthorsMoveDoesNotTakeOverEarlierEdit(t *testing.T) {
 // Ann moves a folder and Bo edits a page in it: the rename is Ann's alone and
 // Bo's commit holds only his edit.
 func TestFolderMoveAndLaterEditAreNotSplitOrMixed(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openTwoAuthors(t, root)

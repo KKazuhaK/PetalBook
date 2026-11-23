@@ -100,7 +100,7 @@ func remoteManager(t *testing.T, st *store.Store, mod ...func(*Options)) *rm {
 }
 
 func (f *rm) open(mod ...func(*Options)) *Manager {
-	opt := Options{Store: f.st, DataDir: f.dir, Committer: "Svc <svc@example.test>", CommitIdle: time.Hour, CommitMax: time.Hour,
+	opt := Options{Store: f.st, DataDir: f.dir, Committer: "Svc <svc@example.test>", CloseWait: 200 * time.Millisecond, CommitIdle: time.Hour, CommitMax: time.Hour,
 		Now: f.clk.Now, PullInterval: time.Minute, RemoteRunner: f.r, FetchFresh: time.Nanosecond, FailFast: time.Nanosecond,
 		RemotePolicy: gitstore.Policy{Hosts: []string{"*"}, AllowUnsafe: true}}
 	for _, m := range mod {

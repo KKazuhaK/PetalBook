@@ -37,7 +37,7 @@ func TestSweeperWritesADraftAsItsUser(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		mgr, err := spaces.NewAccounts(spaces.Options{Store: st, DataDir: filepath.Join(t.TempDir(), "data"), Committer: "Svc <svc@example.test>", CommitIdle: time.Hour, CommitMax: time.Hour})
+		mgr, err := spaces.NewAccounts(spaces.Options{Store: st, DataDir: filepath.Join(t.TempDir(), "data"), Committer: "Svc <svc@example.test>", CloseWait: 200 * time.Millisecond, CommitIdle: time.Hour, CommitMax: time.Hour})
 		if err != nil {
 			t.Fatal(err)
 		}

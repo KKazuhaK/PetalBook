@@ -16,6 +16,7 @@ import (
 // The server must accept its own GET output: the web app sends meta and body
 // straight back, and the file must not change when nothing was edited.
 func TestPutAcceptsWhatGetServedAndLeavesTheFileUntouched(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	headers := map[string]string{
 		"string tags":      "tags: 栀子\ntitle: T",
@@ -100,6 +101,7 @@ func TestPutAcceptsWhatGetServedAndLeavesTheFileUntouched(t *testing.T) {
 }
 
 func TestSaveKeepsFileHeaderOrderOverHTTP(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	if err := os.WriteFile(filepath.Join(f.dir, "o.md"), []byte("---\nid: ABCDE00001\n2024: 年度\ntitle: T\nzeta: z\n---\nb\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -132,6 +134,7 @@ func send(f *fixture, method, path, body string, hdr map[string]string) (int, st
 }
 
 func TestStateChangesNeedAJSONContentType(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	p := f.create("", map[string]any{"title": "T"}, "")
 	id := p["id"].(string)
@@ -176,6 +179,7 @@ func TestStateChangesNeedAJSONContentType(t *testing.T) {
 }
 
 func TestCrossOriginRequestsAreRefused(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, func(o *api.Options) {
 		o.RestrictHost = true
 		o.AllowOrigins = []string{"http://localhost:5173", "HTTPS://Dev.Example.com/"}
@@ -254,6 +258,7 @@ func TestCrossOriginRequestsAreRefused(t *testing.T) {
 // cross-site checks, and there is then no implicit own origin: a rebinding page
 // has Origin equal to Host and must not pass.
 func TestWithoutLoopbackModeOnlyTheAllowListGivesAnOrigin(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, func(o *api.Options) {
 		o.RestrictHost = false
 		o.AllowOrigins = []string{"http://192.168.1.5:8080"}
@@ -293,6 +298,7 @@ func TestWithoutLoopbackModeOnlyTheAllowListGivesAnOrigin(t *testing.T) {
 }
 
 func TestLoopbackAliasesAreOwnOriginInLoopbackMode(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, func(o *api.Options) { o.RestrictHost = true })
 	post := func(host, origin string) int {
 		req := httptest.NewRequest("POST", base+"/pages", strings.NewReader("{}"))
@@ -333,6 +339,7 @@ func TestLoopbackAliasesAreOwnOriginInLoopbackMode(t *testing.T) {
 // the public host name; the browser's origin is https. Allow-listing the origin
 // makes both the Host and the Origin acceptable.
 func TestBehindATLSProxyTheAllowListIsWhatCounts(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, func(o *api.Options) {
 		o.RestrictHost = true
 		o.AllowOrigins = []string{"https://notes.example.com"}

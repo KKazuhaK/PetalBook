@@ -549,6 +549,7 @@ func TestCommitDoesNotTakeAnUnreadableDirectoryForAnEmptyOne(t *testing.T) {
 // An undo of a change with thousands of long paths: more than a command line
 // holds.
 func TestDiscardOfVeryManyPaths(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	ctx := context.Background()
 	r := newClone(t, bareRemote(t), nil)

@@ -41,6 +41,7 @@ func (f *rfx) crashedWithUncommittedFile(title, id string) {
 func (f *rfx) syncNow() error { return f.s.Pull(context.Background(), true) }
 
 func TestCrashLeavingAnUnpushedCommitIsFinishedOnTheNextSync(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	mustCreate(t, f.s, "", meta("title", "Before"), "b\n")
 	f.crashedWithUnpushedCommit("Crashed", "CRASH00001")
@@ -69,6 +70,7 @@ func TestCrashLeavingAnUnpushedCommitIsFinishedOnTheNextSync(t *testing.T) {
 }
 
 func TestCrashLeavingAWrittenButUncommittedFileIsCommittedAndPushed(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	f.crashedWithUncommittedFile("Written", "WRITE00001")
 	f.reopen()
@@ -89,6 +91,7 @@ func TestCrashLeavingAWrittenButUncommittedFileIsCommittedAndPushed(t *testing.T
 }
 
 func TestCrashRecoveryWhenTheRemoteMovedKeepsTheWorkAndFollowsTheRemote(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"unpushed commit", "uncommitted file"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newRemoteSpace(t)
@@ -158,6 +161,7 @@ func TestCrashRecoveryWhenTheRemoteMovedKeepsTheWorkAndFollowsTheRemote(t *testi
 }
 
 func TestACloneWithChangesTheServerDidNotMakeRefusesChanges(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	p := mustCreate(t, f.s, "", meta("title", "Tracked"), "t\n")
 	f.s.Close()
@@ -196,6 +200,7 @@ func TestACloneWithChangesTheServerDidNotMakeRefusesChanges(t *testing.T) {
 }
 
 func TestOpeningARemoteSpaceWhoseRepositoryIsGoneIsRefused(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	mustCreate(t, f.s, "", meta("title", "Unpushed? no"), "x\n")
 	f.s.Close()
@@ -214,6 +219,7 @@ func TestOpeningARemoteSpaceWhoseRepositoryIsGoneIsRefused(t *testing.T) {
 }
 
 func TestOpeningPointsOriginAtTheStoredAddress(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	f.s.Close()
 	git(t, f.root, "remote", "set-url", "origin", "/somewhere/else.git")

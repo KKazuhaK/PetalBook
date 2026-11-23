@@ -49,6 +49,7 @@ func (f *fixture) list(query string) []map[string]any {
 }
 
 func TestImportOneMarkdownFile(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	code, r := f.importFile("?folder=收集&name="+url.QueryEscape("暮雪.md"), []byte("---\nid: 0000000000\nseries: 冬\ncreated: 2020-01-02\n---\n# 标题在这\n\n正文\n"))
 	if code != 200 || r["pages"] != float64(1) || r["files"] != float64(0) || len(r["skipped"].([]any)) != 0 {
@@ -72,6 +73,7 @@ func TestImportOneMarkdownFile(t *testing.T) {
 }
 
 func TestImportAZipWithAttachments(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	data := zipBytes(t,
 		"notes/一.md", "# 一\n\n![图](img/a.png)\n",
@@ -111,6 +113,7 @@ func TestImportAZipWithAttachments(t *testing.T) {
 }
 
 func TestImportRefusals(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, func(o *api.Options) { o.MaxImport = 64 })
 	for _, c := range []struct {
 		query string
@@ -146,6 +149,7 @@ func TestImportRefusals(t *testing.T) {
 // In a space that follows a remote an import is one commit and one push, and
 // when the push is refused nothing of it is left.
 func TestImportInASpaceThatFollowsARemote(t *testing.T) {
+	t.Parallel()
 	n := &pushFails{}
 	o := accOpts{spaces: func(o *spaces.Options) {
 		o.RemotePolicy = gitstore.Policy{Hosts: []string{"*"}, AllowUnsafe: true}
@@ -209,6 +213,7 @@ func TestImportInASpaceThatFollowsARemote(t *testing.T) {
 // A file in a folder the server would not make is left out and named; the
 // rest is imported, and nothing is refused after pages were made.
 func TestImportSkipsFoldersThatCannotBe(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	code, r := f.importFile("?folder=In", zipBytes(t, "a.md", "# a\n", "x.md/c.md", "# c\n", "assets/d.md", "# d\n", strings.Repeat("长", 400)+"/e.md", "# e\n"))
 	// (`assets` is reserved at the root of the space only: below In it is a folder like any other.)

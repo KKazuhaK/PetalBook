@@ -18,6 +18,7 @@ import (
 // --- the server's own state is not in the work tree ----------------------------------
 
 func TestAPullThatPutsALinkForPetalbookLeavesTheIndexWhole(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	s := f.s
 	if _, err := putCurrent(s, "wenan", allKinds()); err != nil {
@@ -69,6 +70,7 @@ func TestAPullThatPutsALinkForPetalbookLeavesTheIndexWhole(t *testing.T) {
 }
 
 func TestTheStateOfAnEarlierVersionIsMovedIntoTheGitDirectoryOnce(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -110,6 +112,7 @@ func TestTheStateOfAnEarlierVersionIsMovedIntoTheGitDirectoryOnce(t *testing.T) 
 }
 
 func TestALinkWhereTheOldStateWasIsNeitherFollowedNorMoved(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -135,6 +138,7 @@ func TestALinkWhereTheOldStateWasIsNeitherFollowedNorMoved(t *testing.T) {
 // --- a repair is never left behind as someone's change ---------------------------------
 
 func TestARepairWhosePushIsRejectedIsMadeAgainOnTheNewTip(t *testing.T) {
+	t.Parallel()
 	for _, how := range []string{"the remote moved", "the network is down"} {
 		t.Run(how, func(t *testing.T) {
 			f := newRemoteSpace(t)
@@ -218,6 +222,7 @@ func TestARepairWhosePushIsRejectedIsMadeAgainOnTheNewTip(t *testing.T) {
 // --- a link put on the way while a file is read --------------------------------------
 
 func TestALinkSwappedInWhileTheSettingsAreReadIsNeverFollowed(t *testing.T) {
+	t.Parallel()
 	s := settled(t)
 	root := s.Root()
 	if err := s.SetTagColor(Author{}, "x", "blue"); err != nil {
@@ -285,6 +290,7 @@ func TestALinkSwappedInWhileTheSettingsAreReadIsNeverFollowed(t *testing.T) {
 // --- a link spelled otherwise, on a file system that ignores case ------------------------
 
 func TestALinkSpelledPetalBookIsNeverFollowed(t *testing.T) {
+	t.Parallel()
 	s := settled(t)
 	root := s.Root()
 	crash(s)
@@ -392,6 +398,7 @@ func TestSalvagingALargeFileWithOneTypoIsLinear(t *testing.T) {
 }
 
 func TestSalvageNeverMakesUpAnEntry(t *testing.T) {
+	t.Parallel()
 	lines, want := thirty()
 	for _, c := range []struct {
 		name  string

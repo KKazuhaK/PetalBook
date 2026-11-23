@@ -15,6 +15,17 @@ import (
 
 // --- edits of very many entries ----------------------------------------------
 
+// manyFolders is how many folders the tests of a very large space.yml bind: as
+// many as a full file holds (49900 of them fill the 1 MiB). Under the race
+// detector, where reading YAML costs many times as much, a quarter of that; the
+// full size runs in the tests without it.
+func manyFolders() int {
+	if raceDetector {
+		return 12000
+	}
+	return 49900
+}
+
 // manyEntries is a settings document with n entries under section, the i-th
 // written by entry, read as the server reads it.
 func manyEntries(t *testing.T, section string, n int, entry func(i int) string) (doc *yaml.Node, size int) {
@@ -52,12 +63,12 @@ func entriesOf(doc *yaml.Node, section string) int {
 // from seconds to more than a minute at this size when entries were cut out of
 // the list one at a time.
 func TestEditsOfManyEntriesTakeOnePassOverTheFile(t *testing.T) {
-	const n = 49900 // a full space.yml: 1 MiB of `fNNNNN: {type: t}`
+	n := manyFolders() // a full space.yml: 1 MiB of `fNNNNN: {type: t}`
 	typed := func(i int) string { return fmt.Sprintf("f%05d: {type: t}", i) }
 	twoTypes := func(i int) string { return fmt.Sprintf("f%05d: {type: %c}", i, "tu"[i%2]) }
 
 	doc, size := manyEntries(t, "folders", n, typed)
-	if size > maxSpaceFile || size < maxSpaceFile*9/10 {
+	if size > maxSpaceFile || (!raceDetector && size < maxSpaceFile*9/10) {
 		t.Fatalf("the file is %d bytes, not a full one", size)
 	}
 	timed(t, "unbinding every folder", func() {
@@ -180,15 +191,16 @@ func TestDeletingATypeBoundToManyFoldersDoesNotStallTheSpace(t *testing.T) {
 	}
 	var b strings.Builder
 	b.WriteString("folders:\n")
-	for i := 0; i < 49900; i++ {
+	n := manyFolders()
+	for i := 0; i < n; i++ {
 		fmt.Fprintf(&b, "  f%05d: {type: t}\n", i)
 	}
 	b.WriteString("  other: {type: u}\n")
 	writeSpaceYML(t, s, b.String())
-	if n := len(s.Bindings()); n != 49901 {
-		t.Fatalf("%d bindings", n)
+	if got := len(s.Bindings()); got != n+1 {
+		t.Fatalf("%d bindings", got)
 	}
-	timed(t, "deleting the type of 49900 folders", func() {
+	timed(t, fmt.Sprintf("deleting the type of %d folders", n), func() {
 		if err := deleteCurrent(s, "t"); err != nil {
 			t.Error(err)
 		}
@@ -220,6 +232,7 @@ func sharedAndKept() string {
 }
 
 func TestADeleteIsTriedOnTheFoldersThatWillBeLeft(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	p := mustCreate(t, s, "D/a", meta("title", "a"), "x\n")
 	q := mustCreate(t, s, "D/keep", meta("title", "k"), "x\n")
@@ -263,6 +276,7 @@ func TestADeleteIsTriedOnTheFoldersThatWillBeLeft(t *testing.T) {
 }
 
 func TestADeleteWhoseFoldersTurnOutOtherwiseMakesTheEditThatWasTried(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	p := mustCreate(t, s, "D/a", meta("title", "a"), "x\n")
 	q := mustCreate(t, s, "D/keep", meta("title", "k"), "x\n")
@@ -307,6 +321,7 @@ func TestADeleteWhoseFoldersTurnOutOtherwiseMakesTheEditThatWasTried(t *testing.
 // --- the comments of a merge key ----------------------------------------------
 
 func TestWritingAMergeKeyOutKeepsItsComments(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "A", meta("title", "a"), "x\n")
 	writeSpaceYML(t, s, `defs: &m {type: t, color: red}

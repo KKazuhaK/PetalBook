@@ -37,7 +37,7 @@ func testManager(t *testing.T, st *store.Store) *Manager {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	m, err := NewAccounts(Options{Store: st, DataDir: filepath.Join(dir, "data"), Committer: "Svc <svc@example.test>", CommitIdle: time.Hour, CommitMax: time.Hour})
+	m, err := NewAccounts(Options{Store: st, DataDir: filepath.Join(dir, "data"), Committer: "Svc <svc@example.test>", CloseWait: 200 * time.Millisecond, CommitIdle: time.Hour, CommitMax: time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestOpenIsLazyAndOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 		// Reopen the manager as after a restart: nothing is open until asked.
-		m2, err := NewAccounts(Options{Store: st, DataDir: m.opt.DataDir, Committer: "Svc <svc@example.test>", CommitIdle: time.Hour, CommitMax: time.Hour})
+		m2, err := NewAccounts(Options{Store: st, DataDir: m.opt.DataDir, Committer: "Svc <svc@example.test>", CloseWait: 200 * time.Millisecond, CommitIdle: time.Hour, CommitMax: time.Hour})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -252,7 +252,7 @@ func TestMissingDirectoryIsAnErrorNotAnEmptyRepository(t *testing.T) {
 		m := testManager(t, st)
 		u := addUser(t, st, "U1", "one")
 		a, _ := m.Create(ctx, u.ID, "A")
-		m2, _ := NewAccounts(Options{Store: st, DataDir: m.opt.DataDir, Committer: "Svc <svc@example.test>"})
+		m2, _ := NewAccounts(Options{Store: st, DataDir: m.opt.DataDir, Committer: "Svc <svc@example.test>", CloseWait: 200 * time.Millisecond})
 		defer m2.Close()
 		root, _ := m2.paths(a.ID)
 		if err := os.RemoveAll(root); err != nil {
@@ -288,7 +288,7 @@ func TestCloseCommitsAndRefusesFurtherOpens(t *testing.T) {
 	if err != nil || !strings.Contains(string(out), "kazuha|Svc|Add Unsaved") {
 		t.Fatalf("not committed at shutdown (author is the owner, committer the service): %q %v", out, err)
 	}
-	m2, _ := NewAccounts(Options{Store: st, DataDir: m.opt.DataDir})
+	m2, _ := NewAccounts(Options{Store: st, DataDir: m.opt.DataDir, CloseWait: 200 * time.Millisecond})
 	m2.Close()
 	if _, _, err := m2.Acquire(ctx, a.ID); err == nil {
 		t.Fatal("a closed manager opened a space")
@@ -366,7 +366,7 @@ func limitedManager(t *testing.T, st *store.Store, mod func(*Options)) (*Manager
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	clk := &tclock{t: time.Date(2026, 11, 21, 8, 0, 0, 0, time.UTC)}
-	opt := Options{Store: st, DataDir: filepath.Join(dir, "data"), Committer: "Svc <svc@example.test>", CommitIdle: time.Hour, CommitMax: time.Hour, Now: clk.now}
+	opt := Options{Store: st, DataDir: filepath.Join(dir, "data"), Committer: "Svc <svc@example.test>", CloseWait: 200 * time.Millisecond, CommitIdle: time.Hour, CommitMax: time.Hour, Now: clk.now}
 	if mod != nil {
 		mod(&opt)
 	}

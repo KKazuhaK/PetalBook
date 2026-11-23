@@ -40,6 +40,7 @@ func openTwoAuthors(t *testing.T, root string) *Space {
 }
 
 func TestTwoAuthorsInOneWindowMakeTwoCommitsEachTheirOwn(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openTwoAuthors(t, root)
@@ -66,6 +67,7 @@ func TestTwoAuthorsInOneWindowMakeTwoCommitsEachTheirOwn(t *testing.T) {
 }
 
 func TestOneAuthorIsOneCommitAndOneGitRun(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openTwoAuthors(t, root)
@@ -102,6 +104,7 @@ func TestOneAuthorIsOneCommitAndOneGitRun(t *testing.T) {
 // A second person's change to a path commits the first person's work first, so
 // the path's history shows both, each as its author.
 func TestAPathChangedByTwoPeopleIsOneCommitEach(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openTwoAuthors(t, root)
@@ -126,6 +129,7 @@ func TestAPathChangedByTwoPeopleIsOneCommitEach(t *testing.T) {
 // goes through (it is not refused for someone else's error), and a later
 // commit makes both, each as its author.
 func TestAFailedSwitchCommitDoesNotBlockTheNextChange(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openTwoAuthors(t, root)
@@ -156,6 +160,7 @@ func TestAFailedSwitchCommitDoesNotBlockTheNextChange(t *testing.T) {
 }
 
 func TestJournalAfterACommitKeepsTheAuthorsOfWhatIsStillPending(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openTwoAuthors(t, root)
@@ -185,6 +190,7 @@ func TestJournalAfterACommitKeepsTheAuthorsOfWhatIsStillPending(t *testing.T) {
 }
 
 func TestCrashRecoveryCommitsEachPersonsChangesAsThem(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openTwoAuthors(t, root)
@@ -220,6 +226,7 @@ func TestCrashRecoveryCommitsEachPersonsChangesAsThem(t *testing.T) {
 }
 
 func TestOldJournalWithoutAuthorsRecoversAsTheDefaultAuthor(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openTwoAuthors(t, root)
@@ -244,6 +251,7 @@ func TestOldJournalWithoutAuthorsRecoversAsTheDefaultAuthor(t *testing.T) {
 }
 
 func TestRemoteChangesAreCommittedAsTheirAuthor(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	p, err := f.s.Create(bo, CreateInput{Meta: meta("title", "ByBo"), Body: "b\n"})
 	if err != nil {
@@ -261,6 +269,7 @@ func TestRemoteChangesAreCommittedAsTheirAuthor(t *testing.T) {
 }
 
 func TestRemoteRecoveryCommitsEachRecordedAuthor(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	write := func(by Author, title, id string) {
 		data := []byte(pageText(id, title, "written\n"))
@@ -282,6 +291,7 @@ func TestRemoteRecoveryCommitsEachRecordedAuthor(t *testing.T) {
 }
 
 func TestRecoveredAuthorOfAPathIsTheLastRecordOfIt(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	got := recoverPending(root, []jrec{
 		{Op: "t", Path: "a.md", AuthorName: ann.Name, AuthorEmail: ann.Email},
@@ -294,6 +304,7 @@ func TestRecoveredAuthorOfAPathIsTheLastRecordOfIt(t *testing.T) {
 }
 
 func TestHalfFilledAuthorIsTheDefaultAuthor(t *testing.T) {
+	t.Parallel()
 	g := &gitRepo{name: "Service", email: "svc@example.test"}
 	g.setAuthor("Owner", "owner@example.test")
 	for _, by := range []Author{{}, {Name: "Only Name"}, {Email: "only@example.test"}} {
@@ -308,6 +319,7 @@ func TestHalfFilledAuthorIsTheDefaultAuthor(t *testing.T) {
 
 // Quiet-period commits group the same way as a flush.
 func TestQuietPeriodCommitsPerAuthor(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root, func(o *Options) {

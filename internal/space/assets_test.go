@@ -13,6 +13,7 @@ import (
 )
 
 func TestAssetIsJournaledBeforeItIsWrittenAndSurvivesACrash(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -59,6 +60,7 @@ func TestAssetIsJournaledBeforeItIsWrittenAndSurvivesACrash(t *testing.T) {
 }
 
 func TestPutAsset(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	p := mustCreate(t, s, "Tang", meta("title", "Doc"), "x\n")
 	data := []byte("hello")
@@ -130,6 +132,7 @@ func TestPutAsset(t *testing.T) {
 }
 
 func TestOpenFile(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	p := mustCreate(t, s, "Tang", meta("title", "Doc"), "x\n")
 	a, err := s.PutAsset(Author{}, p.ID, "a.bin", []byte("payload"))
@@ -166,6 +169,7 @@ func TestOpenFile(t *testing.T) {
 // An ignore rule that matches a file the server wrote must not stop the
 // commit, nor the commits after it.
 func TestAnIgnoredAttachmentIsStillCommitted(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -195,6 +199,7 @@ func TestAnIgnoredAttachmentIsStillCommitted(t *testing.T) {
 // On a file system that ignores case, a folder of pages called Assets would
 // receive the attachments.
 func TestAFolderNamedLikeAssetsInAnotherCaseIsNotUsed(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "Assets"), 0o755); err != nil {
@@ -219,6 +224,7 @@ func TestAFolderNamedLikeAssetsInAnotherCaseIsNotUsed(t *testing.T) {
 // server puts a directory where a deleted page's file was, the commit goes
 // through all the same, and so do the ones after it.
 func TestAFileThatBecameAFolderDoesNotBlockCommits(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -255,6 +261,7 @@ func TestAFileThatBecameAFolderDoesNotBlockCommits(t *testing.T) {
 // committed, and nothing is wedged or lost, whatever the file system thinks
 // of case.
 func TestACaseOnlyRenameIsCommitted(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)

@@ -8,6 +8,7 @@ import (
 )
 
 func TestSingleUserSession(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	code, r, raw := f.do("GET", "/api/session", nil)
 	if code != 200 {
@@ -31,6 +32,7 @@ func TestSingleUserSession(t *testing.T) {
 }
 
 func TestSingleUserHasNoAccountEndpoints(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	n := 0
 	for _, rt := range api.Routes() {
@@ -58,6 +60,7 @@ func TestSingleUserHasNoAccountEndpoints(t *testing.T) {
 }
 
 func TestSingleUserHasNoMembers(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	for _, c := range [][2]string{{"GET", ""}, {"POST", ""}, {"PATCH", "/local"}, {"DELETE", "/local"}} {
 		if code, r, raw := f.do(c[0], base+"/members"+c[1], "{}"); code != 404 || r["error"] != "not_found" {
@@ -71,6 +74,7 @@ func TestSingleUserHasNoMembers(t *testing.T) {
 }
 
 func TestSingleUserDrafts(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	p := f.create("", map[string]any{"title": "T"}, "one\n")
 	url := base + "/pages/" + p["id"].(string)

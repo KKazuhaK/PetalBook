@@ -13,6 +13,7 @@ import (
 
 // A member who was made a viewer keeps the right to throw their own draft away.
 func TestAViewerMayDiscardTheirOwnDraft(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		tm := newTeam(t, a)
 		base := "/api/spaces/" + tm.sid
@@ -34,6 +35,7 @@ func TestAViewerMayDiscardTheirOwnDraft(t *testing.T) {
 
 // Members can leave a space that an administrator has switched off.
 func TestAMemberMayLeaveADisabledSpace(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		tm := newTeam(t, a)
@@ -53,6 +55,7 @@ func TestAMemberMayLeaveADisabledSpace(t *testing.T) {
 
 // A disabled user cannot be the one remaining owner.
 func TestTheLastEnabledOwnerStays(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		tm := newTeam(t, a)
 		base := "/api/spaces/" + tm.sid + "/members"
@@ -71,6 +74,7 @@ func TestTheLastEnabledOwnerStays(t *testing.T) {
 // Deleting a space keeps what members had typed and not saved, next to the
 // directory in the trash; if it cannot be kept, nothing is deleted.
 func TestAdminDeleteKeepsTheDraftsInTheTrash(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		tm := newTeam(t, a)
@@ -133,6 +137,7 @@ func TestAdminDeleteKeepsTheDraftsInTheTrash(t *testing.T) {
 
 // Disabling a user, and changing their role, is seen by the drafts sweeper at once.
 func TestUserChangesReachTheWriteCheckAtOnce(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		tm := newTeam(t, a)

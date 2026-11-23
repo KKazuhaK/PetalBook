@@ -10,6 +10,7 @@ import (
 )
 
 func TestExistingNameErrorsAre409NotFiveHundred(t *testing.T) {
+	t.Parallel()
 	s := &server{}
 	for _, err := range []error{
 		fs.ErrExist,
