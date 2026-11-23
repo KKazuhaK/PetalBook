@@ -153,3 +153,52 @@ func TestTemplateVariables(t *testing.T) {
 		t.Errorf("%v", meta)
 	}
 }
+
+// TestPutTemplateHealsTheWay: a link or a file where the folder of the
+// templates belongs is put aside and committed, the folder is made again, and
+// the template is written; nothing outside the space is touched.
+func TestPutTemplateHealsTheWay(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{"link", "file"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			s := open(t)
+			root := s.Root()
+			dir := filepath.Join(root, ".petalbook", "templates")
+			os.MkdirAll(filepath.Dir(dir), 0o755)
+			outside := t.TempDir()
+			if kind == "link" {
+				if err := os.Symlink(outside, dir); err != nil {
+					t.Skip("no symbolic links here")
+				}
+			} else if err := os.WriteFile(dir, []byte("from a pull\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if names, _, err := s.Templates(); err != nil || len(names) != 0 {
+				t.Fatalf("before: %v %v", names, err)
+			}
+			if _, err := s.PutTemplate(Author{}, "周报", "", meta("title", "周报"), "正文\n"); err != nil {
+				t.Fatalf("put: %v", err)
+			}
+			if es, _ := os.ReadDir(outside); len(es) != 0 {
+				t.Errorf("something was written outside: %v", es)
+			}
+			if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+				t.Errorf("the folder is not made again: %v", err)
+			}
+			if m, _ := filepath.Glob(dir + ".unreadable-*"); len(m) != 1 {
+				t.Errorf("the blocker is not kept aside: %v", m)
+			}
+			list, _, err := s.Templates()
+			if err != nil || len(list) != 1 || list[0].Name != "周报" {
+				t.Errorf("after: %+v %v", list, err)
+			}
+			if err := s.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			if st := git(t, root, "status", "--porcelain"); st != "" {
+				t.Errorf("not committed:\n%s", st)
+			}
+		})
+	}
+}

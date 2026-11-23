@@ -263,10 +263,20 @@ func (s *Space) PutTemplate(by Author, name, baseRev string, meta page.Meta, bod
 		if curT != nil && string(cur) == string(data) {
 			return curT, nil
 		}
+		// Something that is not a folder where the folder of the templates
+		// belongs is put aside and the folder made again, as for the types.
+		if _, err := s.clearWayIn(tx, rel, rel); err != nil {
+			return nil, err
+		}
 		if b, err := wayBlocked(s.root, rel); err != nil {
 			return nil, err
 		} else if b != "" {
 			return nil, unavailable(nil, "%s is not a folder, so the template has nowhere to be kept", b)
+		}
+		if d, err := mkdirIn(s.root, templatesDir); err != nil {
+			return nil, err
+		} else {
+			d.Close()
 		}
 		if err := tx.record(jrec{Op: "t", Path: rel}); err != nil {
 			return nil, err

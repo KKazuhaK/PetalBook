@@ -428,8 +428,15 @@ func TestTemplateLinksAreNeverFollowed(t *testing.T) {
 	if code, _ := c("GET", base+"/templates/外", nil); code != 404 {
 		t.Errorf("a linked folder is read: %d", code)
 	}
-	if code, r := c("PUT", base+"/templates/新", map[string]any{"baseRev": "", "meta": map[string]any{}, "body": "x"}); code == 200 {
-		t.Errorf("written through a linked folder: %v", r)
+	// Writing puts the link aside and makes the folder again.
+	if code, r := c("PUT", base+"/templates/新", map[string]any{"baseRev": "", "meta": map[string]any{}, "body": "x"}); code != 200 {
+		t.Errorf("a linked folder is not healed: %d %v", code, r)
+	}
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+		t.Errorf("the folder is not made again: %v", err)
+	}
+	if names, _, _ := tplList(t, c, base); strings.Join(names, ",") != "新" {
+		t.Errorf("after healing: %v", names)
 	}
 	if es, _ := os.ReadDir(other); len(es) != 1 {
 		t.Errorf("something was written outside: %v", es)
