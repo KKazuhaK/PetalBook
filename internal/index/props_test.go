@@ -474,9 +474,11 @@ func TestFilterSubqueriesLookUpByPrimaryKey(t *testing.T) {
 			rec    bool
 			tags   []string
 		}{"no scope": {}, "folder": {&folder, false, nil}, "recursive": {&folder, true, nil}, "tag": {nil, false, []string{"a"}}, "folder and tag": {&folder, true, []string{"a", "b"}}} {
-			where, wargs := scopeConds(sc.folder, sc.rec, sc.tags)
-			where = append(where, cond)
-			rows, err := x.db.Query(`EXPLAIN QUERY PLAN SELECT p.rowid FROM pages p WHERE `+strings.Join(where, ` AND `), append(wargs, args...)...)
+			where, wargs := whereOf(scopeConditions(sc.folder, sc.rec, sc.tags))
+			if where != "" {
+				where += ` AND `
+			}
+			rows, err := x.db.Query(`EXPLAIN QUERY PLAN SELECT p.rowid FROM pages p WHERE `+where+cond, append(wargs, args...)...)
 			if err != nil {
 				t.Fatalf("%+v: %v", fl, err)
 			}

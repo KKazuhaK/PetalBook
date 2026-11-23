@@ -85,8 +85,10 @@ type Index struct {
 	gen    atomic.Uint64
 	groups groupCache
 
-	// queries counts the queries of listings by a property (read by tests).
+	// queries counts the queries of listings with conditions and of counts
+	// (read by tests); trace, when a test sets it, is called with each.
 	queries atomic.Int64
+	trace   func(query string, args []any)
 }
 
 // Open opens or creates the index at dbPath for the space at root. An index

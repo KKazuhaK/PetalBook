@@ -372,29 +372,26 @@ func TestGroupsOfATagStartFromTheTagsIndex(t *testing.T) {
 		{Tags: []string{"rare", "more"}, Key: "status"},
 		{Tags: []string{"rare"}, Key: "status", Filters: []Filter{{Key: "status", Op: "notEmpty"}}},
 	} {
-		query, qargs, totalQuery, totalArgs := groupSQL(q)
-		for _, c := range []struct {
-			sql  string
-			args []any
-		}{{query, qargs}, {totalQuery, totalArgs}} {
-			rows, err := x.db.Query(`EXPLAIN QUERY PLAN `+c.sql, c.args...)
-			if err != nil {
+		for _, plan := range plansOf(t, x, func() {
+			if _, err := x.countGroups(q); err != nil {
 				t.Fatal(err)
 			}
-			for rows.Next() {
-				var id, parent, unused int
-				var detail string
-				if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
-					t.Fatal(err)
+		}) {
+			for _, detail := range plan.lines {
+				// The pages handed over (j), a subquery's rows and the list of a
+				// property's values (d) are what is read from end to end.
+				if strings.HasPrefix(detail, "SCAN") && !strings.HasPrefix(detail, "SCAN j") && !strings.HasPrefix(detail, "SCAN (subquery") && detail != "SCAN d" {
+					t.Errorf("%v reads a whole table: %s\n%s", q.Tags, detail, plan.query)
 				}
-				if strings.HasPrefix(detail, "SCAN") && !strings.Contains(detail, "t ") && !strings.Contains(detail, " t") {
-					t.Errorf("%v reads a whole table: %s", q.Tags, detail)
+				if strings.Contains(detail, "pages_created") {
+					t.Errorf("%v scans the pages: %s\n%s", q.Tags, detail, plan.query)
 				}
-				if strings.Contains(detail, "pages_created") || strings.Contains(detail, "SCAN p") || strings.Contains(detail, "SCAN s") {
-					t.Errorf("%v scans the pages or the property: %s", q.Tags, detail)
+				// The rows of the property are looked up for the pages of the tag;
+				// its index ranges are only counted, up to a bound.
+				if strings.Contains(detail, "SEARCH props USING") && !strings.Contains(plan.query, "LIMIT ?") {
+					t.Errorf("%v reads an index range of the property: %s\n%s", q.Tags, detail, plan.query)
 				}
 			}
-			rows.Close()
 		}
 	}
 	got, err := x.Groups(GroupQuery{Tags: []string{"rare"}, Key: "status"})
@@ -438,9 +435,10 @@ func TestOptionOrderOfASmallFolderAsksOnlyForTheGroupsItHas(t *testing.T) {
 	}
 }
 
-// What is read whole (a small folder, or the few pages a selective filter keeps
-// of a big one) comes out in the same order, with the same cursors, as what is
-// read group by group.
+// What is read from its smallest condition (a small folder, or the few pages a
+// selective filter keeps of a big one) comes out in the same order, with the
+// same cursors, as what is read by walking the order group by group, and as
+// what is read as sets.
 func TestSmallListingsFollowTheOrderOfTheGroupedRead(t *testing.T) {
 	x := openIndex(t)
 	opts := []string{"todo", "doing", "done", "review"}
@@ -469,26 +467,31 @@ func TestSmallListingsFollowTheOrderOfTheGroupedRead(t *testing.T) {
 	for name, fs := range filters {
 		for _, sort := range []string{"prop:status", "-prop:status"} {
 			for _, limit := range []int{1, 7, 200} {
+				if limit == 1 && raceDetector && name != "none" {
+					continue // 120 queries a listing, each slow under the detector
+				}
 				q := Query{Folder: strp("t"), Sort: sort, PropOptions: opts, Filters: fs}
-				maxSmallScope = 2000
+				setPlan(t, 2000, 4000, 1000)
 				before := x.queries.Load()
 				small := listAll(t, x, q, limit)
-				if limit == 200 && x.queries.Load()-before > 2 {
-					t.Errorf("%s %s: %d queries for one page", name, sort, x.queries.Load()-before)
+				if n := x.queries.Load() - before; limit == 200 && n > 8 {
+					t.Errorf("%s %s: %d queries for one page", name, sort, n)
 				}
-				maxSmallScope = 0
-				grouped := listAll(t, x, q, limit)
-				maxSmallScope = 2000
-				if !reflect.DeepEqual(small, grouped) {
-					t.Errorf("%s %s limit %d:\n small   %v\n grouped %v", name, sort, limit, small, grouped)
+				setPlan(t, 0, 0, 1<<30) // the order walked, each page looked up
+				walked := listAll(t, x, q, limit)
+				setPlan(t, 0, 0, 0) // the conditions as sets, picked out of the order
+				sets := listAll(t, x, q, limit)
+				if !reflect.DeepEqual(small, walked) || !reflect.DeepEqual(small, sets) {
+					t.Errorf("%s %s limit %d:\n small  %v\n walked %v\n sets   %v", name, sort, limit, small, walked, sets)
 				}
 			}
 		}
 	}
 }
 
-// A selective filter in a big folder costs the pages it keeps: one query for
-// them and one for the page of summaries, not one per group.
+// A selective filter in a big folder costs the pages it keeps: a handful of
+// queries (the sizes of the conditions, the pages of the smallest, their
+// values, the summaries), not one per group.
 func TestASelectiveFilterIsReadOnceNotPerGroup(t *testing.T) {
 	x := openIndex(t)
 	opts := make([]string, 40)
@@ -511,8 +514,8 @@ func TestASelectiveFilterIsReadOnceNotPerGroup(t *testing.T) {
 		if len(got) != 10 {
 			t.Errorf("%s: %d pages, want 10", f.Op, len(got))
 		}
-		if n := x.queries.Load() - before; f.Op == "in" && n > 2 {
-			t.Errorf("%d queries for 10 pages in 10 groups", n)
+		if n := x.queries.Load() - before; n > 8 {
+			t.Errorf("%s: %d queries for 10 pages in 10 groups of 40", f.Op, n)
 		}
 	}
 }
@@ -542,7 +545,7 @@ func TestGroupCountsAreRememberedUntilTheIndexChanges(t *testing.T) {
 	if _, err := x.Groups(other); err != nil {
 		t.Fatal(err)
 	}
-	if n := x.queries.Load() - before; n != 1 {
+	if n := x.queries.Load() - before; n == 0 {
 		t.Errorf("another question: %d queries", n)
 	}
 	putProps(t, x, "t", "NEW", "status: done\n")
@@ -561,13 +564,12 @@ func TestGroupCountsAreRememberedUntilTheIndexChanges(t *testing.T) {
 	}
 }
 
-// A folder too large to be read whole, whose filters no index serves (contains,
-// empty, ...) and keep few pages: the matches are found in one walk of the
-// folder, not one per group of the options.
+// A folder too large to start from, whose filters say nothing of how few pages
+// they keep (contains, empty, ...): the walk of the groups stops at its bound,
+// and the matches are found from the index ranges of the conditions, not by a
+// read of every group of the options.
 func TestOptionOrderWithAFilterNoIndexServesWalksTheFolderOnce(t *testing.T) {
-	old := maxSmallScope
-	maxSmallScope = 15
-	t.Cleanup(func() { maxSmallScope = old })
+	setPlan(t, 15, 15, 10)
 	x := openIndex(t)
 	opts := make([]string, 40)
 	for i := range opts {
@@ -601,11 +603,11 @@ func TestOptionOrderWithAFilterNoIndexServesWalksTheFolderOnce(t *testing.T) {
 				t.Errorf("%s: %d pages", c.name, len(got))
 			}
 		case "nothing":
-			if len(got) != 0 || n > 2 {
+			if len(got) != 0 || n > 30 {
 				t.Errorf("%s: %v in %d queries", c.name, got, n)
 			}
 		default:
-			if len(got) != 11 || n > 4 { // n5, n50..n59
+			if len(got) != 11 || n > 30 { // n5, n50..n59: the walk stops at its bound, far short of the 41 groups
 				t.Errorf("%s: %d pages in %d queries", c.name, len(got), n)
 			}
 		}

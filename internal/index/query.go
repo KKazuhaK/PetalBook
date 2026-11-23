@@ -116,10 +116,14 @@ type sortKey struct {
 	desc bool
 }
 
-// List returns pages matching q. Cost: with a folder or tag filter or none, it
-// walks an index in sort order and stops after limit rows; with Text it is
-// bounded by the number of matching pages (ranking), which is the one
-// O(matches) case; sorting by title descending walks its own index.
+// List returns pages matching q. Cost: with no condition but a folder and the
+// order of time of writing, or none at all, it walks the index of the order
+// and stops after limit rows. With tags, filters, dates, a recursive folder or
+// an order by a property it is read in the cheapest of three ways (plan.go):
+// from the smallest condition, by a bounded walk of the order, or as the
+// intersection of the conditions' index ranges, whose cost is the size of
+// those ranges and not the number of pages looked up. With Text and no sort it
+// is bounded by the number of matching pages (ranking).
 func (x *Index) List(q Query) (Result, error) {
 	limit := q.Limit
 	if limit == 0 {
@@ -168,61 +172,98 @@ func (x *Index) List(q Query) (Result, error) {
 		cur = &c
 	}
 
-	var (
-		from  = `FROM pages p`
-		where []string
-		args  []any
-	)
 	if err := checkFilters(q.Filters); err != nil {
 		return Result{}, err
 	}
-	if searching {
-		if relevance {
-			from = `FROM fts JOIN pages p ON p.rowid = fts.rowid`
-			where = append(where, `fts MATCH ?`)
-		} else {
-			where = append(where, `p.rowid IN (SELECT rowid FROM fts WHERE fts MATCH ?)`)
+	conds := conditions(q.Folder, q.Recursive, q.Tags, q.Filters)
+	if q.UpdatedFrom != 0 || q.UpdatedTo != 0 {
+		c := cond{sets: []pageSet{{sql: `SELECT rowid AS id FROM pages WHERE 1 = 1`}}}
+		var w []string
+		if q.UpdatedFrom != 0 {
+			w, c.args = append(w, `p.mtime_ns >= ?`), append(c.args, q.UpdatedFrom)
+			c.sets[0].sql += ` AND mtime_ns >= ?`
 		}
-		args = append(args, match)
-	}
-	sw, sa := scopeConds(q.Folder, q.Recursive, q.Tags)
-	where, args = append(where, sw...), append(args, sa...)
-	if q.UpdatedFrom != 0 {
-		where = append(where, `p.mtime_ns >= ?`)
-		args = append(args, q.UpdatedFrom)
-	}
-	if q.UpdatedTo != 0 {
-		where = append(where, `p.mtime_ns < ?`)
-		args = append(args, q.UpdatedTo)
+		if q.UpdatedTo != 0 {
+			w, c.args = append(w, `p.mtime_ns < ?`), append(c.args, q.UpdatedTo)
+			c.sets[0].sql += ` AND mtime_ns < ?`
+		}
+		c.where, c.sets[0].args = strings.Join(w, ` AND `), c.args
+		conds = append(conds, c)
 	}
 	// `created` holds a date or nothing; dates in this form compare as text.
 	if q.CreatedFrom != "" || q.CreatedTo != "" {
-		where = append(where, `p.created <> ''`)
-	}
-	if q.CreatedFrom != "" {
-		where = append(where, `p.created >= ?`)
-		args = append(args, q.CreatedFrom)
-	}
-	if q.CreatedTo != "" {
-		where = append(where, `p.created <= ?`)
-		args = append(args, q.CreatedTo)
-	}
-
-	for _, f := range q.Filters {
-		cond, cargs := f.sql()
-		where = append(where, cond)
-		args = append(args, cargs...)
-	}
-	if byProp && len(q.PropOptions) > 0 {
-		return x.listByOptions(q, limit, propKey, propDesc, sortName, cur, where, args)
-	}
-	if byProp {
-		if cur != nil && cur.N != 0 {
-			return Result{}, invalid("cursor belongs to another sort order")
+		c := cond{where: `p.created <> ''`}
+		// The index is of created_key, which for a page with a date is that
+		// date, and for one without is something else: its range holds the
+		// pages that match and maybe others, so it is a place to start only.
+		lead := pageSet{sql: `SELECT rowid AS id FROM pages WHERE 1 = 1`}
+		for _, b := range []struct{ day, op string }{{q.CreatedFrom, `>=`}, {q.CreatedTo, `<=`}} {
+			if b.day == "" {
+				continue
+			}
+			c.where += ` AND p.created ` + b.op + ` ?`
+			c.args = append(c.args, b.day)
+			if t, err := time.Parse("2006-01-02", b.day); err == nil && lead.sql != "" {
+				lead.sql += ` AND created_key ` + b.op + ` ?`
+				lead.args = append(lead.args, t.UnixNano())
+			} else {
+				lead.sql = ""
+			}
 		}
-		return x.listByProp(q, limit, propKey, propDesc, sortName, cur, where, args)
+		if lead.sql != "" {
+			c.lead = &lead
+		}
+		conds = append(conds, c)
 	}
+	if relevance {
+		return x.listDirect(q, limit, sortName, nil, cur, match, conds)
+	}
+	o := &ordering{name: sortName, keys: order, key: propKey, desc: propDesc}
+	if byProp {
+		o.opts = q.PropOptions
+	}
+	// The order of time of writing inside one folder is an index of its own.
+	inFolder := q.Folder != nil && !q.Recursive && strings.TrimPrefix(sortName, "-") == "updated"
+	if inFolder {
+		o.folder = q.Folder
+	}
+	if !byProp && !searching && (len(conds) == 0 || (len(conds) == 1 && inFolder)) {
+		// Nothing to look up: the walk of the index is the listing.
+		return x.listDirect(q, limit, sortName, order, cur, "", conds)
+	}
+	if searching {
+		// The words of a search are a set of pages like any other condition,
+		// but finding them is not a lookup by page: they are read once.
+		conds = append([]cond{{where: `p.rowid IN (SELECT rowid FROM fts WHERE fts MATCH ?)`, args: []any{match},
+			sets: []pageSet{{sql: `SELECT rowid AS id FROM fts WHERE fts MATCH ?`, args: []any{match}}}}}, conds...)
+	}
+	// A write between two of the queries of a listing can make them disagree;
+	// the listing is then read once more.
+	for try := 0; ; try++ {
+		gen := x.gen.Load()
+		res, err := x.listPlanned(q, limit, o, cur, conds, searching)
+		if err != nil || try == 1 || x.gen.Load() == gen {
+			return res, err
+		}
+	}
+}
 
+// listDirect reads a page of a listing as one query: the index of the order
+// is walked and each row checked. It is for a listing with no condition but
+// the one its index holds (the cost is the page), and for a search in order
+// of relevance, whose cost is the number of pages that match the words.
+func (x *Index) listDirect(q Query, limit int, sortName string, order []sortKey, cur *cursor, match string, conds []cond) (Result, error) {
+	relevance := order == nil
+	from := `FROM pages p`
+	var where []string
+	var args []any
+	if relevance {
+		from = `FROM fts JOIN pages p ON p.rowid = fts.rowid`
+		where, args = append(where, `fts MATCH ?`), append(args, match)
+	}
+	if w, a := whereOf(conds); w != "" {
+		where, args = append(where, w), append(args, a...)
+	}
 	var orderBy string
 	offset := 0
 	if relevance {
@@ -280,29 +321,6 @@ func (x *Index) List(q Query) (Result, error) {
 		res.Items = append(res.Items, s)
 	}
 	return res, rows.Err()
-}
-
-// scopeConds are the conditions on the page row p that say which pages a
-// listing is about: those in a folder (and below it), those with every tag.
-func scopeConds(folder *string, recursive bool, tags []string) (where []string, args []any) {
-	if folder != nil {
-		f := *folder
-		switch {
-		case !recursive:
-			where = append(where, `p.folder = ?`)
-			args = append(args, f)
-		case f != "":
-			// Subfolders are the range "f/" .. "f0" ('0' follows '/'), which
-			// the (folder, mtime) index can serve.
-			where = append(where, `(p.folder = ? OR (p.folder >= ? AND p.folder < ?))`)
-			args = append(args, f, f+"/", f+"0")
-		}
-	}
-	for _, t := range tags {
-		where = append(where, `EXISTS (SELECT 1 FROM tags t WHERE t.page = p.rowid AND t.tag = ?)`)
-		args = append(args, t)
-	}
-	return where, args
 }
 
 // selectCols are the columns of a summary, in the order scanSummary reads them.

@@ -1,9 +1,10 @@
 package index
 
 import (
+	"database/sql"
 	"encoding/json"
+	"slices"
 	"sort"
-	"strings"
 	"sync"
 	"unicode/utf8"
 )
@@ -42,8 +43,9 @@ type GroupResult struct {
 }
 
 // Groups counts the pages of a scope by the values of a property. It reads the
-// props table only (and the pages table for the scope), never a file. Cost: one
-// pass over the rows of the property that belong to the scope.
+// props table only (and the pages and tags tables for the scope), never a
+// file. Cost: one scan of the index range of each condition of a large scope
+// and one of the rows of the property; for a small scope, its pages.
 func (x *Index) Groups(q GroupQuery) (GroupResult, error) {
 	gen := x.gen.Load()
 	ck, cacheable := q.cacheKey()
@@ -115,37 +117,69 @@ func (q GroupQuery) cacheKey() (string, bool) {
 	return string(b), err == nil
 }
 
-// countGroups is Groups without the cache.
+// countGroups is Groups without the cache: the pages of the scope that meet
+// the filters are found the way a listing finds them (see plan.go), starting
+// from a condition that keeps few pages when there is one, and otherwise as the
+// intersection of one scan of each condition's index range; then the rows of
+// the property are counted, by lookup for few pages and in one scan of the
+// property's values for many. No lookup by page is made for a large scope,
+// so the cost is the size of the index ranges read.
 func (x *Index) countGroups(q GroupQuery) (GroupResult, error) {
-	x.queries.Add(1)
 	if q.Key == "" || len(q.Key) > maxFilterKey || !utf8.ValidString(q.Key) {
 		return GroupResult{}, invalid("groups needs the key of a property")
 	}
 	if err := checkFilters(q.Filters); err != nil {
 		return GroupResult{}, err
 	}
-	query, qargs, totalQuery, totalArgs := groupSQL(q)
-	res := GroupResult{Groups: []Group{}}
-	rows, err := x.db.Query(query, qargs...)
-	if err != nil {
-		return GroupResult{}, err
-	}
-	defer rows.Close()
-	with := 0
-	var all []Group
-	for rows.Next() {
-		var g Group
-		var first int
-		if err := rows.Scan(&g.Value, &g.Count, &first); err != nil {
+	conds := conditions(q.Folder, q.Recursive, q.Tags, q.Filters)
+	for try := 0; ; try++ {
+		// A write between the queries can make them disagree: count once more.
+		gen := x.gen.Load()
+		m, _, err := x.match(conds, false)
+		if err != nil {
 			return GroupResult{}, err
 		}
-		with += first
-		all = append(all, g)
+		res, err := x.countBy(q.Key, m)
+		if err != nil || try == 1 || x.gen.Load() == gen {
+			return res, err
+		}
 	}
-	if err := rows.Err(); err != nil {
+}
+
+// countBy counts the pages of m by their values of the property.
+func (x *Index) countBy(key string, m *idSet) (GroupResult, error) {
+	res := GroupResult{Groups: []Group{}}
+	total := m.count()
+	if total == 0 {
+		return res, nil
+	}
+	var all []Group
+	var err error
+	with := 0
+	if total <= smallSet {
+		const query = `SELECT s.val, count(DISTINCT s.page), sum(s.pos = 0) FROM json_each(?) j CROSS JOIN props s ON s.page = j.value AND s.key = ? GROUP BY s.val`
+		args := []any{jsonIDs(m.ids()), key}
+		x.ran(query, args)
+		rows, err := x.db.Query(query, args...)
+		if err != nil {
+			return GroupResult{}, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var g Group
+			var first int
+			if err := rows.Scan(&g.Value, &g.Count, &first); err != nil {
+				return GroupResult{}, err
+			}
+			with += first
+			all = append(all, g)
+		}
+		if err := rows.Err(); err != nil {
+			return GroupResult{}, err
+		}
+	} else if with, all, err = x.countMany(key, m); err != nil {
 		return GroupResult{}, err
 	}
-	rows.Close()
 	sort.Slice(all, func(i, j int) bool {
 		if all[i].Count != all[j].Count {
 			return all[i].Count > all[j].Count
@@ -158,56 +192,81 @@ func (x *Index) countGroups(q GroupQuery) (GroupResult, error) {
 	if len(all) > 0 {
 		res.Groups = all
 	}
-
-	var total int
-	if err := x.db.QueryRow(totalQuery, totalArgs...).Scan(&total); err != nil {
-		return GroupResult{}, err
-	}
 	res.Empty = total - with
 	return res, nil
 }
 
-// groupSQL builds the two queries of Groups: the values with their page counts,
-// and the number of pages in the scope. Where the scan starts follows the
-// scope, so that the cost follows its size and not that of the space:
-//
-//   - a folder: its pages (the folder index), each with its row of the property
-//     by primary key;
-//   - tags and no folder: the pages of the first tag (the tags index);
-//   - neither: the rows of the property.
-func groupSQL(q GroupQuery) (query string, qargs []any, totalQuery string, totalArgs []any) {
-	tags := q.Tags
-	var lead string
-	if q.Folder == nil && len(tags) > 0 {
-		lead, tags = tags[0], tags[1:]
+// countMany counts the pages of m, which are many, by their values of the
+// property, in one scan of the property's rows in the index of values: no
+// lookup by page. It returns the values with their counts, and how many pages
+// of m have a value at all.
+func (x *Index) countMany(key string, m *idSet) (with int, all []Group, err error) {
+	seen := &idSet{w: make([]uint64, len(m.w))} // the pages of m that have a value
+	count := func(g *Group, page, last int64) {
+		if !m.has(page) {
+			return
+		}
+		if page != last { // a list that holds the value twice counts once
+			g.Count++
+		}
+		seen.w[page>>6] |= 1 << (uint(page) & 63)
 	}
-	where, args := scopeConds(q.Folder, q.Recursive, tags)
-	for _, f := range q.Filters {
-		cond, cargs := f.sql()
-		where = append(where, cond)
-		args = append(args, cargs...)
+	// Few distinct values (a select field): a row for each, with all its pages.
+	// Many (a name, a number): the rows as they are, which costs the driver a
+	// row each but SQLite no grouping.
+	_, few, err := x.valuesOf(key, maxDistinct)
+	if err != nil {
+		return 0, nil, err
 	}
-	scope := ""
-	if len(where) > 0 {
-		scope = ` AND ` + strings.Join(where, ` AND `)
+	query := `SELECT val, page FROM props INDEXED BY props_val WHERE key = ?`
+	if few {
+		query = `SELECT val, group_concat(page) FROM props INDEXED BY props_val WHERE key = ? GROUP BY val`
 	}
-	const cols = `SELECT s.val, count(DISTINCT s.page), sum(s.pos = 0) `
-	switch {
-	case q.Folder != nil:
-		query = cols + `FROM pages p CROSS JOIN props s ON s.page = p.rowid AND s.key = ? WHERE 1 = 1` + scope + ` GROUP BY s.val`
-		qargs = append([]any{q.Key}, args...)
-		totalQuery = `SELECT count(*) FROM pages p WHERE 1 = 1` + scope
-		totalArgs = args
-	case lead != "":
-		query = cols + `FROM tags t CROSS JOIN pages p ON p.rowid = t.page CROSS JOIN props s ON s.page = p.rowid AND s.key = ? WHERE t.tag = ?` + scope + ` GROUP BY s.val`
-		qargs = append([]any{q.Key, lead}, args...)
-		totalQuery = `SELECT count(*) FROM tags t CROSS JOIN pages p ON p.rowid = t.page WHERE t.tag = ?` + scope
-		totalArgs = append([]any{lead}, args...)
-	default:
-		query = cols + `FROM props s CROSS JOIN pages p ON p.rowid = s.page WHERE s.key = ?` + scope + ` GROUP BY s.val`
-		qargs = append([]any{q.Key}, args...)
-		totalQuery = `SELECT count(*) FROM pages p WHERE 1 = 1` + scope
-		totalArgs = args
+	args := []any{key}
+	x.ran(query, args)
+	rows, err := x.db.Query(query, args...)
+	if err != nil {
+		return 0, nil, err
 	}
-	return
+	defer rows.Close()
+	var val, pages sql.RawBytes
+	var page, last int64
+	var ids []int64
+	for rows.Next() {
+		if few {
+			if err := rows.Scan(&val, &pages); err != nil {
+				return 0, nil, err
+			}
+			ids = ids[:0]
+			if err := parseIDs(pages, func(id int64) { ids = append(ids, id) }); err != nil {
+				return 0, nil, err
+			}
+			if !slices.IsSorted(ids) { // the index holds them in order; nothing promises the rows come so
+				slices.Sort(ids)
+			}
+			g := Group{Value: string(val)}
+			last = 0
+			for _, id := range ids {
+				count(&g, id, last)
+				last = id
+			}
+			if g.Count > 0 {
+				all = append(all, g)
+			}
+			continue
+		}
+		if err := rows.Scan(&val, &page); err != nil {
+			return 0, nil, err
+		}
+		if !m.has(page) {
+			continue
+		}
+		if n := len(all); n == 0 || all[n-1].Value != string(val) {
+			all = append(all, Group{Value: string(val)})
+			last = 0
+		}
+		count(&all[len(all)-1], page, last)
+		last = page
+	}
+	return seen.count(), all, rows.Err()
 }

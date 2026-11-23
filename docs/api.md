@@ -683,14 +683,10 @@ pages without a value last. A multiselect counts by its first value. Within an
 option the pages are in the order the server holds them, reversed for `-`. The
 listing is read from the index one option at a time, with a cursor that names
 the option and the place in it, so a page costs the same however many pages
-the folder holds (measured: well under a millisecond in a folder of 50 000).
-A listing of at most 2000 pages (after the filters) in a folder is read whole,
-in one query, and put in the order here: a small folder among 50 000 pages, or
-the few pages a selective filter keeps of a big folder (the read starts from
-the rows of an `in` or `range` filter in the index, so it costs the pages that
-match and not the folder), with any number of options, takes about a
-millisecond. A listing of more pages reads each group from the index of the
-property. A field that lists an option twice (a type file edited by hand) has
+the folder holds (measured: about a millisecond in a folder of 50 000, in
+either direction, with 5 options or 500). With filters, or in a small folder
+among many pages, it is read like any filtered listing (see "What a filtered
+listing costs" below). A field that lists an option twice (a type file edited by hand) has
 it once, the first writing counting, and at most 500 options count.
 The cursor also says how many options there were: a cursor made for another
 list of options, or from a listing that was not in option order (the type was
@@ -715,11 +711,35 @@ Several items must all hold. An unknown `op`, a missing key, the wrong number
 or kind of `values`, or text that is not that JSON is `400 invalid`. The
 filter works together with every other parameter (`folder`, `tag`, `q`, the
 sort and the cursor). A text is compared as the first 300 characters of it.
-Both `sort` and `filter` answer from the index: nothing reads the page files,
-so a folder of 50 000 pages answers in milliseconds. (A filter that few pages
-match, in a folder where many do not, is the slow case: a column of a board for
-an option no page has takes about 40 ms in a folder of 50 000. `…/pages/groups`
-says which columns are empty.)
+Both `sort` and `filter` answer from the index: nothing reads the page files.
+
+**What a filtered listing costs.** A listing with filters, tags, dates, a
+recursive folder or a sort by a property is read in the cheapest of three
+ways, each bounded, so that no combination reads a folder page by page.
+Measured in a space of 50 000 pages, the median of a page of the listing:
+
+- *From the smallest condition.* When a folder, a tag, or an `in`, `range`,
+  `notEmpty` or `notIn` filter keeps at most 2000 pages, the read starts from
+  those and checks the rest for each: a folder of 100 among 50 000 in any
+  order, a filter few pages match, the "other values" column of a board,
+  about 1 ms; 1100 matches put in option order, 6 ms. A filter no page
+  matches (`in` with 500 values none of which exists, a column for an option
+  nobody uses) answers in under a millisecond.
+- *By walking the order.* When every condition keeps many pages, the order is
+  walked from the cursor and each page checked, for at most 1000 pages (or 5
+  per item asked for): a column of a board for an option in use, a sort with
+  a filter half the pages meet, any page of it by cursor, 1 to 3 ms.
+- *As sets.* When the walk does not fill the page (few pages match and no
+  one condition says so, as with `contains` or `empty`; or the matches come
+  last in the order), each condition is read as one range of its index and
+  the ranges are intersected, about 6 ms for each 50 000 rows, four at a
+  time: `contains` that nothing matches 15 ms, a sort by a property with a
+  filter on the same property 20 ms, a search with a sort 25 ms, ten
+  `contains` filters at once 50 ms.
+
+The dear case is a request whose every condition keeps most of the pages
+while together they keep few: ten tags and ten filters (with lists of 500
+values), each on nine pages in ten, 200 items asked for, took 40 to 140 ms.
 
 **Bodies.** With `body=1` each summary has `body`, the page's Markdown, read
 from its file. That is a file read per item, so `limit` is at most 20 (also
@@ -747,11 +767,17 @@ the number of pages in the scope that have no value for the key (the same pages
 as the filter `empty`). Both come from the index, no file is read; the answer
 is kept for as long as the index is not written to, so a board opened again
 costs nothing. At most 1000
-values are returned, the rarest left out, and `truncated` says so. The cost
-follows the scope: the pages of the folder, or the pages of the (first) tag
-when there is no folder (about 60 ms for 50 000 pages in one folder, 100 ms for
-a list; under a millisecond for a small folder, or for a tag of a hundred
-pages, among them).
+values are returned, the rarest left out, and `truncated` says so. The cost,
+when the answer is not a kept one, is one read of the index range of each
+condition and one of the rows of the property, no lookup page by page.
+Measured in a space of 50 000 pages: 25 ms for a recursive folder or a tag
+that holds them all, 30 ms for a list property, 40 to 50 ms for a property
+with thousands of distinct values; 15 to 35 ms with a `range`, `contains` or
+`notIn` filter (100 or 500 values alike); 10 ms for one folder of 5000; under
+a millisecond for a small folder or a tag of a hundred pages; 3 ms for the
+"other values" of a board. With ten tags and ten filters that each keep
+most of the pages it took 100 to 135 ms: twenty ranges of the size of the
+space.
 `400 invalid` for a missing `key`, no folder and no tag, more than 10 different tags, or a bad `filter`.
 
 ### `GET /api/spaces/{space}/pages/{id}`
