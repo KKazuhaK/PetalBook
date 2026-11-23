@@ -177,6 +177,14 @@ func subcommand(args []string) (string, []string) {
 //	status       --untracked-files=normal: files in the work tree that no commit has.
 //	status       --porcelain, -z, --untracked-files=no: modified tracked files when a space opens.
 //
+//	hash-object  -w --no-filters --stdin-paths: the contents of an attachment, read from
+//	             where it is, become a blob (an attachment repository, below).
+//	mktree       -z --missing: a tree made of entries whose contents this clone does not
+//	             have; with ls-tree (no -r), commit-tree and update-ref HEAD, the commit that
+//	             adds files to an attachment repository, or takes a space's attachments
+//	             out of its repository, is built without a work tree or an index.
+//	cat-file blob <id>: the contents of a file fetched by its id, copied to the cache.
+//
 // Dropped from RackBook's list because nothing here needs them: --grep and
 // --fixed-strings (trailer search), merge-base's use for pull requests.
 var allowedOptions = map[string][]string{
@@ -201,6 +209,8 @@ var allowedOptions = map[string][]string{
 	"push":         {},
 	"remote":       {},
 	"update-ref":   {},
+	"hash-object":  {"-w", "--no-filters", "--stdin-paths"},
+	"mktree":       {"-z", "--missing"},
 	"version":      {},
 	"for-each-ref": {"--format=*"},
 	"reset":        {"--quiet", "--hard"},
