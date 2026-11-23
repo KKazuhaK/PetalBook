@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"github.com/KKazuhaK/PetalBook/internal/index"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/store"
@@ -606,6 +607,60 @@ func TestNothingIsEvictedWhileTheAttachmentRepositoryMayHoldTheOnlyCopy(t *testi
 		}
 		if a.m.AssetBytes(a.in.ID) != 0 {
 			t.Fatal("the cached attachments of an evicted space stayed")
+		}
+	})
+}
+
+func TestAnImportPushesItsAttachmentsBeforeItsPages(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		a := newAssetFixture(t, st)
+		defer a.h.Release()
+		a.connectAssets()
+		item := func(title string) space.ImportPage {
+			return space.ImportPage{Meta: page.Meta{{Key: "title", Value: title}}, Body: "see ![x](TOKEN)\n",
+				Assets: []space.ImportAsset{{Token: "TOKEN", Name: title + ".png", Data: []byte("IMG-" + title)}}}
+		}
+		// The space's remote refuses the push of the pages: the import fails, with
+		// no page made, and the attachments stay on their remote, referred to by nothing.
+		hook := filepath.Join(a.remote, "hooks", "pre-receive")
+		os.MkdirAll(filepath.Dir(hook), 0o755)
+		os.WriteFile(hook, []byte("#!/bin/sh\necho refused >&2\nexit 1\n"), 0o755)
+		before := runGit(t, a.remote, "rev-parse", "main")
+		if _, _, err := a.h.Space.Import(space.Author{}, "", []space.ImportPage{item("one")}); err == nil {
+			t.Fatal("the import worked although the remote refused the pages")
+		}
+		if runGit(t, a.remote, "rev-parse", "main") != before {
+			t.Fatal("the space's remote changed")
+		}
+		files := remoteFiles(t, a.aRemote)
+		if len(files) != 1 || !strings.Contains(files[0], "one-") {
+			t.Fatalf("the attachment repository has %v", files)
+		}
+		if exists(filepath.Join(a.root(a.in.ID), "assets")) {
+			t.Fatal("an assets/ folder was made in the space")
+		}
+		// Without the refusal: attachments first (already on the remote), then the pages.
+		os.Remove(hook)
+		pages, n, err := a.h.Space.Import(space.Author{}, "", []space.ImportPage{item("two")})
+		if err != nil || pages != 1 || n != 1 {
+			t.Fatalf("%d %d %v", pages, n, err)
+		}
+		if got := len(remoteFiles(t, a.aRemote)); got != 2 {
+			t.Fatalf("the attachment repository has %d files", got)
+		}
+		if runGit(t, a.remote, "rev-parse", "main") == before {
+			t.Fatal("the pages were not pushed")
+		}
+		// The imported page's link resolves through the repository.
+		res, _ := a.h.Space.List(index.Query{Recursive: true})
+		for _, it := range res.Items {
+			if it.Title == "two" {
+				p, _ := a.h.Space.Get(it.ID)
+				link := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(strings.TrimPrefix(p.Body, "see ![x](")), "/"), ")")
+				if body, _, err := readAsset(t, a.h.Space, link); err != nil || body != "IMG-two" {
+					t.Fatalf("%q: %q %v", link, body, err)
+				}
+			}
 		}
 	})
 }

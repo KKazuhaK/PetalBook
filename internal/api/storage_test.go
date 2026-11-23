@@ -105,7 +105,9 @@ func TestStorageSettingsEndpoint(t *testing.T) {
 			{"hosts": map[string]any{"allowed": []string{}}},
 			{"hosts": map[string]any{"allowed": []string{"a b"}}},
 			{"remotes": "x"},
-			{"assets": map[string]any{"newSpaces": true}},
+			{"assets": map[string]any{"newSpaces": "yes"}},
+			{"assets": map[string]any{"other": true}},
+			{"cache": map[string]any{"assetsBytes": 1 << 20}},
 		} {
 			c.do("PUT", "/api/admin/storage", bad).want(t, 400, "invalid")
 		}
