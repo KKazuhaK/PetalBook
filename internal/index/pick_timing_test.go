@@ -38,10 +38,10 @@ func TestDailyPickInALargeSpace(t *testing.T) {
 			b.WriteString("rare: yes\n")
 		}
 		fmt.Fprintf(&b, "---\n正文 %d\n", i)
-		m.files[fmt.Sprintf("%s/%05d.md", folder, i)] = memFile{[]byte(b.String()), clock + int64(i)}
+		m.files[fmt.Sprintf("%s/%05d.md", folder, i)] = memFile{[]byte(b.String()), clock() + int64(i)}
 	}
 	for i := 0; i < 100; i++ {
-		m.files[fmt.Sprintf("small/%03d.md", i)] = memFile{[]byte(fmt.Sprintf("---\nid: S%09d\nstatus: done\ntags: [rare-tag]\n---\nx\n", i)), clock + int64(pages+i)}
+		m.files[fmt.Sprintf("small/%03d.md", i)] = memFile{[]byte(fmt.Sprintf("---\nid: S%09d\nstatus: done\ntags: [rare-tag]\n---\nx\n", i)), clock() + int64(pages+i)}
 	}
 	start := time.Now()
 	if _, err := x.Sync(m, false); err != nil {
