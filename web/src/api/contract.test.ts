@@ -44,7 +44,7 @@ import { adminApi } from './admin'
 import { mockFetch } from './mock/fetch'
 import { sha256Hex } from './mock/sha256'
 import { createMockServer, MOCK_ADMIN, type MockServer } from './mock/server'
-import type { AdminSpace, ListParams, Member, Page, PageSummary, Problem, ProblemKind, SpaceInfo, User } from './types'
+import type { AdminSpace, CatalogBatch, CatalogEntry, ChangeItem, ListParams, Member, Page, PageSummary, Problem, ProblemKind, SpaceInfo, User } from './types'
 
 declare const process: { env: Record<string, string | undefined> }
 const REAL = process.env.PETALBOOK_API?.replace(/\/+$/, '')
@@ -3383,6 +3383,182 @@ function suite(target: Target) {
       expect(typeof r.ms).toBe('number')
       expect((await walk({ folder: `${root}/reindex` })).map((i) => i.id)).toEqual([p.id])
       expect((await S.getPage(p.id)).body).toBe('重建前\n')
+    })
+  })
+
+
+  describe('offline sync: the catalogue, the changes, several pages and the heads', () => {
+    const folder = `${root}/offline`
+    const syncUrl = (rest: string) => `/api/spaces/${spaceId}${rest}`
+    const walkCatalog = async (folders: string[], limit: number) => {
+      const items: CatalogEntry[] = []
+      let cursor = ''
+      let first: CatalogBatch | undefined
+      for (let guard = 0; guard < 200; guard++) {
+        const b = await S.syncCatalog({ folders, limit, cursor: cursor || undefined })
+        if (!cursor) first = b
+        else expect(b.changes, 'changes only in the first batch').toBeUndefined()
+        items.push(...b.items)
+        cursor = b.next
+        if (!cursor) return { items, first: first! }
+      }
+      throw new Error('catalogue never ended')
+    }
+    const changesAll = async (since: string, limit: number) => {
+      const items: ChangeItem[] = []
+      let next = since
+      for (let guard = 0; guard < 200; guard++) {
+        const r = await S.changes(next, limit)
+        items.push(...r.items)
+        next = r.next
+        if (!r.more) return { items, next, last: r }
+      }
+      throw new Error('changes never ended')
+    }
+
+    it('the catalogue lists every page of the folders asked for, in batches, with the light summary', async () => {
+      const a = await mk(`${folder}/a`, { title: `甲${run}`, tags: ['同步'] }, '甲的正文\n')
+      await mk(`${folder}/a/sub`, { title: `乙${run}` }, '乙\n')
+      await mk(`${folder}/b`, { title: `丙${run}` }, '丙\n')
+      await mk(`${folder}/b`, {}, '没有标题的一页\n')
+      const { items, first } = await walkCatalog([folder], 2)
+      expect(items).toHaveLength(4)
+      expect(first.items).toHaveLength(2)
+      expect(first.changes).toBeTruthy()
+      expect(first.tree).toBeTruthy()
+      expect(first.settings).toBeTruthy()
+      const got = items.find((e) => e.id === a.id)!
+      expect(got).toMatchObject({ id: a.id, path: a.path, folder: `${folder}/a`, title: `甲${run}`, label: `甲${run}`, untitled: false, tags: ['同步'], type: '' })
+      expect(got.rev).toBe((await S.getPage(a.id)).rev)
+      expect(got.updated).toMatch(/^\d{4}-\d\d-\d\dT/)
+      expect(got).not.toHaveProperty('excerpt')
+      expect(items.find((e) => e.untitled)).toBeDefined()
+      // A folder and below; two folders; the root names everything.
+      expect((await walkCatalog([`${folder}/a`], 1)).items.map((e) => e.id).sort()).toEqual(items.filter((e) => e.folder.startsWith(`${folder}/a`)).map((e) => e.id).sort())
+      expect((await walkCatalog([`${folder}/a/sub`, `${folder}/b`], 5)).items).toHaveLength(3)
+      expect((await walkCatalog([''], 1000)).items.length).toBeGreaterThanOrEqual(4)
+      // Refusals.
+      for (const q of ['limit=0', 'limit=5001', 'limit=x', 'cursor=nope']) expect((await call(admin, 'GET', syncUrl(`/sync/catalog?${q}`))).status, q).toBe(400)
+      const many = Array.from({ length: 51 }, (_, i) => `folder=f${i}`).join('&')
+      expect((await call(admin, 'GET', syncUrl(`/sync/catalog?${many}`))).status).toBe(400)
+      const cur = (await S.syncCatalog({ folders: [`${folder}/b`], limit: 1 })).next
+      expect((await call(admin, 'GET', syncUrl(`/sync/catalog?folder=${encodeURIComponent(folder + '/a')}&cursor=${encodeURIComponent(cur)}`))).status, 'a cursor of other folders').toBe(400)
+    })
+
+    it('changes after the cursor of the first batch: the pages that were added, changed and moved, and the removals, each once', async () => {
+      const x = await mk(`${folder}/c`, { title: `一${run}` }, '一\n')
+      const y = await mk(`${folder}/c`, { title: `二${run}` }, '二\n')
+      const z = await mk(`${folder}/c`, { title: `三${run}` }, '三\n')
+      const { first } = await walkCatalog([`${folder}/c`], 10)
+      const since = first.changes!
+      // Nothing yet.
+      const none = await S.changes(since)
+      expect(none.items).toEqual([])
+      expect(none.more).toBe(false)
+      expect(none.next).toBe(since)
+      expect(none.tree).toBe(first.tree)
+
+      const x2 = await S.savePage(x.id, { baseRev: x.rev, meta: { ...x.meta, title: `一改${run}` }, body: '一，改了\n' })
+      await S.savePage(x.id, { baseRev: x2.rev, meta: x2.meta, body: '一，又改了\n' })
+      await S.movePage(y.id, `${folder}/d`)
+      await S.deletePage(z.id)
+      const w = await mk(`${folder}/c`, { title: `四${run}` }, '四\n')
+      const { items, next } = await changesAll(since, 2)
+      const by = new Map(items.map((i) => [i.id, i]))
+      expect(items).toHaveLength(4)
+      expect(by.get(x.id)).toMatchObject({ title: `一改${run}`, folder: `${folder}/c` })
+      expect((by.get(x.id) as CatalogEntry).rev).toBe((await S.getPage(x.id)).rev)
+      expect((by.get(y.id) as CatalogEntry).folder).toBe(`${folder}/d`)
+      expect(by.get(z.id)).toEqual({ id: z.id, deleted: true })
+      expect(by.get(w.id)).toBeDefined()
+      // The tree changed (a folder, the number of pages in one); the cursor moved to where the space is.
+      const again = await S.changes(next)
+      expect(again.items).toEqual([])
+      expect(again.next).toBe(next)
+      expect(again.tree).not.toBe(first.tree)
+      expect((await api.syncHeads([spaceId])).heads[spaceId]).toBe(next)
+      // A page removed and made again with the same id (here: not possible through the API) is out of scope; a
+      // limit that is too big or too small is refused.
+      for (const q of ['limit=0', 'limit=5001']) expect((await call(admin, 'GET', syncUrl(`/changes?since=${encodeURIComponent(next)}&${q}`))).status, q).toBe(400)
+    })
+
+    it('a change cursor that is missing or not ours is 400; one from before a reindex is 410 changes_expired, so is a catalogue cursor', async () => {
+      expect((await call(admin, 'GET', syncUrl('/changes'))).status).toBe(400)
+      expect((await call(admin, 'GET', syncUrl('/changes?since='))).status).toBe(400)
+      expect((await call(admin, 'GET', syncUrl('/changes?since=nope'))).status).toBe(400)
+      await mk(`${folder}/e`, { title: `e1${run}` }, 'x\n')
+      await mk(`${folder}/e`, { title: `e2${run}` }, 'x\n')
+      const { first } = await walkCatalog([`${folder}/e`], 1)
+      const mid = (await S.syncCatalog({ folders: [`${folder}/e`], limit: 1 })).next
+      expect(mid).not.toBe('')
+      await S.reindex()
+      const e = await failure(S.changes(first.changes!))
+      expect([e.status, e.code]).toEqual([410, 'changes_expired'])
+      const e2 = await failure(S.syncCatalog({ folders: [`${folder}/e`], limit: 1, cursor: mid }))
+      expect([e2.status, e2.code]).toEqual([410, 'changes_expired'])
+      // The walk starts again with a good cursor.
+      const fresh = await walkCatalog([`${folder}/e`], 1)
+      expect(fresh.items).toHaveLength(2)
+      expect((await S.changes(fresh.first.changes!)).items).toEqual([])
+    })
+
+    it('several pages at once, as the single-page read gives them, with the caller\'s draft; unknown ids are missing', async () => {
+      const p = await mk(`${folder}/f`, { title: `页${run}` }, '正文一\n')
+      const q = await mk(`${folder}/f`, { title: `页二${run}` }, '正文二\n')
+      const receipt = await S.putDraft(p.id, { baseRev: p.rev, meta: p.meta, body: '正文一，写到一半\n', prev: '' })
+      const r = await S.syncPages([p.id, '01ZZZZZZZZ', q.id])
+      expect(r.pages.map((x) => x.id)).toEqual([p.id, q.id])
+      expect(r.missing).toEqual(['01ZZZZZZZZ'])
+      expect(r.rest).toBeUndefined()
+      const one = await S.getPage(p.id)
+      expect(r.pages[0]).toEqual(one)
+      expect(r.pages[0].draft).toMatchObject({ version: receipt.version, body: '正文一，写到一半\n' })
+      expect(r.pages[1].draft).toBeUndefined()
+      // 100 ids are fine; refusals.
+      const hundred = Array.from({ length: 100 }, (_, i) => `01ZZ${String(i).padStart(6, '0')}`.replace(/[ILOU]/g, 'X'))
+      expect((await S.syncPages(hundred)).missing).toHaveLength(100)
+      expect((await call(admin, 'GET', syncUrl('/sync/pages'))).status).toBe(400)
+      expect((await call(admin, 'GET', syncUrl(`/sync/pages?ids=${p.id},${p.id}`))).status).toBe(400)
+      expect((await call(admin, 'GET', syncUrl(`/sync/pages?ids=${p.id},x`))).status).toBe(400)
+      expect((await call(admin, 'GET', syncUrl(`/sync/pages?ids=${[...hundred, 'XXXXXXXXXX'].join(',')}`))).status).toBe(400)
+    })
+
+    it('heads: the change cursor of each space asked for; a space that cannot be read is missing', async () => {
+      const r = await api.syncHeads([spaceId, '01ZZZZZZZZ'])
+      expect(r.heads[spaceId]).toBeTruthy()
+      expect(r.missing).toEqual(['01ZZZZZZZZ'])
+      // The head is a cursor of the space: asking for its changes works.
+      expect((await S.changes(r.heads[spaceId])).items).toEqual([])
+      // A write moves it, a read does not.
+      await S.syncCatalog({ limit: 1 })
+      expect((await api.syncHeads([spaceId])).heads[spaceId]).toBe(r.heads[spaceId])
+      await mk(`${folder}/g`, { title: `头${run}` }, 'x\n')
+      expect((await api.syncHeads([spaceId])).heads[spaceId]).not.toBe(r.heads[spaceId])
+      const dup = await call(admin, 'GET', `/api/sync/heads?space=${spaceId}&space=${spaceId}`)
+      expect(dup.status).toBe(400)
+      expect((await call(admin, 'GET', '/api/sync/heads')).status).toBe(400)
+      const hundredOne = Array.from({ length: 101 }, (_, i) => `space=s${i}`).join('&')
+      expect((await call(admin, 'GET', `/api/sync/heads?${hundredOne}`)).status).toBe(400)
+    })
+
+    it.skipIf(!accounts)('somebody who is not a member of the space is told there is no such space, and has no head for it', async () => {
+      const invite = await as(admin, () => adminApi.createInvite({ role: 'member', days: 1 }))
+      const b = browser()
+      const name = `os${run}`.slice(0, 20)
+      const r = await call(b, 'POST', '/api/invites/accept', { token: invite.token, username: name, name: `外 ${name}`, password: 'a-long-password' })
+      expect(r.status).toBe(201)
+      created.users.push(r.json.user.id)
+      for (const path of ['/sync/catalog', '/changes?since=x', '/sync/pages?ids=01ZZZZZZZZ']) {
+        const got = await call(b, 'GET', syncUrl(path))
+        expect([got.status, got.json.error], path).toEqual([404, 'not_found'])
+      }
+      const h = await call(b, 'GET', `/api/sync/heads?space=${spaceId}`)
+      expect(h.status).toBe(200)
+      expect(h.json.heads).toEqual({})
+      expect(h.json.missing).toEqual([spaceId])
+      // Nor with no session at all.
+      expect((await call(browser(), 'GET', `/api/sync/heads?space=${spaceId}`)).status).toBe(401)
+      expect((await call(browser(), 'GET', syncUrl('/sync/catalog'))).status).toBe(401)
     })
   })
 

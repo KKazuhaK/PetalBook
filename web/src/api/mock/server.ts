@@ -1957,6 +1957,9 @@ export function createMockServer(options: MockOptions = {}) {
       return { status: 204 }
     }
     if (rest === '/reindex' && method === 'POST') return { status: 200, body: st.reindex() }
+    if (rest === '/sync/catalog' && method === 'GET') return { status: 200, body: st.syncCatalog(url.searchParams) }
+    if (rest === '/changes' && method === 'GET') return { status: 200, body: st.syncChanges(url.searchParams) }
+    if (rest === '/sync/pages' && method === 'GET') return { status: 200, body: st.syncPages(u.id, url.searchParams.get('ids')) }
     throw new HttpError(404, 'not_found', '没有这个接口')
   }
 
@@ -2312,6 +2315,21 @@ export function createMockServer(options: MockOptions = {}) {
         const inbox = body.inbox === undefined ? DEFAULT_INBOX : checkInbox(body.inbox)
         return j(spaceInfo(addSpace(newId((x) => spaces.has(x)), name, me.id, false, false, inbox), me), 201)
       }
+    }
+    // The change cursor of each of up to 100 spaces, from memory: no space is opened.
+    if (path === '/sync/heads' && method === 'GET') {
+      const me = requireUser(ctx)
+      const ids = url.searchParams.getAll('space')
+      if (ids.length < 1 || ids.length > 100) throw new HttpError(400, 'invalid', 'give 1 to 100 space parameters')
+      if (new Set(ids).size !== ids.length) throw new HttpError(400, 'invalid', 'a space given twice')
+      const heads: Record<string, string> = {}
+      const missing: string[] = []
+      for (const id of ids) {
+        const s = spaces.get(id)
+        if (s && !s.disabled && groupBook.has(s, me.id) && spaceInfo(s, me).permissions.includes('read')) heads[id] = s.store.feedHead()
+        else missing.push(id)
+      }
+      return j({ heads, ...(missing.length ? { missing } : {}) })
     }
     const m = /^\/spaces\/([^/]+)(\/.*)?$/.exec(path)
     if (m) {

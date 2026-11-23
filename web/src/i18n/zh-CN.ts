@@ -487,7 +487,7 @@ export const zhCN = {
     close: '关闭设置',
     nav: '设置导航',
     groups: { account: '账号', space: '空间' },
-    sections: { profile: '个人资料', preferences: '偏好设置', security: '安全', tokens: 'API 令牌', general: '常规', types: '类型', templates: '模板', home: '首页', members: '成员', sync: '同步', import: '导入' },
+    sections: { profile: '个人资料', preferences: '偏好设置', security: '安全', tokens: 'API 令牌', general: '常规', types: '类型', templates: '模板', home: '首页', members: '成员', sync: '同步', offline: '离线', import: '导入' },
   },
   prefs: {
     appearance: '外观',
@@ -690,6 +690,15 @@ export const zhCN = {
   permissions: {
     readOnly: '只读',
     readOnlyNote: '你在这个空间里只能查看，不能修改。',
+  },
+  // Reading what is on this device when the server cannot be reached (milestone 4.1).
+  offline: {
+    banner: '离线：显示的是这台设备上保存的内容，可以阅读和搜索，暂时不能修改。',
+    readOnly: '离线，只读',
+    readOnlyNote: '现在连不上服务器：页面只能阅读，不能修改。回到网络后就能改了。',
+    notDownloaded: '这一页的正文没有下载到这台设备上，离线时打不开。',
+    notHere: '这台设备上没有这个页面。',
+    searchNote: '离线时只搜已下载的内容：标题搜全部，正文只搜已保存正文的页面。',
   },
   // The members section of the space settings.
   members: {
