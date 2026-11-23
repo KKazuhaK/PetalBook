@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -194,6 +195,10 @@ func TestThirdPartyCaptcha(t *testing.T) {
 		if cp["provider"] != "turnstile" || cp["siteKey"] != "1x00" || cp["hasSecret"] != true || strings.Contains(r.raw, "s3cret-value") || strings.Contains(r.raw, "secretEnc") {
 			t.Fatal(r.raw)
 		}
+		// The web app's page policy follows the provider in force (webui.WithCaptcha).
+		if got := a.auth.CaptchaProvider(context.Background()); got != "turnstile" {
+			t.Fatalf("CaptchaProvider %q", got)
+		}
 		c := a.newClient("203.0.113.40")
 		ch := c.do("GET", "/api/captcha?ctx=login", nil).want(t, 200, "")
 		if ch.body["provider"] != "turnstile" || ch.body["siteKey"] != "1x00" || ch.body["id"] != nil || ch.body["image"] != nil {
@@ -233,6 +238,9 @@ func TestThirdPartyCaptcha(t *testing.T) {
 		}
 		admin.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"contexts": on}}).want(t, 400, "captcha_secret_required")
 		admin.putSecurity(t, map[string]any{"captcha": map[string]any{"provider": "image"}})
+		if got := a.auth.CaptchaProvider(context.Background()); got != "" {
+			t.Fatalf("CaptchaProvider with the image %q", got)
+		}
 		// The audit log has the change and never the secret.
 		for _, row := range admin.audit(t, "security_changed") {
 			if strings.Contains(strings.ToLower(jsonOf(row)), "s3cret") || strings.Contains(jsonOf(row), "other-secret") {

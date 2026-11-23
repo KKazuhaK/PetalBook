@@ -75,6 +75,16 @@ func (s *Service) captchaRebuild(nst, old *secState) {
 	s.capTok.Store(&tokenChecker{provider: c.Provider, v: v})
 }
 
+// CaptchaProvider is the third-party captcha provider in force ("" for the
+// built-in image), for the web app's page policy. It reads the cached
+// settings, so it costs no query on most calls.
+func (s *Service) CaptchaProvider(ctx context.Context) string {
+	if p := s.sec(ctx).Captcha.Provider; p != CaptchaImage {
+		return p
+	}
+	return ""
+}
+
 // captchaRequired says whether the context asks for a captcha of this address
 // (and, for the login, this username).
 func (s *Service) captchaRequired(st *secState, ctxName, ip, username string) bool {

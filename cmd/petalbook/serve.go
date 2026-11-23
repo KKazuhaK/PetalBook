@@ -406,7 +406,12 @@ func runServe(ctx context.Context, c serveConfig) error {
 
 	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, PublicURL: cfg.publicURL, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
 		RestrictHost: loopback, AllowOrigins: cfg.origins, Logger: log})
-	webApp, webBuilt := webui.Handler()
+	var webOpts []webui.Option
+	if svc != nil {
+		// The page's policy lets the configured captcha provider's widget load.
+		webOpts = append(webOpts, webui.WithCaptcha(func(r *http.Request) string { return svc.CaptchaProvider(r.Context()) }))
+	}
+	webApp, webBuilt := webui.Handler(webOpts...)
 	if !webBuilt {
 		log.Warn("this binary has no web app built in (build it with make release); only the API is served")
 	}
