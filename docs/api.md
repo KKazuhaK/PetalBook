@@ -1645,7 +1645,9 @@ for the languages that have none of their own; written alone it is the source
 of every language. For a language the source is that of the language, else
 that of the language without its region (`zh` for `zh-CN`), else "all
 languages", else, so that a language nobody wrote a source for still gets a
-text, the first by the order of the codes. Moving or renaming a folder carries the `folder` of
+text, the first by the order of the codes. Two spellings of one language
+(`zh:` beside `zh-Hans:`) are read as the one under the canonical key, and the
+next save writes that one key only. Moving or renaming a folder carries the `folder` of
 every source with it, in the same commit as its bindings (and, after a crash,
 at the next start). Deleting a folder leaves the source as it is; it then meets
 no page.
@@ -1738,14 +1740,17 @@ administrators' settings. Owners never enter addresses; they choose among the
 interfaces that are set up.
 
 ```json
-{"inherit": true, "apis": ["hitokoto"], "available": [{"id": "hitokoto", "name": "一言", "lang": "zh"}],
- "languages": ["zh", "en"], "allowed": {"own": true, "api": true}, "default": {"kind": "list"}}
+{"inherit": true, "apis": ["hitokoto"],
+ "available": [{"id": "hitokoto", "name": "一言", "lang": "zh-Hans", "languages": ["zh-Hans", "zh-Hant"]},
+               {"id": "quotes", "name": "Quotes", "lang": "en"}],
+ "languages": ["zh-Hans", "en"], "allowed": {"own": true, "api": true}, "default": {"kind": "list"}}
 ```
 
 `inherit` is whether the space shows the server's default when it has nothing
 else; `apis` are the ids of the interfaces it uses (for a language, the one
 made for it, else one that takes any language, else any); `available` are all
-that are set up (never their addresses); `default` is `null` when the
+that are set up (never their addresses), a built-in one with each of the
+languages it answers in (`languages`; `lang` is the first of them); `default` is `null` when the
 administrators set none. `languages` are the language codes the settings pages
 have a tab for (the administrators' `languages`, below; nothing is limited to
 them). `allowed` is what the administrators let spaces do (below): a field that
@@ -1765,17 +1770,41 @@ protection of the network is in one place).
 #### `GET /api/admin/daily`, `PUT /api/admin/daily`
 
 ```json
-{"default": {"kind": "space", "space": "01JD3K8Q7Z", "source": {"folder": "文案", "zh": {"tag": "诗"}}},
+{"default": {"kind": "space", "space": "01JD3K8Q7Z", "source": {"folder": "文案", "zh-Hans": {"tag": "诗"}}},
  "allow": {"own": true, "api": true},
- "languages": ["zh", "en"],
+ "languages": ["zh-Hans", "en"],
  "apis": [ /* interfaces, below */ ],
  "providers": [ /* built-in interfaces, below */ ],
- "lines": {"total": 6, "byLang": {"zh": 3, "en": 2, "": 1}, "max": 5000}}
+ "lines": {"total": 6, "byLang": {"zh-Hans": 3, "en": 2, "": 1}, "max": 5000},
+ "notices": []}
 ```
 
 `PUT` takes any of `default`, `languages` and `allow` (what it leaves out stays)
 and answers as `GET`; `lines`, `apis` and `providers` are read-only here. A
 `hosts` field sent by an older client is ignored.
+
+`notices` are what the server changed by itself in settings an earlier
+version saved, so that nothing has to be repaired by hand; they stay until
+`PUT` is sent `{"notices": []}`. Each is `{"code", "message"}` with what it is
+about (`id`, `to`, `lang`, `field`). The settings are read part by part, so
+that one part that cannot be read (`unreadable`, logged with its value) loses
+nothing else, and the repairs are saved once, at the first read:
+
+- An interface saved by 2.3's "use preset" with the id of a built-in one
+  (`hitokoto`, `quotable`) becomes the built-in one when its address, paths and
+  link are the built-in's and it has no headers: switched on or off as it was,
+  with its `refresh`, `rps` (at most the service's limit) and `skipNew`; the
+  spaces that chose it and the default keep the id. One the administrators
+  changed stays theirs as `<id>-custom` (`builtin_renamed`, with `to`), its
+  header values sealed again for the new id, and every space's choice and the
+  default follow the new id. One whose header values cannot be sealed again
+  keeps its id (`builtin_kept`); `PUT` and `DELETE` of `…/apis/{id}` then act on
+  it before the built-in one, so it can be changed or deleted and the built-in
+  one switched on after that.
+- A code in the default that is not a language tag (`cn`, which 2.3 accepted),
+  or a second spelling of one (`zh` beside `zh-Hans`: the canonical key wins),
+  is dropped (`dropped_language`, with `lang` and `field`); the rest of the
+  default, the interfaces and their header values are kept.
 
 - `default` is `null`, `{"kind": "list"}` (the lines below),
   `{"kind": "space", "space": id, "source": …}` where `source` is a source or
@@ -1798,7 +1827,8 @@ and answers as `GET`; `lines`, `apis` and `providers` are read-only here. A
   writes tags in canonical form (`ZH-cn` is stored as `zh-CN`). A reader's
   language is matched to the configured ones the usual BCP 47 way (`zh-CN` and
   `zh-SG` find `zh-Hans`, `zh-TW` and `zh-HK` find `zh-Hant`, `en-GB` finds
-  `en`), then "all languages". `GET /api/admin/daily` also returns
+  `en`); another script of the same language is tried before "all languages"
+  (`zh-TW` finds `zh-Hans` when there is no `zh-Hant`), then "all languages". `GET /api/admin/daily` also returns
   `knownLanguages`: `[{"tag": "zh-Hans", "name": "中文（简体）", "english": "Chinese (Simplified)"}, …]`,
   the common languages a client offers to pick from (any valid tag may still be
   typed). Values saved before this rule (`zh`, `pt-br`) are read as their
@@ -1907,7 +1937,8 @@ above that breaks a rule (the message says which), or one of the codes of
 **Built-in interfaces** (`providers`): services the server knows how to ask,
 so an administrator only switches one on — no address, paths or language
 codes to fill in. `GET /api/admin/daily` lists them as
-`{"id": "hitokoto", "name": "一言", "languages": ["zh-Hans"], "site": "https://hitokoto.cn", "note": "…", "enabled": false, "refresh": "daily", "rps": 20, "skipNew": true}`.
+`{"id": "hitokoto", "name": "一言", "languages": ["zh-Hans", "zh-Hant"], "site": "https://hitokoto.cn", "note": "…", "enabled": false, "refresh": "daily", "minutes": 0, "rps": 20, "maxRps": 20, "skipNew": true}`
+(`minutes` is set when `refresh` is `"minutes"`; `maxRps` is the service's own limit, the most `rps` may be).
 `PUT /api/admin/daily/providers/{id}` takes `{"enabled": true}` and optionally
 `refresh`, `minutes`, `rps` (not above the service's own limit) and
 `skipNew`; needs admin; answers as `GET /api/admin/daily`. An enabled built-in
@@ -2042,6 +2073,9 @@ text from where it is from) or `markdown` (entries are cut at the lines that
 are `---`, or at the blank lines when there are none). Entries are at most 8 000
 bytes, their source 200 characters, and the server keeps at most 5 000 in all.
 `DELETE` removes the lines of one language. Both answer as `GET /api/admin/daily`.
+Lines saved by 2.3 under a code that is not a language tag (`cn`) are shown
+under that code in `byLang`, and `PUT` and `DELETE` take that code exactly as
+it is stored, so they can still be replaced or deleted.
 For a language the lines used are those of the language, else of its
 language without region, else those for any language, else the first
 language that has some; the line is picked as a page is (from the day and

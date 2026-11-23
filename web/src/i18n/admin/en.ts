@@ -78,6 +78,11 @@ export const adminEn: AdminMessages = {
   daily: {
     help: 'What decides the daily text of every space: what spaces may do, the languages, the server default, pasted lines, and the external interfaces. The server fetches and caches; browsers never ask an external interface themselves.',
     loadFailed: 'Could not load the daily text settings',
+    noticesTitle: 'Adjusted on upgrade',
+    noticesDismiss: 'Got it',
+    noticeRenamed: (id: string, to: string) => `The interface ${id} differs from the built-in one of that id, so it is kept as ${to}; the spaces that chose it and the server default follow it.`,
+    noticeKept: (id: string) => `The interface ${id} has the id of a built-in one and keeps it, since its header values cannot be moved; delete it to use the built-in one.`,
+    noticeDropped: (code: string) => `"${code}" in the server default is not a language tag (or is a second spelling of one) and was dropped; everything else was kept.`,
     failed: 'That did not work',
     saved: 'Saved',
     deleted: 'Deleted',

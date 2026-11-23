@@ -3,7 +3,7 @@
 // cookie stand-in), invites, spaces per user and a fake OpenID Connect
 // provider. It has no DOM or Node dependencies.
 
-import type { AdminSpace, ConnectRemoteInput, FieldKind, Identity, Invite, Member, Page, Permission, Remote, RemoteKey, RemoteState, Role, ServerStatus, SettingsNotice, SpaceInfo, SpaceRole, User } from '../types.ts'
+import type { AdminSpace, ConnectRemoteInput, DailyNotice, FieldKind, Identity, Invite, Member, Page, Permission, Remote, RemoteKey, RemoteState, Role, ServerStatus, SettingsNotice, SpaceInfo, SpaceRole, User } from '../types.ts'
 import { gitBlobId } from './sha1.ts'
 import { ALPHABET, HttpError, compareCodePoints, createSpaceStore, isRecord, rfc3339, validFolder, type SpaceStore } from './store.ts'
 import { SPACE_NAME } from './seed.ts'
@@ -610,7 +610,7 @@ export function createMockServer(options: MockOptions = {}) {
     rps?: number
     skipNew?: boolean
   }
-  const site = { lines: new Map<string, { body: string; source: string }[]>(), default: null as SiteDefault, allow: { own: true, api: true }, languages: ['zh-Hans', 'en'], apis: [] as SiteApi[], providers: {} as Record<string, ProviderState> }
+  const site = { lines: new Map<string, { body: string; source: string }[]>(), default: null as SiteDefault, allow: { own: true, api: true }, languages: ['zh-Hans', 'en'], apis: [] as SiteApi[], providers: {} as Record<string, ProviderState>, notices: [] as DailyNotice[] }
   const spaceDaily = new Map<string, { inherit: boolean; apis: string[] }>()
   const KNOWN_LANGUAGES = [
     { tag: 'zh-Hans', name: '中文（简体）', english: 'Chinese (Simplified)' },
@@ -706,6 +706,7 @@ export function createMockServer(options: MockOptions = {}) {
         return { id: p.id, name: p.name, languages: p.languages, site: p.site, note: p.note, enabled: st.enabled, refresh: a.refresh, minutes: a.refreshMinutes, rps: a.rps, maxRps: p.rps, skipNew: a.skipNew }
       }),
       lines: { total, byLang, max: 5000 },
+      notices: site.notices.map((n) => ({ ...n })),
     }
   }
   // The interface for a language of a space's choice: the one made for the language the reader's is matched to, else
@@ -769,7 +770,7 @@ export function createMockServer(options: MockOptions = {}) {
       body: {
         inherit: now.inherit,
         apis: now.apis.filter((id) => available.some((a) => a.id === id)),
-        available: available.map((a) => ({ id: a.id, name: a.name, lang: a.lang })),
+        available: available.map((a) => ({ id: a.id, name: a.name, lang: a.lang, ...(a.builtin ? { languages: PROVIDERS.find((p) => p.id === a.id)?.languages } : {}) })),
         languages: [...site.languages],
         allowed: { ...site.allow },
         default: site.default === null ? null : { kind: site.default.kind },
@@ -805,7 +806,7 @@ export function createMockServer(options: MockOptions = {}) {
     if (path === '/admin/daily' && method === 'GET') return { status: 200, body: siteView() }
     if (path === '/admin/daily' && method === 'PUT') {
       // A `hosts` sent by an older client is ignored: there is no list of hosts.
-      for (const k of Object.keys(body)) if (!['default', 'hosts', 'languages', 'allow'].includes(k)) throw new HttpError(400, 'invalid', `不认识 ${k}`)
+      for (const k of Object.keys(body)) if (!['default', 'hosts', 'languages', 'allow', 'notices'].includes(k)) throw new HttpError(400, 'invalid', `不认识 ${k}`)
       let languages = site.languages
       if ('languages' in body) {
         if (!Array.isArray(body.languages)) throw new HttpError(400, 'invalid', 'languages 是 zh-Hans、en 这样的语言标签的列表')
@@ -834,6 +835,11 @@ export function createMockServer(options: MockOptions = {}) {
           }
           next = { kind: 'api', apis }
         } else throw new HttpError(400, 'invalid', 'the mock takes a default that is a list or interfaces, or null')
+      }
+      // The notices are dismissed with an empty list.
+      if ('notices' in body) {
+        if (!Array.isArray(body.notices) || body.notices.length !== 0) throw new HttpError(400, 'invalid', 'notices 只能是 []（表示知道了）')
+        site.notices = []
       }
       site.default = next
       site.languages = languages
@@ -1721,6 +1727,8 @@ export function createMockServer(options: MockOptions = {}) {
     // Views of a folder as written by hand in space.yml: served as "@n" until a write names them.
     // What GET .../types says to managers about settings files that could not be used.
     seedSettingsNotices: (notices: SettingsNotice[], space = 'default') => void settingsNotices.set(space, notices),
+    // What GET /admin/daily says the server changed by itself in the daily text settings on an upgrade.
+    seedDailyNotices: (notices: DailyNotice[]) => void (site.notices = notices.map((n) => ({ ...n }))),
     seedHandWrittenViews: (folder: string, views: Record<string, unknown>[], space = 'default') => spaces.get(space)!.store.seedHandWrittenViews(folder, views as never),
     // Let the server's own draft commits run now (they also run on every request).
     sweep: sweepAll,

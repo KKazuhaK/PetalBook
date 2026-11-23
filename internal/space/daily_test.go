@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -552,5 +553,51 @@ func TestDailyLanguagesAreBCP47Tags(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(`{"zh": {"folder": "x"}, "zh-hans": {"folder": "y"}}`), &c); err == nil {
 		t.Error("two spellings of one language")
+	}
+}
+
+// A settings file with two spellings of one language (`zh:` and `zh-Hans:`)
+// is written back with one key: the entry under the canonical key stays, the
+// other spelling goes.
+func TestDailyTwoSpellingsOfALanguageAreMergedOnSave(t *testing.T) {
+	needGit(t)
+	root := t.TempDir()
+	s := openAt(t, root)
+	mustCreate(t, s, "hans", meta("title", "Simplified"), "x\n")
+	mustCreate(t, s, "old", meta("title", "Old"), "x\n")
+	mustCreate(t, s, "en", meta("title", "English"), "x\n")
+	os.WriteFile(filepath.Join(root, ".petalbook", "space.yml"), []byte("daily:\n  zh:\n    folder: old\n  zh-Hans:\n    folder: hans\n"), 0o644)
+	d := s.Daily()
+	if d == nil || *d.ByLang["zh-Hans"].Folder != "hans" {
+		t.Fatalf("%+v", d)
+	}
+	en := "en"
+	cfg := *d
+	cfg.ByLang = map[string]DailySource{"zh-Hans": d.ByLang["zh-Hans"], "en": {Folder: &en}}
+	if _, err := s.SetDaily(Author{}, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	y := spaceYML(root)
+	if strings.Count(y, "zh-Hans:") != 1 || strings.Contains(y, "\n  zh:") || strings.Contains(y, "folder: old") || !strings.Contains(y, "folder: hans") {
+		t.Fatalf("%s", y)
+	}
+	if d := s.Daily(); len(d.ByLang) != 2 || *d.ByLang["zh-Hans"].Folder != "hans" {
+		t.Fatalf("%+v", d)
+	}
+}
+
+// Stored settings are read leniently: what can be is made canonical, what
+// cannot is dropped and named, and the rest is kept.
+func TestReadStoredDailyConfig(t *testing.T) {
+	c, dropped := ReadStoredDailyConfig([]byte(`{"folder":"any","cn":{"folder":"x"},"zh":{"tag":"a"},"zh-Hans":{"tag":"b"},"pt-br":{"tag":"c"},"en":{"folder":"e","tag":"f"}}`))
+	if c == nil || c.All == nil || *c.All.Folder != "any" || len(c.ByLang) != 2 || c.ByLang["zh-Hans"].Tag != "b" || c.ByLang["pt-BR"].Tag != "c" {
+		t.Fatalf("%+v", c)
+	}
+	sort.Strings(dropped)
+	if fmt.Sprint(dropped) != "[cn en zh]" {
+		t.Fatalf("%v", dropped)
+	}
+	if c, dropped := ReadStoredDailyConfig([]byte(`{"cn":{"folder":"x"}}`)); c != nil || fmt.Sprint(dropped) != "[cn]" {
+		t.Fatalf("%+v %v", c, dropped)
 	}
 }

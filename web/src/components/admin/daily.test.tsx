@@ -67,6 +67,27 @@ describe('the administrators\' daily text page', () => {
     expect(document.body.textContent).toContain(d.allowApi)
   })
 
+  it('says what the server changed by itself on an upgrade, until it is dismissed', async () => {
+    m = await mount(routes, {
+      entries: (server) => {
+        server.seedDailyNotices([
+          { code: 'builtin_renamed', id: 'quotable', to: 'quotable-custom', message: 'renamed' },
+          { code: 'dropped_language', lang: 'cn', field: 'source', message: 'dropped' },
+        ])
+        return ['/admin/daily']
+      },
+      signIn: true,
+      server: { mode: 'accounts' },
+    })
+    await settle(() => document.querySelector('[data-slot="daily-notices"]') !== null, 'the notices')
+    const text = document.querySelector('[data-slot="daily-notices"]')!.textContent
+    expect(text).toContain(d.noticeRenamed('quotable', 'quotable-custom'))
+    expect(text).toContain(d.noticeDropped('cn'))
+    await click(byText('button', d.noticesDismiss))
+    await settle(() => document.querySelector('[data-slot="daily-notices"]') === null, 'dismissed')
+    expect(calls().at(-1)).toEqual({ method: 'PUT', url: '/api/admin/daily', body: { notices: [] } })
+  })
+
   it('the languages are tabs: pick one from the known ones, search them, type any valid tag, take one away', async () => {
     await open()
     expect([...document.querySelectorAll('[data-slot="admin-daily"] ul[aria-label="' + d.languagesTitle + '"]:not([role="listbox"]) li')].map((l) => l.textContent?.trim())).toEqual([d.allLanguages, 'zh-Hans', 'en'])

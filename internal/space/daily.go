@@ -227,6 +227,67 @@ func (c *DailyConfig) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// ReadStoredDailyConfig reads a configuration that was saved earlier, under
+// rules that may have been looser (the site's default in the state database):
+// a language that is a tag is read as its canonical tag; one that is not
+// (`cn`), a second spelling of a language (`zh` beside `zh-Hans`; the
+// canonical key wins, else the first by order), a source that cannot be read
+// and the languages past the most there may be are dropped, and their keys are
+// returned. The rest is kept. It is nil when nothing is left.
+func ReadStoredDailyConfig(data []byte) (*DailyConfig, []string) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, []string{"(all)"}
+	}
+	var dropped []string
+	out := DailyConfig{}
+	whole := map[string]json.RawMessage{}
+	for k, raw := range m {
+		if k == "folder" || k == "tag" || k == "type" || k == "filter" {
+			whole[k] = raw
+		}
+	}
+	if len(whole) > 0 {
+		b, _ := json.Marshal(whole)
+		var d DailySource
+		if err := json.Unmarshal(b, &d); err != nil {
+			dropped = append(dropped, "(all languages)")
+		} else {
+			out.All = &d
+		}
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		if _, ok := whole[k]; !ok {
+			keys = append(keys, k)
+		}
+	}
+	// The canonical spelling of a language first, then the others by order.
+	sort.Slice(keys, func(i, j int) bool {
+		ci, cj := NormalLang(keys[i]) == keys[i], NormalLang(keys[j]) == keys[j]
+		if ci != cj {
+			return ci
+		}
+		return keys[i] < keys[j]
+	})
+	for _, k := range keys {
+		var d DailySource
+		_, taken := out.ByLang[NormalLang(k)]
+		if !ValidLang(k) || taken || len(out.ByLang) >= maxDailyLangs || json.Unmarshal(m[k], &d) != nil {
+			dropped = append(dropped, k)
+			continue
+		}
+		if out.ByLang == nil {
+			out.ByLang = map[string]DailySource{}
+		}
+		out.ByLang[NormalLang(k)] = d
+	}
+	if out.All == nil && out.ByLang == nil {
+		return nil, dropped
+	}
+	return &out, dropped
+}
+
 // key identifies the configuration, for what is remembered of a pick.
 func (c DailyConfig) key() string {
 	b, _ := json.Marshal(c)
@@ -543,6 +604,28 @@ func setDailyIn(top *yaml.Node, d *DailyConfig) (bool, error) {
 	}
 	sort.Strings(langs)
 	for _, l := range langs {
+		// Two spellings of the language (`zh` beside `zh-Hans`) become one key:
+		// the entry under the canonical key, else the first, stays (as it is
+		// read, see dailyIn); the others go.
+		keep, canon := -1, false
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if k, ok := keyText(n.Content[i]); ok && ValidLang(k) && NormalLang(k) == l && (keep < 0 || k == l && !canon) {
+				keep, canon = i, k == l
+			}
+		}
+		if keep >= 0 {
+			kept := n.Content[keep]
+			out := n.Content[:0:0]
+			for i := 0; i+1 < len(n.Content); i += 2 {
+				if k, ok := keyText(n.Content[i]); ok && ValidLang(k) && NormalLang(k) == l && n.Content[i] != kept {
+					continue
+				}
+				out = append(out, n.Content[i], n.Content[i+1])
+			}
+			if len(out) != len(n.Content) {
+				n.Content = out
+			}
+		}
 		found := false
 		for i := 0; i+1 < len(n.Content); i += 2 {
 			if k, ok := keyText(n.Content[i]); ok && ValidLang(k) && NormalLang(k) == l {

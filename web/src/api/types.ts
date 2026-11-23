@@ -593,7 +593,8 @@ export interface DailyAnswer {
 export interface DailyPrefs {
   inherit: boolean
   apis: string[]
-  available: { id: string; name: string; lang: string }[]
+  // A built-in interface that answers in more than one language lists them in `languages`.
+  available: { id: string; name: string; lang: string; languages?: string[] }[]
   // The languages the settings pages have a tab for (besides "all languages").
   languages?: string[]
   default: { kind: string } | null
@@ -674,6 +675,14 @@ export interface KnownLanguage {
   english: string
 }
 export type DailyDefault = null | { kind: 'list' } | { kind: 'space'; space: string; source: DailySettings } | { kind: 'api'; apis: Record<string, string> }
+export interface DailyNotice {
+  code: 'builtin_adopted' | 'builtin_renamed' | 'builtin_kept' | 'dropped_language' | 'unreadable' | (string & {})
+  id?: string
+  to?: string
+  lang?: string
+  field?: string
+  message: string
+}
 export interface AdminDaily {
   default: DailyDefault
   languages: string[]
@@ -682,6 +691,8 @@ export interface AdminDaily {
   apis: DailyApi[]
   providers: DailyProvider[]
   lines: { total: number; byLang: Record<string, number>; max: number }
+  // What the server changed in the settings by itself, reading what an earlier version saved; absent from older servers.
+  notices?: DailyNotice[]
   // Whether spaces may use a source of their own and pick an external interface; absent until the server has them.
   allow?: DailyAllow
 }

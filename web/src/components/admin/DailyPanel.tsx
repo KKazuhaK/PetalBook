@@ -3,7 +3,7 @@ import { Plus, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import { useAdminDaily, useAdminSpaces, useDeleteDailyApi, useDeleteDailyLines, useSaveDailyApi, useSaveDailyLines, useSaveDailyProvider, useSaveDailySite, useTryDailyApi } from '@/api/admin'
-import type { AdminDaily, DailyApi, DailyDefault, DailySettings, DailyTryResult, KnownLanguage, LinesFormat } from '@/api/types'
+import type { AdminDaily, DailyApi, DailyDefault, DailyNotice, DailySettings, DailyTryResult, KnownLanguage, LinesFormat } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { SettingsRow, SettingsRows, SettingsSection } from '@/components/settings/SettingsParts'
@@ -39,12 +39,45 @@ export function DailyPanel() {
   return (
     <div className="min-w-0 space-y-10" data-slot="admin-daily">
       <p className="text-sm break-words text-muted-foreground">{d.help}</p>
+      <NoticesSection data={data} />
       <AllowSection data={data} />
       <LanguagesSection data={data} />
       <DefaultSection data={data} />
       <LinesSection data={data} />
       <BuiltinSection data={data} />
       <ApisSection data={data} />
+    </div>
+  )
+}
+
+// What the server changed by itself in settings an earlier version saved, until an administrator dismisses it.
+const noticeText = (n: DailyNotice) => {
+  switch (n.code) {
+    case 'builtin_renamed':
+      return d.noticeRenamed(n.id ?? '', n.to ?? '')
+    case 'builtin_kept':
+      return d.noticeKept(n.id ?? '')
+    case 'dropped_language':
+      return d.noticeDropped(n.lang ?? '')
+  }
+  return n.message
+}
+
+function NoticesSection({ data }: { data: AdminDaily }) {
+  const save = useSaveDailySite()
+  const notices = data.notices ?? []
+  if (notices.length === 0) return null
+  return (
+    <div role="status" data-slot="daily-notices" className="min-w-0 space-y-2 rounded-md border p-4 text-sm">
+      <p className="font-medium">{d.noticesTitle}</p>
+      <ul className="list-disc space-y-1 ps-5 break-words">
+        {notices.map((n, i) => (
+          <li key={i}>{noticeText(n)}</li>
+        ))}
+      </ul>
+      <Button size="sm" variant="outline" disabled={save.isPending} onClick={() => save.mutate({ notices: [] }, { onError: (e) => void toast.error(message(e)) })}>
+        {d.noticesDismiss}
+      </Button>
     </div>
   )
 }

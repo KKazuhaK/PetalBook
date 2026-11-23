@@ -178,6 +178,8 @@ type adminDailyResp struct {
 	APIs           []apiView          `json:"apis"`
 	Providers      []providerView     `json:"providers"`
 	Lines          dailyLinesInfo     `json:"lines"`
+	// Notices are what the server changed in the settings by itself.
+	Notices []siteNotice `json:"notices"`
 }
 
 func (s *server) adminDailyView(ctx context.Context) (adminDailyResp, error) {
@@ -205,7 +207,11 @@ func (s *server) adminDailyView(ctx context.Context) (adminDailyResp, error) {
 		b := builtinAPI(p, st)
 		providers = append(providers, providerView{p.ID, p.Name, p.Languages, p.Site, p.Note, st.Enabled, b.Refresh, b.RefreshMinutes, b.RPS, p.RPS, b.SkipNew})
 	}
-	return adminDailyResp{site.Default, site.Languages, langtag.Known(), *site.Allow, apis, providers, dailyLinesInfo{total, counts, store.MaxDailyLines}}, nil
+	notices := site.Notices
+	if notices == nil {
+		notices = []siteNotice{}
+	}
+	return adminDailyResp{site.Default, site.Languages, langtag.Known(), *site.Allow, apis, providers, dailyLinesInfo{total, counts, store.MaxDailyLines}, notices}, nil
 }
 
 func (s *server) adminGetDaily(c *call) {
@@ -316,7 +322,12 @@ func (s *server) adminPutDailyLines(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, false, maxLinesBody) {
 		return
 	}
-	lang, ok := lineLang(req.Lang)
+	ctx := c.r.Context()
+	lang, ok, err := storedLineLang(ctx, s.opt.Store.Q(), req.Lang)
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
 	if !ok {
 		s.fail(c.w, badLangError(req.Lang))
 		return
@@ -345,8 +356,7 @@ func (s *server) adminPutDailyLines(c *call) {
 		}
 		lines[i] = store.DailyLine{Lang: lang, Body: body, Source: source}
 	}
-	ctx := c.r.Context()
-	err := s.opt.Store.Tx(ctx, func(q store.Q) error {
+	err = s.opt.Store.Tx(ctx, func(q store.Q) error {
 		// The lines of this language saved before the rule (as `zh`) are replaced too.
 		if err := deleteLangLines(ctx, q, lang); err != nil {
 			return err
@@ -371,6 +381,25 @@ func lineLang(s string) (string, bool) {
 		return "", true
 	}
 	return langtag.Canonical(s)
+}
+
+// storedLineLang is the language of lines a request names: a canonical tag,
+// "" for any, or a code that is no tag exactly as lines are stored under it
+// (`cn`, saved by 2.3), so that those lines can still be replaced and deleted.
+func storedLineLang(ctx context.Context, q store.Q, given string) (string, bool, error) {
+	if l, ok := lineLang(given); ok {
+		return l, true, nil
+	}
+	counts, err := store.DailyLineCounts(ctx, q)
+	if err != nil {
+		return "", false, err
+	}
+	for l := range counts {
+		if l == given {
+			return l, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 // deleteLangLines removes the lines of a language, as saved in any form of its tag.
@@ -449,12 +478,16 @@ func splitMarkdown(text string) []string {
 
 // adminDeleteDailyLines removes the lines of one language (`?lang=`, empty for those for any).
 func (s *server) adminDeleteDailyLines(c *call) {
-	lang, ok := lineLang(c.r.URL.Query().Get("lang"))
+	ctx := c.r.Context()
+	lang, ok, err := storedLineLang(ctx, s.opt.Store.Q(), c.r.URL.Query().Get("lang"))
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
 	if !ok {
 		s.fail(c.w, badLangError(c.r.URL.Query().Get("lang")))
 		return
 	}
-	ctx := c.r.Context()
 	if err := s.opt.Store.Tx(ctx, func(q store.Q) error { return deleteLangLines(ctx, q, lang) }); err != nil {
 		s.fail(c.w, err)
 		return

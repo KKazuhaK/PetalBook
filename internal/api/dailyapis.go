@@ -35,6 +35,9 @@ type storedHeader struct {
 type storedAPI struct {
 	dailyfetch.API
 	Headers []storedHeader `json:"headers"`
+	// KeepsID marks an interface of the administrators' own with the id of a
+	// built-in one, kept so (see adoptBuiltins).
+	KeepsID bool `json:"keepsId,omitempty"`
 }
 
 type siteDaily struct {
@@ -48,6 +51,12 @@ type siteDaily struct {
 	Providers map[string]providerState `json:"providers,omitempty"`
 	// Allow is what the administrators let the spaces do; absent is all of it.
 	Allow *dailyAllow `json:"allow"`
+	// Notices are what the server changed by itself (see siteNotice).
+	Notices []siteNotice `json:"notices,omitempty"`
+	// repair says what was read was repaired and is to be saved; renames are
+	// the interfaces whose id changed, for the spaces' choices.
+	repair  bool
+	renames map[string]string
 }
 
 // dailyAllow is what the administrators let the spaces do. What a space wrote
@@ -106,10 +115,24 @@ func (d *siteDaily) fill() {
 	}
 }
 
+// loadSite reads the administrators' settings. Settings an earlier version
+// saved that need repairing (see decodeSite and adoptBuiltins) are repaired
+// and saved once, here, so that nobody has to.
 func (s *server) loadSite(ctx context.Context) (siteDaily, error) {
+	d, err := s.loadSiteQ(ctx, s.opt.Store.Q())
+	if err != nil || !d.repair {
+		return d, err
+	}
+	if err := s.editSite(ctx, func(store.Q, *siteDaily) error { return nil }); err != nil {
+		// What was read is used as it is repaired in memory; saving is tried again next time.
+		s.log.Error("the repaired daily text settings cannot be saved", "error", err)
+		return d, nil
+	}
 	return s.loadSiteQ(ctx, s.opt.Store.Q())
 }
 
+// loadSiteQ reads the settings and repairs them in memory: repair says they
+// are to be saved, renames which interfaces changed their id.
 func (s *server) loadSiteQ(ctx context.Context, q store.Q) (siteDaily, error) {
 	var d siteDaily
 	raw, ok, err := store.GetSiteSetting(ctx, q, siteDailyKey)
@@ -117,13 +140,239 @@ func (s *server) loadSiteQ(ctx context.Context, q store.Q) (siteDaily, error) {
 		return d, err
 	}
 	if ok {
-		if err := json.Unmarshal([]byte(raw), &d); err != nil {
-			s.log.Error("the daily text settings of the server cannot be read; they are taken as not set", "error", err)
-			d = siteDaily{}
-		}
+		d = s.decodeSite(raw)
+		s.adoptBuiltins(&d)
 	}
 	d.fill()
 	return d, nil
+}
+
+// siteNotice is something the administrators are told about their settings:
+// what the server changed in them by itself, reading what an earlier version
+// saved. It stays until they dismiss it.
+type siteNotice struct {
+	// Code is builtin_adopted, builtin_renamed, builtin_kept, dropped_language
+	// or unreadable.
+	Code string `json:"code"`
+	// ID is the interface, To its new id; Lang the code that was dropped;
+	// Field where it was.
+	ID      string `json:"id,omitempty"`
+	To      string `json:"to,omitempty"`
+	Lang    string `json:"lang,omitempty"`
+	Field   string `json:"field,omitempty"`
+	Message string `json:"message"`
+}
+
+// notify adds a notice (once) and marks the settings as to be saved.
+func (d *siteDaily) notify(n siteNotice) {
+	d.repair = true
+	for _, have := range d.Notices {
+		if have.Code == n.Code && have.ID == n.ID && have.Lang == n.Lang && have.Field == n.Field {
+			return
+		}
+	}
+	d.Notices = append(d.Notices, n)
+}
+
+// decodeSite reads stored settings leniently: each part on its own, so that
+// one that cannot be read is the only one taken as not set; in the default,
+// language codes are read as canonical tags and those that are none (`cn`,
+// saved by 2.3) are dropped, with a notice. Nothing else is lost.
+func (s *server) decodeSite(raw string) siteDaily {
+	var d siteDaily
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &top); err != nil {
+		s.log.Error("the daily text settings of the server cannot be read; they are taken as not set", "error", err)
+		return d
+	}
+	part := func(name string, into any) {
+		v, ok := top[name]
+		if !ok || string(v) == "null" {
+			return
+		}
+		if err := json.Unmarshal(v, into); err != nil {
+			s.log.Error("a part of the daily text settings cannot be read; it is taken as not set", "part", name, "value", string(v), "error", err)
+			d.notify(siteNotice{Code: "unreadable", Field: name, Message: "the " + name + " of the daily text settings could not be read and are taken as not set"})
+		}
+	}
+	part("languages", &d.Languages)
+	part("providers", &d.Providers)
+	part("allow", &d.Allow)
+	part("notices", &d.Notices)
+	var apis []json.RawMessage
+	part("apis", &apis)
+	for _, v := range apis {
+		var a storedAPI
+		if err := json.Unmarshal(v, &a); err != nil {
+			s.log.Error("an interface of the daily text settings cannot be read; it is left out", "value", string(v), "error", err)
+			d.notify(siteNotice{Code: "unreadable", Field: "apis", Message: "an interface of the daily text settings could not be read and is left out"})
+			continue
+		}
+		d.APIs = append(d.APIs, a)
+	}
+	var def *struct {
+		Kind   string            `json:"kind"`
+		Space  string            `json:"space"`
+		Source json.RawMessage   `json:"source"`
+		APIs   map[string]string `json:"apis"`
+	}
+	part("default", &def)
+	if def == nil {
+		return d
+	}
+	d.Default = &siteDefault{Kind: def.Kind, Space: def.Space}
+	dropped := func(field, code string) {
+		s.log.Warn("a language of the daily text default is not a language tag; it is dropped", "field", field, "code", code)
+		d.notify(siteNotice{Code: "dropped_language", Lang: code, Field: field,
+			Message: fmt.Sprintf("%q in the default (%s) is not a language tag, or a second spelling of one; it was dropped", code, field)})
+	}
+	if len(def.Source) > 0 && string(def.Source) != "null" {
+		src, out := space.ReadStoredDailyConfig(def.Source)
+		d.Default.Source = src
+		for _, k := range out {
+			dropped("source", k)
+		}
+	}
+	if def.APIs != nil {
+		keys := slices.Sorted(maps.Keys(def.APIs))
+		// The canonical spelling of a language first, then the others by order.
+		sort.SliceStable(keys, func(i, j int) bool { return langtag.Read(keys[i]) == keys[i] && langtag.Read(keys[j]) != keys[j] })
+		d.Default.APIs = map[string]string{}
+		for _, k := range keys {
+			l := k
+			if k != "" {
+				var ok bool
+				if l, ok = langtag.Canonical(k); !ok {
+					dropped("apis", k)
+					continue
+				}
+			}
+			if _, taken := d.Default.APIs[l]; taken {
+				dropped("apis", k)
+				continue
+			}
+			d.Default.APIs[l] = def.APIs[k]
+		}
+	}
+	return d
+}
+
+// sameAsBuiltin reports whether a stored interface asks what the built-in one
+// does, the way it does: the same address, paths and link, no headers and no
+// other language mapping (what 2.3's "use preset" saved, unchanged).
+func sameAsBuiltin(a storedAPI, p dailyfetch.Provider) bool {
+	return a.URL == p.URL && a.Text == p.Text && a.Source == p.Source && a.Author == p.Author && a.Link == p.Link &&
+		len(a.Headers) == 0 && (len(a.LangMap) == 0 || maps.Equal(a.LangMap, p.LangMap))
+}
+
+// adoptBuiltins repairs the interfaces 2.3 saved from a preset with the id of
+// what is now a built-in one. One the administrators did not change becomes
+// the built-in one, switched on or off as it was, with its refresh, rate and
+// "another" within the built-in's limits. One they changed stays theirs under
+// a new id (`hitokoto-custom`), with its header values sealed again for that
+// id; the spaces' choices (see editSite) and the default follow it. One whose
+// values cannot be sealed again stays theirs under its id (KeepsID); the
+// requests for interfaces then act on it before the built-in one.
+func (s *server) adoptBuiltins(d *siteDaily) {
+	taken := map[string]bool{}
+	for _, a := range d.APIs {
+		taken[a.ID] = true
+	}
+	for _, p := range dailyfetch.Providers() {
+		taken[p.ID] = true
+	}
+	kept := d.APIs[:0:0]
+	for _, a := range d.APIs {
+		p, ok := dailyfetch.ProviderByID(a.ID)
+		if !ok || a.KeepsID {
+			kept = append(kept, a)
+			continue
+		}
+		if sameAsBuiltin(a, p) {
+			if d.Providers == nil {
+				d.Providers = map[string]providerState{}
+			}
+			d.Providers[p.ID] = stateFrom(a, p)
+			d.repair = true
+			continue
+		}
+		to := a.ID + "-custom"
+		for n := 2; taken[to]; n++ {
+			to = fmt.Sprintf("%s-custom-%d", a.ID, n)
+		}
+		moved, err := s.resealed(a, to)
+		if err != nil {
+			s.log.Warn("an interface with the id of a built-in one keeps its id: its header values cannot be sealed again", "interface", a.ID, "error", err)
+			a.KeepsID = true
+			kept = append(kept, a)
+			d.notify(siteNotice{Code: "builtin_kept", ID: a.ID,
+				Message: "the interface " + a.ID + " has the id of a built-in one and keeps it, since its header values cannot be moved; delete it to use the built-in one"})
+			continue
+		}
+		taken[to] = true
+		kept = append(kept, moved)
+		if d.renames == nil {
+			d.renames = map[string]string{}
+		}
+		d.renames[a.ID] = to
+		if d.Default != nil {
+			for l, id := range d.Default.APIs {
+				if id == a.ID {
+					d.Default.APIs[l] = to
+				}
+			}
+		}
+		d.notify(siteNotice{Code: "builtin_renamed", ID: a.ID, To: to,
+			Message: "the interface " + a.ID + " differs from the built-in one of that id; it is kept as " + to})
+	}
+	d.APIs = kept
+}
+
+// stateFrom is the built-in's state that keeps what a stored interface had,
+// within the built-in's limits.
+func stateFrom(a storedAPI, p dailyfetch.Provider) providerState {
+	st := providerState{Enabled: a.Enabled}
+	switch a.Refresh {
+	case dailyfetch.RefreshDaily, dailyfetch.RefreshHourly:
+		if a.Refresh != p.Refresh {
+			st.Refresh = a.Refresh
+		}
+	case dailyfetch.RefreshMinutes:
+		if a.RefreshMinutes >= 1 && a.RefreshMinutes <= 1440 {
+			st.Refresh, st.RefreshMinutes = a.Refresh, a.RefreshMinutes
+		}
+	}
+	if a.RPS >= 0.01 && a.RPS < p.RPS {
+		st.RPS = a.RPS
+	}
+	if a.SkipNew != p.SkipNew {
+		v := a.SkipNew
+		st.SkipNew = &v
+	}
+	return st
+}
+
+// resealed is the interface under the id to, its header values sealed for it.
+func (s *server) resealed(a storedAPI, to string) (storedAPI, error) {
+	out := a
+	out.ID = to
+	out.Headers = make([]storedHeader, len(a.Headers))
+	for i, h := range a.Headers {
+		box := s.spaces.Secrets()
+		if box == nil {
+			return a, errors.New("this server has no key for stored secrets")
+		}
+		v, err := box.Open("site", headerPurpose(a.ID, h.Name, a.URL), h.Enc)
+		if err != nil {
+			return a, err
+		}
+		enc, err := box.Seal("site", headerPurpose(to, h.Name, a.URL), v)
+		if err != nil {
+			return a, err
+		}
+		out.Headers[i] = storedHeader{Name: h.Name, Enc: enc}
+	}
+	return out, nil
 }
 
 // builtinAPI is a built-in interface as the administrators set it.
@@ -168,6 +417,12 @@ func (s *server) editSite(ctx context.Context, change func(q store.Q, d *siteDai
 		d, err := s.loadSiteQ(ctx, q)
 		if err != nil {
 			return err
+		}
+		// The spaces that chose an interface whose id changed follow it.
+		for _, from := range slices.Sorted(maps.Keys(d.renames)) {
+			if err := store.RenameSpaceDailyAPI(ctx, q, from, d.renames[from]); err != nil {
+				return err
+			}
 		}
 		if err := change(q, &d); err != nil {
 			return err
@@ -528,10 +783,20 @@ func (s *server) adminPutDaily(c *call) {
 		return
 	}
 	for k := range req {
-		if k != "default" && k != "hosts" && k != "languages" && k != "allow" {
+		if k != "default" && k != "hosts" && k != "languages" && k != "allow" && k != "notices" {
 			bad(c, "unknown key "+k+": the settings are default, languages and allow (interfaces have their own requests)")
 			return
 		}
+	}
+	// The notices are dismissed with an empty list; they are not written.
+	dismiss := false
+	if raw, ok := req["notices"]; ok {
+		var given []json.RawMessage
+		if err := json.Unmarshal(raw, &given); err != nil || given == nil || len(given) != 0 {
+			bad(c, "notices is [] (to dismiss them)")
+			return
+		}
+		dismiss = true
 	}
 	ctx := c.r.Context()
 	// Everything is checked first; the change is then made to the settings as
@@ -608,6 +873,9 @@ func (s *server) adminPutDaily(c *call) {
 		if _, ok := req["default"]; ok {
 			site.Default = def
 		}
+		if dismiss {
+			site.Notices = nil
+		}
 		return nil
 	})
 	if err != nil {
@@ -631,9 +899,19 @@ func (s *server) adminPutDailyAPI(c *call) {
 		return
 	}
 	b.ID = id
-	if p, ok := dailyfetch.ProviderByID(id); ok {
-		s.putBuiltinFromAPI(c, p, b)
-		return
+	// An interface of the administrators' own with a built-in's id (kept from
+	// 2.3, see adoptBuiltins) is changed as theirs; else the id is the built-in's.
+	p, builtin := dailyfetch.ProviderByID(id)
+	if builtin {
+		site, err := s.loadSite(c.r.Context())
+		if err != nil {
+			s.fail(c.w, err)
+			return
+		}
+		if !slices.ContainsFunc(site.APIs, func(a storedAPI) bool { return a.ID == id }) {
+			s.putBuiltinFromAPI(c, p, b)
+			return
+		}
 	}
 	err := s.editSite(c.r.Context(), func(_ store.Q, site *siteDaily) error {
 		at := -1
@@ -645,12 +923,17 @@ func (s *server) adminPutDailyAPI(c *call) {
 		var old *storedAPI
 		if at >= 0 {
 			old = &site.APIs[at]
+		} else if builtin {
+			return &codedError{code: codeBuiltin, msg: "the interface " + id + " is a built-in one"}
 		} else if len(site.APIs) >= dailyfetch.MaxAPIs {
 			return &space.InvalidError{Msg: "at most 50 interfaces"}
 		}
 		made, _, err := s.build(b, old)
 		if err != nil {
 			return err
+		}
+		if old != nil {
+			made.KeepsID = old.KeepsID
 		}
 		if at >= 0 {
 			site.APIs[at] = made
@@ -785,11 +1068,9 @@ var errNoInterface = errors.New("no such interface")
 // adminDeleteDailyAPI removes an interface.
 func (s *server) adminDeleteDailyAPI(c *call) {
 	id := c.r.PathValue("id")
-	if _, ok := dailyfetch.ProviderByID(id); ok {
-		s.fail(c.w, &codedError{code: codeBuiltin, msg: "a built-in interface cannot be deleted; switch it off"})
-		return
-	}
 	err := s.editSite(c.r.Context(), func(_ store.Q, site *siteDaily) error {
+		// The administrators' own first: one with a built-in's id (kept from
+		// 2.3, see adoptBuiltins) is deleted like any other.
 		kept := site.APIs[:0]
 		found := false
 		for _, a := range site.APIs {
@@ -800,6 +1081,9 @@ func (s *server) adminDeleteDailyAPI(c *call) {
 			kept = append(kept, a)
 		}
 		if !found {
+			if _, ok := dailyfetch.ProviderByID(id); ok {
+				return &codedError{code: codeBuiltin, msg: "a built-in interface cannot be deleted; switch it off"}
+			}
 			return errNoInterface
 		}
 		site.APIs = kept
@@ -926,6 +1210,9 @@ type availAPI struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Lang string `json:"lang"`
+	// Languages are those of a built-in interface that answers in more than
+	// its first (see dailyfetch.API.Languages).
+	Languages []string `json:"languages,omitempty"`
 }
 
 func (s *server) dailyPrefs(c *call) (dailyPrefsResp, error) {
@@ -950,7 +1237,7 @@ func (s *server) dailyPrefs(c *call) (dailyPrefsResp, error) {
 			continue
 		}
 		known[a.ID] = true
-		out.Available = append(out.Available, availAPI{a.ID, a.Name, a.Lang})
+		out.Available = append(out.Available, availAPI{a.ID, a.Name, a.Lang, a.Languages})
 	}
 	for _, id := range ids {
 		if known[id] {
