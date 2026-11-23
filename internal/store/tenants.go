@@ -250,6 +250,16 @@ func (s *Store) TenantRefOf(id string) (TenantRef, bool) {
 	return r, ok
 }
 
+// TenantIDBySlug finds a tenant's id by its slug, from memory.
+func (s *Store) TenantIDBySlug(slug string) (string, bool) {
+	st := s.tenantState.Load()
+	if st == nil {
+		return "", false
+	}
+	id, ok := st.bySlug[slug]
+	return id, ok
+}
+
 // TenantCount is how many tenants there are, from memory.
 func (s *Store) TenantCount() int {
 	if st := s.tenantState.Load(); st != nil {
@@ -308,6 +318,10 @@ func (s *Store) DeleteTenant(ctx context.Context, id string) error {
 			return &ErrTenantNotEmpty{c.Users, c.Spaces, c.Groups, c.Invites}
 		}
 		if _, err := q.Exec(ctx, `DELETE FROM layered_settings WHERE layer = 'tenant' AND layer_id = ?`, id); err != nil {
+			return err
+		}
+		// A provider that put new accounts here goes back to the default tenant.
+		if _, err := q.Exec(ctx, `UPDATE sign_in_providers SET tenant_id = ? WHERE tenant_id = ?`, DefaultTenantID, id); err != nil {
 			return err
 		}
 		res, err := q.Exec(ctx, `DELETE FROM tenants WHERE id = ?`, id)

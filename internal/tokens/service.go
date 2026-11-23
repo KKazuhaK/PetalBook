@@ -174,7 +174,7 @@ func (s *Service) Authenticate(ctx context.Context, secret, ip string) (*auth.Pr
 	if err != nil {
 		return nil, err
 	}
-	if u.Disabled {
+	if u.Disabled || s.st != nil && s.st.TenantDisabled(u.TenantID) { // a disabled tenant is a disabled account
 		return nil, refuse(http.StatusUnauthorized, "token_owner_disabled", "the account this token belongs to is disabled")
 	}
 	s.touch(ctx, e.key, now)

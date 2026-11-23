@@ -27,6 +27,7 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/index"
 	"github.com/KKazuhaK/PetalBook/internal/oauth"
 	"github.com/KKazuhaK/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/settings"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
@@ -96,17 +97,19 @@ type Options struct {
 }
 
 type server struct {
-	opt     Options
-	log     *slog.Logger
-	auth    *auth.Service
-	spaces  *spaces.Manager
-	drafts  *drafts.Service
-	tokens  *tokens.Service
-	oauth   *oauth.Service
-	single  bool
-	started time.Time
-	local   store.User // the built-in user of single-user mode
-	origins map[string]bool
+	opt    Options
+	log    *slog.Logger
+	auth   *auth.Service
+	spaces *spaces.Manager
+	drafts *drafts.Service
+	tokens *tokens.Service
+	oauth  *oauth.Service
+	// settings are the layered settings (site, tenant; see internal/settings).
+	settings *settings.Service
+	single   bool
+	started  time.Time
+	local    store.User // the built-in user of single-user mode
+	origins  map[string]bool
 	// importing lets one import run at a time (see importMarkdown).
 	importing chan struct{}
 	// originHosts are the hosts of the allowed origins: a request addressed to
@@ -134,7 +137,7 @@ func New(opt Options) http.Handler {
 	if opt.DailyFetch == nil {
 		opt.DailyFetch = dailyfetch.New(NewDailyBacking(opt.Store))
 	}
-	s := &server{opt: opt, log: opt.Logger, auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, oauth: opt.OAuth, single: opt.Auth == nil, started: time.Now(),
+	s := &server{opt: opt, log: opt.Logger, settings: settings.New(opt.Store), auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, oauth: opt.OAuth, single: opt.Auth == nil, started: time.Now(),
 		origins: map[string]bool{}, originHosts: map[string]bool{}, importing: make(chan struct{}, 1)}
 	if s.log == nil {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -155,6 +158,7 @@ func New(opt Options) http.Handler {
 			s.local = *u
 		}
 	}
+	s.bindDailySettings()
 	mux := http.NewServeMux()
 	uploads := map[string]bool{}
 	for _, rt := range routeTable {

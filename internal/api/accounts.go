@@ -22,6 +22,10 @@ type userResp struct {
 	// EmailVerified and PasskeyRequired: see docs/api.md, "User".
 	EmailVerified   bool `json:"emailVerified"`
 	PasskeyRequired bool `json:"passkeyRequired"`
+	// SiteAdmin is an administrator of the whole server; Tenant is the tenant
+	// the user belongs to (absent in single-user mode, which has none).
+	SiteAdmin bool           `json:"siteAdmin"`
+	Tenant    *tenantRefResp `json:"tenant,omitempty"`
 }
 
 // toUser is the user as the API shows it. passkeyRequired is whether the
@@ -31,7 +35,11 @@ func (s *server) toUser(u store.User) userResp {
 	if s.auth != nil {
 		req = s.auth.PasskeyRequiredOf(u)
 	}
-	return userResp{u.ID, u.Username, u.Name, u.Email, u.Role, u.Disabled, rfc3339(u.Created), u.EmailVerified, req}
+	r := userResp{u.ID, u.Username, u.Name, u.Email, u.Role, u.Disabled, rfc3339(u.Created), u.EmailVerified, req, u.Role == "admin" && u.SiteAdmin, nil}
+	if !s.single {
+		r.Tenant = s.toTenantRef(u.TenantID)
+	}
+	return r
 }
 
 type spaceResp struct {

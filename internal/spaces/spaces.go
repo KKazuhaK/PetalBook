@@ -381,6 +381,9 @@ func (m *Manager) openFor(ctx context.Context, user store.User, spaceID string, 
 		if err != nil {
 			return nil, err
 		}
+		if m.opt.Store.TenantDisabled(sp.TenantID) {
+			return nil, ErrDisabled // the spaces of a disabled tenant cannot be opened, by anyone
+		}
 		in = Info{ID: sp.ID, Name: sp.Name, Perms: perm.All, ViaAdmin: true, Personal: sp.Personal, Inbox: sp.Inbox}
 	}
 	in = m.withSync(ctx, []Info{in})[0]

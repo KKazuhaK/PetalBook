@@ -90,7 +90,7 @@ func (s *Service) Authenticate(ctx context.Context, raw, ip string) (*auth.Princ
 	if err != nil {
 		return nil, err
 	}
-	if u.Disabled {
+	if u.Disabled || s.cfg.Store != nil && s.cfg.Store.TenantDisabled(u.TenantID) { // a disabled tenant is a disabled account
 		return nil, refuse(http.StatusUnauthorized, "token_owner_disabled", "the account this authorization belongs to is disabled")
 	}
 	g := e.grant

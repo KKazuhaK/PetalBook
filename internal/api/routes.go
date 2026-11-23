@@ -30,6 +30,7 @@ const (
 	kindPublic kind = iota + 1
 	kindSignedIn
 	kindAdmin
+	kindSiteAdmin
 	kindSpace
 )
 
@@ -38,8 +39,12 @@ var (
 	public = access{kind: kindPublic}
 	// signedIn needs a session.
 	signedIn = access{kind: kindSignedIn}
-	// admin needs a session of an administrator.
+	// admin needs a session of an administrator of a tenant (or of the server):
+	// what it shows and changes is the caller's tenant's (see adminScope).
 	admin = access{kind: kindAdmin}
+	// siteAdmin needs a session of an administrator of the whole server: the
+	// server's own settings and the tenants themselves.
+	siteAdmin = access{kind: kindSiteAdmin}
 )
 
 // inSpaceOrSelf is inSpace, except that the caller may do it to themselves.
@@ -124,6 +129,7 @@ var routeTable = []route{
 	{"POST", "/api/oauth/consent", signedIn, true, false, false, (*server).oauthConsentDecide},
 
 	{"GET", "/api/groups", signedIn, true, false, false, (*server).findGroups},
+	{"GET", "/api/settings", signedIn, true, false, false, (*server).mySettings},
 
 	{"GET", "/api/users", admin, true, false, false, (*server).listUsers},
 	{"PATCH", "/api/users/{id}", admin, true, false, false, (*server).patchUser},
@@ -138,17 +144,17 @@ var routeTable = []route{
 	{"POST", "/api/admin/spaces/{space}/disable", admin, true, false, false, (*server).adminDisableSpace},
 	{"POST", "/api/admin/spaces/{space}/enable", admin, true, false, false, (*server).adminEnableSpace},
 	{"DELETE", "/api/admin/spaces/{space}", admin, true, false, false, (*server).adminDeleteSpace},
-	{"GET", "/api/admin/daily", admin, true, false, false, (*server).adminGetDaily},
-	{"PUT", "/api/admin/daily", admin, true, false, false, (*server).adminPutDaily},
-	{"PUT", "/api/admin/daily/lines", admin, true, false, false, (*server).adminPutDailyLines},
-	{"DELETE", "/api/admin/daily/lines", admin, true, false, false, (*server).adminDeleteDailyLines},
-	{"PUT", "/api/admin/daily/apis/{id}", admin, true, false, false, (*server).adminPutDailyAPI},
-	{"DELETE", "/api/admin/daily/apis/{id}", admin, true, false, false, (*server).adminDeleteDailyAPI},
-	{"PUT", "/api/admin/daily/providers/{id}", admin, true, false, false, (*server).adminPutDailyProvider},
-	{"POST", "/api/admin/daily/try", admin, true, false, false, (*server).adminTryDailyAPI},
-	{"GET", "/api/admin/status", admin, true, false, false, (*server).adminStatus},
-	{"GET", "/api/admin/access", admin, true, false, false, (*server).adminGetAccess},
-	{"PUT", "/api/admin/access", admin, true, false, false, (*server).adminPutAccess},
+	{"GET", "/api/admin/daily", siteAdmin, true, false, false, (*server).adminGetDaily},
+	{"PUT", "/api/admin/daily", siteAdmin, true, false, false, (*server).adminPutDaily},
+	{"PUT", "/api/admin/daily/lines", siteAdmin, true, false, false, (*server).adminPutDailyLines},
+	{"DELETE", "/api/admin/daily/lines", siteAdmin, true, false, false, (*server).adminDeleteDailyLines},
+	{"PUT", "/api/admin/daily/apis/{id}", siteAdmin, true, false, false, (*server).adminPutDailyAPI},
+	{"DELETE", "/api/admin/daily/apis/{id}", siteAdmin, true, false, false, (*server).adminDeleteDailyAPI},
+	{"PUT", "/api/admin/daily/providers/{id}", siteAdmin, true, false, false, (*server).adminPutDailyProvider},
+	{"POST", "/api/admin/daily/try", siteAdmin, true, false, false, (*server).adminTryDailyAPI},
+	{"GET", "/api/admin/status", siteAdmin, true, false, false, (*server).adminStatus},
+	{"GET", "/api/admin/access", siteAdmin, true, false, false, (*server).adminGetAccess},
+	{"PUT", "/api/admin/access", siteAdmin, true, false, false, (*server).adminPutAccess},
 	{"GET", "/api/admin/groups", admin, true, false, false, (*server).adminListGroups},
 	{"POST", "/api/admin/groups", admin, true, false, false, (*server).adminCreateGroup},
 	{"GET", "/api/admin/groups/{group}", admin, true, false, false, (*server).adminGetGroup},
@@ -158,6 +164,17 @@ var routeTable = []route{
 	{"POST", "/api/admin/groups/{group}/members", admin, true, false, false, (*server).adminAddGroupMembers},
 	{"DELETE", "/api/admin/groups/{group}/members/{user}", admin, true, false, false, (*server).adminRemoveGroupMember},
 	{"GET", "/api/admin/groups/{group}/spaces", admin, true, false, false, (*server).adminGroupSpaces},
+	{"GET", "/api/admin/tenancy", siteAdmin, true, false, false, (*server).adminGetTenancy},
+	{"PUT", "/api/admin/tenancy", siteAdmin, true, false, false, (*server).adminPutTenancy},
+	{"GET", "/api/admin/tenants", siteAdmin, true, false, false, (*server).adminListTenants},
+	{"POST", "/api/admin/tenants", siteAdmin, true, false, false, (*server).adminCreateTenant},
+	{"GET", "/api/admin/tenants/{tenant}", admin, true, false, false, (*server).adminGetTenant},
+	{"PATCH", "/api/admin/tenants/{tenant}", admin, true, false, false, (*server).adminPatchTenant},
+	{"DELETE", "/api/admin/tenants/{tenant}", siteAdmin, true, false, false, (*server).adminDeleteTenant},
+	{"GET", "/api/admin/tenants/{tenant}/settings", admin, true, false, false, (*server).adminGetTenantSettings},
+	{"PUT", "/api/admin/tenants/{tenant}/settings/{key}", admin, true, false, false, (*server).adminPutTenantSetting},
+	{"GET", "/api/admin/settings", siteAdmin, true, false, false, (*server).adminGetSettings},
+	{"PUT", "/api/admin/settings/{key}", siteAdmin, true, false, false, (*server).adminPutSetting},
 	{"GET", "/api/admin/tokens", admin, true, false, false, (*server).adminListTokens},
 	{"DELETE", "/api/admin/tokens/{id}", admin, true, false, false, (*server).adminRevokeToken},
 	{"GET", "/api/admin/grants", admin, true, false, false, (*server).adminListGrants},
@@ -238,8 +255,9 @@ var routeTable = []route{
 // RouteInfo describes a route for tests and tooling.
 type RouteInfo struct {
 	Method, Pattern string
-	Public          bool // no session needed
-	Admin           bool
+	Public          bool      // no session needed
+	Admin           bool      // a tenant's or the server's administrator
+	SiteAdmin       bool      // the server's administrator only
 	Space           bool      // a route on {space}
 	Perm            perm.Perm // what a space route asks of the caller in the space
 	OrSelf          bool      // the permission is waived for the caller's own {user}
@@ -252,7 +270,7 @@ func Routes() []RouteInfo {
 	out := make([]RouteInfo, len(routeTable))
 	for i, r := range routeTable {
 		a := r.access
-		out[i] = RouteInfo{Method: r.method, Pattern: r.pattern, Public: a.kind == kindPublic, Admin: a.kind == kindAdmin,
+		out[i] = RouteInfo{Method: r.method, Pattern: r.pattern, Public: a.kind == kindPublic, Admin: a.kind == kindAdmin, SiteAdmin: a.kind == kindSiteAdmin,
 			Space: a.kind == kindSpace, Perm: a.need, OrSelf: a.orSelf, AccountsOnly: r.accountsOnly, Upload: r.upload}
 	}
 	return out
@@ -317,6 +335,10 @@ func (s *server) handle(rt route) http.HandlerFunc {
 		}
 		if rt.access.kind == kindAdmin && c.p.User.Role != "admin" {
 			writeError(w, http.StatusForbidden, "forbidden", "only an administrator may do that")
+			return
+		}
+		if rt.access.kind == kindSiteAdmin && !c.isSiteAdmin() {
+			writeError(w, http.StatusForbidden, "forbidden", "only an administrator of the whole server may do that")
 			return
 		}
 		if rt.access.kind == kindSpace {

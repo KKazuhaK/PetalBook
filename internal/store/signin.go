@@ -367,7 +367,8 @@ type AuditRow struct {
 	Detail   string
 	// TenantID is the tenant the row belongs to; "" when the writer did not say,
 	// which InsertAudit fills in from the user the row is about, else the actor,
-	// else the server's own ("").
+	// else the server's own (""); "-" says the server's own outright, for an
+	// event of the site's layer made by someone who has a tenant.
 	TenantID string
 }
 
@@ -381,8 +382,8 @@ var SiteAuditKinds = []string{"security_changed", "provider_created", "provider_
 func InsertAudit(ctx context.Context, q Q, rows []AuditRow) error {
 	for _, r := range rows {
 		if _, err := q.Exec(ctx, `INSERT INTO audit_log(id, at, kind, actor, user_id, username, ip, detail, tenant_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), (SELECT tenant_id FROM users WHERE id = ?), (SELECT tenant_id FROM users WHERE id = ?), ''))
-			ON CONFLICT (id) DO NOTHING`, r.ID, ms(r.At), r.Kind, r.Actor, r.UserID, r.Username, r.IP, r.Detail, r.TenantID, r.UserID, r.Actor); err != nil {
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = '-' THEN '' ELSE COALESCE(NULLIF(?, ''), (SELECT tenant_id FROM users WHERE id = ?), (SELECT tenant_id FROM users WHERE id = ?), '') END)
+			ON CONFLICT (id) DO NOTHING`, r.ID, ms(r.At), r.Kind, r.Actor, r.UserID, r.Username, r.IP, r.Detail, r.TenantID, r.TenantID, r.UserID, r.Actor); err != nil {
 			return err
 		}
 	}

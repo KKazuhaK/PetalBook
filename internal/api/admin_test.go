@@ -25,7 +25,7 @@ func adminRoutes(t *testing.T) []api.RouteInfo {
 	var out []api.RouteInfo
 	for _, rt := range api.Routes() {
 		if strings.HasPrefix(rt.Pattern, "/api/admin/") {
-			if !rt.Admin || !rt.AccountsOnly {
+			if !(rt.Admin || rt.SiteAdmin) || !rt.AccountsOnly {
 				t.Errorf("%s %s must be admin and accounts-only", rt.Method, rt.Pattern)
 			}
 			out = append(out, rt)
