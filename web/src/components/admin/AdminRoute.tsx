@@ -34,7 +34,7 @@ export default function AdminRoute() {
       <TopBar>
         <h1 className="truncate text-sm font-medium">{ta.title}</h1>
       </TopBar>
-      <div className="mx-auto w-full max-w-5xl flex-1 px-4 py-5 md:px-8 md:py-7">
+      <div className="mx-auto w-full max-w-5xl min-w-0 flex-1 px-4 py-5 md:px-8 md:py-7">
         <div className="mb-6 flex flex-wrap items-center gap-x-6 gap-y-2">
           <nav aria-label={ta.nav}>
             <ul className="flex flex-wrap gap-1">

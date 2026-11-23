@@ -2,6 +2,7 @@
 // conversion to and from the shape the server speaks (docs/api.md, "The daily text").
 
 import type { DailyPrefs, DailySettings, DailySource, FilterOp, PropFilter } from '@/api/types'
+import { canonicalTag } from './langTags'
 
 export type SourceKind = 'folder' | 'tag' | 'type'
 export const SOURCE_KINDS: readonly SourceKind[] = ['folder', 'tag', 'type']
@@ -69,18 +70,19 @@ export function settingsFrom(drafts: Drafts): DailySettings | null {
   return Object.keys(out).length ? (out as DailySettings) : null
 }
 
-// The first part of a language code: `zh` for `zh-cn`.
+// The first part of a language tag: `zh` for `zh-Hans`.
 export const baseLang = (code: string) => code.toLowerCase().split('-')[0]
 
 // The tabs of the settings page: "all languages", the server's list, then any language that something already
 // names (a source in the file, an interface), so nothing that is set is out of reach.
 export function tabsOf(languages: readonly string[], settings: DailySettings | null, prefs: DailyPrefs | null): string[] {
+  // Tags are canonical as the server writes them (zh-Hans, pt-BR): they are kept as they are, and compared by case.
   const seen = new Set<string>([''])
   const tabs: string[] = ['']
   const add = (code: string) => {
-    const c = code.toLowerCase()
-    if (c !== '' && !seen.has(c)) {
-      seen.add(c)
+    const c = canonicalTag(code) ?? code
+    if (c !== '' && !seen.has(c.toLowerCase())) {
+      seen.add(c.toLowerCase())
       tabs.push(c)
     }
   }
@@ -92,7 +94,8 @@ export function tabsOf(languages: readonly string[], settings: DailySettings | n
 
 // The interfaces that belong to a tab: those made for that language, or for every language on the first tab.
 export function apisOfTab(prefs: DailyPrefs | null, tab: string) {
-  return (prefs?.available ?? []).filter((a) => (tab === '' ? a.lang === '' : a.lang !== '' && (a.lang.toLowerCase() === tab || (baseLang(a.lang) === baseLang(tab) && !tab.includes('-')))))
+  const t = tab.toLowerCase()
+  return (prefs?.available ?? []).filter((a) => (tab === '' ? a.lang === '' : a.lang !== '' && (a.lang.toLowerCase() === t || (baseLang(a.lang) === baseLang(tab) && !tab.includes('-')))))
 }
 
 // A filter's values as typed in one box (separated by commas).

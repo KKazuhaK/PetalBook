@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -126,6 +127,54 @@ func SetSpaceDaily(ctx context.Context, q Q, spaceID string, d SpaceDaily) error
 	_, err := q.Exec(ctx, `INSERT INTO space_daily(space_id, inherit, apis) VALUES (?, ?, ?)
 		ON CONFLICT (space_id) DO UPDATE SET inherit = excluded.inherit, apis = excluded.apis`, spaceID, b2i(d.Inherit), d.APIs)
 	return err
+}
+
+// RenameSpaceDailyAPI makes the spaces that chose the interface from choose
+// the interface to instead, in the place it had. It reads the rows that
+// mention it (a LIKE on the JSON, then an exact check) and writes those only.
+func RenameSpaceDailyAPI(ctx context.Context, q Q, from, to string) error {
+	rows, err := q.Query(ctx, `SELECT space_id, apis FROM space_daily WHERE apis LIKE ? ESCAPE '\'`, "%"+likeEscape(from)+"%")
+	if err != nil {
+		return err
+	}
+	type change struct{ id, apis string }
+	var changes []change
+	for rows.Next() {
+		var id, apis string
+		if err := rows.Scan(&id, &apis); err != nil {
+			rows.Close()
+			return err
+		}
+		var ids []string
+		if json.Unmarshal([]byte(apis), &ids) != nil {
+			continue
+		}
+		out, changed, seen := make([]string, 0, len(ids)), false, map[string]bool{}
+		for _, v := range ids {
+			if v == from {
+				v, changed = to, true
+			}
+			if !seen[v] {
+				seen[v] = true
+				out = append(out, v)
+			}
+		}
+		if changed {
+			b, _ := json.Marshal(out)
+			changes = append(changes, change{id, string(b)})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, c := range changes {
+		if _, err := q.Exec(ctx, `UPDATE space_daily SET apis = ? WHERE space_id = ?`, c.apis, c.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // DailyCached is one thing an external interface said.

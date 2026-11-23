@@ -17,13 +17,25 @@ export function dailyCodeMessage(r: Partial<ReasonCode> | undefined, d: Words): 
         return d.fieldAuthor
       case 'link':
         return d.fieldLink
+      case 'url':
+        return d.fieldUrl
+      case 'lang':
+        return d.fieldLang
+      case 'langMap':
+        return d.fieldLangMap
+      case 'headers':
+        return d.headers
       default:
         return k ?? ''
     }
   }
   switch (r.code) {
-    case 'host_not_allowed':
-      return d.tryHostNotAllowed(r.host ?? '')
+    case 'bad_language':
+      return d.badLanguage
+    case 'api_not_found':
+      return d.apiNotFound
+    case 'builtin':
+      return d.builtinField(field(r.field))
     case 'header_reenter':
       return d.headerNeedsValue(r.header ?? '')
     case 'header_missing':

@@ -1320,7 +1320,7 @@ function suite(target: Target) {
       const en = await mk(`${folder}/en`, { title: `English${run}` }, 'x\n')
       const set = await setDaily({ zh: { folder: `${folder}/zh` }, 'en-US': { folder: `${folder}/en` } })
       expect(set.status).toBe(200)
-      expect(set.json.daily).toEqual({ zh: { folder: `${folder}/zh`, filter: [] }, 'en-us': { folder: `${folder}/en`, filter: [] } })
+      expect(set.json.daily).toEqual({ 'zh-Hans': { folder: `${folder}/zh`, filter: [] }, 'en-US': { folder: `${folder}/en`, filter: [] } })
       const title = async (lang: string) => (await daily(`date=2026-11-23&lang=${lang}`)).json.page.id
       expect([await title('zh'), await title('zh-CN'), await title('en-US'), await title('en')]).toEqual([zh.id, zh.id, en.id, en.id])
       // A language with no source of its own gets one of them, always the same.
@@ -1341,6 +1341,7 @@ function suite(target: Target) {
         ['a filter that is none', { folder: `${folder}/poems`, filter: [{ key: 'a', op: 'like', values: ['x'] }] }, 400],
         ['11 filters', { folder: `${folder}/poems`, filter: Array.from({ length: 11 }, (_, i) => ({ key: `k${i}`, op: 'notEmpty', values: [] })) }, 400],
         ['a bad language', { 'chinese!': { tag: 'x' } }, 400],
+        ['a language that is none', { cn: { tag: 'x' } }, 400],
         ['a language source that is none', { zh: 'folder' }, 400],
         ['a folder that is not there', { folder: `${root}/no-such-folder` }, 404],
       ]
@@ -1351,9 +1352,13 @@ function suite(target: Target) {
       expect((await call(admin, 'PUT', `${base()}/daily/settings`, {})).status).toBe(400)
       expect((await call(admin, 'PUT', `${base()}/daily/settings`, { daily: {}, extra: 1 })).status).toBe(400)
       expect((await setDaily({ folder: `${folder}/poems` })).status).toBe(200)
-      for (const q of ['date=tomorrow', 'date=2026-13-01', 'date=1969-12-31', 'date=2026-11-23&skip=-1', 'date=2026-11-23&skip=x', 'date=2026-11-23&lang=%E4%B8%AD%E6%96%87', 'date=2026-11-23&lang=x']) {
+      for (const q of ['date=tomorrow', 'date=2026-13-01', 'date=1969-12-31', 'date=2026-11-23&skip=-1', 'date=2026-11-23&skip=x']) {
         const r = await daily(q)
         expect([q, r.status, r.json.error]).toEqual([q, 400, 'invalid'])
+      }
+      for (const q of ['date=2026-11-23&lang=%E4%B8%AD%E6%96%87', 'date=2026-11-23&lang=x', 'date=2026-11-23&lang=cn', 'date=2026-11-23&lang=english', 'date=2026-11-23&lang=zh_CN']) {
+        const r = await daily(q)
+        expect([q, r.status, r.json.error]).toEqual([q, 400, 'bad_language'])
       }
       const far = await daily('date=2026-11-23&skip=99999999')
       expect([far.status, far.json.error]).toEqual([400, 'skip_too_large'])
@@ -1365,7 +1370,7 @@ function suite(target: Target) {
       expect((await setDaily({ zh: { folder: `${folder}/zh` }, en: { folder: `${folder}/poems` } })).status).toBe(200)
       const moved = await call(admin, 'POST', `${base()}/folders/move`, { from: `${folder}/poems`, to: `${folder}/verse` })
       expect(moved.status).toBe(200)
-      expect((await call(admin, 'GET', `${base()}/daily/settings`)).json.daily).toEqual({ zh: { folder: `${folder}/zh`, filter: [] }, en: { folder: `${folder}/verse`, filter: [] } })
+      expect((await call(admin, 'GET', `${base()}/daily/settings`)).json.daily).toEqual({ 'zh-Hans': { folder: `${folder}/zh`, filter: [] }, en: { folder: `${folder}/verse`, filter: [] } })
       expect((await daily('date=2026-11-23&lang=en')).json.page.folder).toBe(`${folder}/verse`)
       expect((await setDaily(null)).json).toEqual({ daily: null, inEffect: true })
       expect((await setDaily(null)).json).toEqual({ daily: null, inEffect: true })
@@ -1377,7 +1382,7 @@ function suite(target: Target) {
       const any = await mk(`${folder}/mixall`, { title: `全${run}` }, 'x\n')
       const set = await setDaily({ folder: `${folder}/mixall`, zh: { folder: `${folder}/mixzh` } })
       expect(set.status).toBe(200)
-      expect(set.json.daily).toEqual({ folder: `${folder}/mixall`, filter: [], zh: { folder: `${folder}/mixzh`, filter: [] } })
+      expect(set.json.daily).toEqual({ folder: `${folder}/mixall`, filter: [], 'zh-Hans': { folder: `${folder}/mixzh`, filter: [] } })
       expect((await call(admin, 'GET', `${base()}/daily/settings`)).json).toEqual(set.json)
       const id = async (lang: string) => (await daily(`date=2026-11-23&lang=${lang}`)).json.page.id
       expect([await id('zh'), await id('zh-TW'), await id('en'), await id('')]).toEqual([zh.id, zh.id, any.id, any.id])
@@ -1385,7 +1390,7 @@ function suite(target: Target) {
       expect((await call(admin, 'POST', `${base()}/folders/move`, { from: `${folder}/mixall`, to: `${folder}/mixmoved` })).status).toBe(200)
       expect((await call(admin, 'GET', `${base()}/daily/settings`)).json.daily.folder).toBe(`${folder}/mixmoved`)
       // Without all languages, only the ones that have a source are asked for: another language gets one of them.
-      expect((await setDaily({ zh: { folder: `${folder}/mixzh` } })).json.daily).toEqual({ zh: { folder: `${folder}/mixzh`, filter: [] } })
+      expect((await setDaily({ zh: { folder: `${folder}/mixzh` } })).json.daily).toEqual({ 'zh-Hans': { folder: `${folder}/mixzh`, filter: [] } })
       expect(await id('fr')).toBe(zh.id)
     })
 
@@ -1492,7 +1497,8 @@ function suite(target: Target) {
         try {
           const empty = await adm('GET', '')
           expect(empty.status).toBe(200)
-          expect(empty.json).toMatchObject({ hosts: expect.any(Array), apis: expect.any(Array), lines: { total: expect.any(Number), max: 5000 } })
+          expect(empty.json.hosts).toBeUndefined()
+          expect(empty.json).toMatchObject({ providers: expect.any(Array), knownLanguages: expect.any(Array), apis: expect.any(Array), lines: { total: expect.any(Number), max: 5000 } })
           // Bad requests.
           for (const [what, method, path, body] of [
             ['an unknown key', 'PUT', '', { extra: 1 }],
@@ -1507,7 +1513,7 @@ function suite(target: Target) {
           expect(set.json.default).toEqual({ kind: 'list' })
           const put = (lang: string, text: string, format = 'lines') => adm('PUT', '/lines', { lang, text, format })
           expect((await put('zh', '山色空蒙雨亦奇\t苏轼\n\n行到水穷处\n')).status).toBe(200)
-          expect((await put('en', 'Stay hungry\tJobs\nStay foolish\nBe kind')).json.lines.byLang).toMatchObject({ zh: 2, en: 3 })
+          expect((await put('en', 'Stay hungry\tJobs\nStay foolish\nBe kind')).json.lines.byLang).toMatchObject({ 'zh-Hans': 2, en: 3 })
           const any = await put('', 'For any language')
           expect(any.json.lines.byLang['']).toBe(1)
           expect(any.json.lines.total).toBeGreaterThanOrEqual(6)
@@ -1561,7 +1567,7 @@ function suite(target: Target) {
           for (const bad of [{}, 'no', { own: 'no' }, null]) expect((await adm('PUT', '', { allow: bad })).status).toBe(400)
           expect(await locks({ api: true })).toEqual({ own: true, api: true })
           // Taking the lines away.
-          expect((await adm('DELETE', '/lines?lang=zh')).json.lines.byLang.zh).toBeUndefined()
+          expect((await adm('DELETE', '/lines?lang=zh')).json.lines.byLang['zh-Hans']).toBeUndefined()
           // Another person has no way in.
           const outsider = browser()
           expect((await call(outsider, 'GET', '/api/admin/daily')).status).toBe(401)
@@ -1569,23 +1575,23 @@ function suite(target: Target) {
           await cleanup()
         }
       })
-      it('the administrators configure external interfaces themselves: any number, headers kept secret, the host added, a list of languages, presets only offered', async () => {
+      it('the administrators configure external interfaces themselves: any number, headers kept secret, a list of languages, built-in interfaces only offered', async () => {
         const adm = (method: string, path: string, body?: unknown) => call(admin, method, `/api/admin/daily${path}`, body)
         const iface = (over: Record<string, unknown> = {}) => ({ name: `Quotes ${run}`, lang: 'en', url: 'https://quotes.example.org/api/{lang}/{date}', text: '[0].q', source: '[0].s', author: '[0].a', link: 'https://quotes.example.org/q/{[0].id}', refresh: 'hourly', skipNew: true, rps: 5, headers: [{ name: 'X-Api-Key', value: `secret-${run}` }], ...over })
         const ids = [`c${run}a`, `c${run}b`]
         try {
           const start = await adm('GET', '')
           expect(start.json.languages).toEqual(expect.any(Array))
-          expect(start.json.presets.map((p: any) => p.id)).toEqual(['hitokoto', 'quotable'])
-          expect(start.json.presets[0]).toMatchObject({ lang: 'zh', url: 'https://international.v1.hitokoto.cn/?max_length=80', text: 'hitokoto', source: 'from', author: 'from_who', rps: 20, link: 'https://hitokoto.cn?uuid={uuid}' })
-          expect(start.json.presets[1]).toMatchObject({ lang: 'en', url: 'https://api.quotable.io/quotes/random', text: '[0].content', author: '[0].author', rps: 3, link: '' })
-          // Making one: the value of a header is kept and never given back; the host is on the list.
+          expect(start.json.presets).toBeUndefined()
+          expect(start.json.providers.map((p: any) => [p.id, p.languages, p.rps])).toEqual([['hitokoto', ['zh-Hans', 'zh-Hant'], 20], ['quotable', ['en'], 3]])
+          expect(start.json.apis.some((a: any) => a.builtin)).toBe(false)
+          // Making one: the value of a header is kept and never given back.
           const made = await adm('PUT', `/apis/${ids[0]}`, iface())
           expect(made.status).toBe(200)
           const got = made.json.apis.find((a: any) => a.id === ids[0])
           expect(got).toMatchObject({ id: ids[0], lang: 'en', refresh: 'hourly', skipNew: true, rps: 5, enabled: true, text: '[0].q', link: 'https://quotes.example.org/q/{[0].id}', headers: [{ name: 'X-Api-Key', set: true }] })
           expect(JSON.stringify(made.json)).not.toContain(`secret-${run}`)
-          expect(made.json.hosts).toContain('quotes.example.org')
+          expect(made.json.hosts).toBeUndefined()
           // A header that comes without a value keeps what it has; one that is left out goes.
           const kept = await adm('PUT', `/apis/${ids[0]}`, iface({ name: 'Renamed', headers: [{ name: 'x-api-key' }] }))
           expect(kept.json.apis.find((a: any) => a.id === ids[0])).toMatchObject({ name: 'Renamed', headers: [{ name: 'x-api-key', set: true }] })
@@ -1609,6 +1615,8 @@ function suite(target: Target) {
             ['a header with no value', 'x', { headers: [{ name: 'X-New' }] }],
             ['a header that cannot be set', 'x', { headers: [{ name: 'Host', value: 'x' }] }],
             ['a bad language', 'x', { lang: '中文' }],
+            ['a lang that is no language', 'x', { lang: 'cn' }],
+            ['a language mapping from no language', 'x', { langMap: { chinese: 'zh' } }],
           ]
           for (const [what, , over] of refuse) expect([what, (await adm('PUT', `/apis/${ids[1]}`, iface(over))).status]).toEqual([what, 400])
           expect((await adm('PUT', '/apis/BAD ID', iface())).status).toBe(400)
@@ -1626,9 +1634,9 @@ function suite(target: Target) {
           expect(none.json.available.some((a: any) => a.id === ids[0])).toBe(false)
           // A trial: a refusal with a code is a 400 with what the trial showed in `result`; a failure with none is a 200 with ok false.
           const trial = (url: string) => adm('POST', '/try', { api: iface({ id: ids[1], url, headers: [] }), lang: 'en', date: '2026-11-23' })
-          const offList = await trial(`https://elsewhere-${run}.example.net/q`)
-          expect(offList.status).toBe(400)
-          expect(offList.json).toMatchObject({ error: 'host_not_allowed', host: `elsewhere-${run}.example.net`, message: expect.any(String), result: { ok: false, url: expect.any(String) } })
+          // There is no list of hosts: another address is not refused for its host.
+          const elsewhere = await trial(`https://elsewhere-${run}.example.net/q`)
+          expect(elsewhere.json.error).not.toBe('host_not_allowed')
           const down = await trial('https://quotes.example.org/down')
           expect(down.status).toBe(200)
           expect(down.json).toMatchObject({ ok: false, url: expect.any(String), message: expect.any(String) })
@@ -1637,9 +1645,11 @@ function suite(target: Target) {
           expect((await adm('DELETE', `/apis/${ids[0]}`)).json.apis.some((a: any) => a.id === ids[0])).toBe(false)
           expect((await adm('DELETE', `/apis/${ids[0]}`)).status).toBe(404)
           // The languages are a list of the administrators' own.
-          const langs = await adm('PUT', '', { languages: ['zh', 'en', 'ja', 'JA', 'pt-BR'] })
-          expect(langs.json.languages).toEqual(['zh', 'en', 'ja', 'pt-br'])
-          for (const bad of [['chinese!'], 'zh', null]) expect([JSON.stringify(bad), (await adm('PUT', '', { languages: bad })).status]).toEqual([JSON.stringify(bad), 400])
+          const langs = await adm('PUT', '', { languages: ['zh', 'en', 'ja', 'JA', 'pt-br'] })
+          expect(langs.json.languages).toEqual(['zh-Hans', 'en', 'ja', 'pt-BR'])
+          expect(langs.json.knownLanguages[0]).toEqual({ tag: 'zh-Hans', name: '中文（简体）', english: 'Chinese (Simplified)' })
+          for (const bad of [['chinese!'], ['cn'], ['zh_CN'], 'zh', null]) expect([JSON.stringify(bad), (await adm('PUT', '', { languages: bad })).status]).toEqual([JSON.stringify(bad), 400])
+          expect((await adm('PUT', '', { languages: ['cn'] })).json.error).toBe('bad_language')
           await adm('PUT', '', { languages: start.json.languages })
           expect((await call(browser(), 'PUT', `/api/admin/daily/apis/${ids[1]}`, iface())).status).toBe(401)
         } finally {

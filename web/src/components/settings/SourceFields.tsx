@@ -2,6 +2,7 @@ import { Plus, Trash2 } from 'lucide-react'
 import { useId, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { RequiredMark } from '@/components/ui/field-mark'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { FILTER_OPS, opTakesValues, parseValues, SOURCE_KINDS, type SourceDraft, type SourceKind } from '@/lib/dailySettings'
@@ -26,8 +27,8 @@ export function SourceFields({ draft, onChange, choices, disabled }: { draft: So
 
   const setFilter = (i: number, patch: Partial<PropFilter>) => onChange({ ...draft, filter: draft.filter.map((f, j) => (j === i ? { ...f, ...patch } : f)) })
   return (
-    <div className="grid gap-4" data-slot="source-fields">
-      <div className="grid gap-3 sm:grid-cols-[10rem_1fr]">
+    <div className="grid grid-cols-1 gap-4" data-slot="source-fields">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[10rem_minmax(0,1fr)]">
         <div className="grid gap-1.5">
           <Label htmlFor={`${id}-kind`}>{th.settings.kindLabel}</Label>
           <NativeSelect id={`${id}-kind`} value={draft.kind} disabled={disabled} onChange={(e) => onChange({ ...draft, kind: e.target.value as SourceKind, value: '' })}>
@@ -39,9 +40,12 @@ export function SourceFields({ draft, onChange, choices, disabled }: { draft: So
           </NativeSelect>
         </div>
         <div className="grid gap-1.5">
-          <Label htmlFor={`${id}-value`}>{th.settings.valueLabel[draft.kind]}</Label>
+          <Label htmlFor={`${id}-value`}>
+            {th.settings.valueLabel[draft.kind]}
+            <RequiredMark />
+          </Label>
           {withCurrent ? (
-            <NativeSelect id={`${id}-value`} value={draft.value} disabled={disabled} onChange={(e) => onChange({ ...draft, value: e.target.value })}>
+            <NativeSelect id={`${id}-value`} aria-required="true" value={draft.value} disabled={disabled} onChange={(e) => onChange({ ...draft, value: e.target.value })}>
               <option value="">{withCurrent.length === 0 ? th.settings.noChoices : th.settings.choose}</option>
               {withCurrent.map((o) => (
                 <option key={o.value} value={o.value}>
@@ -50,7 +54,7 @@ export function SourceFields({ draft, onChange, choices, disabled }: { draft: So
               ))}
             </NativeSelect>
           ) : (
-            <Input id={`${id}-value`} value={draft.value} disabled={disabled} onChange={(e) => onChange({ ...draft, value: e.target.value })} autoComplete="off" />
+            <Input id={`${id}-value`} aria-required="true" value={draft.value} disabled={disabled} onChange={(e) => onChange({ ...draft, value: e.target.value })} autoComplete="off" />
           )}
         </div>
       </div>

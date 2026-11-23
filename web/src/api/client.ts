@@ -71,10 +71,9 @@ export const API_BASE = '/api'
 export const DEFAULT_SPACE = 'default'
 
 // The codes the daily-text endpoints put in `error` (with what they are about next to it).
-const DAILY_CODES = new Set(['host_not_allowed', 'header_reenter', 'header_missing', 'not_json', 'too_large', 'path_error', 'path_reveals_secret', 'link_uses_header', 'skip_too_large'])
-const reasonOf = (b: { error: string; host?: unknown; header?: unknown; field?: unknown }): ReasonCode => ({
+const DAILY_CODES = new Set(['bad_language', 'api_not_found', 'builtin', 'header_reenter', 'header_missing', 'not_json', 'too_large', 'path_error', 'path_reveals_secret', 'link_uses_header', 'skip_too_large'])
+const reasonOf = (b: { error: string; header?: unknown; field?: unknown }): ReasonCode => ({
   code: b.error,
-  ...(typeof b.host === 'string' ? { host: b.host } : {}),
   ...(typeof b.header === 'string' ? { header: b.header } : {}),
   ...(typeof b.field === 'string' ? { field: b.field } : {}),
 })
@@ -282,7 +281,7 @@ export async function request<T>(path: string, { method = 'GET', body, keepalive
       err.current,
       res.status === 429 && Number.isFinite(retry) && retry > 0 ? retry : undefined,
       err.draft,
-      typeof err.error === 'string' && DAILY_CODES.has(err.error) ? reasonOf(err as { error: string; host?: unknown; header?: unknown; field?: unknown }) : undefined,
+      typeof err.error === 'string' && DAILY_CODES.has(err.error) ? reasonOf(err as { error: string; header?: unknown; field?: unknown }) : undefined,
       json ?? undefined,
     )
   }
