@@ -33,7 +33,7 @@ func InsertSpace(ctx context.Context, q Q, id, name, personalOf, inbox string, n
 	if inbox == "" {
 		inbox = DefaultInbox
 	}
-	_, err := q.Exec(ctx, `INSERT INTO spaces(id, name, personal_of, inbox, created) VALUES (?, ?, ?, ?, ?)`, id, name, owner, inbox, ms(now))
+	_, err := q.Exec(ctx, `INSERT INTO spaces(id, name, name_key, personal_of, inbox, created) VALUES (?, ?, ?, ?, ?, ?)`, id, name, FoldName(name), owner, inbox, ms(now))
 	return err
 }
 
@@ -200,7 +200,7 @@ func LockSpace(ctx context.Context, q Q, spaceID string) error {
 
 // RenameSpace changes a space's display name.
 func RenameSpace(ctx context.Context, q Q, id, name string) error {
-	res, err := q.Exec(ctx, `UPDATE spaces SET name = ? WHERE id = ?`, name, id)
+	res, err := q.Exec(ctx, `UPDATE spaces SET name = ?, name_key = ? WHERE id = ?`, name, FoldName(name), id)
 	return oneRow(res, err)
 }
 
@@ -254,8 +254,8 @@ func EnsureLocal(ctx context.Context, q Q, spaceID, spaceName string, now time.T
 		ON CONFLICT (id) DO NOTHING`, LocalUserID, ms(now)); err != nil {
 		return err
 	}
-	if _, err := q.Exec(ctx, `INSERT INTO spaces(id, name, personal_of, created) VALUES (?, ?, ?, ?)
-		ON CONFLICT (id) DO UPDATE SET name = excluded.name`, spaceID, spaceName, LocalUserID, ms(now)); err != nil {
+	if _, err := q.Exec(ctx, `INSERT INTO spaces(id, name, name_key, personal_of, created) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (id) DO UPDATE SET name = excluded.name, name_key = excluded.name_key`, spaceID, spaceName, FoldName(spaceName), LocalUserID, ms(now)); err != nil {
 		return err
 	}
 	_, err := q.Exec(ctx, `INSERT INTO space_members(space_id, user_id, role, created) VALUES (?, ?, 'owner', ?)

@@ -105,6 +105,7 @@ type configCache struct {
 	bindings []Binding
 	byFolder map[string]string
 	views    map[string][]View // by folder, only those that have some
+	daily    *DailySource      // where the daily text comes from, when the file says
 	blocked  string            // what is in the way of the file, when something is
 }
 
@@ -136,6 +137,7 @@ func (s *Space) config() configCache {
 			c.byFolder[b.Folder] = b.Type
 		}
 		c.views = viewsOf(doc, "folders", bindingKey)
+		c.daily = dailyOf(doc)
 		s.heal.setOdd(spaceSettings, oddEntries(doc, spaceSettings))
 	}
 	s.cfg = c
@@ -644,7 +646,14 @@ func recoverBindings(h *healer, root string, recs []jrec) (written []string) {
 				continue // the old folder is there: nothing was moved, or it was moved back
 			}
 			from, to := bindingKey(r.From), bindingKey(r.To)
-			edit = func(top *yaml.Node) (bool, error) { return rebind(top, from, to, true) }
+			edit = func(top *yaml.Node) (bool, error) {
+				a, err := rebind(top, from, to, true)
+				if err != nil {
+					return false, err
+				}
+				b, err := rebindDaily(top, from, to)
+				return a || b, err
+			}
 		case "u":
 			canon := bindingKey(r.Path)
 			edit = func(top *yaml.Node) (bool, error) {

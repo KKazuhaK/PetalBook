@@ -1,0 +1,523 @@
+package space
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"strings"
+	"time"
+
+	"go.yaml.in/yaml/v3"
+
+	"github.com/KKazuhaK/PetalBook/internal/index"
+)
+
+// The daily text of a space (milestone 2.3): one page a day, picked from the
+// pages that meet a condition the space settings name.
+//
+//	daily:
+//	  folder: 文案            # or tag: …, or type: …; one of the three
+//	  filter: [{key: status, op: in, values: [定稿]}]   # optional, as a listing's filter
+//
+// The settings live in space.yml like the bindings (see config.go), so they
+// are read and written the same way: a file that cannot be used is restored
+// from its history, anchors and aliases are kept, and a change is journaled
+// and committed like any other.
+
+const (
+	// DailyBodyLimit is how many characters of a page the daily text carries.
+	DailyBodyLimit = 2000
+	// maxDailySkip is the largest skip a request may carry.
+	maxDailySkip = 1 << 20
+	// dailyMemoMax is how many picks the space remembers.
+	dailyMemoMax = 512
+)
+
+// DailySource says where the daily text is picked from: exactly one of Folder
+// (the folder and the folders below it), Tag and Type (the effective type),
+// and the filters the pages must also meet.
+type DailySource struct {
+	Folder *string
+	Tag    string
+	Type   string
+	Filter []ViewFilter
+}
+
+// MarshalJSON writes the keys that are set, and the filter always.
+func (d DailySource) MarshalJSON() ([]byte, error) {
+	out := map[string]any{"filter": d.filters()}
+	switch {
+	case d.Folder != nil:
+		out["folder"] = *d.Folder
+	case d.Tag != "":
+		out["tag"] = d.Tag
+	case d.Type != "":
+		out["type"] = d.Type
+	}
+	return json.Marshal(out)
+}
+
+// UnmarshalJSON reads a source; keys it does not know are refused.
+func (d *DailySource) UnmarshalJSON(data []byte) error {
+	var in struct {
+		Folder *string      `json:"folder"`
+		Tag    *string      `json:"tag"`
+		Type   *string      `json:"type"`
+		Filter []ViewFilter `json:"filter"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	dec.UseNumber()
+	if err := dec.Decode(&in); err != nil {
+		return err
+	}
+	*d = DailySource{Folder: in.Folder, Filter: in.Filter}
+	set := 0
+	if in.Folder != nil {
+		set++
+	}
+	if in.Tag != nil {
+		set++
+		d.Tag = *in.Tag
+		if d.Tag == "" {
+			return errors.New("tag is empty")
+		}
+	}
+	if in.Type != nil {
+		set++
+		d.Type = *in.Type
+		if d.Type == "" {
+			return errors.New("type is empty")
+		}
+	}
+	if set != 1 {
+		return errors.New("give exactly one of folder, tag and type")
+	}
+	return nil
+}
+
+func (d DailySource) filters() []ViewFilter {
+	if d.Filter == nil {
+		return []ViewFilter{}
+	}
+	return d.Filter
+}
+
+// key identifies the source, so what is remembered of a pick is dropped when
+// the settings change.
+func (d DailySource) key() string {
+	b, _ := json.Marshal(d)
+	return string(b)
+}
+
+// dailyOf reads the daily source of a settings document: nil when there is
+// none or what is there names no source. A hand-written entry that names more
+// than one reads as the first of folder, tag, type.
+func dailyOf(doc *yaml.Node) *DailySource {
+	if doc == nil || len(doc.Content) == 0 {
+		return nil
+	}
+	return dailyIn(doc.Content[0])
+}
+
+func dailyIn(top *yaml.Node) *DailySource {
+	v, _ := mapValue(top, "daily")
+	if v == nil || v.Kind != yaml.MappingNode {
+		return nil
+	}
+	var d DailySource
+	if t, ok := scalarText(first(mapValue(v, "folder"))); ok {
+		t = bindingKey(t)
+		d.Folder = &t
+	} else if t, ok := scalarText(first(mapValue(v, "tag"))); ok && strings.TrimSpace(t) != "" {
+		d.Tag = t
+	} else if t, ok := scalarText(first(mapValue(v, "type"))); ok && strings.TrimSpace(t) != "" {
+		d.Type = strings.TrimSpace(t)
+	} else {
+		return nil
+	}
+	w := &nodeWalk{left: maxNodeBudget}
+	if f, _ := mapValue(v, "filter"); f != nil && f.Kind == yaml.SequenceNode {
+		for _, c := range f.Content {
+			if c = deref(c); c == nil || c.Kind != yaml.MappingNode {
+				continue
+			}
+			vf := ViewFilter{Values: []any{}}
+			vf.Key, _ = scalarText(first(mapValue(c, "key")))
+			vf.Op, _ = scalarText(first(mapValue(c, "op")))
+			if vals, _ := mapValue(c, "values"); vals != nil && vals.Kind == yaml.SequenceNode {
+				for _, e := range vals.Content {
+					vf.Values = append(vf.Values, w.value(e, 0))
+				}
+			}
+			d.Filter = append(d.Filter, vf)
+		}
+	}
+	return &d
+}
+
+// Daily returns the source of the daily text, nil when the space has none.
+func (s *Space) Daily() *DailySource {
+	d := s.config().daily
+	if d == nil {
+		return nil
+	}
+	c := *d
+	return &c
+}
+
+// checkDaily validates a source a request gives, and returns it with the
+// folder as it is spelled on disk.
+func (s *Space) checkDaily(d DailySource) (DailySource, error) {
+	n := 0
+	if d.Folder != nil {
+		n++
+	}
+	if d.Tag != "" {
+		n++
+	}
+	if d.Type != "" {
+		n++
+	}
+	if n != 1 {
+		return d, invalidf("give exactly one of folder, tag and type")
+	}
+	switch {
+	case d.Folder != nil:
+		if err := checkRel(*d.Folder); err != nil {
+			return d, err
+		}
+		canon, existed, err := s.resolveFolder(*d.Folder)
+		if errors.Is(err, ErrExists) || (err == nil && !existed) {
+			return d, ErrNoFolder
+		}
+		if err != nil {
+			return d, err
+		}
+		d.Folder = &canon
+	case d.Tag != "":
+		if err := checkTagName(d.Tag); err != nil {
+			return d, err
+		}
+	default:
+		if _, ok := s.typeInfoCached(d.Type); !ok {
+			return d, invalidf("there is no type %q", d.Type)
+		}
+	}
+	if len(d.Filter) > index.MaxViewFilters {
+		return d, invalidf("at most %d filters", index.MaxViewFilters)
+	}
+	fs := make([]index.Filter, len(d.Filter))
+	for i, f := range d.Filter {
+		fs[i] = index.Filter{Key: f.Key, Op: f.Op, Values: f.Values}
+	}
+	if err := index.CheckFilters(fs); err != nil {
+		return d, invalidf("%s", strings.TrimPrefix(err.Error(), index.ErrInvalidQuery.Error()+": "))
+	}
+	for i := range d.Filter {
+		if d.Filter[i].Values == nil {
+			d.Filter[i].Values = []any{}
+		}
+	}
+	return d, nil
+}
+
+// SetDaily replaces the source of the daily text; nil removes it. It returns
+// the source as it is now. The change is one commit, like a change of views.
+func (s *Space) SetDaily(by Author, d *DailySource) (*DailySource, error) {
+	var want *DailySource
+	if d != nil {
+		c, err := s.checkDaily(*d)
+		if err != nil {
+			return nil, err
+		}
+		want = &c
+	}
+	return mutate(s, by, func(tx *txn) (*DailySource, error) {
+		err := s.editSpaceFile(tx, func(root *yaml.Node) (bool, error) { return setDailyIn(root, want) })
+		if err != nil {
+			return nil, err
+		}
+		return s.Daily(), nil
+	})
+}
+
+// setDailyIn writes the daily source into the settings top, or removes it.
+// What else the entry holds (comments, keys the server does not know) stays.
+func setDailyIn(top *yaml.Node, d *DailySource) (bool, error) {
+	cur, at := mapValue(top, "daily")
+	if d == nil {
+		if at < 0 && cur == nil {
+			return false, nil
+		}
+		before := len(top.Content)
+		removeKey(top, "daily")
+		return len(top.Content) != before, nil
+	}
+	fresh := func() *yaml.Node { return &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"} }
+	var n *yaml.Node
+	switch {
+	case at < 0:
+		n = fresh()
+		top.Content = append(top.Content, textNode("daily"), n)
+	case cur.Kind == yaml.MappingNode:
+		if old := dailyIn(top); old != nil && old.key() == d.key() {
+			return false, nil
+		}
+		n = own(top, at+1)
+	default:
+		if !(cur.Kind == yaml.ScalarNode && (cur.Tag == "!!null" || cur.Value == "")) {
+			noteReplaced(top, "daily")
+		}
+		n = fresh()
+		top.Content[at+1] = n
+	}
+	want, text := "type", d.Type
+	switch {
+	case d.Folder != nil:
+		want, text = "folder", *d.Folder
+	case d.Tag != "":
+		want, text = "tag", d.Tag
+	}
+	// The key that names the source stays where it is, with its comments, and
+	// is renamed when the source changes from one kind to another.
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if k, ok := keyText(n.Content[i]); ok && (k == "folder" || k == "tag" || k == "type") {
+			if k != want {
+				nk := textNode(want)
+				nk.HeadComment, nk.LineComment, nk.FootComment = n.Content[i].HeadComment, n.Content[i].LineComment, n.Content[i].FootComment
+				n.Content[i] = nk
+			}
+			break
+		}
+	}
+	for _, k := range []string{"folder", "tag", "type"} {
+		if k != want {
+			removeKey(n, k)
+		}
+	}
+	setKey(n, want, textNode(text))
+	if len(d.Filter) > 0 {
+		setKey(n, "filter", filterNode(d.Filter))
+	} else {
+		removeKey(n, "filter")
+	}
+	return true, nil
+}
+
+// rebindDaily makes the daily source follow a folder that was moved from
+// `from` to `to`: it is the folder or one below it.
+func rebindDaily(top *yaml.Node, from, to string) (bool, error) {
+	cur, at := mapValue(top, "daily")
+	if at < 0 || cur == nil || cur.Kind != yaml.MappingNode {
+		return false, nil
+	}
+	f, fat := mapValue(cur, "folder")
+	t, ok := scalarText(f)
+	if !ok || fat < 0 {
+		return false, nil
+	}
+	key := bindingKey(t)
+	var nk string
+	switch {
+	case key == from:
+		nk = to
+	case strings.HasPrefix(key, from+"/"):
+		nk = to + key[len(from):]
+	default:
+		return false, nil
+	}
+	n := own(top, at+1)
+	setKey(n, "folder", textNode(nk))
+	return true, nil
+}
+
+// --- the pick --------------------------------------------------------------------------
+
+// DailyPick is the daily text of a day: the page, its body cut to
+// DailyBodyLimit characters, and how many pages the source holds.
+type DailyPick struct {
+	Page index.Summary
+	Body string
+	// Truncated says the body was cut.
+	Truncated bool
+	// Count is how many pages meet the source.
+	Count int
+}
+
+// DailyNone says why there is no daily text.
+type DailyNone int
+
+const (
+	// DailyNoSource: the space has no source set.
+	DailyNoSource DailyNone = iota + 1
+	// DailyNoMatch: the source is set and no page meets it.
+	DailyNoMatch
+)
+
+type dailyKey struct {
+	space  string
+	source string
+	date   string
+	skip   int
+}
+
+// dailyMemo is what a space remembers of its picks, so that pages added or
+// removed during a day do not change the page everybody was shown.
+type dailyMemo struct {
+	picks map[dailyKey]dailyEntry
+}
+
+type dailyEntry struct {
+	id    string
+	count int
+}
+
+// ValidDailyDate reports whether date is a day like 2026-11-23, in the years
+// the rest of the server works with.
+func ValidDailyDate(date string) bool {
+	t, err := time.Parse("2006-01-02", date)
+	return err == nil && t.Year() >= 1970 && t.Year() <= 2261
+}
+
+// ValidDailySkip reports whether skip is in the range a request may use.
+func ValidDailySkip(skip int) bool { return skip >= 0 && skip <= maxDailySkip }
+
+// dailyNumber is the number a day of a space starts at: the same for everybody
+// who asks about that day, and unlike the one of the day before.
+func dailyNumber(spaceID, date string) uint64 {
+	sum := sha256.Sum256([]byte(spaceID + "\x00" + date))
+	return binary.BigEndian.Uint64(sum[:8])
+}
+
+// Daily picks the daily text of a day. date is a day (ValidDailyDate), skip
+// moves along the pages that meet the source (a "next one" that only the
+// asker sees). The page is the n-th, by index order, of the pages that meet
+// the source, n being a number made from the space and the day plus skip,
+// modulo how many there are: one counting query and one read by position, both
+// on the index, and the one file of the page for its body. A pick is
+// remembered for the (source, date, skip) until the page is gone.
+func (s *Space) DailyText(spaceID, date string, skip int) (*DailyPick, DailyNone, error) {
+	if !ValidDailyDate(date) {
+		return nil, 0, invalidf("date must be a day like 2026-11-23")
+	}
+	if !ValidDailySkip(skip) {
+		return nil, 0, invalidf("skip must be a number from 0 to %d", maxDailySkip)
+	}
+	src := s.config().daily
+	if src == nil {
+		return nil, DailyNoSource, nil
+	}
+	q := index.PickQuery{Folder: src.Folder, Recursive: src.Folder != nil, Type: src.Type}
+	if src.Tag != "" {
+		q.Tags = []string{src.Tag}
+	}
+	for _, f := range src.Filter {
+		q.Filters = append(q.Filters, index.Filter{Key: f.Key, Op: f.Op, Values: f.Values})
+	}
+	if src.Type != "" {
+		q.TypeFolders = s.foldersOfType(src.Type)
+	}
+	k := dailyKey{spaceID, src.key(), date, skip}
+
+	s.dailyMu.Lock()
+	memo, remembered := s.daily.picks[k]
+	s.dailyMu.Unlock()
+	var sum index.Summary
+	count := 0
+	if remembered {
+		// Only the summary of the remembered page is read; a page that is gone
+		// from the index is picked again.
+		got, ok, err := s.idx.Summary(memo.id)
+		if err != nil {
+			return nil, 0, err
+		}
+		if ok {
+			sum, count = got, memo.count
+		}
+		remembered = ok
+	}
+	if !remembered {
+		base := dailyNumber(spaceID, date) + uint64(skip)
+		var err error
+		count, sum, err = s.idx.Pick(q, func(total int) int { return int(base % uint64(total)) })
+		if errors.Is(err, index.ErrNoPick) || errors.Is(err, index.ErrInvalidQuery) {
+			// A filter written by hand that the index refuses picks nothing.
+			return nil, DailyNoMatch, nil
+		}
+		if err != nil {
+			return nil, 0, err
+		}
+		s.dailyMu.Lock()
+		if s.daily.picks == nil || len(s.daily.picks) >= dailyMemoMax {
+			s.daily.picks = map[dailyKey]dailyEntry{}
+		}
+		s.daily.picks[k] = dailyEntry{sum.ID, count}
+		s.dailyMu.Unlock()
+	}
+	p, err := s.Get(sum.ID)
+	if errors.Is(err, ErrNotFound) {
+		// Gone since the index was read: the pick is made again.
+		s.dailyMu.Lock()
+		delete(s.daily.picks, k)
+		s.dailyMu.Unlock()
+		if !remembered {
+			return nil, DailyNoMatch, nil
+		}
+		return s.DailyText(spaceID, date, skip)
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	body, cut := cutText(p.Body, DailyBodyLimit)
+	return &DailyPick{Page: sum, Body: body, Truncated: cut, Count: count}, 0, nil
+}
+
+// cutText keeps the first max characters of text.
+func cutText(text string, max int) (string, bool) {
+	if len(text) <= max { // bytes are never fewer than characters
+		return text, false
+	}
+	n := 0
+	for i := range text {
+		if n == max {
+			return text[:i], true
+		}
+		n++
+	}
+	return text, false
+}
+
+// foldersOfType are the folders whose pages, those with no `type` of their
+// own in the header, have the type typ: those the bindings give it to.
+func (s *Space) foldersOfType(typ string) []string {
+	bound := false
+	for _, b := range s.Bindings() {
+		if b.Type == typ {
+			bound = true
+			break
+		}
+	}
+	if !bound {
+		return nil
+	}
+	tree, err := s.idx.Tree()
+	if err != nil {
+		return nil
+	}
+	r := s.TypeResolver()
+	var out []string
+	seen := false
+	for _, f := range tree {
+		if r.For(f.Path, "") == typ {
+			out = append(out, f.Path)
+		}
+		seen = seen || f.Path == ""
+	}
+	if !seen && r.For("", "") == typ {
+		out = append(out, "")
+	}
+	return out
+}

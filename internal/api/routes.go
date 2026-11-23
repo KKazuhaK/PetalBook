@@ -152,6 +152,13 @@ var routeTable = []route{
 	{"PUT", "/api/spaces/{space}/types/{name}", inSpace(perm.Manage), false, false, false, (*server).putType},
 	{"DELETE", "/api/spaces/{space}/types/{name}", inSpace(perm.Manage), false, false, false, (*server).deleteType},
 	{"PUT", "/api/spaces/{space}/folders/type", inSpace(perm.Manage), false, false, false, (*server).putFolderType},
+	{"GET", "/api/spaces/{space}/daily", inSpace(perm.Read), false, false, false, (*server).getDaily},
+	{"GET", "/api/spaces/{space}/daily/settings", inSpace(perm.Read), false, false, false, (*server).getDailySettings},
+	{"PUT", "/api/spaces/{space}/daily/settings", inSpace(perm.Manage), false, false, false, (*server).putDailySettings},
+	{"GET", "/api/spaces/{space}/favorites", inSpace(perm.Read), false, false, false, (*server).getFavorites},
+	{"POST", "/api/spaces/{space}/favorites", inSpace(perm.Read), false, false, false, (*server).addFavorite},
+	{"DELETE", "/api/spaces/{space}/favorites", inSpace(perm.Read), false, false, false, (*server).deleteFavorite},
+	{"PUT", "/api/spaces/{space}/favorites/order", inSpace(perm.Read), false, false, false, (*server).putFavoritesOrder},
 	{"POST", "/api/spaces/{space}/reindex", inSpace(perm.Manage), false, false, false, (*server).reindex},
 
 	{"POST", "/api/spaces/{space}/pages/{id}/assets", inSpace(perm.Write), false, false, true, (*server).putAsset},

@@ -524,10 +524,15 @@ func (s *server) moveFolder(c *call) {
 	if !s.readJSON(c.w, c.r, &req, false) {
 		return
 	}
+	// How the folder is spelled on disk: the favourites of it are under that.
+	from, _, _ := c.sp.Space.CanonicalFolder(req.From)
 	p, err := c.sp.Space.MoveFolder(s.author(c), req.From, req.To)
 	if err != nil {
 		s.fail(c.w, err)
 		return
+	}
+	if from != "" {
+		s.followFolder(c, from, p)
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Path string `json:"path"`

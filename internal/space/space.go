@@ -89,6 +89,9 @@ type Space struct {
 	heal *healer
 	// tagCfg is what was last read of the views in tags.yml (see views.go).
 	tagCfg tagCache
+	// daily is what was picked for the daily text (see daily.go).
+	dailyMu sync.Mutex
+	daily   dailyMemo
 	// typeCache are the type files parsed, by name (see listing.go).
 	typeCache map[string]typeCacheEntry
 
