@@ -439,7 +439,8 @@ func cleanEmail(in string) (string, error) {
 		return "", nil
 	}
 	at := strings.Index(e, "@")
-	if len(e) > 254 || at < 1 || at == len(e)-1 || strings.ContainsFunc(e, func(r rune) bool { return r <= 0x20 || r == 0x7f || r == '<' || r == '>' }) || !utf8.ValidString(e) {
+	// ASCII only: Unicode case mapping makes look-alikes equal (see store.EmailKey).
+	if len(e) > 254 || at < 1 || at == len(e)-1 || strings.ContainsFunc(e, func(r rune) bool { return r <= 0x20 || r >= 0x7f || r == '<' || r == '>' }) {
 		return "", errf(Invalid, "that does not look like an email address")
 	}
 	return e, nil

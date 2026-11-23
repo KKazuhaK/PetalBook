@@ -307,8 +307,9 @@ type capKey struct {
 }
 
 // hourCaps counts events per key in a fixed window of an hour that starts at
-// the key's first event. In memory and bounded, like the limits of 2.8: a key
-// seen longest ago goes first.
+// the key's first event. In memory and bounded: when the table is full a new
+// key is refused, never an old one forgotten (that would give a capped key its
+// allowance back); a key not used for an hour is over and makes room.
 type hourCaps struct {
 	mu      sync.Mutex
 	entries map[string]*hourEntry
@@ -319,6 +320,7 @@ type hourCaps struct {
 type hourEntry struct {
 	key   string
 	start time.Time
+	last  time.Time // when it was last asked for: the list is in this order
 	n     int
 	elem  *list.Element
 }
@@ -340,30 +342,47 @@ func (h *hourCaps) take(now time.Time, keys ...capKey) (wait time.Duration, ok b
 			e = nil
 		}
 		if e != nil && e.n >= k.limit {
-			h.order.MoveToFront(e.elem)
+			h.touch(e, now)
 			return e.start.Add(time.Hour).Sub(now), false
 		}
 		es[i] = e
 	}
+	need := 0
+	for _, e := range es {
+		if e == nil {
+			need++
+		}
+	}
+	// Room for the new keys: only keys not asked for in an hour go, and those
+	// are over (their window started no later). Else nothing is spent.
+	for need > 0 && len(h.entries)+need > h.max {
+		back := h.order.Back()
+		if back == nil || now.Sub(back.Value.(*hourEntry).last) < time.Hour {
+			wait := time.Minute
+			if back != nil {
+				wait = back.Value.(*hourEntry).last.Add(time.Hour).Sub(now)
+			}
+			return wait, false
+		}
+		h.drop(back.Value.(*hourEntry))
+	}
 	for i, k := range keys {
 		e := es[i]
 		if e == nil {
-			for len(h.entries) >= h.max {
-				back := h.order.Back()
-				if back == nil {
-					break
-				}
-				h.drop(back.Value.(*hourEntry))
-			}
-			e = &hourEntry{key: k.key, start: now}
+			e = &hourEntry{key: k.key, start: now, last: now}
 			e.elem = h.order.PushFront(e)
 			h.entries[k.key] = e
 		} else {
-			h.order.MoveToFront(e.elem)
+			h.touch(e, now)
 		}
 		e.n++
 	}
 	return 0, true
+}
+
+func (h *hourCaps) touch(e *hourEntry, now time.Time) {
+	e.last = now
+	h.order.MoveToFront(e.elem)
 }
 
 func (h *hourCaps) drop(e *hourEntry) {
@@ -386,7 +405,11 @@ const (
 // mailSlot spends one message of the address's allowance and of the caller's
 // (ip may be "" for a message nobody's address caused). false: nothing may be sent.
 func (s *Service) mailSlot(email, ip string) (time.Duration, bool) {
-	keys := []capKey{{"to:" + strings.ToLower(email), mailCapPerAddress}}
+	key, ok := store.EmailKey(email)
+	if !ok {
+		key = email
+	}
+	keys := []capKey{{"to:" + key, mailCapPerAddress}}
 	if ip != "" {
 		keys = append(keys, capKey{"by:" + ip, mailCapPerCaller})
 	}

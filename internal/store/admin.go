@@ -67,6 +67,28 @@ func init() {
 		}
 		return args[0], nil
 	})
+	sqlite.MustRegisterDeterministicScalarFunction(sqliteASCIILower, 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		switch v := args[0].(type) {
+		case string:
+			return asciiLowerGo(v), nil
+		case []byte:
+			return asciiLowerGo(string(v)), nil
+		}
+		return args[0], nil
+	})
+}
+
+// sqliteASCIILower lower-cases A to Z and nothing else (see asciiLower).
+const sqliteASCIILower = "petalbook_ascii_lower"
+
+func asciiLowerGo(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
 }
 
 // FoldName is a space name as it is searched: Unicode case folding, which

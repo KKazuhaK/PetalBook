@@ -189,16 +189,43 @@ func SetPasskeyRequired(ctx context.Context, q Q, id string, required bool) erro
 	return oneRow(res, err)
 }
 
-// UsersByEmail returns the users whose address equals email, ignoring case
-// (at most limit; limit <= 0: all).
-func UsersByEmail(ctx context.Context, q Q, d Dialect, sc Scope, email string, limit int) ([]User, error) {
-	lower := "LOWER"
+// EmailKey is the form addresses are compared in: ASCII, with A to Z made
+// lower case and nothing else changed. ok is false for an address with any
+// other character: Unicode case mapping makes look-alikes equal (U+0130 and
+// U+212A lower to "i" and "k"), so such an address equals no other.
+func EmailKey(email string) (key string, ok bool) {
+	b := []byte(email)
+	for i, c := range b {
+		if c >= 0x80 {
+			return "", false
+		}
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b), true
+}
+
+// asciiLower is the SQL that lower-cases A to Z of a column and nothing else
+// (LOWER follows the database's locale).
+func asciiLower(d Dialect, col string) string {
 	if d == SQLite {
-		lower = sqliteLower
+		return sqliteASCIILower + `(` + col + `)`
+	}
+	return `translate(` + col + `, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')`
+}
+
+// UsersByEmail returns the users whose address equals email in EmailKey form
+// (at most limit; limit <= 0: all). An address that is not ASCII matches
+// nobody, and a stored one that is not ASCII is matched by nothing.
+func UsersByEmail(ctx context.Context, q Q, d Dialect, sc Scope, email string, limit int) ([]User, error) {
+	key, ok := EmailKey(email)
+	if !ok || key == "" {
+		return nil, nil
 	}
 	cond, cargs := sc.cond("tenant_id")
-	sqlText := `SELECT ` + userCols + ` FROM users WHERE email <> '' AND ` + lower + `(email) = ? AND ` + cond + ` ORDER BY created, id`
-	args := append([]any{strings.ToLower(email)}, cargs...)
+	sqlText := `SELECT ` + userCols + ` FROM users WHERE email <> '' AND ` + asciiLower(d, "email") + ` = ? AND ` + cond + ` ORDER BY created, id`
+	args := append([]any{key}, cargs...)
 	if limit > 0 {
 		sqlText += ` LIMIT ?`
 		args = append(args, limit)

@@ -146,8 +146,9 @@ func TestRegistrationAnswersTheSameWhetherOrNotAMessageGoes(t *testing.T) {
 		if !contains(dup.Text, "already") || !contains(dup.Text, "/reset-password#") {
 			t.Fatalf("%s", dup.Text)
 		}
-		if rowCount(t, a, `SELECT COUNT(*) FROM registrations`) != 1 || !mustNoUser(a, "newname") {
-			t.Fatal("a registration was made for an address that has an account")
+		// The username is held all the same (a decoy whose link is never sent).
+		if rowCount(t, a, `SELECT COUNT(*) FROM registrations WHERE username = 'newname'`) != 1 || !mustNoUser(a, "newname") {
+			t.Fatal("the username is not held, or an account was made, for an address that has an account")
 		}
 		// The 3-an-hour cap of one address: the fourth message is not sent, and not said.
 		for i := 0; i < 3; i++ {
