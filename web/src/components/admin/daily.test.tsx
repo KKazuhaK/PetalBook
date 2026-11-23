@@ -196,6 +196,72 @@ describe('the administrators\' daily text page', () => {
       expect(calls().find((c) => c.url === '/api/admin/daily/apis/quotes')!.body.headers).toEqual([{ name: 'X-Api-Key' }])
     })
 
+    it('another address than the saved one means the saved header values are not kept: they are typed again', async () => {
+      await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', { ...GOOD, headers: [{ name: 'X-Api-Key', value: 'old' }] }))
+      await settle(() => api('quotes') !== null, 'the interface')
+      await click(api('quotes')!.querySelector('button'))
+      await settle(() => byText('button', d.headerChange) !== null, 'change')
+      // The same host, another path: still another address.
+      await type(input('api-url'), 'https://example.org/other?l={lang}')
+      const row = document.querySelector<HTMLElement>('[data-slot="api-header"]')!
+      expect(row.textContent).not.toContain(d.headerSet)
+      expect(byText('button', d.headerChange)).toBeNull()
+      const value = row.querySelector<HTMLInputElement>('input[type="password"]')!
+      expect(value.placeholder).toBe(d.headerValue)
+      expect(document.querySelector('[data-slot="header-again"]')?.textContent).toBe(d.headerAgain)
+      // Nothing is sent without a value.
+      await click(formSave())
+      expect(document.querySelector('[data-slot="api-form"]')!.textContent).toContain(d.headerNeedsValue('X-Api-Key'))
+      expect(calls().filter((c) => c.url === '/api/admin/daily/apis/quotes')).toHaveLength(0)
+      await type(value, 'fresh')
+      await click(formSave())
+      await settle(() => calls().filter((c) => c.url === '/api/admin/daily/apis/quotes').length === 1, 'saved')
+      expect(calls().filter((c) => c.url === '/api/admin/daily/apis/quotes')[0].body.headers).toEqual([{ name: 'X-Api-Key', value: 'fresh' }])
+    })
+
+    it('an address put back as saved gets the saved value back', async () => {
+      await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', { ...GOOD, headers: [{ name: 'X-Api-Key', value: 'old' }] }))
+      await settle(() => api('quotes') !== null, 'the interface')
+      await click(api('quotes')!.querySelector('button'))
+      await settle(() => input('api-url') !== null, 'form')
+      await type(input('api-url'), 'https://example.org/other')
+      await type(input('api-url'), GOOD.url)
+      expect(document.querySelector('[data-slot="api-header"]')!.textContent).toContain(d.headerSet)
+      expect(document.querySelector('[data-slot="header-again"]')).toBeNull()
+    })
+
+    it('the server\'s words about headers and the try are put in the language of the page', async () => {
+      const { localised } = await import('./DailyPanel')
+      expect(localised('the host a.example is not on the list of hosts')).toBe(d.tryHostNotAllowed('a.example'))
+      expect(localised('the address goes to another host than before; give the value of the header X-Api-Key again')).toBe(d.headerNeedsValue('X-Api-Key'))
+      expect(localised('the header X-Api-Key has no value yet; give one')).toBe(d.headerValueMissing('X-Api-Key'))
+      expect(localised('the answer is larger than 1048576 bytes')).toBe(d.tryTooLarge(1048576))
+      expect(localised('the answer is not JSON (its Content-Type does not say so)')).toBe(d.tryNotJson)
+      expect(localised('something else')).toBeNull()
+    })
+
+    it('a host that is not allowed yet is said before trying, can be added in one click, and a try says it in the page\'s language', async () => {
+      await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', GOOD))
+      await settle(() => api('quotes') !== null, 'the interface')
+      await click(api('quotes')!.querySelector('button'))
+      await settle(() => input('api-url') !== null, 'form')
+      expect(document.querySelector('[data-slot="try-host"]')).toBeNull()
+      await type(input('api-url'), 'https://new.example.net/q')
+      expect(document.querySelector('[data-slot="try-host"]')!.textContent).toContain(d.tryHostHint('new.example.net'))
+      // Trying anyway: the server's English is not shown as it is.
+      await click(byText('button', d.tryButton))
+      await settle(() => document.querySelector('[data-slot="try-result"]') !== null, 'the result')
+      expect(document.querySelector('[data-slot="try-result"]')!.textContent).toContain(d.tryHostNotAllowed('new.example.net'))
+      expect(document.querySelector('[data-slot="try-result"]')!.textContent).not.toContain('is not on the list of hosts')
+      await click(byText('button', d.tryAddHost))
+      await settle(() => document.querySelector('[data-slot="try-host"]') === null, 'the host added')
+      const put = calls().find((c) => c.method === 'PUT' && c.url === '/api/admin/daily')!
+      expect(put.body.hosts).toContain('new.example.net')
+      expect(put.body.hosts).toContain('example.org')
+      // The form still has what was typed.
+      expect(input('api-url').value).toBe('https://new.example.net/q')
+    })
+
     it('"Try it" shows the raw answer and the fields the paths found, for the form as it is', async () => {
       await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', GOOD))
       await click(await (async () => { await settle(() => api('quotes') !== null, 'the interface'); return api('quotes')!.querySelector('button') })())

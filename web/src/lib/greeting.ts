@@ -138,3 +138,15 @@ export function greetingFor(input: GreetingInput, g: GreetMessages): string {
   if (input.firstToday) pool.push(...g.situations.firstToday)
   return fill(pickBy(pool, day), { name })
 }
+
+// Everything the sentence of a day goes by besides the date: the part of the day, whether "just wrote" holds, how
+// many pages were written today (only up to where it matters), the language, the name, the variety and the
+// festivals of the date. A sentence kept for the day is reused only while all of these are as they were.
+export function greetingSignature(input: { now: Date; name?: string; lang: string; variety: boolean; wrote: Date[] }): string {
+  const { now, wrote } = input
+  const newest = wrote[0]
+  const just = !!newest && now.getTime() - newest.getTime() >= 0 && now.getTime() - newest.getTime() <= JUST_WROTE_MINUTES * 60_000
+  const today = localDay(now)
+  const count = Math.min(WROTE_SEVERAL, wrote.filter((d) => localDay(d) === today).length)
+  return JSON.stringify([today, bucketOf(now.getHours()), just, count, input.lang, input.name ?? '', input.variety, namesOn(now).join('+')])
+}

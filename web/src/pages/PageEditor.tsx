@@ -293,8 +293,9 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
         readDraft: live.readStorable,
         // The lists show the file, so they change only when the file does. This
         // also runs when the commit lands after the editor was left.
-        onCommitted: () => {
-          noteWrote(wroteKey(userId, space))
+        onStored: (id) => noteWrote(wroteKey(userId, space), id),
+        onCommitted: (page) => {
+          noteWrote(wroteKey(userId, space), page.id)
           void invalidateListings(qc, space)
         },
         onConflict: (info) => {

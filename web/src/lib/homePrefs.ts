@@ -46,7 +46,7 @@ export interface Visit {
   // The page has been opened today (stored true from the first call on).
   seen?: boolean
   // What the greeting said today, with what it went by, so coming back to the page does not change it.
-  greeting?: { text: string; wrote: number; variety: boolean }
+  greeting?: { text: string; sig: string }
 }
 
 export const visitKey = (user: string | undefined, space: string) => `pb.home.visit.${user ?? 'local'}.${space}`
@@ -90,27 +90,43 @@ export function rememberGreeting(key: string, today: string, greeting: NonNullab
 
 // --- the person's own writing ---------------------------------------------------------
 
-// When this browser saved a page, per person and space (the newest few): the greeting's "just wrote" goes by
-// these and not by the space's recent pages, which in a shared space are other people's too.
+// The pages this browser saved, per person and space (the newest few, one entry per page, with when it last was):
+// the greeting's "just wrote" goes by these and not by the space's recent pages, which in a shared space are other
+// people's too. One page saved ten times is one page written.
 export const wroteKey = (user: string | undefined, space: string) => `pb.home.wrote.${user ?? 'local'}.${space}`
 const WROTE_KEEP = 20
 
-export function noteWrote(key: string, at: Date = new Date()) {
+export interface Wrote {
+  id: string
+  at: Date
+}
+
+export function noteWrote(key: string, id: string, at: Date = new Date()) {
   try {
-    const list = loadWrote(key)
-    localStorage.setItem(key, JSON.stringify([at, ...list].slice(0, WROTE_KEEP).map((d) => d.getTime())))
+    const list = loadWroteEntries(key).filter((w) => w.id !== id)
+    localStorage.setItem(key, JSON.stringify([{ id, at }, ...list].sort((a, b) => b.at.getTime() - a.at.getTime()).slice(0, WROTE_KEEP).map((w) => ({ id: w.id, at: w.at.getTime() }))))
   } catch {
     // Not kept: the greeting just does not notice this one.
   }
 }
 
-// Newest first.
-export function loadWrote(key: string): Date[] {
+// Newest first. A bare number (the older format) is a page of its own.
+export function loadWroteEntries(key: string): Wrote[] {
   try {
     const raw = JSON.parse(localStorage.getItem(key) ?? '[]') as unknown
     if (!Array.isArray(raw)) return []
-    return raw.filter((n): n is number => typeof n === 'number').map((n) => new Date(n)).filter((d) => !Number.isNaN(d.getTime())).sort((a, b) => b.getTime() - a.getTime())
+    const out: Wrote[] = []
+    for (const e of raw as unknown[]) {
+      const n = typeof e === 'number' ? e : e && typeof e === 'object' && typeof (e as { at?: unknown }).at === 'number' ? (e as { at: number }).at : NaN
+      const id = typeof e === 'object' && e && typeof (e as { id?: unknown }).id === 'string' ? (e as { id: string }).id : `legacy-${n}`
+      const at = new Date(n)
+      if (!Number.isNaN(at.getTime())) out.push({ id, at })
+    }
+    return out.sort((a, b) => b.at.getTime() - a.at.getTime())
   } catch {
     return []
   }
 }
+
+// The times of the distinct pages, newest first.
+export const loadWrote = (key: string): Date[] => loadWroteEntries(key).map((w) => w.at)

@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { greetingFor } from '@/lib/greeting'
+import { greetingFor, greetingSignature } from '@/lib/greeting'
+import { lang } from '@/i18n'
 import { loadWrote, localDay, noteVisit, rememberGreeting } from '@/lib/homePrefs'
 import { th } from '@/i18n/home'
 
@@ -11,10 +12,12 @@ export function Greeting({ now, name, registered: registeredIso, visitKey, wrote
     const today = localDay(now)
     const visit = noteVisit(visitKey, today)
     const wrote = loadWrote(wroteKey)
-    const count = wrote.filter((d) => localDay(d) === today).length
-    if (visit.greeting && visit.greeting.wrote === count && visit.greeting.variety === variety && !visit.first) return visit.greeting.text
+    const sig = greetingSignature({ now, name, lang, variety, wrote })
+    // What was said is kept only while everything it went by is as it was; once it is not, it is worked out again
+    // (and it is no longer the first visit).
+    if (visit.greeting?.sig === sig && !visit.first) return visit.greeting.text
     const out = greetingFor({ now, name, registered: registeredIso ? new Date(registeredIso) : null, firstToday: visit.first, absentDays: visit.absentDays, recentUpdated: wrote, variety }, th.greet)
-    rememberGreeting(visitKey, today, { text: out, wrote: count, variety })
+    rememberGreeting(visitKey, today, { text: out, sig })
     return out
   })
   return (

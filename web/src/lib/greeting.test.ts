@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest'
-import { bucketOf, dayNumber, fill, FESTIVALS, greetingFor, hasCalendar, namesOn, TERMS, type GreetingInput } from './greeting'
+import { bucketOf, dayNumber, fill, FESTIVALS, greetingFor, greetingSignature, hasCalendar, namesOn, TERMS, type GreetingInput } from './greeting'
 import { CALENDAR_YEARS } from './calendarTable'
 import { daysBetween, getVariety, loadWrote, localDay, noteVisit, noteWrote, setVariety, visitKey, wroteKey } from './homePrefs'
 import { homeEn } from '@/i18n/home/en'
@@ -180,6 +180,42 @@ describe('filling in a sentence', () => {
   })
 })
 
+describe('what a kept sentence goes by', () => {
+  const base = { now: at(2026, 11, 24, 9, 0), name: 'Ann', lang: 'zh-CN', variety: true, wrote: [] as Date[] }
+  const sig = (over: Partial<typeof base> = {}) => greetingSignature({ ...base, ...over })
+  const wrote = (n: number, h = 8) => Array.from({ length: n }, (_, i) => at(2026, 11, 24, h, i))
+  // Same inputs but for the one that changes: the signature must differ (so the sentence is worked out again).
+  type Over = Partial<typeof base>
+  it.each<[string, Over]>([
+    ['the part of the day', { now: at(2026, 11, 24, 21, 0) }],
+    ['the part of the day, across a boundary', { now: at(2026, 11, 24, 12, 0) }],
+    ['the language', { lang: 'en' }],
+    ['the name', { name: 'Bo' }],
+    ['no name', { name: undefined }],
+    ['the variety', { variety: false }],
+    ['a page written a minute ago', { wrote: [at(2026, 11, 24, 8, 59)] }],
+    ['a page written earlier today', { wrote: [at(2026, 11, 24, 7, 0)] }],
+    ['three pages written today', { wrote: wrote(3) }],
+    ['a festival of the date', { now: at(2026, 12, 25, 9, 0) }],
+    ['another date', { now: at(2026, 11, 25, 9, 0) }],
+  ])('differs with %s', (_n, over) => {
+    expect(sig(over)).not.toBe(sig())
+  })
+  it.each<[string, Over]>([
+    ['minutes within the same part of the day', { now: at(2026, 11, 24, 10, 41) }],
+    ['a save of yesterday', { wrote: [at(2026, 11, 23, 9, 0)] }],
+  ])('does not differ with %s', (_n, over) => {
+    expect(sig(over)).toBe(sig())
+  })
+  it('counts written pages only up to where the sentence cares', () => {
+    expect(sig({ wrote: wrote(4) })).toBe(sig({ wrote: wrote(3) }))
+  })
+  it('"just wrote" ends thirty minutes after the save, with the same part of the day', () => {
+    const w = [at(2026, 11, 24, 9, 5)]
+    expect(sig({ now: at(2026, 11, 24, 9, 30), wrote: w })).not.toBe(sig({ now: at(2026, 11, 24, 9, 36), wrote: w }))
+  })
+})
+
 describe('what is remembered of visits', () => {
   beforeEach(() => localStorage.clear())
   it('only the first call of a day is the first visit; the tenth is not', () => {
@@ -190,11 +226,19 @@ describe('what is remembered of visits', () => {
   })
   it('keeps what this browser wrote, newest first, per person and space', () => {
     const key = wroteKey('u1', 's1')
-    noteWrote(key, new Date(2026, 10, 24, 9))
-    noteWrote(key, new Date(2026, 10, 24, 10))
+    noteWrote(key, 'a', new Date(2026, 10, 24, 9))
+    noteWrote(key, 'b', new Date(2026, 10, 24, 10))
     expect(loadWrote(key).map((d) => d.getHours())).toEqual([10, 9])
     expect(loadWrote(wroteKey('u2', 's1'))).toEqual([])
     expect(loadWrote(wroteKey('u1', 's2'))).toEqual([])
+  })
+  it('counts a page once however often it is saved, and reads the older format as pages of their own', () => {
+    const key = wroteKey('u1', 's1')
+    for (let h = 9; h < 13; h++) noteWrote(key, 'same', new Date(2026, 10, 24, h))
+    noteWrote(key, 'other', new Date(2026, 10, 24, 13))
+    expect(loadWrote(key).map((d) => d.getHours())).toEqual([13, 12])
+    localStorage.setItem(key, JSON.stringify([new Date(2026, 10, 24, 9).getTime(), new Date(2026, 10, 24, 10).getTime()]))
+    expect(loadWrote(key)).toHaveLength(2)
   })
   it('counts the days since the visit before', () => {
     const key = visitKey('u1', 's1')

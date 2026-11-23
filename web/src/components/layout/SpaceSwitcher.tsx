@@ -24,7 +24,7 @@ export function SpaceSwitcher() {
   return (
     <>
       <div className="flex items-center gap-1">
-        <NavLink to={id ? spaceUrls(id).home() : '/'} className="flex shrink-0 items-center px-1 pt-0.5" aria-label={t.nav.recent}>
+        <NavLink to={id ? spaceUrls(id).home() : '/'} className="flex shrink-0 items-center px-1 pt-0.5" aria-label={t.nav.home}>
           <img src="/favicon.svg" alt="" className="size-6 rounded-md" />
         </NavLink>
         <DropdownMenu>

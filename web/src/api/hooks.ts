@@ -365,9 +365,9 @@ export function useCreatePage() {
   const user = useSession().data?.user?.id
   return useMutation({
     mutationFn: (input: CreatePageInput) => spaceApi(space).createPage(input),
-    onSuccess: () => {
+    onSuccess: (page) => {
       // The greeting's "just wrote" goes by what this browser saved, not by the space's recent pages.
-      noteWrote(wroteKey(user, space))
+      noteWrote(wroteKey(user, space), page.id)
       return invalidateListings(qc, space)
     },
   })

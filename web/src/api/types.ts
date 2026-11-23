@@ -530,7 +530,7 @@ export interface DailyQuote {
   fetched?: string
   stale?: boolean
 }
-export type DailyReason = 'no_source' | 'no_match' | 'unavailable'
+export type DailyReason = 'no_source' | 'no_match' | 'unavailable' | 'out_of_range'
 // What `GET …/daily` says: a page of the space, a text from the administrators, or nothing to show.
 export interface DailyAnswer {
   page: (PageSummary & { body: string; bodyTruncated?: boolean }) | null

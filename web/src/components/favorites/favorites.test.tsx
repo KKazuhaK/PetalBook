@@ -77,6 +77,13 @@ describe('favourites in the sidebar and on the home page', () => {
     expect(m.requests.filter((r) => r.url.endsWith('/favorites') && r.method === 'GET')).toHaveLength(1)
   })
 
+  it('the logo link in the sidebar is named as the way home, not as the recent pages', async () => {
+    m = await mount(shell, { entries: ['/s/default'], signIn: true, server: { mode: 'accounts' } })
+    await settle(() => document.querySelector('a[aria-label="' + t.nav.home + '"]') !== null, 'the logo link')
+    expect(document.querySelector('a[aria-label="' + t.nav.home + '"]')!.getAttribute('href')).toMatch(/^\/s\/[^/]+\/?$/)
+    expect(document.querySelector('a[aria-label="' + t.nav.recent + '"] img[src="/favicon.svg"]')).toBeNull()
+  })
+
   it('the sidebar group folds away and remembers it; with no favourites it is not there', async () => {
     m = await open(seed)
     await settle(() => sideRows().length === 3, 'the group')

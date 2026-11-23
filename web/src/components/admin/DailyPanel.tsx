@@ -20,7 +20,24 @@ import { t } from '@/i18n'
 import { ta } from '@/i18n/admin'
 
 const d = ta.daily
-const message = (e: unknown) => (e instanceof ApiError && (e.code === 'invalid' || e.code === 'not_found' || e.code === 'rate_limited') ? e.message : t.fmt.labelled(d.failed, e instanceof Error ? e.message : ''))
+// The server answers in English; what it says about headers and about the try is put in the language of the page.
+export function localised(raw: string): string | null {
+  let m: RegExpExecArray | null
+  if ((m = /^the host (.+) is not on the list of hosts$/.exec(raw))) return d.tryHostNotAllowed(m[1])
+  if (/^the answer is not JSON/.test(raw)) return d.tryNotJson
+  if (/^the answer is not valid JSON/.test(raw)) return d.tryNotValidJson
+  if ((m = /^the answer is larger than (\d+) bytes/.exec(raw))) return d.tryTooLarge(Number(m[1]))
+  if ((m = /^the header (\S+) has no value yet/.exec(raw))) return d.headerValueMissing(m[1])
+  if ((m = /give the value of the header (\S+) again/.exec(raw))) return d.headerNeedsValue(m[1])
+  return null
+}
+const message = (e: unknown) => (e instanceof ApiError && (e.code === 'invalid' || e.code === 'not_found' || e.code === 'rate_limited') ? (localised(e.message) ?? e.message) : t.fmt.labelled(d.failed, e instanceof Error ? e.message : ''))
+
+// The host an address goes to, as the server reads it (lower case), or null while it is not an address yet.
+export function hostOfUrl(url: string): string | null {
+  const m = /^https?:\/\/(?:[^/?#@]*@)?([^/?#]+)/i.exec(url.trim())
+  return m ? m[1].toLowerCase() : null
+}
 
 // What administrators decide about the daily text of every space: what spaces may do, the languages, the default,
 // the pasted lines, the hosts the server may fetch from, and the external interfaces (any number, with a button to
@@ -282,10 +299,11 @@ type Form = Omit<DailyApi, 'headers' | 'note'> & { headers: HeaderRow[] }
 const blankForm = (): Form => ({ id: '', name: '', lang: '', url: 'https://', headers: [], text: '', source: '', author: '', link: '', refresh: 'daily', refreshMinutes: 60, skipNew: true, rps: 1, enabled: true })
 const formOf = (a: DailyApi): Form => ({ ...a, headers: (a.headers ?? []).map((h) => ({ name: h.name, set: h.set === true, value: '', changing: false })) })
 // What is sent: a header whose value was not typed has only its name, which keeps the saved value.
-const payloadOf = (f: Form): Omit<DailyApi, 'note'> => ({
+// When the address is not the saved one the server keeps no header value, so every header is typed again.
+const payloadOf = (f: Form, saved: string): Omit<DailyApi, 'note'> => ({
   ...f,
   refreshMinutes: f.refresh === 'minutes' ? f.refreshMinutes : 0,
-  headers: f.headers.filter((h) => h.name.trim() !== '').map((h) => (h.set && (!h.changing || h.value === '') ? { name: h.name.trim() } : { name: h.name.trim(), value: h.value })),
+  headers: f.headers.filter((h) => h.name.trim() !== '').map((h) => (h.set && f.url === saved && (!h.changing || h.value === '') ? { name: h.name.trim() } : { name: h.name.trim(), value: h.value })),
 })
 
 function ApisSection({ data }: { data: AdminDaily }) {
@@ -306,7 +324,7 @@ function ApisSection({ data }: { data: AdminDaily }) {
             </button>
             {open?.id === a.id && (
               <div className="border-t p-3">
-                <ApiEditor key={JSON.stringify(a)} initial={open.form} existing languages={data.languages} onClose={() => setOpen(null)} />
+                <ApiEditor key={JSON.stringify(a)} initial={open.form} existing languages={data.languages} hosts={data.hosts} onClose={() => setOpen(null)} />
               </div>
             )}
           </li>
@@ -314,7 +332,7 @@ function ApisSection({ data }: { data: AdminDaily }) {
       </ul>
       {open?.id === 'new' && (
         <div className="rounded-lg border p-3">
-          <ApiEditor initial={open.form} existing={false} languages={data.languages} onClose={() => setOpen(null)} />
+          <ApiEditor initial={open.form} existing={false} languages={data.languages} hosts={data.hosts} onClose={() => setOpen(null)} />
         </div>
       )}
       {open?.id !== 'new' && (
@@ -343,7 +361,7 @@ function ApisSection({ data }: { data: AdminDaily }) {
   )
 }
 
-function ApiEditor({ initial, existing, languages, onClose }: { initial: Form; existing: boolean; languages: string[]; onClose: () => void }) {
+function ApiEditor({ initial, existing, languages, hosts, onClose }: { initial: Form; existing: boolean; languages: string[]; hosts: string[]; onClose: () => void }) {
   const [f, setF] = useState<Form>(initial)
   const [error, setError] = useState('')
   const [confirming, setConfirming] = useState(false)
@@ -352,6 +370,11 @@ function ApiEditor({ initial, existing, languages, onClose }: { initial: Form; e
   const save = useSaveDailyApi()
   const del = useDeleteDailyApi()
   const tryIt = useTryDailyApi()
+  const addHost = useSaveDailySite()
+  const tryHost = hostOfUrl(f.url)
+  const hostMissing = tryHost !== null && !hosts.includes(tryHost)
+  // The saved values go with the saved address: with another one they are typed again.
+  const urlChanged = f.url !== initial.url
   const set = (patch: Partial<Form>) => setF((x) => ({ ...x, ...patch }))
   const setHeader = (i: number, patch: Partial<HeaderRow>) => setF((x) => ({ ...x, headers: x.headers.map((h, j) => (j === i ? { ...h, ...patch } : h)) }))
   const langs = ['', ...languages, ...(f.lang !== '' && !languages.includes(f.lang) ? [f.lang] : [])]
@@ -370,7 +393,9 @@ function ApiEditor({ initial, existing, languages, onClose }: { initial: Form; e
       onSubmit={(e) => {
         e.preventDefault()
         setError('')
-        save.mutate(payloadOf(f), { onSuccess: () => { toast.success(d.saved); onClose() }, onError: (err) => setError(message(err)) })
+        const missing = urlChanged ? f.headers.find((h) => h.set && h.name.trim() !== '' && h.value === '') : undefined
+        if (missing) return setError(d.headerNeedsValue(missing.name))
+        save.mutate(payloadOf(f, initial.url), { onSuccess: () => { toast.success(d.saved); onClose() }, onError: (err) => setError(message(err)) })
       }}
     >
       <div className="grid gap-3 sm:grid-cols-2">
@@ -392,10 +417,11 @@ function ApiEditor({ initial, existing, languages, onClose }: { initial: Form; e
       <fieldset className="grid gap-2">
         <legend className="text-sm font-medium">{d.headers}</legend>
         <p className="text-xs text-muted-foreground">{d.headersHelp}</p>
+        {urlChanged && f.headers.some((h) => h.set) && <p className="text-xs text-muted-foreground" data-slot="header-again">{d.headerAgain}</p>}
         {f.headers.map((h, i) => (
           <div key={i} className="flex flex-wrap items-center gap-2" data-slot="api-header">
             <Input aria-label={d.headerName} placeholder="X-Api-Key" value={h.name} readOnly={h.set} onChange={(e) => setHeader(i, { name: e.target.value })} className="w-44" autoComplete="off" />
-            {h.set && !h.changing ? (
+            {h.set && !h.changing && !urlChanged ? (
               <>
                 <span className="text-sm text-muted-foreground">{d.headerSet}</span>
                 <Button type="button" variant="outline" size="xs" onClick={() => setHeader(i, { changing: true })}>
@@ -403,7 +429,7 @@ function ApiEditor({ initial, existing, languages, onClose }: { initial: Form; e
                 </Button>
               </>
             ) : (
-              <Input aria-label={d.headerValue} type="password" placeholder={h.set ? d.headerKeep : d.headerValue} value={h.value} onChange={(e) => setHeader(i, { value: e.target.value })} className="w-60" autoComplete="off" />
+              <Input aria-label={d.headerValue} type="password" placeholder={h.set && !urlChanged ? d.headerKeep : d.headerValue} value={h.value} onChange={(e) => setHeader(i, { value: e.target.value })} className="w-60" autoComplete="off" />
             )}
             <Button type="button" variant="ghost" size="icon-sm" aria-label={d.headerRemove} title={d.headerRemove} onClick={() => setF((x) => ({ ...x, headers: x.headers.filter((_, j) => j !== i) }))}>
               <Trash2 />
@@ -474,7 +500,7 @@ function ApiEditor({ initial, existing, languages, onClose }: { initial: Form; e
             disabled={tryIt.isPending}
             onClick={() =>
               tryIt.mutate(
-                { api: payloadOf(f), lang: tryLang, date: dayOf(new Date()).date },
+                { api: payloadOf(f, initial.url), lang: tryLang, date: dayOf(new Date()).date },
                 { onSuccess: setResult, onError: (e) => setResult({ ok: false, message: message(e) }) },
               )
             }
@@ -483,6 +509,14 @@ function ApiEditor({ initial, existing, languages, onClose }: { initial: Form; e
             {tryIt.isPending ? d.trying : d.tryButton}
           </Button>
         </div>
+        {hostMissing && (
+          <div className="flex flex-wrap items-center gap-2 text-sm" data-slot="try-host">
+            <span>{d.tryHostHint(tryHost)}</span>
+            <Button type="button" size="xs" variant="outline" disabled={addHost.isPending} onClick={() => addHost.mutate({ hosts: [...hosts, tryHost] }, { onError: (e) => setError(message(e)) })}>
+              {d.tryAddHost}
+            </Button>
+          </div>
+        )}
         {result && <TryResult result={result} />}
       </div>
 
@@ -522,7 +556,7 @@ function TryResult({ result }: { result: DailyTryResult }) {
   ]
   return (
     <div className="grid gap-2 text-sm" data-slot="try-result" role="status">
-      <p className={result.ok ? 'text-green-700 dark:text-green-400' : 'text-destructive'}>{result.ok ? d.tryOk(result.status ?? 200) : (result.message ?? d.tryFailed)}</p>
+      <p className={result.ok ? 'text-green-700 dark:text-green-400' : 'text-destructive'}>{result.ok ? d.tryOk(result.status ?? 200) : (result.message ? (localised(result.message) ?? result.message) : d.tryFailed)}</p>
       {result.url && <p className="truncate font-mono text-xs text-muted-foreground">{result.url}</p>}
       {result.raw !== undefined && (
         <div>

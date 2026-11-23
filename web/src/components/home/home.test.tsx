@@ -321,7 +321,7 @@ describe('the greeting', () => {
     m = await opens()
     await m.unmount()
     // This browser saved a page a few minutes ago.
-    noteWrote(wroteKey(undefined, 'default'), new Date(Date.now() - 5 * 60_000))
+    noteWrote(wroteKey(undefined, 'default'), 'p1', new Date(Date.now() - 5 * 60_000))
     m = await opens()
     await ready()
     expect(greeting()).toMatch(/刚写完|写得不错/)

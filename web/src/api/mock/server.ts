@@ -770,6 +770,8 @@ export function createMockServer(options: MockOptions = {}) {
       // "missing": the path finds nothing).
       const a = (isRecord(body.api) ? body.api : {}) as Record<string, unknown>
       const url = String(a.url ?? '')
+      const tryHost = /^https?:\/\/([^/?#]+)/i.exec(url)?.[1]?.toLowerCase()
+      if (tryHost && !site.hosts.includes(tryHost)) return { status: 200, body: { ok: false, message: `the host ${tryHost} is not on the list of hosts`, url } }
       if (url.includes('down')) return { status: 200, body: { ok: false, message: 'status 503', status: 503, url } }
       const raw = '{"hitokoto": "山色空蒙雨亦奇", "from": "饮湖上初晴后雨", "from_who": "苏轼"}'
       const pathErrors: Record<string, string> = {}
