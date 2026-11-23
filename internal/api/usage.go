@@ -318,7 +318,7 @@ func (s *server) mergeOwnQuota(c *call, target store.User, raw json.RawMessage, 
 	return own.Encode(), true
 }
 
-// patchQuota is the quota part of PATCH /api/users/{id}. It is checked before
+// checkQuotaPatch is the quota part of PATCH /api/users/{id}. It is checked before
 // anything else is changed (so a refused quota changes nothing), and applied
 // after.
 func (s *server) checkQuotaPatch(c *call, id string, raw json.RawMessage) (apply func() bool, ok bool) {
