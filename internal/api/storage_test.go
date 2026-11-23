@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KKazuhaK/PetalBook/internal/api"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 )
@@ -453,5 +454,67 @@ func TestALimitOnLocalSpacesRefusesUploadsAndImportsButNotText(t *testing.T) {
 		admin.do("POST", base+"/pages", map[string]any{"meta": map[string]any{"title": "Long"}, "body": text}).want(t, 201, "")
 		admin.do("PUT", "/api/admin/storage", map[string]any{"localSpaces": map[string]any{"maxBytes": nil}}).want(t, 200, "")
 		admin.upload(base, pid, "big.png", big).want(t, 201, "")
+	})
+}
+
+// Every route the index answers works on an evicted space, without restoring
+// it: links and backlinks too, which on a cached space read the files.
+func TestEveryIndexOnlyRouteAnswersOnAnEvictedSpace(t *testing.T) {
+	t.Parallel()
+	n := &netSwitch{}
+	eachAccounts(t, storageOpts(n, func(o *spaces.Options) { o.EvictEvery = -1 }), func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		remote := filterRemote(t)
+		dir := t.TempDir() + "/o"
+		rg(t, t.TempDir(), "clone", "-q", remote, dir)
+		rg(t, dir, "checkout", "-q", "-B", "main")
+		writeFile(t, dir+"/From.md", "---\nid: PAGEA00001\ntitle: From\ntags: [a]\n---\nSee [the target](To.md) here.\n")
+		writeFile(t, dir+"/To.md", "---\nid: PAGEB00002\ntitle: To\n---\ntarget\n")
+		rg(t, dir, "add", "-A")
+		rg(t, dir, "commit", "-qm", "two pages")
+		rg(t, dir, "push", "-q", "origin", "main")
+		sid := admin.do("POST", "/api/spaces", map[string]any{"name": "Followed", "remote": connectBody("file://" + remote)}).want(t, 201, "").body["id"].(string)
+		base := "/api/spaces/" + sid
+		// On the cached space first: what the evicted one must answer the same.
+		cachedLinks := admin.do("GET", base+"/pages/PAGEA00001/links", nil).want(t, 200, "")
+		cachedBack := admin.do("GET", base+"/pages/PAGEB00002/backlinks", nil).want(t, 200, "")
+		if b := cachedBack.body["items"].([]any); len(b) != 1 || b[0].(map[string]any)["excerpt"] == "" {
+			t.Fatal(cachedBack.raw)
+		}
+		a.clock.Advance(48 * time.Hour)
+		admin.do("POST", "/api/admin/spaces/"+sid+"/evict", nil).want(t, 204, "")
+
+		links := admin.do("GET", base+"/pages/PAGEA00001/links", nil).want(t, 200, "")
+		if links.raw != cachedLinks.raw {
+			t.Fatalf("links of an evicted space:\n%s\nof the cached one:\n%s", links.raw, cachedLinks.raw)
+		}
+		back := admin.do("GET", base+"/pages/PAGEB00002/backlinks", nil).want(t, 200, "")
+		items := back.body["items"].([]any)
+		if len(items) != 1 || back.body["total"] != float64(1) {
+			t.Fatal(back.raw)
+		}
+		it := items[0].(map[string]any)
+		if it["id"] != "PAGEA00001" || it["path"] != "From.md" || it["title"] != "From" || it["excerpt"] != "" {
+			t.Fatalf("a backlink of an evicted space has its page and no excerpt: %s", back.raw)
+		}
+		admin.do("GET", base+"/pages/NOSUCHPAGE/links", nil).want(t, 404, "not_found")
+		admin.do("GET", base+"/pages/NOSUCHPAGE/backlinks", nil).want(t, 404, "not_found")
+
+		query := map[string]string{"GET /api/spaces/{space}/pages/groups": "?key=title&tag=a"}
+		for _, rt := range api.IndexOnlyRoutes() {
+			method, pattern, _ := strings.Cut(rt, " ")
+			p := strings.ReplaceAll(pattern, "{space}", sid)
+			p = strings.ReplaceAll(p, "{id}", "PAGEB00002")
+			if strings.Contains(p, "{") {
+				t.Fatalf("a route with a parameter this test does not fill: %s", rt)
+			}
+			r := admin.do(method, p+query[rt], nil)
+			if r.code != 200 {
+				t.Errorf("%s on an evicted space: %d %s", rt, r.code, r.raw)
+			}
+		}
+		if c := admin.do("GET", "/api/admin/spaces/"+sid, nil).body["storage"].(map[string]any)["cache"]; c != "evicted" {
+			t.Fatalf("an index-only read restored the space (%v)", c)
+		}
 	})
 }

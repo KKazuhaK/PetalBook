@@ -33,9 +33,10 @@ type Backlink struct {
 // Backlinks lists the pages that link to page id, BacklinksPageSize at a time,
 // the most recently changed first. It reads the files of the pages it lists
 // (for the excerpt) and no others. total is the number of pages that link to
-// it; next is "" at the end.
+// it; next is "" at the end. An evicted space has no files: its backlinks come
+// from the index alone, without excerpts.
 func (s *Space) Backlinks(id, cursor string) (items []Backlink, next string, total int, err error) {
-	rel, _, _, err := s.load(id, true)
+	rel, err := s.locate(id)
 	if err != nil {
 		return nil, "", 0, err
 	}
@@ -49,6 +50,10 @@ func (s *Space) Backlinks(id, cursor string) (items []Backlink, next string, tot
 	items = make([]Backlink, 0, len(rows))
 	for _, r := range rows {
 		b := Backlink{ID: r.ID, Path: r.Path, Title: r.Label, Untitled: r.Untitled}
+		if s.evicted {
+			items = append(items, b)
+			continue
+		}
 		if data, _, err := s.readFile(r.Path); err == nil {
 			for _, l := range links.Extract(r.Path, data) {
 				if (l.ID != "" && l.ID == id) || (l.ID == "" && l.Path == rel) {
@@ -109,7 +114,7 @@ type OutLink struct {
 
 // Links lists the links of page id to other pages, in the order of the text.
 func (s *Space) Links(id string) ([]OutLink, error) {
-	if _, _, _, err := s.load(id, true); err != nil {
+	if _, err := s.locate(id); err != nil {
 		return nil, err
 	}
 	rows, ok, err := s.idx.OutLinks(id)
@@ -127,6 +132,20 @@ func (s *Space) Links(id string) ([]OutLink, error) {
 		}
 	}
 	return out, nil
+}
+
+// locate is the path of page id, checked against its file as load does. An
+// evicted space has no file to check: the index's path is the answer.
+func (s *Space) locate(id string) (string, error) {
+	if s.evicted {
+		rel, ok := s.idx.PathByID(id)
+		if !ok {
+			return "", ErrNotFound
+		}
+		return rel, nil
+	}
+	rel, _, _, err := s.load(id, true)
+	return rel, err
 }
 
 // --- keeping links right when pages move ---------------------------------------

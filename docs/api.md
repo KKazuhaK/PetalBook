@@ -1223,8 +1223,11 @@ An evicted space has no clone on the server: `DATA/spaces/<id>` is removed. Its
 index, its records (members, remote, drafts) and its settings in the state
 database stay. Lists, the tree, tags, search (the space's and the global one),
 links and backlinks and the checks are answered from the index without
-fetching anything, as fast as for a cached space. Everything that needs a file
-restores the space first.
+fetching anything, as fast as for a cached space. What the index does not
+hold is left out rather than fetched: a backlink's `excerpt` is `""` (it is
+the paragraph, read from the file), a listing has no tag colours and no type
+a folder gives its pages (both are in files of the space). Everything that
+needs a file restores the space first.
 
 **Which spaces.** Only spaces that follow a remote, and only when all of this
 holds at the moment of eviction, checked while the space is closed and held
@@ -2025,7 +2028,8 @@ The pages that link to this one, the most recently changed first, 20 at a time:
 ```
 
 `excerpt` is the paragraph the link is in, as plain text, cut to about 240
-characters around the link (`""` when the file no longer has the link). A page
+characters around the link (`""` when the file no longer has the link, and
+while the space is evicted: see "Eviction"). A page
 that links several times is listed once. `next` is `""` at the end, else the
 `cursor` of the next request; a `cursor` that was not handed out is `400`. `404`
 for an unknown page.

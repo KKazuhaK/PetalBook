@@ -137,8 +137,12 @@ func (s *Space) resync() bool {
 	return s.resyncNow()
 }
 
-// resyncNow runs the sync without the throttle.
+// resyncNow runs the sync without the throttle. An evicted space has no
+// files to sync from: its index stays as it was.
 func (s *Space) resyncNow() bool {
+	if s.evicted {
+		return false
+	}
 	s.syncMu.Lock()
 	s.lastSync = time.Now()
 	s.syncMu.Unlock()
