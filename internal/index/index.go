@@ -16,13 +16,14 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	_ "modernc.org/sqlite" // pure-Go driver, keeps the binary static
 )
 
 // schemaVersion changes whenever the tables or the way text is tokenised
 // change; an index with another version is thrown away and rebuilt.
-const schemaVersion = 9
+const schemaVersion = 10
 
 const schema = `
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -46,8 +47,16 @@ CREATE TABLE pages (
 	rev         TEXT NOT NULL,
 	excerpt     TEXT NOT NULL,
 	props       TEXT NOT NULL DEFAULT '',
-	partial     TEXT NOT NULL DEFAULT ''
+	partial     TEXT NOT NULL DEFAULT '',
+	seq         INTEGER NOT NULL DEFAULT 0
 );
+CREATE INDEX pages_seq ON pages(seq);
+-- The pages that were removed, for the change feed (see feed.go): the sequence
+-- number the removal got and when it happened (Unix seconds). Bounded by
+-- goneMax records and goneAge.
+CREATE TABLE gone (id TEXT PRIMARY KEY, seq INTEGER NOT NULL, at INTEGER NOT NULL) WITHOUT ROWID;
+CREATE INDEX gone_seq ON gone(seq);
+CREATE INDEX gone_at ON gone(at);
 CREATE INDEX pages_folder_mtime ON pages(folder, mtime_ns);
 CREATE INDEX pages_mtime ON pages(mtime_ns);
 CREATE INDEX pages_created ON pages(created_key);
@@ -116,6 +125,11 @@ type Index struct {
 	path string
 	root string
 	wmu  sync.Mutex
+
+	// head is where the change feed is (see feed.go), moved by every commit.
+	head atomic.Pointer[headState]
+	// now is the clock of the removal records (tests set it).
+	now func() time.Time
 
 	// plan holds the bounds that choose how a listing or a count is read.
 	plan planBounds
@@ -201,7 +215,7 @@ var walCheckpointAt int64 = 16 << 20
 const readConns = 8
 
 func open(dbPath, root string) (*Index, error) {
-	x := &Index{path: dbPath, root: root, walMax: walCheckpointAt, plan: defaultPlan}
+	x := &Index{path: dbPath, root: root, walMax: walCheckpointAt, plan: defaultPlan, now: time.Now}
 	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(10000)&_pragma=cache_size(-65536)" +
 		fmt.Sprintf("&_pragma=journal_size_limit(%d)", x.walMax)
 	var err error
@@ -212,6 +226,10 @@ func open(dbPath, root string) (*Index, error) {
 	x.wdb.SetMaxOpenConns(1)
 	x.wdb.SetMaxIdleConns(1)
 	if err := x.init(); err != nil {
+		x.wdb.Close()
+		return nil, err
+	}
+	if err := x.loadHead(); err != nil {
 		x.wdb.Close()
 		return nil, err
 	}
@@ -266,6 +284,9 @@ func (x *Index) init() error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meta(key, value) VALUES ('root', ?)`, x.root); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meta(key, value) VALUES ('epoch', ?), ('seq', '0'), ('tree', '0'), ('gone_n', '0'), ('gone_floor', '0')`, newEpoch()); err != nil {
+		return err
+	}
 	// PRAGMA does not take parameters; the value is a constant.
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion)); err != nil {
 		return err
@@ -295,11 +316,22 @@ func (x *Index) unlockWrite() { x.wmu.Unlock() }
 // commit commits a write, with gen odd for as long as the commit may be under
 // way: a read that took its snapshot while gen held one even value cannot have
 // seen a part of what it changed.
-func (x *Index) commit(tx *sql.Tx) error {
+func (x *Index) commit(tx *sql.Tx) error { return x.commitW(tx, nil) }
+
+// commitW is commit for a write that has a writer: when the commit succeeds,
+// the head of the change feed moves to where the writer left it (inside the
+// odd generation, so a read that sees the commit sees the head too).
+func (x *Index) commitW(tx *sql.Tx, w *writer) error {
 	err := func() error {
 		x.gen.Add(1)
 		defer x.gen.Add(1)
-		return tx.Commit()
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		if w != nil {
+			x.publish(w)
+		}
+		return nil
 	}()
 	if err == nil {
 		x.checkWAL()

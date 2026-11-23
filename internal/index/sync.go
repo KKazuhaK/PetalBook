@@ -126,8 +126,9 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 		return Stats{}, err
 	}
 	defer tx.Rollback()
-	w := newWriter(ctx, tx)
+	w := x.newWriter(ctx, tx)
 	defer w.close()
+	w.fd.pruneAge = true
 	rules := x.rules.Load()
 
 	st := Stats{}
@@ -205,7 +206,7 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 			return Stats{}, err
 		}
 	}
-	if err := x.commit(tx); err != nil {
+	if err := x.commitW(tx, w); err != nil {
 		return Stats{}, err
 	}
 	if len(todo) > 1000 {
@@ -333,7 +334,7 @@ func (x *Index) Put(rel string, data []byte, mtimeNs int64) (bool, error) {
 		return false, err
 	}
 	defer tx.Rollback()
-	w := newWriter(ctx, tx)
+	w := x.newWriter(ctx, tx)
 	defer w.close()
 
 	e, prob := BuildEntry(rel, data, mtimeNs)
@@ -351,7 +352,7 @@ func (x *Index) Put(rel string, data []byte, mtimeNs int64) (bool, error) {
 	if err := w.finish(); err != nil {
 		return false, err
 	}
-	return ok, x.commit(tx)
+	return ok, x.commitW(tx, w)
 }
 
 // Remove drops a page from the index by id.
@@ -364,7 +365,7 @@ func (x *Index) Remove(id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	w := newWriter(ctx, tx)
+	w := x.newWriter(ctx, tx)
 	defer w.close()
 	var rel string
 	if err := tx.QueryRowContext(ctx, `SELECT path FROM pages WHERE id = ?`, id).Scan(&rel); errors.Is(err, sql.ErrNoRows) {
@@ -378,24 +379,30 @@ func (x *Index) Remove(id string) error {
 	if err := w.finish(); err != nil {
 		return err
 	}
-	return x.commit(tx)
+	return x.commitW(tx, w)
 }
 
 // AddFolder records a folder and its ancestors.
 func (x *Index) AddFolder(rel string) error {
 	x.wmu.Lock()
 	defer x.unlockWrite()
-	tx, err := x.wdb.Begin()
+	ctx := context.Background()
+	tx, err := x.wdb.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	w := x.newWriter(ctx, tx)
+	defer w.close()
 	for ; rel != "" && rel != "."; rel = path.Dir(rel) {
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO folders(path) VALUES (?)`, rel); err != nil {
+		if err := w.addFolder(rel); err != nil {
 			return err
 		}
 	}
-	return x.commit(tx)
+	if err := w.flushFeed(); err != nil {
+		return err
+	}
+	return x.commitW(tx, w)
 }
 
 // Forget drops the rows of these file paths and these folders, whatever is on
@@ -411,7 +418,7 @@ func (x *Index) Forget(paths, dirs []string) error {
 		return err
 	}
 	defer tx.Rollback()
-	w := newWriter(ctx, tx)
+	w := x.newWriter(ctx, tx)
 	defer w.close()
 	for _, p := range paths {
 		if err := w.removePath(p); err != nil {
@@ -419,14 +426,14 @@ func (x *Index) Forget(paths, dirs []string) error {
 		}
 	}
 	for _, d := range dirs {
-		if _, err := w.exec(`DELETE FROM folders WHERE path = ?`, d); err != nil {
+		if err := w.dropFolder(d); err != nil {
 			return err
 		}
 	}
 	if err := w.finish(); err != nil {
 		return err
 	}
-	return x.commit(tx)
+	return x.commitW(tx, w)
 }
 
 // PathByID returns the file path of a page.
@@ -492,10 +499,16 @@ type writer struct {
 	// fresh says the tables were emptied in this transaction (a full
 	// rebuild): there is nothing to replace.
 	fresh bool
+
+	// The change feed (see feed.go): where it stands, read at the first need
+	// and written back by finish.
+	now       func() time.Time
+	fd        feedState
+	treeDirty bool
 }
 
-func newWriter(ctx context.Context, tx *sql.Tx) *writer {
-	return &writer{ctx: ctx, tx: tx, stmts: map[string]*sql.Stmt{}}
+func (x *Index) newWriter(ctx context.Context, tx *sql.Tx) *writer {
+	return &writer{ctx: ctx, tx: tx, stmts: map[string]*sql.Stmt{}, now: x.now}
 }
 
 func (w *writer) close() {
@@ -537,7 +550,7 @@ func (w *writer) clearAll() error {
 		}
 	}
 	w.allTitles, w.allLinks, w.fresh = true, true, true
-	return nil
+	return w.newEpoch()
 }
 
 // removePath deletes whatever the index holds for a file path.
@@ -553,14 +566,18 @@ func (w *writer) removePath(rel string) error {
 }
 
 func (w *writer) deleteRow(rowid int64) error {
-	if !w.allLinks {
-		// The links to the page are broken now.
-		var id, p string
-		if err := w.queryRow(`SELECT id, path FROM pages WHERE rowid = ?`, rowid).Scan(&id, &p); err == nil {
+	var id, p string
+	if err := w.queryRow(`SELECT id, path FROM pages WHERE rowid = ?`, rowid).Scan(&id, &p); err == nil {
+		if !w.allLinks {
+			// The links to the page are broken now.
 			w.markLinkTarget(id, p)
-		} else if !errors.Is(err, sql.ErrNoRows) {
+		}
+		// The page is gone for the change feed (until it is made again).
+		if err := w.recordGone(id); err != nil {
 			return err
 		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
 	}
 	for _, q := range []string{`DELETE FROM tags WHERE page = ?`, `DELETE FROM props WHERE page = ?`, `DELETE FROM links WHERE src = ?`, `DELETE FROM fts WHERE rowid = ?`, `DELETE FROM pages WHERE rowid = ?`} {
 		if _, err := w.exec(q, rowid); err != nil {
@@ -630,8 +647,20 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 			return "", err
 		}
 	}
+	seq, err := w.nextSeq()
+	if err != nil {
+		return "", err
+	}
+	if !found || oldFolder != e.Folder {
+		if err := w.treeChanged(); err != nil {
+			return "", err
+		}
+	}
+	if err := w.forgetGone(e.ID); err != nil {
+		return "", err
+	}
 	args := []any{e.ID, e.Path, e.Folder, e.Title, e.Subtitle, e.Source, b2i(e.Untitled), strings.ToLower(e.Title), e.Label, e.Type,
-		tagsJSON(e.Tags), e.Created, e.CreatedKey, e.MtimeNs, e.Size, e.Rev, e.Excerpt, e.PropsJSON, e.PartialJSON}
+		tagsJSON(e.Tags), e.Created, e.CreatedKey, e.MtimeNs, e.Size, e.Rev, e.Excerpt, e.PropsJSON, e.PartialJSON, seq}
 	titleKey := strings.ToLower(e.Title)
 	if found {
 		w.markTitle(oldFolder, oldKey, oldUntitled)
@@ -643,11 +672,11 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 			return "", err
 		}
 		_, err = w.exec(`UPDATE pages SET id=?, path=?, folder=?, title=?, subtitle=?, source=?, untitled=?, title_key=?, label=?, type=?,
-			tags=?, created=?, created_key=?, mtime_ns=?, size=?, rev=?, excerpt=?, props=?, partial=? WHERE rowid = ?`, append(args, rowid)...)
+			tags=?, created=?, created_key=?, mtime_ns=?, size=?, rev=?, excerpt=?, props=?, partial=?, seq=? WHERE rowid = ?`, append(args, rowid)...)
 	} else {
 		var res sql.Result
 		res, err = w.exec(`INSERT INTO pages(id, path, folder, title, subtitle, source, untitled, title_key, label, type,
-			tags, created, created_key, mtime_ns, size, rev, excerpt, props, partial) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, args...)
+			tags, created, created_key, mtime_ns, size, rev, excerpt, props, partial, seq) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, args...)
 		if err == nil {
 			rowid, err = res.LastInsertId()
 		}
@@ -706,7 +735,7 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 		if d == "." {
 			break
 		}
-		if _, err := w.exec(`INSERT OR IGNORE INTO folders(path) VALUES (?)`, d); err != nil {
+		if err := w.addFolder(d); err != nil {
 			return "", err
 		}
 	}
@@ -728,7 +757,7 @@ func (w *writer) deleteRowKeepPage(rowid int64) error {
 // really gone.
 func (w *writer) replaceFolders(dirs map[string]bool, exists func(string) bool) error {
 	for d := range dirs {
-		if _, err := w.exec(`INSERT OR IGNORE INTO folders(path) VALUES (?)`, d); err != nil {
+		if err := w.addFolder(d); err != nil {
 			return err
 		}
 	}
@@ -749,13 +778,43 @@ func (w *writer) replaceFolders(dirs map[string]bool, exists func(string) bool) 
 	}
 	rows.Close()
 	for _, p := range stale {
-		if _, err := w.exec(`DELETE FROM folders WHERE path = ?`, p); err != nil {
+		if err := w.dropFolder(p); err != nil {
 			return err
 		}
 	}
 	// Folders of indexed pages exist even if the walk skipped them.
-	_, err = w.exec(`INSERT OR IGNORE INTO folders(path) SELECT DISTINCT folder FROM pages`)
-	return err
+	res, err := w.exec(`INSERT OR IGNORE INTO folders(path) SELECT DISTINCT folder FROM pages`)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return w.treeChanged()
+	}
+	return nil
+}
+
+// addFolder records a folder; the tree changed if it was not there.
+func (w *writer) addFolder(rel string) error {
+	res, err := w.exec(`INSERT OR IGNORE INTO folders(path) VALUES (?)`, rel)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return w.treeChanged()
+	}
+	return nil
+}
+
+// dropFolder forgets a folder; the tree changed if it was there.
+func (w *writer) dropFolder(rel string) error {
+	res, err := w.exec(`DELETE FROM folders WHERE path = ?`, rel)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return w.treeChanged()
+	}
+	return nil
 }
 
 func b2i(b bool) int {
@@ -797,7 +856,7 @@ func (x *Index) RetryDuplicates(src Source) error {
 		return err
 	}
 	defer tx.Rollback()
-	w := newWriter(ctx, tx)
+	w := x.newWriter(ctx, tx)
 	defer w.close()
 	for _, p := range paths {
 		info, err := src.Stat(p)
@@ -836,7 +895,7 @@ func (x *Index) RetryDuplicates(src Source) error {
 	if err := w.finish(); err != nil {
 		return err
 	}
-	return x.commit(tx)
+	return x.commitW(tx, w)
 }
 
 // Refresh brings the index in line with the source for exactly these page
@@ -877,7 +936,7 @@ func (x *Index) Refresh(src Source, paths, dirs []string) (Stats, error) {
 		return Stats{}, err
 	}
 	defer tx.Rollback()
-	w := newWriter(ctx, tx)
+	w := x.newWriter(ctx, tx)
 	defer w.close()
 
 	st := Stats{}
@@ -924,10 +983,10 @@ func (x *Index) Refresh(src Source, paths, dirs []string) (Stats, error) {
 			}
 			seen[d] = true
 			if src.DirExists(d) {
-				_, err = w.exec(`INSERT OR IGNORE INTO folders(path) VALUES (?)`, d)
+				err = w.addFolder(d)
 			} else {
 				// A folder that is gone takes its (page-less) descendants with it.
-				_, err = w.exec(`DELETE FROM folders WHERE path = ?`, d)
+				err = w.dropFolder(d)
 			}
 			if err != nil {
 				return Stats{}, err
@@ -937,7 +996,7 @@ func (x *Index) Refresh(src Source, paths, dirs []string) (Stats, error) {
 	if err := w.finish(); err != nil {
 		return Stats{}, err
 	}
-	if err := x.commit(tx); err != nil {
+	if err := x.commitW(tx, w); err != nil {
 		return Stats{}, err
 	}
 	x.wdb.QueryRowContext(ctx, `SELECT count(*) FROM pages`).Scan(&st.Pages)
