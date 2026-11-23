@@ -460,3 +460,26 @@ func TestSweptDraftsFollowGroupRoles(t *testing.T) {
 		}
 	})
 }
+
+// The audit row of an add names only the people it added, not those who were
+// in the group already.
+func TestGroupMemberAddedAuditListsOnlyTheAdded(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		a.addUser("ann", pw, "member")
+		a.addUser("bob", pw, "member")
+		annID, bobID := mustUserID(t, a, "ann"), mustUserID(t, a, "bob")
+		g := admin.mkGroup(t, "Eng", "local")
+		admin.groupAdd(t, g, annID).want(t, 200, "")
+		r := admin.groupAdd(t, g, annID, bobID).want(t, 200, "")
+		if r.body["added"] != float64(1) || r.body["already"] != float64(1) {
+			t.Fatal(r.raw)
+		}
+		rows := admin.audit(t, "group_member_added")
+		users := rows[0]["detail"].(map[string]any)["users"].([]any) // newest first
+		if len(users) != 1 || users[0] != bobID {
+			t.Fatalf("users %v", users)
+		}
+	})
+}

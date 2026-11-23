@@ -277,7 +277,7 @@ func (m *Manager) GroupSpaces(ctx context.Context, id, cursor string, limit int)
 }
 
 // AddGroupPeople adds people to a local group, all or nothing. It returns how
-// many were added and how many were in it already.
+// many were added, how many were in it already, and the ids of those added.
 func (m *Manager) AddGroupPeople(ctx context.Context, id string, userIDs []string) (added, already int, ids []string, err error) {
 	if err := m.needAccounts(); err != nil {
 		return 0, 0, nil, err
@@ -352,7 +352,7 @@ func (m *Manager) AddGroupPeople(ctx context.Context, id string, userIDs []strin
 		return 0, 0, nil, err
 	}
 	m.MembershipChanged(fresh...)
-	return len(fresh), already, want, nil
+	return len(fresh), already, fresh, nil
 }
 
 // RemoveGroupPerson removes a person from a local group.
