@@ -104,8 +104,10 @@ async function run(store: OfflineStore, cfg: Awaited<ReturnType<OfflineStore['co
       await walk()
       continue
     }
-    const removed = r.items.filter(isRemoved).map((i) => i.id)
     const ups = r.items.filter((i): i is CatalogEntry => !isRemoved(i))
+    // A page is in an answer once; were it in as both, it is there.
+    const here = new Set(ups.map((e) => e.id))
+    const removed = r.items.filter(isRemoved).map((i) => i.id).filter((id) => !here.has(id))
     if (ups.length || removed.length) {
       changed = true
       await store.applyCatalog(ups, removed, { cursor: r.next })
