@@ -27,6 +27,9 @@ import type {
   Page,
   PageDraft,
   PageList,
+  ChecksParams,
+  ChecksResponse,
+  FixCheckInput,
   PageTemplate,
   PutTemplateInput,
   TemplateDefaults,
@@ -376,6 +379,15 @@ export function spaceApi(space: string) {
     types: (signal?: AbortSignal) => request<TypesResponse>(base('/types'), { signal }),
     putType: (name: string, input: TypeInput) => request<PageType>(base(`/types/${enc(name)}`), { method: 'PUT', body: input }),
     deleteType: (name: string, baseRev: string) => request<void>(base(`/types/${enc(name)}?baseRev=${enc(baseRev)}`), { method: 'DELETE' }),
+    // The check page (docs/api.md, "Checks"). Fixing needs `write`.
+    checks: (params: ChecksParams = {}, signal?: AbortSignal) => {
+      const q = new URLSearchParams()
+      if (params.kind) q.set('kind', params.kind)
+      if (params.cursor) q.set('cursor', params.cursor)
+      const s = q.toString()
+      return request<ChecksResponse>(base(`/checks${s ? `?${s}` : ''}`), { signal })
+    },
+    fixCheck: (input: FixCheckInput) => request<Page>(base('/checks/fix'), { method: 'POST', body: input }),
     // Templates (docs/api.md, "Templates"). Writing needs `manage`.
     templates: (signal?: AbortSignal) => request<TemplatesResponse>(base('/templates'), { signal }),
     template: (name: string, signal?: AbortSignal) => request<PageTemplate>(base(`/templates/${enc(name)}`), { signal }),

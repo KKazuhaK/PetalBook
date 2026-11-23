@@ -231,6 +231,37 @@ export interface PutTemplateInput {
   meta: PageMeta
   body: string
 }
+// What the check page lists (docs/api.md, "Checks"), in this order.
+export type ProblemKind = 'no_id' | 'duplicate_id' | 'bad_header' | 'type_mismatch' | 'not_in_type' | 'broken_link' | 'missing_asset' | 'duplicate_title'
+export type ProblemFix = 'add_id' | 'remove_fields'
+export interface Problem {
+  kind: ProblemKind
+  path: string
+  // The page, when the file is one.
+  id?: string
+  message: string
+  // no_id: {rev}, the rev of the file, which a fix is based on; bad_header: {line};
+  // duplicate_id and duplicate_title: {paths}; type_mismatch and not_in_type: {fields};
+  // broken_link: {target, line}; missing_asset: {target}.
+  detail?: Record<string, unknown>
+  fix: ProblemFix | null
+}
+export interface ChecksParams {
+  kind?: ProblemKind
+  cursor?: string
+}
+export interface ChecksResponse {
+  // Every kind, listed or not.
+  counts: Record<ProblemKind, number>
+  items: Problem[]
+  next: string
+}
+export interface FixCheckInput {
+  kind: 'no_id' | 'not_in_type'
+  path: string
+  // The rev of the file as it was listed.
+  baseRev: string
+}
 export interface FolderBinding {
   folder: string
   type: string

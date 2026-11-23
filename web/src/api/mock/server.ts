@@ -247,7 +247,7 @@ export function createMockServer(options: MockOptions = {}) {
       key: null,
       reachable: true,
     }
-    rec.store = createSpaceStore({ now, random, seed, author: () => ownerOf(rec)?.name ?? 'Local user', blocked: () => blockedReason(rec), inbox: () => rec.inbox })
+    rec.store = createSpaceStore({ now, random, seed, author: () => ownerOf(rec)?.name ?? 'Local user', blocked: () => blockedReason(rec), inbox: () => rec.inbox, fileExists: (path) => rec.files.read(path.split('/')) !== null })
     spaces.set(id, rec)
     return rec
   }
@@ -1206,6 +1206,8 @@ export function createMockServer(options: MockOptions = {}) {
       const notices = settingsNotices.get(space.id) ?? []
       return { status: 200, body: notices.length > 0 && spaceInfo(space, u).permissions.includes('manage') ? { ...st.types(), settingsNotices: notices } : st.types() }
     }
+    if (rest === '/checks' && method === 'GET') return { status: 200, body: st.checks(url.searchParams.get('kind'), url.searchParams.get('cursor')) }
+    if (rest === '/checks/fix' && method === 'POST') return { status: 200, body: st.fixCheck(u.id, body) }
     if (rest === '/templates' && method === 'GET') return { status: 200, body: st.templates() }
     if (rest === '/templates/defaults' && method === 'PUT') return { status: 200, body: st.setTemplateDefault(body) }
     const tplOne = /^\/templates\/(.+)$/.exec(rest)
@@ -1554,6 +1556,8 @@ export function createMockServer(options: MockOptions = {}) {
     peek: (id: string, space?: string): Page | undefined => (space ? spaces.get(space) : [...spaces.values()].find((s) => s.store.peek(id)))?.store.peek(id),
     // Mock only: the file of a type was damaged by hand.
     damageType: (space: string, name: string, message: string) => spaces.get(space)!.store.damageType(name, message),
+    // A file that is not a page, for the check page: the mock has no files of its own.
+    addOrphan: (space: string, o: Parameters<SpaceStore['addOrphan']>[0]) => spaces.get(space)!.store.addOrphan(o),
     // Mock only: a field of a kind the app does not know.
     forceKind: (space: string, name: string, key: string, kind: FieldKind) => spaces.get(space)!.store.forceKind(name, key, kind),
     ids: (space = 'default') => spaces.get(space)?.store.ids() ?? [],

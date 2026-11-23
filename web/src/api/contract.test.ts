@@ -44,7 +44,7 @@ import { adminApi } from './admin'
 import { mockFetch } from './mock/fetch'
 import { sha256Hex } from './mock/sha256'
 import { createMockServer, MOCK_ADMIN, type MockServer } from './mock/server'
-import type { AdminSpace, ListParams, Member, Page, PageSummary, SpaceInfo, User } from './types'
+import type { AdminSpace, ListParams, Member, Page, PageSummary, Problem, ProblemKind, SpaceInfo, User } from './types'
 
 declare const process: { env: Record<string, string | undefined> }
 const REAL = process.env.PETALBOOK_API?.replace(/\/+$/, '')
@@ -2777,6 +2777,182 @@ function suite(target: Target) {
       expect((await call(admin, 'DELETE', `${url(names.diary)}?baseRev=${rev}`)).status).toBe(404)
       const q = (await call(admin, 'GET', url(names.quick))).json
       expect((await call(admin, 'DELETE', `${url(names.quick)}?baseRev=${q.rev}`)).status).toBe(204)
+    })
+  })
+
+  describe('the check page', () => {
+    const folder = `${root}/checks`
+    const typeName = `chk${run}`
+    const mine = (items: Problem[]) => items.filter((p) => p.path.startsWith(`${folder}/`))
+    const walkChecks = async (kind?: ProblemKind) => {
+      const items: Problem[] = []
+      let cursor = ''
+      for (let guard = 0; guard < 100; guard++) {
+        const r = await S.checks({ kind, cursor: cursor || undefined })
+        expect(r.items.length).toBeLessThanOrEqual(50)
+        items.push(...r.items)
+        cursor = r.next
+        if (!cursor) return items
+      }
+      throw new Error('cursor never ended')
+    }
+    const of = (items: Problem[], kind: ProblemKind) => mine(items).filter((p) => p.kind === kind)
+    const at = (items: Problem[], kind: ProblemKind, path: string) => mine(items).find((p) => p.kind === kind && p.path === path)
+    let rev = ''
+    let strayId = ''
+
+    it('counts every kind, listed or not, and lists in the order of the kinds, then paths', async () => {
+      await S.createFolder(folder)
+      const t = await S.putType(typeName, { title: '检查', fields: [{ key: 'status', kind: 'select', options: ['todo', 'done'] }, { key: 'points', kind: 'number' }] })
+      expect(t.rev).toMatch(/^[0-9a-f]{40}$/)
+      await S.bindFolder(folder, typeName)
+      const r = await S.checks()
+      expect(Object.keys(r.counts).sort()).toEqual(['bad_header', 'broken_link', 'duplicate_id', 'duplicate_title', 'missing_asset', 'no_id', 'not_in_type', 'type_mismatch'])
+      for (const n of Object.values(r.counts)) expect(Number.isInteger(n)).toBe(true)
+      const order = ['no_id', 'duplicate_id', 'bad_header', 'type_mismatch', 'not_in_type', 'broken_link', 'missing_asset', 'duplicate_title']
+      const items = await walkChecks()
+      const keys = items.map((p) => [order.indexOf(p.kind), p.path] as const)
+      for (let i = 1; i < keys.length; i++) expect(keys[i - 1][0] < keys[i][0] || (keys[i - 1][0] === keys[i][0] && keys[i - 1][1] <= keys[i][1])).toBe(true)
+      for (const p of items) {
+        expect(typeof p.message).toBe('string')
+        expect(p.fix === null || p.fix === 'add_id' || p.fix === 'remove_fields').toBe(true)
+      }
+    })
+
+    it('finds fields a type does not have and values that do not fit it, per page, and says what fixes what', async () => {
+      const before = (await S.checks()).counts
+      const fine = await mk(folder, { title: `好${run}`, status: 'todo', points: 3 }, 'x\n')
+      const stray = await mk(folder, { title: `多${run}`, status: 'todo', colour: 'red', size: 3, slug: 's' }, 'x\n')
+      const bad = await mk(folder, { title: `错${run}`, status: 'later', points: 'many' }, 'x\n')
+      const both = await mk(folder, { title: `两${run}`, status: 'nope', extra: 1 }, 'x\n')
+      strayId = stray.id
+      rev = stray.rev
+      const items = await walkChecks()
+      expect(mine(items).filter((p) => p.id === fine.id)).toEqual([])
+      const s = at(items, 'not_in_type', stray.path)!
+      expect(s).toMatchObject({ id: stray.id, fix: 'remove_fields' })
+      expect(s.detail).toEqual({ fields: ['colour', 'size'] })
+      expect(s.message).not.toBe('')
+      const m = at(items, 'type_mismatch', bad.path)!
+      expect(m).toMatchObject({ id: bad.id, fix: null })
+      expect((m.detail!.fields as string[]).sort()).toEqual(['points', 'status'])
+      expect(at(items, 'type_mismatch', both.path)!.detail).toEqual({ fields: ['status'] })
+      expect(at(items, 'not_in_type', both.path)!.detail).toEqual({ fields: ['extra'] })
+      expect(of(items, 'not_in_type').map((p) => p.path)).toEqual([both.path, stray.path].sort())
+      const after = (await S.checks()).counts
+      expect(after.not_in_type - before.not_in_type).toBe(2)
+      expect(after.type_mismatch - before.type_mismatch).toBe(2)
+      // A save that repairs one page and breaks another moves the counts at once.
+      const repaired = await S.savePage(bad.id, { baseRev: bad.rev, meta: { ...bad.meta, status: 'done', points: 4 }, body: bad.body })
+      await S.savePage(fine.id, { baseRev: fine.rev, meta: { ...fine.meta, odd: true }, body: fine.body })
+      const next = await walkChecks()
+      expect(at(next, 'type_mismatch', repaired.path)).toBeUndefined()
+      expect(at(next, 'not_in_type', fine.path)!.detail).toEqual({ fields: ['odd'] })
+      expect((await S.checks()).counts.not_in_type - before.not_in_type).toBe(3)
+    })
+
+    it('finds two pages of one folder with one title, not in two folders, not untitled ones', async () => {
+      const before = (await S.checks()).counts.duplicate_title
+      const a = await mk(`${folder}/dup`, { title: `同名${run}` }, '1\n')
+      const b = await mk(`${folder}/dup`, { title: `同名${run}` }, '2\n')
+      await mk(`${folder}/other`, { title: `同名${run}` }, '3\n')
+      await mk(`${folder}/dup`, {}, '无题 一\n')
+      await mk(`${folder}/dup`, {}, '无题 二\n')
+      const items = of(await walkChecks('duplicate_title'), 'duplicate_title')
+      expect(items.map((p) => p.path)).toEqual([a.path, b.path].sort())
+      expect(items[0].detail).toEqual({ paths: [a.path, b.path].sort() })
+      expect(items[0].fix).toBeNull()
+      expect((await S.checks()).counts.duplicate_title - before).toBe(2)
+      // One of them is retitled: the group is gone.
+      await S.savePage(b.id, { baseRev: b.rev, meta: { ...b.meta, title: `另一个${run}` }, body: b.body })
+      expect(of(await walkChecks('duplicate_title'), 'duplicate_title')).toEqual([])
+      expect((await S.checks()).counts.duplicate_title).toBe(before)
+    })
+
+    it('finds an image or attachment of assets/ that is not there, and forgets it when the page stops pointing at it', async () => {
+      const before = (await S.checks()).counts.missing_asset
+      const p = await mk(folder, { title: `图${run}` }, '![x](/assets/NOSUCHPAGE/gone.png) [f](/assets/NOSUCHPAGE/gone.pdf) [web](https://example.test/assets/a/b.png)\n')
+      const items = of(await walkChecks('missing_asset'), 'missing_asset')
+      expect(items.map((x) => x.detail)).toEqual([{ target: '/assets/NOSUCHPAGE/gone.png' }, { target: '/assets/NOSUCHPAGE/gone.pdf' }])
+      expect(items.every((x) => x.id === p.id && x.path === p.path && x.fix === null)).toBe(true)
+      expect((await S.checks()).counts.missing_asset - before).toBe(2)
+      await S.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: 'no pictures\n' })
+      expect((await S.checks()).counts.missing_asset).toBe(before)
+    })
+
+    it('pages 50 at a time with a cursor, one kind or all of them; a kind or cursor it does not know is 400', async () => {
+      const before = (await S.checks()).counts.not_in_type
+      const made: string[] = []
+      for (let i = 0; i < 55; i++) made.push((await mk(`${folder}/many`, { title: `多${i}-${run}`, stray: i + 1 }, 'x\n')).path)
+      const first = await S.checks({ kind: 'not_in_type' })
+      expect(first.items).toHaveLength(50)
+      expect(first.next).not.toBe('')
+      expect(first.counts.not_in_type - before).toBe(55)
+      const all = await walkChecks('not_in_type')
+      expect(all.length).toBe(first.counts.not_in_type)
+      expect(of(all, 'not_in_type').filter((p) => p.path.startsWith(`${folder}/many/`)).map((p) => p.path)).toEqual([...made].sort())
+      const every = await walkChecks()
+      expect(every.length).toBe(Object.values((await S.checks()).counts).reduce((a, b) => a + b, 0))
+      for (const query of ['?kind=nope', '?cursor=nope']) {
+        const r = await call(admin, 'GET', `/api/spaces/${spaceId}/checks${query}`)
+        expect([r.status, r.json.error]).toEqual([400, 'invalid'])
+      }
+    })
+
+    it('fixes not_in_type: only the listed fields go and the rest of the header stays; a stale rev is 409; other kinds are 400 not_fixable', async () => {
+      const cur = await S.getPage(strayId)
+      expect(cur.rev).toBe(rev)
+      const stale = await failure(S.fixCheck({ kind: 'not_in_type', path: cur.path, baseRev: '0'.repeat(40) }))
+      expect([stale.status, stale.code]).toEqual([409, 'conflict'])
+      expect(stale.current).toMatchObject({ id: strayId, rev })
+      for (const kind of ['type_mismatch', 'duplicate_id', 'bad_header', 'broken_link', 'missing_asset', 'duplicate_title', 'nope']) {
+        const e = await failure(S.fixCheck({ kind: kind as 'no_id', path: cur.path, baseRev: cur.rev }))
+        expect([e.status, e.code], kind).toEqual([400, 'not_fixable'])
+      }
+      const gone = await failure(S.fixCheck({ kind: 'not_in_type', path: `${folder}/nowhere.md`, baseRev: cur.rev }))
+      expect(gone.status).toBe(404)
+      const fixed = await S.fixCheck({ kind: 'not_in_type', path: cur.path, baseRev: cur.rev })
+      expect(fixed).toMatchObject({ id: strayId, path: cur.path, body: cur.body })
+      expect(fixed.rev).not.toBe(cur.rev)
+      expect(fixed.meta.colour).toBeUndefined()
+      expect(fixed.meta.size).toBeUndefined()
+      expect(fixed.meta).toMatchObject({ title: cur.meta.title, status: 'todo', slug: 's' })
+      expect((await S.getPage(strayId)).rev).toBe(fixed.rev)
+      expect(at(await walkChecks(), 'not_in_type', cur.path)).toBeUndefined()
+      // The page has nothing left to remove, and the old rev is stale.
+      expect((await failure(S.fixCheck({ kind: 'not_in_type', path: cur.path, baseRev: cur.rev }))).status).toBe(409)
+      expect((await S.fixCheck({ kind: 'not_in_type', path: cur.path, baseRev: fixed.rev })).rev).toBe(fixed.rev)
+    })
+
+    // Only a server whose files are written by hand can have these: the mock is given them.
+    it('mock only: a file without an id, with a broken header or with an id that is taken; no_id is fixed with the rev it lists', async () => {
+      if (REAL) return
+      const taken = await mk(folder, { title: `占了${run}` }, 'x\n')
+      server!.addOrphan(spaceId, { path: `${folder}/noid.md`, kind: 'no_id', meta: { title: `无id${run}`, custom: 1 }, body: 'orphan\n' })
+      server!.addOrphan(spaceId, { path: `${folder}/broken.md`, kind: 'bad_header', line: 3 })
+      server!.addOrphan(spaceId, { path: `${folder}/twin.md`, kind: 'duplicate_id', id: taken.id })
+      const items = await walkChecks()
+      const n = at(items, 'no_id', `${folder}/noid.md`)!
+      expect(n).toMatchObject({ fix: 'add_id' })
+      expect(n.id).toBeUndefined()
+      expect(n.detail!.rev).toMatch(/^[0-9a-f]{40}$/)
+      expect(at(items, 'bad_header', `${folder}/broken.md`)).toMatchObject({ fix: null, detail: { line: 3 } })
+      expect(at(items, 'duplicate_id', `${folder}/twin.md`)).toMatchObject({ id: taken.id, fix: null, detail: { paths: [taken.path, `${folder}/twin.md`] } })
+      const stale = await failure(S.fixCheck({ kind: 'no_id', path: n.path, baseRev: '0'.repeat(40) }))
+      expect([stale.status, stale.code]).toEqual([409, 'conflict'])
+      const made = await S.fixCheck({ kind: 'no_id', path: n.path, baseRev: n.detail!.rev as string })
+      expect(made.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{10}$/)
+      expect(made).toMatchObject({ path: n.path, body: 'orphan\n' })
+      expect(made.meta).toMatchObject({ id: made.id, title: `无id${run}`, custom: 1 })
+      expect((await S.getPage(made.id)).path).toBe(n.path)
+      expect(at(await walkChecks(), 'no_id', n.path)).toBeUndefined()
+      const again = await failure(S.fixCheck({ kind: 'no_id', path: `${folder}/broken.md`, baseRev: '0'.repeat(40) }))
+      expect([400, 409]).toContain(again.status)
+    })
+
+    it('needs write to fix and read to list: the mock and a real server answer 400 invalid for a fix with no path or rev', async () => {
+      const r = await call(admin, 'POST', `/api/spaces/${spaceId}/checks/fix`, { kind: 'no_id' })
+      expect([r.status, r.json.error]).toEqual([400, 'invalid'])
     })
   })
 

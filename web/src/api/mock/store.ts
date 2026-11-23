@@ -9,6 +9,7 @@ import { createTypeBook } from './typeBook.ts'
 import { createHomeBook } from './homeBook.ts'
 import { createViewBook } from './viewBook.ts'
 import { createTemplateBook } from './templateBook.ts'
+import { checksPage, problemsOf, strayKeys, type Orphan } from './checkBook.ts'
 import { TAG_COLORS, parseTagColor } from '../../lib/tagColors.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
 import { gitBlobId } from './sha1.ts'
@@ -140,9 +141,11 @@ export interface StoreOptions {
   blocked?: () => string | null
   // The folder quick notes go to (the space's `inbox`).
   inbox?: () => string
+  // Whether a file of the space that is not a page exists, by its path from the root.
+  fileExists?: (path: string) => boolean
 }
 
-export function createSpaceStore({ now, random, seed, author = () => 'Local user', blocked = () => null, inbox = () => 'Inbox' }: StoreOptions) {
+export function createSpaceStore({ now, random, seed, author = () => 'Local user', blocked = () => null, inbox = () => 'Inbox', fileExists = () => false }: StoreOptions) {
   const pages = new Map<string, Stored>()
   // Every page's commits, oldest first; kept after the page is deleted.
   const histories = new Map<string, VersionRec[]>()
@@ -881,6 +884,55 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     templateBook.folderRemoved(path)
   }
 
+  // --- the check page (docs/api.md, "Checks") ---
+
+  // Files that are not pages, put there by a test: the mock has no files of its own.
+  const orphans = new Map<string, Orphan>()
+  const problems = () =>
+    problemsOf({
+      pages: [...pages.values()].map((p) => ({ id: p.id, path: pathOf(p), folder: p.folder, meta: p.meta, body: p.body })),
+      orphans: [...orphans.values()],
+      fieldsOf: (folder, headerType) => book.fieldsOf(folder, headerType),
+      fileExists,
+    })
+
+  const checks = (kind: string | null, cursor: string | null) => checksPage(problems(), kind, cursor)
+
+  const addOrphan = (o: { path: string; kind: Orphan['kind']; meta?: PageMeta; body?: string; id?: string; line?: number }) => {
+    const meta = o.meta ?? {}
+    const body = o.body ?? ''
+    orphans.set(o.path, { path: o.path, kind: o.kind, meta, body, rev: gitBlobId(serializeFile(meta, body)), ...(o.id ? { id: o.id } : {}), ...(o.line ? { line: o.line } : {}) })
+  }
+
+  const fixCheck = (userId: string, input: Record<string, unknown>): Page => {
+    guard()
+    if (input.kind !== 'no_id' && input.kind !== 'not_in_type') throw new HttpError(400, 'not_fixable', '只有 no_id 和 not_in_type 能在这里修')
+    if (typeof input.path !== 'string' || input.path === '' || typeof input.baseRev !== 'string' || input.baseRev === '') throw new HttpError(400, 'invalid', '缺少 path 或 baseRev')
+    const path = input.path
+    if (input.kind === 'not_in_type') {
+      const cur = [...pages.values()].find((p) => pathOf(p) === path)
+      if (!cur) throw new HttpError(404, 'not_found', '找不到这个页面')
+      if (input.baseRev !== cur.rev) throw new HttpError(409, 'conflict', '页面已被修改', { current: toPage(cur) })
+      const fields = book.fieldsOf(cur.folder, typeof cur.meta.type === 'string' ? cur.meta.type.trim() : '')
+      const stray = fields ? strayKeys(cur.meta, fields) : []
+      return stray.length ? patchProps(userId, cur.id, { baseRev: cur.rev, unset: stray }) : toPage(cur)
+    }
+    const o = orphans.get(path)
+    if (!o) {
+      const have = [...pages.values()].find((p) => pathOf(p) === path)
+      if (have) throw new HttpError(409, 'conflict', '文件已经被修改', { current: toPage(have) })
+      throw new HttpError(404, 'not_found', '找不到这个文件')
+    }
+    if (o.kind !== 'no_id') throw new HttpError(400, 'not_fixable', '这个文件的头部读不了，要手修')
+    if (input.baseRev !== o.rev) throw new HttpError(409, 'conflict', '文件已被修改', { current: { id: '', path: o.path, folder: '', rev: o.rev, updated: rfc3339(now()), meta: o.meta, header: '', body: o.body, effectiveType: '' } })
+    const id = newId()
+    const slash = path.lastIndexOf('/')
+    const s = store({ id, folder: slash < 0 ? '' : path.slice(0, slash), fileName: path.slice(slash + 1), meta: { id, ...o.meta }, body: o.body, updated: now() })
+    orphans.delete(path)
+    record(s, 'add')
+    return toPage(s)
+  }
+
   // Mock only: change a page behind the app's back, as another editor or a
   // `git pull` would, to exercise the conflict path by hand.
   const touch = (id: string, body: Record<string, unknown>): Page => {
@@ -906,6 +958,9 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     create,
     save,
     patchProps,
+    checks,
+    fixCheck,
+    addOrphan,
     templates: () => templateBook.list(),
     template: (name: string) => templateBook.get(name),
     putTemplate: (name: string, input: Record<string, unknown>) => {
