@@ -924,6 +924,17 @@ func (x *Index) RetryDuplicates(src Source) error {
 // conflict with their own stale rows. An id that a file outside paths still
 // holds makes the new file a duplicate, as in Sync.
 func (x *Index) Refresh(src Source, paths, dirs []string) (Stats, error) {
+	return x.refresh(src, nil, nil, paths, dirs)
+}
+
+// Move is Forget(oldPaths, oldDirs) and then Refresh(src, paths, dirs) in one
+// write: what moved (a folder and the pages in it) is never seen gone from its
+// old place and not yet at its new one, by a read or by the change feed.
+func (x *Index) Move(src Source, oldPaths, oldDirs, paths, dirs []string) (Stats, error) {
+	return x.refresh(src, oldPaths, oldDirs, paths, dirs)
+}
+
+func (x *Index) refresh(src Source, forget, forgetDirs, paths, dirs []string) (Stats, error) {
 	start := time.Now()
 	ctx := context.Background()
 	sort.Strings(paths)
@@ -954,6 +965,17 @@ func (x *Index) Refresh(src Source, paths, dirs []string) (Stats, error) {
 	w := x.newWriter(ctx, tx)
 	defer w.close()
 
+	// The old names are forgotten outright rather than looked up (see Forget).
+	for _, p := range forget {
+		if err := w.removePath(p); err != nil {
+			return Stats{}, err
+		}
+	}
+	for _, d := range forgetDirs {
+		if err := w.dropFolder(d); err != nil {
+			return Stats{}, err
+		}
+	}
 	st := Stats{}
 	for _, p := range gone {
 		if err := w.removePath(p); err != nil {

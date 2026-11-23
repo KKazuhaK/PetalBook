@@ -331,11 +331,9 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 		return "", err
 	}
 	// The old names are forgotten outright rather than looked up: under a
-	// change of case they still answer on a file system that ignores it.
-	if err := s.idx.Forget(oldPages, visibleDirs(oldDirs)); err != nil {
-		return "", err
-	}
-	if _, err := s.idx.Refresh(s.src, append(newPages, edited...), visibleDirs(newDirs)); err != nil {
+	// change of case they still answer on a file system that ignores it. One
+	// write: a poll of the change feed never sees the pages gone in between.
+	if _, err := s.idx.Move(s.src, oldPages, visibleDirs(oldDirs), append(newPages, edited...), visibleDirs(newDirs)); err != nil {
 		return "", err
 	}
 	if err := s.idx.RetryDuplicates(s.src); err != nil {

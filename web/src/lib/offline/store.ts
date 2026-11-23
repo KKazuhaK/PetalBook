@@ -185,18 +185,19 @@ export class OfflineStore {
     return req(this.db.transaction('catalog').objectStore('catalog').getAllKeys() as IDBRequest<string[]>)
   }
 
-  // Puts and removes catalogue entries; a page removed loses its text and its mark of being opened too. The sync
+  // Puts and removes catalogue entries; a page removed loses its text. Its mark of being opened stays (the marks are
+  // bounded, and only pages in the catalogue are kept for it): a page that comes back, as one in a folder that moved
+  // can when a poll falls between two writes, is still among the recent ones. The sync
   // state (the cursor) is written in the same transaction, so a catalogue and its cursor are never apart.
   async applyCatalog(upserts: CatalogEntry[], removed: string[], state?: Partial<SyncState>) {
     const cur = state ? { ...(await this.state()), ...state } : undefined
-    const names = ['catalog', 'pages', 'textmeta', 'opened', 'meta']
+    const names = ['catalog', 'pages', 'textmeta', 'meta']
     const tx = this.db.transaction(names, 'readwrite')
     const cat = tx.objectStore('catalog')
     for (const e of upserts) cat.put(e)
     let delta = 0
     for (const id of removed) {
       cat.delete(id)
-      tx.objectStore('opened').delete(id)
       const tm = (await req(tx.objectStore('textmeta').get(id))) as TextMeta | undefined
       if (tm) {
         delta -= tm.bytes

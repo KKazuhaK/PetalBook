@@ -4,6 +4,7 @@ import { freshDevice } from './testkit'
 import { clearAccount, configure, existingStore, hasCopy, storeFor } from './manager'
 import { bytesOf, entryOf, spacesOf, totalBytes, usersOf } from './registry'
 import { DEFAULT_CONFIG, OfflineStore, RECENT_KEPT, pageBytes, utf8Length } from './store'
+import { wantedText } from './scope'
 
 beforeEach(freshDevice)
 
@@ -34,11 +35,21 @@ describe('the store of one space', () => {
     await s.applyCatalog([entry('B', { rev: 'rev-2' })], ['A'], { cursor: 'c-2' })
     expect((await s.catalog()).map((e) => e.id)).toEqual(['B'])
     expect(await s.page('A')).toBeUndefined()
-    expect(await s.opened()).toEqual([])
     expect(await s.bytes()).toBe(pageBytes(page('B')))
     expect((await s.state()).cursor).toBe('c-2')
     expect(await s.catalogCount()).toBe(1)
     expect(await s.textCount()).toBe(1)
+  })
+
+  it('keeps the mark of a page opened when it is removed, so a page that comes back (a folder moved under a poll) is still recent', async () => {
+    const s = await storeFor('u1', 'sp')
+    await s.applyCatalog([entry('A'), entry('B')], [])
+    await s.touchOpened('A', 5)
+    await s.applyCatalog([], ['A'])
+    expect((await s.opened()).map((o) => o.id)).toEqual(['A'])
+    await s.applyCatalog([entry('A', { folder: 'Moved' })], [])
+    const w = wantedText(await s.catalog(), { ...DEFAULT_CONFIG, mode: 'text', inbox: false, favourites: false, recent: true }, '', { pages: [], folders: [] }, await s.opened())
+    expect(w.recent).toEqual(['A'])
   })
 
   it('counts the bytes of text exactly through replacing and deleting', async () => {

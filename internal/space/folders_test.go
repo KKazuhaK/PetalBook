@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -726,5 +727,62 @@ func TestTagsFileWithSeveralDocumentsOrRepeatedKeys(t *testing.T) {
 	data, _ := os.ReadFile(file)
 	if !strings.Contains(string(data), "red") || strings.Contains(string(data), "green") {
 		t.Fatalf("the wrong entry was edited:\n%s", data)
+	}
+}
+
+// statSpy calls look on every Stat, to see the index while a change is being made.
+type statSpy struct {
+	index.Source
+	look func()
+}
+
+func (s statSpy) Stat(rel string) (index.FileInfo, error) {
+	s.look()
+	return s.Source.Stat(rel)
+}
+
+// A folder move is one write of the index: a poll of the change feed while it is
+// under way never sees the pages that move as removed.
+func TestMoveFolderIsOneIndexWrite(t *testing.T) {
+	t.Parallel()
+	s := open(t)
+	a := mustCreate(t, s, "随笔", meta("title", "一"), "x\n")
+	b := mustCreate(t, s, "随笔/深", meta("title", "二"), "y\n")
+	before := s.idx.Head()
+	var mu sync.Mutex
+	var seen []string
+	s.src = statSpy{s.src, func() {
+		mu.Lock()
+		defer mu.Unlock()
+		cl, err := s.idx.Changes(before, 1000)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		for _, it := range cl.Items {
+			if it.Deleted {
+				seen = append(seen, it.ID)
+			}
+		}
+	}}
+	if _, err := s.MoveFolder(Author{}, "随笔", "归档"); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 0 {
+		t.Fatalf("a poll during the move saw %v removed", seen)
+	}
+	cl, err := s.idx.Changes(before, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := map[string]string{}
+	for _, it := range cl.Items {
+		if it.Deleted {
+			t.Fatalf("%s reported as removed after the move", it.ID)
+		}
+		moved[it.ID] = it.Path
+	}
+	if moved[a.ID] != "归档/一.md" || moved[b.ID] != "归档/深/二.md" {
+		t.Fatalf("%v", moved)
 	}
 }
