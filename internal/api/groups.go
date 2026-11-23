@@ -113,7 +113,18 @@ func (s *server) failGroup(w http.ResponseWriter, err error) bool {
 	return true
 }
 
-// pageLimit reads limit (1 to max), answering 400 itself.
+// failAdminGroup is fail for the routes that name the group in the path: a group
+// that is not there is a plain not_found (group_not_found is for a group named
+// in a body).
+func (s *server) failAdminGroup(w http.ResponseWriter, err error) {
+	if errors.Is(err, spaces.ErrGroupNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "there is no such group")
+		return
+	}
+	s.fail(w, err)
+}
+
+// listLimit reads limit (1 to max), answering 400 itself.
 func listLimit(c *call, def, max int) (int, bool) {
 	v := c.r.URL.Query().Get("limit")
 	if v == "" {
@@ -146,7 +157,7 @@ func (s *server) adminListGroups(c *call) {
 	}
 	rows, next, err := s.spaces.ListGroups(c.r.Context(), store.GroupFilter{Query: q.Get("q"), Source: src, UserID: q.Get("user"), After: q.Get("cursor"), Limit: limit})
 	if err != nil {
-		s.fail(c.w, err)
+		s.failAdminGroup(c.w, err)
 		return
 	}
 	writeJSON(c.w, http.StatusOK, struct {
@@ -158,7 +169,7 @@ func (s *server) adminListGroups(c *call) {
 func (s *server) adminGetGroup(c *call) {
 	g, err := s.spaces.Group(c.r.Context(), c.r.PathValue("group"))
 	if err != nil {
-		s.fail(c.w, err)
+		s.failAdminGroup(c.w, err)
 		return
 	}
 	writeJSON(c.w, http.StatusOK, s.toGroups([]store.Group{*g})[0])
@@ -175,7 +186,7 @@ func (s *server) adminCreateGroup(c *call) {
 	}
 	g, err := s.spaces.CreateGroup(c.r.Context(), req.Name, req.Description, req.Source)
 	if err != nil {
-		s.fail(c.w, err)
+		s.failAdminGroup(c.w, err)
 		return
 	}
 	s.auditGroup(c, "group_created", "", map[string]any{"group": g.ID, "name": g.Name, "source": g.Source})
@@ -197,7 +208,7 @@ func (s *server) adminPatchGroup(c *call) {
 	}
 	g, changed, err := s.spaces.UpdateGroup(c.r.Context(), c.r.PathValue("group"), req.Name, req.Description)
 	if err != nil {
-		s.fail(c.w, err)
+		s.failAdminGroup(c.w, err)
 		return
 	}
 	if len(changed) > 0 {
@@ -229,13 +240,13 @@ func (s *server) adminDeleteGroup(c *call) {
 	mappings := s.auth.GroupMappings(id)
 	if force && mappings > 0 {
 		if err := s.auth.UnmapGroup(ctx, id); err != nil {
-			s.fail(c.w, err)
+			s.failAdminGroup(c.w, err)
 			return
 		}
 	}
 	g, err := s.spaces.DeleteGroup(ctx, id, force, mappings)
 	if err != nil {
-		s.fail(c.w, err)
+		s.failAdminGroup(c.w, err)
 		return
 	}
 	s.auditGroup(c, "group_deleted", "", map[string]any{"group": g.ID, "name": g.Name, "source": g.Source, "people": g.People, "spaces": g.Spaces})
@@ -250,7 +261,7 @@ func (s *server) adminGroupMembers(c *call) {
 	q := c.r.URL.Query()
 	rows, next, err := s.spaces.GroupPeople(c.r.Context(), c.r.PathValue("group"), q.Get("q"), q.Get("cursor"), limit)
 	if err != nil {
-		s.fail(c.w, err)
+		s.failAdminGroup(c.w, err)
 		return
 	}
 	type from struct {
@@ -289,7 +300,7 @@ func (s *server) adminAddGroupMembers(c *call) {
 	id := c.r.PathValue("group")
 	added, already, ids, err := s.spaces.AddGroupPeople(c.r.Context(), id, req.UserIDs)
 	if err != nil {
-		s.fail(c.w, err)
+		s.failAdminGroup(c.w, err)
 		return
 	}
 	if added > 0 {
@@ -304,7 +315,7 @@ func (s *server) adminAddGroupMembers(c *call) {
 func (s *server) adminRemoveGroupMember(c *call) {
 	id, user := c.r.PathValue("group"), c.r.PathValue("user")
 	if err := s.spaces.RemoveGroupPerson(c.r.Context(), id, user); err != nil {
-		s.fail(c.w, err)
+		s.failAdminGroup(c.w, err)
 		return
 	}
 	s.auditGroup(c, "group_member_removed", user, map[string]any{"group": id, "users": []string{user}})
@@ -318,7 +329,7 @@ func (s *server) adminGroupSpaces(c *call) {
 	}
 	rows, next, err := s.spaces.GroupSpaces(c.r.Context(), c.r.PathValue("group"), c.r.URL.Query().Get("cursor"), limit)
 	if err != nil {
-		s.fail(c.w, err)
+		s.failAdminGroup(c.w, err)
 		return
 	}
 	type item struct {

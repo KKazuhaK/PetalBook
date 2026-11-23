@@ -41,3 +41,11 @@ func TestSets(t *testing.T) {
 		t.Fatal("String")
 	}
 }
+
+func TestRoleForNamesTheUnion(t *testing.T) {
+	v, _ := ForRole(Viewer)
+	e, _ := ForRole(Editor)
+	if RoleFor(v|e) != Editor || RoleFor(v) != Viewer || RoleFor(All) != Owner || RoleFor(0) != "" || RoleFor(Of(Write)) != "" {
+		t.Fatal("RoleFor")
+	}
+}
