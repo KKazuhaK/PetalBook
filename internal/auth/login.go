@@ -143,7 +143,8 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 	}
 	held := false
 	if s.passkeyRequiredOf(st, *u) {
-		n, err := store.CountPasskeys(ctx, s.st.Q(), u.ID)
+		// Only a passkey of this host can be used; one made for an old host leaves the person to register a new one.
+		n, err := store.CountPasskeysForRP(ctx, s.st.Q(), u.ID, s.pk.rpID)
 		if err != nil {
 			return nil, err
 		}
@@ -250,7 +251,8 @@ func (s *Service) Setup(ctx context.Context, token, username, name, password, ip
 	if err != nil {
 		return nil, "", err
 	}
-	tok, err := s.issueSession(ctx, u.ID, false)
+	// A new account has no passkey: held when one is required of it.
+	tok, err := s.issueSession(ctx, u.ID, s.passkeyRequiredOf(st, *u))
 	if err == nil {
 		s.Audit(AuditEvent{Kind: "login", User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "password", "created": true}})
 	}
@@ -316,7 +318,8 @@ func (s *Service) AcceptInvite(ctx context.Context, token, username, name, passw
 	if err != nil {
 		return nil, "", err
 	}
-	tok, err := s.issueSession(ctx, u.ID, false)
+	// A new account has no passkey: held when one is required of it.
+	tok, err := s.issueSession(ctx, u.ID, s.passkeyRequiredOf(st, *u))
 	if err == nil {
 		s.Audit(AuditEvent{Kind: "login", User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "password", "created": true}})
 	}

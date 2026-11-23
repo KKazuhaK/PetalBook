@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/KKazuhaK/PetalBook/internal/auth"
 	"github.com/KKazuhaK/PetalBook/internal/auth/testidp"
+	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
 // vkey is a virtual authenticator with one credential, for one person.
@@ -441,5 +443,58 @@ func TestPasskeysNeedAPublicURLTheyCanWorkWith(t *testing.T) {
 		if p := a.newClient("").do("GET", "/api/auth/providers", nil).body["passkey"]; p != true {
 			t.Fatalf("passkey %v", p)
 		}
+	})
+}
+
+// A passkey made for another host cannot be used here, so it does not count:
+// a person required to use one signs in with the password into a held session
+// and registers a new one.
+func TestAPasskeyOfAnOldHostDoesNotStopTheHeldSession(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		a.addUser("tang", pw, "member")
+		tid := mustUserID(t, a, "tang")
+		if err := store.InsertPasskey(context.Background(), a.st.Q(), store.PasskeyRow{ID: "old-1", UserID: tid, CredentialID: "b2xk", Credential: `{"id":"b2xk"}`, Name: "Old host", RPID: "old.example.test", Created: time.Now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
+		admin.do("PATCH", "/api/users/"+tid, map[string]any{"passkeyRequired": true}).want(t, 200, "")
+		c := a.newClient("")
+		c.do("POST", "/api/login", good("tang")).want(t, 200, "")
+		if h := c.do("GET", "/api/session", nil).body["hold"]; h != "passkey" {
+			t.Fatalf("hold %v", h)
+		}
+		c.register(t, newVKey(tid), "new").want(t, 201, "")
+		if h := c.do("GET", "/api/session", nil).body["hold"]; h != nil {
+			t.Fatalf("hold after registering %v", h)
+		}
+		// With one for this host, the password alone is refused again.
+		a.newClient("").do("POST", "/api/login", good("tang")).want(t, 403, "passkey_required")
+	})
+}
+
+// The accounts made by first-run setup and by an invite are held like a
+// password sign-in when their role requires a passkey.
+func TestSetupAndInvitesStartAHeldSessionWhenAPasskeyIsRequired(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		// Stored before anyone exists, as a restored database could have it.
+		if _, err := store.PutSetting(context.Background(), a.st.Q(), "security", `{"passkeys":{"enabled":true,"requireRoles":["admin","member"]}}`, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		a.clock.Advance(6 * time.Minute) // past the settings cache
+		admin := a.newClient("")
+		admin.do("POST", "/api/setup", map[string]any{"token": a.auth.SetupToken(), "username": "kazuha", "password": pw}).want(t, 201, "")
+		if h := admin.do("GET", "/api/session", nil).body["hold"]; h != "passkey" {
+			t.Fatalf("setup: hold %v", h)
+		}
+		admin.register(t, newVKey(mustUserID(t, a, "kazuha")), "admin key").want(t, 201, "")
+		r := admin.do("POST", "/api/invites", map[string]any{"role": "member", "days": 7}).want(t, 201, "")
+		c := a.newClient("")
+		c.do("POST", "/api/invites/accept", map[string]any{"token": r.body["token"], "username": "lin", "password": pw}).want(t, 201, "")
+		if h := c.do("GET", "/api/session", nil).body["hold"]; h != "passkey" {
+			t.Fatalf("invite: hold %v", h)
+		}
+		c.do("GET", "/api/spaces", nil).want(t, 403, "passkey_required")
 	})
 }

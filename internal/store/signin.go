@@ -254,6 +254,13 @@ func CountPasskeys(ctx context.Context, q Q, userID string) (n int, err error) {
 	return
 }
 
+// CountPasskeysForRP counts a user's passkeys made for the relying party
+// rpID: the ones that can be used on this host.
+func CountPasskeysForRP(ctx context.Context, q Q, userID, rpID string) (n int, err error) {
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM passkeys WHERE user_id = ? AND rp_id = ?`, userID, rpID).Scan(&n)
+	return
+}
+
 // PasskeyUse records a sign-in with a passkey: the credential (with its new
 // counter) and the time.
 func PasskeyUse(ctx context.Context, q Q, credID, credential string, synced bool, at time.Time) error {
