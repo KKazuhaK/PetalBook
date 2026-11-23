@@ -113,7 +113,9 @@ not signed in), in the shape of `GET /api/spaces`.
 ```
 
 `maxUpload` is the largest file, in bytes, the server accepts as an upload
-(`--max-upload`, 10 MiB by default, at most 256 MiB). `maxImport` is the same for an import
+(`--max-upload`, 10 MiB by default, at most 256 MiB). From 3.5 it is the
+effective `files.maxBytes` of the caller's tenant (see "The size of one file"),
+at most `--max-upload`. `maxImport` is the same for an import
 (`--max-import`, 100 MiB by default, at most 512 MiB).
 
 ## Session
@@ -4316,6 +4318,9 @@ The User object gains:
 The daily text's tenant default is a tenant setting (see "Settings by layer"),
 not `/api/admin/daily`, which stays the site's.
 
+From 3.5 and 3.6 this table is replaced by the one in "Tenant autonomy"
+("Updated administrators' table").
+
 `GET /api/session` returns the user with these fields; the web app shows the
 site-only pages of `/admin` to site administrators only.
 
@@ -4378,6 +4383,8 @@ tenants.
 
 ### Sign-in providers and groups
 
+- (3.3; from 3.6 providers are social or SSO, and a tenant may own SSO
+  providers: see "Tenant autonomy".)
 - Providers stay the server's (site administrators only) and every tenant's
   sign-in page lists the same ones. A provider gains `tenant` (an id, default
   the default tenant): where `autoCreate` makes accounts. An identity signs in
@@ -5090,6 +5097,995 @@ text above:
   from the index file of a closed one; the walk of its files (1.7's) is the turn's
   cost, about 0.2 to 0.3 s.
 
+## Storage management
+
+Milestone 3.5 (contract, 2026-11-23; written for after 2.7 and 3.1 are merged).
+Accounts mode only: single-user mode answers `404` for every endpoint here.
+
+What it adds: a live view of what people and spaces hold on the server, a
+recycle bin that every deletion goes through, deleting a user, bulk actions
+with a second confirmation, an export before a deletion, and a per-tenant limit
+on the size of one file. Site administrators see every tenant (`?tenant=` to
+narrow); a tenant administrator sees and acts on their own tenant only, with
+the same endpoints, and another tenant's ids answer as ids that do not exist
+(the isolation table of 3.3 gains every route of this section).
+
+**Nothing here walks a disk or a repository on a request.** Every number is a
+stored measurement (1.7's background measurement, 3.1's `cloneBytes`,
+`indexBytes`, `lastUsed`, 3.3's `usage` rows) or an in-memory total (3.1's
+attachment cache). Every list is one query a page over an index; the cursor is
+keyset (`<sort value>:<id>`), never an offset, so the ten-thousandth page costs
+what the first does.
+
+### Measurements this adds
+
+- `users.last_active`: written when a session or token of the person is used,
+  at most once an hour per person (the time is held in memory and written only
+  when the stored one is more than an hour old, as 3.1's `lastUsed` is).
+  `null` until the first use after 3.5; the upgrade fills it with the latest
+  `login` row of the audit log, where there is one.
+- `users.first_write`: when the person first changed anything in a space (a
+  page saved or committed, an upload, an import, a page made through MCP).
+  Written once (`UPDATE … WHERE first_write IS NULL`), skipped from memory
+  afterwards. The upgrade fills it from the spaces' first owners whose
+  `usage.pages` is above zero, which is an approximation stated as such.
+- On each person's `usage` row (3.3), kept by difference in the same
+  transactions that change what they count, and corrected by the daily recount:
+  `held_bytes` (what the server holds for the spaces counted for the person:
+  `cloneBytes + indexBytes` of 3.1, summed), `remote_spaces` (those that follow
+  a remote), `grace_spaces`, `overdue_spaces` (3.1's deadline states),
+  `evicted_spaces`, `pinned_spaces`, and `connected` (the person has a GitHub
+  authorisation, 2.7). The tenant's row gets the same sums.
+- A person is **dormant** when `first_write IS NULL`, `remote_spaces = 0` and
+  `connected = false`: registered, never connected anything, never used. It is
+  a stored flag (`usage.dormant`), so the filter is an index range.
+
+Indexes: `(kind, tenant_id, held_bytes DESC, id)`, `(kind, tenant_id, last_active, id)`,
+`(kind, tenant_id, dormant, created, id)` on `usage`; `(tenant_id, size_bytes DESC, id)`,
+`(tenant_id, last_used, id)` and `(tenant_id, created, id)` on `spaces`.
+
+### `GET /api/admin/storage`
+
+The 3.1 endpoint keeps its settings (site administrators only for `PUT`, see
+"Tenant autonomy" for which of them tenants may tighten from 3.6). `GET` gains a
+summary, and a tenant administrator may now `GET` it: they receive the summary
+of their tenant and the effective values of the settings, read only.
+
+```json
+{"summary": {"tenant": null, "spaces": {"local": 12, "full": 3, "partial": 41, "evicted": 156, "restoring": 0},
+             "people": 340, "dormant": 51, "heldBytes": 3436973876, "usageBytes": 912680550400,
+             "assetCacheBytes": 4831838208, "recycle": {"items": 4, "bytes": 52428800},
+             "exports": {"items": 1, "bytes": 10485760}, "remotes": {"inGrace": 3, "overdue": 0},
+             "diskFreeBytes": 52428800000, "measuredAt": "2026-11-23T02:10:00Z"}}
+```
+
+The sums are the tenant's `usage` row (one primary-key read) or, for the whole
+server, one aggregate over the tenants' rows; `assetCacheBytes` comes from
+memory (per space, summed for the tenant's spaces from the in-memory map);
+`diskFreeBytes` is for site administrators only.
+
+### `GET /api/admin/spaces` (filters and sorting added)
+
+The 1.7 list, with 3.1's `storage` block, gains:
+
+- `sort`: `created` (the default, as before), `name`, `bytes` (`sizeBytes`),
+  `lastUsed`; `order`: `asc` or `desc` (default `asc` for `created` and `name`,
+  `desc` for the others). Spaces never measured, or never used, sort last.
+- Filters, combinable: `tenant`, `q` (as before), `owner={user}`, `cache`
+  (3.1), `remote=none|ok|offline|error`, `deadline=grace|overdue`, `pinned=1`,
+  `exempt=1`, `idleDays={n}` (not used for at least `n` days, or never).
+- `400 invalid` for an unknown `sort`, `order` or filter value, and for a
+  cursor that was made for another `sort`.
+
+Each filter is a column of `spaces` (3.1 stores the cache state, the remote
+state and the deadline state with the space), so a page is one query; the
+owners and member counts are looked up for the page only.
+
+### `GET /api/admin/storage/people?tenant=&q=&sort=&order=&cursor=&limit=`
+
+People and what they hold, one page at a time:
+
+```json
+{"items": [{"user": {"id": "01JD3K7A2M", "username": "tang", "name": "Tang", "disabled": false},
+  "tenant": "0000000000", "created": "2026-01-02T03:04:05Z", "lastActive": "2026-11-22T09:00:00Z",
+  "firstWrite": "2026-01-02T03:10:00Z", "dormant": false, "connected": true,
+  "spaces": 3, "remoteSpaces": 2, "evictedSpaces": 1, "pinnedSpaces": 0,
+  "graceSpaces": 1, "overdueSpaces": 0, "usageBytes": 52428800, "heldBytes": 9437184,
+  "measuredAt": "2026-11-23T02:10:00Z"}],
+ "next": "9437184:01JD3K7A2M"}
+```
+
+- `sort`: `held` (the default: what the server holds, largest first), `bytes`
+  (the quota's measure), `lastActive`, `created`, `spaces`.
+- Filters: `dormant=1`, `remote=none|some`, `deadline=grace|overdue`,
+  `inactiveDays={n}` (`lastActive` at least `n` days ago, or never),
+  `disabled=0|1`. `q` matches username or name as `GET /api/users` does.
+- `limit` 1 to 200 (default 50). One query over the `usage` index; names for
+  the page only.
+
+`GET /api/admin/storage/people/{user}` is one item, plus `items` of the person's
+spaces in the shape of `GET /api/admin/spaces` (spaces counted for them, at
+most 200, by `lastUsed`).
+
+### The recycle bin
+
+Every deletion of a space or a user goes into the recycle bin; nothing an
+administrator deletes is gone at once. An item is kept for `recycle.days`
+(a site setting, 30 by default, 1 to 365) and then purged.
+
+- **What a recycled space is.** Its records (the space row, members, space
+  groups, remote and attachment repository records with their sealed
+  credentials, favourites, drafts, settings records, 3.1's storage records) are
+  copied as one JSON document into `recycle_items` and removed from the live
+  tables in the same transaction; its directories (`DATA/spaces/<id>`, the
+  index cache and journal) are moved to `DATA/recycle/<item>/`; its files in
+  3.1's attachment cache are dropped (they are on the attachment repository).
+  So no query of the live tables can see a recycled space, and the permission
+  caches of its members are invalidated as for a disabled space.
+- **The remote repositories are never touched**: not the space's, not its
+  attachment repository, on GitHub or anywhere. The preview says so.
+- **An evicted space** has only its index on the server; that is what moves.
+- **A recycled space does not count** toward anyone's quota (its usage is
+  subtracted, as for a deletion in 3.3) and its bytes show as `recycle.bytes`.
+- **Restoring** moves the directories back and inserts the records again under
+  the same ids, in the original tenant, by `INSERT … SELECT` joined on that
+  tenant (3.3's rule, so a restore cannot make a cross-tenant link). A member
+  who no longer exists, is deleted or is in the recycle bin is left out (listed
+  in the answer); when that leaves no owner the restore needs an `owner`
+  (`409 owner_required`). 3.1's deadline of a restored space is computed again
+  from the policy in force. Quotas count it again; a restore is never refused
+  for a quota (it is an administrator's act), it can only make a notice.
+- **Purging** deletes the directory and the item. The purge job runs every
+  hour, purges one item at a time and pauses between directories as the 1.7
+  measurement does, so its disk load is that of one walk.
+- Before 3.5, `DELETE /api/admin/spaces/{space}` moved directories to
+  `DATA/trash/` and deleted the records; those directories are not brought into
+  the recycle bin (their records are gone). `GET /api/admin/storage` reports
+  `legacyTrashBytes` (measured once at start) for site administrators, who
+  remove them by hand.
+
+#### Recycle item
+
+```json
+{"id": "01JDRC1X9A", "kind": "space", "tenant": "0000000000",
+ "space": {"id": "01JD3K8Q7Z", "name": "Team", "personal": false},
+ "user": null, "with": [],
+ "bytes": 18304211, "deletedAt": "2026-11-23T08:30:00Z", "deletedBy": {"id": "…", "username": "wu"},
+ "purgeAt": "2026-12-23T08:30:00Z", "reason": "", "restorable": true, "problems": []}
+```
+
+`kind` is `space` or `user`. A `user` item has `user` and lists in `with` the
+space items recycled with that person (their personal space and the spaces they
+owned alone); those spaces are restored with the person, and on their own only
+with an `owner`. `restorable` is `false` (with `problems`) when restoring would
+fail now (the original tenant was deleted: never, see below; a directory
+missing from `DATA/recycle`). `purgeAt` follows `recycle.days` as it is now:
+shortening it moves every item's date.
+
+#### `GET /api/admin/recycle?tenant=&kind=&q=&cursor=&limit=`
+
+Items, newest first; one query a page.
+
+#### `POST /api/admin/recycle/{item}/restore`
+
+`{"owner": "01JD3K7A2M"}` (optional). `200` with what was restored and what
+was left out (`{"restored": {...}, "skipped": [{"user": "…", "reason": "deleted"}]}`).
+`409 owner_required`, `409 busy` (a purge of it is running), `409 conflict`
+(a space with that id exists again: never in practice, ids are random).
+
+#### `DELETE /api/admin/recycle/{item}?confirm={token}`
+
+Purges now. Site administrators only (it frees the server's disk early; a
+tenant administrator waits for the date): `403 forbidden` otherwise. Needs a
+confirmation token from `POST /api/admin/confirm` (below). `204`.
+
+### Deleting a space
+
+`DELETE /api/admin/spaces/{space}` keeps its 1.7 checks (commits what the space
+holds first; `409 busy`; `409 personal_space`) and now **recycles** the space.
+`200` with the recycle item. The 1.7 fields `trashed`, `cacheTrashed` and
+`warnings` are kept in the answer for old clients (`trashed` is the item's
+directory under `DATA/recycle`). A member's next request answers
+`404 not_found`.
+
+#### `GET /api/admin/spaces/{space}/deletion`
+
+What deleting the space would do; reads stored values only:
+
+```json
+{"space": {"id": "01JD3K8Q7Z", "name": "Team"}, "pages": 2100, "bytes": 18304211, "heldBytes": 9437184,
+ "attachments": {"inSpace": 312, "repository": true}, "members": 5, "groups": 1,
+ "drafts": 2, "remote": {"url": "https://github.com/kazuhahub/tang-notes", "kept": true},
+ "assetsRemote": {"url": "https://github.com/kazuhahub/tang-notes-assets", "kept": true},
+ "cache": "evicted", "exportable": true, "recycleDays": 30}
+```
+
+`exportable` is `false` for an evicted space whose remote cannot be reached now
+(an export needs its files; 3.1's restore is what fetches them).
+
+### Deleting a user
+
+Users were never deleted before 3.5 (only disabled). From 3.5:
+
+#### `GET /api/admin/users/{user}/deletion?heir={user}`
+
+The plan, computed from the records (memberships, spaces' first owners, tokens,
+grants, groups, GitHub connection), never from files:
+
+```json
+{"user": {"id": "…", "username": "tang"},
+ "recycle": [{"space": {"id": "…", "name": "Tang", "personal": true}, "bytes": 4194304}],
+ "transfer": [{"space": {"id": "…", "name": "Team"}, "to": {"id": "…", "username": "li"}, "why": "editor",
+               "credential": "user"}],
+ "leave": [{"space": {"id": "…", "name": "Shared"}, "role": "owner"}],
+ "revoke": {"tokens": 2, "grants": 1, "passkeys": 1, "identities": 1, "github": true, "sessions": 3},
+ "groups": 4, "needsHeir": [], "blockers": []}
+```
+
+The rules:
+
+1. **Personal space**: recycled with the person.
+2. **Spaces where the person is the only owner and nobody else is a member**
+   (no other direct member, no group): recycled with the person.
+3. **Spaces where the person is the only owner and others are members**:
+   transferred (3.3's `POST …/transfer`). The heir is, in this order: the one
+   named in `transfers` for that space; the earliest direct member with the
+   `editor` role; `heir` from the request. Viewers and group members are never
+   made owner on their own. With none of these the space is in `needsHeir` and
+   the deletion is refused (`409 heir_required` with the spaces).
+4. **Spaces with another owner**: the person's membership is removed.
+5. `credential: "user"` marks a space that syncs with the person's own token
+   (2.7's `via: "user"`, or a remote token they entered): after the transfer it
+   stops syncing until the new owner reconnects it; the space's remote state
+   says so (the 2.7 "credential stops working" path), nothing is lost.
+6. `blockers`: the caller themself; the last enabled site administrator (as
+   for disabling); a site administrator, for a tenant administrator (`403`).
+
+#### `DELETE /api/users/{id}`
+
+```json
+{"heir": "01JD3K7A2M", "transfers": {"01JD3K8Q7Z": "01JD3K9B4N"}, "reason": "left the company"}
+```
+
+All optional. The order, which makes a half-done deletion harmless:
+
+1. The person is **disabled** at once (sessions end, tokens and grants answer
+   `401 token_owner_disabled`), in its own transaction.
+2. Transfers, then removed memberships, each a transaction of its own (a
+   failure leaves a disabled person with fewer spaces, never a space without an
+   owner).
+3. The spaces of rules 1 and 2 are recycled into items listed under the
+   person's item.
+4. The person's row is marked deleted (`users.deleted_at`, `users.recycle_item`);
+   their API tokens and OAuth grants are revoked (not restored later), their
+   GitHub authorisation is revoked at GitHub (best effort, as 2.7 does), their
+   group memberships are removed (recorded in the item, restored with them),
+   their pending invites are kept (they still let invited people in). Their
+   passkeys and identities stay attached, unusable while deleted, so a
+   deleted person signing in by SSO is refused instead of getting a new
+   account by `autoCreate`.
+
+`200` with the person's recycle item. The usage of the person moves with the
+spaces (3.3's accounting); the tenant's people count goes down by one.
+
+**A deleted person is invisible**: not in user lists, pickers, member lists or
+`GET /api/groups`; their id answers `404 user_not_found` to everything but the
+recycle bin and the audit log, which show "deleted user" with the username.
+Their username stays taken while they are in the recycle bin.
+
+#### Restoring and purging a user
+
+- Restoring brings back the person as they were before step 1 (enabled or
+  disabled), their group memberships, and the spaces recycled with them.
+  Transfers and removed memberships are **not** undone (the heirs may have
+  changed things since); the answer lists them so an administrator can redo
+  them by hand. Revoked tokens and grants stay revoked.
+- Purging deletes their personal data: password hash, passkeys, identities,
+  email, name, preferences, favourites, drafts, sessions, held sessions,
+  usage row, and their spaces' items. **The row itself stays as a tombstone**
+  (`id`, `tenant_id`, `deleted_at`, username replaced by `deleted-<id>`) while
+  anything refers to it: audit rows, and groups or invites they made. The daily job hard-deletes a tombstone that nothing
+  refers to any more (the audit log's 90 days are the usual last reference).
+  Git history is never rewritten: commits keep the author name and address
+  they were made with.
+
+### Confirmations and bulk actions
+
+#### `POST /api/admin/confirm`
+
+```json
+{"action": "delete_spaces", "spaces": ["01JD3K8Q7Z", "01JD3K8Q80"]}
+```
+
+`action` is one of `delete_spaces`, `delete_users`, `purge`, `restore`,
+`evict`, `pin`, `unpin`, `disable_spaces`, `enable_spaces`, `disable_users`,
+`enable_users`, `export`; with `spaces`, `users` or `items` (recycle items), at
+most 500, all in the caller's scope (`404` for any that is not: nothing is
+confirmed). For `delete_users`, also `heir` and `transfers` as above.
+
+`200`:
+
+```json
+{"confirm": "c_6c1…", "expires": "2026-11-23T08:40:00Z", "count": 2,
+ "plan": [ /* the deletion previews, or one line per item for the other actions */ ],
+ "bytes": 22020096, "needsHeir": [], "blockers": []}
+```
+
+The token is bound to the caller, the action, the exact set of ids and a hash
+of the plan; it lasts 10 minutes and works once. It is held in memory (at most
+1,000; a restart forgets them and the client asks again). The web app shows the
+plan and asks the administrator to type the number of items before it sends
+the token: that is the second confirmation.
+
+#### `POST /api/admin/bulk`
+
+`{"confirm": "c_6c1…"}`. Needs a confirmation for every action of more than one
+item and for `purge` of any. `409 confirm_stale` when what the plan was made
+from changed (a member added, a space measured again is not a change: the hash
+covers ids, owners, members, heirs and states); `404 not_found` for an unknown,
+used or expired token. `202` with a job:
+
+```json
+{"job": {"id": "01JDJB…", "action": "delete_spaces", "total": 2, "done": 0, "failed": [], "state": "running"}}
+```
+
+`GET /api/admin/jobs/{id}` follows it. A job runs the items one at a time,
+in the background, each with the rules of its single action (so `409 busy` on
+one space fails that item, which is listed in `failed` with its error, and the
+rest go on). At most one bulk job per tenant and two on the server run at once;
+others wait (`state: "queued"`). A job survives nothing: after a restart, items
+not done are not done, and the job reads `state: "interrupted"` with what was
+done.
+
+Single actions keep their own endpoints without a token, except the purge of a
+recycle item.
+
+### Exports
+
+An export is a zip of what a space holds, made before a deletion so that the
+content can be kept elsewhere. It is offered by the deletion preview and in the
+recycle bin.
+
+#### `POST /api/admin/exports`
+
+`{"spaces": ["01JD3K8Q7Z"], "items": [], "user": null, "history": false}`: spaces,
+recycle items, or a user (their personal space and the spaces of rules 1 and 2).
+`202` with an export: `{"id", "state": "running", "bytes": 0, "expires"}`.
+
+- Each space is a folder: its files at the current commit (`git archive` from
+  the clone, or from the recycle directory), `drafts.json` (every member's
+  unsaved drafts, as 1.7's trash file), and `REMOTE.txt` with the remote
+  addresses (never credentials). An attachment repository's files are fetched
+  into the zip (an evicted space is restored for it first, from the remote).
+  With `history: true` (site administrators only), a `git bundle` of the
+  space's repository instead of the files at the current commit.
+- **Admins cannot read people's pages through the API** (1.7); an export breaks
+  that on purpose and so it is narrow: only spaces that are being deleted or
+  are in the recycle bin may be exported (`409 not_deleting` otherwise: a space
+  is "being deleted" for 1 hour after its deletion preview was asked for by
+  that caller), it is audited (`export_created`, `export_downloaded`), and every
+  owner of the space gets a notice in their account.
+- Exports are written to `DATA/exports/`, kept 7 days (`exports.days`, site
+  only) and count against `exports.maxBytes` (site only, 20 GiB by default):
+  `507 exports_full` beyond it. One export at a time per tenant, two on the
+  server; the rest wait.
+
+`GET /api/admin/exports`, `GET /api/admin/exports/{id}`, `DELETE /api/admin/exports/{id}`,
+and `GET /api/admin/exports/{id}/download` (`Content-Disposition: attachment`,
+`Range` supported). An export made by a tenant administrator is visible to that
+tenant's administrators and the site's.
+
+### The size of one file
+
+**`files.maxBytes`**: a layered setting (site, tenant; see "Settings by layer")
+of kind `limit`, the largest file a write may create or replace, for every kind
+of file, images included.
+
+- The **ceiling** is the site's: `--max-upload` (10 MiB by default, at most
+  256 MiB) is the site value and its `lower` is `restrict` with `max` equal to
+  it, so a tenant can set any value up to it and never above. Raising the flag
+  raises the ceiling; lowering it below a tenant's value makes that value
+  `inEffect: false` and the flag's value applies.
+- **Where it is enforced**, before the file is written anywhere:
+  - `POST …/assets` (the `Content-Length` first, then a reader that stops at
+    the limit for a body without one);
+  - `POST …/import`: each file that would be written (a page, an attachment, a
+    file of a zip); the import's own size stays `maxImport` (site only);
+  - pages saved by `PUT`/`POST` of pages, drafts (`PUT …/draft`), commits, MCP's
+    `page_create` and `page_update`, and 4.2's offline replay: the size of the
+    page file as it would be written;
+  - a commit to an attachment repository (3.1), which only uploads and imports
+    make.
+- **Not enforced** on what already exists or arrives from a remote (a pull, a
+  restore, 3.1's move of `assets/` into an attachment repository): the server
+  cannot refuse what is in Git, and a lower limit never makes a file
+  unreadable.
+- **Refusal**: `413 file_too_large` with `{"limit": 10485760, "size": 23068672, "name": "street.jpg"}`
+  (`size` is absent when the body was cut off at the limit). Before 3.5 an
+  upload over `maxUpload` answered `413 invalid`; old clients still see `413`.
+  MCP answers a tool error with `code: "file_too_large"`.
+- `GET /api/meta`'s `maxUpload` is the effective value for the caller's tenant
+  (the site's for a caller not signed in); 4.1's offline uploads use it.
+- The effective value is read from the settings cache (one map lookup), never
+  per layer on a request.
+
+### Audit
+
+| `kind` | When | `detail` |
+|---|---|---|
+| `space_deleted`, `space_restored`, `space_purged` | a space went into, out of, or was purged from the recycle bin | `item`, `space`, `name`, `bytes`, `reason`, `bulk` (job id) |
+| `user_deleted`, `user_restored`, `user_purged` | the same for a person | `item`, `user`, `username`, `transfers`, `recycled` (space ids), `reason`, `bulk` |
+| `export_created`, `export_downloaded`, `export_deleted` | an export | `export`, `spaces` |
+| `bulk_started`, `bulk_finished` | a bulk job | `job`, `action`, `count`, `failed` |
+
+Rows carry the tenant of the space or person. A tenant administrator sees their
+tenant's rows of these kinds.
+
+### Errors of this section
+
+| Code | Status | When |
+|---|---|---|
+| `file_too_large` | 413 | a file over `files.maxBytes`, with `limit`, `size`, `name` |
+| `heir_required` | 409 | deleting a person who owns shared spaces alone and no heir can be chosen, with `spaces` |
+| `owner_required` | 409 | restoring a space whose owners are all gone without naming one |
+| `confirm_stale` | 409 | a bulk confirmation whose plan no longer holds |
+| `not_deleting` | 409 | exporting a space that is neither being deleted nor in the recycle bin |
+| `exports_full` | 507 | the exports would exceed `exports.maxBytes` |
+| `busy` | 409 | as in "Administration", for one space of an action |
+
+### Settings this adds
+
+| Key | Kind | Layers | Site default | Site's `lower` by default |
+|---|---|---|---|---|
+| `files.maxBytes` | limit in bytes | site, tenant | `--max-upload` (10 MiB) | `restrict`, `max` = the site value |
+| `recycle.days` | limit, 1 to 365 | site | 30 | — |
+| `exports.days`, `exports.maxBytes` | limits | site | 7, 20 GiB | — |
+
+### Storage
+
+Migration `0020_recycle.sql` (0019 is left to phase 4), SQLite and PostgreSQL:
+
+- `recycle_items` (id, tenant_id, kind, space_id, user_id, parent item, records
+  JSON, bytes, deleted_at, deleted_by, reason, purge state); indexes
+  `(tenant_id, deleted_at DESC, id)` and `(deleted_at)` for the purge job.
+- `users.deleted_at`, `users.recycle_item`, `users.last_active`,
+  `users.first_write`; a partial index on users that are not deleted, for the
+  lists.
+- `usage` gains `held_bytes`, `remote_spaces`, `grace_spaces`, `overdue_spaces`,
+  `evicted_spaces`, `pinned_spaces`, `connected`, `dormant`, `last_active`,
+  `created` (copied so that the people's list sorts without a join), and the
+  indexes above; filled by set statements in the migration.
+- `exports` (id, tenant_id, made_by, spaces JSON, state, bytes, path, created,
+  expires).
+- Every store method that lists users excludes deleted ones; the 3.3 scope test
+  gains a check that no listing of `users` forgets it.
+
+## Tenant autonomy
+
+Milestone 3.6 (contract, 2026-11-23; written for after 2.7, 3.1 and 3.5 are
+merged). Accounts mode only. It finishes the administrators' permission model:
+
+- **A tenant administrator may have anything that does not use the server's
+  shared resources** (its disk, its outgoing capacity, its identity as a
+  service) and does not reach outside their tenant.
+- **A site administrator is the highest level**: they see and manage
+  everything, in every tenant, and decide for every shared thing whether it is
+  forced on all tenants or only a default.
+- design.md lists every administrator-configurable thing and its class
+  ("管理项清单"): **site-only** (a), **layered** (b: the site sets a value and
+  whether it is forced, a minimum, or a default; tenants configure within it;
+  spaces and people below where it makes sense), **tenant-owned** (c: each
+  tenant has its own, independent of the others).
+
+With one tenant, which is every deployment upgraded from 3.5, nothing changes
+(see "Upgrading").
+
+### Forced, minimum, default
+
+3.3's `lower` (`allow`, `restrict`, `lock`) gains one mode and a reason, and
+applies to every layered (b) key of the inventory:
+
+```json
+{"mode": "allow"}
+{"mode": "tighten", "note": "Company policy: sessions end after 7 days."}
+{"mode": "restrict", "options": ["any", "github"]}
+{"mode": "restrict", "max": 10485760}
+{"mode": "lock", "note": "The server's disk is shared; every space must follow a remote."}
+```
+
+| Mode | The administrators' page calls it | Lower layers may |
+|---|---|---|
+| `allow` | 默认（下面可以改） / default only | set any valid value, looser or stricter than the site's |
+| `tighten` | 最低要求 / minimum | set a value at least as strict as the site's **own value** |
+| `restrict` | 限定范围 / limited to | pick among `options`, or stay at or under `max` (3.3) |
+| `lock` | 强制 / forced | nothing: the site's value applies |
+
+- Every key says what "stricter" means for it (`strictness`): `higher`
+  (booleans where `true` is stricter, e.g. `auth.ssoOnly`), `lower` (limits,
+  e.g. `session.maxDays`), an order of options (`storage.remotes.require`:
+  `null` < `any` < `github`), or `subset` (lists, e.g. `storage.hosts`: a
+  lower layer keeps only some of the site's entries). A key without an order
+  cannot be `tighten`ed (`400 invalid`).
+- `note` (at most 200 characters, optional, any mode but `allow`) is shown to
+  the tenant's administrators next to the setting.
+- A lower layer's own `lower` must be at least as strict as the one above it
+  (3.3's rule, `tighten` sitting between `allow` and `restrict`).
+- Values that a change makes ineffective are kept, `inEffect: false`, as in
+  3.3; `affected` counts the tenants.
+
+**Cost.** The effective values stay computed once per (tenant, settings
+generation, space settings version) and cached (3.3); a request does a map
+lookup. Each layered key has one entry in that map; the inventory adds about
+thirty keys, so a tenant's map is a few kilobytes, and a thousand tenants a few
+megabytes.
+
+### What a tenant administrator sees of a site rule
+
+`GET /api/admin/tenants/{tenant}/settings` (3.3) gives each setting:
+
+```json
+{"key": "storage.remotes.require", "kind": "choice", "layers": ["site", "tenant", "space"],
+ "strictness": ["null", "any", "github"],
+ "site": {"value": "any", "lower": {"mode": "tighten", "note": "…"}},
+ "tenant": {"value": "github", "lower": {"mode": "lock"}, "inEffect": true},
+ "effective": "github",
+ "editable": true, "forced": false, "allowed": ["any", "github"], "reason": null}
+```
+
+- `editable`: whether this caller may change the tenant's value now.
+- `forced`: the site locks it. `reason` is then `{"by": "site", "mode": "lock", "note": "…"}`;
+  for `tighten` and `restrict` the reason says so as well and `allowed` (or
+  `max`) says what is left. The page shows a forced setting read only, greyed,
+  with "由全站管理员统一设置" and the note.
+- `GET /api/settings?space=` (3.3) answers the same `reason` for the space and
+  person layers (`by` is `site` or `tenant`).
+
+A tenant administrator never sees the site's value of a secret, a site-only
+setting, or anything about another tenant.
+
+### The layered keys
+
+3.3's keys stay as they are. 3.6 gives a tenant layer (and where it says so a
+space or person layer) to these; the column "Upgrade" is the site's `lower`
+that the migration writes, chosen so that nothing changes for anyone (see
+"Upgrading").
+
+| Key | Kind, strictness | Layers | Site value after the upgrade | Upgrade `lower` |
+|---|---|---|---|---|
+| `auth.ssoOnly` | boolean, `higher` | site, tenant | the stored `login.ssoOnly` | `tighten` |
+| `auth.loginMode` | choice (`dual`, `sso_first`, `sso_redirect`, `local_only`) | site, tenant | the stored `login.mode` | `allow` |
+| `auth.passkeys.requireRoles` | list, `superset` stricter | site, tenant | the stored value | `tighten` |
+| `auth.social` | list of the site's social providers a tenant's people may use, `subset` | site, tenant | all | `tighten` |
+| `auth.tenantSso` | boolean: a tenant may own SSO providers | site | `true` | — |
+| `session.idleDays`, `session.maxDays` | limits, `lower` | site, tenant | the stored values | `tighten` |
+| `captcha.contexts.register`, `.forgot`, `.invite` | `off` < `after_failures` < `always` | site, tenant | the stored values | `tighten` |
+| `mail.useSite` | boolean: a tenant without its own SMTP sends through the site's | site, tenant | `true` | `allow` |
+| `access.tokens`, `access.mcp` | boolean, `false` stricter | site, tenant | the stored values | `tighten` |
+| `daily.useSiteApis` | boolean: a tenant's spaces may choose the site's interfaces | site, tenant | `true` | `allow` |
+| `github.useSiteApp` | boolean: the tenant's people may connect through the site's App | site, tenant | `true` | `allow` |
+| `storage.remotes.require` | choice, `null` < `any` < `github` | site, tenant | 3.1's stored value | `lock` (3.1's) |
+| `storage.remotes.scope` | `new` < `all` | site, tenant | 3.1's | `lock` |
+| `storage.remotes.graceDays` | limit, `lower` | site, tenant | 3.1's | `lock` |
+| `storage.hosts` | list, `subset` | site, tenant | 3.1's `hosts.allowed` (or `--remote-host`) | `restrict` to the site's list, always |
+| `storage.localSpaces.maxBytes` | limit, `lower` | site, tenant | 3.1's | `lock` |
+| `storage.assets` | choice `space` < `repository` | site, tenant, space | `repository` when 3.1's `assets.newSpaces` was `true`, else `space` | `allow` |
+| `files.maxBytes` | limit (3.5) | site, tenant | `--max-upload` | `restrict`, `max` = the site value |
+| `offline.copies` | boolean, `false` stricter (4.1) | site, tenant, space | `true` | `tighten` |
+| `tenant.selfService` | see "Organisation sign-up" | site | `false` | — |
+
+Notes:
+
+- `auth.*`, `session.*`, `captcha.*` and `access.*` are applied to a person by
+  their tenant, after the account is known; see "What stays the site's" for why
+  some security settings cannot be per tenant.
+- `storage.*` keep 3.1's `lock` on upgrade: the site administrators then decide
+  whether to loosen each to `tighten` (tenants may only require more) or `allow`
+  (the site's value is a default). With `allow` a tenant may set
+  `storage.remotes.require: null` and so use the server's disk for local
+  spaces: that is the site's choice to make, and `storage.localSpaces.maxBytes`
+  and the tenant's byte quota (3.3, site only) still bound it.
+- **Exemptions** (3.1's `remoteExempt` on a user, `exempt` on a space) are
+  recorded with the layer that granted them: a tenant administrator's exemption
+  releases a space only from what the tenant added on top of the site; the
+  site's own value still applies. A site administrator's releases from both.
+- **Pinning** (3.1) keeps a space's whole history and attachments on the
+  server's disk, so it is the site's: a tenant administrator may pin up to the
+  tenant's `quota.pinnedBytes` (a tenant total set by site administrators, `0`
+  by default, so tenant administrators cannot pin until the site allows it):
+  `409 quota_exceeded` with `quota: "pinnedBytes"`. Evicting is open to tenant
+  administrators (it only frees the server's disk).
+- `storage.assets` at the space layer is the owner's choice for their space (a
+  record of the state database, as 3.1's per-space values, not `space.yml`).
+  When the effective rule requires `repository`, it applies to new spaces and to
+  a space when it connects a remote; an existing space keeps its attachments
+  where they are and is shown the one-step move. Nothing is moved on its own.
+
+### What stays the site's
+
+The inventory's (a) items, and the reasons that matter for security:
+
+- **Per-address limits, failure caps and lockout** (`limits.*`, `lockout.*`):
+  sign-in does not know the tenant until the account is found, and a tenant's
+  stricter cap would show, by when it starts refusing, that a username exists
+  and which tenant it is in (2.8 counts failures for names nobody has, so that
+  nothing tells them apart).
+- **The `login` and `setup` captcha contexts**: the same reason; the sign-in
+  form is the server's. A tenant's captcha keys and contexts apply to the forms
+  that name the tenant (`register`, `forgot`, `invite`).
+- **Passkeys on or off**: their relying party is the server's host.
+- **The server itself**: `--listen`, `--public-url`, `--data`, `--database`,
+  `--trusted-proxy`, `--allow-origin`, the process limits, the secret key,
+  tenancy, tenants' creation, deletion, `disabled`, `slug` and quotas, the
+  server status, the cache and eviction settings of 3.1, the recycle bin's
+  retention and the exports' limits of 3.5, the outbound cap below, the list of
+  public mail domains, `--max-upload` and `--max-import` as ceilings.
+
+### Tenant-owned resources
+
+Every endpoint below exists as `/api/admin/tenants/{tenant}/…`, for the
+tenant's administrators and for site administrators. `{tenant}` is the id; a
+tenant administrator who names another answers `404 not_found`. The site's own
+counterparts keep their 2.x/3.x addresses (`/api/admin/auth/providers`,
+`/api/admin/mail`, …) and stay site administrators only.
+
+All of them are held in memory per tenant, loaded at start and re-read on
+change (one tenant's at a time), so no request reads them from the database:
+providers (2.8 already), the SMTP settings, the captcha keys, the daily
+interfaces and the GitHub Apps. A tenant may have at most: 10 SSO providers,
+20 email domains, 1 SMTP sender, 1 captcha configuration, 20 daily interfaces,
+1,000 pasted daily lines, 1 GitHub App.
+
+#### Outgoing requests made for a tenant
+
+A tenant administrator chooses addresses the server will connect to (an
+identity provider's issuer, a SAML metadata address, an SMTP host, a daily
+interface). The server is the one making those connections, so:
+
+- **The public-address check of 2.3** applies to every such connection, at
+  connect time, on the address the name resolves to: no loopback, private,
+  link-local, multicast, unique-local or unspecified address, and no
+  `localhost`; redirects are followed only to addresses that pass too (and at
+  most 3). An SMTP host must also pass, which leaves out 3.3's `none` (loopback
+  relays only) for tenants: a tenant's SMTP is `starttls` or `tls`, on ports
+  25, 465, 587 or 2525.
+- **A site-wide outbound cap** (`outbound.perMinute`, site only, 600 by
+  default) counts every request made for any tenant's configuration, and each
+  tenant has at most `outbound.tenantPerMinute` of it (site only, 120 by
+  default); over it the request is not made and the feature answers as when the
+  remote is unreachable (`unavailable`). The site's own configuration does not
+  count against it.
+- Answers are bounded (2.3's 64 KB for daily interfaces; 1 MB for discovery
+  documents and metadata), with the same timeouts as the site's.
+- Secrets are sealed with the server's key with the tenant's id in the
+  purpose (so a sealed value cannot be moved to another tenant's record), never
+  returned (`hasSecret`), and shown in the audit log as `"changed"`.
+
+#### Sign-in: social providers and SSO
+
+The 2.8 providers split into two kinds, as consumer products do it:
+
+- **Social sign-in** (`class: "social"`): consumer accounts (Google, GitHub,
+  Microsoft personal accounts, Apple, GitLab.com and the like). **The site
+  configures them** (`/api/admin/auth/providers`, unchanged). Each is a
+  "Continue with Google" button on every sign-in page. It signs a person in to
+  the account its identity is attached to, in any tenant, as today; with
+  registration open for the page's tenant it can register (see below).
+  `auth.social` lets a tenant narrow which social providers its people may use;
+  an identity from a provider the person's tenant does not allow is refused
+  after it is resolved (`sso_error=not_allowed`, the same as for a GitHub
+  organisation that does not match).
+- **SSO** (`class: "sso"`): enterprise OpenID Connect or SAML, owned by a
+  tenant (`/api/admin/tenants/{tenant}/auth/providers`, the same Provider
+  object and refusals as 2.8). It signs people in only to accounts of its
+  tenant, makes accounts only there (`autoCreate`), and maps groups only to the
+  tenant's groups. A site administrator may also own SSO providers (the 2.8
+  ones that are SSO by nature) and offer each to all tenants or to a list
+  (`tenants`).
+
+The Provider object gains:
+
+```json
+{"class": "sso", "owner": "01JDT3NANT", "tenants": null, "domains": ["acme.example"], "…": "…"}
+```
+
+`owner` is a tenant id, or `"site"`; `tenants` is for a site-owned provider
+(`"all"` or a list of ids; `null` for a tenant's); `domains` are the tenant's
+verified domains routed to this provider (below).
+
+**Identities.** An identity is keyed by (`owner`, issuer, subject), where the
+owner is `site` for site providers and the tenant for a tenant's SSO. So two
+tenants may both use the same identity provider (two companies on Microsoft
+Entra ID, or one issuer with two applications) without sharing identities, and
+the site's issuer uniqueness (`provider_issuer_in_use`) holds per owner. A
+tenant's SSO provider:
+
+- finds accounts only by `(its tenant, issuer, subject)`, and the account must
+  be of its tenant (checked again on the row, so a bad row cannot cross);
+- merges by verified address (`mergeVerifiedEmail`) only into its tenant's
+  accounts (3.3 already), never an administrator's;
+- **never signs in a site administrator**, even one whose identity is linked:
+  a tenant administrator controls that provider and could point it at an
+  identity provider of their own (`sso_error=not_allowed`, audited);
+- when its issuer, SAML entity id or GitHub base address changes, its
+  identities are detached (they named a subject at the old issuer); the
+  answer says how many, and people sign in again by linking.
+
+`POST`/`PATCH`/`DELETE /api/admin/tenants/{tenant}/auth/providers…` need
+`auth.tenantSso` at the site (`403 forbidden` while it is `false`). Slugs stay
+unique on the server (they are in the callback addresses registered at the
+identity provider); `409 exists` says only that the slug is taken. `kind`
+`github` is social only.
+
+**How the 2.8 providers migrate.** Nothing moves between owners and no identity
+changes, so every sign-in that works before works after:
+
+- every existing provider stays site-owned (`owner: "site"`) and its
+  identities get the owner `site`;
+- `class` is set by what it is: `kind: "github"` with `baseUrl`
+  `https://github.com`, and `oidc` with the issuer of Google
+  (`https://accounts.google.com`), of Microsoft's personal accounts (`…/consumers/…`,
+  `…/9188040d-6c67-4c5b-b112-36a304b66dad/…`) or of `…/common/…`, Apple or
+  GitLab.com, are `social`; everything else (`saml`, other `oidc`, GitHub
+  Enterprise Server) is `sso`;
+- a site-owned SSO provider is offered to `tenants: "all"`, which is what it
+  did before; a site administrator may hand it to one tenant
+  (`POST /api/admin/auth/providers/{slug}/assign` with `{"tenant": id}`) once
+  every account that has an identity from it is in that tenant (`409 conflict`
+  with the count otherwise), and only then do its identities change owner.
+- `class` can be changed by a site administrator for a site provider; it only
+  changes how the page shows it.
+
+#### Email domains and the SSO entry
+
+A tenant claims the email domains its people use; a **verified** claim routes
+sign-in for those addresses to the tenant's SSO.
+
+- `GET /api/admin/tenants/{tenant}/domains`, `POST …/domains` (`{"domain": "acme.example"}`),
+  `POST …/domains/{domain}/verify`, `DELETE …/domains/{domain}`, `PATCH
+  …/domains/{domain}` (`{"provider": slug, "autoJoin": false}`).
+- A claim is made unverified, with a token. It is verified by a DNS TXT record
+  `_petalbook.<domain>` holding `petalbook-domain=<token>`; `verify` looks it up
+  (through the system resolver, counted as one outgoing request of the tenant).
+  An unverified claim does nothing at all.
+- A claim is for exactly that domain (subdomains are claimed one by one). Public
+  mail domains (a list shipped with the server and kept by site administrators:
+  `gmail.com`, `outlook.com`, `qq.com`, `163.com`, …) cannot be claimed
+  (`400 domain_public`).
+- **Two tenants and one domain**: any number of tenants may hold an unverified
+  claim; at most one claim of a domain is verified. The first to verify has it;
+  a later `verify` that finds its own record answers `409 domain_claimed` (it
+  does not name the other tenant; only a holder of the DNS learns even that).
+  A site administrator may move a verified claim
+  (`POST /api/admin/domains/{domain}/assign`), and sees every claim
+  (`GET /api/admin/domains`).
+- Verified claims are checked again every 7 days; a record missing at three
+  checks in a row (over at least 48 hours) makes the claim unverified, with a
+  notice to the tenant's administrators and an audit row. A DNS failure is not
+  a missing record.
+- The map of verified domains is in memory (domain → tenant, provider,
+  `autoJoin`), rebuilt on change.
+
+**The sign-in page asks for the email or username first** when the server has
+any verified domain with SSO (`GET /api/auth/providers` gains `"identifierFirst": true`
+and `"ssoEntry": true`). Then:
+
+#### `POST /api/auth/discover`
+
+Public. `{"identifier": "tang@acme.example", "tenant": "acme"}` (`tenant`, the
+page's slug, optional).
+
+```json
+{"sso": {"slug": "acme-entra", "kind": "oidc", "name": "Acme", "icon": "preset:microsoft",
+         "start": "/api/auth/oidc/acme-entra/start", "enforced": true}}
+```
+
+or `{"sso": null}`.
+
+- It looks only at the **domain** of an identifier that contains `@`: whether a
+  verified claim routes it to an enabled provider. It never looks up an account
+  and its answer is the same whether one exists (a username, without `@`,
+  always gets `null`). So it tells only what the DNS of that domain tells
+  anyone: that the domain has SSO here.
+- `enforced` is the routed tenant's effective `auth.ssoOnly`. The page then
+  hides the password field and shows only "Continue with <name>" (and "Use a
+  password instead", which opens the form: administrators keep 2.8's password
+  back door, and `ssoOnly` still refuses everyone else after the password).
+  Without `enforced`, the page shows the button above the password field.
+- The start carries the address as `login_hint` (OpenID Connect) or the SAML
+  `Subject`'s `NameID` hint when the provider supports it. The address is only
+  a hint: **the account is decided by the identity the provider returns**, with
+  the rules above, so routing can never sign anyone into an account outside the
+  provider's tenant.
+- It counts against the address's per-minute allowance of 2.8, like
+  `POST /api/login`; answered from memory.
+
+A separate **"Sign in with SSO"** entry (`/login/sso`) asks only for an email
+and does the same.
+
+**Usernames still sign in with a password** as before, in every mode.
+
+**With the 2.8 login modes**: `auth.loginMode` is now layered; a page with
+`?tenant=` uses the tenant's, a page without uses the site's. `local_only` turns
+off the buttons and the SSO entry, not the password back door. `sso_redirect`
+on a tenant's page goes straight to the tenant's one SSO provider (or lists
+them when it has several). `identifierFirst` is added to `dual` and
+`sso_first`; `sso_redirect` does not need it. `GET /api/auth/providers?tenant=`
+lists the site's social providers the tenant allows, the site SSO providers
+offered to it, and the tenant's own SSO providers.
+
+**Joining by domain** (`autoJoin` on a verified domain, off by default): an
+account made with an address of that domain (registration after the address is
+confirmed, or `autoCreate` of a social provider that vouched for the address)
+is made in that tenant, whatever page it started on, and the person is told
+which tenant they joined. It does not move existing accounts (3.3 has no move).
+With the tenant's `auth.ssoOnly` in effect, registering with a password for
+such an address answers `409 sso_required` with the provider's `start`.
+
+#### Mail: `GET/PUT /api/admin/tenants/{tenant}/mail`, `POST …/mail/test`
+
+The shape of `/api/admin/mail` (3.3), without `security: "none"`, under the
+outgoing rules above. A tenant's mail (verification, reset, registration,
+notices) is sent with the tenant's SMTP when it has one enabled; otherwise with
+the site's if `mail.useSite` is in effect (the site's `from` address, the
+tenant's name as the display name), otherwise not at all (the tenant's
+registration and reset then answer as with mail off). The 3.3 caps stay
+site-wide (1,000 waiting on the server, 3 an hour to one address); each tenant
+has at most 200 waiting.
+
+#### Captcha: `GET/PUT /api/admin/tenants/{tenant}/captcha`
+
+`provider`, `siteKey`, `secret` (write-only) as 2.8, and the tenant's values of
+the contexts `register`, `forgot`, `invite` (within the site's `tighten`). Used
+on the tenant's registration, reset and invite pages; the verification request
+goes to the provider's fixed host and counts against the tenant's outbound
+share.
+
+#### Daily text: `/api/admin/tenants/{tenant}/daily…`
+
+`GET/PUT …/daily`, `PUT/DELETE …/daily/apis/{id}`, `POST …/daily/try`,
+`PUT/DELETE …/daily/lines`: the shapes of 2.3's site endpoints, for the
+tenant. The tenant's interfaces have their own sealed header values, their own
+`rps` and their own cache (keyed by tenant and interface), so they never use the
+site's rate limits; they count against the outbound cap. A tenant's spaces may
+choose the tenant's interfaces, and the site's while `daily.useSiteApis` is in
+effect. The tenant's `daily.default` (3.3) may name its own interfaces and
+lines.
+
+#### GitHub: `/api/admin/tenants/{tenant}/github…`
+
+- A tenant may register its **own GitHub App** (`GET/PUT/DELETE …/github`, the
+  shape of 2.7's `/api/admin/github`), only on `github.com`. Its installations
+  (`GET …/github/installations`, `PUT …/installations/{id}` with `shared`) are
+  shared within the tenant only.
+- **The site's App** stays the site's. Sharing one of its installations is now
+  per tenant: `PUT /api/admin/github/installations/{id}` takes
+  `{"shared": true, "tenants": "all"}` or a list of tenant ids. The upgrade
+  turns 2.7's `shared: true` into `tenants: "all"`.
+  `GET /api/admin/tenants/{tenant}/github` also lists, read only, the site
+  installations shared with the tenant.
+- A person connects their GitHub account through their tenant's App when it has
+  one, else through the site's while `github.useSiteApp` is in effect. One
+  GitHub account still links to one PetalBook user on the server (2.7). The
+  callback address stays one (`/api/github/authorization/callback`); the state
+  names the App.
+- `internal/githubapp` takes an App as a value (id, key, client), never a
+  global; the token cache (10,000) is the server's and is keyed by (App,
+  installation, repository).
+
+#### Security: `GET/PUT /api/admin/tenants/{tenant}/security`
+
+The tenant's layer of `auth.ssoOnly`, `auth.loginMode`,
+`auth.passkeys.requireRoles`, `auth.social`, `session.*` and the captcha
+contexts above, gathered as one page with 2.8's checks scoped to the tenant:
+`local_admin_required` counts the tenant's enabled administrators with a
+password; `ssoOnly` needs an enabled SSO provider of the tenant or offered to
+it. Tenant administrators are never refused a password by `ssoOnly` (2.8's back
+door, kept per tenant). A site administrator is never refused by a tenant's
+setting.
+
+### Organisation sign-up
+
+With `tenant.selfService` on at the site (off by default; it needs
+`tenancy.enabled` and mail), registration offers a second choice: **create my
+own organisation**.
+
+- `GET /api/register` answers `createTenant: true`. `POST /api/register` takes
+  `{"organisation": {"name": "Acme", "slug": "acme"}}` beside the 3.3 fields;
+  the slug is held while the registration waits for its confirmation (as the
+  username is).
+- Confirming the address makes the tenant, then the account in it with
+  `role: "admin"` (not `siteAdmin`), with a personal space. The new tenant
+  starts with the site's defaults, the tenant totals of `tenant.selfService.quota`
+  (site only; `null` means none), and registration closed.
+- **Caps** (site only): `tenant.selfService.perPerson` tenants per address
+  (default 1, counted by the confirmed address, over the tenant's whole life,
+  deleted ones included), `tenant.selfService.perHour` on the server (default
+  20), and 3.3's 1,000 tenants. Over a cap: the same `202` and an email saying
+  the organisation could not be made (the answer stays the same for every
+  address, as 3.3 does).
+- Individuals keep 3.3's flow: an account and a personal space in the tenant of
+  the page (or of a domain with `autoJoin`).
+- One account in several tenants (switching workspaces) is not in 3.6.
+
+`tenant_created` rows say `by: "self_service"` and the address.
+
+### Updated administrators' table
+
+| Endpoints | Tenant administrator | Site administrator |
+|---|---|---|
+| `/api/users…`, `/api/invites…`, `DELETE /api/users/{id}`, `/api/admin/users/{id}/deletion` | their tenant | every tenant |
+| `/api/admin/spaces…` (incl. 3.1's `…/storage` `exempt`, `…/evict`; `pin` within `quota.pinnedBytes`), `/api/admin/groups…`, `/api/admin/tokens…`, `/api/admin/grants…`, `/api/admin/usage`, `/api/admin/storage/people…` | their tenant | every tenant |
+| `GET /api/admin/storage` | their tenant's summary, settings read only | all, and `PUT` |
+| `/api/admin/recycle…` (list, restore), `/api/admin/confirm`, `/api/admin/bulk`, `/api/admin/jobs…`, `/api/admin/exports…` | their tenant | every tenant |
+| `DELETE /api/admin/recycle/{item}` (purge early), exports with `history` | `403` | yes |
+| `GET /api/admin/audit` | their tenant's rows, without the site's kinds | every row |
+| `/api/admin/tenants/{own}`: `GET`, `PATCH name`, `…/settings`, `…/security`, `…/auth/providers…`, `…/domains…`, `…/mail…`, `…/captcha`, `…/daily…`, `…/github…` | yes, within the site's rules | every tenant, and may also set every rule |
+| `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/access`, `/api/admin/daily…`, `/api/admin/github…`, `/api/admin/settings…`, `/api/admin/domains…`, `/api/admin/status`, `/api/admin/tenancy`, the tenant list, create, delete, `disabled`, `slug`, `quota`, `PUT /api/admin/storage` | `403 forbidden` | yes |
+
+`/api/admin/access` and `/api/admin/security` remain the site's layer; the
+tenant's layer of the same switches is `…/tenants/{tenant}/settings` and
+`…/security`.
+
+### Upgrading
+
+Migration `0021_tenant_autonomy.sql`, SQLite and PostgreSQL.
+
+- **The values move, unchanged, to the site layer.** The stored security
+  settings (`login.mode`, `ssoOnly`, `requireRoles`, sessions, captcha
+  contexts), machine access, 3.1's storage settings and 2.7's sharing are
+  written as the site's values of the keys above. `/api/admin/security`,
+  `/api/admin/access` and `/api/admin/storage` keep their shapes and read and
+  write the same records (as 3.3 did for `/api/admin/daily`), so old clients
+  keep working.
+- **No tenant value is written**: every tenant follows the site (`null`), so
+  every effective value is what it was. The site's `lower` is the "Upgrade"
+  column: `tighten` for security keys (tenants may only make them stricter,
+  which changes nothing until a tenant administrator does), `lock` for 3.1's
+  storage keys (as 3.1 had them), `allow` where the key is a choice among the
+  site's own resources (`mail.useSite`, `daily.useSiteApis`,
+  `github.useSiteApp`, `true` by default, so tenants keep using them).
+- Providers, identities and installations as above: nothing changes owner.
+- Tenant-owned tables start empty.
+- Single-user mode: none of this; the settings resolve site → space → person.
+
+New tables: `tenant_mail`, `tenant_captcha`, `tenant_daily` (and its interfaces
+and lines, by tenant), `github_apps` (the site's row moved here with owner
+`site`), `tenant_domains` (tenant, domain, token hash, verified, checked,
+failures, provider, auto_join; unique on verified domain), `site_settings` key
+`publicMailDomains`; columns `sign_in_providers.owner`, `.class`, `.tenants`,
+`identities.owner` (unique `(owner, issuer, subject)`),
+`github_installations.tenants`, `tenants.created_by` (self-service), and
+`layered_settings.note`. The identity index is rebuilt (a set statement: all
+existing rows get `site`).
+
+### Audit
+
+| `kind` | When | `detail` |
+|---|---|---|
+| `setting_changed` | as 3.3, plus `note` | `key`, `layer`, `from`, `to` |
+| `tenant_provider_created`, `…_changed`, `…_deleted` | a tenant's SSO provider changed | as `provider_*`, with `tenant`; `identitiesDetached` |
+| `provider_assigned` | a site SSO provider was handed to a tenant | `slug`, `tenant` |
+| `domain_claimed`, `domain_verified`, `domain_lapsed`, `domain_removed`, `domain_assigned` | a domain claim changed | `domain`, `tenant` |
+| `tenant_mail_changed`, `tenant_captcha_changed`, `tenant_daily_changed`, `tenant_github_changed` | a tenant-owned resource changed | the changed fields, secrets as `"changed"` |
+| `sso_refused_site_admin` | a tenant's provider tried to sign in a site administrator | `provider`, `user` |
+| `outbound_capped` | a tenant reached its outbound share (once a minute per tenant) | `tenant`, `feature` |
+
+Tenant administrators see their tenant's rows of these kinds.
+
+### Errors of this section
+
+| Code | Status | When |
+|---|---|---|
+| `setting_locked`, `setting_restricted` | 409 | as 3.3; `setting_restricted` also for a value looser than a `tighten` |
+| `domain_public` | 400 | claiming a public mail domain |
+| `domain_unverified` | 409 | `verify` did not find the record (with what it looked up) |
+| `domain_claimed` | 409 | another tenant holds the verified claim |
+| `domain_limit`, `provider_limit` | 409 | a tenant's 20 domains, 10 providers |
+| `sso_required` | 409 | registering with a password for an address of a tenant that enforces SSO; with `start` |
+| `address_not_public` | 400 | a tenant's issuer, metadata, SMTP host or interface resolves to an address that is not public |
+| `unavailable` | 503 | as today, also when the outbound cap is reached |
+| `quota_exceeded` | 409 | `quota: "pinnedBytes"` |
+
 ## Administration
 
 Accounts mode, administrators only; single-user mode answers `404`, anyone else
@@ -5176,6 +6172,8 @@ waits up to 5 seconds, then leaves it to close as soon as the last one is done).
 `204`. Undoes `disable`.
 
 ### `DELETE /api/admin/spaces/{space}`
+
+From 3.5 the space goes into the recycle bin instead (see "Storage management"); what follows is the 1.7 behaviour.
 
 Closes the space (committing what it holds), deletes its records (members,
 drafts, remote and the space itself) and moves its directories into the trash
