@@ -88,20 +88,52 @@ func pageLimit(n, def, most int) (int, error) {
 	return n, nil
 }
 
-// piece is the part of a body a call returns: at most mcpMaxBodyChunk bytes from
-// offset, cut at a character, and where the rest starts (nil at the end).
-func piece(body string, offset int) (string, *int, error) {
+// withPiece puts into out, the answer of page_get or page_version, the part of
+// body from offset that fits in a result beside the rest of out: at most
+// mcpMaxBodyChunk bytes, cut at a character, and where the rest starts (nil at
+// the end). A header so large that no part of the body fits beside it is
+// too_large.
+func withPiece(out map[string]any, body string, offset int) (map[string]any, error) {
 	if offset < 0 || offset > len(body) || (offset < len(body) && !utf8.RuneStart(body[offset])) {
-		return "", nil, mcpInvalid("offset must be a byte offset within the body, at the start of a character (the next of the last answer, or 0)")
+		return nil, mcpInvalid("offset must be a byte offset within the body, at the start of a character (the next of the last answer, or 0)")
 	}
-	end := offset + mcpMaxBodyChunk
-	if end >= len(body) {
-		return body[offset:], nil, nil
+	// The rest of the answer, with the largest next there can be.
+	out["body"], out["offset"], out["next"] = "", offset, len(body)
+	b, err := mcpEncode(out)
+	if err != nil {
+		return nil, err
 	}
-	for end > offset && !utf8.RuneStart(body[end]) {
-		end--
+	room := mcpMaxResult - len(b)
+	end, size := offset, 0
+	for end < len(body) {
+		r, n := utf8.DecodeRuneInString(body[end:])
+		if end+n-offset > mcpMaxBodyChunk || size+jsonSize(r, n) > room {
+			break
+		}
+		end, size = end+n, size+jsonSize(r, n)
 	}
-	return body[offset:end], &end, nil
+	if room < 0 || (end == offset && offset < len(body)) {
+		return nil, &mcpError{Code: "too_large", Message: "the header of this page leaves no room for its body in the 1 MiB a result may be; the page cannot be read through MCP",
+			Details: map[string]any{"limitBytes": mcpMaxResult, "sizeBytes": len(b)}}
+	}
+	out["body"] = body[offset:end]
+	if end < len(body) {
+		out["next"] = end
+	} else {
+		out["next"] = nil
+	}
+	return out, nil
+}
+
+// jsonSize is at least the size of the rune r, of n bytes, in a JSON string.
+func jsonSize(r rune, n int) int {
+	switch {
+	case r == '"' || r == '\\' || r == '\n' || r == '\r' || r == '\t':
+		return 2
+	case r < 0x20 || r == '\u2028' || r == '\u2029' || r == utf8.RuneError && n == 1:
+		return 6
+	}
+	return n
 }
 
 func (t *mcpTools) addReadTools() {
@@ -467,20 +499,16 @@ func (t *mcpTools) pageGet(c *mcpCall, in getIn) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	body, next, err := piece(p.Body, in.Offset)
-	if err != nil {
-		return nil, err
-	}
 	meta := p.Meta
 	if meta == nil {
 		meta = page.Meta{}
 	}
 	out := map[string]any{"space": h.Info.ID, "id": p.ID, "path": p.Path, "folder": p.Folder, "rev": p.Rev, "updated": rfc3339(p.Updated), "meta": meta,
-		"effectiveType": p.EffectiveType, "body": body, "bodyBytes": len(p.Body), "offset": in.Offset, "next": next}
+		"effectiveType": p.EffectiveType, "bodyBytes": len(p.Body)}
 	if len(p.PartialProps) > 0 {
 		out["partialProps"] = p.PartialProps
 	}
-	return out, nil
+	return withPiece(out, p.Body, in.Offset)
 }
 
 type historyIn struct {
@@ -534,14 +562,10 @@ func (t *mcpTools) pageVersion(c *mcpCall, in versionIn) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	body, next, err := piece(v.Body, in.Offset)
-	if err != nil {
-		return nil, err
-	}
 	meta := v.Meta
 	if meta == nil {
 		meta = page.Meta{}
 	}
-	return map[string]any{"space": h.Info.ID, "id": in.ID, "commit": v.Commit, "time": rfc3339(v.Time), "author": v.Author, "path": v.Path, "rev": v.Rev,
-		"meta": meta, "body": body, "bodyBytes": len(v.Body), "offset": in.Offset, "next": next}, nil
+	return withPiece(map[string]any{"space": h.Info.ID, "id": in.ID, "commit": v.Commit, "time": rfc3339(v.Time), "author": v.Author, "path": v.Path, "rev": v.Rev,
+		"meta": meta, "bodyBytes": len(v.Body)}, v.Body, in.Offset)
 }

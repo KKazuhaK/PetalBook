@@ -171,9 +171,17 @@ func (t *mcpTools) pageCreate(c *mcpCall, in createIn) (any, error) {
 		return map[string]any{"page": item, "replayed": false}, nil
 	}
 	g := c.p.Grant
-	item, replayed, err := t.idem.do(g.Kind+"\x00"+g.ID+"\x00"+in.RequestID, create)
+	item, replayed, err := t.idem.do(c.ctx, g.Kind+"\x00"+g.ID+"\x00"+in.RequestID, create)
 	if err != nil {
 		return nil, err
+	}
+	if replayed {
+		// The owner may have lost the space, or the right to write in it, since.
+		h, err := c.open(in.Space, true)
+		if err != nil {
+			return nil, err
+		}
+		h.Release()
 	}
 	return map[string]any{"page": item, "replayed": replayed}, nil
 }
@@ -295,18 +303,23 @@ func (t *mcpTools) pageUpdate(c *mcpCall, in updateIn) (any, error) {
 		}
 		return meta, body, nil
 	}
-	return t.writePage(c, in.Space, in.ID, in.BaseRev, produce)
+	// A whole body is the caller's text, based on baseRev, as a save is.
+	return t.writePage(c, in.Space, in.ID, in.BaseRev, in.Body != nil, produce)
 }
 
-// writePage changes a page as the credential's owner through space.Update, as
-// the save of a token does: the owner's draft of it is left alone.
-func (t *mcpTools) writePage(c *mcpCall, spaceID, id, baseRev string, produce func(page.Meta, string) (page.Meta, string, error)) (any, error) {
+// writePage changes a page as the credential's owner through space.Update (or
+// UpdateBody, when the body produce returns is the caller's, based on
+// baseRev), as the save of a token does: the owner's draft of it is left alone.
+func (t *mcpTools) writePage(c *mcpCall, spaceID, id, baseRev string, ownBody bool, produce func(page.Meta, string) (page.Meta, string, error)) (any, error) {
 	h, err := c.open(spaceID, true)
 	if err != nil {
 		return nil, err
 	}
 	defer h.Release()
 	p, err := c.s.drafts.Write(c.ctx, h.Space, h.Info.ID, c.p.User.ID, id, func(by space.Author) (*space.Page, error) {
+		if ownBody {
+			return h.Space.UpdateBody(by, id, baseRev, produce)
+		}
 		return h.Space.Update(by, id, baseRev, produce)
 	})
 	if err != nil {
@@ -397,5 +410,5 @@ func (t *mcpTools) pageTag(c *mcpCall, in tagIn) (any, error) {
 		}
 		return putBuiltin(meta, "tags", tagValue(next)), body, nil
 	}
-	return t.writePage(c, in.Space, in.ID, in.BaseRev, produce)
+	return t.writePage(c, in.Space, in.ID, in.BaseRev, false, produce)
 }

@@ -397,7 +397,7 @@ func (s *Space) Save(by Author, id, baseRev string, meta page.Meta, body string)
 }
 
 func (s *Space) saveLocked(tx *txn, id, baseRev string, meta page.Meta, body string) (*Page, error) {
-	return s.saveWith(tx, id, baseRev, true, func(page.Meta, string) (page.Meta, string, error) { return meta, body, nil })
+	return s.saveWith(tx, id, baseRev, rebaseWhole, func(page.Meta, string) (page.Meta, string, error) { return meta, body, nil })
 }
 
 // Update changes a page by what edit makes of its header and body as the file
@@ -411,13 +411,32 @@ func (s *Space) saveLocked(tx *txn, id, baseRev string, meta page.Meta, body str
 // edit may be called more than once, and must give the same answer.
 func (s *Space) Update(by Author, id, baseRev string, edit func(meta page.Meta, body string) (page.Meta, string, error)) (*Page, error) {
 	s.refresh(id)
-	return mutate(s, by, func(tx *txn) (*Page, error) { return s.saveWith(tx, id, baseRev, false, edit) })
+	return mutate(s, by, func(tx *txn) (*Page, error) { return s.saveWith(tx, id, baseRev, rebaseNone, edit) })
 }
 
-// saveWith is the write of Save and Update. With rebase the caller's text is
-// based on baseRev, and the link rewrites made since are made to it; without,
-// produce works on the file as it is.
-func (s *Space) saveWith(tx *txn, id, baseRev string, rebase bool, produce func(old page.Meta, body string) (page.Meta, string, error)) (*Page, error) {
+// UpdateBody is Update for an edit whose body is text of the caller's own,
+// written against baseRev, not made from the body edit gets: the link
+// rewrites the service made since baseRev are made to that body, as Save
+// makes them. The header edit returns is taken as it is.
+func (s *Space) UpdateBody(by Author, id, baseRev string, edit func(meta page.Meta, body string) (page.Meta, string, error)) (*Page, error) {
+	s.refresh(id)
+	return mutate(s, by, func(tx *txn) (*Page, error) { return s.saveWith(tx, id, baseRev, rebaseBody, edit) })
+}
+
+// rebaseMode says what of a write is based on baseRev, so gets the link
+// rewrites made since.
+type rebaseMode int
+
+const (
+	rebaseNone  rebaseMode = iota // nothing: produce works on the file as it is
+	rebaseWhole                   // the header and the body (Save)
+	rebaseBody                    // the body produce returns (UpdateBody)
+)
+
+// saveWith is the write of Save, Update and UpdateBody. What mode says is
+// based on baseRev gets the link rewrites made since; the rest of what produce
+// returns is taken as it is.
+func (s *Space) saveWith(tx *txn, id, baseRev string, mode rebaseMode, produce func(old page.Meta, body string) (page.Meta, string, error)) (*Page, error) {
 	rel, data, mtime, err := s.load(id, false)
 	if err != nil {
 		return nil, err
@@ -426,13 +445,10 @@ func (s *Space) saveWith(tx *txn, id, baseRev string, rebase bool, produce func(
 	// file (a page it links to moved, or it did) is no conflict: the same
 	// rewrites are made to what is saved.
 	var steps []rebaseStep
-	if cur := page.Rev(data); baseRev != cur && (rebase || baseRev != "") {
+	if cur := page.Rev(data); baseRev != cur && (mode == rebaseWhole || baseRev != "") {
 		var ok bool
 		if steps, ok = s.rebaseTo(id, baseRev, cur); !ok {
 			return nil, &ConflictError{Current: s.pageFrom(rel, data, mtime)}
-		}
-		if !rebase {
-			steps = nil
 		}
 	}
 	doc := page.Parse(data)
@@ -440,6 +456,18 @@ func (s *Space) saveWith(tx *txn, id, baseRev string, rebase bool, produce func(
 	reqMeta, body, err := produce(old.Clone(), doc.Body)
 	if err != nil {
 		return nil, err
+	}
+	whole := steps
+	switch mode {
+	case rebaseNone:
+		whole = nil
+	case rebaseBody:
+		if len(steps) > 0 {
+			based := page.Parse(data)
+			based.SetBody(body)
+			body = page.Parse(s.rebaseFile(steps, based.Bytes())).Body
+		}
+		whole = nil
 	}
 	if err := checkBody(body); err != nil {
 		return nil, err
@@ -452,7 +480,7 @@ func (s *Space) saveWith(tx *txn, id, baseRev string, rebase bool, produce func(
 		return nil, invalidf("%v", err)
 	}
 	doc.SetBody(body)
-	newData := s.withIDs(rel, s.rebaseFile(steps, doc.Bytes()))
+	newData := s.withIDs(rel, s.rebaseFile(whole, doc.Bytes()))
 
 	wantRename := old.Title() != newMeta.Title()
 	if bytes.Equal(newData, data) && !wantRename {

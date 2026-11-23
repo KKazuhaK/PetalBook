@@ -2809,9 +2809,14 @@ are JSON-RPC errors (`-32602`); an argument of the right type that is refused
 
 **Limits.** No tool returns everything: lists are paged with a `cursor` (the
 `next` of the previous result, `""` after the last), and each list has its own
-default and largest `limit`. One result is at most 1 MiB as JSON; a larger one
-is refused with `too_large` and `details: {"limitBytes", "sizeBytes", "suggestedLimit"?}`,
-to repeat with the same cursor and a smaller limit. A page body is returned at
+default and largest `limit`. The structured result (`structuredContent`) is
+at most 1 MiB as JSON; a larger one is refused with `too_large` and
+`details: {"limitBytes", "sizeBytes", "suggestedLimit"?}`, to repeat with the
+same cursor and a smaller limit. The cap is that of the structured result
+only: the response also carries the same JSON as text (escaped once more, as
+a JSON string), so the whole JSON-RPC response is about twice the result, a
+little over 2 MiB at most for most results, and never more than three times
+the result (a result made only of quotes and backslashes) and the envelope. A page body is returned at
 most 128 KiB at a time (see `page_get`). A request is at most 2 MiB (`413`).
 Lists and search are read from the index, never by scanning files, so they
 cost the same in a space of 50 000 pages as the matching REST listing.
@@ -2916,11 +2921,14 @@ in pieces:
 ```
 
 `body` holds at most 128 KiB of the body from byte `offset` (cut on a
-character boundary); `next` is the offset of the rest, or `null` when this is
-the end; `bodyBytes` is the size of the whole body. The rev is the same in
+character boundary), less when the header leaves less room in the 1 MiB of a
+result; `next` is the offset of the rest, or `null` when this is the end;
+`bodyBytes` is the size of the whole body. A header so large that no part of
+the body fits beside it in 1 MiB is `too_large` (the page cannot be read
+through MCP; the app and REST read it). The rev is the same in
 every piece; if the file changed between two reads, a later piece with a
 different `rev` means to start over. `not_found`; `invalid` for an `offset`
-that is not a character boundary within the body.
+that is not a character boundary within the body; `too_large` as above.
 
 ### `page_history`
 

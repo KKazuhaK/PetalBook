@@ -392,6 +392,17 @@ func TestMCPSearchAndQuery(t *testing.T) {
 	})
 }
 
+// fitsTheCap checks the sizes docs/api.md gives: the structured result at most
+// 1 MiB as JSON; the response, which also carries that JSON as text, escaped
+// once more as a JSON string, at most three times that and the envelope.
+func fitsTheCap(t *testing.T, r toolRes) {
+	t.Helper()
+	text := firstText(r.r.body["result"].(map[string]any))
+	if len(text) > 1<<20 || len(r.r.raw) > 3*len(text)+4096 {
+		t.Fatalf("a result of %d bytes in a response of %d", len(text), len(r.r.raw))
+	}
+}
+
 // A result over 1 MiB is refused with a limit that fits.
 func TestMCPTooLarge(t *testing.T) {
 	t.Parallel()
@@ -414,9 +425,10 @@ func TestMCPTooLarge(t *testing.T) {
 		}
 		// The advice works, with the same cursor.
 		ok := e.r.tool("pages_query", e.args("sort", "title", "limit", suggested)).ok(t)
-		if len(ok.items(t)) != suggested || len(ok.r.raw) > 2*(1<<20)+4096 {
-			t.Fatalf("%d items, %d bytes", len(ok.items(t)), len(ok.r.raw))
+		if len(ok.items(t)) != suggested {
+			t.Fatalf("%d items", len(ok.items(t)))
 		}
+		fitsTheCap(t, ok)
 		// Over the REST listing the same page is fine: the cap is the tool's.
 		if len(e.r.tool("pages_query", e.args("limit", 1)).ok(t).items(t)) != 1 {
 			t.Fatal("one item")
@@ -488,6 +500,43 @@ func TestMCPPageGetInPieces(t *testing.T) {
 		e.tm.owner.do("PUT", spacePath(e.sid)+"/pages/"+id+"/draft", map[string]any{"baseRev": rev, "meta": map[string]any{"title": "Long"}, "body": "draft\n"}).want(t, 200, "")
 		if got := e.r.tool("page_get", e.args("id", id)).ok(t).out; got["draft"] != nil || got["body"] == "draft\n" {
 			t.Fatal("the draft shows")
+		}
+	})
+}
+
+// A header near the 1 MiB of a result leaves less room for the body: the pieces
+// are smaller, and every one of them fits. A header over it alone is too_large.
+func TestMCPPageGetWithALargeHeader(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, oa(), func(t *testing.T, a *acc) {
+		e := newMCP(t, a)
+		// Quotes, backslashes and line ends take two bytes each in JSON.
+		body := strings.Repeat("\"长\" \\ x\n", 30000) // about 330 KB
+		big := strings.Repeat("y", 1<<20-60<<10)
+		id := e.create(t, map[string]any{"title": "Wide", "props": map[string]any{"big": big}, "body": body})["id"].(string)
+		var got strings.Builder
+		offset, n := 0, 0
+		for {
+			r := e.r.tool("page_get", e.args("id", id, "offset", offset)).ok(t)
+			if len(r.out["body"].(string)) == 0 || r.out["meta"].(map[string]any)["big"] != big {
+				t.Fatalf("a piece of %d bytes", len(r.out["body"].(string)))
+			}
+			got.WriteString(r.out["body"].(string))
+			n++
+			fitsTheCap(t, r)
+			next, ok := r.out["next"].(float64)
+			if !ok {
+				break
+			}
+			offset = int(next)
+		}
+		if got.String() != body || n < 3 {
+			t.Fatalf("%d pieces, equal %v", n, got.String() == body)
+		}
+		huge := e.create(t, map[string]any{"title": "Wider", "props": map[string]any{"big": strings.Repeat("y", 1<<20)}, "body": "x\n"})["id"].(string)
+		r := e.r.tool("page_get", e.args("id", huge)).refused(t, "too_large")
+		if !strings.Contains(r.out["message"].(string), "header") {
+			t.Fatalf("%v", r.out)
 		}
 	})
 }

@@ -212,6 +212,27 @@ func TestMCPUpdate(t *testing.T) {
 	})
 }
 
+// A whole body sent with a baseRev that is behind only by the service's link
+// rewrites gets the same rewrites, as a save in the app does: a link without
+// an id does not keep the old path.
+func TestMCPUpdateBodyIsRebasedOverLinkRewrites(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, oa(), func(t *testing.T, a *acc) {
+		e := newMCP(t, a)
+		target := e.create(t, map[string]any{"folder": "Tang", "title": "Doc", "body": "x\n"})
+		viaMCP := e.create(t, map[string]any{"title": "One", "body": "see [Doc](Tang/Doc.md)\n"})
+		viaApp := e.create(t, map[string]any{"title": "Two", "body": "see [Doc](Tang/Doc.md)\n"})
+		e.w.tool("page_move", e.args("id", target["id"], "folder", "Song")).ok(t)
+		body := "see [Doc](Tang/Doc.md)\nmore\n"
+		e.w.tool("page_update", e.args("id", viaMCP["id"], "baseRev", viaMCP["rev"], "body", body)).ok(t)
+		e.tm.owner.do("PUT", spacePath(e.sid)+"/pages/"+viaApp["id"].(string), map[string]any{"baseRev": viaApp["rev"], "meta": map[string]any{"title": "Two"}, "body": body}).want(t, 200, "")
+		got, want := e.restPage(t, viaMCP["id"].(string))["body"].(string), e.restPage(t, viaApp["id"].(string))["body"].(string)
+		if got != want || !strings.Contains(got, "Song/Doc.md") || strings.Contains(got, "Tang/") {
+			t.Fatalf("by MCP %q, by the app %q", got, want)
+		}
+	})
+}
+
 // A write by MCP does not touch the owner's draft: it is left, and shows as stale.
 func TestMCPWriteLeavesTheDraftAlone(t *testing.T) {
 	t.Parallel()
@@ -312,6 +333,26 @@ func TestMCPMoveAndTag(t *testing.T) {
 		tag("add", many).refused(t, "invalid")
 		tag("remove", many).refused(t, "invalid")
 		e.w.tool("page_tag", e.args("id", "01JD3K8Q7Z", "add", []string{"x"})).refused(t, "not_found")
+	})
+}
+
+// A replay of a requestId is checked as a new call is: an owner who has been
+// demoted or removed since gets the refusal, not the page.
+func TestMCPCreateReplayChecksPermissionAgain(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, oa(), func(t *testing.T, a *acc) {
+		e := newMCP(t, a)
+		_, es := mkToken(t, e.tm.editor, "write", nil, e.sid)
+		ed := a.bearer(es, "")
+		args := e.args("title", "Once", "requestId", "r-1")
+		first := ed.tool("page_create", args).ok(t)
+		if again := ed.tool("page_create", args).ok(t); again.out["replayed"] != true || again.page(t)["id"] != first.page(t)["id"] {
+			t.Fatalf("%s", again.r.raw)
+		}
+		e.tm.owner.do("PATCH", spacePath(e.sid)+"/members/"+e.tm.editorID, map[string]any{"role": "viewer"}).want(t, 200, "")
+		ed.tool("page_create", args).refused(t, "no_permission")
+		e.tm.owner.do("DELETE", spacePath(e.sid)+"/members/"+e.tm.editorID, nil).want(t, 204, "")
+		ed.tool("page_create", args).refused(t, "not_found")
 	})
 }
 

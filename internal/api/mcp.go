@@ -347,13 +347,10 @@ func (t *mcpTools) errorResult(e *mcpError) *mcp.CallToolResult {
 // text for clients that only read that. One more than 1 MiB is too_large, told
 // how many items would have fitted when it is a list.
 func (t *mcpTools) okResult(out any) *mcp.CallToolResult {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(out); err != nil {
+	b, err := mcpEncode(out)
+	if err != nil {
 		return t.errorResult(mcpErr("internal", "could not encode the result"))
 	}
-	b := bytes.TrimRight(buf.Bytes(), "\n")
 	if len(b) > mcpMaxResult {
 		details := map[string]any{"limitBytes": mcpMaxResult, "sizeBytes": len(b)}
 		var list struct {
@@ -367,6 +364,17 @@ func (t *mcpTools) okResult(out any) *mcp.CallToolResult {
 		return t.errorResult(&mcpError{Code: "too_large", Message: "the result is larger than the 1 MiB a result may be; repeat the request with a smaller limit", Details: details})
 	}
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}, StructuredContent: json.RawMessage(b)}
+}
+
+// mcpEncode is the JSON of a result, as okResult sends it.
+func mcpEncode(out any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(out); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
 // --- remembering a create ----------------------------------------------------
@@ -388,9 +396,9 @@ type mcpIdemEntry struct {
 }
 
 // do returns what an earlier call with the key made, or makes it with fn (a
-// second call with the same key waits for the first). A failed fn is not
-// remembered.
-func (i *mcpIdem) do(key string, fn func() (*mcpItem, error)) (item *mcpItem, replayed bool, err error) {
+// second call with the same key waits for the first, or until ctx is done). A
+// failed fn, or one that panicked, is not remembered.
+func (i *mcpIdem) do(ctx context.Context, key string, fn func() (*mcpItem, error)) (item *mcpItem, replayed bool, err error) {
 	for {
 		i.mu.Lock()
 		e := i.m[key]
@@ -410,21 +418,14 @@ func (i *mcpIdem) do(key string, fn func() (*mcpItem, error)) (item *mcpItem, re
 				i.order = slices.DeleteFunc(i.order, func(k string) bool { return i.m[k] == nil })
 			}
 			i.mu.Unlock()
-			item, err = fn()
-			i.mu.Lock()
-			if err != nil {
-				if i.m[key] == e {
-					delete(i.m, key)
-				}
-			} else {
-				e.item, e.at = item, i.now()
-			}
-			i.mu.Unlock()
-			close(e.done)
-			return item, false, err
+			return i.make(key, e, fn)
 		}
 		i.mu.Unlock()
-		<-e.done
+		select {
+		case <-e.done:
+		case <-ctx.Done():
+			return nil, false, ctx.Err()
+		}
 		i.mu.Lock()
 		got := e.item
 		i.mu.Unlock()
@@ -433,4 +434,21 @@ func (i *mcpIdem) do(key string, fn func() (*mcpItem, error)) (item *mcpItem, re
 		}
 		// The call that was making it failed: this one makes it.
 	}
+}
+
+// make runs fn for the entry e of key. Whatever fn does, a panic included,
+// the waiters are let go, and e is dropped unless it made the item.
+func (i *mcpIdem) make(key string, e *mcpIdemEntry, fn func() (*mcpItem, error)) (item *mcpItem, replayed bool, err error) {
+	defer func() {
+		i.mu.Lock()
+		if item != nil && err == nil {
+			e.item, e.at = item, i.now()
+		} else if i.m[key] == e {
+			delete(i.m, key)
+		}
+		i.mu.Unlock()
+		close(e.done)
+	}()
+	item, err = fn()
+	return item, false, err
 }
