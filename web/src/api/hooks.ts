@@ -10,7 +10,7 @@ import { api, ApiError, spaceApi } from './client'
 import { parseTagColor } from '../lib/tagColors.ts'
 import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
 import { propsOfMeta } from '../lib/pageTypes.ts'
-import type { BatchPagesInput, ChecksResponse, FixCheckInput, ConnectRemoteInput, DailyPrefs, DailySettings, Favorite, FavoriteList, FavoriteRef, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, ProblemKind, PutTemplateInput, PutViewsInput, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
+import type { MembersResponse, BatchPagesInput, ChecksResponse, FixCheckInput, ConnectRemoteInput, DailyPrefs, DailySettings, Favorite, FavoriteList, FavoriteRef, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, ProblemKind, PutTemplateInput, PutViewsInput, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
 
 // Everything of one space is under ['space', id, …], so switching space never
 // shows another space's data and one invalidation covers a space.
@@ -21,6 +21,10 @@ export const keys = {
   providers: ['auth', 'providers'] as const,
   adminSecurity: ['admin', 'security'] as const,
   adminProviders: ['admin', 'providers'] as const,
+  adminGroups: ['admin', 'groups'] as const,
+  adminGroupList: (q: string, source: string) => ['admin', 'groups', 'list', q, source] as const,
+  adminGroupPeople: (id: string, q: string) => ['admin', 'groups', 'people', id, q] as const,
+  adminGroupSpaces: (id: string) => ['admin', 'groups', 'spaces', id] as const,
   adminAudit: (kind: string, user: string) => ['admin', 'audit', kind, user] as const,
   userPasskeys: (id: string) => ['users', 'passkeys', id] as const,
   users: ['users'] as const,
@@ -67,6 +71,8 @@ export const keys = {
   version: (space: string, id: string, commit: string) => ['space', space, 'history', id, 'version', commit] as const,
   remote: (space: string) => ['space', space, 'remote'] as const,
   members: (space: string) => ['space', space, 'members'] as const,
+  effectiveMembers: (space: string, q: string) => ['space', space, 'members', 'effective', q] as const,
+  groupSearch: (q: string) => ['groups', 'search', q] as const,
   // The home page: the day's text (by day, "another" and language), where it comes from, and a person's favourites.
   daily: (space: string, date: string, skip: number, lang: string) => ['space', space, 'daily', date, skip, lang] as const,
   dailySettings: (space: string) => ['space', space, 'dailySettings'] as const,
@@ -646,6 +652,36 @@ function useMembersChanged(space: string) {
   return () => Promise.all([qc.invalidateQueries({ queryKey: keys.members(space) }), qc.invalidateQueries({ queryKey: keys.spaces })])
 }
 
+// Everyone who can reach the space, a cursor page at a time; `q` is the name filter.
+export function useEffectiveMembers(space: string, q: string, enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.effectiveMembers(space, q),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => spaceApi(space).effectiveMembers({ q: q || undefined, cursor: pageParam || undefined, limit: 50 }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled: enabled && space !== '',
+    staleTime: 10_000,
+  })
+}
+
+// A few groups by part of the name, for choosing one to add to a space.
+export function useGroupSearch(q: string, enabled = true) {
+  return useQuery({ queryKey: keys.groupSearch(q), queryFn: ({ signal }) => api.findGroups(q, signal), enabled: enabled && q !== '', staleTime: 15_000 })
+}
+
+export function useAddGroup(space: string) {
+  const changed = useMembersChanged(space)
+  return useMutation({ mutationFn: ({ groupId, role }: { groupId: string; role: SpaceRole }) => spaceApi(space).addGroup(groupId, role), onSuccess: changed })
+}
+export function useSetGroupRole(space: string) {
+  const changed = useMembersChanged(space)
+  return useMutation({ mutationFn: ({ groupId, role }: { groupId: string; role: SpaceRole }) => spaceApi(space).setGroupRole(groupId, role), onSuccess: changed })
+}
+export function useRemoveGroup(space: string) {
+  const changed = useMembersChanged(space)
+  return useMutation({ mutationFn: (groupId: string) => spaceApi(space).removeGroup(groupId), onSuccess: changed })
+}
+
 export function useAddMember(space: string) {
   const changed = useMembersChanged(space)
   return useMutation({ mutationFn: ({ username, role }: { username: string; role: SpaceRole }) => spaceApi(space).addMember(username, role), onSuccess: changed })
@@ -661,7 +697,7 @@ export function useRemoveMember(space: string) {
 
 // Updates one member in the cached list (a role change), without asking again.
 export function putMember(qc: QueryClient, space: string, member: Member) {
-  qc.setQueryData<{ members: Member[] }>(keys.members(space), (prev) => prev && { members: prev.members.map((m) => (m.userId === member.userId ? member : m)) })
+  qc.setQueryData<MembersResponse>(keys.members(space), (prev) => prev && { ...prev, members: prev.members.map((m) => (m.userId === member.userId ? member : m)) })
 }
 
 // --- page types ------------------------------------------------------------------

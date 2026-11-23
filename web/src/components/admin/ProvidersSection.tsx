@@ -1,7 +1,7 @@
 import { useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { adminApi, useAuthProviders } from '@/api/admin'
+import { adminApi, useAuthProviders, useSyncedGroups } from '@/api/admin'
 import { ApiError } from '@/api/client'
 import { keys } from '@/api/hooks'
 import type { AuthProvider, ProviderInput, ProviderKind } from '@/api/types'
@@ -19,8 +19,10 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { absoluteTime } from '@/lib/time'
+import { useDebounced } from '@/lib/useDebounced'
 import { t } from '@/i18n'
 import { tsec } from '@/i18n/security'
+import { tg } from '@/i18n/groups'
 import { RequiredMark } from '@/components/ui/field-mark'
 
 const tp = tsec.providers
@@ -29,6 +31,9 @@ const KINDS: readonly ProviderKind[] = ['oidc', 'saml', 'github']
 // What a refusal of the provider endpoints says, in words.
 function refusal(e: unknown): string {
   if (!(e instanceof ApiError)) return tp.errors.unknown
+  if (e.code === 'group_not_synced') return tg.provider.errors.notSynced
+  if (e.code === 'group_not_found') return tg.provider.errors.notFound
+  if (e.code === 'exists' && /mapped twice/.test(e.message)) return tg.provider.errors.exists
   if (e.code !== 'invalid' && Object.hasOwn(tp.errors, e.code)) return tp.errors[e.code]
   return e.message || tp.errors.unknown
 }
@@ -198,6 +203,7 @@ interface F {
   oidc: { issuer: string; clientId: string; secret: string | null; scopes: string; legacyCallback: boolean }
   saml: { metadataUrl: string; metadataXml: string; entityId: string; email: string; name: string; username: string; nameIdFormat: string; signRequests: boolean; allowIdpInitiated: boolean }
   github: { baseUrl: string; clientId: string; secret: string | null; organizations: string }
+  groups: { enabled: boolean; claim: string; missing: 'keep' | 'clear'; map: { value: string; groupId: string }[] }
 }
 
 const blank = (): F => ({
@@ -212,6 +218,7 @@ const blank = (): F => ({
   oidc: { issuer: '', clientId: '', secret: null, scopes: 'profile email', legacyCallback: false },
   saml: { metadataUrl: '', metadataXml: '', entityId: '', email: 'mail', name: 'displayName', username: 'uid', nameIdFormat: '', signRequests: false, allowIdpInitiated: false },
   github: { baseUrl: 'https://github.com', clientId: '', secret: null, organizations: '' },
+  groups: { enabled: false, claim: 'groups', missing: 'keep', map: [] },
 })
 
 function formOf(p: AuthProvider): F {
@@ -226,6 +233,7 @@ function formOf(p: AuthProvider): F {
   f.mergeVerifiedEmail = p.mergeVerifiedEmail
   if (p.oidc) f.oidc = { issuer: p.oidc.issuer, clientId: p.oidc.clientId, secret: null, scopes: p.oidc.scopes.join(' '), legacyCallback: p.oidc.legacyCallback }
   if (p.saml) f.saml = { metadataUrl: p.saml.metadataUrl, metadataXml: p.saml.metadataXml, entityId: p.saml.entityId, email: p.saml.attributes.email, name: p.saml.attributes.name, username: p.saml.attributes.username, nameIdFormat: p.saml.nameIdFormat, signRequests: p.saml.signRequests, allowIdpInitiated: p.saml.allowIdpInitiated }
+  f.groups = { enabled: p.groups.enabled, claim: p.groups.claim, missing: p.groups.missing, map: p.groups.map.map((e) => ({ ...e })) }
   if (p.github) f.github = { baseUrl: p.github.baseUrl, clientId: p.github.clientId, secret: null, organizations: p.github.organizations.join('\n') }
   return f
 }
@@ -245,6 +253,14 @@ function inputOf(f: F, was: AuthProvider | null): ProviderInput {
   if (diff('order')) out.order = Number(f.order)
   if (diff('autoCreate')) out.autoCreate = f.autoCreate
   if (diff('mergeVerifiedEmail')) out.mergeVerifiedEmail = f.mergeVerifiedEmail
+  const gb = base?.groups
+  const groups: NonNullable<ProviderInput['groups']> = {}
+  if (f.groups.enabled !== (gb?.enabled ?? false)) groups.enabled = f.groups.enabled
+  if (f.kind !== 'github' && f.groups.claim.trim() !== (gb?.claim ?? (f.kind === 'oidc' ? 'groups' : ''))) groups.claim = f.groups.claim.trim()
+  if (f.groups.missing !== (gb?.missing ?? 'keep')) groups.missing = f.groups.missing
+  const rows = f.groups.map.filter((e) => e.value !== '' || e.groupId !== '')
+  if (JSON.stringify(rows) !== JSON.stringify(gb?.map ?? [])) groups.map = rows
+  if (Object.keys(groups).length > 0) out.groups = groups
   if (f.kind === 'oidc') {
     const o = f.oidc
     const b = base?.oidc
@@ -354,6 +370,8 @@ function ProviderForm({ initial, onDone }: { initial: AuthProvider | null; onDon
       {f.kind === 'saml' && <SamlFields f={f} set={set} initial={initial} />}
       {f.kind === 'github' && <GithubFields f={f} set={set} initial={initial} />}
 
+      <GroupsFields f={f} set={set} />
+
       <div className="flex flex-wrap gap-2">
         <Button type="submit" disabled={busy || !dirty}>
           {edit ? (busy ? tp.saving : tp.save) : busy ? tp.creating : tp.create}
@@ -363,6 +381,95 @@ function ProviderForm({ initial, onDone }: { initial: AuthProvider | null; onDon
         </Button>
       </div>
     </form>
+  )
+}
+
+// How the provider's groups claim becomes synced groups (see "Groups from sign-in").
+function GroupsFields({ f, set }: { f: F; set: (p: Partial<F>) => void }) {
+  const tgp = tg.provider
+  const [find, setFind] = useState('')
+  const q = useDebounced(find.trim(), 200)
+  const synced = useSyncedGroups(q)
+  // The names of the groups seen in any search, so a chosen group keeps its name when the search moves on.
+  const [names, setNames] = useState<Record<string, string>>({})
+  const items = synced.data?.items
+  const [seen, setSeen] = useState(items)
+  if (items !== seen) {
+    setSeen(items)
+    if (items) setNames((old) => ({ ...old, ...Object.fromEntries(items.map((c) => [c.id, c.name])) }))
+  }
+  const g = f.groups
+  const up = (p: Partial<F['groups']>) => set({ groups: { ...g, ...p } })
+  const choices = items ?? []
+  // Every synced group is in the list only when nothing was searched and there is no further page.
+  const complete = synced.isSuccess && q === '' && !synced.data.next
+  const labelOf = (id: string) => names[id] ?? (complete ? tgp.unknownGroup : id)
+  const setRow = (i: number, p: Partial<{ value: string; groupId: string }>) => up({ map: g.map.map((e, j) => (j === i ? { ...e, ...p } : e)) })
+  const claimHelp = f.kind === 'oidc' ? tgp.claimOidcHelp : f.kind === 'saml' ? tgp.claimSamlHelp : tgp.claimGithubHelp
+  return (
+    <fieldset className="grid min-w-0 grid-cols-1 gap-4" data-slot="groups-fields">
+      <legend className="pb-1 text-sm font-semibold">{tgp.title}</legend>
+      <p className="text-xs text-muted-foreground">{tgp.help}</p>
+      <Check label={tgp.enabled} checked={g.enabled} onChange={(on) => up({ enabled: on })} />
+      {f.kind !== 'github' ? <Field label={tgp.claim} help={claimHelp} value={g.claim} onChange={(e) => up({ claim: e.target.value })} autoComplete="off" spellCheck={false} maxLength={256} className="break-all" /> : <p className="text-xs text-muted-foreground">{claimHelp}</p>}
+      <div className="grid gap-1.5">
+        <Label htmlFor="groups-missing">{tgp.missing}</Label>
+        <NativeSelect id="groups-missing" value={g.missing} onChange={(e) => up({ missing: e.target.value as 'keep' | 'clear' })}>
+          <option value="keep">{tgp.missingKeep}</option>
+          <option value="clear">{tgp.missingClear}</option>
+        </NativeSelect>
+        <p className="text-xs text-muted-foreground">{tgp.missingHelp}</p>
+      </div>
+      <div className="grid gap-2" data-slot="groups-map">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <span className="text-sm font-medium">
+            {tgp.map} <span className="font-normal text-muted-foreground">({tgp.rows(g.map.length)})</span>
+          </span>
+        </div>
+        <p className="text-xs text-muted-foreground">{tgp.mapHelp}</p>
+        {complete && choices.length === 0 && g.map.length === 0 && <p className="text-xs text-muted-foreground">{tgp.noSynced}</p>}
+        {!(complete && choices.length === 0) && (
+          <div className="grid gap-1">
+            <Input type="search" value={find} onChange={(e) => setFind(e.target.value)} aria-label={tgp.findGroup} placeholder={tgp.findGroup} autoComplete="off" spellCheck={false} className="sm:max-w-xs" />
+            <p className="text-xs text-muted-foreground" aria-live="polite">
+              {synced.isSuccess && q !== '' && choices.length === 0 ? tgp.findNone : synced.data?.next ? tgp.findMore : ''}
+            </p>
+          </div>
+        )}
+        {g.map.map((e, i) => (
+          <div key={i} className="grid min-w-0 gap-2 rounded-md border p-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end" data-row={i}>
+            <div className="grid gap-1">
+              <Label htmlFor={`groups-value-${i}`} className="text-xs">
+                {tgp.value}
+              </Label>
+              <Input id={`groups-value-${i}`} value={e.value} onChange={(ev) => setRow(i, { value: ev.target.value })} autoComplete="off" spellCheck={false} className="break-all" />
+            </div>
+            <div className="grid gap-1">
+              <Label htmlFor={`groups-group-${i}`} className="text-xs">
+                {tgp.group}
+              </Label>
+              <NativeSelect id={`groups-group-${i}`} value={e.groupId} onChange={(ev) => setRow(i, { groupId: ev.target.value })}>
+                <option value="">{tgp.chooseGroup}</option>
+                {e.groupId !== '' && !choices.some((c) => c.id === e.groupId) && <option value={e.groupId}>{labelOf(e.groupId)}</option>}
+                {choices.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </NativeSelect>
+            </div>
+            <Button type="button" variant="outline" size="sm" aria-label={`${tgp.removeRow}: ${e.value}`} onClick={() => up({ map: g.map.filter((_, j) => j !== i) })}>
+              {tgp.removeRow}
+            </Button>
+          </div>
+        ))}
+        <div>
+          <Button type="button" variant="outline" size="sm" onClick={() => up({ map: [...g.map, { value: '', groupId: '' }] })}>
+            {tgp.addRow}
+          </Button>
+        </div>
+      </div>
+    </fieldset>
   )
 }
 

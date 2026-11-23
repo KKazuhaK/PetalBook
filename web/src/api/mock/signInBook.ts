@@ -51,6 +51,11 @@ export interface SignInBookOptions {
   passkeysAvailable: boolean
   users: () => Iterable<BookUser>
   newAuditId: () => string
+  // Groups (3.2): a group's source, undefined for a group that does not exist; and
+  // what to do when a provider goes (its memberships go with it).
+  groupSource?: (id: string) => string | undefined
+  onProviderDeleted?: (slug: string) => void
+  onMappingRemoved?: (slug: string, value: string, keep: string) => void
   security?: MockSecurity
   providers?: (ProviderInput & { slug: string; kind: ProviderKind; name: string; sub?: string; status?: AuthProvider['status'] })[]
   notices?: SecurityNotice[]
@@ -146,6 +151,7 @@ export function createSignInBook(o: SignInBookOptions) {
       order: input.order ?? providers.size,
       autoCreate: input.autoCreate ?? false,
       mergeVerifiedEmail: input.mergeVerifiedEmail ?? false,
+      groups: { enabled: false, claim: input.kind === 'oidc' ? 'groups' : '', missing: 'keep', map: [] },
       status: { ok: true, checked: at, message: '' },
       people: 0,
       created: at,
@@ -226,6 +232,45 @@ export function createSignInBook(o: SignInBookOptions) {
     if (issuer) for (const p of providers.values()) if (p.view.slug !== slug && p.view.kind === kind && issuerOf(p.view) === issuer) throw new HttpError(409, 'provider_issuer_in_use', '另一个提供方已经用了这个签发方')
   }
 
+  // The groups setting: what is refused, in the order the server refuses it.
+  const checkGroups = (g: unknown, kind: ProviderKind) => {
+    if (g === undefined) return
+    if (!isRecord(g)) bad('groups 要是一个对象')
+    if (g.enabled !== undefined) bool(g.enabled, 'groups.enabled')
+    if (g.claim !== undefined) {
+      if (typeof g.claim !== 'string' || new TextEncoder().encode(g.claim).length > 256) bad('groups.claim 最多 256 字节')
+      if (kind === 'github' && g.claim.trim() !== '') bad('GitHub 的组就是组织，不能设置 groups.claim')
+    }
+    if (g.missing !== undefined && g.missing !== 'keep' && g.missing !== 'clear') bad('groups.missing 是 keep 或 clear')
+    if (g.map !== undefined) {
+      if (!Array.isArray(g.map) || g.map.length > 1000) bad('groups.map 最多 1000 项')
+      const seen = new Set<string>()
+      for (const e of g.map as unknown[]) {
+        if (!isRecord(e) || typeof e.value !== 'string' || e.value === '' || new TextEncoder().encode(e.value).length > 256) bad('groups.map 的值是 1 到 256 个字节')
+        if (typeof e.groupId !== 'string' || o.groupSource?.(e.groupId) === undefined) throw new HttpError(404, 'group_not_found', '映射里有不存在的组')
+      }
+      for (const e of g.map as { value: string }[]) {
+        if (seen.has(e.value)) throw new HttpError(409, 'exists', `值 ${e.value} 映射了两次`)
+        seen.add(e.value)
+      }
+      for (const e of g.map as { groupId: string }[]) if (o.groupSource?.(e.groupId) !== 'synced') throw new HttpError(409, 'group_not_synced', '只能映射到同步组')
+    }
+  }
+  const applyGroups = (v: AuthProvider, g: ProviderInput['groups'], slug: string, changed: Record<string, unknown>) => {
+    if (!g) return
+    const cur = v.groups
+    if (g.enabled !== undefined && g.enabled !== cur.enabled) changed['groups.enabled'] = cur.enabled = g.enabled
+    if (g.claim !== undefined && g.claim.trim() !== cur.claim) changed['groups.claim'] = cur.claim = g.claim.trim()
+    if (g.missing !== undefined && g.missing !== cur.missing) changed['groups.missing'] = cur.missing = g.missing
+    if (g.map !== undefined) {
+      const next = new Map(g.map.map((e) => [e.value, e.groupId]))
+      for (const old of cur.map) if (next.get(old.value) !== old.groupId) o.onMappingRemoved?.(slug, old.value, next.get(old.value) ?? '')
+      if (JSON.stringify(cur.map) !== JSON.stringify(g.map)) changed['groups.map'] = g.map.length
+      cur.map = g.map.map((e) => ({ ...e }))
+    }
+    if (cur.enabled && v.kind === 'saml' && cur.claim === '') bad('SAML 要写明属性名（groups.claim）')
+  }
+
   const createProvider = (body: Record<string, unknown>, actor: string): AuthProvider => {
     const input = body as ProviderInput
     const slug = typeof input.slug === 'string' ? input.slug : ''
@@ -237,7 +282,9 @@ export function createSignInBook(o: SignInBookOptions) {
     const kinds = ['oidc', 'saml', 'github'].filter((k) => (input as Record<string, unknown>)[k] !== undefined)
     if (kinds.length !== 1 || kinds[0] !== kind) bad(`需要 ${kind} 这一块，也只能有这一块`)
     checkProvider(input, kind, slug)
+    checkGroups((input as Record<string, unknown>).groups, kind)
     const rec = fresh({ ...input, slug, kind, name: input.name!.trim() })
+    applyGroups(rec.view, input.groups, slug, {})
     const secret = input.oidc?.clientSecret ?? input.github?.clientSecret
     rec.secret = typeof secret === 'string' && secret !== ''
     // A provider whose discovery document or metadata cannot be fetched is stored, switched off.
@@ -258,8 +305,10 @@ export function createSignInBook(o: SignInBookOptions) {
     if (body.kind !== undefined && body.kind !== rec.view.kind) bad('kind 不能改')
     const input = body as ProviderInput
     checkProvider(input, rec.view.kind, slug, rec.view)
+    checkGroups((input as Record<string, unknown>).groups, rec.view.kind)
     const v = rec.view
     const changed: Record<string, unknown> = {}
+    applyGroups(v, input.groups, slug, changed)
     for (const f of ['name', 'icon', 'enabled', 'order', 'autoCreate', 'mergeVerifiedEmail'] as const) {
       if (input[f] !== undefined && input[f] !== v[f]) {
         ;(v as unknown as Record<string, unknown>)[f] = input[f]
@@ -303,6 +352,7 @@ export function createSignInBook(o: SignInBookOptions) {
     const accounts = strandedBy(slug)
     if (accounts > 0 && !force) throw new HttpError(409, 'provider_in_use', '有账号只能用这个提供方登录', { accounts })
     providers.delete(slug)
+    o.onProviderDeleted?.(slug)
     record('provider_deleted', { actor, detail: { slug, kind: rec.view.kind } })
   }
 
@@ -482,6 +532,11 @@ export function createSignInBook(o: SignInBookOptions) {
     deleteProvider,
     refreshProvider,
     withDerived,
+    // How many entries of the providers map to a group, and which; and taking them out.
+    mappingsOf: (groupId: string) => [...providers.values()].flatMap((p) => p.view.groups.map.filter((e) => e.groupId === groupId).map((e) => ({ provider: p.view.slug, value: e.value }))),
+    unmap: (groupId: string) => {
+      for (const p of providers.values()) p.view.groups.map = p.view.groups.map.filter((e) => e.groupId !== groupId)
+    },
     issue,
     takeChallenge,
     passwordAdmins,

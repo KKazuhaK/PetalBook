@@ -2,7 +2,7 @@
 
 import { t } from '@/i18n'
 
-import type {
+import type { EffectiveMemberList, GroupMember, GroupRef, MembersResponse,
   AccountInfo,
   AdminSpace,
   ApiToken,
@@ -473,7 +473,20 @@ export function spaceApi(space: string) {
     reindex: () => request<{ pages: number; ms: number }>(base('/reindex'), { method: 'POST' }),
 
     // The people of the space (accounts mode). `user` is a member's `userId`.
-    members: (signal?: AbortSignal) => request<{ members: Member[] }>(base('/members'), { signal }),
+    members: (signal?: AbortSignal) => request<MembersResponse>(base('/members'), { signal }),
+    // Everyone who can reach the space, through their own role or a group, a cursor page at a time.
+    effectiveMembers: (params: { q?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+      const q = new URLSearchParams()
+      if (params.q) q.set('q', params.q)
+      if (params.cursor) q.set('cursor', params.cursor)
+      if (params.limit) q.set('limit', String(params.limit))
+      const qs = q.toString()
+      return request<EffectiveMemberList>(base(`/members/effective${qs ? `?${qs}` : ''}`), { signal })
+    },
+    // Groups as members of the space (shared spaces only).
+    addGroup: (groupId: string, role: SpaceRole) => request<GroupMember>(base('/groups'), { method: 'POST', body: { groupId, role } }),
+    setGroupRole: (groupId: string, role: SpaceRole) => request<GroupMember>(base(`/groups/${enc(groupId)}`), { method: 'PATCH', body: { role } }),
+    removeGroup: (groupId: string) => request<void>(base(`/groups/${enc(groupId)}`), { method: 'DELETE' }),
     addMember: (username: string, role: SpaceRole) => request<Member>(base('/members'), { method: 'POST', body: { username, role } }),
     setMemberRole: (user: string, role: SpaceRole) => request<Member>(base(`/members/${enc(user)}`), { method: 'PATCH', body: { role } }),
     // Removing yourself is leaving the space.
@@ -520,6 +533,8 @@ export const api = {
 
   // --- account ---
   account: (signal?: AbortSignal) => request<AccountInfo>('/account', { signal }),
+  // Finding a group by part of its name, to add it to a space: names only.
+  findGroups: (q: string, signal?: AbortSignal) => request<{ groups: GroupRef[] }>(`/groups?q=${enc(q)}&limit=20`, { signal }),
   updateAccount: (input: { name?: string; email?: string }) => request<{ user: User }>('/account', { method: 'PATCH', body: input }),
   // `current` is left out when the account has no password yet.
   changePassword: (input: { current?: string; new: string }) => request<void>('/account/password', { method: 'POST', body: input }),

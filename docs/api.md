@@ -695,7 +695,7 @@ how many. At most 100,000 rows or 90 days are kept.
 
 Each row has `at`, `kind`, `actor` (the user who acted, if any), `user` (the
 account it is about, if any), `username` (as typed, for refused sign-ins), `ip`
-and `detail`.
+and `detail`. Groups add rows of their own (see "Audit" under "Groups").
 
 ### Sign-in error codes
 
@@ -891,6 +891,10 @@ by the name of a role:
 
 An `owner` has all four, an `editor` `read` and `write`, a `viewer` `read`.
 In single-user mode the one user has all of them.
+From 3.2 `role` and `permissions` are the caller's effective ones, which
+include the roles of their groups, and the Space also has `directRole` (the
+caller's own role, `""` when they reach the space only through groups) and
+`viaGroups`; see "Effective permission" under "Groups".
 `personal` marks the space made together with the account. `sync` is `local`
 (the repository exists only on the server) or the `state` of its remote (see
 "Remote repository"). `inbox` is the folder that quick notes go to: a folder
@@ -927,7 +931,9 @@ space, each with a role (`owner`, `editor` or `viewer`, see "Space"). A space
 always keeps at least one owner. A personal space (`personal: true`) belongs to
 its person alone and never has other members. An administrator is not a member
 of the spaces they open, so they are not listed here and not in `GET /api/spaces`,
-but may use these endpoints as if they were an owner.
+but may use these endpoints as if they were an owner. From 3.2 a shared space's
+members may also be groups, with endpoints of their own (see "Groups"); this
+section is about people.
 
 ### Member
 
@@ -964,6 +970,268 @@ goes through the space, which cannot be opened). `204`. `409 last_owner` when no
 other owner who can sign in would be left (a disabled user cannot be the one
 remaining owner; the same goes for `PATCH`): make someone else an owner first.
 The removed member's very next request to the space answers `404 not_found`.
+
+## Groups
+
+Milestone 3.2. Accounts mode; single-user mode has no groups and answers `404`
+on every endpoint here. A group is a set of people that can be made a member of a
+shared space with a role, like a person. There are two kinds, fixed when the
+group is made:
+
+- **local**: made in the app; an administrator adds and removes its people (see
+  "Groups" under "Administration").
+- **synced**: its people come only from sign-in. A sign-in provider maps values
+  of its groups claim to synced groups (see "Groups from sign-in" below), and
+  each sign-in through that provider brings the person's groups up to date. Its
+  people cannot be changed by hand (`409 group_synced`).
+
+Groups do not nest: a group's people are users, never other groups.
+
+### Group
+
+```json
+{"id": "01JD4A2K9P", "name": "Engineering", "description": "", "source": "synced",
+ "people": 214, "spaces": 3,
+ "mappedFrom": [{"provider": "company", "value": "5f1c…-engineering"}],
+ "created": "2026-11-23T08:30:00Z", "updated": "2026-11-23T08:30:00Z"}
+```
+
+- `id` has the form of a page id.
+- `name` is 1 to 80 characters, unique ignoring case (compared by Unicode case
+  folding, the same on SQLite and PostgreSQL, as space names are).
+  `description` is at most 500 characters.
+- `source` is `local` or `synced`, fixed once made.
+- `people` is how many users are in it; `spaces` how many spaces it is a member
+  of.
+- `mappedFrom` (synced groups only; `[]` for a local one) lists the providers'
+  claim values that feed it, read from the providers' settings.
+
+Only administrators see a whole group. Everyone else sees groups only as
+`{"id", "name", "source"}`: in a space's members (with the group's role and
+`people`), in `GET /api/groups` and in their own account.
+
+### Effective permission
+
+A person's permissions in a space are the union of the permissions of their
+direct role, if they are a member, and the roles of every group of theirs that
+is a member of the space. The built-in roles nest (`viewer` ⊂ `editor` ⊂
+`owner`), so the union is the highest of those roles. In the Space object (see
+"Spaces") `role` is the built-in role whose permissions are that union and
+`permissions` lists them; `directRole` is the person's own role, `""` when they
+reach the space only through groups; `viaGroups` is `true` when at least one of
+their groups is a member. A space reached both ways is listed once.
+
+Everything that asks what a person may do in a space uses this effective
+permission: every route's check, `GET /api/spaces`, an API token or OAuth grant
+(which is never more than its owner's permission now, see "API tokens"), MCP's
+`tools/list`, and whether a waiting draft of theirs may be written. A space that
+someone reaches only through a group can be put in a token; when the person
+leaves the group, or the group leaves the space, the token's next request to the
+space answers `404 not_found`, the same as for a removed member.
+
+**What it costs.** A permission check stays the in-memory lookup of 1.7: the
+server keeps, per person, the spaces they can reach and one byte of permissions
+for each. On a miss the list is read with one query (direct memberships and
+group memberships together) and kept; groups are never expanded per request.
+A change drops exactly the people it touches, and the very next request of each
+reads the database once:
+
+| Change | Whose cached list is dropped |
+|---|---|
+| a person added to or removed from a local group | that person |
+| a sign-in changes a person's synced groups (no change, nothing dropped) | that person |
+| a group added to a space, its role changed, or removed | every person in the group (one indexed query for their ids) |
+| a group deleted, or a provider's mapping entry removed | every person in it |
+| a space deleted | its direct members and every person in its groups |
+| a space renamed | nobody: names are kept apart from the per-person lists |
+
+The cache is bounded by entries (2 million space–person pairs by default), not
+by people, so a group in hundreds of spaces costs hundreds of pairs per person.
+Like the 1.7 cache, it lives in one process.
+
+### Groups as members of a space
+
+Shared spaces only: a personal space never has groups (`409 personal_space`).
+These need `members`, like the member endpoints, and an administrator may use
+them in any space.
+
+A space always keeps at least one **direct** owner who can sign in: an owner
+through a group does not count, because the identity provider may empty the
+group. For the same reason the first direct owner stays the Git author of a
+space's default commits.
+
+#### Group member
+
+```json
+{"groupId": "01JD4A2K9P", "name": "Engineering", "source": "synced", "role": "editor", "people": 214, "yours": true}
+```
+
+`yours` is true when the caller is in the group.
+
+#### `GET /api/spaces/{space}/members`
+
+Needs `read`, as before: `{"members": [{…}], "groups": [{…}]}`. `members` is
+unchanged: the direct members (owners first, then by name). `groups` are the
+groups that are members, by name. Neither is expanded or paged: a space has at
+most 200 groups. Each Member gains `viaGroups` (whether one of their groups is
+in the space too) and `effectiveRole`.
+
+#### `GET /api/spaces/{space}/members/effective?q={text}&cursor={cursor}&limit={n}`
+
+Needs `read`. Every person who can reach the space, with how:
+
+```json
+{"items": [{"userId": "01JD3K8Q7Z", "username": "tang", "name": "Tang", "role": "owner",
+            "directRole": "editor", "groups": [{"groupId": "01JD4A2K9P", "name": "Engineering", "role": "owner"}],
+            "you": false}],
+ "next": "tang"}
+```
+
+By username; `q` keeps people whose `username` or `name` contains it, ignoring
+case. `limit` 1 to 200 (default 50); `next` is the following page's `cursor`,
+`""` after the last. One query a page however large the groups are. Disabled
+users are left out. Administrators who are not members are not listed.
+
+#### `POST /api/spaces/{space}/groups`
+
+`{"groupId": "01JD4A2K9P", "role": "editor"}`. `201` with the group member.
+`404 group_not_found` for no such group; `409 exists` when it is a member
+already; `409 personal_space`; `409 group_limit` at 200 groups;
+`400 invalid` for a role that is not one of the three. Its people's very next
+request sees the space.
+
+#### `PATCH /api/spaces/{space}/groups/{group}`
+
+`{"role": "viewer"}`. `200` with the group member; `404 not_found` when the group
+is not a member. Applies to its people's very next request.
+
+#### `DELETE /api/spaces/{space}/groups/{group}`
+
+`204`; `404 not_found` when the group is not a member. Its people who are not
+direct members (and in no other group of the space) answer `404 not_found` on
+their very next request to it; their drafts are kept, as for a removed member.
+
+#### Leaving a space
+
+`DELETE /api/spaces/{space}/members/{user}` for oneself removes the direct
+membership only. A person who reaches the space only through groups cannot
+leave it themself: `409 member_via_group` (the message names the groups). One
+who is both a direct member and in a group leaves the direct membership and
+keeps the group's role.
+
+### `GET /api/groups?q={text}&limit={n}`
+
+Any signed-in user (not an API token). For finding a group to add to a space:
+`{"groups": [{"id", "name", "source"}]}`, the groups whose name contains `q`,
+ignoring case, by name. `q` is required (1 to 80 characters, `400 invalid`
+otherwise); `limit` 1 to 20 (default 20). Never the people of a group, nor its
+mapping.
+
+`GET /api/account` gains `groups`: `[{"id", "name", "source"}]`, the caller's
+groups by name.
+
+### Groups from sign-in
+
+A sign-in provider (see "Sign-in providers") may carry a `groups` setting:
+
+```json
+"groups": {"enabled": true, "claim": "groups", "missing": "keep",
+           "map": [{"value": "5f1c…-engineering", "groupId": "01JD4A2K9P"},
+                   {"value": "/staff", "groupId": "01JD4A3B7Q"}]}
+```
+
+- `claim`: where the values are read. OpenID Connect: a claim of the ID token
+  (the userinfo response is not read), holding a string or an array of strings
+  (default `groups`). SAML: an attribute name, every value of it
+  (`memberOf`, or `http://schemas.microsoft.com/ws/2008/06/identity/claims/groups`
+  for Entra ID). GitHub: not settable; the values are the organisations the
+  person belongs to (the logins 2.8 already reads, at most 500).
+- `missing`: what happens when the claim is not there at all: `keep` (default:
+  the person's groups from this provider stay as they are) or `clear` (as if
+  the list were empty). OpenID Connect's "groups overage" (Entra ID sends
+  `_claim_names` instead of the list when a person is in too many groups) counts
+  as missing.
+- `map`: up to 1,000 entries, each a value (1 to 256 bytes, compared exactly) and
+  a synced group. A value appears once per provider; a group may be fed by
+  several values and several providers. Values in the claim with no entry are
+  ignored: no group is ever made from a claim.
+
+**Sync.** After every successful sign-in through the provider (`login`, and
+`link` and `invite` too, which prove the same identity), with `enabled` on:
+
+1. The values are read (at most 1,000; more are ignored and the
+   `groups_claim_truncated` audit row says so) and mapped through `map`.
+2. The person's memberships that came from this provider are read (one query)
+   and compared: memberships for values no longer sent are removed, new ones
+   added. Memberships from other providers and of local groups are untouched.
+3. Only when something changed: one write, the person's cached list is dropped,
+   and a `groups_synced` audit row is written.
+
+The sync never refuses a sign-in. A person in more than 1,000 groups is not
+added to the ones past that number (`group_limit` in the audit row).
+
+**When a value disappears.** The person leaves that group at their next sign-in
+through the provider, not before: until then their sessions, tokens and grants
+keep the group's permissions. To take access away at once, disable the person,
+remove the group from the space, or remove the mapping entry. Removing an entry
+from `map` (or pointing it to another group) at once removes the memberships
+that entry brought, from everyone; deleting a provider removes every membership
+it brought (its identities are kept, as in 2.8). Disabling a provider changes
+nothing.
+
+**Refusals of the setting** (`POST`/`PATCH /api/admin/auth/providers`):
+`400 invalid` for a bad `claim`, `missing` or value; `404 group_not_found` for an
+unknown group; `409 group_not_synced` for a local group; `409 exists` for a
+value given twice.
+
+### Limits
+
+| What | Limit |
+|---|---|
+| groups on the server | 10,000 |
+| people in a group | 100,000 |
+| groups a person is in | 1,000 |
+| groups that are members of one space | 200 |
+| mapping entries of one provider | 1,000 |
+| claim values read at one sign-in | 1,000, each at most 256 bytes |
+| people added in one request | 500 |
+| page size of every list | 1 to 200 (default 50); `GET /api/groups` 1 to 20 |
+
+Going over a limit is `409 group_limit`, with the limit in the message. Every
+list is paged with `cursor` and `next` and is one query a page.
+
+### Audit
+
+These rows join those of "Audit log":
+
+| `kind` | When | `detail` |
+|---|---|---|
+| `group_created`, `group_changed`, `group_deleted` | an administrator made, renamed or deleted a group | `group`, `name`, `source`; for a change the changed fields; for a delete `people` and `spaces` |
+| `group_member_added`, `group_member_removed` | an administrator changed a local group's people (one row per request) | `group`, `users` (ids, at most 500) |
+| `groups_synced` | a sign-in changed a person's synced groups | `provider`, `added`, `removed` (group ids) |
+| `groups_claim_missing` | a provider with groups on sent no claim (or an overage) | `provider`, `missing` (`keep` or `clear`), `reason` (`absent`, `overage`) |
+| `groups_claim_truncated` | more values than read, or more groups than a person may be in | `provider`, `limit` (`values`, `group_limit`) |
+| `space_group_added`, `space_group_changed`, `space_group_removed` | a group became a member of a space, changed role, or left | `space`, `group`, `role` (old and new for a change) |
+
+`user` is the person a sync or a membership change is about; `actor` the one who
+acted (`null` for a sync).
+
+### Group error codes
+
+The codes of this section, besides those of "Conventions":
+
+| Code | Status | When |
+|---|---|---|
+| `group_not_found` | 404 | the group in the body (or in a mapping entry) does not exist |
+| `group_synced` | 409 | changing a synced group's people by hand |
+| `group_not_synced` | 409 | a mapping entry points to a local group |
+| `group_limit` | 409 | a limit of "Limits" would be passed |
+| `group_in_use` | 409 | deleting a group that is a member of spaces or mapped, without `force=1` (with `{"spaces": n, "mappings": n}`) |
+| `member_via_group` | 409 | leaving a space one reaches only through groups |
+| `user_not_found` | 404 | adding people who do not exist (with `{"missing": [ids]}`; nobody is added) |
+| `personal_space` | 409 | a group for a personal space |
+| `exists` | 409 | the name is taken; the group is a member already; a mapping value given twice |
+| `last_owner` | 409 | unchanged: counts direct owners only |
 
 ## Remote repository
 
@@ -3949,6 +4217,9 @@ name where the email, display name and username come from (empty: the
 `organizations`: when not empty, only members of one of them may sign in
 (`sso_error=not_allowed` otherwise).
 
+`groups` (any kind, from 3.2; absent or `{"enabled": false}` by default): how
+the provider's groups claim maps to synced groups; see "Groups from sign-in".
+
 #### `GET /api/admin/auth/providers`, `GET /api/admin/auth/providers/{slug}`
 
 `{"providers": [{…}]}` in `order`, and one provider.
@@ -3993,6 +4264,65 @@ Fetches the discovery document or the metadata now. `200` with the provider
 | `github_auto_create_needs_org` | 400 | `autoCreate` on a GitHub provider that names no organisation: anyone with a GitHub account could make one |
 | `public_url_required` | 400 | any provider without `--public-url` |
 | `provider_in_use` | 409 | `DELETE` without `force=1`, see above |
+
+### Groups
+
+Milestone 3.2; see "Groups" for what a group is and the codes. Every list is one
+query a page.
+
+#### `GET /api/admin/groups?q={text}&source={source}&user={id}&cursor={cursor}&limit={n}`
+
+`{"items": [Group], "next": "…"}`, by name. `q` keeps names containing it
+(ignoring case, as above); `source` is `local` or `synced`; `user` keeps the
+groups that user is in. `limit` 1 to 200 (default 50).
+
+#### `GET /api/admin/groups/{group}`
+
+One group; `404 not_found`.
+
+#### `POST /api/admin/groups`
+
+`{"name": "Engineering", "description": "", "source": "local"}`; `source` is
+required. `201` with the group. `409 exists` for a name taken, `409 group_limit`
+at 10,000 groups. A synced group starts empty; map it from a provider's
+`groups` setting.
+
+#### `PATCH /api/admin/groups/{group}`
+
+`{"name": "…", "description": "…"}`, each optional. `200` with the group.
+`source` cannot change (`400 invalid`).
+
+#### `DELETE /api/admin/groups/{group}?force=1`
+
+`204`. Without `force=1`, refused with `409 group_in_use` while the group is a
+member of a space or a provider maps to it. With it, the group leaves every
+space, its mapping entries are removed from the providers, and its people's
+cached lists are dropped. Nothing else is deleted: people, spaces and drafts
+stay.
+
+#### `GET /api/admin/groups/{group}/members?q={text}&cursor={cursor}&limit={n}`
+
+`{"items": [{"userId", "username", "name", "disabled", "from": [{"provider": "company", "value": "…"}], "added": "…"}], "next": "…"}`,
+by username. `from` is `[]` in a local group; in a synced group it is the
+provider and claim value each membership came from.
+
+#### `POST /api/admin/groups/{group}/members`
+
+Local groups only (`409 group_synced`). `{"userIds": ["01JD3K8Q7Z", …]}`, 1 to
+500. `200` with `{"added": 3, "already": 1}`. All or nothing: an unknown id is
+`404 user_not_found` with `{"missing": […]}`; `409 group_limit` when the group
+or a person would pass their limit. Disabled users may be added (they still
+cannot sign in).
+
+#### `DELETE /api/admin/groups/{group}/members/{user}`
+
+Local groups only (`409 group_synced`). `204`; `404 not_found` when they are not
+in it.
+
+#### `GET /api/admin/groups/{group}/spaces?cursor={cursor}&limit={n}`
+
+The spaces the group is a member of: `{"items": [{"id", "name", "role"}], "next": "…"}`,
+by name. What an administrator looks at before deleting a group.
 
 ### `GET /api/admin/audit?kind={kind}&user={id}&cursor={cursor}&limit={n}`
 

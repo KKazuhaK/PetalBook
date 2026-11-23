@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/KKazuhaK/PetalBook/internal/perm"
@@ -32,7 +33,7 @@ func checkRole(role string) error {
 	return nil
 }
 
-// Members lists the members of the open space, owners first.
+// Members lists the direct members of the open space, owners first.
 func (m *Manager) Members(ctx context.Context, h *Handle) ([]store.Member, error) {
 	if m.single != nil {
 		return nil, ErrNotFound
@@ -137,6 +138,21 @@ func (m *Manager) RemoveMember(ctx context.Context, actor store.User, h *Handle,
 		}
 		cur, err := store.MemberRole(ctx, q, h.Info.ID, userID)
 		if errors.Is(err, store.ErrNotFound) {
+			if userID == actor.ID {
+				// Reached only through groups: there is no membership of one's own to leave.
+				gs, gerr := store.UserSpaceGroups(ctx, q, h.Info.ID, userID)
+				if gerr != nil {
+					return gerr
+				}
+				if len(gs) > 0 {
+					names := make([]string, len(gs))
+					for i, g := range gs {
+						names[i] = g.Name
+					}
+					slices.Sort(names)
+					return &ViaGroupError{Groups: names}
+				}
+			}
 			return ErrNotMember
 		}
 		if err != nil {

@@ -11,7 +11,9 @@ import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { can } from '@/lib/permissions'
 import { t } from '@/i18n'
+import { tg } from '@/i18n/groups'
 import { useQueryClient } from '@tanstack/react-query'
+import { EffectiveMembers, GroupMembers } from './MemberGroups'
 import { SettingsNote, SettingsSection } from './SettingsParts'
 
 // The built-in roles, from the one with the most to the one with the least.
@@ -29,6 +31,8 @@ export function memberError(e: unknown): string {
       return t.members.errors.lastOwner
     case 'personal_space':
       return t.members.errors.personalSpace
+    case 'member_via_group':
+      return e.message
     case 'space_disabled':
       return t.spaces.disabledTitle
     default:
@@ -54,6 +58,8 @@ export function MembersPanel({ space }: { space: string }) {
     <div className="space-y-8">
       <MemberList space={current} members={members.data.members} manage={manage} />
       {current.personal ? <SettingsNote>{t.members.personalNote}</SettingsNote> : manage ? <AddMember space={space} /> : <SettingsNote>{t.members.noManage}</SettingsNote>}
+      {!current.personal && <GroupMembers space={current} groups={members.data.groups} manage={manage} />}
+      {!current.personal && <EffectiveMembers space={space} />}
     </div>
   )
 }
@@ -152,6 +158,7 @@ function MemberList({ space, members, manage }: { space: SpaceInfo; members: Mem
               <div className="flex items-center gap-2">
                 <span className="truncate text-sm font-medium">{m.name}</span>
                 {m.you && <span className="text-xs text-muted-foreground">{t.members.you}</span>}
+                {m.viaGroups && <span className="text-xs text-muted-foreground">{tg.space.viaGroups}{m.effectiveRole && m.effectiveRole !== m.role ? ` · ${tg.space.effective(t.roles[m.effectiveRole])}` : ''}</span>}
               </div>
               <div className="truncate text-xs text-muted-foreground">{m.username}</div>
             </div>

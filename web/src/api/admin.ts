@@ -6,7 +6,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, enc, request } from './client'
 import { keys } from './hooks'
-import type { AdminDaily, AdminSpaceList, AuditList, AuthProvider, Passkey, ProviderInput, SecurityPatch, SecuritySettings, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User, AdminGrantList, AdminTokenList, MachineAccess } from './types'
+import type { Group, GroupList, GroupPersonList, GroupSource, GroupSpaceList, AdminDaily, AdminSpaceList, AuditList, AuthProvider, Passkey, ProviderInput, SecurityPatch, SecuritySettings, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User, AdminGrantList, AdminTokenList, MachineAccess } from './types'
 
 export const adminApi = {
   // --- users and invites ---
@@ -44,6 +44,39 @@ export const adminApi = {
   adminEnableSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/enable`, { method: 'POST' }),
   adminDeleteSpace: (id: string) => request<DeletedSpace>(`/admin/spaces/${enc(id)}`, { method: 'DELETE' }),
   adminStatus: (signal?: AbortSignal) => request<ServerStatus>('/admin/status', { signal }),
+
+  // --- groups ---
+  adminGroups: (params: { q?: string; source?: GroupSource | ''; user?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.q) q.set('q', params.q)
+    if (params.source) q.set('source', params.source)
+    if (params.user) q.set('user', params.user)
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<GroupList>(`/admin/groups${qs ? `?${qs}` : ''}`, { signal })
+  },
+  createGroup: (input: { name: string; description?: string; source: GroupSource }) => request<Group>('/admin/groups', { method: 'POST', body: input }),
+  updateGroup: (id: string, input: { name?: string; description?: string }) => request<Group>(`/admin/groups/${enc(id)}`, { method: 'PATCH', body: input }),
+  deleteGroup: (id: string, force = false) => request<void>(`/admin/groups/${enc(id)}${force ? '?force=1' : ''}`, { method: 'DELETE' }),
+  groupPeople: (id: string, params: { q?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.q) q.set('q', params.q)
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<GroupPersonList>(`/admin/groups/${enc(id)}/members${qs ? `?${qs}` : ''}`, { signal })
+  },
+  // 1 to 500 users, all or nothing.
+  addGroupPeople: (id: string, userIds: string[]) => request<{ added: number; already: number }>(`/admin/groups/${enc(id)}/members`, { method: 'POST', body: { userIds } }),
+  removeGroupPerson: (id: string, userId: string) => request<void>(`/admin/groups/${enc(id)}/members/${enc(userId)}`, { method: 'DELETE' }),
+  groupSpaces: (id: string, params: { cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<GroupSpaceList>(`/admin/groups/${enc(id)}/spaces${qs ? `?${qs}` : ''}`, { signal })
+  },
 
   // --- security: settings, sign-in providers and the audit log ---
   security: (signal?: AbortSignal) => request<SecuritySettings>('/admin/security', { signal }),
@@ -187,6 +220,92 @@ export function useDeleteSpace() {
       return changed(id)
     },
   })
+}
+
+// --- groups --------------------------------------------------------------------------
+
+// Every group, a cursor page at a time; `q` is the name filter, `source` local or synced.
+export function useAdminGroups(q: string, source: GroupSource | '', enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.adminGroupList(q, source),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => adminApi.adminGroups({ q: q || undefined, source, cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled,
+    staleTime: 15_000,
+  })
+}
+
+// The synced groups whose names contain `q`, for the mapping of a sign-in provider: the first 200 by name (the
+// server has at most 10,000 groups, so the picker searches rather than loading them all).
+export function useSyncedGroups(q = '', enabled = true) {
+  return useQuery({
+    queryKey: keys.adminGroupList(q, 'synced-all'),
+    queryFn: ({ signal }) => adminApi.adminGroups({ q: q || undefined, source: 'synced', limit: 200 }, signal),
+    enabled,
+    staleTime: 15_000,
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useGroupPeople(id: string, q: string, enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.adminGroupPeople(id, q),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => adminApi.groupPeople(id, { q: q || undefined, cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled,
+    staleTime: 10_000,
+  })
+}
+
+export function useGroupSpaces(id: string, enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.adminGroupSpaces(id),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => adminApi.groupSpaces(id, { cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled,
+    staleTime: 10_000,
+  })
+}
+
+// What changes a group changes the lists of groups, and what the members of
+// spaces see of them, and a person's own groups.
+function useGroupsChanged() {
+  const qc = useQueryClient()
+  return () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: keys.adminGroups }),
+      qc.invalidateQueries({ queryKey: keys.account }),
+      qc.invalidateQueries({ queryKey: keys.spaces }),
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'space' && q.queryKey[2] === 'members' }),
+    ])
+}
+export function useCreateGroup() {
+  const changed = useGroupsChanged()
+  return useMutation({ mutationFn: (input: { name: string; description?: string; source: GroupSource }) => adminApi.createGroup(input), onSuccess: changed })
+}
+export function useUpdateGroup() {
+  const changed = useGroupsChanged()
+  return useMutation({ mutationFn: ({ id, ...input }: { id: string; name?: string; description?: string }) => adminApi.updateGroup(id, input), onSuccess: changed })
+}
+export function useDeleteGroup() {
+  const changed = useGroupsChanged()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, force }: { id: string; force: boolean }) => adminApi.deleteGroup(id, force),
+    // The providers' mappings lose their entries with the group.
+    onSuccess: () => Promise.all([changed(), qc.invalidateQueries({ queryKey: keys.adminProviders })]),
+  })
+}
+export function useAddGroupPeople() {
+  const changed = useGroupsChanged()
+  return useMutation({ mutationFn: ({ id, userIds }: { id: string; userIds: string[] }) => adminApi.addGroupPeople(id, userIds), onSuccess: changed })
+}
+export function useRemoveGroupPerson() {
+  const changed = useGroupsChanged()
+  return useMutation({ mutationFn: ({ id, userId }: { id: string; userId: string }) => adminApi.removeGroupPerson(id, userId), onSuccess: changed })
 }
 
 // --- the daily text of the whole server ----------------------------------------------

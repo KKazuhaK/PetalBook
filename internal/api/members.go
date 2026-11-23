@@ -14,23 +14,34 @@ type memberResp struct {
 	You      bool   `json:"you"`
 }
 
+// memberListResp is a member in the list of members, which also says how the
+// groups add to them: ViaGroups is whether a group of theirs is a member of
+// the space too, EffectiveRole the role their own and those groups' roles give
+// together.
+type memberListResp struct {
+	memberResp
+	ViaGroups     bool   `json:"viaGroups"`
+	EffectiveRole string `json:"effectiveRole"`
+}
+
 func toMember(m store.Member, you string) memberResp {
 	return memberResp{m.UserID, m.Username, m.Name, m.Role, m.UserID == you}
 }
 
 func (s *server) listMembers(c *call) {
-	l, err := s.spaces.Members(c.r.Context(), c.sp)
+	l, groups, err := s.spaces.MembersView(c.r.Context(), c.sp, c.user().ID)
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	out := make([]memberResp, len(l))
+	out := make([]memberListResp, len(l))
 	for i, m := range l {
-		out[i] = toMember(m, c.user().ID)
+		out[i] = memberListResp{toMember(m.Member, c.user().ID), m.ViaGroups, m.EffectiveRole}
 	}
 	writeJSON(c.w, http.StatusOK, struct {
-		Members []memberResp `json:"members"`
-	}{out})
+		Members []memberListResp  `json:"members"`
+		Groups  []groupMemberResp `json:"groups"`
+	}{out, toGroupMembers(groups)})
 }
 
 func (s *server) addMember(c *call) {
