@@ -56,12 +56,12 @@ describe('the administrators\' daily text page', () => {
     expect(document.querySelector('[data-slot="admin-daily"]')).toBeNull()
   })
 
-  it('has room for the two switches spaces are limited by, and keeps them off until the server has them', async () => {
+  it('shows the two switches spaces are limited by, on and usable once the server sends them', async () => {
     await open()
     const [own, apiSwitch] = [...document.querySelectorAll<HTMLElement>('[data-slot="admin-daily"] [role="switch"]')]
     expect(own.getAttribute('aria-checked')).toBe('true')
-    expect(own.hasAttribute('data-disabled')).toBe(true)
-    expect(apiSwitch.hasAttribute('data-disabled')).toBe(true)
+    expect(own.hasAttribute('data-disabled')).toBe(false)
+    expect(apiSwitch.hasAttribute('data-disabled')).toBe(false)
     expect(document.body.textContent).toContain(d.allowOwn)
     expect(document.body.textContent).toContain(d.allowApi)
   })
