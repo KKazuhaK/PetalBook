@@ -5,12 +5,18 @@ import { t } from '@/i18n'
 import type {
   AccountInfo,
   AdminSpace,
+  DailyAnswer,
+  DailyPrefs,
+  DailySettings,
+  FavoriteList,
+  FavoriteRef,
   CreatePageInput,
   DraftInput,
   DraftReceipt,
   BatchPagesInput,
   ConnectRemoteInput,
   ErrorCode,
+  ReasonCode,
   HistoryList,
   ImportReport,
   InviteCheck,
@@ -49,6 +55,15 @@ export const API_BASE = '/api'
 // Single-user mode has exactly one space, with this id.
 export const DEFAULT_SPACE = 'default'
 
+// The codes the daily-text endpoints put in `error` (with what they are about next to it).
+const DAILY_CODES = new Set(['host_not_allowed', 'header_reenter', 'header_missing', 'not_json', 'too_large', 'path_error', 'path_reveals_secret', 'link_uses_header', 'skip_too_large'])
+const reasonOf = (b: { error: string; host?: unknown; header?: unknown; field?: unknown }): ReasonCode => ({
+  code: b.error,
+  ...(typeof b.host === 'string' ? { host: b.host } : {}),
+  ...(typeof b.header === 'string' ? { header: b.header } : {}),
+  ...(typeof b.field === 'string' ? { field: b.field } : {}),
+})
+
 export class ApiError extends Error {
   readonly status: number
   readonly code: ErrorCode
@@ -59,7 +74,11 @@ export class ApiError extends Error {
   readonly draft?: PageDraft | null
   // Present on 429: seconds the server asks us to wait.
   readonly retryAfter?: number
-  constructor(status: number, code: ErrorCode, message: string, current?: Page, retryAfter?: number, draft?: PageDraft | null) {
+  // The stable reason a daily-text refusal carries next to `error`, with what it is about; absent otherwise.
+  readonly reason?: ReasonCode
+  // The parsed answer, when it had a body: some refusals carry more than a code (the daily trial's `result`).
+  readonly body?: unknown
+  constructor(status: number, code: ErrorCode, message: string, current?: Page, retryAfter?: number, draft?: PageDraft | null, reason?: ReasonCode, body?: unknown) {
     super(message)
     this.name = 'ApiError'
     this.status = status
@@ -67,6 +86,8 @@ export class ApiError extends Error {
     this.current = current
     this.retryAfter = retryAfter
     this.draft = draft
+    this.reason = reason
+    this.body = body
   }
 }
 
@@ -124,8 +145,9 @@ const SIGN_IN_PATHS = /^\/(login|logout|setup|session|meta|invites\/(check|accep
 // A member whose role lacks the permission a route needs gets 403 `no_permission`
 // from any space endpoint: its own code, so it is never taken for a refused origin
 // and no path has to be listed for it. What is listed here answers `forbidden` for
-// reasons of its own (the limit on spaces, a host that is not allowed).
-const USER_LEVEL_403 = /^\/(setup|account(\/.*)?|users(\/.*)?|invites(\/.*)?|admin(\/.*)?)$|^\/spaces(\/[^/]+\/remote(\/.*)?)?$/
+// reasons of its own (the limit on spaces, a host that is not allowed, favourites of a space the
+// administrator is not a member of).
+const USER_LEVEL_403 = /^\/(setup|account(\/.*)?|users(\/.*)?|invites(\/.*)?|admin(\/.*)?)$|^\/spaces(\/[^/]+\/(remote|favorites)(\/.*)?)?$/
 
 // --- a remote that cannot be reached ---------------------------------------------
 //
@@ -224,7 +246,7 @@ export async function request<T>(path: string, { method = 'GET', body, keepalive
     }
   }
   if (!res.ok) {
-    const err = (json ?? {}) as { error?: string; message?: string; current?: Page; draft?: PageDraft | null }
+    const err = (json ?? {}) as { error?: string; message?: string; current?: Page; draft?: PageDraft | null; host?: unknown; header?: unknown; field?: unknown }
     if (err.error === 'forbidden' && !USER_LEVEL_403.test(barePath)) {
       const message = forbiddenMessage(globalThis.location?.origin ?? '')
       forbiddenListeners.forEach((fn) => fn(message))
@@ -245,6 +267,8 @@ export async function request<T>(path: string, { method = 'GET', body, keepalive
       err.current,
       res.status === 429 && Number.isFinite(retry) && retry > 0 ? retry : undefined,
       err.draft,
+      typeof err.error === 'string' && DAILY_CODES.has(err.error) ? reasonOf(err as { error: string; host?: unknown; header?: unknown; field?: unknown }) : undefined,
+      json ?? undefined,
     )
   }
   return json as T
@@ -368,6 +392,26 @@ export function spaceApi(space: string) {
     disconnectRemote: () => request<void>(base('/remote'), { method: 'DELETE' }),
     syncRemote: () => request<Remote>(base('/remote/sync'), { method: 'POST' }),
     acceptRemote: (commit: string) => request<Remote>(base('/remote/accept'), { method: 'POST', body: { commit } }),
+
+    // The day's text. `date` is the day where the browser is and `tz` its offset in minutes east of UTC; `skip` asks for another.
+    daily: (q: { date: string; skip?: number; lang?: string; tz?: number }, signal?: AbortSignal) => {
+      const p = new URLSearchParams({ date: q.date })
+      if (q.skip) p.set('skip', String(q.skip))
+      if (q.lang) p.set('lang', q.lang)
+      if (q.tz !== undefined) p.set('tz', String(q.tz))
+      return request<DailyAnswer>(base(`/daily?${p.toString()}`), { signal })
+    },
+    dailySettings: (signal?: AbortSignal) => request<{ daily: DailySettings | null; inEffect?: boolean }>(base('/daily/settings'), { signal }),
+    putDailySettings: (daily: DailySettings | null) => request<{ daily: DailySettings | null; inEffect?: boolean }>(base('/daily/settings'), { method: 'PUT', body: { daily } }),
+    // Accounts mode only (the single-user server answers 404).
+    dailyPrefs: (signal?: AbortSignal) => request<DailyPrefs>(base('/daily/prefs'), { signal }),
+    putDailyPrefs: (input: { inherit: boolean; apis: string[] }) => request<DailyPrefs>(base('/daily/prefs'), { method: 'PUT', body: input }),
+
+    // A person's own favourites of the space.
+    favorites: (signal?: AbortSignal) => request<FavoriteList>(base('/favorites'), { signal }),
+    addFavorite: (ref: FavoriteRef) => request<FavoriteList>(base('/favorites'), { method: 'POST', body: ref }),
+    removeFavorite: (ref: FavoriteRef) => request<FavoriteList>(base(`/favorites?kind=${enc(ref.kind)}&target=${enc(ref.target)}`), { method: 'DELETE' }),
+    orderFavorites: (items: FavoriteRef[]) => request<FavoriteList>(base('/favorites/order'), { method: 'PUT', body: { items } }),
 
     reindex: () => request<{ pages: number; ms: number }>(base('/reindex'), { method: 'POST' }),
 

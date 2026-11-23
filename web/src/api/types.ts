@@ -367,7 +367,26 @@ export interface ConnectRemoteInput {
   credential: { type: 'ssh' } | { type: 'token'; username?: string; token?: string }
 }
 
+// A refusal of the daily-text endpoints says why with a stable code in `error`, next to `message`, and the
+// thing it is about: host_not_allowed (host), header_reenter / header_missing (header), not_json, too_large,
+// path_error / path_reveals_secret (field: text|source|author|link), link_uses_header, skip_too_large.
+export interface ReasonCode {
+  code: string
+  host?: string
+  header?: string
+  field?: string
+}
+
 export type ErrorCode =
+  | 'host_not_allowed'
+  | 'header_reenter'
+  | 'header_missing'
+  | 'not_json'
+  | 'too_large'
+  | 'path_error'
+  | 'path_reveals_secret'
+  | 'link_uses_header'
+  | 'skip_too_large'
   | 'not_found'
   | 'invalid'
   | 'conflict'
@@ -509,3 +528,120 @@ export interface ServerStatus {
   diskFreeBytes?: number
   goVersion: string
 }
+
+// --- home: the daily text and favourites (docs/api.md, "Home") ---------------------
+
+// Where a space takes its daily text from: a folder (and those below it), a tag or a type, with filters.
+export interface DailySource {
+  folder?: string
+  tag?: string
+  type?: string
+  filter?: PropFilter[]
+}
+// A source for every language beside sources by language (the language codes are lower-case keys).
+export type DailySettings = DailySource & { [lang: string]: DailySource | string | PropFilter[] | undefined }
+
+export interface DailyQuote {
+  text: string
+  source?: string
+  author?: string
+  link?: string
+  fetched?: string
+  stale?: boolean
+}
+export type DailyReason = 'no_source' | 'no_match' | 'unavailable' | 'out_of_range'
+// What `GET …/daily` says: a page of the space, a text from the administrators, or nothing to show.
+export interface DailyAnswer {
+  page: (PageSummary & { body: string; bodyTruncated?: boolean }) | null
+  count?: number
+  quote?: DailyQuote
+  origin?: 'space' | 'external' | 'site'
+  reason?: DailyReason
+}
+
+export interface DailyPrefs {
+  inherit: boolean
+  apis: string[]
+  available: { id: string; name: string; lang: string }[]
+  // The languages the settings pages have a tab for (besides "all languages").
+  languages?: string[]
+  default: { kind: string } | null
+  // What the administrators let spaces do (absent: everything). A field that is `false` is set for the whole
+  // server: the space's page shows it disabled and says so.
+  allowed?: { own?: boolean; api?: boolean }
+}
+export interface DailyAllow {
+  own: boolean
+  api: boolean
+}
+
+export type FavoriteKind = 'page' | 'folder' | 'view'
+export interface Favorite {
+  kind: FavoriteKind
+  target: string
+  name: string
+  path?: string
+  // A view: the folder or tag it belongs to.
+  of?: string
+  ofKind?: 'folder' | 'tag'
+  missing: boolean
+  created: string
+}
+export interface FavoriteList {
+  items: Favorite[]
+  limit: number
+}
+export interface FavoriteRef {
+  kind: FavoriteKind
+  target: string
+}
+
+export interface DailyApiHeader {
+  name: string
+  set?: boolean
+  value?: string
+}
+export interface DailyApi {
+  id: string
+  name: string
+  lang: string
+  url: string
+  headers: DailyApiHeader[]
+  text: string
+  source: string
+  author: string
+  link: string
+  refresh: 'daily' | 'hourly' | 'minutes'
+  refreshMinutes: number
+  skipNew: boolean
+  rps: number
+  enabled: boolean
+  note?: string
+}
+export type DailyDefault = null | { kind: 'list' } | { kind: 'space'; space: string; source: DailySettings }
+export interface AdminDaily {
+  default: DailyDefault
+  hosts: string[]
+  languages: string[]
+  apis: DailyApi[]
+  presets: DailyApi[]
+  lines: { total: number; byLang: Record<string, number>; max: number }
+  // Whether spaces may use a source of their own and pick an external interface; absent until the server has them.
+  allow?: DailyAllow
+}
+export interface DailyTryResult {
+  ok: boolean
+  status?: number
+  url?: string
+  message?: string
+  // Why it did not work, as a code (see ReasonCode), with what it is about.
+  error?: string
+  host?: string
+  header?: string
+  field?: string
+  raw?: string
+  rawTruncated?: boolean
+  quote?: DailyQuote
+  pathErrors?: { field: string; code: string; message: string }[]
+}
+export type LinesFormat = 'lines' | 'markdown'

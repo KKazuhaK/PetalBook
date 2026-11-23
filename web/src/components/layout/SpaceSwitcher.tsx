@@ -24,7 +24,7 @@ export function SpaceSwitcher() {
   return (
     <>
       <div className="flex items-center gap-1">
-        <NavLink to={id ? spaceUrls(id).recent() : '/'} className="flex shrink-0 items-center px-1 pt-0.5" aria-label={t.nav.recent}>
+        <NavLink to={id ? spaceUrls(id).home() : '/'} className="flex shrink-0 items-center px-1 pt-0.5" aria-label={t.nav.home}>
           <img src="/favicon.svg" alt="" className="size-6 rounded-md" />
         </NavLink>
         <DropdownMenu>
@@ -36,7 +36,7 @@ export function SpaceSwitcher() {
             <ChevronsUpDown className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="min-w-56">
-            <DropdownMenuRadioGroup value={id ?? ''} onValueChange={(v) => navigate(spaceUrls(String(v)).recent())}>
+            <DropdownMenuRadioGroup value={id ?? ''} onValueChange={(v) => navigate(spaceUrls(String(v)).home())}>
               {spaces.map((s) => (
                 <DropdownMenuRadioItem key={s.id} value={s.id}>
                   <span className="truncate">{s.name}</span>
@@ -68,7 +68,7 @@ export function SpaceSwitcher() {
         onSubmit={async (name) => {
           // A Chinese-language app names the inbox folder in Chinese.
           const space = await create.mutateAsync({ name, inbox: t.inbox.folderName })
-          navigate(spaceUrls(space.id).recent())
+          navigate(spaceUrls(space.id).home())
         }}
       />
       <NameDialog

@@ -121,6 +121,6 @@ describe('Set type… on a folder', () => {
       },
     })
     await rightClick('f:Work')
-    expect(menuItems()).toEqual([t.manage.open, t.manage.rename, t.manage.select, t.manage.move, t.manage.delete])
+    expect(menuItems()).toEqual([t.manage.open, t.fav.addFolder, t.manage.rename, t.manage.select, t.manage.move, t.manage.delete])
   })
 })

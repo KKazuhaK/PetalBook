@@ -47,7 +47,7 @@ describe('who can reach the administration', () => {
     m = await mount(routes, { entries: ['/admin'], signIn: true, server: { mode: 'accounts' } })
     await settle(() => locationText() === '/admin/users' && text().includes(t.users.createInvite), 'users and invites')
     expect(heading()).toBe(ta.title)
-    expect(navLinks()).toEqual([ta.sections.users, ta.sections.spaces, ta.sections.status])
+    expect(navLinks()).toEqual([ta.sections.users, ta.sections.spaces, ta.sections.daily, ta.sections.status])
     expect(document.querySelector('nav [aria-current="page"]')?.textContent).toBe(ta.sections.users)
   })
 
@@ -107,7 +107,7 @@ describe('all spaces', () => {
     expect(team.textContent).not.toContain(ta.spaces.personal)
     expect(rows().filter((r) => r.textContent?.includes(ta.spaces.personal))).toHaveLength(2)
     // The way into a space's content.
-    expect(team.querySelector('a')!.getAttribute('href')).toMatch(/^\/s\/[^/]+\/recent$/)
+    expect(team.querySelector('a')!.getAttribute('href')).toMatch(/^\/s\/[^/]+\/$/)
     expect(text()).toContain(ta.spaces.allLoaded(3))
   })
 

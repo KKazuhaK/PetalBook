@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/text/cases"
 	"modernc.org/sqlite"
 )
 
@@ -38,12 +39,8 @@ type AdminOwner struct {
 type SpaceFilter struct {
 	// Query keeps the spaces whose name contains it, ignoring case.
 	Query string
-	// Dialect is the database in use (Store.Dialect). On SQLite the name is
-	// folded by a function the store registers, so that case is ignored for all
-	// of Unicode and not only ASCII, which is all SQLite's own LOWER does; on
-	// PostgreSQL LOWER follows the database's locale (the C locale folds ASCII
-	// only). Either way it is the same single query and page.
-	Dialect Dialect
+	// The search compares the folded name (FoldName) the space was written with,
+	// so both databases find the same spaces.
 	// ID keeps only the space with this id: the same row the list has, found
 	// directly.
 	ID string
@@ -55,7 +52,7 @@ type SpaceFilter struct {
 }
 
 // sqliteLower is the name of the function that lower-cases text on SQLite
-// (registered in init), for case-insensitive search beyond ASCII.
+// (registered in init), for the search of users.
 const sqliteLower = "petalbook_lower"
 
 func init() {
@@ -68,6 +65,39 @@ func init() {
 		}
 		return args[0], nil
 	})
+}
+
+// FoldName is a space name as it is searched: Unicode case folding, which
+// makes "STRASSE" and "Straße" the same, and the two spellings of an
+// i with a dot the same too. It is stored in spaces.name_key.
+func FoldName(s string) string { return cases.Fold().String(s) }
+
+// fillSpaceNameKeys folds the names of the spaces that exist (migration 7).
+func fillSpaceNameKeys(ctx context.Context, q Q) error {
+	rows, err := q.Query(ctx, `SELECT id, name FROM spaces`)
+	if err != nil {
+		return err
+	}
+	type row struct{ id, key string }
+	var all []row
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			rows.Close()
+			return err
+		}
+		all = append(all, row{id, FoldName(name)})
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, r := range all {
+		if _, err := q.Exec(ctx, `UPDATE spaces SET name_key = ? WHERE id = ?`, r.key, r.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // likeEscape makes s a literal inside a LIKE pattern (ESCAPE '\').
@@ -95,12 +125,8 @@ func ListAllSpaces(ctx context.Context, q Q, f SpaceFilter) (out []AdminSpace, n
 		args = append(args, f.ID)
 	}
 	if f.Query != "" {
-		lower := "LOWER"
-		if f.Dialect == SQLite {
-			lower = sqliteLower
-		}
-		where = append(where, lower+`(s.name) LIKE ? ESCAPE '\'`)
-		args = append(args, "%"+likeEscape(strings.ToLower(f.Query))+"%")
+		where = append(where, `s.name_key LIKE ? ESCAPE '\'`)
+		args = append(args, "%"+likeEscape(FoldName(f.Query))+"%")
 	}
 	cond := ""
 	if len(where) > 0 {
@@ -268,6 +294,8 @@ func DeleteSpace(ctx context.Context, q Q, id string) (members []string, err err
 	for _, stmt := range []string{
 		`DELETE FROM drafts WHERE space_id = ?`,
 		`DELETE FROM remotes WHERE space_id = ?`,
+		`DELETE FROM favorites WHERE space_id = ?`,
+		`DELETE FROM space_daily WHERE space_id = ?`,
 		`DELETE FROM space_members WHERE space_id = ?`,
 	} {
 		if _, err := q.Exec(ctx, stmt, id); err != nil {

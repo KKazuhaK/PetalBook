@@ -221,6 +221,10 @@ func NewAccounts(opt Options) (*Manager, error) {
 	return newManager(opt, nil), nil
 }
 
+// Secrets is the box that encrypts the credentials the server keeps; nil in
+// single-user mode.
+func (m *Manager) Secrets() *secret.Box { return m.opt.Secrets }
+
 // NewSingle returns the manager of single-user mode around sp, and makes sure
 // the built-in user and space exist in the database (drafts refer to them).
 func NewSingle(ctx context.Context, st *store.Store, sp *space.Space, log *slog.Logger) (*Manager, error) {
