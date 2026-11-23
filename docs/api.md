@@ -2403,7 +2403,7 @@ before acting, so a request never touches another page's file.
 
 A `.md` file with no header, a header that does not parse, no `id`, or an `id`
 another file already uses is not served as a page. The server logs each one
-at start-up. Showing and repairing them in the app comes in a later milestone.
+at start-up, and the check page lists them (see "Checks").
 
 ## Administration
 

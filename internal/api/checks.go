@@ -15,7 +15,7 @@ type problemResp struct {
 	Message string `json:"message"`
 	// Rev is the current rev of the file the problem is in: the baseRev of a
 	// fix (a file without an id has no page to read it from).
-	Rev    string          `json:"rev,omitempty"`
+	Rev    string          `json:"rev"`
 	Detail json.RawMessage `json:"detail,omitempty"`
 	Fix    *string         `json:"fix"`
 }
