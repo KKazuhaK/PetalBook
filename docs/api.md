@@ -4024,8 +4024,11 @@ and the pages removed, in the order they last changed.
  "next": "change cursor", "more": false, "tree": "k2f0…", "settings": "9a1c…"}
 ```
 
-- `next` is the cursor to keep: the client asks with it next time. With no
-  changes `items` is empty and `next` is `since`.
+- `next` is the cursor to keep: the client asks with it next time. It is the
+  head the answer was read at (so `GET /api/sync/heads` gives the same string
+  while nothing else changes), or, when `more` is `true`, the position of the
+  last change in `items`. When `since` is already the head, `items` is empty and
+  `next` is `since`.
 - `more` is `true` when there were more changes than `limit`; the client asks
   again with `next` at once.
 - Each page is in the answer at most once, as it is now. A page removed and
@@ -4087,6 +4090,14 @@ ask once and then read changes only where something changed. 1 to 100
 - A head equal to the client's cursor means nothing changed; a different one
   means the client calls `GET …/changes`. A head is not a promise that there are
   changes: comparing it is cheap, reading the changes settles it.
+- A space that has not been open since the server started has no head to give
+  yet: its head is `""`, which is never a cursor, so the client asks for its
+  changes (which opens it); from then on its head is known, also after it
+  closes.
+- A person who reaches a space only as an administrator, without being a member
+  of it, has no head for it (it is in `missing`): heads come from the
+  membership the server holds in memory, and a client that can read such a
+  space asks its changes directly.
 - The answer comes from memory and never opens or pulls a space: a space that
   is closed (idle, or cleared from the disk by milestone 3.1) answers the
   head it had when it closed. So a device polling heads keeps no space open, and
@@ -4109,11 +4120,16 @@ Not enforced by the server, but what it is built for:
   copy, show it as read-only and stop asking until the space is in `heads`
   again.
 
-**What it costs**, in a space of 50 000 pages (targets, measured before 4.1 is
-merged): a `changes` with nothing new under a millisecond; a catalogue batch of
-2000 under 20 ms; 100 bodies under 100 ms on an SSD; `heads` for 100 spaces
-a few microseconds each. The index grows by one column and one small table,
-under 1% of its size.
+**What it costs**, in a space of 50 000 pages (measured with
+`PETALBOOK_TIMING=1 go test -run TestChangeFeedInALargeSpace ./internal/space/`;
+the numbers are in docs/design.md, "4.1 的现状"): a `changes` with nothing new
+under a millisecond; a catalogue batch of 2000 about 15 to 20 ms; 100 bodies
+about 20 ms on an SSD; `heads` for 100 spaces a few microseconds each, and no
+disk. The index grows by one column and one small table, under 1% of its size.
+The `settings` stamp of an answer is made from the names, sizes and times of
+the files in `.petalbook/`, `.petalbook/types/` and `.petalbook/templates/` (three
+directory listings, as many entries as the space has settings, not as many as
+it has pages).
 
 ## Maintenance
 
