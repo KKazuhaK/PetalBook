@@ -523,9 +523,9 @@ func (s *server) createSpace(c *call) {
 			spaces.ConnectRequest{URL: r.URL, Branch: r.Branch, CredType: r.Credential.Type, Username: r.Credential.Username, Token: r.Credential.Token})
 	} else if g := req.GitHub; g != nil {
 		gc := spaces.GitHubCreate{Owner: g.Owner, Name: g.Name, Private: g.Private == nil || *g.Private, Description: g.Description, Create: g.Create == nil || *g.Create}
-		assets, err := assetsAsked(g.Assets)
-		if err != nil {
-			s.fail(c.w, err)
+		assets, aerr := assetsAsked(g.Assets)
+		if aerr != nil {
+			s.fail(c.w, aerr)
 			return
 		}
 		gc.Assets = assets

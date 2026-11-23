@@ -420,8 +420,8 @@ func TestOwnerRoutesAreForOwnersOnly(t *testing.T) {
 				}
 			}
 		}
-		if n != 6 {
-			t.Fatalf("%d owner routes, want the six of the remote", n)
+		if n != 10 { // the six of the remote and the four of the attachment repository
+			t.Fatalf("%d owner routes, want the ten of the remote and the attachment repository", n)
 		}
 		// Nothing was changed by any of it, and the owner is not refused.
 		tang.do("GET", "/api/spaces/"+tangSpace+"/remote", nil).want(t, 404, "not_found")
