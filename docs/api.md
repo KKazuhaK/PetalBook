@@ -833,7 +833,10 @@ leave no enabled administrator, when an administrator tries to disable themself,
 or, while `ssoOnly` is in effect, when it would leave no enabled administrator
 with a password. `passkeyRequired: true` is refused with
 `400 passkey_unavailable` while passkeys cannot be used (see "Passkeys").
-Setting `email` without `emailVerified` makes it unverified. From 3.3,
+Setting `email` without `emailVerified` makes it unverified. From 3.3 the body
+may also have `quota` (see "Quotas"), and the users of the administrators' lists
+and of this answer have `quota`: `{"spaces": null, "bytes": null, "pages": null}`
+(the person's own limits; `null` follows the tenant). From 3.3,
 `emailVerified: true` sent by a tenant administrator (not a site administrator)
 is stored and shown, but the address does not count for merging a sign-in by
 address (see "Which account an identity signs in to") until a site
@@ -870,9 +873,12 @@ neither used nor expired.
 
 ### `POST /api/invites/check` (public)
 
-`{"token": "…", "captcha": {…}}`. `200` with `{"role": "member", "expires": "…"}`, or
-`404 not_found` for a token that is unknown, used or expired (a failure of the
-address). `captcha` as for the `invite` context.
+`{"token": "…", "captcha": {…}}`. `200` with
+`{"role": "member", "expires": "…", "username": "", "name": "", "email": ""}`
+(the last three are what the invite fills in: see `POST /api/admin/tenants`; an
+ordinary invite has them empty), or `404 not_found` for a token that is
+unknown, used or expired (a failure of the address). `captcha` as for the
+`invite` context.
 
 ### `POST /api/invites/accept` (public)
 
@@ -881,7 +887,9 @@ address). `captcha` as for the `invite` context.
 ```
 
 `201` with `{"user": {…}}` and a session cookie; the user gets a personal
-space. `404 not_found` for a bad token, `409 exists` when the username is
+space. A `username` or `name` left empty (or out) takes what the invite fills
+in; the invite's `email`, if it has one, becomes the account's (not verified).
+`404 not_found` for a bad token, `409 exists` when the username is
 taken (the invite stays usable). While `ssoOnly` is in effect, an invite for
 the `member` role cannot be accepted with a password: `403 local_login_refused`
 (the page offers the providers instead, which accept it with
@@ -935,8 +943,9 @@ characters; `inbox` is optional (default `Inbox`) and must be a valid folder
 path. `201` with the space.
 The server makes the Git repository. The caller is its owner. `403 forbidden` when
 the caller already owns as many spaces as the server allows (`--max-spaces`,
-20 by default). From 3.3 this is `403 quota_exceeded`, and the limit is the
-setting `quota.spacesPerPerson` (see "Quotas").
+20 by default). From 3.3 this is `403 quota_exceeded` with `quota`, `limit` and
+`used` (see "Quotas"), and the limit is the setting `quota.spacesPerPerson`, or
+the person's own, or the tenant's total of spaces.
 
 ### `PATCH /api/spaces/{space}`
 
@@ -3992,7 +4001,7 @@ answer as switched off, and no setting can open registration.
 {"id": "0000000000", "slug": "default", "name": "Default", "default": true, "disabled": false,
  "registration": {"open": false},
  "quota": {"people": null, "spaces": null, "bytes": null, "pages": null},
- "usage": {"people": 40, "spaces": 212, "bytes": 18304211000, "pages": 61234, "measuredAt": "2026-11-23T02:10:00Z"},
+ "usage": {"people": 40, "spaces": 212, "bytes": 18304211000, "pages": 61234, "measuredAt": "2026-11-23T02:10:00Z", "over": []},
  "created": "2026-11-23T08:30:00Z", "updated": "2026-11-23T08:30:00Z"}
 ```
 
@@ -4009,7 +4018,9 @@ answer as switched off, and no setting can open registration.
 - `registration.open` is the effective value of the setting
   `registration.open` for this tenant (see "Registration").
 - `quota`: the tenant's totals, set by site administrators only; `null` is no
-  limit. `usage` is what is measured (see "Quotas").
+  limit. `usage` is what is measured (see "Quotas"): `measuredAt` is when a
+  measurement last changed it (`null`: never), and `over` lists the totals it is
+  over (`people`, `spaces`, `bytes`, `pages`).
 - The host a tenant is reached on is reserved: in 3.3 every tenant is served on
   the one `--public-url`, and a public endpoint names its tenant by slug.
 
@@ -4142,8 +4153,12 @@ Site administrators; `409 tenants_off` while `tenancy.enabled` is `false`.
 
 `201` with the tenant. `admin` is optional: when given, the answer also has an
 `invite` (as `POST /api/invites` answers, role `admin`, 7 days) for the first
-administrator of the tenant; the link is shown once, and nothing is mailed
-(`email` only fills in the invite's account). `409 exists` for a slug taken;
+administrator of the tenant; the link is shown once, and nothing is mailed.
+The invite **fills in** the form that accepts it: it has `username` (normalised
+as a username is), `name` and `email` (each `""` when not given), `POST
+/api/invites/check` answers them (below), and the account the invite makes gets
+the `email` (not verified). `400 invalid` for a username, name or address that
+is not valid (and no tenant is made). `409 exists` for a slug taken;
 `409 tenant_limit` at 1,000 tenants.
 
 ### `PATCH /api/admin/tenants/{tenant}`
@@ -4493,29 +4508,50 @@ address. `202`. `409 email_unverified`, `409 mail_not_configured`,
 Measured per person and per tenant: spaces owned, bytes, pages.
 
 - **Whose**: a space counts toward its first owner (the person whose name is
-  its default Git author, as in the administration's list) and its tenant; a
-  transfer moves it. Group members, editors and viewers count nothing.
-- **Spaces** are counted when they are made, deleted or transferred.
+  its default Git author, as in the administration's list: the earliest owner
+  membership) and its tenant; a transfer, or any change of who the first owner
+  is, moves it. Group members, editors, viewers and later owners count nothing.
+- **Spaces** are counted when they are made, deleted or handed over, in the
+  transaction that does it: the person's and the tenant's row change by the
+  difference.
 - **Bytes and pages** come from the background measurement of 1.7, which walks
   one space at a time at most every 6 hours; it now also stores the space's
-  page count (one `COUNT` on the space's index, milliseconds). After each
-  measurement the difference is added to the owner's and the tenant's row of a
-  usage table in the same transaction, so reading anyone's usage is one row;
-  once a day one grouped query recounts every row to correct any drift.
+  page count (one `COUNT` on the space's index: from the open space, or from the
+  index file of a closed one without opening it, so a space with a remote is not
+  pulled for it; a space whose index is gone keeps its earlier count). The
+  measurement stores both in one transaction (`spaces.usage_bytes`,
+  `spaces.page_count`) and adds the difference to the first owner's and the
+  tenant's row of the `usage` table, so reading anyone's usage is one row.
+- **Drift** is corrected from the rows themselves, by one grouped query a
+  table: once when the server starts running (a crash may have left a
+  difference) and once a day. A re-measure corrects a space's own numbers the
+  same way, by the difference to what it held. Nothing on a request path walks
+  files, counts pages, or recounts anything.
 - **Reserved for 3.1**: a space that is partially cloned or evicted keeps the
   bytes of its last full measurement (3.1's `cloneBytes` and `indexBytes` are
   what the server holds, not what the space holds); 3.1's measuring writes
-  `usage_bytes` only from a full working tree, and the quota reads
-  `usage_bytes`.
-- **What is refused**: only spaces. `POST /api/spaces` over the effective
-  `quota.spacesPerPerson` (or the tenant's `quota.spaces`) answers
-  `403 quota_exceeded` with `{"quota": "spaces", "limit": 20}`, as
-  `--max-spaces` answered `403 forbidden` before (old clients still see a
-  `403`). Bytes, pages and the tenant's people are **not refused** in 3.3:
-  going over shows a notice to the person and the administrators and writes
-  `quota_exceeded` to the audit log once per crossing. Uploads keep 3.1's
-  `507 space_full` for its own limit; a byte quota that refuses later will
+  `usage_bytes` only from a full working tree (the listing's `sizeBytes` may be
+  written on its own), and the quota reads `usage_bytes`. On this branch the
+  measurement is the 1.7 one, and `store.RecordMeasurement` is the one place
+  that writes `usage_bytes`.
+- **What is refused**: only spaces. `POST /api/spaces` over the person's limit
+  (their own, else the tenant's `quota.spacesPerPerson`, else the site's) or the
+  tenant's `quota.spaces` answers `403 quota_exceeded` with
+  `{"quota": "spaces", "limit": 20, "used": 20}`, as `--max-spaces` answered
+  `403 forbidden` before (old clients still see a `403`). A limit of `0` is none.
+  The check reads the person's usage row (and the tenant's, when it has a total):
+  one primary-key lookup each, however many spaces there are. Bytes, pages and
+  the tenant's people are **not refused** in 3.3: going over shows a notice to
+  the person and the tenant's administrators see it in the list and the tenant,
+  and `quota_exceeded` goes to the audit log once per crossing. Uploads keep
+  3.1's `507 space_full` for its own limit; a byte quota that refuses later will
   answer `507 quota_exceeded`.
+- **Over** means more than the limit (at it is not). Whether a row is over is
+  looked at after each measurement, after a change of a person's limits or a
+  tenant's totals, after a quota setting changes (everyone in its scope, one
+  read of the usage rows in pages of 500), and after the recount; it is stored
+  (`usage.over`), so `over=1` is an index range and a crossing is reported once:
+  a row that stays over, and is looked at again, writes nothing.
 
 #### `GET /api/account/usage`
 
@@ -4523,18 +4559,57 @@ Signed in.
 
 ```json
 {"spaces": {"used": 3, "limit": 20}, "bytes": {"used": 52428800, "limit": null},
- "pages": {"used": 2100, "limit": null}, "measuredAt": "2026-11-23T02:10:00Z", "notices": []}
+ "pages": {"used": 2100, "limit": null}, "measuredAt": "2026-11-23T02:10:00Z",
+ "notices": [{"quota": "pages", "scope": "person", "limit": 2000, "used": 2100}]}
 ```
+
+`limit` is `null` for none; `measuredAt` is `null` until a space of the person
+has been measured. A **notice** is a quota that is over: `scope` `person` for
+the person's own limit, `tenant` for the tenant's total (`quota` is then also
+`people`). Three lookups of rows by key; the numbers are the stored ones.
 
 #### `GET /api/admin/usage?tenant={id}&over=1&cursor={cursor}&limit={n}`
 
-Administrators (in their scope). People by usage, largest bytes first:
-`{"items": [{"user": {"id", "username", "name"}, "spaces", "bytes", "pages", "limits": {…}, "over": ["bytes"]}], "next": "…"}`.
-`over=1` keeps those over a limit. One query a page over the usage table.
+Administrators (in their scope: a tenant administrator's own tenant, a site
+administrator's every tenant, or `?tenant=`: `404 not_found` for one that is not
+theirs or does not exist). People by usage, largest bytes first, then by id:
 
-`PATCH /api/users/{id}` takes `quota: {"spaces": 50, "bytes": null, "pages": null}`
-(each a number, `null` to follow the tenant and the site); it may be above the
-tenant's per-person value only for a site administrator.
+```json
+{"items": [{"user": {"id": "…", "username": "tang", "name": "Tang"}, "tenant": "0000000000",
+  "spaces": 3, "bytes": 52428800, "pages": 2100,
+  "limits": {"spaces": 20, "bytes": null, "pages": 2000},
+  "own": {"spaces": null, "bytes": null, "pages": 2000},
+  "over": ["pages"], "measuredAt": "2026-11-23T02:10:00Z"}],
+ "next": "52428800:01JD3K7A2M"}
+```
+
+`limits` are the limits in force (`null` none) and `own` the person's own
+(what the edit form starts with). `over=1` keeps those over a limit (`over=0` or
+none keeps all; anything else is `400 invalid`). `limit` is 1 to 200 (default
+50). The cursor is what `next` says (`400 invalid` for any other). One query a
+page over the usage table's index; the people's names are looked up for the page
+only.
+
+#### `quota` on `PATCH /api/users/{id}`
+
+`quota: {"spaces": 50, "bytes": null, "pages": 100000}`: each key given is a
+number (`spaces` 0 to 10,000, `0` meaning none; `bytes` and `pages` at least 1)
+or `null` to follow the tenant and the site; the keys left out stay. `200` with
+the user, whose `quota` is the person's own limits as they are now.
+
+- `400 invalid` for an unknown key, a value that is no whole number in range, or
+  a `quota` that is not an object.
+- A tenant administrator may lower a person's limit, not raise it above the
+  tenant's effective value (no limit is the highest): `403 forbidden`. Only a
+  site administrator may. Both answer to a lock or a restriction the layer above
+  put on the setting (`409 setting_locked`, `409 setting_restricted`): a tenant
+  administrator to the stricter of the site's and the tenant's, a site
+  administrator to the site's.
+- A person of another tenant is `404 not_found`, a member `403 forbidden`.
+- It is checked before anything else of the request is applied: a refused
+  `quota` changes nothing, not the other fields either.
+- Saving writes `user_changed` (with the new `quota`) to the audit log and looks
+  at the person's numbers again.
 
 ### Abuse basics
 
@@ -4570,7 +4645,7 @@ the site's own kinds):
 | `registered` | a registration was confirmed | `email` |
 | `email_verified` | an address was verified | `email` |
 | `password_reset_requested`, `password_reset` | a reset link was sent; a password was reset | `by` (`user`, `admin`) |
-| `quota_exceeded` | a person or a tenant went over a quota | `quota`, `limit`, `used` |
+| `quota_exceeded` | a person or a tenant went over a quota (once per crossing) | `quota` (`spaces`, `bytes`, `pages`, `people`), `limit`, `used`, `scope` (`person`, `tenant`); the row's `user` is the person, and for a tenant's total the `tenant` is the one |
 
 `POST /api/register` writes nothing until it is confirmed (made-up addresses do
 not fill the log).
@@ -4596,7 +4671,7 @@ not fill the log).
 | `terms_required` | 400 | `acceptTerms` missing while a terms or privacy address is set |
 | `email_verified` | 409 | asking to verify an address that is verified |
 | `email_unverified` | 409 | an administrator sending a reset to an unverified address |
-| `quota_exceeded` | 403 (spaces); 507 reserved for bytes | over a quota that is refused (with `quota` and `limit`) |
+| `quota_exceeded` | 403 (spaces); 507 reserved for bytes | over a quota that is refused (with `quota`, `limit` and `used`) |
 | `captcha_failed` | 400 | as in "Signing in", for the `register` and `forgot` contexts |
 | `rate_limited` | 429 | the allowances and caps of "Abuse basics", with `Retry-After` |
 | `not_found` | 404 | a token unknown, used or expired; a tenant slug unknown or disabled; another tenant's id |
@@ -4632,8 +4707,16 @@ before the milestone is released.
   token, kind `verify` or `reset`, user, address, created, expires, used) and the
   column `users.terms_accepted` (JSON: `at`, `termsUrl`, `privacyUrl`). The mail
   settings are a record of `site_settings` (key `mail`, the password sealed).
-- Added by the later parts: `usage` (person or tenant, spaces, bytes, pages), and
-  the columns `users.quota`, `spaces.page_count`, `spaces.usage_bytes`.
+- Added by the third part: `usage` (kind `user` or `tenant`, id, tenant_id,
+  spaces, bytes, pages, people, over, measured; primary key `(kind, id)`; indexes
+  `(kind, tenant_id, bytes DESC, id)` and `(kind, bytes DESC, id)` for the list of
+  people), and the columns `users.quota` (JSON, `''` for none), `spaces.page_count`,
+  `spaces.usage_bytes` (what the last measurement found; the 1.7 `size_bytes` is
+  its first value), `spaces.usage_user` (whom the space is counted for now, so a
+  hand-over moves exactly what was added; indexed), and `invites.username`,
+  `invites.name`, `invites.email` (what the invite fills in). The migration makes
+  the usage rows with two set statements (a fraction of a second at 20,000 people
+  and 40,000 spaces).
 - `UPDATE users SET site_admin = 1 WHERE role = 'admin'`.
 
 ### What the first part of 3.3 does and does not do
@@ -4643,11 +4726,9 @@ administrator split, `/api/admin/tenancy`, the tenants, layered settings with
 locks (`/api/admin/settings`, the tenants' settings, `GET /api/settings`), the
 daily text's switches and default on that mechanism, and a provider's `tenant`.
 
-Not yet (the next part of 3.3): quotas and usage (the `quota.*` settings, the
-tenant's `usage`, `/api/account/usage`, `/api/admin/usage`, `quota_exceeded`).
-Until then the Tenant object has no `usage`, the settings table above lacks the
-`quota.*` rows, and the `admin` object of `POST /api/admin/tenants` is checked
-but does not prefill the invite.
+The quotas and usage (the `quota.*` settings, the tenant's `usage`,
+`/api/account/usage`, `/api/admin/usage`, `quota_exceeded`) and the prefilled
+invite of `POST /api/admin/tenants` came with the third part, below.
 
 ### What the second part of 3.3 does
 
@@ -4716,6 +4797,55 @@ Details the first part settled:
   `tenant_*`, `dropped`, `rate_limited`, `lockout`) are hidden from tenant
   administrators; rows of the site layer's settings have no tenant.
 - Deleting a tenant puts the providers that named it back on the default tenant.
+
+### What the third part of 3.3 does
+
+Done: the `usage` table and its upkeep, the `quota.*` settings with their person
+layer, `GET /api/account/usage`, `GET /api/admin/usage`, `quota` on
+`PATCH /api/users/{id}`, the tenant's `usage`, `quota_exceeded` for the number of
+spaces, notices and the once-per-crossing audit row, and the prefilled invite of
+`POST /api/admin/tenants`. Details the implementation settled, which refine the
+text above:
+
+- `--max-spaces`, when it is given, is the site's value of
+  `quota.spacesPerPerson` (`fromFlag: true`, read only: a `PUT` of the value is
+  `409 conflict`); without it the stored setting counts, 20 to begin with. The
+  setting's lower rule can be set either way. `0` is no limit.
+- The quota settings are `limit` settings with layers site, tenant and person:
+  `quota.spacesPerPerson` is 0 to 10,000 (a `null` value sets it back to 20),
+  `quota.bytesPerPerson` 1 to 2^50 and `quota.pagesPerPerson` 1 to 2^40, both
+  may be `null` (no limit). The person layer is the user's own `quota`: it is
+  not among what `GET /api/settings` offers a person, who cannot set it.
+- Changing one of these settings, a person's `quota` or a tenant's `quota` looks
+  at the numbers of everyone it concerns at once, so `over`, the notices and the
+  audit follow the new limit without waiting for a measurement; the answer comes
+  after (a site-wide change reads the usage rows once: about 20 ms for 20,000
+  people when nothing changes, 0.3 s when half of them cross).
+- A tenant's `quota.people` counts people, not accounts that may sign in: a
+  disabled person counts. Nobody is refused for it: the tenant, its
+  administrators and its people see it (`over`, notices), and the audit has one
+  row.
+- A space is counted for a tenant from the moment it is made, and for its first
+  owner from the moment it has one; a space nobody owns counts for its tenant
+  only. A tenant that is deleted takes its usage row with it.
+- The audit's `quota_exceeded` for a person has the person as `user` and their
+  tenant as `tenant`; for a tenant's total it has the tenant only.
+- `POST /api/admin/spaces/{space}/size` measures with the same turn as the
+  background one (bytes, pages, usage, a look at the person), so an
+  administrator asking for a size also brings the quotas up to date.
+- A server upgraded from before quotas has its usage rows made by the migration
+  from the 1.7 measurements it already stored, with no page counts until each
+  space is measured once; the first pass of the sizer, a space at a time,
+  fills them.
+- Costs, measured on 20,000 people and 40,000 spaces (SQLite / PostgreSQL): the
+  migration's step 0.28 s / 0.7 s; the daily recount with nothing to correct
+  0.17 s / 0.19 s, correcting a thousand rows 0.20 s / 0.26 s; a person's usage
+  row 21 µs / 59 µs; a page of 50 people 0.2 ms / 0.5 ms, 1.3 ms / 2.0 ms ten
+  thousand people deep; recording a measurement 0.25 ms / 0.44 ms; making a space
+  (with its owner) 0.33 ms / 0.64 ms; handing one over 0.38 ms / 0.83 ms. For a
+  space of 20,000 pages the page count is 0.15 ms from the open space and 0.5 ms
+  from the index file of a closed one; the walk of its files (1.7's) is the turn's
+  cost, about 0.2 to 0.3 s.
 
 ## Administration
 
