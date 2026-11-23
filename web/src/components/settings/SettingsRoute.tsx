@@ -26,6 +26,8 @@ const TypesPanel = lazy(() => import('./TypesPanel'))
 const HomePanel = lazy(() => import('./HomePanel'))
 // And the templates', which have the words of templates with them.
 const TemplatesPanel = lazy(() => import('./TemplatesPanel'))
+// And the API tokens', which have their own words.
+const TokensPanel = lazy(() => import('./TokensPanel'))
 
 // The settings surface: one dialog, reached from `/settings/<section>`. It is a
 // route so a link, a reload and the old addresses all work; what is behind it is
@@ -79,6 +81,13 @@ export default function SettingsRoute() {
         break
       case 'security':
         body = <SecurityPanel />
+        break
+      case 'tokens':
+        body = (
+          <Suspense fallback={<PageFallback />}>
+            <TokensPanel />
+          </Suspense>
+        )
         break
       case 'preferences':
         body = <PreferencesPanel />

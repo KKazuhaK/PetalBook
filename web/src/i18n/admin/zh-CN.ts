@@ -5,7 +5,7 @@ export const adminZhCN = {
   title: '管理后台',
   nav: '管理后台导航',
   back: '回到应用',
-  sections: { users: '用户和邀请', spaces: '空间', daily: '每日文案', status: '服务器状态' },
+  sections: { users: '用户和邀请', spaces: '空间', daily: '每日文案', access: '机器访问', status: '服务器状态' },
   spaces: {
     title: '所有空间',
     help: '服务器上的每一个空间。管理员可以打开任何空间，但不算它的成员。',

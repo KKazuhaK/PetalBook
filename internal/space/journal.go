@@ -47,9 +47,11 @@ type jrec struct {
 	// neither: those changes get the space's default author.
 	AuthorName  string `json:"an,omitempty"`
 	AuthorEmail string `json:"ae,omitempty"`
+	// Via is the means of the change (Author.Via).
+	Via string `json:"av,omitempty"`
 }
 
-func (r jrec) author() Author { return Author{r.AuthorName, r.AuthorEmail} }
+func (r jrec) author() Author { return Author{Name: r.AuthorName, Email: r.AuthorEmail, Via: r.Via} }
 
 // journal is an append-only file in the state directory. Every append is
 // fsynced before the write it announces. After a successful commit it is
@@ -112,7 +114,7 @@ func (j *journal) rewrite(pending map[string]Author, keep []jrec) error {
 	var buf bytes.Buffer
 	for _, p := range paths {
 		by := pending[p]
-		b, _ := json.Marshal(jrec{Op: "t", Path: p, AuthorName: by.Name, AuthorEmail: by.Email})
+		b, _ := json.Marshal(jrec{Op: "t", Path: p, AuthorName: by.Name, AuthorEmail: by.Email, Via: by.Via})
 		buf.Write(b)
 		buf.WriteByte('\n')
 	}

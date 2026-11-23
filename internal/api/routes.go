@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/KKazuhaK/PetalBook/internal/auth"
+	"github.com/KKazuhaK/PetalBook/internal/oauth"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/perm"
 	"github.com/KKazuhaK/PetalBook/internal/space"
@@ -74,8 +75,14 @@ type call struct {
 func (c *call) user() store.User { return c.p.User }
 
 // author is who a change by the caller is credited to in the space's history
-// (see spaces.Manager.AuthorOf).
-func (s *server) author(c *call) space.Author { return s.spaces.AuthorOf(c.user()) }
+// (see spaces.Manager.AuthorOf); a change made with an API token says so.
+func (s *server) author(c *call) space.Author {
+	a := s.spaces.AuthorOf(c.user())
+	if c.p.Grant != nil {
+		a.Via = space.ViaToken
+	}
+	return a
+}
 
 type route struct {
 	method, pattern string
@@ -108,6 +115,13 @@ var routeTable = []route{
 	{"PATCH", "/api/account", signedIn, true, false, false, (*server).patchAccount},
 	{"POST", "/api/account/password", signedIn, true, false, false, (*server).changePassword},
 	{"DELETE", "/api/account/identities/{id}", signedIn, true, false, false, (*server).unlinkIdentity},
+	{"GET", "/api/account/tokens", signedIn, true, false, false, (*server).listMyTokens},
+	{"POST", "/api/account/tokens", signedIn, true, false, false, (*server).createToken},
+	{"DELETE", "/api/account/tokens/{id}", signedIn, true, false, false, (*server).revokeMyToken},
+	{"GET", "/api/account/grants", signedIn, true, false, false, (*server).listMyGrants},
+	{"DELETE", "/api/account/grants/{id}", signedIn, true, false, false, (*server).revokeMyGrant},
+	{"GET", "/api/oauth/consent", signedIn, true, false, false, (*server).oauthConsentInfo},
+	{"POST", "/api/oauth/consent", signedIn, true, false, false, (*server).oauthConsentDecide},
 
 	{"GET", "/api/users", admin, true, false, false, (*server).listUsers},
 	{"PATCH", "/api/users/{id}", admin, true, false, false, (*server).patchUser},
@@ -131,6 +145,12 @@ var routeTable = []route{
 	{"PUT", "/api/admin/daily/providers/{id}", admin, true, false, false, (*server).adminPutDailyProvider},
 	{"POST", "/api/admin/daily/try", admin, true, false, false, (*server).adminTryDailyAPI},
 	{"GET", "/api/admin/status", admin, true, false, false, (*server).adminStatus},
+	{"GET", "/api/admin/access", admin, true, false, false, (*server).adminGetAccess},
+	{"PUT", "/api/admin/access", admin, true, false, false, (*server).adminPutAccess},
+	{"GET", "/api/admin/tokens", admin, true, false, false, (*server).adminListTokens},
+	{"DELETE", "/api/admin/tokens/{id}", admin, true, false, false, (*server).adminRevokeToken},
+	{"GET", "/api/admin/grants", admin, true, false, false, (*server).adminListGrants},
+	{"DELETE", "/api/admin/grants/{id}", admin, true, false, false, (*server).adminRevokeGrant},
 
 	{"GET", "/api/spaces", signedIn, false, false, false, (*server).listSpaces},
 	{"POST", "/api/spaces", signedIn, true, false, false, (*server).createSpace},
@@ -235,7 +255,31 @@ func (s *server) handle(rt route) http.HandlerFunc {
 			return
 		}
 		c := &call{w: w, r: r}
-		if rt.access.kind != kindPublic || rt.optionalUser {
+		if secret, ok := bearerToken(r); ok {
+			// A request with a token is judged by the token alone: never by a
+			// cookie sent with it, and never falling back to one.
+			viaOAuth := s.oauth != nil && oauth.LooksLikeAccessToken(secret)
+			if viaOAuth {
+				// An access token of the authorization server is for /mcp only.
+				writeError(w, http.StatusForbidden, "token_scope", "an OAuth access token can only be used on /mcp")
+				return
+			}
+			if !tokenAllowed(rt) {
+				writeError(w, http.StatusForbidden, "token_scope", "an API token cannot use this endpoint")
+				return
+			}
+			p, err := s.tokenPrincipal(r, secret)
+			if err != nil {
+				s.fail(w, err)
+				return
+			}
+			if p.Grant != nil && !p.Grant.Write && tokenChanges(r) {
+				writeError(w, http.StatusForbidden, "token_scope", "this token is read only")
+				return
+			}
+			c.p = p
+			c.r = r.WithContext(space.ContextWithVia(r.Context(), space.ViaToken))
+		} else if rt.access.kind != kindPublic || rt.optionalUser {
 			p, err := s.principal(r)
 			switch {
 			case err == nil:
@@ -257,33 +301,74 @@ func (s *server) handle(rt route) http.HandlerFunc {
 			return
 		}
 		if rt.access.kind == kindSpace {
-			self := rt.access.orSelf && r.PathValue("user") == c.p.User.ID
-			var h *spaces.Handle
-			var err error
-			if self {
-				// Acting on one's own membership (leaving) needs no open space.
-				h, err = s.spaces.OpenMembership(r.Context(), c.p.User, r.PathValue("space"))
-			}
-			if !self || errors.Is(err, spaces.ErrNotFound) {
-				h, err = s.spaces.Open(r.Context(), c.p.User, r.PathValue("space"))
-			}
-			if err != nil {
-				s.fail(w, err)
+			if !s.openSpace(c, rt) {
 				return
 			}
-			c.sp = h
-			defer h.Release()
-			need := rt.access.need
-			if self {
-				need = perm.Read
-			}
-			if !h.Info.Perms.Has(need) {
-				writeError(w, http.StatusForbidden, "no_permission", "your role in this space does not allow that; it needs the "+need.String()+" permission")
-				return
-			}
+			defer c.sp.Release()
 		}
 		rt.h(s, c)
 	}
+}
+
+// openSpace opens the {space} of a space route for the caller and checks that
+// they hold the permission the route asks, leaving the handle in c.sp (the
+// caller releases it). It answers the refusal and returns false otherwise.
+func (s *server) openSpace(c *call, rt route) bool {
+	w, r := c.w, c.r
+	need := rt.access.need
+	spaceID := r.PathValue("space")
+	if g := c.p.Grant; g != nil {
+		// A token reaches only the spaces it names, and never more than its
+		// owner has there now: the owner's own membership decides, not the
+		// administrator's way into spaces they are not a member of.
+		if !g.Names(spaceID) {
+			writeError(w, http.StatusForbidden, "token_scope", "this token does not name this space")
+			return false
+		}
+		if need == perm.Write && !g.Write {
+			writeError(w, http.StatusForbidden, "token_scope", "this token is read only")
+			return false
+		}
+		h, err := s.spaces.OpenMember(r.Context(), c.p.User, spaceID)
+		if err != nil {
+			s.fail(w, err)
+			return false
+		}
+		h.Info.Perms &= g.Perms()
+		c.sp = h
+		if !h.Info.Perms.Has(need) {
+			h.Release()
+			c.sp = nil
+			writeError(w, http.StatusForbidden, "no_permission", "your role in this space does not allow that; it needs the "+need.String()+" permission")
+			return false
+		}
+		return true
+	}
+	self := rt.access.orSelf && r.PathValue("user") == c.p.User.ID
+	var h *spaces.Handle
+	var err error
+	if self {
+		// Acting on one's own membership (leaving) needs no open space.
+		h, err = s.spaces.OpenMembership(r.Context(), c.p.User, spaceID)
+	}
+	if !self || errors.Is(err, spaces.ErrNotFound) {
+		h, err = s.spaces.Open(r.Context(), c.p.User, spaceID)
+	}
+	if err != nil {
+		s.fail(w, err)
+		return false
+	}
+	c.sp = h
+	if self {
+		need = perm.Read
+	}
+	if !h.Info.Perms.Has(need) {
+		h.Release()
+		c.sp = nil
+		writeError(w, http.StatusForbidden, "no_permission", "your role in this space does not allow that; it needs the "+need.String()+" permission")
+		return false
+	}
+	return true
 }
 
 // principal is who a request is from: the built-in user in single-user mode,

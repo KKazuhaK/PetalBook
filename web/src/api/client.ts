@@ -5,6 +5,12 @@ import { t } from '@/i18n'
 import type {
   AccountInfo,
   AdminSpace,
+  ApiToken,
+  ConsentDecision,
+  ConsentInfo,
+  CreatedToken,
+  Grant,
+  TokenAccess,
   BacklinkList,
   DailyAnswer,
   DailyPrefs,
@@ -482,6 +488,19 @@ export const api = {
   // `current` is left out when the account has no password yet.
   changePassword: (input: { current?: string; new: string }) => request<void>('/account/password', { method: 'POST', body: input }),
   removeIdentity: (id: string) => request<void>(`/account/identities/${enc(id)}`, { method: 'DELETE' }),
+
+  // --- API tokens ---
+  tokens: (signal?: AbortSignal) => request<{ tokens: ApiToken[] }>('/account/tokens', { signal }),
+  // `expiresInDays` 0 is a token that never expires; left out, 90 days.
+  createToken: (input: { name: string; access: TokenAccess; spaces: string[]; expiresInDays?: number }) => request<CreatedToken>('/account/tokens', { method: 'POST', body: input }),
+  revokeToken: (id: string) => request<void>(`/account/tokens/${enc(id)}`, { method: 'DELETE' }),
+
+  // --- connected apps (OAuth grants) and the consent page ---
+  // 404 when the server has no authorization server (no public address, or MCP is off).
+  grants: (signal?: AbortSignal) => request<{ grants: Grant[] }>('/account/grants', { signal }),
+  revokeGrant: (id: string) => request<void>(`/account/grants/${enc(id)}`, { method: 'DELETE' }),
+  consent: (req: string, signal?: AbortSignal) => request<ConsentInfo>(`/oauth/consent?req=${enc(req)}`, { signal }),
+  decideConsent: (input: ConsentDecision) => request<{ redirect: string }>('/oauth/consent', { method: 'POST', body: input }),
 
   // --- users and invites (administrators) ---
   checkInvite: (token: string, signal?: AbortSignal) => request<InviteCheck>('/invites/check', { method: 'POST', body: { token }, signal }),
