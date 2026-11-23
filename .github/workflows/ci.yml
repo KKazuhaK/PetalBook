@@ -196,7 +196,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
           cache-dependency-path: web/package-lock.json
       # Installs from package-lock.json (npm ci), then typecheck and lint.
@@ -216,7 +216,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: make web-test
@@ -315,7 +315,7 @@ jobs:
       - run: make test-postgres
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: make contract-postgres
@@ -420,7 +420,7 @@ jobs:
           esac
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: make contract
@@ -453,7 +453,7 @@ jobs:
           esac
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: make release
