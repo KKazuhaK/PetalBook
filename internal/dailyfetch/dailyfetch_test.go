@@ -121,31 +121,31 @@ func TestCheckAPI(t *testing.T) {
 
 func TestExtractAndLinks(t *testing.T) {
 	a := API{Text: "data.0.q", Source: "data.0.meta.from", Author: "data.0.a", Link: "https://example.org/q?id={data.0.id}&n={n}"}
-	q, err := Extract(a, []byte(`{"n":7,"data":[{"q":" 山高月小 ","a":"苏轼","id":"a b","meta":{"from":"后赤壁赋"}}]}`))
+	q, err := extract(a, []byte(`{"n":7,"data":[{"q":" 山高月小 ","a":"苏轼","id":"a b","meta":{"from":"后赤壁赋"}}]}`))
 	if err != nil || q.Text != "山高月小" || q.Author != "苏轼" || q.Source != "后赤壁赋" || q.Link != "https://example.org/q?id=a+b&n=7" {
 		t.Fatalf("%+v %v", q, err)
 	}
 	// A link whose value is not in the answer is left out, not half made.
-	q, _ = Extract(a, []byte(`{"data":[{"q":"x"}]}`))
+	q, _ = extract(a, []byte(`{"data":[{"q":"x"}]}`))
 	if q.Text != "x" || q.Link != "" {
 		t.Fatalf("%+v", q)
 	}
 	// A value cannot turn the link into another address.
-	q, _ = Extract(API{Text: "t", Link: "{u}"}, []byte(`{"t":"x","u":"javascript:alert(1)"}`))
+	q, _ = extract(API{Text: "t", Link: "{u}"}, []byte(`{"t":"x","u":"javascript:alert(1)"}`))
 	if q.Link != "" {
 		t.Fatalf("%q", q.Link)
 	}
-	q, err = Extract(API{Text: "[1].n"}, []byte(`[{"n":1},{"n":2.5}]`))
+	q, err = extract(API{Text: "[1].n"}, []byte(`[{"n":1},{"n":2.5}]`))
 	if err != nil || q.Text != "2.5" || q.Source != "" {
 		t.Fatalf("%+v %v", q, err)
 	}
 	for name, body := range map[string]string{"not JSON": `nope`, "no such path": `{"x":1}`, "a list at the end": `{"data":[1]}`, "blank": `{"data":[{"q":"  "}]}`, "an object": `{"data":[{"q":{"a":1}}]}`, "out of range": `{"data":[]}`} {
-		if _, err := Extract(API{Text: "data.0.q"}, []byte(body)); !errors.Is(err, ErrUnavailable) {
+		if _, err := extract(API{Text: "data.0.q"}, []byte(body)); !errors.Is(err, ErrUnavailable) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 	long := strings.Repeat("字", 3000)
-	q, err = Extract(API{Text: "t"}, []byte(`{"t":"`+long+`"}`))
+	q, err = extract(API{Text: "t"}, []byte(`{"t":"`+long+`"}`))
 	if err != nil || len([]rune(q.Text)) != MaxTextChars {
 		t.Fatalf("%d %v", len([]rune(q.Text)), err)
 	}
@@ -622,13 +622,13 @@ func TestProbeShowsTheRawAnswerAndWhatThePathsTakeOut(t *testing.T) {
 	a.Text, a.Source, a.Author, a.Link = "text", "nope.x", "who", "https://example.org/{missing}"
 	c.add(time.Second)
 	res, _ = f.Probe(ctx, a, hosts, "", "2026-11-23")
-	if res.OK || res.Quote == nil || res.Quote.Text == "" || res.PathErrors["source"] == "" || res.PathErrors["link"] == "" || res.PathErrors["text"] != "" || res.PathErrors["author"] != "" {
+	if res.OK || res.Quote == nil || res.Quote.Text == "" || res.PathError("source") == nil || res.PathError("link") == nil || res.PathError("text") != nil || res.PathError("author") != nil {
 		t.Fatalf("%+v", res)
 	}
 	a.Text = "wrong.path"
 	c.add(time.Second)
 	res, _ = f.Probe(ctx, a, hosts, "", "2026-11-23")
-	if res.OK || res.Quote != nil || res.PathErrors["text"] == "" || res.Message == "" || res.Raw == "" {
+	if res.OK || res.Quote != nil || res.PathError("text") == nil || res.Message == "" || res.Raw == "" {
 		t.Fatalf("%+v", res)
 	}
 	// A long answer is cut, and one that is not JSON, or an error, shows why.
@@ -739,14 +739,14 @@ func TestProbeKeepsToTheHostsAndHidesHeaderValues(t *testing.T) {
 	s.mode.Store("echo")
 	c.add(time.Second)
 	res, err = f.Probe(ctx, a, hosts, "en", "2026-11-23")
-	if err != nil || s.hits.Load() != 1 || res.Raw == "" || res.Quote == nil {
+	if err != nil || s.hits.Load() != 1 || res.OK || res.Raw != "" || res.Quote != nil || res.Message != MsgRepeatsHeader || res.PathError("text") == nil {
 		t.Fatalf("%+v %v", res, err)
 	}
-	if strings.Contains(res.Raw, "secret-1") || strings.Contains(res.Quote.Text, "secret-1") {
+	if strings.Contains(strings.ToLower(fmt.Sprint(res)), "secret-1") {
 		t.Fatalf("a header value is shown: %+v", res)
 	}
-	// Nor does what is fetched for the readers.
-	if r, err := f.Get(ctx, a, hosts, "en", "2026-11-23", 0); err != nil || strings.Contains(r.Text, "secret-1") {
+	// Nor does what is fetched for the readers: such an answer is refused.
+	if r, err := f.Get(ctx, a, hosts, "en", "2026-11-23", 0); !errors.Is(err, ErrUnavailable) || strings.Contains(r.Text, "secret-1") {
 		t.Fatalf("%+v %v", r, err)
 	}
 }
@@ -859,5 +859,114 @@ func TestTheKeptAnswersAreTrimmed(t *testing.T) {
 	}
 	if b.trims.Load() != 1 {
 		t.Fatalf("%d trims", b.trims.Load())
+	}
+}
+
+// extract is Extract for a request with no language or day.
+func extract(a API, body []byte) (Quote, error) { return Extract(a, body, "", "") }
+
+// An echo service: it answers what body makes of the request's key.
+func newEcho(t *testing.T, body func(key string) string) (API, []string) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		jsonOK(w, body(r.Header.Get("Authorization")))
+	}))
+	t.Cleanup(srv.Close)
+	return API{ID: "e", Name: "e", URL: srv.URL + "/echo", Text: "text", Refresh: RefreshDaily, RPS: 100}, []string{strings.TrimPrefix(srv.URL, "http://")}
+}
+
+// Each way an answer can repeat a request header's value, through any path,
+// the link, or the raw answer of a trial, is refused: the value is compared
+// decoded, in any case, in pieces, before anything is cut or escaped.
+func TestNoPathOrLinkOrTrialRepeatsAHeaderValue(t *testing.T) {
+	jwt := "eyJhbGciOiJIUzI1NiJ9." + strings.Repeat("eyJzdWIiOiIxMjM0NTY3ODkwIn0", 9) + ".c2lnbmF0dXJl"
+	if len(jwt) <= 200 {
+		t.Fatal("the token is to be longer than a cut source")
+	}
+	esc := func(s string) string { b, _ := json.Marshal(s); return string(b) }
+	for _, c := range []struct {
+		name, secret string
+		mod          func(*API)
+		body         func(key string) string
+	}{
+		{"the text", "Bearer sk-live-0123456789", nil,
+			func(k string) string { return `{"text":` + esc("key "+k) + `}` }},
+		{"upper case", "Bearer sk-live-abcdefghij", nil,
+			func(k string) string { return `{"text":` + esc(strings.ToUpper(k)) + `}` }},
+		{"a piece of it", "Bearer sk-live-abcdefghij", nil,
+			func(k string) string { return `{"text":` + esc("part "+k[10:20]) + `}` }},
+		{"PHP's \\/", "key/with/many/slashes/0123", nil,
+			func(k string) string { return `{"text":"` + strings.ReplaceAll(k, "/", `\/`) + `"}` }},
+		{"\\u escapes", "Bearer sk-live-0123456789", nil,
+			func(k string) string { return `{"text":"B` + k[1:] + `"}` }},
+		{"+ read as a space", "Bearer a+b+c+d+e+f+g+h", nil,
+			func(k string) string { return `{"text":` + esc(strings.ReplaceAll(k, "+", " ")) + `}` }},
+		{"+ query escaped", "Bearer a+b+c+d+e+f+g+h", nil,
+			func(k string) string { return `{"text":` + esc(strings.ReplaceAll(k, "+", "%2B")) + `}` }},
+		{"a long token in the source, before it is cut", "Bearer " + jwt, func(a *API) { a.Source = "src" },
+			func(k string) string { return `{"text":"fine","src":` + esc(k) + `}` }},
+		{"a key past the end of the text's cut", "Bearer sk-live-0123456789", nil,
+			func(k string) string { return `{"text":` + esc(strings.Repeat("a", MaxTextChars-3)+k) + `}` }},
+		{"the author", "Bearer sk-live-0123456789", func(a *API) { a.Author = "who" },
+			func(k string) string { return `{"text":"fine","who":` + esc(k) + `}` }},
+		{"the link, query escaped", "Bearer sk/live+0123456789", func(a *API) { a.Link = "https://example.org/?k={h}" },
+			func(k string) string { return `{"text":"fine","h":` + esc(k) + `}` }},
+		{"the link, a number", "1234567890123456", func(a *API) { a.Link = "https://example.org/?k={h}" },
+			func(k string) string { return `{"text":"fine","h":` + k + `}` }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a, hosts := newEcho(t, c.body)
+			a.Headers = []Header{{"Authorization", c.secret}}
+			if c.mod != nil {
+				c.mod(&a)
+			}
+			if _, _, err := CheckAPI(a, true); err != nil {
+				t.Fatal(err)
+			}
+			f, _ := fetcher(nil)
+			ctx := context.Background()
+			res, err := f.Probe(ctx, a, hosts, "en", "2026-11-23")
+			if err != nil || res.OK || res.Raw != "" || res.Message != MsgRepeatsHeader || len(res.PathErrors) == 0 {
+				t.Fatalf("%+v %v", res, err)
+			}
+			if shown := strings.ToLower(fmt.Sprint(res)); strings.Contains(shown, strings.ToLower(c.secret[7:15])) {
+				t.Fatalf("a piece of the value is shown: %s", shown)
+			}
+			if r, err := f.Get(ctx, a, hosts, "en", "2026-11-23", 0); !errors.Is(err, ErrUnavailable) || r.Text != "" {
+				t.Fatalf("%+v %v", r, err)
+			}
+		})
+	}
+	// An answer that is clean is shown as it came; one that repeats a value in
+	// a name given twice (only the last of which is decoded) is not.
+	a, hosts := newEcho(t, func(string) string { return `{"text":"fine","x":"\/a"}` })
+	a.Headers = []Header{{"Authorization", "Bearer sk-live-0123456789"}}
+	f, c := fetcher(nil)
+	if res, err := f.Probe(context.Background(), a, hosts, "en", "2026-11-23"); err != nil || !res.OK || res.Raw != `{"text":"fine","x":"\/a"}` {
+		t.Fatalf("%+v %v", res, err)
+	}
+	a, hosts = newEcho(t, func(k string) string { return `{"text":"fine","x":"B` + k[1:] + `","x":"y"}` })
+	a.Headers = []Header{{"Authorization", "Bearer sk-live-0123456789"}}
+	c.add(time.Second)
+	if res, err := f.Probe(context.Background(), a, hosts, "en", "2026-11-23"); err != nil || res.OK || res.Raw != "" || res.Message != MsgRepeatsHeader || res.Quote == nil {
+		t.Fatalf("%+v %v", res, err)
+	}
+}
+
+// A link takes values of the answer and the request's language and day,
+// never a request header, whatever the path is spelled like.
+func TestALinkNeverTakesAHeader(t *testing.T) {
+	for _, link := range []string{"https://e.org/?k={headers.Authorization}", "https://e.org/?k={headers.authorization}", "https://e.org/{args.X-Api-Key}",
+		"https://e.org/{header}", "https://e.org/{[0].Headers[1]}", "https://e.org/{x-api-key}"} {
+		a := okAPI()
+		a.Link = link
+		if _, _, err := CheckAPI(a, false); err == nil {
+			t.Errorf("%s is accepted", link)
+		}
+	}
+	a := API{Text: "t", Link: "https://e.org/{lang}/{date}?id={id}&n={lang}x"}
+	q, err := Extract(a, []byte(`{"t":"x","id":"a b","lang":"no"}`), "zh", "2026-11-23")
+	if err != nil || q.Link != "https://e.org/zh/2026-11-23?id=a+b&n=zhx" {
+		t.Fatalf("%+v %v", q, err)
 	}
 }

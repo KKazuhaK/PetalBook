@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -130,7 +132,15 @@ func viewOfAPI(a storedAPI) apiView {
 	return v
 }
 
-func headerPurpose(id, name string) string { return "daily-header/" + id + "/" + strings.ToLower(name) }
+// headerPurpose binds a stored header value to the exact request it was given
+// for: the interface, the header's name and the address as it is written, with
+// its scheme, host, port, path, query and placeholders. A value sealed for one
+// does not open for another, so a changed address cannot send a kept value
+// anywhere else, nor anywhere that says it back.
+func headerPurpose(id, name, rawURL string) string {
+	sum := sha256.Sum256([]byte(rawURL))
+	return "daily-header/" + id + "/" + strings.ToLower(name) + "/" + hex.EncodeToString(sum[:])
+}
 
 // runtime is the interface with its header values in the clear, to be asked.
 func (s *server) runtime(a storedAPI) (dailyfetch.API, error) {
@@ -141,7 +151,7 @@ func (s *server) runtime(a storedAPI) (dailyfetch.API, error) {
 		if box == nil {
 			return out, errors.New("this server has no key for stored secrets")
 		}
-		v, err := box.Open("site", headerPurpose(a.ID, h.Name), h.Enc)
+		v, err := box.Open("site", headerPurpose(a.ID, h.Name, a.URL), h.Enc)
 		if err != nil {
 			return out, err
 		}
@@ -294,6 +304,14 @@ type apiBody struct {
 	Enabled *bool `json:"enabled"`
 }
 
+// Codes of the refusals of the daily text's requests (errorBody.Code); those
+// of what a trial finds are dailyfetch's.
+const (
+	codeHeaderNoValue    = "header_missing"
+	codeHeaderValueAgain = "header_reenter"
+	codeSkipTooLarge     = "skip_too_large"
+)
+
 // build checks an interface from a request and makes the stored form, keeping
 // the header values already stored for names that come without one. old is the
 // stored interface with the same id, if any.
@@ -320,18 +338,20 @@ func (s *server) build(b apiBody, old *storedAPI) (storedAPI, dailyfetch.API, st
 				}
 			}
 			if enc == "" {
-				return storedAPI{}, a, "", &space.InvalidError{Msg: "the header " + h.Name + " has no value yet; give one"}
+				return storedAPI{}, a, "", &codedError{code: codeHeaderNoValue, header: h.Name, msg: "the header " + h.Name + " has no value yet; give one"}
 			}
-			// A kept value goes only where it went: to another scheme or host it
-			// is given again, by someone who knows it.
-			if o := dailyfetch.Origin(a.URL); o == "" || o != dailyfetch.Origin(old.URL) {
-				return storedAPI{}, a, "", &space.InvalidError{Msg: "the address goes to another host than before; give the value of the header " + h.Name + " again"}
+			// A kept value goes only to the request it was given for: with any
+			// change to the address (its path and query too) it is given again,
+			// by someone who knows it.
+			if a.URL != old.URL {
+				return storedAPI{}, a, "", &codedError{code: codeHeaderValueAgain, header: h.Name,
+					msg: "the address is not the one the value of the header " + h.Name + " was given for; give the value again"}
 			}
 			box := s.spaces.Secrets()
 			if box == nil {
 				return storedAPI{}, a, "", errors.New("this server has no key for stored secrets")
 			}
-			v, err := box.Open("site", headerPurpose(old.ID, h.Name), enc)
+			v, err := box.Open("site", headerPurpose(old.ID, h.Name, old.URL), enc)
 			if err != nil {
 				return storedAPI{}, a, "", err
 			}
@@ -344,9 +364,13 @@ func (s *server) build(b apiBody, old *storedAPI) (storedAPI, dailyfetch.API, st
 	a.Headers = clear
 	checked, host, err := dailyfetch.CheckAPI(a, s.opt.DailyFetch.AllowHTTP())
 	if err != nil {
+		var ce *dailyfetch.CodedError
+		if errors.As(err, &ce) {
+			return storedAPI{}, a, "", &codedError{code: ce.Code, field: "link", msg: ce.Msg}
+		}
 		return storedAPI{}, a, "", &space.InvalidError{Msg: err.Error()}
 	}
-	// Values given now are sealed under this interface's id.
+	// Values given now are sealed for this interface, header and address.
 	for i, h := range b.Headers {
 		if h.Value == nil {
 			continue
@@ -355,7 +379,7 @@ func (s *server) build(b apiBody, old *storedAPI) (storedAPI, dailyfetch.API, st
 		if box == nil {
 			return storedAPI{}, a, "", &space.InvalidError{Msg: "this server has no key for storing secrets, so it cannot keep a header value"}
 		}
-		enc, err := box.Seal("site", headerPurpose(checked.ID, h.Name), []byte(*h.Value))
+		enc, err := box.Seal("site", headerPurpose(checked.ID, h.Name, checked.URL), []byte(*h.Value))
 		if err != nil {
 			return storedAPI{}, a, "", err
 		}
@@ -627,7 +651,37 @@ func (s *server) adminTryDailyAPI(c *call) {
 		s.fail(c.w, err)
 		return
 	}
+	if e := probeRefusal(res); e != nil {
+		// The refusal, with what the trial showed beside it.
+		writeJSON(c.w, http.StatusBadRequest, struct {
+			errorBody
+			Result dailyfetch.ProbeResult `json:"result"`
+		}{e.body(), res})
+		return
+	}
 	writeJSON(c.w, http.StatusOK, res)
+}
+
+// probeRefusal is the refusal a trial's result is, if it is one with a code
+// (docs/api.md, "Daily text refusals"): the host is not allowed, the answer
+// is not JSON or too large, or a path is wrong, a path that takes out a
+// request header's value first. Other failures (the service did not answer,
+// or answered with an error status) are a result with ok false.
+func probeRefusal(res dailyfetch.ProbeResult) *codedError {
+	switch res.Code {
+	case dailyfetch.CodeHostNotAllowed:
+		return &codedError{code: res.Code, host: res.Host, msg: res.Message}
+	case dailyfetch.CodeNotJSON, dailyfetch.CodeTooLarge:
+		return &codedError{code: res.Code, msg: res.Message}
+	}
+	for _, want := range []string{dailyfetch.CodePathRevealsSecret, dailyfetch.CodePathError} {
+		for _, pe := range res.PathErrors {
+			if pe.Code == want {
+				return &codedError{code: want, field: pe.Field, msg: pe.Message}
+			}
+		}
+	}
+	return nil
 }
 
 // --- what the owner of a space chooses ---------------------------------------------

@@ -1654,8 +1654,9 @@ yesterday and tomorrow are (today where the browser is, by `tz`; in UTC
 without it), since each other day would be a request and a row kept. A client
 hides the block for any of them. `429 rate_limited` (with `Retry-After`) when
 another text from an interface is asked for too often. `400 invalid` for a
-`date` that is not a day from 1970 to 2261, a `skip` or a `lang` that cannot
-be.
+`date` that is not a day (`YYYY-MM-DD`) from 1970 to 2261, a `skip` that is not
+a number from 0 up, or a `lang` that cannot be; `400 skip_too_large` for a
+`skip` above 1 000 (see "Daily text refusals").
 
 #### `GET /api/spaces/{space}/daily/prefs`, `PUT …/daily/prefs`
 
@@ -1758,22 +1759,42 @@ Any number of interfaces (at most 50). An interface in `apis`:
   checked against `hosts` again. An address that is an IP address
   that is not public, `localhost` and its subdomains are refused when it is saved;
   whatever a name resolves to is checked again when the connection is made (below).
-- `headers` are request headers, at most 10. A value is **never returned**: it is
-  encrypted with the server's key (`DATA/secret.key`, or `PETALBOOK_SECRET_KEY`),
-  bound to the interface and the header, and the interface answers with
-  `{"name": …, "set": true}`. In a request `{"name": "X-Api-Key", "value": "…"}`
-  sets or replaces a value, `{"name": "X-Api-Key"}` keeps the one it has (`400` when it
-  has none, and when the scheme or the host and port of `url` are not those
-  saved: a kept value is sent only where it was, and to another host it is
-  given again), and a header that is left out is removed. `Host`, `Content-Length`, `Content-Type`,
-  `Transfer-Encoding`, `Connection` and the like cannot be set.
+- `headers` are request headers, at most 10. A value is **never returned**, and
+  never reaches any output (below). It is encrypted with the server's key
+  (`DATA/secret.key`, or `PETALBOOK_SECRET_KEY`), bound to the exact request it
+  was given for: the interface's `id`, the header's name and the `url` exactly
+  as written (scheme, host, port, path, query and placeholders). The interface
+  answers with `{"name": …, "set": true}`. In a request
+  `{"name": "X-Api-Key", "value": "…"}` sets or replaces a value, and
+  `{"name": "X-Api-Key"}` keeps the one it has: `400 header_missing` when it has
+  none (another `id` has none), `400 header_reenter` when `url` is not, to the
+  character, the one the value was given for. Any change of the address, even
+  of its path or query, drops every kept value of the interface: they are
+  given again by whoever has them. `text`, `source`, `author` and `link` may
+  change freely. A header that is left out is removed. `Host`, `Content-Length`,
+  `Content-Type`, `Transfer-Encoding`, `Connection` and the like cannot be set.
 - `text` (needed), `source` and `author` are paths in the JSON answer: names
   and positions with dots and brackets (`hitokoto`, `data.0.q`, `[0].content`);
   the value must be text or a number; the text is cut to 2 000 characters, the
   others to 200.
 - `link` is an optional template of a link shown with the text (an attribution):
-  `{path}` is replaced by the value at that path of the answer (URL-escaped);
-  it is `http` or `https`, and is left out when a value it needs is missing.
+  `{lang}` and `{date}` are those of the request, any other `{path}` the value at
+  that path of the answer (URL-escaped); it is `http` or `https`, and is left out
+  when a value it needs is missing. It never takes a request header:
+  `400 link_uses_header` (`field` `"link"`) for a placeholder any part of whose
+  path is `header`, `headers` or the name of one of the interface's headers
+  (`{headers.Authorization}`, `{args.X-Api-Key}`), in any case.
+
+**No header value reaches an output.** Each value the server shows (`text`,
+`source`, `author`, each value of `link`, the `raw` of a trial) is taken in
+this order: the value at its path, decoded from JSON (escapes such as `\/` and
+`A` undone); checked; cut; and, in a link, escaped. A value that contains a
+header's value (of 4 characters and more), or any 8 characters in a row of
+one, in any case, as it is or with its URL escapes undone (`%2B`, `+` read as a
+space), is refused: a trial says so (`path_reveals_secret`), and an answer to
+readers with such a value is not used at all (as a failure: the last good
+text, or `unavailable`). The old blotting out of values (`•••`) is kept as a
+second line only.
 - `refresh` is how long the text everybody sees stays the same: `"daily"` (the day
   of the request: the `date` parameter), `"hourly"`, or `"minutes"` with `refreshMinutes`
   1 to 1440 (by the server's clock). `skipNew` says "another" (`skip` above 0)
@@ -1790,7 +1811,8 @@ Any number of interfaces (at most 50). An interface in `apis`:
 and `DELETE`) are made one at a time, in a transaction that holds the
 settings: two administrators saving at once both keep their change. `DELETE` removes it (its host stays on the list) and
 answers the same; `404` for an id that is not there. `400 invalid` for anything
-above that breaks a rule (the message says which).
+above that breaks a rule (the message says which), or one of the codes of
+"Daily text refusals".
 
 `presets` are interfaces a form can be filled in with (the same fields, with a
 `note`): they are **only offered**, none is created or used until an
@@ -1807,26 +1829,68 @@ random quote, 3 requests a second).
 ```
 
 Makes one request now with the interface as it is in the form (saved or not;
-a header without a value uses the value saved for that `id`, on the same
-scheme and host only), at the same rules as any request, and shows what came
-back. The host must be on `hosts` already (else `ok` is false and `message`
-says so, and nothing is sent): an interface on a new host is tried once the
-host is on the list. The values of the request's headers (of 4 characters and
-more) are blotted out (`•••`) wherever the answer repeats them, in `raw` and in
-`quote`. It keeps nothing and is limited to a few a second (`429`). `400
-invalid` when the interface itself breaks a rule.
+a header without a value uses the value saved for that `id` and that exact
+`url` only), at the same rules as any request, and shows what came back. The
+host must be on `hosts` already (else `400 host_not_allowed`, and nothing is
+sent): an interface on a new host is tried once the host is on the list. It
+keeps nothing and is limited to a few a second (`429`). `400 invalid`, or a
+code of "Daily text refusals", when the interface itself breaks a rule.
+
+A trial that worked, or failed for a reason that has no code (the service did
+not answer, answered with an error status, or said a header's value back
+outside every path), is a `200`:
 
 ```json
 {"ok": true, "status": 200, "url": "https://…?l=zh", "raw": "{\"hitokoto\": …", "rawTruncated": false,
  "quote": {"text": "…", "source": "…", "author": "…", "link": "https://hitokoto.cn?uuid=…"}}
-{"ok": false, "status": 200, "url": "…", "raw": "…", "quote": {"text": "…"},
- "pathErrors": {"source": "no text or number at from_x", "link": "a value the link needs is not in the answer"}}
 {"ok": false, "message": "status 503", "status": 503, "url": "…"}
+{"ok": false, "status": 200, "url": "…", "quote": {"text": "…"},
+ "message": "the answer repeats the value of a request header, so it is not shown"}
 ```
 
-`raw` is the start of the answer (4 000 characters) when it is JSON. `pathErrors`
-say, by field, which path found nothing; the fields that were found are still
-in `quote`. `message` says what went wrong with the request or the answer.
+A trial whose answer is refused is a `400` with the code of the refusal, what
+it is about beside it, and what the trial showed in `result` (the shape
+above). With several path errors, the code and `field` are those of the first:
+a `path_reveals_secret` before a `path_error`, in the order text, source,
+author, link.
+
+```json
+{"error": "path_error", "message": "no text or number at from_x", "field": "source",
+ "result": {"ok": false, "status": 200, "url": "…", "raw": "…", "quote": {"text": "…"},
+            "pathErrors": [{"field": "source", "code": "path_error", "message": "no text or number at from_x"},
+                           {"field": "link", "code": "path_error", "message": "a value the link needs is not in the answer"}]}}
+{"error": "host_not_allowed", "message": "the host api.example.org is not on the list of hosts", "host": "api.example.org",
+ "result": {"ok": false, "url": "…", "message": "…"}}
+```
+
+`raw` is the start of the answer (4 000 characters), shown only when it is
+valid JSON and none of its decoded texts, names and numbers repeats a request
+header's value (see above); otherwise it is left out, and `message` says why.
+`pathErrors` is a list of `{field, code, message}` (`field` one of `text`,
+`source`, `author`, `link`; `code` `path_error` or `path_reveals_secret`); the
+fields that were found are still in `quote`. `message` says what went wrong
+with the request or the answer.
+
+#### Daily text refusals
+
+The code is the `error` of the error body; what the refusal is about is beside
+it. All are `400`.
+
+| `error` | beside it | when |
+|---|---|---|
+| `host_not_allowed` | `host` | a trial of an address whose host is not on `hosts` |
+| `header_reenter` | `header` | a header without a value whose kept value was given for another `url` |
+| `header_missing` | `header` | a header without a value, and none is kept for it (for this `id`) |
+| `not_json` | | a trial's answer does not declare JSON, or is not valid JSON |
+| `too_large` | | a trial's answer is larger than 64 KB |
+| `path_error` | `field` | a trial's path (or a value the link needs) finds no text or number |
+| `path_reveals_secret` | `field` | a trial's path (or a value of the link) would show a request header's value |
+| `link_uses_header` | `field` (`"link"`) | a link template with a request header in it (saving or trying) |
+| `skip_too_large` | | `GET …/daily` with a `skip` above 1 000 |
+
+A `date` that is a day but not today, yesterday or tomorrow, for an external
+interface, is not a refusal: `GET …/daily` answers `200` with `"reason":
+"out_of_range"`. A `date` that is not a day is `400 invalid`.
 
 **How it is fetched.** Only the interfaces the administrators wrote, only from
 `https`, only to hosts on the list. The address a name resolves to is checked
@@ -1923,9 +1987,17 @@ person who already has a favourite at the new path keeps it, and their old one
 goes. The move is recorded in the state database before it is made, and the
 record goes with the change of the favourites, whether or not the client is
 still there; a record left by a crash or a failure is settled the next time
-the favourites of the space are read (the favourites follow when the folder is
-at its new place; a record of a folder still where it was is forgotten after
-ten minutes). Deleting a folder leaves the favourites, now `missing`.
+the favourites of the space are read or a folder of it is moved. All records
+of a space are settled together, oldest first, in one transaction (all or
+none): a move is taken as made when its folder is gone from the old place,
+whatever its age, or a later move put a folder there, or a folder is at both
+places (the one at the old place is new: it keeps none of the old one's
+favourites); its favourites go to where the folder is, or to its new place
+from which a later move carries them on, so moves A to B and B to C take A's
+favourites to C, settled in any order. A record of a folder still where it was
+and not at the new place is forgotten after ten minutes. A move onto a folder
+that is there is refused and not recorded. Deleting a folder leaves the
+favourites, now `missing`.
 
 ## Files
 

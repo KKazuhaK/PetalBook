@@ -88,8 +88,12 @@ func (s *server) getDaily(c *call) {
 	skip := 0
 	if raw := v.Get("skip"); raw != "" {
 		n, err := strconv.Atoi(raw)
-		if err != nil || !space.ValidDailySkip(n) {
+		switch {
+		case err != nil || n < 0:
 			writeError(c.w, http.StatusBadRequest, "invalid", "skip must be a number from 0 up")
+			return
+		case !space.ValidDailySkip(n):
+			writeCoded(c.w, &codedError{code: codeSkipTooLarge, msg: "skip is too large"})
 			return
 		}
 		skip = n
@@ -393,54 +397,108 @@ func (s *server) recordFolderMove(c *call, from, to string) bool {
 
 // followFolder makes everybody's favourites of a folder that was moved follow
 // it, and forgets the record of the move (to is the address the request gave,
-// as recorded; at is where the folder is now). It is not the request's
-// context: the folder is moved whether or not the client is still there.
-// What cannot be updated is logged, and the record stays to be settled later.
+// as recorded; at is where the folder is now, "" when it did not move). The
+// other recorded moves of the space are settled with it, in the order they
+// were recorded, so that a move of a folder another unsettled move led to carries
+// those favourites on. It is not the request's context: the folder is moved
+// whether or not the client is still there. What cannot be updated is logged,
+// and the records stay to be settled later.
 func (s *server) followFolder(c *call, from, to, at string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.r.Context()), 10*time.Second)
 	defer cancel()
-	if err := s.finishFolderMove(ctx, c.sp.Info.ID, store.FolderMove{From: from, To: to}, at); err != nil {
+	var err error
+	if at == "" {
+		err = store.DoneFolderMove(ctx, s.opt.Store.Q(), c.sp.Info.ID, from, to)
+	} else {
+		err = s.settleMoves(ctx, c, &store.FolderMove{From: from, To: to}, at)
+	}
+	if err != nil {
 		s.log.Error("favourites of a moved folder were not updated", "space", c.sp.Info.ID, "from", from, "to", at, "error", err)
 	}
 }
 
-func (s *server) finishFolderMove(ctx context.Context, spaceID string, m store.FolderMove, at string) error {
-	return s.opt.Store.Tx(ctx, func(q store.Q) error {
-		if at != "" {
-			if err := store.MoveFolderFavorites(ctx, q, spaceID, m.From, at); err != nil {
-				return err
-			}
-		}
-		return store.DoneFolderMove(ctx, q, spaceID, m.From, m.To)
-	})
-}
-
-// settleFolderMoves deals with the recorded moves of a space: one whose
-// folder is at its new place and not at the old is finished; one whose folder
-// is not at its new place is forgotten (it did not happen, or the folder is
-// gone since), once it is old enough not to be under way. Cost: one query by
-// the index of the table, which is empty but for a crash or a failure.
+// settleFolderMoves settles the recorded moves of a space (see settleMoves)
+// when there are any. Cost: one query by the index of the table, which is
+// empty but for a crash or a failure.
 func (s *server) settleFolderMoves(c *call) {
 	ctx := context.WithoutCancel(c.r.Context())
 	moves, err := store.PendingFolderMoves(ctx, s.opt.Store.Q(), c.sp.Info.ID)
 	if err != nil || len(moves) == 0 {
 		return
 	}
-	for _, m := range moves {
-		cf, fromThere, _ := c.sp.Space.CanonicalFolder(m.From)
-		ct, toThere, _ := c.sp.Space.CanonicalFolder(m.To)
-		// A move that only changed the case of a name finds both on a file
-		// system that ignores it: it is done when the name on disk is the new one.
-		moved := toThere && (!fromThere || (cf == ct && cf != m.From))
-		var at string
-		switch {
-		case moved:
-			at = ct
-		case fromThere && time.Since(m.Created) < pendingMoveAge:
-			continue // maybe under way
-		}
-		if err := s.finishFolderMove(ctx, c.sp.Info.ID, m, at); err != nil {
-			s.log.Error("a folder move's favourites were not settled", "space", c.sp.Info.ID, "from", m.From, "to", m.To, "error", err)
-		}
+	if err := s.settleMoves(ctx, c, nil, ""); err != nil {
+		s.log.Error("folder moves' favourites were not settled", "space", c.sp.Info.ID, "error", err)
 	}
+}
+
+// settleMoves deals with the recorded moves of a space, oldest first, in one
+// transaction: all of them or none. done, when it is not nil, is a move known
+// to be made, to at. Of the others, a move is taken as made when its folder
+// is gone from the old place (whatever its age), when a later move put another
+// folder there, when only the case of the name changed and the disk has the
+// new one, or when a folder is at both places: the one at the old place is
+// then a new one. Its favourites go
+// to where the folder is now, or, when it is gone from there too, to its new
+// place, from which a later move takes them on. A move old enough whose folder
+// is at the old place and not at the new did not happen and is forgotten. So
+// a chain of moves (A to B, then B to C) takes A's favourites to C, and a
+// folder made where one was moved from keeps none of the old one's.
+func (s *server) settleMoves(ctx context.Context, c *call, done *store.FolderMove, at string) error {
+	spaceID := c.sp.Info.ID
+	return s.opt.Store.Tx(ctx, func(q store.Q) error {
+		moves, err := store.PendingFolderMoves(ctx, q, spaceID)
+		if err != nil {
+			return err
+		}
+		for i, m := range moves {
+			later := moves[i+1:]
+			var to string
+			if done != nil && m.From == done.From && m.To == done.To {
+				to = at
+			} else {
+				cf, fromThere, _ := c.sp.Space.CanonicalFolder(m.From)
+				ct, toThere, _ := c.sp.Space.CanonicalFolder(m.To)
+				refilled := false
+				for _, l := range later {
+					if strings.EqualFold(l.To, m.From) {
+						refilled = true
+					}
+				}
+				switch {
+				case !fromThere || refilled:
+					to = m.To
+					if toThere {
+						to = ct
+					} else {
+						// Spelled as a later move from there spells it.
+						for _, l := range later {
+							if strings.EqualFold(l.From, m.To) {
+								to = l.From
+								break
+							}
+						}
+					}
+				case toThere && cf == ct && cf != m.From: // only the case changed
+					to = ct
+				case toThere && cf != ct:
+					// A folder at both places: a move under way has one at one
+					// of them (it is a rename), and one onto a folder that is
+					// there is not recorded (moveFolder), so this one was made
+					// and the folder at the old place is a new one.
+					to = ct
+				case time.Since(m.Created) < pendingMoveAge:
+					continue // maybe under way
+				}
+			}
+			if to != "" && to != m.From {
+				if err := store.MoveFolderFavorites(ctx, q, spaceID, m.From, to); err != nil {
+					return err
+				}
+			}
+			if err := store.DoneFolderMove(ctx, q, spaceID, m.From, m.To); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

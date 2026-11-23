@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -432,6 +433,13 @@ func TestAdministratorsConfigureExternalInterfaces(t *testing.T) {
 			}
 		}
 		bad("a header with no value", func(b map[string]any) { b["headers"] = []any{map[string]any{"name": "X-New"}} }, 400)
+		if code, r := x.putAPI("other", func() map[string]any {
+			b := qs.api("other", "")
+			b["headers"] = []any{map[string]any{"name": "X-New"}}
+			return b
+		}()); code != 400 || r["error"] != "header_missing" || r["header"] != "X-New" {
+			t.Errorf("%d %v", code, r)
+		}
 		bad("a forbidden header", func(b map[string]any) { b["headers"] = []any{map[string]any{"name": "Host", "value": "x"}} }, 400)
 		bad("no text path", func(b map[string]any) { b["text"] = "" }, 400)
 		bad("a refresh that is none", func(b map[string]any) { b["refresh"] = "weekly" }, 400)
@@ -502,7 +510,7 @@ func TestAdministratorsTryAnInterface(t *testing.T) {
 		}
 		// A trial is held to the list of hosts, like any request.
 		code, r := try(body)
-		if code != 200 || r["ok"] != false || !strings.Contains(fmt.Sprint(r["message"]), "not on the list") || qs.hits.Load() != 0 {
+		if code != 400 || r["error"] != "host_not_allowed" || r["host"] != qs.host || !strings.Contains(fmt.Sprint(r["message"]), "not on the list") || r["result"].(map[string]any)["ok"] != false || qs.hits.Load() != 0 {
 			t.Fatalf("%d %v", code, r)
 		}
 		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"hosts": []any{qs.host}}); code != 200 {
@@ -517,16 +525,20 @@ func TestAdministratorsTryAnInterface(t *testing.T) {
 		if _, g := x.adm("GET", "/api/admin/daily", nil); len(g["apis"].([]any)) != 0 || len(g["hosts"].([]any)) != 1 {
 			t.Fatalf("a trial saved something: %v", g)
 		}
-		// A path that finds nothing is said, with the raw answer, and the rest is taken out.
+		// A path that finds nothing is refused, naming the first such field, with
+		// the raw answer and the rest taken out beside it.
 		body["source"], body["link"] = "nope.x", "https://example.org/{missing}"
 		code, r = try(body)
-		pe, _ := r["pathErrors"].(map[string]any)
-		if code != 200 || r["ok"] != false || pe["source"] == nil || pe["link"] == nil || pe["text"] != nil || r["quote"].(map[string]any)["text"] == "" || r["raw"] == "" {
+		res, _ := r["result"].(map[string]any)
+		pe := map[string]any{"source": pathErr(res, "source"), "link": pathErr(res, "link"), "text": pathErr(res, "text")}
+		if code != 400 || r["error"] != "path_error" || r["field"] != "source" || res["ok"] != false || pe["source"] == nil || pe["link"] == nil || pe["text"] != nil ||
+			res["quote"].(map[string]any)["text"] == "" || res["raw"] == "" {
 			t.Fatalf("%d %v", code, r)
 		}
 		body["text"] = "wrong"
 		code, r = try(body)
-		if r["ok"] != false || r["quote"] != nil || r["pathErrors"].(map[string]any)["text"] == nil || r["raw"] == "" {
+		res, _ = r["result"].(map[string]any)
+		if code != 400 || r["error"] != "path_error" || r["field"] != "text" || res["quote"] != nil || pathErr(res, "text") == nil || res["raw"] == "" {
 			t.Fatalf("%d %v", code, r)
 		}
 		// A trial uses the value of a header already saved, for an interface that is saved.
@@ -547,7 +559,7 @@ func TestAdministratorsTryAnInterface(t *testing.T) {
 		moved := qs.api("saved", "en")
 		moved["url"] = evil.URL + "/q?lang={lang}"
 		moved["headers"] = []any{map[string]any{"name": "X-Api-Key"}}
-		if code, r := try(moved); code != 400 || evil.hits.Load() != 0 {
+		if code, r := try(moved); code != 400 || r["error"] != "header_reenter" || r["header"] != "X-Api-Key" || evil.hits.Load() != 0 {
 			t.Fatalf("a kept value was sent to another host: %d %v (%v)", code, r, evil.key.Load())
 		}
 		if code, r := x.putAPI("saved", moved); code != 400 {
@@ -557,11 +569,34 @@ func TestAdministratorsTryAnInterface(t *testing.T) {
 		if code, r := try(moved); code != 200 || evil.key.Load() != "key-evil" {
 			t.Fatalf("%d %v", code, r)
 		}
-		// The same host, however the scheme is written, keeps it.
+		// The same host with another path, another query, or only written
+		// another way, is another request: the value is given again.
+		qs.hits.Store(0)
+		for _, u := range []string{"HTTP://" + qs.host + "/q?lang={lang}&d={date}", qs.URL + "/other?lang={lang}&d={date}", qs.URL + "/q?lang={lang}&d={date}&x=1", qs.URL + "/q?lang={lang}"} {
+			same := qs.api("saved", "en")
+			same["url"] = u
+			same["headers"] = []any{map[string]any{"name": "X-Api-Key"}}
+			if code, r := try(same); code != 400 {
+				t.Fatalf("%s: %d %v", u, code, r)
+			}
+			if code, r := x.putAPI("saved", same); code != 400 {
+				t.Fatalf("%s: %d %v", u, code, r)
+			}
+		}
+		// Nor under another id, even with the same address.
+		other := qs.api("other-id", "en")
+		other["headers"] = []any{map[string]any{"name": "X-Api-Key"}}
+		if code, r := try(other); code != 400 || qs.hits.Load() != 0 {
+			t.Fatalf("%d %v", code, r)
+		}
+		// The exact address keeps it, whatever the paths and the link are now.
 		same := qs.api("saved", "en")
-		same["url"] = "HTTP://" + qs.host + "/other?lang={lang}"
 		same["headers"] = []any{map[string]any{"name": "X-Api-Key"}}
-		if code, r := try(same); code != 200 || qs.key.Load() != "key-saved" {
+		same["source"], same["link"] = "data.0.a", "https://example.org/{lang}/{data.0.id}"
+		if code, r := x.putAPI("saved", same); code != 200 {
+			t.Fatalf("%d %v", code, r)
+		}
+		if code, r := try(same); code != 200 || r["ok"] != true || qs.key.Load() != "key-saved" || r["quote"].(map[string]any)["link"] != "https://example.org/en/id1" {
 			t.Fatalf("%d %v", code, r)
 		}
 		// A service that is down, an address that is not allowed, an interface that is not valid.
@@ -1027,4 +1062,114 @@ func TestDailyAdminLocks(t *testing.T) {
 			t.Fatalf("%s", o)
 		}
 	})
+}
+
+// An administrator who does not know a kept key cannot read it back: not by
+// pointing the interface at a service that says it back (the key is bound to
+// the address it was given for), not through a link (a link never takes a
+// header), and not through a path, a trial or the readers' daily text when
+// the service the key is for says it back itself.
+func TestAKeptKeyCannotBeReadBack(t *testing.T) {
+	withExternal(t, func(x *extFixture) {
+		t := x.t
+		const key = "Bearer sk-live-0123456789abcdef"
+		echo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			k := r.Header.Get("Authorization")
+			b, _ := json.Marshal(map[string]any{"text": "fine", "plain": k, "upper": strings.ToUpper(k), "headers": map[string]any{"Authorization": k}})
+			// PHP writes / as \/.
+			w.Write([]byte(strings.ReplaceAll(string(b), "/", `\/`)))
+		}))
+		defer echo.Close()
+		host := strings.TrimPrefix(echo.URL, "http://")
+		body := map[string]any{"name": "Echo", "url": echo.URL + "/q?lang={lang}", "text": "text", "rps": 100,
+			"headers": []any{map[string]any{"name": "Authorization", "value": key}}}
+		if code, r := x.putAPI("echo", body); code != 200 {
+			t.Fatalf("%d %v", code, r)
+		}
+		x.choose("echo")
+		try := func(api map[string]any) (int, map[string]any) {
+			x.now = x.now.Add(time.Second)
+			return x.adm("POST", "/api/admin/daily/try", map[string]any{"api": api, "lang": "en", "date": "2026-11-23"})
+		}
+		leaks := func(r map[string]any) bool {
+			s := strings.ToLower(fmt.Sprint(r))
+			return strings.Contains(s, "sk-live") || strings.Contains(s, "0123456789abcdef")
+		}
+		kept := func(mod func(map[string]any)) map[string]any {
+			b := map[string]any{"id": "echo", "name": "Echo", "url": echo.URL + "/q?lang={lang}", "text": "text", "rps": 100,
+				"headers": []any{map[string]any{"name": "Authorization"}}}
+			mod(b)
+			return b
+		}
+		// A link with a header in it is refused, saved or tried.
+		for _, link := range []string{"https://e.org/?k={headers.Authorization}", "https://e.org/{Authorization}"} {
+			b := kept(func(b map[string]any) { b["link"] = link })
+			if code, r := x.putAPI("echo", b); code != 400 || r["error"] != "link_uses_header" || r["field"] != "link" || leaks(r) {
+				t.Fatalf("%s: %d %v", link, code, r)
+			}
+			if code, r := try(b); code != 400 || r["error"] != "link_uses_header" || leaks(r) {
+				t.Fatalf("%s: %d %v", link, code, r)
+			}
+		}
+		// The answer is not shown, and no path takes the key out, however it is
+		// written; the readers never see it either.
+		for _, path := range []string{"text", "plain", "upper", "headers.Authorization"} {
+			b := kept(func(b map[string]any) { b["source"] = path; b["link"] = "https://e.org/?k={" + path + "}" })
+			if path == "headers.Authorization" {
+				b["link"] = "https://e.org/?k={plain}" // a link with it is refused before it is asked (above)
+			}
+			code, r := try(b)
+			res, _ := r["result"].(map[string]any)
+			if path == "text" {
+				// Nothing a path takes out repeats it, so the trial stands; only the raw answer is held back.
+				res = r
+				if code != 200 || r["ok"] != false || r["message"] != dailyfetch.MsgRepeatsHeader {
+					t.Fatalf("%s: %d %v", path, code, r)
+				}
+			} else if code != 400 || r["error"] != "path_reveals_secret" || r["field"] != "source" || pathErr(res, "link") == nil {
+				t.Fatalf("%s: %d %v", path, code, r)
+			}
+			if res["raw"] != nil || leaks(r) {
+				t.Fatalf("%s: %d %v", path, code, r)
+			}
+			if code, r := x.putAPI("echo", b); code != 200 {
+				t.Fatalf("%d %v", code, r)
+			}
+			x.now = x.now.Add(25 * time.Hour)
+			r = quoteOf(t, x.viewer, x.base, "date="+x.now.UTC().Format("2006-01-02")+"&lang=en")
+			if (path != "text" && r["quote"] != nil) || leaks(r) {
+				t.Fatalf("%s: the readers see %v", path, r)
+			}
+		}
+		// Given again by someone who knows it, the key goes to the new address;
+		// the value is never given back.
+		moved := kept(func(b map[string]any) {
+			b["url"] = echo.URL + "/other"
+			b["headers"] = []any{map[string]any{"name": "Authorization", "value": "Bearer sk-live-fedcba9876543210"}}
+		})
+		if code, r := x.putAPI("echo", moved); code != 200 || leaks(r) || !hostIn(r["hosts"], host) {
+			t.Fatalf("%d %v", code, r)
+		}
+	})
+}
+
+func hostIn(hosts any, h string) bool {
+	for _, x := range hosts.([]any) {
+		if x == h {
+			return true
+		}
+	}
+	return false
+}
+
+// pathErr is the entry of a trial's pathErrors for a field, nil when there is none.
+func pathErr(res map[string]any, field string) any {
+	l, _ := res["pathErrors"].([]any)
+	for _, e := range l {
+		if m := e.(map[string]any); m["field"] == field {
+			return m
+		}
+	}
+	return nil
 }

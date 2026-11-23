@@ -110,7 +110,9 @@ type API struct {
 	Source string `json:"source"`
 	Author string `json:"author"`
 	// Link is a template of a link to show with the text (an attribution): {x}
-	// is the value at the path x of the answer, `https://hitokoto.cn?uuid={uuid}`.
+	// is the value at the path x of the answer, `https://hitokoto.cn?uuid={uuid}`,
+	// and {lang} and {date} those of the request. A request header is never one
+	// of its values (see CheckAPI).
 	Link string `json:"link"`
 	// Refresh is how long the item everybody sees stays the same: "daily" (the
 	// day asked for), "hourly", or "minutes" (every RefreshMinutes).
@@ -255,6 +257,18 @@ func CheckAPI(a API, allowHTTP bool) (API, string, error) {
 		if err != nil || (lu.Scheme != "https" && lu.Scheme != "http") || lu.Host == "" || len(a.Link) > 500 {
 			return a, "", errors.New("the link is an http or https address, with {path} where a value of the answer goes")
 		}
+		// The link may take values of the answer and the request's {lang} and
+		// {date}, never a request header.
+		var refused string
+		linkTemplate(a.Link, func(p string) string {
+			if refused == "" && headerish(p, a.Headers) {
+				refused = p
+			}
+			return ""
+		})
+		if refused != "" {
+			return a, "", &CodedError{Code: CodeLinkUsesHeader, Msg: fmt.Sprintf("the link cannot take {%s}: a link takes values of the answer, {lang} and {date}, never a request header", refused)}
+		}
 	}
 	switch a.Refresh {
 	case "":
@@ -304,16 +318,6 @@ func splitRaw(raw string) (scheme, authority string, ok bool) {
 		rest = rest[:j]
 	}
 	return strings.ToLower(raw[:i]), strings.ToLower(rest), rest != ""
-}
-
-// Origin is the scheme and the host (with the port) of an address as it is
-// written, "" when it has none: where a header value is sent.
-func Origin(raw string) string {
-	scheme, auth, ok := splitRaw(raw)
-	if !ok {
-		return ""
-	}
-	return scheme + "://" + auth
 }
 
 // LaneLang is the language an interface is asked in for a reader who asks in
@@ -883,7 +887,7 @@ func (f *Fetcher) fetch(ctx context.Context, a API, hosts []string, lang, date s
 	case len(body) > MaxResponse:
 		return Quote{}, fmt.Errorf("%w: the answer is larger than %d bytes", ErrUnavailable, MaxResponse)
 	}
-	return Extract(a, body)
+	return Extract(a, body, lang, date)
 }
 
 // ProbeResult is what one trial request showed.
@@ -891,23 +895,72 @@ type ProbeResult struct {
 	OK     bool   `json:"ok"`
 	Status int    `json:"status,omitempty"`
 	URL    string `json:"url"`
-	// Raw is the start of the answer when it is JSON.
+	// Raw is the start of the answer when it is valid JSON and repeats no
+	// request header's value.
 	Raw          string `json:"raw,omitempty"`
 	RawTruncated bool   `json:"rawTruncated,omitempty"`
 	Quote        *Quote `json:"quote,omitempty"`
 	// Message says what went wrong with the request or the answer.
 	Message string `json:"message,omitempty"`
-	// PathErrors say, by field (text, source, author, link), what a path found
-	// no value at.
-	PathErrors map[string]string `json:"pathErrors,omitempty"`
+	// PathErrors say, by field, in the order text, source, author, link, what
+	// a path found no value at, or found a request header's value at.
+	PathErrors []PathError `json:"pathErrors,omitempty"`
+	// Code says, as one of the Code constants, what Message says; Host is the
+	// host of the address. The caller turns them into its answer.
+	Code string `json:"-"`
+	Host string `json:"-"`
 }
+
+// PathError is what the path of a field (text, source, author or link) did
+// not give: Code is CodePathError or CodePathRevealsSecret.
+type PathError struct {
+	Field   string `json:"field"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// PathError is the error of a field, if it has one.
+func (r ProbeResult) PathError(field string) *PathError {
+	for i := range r.PathErrors {
+		if r.PathErrors[i].Field == field {
+			return &r.PathErrors[i]
+		}
+	}
+	return nil
+}
+
+// Codes of what a trial or a check found: stable, for a client to say in its
+// own words. The API sends those of the first group (docs/api.md); the second
+// are only for the caller to tell the cases apart.
+const (
+	CodeHostNotAllowed    = "host_not_allowed"
+	CodeNotJSON           = "not_json"
+	CodeTooLarge          = "too_large"
+	CodePathError         = "path_error"
+	CodePathRevealsSecret = "path_reveals_secret"
+	CodeLinkUsesHeader    = "link_uses_header"
+
+	CodeRequestFailed       = "request_failed"
+	CodeStatus              = "status"
+	CodeAnswerRevealsSecret = "answer_reveals_secret"
+	CodeNoText              = "no_text"
+)
+
+// CodedError is a refusal with a stable code.
+type CodedError struct{ Code, Msg string }
+
+func (e *CodedError) Error() string { return e.Msg }
+
+// MsgRepeatsHeader is the message of a trial whose answer repeats the value
+// of a request header: such an answer is not shown.
+const MsgRepeatsHeader = "the answer repeats the value of a request header, so it is not shown"
 
 // Probe makes one request now, at the same rules as any other (the host must be
 // one of hosts, and the address is checked when the connection is made) and
-// shows the answer as it came and what the paths take out of it, with the
-// values of the request's headers blotted out wherever the answer repeats
-// them. It is not kept, and is limited to a few a second whatever the
-// interface says.
+// shows the answer as it came and what the paths take out of it. An answer
+// any decoded text of which repeats a request header's value (see secrets) is
+// not shown at all, and no path may take such a value out. It is not kept,
+// and is limited to a few a second whatever the interface says.
 func (f *Fetcher) Probe(ctx context.Context, a API, hosts []string, lang, date string) (ProbeResult, error) {
 	f.mu.Lock()
 	ok := f.probe.take(f.now(), 2)
@@ -915,86 +968,176 @@ func (f *Fetcher) Probe(ctx context.Context, a API, hosts []string, lang, date s
 	if !ok {
 		return ProbeResult{}, ErrRateLimited
 	}
-	res := ProbeResult{URL: fill(a.URL, lang, date)}
+	res := ProbeResult{URL: fill(a.URL, lang, date), Host: hostOf(a.URL)}
 	if !hostAllowed(hostOf(a.URL), hosts) {
-		res.Message = "the host " + hostOf(a.URL) + " is not on the list of hosts"
+		res.Code, res.Message = CodeHostNotAllowed, "the host "+hostOf(a.URL)+" is not on the list of hosts"
 		return res, nil
 	}
 	status, body, isJSON, err := f.do(ctx, a, hosts, lang, date)
 	res.Status = status
 	if err != nil {
-		res.Message = strings.TrimPrefix(err.Error(), ErrUnavailable.Error()+": ")
+		res.Code, res.Message = CodeRequestFailed, strings.TrimPrefix(err.Error(), ErrUnavailable.Error()+": ")
+		return res, nil
+	}
+	if !isJSON && status != http.StatusOK {
+		res.Code, res.Message = CodeStatus, fmt.Sprintf("status %d", status)
 		return res, nil
 	}
 	if !isJSON {
-		res.Message = "the answer is not JSON (its Content-Type does not say so)"
+		res.Code, res.Message = CodeNotJSON, "the answer is not JSON (its Content-Type does not say so)"
 		return res, nil
 	}
 	if len(body) > MaxResponse {
-		res.Message = fmt.Sprintf("the answer is larger than %d bytes", MaxResponse)
+		res.Code, res.Message = CodeTooLarge, fmt.Sprintf("the answer is larger than %d bytes", MaxResponse)
 		return res, nil
 	}
-	raw := scrub(a, string(body))
-	if utf8.RuneCountInString(raw) > RawLimit {
-		raw, res.RawTruncated = string([]rune(raw)[:RawLimit]), true
+	sec := secretsOf(a)
+	// Decoded first, every text, name and number of it checked, and only then
+	// cut and shown. An answer that cannot be decoded is not shown: what it
+	// says cannot be checked.
+	switch clean, valid := rawIsClean(body, sec); {
+	case !valid:
+		res.Code, res.Message = CodeNotJSON, "the answer is not valid JSON"
+		if status != http.StatusOK {
+			res.Message = fmt.Sprintf("status %d; %s", status, res.Message)
+		}
+		return res, nil
+	case !clean:
+		res.Code, res.Message = CodeAnswerRevealsSecret, MsgRepeatsHeader
+	default:
+		raw := strings.ToValidUTF8(string(body), "�")
+		if utf8.RuneCountInString(raw) > RawLimit {
+			raw, res.RawTruncated = string([]rune(raw)[:RawLimit]), true
+		}
+		res.Raw = scrub(a, raw)
 	}
-	res.Raw = strings.ToValidUTF8(raw, "�")
 	if status != http.StatusOK {
-		res.Message = fmt.Sprintf("status %d", status)
+		if res.Message == "" {
+			res.Code, res.Message = CodeStatus, fmt.Sprintf("status %d", status)
+		}
 		return res, nil
 	}
 	var doc any
 	if err := json.Unmarshal(body, &doc); err != nil {
-		res.Message = "the answer is not valid JSON"
+		res.Code, res.Message = CodeNotJSON, "the answer is not valid JSON"
 		return res, nil
 	}
-	res.PathErrors = map[string]string{}
-	q := Quote{}
-	for _, f := range []struct {
-		name, path string
-		set        func(string)
-		need       bool
-	}{
-		{"text", a.Text, func(s string) { q.Text = cut(strings.TrimSpace(s), MaxTextChars) }, true},
-		{"source", a.Source, func(s string) { q.Source = cut(strings.TrimSpace(s), 200) }, false},
-		{"author", a.Author, func(s string) { q.Author = cut(strings.TrimSpace(s), 200) }, false},
-	} {
-		if f.path == "" {
-			continue
+	q, errs, codes, _ := takeOut(a, doc, lang, date, sec)
+	for _, f := range []string{"text", "source", "author", "link"} {
+		if errs[f] != "" {
+			res.PathErrors = append(res.PathErrors, PathError{Field: f, Code: codes[f], Message: errs[f]})
 		}
-		s, found := pathText(doc, f.path)
-		if !found || (f.need && strings.TrimSpace(s) == "") {
-			res.PathErrors[f.name] = "no text or number at " + f.path
-			continue
-		}
-		f.set(s)
-	}
-	if a.Link != "" {
-		q.Link = expandLink(a.Link, doc)
-		if q.Link == "" {
-			res.PathErrors["link"] = "a value the link needs is not in the answer"
-		}
-	}
-	if len(res.PathErrors) == 0 {
-		res.PathErrors = nil
 	}
 	if q.Text != "" {
-		q = scrubQuote(a, q)
 		res.Quote = &q
-		res.OK = res.PathErrors == nil
+		res.OK = res.PathErrors == nil && res.Message == ""
 	} else if res.Message == "" {
-		res.Message = "no text could be taken out of the answer"
+		res.Code, res.Message = CodeNoText, "no text could be taken out of the answer"
 	}
 	return res, nil
 }
 
-// minSecret is the shortest header value blotted out of answers: shorter ones
-// are not secrets, and blotting them would garble the answer.
+// rawIsClean reads an answer token by token, so that every text, name and
+// number is seen decoded (escapes such as \/ and A undone, a name given
+// twice seen twice), and reports whether none of them, nor the bytes as they
+// came, repeats a request header's value, and whether the answer is valid JSON.
+func rawIsClean(body []byte, sec *secrets) (clean, valid bool) {
+	if !json.Valid(body) {
+		return false, false
+	}
+	clean = !sec.in(string(body))
+	dec := json.NewDecoder(strings.NewReader(string(body)))
+	dec.UseNumber()
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			return clean, true
+		}
+		if err != nil {
+			return false, false
+		}
+		switch v := tok.(type) {
+		case string:
+			if sec.in(v) {
+				clean = false
+			}
+		case json.Number:
+			if sec.in(v.String()) {
+				clean = false
+			}
+		}
+	}
+}
+
+// minSecret is the shortest header value looked for in answers: shorter ones
+// are not secrets, and refusing them would refuse most answers.
 const minSecret = 4
 
-// scrub blots out of an answer the values of the request's headers, as they
-// are and as JSON writes them, so that a service that repeats what it was sent
-// does not show a key.
+// fragment is the length of the pieces of a header value that are looked for:
+// an answer that repeats any fragment bytes of a value in a row repeats it.
+const fragment = 8
+
+// secrets are the request header values of an interface as they are looked
+// for in what an answer says: in lower case, whole when they are short, else
+// as every run of fragment bytes; and the same of the value as a query
+// escapes it and with + read as a space.
+type secrets struct {
+	whole []string
+	frags map[string]struct{}
+}
+
+func secretsOf(a API) *secrets {
+	s := &secrets{frags: map[string]struct{}{}}
+	for _, h := range a.Headers {
+		if len(h.Value) < minSecret {
+			continue
+		}
+		v := strings.ToLower(h.Value)
+		for _, form := range []string{v, strings.ToLower(url.QueryEscape(h.Value)), strings.ReplaceAll(v, "+", " ")} {
+			if len(form) < fragment {
+				s.whole = append(s.whole, form)
+				continue
+			}
+			for i := 0; i+fragment <= len(form); i++ {
+				s.frags[form[i:i+fragment]] = struct{}{}
+			}
+		}
+	}
+	return s
+}
+
+// in reports whether t, in lower case, as it is or with its query escapes
+// undone, has a header value or a fragment of one in it. It costs one look-up
+// for each byte of t.
+func (s *secrets) in(t string) bool {
+	if s == nil || len(s.whole) == 0 && len(s.frags) == 0 {
+		return false
+	}
+	forms := []string{strings.ToLower(t)}
+	if u, err := url.QueryUnescape(t); err == nil && u != t {
+		forms = append(forms, strings.ToLower(u))
+	}
+	for _, f := range forms {
+		for _, w := range s.whole {
+			if strings.Contains(f, w) {
+				return true
+			}
+		}
+		if len(s.frags) == 0 {
+			continue
+		}
+		for i := 0; i+fragment <= len(f); i++ {
+			if _, ok := s.frags[f[i:i+fragment]]; ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// scrub blots out of a text the values of the request's headers, as they are
+// and as JSON writes them. It is a second line only: what repeats a value is
+// refused before it gets here (see secrets).
 func scrub(a API, s string) string {
 	for _, h := range a.Headers {
 		if len(h.Value) < minSecret {
@@ -1021,30 +1164,71 @@ func trimErr(err error) string {
 	return err.Error()
 }
 
-// Extract reads the text, source, author and link out of an answer.
-func Extract(a API, body []byte) (Quote, error) {
+// Extract reads the text, source, author and link out of an answer to a
+// request in lang for date. An answer from which a path takes out a request
+// header's value is refused whole.
+func Extract(a API, body []byte, lang, date string) (Quote, error) {
 	var doc any
 	if err := json.Unmarshal(body, &doc); err != nil {
 		return Quote{}, fmt.Errorf("%w: not JSON", ErrUnavailable)
 	}
-	text, ok := pathText(doc, a.Text)
-	text = strings.TrimSpace(text)
-	if !ok || text == "" {
+	q, errs, _, leaked := takeOut(a, doc, lang, date, secretsOf(a))
+	if leaked {
+		return Quote{}, fmt.Errorf("%w: the answer repeats the value of a request header", ErrUnavailable)
+	}
+	if errs["text"] != "" || q.Text == "" {
 		return Quote{}, fmt.Errorf("%w: no text at %s", ErrUnavailable, a.Text)
 	}
-	q := Quote{Text: cut(text, MaxTextChars)}
-	if a.Source != "" {
-		s, _ := pathText(doc, a.Source)
-		q.Source = cut(strings.TrimSpace(s), 200)
-	}
-	if a.Author != "" {
-		s, _ := pathText(doc, a.Author)
-		q.Author = cut(strings.TrimSpace(s), 200)
+	return q, nil
+}
+
+// takeOut takes the fields out of a decoded answer, each in this order: the
+// value at its path, decoded; refused when it repeats a header value; cut;
+// and, in a link, escaped. errs say by field what was not taken out, and
+// codes the same as codes (both nil when all was); leaked is whether something
+// was refused for repeating a header value.
+func takeOut(a API, doc any, lang, date string, sec *secrets) (q Quote, errs, codes map[string]string, leaked bool) {
+	errs, codes = map[string]string{}, map[string]string{}
+	for _, f := range []struct {
+		name, path string
+		set        func(string)
+		need       bool
+	}{
+		{"text", a.Text, func(s string) { q.Text = cut(s, MaxTextChars) }, true},
+		{"source", a.Source, func(s string) { q.Source = cut(s, 200) }, false},
+		{"author", a.Author, func(s string) { q.Author = cut(s, 200) }, false},
+	} {
+		if f.path == "" {
+			continue
+		}
+		s, found := pathText(doc, f.path)
+		s = strings.TrimSpace(s)
+		switch {
+		case !found || (f.need && s == ""):
+			errs[f.name], codes[f.name] = "no text or number at "+f.path, CodePathError
+		case sec.in(s):
+			errs[f.name], codes[f.name] = "the value at "+f.path+" repeats a request header's value; it is never shown", CodePathRevealsSecret
+			leaked = true
+		default:
+			f.set(s)
+		}
 	}
 	if a.Link != "" {
-		q.Link = expandLink(a.Link, doc)
+		link, why, bad := expandLink(a.Link, doc, lang, date, sec)
+		switch {
+		case bad:
+			errs["link"], codes["link"] = why, CodePathRevealsSecret
+			leaked = true
+		case link == "":
+			errs["link"], codes["link"] = "a value the link needs is not in the answer", CodePathError
+		default:
+			q.Link = link
+		}
 	}
-	return scrubQuote(a, q), nil
+	if len(errs) == 0 {
+		errs, codes = nil, nil
+	}
+	return scrubQuote(a, q), errs, codes, leaked
 }
 
 // linkTemplate fills {path} in a template with value(path).
@@ -1067,25 +1251,73 @@ func linkTemplate(tpl string, value func(path string) string) string {
 	}
 }
 
-// expandLink makes the link of a template from the answer; "" when a value it
-// needs is not there or the result is not an http(s) address.
-func expandLink(tpl string, doc any) string {
+// headerish reports whether a placeholder of a link names a request header: a
+// part of its path is "header" or "headers", or the name of one of the
+// interface's headers. A link with one is refused, whatever the answer says.
+func headerish(path string, headers []Header) bool {
+	for _, seg := range strings.FieldsFunc(path, func(r rune) bool { return r == '.' || r == '[' || r == ']' }) {
+		seg = strings.TrimSpace(seg)
+		if strings.EqualFold(seg, "header") || strings.EqualFold(seg, "headers") {
+			return true
+		}
+		for _, h := range headers {
+			if strings.EqualFold(seg, h.Name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// expandLink makes the link of a template: {lang} and {date} are those of the
+// request, any other {x} the value at the path x of the answer, decoded,
+// checked and only then escaped. It is "" when a value it needs is not there
+// or the result is not an http(s) address; bad, with why, when a value
+// repeats a request header's value.
+func expandLink(tpl string, doc any, lang, date string, sec *secrets) (link, why string, bad bool) {
+	if lang == "" || !validLang(lang) {
+		lang = "en"
+	}
+	if _, err := time.Parse("2006-01-02", date); err != nil {
+		date = ""
+	}
 	missing := false
 	out := linkTemplate(tpl, func(path string) string {
-		s, ok := pathText(doc, path)
-		if !ok || strings.TrimSpace(s) == "" {
+		var s string
+		switch path {
+		case "lang":
+			s = lang
+		case "date":
+			s = date
+		default:
+			v, ok := pathText(doc, path)
+			if !ok {
+				missing = true
+			}
+			s = strings.TrimSpace(v)
+			if !bad && sec.in(s) {
+				bad, why = true, "the value at "+path+" repeats a request header's value; it is never put in the link"
+			}
+		}
+		if s == "" {
 			missing = true
 		}
-		return url.QueryEscape(strings.TrimSpace(s))
+		return url.QueryEscape(s)
 	})
+	if bad {
+		return "", why, true
+	}
 	if missing {
-		return ""
+		return "", "", false
+	}
+	if sec.in(out) {
+		return "", "the link would repeat a request header's value", true
 	}
 	u, err := url.Parse(out)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return ""
+		return "", "", false
 	}
-	return out
+	return out, "", false
 }
 
 func cut(s string, max int) string {

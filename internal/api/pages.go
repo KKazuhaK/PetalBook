@@ -527,7 +527,13 @@ func (s *server) moveFolder(c *call) {
 	// How the folder is spelled on disk: the favourites of it are under that.
 	// The move is recorded first, so that the favourites follow it even when
 	// what follows the move does not happen (see followFolder).
+	// A move onto a folder that is there is refused by MoveFolder, and is not
+	// recorded: a recorded move with a folder at both places is taken as made
+	// (settleMoves).
 	from, _, _ := c.sp.Space.CanonicalFolder(req.From)
+	if ct, there, _ := c.sp.Space.CanonicalFolder(req.To); there && ct != from {
+		from = ""
+	}
 	if from != "" && !s.recordFolderMove(c, from, req.To) {
 		return
 	}

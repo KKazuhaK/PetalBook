@@ -156,7 +156,11 @@ func dailyScenario(t *testing.T, base string, owner, editor, viewer caller, refu
 	}
 	// What a request may not ask.
 	for _, q := range []string{"date=tomorrow", "date=2026-13-01", "date=1969-12-31", "date=2026-11-23&skip=-1", "date=2026-11-23&skip=x", "date=2026-11-23&skip=99999999"} {
-		if code, r := viewer("GET", base+"/daily?"+q, nil); code != 400 || r["error"] != "invalid" {
+		want := "invalid"
+		if strings.HasSuffix(q, "99999999") {
+			want = "skip_too_large"
+		}
+		if code, r := viewer("GET", base+"/daily?"+q, nil); code != 400 || r["error"] != want {
 			t.Errorf("%s: %d %v", q, code, r)
 		}
 	}
@@ -841,4 +845,124 @@ func TestFavoritesInSingleUserMode(t *testing.T) {
 	if code, _ := c("DELETE", favURL(base, "page", "filler000"), nil); code != 200 {
 		t.Fatal(code)
 	}
+}
+
+// Recorded moves are settled by following them: a chain takes the favourites
+// of the first folder to the last place, whatever order the records are
+// settled in and however old they are, and a folder made where one was moved
+// from keeps none of the old one's favourites. A settlement that fails changes
+// nothing, and is done in full later.
+func TestUnsettledFolderMovesAreFollowedInChains(t *testing.T) {
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		a.setup("kazuha", pw)
+		tm := newTeam(t, a)
+		base := "/api/spaces/" + tm.sid
+		o, v := asClient(tm.owner), asClient(tm.viewer)
+		ctx := context.Background()
+		mkdir := func(p string) {
+			t.Helper()
+			if code, r := o("POST", base+"/folders", map[string]any{"path": p}); code != 201 {
+				t.Fatalf("%s: %d %v", p, code, r)
+			}
+		}
+		fav := func(p string) {
+			t.Helper()
+			if code, r := v("POST", base+"/favorites", map[string]any{"kind": "folder", "target": p}); code != 200 {
+				t.Fatalf("%s: %d %v", p, code, r)
+			}
+		}
+		// A move made on disk whose favourites did not follow (a crash).
+		crashMove := func(from, to string, at time.Time) {
+			t.Helper()
+			if err := store.RecordFolderMove(ctx, a.st.Q(), tm.sid, from, to, at); err != nil {
+				t.Fatal(err)
+			}
+			sp, release, err := a.mgr.Acquire(ctx, tm.sid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer release()
+			if _, err := sp.MoveFolder(space.Author{}, from, to); err != nil {
+				t.Fatal(err)
+			}
+		}
+		pending := func() int {
+			l, err := store.PendingFolderMoves(ctx, a.st.Q(), tm.sid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return len(l)
+		}
+		now := time.Now()
+
+		// A to B is not settled; B to C, through the request, carries A's favourites to C.
+		mkdir("A")
+		mkdir("A/Sub")
+		fav("A")
+		fav("A/Sub")
+		crashMove("A", "B", now.Add(-time.Second))
+		if code, r := o("POST", base+"/folders/move", map[string]any{"from": "B", "to": "C"}); code != 200 {
+			t.Fatalf("%d %v", code, r)
+		}
+		if got := favLine(favList(t, v, base)); got != "folder:C folder:Sub" || pending() != 0 {
+			t.Fatalf("%s (%d pending)", got, pending())
+		}
+
+		// Two moves of a chain both unsettled, the second one just now: settled
+		// on the next read, in order.
+		mkdir("D")
+		fav("D")
+		crashMove("D", "E", now.Add(-time.Hour))
+		crashMove("E", "F", now)
+		if got := favLine(favList(t, v, base)); got != "folder:C folder:Sub folder:F" || pending() != 0 {
+			t.Fatalf("%s (%d pending)", got, pending())
+		}
+
+		// A folder made at the old place, just after: it keeps none of the old
+		// favourites, and receives none when it is moved in turn.
+		mkdir("G")
+		fav("G")
+		crashMove("G", "H", now)
+		mkdir("G")
+		crashMove("G", "I", now)
+		if got := favLine(favList(t, v, base)); got != "folder:C folder:Sub folder:F folder:H" || pending() != 0 {
+			t.Fatalf("%s (%d pending)", got, pending())
+		}
+		mkdir("J")
+		fav("J")
+		crashMove("J", "K", now)
+		mkdir("J")
+		if got := favLine(favList(t, v, base)); got != "folder:C folder:Sub folder:F folder:H folder:K" || pending() != 0 {
+			t.Fatalf("%s (%d pending)", got, pending())
+		}
+
+		// A move that failed with its folder in place moves nothing, and is
+		// forgotten once it is old; one onto a folder that is there is not even recorded.
+		store.RecordFolderMove(ctx, a.st.Q(), tm.sid, "J", "Nowhere", now.Add(-time.Hour))
+		if code, _ := o("POST", base+"/folders/move", map[string]any{"from": "J", "to": "K"}); code == 200 {
+			t.Fatal("a move onto a folder that is there")
+		}
+		if got := favLine(favList(t, v, base)); got != "folder:C folder:Sub folder:F folder:H folder:K" || pending() != 0 {
+			t.Fatalf("%s (%d pending)", got, pending())
+		}
+
+		// The favourites cannot be updated: the move is made, nothing of the
+		// chain is settled, and all of it is on the next read.
+		mkdir("L")
+		fav("L")
+		crashMove("L", "M", now.Add(-time.Minute))
+		if _, err := a.st.Q().Exec(ctx, `ALTER TABLE favorites RENAME TO favorites_away`); err != nil {
+			t.Fatal(err)
+		}
+		code, r := o("POST", base+"/folders/move", map[string]any{"from": "M", "to": "N"})
+		if _, err := a.st.Q().Exec(ctx, `ALTER TABLE favorites_away RENAME TO favorites`); err != nil {
+			t.Fatal(err)
+		}
+		if code != 200 || pending() != 2 {
+			t.Fatalf("%d %v (%d pending)", code, r, pending())
+		}
+		if got := favLine(favList(t, v, base)); got != "folder:C folder:Sub folder:F folder:H folder:K folder:N" || pending() != 0 {
+			t.Fatalf("%s (%d pending)", got, pending())
+		}
+	})
 }
