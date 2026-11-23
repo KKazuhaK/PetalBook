@@ -306,21 +306,29 @@ func DeleteOAuthGrant(ctx context.Context, q Q, id string) (bool, error) {
 
 // RotateOAuthRefresh replaces the live refresh token of a grant, but only while
 // it is still oldHash, so two requests with the same token cannot both win. It
-// keeps the last keep replaced hashes, and reports whether it replaced it.
-func RotateOAuthRefresh(ctx context.Context, q Q, id, oldHash, newHash string, at time.Time, keep int) (bool, error) {
-	res, err := q.Exec(ctx, `UPDATE oauth_grants SET refresh_hash = ?, last_used = ? WHERE id = ? AND refresh_hash = ?`, newHash, ms(at), id, oldHash)
-	if err != nil {
-		return false, err
-	}
-	if n, err := res.RowsAffected(); err != nil || n == 0 {
-		return false, err
-	}
-	if _, err := q.Exec(ctx, `INSERT INTO oauth_retired(grant_id, hash, at) VALUES (?, ?, ?) ON CONFLICT (grant_id, hash) DO NOTHING`, id, oldHash, ms(at)); err != nil {
-		return false, err
-	}
-	_, err = q.Exec(ctx, `DELETE FROM oauth_retired WHERE grant_id = ? AND hash NOT IN
-		(SELECT hash FROM (SELECT hash FROM oauth_retired WHERE grant_id = ? ORDER BY at DESC, hash DESC LIMIT `+strconv.Itoa(keep)+`) r)`, id, id)
-	return err == nil, err
+// keeps the last keep replaced hashes, and reports whether it replaced it. The
+// three steps are one transaction: a failure leaves the old token live.
+func RotateOAuthRefresh(ctx context.Context, s *Store, id, oldHash, newHash string, at time.Time, keep int) (bool, error) {
+	won := false
+	err := s.Tx(ctx, func(q Q) error {
+		res, err := q.Exec(ctx, `UPDATE oauth_grants SET refresh_hash = ?, last_used = ? WHERE id = ? AND refresh_hash = ?`, newHash, ms(at), id, oldHash)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil || n == 0 {
+			return err
+		}
+		if _, err := q.Exec(ctx, `INSERT INTO oauth_retired(grant_id, hash, at) VALUES (?, ?, ?) ON CONFLICT (grant_id, hash) DO NOTHING`, id, oldHash, ms(at)); err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, `DELETE FROM oauth_retired WHERE grant_id = ? AND hash NOT IN
+		(SELECT hash FROM (SELECT hash FROM oauth_retired WHERE grant_id = ? ORDER BY at DESC, hash DESC LIMIT `+strconv.Itoa(keep)+`) r)`, id, id); err != nil {
+			return err
+		}
+		won = true
+		return nil
+	})
+	return won && err == nil, err
 }
 
 // DeleteIdleOAuthGrants ends the grants not used since cutoff.

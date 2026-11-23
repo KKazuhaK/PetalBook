@@ -16,10 +16,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
 )
 
 // Limits of a Client ID Metadata Document fetch.
@@ -29,6 +30,7 @@ const (
 	cimdMinTTL     = time.Minute
 	cimdMaxTTL     = time.Hour
 	cimdDefaultTTL = 5 * time.Minute
+	cimdFailTTL    = time.Minute
 	cimdCacheSize  = 256
 	maxRedirects   = 10
 	maxNameLen     = 100
@@ -41,31 +43,22 @@ type clientInfo struct {
 	RedirectURIs []string
 }
 
-// specialPrefixes are special-use ranges a client_id URL may never lead to,
-// besides everything that is not a global unicast address or is private.
-var specialPrefixes = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),
-	netip.MustParsePrefix("100.64.0.0/10"), // carrier-grade NAT
-	netip.MustParsePrefix("192.0.0.0/24"),  // IETF protocol assignments
-	netip.MustParsePrefix("198.18.0.0/15"), // benchmarking
-	netip.MustParsePrefix("240.0.0.0/4"),   // reserved, and the broadcast address
-	netip.MustParsePrefix("::/96"),         // IPv4-compatible
-	netip.MustParsePrefix("64:ff9b::/96"),  // NAT64
-	netip.MustParsePrefix("64:ff9b:1::/48"),
+// extraPrefixes are refused for a client_id URL besides what
+// dailyfetch.Public refuses: IPv4-compatible IPv6 addresses and Teredo, which
+// can lead to an IPv4 address the check would not see.
+var extraPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("::/96"),     // IPv4-compatible
 	netip.MustParsePrefix("2001::/32"), // Teredo
-	netip.MustParsePrefix("2002::/16"), // 6to4
-	netip.MustParsePrefix("fc00::/7"),  // unique local
-	netip.MustParsePrefix("fe80::/10"), // link-local
 }
 
 // blockedAddr says an address must not be connected to: anything that is not
-// a global unicast address, a private address, or a special-use range.
+// public by the check of internal/dailyfetch, and the extra ranges.
 func blockedAddr(a netip.Addr) bool {
-	a = a.Unmap()
-	if !a.IsValid() || !a.IsGlobalUnicast() || a.IsPrivate() {
+	if !dailyfetch.Public(a) {
 		return true
 	}
-	for _, p := range specialPrefixes {
+	a = a.Unmap()
+	for _, p := range extraPrefixes {
 		if p.Contains(a) {
 			return true
 		}
@@ -74,38 +67,34 @@ func blockedAddr(a netip.Addr) bool {
 }
 
 // safeClient fetches client metadata documents. The address check runs in the
-// dialer's Control hook, on the address that is about to be connected, so a name
-// that resolves to a private address (or changes its answer between the check
-// and the connection) is refused whatever DNS says. Proxies are not used and
-// redirects are not followed.
+// dialer's Control hook (dailyfetch.RefuseAddrs), on the address that is about
+// to be connected. Proxies are not used, redirects are not followed and the
+// response headers are bounded as dailyfetch bounds them.
 func safeClient() *http.Client {
-	d := &net.Dialer{
-		Timeout: cimdTimeout,
-		Control: func(_, address string, _ syscall.RawConn) error {
-			host, _, err := net.SplitHostPort(address)
-			if err != nil {
-				return err
-			}
-			a, err := netip.ParseAddr(host)
-			if err != nil || blockedAddr(a) {
-				return fmt.Errorf("address %s is not allowed", host)
-			}
-			return nil
-		},
-	}
+	d := &net.Dialer{Timeout: cimdTimeout, Control: dailyfetch.RefuseAddrs(blockedAddr)}
 	return &http.Client{
 		Timeout: cimdTimeout,
 		Transport: &http.Transport{
 			Proxy: nil, DialContext: d.DialContext, TLSHandshakeTimeout: cimdTimeout,
-			ResponseHeaderTimeout: cimdTimeout, DisableKeepAlives: true,
+			ResponseHeaderTimeout: cimdTimeout, DisableKeepAlives: true, MaxResponseHeaderBytes: dailyfetch.MaxResponseHeaderBytes,
 		},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 }
 
+// cimdEntry is a document that was fetched, or a fetch that failed (err set,
+// kept cimdFailTTL so a failing client_id is not fetched on every request).
 type cimdEntry struct {
 	info    clientInfo
+	err     error
 	expires time.Time
+}
+
+// cimdFlight is the one fetch in progress for a client_id; others wait for it.
+type cimdFlight struct {
+	done chan struct{}
+	info *clientInfo
+	err  error
 }
 
 type cimdFetcher struct {
@@ -114,13 +103,14 @@ type cimdFetcher struct {
 	log    *slog.Logger
 	mu     sync.Mutex
 	cache  map[string]cimdEntry
+	busy   map[string]*cimdFlight
 }
 
 func newCIMDFetcher(client *http.Client, now func() time.Time, log *slog.Logger) *cimdFetcher {
 	if client == nil {
 		client = safeClient()
 	}
-	return &cimdFetcher{client: client, now: now, log: log, cache: map[string]cimdEntry{}}
+	return &cimdFetcher{client: client, now: now, log: log, cache: map[string]cimdEntry{}, busy: map[string]*cimdFlight{}}
 }
 
 // errFetch is all the person is told when the document could not be fetched:
@@ -167,6 +157,8 @@ func validCIMDURL(raw string) (*url.URL, error) {
 }
 
 // get returns the client behind a client_id URL: from the cache, else fetched.
+// A failure is remembered for cimdFailTTL, and requests for the same client_id
+// at the same moment share one fetch.
 func (f *cimdFetcher) get(ctx context.Context, clientID string) (*clientInfo, error) {
 	if _, err := validCIMDURL(clientID); err != nil {
 		return nil, err
@@ -174,21 +166,58 @@ func (f *cimdFetcher) get(ctx context.Context, clientID string) (*clientInfo, er
 	f.mu.Lock()
 	if e, ok := f.cache[clientID]; ok && f.now().Before(e.expires) {
 		f.mu.Unlock()
+		if e.err != nil {
+			return nil, e.err
+		}
 		info := e.info
 		return &info, nil
 	}
+	if fl, ok := f.busy[clientID]; ok {
+		f.mu.Unlock()
+		select {
+		case <-fl.done:
+			return copyInfo(fl.info), fl.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	fl := &cimdFlight{done: make(chan struct{})}
+	f.busy[clientID] = fl
 	f.mu.Unlock()
-	info, ttl, err := f.fetch(ctx, clientID)
+
+	// The fetch is everybody's: the request that happened to start it going
+	// away does not cut it short, only its own time does.
+	lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cimdTimeout)
+	info, ttl, err := f.fetch(lctx, clientID)
+	cancel()
 	var fe *fetchError
 	if errors.As(err, &fe) {
 		f.log.Info("client metadata document not fetched", "client", clientID, "err", fe.err.Error())
-		return nil, errFetch
+		err = errFetch
 	}
 	if err != nil {
-		return nil, err
+		info, ttl = nil, cimdFailTTL
 	}
+
 	f.mu.Lock()
-	defer f.mu.Unlock()
+	delete(f.busy, clientID)
+	f.store(clientID, info, err, ttl)
+	f.mu.Unlock()
+	fl.info, fl.err = info, err
+	close(fl.done)
+	return copyInfo(info), err
+}
+
+func copyInfo(info *clientInfo) *clientInfo {
+	if info == nil {
+		return nil
+	}
+	c := *info
+	return &c
+}
+
+// store keeps an entry, making room when the cache is full. f.mu is held.
+func (f *cimdFetcher) store(clientID string, info *clientInfo, err error, ttl time.Duration) {
 	if len(f.cache) >= cimdCacheSize {
 		for k, e := range f.cache {
 			if !f.now().Before(e.expires) {
@@ -202,8 +231,11 @@ func (f *cimdFetcher) get(ctx context.Context, clientID string) (*clientInfo, er
 			delete(f.cache, k)
 		}
 	}
-	f.cache[clientID] = cimdEntry{info: *info, expires: f.now().Add(ttl)}
-	return info, nil
+	e := cimdEntry{err: err, expires: f.now().Add(ttl)}
+	if info != nil {
+		e.info = *info
+	}
+	f.cache[clientID] = e
 }
 
 var maxAge = regexp.MustCompile(`(?i)max-age=(\d+)`)

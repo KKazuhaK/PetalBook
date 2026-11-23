@@ -272,7 +272,9 @@ func (s *server) wrap(next http.Handler, bodyType func(*http.Request) string) ht
 		// sent to them, by other sites by design (see oauthCrossSite).
 		if !(r.Method == http.MethodGet && r.URL.Path == oidcCallbackPath) && !oauthCrossSite(r) {
 			if why := s.crossSite(r); why != "" {
-				writeError(sw, http.StatusForbidden, "forbidden", why)
+				if !oauthRefuse(sw, r, http.StatusForbidden, "invalid_request", why) {
+					writeError(sw, http.StatusForbidden, "forbidden", why)
+				}
 				return
 			}
 		}
@@ -292,7 +294,13 @@ func (s *server) wrap(next http.Handler, bodyType func(*http.Request) string) ht
 				if want != "application/json" {
 					msg = "send the file with Content-Type: " + want
 				}
-				writeError(sw, http.StatusUnsupportedMediaType, "invalid", msg)
+				if r.URL.Path == oauth.PathRegister {
+					oauthRefuse(sw, r, http.StatusBadRequest, "invalid_client_metadata", "send the client metadata with Content-Type: application/json")
+					return
+				}
+				if !oauthRefuse(sw, r, http.StatusUnsupportedMediaType, "invalid_request", msg) {
+					writeError(sw, http.StatusUnsupportedMediaType, "invalid", msg)
+				}
 				return
 			}
 		}

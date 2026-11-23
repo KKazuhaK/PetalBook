@@ -2627,8 +2627,7 @@ same reach on `/mcp`). An OAuth access token is accepted on `/mcp` only; on
 
 - `GET /.well-known/oauth-authorization-server` (RFC 8414): `issuer`,
   `authorization_endpoint` (`/oauth/authorize`), `token_endpoint`
-  (`/oauth/token`), `registration_endpoint` (`/oauth/register`, left out when
-  registration is off), `response_types_supported: ["code"]`,
+  (`/oauth/token`), `registration_endpoint` (`/oauth/register`), `response_types_supported: ["code"]`,
   `grant_types_supported: ["authorization_code", "refresh_token"]`,
   `code_challenge_methods_supported: ["S256"]`,
   `token_endpoint_auth_methods_supported: ["none"]`,
@@ -2652,15 +2651,18 @@ redirect URIs are registered again, which costs nothing. At most 30 new
 registrations per client address in 10 minutes (`429 temporarily_unavailable`
 with `Retry-After`) and 1000 clients in all; a client never authorized is
 removed after a day, one with no grant left after 30 days.
-`400 invalid_client_metadata` or `invalid_redirect_uri` for a bad request. When
+`400 invalid_client_metadata` (also for a body that is not sent as
+`application/json`) or `invalid_redirect_uri` for a bad request. When
 the 1000 are all in use, `503 temporarily_unavailable` with `Retry-After`;
 otherwise the oldest client nobody authorized makes room. Clients are kept in the
 state database.
 
 A `client_id` that is an `https` URL is a client ID metadata document: the
 server fetches it (at most 8 KiB, no private or loopback addresses, cached as
-its `Cache-Control` says, between 1 minute and 1 hour) and takes the name and
-redirect URIs from it. Nothing is registered.
+its `Cache-Control` says, between 1 minute and 1 hour; a fetch that failed is
+remembered for 1 minute, and requests for the same `client_id` at the same
+moment share one fetch) and takes the name and redirect URIs from it. Nothing
+is registered.
 
 ### `GET /oauth/authorize`
 
@@ -2670,12 +2672,20 @@ The browser is sent here by the client with `response_type=code`,
 redirects to the sign-in page, which comes back here. With a bad `client_id` or
 a `redirect_uri` the client did not register, it shows an error page and
 redirects nowhere (the page is in English or, for a browser that asks for it,
-Chinese); any other bad parameter goes back to the client's
-`redirect_uri` with `error` (`invalid_request` for missing or non-`S256`
-PKCE, `invalid_target` for a missing or other `resource`, `invalid_scope`,
-`unsupported_response_type`). Otherwise it redirects to the consent page,
-`/oauth/consent?req=…`; the request is kept 10 minutes, in memory, for this
-person only. The browser of someone who is not signed in is sent to
+Chinese). Any other bad parameter is shown on the same page, with its OAuth
+code, and is not sent back to the client either: `400` with
+`invalid_request` for missing or non-`S256` PKCE, `invalid_target` for a
+missing or other `resource`, `invalid_scope`, `unsupported_response_type`.
+Before the person has consented the server never redirects with an error, so
+a client that registered itself, or that names any metadata document, cannot
+use it as an open redirector (RFC 9700 section 4.11.2); the only error that
+goes back to the client's `redirect_uri` is `access_denied`, once the request
+was well-formed and the person refused it on the consent page. Otherwise it
+redirects to the consent page, `/oauth/consent?req=…`; the request is kept 10
+minutes, in memory, for this person only. One person may have at most 20
+requests waiting for a decision, and the server 1000 in all: past either, the
+page shows `temporarily_unavailable` (`429` for the person's own 20, `503` for
+the server's 1000) until one is decided or expires. The browser of someone who is not signed in is sent to
 `/login?return=<this address>`; the web app turns that return into a full page
 load of `/oauth/authorize`, which the server answers. A link from another site
 may open `/oauth/authorize` (it only asks the person); the rest of `/api` never

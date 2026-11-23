@@ -59,10 +59,10 @@ func TestOAuthGrantsAndRefreshRotation(t *testing.T) {
 		// The token is replaced only while it is the one that was read.
 		for i := 0; i < 12; i++ {
 			old, next := fmt.Sprintf("h%d", i), fmt.Sprintf("h%d", i+1)
-			if won, err := store.RotateOAuthRefresh(ctx, st.Q(), "G1", old, next, now.Add(time.Duration(i+1)*time.Minute), 8); err != nil || !won {
+			if won, err := store.RotateOAuthRefresh(ctx, st, "G1", old, next, now.Add(time.Duration(i+1)*time.Minute), 8); err != nil || !won {
 				t.Fatalf("%d: %v %v", i, won, err)
 			}
-			if won, err := store.RotateOAuthRefresh(ctx, st.Q(), "G1", old, "other", now, 8); err != nil || won {
+			if won, err := store.RotateOAuthRefresh(ctx, st, "G1", old, "other", now, 8); err != nil || won {
 				t.Fatalf("%d: the replaced token replaced again: %v %v", i, won, err)
 			}
 		}
@@ -166,6 +166,26 @@ func TestOAuthClients(t *testing.T) {
 		}
 		if n, _ := store.CountOAuthClients(ctx, st.Q()); n != 1 {
 			t.Fatalf("%d", n)
+		}
+	})
+}
+
+// The update, the insert of the replaced hash and the trim are one transaction:
+// when a later step fails, the live token is still the old one.
+func TestRotateOAuthRefreshIsOneTransaction(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		mkUser(t, st, "A", "a", "member")
+		now := time.UnixMilli(1_700_000_000_000)
+		mkGrant(t, st, "G1", "A", "h0", now)
+		if _, err := st.Q().Exec(ctx, `DROP TABLE oauth_retired`); err != nil {
+			t.Fatal(err)
+		}
+		if won, err := store.RotateOAuthRefresh(ctx, st, "G1", "h0", "h1", now.Add(time.Minute), 8); err == nil || won {
+			t.Fatalf("rotation without oauth_retired succeeded: %v %v", won, err)
+		}
+		var hash string
+		if err := st.Q().QueryRow(ctx, `SELECT refresh_hash FROM oauth_grants WHERE id = ?`, "G1").Scan(&hash); err != nil || hash != "h0" {
+			t.Fatalf("the live token changed although the rotation failed: %q %v", hash, err)
 		}
 	})
 }

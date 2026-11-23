@@ -486,7 +486,7 @@ func New(backing Backing) *Fetcher {
 	d := &net.Dialer{Timeout: Timeout, Control: refusePrivate}
 	return newFetcher(&http.Client{
 		Timeout:       Timeout,
-		Transport:     &http.Transport{DialContext: d.DialContext, Proxy: nil, DisableKeepAlives: true, ResponseHeaderTimeout: Timeout, MaxResponseHeaderBytes: 16 << 10},
+		Transport:     &http.Transport{DialContext: d.DialContext, Proxy: nil, DisableKeepAlives: true, ResponseHeaderTimeout: Timeout, MaxResponseHeaderBytes: MaxResponseHeaderBytes},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}, false, backing)
 }
@@ -530,20 +530,32 @@ func (f *Fetcher) ForgetMemory() {
 
 // refusePrivate is the Control of the dialer: it runs for every address a name
 // resolved to, just before the connection is made to it.
-func refusePrivate(network, address string, _ syscall.RawConn) error {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return err
+var refusePrivate = RefuseAddrs(func(ip netip.Addr) bool { return !Public(ip) })
+
+// RefuseAddrs makes the Control of a net.Dialer that refuses every address for
+// which refuse is true. It runs on the address that is about to be connected,
+// after the name was resolved, so a name that resolves to a private address
+// (or changes its answer between a check and the connection) is refused
+// whatever DNS says. Other fetchers of untrusted URLs use it with Public.
+func RefuseAddrs(refuse func(netip.Addr) bool) func(network, address string, _ syscall.RawConn) error {
+	return func(_, address string, _ syscall.RawConn) error {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			return err
+		}
+		ip, err := netip.ParseAddr(host)
+		if err != nil {
+			return fmt.Errorf("not an address: %q", host)
+		}
+		if refuse(ip) {
+			return fmt.Errorf("%s is not a public address", ip)
+		}
+		return nil
 	}
-	ip, err := netip.ParseAddr(host)
-	if err != nil {
-		return fmt.Errorf("not an address: %q", host)
-	}
-	if !Public(ip) {
-		return fmt.Errorf("%s is not a public address", ip)
-	}
-	return nil
 }
+
+// MaxResponseHeaderBytes bounds the response headers of a fetch.
+const MaxResponseHeaderBytes = 16 << 10
 
 var cgnat = netip.MustParsePrefix("100.64.0.0/10")
 

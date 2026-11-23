@@ -244,7 +244,8 @@ func TestAuthorizeRefusals(t *testing.T) {
 			t.Errorf("another loopback port: %d %s", r.code, r.raw)
 		}
 
-		// These go back to the client with an error, its state and the issuer.
+		// Before consent, a bad request is shown on the page too and never goes
+		// back to the client (RFC 9700 section 4.11.2: no open redirect).
 		for name, c := range map[string]struct {
 			mod  func(*authParams)
 			code string
@@ -262,10 +263,9 @@ func TestAuthorizeRefusals(t *testing.T) {
 		} {
 			p := params(cid, ch)
 			c.mod(&p)
-			u := location(t, get(p))
-			q := u.Query()
-			if u.Host != "localhost:7777" || q.Get("error") != c.code || q.Get("state") != "st4te" || q.Get("iss") != oaIssue || q.Get("code") != "" {
-				t.Errorf("%s: %s", name, u)
+			r := get(p)
+			if r.code != 400 || r.resp.Header.Get("Location") != "" || !strings.Contains(r.resp.Header.Get("Content-Type"), "text/html") || !strings.Contains(r.raw, c.code) {
+				t.Errorf("%s: %d %q %s", name, r.code, r.resp.Header.Get("Location"), r.raw)
 			}
 		}
 		// A scope of read only, or none at all, is fine.
@@ -1077,6 +1077,22 @@ func TestGrantsGoWithTheirOwner(t *testing.T) {
 		a.st.Q().QueryRow(context.Background(), `SELECT COUNT(*) FROM oauth_grant_spaces`).Scan(new(int))
 		if n != 0 {
 			t.Fatalf("%d grants of a deleted user", n)
+		}
+	})
+}
+
+// docs/api.md promises the OAuth error shape on these endpoints, also for the
+// refusals of the API's own checks in front of them.
+func TestOAuthEndpointsAnswerInTheOAuthShape(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, oa(), func(t *testing.T, a *acc) {
+		anon := a.newClient("")
+		body := `{"client_name":"x","redirect_uris":["` + cbURI + `"]}`
+		for _, ct := range []string{"", "text/plain", "application/x-www-form-urlencoded"} {
+			r := anon.do("POST", "/oauth/register", body, "Content-Type", ct)
+			if r.code != 400 || r.body["error"] != "invalid_client_metadata" || r.body["error_description"] == nil || r.body["message"] != nil {
+				t.Errorf("register with %q: %d %s", ct, r.code, r.raw)
+			}
 		}
 	})
 }

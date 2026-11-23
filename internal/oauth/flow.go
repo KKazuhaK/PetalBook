@@ -93,71 +93,84 @@ func (s *Service) lookupClient(ctx context.Context, clientID string) (*clientInf
 	return &clientInfo{ID: c.ID, Name: c.Name, RedirectURIs: c.RedirectURIs}, nil
 }
 
-// Problem is an authorization request that cannot be sent back to the client
-// (an unknown client, a redirect_uri it did not register): the person is shown
-// the problem and nothing is redirected.
+// Problem is an authorization request that is not sent back to the client:
+// the person is shown the problem and nothing is redirected. Code and Desc are
+// the OAuth error of a request that is not well-formed (RFC 9700 section
+// 4.11.2: before consent, the server never redirects on an error, so a client
+// that registered itself cannot use it as an open redirector).
 type Problem struct {
 	Status int
+	Code   string
+	Desc   string
 	why    pageReason
 	err    error
 }
 
+func badRequest(status int, code, desc string) *Problem {
+	return &Problem{Status: status, Code: code, Desc: desc, why: reasonRequest}
+}
+
 // Begin judges the parameters of GET /oauth/authorize for a signed-in person
-// (userID) and keeps the request for the consent page. It returns where to send
-// the browser: the consent page, or the client's redirect_uri with an error.
-// Problem is set instead when the browser must not be redirected.
+// (userID) and keeps the request for the consent page. It returns the consent
+// page to send the browser to, or the Problem to show instead. No error before
+// consent goes back to the client's redirect_uri: the only redirect with an
+// error is access_denied, after the person refused (Decide).
 func (s *Service) Begin(r *http.Request, userID string) (string, *Problem) {
 	q := r.URL.Query()
 	clientID := q.Get("client_id")
 	if clientID == "" {
-		return "", &Problem{http.StatusBadRequest, reasonNoClientID, nil}
+		return "", &Problem{Status: http.StatusBadRequest, why: reasonNoClientID}
 	}
 	client, err := s.lookupClient(r.Context(), clientID)
 	if err != nil {
 		s.log.Info("oauth authorize: client refused", "client", clientID, "err", err.Error())
-		return "", &Problem{http.StatusBadRequest, reasonClient, err}
+		return "", &Problem{Status: http.StatusBadRequest, why: reasonClient, err: err}
 	}
 	redirectURI := q.Get("redirect_uri")
 	if redirectURI == "" || !redirectAllowed(client.RedirectURIs, redirectURI) {
 		s.log.Info("oauth authorize: redirect_uri not registered", "client", clientID, "redirect_uri", redirectURI)
-		return "", &Problem{http.StatusBadRequest, reasonRedirect, nil}
+		return "", &Problem{Status: http.StatusBadRequest, why: reasonRedirect}
 	}
-	// From here on the redirect target is known to be the client's own.
 	state := q.Get("state")
 	if q.Get("response_type") != "code" {
-		return s.errorBack(redirectURI, state, "unsupported_response_type", "response_type must be code"), nil
+		return "", badRequest(http.StatusBadRequest, "unsupported_response_type", "response_type must be code")
 	}
 	challenge := q.Get("code_challenge")
 	if method := q.Get("code_challenge_method"); challenge == "" || method != "S256" {
-		return s.errorBack(redirectURI, state, "invalid_request", "PKCE with code_challenge_method S256 is required"), nil
+		return "", badRequest(http.StatusBadRequest, "invalid_request", "PKCE with code_challenge_method S256 is required")
 	}
 	if !challengeRe.MatchString(challenge) {
-		return s.errorBack(redirectURI, state, "invalid_request", "code_challenge is not a base64url SHA-256 value"), nil
+		return "", badRequest(http.StatusBadRequest, "invalid_request", "code_challenge is not a base64url SHA-256 value")
 	}
 	resource := q.Get("resource")
 	if resource == "" {
-		return s.errorBack(redirectURI, state, "invalid_target", "the resource parameter (RFC 8707) is required"), nil
+		return "", badRequest(http.StatusBadRequest, "invalid_target", "the resource parameter (RFC 8707) is required")
 	}
 	if resource != s.resource {
-		return s.errorBack(redirectURI, state, "invalid_target", "unknown resource"), nil
+		return "", badRequest(http.StatusBadRequest, "invalid_target", "unknown resource")
 	}
 	scopes, ok := grantScopes(q.Get("scope"))
 	if !ok {
-		return s.errorBack(redirectURI, state, "invalid_scope", "scope must be one of: "+strings.Join(scopesSupported(), " ")), nil
+		return "", badRequest(http.StatusBadRequest, "invalid_scope", "scope must be one of: "+strings.Join(scopesSupported(), " "))
 	}
 	id, err := randomToken(24)
 	if err != nil {
-		return s.errorBack(redirectURI, state, "server_error", "could not start the request"), nil
+		return "", badRequest(http.StatusInternalServerError, "server_error", "could not start the request")
 	}
 	now := s.now()
 	s.mu.Lock()
 	s.prune(now)
+	if s.pendingOf[userID] >= maxPendingPerUser {
+		s.mu.Unlock()
+		return "", badRequest(http.StatusTooManyRequests, "temporarily_unavailable", "too many pending requests of this account; finish or wait for the others (10 minutes)")
+	}
 	if len(s.pending) >= maxPending {
 		s.mu.Unlock()
-		return s.errorBack(redirectURI, state, "temporarily_unavailable", "too many pending requests"), nil
+		return "", badRequest(http.StatusServiceUnavailable, "temporarily_unavailable", "too many pending requests")
 	}
 	s.pending[id] = &pendingAuth{id: id, client: *client, redirectURI: redirectURI, state: state, challenge: challenge,
 		scopes: scopes, resource: resource, userID: userID, expires: now.Add(pendingTTL)}
+	s.pendingOf[userID]++
 	s.mu.Unlock()
 	return PathConsent + "?req=" + url.QueryEscape(id), nil
 }
@@ -184,7 +197,7 @@ func grantScopes(requested string) ([]string, bool) {
 func (s *Service) prune(now time.Time) {
 	for k, p := range s.pending {
 		if now.After(p.expires) {
-			delete(s.pending, k)
+			s.dropPending(k, p)
 		}
 	}
 	for k, c := range s.codes {
@@ -209,9 +222,17 @@ func (s *Service) takePending(id, userID string, keep bool) *pendingAuth {
 		return nil
 	}
 	if !keep {
-		delete(s.pending, id)
+		s.dropPending(id, p)
 	}
 	return p
+}
+
+// dropPending removes a pending request and its count. s.mu is held.
+func (s *Service) dropPending(id string, p *pendingAuth) {
+	delete(s.pending, id)
+	if s.pendingOf[p.userID]--; s.pendingOf[p.userID] <= 0 {
+		delete(s.pendingOf, p.userID)
+	}
 }
 
 // ConsentInfo is what the consent page shows of a request.

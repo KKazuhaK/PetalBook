@@ -136,18 +136,21 @@ const (
 	reasonNoClientID pageReason = iota
 	reasonClient
 	reasonRedirect
+	reasonRequest // a request that is not well-formed: Code and Desc say why
 )
 
 type pageTexts struct {
-	lang, title, nothing, noClientID, redirect, clientUnknown, clientDetail, detailClose string
+	lang, title, nothing, noClientID, redirect, request, clientUnknown, clientDetail, detailClose string
 }
 
 var pageEn = pageTexts{lang: "en", title: "Authorization failed", nothing: "Nothing was authorized. You can close this page.",
 	noClientID: "The request has no client_id.", redirect: "The redirect_uri is not one the client has registered.",
+	request:       "The client sent a request this server does not accept. ",
 	clientUnknown: "This client is not registered with this server.", clientDetail: "This client cannot be used: ", detailClose: "."}
 
 var pageZh = pageTexts{lang: "zh-CN", title: "授权失败", nothing: "没有授予任何权限。可以关闭此页面。",
 	noClientID: "请求中缺少 client_id。", redirect: "redirect_uri 不是该客户端注册过的地址。",
+	request:       "客户端发来的请求不被此服务器接受。",
 	clientUnknown: "该客户端没有在此服务器注册。", clientDetail: "无法使用该客户端：", detailClose: "。"}
 
 // WriteProblem answers an authorization request that cannot be redirected: the
@@ -163,6 +166,8 @@ func (s *Service) WriteProblem(w http.ResponseWriter, r *http.Request, p *Proble
 		msg = t.noClientID
 	case reasonRedirect:
 		msg = t.redirect
+	case reasonRequest:
+		msg = t.request + p.Code + ": " + p.Desc
 	default:
 		switch {
 		case p.err == errUnknownClient:

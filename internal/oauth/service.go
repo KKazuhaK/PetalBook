@@ -56,8 +56,11 @@ const (
 	IdleExpiry   = 90 * 24 * time.Hour
 	codeTTL      = 60 * time.Second
 	pendingTTL   = 10 * time.Minute
-	maxPending   = 1000
-	maxRetired   = 8
+	maxPending   = 1000 // pending authorization requests in all
+	// maxPendingPerUser is the pending requests of one person, so that one
+	// signed-in account cannot fill the table for everyone.
+	maxPendingPerUser = 20
+	maxRetired        = 8
 	// cacheTTL is how long a grant read from the database is trusted in memory.
 	cacheTTL    = tokens.DefaultTTL
 	maxCached   = 10_000
@@ -99,10 +102,11 @@ type Service struct {
 	regLimit  *tokens.Limiter // new registrations per client address
 	failLimit *tokens.Limiter // refused access tokens per client address
 
-	mu      sync.Mutex
-	pending map[string]*pendingAuth // consent requests by id
-	codes   map[string]*authCode    // by SHA-256 of the code
-	used    map[string]usedCode     // codes exchanged, to end the grant on a replay
+	mu        sync.Mutex
+	pending   map[string]*pendingAuth // consent requests by id
+	pendingOf map[string]int          // the number of them per person
+	codes     map[string]*authCode    // by SHA-256 of the code
+	used      map[string]usedCode     // codes exchanged, to end the grant on a replay
 
 	refreshMu sync.Mutex // one refresh at a time
 	replayMu  sync.Mutex
@@ -139,7 +143,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		return nil, err
 	}
 	s := &Service{cfg: cfg, st: cfg.Store, log: cfg.Logger, now: cfg.Now, issuer: cfg.Issuer, resource: cfg.Issuer + ResourcePath, key: key,
-		pending: map[string]*pendingAuth{}, codes: map[string]*authCode{}, used: map[string]usedCode{}, replay: map[string]replayEntry{},
+		pending: map[string]*pendingAuth{}, pendingOf: map[string]int{}, codes: map[string]*authCode{}, used: map[string]usedCode{}, replay: map[string]replayEntry{},
 		grants: map[string]*grantEntry{}, gone: map[string]time.Time{}, verified: map[[32]byte]verifiedToken{}}
 	s.cimd = newCIMDFetcher(cfg.CIMDClient, s.now, s.log)
 	s.regLimit = &tokens.Limiter{Max: registerPerWindow, Window: registerWindow, Now: s.now}

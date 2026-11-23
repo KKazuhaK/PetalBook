@@ -46,6 +46,17 @@ func oauthCrossSite(r *http.Request) bool {
 	return false
 }
 
+// oauthRefuse answers a refusal of the checks in front of the handlers in the
+// OAuth error shape when the request is for /oauth/*, as docs/api.md promises
+// there, and reports whether it did.
+func oauthRefuse(w http.ResponseWriter, r *http.Request, status int, code, desc string) bool {
+	if !strings.HasPrefix(r.URL.Path, "/oauth/") {
+		return false
+	}
+	writeJSON(w, status, map[string]string{"error": code, "error_description": desc})
+	return true
+}
+
 // oauthForm is the one POST of the API whose body is a form.
 func oauthForm(r *http.Request) bool { return r.URL.Path == oauth.PathToken }
 

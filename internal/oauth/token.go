@@ -280,7 +280,7 @@ func (s *Service) refresh(w http.ResponseWriter, r *http.Request) {
 	}
 	// The new hash is stored before the answer leaves. The grant may have been
 	// revoked, or refreshed by another process, since it was read.
-	won, err := store.RotateOAuthRefresh(ctx, s.st.Q(), gid, h, hashToken(secNew), now, maxRetired)
+	won, err := store.RotateOAuthRefresh(ctx, s.st, gid, h, hashToken(secNew), now, maxRetired)
 	if err != nil {
 		s.fail(w, "refreshing", err)
 		return

@@ -1636,6 +1636,15 @@ GitHub App 和用户授权，自动建仓库；passkey；SAML。
   账号页和管理页仍可列出、吊销。主人被停用时刷新答 `invalid_grant`，授权保留，
   账号启用后继续有效。回调地址除 `https` 和本机回环的 `http` 外，也接受原生应用
   的私有协议（`cursor://` 之类，RFC 8252），Cursor、VS Code 要用。
+  同一人同时等待决定的授权请求最多 20 个，全服务器最多 1000 个，超过的在错误页上
+  显示 `temporarily_unavailable`（个人的答 `429`，全服务器的答 `503`）。
+- **授权请求出错不再跳回客户端**（2.6 第二部分审查时改，**改了上面最初的约定，
+  待所有者确认**）：最初约定 `client_id`、`redirect_uri` 以外的参数错误带 `error`
+  跳回客户端的 `redirect_uri`；现在照 RFC 9700 第 4.11.2 节，用户同意之前的一切
+  错误（`response_type`、`scope`、PKCE、`resource` 不对，请求过多）都只显示本服务器
+  的错误页，不跳转，免得自行注册的客户端或任意元数据文档把本服务器当成开放跳转。
+  只有在 `redirect_uri` 已核对、请求本身也合格之后，用户在同意页上拒绝时才带
+  `access_denied` 跳回。
 - **MCP 传输**：Streamable HTTP，无状态、只回 JSON（不开 SSE，没有 MCP 会话），
   空闲的客户端不占任何资源。`Origin` 检查照旧，防 DNS 重绑定。
 - **工具**：`spaces_list`、`folders_list`、`tags_list`、`types_list`、
@@ -1680,6 +1689,22 @@ GitHub App 和用户授权，自动建仓库；passkey；SAML。
 - 只要提交带 `Changed-via` trailer，历史里就会显示 `via`，包括从远端拉下来的
   提交：别人（或另一台 PetalBook）写的 trailer 在这里也会显示成 MCP 或 API token。
   `via` 只说明提交信息里写了什么，不是本服务器验证过的来源。
+
+已知问题（2.6 第二部分，OAuth 服务审查时记下，暂不处理）：
+
+- 授权码重放的检测有空档：第一次兑换还在保存授权记录时来的重放发现不了；兑换
+  60 秒以后再来的重放也不再认作重放（只答 `invalid_grant`，不结束授权）。PKCE
+  仍然保护着：没有 `code_verifier` 的人拿到授权码也换不到令牌。
+- 被换掉的刷新令牌只记最近 8 个；更早的旧令牌再来时认不出是重用，只答
+  `invalid_grant`，不会结束整个授权。
+- 刷新用一把锁管所有授权（同一时刻只做一次刷新）。SQLite 本来就只有一个写入者，
+  没有影响；PostgreSQL 上不同授权的刷新本可以并行，这把锁会限制吞吐。
+- 60 秒宽限期内重发拿到同一个答复，这份答复只在内存里。PostgreSQL 上跑多个进程
+  时，重试落到另一个进程就拿不到，答 `invalid_grant`（客户端要重新授权）。
+
+第三部分（MCP）要注意的，先记下，这次不做：只读的 token 在 `handle` 的路由上
+拒绝一切非 GET 请求（`internal/api/routes.go:281`）。`/mcp` 每次都是 POST，所以
+不能挂在 `handle` 下，要单独挂一个路径，按每个工具自己判断要读还是要写。
 
 **2.7 GitHub App、用户授权、自动建仓库**
 
