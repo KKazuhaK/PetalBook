@@ -2423,6 +2423,12 @@ server keeps only its SHA-256, never the secret; the first 12 characters
   `"token": {"id", "name", "access", "spaces": ["…"]}` (`null` for a session);
 - `/mcp` (see "MCP").
 
+The drafts are not among them: `PUT` and `DELETE …/pages/{id}/draft` and
+`POST …/pages/{id}/commit` answer `403 token_scope` to a token. A draft is a
+person's, kept for the browser; what a token writes goes straight to a commit
+(with its own `via`, like `/mcp`), so the server never commits a token's draft
+under no name, and a token never commits a browser draft as "API token".
+
 Everything else, a route that needs `members` or `manage`, and anything under
 `/api/account`, `/api/users`, `/api/invites`, `/api/admin`, `/api/oauth` and
 the sign-in routes, answers `403 token_scope`: a token cannot make tokens,
@@ -2440,7 +2446,10 @@ is not open to tokens. So:
 - a space it names but whose member the owner no longer is (or that no longer
   exists): `404 not_found`, the same as for a session, from the owner's very
   next request after the removal;
-- a write with a `read` token: `403 token_scope`;
+- a write with a `read` token: `403 token_scope`. Any request that is not
+  `GET` or `HEAD` is a write here, whatever permission the route asks: a
+  `read` token cannot delete a draft, add or remove a favourite or reorder
+  them either;
 - a write with a `write` token whose owner is now a viewer there:
   `403 no_permission`, from the next request after the change of role;
 - a disabled space: `403 space_disabled`.
@@ -2486,7 +2495,8 @@ that is in memory costs no query.
   that no longer exists or the owner has left; it stays listed, and does
   nothing). There is no "all my spaces": a token names its spaces.
 - `expires`: a time, or `null` for never.
-- `lastUsed`: when it was last used, to the hour; `null` if never.
+- `lastUsed`: when it was last used; it is updated at most once an hour, so it
+  is right within an hour; `null` if never.
 - `revoked`: when it was revoked, or `null`.
 - `state`: `active`, `expired` or `revoked`.
 
@@ -2557,10 +2567,11 @@ cannot sign in); tokens in accounts mode are created through the app.
   01JD3M9T2B  pbk_3fK9a2Lq  Desktop notes  write   2027-02-21  2026-11-23 09:00  active
   ```
 
-- `revoke`: by id, or by prefix when exactly one token has it. Prints
-  `revoked 01JD3M9T2B "Desktop notes"`; the running server refuses the token
-  within 30 seconds. An id or prefix that matches no token, or a prefix that
-  matches several, exits with status 1 and says so.
+- `revoke`: by id, or by prefix when exactly one token has it; a prefix must be
+  the full 12 characters (a shorter one is an error that says so, and revokes
+  nothing). Prints `revoked 01JD3M9T2B "Desktop notes"`; the running server
+  refuses the token within 30 seconds. An id or prefix that matches no token,
+  or a prefix that matches several, exits with status 1 and says so.
 
 ## OAuth for MCP clients
 

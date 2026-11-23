@@ -77,9 +77,20 @@ var tokenRoutes = map[string]bool{
 // route that needs members or manage included, is for a person.
 func tokenAllowed(rt route) bool {
 	if rt.access.kind == kindSpace {
+		// The drafts are a person's, kept in the browser. What a token writes
+		// goes straight to a commit, with its own via.
+		if strings.HasSuffix(rt.pattern, "/draft") || strings.HasSuffix(rt.pattern, "/commit") {
+			return false
+		}
 		return !rt.access.orSelf && (rt.access.need == perm.Read || rt.access.need == perm.Write)
 	}
 	return tokenRoutes[rt.method+" "+rt.pattern]
+}
+
+// tokenChanges says whether a request changes anything; a token without write
+// is refused those, whatever permission the route asks for.
+func tokenChanges(r *http.Request) bool {
+	return r.Method != http.MethodGet && r.Method != http.MethodHead
 }
 
 // tokenPrincipal is who a request with a bearer token acts for.

@@ -211,6 +211,10 @@ func oneLine(s string) string {
 	}, s)
 }
 
+// shownPrefixLen is the length of the prefix a list shows; less than that is
+// too little to tell one token from another.
+var shownPrefixLen = len(tokens.ShownPrefix(strings.Repeat("x", 64)))
+
 func newTokenRevoke() *cobra.Command {
 	var f tokenFlags
 	cmd := &cobra.Command{
@@ -234,9 +238,12 @@ func newTokenRevoke() *cobra.Command {
 					hit = []store.TokenRow{r}
 					break
 				}
-				if want != "" && strings.HasPrefix(r.Prefix, want) {
+				if len(want) >= shownPrefixLen && strings.HasPrefix(r.Prefix, want) {
 					hit = append(hit, r)
 				}
+			}
+			if len(hit) == 0 && len(want) < shownPrefixLen {
+				return fmt.Errorf("%q is not an id of yours; to name a token by its prefix give all %d characters (petalbook token list)", want, shownPrefixLen)
 			}
 			switch {
 			case len(hit) == 0:

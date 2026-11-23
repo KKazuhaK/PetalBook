@@ -1666,6 +1666,15 @@ GitHub App 和用户授权，自动建仓库；passkey；SAML。
 - trailer 的写法 `Changed-via: MCP`／`Changed-via: API token`。
 - 要不要按 token 限制请求频率（先不限）。
 
+已知问题（2.6 第一部分审查时记下，暂不处理）：
+
+- PostgreSQL 上，同一人在同一时刻建两个 token，可能都通过「最多 50 个有效的」
+  的检查，结果多出一两个。限制是先数后写，没有加锁；SQLite 只有一个写入者，
+  不受影响。超出的不影响使用，吊销一个即可。
+- 只要提交带 `Changed-via` trailer，历史里就会显示 `via`，包括从远端拉下来的
+  提交：别人（或另一台 PetalBook）写的 trailer 在这里也会显示成 MCP 或 API token。
+  `via` 只说明提交信息里写了什么，不是本服务器验证过的来源。
+
 **2.7 GitHub App、用户授权、自动建仓库**
 
 - 新建空间时选「在 GitHub 上建一个仓库」：组织下用 GitHub App 的安装令牌，

@@ -216,6 +216,48 @@ func TestATokenIsNeverMoreThanItsOwner(t *testing.T) {
 	})
 }
 
+func TestAReadTokenChangesNothing(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		tm := newTeam(t, a)
+		_, readTok := mkToken(t, tm.editor, "read", nil, tm.sid)
+		_, writeTok := mkToken(t, tm.editor, "write", nil, tm.sid)
+		p := newPage(t, tm.editor, tm.sid, "Seed")
+		page := spacePath(tm.sid) + "/pages/" + p["id"].(string)
+		rd, wr := a.bearer(readTok, ""), a.bearer(writeTok, "")
+		fav := map[string]any{"page": p["id"]}
+		for _, c := range []struct{ m, path string }{
+			{"DELETE", page + "/draft"},
+			{"POST", spacePath(tm.sid) + "/favorites"},
+			{"DELETE", spacePath(tm.sid) + "/favorites"},
+			{"PUT", spacePath(tm.sid) + "/favorites/order"},
+		} {
+			rd.do(c.m, c.path, fav).want(t, 403, "token_scope")
+		}
+		// A write token is not turned away by the scope on these.
+		if got := wr.do("PUT", spacePath(tm.sid)+"/favorites/order", map[string]any{"ids": []string{}}); got.code == 403 && got.body["error"] == "token_scope" {
+			t.Fatal(got.raw)
+		}
+	})
+}
+
+func TestNoDraftRouteIsForATokenToUse(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		tm := newTeam(t, a)
+		_, writeTok := mkToken(t, tm.editor, "write", nil, tm.sid)
+		p := newPage(t, tm.editor, tm.sid, "Seed")
+		page := spacePath(tm.sid) + "/pages/" + p["id"].(string)
+		wr := a.bearer(writeTok, "")
+		body := map[string]any{"baseRev": p["rev"], "meta": map[string]any{"title": "Seed"}, "body": "x\n"}
+		wr.do("PUT", page+"/draft", body).want(t, 403, "token_scope")
+		wr.do("DELETE", page+"/draft", nil).want(t, 403, "token_scope")
+		wr.do("POST", page+"/commit", nil).want(t, 403, "token_scope")
+		// The same calls with the browser session are the person's.
+		tm.editor.do("PUT", page+"/draft", body).want(t, 200, "")
+	})
+}
+
 func TestAScopeOutsideTheToken(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
@@ -347,7 +389,7 @@ func TestWhichRoutesATokenMayUse(t *testing.T) {
 			tokenRoute := false
 			switch {
 			case rt.Space && !rt.OrSelf && (rt.Perm == perm.Read || rt.Perm == perm.Write):
-				tokenRoute = true
+				tokenRoute = !strings.HasSuffix(rt.Pattern, "/draft") && !strings.HasSuffix(rt.Pattern, "/commit")
 			case outside[rt.Method+" "+rt.Pattern]:
 				tokenRoute = true
 			}

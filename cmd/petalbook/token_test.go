@@ -139,7 +139,7 @@ func TestTokenCommandsInSingleUserMode(t *testing.T) {
 	// Ids and prefixes that match nothing, or too much, exit with an error.
 	list, _, _ = runSplit(t, "token", "list", "--space", dir)
 	id := strings.Fields(strings.Split(list, "\n")[1])[0]
-	for _, c := range []struct{ arg, want string }{{"NOSUCHTOKN", "no token"}, {"pbk_", "tokens have the prefix"}, {"", "no token"}} {
+	for _, c := range []struct{ arg, want string }{{"NOSUCHTOKN", "all 12 characters"}, {"pbk_", "all 12 characters"}, {secret[:11], "all 12 characters"}, {"", "all 12 characters"}} {
 		if _, _, err := runSplit(t, "token", "revoke", "--space", dir, c.arg); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%q: %v", c.arg, err)
 		}

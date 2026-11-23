@@ -259,6 +259,10 @@ func (s *server) handle(rt route) http.HandlerFunc {
 				s.fail(w, err)
 				return
 			}
+			if p.Grant != nil && !p.Grant.Write && tokenChanges(r) {
+				writeError(w, http.StatusForbidden, "token_scope", "this token is read only")
+				return
+			}
 			c.p = p
 			c.r = r.WithContext(space.ContextWithVia(r.Context(), space.ViaToken))
 		} else if rt.access.kind != kindPublic || rt.optionalUser {
