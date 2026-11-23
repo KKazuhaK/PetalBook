@@ -625,9 +625,6 @@ export function createMockServer(options: MockOptions = {}) {
     const home = space.store.home
     const { date, skip, lang } = home.checkQuery(q)
     const locked = accounts ? site.allow : { own: true, api: true } // a locked source or choice is kept, and not used
-    // Dates the texts do not cover are not an error: there is just nothing for that day.
-    const year = Number(date.slice(0, 4))
-    if (year < 1970 || year > 2261) return { page: null, reason: 'out_of_range' }
     const own = locked.own ? home.sourceOf(lang) : undefined
     if (own) return home.pick(space.id, q, own) ?? { page: null, reason: 'no_match' }
     // An interface the space chose (the one for the language, else one for every language). The mock makes no
@@ -635,6 +632,8 @@ export function createMockServer(options: MockOptions = {}) {
     const chosen = site.apis.filter((a) => a.enabled && locked.api && (spaceDaily.get(space.id)?.apis ?? []).includes(a.id))
     const api = chosen.find((a) => a.lang !== '' && lang.startsWith(a.lang)) ?? chosen.find((a) => a.lang === '') ?? chosen[0]
     if (accounts && api) {
+      // An external interface knows only today and the days next to it: another date is no error, there is just no text.
+      if (Math.abs(Date.parse(date + 'T00:00:00Z') - Date.parse(new Date(now()).toISOString().slice(0, 10) + 'T00:00:00Z')) > 86400_000) return { page: null, reason: 'out_of_range' }
       const quote: Record<string, unknown> = { text: `${api.name} ${date}${skip ? ` #${skip}` : ''}`, ...(api.source ? { source: 'src' } : {}), ...(api.author ? { author: 'au' } : {}) }
       if (api.link) quote.link = api.link.replaceAll('{uuid}', 'u1')
       if (api.id.includes('stale')) Object.assign(quote, { stale: true, fetched: '2026-11-20T08:00:00Z' })
@@ -732,10 +731,10 @@ export function createMockServer(options: MockOptions = {}) {
       if (str('text') === '') throw bad('text 是正文的 JSON 路径，必填')
       for (const f of ['text', 'source', 'author'] as const) {
         const v = str(f)
-        if (/secret/i.test(v)) throw new HttpError(400, 'invalid', `${f} 的路径会露出保密的内容`, { code: 'path_reveals_secret', field: f })
-        if (v !== '' && !/^[\w.[\]-]+$/.test(v)) throw new HttpError(400, 'invalid', `${f} 不是合法的路径`, { code: 'path_error', field: f })
+        if (/secret/i.test(v)) throw new HttpError(400, 'path_reveals_secret', `${f} 的路径会露出保密的内容`, { field: f })
+        if (v !== '' && !/^[\w.[\]-]+$/.test(v)) throw new HttpError(400, 'path_error', `${f} 不是合法的路径`, { field: f })
       }
-      if (/\{header[.:_]/i.test(str('link'))) throw new HttpError(400, 'invalid', 'link 不能用请求头', { code: 'link_uses_header' })
+      if (/\{header[.:_]/i.test(str('link'))) throw new HttpError(400, 'link_uses_header', 'link 不能用请求头')
       const refresh = str('refresh') || 'daily'
       if (!['daily', 'hourly', 'minutes'].includes(refresh)) throw bad('refresh 是 daily、hourly 或 minutes')
       const refreshMinutes = refresh === 'minutes' ? Number(body.refreshMinutes) : 0
@@ -751,9 +750,9 @@ export function createMockServer(options: MockOptions = {}) {
         let value = typeof h.value === 'string' ? h.value : undefined
         // The saved values go with the saved address: with another one they are given again.
         const kept = old?.headers.find((x) => x.name.toLowerCase() === hn.toLowerCase())
-        if (value === undefined && kept && old?.url !== url) throw new HttpError(400, 'invalid', `the address changed; give the value of the header ${hn} again`, { code: 'header_reenter', header: hn })
+        if (value === undefined && kept && old?.url !== url) throw new HttpError(400, 'header_reenter', `the address changed; give the value of the header ${hn} again`, { header: hn })
         if (value === undefined) value = kept?.value
-        if (value === undefined) throw new HttpError(400, 'invalid', `the header ${hn} has no value yet`, { code: 'header_missing', header: hn })
+        if (value === undefined) throw new HttpError(400, 'header_missing', `the header ${hn} has no value yet`, { header: hn })
         headers.push({ name: hn, value })
       }
       if (!old && site.apis.length >= 50) throw bad('最多 50 个接口')
@@ -783,16 +782,16 @@ export function createMockServer(options: MockOptions = {}) {
       const a = (isRecord(body.api) ? body.api : {}) as Record<string, unknown>
       const url = String(a.url ?? '')
       const tryHost = /^https?:\/\/([^/?#]+)/i.exec(url)?.[1]?.toLowerCase()
-      if (tryHost && !site.hosts.includes(tryHost)) return { status: 200, body: { ok: false, message: `the host ${tryHost} is not on the list of hosts`, code: 'host_not_allowed', host: tryHost, url } }
-      if (url.includes('html')) return { status: 200, body: { ok: false, message: 'the answer is not JSON', code: 'not_json', url } }
-      if (url.includes('huge')) return { status: 200, body: { ok: false, message: 'the answer is too large', code: 'too_large', url } }
+      if (tryHost && !site.hosts.includes(tryHost)) return { status: 200, body: { ok: false, message: `the host ${tryHost} is not on the list of hosts`, error: 'host_not_allowed', host: tryHost, url } }
+      if (url.includes('html')) return { status: 200, body: { ok: false, message: 'the answer is not JSON', error: 'not_json', url } }
+      if (url.includes('huge')) return { status: 200, body: { ok: false, message: 'the answer is too large', error: 'too_large', url } }
       if (url.includes('down')) return { status: 200, body: { ok: false, message: 'status 503', status: 503, url } }
       const raw = '{"hitokoto": "山色空蒙雨亦奇", "from": "饮湖上初晴后雨", "from_who": "苏轼"}'
-      const pathErrors: Record<string, string> = {}
-      const pick = (k: string, v: string) => (a[k] === 'missing' ? ((pathErrors[k] = `no text or number at ${v}`), undefined) : a[k] ? v : undefined)
+      const pathErrors: { field: string; code: string; message: string }[] = []
+      const pick = (k: string, v: string) => (a[k] === 'missing' ? (pathErrors.push({ field: k, code: 'path_error', message: `no text or number at ${v}` }), undefined) : a[k] ? v : undefined)
       const quote = { text: pick('text', '山色空蒙雨亦奇'), source: pick('source', '饮湖上初晴后雨'), author: pick('author', '苏轼') }
       const clean = Object.fromEntries(Object.entries(quote).filter(([, v]) => v !== undefined))
-      return { status: 200, body: { ok: Object.keys(pathErrors).length === 0, status: 200, url, raw, rawTruncated: false, quote: clean, ...(Object.keys(pathErrors).length ? { pathErrors } : {}) } }
+      return { status: 200, body: { ok: pathErrors.length === 0, status: 200, url, raw, rawTruncated: false, quote: clean, ...(pathErrors.length ? { pathErrors } : {}) } }
     }
     if (path === '/admin/daily/lines' && method === 'PUT') {
       const lang = typeof body.lang === 'string' ? body.lang.toLowerCase() : ''

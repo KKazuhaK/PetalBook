@@ -147,7 +147,7 @@ export function createHomeBook(env: HomeEnv) {
   const validDate = (date: string): boolean => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false
     const t = new Date(date + 'T00:00:00Z')
-    return !Number.isNaN(t.getTime()) && t.toISOString().slice(0, 10) === date
+    return !Number.isNaN(t.getTime()) && t.toISOString().slice(0, 10) === date && t.getUTCFullYear() >= 1970 && t.getUTCFullYear() <= 2261
   }
 
   const favLabel = (f: Fav) => {
@@ -189,7 +189,7 @@ export function createHomeBook(env: HomeEnv) {
       let skip = 0
       if (rawSkip !== null && rawSkip !== '') {
         if (!/^\d+$/.test(rawSkip)) throw invalid('skip 要是 0 以上的数')
-        if (Number(rawSkip) > MAX_SKIP) throw new HttpError(400, 'invalid', `skip 最大是 ${MAX_SKIP}`, { code: 'skip_too_large' })
+        if (Number(rawSkip) > MAX_SKIP) throw new HttpError(400, 'skip_too_large', `skip 最大是 ${MAX_SKIP}`)
         skip = Number(rawSkip)
       }
       const got = mapPick(src, spaceId, date, skip)
@@ -205,7 +205,7 @@ export function createHomeBook(env: HomeEnv) {
       let skip = 0
       if (rawSkip !== null && rawSkip !== '') {
         if (!/^\d+$/.test(rawSkip)) throw invalid('skip 要是 0 以上的数')
-        if (Number(rawSkip) > MAX_SKIP) throw new HttpError(400, 'invalid', `skip 最大是 ${MAX_SKIP}`, { code: 'skip_too_large' })
+        if (Number(rawSkip) > MAX_SKIP) throw new HttpError(400, 'skip_too_large', `skip 最大是 ${MAX_SKIP}`)
         skip = Number(rawSkip)
       }
       const lang = (q.get('lang') ?? '').toLowerCase()

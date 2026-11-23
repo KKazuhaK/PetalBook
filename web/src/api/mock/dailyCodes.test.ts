@@ -19,36 +19,48 @@ const put = (call: ReturnType<typeof admin>, over: Record<string, unknown>) => c
 describe('the mock gives the stable codes', () => {
   it('a header without a value is header_missing, and a changed address asks for kept values again (header_reenter)', () => {
     const call = admin()
-    expect(put(call, { headers: [{ name: 'X-New' }] })).toMatchObject({ status: 400, body: { error: 'invalid', code: 'header_missing', header: 'X-New' } })
+    expect(put(call, { headers: [{ name: 'X-New' }] })).toMatchObject({ status: 400, body: { error: 'header_missing', header: 'X-New' } })
     expect(put(call, {}).status).toBe(200)
     // The same address keeps the value; another one drops it.
     expect(put(call, { headers: [{ name: 'X-Api-Key' }] }).status).toBe(200)
-    expect(put(call, { url: 'https://quotes.example.org/other/{lang}', headers: [{ name: 'X-Api-Key' }] })).toMatchObject({ status: 400, body: { code: 'header_reenter', header: 'X-Api-Key' } })
+    expect(put(call, { url: 'https://quotes.example.org/other/{lang}', headers: [{ name: 'X-Api-Key' }] })).toMatchObject({ status: 400, body: { error: 'header_reenter', header: 'X-Api-Key' } })
     expect(put(call, { url: 'https://quotes.example.org/other/{lang}', headers: [{ name: 'X-Api-Key', value: 'v2' }] }).status).toBe(200)
   })
 
   it('paths and the link: path_error and path_reveals_secret with the field, link_uses_header', () => {
     const call = admin()
-    expect(put(call, { author: 'a b' })).toMatchObject({ status: 400, body: { code: 'path_error', field: 'author' } })
-    expect(put(call, { source: 'headers.secret' })).toMatchObject({ status: 400, body: { code: 'path_reveals_secret', field: 'source' } })
-    expect(put(call, { link: 'https://q.example.org/{header.X-Api-Key}' })).toMatchObject({ status: 400, body: { code: 'link_uses_header' } })
+    expect(put(call, { author: 'a b' })).toMatchObject({ status: 400, body: { error: 'path_error', field: 'author' } })
+    expect(put(call, { source: 'headers.secret' })).toMatchObject({ status: 400, body: { error: 'path_reveals_secret', field: 'source' } })
+    expect(put(call, { link: 'https://q.example.org/{header.X-Api-Key}' })).toMatchObject({ status: 400, body: { error: 'link_uses_header' } })
     expect(put(call, { link: 'https://q.example.org/{[0].id}' }).status).toBe(200)
   })
 
   it('a try says host_not_allowed with the host, not_json and too_large', () => {
     const call = admin()
     const tryIt = (url: string) => call('POST', '/api/admin/daily/try', { api: { ...GOOD, url }, lang: 'en', date: '2026-11-23' }).body
-    expect(tryIt('https://elsewhere.example.net/q')).toMatchObject({ ok: false, code: 'host_not_allowed', host: 'elsewhere.example.net' })
+    expect(tryIt('https://elsewhere.example.net/q')).toMatchObject({ ok: false, error: 'host_not_allowed', host: 'elsewhere.example.net' })
     put(call, {})
-    expect(tryIt('https://quotes.example.org/page.html')).toMatchObject({ ok: false, code: 'not_json' })
-    expect(tryIt('https://quotes.example.org/huge')).toMatchObject({ ok: false, code: 'too_large' })
+    expect(tryIt('https://quotes.example.org/page.html')).toMatchObject({ ok: false, error: 'not_json' })
+    expect(tryIt('https://quotes.example.org/huge')).toMatchObject({ ok: false, error: 'too_large' })
   })
 
-  it('a skip beyond the limit is skip_too_large, and a date outside the years is the reason out_of_range, not an error', () => {
+  it('a try reports a path that finds nothing as pathErrors with field, code and message', () => {
+    const call = admin()
+    put(call, {})
+    const r = call('POST', '/api/admin/daily/try', { api: { ...GOOD, author: 'missing' }, lang: 'en', date: '2026-11-23' }).body as { ok: boolean; pathErrors: unknown }
+    expect(r.ok).toBe(false)
+    expect(r.pathErrors).toEqual([{ field: 'author', code: 'path_error', message: expect.any(String) }])
+  })
+
+  it('a skip beyond the limit is skip_too_large; a malformed date stays invalid; out_of_range is for another day with an external source', () => {
     const call = admin()
     const space = (call('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
-    expect(call('GET', `/api/spaces/${space}/daily?date=2026-11-23&skip=99999999`)).toMatchObject({ status: 400, body: { error: 'invalid', code: 'skip_too_large' } })
-    expect(call('GET', `/api/spaces/${space}/daily?date=1969-12-31`)).toMatchObject({ status: 200, body: { page: null, reason: 'out_of_range' } })
+    const daily = (q: string) => call('GET', `/api/spaces/${space}/daily?${q}`)
+    expect(daily('date=2026-11-23&skip=99999999')).toMatchObject({ status: 400, body: { error: 'skip_too_large' } })
+    expect(daily('date=1969-12-31')).toMatchObject({ status: 400, body: { error: 'invalid' } })
+    put(call, {})
+    expect(call('PUT', `/api/spaces/${space}/daily/prefs`, { inherit: true, apis: ['quotes'] }).status).toBe(200)
+    expect(daily('date=2001-01-01')).toMatchObject({ status: 200, body: { page: null, reason: 'out_of_range' } })
   })
 })
 

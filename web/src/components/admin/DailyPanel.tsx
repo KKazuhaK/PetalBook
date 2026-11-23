@@ -24,7 +24,7 @@ const d = ta.daily
 // The server says why it refused with a code (and what it is about); it is put in the language of the page here.
 // A code that is not known shows the server's own words.
 const localised = (r: Parameters<typeof dailyCodeMessage>[0]) => dailyCodeMessage(r, d)
-const message = (e: unknown) => (e instanceof ApiError && (e.code === 'invalid' || e.code === 'not_found' || e.code === 'rate_limited') ? (localised(e.reason) ?? e.message) : t.fmt.labelled(d.failed, e instanceof Error ? e.message : ''))
+const message = (e: unknown) => (e instanceof ApiError && (e.reason || e.code === 'invalid' || e.code === 'not_found' || e.code === 'rate_limited') ? (localised(e.reason) ?? e.message) : t.fmt.labelled(d.failed, e instanceof Error ? e.message : ''))
 
 // The host an address goes to, as the server reads it (lower case), or null while it is not an address yet.
 export function hostOfUrl(url: string): string | null {
@@ -549,7 +549,7 @@ function TryResult({ result }: { result: DailyTryResult }) {
   ]
   return (
     <div className="grid gap-2 text-sm" data-slot="try-result" role="status">
-      <p className={result.ok ? 'text-green-700 dark:text-green-400' : 'text-destructive'}>{result.ok ? d.tryOk(result.status ?? 200) : (localised(result) ?? result.message ?? d.tryFailed)}</p>
+      <p className={result.ok ? 'text-green-700 dark:text-green-400' : 'text-destructive'}>{result.ok ? d.tryOk(result.status ?? 200) : (localised(result.error ? { ...result, code: result.error } : undefined) ?? result.message ?? d.tryFailed)}</p>
       {result.url && <p className="truncate font-mono text-xs text-muted-foreground">{result.url}</p>}
       {result.raw !== undefined && (
         <div>
@@ -560,7 +560,8 @@ function TryResult({ result }: { result: DailyTryResult }) {
       {(q || result.pathErrors) && (
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
           {rows.map(([label, value, key]) => {
-            const err = result.pathErrors?.[key]
+            const pe = result.pathErrors?.find((x) => x.field === key)
+            const err = pe ? (localised(pe) ?? pe.message) : undefined
             if (value === undefined && !err) return null
             return (
               <div key={key} className="contents">

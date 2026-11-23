@@ -291,7 +291,7 @@ describe('the administrators\' daily text page', () => {
       await click(byText('button', d.tryButton))
       await settle(() => document.querySelector('[data-slot="try-result"]') !== null, 'the result')
       const r = document.querySelector<HTMLElement>('[data-slot="try-result"]')!
-      expect(r.textContent).toContain('no text or number at')
+      expect(r.textContent).toContain(d.pathError(d.fieldSource))
       expect(r.textContent).toContain('山色空蒙雨亦奇')
       expect(r.textContent).not.toContain(d.tryOk(200))
     })

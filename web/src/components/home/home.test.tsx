@@ -163,7 +163,7 @@ describe('the text of the day', () => {
     const server = m.server as { handle: (...a: any[]) => unknown }
     const real = server.handle.bind(server)
     server.handle = (method: string, url: string, ...rest: unknown[]) =>
-      url.includes('skip=1') ? { status: 400, body: { error: 'invalid', message: 'skip is too large', code: 'skip_too_large' } } : real(method, url, ...rest)
+      url.includes('skip=1') ? { status: 400, body: { error: 'skip_too_large', message: 'skip is too large' } } : real(method, url, ...rest)
     await ready()
     await settle(() => daily() !== null && another() !== null, 'the text and the button')
     const first = daily()!.textContent

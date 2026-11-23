@@ -367,7 +367,7 @@ export interface ConnectRemoteInput {
   credential: { type: 'ssh' } | { type: 'token'; username?: string; token?: string }
 }
 
-// A refusal of the daily-text endpoints says why with a stable `code` next to `error` and `message`, and the
+// A refusal of the daily-text endpoints says why with a stable code in `error`, next to `message`, and the
 // thing it is about: host_not_allowed (host), header_reenter / header_missing (header), not_json, too_large,
 // path_error / path_reveals_secret (field: text|source|author|link), link_uses_header, skip_too_large.
 export interface ReasonCode {
@@ -378,6 +378,15 @@ export interface ReasonCode {
 }
 
 export type ErrorCode =
+  | 'host_not_allowed'
+  | 'header_reenter'
+  | 'header_missing'
+  | 'not_json'
+  | 'too_large'
+  | 'path_error'
+  | 'path_reveals_secret'
+  | 'link_uses_header'
+  | 'skip_too_large'
   | 'not_found'
   | 'invalid'
   | 'conflict'
@@ -625,14 +634,14 @@ export interface DailyTryResult {
   status?: number
   url?: string
   message?: string
-  // Why it did not work, as a code (see ReasonCode).
-  code?: string
+  // Why it did not work, as a code (see ReasonCode), with what it is about.
+  error?: string
   host?: string
   header?: string
   field?: string
   raw?: string
   rawTruncated?: boolean
   quote?: DailyQuote
-  pathErrors?: Record<string, string>
+  pathErrors?: { field: string; code: string; message: string }[]
 }
 export type LinesFormat = 'lines' | 'markdown'

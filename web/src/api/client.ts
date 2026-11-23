@@ -55,8 +55,10 @@ export const API_BASE = '/api'
 // Single-user mode has exactly one space, with this id.
 export const DEFAULT_SPACE = 'default'
 
-const reasonOf = (b: { code: string; host?: unknown; header?: unknown; field?: unknown }): ReasonCode => ({
-  code: b.code,
+// The codes the daily-text endpoints put in `error` (with what they are about next to it).
+const DAILY_CODES = new Set(['host_not_allowed', 'header_reenter', 'header_missing', 'not_json', 'too_large', 'path_error', 'path_reveals_secret', 'link_uses_header', 'skip_too_large'])
+const reasonOf = (b: { error: string; host?: unknown; header?: unknown; field?: unknown }): ReasonCode => ({
+  code: b.error,
   ...(typeof b.host === 'string' ? { host: b.host } : {}),
   ...(typeof b.header === 'string' ? { header: b.header } : {}),
   ...(typeof b.field === 'string' ? { field: b.field } : {}),
@@ -241,7 +243,7 @@ export async function request<T>(path: string, { method = 'GET', body, keepalive
     }
   }
   if (!res.ok) {
-    const err = (json ?? {}) as { error?: string; message?: string; current?: Page; draft?: PageDraft | null; code?: unknown; host?: unknown; header?: unknown; field?: unknown }
+    const err = (json ?? {}) as { error?: string; message?: string; current?: Page; draft?: PageDraft | null; host?: unknown; header?: unknown; field?: unknown }
     if (err.error === 'forbidden' && !USER_LEVEL_403.test(barePath)) {
       const message = forbiddenMessage(globalThis.location?.origin ?? '')
       forbiddenListeners.forEach((fn) => fn(message))
@@ -262,7 +264,7 @@ export async function request<T>(path: string, { method = 'GET', body, keepalive
       err.current,
       res.status === 429 && Number.isFinite(retry) && retry > 0 ? retry : undefined,
       err.draft,
-      typeof err.code === 'string' ? reasonOf(err as { code: string; host?: unknown; header?: unknown; field?: unknown }) : undefined,
+      typeof err.error === 'string' && DAILY_CODES.has(err.error) ? reasonOf(err as { error: string; host?: unknown; header?: unknown; field?: unknown }) : undefined,
     )
   }
   return json as T
