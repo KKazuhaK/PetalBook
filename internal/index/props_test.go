@@ -140,8 +140,7 @@ func TestNumberKeysSortLikeNumbers(t *testing.T) {
 
 // clockTime is a modification time later than the last one handed out.
 func clockTime(string) time.Time {
-	clock += int64(time.Second)
-	return time.Unix(0, clock)
+	return time.Unix(0, clockNs.Add(int64(time.Second)))
 }
 
 // putProp indexes a page in folder f with the header lines given.

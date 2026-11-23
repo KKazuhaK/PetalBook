@@ -119,7 +119,7 @@ func stressWAL(t *testing.T, pages, readers int, d time.Duration) walStats {
 	}
 	syncAll(t, x, all, false)
 	before := x.checkpoints.Load()
-	base := clock
+	base := clock()
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup

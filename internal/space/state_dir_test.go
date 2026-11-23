@@ -18,6 +18,7 @@ import (
 // --- the server's own state is not in the work tree ----------------------------------
 
 func TestAPullThatPutsALinkForPetalbookLeavesTheIndexWhole(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	s := f.s
 	if _, err := putCurrent(s, "wenan", allKinds()); err != nil {
@@ -69,6 +70,7 @@ func TestAPullThatPutsALinkForPetalbookLeavesTheIndexWhole(t *testing.T) {
 }
 
 func TestTheStateOfAnEarlierVersionIsMovedIntoTheGitDirectoryOnce(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -110,6 +112,7 @@ func TestTheStateOfAnEarlierVersionIsMovedIntoTheGitDirectoryOnce(t *testing.T) 
 }
 
 func TestALinkWhereTheOldStateWasIsNeitherFollowedNorMoved(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -135,6 +138,7 @@ func TestALinkWhereTheOldStateWasIsNeitherFollowedNorMoved(t *testing.T) {
 // --- a repair is never left behind as someone's change ---------------------------------
 
 func TestARepairWhosePushIsRejectedIsMadeAgainOnTheNewTip(t *testing.T) {
+	t.Parallel()
 	for _, how := range []string{"the remote moved", "the network is down"} {
 		t.Run(how, func(t *testing.T) {
 			f := newRemoteSpace(t)
@@ -218,6 +222,7 @@ func TestARepairWhosePushIsRejectedIsMadeAgainOnTheNewTip(t *testing.T) {
 // --- a link put on the way while a file is read --------------------------------------
 
 func TestALinkSwappedInWhileTheSettingsAreReadIsNeverFollowed(t *testing.T) {
+	t.Parallel()
 	s := settled(t)
 	root := s.Root()
 	if err := s.SetTagColor(Author{}, "x", "blue"); err != nil {
@@ -285,6 +290,7 @@ func TestALinkSwappedInWhileTheSettingsAreReadIsNeverFollowed(t *testing.T) {
 // --- a link spelled otherwise, on a file system that ignores case ------------------------
 
 func TestALinkSpelledPetalBookIsNeverFollowed(t *testing.T) {
+	t.Parallel()
 	s := settled(t)
 	root := s.Root()
 	crash(s)
@@ -366,11 +372,21 @@ func TestSalvagingALargeFileWithOneTypoIsLinear(t *testing.T) {
 		small, large = full/32, full/8
 	}
 	salvageTime(t, typoFile(small)) // warm
-	ts := salvageTime(t, typoFile(small))
-	tl := salvageTime(t, typoFile(large))
 	// Four times the text takes about four times as long; quadratic, sixteen.
-	if tl > 8*ts+200*time.Millisecond {
-		t.Fatalf("%d bytes took %v, %d bytes %v", small, ts, large, tl)
+	// A machine that is busy with other work slows one of the two readings and
+	// not the other, so the comparison is made again before it fails: code that
+	// is quadratic fails every time.
+	var ts, tl time.Duration
+	for attempt := 1; ; attempt++ {
+		ts = salvageTime(t, typoFile(small))
+		tl = salvageTime(t, typoFile(large))
+		if tl <= 8*ts+200*time.Millisecond {
+			break
+		}
+		if attempt == 3 {
+			t.Fatalf("%d bytes took %v, %d bytes %v, three times", small, ts, large, tl)
+		}
+		t.Logf("attempt %d: %d bytes took %v, %d bytes %v", attempt, small, ts, large, tl)
 	}
 	t.Logf("%d bytes: %v; %d bytes: %v", small, ts, large, tl)
 	if raceDetector {
@@ -392,6 +408,7 @@ func TestSalvagingALargeFileWithOneTypoIsLinear(t *testing.T) {
 }
 
 func TestSalvageNeverMakesUpAnEntry(t *testing.T) {
+	t.Parallel()
 	lines, want := thirty()
 	for _, c := range []struct {
 		name  string

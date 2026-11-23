@@ -11,6 +11,7 @@ import (
 )
 
 func TestRemovingAViewThatCarriesAnAnchorKeepsWhatItsAliasesMean(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "F", meta("title", "x"), "x\n")
 	src := `folders:
@@ -71,6 +72,7 @@ func TestRemovingAViewThatCarriesAnAnchorKeepsWhatItsAliasesMean(t *testing.T) {
 }
 
 func TestSavingOneViewLeavesTheOthersAsTheyAre(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "F", meta("title", "x"), "x\n")
 	writeSpaceYML(t, s, `defs:
@@ -110,6 +112,7 @@ folders:
 }
 
 func TestOptionsWrittenTwiceInATypeAreListedOnce(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	writeType(t, s.Root(), "task", `{"title":"task","type":"object","properties":{"status":{"type":"string","enum":["a","b","a"]}}}`)
 	for _, st := range []string{"a", "b", "a", "z"} {
@@ -140,6 +143,7 @@ func TestOptionsWrittenTwiceInATypeAreListedOnce(t *testing.T) {
 }
 
 func TestAMoveThatFillsTheSettingsFileIsRefusedAndUndone(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "A", meta("title", "x"), "x\n")
 	if _, err := putCurrent(s, "t", TypeInput{}); err != nil {
@@ -177,6 +181,7 @@ const crossAnchors = `folders:
 `
 
 func TestDeletingAFolderWhoseAnchorAnotherFolderUsesForgetsItsViews(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "A", meta("title", "x"), "x\n")
 	mustCreate(t, s, "B", meta("title", "y"), "y\n")
@@ -200,6 +205,7 @@ func TestDeletingAFolderWhoseAnchorAnotherFolderUsesForgetsItsViews(t *testing.T
 }
 
 func TestMovingAFolderWhoseAnchorAnotherFolderUsesKeepsBothViews(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "A", meta("title", "x"), "x\n")
 	mustCreate(t, s, "B", meta("title", "y"), "y\n")
@@ -229,6 +235,7 @@ func TestMovingAFolderWhoseAnchorAnotherFolderUsesKeepsBothViews(t *testing.T) {
 }
 
 func TestRecoveryOfAMoveWhoseSettingsDoNotFitMovesTheFolderBack(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)

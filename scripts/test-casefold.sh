@@ -44,11 +44,20 @@ folds() {
   return "$ok"
 }
 
+# The test binaries are linked side by side: linking a race binary is slow. The
+# tests themselves run one package at a time, so that tests that depend on
+# timing do not compete with those of another package.
 build() {
   mkdir "$work/bin"
+  local pids=() pid status=0
   for pkg in $pkgs; do
-    go test -c -race -o "$work/bin/$(basename "$pkg").test" "./$pkg"
+    go test -c -race -o "$work/bin/$(basename "$pkg").test" "./$pkg" &
+    pids+=($!)
   done
+  for pid in "${pids[@]}"; do
+    wait "$pid" || status=1
+  done
+  return "$status"
 }
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/petalbook-casefold.XXXXXX")"

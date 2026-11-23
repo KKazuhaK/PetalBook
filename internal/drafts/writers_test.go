@@ -39,7 +39,7 @@ func newShared(t *testing.T, st *store.Store) *sharedFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	mgr, err := spaces.NewAccounts(spaces.Options{Store: st, DataDir: filepath.Join(dir, "data"), Committer: "Svc <svc@example.test>", CommitIdle: time.Hour, CommitMax: time.Hour})
+	mgr, err := spaces.NewAccounts(spaces.Options{Store: st, DataDir: filepath.Join(dir, "data"), Committer: "Svc <svc@example.test>", CloseWait: 200 * time.Millisecond, CommitIdle: time.Hour, CommitMax: time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}

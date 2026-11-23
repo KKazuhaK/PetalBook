@@ -51,6 +51,7 @@ func hash8(data []byte) string {
 var pngBytes = []byte("\x89PNG\r\n\x1a\n not really a picture")
 
 func TestUploadStoresAFileOfThePage(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	id := f.create("Tang", map[string]any{"title": "暮雪"}, "x\n")["id"].(string)
 
@@ -112,6 +113,7 @@ func TestUploadStoresAFileOfThePage(t *testing.T) {
 }
 
 func TestUploadNames(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	id := f.create("", nil, "x\n")["id"].(string)
 	data := []byte("data")
@@ -142,6 +144,7 @@ func TestUploadNames(t *testing.T) {
 }
 
 func TestUploadRefusals(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, func(o *api.Options) { o.MaxUpload = 1000 })
 	id := f.create("", nil, "x\n")["id"].(string)
 	u := base + "/pages/" + id + "/assets"
@@ -189,6 +192,7 @@ func TestUploadRefusals(t *testing.T) {
 }
 
 func TestGetFile(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	id := f.create("Tang", map[string]any{"title": "暮雪"}, "x\n")["id"].(string)
 	_, r := f.upload(id, "street.png", pngBytes)
@@ -275,6 +279,7 @@ func TestGetFile(t *testing.T) {
 }
 
 func TestPageCarriesItsHeaderText(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	id := f.create("", map[string]any{"title": "T"}, "x\n")["id"].(string)
 	p := filepath.Join(f.dir, "T.md")
@@ -289,6 +294,7 @@ func TestPageCarriesItsHeaderText(t *testing.T) {
 }
 
 func TestExcerptIs400Characters(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.create("", nil, strings.Repeat("字", 500)+"\n")
 	_, r, _ := f.do("GET", base+"/pages", nil)
@@ -299,6 +305,7 @@ func TestExcerptIs400Characters(t *testing.T) {
 }
 
 func TestSingleUserInbox(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	_, r, raw := f.do("GET", "/api/meta", nil)
 	if sp := r["spaces"].([]any)[0].(map[string]any); sp["inbox"] != "Inbox" {
@@ -319,6 +326,7 @@ func TestSingleUserInbox(t *testing.T) {
 }
 
 func TestSpaceInbox(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		sid := c.personalSpace()
@@ -397,6 +405,7 @@ func (c *client) upload(base, id, name string, data []byte) result {
 }
 
 func TestUploadInASpaceThatFollowsARemote(t *testing.T) {
+	t.Parallel()
 	n := &pushFails{}
 	o := accOpts{spaces: func(o *spaces.Options) {
 		o.RemotePolicy = gitstore.Policy{Hosts: []string{"*"}, AllowUnsafe: true}

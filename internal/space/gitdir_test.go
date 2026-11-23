@@ -56,6 +56,7 @@ func firstCommit(t *testing.T, root string) {
 }
 
 func TestACheckoutMadeWithWorktreeAddOpensWithStateOfItsOwn(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	main := filepath.Join(t.TempDir(), "main")
 	firstCommit(t, main)
@@ -79,6 +80,7 @@ func TestACheckoutMadeWithWorktreeAddOpensWithStateOfItsOwn(t *testing.T) {
 }
 
 func TestASubmoduleLikeGitFileOpens(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	top := t.TempDir()
 	root := filepath.Join(top, "sub")
@@ -97,6 +99,7 @@ func TestASubmoduleLikeGitFileOpens(t *testing.T) {
 }
 
 func TestARepositoryMadeWithSeparateGitDirOpens(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := filepath.Join(t.TempDir(), "space")
 	gd := filepath.Join(t.TempDir(), "repo.git")
@@ -108,6 +111,7 @@ func TestARepositoryMadeWithSeparateGitDirOpens(t *testing.T) {
 }
 
 func TestAGitLinkToAFolderOpens(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := filepath.Join(t.TempDir(), "space")
 	firstCommit(t, root)
@@ -125,6 +129,7 @@ func TestAGitLinkToAFolderOpens(t *testing.T) {
 }
 
 func TestAGivenStateDirectoryWithAGitFile(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := filepath.Join(t.TempDir(), "space")
 	gd := filepath.Join(t.TempDir(), "repo.git")
@@ -137,6 +142,7 @@ func TestAGivenStateDirectoryWithAGitFile(t *testing.T) {
 }
 
 func TestAGitFileThatLeadsNowhereIsRefused(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: /nonexistent/x.git\n"), 0o644)
@@ -178,6 +184,7 @@ func cacheKept(t *testing.T, root string) {
 }
 
 func TestCommittedFilesWhereTheOldStateWasAreNeitherMovedNorUsed(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -212,6 +219,7 @@ func TestCommittedFilesWhereTheOldStateWasAreNeitherMovedNorUsed(t *testing.T) {
 }
 
 func TestCommittedFilesWhereTheOldStateWasDoNotBlockARemoteSpace(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	mustCreate(t, f.s, "", meta("title", "Mine"), "x\n")
 	o := f.theirs()
@@ -247,6 +255,7 @@ func TestCommittedFilesWhereTheOldStateWasDoNotBlockARemoteSpace(t *testing.T) {
 // --- an old state folder beside the current one ---------------------------------------------
 
 func TestAnOldStateBesideTheCurrentOneIsTakenOverAndNothingIsLost(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)

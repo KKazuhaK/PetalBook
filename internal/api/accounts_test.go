@@ -18,6 +18,7 @@ import (
 )
 
 func TestSessionBeforeSetup(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.newClient("")
 		r := c.do("GET", "/api/session", nil).want(t, 200, "")
@@ -40,6 +41,7 @@ func TestSessionBeforeSetup(t *testing.T) {
 }
 
 func TestSetup(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.newClient("")
 		tok := a.auth.SetupToken()
@@ -90,6 +92,7 @@ func TestSetup(t *testing.T) {
 }
 
 func TestConcurrentSetupHasOneWinner(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		tok := a.auth.SetupToken()
 		const n = 8
@@ -132,6 +135,7 @@ func TestConcurrentSetupHasOneWinner(t *testing.T) {
 }
 
 func TestLogin(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		a.addUser("tang", pw, "member")
@@ -175,6 +179,7 @@ func TestLogin(t *testing.T) {
 }
 
 func TestCookieNameFollowsThePublicURL(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{public: "http://localhost:8080"}, func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		if _, ok := c.cookies["petalbook_session"]; !ok || len(c.cookies) != 1 {
@@ -187,6 +192,7 @@ func TestCookieNameFollowsThePublicURL(t *testing.T) {
 }
 
 func TestSessionLifetimeAndRevocation(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		c.do("GET", "/api/account", nil).want(t, 200, "")
@@ -217,6 +223,7 @@ func TestSessionLifetimeAndRevocation(t *testing.T) {
 }
 
 func TestLogoutEndsTheSession(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		copyOf := a.newClient("")
@@ -235,6 +242,7 @@ func TestLogoutEndsTheSession(t *testing.T) {
 }
 
 func TestLastUsedIsWrittenOncePerHour(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		lastUsed := func() time.Time {
@@ -261,6 +269,7 @@ func TestLastUsedIsWrittenOncePerHour(t *testing.T) {
 }
 
 func TestPasswordChangeEndsOtherSessions(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		one := a.setup("kazuha", pw)
 		two := a.newClient("")
@@ -281,6 +290,7 @@ func TestPasswordChangeEndsOtherSessions(t *testing.T) {
 }
 
 func TestAccountProfile(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		r := c.do("GET", "/api/account", nil).want(t, 200, "")
@@ -306,6 +316,7 @@ func TestAccountProfile(t *testing.T) {
 }
 
 func TestInvites(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		member := a.addUser("tang", pw, "member")
@@ -372,6 +383,7 @@ func TestInvites(t *testing.T) {
 }
 
 func TestUsersCanBeSearched(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		ids := map[string]string{}
@@ -425,6 +437,7 @@ func TestUsersCanBeSearched(t *testing.T) {
 }
 
 func TestUsersAdministration(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		tang := a.addUser("tang", pw, "member")
@@ -472,6 +485,7 @@ func TestUsersAdministration(t *testing.T) {
 }
 
 func TestConcurrentDemotionsKeepAnAdministrator(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		one := a.setup("kazuha", pw)
 		two := a.addUser("tang", pw, "admin")
@@ -500,6 +514,7 @@ func TestConcurrentDemotionsKeepAnAdministrator(t *testing.T) {
 }
 
 func TestIdentityUnlinkRefusedWhenItIsTheOnlyWayIn(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		ctx := context.Background()
 		// An SSO-only account: one identity, no password.
@@ -556,6 +571,7 @@ func mustSession(t *testing.T, a *acc, userID string) *http.Cookie {
 }
 
 func TestConcurrentAcceptsOfOneInviteHaveOneWinner(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		token := admin.do("POST", "/api/invites", nil).want(t, 201, "").body["token"].(string)
@@ -591,6 +607,7 @@ func TestConcurrentAcceptsOfOneInviteHaveOneWinner(t *testing.T) {
 }
 
 func TestChangesMadeByAnotherProcessReachTheCacheWithinItsLifetime(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		ctx := context.Background()
 		a.setup("kazuha", pw)

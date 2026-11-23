@@ -64,6 +64,7 @@ func allKinds() TypeInput {
 }
 
 func TestPutTypeWritesTheSchemaForEveryKind(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	got, err := putCurrent(s, "文案", allKinds())
 	if err != nil {
@@ -129,6 +130,7 @@ func TestPutTypeWritesTheSchemaForEveryKind(t *testing.T) {
 }
 
 func TestPutTypeKeepsWhatItDoesNotUnderstand(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	writeType(t, s.Root(), "log", `{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -215,6 +217,7 @@ func TestPutTypeKeepsWhatItDoesNotUnderstand(t *testing.T) {
 }
 
 func TestPutTypeChangingAKindKeepsTheOtherKeywords(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	writeType(t, s.Root(), "t", `{"properties":{"x":{"type":"string","format":"date","default":"2026-01-01","description":"d"}}}`)
 	got, err := putCurrent(s, "t", TypeInput{Fields: []FieldInput{{Key: "x", Kind: KindSelect, Options: []string{"a"}}}})
@@ -238,6 +241,7 @@ func TestPutTypeChangingAKindKeepsTheOtherKeywords(t *testing.T) {
 }
 
 func TestTypeFilesThatCannotBeUsedArePutAsideByTheNextWrite(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	root := s.Root()
 	tooMany := `{"properties":{` + strings.TrimSuffix(strings.Repeat(`"k",`, 0), ",")
@@ -312,6 +316,7 @@ func TestTypeFilesThatCannotBeUsedArePutAsideByTheNextWrite(t *testing.T) {
 }
 
 func TestTypeRules(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	ok := func(key string) TypeInput { return TypeInput{Fields: []FieldInput{{Key: key, Kind: KindText}}} }
 	for _, key := range []string{"id", "title", "subtitle", "source", "tags", "created", "type", "publish", "slug", "", strings.Repeat("a", 65), "a:b", "a\nb", "a\x00"} {
@@ -377,6 +382,7 @@ func TestTypeRules(t *testing.T) {
 }
 
 func TestATypeNeedsAFreeNameAndTheSpaceHasALimit(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	if _, err := putCurrent(s, "Case", TypeInput{}); err != nil {
 		t.Fatal(err)
@@ -405,6 +411,7 @@ func TestATypeNeedsAFreeNameAndTheSpaceHasALimit(t *testing.T) {
 }
 
 func TestEffectiveType(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	for _, n := range []string{"文案", "task", "memo"} {
 		if _, err := putCurrent(s, n, TypeInput{}); err != nil {
@@ -503,6 +510,7 @@ func TestEffectiveType(t *testing.T) {
 }
 
 func TestBindFolderRefusals(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	if _, err := putCurrent(s, "t", TypeInput{}); err != nil {
 		t.Fatal(err)
@@ -596,6 +604,7 @@ func TestBindFolderRefusals(t *testing.T) {
 }
 
 func TestBindingsFollowTheirFolders(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	root := s.Root()
 	for _, n := range []string{"a", "b"} {
@@ -685,6 +694,7 @@ func TestBindingsFollowTheirFolders(t *testing.T) {
 }
 
 func TestMovingAFolderIsNotStoppedBySettingsThatCannotBeRead(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "A", meta("title", "x"), "x\n")
 	file := filepath.Join(s.Root(), ".petalbook", "space.yml")
@@ -704,6 +714,7 @@ func TestMovingAFolderIsNotStoppedBySettingsThatCannotBeRead(t *testing.T) {
 }
 
 func TestDeleteTypeRemovesItsBindingsAndNotThePages(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	for _, n := range []string{"a", "b"} {
 		if _, err := putCurrent(s, n, TypeInput{}); err != nil {
@@ -755,6 +766,7 @@ func TestDeleteTypeRemovesItsBindingsAndNotThePages(t *testing.T) {
 }
 
 func TestPatchProps(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	root := s.Root()
 	p := mustCreate(t, s, "F", meta("title", "页", "tags", []any{"a"}, "status", "draft", "keep", "me", "labels", []any{"x"}), "正文\n第二行\n")
@@ -856,6 +868,7 @@ func TestPatchProps(t *testing.T) {
 }
 
 func TestPatchPropsOfAPageWithoutAHeaderField(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	p := mustCreate(t, s, "", meta("title", "t"), "b\n")
 	got, err := s.PatchProps(Author{}, p.ID, p.Rev, meta("due", "2026-11-22"), nil)
@@ -873,6 +886,7 @@ func TestPatchPropsOfAPageWithoutAHeaderField(t *testing.T) {
 // answered, one commit each, and taken back completely when the remote cannot
 // be reached.
 func TestTypesBindingsAndPatchesGoThroughTheRemoteCommitPath(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	remoteFile := func(rel string) string { return git(t, f.remote, "show", "main:"+rel) }
 	n := len(f.remoteLog())
@@ -971,6 +985,7 @@ func TestTypesBindingsAndPatchesGoThroughTheRemoteCommitPath(t *testing.T) {
 // The writes are journaled before they are made, so a crash before the commit
 // still commits them at the next start.
 func TestTypeAndBindingWritesAreJournaled(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	p := mustCreate(t, s, "F", meta("title", "x"), "x\n")
 	if _, err := putCurrent(s, "t", allKinds()); err != nil {

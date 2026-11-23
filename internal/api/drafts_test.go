@@ -63,6 +63,7 @@ func fileOf(t *testing.T, a *acc, c *client, p map[string]any) string {
 }
 
 func TestDraftStoredApartFromTheFile(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		url, p := draftPage(t, c, "暮雪", "one\n")
@@ -112,6 +113,7 @@ func TestDraftStoredApartFromTheFile(t *testing.T) {
 }
 
 func TestDraftHeaderOrderIsKept(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		url, p := draftPage(t, c, "T", "x\n")
@@ -126,6 +128,7 @@ func TestDraftHeaderOrderIsKept(t *testing.T) {
 }
 
 func TestDraftChecksAreTheChecksOfASave(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		url, p := draftPage(t, c, "T", "x\n")
@@ -156,6 +159,7 @@ func TestDraftChecksAreTheChecksOfASave(t *testing.T) {
 }
 
 func TestDraftsOfDifferentPeopleAreSeparate(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		ctx := context.Background()
 		c := a.setup("kazuha", pw)
@@ -206,6 +210,7 @@ func TestDraftsOfDifferentPeopleAreSeparate(t *testing.T) {
 }
 
 func TestSaveLeavesTheCallersDraftUnlessItSaysTheSame(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		url, p := draftPage(t, c, "T", "x\n")
@@ -230,6 +235,7 @@ func TestSaveLeavesTheCallersDraftUnlessItSaysTheSame(t *testing.T) {
 }
 
 func TestDeletingAPageDeletesItsDrafts(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		url, p := draftPage(t, c, "T", "x\n")
@@ -252,6 +258,7 @@ func TestDeletingAPageDeletesItsDrafts(t *testing.T) {
 }
 
 func TestCommitWritesTheDraftLikeASave(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		url, p := draftPage(t, c, "Old title", "one\n")
@@ -276,6 +283,7 @@ func TestCommitWritesTheDraftLikeASave(t *testing.T) {
 }
 
 func TestStaleDraftConflictsAndIsHeld(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		ctx := context.Background()
 		c := a.setup("kazuha", pw)
@@ -320,6 +328,7 @@ func TestStaleDraftConflictsAndIsHeld(t *testing.T) {
 }
 
 func TestSweeperAppliesWhenIdleOrOld(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		ctx := context.Background()
 		c := a.setup("kazuha", pw)
@@ -363,6 +372,7 @@ func TestSweeperAppliesWhenIdleOrOld(t *testing.T) {
 func g(c *client, url string) map[string]any { return c.do("GET", url, nil).body }
 
 func TestApplyingAnUnchangedDraftWritesNothing(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		ctx := context.Background()
 		c := a.setup("kazuha", pw)
@@ -423,6 +433,7 @@ func atoi(s string) int {
 }
 
 func TestADraftOutlivesItsPageFileUntilThePageIsDeleted(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		ctx := context.Background()
 		c := a.setup("kazuha", pw)
@@ -451,6 +462,7 @@ func TestADraftOutlivesItsPageFileUntilThePageIsDeleted(t *testing.T) {
 }
 
 func TestTypingPastTheDraftMaximumRebasesInsteadOfHoldingForever(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		ctx := context.Background()
 		c := a.setup("kazuha", pw)
@@ -499,6 +511,7 @@ func TestTypingPastTheDraftMaximumRebasesInsteadOfHoldingForever(t *testing.T) {
 }
 
 func TestDraftVersionsGuardAgainstAnotherDevice(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		url, p := draftPage(t, c, "T", "one\n")
@@ -549,6 +562,7 @@ func TestDraftVersionsGuardAgainstAnotherDevice(t *testing.T) {
 }
 
 func TestTwoDevicesStoringAtOnceHaveOneWinner(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		url, p := draftPage(t, c, "T", "one\n")
@@ -582,6 +596,7 @@ func TestTwoDevicesStoringAtOnceHaveOneWinner(t *testing.T) {
 }
 
 func TestVersionedDraftDelete(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		ctx := context.Background()
 		c := a.setup("kazuha", pw)

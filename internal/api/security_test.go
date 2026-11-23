@@ -15,6 +15,7 @@ import (
 )
 
 func TestLoginRateLimitPerUsername(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		a.setup("kazuha", pw)
 		bad := map[string]any{"username": "kazuha", "password": "wrong password here"}
@@ -51,6 +52,7 @@ func TestLoginRateLimitPerUsername(t *testing.T) {
 }
 
 func TestLoginRateLimitPerAddress(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		a.setup("kazuha", pw)
 		c := a.newClient("203.0.113.50")
@@ -66,6 +68,7 @@ func TestLoginRateLimitPerAddress(t *testing.T) {
 }
 
 func TestRateLimitBehindATrustedProxy(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{proxies: []string{"10.0.0.0/8"}}, func(t *testing.T, a *acc) {
 		a.setup("kazuha", pw)
 		// Everything arrives from the proxy; the real clients differ.
@@ -95,6 +98,7 @@ func TestRateLimitBehindATrustedProxy(t *testing.T) {
 }
 
 func TestSetupAndInviteEndpointsAreThrottled(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.newClient("203.0.113.60")
 		for range 11 { // ten failures are free; the eleventh starts the delay
@@ -105,6 +109,7 @@ func TestSetupAndInviteEndpointsAreThrottled(t *testing.T) {
 }
 
 func TestUnknownUserCostsAsMuchAsAWrongPassword(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		a.setup("kazuha", pw)
 		ops := func() int64 { return auth.HashOps(a.auth) }
@@ -129,6 +134,7 @@ func typeFor(rt api.RouteInfo) []string {
 }
 
 func TestEveryProtectedRouteWantsASession(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		sid := admin.personalSpace()
@@ -162,6 +168,7 @@ func TestEveryProtectedRouteWantsASession(t *testing.T) {
 }
 
 func TestMemberRoutesAreNotForOtherPeopleSpaces(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		boss := a.setup("kazuha", pw) // an administrator
 		tang := a.addUser("tang", pw, "member")
@@ -210,6 +217,7 @@ func TestMemberRoutesAreNotForOtherPeopleSpaces(t *testing.T) {
 }
 
 func TestSpaces(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		personal := c.personalSpace()
@@ -254,6 +262,7 @@ func TestSpaces(t *testing.T) {
 }
 
 func TestNoHalfMadeSpaceOrAccountWhenAStepFails(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		ctx := context.Background()
@@ -314,6 +323,7 @@ func mustUserID(t *testing.T, a *acc, username string) string {
 }
 
 func TestAConcurrentBurstOfWrongPasswordsGetsOnlyItsAllowance(t *testing.T) {
+	t.Parallel()
 	// Hashing is slow and one at a time, so the burst queues behind it. Every
 	// attempt must be counted before it waits, not judged by the count from before.
 	o := accOpts{mod: func(c *auth.Config) {
@@ -370,6 +380,7 @@ func TestAConcurrentBurstOfWrongPasswordsGetsOnlyItsAllowance(t *testing.T) {
 }
 
 func TestTheUsernameLimitIsKeyedOnTheUsernameSignInReads(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		a.setup("kazuha", pw)
 		spellings := []string{"kazuha", " kazuha", "KAZUHA", "kazuha ", "Kazuha", "\tkazuha\n"}
@@ -383,6 +394,7 @@ func TestTheUsernameLimitIsKeyedOnTheUsernameSignInReads(t *testing.T) {
 }
 
 func TestSpacesPerUserAreLimited(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{maxSpaces: 3}, func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw) // the personal space is the first of three
 		c.do("POST", "/api/spaces", map[string]any{"name": "B"}).want(t, 201, "")

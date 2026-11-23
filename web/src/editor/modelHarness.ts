@@ -3,8 +3,9 @@
 // rules the contract tests keep equal to the real server's), driven by many
 // random sequences of what a person and the server's world can do. Seeded and
 // deterministic: a failure prints the seed and the steps, and
-//   MODEL_SEED=<seed> npx vitest run src/editor/model.test.ts
-// replays it alone.
+//   MODEL_SEED=<seed> npx vitest run src/editor/model.mixed.test.ts
+// replays it alone. The sequences are split over the model.*.test.ts files so the
+// test runner can run them in parallel; this file holds the model and is not a test.
 //
 // Who is who. "A" is the person at this editor; "B" is the same user on a second
 // device (it acts on the same server, with its own texts "B<n>" that A never
@@ -46,7 +47,6 @@
 //  I6  after B deletes the page, the person's typed text is still in the browser (or
 //      was already in a file version).
 
-import { afterEach, beforeEach, describe, it, vi } from 'vitest'
 import { ApiError } from '@/api/client'
 import { createMockServer, type MockServer } from '@/api/mock/server'
 import type { DraftReceipt, Page, PageDraft } from '@/api/types'
@@ -95,7 +95,7 @@ class Violation extends Error {}
 
 // `copy` makes the second device mostly copy what the person once sent or gave up, and
 // move the file around, which is what makes "ours" and "someone else's" look alike.
-async function runSequence(seed: number, opts: { steps?: number; profile?: 'mixed' | 'copy' | 'offline' | 'giveup' | 'macro' | 'longoffline' | 'swept' | 'stores' } = {}): Promise<void> {
+export async function runSequence(seed: number, opts: { steps?: number; profile?: 'mixed' | 'copy' | 'offline' | 'giveup' | 'macro' | 'longoffline' | 'swept' | 'stores' } = {}): Promise<void> {
   const rnd = mulberry32(seed)
   const pick = <T,>(xs: T[]) => xs[Math.floor(rnd() * xs.length)]
   const log: string[] = []
@@ -1011,54 +1011,10 @@ const OURS_LIMIT = Number(process.env.OURS_LIMIT ?? 4)
 
 declare const process: { env: Record<string, string | undefined> }
 const COUNT = Number(process.env.MODEL_COUNT ?? 5000)
-const BASE = Number(process.env.MODEL_BASE ?? 1000)
-const ONLY = process.env.MODEL_SEED ? Number(process.env.MODEL_SEED) : undefined
+export const BASE = Number(process.env.MODEL_BASE ?? 1000)
+export const MODEL_STEPS = process.env.MODEL_STEPS ? Number(process.env.MODEL_STEPS) : undefined
+export const MODEL_PROFILE = process.env.MODEL_PROFILE as 'copy' | 'offline' | undefined
+export const ONLY = process.env.MODEL_SEED ? Number(process.env.MODEL_SEED) : undefined
 
 // The default run is about 8,300 sequences; MODEL_COUNT scales it (5000 is the default).
-const SCALE = COUNT / 5000
-
-describe('model-based: random sequences against the in-memory server', () => {
-  beforeEach(() => vi.useFakeTimers())
-  afterEach(() => vi.useRealTimers())
-
-  it(`holds the invariants over ${ONLY === undefined ? Math.floor(2000 * SCALE) : 1} mixed sequences`, async () => {
-    const seeds = ONLY === undefined ? Array.from({ length: Math.floor(2000 * SCALE) }, (_, i) => BASE + i) : [ONLY]
-    for (const seed of seeds) await runSequence(seed, { steps: process.env.MODEL_STEPS ? Number(process.env.MODEL_STEPS) : undefined, profile: process.env.MODEL_PROFILE as 'copy' | 'offline' | undefined })
-  }, 120_000)
-
-  it('holds them in a world where the second device mostly copies what the person sent or gave up', async () => {
-    if (ONLY !== undefined) return
-    for (let seed = 800_000; seed < 800_000 + Math.floor(3500 * SCALE); seed++) await runSequence(seed, { steps: 24, profile: 'copy' })
-  }, 120_000)
-
-  it('holds them when the person gives a text up and the second device later writes it', async () => {
-    if (ONLY !== undefined) return
-    for (let seed = 700_000; seed < 700_000 + Math.floor(2000 * SCALE); seed++) await runSequence(seed, { steps: 16, profile: 'giveup' })
-  }, 120_000)
-
-  it('holds them through long offline stretches and reloads', async () => {
-    if (ONLY !== undefined) return
-    for (let seed = 900_000; seed < 900_000 + Math.floor(1500 * SCALE); seed++) await runSequence(seed, { steps: 20, profile: 'offline' })
-  }, 120_000)
-
-  it('holds them with slow requests, moves and notices interleaved with typing and the second device, and the swept/offline macros', async () => {
-    if (ONLY !== undefined) return
-    for (let seed = 600_000; seed < 600_000 + Math.floor(3500 * SCALE); seed++) await runSequence(seed, { steps: 14, profile: 'macro' })
-  }, 240_000)
-
-  it('holds them through a very long offline session (thousands of pauses) with no dialog and a small list of own drafts', async () => {
-    if (ONLY !== undefined) return
-    for (let seed = 400_000; seed < 400_000 + Math.floor(40 * SCALE); seed++) await runSequence(seed, { steps: 6, profile: 'longoffline' })
-  }, 240_000)
-
-  it('holds them when the server commits a stored text while newer text waits, across reopenings, with no second device or with one', async () => {
-    if (ONLY !== undefined) return
-    for (let seed = 300_000; seed < 300_000 + Math.floor(600 * SCALE); seed++) await runSequence(seed, { steps: 8, profile: 'swept' })
-    for (let seed = 200_000; seed < 200_000 + Math.floor(300 * SCALE); seed++) await runSequence(seed, { steps: 6, profile: 'stores' })
-  }, 240_000)
-
-  it('holds them over long sequences too', async () => {
-    if (ONLY !== undefined) return
-    for (let seed = 500_000; seed < 500_000 + Math.floor(300 * SCALE); seed++) await runSequence(seed, { steps: 40 })
-  }, 120_000)
-})
+export const SCALE = COUNT / 5000

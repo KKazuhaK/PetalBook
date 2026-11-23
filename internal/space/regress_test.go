@@ -19,6 +19,7 @@ import (
 // --- 1. a name the file system treats as taken must not hang a create --------
 
 func TestCreateWithNameTakenInAnotherUnicodeForm(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	nfd := norm.NFD.String("Café")
@@ -174,6 +175,7 @@ func (f *fakeFS) ops() fileOps {
 }
 
 func TestRenameNeverReplacesAnotherFile(t *testing.T) {
+	t.Parallel()
 	// Case-sensitive: A.md is page X (inode 1) and a.md is page Y (inode 2).
 	cs := &fakeFS{files: map[string]int{"A.md": 1, "a.md": 2}}
 	s := &Space{ops: cs.ops()}
@@ -224,6 +226,7 @@ func TestRenameNeverReplacesAnotherFile(t *testing.T) {
 
 // On a case-sensitive file system the same thing through Save.
 func TestSaveRenameDoesNotOverwriteCaseVariant(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	probe := t.TempDir()
 	os.WriteFile(filepath.Join(probe, "p"), nil, 0o644)
@@ -270,6 +273,7 @@ func swapped(t *testing.T) (s *Space, x, y *Page, xNow string) {
 }
 
 func TestDeleteActsOnTheRightFile(t *testing.T) {
+	t.Parallel()
 	s, x, y, xNow := swapped(t)
 	if err := s.Delete(Author{}, x.ID); err != nil {
 		t.Fatal(err)
@@ -293,6 +297,7 @@ func TestDeleteActsOnTheRightFile(t *testing.T) {
 }
 
 func TestSaveAndMoveActOnTheRightFile(t *testing.T) {
+	t.Parallel()
 	s, x, y, xNow := swapped(t)
 	// The conflict answer shows X, never Y.
 	_, err := s.Save(Author{}, x.ID, "stale", x.Meta, "mine\n")
@@ -327,6 +332,7 @@ func TestSaveAndMoveActOnTheRightFile(t *testing.T) {
 // --- 5. header order is the file's -------------------------------------------
 
 func TestSaveKeepsFileOrderWhateverTheRequestOrder(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	p := mustCreate(t, s, "", meta("title", "T"), "b\n")
 	today := p.Meta.Created()
@@ -365,6 +371,7 @@ func TestSaveKeepsFileOrderWhateverTheRequestOrder(t *testing.T) {
 // --- 8. folders that differ only in case or Unicode form ----------------------
 
 func TestFolderNamesResolveToTheExistingSpelling(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	if _, err := s.CreateFolder(Author{}, "Tang/诗"); err != nil {
 		t.Fatal(err)
@@ -415,6 +422,7 @@ func TestFolderNamesResolveToTheExistingSpelling(t *testing.T) {
 func ptr(s string) *string { return &s }
 
 func TestMoveFailsCleanlyWhenNoNameIsFree(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	a := mustCreate(t, s, "", meta("title", "A"), "")
 	s.ops.Link = func(string, string) error { return fs.ErrExist }
@@ -432,6 +440,7 @@ func TestMoveFailsCleanlyWhenNoNameIsFree(t *testing.T) {
 // --- 9 and 10. the committer ---------------------------------------------------
 
 func TestCommitIncludesOnlyThePathsTheServerWrote(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	git(t, root, "init", "-q")
@@ -481,6 +490,7 @@ func TestCommitIncludesOnlyThePathsTheServerWrote(t *testing.T) {
 }
 
 func TestCommitWaitsWhileTheRepositoryIsBusy(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	for _, marker := range []string{"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG", "rebase-merge", "rebase-apply"} {
 		t.Run(marker, func(t *testing.T) {
@@ -517,6 +527,7 @@ func TestCommitWaitsWhileTheRepositoryIsBusy(t *testing.T) {
 }
 
 func TestSavesDoNotWaitForGit(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)

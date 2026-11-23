@@ -332,6 +332,7 @@ func manyViews(n int) []any {
 }
 
 func TestViewsAndBoardsInAccountsMode(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		tm := newTeam(t, a)
 		viewsScenario(t, "/api/spaces/"+tm.sid, asClient(tm.owner), asClient(tm.editor), asClient(tm.viewer), true)
@@ -349,6 +350,7 @@ func TestViewsAndBoardsInAccountsMode(t *testing.T) {
 }
 
 func TestViewsAndBoardsInSingleUserMode(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	c := asFixture(f)
 	viewsScenario(t, base, c, c, c, false)
@@ -367,6 +369,7 @@ func TestViewsAndBoardsInSingleUserMode(t *testing.T) {
 // they go into the last version that can be used, what the file was is kept
 // beside it, and the answer of the types says so.
 func TestViewsAreSavedThoughTheSettingsCannotBeUsed(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	if code, r, _ := f.do("POST", base+"/folders", map[string]any{"path": "F"}); code != 201 {
 		t.Fatalf("%d %v", code, r)
@@ -410,6 +413,7 @@ func TestViewsAreSavedThoughTheSettingsCannotBeUsed(t *testing.T) {
 
 // The shape of a view, as a client reads it.
 func TestAViewIsWrittenWithEveryKey(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.do("POST", base+"/folders", map[string]any{"path": "F"})
 	_, r, _ := f.do("GET", base+"/views?folder=F", nil)
@@ -468,6 +472,7 @@ func TestAViewsRequestIsBoundedBeforeItIsBuilt(t *testing.T) {
 // The "other values" column of a board excludes every option of the field,
 // and a field may have 500 options of 200 bytes: that filter is accepted.
 func TestAFilterThatExcludesEveryOptionOfAFieldIsAccepted(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.do("POST", base+"/folders", map[string]any{"path": "F"})
 	var values []any

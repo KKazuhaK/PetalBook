@@ -109,6 +109,7 @@ func cleanTree(t *testing.T, s *Space) {
 }
 
 func TestALinkedPetalbookAtTheStartIsPutRightAndNothingOutsideIsTouched(t *testing.T) {
+	t.Parallel()
 	s := settled(t)
 	root := s.Root()
 	if err := s.SetTagColor(Author{}, "x", "blue"); err != nil {
@@ -164,6 +165,7 @@ func TestALinkedPetalbookAtTheStartIsPutRightAndNothingOutsideIsTouched(t *testi
 }
 
 func TestALinkedPetalbookWhileRunningIsReadFromTheHistoryAndPutRightByAWrite(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	state := t.TempDir()
 	s := openAt(t, t.TempDir(), func(o *Options) { o.StateDir = state })
@@ -223,6 +225,7 @@ func TestALinkedPetalbookWhileRunningIsReadFromTheHistoryAndPutRightByAWrite(t *
 }
 
 func TestALinkedTypesFolderIsNeverFollowed(t *testing.T) {
+	t.Parallel()
 	s := settled(t)
 	root := s.Root()
 	out := outsideDir(t)
@@ -269,6 +272,7 @@ func TestALinkedTypesFolderIsNeverFollowed(t *testing.T) {
 }
 
 func TestALinkFromAPullIsPutRightAndPushed(t *testing.T) {
+	t.Parallel()
 	for _, which := range []string{".petalbook", typesDir} {
 		t.Run(which, func(t *testing.T) {
 			f := newRemoteSpace(t)
@@ -346,6 +350,7 @@ func (o *theirs) pushAt(msg, date string) {
 }
 
 func TestAGoodCommitFromASlowClockIsNotLostToTheServersOwnWrite(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	s := f.s
 	if _, err := putCurrent(s, "wenan", allKinds()); err != nil {
@@ -378,6 +383,7 @@ func TestAGoodCommitFromASlowClockIsNotLostToTheServersOwnWrite(t *testing.T) {
 }
 
 func TestAfterAHistoryRewriteTheNewestCommitOfTheNewHistoryIsRestored(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	s := f.s
 	if _, err := putCurrent(s, "wenan", allKinds()); err != nil {
@@ -409,6 +415,7 @@ func TestAfterAHistoryRewriteTheNewestCommitOfTheNewHistoryIsRestored(t *testing
 }
 
 func TestALocalCommitDropsTheServersOwnWrite(t *testing.T) {
+	t.Parallel()
 	s := settled(t)
 	if _, err := s.BindFolder(Author{}, "B", "wenan"); err != nil {
 		t.Fatal(err)
@@ -445,6 +452,7 @@ func thirty() (lines string, want map[string]string) {
 }
 
 func TestThirtyNewBindingsAndOneMistakeAreKept(t *testing.T) {
+	t.Parallel()
 	lines, want := thirty()
 	deep := strings.Repeat("[", maxDocDepth+2) + strings.Repeat("]", maxDocDepth+2)
 	for _, c := range []struct {
@@ -506,6 +514,7 @@ func TestThirtyNewBindingsAndOneMistakeAreKept(t *testing.T) {
 }
 
 func TestAFoldersThatIsNotAListKeepsTheRestOfTheFile(t *testing.T) {
+	t.Parallel()
 	s := settled(t)
 	root := s.Root()
 	setSpaceYML(t, root, "name: Mine\nfolders: [a, b]\n")
@@ -524,6 +533,7 @@ func TestAFoldersThatIsNotAListKeepsTheRestOfTheFile(t *testing.T) {
 }
 
 func TestThirtyNewTagsAndOneTypoAreKept(t *testing.T) {
+	t.Parallel()
 	s := settled(t)
 	root := s.Root()
 	if err := s.SetTagColor(Author{}, "old", "blue"); err != nil {
@@ -562,6 +572,7 @@ func TestThirtyNewTagsAndOneTypoAreKept(t *testing.T) {
 // --- the history is not searched again for every commit ------------------------------
 
 func TestAnUnusableFileIsNotSearchedAgainForEveryCommit(t *testing.T) {
+	t.Parallel()
 	s := settled(t)
 	root := s.Root()
 	if err := s.SetTagColor(Author{}, "old", "blue"); err != nil {
@@ -604,6 +615,7 @@ func TestAnUnusableFileIsNotSearchedAgainForEveryCommit(t *testing.T) {
 }
 
 func TestALinkThatCameWhileTheServerWasDownIsPutRightAtTheStart(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	s := f.s
 	if _, err := putCurrent(s, "wenan", allKinds()); err != nil {

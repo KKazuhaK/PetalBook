@@ -36,6 +36,7 @@ func pathOf(t *testing.T, s *Space, id string) string {
 }
 
 func TestMoveFolder(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	root := s.Root()
 	a := mustCreate(t, s, "随笔/2026", meta("title", "一"), "x\n")
@@ -117,6 +118,7 @@ func unquoteGitPaths(t *testing.T, root string) string {
 }
 
 func TestMoveFolderRenamesByCase(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	p := mustCreate(t, s, "notes", meta("title", "One"), "x\n")
 	if err := s.Flush(); err != nil {
@@ -150,6 +152,7 @@ func TestMoveFolderRenamesByCase(t *testing.T) {
 }
 
 func TestMoveFolderRefusals(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "a/b", meta("title", "P"), "x\n")
 	mustCreate(t, s, "c", meta("title", "Q"), "y\n")
@@ -188,6 +191,7 @@ func TestMoveFolderRefusals(t *testing.T) {
 // The journal names every path of the move before the folder is renamed, so a
 // crash on either side of the rename leaves nothing uncommitted for good.
 func TestMoveFolderIsJournaledBeforeTheRename(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -231,6 +235,7 @@ func TestMoveFolderIsJournaledBeforeTheRename(t *testing.T) {
 }
 
 func TestDeleteFolder(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	a := mustCreate(t, s, "f", meta("title", "A"), "x\n")
 	b := mustCreate(t, s, "f/sub", meta("title", "B"), "y\n")
@@ -298,6 +303,7 @@ func TestDeleteFolder(t *testing.T) {
 }
 
 func TestBatch(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	a := mustCreate(t, s, "x", meta("title", "A"), "1\n")
 	b := mustCreate(t, s, "y", meta("title", "B"), "2\n")
@@ -357,6 +363,7 @@ func TestBatch(t *testing.T) {
 }
 
 func TestTagColors(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -476,6 +483,7 @@ func TestTagColors(t *testing.T) {
 // committed under the new names; moved on from there, nothing of the old
 // spelling is left in the history's last commit.
 func TestRenamesByCaseAreCommitted(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -514,6 +522,7 @@ func TestRenamesByCaseAreCommitted(t *testing.T) {
 // to the rest of the space, and to a file system that ignores case, the two
 // are one.
 func TestMoveFolderOntoAnotherSpellingOfAnExistingOne(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	s := openAt(t, t.TempDir())
 	mustCreate(t, s, "a", meta("title", "In a"), "x\n")
@@ -532,6 +541,7 @@ func TestMoveFolderOntoAnotherSpellingOfAnExistingOne(t *testing.T) {
 // Two files with one id: deleting the page makes the other file the page.
 // A recursive delete of their folder ends with neither.
 func TestDeleteFolderWithFilesSharingAnID(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -570,6 +580,7 @@ func TestDeleteFolderWithFilesSharingAnID(t *testing.T) {
 // case. Anything else is refused, and a value in the file that is no colour
 // leaves the tag without one.
 func TestTagColorsOfOnesOwn(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -613,6 +624,7 @@ func foldsNames(t *testing.T, a, b string) bool {
 // equal: ß and ss, the Greek sigmas. Renaming across them is a respelling,
 // committed as such, with one copy afterwards.
 func TestMoveFolderAcrossUnicodeFolds(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	for _, c := range [][2]string{{"Straße", "Strasse"}, {"ΟΔΟΣ", "οδος"}} {
 		t.Run(c[0], func(t *testing.T) {
@@ -669,6 +681,7 @@ func TestMoveFolderAcrossUnicodeFolds(t *testing.T) {
 // A file with two YAML documents is not rewritten (the second would be
 // lost), and a key written twice is edited where readers see it: at its last.
 func TestTagsFileWithSeveralDocumentsOrRepeatedKeys(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)

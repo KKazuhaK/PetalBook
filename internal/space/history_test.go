@@ -18,6 +18,7 @@ func flushed(t *testing.T, s *Space) {
 }
 
 func TestHistoryFollowsAPageThroughRenamesAndMoves(t *testing.T) {
+	t.Parallel()
 	s := localSpace(t)
 	ctx := context.Background()
 	p := mustCreate(t, s, "Tang", meta("title", "暮雪"), "v1\n")
@@ -124,6 +125,7 @@ func TestHistoryFollowsAPageThroughRenamesAndMoves(t *testing.T) {
 }
 
 func TestVersionsOfAPageNeverShowAnyOtherFile(t *testing.T) {
+	t.Parallel()
 	s := localSpace(t)
 	ctx := context.Background()
 	a := mustCreate(t, s, "", meta("title", "Alpha"), "alpha\n")
@@ -206,6 +208,7 @@ func encode(commit, path string) string {
 }
 
 func TestAFileReplacedByAnotherPageUnderTheSamePath(t *testing.T) {
+	t.Parallel()
 	s := localSpace(t)
 	ctx := context.Background()
 	a := mustCreate(t, s, "", meta("title", "Alpha"), "alpha\n")
@@ -260,6 +263,7 @@ func TestAFileReplacedByAnotherPageUnderTheSamePath(t *testing.T) {
 }
 
 func TestHistoryOfAPageThatIsNotCommittedYetIsEmpty(t *testing.T) {
+	t.Parallel()
 	s := localSpace(t)
 	p := mustCreate(t, s, "", meta("title", "New"), "x\n")
 	// Nothing is committed in this space yet (the committer is quiet).
@@ -274,6 +278,7 @@ func TestHistoryOfAPageThatIsNotCommittedYetIsEmpty(t *testing.T) {
 }
 
 func TestHistoryPagingDoesNotWalkFromTheTop(t *testing.T) {
+	t.Parallel()
 	s := localSpace(t)
 	ctx := context.Background()
 	p := mustCreate(t, s, "", meta("title", "Many"), "0\n")
@@ -317,6 +322,7 @@ func TestHistoryPagingDoesNotWalkFromTheTop(t *testing.T) {
 // commit Git sees an unrelated new file, and its own rename following stops
 // there. The page's id is in the file, so the history goes on.
 func TestHistoryFollowsARenameThatRewroteTheText(t *testing.T) {
+	t.Parallel()
 	s := localSpace(t)
 	ctx := context.Background()
 	long := strings.Repeat("the first text of this page, which will be replaced entirely. ", 20) + "\n"

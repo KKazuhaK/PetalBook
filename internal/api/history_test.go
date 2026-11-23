@@ -16,6 +16,7 @@ func (f *fixture) commitNow() {
 }
 
 func TestHistoryEndpoints(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	p := f.create("Tang", map[string]any{"title": "暮雪"}, "v1\n")
 	id := p["id"].(string)
@@ -151,6 +152,7 @@ func TestHistoryEndpoints(t *testing.T) {
 }
 
 func TestHistoryInAccountsModeIsForEveryMember(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		a.setup("kazuha", pw)
 		tang := a.addUser("tang", pw, "member")
@@ -188,6 +190,7 @@ var ctxBG = context.Background()
 // Each commit carries the person who made the change, and the history says so,
 // whoever else shares the space.
 func TestHistoryNamesThePersonWhoMadeEachChange(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		a.setup("kazuha", pw)
 		tm := newTeam(t, a)

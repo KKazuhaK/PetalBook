@@ -46,6 +46,7 @@ func routePath(rt api.RouteInfo, sid string) string {
 // its permissions allow. The test is driven by Routes(), so a write route that
 // is declared with too small a permission is caught here.
 func TestRolesGetWhatTheirPermissionsAllow(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		tm := newTeam(t, a)
 		n := 0
@@ -106,6 +107,7 @@ func TestRolesGetWhatTheirPermissionsAllow(t *testing.T) {
 }
 
 func TestSpaceListSaysWhatYouMayDo(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		tm := newTeam(t, a)
 		want := map[*client][]any{
@@ -133,6 +135,7 @@ func TestSpaceListSaysWhatYouMayDo(t *testing.T) {
 }
 
 func TestAdministratorSeesEverySpace(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		boss := a.setup("kazuha", pw) // an administrator, a member of nothing but their own space
 		tm := newTeam(t, a)
@@ -172,6 +175,7 @@ func TestAdministratorSeesEverySpace(t *testing.T) {
 }
 
 func TestMembers(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		tm := newTeam(t, a)
 		base := "/api/spaces/" + tm.sid + "/members"
@@ -242,6 +246,7 @@ func TestMembers(t *testing.T) {
 }
 
 func TestASpaceKeepsAnOwner(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		tm := newTeam(t, a)
 		base := "/api/spaces/" + tm.sid + "/members"
@@ -262,6 +267,7 @@ func TestASpaceKeepsAnOwner(t *testing.T) {
 
 // Two owners each demoting the other at the same moment: one of them has to lose.
 func TestOwnersCannotBothStepDown(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		tm := newTeam(t, a)
 		base := "/api/spaces/" + tm.sid + "/members"
@@ -305,6 +311,7 @@ func TestOwnersCannotBothStepDown(t *testing.T) {
 }
 
 func TestPersonalSpaceCannotBeShared(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		tang := a.addUser("tang", pw, "member")
 		a.addUser("kai", pw, "member")
@@ -322,6 +329,7 @@ func TestPersonalSpaceCannotBeShared(t *testing.T) {
 // The membership cache is dropped for the people a change touches, so the very
 // next request of theirs sees it.
 func TestMembershipChangesApplyAtOnce(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		tm := newTeam(t, a)
 		base := "/api/spaces/" + tm.sid
@@ -347,6 +355,7 @@ func TestMembershipChangesApplyAtOnce(t *testing.T) {
 
 // Only owner roles count against the limit on how many spaces a person may own.
 func TestMembershipDoesNotCountAgainstTheSpaceLimit(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{maxSpaces: 2}, func(t *testing.T, a *acc) {
 		tm := newTeam(t, a)
 		// edith owns her personal space only; being an editor of Team is not owning it.
@@ -361,6 +370,7 @@ func TestMembershipDoesNotCountAgainstTheSpaceLimit(t *testing.T) {
 // What the server did about a settings file it could not use is told to those
 // who may manage the space, and to nobody else.
 func TestSettingsNoticesAreForThoseWhoManageTheSpace(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		tm := newTeam(t, a)
 		base := "/api/spaces/" + tm.sid

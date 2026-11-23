@@ -9,6 +9,7 @@ import (
 )
 
 func TestDefaultCommitIdleIsAFewSeconds(t *testing.T) {
+	t.Parallel()
 	// A draft is applied after its own idle time (see the drafts package); the
 	// file it writes must reach Git within seconds, not after another long wait.
 	if DefaultCommitIdle > 10*time.Second || DefaultCommitIdle <= 0 {
@@ -20,6 +21,7 @@ func TestDefaultCommitIdleIsAFewSeconds(t *testing.T) {
 }
 
 func TestAuthorAndCommitterAreSeparate(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root, func(o *Options) {
@@ -57,6 +59,7 @@ func TestAuthorAndCommitterAreSeparate(t *testing.T) {
 }
 
 func TestSingleUserAuthorStaysTheCommitter(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root, func(o *Options) {
@@ -76,6 +79,7 @@ func TestSingleUserAuthorStaysTheCommitter(t *testing.T) {
 }
 
 func TestCheckDraftValidatesWithoutWriting(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	s := openAt(t, t.TempDir())
 	p := mustCreate(t, s, "", meta("title", "T"), "x\n")
@@ -101,6 +105,7 @@ func TestCheckDraftValidatesWithoutWriting(t *testing.T) {
 }
 
 func TestChangesAfterCloseAreRefusedBeforeAnythingIsWritten(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root, func(o *Options) { o.CommitIdle, o.CommitMax = time.Hour, time.Hour })

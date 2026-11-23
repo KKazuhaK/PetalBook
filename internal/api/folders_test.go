@@ -23,6 +23,7 @@ func (f *fixture) folders() string {
 }
 
 func TestFolderMoveAndDelete(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	a := f.create("随笔/2026", map[string]any{"title": "一"}, "x\n")["id"].(string)
 	b := f.create("随笔/2026/深", map[string]any{"title": "二"}, "y\n")["id"].(string)
@@ -103,6 +104,7 @@ func TestFolderMoveAndDelete(t *testing.T) {
 }
 
 func TestBatchPages(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	a := f.create("x", map[string]any{"title": "A"}, "1\n")["id"].(string)
 	b := f.create("y", map[string]any{"title": "B"}, "2\n")["id"].(string)
@@ -179,6 +181,7 @@ func TestBatchPages(t *testing.T) {
 }
 
 func TestTagColours(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.create("", map[string]any{"title": "A", "tags": []string{"栀子", "夏"}}, "x\n")
 	put := func(tag string, body any) (int, map[string]any, string) {
@@ -225,6 +228,7 @@ func TestTagColours(t *testing.T) {
 }
 
 func TestListFilterParameters(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.create("", map[string]any{"title": "栀子"}, "玉兰 在正文\n")
 	f.create("", map[string]any{"title": "玉兰"}, "栀子 在正文\n")
@@ -263,6 +267,7 @@ func TestListFilterParameters(t *testing.T) {
 // In a space that follows a remote a folder move is one commit and one push,
 // and when the push is refused the folder, the index and the clone are as before.
 func TestFolderMoveInASpaceThatFollowsARemote(t *testing.T) {
+	t.Parallel()
 	n := &pushFails{}
 	o := accOpts{spaces: func(o *spaces.Options) {
 		o.RemotePolicy = gitstore.Policy{Hosts: []string{"*"}, AllowUnsafe: true}
@@ -403,6 +408,7 @@ func TestFolderMoveInASpaceThatFollowsARemote(t *testing.T) {
 
 // What the document says is refused, and that nothing changes then.
 func TestBatchAndFilterRefusals(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	a := f.create("x", map[string]any{"title": "A"}, "a\n")["id"].(string)
 	// A move must say where to; "" is the top level and is a place.
@@ -434,6 +440,7 @@ func TestBatchAndFilterRefusals(t *testing.T) {
 }
 
 func TestTagColoursOfOnesOwn(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.create("x", map[string]any{"title": "A", "tags": []string{"栀子"}}, "a\n")
 	tagURL := base + "/tags/" + url.PathEscape("栀子")

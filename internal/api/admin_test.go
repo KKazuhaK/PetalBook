@@ -38,6 +38,7 @@ func adminRoutes(t *testing.T) []api.RouteInfo {
 }
 
 func TestAdminRoutesAreForAdministrators(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		tang := a.addUser("tang", pw, "member")
@@ -56,6 +57,7 @@ func TestAdminRoutesAreForAdministrators(t *testing.T) {
 }
 
 func TestAdminRoutesDoNotExistInSingleUserMode(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	for _, rt := range adminRoutes(t) {
 		code, r, raw := f.do(rt.Method, adminPath(rt, "default"), "{}")
@@ -66,6 +68,7 @@ func TestAdminRoutesDoNotExistInSingleUserMode(t *testing.T) {
 }
 
 func TestAdminListsEverySpaceWithOwnersAndPages(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		tang := a.addUser("tang", pw, "member")
@@ -132,6 +135,7 @@ func TestAdminListsEverySpaceWithOwnersAndPages(t *testing.T) {
 }
 
 func TestAdminGetsOneSpaceAsTheListHasIt(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		tang := a.addUser("tang", pw, "member")
@@ -160,6 +164,7 @@ func TestAdminGetsOneSpaceAsTheListHasIt(t *testing.T) {
 }
 
 func TestAdminListDoesNotOpenSpaces(t *testing.T) {
+	t.Parallel()
 	opened := 0
 	eachAccounts(t, accOpts{spaces: func(o *spaces.Options) { o.OpenHook = func(string) { opened++ } }}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
@@ -174,6 +179,7 @@ func TestAdminListDoesNotOpenSpaces(t *testing.T) {
 }
 
 func TestAdminDisableAndEnable(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{spaces: func(o *spaces.Options) { o.CloseWait = 200 * time.Millisecond }}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		tm := newTeam(t, a)
@@ -236,6 +242,7 @@ func TestAdminDisableAndEnable(t *testing.T) {
 }
 
 func TestAdminDisableWaitsForRequestsInFlight(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{spaces: func(o *spaces.Options) { o.CloseWait = 100 * time.Millisecond }}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		tm := newTeam(t, a)
@@ -259,6 +266,7 @@ func TestAdminDisableWaitsForRequestsInFlight(t *testing.T) {
 }
 
 func TestAdminTransferOwnership(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		ctx := context.Background()
 		admin := a.setup("kazuha", pw)
@@ -331,6 +339,7 @@ func TestAdminTransferOwnership(t *testing.T) {
 }
 
 func TestAdminDeleteMovesTheDirectoryToTheTrash(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{spaces: func(o *spaces.Options) { o.CloseWait = 100 * time.Millisecond }}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		tm := newTeam(t, a)
@@ -395,6 +404,7 @@ func TestAdminDeleteMovesTheDirectoryToTheTrash(t *testing.T) {
 }
 
 func TestAdminDeleteReportsAMoveThatFailed(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		tang := a.addUser("tang", pw, "member")
@@ -417,6 +427,7 @@ func TestAdminDeleteReportsAMoveThatFailed(t *testing.T) {
 }
 
 func TestAdminSizesAreMeasuredInTheBackgroundAndOnDemand(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{spaces: func(o *spaces.Options) {
 		o.SizeEvery, o.SizeAge = 20*time.Millisecond, time.Hour
 	}}, func(t *testing.T, a *acc) {
@@ -483,6 +494,7 @@ func sizeOf(t *testing.T, admin *client, sid string) float64 {
 }
 
 func TestAdminStatus(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		a.addUser("tang", pw, "member")
@@ -500,6 +512,7 @@ func TestAdminStatus(t *testing.T) {
 }
 
 func TestAdminSizerDoesNotWaitBetweenStaleSpaces(t *testing.T) {
+	t.Parallel()
 	const every = time.Second
 	eachAccounts(t, accOpts{spaces: func(o *spaces.Options) { o.SizeEvery, o.SizeAge = every, time.Hour }}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)

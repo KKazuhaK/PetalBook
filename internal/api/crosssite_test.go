@@ -9,6 +9,7 @@ import (
 )
 
 func TestCrossSiteRulesInAccountsMode(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{public: "https://Notes.Example.test"}, func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		sid := c.personalSpace()
@@ -53,6 +54,7 @@ func TestCrossSiteRulesInAccountsMode(t *testing.T) {
 }
 
 func TestOIDCCallbackIsExemptFromTheCrossSiteRules(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.newClient("")
 		// The provider's redirect is cross-site by nature: it must get through to
@@ -69,6 +71,7 @@ func TestOIDCCallbackIsExemptFromTheCrossSiteRules(t *testing.T) {
 }
 
 func TestWrongMethodAndUnknownRoutes(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		r := c.do("GET", "/api/invites/accept", nil).want(t, 405, "invalid")
@@ -86,6 +89,7 @@ func TestWrongMethodAndUnknownRoutes(t *testing.T) {
 }
 
 func TestCommitsCarryTheOwnerAsAuthor(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		ctx := context.Background()
 		c := a.setup("kazuha", pw)

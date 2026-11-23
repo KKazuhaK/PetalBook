@@ -62,7 +62,7 @@ func deadlockRound(t *testing.T, round int, d time.Duration) int64 {
 	}
 	// Checkpoints made by the Sync above do not count.
 	before := x.checkpoints.Load()
-	base := clock
+	base := clock()
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup

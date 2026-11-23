@@ -106,7 +106,7 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	}
 	t.Cleanup(func() { os.RemoveAll(base) })
 	dir := filepath.Join(base, "data")
-	sopt := spaces.Options{Store: st, DataDir: dir, Committer: "PetalBook Test <svc@example.test>",
+	sopt := spaces.Options{Store: st, DataDir: dir, Committer: "PetalBook Test <svc@example.test>", CloseWait: 200 * time.Millisecond,
 		CommitIdle: time.Hour, CommitMax: 2 * time.Hour, Now: clk.Now, MaxSpaces: o.maxSpaces}
 	if o.spaces != nil {
 		o.spaces(&sopt)

@@ -87,6 +87,7 @@ func connectBody(url string) map[string]any {
 }
 
 func TestRemoteEndpoints(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, remoteOpts(&netSwitch{}, []string{"*"}, true), func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		sid := c.personalSpace()
@@ -162,6 +163,7 @@ func TestRemoteEndpoints(t *testing.T) {
 }
 
 func TestConnectingToAnUnreachableOrRefusingRemoteChangesNothing(t *testing.T) {
+	t.Parallel()
 	n := &netSwitch{}
 	eachAccounts(t, remoteOpts(n, []string{"*"}, true), func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
@@ -206,6 +208,7 @@ func TestConnectingToAnUnreachableOrRefusingRemoteChangesNothing(t *testing.T) {
 }
 
 func TestRemoteRefusesAddressesAndHostsByTheAdministrator(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, remoteOpts(&netSwitch{}, []string{"github.com", "git.example.org"}, false), func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		rurl := "/api/spaces/" + c.personalSpace() + "/remote"
@@ -221,6 +224,7 @@ func TestRemoteRefusesAddressesAndHostsByTheAdministrator(t *testing.T) {
 }
 
 func TestChangesAnswer503WhileTheRemoteIsDownAndNothingIsChanged(t *testing.T) {
+	t.Parallel()
 	n := &netSwitch{}
 	eachAccounts(t, remoteOpts(n, []string{"*"}, true), func(t *testing.T, a *acc) {
 		n.set(false)
@@ -309,6 +313,7 @@ func TestChangesAnswer503WhileTheRemoteIsDownAndNothingIsChanged(t *testing.T) {
 }
 
 func TestCommitOfADraftIsPushedWhenTheRemoteIsUp(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, remoteOpts(&netSwitch{}, []string{"*"}, true), func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		sid := c.personalSpace()
@@ -339,6 +344,7 @@ func TestCommitOfADraftIsPushedWhenTheRemoteIsUp(t *testing.T) {
 }
 
 func TestRewrittenRemoteThroughTheAPI(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, remoteOpts(&netSwitch{}, []string{"*"}, true), func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		sid := c.personalSpace()
@@ -380,6 +386,7 @@ func TestRewrittenRemoteThroughTheAPI(t *testing.T) {
 // The owner-only rule is the middleware's: every owner route refuses a member
 // who is not an owner with 403, and everyone else's space is not there.
 func TestOwnerRoutesAreForOwnersOnly(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, remoteOpts(&netSwitch{}, []string{"*"}, true), func(t *testing.T, a *acc) {
 		boss := a.setup("kazuha", pw)
 		tang := a.addUser("tang", pw, "member")
@@ -424,6 +431,7 @@ func TestOwnerRoutesAreForOwnersOnly(t *testing.T) {
 }
 
 func TestRemoteEndpointsDoNotExistInSingleUserMode(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	for _, rt := range api.Routes() {
 		if !strings.Contains(rt.Pattern, "/remote") {
@@ -446,6 +454,7 @@ func TestRemoteEndpointsDoNotExistInSingleUserMode(t *testing.T) {
 // replaced, and the person would later be asked to choose between their own
 // older and newer text.
 func TestTypingWhileACommitWaitsForTheRemote(t *testing.T) {
+	t.Parallel()
 	n := &netSwitch{}
 	eachAccounts(t, remoteOpts(n, []string{"*"}, true), func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
@@ -516,6 +525,7 @@ func TestTypingWhileACommitWaitsForTheRemote(t *testing.T) {
 // remote: forgotten, it would be opened as local after a restart and commit
 // changes that are never pushed.
 func TestAFailedChangeOfCredentialKeepsTheSpaceConnected(t *testing.T) {
+	t.Parallel()
 	n := &netSwitch{}
 	eachAccounts(t, remoteOpts(n, []string{"*"}, true), func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
