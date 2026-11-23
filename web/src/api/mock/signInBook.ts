@@ -2,7 +2,7 @@
 // the sign-in providers, the captcha and the audit log. The flows that need a session (signing in, the
 // passkeys) are in server.ts; this holds the state and the checks of what an administrator may set.
 
-import type { AuditItem, AuthProvider, CaptchaContext, CaptchaProvider, LoginMode, ProviderInput, ProviderKind, PublicProvider, Role, SecurityNotice, SecurityPatch, SecuritySettings } from '../types.ts'
+import type { AuditItem, AuthProvider, CaptchaContext, CaptchaContextSettings, CaptchaProvider, LoginMode, ProviderInput, ProviderKind, PublicProvider, Role, SecurityNotice, SecurityPatch, SecuritySettings } from '../types.ts'
 import { HttpError, isRecord } from './store.ts'
 
 export interface PasskeyRec {
@@ -34,6 +34,15 @@ export interface ProviderRec {
   secret: boolean
 }
 
+// Settings that differ from the defaults, as a test or the dev server sets them.
+export interface MockSecurity {
+  login?: Partial<{ mode: LoginMode; ssoOnly: boolean }>
+  passkeys?: Partial<{ enabled: boolean; requireRoles: Role[] }>
+  captcha?: Partial<{ provider: CaptchaProvider; siteKey: string; hasSecret: boolean; contexts: Partial<Record<CaptchaContext, Partial<CaptchaContextSettings>>> }>
+  lockout?: Partial<SecuritySettings['lockout']>
+  limits?: Partial<SecuritySettings['limits']>
+}
+
 export interface SignInBookOptions {
   now: () => number
   // The server's public URL; null means it has none (`--public-url` not given).
@@ -42,7 +51,7 @@ export interface SignInBookOptions {
   passkeysAvailable: boolean
   users: () => Iterable<BookUser>
   newAuditId: () => string
-  security?: Partial<{ [K in keyof SecuritySettings]: Partial<SecuritySettings[K]> }>
+  security?: MockSecurity
   providers?: (ProviderInput & { slug: string; kind: ProviderKind; name: string; sub?: string; status?: AuthProvider['status'] })[]
   notices?: SecurityNotice[]
 }
