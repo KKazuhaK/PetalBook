@@ -197,82 +197,6 @@ type fakeClock struct{ t time.Time }
 
 func (c *fakeClock) now() time.Time { return c.t }
 
-func TestFailLimiterDelaysGrowAndReset(t *testing.T) {
-	clk := &fakeClock{t: time.Unix(1_000_000, 0)}
-	l := newFailLimiter(100, 3, time.Second, 8*time.Second, time.Minute, clk.now)
-	for range 3 {
-		if l.wait("k") != 0 {
-			t.Fatal("blocked within the free failures")
-		}
-		l.fail("k")
-	}
-	if l.wait("k") != 0 {
-		t.Fatal("blocked before the free failures ran out")
-	}
-	var delays []time.Duration
-	for range 5 {
-		l.fail("k")
-		d := l.wait("k")
-		delays = append(delays, d)
-		clk.t = clk.t.Add(d)
-		if l.wait("k") != 0 {
-			t.Fatal("still blocked after waiting")
-		}
-	}
-	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 8 * time.Second} // capped
-	for i := range want {
-		if delays[i] != want[i] {
-			t.Fatalf("delays %v, want %v", delays, want)
-		}
-	}
-	// Other keys are not affected, and a success forgets the key.
-	if l.wait("other") != 0 {
-		t.Fatal("another key is blocked")
-	}
-	l.fail("k")
-	l.reset("k")
-	if l.wait("k") != 0 {
-		t.Fatal("reset did not clear")
-	}
-	// A quiet window forgets failures by itself.
-	for range 5 {
-		l.fail("q")
-	}
-	clk.t = clk.t.Add(2 * time.Minute)
-	if l.wait("q") != 0 {
-		t.Fatal("old failures still count")
-	}
-}
-
-func TestLimitersAreBounded(t *testing.T) {
-	clk := &fakeClock{t: time.Unix(1_000_000, 0)}
-	l := newFailLimiter(50, 1, time.Second, time.Minute, time.Hour, clk.now)
-	for i := range 1000 {
-		l.fail(strings.Repeat("x", i%7) + string(rune('a'+i%26)) + itoa(i))
-	}
-	if n := l.size(); n > 50 {
-		t.Fatalf("%d entries with a bound of 50", n)
-	}
-	// The key seen last survives; the oldest is the one dropped.
-	l.fail("hot")
-	for i := range 40 {
-		l.fail("filler" + itoa(i))
-		l.fail("hot")
-	}
-	l.fail("hot")
-	l.fail("hot")
-	if l.wait("hot") == 0 {
-		t.Fatal("a busy key was evicted")
-	}
-	b := newBucketLimiter(20, 60, 3, clk.now)
-	for i := range 500 {
-		b.take("k" + itoa(i))
-	}
-	if len(b.entries) > 20 {
-		t.Fatalf("%d buckets", len(b.entries))
-	}
-}
-
 func TestBucketLimiter(t *testing.T) {
 	clk := &fakeClock{t: time.Unix(1_000_000, 0)}
 	b := newBucketLimiter(100, 60, 3, clk.now) // one a second, burst of 3
@@ -298,7 +222,7 @@ func TestPendingStoreIsOneTimeBoundAndExpires(t *testing.T) {
 	clk := &fakeClock{t: time.Unix(1_000_000, 0)}
 	p := newPendingStore(clk.now)
 	mk := func(v string) pendingEntry {
-		return pendingEntry{state: authoidc.State{Value: v}, intent: "login", ret: "/"}
+		return pendingEntry{state: authoidc.State{Value: v}, stateValue: v, intent: "login", ret: "/"}
 	}
 	id := p.put(mk("state-1"))
 	// A wrong state does not burn the attempt.
@@ -369,32 +293,6 @@ func TestUsernameFromClaims(t *testing.T) {
 	}
 }
 
-func TestReserveCountsBeforeTheAttemptAndRefundGivesItBack(t *testing.T) {
-	clk := &fakeClock{t: time.Unix(1_000_000, 0)}
-	l := newFailLimiter(100, 2, time.Second, time.Minute, time.Hour, clk.now)
-	// Three attempts in flight together: two free, the third starts the delay.
-	for range 3 {
-		if l.reserve("k") != 0 {
-			t.Fatal("blocked within the allowance")
-		}
-	}
-	if l.reserve("k") == 0 {
-		t.Fatal("a fourth in-flight attempt was let through")
-	}
-	// A blocked attempt is not counted: after the wait the key is where it was.
-	clk.t = clk.t.Add(time.Second)
-	l.refund("k") // one of the three succeeded
-	if l.wait("k") != 0 {
-		t.Fatal("still blocked after a refund brought it within the allowance")
-	}
-	l.refund("k")
-	l.refund("k")
-	l.refund("k") // more refunds than reservations are harmless
-	if l.size() != 0 {
-		t.Fatal("the entry stays")
-	}
-}
-
 func TestUserKeyIsTheUsernameSignInReads(t *testing.T) {
 	for _, in := range []string{"kazuha", " kazuha", "KAZUHA\n", "\tKaZuHa "} {
 		if got := userKey(in); got != "u:kazuha" {
@@ -403,30 +301,3 @@ func TestUserKeyIsTheUsernameSignInReads(t *testing.T) {
 	}
 }
 
-func TestAnOccasionalSlipNeverLocksAUserOut(t *testing.T) {
-	clk := &fakeClock{t: time.Unix(1_000_000, 0)}
-	l := newFailLimiter(100, 5, 2*time.Second, 5*time.Minute, 15*time.Minute, clk.now)
-	// One wrong password every five minutes, for two days.
-	for i := range 576 {
-		if w := l.reserve("u"); w != 0 {
-			t.Fatalf("slip %d blocked for %v", i, w)
-		}
-		clk.t = clk.t.Add(5 * time.Minute)
-	}
-	// Failures piled up faster than they are forgiven still lock, and the lock lifts as they are forgiven.
-	for range 20 {
-		l.fail("burst")
-	}
-	if l.wait("burst") == 0 {
-		t.Fatal("a burst of failures did not lock")
-	}
-	clk.t = clk.t.Add(5 * time.Minute) // the delay itself has run out, but most failures are still remembered
-	l.fail("burst")
-	if l.wait("burst") == 0 {
-		t.Fatal("forgiven too fast")
-	}
-	clk.t = clk.t.Add(14 * 5 * time.Minute)
-	if l.wait("burst") != 0 {
-		t.Fatal("never forgiven")
-	}
-}

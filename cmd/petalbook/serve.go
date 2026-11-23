@@ -443,7 +443,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 	}
 	if svc != nil {
 		run(svc.Run)
-		run(svc.WarmOIDC)
+		run(svc.WarmProviders)
 	}
 
 	errc := make(chan error, 1)
@@ -503,9 +503,9 @@ func withWebApp(api, app http.Handler) http.Handler {
 
 func signInMethods(cfg *checked) string {
 	if cfg.oidc != nil {
-		return "password, " + cfg.oidc.Issuer
+		return "password, passkeys, providers of the state database (--oidc-* is imported once: " + cfg.oidc.Issuer + ")"
 	}
-	return "password"
+	return "password, passkeys, providers of the state database"
 }
 
 func originOf(u string) []string {

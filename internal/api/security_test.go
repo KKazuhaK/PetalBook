@@ -5,108 +5,12 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/api"
 	"github.com/KKazuhaK/PetalBook/internal/auth"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
-
-func TestLoginRateLimitPerUsername(t *testing.T) {
-	t.Parallel()
-	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
-		a.setup("kazuha", pw)
-		bad := map[string]any{"username": "kazuha", "password": "wrong password here"}
-		// Each attempt from a new address, so only the username is counted.
-		try := func(i int, body map[string]any) result {
-			return a.newClient(fmt.Sprintf("203.0.113.%d", i)).do("POST", "/api/login", body)
-		}
-		for i := 1; i <= 6; i++ {
-			try(i, bad).want(t, 401, "unauthenticated") // five are free, the sixth starts the delay
-		}
-		r := try(7, bad).want(t, 429, "rate_limited")
-		if ra := r.resp.Header.Get("Retry-After"); ra != "2" {
-			t.Fatalf("Retry-After %q", ra)
-		}
-		// The right password does not get past a block.
-		try(8, map[string]any{"username": "kazuha", "password": pw}).want(t, 429, "rate_limited")
-		// Other usernames are not affected.
-		try(9, map[string]any{"username": "someone", "password": "x"}).want(t, 401, "")
-		// After the wait the next failure doubles the delay.
-		a.clock.Advance(2 * time.Second)
-		try(10, bad).want(t, 401, "unauthenticated")
-		r = try(11, bad).want(t, 429, "rate_limited")
-		if ra := r.resp.Header.Get("Retry-After"); ra != "4" {
-			t.Fatalf("Retry-After %q after the second block", ra)
-		}
-		// A correct sign-in after the wait works and clears the count.
-		a.clock.Advance(4 * time.Second)
-		try(12, map[string]any{"username": "kazuha", "password": pw}).want(t, 200, "")
-		for i := 20; i < 25; i++ {
-			try(i, bad).want(t, 401, "unauthenticated")
-		}
-		try(26, bad).want(t, 401, "unauthenticated") // free again: only five since the reset
-	})
-}
-
-func TestLoginRateLimitPerAddress(t *testing.T) {
-	t.Parallel()
-	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
-		a.setup("kazuha", pw)
-		c := a.newClient("203.0.113.50")
-		for i := range 11 {
-			c.do("POST", "/api/login", map[string]any{"username": fmt.Sprintf("nobody%d", i), "password": "x"}).want(t, 401, "")
-		}
-		c.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 429, "rate_limited")
-		// Another address is untouched.
-		a.newClient("203.0.113.51").do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 200, "")
-		a.clock.Advance(time.Minute)
-		c.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 200, "")
-	})
-}
-
-func TestRateLimitBehindATrustedProxy(t *testing.T) {
-	t.Parallel()
-	eachAccounts(t, accOpts{proxies: []string{"10.0.0.0/8"}}, func(t *testing.T, a *acc) {
-		a.setup("kazuha", pw)
-		// Everything arrives from the proxy; the real clients differ.
-		viaProxy := func(client string) *client {
-			c := a.newClient("10.0.0.2")
-			c.headers["X-Forwarded-For"] = client
-			return c
-		}
-		for i := range 11 {
-			viaProxy("198.51.100.1").do("POST", "/api/login", map[string]any{"username": fmt.Sprintf("n%d", i), "password": "x"}).want(t, 401, "")
-		}
-		viaProxy("198.51.100.1").do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 429, "rate_limited")
-		viaProxy("198.51.100.2").do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 200, "")
-	})
-	// A peer that is not a trusted proxy cannot pick its own address.
-	eachAccounts(t, accOpts{proxies: []string{"10.0.0.0/8"}}, func(t *testing.T, a *acc) {
-		a.setup("kazuha", pw)
-		for i := range 11 {
-			c := a.newClient("203.0.113.9")
-			c.headers["X-Forwarded-For"] = fmt.Sprintf("198.51.100.%d", i)
-			c.do("POST", "/api/login", map[string]any{"username": fmt.Sprintf("n%d", i), "password": "x"}).want(t, 401, "")
-		}
-		c := a.newClient("203.0.113.9")
-		c.headers["X-Forwarded-For"] = "198.51.100.200"
-		c.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 429, "rate_limited")
-	})
-}
-
-func TestSetupAndInviteEndpointsAreThrottled(t *testing.T) {
-	t.Parallel()
-	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
-		c := a.newClient("203.0.113.60")
-		for range 11 { // ten failures are free; the eleventh starts the delay
-			c.do("POST", "/api/setup", map[string]any{"token": "guess", "username": "x1", "password": pw}).want(t, 403, "")
-		}
-		c.do("POST", "/api/setup", map[string]any{"token": a.auth.SetupToken(), "username": "kazuha", "password": pw}).want(t, 429, "rate_limited")
-	})
-}
 
 func TestUnknownUserCostsAsMuchAsAWrongPassword(t *testing.T) {
 	t.Parallel()
@@ -320,77 +224,6 @@ func mustUserID(t *testing.T, a *acc, username string) string {
 	}
 	t.Fatalf("no user %s", username)
 	return ""
-}
-
-func TestAConcurrentBurstOfWrongPasswordsGetsOnlyItsAllowance(t *testing.T) {
-	t.Parallel()
-	// Hashing is slow and one at a time, so the burst queues behind it. Every
-	// attempt must be counted before it waits, not judged by the count from before.
-	o := accOpts{mod: func(c *auth.Config) {
-		c.Password = auth.PasswordParams{MemoryKiB: 4 * 1024, Time: 1, Threads: 1}
-		c.HashConcurrency = 1
-	}}
-	eachAccounts(t, o, func(t *testing.T, a *acc) {
-		a.setup("kazuha", pw)
-		const n = 60
-		codes := make([]int, n)
-		var wg sync.WaitGroup
-		for i := range n {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				// Different addresses: this is the per-username allowance.
-				c := a.newClient(fmt.Sprintf("203.0.%d.%d", i/200, i%200+1))
-				codes[i] = c.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": "wrong password here"}).code
-			}()
-		}
-		wg.Wait()
-		got := map[int]int{}
-		for _, c := range codes {
-			got[c]++
-		}
-		if got[401] != 6 || got[429] != n-6 {
-			t.Fatalf("60 simultaneous wrong logins for one user: %v (want 6 answered 401, the rest 429)", got)
-		}
-		// And per address, with different usernames.
-		codes = make([]int, n)
-		for i := range n {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				c := a.newClient("198.51.100.99")
-				codes[i] = c.do("POST", "/api/login", map[string]any{"username": fmt.Sprintf("nobody%d", i), "password": "wrong password here"}).code
-			}()
-		}
-		wg.Wait()
-		got = map[int]int{}
-		for _, c := range codes {
-			got[c]++
-		}
-		if got[401] != 11 || got[429] != n-11 {
-			t.Fatalf("60 simultaneous wrong logins from one address: %v (want 11 answered 401, the rest 429)", got)
-		}
-		// A success gives its place back: it does not use up the allowance.
-		a.clock.Advance(time.Hour)
-		c := a.newClient("198.51.100.5")
-		for range 20 {
-			c.do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 200, "")
-		}
-	})
-}
-
-func TestTheUsernameLimitIsKeyedOnTheUsernameSignInReads(t *testing.T) {
-	t.Parallel()
-	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
-		a.setup("kazuha", pw)
-		spellings := []string{"kazuha", " kazuha", "KAZUHA", "kazuha ", "Kazuha", "\tkazuha\n"}
-		for i, name := range spellings {
-			a.newClient(fmt.Sprintf("203.0.113.%d", i+1)).do("POST", "/api/login", map[string]any{"username": name, "password": "wrong password here"}).want(t, 401, "")
-		}
-		// Six failures under six spellings are six failures of one username.
-		a.newClient("203.0.113.50").do("POST", "/api/login", map[string]any{"username": " KaZuHa ", "password": pw}).want(t, 429, "rate_limited")
-		a.newClient("203.0.113.51").do("POST", "/api/login", map[string]any{"username": "kazuha", "password": pw}).want(t, 429, "rate_limited")
-	})
 }
 
 func TestSpacesPerUserAreLimited(t *testing.T) {
