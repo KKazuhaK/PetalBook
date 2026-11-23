@@ -2593,9 +2593,13 @@ OAuth codes (`invalid_request`, `invalid_client`, `invalid_grant`,
 `invalid_scope`, `invalid_target`, `unsupported_grant_type`,
 `unsupported_response_type`, `access_denied`, `temporarily_unavailable`,
 `server_error`). The discovery documents, `/oauth/token` and `/oauth/register`
-take no cookies and answer every origin (`Access-Control-Allow-Origin: *`), so
-a browser-based MCP client can use them. When MCP is switched off (see
-"Machine access") all of them answer `404`.
+take no cookies and answer every origin (`Access-Control-Allow-Origin: *`, and
+the cross-site rules of `/api` do not apply to them), so a browser-based MCP
+client can use them. When MCP is switched off (see "Machine access") all of
+them, the authorization and consent endpoints included, answer `404`; the
+grants (below) are kept and can still be listed and revoked. In single-user
+mode, and in accounts mode without `--public-url`, there is no authorization
+server: the same paths answer `404`.
 
 ### Scopes and what a grant may do
 
@@ -2639,14 +2643,19 @@ Both are cacheable for 5 minutes. A request to `/mcp` without a token answers
 
 RFC 7591, for clients that have no client ID metadata document.
 `{"client_name": "…", "redirect_uris": ["…"], "token_endpoint_auth_method": "none", "grant_types": [...], "response_types": ["code"]}`
-(body at most 16 KiB; 1–10 redirect URIs, each `https`, or `http` on a
-loopback address with any port). `201` with the client
+(body at most 16 KiB; 1–10 redirect URIs, each `https`, `http` on a loopback
+address with any port, or the private-use scheme of a native app such as
+`cursor://…`, RFC 8252; never a fragment, credentials, `javascript:`, `data:`
+and the like, nor a host with look-alike letters). `201` with the client
 (`client_id` is `pbc_…`); `200` with the existing client when the same name and
 redirect URIs are registered again, which costs nothing. At most 30 new
 registrations per client address in 10 minutes (`429 temporarily_unavailable`
 with `Retry-After`) and 1000 clients in all; a client never authorized is
 removed after a day, one with no grant left after 30 days.
-`400 invalid_client_metadata` or `invalid_redirect_uri` for a bad request.
+`400 invalid_client_metadata` or `invalid_redirect_uri` for a bad request. When
+the 1000 are all in use, `503 temporarily_unavailable` with `Retry-After`;
+otherwise the oldest client nobody authorized makes room. Clients are kept in the
+state database.
 
 A `client_id` that is an `https` URL is a client ID metadata document: the
 server fetches it (at most 8 KiB, no private or loopback addresses, cached as
@@ -2660,12 +2669,17 @@ The browser is sent here by the client with `response_type=code`,
 `resource` (the URL of `/mcp`), `scope` and `state`. Without a session it
 redirects to the sign-in page, which comes back here. With a bad `client_id` or
 a `redirect_uri` the client did not register, it shows an error page and
-redirects nowhere; any other bad parameter goes back to the client's
+redirects nowhere (the page is in English or, for a browser that asks for it,
+Chinese); any other bad parameter goes back to the client's
 `redirect_uri` with `error` (`invalid_request` for missing or non-`S256`
 PKCE, `invalid_target` for a missing or other `resource`, `invalid_scope`,
 `unsupported_response_type`). Otherwise it redirects to the consent page,
 `/oauth/consent?req=…`; the request is kept 10 minutes, in memory, for this
-person only.
+person only. The browser of someone who is not signed in is sent to
+`/login?return=<this address>`; the web app turns that return into a full page
+load of `/oauth/authorize`, which the server answers. A link from another site
+may open `/oauth/authorize` (it only asks the person); the rest of `/api` never
+accepts requests from other sites.
 
 ### Consent
 
@@ -2712,24 +2726,34 @@ secret.
 {"access_token": "…", "token_type": "Bearer", "expires_in": 600, "refresh_token": "pbr_…", "scope": "read write"}
 ```
 
-The access token is a JWT signed with the server's ES256 key (in
-`DATA/oauth-signing-key.pem`, made at the first start), valid 10 minutes, bound
-to the `/mcp` URL and to the grant. Only this server checks it, in process;
-once checked it is kept in memory by its hash until it expires, and the grant
-it names is looked up in the same cache as tokens, so revoking a grant stops its
-access tokens at once. The refresh token is replaced at every refresh; the
+The access token is a JWT signed with the server's ES256 key (made at the first
+start and kept in the state database, sealed with the server key like the other
+secrets: `DATA/secret.key` or `PETALBOOK_SECRET_KEY`; with another server key it
+cannot be opened and the server does not start), valid 10 minutes, bound to the
+`/mcp` URL and to the grant. There is no JWKS endpoint: only this server checks
+it, in process. A token whose signature was checked is kept in memory by its
+hash until it expires, and the grant it names is looked up in the same cache
+as API tokens (30 seconds), so a check costs no query, and revoking a grant
+through this server stops its access tokens at once (one made by another
+process, within 30 seconds). A refused access token answers with the codes of
+"API tokens": `token_invalid`, `token_expired`, `token_revoked` (the grant is
+gone), `token_owner_disabled`. The refresh token is replaced at every refresh; the
 replaced one, sent again within 60 seconds, gets the same answer (a response
 that was lost), and after that ends the grant. A grant not refreshed for 90
-days ends. `invalid_grant` for a bad, used or ended code or refresh token,
-a verifier that does not match, and when the owner is disabled or the grant
-was revoked (the client must authorize again).
+days ends. The refresh token is `pbr_<grant id>.<secret>`; only its SHA-256 is kept.
+`invalid_grant` for a bad, used or ended code or refresh token, a verifier that
+does not match, and when the owner is disabled or the grant was revoked (the
+client must authorize again). A disabled owner does not end the grant: it works
+again when the account does.
 
 ### Grants
 
 A grant is one approval of one client by one person. They are listed and
 revoked like tokens:
 
-- `GET /api/account/grants`: `{"grants": [{"id", "client": {"name", "id"}, "access", "spaces": [{"id", "name"}], "created", "lastUsed"}]}`.
+- `GET /api/account/grants`: `{"grants": [{"id", "client": {"name", "id"}, "access", "spaces": [{"id", "name"}], "created", "lastUsed"}]}`,
+  newest first. `lastUsed` is the last refresh (the creation until the first
+  one); `name` of a space is `""` as for tokens.
 - `DELETE /api/account/grants/{id}`: `204`; the client's access and refresh
   tokens stop working at once.
 

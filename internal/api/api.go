@@ -25,6 +25,7 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/drafts"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/index"
+	"github.com/KKazuhaK/PetalBook/internal/oauth"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
@@ -83,22 +84,28 @@ type Options struct {
 	// Tokens is the service of API tokens (NewTokens); made with the defaults
 	// when nil. The caller runs its Run.
 	Tokens *tokens.Service
+	// OAuth is the authorization server for MCP clients; nil when there is none
+	// (single-user mode, or no public URL). The caller runs its Run.
+	OAuth *oauth.Service
 	// DailyFetch gets the daily text from the external interfaces an
 	// administrator configured; the one that refuses private addresses when nil.
 	DailyFetch *dailyfetch.Fetcher
 }
 
 type server struct {
-	opt     Options
-	log     *slog.Logger
-	auth    *auth.Service
-	spaces  *spaces.Manager
-	drafts  *drafts.Service
-	tokens  *tokens.Service
-	single  bool
-	started time.Time
-	local   store.User // the built-in user of single-user mode
-	origins map[string]bool
+	opt    Options
+	log    *slog.Logger
+	auth   *auth.Service
+	spaces *spaces.Manager
+	drafts *drafts.Service
+	tokens *tokens.Service
+	oauth  *oauth.Service
+	// mcpStandIn: see build.
+	mcpStandIn bool
+	single     bool
+	started    time.Time
+	local      store.User // the built-in user of single-user mode
+	origins    map[string]bool
 	// importing lets one import run at a time (see importMarkdown).
 	importing chan struct{}
 	// originHosts are the hosts of the allowed origins: a request addressed to
@@ -107,7 +114,12 @@ type server struct {
 }
 
 // New returns the handler for every endpoint.
-func New(opt Options) http.Handler {
+func New(opt Options) http.Handler { return build(opt, false) }
+
+// build makes the handler. mcpStandIn lets the routes of /api take an OAuth
+// access token like an API token: tests use it for the permission rules of a
+// grant until /mcp, the one place such a token is accepted, exists.
+func build(opt Options, mcpStandIn bool) http.Handler {
 	if opt.MaxBody <= 0 {
 		opt.MaxBody = DefaultMaxBody
 	}
@@ -126,7 +138,7 @@ func New(opt Options) http.Handler {
 	if opt.DailyFetch == nil {
 		opt.DailyFetch = dailyfetch.New(NewDailyBacking(opt.Store))
 	}
-	s := &server{opt: opt, log: opt.Logger, auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, single: opt.Auth == nil, started: time.Now(),
+	s := &server{opt: opt, log: opt.Logger, auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, oauth: opt.OAuth, mcpStandIn: mcpStandIn, single: opt.Auth == nil, started: time.Now(),
 		origins: map[string]bool{}, originHosts: map[string]bool{}, importing: make(chan struct{}, 1)}
 	if s.log == nil {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -155,6 +167,7 @@ func New(opt Options) http.Handler {
 			uploads[rt.method+" "+rt.pattern] = true
 		}
 	}
+	s.mountOAuth(mux)
 	// A path that exists with other methods is 405 in the API's error shape
 	// (the mux would answer in plain text), anything else 404. This cannot be
 	// method-less patterns in the mux: they conflict with wildcard routes such
@@ -255,7 +268,9 @@ func (s *server) wrap(next http.Handler, bodyType func(*http.Request) string) ht
 		// The identity provider's redirect is a cross-site navigation by
 		// nature. It changes nothing unless its state matches a sign-in this
 		// browser started, so the cross-site rules do not apply to it.
-		if !(r.Method == http.MethodGet && r.URL.Path == oidcCallbackPath) {
+		// The endpoints of the authorization server are called, or the browser is
+		// sent to them, by other sites by design (see oauthCrossSite).
+		if !(r.Method == http.MethodGet && r.URL.Path == oidcCallbackPath) && !oauthCrossSite(r) {
 			if why := s.crossSite(r); why != "" {
 				writeError(sw, http.StatusForbidden, "forbidden", why)
 				return
@@ -267,6 +282,11 @@ func (s *server) wrap(next http.Handler, bodyType func(*http.Request) string) ht
 			// requiring it keeps pages on other sites from making changes.
 			// A file upload is the one exception, and its type cannot be sent by a form either.
 			want := bodyType(r)
+			if oauthForm(r) {
+				// The token endpoint takes a form, as RFC 6749 says; it checks the type itself.
+				next.ServeHTTP(sw, r)
+				return
+			}
 			if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != want {
 				msg := "send Content-Type: application/json with every request that changes something"
 				if want != "application/json" {

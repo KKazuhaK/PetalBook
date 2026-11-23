@@ -329,13 +329,13 @@ func (s *server) revokeToken(c *call, owner string) {
 type accessResp struct {
 	Tokens bool `json:"tokens"`
 	MCP    bool `json:"mcp"`
-	// OAuth is whether the authorization server is there; it needs MCP and a
-	// public URL, and is not built yet.
+	// OAuth is whether the authorization server is there: it needs MCP on and a
+	// public URL.
 	OAuth bool `json:"oauth"`
 }
 
 func (s *server) accessResp(a tokens.Access) accessResp {
-	return accessResp{Tokens: a.Tokens, MCP: a.MCP}
+	return accessResp{Tokens: a.Tokens, MCP: a.MCP, OAuth: a.MCP && s.oauth != nil}
 }
 
 func (s *server) adminGetAccess(c *call) {

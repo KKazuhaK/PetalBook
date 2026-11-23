@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/KKazuhaK/PetalBook/internal/auth"
+	"github.com/KKazuhaK/PetalBook/internal/oauth"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/perm"
 	"github.com/KKazuhaK/PetalBook/internal/space"
@@ -117,6 +118,10 @@ var routeTable = []route{
 	{"GET", "/api/account/tokens", signedIn, true, false, false, (*server).listMyTokens},
 	{"POST", "/api/account/tokens", signedIn, true, false, false, (*server).createToken},
 	{"DELETE", "/api/account/tokens/{id}", signedIn, true, false, false, (*server).revokeMyToken},
+	{"GET", "/api/account/grants", signedIn, true, false, false, (*server).listMyGrants},
+	{"DELETE", "/api/account/grants/{id}", signedIn, true, false, false, (*server).revokeMyGrant},
+	{"GET", "/api/oauth/consent", signedIn, true, false, false, (*server).oauthConsentInfo},
+	{"POST", "/api/oauth/consent", signedIn, true, false, false, (*server).oauthConsentDecide},
 
 	{"GET", "/api/users", admin, true, false, false, (*server).listUsers},
 	{"PATCH", "/api/users/{id}", admin, true, false, false, (*server).patchUser},
@@ -143,6 +148,8 @@ var routeTable = []route{
 	{"PUT", "/api/admin/access", admin, true, false, false, (*server).adminPutAccess},
 	{"GET", "/api/admin/tokens", admin, true, false, false, (*server).adminListTokens},
 	{"DELETE", "/api/admin/tokens/{id}", admin, true, false, false, (*server).adminRevokeToken},
+	{"GET", "/api/admin/grants", admin, true, false, false, (*server).adminListGrants},
+	{"DELETE", "/api/admin/grants/{id}", admin, true, false, false, (*server).adminRevokeGrant},
 
 	{"GET", "/api/spaces", signedIn, false, false, false, (*server).listSpaces},
 	{"POST", "/api/spaces", signedIn, true, false, false, (*server).createSpace},
@@ -250,11 +257,23 @@ func (s *server) handle(rt route) http.HandlerFunc {
 		if secret, ok := bearerToken(r); ok {
 			// A request with a token is judged by the token alone: never by a
 			// cookie sent with it, and never falling back to one.
+			viaOAuth := s.oauth != nil && oauth.LooksLikeAccessToken(secret)
+			if viaOAuth && !s.mcpStandIn {
+				// An access token of the authorization server is for /mcp only.
+				writeError(w, http.StatusForbidden, "token_scope", "an OAuth access token can only be used on /mcp")
+				return
+			}
 			if !tokenAllowed(rt) {
 				writeError(w, http.StatusForbidden, "token_scope", "an API token cannot use this endpoint")
 				return
 			}
-			p, err := s.tokenPrincipal(r, secret)
+			var p *auth.Principal
+			var err error
+			if viaOAuth {
+				p, err = s.oauthPrincipal(r, secret)
+			} else {
+				p, err = s.tokenPrincipal(r, secret)
+			}
 			if err != nil {
 				s.fail(w, err)
 				return

@@ -20,6 +20,7 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/auth"
 	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
 	"github.com/KKazuhaK/PetalBook/internal/drafts"
+	"github.com/KKazuhaK/PetalBook/internal/oauth"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
@@ -55,6 +56,7 @@ type acc struct {
 	auth   *auth.Service
 	drafts *drafts.Service
 	tokens *tokens.Service
+	oauth  *oauth.Service
 	clock  *clock
 	h      http.Handler
 	public string
@@ -73,6 +75,10 @@ type accOpts struct {
 	draftCfg func(*drafts.Config)
 	// dailyFetch replaces the fetcher of external daily text (tests talk to a server of their own).
 	dailyFetch *dailyfetch.Fetcher
+	// oauth turns the authorization server on; standIn lets /api take its access
+	// tokens (see api.NewWithMCPStandIn); cimd fetches client metadata documents.
+	oauth, standIn bool
+	cimd           *http.Client
 }
 
 func needGit(t *testing.T) {
@@ -141,8 +147,20 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 		t.Fatal(err)
 	}
 	tok := api.NewTokens(tokens.Config{Store: st, Now: clk.Now, Logger: log}, svc)
-	h := api.New(api.Options{Logger: log, Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tok, PublicURL: o.public, Version: "test-1", DailyFetch: o.dailyFetch})
-	return &acc{t: t, dir: dir, st: st, mgr: mgr, auth: svc, drafts: drf, tokens: tok, clock: clk, h: h, public: o.public}
+	var oa *oauth.Service
+	if o.oauth {
+		oa, err = oauth.New(ctx, oauth.Config{Store: st, Secrets: mgr.Secrets(), Users: svc, Machine: tok, Issuer: o.public, ClientIP: svc.ClientAddr,
+			Logger: log, Now: clk.Now, CIMDClient: o.cimd})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	opts := api.Options{Logger: log, Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tok, OAuth: oa, PublicURL: o.public, Version: "test-1", DailyFetch: o.dailyFetch}
+	h := api.New(opts)
+	if o.standIn {
+		h = api.NewWithMCPStandIn(opts)
+	}
+	return &acc{t: t, dir: dir, st: st, mgr: mgr, auth: svc, drafts: drf, tokens: tok, oauth: oa, clock: clk, h: h, public: o.public}
 }
 
 // client is a browser: it keeps cookies and has an address.

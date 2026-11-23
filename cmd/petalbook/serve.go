@@ -23,6 +23,7 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/auth"
 	"github.com/KKazuhaK/PetalBook/internal/drafts"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"github.com/KKazuhaK/PetalBook/internal/oauth"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
@@ -403,7 +404,16 @@ func runServe(ctx context.Context, c serveConfig) error {
 	}
 
 	tokenSvc := api.NewTokens(tokens.Config{Store: st, Logger: log}, svc)
-	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tokenSvc, PublicURL: cfg.publicURL, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
+	// The authorization server for MCP clients needs accounts and the address
+	// people use: it is the issuer of its tokens.
+	var oauthSvc *oauth.Service
+	if cfg.accounts && cfg.publicURL != "" {
+		if oauthSvc, err = oauth.New(ctx, oauth.Config{Store: st, Secrets: mgr.Secrets(), Users: svc, Machine: tokenSvc, Issuer: cfg.publicURL,
+			ClientIP: svc.ClientAddr, Logger: log}); err != nil {
+			return fmt.Errorf("the authorization server: %w", err)
+		}
+	}
+	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tokenSvc, OAuth: oauthSvc, PublicURL: cfg.publicURL, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
 		RestrictHost: loopback, AllowOrigins: cfg.origins, Logger: log})
 	webApp, webBuilt := webui.Handler()
 	if !webBuilt {
@@ -440,6 +450,9 @@ func runServe(ctx context.Context, c serveConfig) error {
 	}
 	run(drf.Run)
 	run(tokenSvc.Run)
+	if oauthSvc != nil {
+		run(oauthSvc.Run)
+	}
 	if cfg.accounts {
 		run(mgr.Run)
 		run(mgr.RunPull)
@@ -488,16 +501,16 @@ func runServe(ctx context.Context, c serveConfig) error {
 	return serveErr
 }
 
-// withWebApp sends /api/ to the API and everything else to the web app. The
+// withWebApp sends /api/ and the endpoints of the authorization server to the API and everything else to the web app. The
 // prefix test, not a ServeMux, so the API sees the request path exactly as it
 // did before the app was served from here. The page and the API share one
 // origin, so the API's own-origin rules (the public URL in accounts mode, the
 // loopback address on the listen port in single-user mode) already let the
 // page call it.
-func withWebApp(api, app http.Handler) http.Handler {
+func withWebApp(apiHandler, app http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/") {
-			api.ServeHTTP(w, r)
+		if api.HandlesPath(r.URL.Path) {
+			apiHandler.ServeHTTP(w, r)
 			return
 		}
 		app.ServeHTTP(w, r)

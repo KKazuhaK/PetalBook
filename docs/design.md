@@ -1625,11 +1625,17 @@ GitHub App 和用户授权，自动建仓库；passkey；SAML。
   账号模式、且给了 `--public-url` 时有。
 - **OAuth**：照搬 Rackbook 的授权服务（OAuth 2.1、只支持 S256 的 PKCE、RFC 8707、
   RFC 9207、客户端元数据文档优先、动态注册兜底、公开客户端），客户端和授权记录从
-  JSON 文件改存状态库（SQLite 和 PostgreSQL 都测）。scope 只有 `read`、`write`，
+  JSON 文件改存状态库（SQLite 和 PostgreSQL 都测）。签名密钥也在状态库里，用
+  服务器密钥（`secret.key`）封存，和别的凭据一样，不单独放文件；换了服务器密钥
+  就打不开，服务不启动，而不是悄悄换一把把所有授权作废。scope 只有 `read`、`write`，
   空间在同意页上勾选（默认只勾个人空间）；一次授权之后的行为和同样范围的 token
   完全一样。访问令牌是 10 分钟的 ES256 JWT，只在本进程里验，验过的按哈希缓存到
   过期；刷新令牌每次轮换，60 秒内重发拿到同一个答复，之后重用就结束整个授权；
-  90 天没刷新的授权失效。OAuth 访问令牌只能用在 `/mcp`。
+  90 天没刷新的授权失效。OAuth 访问令牌只能用在 `/mcp`（`/api` 答 `403 token_scope`）。
+  机器访问里的 MCP 开关关掉时，授权服务的所有端点答 `404`，但授权记录保留，
+  账号页和管理页仍可列出、吊销。主人被停用时刷新答 `invalid_grant`，授权保留，
+  账号启用后继续有效。回调地址除 `https` 和本机回环的 `http` 外，也接受原生应用
+  的私有协议（`cursor://` 之类，RFC 8252），Cursor、VS Code 要用。
 - **MCP 传输**：Streamable HTTP，无状态、只回 JSON（不开 SSE，没有 MCP 会话），
   空闲的客户端不占任何资源。`Origin` 检查照旧，防 DNS 重绑定。
 - **工具**：`spaces_list`、`folders_list`、`tags_list`、`types_list`、
