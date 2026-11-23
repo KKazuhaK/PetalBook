@@ -168,7 +168,7 @@ func (x *read) countBy(key string, m *idSet) (GroupResult, error) {
 	var all []Group
 	var err error
 	with := 0
-	if total <= smallSet {
+	if total <= x.plan.set {
 		const query = `SELECT s.val, count(DISTINCT s.page), sum(s.pos = 0) FROM json_each(?) j CROSS JOIN props s ON s.page = j.value AND s.key = ? GROUP BY s.val`
 		args := []any{jsonIDs(m.ids()), key}
 		x.ran(query, args)

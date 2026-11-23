@@ -9,18 +9,18 @@ import (
 	"testing"
 )
 
-// setPlan sets, until the test ends, the bounds that choose how a listing is
-// read: the most pages of a condition the read starts from, the most matches
+// setPlan sets the bounds of x that choose how a listing is read: the most pages of a condition the read starts from, the most matches
 // put in order by lookup, and the most pages a walk of the order looks at.
 //
-//	setPlan(t, 0, 0, 1<<30)  the order is walked and every page looked up
-//	setPlan(t, 0, 0, 0)      the conditions are read as sets, the order scanned
-//	setPlan(t, 1<<30, 1<<30, 0)  the read starts from the smallest condition
-func setPlan(t *testing.T, lead, set, budget int) {
+//	setPlan(t, x, 0, 0, 1<<30)  the order is walked and every page looked up
+//	setPlan(t, x, 0, 0, 0)      the conditions are read as sets, the order scanned
+//	setPlan(t, x, 1<<30, 1<<30, 0)  the read starts from the smallest condition
+//
+// The bounds belong to the index, so tests of other indexes can run beside it.
+// Set them before any read of x starts.
+func setPlan(t *testing.T, x *Index, lead, set, budget int) {
 	t.Helper()
-	oldLead, oldSet, oldBudget := smallLead, smallSet, walkBudget
-	smallLead, smallSet, walkBudget = lead, set, func(int) int { return budget }
-	t.Cleanup(func() { smallLead, smallSet, walkBudget = oldLead, oldSet, oldBudget })
+	x.plan.lead, x.plan.set, x.plan.budget = lead, set, func(int) int { return budget }
 }
 
 // queryPlan is a query that ran, with the lines of its EXPLAIN QUERY PLAN.
@@ -85,6 +85,7 @@ func newPlansOf(t *testing.T, x *Index, seen map[string]bool, f func()) []queryP
 // looked up by page is a lookup by primary key, and every order that is walked
 // or scanned comes out of its index already in order.
 func TestEveryQueryOfAListingOrACountReadsAnIndexRange(t *testing.T) {
+	t.Parallel()
 	x := equivIndex(t, rand.New(rand.NewSource(3)), 220)
 	f := func(key, op string, v ...any) Filter { return Filter{Key: key, Op: op, Values: v} }
 	many := make([]any, 100)
@@ -137,7 +138,7 @@ func TestEveryQueryOfAListingOrACountReadsAnIndexRange(t *testing.T) {
 		plans, sorts = plans[:3], []string{"", "-title", "-prop:points", "prop:status"}
 	}
 	for _, plan := range plans {
-		setPlan(t, plan.lead, plan.set, plan.budget)
+		setPlan(t, x, plan.lead, plan.set, plan.budget)
 		for si, sc := range scopes {
 			for fi := -1; fi < len(filters); fi++ {
 				var fs []Filter
@@ -177,7 +178,7 @@ func TestEveryQueryOfAListingOrACountReadsAnIndexRange(t *testing.T) {
 		}
 	}
 	// Ten filters and three tags at once: more ranges than are read at a time.
-	setPlan(t, 0, 0, 0)
+	setPlan(t, x, 0, 0, 0)
 	check("many conditions", func() {
 		if _, err := x.List(Query{Folder: strp("a"), Recursive: true, Tags: []string{"x", "y", "z"}, Filters: filters, Limit: 3}); err != nil {
 			t.Fatal(err)

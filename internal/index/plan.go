@@ -25,11 +25,11 @@ import (
 // way is bounded, and the next is taken when the bound is reached:
 //
 //  1. The size of every condition an index can count is counted, up to
-//     smallLead. When one keeps at most that many pages, the read starts from
+//     plan.lead. When one keeps at most that many pages, the read starts from
 //     its pages and looks the other conditions up for each (matchFrom): the
 //     cost follows the smallest condition.
 //  2. Otherwise the order is walked from the cursor, each page looked up, in
-//     stretches that grow, for at most walkBudget pages (walk): where a
+//     stretches that grow, for at most plan.budget pages (walk): where a
 //     fiftieth of the pages or more match, as in a board's column for an
 //     option in use, that fills the page. The walk goes past the bound only
 //     while its last stretch says the page will be full within walkTime.
@@ -57,15 +57,31 @@ import (
 // together they keep few, or a count under such conditions: each of them is a
 // range of the size of the space, and all must be read (twenty of them, the
 // most a request may hold, are some 100 ms for 50 000 pages).
-var (
-	// smallLead is the most pages of a condition for the read to start from it.
-	smallLead = 2000
-	// smallSet is the most matching pages that are put in order by looking each
+// planBounds are the bounds that choose how a listing or a count is read. Each
+// index has its own, so a test can set them for one index and run beside
+// others; an index takes them from defaultPlan when it is opened.
+type planBounds struct {
+	// lead is the most pages of a condition for the read to start from it.
+	lead int
+	// set is the most matching pages that are put in order by looking each
 	// up; more are picked out of a scan of the order.
-	smallSet = 6000
-	// walkBudget is the most pages a walk of the order looks at before the
+	set int
+	// budget is the most pages a walk of the order looks at before the
 	// conditions are read as sets instead.
-	walkBudget = func(limit int) int { return max(1000, 5*(limit+1)) }
+	budget func(limit int) int
+	// part is the number of pages looked up in one query, when many are
+	// looked up in several at the same time.
+	part int
+}
+
+var defaultPlan = planBounds{
+	lead:   2000,
+	set:    6000,
+	budget: func(limit int) int { return max(1000, 5*(limit+1)) },
+	part:   500,
+}
+
+var (
 	// scanWorkers is the most sets read, and the most parts of a long list of
 	// pages looked up, at the same time, each on a connection of its own that
 	// holds the snapshot of the request (read.go).
@@ -73,9 +89,6 @@ var (
 	// walkTime is the most a walk that goes past walkBudget may be expected
 	// to take in all.
 	walkTime = 50 * time.Millisecond
-	// lookupPart is the number of pages looked up in one query, when many are
-	// looked up in several at the same time.
-	lookupPart = 500
 )
 
 const (
@@ -515,14 +528,14 @@ func (x *read) match(conds []cond, onlySmall bool) (m *idSet, ok bool, err error
 		if s == nil || s.scan {
 			continue
 		}
-		n, err := x.countUpTo(s, smallLead)
+		n, err := x.countUpTo(s, x.plan.lead)
 		if err != nil {
 			return nil, false, err
 		}
 		if n == 0 {
 			return &idSet{}, true, nil // a condition no page meets
 		}
-		if n <= smallLead && (best < 0 || n < bestN) {
+		if n <= x.plan.lead && (best < 0 || n < bestN) {
 			best, bestN = i, n
 		}
 	}
@@ -566,7 +579,7 @@ func (x *read) among(ids []int64, conds []cond) ([]int64, error) {
 	look := func(r *read, part []int64) ([]int64, error) {
 		return r.idsOf(query, append([]any{jsonIDs(part)}, wargs...))
 	}
-	parts := min(scanWorkers, len(ids)/lookupPart+1)
+	parts := min(scanWorkers, len(ids)/x.plan.part+1)
 	if parts == 1 {
 		return look(x, ids)
 	}
@@ -650,7 +663,7 @@ func (x *read) fewestFirst(conds []cond) error {
 // matchAll reads every condition as the sets of pages its index ranges hold
 // and intersects them: one scan of each range, a few at a time, and no lookup
 // by page, whatever the conditions keep. It stops when no page is left, and
-// when few are left (smallLead) it looks the remaining conditions up for those,
+// when few are left (plan.lead) it looks the remaining conditions up for those,
 // which then costs less than the scans of their ranges.
 func (x *read) matchAll(conds []cond) (*idSet, error) {
 	// The conditions an index says exactly, each with what it takes to read
@@ -750,7 +763,7 @@ func (x *read) matchAll(conds []cond) (*idSet, error) {
 		if failed != nil {
 			break
 		}
-		if left := m.count(); left == 0 || (left <= smallLead && i+1 < len(order)) {
+		if left := m.count(); left == 0 || (left <= x.plan.lead && i+1 < len(order)) {
 			for _, c := range order[i+1:] {
 				if left > 0 && !c.loose {
 					rest = append(rest, c)

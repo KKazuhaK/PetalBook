@@ -27,11 +27,17 @@ type memFile struct {
 
 func newMem() *memSource { return &memSource{files: map[string]memFile{}} }
 
-var clock int64 = 1_700_000_000_000_000_000
+// clockNs is a clock the tests share: every file they make is a second later
+// than the one before. It is atomic so that tests can run side by side.
+var clockNs atomic.Int64
+
+func init() { clockNs.Store(1_700_000_000_000_000_000) }
+
+// clock is the time the last file was made at.
+func clock() int64 { return clockNs.Load() }
 
 func (m *memSource) put(rel, content string) {
-	clock += int64(time.Second)
-	m.files[rel] = memFile{[]byte(content), clock}
+	m.files[rel] = memFile{[]byte(content), clockNs.Add(int64(time.Second))}
 }
 
 func (m *memSource) Walk(file func(FileInfo) error, dir func(string) error) error {

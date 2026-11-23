@@ -94,6 +94,9 @@ type Index struct {
 	root string
 	wmu  sync.Mutex
 
+	// plan holds the bounds that choose how a listing or a count is read.
+	plan planBounds
+
 	// gate is held shared by every read from the pin of its snapshot to its
 	// end, and alone by the checkpointer (see above).
 	gate sync.RWMutex
@@ -170,7 +173,7 @@ var walCheckpointAt int64 = 16 << 20
 const readConns = 8
 
 func open(dbPath, root string) (*Index, error) {
-	x := &Index{path: dbPath, root: root, walMax: walCheckpointAt}
+	x := &Index{path: dbPath, root: root, walMax: walCheckpointAt, plan: defaultPlan}
 	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(10000)&_pragma=cache_size(-65536)" +
 		fmt.Sprintf("&_pragma=journal_size_limit(%d)", x.walMax)
 	var err error

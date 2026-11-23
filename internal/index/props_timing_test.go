@@ -34,12 +34,12 @@ func TestPropQueriesInALargeFolder(t *testing.T) {
 			fmt.Fprintf(&b, "due: 20%02d-%02d-%02d\npoints: %d\n", 24+i%3, i%12+1, i%28+1, i%1000)
 		}
 		fmt.Fprintf(&b, "labels: [%s, %s]\n---\n正文 %d\n", labels[i%8], labels[(i*3+1)%8], i)
-		m.files[fmt.Sprintf("tasks/%05d.md", i)] = memFile{[]byte(b.String()), clock + int64(i)}
+		m.files[fmt.Sprintf("tasks/%05d.md", i)] = memFile{[]byte(b.String()), clock() + int64(i)}
 	}
 	// A small folder among the big one, its pages written last, so they have
 	// the highest rowids and the worst place for a scan of the whole space.
 	for i := 0; i < 100; i++ {
-		m.files[fmt.Sprintf("small/%03d.md", i)] = memFile{[]byte(fmt.Sprintf("---\nid: S%09d\nstatus: review\npoints: %d\n---\nx\n", i, i)), clock + int64(pages+i)}
+		m.files[fmt.Sprintf("small/%03d.md", i)] = memFile{[]byte(fmt.Sprintf("---\nid: S%09d\nstatus: review\npoints: %d\n---\nx\n", i, i)), clock() + int64(pages+i)}
 	}
 	start := time.Now()
 	if _, err := x.Sync(m, false); err != nil {
@@ -159,10 +159,10 @@ func TestOptionOrderAndBoardInALargeFolder(t *testing.T) {
 			fmt.Fprintf(&b, "points: %d\n", i%1000)
 		}
 		fmt.Fprintf(&b, "labels: [%s, %s]\n---\n正文 %d\n", options[i%5], options[(i*3+1)%5], i)
-		m.files[fmt.Sprintf("tasks/%05d.md", i)] = memFile{[]byte(b.String()), clock + int64(i)}
+		m.files[fmt.Sprintf("tasks/%05d.md", i)] = memFile{[]byte(b.String()), clock() + int64(i)}
 	}
 	for i := 0; i < 100; i++ { // a small folder written last, in the groups of the big one
-		m.files[fmt.Sprintf("small/%03d.md", i)] = memFile{[]byte(fmt.Sprintf("---\nid: S%09d\nstatus: %s\ntags: [rare]\n---\nx\n", i, options[i%5])), clock + int64(pages+i)}
+		m.files[fmt.Sprintf("small/%03d.md", i)] = memFile{[]byte(fmt.Sprintf("---\nid: S%09d\nstatus: %s\ntags: [rare]\n---\nx\n", i, options[i%5])), clock() + int64(pages+i)}
 	}
 	start := time.Now()
 	if _, err := x.Sync(m, false); err != nil {
@@ -291,7 +291,7 @@ func TestInAndGroupCostsInALargeSpace(t *testing.T) {
 			fmt.Fprintf(&b, "points: %d\n", i%1000)
 		}
 		fmt.Fprintf(&b, "---\n正文 %d\n", i)
-		m.files[fmt.Sprintf("tasks/g%d/%05d.md", i%10, i)] = memFile{[]byte(b.String()), clock + int64(i)}
+		m.files[fmt.Sprintf("tasks/g%d/%05d.md", i%10, i)] = memFile{[]byte(b.String()), clock() + int64(i)}
 	}
 	if _, err := x.Sync(m, false); err != nil {
 		t.Fatal(err)
@@ -414,10 +414,10 @@ func TestEveryKindOfListingAndCountInALargeSpace(t *testing.T) {
 			b.WriteString("old: yes\n") // the 600 pages written first: last in the default order
 		}
 		fmt.Fprintf(&b, "---\n正文 %d\n", i)
-		m.files[fmt.Sprintf("tasks/g%d/%05d.md", i%10, i)] = memFile{[]byte(b.String()), clock + int64(i)}
+		m.files[fmt.Sprintf("tasks/g%d/%05d.md", i%10, i)] = memFile{[]byte(b.String()), clock() + int64(i)}
 	}
 	for i := 0; i < 100; i++ { // a small folder written last
-		m.files[fmt.Sprintf("small/%03d.md", i)] = memFile{[]byte(fmt.Sprintf("---\nid: S%09d\nstatus: %s\npoints: %d\n---\nx\n", i, options[i%5], i)), clock + int64(pages+i)}
+		m.files[fmt.Sprintf("small/%03d.md", i)] = memFile{[]byte(fmt.Sprintf("---\nid: S%09d\nstatus: %s\npoints: %d\n---\nx\n", i, options[i%5], i)), clock() + int64(pages+i)}
 	}
 	if _, err := x.Sync(m, false); err != nil {
 		t.Fatal(err)
