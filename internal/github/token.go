@@ -64,11 +64,16 @@ func (s *Service) gitToken(ctx context.Context, r *store.Remote, checkMember boo
 		return "", offlineErr(s.wrap(err))
 	case ViaUser:
 		if checkMember {
-			role, disabled, err := store.MemberStanding(ctx, s.opt.Store.Q(), r.SpaceID, r.GHUserID)
+			// Manage may come directly or through a group: the union counts.
+			roles, disabled, err := store.MemberStanding(ctx, s.opt.Store.Q(), r.SpaceID, r.GHUserID)
 			if err != nil && !errors.Is(err, store.ErrNotFound) {
 				return "", offlineErr(err)
 			}
-			ps, _ := perm.ForRole(role)
+			var ps perm.Set
+			for _, role := range roles {
+				rp, _ := perm.ForRole(role)
+				ps |= rp
+			}
 			if errors.Is(err, store.ErrNotFound) || disabled || !ps.Has(perm.Manage) {
 				return "", credErr(CodeAuthorizationMissing, "the GitHub connection this space syncs with belongs to someone who can no longer manage it; connect another", nil)
 			}

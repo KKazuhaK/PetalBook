@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"cmp"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -15,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -64,6 +66,8 @@ type fakeGitHub struct {
 	toks  map[string]string // token -> key
 	// seen is what the server was asked, for tests of what the user token is used for.
 	seen []string
+	// failOrgsFrom, when set, makes /user/orgs fail from that page on.
+	failOrgsFrom int
 }
 
 type ghFake struct {
@@ -136,9 +140,19 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 	})
 	mux.HandleFunc("GET /api/v3/user/orgs", func(w http.ResponseWriter, r *http.Request) {
 		if u, ok := user(w, r); ok {
+			page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+			per, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+			page, per = max(page, 1), cmp.Or(per, 30)
+			g.mu.Lock()
+			fail := g.failOrgsFrom
+			g.mu.Unlock()
+			if fail > 0 && page >= fail {
+				http.Error(w, "server error", 502)
+				return
+			}
 			out := []map[string]string{}
-			for _, o := range u.Orgs {
-				out = append(out, map[string]string{"login": o})
+			for i := (page - 1) * per; i < min(page*per, len(u.Orgs)); i++ {
+				out = append(out, map[string]string{"login": u.Orgs[i]})
 			}
 			json.NewEncoder(w).Encode(out)
 		}

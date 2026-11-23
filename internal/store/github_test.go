@@ -160,12 +160,36 @@ func TestGitHubInstallationsAndSpaces(t *testing.T) {
 		if err := store.AddMember(ctx, q, "S3", "A", "owner", now); err != nil {
 			t.Fatal(err)
 		}
-		if role, disabled, err := store.MemberStanding(ctx, q, "S3", "A"); err != nil || role != "owner" || disabled {
-			t.Fatalf("%q %v %v", role, disabled, err)
+		if roles, disabled, err := store.MemberStanding(ctx, q, "S3", "A"); err != nil || len(roles) != 1 || roles[0] != "owner" || disabled {
+			t.Fatalf("%q %v %v", roles, disabled, err)
 		}
 		store.SetDisabled(ctx, q, "A", true)
 		if _, disabled, _ := store.MemberStanding(ctx, q, "S3", "A"); !disabled {
 			t.Fatal("not disabled")
+		}
+		if _, _, err := store.MemberStanding(ctx, q, "S1", "A"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatal(err)
+		}
+		// Through a group, and both ways at once.
+		if err := store.InsertGroup(ctx, q, store.Group{ID: "GMAINT0000", Name: "Maintainers", Source: store.GroupLocal, Created: now, Updated: now}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.AddLocalMembers(ctx, q, "GMAINT0000", []string{"A"}, now); err != nil {
+			t.Fatal(err)
+		}
+		for _, sp := range []string{"S1", "S3"} {
+			if err := store.AddSpaceGroup(ctx, q, sp, "GMAINT0000", "editor", now); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if roles, _, err := store.MemberStanding(ctx, q, "S1", "A"); err != nil || len(roles) != 1 || roles[0] != "editor" {
+			t.Fatalf("%q %v", roles, err)
+		}
+		if roles, _, err := store.MemberStanding(ctx, q, "S3", "A"); err != nil || len(roles) != 2 || roles[0] != "owner" || roles[1] != "editor" {
+			t.Fatalf("%q %v", roles, err)
+		}
+		if err := store.RemoveLocalMember(ctx, q, "GMAINT0000", "A"); err != nil {
+			t.Fatal(err)
 		}
 		if _, _, err := store.MemberStanding(ctx, q, "S1", "A"); !errors.Is(err, store.ErrNotFound) {
 			t.Fatal(err)

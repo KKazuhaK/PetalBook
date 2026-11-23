@@ -340,14 +340,36 @@ func DeleteGitHubInstallations(ctx context.Context, q Q) error {
 	return err
 }
 
-// MemberStanding is a user's role in a space and whether they are disabled;
-// ErrNotFound when they are not a member (or not a user).
-func MemberStanding(ctx context.Context, q Q, spaceID, userID string) (role string, disabled bool, err error) {
-	var d int64
-	err = q.QueryRow(ctx, `SELECT m.role, u.disabled FROM space_members m JOIN users u ON u.id = m.user_id
-		WHERE m.space_id = ? AND m.user_id = ?`, spaceID, userID).Scan(&role, &d)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", false, ErrNotFound
+// MemberStanding is every role through which a user reaches a space (their
+// direct role, if any, then the roles of their groups that are members of it)
+// and whether they are disabled; ErrNotFound when they reach it by neither
+// (or are not a user). Their permission is the union of the roles.
+func MemberStanding(ctx context.Context, q Q, spaceID, userID string) (roles []string, disabled bool, err error) {
+	rows, err := q.Query(ctx, `SELECT x.role, u.disabled FROM users u JOIN (
+			SELECT role, 0 AS ord FROM space_members WHERE space_id = ? AND user_id = ?
+			UNION ALL
+			SELECT sg.role, 1 AS ord FROM space_groups sg JOIN group_members gm ON gm.group_id = sg.group_id
+				WHERE sg.space_id = ? AND gm.user_id = ?
+		) x ON 1 = 1
+		WHERE u.id = ? ORDER BY x.ord, x.role`, spaceID, userID, spaceID, userID, userID)
+	if err != nil {
+		return nil, false, err
 	}
-	return role, d != 0, err
+	defer rows.Close()
+	for rows.Next() {
+		var role string
+		var d int64
+		if err := rows.Scan(&role, &d); err != nil {
+			return nil, false, err
+		}
+		roles = append(roles, role)
+		disabled = d != 0
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	if len(roles) == 0 {
+		return nil, false, ErrNotFound
+	}
+	return roles, disabled, nil
 }

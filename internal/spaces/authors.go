@@ -99,16 +99,11 @@ func (m *Manager) MayWrite(ctx context.Context, userID, spaceID string) (bool, e
 	if c.admin {
 		return true, nil
 	}
-	l, err := m.list(ctx, userID)
-	if err != nil {
+	ps, ok, err := m.permsOf(ctx, userID, spaceID)
+	if err != nil || !ok {
 		return false, err
 	}
-	for _, in := range l {
-		if in.ID == spaceID {
-			return in.Perms.Has(perm.Write), nil
-		}
-	}
-	return false, nil
+	return ps.Has(perm.Write), nil
 }
 
 func (m *Manager) forgetAuthor(userID string) {

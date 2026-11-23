@@ -262,6 +262,9 @@ func TestOpeningAnOlderDatabaseFillsNameKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, stmt := range []string{
+		`DROP TABLE space_groups`,
+		`DROP TABLE group_members`,
+		`DROP TABLE groups`,
 		`DROP TABLE oauth_retired`,
 		`DROP TABLE oauth_grant_spaces`,
 		`DROP TABLE oauth_grants`,

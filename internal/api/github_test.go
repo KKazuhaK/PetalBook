@@ -405,6 +405,45 @@ func TestSwitchingASpaceToGitHubThroughTheRemoteEndpoint(t *testing.T) {
 	})
 }
 
+// Manage through a group is manage: a person who may manage a space only
+// through a group can switch it to GitHub with their own connection, and when
+// they leave the group they can no longer switch it, and their connection
+// stops being used for it.
+func TestManageThroughAGroupCoversGitHub(t *testing.T) {
+	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
+		admin, tang := ghSetup(t, a)
+		a.fake.AddRepo("kazuhahub", "team", true)
+		ann := a.addUser("ann", pw, "member")
+		sp := ann.do("POST", "/api/spaces", map[string]any{"name": "Team"}).want(t, 201, "").body["id"].(string)
+		base := "/api/spaces/" + sp
+		ann.do("POST", base+"/members", map[string]any{"username": "tang", "role": "editor"}).want(t, 201, "")
+		body := map[string]any{"url": a.fake.URL + "/kazuhahub/team.git", "credential": map[string]any{"type": "github", "via": "user"}}
+
+		// A direct editor may not switch the remote.
+		tang.do("PUT", base+"/remote", body).want(t, 403, "no_permission")
+
+		// Owner through a group: the remote switches with tang's connection.
+		g := admin.mkGroup(t, "Maintainers", "local")
+		tangID := mustUserID(t, a, "tang")
+		admin.groupAdd(t, g, tangID).want(t, 200, "")
+		ann.do("POST", base+"/groups", map[string]any{"groupId": g, "role": "owner"}).want(t, 201, "")
+		r := tang.do("PUT", base+"/remote", body).want(t, 200, "")
+		if c := r.body["credential"].(map[string]any); c["type"] != "github" || r.body["state"] != "ok" {
+			t.Fatalf("%s", r.raw)
+		}
+		newPage(t, ann, sp, "while tang manages")
+
+		// Out of the group: no switching, and the connection is not used.
+		admin.do("DELETE", "/api/admin/groups/"+g+"/members/"+tangID, nil).want(t, 204, "")
+		tang.do("PUT", base+"/remote", body).want(t, 403, "no_permission")
+		ann.do("POST", base+"/pages", map[string]any{"meta": map[string]any{"title": "after"}, "body": "x"}).want(t, 503, "unavailable")
+		rem := ann.do("GET", base+"/remote", nil).want(t, 200, "")
+		if rem.body["state"] != "error" || rem.body["errorCode"] != "github_authorization_missing" {
+			t.Fatalf("%s", rem.raw)
+		}
+	})
+}
+
 func TestAnExpiredAuthorizationShowsItsCodeAndRefusesWrites(t *testing.T) {
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		_, member := ghSetup(t, a)

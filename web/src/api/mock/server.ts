@@ -13,6 +13,7 @@ import { canonicalTag, matchTag } from '../../lib/langTags.ts'
 import { createFileStore, DEFAULT_MAX_UPLOAD, type FileStore } from './files.ts'
 import { DEFAULT_MAX_IMPORT, runImport } from './importer.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
+import { createGroupBook } from './groupBook.ts'
 import { createSignInBook, type PasskeyRec, type ProviderRec, type SignInBookOptions } from './signInBook.ts'
 
 const DEFAULT_INBOX = 'Inbox'
@@ -182,6 +183,8 @@ interface SpaceRec {
   id: string
   name: string
   members: Map<string, MemberRec>
+  // The groups that are members of the space, with their roles (3.2).
+  groups: Map<string, SpaceRole>
   personal: boolean
   created: number
   // Switched off by an administrator (docs/api.md, "Administration").
@@ -284,6 +287,16 @@ export function createMockServer(options: MockOptions = {}) {
     security: options.security,
     providers: options.providers,
     notices: options.securityNotices,
+    groupSource: (id) => groupBook.groups.get(id)?.source,
+    onProviderDeleted: (slug) => groupBook.dropProvider(slug),
+    onMappingRemoved: (slug, value, keep) => groupBook.dropMapped(slug, value, keep),
+  })
+  const groupBook = createGroupBook({
+    now: () => new Date(now()).toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    users: () => users,
+    spaces: () => spaces,
+    newId: (taken) => newId(taken),
+    book: () => book,
   })
   if (oidc) book.addLegacy(oidc.name, oidc.autoCreate === true, oidc.sub ?? 'mock-sub-1')
 
@@ -308,11 +321,13 @@ export function createMockServer(options: MockOptions = {}) {
     return owners[0] ? users.get(owners[0][0]) : undefined
   }
   const spaceInfo = (s: SpaceRec, u: UserRec): SpaceInfo => {
-    const role = s.members.get(u.id)?.role
+    const { role, direct, via } = groupBook.reach(s, u.id)
     return {
       id: s.id,
       name: s.name,
       role: role ?? '',
+      directRole: direct ?? '',
+      viaGroups: via,
       // An administrator who is not a member may do everything.
       permissions: [...(role ? ROLE_PERMISSIONS[role] : ROLE_PERMISSIONS.owner)],
       personal: s.personal,
@@ -335,6 +350,7 @@ export function createMockServer(options: MockOptions = {}) {
       id,
       name,
       members: new Map([[ownerId, { role: 'owner', joined: ++counter }]]),
+      groups: new Map(),
       personal,
       created: now(),
       disabled: false,
@@ -421,7 +437,7 @@ export function createMockServer(options: MockOptions = {}) {
   const callerSpaces = (u: UserRec | null): SpaceRec[] => {
     if (!u) return []
     return [...spaces.values()]
-      .filter((s) => s.members.has(u.id))
+      .filter((s) => groupBook.has(s, u.id))
       .sort((a, b) => Number(b.personal) - Number(a.personal) || compareCodePoints(a.name, b.name))
   }
 
@@ -749,6 +765,7 @@ export function createMockServer(options: MockOptions = {}) {
       return { id: i.id, provider: p?.view.name ?? 'sso.example', providerSlug: p ? i.providerSlug : '', kind: p?.view.kind ?? '', label: i.label, created: i.created }
     }),
     passkeys: u.passkeys.map(passkeyView),
+    groups: groupBook.inGroups(u.id),
   })
 
   const patchAccount = (u: UserRec, body: Record<string, unknown>) => {
@@ -854,7 +871,7 @@ export function createMockServer(options: MockOptions = {}) {
       prefix: t.prefix,
       access: t.access,
       // A space is named only while its owner is a member of it.
-      spaces: t.spaces.map((id) => ({ id, name: spaces.get(id)?.members.has(t.userId) && owner ? spaces.get(id)!.name : '' })),
+      spaces: t.spaces.map((id) => ({ id, name: groupBook.has(spaces.get(id), t.userId) && owner ? spaces.get(id)!.name : '' })),
       created: rfc3339(t.created),
       expires: t.expires === null ? null : rfc3339(t.expires),
       lastUsed: null,
@@ -872,7 +889,7 @@ export function createMockServer(options: MockOptions = {}) {
     if (typeof days !== 'number' || !Number.isInteger(days) || days < 0 || days > 365) throw new HttpError(400, 'invalid', 'expiresInDays 要在 1 到 365 之间，0 是永不过期')
     if (!Array.isArray(body.spaces) || body.spaces.length < 1 || body.spaces.length > 100 || !body.spaces.every((x) => typeof x === 'string')) throw new HttpError(400, 'invalid', '要选 1 到 100 个空间')
     const ids = [...new Set(body.spaces as string[])]
-    for (const id of ids) if (!spaces.get(id)?.members.has(me.id)) throw new HttpError(404, 'not_found', `没有这个空间：${id}`)
+    for (const id of ids) if (!groupBook.has(spaces.get(id), me.id)) throw new HttpError(404, 'not_found', `没有这个空间：${id}`)
     const live = [...apiTokens.values()].filter((t) => t.userId === me.id && tokenState(t) === 'active').length
     if (live >= TOKEN_LIMIT) throw new HttpError(400, 'token_limit', '有效的令牌已有 50 个，先吊销一个')
     const secret = 'pbk_' + randomString(43)
@@ -933,7 +950,7 @@ export function createMockServer(options: MockOptions = {}) {
     id: g.id,
     client: { name: g.clientName, id: g.clientId },
     access: g.access,
-    spaces: g.spaces.map((id) => ({ id, name: spaces.get(id)?.members.has(g.userId) ? spaces.get(id)!.name : '' })),
+    spaces: g.spaces.map((id) => ({ id, name: groupBook.has(spaces.get(id), g.userId) ? spaces.get(id)!.name : '' })),
     created: rfc3339(g.created),
     lastUsed: rfc3339(g.lastUsed),
   })
@@ -990,7 +1007,7 @@ export function createMockServer(options: MockOptions = {}) {
     if (access === 'write' && !p.scopes.includes('write')) throw new HttpError(400, 'invalid', 'the client asked for read only')
     if (!Array.isArray(body.spaces) || body.spaces.length < 1 || body.spaces.length > 100 || !body.spaces.every((x) => typeof x === 'string')) throw new HttpError(400, 'invalid', 'choose 1 to 100 spaces')
     const ids = [...new Set(body.spaces as string[])]
-    for (const sid of ids) if (!spaces.get(sid)?.members.has(me.id)) throw new HttpError(400, 'invalid', `you are not a member of the space ${sid}`)
+    for (const sid of ids) if (!groupBook.has(spaces.get(sid), me.id)) throw new HttpError(400, 'invalid', `you are not a member of the space ${sid}`)
     pending.delete(id!)
     // The real server makes the grant when the client exchanges the code; the mock has no client.
     const g: GrantRec = { id: newId((x) => grants.has(x)), userId: me.id, clientId: p.clientId, clientName: p.clientName, access, spaces: ids, created: now(), lastUsed: now() }
@@ -1005,7 +1022,7 @@ export function createMockServer(options: MockOptions = {}) {
   // permission the route needs is refused.
   const openSpace = (u: UserRec, id: string, need: Permission): SpaceRec => {
     const s = spaces.get(id)
-    if (!s || (!s.members.has(u.id) && u.role !== 'admin')) throw new HttpError(404, 'not_found', '没有这个空间')
+    if (!s || (!groupBook.has(s, u.id) && u.role !== 'admin')) throw new HttpError(404, 'not_found', '没有这个空间')
     if (s.disabled) throw new HttpError(403, 'space_disabled', 'this space has been disabled by an administrator')
     if (!spaceInfo(s, u).permissions.includes(need)) throw new HttpError(403, 'no_permission', NO_PERMISSION(need))
     return s
@@ -1017,6 +1034,7 @@ export function createMockServer(options: MockOptions = {}) {
     if ((rest.startsWith('/types/') && method !== 'GET') || (rest === '/folders/type' && method === 'PUT')) return 'manage'
     if ((rest === '/daily/settings' && method === 'PUT') || (rest === '/daily/prefs' && method === 'PUT') || (rest === '/favorites' && method !== 'GET') || rest === '/favorites/order') return rest.startsWith('/favorites') ? 'read' : 'manage'
     if ((rest === '' && method === 'PATCH') || rest === '/reindex' || rest === '/remote' || rest.startsWith('/remote/')) return 'manage'
+    if (rest === '/groups' || rest.startsWith('/groups/')) return 'members'
     if (rest === '/members' || rest.startsWith('/members/')) {
       if (method === 'GET') return 'read'
       // Anyone may leave: removing yourself needs no more than being a member.
@@ -1469,12 +1487,12 @@ export function createMockServer(options: MockOptions = {}) {
     const others = [...s.members].filter(([id, m]) => m.role === 'owner' && id !== userId && !users.get(id)?.disabled).length
     if (leaving === 'owner' && others < 1) throw new HttpError(409, 'last_owner', 'a space needs at least one owner; make someone else an owner first')
   }
-  const routeMembers = (me: UserRec, s: SpaceRec, method: string, rest: string, body: Record<string, unknown>): MockResponse => {
+  const routeMembers = (me: UserRec, s: SpaceRec, method: string, rest: string, body: Record<string, unknown>, query = ''): MockResponse => {
     const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
     if (rest === '/members' && method === 'GET') {
       const list = [...s.members.keys()].map((id) => memberOf(s, id, me.id))
       list.sort((a, b) => Number(b.role === 'owner') - Number(a.role === 'owner') || compareCodePoints(a.name, b.name))
-      return j({ members: list })
+      return j(groupBook.membersView(s, me.id, list))
     }
     if (rest === '/members' && method === 'POST') {
       const role = checkRole(body.role)
@@ -1486,6 +1504,7 @@ export function createMockServer(options: MockOptions = {}) {
       s.members.set(u.id, { role, joined: ++counter })
       return j(memberOf(s, u.id, me.id), 201)
     }
+    if (rest === '/members/effective' && method === 'GET') return groupBook.effective(s, me.id, new URL(`http://mock${rest}${query}`))
     const one = /^\/members\/([^/]+)$/.exec(rest)
     if (one) {
       const userId = decodeURIComponent(one[1])
@@ -1501,6 +1520,10 @@ export function createMockServer(options: MockOptions = {}) {
       }
       if (method === 'DELETE') {
         const cur = s.members.get(userId)
+        if (!cur && userId === me.id) {
+          const via = groupBook.viaGroupsOnly(s, userId)
+          if (via.length > 0) throw new HttpError(409, 'member_via_group', `you are in this space through ${via.join(', ')}; ask a space owner to remove the group, or its administrator to remove you from it`)
+        }
         if (!cur) throw new HttpError(404, 'not_found', 'that user is not a member of this space')
         keepOneOwner(s, userId, cur.role)
         s.members.delete(userId)
@@ -1771,6 +1794,13 @@ export function createMockServer(options: MockOptions = {}) {
       if (!space.remote) throw new HttpError(404, 'not_found', '这个空间没有连接远端仓库')
       return space.remote
     }
+    // Whether a person may still manage this space as a member, directly or through a group (as the server checks
+    // before using their GitHub connection; being an administrator does not count).
+    const canManage = (uid: string) => {
+      const u = users.get(uid)
+      const { role } = groupBook.reach(space, uid)
+      return !!u && !u.disabled && !!role && ROLE_PERMISSIONS[role].includes('manage')
+    }
     if (rest === '/remote') {
       if (method === 'GET') {
         following()
@@ -1798,6 +1828,11 @@ export function createMockServer(options: MockOptions = {}) {
           r.state = 'offline'
           r.error ||= '连接超时'
         }
+      } else if (r.credential.type === 'github' && r.credential.via === 'user' && !canManage(r.credential.userId)) {
+        // Its owner may no longer manage the space (directly or through a group): their connection is not used.
+        r.state = 'error'
+        r.errorCode = 'github_authorization_missing'
+        r.error = '这个空间同步用的 GitHub 连接属于一个已不能管理它的人，请换一个连接'
       } else if (r.credential.type === 'github' && r.credential.via === 'user' && !github.userOf(r.credential.userId)) {
         // The connection this space syncs with has not been renewed: nothing changes until it is connected again.
         r.state = 'error'
@@ -2324,6 +2359,16 @@ export function createMockServer(options: MockOptions = {}) {
       requireAdmin(ctx)
       return routeAdmin(method, path, url, body)
     }
+    if (path === '/groups' && method === 'GET') {
+      accountsOnly()
+      requireUser(ctx)
+      return groupBook.find(url)
+    }
+    if (path === '/admin/groups' || path.startsWith('/admin/groups/')) {
+      accountsOnly()
+      const me = requireAdmin(ctx)
+      return groupBook.routeAdmin(me, method, path, url, body)
+    }
     if (path === '/admin/security' || path === '/admin/audit' || path === '/admin/auth/providers' || path.startsWith('/admin/auth/providers/')) {
       accountsOnly()
       const me = requireAdmin(ctx)
@@ -2447,11 +2492,11 @@ export function createMockServer(options: MockOptions = {}) {
       const id = decodeURIComponent(m[1])
       const rest = m[2] ?? ''
       // These do not exist in single-user mode, whoever asks.
-      if ((rest === '' && method === 'PATCH') || rest === '/remote' || rest.startsWith('/remote/') || rest === '/members' || rest.startsWith('/members/')) accountsOnly()
+      if ((rest === '' && method === 'PATCH') || rest === '/remote' || rest.startsWith('/remote/') || rest === '/members' || rest.startsWith('/members/') || rest === '/groups' || rest.startsWith('/groups/')) accountsOnly()
       // Leaving touches only the membership: it works in a space that is switched off.
       const leaving = method === 'DELETE' && rest.startsWith('/members/') && decodeURIComponent(rest.slice('/members/'.length)) === me.id
       const own = leaving ? spaces.get(id) : undefined
-      const s = own?.members.has(me.id) ? own : openSpace(me, id, needOf(me, method, rest))
+      const s = own && groupBook.has(own, me.id) ? own : openSpace(me, id, needOf(me, method, rest))
       if (rest === '' && method === 'PATCH') {
         if (body.name === undefined && body.inbox === undefined) throw new HttpError(400, 'invalid', '至少要给出 name 或 inbox')
         // Check both before changing either, so a bad one leaves the space as it was.
@@ -2463,7 +2508,12 @@ export function createMockServer(options: MockOptions = {}) {
       }
       if (rest === '/members' || rest.startsWith('/members/')) {
         // Leaving needs no more than being a member: the permission check above is waived for it.
-        return routeMembers(me, s, method, rest, body)
+        return routeMembers(me, s, method, rest, body, url.search)
+      }
+      if (rest === '/groups' || rest.startsWith('/groups/')) {
+        accountsOnly()
+        const r = groupBook.routeSpace(me, s, method, rest, body)
+        if (r) return r
       }
       return routeSpace(me, s, method, rest, url, body, raw)
     }

@@ -70,7 +70,7 @@ func TestSingleMode(t *testing.T) {
 		t.Fatal()
 	}
 	l, _ := m.List(ctx, store.LocalUserID)
-	if len(l) != 1 || l[0] != (Info{ID: "default", Name: "Mine", Role: "owner", Perms: perm.All, Personal: true, Inbox: "Inbox", Sync: "local"}) {
+	if len(l) != 1 || l[0] != (Info{ID: "default", Name: "Mine", Role: "owner", DirectRole: "owner", Perms: perm.All, Personal: true, Inbox: "Inbox", Sync: "local"}) {
 		t.Fatalf("%+v", l)
 	}
 	if h, err := m.Open(ctx, store.User{ID: store.LocalUserID, Role: "admin"}, "default"); err != nil || h.Space != sp {
@@ -784,7 +784,7 @@ func TestMembershipChangedDropsOnlyThoseUsers(t *testing.T) {
 	cached := func(id string) bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		_, ok := m.lists[id]
+		_, ok := m.cache.users[id]
 		return ok
 	}
 	if !cached("U1") || !cached("U2") {

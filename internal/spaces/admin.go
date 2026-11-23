@@ -297,6 +297,7 @@ func (m *Manager) DeleteSpace(ctx context.Context, id string) (*Deleted, error) 
 		return nil, err
 	}
 	m.MembershipChanged(members...)
+	m.spaceChanged(id)
 	m.setSync(id, "")
 
 	res := &Deleted{}

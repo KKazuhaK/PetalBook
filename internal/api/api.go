@@ -460,6 +460,11 @@ type errorBody struct {
 	Field  string `json:"field,omitempty"`
 	// Accounts is how many accounts a refused provider deletion would have left without a way in.
 	Accounts *int `json:"accounts,omitempty"`
+	// What a refused group request is about: how many spaces and provider
+	// entries keep a group, the ids of people that do not exist.
+	Spaces   *int     `json:"spaces,omitempty"`
+	Mappings *int     `json:"mappings,omitempty"`
+	Missing  []string `json:"missing,omitempty"`
 }
 
 // codedError is a 400 whose error code is code, with what it is about.
@@ -586,6 +591,7 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "conflict", err.Error())
 	case errors.Is(err, spaces.ErrLimit):
 		writeError(w, http.StatusForbidden, "forbidden", strings.TrimPrefix(err.Error(), spaces.ErrLimit.Error()+": "))
+	case s.failGroup(w, err):
 	case errors.Is(err, spaces.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "no such space")
 	case errors.Is(err, spaces.ErrDisabled):

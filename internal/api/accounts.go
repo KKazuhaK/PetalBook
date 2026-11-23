@@ -47,12 +47,16 @@ type spaceResp struct {
 	Inbox       string   `json:"inbox"`
 	// Disabled: an administrator switched the space off; it is listed but cannot be opened.
 	Disabled bool `json:"disabled"`
+	// DirectRole is the caller's own role, "" when they reach the space only
+	// through groups; ViaGroups is whether a group of theirs is a member.
+	DirectRole string `json:"directRole"`
+	ViaGroups  bool   `json:"viaGroups"`
 }
 
 func toSpaces(in []spaces.Info) []spaceResp {
 	out := make([]spaceResp, len(in))
 	for i, s := range in {
-		out[i] = spaceResp{s.ID, s.Name, s.Role, s.Perms.Names(), s.Personal, s.Sync, s.Inbox, s.Disabled}
+		out[i] = spaceResp{s.ID, s.Name, s.Role, s.Perms.Names(), s.Personal, s.Sync, s.Inbox, s.Disabled, s.DirectRole, s.ViaGroups}
 	}
 	return out
 }
@@ -273,12 +277,18 @@ func (s *server) getAccount(c *call) {
 	for i, x := range v.Identities {
 		ids[i] = ident{x.ID, x.Provider, x.Slug, x.Kind, x.Label, rfc3339(x.Created)}
 	}
+	groups, err := s.spaces.GroupsOf(c.r.Context(), c.user().ID)
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
 	writeJSON(c.w, http.StatusOK, struct {
 		User        userResp      `json:"user"`
 		HasPassword bool          `json:"hasPassword"`
 		Identities  []ident       `json:"identities"`
 		Passkeys    []passkeyResp `json:"passkeys"`
-	}{s.toUser(v.User), v.HasPassword, ids, toPasskeys(v.Passkeys)})
+		Groups      []groupRef    `json:"groups"`
+	}{s.toUser(v.User), v.HasPassword, ids, toPasskeys(v.Passkeys), toGroupRefs(groups)})
 }
 
 func (s *server) patchAccount(c *call) {

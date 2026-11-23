@@ -286,17 +286,24 @@ func TransferOwnership(ctx context.Context, q Q, spaceID, newOwner string, now t
 
 // DeleteSpace removes a space's rows: its drafts, remote, members and the
 // space itself. Call it in a transaction. It deletes nothing on disk. It
-// returns who the members were, for the caller to drop their cached lists.
+// returns who the members were, and the people of its groups, for the caller
+// to drop their cached lists.
 func DeleteSpace(ctx context.Context, q Q, id string) (members []string, err error) {
 	if members, err = SpaceMemberIDs(ctx, q, id); err != nil {
 		return nil, err
 	}
+	viaGroups, err := SpaceGroupUserIDs(ctx, q, id)
+	if err != nil {
+		return nil, err
+	}
+	members = append(members, viaGroups...)
 	for _, stmt := range []string{
 		`DELETE FROM drafts WHERE space_id = ?`,
 		`DELETE FROM remotes WHERE space_id = ?`,
 		`DELETE FROM favorites WHERE space_id = ?`,
 		`DELETE FROM space_daily WHERE space_id = ?`,
 		`DELETE FROM space_members WHERE space_id = ?`,
+		`DELETE FROM space_groups WHERE space_id = ?`,
 	} {
 		if _, err := q.Exec(ctx, stmt, id); err != nil {
 			return nil, err
