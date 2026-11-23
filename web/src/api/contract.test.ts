@@ -882,6 +882,107 @@ function suite(target: Target) {
     }
     const roleOf = async (b: Browser, space: string) => ((await call(b, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).find((s) => s.id === space)
 
+    describe('groups', () => {
+      const mkGroup = async (name: string, source = 'local') => {
+        const r = await call(admin, 'POST', '/api/admin/groups', { name, source })
+        expect(r.status, name).toBe(201)
+        return r.json as { id: string; name: string; source: string; people: number; spaces: number; mappedFrom: unknown[] }
+      }
+
+      it('an administrator makes, renames, lists and deletes groups; names are unique ignoring case; only administrators may', async () => {
+        const name = uniq('Group')
+        const g = await mkGroup(name)
+        expect(g).toMatchObject({ name, source: 'local', people: 0, spaces: 0, mappedFrom: [] })
+        const clash = await call(admin, 'POST', '/api/admin/groups', { name: name.toUpperCase(), source: 'local' })
+        expect([clash.status, clash.json.error]).toEqual([409, 'exists'])
+        const bad = await call(admin, 'POST', '/api/admin/groups', { name: ' ', source: 'local' })
+        expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
+        const renamed = await call(admin, 'PATCH', `/api/admin/groups/${g.id}`, { name: `${name} 2`, description: 'd' })
+        expect(renamed.json).toMatchObject({ name: `${name} 2`, description: 'd' })
+        expect((await call(admin, 'PATCH', `/api/admin/groups/${g.id}`, { source: 'synced' })).status).toBe(400)
+        const list = await call(admin, 'GET', `/api/admin/groups?q=${encodeURIComponent(name.toLowerCase())}`)
+        expect((list.json.items as { id: string }[]).map((x) => x.id)).toEqual([g.id])
+        expect(list.json.next).toBe('')
+        const m = await newMember(uniq('gm'))
+        expect((await call(m.browser, 'GET', '/api/admin/groups')).status).toBe(403)
+        expect((await call(admin, 'GET', '/api/admin/groups/01ZZZZZZZZ')).json.error).toBe('not_found')
+        expect((await call(admin, 'DELETE', `/api/admin/groups/${g.id}`)).status).toBe(204)
+        expect((await call(admin, 'GET', `/api/admin/groups/${g.id}`)).status).toBe(404)
+      })
+
+      it('people: local groups only, all or nothing; synced groups refuse; anyone signed in finds a group by name and sees theirs in the account', async () => {
+        const local = await mkGroup(uniq('Local'))
+        const synced = await mkGroup(uniq('Synced'), 'synced')
+        const m = await newMember(uniq('gp'))
+        const refused = await call(admin, 'POST', `/api/admin/groups/${synced.id}/members`, { userIds: [m.user.id] })
+        expect([refused.status, refused.json.error]).toEqual([409, 'group_synced'])
+        const missing = await call(admin, 'POST', `/api/admin/groups/${local.id}/members`, { userIds: [m.user.id, '01ZZZZZZZZ'] })
+        expect([missing.status, missing.json.error, missing.json.missing]).toEqual([404, 'user_not_found', ['01ZZZZZZZZ']])
+        expect((await call(admin, 'GET', `/api/admin/groups/${local.id}`)).json.people).toBe(0)
+        const added = await call(admin, 'POST', `/api/admin/groups/${local.id}/members`, { userIds: [m.user.id, m.user.id] })
+        expect(added.json).toEqual({ added: 1, already: 0 })
+        const people = (await call(admin, 'GET', `/api/admin/groups/${local.id}/members`)).json.items as { userId: string; from: unknown[] }[]
+        expect(people.map((p) => [p.userId, p.from])).toEqual([[m.user.id, []]])
+        expect(((await call(m.browser, 'GET', '/api/account')).json.groups as { id: string }[]).map((x) => x.id)).toEqual([local.id])
+        const found = await call(m.browser, 'GET', `/api/groups?q=${encodeURIComponent(local.name.slice(1, 8))}`)
+        expect(found.json.groups).toEqual([{ id: local.id, name: local.name, source: 'local' }])
+        expect((await call(m.browser, 'GET', '/api/groups')).status).toBe(400)
+        expect((await call(admin, 'DELETE', `/api/admin/groups/${local.id}/members/${m.user.id}`)).status).toBe(204)
+        expect((await call(admin, 'DELETE', `/api/admin/groups/${local.id}/members/${m.user.id}`)).status).toBe(404)
+        await call(admin, 'DELETE', `/api/admin/groups/${local.id}`)
+        await call(admin, 'DELETE', `/api/admin/groups/${synced.id}`)
+      })
+
+      it('a group in a space gives its people the role; the union with their own; leaving through a group is refused; removal ends it', async () => {
+        const owner = await newMember(uniq('go'))
+        const person = await newMember(uniq('gq'))
+        const sp = await ownedSpace(owner, 'Shared')
+        const g = await mkGroup(uniq('Team'))
+        await call(admin, 'POST', `/api/admin/groups/${g.id}/members`, { userIds: [person.user.id] })
+        const base = `/api/spaces/${sp.id}`
+        expect((await call(person.browser, 'GET', `${base}/members`)).status).toBe(404)
+        const refusals: [unknown, number, string][] = [
+          [{ groupId: '01ZZZZZZZZ', role: 'viewer' }, 404, 'group_not_found'],
+          [{ groupId: g.id, role: 'boss' }, 400, 'invalid'],
+        ]
+        for (const [body, status, code] of refusals) {
+          const r = await call(owner.browser, 'POST', `${base}/groups`, body)
+          expect([r.status, r.json.error], JSON.stringify(body)).toEqual([status, code])
+        }
+        const mine = ((await call(owner.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).find((s) => s.personal)!
+        expect((await call(owner.browser, 'POST', `/api/spaces/${mine.id}/groups`, { groupId: g.id, role: 'viewer' })).json.error).toBe('personal_space')
+        const added = await call(owner.browser, 'POST', `${base}/groups`, { groupId: g.id, role: 'editor' })
+        expect(added.status).toBe(201)
+        expect(added.json).toEqual({ groupId: g.id, name: g.name, source: 'local', role: 'editor', people: 1, yours: false })
+        expect((await call(owner.browser, 'POST', `${base}/groups`, { groupId: g.id, role: 'viewer' })).json.error).toBe('exists')
+        expect(await roleOf(person.browser, sp.id)).toMatchObject({ role: 'editor', directRole: '', viaGroups: true, permissions: ['read', 'write'] })
+        // Members and groups of the space, and everyone who can reach it.
+        const listed = (await call(person.browser, 'GET', `${base}/members`)).json as { members: Member[]; groups: { groupId: string; yours: boolean }[] }
+        expect(listed.members.map((x) => x.userId)).toEqual([owner.user.id])
+        expect(listed.groups.map((x) => [x.groupId, x.yours])).toEqual([[g.id, true]])
+        const eff = (await call(person.browser, 'GET', `${base}/members/effective`)).json.items as { userId: string; role: string; directRole: string }[]
+        expect(eff.map((x) => [x.userId, x.role, x.directRole]).sort()).toEqual([[owner.user.id, 'owner', 'owner'], [person.user.id, 'editor', '']].sort())
+        // Cannot leave: not a member of one's own.
+        const leave = await call(person.browser, 'DELETE', `${base}/members/${person.user.id}`)
+        expect([leave.status, leave.json.error]).toEqual([409, 'member_via_group'])
+        // Direct viewer and editor through the group: the union, then the direct membership goes and the group's role stays.
+        await addMember(owner, sp.id, person.user.username, 'viewer')
+        expect(await roleOf(person.browser, sp.id)).toMatchObject({ role: 'editor', directRole: 'viewer', viaGroups: true })
+        expect((await call(person.browser, 'DELETE', `${base}/members/${person.user.id}`)).status).toBe(204)
+        expect(await roleOf(person.browser, sp.id)).toMatchObject({ role: 'editor', directRole: '' })
+        // The role of the group changes; the group leaves the space.
+        expect((await call(owner.browser, 'PATCH', `${base}/groups/${g.id}`, { role: 'viewer' })).json.role).toBe('viewer')
+        expect(await roleOf(person.browser, sp.id)).toMatchObject({ role: 'viewer', permissions: ['read'] })
+        expect((await call(owner.browser, 'PATCH', `${base}/groups/01ZZZZZZZZ`, { role: 'viewer' })).status).toBe(404)
+        // Deleting a group that is in a space needs force.
+        const inUse = await call(admin, 'DELETE', `/api/admin/groups/${g.id}`)
+        expect([inUse.status, inUse.json.error, inUse.json.spaces]).toEqual([409, 'group_in_use', 1])
+        expect((await call(owner.browser, 'DELETE', `${base}/groups/${g.id}`)).status).toBe(204)
+        expect((await call(person.browser, 'GET', `${base}/members`)).status).toBe(404)
+        expect((await call(admin, 'DELETE', `/api/admin/groups/${g.id}`)).status).toBe(204)
+      })
+    })
+
     describe('members and permissions', () => {
       it('adds a member by username with a role; lists owners first with `you`; the role and its permissions show in the member\'s own list', async () => {
         const owner = await newMember(uniq('mo'))

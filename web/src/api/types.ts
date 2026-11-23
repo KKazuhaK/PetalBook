@@ -24,6 +24,11 @@ export interface SpaceInfo {
   // The folder quick notes go to: a folder path, never empty. Only a name; the
   // folder exists once a page has been made in it.
   inbox: string
+  // From 3.2 `role` and `permissions` are the effective ones (the person's own
+  // role and their groups' together). The person's own role, "" when they reach
+  // the space only through groups, and whether a group of theirs is a member.
+  directRole?: SpaceRole | ''
+  viaGroups?: boolean
 }
 export interface MetaResponse {
   version: string
@@ -503,6 +508,12 @@ export type ErrorCode =
   | 'too_many_passkeys'
   | 'passkey_unavailable'
   | 'provider_in_use'
+  | 'group_not_found'
+  | 'group_synced'
+  | 'group_not_synced'
+  | 'group_limit'
+  | 'group_in_use'
+  | 'member_via_group'
   | 'unavailable'
   | 'internal'
   | 'network'
@@ -640,6 +651,8 @@ export interface AccountInfo {
   hasPassword: boolean
   identities: Identity[]
   passkeys: Passkey[]
+  // The groups the person is in, by name.
+  groups: GroupRef[]
 }
 
 // --- signing in (docs/api.md, "Signing in") -------------------------------------------
@@ -711,6 +724,88 @@ export interface Member {
   role: SpaceRole
   // True for the caller.
   you: boolean
+  // A group of theirs is a member of the space too; the role the person's own
+  // role and those groups give together.
+  viaGroups?: boolean
+  effectiveRole?: SpaceRole
+}
+
+// --- groups (docs/api.md, "Groups") --------------------------------------------------
+
+export type GroupSource = 'local' | 'synced'
+// What everyone may see of a group.
+export interface GroupRef {
+  id: string
+  name: string
+  source: GroupSource
+}
+// A group as an administrator sees it.
+export interface Group extends GroupRef {
+  description: string
+  people: number
+  spaces: number
+  mappedFrom: { provider: string; value: string }[]
+  created: string
+  updated: string
+}
+export interface GroupList {
+  items: Group[]
+  next: string
+}
+export interface GroupPerson {
+  userId: string
+  username: string
+  name: string
+  disabled: boolean
+  from: { provider: string; value: string }[]
+  added: string
+}
+export interface GroupPersonList {
+  items: GroupPerson[]
+  next: string
+}
+export interface GroupSpaceRef {
+  id: string
+  name: string
+  role: SpaceRole
+}
+export interface GroupSpaceList {
+  items: GroupSpaceRef[]
+  next: string
+}
+// A group that is a member of a space.
+export interface GroupMember {
+  groupId: string
+  name: string
+  source: GroupSource
+  role: SpaceRole
+  people: number
+  // The caller is in the group.
+  yours: boolean
+}
+export interface MembersResponse {
+  members: Member[]
+  groups: GroupMember[]
+}
+export interface EffectiveMember {
+  userId: string
+  username: string
+  name: string
+  role: SpaceRole | ''
+  directRole: SpaceRole | ''
+  groups: { groupId: string; name: string; role: SpaceRole }[]
+  you: boolean
+}
+export interface EffectiveMemberList {
+  items: EffectiveMember[]
+  next: string
+}
+// What a provider does with its groups claim.
+export interface GroupsMapping {
+  enabled: boolean
+  claim: string
+  missing: 'keep' | 'clear'
+  map: { value: string; groupId: string }[]
 }
 
 // --- administration (docs/api.md, "Administration") -----------------------------------
@@ -987,6 +1082,7 @@ export interface AuthProvider {
   order: number
   autoCreate: boolean
   mergeVerifiedEmail: boolean
+  groups: GroupsMapping
   oidc?: OidcSettings
   saml?: SamlSettings
   github?: GithubSettings
@@ -1005,6 +1101,7 @@ export interface ProviderInput {
   order?: number
   autoCreate?: boolean
   mergeVerifiedEmail?: boolean
+  groups?: Partial<GroupsMapping>
   oidc?: Partial<Pick<OidcSettings, 'issuer' | 'clientId' | 'scopes' | 'legacyCallback'>> & { clientSecret?: string }
   saml?: Partial<Pick<SamlSettings, 'metadataUrl' | 'metadataXml' | 'entityId' | 'attributes' | 'nameIdFormat' | 'signRequests' | 'allowIdpInitiated'>>
   github?: Partial<Pick<GithubSettings, 'baseUrl' | 'clientId' | 'organizations'>> & { clientSecret?: string }
@@ -1028,6 +1125,17 @@ export type AuditKind =
   | 'token_created'
   | 'token_revoked'
   | 'grant_revoked'
+  | 'group_created'
+  | 'group_changed'
+  | 'group_deleted'
+  | 'group_member_added'
+  | 'group_member_removed'
+  | 'groups_synced'
+  | 'groups_claim_missing'
+  | 'groups_claim_truncated'
+  | 'space_group_added'
+  | 'space_group_changed'
+  | 'space_group_removed'
   | 'dropped'
 export interface AuditItem {
   id: string

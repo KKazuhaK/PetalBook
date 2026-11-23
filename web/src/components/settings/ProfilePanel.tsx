@@ -6,8 +6,10 @@ import type { AccountInfo, SessionInfo } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
 import { SettingsSection } from './SettingsParts'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { t } from '@/i18n'
+import { tg } from '@/i18n/groups'
 
 // Profile: name and email (accounts mode only). The password and the linked
 // sign-ins are on the Security panel.
@@ -24,7 +26,34 @@ export function ProfilePanel() {
 }
 
 function Sections({ account }: { account: AccountInfo }) {
-  return <Profile account={account} />
+  return (
+    <>
+      <Profile account={account} />
+      <MyGroups account={account} />
+    </>
+  )
+}
+
+// The groups the person is in: names only, as everyone may see them.
+function MyGroups({ account }: { account: AccountInfo }) {
+  const groups = account.groups ?? []
+  return (
+    <SettingsSection title={tg.account.title} id="my-groups-heading" description={tg.account.help}>
+      {groups.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{tg.account.none}</p>
+      ) : (
+        <ul className="flex flex-wrap gap-2" data-slot="my-groups">
+          {groups.map((g) => (
+            <li key={g.id}>
+              <Badge variant={g.source === 'synced' ? 'secondary' : 'outline'}>
+                {g.name} · {tg.account.source[g.source]}
+              </Badge>
+            </li>
+          ))}
+        </ul>
+      )}
+    </SettingsSection>
+  )
 }
 
 function Profile({ account }: { account: AccountInfo }) {

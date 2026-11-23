@@ -1,6 +1,6 @@
 import { Link, Navigate, useParams } from 'react-router'
 import { lazy, Suspense } from 'react'
-import { ArrowLeft, HardDrive, KeyRound, Layers, Quote, ShieldCheck, Users } from 'lucide-react'
+import { ArrowLeft, HardDrive, KeyRound, Layers, Quote, ShieldCheck, Users, UsersRound } from 'lucide-react'
 import { TopBar } from '@/components/layout/TopBar'
 import { useActiveSpace } from '@/api/hooks'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
@@ -8,6 +8,7 @@ import { adminPath, isAdminSection, spaceUrls, type AdminSection } from '@/lib/u
 import { t } from '@/i18n'
 import { ta } from '@/i18n/admin'
 import { PageFallback } from '@/components/common'
+import { GroupsPanel } from './GroupsPanel'
 import { SpacesPanel } from './SpacesPanel'
 import { StatusPanel } from './StatusPanel'
 import { UsersPanel } from './UsersPanel'
@@ -18,8 +19,8 @@ const AccessPanel = lazy(() => import('./AccessPanel').then((m) => ({ default: m
 // The security page, with the providers and the audit log, is another.
 const SecurityPanel = lazy(() => import('./AdminSecurityPanel').then((m) => ({ default: m.AdminSecurityPanel })))
 
-const ICONS: Record<AdminSection, typeof Users> = { users: Users, spaces: Layers, daily: Quote, access: KeyRound, security: ShieldCheck, status: HardDrive }
-const SECTIONS: readonly AdminSection[] = ['users', 'spaces', 'daily', 'access', 'security', 'status']
+const ICONS: Record<AdminSection, typeof Users> = { users: Users, groups: UsersRound, spaces: Layers, daily: Quote, access: KeyRound, security: ShieldCheck, status: HardDrive }
+const SECTIONS: readonly AdminSection[] = ['users', 'groups', 'spaces', 'daily', 'access', 'security', 'status']
 
 // The administration: users and invites, every space, the state of the server.
 // It is a route of its own, loaded only when an administrator goes there (see
@@ -63,6 +64,7 @@ export default function AdminRoute() {
           </Link>
         </div>
         {section === 'users' && <UsersPanel />}
+        {section === 'groups' && <GroupsPanel />}
         {section === 'spaces' && <SpacesPanel />}
         {section === 'daily' && (
           <Suspense fallback={<PageFallback />}>
