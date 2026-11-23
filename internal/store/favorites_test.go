@@ -284,6 +284,13 @@ func TestOpeningAnOlderDatabaseFillsNameKeys(t *testing.T) {
 		`ALTER TABLE remotes DROP COLUMN gh_installation_id`,
 		`ALTER TABLE remotes DROP COLUMN gh_repo_id`,
 		`ALTER TABLE remotes DROP COLUMN gh_user_id`,
+		`DROP INDEX spaces_last_used`,
+		`ALTER TABLE spaces DROP COLUMN last_used`,
+		`ALTER TABLE spaces DROP COLUMN cache_state`,
+		`ALTER TABLE spaces DROP COLUMN pinned`,
+		`ALTER TABLE spaces DROP COLUMN exempt`,
+		`ALTER TABLE spaces DROP COLUMN index_bytes`,
+		`ALTER TABLE users DROP COLUMN remote_exempt`,
 		`DELETE FROM schema_migrations WHERE version >= 6`,
 		`INSERT INTO spaces(id, name, created) VALUES ('S1', 'Straße', 0)`,
 	} {
