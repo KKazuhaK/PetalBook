@@ -268,6 +268,7 @@ export const securityEn: SecurityMessages = {
     passkeyRequired: 'Require a passkey',
     passkeyRequiredHelp: 'This person must sign in with a passkey.',
     passkeyRequiredFor: (name: string) => `Require ${name} to use a passkey`,
+    passkeyByRole: '(required by role)',
     passkeyUnavailable: 'Passkeys cannot be used right now, so nobody can be required to use one.',
     counts: (passkeys: number, sso: number) => `${passkeys} passkey${passkeys === 1 ? '' : 's'} · ${sso} single sign-on identit${sso === 1 ? 'y' : 'ies'}`,
     passkeys: 'Passkeys',

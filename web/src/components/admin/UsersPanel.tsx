@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { adminApi, useInvites, useUsers } from '@/api/admin'
+import { adminApi, useInvites, useSecuritySettings, useUsers } from '@/api/admin'
 import { keys, useSession } from '@/api/hooks'
 import type { CreatedInvite, Passkey, Role, User } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
@@ -51,6 +51,8 @@ function UserList({ users, meId }: { users: User[]; meId: string }) {
   const [error, setError] = useState<{ id: string; message: string } | null>(null)
   const [open, setOpen] = useState<string | null>(null)
   const messageRef = useRef<HTMLParagraphElement>(null)
+  // The roles a passkey is required of: for them the switch is on and cannot be turned off here.
+  const requireRoles = useSecuritySettings().data?.passkeys.requireRoles ?? []
 
   const change = async (u: User, patch: { role?: Role; disabled?: boolean; passkeyRequired?: boolean; email?: string; emailVerified?: boolean }) => {
     setBusy(u.id)
@@ -94,8 +96,14 @@ function UserList({ users, meId }: { users: User[]; meId: string }) {
                 </div>
               </div>
               <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Switch checked={u.passkeyRequired} disabled={busy === u.id} aria-label={tsec.users.passkeyRequiredFor(u.name)} onCheckedChange={(on) => void change(u, { passkeyRequired: on })} />
+                <Switch
+                  checked={u.passkeyRequired}
+                  disabled={busy === u.id || requireRoles.includes(u.role)}
+                  aria-label={tsec.users.passkeyRequiredFor(u.name)}
+                  onCheckedChange={(on) => void change(u, { passkeyRequired: on })}
+                />
                 {tsec.users.passkeyRequired}
+                {requireRoles.includes(u.role) && <span data-slot="passkey-by-role">{tsec.users.passkeyByRole}</span>}
               </label>
               <div className="w-28">
                 <NativeSelect

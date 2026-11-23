@@ -5,6 +5,7 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import { tsec } from '@/i18n/security'
 import { adminRequests, byLabel, click, installDomShims, makePerson, mount, settle, type, type Mounted } from '@/testing/harness'
 import { AdminGate } from './AdminGate'
+import { MOCK_ADMIN } from '@/api/mock/server'
 
 // The users page: passkeys, the email and what a person has.
 
@@ -51,6 +52,23 @@ describe('users and their sign-in', () => {
     await settle(() => calls('PATCH', `/api/users/${carol.id}`).length === 1, 'patched')
     expect(JSON.parse(calls('PATCH', `/api/users/${carol.id}`)[0].body!)).toEqual({ passkeyRequired: true })
     await settle(() => byLabel(tsec.users.passkeyRequiredFor('名 carol'))?.getAttribute('aria-checked') === 'true', 'on')
+  })
+
+  it('a passkey required by the person\'s role shows as on, cannot be switched off, and says why', async () => {
+    await open()
+    // The administrator has a passkey first, so the requirement does not hold their own session.
+    const admin = adminRequests(m!.server)
+    const ceremony = (admin('POST', '/api/account/passkeys/begin', { name: 'Laptop' }).body as { ceremony: string }).ceremony
+    admin('POST', `/api/account/passkeys/finish?ceremony=${ceremony}`, { id: 'cred-admin' })
+    admin('PUT', '/api/admin/security', { passkeys: { requireRoles: ['admin'] } })
+    await m!.qc.invalidateQueries()
+    const sw = (name: string) => byLabel(tsec.users.passkeyRequiredFor(name))
+    await settle(() => sw(MOCK_ADMIN.name)?.getAttribute('aria-disabled') === 'true', 'the switch, held by the role')
+    expect(sw(MOCK_ADMIN.name)!.getAttribute('aria-checked')).toBe('true')
+    expect(sw(MOCK_ADMIN.name)!.closest('li')!.querySelector('[data-slot="passkey-by-role"]')?.textContent).toBe(tsec.users.passkeyByRole)
+    // A member is not required by the role: their switch works and says nothing of it.
+    expect(sw('名 carol')!.getAttribute('aria-disabled')).toBeNull()
+    expect(sw('名 carol')!.closest('li')!.querySelector('[data-slot="passkey-by-role"]')).toBeNull()
   })
 
   it('lists a person\'s passkeys, and deletes a lost one after asking', async () => {

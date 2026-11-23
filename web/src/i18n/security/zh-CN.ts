@@ -266,6 +266,7 @@ export const securityZhCN = {
     passkeyRequired: '要求 passkey',
     passkeyRequiredHelp: '这个人必须用 passkey 登录。',
     passkeyRequiredFor: (name: string) => `要求 ${name} 使用 passkey`,
+    passkeyByRole: '（由角色要求）',
     passkeyUnavailable: '现在不能使用 passkey，不能要求任何人用它。',
     counts: (passkeys: number, sso: number) => `${passkeys} 个 passkey · ${sso} 个单点登录身份`,
     passkeys: 'Passkey',
