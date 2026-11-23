@@ -108,6 +108,7 @@ type Service struct {
 	replay       *authsaml.MemoryReplayCache
 	pk           *passkeyState
 	capImg       *captcha.ImageGenerator
+	capStore     *captcha.MemoryStore
 	capTok       atomic.Pointer[tokenChecker]
 	capSecretErr atomic.Bool
 	flagsIgnored atomic.Bool

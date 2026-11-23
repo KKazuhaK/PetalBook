@@ -59,7 +59,14 @@ type attempt struct {
 
 func (f *fakeIDP) begin(t *testing.T, c *client, who string, body map[string]any) attempt {
 	t.Helper()
-	r := c.do("POST", "/api/auth/oidc/start", body).want(t, 200, "")
+	return f.beginAt(t, c, "/api/auth/oidc/start", "/api/auth/oidc/callback", who, body)
+}
+
+// beginAt starts a sign-in at startPath and follows the provider's redirect back
+// to callbackPath.
+func (f *fakeIDP) beginAt(t *testing.T, c *client, startPath, callbackPath, who string, body map[string]any) attempt {
+	t.Helper()
+	r := c.do("POST", startPath, body).want(t, 200, "")
 	authURL := r.body["url"].(string)
 	if !strings.HasPrefix(authURL, f.srv.URL+"/authorize?") {
 		t.Fatalf("authorization URL %s", authURL)
@@ -75,7 +82,7 @@ func (f *fakeIDP) begin(t *testing.T, c *client, who string, body map[string]any
 		t.Fatalf("the provider answered %d", resp.StatusCode)
 	}
 	loc, err := url.Parse(resp.Header.Get("Location"))
-	if err != nil || loc.Scheme+"://"+loc.Host != testPublic || loc.Path != "/api/auth/oidc/callback" {
+	if err != nil || loc.Scheme+"://"+loc.Host != testPublic || loc.Path != callbackPath {
 		t.Fatalf("redirect back to %v", resp.Header.Get("Location"))
 	}
 	return attempt{start: r, cb: loc.RequestURI(), state: loc.Query().Get("state")}

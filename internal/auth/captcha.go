@@ -35,7 +35,8 @@ func errCaptcha() *Error {
 }
 
 func (s *Service) initCaptcha() {
-	s.capImg = captcha.NewImageGenerator(captcha.NewMemoryStore(captcha.DefaultMemoryStoreCapacity, captcha.DefaultMemoryStoreTTL))
+	s.capStore = captcha.NewMemoryStore(captcha.DefaultMemoryStoreCapacity, captcha.DefaultMemoryStoreTTL)
+	s.capImg = captcha.NewImageGenerator(s.capStore)
 }
 
 // captchaRebuild builds the verifier of a third-party provider when the

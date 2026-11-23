@@ -223,7 +223,7 @@ func (s *Service) newRT(row store.ProviderRow) *providerRT {
 
 // reloadProviders reads the providers again and rebuilds only those that
 // changed; the others keep what they have built.
-func (s *Service) reloadProviders(ctx context.Context) error {
+func (s *Service) reloadProviders(ctx context.Context, rebuild ...string) error {
 	rows, err := store.ListProviders(ctx, s.st.Q())
 	if err != nil {
 		return err
@@ -234,7 +234,7 @@ func (s *Service) reloadProviders(ctx context.Context) error {
 	}
 	list := make([]*providerRT, 0, len(rows))
 	for _, row := range rows {
-		if o := old[row.Slug]; o != nil && o.row.Updated.Equal(row.Updated) && o.row.Enabled == row.Enabled {
+		if o := old[row.Slug]; o != nil && !slices.Contains(rebuild, row.Slug) && o.row.Updated.Equal(row.Updated) {
 			list = append(list, o)
 			continue
 		}
@@ -870,7 +870,7 @@ func (s *Service) CreateProvider(ctx context.Context, actorID, ip string, in Pro
 		}
 		return nil, err
 	}
-	if err := s.reloadProviders(ctx); err != nil {
+	if err := s.reloadProviders(ctx, b.row.Slug); err != nil {
 		return nil, err
 	}
 	s.Audit(AuditEvent{Kind: "provider_created", Actor: actorID, IP: ip, Detail: map[string]any{"slug": b.row.Slug, "kind": b.row.Kind, "name": b.row.Name}})
@@ -929,7 +929,7 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID, ip, slug string, 
 	if err := store.UpdateProvider(ctx, s.st.Q(), b.row); err != nil {
 		return nil, err
 	}
-	if err := s.reloadProviders(ctx); err != nil {
+	if err := s.reloadProviders(ctx, slug); err != nil {
 		return nil, err
 	}
 	if len(b.changed) > 0 {
@@ -1032,7 +1032,7 @@ func (s *Service) RefreshProvider(ctx context.Context, slug string) (*ProviderVi
 	if err := s.refresh(ctx, cur); err != nil && !errors.Is(err, errUnreachable) {
 		return nil, err
 	}
-	if err := s.reloadProviders(ctx); err != nil {
+	if err := s.reloadProviders(ctx, slug); err != nil {
 		return nil, err
 	}
 	return s.Provider(ctx, slug)

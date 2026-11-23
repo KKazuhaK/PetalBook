@@ -415,7 +415,11 @@ func (s *Service) refreshSAMLMetadata(ctx context.Context) {
 		changed = true
 	}
 	if changed {
-		if err := s.reloadProviders(ctx); err != nil {
+		var slugs []string
+		for _, rt := range s.provs.all() {
+			slugs = append(slugs, rt.row.Slug)
+		}
+		if err := s.reloadProviders(ctx, slugs...); err != nil {
 			s.log.Warn("could not reload the providers", "error", err)
 		}
 	}
