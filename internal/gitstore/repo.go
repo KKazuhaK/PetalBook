@@ -111,6 +111,14 @@ func (r *Repo) net(ctx context.Context, timeout time.Duration, args ...string) (
 	if r.opt.Cred != nil {
 		e, s, cleanup, err := r.opt.Cred.prepare()
 		if err != nil {
+			var ce *CredentialError
+			if errors.As(err, &ce) {
+				kind := KindAuth
+				if ce.Offline {
+					kind = KindOffline
+				}
+				return "", &NetError{kind, Scrub(ce.Msg), err}
+			}
 			return "", &NetError{KindAuth, "the stored credential cannot be used", err}
 		}
 		defer cleanup()

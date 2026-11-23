@@ -29,23 +29,30 @@ type Remote struct {
 	PubKey     string
 	LastGood   string
 	State      string
-	ErrorKind  string // what kind of attention the error needs: "", "auth", "hostkey", "clone", "rescued"
+	ErrorKind  string // what kind of attention the error needs: "", "auth", "hostkey", "clone", "rescued", or a github_ code
 	LastError  string
 	RemoteTip  string // when rewritten: the remote's commit
 	LastSync   time.Time
 	Updated    time.Time
+
+	// The GitHub credential (CredType "github"): which token syncs the space
+	// and what it syncs. No secret is stored with the row.
+	GHVia            string // "app" or "user"
+	GHInstallationID int64  // via "app"
+	GHRepoID         int64
+	GHUserID         string // via "user": the PetalBook user whose authorisation syncs it
 }
 
 // Connected reports whether the space follows a remote (it is not just a key).
 func (r *Remote) Connected() bool { return r.URL != "" }
 
-const remoteCols = `space_id, url, branch, cred_type, username, token_enc, privkey_enc, pubkey, last_good, state, error_kind, last_error, remote_tip, last_sync, updated`
+const remoteCols = `space_id, url, branch, cred_type, username, token_enc, privkey_enc, pubkey, last_good, state, error_kind, last_error, remote_tip, last_sync, updated, gh_via, gh_installation_id, gh_repo_id, gh_user_id`
 
 func scanRemote(row interface{ Scan(...any) error }) (*Remote, error) {
 	var r Remote
 	var sync, upd int64
 	if err := row.Scan(&r.SpaceID, &r.URL, &r.Branch, &r.CredType, &r.Username, &r.TokenEnc, &r.PrivKeyEnc, &r.PubKey, &r.LastGood,
-		&r.State, &r.ErrorKind, &r.LastError, &r.RemoteTip, &sync, &upd); err != nil {
+		&r.State, &r.ErrorKind, &r.LastError, &r.RemoteTip, &sync, &upd, &r.GHVia, &r.GHInstallationID, &r.GHRepoID, &r.GHUserID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -69,13 +76,14 @@ func PutRemote(ctx context.Context, q Q, r Remote) error {
 	if !r.LastSync.IsZero() {
 		sync = ms(r.LastSync)
 	}
-	_, err := q.Exec(ctx, `INSERT INTO remotes(`+remoteCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err := q.Exec(ctx, `INSERT INTO remotes(`+remoteCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT (space_id) DO UPDATE SET url = excluded.url, branch = excluded.branch, cred_type = excluded.cred_type,
 		username = excluded.username, token_enc = excluded.token_enc, privkey_enc = excluded.privkey_enc, pubkey = excluded.pubkey,
 		last_good = excluded.last_good, state = excluded.state, error_kind = excluded.error_kind, last_error = excluded.last_error,
-		remote_tip = excluded.remote_tip, last_sync = excluded.last_sync, updated = excluded.updated`,
+		remote_tip = excluded.remote_tip, last_sync = excluded.last_sync, updated = excluded.updated,
+		gh_via = excluded.gh_via, gh_installation_id = excluded.gh_installation_id, gh_repo_id = excluded.gh_repo_id, gh_user_id = excluded.gh_user_id`,
 		r.SpaceID, r.URL, r.Branch, r.CredType, r.Username, r.TokenEnc, r.PrivKeyEnc, r.PubKey, r.LastGood,
-		r.State, r.ErrorKind, r.LastError, r.RemoteTip, sync, ms(r.Updated))
+		r.State, r.ErrorKind, r.LastError, r.RemoteTip, sync, ms(r.Updated), r.GHVia, r.GHInstallationID, r.GHRepoID, r.GHUserID)
 	return err
 }
 

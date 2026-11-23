@@ -43,6 +43,10 @@ const (
 	KindRescued = "rescued"
 )
 
+// IsGitHubKind reports whether an error kind is one of the GitHub credential's
+// (github_authorization_expired and the like): they clear themselves like auth.
+func IsGitHubKind(kind string) bool { return strings.HasPrefix(kind, "github_") }
+
 // RemoteStatus is what the server knows about the remote right now.
 type RemoteStatus struct {
 	State     string
@@ -171,7 +175,7 @@ func (r *remote) markOK() {
 		case RemoteOffline, RemoteRewritten:
 			st.State, st.Kind, st.Error, st.RemoteTip = RemoteOK, "", "", ""
 		case RemoteError:
-			if st.Kind == KindAuth || st.Kind == KindHostKey {
+			if st.Kind == KindAuth || st.Kind == KindHostKey || IsGitHubKind(st.Kind) {
 				st.State, st.Kind, st.Error = RemoteOK, "", ""
 			}
 		}
@@ -324,6 +328,17 @@ func (s *Space) netFailure(r *remote, err error) error {
 		msg = ne.Msg
 	}
 	msg = gitstore.Scrub(msg)
+	var ce *gitstore.CredentialError
+	if errors.As(err, &ce) && ce.Code != "" && !ce.Offline {
+		// The credential itself cannot be had (a GitHub authorisation ran out):
+		// reads go on, writes are refused, and the code says what to fix.
+		r.set(func(st *RemoteStatus) {
+			if st.State != RemoteRewritten {
+				st.State, st.Kind, st.Error = RemoteError, ce.Code, msg
+			}
+		})
+		return unavailable(err, "%s", msg)
+	}
 	switch gitstore.KindOf(err) {
 	case gitstore.KindAuth:
 		r.set(func(st *RemoteStatus) {

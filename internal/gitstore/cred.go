@@ -22,6 +22,21 @@ type Credential interface {
 	prepare() (env, secrets []string, cleanup func(), err error)
 }
 
+// CredentialError is what a Token's Get returns when the credential cannot be
+// had, not because Git refused it: a GitHub authorisation has expired, the App
+// is gone. Code says which (a stable name the API shows); Offline says the
+// credential could not be had because a service it depends on was unreachable,
+// which is not the credential's fault. Msg is fit to show.
+type CredentialError struct {
+	Code    string
+	Msg     string
+	Offline bool
+	Err     error
+}
+
+func (e *CredentialError) Error() string { return e.Msg }
+func (e *CredentialError) Unwrap() error { return e.Err }
+
 // Token is an https access token. Get is called once per command, so the
 // caller can keep the token encrypted until then.
 type Token struct {

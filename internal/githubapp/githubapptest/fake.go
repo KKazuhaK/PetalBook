@@ -129,6 +129,7 @@ type instToken struct {
 }
 
 type userToken struct {
+	seq     int64
 	access  string
 	login   string
 	expires time.Time // zero: none
@@ -136,6 +137,7 @@ type userToken struct {
 }
 
 type refreshToken struct {
+	seq     int64
 	token   string
 	login   string
 	expires time.Time
@@ -391,7 +393,7 @@ func (f *Fake) RefreshTokenOf(login string) string {
 	defer f.mu.Unlock()
 	var best *refreshToken
 	for _, r := range f.refresh {
-		if strings.EqualFold(r.login, login) && !r.used && !r.revoked && (best == nil || r.expires.After(best.expires)) {
+		if strings.EqualFold(r.login, login) && !r.used && !r.revoked && (best == nil || r.seq > best.seq) {
 			best = r
 		}
 	}
@@ -407,7 +409,7 @@ func (f *Fake) AccessTokenOf(login string) string {
 	defer f.mu.Unlock()
 	var best *userToken
 	for _, u := range f.users {
-		if strings.EqualFold(u.login, login) && !u.revoked && (best == nil || u.expires.After(best.expires)) {
+		if strings.EqualFold(u.login, login) && !u.revoked && (best == nil || u.seq > best.seq) {
 			best = u
 		}
 	}
@@ -1065,7 +1067,7 @@ func (f *Fake) createRepo(w http.ResponseWriter, r *http.Request, p principal, o
 		return
 	}
 	if b.Private && acc.NoPrivate {
-		apiError(w, 422, "Repository creation failed.", "private repositories are not allowed in this organization")
+		apiError(w, 403, "Private repositories are not allowed in this organization.")
 		return
 	}
 	if b.Name == "" || strings.ContainsAny(b.Name, " /") {
@@ -1092,6 +1094,9 @@ func (f *Fake) createRepo(w http.ResponseWriter, r *http.Request, p principal, o
 func (f *Fake) serveWeb(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/login/oauth/access_token" || r.Method != "POST" {
 		http.NotFound(w, r)
+		return
+	}
+	if f.limited(w) {
 		return
 	}
 	r.ParseForm()
@@ -1133,12 +1138,12 @@ func (f *Fake) serveWeb(w http.ResponseWriter, r *http.Request) {
 	}
 	access := "ghu_" + randHex(18)
 	out := map[string]any{"access_token": access, "token_type": "bearer", "scope": ""}
-	ut := &userToken{access: access, login: login}
+	ut := &userToken{seq: f.id(), access: access, login: login}
 	if !f.NoRefresh {
 		ut.expires = now.Add(8 * time.Hour)
 		out["expires_in"] = 8 * 3600
 		ref := "ghr_" + randHex(24)
-		f.refresh[ref] = &refreshToken{token: ref, login: login, expires: now.Add(180 * 24 * time.Hour)}
+		f.refresh[ref] = &refreshToken{seq: f.id(), token: ref, login: login, expires: now.Add(180 * 24 * time.Hour)}
 		out["refresh_token"] = ref
 		out["refresh_token_expires_in"] = 180 * 24 * 3600
 	}
