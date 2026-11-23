@@ -947,11 +947,7 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID, ip, slug string, 
 	if len(b.changed) > 0 {
 		d := map[string]any{"slug": slug, "kind": b.row.Kind}
 		for _, f := range b.changed {
-			if f == "clientSecret" {
-				d[f] = "changed"
-			} else {
-				d[f] = "changed"
-			}
+			d[f] = changedValue(b, f)
 		}
 		s.Audit(AuditEvent{Kind: "provider_changed", Actor: actorID, IP: ip, Detail: d})
 	}
@@ -1314,4 +1310,48 @@ func parseSAMLKey(keyPEM, certPEM string) (*rsa.PrivateKey, *x509.Certificate, e
 		return nil, nil, err
 	}
 	return rk, cert, nil
+}
+
+// changedValue is what the audit log says a changed field became: its value,
+// except for secrets and large documents, which show only that they changed.
+func changedValue(b *built, field string) any {
+	switch field {
+	case "name":
+		return b.row.Name
+	case "icon":
+		return b.row.Icon
+	case "enabled":
+		return b.row.Enabled
+	case "order":
+		return b.row.Position
+	case "autoCreate":
+		return b.row.AutoCreate
+	case "mergeVerifiedEmail":
+		return b.row.MergeVerifiedEmail
+	case "oidc.issuer":
+		return b.cfg.Issuer
+	case "oidc.clientId", "github.clientId":
+		return b.cfg.ClientID
+	case "oidc.scopes":
+		return b.cfg.Scopes
+	case "oidc.legacyCallback":
+		return b.row.LegacyCallback
+	case "github.baseUrl":
+		return b.cfg.BaseURL
+	case "github.organizations":
+		return b.cfg.Organizations
+	case "saml.metadataUrl":
+		return b.cfg.MetadataURL
+	case "saml.entityId":
+		return b.cfg.EntityID
+	case "saml.attributes":
+		return b.cfg.Attributes
+	case "saml.nameIdFormat":
+		return b.cfg.NameIDFormat
+	case "saml.signRequests":
+		return b.cfg.SignRequests
+	case "saml.allowIdpInitiated":
+		return b.cfg.AllowIDPInitiated
+	}
+	return "changed" // clientSecret, metadataXml
 }

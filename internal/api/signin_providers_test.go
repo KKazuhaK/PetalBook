@@ -494,3 +494,28 @@ func TestADiscoveryDocumentIsKeptAndASignInDoesNotFetchIt(t *testing.T) {
 		}
 	})
 }
+
+func TestASecretThatCannotBeOpenedMakesTheProviderUnavailableAndIsSaid(t *testing.T) {
+	t.Parallel()
+	f := newIDPFor(t, "one")
+	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		admin.do("POST", "/api/admin/auth/providers", f.providerBody("one", nil)).want(t, 201, "")
+		ctx := context.Background()
+		// The key of this server changed, or the row was copied from another one.
+		if _, err := a.st.Q().Exec(ctx, `UPDATE sign_in_providers SET secret_enc = 'bm90IHNlYWxlZCBieSB0aGlzIHNlcnZlcg==' WHERE slug = 'one'`); err != nil {
+			t.Fatal(err)
+		}
+		svc2, err := auth.New(ctx, auth.Config{Store: a.st, Spaces: a.mgr, PublicURL: testPublic, HTTPClient: anyTLSClient(), Password: fastPasswords, Now: a.clock.Now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		v, err := svc2.SecurityView(ctx)
+		if err != nil || len(v.Notices) != 1 || v.Notices[0].Code != "secret_unreadable" || v.Notices[0].Slug != "one" {
+			t.Fatalf("%+v %v", v, err)
+		}
+		if _, err := svc2.SSOBegin(ctx, "oidc", "one", auth.BeginParams{}, "203.0.113.2"); err == nil {
+			t.Fatal("a provider whose secret cannot be opened started a sign-in")
+		}
+	})
+}

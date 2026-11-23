@@ -396,7 +396,12 @@ func failURL(intent, code string) string {
 
 // ssoFail is the outcome of a sign-in that did not work, and the audit row for it.
 func (s *Service) ssoFail(kind, slug, intent, code, ip string, clear ...*http.Cookie) Outcome {
-	s.Audit(AuditEvent{Kind: "login_failed", IP: ip, Detail: map[string]any{"method": kind, "reason": code, "provider": slug}})
+	// Only a sign-in that was really under way (it has an intent) is written
+	// down: anyone can send a callback that matches nothing, and the log is not
+	// for them to fill.
+	if intent != "" && s.provs.get(slug) != nil {
+		s.Audit(AuditEvent{Kind: "login_failed", IP: ip, Detail: map[string]any{"method": kind, "reason": code, "provider": slug}})
+	}
 	return Outcome{Redirect: failURL(intent, code), Clear: clear}
 }
 
