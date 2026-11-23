@@ -171,7 +171,9 @@ function SettingsForm({ settings }: { settings: SecuritySettings }) {
                 value={draft.provider}
                 onChange={(e) => {
                   setReplacing(false)
-                  set({ provider: e.target.value as CaptchaProvider, secret: null })
+                  const provider = e.target.value as CaptchaProvider
+                  // A site key belongs to its provider: another one starts empty, the stored one gets its key back.
+                  set({ provider, secret: null, siteKey: provider === settings.captcha.provider ? settings.captcha.siteKey : '' })
                 }}
               >
                 {CAPTCHAS.map((p) => (
@@ -184,10 +186,10 @@ function SettingsForm({ settings }: { settings: SecuritySettings }) {
           </SettingsRow>
           {third && (
             <>
-              <SettingsRow title={tsec.captcha.siteKey} help={tsec.captcha.siteKeyHelp} controlId="security-sitekey">
-                <Input id="security-sitekey" className={`${field} break-all`} value={draft.siteKey} onChange={(e) => set({ siteKey: e.target.value })} autoComplete="off" spellCheck={false} />
+              <SettingsRow title={tsec.captcha.siteKey} help={tsec.captcha.siteKeyHelp} controlId="security-sitekey" required>
+                <Input id="security-sitekey" aria-required="true" className={`${field} break-all`} value={draft.siteKey} onChange={(e) => set({ siteKey: e.target.value })} autoComplete="off" spellCheck={false} />
               </SettingsRow>
-              <SettingsRow title={tsec.captcha.secret} help={tsec.captcha.secretHelp} controlId="security-secret">
+              <SettingsRow title={tsec.captcha.secret} help={tsec.captcha.secretHelp} controlId="security-secret" required>
                 <div className={`${field} grid gap-2`}>
                   {secretStored && !replacing && draft.secret === null ? (
                     <>
@@ -211,6 +213,7 @@ function SettingsForm({ settings }: { settings: SecuritySettings }) {
                   ) : (
                     <Input
                       id="security-secret"
+                      aria-required="true"
                       type="password"
                       autoComplete="new-password"
                       placeholder={secretStored ? tsec.captcha.secretNew : tsec.captcha.secretNone}

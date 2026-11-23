@@ -1,6 +1,7 @@
 import { useId, type ReactNode } from 'react'
 import { Download, GitBranch, House, LayoutTemplate, Settings, Shapes, ShieldCheck, SlidersHorizontal, User, Users } from 'lucide-react'
 import type { SectionId } from './sections'
+import { RequiredMark } from '@/components/ui/field-mark'
 
 // The building blocks every settings section is made of, so spacing and rows
 // look the same everywhere: a heading with a rule under it, then rows of
@@ -35,7 +36,8 @@ export function SettingsRows({ children }: { children: ReactNode }) {
 
 // `label` ties the name to the control for a screen reader; the help line is
 // described-by the control as well.
-export function SettingsRow({ title, help, children, controlId }: { title: string; help?: string; children: ReactNode; controlId?: string }) {
+// `required` puts the star of a required field after the name; the control itself says aria-required.
+export function SettingsRow({ title, help, children, controlId, required }: { title: string; help?: string; children: ReactNode; controlId?: string; required?: boolean }) {
   const helpId = useId()
   return (
     <div className="flex items-center justify-between gap-6 py-3 max-sm:flex-col max-sm:items-stretch max-sm:gap-2.5" data-slot="settings-row">
@@ -43,9 +45,13 @@ export function SettingsRow({ title, help, children, controlId }: { title: strin
         {controlId ? (
           <label htmlFor={controlId} className="block text-sm font-medium">
             {title}
+            {required && <RequiredMark />}
           </label>
         ) : (
-          <div className="text-sm font-medium">{title}</div>
+          <div className="text-sm font-medium">
+            {title}
+            {required && <RequiredMark />}
+          </div>
         )}
         {help && (
           <p id={helpId} className="mt-0.5 text-xs break-words text-muted-foreground">

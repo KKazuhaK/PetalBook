@@ -21,6 +21,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { absoluteTime } from '@/lib/time'
 import { t } from '@/i18n'
 import { tsec } from '@/i18n/security'
+import { RequiredMark } from '@/components/ui/field-mark'
 
 const tp = tsec.providers
 const KINDS: readonly ProviderKind[] = ['oidc', 'saml', 'github']
@@ -315,7 +316,7 @@ function ProviderForm({ initial, onDone }: { initial: AuthProvider | null; onDon
       <FormMessage focusRef={messageRef}>{error}</FormMessage>
       <fieldset className="grid min-w-0 grid-cols-1 gap-4">
         <legend className="pb-1 text-sm font-semibold">{tp.common}</legend>
-        {!edit && <Field label={tp.slug} help={tp.slugHelp} value={f.slug} onChange={(e) => set({ slug: e.target.value })} autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={32} className="break-all" />}
+        {!edit && <Field label={tp.slug} requiredMark help={tp.slugHelp} value={f.slug} onChange={(e) => set({ slug: e.target.value })} autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={32} className="break-all" />}
         {edit && <ReadOnly label={tp.slug} value={f.slug} />}
         <div className="grid gap-1.5">
           <Label htmlFor="provider-kind">{tp.kind}</Label>
@@ -328,7 +329,7 @@ function ProviderForm({ initial, onDone }: { initial: AuthProvider | null; onDon
           </NativeSelect>
           {edit && <p className="text-xs text-muted-foreground">{tp.kindFixed}</p>}
         </div>
-        <Field label={tp.name} help={tp.nameHelp} value={f.name} onChange={(e) => set({ name: e.target.value })} maxLength={60} autoComplete="off" />
+        <Field label={tp.name} requiredMark help={tp.nameHelp} value={f.name} onChange={(e) => set({ name: e.target.value })} maxLength={60} autoComplete="off" />
         <div className="grid gap-1.5">
           <Label htmlFor="provider-icon">{tp.icon}</Label>
           <div className="flex min-w-0 items-center gap-2">
@@ -406,17 +407,19 @@ function ReadOnly({ label, value, help, multiline }: { label: string; value: str
   )
 }
 
-// A secret the server never shows again: saved, replace, clear.
-function WriteOnly({ label, help, stored, value, onChange }: { label: string; help?: string; stored: boolean; value: string | null; onChange: (v: string | null) => void }) {
+// A secret the server never shows again: saved · change, clear.
+function WriteOnly({ label, help, stored, value, onChange, required }: { label: string; help?: string; stored: boolean; value: string | null; onChange: (v: string | null) => void; required?: boolean }) {
   const [replacing, setReplacing] = useState(false)
   let body: ReactNode
   if (stored && value === null && !replacing) {
     body = (
       <div className="flex flex-wrap items-center gap-2 text-sm" data-slot="secret-saved">
-        <span>{tp.secretSaved}</span>
-        <Button type="button" variant="outline" size="sm" onClick={() => setReplacing(true)}>
-          {tp.secretReplace}
-        </Button>
+        <span>
+          {tp.secretSaved} ·{' '}
+          <button type="button" className="underline underline-offset-4" onClick={() => setReplacing(true)}>
+            {tp.secretReplace}
+          </button>
+        </span>
         <Button type="button" variant="outline" size="sm" onClick={() => onChange('')}>
           {tp.secretClear}
         </Button>
@@ -432,11 +435,14 @@ function WriteOnly({ label, help, stored, value, onChange }: { label: string; he
       </p>
     )
   } else {
-    body = <Input type="password" autoComplete="new-password" aria-label={label} placeholder={stored ? tp.secretKeep : tp.secretNone} value={value ?? ''} onChange={(e) => onChange(e.target.value === '' ? null : e.target.value)} />
+    body = <Input type="password" autoComplete="new-password" aria-label={label} aria-required={required ? true : undefined} placeholder={stored ? tp.secretKeep : tp.secretNone} value={value ?? ''} onChange={(e) => onChange(e.target.value === '' ? null : e.target.value)} />
   }
   return (
     <div className="grid min-w-0 gap-1.5">
-      <Label>{label}</Label>
+      <Label>
+        {label}
+        {required && <RequiredMark />}
+      </Label>
       {body}
       {help && <p className="text-xs text-muted-foreground">{help}</p>}
     </div>
@@ -451,8 +457,8 @@ function OidcFields({ f, set, initial }: Sub) {
   return (
     <fieldset className="grid min-w-0 grid-cols-1 gap-4">
       <legend className="pb-1 text-sm font-semibold">{tp.kinds.oidc}</legend>
-      <Field label={tp.oidc.issuer} help={tp.oidc.issuerHelp} value={o.issuer} onChange={(e) => up({ issuer: e.target.value })} autoComplete="off" spellCheck={false} className="break-all" />
-      <Field label={tp.oidc.clientId} value={o.clientId} onChange={(e) => up({ clientId: e.target.value })} autoComplete="off" spellCheck={false} className="break-all" />
+      <Field label={tp.oidc.issuer} requiredMark help={tp.oidc.issuerHelp} value={o.issuer} onChange={(e) => up({ issuer: e.target.value })} autoComplete="off" spellCheck={false} className="break-all" />
+      <Field label={tp.oidc.clientId} requiredMark value={o.clientId} onChange={(e) => up({ clientId: e.target.value })} autoComplete="off" spellCheck={false} className="break-all" />
       <WriteOnly label={tp.oidc.clientSecret} help={tp.oidc.clientSecretHelp} stored={initial?.oidc?.hasSecret === true} value={o.secret} onChange={(v) => up({ secret: v })} />
       <Field label={tp.oidc.scopes} help={tp.oidc.scopesHelp} value={o.scopes} onChange={(e) => up({ scopes: e.target.value })} autoComplete="off" spellCheck={false} />
       <Check label={tp.oidc.legacyCallback} help={tp.oidc.legacyCallbackHelp} checked={o.legacyCallback} onChange={(on) => up({ legacyCallback: on })} />
@@ -506,8 +512,8 @@ function GithubFields({ f, set, initial }: Sub) {
     <fieldset className="grid min-w-0 grid-cols-1 gap-4">
       <legend className="pb-1 text-sm font-semibold">{tp.kinds.github}</legend>
       <Field label={tp.github.baseUrl} help={tp.github.baseUrlHelp} value={g.baseUrl} onChange={(e) => up({ baseUrl: e.target.value })} autoComplete="off" spellCheck={false} className="break-all" />
-      <Field label={tp.github.clientId} value={g.clientId} onChange={(e) => up({ clientId: e.target.value })} autoComplete="off" spellCheck={false} className="break-all" />
-      <WriteOnly label={tp.github.clientSecret} stored={initial?.github?.hasSecret === true} value={g.secret} onChange={(v) => up({ secret: v })} />
+      <Field label={tp.github.clientId} requiredMark value={g.clientId} onChange={(e) => up({ clientId: e.target.value })} autoComplete="off" spellCheck={false} className="break-all" />
+      <WriteOnly label={tp.github.clientSecret} required stored={initial?.github?.hasSecret === true} value={g.secret} onChange={(v) => up({ secret: v })} />
       <div className="grid gap-1.5">
         <Label htmlFor="github-orgs">{tp.github.organizations}</Label>
         <Textarea id="github-orgs" value={g.organizations} onChange={(e) => up({ organizations: e.target.value })} spellCheck={false} rows={3} className="min-w-0 break-all" />

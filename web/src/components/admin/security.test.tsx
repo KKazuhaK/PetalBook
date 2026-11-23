@@ -172,6 +172,27 @@ describe('the security page', () => {
     expect(lastPut().captcha).toEqual({ secret: '' })
   })
 
+  it('changing the captcha provider away from the stored one clears its site key, and coming back restores it', async () => {
+    await open({ security: { captcha: { provider: 'turnstile', siteKey: 'site-1', hasSecret: true } } })
+    await settle(() => q<HTMLInputElement>('#security-sitekey')?.value === 'site-1', 'the stored site key')
+    await type(q<HTMLSelectElement>('#security-captcha-provider')!, 'hcaptcha')
+    expect(q<HTMLInputElement>('#security-sitekey')!.value).toBe('')
+    await type(q<HTMLSelectElement>('#security-captcha-provider')!, 'turnstile')
+    expect(q<HTMLInputElement>('#security-sitekey')!.value).toBe('site-1')
+  })
+
+  it('the site key and the secret are marked required, and a stored secret reads "saved · change"', async () => {
+    await open({ security: { captcha: { provider: 'turnstile', siteKey: 'site-1', hasSecret: true } } })
+    await settle(() => q('[data-slot="secret-saved"]') !== null, 'the stored secret')
+    const label = (id: string) => q(`label[for="${id}"]`)!
+    expect(label('security-sitekey').querySelector('[data-slot="required-mark"]')?.textContent).toBe('*')
+    expect(q('#security-sitekey')!.getAttribute('aria-required')).toBe('true')
+    expect(q('[data-slot="settings-row"]:has(#security-secret), [data-slot="settings-row"]:has([data-slot="secret-saved"])')!.querySelector('[data-slot="required-mark"]')).not.toBeNull()
+    expect(label('security-captcha-provider').querySelector('[data-slot="required-mark"]')).toBeNull()
+    expect(q('[data-slot="secret-saved"]')!.textContent).toBe(`${tsec.captcha.secretSaved} · ${tsec.captcha.replace}`)
+    expect(tsec.captcha.replace).toBe(ta.daily.headerChange)
+  })
+
   it('lockout by username warns, asks to confirm, and is only chosen after that', async () => {
     await open()
     const scope = q<HTMLSelectElement>('#security-lock-scope')!
@@ -227,7 +248,10 @@ describe('the security page', () => {
 describe('the sign-in providers', () => {
   const listed = () => [...document.querySelectorAll<HTMLElement>('[data-slot="providers"] > li')]
   const form = () => q('[data-slot="provider-form"]')!
-  const inputIn = (label: string) => [...form().querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea')].find((i) => i.closest('div')?.querySelector('label')?.textContent === label || i.getAttribute('aria-label') === label)!
+  // A label's words, without the star of a required field.
+  const words = (el: Element | null | undefined) => (el?.textContent ?? '').replace(/\*$/, '')
+  const inputIn = (label: string) => [...form().querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea')].find((i) => words(i.closest('div')?.querySelector('label')) === label || i.getAttribute('aria-label') === label)!
+  const labelOf = (label: string) => [...form().querySelectorAll('label')].find((l) => words(l) === label)!
 
   it('lists the providers with their status and how many people use them', async () => {
     await open({ providers: [company, { slug: 'campus', kind: 'saml', name: 'Campus login', saml: { metadataUrl: 'https://idp.example/m' }, status: { ok: false, checked: '2026-11-23T08:00:00Z', message: 'no route to host' } }] })
@@ -239,7 +263,7 @@ describe('the sign-in providers', () => {
     expect(listed()[1].textContent).toContain('no route to host')
   })
 
-  it('creates an OpenID Connect provider with the fields of its kind, and shows the address to register', async () => {
+  it('creates an OpenID Connect provider with the fields of its kind, and shows the address to register and "saved · change"', async () => {
     await open()
     await settle(() => text().includes(tsec.providers.empty), 'no providers yet')
     await click(buttonWith(tsec.providers.add))
@@ -257,8 +281,25 @@ describe('the sign-in providers', () => {
     await click(byLabel(tsec.providers.editFor('Acme SSO')))
     await settle(() => q('[data-slot="provider-form"]') !== null, 'the edit form')
     expect(inputIn(tsec.providers.oidc.redirectUrl).value).toBe('https://notes.example.com/api/auth/oidc/acme/callback')
-    expect(q('[data-slot="secret-saved"]')).not.toBeNull()
+    expect(q('[data-slot="secret-saved"]')!.textContent).toContain(`${tsec.providers.secretSaved} · ${tsec.providers.secretReplace}`)
+    expect(tsec.providers.secretReplace).toBe(ta.daily.headerChange)
     expect(document.body.innerHTML).not.toContain('shh')
+  })
+
+  it('marks the required fields with a star', async () => {
+    await open({ providers: [company] })
+    await settle(() => listed().length === 1, 'the list')
+    await click(buttonWith(tsec.providers.add))
+    await settle(() => q('[data-slot="provider-form"]') !== null, 'the form')
+    const marked = (label: string) => labelOf(label).querySelector('[data-slot="required-mark"]') !== null
+    for (const l of [tsec.providers.slug, tsec.providers.name, tsec.providers.oidc.issuer, tsec.providers.oidc.clientId]) {
+      expect(marked(l), l).toBe(true)
+      expect(inputIn(l).getAttribute('aria-required'), l).toBe('true')
+    }
+    for (const l of [tsec.providers.order, tsec.providers.oidc.scopes, tsec.providers.oidc.clientSecret]) expect(marked(l), l).toBe(false)
+    await type(q<HTMLSelectElement>('#provider-kind')!, 'github')
+    for (const l of [tsec.providers.github.clientId, tsec.providers.github.clientSecret]) expect(marked(l), l).toBe(true)
+    expect(marked(tsec.providers.github.baseUrl)).toBe(false)
   })
 
   it('SAML shows what to give the identity provider: entity id, ACS address, metadata path and certificate', async () => {
