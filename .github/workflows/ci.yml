@@ -459,8 +459,40 @@ jobs:
       - run: make release
       # With the app embedded the handler's tests run against the real build.
       - run: go test ./internal/webui/ ./cmd/...
-      # Release builds are static (no cgo): every release target must still compile.
-      - run: make cross-compile
+
+  # Release builds are static (no cgo): every release target must still compile.
+  # Each platform builds the whole dependency tree again, which is what took
+  # the time when all six ran after the release build in one job; one machine
+  # per OS (two architectures each) is far quicker.
+  cross-compile:
+    name: cross-compile (${{ matrix.os }})
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [linux, darwin, windows]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Go version matches go.mod
+        shell: bash
+        run: |
+          want="$(go list -m -f '{{.GoVersion}}')"
+          case "$(go env GOVERSION)" in
+            "go$want" | "go$want".*) ;;
+            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
+          esac
+      - run: make cross-compile OSES=${{ matrix.os }}
 
   docker:
     name: docker
@@ -493,7 +525,7 @@ jobs:
   ci:
     name: ci
     if: always()
-    needs: [changes, go-index, go-space, go-rest, web-static, web-test, actionlint, postgres, casefold, test-full, contract, release-build, docker]
+    needs: [changes, go-index, go-space, go-rest, web-static, web-test, actionlint, postgres, casefold, test-full, contract, release-build, cross-compile, docker]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}

@@ -29,7 +29,15 @@ set -euo pipefail
 export GOWORK=off
 cd "$(dirname "$0")/.."
 
-pkgs="internal/gitstore internal/space internal/api internal/index internal/spaces"
+# Only the packages whose tests put files with names of their own on disk.
+# Left out on purpose, because they cannot tell a case-folding file system from
+# any other (about half of the time this run used to take):
+#   internal/index   works on page paths as strings and opens one fixed file name
+#                    (index.db); its stress and randomized tests are the slow ones
+#   internal/spaces  names directories after page ids, which are upper case only
+#                    (page.ValidID), and its tests push single-case file names
+# Both run on every pull request in the normal suite.
+pkgs="internal/gitstore internal/space internal/api"
 
 if [ "$(uname -s)" != "Linux" ]; then
   echo "test-casefold needs Linux (a tmpfs with casefold)" >&2

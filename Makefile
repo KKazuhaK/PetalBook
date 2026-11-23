@@ -166,9 +166,13 @@ test-casefold:
 
 # The server builds without cgo for every release platform. The web app is
 # not embedded here: this only proves the Go code compiles for each target.
+# Each platform compiles the whole dependency tree again, so the work is the
+# same for all six and CPU bound: CI runs one machine per OS
+# ("make cross-compile OSES=darwin"), and a bare "make cross-compile" does all.
+OSES ?= linux darwin windows
 cross-compile:
 	@dir="$$(mktemp -d)"; trap 'rm -rf "$$dir"' EXIT; \
-	for os in linux darwin windows; do \
+	for os in $(OSES); do \
 	  for arch in amd64 arm64; do \
 	    echo "== $$os/$$arch"; \
 	    CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -o "$$dir/petalbook" ./cmd/petalbook || exit 1; \
