@@ -6,7 +6,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { enc, request } from './client'
 import { keys } from './hooks'
-import type { AdminSpaceList, AdminSpacesParams, CreatedInvite, DeletedSpace, Invite, Role, ServerStatus, SpaceSize, User } from './types'
+import type { AdminDaily, AdminSpaceList, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User } from './types'
 
 export const adminApi = {
   // --- users and invites ---
@@ -41,6 +41,16 @@ export const adminApi = {
   adminEnableSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/enable`, { method: 'POST' }),
   adminDeleteSpace: (id: string) => request<DeletedSpace>(`/admin/spaces/${enc(id)}`, { method: 'DELETE' }),
   adminStatus: (signal?: AbortSignal) => request<ServerStatus>('/admin/status', { signal }),
+
+  // --- the daily text of the whole server ---
+  daily: (signal?: AbortSignal) => request<AdminDaily>('/admin/daily', { signal }),
+  putDaily: (input: { default?: DailyDefault; hosts?: string[]; languages?: string[]; allow?: DailyAllow }) => request<AdminDaily>('/admin/daily', { method: 'PUT', body: input }),
+  // A header with a `value` sets it; one with only a `name` keeps what is saved; a header left out is removed.
+  putDailyApi: (api: Omit<DailyApi, 'note'>) => request<AdminDaily>(`/admin/daily/apis/${enc(api.id)}`, { method: 'PUT', body: api }),
+  deleteDailyApi: (id: string) => request<AdminDaily>(`/admin/daily/apis/${enc(id)}`, { method: 'DELETE' }),
+  tryDailyApi: (api: Omit<DailyApi, 'note'>, lang: string, date: string) => request<DailyTryResult>('/admin/daily/try', { method: 'POST', body: { api, lang, date } }),
+  putDailyLines: (input: { lang: string; text: string; format: LinesFormat }) => request<AdminDaily>('/admin/daily/lines', { method: 'PUT', body: input }),
+  deleteDailyLines: (lang: string) => request<AdminDaily>(`/admin/daily/lines?lang=${enc(lang)}`, { method: 'DELETE' }),
 }
 
 // --- users and invites ----------------------------------------------------------
@@ -124,4 +134,31 @@ export function useDeleteSpace() {
       return changed(id)
     },
   })
+}
+
+// --- the daily text of the whole server ----------------------------------------------
+
+export function useAdminDaily(enabled = true) {
+  return useQuery({ queryKey: keys.adminDaily, queryFn: ({ signal }) => adminApi.daily(signal), enabled, staleTime: 15_000 })
+}
+
+// Every write answers with the settings as they are now, which replace the cached ones.
+function useDailyWrite<V>(write: (v: V) => Promise<AdminDaily>) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: write,
+    onSuccess: (data) => {
+      qc.setQueryData(keys.adminDaily, data)
+      // What spaces may choose from, and what they show, comes from these.
+      void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'space' && String(q.queryKey[2]).startsWith('daily') })
+    },
+  })
+}
+export const useSaveDailySite = () => useDailyWrite((input: { default?: DailyDefault; hosts?: string[]; languages?: string[]; allow?: DailyAllow }) => adminApi.putDaily(input))
+export const useSaveDailyApi = () => useDailyWrite((api: Omit<DailyApi, 'note'>) => adminApi.putDailyApi(api))
+export const useDeleteDailyApi = () => useDailyWrite((id: string) => adminApi.deleteDailyApi(id))
+export const useSaveDailyLines = () => useDailyWrite((input: { lang: string; text: string; format: LinesFormat }) => adminApi.putDailyLines(input))
+export const useDeleteDailyLines = () => useDailyWrite((lang: string) => adminApi.deleteDailyLines(lang))
+export function useTryDailyApi() {
+  return useMutation({ mutationFn: ({ api, lang, date }: { api: Omit<DailyApi, 'note'>; lang: string; date: string }) => adminApi.tryDailyApi(api, lang, date) })
 }

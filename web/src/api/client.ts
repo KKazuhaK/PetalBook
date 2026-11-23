@@ -5,6 +5,11 @@ import { t } from '@/i18n'
 import type {
   AccountInfo,
   AdminSpace,
+  DailyAnswer,
+  DailyPrefs,
+  DailySettings,
+  FavoriteList,
+  FavoriteRef,
   CreatePageInput,
   DraftInput,
   DraftReceipt,
@@ -124,8 +129,9 @@ const SIGN_IN_PATHS = /^\/(login|logout|setup|session|meta|invites\/(check|accep
 // A member whose role lacks the permission a route needs gets 403 `no_permission`
 // from any space endpoint: its own code, so it is never taken for a refused origin
 // and no path has to be listed for it. What is listed here answers `forbidden` for
-// reasons of its own (the limit on spaces, a host that is not allowed).
-const USER_LEVEL_403 = /^\/(setup|account(\/.*)?|users(\/.*)?|invites(\/.*)?|admin(\/.*)?)$|^\/spaces(\/[^/]+\/remote(\/.*)?)?$/
+// reasons of its own (the limit on spaces, a host that is not allowed, favourites of a space the
+// administrator is not a member of).
+const USER_LEVEL_403 = /^\/(setup|account(\/.*)?|users(\/.*)?|invites(\/.*)?|admin(\/.*)?)$|^\/spaces(\/[^/]+\/(remote|favorites)(\/.*)?)?$/
 
 // --- a remote that cannot be reached ---------------------------------------------
 //
@@ -368,6 +374,26 @@ export function spaceApi(space: string) {
     disconnectRemote: () => request<void>(base('/remote'), { method: 'DELETE' }),
     syncRemote: () => request<Remote>(base('/remote/sync'), { method: 'POST' }),
     acceptRemote: (commit: string) => request<Remote>(base('/remote/accept'), { method: 'POST', body: { commit } }),
+
+    // The day's text. `date` is the day where the browser is and `tz` its offset in minutes east of UTC; `skip` asks for another.
+    daily: (q: { date: string; skip?: number; lang?: string; tz?: number }, signal?: AbortSignal) => {
+      const p = new URLSearchParams({ date: q.date })
+      if (q.skip) p.set('skip', String(q.skip))
+      if (q.lang) p.set('lang', q.lang)
+      if (q.tz !== undefined) p.set('tz', String(q.tz))
+      return request<DailyAnswer>(base(`/daily?${p.toString()}`), { signal })
+    },
+    dailySettings: (signal?: AbortSignal) => request<{ daily: DailySettings | null }>(base('/daily/settings'), { signal }),
+    putDailySettings: (daily: DailySettings | null) => request<{ daily: DailySettings | null }>(base('/daily/settings'), { method: 'PUT', body: { daily } }),
+    // Accounts mode only (the single-user server answers 404).
+    dailyPrefs: (signal?: AbortSignal) => request<DailyPrefs>(base('/daily/prefs'), { signal }),
+    putDailyPrefs: (input: { inherit: boolean; apis: string[] }) => request<DailyPrefs>(base('/daily/prefs'), { method: 'PUT', body: input }),
+
+    // A person's own favourites of the space.
+    favorites: (signal?: AbortSignal) => request<FavoriteList>(base('/favorites'), { signal }),
+    addFavorite: (ref: FavoriteRef) => request<FavoriteList>(base('/favorites'), { method: 'POST', body: ref }),
+    removeFavorite: (ref: FavoriteRef) => request<FavoriteList>(base(`/favorites?kind=${enc(ref.kind)}&target=${enc(ref.target)}`), { method: 'DELETE' }),
+    orderFavorites: (items: FavoriteRef[]) => request<FavoriteList>(base('/favorites/order'), { method: 'PUT', body: { items } }),
 
     reindex: () => request<{ pages: number; ms: number }>(base('/reindex'), { method: 'POST' }),
 

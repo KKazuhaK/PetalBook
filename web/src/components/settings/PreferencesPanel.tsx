@@ -4,6 +4,7 @@ import { Switch } from '@/components/ui/switch'
 import { NativeSelect } from '@/components/ui/native-select'
 import { getEditMode, setEditMode, EDIT_MODES, type DefaultEditMode } from '@/lib/editPrefs'
 import { palettes, swatchOf, type Palette } from '@/lib/palettes'
+import { getVariety, setVariety } from '@/lib/homePrefs'
 import { getUploadOriginal, setUploadOriginal } from '@/lib/uploadPrefs'
 import { useTheme, type Theme } from '@/providers/theme'
 import { isLang, lang, languages, setLanguage, t } from '@/i18n'
@@ -82,6 +83,7 @@ export function PreferencesPanel() {
   // only mirrors it for display.
   const [original, setOriginal] = useState(getUploadOriginal)
   const [mode, setMode] = useState<DefaultEditMode>(getEditMode)
+  const [variety, setVarietyState] = useState(getVariety)
   return (
     <div className="space-y-8">
       <SettingsSection title={t.prefs.appearance}>
@@ -147,6 +149,21 @@ export function PreferencesPanel() {
                 ))}
               </NativeSelect>
             </div>
+          </SettingsRow>
+        </SettingsRows>
+      </SettingsSection>
+
+      <SettingsSection title={t.prefs.homeTitle}>
+        <SettingsRows>
+          <SettingsRow title={t.prefs.variety} help={t.prefs.varietyHelp} controlId="pref-variety">
+            <Switch
+              id="pref-variety"
+              checked={variety}
+              onCheckedChange={(on) => {
+                setVarietyState(on)
+                setVariety(on)
+              }}
+            />
           </SettingsRow>
         </SettingsRows>
       </SettingsSection>

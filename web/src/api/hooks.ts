@@ -9,7 +9,7 @@ import { api, ApiError, spaceApi } from './client'
 import { parseTagColor } from '../lib/tagColors.ts'
 import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
 import { propsOfMeta } from '../lib/pageTypes.ts'
-import type { BatchPagesInput, ConnectRemoteInput, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, PutViewsInput, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
+import type { BatchPagesInput, ConnectRemoteInput, DailyPrefs, DailySettings, Favorite, FavoriteList, FavoriteRef, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, PutViewsInput, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
 
 // Everything of one space is under ['space', id, …], so switching space never
 // shows another space's data and one invalidation covers a space.
@@ -23,6 +23,7 @@ export const keys = {
   adminSpaces: ['admin', 'spaces'] as const,
   adminSpaceList: (q: string) => ['admin', 'spaces', 'list', q] as const,
   adminStatus: ['admin', 'status'] as const,
+  adminDaily: ['admin', 'daily'] as const,
   // A space an administrator opens without being a member of it.
   viewedSpace: (space: string) => ['admin', 'spaces', 'view', space] as const,
   space: (space: string) => ['space', space] as const,
@@ -47,6 +48,11 @@ export const keys = {
   version: (space: string, id: string, commit: string) => ['space', space, 'history', id, 'version', commit] as const,
   remote: (space: string) => ['space', space, 'remote'] as const,
   members: (space: string) => ['space', space, 'members'] as const,
+  // The home page: the day's text (by day, "another" and language), where it comes from, and a person's favourites.
+  daily: (space: string, date: string, skip: number, lang: string) => ['space', space, 'daily', date, skip, lang] as const,
+  dailySettings: (space: string) => ['space', space, 'dailySettings'] as const,
+  dailyPrefs: (space: string) => ['space', space, 'dailyPrefs'] as const,
+  favorites: (space: string) => ['space', space, 'favorites'] as const,
 }
 
 export const PAGE_SIZE = 50
@@ -349,6 +355,9 @@ export function invalidateListings(qc: QueryClient, space: string) {
   return Promise.all([qc.invalidateQueries({ queryKey: keys.pages(space) }), qc.invalidateQueries({ queryKey: keys.tree(space) }), qc.invalidateQueries({ queryKey: keys.tags(space) })])
 }
 
+// A favourite names a page, a folder or a view: what moves or goes changes what they say (and whether they are gone).
+export const invalidateFavorites = (qc: QueryClient, space: string) => qc.invalidateQueries({ queryKey: keys.favorites(space) })
+
 export function useCreatePage() {
   const qc = useQueryClient()
   const space = useSpaceId()
@@ -363,7 +372,7 @@ export function useMovePage() {
   const space = useSpaceId()
   return useMutation({
     mutationFn: ({ id, folder }: { id: string; folder: string }) => spaceApi(space).movePage(id, folder),
-    onSuccess: () => invalidateListings(qc, space),
+    onSuccess: () => Promise.all([invalidateListings(qc, space), invalidateFavorites(qc, space)]),
   })
 }
 
@@ -372,7 +381,7 @@ export function useDeletePage() {
   const space = useSpaceId()
   return useMutation({
     mutationFn: (id: string) => spaceApi(space).deletePage(id),
-    onSuccess: () => invalidateListings(qc, space),
+    onSuccess: () => Promise.all([invalidateListings(qc, space), invalidateFavorites(qc, space)]),
   })
 }
 
@@ -382,7 +391,7 @@ export function useBatchPages() {
   const space = useSpaceId()
   return useMutation({
     mutationFn: (input: BatchPagesInput) => spaceApi(space).batchPages(input),
-    onSuccess: () => invalidateListings(qc, space),
+    onSuccess: () => Promise.all([invalidateListings(qc, space), invalidateFavorites(qc, space)]),
   })
 }
 
@@ -394,7 +403,7 @@ export function useMoveFolder() {
   return useMutation({
     mutationFn: ({ from, to }: { from: string; to: string }) => spaceApi(space).moveFolder(from, to),
     // The views of a folder go with it.
-    onSuccess: () => Promise.all([invalidateListings(qc, space), qc.invalidateQueries({ queryKey: ['space', space, 'views'] })]),
+    onSuccess: () => Promise.all([invalidateListings(qc, space), invalidateFavorites(qc, space), qc.invalidateQueries({ queryKey: ['space', space, 'views'] }), qc.invalidateQueries({ queryKey: keys.dailySettings(space) })]),
   })
 }
 
@@ -403,7 +412,7 @@ export function useDeleteFolder() {
   const space = useSpaceId()
   return useMutation({
     mutationFn: ({ path, recursive }: { path: string; recursive?: boolean }) => spaceApi(space).deleteFolder(path, recursive),
-    onSuccess: () => Promise.all([invalidateListings(qc, space), qc.invalidateQueries({ queryKey: ['space', space, 'views'] })]),
+    onSuccess: () => Promise.all([invalidateListings(qc, space), invalidateFavorites(qc, space), qc.invalidateQueries({ queryKey: ['space', space, 'views'] })]),
   })
 }
 
@@ -846,5 +855,148 @@ export function useReadingPages(params: Omit<ListParams, 'cursor' | 'limit' | 'b
     gcTime: 0,
     staleTime: Infinity,
     refetchOnWindowFocus: false,
+  })
+}
+
+// --- home: favourites and the daily text ---------------------------------------------
+
+// Only for someone who is a member: an administrator who opens a space they do not belong to has no favourites,
+// and the server refuses to add any.
+export function useCanFavorite(): boolean {
+  const { id, spaces } = useActiveSpace()
+  const space = spaces.find((s) => s.id === id)
+  return can(space, 'read') && !!space && space.role !== ''
+}
+
+export function useFavorites(enabled = true) {
+  const space = useSpaceId()
+  const { read } = useSpacePermissions()
+  return useQuery({ queryKey: keys.favorites(space), queryFn: ({ signal }) => spaceApi(space).favorites(signal), staleTime: 30_000, enabled: enabled && space !== '' && read })
+}
+
+export const favoriteKey = (f: FavoriteRef) => `${f.kind}:${f.target}`
+
+// The favourite that is this page, folder or view, if there is one.
+export function useFavorite(ref: FavoriteRef | null): Favorite | undefined {
+  const { data } = useFavorites(ref !== null)
+  return ref ? data?.items.find((f) => f.kind === ref.kind && f.target === ref.target) : undefined
+}
+
+// Every write answers with the list as it is now, which replaces the cached one.
+function useFavoritesWrite<V>(write: (space: string, v: V) => Promise<FavoriteList>, optimistic?: (prev: FavoriteList, v: V) => FavoriteList) {
+  const qc = useQueryClient()
+  const space = useSpaceId()
+  return useMutation({
+    mutationFn: (v: V) => write(space, v),
+    onMutate: async (v) => {
+      if (!optimistic) return undefined
+      await qc.cancelQueries({ queryKey: keys.favorites(space) })
+      const prev = qc.getQueryData<FavoriteList>(keys.favorites(space))
+      if (prev) qc.setQueryData<FavoriteList>(keys.favorites(space), optimistic(prev, v))
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(keys.favorites(space), ctx.prev)
+      void qc.invalidateQueries({ queryKey: keys.favorites(space) })
+    },
+    onSuccess: (list) => qc.setQueryData(keys.favorites(space), list),
+  })
+}
+export const useAddFavorite = () => useFavoritesWrite((space, ref: FavoriteRef) => spaceApi(space).addFavorite(ref))
+export const useRemoveFavorite = () =>
+  useFavoritesWrite(
+    (space, ref: FavoriteRef) => spaceApi(space).removeFavorite(ref),
+    (prev, ref) => ({ ...prev, items: prev.items.filter((f) => !(f.kind === ref.kind && f.target === ref.target)) }),
+  )
+// The new order is shown at once and put back if the server refuses it.
+export const useOrderFavorites = () =>
+  useFavoritesWrite(
+    (space, items: FavoriteRef[]) => spaceApi(space).orderFavorites(items),
+    (prev, items) => {
+      const rank = new Map(items.map((r, i) => [favoriteKey(r), i]))
+      return { ...prev, items: [...prev.items].sort((a, b) => (rank.get(favoriteKey(a)) ?? Infinity) - (rank.get(favoriteKey(b)) ?? Infinity)) }
+    },
+  )
+
+// The day the browser is in, as the server wants it, and how far east of UTC it is.
+export function dayOf(now: Date): { date: string; tz: number } {
+  const p = (n: number) => String(n).padStart(2, '0')
+  return { date: `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`, tz: -now.getTimezoneOffset() }
+}
+
+// The text of the day. `skip` is "another one", and only this browser sees it. The server says how long the answer
+// stays the same, so asking again within the day costs nothing; the last text stays on screen while another is read.
+export function useDaily(date: string, tz: number, skip: number, lang: string, enabled = true) {
+  const space = useSpaceId()
+  const { read } = useSpacePermissions()
+  return useQuery({
+    queryKey: keys.daily(space, date, skip, lang),
+    queryFn: ({ signal }) => spaceApi(space).daily({ date, skip, lang, tz }, signal),
+    enabled: enabled && space !== '' && read,
+    staleTime: 5 * 60_000,
+    placeholderData: keepPreviousData,
+    // Nothing here is worth asking twice over a failure: the block just is not there.
+    retry: false,
+  })
+}
+
+// Where the space takes its daily text from (anyone who reads sees it; changing it is for those who manage).
+export function useDailySettings(enabled = true) {
+  const space = useSpaceId()
+  const { read } = useSpacePermissions()
+  return useQuery({ queryKey: keys.dailySettings(space), queryFn: ({ signal }) => spaceApi(space).dailySettings(signal), enabled: enabled && space !== '' && read, staleTime: 15_000 })
+}
+export function useSaveDailySettings() {
+  const qc = useQueryClient()
+  const space = useSpaceId()
+  return useMutation({
+    mutationFn: (daily: DailySettings | null) => spaceApi(space).putDailySettings(daily),
+    onSuccess: (res) => {
+      qc.setQueryData(keys.dailySettings(space), res)
+      void qc.invalidateQueries({ queryKey: ['space', space, 'daily'] })
+    },
+  })
+}
+
+// What a space takes of the administrators' settings. 404 in single-user mode, where there are none: that is `null`.
+export function useDailyPrefs(enabled = true) {
+  const space = useSpaceId()
+  const { read } = useSpacePermissions()
+  return useQuery({
+    queryKey: keys.dailyPrefs(space),
+    queryFn: async ({ signal }): Promise<DailyPrefs | null> => {
+      try {
+        return await spaceApi(space).dailyPrefs(signal)
+      } catch (e) {
+        if (e instanceof ApiError && e.code === 'not_found') return null
+        throw e
+      }
+    },
+    enabled: enabled && space !== '' && read,
+    staleTime: 15_000,
+  })
+}
+export function useSaveDailyPrefs() {
+  const qc = useQueryClient()
+  const space = useSpaceId()
+  return useMutation({
+    mutationFn: (input: { inherit: boolean; apis: string[] }) => spaceApi(space).putDailyPrefs(input),
+    onSuccess: (res) => {
+      qc.setQueryData(keys.dailyPrefs(space), res)
+      void qc.invalidateQueries({ queryKey: ['space', space, 'daily'] })
+    },
+  })
+}
+
+// The first few pages of a listing, once (the home page's blocks): no cursor, no "load more". Under `pages`, so a
+// write of a page reads it again like every listing.
+export function useTopPages(params: Omit<ListParams, 'cursor' | 'limit'>, limit: number, enabled = true) {
+  const space = useSpaceId()
+  const { read } = useSpacePermissions()
+  return useQuery({
+    queryKey: [...keys.pages(space), 'top', limit, params] as const,
+    queryFn: ({ signal }) => spaceApi(space).listPages({ ...params, limit }, signal),
+    enabled: enabled && space !== '' && read,
+    staleTime: 10_000,
   })
 }

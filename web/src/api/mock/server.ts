@@ -625,6 +625,16 @@ export function createMockServer(options: MockOptions = {}) {
     const { date, skip, lang } = home.checkQuery(q)
     const own = home.sourceOf(lang)
     if (own) return home.pick(space.id, q, own) ?? { page: null, reason: 'no_match' }
+    // An interface the space chose (the one for the language, else one for every language). The mock makes no
+    // requests: the text names the interface, and an id with "stale" in it plays one that did not answer.
+    const chosen = site.apis.filter((a) => a.enabled && (spaceDaily.get(space.id)?.apis ?? []).includes(a.id))
+    const api = chosen.find((a) => a.lang !== '' && lang.startsWith(a.lang)) ?? chosen.find((a) => a.lang === '') ?? chosen[0]
+    if (accounts && api) {
+      const quote: Record<string, unknown> = { text: `${api.name} ${date}${skip ? ` #${skip}` : ''}`, ...(api.source ? { source: 'src' } : {}), ...(api.author ? { author: 'au' } : {}) }
+      if (api.link) quote.link = api.link.replaceAll('{uuid}', 'u1')
+      if (api.id.includes('stale')) Object.assign(quote, { stale: true, fetched: '2026-11-20T08:00:00Z' })
+      return { page: null, quote, origin: 'external' }
+    }
     if (accounts && site.listDefault && (spaceDaily.get(space.id)?.inherit ?? true)) {
       const base = lang.split('-')[0]
       const use = [lang, base, ''].find((l) => (site.lines.get(l)?.length ?? 0) > 0) ?? [...site.lines.keys()].filter((l) => (site.lines.get(l)?.length ?? 0) > 0).sort()[0]
@@ -745,7 +755,19 @@ export function createMockServer(options: MockOptions = {}) {
       if (!site.hosts.includes(u.host)) site.hosts.push(u.host)
       return { status: 200, body: siteView() }
     }
-    if (path === '/admin/daily/try' && method === 'POST') throw new HttpError(400, 'invalid', 'the mock does not make requests')
+    if (path === '/admin/daily/try' && method === 'POST') {
+      // The mock asks nobody: the address says what would have come back ("down": an error; a text path of
+      // "missing": the path finds nothing).
+      const a = (isRecord(body.api) ? body.api : {}) as Record<string, unknown>
+      const url = String(a.url ?? '')
+      if (url.includes('down')) return { status: 200, body: { ok: false, message: 'status 503', status: 503, url } }
+      const raw = '{"hitokoto": "山色空蒙雨亦奇", "from": "饮湖上初晴后雨", "from_who": "苏轼"}'
+      const pathErrors: Record<string, string> = {}
+      const pick = (k: string, v: string) => (a[k] === 'missing' ? ((pathErrors[k] = `no text or number at ${v}`), undefined) : a[k] ? v : undefined)
+      const quote = { text: pick('text', '山色空蒙雨亦奇'), source: pick('source', '饮湖上初晴后雨'), author: pick('author', '苏轼') }
+      const clean = Object.fromEntries(Object.entries(quote).filter(([, v]) => v !== undefined))
+      return { status: 200, body: { ok: Object.keys(pathErrors).length === 0, status: 200, url, raw, rawTruncated: false, quote: clean, ...(Object.keys(pathErrors).length ? { pathErrors } : {}) } }
+    }
     if (path === '/admin/daily/lines' && method === 'PUT') {
       const lang = typeof body.lang === 'string' ? body.lang.toLowerCase() : ''
       if (lang !== '' && !validLang(lang)) throw new HttpError(400, 'invalid', 'lang 要是语言代码，或空')

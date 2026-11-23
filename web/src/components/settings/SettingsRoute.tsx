@@ -22,6 +22,8 @@ import { MembersPanel } from './MembersPanel'
 
 // The page types' editor is a chunk of its own, loaded when its section is opened.
 const TypesPanel = lazy(() => import('./TypesPanel'))
+// So is the home page's setup, which has the words of the home page with it.
+const HomePanel = lazy(() => import('./HomePanel'))
 
 // The settings surface: one dialog, reached from `/settings/<section>`. It is a
 // route so a link, a reload and the old addresses all work; what is behind it is
@@ -42,6 +44,7 @@ export default function SettingsRoute() {
     hasSpace: !!space,
     canRead: can(current, 'read'),
     canWrite: can(current, 'write'),
+    canManage: can(current, 'manage'),
     disabled: current?.disabled === true,
   }
   const shown = visibleSections(visibility)
@@ -85,6 +88,13 @@ export default function SettingsRoute() {
         body = (
           <Suspense fallback={<PageFallback />}>
             <TypesPanel canManage={can(current, 'manage')} />
+          </Suspense>
+        )
+        break
+      case 'home':
+        body = (
+          <Suspense fallback={<PageFallback />}>
+            <HomePanel canManage={can(current, 'manage')} />
           </Suspense>
         )
         break

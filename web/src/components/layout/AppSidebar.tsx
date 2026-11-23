@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { NavLink, useLocation } from 'react-router'
-import { ChevronRight, Clock, Folder, FolderOpen, FolderPlus, Home, Inbox, MoreHorizontal, PenLine, Search, Settings, Tag, Upload } from 'lucide-react'
+import { ChevronRight, Clock, Folder, FolderOpen, FolderPlus, Home, House, Inbox, MoreHorizontal, PenLine, Search, Settings, Tag, Upload } from 'lucide-react'
 import { useActiveSpace, useSession, useSpacePermissions, useTagColors, useTags, useTree, useUrls } from '@/api/hooks'
 import type { TagColor } from '@/api/types'
 import { TAG_ATTR, TagColorMenu, useOpenTagColorMenu } from '@/components/TagColorMenu'
@@ -30,6 +30,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { buildFolderTree, ancestorsOf, isSameOrUnder, pathAfter, type FileItem, type FolderNode } from '@/lib/folders'
 import { t } from '@/i18n'
+import { SidebarFavorites } from '@/components/favorites/SidebarFavorites'
 import { useQuickCapture } from './QuickCapture'
 import { SidebarToggle } from './SidebarToggle'
 import { SpaceSwitcher } from './SpaceSwitcher'
@@ -353,7 +354,7 @@ export function AppSidebar() {
             {accounts ? (
               <SpaceSwitcher />
             ) : (
-              <NavLink to={urls.recent()} className="flex items-center gap-2 px-1 pt-0.5">
+              <NavLink to={urls.home()} className="flex items-center gap-2 px-1 pt-0.5">
                 <img src="/favicon.svg" alt="" className="size-6 rounded-md" />
                 <span className="truncate text-sm font-semibold">{spaceName ?? t.appName}</span>
               </NavLink>
@@ -368,6 +369,12 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton isActive={pathname === urls.home() || pathname === urls.base} render={<NavLink to={urls.home()} end />}>
+                  <House />
+                  <span>{t.nav.home}</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
               <InboxLink inbox={current?.inbox || undefined} activeFolder={activeFolder} />
               <SidebarMenuItem>
                 <SidebarMenuButton isActive={pathname === urls.recent()} render={<NavLink to={urls.recent()} />}>
@@ -378,6 +385,7 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+        <SidebarFavorites />
         <SidebarGroup>
           <FoldersHeading activeFolder={activeFolder} />
           {write && (

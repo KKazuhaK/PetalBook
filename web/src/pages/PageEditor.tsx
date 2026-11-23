@@ -23,6 +23,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { ErrorState, PageFallback } from '@/components/common'
 import { setEditableQuietly } from '@/components/editor/editable'
 import { Breadcrumbs } from '@/components/files/Breadcrumbs'
+import { StarButton } from '@/components/favorites/StarButton'
 import { TopBar } from '@/components/layout/TopBar'
 import { AutoTextarea } from '@/components/editor/AutoTextarea'
 import { ImagePopover, LinkPopover, SelectionBubble } from '@/components/editor/BubbleToolbar'
@@ -739,6 +740,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
             ) : (
               <SaveIndicator snapshot={snapshot} draftSafe={!controller.hasUnsaved()} onRetry={() => void controller.retry()} onOpenConflict={() => setConflictOpen(true)} />
             )}
+            <StarButton target={{ kind: 'page', target: page.id }} labels={{ add: t.fav.addPage, remove: t.fav.removePage }} />
             {!historyOpen && <ModeSwitch mode={mode} wide={wide} onChange={changeMode} />}
             {!historyOpen && (
               <Button variant="ghost" size="sm" onClick={() => setHistoryOpen(true)} onPointerEnter={() => void loadHistory()} onFocus={() => void loadHistory()} title={t.history.openHint} aria-label={t.history.open}>

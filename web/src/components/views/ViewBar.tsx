@@ -9,6 +9,8 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/common'
+import { StarButton } from '@/components/favorites/StarButton'
+import { viewTarget } from '@/lib/favorites'
 import { cutBytes, freshName, MAX_NAME_BYTES, MAX_VIEWS, moveView, nameBytes, withState, type ViewState } from '@/lib/savedViews'
 import type { ViewOp, Written } from '@/lib/workingCopy'
 import { t } from '@/i18n'
@@ -147,6 +149,8 @@ export function ViewBar({ scope, views, rev, active, working, modified, write, b
           })}
         </div>
       )}
+
+      {active && <StarButton target={{ kind: 'view', target: viewTarget(scope, active.id) }} labels={{ add: t.fav.addView, remove: t.fav.removeView }} />}
 
       {write && (
         <div role="group" aria-label={t.views.actions} className="flex items-center gap-0.5">

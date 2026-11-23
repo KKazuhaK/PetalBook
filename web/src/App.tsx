@@ -28,6 +28,8 @@ const SetupPage = lazy(() => import('@/pages/auth/SetupPage'))
 const InvitePage = lazy(() => import('@/pages/auth/InvitePage'))
 const SettingsRoute = lazy(() => import('@/components/settings/SettingsRoute'))
 const ImportPage = lazy(() => import('@/pages/ImportPage'))
+// The home page of a space: the default landing, in a chunk of its own so the lists do not carry it.
+const HomePage = lazy(() => import('@/components/home/HomePage'))
 
 const later = (el: ReactNode) => <Suspense fallback={<PageFallback />}>{el}</Suspense>
 
@@ -73,7 +75,7 @@ function LegacyRedirect() {
   const last = lastSpace()
   const space = list.find((s) => s.id === last) ?? list[0]
   if (!space) return <NotFoundPage message={t.editor.spaceMissing} />
-  const target = pathname === '/' ? '/recent' : pathname
+  const target = pathname === '/' ? '' : pathname
   return <Navigate to={`/s/${encodeURIComponent(space.id)}${target}${search}${hash}`} replace />
 }
 
@@ -104,7 +106,7 @@ const router = createBrowserRouter([
             path: 's/:space',
             element: <SpaceGate />,
             children: [
-              { index: true, element: <Navigate to="recent" replace /> },
+              { index: true, element: later(<HomePage />) },
               { path: 'recent', element: <RecentList /> },
               { path: 'f/*', element: <FolderList /> },
               { path: 't/*', element: <TagList /> },
