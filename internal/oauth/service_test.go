@@ -55,6 +55,10 @@ func TestTheRegistryCapEvictsTheOldestUnused(t *testing.T) {
 		t.Cleanup(func() { maxRegistrations = old })
 		s := newService(t, st, nil)
 		s.regLimit.Max = 1000
+		// Each registration a millisecond after the last, so "oldest" is not
+		// left to the random ids of clients made in the same millisecond.
+		clock := time.Now()
+		s.now = func() time.Time { clock = clock.Add(time.Millisecond); return clock }
 		var ids []string
 		for i := 0; i < 3; i++ {
 			rec := reg(s, i)
