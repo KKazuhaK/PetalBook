@@ -46,6 +46,9 @@ type serveConfig struct {
 	// maxSpaces is how many spaces one user may own (0: no limit); spaceIdle
 	// and maxOpenSpaces decide when spaces that are not in use are closed.
 	maxSpaces, maxOpenSpaces int
+	// maxSpacesSet is whether --max-spaces was given: then it is the site's
+	// quota.spacesPerPerson, read only.
+	maxSpacesSet bool
 	// maxUpload is the largest file accepted as an upload, in bytes; inbox is
 	// the folder quick notes go to in single-user mode.
 	maxUpload int64
@@ -125,6 +128,7 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c.nameSet = cmd.Flags().Changed("name")
 			c.mcpSet = cmd.Flags().Changed("mcp")
+			c.maxSpacesSet = cmd.Flags().Changed("max-spaces")
 			c.noMCP = !mcpOn
 			c.remoteSet = cmd.Flags().Changed("pull-interval") || cmd.Flags().Changed("remote-host") || cmd.Flags().Changed("remote-timeout")
 			c.oidcClientSecret = os.Getenv("PETALBOOK_OIDC_CLIENT_SECRET")
@@ -161,7 +165,7 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 	f.Int64Var(&c.maxImport, "max-import", api.DefaultMaxImport, "largest Markdown file or zip accepted as an import, in bytes (0: the default, 100 MiB)")
 	f.BoolVar(&mcpOn, "mcp", true, "single-user mode: serve /mcp for MCP clients with an API token (false: it answers 404); in accounts mode an administrator decides, in the app")
 	f.StringVar(&c.inbox, "inbox", store.DefaultInbox, "single-user mode: the folder quick notes go to")
-	f.IntVar(&c.maxSpaces, "max-spaces", spaces.DefaultMaxSpaces, "accounts mode: how many spaces one user may own (0: no limit)")
+	f.IntVar(&c.maxSpaces, "max-spaces", spaces.DefaultMaxSpaces, "accounts mode: how many spaces one user may own (0: no limit); when given, it is the site's quota.spacesPerPerson and cannot be changed in the app")
 	f.DurationVar(&c.spaceIdle, "space-idle", spaces.DefaultIdleAfter, "accounts mode: close a space that has not been used for this long (it reopens on the next request)")
 	f.IntVar(&c.maxOpenSpaces, "max-open-spaces", spaces.DefaultMaxOpen, "accounts mode: at most this many spaces open at once; the least recently used are closed first")
 	f.BoolVar(&c.insecure, "insecure-no-auth", false, "single-user mode: allow a non-loopback --listen address (anyone who can reach it can read and edit everything). The checks against requests from other web sites stay on, and without loopback-only mode there is no implicit own origin: a browser needs --allow-origin for the address it uses")
@@ -426,7 +430,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 			return fmt.Errorf("the authorization server: %w", err)
 		}
 	}
-	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tokenSvc, OAuth: oauthSvc, PublicURL: cfg.publicURL, NoMCP: c.noMCP, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
+	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tokenSvc, OAuth: oauthSvc, PublicURL: cfg.publicURL, MaxSpaces: c.maxSpacesFlag(), NoMCP: c.noMCP, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
 		RestrictHost: loopback, AllowOrigins: cfg.origins, Logger: log})
 	var webOpts []webui.Option
 	if svc != nil {
@@ -547,6 +551,15 @@ func originOf(u string) []string {
 		return []string{o}
 	}
 	return nil
+}
+
+// maxSpacesFlag is --max-spaces when it was given, else nil.
+func (c serveConfig) maxSpacesFlag() *int {
+	if !c.maxSpacesSet {
+		return nil
+	}
+	n := c.maxSpaces
+	return &n
 }
 
 // nameIfSet returns the name only when the user gave one, so a name already

@@ -44,7 +44,7 @@ func (l *localUser) CachedUser(ctx context.Context, id string) (*store.User, err
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.u == nil {
-		u, err := store.GetUser(ctx, l.st.Q(), id)
+		u, err := store.GetUser(ctx, l.st.Q(), store.AllTenants(), id)
 		if err != nil {
 			return nil, err
 		}
@@ -199,7 +199,7 @@ func toToken(t store.APIToken, now time.Time) tokenResp {
 // --- a person's own tokens ---------------------------------------------------
 
 func (s *server) listMyTokens(c *call) {
-	rows, err := s.tokens.List(c.r.Context(), store.TokenFilter{UserID: c.user().ID, Limit: 500})
+	rows, err := s.tokens.List(c.r.Context(), c.ownScope(), store.TokenFilter{UserID: c.user().ID, Limit: 500})
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -314,13 +314,16 @@ func (s *server) revokeMyToken(c *call) {
 // revokeToken revokes a token; owner "" is any (an administrator).
 func (s *server) revokeToken(c *call, owner string) {
 	id := c.r.PathValue("id")
-	rows, err := s.tokens.List(c.r.Context(), store.TokenFilter{ID: id, Limit: 1})
+	rows, err := s.tokens.List(c.r.Context(), store.ScopeOf(c.user()), store.TokenFilter{ID: id, Limit: 1})
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
 	if len(rows) == 0 || (owner != "" && rows[0].UserID != owner) {
 		writeError(c.w, http.StatusNotFound, "not_found", "no such token")
+		return
+	}
+	if owner == "" && s.refuseSiteAdminOwner(c, rows[0].UserID) {
 		return
 	}
 	done, err := s.tokens.Revoke(c.r.Context(), id)
@@ -333,6 +336,28 @@ func (s *server) revokeToken(c *call, owner string) {
 			Detail: map[string]any{"token": id, "name": rows[0].Name, "by": revokedBy(owner)}})
 	}
 	c.w.WriteHeader(http.StatusNoContent)
+}
+
+// refuseSiteAdminOwner answers 403 and returns true when the person is a site
+// administrator and the caller is not one: a tenant administrator may not end
+// what a site administrator holds (as with changing the account itself).
+func (s *server) refuseSiteAdminOwner(c *call, userID string) bool {
+	if cu := c.user(); cu.SiteAdmin && cu.Role == "admin" {
+		return false
+	}
+	u, err := store.GetUser(c.r.Context(), s.opt.Store.Q(), store.AllTenants(), userID)
+	if errors.Is(err, store.ErrNotFound) {
+		return false
+	}
+	if err != nil {
+		s.fail(c.w, err)
+		return true
+	}
+	if u.SiteAdmin {
+		writeError(c.w, http.StatusForbidden, "forbidden", "only a site administrator may change a site administrator")
+		return true
+	}
+	return false
 }
 
 // revokedBy is the "by" of a revocation's audit row: owner "" is an administrator.
@@ -393,6 +418,10 @@ func (s *server) adminPutAccess(c *call) {
 }
 
 func (s *server) adminListTokens(c *call) {
+	sc, ok := s.adminScope(c)
+	if !ok {
+		return
+	}
 	q := c.r.URL.Query()
 	limit := 50
 	if v := q.Get("limit"); v != "" {
@@ -414,7 +443,7 @@ func (s *server) adminListTokens(c *call) {
 		}
 		f.AfterCreated, f.AfterID = time.UnixMilli(n).UTC(), id
 	}
-	rows, err := s.tokens.List(c.r.Context(), f)
+	rows, err := s.tokens.List(c.r.Context(), sc, f)
 	if err != nil {
 		s.fail(c.w, err)
 		return

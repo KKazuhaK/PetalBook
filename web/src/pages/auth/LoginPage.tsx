@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button'
 import { safeReturn } from '@/lib/auth'
 import { t } from '@/i18n'
 import { ts } from '@/i18n/signin'
+import { tm } from '@/i18n/mail'
 
 // The sentence for a `?sso_error=` code. Own keys only: a code like `constructor` is not a message.
 export const ssoErrorMessage = (code: string | null): string => (code ? (Object.hasOwn(ts.ssoErrors, code) ? ts.ssoErrors[code] : ts.ssoErrors.unknown) : '')
@@ -216,6 +217,12 @@ function LoginForm({ ret, providers, ssoError, local }: { ret: string; providers
               {busy ? t.login.submitting : t.login.submit}
             </Button>
           </form>
+          {(providers.forgot || providers.register) && (
+            <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-sm">
+              {providers.forgot && <Link to="/forgot" className="text-brand underline underline-offset-4">{tm.links.forgot}</Link>}
+              {providers.register && <Link to="/register" className="text-brand underline underline-offset-4">{tm.links.register}</Link>}
+            </div>
+          )}
           {!passkeyOnly && passkey && (
             <>
               <OrDivider />

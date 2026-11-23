@@ -371,7 +371,7 @@ func TestMergeByVerifiedEmailIsStrict(t *testing.T) {
 		mk("twin-a", "twin@example.test", true, "member")
 		mk("twin-b", "twin@example.test", true, "member")
 		goneID := mk("gone-local", "gone@example.test", true, "member")
-		if _, err := a.auth.UpdateUser(ctx, "", "", goneID, auth.UserPatch{Disabled: ptr(true)}); err != nil {
+		if _, err := a.auth.UpdateUser(ctx, store.User{Role: "admin", SiteAdmin: true}, "", goneID, auth.UserPatch{Disabled: ptr(true)}); err != nil {
 			t.Fatal(err)
 		}
 		try := func(key string) (string, *client) {

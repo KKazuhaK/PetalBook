@@ -62,22 +62,33 @@ func (m *Manager) AddMember(ctx context.Context, h *Handle, username, role strin
 	now := m.opt.Now()
 	// Under the space lock like every other change of its members, so it
 	// cannot interleave with an ownership transfer or a removal.
+	var before, after store.Touched
 	err = m.opt.Store.Tx(ctx, func(q store.Q) error {
 		if err := store.LockSpace(ctx, q, h.Info.ID); err != nil {
 			return err
 		}
-		return store.AddMember(ctx, q, h.Info.ID, u.ID, role, now)
+		if before, err = store.SpaceCountedFor(ctx, q, h.Info.ID); err != nil {
+			return err
+		}
+		if err := store.AddMember(ctx, q, h.Info.ID, u.ID, role, now); err != nil {
+			return err
+		}
+		after, err = store.SpaceCountedFor(ctx, q, h.Info.ID)
+		return err
 	})
 	if err != nil {
 		if store.IsUnique(err) {
 			return nil, ErrAlreadyMember
 		}
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, ErrNotFound
+			// The statement joins the space and the user on one tenant: a person
+			// of another tenant is, as ever, a username nobody has.
+			return nil, ErrUserNotFound
 		}
 		return nil, err
 	}
 	m.MembershipChanged(u.ID)
+	m.usageMoved(ctx, before, after)
 	return &store.Member{UserID: u.ID, Username: u.Username, Name: u.Name, Role: role, Created: now}, nil
 }
 
@@ -90,8 +101,13 @@ func (m *Manager) SetMemberRole(ctx context.Context, h *Handle, userID, role str
 		return nil, err
 	}
 	var out *store.Member
+	var before, after store.Touched
 	err := m.opt.Store.Tx(ctx, func(q store.Q) error {
 		if err := store.LockSpace(ctx, q, h.Info.ID); err != nil {
+			return err
+		}
+		var err error
+		if before, err = store.SpaceCountedFor(ctx, q, h.Info.ID); err != nil {
 			return err
 		}
 		cur, err := store.MemberRole(ctx, q, h.Info.ID, userID)
@@ -109,6 +125,9 @@ func (m *Manager) SetMemberRole(ctx context.Context, h *Handle, userID, role str
 				return err
 			}
 		}
+		if after, err = store.SpaceCountedFor(ctx, q, h.Info.ID); err != nil {
+			return err
+		}
 		out, err = store.GetMember(ctx, q, h.Info.ID, userID)
 		return err
 	})
@@ -116,6 +135,7 @@ func (m *Manager) SetMemberRole(ctx context.Context, h *Handle, userID, role str
 		return nil, err
 	}
 	m.MembershipChanged(userID)
+	m.usageMoved(ctx, before, after)
 	return out, nil
 }
 
@@ -132,8 +152,13 @@ func (m *Manager) RemoveMember(ctx context.Context, actor store.User, h *Handle,
 			return err
 		}
 	}
+	var before, after store.Touched
 	err := m.opt.Store.Tx(ctx, func(q store.Q) error {
 		if err := store.LockSpace(ctx, q, h.Info.ID); err != nil {
+			return err
+		}
+		var err error
+		if before, err = store.SpaceCountedFor(ctx, q, h.Info.ID); err != nil {
 			return err
 		}
 		cur, err := store.MemberRole(ctx, q, h.Info.ID, userID)
@@ -161,12 +186,17 @@ func (m *Manager) RemoveMember(ctx context.Context, actor store.User, h *Handle,
 		if err := m.keepOneOwner(ctx, q, h.Info.ID, userID, cur); err != nil {
 			return err
 		}
-		return store.RemoveMember(ctx, q, h.Info.ID, userID)
+		if err := store.RemoveMember(ctx, q, h.Info.ID, userID); err != nil {
+			return err
+		}
+		after, err = store.SpaceCountedFor(ctx, q, h.Info.ID)
+		return err
 	})
 	if err != nil {
 		return err
 	}
 	m.MembershipChanged(userID)
+	m.usageMoved(ctx, before, after)
 	return nil
 }
 

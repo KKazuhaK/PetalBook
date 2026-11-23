@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/KKazuhaK/PetalBook/internal/auth"
+	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
 const samlACSPattern = "/api/auth/saml/{slug}/acs"
@@ -51,14 +52,14 @@ var signinRoutes = []route{
 	{"GET", "/api/users/{id}/passkeys", admin, true, false, false, (*server).listUserPasskeys},
 	{"DELETE", "/api/users/{id}/passkeys/{passkey}", admin, true, false, false, (*server).deleteUserPasskey},
 
-	{"GET", "/api/admin/security", admin, true, false, false, (*server).adminGetSecurity},
-	{"PUT", "/api/admin/security", admin, true, false, false, (*server).adminPutSecurity},
-	{"GET", "/api/admin/auth/providers", admin, true, false, false, (*server).adminListProviders},
-	{"POST", "/api/admin/auth/providers", admin, true, false, false, (*server).adminCreateProvider},
-	{"GET", "/api/admin/auth/providers/{slug}", admin, true, false, false, (*server).adminGetProvider},
-	{"PATCH", "/api/admin/auth/providers/{slug}", admin, true, false, false, (*server).adminPatchProvider},
-	{"DELETE", "/api/admin/auth/providers/{slug}", admin, true, false, false, (*server).adminDeleteProvider},
-	{"POST", "/api/admin/auth/providers/{slug}/refresh", admin, true, false, false, (*server).adminRefreshProvider},
+	{"GET", "/api/admin/security", siteAdmin, true, false, false, (*server).adminGetSecurity},
+	{"PUT", "/api/admin/security", siteAdmin, true, false, false, (*server).adminPutSecurity},
+	{"GET", "/api/admin/auth/providers", siteAdmin, true, false, false, (*server).adminListProviders},
+	{"POST", "/api/admin/auth/providers", siteAdmin, true, false, false, (*server).adminCreateProvider},
+	{"GET", "/api/admin/auth/providers/{slug}", siteAdmin, true, false, false, (*server).adminGetProvider},
+	{"PATCH", "/api/admin/auth/providers/{slug}", siteAdmin, true, false, false, (*server).adminPatchProvider},
+	{"DELETE", "/api/admin/auth/providers/{slug}", siteAdmin, true, false, false, (*server).adminDeleteProvider},
+	{"POST", "/api/admin/auth/providers/{slug}/refresh", siteAdmin, true, false, false, (*server).adminRefreshProvider},
 	{"GET", "/api/admin/audit", admin, true, false, false, (*server).adminAudit},
 }
 
@@ -67,6 +68,19 @@ func init() { routeTable = append(routeTable, signinRoutes...) }
 // --- the sign-in page ------------------------------------------------------------
 
 func (s *server) getAuthProviders(c *call) {
+	// The same providers for every tenant; ?tenant={slug} names the tenant the
+	// page is for (absent: the default tenant), and an unknown or disabled one
+	// is not found. register and forgot are what the page links to; they come
+	// with mail and registration, which are the next part of 3.3.
+	tenant, ok := s.tenantOfRequest(c, c.r.URL.Query().Get("tenant"))
+	if !ok {
+		return
+	}
+	rules, err := s.auth.Registration(c.r.Context(), tenant)
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
 	info := s.auth.PublicInfo()
 	writeJSON(c.w, http.StatusOK, struct {
 		Providers []auth.PublicProvider `json:"providers"`
@@ -74,7 +88,9 @@ func (s *server) getAuthProviders(c *call) {
 		Local     bool                  `json:"local"`
 		SSO       bool                  `json:"sso"`
 		Passkey   bool                  `json:"passkey"`
-	}{info.Providers, info.Mode, info.Local, info.SSO, info.Passkey})
+		Register  bool                  `json:"register"`
+		Forgot    bool                  `json:"forgot"`
+	}{info.Providers, info.Mode, info.Local, info.SSO, info.Passkey, rules.Open, s.auth.MailEnabled()})
 }
 
 func (s *server) getCaptcha(c *call) {
@@ -313,7 +329,7 @@ func (s *server) deleteAccountPasskey(c *call) {
 }
 
 func (s *server) listUserPasskeys(c *call) {
-	l, err := s.auth.UserPasskeys(c.r.Context(), c.r.PathValue("id"))
+	l, err := s.auth.UserPasskeys(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("id"))
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -487,7 +503,11 @@ func (s *server) adminAudit(c *call) {
 		}
 		limit = n
 	}
-	rows, next, err := s.auth.ListAudit(c.r.Context(), strings.TrimSpace(q.Get("kind")), strings.TrimSpace(q.Get("user")), q.Get("cursor"), limit)
+	sc, ok := s.adminScope(c)
+	if !ok {
+		return
+	}
+	rows, next, err := s.auth.ListAudit(c.r.Context(), sc, !c.isSiteAdmin(), strings.TrimSpace(q.Get("kind")), strings.TrimSpace(q.Get("user")), q.Get("cursor"), limit)
 	if err != nil {
 		s.fail(c.w, err)
 		return

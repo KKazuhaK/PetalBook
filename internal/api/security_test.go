@@ -217,7 +217,7 @@ func TestNoHalfMadeSpaceOrAccountWhenAStepFails(t *testing.T) {
 
 func mustUserID(t *testing.T, a *acc, username string) string {
 	t.Helper()
-	us, err := a.auth.Users(context.Background())
+	us, err := a.auth.Users(context.Background(), store.AllTenants())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,8 +236,8 @@ func TestSpacesPerUserAreLimited(t *testing.T) {
 		c := a.setup("kazuha", pw) // the personal space is the first of three
 		c.do("POST", "/api/spaces", map[string]any{"name": "B"}).want(t, 201, "")
 		c.do("POST", "/api/spaces", map[string]any{"name": "C"}).want(t, 201, "")
-		r := c.do("POST", "/api/spaces", map[string]any{"name": "D"}).want(t, 403, "forbidden")
-		if !strings.Contains(r.body["message"].(string), "3") {
+		r := c.do("POST", "/api/spaces", map[string]any{"name": "D"}).want(t, 403, "quota_exceeded")
+		if !strings.Contains(r.body["message"].(string), "3") || r.body["quota"] != "spaces" || r.body["limit"] != float64(3) || r.body["used"] != float64(3) {
 			t.Fatalf("the message does not say what the limit is: %s", r.raw)
 		}
 		if len(c.do("GET", "/api/spaces", nil).body["spaces"].([]any)) != 3 {
@@ -250,7 +250,7 @@ func TestSpacesPerUserAreLimited(t *testing.T) {
 
 func mustUser(t *testing.T, a *acc, username string) store.User {
 	t.Helper()
-	u, err := store.GetUser(context.Background(), a.st.Q(), mustUserID(t, a, username))
+	u, err := store.GetUser(context.Background(), a.st.Q(), store.AllTenants(), mustUserID(t, a, username))
 	if err != nil {
 		t.Fatal(err)
 	}

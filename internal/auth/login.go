@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/store"
@@ -21,6 +22,10 @@ func (s *Service) allow(ctx context.Context, ip string) error {
 	}
 	return retryAfter(wait)
 }
+
+// AllowPublic spends one of the address's requests this minute, for the public
+// endpoints that have no other check (docs/api.md, "Abuse basics").
+func (s *Service) AllowPublic(ctx context.Context, ip string) error { return s.allow(ctx, ip) }
 
 // gateIP reserves one failure of the address before any hash or token is
 // looked at; the caller gives it back with refundIP when the attempt turns out
@@ -133,7 +138,7 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 	if !good || u == nil || hash == s.hasher.dummy {
 		return nil, s.wrongPassword(st, p, ukey, pkey, "bad_password", &reserved)
 	}
-	if u.Disabled {
+	if u.Disabled || s.st.TenantDisabled(u.TenantID) {
 		return nil, s.wrongPassword(st, p, ukey, pkey, "disabled", &reserved)
 	}
 	// The password is right: what stands against the name is forgiven.
@@ -322,10 +327,18 @@ func (s *Service) AcceptInvite(ctx context.Context, token, username, name, passw
 	if err != nil {
 		return nil, "", err
 	}
+	// What the invite fills in is what the form starts with: a field left empty
+	// takes it.
+	if strings.TrimSpace(username) == "" {
+		username = inv.Username
+	}
+	if strings.TrimSpace(name) == "" {
+		name = inv.Name
+	}
 	if s.ssoOnlyInEffect(st) && inv.Role != "admin" {
 		return nil, "", errLocalRefused()
 	}
-	u, err := s.CreateUser(ctx, CreateParams{Username: username, Name: name, Role: inv.Role, Password: password, InviteID: inv.ID})
+	u, err := s.CreateUser(ctx, CreateParams{Username: username, Name: name, Email: inv.Email, Role: inv.Role, Password: password, InviteID: inv.ID, TenantID: inv.TenantID, SiteAdmin: inv.SiteAdmin})
 	if err != nil {
 		return nil, "", err
 	}

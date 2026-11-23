@@ -253,23 +253,25 @@ func (s *Service) reloadProviders(ctx context.Context, rebuild ...string) error 
 
 // ProviderView is a provider as the administrators see it.
 type ProviderView struct {
-	Slug               string       `json:"slug"`
-	Kind               string       `json:"kind"`
-	Name               string       `json:"name"`
-	Icon               string       `json:"icon"`
-	Enabled            bool         `json:"enabled"`
-	Order              int          `json:"order"`
-	AutoCreate         bool         `json:"autoCreate"`
-	MergeVerifiedEmail bool         `json:"mergeVerifiedEmail"`
-	OIDC               *OIDCView    `json:"oidc,omitempty"`
-	SAML               *SAMLView    `json:"saml,omitempty"`
-	GitHub             *GitHubView  `json:"github,omitempty"`
-	Groups             GroupsCfg    `json:"groups"`
-	Status             ProviderStat `json:"status"`
-	People             int          `json:"people"`
-	Created            string       `json:"created"`
-	Updated            string       `json:"updated"`
-	SecretUnreadable   bool         `json:"-"`
+	Slug               string `json:"slug"`
+	Kind               string `json:"kind"`
+	Name               string `json:"name"`
+	Icon               string `json:"icon"`
+	Enabled            bool   `json:"enabled"`
+	Order              int    `json:"order"`
+	AutoCreate         bool   `json:"autoCreate"`
+	MergeVerifiedEmail bool   `json:"mergeVerifiedEmail"`
+	// Tenant is the tenant autoCreate puts new accounts in (an id).
+	Tenant           string       `json:"tenant"`
+	OIDC             *OIDCView    `json:"oidc,omitempty"`
+	SAML             *SAMLView    `json:"saml,omitempty"`
+	GitHub           *GitHubView  `json:"github,omitempty"`
+	Groups           GroupsCfg    `json:"groups"`
+	Status           ProviderStat `json:"status"`
+	People           int          `json:"people"`
+	Created          string       `json:"created"`
+	Updated          string       `json:"updated"`
+	SecretUnreadable bool         `json:"-"`
 }
 
 // ProviderStat is the result of the last discovery or metadata fetch.
@@ -332,7 +334,7 @@ func (s *Service) viewOf(rt *providerRT, people int) ProviderView {
 	row := rt.row
 	ok, checked, msg := rt.status()
 	v := ProviderView{Slug: row.Slug, Kind: row.Kind, Name: row.Name, Icon: row.Icon, Enabled: row.Enabled, Order: row.Position,
-		AutoCreate: row.AutoCreate, MergeVerifiedEmail: row.MergeVerifiedEmail, People: people, Groups: groupsView(row.Kind, rt.cfg.Groups),
+		AutoCreate: row.AutoCreate, MergeVerifiedEmail: row.MergeVerifiedEmail, Tenant: row.TenantID, People: people, Groups: groupsView(row.Kind, rt.cfg.Groups),
 		Status:  ProviderStat{OK: ok, Message: msg},
 		Created: rfc3339(row.Created), Updated: rfc3339(row.Updated), SecretUnreadable: rt.secretErr != nil}
 	if !checked.IsZero() {
@@ -408,6 +410,7 @@ type ProviderInput struct {
 	Order              *int    `json:"order"`
 	AutoCreate         *bool   `json:"autoCreate"`
 	MergeVerifiedEmail *bool   `json:"mergeVerifiedEmail"`
+	Tenant             *string `json:"tenant"`
 	OIDC               *struct {
 		Issuer         *string   `json:"issuer"`
 		ClientID       *string   `json:"clientId"`
@@ -525,7 +528,7 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 	creating := cur == nil
 	b := &built{}
 	if creating {
-		b.row = store.ProviderRow{Enabled: true}
+		b.row = store.ProviderRow{Enabled: true, TenantID: store.DefaultTenantID}
 		if in.Slug == nil || !slugRE.MatchString(*in.Slug) {
 			return nil, providerInvalid("slug is 1 to 32 characters of a-z, 0-9 and -, starting with a letter or digit")
 		}
@@ -590,6 +593,21 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 			mark("order")
 		}
 		b.row.Position = *in.Order
+	}
+	if in.Tenant != nil {
+		t, err := store.GetTenant(ctx, s.st.Q(), *in.Tenant)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, providerInvalid("tenant is the id of a tenant")
+		} else if err != nil {
+			return nil, err
+		}
+		if t.Disabled && *in.Tenant != b.row.TenantID {
+			return nil, providerInvalid("that tenant is disabled")
+		}
+		if *in.Tenant != b.row.TenantID {
+			mark("tenant")
+		}
+		b.row.TenantID = *in.Tenant
 	}
 	if in.AutoCreate != nil {
 		if *in.AutoCreate != b.row.AutoCreate {

@@ -165,3 +165,38 @@ func TestTheAuditQueueDropsWhenFullAndSaysSo(t *testing.T) {
 		t.Fatalf("%s %s", a.ID, b.ID)
 	}
 }
+
+// A full table refuses a new key rather than forget an old one: forgetting
+// would give a capped address its allowance back.
+func TestAFullHourCapTableRefusesInsteadOfForgetting(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	h := newHourCaps(3)
+	if _, ok := h.take(now, capKey{"to:victim", 1}); !ok {
+		t.Fatal("refused within the allowance")
+	}
+	if _, ok := h.take(now, capKey{"to:victim", 1}); ok {
+		t.Fatal("the cap is not kept")
+	}
+	refused := 0
+	for i := range 10 {
+		if _, ok := h.take(now.Add(time.Duration(i)*time.Second), capKey{"to:flood" + strconv.Itoa(i), 1}); !ok {
+			refused++
+		}
+	}
+	if refused == 0 || h.size() > 3 {
+		t.Fatalf("refused %d, size %d", refused, h.size())
+	}
+	if _, ok := h.take(now.Add(time.Minute), capKey{"to:victim", 1}); ok {
+		t.Fatal("flooding the table gave the capped key its allowance back")
+	}
+	// All or none: a refusal for room spends nothing of the other key.
+	h2 := newHourCaps(1)
+	h2.take(now, capKey{"by:ip", 5})
+	if _, ok := h2.take(now, capKey{"by:ip", 5}, capKey{"to:new", 3}); ok {
+		t.Fatal("no room, yet allowed")
+	}
+	// Room comes back an hour after a key was last used.
+	if _, ok := h.take(now.Add(2*time.Hour), capKey{"to:later", 1}); !ok {
+		t.Fatal("expired keys keep the table full")
+	}
+}

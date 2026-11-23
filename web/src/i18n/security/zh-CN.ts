@@ -48,7 +48,7 @@ export const securityZhCN = {
     secretNew: '新的密钥',
     clear: '清除密钥',
     contexts: '各处的验证码',
-    context: { login: '登录', invite: '接受邀请', setup: '首次设置' },
+    context: { login: '登录', invite: '接受邀请', setup: '首次设置', forgot: '找回密码', register: '注册' },
     on: '开启',
     when: '什么时候要求',
     whens: { always: '每次', after_failures: '错几次之后' },

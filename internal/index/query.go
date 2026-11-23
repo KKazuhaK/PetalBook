@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"strings"
 	"time"
 )
@@ -518,4 +520,27 @@ func (x *Index) Count() (n int, err error) {
 		return db.QueryRow(`SELECT count(*) FROM pages`).Scan(&n)
 	})
 	return
+}
+
+// CountFile counts the pages of the index database at dbPath without opening an
+// Index: for a space that is not open, whose index is only read. ok is false
+// when there is no such file, or it is no index (a space never opened, or a
+// cache that was cleared); the count of such a space is not known.
+func CountFile(dbPath string) (n int, ok bool, err error) {
+	if _, err := os.Stat(dbPath); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(5000)&_pragma=query_only(1)")
+	if err != nil {
+		return 0, false, err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if err := db.QueryRow(`SELECT count(*) FROM pages`).Scan(&n); err != nil {
+		return 0, false, err
+	}
+	return n, true, nil
 }

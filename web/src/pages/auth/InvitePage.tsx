@@ -14,6 +14,7 @@ import { forgetFragmentToken, fragmentToken } from '@/lib/auth'
 import { absoluteTime } from '@/lib/time'
 import { t } from '@/i18n'
 import { ts } from '@/i18n/signin'
+import { tu } from '@/i18n/usage'
 
 // The invite token comes from the address (`/invite#<token>`) or is pasted. It
 // is checked with the server before the person is asked for anything.
@@ -59,6 +60,9 @@ function InviteForm() {
     return api.checkInvite(token, sent, signal).then(
       (invite) => {
         setCheck({ state: 'ok', invite })
+        // What the invite starts the form with: an administrator's own words win, so only what is still empty is filled.
+        setUsername((v) => v || invite.username || '')
+        setName((v) => v || invite.name || '')
         // A challenge is used once, right or wrong: the form below needs its own.
         if (sent) void captcha.refresh()
       },
@@ -189,6 +193,12 @@ function InviteForm() {
   return (
     <AuthLayout title={t.invite.title} intro={t.fmt.sentences(t.invite.role(t.roles[check.invite.role]), t.invite.expires(absoluteTime(check.invite.expires)))}>
       <FormMessage focusRef={messageRef}>{error}</FormMessage>
+      {(check.invite.username || check.invite.name || check.invite.email) && (
+        <div className="grid gap-1 rounded-lg border bg-muted/40 px-3 py-2 text-sm" role="note" data-slot="invite-prefill">
+          <p>{tu.invite.prefilled}</p>
+          {check.invite.email && <p className="text-xs break-words text-muted-foreground">{tu.invite.email(check.invite.email)}</p>}
+        </div>
+      )}
       {ssoOnly && <FormMessage>{ts.inviteSso.ssoOnly}</FormMessage>}
       {!ssoOnly && (
       <form className="grid gap-4" onSubmit={(e) => void submit(e)} noValidate>
