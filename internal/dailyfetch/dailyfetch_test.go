@@ -970,3 +970,16 @@ func TestALinkNeverTakesAHeader(t *testing.T) {
 		t.Fatalf("%+v %v", q, err)
 	}
 }
+
+// Hosts written only with numbers, in shorthand forms, are refused whatever
+// the resolver would make of them.
+func TestNumericHostShorthandsAreRefused(t *testing.T) {
+	for h, want := range map[string]bool{
+		"127.1": true, "2130706433": true, "0x7f.0.0.1": true, "0177.0.0.1": true, "10.1": true, "1.": true,
+		"127.0.0.1": false, "::1": false, "example.com": false, "cafe.de": false, "0x.example": false, "v1.hitokoto.cn": false, "": false,
+	} {
+		if got := numericHost(h); got != want {
+			t.Errorf("numericHost(%q) = %v, want %v", h, got, want)
+		}
+	}
+}

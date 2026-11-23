@@ -239,6 +239,9 @@ func CheckAPI(a API, allowHTTP bool) (API, string, error) {
 	if ip, err := netip.ParseAddr(u.Hostname()); err == nil && !allowHTTP && !Public(ip) {
 		return a, "", fmt.Errorf("%s is not a public address; the server never connects to one", ip)
 	}
+	if !allowHTTP && numericHost(u.Hostname()) {
+		return a, "", fmt.Errorf("%s is not a public address; the server never connects to one", u.Hostname())
+	}
 	if h := strings.ToLower(u.Hostname()); !allowHTTP && (h == "localhost" || strings.HasSuffix(h, ".localhost")) {
 		return a, "", errors.New("the server never connects to this machine")
 	}
@@ -841,6 +844,9 @@ func (f *Fetcher) request(ctx context.Context, a API, hosts []string, lang, date
 	if h := strings.ToLower(u.Host); h != hostOf(a.URL) || !hostAllowed(h, hosts) {
 		return nil, fmt.Errorf("%w: the host %s is not on the list of hosts", ErrUnavailable, u.Host)
 	}
+	if !f.allowHTTP && numericHost(u.Hostname()) {
+		return nil, fmt.Errorf("%w: %s is not a public address", ErrUnavailable, u.Hostname())
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: bad address", ErrUnavailable)
@@ -1383,4 +1389,37 @@ func Presets() []Preset {
 			Refresh: RefreshDaily, SkipNew: true, RPS: 3, Enabled: true},
 			Note: "Open source, no key; 180 requests a minute for each address. It can also be hosted by yourself."},
 	}
+}
+
+// numericHost reports whether a host name is written only with numbers, in a
+// form other than a plain IPv4 or IPv6 address: "127.1", "2130706433",
+// "0x7f.0.0.1", "0177.0.0.1". Some resolvers read these as addresses (as
+// inet_aton does) and others do not, so they are refused outright rather
+// than left to the resolver: no real host is named like that.
+func numericHost(h string) bool {
+	if h == "" {
+		return false
+	}
+	if _, err := netip.ParseAddr(h); err == nil {
+		return false // a plain address: judged by Public
+	}
+	for _, label := range strings.Split(strings.TrimSuffix(h, "."), ".") {
+		if label == "" {
+			return false
+		}
+		hex := len(label) > 1 && label[0] == '0' && (label[1] == 'x' || label[1] == 'X')
+		digits := label
+		if hex {
+			digits = label[2:]
+		}
+		for _, r := range digits {
+			switch {
+			case r >= '0' && r <= '9':
+			case hex && (r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F'):
+			default:
+				return false
+			}
+		}
+	}
+	return true
 }
