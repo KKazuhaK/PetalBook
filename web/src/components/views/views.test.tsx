@@ -679,6 +679,69 @@ describe('a view written by hand while another person changes the list', () => {
   })
 })
 
+describe('a view written by hand, then a new view or a copy', () => {
+  beforeEach(() => {
+    toast.dismiss()
+  })
+  const hand = (_send: unknown, _ids: unknown, server: MockServer) => server.seedHandWrittenViews('Work', [{ name: '甲', layout: 'list' }, { name: '乙', layout: 'list' }])
+  const showSecond = async () => {
+    await open('/s/default/f/Work', hand)
+    await settle(() => tabs().length === 2, 'the tabs')
+    await click(tab('乙'))
+    await click(button(t.view.cards))
+    expect(modifiedMark()).not.toBeNull()
+  }
+
+  it('shows the new view that was made while a hand-written one was shown', async () => {
+    await showSecond()
+    await click(button(t.views.add))
+    await settle(() => document.querySelector('input[aria-label="' + t.views.name + '"]') !== null, 'the name dialog')
+    const input = document.querySelector<HTMLInputElement>(`input[aria-label="${t.views.name}"]`)!
+    await type(input, '新')
+    await act(async () => input.form!.requestSubmit())
+    await settle(() => puts().length === 1 && tabNames().includes('新'), 'created')
+    await settle(() => selected() === '新', 'the new view is shown')
+    const list = (await saved()).views
+    expect(localStorage.getItem(viewIdKey('default', 'folder', 'Work'))).toBe(list[list.length - 1].id)
+    expect(modifiedMark()).toBeNull()
+  })
+
+  it('shows the copy that was made of the hand-written view shown, with its changes saved in the copy only', async () => {
+    await showSecond()
+    await click(button(t.views.duplicate))
+    await settle(() => puts().length === 1 && tabs().length === 3, 'copied')
+    await settle(() => selected() === t.views.copyName('乙'), 'the copy is shown')
+    expect(modifiedMark()).toBeNull()
+    expect((await saved()).views.map((v) => v.layout)).toEqual(['list', 'list', 'cards'])
+  })
+
+  it('does not say the view is lost when a refetch lands before the answer of its own save', async () => {
+    await showSecond()
+    const real = globalThis.fetch
+    let release: () => void = () => {}
+    const held = new Promise<void>((r) => (release = r))
+    globalThis.fetch = async (input, init) => {
+      const res = await real(input, init)
+      if ((init?.method ?? 'GET') === 'PUT' && String(input instanceof Request ? input.url : input).endsWith('/views')) await held
+      return res
+    }
+    await click(textButton(t.views.save))
+    await settle(() => puts().length === 1, 'the write is sent')
+    // The server has committed; a refetch sees the new settings before the answer arrives.
+    await act(async () => {
+      await m!.qc.invalidateQueries({ queryKey: keys.views('default', FOLDER) })
+    })
+    await new Promise((r) => setTimeout(r, 100))
+    await act(async () => {})
+    expect(document.body.textContent!.includes(t.views.lost('乙'))).toBe(false)
+    await act(async () => release())
+    await settle(() => modifiedMark() === null, 'saved')
+    expect(document.body.textContent!.includes(t.views.lost('乙'))).toBe(false)
+    expect(selected()).toBe('乙')
+    expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('true')
+  })
+})
+
 describe('the tab that is shown', () => {
   it('keeps what was changed in it when it is clicked again; another tab is the way to leave it', async () => {
     await open('/s/default/f/Work', (send) => putViews(send, FOLDER, [{ name: '全部', layout: 'list' }, { name: '看板', layout: 'board', group: 'status' }]))

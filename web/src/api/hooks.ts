@@ -738,6 +738,7 @@ export function useSaveViews(scope: ViewScope, written?: (list: ViewList) => voi
   const qc = useQueryClient()
   const space = useSpaceId()
   return useMutation({
+    mutationKey: ['saveViews'],
     mutationFn: async (input: PutViewsInput) => {
       const list = await spaceApi(space).putViews(scope, input)
       written?.(list)

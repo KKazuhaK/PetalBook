@@ -1,3 +1,4 @@
+import { useIsMutating } from '@tanstack/react-query'
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { ArrowUpDown, BookOpen, Columns3, FilePlus2, FolderPlus, LayoutGrid, List as ListIcon, PenLine, Table2, Tag as TagIcon } from 'lucide-react'
@@ -164,7 +165,10 @@ function Listing({ source }: { source: ListSource }) {
   const [lostNotice, setLostNotice] = useState<{ name: string } | null>(null)
   const [edits, setEdits] = useState<Edits>({ id: '', patch: {} })
   const follow = scope && snap && views.data ? followSnapshot(saved, snap) : null
-  const gone = (follow?.gone ?? false) || (hint !== null && snap !== null && hint.from === snap.id && saved.some((v) => v.id === hint.to))
+  // A save of the views is on its way: the list may already hold what it writes (a refetch after the server committed),
+  // which is not another person's change.
+  const saving = useIsMutating({ mutationKey: ['saveViews'] }) > 0
+  const gone = ((follow?.gone ?? false) && !saving) || (hint !== null && snap !== null && hint.from === snap.id && saved.some((v) => v.id === hint.to))
   const hinted = hint && snap && hint.from === snap.id ? (saved.find((v) => v.id === hint.to) ?? null) : null
   const moved = hinted ?? follow?.to ?? null
   const active = scope ? (gone ? (moved ?? saved[0] ?? null) : pickView(saved, remembered)) : null
@@ -198,6 +202,9 @@ function Listing({ source }: { source: ListSource }) {
   }
   // Shows a view and drops the working copy of the one shown (a saved view has nothing left of it).
   const select = (id: string) => {
+    // What a write of the person said about the old view (and the snapshot of it) does not apply to the one chosen now.
+    setHint(null)
+    setSnap(null)
     setRemembered(id)
     saveViewId(idKey, id)
     clearEdits()
@@ -231,7 +238,7 @@ function Listing({ source }: { source: ListSource }) {
     }
   } else if (active && isHandMark(active.id)) {
     if (snap?.id !== active.id) setSnap(snapshotOf(active))
-  } else if (snap) setSnap(null)
+  } else if (snap && !saving) setSnap(null)
   useEffect(() => {
     if (lostNotice) toast.error(t.views.lost(lostNotice.name))
   }, [lostNotice])
