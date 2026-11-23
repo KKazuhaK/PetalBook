@@ -400,6 +400,10 @@ func (s *Space) reconcileLocked(ctx context.Context, r *remote) error {
 				r.set(func(st *RemoteStatus) { st.State, st.Kind, st.Error = RemoteError, KindClone, msg })
 				return unavailable(err, "%s", msg)
 			}
+			// A pull may have put a link or a file where a folder of .petalbook
+			// belongs, which the server writes in (its index too): it is put
+			// right at once, before anything is written there.
+			s.clearOwnDirsLocked(ctx, r)
 			s.applyDelta(ctx, r, head, tip)
 		case behind == 0:
 			// Commits that were never pushed (a crash). Push them as they are.
@@ -422,6 +426,7 @@ func (s *Space) reconcileLocked(ctx context.Context, r *remote) error {
 			if err := repo.ResetHard(ctx, tip); err != nil {
 				return err
 			}
+			s.clearOwnDirsLocked(ctx, r)
 			s.applyDelta(ctx, r, head, tip)
 			msg := fmt.Sprintf("%d change(s) made here were never pushed and the remote has moved on; they are kept as %s in the server's clone, and the space now follows the remote", ahead, ref)
 			s.log.Error("diverged from the remote: unpushed commits set aside", "ref", ref, "commits", ahead)
@@ -569,6 +574,7 @@ func (s *Space) Accept(ctx context.Context, commit string) error {
 	if err := r.repo.ResetHard(ctx, tip); err != nil {
 		return err
 	}
+	s.clearOwnDirsLocked(ctx, r)
 	s.applyDelta(ctx, r, old, tip)
 	if err := r.repo.WriteLastGood(ctx, r.branch, tip); err != nil {
 		s.log.Warn("could not store the last good commit", "error", err)
@@ -680,7 +686,7 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 		tx := &txn{s: s, by: by, remote: true, parent: parent}
 		res, err := op(tx)
 		if err != nil {
-			s.undoLocked(ctx, r, tx, parent)
+			s.undoLocked(ctx, r, tx, tx.parent)
 			return zero, err
 		}
 		tx.paths = uniq(tx.paths)
@@ -692,9 +698,10 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 		author, committer := s.cm.git.identities(by)
 		made, err := r.repo.CommitPaths(ctx, tx.paths, commitMessage, author, committer)
 		if err != nil {
-			s.undoLocked(ctx, r, tx, parent)
+			s.undoLocked(ctx, r, tx, tx.parent)
 			return zero, err
 		}
+		s.heal.committed(tx.paths)
 		if !made { // the change netted out to nothing
 			tx.finishBindings()
 			s.cm.clearJournal()
@@ -714,7 +721,7 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 			return res, nil
 		}
 		moved := lerr == nil && r.repo.RemoteTip(ctx, r.branch) != parent
-		s.undoLocked(ctx, r, tx, parent)
+		s.undoLocked(ctx, r, tx, tx.parent)
 		switch {
 		case lerr != nil:
 			return zero, s.netFailure(r, lerr)
@@ -830,6 +837,8 @@ func (s *Space) undoLocked(ctx context.Context, r *remote, tx *txn, parent strin
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	paths := uniq(tx.paths)
+	// What the change wrote is taken back: it is not newer than the history.
+	defer s.heal.committed(paths)
 	settled := map[string]bool{}
 	for i := len(tx.undo) - 1; i >= 0; i-- {
 		for _, p := range tx.undo[i]() {
@@ -1002,6 +1011,9 @@ func (s *Space) Connect(ctx context.Context, o RemoteOptions) error {
 			if err := repo.FastForward(ctx, o.Branch); err != nil {
 				return err
 			}
+			if !s.clearOwnDirsLocked(ctx, nr) {
+				return fail(errors.New("a folder of .petalbook is not a folder and could not be put right"))
+			}
 			s.applyDelta(ctx, nr, oldHead, tip)
 		case behind == 0: // the space contains the remote: the remote moves forward
 			if err := repo.Push(ctx, o.Branch); err != nil {
@@ -1019,6 +1031,9 @@ func (s *Space) Connect(ctx context.Context, o RemoteOptions) error {
 			if err := repo.ResetHard(ctx, tip); err != nil {
 				return err
 			}
+			if !s.clearOwnDirsLocked(ctx, nr) {
+				return fail(errors.New("a folder of .petalbook is not a folder and could not be put right"))
+			}
 			s.applyDelta(ctx, nr, oldHead, tip)
 			if err := s.ensureConfigLocked(ctx, nr); err != nil {
 				return fail(err)
@@ -1026,8 +1041,10 @@ func (s *Space) Connect(ctx context.Context, o RemoteOptions) error {
 		}
 	}
 	// The set-up of the space that the server keeps out of Git's way.
-	if err := os.MkdirAll(filepath.Join(s.root, ".petalbook"), 0o755); err == nil {
-		ensureLines(filepath.Join(s.root, ".git", "info", "exclude"), "/.petalbook/tmp/", "/.petalbook/cache/")
+	if firstBlockedOwn(s.root) == "" {
+		if err := os.MkdirAll(filepath.Join(s.root, ".petalbook"), 0o755); err == nil {
+			ensureLines(filepath.Join(s.root, ".git", "info", "exclude"), "/.petalbook/tmp/", "/.petalbook/cache/")
+		}
 	}
 	head := repo.Head(ctx)
 	if err := repo.WriteLastGood(ctx, o.Branch, head); err != nil {
@@ -1071,8 +1088,8 @@ func (s *Space) pristineLocked(ctx context.Context, repo *gitstore.Repo) (bool, 
 // and pushed as part of connecting (never left untracked).
 func (s *Space) ensureConfigLocked(ctx context.Context, r *remote) error {
 	file := filepath.Join(s.root, ".petalbook", "space.yml")
-	if _, err := os.Lstat(file); err == nil {
-		return nil
+	if _, blocked, err := lstatIn(s.root, spaceFile); err == nil || blocked != "" {
+		return nil // there (or behind what is put right with the next change)
 	}
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		return err
@@ -1109,7 +1126,9 @@ func (s *Space) Disconnect() error {
 	s.rem.Store(nil)
 	// Local mode puts its own files in order again.
 	pb := filepath.Join(s.root, ".petalbook")
-	if changed, err := ensureLines(filepath.Join(pb, ".gitignore"), "cache/", "tmp/"); err != nil {
+	if !isRealDir(s.root, ".petalbook") {
+		s.log.Warn("could not write .petalbook/.gitignore: .petalbook is not a folder; it is put right by the next change of the settings")
+	} else if changed, err := ensureLines(filepath.Join(pb, ".gitignore"), "cache/", "tmp/"); err != nil {
 		s.log.Warn("could not write .petalbook/.gitignore", "error", err)
 	} else if changed {
 		if err := s.cm.Record(Author{}, jrec{Op: "t", Path: ".petalbook/.gitignore"}); err == nil {

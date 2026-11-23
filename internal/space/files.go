@@ -38,7 +38,8 @@ func osOps() fileOps {
 
 // tmpDir is where files are written before being renamed into place. It is
 // inside the space (same file system, so rename is atomic) and git-ignored.
-func (s *Space) tmpDir() string { return filepath.Join(s.root, ".petalbook", "tmp") }
+// Never through something on the way that is not a folder (tmpDirAt).
+func (s *Space) tmpDir() string { return tmpDirAt(s.root) }
 
 // takenKeys lists the names in dir by NameKey (NFC, case-folded). It is a
 // hint only to skip names quickly: the file system has the last word, through

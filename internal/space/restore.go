@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -88,6 +89,11 @@ type SettingsNotice struct {
 	Copy string `json:"copy,omitempty"`
 	// RepairedAt is when it was put right.
 	RepairedAt *time.Time `json:"repairedAt,omitempty"`
+	// Lost are the entries of the file as it was that could not be read even
+	// one by one, so they are not in the settings in use: they are only in the
+	// file (and, once it was put right, in the copy). "*" stands for all of
+	// it, when not even that much of the file could be read.
+	Lost []string `json:"lost,omitempty"`
 }
 
 // restored is the settings that stand in for a file that cannot be used.
@@ -95,6 +101,10 @@ type restored struct {
 	text  []byte // nil: no settings
 	from  *SettingsVersion
 	since *SettingsVersion
+	// lost are the entries of the file as it is that could not be read on
+	// their own, so they are not in text (see salvage.go); "*" when nothing of
+	// it could be read.
+	lost []string
 }
 
 // doc is the restored settings as a document; nil for none.
@@ -111,16 +121,26 @@ type healer struct {
 	repo           func() *gitstore.Repo
 	log            *slog.Logger
 
-	mu    sync.Mutex
-	found map[string]*restored // by what the unusable file is (stateOf) and where the history stands
-	using map[string]*restored // by file: what is read in its place now
-	odd   map[string][]string  // by file: the entries of it that cannot be used
-	wrote map[string]lastWrite // by file: what this server last wrote there
+	mu sync.Mutex
+	// found is what was found for an unusable file, by what the file is
+	// (stateOf) and where the history stands (historyMark): the cheap first
+	// look. bySrc is the same by what the file is and the newest commit that
+	// changed it, which a commit of anything else leaves as it is.
+	found    map[string]*restored
+	bySrc    map[string]*restored
+	using    map[string]*restored // by file: what is read in its place now
+	odd      map[string][]string  // by file: the entries of it that cannot be used
+	wrote    map[string]lastWrite // by file: what this server wrote there and has not committed yet
+	names    *namesCache          // the types of a folder of the types that is not one now
+	pending  []SettingsNotice     // repairs made before the state directory was known
+	searches int                  // how many times the history was searched, for the tests
 }
 
-// lastWrite is the text of a settings file as the server wrote it, and when. In
-// a space that commits a while after a change, it is newer than anything in
-// the history until that commit is made.
+// lastWrite is the text of a settings file as the server wrote it, and when.
+// It is kept only until the committer has committed that file: until then it
+// is newer than anything in the history, and after that the history has it,
+// in its place among the commits. Times of different machines are never
+// compared.
 type lastWrite struct {
 	text []byte
 	at   time.Time
@@ -136,12 +156,28 @@ func (h *healer) wroteGood(f settingsFile, text []byte) {
 		h.wrote = map[string]lastWrite{}
 	}
 	h.wrote[f.rel] = lastWrite{text, time.Now()}
-	h.found = nil // what the history had to give may be older than this now
+	h.found, h.bySrc = nil, nil // what the history had to give may be older than this now
 	h.mu.Unlock()
 }
 
-// historyMark changes whenever the history of the space gets a commit: what
-// was found in it for an unusable file is good for as long as it stays.
+// committed is told the paths of a change once they are committed, or once
+// the change was taken back: what this server wrote to them is no longer
+// newer than the history.
+func (h *healer) committed(paths []string) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, p := range paths {
+		if _, ok := h.wrote[p]; ok {
+			delete(h.wrote, p)
+			h.found, h.bySrc = nil, nil
+		}
+	}
+}
+
+// historyMark changes whenever the history of the space gets a commit.
 func (h *healer) historyMark() string {
 	if fi, err := os.Stat(filepath.Join(h.root, ".git", "logs", "HEAD")); err == nil {
 		return fmt.Sprintf("%d:%d", fi.Size(), fi.ModTime().UnixNano())
@@ -155,91 +191,153 @@ func (h *healer) historyMark() string {
 }
 
 // stateOf identifies a settings file as it is now, for one that cannot be
-// used: its content, or for what has no content to read, what it is.
+// used: its content, or for what has no content to read, what it is. Nothing
+// is followed: a link or a file in the place of a folder on the way is what
+// is looked at.
 func stateOf(root string, f settingsFile) (key string, mtime time.Time) {
-	abs := filepath.Join(root, filepath.FromSlash(f.rel))
-	fi, err := os.Lstat(abs)
+	fi, blocked, err := lstatIn(root, f.rel)
 	if err != nil {
 		return f.rel + ":gone", time.Time{}
 	}
 	mtime = fi.ModTime()
+	at := filepath.Join(root, filepath.FromSlash(f.rel))
+	if blocked != "" {
+		key = f.rel + ":behind:" + blocked
+		at = filepath.Join(root, filepath.FromSlash(blocked))
+	} else {
+		key = f.rel
+	}
 	switch {
 	case fi.Mode()&fs.ModeSymlink != 0:
-		to, _ := os.Readlink(abs)
-		return f.rel + ":link:" + to, mtime
+		to, _ := os.Readlink(at)
+		return key + ":link:" + to, mtime
 	case !fi.Mode().IsRegular():
-		return f.rel + ":" + fi.Mode().Type().String(), mtime
-	case fi.Size() > int64(f.max):
-		return fmt.Sprintf("%s:large:%d:%d", f.rel, fi.Size(), mtime.UnixNano()), mtime
+		return key + ":" + fi.Mode().Type().String(), mtime
+	case blocked != "":
+		return fmt.Sprintf("%s:file:%d:%d", key, fi.Size(), mtime.UnixNano()), mtime
+	case fi.Size() > int64(maxSalvage(f)):
+		return fmt.Sprintf("%s:large:%d:%d", key, fi.Size(), mtime.UnixNano()), mtime
 	}
-	data, err := os.ReadFile(abs)
+	data, err := os.ReadFile(at)
 	if err != nil {
-		return fmt.Sprintf("%s:unread:%d:%d", f.rel, fi.Size(), mtime.UnixNano()), mtime
+		return fmt.Sprintf("%s:unread:%d:%d", key, fi.Size(), mtime.UnixNano()), mtime
 	}
 	sum := sha256.Sum256(data)
-	return f.rel + ":" + hex.EncodeToString(sum[:]), mtime
+	return key + ":" + hex.EncodeToString(sum[:]), mtime
 }
 
 // restore finds the settings to use in place of the file f, which cannot be
-// used as it is. An error means the history could not be asked, which passes.
+// used as it is: the newest version of it in the history that can be, or
+// what this server wrote there and has not committed yet, with what can still
+// be read of the file as it is put onto that (salvage.go). An error means the
+// history could not be asked, which passes.
+//
+// The history is searched once for one unusable content and one newest commit
+// of the file: commits of other files do not search it again.
 func (h *healer) restore(f settingsFile) (*restored, error) {
-	key, mtime := stateOf(h.root, f)
-	key += "@" + h.historyMark()
+	state, mtime := stateOf(h.root, f)
+	fast := state + "@" + h.historyMark()
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	if r := h.found[key]; r != nil {
+	if r := h.found[fast]; r != nil {
+		h.mu.Unlock()
 		return r, nil
 	}
-	r, err := h.search(f)
+	h.mu.Unlock()
+	versions, err := h.versions(f)
 	if err != nil {
 		return nil, unavailable(err, "%s cannot be used as it is, and the history of the space could not be read for an earlier version; try again", f.rel)
 	}
-	if r.since == nil {
-		r.since = &SettingsVersion{Time: mtime.UTC()}
+	src := state + "#"
+	if len(versions) > 0 {
+		src += versions[0].Commit
 	}
-	// What this server wrote after the newest usable commit, and has not
-	// committed yet, is newer than that commit.
-	if w, ok := h.wrote[f.rel]; ok && (r.from == nil || w.at.Truncate(time.Second).After(r.from.Time)) {
-		if f.usable(w.text) {
+	h.mu.Lock()
+	r := h.bySrc[src]
+	w, written := h.wrote[f.rel]
+	h.mu.Unlock()
+	if r == nil {
+		if r, err = h.search(f, versions); err != nil {
+			return nil, unavailable(err, "%s cannot be used as it is, and the history of the space could not be read for an earlier version; try again", f.rel)
+		}
+		if r.since == nil {
+			r.since = &SettingsVersion{Time: mtime.UTC()}
+		}
+		// What this server wrote and has not committed yet is newer than any
+		// commit.
+		if written && f.usable(w.text) {
 			r.text, r.from = w.text, &SettingsVersion{Time: w.at.UTC()}
 		}
+		h.salvageInto(f, r)
+		if h.log != nil {
+			from := "none; the settings start empty"
+			if r.from != nil {
+				from = r.from.Commit
+			}
+			h.log.Warn("a settings file cannot be used; the space goes on with the newest version that can", "file", f.rel, "restored_from", from, "lost", r.lost)
+		}
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if w2, ok := h.wrote[f.rel]; ok != written || (ok && !bytes.Equal(w2.text, w.text)) {
+		return r, nil // written meanwhile: not remembered
 	}
 	if len(h.found) >= 16 {
 		h.found = nil
 	}
+	if len(h.bySrc) >= 16 {
+		h.bySrc = nil
+	}
 	if h.found == nil {
 		h.found = map[string]*restored{}
 	}
-	h.found[key] = r
-	if h.log != nil {
-		from := "none; the settings start empty"
-		if r.from != nil {
-			from = r.from.Commit
-		}
-		h.log.Warn("a settings file cannot be used; the space goes on with the newest version that can", "file", f.rel, "restored_from", from)
+	if h.bySrc == nil {
+		h.bySrc = map[string]*restored{}
 	}
+	h.found[fast], h.bySrc[src] = r, r
 	return r, nil
 }
 
-// search looks through the history of f, newest first.
-func (h *healer) search(f settingsFile) (*restored, error) {
-	r := &restored{}
+// versions are the last maxRestoreLook commits that changed f, newest first.
+func (h *healer) versions(f settingsFile) ([]gitstore.Version, error) {
 	if h.repo == nil {
-		return r, nil
+		return nil, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	repo := h.repo()
 	if repo.Head(ctx) == "" {
-		return r, nil // no commit yet
+		return nil, nil // no commit yet
 	}
 	versions, _, err := repo.FileHistory(ctx, gitstore.HistoryQuery{Start: "HEAD", Path: f.rel, Limit: maxRestoreLook})
-	if err != nil {
-		return nil, err
+	return versions, err
+}
+
+// search looks through versions of f, newest first, for one that can be used.
+// A version where the file is gone because something that is not a folder
+// took the place of a folder above it is not one: the file was not deleted,
+// it could not be read.
+func (h *healer) search(f settingsFile, versions []gitstore.Version) (*restored, error) {
+	r := &restored{}
+	if len(versions) == 0 {
+		return r, nil
 	}
+	h.mu.Lock()
+	h.searches++
+	h.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	repo := h.repo()
 	for _, v := range versions {
 		at := &SettingsVersion{Commit: v.Commit, Time: v.Time.UTC()}
 		if v.Status == 'D' {
+			blocked, err := blockedIn(ctx, repo, v.Commit, v.Path)
+			if err != nil {
+				return nil, err
+			}
+			if blocked {
+				r.since = at
+				continue
+			}
 			// The file was deleted here: no settings, and that is a version too.
 			r.from = at
 			return r, nil
@@ -258,6 +356,21 @@ func (h *healer) search(f settingsFile) (*restored, error) {
 		r.since = at
 	}
 	return r, nil
+}
+
+// blockedIn reports whether a folder above rel is a file or a link in commit.
+func blockedIn(ctx context.Context, repo *gitstore.Repo, commit, rel string) (bool, error) {
+	parts := strings.Split(rel, "/")
+	for i := 1; i < len(parts); i++ {
+		_, _, err := repo.ReadBlob(ctx, commit, strings.Join(parts[:i], "/"))
+		if err == nil {
+			return true, nil
+		}
+		if !errors.Is(err, gitstore.ErrNoSuchFile) {
+			return false, err
+		}
+	}
+	return false, nil
 }
 
 // setOdd says which entries of f cannot be used, as it was just read.
@@ -333,14 +446,22 @@ func copiesOf(root string, f settingsFile) []string {
 // kept is a copy of a file that could not be used: where it is, and of what.
 type kept struct{ rel, file string }
 
-// copiesIn lists the copies kept in the folder dir of the space, by name.
+// copiesIn lists the copies kept in the folder dir of the space, by name;
+// none when dir is not a folder reached through folders. dir "" is the top of
+// the space, where only copies of .petalbook are looked for.
 func copiesIn(root, dir string) []kept {
+	if dir != "" && !isRealDir(root, dir) {
+		return nil
+	}
 	entries, _ := os.ReadDir(filepath.Join(root, filepath.FromSlash(dir)))
 	var out []kept
 	for _, e := range entries {
-		if i := strings.Index(e.Name(), unreadableMark); i > 0 {
-			out = append(out, kept{dir + "/" + e.Name(), dir + "/" + e.Name()[:i]})
+		i := strings.Index(e.Name(), unreadableMark)
+		if i <= 0 || (dir == "" && e.Name()[:i] != ".petalbook") {
+			continue
 		}
+		rel := path.Join(dir, e.Name())
+		out = append(out, kept{rel, path.Join(dir, e.Name()[:i])})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].rel < out[j].rel })
 	return out
@@ -394,6 +515,10 @@ func sameFile(a, b string) bool {
 // whenever this stops; whoever writes f next replaces the first. What is not
 // a regular file (a link, a folder) is moved away under the new name.
 func (h *healer) keep(f settingsFile, record func(rel string) error) (string, error) {
+	if b, err := wayBlocked(h.root, f.rel); err != nil || b != "" {
+		// clearWay is for that; nothing is moved through it.
+		return "", errors.Join(err, fmt.Errorf("%s is not a folder", b))
+	}
 	abs := filepath.Join(h.root, filepath.FromSlash(f.rel))
 	for _, c := range copiesOf(h.root, f) {
 		if sameFile(abs, filepath.Join(h.root, filepath.FromSlash(c))) {
@@ -426,7 +551,22 @@ func (h *healer) keep(f settingsFile, record func(rel string) error) (string, er
 // directory of the space: they are this server's to tell, not the repository's.
 func (h *healer) noticesFile() string { return filepath.Join(h.stateDir, "settings-restored.json") }
 
+// stateOK reports whether the state directory can be used: one inside the
+// space (under .petalbook, say) is not, through something on its way that is
+// not a folder.
+func (h *healer) stateOK() bool {
+	if rel, err := filepath.Rel(h.root, h.stateDir); err == nil && filepath.IsLocal(rel) {
+		if b, err := wayBlocked(h.root, filepath.ToSlash(rel)+"/x"); err != nil || b != "" {
+			return false
+		}
+	}
+	return true
+}
+
 func (h *healer) readRepairs() []SettingsNotice {
+	if h.stateDir == "" || !h.stateOK() {
+		return nil
+	}
 	data, err := os.ReadFile(h.noticesFile())
 	if err != nil {
 		return nil
@@ -442,34 +582,81 @@ func (h *healer) repaired(f settingsFile, rep *repair, copy string) {
 	now := time.Now().UTC()
 	var made []SettingsNotice
 	if rep.from != nil {
-		made = append(made, SettingsNotice{File: f.rel, Since: rep.from.since, RestoredFrom: rep.from.from, Copy: copy, RepairedAt: &now})
+		made = append(made, SettingsNotice{File: f.rel, Since: rep.from.since, RestoredFrom: rep.from.from, Lost: rep.from.lost, Copy: copy, RepairedAt: &now})
 	}
 	for _, e := range rep.entries {
 		made = append(made, SettingsNotice{File: f.rel, Entry: e, Copy: copy, RepairedAt: &now})
 	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	delete(h.using, f.rel)
-	var list []SettingsNotice
-	for _, o := range h.readRepairs() {
-		if o.Copy != copy {
-			list = append(list, o)
-		}
-	}
-	list = append(list, made...)
-	if len(list) > 100 {
-		list = list[len(list)-100:]
-	}
+	h.mu.Unlock()
 	if h.log != nil {
 		h.log.Warn("a file that could not be used, or entries of it, were put right; the file as it was is kept", "file", f.rel, "entries", rep.entries, "copy", copy)
 	}
-	data, err := json.Marshal(list)
-	if err != nil || h.stateDir == "" {
+	h.noteRepairs(made, copy)
+}
+
+// noteRepairs writes down repairs whose copy is copy. Before the state
+// directory is known (a repair at the start) they wait for it.
+func (h *healer) noteRepairs(made []SettingsNotice, copy string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.stateDir == "" {
+		h.pending = append(h.pending, made...)
+		return
+	}
+	list := h.readRepairs()
+	if len(h.pending) > 0 {
+		list, h.pending = append(list, h.pending...), nil
+	}
+	// What is said again of the same file and copy replaces what was said.
+	again := map[[3]string]bool{}
+	for _, m := range made {
+		again[[3]string{m.File, m.Entry, m.Copy}] = true
+	}
+	var out []SettingsNotice
+	for _, o := range list {
+		if !again[[3]string{o.File, o.Entry, o.Copy}] {
+			out = append(out, o)
+		}
+	}
+	out = append(out, made...)
+	if len(out) > 100 {
+		out = out[len(out)-100:]
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return
+	}
+	// The state directory may be under .petalbook: never written through
+	// something that is not a folder there.
+	if !h.stateOK() {
 		return
 	}
 	tmp := h.noticesFile() + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err == nil {
 		os.Rename(tmp, h.noticesFile())
+	}
+}
+
+// setStateDir is where the notices are kept, known once the space has opened;
+// repairs made before are written down now.
+func (h *healer) setStateDir(dir string) {
+	h.mu.Lock()
+	h.stateDir = dir
+	pending := h.pending
+	h.pending = nil
+	h.mu.Unlock()
+	byCopy := map[string][]SettingsNotice{}
+	var order []string
+	for _, n := range pending {
+		if _, ok := byCopy[n.Copy]; !ok {
+			order = append(order, n.Copy)
+		}
+		byCopy[n.Copy] = append(byCopy[n.Copy], n)
+	}
+	for _, c := range order {
+		h.noteRepairs(byCopy[c], c)
 	}
 }
 
@@ -496,12 +683,12 @@ func (s *Space) SettingsNotices() []SettingsNotice {
 	}
 	sort.Strings(files)
 	for _, rel := range files {
-		if _, err := os.Lstat(filepath.Join(s.root, filepath.FromSlash(rel))); err != nil {
+		if _, _, err := lstatIn(s.root, rel); err != nil {
 			delete(h.using, rel) // gone since it was read
 			continue
 		}
 		r := h.using[rel]
-		out = append(out, SettingsNotice{File: rel, Unreadable: true, Since: r.since, RestoredFrom: r.from})
+		out = append(out, SettingsNotice{File: rel, Unreadable: true, Since: r.since, RestoredFrom: r.from, Lost: r.lost})
 	}
 	for _, f := range []settingsFile{spaceSettings, tagsSettings} {
 		for _, e := range h.odd[f.rel] {
@@ -510,7 +697,7 @@ func (s *Space) SettingsNotices() []SettingsNotice {
 	}
 	// What was put right, for as long as the copy is there.
 	var repairs map[string][]SettingsNotice // read when there is a copy to tell of
-	for _, dir := range []string{".petalbook", typesDir} {
+	for _, dir := range []string{"", ".petalbook", typesDir} {
 		for _, c := range copiesIn(s.root, dir) {
 			if repairs == nil {
 				repairs = map[string][]SettingsNotice{}

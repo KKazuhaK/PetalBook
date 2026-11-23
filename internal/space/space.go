@@ -20,6 +20,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/index"
 )
 
@@ -173,10 +174,48 @@ func Open(opt Options) (*Space, error) {
 	}
 
 	pb := filepath.Join(root, ".petalbook")
+	heal := &healer{root: root, repo: g.r, log: log}
+	// A link or a file where .petalbook, or a folder of it the server writes
+	// in, belongs is put right before anything is written there (see
+	// settingspath.go): what is in its place is moved aside and that is
+	// committed, and the folder is made again with what it had. What is put
+	// back is committed with the first commit.
+	var refilled []string
+	for i := 0; i < len(ownDirs) && firstBlockedOwn(root) != ""; i++ {
+		b := firstBlockedOwn(root)
+		w := wayWriter{
+			record: func(rel string, deleted bool) error {
+				if !deleted {
+					refilled = append(refilled, rel)
+				}
+				return nil
+			},
+			commitNow: func(paths []string) error {
+				id, _ := g.identities(Author{})
+				_, err := g.commitPaths(id, paths)
+				var skipped *gitstore.SkippedError
+				if errors.As(err, &skipped) {
+					err = nil
+				}
+				for _, p := range paths {
+					for j, r := range refilled {
+						if r == p {
+							refilled = append(refilled[:j], refilled[j+1:]...)
+							break
+						}
+					}
+				}
+				return err
+			},
+		}
+		if _, err := heal.clearWay(b+"/x", "", w); err != nil {
+			return nil, fmt.Errorf("%s is not a folder and could not be put right: %w", b, err)
+		}
+	}
 	if err := os.MkdirAll(pb, 0o755); err != nil {
 		return nil, err
 	}
-	var ours []string // files under .petalbook the server made, for the first commit
+	ours := refilled // files under .petalbook the server made, for the first commit
 	var name string
 	if opt.Remote != nil {
 		// A space that follows a remote never makes tracked files of its own
@@ -225,6 +264,7 @@ func Open(opt Options) (*Space, error) {
 	}
 	// Half-written files from a crash.
 	os.RemoveAll(filepath.Join(pb, "tmp"))
+	os.RemoveAll(filepath.Join(root, ".git", "petalbook-tmp"))
 
 	// What an earlier run changed but did not get to commit, and any move it
 	// left half done, before the index looks at the files.
@@ -232,7 +272,17 @@ func Open(opt Options) (*Space, error) {
 	if err != nil {
 		return nil, err
 	}
-	heal := &healer{root: root, stateDir: stateDir, repo: g.r, log: log}
+	if rel, err := filepath.Rel(root, stateDir); err == nil && filepath.IsLocal(rel) {
+		// A state directory inside the space is never written through
+		// something that is not a folder there.
+		jrn.guard = func() error {
+			if b, err := wayBlocked(root, filepath.ToSlash(rel)+"/x"); err != nil || b != "" {
+				return errors.Join(err, fmt.Errorf("%s is not a folder", b))
+			}
+			return nil
+		}
+	}
+	heal.setStateDir(stateDir)
 	recovered := recoverPendingWith(heal, root, recs)
 	for _, r := range recs {
 		if r.Op == "b" || r.Op == "u" {
@@ -287,7 +337,16 @@ func Open(opt Options) (*Space, error) {
 	if opt.Remote != nil {
 		// What the journal says was written but not committed is handled by
 		// initRemote, not by the background committer.
+		for _, p := range refilled {
+			if recovered == nil {
+				recovered = map[string]Author{}
+			}
+			if _, ok := recovered[p]; !ok {
+				recovered[p] = Author{}
+			}
+		}
 		s.cm = newCommitter(g, idle, max, log, jrn, nil)
+		s.cm.setOnCommit(heal.committed)
 		if err := s.initRemote(opt.Remote, recovered); err != nil {
 			s.cm.Close()
 			idx.Close()
@@ -296,6 +355,7 @@ func Open(opt Options) (*Space, error) {
 		return s, nil
 	}
 	s.cm = newCommitter(g, idle, max, log, jrn, recovered)
+	s.cm.setOnCommit(heal.committed)
 	if len(ours) > 0 {
 		recs := make([]jrec, len(ours))
 		for i, p := range ours {

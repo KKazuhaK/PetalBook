@@ -656,22 +656,27 @@ func TestATypeFileThatCannotBeUsedIsRestoredFromTheHistory(t *testing.T) {
 		t.Errorf("what the file was: %v", kept)
 	}
 
-	// Something that is not a folder where the types belong holds no types,
-	// and is put aside when one is made.
+	// Something that is not a folder where the types belong holds the types
+	// the folder had, and is put aside when one is written: the folder is made
+	// again with them.
 	if err := s.Flush(); err != nil {
 		t.Fatal(err)
+	}
+	had, _, err := s.Types()
+	if err != nil || len(had) == 0 {
+		t.Fatalf("%v %v", had, err)
 	}
 	os.RemoveAll(filepath.Join(root, ".petalbook", "types"))
 	if err := os.WriteFile(filepath.Join(root, ".petalbook", "types"), []byte("not a folder\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if types, _, err := s.Types(); err != nil || len(types) != 0 {
+	if types, _, err := s.Types(); err != nil || len(types) != len(had) {
 		t.Errorf("%v %v", types, err)
 	}
 	if _, err := putCurrent(s, "fresh", TypeInput{Title: "Fresh"}); err != nil {
 		t.Fatal(err)
 	}
-	if types, _, err := s.Types(); err != nil || len(types) != 1 {
+	if types, _, err := s.Types(); err != nil || len(types) != len(had)+1 {
 		t.Errorf("%v %v", types, err)
 	}
 	if kept := copiesIn(root, ".petalbook"); len(kept) == 0 || readDisk(t, s, kept[len(kept)-1].rel) != "not a folder\n" {

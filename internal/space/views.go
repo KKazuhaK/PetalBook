@@ -7,8 +7,6 @@ import (
 	"errors"
 	"io/fs"
 	"math/big"
-	"os"
-	"path/filepath"
 	"reflect"
 	"sort"
 	"strconv"
@@ -569,11 +567,11 @@ type tagCache struct {
 	size    int64
 	mtimeNs int64
 	views   map[string][]View
+	blocked string
 }
 
 func (s *Space) tagViews() map[string][]View {
-	abs := filepath.Join(s.root, filepath.FromSlash(tagsFile))
-	fi, err := os.Lstat(abs)
+	fi, blocked, err := lstatIn(s.root, tagsFile)
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
 	if err != nil {
@@ -583,10 +581,10 @@ func (s *Space) tagViews() map[string][]View {
 		s.tagCfg = tagCache{}
 		return nil
 	}
-	if c := s.tagCfg; c.valid && c.mode == fi.Mode() && c.size == fi.Size() && c.mtimeNs == fi.ModTime().UnixNano() {
+	if c := s.tagCfg; c.valid && c.blocked == blocked && c.mode == fi.Mode() && c.size == fi.Size() && c.mtimeNs == fi.ModTime().UnixNano() {
 		return c.views
 	}
-	c := tagCache{valid: true, mode: fi.Mode(), size: fi.Size(), mtimeNs: fi.ModTime().UnixNano()}
+	c := tagCache{valid: true, mode: fi.Mode(), size: fi.Size(), mtimeNs: fi.ModTime().UnixNano(), blocked: blocked}
 	if doc, err := s.loadTags(); err == nil {
 		c.views = viewsOf(doc, "tags", func(k string) string { return k })
 		s.heal.setOdd(tagsSettings, oddEntries(doc, tagsSettings))

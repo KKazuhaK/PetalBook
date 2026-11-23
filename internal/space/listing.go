@@ -1,8 +1,6 @@
 package space
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/KKazuhaK/PetalBook/internal/index"
@@ -26,8 +24,16 @@ func (s *Space) typeInfoCached(name string) (TypeInfo, bool) {
 	if ValidTypeName(name) != nil {
 		return TypeInfo{}, false
 	}
-	abs := filepath.Join(s.root, filepath.FromSlash(typesDir), name+".json")
-	fi, err := os.Lstat(abs)
+	fi, blocked, err := lstatIn(s.root, typesDir+"/"+name+".json")
+	if err == nil && blocked != "" {
+		// Behind something that is not a folder: as restored, not remembered.
+		data, err := s.readTypeFile(name)
+		if err != nil || data == nil {
+			return TypeInfo{}, false
+		}
+		info, _, err := parseType(name, data)
+		return info, err == nil
+	}
 	if err != nil || !fi.Mode().IsRegular() || fi.Size() > MaxTypeFile {
 		return TypeInfo{}, false
 	}

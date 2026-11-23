@@ -414,10 +414,6 @@ func (s *Space) typeNow(name string) (data []byte, from *restored, err error) {
 		return data, nil, nil
 	}
 	if err != nil && !errors.Is(err, errTypeFile) {
-		// Something that is not a folder where the types belong holds none.
-		if ok, derr := s.typeDirOK(); derr == nil && !ok {
-			return nil, nil, nil
-		}
 		return nil, nil, err
 	}
 	if s.heal == nil {
@@ -453,14 +449,15 @@ func (s *Space) asideType(tx *txn, name string, from *restored, entries []string
 
 func (s *Space) readTypeRaw(name string) ([]byte, error) {
 	abs := filepath.Join(s.root, filepath.FromSlash(typesDir), name+".json")
-	fi, err := os.Lstat(abs)
+	fi, blocked, err := lstatIn(s.root, typesDir+"/"+name+".json")
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if !fi.Mode().IsRegular() || fi.Size() > MaxTypeFile {
+	// Behind a link or a file in the place of a folder, it is read as restored.
+	if blocked != "" || !fi.Mode().IsRegular() || fi.Size() > MaxTypeFile {
 		return nil, errTypeFile
 	}
 	f, err := os.Open(abs)
@@ -496,42 +493,33 @@ func (s *Space) typeDirOK() (bool, error) {
 	return true, nil
 }
 
-// typesFolder is the folder of the types as the healer knows it: what is in
-// its place when it is not a folder is put aside like a file that cannot be
-// used.
-var typesFolder = settingsFile{rel: typesDir, bad: errTypeFile, good: func([]byte) bool { return false }}
-
-// makeTypeDir is for a change that writes a type: something that is not a
-// folder where the folder of the types belongs is put aside, in the same
-// change, and the folder is made.
-func (s *Space) makeTypeDir(tx *txn) error {
-	abs := filepath.Join(s.root, filepath.FromSlash(typesDir))
-	if ok, err := s.typeDirOK(); err != nil {
-		return err
-	} else if !ok && s.heal != nil {
-		copy, err := s.heal.keep(typesFolder, func(rel string) error {
-			if err := tx.record(jrec{Op: "t", Path: rel}, jrec{Op: "d", Path: typesDir}); err != nil {
-				return err
-			}
-			tx.touch(rel, typesDir)
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		if err := os.Remove(abs); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-		s.heal.repaired(typesFolder, &repair{entries: []string{"not a folder"}}, copy)
+// makeTypeDir is for a change that writes the type file rel: something that
+// is not a folder where the folder of the types (or .petalbook) belongs is put
+// aside, the folder is made again with the types it had (clearWay), and the
+// copy is returned; "" when the way was clear.
+func (s *Space) makeTypeDir(tx *txn, rel string) (string, error) {
+	copy, err := s.clearWayIn(tx, rel, rel)
+	if err != nil {
+		return "", err
 	}
-	return os.MkdirAll(abs, 0o755)
+	if b, err := wayBlocked(s.root, rel); err != nil || b != "" {
+		return "", errors.Join(err, fmt.Errorf("%s is not a folder", b))
+	}
+	return copy, os.MkdirAll(filepath.Join(s.root, filepath.FromSlash(typesDir)), 0o755)
 }
 
-// typeNames lists the names of the type files, in name order.
+// typeNames lists the names of the type files, in name order. When something
+// that is not a folder is in the place of the folder of the types (or of
+// .petalbook), they are the types the folder had (see settingspath.go).
 func (s *Space) typeNames() ([]string, error) {
-	// Something that is not a folder in its place holds no types.
-	if ok, err := s.typeDirOK(); err != nil || !ok {
+	if ok, err := s.typeDirOK(); err != nil {
 		return nil, err
+	} else if !ok {
+		blocked, err := wayBlocked(s.root, typesDir+"/x")
+		if err != nil || blocked == "" {
+			return nil, err
+		}
+		return s.heal.typeNamesFromHistory(blocked)
 	}
 	entries, err := os.ReadDir(filepath.Join(s.root, filepath.FromSlash(typesDir)))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -824,14 +812,22 @@ func (s *Space) PutType(by Author, name, baseRev string, in TypeInput) (TypeInfo
 		}
 		rel := typesDir + "/" + name + ".json"
 		abs := filepath.Join(s.root, filepath.FromSlash(rel))
-		if err := s.makeTypeDir(tx); err != nil {
+		moved, err := s.makeTypeDir(tx, rel)
+		if err != nil {
 			return TypeInfo{}, err
 		}
 		// A file that could not be used, or whose field could not, is kept as
-		// it was beside the one written now.
-		done, err := s.asideType(tx, name, from, replacedFields)
-		if err != nil {
-			return TypeInfo{}, err
+		// it was beside the one written now; behind a folder that was not one,
+		// what was in the place of the folder is that copy.
+		done := func() {
+			if s.heal != nil && (from != nil || len(replacedFields) > 0) {
+				s.heal.repaired(typeSettings(name), &repair{from, replacedFields}, moved)
+			}
+		}
+		if moved == "" {
+			if done, err = s.asideType(tx, name, from, replacedFields); err != nil {
+				return TypeInfo{}, err
+			}
 		}
 		if err := tx.record(jrec{Op: "t", Path: rel}); err != nil {
 			return TypeInfo{}, err
@@ -861,11 +857,20 @@ func (s *Space) DeleteType(by Author, name, baseRev string) error {
 		return err
 	}
 	_, err := mutate(s, by, func(tx *txn) (struct{}, error) {
+		rel := typesDir + "/" + name + ".json"
+		// Behind something that is not a folder, the folder is made again with
+		// the types it had first (the one deleted among them, as it is read).
+		if b, err := wayBlocked(s.root, rel); err != nil {
+			return struct{}{}, err
+		} else if b != "" {
+			if _, err := s.clearWayIn(tx, rel, ""); err != nil {
+				return struct{}{}, err
+			}
+		}
 		dirOK, err := s.typeDirOK()
 		if err != nil {
 			return struct{}{}, err
 		}
-		rel := typesDir + "/" + name + ".json"
 		abs := filepath.Join(s.root, filepath.FromSlash(rel))
 		// A link in its place is removed as a link, never followed.
 		_, err = os.Lstat(abs)

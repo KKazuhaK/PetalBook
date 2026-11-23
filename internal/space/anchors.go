@@ -965,10 +965,11 @@ func loadSettingsAt(root string, f settingsFile) (*yaml.Node, error) {
 }
 
 // readSettingsAt is the text of a settings file: nil when there is no file,
-// f.bad for one that is not a regular file or is larger than the server reads.
+// f.bad for one that is not a regular file, is larger than the server reads,
+// or is behind something on its way that is not a folder (see settingspath.go).
 func readSettingsAt(root string, f settingsFile) ([]byte, error) {
 	abs := filepath.Join(root, filepath.FromSlash(f.rel))
-	fi, err := os.Lstat(abs)
+	fi, blocked, err := lstatIn(root, f.rel)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
@@ -976,7 +977,7 @@ func readSettingsAt(root string, f settingsFile) ([]byte, error) {
 		return nil, err
 	}
 	// A link in the way could lead out of the space.
-	if !fi.Mode().IsRegular() || fi.Size() > int64(f.max) {
+	if blocked != "" || !fi.Mode().IsRegular() || fi.Size() > int64(f.max) {
 		return nil, f.bad
 	}
 	file, err := os.Open(abs)

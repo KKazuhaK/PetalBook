@@ -105,14 +105,14 @@ type configCache struct {
 	bindings []Binding
 	byFolder map[string]string
 	views    map[string][]View // by folder, only those that have some
+	blocked  string            // what is in the way of the file, when something is
 }
 
 // config returns what is known of the settings file, read again when the file
 // looks different. A file that cannot be used is read as the settings restored
 // for it (see restore.go).
 func (s *Space) config() configCache {
-	abs := filepath.Join(s.root, filepath.FromSlash(spaceFile))
-	fi, err := os.Lstat(abs)
+	fi, blocked, err := lstatIn(s.root, spaceFile)
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
 	if errors.Is(err, fs.ErrNotExist) {
@@ -124,11 +124,11 @@ func (s *Space) config() configCache {
 		s.cfg = configCache{}
 		return s.cfg
 	}
-	if c := s.cfg; c.valid && c.mode == fi.Mode() && c.size == fi.Size() && c.mtimeNs == fi.ModTime().UnixNano() {
+	if c := s.cfg; c.valid && c.blocked == blocked && c.mode == fi.Mode() && c.size == fi.Size() && c.mtimeNs == fi.ModTime().UnixNano() {
 		return c
 	}
 	doc, err := s.loadSettings(spaceSettings)
-	c := configCache{valid: true, mode: fi.Mode(), size: fi.Size(), mtimeNs: fi.ModTime().UnixNano()}
+	c := configCache{valid: true, mode: fi.Mode(), size: fi.Size(), mtimeNs: fi.ModTime().UnixNano(), blocked: blocked}
 	if err == nil {
 		c.bindings = bindingsOf(doc)
 		c.byFolder = make(map[string]string, len(c.bindings))
@@ -201,7 +201,7 @@ func (s *Space) editSpaceFile(tx *txn, edit func(root *yaml.Node) (changed bool,
 		}
 		tx.touch(rel)
 		return nil
-	})
+	}, func() (string, error) { return s.clearWayIn(tx, spaceFile, spaceFile) })
 	s.cfgMu.Lock()
 	s.cfg = configCache{}
 	s.cfgMu.Unlock()
@@ -248,7 +248,9 @@ func planSpaceYAMLWith(h *healer, root, name string, edit func(root *yaml.Node) 
 // without a Space: before runs just ahead of the write of each file that is
 // written, when there is something to write. It returns the files written:
 // space.yml, and the copy of a file that could not be used, put aside first.
-func editSpaceYAML(h *healer, root, name, tmpDir string, edit func(root *yaml.Node) (bool, error), before func(rel string) error) ([]string, error) {
+// clear puts right a folder on the way that is not one (clearWay); without
+// it, nothing is written through such a thing.
+func editSpaceYAML(h *healer, root, name, tmpDir string, edit func(root *yaml.Node) (bool, error), before func(rel string) error, clear func() (string, error)) ([]string, error) {
 	data, changed, rep, err := planSpaceYAMLWith(h, root, name, edit)
 	if err != nil || !changed {
 		return nil, err
@@ -258,7 +260,18 @@ func editSpaceYAML(h *healer, root, name, tmpDir string, edit func(root *yaml.No
 	}
 	var written []string
 	kept := ""
-	if rep != nil && h != nil {
+	blocked, err := wayBlocked(root, spaceFile)
+	switch {
+	case err != nil:
+		return nil, err
+	case blocked != "" && clear == nil:
+		return nil, unavailable(nil, "%s is not a folder; it is put right by the next change", blocked)
+	case blocked != "":
+		if kept, err = clear(); err != nil {
+			return nil, err
+		}
+		written = append(written, kept)
+	case rep != nil && h != nil:
 		if kept, err = h.keep(spaceSettings, before); err != nil {
 			return nil, err
 		}
@@ -619,7 +632,7 @@ func (s *Space) editBindings(tx *txn, edit func(root *yaml.Node) (bool, error)) 
 // moved only if the folder is at its new place and no longer at the old one,
 // and a deleted folder's are dropped only if the folder is not there.
 func recoverBindings(h *healer, root string, recs []jrec) (written []string) {
-	tmp := filepath.Join(root, ".petalbook", "tmp")
+	tmp := tmpDirAt(root)
 	gone := func(rel string) bool {
 		_, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel)))
 		return errors.Is(err, fs.ErrNotExist)
@@ -651,7 +664,7 @@ func recoverBindings(h *healer, root string, recs []jrec) (written []string) {
 		// it are written with the edit, as when a change is made (see
 		// restore.go). Each record is looked at once, and the edit costs no more
 		// than the file is large, so a file cannot keep the space from opening.
-		paths, err := editSpaceYAML(h, root, "", tmp, edit, nil)
+		paths, err := editSpaceYAML(h, root, "", tmp, edit, nil, nil)
 		written = append(written, paths...)
 		if _, refused := settingsReason(err); !refused {
 			if err != nil {

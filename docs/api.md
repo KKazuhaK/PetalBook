@@ -1104,8 +1104,7 @@ file) is treated as below, like the two settings files: it is read as its
 newest version in the history that can be used (with none, there is no such
 type), the next change of the type writes it and keeps the file as it was as
 `.petalbook/types/{name}.json.unreadable-{time}`, and so does deleting the
-type. Something that is not a folder where `.petalbook/types` belongs holds no
-types and is put aside the same way when a type is made. A field whose schema
+type. A field whose schema
 is not an object is kept as it is until a request gives the field a kind;
 then the schema is written anew and the file as it was is kept.
 
@@ -1117,10 +1116,24 @@ refused because of it:
 
 - **Reading.** The settings are those of the newest version of the file in the
   history of the space that can be used, looked for among the last 50 commits
-  that changed the file; with none, the space has no settings, like one that
-  never had the file. Bindings, views and colours are read from that version
-  until the file is put right. What was found is remembered for the file as it
-  is, so the history is searched once, not for every request.
+  that changed the file, in the order of the commits (the clocks of the
+  machines that made them are never compared); with none, the space has no
+  settings, like one that never had the file. What the server wrote itself
+  and has not committed yet counts as newer than any commit, until it is
+  committed. Onto that version goes what can still be read of the file as it
+  is, entry by entry, the file winning for each entry it has: in a file that
+  is YAML but cannot be used, every top-level key and every entry of
+  `folders` or `tags` that can be used by itself (with its aliases written
+  out); in a file that is not YAML, every top-level key, and every entry of
+  `folders` or `tags`, that reads by itself when the text is cut by its
+  indentation. So thirty new bindings and one typo keep the thirty; only the
+  entry with the typo is not read (`lost` in the notice), and it is in the
+  file and in the copy kept of it. A type file is one JSON document and is
+  read as the version restored. Bindings, views and colours are read from
+  those settings until the file is put right. What was found is remembered for
+  the file as it is and the newest commit that changed it, so the history is
+  searched once, not for every request, and not again for commits of other
+  files.
 - **Repair.** The next change that writes the file (a binding, views, a
   colour, a folder with settings moved or deleted, a type deleted) is made on
   those settings and written in its place. In the same commit the file as it
@@ -1136,6 +1149,22 @@ refused because of it:
   it, in the restored settings.
 - **After a crash.** The start that finishes an interrupted move or delete
   goes the same way: it restores, writes and keeps the copy, and commits both.
+- **A link or a file in the place of a folder.** Nothing is ever read or
+  written through a link, or a file, where `.petalbook` or `.petalbook/types`
+  belongs (a pull can bring one, or a person put it there), wherever it leads.
+  The settings files and types behind it read as restored from the history
+  above (the commit that put the link there does not count as deleting them),
+  and the types listed are those the folder had. The next change that writes
+  there moves what is in the place of the folder aside, inside the space, as
+  `.petalbook.unreadable-{time}` (or `.petalbook/types.unreadable-{time}`),
+  commits that, makes the folder again with everything it had (the settings
+  as they are read, the other files as they were), and makes the change in
+  it. A link where `.petalbook`, `.petalbook/tmp` or `.petalbook/cache` belongs
+  (the server's own folders, where it keeps its temporary files and, by
+  default, its index and journal) is put right that way at once: when the
+  space starts, and in a space that follows a remote, right after the pull
+  that brought it, committed and pushed. Until then, no temporary file, index,
+  journal or notice is written through it.
 
 What happened is told in `settingsNotices` of `GET /api/spaces/{space}/types`,
 to callers who have `manage` in the space (in single-user mode, always); for
@@ -1162,7 +1191,14 @@ in the folder and is in no commit; `time` is then when it was changed).
 `restoredFrom` is the version the settings were taken from; it is absent when
 the history has none that can be used and the settings started empty, and has
 no `commit` when they are what the server itself wrote last and had not
-committed yet. `copy` is where the file as it was is kept. A notice of a
+committed yet. `lost` lists the entries of the file as it is (was) that could
+not be read even one by one, so they are not in the settings in use and are
+only in the file and its copy (`"*"`: nothing of it could be read, as for a
+file more than four times as large as the server reads); it is absent when
+everything that could be read was kept. `copy` is where the file as it was is
+kept. A link or a file that was in the place of `.petalbook` or
+`.petalbook/types` has a notice with that `file`, `entry`
+`"not a folder"` and its `copy`. A notice of a
 repair stays for as long as its copy is in the space: deleting the copy puts
 the notice away. `since`, `restoredFrom` and `repairedAt` of a repair are kept
 by the server that made it; a copy that came with a pull from another server

@@ -252,7 +252,9 @@ func (s *Space) editTagsFile(tx *txn, edit func(root *yaml.Node) (changed bool, 
 	// A file that could not be used is put aside before the restored settings
 	// with this change take its place.
 	kept := ""
-	if rep != nil && s.heal != nil {
+	if kept, err = s.clearWayIn(tx, tagsFile, tagsFile); err != nil {
+		return err
+	} else if kept == "" && rep != nil && s.heal != nil {
 		if kept, err = s.heal.keep(tagsSettings, record); err != nil {
 			return err
 		}
