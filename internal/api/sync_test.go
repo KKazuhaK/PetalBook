@@ -411,6 +411,48 @@ func TestSyncHeadsOfATokenAndOfAColdSpace(t *testing.T) {
 	})
 }
 
+// After a restart the head of a space that was closed cleanly is read from its
+// index, without opening the space: a device with many spaces does not make the
+// server open each of them.
+func TestSyncHeadsAfterARestartOpenNoSpace(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		tm := newTeam(t, a)
+		tm.editor.do("POST", "/api/spaces/"+tm.sid+"/pages", map[string]any{"meta": map[string]any{"title": "冷"}, "body": "x\n"}).want(t, 201, "")
+		sp, release, err := a.mgr.Acquire(context.Background(), tm.sid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		head := sp.Head()
+		release()
+		// The server stops.
+		if err := a.mgr.Close(); err != nil {
+			t.Fatal(err)
+		}
+		opened := 0
+		m2, err := spaces.NewAccounts(spaces.Options{Store: a.st, DataDir: a.dir, Committer: "PetalBook Test <svc@example.test>", OpenHook: func(string) { opened++ }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer m2.Close()
+		for range 2 {
+			hs, err := m2.Heads(context.Background(), tm.ownerID, []string{tm.sid})
+			if err != nil || hs[tm.sid].Head != head || opened != 0 || m2.OpenCount() != 0 {
+				t.Fatalf("%v %v want %q, opened %d", hs, err, head, opened)
+			}
+		}
+		// The head is the one the space has when it is opened.
+		sp, release, err = m2.Acquire(context.Background(), tm.sid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer release()
+		if sp.Head() != head {
+			t.Fatalf("opened at %s, the stored head was %s", sp.Head(), head)
+		}
+	})
+}
+
 func TestSingleUserSync(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

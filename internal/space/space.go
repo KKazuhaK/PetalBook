@@ -150,6 +150,16 @@ type ConflictError struct{ Current *Page }
 
 func (e *ConflictError) Error() string { return "the page was changed by someone else" }
 
+// indexFile is the name of a space's index in its state directory.
+const indexFile = "index.db"
+
+// StoredHead is the change cursor the index of the closed space with this state
+// directory was left at, read without opening the space (see index.StoredHead):
+// "" when there is none to give.
+func StoredHead(stateDir string) (string, error) {
+	return index.StoredHead(filepath.Join(stateDir, indexFile))
+}
+
 // Open prepares the directory (git init, .petalbook/, space.yml), opens the
 // index, brings it up to date with the files and starts the committer. On a
 // large space with no usable index this takes as long as a full rebuild.
@@ -344,7 +354,7 @@ func Open(opt Options) (*Space, error) {
 		log.Info("recovered uncommitted changes from the journal", "paths", len(recovered))
 	}
 
-	idx, err := index.Open(filepath.Join(stateDir, "index.db"), root)
+	idx, err := index.Open(filepath.Join(stateDir, indexFile), root)
 	if err != nil {
 		return nil, err
 	}

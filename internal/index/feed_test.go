@@ -569,3 +569,53 @@ func TestFeedNewEpochWhenTheStartupSyncFindsChanges(t *testing.T) {
 		t.Fatalf("%+v", items)
 	}
 }
+
+// The head a closed index was left at is read without opening it: nothing is
+// created where there is no index, an index that was not closed cleanly has no
+// head to give, and the read leaves nothing that a later open would trip on.
+func TestStoredHeadOfAClosedIndex(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "none", "index.db")
+	if h, err := StoredHead(missing); err != nil || h != "" {
+		t.Fatalf("no index: %q %v", h, err)
+	}
+	if _, err := os.Stat(filepath.Dir(missing)); !os.IsNotExist(err) {
+		t.Fatalf("the read made something: %v", err)
+	}
+
+	p := filepath.Join(dir, "state", "index.db")
+	x, err := Open(p, "/space")
+	if err != nil {
+		t.Fatal(err)
+	}
+	putPage(t, x, "a.md", pageID(1), "A")
+	// Open: it may change at any moment, and its next open after a crash is a new epoch.
+	if h, err := StoredHead(p); err != nil || h != "" {
+		t.Fatalf("an open index: %q %v", h, err)
+	}
+	head := x.Head()
+	x.Close()
+	for range 2 {
+		h, err := StoredHead(p)
+		if err != nil || h != head {
+			t.Fatalf("closed: %q %v, want %s", h, err, head)
+		}
+	}
+	// A reader of a WAL database may leave the log (empty) and the shared memory, as any reader does; never a change.
+	if fi, err := os.Stat(p + "-wal"); err == nil && fi.Size() != 0 {
+		t.Fatalf("the read wrote %d bytes to the log", fi.Size())
+	}
+	// A later open is not disturbed: same head, writes go on.
+	x, err = Open(p, "/space")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer x.Close()
+	if x.Head() != head {
+		t.Fatalf("head %s after the read, was %s", x.Head(), head)
+	}
+	putPage(t, x, "b.md", pageID(2), "B")
+	if items, _ := changesAll(t, x, head, 10); len(items) != 1 {
+		t.Fatalf("%+v", items)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -687,4 +688,62 @@ func (x *Index) Changes(since string, limit int) (ChangeList, error) {
 		out.Next = cursorOf(m.epoch, m.seq)
 	}
 	return out, nil
+}
+
+// StoredHead is the head the closed index at dbPath was left at, read from its
+// meta table on a read-only connection: no write, no walk, about a millisecond.
+// It is "" when there is no index there, when the index is open or was not
+// closed cleanly (its next open starts a new epoch), or when it is of another
+// schema version (its next open builds it again).
+func StoredHead(dbPath string) (string, error) {
+	if _, err := os.Stat(dbPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", err
+	}
+	if strings.ContainsAny(dbPath, "?#") {
+		return "", nil
+	}
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_pragma=busy_timeout(1000)")
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return "", err
+	}
+	if version != schemaVersion {
+		return "", nil
+	}
+	rows, err := db.Query(`SELECT key, value FROM meta WHERE key IN ('epoch', 'seq', 'clean')`)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var epoch, seq, clean string
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return "", err
+		}
+		switch k {
+		case "epoch":
+			epoch = v
+		case "seq":
+			seq = v
+		case "clean":
+			clean = v
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	n, ok := parseNumber(seq)
+	if clean != "1" || !ok || !isEpoch(epoch) {
+		return "", nil
+	}
+	return cursorOf(epoch, n), nil
 }

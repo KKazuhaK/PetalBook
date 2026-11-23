@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/KKazuhaK/PetalBook/internal/perm"
+	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
@@ -13,8 +14,11 @@ import (
 // space, pulls a remote or touches the disk: a space that is open answers its
 // own head (an atomic read), a space that was closed answers the head it had
 // when it closed (remembered by closing, bounded by the number of spaces), and
-// a space that has not been open since the server started has no head to give
-// ("" : the client asks for its changes, which opens it).
+// a space that has not been open since the server started answers the head its
+// index was closed at, read from the index file read-only (about a millisecond,
+// once: it is remembered as if the space had closed). A space without an index,
+// or whose index was not closed cleanly, has no head to give ("": the client
+// asks for its changes, which opens it).
 
 // maxRememberedHeads bounds the table of heads of closed spaces (spaces are
 // few; this is a safety net).
@@ -48,8 +52,7 @@ func openID(open map[string]*opening, e *opening) string {
 type SpaceHead struct {
 	// Perms are what the user may do in the space.
 	Perms perm.Set
-	// Head is the change cursor ("" when the server has not had the space open
-	// since it started).
+	// Head is the change cursor ("" when there is none to give: see above).
 	Head string
 	// Disabled: an administrator has switched the space off.
 	Disabled bool
@@ -58,7 +61,7 @@ type SpaceHead struct {
 // Heads returns, for each of the spaces ids that the user is a member of, what
 // they may do there and the head it is at. A space the user is no member of is
 // not in the answer. The membership comes from the cached list (one query on a
-// miss, as everywhere), the head from memory.
+// miss, as everywhere), the head from memory, or once from the closed index.
 func (m *Manager) Heads(ctx context.Context, userID string, ids []string) (map[string]SpaceHead, error) {
 	out := make(map[string]SpaceHead, len(ids))
 	if m.single != nil {
@@ -76,6 +79,40 @@ func (m *Manager) Heads(ctx context.Context, userID string, ids []string) (map[s
 		return nil, err
 	}
 	m.loadDisabled(ctx) // on failure nothing is shown as disabled; Open still refuses
+	cold := m.heads0(cells, ids, out)
+	if len(cold) == 0 {
+		return out, nil
+	}
+	// Read outside the lock: it touches the disk.
+	stored := make(map[string]string, len(cold))
+	for _, id := range cold {
+		_, state := m.paths(id)
+		h, err := space.StoredHead(state)
+		if err != nil {
+			m.log.Warn("reading the head of a closed space", "space", id, "error", err)
+			continue
+		}
+		stored[id] = h
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, h := range stored {
+		if h == "" {
+			continue
+		}
+		e := out[id]
+		e.Head = h
+		out[id] = e
+		// Remembered unless the space was opened, or closed with a newer head, meanwhile.
+		if m.open[id] == nil && m.heads[id] == "" {
+			m.rememberHead(id, h)
+		}
+	}
+	return out, nil
+}
+
+// heads0 fills out from memory and returns the spaces whose head is not there.
+func (m *Manager) heads0(cells []spaceCell, ids []string, out map[string]SpaceHead) (cold []string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, id := range ids {
@@ -95,8 +132,11 @@ func (m *Manager) Heads(ctx context.Context, userID string, ids []string) (map[s
 		}
 		if h.Head == "" {
 			h.Head = m.heads[id]
+			if h.Head == "" && m.open[id] == nil && !h.Disabled {
+				cold = append(cold, id)
+			}
 		}
 		out[id] = h
 	}
-	return out, nil
+	return cold
 }
