@@ -3,9 +3,12 @@ package api_test
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/auth"
 	"github.com/KKazuhaK/PetalBook/internal/auth/testidp"
@@ -430,3 +433,64 @@ func TestMergeByVerifiedEmailIsStrict(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// countingClient counts the requests that go to a path.
+type countingTransport struct {
+	base http.RoundTripper
+	mu   sync.Mutex
+	n    map[string]int
+}
+
+func (c *countingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	c.mu.Lock()
+	c.n[r.URL.Path]++
+	c.mu.Unlock()
+	return c.base.RoundTrip(r)
+}
+
+func (c *countingTransport) count(path string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.n[path]
+}
+
+func TestADiscoveryDocumentIsKeptAndASignInDoesNotFetchIt(t *testing.T) {
+	t.Parallel()
+	f := newIDPFor(t, "one")
+	f.addUser("alice", testidp.Claims{"sub": "sub-alice", "preferred_username": "alice"})
+	o := providersOpts()
+	counter := &countingTransport{base: anyTLSClient().Transport, n: map[string]int{}}
+	o.httpc = &http.Client{Transport: counter, Timeout: 20 * time.Second}
+	eachAccounts(t, o, func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		const doc = "/.well-known/openid-configuration"
+		before := counter.count(doc)
+		admin.do("POST", "/api/admin/auth/providers", f.providerBody("one", map[string]any{"autoCreate": true})).want(t, 201, "")
+		if counter.count(doc) != before+1 {
+			t.Fatalf("%d fetches to make a provider", counter.count(doc)-before)
+		}
+		c := a.newClient("")
+		if loc := f.signIn2(t, c, "one", "alice", map[string]any{}); loc != "/" {
+			t.Fatal(loc)
+		}
+		if counter.count(doc) != before+1 {
+			t.Fatalf("a sign-in fetched the discovery document: %d", counter.count(doc)-before)
+		}
+		// A restart reads it from the state database, with the identity provider unreachable for discovery.
+		svc2, err := auth.New(context.Background(), auth.Config{Store: a.st, Spaces: a.mgr, PublicURL: testPublic, HTTPClient: o.httpc, Password: fastPasswords, Now: a.clock.Now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc2.SSOBegin(context.Background(), "oidc", "one", auth.BeginParams{}, "203.0.113.1"); err != nil {
+			t.Fatal(err)
+		}
+		if counter.count(doc) != before+1 {
+			t.Fatalf("the restarted server fetched the discovery document: %d", counter.count(doc)-before)
+		}
+		// Refresh fetches it, with the stored secret.
+		r := admin.do("POST", "/api/admin/auth/providers/one/refresh", nil).want(t, 200, "")
+		if r.body["status"].(map[string]any)["ok"] != true || counter.count(doc) != before+2 {
+			t.Fatalf("%s %d", r.raw, counter.count(doc)-before)
+		}
+	})
+}

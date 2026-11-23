@@ -36,11 +36,11 @@ func (g *fakeGitHub) signIn(t *testing.T, c *client, slug, who string, body map[
 
 func TestGitHubSignInNeedsAnOrganisationToCreateAccounts(t *testing.T) {
 	t.Parallel()
-	gh := newFakeGitHub(t)
-	gh.users["member"] = ghFake{ID: 4711, Login: "Octo-Cat", Name: "Octo Cat", Email: "octo@example.test", Verified: true, Orgs: []string{"kazuhahub", "other"}}
-	gh.users["outsider"] = ghFake{ID: 99, Login: "outsider", Orgs: []string{"somewhere"}}
-	gh.users["unverified"] = ghFake{ID: 100, Login: "newbie", Email: "n@example.test", Verified: false, Orgs: []string{"KazuhaHub"}}
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		gh := newFakeGitHub(t) // one per database: the test changes what GitHub says
+		gh.users["member"] = ghFake{ID: 4711, Login: "Octo-Cat", Name: "Octo Cat", Email: "octo@example.test", Verified: true, Orgs: []string{"kazuhahub", "other"}}
+		gh.users["outsider"] = ghFake{ID: 99, Login: "outsider", Orgs: []string{"somewhere"}}
+		gh.users["unverified"] = ghFake{ID: 100, Login: "newbie", Email: "n@example.test", Verified: false, Orgs: []string{"KazuhaHub"}}
 		admin := a.setup("kazuha", pw)
 		admin.do("POST", "/api/admin/auth/providers", gh.body("gh", map[string]any{"autoCreate": true})).want(t, 400, "github_auto_create_needs_org")
 		body := gh.body("gh", map[string]any{"autoCreate": true})

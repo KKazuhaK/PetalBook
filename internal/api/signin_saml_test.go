@@ -363,9 +363,8 @@ func TestSAMLEndpoints(t *testing.T) {
 
 func TestSAMLProviderFromMetadataAddress(t *testing.T) {
 	t.Parallel()
-	idp := newFakeSAML(t, false)
-	other := newFakeSAML(t, false)
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		idp, other := newFakeSAML(t, false), newFakeSAML(t, false) // one pair per database: the test shuts one down
 		a.clock.Advance(time.Since(a.clock.Now()))
 		admin := a.setup("kazuha", pw)
 		b := idp.body("byurl", nil)

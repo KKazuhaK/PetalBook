@@ -505,6 +505,9 @@ type built struct {
 	changed []string
 	refetch bool
 	metaErr error
+	// curSecret is the stored secret, used for discovery when none is given now.
+	curSecret string
+	secretSet bool
 }
 
 var providerMu sync.Mutex // serialises changes: the checks and the write are one step
@@ -527,7 +530,7 @@ func (s *Service) applyInput(cur *providerRT, in ProviderInput, rows []store.Pro
 			return nil, providerInvalid("name is required")
 		}
 	} else {
-		b.row, b.cfg = cur.row, cur.cfg
+		b.row, b.cfg, b.curSecret = cur.row, cur.cfg, cur.secret
 		b.cfg.Scopes = slices.Clone(cur.cfg.Scopes)
 		b.cfg.Organizations = slices.Clone(cur.cfg.Organizations)
 		if in.Slug != nil && *in.Slug != cur.row.Slug || in.Kind != nil && *in.Kind != cur.row.Kind {
@@ -590,7 +593,7 @@ func (s *Service) applyInput(cur *providerRT, in ProviderInput, rows []store.Pro
 	}
 	secretSet := func(v *string) {
 		if v != nil {
-			b.secret = *v
+			b.secret, b.secretSet = *v, true
 			mark("clientSecret")
 		}
 	}
@@ -1049,7 +1052,7 @@ func (s *Service) RefreshProvider(ctx context.Context, slug string) (*ProviderVi
 
 // refresh fetches the document of a stored provider and records how it went.
 func (s *Service) refresh(ctx context.Context, cur *providerRT) error {
-	b := &built{row: cur.row, cfg: cur.cfg}
+	b := &built{row: cur.row, cfg: cur.cfg, curSecret: cur.secret}
 	b.row.Cache = ""
 	rt := s.fetchInto(ctx, b)
 	err := b.metaErr
@@ -1146,7 +1149,12 @@ func redirectPath(row store.ProviderRow) string {
 	return "/api/auth/" + row.Kind + "/" + row.Slug + "/callback"
 }
 
-func (b *built) secretFor() string { return b.secret }
+func (b *built) secretFor() string {
+	if b.secretSet || b.secret != "" {
+		return b.secret
+	}
+	return b.curSecret
+}
 
 func (b *built) setStatus(rt *providerRT) {
 	b.row.StatusOK, b.row.StatusChecked, b.row.StatusMessage = rt.statusOK, rt.statusChecked, rt.statusMessage
