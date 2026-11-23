@@ -5,8 +5,12 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 SPACE   ?= ./space
 
-.PHONY: build web release test test-postgres test-casefold vet run clean contract contract-postgres \
-	fmt-check tidy-check actionlint vuln check-go check-web check check-full cross-compile
+# Every Go package with tests but the two that "test-index" and "test-space" run.
+REST_PKGS = $(shell go list ./cmd/... ./internal/... | awk '!/\/internal\/(index|space)$$/')
+
+.PHONY: build web release test test-full test-index test-space test-rest test-postgres test-casefold vet run clean \
+	contract contract-postgres fmt-check tidy-check actionlint vuln check-go check-go-rest check-web check-web-static check check-full \
+	cross-compile web-typecheck web-lint web-test
 
 # Go binary only, no Node needed: it serves the API, and the web app is run
 # with its dev server. "make release" builds the one-program version.
@@ -26,11 +30,31 @@ release: web
 	cp -R web/dist/. internal/webui/dist/
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o petalbook ./cmd/petalbook
 
+# Under the race detector a few tests use smaller sizes (see raceDetector in
+# internal/index and internal/space): this is the run for pull requests.
 test:
 	go test -race ./cmd/... ./internal/...
 
-# The same tests, with the state-database ones also run on PostgreSQL in a
-# throwaway cluster (needs initdb, pg_ctl and psql on PATH).
+# The same tests without the race detector, so that those tests run at their
+# full size. It is quick, and is what main runs beside "test".
+test-full:
+	go test ./cmd/... ./internal/...
+
+# "test" in three parts that together are all of it, so that CI runs them on
+# machines of their own: the two packages that take longest, and the rest.
+test-index:
+	go test -race ./internal/index
+
+test-space:
+	go test -race ./internal/space
+
+test-rest:
+	go test -race $(REST_PKGS)
+
+# The tests of the packages that use the state database (the ones that import
+# internal/store/storetest), run on SQLite and on PostgreSQL in a throwaway
+# cluster (needs initdb, pg_ctl and psql on PATH). The other packages never
+# read the database, so running them again would prove nothing.
 test-postgres:
 	bash scripts/test-postgres.sh
 
@@ -93,18 +117,35 @@ vuln:
 	go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
 # All the Go checks that need nothing but a Go toolchain (SQLite only).
-check-go: fmt-check tidy-check vet
-	go test -race ./cmd/... ./internal/...
+check-go: fmt-check tidy-check vet test
 
-# The web app's typecheck, lint and tests.
-check-web: web/node_modules/.package-lock.json
+# The same without the two slowest packages, which CI runs on machines of their
+# own (test-index, test-space): the Go checks of the third machine.
+check-go-rest: fmt-check tidy-check vet test-rest
+
+# The web app's typecheck, lint and tests (CI runs the first two and the tests
+# on machines of their own).
+web-typecheck: web/node_modules/.package-lock.json
 	npm --prefix web run typecheck
+
+web-lint: web/node_modules/.package-lock.json
 	npm --prefix web run lint
+
+web-test: web/node_modules/.package-lock.json
 	npm --prefix web test
 
+check-web: web-typecheck web-lint web-test
+
+# The typecheck and lint, without the tests.
+check-web-static: web-typecheck web-lint
+
 # The presubmit: what a pull request must pass, and what to run before
-# pushing. No PostgreSQL, no root, no Docker.
-check: check-go vuln check-web actionlint
+# pushing. No PostgreSQL, no root, no Docker. The Go and web checks run side by
+# side (scripts/lanes.sh), each target's output comes whole when it ends, and a
+# table of how long each took closes the run. "make check-go check-web vuln
+# actionlint" runs the same checks one after the other.
+check:
+	@bash scripts/lanes.sh go='fmt-check tidy-check vet test' web='web-typecheck web-lint web-test' vuln actionlint
 
 # The tests on a case-folding tmpfs, the way macOS and Windows treat file
 # names (Linux only, needs a kernel with tmpfs casefold and user namespaces).
@@ -123,5 +164,14 @@ cross-compile:
 	done
 
 # The postsubmit: everything main runs after a merge. Needs the PostgreSQL
-# tools (initdb, pg_ctl, psql) and a Linux kernel with tmpfs casefold.
-check-full: check test-postgres test-casefold release contract contract-postgres cross-compile
+# tools (initdb, pg_ctl, psql) and a Linux kernel with tmpfs casefold. Like
+# "check" it runs in lanes: first the checks, the full-size tests, PostgreSQL and
+# the case-folding file system side by side, then the release build (which puts
+# the web app into internal/webui, so it must not run beside the Go tests) with the
+# contract tests that use its binary, and the cross-compile.
+check-full:
+	@bash scripts/lanes.sh \
+	  go='fmt-check tidy-check vet test test-full' web='web-typecheck web-lint web-test' vuln actionlint \
+	  test-postgres test-casefold \
+	  -- release='release contract contract-postgres' cross-compile
+
