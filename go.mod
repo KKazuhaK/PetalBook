@@ -2,6 +2,9 @@ module github.com/KKazuhaK/PetalBook
 
 go 1.27
 
+// The web app's npm packages are not Go packages, even when one ships a .go file.
+ignore ./web/node_modules
+
 require (
 	github.com/KazuhaHub/authcore v0.6.3-0.20261106114224-f3886de2dcef
 	github.com/go-jose/go-jose/v4 v4.1.9
