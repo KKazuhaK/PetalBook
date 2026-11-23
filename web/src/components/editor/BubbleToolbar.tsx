@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { normalizeUrl } from '@/lib/url'
 import { t } from '@/i18n'
 import { resolveAddressIn } from './pageFiles'
+import { pageLinksOf } from './pageLinks'
 
 const panel = 'flex items-center gap-0.5 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10'
 
@@ -129,10 +130,13 @@ export function SelectionBubble({ editor }: { editor: Editor }) {
 // Appears when the cursor rests inside a link: change the address, open it,
 // or take the link off (the text stays).
 export function LinkPopover({ editor }: { editor: Editor }) {
-  const { href } = useEditorState({
+  const { href, title } = useEditorState({
     editor,
-    selector: ({ editor: e }) => ({ href: (e.getAttributes('link').href as string | undefined) ?? '' }),
+    selector: ({ editor: e }) => ({ href: (e.getAttributes('link').href as string | undefined) ?? '', title: (e.getAttributes('link').title as string | null | undefined) ?? null }),
   })
+  // A link to a page of the space opens that page in the app.
+  const pageLinks = pageLinksOf(editor)
+  const isPage = !!pageLinks && href !== '' && pageLinks.isPage(href)
   return (
     <BubbleMenu
       editor={editor}
@@ -142,19 +146,25 @@ export function LinkPopover({ editor }: { editor: Editor }) {
     >
       <div className={panel}>
         <UrlInput key={href} editor={editor} initial={href} />
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          // The address is kept as written in the page; a file of the space is opened through the files endpoint.
-          render={<a href={resolveAddressIn(editor, href)} target="_blank" rel="noopener noreferrer" />}
-          title={t.link.open}
-          aria-label={t.link.open}
-          className="text-muted-foreground"
-          nativeButton={false}
-        >
-          <ExternalLink />
-        </Button>
+        {isPage ? (
+          <Button type="button" variant="ghost" size="icon-sm" onClick={() => pageLinks.openHref(href, title)} title={t.pageLinks.openInApp} aria-label={t.pageLinks.openInApp} className="text-muted-foreground">
+            <ExternalLink />
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            // The address is kept as written in the page; a file of the space is opened through the files endpoint.
+            render={<a href={resolveAddressIn(editor, href)} target="_blank" rel="noopener noreferrer" />}
+            title={t.link.open}
+            aria-label={t.link.open}
+            className="text-muted-foreground"
+            nativeButton={false}
+          >
+            <ExternalLink />
+          </Button>
+        )}
         <Tool label={t.link.remove} onClick={() => editor.chain().focus().extendMarkRange('link').unsetLink().run()}>
           <Link2Off />
         </Tool>
