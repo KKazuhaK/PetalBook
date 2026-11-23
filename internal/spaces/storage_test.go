@@ -59,6 +59,9 @@ func (f *rm) idle(d time.Duration) { f.clk.Advance(d) }
 
 func (f *rm) root(id string) string { r, _ := f.m.paths(id); return r }
 
+// serving opens a manager as the server does: it cleans up at its start.
+func serving(o *Options) { o.Serve = true }
+
 func exists(p string) bool { _, err := os.Stat(p); return err == nil }
 
 func cacheOf(t *testing.T, st *store.Store, id string) string {
@@ -489,7 +492,7 @@ func TestACrashAtEveryStepOfAnEvictionLeavesAGoodSpace(t *testing.T) {
 				// The process goes away here; the next one starts from what is on disk.
 				f.m.Close()
 				crash = ""
-				m2 := f.open()
+				m2 := f.open(serving)
 				h, err := m2.Open(ctx, f.user, in.ID)
 				if err != nil {
 					t.Fatalf("the space does not open after a crash at %s: %v", step, err)
@@ -549,7 +552,7 @@ func TestACrashInTheMiddleOfARestoreLeavesNoHalfClone(t *testing.T) {
 				// The index-only reads still work, and a restart restores it.
 				f.m.Close()
 				crash = ""
-				m2 := f.open()
+				m2 := f.open(serving)
 				ih, err := m2.OpenIndex(ctx, f.user, in.ID)
 				if err != nil {
 					t.Fatal(err)
@@ -810,7 +813,7 @@ func TestTheIdleSpacesAreOpenedByIndexAfterARestartToo(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.m.Close()
-		m2 := f.open()
+		m2 := f.open(serving)
 		if m2.CacheState(store.CacheEvicted, true, in.ID) != "evicted" {
 			t.Fatal()
 		}

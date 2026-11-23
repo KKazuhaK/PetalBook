@@ -886,8 +886,9 @@ When a step fails:
   Codes: `409 github_repo_not_in_installation`, `502 github_push_failed`,
   `500 internal` (the transaction failed).
 - A crash between steps 3 and 6 is the same failure without an answer: the
-  directory on disk has no record and no one sees it (the next start removes
-  it once it is a quarter of an hour old), and the empty repository is on
+  directory on disk has no record and no one sees it (the next start of the
+  server removes it once it is a quarter of an hour old; `petalbook user …`
+  does not), and the empty repository is on
   GitHub, ready for `create: false`.
 
 Two requests for the same name: the second gets `409 github_name_taken`. The
@@ -1282,6 +1283,12 @@ does not work, the restore fails at once: `503 unavailable` with the remote's
 as in "When a GitHub credential stops working"), and the index-only answers
 above go on working. A failed restore leaves no half clone: the clone is made
 in a directory of its own and moved into place when it is complete.
+
+What a crash leaves (an eviction cut short, a restore's directory) is finished
+or removed by the next start of the server, and by nothing else: `petalbook
+user …` run against the data directory of a running server touches none of
+it. The server holds `DATA/serve.lock` while it runs; a second server on the
+same data directory does not start.
 
 Drafts are not affected by any of this: they are in the state database, with
 the rev they started from, and are committed after the restore like any other

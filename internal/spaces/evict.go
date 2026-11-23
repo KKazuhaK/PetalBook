@@ -126,8 +126,8 @@ func (m *Manager) evictHook(step string) error {
 
 // --- what is evicted ---------------------------------------------------------------
 
-// loadEvicted reads which spaces have no clone, and finishes the evictions a
-// crash cut short (see recoverEvictions).
+// loadEvicted reads which spaces have no clone. It changes nothing: what a
+// crash cut short is finished by the server at its start (recoverEvictions).
 func (m *Manager) loadEvicted(ctx context.Context) error {
 	m.ev.mu.Lock()
 	if m.ev.loaded {
@@ -135,9 +135,6 @@ func (m *Manager) loadEvicted(ctx context.Context) error {
 		return nil
 	}
 	m.ev.mu.Unlock()
-	if err := m.recoverEvictions(ctx); err != nil {
-		return err
-	}
 	set, err := store.SpacesInCacheState(ctx, m.opt.Store.Q(), store.CacheEvicted)
 	if err != nil {
 		return err
@@ -159,6 +156,8 @@ func (m *Manager) loadEvicted(ctx context.Context) error {
 
 // recoverEvictions finishes or undoes an eviction that a crash stopped, and
 // removes what such a crash and a failed restore left in the staging folders.
+// It runs only at the start of a server (Options.Serve), which holds the lock
+// of the data directory: no other process can have a restore in progress.
 // A space marked "evicting" whose directory is still there was not touched
 // (everything about it was checked before the mark): it is a normal space
 // again. One whose directory is gone was moved aside: it is evicted, and what

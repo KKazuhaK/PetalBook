@@ -58,6 +58,8 @@ var (
 	ErrBusy = errors.New("the space is in use; try again in a moment")
 	// ErrPersonalSpace: a personal space cannot be transferred or deleted.
 	ErrPersonalSpace = errors.New("a personal space belongs to one person")
+	// ErrDataDirInUse: another server runs on this data directory.
+	ErrDataDirInUse = errors.New("another server uses this data directory (DATA/serve.lock is held)")
 	// ErrUserDisabled: the user cannot sign in, so cannot own a space.
 	ErrUserDisabled = errors.New("that user is disabled")
 	errClosed       = errors.New("the server is shutting down")
@@ -115,6 +117,13 @@ func (h *Handle) Release() {
 type Options struct {
 	Store   *store.Store
 	DataDir string // spaces live in DataDir/spaces/<id>, their index and journal in DataDir/cache/<id>
+	// Serve says the manager is the server's (petalbook serve): it holds the
+	// data directory's lock (DataDir/serve.lock) while it runs, and at its
+	// start finishes what a crash left (evictions cut short, half restored
+	// clones, half made spaces). A command run against the data directory of a
+	// running server (petalbook user …) leaves Serve false and touches none of
+	// that.
+	Serve bool
 	// Committer is the Git committer of commits ("Name <email>"): the service.
 	Committer             string
 	CommitIdle, CommitMax time.Duration
@@ -240,6 +249,8 @@ type Manager struct {
 	createMu sync.Mutex      // space creation is one at a time, so the limit cannot be passed by racing
 	staging  map[string]bool // spaces being made with a GitHub repository, whose first push needs no member yet (guarded by mu)
 	reserved map[string]int  // spaces being made with a new GitHub repository, by owner (guarded by createMu)
+
+	lock *os.File // DataDir/serve.lock, held while a server's manager runs (Options.Serve)
 }
 
 // NewAccounts returns the manager of accounts mode.
@@ -263,15 +274,29 @@ func NewAccounts(opt Options) (*Manager, error) {
 	if opt.Secrets == nil {
 		opt.Secrets = secret.NewBox(abs)
 	}
+	var lock *os.File
+	if opt.Serve {
+		// Taken before anything is cleaned up, so that what one server has in
+		// progress is never taken for what a crash left by another.
+		if lock, err = lockDataDir(filepath.Join(abs, "serve.lock")); err != nil {
+			return nil, err
+		}
+	}
 	m := newManager(opt, nil)
+	m.lock = lock
 	m.initStorage(context.Background())
+	if opt.Serve {
+		if err := m.recoverEvictions(context.Background()); err != nil {
+			m.log.Warn("could not finish the evictions and restores a crash cut short", "error", err)
+		}
+		if n, err := m.SweepStaged(context.Background()); err != nil {
+			m.log.Warn("could not remove the spaces a crash left half made", "error", err)
+		} else if n > 0 {
+			m.log.Info("removed spaces a crash left half made", "count", n)
+		}
+	}
 	if err := m.loadEvicted(context.Background()); err != nil {
 		m.log.Warn("could not look at the spaces whose clone was removed", "error", err)
-	}
-	if n, err := m.SweepStaged(context.Background()); err != nil {
-		m.log.Warn("could not remove the spaces a crash left half made", "error", err)
-	} else if n > 0 {
-		m.log.Info("removed spaces a crash left half made", "count", n)
 	}
 	return m, nil
 }
@@ -1068,6 +1093,13 @@ func (m *Manager) Close() error {
 				errs = append(errs, err)
 			}
 		}
+	}
+	m.mu.Lock()
+	lock := m.lock
+	m.lock = nil
+	m.mu.Unlock()
+	if lock != nil {
+		lock.Close() // releases the lock
 	}
 	return errors.Join(errs...)
 }

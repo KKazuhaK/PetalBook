@@ -815,7 +815,7 @@ func TestLeftoverStagedSpacesAreRemovedAtStart(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		needGit(t)
 		dir := filepath.Join(t.TempDir(), "data")
-		opt := Options{Store: st, DataDir: dir, Committer: "Svc <svc@example.test>", CloseWait: 200 * time.Millisecond, CommitIdle: time.Hour, CommitMax: time.Hour}
+		opt := Options{Store: st, DataDir: dir, Serve: true, Committer: "Svc <svc@example.test>", CloseWait: 200 * time.Millisecond, CommitIdle: time.Hour, CommitMax: time.Hour}
 		m, err := NewAccounts(opt)
 		if err != nil {
 			t.Fatal(err)
