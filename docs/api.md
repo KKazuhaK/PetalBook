@@ -1767,15 +1767,15 @@ protection of the network is in one place).
 ```json
 {"default": {"kind": "space", "space": "01JD3K8Q7Z", "source": {"folder": "文案", "zh": {"tag": "诗"}}},
  "allow": {"own": true, "api": true},
- "hosts": ["international.v1.hitokoto.cn", "api.quotable.io"],
  "languages": ["zh", "en"],
  "apis": [ /* interfaces, below */ ],
  "presets": [ /* interfaces to start a form from, below */ ],
  "lines": {"total": 6, "byLang": {"zh": 3, "en": 2, "": 1}, "max": 5000}}
 ```
 
-`PUT` takes any of `default`, `hosts`, `languages` and `allow` (what it leaves out stays)
-and answers as `GET`; `lines`, `apis` and `presets` are read-only here.
+`PUT` takes any of `default`, `languages` and `allow` (what it leaves out stays)
+and answers as `GET`; `lines`, `apis` and `providers` are read-only here. A
+`hosts` field sent by an older client is ignored.
 
 - `default` is `null`, `{"kind": "list"}` (the lines below),
   `{"kind": "space", "space": id, "source": …}` where `source` is a source or
@@ -1788,9 +1788,6 @@ and answers as `GET`; `lines`, `apis` and `presets` are read-only here.
   The interface is used exactly as when a space picks it (same cache, refresh
   and rate limit), and the `allow.api` lock does not apply to it: it limits
   what spaces may choose, not the administrators' own default.
-- `hosts` are the hosts (with a port when it is not the usual one) the server
-  may fetch from, at most 100. Saving an interface adds its host; removing a host
-  here stops the interfaces that use it (they are not asked until it is back).
 - `languages` are the languages the settings pages have a tab for besides
   "all languages", as BCP 47 language tags in canonical form (`zh-Hans`,
   `zh-Hant`, `en`, `pt-BR`; each once, at most 30), `["zh-Hans", "en"]` to begin
@@ -1846,8 +1843,10 @@ Any number of interfaces (at most 50). An interface in `apis`:
   (the language asked for, `en` when none) and `{date}` (the day, `2026-11-23`)
   may be in its path or query, not in its scheme, user, host or port (as the
   address is written, in any case); they are filled in only as a checked
-  language code and day, escaped, and the host of the address really used is
-  checked against `hosts` again. An address that is an IP address
+  language code and day, escaped, and the request may go only to the host
+  (and port) of `url` as written: **there is no separate list of trusted
+  hosts** — saving an interface is what trusts its host, and only for that
+  interface. An address that is an IP address
   that is not public, `localhost` and its subdomains are refused when it is saved;
   whatever a name resolves to is checked again when the connection is made (below).
 - `headers` are request headers, at most 10. A value is **never returned**, and
@@ -1897,20 +1896,34 @@ second line only.
   is used. `enabled` (true when a new interface leaves it out) says whether it may
   be chosen by spaces and is used.
 
-`PUT` makes the interface or replaces it, adds its host to `hosts`, and answers as
+`PUT` makes the interface or replaces it, and answers as
 `GET /api/admin/daily`. Changes of the settings (these, `PUT /api/admin/daily`
 and `DELETE`) are made one at a time, in a transaction that holds the
-settings: two administrators saving at once both keep their change. `DELETE` removes it (its host stays on the list) and
+settings: two administrators saving at once both keep their change. `DELETE` removes it and
 answers the same; `404` for an id that is not there. `400 invalid` for anything
 above that breaks a rule (the message says which), or one of the codes of
 "Daily text refusals".
 
-`presets` are interfaces a form can be filled in with (the same fields, with a
-`note`): they are **only offered**, none is created or used until an
-administrator saves it, and a service of a preset is not contacted until then.
-Today: `hitokoto` (zh; the international line, `max_length=80`, 20 requests a
-second, with the link back the service asks for) and `quotable` (en; Quotable's
-random quote, 3 requests a second).
+**Built-in interfaces** (`providers`): services the server knows how to ask,
+so an administrator only switches one on — no address, paths or language
+codes to fill in. `GET /api/admin/daily` lists them as
+`{"id": "hitokoto", "name": "一言", "languages": ["zh-Hans"], "site": "https://hitokoto.cn", "note": "…", "enabled": false, "refresh": "daily", "rps": 20, "skipNew": true}`.
+`PUT /api/admin/daily/providers/{id}` takes `{"enabled": true}` and optionally
+`refresh`, `minutes`, `rps` (not above the service's own limit) and
+`skipNew`; needs admin; answers as `GET /api/admin/daily`. An enabled built-in
+interface appears in `apis` with `"builtin": true` and can be chosen by spaces
+and as the site default like any other; its address, paths, link and language
+mapping cannot be changed (`400 invalid`, `error: "builtin"`). None is enabled
+until an administrator enables it, and no service is contacted before that.
+Today: `hitokoto` (一言, the international line; `zh-Hans`, `zh-Hant`; link
+back to the sentence as the service asks) and `quotable` (Quotable; `en`).
+
+**Language codes in the address**: `{lang}` is filled with the reader's
+language as matched (a canonical BCP 47 tag, e.g. `zh-Hans`). Services that
+want another form are given a `langMap` on the interface,
+`{"zh-Hans": "zh", "en": "en"}`, applied before filling in (built-in
+interfaces have theirs set; custom interfaces may set one, keys checked as
+language tags, values 1–35 characters of `[A-Za-z0-9_-]`).
 
 #### `POST /api/admin/daily/try`
 
@@ -1921,9 +1934,8 @@ random quote, 3 requests a second).
 
 Makes one request now with the interface as it is in the form (saved or not;
 a header without a value uses the value saved for that `id` and that exact
-`url` only), at the same rules as any request, and shows what came back. The
-host must be on `hosts` already (else `400 host_not_allowed`, and nothing is
-sent): an interface on a new host is tried once the host is on the list. It
+`url` only), at the same rules as any request, and shows what came back. It goes only to
+the host of the address in the form, under the same public-address checks. It
 keeps nothing and is limited to a few a second (`429`). `400 invalid`, or a
 code of "Daily text refusals", when the interface itself breaks a rule.
 
@@ -1969,7 +1981,6 @@ it. All are `400`.
 
 | `error` | beside it | when |
 |---|---|---|
-| `host_not_allowed` | `host` | a trial of an address whose host is not on `hosts` |
 | `header_reenter` | `header` | a header without a value whose kept value was given for another `url` |
 | `header_missing` | `header` | a header without a value, and none is kept for it (for this `id`) |
 | `not_json` | | a trial's answer does not declare JSON, or is not valid JSON |
@@ -1984,7 +1995,7 @@ interface, is not a refusal: `GET …/daily` answers `200` with `"reason":
 "out_of_range"`. A `date` that is not a day is `400 invalid`.
 
 **How it is fetched.** Only the interfaces the administrators wrote, only from
-`https`, only to hosts on the list. The address a name resolves to is checked
+`https`, only to the host of the interface's own address. The address a name resolves to is checked
 when the connection is made, for every address (so a name that answers
 differently the second time is no way round it): loopback, private, link-local
 (the cloud metadata address included), unspecified, multicast, carrier-grade
