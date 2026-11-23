@@ -519,3 +519,51 @@ func TestCreatingATenantPrefillsTheAdministratorsInvite(t *testing.T) {
 		}
 	})
 }
+
+// The first administrator's details are checked as the invite checks them, before
+// the tenant is made: an address that is not ASCII, an address with nothing after
+// the @, or a name with a control character answer 400 and make no tenant.
+func TestATenantWithABadAdministratorIsNotMade(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		root := a.setup("root", pw)
+		root.do("PUT", "/api/admin/tenancy", map[string]any{"enabled": true}).want(t, 200, "")
+		count := func() int {
+			return len(root.do("GET", "/api/admin/tenants", nil).want(t, 200, "").body["items"].([]any))
+		}
+		before := count()
+		for _, admin := range []map[string]any{
+			{"username": "wu", "email": "wü@acme.example"},
+			{"username": "wu", "email": "wu@"},
+			{"username": "wu", "name": "Wu\x07Wei"},
+		} {
+			root.do("POST", "/api/admin/tenants", map[string]any{"slug": "acme", "name": "Acme", "admin": admin}).want(t, 400, "invalid")
+			if n := count(); n != before {
+				t.Fatalf("%v: %d tenants, want %d", admin, n, before)
+			}
+		}
+	})
+}
+
+// admin without a username: the contract fills each field with "" when it is not
+// given, so the invite is made with no username and the person picks one when
+// they accept it.
+func TestATenantsAdministratorMayPickTheUsernameAtAccept(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		root := a.setup("root", pw)
+		root.do("PUT", "/api/admin/tenancy", map[string]any{"enabled": true}).want(t, 200, "")
+		r := root.do("POST", "/api/admin/tenants", map[string]any{"slug": "acme", "name": "Acme",
+			"admin": map[string]any{"email": "wu@acme.example"}}).want(t, 201, "")
+		inv := r.body["invite"].(map[string]any)
+		if inv["username"] != "" || inv["email"] != "wu@acme.example" || inv["role"] != "admin" {
+			t.Fatalf("%v", inv)
+		}
+		visitor := a.newClient("")
+		visitor.do("POST", "/api/invites/accept", map[string]any{"token": inv["token"], "password": pw}).want(t, 400, "invalid")
+		u := visitor.do("POST", "/api/invites/accept", map[string]any{"token": inv["token"], "username": "wu", "name": "Wu", "password": pw}).want(t, 201, "").user()
+		if u["username"] != "wu" || u["role"] != "admin" || u["tenant"].(map[string]any)["slug"] != "acme" {
+			t.Fatalf("%v", u)
+		}
+	})
+}

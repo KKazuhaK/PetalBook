@@ -261,17 +261,13 @@ func (s *server) adminCreateTenant(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "slug is 2 to 32 characters of a-z, 0-9 and -, starting with a letter or digit; name is 1 to 80 characters")
 		return
 	}
+	// The first administrator's details are checked as the invite checks them,
+	// before the tenant is made, so a bad one makes nothing. Each may be "": the
+	// person fills it in when they accept (a username they must).
+	var fill auth.InviteFill
 	if req.Admin != nil {
-		if _, err := auth.NormalizeUsername(req.Admin.Username); err != nil {
+		if fill, err = auth.CleanInviteFill(auth.InviteFill{Username: req.Admin.Username, Name: req.Admin.Name, Email: req.Admin.Email}); err != nil {
 			s.fail(c.w, err)
-			return
-		}
-		if n := strings.TrimSpace(req.Admin.Name); n != "" && utf8.RuneCountInString(n) > 80 {
-			writeError(c.w, http.StatusBadRequest, "invalid", "admin.name is at most 80 characters")
-			return
-		}
-		if e := strings.TrimSpace(req.Admin.Email); e != "" && (len(e) > 254 || !strings.Contains(e, "@")) {
-			writeError(c.w, http.StatusBadRequest, "invalid", "admin.email is not an address")
 			return
 		}
 	}
@@ -307,7 +303,7 @@ func (s *server) adminCreateTenant(c *call) {
 	if req.Admin != nil {
 		// The first administrator's invite carries the account's name, username
 		// and address, which the form that accepts it starts with. Nothing is mailed.
-		inv, err := s.auth.CreateInvite(ctx, c.user(), t.ID, "admin", nil, nil, auth.InviteFill{Username: req.Admin.Username, Name: req.Admin.Name, Email: req.Admin.Email})
+		inv, err := s.auth.CreateInvite(ctx, c.user(), t.ID, "admin", nil, nil, fill)
 		if err != nil {
 			s.fail(c.w, err)
 			return

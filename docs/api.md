@@ -4157,8 +4157,12 @@ administrator of the tenant; the link is shown once, and nothing is mailed.
 The invite **fills in** the form that accepts it: it has `username` (normalised
 as a username is), `name` and `email` (each `""` when not given), `POST
 /api/invites/check` answers them (below), and the account the invite makes gets
-the `email` (not verified). `400 invalid` for a username, name or address that
-is not valid (and no tenant is made). `409 exists` for a slug taken;
+the `email` (not verified). Each of the three may be left out, `username`
+too: the person then picks one when they accept (`POST /api/invites/accept`
+needs it). They are checked as `POST /api/invites` checks them (an ASCII
+address with something on both sides of the `@`, a name of 1 to 100 characters
+with no control characters), before the tenant is made: `400 invalid` for one
+that is not valid, and no tenant is made. `409 exists` for a slug taken;
 `409 tenant_limit` at 1,000 tenants.
 
 ### `PATCH /api/admin/tenants/{tenant}`

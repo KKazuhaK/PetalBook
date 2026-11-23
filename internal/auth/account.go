@@ -398,7 +398,10 @@ type InviteFill struct {
 	Username, Name, Email string
 }
 
-func cleanInviteFill(f InviteFill) (InviteFill, error) {
+// CleanInviteFill checks and trims what an invite fills in, as CreateInvite
+// does; a caller that must refuse bad values before it changes anything (the
+// tenant made with its first administrator) calls it first.
+func CleanInviteFill(f InviteFill) (InviteFill, error) {
 	var out InviteFill
 	if strings.TrimSpace(f.Username) != "" {
 		u, err := NormalizeUsername(f.Username)
@@ -474,7 +477,7 @@ func (s *Service) CreateInvite(ctx context.Context, actor store.User, tenantID, 
 	inv := store.Invite{TokenHash: hashToken(token), Role: role, CreatedBy: actor.ID, Created: now, TenantID: tenantID, SiteAdmin: site,
 		Expires: now.Add(time.Duration(days) * 24 * time.Hour)}
 	if len(fill) > 0 {
-		f, err := cleanInviteFill(fill[0])
+		f, err := CleanInviteFill(fill[0])
 		if err != nil {
 			return nil, err
 		}
