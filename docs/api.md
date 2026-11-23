@@ -6414,9 +6414,8 @@ of exactly the tenant it was in and everything answers as before (see
   membership; it never moves the home.
 - **Personal spaces are never visible to an organisation's administrators**:
   not in lists, storage views, `view` (3.5) or exports, whatever the account's
-  memberships. Site administrators see everything. The one exception is
-  `legacyVisible`, set by the upgrade (see "Upgrading to several organisations"
-  and the owner's question 1 in design.md).
+  memberships, and with no exception for accounts that existed before 3.7
+  (owner, 2026-11-23). Site administrators see everything.
 
 The User object gains:
 
@@ -6625,19 +6624,21 @@ Migration `0022_memberships.sql`, SQLite and PostgreSQL, a few set statements:
 
 - one `tenant_members` row per user from `users.tenant_id` and `users.role`
   (`via: "migration"`, `roleSource` from 3.6's column);
-- `users.held = true`, `users.legacy_visible = true` for every existing
-  account, so each tenant's administrators keep administering, and seeing the
-  personal spaces of, the people they had;
+- `users.held = true` for every existing account, so each tenant's
+  administrators keep administering the accounts they had (disable, password
+  reset, and the rest); from the upgrade on they no longer see those people's
+  personal spaces, which only the person and site administrators see;
 - tokens, OAuth grants and sessions get the user's tenant as their binding,
   current tenant and proof;
 - `usage` rows get the user's tenant.
 
 Afterwards every person is a member of one tenant, their home, and every answer
-is the one before. The switcher appears only for people with more than one
+is the one before, except that a tenant administrator no longer sees the
+personal spaces of the tenant's people. The switcher appears only for people with more than one
 place to go.
 
 New: `tenant_members` (primary key `(tenant_id, user_id)`, index `(user_id)`),
-`users.held`, `users.legacy_visible`, `users.managed_by`, a `tenant_id` on API
+`users.held`, `users.managed_by`, a `tenant_id` on API
 tokens and OAuth grants, `current_tenant` and `proofs` on sessions,
 `tenant_domains.managed`, and `tenant_id` in the key of `usage`.
 
