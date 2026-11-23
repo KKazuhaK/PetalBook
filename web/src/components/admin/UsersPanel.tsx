@@ -12,9 +12,11 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { NativeSelect } from '@/components/ui/native-select'
 import { absoluteTime } from '@/lib/time'
 import { t } from '@/i18n'
+import { ts } from '@/i18n/storage'
 
 // Users and invites, for administrators. Moved from the old users page; the
 // lists and forms are as they were.
@@ -47,7 +49,7 @@ function UserList({ users, meId }: { users: User[]; meId: string }) {
   const [error, setError] = useState<{ id: string; message: string } | null>(null)
   const messageRef = useRef<HTMLParagraphElement>(null)
 
-  const change = async (u: User, patch: { role?: Role; disabled?: boolean }) => {
+  const change = async (u: User, patch: { role?: Role; disabled?: boolean; remoteExempt?: boolean }) => {
     setBusy(u.id)
     setError(null)
     try {
@@ -93,6 +95,10 @@ function UserList({ users, meId }: { users: User[]; meId: string }) {
                   <option value="admin">{t.roles.admin}</option>
                 </NativeSelect>
               </div>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground" title={ts.users.remoteExemptHelp}>
+                <Switch aria-label={t.fmt.labelled(ts.users.remoteExempt, u.name)} checked={u.remoteExempt === true} disabled={busy === u.id} onCheckedChange={(on) => void change(u, { remoteExempt: on })} />
+                {ts.users.remoteExempt}
+              </label>
               <Button type="button" variant="outline" size="sm" disabled={busy === u.id} onClick={() => void change(u, { disabled: !u.disabled })} aria-label={t.fmt.labelled(u.disabled ? t.users.enable : t.users.disable, u.name)}>
                 {u.disabled ? t.users.enable : t.users.disable}
               </Button>

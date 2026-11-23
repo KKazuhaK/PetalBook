@@ -6,7 +6,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, enc, request } from './client'
 import { keys } from './hooks'
-import type { AdminDaily, AdminGrantList, AdminTokenList, MachineAccess, AdminGitHub, GitHubCursorPage, GitHubInstallation, PutAdminGitHubInput, AdminSpaceList, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User } from './types'
+import type { AdminStorage, AdminSpace, CacheState, PutAdminStorage, AdminDaily, AdminGrantList, AdminTokenList, MachineAccess, AdminGitHub, GitHubCursorPage, GitHubInstallation, PutAdminGitHubInput, AdminSpaceList, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User } from './types'
 
 export const adminApi = {
   // --- users and invites ---
@@ -20,7 +20,7 @@ export const adminApi = {
     const query = q.toString()
     return request<{ users: User[] }>(`/users${query ? `?${query}` : ''}`, { signal })
   },
-  updateUser: (id: string, input: { role?: Role; disabled?: boolean }) => request<{ user: User }>(`/users/${enc(id)}`, { method: 'PATCH', body: input }),
+  updateUser: (id: string, input: { role?: Role; disabled?: boolean; remoteExempt?: boolean }) => request<{ user: User }>(`/users/${enc(id)}`, { method: 'PATCH', body: input }),
   createInvite: (input: { role?: Role; days?: number } = {}) => request<CreatedInvite>('/invites', { method: 'POST', body: input }),
   invites: (signal?: AbortSignal) => request<{ invites: Invite[] }>('/invites', { signal }),
   revokeInvite: (id: string) => request<void>(`/invites/${enc(id)}`, { method: 'DELETE' }),
@@ -31,9 +31,18 @@ export const adminApi = {
     if (params.q) q.set('q', params.q)
     if (params.cursor) q.set('cursor', params.cursor)
     if (params.limit) q.set('limit', String(params.limit))
+    if (params.cache) q.set('cache', params.cache)
+    if (params.overdue) q.set('overdue', '1')
     const qs = q.toString()
     return request<AdminSpaceList>(`/admin/spaces${qs ? `?${qs}` : ''}`, { signal })
   },
+  // The site's storage policy (docs/api.md, "Server storage").
+  adminStorage: (signal?: AbortSignal) => request<AdminStorage>('/admin/storage', { signal }),
+  putAdminStorage: (input: PutAdminStorage) => request<AdminStorage>('/admin/storage', { method: 'PUT', body: input }),
+  // Keeps a space's files on the server (pin), or leaves it out of the requirement of a remote (exempt).
+  putSpaceStorage: (id: string, input: { pin?: boolean; exempt?: boolean }) => request<AdminSpace>(`/admin/spaces/${enc(id)}/storage`, { method: 'PUT', body: input }),
+  // Evicts the space now, if it may be.
+  evictSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/evict`, { method: 'POST' }),
   // Measures the space's directory now.
   adminResizeSpace: (id: string) => request<SpaceSize>(`/admin/spaces/${enc(id)}/size`, { method: 'POST' }),
   adminTransferSpace: (id: string, userId: string) => request<void>(`/admin/spaces/${enc(id)}/transfer`, { method: 'POST', body: { userId } }),
@@ -113,11 +122,11 @@ export function useInvites(enabled = true) {
 export const ADMIN_PAGE_SIZE = 50
 
 // Every space on the server, a cursor page at a time; `q` is the name filter.
-export function useAdminSpaces(q: string, enabled = true) {
+export function useAdminSpaces(q: string, enabled = true, filter: { cache?: CacheState; overdue?: boolean } = {}) {
   return useInfiniteQuery({
-    queryKey: keys.adminSpaceList(q),
+    queryKey: keys.adminSpaceList(q, `${filter.cache ?? ''}|${filter.overdue ? 1 : 0}`),
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => adminApi.adminSpaces({ q: q || undefined, cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE }, signal),
+    queryFn: ({ pageParam, signal }) => adminApi.adminSpaces({ q: q || undefined, cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE, cache: filter.cache, overdue: filter.overdue }, signal),
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 15_000,
@@ -281,4 +290,33 @@ export function useShareGitHubInstallation() {
     mutationFn: ({ id, shared }: { id: number; shared: boolean }) => adminApi.putAdminGitHubInstallation(id, shared),
     onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: keys.adminGitHubInstallations }), qc.invalidateQueries({ queryKey: ['github', 'owners'] })]),
   })
+}
+
+// --- server storage (docs/api.md, "Server storage") ---
+
+export function useAdminStorage(enabled = true) {
+  return useQuery({ queryKey: keys.adminStorage, queryFn: ({ signal }) => adminApi.adminStorage(signal), enabled, staleTime: 10_000 })
+}
+// A change of the policy changes what the spaces show (notices, read only) and the counts of the status.
+export function useSaveAdminStorage() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: PutAdminStorage) => adminApi.putAdminStorage(input),
+    onSuccess: (data) => {
+      qc.setQueryData(keys.adminStorage, data)
+      return Promise.all([qc.invalidateQueries({ queryKey: keys.adminSpaces }), qc.invalidateQueries({ queryKey: keys.spaces }), qc.invalidateQueries({ queryKey: keys.adminStatus })])
+    },
+  })
+}
+export function usePutSpaceStorage() {
+  const changed = useAdminSpaceChanged()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...input }: { id: string; pin?: boolean; exempt?: boolean }) => adminApi.putSpaceStorage(id, input),
+    onSuccess: (_r, { id }) => Promise.all([changed(id), qc.invalidateQueries({ queryKey: keys.adminStorage })]),
+  })
+}
+export function useEvictSpace() {
+  const changed = useAdminSpaceChanged()
+  return useMutation({ mutationFn: (id: string) => adminApi.evictSpace(id), onSuccess: (_r, id) => changed(id) })
 }

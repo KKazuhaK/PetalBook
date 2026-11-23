@@ -7,6 +7,7 @@ import { formatBytes } from '@/lib/bytes'
 import { absoluteTime } from '@/lib/time'
 import { t } from '@/i18n'
 import { ta } from '@/i18n/admin'
+import { ts } from '@/i18n/storage'
 
 // What the server says about itself (GET /api/admin/status).
 export function StatusPanel() {
@@ -26,6 +27,12 @@ export function StatusPanel() {
     [st.openSpaces, String(s.openSpaces), st.openSpacesHelp],
     [st.disk, s.diskFreeBytes === undefined ? st.unknown : formatBytes(s.diskFreeBytes)],
     [st.goVersion, s.goVersion],
+    [ts.status.spaces, ts.status.spacesValue(s.storage.spaces.local, s.storage.spaces.full, s.storage.spaces.partial, s.storage.spaces.evicted, s.storage.spaces.restoring)],
+    [ts.status.clones, formatBytes(s.storage.cloneBytes)],
+    [ts.status.indexes, formatBytes(s.storage.indexBytes)],
+    [ts.status.budget, s.storage.clonesBudget === null ? ts.status.noBudget : formatBytes(s.storage.clonesBudget)],
+    [ts.status.restoresWaiting, String(s.storage.restoresWaiting)],
+    [ts.status.remotes, ts.status.remotesValue(s.storage.remotes.inGrace, s.storage.remotes.overdue)],
   ]
   return (
     <SettingsSection title={st.title} id="status-heading">

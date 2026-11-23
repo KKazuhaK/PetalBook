@@ -1416,6 +1416,105 @@ function suite(target: Target) {
         expect(r.json.errorCode).toBe('')
       })
     })
+
+    describe('server storage (the site\'s policy, the pin and the exemption, the requirement of a remote)', () => {
+      const settings = () => call(admin, 'GET', '/api/admin/storage')
+      // The policy is the site's: whatever a test changes is put back, also on a real server that is used again.
+      const reset = () =>
+        call(admin, 'PUT', '/api/admin/storage', {
+          remotes: { require: null, scope: 'new', graceDays: 30 },
+          localSpaces: { maxBytes: null },
+          cache: { evictAfterDays: 14, minIdleHours: 24, clonesBytes: null, minFreeBytes: 10 * 1024 ** 3 },
+        })
+      afterAll(async () => {
+        await reset()
+      })
+
+      it('has the settings an administrator reads and writes, partly, and refuses a value outside its range', async () => {
+        await reset()
+        const g = await settings()
+        expect(g.status).toBe(200)
+        expect(g.json).toMatchObject({
+          remotes: { require: null, scope: 'new', graceDays: 30, since: null },
+          hosts: { allowed: expect.any(Array), fromFlag: expect.any(Boolean) },
+          localSpaces: { maxBytes: null },
+          cache: { partial: expect.any(Boolean), evictAfterDays: 14, minIdleHours: 24, clonesBytes: null, minFreeBytes: 10 * 1024 ** 3 },
+          git: { version: expect.any(String), partialClone: expect.any(Boolean) },
+          affected: { inGrace: expect.any(Number), overdue: expect.any(Number), exempt: expect.any(Number) },
+        })
+        const put = await call(admin, 'PUT', '/api/admin/storage', { cache: { minIdleHours: 48 }, localSpaces: { maxBytes: 5 * 1024 ** 2 } })
+        expect(put.status).toBe(200)
+        expect(put.json.cache).toMatchObject({ minIdleHours: 48, evictAfterDays: 14 })
+        expect(put.json.localSpaces.maxBytes).toBe(5 * 1024 ** 2)
+        expect((await settings()).json).toEqual(put.json)
+        for (const bad of [
+          { remotes: { graceDays: 400 } },
+          { remotes: { require: 'gitlab' } },
+          { remotes: { scope: 'most' } },
+          { localSpaces: { maxBytes: 1000 } },
+          { cache: { evictAfterDays: 0 } },
+          { cache: { minIdleHours: 0 } },
+          { cache: { clonesBytes: 1024 ** 2 } },
+        ]) {
+          const r = await call(admin, 'PUT', '/api/admin/storage', bad)
+          expect([r.status, r.json.error], JSON.stringify(bad)).toEqual([400, 'invalid'])
+        }
+      })
+
+      it('is for administrators only', async () => {
+        const m = await newMember(uniq('stad'))
+        for (const [method, path, body] of [
+          ['GET', '/api/admin/storage', undefined],
+          ['PUT', '/api/admin/storage', {}],
+          ['PUT', '/api/admin/spaces/01ZZZZZZZZ/storage', {}],
+          ['POST', '/api/admin/spaces/01ZZZZZZZZ/evict', {}],
+        ] as [string, string, unknown][]) {
+          const r = await call(m.browser, method, path, body)
+          expect([r.status, r.json?.error], `${method} ${path}`).toEqual([403, 'forbidden'])
+        }
+      })
+
+      it('a space says what its copy is; a local space is never evicted; pinning and the exemption are an administrator\'s', async () => {
+        const owner = await newMember(uniq('stsp'))
+        const sp = await ownedSpace(owner, `Stored ${run}`)
+        const item = (await call(admin, 'GET', `/api/admin/spaces/${sp.id}`)).json as AdminSpace
+        expect(item.storage).toMatchObject({ cache: 'local', pinned: false, exempt: false, remote: null, assets: 'space' })
+        const mine = (await call(owner.browser, 'GET', '/api/spaces')).json.spaces.find((s: SpaceInfo) => s.id === sp.id)
+        expect(mine.storage).toMatchObject({ cache: 'local', remote: null })
+        const evict = await call(admin, 'POST', `/api/admin/spaces/${sp.id}/evict`)
+        expect([evict.status, evict.json.error]).toEqual([409, 'conflict'])
+        const pinned = await call(admin, 'PUT', `/api/admin/spaces/${sp.id}/storage`, { pin: true, exempt: true })
+        expect(pinned.status).toBe(200)
+        expect(pinned.json.storage).toMatchObject({ pinned: true, exempt: true })
+        expect((await call(admin, 'PUT', `/api/admin/spaces/${sp.id}/storage`, { pin: false, exempt: false })).json.storage).toMatchObject({ pinned: false, exempt: false })
+        const filtered = (await call(admin, 'GET', '/api/admin/spaces?cache=evicted&limit=200')).json.items as AdminSpace[]
+        expect(filtered.every((s) => s.storage.cache === 'evicted')).toBe(true)
+        const status = (await call(admin, 'GET', '/api/admin/status')).json
+        expect(status.storage).toMatchObject({ spaces: { local: expect.any(Number), full: expect.any(Number), partial: expect.any(Number), evicted: expect.any(Number), restoring: expect.any(Number) }, remotes: { inGrace: expect.any(Number), overdue: expect.any(Number) } })
+      })
+
+      it('requires a remote of new spaces before anything is made, and relaxing it takes the requirement away', async () => {
+        const owner = await newMember(uniq('strq'))
+        const before = (await call(owner.browser, 'GET', '/api/spaces')).json.spaces.length
+        await call(admin, 'PUT', '/api/admin/storage', { remotes: { require: 'any', scope: 'new', graceDays: 30 } })
+        const refused = await call(owner.browser, 'POST', '/api/spaces', { name: `Needs a remote ${run}` })
+        expect([refused.status, refused.json.error, refused.json.require]).toEqual([409, 'remote_required', 'any'])
+        expect((await call(owner.browser, 'GET', '/api/spaces')).json.spaces.length).toBe(before)
+        await call(admin, 'PUT', '/api/admin/storage', { remotes: { require: null } })
+        expect((await call(owner.browser, 'POST', '/api/spaces', { name: `Free ${run}` })).status).toBe(201)
+      })
+
+      it('exempts a user: the spaces they own are not asked for a remote', async () => {
+        const owner = await newMember(uniq('stex'))
+        const r = await call(admin, 'PATCH', `/api/users/${owner.user.id}`, { remoteExempt: true })
+        expect(r.json.user.remoteExempt).toBe(true)
+        await call(admin, 'PUT', '/api/admin/storage', { remotes: { require: 'any', scope: 'new', graceDays: 30 } })
+        expect((await call(owner.browser, 'POST', '/api/spaces', { name: `Exempt ${run}` })).status).toBe(201)
+        await call(admin, 'PUT', '/api/admin/storage', { remotes: { require: null } })
+        const back = await call(admin, 'PATCH', `/api/users/${owner.user.id}`, { remoteExempt: false })
+        expect(back.json.user.remoteExempt).toBeUndefined()
+      })
+    })
   })
 
   describe('the daily text and favourites', () => {

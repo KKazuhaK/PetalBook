@@ -3,8 +3,8 @@ import { Link } from 'react-router'
 import { MoreHorizontal, RefreshCw, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { useAdminSpaces, useDeleteSpace, useResizeSpace, useSetSpaceDisabled, useTransferSpace, useUserSearch, USER_SEARCH_LIMIT } from '@/api/admin'
-import type { AdminSpace, DeletedSpace, User } from '@/api/types'
+import { useAdminSpaces, useDeleteSpace, useEvictSpace, usePutSpaceStorage, useResizeSpace, useSetSpaceDisabled, useTransferSpace, useUserSearch, USER_SEARCH_LIMIT } from '@/api/admin'
+import type { AdminSpace, CacheState, DeletedSpace, User } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { SettingsSection } from '@/components/settings/SettingsParts'
@@ -22,11 +22,12 @@ import { spaceUrls } from '@/lib/urls'
 import { useDebounced } from '@/lib/useDebounced'
 import { t } from '@/i18n'
 import { ta } from '@/i18n/admin'
+import { ts } from '@/i18n/storage'
 
 // Two names that read the same: trimmed, and in the same Unicode normal form.
 const sameName = (a: string, b: string) => a.trim().normalize('NFC') === b.trim().normalize('NFC')
 
-type Action = { kind: 'transfer' | 'disable' | 'delete'; space: AdminSpace }
+type Action = { kind: 'transfer' | 'disable' | 'delete' | 'evict'; space: AdminSpace }
 
 // What a refusal of an administration call means, in plain words.
 function actionError(e: unknown): string {
@@ -54,8 +55,11 @@ function actionError(e: unknown): string {
 export function SpacesPanel() {
   const [text, setText] = useState('')
   const q = useDebounced(text.trim(), 300)
-  const spaces = useAdminSpaces(q)
+  // What to show: all spaces, those past their deadline for a remote, or those in one cache state.
+  const [filter, setFilter] = useState('')
+  const spaces = useAdminSpaces(q, true, { cache: filter === 'overdue' ? undefined : (filter as CacheState) || undefined, overdue: filter === 'overdue' })
   const setDisabled = useSetSpaceDisabled()
+  const putStorage = usePutSpaceStorage()
   const [action, setAction] = useState<Action | null>(null)
 
   const items = spaces.data?.pages.flatMap((p) => p.items) ?? []
@@ -68,11 +72,31 @@ export function SpacesPanel() {
     }
   }
 
+  const changeStorage = async (s: AdminSpace, input: { pin?: boolean; exempt?: boolean }, done: string) => {
+    try {
+      await putStorage.mutateAsync({ id: s.id, ...input })
+      toast.success(done)
+    } catch (e) {
+      toast.error(e instanceof ApiError && e.message ? e.message : ts.spaces.changeFailed)
+    }
+  }
+
   return (
     <SettingsSection title={ta.spaces.title} id="admin-spaces-heading" description={ta.spaces.help}>
-      <div className="relative max-w-sm">
-        <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input type="search" value={text} onChange={(e) => setText(e.target.value)} placeholder={ta.spaces.searchPlaceholder} aria-label={ta.spaces.search} className="pl-8" autoComplete="off" />
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative w-full max-w-sm min-w-0">
+          <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input type="search" value={text} onChange={(e) => setText(e.target.value)} placeholder={ta.spaces.searchPlaceholder} aria-label={ta.spaces.search} className="pl-8" autoComplete="off" />
+        </div>
+        <NativeSelect aria-label={ts.spaces.filter} value={filter} onChange={(e) => setFilter(e.target.value)} className="w-auto max-sm:w-full">
+          <option value="">{ts.spaces.filterAll}</option>
+          <option value="overdue">{ts.spaces.filterOverdue}</option>
+          {(['local', 'full', 'partial', 'evicted'] as const).map((c) => (
+            <option key={c} value={c}>
+              {ts.spaces.caches[c]}
+            </option>
+          ))}
+        </NativeSelect>
       </div>
 
       {spaces.isPending ? (
@@ -84,7 +108,7 @@ export function SpacesPanel() {
       ) : (
         <>
           <div className="overflow-x-auto rounded-lg border">
-            <table className="w-full min-w-[44rem] text-left text-sm">
+            <table className="w-full min-w-[54rem] text-left text-sm">
               <thead className="border-b bg-muted/40 text-xs text-muted-foreground">
                 <tr>
                   <th scope="col" className="px-3 py-2 font-medium">{ta.spaces.name}</th>
@@ -93,12 +117,20 @@ export function SpacesPanel() {
                   <th scope="col" className="px-3 py-2 font-medium">{ta.spaces.size}</th>
                   <th scope="col" className="px-3 py-2 font-medium">{ta.spaces.sync}</th>
                   <th scope="col" className="px-3 py-2 font-medium">{ta.spaces.status}</th>
+                  <th scope="col" className="px-3 py-2 font-medium">{ts.spaces.cache}</th>
                   <th scope="col" className="px-3 py-2 text-right font-medium">{ta.spaces.actions}</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {items.map((s) => (
-                  <SpaceRow key={s.id} space={s} onAction={(kind) => setAction({ kind, space: s })} onEnable={() => void enable(s)} />
+                  <SpaceRow
+                    key={s.id}
+                    space={s}
+                    onAction={(kind) => setAction({ kind, space: s })}
+                    onEnable={() => void enable(s)}
+                    onPin={() => void changeStorage(s, { pin: !s.storage.pinned }, s.storage.pinned ? ts.spaces.unpinnedDone : ts.spaces.pinnedDone)}
+                    onExempt={() => void changeStorage(s, { exempt: !s.storage.exempt }, ts.spaces.exemptDone)}
+                  />
                 ))}
               </tbody>
             </table>
@@ -119,11 +151,12 @@ export function SpacesPanel() {
       {action?.kind === 'transfer' && <TransferDialog space={action.space} onClose={() => setAction(null)} />}
       {action?.kind === 'disable' && <DisableDialog space={action.space} onClose={() => setAction(null)} />}
       {action?.kind === 'delete' && <DeleteDialog space={action.space} onClose={() => setAction(null)} />}
+      {action?.kind === 'evict' && <EvictDialog space={action.space} onClose={() => setAction(null)} />}
     </SettingsSection>
   )
 }
 
-function SpaceRow({ space: s, onAction, onEnable }: { space: AdminSpace; onAction: (kind: Action['kind']) => void; onEnable: () => void }) {
+function SpaceRow({ space: s, onAction, onEnable, onPin, onExempt }: { space: AdminSpace; onAction: (kind: Action['kind']) => void; onEnable: () => void; onPin: () => void; onExempt: () => void }) {
   const sp = ta.spaces
   return (
     <tr data-space={s.id}>
@@ -149,6 +182,9 @@ function SpaceRow({ space: s, onAction, onEnable }: { space: AdminSpace; onActio
       </td>
       <td className="px-3 py-2.5 whitespace-nowrap">{sp.syncStates[s.sync]}</td>
       <td className="px-3 py-2.5">{s.disabled ? <Badge variant="secondary">{sp.disabled}</Badge> : <span className="text-muted-foreground">{sp.active}</span>}</td>
+      <td className="px-3 py-2.5" data-slot="space-cache">
+        <CacheCell space={s} />
+      </td>
       <td className="px-3 py-2.5">
         <div className="flex items-center justify-end gap-1">
           <Button variant="outline" size="sm" render={<Link to={spaceUrls(s.id).home()} aria-label={t.fmt.labelled(sp.open, s.name)} />}>
@@ -164,6 +200,12 @@ function SpaceRow({ space: s, onAction, onEnable }: { space: AdminSpace; onActio
               </DropdownMenuItem>
               {s.disabled ? <DropdownMenuItem onClick={onEnable}>{sp.enable}</DropdownMenuItem> : <DropdownMenuItem onClick={() => onAction('disable')}>{sp.disable}</DropdownMenuItem>}
               <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={onPin}>{s.storage.pinned ? ts.spaces.unpin : ts.spaces.pin}</DropdownMenuItem>
+              <DropdownMenuItem onClick={onExempt}>{s.storage.exempt ? ts.spaces.exemptOff : ts.spaces.exemptOn}</DropdownMenuItem>
+              <DropdownMenuItem disabled={s.storage.cache === 'local' || s.storage.cache === 'evicted' || s.storage.pinned} onClick={() => onAction('evict')}>
+                {ts.spaces.evict}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" disabled={s.personal} onClick={() => onAction('delete')}>
                 {sp.delete}
               </DropdownMenuItem>
@@ -172,6 +214,64 @@ function SpaceRow({ space: s, onAction, onEnable }: { space: AdminSpace; onActio
         </div>
       </td>
     </tr>
+  )
+}
+
+// What the copy on the server is, with the marks that keep it, and what the
+// storage policy asks of the space.
+function CacheCell({ space: s }: { space: AdminSpace }) {
+  const st = s.storage
+  const c = ts.spaces
+  return (
+    <div className="grid gap-0.5">
+      <div className="flex flex-wrap items-center gap-1">
+        <span title={c.cacheHelp[st.cache]}>{c.caches[st.cache]}</span>
+        {st.pinned && <Badge variant="secondary">{c.pinned}</Badge>}
+        {st.exempt && <Badge variant="outline">{c.exempt}</Badge>}
+      </div>
+      <span className="text-xs text-muted-foreground">{st.lastUsed ? c.lastUsed(absoluteTime(st.lastUsed)) : c.neverUsed}</span>
+      {st.cache !== 'local' && <span className="text-xs text-muted-foreground">{c.sizes(formatBytes(st.cloneBytes), formatBytes(st.indexBytes))}</span>}
+      {st.remote && <span className={`text-xs ${st.remote.overdue ? 'text-destructive' : 'text-warning'}`}>{c.deadline(absoluteTime(st.remote.deadline), st.remote.overdue)}</span>}
+    </div>
+  )
+}
+
+function EvictDialog({ space, onClose }: { space: AdminSpace; onClose: () => void }) {
+  const c = ts.spaces
+  const evict = useEvictSpace()
+  const [error, setError] = useState('')
+  const confirm = async () => {
+    setError('')
+    try {
+      await evict.mutateAsync(space.id)
+      toast.success(c.evictedDone)
+      onClose()
+    } catch (e) {
+      if (!(e instanceof ApiError)) return setError(c.changeFailed)
+      // busy says what keeps the space (in the server's words); the others have a sentence of their own.
+      if (e.code === 'busy') setError(`${c.errors.busy} ${e.message}`)
+      else if (e.code === 'conflict') setError(c.errors.conflict)
+      else if (e.code === 'unavailable') setError(c.errors.unavailable)
+      else setError(e.message || c.changeFailed)
+    }
+  }
+  return (
+    <AlertDialog open onOpenChange={(o) => !o && onClose()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{c.evictTitle(space.name)}</AlertDialogTitle>
+          <AlertDialogDescription>{c.evictHelp}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <FormMessage>{error}</FormMessage>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{ta.spaces.cancel}</AlertDialogCancel>
+          <Button type="button" variant="destructive" disabled={evict.isPending} onClick={() => void confirm()}>
+            {evict.isPending && <Spinner />}
+            {c.evictConfirm}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 

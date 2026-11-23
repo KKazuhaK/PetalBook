@@ -14,6 +14,8 @@ import { homeEn } from './home/en'
 import { homeZhCN } from './home/zh-CN'
 import { tokensEn } from './tokens/en'
 import { tokensZhCN } from './tokens/zh-CN'
+import { storageEn } from './storage/en'
+import { storageZhCN } from './storage/zh-CN'
 import { oauthEn } from './oauth/en'
 import { oauthZhCN } from './oauth/zh-CN'
 
@@ -127,6 +129,7 @@ describe('dictionaries', () => {
     walk(homeZhCN, homeEn, 'home', problems, true)
     walk(tokensZhCN, tokensEn, 'tokens', problems)
     walk(oauthZhCN, oauthEn, 'oauth', problems)
+    walk(storageZhCN, storageEn, 'storage', problems)
     expect(problems).toEqual([])
   })
   it('English has no Chinese text in it', () => {
@@ -150,6 +153,7 @@ describe('dictionaries', () => {
     scan(homeEn, 'home')
     scan(tokensEn, 'tokens')
     scan(oauthEn, 'oauth')
+    scan(storageEn, 'storage')
     expect(found).toEqual([])
   })
   it('the sentences of the greeting use only the placeholders the code fills, in both languages', () => {

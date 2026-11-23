@@ -24,6 +24,24 @@ export interface SpaceInfo {
   // The folder quick notes go to: a folder path, never empty. Only a name; the
   // folder exists once a page has been made in it.
   inbox: string
+  // What the space's copy on the server is and what the storage policy asks of
+  // it (docs/api.md, "Server storage"). Absent in single-user mode.
+  storage?: SpaceStorage
+}
+
+// What a space's copy on the server is.
+export type CacheState = 'local' | 'full' | 'partial' | 'evicted' | 'restoring'
+// A requirement of the storage policy that the space does not meet yet.
+export interface RemoteNotice {
+  required: 'any' | 'github'
+  deadline: string
+  overdue: boolean
+}
+export interface SpaceStorage {
+  cache: CacheState
+  assets: 'space' | 'repository'
+  // null unless the policy asks something of this space that it does not have yet.
+  remote: RemoteNotice | null
 }
 export interface MetaResponse {
   version: string
@@ -608,6 +626,10 @@ export type ErrorCode =
   | 'last_owner'
   | 'personal_space'
   | 'busy'
+  | 'remote_required'
+  | 'not_cached'
+  | 'restoring'
+  | 'space_full'
   | 'github_not_configured'
   | 'github_not_authorized'
   | 'github_owner_not_allowed'
@@ -639,6 +661,8 @@ export interface User {
   role: Role
   disabled: boolean
   created: string
+  // The storage policy does not ask the spaces this user owns for a remote (absent when false).
+  remoteExempt?: boolean
 }
 
 export interface SessionInfo {
@@ -790,6 +814,44 @@ export interface AdminSpace {
   sizeBytes: number | null
   sizeAt: string | null
   sync: SyncState
+  // What the copy on the server is, per space (docs/api.md, "Server storage").
+  storage: AdminSpaceStorage
+}
+export interface AdminSpaceStorage {
+  cache: CacheState
+  pinned: boolean
+  exempt: boolean
+  lastUsed: string | null
+  cloneBytes: number
+  indexBytes: number
+  assetCacheBytes: number
+  assets: 'space' | 'repository'
+  remote: RemoteNotice | null
+}
+export interface AdminStorage {
+  remotes: { require: 'any' | 'github' | null; scope: 'new' | 'all'; graceDays: number; since: string | null }
+  hosts: { allowed: string[]; fromFlag: boolean }
+  localSpaces: { maxBytes: number | null }
+  cache: { partial: boolean; evictAfterDays: number | null; minIdleHours: number; clonesBytes: number | null; minFreeBytes: number | null }
+  git: { version: string; partialClone: boolean }
+  affected: { inGrace: number; overdue: number; exempt: number }
+}
+// What a PUT may change: any of the sections, each partly.
+export interface PutAdminStorage {
+  remotes?: Partial<AdminStorage['remotes']>
+  hosts?: { allowed?: string[] }
+  localSpaces?: { maxBytes?: number | null }
+  cache?: Partial<AdminStorage['cache']>
+}
+export interface StorageStatus {
+  spaces: { local: number; full: number; partial: number; evicted: number; restoring: number }
+  cloneBytes: number
+  indexBytes: number
+  assetCacheBytes: number
+  clonesBudget: number | null
+  assetsBudget: number | null
+  restoresWaiting: number
+  remotes: { inGrace: number; overdue: number }
 }
 export interface AdminSpaceList {
   items: AdminSpace[]
@@ -798,6 +860,9 @@ export interface AdminSpaceList {
 }
 export interface AdminSpacesParams {
   q?: string
+  // Keeps the spaces in one cache state, or (overdue) those past their deadline for a remote.
+  cache?: CacheState
+  overdue?: boolean
   cursor?: string
   limit?: number
 }
@@ -822,6 +887,7 @@ export interface ServerStatus {
   // Absent where the platform cannot say.
   diskFreeBytes?: number
   goVersion: string
+  storage: StorageStatus
 }
 
 // --- home: the daily text and favourites (docs/api.md, "Home") ---------------------
