@@ -498,6 +498,8 @@ export type ErrorCode =
   | 'passkey_failed'
   | 'recent_login_required'
   | 'too_many_passkeys'
+  | 'passkey_unavailable'
+  | 'provider_in_use'
   | 'unavailable'
   | 'internal'
   | 'network'

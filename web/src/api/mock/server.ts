@@ -1769,6 +1769,14 @@ export function createMockServer(options: MockOptions = {}) {
       return j(target.store.touch(touch[1], body))
     }
 
+    // Mock only: an account that single sign-on made has no password; this takes one away.
+    if (method === 'POST' && path === '/_mock/drop-password') {
+      const target = [...users.values()].find((u) => u.username === body.username)
+      if (!target) throw new HttpError(404, 'not_found', '没有这个用户')
+      target.passwordHash = undefined
+      return j({})
+    }
+
     // Mock only: put a space's remote in a state, to see how the app shows it.
     if (method === 'POST' && path === '/_mock/remote') {
       const target = spaces.get(url.searchParams.get('space') ?? '') ?? [...spaces.values()][0]
