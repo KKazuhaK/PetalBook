@@ -1927,10 +1927,9 @@ a `path_reveals_secret` before a `path_error`, in the order text, source,
 author, link.
 
 ```json
-{"error": "path_error", "message": "no text or number at from_x", "field": "source",
- "result": {"ok": false, "status": 200, "url": "…", "raw": "…", "quote": {"text": "…"},
-            "pathErrors": [{"field": "source", "code": "path_error", "message": "no text or number at from_x"},
-                           {"field": "link", "code": "path_error", "message": "a value the link needs is not in the answer"}]}}
+{"error": "path_error", "message": "no text or number at hitokoto", "field": "text",
+ "result": {"ok": false, "status": 200, "url": "…", "raw": "…",
+            "pathErrors": [{"field": "text", "code": "path_error", "message": "no text or number at hitokoto"}]}}
 {"error": "host_not_allowed", "message": "the host api.example.org is not on the list of hosts", "host": "api.example.org",
  "result": {"ok": false, "url": "…", "message": "…"}}
 ```
@@ -1938,8 +1937,11 @@ author, link.
 `raw` is the start of the answer (4 000 characters), shown only when it is
 valid JSON and none of its decoded texts, names and numbers repeats a request
 header's value (see above); otherwise it is left out, and `message` says why.
+Only the `text` path is required: a `source`, `author` or `link` whose path
+finds a null, nothing or an empty text (or whose link needs a value that is
+missing) gives no value for that field, and is no error.
 `pathErrors` is a list of `{field, code, message}` (`field` one of `text`,
-`source`, `author`, `link`; `code` `path_error` or `path_reveals_secret`); the
+`source`, `author`, `link`; `code` `path_error`, for `text` only, or `path_reveals_secret`); the
 fields that were found are still in `quote`. `message` says what went wrong
 with the request or the answer.
 
@@ -1955,7 +1957,7 @@ it. All are `400`.
 | `header_missing` | `header` | a header without a value, and none is kept for it (for this `id`) |
 | `not_json` | | a trial's answer does not declare JSON, or is not valid JSON |
 | `too_large` | | a trial's answer is larger than 64 KB |
-| `path_error` | `field` | a trial's path (or a value the link needs) finds no text or number |
+| `path_error` | `field` (`"text"`) | a trial's text path finds no text or number |
 | `path_reveals_secret` | `field` | a trial's path (or a value of the link) would show a request header's value |
 | `link_uses_header` | `field` (`"link"`) | a link template with a request header in it (saving or trying) |
 | `skip_too_large` | | `GET …/daily` with a `skip` above 1 000 |

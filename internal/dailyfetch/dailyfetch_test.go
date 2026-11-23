@@ -151,6 +151,44 @@ func TestExtractAndLinks(t *testing.T) {
 	}
 }
 
+// A hitokoto-like answer has "from_who": null: only the text path is required.
+func TestOptionalFieldsWithoutAValueAreNoError(t *testing.T) {
+	a := API{Text: "hitokoto", Source: "from", Author: "from_who", Link: "https://hitokoto.cn?uuid={uuid}"}
+	for name, body := range map[string]string{
+		"null":    `{"hitokoto":"x","from":"s","from_who":null}`,
+		"missing": `{"hitokoto":"x","from":"s"}`,
+		"empty":   `{"hitokoto":"x","from":"s","from_who":"  "}`,
+	} {
+		q, err := extract(a, []byte(body))
+		if err != nil || q.Text != "x" || q.Source != "s" || q.Author != "" || q.Link != "" {
+			t.Errorf("%s: %+v %v", name, q, err)
+		}
+		_, errs, codes, _ := takeOut(a, mustJSON(t, body), "zh", "2026-11-23", secretsOf(a))
+		if errs != nil || codes != nil {
+			t.Errorf("%s: %v %v", name, errs, codes)
+		}
+	}
+	// The text is still required.
+	for _, body := range []string{`{"hitokoto":null,"from":"s"}`, `{"from":"s"}`, `{"hitokoto":"","from":"s"}`} {
+		if _, err := extract(a, []byte(body)); !errors.Is(err, ErrUnavailable) {
+			t.Errorf("%s: %v", body, err)
+		}
+		_, errs, codes, _ := takeOut(a, mustJSON(t, body), "zh", "2026-11-23", secretsOf(a))
+		if errs["text"] == "" || codes["text"] != CodePathError || len(errs) != 1 {
+			t.Errorf("%s: %v %v", body, errs, codes)
+		}
+	}
+}
+
+func mustJSON(t *testing.T, s string) any {
+	t.Helper()
+	var v any
+	if err := json.Unmarshal([]byte(s), &v); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
 func TestPeriods(t *testing.T) {
 	at := time.Date(2026, 11, 23, 10, 17, 30, 0, time.UTC)
 	k, ends := API{Refresh: RefreshDaily}.Period(at, "2026-11-23")
@@ -622,7 +660,9 @@ func TestProbeShowsTheRawAnswerAndWhatThePathsTakeOut(t *testing.T) {
 	a.Text, a.Source, a.Author, a.Link = "text", "nope.x", "who", "https://example.org/{missing}"
 	c.add(time.Second)
 	res, _ = f.Probe(ctx, a, hosts, "", "2026-11-23")
-	if res.OK || res.Quote == nil || res.Quote.Text == "" || res.PathError("source") == nil || res.PathError("link") == nil || res.PathError("text") != nil || res.PathError("author") != nil {
+	// Source, author and link are optional: a path with no value there is no
+	// value, not a path error.
+	if !res.OK || res.Quote == nil || res.Quote.Text == "" || res.Quote.Source != "" || res.Quote.Link != "" || res.PathErrors != nil || res.Code != "" {
 		t.Fatalf("%+v", res)
 	}
 	a.Text = "wrong.path"

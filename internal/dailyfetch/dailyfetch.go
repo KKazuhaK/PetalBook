@@ -1210,8 +1210,12 @@ func takeOut(a API, doc any, lang, date string, sec *secrets) (q Quote, errs, co
 		s, found := pathText(doc, f.path)
 		s = strings.TrimSpace(s)
 		switch {
-		case !found || (f.need && s == ""):
-			errs[f.name], codes[f.name] = "no text or number at "+f.path, CodePathError
+		case !found || s == "":
+			// Only the text is required; a source or author with no value
+			// (null, missing, empty) is simply left out.
+			if f.need {
+				errs[f.name], codes[f.name] = "no text or number at "+f.path, CodePathError
+			}
 		case sec.in(s):
 			errs[f.name], codes[f.name] = "the value at "+f.path+" repeats a request header's value; it is never shown", CodePathRevealsSecret
 			leaked = true
@@ -1226,7 +1230,7 @@ func takeOut(a API, doc any, lang, date string, sec *secrets) (q Quote, errs, co
 			errs["link"], codes["link"] = why, CodePathRevealsSecret
 			leaked = true
 		case link == "":
-			errs["link"], codes["link"] = "a value the link needs is not in the answer", CodePathError
+			// A value the link needs is missing: no link, not an error.
 		default:
 			q.Link = link
 		}

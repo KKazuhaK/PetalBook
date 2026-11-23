@@ -525,19 +525,17 @@ func TestAdministratorsTryAnInterface(t *testing.T) {
 		if _, g := x.adm("GET", "/api/admin/daily", nil); len(g["apis"].([]any)) != 0 || len(g["hosts"].([]any)) != 1 {
 			t.Fatalf("a trial saved something: %v", g)
 		}
-		// A path that finds nothing is refused, naming the first such field, with
-		// the raw answer and the rest taken out beside it.
+		// Source, author and link are optional: a path that finds nothing (or a
+		// link value that is missing) is no value, not an error.
 		body["source"], body["link"] = "nope.x", "https://example.org/{missing}"
 		code, r = try(body)
-		res, _ := r["result"].(map[string]any)
-		pe := map[string]any{"source": pathErr(res, "source"), "link": pathErr(res, "link"), "text": pathErr(res, "text")}
-		if code != 400 || r["error"] != "path_error" || r["field"] != "source" || res["ok"] != false || pe["source"] == nil || pe["link"] == nil || pe["text"] != nil ||
-			res["quote"].(map[string]any)["text"] == "" || res["raw"] == "" {
+		if code != 200 || r["ok"] != true || r["pathErrors"] != nil || r["quote"].(map[string]any)["text"] == "" || r["quote"].(map[string]any)["link"] != nil {
 			t.Fatalf("%d %v", code, r)
 		}
+		// The text path is required: refused, with the raw answer beside it.
 		body["text"] = "wrong"
 		code, r = try(body)
-		res, _ = r["result"].(map[string]any)
+		res, _ := r["result"].(map[string]any)
 		if code != 400 || r["error"] != "path_error" || r["field"] != "text" || res["quote"] != nil || pathErr(res, "text") == nil || res["raw"] == "" {
 			t.Fatalf("%d %v", code, r)
 		}
