@@ -27,14 +27,16 @@ type ProviderRow struct {
 	StatusChecked          time.Time
 	StatusMessage          string
 	Created, Updated       time.Time
+	// GroupsVersion is bumped by UpdateProvider (see LockProviderGroups).
+	GroupsVersion int64
 }
 
-const providerCols = `slug, kind, name, icon, enabled, position, auto_create, merge_verified_email, legacy_callback, issuer, config, secret_enc, cache, status_ok, status_checked, status_message, created, updated`
+const providerCols = `slug, kind, name, icon, enabled, position, auto_create, merge_verified_email, legacy_callback, issuer, config, secret_enc, cache, status_ok, status_checked, status_message, created, updated, groups_version`
 
 func scanProvider(sc interface{ Scan(...any) error }) (*ProviderRow, error) {
 	var p ProviderRow
 	var en, pos, ac, mv, lc, ok, chk, cr, up int64
-	if err := sc.Scan(&p.Slug, &p.Kind, &p.Name, &p.Icon, &en, &pos, &ac, &mv, &lc, &p.Issuer, &p.Config, &p.SecretEnc, &p.Cache, &ok, &chk, &p.StatusMessage, &cr, &up); err != nil {
+	if err := sc.Scan(&p.Slug, &p.Kind, &p.Name, &p.Icon, &en, &pos, &ac, &mv, &lc, &p.Issuer, &p.Config, &p.SecretEnc, &p.Cache, &ok, &chk, &p.StatusMessage, &cr, &up, &p.GroupsVersion); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -73,19 +75,32 @@ func GetProvider(ctx context.Context, q Q, slug string) (*ProviderRow, error) {
 
 // InsertProvider adds a provider; a taken slug is a unique violation.
 func InsertProvider(ctx context.Context, q Q, p ProviderRow) error {
-	_, err := q.Exec(ctx, `INSERT INTO sign_in_providers(`+providerCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err := q.Exec(ctx, `INSERT INTO sign_in_providers(`+providerCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Slug, p.Kind, p.Name, p.Icon, b2i(p.Enabled), p.Position, b2i(p.AutoCreate), b2i(p.MergeVerifiedEmail), b2i(p.LegacyCallback), p.Issuer,
-		p.Config, p.SecretEnc, p.Cache, b2i(p.StatusOK), zeroMS(p.StatusChecked), p.StatusMessage, ms(p.Created), ms(p.Updated))
+		p.Config, p.SecretEnc, p.Cache, b2i(p.StatusOK), zeroMS(p.StatusChecked), p.StatusMessage, ms(p.Created), ms(p.Updated), p.GroupsVersion)
 	return err
 }
 
-// UpdateProvider replaces everything but the slug, the kind and the creation time.
+// UpdateProvider replaces everything but the slug, the kind and the creation
+// time, and bumps the groups version.
 func UpdateProvider(ctx context.Context, q Q, p ProviderRow) error {
 	res, err := q.Exec(ctx, `UPDATE sign_in_providers SET name = ?, icon = ?, enabled = ?, position = ?, auto_create = ?, merge_verified_email = ?, legacy_callback = ?, issuer = ?,
-		config = ?, secret_enc = ?, cache = ?, status_ok = ?, status_checked = ?, status_message = ?, updated = ? WHERE slug = ?`,
+		config = ?, secret_enc = ?, cache = ?, status_ok = ?, status_checked = ?, status_message = ?, updated = ?, groups_version = groups_version + 1 WHERE slug = ?`,
 		p.Name, p.Icon, b2i(p.Enabled), p.Position, b2i(p.AutoCreate), b2i(p.MergeVerifiedEmail), b2i(p.LegacyCallback), p.Issuer,
 		p.Config, p.SecretEnc, p.Cache, b2i(p.StatusOK), zeroMS(p.StatusChecked), p.StatusMessage, ms(p.Updated), p.Slug)
 	return oneRow(res, err)
+}
+
+// LockProviderGroups locks a provider's row for the rest of the transaction if
+// its groups version is still version. It reports false, locking nothing, when
+// the provider has changed since or is gone: a write of the provider holds the
+// row until it commits, so this waits for it and then sees the new version.
+func LockProviderGroups(ctx context.Context, q Q, slug string, version int64) (bool, error) {
+	err := oneRow(q.Exec(ctx, `UPDATE sign_in_providers SET slug = slug WHERE slug = ? AND groups_version = ?`, slug, version))
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // SetProviderStatus records the result of a discovery or metadata fetch (and

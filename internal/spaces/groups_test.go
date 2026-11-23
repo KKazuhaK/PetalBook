@@ -332,7 +332,8 @@ func TestGroupLimits(t *testing.T) {
 			t.Fatalf("1001st: %v", err)
 		}
 		sg := f.group("Synced", "synced")
-		res, err := f.m.SyncProviderGroups(ctx, "many", "co", []store.SyncedMembership{{GroupID: sg, Value: "x"}})
+		f.provider("co")
+		res, err := f.m.SyncProviderGroups(ctx, "many", "co", 0, []store.SyncedMembership{{GroupID: sg, Value: "x"}})
 		if err != nil || !res.Limited || res.Changed() {
 			t.Fatalf("%+v %v", res, err)
 		}
@@ -453,11 +454,12 @@ func TestChangesDropOnlyTheAffectedPeople(t *testing.T) {
 		}
 		// A sync with no change drops nobody, one with a change drops that person.
 		sg := f.group("Synced", "synced")
-		if res, err := f.m.SyncProviderGroups(ctx, "ann", "co", nil); err != nil || res.Changed() {
+		f.provider("co")
+		if res, err := f.m.SyncProviderGroups(ctx, "ann", "co", 0, nil); err != nil || res.Changed() {
 			t.Fatal(res, err)
 		}
 		check("sync without a change")
-		if res, err := f.m.SyncProviderGroups(ctx, "ann", "co", []store.SyncedMembership{{GroupID: sg, Value: "v"}}); err != nil || !res.Changed() {
+		if res, err := f.m.SyncProviderGroups(ctx, "ann", "co", 0, []store.SyncedMembership{{GroupID: sg, Value: "v"}}); err != nil || !res.Changed() {
 			t.Fatal(res, err)
 		}
 		check("sync with a change", "ann")
@@ -640,12 +642,14 @@ func TestSyncTouchesOnlyWhatTheProviderBrought(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newGfix(t, st)
 		f.user("ann")
+		f.provider("one")
+		f.provider("two")
 		a, b, c := f.group("A", "synced"), f.group("B", "synced"), f.group("C", "synced")
 		local := f.group("Local", "local")
 		f.in(local, "ann")
 		sync := func(provider string, want ...store.SyncedMembership) SyncResult {
 			t.Helper()
-			r, err := f.m.SyncProviderGroups(ctx, "ann", provider, want)
+			r, err := f.m.SyncProviderGroups(ctx, "ann", provider, 0, want)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -684,20 +688,26 @@ func TestSyncTouchesOnlyWhatTheProviderBrought(t *testing.T) {
 			t.Fatalf("%+v", g)
 		}
 		// A mapping entry removed takes its rows at once, not the other value's.
-		if err := f.m.DropMapped(ctx, "two", "z", ""); err != nil {
+		drop := func(fn func(q store.Q) ([]string, error)) error {
+			var ids []string
+			err := st.Tx(ctx, func(q store.Q) (err error) { ids, err = fn(q); return })
+			f.m.MembershipChanged(ids...)
+			return err
+		}
+		if err := drop(func(q store.Q) ([]string, error) { return f.m.DropMapped(ctx, q, "two", "z", "") }); err != nil {
 			t.Fatal(err)
 		}
 		if g, _ := f.m.Group(ctx, b); g.People != 1 {
 			t.Fatalf("the other value's row is gone: %+v", g)
 		}
-		if err := f.m.DropMapped(ctx, "two", "z2", ""); err != nil {
+		if err := drop(func(q store.Q) ([]string, error) { return f.m.DropMapped(ctx, q, "two", "z2", "") }); err != nil {
 			t.Fatal(err)
 		}
 		if g, _ := f.m.Group(ctx, b); g.People != 0 {
 			t.Fatalf("%+v", g)
 		}
 		// A deleted provider takes everything it brought.
-		if err := f.m.DropProvider(ctx, "two"); err != nil {
+		if err := drop(func(q store.Q) ([]string, error) { return f.m.DropProvider(ctx, q, "two") }); err != nil {
 			t.Fatal(err)
 		}
 		gs, _ = store.UserGroups(ctx, st.Q(), "ann")
@@ -799,7 +809,7 @@ func TestRevokingRacesAnAddToTheGroup(t *testing.T) {
 			return err
 		}},
 		{"sync", store.GroupSynced, func(f *gfix, g string) error {
-			_, err := f.m.SyncProviderGroups(ctx, "x", "co", []store.SyncedMembership{{GroupID: g, Value: "v"}})
+			_, err := f.m.SyncProviderGroups(ctx, "x", "co", 0, []store.SyncedMembership{{GroupID: g, Value: "v"}})
 			return err
 		}},
 	}
@@ -832,6 +842,7 @@ func TestRevokingRacesAnAddToTheGroup(t *testing.T) {
 					f := newGfix(t, st)
 					boss := f.user("boss")
 					f.user("x")
+					f.provider("co")
 					f.space("S1", "Alpha", "boss")
 					h := f.handle(boss, "S1")
 					g := f.group("G", gr.source)
@@ -871,6 +882,85 @@ func TestRevokingRacesAnAddToTheGroup(t *testing.T) {
 					}
 				})
 			}
+		}
+	})
+}
+
+// provider adds a sign-in provider row; its groups version starts at 0.
+func (f *gfix) provider(slug string) store.ProviderRow {
+	f.t.Helper()
+	now := time.Now()
+	p := store.ProviderRow{Slug: slug, Kind: "oidc", Name: slug, Config: "{}", Created: now, Updated: now}
+	if err := store.InsertProvider(ctx, f.st.Q(), p); err != nil {
+		f.t.Fatal(err)
+	}
+	got, err := store.GetProvider(ctx, f.st.Q(), slug)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return *got
+}
+
+// A provider's mapping change (or deletion) drops what it brought in the same
+// transaction as the provider's row, and a sign-in that still holds the old
+// mapping cannot bring it back afterwards.
+func TestASignInWithTheOldMappingCannotReAdd(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := newGfix(t, st)
+		f.user("ann")
+		g := f.group("G", "synced")
+		p := f.provider("co")
+		want := []store.SyncedMembership{{GroupID: g, Value: "v"}}
+		if res, err := f.m.SyncProviderGroups(ctx, "ann", "co", p.GroupsVersion, want); err != nil || !res.Changed() {
+			t.Fatal(res, err)
+		}
+		// The entry is removed: the provider's row and the memberships, together.
+		var dropped []string
+		err := st.Tx(ctx, func(q store.Q) error {
+			if err := store.UpdateProvider(ctx, q, p); err != nil {
+				return err
+			}
+			var err error
+			dropped, err = f.m.DropMapped(ctx, q, "co", "v", "")
+			return err
+		})
+		if err != nil || len(dropped) != 1 || dropped[0] != "ann" {
+			t.Fatal(dropped, err)
+		}
+		f.m.MembershipChanged(dropped...)
+		// A sign-in that read the provider before the change comes late.
+		if res, err := f.m.SyncProviderGroups(ctx, "ann", "co", p.GroupsVersion, want); err != nil || res.Changed() {
+			t.Fatal(res, err)
+		}
+		if in, _ := store.UserInGroup(ctx, st.Q(), "ann", g); in {
+			t.Fatal("a sign-in with the old mapping put ann back")
+		}
+		// With the provider's current version it syncs again.
+		cur, err := store.GetProvider(ctx, st.Q(), "co")
+		if err != nil || cur.GroupsVersion == p.GroupsVersion {
+			t.Fatal(cur, err)
+		}
+		if res, err := f.m.SyncProviderGroups(ctx, "ann", "co", cur.GroupsVersion, want); err != nil || !res.Changed() {
+			t.Fatal(res, err)
+		}
+		// A deleted provider: its memberships go with the row, and a late sign-in adds nothing.
+		err = st.Tx(ctx, func(q store.Q) error {
+			if err := store.DeleteProvider(ctx, q, "co"); err != nil {
+				return err
+			}
+			var err error
+			dropped, err = f.m.DropProvider(ctx, q, "co")
+			return err
+		})
+		if err != nil || len(dropped) != 1 {
+			t.Fatal(dropped, err)
+		}
+		f.m.MembershipChanged(dropped...)
+		if res, err := f.m.SyncProviderGroups(ctx, "ann", "co", cur.GroupsVersion, want); err != nil || res.Changed() {
+			t.Fatal(res, err)
+		}
+		if in, _ := store.UserInGroup(ctx, st.Q(), "ann", g); in {
+			t.Fatal("a sign-in through a deleted provider put ann back")
 		}
 	})
 }

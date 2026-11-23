@@ -239,7 +239,7 @@ func (s *Service) reloadProviders(ctx context.Context, rebuild ...string) error 
 	}
 	list := make([]*providerRT, 0, len(rows))
 	for _, row := range rows {
-		if o := old[row.Slug]; o != nil && !slices.Contains(rebuild, row.Slug) && o.row.Updated.Equal(row.Updated) {
+		if o := old[row.Slug]; o != nil && !slices.Contains(rebuild, row.Slug) && o.row.Updated.Equal(row.Updated) && o.row.GroupsVersion == row.GroupsVersion {
 			list = append(list, o)
 			continue
 		}
@@ -965,13 +965,25 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID, ip, slug string, 
 		}
 		b.row.StatusOK, b.row.StatusChecked, b.row.StatusMessage = cur.statusOK, cur.statusChecked, cur.statusMessage
 	}
-	if err := store.UpdateProvider(ctx, s.st.Q(), b.row); err != nil {
+	// The row and the memberships of entries that are gone or now point
+	// elsewhere change together; a sign-in's sync waits for both and then sees
+	// the new groups version (see SyncProviderGroups).
+	var dropped []string
+	err = s.st.Tx(ctx, func(q store.Q) error {
+		if err := store.UpdateProvider(ctx, q, b.row); err != nil {
+			return err
+		}
+		var err error
+		dropped, err = s.dropUnmapped(ctx, q, slug, cur.cfg.Groups, b.cfg.Groups)
+		return err
+	})
+	if err != nil {
 		return nil, err
 	}
+	s.cfg.Spaces.MembershipChanged(dropped...)
 	if err := s.reloadProviders(ctx, slug); err != nil {
 		return nil, err
 	}
-	s.dropUnmapped(ctx, slug, cur.cfg.Groups, b.cfg.Groups)
 	if len(b.changed) > 0 {
 		d := map[string]any{"slug": slug, "kind": b.row.Kind}
 		for _, f := range b.changed {
@@ -1044,18 +1056,26 @@ func (s *Service) DeleteProvider(ctx context.Context, actorID, ip, slug string, 
 			return e
 		}
 	}
-	if err := store.DeleteProvider(ctx, s.st.Q(), slug); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return errf(NotFound, "no such provider")
+	// What the provider brought goes with it, in the same transaction; the
+	// identities stay.
+	var dropped []string
+	err := s.st.Tx(ctx, func(q store.Q) error {
+		if err := store.DeleteProvider(ctx, q, slug); err != nil {
+			return err
 		}
+		var err error
+		dropped, err = s.cfg.Spaces.DropProvider(ctx, q, slug)
+		return err
+	})
+	if errors.Is(err, store.ErrNotFound) {
+		return errf(NotFound, "no such provider")
+	}
+	if err != nil {
 		return err
 	}
+	s.cfg.Spaces.MembershipChanged(dropped...)
 	if err := s.reloadProviders(ctx); err != nil {
 		return err
-	}
-	// What the provider brought goes with it; the identities stay.
-	if err := s.cfg.Spaces.DropProvider(ctx, slug); err != nil {
-		s.log.Error("could not remove the group memberships of a deleted provider", "provider", slug, "error", err)
 	}
 	s.Audit(AuditEvent{Kind: "provider_deleted", Actor: actorID, IP: ip, Detail: map[string]any{"slug": slug, "kind": cur.row.Kind}})
 	return nil

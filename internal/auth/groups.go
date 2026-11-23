@@ -295,7 +295,7 @@ func (s *Service) syncGroups(ctx context.Context, rt *providerRT, userID, userna
 			}
 		}
 	}
-	res, err := s.cfg.Spaces.SyncProviderGroups(ctx, userID, slug, want)
+	res, err := s.cfg.Spaces.SyncProviderGroups(ctx, userID, slug, rt.row.GroupsVersion, want)
 	if err != nil {
 		s.log.Error("could not sync the groups of a sign-in", "provider", slug, "user", userID, "error", err)
 		return
@@ -374,24 +374,29 @@ func (s *Service) UnmapGroup(ctx context.Context, groupID string) error {
 	return s.reloadProviders(ctx, touched...)
 }
 
-// dropUnmapped removes at once the memberships brought by entries that are no
-// longer in the map, or that now point to another group.
-func (s *Service) dropUnmapped(ctx context.Context, slug string, old, cur *GroupsCfg) {
+// dropUnmapped removes, in the transaction that writes the provider, the
+// memberships brought by entries that are no longer in the map, or that now
+// point to another group. It returns the people to pass to MembershipChanged.
+func (s *Service) dropUnmapped(ctx context.Context, q store.Q, slug string, old, cur *GroupsCfg) ([]string, error) {
 	if old == nil {
-		return
+		return nil, nil
 	}
 	now := map[string]string{}
 	if cur != nil {
 		now = cur.mapIndex()
 	}
+	var dropped []string
 	for _, e := range old.Map {
 		if gid, ok := now[e.Value]; ok && gid == e.GroupID {
 			continue
 		}
-		if err := s.cfg.Spaces.DropMapped(ctx, slug, e.Value, now[e.Value]); err != nil {
-			s.log.Error("could not remove the memberships of a mapping entry", "provider", slug, "error", err)
+		ids, err := s.cfg.Spaces.DropMapped(ctx, q, slug, e.Value, now[e.Value])
+		if err != nil {
+			return nil, err
 		}
+		dropped = append(dropped, ids...)
 	}
+	return dropped, nil
 }
 
 // MappedFrom is a provider and claim value that feed a group.

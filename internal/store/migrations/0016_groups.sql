@@ -34,3 +34,8 @@ CREATE TABLE space_groups (
   PRIMARY KEY (space_id, group_id)
 );
 CREATE INDEX space_groups_group ON space_groups(group_id);
+
+-- groups_version is bumped by every change of a provider's row. A sign-in's
+-- sync runs only while it still matches the version the sign-in read, so one
+-- that holds an old mapping cannot bring back what the change removed.
+ALTER TABLE sign_in_providers ADD COLUMN groups_version BIGINT NOT NULL DEFAULT 0;

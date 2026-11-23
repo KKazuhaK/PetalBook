@@ -586,8 +586,10 @@ func (r SyncResult) Changed() bool { return len(r.Added) > 0 || len(r.Removed) >
 // want (group id and claim value pairs). It reads those memberships with one
 // query, compares, and writes only when something differs; only then is the
 // person's cached list dropped. Memberships of other providers and of local
-// groups are never touched.
-func (m *Manager) SyncProviderGroups(ctx context.Context, userID, provider string, want []store.SyncedMembership) (SyncResult, error) {
+// groups are never touched. version is the provider's groups version the
+// sign-in read its mapping with: if the provider has changed or gone since,
+// nothing is written (the next sign-in brings the person up to date).
+func (m *Manager) SyncProviderGroups(ctx context.Context, userID, provider string, version int64, want []store.SyncedMembership) (SyncResult, error) {
 	var res SyncResult
 	if m.single != nil {
 		return res, nil
@@ -613,6 +615,12 @@ func (m *Manager) SyncProviderGroups(ctx context.Context, userID, provider strin
 	err = m.opt.Store.Tx(ctx, func(q store.Q) error {
 		res = SyncResult{}
 		held := map[string]bool{}
+		// The provider first (a change of its mapping holds it while it drops
+		// what the old mapping brought), then the groups.
+		ok, err := store.LockProviderGroups(ctx, q, provider, version)
+		if err != nil || !ok {
+			return err
+		}
 		// Every group this touches, locked at once in id order (ApplySynced
 		// locks again what it touches, which is already held).
 		var touched []string
@@ -674,28 +682,21 @@ func groupSet(l []store.SyncedMembership) []string {
 }
 
 // DropMapped removes what one claim value of a provider brought (except into
-// keepGroup, "" for none) from everyone, at once.
-func (m *Manager) DropMapped(ctx context.Context, provider, value, keepGroup string) error {
+// keepGroup, "" for none) from everyone, at once. It runs in the transaction
+// that writes the provider's row, which holds the row against syncs; the
+// caller passes the people it returns to MembershipChanged once that commits.
+func (m *Manager) DropMapped(ctx context.Context, q store.Q, provider, value, keepGroup string) ([]string, error) {
 	if m.single != nil {
-		return nil
+		return nil, nil
 	}
-	ids, err := store.RemoveMapped(ctx, m.opt.Store.Q(), provider, value, keepGroup)
-	if err != nil {
-		return err
-	}
-	m.MembershipChanged(ids...)
-	return nil
+	return store.RemoveMapped(ctx, q, provider, value, keepGroup)
 }
 
-// DropProvider removes every membership a provider brought.
-func (m *Manager) DropProvider(ctx context.Context, provider string) error {
+// DropProvider removes every membership a provider brought, in the
+// transaction that deletes the provider (see DropMapped).
+func (m *Manager) DropProvider(ctx context.Context, q store.Q, provider string) ([]string, error) {
 	if m.single != nil {
-		return nil
+		return nil, nil
 	}
-	ids, err := store.RemoveProviderMemberships(ctx, m.opt.Store.Q(), provider)
-	if err != nil {
-		return err
-	}
-	m.MembershipChanged(ids...)
-	return nil
+	return store.RemoveProviderMemberships(ctx, q, provider)
 }
