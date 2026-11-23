@@ -340,8 +340,10 @@ cookie; `return` is made safe as for single sign-on.
 - `403 local_login_refused`: `ssoOnly` is in effect and the account is not an
   administrator (see "Security settings").
 
-A passkey sign-in costs one query (the credential, by its id) and one write
-(its counter and last use); the user comes from the session cache.
+A passkey sign-in costs two indexed queries (the credential, by its id or by
+the named user's handle, and the user, by its id: a browser that is signing in
+has no session whose cache could answer), one write (the credential's counter
+and last use) and the insert of the new session.
 
 #### When a passkey is required
 
