@@ -3948,6 +3948,201 @@ changed since. Returns `{"page": Page item}`. Needs `write`.
 There is no tool to delete pages or folders, move folders, or change types,
 templates, settings or members.
 
+## Offline sync
+
+Milestone 4.1. These endpoints let a client keep a copy of some spaces on the
+device and bring it up to date by asking only for what changed. They change
+nothing on the server; writing back what was done offline is milestone 4.2.
+Every endpoint here works in both modes (in single-user mode the space is
+`default`) and with an API token; an OAuth access token is still for `/mcp`
+only (`403 token_scope`).
+
+The server keeps no record of devices. A client holds a **change cursor** per
+space and asks what changed after it; nothing is registered, and a device that
+is never seen again leaves nothing behind.
+
+A client typically:
+
+1. walks the **catalogue** of a space once (`GET …/sync/catalog`), which also
+   hands it the change cursor taken before the walk began;
+2. fetches the bodies of the pages it wants (`GET …/sync/pages`);
+3. from then on asks `GET /api/sync/heads` for all its spaces at once, and
+   `GET …/changes` only for a space whose head differs from its cursor;
+4. when told `410 changes_expired`, walks the catalogue again and compares
+   `rev`s, fetching only the bodies whose `rev` changed.
+
+### Change cursor
+
+An opaque string. It names a point in the index of one space: an epoch, which
+is new every time the index is built from scratch (at an upgrade that changes
+the index, `POST …/reindex`, or when the index does not match the files), and
+a sequence number. Every write of a page to the index (added, its file changed,
+renamed or moved, its links rewritten by the server, read again after a change
+made outside the server) gives the page a new sequence number, higher than any
+before; a page that is removed leaves a record of its removal. So "what changed
+after a cursor" is one range read of an index, whatever the size of the space,
+and a page that changed many times since is reported once, as it is now.
+
+A cursor is good for as long as the index keeps its epoch and the server still
+holds the removals after it: the last 100,000, and none older than 180 days.
+Otherwise the answer is `410 changes_expired`, and the client walks the
+catalogue again. A string that is not a cursor this server made is
+`400 invalid`.
+
+### Catalogue entry
+
+The light summary that a catalogue and a change list hold for a page: what a
+tree, a list, a search by title and a check of `rev` need, without the
+excerpt, the properties or the body.
+
+```json
+{"id": "01JD3K8Q7Z", "path": "Tang/暮雪.md", "folder": "Tang", "title": "暮雪",
+ "label": "暮雪", "untitled": false, "tags": ["玉兰", "黄昏"], "type": "",
+ "created": "2025-12-03", "updated": "2026-11-21T08:30:00Z",
+ "rev": "3b18e512dba79e4c8300dd08aeb37f8e728b8dad"}
+```
+
+The fields mean what they mean in a page summary (see "Page summary");
+`title` and `created` are absent when the page has none. A page that was
+removed is `{"id": "01JD3K8Q7Z", "deleted": true}` in a change list (never in
+a catalogue).
+
+### `GET /api/spaces/{space}/sync/catalog`
+
+Needs `read`. Every page of the space, in the order the server holds them, a
+batch at a time.
+
+| name | meaning |
+|---|---|
+| `folder` | only pages in this folder and below it (repeatable, at most 50; the root, `""`, means all) |
+| `limit` | 1–5000, default 2000 |
+| `cursor` | the `next` of the previous batch |
+
+```json
+{"items": [/* catalogue entries */], "next": "opaque-or-empty",
+ "changes": "change cursor", "tree": "k2f0…", "settings": "9a1c…"}
+```
+
+`changes` is in the first batch only (the one asked for without `cursor`): the
+change cursor as it was before the walk began. A page that changes while the
+client walks may be in the catalogue as it was or as it is; either way it is
+in `GET …/changes?since=` that cursor, so nothing is missed. `tree` and
+`settings` are as in a change list (below). `next` is `""` after the last
+batch. A batch is one range read of the index; no file is read.
+
+A `cursor` made for another set of `folder`s, or that is not one this server
+made, is `400 invalid`. A cursor outlives changes to the space (it names a
+position, not an offset), but not a rebuild of the index: then `410
+changes_expired`, and the walk starts again.
+
+### `GET /api/spaces/{space}/changes?since={cursor}&limit={n}`
+
+Needs `read`. What changed in the space after the change cursor `since`
+(required): the pages added, changed, renamed or moved, as catalogue entries,
+and the pages removed, in the order they last changed.
+
+| name | meaning |
+|---|---|
+| `since` | a change cursor (required) |
+| `limit` | 1–5000, default 1000 |
+
+```json
+{"items": [{"id": "01JD3K8Q7Z", "path": "Tang/暮雪.md", "…": "…", "rev": "3b18e5…"},
+           {"id": "01JD3K8Q80", "deleted": true}],
+ "next": "change cursor", "more": false, "tree": "k2f0…", "settings": "9a1c…"}
+```
+
+- `next` is the cursor to keep: the client asks with it next time. With no
+  changes `items` is empty and `next` is `since`.
+- `more` is `true` when there were more changes than `limit`; the client asks
+  again with `next` at once.
+- Each page is in the answer at most once, as it is now. A page removed and
+  then made again with the same id (moved out of the space and back, outside
+  the server) is a catalogue entry, not a removal.
+- `tree` changes whenever a folder is made, moved or removed, or the number of
+  pages in a folder changes; the client then reads `GET …/tree` (and
+  `GET …/tags` if it shows tags). `settings` changes whenever a file the server
+  reads as settings changes (`.petalbook/space.yml`, `tags.yml`, the types and
+  the templates); the client then reads again what it uses of them (`…/types`,
+  `…/views`, `…/templates`, `…/tags`). Neither is a change of a page, so
+  neither is in `items`.
+- A change of a page's effective type that comes only from a folder binding
+  is a change of `settings`, not of the page.
+
+What counts is the index. In a space that follows a remote, changes made on
+the remote arrive with the space's next pull, which happens only while the
+space is open (see "Remote repository"). Changes made to the files outside the
+server arrive when the index sees them (see "Maintenance").
+
+Errors: `400 invalid` without `since`, or for a `since` or `limit` that cannot
+be used; `410 changes_expired` (see "Change cursor").
+
+### `GET /api/spaces/{space}/sync/pages?ids={id},{id},…`
+
+Needs `read`. Several pages at once, for filling the device's copy: 1 to 100
+page ids, comma-separated, each once.
+
+```json
+{"pages": [/* pages, as GET …/pages/{id} returns them, with the caller's draft */],
+ "missing": ["01JD3K8Q81"], "rest": ["01JD3K8Q90"]}
+```
+
+- Each page is what `GET …/pages/{id}` returns, `draft` included when the
+  caller has one (the drafts of the whole request are read in one query).
+- `missing` lists the ids that are not pages of the space (any more). Left out
+  when empty.
+- An answer holds at most 8 MiB of pages; the pages that did not fit are listed
+  in `rest`, in the order asked, for the next request. The first page always
+  fits, whatever its size (a page file is at most 8 MiB). Left out when empty.
+
+`400 invalid` for no ids, more than 100, an id given twice, or one that is not
+in the form of a page id.
+
+### `GET /api/sync/heads?space={id}&space={id}…`
+
+The change cursor each space is at now, so that a client with many spaces can
+ask once and then read changes only where something changed. 1 to 100
+`space` parameters, each once.
+
+```json
+{"heads": {"01JD4A2K9P": "change cursor", "default": "change cursor"},
+ "missing": ["01JD4A2K9Q"]}
+```
+
+- `heads` holds every space the caller may `read`; `missing` (left out when
+  empty) every other one, not telling a space that does not exist from one the
+  caller may not see. A disabled space is in `missing`.
+- A head equal to the client's cursor means nothing changed; a different one
+  means the client calls `GET …/changes`. A head is not a promise that there are
+  changes: comparing it is cheap, reading the changes settles it.
+- The answer comes from memory and never opens or pulls a space: a space that
+  is closed (idle, or cleared from the disk by milestone 3.1) answers the
+  head it had when it closed. So a device polling heads keeps no space open, and
+  a space that follows a remote and is closed shows the remote's changes only
+  once someone opens it.
+
+`400 invalid` for no `space`, more than 100, or one given twice.
+
+### What a client is expected to do
+
+Not enforced by the server, but what it is built for:
+
+- Ask `heads` once a minute while the app is visible and online, and at once
+  when it comes back to the foreground or the network returns. Do not poll
+  `changes` for spaces whose head did not move.
+- Walk a catalogue in batches one after another, not in parallel; fetch bodies
+  at most 4 requests at a time.
+- On `404` from any of these for a space, remove that space's copy from the
+  device (the caller can no longer read it). On `403 space_disabled`, keep the
+  copy, show it as read-only and stop asking until the space is in `heads`
+  again.
+
+**What it costs**, in a space of 50 000 pages (targets, measured before 4.1 is
+merged): a `changes` with nothing new under a millisecond; a catalogue batch of
+2000 under 20 ms; 100 bodies under 100 ms on an SSD; `heads` for 100 spaces
+a few microseconds each. The index grows by one column and one small table,
+under 1% of its size.
+
 ## Maintenance
 
 ### `POST /api/spaces/{space}/reindex`
