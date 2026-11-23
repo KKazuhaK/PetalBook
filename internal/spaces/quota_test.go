@@ -264,3 +264,64 @@ type ctxT = context.Context
 func ctxWithCancel() (context.Context, context.CancelFunc) {
 	return context.WithCancel(context.Background())
 }
+
+// What one measuring turn costs for a space of 20,000 pages: the walk of its
+// files, the page count from the open space and from the index file of a closed
+// one. It prints the timings (the design notes quote them): set PETALBOOK_PERF=1.
+func TestMeasuringCostsOfALargeSpace(t *testing.T) {
+	if os.Getenv("PETALBOOK_PERF") == "" {
+		t.Skip("set PETALBOOK_PERF=1 to measure")
+	}
+	const pages = 20000
+	st := storetest.Open(t, "sqlite")
+	m := testManager(t, st)
+	owner := addUser(t, st, "U1", "owner")
+	info, err := m.Create(ctx, owner.ID, "Big")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, _ := m.paths(info.ID)
+	for i := 0; i < pages; i++ {
+		dir := filepath.Join(root, "notes", strconv.Itoa(i/200))
+		if i%200 == 0 {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		body := "---\nid: " + page.NewID(time.Now().Add(time.Duration(i)*time.Millisecond)) + "\ntitle: Page " + strconv.Itoa(i) + "\ncreated: 2026-11-23\n---\ntext of the page " + strconv.Itoa(i) + "\n"
+		if err := os.WriteFile(filepath.Join(dir, "p"+strconv.Itoa(i)+".md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Close it and open it again so that the index reads the files.
+	if err := m.evict(ctx, info.ID); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	h, err := m.Open(ctx, owner, info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Release()
+	t.Logf("PERF indexing %d pages when the space is opened%s%v", pages, "                    ", time.Since(start).Round(time.Millisecond))
+	if err := m.evict(ctx, info.ID); err != nil {
+		t.Fatal(err)
+	}
+	start = time.Now()
+	c, ok := m.pageCount(ctx, info.ID)
+	t.Logf("PERF page count of a closed space, from its index file (%d, %v)%s%v", c, ok, "          ", time.Since(start).Round(time.Microsecond))
+	start = time.Now()
+	n, _, err := m.Resize(ctx, store.AllTenants(), info.ID)
+	t.Logf("PERF a whole measuring turn of the closed space (%d bytes)%s%v", n, "                ", time.Since(start).Round(time.Millisecond))
+	if err != nil || c < pages-100 { // a few generated ids collide
+		t.Fatal(err, c)
+	}
+	h, err = m.Open(ctx, owner, info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Release()
+	start = time.Now()
+	c, ok = m.pageCount(ctx, info.ID)
+	t.Logf("PERF page count of an open space (%d, %v)%s%v", c, ok, "                              ", time.Since(start).Round(time.Microsecond))
+}

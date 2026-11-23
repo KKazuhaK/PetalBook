@@ -3,6 +3,7 @@ package quota
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -180,5 +181,57 @@ func TestSpaceLimitsAreThePersonsAndTheTenants(t *testing.T) {
 		if got, err := svc.SpaceLimits(ctx, u); err != nil || got != (spaces.SpaceLimits{Person: 3, Tenant: 9}) {
 			t.Fatalf("%+v %v", got, err)
 		}
+	})
+}
+
+// What looking at everyone costs, after a limit changed or the daily recount:
+// the usage rows read in pages of 500, and a write for each person whose state
+// changed. It prints the timings (the design notes quote them): PETALBOOK_PERF=1.
+func TestEvaluatingEveryoneCosts(t *testing.T) {
+	if os.Getenv("PETALBOOK_PERF") == "" {
+		t.Skip("set PETALBOOK_PERF=1 to measure")
+	}
+	const people = 20000
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		svc, rows, mu := newService(t, st)
+		now := time.Now().UnixMilli()
+		if err := st.Tx(ctx, func(q store.Q) error {
+			for i := 0; i < people; i++ {
+				id := fmt.Sprintf("U%07d", i)
+				if _, err := q.Exec(ctx, `INSERT INTO usage(kind, id, tenant_id, spaces, bytes, pages) VALUES ('user', ?, ?, 2, ?, 100)`, id, store.DefaultTenantID, 1_000_000+i); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		_ = now
+		time1 := func(name string, f func()) {
+			start := time.Now()
+			f()
+			t.Logf("PERF %-62s %10s", name, time.Since(start).Round(time.Millisecond))
+		}
+		time1(fmt.Sprintf("look at %d people, nobody over a limit", people), func() {
+			if err := svc.EvaluateScope(ctx, store.AllTenants()); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if _, err := svc.set.SetSite(ctx, settings.QuotaBytesPerPerson, settings.Change{HasValue: true, Value: int64(1_010_000)}); err != nil {
+			t.Fatal(err)
+		}
+		time1(fmt.Sprintf("a limit that 10,000 of %d people are over: state stored, audit written", people), func() {
+			if err := svc.EvaluateScope(ctx, store.AllTenants()); err != nil {
+				t.Fatal(err)
+			}
+		})
+		mu.Lock()
+		t.Logf("PERF   %d crossings reported", len(*rows))
+		mu.Unlock()
+		time1("the same look again: nothing changed, nothing written", func() {
+			if err := svc.EvaluateScope(ctx, store.AllTenants()); err != nil {
+				t.Fatal(err)
+			}
+		})
 	})
 }

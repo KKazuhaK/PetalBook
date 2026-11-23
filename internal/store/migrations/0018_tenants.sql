@@ -127,7 +127,9 @@ CREATE TABLE usage (
   measured  BIGINT NOT NULL DEFAULT 0,
   PRIMARY KEY (kind, id)
 );
+-- The list of people by bytes: within a tenant, and across all of them (a site administrator's).
 CREATE INDEX usage_rank ON usage(kind, tenant_id, bytes DESC, id);
+CREATE INDEX usage_rank_all ON usage(kind, bytes DESC, id);
 
 -- What the 1.7 measurement found is the first value of usage_bytes.
 UPDATE spaces SET usage_bytes = size_bytes WHERE size_bytes IS NOT NULL;

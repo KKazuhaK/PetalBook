@@ -419,6 +419,9 @@ func TestAdminUsageListsPeopleByBytesInTheirScope(t *testing.T) {
 		if first["user"].(map[string]any)["id"] != f.userA || first["pages"] != float64(6) || first["limits"].(map[string]any)["spaces"] != float64(20) || first["limits"].(map[string]any)["bytes"] != nil {
 			t.Fatalf("%v", first)
 		}
+		if own, _ := first["own"].(map[string]any); own == nil || own["spaces"] != nil || own["bytes"] != nil || own["pages"] != nil {
+			t.Fatalf("a person with no limits of their own: %v", first["own"])
+		}
 		for i := 1; i < len(items); i++ {
 			if items[i].(map[string]any)["bytes"].(float64) > items[i-1].(map[string]any)["bytes"].(float64) {
 				t.Fatalf("not by bytes: %s", raw)

@@ -236,6 +236,18 @@ func limitOf(quota string, p Person, t Tenant, tenant bool) int64 {
 	return *l
 }
 
+func sameSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, x := range a {
+		if !contains(b, x) {
+			return false
+		}
+	}
+	return true
+}
+
 func contains(l []string, s string) bool {
 	for _, x := range l {
 		if x == s {
@@ -248,6 +260,9 @@ func contains(l []string, s string) bool {
 // settle stores which quotas a row is over and audits each one it was not over
 // before: once per crossing, however often it is looked at.
 func (s *Service) settle(ctx context.Context, u store.Usage, now []string, p Person, t Tenant, tenant bool) error {
+	if sameSet(u.Over, now) {
+		return nil // nothing to store: looking at everyone writes only what changed
+	}
 	changed, err := store.SetUsageOver(ctx, s.st.Q(), u.Kind, u.ID, now)
 	if err != nil || !changed || s.audit == nil {
 		return err

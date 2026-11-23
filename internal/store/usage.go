@@ -425,6 +425,29 @@ func UserUsageRows(ctx context.Context, q Q, sc Scope, after string, limit int) 
 	return out, rows.Err()
 }
 
+// seedUsage makes the usage rows of a database that has none (the last step of the
+// migration): the first owner of every space, then one row per person and per
+// tenant from two grouped queries, each a single statement, so that a server with
+// tens of thousands of people and spaces migrates in a fraction of a second. What
+// it makes is what recountUsage would make; the daily pass takes over from here.
+func seedUsage(ctx context.Context, q Q) error {
+	if _, err := q.Exec(ctx, `UPDATE spaces SET usage_user = COALESCE((SELECT m.user_id FROM space_members m WHERE m.space_id = spaces.id AND m.role = 'owner'
+			ORDER BY m.created, m.user_id LIMIT 1), '')`); err != nil {
+		return err
+	}
+	if _, err := q.Exec(ctx, `INSERT INTO usage(kind, id, tenant_id, spaces, bytes, pages, people)
+		SELECT 'user', u.id, u.tenant_id, COALESCE(a.c, 0), COALESCE(a.b, 0), COALESCE(a.p, 0), 0
+		FROM users u LEFT JOIN (SELECT usage_user, COUNT(*) AS c, SUM(usage_bytes) AS b, SUM(page_count) AS p FROM spaces WHERE usage_user <> '' GROUP BY usage_user) a ON a.usage_user = u.id`); err != nil {
+		return err
+	}
+	_, err := q.Exec(ctx, `INSERT INTO usage(kind, id, tenant_id, spaces, bytes, pages, people)
+		SELECT 'tenant', t.id, t.id, COALESCE(s.c, 0), COALESCE(s.b, 0), COALESCE(s.p, 0), COALESCE(p.c, 0)
+		FROM tenants t
+		LEFT JOIN (SELECT tenant_id, COUNT(*) AS c, SUM(usage_bytes) AS b, SUM(page_count) AS p FROM spaces GROUP BY tenant_id) s ON s.tenant_id = t.id
+		LEFT JOIN (SELECT tenant_id, COUNT(*) AS c FROM users GROUP BY tenant_id) p ON p.tenant_id = t.id`)
+	return err
+}
+
 // RecountUsage puts the usage table right from the rows it summarises: the
 // first owner of every space, the spaces, bytes and pages of every person and
 // every tenant, and the people of every tenant. It is the daily pass (and the

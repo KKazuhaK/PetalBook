@@ -154,13 +154,15 @@ type personUsageResp struct {
 		Username string `json:"username"`
 		Name     string `json:"name"`
 	} `json:"user"`
-	Tenant     string   `json:"tenant"`
-	Spaces     int64    `json:"spaces"`
-	Bytes      int64    `json:"bytes"`
-	Pages      int64    `json:"pages"`
-	Limits     limits   `json:"limits"`
-	Over       []string `json:"over"`
-	MeasuredAt *string  `json:"measuredAt"`
+	Tenant string `json:"tenant"`
+	Spaces int64  `json:"spaces"`
+	Bytes  int64  `json:"bytes"`
+	Pages  int64  `json:"pages"`
+	Limits limits `json:"limits"`
+	// Own is the person's own limits (null follows the tenant): what the edit form starts with.
+	Own        *ownQuotaResp `json:"own"`
+	Over       []string      `json:"over"`
+	MeasuredAt *string       `json:"measuredAt"`
 }
 
 type limits struct {
@@ -206,7 +208,7 @@ func (s *server) adminUsage(c *call) {
 			s.fail(c.w, err)
 			return
 		}
-		it := personUsageResp{Tenant: r.TenantID, Spaces: r.Spaces, Bytes: r.Bytes, Pages: r.Pages, Limits: limits{l.Spaces, l.Bytes, l.Pages},
+		it := personUsageResp{Tenant: r.TenantID, Spaces: r.Spaces, Bytes: r.Bytes, Pages: r.Pages, Limits: limits{l.Spaces, l.Bytes, l.Pages}, Own: toOwnQuota(r.Quota),
 			Over: r.Over, MeasuredAt: measuredAt(r.Measured)}
 		if it.Over == nil {
 			it.Over = []string{}
