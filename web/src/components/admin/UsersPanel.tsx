@@ -21,6 +21,7 @@ import { t } from '@/i18n'
 import { tsec } from '@/i18n/security'
 import { tm } from '@/i18n/mail'
 import { mailLang } from '@/pages/auth/MailPages'
+import { OwnLimits } from './OwnLimits'
 
 // Users and invites, for administrators. Moved from the old users page; the
 // lists and forms are as they were.
@@ -235,6 +236,7 @@ function UserDetails({ u, busy, save }: { u: User; busy: boolean; save: (patch: 
           </div>
         </div>
       )}
+      {u.quota && <OwnLimits userId={u.id} own={u.quota} />}
       <div className="grid min-w-0 gap-2">
         <h4 className="text-sm font-medium">{tsec.users.passkeys}</h4>
         <p className="text-xs break-words text-muted-foreground">{tsec.users.passkeysHelp}</p>

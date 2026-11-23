@@ -24,7 +24,7 @@ export type SpaceUrls = ReturnType<typeof spaceUrls>
 
 // The administration (administrators only, accounts mode): its own pages, kept
 // apart from the personal settings.
-export const ADMIN_SECTIONS = ['users', 'groups', 'spaces', 'daily', 'access', 'security', 'mail', 'settings', 'tenants', 'status'] as const
+export const ADMIN_SECTIONS = ['users', 'groups', 'spaces', 'daily', 'access', 'security', 'mail', 'settings', 'tenants', 'usage', 'status'] as const
 export type AdminSection = (typeof ADMIN_SECTIONS)[number]
 export const isAdminSection = (v: unknown): v is AdminSection => ADMIN_SECTIONS.some((s) => s === v)
 export const adminPath = (section?: AdminSection) => (section ? `/admin/${section}` : '/admin')

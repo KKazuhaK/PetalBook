@@ -4,6 +4,7 @@ import { t } from '@/i18n'
 
 import type { RegisterInfo, RegisterInput, MySetting, EffectiveMemberList, GroupMember, GroupRef, MembersResponse,
   AccountInfo,
+  AccountUsage,
   AdminSpace,
   ApiToken,
   ConsentDecision,
@@ -533,6 +534,8 @@ export const api = {
 
   // --- account ---
   account: (signal?: AbortSignal) => request<AccountInfo>('/account', { signal }),
+  // The caller's own spaces, bytes and pages against their limits (3.3): stored numbers, nothing is measured for the request.
+  accountUsage: (signal?: AbortSignal) => request<AccountUsage>('/account/usage', { signal }),
   // Finding a group by part of its name, to add it to a space: names only.
   findGroups: (q: string, signal?: AbortSignal) => request<{ groups: GroupRef[] }>(`/groups?q=${enc(q)}&limit=20`, { signal }),
   updateAccount: (input: { name?: string; email?: string }) => request<{ user: User }>('/account', { method: 'PATCH', body: input }),

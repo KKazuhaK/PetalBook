@@ -2,7 +2,7 @@
 // layered settings with their locks. It does not keep people or spaces apart by tenant (the mock has one world);
 // what it keeps true is what the web app reads: the contract of these endpoints.
 
-import type { SettingLower, SiteSetting, Tenant, TenantSetting } from '../types.ts'
+import type { CreatedInvite, SettingLower, SiteSetting, Tenant, TenantSetting, TenantUsage } from '../types.ts'
 import { HttpError } from './store.ts'
 import type { MockResponse } from './server.ts'
 
@@ -17,13 +17,13 @@ type Kind = SiteSetting['kind']
 interface Def {
   key: string
   kind: Kind
-  layers: ('site' | 'tenant' | 'space')[]
+  layers: ('site' | 'tenant' | 'space' | 'person')[]
   def: unknown
   lower: SettingLower
   min?: number
   max?: number
 }
-// The settings of 3.3, as the server has them (quota.* and 3.1's come later).
+// The settings of 3.3, as the server has them (3.1's come with 3.1).
 const DEFS: Def[] = [
   { key: 'registration.open', kind: 'boolean', layers: ['site', 'tenant'], def: false, lower: { mode: 'lock' } },
   { key: 'registration.domains', kind: 'list', layers: ['site', 'tenant'], def: [], lower: { mode: 'allow' } },
@@ -33,6 +33,10 @@ const DEFS: Def[] = [
   { key: 'daily.own', kind: 'boolean', layers: ['site', 'tenant', 'space'], def: true, lower: { mode: 'allow' } },
   { key: 'daily.api', kind: 'boolean', layers: ['site', 'tenant', 'space'], def: true, lower: { mode: 'allow' } },
   { key: 'daily.default', kind: 'doc', layers: ['site', 'tenant'], def: null, lower: { mode: 'allow' } },
+  // What one person may use: only the number of spaces is refused (0 is none); bytes and pages warn (null is none).
+  { key: 'quota.spacesPerPerson', kind: 'limit', layers: ['site', 'tenant', 'person'], def: 20, lower: { mode: 'allow' }, min: 0, max: 10000 },
+  { key: 'quota.bytesPerPerson', kind: 'limit', layers: ['site', 'tenant', 'person'], def: null, lower: { mode: 'allow' }, min: 1, max: 2 ** 50 },
+  { key: 'quota.pagesPerPerson', kind: 'limit', layers: ['site', 'tenant', 'person'], def: null, lower: { mode: 'allow' }, min: 1, max: 2 ** 40 },
 ]
 
 function checkValue(d: Def, v: unknown): unknown {
@@ -40,6 +44,7 @@ function checkValue(d: Def, v: unknown): unknown {
     case 'boolean':
       return typeof v === 'boolean' ? v : bad(`${d.key} is true or false`)
     case 'limit':
+      if (v === null && d.def === null) return null
       return typeof v === 'number' && Number.isInteger(v) && v >= (d.min ?? 0) && v <= (d.max ?? 1e9) ? v : bad(`${d.key} is a number from ${d.min} to ${d.max}`)
     case 'list': {
       if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) return bad(`${d.key} is a list of text`)
@@ -87,6 +92,14 @@ export interface TenantBookOptions {
   mailReady: () => boolean
   ssoOnlyStored: () => boolean
   onRegistrationChanged: () => void
+  // What a tenant uses (the default tenant's, from the mock's spaces and people).
+  usageOf: (tenant: string) => TenantUsage
+  // A limit changed: look at everyone's numbers again.
+  onQuotaChanged: () => void
+  // --max-spaces, when it was given: the site's quota.spacesPerPerson, read only.
+  maxSpacesFlag?: number
+  // A real invite of the server for the first administrator of a new tenant (nothing is mailed).
+  makeInvite: (by: string, tenant: string, fill: { username: string; name: string; email: string }) => CreatedInvite & { tenant: string; siteAdmin: boolean }
 }
 
 interface TenantRow {
@@ -94,18 +107,25 @@ interface TenantRow {
   lower?: SettingLower
 }
 
+const ZERO: TenantUsage = { people: 0, spaces: 0, bytes: 0, pages: 0, measuredAt: null, over: [] }
+
 export function createTenantBook(o: TenantBookOptions) {
   let enabled = false
   const tenants = new Map<string, Tenant>()
   const stamp = o.now()
-  tenants.set(DEFAULT_TENANT, { id: DEFAULT_TENANT, slug: 'default', name: 'Default', default: true, disabled: false, registration: { open: false }, quota: { people: null, spaces: null, bytes: null, pages: null }, created: stamp, updated: stamp })
+  tenants.set(DEFAULT_TENANT, { id: DEFAULT_TENANT, slug: 'default', name: 'Default', default: true, disabled: false, registration: { open: false }, quota: { people: null, spaces: null, bytes: null, pages: null }, usage: ZERO, created: stamp, updated: stamp })
   const siteRows = new Map<string, { value?: unknown; lower?: SettingLower }>()
   const tenantRows = new Map<string, Map<string, TenantRow>>()
   let seq = 1
 
-  const siteValue = (d: Def): unknown => (d.key === 'daily.own' ? o.daily.get().own : d.key === 'daily.api' ? o.daily.get().api : siteRows.has(d.key) && siteRows.get(d.key)!.value !== undefined ? siteRows.get(d.key)!.value : d.def)
+  const siteValue = (d: Def): unknown => (d.key === 'quota.spacesPerPerson' && o.maxSpacesFlag !== undefined ? o.maxSpacesFlag : d.key === 'daily.own' ? o.daily.get().own : d.key === 'daily.api' ? o.daily.get().api : siteRows.has(d.key) && siteRows.get(d.key)!.value !== undefined ? siteRows.get(d.key)!.value : d.def)
   const siteLower = (d: Def): SettingLower => siteRows.get(d.key)?.lower ?? d.lower
-  const siteView = (d: Def): SiteSetting => ({ key: d.key, kind: d.kind, layers: d.layers, site: { value: siteValue(d), lower: siteLower(d) } })
+  const siteView = (d: Def): SiteSetting => ({
+    key: d.key,
+    kind: d.kind,
+    layers: d.layers,
+    site: { value: siteValue(d), lower: siteLower(d), ...(d.key === 'quota.spacesPerPerson' && o.maxSpacesFlag !== undefined ? { fromFlag: true } : {}) },
+  })
   const tenantView = (tenant: string, d: Def): TenantSetting => {
     const row = tenantRows.get(tenant)?.get(d.key)
     const sl = siteLower(d)
@@ -122,7 +142,7 @@ export function createTenantBook(o: TenantBookOptions) {
   }
   const effectiveOf = (tenant: string, d: Def) => tenantView(tenant, d)
 
-  const tenantOut = (t: Tenant): Tenant => ({ ...t, registration: { open: o.mailReady() && effectiveOf(t.id, DEFS[0]).effective === true } })
+  const tenantOut = (t: Tenant): Tenant => ({ ...t, usage: t.id === DEFAULT_TENANT ? o.usageOf(t.id) : ZERO, registration: { open: o.mailReady() && effectiveOf(t.id, DEFS[0]).effective === true } })
   const checkOpening = () => {
     if (!o.mailReady()) throw new HttpError(409, 'mail_not_configured', 'registration verifies addresses by mail, and mail is not enabled')
     if (o.ssoOnlyStored()) throw new HttpError(409, 'sso_only_with_registration', 'password sign-in is refused (ssoOnly), so nobody could finish registering')
@@ -144,7 +164,8 @@ export function createTenantBook(o: TenantBookOptions) {
     if (!('value' in body) && !('lower' in body)) bad('give value, lower or both')
     const row = siteRows.get(key) ?? {}
     if ('value' in body) {
-      const v = d.kind === 'doc' ? body.value : checkValue(d, body.value)
+      if (key === 'quota.spacesPerPerson' && o.maxSpacesFlag !== undefined) throw new HttpError(409, 'conflict', `${key} is set by a command-line flag; change the flag`)
+      const v = d.kind === 'doc' ? body.value : body.value === null && d.kind === 'limit' && d.def !== null ? d.def : checkValue(d, body.value)
       if (key === 'registration.open' && v === true) checkOpening()
       if (key === 'daily.own') o.daily.set({ own: v as boolean })
       else if (key === 'daily.api') o.daily.set({ api: v as boolean })
@@ -163,6 +184,7 @@ export function createTenantBook(o: TenantBookOptions) {
     }
     siteRows.set(key, row)
     if (key === 'registration.open') o.onRegistrationChanged()
+    if (key.startsWith('quota.')) o.onQuotaChanged()
     return { ...siteView(d), ...(affected === undefined ? {} : { affected }) }
   }
   const putTenant = (tenant: string, key: string, body: Record<string, unknown>): TenantSetting => {
@@ -191,6 +213,7 @@ export function createTenantBook(o: TenantBookOptions) {
     rows.set(key, row)
     tenantRows.set(tenant, rows)
     if (key === 'registration.open') o.onRegistrationChanged()
+    if (key.startsWith('quota.')) o.onQuotaChanged()
     return effectiveOf(tenant, d)
   }
 
@@ -210,8 +233,20 @@ export function createTenantBook(o: TenantBookOptions) {
       return { key: d.key, effective: e.effective, space: { canChange: on && !lockedBy, inEffect: on, ...(source ? { source } : {}) } }
     })
 
+  // What the layer below the tenant may do with a setting: a site administrator answers to the site's rule only, anyone
+  // else to the stricter of the site's and the tenant's.
+  const lowerFor = (key: string, site: boolean): SettingLower => {
+    const d = DEFS.find((x) => x.key === key)!
+    const sl = siteLower(d)
+    const tl = tenantRows.get(DEFAULT_TENANT)?.get(key)?.lower
+    return site || !tl || !tightens(tl, d, sl) ? sl : tl
+  }
+  // The default tenant's own totals, which PATCH /admin/tenants/{id} sets.
+  const quotaOf = (id: string) => tenants.get(id)?.quota ?? { people: null, spaces: null, bytes: null, pages: null }
   return {
     mine,
+    lowerFor,
+    quotaOf,
     registrationStored: anyOpen,
     // Whether daily.own / daily.api are in effect for a person's tenant (the mock has one world: the default).
     effective: (key: string): unknown => effectiveOf(DEFAULT_TENANT, DEFS.find((d) => d.key === key)!).effective,
@@ -248,13 +283,17 @@ export function createTenantBook(o: TenantBookOptions) {
           if (tenants.size >= 1000) throw new HttpError(409, 'tenant_limit', 'a server has at most 1000 tenants')
           const id = `T${String(seq++).padStart(9, '0')}`
           const stampNow = o.now()
-          const t: Tenant = { id, slug: body.slug as string, name, default: false, disabled: false, registration: { open: false }, quota: { people: null, spaces: null, bytes: null, pages: null }, created: stampNow, updated: stampNow }
+          const t: Tenant = { id, slug: body.slug as string, name, default: false, disabled: false, registration: { open: false }, quota: { people: null, spaces: null, bytes: null, pages: null }, usage: ZERO, created: stampNow, updated: stampNow }
           tenants.set(id, t)
           const out: Record<string, unknown> = { ...tenantOut(t) }
           if (body.admin && typeof body.admin === 'object') {
-            const a = body.admin as { username?: unknown }
-            if (typeof a.username !== 'string' || !/^[a-z0-9][a-z0-9._-]{1,31}$/.test(a.username)) bad('admin.username is not a username')
-            out.invite = { id: `INV${id}`, token: `invite-${id}`, role: 'admin', created: stampNow, expires: stampNow, tenant: id, siteAdmin: false }
+            const a = body.admin as { username?: unknown; name?: unknown; email?: unknown }
+            const username = typeof a.username === 'string' ? a.username.trim().toLowerCase() : ''
+            if (!/^[a-z0-9][a-z0-9._-]{1,31}$/.test(username)) bad('admin.username is not a username')
+            if (a.name !== undefined && (typeof a.name !== 'string' || a.name.trim().length > 80)) bad('admin.name is at most 80 characters')
+            const email = typeof a.email === 'string' ? a.email.trim() : ''
+            if (a.email !== undefined && (typeof a.email !== 'string' || (email !== '' && (email.length > 254 || !email.includes('@'))))) bad('admin.email is not an address')
+            out.invite = o.makeInvite(me, id, { username, name: typeof a.name === 'string' ? a.name.trim() : '', email })
           }
           return j(out, 201)
         }
@@ -295,6 +334,7 @@ export function createTenantBook(o: TenantBookOptions) {
             }
           }
           t.updated = o.now()
+          if ('quota' in body) o.onQuotaChanged()
           return j(tenantOut(t))
         }
         if (method === 'DELETE') {

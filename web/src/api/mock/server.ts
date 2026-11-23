@@ -14,6 +14,7 @@ import { DEFAULT_MAX_IMPORT, runImport } from './importer.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
 import { createGroupBook } from './groupBook.ts'
 import { createTenantBook, DEFAULT_TENANT } from './tenantBook.ts'
+import { createQuotaBook } from './quotaBook.ts'
 import { createMailBook } from './mailBook.ts'
 import { createSignInBook, type PasskeyRec, type ProviderRec, type SignInBookOptions } from './signInBook.ts'
 
@@ -56,9 +57,9 @@ export interface MockOptions {
   // Whether passkeys can work on this server (default true).
   passkeysAvailable?: boolean
   // Accounts mode: an invite that exists from the start, with this token.
-  invite?: { token: string; role?: Role }
+  invite?: { token: string; role?: Role; fill?: { username: string; name: string; email: string } }
   // Drafts the server commits by itself (docs/api.md: --draft-idle, --draft-max).
-  // Accounts mode: how many spaces one person may own (POST /api/spaces is 403 beyond it).
+  // Accounts mode: --max-spaces, the site's quota.spacesPerPerson (0 is no limit); the default is 20. POST /api/spaces is 403 quota_exceeded beyond it.
   maxSpaces?: number
   // Single-user mode: the inbox folder (`--inbox`); default `Inbox`.
   inbox?: string
@@ -117,6 +118,8 @@ interface InviteRec {
   expires: number
   createdBy: string
   used: boolean
+  // What the invite starts the form with (a new tenant's first administrator).
+  fill?: { username: string; name: string; email: string }
 }
 interface TokenRec {
   id: string
@@ -183,7 +186,7 @@ interface SpaceRec {
   disabled: boolean
   // The last stored measurement; the real server measures in the background,
   // the mock only when asked.
-  size: { bytes: number; at: number } | null
+  size: { bytes: number; at: number; pages: number } | null
   inbox: string
   store: SpaceStore
   files: FileStore
@@ -303,7 +306,7 @@ export function createMockServer(options: MockOptions = {}) {
   const isSiteAdmin = (u: UserRec | undefined) => u?.role === 'admin' && u.siteAdmin !== false
   const publicUser = (u: UserRec): User => ({ id: u.id, username: u.username, name: u.name, email: u.email, emailVerified: u.emailVerified, role: u.role, disabled: u.disabled, passkeyRequired: book.requiredOf(u), siteAdmin: isSiteAdmin(u), tenant: { id: DEFAULT_TENANT, slug: 'default', name: 'Default' }, created: u.created })
   // In the users list a person also has how many passkeys and sign-in identities.
-  const listedUser = (u: UserRec): User => ({ ...publicUser(u), passkeys: u.passkeys.length, sso: u.identities.length })
+  const listedUser = (u: UserRec): User => ({ ...publicUser(u), passkeys: u.passkeys.length, sso: u.identities.length, quota: quotaBook.ownOf(u.id) })
   // The first owner: who the space's own commits are credited to.
   const ownerOf = (s: SpaceRec): UserRec | undefined => {
     const owners = [...s.members].filter(([, m]) => m.role === 'owner').sort((a, b) => a[1].joined - b[1].joined)
@@ -390,7 +393,7 @@ export function createMockServer(options: MockOptions = {}) {
     }
     if (options.invite) {
       const id = newId((x) => invites.has(x))
-      invites.set(id, { id, tokenHash: hashOf(options.invite.token), role: options.invite.role ?? 'member', created: now(), expires: now() + 7 * 86_400_000, createdBy: [...users.keys()][0] ?? '', used: false })
+      invites.set(id, { id, tokenHash: hashOf(options.invite.token), role: options.invite.role ?? 'member', created: now(), expires: now() + 7 * 86_400_000, createdBy: [...users.keys()][0] ?? '', used: false, fill: options.invite.fill })
     }
   }
 
@@ -599,11 +602,14 @@ export function createMockServer(options: MockOptions = {}) {
     checkCaptcha('invite', 'ip', body.captcha)
     const inv = checkInviteToken(body.token)
     if (book.ssoOnlyInEffect() && inv.role === 'member') throw new HttpError(403, 'local_login_refused', '这个服务器只允许通过单点登录创建账号', { ssoOnly: true })
-    const username = checkUsername(body.username)
+    // A field left empty takes what the invite fills in.
+    const username = checkUsername(body.username === undefined || body.username === '' ? (inv.fill?.username ?? body.username) : body.username)
     const password = checkPassword(body.password)
-    const name = body.name === undefined || body.name === '' ? username : checkName(body.name)
+    const given = body.name === undefined || body.name === '' ? inv.fill?.name : body.name
+    const name = given === undefined || given === '' ? username : checkName(given)
     if (usernameTaken(username)) throw new HttpError(409, 'exists', '这个用户名已经有人用了')
     const u = addUser({ username, name, role: inv.role, password }, false)
+    if (inv.fill?.email) u.email = inv.fill.email
     inv.used = true
     book.record('login', { user: u.id, username, detail: { method: 'password', created: true } })
     return { status: 201, body: { user: publicUser(u) }, headers: { 'Set-Cookie': startSession(u) } }
@@ -844,6 +850,8 @@ export function createMockServer(options: MockOptions = {}) {
     if (body.emailVerified !== undefined && typeof body.emailVerified !== 'boolean') throw new HttpError(400, 'invalid', 'emailVerified 要是布尔值')
     if (body.siteAdmin !== undefined && typeof body.siteAdmin !== 'boolean') throw new HttpError(400, 'invalid', 'siteAdmin 要是布尔值')
     if (body.email !== undefined && (typeof body.email !== 'string' || body.email.length > 254)) throw new HttpError(400, 'invalid', '邮箱不合法')
+    // A refused quota changes nothing: it is checked before the rest is applied.
+    const applyQuota = body.quota === undefined ? null : quotaBook.patch(u.id, body.quota, isSiteAdmin(me))
     const role = (body.role as Role | undefined) ?? u.role
     const disabled = (body.disabled as boolean | undefined) ?? u.disabled
     if (disabled && !u.disabled && u.id === me.id) throw new HttpError(409, 'conflict', '不能停用自己')
@@ -882,8 +890,12 @@ export function createMockServer(options: MockOptions = {}) {
       note('emailVerified', u.emailVerified)
     }
     if (disabled) endSessions(u.id)
+    if (applyQuota) {
+      applyQuota()
+      note('quota', quotaBook.ownOf(u.id))
+    }
     if (Object.keys(changed).length > 0) book.record('user_changed', { actor: me.id, user: u.id, detail: changed })
-    return { user: publicUser(u) }
+    return { user: { ...publicUser(u), quota: quotaBook.ownOf(u.id) } }
   }
 
   const createInvite = (me: UserRec, body: Record<string, unknown>): MockResponse => {
@@ -1123,6 +1135,28 @@ export function createMockServer(options: MockOptions = {}) {
     mailReady: () => mailBook.ready(),
     ssoOnlyStored: () => book.security.login.ssoOnly,
     onRegistrationChanged: () => mailBook.cancelClosed(),
+    usageOf: () => quotaBook.tenantUsage(),
+    onQuotaChanged: () => quotaBook.evaluate(),
+    maxSpacesFlag: options.maxSpaces,
+    makeInvite: (by, tenant, fill) => {
+      const id = newId((x) => invites.has(x))
+      const token = randomString(32)
+      const rec: InviteRec = { id, tokenHash: hashOf(token), role: 'admin', created: now(), expires: now() + 7 * 86_400_000, createdBy: by, used: false, fill }
+      invites.set(id, rec)
+      return { id, token, role: 'admin', created: rfc3339(rec.created), expires: rfc3339(rec.expires), tenant, siteAdmin: false, ...fill }
+    },
+  })
+  // What people and the tenant use and may use (docs/api.md, "Quotas"); the numbers are the spaces' last measurements.
+  const quotaBook = createQuotaBook({
+    now,
+    rfc3339: (ms) => rfc3339(ms),
+    tenant: DEFAULT_TENANT,
+    people: () => [...users.values()].map((u) => ({ id: u.id, username: u.username, name: u.name })),
+    spaces: () => [...spaces.values()].map((s) => ({ id: s.id, ownerId: ownerOf(s)?.id ?? null, bytes: s.size?.bytes ?? 0, pages: s.size?.pages ?? 0, measuredAt: s.size?.at ?? null })),
+    setting: (key) => tenantBook.effective(key) as number | null,
+    lowerOf: (key, site) => tenantBook.lowerFor(key, site),
+    tenantQuota: () => tenantBook.quotaOf(DEFAULT_TENANT),
+    record: (kind, o) => book.record(kind, o),
   })
   const site = { lines: new Map<string, { body: string; source: string }[]>(), default: null as SiteDefault, allow: { own: true, api: true }, languages: ['zh-Hans', 'en'], apis: [] as SiteApi[], providers: {} as Record<string, ProviderState>, notices: [] as DailyNotice[] }
   const spaceDaily = new Map<string, { inherit: boolean; apis: string[] }>()
@@ -1656,7 +1690,8 @@ export function createMockServer(options: MockOptions = {}) {
       switch (one[2]) {
         case 'size':
           if (method !== 'POST') break
-          s.size = { bytes: sizeOf(s), at: now() }
+          s.size = { bytes: sizeOf(s), at: now(), pages: s.store.ids().length }
+          quotaBook.evaluate()
           return j({ sizeBytes: s.size.bytes, sizeAt: rfc3339(s.size.at) })
         case 'transfer': {
           if (method !== 'POST') break
@@ -2145,7 +2180,7 @@ export function createMockServer(options: MockOptions = {}) {
       accountsOnly()
       checkCaptcha('invite', 'ip', body.captcha)
       const inv = checkInviteToken(body.token)
-      return j({ role: inv.role, expires: rfc3339(inv.expires) })
+      return j({ role: inv.role, expires: rfc3339(inv.expires), username: inv.fill?.username ?? '', name: inv.fill?.name ?? '', email: inv.fill?.email ?? '' })
     }
     if (path === '/invites/accept' && method === 'POST') {
       accountsOnly()
@@ -2318,6 +2353,17 @@ export function createMockServer(options: MockOptions = {}) {
       if (method === 'POST') return decideConsent(me, body)
     }
 
+    // --- usage (3.3): one's own, and everyone's for the administrators ---
+    if (path === '/account/usage' && method === 'GET') {
+      accountsOnly()
+      return j(quotaBook.account(requireUser(ctx).id))
+    }
+    if (path === '/admin/usage' && method === 'GET') {
+      accountsOnly()
+      const me = requireAdmin(ctx)
+      return j(quotaBook.list(url, isSiteAdmin(me) ? '' : DEFAULT_TENANT))
+    }
+
     // --- administration (administrators only; accounts mode) ---
     if (path === '/admin/status' || path === '/admin/spaces' || path.startsWith('/admin/spaces/')) {
       accountsOnly()
@@ -2439,7 +2485,7 @@ export function createMockServer(options: MockOptions = {}) {
         accountsOnly()
         const me = requireUser(ctx)
         const name = checkName(body.name)
-        if (options.maxSpaces !== undefined && callerSpaces(me).filter((s) => s.members.get(me.id)?.role === 'owner').length >= options.maxSpaces) throw new HttpError(403, 'forbidden', `最多只能拥有 ${options.maxSpaces} 个空间`)
+        quotaBook.checkSpace(me.id)
         const inbox = body.inbox === undefined ? DEFAULT_INBOX : checkInbox(body.inbox)
         return j(spaceInfo(addSpace(newId((x) => spaces.has(x)), name, me.id, false, false, inbox), me), 201)
       }

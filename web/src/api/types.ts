@@ -475,6 +475,7 @@ export interface ReasonCode {
 
 export type ErrorCode =
   | 'token_limit'
+  | 'quota_exceeded'
   | 'tenants_off'
   | 'tenant_limit'
   | 'tenant_not_empty'
@@ -556,6 +557,8 @@ export interface User {
   siteAdmin?: boolean
   // The tenant the person belongs to; absent in single-user mode, which has none.
   tenant?: TenantRef
+  // The person's own limits (null follows the tenant); only the administrators' list and PATCH answer have it.
+  quota?: OwnQuota
   created: string
   // The users list only: how many passkeys and single sign-on identities the person has.
   passkeys?: number
@@ -771,10 +774,18 @@ export interface CreatedInvite {
   role: Role
   created: string
   expires: string
+  // What a new tenant's first administrator's invite fills in (see InviteCheck).
+  username?: string
+  name?: string
+  email?: string
 }
 export interface InviteCheck {
   role: Role
   expires: string
+  // What the invite starts the form with ("" when it says nothing); the address becomes the account's, not verified.
+  username?: string
+  name?: string
+  email?: string
 }
 
 export type OidcIntent = 'login' | 'setup' | 'invite' | 'link'
@@ -1227,11 +1238,21 @@ export interface TenantRef {
   name: string
 }
 export type TenantQuotaKey = 'people' | 'spaces' | 'bytes' | 'pages'
+// What a tenant uses, as measured (docs/api.md, "Quotas"); `over` lists the totals it is over.
+export interface TenantUsage {
+  people: number
+  spaces: number
+  bytes: number
+  pages: number
+  measuredAt: string | null
+  over: TenantQuotaKey[]
+}
 export interface Tenant extends TenantRef {
   default: boolean
   disabled: boolean
   registration: { open: boolean }
   quota: Record<TenantQuotaKey, number | null>
+  usage: TenantUsage
   created: string
   updated: string
 }
@@ -1244,6 +1265,43 @@ export interface Tenancy {
   tenants: number
 }
 export type CreatedTenant = Tenant & { invite?: CreatedInvite }
+
+// --- quotas and usage (3.3) ---
+
+export type PersonQuotaKey = 'spaces' | 'bytes' | 'pages'
+// A person's own limits: a number, or null to follow the tenant and the site.
+export type OwnQuota = Record<PersonQuotaKey, number | null>
+// A quota that is over: the person's own (scope person) or the tenant's total (scope tenant).
+export interface UsageNotice {
+  quota: TenantQuotaKey
+  scope: 'person' | 'tenant'
+  limit: number
+  used: number
+}
+// GET /api/account/usage. limit null is none.
+export interface AccountUsage {
+  spaces: { used: number; limit: number | null }
+  bytes: { used: number; limit: number | null }
+  pages: { used: number; limit: number | null }
+  measuredAt: string | null
+  notices: UsageNotice[]
+}
+export interface PersonUsage {
+  user: { id: string; username: string; name: string }
+  tenant: string
+  spaces: number
+  bytes: number
+  pages: number
+  limits: Record<PersonQuotaKey, number | null>
+  // The person's own limits (null follows the tenant), what the edit form starts with.
+  own: OwnQuota
+  over: PersonQuotaKey[]
+  measuredAt: string | null
+}
+export interface AdminUsageList {
+  items: PersonUsage[]
+  next: string
+}
 
 export type SettingLayer = 'site' | 'tenant' | 'space' | 'person'
 export type SettingKind = 'boolean' | 'choice' | 'limit' | 'list' | 'text' | 'doc'

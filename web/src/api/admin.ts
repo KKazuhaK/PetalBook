@@ -6,7 +6,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, enc, request } from './client'
 import { keys } from './hooks'
-import type { MailPatch, MailSettings, MailTestResult, CreatedTenant, SettingLower, SiteSetting, Tenancy, Tenant, TenantList, TenantQuotaKey, TenantSetting, Group, GroupList, GroupPersonList, GroupSource, GroupSpaceList, AdminDaily, AdminSpaceList, AuditList, AuthProvider, Passkey, ProviderInput, SecurityPatch, SecuritySettings, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User, AdminGrantList, AdminTokenList, MachineAccess } from './types'
+import type { MailPatch, MailSettings, MailTestResult, CreatedTenant, AdminUsageList, OwnQuota, SettingLower, SiteSetting, Tenancy, Tenant, TenantList, TenantQuotaKey, TenantSetting, Group, GroupList, GroupPersonList, GroupSource, GroupSpaceList, AdminDaily, AdminSpaceList, AuditList, AuthProvider, Passkey, ProviderInput, SecurityPatch, SecuritySettings, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User, AdminGrantList, AdminTokenList, MachineAccess } from './types'
 
 export const adminApi = {
   // --- users and invites ---
@@ -20,7 +20,8 @@ export const adminApi = {
     const query = q.toString()
     return request<{ users: User[] }>(`/users${query ? `?${query}` : ''}`, { signal })
   },
-  updateUser: (id: string, input: { role?: Role; disabled?: boolean; passkeyRequired?: boolean; email?: string; emailVerified?: boolean; siteAdmin?: boolean }) => request<{ user: User }>(`/users/${enc(id)}`, { method: 'PATCH', body: input }),
+  // `quota` sets the person's own limits: a number each, or null to follow the tenant; the keys left out stay.
+  updateUser: (id: string, input: { role?: Role; disabled?: boolean; passkeyRequired?: boolean; email?: string; emailVerified?: boolean; siteAdmin?: boolean; quota?: Partial<OwnQuota> }) => request<{ user: User }>(`/users/${enc(id)}`, { method: 'PATCH', body: input }),
   // The passkeys of one person, for an administrator who removes a lost one.
   userPasskeys: (id: string, signal?: AbortSignal) => request<{ passkeys: Passkey[] }>(`/users/${enc(id)}/passkeys`, { signal }),
   deleteUserPasskey: (id: string, passkey: string) => request<void>(`/users/${enc(id)}/passkeys/${enc(passkey)}`, { method: 'DELETE' }),
@@ -44,6 +45,17 @@ export const adminApi = {
   adminEnableSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/enable`, { method: 'POST' }),
   adminDeleteSpace: (id: string) => request<DeletedSpace>(`/admin/spaces/${enc(id)}`, { method: 'DELETE' }),
   adminStatus: (signal?: AbortSignal) => request<ServerStatus>('/admin/status', { signal }),
+
+  // --- usage (3.3): people by bytes, in the caller's scope; a site administrator may narrow to one tenant ---
+  usage: (params: { tenant?: string; over?: boolean; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.tenant) q.set('tenant', params.tenant)
+    if (params.over) q.set('over', '1')
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<AdminUsageList>(`/admin/usage${qs ? `?${qs}` : ''}`, { signal })
+  },
 
   // --- mail and password reset (3.3) ---
   mail: (signal?: AbortSignal) => request<MailSettings>('/admin/mail', { signal }),
@@ -198,6 +210,18 @@ export function useAdminSpaces(q: string, enabled = true) {
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 15_000,
+  })
+}
+
+// People by usage, the most bytes first, a cursor page at a time.
+export function useAdminUsage(params: { tenant: string; over: boolean }, enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.adminUsage(params.tenant, params.over),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => adminApi.usage({ tenant: params.tenant || undefined, over: params.over, cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled,
+    staleTime: 10_000,
   })
 }
 

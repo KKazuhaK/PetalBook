@@ -47,7 +47,7 @@ describe('who can reach the administration', () => {
     m = await mount(routes, { entries: ['/admin'], signIn: true, server: { mode: 'accounts' } })
     await settle(() => locationText() === '/admin/users' && text().includes(t.users.createInvite), 'users and invites')
     expect(heading()).toBe(ta.title)
-    expect(navLinks()).toEqual([ta.sections.users, ta.sections.groups, ta.sections.spaces, ta.sections.daily, ta.sections.access, ta.sections.security, ta.sections.mail, ta.sections.settings, ta.sections.tenants, ta.sections.status])
+    expect(navLinks()).toEqual([ta.sections.users, ta.sections.groups, ta.sections.spaces, ta.sections.daily, ta.sections.access, ta.sections.security, ta.sections.mail, ta.sections.settings, ta.sections.tenants, ta.sections.usage, ta.sections.status])
     expect(document.querySelector('nav [aria-current="page"]')?.textContent).toBe(ta.sections.users)
   })
 
@@ -87,7 +87,8 @@ describe('all spaces', () => {
         return ['/admin/spaces']
       },
       signIn: true,
-      server: { mode: 'accounts' },
+      // No limit on the number of spaces (--max-spaces 0): this page is about lists, not quotas.
+      server: { mode: 'accounts', maxSpaces: 0 },
     })
 
   it('is a table with the owner, the members, a dash for a size not measured, sync and the state; personal spaces are marked', async () => {

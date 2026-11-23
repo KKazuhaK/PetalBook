@@ -118,11 +118,17 @@ export const tenantsEn: TenantsMessages = {
       'daily.own': 'Spaces may use a daily text source of their own',
       'daily.api': 'Spaces may choose an external interface',
       'daily.default': 'Daily text default for spaces with no source',
+      'quota.spacesPerPerson': 'Spaces one person may own',
+      'quota.bytesPerPerson': 'Disk one person may use (bytes)',
+      'quota.pagesPerPerson': 'Pages one person may have',
     },
     helps: {
       'registration.open': 'Off by default and locked for tenants: to open it, a site administrator unlocks it first, then it is switched on in the tenant. Needs mail to be enabled.',
       'registration.perHour': 'How many registrations one tenant takes in an hour.',
       'daily.default': 'A tenant may name one of its own spaces or one of the site\'s external interfaces; pasted lines stay with the site.',
+      'quota.spacesPerPerson': 'How many spaces one person may own; 0 is no limit, and at the limit they cannot make another. --max-spaces, when given, decides. A person\'s own limit is set under Users and invites.',
+      'quota.bytesPerPerson': 'How many bytes a person\'s spaces take; empty is no limit. Going over only warns.',
+      'quota.pagesPerPerson': 'How many pages a person\'s spaces hold in all; empty is no limit. Going over only warns.',
     },
   },
 }

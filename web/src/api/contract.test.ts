@@ -713,7 +713,7 @@ function suite(target: Target) {
         const anon = browser()
         const ok = await call(anon, 'POST', '/api/invites/check', { token: inv.token })
         expect(ok.status).toBe(200)
-        expect(ok.json).toEqual({ role: 'member', expires: inv.expires })
+        expect(ok.json).toEqual({ role: 'member', expires: inv.expires, username: '', name: '', email: '' })
         const bad = await call(anon, 'POST', '/api/invites/check', { token: 'not-a-token' })
         expect([bad.status, bad.json.error]).toEqual([404, 'not_found'])
       })
@@ -1096,6 +1096,124 @@ function suite(target: Target) {
           expect(back.allow.own).toBe(true)
         } finally {
           await call(admin, 'PUT', '/api/admin/settings/daily.own', { value: was })
+        }
+      })
+    })
+
+    describe('quotas and usage (3.3)', () => {
+      const slugOf = (p: string) => `${p}${run}`.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 24)
+      type Row = { used: number; limit: number | null }
+
+      it('GET /api/account/usage is the caller\'s own spaces, bytes and pages against their limits', async () => {
+        const m = await newMember(uniq('qa'))
+        const r = await call(m.browser, 'GET', '/api/account/usage')
+        expect(r.status).toBe(200)
+        const u = r.json as unknown as { spaces: Row; bytes: Row; pages: Row; measuredAt: string | null; notices: unknown[] }
+        // The personal space is one; nothing is measured on the request path, and nothing is limited unless an administrator said so.
+        expect(u.spaces.used).toBe(1)
+        expect(typeof u.spaces.limit === 'number' || u.spaces.limit === null).toBe(true)
+        expect(u.bytes.used).toBeGreaterThanOrEqual(0)
+        expect(u.pages.used).toBeGreaterThanOrEqual(0)
+        expect(u.notices).toEqual([])
+        expect(typeof u.measuredAt === 'string' || u.measuredAt === null).toBe(true)
+        // Signed in only.
+        expect((await call(browser(), 'GET', '/api/account/usage')).status).toBe(401)
+      })
+
+      it('GET /api/admin/usage lists people with their numbers, limits and own limits; it is checked, and for administrators only', async () => {
+        const m = await newMember(uniq('qb'))
+        const list = await call(admin, 'GET', '/api/admin/usage?limit=200')
+        expect(list.status).toBe(200)
+        const items = list.json.items as { user: { id: string; username: string; name: string }; tenant: string; spaces: number; bytes: number; pages: number; limits: Record<string, number | null>; own: Record<string, number | null>; over: string[]; measuredAt: string | null }[]
+        expect(items.length).toBeGreaterThan(0)
+        for (let i = 1; i < items.length; i++) expect(items[i].bytes).toBeLessThanOrEqual(items[i - 1].bytes)
+        const mine = items.find((x) => x.user.id === m.user.id)
+        // Found on the first page unless the server has more than 200 people with more bytes than this one.
+        if (mine) {
+          expect(mine.spaces).toBe(1)
+          expect(Object.keys(mine.limits).sort()).toEqual(['bytes', 'pages', 'spaces'])
+          expect(mine.own).toEqual({ spaces: null, bytes: null, pages: null })
+          expect(mine.over).toEqual([])
+        }
+        expect(typeof list.json.next).toBe('string')
+        expect((await call(admin, 'GET', '/api/admin/usage?limit=0')).status).toBe(400)
+        expect((await call(admin, 'GET', '/api/admin/usage?over=yes')).status).toBe(400)
+        expect((await call(admin, 'GET', '/api/admin/usage?tenant=01ZZZZZZZZ')).json.error).toBe('not_found')
+        expect((await call(m.browser, 'GET', '/api/admin/usage')).status).toBe(403)
+      })
+
+      it('quota on PATCH /api/users/{id} sets a person\'s own limits; the number of spaces is the one refused, with what ran out', async () => {
+        const m = await newMember(uniq('qc'))
+        const path = `/api/users/${m.user.id}`
+        expect((await call(m.browser, 'PATCH', path, { quota: { spaces: 5 } })).status).toBe(403)
+        for (const bad of ['x', { disk: 1 }, { spaces: -1 }, { spaces: 10001 }, { bytes: 0 }, { pages: 1.5 }, { bytes: '1' }]) {
+          const r = await call(admin, 'PATCH', path, { quota: bad })
+          expect([r.status, r.json.error], JSON.stringify(bad)).toEqual([400, 'invalid'])
+        }
+        const set = await call(admin, 'PATCH', path, { quota: { spaces: 1 } })
+        expect(set.status).toBe(200)
+        expect((set.json.user as User).quota).toEqual({ spaces: 1, bytes: null, pages: null })
+        try {
+          // The personal space is the one they may have.
+          const refused = await call(m.browser, 'POST', '/api/spaces', { name: 'One too many' })
+          expect([refused.status, refused.json.error, refused.json.quota, refused.json.limit, refused.json.used]).toEqual([403, 'quota_exceeded', 'spaces', 1, 1])
+          expect((await call(m.browser, 'GET', '/api/account/usage')).json.spaces).toEqual({ used: 1, limit: 1 })
+          const raised = await call(admin, 'PATCH', path, { quota: { spaces: 3, pages: 100000 } })
+          expect((raised.json.user as User).quota).toEqual({ spaces: 3, bytes: null, pages: 100000 })
+          expect((await call(m.browser, 'POST', '/api/spaces', { name: 'Allowed now' })).status).toBe(201)
+          // 0 is no limit; null follows the tenant and the site again.
+          expect((await call(admin, 'PATCH', path, { quota: { spaces: 0 } })).status).toBe(200)
+          expect((await call(m.browser, 'GET', '/api/account/usage')).json.spaces).toMatchObject({ used: 2, limit: null })
+        } finally {
+          const cleared = await call(admin, 'PATCH', path, { quota: { spaces: null, bytes: null, pages: null } })
+          expect((cleared.json.user as User).quota).toEqual({ spaces: null, bytes: null, pages: null })
+        }
+        const listed = ((await call(admin, 'GET', '/api/users')).json.users as User[]).find((x) => x.id === m.user.id)
+        expect(listed?.quota).toEqual({ spaces: null, bytes: null, pages: null })
+      })
+
+      it('the quotas are layered settings with a person layer, checked like the others; a tenant says what it uses', async () => {
+        const settings = (await call(admin, 'GET', '/api/admin/settings')).json.settings as { key: string; kind: string; layers: string[]; site: { value: unknown } }[]
+        for (const key of ['quota.spacesPerPerson', 'quota.bytesPerPerson', 'quota.pagesPerPerson']) {
+          const d = settings.find((x) => x.key === key)
+          expect([d?.kind, d?.layers]).toEqual(['limit', ['site', 'tenant', 'person']])
+        }
+        expect((await call(admin, 'PUT', '/api/admin/settings/quota.bytesPerPerson', { value: 0 })).json.error).toBe('invalid')
+        expect((await call(admin, 'PUT', '/api/admin/settings/quota.spacesPerPerson', { value: 10001 })).json.error).toBe('invalid')
+        // A person has no use for the layer: it is not among what GET /api/settings offers.
+        const m = await newMember(uniq('qd'))
+        expect(((await call(m.browser, 'GET', '/api/settings')).json.settings as { key: string }[]).some((x) => x.key.startsWith('quota.'))).toBe(false)
+        const tenant = (await call(admin, 'GET', '/api/admin/tenants/0000000000')).json as unknown as { usage: { people: number; spaces: number; bytes: number; pages: number; measuredAt: string | null; over: string[] } }
+        expect(tenant.usage.people).toBeGreaterThanOrEqual(1)
+        expect(tenant.usage.spaces).toBeGreaterThanOrEqual(1)
+        expect(Array.isArray(tenant.usage.over)).toBe(true)
+        expect('measuredAt' in tenant.usage).toBe(true)
+      })
+
+      it('a new tenant\'s first administrator\'s invite fills in the form that accepts it; nothing is mailed', async () => {
+        const was = ((await call(admin, 'GET', '/api/admin/tenancy')).json as { enabled: boolean }).enabled
+        await call(admin, 'PUT', '/api/admin/tenancy', { enabled: true })
+        const username = uniq('qa')
+        const made = await call(admin, 'POST', '/api/admin/tenants', { slug: slugOf('qi'), name: 'Invite', admin: { username, name: 'First Admin', email: 'first@example.test' } })
+        expect(made.status).toBe(201)
+        const tenantId = made.json.id as string
+        const inv = made.json.invite as { id: string; token: string; role: string; username: string; name: string; email: string }
+        try {
+          expect([inv.role, inv.username, inv.name, inv.email]).toEqual(['admin', username, 'First Admin', 'first@example.test'])
+          const check = await call(browser(), 'POST', '/api/invites/check', { token: inv.token })
+          expect(check.status).toBe(200)
+          expect([check.json.role, check.json.username, check.json.name, check.json.email]).toEqual(['admin', username, 'First Admin', 'first@example.test'])
+          // An invite without a fill has nothing in them.
+          const plain = (await call(admin, 'POST', '/api/invites', { role: 'member' })).json as { id: string; token: string }
+          const empty = await call(browser(), 'POST', '/api/invites/check', { token: plain.token })
+          expect([empty.json.username ?? '', empty.json.name ?? '', empty.json.email ?? '']).toEqual(['', '', ''])
+          await call(admin, 'DELETE', `/api/invites/${plain.id}`)
+          const bad = await call(admin, 'POST', '/api/admin/tenants', { slug: slugOf('qj'), name: 'Bad', admin: { username, email: 'not-an-address' } })
+          expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
+        } finally {
+          await call(admin, 'DELETE', `/api/invites/${inv.id}`)
+          await call(admin, 'DELETE', `/api/admin/tenants/${tenantId}`)
+          await call(admin, 'PUT', '/api/admin/tenancy', { enabled: was })
         }
       })
     })

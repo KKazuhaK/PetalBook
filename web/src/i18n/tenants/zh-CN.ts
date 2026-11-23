@@ -118,11 +118,17 @@ export const tenantsZhCN = {
       'daily.own': '空间可以用自己的每日文案来源',
       'daily.api': '空间可以选外部接口',
       'daily.default': '没有来源的空间的每日文案默认',
+      'quota.spacesPerPerson': '每人的空间数上限',
+      'quota.bytesPerPerson': '每人的磁盘上限（字节）',
+      'quota.pagesPerPerson': '每人的页面数上限',
     } as Record<string, string>,
     helps: {
       'registration.open': '默认关，并且对租户锁定：要开，全站管理员先放开，再在租户上打开。需要已启用的发信。',
       'registration.perHour': '一个租户一小时最多接受多少个注册。',
       'daily.default': '租户可以选本租户的空间或全站的外部接口；贴的文案仍只在全站。',
+      'quota.spacesPerPerson': '一个人最多可以拥有多少个空间，0 是不限，到了上限就不能再建新的。给了 --max-spaces 时以参数为准。个人的上限在「用户和邀请」里设。',
+      'quota.bytesPerPerson': '一个人的空间占多少字节，留空是不限。超出只提醒，不拒绝。',
+      'quota.pagesPerPerson': '一个人的空间一共有多少页，留空是不限。超出只提醒，不拒绝。',
     } as Record<string, string>,
   },
 }

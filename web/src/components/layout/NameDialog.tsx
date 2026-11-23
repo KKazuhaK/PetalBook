@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Field } from '@/components/auth/Field'
 import { ApiError } from '@/api/client'
 import { t } from '@/i18n'
+import { tu } from '@/i18n/usage'
 
 // Asks for one name (a space's). Mounted only while open, so the field starts
 // from `initial` each time.
@@ -50,7 +51,7 @@ function NameForm({ title, initial, submitLabel, onSubmit, onClose }: { title: s
       onClose()
     } catch (err) {
       setBusy(false)
-      setError(err instanceof ApiError ? err.message : t.spaces.failed)
+      setError(err instanceof ApiError && err.code === 'quota_exceeded' ? tu.account.createRefused(Number((err.body as { limit?: number } | undefined)?.limit ?? 0)) : err instanceof ApiError ? err.message : t.spaces.failed)
     }
   }
 
