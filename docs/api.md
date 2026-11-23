@@ -2216,6 +2216,96 @@ colour leaves alone. A colour written as an alias (`color: *c`) is the colour
 of its anchor, and changing or removing the colour of one tag never changes
 another's (see Anchors, aliases and merge keys).
 
+## Templates
+
+Templates are ordinary pages under `.petalbook/templates/` of the space (header
+and body, type fields allowed). They are not listed as pages, not indexed for
+search, and travel with the repository. Variables in the title, the header
+values and the body: `{{date}}` (YYYY-MM-DD), `{{time}}` (HH:MM) and
+`{{datetime}}`, in the time zone the client sends (`tz`, minutes east of
+UTC, as for the daily text); nothing else is substituted, and `{{` that is not
+one of these stays as written.
+
+### Template
+
+```json
+{"name": "日记", "path": ".petalbook/templates/日记.md", "rev": "…", "meta": {"title": "{{date}}", "tags": ["日记"], "type": "diary"}, "body": "## 今天\n"}
+```
+
+`name` is the file name without `.md`; it is the template's id.
+
+### `GET /api/spaces/{space}/templates`
+
+`{"templates": [/* Template without body */], "defaults": {"folders": {"随笔": "日记"}, "quickNote": "随记"}}`.
+Needs `read`. Defaults are kept in `space.yml` (`templates: {folders: {…},
+quickNote: …}`), with the settings-file rules of 2.2.
+
+### `GET /api/spaces/{space}/templates/{name}`
+
+The template with its body. `404 not_found`.
+
+### `PUT /api/spaces/{space}/templates/{name}`
+
+`{"baseRev": "…" | "", "meta": {…}, "body": "…"}`. `baseRev` `""` creates;
+otherwise it must match (`409 conflict` with `current`). Needs `manage`.
+Names follow page-name rules; at most 200 templates, 256 KiB each
+(`400 invalid` with `error: "template_limit"` / `"template_too_large"`).
+
+### `DELETE /api/spaces/{space}/templates/{name}?baseRev=…`
+
+Needs `manage`. Folder defaults and the quick-note default that name it are
+removed in the same change.
+
+### `PUT /api/spaces/{space}/templates/defaults`
+
+`{"folder": "随笔", "template": "日记" | ""}` or `{"quickNote": "随记" | ""}`.
+Needs `manage`. `400 invalid` with `error: "template_not_found"` for an
+unknown template.
+
+### Creating a page from a template
+
+`POST /api/spaces/{space}/pages` takes `"template": "日记"` and `"tz"`.
+Without `template`, the folder's default template applies (send
+`"template": ""` to create a blank page); quick notes use the quick-note
+default. The request's `meta` and `body` win over the template's per field;
+the template's `type` is kept. `400 invalid` with `error:
+"template_not_found"` for an unknown name.
+
+## Checks
+
+The check page lists what is wrong in a space. Everything comes from the
+index (problems found when files are indexed), so it never scans files.
+
+### `GET /api/spaces/{space}/checks?kind={kind}&cursor={cursor}`
+
+Needs `read`. `{"counts": {"no_id": 2, …}, "items": [Problem], "next": "…"}`,
+50 per page, ordered by kind then path. `kind` filters.
+
+### Problem
+
+`{"kind": "…", "path": "…", "id": "…"?, "message": "…", "detail": {…}?, "fix": "add_id" | "remove_fields" | null}`
+
+Kinds:
+
+| kind | meaning | detail |
+|---|---|---|
+| `no_id` | a page file without an `id` | |
+| `duplicate_id` | two or more files share an `id` | `{"paths": […]}` |
+| `bad_header` | the header is not valid YAML | `{"line": n}` |
+| `type_mismatch` | type fields that do not fit the type's schema | `{"fields": […]}` |
+| `not_in_type` | header fields that are not in the page's type | `{"fields": […]}` |
+| `broken_link` | a link to a page that does not exist (after 2.4) | `{"target": "…", "line": n}` |
+| `missing_asset` | an image or attachment that does not exist | `{"target": "…"}` |
+| `duplicate_title` | two pages in one folder with the same title | `{"paths": […]}` |
+
+### `POST /api/spaces/{space}/checks/fix`
+
+`{"kind": "no_id" | "not_in_type", "path": "…", "baseRev": "…"}`. Needs
+`write`. `no_id` gives the page a new id; `not_in_type` removes the listed
+fields (only those, the rest of the header byte-for-byte). Answers the page
+like a save; `409 conflict` on a stale `baseRev`; `400 invalid` with
+`error: "not_fixable"` for other kinds.
+
 ## Maintenance
 
 ### `POST /api/spaces/{space}/reindex`
