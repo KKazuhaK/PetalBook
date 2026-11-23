@@ -179,6 +179,17 @@ type feedState struct {
 	dirty        bool // seq, the removals, the epoch or the floor changed
 	goneAdded    bool
 	pruneAge     bool // look at the age of the removals even if none was added
+	recount      bool // goneN drifted below the table: pruneGone counts it again
+}
+
+// dropGone takes n records of removals off the count. A count that would go
+// below zero has drifted from the table: it stays at zero and is counted again.
+func (f *feedState) dropGone(n uint64) {
+	if n > f.goneN {
+		f.recount = true
+	}
+	f.goneN -= min(f.goneN, n)
+	f.dirty = true
 }
 
 // feed loads the state of the feed from the transaction, once.
@@ -252,8 +263,7 @@ func (w *writer) forgetGone(id string) error {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
-		f.goneN -= uint64(n)
-		f.dirty = true
+		f.dropGone(uint64(n))
 	}
 	return nil
 }
@@ -274,7 +284,7 @@ func (w *writer) recordGone(id string) error {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
-		f.goneN -= uint64(n)
+		f.dropGone(uint64(n))
 	}
 	if _, err := w.exec(`INSERT INTO gone(id, seq, at) VALUES (?, ?, ?)`, id, seq, w.now().Unix()); err != nil {
 		return err
@@ -311,7 +321,7 @@ func (w *writer) flushFeed() error {
 	if !f.loaded {
 		return nil
 	}
-	if f.goneAdded || f.pruneAge {
+	if f.goneAdded || f.pruneAge || f.recount {
 		if err := w.pruneGone(); err != nil {
 			return err
 		}
@@ -347,6 +357,13 @@ func (w *writer) pruneGone() error {
 		f.dirty = true
 		return nil
 	}
+	if f.recount {
+		var n int64
+		if err := w.queryRow(`SELECT count(*) FROM gone`).Scan(&n); err != nil {
+			return err
+		}
+		f.goneN, f.recount, f.dirty = uint64(n), false, true
+	}
 	var old sql.NullInt64
 	if err := w.queryRow(`SELECT max(seq) FROM gone WHERE at < ?`, w.now().Add(-goneAge).Unix()).Scan(&old); err != nil {
 		return err
@@ -358,7 +375,20 @@ func (w *writer) pruneGone() error {
 	}
 	if f.goneN > uint64(goneMax) {
 		var at int64
-		if err := w.queryRow(`SELECT seq FROM gone ORDER BY seq LIMIT 1 OFFSET ?`, f.goneN-uint64(goneMax)-1).Scan(&at); err != nil {
+		err := w.queryRow(`SELECT seq FROM gone ORDER BY seq LIMIT 1 OFFSET ?`, f.goneN-uint64(goneMax)-1).Scan(&at)
+		if errors.Is(err, sql.ErrNoRows) {
+			// The count drifted above the table: it is counted again (one read of the index of the table, rare).
+			var n int64
+			if err := w.queryRow(`SELECT count(*) FROM gone`).Scan(&n); err != nil {
+				return err
+			}
+			f.goneN, f.dirty = uint64(n), true
+			if f.goneN <= uint64(goneMax) {
+				return nil
+			}
+			err = w.queryRow(`SELECT seq FROM gone ORDER BY seq LIMIT 1 OFFSET ?`, f.goneN-uint64(goneMax)-1).Scan(&at)
+		}
+		if err != nil {
 			return err
 		}
 		if err := cut(uint64(at)); err != nil {

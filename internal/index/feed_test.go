@@ -419,3 +419,58 @@ func TestFeedAPageThatIsThereIsNeverAlsoARemoval(t *testing.T) {
 		t.Fatalf("%d records", n)
 	}
 }
+
+// A count of removals that drifted from the table (too high, or too low so that
+// taking one away would go below zero) never fails a write or a sync: the prune
+// counts the table again.
+func TestFeedGoneCountThatDriftedNeverFailsAWrite(t *testing.T) {
+	old := goneMax
+	goneMax = 3
+	t.Cleanup(func() { goneMax = old })
+	x := openIndex(t)
+	for i := 0; i < 8; i++ {
+		putPage(t, x, fmt.Sprintf("p%d.md", i), pageID(i), "T")
+	}
+	gone := func() (n int) {
+		x.wdb.QueryRow(`SELECT count(*) FROM gone`).Scan(&n)
+		return n
+	}
+	// Too high: the prune would look for a row past the end of the table.
+	if _, err := x.wdb.Exec(`UPDATE meta SET value = '1000' WHERE key = 'gone_n'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := x.Remove(pageID(0)); err != nil {
+		t.Fatalf("a removal with the count too high: %v", err)
+	}
+	if err := x.Remove(pageID(1)); err != nil {
+		t.Fatal(err)
+	}
+	var n uint64
+	x.wdb.QueryRow(`SELECT value FROM meta WHERE key = 'gone_n'`).Scan(&n)
+	if int(n) != gone() {
+		t.Fatalf("gone_n %d, table %d", n, gone())
+	}
+	// Too low: a page that comes back takes its record away from a count of zero.
+	if _, err := x.wdb.Exec(`UPDATE meta SET value = '0' WHERE key = 'gone_n'`); err != nil {
+		t.Fatal(err)
+	}
+	putPage(t, x, "p0.md", pageID(0), "T")
+	for i := 2; i < 8; i++ {
+		if err := x.Remove(pageID(i)); err != nil {
+			t.Fatalf("removal %d after the count went below zero: %v", i, err)
+		}
+		if gone() > 3 {
+			t.Fatalf("%d records", gone())
+		}
+	}
+	// A sync (as at a start) with the count too high again.
+	if _, err := x.wdb.Exec(`UPDATE meta SET value = '99999' WHERE key = 'gone_n'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := x.Sync(newMem(), false); err != nil {
+		t.Fatalf("a sync with the count too high: %v", err)
+	}
+	if gone() > 3 {
+		t.Fatalf("%d records after the sync", gone())
+	}
+}
