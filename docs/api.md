@@ -1769,7 +1769,7 @@ protection of the network is in one place).
  "allow": {"own": true, "api": true},
  "languages": ["zh", "en"],
  "apis": [ /* interfaces, below */ ],
- "presets": [ /* interfaces to start a form from, below */ ],
+ "providers": [ /* built-in interfaces, below */ ],
  "lines": {"total": 6, "byLang": {"zh": 3, "en": 2, "": 1}, "max": 5000}}
 ```
 
@@ -1962,8 +1962,8 @@ author, link.
  "result": {"ok": false, "status": 200, "url": "…", "raw": "…", "quote": {"text": "…"},
             "pathErrors": [{"field": "source", "code": "path_error", "message": "no text or number at from_x"},
                            {"field": "link", "code": "path_error", "message": "a value the link needs is not in the answer"}]}}
-{"error": "host_not_allowed", "message": "the host api.example.org is not on the list of hosts", "host": "api.example.org",
- "result": {"ok": false, "url": "…", "message": "…"}}
+{"error": "not_json", "message": "the answer is not JSON",
+ "result": {"ok": false, "status": 200, "url": "…", "message": "…"}}
 ```
 
 `raw` is the start of the answer (4 000 characters), shown only when it is
