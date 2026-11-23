@@ -1,3 +1,4 @@
+import { useOffline } from '@/lib/offline/status'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { useNavigate } from 'react-router'
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog'
@@ -162,6 +163,7 @@ export function SearchDialog({ onClose }: { onClose: () => void }) {
     }
   }
 
+  const offline = useOffline()
   const filtered = text.trim() !== '' || hasFilters(filters)
   const showSort = text.trim() !== ''
 
@@ -212,6 +214,11 @@ export function SearchDialog({ onClose }: { onClose: () => void }) {
               </div>
             )}
           </div>
+          {offline && showSort && (
+            <p role="note" className="border-b bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
+              {t.offline.searchNote}
+            </p>
+          )}
           <div className="flex min-h-0 flex-1">
             <div className="min-w-0 flex-1 overflow-y-auto overscroll-contain" aria-busy={refreshing}>
               {query.isError ? (

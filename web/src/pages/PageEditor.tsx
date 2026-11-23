@@ -1,3 +1,4 @@
+import { useOffline } from '@/lib/offline/status'
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Link, useBlocker, useNavigate, useParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
@@ -263,7 +264,10 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
   // Without `write` the page is shown and nothing about it can be changed: no
   // typing, no draft, no move or delete, no going back to a version.
   const { write } = useSpacePermissions()
-  const readOnly = !write
+  // Offline the page can be read and not changed (4.2 makes offline editing); what was typed stays in the browser's
+  // own draft.
+  const offline = useOffline()
+  const readOnly = !write || offline
   const readOnlyRef = useRef(readOnly)
   useEffect(() => {
     readOnlyRef.current = readOnly
@@ -836,8 +840,8 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
         actions={
           <>
             {readOnly ? (
-              <span className="rounded-md border px-1.5 py-0.5 text-xs text-muted-foreground" title={t.permissions.readOnlyNote}>
-                {t.permissions.readOnly}
+              <span className="rounded-md border px-1.5 py-0.5 text-xs text-muted-foreground" title={offline ? t.offline.readOnlyNote : t.permissions.readOnlyNote}>
+                {offline ? t.offline.readOnly : t.permissions.readOnly}
               </span>
             ) : (
               <SaveIndicator snapshot={snapshot} draftSafe={!controller.hasUnsaved()} onRetry={() => void controller.retry()} onOpenConflict={() => setConflictOpen(true)} />

@@ -8,16 +8,22 @@ const ids = (v: Visibility) => visibleSections(v).map((s) => s.id)
 
 describe('which sections are shown', () => {
   it('single-user mode has only what applies: preferences, and the space\'s general, types, templates and import', () => {
-    expect(ids(single)).toEqual(['preferences', 'general', 'types', 'templates', 'import'])
+    expect(ids(single)).toEqual(['preferences', 'general', 'types', 'templates', 'offline', 'import'])
   })
-  it('a member has the account and the space, with its members and sync', () => {
-    expect(ids(member)).toEqual(['profile', 'preferences', 'security', 'tokens', 'general', 'types', 'templates', 'members', 'sync', 'import'])
+  it('a member has the account and the space, with its members, sync and the offline copy', () => {
+    expect(ids(member)).toEqual(['profile', 'preferences', 'security', 'tokens', 'general', 'types', 'templates', 'members', 'sync', 'offline', 'import'])
   })
   it('someone who may only read has no import (it writes pages) but still sees the members', () => {
-    expect(ids(viewer)).toEqual(['profile', 'preferences', 'security', 'tokens', 'general', 'types', 'templates', 'members', 'sync'])
+    expect(ids(viewer)).toEqual(['profile', 'preferences', 'security', 'tokens', 'general', 'types', 'templates', 'members', 'sync', 'offline'])
   })
   it('a space that cannot be read shows no members', () => {
     expect(ids({ ...member, canRead: false, canWrite: false })).toEqual(['profile', 'preferences', 'security', 'tokens', 'general', 'sync'])
+  })
+  it('the offline copy is for whoever may read the space, in either mode, and not for a space that cannot be read', () => {
+    expect(ids(single)).toContain('offline')
+    expect(ids(viewer)).toContain('offline')
+    expect(ids({ ...member, canRead: false, canWrite: false })).not.toContain('offline')
+    expect(ids({ ...member, hasSpace: false })).not.toContain('offline')
   })
   it('a space that is switched off still has the members section, for leaving it', () => {
     expect(ids({ ...member, canRead: false, canWrite: false, disabled: true })).toEqual(['profile', 'preferences', 'security', 'tokens', 'general', 'members', 'sync'])
@@ -36,7 +42,7 @@ describe('which sections are shown', () => {
   it('groups the navigation: account, space', () => {
     expect(groupsOf(visibleSections(member)).map((g) => [g.group, g.sections.map((s) => s.id)])).toEqual([
       ['account', ['profile', 'preferences', 'security', 'tokens']],
-      ['space', ['general', 'types', 'templates', 'members', 'sync', 'import']],
+      ['space', ['general', 'types', 'templates', 'members', 'sync', 'offline', 'import']],
     ])
     expect(groupsOf(visibleSections(single)).map((g) => g.group)).toEqual(['account', 'space'])
   })

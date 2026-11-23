@@ -39,6 +39,9 @@ const later = (el: ReactNode) => <Suspense fallback={<PageFallback />}>{el}</Sus
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
+      // Reads are answered from the copy on the device when the server cannot be reached (src/lib/offline), so a
+      // query is not held back while the browser says it is offline.
+      networkMode: 'always',
       refetchOnWindowFocus: false,
       // A 4xx will not get better by asking again.
       retry: (count, error) => !(error instanceof ApiError && error.status >= 400 && error.status < 500) && count < 2,

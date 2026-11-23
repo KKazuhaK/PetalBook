@@ -6,6 +6,7 @@ import { FileOpsProvider } from '@/components/files/FileOps'
 import { SearchDialogProvider } from '@/components/search/SearchDialog'
 import { AppSidebar } from './AppSidebar'
 import { QuickCaptureProvider } from './QuickCapture'
+import { OfflineBanner, OfflineSync } from './OfflineSync'
 
 // On a phone the sidebar is a drawer; it should close once a destination is picked.
 function CloseMobileOnNavigate() {
@@ -22,8 +23,10 @@ export function AppShell() {
         <SearchDialogProvider>
           <FileOpsProvider>
             <CloseMobileOnNavigate />
+            <OfflineSync />
             <AppSidebar />
             <SidebarInset className="min-w-0">
+              <OfflineBanner />
               <ErrorBoundary>
                 <Outlet />
               </ErrorBoundary>

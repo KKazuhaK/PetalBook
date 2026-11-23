@@ -14,6 +14,8 @@ import { tokensEn } from './tokens/en'
 import { tokensZhCN } from './tokens/zh-CN'
 import { oauthEn } from './oauth/en'
 import { oauthZhCN } from './oauth/zh-CN'
+import { offlineEn } from './offline/en'
+import { offlineZhCN } from './offline/zh-CN'
 
 describe('decideLanguage', () => {
   it('uses a saved choice over the browser', () => {
@@ -124,6 +126,7 @@ describe('dictionaries', () => {
     walk(homeZhCN, homeEn, 'home', problems, true)
     walk(tokensZhCN, tokensEn, 'tokens', problems)
     walk(oauthZhCN, oauthEn, 'oauth', problems)
+    walk(offlineZhCN, offlineEn, 'offline', problems)
     expect(problems).toEqual([])
   })
   it('English has no Chinese text in it', () => {
@@ -146,6 +149,7 @@ describe('dictionaries', () => {
     scan(homeEn, 'home')
     scan(tokensEn, 'tokens')
     scan(oauthEn, 'oauth')
+    scan(offlineEn, 'offline')
     expect(found).toEqual([])
   })
   it('the sentences of the greeting use only the placeholders the code fills, in both languages', () => {
