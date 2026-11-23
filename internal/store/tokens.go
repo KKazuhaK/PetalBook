@@ -125,9 +125,11 @@ type TokenFilter struct {
 // ListAPITokens returns tokens newest first with their owners and the spaces
 // they name, in one query. A space's Name is its name while its token's owner
 // is a member of it, "" otherwise.
-func ListAPITokens(ctx context.Context, q Q, f TokenFilter) ([]TokenRow, error) {
+func ListAPITokens(ctx context.Context, q Q, sc Scope, f TokenFilter) ([]TokenRow, error) {
 	var where []string
 	var args []any
+	sCond, sArgs := sc.ofUser("user_id")
+	where, args = append(where, sCond), append(args, sArgs...)
 	if f.UserID != "" {
 		where = append(where, "user_id = ?")
 		args = append(args, f.UserID)

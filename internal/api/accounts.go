@@ -335,6 +335,10 @@ func (s *server) unlinkIdentity(c *call) {
 // --- users and invites (administrators) --------------------------------------
 
 func (s *server) listUsers(c *call) {
+	sc, ok := s.adminScope(c)
+	if !ok {
+		return
+	}
 	q := c.r.URL.Query()
 	var us []store.User
 	var err error
@@ -359,9 +363,9 @@ func (s *server) listUsers(c *call) {
 			}
 			limit = n
 		}
-		us, err = s.auth.FindUsers(c.r.Context(), strings.TrimSpace(q.Get("q")), enabledOnly, limit)
+		us, err = s.auth.FindUsers(c.r.Context(), sc, strings.TrimSpace(q.Get("q")), enabledOnly, limit)
 	} else {
-		us, err = s.auth.Users(c.r.Context())
+		us, err = s.auth.Users(c.r.Context(), sc)
 	}
 	if err != nil {
 		s.fail(c.w, err)
@@ -393,12 +397,13 @@ func (s *server) patchUser(c *call) {
 		PasskeyRequired *bool   `json:"passkeyRequired"`
 		Email           *string `json:"email"`
 		EmailVerified   *bool   `json:"emailVerified"`
+		SiteAdmin       *bool   `json:"siteAdmin"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	u, err := s.auth.UpdateUser(c.r.Context(), c.user().ID, s.auth.ClientAddr(c.r), c.r.PathValue("id"), auth.UserPatch{Role: req.Role, Disabled: req.Disabled,
-		PasskeyRequired: req.PasskeyRequired, Email: req.Email, EmailVerified: req.EmailVerified})
+	u, err := s.auth.UpdateUser(c.r.Context(), c.user(), s.auth.ClientAddr(c.r), c.r.PathValue("id"), auth.UserPatch{Role: req.Role, Disabled: req.Disabled,
+		PasskeyRequired: req.PasskeyRequired, Email: req.Email, EmailVerified: req.EmailVerified, SiteAdmin: req.SiteAdmin})
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -410,28 +415,36 @@ func (s *server) patchUser(c *call) {
 
 func (s *server) createInvite(c *call) {
 	var req struct {
-		Role string `json:"role"`
-		Days *int   `json:"days"`
+		Role      string `json:"role"`
+		Days      *int   `json:"days"`
+		Tenant    string `json:"tenant"`
+		SiteAdmin *bool  `json:"siteAdmin"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, true, authBodyLimit) {
 		return
 	}
-	inv, err := s.auth.CreateInvite(c.r.Context(), c.user().ID, req.Role, req.Days)
+	inv, err := s.auth.CreateInvite(c.r.Context(), c.user(), req.Tenant, req.Role, req.Days, req.SiteAdmin)
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
 	writeJSON(c.w, http.StatusCreated, struct {
-		ID      string `json:"id"`
-		Token   string `json:"token"`
-		Role    string `json:"role"`
-		Created string `json:"created"`
-		Expires string `json:"expires"`
-	}{inv.ID, inv.Token, inv.Role, rfc3339(inv.Created), rfc3339(inv.Expires)})
+		ID        string `json:"id"`
+		Token     string `json:"token"`
+		Role      string `json:"role"`
+		Created   string `json:"created"`
+		Expires   string `json:"expires"`
+		Tenant    string `json:"tenant"`
+		SiteAdmin bool   `json:"siteAdmin"`
+	}{inv.ID, inv.Token, inv.Role, rfc3339(inv.Created), rfc3339(inv.Expires), inv.TenantID, inv.SiteAdmin})
 }
 
 func (s *server) listInvites(c *call) {
-	l, err := s.auth.OpenInvites(c.r.Context())
+	sc, ok := s.adminScope(c)
+	if !ok {
+		return
+	}
+	l, err := s.auth.OpenInvites(c.r.Context(), sc)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -442,10 +455,11 @@ func (s *server) listInvites(c *call) {
 		Created   string `json:"created"`
 		Expires   string `json:"expires"`
 		CreatedBy string `json:"createdBy"`
+		Tenant    string `json:"tenant"`
 	}
 	out := make([]inv, len(l))
 	for i, x := range l {
-		out[i] = inv{x.ID, x.Role, rfc3339(x.Created), rfc3339(x.Expires), x.CreatedBy}
+		out[i] = inv{x.ID, x.Role, rfc3339(x.Created), rfc3339(x.Expires), x.CreatedBy, x.TenantID}
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Invites []inv `json:"invites"`
@@ -453,7 +467,7 @@ func (s *server) listInvites(c *call) {
 }
 
 func (s *server) deleteInvite(c *call) {
-	if err := s.auth.DeleteInvite(c.r.Context(), c.r.PathValue("id")); err != nil {
+	if err := s.auth.DeleteInvite(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("id")); err != nil {
 		s.fail(c.w, err)
 		return
 	}

@@ -314,7 +314,7 @@ func TestAuditLogIsPagedFilteredAndTrimmed(t *testing.T) {
 		if n, err := store.TrimAudit(ctx, a.st.Q(), time.Time{}, 5); err != nil || n < 15 {
 			t.Fatalf("%d %v", n, err)
 		}
-		rows, err := store.ListAudit(ctx, a.st.Q(), "", "", "", 100)
+		rows, err := store.ListAudit(ctx, a.st.Q(), store.AllTenants(), false, "", "", "", 100)
 		if err != nil || len(rows) != 5 {
 			t.Fatalf("%d %v", len(rows), err)
 		}

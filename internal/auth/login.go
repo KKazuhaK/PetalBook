@@ -133,7 +133,7 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 	if !good || u == nil || hash == s.hasher.dummy {
 		return nil, s.wrongPassword(st, p, ukey, pkey, "bad_password", &reserved)
 	}
-	if u.Disabled {
+	if u.Disabled || s.st.TenantDisabled(u.TenantID) {
 		return nil, s.wrongPassword(st, p, ukey, pkey, "disabled", &reserved)
 	}
 	// The password is right: what stands against the name is forgiven.
@@ -325,7 +325,7 @@ func (s *Service) AcceptInvite(ctx context.Context, token, username, name, passw
 	if s.ssoOnlyInEffect(st) && inv.Role != "admin" {
 		return nil, "", errLocalRefused()
 	}
-	u, err := s.CreateUser(ctx, CreateParams{Username: username, Name: name, Role: inv.Role, Password: password, InviteID: inv.ID})
+	u, err := s.CreateUser(ctx, CreateParams{Username: username, Name: name, Role: inv.Role, Password: password, InviteID: inv.ID, TenantID: inv.TenantID, SiteAdmin: inv.SiteAdmin})
 	if err != nil {
 		return nil, "", err
 	}

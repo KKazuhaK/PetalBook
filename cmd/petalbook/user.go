@@ -167,7 +167,7 @@ func newUserList() *cobra.Command {
 				return err
 			}
 			defer env.close()
-			us, err := env.svc.Users(cmd.Context())
+			us, err := env.svc.Users(cmd.Context(), store.AllTenants())
 			if err != nil {
 				return err
 			}

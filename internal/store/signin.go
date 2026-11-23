@@ -29,14 +29,16 @@ type ProviderRow struct {
 	Created, Updated       time.Time
 	// GroupsVersion is bumped by UpdateProvider (see LockProviderGroups).
 	GroupsVersion int64
+	// TenantID is where autoCreate puts new accounts.
+	TenantID string
 }
 
-const providerCols = `slug, kind, name, icon, enabled, position, auto_create, merge_verified_email, legacy_callback, issuer, config, secret_enc, cache, status_ok, status_checked, status_message, created, updated, groups_version`
+const providerCols = `slug, kind, name, icon, enabled, position, auto_create, merge_verified_email, legacy_callback, issuer, config, secret_enc, cache, status_ok, status_checked, status_message, created, updated, groups_version, tenant_id`
 
 func scanProvider(sc interface{ Scan(...any) error }) (*ProviderRow, error) {
 	var p ProviderRow
 	var en, pos, ac, mv, lc, ok, chk, cr, up int64
-	if err := sc.Scan(&p.Slug, &p.Kind, &p.Name, &p.Icon, &en, &pos, &ac, &mv, &lc, &p.Issuer, &p.Config, &p.SecretEnc, &p.Cache, &ok, &chk, &p.StatusMessage, &cr, &up, &p.GroupsVersion); err != nil {
+	if err := sc.Scan(&p.Slug, &p.Kind, &p.Name, &p.Icon, &en, &pos, &ac, &mv, &lc, &p.Issuer, &p.Config, &p.SecretEnc, &p.Cache, &ok, &chk, &p.StatusMessage, &cr, &up, &p.GroupsVersion, &p.TenantID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -75,9 +77,9 @@ func GetProvider(ctx context.Context, q Q, slug string) (*ProviderRow, error) {
 
 // InsertProvider adds a provider; a taken slug is a unique violation.
 func InsertProvider(ctx context.Context, q Q, p ProviderRow) error {
-	_, err := q.Exec(ctx, `INSERT INTO sign_in_providers(`+providerCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err := q.Exec(ctx, `INSERT INTO sign_in_providers(`+providerCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Slug, p.Kind, p.Name, p.Icon, b2i(p.Enabled), p.Position, b2i(p.AutoCreate), b2i(p.MergeVerifiedEmail), b2i(p.LegacyCallback), p.Issuer,
-		p.Config, p.SecretEnc, p.Cache, b2i(p.StatusOK), zeroMS(p.StatusChecked), p.StatusMessage, ms(p.Created), ms(p.Updated), p.GroupsVersion)
+		p.Config, p.SecretEnc, p.Cache, b2i(p.StatusOK), zeroMS(p.StatusChecked), p.StatusMessage, ms(p.Created), ms(p.Updated), p.GroupsVersion, tenantOrDefault(p.TenantID))
 	return err
 }
 
@@ -85,9 +87,9 @@ func InsertProvider(ctx context.Context, q Q, p ProviderRow) error {
 // time, and bumps the groups version.
 func UpdateProvider(ctx context.Context, q Q, p ProviderRow) error {
 	res, err := q.Exec(ctx, `UPDATE sign_in_providers SET name = ?, icon = ?, enabled = ?, position = ?, auto_create = ?, merge_verified_email = ?, legacy_callback = ?, issuer = ?,
-		config = ?, secret_enc = ?, cache = ?, status_ok = ?, status_checked = ?, status_message = ?, updated = ?, groups_version = groups_version + 1 WHERE slug = ?`,
+		config = ?, secret_enc = ?, cache = ?, status_ok = ?, status_checked = ?, status_message = ?, updated = ?, tenant_id = ?, groups_version = groups_version + 1 WHERE slug = ?`,
 		p.Name, p.Icon, b2i(p.Enabled), p.Position, b2i(p.AutoCreate), b2i(p.MergeVerifiedEmail), b2i(p.LegacyCallback), p.Issuer,
-		p.Config, p.SecretEnc, p.Cache, b2i(p.StatusOK), zeroMS(p.StatusChecked), p.StatusMessage, ms(p.Updated), p.Slug)
+		p.Config, p.SecretEnc, p.Cache, b2i(p.StatusOK), zeroMS(p.StatusChecked), p.StatusMessage, ms(p.Updated), tenantOrDefault(p.TenantID), p.Slug)
 	return oneRow(res, err)
 }
 
@@ -363,13 +365,24 @@ type AuditRow struct {
 	Username string
 	IP       string
 	Detail   string
+	// TenantID is the tenant the row belongs to; "" when the writer did not say,
+	// which InsertAudit fills in from the user the row is about, else the actor,
+	// else the server's own ("").
+	TenantID string
 }
+
+// SiteAuditKinds are the kinds of the server's own doings, which a tenant
+// administrator does not see (even in the rows written before tenants, which
+// all sit in the default tenant).
+var SiteAuditKinds = []string{"security_changed", "provider_created", "provider_changed", "provider_deleted",
+	"mail_changed", "mail_test", "tenant_created", "tenant_changed", "tenant_deleted", "dropped", "rate_limited", "lockout"}
 
 // InsertAudit writes rows (a repeated id is ignored).
 func InsertAudit(ctx context.Context, q Q, rows []AuditRow) error {
 	for _, r := range rows {
-		if _, err := q.Exec(ctx, `INSERT INTO audit_log(id, at, kind, actor, user_id, username, ip, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT (id) DO NOTHING`, r.ID, ms(r.At), r.Kind, r.Actor, r.UserID, r.Username, r.IP, r.Detail); err != nil {
+		if _, err := q.Exec(ctx, `INSERT INTO audit_log(id, at, kind, actor, user_id, username, ip, detail, tenant_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), (SELECT tenant_id FROM users WHERE id = ?), (SELECT tenant_id FROM users WHERE id = ?), ''))
+			ON CONFLICT (id) DO NOTHING`, r.ID, ms(r.At), r.Kind, r.Actor, r.UserID, r.Username, r.IP, r.Detail, r.TenantID, r.UserID, r.Actor); err != nil {
 			return err
 		}
 	}
@@ -378,9 +391,21 @@ func InsertAudit(ctx context.Context, q Q, rows []AuditRow) error {
 
 // ListAudit returns one page of the log, newest first: the rows with an id
 // below cursor ("" for the first page), at most limit+1 (the caller cuts it).
-func ListAudit(ctx context.Context, q Q, kind, userID, cursor string, limit int) ([]AuditRow, error) {
+//
+// Only the rows of the scope's tenants are read; hideSite also leaves out the
+// kinds of SiteAuditKinds (what a tenant administrator may not see).
+func ListAudit(ctx context.Context, q Q, sc Scope, hideSite bool, kind, userID, cursor string, limit int) ([]AuditRow, error) {
 	var conds []string
 	var args []any
+	sCond, sArgs := sc.cond("tenant_id")
+	conds, args = append(conds, sCond), append(args, sArgs...)
+	if hideSite {
+		ph := strings.TrimSuffix(strings.Repeat("?, ", len(SiteAuditKinds)), ", ")
+		conds = append(conds, `kind NOT IN (`+ph+`)`)
+		for _, k := range SiteAuditKinds {
+			args = append(args, k)
+		}
+	}
 	if kind != "" {
 		conds = append(conds, `kind = ?`)
 		args = append(args, kind)
@@ -398,7 +423,7 @@ func ListAudit(ctx context.Context, q Q, kind, userID, cursor string, limit int)
 		where = ` WHERE ` + strings.Join(conds, ` AND `)
 	}
 	args = append(args, limit+1)
-	rows, err := q.Query(ctx, `SELECT id, at, kind, actor, user_id, username, ip, detail FROM audit_log`+where+` ORDER BY id DESC LIMIT ?`, args...)
+	rows, err := q.Query(ctx, `SELECT id, at, kind, actor, user_id, username, ip, detail, tenant_id FROM audit_log`+where+` ORDER BY id DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -407,7 +432,7 @@ func ListAudit(ctx context.Context, q Q, kind, userID, cursor string, limit int)
 	for rows.Next() {
 		var r AuditRow
 		var at int64
-		if err := rows.Scan(&r.ID, &at, &r.Kind, &r.Actor, &r.UserID, &r.Username, &r.IP, &r.Detail); err != nil {
+		if err := rows.Scan(&r.ID, &at, &r.Kind, &r.Actor, &r.UserID, &r.Username, &r.IP, &r.Detail, &r.TenantID); err != nil {
 			return nil, err
 		}
 		r.At = fromMS(at)

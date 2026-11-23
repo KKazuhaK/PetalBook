@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/KKazuhaK/PetalBook/internal/auth"
+	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
 const samlACSPattern = "/api/auth/saml/{slug}/acs"
@@ -313,7 +314,7 @@ func (s *server) deleteAccountPasskey(c *call) {
 }
 
 func (s *server) listUserPasskeys(c *call) {
-	l, err := s.auth.UserPasskeys(c.r.Context(), c.r.PathValue("id"))
+	l, err := s.auth.UserPasskeys(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("id"))
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -487,7 +488,11 @@ func (s *server) adminAudit(c *call) {
 		}
 		limit = n
 	}
-	rows, next, err := s.auth.ListAudit(c.r.Context(), strings.TrimSpace(q.Get("kind")), strings.TrimSpace(q.Get("user")), q.Get("cursor"), limit)
+	sc, ok := s.adminScope(c)
+	if !ok {
+		return
+	}
+	rows, next, err := s.auth.ListAudit(c.r.Context(), sc, !c.isSiteAdmin(), strings.TrimSpace(q.Get("kind")), strings.TrimSpace(q.Get("user")), q.Get("cursor"), limit)
 	if err != nil {
 		s.fail(c.w, err)
 		return

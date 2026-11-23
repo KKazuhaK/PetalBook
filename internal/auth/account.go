@@ -191,13 +191,17 @@ type UserPatch struct {
 	PasskeyRequired *bool
 	Email           *string
 	EmailVerified   *bool
+	// SiteAdmin makes an administrator one of the whole server; only a site
+	// administrator may send it.
+	SiteAdmin *bool
 }
 
 // UpdateUser applies a patch. It refuses to leave the instance without an
 // enabled administrator, an administrator disabling themself, and, while
 // password sign-in is refused to everyone else, leaving no enabled
 // administrator with a password.
-func (s *Service) UpdateUser(ctx context.Context, actorID, ip, targetID string, patch UserPatch) (*store.User, error) {
+func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID string, patch UserPatch) (*store.User, error) {
+	actorID := actor.ID
 	if patch.Role != nil {
 		if err := checkRole(*patch.Role); err != nil {
 			return nil, err
@@ -220,12 +224,20 @@ func (s *Service) UpdateUser(ctx context.Context, actorID, ip, targetID string, 
 	var out *store.User
 	changed := map[string]any{}
 	err := s.st.Tx(ctx, func(q store.Q) error {
-		u, err := store.GetUser(ctx, q, targetID)
+		// A person of another tenant is no person at all.
+		u, err := store.GetUser(ctx, q, store.ScopeOf(actor), targetID)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				return errf(NotFound, "no such user")
 			}
 			return err
+		}
+		isSite := actor.SiteAdmin && actor.Role == "admin"
+		if u.SiteAdmin && !isSite {
+			return errf(Forbidden, "only a site administrator may change a site administrator")
+		}
+		if patch.SiteAdmin != nil && !isSite {
+			return errf(Forbidden, "only a site administrator may make or end a site administrator")
 		}
 		role, disabled := u.Role, u.Disabled
 		if patch.Role != nil {
@@ -237,7 +249,22 @@ func (s *Service) UpdateUser(ctx context.Context, actorID, ip, targetID string, 
 		if disabled && !u.Disabled && u.ID == actorID {
 			return errf(Conflict, "you cannot disable your own account")
 		}
-		losesAdmin := u.Role == "admin" && !u.Disabled && (role != "admin" || disabled)
+		// Promoting someone in the default tenant gives what administrators of it
+		// always had: the server (a site administrator may say otherwise).
+		site := u.SiteAdmin
+		switch {
+		case patch.SiteAdmin != nil:
+			site = *patch.SiteAdmin
+		case isSite && role == "admin" && u.Role != "admin" && u.TenantID == store.DefaultTenantID:
+			site = true
+		}
+		if role != "admin" {
+			site = false
+		}
+		if patch.SiteAdmin != nil && *patch.SiteAdmin && role != "admin" {
+			return errf(Invalid, "a site administrator must be an administrator")
+		}
+		losesAdmin := u.SiteAdmin && !u.Disabled && (!site || disabled)
 		if losesAdmin {
 			if n, err := store.CountEnabledAdmins(ctx, q); err != nil {
 				return err
@@ -261,6 +288,13 @@ func (s *Service) UpdateUser(ctx context.Context, actorID, ip, targetID string, 
 				return err
 			}
 			changed["role"] = role
+		}
+		if site != u.SiteAdmin {
+			if err := store.SetSiteAdmin(ctx, q, u.ID, site); err != nil {
+				return err
+			}
+			changed["siteAdmin"] = site
+			u.SiteAdmin = site
 		}
 		if disabled != u.Disabled {
 			if err := store.SetDisabled(ctx, q, u.ID, disabled); err != nil {
@@ -329,9 +363,13 @@ type NewInvite struct {
 	Token string
 }
 
-// CreateInvite makes an invite that works once. days is 1-30; nil means 7. An
-// explicit 0 is refused, not taken for "not given".
-func (s *Service) CreateInvite(ctx context.Context, actorID, role string, daysGiven *int) (*NewInvite, error) {
+// CreateInvite makes an invite that works once, for an account in tenantID.
+// days is 1-30; nil means 7. An explicit 0 is refused, not taken for "not
+// given". An administrator invited to the default tenant by a site
+// administrator is a site administrator (what every administrator of the
+// server was before tenants), unless siteAdmin says otherwise; nobody else
+// can make one.
+func (s *Service) CreateInvite(ctx context.Context, actor store.User, tenantID, role string, daysGiven *int, siteAdmin *bool) (*NewInvite, error) {
 	if role == "" {
 		role = "member"
 	}
@@ -347,7 +385,29 @@ func (s *Service) CreateInvite(ctx context.Context, actorID, role string, daysGi
 	}
 	now := s.now().UTC()
 	token := randomToken()
-	inv := store.Invite{TokenHash: hashToken(token), Role: role, CreatedBy: actorID, Created: now, Expires: now.Add(time.Duration(days) * 24 * time.Hour)}
+	if tenantID == "" {
+		tenantID = actor.TenantID
+	}
+	isSite := actor.SiteAdmin && actor.Role == "admin"
+	if !isSite && tenantID != actor.TenantID {
+		return nil, errf(NotFound, "no such tenant")
+	}
+	if t, err := store.GetTenant(ctx, s.st.Q(), tenantID); errors.Is(err, store.ErrNotFound) {
+		return nil, errf(NotFound, "no such tenant")
+	} else if err != nil {
+		return nil, err
+	} else if t.Disabled {
+		return nil, errf(Conflict, "that tenant is disabled")
+	}
+	site := role == "admin" && isSite && tenantID == store.DefaultTenantID
+	if siteAdmin != nil {
+		if *siteAdmin && (!isSite || role != "admin") {
+			return nil, errf(Forbidden, "only a site administrator can invite a site administrator")
+		}
+		site = *siteAdmin
+	}
+	inv := store.Invite{TokenHash: hashToken(token), Role: role, CreatedBy: actor.ID, Created: now, TenantID: tenantID, SiteAdmin: site,
+		Expires: now.Add(time.Duration(days) * 24 * time.Hour)}
 	for attempt := 0; ; attempt++ {
 		inv.ID = s.newID()
 		err := store.InsertInvite(ctx, s.st.Q(), inv)
@@ -362,13 +422,13 @@ func (s *Service) CreateInvite(ctx context.Context, actorID, role string, daysGi
 }
 
 // OpenInvites lists the invites neither used nor expired.
-func (s *Service) OpenInvites(ctx context.Context) ([]store.Invite, error) {
-	return store.ListOpenInvites(ctx, s.st.Q(), s.now())
+func (s *Service) OpenInvites(ctx context.Context, sc store.Scope) ([]store.Invite, error) {
+	return store.ListOpenInvites(ctx, s.st.Q(), sc, s.now())
 }
 
 // DeleteInvite revokes an invite.
-func (s *Service) DeleteInvite(ctx context.Context, id string) error {
-	if err := store.DeleteInvite(ctx, s.st.Q(), id); errors.Is(err, store.ErrNotFound) {
+func (s *Service) DeleteInvite(ctx context.Context, sc store.Scope, id string) error {
+	if err := store.DeleteInvite(ctx, s.st.Q(), sc, id); errors.Is(err, store.ErrNotFound) {
 		return errf(NotFound, "no such invite")
 	} else {
 		return err
@@ -464,9 +524,9 @@ func (s *Service) UserCounts(ctx context.Context) (*Counts, error) {
 	return &Counts{Passkeys: p, SSO: i}, nil
 }
 
-// UserPasskeys lists a user's passkeys for an administrator.
-func (s *Service) UserPasskeys(ctx context.Context, userID string) ([]PasskeyView, error) {
-	if _, err := store.GetUser(ctx, s.st.Q(), userID); errors.Is(err, store.ErrNotFound) {
+// UserPasskeys lists a user's passkeys for an administrator of the scope.
+func (s *Service) UserPasskeys(ctx context.Context, sc store.Scope, userID string) ([]PasskeyView, error) {
+	if _, err := store.GetUser(ctx, s.st.Q(), sc, userID); errors.Is(err, store.ErrNotFound) {
 		return nil, errf(NotFound, "no such user")
 	} else if err != nil {
 		return nil, err

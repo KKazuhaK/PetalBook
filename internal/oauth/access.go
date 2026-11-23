@@ -235,8 +235,8 @@ func (s *Service) markGoneLocked(gid string, now time.Time) {
 // --- listing and revoking ----------------------------------------------------
 
 // List returns grants as store.ListOAuthGrants does.
-func (s *Service) List(ctx context.Context, f store.GrantFilter) ([]store.OAuthGrantRow, error) {
-	return store.ListOAuthGrants(ctx, s.st.Q(), f)
+func (s *Service) List(ctx context.Context, sc store.Scope, f store.GrantFilter) ([]store.OAuthGrantRow, error) {
+	return store.ListOAuthGrants(ctx, s.st.Q(), sc, f)
 }
 
 // Revoke ends a grant and reports whether it existed. Its refresh token stops

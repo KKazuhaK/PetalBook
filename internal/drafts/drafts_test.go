@@ -171,7 +171,7 @@ func TestAFailureIsRetriedLaterNotInATightLoop(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newFixture(t, st, Config{})
 		// A draft in a space this server cannot open.
-		if err := store.InsertSpace(ctx, st.Q(), "OTHERSPACE", "other", "", "", f.clk.t); err != nil {
+		if err := store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, "OTHERSPACE", "other", "", "", f.clk.t); err != nil {
 			t.Fatal(err)
 		}
 		d, err := store.PutDraft(ctx, st.Q(), store.Draft{SpaceID: "OTHERSPACE", PageID: "P", UserID: store.LocalUserID, BaseRev: "r", Meta: "{}", Body: "b", Updated: f.clk.t}, "", time.Minute, time.Hour)

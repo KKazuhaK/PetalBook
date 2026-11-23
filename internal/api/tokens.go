@@ -44,7 +44,7 @@ func (l *localUser) CachedUser(ctx context.Context, id string) (*store.User, err
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.u == nil {
-		u, err := store.GetUser(ctx, l.st.Q(), id)
+		u, err := store.GetUser(ctx, l.st.Q(), store.AllTenants(), id)
 		if err != nil {
 			return nil, err
 		}
@@ -199,7 +199,7 @@ func toToken(t store.APIToken, now time.Time) tokenResp {
 // --- a person's own tokens ---------------------------------------------------
 
 func (s *server) listMyTokens(c *call) {
-	rows, err := s.tokens.List(c.r.Context(), store.TokenFilter{UserID: c.user().ID, Limit: 500})
+	rows, err := s.tokens.List(c.r.Context(), c.ownScope(), store.TokenFilter{UserID: c.user().ID, Limit: 500})
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -314,7 +314,7 @@ func (s *server) revokeMyToken(c *call) {
 // revokeToken revokes a token; owner "" is any (an administrator).
 func (s *server) revokeToken(c *call, owner string) {
 	id := c.r.PathValue("id")
-	rows, err := s.tokens.List(c.r.Context(), store.TokenFilter{ID: id, Limit: 1})
+	rows, err := s.tokens.List(c.r.Context(), store.ScopeOf(c.user()), store.TokenFilter{ID: id, Limit: 1})
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -393,6 +393,10 @@ func (s *server) adminPutAccess(c *call) {
 }
 
 func (s *server) adminListTokens(c *call) {
+	sc, ok := s.adminScope(c)
+	if !ok {
+		return
+	}
 	q := c.r.URL.Query()
 	limit := 50
 	if v := q.Get("limit"); v != "" {
@@ -414,7 +418,7 @@ func (s *server) adminListTokens(c *call) {
 		}
 		f.AfterCreated, f.AfterID = time.UnixMilli(n).UTC(), id
 	}
-	rows, err := s.tokens.List(c.r.Context(), f)
+	rows, err := s.tokens.List(c.r.Context(), sc, f)
 	if err != nil {
 		s.fail(c.w, err)
 		return

@@ -35,6 +35,8 @@ type adminSpaceResp struct {
 	Disabled bool        `json:"disabled"`
 	Owner    *adminOwner `json:"owner"`
 	Members  int         `json:"members"`
+	// Tenant is the tenant the space belongs to.
+	Tenant string `json:"tenant"`
 	// SizeBytes and SizeAt are the last stored measurement, null before the first.
 	SizeBytes *int64  `json:"sizeBytes"`
 	SizeAt    *string `json:"sizeAt"`
@@ -54,7 +56,11 @@ func (s *server) adminListSpaces(c *call) {
 		}
 		limit = n
 	}
-	rows, next, err := store.ListAllSpaces(c.r.Context(), s.opt.Store.Q(), store.SpaceFilter{Query: q.Get("q"), After: q.Get("cursor"), Limit: limit})
+	sc, ok := s.adminScope(c)
+	if !ok {
+		return
+	}
+	rows, next, err := store.ListAllSpaces(c.r.Context(), s.opt.Store.Q(), sc, store.SpaceFilter{Query: q.Get("q"), After: q.Get("cursor"), Limit: limit})
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -76,7 +82,7 @@ func (s *server) adminSpaceItems(c *call, rows []store.AdminSpace) []adminSpaceR
 	items := make([]adminSpaceResp, len(rows))
 	for i, r := range rows {
 		it := adminSpaceResp{ID: r.ID, Name: r.Name, Personal: r.Personal, Inbox: r.Inbox, Created: rfc3339(r.Created), Disabled: r.Disabled,
-			Members: r.Members, SizeBytes: r.SizeBytes, Sync: syncs[i]}
+			Members: r.Members, SizeBytes: r.SizeBytes, Sync: syncs[i], Tenant: r.TenantID}
 		if r.Owner != nil {
 			it.Owner = &adminOwner{r.Owner.ID, r.Owner.Username, r.Owner.Name}
 		}
@@ -91,7 +97,7 @@ func (s *server) adminSpaceItems(c *call, rows []store.AdminSpace) []adminSpaceR
 
 // adminGetSpace is one item of the list, found by its id.
 func (s *server) adminGetSpace(c *call) {
-	row, err := store.GetAdminSpace(c.r.Context(), s.opt.Store.Q(), c.r.PathValue("space"))
+	row, err := store.GetAdminSpace(c.r.Context(), s.opt.Store.Q(), store.ScopeOf(c.user()), c.r.PathValue("space"))
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(c.w, http.StatusNotFound, "not_found", "no such space")
 		return
@@ -104,7 +110,7 @@ func (s *server) adminGetSpace(c *call) {
 }
 
 func (s *server) adminResizeSpace(c *call) {
-	n, at, err := s.spaces.Resize(c.r.Context(), c.r.PathValue("space"))
+	n, at, err := s.spaces.Resize(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("space"))
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -122,7 +128,7 @@ func (s *server) adminTransferSpace(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	if err := s.spaces.Transfer(c.r.Context(), c.r.PathValue("space"), req.UserID); err != nil {
+	if err := s.spaces.Transfer(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("space"), req.UserID); err != nil {
 		s.fail(c.w, err)
 		return
 	}
@@ -138,7 +144,7 @@ func (s *server) adminEnableSpace(c *call) {
 }
 
 func (s *server) adminSetDisabled(c *call, disabled bool) {
-	if err := s.spaces.SetDisabled(c.r.Context(), c.r.PathValue("space"), disabled); err != nil {
+	if err := s.spaces.SetDisabled(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("space"), disabled); err != nil {
 		s.fail(c.w, err)
 		return
 	}
@@ -146,7 +152,7 @@ func (s *server) adminSetDisabled(c *call, disabled bool) {
 }
 
 func (s *server) adminDeleteSpace(c *call) {
-	d, err := s.spaces.DeleteSpace(c.r.Context(), c.r.PathValue("space"))
+	d, err := s.spaces.DeleteSpace(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("space"))
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -160,12 +166,12 @@ func (s *server) adminDeleteSpace(c *call) {
 
 func (s *server) adminStatus(c *call) {
 	ctx := c.r.Context()
-	nSpaces, err := store.CountSpaces(ctx, s.opt.Store.Q())
+	nSpaces, err := store.CountSpaces(ctx, s.opt.Store.Q(), store.AllTenants())
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	nUsers, err := store.CountUsers(ctx, s.opt.Store.Q())
+	nUsers, err := store.CountUsers(ctx, s.opt.Store.Q(), store.AllTenants())
 	if err != nil {
 		s.fail(c.w, err)
 		return

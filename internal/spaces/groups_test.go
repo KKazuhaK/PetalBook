@@ -38,7 +38,7 @@ func (f *gfix) user(id string) store.User {
 
 func (f *gfix) space(id, name, owner string) {
 	f.t.Helper()
-	if err := store.InsertSpace(ctx, f.st.Q(), id, name, "", "", time.Now()); err != nil {
+	if err := store.InsertSpace(ctx, f.st.Q(), store.DefaultTenantID, id, name, "", "", time.Now()); err != nil {
 		f.t.Fatal(err)
 	}
 	if owner != "" {
@@ -50,7 +50,7 @@ func (f *gfix) space(id, name, owner string) {
 
 func (f *gfix) group(name, source string) string {
 	f.t.Helper()
-	g, err := f.m.CreateGroup(ctx, name, "", source)
+	g, err := f.m.CreateGroup(ctx, store.DefaultTenantID, name, "", source)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func (f *gfix) group(name, source string) string {
 
 func (f *gfix) in(group string, users ...string) {
 	f.t.Helper()
-	if _, _, _, err := f.m.AddGroupPeople(ctx, group, users); err != nil {
+	if _, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), group, users); err != nil {
 		f.t.Fatal(err)
 	}
 }
@@ -149,7 +149,7 @@ func TestEffectivePermissionIsTheUnionOfDirectAndGroupRoles(t *testing.T) {
 			t.Fatalf("bob %+v", bob)
 		}
 		// Leaving the group takes the access away too.
-		if err := f.m.RemoveGroupPerson(ctx, ops, "cy"); err != nil {
+		if err := f.m.RemoveGroupPerson(ctx, store.AllTenants(), ops, "cy"); err != nil {
 			t.Fatal(err)
 		}
 		if _, ok := f.info("cy", "S1"); ok {
@@ -225,7 +225,7 @@ func TestAPersonalSpaceHasNoGroups(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newGfix(t, st)
 		boss := f.user("boss")
-		if err := store.InsertSpace(ctx, st.Q(), "P1", "Mine", "boss", "", time.Now()); err != nil {
+		if err := store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, "P1", "Mine", "boss", "", time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		if err := store.AddMember(ctx, st.Q(), "P1", "boss", perm.Owner, time.Now()); err != nil {
@@ -295,25 +295,25 @@ func TestGroupLimits(t *testing.T) {
 		for i := 0; i < MaxAddPeople+1; i++ {
 			ids = append(ids, fmt.Sprintf("u%04d", i))
 		}
-		if _, _, _, err := f.m.AddGroupPeople(ctx, g, ids); !errors.Is(err, ErrInvalid) {
+		if _, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), g, ids); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("501: %v", err)
 		}
-		if _, _, _, err := f.m.AddGroupPeople(ctx, g, nil); !errors.Is(err, ErrInvalid) {
+		if _, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), g, nil); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("none: %v", err)
 		}
 		f.user("real")
 		var miss *MissingUsersError
-		if _, _, _, err := f.m.AddGroupPeople(ctx, g, []string{"real", "ghost", "ghost2"}); !errors.As(err, &miss) || len(miss.Missing) != 2 {
+		if _, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), g, []string{"real", "ghost", "ghost2"}); !errors.As(err, &miss) || len(miss.Missing) != 2 {
 			t.Fatalf("missing: %v", err)
 		}
 		if n, _ := store.CountGroupPeople(ctx, st.Q(), g); n != 0 {
 			t.Fatalf("a refused request added %d people", n)
 		}
-		added, already, _, err := f.m.AddGroupPeople(ctx, g, []string{"real", "real"})
+		added, already, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), g, []string{"real", "real"})
 		if err != nil || added != 1 || already != 0 {
 			t.Fatal(added, already, err)
 		}
-		if added, already, _, err = f.m.AddGroupPeople(ctx, g, []string{"real"}); err != nil || added != 0 || already != 1 {
+		if added, already, _, err = f.m.AddGroupPeople(ctx, store.AllTenants(), g, []string{"real"}); err != nil || added != 0 || already != 1 {
 			t.Fatal(added, already, err)
 		}
 		// A person in 1000 groups cannot join a 1001st; a synced sync is cut there too.
@@ -328,7 +328,7 @@ func TestGroupLimits(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, _, _, err := f.m.AddGroupPeople(ctx, g, []string{"many"}); !errors.Is(err, ErrGroupLimit) {
+		if _, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), g, []string{"many"}); !errors.Is(err, ErrGroupLimit) {
 			t.Fatalf("1001st: %v", err)
 		}
 		sg := f.group("Synced", "synced")
@@ -346,39 +346,39 @@ func TestEditingGroupsByHandRules(t *testing.T) {
 		f.user("ann")
 		syn := f.group("From IdP", "synced")
 		loc := f.group("By hand", "local")
-		if _, _, _, err := f.m.AddGroupPeople(ctx, syn, []string{"ann"}); !errors.Is(err, ErrGroupSynced) {
+		if _, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), syn, []string{"ann"}); !errors.Is(err, ErrGroupSynced) {
 			t.Fatalf("%v", err)
 		}
-		if err := f.m.RemoveGroupPerson(ctx, syn, "ann"); !errors.Is(err, ErrGroupSynced) {
+		if err := f.m.RemoveGroupPerson(ctx, store.AllTenants(), syn, "ann"); !errors.Is(err, ErrGroupSynced) {
 			t.Fatalf("%v", err)
 		}
-		if err := f.m.RemoveGroupPerson(ctx, loc, "ann"); !errors.Is(err, ErrNotInGroup) {
+		if err := f.m.RemoveGroupPerson(ctx, store.AllTenants(), loc, "ann"); !errors.Is(err, ErrNotInGroup) {
 			t.Fatalf("%v", err)
 		}
-		if err := f.m.RemoveGroupPerson(ctx, "0000000000", "ann"); !errors.Is(err, ErrGroupNotFound) {
+		if err := f.m.RemoveGroupPerson(ctx, store.AllTenants(), "0000000000", "ann"); !errors.Is(err, ErrGroupNotFound) {
 			t.Fatalf("%v", err)
 		}
-		if _, err := f.m.CreateGroup(ctx, " by HAND ", "", "local"); !errors.Is(err, ErrGroupExists) {
+		if _, err := f.m.CreateGroup(ctx, store.DefaultTenantID, " by HAND ", "", "local"); !errors.Is(err, ErrGroupExists) {
 			t.Fatalf("a name is unique ignoring case: %v", err)
 		}
-		if _, err := f.m.CreateGroup(ctx, "Straße", "", "local"); err != nil {
+		if _, err := f.m.CreateGroup(ctx, store.DefaultTenantID, "Straße", "", "local"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := f.m.CreateGroup(ctx, "STRASSE", "", "local"); !errors.Is(err, ErrGroupExists) {
+		if _, err := f.m.CreateGroup(ctx, store.DefaultTenantID, "STRASSE", "", "local"); !errors.Is(err, ErrGroupExists) {
 			t.Fatalf("case folding: %v", err)
 		}
 		for _, bad := range []string{"", "   ", string(make([]rune, 81)), "tab\there"} {
-			if _, err := f.m.CreateGroup(ctx, bad, "", "local"); !errors.Is(err, ErrInvalid) {
+			if _, err := f.m.CreateGroup(ctx, store.DefaultTenantID, bad, "", "local"); !errors.Is(err, ErrInvalid) {
 				t.Fatalf("%q: %v", bad, err)
 			}
 		}
-		if _, err := f.m.CreateGroup(ctx, "x", "", "other"); !errors.Is(err, ErrInvalid) {
+		if _, err := f.m.CreateGroup(ctx, store.DefaultTenantID, "x", "", "other"); !errors.Is(err, ErrInvalid) {
 			t.Fatal(err)
 		}
-		if _, _, err := f.m.UpdateGroup(ctx, loc, strp("From IdP"), nil); !errors.Is(err, ErrGroupExists) {
+		if _, _, err := f.m.UpdateGroup(ctx, store.AllTenants(), loc, strp("From IdP"), nil); !errors.Is(err, ErrGroupExists) {
 			t.Fatalf("rename onto another: %v", err)
 		}
-		g, changed, err := f.m.UpdateGroup(ctx, loc, strp("Renamed"), strp("d"))
+		g, changed, err := f.m.UpdateGroup(ctx, store.AllTenants(), loc, strp("Renamed"), strp("d"))
 		if err != nil || g.Name != "Renamed" || len(changed) != 2 {
 			t.Fatal(g, changed, err)
 		}
@@ -437,7 +437,7 @@ func TestChangesDropOnlyTheAffectedPeople(t *testing.T) {
 		f.in(g, "out")
 		check("person added to a local group", "out")
 		warm()
-		if err := f.m.RemoveGroupPerson(ctx, g, "bob"); err != nil {
+		if err := f.m.RemoveGroupPerson(ctx, store.AllTenants(), g, "bob"); err != nil {
 			t.Fatal(err)
 		}
 		check("person removed from a local group", "bob")
@@ -464,11 +464,11 @@ func TestChangesDropOnlyTheAffectedPeople(t *testing.T) {
 		}
 		check("sync with a change", "ann")
 		warm()
-		if _, err := f.m.DeleteGroup(ctx, g, false, 0); err == nil {
+		if _, err := f.m.DeleteGroup(ctx, store.AllTenants(), g, false, 0); err == nil {
 			t.Fatal("a group that is in a space was deleted without force")
 		}
 		check("refused delete")
-		if _, err := f.m.DeleteGroup(ctx, g, true, 0); err != nil {
+		if _, err := f.m.DeleteGroup(ctx, store.AllTenants(), g, true, 0); err != nil {
 			t.Fatal(err)
 		}
 		check("group deleted", "ann", "out")
@@ -498,7 +498,7 @@ func TestDeletingASpaceDropsItsGroupsPeople(t *testing.T) {
 		var members []string
 		err := st.Tx(ctx, func(q store.Q) error {
 			var err error
-			members, err = store.DeleteSpace(ctx, q, "S1")
+			members, err = store.DeleteSpace(ctx, q, store.AllTenants(), "S1")
 			return err
 		})
 		if err != nil {
@@ -508,7 +508,7 @@ func TestDeletingASpaceDropsItsGroupsPeople(t *testing.T) {
 		if cachedUser(f.m, "boss") || cachedUser(f.m, "ann") || !cachedUser(f.m, "out") {
 			t.Fatalf("members %v", members)
 		}
-		if gr, _ := f.m.Group(ctx, g); gr.Spaces != 0 {
+		if gr, _ := f.m.Group(ctx, store.AllTenants(), g); gr.Spaces != 0 {
 			t.Fatalf("%+v", gr)
 		}
 	})
@@ -598,7 +598,7 @@ func TestConcurrentChangesAndReads(t *testing.T) {
 			} else if _, err := f.m.RemoveSpaceGroup(ctx, h, g2); err != nil {
 				t.Fatal(err)
 			}
-			if err := f.m.RemoveGroupPerson(ctx, g1, users[i%(people/2)]); err != nil {
+			if err := f.m.RemoveGroupPerson(ctx, store.AllTenants(), g1, users[i%(people/2)]); err != nil {
 				t.Fatal(err)
 			}
 			f.in(g1, users[i%(people/2)])
@@ -684,7 +684,7 @@ func TestSyncTouchesOnlyWhatTheProviderBrought(t *testing.T) {
 		}
 		// Two values into one group are two rows and one group.
 		sync("two", m(b, "z"), m(b, "z2"), m(c, "w"))
-		if g, _ := f.m.Group(ctx, b); g.People != 1 {
+		if g, _ := f.m.Group(ctx, store.AllTenants(), b); g.People != 1 {
 			t.Fatalf("%+v", g)
 		}
 		// A mapping entry removed takes its rows at once, not the other value's.
@@ -697,13 +697,13 @@ func TestSyncTouchesOnlyWhatTheProviderBrought(t *testing.T) {
 		if err := drop(func(q store.Q) ([]string, error) { return f.m.DropMapped(ctx, q, "two", "z", "") }); err != nil {
 			t.Fatal(err)
 		}
-		if g, _ := f.m.Group(ctx, b); g.People != 1 {
+		if g, _ := f.m.Group(ctx, store.AllTenants(), b); g.People != 1 {
 			t.Fatalf("the other value's row is gone: %+v", g)
 		}
 		if err := drop(func(q store.Q) ([]string, error) { return f.m.DropMapped(ctx, q, "two", "z2", "") }); err != nil {
 			t.Fatal(err)
 		}
-		if g, _ := f.m.Group(ctx, b); g.People != 0 {
+		if g, _ := f.m.Group(ctx, store.AllTenants(), b); g.People != 0 {
 			t.Fatalf("%+v", g)
 		}
 		// A deleted provider takes everything it brought.
@@ -731,7 +731,7 @@ func BenchmarkCacheMissInThousandGroups(b *testing.B) {
 		b.Fatal(err)
 	}
 	for s := 0; s < 200; s++ {
-		if err := store.InsertSpace(ctx, st.Q(), fmt.Sprintf("S%04d", s), fmt.Sprintf("Space %d", s), "", "", now); err != nil {
+		if err := store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, fmt.Sprintf("S%04d", s), fmt.Sprintf("Space %d", s), "", "", now); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -775,7 +775,7 @@ func BenchmarkCacheHit(b *testing.B) {
 	}
 	for s := 0; s < 200; s++ {
 		id := fmt.Sprintf("S%04d", s)
-		if err := store.InsertSpace(ctx, st.Q(), id, id, "", "", now); err != nil {
+		if err := store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, id, id, "", "", now); err != nil {
 			b.Fatal(err)
 		}
 		if err := store.AddMember(ctx, st.Q(), id, "u", perm.Editor, now); err != nil {
@@ -805,7 +805,7 @@ func TestRevokingRacesAnAddToTheGroup(t *testing.T) {
 	}
 	grants := []grant{
 		{"local add", store.GroupLocal, func(f *gfix, g string) error {
-			_, _, _, err := f.m.AddGroupPeople(ctx, g, []string{"x"})
+			_, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), g, []string{"x"})
 			return err
 		}},
 		{"sync", store.GroupSynced, func(f *gfix, g string) error {
@@ -827,7 +827,7 @@ func TestRevokingRacesAnAddToTheGroup(t *testing.T) {
 			return err
 		}},
 		{"delete group", func(f *gfix, h *Handle, g string) error {
-			_, err := f.m.DeleteGroup(ctx, g, true, 0)
+			_, err := f.m.DeleteGroup(ctx, store.AllTenants(), g, true, 0)
 			return err
 		}},
 	}
@@ -979,7 +979,7 @@ func TestCreateGroupRetriesAnIDClash(t *testing.T) {
 			}
 			return ""
 		}
-		g, err := f.m.CreateGroup(ctx, "Second", "", "local")
+		g, err := f.m.CreateGroup(ctx, store.DefaultTenantID, "Second", "", "local")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -987,7 +987,7 @@ func TestCreateGroupRetriesAnIDClash(t *testing.T) {
 			t.Fatalf("%+v after %d ids", g, calls)
 		}
 		f.m.testID = nil
-		if _, err := f.m.CreateGroup(ctx, "first", "", "local"); !errors.Is(err, ErrGroupExists) {
+		if _, err := f.m.CreateGroup(ctx, store.DefaultTenantID, "first", "", "local"); !errors.Is(err, ErrGroupExists) {
 			t.Fatalf("a taken name: %v", err)
 		}
 	})

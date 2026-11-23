@@ -104,7 +104,7 @@ func cleanGroupDesc(d string) (string, error) {
 // --- the groups themselves (administrators) ----------------------------------------
 
 // CreateGroup makes a group of source "local" or "synced".
-func (m *Manager) CreateGroup(ctx context.Context, name, description, source string) (*store.Group, error) {
+func (m *Manager) CreateGroup(ctx context.Context, tenantID, name, description, source string) (*store.Group, error) {
 	if err := m.needAccounts(); err != nil {
 		return nil, err
 	}
@@ -119,11 +119,11 @@ func (m *Manager) CreateGroup(ctx context.Context, name, description, source str
 		return nil, err
 	}
 	now := m.opt.Now()
-	g := store.Group{Name: name, Description: description, Source: source, Created: now, Updated: now}
+	g := store.Group{TenantID: tenantID, Name: name, Description: description, Source: source, Created: now, Updated: now}
 	for try := 0; ; try++ {
 		g.ID = m.newGroupID(now)
 		err = m.opt.Store.Tx(ctx, func(q store.Q) error {
-			n, err := store.CountGroups(ctx, q)
+			n, err := store.CountGroups(ctx, q, store.AllTenants())
 			if err != nil {
 				return err
 			}
@@ -138,14 +138,14 @@ func (m *Manager) CreateGroup(ctx context.Context, name, description, source str
 		}
 		// The name's index is groups.name_key (SQLite) or groups_name_key_key
 		// (PostgreSQL); anything else is the id, which a new one fixes.
-		if strings.Contains(on, "name_key") || try >= 4 {
+		if strings.Contains(on, "name_key") || strings.Contains(on, "tenant_name") || try >= 4 {
 			return nil, ErrGroupExists
 		}
 	}
 	if err != nil {
 		return nil, err
 	}
-	return m.Group(ctx, g.ID)
+	return m.Group(ctx, store.AllTenants(), g.ID)
 }
 
 // newGroupID is a fresh random id (or the test's).
@@ -159,11 +159,11 @@ func (m *Manager) newGroupID(now time.Time) string {
 }
 
 // Group returns a group with its counts.
-func (m *Manager) Group(ctx context.Context, id string) (*store.Group, error) {
+func (m *Manager) Group(ctx context.Context, sc store.Scope, id string) (*store.Group, error) {
 	if err := m.needAccounts(); err != nil {
 		return nil, err
 	}
-	g, err := store.GetGroup(ctx, m.opt.Store.Q(), id)
+	g, err := store.GetGroup(ctx, m.opt.Store.Q(), sc, id)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, ErrGroupNotFound
 	}
@@ -171,20 +171,20 @@ func (m *Manager) Group(ctx context.Context, id string) (*store.Group, error) {
 }
 
 // ListGroups pages the groups (see store.GroupFilter).
-func (m *Manager) ListGroups(ctx context.Context, f store.GroupFilter) ([]store.Group, string, error) {
+func (m *Manager) ListGroups(ctx context.Context, sc store.Scope, f store.GroupFilter) ([]store.Group, string, error) {
 	if err := m.needAccounts(); err != nil {
 		return nil, "", err
 	}
-	return store.ListGroups(ctx, m.opt.Store.Q(), m.opt.Store.Dialect(), f)
+	return store.ListGroups(ctx, m.opt.Store.Q(), m.opt.Store.Dialect(), sc, f)
 }
 
 // UpdateGroup renames a group and/or changes its description (nil leaves one
 // as it is). It returns the group and the names of the fields that changed.
-func (m *Manager) UpdateGroup(ctx context.Context, id string, name, description *string) (*store.Group, []string, error) {
+func (m *Manager) UpdateGroup(ctx context.Context, sc store.Scope, id string, name, description *string) (*store.Group, []string, error) {
 	if err := m.needAccounts(); err != nil {
 		return nil, nil, err
 	}
-	cur, err := m.Group(ctx, id)
+	cur, err := m.Group(ctx, sc, id)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -218,7 +218,7 @@ func (m *Manager) UpdateGroup(ctx context.Context, id string, name, description 
 			return nil, nil, err
 		}
 	}
-	g, err := m.Group(ctx, id)
+	g, err := m.Group(ctx, sc, id)
 	return g, changed, err
 }
 
@@ -226,7 +226,7 @@ func (m *Manager) UpdateGroup(ctx context.Context, id string, name, description 
 // (the providers' settings are not the database's): without force a group that
 // is in spaces or mapped is refused. The group's people lose what it gave them
 // at their very next request; nothing else is deleted.
-func (m *Manager) DeleteGroup(ctx context.Context, id string, force bool, mappings int) (*store.Group, error) {
+func (m *Manager) DeleteGroup(ctx context.Context, sc store.Scope, id string, force bool, mappings int) (*store.Group, error) {
 	if err := m.needAccounts(); err != nil {
 		return nil, err
 	}
@@ -238,7 +238,7 @@ func (m *Manager) DeleteGroup(ctx context.Context, id string, force bool, mappin
 			return err
 		}
 		var err error
-		if g, err = store.GetGroup(ctx, q, id); err != nil {
+		if g, err = store.GetGroup(ctx, q, sc, id); err != nil {
 			return err
 		}
 		if !force && (g.Spaces > 0 || mappings > 0) {
@@ -261,16 +261,16 @@ func (m *Manager) DeleteGroup(ctx context.Context, id string, force bool, mappin
 }
 
 // GroupPeople pages the people of a group.
-func (m *Manager) GroupPeople(ctx context.Context, id, query, cursor string, limit int) ([]store.GroupPerson, string, error) {
-	if _, err := m.Group(ctx, id); err != nil {
+func (m *Manager) GroupPeople(ctx context.Context, sc store.Scope, id, query, cursor string, limit int) ([]store.GroupPerson, string, error) {
+	if _, err := m.Group(ctx, sc, id); err != nil {
 		return nil, "", err
 	}
 	return store.ListGroupPeople(ctx, m.opt.Store.Q(), m.opt.Store.Dialect(), id, query, cursor, limit)
 }
 
 // GroupSpaces pages the spaces a group is a member of.
-func (m *Manager) GroupSpaces(ctx context.Context, id, cursor string, limit int) ([]store.GroupSpaceRef, string, error) {
-	if _, err := m.Group(ctx, id); err != nil {
+func (m *Manager) GroupSpaces(ctx context.Context, sc store.Scope, id, cursor string, limit int) ([]store.GroupSpaceRef, string, error) {
+	if _, err := m.Group(ctx, sc, id); err != nil {
 		return nil, "", err
 	}
 	return store.ListGroupSpaces(ctx, m.opt.Store.Q(), m.opt.Store.Dialect(), id, cursor, limit)
@@ -278,7 +278,7 @@ func (m *Manager) GroupSpaces(ctx context.Context, id, cursor string, limit int)
 
 // AddGroupPeople adds people to a local group, all or nothing. It returns how
 // many were added, how many were in it already, and the ids of those added.
-func (m *Manager) AddGroupPeople(ctx context.Context, id string, userIDs []string) (added, already int, ids []string, err error) {
+func (m *Manager) AddGroupPeople(ctx context.Context, sc store.Scope, id string, userIDs []string) (added, already int, ids []string, err error) {
 	if err := m.needAccounts(); err != nil {
 		return 0, 0, nil, err
 	}
@@ -298,14 +298,16 @@ func (m *Manager) AddGroupPeople(ctx context.Context, id string, userIDs []strin
 		if err := store.LockGroup(ctx, q, id); err != nil {
 			return err
 		}
-		src, err := store.GroupSourceOf(ctx, q, id)
+		g, err := store.GetGroup(ctx, q, sc, id)
 		if err != nil {
 			return err
 		}
-		if src != store.GroupLocal {
+		if g.Source != store.GroupLocal {
 			return ErrGroupSynced
 		}
-		have, err := store.ExistingUsers(ctx, q, want)
+		// The people must be of the group's own tenant: another tenant's person
+		// is reported as unknown, whoever asks.
+		have, err := store.ExistingUsers(ctx, q, store.InTenant(g.TenantID), want)
 		if err != nil {
 			return err
 		}
@@ -356,7 +358,7 @@ func (m *Manager) AddGroupPeople(ctx context.Context, id string, userIDs []strin
 }
 
 // RemoveGroupPerson removes a person from a local group.
-func (m *Manager) RemoveGroupPerson(ctx context.Context, id, userID string) error {
+func (m *Manager) RemoveGroupPerson(ctx context.Context, sc store.Scope, id, userID string) error {
 	if err := m.needAccounts(); err != nil {
 		return err
 	}
@@ -364,17 +366,17 @@ func (m *Manager) RemoveGroupPerson(ctx context.Context, id, userID string) erro
 		if err := store.LockGroup(ctx, q, id); err != nil {
 			return err
 		}
-		src, err := store.GroupSourceOf(ctx, q, id)
+		g, err := store.GetGroup(ctx, q, sc, id)
 		if err != nil {
 			return err
 		}
-		if src != store.GroupLocal {
+		if g.Source != store.GroupLocal {
 			return ErrGroupSynced
 		}
 		return store.RemoveLocalMember(ctx, q, id, userID)
 	})
 	if errors.Is(err, store.ErrNotFound) {
-		if _, gerr := m.Group(ctx, id); gerr != nil {
+		if _, gerr := m.Group(ctx, sc, id); gerr != nil {
 			return gerr
 		}
 		return ErrNotInGroup
@@ -387,11 +389,11 @@ func (m *Manager) RemoveGroupPerson(ctx context.Context, id, userID string) erro
 }
 
 // FindGroups finds groups by part of the name, for anyone signed in.
-func (m *Manager) FindGroups(ctx context.Context, query string, limit int) ([]store.GroupRef, error) {
+func (m *Manager) FindGroups(ctx context.Context, sc store.Scope, query string, limit int) ([]store.GroupRef, error) {
 	if err := m.needAccounts(); err != nil {
 		return nil, err
 	}
-	return store.SearchGroups(ctx, m.opt.Store.Q(), m.opt.Store.Dialect(), query, limit)
+	return store.SearchGroups(ctx, m.opt.Store.Q(), m.opt.Store.Dialect(), sc, query, limit)
 }
 
 // GroupsOf lists a person's groups.

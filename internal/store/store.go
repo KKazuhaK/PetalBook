@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -40,6 +41,8 @@ type Store struct {
 	db      *sql.DB
 	dialect Dialect
 	rebinds sync.Map // query -> rewritten query (PostgreSQL only)
+	// tenantState is which tenants are disabled (see TenantDisabled).
+	tenantState atomic.Pointer[tenantState]
 }
 
 // Q is what queries run on: the database, or a transaction of it.
@@ -132,6 +135,10 @@ func Open(ctx context.Context, target string) (*Store, error) {
 		return nil, redact(err, target)
 	}
 	if err := s.migrate(ctx); err != nil {
+		s.Close()
+		return nil, redact(err, target)
+	}
+	if err := s.loadTenantState(ctx); err != nil {
 		s.Close()
 		return nil, redact(err, target)
 	}

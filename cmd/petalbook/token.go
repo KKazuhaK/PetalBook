@@ -72,7 +72,7 @@ func (f *tokenFlags) owner(ctx context.Context) (*store.Store, *store.User, erro
 			st.Close()
 			return nil, nil, errors.New("--user is for --data; single-user mode has one user")
 		}
-		u, err = store.GetUser(ctx, st.Q(), store.LocalUserID)
+		u, err = store.GetUser(ctx, st.Q(), store.AllTenants(), store.LocalUserID)
 		if errors.Is(err, store.ErrNotFound) {
 			st.Close()
 			return nil, nil, errors.New("this space has never been served by this version of PetalBook; start the server once first")
@@ -163,7 +163,7 @@ func newTokenList() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			rows, err := store.ListAPITokens(cmd.Context(), st.Q(), store.TokenFilter{UserID: u.ID, Limit: 500})
+			rows, err := store.ListAPITokens(cmd.Context(), st.Q(), store.AllTenants(), store.TokenFilter{UserID: u.ID, Limit: 500})
 			if err != nil {
 				return err
 			}
@@ -227,7 +227,7 @@ func newTokenRevoke() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			rows, err := store.ListAPITokens(cmd.Context(), st.Q(), store.TokenFilter{UserID: u.ID, Limit: 500})
+			rows, err := store.ListAPITokens(cmd.Context(), st.Q(), store.AllTenants(), store.TokenFilter{UserID: u.ID, Limit: 500})
 			if err != nil {
 				return err
 			}

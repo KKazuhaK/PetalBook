@@ -779,11 +779,11 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 	ident, err := store.FindIdentity(ctx, s.st.Q(), c.issuer, c.subject)
 	switch {
 	case err == nil:
-		u, err := store.GetUser(ctx, s.st.Q(), ident.UserID)
+		u, err := store.GetUser(ctx, s.st.Q(), store.AllTenants(), ident.UserID) // an identity signs in to its account, whatever tenant
 		if err != nil {
 			return nil, false, err
 		}
-		if u.Disabled {
+		if u.Disabled || s.st.TenantDisabled(u.TenantID) {
 			return nil, false, ssoErr("disabled")
 		}
 		return u, false, nil
@@ -812,7 +812,7 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 	if rt.row.Kind == KindGitHub && len(rt.cfg.Organizations) == 0 {
 		return nil, false, ssoErr("no_account")
 	}
-	u, err := s.createFromClaims(ctx, c, "member", "", false)
+	u, err := s.createFromClaims(ctx, c, "member", "", false, rt.row.TenantID, false)
 	return u, true, err
 }
 
@@ -820,7 +820,7 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 // when that account's address is verified too. Never to an administrator, a
 // disabled account, or one that has an identity from this provider already.
 func (s *Service) mergeByEmail(ctx context.Context, rt *providerRT, c claimed, ip string) (*store.User, error) {
-	users, err := store.UsersByEmail(ctx, s.st.Q(), s.st.Dialect(), c.email, 2)
+	users, err := store.UsersByEmail(ctx, s.st.Q(), s.st.Dialect(), store.AllTenants(), c.email, 2)
 	if err != nil {
 		return nil, err
 	}
@@ -850,7 +850,7 @@ func (s *Service) mergeByEmail(ctx context.Context, rt *providerRT, c claimed, i
 // ambiguousEmail is where an address that matched nobody (or somebody the
 // rules above kept out) stops: no_account, never a new account.
 func (s *Service) ambiguousEmail(ctx context.Context, email string) error {
-	users, err := store.UsersByEmail(ctx, s.st.Q(), s.st.Dialect(), email, 1)
+	users, err := store.UsersByEmail(ctx, s.st.Q(), s.st.Dialect(), store.AllTenants(), email, 1)
 	if err != nil {
 		return err
 	}
@@ -866,7 +866,7 @@ func (s *Service) ssoSetup(ctx context.Context, c claimed, token string) (*store
 	} else if !open || !s.setupTokenOK(token) {
 		return nil, ssoErr("setup_invalid")
 	}
-	u, err := s.createFromClaims(ctx, c, "admin", "", true)
+	u, err := s.createFromClaims(ctx, c, "admin", "", true, store.DefaultTenantID, true)
 	var ae *Error
 	if errors.As(err, &ae) && ae.Kind == Exists {
 		return nil, ssoErr("setup_invalid")
@@ -882,7 +882,7 @@ func (s *Service) ssoInvite(ctx context.Context, rt *providerRT, c claimed, toke
 	} else if err != nil {
 		return nil, err
 	}
-	u, err := s.createFromClaims(ctx, c, inv.Role, inv.ID, false)
+	u, err := s.createFromClaims(ctx, c, inv.Role, inv.ID, false, inv.TenantID, inv.SiteAdmin)
 	if errors.As(err, &ae) && ae.Kind == NotFound {
 		return nil, ssoErr("invite_invalid")
 	}
@@ -898,7 +898,7 @@ func (s *Service) ssoLink(ctx context.Context, rt *providerRT, c claimed, userID
 	var p *Principal
 	var err error
 	if rt.row.Kind == KindSAML {
-		u, e := store.GetUser(ctx, s.st.Q(), userID)
+		u, e := store.GetUser(ctx, s.st.Q(), store.AllTenants(), userID)
 		if e != nil || u.Disabled {
 			return ssoErr("expired")
 		}
@@ -928,7 +928,7 @@ func (s *Service) ssoLink(ctx context.Context, rt *providerRT, c claimed, userID
 // claim, the username from preferred_username or the part of the email before
 // the @, made valid and unique. The address is the provider's, and verified
 // only when the provider vouched for it.
-func (s *Service) createFromClaims(ctx context.Context, c claimed, role, inviteID string, setup bool) (*store.User, error) {
+func (s *Service) createFromClaims(ctx context.Context, c claimed, role, inviteID string, setup bool, tenantID string, siteAdmin bool) (*store.User, error) {
 	base := usernameFrom(c)
 	name := clip(c.name, 100)
 	if strings.TrimSpace(name) == "" {
@@ -938,7 +938,7 @@ func (s *Service) createFromClaims(ctx context.Context, c claimed, role, inviteI
 	if e, err := cleanEmail(c.email); err == nil && e != "" {
 		email, verified = e, c.emailVerified
 	}
-	u, err := s.CreateUser(ctx, CreateParams{Username: base, Name: name, Role: role, Email: email, EmailVerified: verified, Identity: c.params(), InviteID: inviteID, Setup: setup, RetryUsername: true})
+	u, err := s.CreateUser(ctx, CreateParams{Username: base, Name: name, Role: role, Email: email, EmailVerified: verified, Identity: c.params(), InviteID: inviteID, Setup: setup, RetryUsername: true, TenantID: tenantID, SiteAdmin: siteAdmin})
 	var ae *Error
 	if errors.As(err, &ae) && ae.Kind == Conflict && ae == errInUse {
 		return nil, ssoErr("identity_in_use")

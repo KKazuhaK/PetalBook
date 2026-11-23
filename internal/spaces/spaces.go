@@ -374,7 +374,7 @@ func (m *Manager) openFor(ctx context.Context, user store.User, spaceID string, 
 		if m.single != nil || !viaAdmin || user.Role != "admin" || !page.ValidID(spaceID) {
 			return nil, ErrNotFound
 		}
-		sp, err := store.GetSpace(ctx, m.opt.Store.Q(), spaceID)
+		sp, err := store.GetSpace(ctx, m.opt.Store.Q(), store.ScopeOf(user), spaceID)
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, ErrNotFound
 		}
@@ -698,7 +698,7 @@ func (m *Manager) CreateWith(ctx context.Context, userID, name, inbox string) (I
 	}
 	m.createMu.Lock()
 	defer m.createMu.Unlock()
-	u, err := store.GetUser(ctx, m.opt.Store.Q(), userID)
+	u, err := store.GetUser(ctx, m.opt.Store.Q(), store.AllTenants(), userID) // the creator, by id
 	if err != nil {
 		return Info{}, err
 	}
@@ -717,7 +717,7 @@ func (m *Manager) CreateWith(ctx context.Context, userID, name, inbox string) (I
 	}
 	now := m.opt.Now()
 	err = m.opt.Store.Tx(ctx, func(q store.Q) error {
-		if err := store.InsertSpace(ctx, q, stg.ID(), stg.Name(), "", inbox, now); err != nil {
+		if err := store.InsertSpace(ctx, q, u.TenantID, stg.ID(), stg.Name(), "", inbox, now); err != nil {
 			return err
 		}
 		return store.AddMember(ctx, q, stg.ID(), userID, perm.Owner, now)

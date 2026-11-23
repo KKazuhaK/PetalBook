@@ -446,6 +446,12 @@ type CreateParams struct {
 	// RetryUsername lets the name get a numeric suffix when it is taken (accounts made from an
 	// identity provider's claims).
 	RetryUsername bool
+	// TenantID is the tenant the account is made in (the default tenant when
+	// empty); SiteAdmin makes an administrator one of the whole server. An
+	// invite decides both (see AcceptInvite), and the first account is always a
+	// site administrator of the default tenant.
+	TenantID  string
+	SiteAdmin bool
 }
 
 // IdentityParams is an external identity to attach.
@@ -505,7 +511,18 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 		return nil, err
 	}
 
-	u := store.User{Username: username, Name: name, Email: email, EmailVerified: p.EmailVerified && email != "", Role: p.Role, Created: s.now().UTC()}
+	// An account made without saying where (setup, the command line) is in the
+	// default tenant, and an administrator of it is one of the server, as every
+	// administrator was before tenants. An invite or a provider says where, and
+	// whether.
+	if p.Setup {
+		p.TenantID, p.SiteAdmin = store.DefaultTenantID, true
+	}
+	if p.TenantID == "" {
+		p.TenantID, p.SiteAdmin = store.DefaultTenantID, p.Role == "admin"
+	}
+	u := store.User{Username: username, Name: name, Email: email, EmailVerified: p.EmailVerified && email != "", Role: p.Role, Created: s.now().UTC(),
+		TenantID: p.TenantID, SiteAdmin: p.SiteAdmin && p.Role == "admin"}
 	stg, err := s.cfg.Spaces.Stage("My notes", spaces.IdentityOf(u))
 	if err != nil {
 		return nil, err
@@ -534,6 +551,13 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 					return errf(NotFound, "that invite is not valid")
 				}
 			}
+			// The tenant must exist, and take new people: an invite of a disabled
+			// tenant is no invite.
+			if t, err := store.GetTenant(ctx, q, cand.TenantID); errors.Is(err, store.ErrNotFound) || err == nil && t.Disabled {
+				return errf(NotFound, "that invite is not valid")
+			} else if err != nil {
+				return err
+			}
 			if err := store.InsertUser(ctx, q, cand); err != nil {
 				return err
 			}
@@ -548,7 +572,7 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 					return err
 				}
 			}
-			if err := store.InsertSpace(ctx, q, stg.ID(), stg.Name(), cand.ID, "", s.now()); err != nil {
+			if err := store.InsertSpace(ctx, q, cand.TenantID, stg.ID(), stg.Name(), cand.ID, "", s.now()); err != nil {
 				return err
 			}
 			return store.AddMember(ctx, q, stg.ID(), cand.ID, "owner", s.now())
@@ -634,14 +658,14 @@ func (s *Service) SetPassword(ctx context.Context, username, password string) er
 	return err
 }
 
-// Users lists every account, oldest first (administrators only; the API checks).
-func (s *Service) Users(ctx context.Context) ([]store.User, error) {
-	return store.ListUsers(ctx, s.st.Q())
+// Users lists the accounts in the scope, oldest first (administrators only; the API checks).
+func (s *Service) Users(ctx context.Context, sc store.Scope) ([]store.User, error) {
+	return store.ListUsers(ctx, s.st.Q(), sc)
 }
 
 // FindUsers lists the accounts whose username or name contains query (ignoring
 // case), oldest first, at most limit of them (limit <= 0: no limit). enabledOnly
 // leaves the disabled accounts out before the limit counts.
-func (s *Service) FindUsers(ctx context.Context, query string, enabledOnly bool, limit int) ([]store.User, error) {
-	return store.SearchUsers(ctx, s.st.Q(), s.st.Dialect(), query, enabledOnly, limit)
+func (s *Service) FindUsers(ctx context.Context, sc store.Scope, query string, enabledOnly bool, limit int) ([]store.User, error) {
+	return store.SearchUsers(ctx, s.st.Q(), s.st.Dialect(), sc, query, enabledOnly, limit)
 }

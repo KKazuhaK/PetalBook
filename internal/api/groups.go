@@ -138,8 +138,10 @@ func listLimit(c *call, def, max int) (int, bool) {
 	return n, true
 }
 
-func (s *server) auditGroup(c *call, kind, user string, detail map[string]any) {
-	s.audit(c, auth.AuditEvent{Kind: kind, Actor: c.user().ID, User: user, Detail: detail})
+// auditGroup writes a group's event; tenant is the group's ("" takes the
+// caller's, or the person's the event is about).
+func (s *server) auditGroup(c *call, tenant, kind, user string, detail map[string]any) {
+	s.audit(c, auth.AuditEvent{Kind: kind, Actor: c.user().ID, User: user, Detail: detail, Tenant: tenant})
 }
 
 // --- administrators ------------------------------------------------------------------
@@ -155,7 +157,11 @@ func (s *server) adminListGroups(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "source is local or synced")
 		return
 	}
-	rows, next, err := s.spaces.ListGroups(c.r.Context(), store.GroupFilter{Query: q.Get("q"), Source: src, UserID: q.Get("user"), After: q.Get("cursor"), Limit: limit})
+	sc, ok := s.adminScope(c)
+	if !ok {
+		return
+	}
+	rows, next, err := s.spaces.ListGroups(c.r.Context(), sc, store.GroupFilter{Query: q.Get("q"), Source: src, UserID: q.Get("user"), After: q.Get("cursor"), Limit: limit})
 	if err != nil {
 		s.failAdminGroup(c.w, err)
 		return
@@ -167,7 +173,7 @@ func (s *server) adminListGroups(c *call) {
 }
 
 func (s *server) adminGetGroup(c *call) {
-	g, err := s.spaces.Group(c.r.Context(), c.r.PathValue("group"))
+	g, err := s.spaces.Group(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("group"))
 	if err != nil {
 		s.failAdminGroup(c.w, err)
 		return
@@ -184,12 +190,16 @@ func (s *server) adminCreateGroup(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	g, err := s.spaces.CreateGroup(c.r.Context(), req.Name, req.Description, req.Source)
+	tenant, ok := s.createIn(c)
+	if !ok {
+		return
+	}
+	g, err := s.spaces.CreateGroup(c.r.Context(), tenant, req.Name, req.Description, req.Source)
 	if err != nil {
 		s.failAdminGroup(c.w, err)
 		return
 	}
-	s.auditGroup(c, "group_created", "", map[string]any{"group": g.ID, "name": g.Name, "source": g.Source})
+	s.auditGroup(c, g.TenantID, "group_created", "", map[string]any{"group": g.ID, "name": g.Name, "source": g.Source})
 	writeJSON(c.w, http.StatusCreated, s.toGroups([]store.Group{*g})[0])
 }
 
@@ -206,7 +216,7 @@ func (s *server) adminPatchGroup(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "the source of a group cannot change")
 		return
 	}
-	g, changed, err := s.spaces.UpdateGroup(c.r.Context(), c.r.PathValue("group"), req.Name, req.Description)
+	g, changed, err := s.spaces.UpdateGroup(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("group"), req.Name, req.Description)
 	if err != nil {
 		s.failAdminGroup(c.w, err)
 		return
@@ -218,7 +228,7 @@ func (s *server) adminPatchGroup(c *call) {
 				d[f] = g.Description
 			}
 		}
-		s.auditGroup(c, "group_changed", "", d)
+		s.auditGroup(c, g.TenantID, "group_changed", "", d)
 	}
 	writeJSON(c.w, http.StatusOK, s.toGroups([]store.Group{*g})[0])
 }
@@ -244,12 +254,12 @@ func (s *server) adminDeleteGroup(c *call) {
 			return
 		}
 	}
-	g, err := s.spaces.DeleteGroup(ctx, id, force, mappings)
+	g, err := s.spaces.DeleteGroup(ctx, store.ScopeOf(c.user()), id, force, mappings)
 	if err != nil {
 		s.failAdminGroup(c.w, err)
 		return
 	}
-	s.auditGroup(c, "group_deleted", "", map[string]any{"group": g.ID, "name": g.Name, "source": g.Source, "people": g.People, "spaces": g.Spaces})
+	s.auditGroup(c, g.TenantID, "group_deleted", "", map[string]any{"group": g.ID, "name": g.Name, "source": g.Source, "people": g.People, "spaces": g.Spaces})
 	c.w.WriteHeader(http.StatusNoContent)
 }
 
@@ -259,7 +269,7 @@ func (s *server) adminGroupMembers(c *call) {
 		return
 	}
 	q := c.r.URL.Query()
-	rows, next, err := s.spaces.GroupPeople(c.r.Context(), c.r.PathValue("group"), q.Get("q"), q.Get("cursor"), limit)
+	rows, next, err := s.spaces.GroupPeople(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("group"), q.Get("q"), q.Get("cursor"), limit)
 	if err != nil {
 		s.failAdminGroup(c.w, err)
 		return
@@ -298,13 +308,13 @@ func (s *server) adminAddGroupMembers(c *call) {
 		return
 	}
 	id := c.r.PathValue("group")
-	added, already, ids, err := s.spaces.AddGroupPeople(c.r.Context(), id, req.UserIDs)
+	added, already, ids, err := s.spaces.AddGroupPeople(c.r.Context(), store.ScopeOf(c.user()), id, req.UserIDs)
 	if err != nil {
 		s.failAdminGroup(c.w, err)
 		return
 	}
 	if added > 0 {
-		s.auditGroup(c, "group_member_added", "", map[string]any{"group": id, "users": ids})
+		s.auditGroup(c, "", "group_member_added", "", map[string]any{"group": id, "users": ids})
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Added   int `json:"added"`
@@ -314,11 +324,11 @@ func (s *server) adminAddGroupMembers(c *call) {
 
 func (s *server) adminRemoveGroupMember(c *call) {
 	id, user := c.r.PathValue("group"), c.r.PathValue("user")
-	if err := s.spaces.RemoveGroupPerson(c.r.Context(), id, user); err != nil {
+	if err := s.spaces.RemoveGroupPerson(c.r.Context(), store.ScopeOf(c.user()), id, user); err != nil {
 		s.failAdminGroup(c.w, err)
 		return
 	}
-	s.auditGroup(c, "group_member_removed", user, map[string]any{"group": id, "users": []string{user}})
+	s.auditGroup(c, "", "group_member_removed", user, map[string]any{"group": id, "users": []string{user}})
 	c.w.WriteHeader(http.StatusNoContent)
 }
 
@@ -327,7 +337,7 @@ func (s *server) adminGroupSpaces(c *call) {
 	if !ok {
 		return
 	}
-	rows, next, err := s.spaces.GroupSpaces(c.r.Context(), c.r.PathValue("group"), c.r.URL.Query().Get("cursor"), limit)
+	rows, next, err := s.spaces.GroupSpaces(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("group"), c.r.URL.Query().Get("cursor"), limit)
 	if err != nil {
 		s.failAdminGroup(c.w, err)
 		return
@@ -359,7 +369,7 @@ func (s *server) findGroups(c *call) {
 	if !ok {
 		return
 	}
-	l, err := s.spaces.FindGroups(c.r.Context(), q, limit)
+	l, err := s.spaces.FindGroups(c.r.Context(), c.ownScope(), q, limit)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -423,7 +433,7 @@ func (s *server) addSpaceGroup(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	s.auditGroup(c, "space_group_added", "", map[string]any{"space": c.sp.Info.ID, "group": g.GroupID, "role": g.Role})
+	s.auditGroup(c, "", "space_group_added", "", map[string]any{"space": c.sp.Info.ID, "group": g.GroupID, "role": g.Role})
 	writeJSON(c.w, http.StatusCreated, toGroupMember(*g))
 }
 
@@ -440,7 +450,7 @@ func (s *server) patchSpaceGroup(c *call) {
 		return
 	}
 	if old != g.Role {
-		s.auditGroup(c, "space_group_changed", "", map[string]any{"space": c.sp.Info.ID, "group": g.GroupID, "role": map[string]string{"old": old, "new": g.Role}})
+		s.auditGroup(c, "", "space_group_changed", "", map[string]any{"space": c.sp.Info.ID, "group": g.GroupID, "role": map[string]string{"old": old, "new": g.Role}})
 	}
 	writeJSON(c.w, http.StatusOK, toGroupMember(*g))
 }
@@ -452,6 +462,6 @@ func (s *server) deleteSpaceGroup(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	s.auditGroup(c, "space_group_removed", "", map[string]any{"space": c.sp.Info.ID, "group": id, "role": old})
+	s.auditGroup(c, "", "space_group_removed", "", map[string]any{"space": c.sp.Info.ID, "group": id, "role": old})
 	c.w.WriteHeader(http.StatusNoContent)
 }

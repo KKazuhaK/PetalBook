@@ -58,11 +58,11 @@ func (m *Manager) markDisabled(id string, on bool) (was bool) {
 
 // adminSpace checks the id and reads the space's row, for the administration
 // calls: ErrNotFound for anything that is not a space.
-func (m *Manager) adminSpace(ctx context.Context, id string) (*store.SpaceInfo, error) {
+func (m *Manager) adminSpace(ctx context.Context, sc store.Scope, id string) (*store.SpaceInfo, error) {
 	if m.single != nil || !page.ValidID(id) {
 		return nil, ErrNotFound
 	}
-	sp, err := store.GetSpace(ctx, m.opt.Store.Q(), id)
+	sp, err := store.GetSpace(ctx, m.opt.Store.Q(), sc, id)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, ErrNotFound
 	}
@@ -140,8 +140,8 @@ func (m *Manager) evict(ctx context.Context, id string) error {
 // closes it if it is open, after committing what it holds; if requests still
 // use it when CloseWait is over it is left to the next trim, which closes a
 // disabled space as soon as nobody holds it, and nothing new can start using it.
-func (m *Manager) SetDisabled(ctx context.Context, id string, disabled bool) error {
-	if _, err := m.adminSpace(ctx, id); err != nil {
+func (m *Manager) SetDisabled(ctx context.Context, sc store.Scope, id string, disabled bool) error {
+	if _, err := m.adminSpace(ctx, sc, id); err != nil {
 		return err
 	}
 	if err := m.loadDisabled(ctx); err != nil {
@@ -149,7 +149,7 @@ func (m *Manager) SetDisabled(ctx context.Context, id string, disabled bool) err
 	}
 	m.adminMu.Lock()
 	defer m.adminMu.Unlock()
-	if err := store.SetSpaceDisabled(ctx, m.opt.Store.Q(), id, disabled); err != nil {
+	if err := store.SetSpaceDisabled(ctx, m.opt.Store.Q(), sc, id, disabled); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return ErrNotFound
 		}
@@ -169,15 +169,15 @@ func (m *Manager) SetDisabled(ctx context.Context, id string, disabled bool) err
 // changed, and a user who was not a member becomes one. A personal space
 // belongs to its person and cannot be transferred. The Git author of later
 // commits becomes the new owner, in the space if it is open now.
-func (m *Manager) Transfer(ctx context.Context, id, userID string) error {
-	sp, err := m.adminSpace(ctx, id)
+func (m *Manager) Transfer(ctx context.Context, sc store.Scope, id, userID string) error {
+	sp, err := m.adminSpace(ctx, sc, id)
 	if err != nil {
 		return err
 	}
 	if sp.Personal {
 		return ErrPersonalSpace
 	}
-	u, err := store.GetUser(ctx, m.opt.Store.Q(), userID)
+	u, err := store.GetUser(ctx, m.opt.Store.Q(), store.InTenant(sp.TenantID), userID)
 	if errors.Is(err, store.ErrNotFound) {
 		return ErrUserNotFound
 	}
@@ -246,8 +246,8 @@ type Deleted struct {
 // whoever wants the room back deletes the trash by hand. If a move fails the
 // rows are gone already: the failure is logged as an error and reported, and the
 // files stay where they are.
-func (m *Manager) DeleteSpace(ctx context.Context, id string) (*Deleted, error) {
-	sp, err := m.adminSpace(ctx, id)
+func (m *Manager) DeleteSpace(ctx context.Context, sc store.Scope, id string) (*Deleted, error) {
+	sp, err := m.adminSpace(ctx, sc, id)
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +283,7 @@ func (m *Manager) DeleteSpace(ctx context.Context, id string) (*Deleted, error) 
 		if draftsFile, err = m.saveDrafts(ctx, q, id, trash, stamp); err != nil {
 			return fmt.Errorf("could not keep the drafts of the space: %w", err)
 		}
-		members, err = store.DeleteSpace(ctx, q, id)
+		members, err = store.DeleteSpace(ctx, q, sc, id)
 		return err
 	})
 	if err != nil {

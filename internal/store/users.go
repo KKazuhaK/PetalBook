@@ -23,29 +23,36 @@ type User struct {
 	// PasskeyRequired: this person must sign in with a passkey (set for them
 	// alone; a requirement of their role is in the security settings).
 	PasskeyRequired bool
+	// TenantID is the tenant the user belongs to (DefaultTenantID when empty
+	// at insert); SiteAdmin makes an administrator one of the whole server.
+	TenantID  string
+	SiteAdmin bool
 }
 
 // LocalUserID is the built-in user of single-user mode.
 const LocalUserID = "local"
 
-const userCols = `id, username, name, email, role, disabled, created, email_verified, passkey_required`
+const userCols = `id, username, name, email, role, disabled, created, email_verified, passkey_required, tenant_id, site_admin`
 
 func scanUser(sc interface{ Scan(...any) error }) (*User, error) {
 	var u User
-	var disabled, created, verified, required int64
-	if err := sc.Scan(&u.ID, &u.Username, &u.Name, &u.Email, &u.Role, &disabled, &created, &verified, &required); err != nil {
+	var disabled, created, verified, required, siteAdmin int64
+	if err := sc.Scan(&u.ID, &u.Username, &u.Name, &u.Email, &u.Role, &disabled, &created, &verified, &required, &u.TenantID, &siteAdmin); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
 	u.Disabled, u.Created, u.EmailVerified, u.PasskeyRequired = disabled != 0, fromMS(created), verified != 0, required != 0
+	u.SiteAdmin = siteAdmin != 0
 	return &u, nil
 }
 
-// GetUser returns the user with this id, or ErrNotFound.
-func GetUser(ctx context.Context, q Q, id string) (*User, error) {
-	return scanUser(q.QueryRow(ctx, `SELECT `+userCols+` FROM users WHERE id = ?`, id))
+// GetUser returns the user with this id, or ErrNotFound; a user of a tenant
+// outside the scope is not found.
+func GetUser(ctx context.Context, q Q, sc Scope, id string) (*User, error) {
+	cond, args := sc.cond("tenant_id")
+	return scanUser(q.QueryRow(ctx, `SELECT `+userCols+` FROM users WHERE id = ? AND `+cond, append([]any{id}, args...)...))
 }
 
 // GetUserByUsername finds a user by the stored (lower case) username.
@@ -63,9 +70,10 @@ func HasUsers(ctx context.Context, q Q) (bool, error) {
 	return err == nil, err
 }
 
-// ListUsers returns every user, oldest first.
-func ListUsers(ctx context.Context, q Q) ([]User, error) {
-	rows, err := q.Query(ctx, `SELECT `+userCols+` FROM users ORDER BY created, id`)
+// ListUsers returns the users in the scope, oldest first.
+func ListUsers(ctx context.Context, q Q, sc Scope) ([]User, error) {
+	cond, args := sc.cond("tenant_id")
+	rows, err := q.Query(ctx, `SELECT `+userCols+` FROM users WHERE `+cond+` ORDER BY created, id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -84,9 +92,11 @@ func ListUsers(ctx context.Context, q Q) ([]User, error) {
 // SearchUsers returns the users whose username or name contains query, ignoring
 // case, oldest first; an empty query matches everyone. enabledOnly leaves out the
 // disabled accounts before the limit counts. limit <= 0 means no limit.
-func SearchUsers(ctx context.Context, q Q, d Dialect, query string, enabledOnly bool, limit int) ([]User, error) {
+func SearchUsers(ctx context.Context, q Q, d Dialect, sc Scope, query string, enabledOnly bool, limit int) ([]User, error) {
 	var conds []string
 	args := []any{}
+	sCond, sArgs := sc.cond("tenant_id")
+	conds, args = append(conds, sCond), append(args, sArgs...)
 	if query != "" {
 		lower := "LOWER"
 		if d == SQLite {
@@ -126,8 +136,11 @@ func SearchUsers(ctx context.Context, q Q, d Dialect, query string, enabledOnly 
 
 // InsertUser adds a user. A taken username or id is a unique violation (see UniqueOn).
 func InsertUser(ctx context.Context, q Q, u User) error {
-	_, err := q.Exec(ctx, `INSERT INTO users(`+userCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		u.ID, u.Username, u.Name, u.Email, u.Role, b2i(u.Disabled), ms(u.Created), b2i(u.EmailVerified), b2i(u.PasskeyRequired))
+	if u.TenantID == "" {
+		u.TenantID = DefaultTenantID
+	}
+	_, err := q.Exec(ctx, `INSERT INTO users(`+userCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		u.ID, u.Username, u.Name, u.Email, u.Role, b2i(u.Disabled), ms(u.Created), b2i(u.EmailVerified), b2i(u.PasskeyRequired), u.TenantID, b2i(u.SiteAdmin))
 	return err
 }
 
@@ -157,13 +170,14 @@ func SetPasskeyRequired(ctx context.Context, q Q, id string, required bool) erro
 
 // UsersByEmail returns the users whose address equals email, ignoring case
 // (at most limit; limit <= 0: all).
-func UsersByEmail(ctx context.Context, q Q, d Dialect, email string, limit int) ([]User, error) {
+func UsersByEmail(ctx context.Context, q Q, d Dialect, sc Scope, email string, limit int) ([]User, error) {
 	lower := "LOWER"
 	if d == SQLite {
 		lower = sqliteLower
 	}
-	sqlText := `SELECT ` + userCols + ` FROM users WHERE email <> '' AND ` + lower + `(email) = ? ORDER BY created, id`
-	args := []any{strings.ToLower(email)}
+	cond, cargs := sc.cond("tenant_id")
+	sqlText := `SELECT ` + userCols + ` FROM users WHERE email <> '' AND ` + lower + `(email) = ? AND ` + cond + ` ORDER BY created, id`
+	args := append([]any{strings.ToLower(email)}, cargs...)
 	if limit > 0 {
 		sqlText += ` LIMIT ?`
 		args = append(args, limit)
@@ -184,15 +198,24 @@ func UsersByEmail(ctx context.Context, q Q, d Dialect, email string, limit int) 
 	return out, rows.Err()
 }
 
-// CountEnabledPasswordAdmins counts the enabled administrators who have a password.
+// CountEnabledPasswordAdmins counts the enabled site administrators who have a password.
 func CountEnabledPasswordAdmins(ctx context.Context, q Q) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM users u JOIN passwords p ON p.user_id = u.id WHERE u.role = 'admin' AND u.disabled = 0`).Scan(&n)
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM users u JOIN passwords p ON p.user_id = u.id WHERE u.role = 'admin' AND u.site_admin = 1 AND u.disabled = 0`).Scan(&n)
 	return
 }
 
-// SetRole changes a user's instance role.
+// SetRole changes a user's role in their tenant. (A site administrator is an
+// administrator with the flag: the callers that demote one clear the flag too,
+// see SetSiteAdmin.)
 func SetRole(ctx context.Context, q Q, id, role string) error {
 	res, err := q.Exec(ctx, `UPDATE users SET role = ? WHERE id = ?`, role, id)
+	return oneRow(res, err)
+}
+
+// SetSiteAdmin makes an administrator a site administrator or not; a member
+// cannot be made one (ErrNotFound).
+func SetSiteAdmin(ctx context.Context, q Q, id string, on bool) error {
+	res, err := q.Exec(ctx, `UPDATE users SET site_admin = ? WHERE id = ? AND (role = 'admin' OR ? = 0)`, b2i(on), id, b2i(on))
 	return oneRow(res, err)
 }
 
@@ -202,9 +225,10 @@ func SetDisabled(ctx context.Context, q Q, id string, disabled bool) error {
 	return oneRow(res, err)
 }
 
-// CountEnabledAdmins counts administrators who can sign in.
+// CountEnabledAdmins counts the site administrators who can sign in: the rule
+// "keep one administrator" is about the server.
 func CountEnabledAdmins(ctx context.Context, q Q) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0`).Scan(&n)
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE role = 'admin' AND site_admin = 1 AND disabled = 0`).Scan(&n)
 	return
 }
 

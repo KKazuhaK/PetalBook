@@ -217,7 +217,7 @@ func TestNoHalfMadeSpaceOrAccountWhenAStepFails(t *testing.T) {
 
 func mustUserID(t *testing.T, a *acc, username string) string {
 	t.Helper()
-	us, err := a.auth.Users(context.Background())
+	us, err := a.auth.Users(context.Background(), store.AllTenants())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +250,7 @@ func TestSpacesPerUserAreLimited(t *testing.T) {
 
 func mustUser(t *testing.T, a *acc, username string) store.User {
 	t.Helper()
-	u, err := store.GetUser(context.Background(), a.st.Q(), mustUserID(t, a, username))
+	u, err := store.GetUser(context.Background(), a.st.Q(), store.AllTenants(), mustUserID(t, a, username))
 	if err != nil {
 		t.Fatal(err)
 	}

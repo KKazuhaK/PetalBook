@@ -150,8 +150,8 @@ func New(opt Options) http.Handler {
 		}
 	}
 	if s.single {
-		s.local = store.User{ID: store.LocalUserID, Username: "local", Name: "Local user", Role: "admin", Created: time.Now().UTC()}
-		if u, err := store.GetUser(context.Background(), opt.Store.Q(), store.LocalUserID); err == nil {
+		s.local = store.User{ID: store.LocalUserID, Username: "local", Name: "Local user", Role: "admin", SiteAdmin: true, TenantID: store.DefaultTenantID, Created: time.Now().UTC()}
+		if u, err := store.GetUser(context.Background(), opt.Store.Q(), store.AllTenants(), store.LocalUserID); err == nil {
 			s.local = *u
 		}
 	}

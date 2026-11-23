@@ -356,8 +356,8 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (store.APIToken, s
 }
 
 // List returns tokens as store.ListAPITokens does.
-func (s *Service) List(ctx context.Context, f store.TokenFilter) ([]store.TokenRow, error) {
-	return store.ListAPITokens(ctx, s.st.Q(), f)
+func (s *Service) List(ctx context.Context, sc store.Scope, f store.TokenFilter) ([]store.TokenRow, error) {
+	return store.ListAPITokens(ctx, s.st.Q(), sc, f)
 }
 
 // Revoke revokes a token and reports whether it exists. In this process it

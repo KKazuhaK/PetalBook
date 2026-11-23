@@ -279,7 +279,7 @@ func TestOIDCLoginAndAutoCreate(t *testing.T) {
 
 func mustUsers(t *testing.T, a *acc) []store.User {
 	t.Helper()
-	us, err := a.auth.Users(context.Background())
+	us, err := a.auth.Users(context.Background(), store.AllTenants())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -82,7 +82,7 @@ func (m *Manager) measureNext(ctx context.Context, age time.Duration) bool {
 	if !ok {
 		return false
 	}
-	_, _, err = m.Resize(ctx, id)
+	_, _, err = m.Resize(ctx, store.AllTenants(), id)
 	switch {
 	case err == nil:
 		return true
@@ -105,8 +105,8 @@ func (m *Manager) measureNext(ctx context.Context, age time.Duration) bool {
 
 // Resize measures the space's directory now and stores the result. It waits for
 // a walk that is already running (one at a time), and stops if ctx ends.
-func (m *Manager) Resize(ctx context.Context, id string) (int64, time.Time, error) {
-	if _, err := m.adminSpace(ctx, id); err != nil {
+func (m *Manager) Resize(ctx context.Context, sc store.Scope, id string) (int64, time.Time, error) {
+	if _, err := m.adminSpace(ctx, sc, id); err != nil {
 		return 0, time.Time{}, err
 	}
 	select {
@@ -121,7 +121,7 @@ func (m *Manager) Resize(ctx context.Context, id string) (int64, time.Time, erro
 		if errors.Is(err, fs.ErrNotExist) {
 			// A space deleted while it was being measured has had its directory
 			// moved away: that is not a failure to measure.
-			if _, aerr := m.adminSpace(ctx, id); errors.Is(aerr, ErrNotFound) {
+			if _, aerr := m.adminSpace(ctx, sc, id); errors.Is(aerr, ErrNotFound) {
 				return 0, time.Time{}, ErrNotFound
 			}
 		}

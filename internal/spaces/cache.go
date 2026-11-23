@@ -198,7 +198,7 @@ func (m *Manager) metaFor(ctx context.Context, id string) (*spaceMeta, error) {
 	}
 	gen := m.listGen
 	m.mu.Unlock()
-	sp, err := store.GetSpace(ctx, m.opt.Store.Q(), id)
+	sp, err := store.GetSpace(ctx, m.opt.Store.Q(), store.AllTenants(), id) // a member's space, already resolved by id
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, ErrNotFound
 	}
