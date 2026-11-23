@@ -1044,6 +1044,303 @@ function suite(target: Target) {
     })
   })
 
+  describe('the daily text and favourites', () => {
+    const enc = encodeURIComponent
+    const base = () => `/api/spaces/${spaceId}`
+    const folder = `${root}/home`
+    const daily = (query: string) => call(admin, 'GET', `${base()}/daily?${query}`)
+    const setDaily = (value: unknown) => call(admin, 'PUT', `${base()}/daily/settings`, { daily: value })
+    const favs = async () => (await call(admin, 'GET', `${base()}/favorites`)).json as { items: Record<string, any>[]; limit: number }
+    const favLine = (items: Record<string, any>[]) => items.map((i) => `${i.kind}:${i.name}${i.missing ? '!' : ''}`).join(' ')
+    const DAYS = Array.from({ length: 30 }, (_, i) => `2026-11-${String(i + 1).padStart(2, '0')}`)
+    const pageIds: Record<string, string> = {}
+    afterAll(async () => {
+      globalThis.fetch = admin.fetch
+      await setDaily(null).catch(() => undefined)
+    })
+
+    it('has no source until one is set: the pick is {"page": null} with a reason, the settings are null', async () => {
+      await setDaily(null)
+      const r = await daily('date=2026-11-23&lang=en')
+      expect([r.status, r.json.page]).toEqual([200, null])
+      // Another source may be there from the server's own settings; with none, this says so.
+      expect(['no_source', undefined]).toContain(r.json.quote === undefined ? r.json.reason : undefined)
+      expect((await call(admin, 'GET', `${base()}/daily/settings`)).json).toEqual({ daily: null })
+    })
+
+    it('picks one page of a folder, the same for a whole day, another by skip, and cuts a long body at 2000 characters', async () => {
+      for (const [name, status] of [['甲', '定稿'], ['乙', '草稿'], ['丙', '定稿'], ['丁', '草稿'], ['戊', '定稿']]) {
+        pageIds[name] = (await mk(`${folder}/poems`, { title: `${name}${run}`, status, tags: [`t${run}`] }, `《${name}》｜正文\n`)).id
+      }
+      pageIds.long = (await mk(`${folder}/long`, { title: `长${run}`, tags: [`long${run}`] }, '长'.repeat(1999) + 'AB' + 'x'.repeat(500) + '\n')).id
+      const set = await setDaily({ folder: `${folder}/poems` })
+      expect(set.status).toBe(200)
+      expect(set.json).toEqual({ daily: { folder: `${folder}/poems`, filter: [] } })
+      expect((await call(admin, 'GET', `${base()}/daily/settings`)).json).toEqual(set.json)
+      const first = await daily('date=2026-11-23&skip=0')
+      expect(first.status).toBe(200)
+      const page = first.json.page
+      expect(page).toMatchObject({ folder: `${folder}/poems`, bodyTruncated: false })
+      expect(Object.values(pageIds)).toContain(page.id)
+      expect(page.body).toMatch(/^《.》｜正文/)
+      expect(first.json.count).toBe(5)
+      for (let i = 0; i < 3; i++) expect((await daily('date=2026-11-23')).json.page.id).toBe(page.id)
+      const seen = new Set<string>()
+      for (const d of DAYS) seen.add((await daily(`date=${d}`)).json.page.id)
+      expect(seen.size).toBeGreaterThanOrEqual(3)
+      const next = (await daily('date=2026-11-23&skip=1')).json.page.id
+      expect(next).not.toBe(page.id)
+      expect((await daily('date=2026-11-23&skip=5')).json.page.id).toBe(page.id)
+      // The long body.
+      expect((await setDaily({ tag: `long${run}` })).status).toBe(200)
+      const long = (await daily('date=2026-11-23')).json.page
+      expect(long.id).toBe(pageIds.long)
+      expect(long.bodyTruncated).toBe(true)
+      expect(Array.from(long.body as string)).toHaveLength(2000)
+      expect(long.body.endsWith('长A')).toBe(true)
+    })
+
+    it('filters, a tag, a type and no match; a source that meets no page says no_match', async () => {
+      const done = new Set([pageIds['甲'], pageIds['丙'], pageIds['戊']])
+      const f = await setDaily({ folder: `${folder}/poems`, filter: [{ key: 'status', op: 'in', values: ['定稿'] }] })
+      expect(f.json.daily.filter).toEqual([{ key: 'status', op: 'in', values: ['定稿'] }])
+      for (const d of DAYS.slice(0, 10)) {
+        const r = await daily(`date=${d}`)
+        expect(done.has(r.json.page.id)).toBe(true)
+        expect(r.json.count).toBe(3)
+      }
+      expect((await setDaily({ tag: `t${run}` })).status).toBe(200)
+      expect((await daily('date=2026-11-23')).json.count).toBe(5)
+      const none = await setDaily({ tag: `nothing${run}` })
+      expect(none.status).toBe(200)
+      expect((await daily('date=2026-11-23')).json).toEqual({ page: null, reason: 'no_match' })
+      // A type: the header's, and the folder's.
+      const type = `daily${run}`
+      expect((await S.putType(type, { title: '文案', fields: [{ key: 'status', kind: 'select', options: ['草稿', '定稿'] }] })).name).toBe(type)
+      await S.bindFolder(`${folder}/poems`, type)
+      const own = await mk(`${folder}/elsewhere`, { title: `自带${run}`, type }, 'x\n')
+      expect((await setDaily({ type })).status).toBe(200)
+      const typed = await daily('date=2026-11-23')
+      expect(typed.json.count).toBe(6)
+      expect(typed.json.page.effectiveType).toBe(type)
+      expect(own.id).toBeTruthy()
+      await S.bindFolder(`${folder}/poems`, '')
+    })
+
+    it('a source by language: the language, its region, and a language nobody wrote one for', async () => {
+      const zh = await mk(`${folder}/zh`, { title: `中文${run}` }, 'x\n')
+      const en = await mk(`${folder}/en`, { title: `English${run}` }, 'x\n')
+      const set = await setDaily({ zh: { folder: `${folder}/zh` }, 'en-US': { folder: `${folder}/en` } })
+      expect(set.status).toBe(200)
+      expect(set.json.daily).toEqual({ zh: { folder: `${folder}/zh`, filter: [] }, 'en-us': { folder: `${folder}/en`, filter: [] } })
+      const title = async (lang: string) => (await daily(`date=2026-11-23&lang=${lang}`)).json.page.id
+      expect([await title('zh'), await title('zh-CN'), await title('en-US'), await title('en')]).toEqual([zh.id, zh.id, en.id, en.id])
+      // A language with no source of its own gets one of them, always the same.
+      expect(await title('fr')).toBe(await title('de'))
+      expect(await title('')).toBe(await title('fr'))
+      // The same source for every language.
+      expect((await setDaily({ folder: `${folder}/zh` })).status).toBe(200)
+      expect(await title('en')).toBe(zh.id)
+    })
+
+    it('refuses a source that is malformed, a folder that is not there, and a date, skip or language that cannot be', async () => {
+      const bad: [string, unknown, number][] = [
+        ['two sources', { folder: `${folder}/poems`, tag: 'x' }, 400],
+        ['none', {}, 400],
+        ['an empty tag', { tag: '' }, 400],
+        ['no such type', { type: `nothing${run}` }, 400],
+        ['an unknown key', { folder: `${folder}/poems`, recursive: true }, 400],
+        ['a filter that is none', { folder: `${folder}/poems`, filter: [{ key: 'a', op: 'like', values: ['x'] }] }, 400],
+        ['11 filters', { folder: `${folder}/poems`, filter: Array.from({ length: 11 }, (_, i) => ({ key: `k${i}`, op: 'notEmpty', values: [] })) }, 400],
+        ['a bad language', { 'chinese!': { tag: 'x' } }, 400],
+        ['a language source that is none', { zh: 'folder' }, 400],
+        ['a folder that is not there', { folder: `${root}/no-such-folder` }, 404],
+      ]
+      for (const [what, value, status] of bad) {
+        const r = await setDaily(value)
+        expect([what, r.status]).toEqual([what, status])
+      }
+      expect((await call(admin, 'PUT', `${base()}/daily/settings`, {})).status).toBe(400)
+      expect((await call(admin, 'PUT', `${base()}/daily/settings`, { daily: {}, extra: 1 })).status).toBe(400)
+      expect((await setDaily({ folder: `${folder}/poems` })).status).toBe(200)
+      for (const q of ['date=tomorrow', 'date=2026-13-01', 'date=1969-12-31', 'date=2026-11-23&skip=-1', 'date=2026-11-23&skip=x', 'date=2026-11-23&skip=99999999', 'date=2026-11-23&lang=%E4%B8%AD%E6%96%87', 'date=2026-11-23&lang=x']) {
+        const r = await daily(q)
+        expect([q, r.status, r.json.error]).toEqual([q, 400, 'invalid'])
+      }
+      expect((await daily('')).status).toBe(200) // today
+      expect((await setDaily({ folder: `${folder}/poems` })).status).toBe(200)
+    })
+
+    it('a folder that is moved takes the source with it, and taking the source off puts the block back to nothing', async () => {
+      expect((await setDaily({ zh: { folder: `${folder}/zh` }, en: { folder: `${folder}/poems` } })).status).toBe(200)
+      const moved = await call(admin, 'POST', `${base()}/folders/move`, { from: `${folder}/poems`, to: `${folder}/verse` })
+      expect(moved.status).toBe(200)
+      expect((await call(admin, 'GET', `${base()}/daily/settings`)).json.daily).toEqual({ zh: { folder: `${folder}/zh`, filter: [] }, en: { folder: `${folder}/verse`, filter: [] } })
+      expect((await daily('date=2026-11-23&lang=en')).json.page.folder).toBe(`${folder}/verse`)
+      expect((await setDaily(null)).json).toEqual({ daily: null })
+      expect((await setDaily(null)).json).toEqual({ daily: null })
+      expect((await daily('date=2026-11-23&lang=en')).json.page).toBeNull()
+    })
+
+    it('keeps a person\'s favourites: pages, folders and views, in order, with their names, each once', async () => {
+      const a = (await mk(`${folder}/fav`, { title: `暮雪${run}` }, 'x\n')).id
+      const b = (await mk(`${folder}/fav`, { title: `春晓${run}` }, 'x\n')).id
+      await S.createFolder(`${folder}/fav/sub`)
+      const views = (await call(admin, 'GET', `${base()}/views?folder=${enc(`${folder}/fav`)}`)).json
+      const saved = await call(admin, 'PUT', `${base()}/views`, { folder: `${folder}/fav`, baseRev: views.rev, views: [{ name: '按作者', layout: 'table' }] })
+      const viewT = `folder:${folder}/fav#${saved.json.views[0].id}`
+      const post = (kind: string, target: string) => call(admin, 'POST', `${base()}/favorites`, { kind, target })
+      expect((await favs()).items.filter((i) => i.target === a)).toEqual([])
+      const r1 = await post('page', a)
+      expect(r1.status).toBe(200)
+      expect(r1.json.limit).toBe(200)
+      for (const [k, t] of [['folder', `${folder}/fav/sub`], ['view', viewT], ['page', b]]) expect((await post(k, t)).status).toBe(200)
+      const again = await post('page', a)
+      const mine = again.json.items.filter((i: any) => [a, b, `${folder}/fav/sub`, viewT].includes(i.target))
+      expect(favLine(mine)).toBe(`page:暮雪${run} folder:sub view:按作者 page:春晓${run}`)
+      expect(mine[0]).toMatchObject({ kind: 'page', target: a, path: `${folder}/fav/暮雪${run}.md`, missing: false })
+      expect(mine[1]).toMatchObject({ path: `${folder}/fav/sub`, missing: false })
+      expect(mine[2]).toMatchObject({ of: `${folder}/fav`, ofKind: 'folder', target: viewT, missing: false })
+      expect(typeof mine[0].created).toBe('string')
+      // The order: those named first, the rest after; names that are no favourite are ignored.
+      const order = (items: [string, string][]) => call(admin, 'PUT', `${base()}/favorites/order`, { items: items.map(([kind, target]) => ({ kind, target })) })
+      const full = (await favs()).items.map((i) => [i.kind, i.target] as [string, string])
+      const named: [string, string][] = [['page', b], ['view', viewT], ['page', '01JD3K8Q7Z'], ['page', a]]
+      const ordered = await order(named)
+      expect(ordered.status).toBe(200)
+      const mine2 = ordered.json.items.filter((i: any) => [a, b, `${folder}/fav/sub`, viewT].includes(i.target))
+      expect(favLine(mine2)).toBe(`page:春晓${run} view:按作者 page:暮雪${run} folder:sub`)
+      expect(full.length).toBe(ordered.json.items.length)
+      expect((await favs()).items.map((i) => i.target)).toEqual(ordered.json.items.map((i: any) => i.target))
+      // What cannot be a favourite.
+      const refused: [string, string, number][] = [
+        ['page', '01JD3K8Q7Z', 404],
+        ['page', '../x', 400],
+        ['folder', `${root}/no-such`, 404],
+        ['folder', '', 400],
+        ['view', `folder:${folder}/fav#nope`, 404],
+        ['view', 'fav', 400],
+        ['star', 'x', 400],
+      ]
+      for (const [k, t, status] of refused) expect([k, t, (await post(k, t)).status]).toEqual([k, t, status])
+      expect((await call(admin, 'POST', `${base()}/favorites`, { kind: 'page' })).status).toBe(400)
+      expect((await call(admin, 'PUT', `${base()}/favorites/order`, {})).status).toBe(400)
+      expect((await call(admin, 'PUT', `${base()}/favorites/order`, { items: [{ kind: 'star', target: 'x' }] })).status).toBe(400)
+      // Gone: shown as missing, and taken off; taking off what is not there is fine.
+      expect((await call(admin, 'DELETE', `${SP_PAGES}/${b}`)).status).toBe(204)
+      expect((await call(admin, 'DELETE', `${base()}/folders?path=${enc(`${folder}/fav/sub`)}`)).status).toBe(204)
+      const gone = (await favs()).items.filter((i) => [a, b, `${folder}/fav/sub`, viewT].includes(i.target))
+      expect(favLine(gone)).toBe(`page:! view:按作者 page:暮雪${run} folder:sub!`)
+      expect(gone.find((i) => i.target === b)!.missing).toBe(true)
+      const del = (kind: string, target: string) => call(admin, 'DELETE', `${base()}/favorites?kind=${kind}&target=${enc(target)}`)
+      for (const [k, t] of [['page', b], ['folder', `${folder}/fav/sub`], ['view', viewT], ['page', a]]) expect([k, (await del(k, t)).status]).toEqual([k, 200])
+      expect((await del('page', a)).status).toBe(200)
+      expect((await favs()).items.filter((i) => [a, b, viewT].includes(i.target))).toEqual([])
+      for (const q of ['', '?kind=page', '?target=x', '?kind=star&target=x']) expect([q, (await call(admin, 'DELETE', `${base()}/favorites${q}`)).status]).toEqual([q, 400])
+    })
+
+    it('favourites follow a folder that is moved, with its views, and nothing else', async () => {
+      await S.createFolder(`${folder}/mv/inner`)
+      const views = (await call(admin, 'GET', `${base()}/views?folder=${enc(`${folder}/mv/inner`)}`)).json
+      const saved = await call(admin, 'PUT', `${base()}/views`, { folder: `${folder}/mv/inner`, baseRev: views.rev, views: [{ name: 'wide', layout: 'cards' }] })
+      const vid = saved.json.views[0].id
+      const post = (kind: string, target: string) => call(admin, 'POST', `${base()}/favorites`, { kind, target })
+      await S.createFolder(`${folder}/mvx`)
+      for (const [k, t] of [['folder', `${folder}/mv`], ['folder', `${folder}/mv/inner`], ['folder', `${folder}/mvx`], ['view', `folder:${folder}/mv/inner#${vid}`]]) expect((await post(k, t)).status).toBe(200)
+      expect((await call(admin, 'POST', `${base()}/folders/move`, { from: `${folder}/mv`, to: `${folder}/moved` })).status).toBe(200)
+      const mine = (await favs()).items.filter((i) => i.kind !== 'page')
+      const line = mine.filter((i) => [`${folder}/moved`, `${folder}/moved/inner`, `${folder}/mvx`].includes(i.target) || i.target.endsWith(`#${vid}`))
+      expect(line.map((i) => i.target).sort()).toEqual([`${folder}/moved`, `${folder}/moved/inner`, `${folder}/mvx`, `folder:${folder}/moved/inner#${vid}`].sort())
+      expect(line.every((i) => !i.missing)).toBe(true)
+      for (const i of line) await call(admin, 'DELETE', `${base()}/favorites?kind=${i.kind}&target=${enc(i.target)}`)
+    })
+
+    if (accounts) {
+      it('the administrators give a default for spaces with no source: lines by language, a choice per space, and the settings are theirs alone', async () => {
+        const adm = (method: string, path: string, body?: unknown) => call(admin, method, `/api/admin/daily${path}`, body)
+        const cleanup = async () => {
+          await adm('DELETE', '/lines?lang=zh')
+          await adm('DELETE', '/lines?lang=en')
+          await adm('DELETE', '/lines?lang=')
+          await adm('PUT', '', { default: null })
+        }
+        try {
+          const empty = await adm('GET', '')
+          expect(empty.status).toBe(200)
+          expect(empty.json).toMatchObject({ hosts: expect.any(Array), apis: expect.any(Array), lines: { total: expect.any(Number), max: 5000 } })
+          // Bad requests.
+          for (const [what, method, path, body] of [
+            ['an unknown key', 'PUT', '', { extra: 1 }],
+            ['a default with no kind', 'PUT', '', { default: {} }],
+            ['a bad language', 'PUT', '/lines', { lang: 'chinese!', text: 'x' }],
+            ['no text', 'PUT', '/lines', { lang: 'en', text: ' \n ' }],
+            ['a bad format', 'PUT', '/lines', { lang: 'en', text: 'x', format: 'html' }],
+          ] as const) expect([what, (await adm(method, path, body)).status]).toEqual([what, 400])
+          expect((await call(admin, 'DELETE', '/api/admin/daily/lines?lang=chinese!')).status).toBe(400)
+          const set = await adm('PUT', '', { default: { kind: 'list' } })
+          expect(set.status).toBe(200)
+          expect(set.json.default).toEqual({ kind: 'list' })
+          const put = (lang: string, text: string, format = 'lines') => adm('PUT', '/lines', { lang, text, format })
+          expect((await put('zh', '山色空蒙雨亦奇\t苏轼\n\n行到水穷处\n')).status).toBe(200)
+          expect((await put('en', 'Stay hungry\tJobs\nStay foolish\nBe kind')).json.lines.byLang).toMatchObject({ zh: 2, en: 3 })
+          const any = await put('', 'For any language')
+          expect(any.json.lines.byLang['']).toBe(1)
+          expect(any.json.lines.total).toBeGreaterThanOrEqual(6)
+          // A new space has no source, so it shows the default; the same text for everybody, all day.
+          const sp = (await call(admin, 'POST', '/api/spaces', { name: `Home ${run}` })).json.id as string
+          const dq = (query: string) => call(admin, 'GET', `/api/spaces/${sp}/daily?${query}`)
+          const zh = new Set(['山色空蒙雨亦奇', '行到水穷处'])
+          const seen = new Set<string>()
+          for (const d of DAYS.slice(0, 12)) {
+            const r = await dq(`date=${d}&lang=zh`)
+            expect(r.json.page).toBeNull()
+            expect(zh.has(r.json.quote.text)).toBe(true)
+            expect(r.json.origin).toBe('site')
+            expect((await dq(`date=${d}&lang=zh`)).json.quote.text).toBe(r.json.quote.text)
+            seen.add(r.json.quote.text)
+          }
+          expect(seen.size).toBe(2)
+          expect((await dq('date=2026-11-23&lang=zh')).json.quote.source === '苏轼' || (await dq('date=2026-11-23&lang=zh')).json.quote.source === undefined).toBe(true)
+          expect((await dq('date=2026-11-23&lang=zh-CN')).json.quote.text).toBeTruthy()
+          expect((await dq('date=2026-11-23&lang=fr')).json.quote.text).toBe('For any language')
+          const enSeen = new Set<string>()
+          for (let k = 0; k < 3; k++) enSeen.add((await dq(`date=2026-11-23&lang=en&skip=${k}`)).json.quote.text)
+          expect(enSeen.size).toBe(3)
+          // Markdown is cut at the rules.
+          expect((await put('en', 'First\nsecond line\n---\nSecond\n---\n\n', 'markdown')).json.lines.byLang.en).toBe(2)
+          // The owner of the space leaves the default, or takes it back.
+          const prefs = await call(admin, 'GET', `/api/spaces/${sp}/daily/prefs`)
+          expect(prefs.json).toMatchObject({ inherit: true, apis: [], available: expect.any(Array), default: { kind: 'list' } })
+          expect((await call(admin, 'PUT', `/api/spaces/${sp}/daily/prefs`, { inherit: false })).status).toBe(400)
+          expect((await call(admin, 'PUT', `/api/spaces/${sp}/daily/prefs`, { inherit: true, apis: ['nope'] })).status).toBe(400)
+          const off = await call(admin, 'PUT', `/api/spaces/${sp}/daily/prefs`, { inherit: false, apis: [] })
+          expect([off.status, off.json.inherit]).toEqual([200, false])
+          expect((await dq('date=2026-11-23&lang=zh')).json).toEqual({ page: null, reason: 'no_source' })
+          await call(admin, 'PUT', `/api/spaces/${sp}/daily/prefs`, { inherit: true, apis: [] })
+          // The space's own source comes first.
+          await call(admin, 'POST', `/api/spaces/${sp}/pages`, { folder: 'Own', meta: { title: 'Mine' }, body: 'mine\n' })
+          expect((await call(admin, 'PUT', `/api/spaces/${sp}/daily/settings`, { daily: { folder: 'Own' } })).status).toBe(200)
+          const mine = await dq('date=2026-11-23&lang=zh')
+          expect([mine.json.origin, mine.json.page.title, mine.json.quote]).toEqual(['space', 'Mine', undefined])
+          // Taking the lines away.
+          expect((await adm('DELETE', '/lines?lang=zh')).json.lines.byLang.zh).toBeUndefined()
+          // Another person has no way in.
+          const outsider = browser()
+          expect((await call(outsider, 'GET', '/api/admin/daily')).status).toBe(401)
+        } finally {
+          await cleanup()
+        }
+      })
+    } else {
+      it('has no settings of administrators or choices of spaces in single-user mode', async () => {
+        for (const [method, path] of [['GET', '/api/admin/daily'], ['PUT', '/api/admin/daily'], ['PUT', '/api/admin/daily/lines'], ['GET', `${base()}/daily/prefs`], ['PUT', `${base()}/daily/prefs`]]) {
+          const r = await call(admin, method, path, method === 'GET' ? undefined : {})
+          expect([method, path, r.status, r.json?.error]).toEqual([method, path, 404, 'not_found'])
+        }
+      })
+    }
+  })
+
   describe('create and read', () => {
     it('a page carries its header as text: the lines between the --- lines, naming its id and fields, the same from create, get and save', async () => {
       const p = await mk(`${root}/header`, { title: `头部原文${run}`, tags: ['a'] }, 'x\n')

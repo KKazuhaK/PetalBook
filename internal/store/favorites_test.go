@@ -235,6 +235,9 @@ func TestOpeningAnOlderDatabaseFillsNameKeys(t *testing.T) {
 	}
 	for _, stmt := range []string{
 		`DROP TABLE favorites`,
+		`DROP TABLE site_settings`,
+		`DROP TABLE daily_lines`,
+		`DROP TABLE space_daily`,
 		`ALTER TABLE spaces DROP COLUMN name_key`,
 		`DELETE FROM schema_migrations WHERE version >= 6`,
 		`INSERT INTO spaces(id, name, created) VALUES ('S1', 'Straße', 0)`,

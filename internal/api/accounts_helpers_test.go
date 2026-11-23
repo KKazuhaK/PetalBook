@@ -18,6 +18,7 @@ import (
 
 	"github.com/KKazuhaK/PetalBook/internal/api"
 	"github.com/KKazuhaK/PetalBook/internal/auth"
+	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
 	"github.com/KKazuhaK/PetalBook/internal/drafts"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
@@ -68,6 +69,8 @@ type accOpts struct {
 	// spaces and draftCfg adjust the manager and the draft service.
 	spaces   func(*spaces.Options)
 	draftCfg func(*drafts.Config)
+	// dailyFetch replaces the fetcher of external daily text (tests talk to a server of their own).
+	dailyFetch *dailyfetch.Fetcher
 }
 
 func needGit(t *testing.T) {
@@ -79,6 +82,11 @@ func needGit(t *testing.T) {
 
 // eachAccounts runs a test in accounts mode on every available database.
 func eachAccounts(t *testing.T, o accOpts, fn func(t *testing.T, a *acc)) {
+	t.Helper()
+	eachAccountsWith(t, o, fn)
+}
+
+func eachAccountsWith(t *testing.T, o accOpts, fn func(t *testing.T, a *acc)) {
 	t.Helper()
 	needGit(t)
 	storetest.Each(t, func(t *testing.T, st *store.Store) { fn(t, newAcc(t, st, o)) })
@@ -130,7 +138,7 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := api.New(api.Options{Logger: log, Store: st, Spaces: mgr, Drafts: drf, Auth: svc, PublicURL: o.public, Version: "test-1"})
+	h := api.New(api.Options{Logger: log, Store: st, Spaces: mgr, Drafts: drf, Auth: svc, PublicURL: o.public, Version: "test-1", DailyFetch: o.dailyFetch})
 	return &acc{t: t, dir: dir, st: st, mgr: mgr, auth: svc, drafts: drf, clock: clk, h: h, public: o.public}
 }
 

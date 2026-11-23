@@ -6,6 +6,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -98,6 +100,125 @@ func (d *DailySource) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// DailyConfig is the daily source of a space: one for every language, or one
+// per language (`daily: {zh: {folder: 文案}, en: {tag: quotes}}`).
+type DailyConfig struct {
+	// All is a source written without languages: it applies to every language.
+	All *DailySource
+	// ByLang are the sources by language code, in lower case.
+	ByLang map[string]DailySource
+}
+
+// maxDailyLangs is the most languages a space may give a source of its own.
+const maxDailyLangs = 20
+
+// ValidLang reports whether s can be a language code: `zh`, `en`, `zh-CN`.
+func ValidLang(s string) bool {
+	if len(s) < 2 || len(s) > 16 {
+		return false
+	}
+	for i, part := range strings.Split(s, "-") {
+		if part == "" || len(part) > 8 || (i == 0 && (len(part) > 3 || len(part) < 2)) {
+			return false
+		}
+		for _, r := range part {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || (i > 0 && r >= '0' && r <= '9')) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// NormalLang is a language code as it is compared: lower case.
+func NormalLang(s string) string { return strings.ToLower(s) }
+
+// For is the source for a language: the one for every language; else that of
+// the language itself, or of the language without its region (`zh` for
+// `zh-CN`); else, so that a language nobody wrote a source for still gets a
+// text, the first of the sources by the order of their codes.
+func (c *DailyConfig) For(lang string) *DailySource {
+	if c == nil {
+		return nil
+	}
+	if c.All != nil {
+		return c.All
+	}
+	lang = NormalLang(lang)
+	if d, ok := c.ByLang[lang]; ok {
+		return &d
+	}
+	if i := strings.IndexByte(lang, '-'); i > 0 {
+		if d, ok := c.ByLang[lang[:i]]; ok {
+			return &d
+		}
+	}
+	keys := make([]string, 0, len(c.ByLang))
+	for k := range c.ByLang {
+		keys = append(keys, k)
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	sort.Strings(keys)
+	d := c.ByLang[keys[0]]
+	return &d
+}
+
+// MarshalJSON writes the one source, or the sources by language.
+func (c DailyConfig) MarshalJSON() ([]byte, error) {
+	if c.All != nil {
+		return json.Marshal(c.All)
+	}
+	return json.Marshal(c.ByLang)
+}
+
+// UnmarshalJSON reads either shape.
+func (c *DailyConfig) UnmarshalJSON(data []byte) error {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		return err
+	}
+	if len(m) == 0 {
+		return errors.New("give a source: folder, tag or type, or one for each language")
+	}
+	for _, k := range []string{"folder", "tag", "type", "filter"} {
+		if _, ok := m[k]; ok {
+			var d DailySource
+			if err := json.Unmarshal(data, &d); err != nil {
+				return err
+			}
+			*c = DailyConfig{All: &d}
+			return nil
+		}
+	}
+	if len(m) > maxDailyLangs {
+		return fmt.Errorf("at most %d languages", maxDailyLangs)
+	}
+	out := DailyConfig{ByLang: map[string]DailySource{}}
+	for k, raw := range m {
+		if !ValidLang(k) {
+			return fmt.Errorf("%q is not a language code (zh, en, zh-CN)", k)
+		}
+		var d DailySource
+		if err := json.Unmarshal(raw, &d); err != nil {
+			return fmt.Errorf("%s: %w", k, err)
+		}
+		if _, dup := out.ByLang[NormalLang(k)]; dup {
+			return fmt.Errorf("%q is given twice", k)
+		}
+		out.ByLang[NormalLang(k)] = d
+	}
+	*c = out
+	return nil
+}
+
+// key identifies the configuration, for what is remembered of a pick.
+func (c DailyConfig) key() string {
+	b, _ := json.Marshal(c)
+	return string(b)
+}
+
 func (d DailySource) filters() []ViewFilter {
 	if d.Filter == nil {
 		return []ViewFilter{}
@@ -112,21 +233,58 @@ func (d DailySource) key() string {
 	return string(b)
 }
 
-// dailyOf reads the daily source of a settings document: nil when there is
-// none or what is there names no source. A hand-written entry that names more
-// than one reads as the first of folder, tag, type.
-func dailyOf(doc *yaml.Node) *DailySource {
+// dailyOf reads the daily configuration of a settings document: nil when
+// there is none or what is there names no source.
+func dailyOf(doc *yaml.Node) *DailyConfig {
 	if doc == nil || len(doc.Content) == 0 {
 		return nil
 	}
 	return dailyIn(doc.Content[0])
 }
 
-func dailyIn(top *yaml.Node) *DailySource {
+func isSourceKey(k string) bool { return k == "folder" || k == "tag" || k == "type" }
+
+func hasSourceKey(m *yaml.Node) bool {
+	for _, k := range []string{"folder", "tag", "type"} {
+		if t, ok := scalarText(first(mapValue(m, k))); ok && (k == "folder" || strings.TrimSpace(t) != "") {
+			return true
+		}
+	}
+	return false
+}
+
+func dailyIn(top *yaml.Node) *DailyConfig {
 	v, _ := mapValue(top, "daily")
 	if v == nil || v.Kind != yaml.MappingNode {
 		return nil
 	}
+	if hasSourceKey(v) {
+		if d := sourceIn(v); d != nil {
+			return &DailyConfig{All: d}
+		}
+		return nil
+	}
+	var out DailyConfig
+	eachPair(v, func(k string, val *yaml.Node, _ int) {
+		if !ValidLang(k) || val == nil || val.Kind != yaml.MappingNode || len(out.ByLang) >= maxDailyLangs {
+			return
+		}
+		if d := sourceIn(val); d != nil {
+			if out.ByLang == nil {
+				out.ByLang = map[string]DailySource{}
+			}
+			out.ByLang[NormalLang(k)] = *d
+		}
+	})
+	if out.ByLang == nil {
+		return nil
+	}
+	return &out
+}
+
+// sourceIn reads one source from a mapping. A mapping that names more than
+// one reads as the first of folder, tag, type.
+func sourceIn(v *yaml.Node) *DailySource {
 	var d DailySource
 	if t, ok := scalarText(first(mapValue(v, "folder"))); ok {
 		t = bindingKey(t)
@@ -158,19 +316,29 @@ func dailyIn(top *yaml.Node) *DailySource {
 	return &d
 }
 
-// Daily returns the source of the daily text, nil when the space has none.
-func (s *Space) Daily() *DailySource {
+// Daily returns the daily configuration, nil when the space has none.
+func (s *Space) Daily() *DailyConfig {
 	d := s.config().daily
 	if d == nil {
 		return nil
 	}
-	c := *d
+	c := DailyConfig{}
+	if d.All != nil {
+		a := *d.All
+		c.All = &a
+	}
+	if d.ByLang != nil {
+		c.ByLang = make(map[string]DailySource, len(d.ByLang))
+		for k, v := range d.ByLang {
+			c.ByLang[k] = v
+		}
+	}
 	return &c
 }
 
-// checkDaily validates a source a request gives, and returns it with the
+// CheckDailySource validates a source a request gives, and returns it with the
 // folder as it is spelled on disk.
-func (s *Space) checkDaily(d DailySource) (DailySource, error) {
+func (s *Space) CheckDailySource(d DailySource) (DailySource, error) {
 	n := 0
 	if d.Folder != nil {
 		n++
@@ -224,10 +392,40 @@ func (s *Space) checkDaily(d DailySource) (DailySource, error) {
 	return d, nil
 }
 
-// SetDaily replaces the source of the daily text; nil removes it. It returns
-// the source as it is now. The change is one commit, like a change of views.
-func (s *Space) SetDaily(by Author, d *DailySource) (*DailySource, error) {
-	var want *DailySource
+func (s *Space) checkDaily(c DailyConfig) (DailyConfig, error) {
+	var out DailyConfig
+	if c.All != nil {
+		d, err := s.CheckDailySource(*c.All)
+		if err != nil {
+			return c, err
+		}
+		out.All = &d
+		return out, nil
+	}
+	if len(c.ByLang) == 0 {
+		return c, invalidf("give a source: folder, tag or type, or one for each language")
+	}
+	if len(c.ByLang) > maxDailyLangs {
+		return c, invalidf("at most %d languages", maxDailyLangs)
+	}
+	out.ByLang = map[string]DailySource{}
+	for lang, d := range c.ByLang {
+		if !ValidLang(lang) {
+			return c, invalidf("%q is not a language code", lang)
+		}
+		checked, err := s.CheckDailySource(d)
+		if err != nil {
+			return c, err
+		}
+		out.ByLang[NormalLang(lang)] = checked
+	}
+	return out, nil
+}
+
+// SetDaily replaces the daily configuration; nil removes it. It returns the
+// configuration as it is now. The change is one commit, like a change of views.
+func (s *Space) SetDaily(by Author, d *DailyConfig) (*DailyConfig, error) {
+	var want *DailyConfig
 	if d != nil {
 		c, err := s.checkDaily(*d)
 		if err != nil {
@@ -235,7 +433,7 @@ func (s *Space) SetDaily(by Author, d *DailySource) (*DailySource, error) {
 		}
 		want = &c
 	}
-	return mutate(s, by, func(tx *txn) (*DailySource, error) {
+	return mutate(s, by, func(tx *txn) (*DailyConfig, error) {
 		err := s.editSpaceFile(tx, func(root *yaml.Node) (bool, error) { return setDailyIn(root, want) })
 		if err != nil {
 			return nil, err
@@ -244,9 +442,44 @@ func (s *Space) SetDaily(by Author, d *DailySource) (*DailySource, error) {
 	})
 }
 
-// setDailyIn writes the daily source into the settings top, or removes it.
-// What else the entry holds (comments, keys the server does not know) stays.
-func setDailyIn(top *yaml.Node, d *DailySource) (bool, error) {
+// writeSource writes a source into the mapping n, the writer's own. The key
+// that names the source stays where it is, with its comments, and is renamed
+// when the source changes from one kind to another.
+func writeSource(n *yaml.Node, d DailySource) {
+	want, text := "type", d.Type
+	switch {
+	case d.Folder != nil:
+		want, text = "folder", *d.Folder
+	case d.Tag != "":
+		want, text = "tag", d.Tag
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if k, ok := keyText(n.Content[i]); ok && isSourceKey(k) {
+			if k != want {
+				nk := textNode(want)
+				nk.HeadComment, nk.LineComment, nk.FootComment = n.Content[i].HeadComment, n.Content[i].LineComment, n.Content[i].FootComment
+				n.Content[i] = nk
+			}
+			break
+		}
+	}
+	for _, k := range []string{"folder", "tag", "type"} {
+		if k != want {
+			removeKey(n, k)
+		}
+	}
+	setKey(n, want, textNode(text))
+	if len(d.Filter) > 0 {
+		setKey(n, "filter", filterNode(d.Filter))
+	} else {
+		removeKey(n, "filter")
+	}
+}
+
+// setDailyIn writes the daily configuration into the settings top, or removes
+// it. What else the entry holds (comments, keys the server does not know)
+// stays.
+func setDailyIn(top *yaml.Node, d *DailyConfig) (bool, error) {
 	cur, at := mapValue(top, "daily")
 	if d == nil {
 		if at < 0 && cur == nil {
@@ -274,63 +507,121 @@ func setDailyIn(top *yaml.Node, d *DailySource) (bool, error) {
 		n = fresh()
 		top.Content[at+1] = n
 	}
-	want, text := "type", d.Type
-	switch {
-	case d.Folder != nil:
-		want, text = "folder", *d.Folder
-	case d.Tag != "":
-		want, text = "tag", d.Tag
-	}
-	// The key that names the source stays where it is, with its comments, and
-	// is renamed when the source changes from one kind to another.
-	for i := 0; i+1 < len(n.Content); i += 2 {
-		if k, ok := keyText(n.Content[i]); ok && (k == "folder" || k == "tag" || k == "type") {
-			if k != want {
-				nk := textNode(want)
-				nk.HeadComment, nk.LineComment, nk.FootComment = n.Content[i].HeadComment, n.Content[i].LineComment, n.Content[i].FootComment
-				n.Content[i] = nk
-			}
-			break
+	if d.All != nil {
+		// Sources by language that were there go: this one is for all of them.
+		for _, k := range langKeys(n) {
+			removeKey(n, k)
 		}
+		writeSource(n, *d.All)
+		return true, nil
 	}
-	for _, k := range []string{"folder", "tag", "type"} {
-		if k != want {
+	for _, k := range []string{"folder", "tag", "type", "filter"} {
+		removeKey(n, k)
+	}
+	have := map[string]bool{}
+	for _, k := range langKeys(n) {
+		if _, keep := d.ByLang[NormalLang(k)]; !keep {
 			removeKey(n, k)
 		}
 	}
-	setKey(n, want, textNode(text))
-	if len(d.Filter) > 0 {
-		setKey(n, "filter", filterNode(d.Filter))
-	} else {
-		removeKey(n, "filter")
+	langs := make([]string, 0, len(d.ByLang))
+	for l := range d.ByLang {
+		langs = append(langs, l)
+	}
+	sort.Strings(langs)
+	for _, l := range langs {
+		found := false
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if k, ok := keyText(n.Content[i]); ok && ValidLang(k) && NormalLang(k) == l {
+				sub := own(n, i+1)
+				if sub.Kind != yaml.MappingNode {
+					noteReplaced(top, "daily: "+k)
+					sub = fresh()
+					n.Content[i+1] = sub
+				}
+				writeSource(sub, d.ByLang[l])
+				found = true
+			}
+		}
+		if !found && !have[l] {
+			sub := fresh()
+			writeSource(sub, d.ByLang[l])
+			n.Content = append(n.Content, textNode(l), sub)
+		}
 	}
 	return true, nil
 }
 
-// rebindDaily makes the daily source follow a folder that was moved from
-// `from` to `to`: it is the folder or one below it.
+// langKeys are the keys of a daily mapping that are sources by language.
+func langKeys(n *yaml.Node) []string {
+	var out []string
+	seen := map[string]bool{}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		k, ok := keyText(n.Content[i])
+		if ok && ValidLang(k) && !seen[k] {
+			if v := deref(n.Content[i+1]); v != nil && v.Kind == yaml.MappingNode {
+				seen[k] = true
+				out = append(out, k)
+			}
+		}
+	}
+	return out
+}
+
+// movedFolder is where a folder named by a source goes when `from` moves to `to`.
+func movedFolder(src *yaml.Node, from, to string) (string, bool) {
+	f, _ := mapValue(src, "folder")
+	t, ok := scalarText(f)
+	if !ok {
+		return "", false
+	}
+	key := bindingKey(t)
+	switch {
+	case key == from:
+		return to, true
+	case strings.HasPrefix(key, from+"/"):
+		return to + key[len(from):], true
+	}
+	return "", false
+}
+
+// rebindDaily makes the daily sources follow a folder that was moved from
+// `from` to `to`: those that name the folder or one below it.
 func rebindDaily(top *yaml.Node, from, to string) (bool, error) {
 	cur, at := mapValue(top, "daily")
 	if at < 0 || cur == nil || cur.Kind != yaml.MappingNode {
 		return false, nil
 	}
-	f, fat := mapValue(cur, "folder")
-	t, ok := scalarText(f)
-	if !ok || fat < 0 {
-		return false, nil
+	anyMoves := false
+	if hasSourceKey(cur) {
+		_, anyMoves = movedFolder(cur, from, to)
+	} else {
+		eachPair(cur, func(k string, v *yaml.Node, _ int) {
+			if v != nil && v.Kind == yaml.MappingNode {
+				if _, ok := movedFolder(v, from, to); ok {
+					anyMoves = true
+				}
+			}
+		})
 	}
-	key := bindingKey(t)
-	var nk string
-	switch {
-	case key == from:
-		nk = to
-	case strings.HasPrefix(key, from+"/"):
-		nk = to + key[len(from):]
-	default:
+	if !anyMoves {
 		return false, nil
 	}
 	n := own(top, at+1)
-	setKey(n, "folder", textNode(nk))
+	if hasSourceKey(n) {
+		nk, _ := movedFolder(n, from, to)
+		setKey(n, "folder", textNode(nk))
+		return true, nil
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if k, ok := keyText(n.Content[i]); ok && ValidLang(k) {
+			if v := deref(n.Content[i+1]); v != nil && v.Kind == yaml.MappingNode {
+				if nk, ok := movedFolder(v, from, to); ok {
+					setKey(own(n, i+1), "folder", textNode(nk))
+				}
+			}
+		}
+	}
 	return true, nil
 }
 
@@ -387,7 +678,11 @@ func ValidDailySkip(skip int) bool { return skip >= 0 && skip <= maxDailySkip }
 
 // dailyNumber is the number a day of a space starts at: the same for everybody
 // who asks about that day, and unlike the one of the day before.
-func dailyNumber(spaceID, date string) uint64 {
+func dailyNumber(spaceID, date string) uint64 { return DailyNumber(spaceID, date) }
+
+// DailyNumber is the number a day of a space (or of anything else that is
+// picked from, named by key) starts at.
+func DailyNumber(spaceID, date string) uint64 {
 	sum := sha256.Sum256([]byte(spaceID + "\x00" + date))
 	return binary.BigEndian.Uint64(sum[:8])
 }
@@ -399,17 +694,30 @@ func dailyNumber(spaceID, date string) uint64 {
 // modulo how many there are: one counting query and one read by position, both
 // on the index, and the one file of the page for its body. A pick is
 // remembered for the (source, date, skip) until the page is gone.
-func (s *Space) DailyText(spaceID, date string, skip int) (*DailyPick, DailyNone, error) {
+func (s *Space) DailyText(spaceID, date string, skip int, lang string) (*DailyPick, DailyNone, error) {
 	if !ValidDailyDate(date) {
 		return nil, 0, invalidf("date must be a day like 2026-11-23")
 	}
 	if !ValidDailySkip(skip) {
 		return nil, 0, invalidf("skip must be a number from 0 to %d", maxDailySkip)
 	}
-	src := s.config().daily
+	src := s.config().daily.For(lang)
 	if src == nil {
 		return nil, DailyNoSource, nil
 	}
+	return s.DailyFrom(spaceID, date, skip, *src)
+}
+
+// DailyFrom is DailyText for a source the caller has: the site's default
+// source may name a folder, tag or type of this space.
+func (s *Space) DailyFrom(spaceID, date string, skip int, source DailySource) (*DailyPick, DailyNone, error) {
+	if !ValidDailyDate(date) {
+		return nil, 0, invalidf("date must be a day like 2026-11-23")
+	}
+	if !ValidDailySkip(skip) {
+		return nil, 0, invalidf("skip must be a number from 0 to %d", maxDailySkip)
+	}
+	src := &source
 	q := index.PickQuery{Folder: src.Folder, Recursive: src.Folder != nil, Type: src.Type}
 	if src.Tag != "" {
 		q.Tags = []string{src.Tag}
@@ -466,7 +774,7 @@ func (s *Space) DailyText(spaceID, date string, skip int) (*DailyPick, DailyNone
 		if !remembered {
 			return nil, DailyNoMatch, nil
 		}
-		return s.DailyText(spaceID, date, skip)
+		return s.DailyFrom(spaceID, date, skip, source)
 	}
 	if err != nil {
 		return nil, 0, err
@@ -521,3 +829,6 @@ func (s *Space) foldersOfType(typ string) []string {
 	}
 	return out
 }
+
+// CheckDailyConfig validates a configuration a caller gives for this space.
+func (s *Space) CheckDailyConfig(c DailyConfig) (DailyConfig, error) { return s.checkDaily(c) }

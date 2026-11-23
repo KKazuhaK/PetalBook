@@ -295,6 +295,7 @@ func DeleteSpace(ctx context.Context, q Q, id string) (members []string, err err
 		`DELETE FROM drafts WHERE space_id = ?`,
 		`DELETE FROM remotes WHERE space_id = ?`,
 		`DELETE FROM favorites WHERE space_id = ?`,
+		`DELETE FROM space_daily WHERE space_id = ?`,
 		`DELETE FROM space_members WHERE space_id = ?`,
 	} {
 		if _, err := q.Exec(ctx, stmt, id); err != nil {

@@ -21,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/KKazuhaK/PetalBook/internal/auth"
+	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
 	"github.com/KKazuhaK/PetalBook/internal/drafts"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/index"
@@ -78,6 +79,9 @@ type Options struct {
 	// proxies to this one. Cross-site checks stay on whatever else is set.
 	AllowOrigins []string
 	Logger       *slog.Logger
+	// DailyFetch gets the daily text from the external interfaces an
+	// administrator configured; the one that refuses private addresses when nil.
+	DailyFetch *dailyfetch.Fetcher
 }
 
 type server struct {
@@ -110,6 +114,9 @@ func New(opt Options) http.Handler {
 	}
 	if opt.Version == "" {
 		opt.Version = "dev"
+	}
+	if opt.DailyFetch == nil {
+		opt.DailyFetch = dailyfetch.New()
 	}
 	s := &server{opt: opt, log: opt.Logger, auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, single: opt.Auth == nil, started: time.Now(),
 		origins: map[string]bool{}, originHosts: map[string]bool{}, importing: make(chan struct{}, 1)}

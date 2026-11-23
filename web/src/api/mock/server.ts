@@ -7,6 +7,7 @@ import type { AdminSpace, ConnectRemoteInput, FieldKind, Identity, Invite, Membe
 import { gitBlobId } from './sha1.ts'
 import { ALPHABET, HttpError, compareCodePoints, createSpaceStore, isRecord, rfc3339, validFolder, type SpaceStore } from './store.ts'
 import { SPACE_NAME } from './seed.ts'
+import { pickNumber, validLang } from './homeBook.ts'
 import { createFileStore, DEFAULT_MAX_UPLOAD, type FileStore } from './files.ts'
 import { DEFAULT_MAX_IMPORT, runImport } from './importer.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
@@ -567,6 +568,7 @@ export function createMockServer(options: MockOptions = {}) {
   const needOf = (me: UserRec, method: string, rest: string): Permission => {
     // Types and their bindings are for those who manage the space; reading them is reading.
     if ((rest.startsWith('/types/') && method !== 'GET') || (rest === '/folders/type' && method === 'PUT')) return 'manage'
+    if ((rest === '/daily/settings' && method === 'PUT') || (rest === '/daily/prefs' && method === 'PUT') || (rest === '/favorites' && method !== 'GET') || rest === '/favorites/order') return rest.startsWith('/favorites') ? 'read' : 'manage'
     if ((rest === '' && method === 'PATCH') || rest === '/reindex' || rest === '/remote' || rest.startsWith('/remote/')) return 'manage'
     if (rest === '/members' || rest.startsWith('/members/')) {
       if (method === 'GET') return 'read'
@@ -575,6 +577,98 @@ export function createMockServer(options: MockOptions = {}) {
       return 'members'
     }
     return method === 'GET' ? 'read' : 'write'
+  }
+
+  // --- the daily text of the whole server (what administrators give) ---
+  // Only the default that is a list of lines is kept here: the real server also
+  // takes a space as the default and fetches from external interfaces, which a
+  // mock has nothing to fetch for.
+  const site = { lines: new Map<string, { body: string; source: string }[]>(), listDefault: false, hosts: [] as string[] }
+  const spaceDaily = new Map<string, { inherit: boolean; apis: string[] }>()
+  const siteView = () => {
+    const byLang: Record<string, number> = {}
+    let total = 0
+    for (const [l, list] of site.lines) {
+      if (list.length) byLang[l] = list.length
+      total += list.length
+    }
+    return { default: site.listDefault ? { kind: 'list' } : null, hosts: [...site.hosts], apis: [], lines: { total, byLang, max: 5000 } }
+  }
+  const dailyText = (space: SpaceRec, q: URLSearchParams): Record<string, unknown> => {
+    const home = space.store.home
+    const { date, skip, lang } = home.checkQuery(q)
+    const own = home.sourceOf(lang)
+    if (own) return home.pick(space.id, q, own) ?? { page: null, reason: 'no_match' }
+    if (accounts && site.listDefault && (spaceDaily.get(space.id)?.inherit ?? true)) {
+      const base = lang.split('-')[0]
+      const use = [lang, base, ''].find((l) => (site.lines.get(l)?.length ?? 0) > 0) ?? [...site.lines.keys()].filter((l) => (site.lines.get(l)?.length ?? 0) > 0).sort()[0]
+      const list = use === undefined ? [] : (site.lines.get(use) ?? [])
+      if (list.length) {
+        const line = list[pickNumber('site:' + use, date, skip, list.length)]
+        return { page: null, quote: { text: line.body, ...(line.source ? { source: line.source } : {}) }, origin: 'site' }
+      }
+    }
+    return { page: null, reason: 'no_source' }
+  }
+  const routeDailyPrefs = (space: SpaceRec, method: string, body: Record<string, unknown>): MockResponse => {
+    const cur = spaceDaily.get(space.id) ?? { inherit: true, apis: [] }
+    if (method === 'PUT') {
+      if (typeof body.inherit !== 'boolean' || !Array.isArray(body.apis)) throw new HttpError(400, 'invalid', '给 inherit 和 apis')
+      if (body.apis.length) throw new HttpError(400, 'invalid', `没有接口 ${String(body.apis[0])}：只能用管理员设好的`)
+      spaceDaily.set(space.id, { inherit: body.inherit, apis: [] })
+    } else if (method !== 'GET') throw new HttpError(404, 'not_found', '没有这个接口')
+    const now = spaceDaily.get(space.id) ?? cur
+    return { status: 200, body: { inherit: now.inherit, apis: now.apis, available: [], default: site.listDefault ? { kind: 'list' } : null } }
+  }
+  const routeSiteDaily = (method: string, path: string, url: URL, body: Record<string, unknown>): MockResponse => {
+    if (path === '/admin/daily' && method === 'GET') return { status: 200, body: siteView() }
+    if (path === '/admin/daily' && method === 'PUT') {
+      for (const k of Object.keys(body)) if (!['default', 'hosts', 'apis'].includes(k)) throw new HttpError(400, 'invalid', `不认识 ${k}`)
+      if ('apis' in body && !(Array.isArray(body.apis) && body.apis.length === 0)) throw new HttpError(400, 'invalid', 'the mock has no external interfaces')
+      if ('hosts' in body && !(Array.isArray(body.hosts) && body.hosts.every((h) => typeof h === 'string'))) throw new HttpError(400, 'invalid', 'hosts 是主机名的列表')
+      let listDefault = site.listDefault
+      if ('default' in body) {
+        const d = body.default
+        if (d === null) listDefault = false
+        else if (isRecord(d) && d.kind === 'list' && d.space === undefined && d.source === undefined) listDefault = true
+        else throw new HttpError(400, 'invalid', 'the mock takes a default that is a list, or null')
+      }
+      if ('hosts' in body) site.hosts = (body.hosts as string[]).map((h) => h.trim().toLowerCase())
+      site.listDefault = listDefault
+      return { status: 200, body: siteView() }
+    }
+    if (path === '/admin/daily/lines' && method === 'PUT') {
+      const lang = typeof body.lang === 'string' ? body.lang.toLowerCase() : ''
+      if (lang !== '' && !validLang(lang)) throw new HttpError(400, 'invalid', 'lang 要是语言代码，或空')
+      const format = body.format ?? 'lines'
+      if (format !== 'lines' && format !== 'markdown') throw new HttpError(400, 'invalid', 'format 是 lines 或 markdown')
+      const text = typeof body.text === 'string' ? body.text.replace(/\r\n/g, '\n') : ''
+      if (text.includes('\0')) throw new HttpError(400, 'invalid', '有空字符')
+      let parts: string[]
+      if (format === 'lines') parts = text.split('\n').filter((l) => l.trim() !== '')
+      else {
+        const hasRule = text.split('\n').some((l) => l.trim() === '---')
+        parts = (hasRule ? text.split(/^\s*---\s*$/m) : text.split(/\n\s*\n/)).map((x) => x.trim()).filter((x) => x !== '')
+      }
+      if (parts.length === 0) throw new HttpError(400, 'invalid', '里面没有文字；要去掉这些行，请删除')
+      const total = [...site.lines].filter(([l]) => l !== lang).reduce((n, [, v]) => n + v.length, 0) + parts.length
+      if (total > 5000) throw new HttpError(400, 'invalid', '服务器一共最多保留 5000 行')
+      site.lines.set(
+        lang,
+        parts.map((p) => {
+          const [b, ...rest] = p.split('\t')
+          return { body: b.trim(), source: rest.join('\t').trim() }
+        }),
+      )
+      return { status: 200, body: siteView() }
+    }
+    if (path === '/admin/daily/lines' && method === 'DELETE') {
+      const lang = (url.searchParams.get('lang') ?? '').toLowerCase()
+      if (lang !== '' && !validLang(lang)) throw new HttpError(400, 'invalid', 'lang 要是语言代码，或空')
+      site.lines.delete(lang)
+      return { status: 200, body: siteView() }
+    }
+    throw new HttpError(404, 'not_found', '没有这个接口')
   }
 
   // --- members ---
@@ -915,6 +1009,17 @@ export function createMockServer(options: MockOptions = {}) {
       return { status: 200, body: st.views(v.has('folder') ? (v.get('folder') ?? '') : undefined, v.get('tag') ?? undefined) }
     }
     if (rest === '/views' && method === 'PUT') return { status: 200, body: st.putViews(body) }
+    if (rest === '/daily' && method === 'GET') return { status: 200, body: dailyText(space, url.searchParams) }
+    if (rest === '/daily/settings' && method === 'GET') return { status: 200, body: { daily: st.home.config() } }
+    if (rest === '/daily/settings' && method === 'PUT') return { status: 200, body: st.home.setConfig(body) }
+    if (rest === '/daily/prefs') {
+      accountsOnly()
+      return routeDailyPrefs(space, method, body)
+    }
+    if (rest === '/favorites' && method === 'GET') return { status: 200, body: st.home.favorites(u.id) }
+    if (rest === '/favorites' && method === 'POST') return { status: 200, body: st.home.addFavorite(u.id, body) }
+    if (rest === '/favorites' && method === 'DELETE') return { status: 200, body: st.home.removeFavorite(u.id, url.searchParams.get('kind'), url.searchParams.get('target')) }
+    if (rest === '/favorites/order' && method === 'PUT') return { status: 200, body: st.home.orderFavorites(u.id, body) }
     if (rest === '/pages/batch' && method === 'POST') return { status: 200, body: st.batch(body) }
     const hist = /^\/pages\/([^/]+)\/history$/.exec(rest)
     if (hist && method === 'GET') return { status: 200, body: st.history(decodeURIComponent(hist[1]), url.searchParams) }
@@ -1154,6 +1259,11 @@ export function createMockServer(options: MockOptions = {}) {
       accountsOnly()
       requireAdmin(ctx)
       return routeAdmin(method, path, url, body)
+    }
+    if (path === '/admin/daily' || path.startsWith('/admin/daily/')) {
+      accountsOnly()
+      requireAdmin(ctx)
+      return routeSiteDaily(method, path, url, body)
     }
 
     // --- spaces ---

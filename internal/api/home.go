@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
@@ -14,7 +15,7 @@ import (
 // getDailySettings tells where the daily text of the space comes from.
 func (s *server) getDailySettings(c *call) {
 	writeJSON(c.w, http.StatusOK, struct {
-		Daily *space.DailySource `json:"daily"`
+		Daily *space.DailyConfig `json:"daily"`
 	}{c.sp.Space.Daily()})
 }
 
@@ -29,18 +30,18 @@ func (s *server) putDailySettings(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "give daily: the source of the daily text, or null to remove it")
 		return
 	}
-	var src *space.DailySource
-	if err := json.Unmarshal(raw, &src); err != nil {
+	var cfg *space.DailyConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil {
 		writeError(c.w, http.StatusBadRequest, "invalid", "daily: "+err.Error())
 		return
 	}
-	d, err := c.sp.Space.SetDaily(s.author(c), src)
+	d, err := c.sp.Space.SetDaily(s.author(c), cfg)
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
 	writeJSON(c.w, http.StatusOK, struct {
-		Daily *space.DailySource `json:"daily"`
+		Daily *space.DailyConfig `json:"daily"`
 	}{d})
 }
 
@@ -51,7 +52,9 @@ type dailyPageResp struct {
 	BodyTruncated bool   `json:"bodyTruncated"`
 }
 
-// getDaily answers with the daily text of a day.
+// getDaily answers with the daily text of a day, from the first of: the
+// space's own source, the external interface the space chose, the server's
+// default (see dailysite.go).
 func (s *server) getDaily(c *call) {
 	v := c.r.URL.Query()
 	date := v.Get("date")
@@ -71,26 +74,57 @@ func (s *server) getDaily(c *call) {
 		}
 		skip = n
 	}
-	pick, none, err := c.sp.Space.DailyText(c.sp.Info.ID, date, skip)
+	lang := space.NormalLang(v.Get("lang"))
+	if lang != "" && !space.ValidLang(lang) {
+		writeError(c.w, http.StatusBadRequest, "invalid", "lang must be a language code like zh or en")
+		return
+	}
+	type none struct {
+		Page   *dailyPageResp `json:"page"`
+		Reason string         `json:"reason"`
+	}
+	// 1. The space's own.
+	pick, why, err := c.sp.Space.DailyText(c.sp.Info.ID, date, skip, lang)
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	if pick == nil {
-		reason := "no_source"
-		if none == space.DailyNoMatch {
-			reason = "no_match"
-		}
+	if pick != nil {
 		writeJSON(c.w, http.StatusOK, struct {
 			Page   *dailyPageResp `json:"page"`
-			Reason string         `json:"reason"`
-		}{nil, reason})
+			Count  int            `json:"count"`
+			Origin string         `json:"origin"`
+		}{&dailyPageResp{toSummary(pick.Page, c.sp.Space.TypeResolver()), pick.Body, pick.Truncated}, pick.Count, "space"})
 		return
 	}
-	writeJSON(c.w, http.StatusOK, struct {
-		Page  *dailyPageResp `json:"page"`
-		Count int            `json:"count"`
-	}{&dailyPageResp{toSummary(pick.Page, c.sp.Space.TypeResolver()), pick.Body, pick.Truncated}, pick.Count})
+	if why == space.DailyNoMatch {
+		writeJSON(c.w, http.StatusOK, none{nil, "no_match"})
+		return
+	}
+	// 2 and 3. What the administrators gave (accounts mode only).
+	if !s.single {
+		q, reason, err := s.siteDaily(c, date, skip, lang)
+		switch {
+		case errors.Is(err, dailyfetch.ErrRateLimited):
+			c.w.Header().Set("Retry-After", "10")
+			writeError(c.w, http.StatusTooManyRequests, "rate_limited", "another text was asked for too often; try again in a moment")
+			return
+		case err != nil:
+			s.fail(c.w, err)
+			return
+		case q != nil:
+			writeJSON(c.w, http.StatusOK, struct {
+				Page   *dailyPageResp `json:"page"`
+				Quote  *dailyQuote    `json:"quote"`
+				Origin string         `json:"origin"`
+			}{nil, q, q.origin})
+			return
+		case reason != "":
+			writeJSON(c.w, http.StatusOK, none{nil, reason})
+			return
+		}
+	}
+	writeJSON(c.w, http.StatusOK, none{nil, "no_source"})
 }
 
 // --- favourites ---------------------------------------------------------------------

@@ -105,7 +105,7 @@ type configCache struct {
 	bindings []Binding
 	byFolder map[string]string
 	views    map[string][]View // by folder, only those that have some
-	daily    *DailySource      // where the daily text comes from, when the file says
+	daily    *DailyConfig      // where the daily text comes from, when the file says
 	blocked  string            // what is in the way of the file, when something is
 }
 

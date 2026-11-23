@@ -11,13 +11,13 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/index"
 )
 
-func dailyFolder(s *Space, folder string, filter ...ViewFilter) *DailySource {
-	return &DailySource{Folder: &folder, Filter: filter}
+func dailyFolder(s *Space, folder string, filter ...ViewFilter) *DailyConfig {
+	return &DailyConfig{All: &DailySource{Folder: &folder, Filter: filter}}
 }
 
 func mustDaily(t *testing.T, s *Space, spaceID, date string, skip int) *DailyPick {
 	t.Helper()
-	p, none, err := s.DailyText(spaceID, date, skip)
+	p, none, err := s.DailyText(spaceID, date, skip, "")
 	if err != nil || p == nil {
 		t.Fatalf("daily %s/%d: %v %v", date, skip, none, err)
 	}
@@ -73,7 +73,7 @@ func TestDailyIsTheSameForADayAndMovesWithTheDayAndSkip(t *testing.T) {
 		date string
 		skip int
 	}{{"23 Nov", 0}, {"2026-02-30", 0}, {"2026-11-23", -1}, {"2026-11-23", 1 << 21}} {
-		if _, _, err := s.DailyText("S", c.date, c.skip); err == nil {
+		if _, _, err := s.DailyText("S", c.date, c.skip, ""); err == nil {
 			t.Errorf("%v is accepted", c)
 		}
 	}
@@ -98,7 +98,7 @@ func TestDailyKeepsTheDaysPickWhilePagesComeAndGo(t *testing.T) {
 	if _, err := s.SetDaily(Author{}, dailyFolder(s, "f", ViewFilter{Key: "k", Op: "notEmpty"})); err != nil {
 		t.Fatal(err)
 	}
-	if _, none, err := s.DailyText("S", "2026-11-23", 0); err != nil || none != DailyNoMatch {
+	if _, none, err := s.DailyText("S", "2026-11-23", 0, ""); err != nil || none != DailyNoMatch {
 		t.Fatalf("%v %v", none, err)
 	}
 	if _, err := s.SetDaily(Author{}, dailyFolder(s, "f")); err != nil {
@@ -151,7 +151,7 @@ func TestDailyFollowsAFolderMoveAndItsRecovery(t *testing.T) {
 	if _, err := s.MoveFolder(Author{}, "A", "B"); err != nil {
 		t.Fatal(err)
 	}
-	if d := s.Daily(); d == nil || *d.Folder != "B/sub" {
+	if d := s.Daily(); d == nil || *d.All.Folder != "B/sub" {
 		t.Fatalf("%+v\n%s", d, spaceYML(root))
 	}
 	if got := mustDaily(t, s, "S", "2026-11-23", 0); got.Page.Folder != "B/sub" {
@@ -162,7 +162,7 @@ func TestDailyFollowsAFolderMoveAndItsRecovery(t *testing.T) {
 	if _, err := s.MoveFolder(Author{}, "Bx", "By"); err != nil {
 		t.Fatal(err)
 	}
-	if d := s.Daily(); *d.Folder != "B/sub" {
+	if d := s.Daily(); *d.All.Folder != "B/sub" {
 		t.Fatalf("%+v", d)
 	}
 	// A crash after the rename, before space.yml was written.
@@ -175,7 +175,7 @@ func TestDailyFollowsAFolderMoveAndItsRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	s2 := openAt(t, root)
-	if d := s2.Daily(); d == nil || *d.Folder != "C/sub" {
+	if d := s2.Daily(); d == nil || *d.All.Folder != "C/sub" {
 		t.Fatalf("after recovery: %+v\n%s", d, spaceYML(root))
 	}
 }
@@ -198,7 +198,7 @@ func TestDailyTypeCountsTheFoldersBoundToIt(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := s.SetDaily(Author{}, &DailySource{Type: "t"}); err != nil {
+	if _, err := s.SetDaily(Author{}, &DailyConfig{All: &DailySource{Type: "t"}}); err != nil {
 		t.Fatal(err)
 	}
 	// "in A" (the folder's), "own" (the header's, though its folder is bound to u)
@@ -218,7 +218,7 @@ func TestDailyTypeCountsTheFoldersBoundToIt(t *testing.T) {
 	if _, err := s.BindFolder(Author{}, "", "u"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.SetDaily(Author{}, &DailySource{Type: "u"}); err != nil {
+	if _, err := s.SetDaily(Author{}, &DailyConfig{All: &DailySource{Type: "u"}}); err != nil {
 		t.Fatal(err)
 	}
 	if p := mustDaily(t, s, "S", "2026-11-23", 0); p.Count != 2 {
@@ -242,7 +242,7 @@ func TestDailySourceInTheSettingsFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".petalbook", "space.yml"), []byte(hand), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if d := s.Daily(); d == nil || d.Tag != "诗" {
+	if d := s.Daily(); d == nil || d.All == nil || d.All.Tag != "诗" {
 		t.Fatalf("an alias is read as what it stands for: %+v", d)
 	}
 	// Changing it does not change what the anchor means.
@@ -253,12 +253,12 @@ func TestDailySourceInTheSettingsFile(t *testing.T) {
 	if !strings.Contains(y, "shared:") || !strings.Contains(y, "tag: 诗") || !strings.Contains(y, "folder: f") || !strings.Contains(y, "notes: keep") {
 		t.Fatalf("%s", y)
 	}
-	if d := s.Daily(); d == nil || d.Folder == nil || *d.Folder != "f" || d.Tag != "" {
+	if d := s.Daily(); d == nil || d.All == nil || d.All.Folder == nil || *d.All.Folder != "f" || d.All.Tag != "" {
 		t.Fatalf("%+v\n%s", d, y)
 	}
 	// Written by hand with more than one: the first of folder, tag, type counts.
 	os.WriteFile(filepath.Join(root, ".petalbook", "space.yml"), []byte("daily:\n  type: t\n  tag: 诗\n"), 0o644)
-	if d := s.Daily(); d == nil || d.Tag != "诗" {
+	if d := s.Daily(); d == nil || d.All == nil || d.All.Tag != "诗" {
 		t.Fatalf("%+v", d)
 	}
 	// A value that is not settings reads as none and is written over.
@@ -269,13 +269,13 @@ func TestDailySourceInTheSettingsFile(t *testing.T) {
 	if _, err := s.SetDaily(Author{}, dailyFolder(s, "f")); err != nil {
 		t.Fatal(err)
 	}
-	if d := s.Daily(); d == nil || *d.Folder != "f" {
+	if d := s.Daily(); d == nil || *d.All.Folder != "f" {
 		t.Fatalf("%+v", d)
 	}
 	// A file that cannot be used: the settings of the last version that could be.
 	s.Flush()
 	os.WriteFile(filepath.Join(root, ".petalbook", "space.yml"), []byte("daily: [unclosed\nfolders: {{\n"), 0o644)
-	if d := s.Daily(); d == nil || *d.Folder != "f" {
+	if d := s.Daily(); d == nil || *d.All.Folder != "f" {
 		t.Fatalf("restored from the history: %+v", d)
 	}
 	if _, err := s.SetDaily(Author{}, nil); err != nil {
@@ -308,14 +308,116 @@ func TestDailyIsRefusedWhenNotMade(t *testing.T) {
 		"a bad filter": {Folder: &f, Filter: []ViewFilter{{Key: "", Op: "in"}}},
 		"too many":     {Folder: &f, Filter: tooMany},
 	} {
-		if _, err := s.SetDaily(Author{}, &d); err == nil {
+		if _, err := s.SetDaily(Author{}, &DailyConfig{All: &d}); err == nil {
 			t.Errorf("%s is accepted", name)
 		}
 	}
 	if s.Daily() != nil {
 		t.Fatal("a refused source was written")
 	}
-	if p, none, err := s.DailyText("S", "2026-11-23", 0); err != nil || p != nil || none != DailyNoSource {
+	if p, none, err := s.DailyText("S", "2026-11-23", 0, ""); err != nil || p != nil || none != DailyNoSource {
 		t.Fatalf("%v %v %v", p, none, err)
+	}
+}
+
+func TestDailyConfigByLanguage(t *testing.T) {
+	needGit(t)
+	root := t.TempDir()
+	s := openAt(t, root)
+	mustCreate(t, s, "文案/a", meta("title", "中文一"), "中\n")
+	mustCreate(t, s, "quotes", meta("title", "English one", "tags", []any{"q"}), "en\n")
+	zh, en := "文案", "quotes"
+	cfg := &DailyConfig{ByLang: map[string]DailySource{"zh": {Folder: &zh}, "EN": {Folder: &en}}}
+	got, err := s.SetDaily(Author{}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.ByLang) != 2 || got.ByLang["en"].Folder == nil || got.All != nil {
+		t.Fatalf("%+v", got)
+	}
+	y := spaceYML(root)
+	if !strings.Contains(y, "daily:") || !strings.Contains(y, "zh:") || !strings.Contains(y, "en:") || !strings.Contains(y, "folder: 文案") {
+		t.Fatalf("%s", y)
+	}
+	// Each language is picked from its own source; a region follows its language.
+	for lang, title := range map[string]string{"zh": "中文一", "zh-CN": "中文一", "en": "English one", "en-GB": "English one"} {
+		if p := mustDailyLang(t, s, lang); p.Page.Title != title {
+			t.Errorf("%s: %s", lang, p.Page.Title)
+		}
+	}
+	// A language nobody wrote a source for gets one of the sources, always the same.
+	a, b := mustDailyLang(t, s, "fr"), mustDailyLang(t, s, "de")
+	if a.Page.Title != b.Page.Title || a.Page.Title != "English one" {
+		t.Errorf("%s %s", a.Page.Title, b.Page.Title)
+	}
+	if p := mustDailyLang(t, s, ""); p.Page.Title != "English one" {
+		t.Errorf("no language: %s", p.Page.Title)
+	}
+	// A folder moved takes the sources of every language with it.
+	if _, err := s.MoveFolder(Author{}, "文案", "诗"); err != nil {
+		t.Fatal(err)
+	}
+	if d := s.Daily(); d == nil || *d.ByLang["zh"].Folder != "诗" || *d.ByLang["en"].Folder != "quotes" {
+		t.Fatalf("%+v\n%s", d, spaceYML(root))
+	}
+	// Dropping one language keeps the other; the same everywhere replaces them all.
+	if _, err := s.SetDaily(Author{}, &DailyConfig{ByLang: map[string]DailySource{"en": {Folder: &en}}}); err != nil {
+		t.Fatal(err)
+	}
+	if d := s.Daily(); len(d.ByLang) != 1 || strings.Contains(spaceYML(root), "zh:") {
+		t.Fatalf("%+v\n%s", d, spaceYML(root))
+	}
+	if _, err := s.SetDaily(Author{}, &DailyConfig{All: &DailySource{Tag: "q"}}); err != nil {
+		t.Fatal(err)
+	}
+	if d := s.Daily(); d.All == nil || d.All.Tag != "q" || len(d.ByLang) != 0 || strings.Contains(spaceYML(root), "en:") {
+		t.Fatalf("%+v\n%s", d, spaceYML(root))
+	}
+	// ... and back.
+	if _, err := s.SetDaily(Author{}, &DailyConfig{ByLang: map[string]DailySource{"zh": {Tag: "q"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if d := s.Daily(); d.All != nil || d.ByLang["zh"].Tag != "q" || strings.Contains(spaceYML(root), "\n  tag: q") {
+		t.Fatalf("%+v\n%s", d, spaceYML(root))
+	}
+	for name, c := range map[string]DailyConfig{
+		"a bad code": {ByLang: map[string]DailySource{"chinese!": {Tag: "q"}}},
+		"a bad one":  {ByLang: map[string]DailySource{"en": {}}},
+		"none":       {},
+	} {
+		if _, err := s.SetDaily(Author{}, &c); err == nil {
+			t.Errorf("%s is accepted", name)
+		}
+	}
+}
+
+func mustDailyLang(t *testing.T, s *Space, lang string) *DailyPick {
+	t.Helper()
+	p, none, err := s.DailyText("S", "2026-11-23", 0, lang)
+	if err != nil || p == nil {
+		t.Fatalf("daily %q: %v %v", lang, none, err)
+	}
+	return p
+}
+
+func TestDailyConfigJSON(t *testing.T) {
+	var c DailyConfig
+	for in, ok := range map[string]bool{
+		`{"folder":"a"}`:                         true,
+		`{"tag":"a","filter":[]}`:                true,
+		`{"zh":{"folder":"a"},"en":{"tag":"b"}}`: true,
+		`{"zh-CN":{"type":"t"}}`:                 true,
+		`{}`:                                     false,
+		`{"zh":{"folder":"a"},"ZH":{"tag":"b"}}`: false,
+		`{"folder":"a","tag":"b"}`:               false,
+		`{"zh":{}}`:                              false,
+		`{"toolongcode":{"tag":"b"}}`:            false,
+		`{"zh":"folder"}`:                        false,
+		`[]`:                                     false,
+	} {
+		c = DailyConfig{}
+		if err := c.UnmarshalJSON([]byte(in)); (err == nil) != ok {
+			t.Errorf("%s: %v", in, err)
+		}
 	}
 }

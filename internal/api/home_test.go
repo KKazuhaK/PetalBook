@@ -246,13 +246,14 @@ func dailyScenario(t *testing.T, base string, owner, editor, viewer caller, refu
 	if _, r := dailyID(t, viewer, base, "date=2026-11-23"); r["count"] != float64(4+12+1) {
 		t.Fatalf("a type: %v", r["count"])
 	}
+	// Every page of the type is reached by skip (a day alone may miss one).
 	seen = map[string]bool{}
-	for _, d := range days(40) {
-		id, _ := dailyID(t, viewer, base, "date="+d)
+	for k := 0; k < 17; k++ {
+		id, _ := dailyID(t, viewer, base, fmt.Sprintf("date=2026-11-23&skip=%d", k))
 		seen[id] = true
 	}
-	if !seen[own] || len(seen) < 6 {
-		t.Errorf("40 days showed %d pages, the page with the header type among them: %v", len(seen), seen[own])
+	if !seen[own] || len(seen) != 17 {
+		t.Errorf("skip 0..16 showed %d pages, the page with the header type among them: %v", len(seen), seen[own])
 	}
 	// A header that says another type takes the page out of the folder's.
 	other := mk("文案", "另一类", "o\n", map[string]any{"type": "task"})
