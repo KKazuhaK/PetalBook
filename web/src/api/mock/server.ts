@@ -7,7 +7,8 @@ import type { AdminSpace, ConnectRemoteInput, FieldKind, Identity, Invite, Membe
 import { gitBlobId } from './sha1.ts'
 import { ALPHABET, HttpError, compareCodePoints, createSpaceStore, isRecord, rfc3339, validFolder, type SpaceStore } from './store.ts'
 import { SPACE_NAME } from './seed.ts'
-import { pickNumber, validLang } from './homeBook.ts'
+import { pickNumber } from './homeBook.ts'
+import { canonicalTag, matchTag } from '../../lib/langTags.ts'
 import { createFileStore, DEFAULT_MAX_UPLOAD, type FileStore } from './files.ts'
 import { DEFAULT_MAX_IMPORT, runImport } from './importer.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
@@ -580,30 +581,112 @@ export function createMockServer(options: MockOptions = {}) {
   }
 
   // --- the daily text of the whole server (what administrators give) ---
-  // Only the default that is a list of lines is kept here: the real server also
-  // takes a space as the default, which a mock does not need.
+  // The default that is a space is not kept here: the real server also takes a space as the default, which a
+  // mock does not need. Languages are canonical BCP 47 tags, as on the server.
   interface SiteApi {
     id: string
     name: string
     lang: string
+    languages?: string[]
     url: string
     headers: { name: string; value: string }[]
     text: string
     source: string
     author: string
     link: string
+    langMap: Record<string, string>
     refresh: string
     refreshMinutes: number
     skipNew: boolean
     rps: number
     enabled: boolean
+    builtin?: boolean
   }
-  const site = { lines: new Map<string, { body: string; source: string }[]>(), listDefault: false, allow: { own: true, api: true }, hosts: [] as string[], languages: ['zh', 'en'], apis: [] as SiteApi[] }
+  type SiteDefault = null | { kind: 'list' } | { kind: 'api'; apis: Record<string, string> }
+  interface ProviderState {
+    enabled: boolean
+    refresh?: string
+    minutes?: number
+    rps?: number
+    skipNew?: boolean
+  }
+  const site = { lines: new Map<string, { body: string; source: string }[]>(), default: null as SiteDefault, allow: { own: true, api: true }, languages: ['zh-Hans', 'en'], apis: [] as SiteApi[], providers: {} as Record<string, ProviderState> }
   const spaceDaily = new Map<string, { inherit: boolean; apis: string[] }>()
-  const PRESETS = [
-    { id: 'hitokoto', name: '一言', lang: 'zh', url: 'https://international.v1.hitokoto.cn/?max_length=80', text: 'hitokoto', source: 'from', author: 'from_who', link: 'https://hitokoto.cn?uuid={uuid}', refresh: 'daily', refreshMinutes: 0, skipNew: true, rps: 20, enabled: true, note: '' },
-    { id: 'quotable', name: 'Quotable', lang: 'en', url: 'https://api.quotable.io/quotes/random', text: '[0].content', source: '', author: '[0].author', link: '', refresh: 'daily', refreshMinutes: 0, skipNew: true, rps: 3, enabled: true, note: '' },
+  const KNOWN_LANGUAGES = [
+    { tag: 'zh-Hans', name: '中文（简体）', english: 'Chinese (Simplified)' },
+    { tag: 'zh-Hant', name: '中文（繁體）', english: 'Chinese (Traditional)' },
+    { tag: 'en', name: 'English', english: 'English' },
+    { tag: 'ja', name: '日本語', english: 'Japanese' },
+    { tag: 'ko', name: '한국어', english: 'Korean' },
+    { tag: 'fr', name: 'français', english: 'French' },
+    { tag: 'de', name: 'Deutsch', english: 'German' },
+    { tag: 'es', name: 'español', english: 'Spanish' },
+    { tag: 'pt-BR', name: 'português (Brasil)', english: 'Portuguese (Brazil)' },
+    { tag: 'pt-PT', name: 'português (Portugal)', english: 'Portuguese (Portugal)' },
+    { tag: 'ru', name: 'русский', english: 'Russian' },
+    { tag: 'it', name: 'italiano', english: 'Italian' },
+    { tag: 'nl', name: 'Nederlands', english: 'Dutch' },
+    { tag: 'pl', name: 'polski', english: 'Polish' },
+    { tag: 'tr', name: 'Türkçe', english: 'Turkish' },
+    { tag: 'uk', name: 'українська', english: 'Ukrainian' },
+    { tag: 'cs', name: 'čeština', english: 'Czech' },
+    { tag: 'sv', name: 'svenska', english: 'Swedish' },
+    { tag: 'da', name: 'dansk', english: 'Danish' },
+    { tag: 'nb', name: 'norsk bokmål', english: 'Norwegian Bokmål' },
+    { tag: 'fi', name: 'suomi', english: 'Finnish' },
+    { tag: 'el', name: 'Ελληνικά', english: 'Greek' },
+    { tag: 'he', name: 'עברית', english: 'Hebrew' },
+    { tag: 'ar', name: 'العربية', english: 'Arabic' },
+    { tag: 'fa', name: 'فارسی', english: 'Persian' },
+    { tag: 'hi', name: 'हिन्दी', english: 'Hindi' },
+    { tag: 'bn', name: 'বাংলা', english: 'Bengali' },
+    { tag: 'ta', name: 'தமிழ்', english: 'Tamil' },
+    { tag: 'th', name: 'ไทย', english: 'Thai' },
+    { tag: 'vi', name: 'Tiếng Việt', english: 'Vietnamese' },
+    { tag: 'id', name: 'Indonesia', english: 'Indonesian' },
+    { tag: 'ms', name: 'Melayu', english: 'Malay' },
+    { tag: 'fil', name: 'Filipino', english: 'Filipino' },
+    { tag: 'ro', name: 'română', english: 'Romanian' },
+    { tag: 'hu', name: 'magyar', english: 'Hungarian' },
+    { tag: 'bg', name: 'български', english: 'Bulgarian' },
+    { tag: 'ca', name: 'català', english: 'Catalan' },
+    { tag: 'la', name: 'Latina', english: 'Latin' },
+    { tag: 'en-GB', name: 'English (United Kingdom)', english: 'English (United Kingdom)' },
+    { tag: 'es-419', name: 'español (Latinoamérica)', english: 'Spanish (Latin America)' },
+    { tag: 'yue-Hant', name: '粵語（繁體）', english: 'Cantonese (Traditional)' },
   ]
+  const PROVIDERS = [
+    { id: 'hitokoto', name: '一言', languages: ['zh-Hans', 'zh-Hant'], site: 'https://hitokoto.cn', note: 'Free, no key.', url: 'https://international.v1.hitokoto.cn/?max_length=80', text: 'hitokoto', source: 'from', author: 'from_who', link: 'https://hitokoto.cn?uuid={uuid}', rps: 20 },
+    { id: 'quotable', name: 'Quotable', languages: ['en'], site: 'https://github.com/lukePeavey/quotable', note: 'Open source, no key.', url: 'https://api.quotable.io/quotes/random', text: '[0].content', source: '', author: '[0].author', link: '', rps: 3 },
+  ]
+  const badLang = (tag: string) => new HttpError(400, 'bad_language', `“${tag}” 不是 zh-Hans、en、pt-BR 这样的语言标签`)
+  const tagOf = (raw: unknown): string => {
+    const tag = typeof raw === 'string' ? canonicalTag(raw) : null
+    if (tag === null) throw badLang(String(raw))
+    return tag
+  }
+  const providerApi = (p: (typeof PROVIDERS)[number], st: ProviderState): SiteApi => ({
+    id: p.id,
+    name: p.name,
+    lang: p.languages[0],
+    languages: p.languages,
+    url: p.url,
+    headers: [],
+    text: p.text,
+    source: p.source,
+    author: p.author,
+    link: p.link,
+    langMap: {},
+    refresh: st.refresh ?? 'daily',
+    refreshMinutes: st.refresh === 'minutes' ? (st.minutes ?? 0) : 0,
+    skipNew: st.skipNew ?? true,
+    rps: st.rps ?? p.rps,
+    enabled: true,
+    builtin: true,
+  })
+  // The interfaces that are set up: the administrators' own, and the built-in ones that are switched on.
+  const allApis = (): SiteApi[] => [...site.apis, ...PROVIDERS.filter((p) => site.providers[p.id]?.enabled).map((p) => providerApi(p, site.providers[p.id]))]
+  const apiTags = (a: SiteApi): string[] => a.languages ?? (a.lang === '' ? [] : [a.lang])
   const siteView = () => {
     const byLang: Record<string, number> = {}
     let total = 0
@@ -612,14 +695,32 @@ export function createMockServer(options: MockOptions = {}) {
       total += list.length
     }
     return {
-      default: site.listDefault ? { kind: 'list' } : null,
-      hosts: [...site.hosts],
+      default: site.default === null ? null : { ...site.default },
       languages: [...site.languages],
+      knownLanguages: KNOWN_LANGUAGES,
       allow: { ...site.allow },
-      apis: site.apis.map(({ headers, ...rest }) => ({ ...rest, headers: headers.map((h) => ({ name: h.name, set: true })) })),
-      presets: PRESETS,
+      apis: allApis().map(({ headers, ...rest }) => ({ ...rest, headers: headers.map((h) => ({ name: h.name, set: true })) })),
+      providers: PROVIDERS.map((p) => {
+        const st = site.providers[p.id] ?? { enabled: false }
+        const a = providerApi(p, st)
+        return { id: p.id, name: p.name, languages: p.languages, site: p.site, note: p.note, enabled: st.enabled, refresh: a.refresh, minutes: a.refreshMinutes, rps: a.rps, maxRps: p.rps, skipNew: a.skipNew }
+      }),
       lines: { total, byLang, max: 5000 },
     }
+  }
+  // The interface for a language of a space's choice: the one made for the language the reader's is matched to, else
+  // one for every language, else any.
+  const chooseApi = (chosen: SiteApi[], lang: string): SiteApi | undefined => {
+    const m = matchTag(lang, chosen.flatMap(apiTags))
+    return (m !== null ? chosen.find((a) => apiTags(a).includes(m)) : undefined) ?? chosen.find((a) => a.lang === '') ?? chosen[0]
+  }
+  const quoteFrom = (api: SiteApi, date: string, skip: number): Record<string, unknown> => {
+    // An external interface knows only today and the days next to it: another date is no error, there is just no text.
+    if (Math.abs(Date.parse(date + 'T00:00:00Z') - Date.parse(new Date(now()).toISOString().slice(0, 10) + 'T00:00:00Z')) > 86400_000) return { page: null, reason: 'out_of_range' }
+    const quote: Record<string, unknown> = { text: `${api.name} ${date}${skip ? ` #${skip}` : ''}`, ...(api.source ? { source: 'src' } : {}), ...(api.author ? { author: 'au' } : {}) }
+    if (api.link) quote.link = api.link.replaceAll('{uuid}', 'u1')
+    if (api.id.includes('stale')) Object.assign(quote, { stale: true, fetched: '2026-11-20T08:00:00Z' })
+    return { page: null, quote, origin: 'external' }
   }
   const dailyText = (space: SpaceRec, q: URLSearchParams): Record<string, unknown> => {
     const home = space.store.home
@@ -627,21 +728,25 @@ export function createMockServer(options: MockOptions = {}) {
     const locked = accounts ? site.allow : { own: true, api: true } // a locked source or choice is kept, and not used
     const own = locked.own ? home.sourceOf(lang) : undefined
     if (own) return home.pick(space.id, q, own) ?? { page: null, reason: 'no_match' }
-    // An interface the space chose (the one for the language, else one for every language). The mock makes no
-    // requests: the text names the interface, and an id with "stale" in it plays one that did not answer.
-    const chosen = site.apis.filter((a) => a.enabled && locked.api && (spaceDaily.get(space.id)?.apis ?? []).includes(a.id))
-    const api = chosen.find((a) => a.lang !== '' && lang.startsWith(a.lang)) ?? chosen.find((a) => a.lang === '') ?? chosen[0]
-    if (accounts && api) {
-      // An external interface knows only today and the days next to it: another date is no error, there is just no text.
-      if (Math.abs(Date.parse(date + 'T00:00:00Z') - Date.parse(new Date(now()).toISOString().slice(0, 10) + 'T00:00:00Z')) > 86400_000) return { page: null, reason: 'out_of_range' }
-      const quote: Record<string, unknown> = { text: `${api.name} ${date}${skip ? ` #${skip}` : ''}`, ...(api.source ? { source: 'src' } : {}), ...(api.author ? { author: 'au' } : {}) }
-      if (api.link) quote.link = api.link.replaceAll('{uuid}', 'u1')
-      if (api.id.includes('stale')) Object.assign(quote, { stale: true, fetched: '2026-11-20T08:00:00Z' })
-      return { page: null, quote, origin: 'external' }
-    }
-    if (accounts && site.listDefault && (spaceDaily.get(space.id)?.inherit ?? true)) {
-      const base = lang.split('-')[0]
-      const use = [lang, base, ''].find((l) => (site.lines.get(l)?.length ?? 0) > 0) ?? [...site.lines.keys()].filter((l) => (site.lines.get(l)?.length ?? 0) > 0).sort()[0]
+    // An interface the space chose. The mock makes no requests: the text names the interface, and an id with
+    // "stale" in it plays one that did not answer.
+    const apis = allApis()
+    const chosen = apis.filter((a) => a.enabled && locked.api && (spaceDaily.get(space.id)?.apis ?? []).includes(a.id))
+    const api = chooseApi(chosen, lang)
+    if (accounts && api) return quoteFrom(api, date, skip)
+    if (accounts && site.default !== null && (spaceDaily.get(space.id)?.inherit ?? true)) {
+      if (site.default.kind === 'api') {
+        // The administrators' own choice, not limited by what spaces may choose.
+        const map = site.default.apis
+        const m = matchTag(lang, Object.keys(map).filter((k) => k !== ''))
+        const id = m !== null ? map[m] : map['']
+        if (id === undefined) return { page: null, reason: 'no_source' }
+        const one = apis.find((a) => a.id === id && a.enabled)
+        return one ? quoteFrom(one, date, skip) : { page: null, reason: 'unavailable' }
+      }
+      const have = [...site.lines.keys()].filter((l) => l !== '' && (site.lines.get(l)?.length ?? 0) > 0)
+      const m = matchTag(lang, have)
+      const use = m ?? ((site.lines.get('')?.length ?? 0) > 0 ? '' : have.sort()[0])
       const list = use === undefined ? [] : (site.lines.get(use) ?? [])
       if (list.length) {
         const line = list[pickNumber('site:' + use, date, skip, list.length)]
@@ -651,14 +756,14 @@ export function createMockServer(options: MockOptions = {}) {
     return { page: null, reason: 'no_source' }
   }
   const routeDailyPrefs = (space: SpaceRec, method: string, body: Record<string, unknown>): MockResponse => {
+    const available = allApis().filter((a) => a.enabled)
     if (method === 'PUT') {
       if (typeof body.inherit !== 'boolean' || !Array.isArray(body.apis)) throw new HttpError(400, 'invalid', '给 inherit 和 apis')
-      const usable = new Set(site.apis.filter((a) => a.enabled).map((a) => a.id))
+      const usable = new Set(available.map((a) => a.id))
       for (const id of body.apis) if (typeof id !== 'string' || !usable.has(id)) throw new HttpError(400, 'invalid', `没有接口 ${String(id)}：只能用管理员设好并启用的`)
       spaceDaily.set(space.id, { inherit: body.inherit, apis: [...new Set(body.apis as string[])] })
     } else if (method !== 'GET') throw new HttpError(404, 'not_found', '没有这个接口')
     const now = spaceDaily.get(space.id) ?? { inherit: true, apis: [] }
-    const available = site.apis.filter((a) => a.enabled)
     return {
       status: 200,
       body: {
@@ -667,19 +772,45 @@ export function createMockServer(options: MockOptions = {}) {
         available: available.map((a) => ({ id: a.id, name: a.name, lang: a.lang })),
         languages: [...site.languages],
         allowed: { ...site.allow },
-        default: site.listDefault ? { kind: 'list' } : null,
+        default: site.default === null ? null : { kind: site.default.kind },
       },
     }
+  }
+  // A built-in interface is switched and tuned; what is fixed in it is not for changing.
+  const putProvider = (p: (typeof PROVIDERS)[number], body: Record<string, unknown>, fromApi: boolean): void => {
+    const bad = (m: string) => new HttpError(400, 'invalid', m)
+    const st: ProviderState = { ...(site.providers[p.id] ?? { enabled: false }) }
+    if (typeof body.enabled === 'boolean') st.enabled = body.enabled
+    else if (fromApi && !st.enabled) st.enabled = true
+    else if (!fromApi) throw bad('给 enabled（true 或 false）')
+    if (body.refresh !== undefined && body.refresh !== '') {
+      if (!['daily', 'hourly', 'minutes'].includes(String(body.refresh))) throw bad('refresh 是 daily、hourly 或 minutes')
+      st.refresh = String(body.refresh)
+      st.minutes = 0
+      if (st.refresh === 'minutes') {
+        const m = Number(body.minutes ?? body.refreshMinutes)
+        if (!(Number.isInteger(m) && m >= 1 && m <= 1440)) throw bad('minutes 是 1 到 1440')
+        st.minutes = m
+      }
+    }
+    if (body.rps !== undefined && body.rps !== 0) {
+      const r = Number(body.rps)
+      if (!(r >= 0.01 && r <= p.rps)) throw bad(`rps 是 0.01 到 ${p.rps}，是 ${p.name} 允许的最多`)
+      st.rps = r
+    }
+    if (typeof body.skipNew === 'boolean') st.skipNew = body.skipNew
+    site.providers[p.id] = st
   }
   const routeSiteDaily = (method: string, path: string, url: URL, body: Record<string, unknown>): MockResponse => {
     if (path === '/admin/daily' && method === 'GET') return { status: 200, body: siteView() }
     if (path === '/admin/daily' && method === 'PUT') {
+      // A `hosts` sent by an older client is ignored: there is no list of hosts.
       for (const k of Object.keys(body)) if (!['default', 'hosts', 'languages', 'allow'].includes(k)) throw new HttpError(400, 'invalid', `不认识 ${k}`)
-      if ('hosts' in body && !(Array.isArray(body.hosts) && body.hosts.every((h) => typeof h === 'string'))) throw new HttpError(400, 'invalid', 'hosts 是主机名的列表')
       let languages = site.languages
       if ('languages' in body) {
-        if (!Array.isArray(body.languages) || body.languages.some((l) => typeof l !== 'string' || !validLang(l.toLowerCase()))) throw new HttpError(400, 'invalid', 'languages 是 zh、en 这样的语言代码的列表')
-        languages = [...new Set((body.languages as string[]).map((l) => l.toLowerCase()))]
+        if (!Array.isArray(body.languages)) throw new HttpError(400, 'invalid', 'languages 是 zh-Hans、en 这样的语言标签的列表')
+        if (body.languages.length > 30) throw new HttpError(400, 'invalid', '最多 30 种语言')
+        languages = [...new Set((body.languages as unknown[]).map(tagOf))]
       }
       let allow = site.allow
       if ('allow' in body) {
@@ -687,22 +818,39 @@ export function createMockServer(options: MockOptions = {}) {
         if (!isRecord(a) || (a.own === undefined && a.api === undefined) || (a.own !== undefined && typeof a.own !== 'boolean') || (a.api !== undefined && typeof a.api !== 'boolean')) throw new HttpError(400, 'invalid', 'allow 是 {own: true 或 false, api: true 或 false}')
         allow = { own: typeof a.own === 'boolean' ? a.own : allow.own, api: typeof a.api === 'boolean' ? a.api : allow.api }
       }
-      let listDefault = site.listDefault
+      let next = site.default
       if ('default' in body) {
         const d = body.default
-        if (d === null) listDefault = false
-        else if (isRecord(d) && d.kind === 'list' && d.space === undefined && d.source === undefined) listDefault = true
-        else throw new HttpError(400, 'invalid', 'the mock takes a default that is a list, or null')
+        if (d === null) next = null
+        else if (isRecord(d) && d.kind === 'list' && d.space === undefined && d.source === undefined && d.apis === undefined) next = { kind: 'list' }
+        else if (isRecord(d) && d.kind === 'api' && d.space === undefined && d.source === undefined && isRecord(d.apis) && Object.keys(d.apis).length > 0) {
+          const ids = new Set(allApis().map((a) => a.id))
+          const apis: Record<string, string> = {}
+          for (const [k, id] of Object.entries(d.apis)) {
+            const tag = k === '' ? '' : tagOf(k)
+            if (tag in apis) throw new HttpError(400, 'invalid', `${tag} 写了两次`)
+            if (typeof id !== 'string' || !ids.has(id)) throw new HttpError(400, 'api_not_found', `没有接口 ${String(id)}`)
+            apis[tag] = id
+          }
+          next = { kind: 'api', apis }
+        } else throw new HttpError(400, 'invalid', 'the mock takes a default that is a list or interfaces, or null')
       }
-      if ('hosts' in body) site.hosts = (body.hosts as string[]).map((h) => h.trim().toLowerCase())
-      site.listDefault = listDefault
+      site.default = next
       site.languages = languages
       site.allow = allow
+      return { status: 200, body: siteView() }
+    }
+    const providerOne = /^\/admin\/daily\/providers\/([^/]+)$/.exec(path)
+    if (providerOne && method === 'PUT') {
+      const p = PROVIDERS.find((x) => x.id === decodeURIComponent(providerOne[1]))
+      if (!p) throw new HttpError(404, 'not_found', '没有这个内置接口')
+      putProvider(p, body, false)
       return { status: 200, body: siteView() }
     }
     const apiOne = /^\/admin\/daily\/apis\/([^/]+)$/.exec(path)
     if (apiOne && method === 'DELETE') {
       const id = decodeURIComponent(apiOne[1])
+      if (PROVIDERS.some((p) => p.id === id)) throw new HttpError(400, 'builtin', '内置接口不能删除，请关闭它', { field: '' })
       if (!site.apis.some((a) => a.id === id)) throw new HttpError(404, 'not_found', '没有这个接口')
       site.apis = site.apis.filter((a) => a.id !== id)
       return { status: 200, body: siteView() }
@@ -712,12 +860,31 @@ export function createMockServer(options: MockOptions = {}) {
       const old = site.apis.find((a) => a.id === id)
       const bad = (m: string) => new HttpError(400, 'invalid', m)
       if (body.id !== undefined && body.id !== id) throw bad('body 里的 id 和地址里的不一样')
+      const provider = PROVIDERS.find((p) => p.id === id)
+      if (provider) {
+        // What is fixed must be as it is; the rest is what a provider takes.
+        const fixed: [string, unknown][] = [['name', provider.name], ['lang', provider.languages[0]], ['url', provider.url], ['text', provider.text], ['source', provider.source], ['author', provider.author], ['link', provider.link]]
+        for (const [f, want] of fixed) if (body[f] !== undefined && body[f] !== '' && body[f] !== want) throw new HttpError(400, 'builtin', `内置接口 ${id} 的 ${f} 不能改`, { field: f })
+        if (Array.isArray(body.headers) && body.headers.length > 0) throw new HttpError(400, 'builtin', '内置接口不能有请求头', { field: 'headers' })
+        if (isRecord(body.langMap) && Object.keys(body.langMap).length > 0) throw new HttpError(400, 'builtin', '内置接口的语言对照不能改', { field: 'langMap' })
+        putProvider(provider, { enabled: body.enabled, refresh: body.refresh, minutes: body.refreshMinutes, rps: body.rps, skipNew: body.skipNew }, true)
+        return { status: 200, body: siteView() }
+      }
       if (!/^[a-z0-9_-]{1,32}$/.test(id)) throw bad('接口 id 是 1 到 32 个小写字母、数字、- 或 _')
       const str = (k: string) => (typeof body[k] === 'string' ? (body[k] as string).trim() : '')
       const name = str('name')
       if (name === '' || Array.from(name).length > 100) throw bad('接口要有名字')
-      const lang = str('lang').toLowerCase()
-      if (lang !== '' && !validLang(lang)) throw bad('lang 是语言代码，或空')
+      const lang = str('lang') === '' ? '' : tagOf(str('lang'))
+      const langMap: Record<string, string> = {}
+      if (body.langMap !== undefined && body.langMap !== null) {
+        if (!isRecord(body.langMap)) throw bad('langMap 是 {语言: 代码}')
+        for (const [k, v] of Object.entries(body.langMap)) {
+          const tag = tagOf(k)
+          if (typeof v !== 'string' || !/^[A-Za-z0-9_-]{1,35}$/.test(v)) throw bad(`langMap 里 ${tag} 的代码是 1 到 35 个字母、数字、- 或 _`)
+          if (tag in langMap) throw bad(`langMap 里 ${tag} 写了两次`)
+          langMap[tag] = v
+        }
+      }
       const url = str('url')
       let u: URL
       try {
@@ -766,6 +933,7 @@ export function createMockServer(options: MockOptions = {}) {
         source: str('source'),
         author: str('author'),
         link: str('link'),
+        langMap,
         refresh,
         refreshMinutes,
         skipNew: body.skipNew === true,
@@ -773,7 +941,6 @@ export function createMockServer(options: MockOptions = {}) {
         enabled: typeof body.enabled === 'boolean' ? body.enabled : (old?.enabled ?? true),
       }
       site.apis = old ? site.apis.map((a) => (a.id === id ? made : a)) : [...site.apis, made]
-      if (!site.hosts.includes(u.host)) site.hosts.push(u.host)
       return { status: 200, body: siteView() }
     }
     if (path === '/admin/daily/try' && method === 'POST') {
@@ -781,10 +948,9 @@ export function createMockServer(options: MockOptions = {}) {
       // "missing" or "null": the path finds nothing, which is an error for the text only).
       const a = (isRecord(body.api) ? body.api : {}) as Record<string, unknown>
       const url = String(a.url ?? '')
-      const tryHost = /^https?:\/\/([^/?#]+)/i.exec(url)?.[1]?.toLowerCase()
+      if (typeof body.lang === 'string' && body.lang !== '') tagOf(body.lang)
       // Like the server: a refusal with a code is a 400, the trial's output in `result`.
       const refused = (error: string, message: string, extra: Record<string, unknown> = {}, result: Record<string, unknown> = {}) => ({ status: 400, body: { error, message, ...extra, result: { ok: false, url, message, ...result } } })
-      if (tryHost && !site.hosts.includes(tryHost)) return refused('host_not_allowed', `the host ${tryHost} is not on the list of hosts`, { host: tryHost })
       if (url.includes('html')) return refused('not_json', 'the answer is not JSON')
       if (url.includes('huge')) return refused('too_large', 'the answer is too large')
       if (url.includes('down')) return { status: 200, body: { ok: false, message: 'status 503', status: 503, url } }
@@ -805,8 +971,7 @@ export function createMockServer(options: MockOptions = {}) {
       return { status: 200, body: { ok: true, status: 200, url, raw, rawTruncated: false, quote: clean } }
     }
     if (path === '/admin/daily/lines' && method === 'PUT') {
-      const lang = typeof body.lang === 'string' ? body.lang.toLowerCase() : ''
-      if (lang !== '' && !validLang(lang)) throw new HttpError(400, 'invalid', 'lang 要是语言代码，或空')
+      const lang = body.lang === undefined || body.lang === '' ? '' : tagOf(body.lang)
       const format = body.format ?? 'lines'
       if (format !== 'lines' && format !== 'markdown') throw new HttpError(400, 'invalid', 'format 是 lines 或 markdown')
       const text = typeof body.text === 'string' ? body.text.replace(/\r\n/g, '\n') : ''
@@ -830,9 +995,8 @@ export function createMockServer(options: MockOptions = {}) {
       return { status: 200, body: siteView() }
     }
     if (path === '/admin/daily/lines' && method === 'DELETE') {
-      const lang = (url.searchParams.get('lang') ?? '').toLowerCase()
-      if (lang !== '' && !validLang(lang)) throw new HttpError(400, 'invalid', 'lang 要是语言代码，或空')
-      site.lines.delete(lang)
+      const raw = url.searchParams.get('lang') ?? ''
+      site.lines.delete(raw === '' ? '' : tagOf(raw))
       return { status: 200, body: siteView() }
     }
     throw new HttpError(404, 'not_found', '没有这个接口')
