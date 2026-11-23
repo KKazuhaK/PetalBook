@@ -43,6 +43,9 @@ export const keys = {
   // change somewhere would be heavy; it is a snapshot that is taken afresh when the reading is opened.
   reading: (space: string, params: ListParams) => ['space', space, 'reading', params] as const,
   page: (space: string, id: string) => ['space', space, 'page', id] as const,
+  // Under `pages`, so what writes a page reads them again.
+  links: (space: string, id: string) => ['space', space, 'pages', 'links', id] as const,
+  backlinks: (space: string, id: string) => ['space', space, 'pages', 'backlinks', id] as const,
   history: (space: string, id: string) => ['space', space, 'history', id, 'list'] as const,
   version: (space: string, id: string, commit: string) => ['space', space, 'history', id, 'version', commit] as const,
   remote: (space: string) => ['space', space, 'remote'] as const,
@@ -340,6 +343,30 @@ export function usePage(space: string, id: string) {
     staleTime: Infinity,
     refetchOnWindowFocus: false,
     retry: (count, e) => !(e as { status?: number }).status && count < 2,
+  })
+}
+
+// Where the links of a page lead, for marking the broken ones and for hover text.
+export function usePageLinks(id: string, enabled = true) {
+  const space = useSpaceId()
+  return useQuery({
+    enabled: enabled && space !== '' && id !== '',
+    queryKey: keys.links(space, id),
+    queryFn: ({ signal }) => spaceApi(space).links(id, signal),
+    staleTime: 30_000,
+  })
+}
+
+// The pages that link to this one, 20 at a time; nothing is asked until `enabled`.
+export function useBacklinks(id: string, enabled = true) {
+  const space = useSpaceId()
+  return useInfiniteQuery({
+    enabled: enabled && space !== '' && id !== '',
+    queryKey: keys.backlinks(space, id),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => spaceApi(space).backlinks(id, pageParam || undefined, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    staleTime: 10_000,
   })
 }
 

@@ -5,6 +5,7 @@ import { t } from '@/i18n'
 import type {
   AccountInfo,
   AdminSpace,
+  BacklinkList,
   CreatePageInput,
   DraftInput,
   DraftReceipt,
@@ -20,6 +21,7 @@ import type {
   OidcIntent,
   Page,
   PageDraft,
+  PageLinkList,
   PageList,
   PatchPropsInput,
   PageVersion,
@@ -320,6 +322,10 @@ export function spaceApi(space: string) {
     deleteDraft: (id: string, version?: string, rev?: string) => request<void>(pageBase(id, `/draft${version ? `?version=${enc(version)}${rev ? `&rev=${enc(rev)}` : ''}` : ''}`), { method: 'DELETE' }),
     // Only the draft of that version is committed (409 with the page and the draft otherwise).
     commitPage: (id: string, version: string) => request<Page>(pageBase(id, '/commit'), { method: 'POST', body: { version } }),
+
+    // Who links to a page (20 at a time), and where its own links lead.
+    backlinks: (id: string, cursor?: string, signal?: AbortSignal) => request<BacklinkList>(pageBase(id, `/backlinks${cursor ? `?cursor=${enc(cursor)}` : ''}`), { signal }),
+    links: (id: string, signal?: AbortSignal) => request<PageLinkList>(pageBase(id, '/links'), { signal }),
 
     // Stores a file for a page; the answer's `path` is what the page refers to.
     uploadAsset: (id: string, file: Blob, name: string, signal?: AbortSignal) => request<UploadedAsset>(pageBase(id, `/assets?name=${enc(name)}`), { method: 'POST', blob: file, signal }),

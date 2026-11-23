@@ -165,6 +165,34 @@ export interface PageList {
   next: string
 }
 
+// A page that links to this one (`GET …/pages/{id}/backlinks`).
+export interface Backlink {
+  id: string
+  path: string
+  title: string
+  untitled: boolean
+  // The paragraph the link is in, as plain text; "" when the file no longer has the link.
+  excerpt: string
+}
+export interface BacklinkList {
+  items: Backlink[]
+  next: string
+  total: number
+}
+// One link of a page, in the order of the text (`GET …/pages/{id}/links`).
+export interface PageLink {
+  text: string
+  // The file the link names, from the root of the space.
+  path: string
+  id?: string
+  anchor?: string
+  broken: boolean
+  target?: { id: string; path: string; title: string; untitled: boolean }
+}
+export interface PageLinkList {
+  items: PageLink[]
+}
+
 export interface CreatePageInput {
   folder?: string
   meta?: PageMeta
