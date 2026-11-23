@@ -146,3 +146,22 @@ func TestLockIfAtCapLocksOnlyAKeyThatReachedTheCap(t *testing.T) {
 		t.Fatal("locked twice")
 	}
 }
+
+func TestTheAuditQueueDropsWhenFullAndSaysSo(t *testing.T) {
+	s := &Service{audit: newAuditLog(), now: time.Now}
+	for range auditQueueSize + 25 {
+		s.Audit(AuditEvent{Kind: "login", Username: "u"})
+	}
+	if n := len(s.audit.ch); n != auditQueueSize {
+		t.Fatalf("%d queued, want a full queue of %d", n, auditQueueSize)
+	}
+	if n := s.audit.dropped.Load(); n != 25 {
+		t.Fatalf("%d dropped, want 25", n)
+	}
+	// Ids sort by arrival, so the log reads in order.
+	a, _ := s.audit.row(AuditEvent{Kind: "x"}, time.Unix(1_000_000, 0))
+	b, _ := s.audit.row(AuditEvent{Kind: "x"}, time.Unix(1_000_000, 0))
+	if !(a.ID < b.ID) {
+		t.Fatalf("%s %s", a.ID, b.ID)
+	}
+}

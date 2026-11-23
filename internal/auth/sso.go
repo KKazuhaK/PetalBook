@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -234,7 +235,19 @@ func (s *Service) SAMLMetadata(slug string) ([]byte, error) {
 	if err != nil {
 		return nil, errf(Unavailable, "the provider's metadata is not available")
 	}
-	return p.MetadataXML()
+	// Only the signing key is offered: encrypted assertions are not supported
+	// (and are refused), and a provider that is shown an encryption key uses it.
+	md := p.Metadata()
+	for i := range md.SPSSODescriptors {
+		var keep []crewjamsaml.KeyDescriptor
+		for _, k := range md.SPSSODescriptors[i].KeyDescriptors {
+			if k.Use != "encryption" {
+				keep = append(keep, k)
+			}
+		}
+		md.SPSSODescriptors[i].KeyDescriptors = keep
+	}
+	return xml.MarshalIndent(md, "", "  ")
 }
 
 // --- starting ------------------------------------------------------------------

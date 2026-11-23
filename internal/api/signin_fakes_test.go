@@ -338,9 +338,7 @@ func (c *client) postACS(slug string, response []byte, relay string, ck *http.Co
 	if ck != nil {
 		req.AddCookie(&http.Cookie{Name: ck.Name, Value: ck.Value})
 	}
-	for _, x := range c.cookies {
-		req.AddCookie(&http.Cookie{Name: x.Name, Value: x.Value})
-	}
+	// The session cookie is SameSite=Lax: a browser does not send it with a post from another site.
 	rec := httptest.NewRecorder()
 	c.a.h.ServeHTTP(rec, req)
 	resp := rec.Result()
@@ -352,4 +350,29 @@ func (c *client) postACS(slug string, response []byte, relay string, ck *http.Co
 		}
 	}
 	return result{rec.Code, nil, rec.Body.String(), resp}
+}
+
+// respondTo makes this identity provider answer the AuthnRequest with the given
+// ID, signing with its own key, as an attacker would. It builds the request the
+// way a service provider does.
+func (s *fakeSAML) respondTo(t *testing.T, requestID string) []byte {
+	t.Helper()
+	sp := crewjamsaml.ServiceProvider{EntityID: s.spMeta.EntityID, AcsURL: url.URL{Scheme: "https", Host: "notes.example.test", Path: "/api/auth/saml/campus/acs"},
+		IDPMetadata: s.idp.Metadata(), AuthnNameIDFormat: crewjamsaml.PersistentNameIDFormat}
+	req, err := sp.MakeAuthenticationRequest(s.srv.URL+"/sso", crewjamsaml.HTTPRedirectBinding, crewjamsaml.HTTPPostBinding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.ID = requestID
+	redirect, err := req.Redirect("x", &sp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	s.idp.ServeSSO(rec, httptest.NewRequest("GET", s.srv.URL+"/sso?"+redirect.RawQuery, nil))
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	resp, _ := formFields(t, rec.Body.String())
+	return resp
 }

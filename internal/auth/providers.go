@@ -855,6 +855,15 @@ func (s *Service) CreateProvider(ctx context.Context, actorID, ip string, in Pro
 	if b.metaErr != nil && !errors.Is(b.metaErr, errUnreachable) {
 		return nil, b.metaErr
 	}
+	if err := s.writeBuilt(b, true); err != nil {
+		return nil, err
+	}
+	// What the metadata names may be an identity provider that has a provider already.
+	for _, o := range rows {
+		if b.row.Issuer != "" && o.Issuer == b.row.Issuer {
+			return nil, coded(409, "provider_issuer_in_use", "another provider already has this issuer")
+		}
+	}
 	if !rt.statusOK && !enabledAsked {
 		b.row.Enabled = false
 	}
