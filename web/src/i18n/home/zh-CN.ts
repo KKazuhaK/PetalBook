@@ -58,6 +58,7 @@ export const homeZhCN = {
     another: '换一条',
     anotherBusy: '换一条…',
     anotherFailed: '换不了一条，稍后再试。',
+    skipLimit: '今天最多只能换到这里了。',
     tooOften: '换得太快了，过一会儿再试。',
     open: '打开这一篇',
     via: (host: string) => `来源：${host}`,

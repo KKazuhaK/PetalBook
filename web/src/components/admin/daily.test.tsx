@@ -230,14 +230,18 @@ describe('the administrators\' daily text page', () => {
       expect(document.querySelector('[data-slot="header-again"]')).toBeNull()
     })
 
-    it('the server\'s words about headers and the try are put in the language of the page', async () => {
-      const { localised } = await import('./DailyPanel')
-      expect(localised('the host a.example is not on the list of hosts')).toBe(d.tryHostNotAllowed('a.example'))
-      expect(localised('the address goes to another host than before; give the value of the header X-Api-Key again')).toBe(d.headerNeedsValue('X-Api-Key'))
-      expect(localised('the header X-Api-Key has no value yet; give one')).toBe(d.headerValueMissing('X-Api-Key'))
-      expect(localised('the answer is larger than 1048576 bytes')).toBe(d.tryTooLarge(1048576))
-      expect(localised('the answer is not JSON (its Content-Type does not say so)')).toBe(d.tryNotJson)
-      expect(localised('something else')).toBeNull()
+    it('the link template says that request headers cannot be used in it, and a refusal by code is shown in the page\'s language', async () => {
+      await open()
+      await click(byText('button', d.addApi))
+      await settle(() => input('api-link') !== null, 'form')
+      expect(input('api-link').parentElement!.textContent).toContain(d.fieldLinkNoHeaders)
+      await type(input('api-id'), 'quotes')
+      await type(input('api-name'), 'Quotes')
+      await type(input('api-url'), 'https://example.org/q')
+      await type(input('api-text'), 'hitokoto')
+      await type(input('api-link'), 'https://example.org/{header.X-Api-Key}')
+      await click(formSave())
+      await settle(() => document.body.textContent!.includes(d.linkUsesHeader), 'the refusal')
     })
 
     it('a host that is not allowed yet is said before trying, can be added in one click, and a try says it in the page\'s language', async () => {

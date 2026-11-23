@@ -152,6 +152,29 @@ describe('the text of the day', () => {
     expect(m.requests.filter((r) => r.method !== 'GET' && !r.url.includes('/pages'))).toEqual([])
   })
 
+  it('skip_too_large turns "another" off with a short note, and keeps the text on screen', async () => {
+    m = await mount(routes, {
+      entries: (server) => {
+        seedTexts(sender(server))
+        return ['/s/default']
+      },
+      server: { mode: 'single' },
+    })
+    const server = m.server as { handle: (...a: any[]) => unknown }
+    const real = server.handle.bind(server)
+    server.handle = (method: string, url: string, ...rest: unknown[]) =>
+      url.includes('skip=1') ? { status: 400, body: { error: 'invalid', message: 'skip is too large', code: 'skip_too_large' } } : real(method, url, ...rest)
+    await ready()
+    await settle(() => daily() !== null && another() !== null, 'the text and the button')
+    const first = daily()!.textContent
+    await click(another())
+    await settle(() => document.querySelector('[data-slot="daily-skip-limit"]') !== null, 'the note')
+    expect(document.querySelector('[data-slot="daily-skip-limit"]')!.textContent).toBe(th.daily.skipLimit)
+    expect(another()!.disabled).toBe(true)
+    expect(daily()!.textContent).toContain(first!.split(th.daily.another)[0])
+    expect(document.body.textContent).not.toContain(th.daily.anotherFailed)
+  })
+
   it('a single page has nothing to change to', async () => {
     m = await mount(routes, {
       entries: (server) => {

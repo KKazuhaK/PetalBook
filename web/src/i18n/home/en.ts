@@ -57,6 +57,7 @@ export const homeEn: HomeMessages = {
     another: 'Another',
     anotherBusy: 'Another…',
     anotherFailed: 'Could not get another one; try again later.',
+    skipLimit: 'That is as many as can be skipped today.',
     tooOften: 'Too quick: try again in a moment.',
     open: 'Open this page',
     via: (host: string) => `From ${host}`,

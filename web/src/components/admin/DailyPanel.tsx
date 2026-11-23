@@ -16,22 +16,15 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { draftsFrom, emptyDraft, settingsFrom, tabsOf, type Drafts } from '@/lib/dailySettings'
 import { dayOf } from '@/api/hooks'
+import { dailyCodeMessage } from './dailyCodes'
 import { t } from '@/i18n'
 import { ta } from '@/i18n/admin'
 
 const d = ta.daily
-// The server answers in English; what it says about headers and about the try is put in the language of the page.
-export function localised(raw: string): string | null {
-  let m: RegExpExecArray | null
-  if ((m = /^the host (.+) is not on the list of hosts$/.exec(raw))) return d.tryHostNotAllowed(m[1])
-  if (/^the answer is not JSON/.test(raw)) return d.tryNotJson
-  if (/^the answer is not valid JSON/.test(raw)) return d.tryNotValidJson
-  if ((m = /^the answer is larger than (\d+) bytes/.exec(raw))) return d.tryTooLarge(Number(m[1]))
-  if ((m = /^the header (\S+) has no value yet/.exec(raw))) return d.headerValueMissing(m[1])
-  if ((m = /give the value of the header (\S+) again/.exec(raw))) return d.headerNeedsValue(m[1])
-  return null
-}
-const message = (e: unknown) => (e instanceof ApiError && (e.code === 'invalid' || e.code === 'not_found' || e.code === 'rate_limited') ? (localised(e.message) ?? e.message) : t.fmt.labelled(d.failed, e instanceof Error ? e.message : ''))
+// The server says why it refused with a code (and what it is about); it is put in the language of the page here.
+// A code that is not known shows the server's own words.
+const localised = (r: Parameters<typeof dailyCodeMessage>[0]) => dailyCodeMessage(r, d)
+const message = (e: unknown) => (e instanceof ApiError && (e.code === 'invalid' || e.code === 'not_found' || e.code === 'rate_limited') ? (localised(e.reason) ?? e.message) : t.fmt.labelled(d.failed, e instanceof Error ? e.message : ''))
 
 // The host an address goes to, as the server reads it (lower case), or null while it is not an address yet.
 export function hostOfUrl(url: string): string | null {
@@ -449,7 +442,7 @@ function ApiEditor({ initial, existing, languages, hosts, onClose }: { initial: 
         {field('source', d.fieldSource)}
         {field('author', d.fieldAuthor)}
       </div>
-      {field('link', d.fieldLink, d.fieldLinkHelp)}
+      {field('link', d.fieldLink, `${d.fieldLinkHelp} ${d.fieldLinkNoHeaders}`)}
 
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="grid gap-1.5">
@@ -556,7 +549,7 @@ function TryResult({ result }: { result: DailyTryResult }) {
   ]
   return (
     <div className="grid gap-2 text-sm" data-slot="try-result" role="status">
-      <p className={result.ok ? 'text-green-700 dark:text-green-400' : 'text-destructive'}>{result.ok ? d.tryOk(result.status ?? 200) : (result.message ? (localised(result.message) ?? result.message) : d.tryFailed)}</p>
+      <p className={result.ok ? 'text-green-700 dark:text-green-400' : 'text-destructive'}>{result.ok ? d.tryOk(result.status ?? 200) : (localised(result) ?? result.message ?? d.tryFailed)}</p>
       {result.url && <p className="truncate font-mono text-xs text-muted-foreground">{result.url}</p>}
       {result.raw !== undefined && (
         <div>

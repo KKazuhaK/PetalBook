@@ -16,6 +16,7 @@ import type {
   BatchPagesInput,
   ConnectRemoteInput,
   ErrorCode,
+  ReasonCode,
   HistoryList,
   ImportReport,
   InviteCheck,
@@ -54,6 +55,13 @@ export const API_BASE = '/api'
 // Single-user mode has exactly one space, with this id.
 export const DEFAULT_SPACE = 'default'
 
+const reasonOf = (b: { code: string; host?: unknown; header?: unknown; field?: unknown }): ReasonCode => ({
+  code: b.code,
+  ...(typeof b.host === 'string' ? { host: b.host } : {}),
+  ...(typeof b.header === 'string' ? { header: b.header } : {}),
+  ...(typeof b.field === 'string' ? { field: b.field } : {}),
+})
+
 export class ApiError extends Error {
   readonly status: number
   readonly code: ErrorCode
@@ -64,7 +72,9 @@ export class ApiError extends Error {
   readonly draft?: PageDraft | null
   // Present on 429: seconds the server asks us to wait.
   readonly retryAfter?: number
-  constructor(status: number, code: ErrorCode, message: string, current?: Page, retryAfter?: number, draft?: PageDraft | null) {
+  // The stable reason a daily-text refusal carries next to `error`, with what it is about; absent otherwise.
+  readonly reason?: ReasonCode
+  constructor(status: number, code: ErrorCode, message: string, current?: Page, retryAfter?: number, draft?: PageDraft | null, reason?: ReasonCode) {
     super(message)
     this.name = 'ApiError'
     this.status = status
@@ -72,6 +82,7 @@ export class ApiError extends Error {
     this.current = current
     this.retryAfter = retryAfter
     this.draft = draft
+    this.reason = reason
   }
 }
 
@@ -230,7 +241,7 @@ export async function request<T>(path: string, { method = 'GET', body, keepalive
     }
   }
   if (!res.ok) {
-    const err = (json ?? {}) as { error?: string; message?: string; current?: Page; draft?: PageDraft | null }
+    const err = (json ?? {}) as { error?: string; message?: string; current?: Page; draft?: PageDraft | null; code?: unknown; host?: unknown; header?: unknown; field?: unknown }
     if (err.error === 'forbidden' && !USER_LEVEL_403.test(barePath)) {
       const message = forbiddenMessage(globalThis.location?.origin ?? '')
       forbiddenListeners.forEach((fn) => fn(message))
@@ -251,6 +262,7 @@ export async function request<T>(path: string, { method = 'GET', body, keepalive
       err.current,
       res.status === 429 && Number.isFinite(retry) && retry > 0 ? retry : undefined,
       err.draft,
+      typeof err.code === 'string' ? reasonOf(err as { code: string; host?: unknown; header?: unknown; field?: unknown }) : undefined,
     )
   }
   return json as T

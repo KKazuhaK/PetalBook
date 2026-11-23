@@ -1163,10 +1163,14 @@ function suite(target: Target) {
       expect((await call(admin, 'PUT', `${base()}/daily/settings`, {})).status).toBe(400)
       expect((await call(admin, 'PUT', `${base()}/daily/settings`, { daily: {}, extra: 1 })).status).toBe(400)
       expect((await setDaily({ folder: `${folder}/poems` })).status).toBe(200)
-      for (const q of ['date=tomorrow', 'date=2026-13-01', 'date=1969-12-31', 'date=2026-11-23&skip=-1', 'date=2026-11-23&skip=x', 'date=2026-11-23&skip=99999999', 'date=2026-11-23&lang=%E4%B8%AD%E6%96%87', 'date=2026-11-23&lang=x']) {
+      for (const q of ['date=tomorrow', 'date=2026-13-01', 'date=2026-11-23&skip=-1', 'date=2026-11-23&skip=x', 'date=2026-11-23&skip=99999999', 'date=2026-11-23&lang=%E4%B8%AD%E6%96%87', 'date=2026-11-23&lang=x']) {
         const r = await daily(q)
         expect([q, r.status, r.json.error]).toEqual([q, 400, 'invalid'])
       }
+      expect((await daily('date=2026-11-23&skip=99999999')).json.code).toBe('skip_too_large')
+      // A date outside the years there are texts for is not a refusal: the answer says so.
+      const early = await daily('date=1969-12-31')
+      expect([early.status, early.json.reason]).toEqual([200, 'out_of_range'])
       expect((await daily('')).status).toBe(200) // today
       expect((await setDaily({ folder: `${folder}/poems` })).status).toBe(200)
     })

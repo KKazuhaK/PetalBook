@@ -48,6 +48,8 @@ export function DailyBlock({ now }: { now: Date }) {
   const qc = useQueryClient()
   const space = useSpaceId()
   const [asking, setAsking] = useState(false)
+  // The server will not skip further than this: the button stays off, with a note.
+  const [skipLimit, setSkipLimit] = useState(false)
   const another = async () => {
     if (asking) return
     setAsking(true)
@@ -55,7 +57,8 @@ export function DailyBlock({ now }: { now: Date }) {
       await qc.fetchQuery({ queryKey: keys.daily(space, date, skip + 1, lang), queryFn: ({ signal }) => spaceApi(space).daily({ date, skip: skip + 1, lang, tz }, signal), staleTime: 5 * 60_000 })
       setSkip((s) => s + 1)
     } catch (e) {
-      toast.error(e instanceof ApiError && e.code === 'rate_limited' ? th.daily.tooOften : th.daily.anotherFailed)
+      if (e instanceof ApiError && e.reason?.code === 'skip_too_large') setSkipLimit(true)
+      else toast.error(e instanceof ApiError && e.code === 'rate_limited' ? th.daily.tooOften : th.daily.anotherFailed)
     } finally {
       setAsking(false)
     }
@@ -97,11 +100,12 @@ export function DailyBlock({ now }: { now: Date }) {
       )}
       <figcaption className="flex items-center gap-2 text-xs text-muted-foreground">
         {more && (
-          <Button variant="ghost" size="xs" onClick={() => void another()} disabled={waiting} data-slot="daily-another">
+          <Button variant="ghost" size="xs" onClick={() => void another()} disabled={waiting || skipLimit} data-slot="daily-another">
             <RefreshCw className={waiting ? 'animate-spin' : ''} />
             {waiting ? th.daily.anotherBusy : th.daily.another}
           </Button>
         )}
+        {more && skipLimit && <span data-slot="daily-skip-limit">{th.daily.skipLimit}</span>}
       </figcaption>
     </figure>
   )

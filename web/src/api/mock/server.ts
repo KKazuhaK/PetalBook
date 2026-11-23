@@ -625,6 +625,9 @@ export function createMockServer(options: MockOptions = {}) {
     const home = space.store.home
     const { date, skip, lang } = home.checkQuery(q)
     const locked = accounts ? site.allow : { own: true, api: true } // a locked source or choice is kept, and not used
+    // Dates the texts do not cover are not an error: there is just nothing for that day.
+    const year = Number(date.slice(0, 4))
+    if (year < 1970 || year > 2261) return { page: null, reason: 'out_of_range' }
     const own = locked.own ? home.sourceOf(lang) : undefined
     if (own) return home.pick(space.id, q, own) ?? { page: null, reason: 'no_match' }
     // An interface the space chose (the one for the language, else one for every language). The mock makes no
@@ -727,6 +730,12 @@ export function createMockServer(options: MockOptions = {}) {
       const host = u.hostname.replace(/^\[|\]$/g, '')
       if (host === 'localhost' || host.endsWith('.localhost') || /^(127\.|10\.|192\.168\.|169\.254\.|0\.0\.0\.0)/.test(host) || host === '::1') throw bad('服务器不会连内网或本机地址')
       if (str('text') === '') throw bad('text 是正文的 JSON 路径，必填')
+      for (const f of ['text', 'source', 'author'] as const) {
+        const v = str(f)
+        if (/secret/i.test(v)) throw new HttpError(400, 'invalid', `${f} 的路径会露出保密的内容`, { code: 'path_reveals_secret', field: f })
+        if (v !== '' && !/^[\w.[\]-]+$/.test(v)) throw new HttpError(400, 'invalid', `${f} 不是合法的路径`, { code: 'path_error', field: f })
+      }
+      if (/\{header[.:_]/i.test(str('link'))) throw new HttpError(400, 'invalid', 'link 不能用请求头', { code: 'link_uses_header' })
       const refresh = str('refresh') || 'daily'
       if (!['daily', 'hourly', 'minutes'].includes(refresh)) throw bad('refresh 是 daily、hourly 或 minutes')
       const refreshMinutes = refresh === 'minutes' ? Number(body.refreshMinutes) : 0
@@ -740,8 +749,11 @@ export function createMockServer(options: MockOptions = {}) {
         if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,100}$/.test(hn) || ['host', 'content-length', 'transfer-encoding', 'connection', 'content-type'].includes(hn.toLowerCase())) throw bad(`${hn} 不能作请求头`)
         if (headers.some((x) => x.name.toLowerCase() === hn.toLowerCase())) throw bad(`请求头 ${hn} 写了两次`)
         let value = typeof h.value === 'string' ? h.value : undefined
-        if (value === undefined) value = old?.headers.find((x) => x.name.toLowerCase() === hn.toLowerCase())?.value
-        if (value === undefined) throw bad(`请求头 ${hn} 还没有值`)
+        // The saved values go with the saved address: with another one they are given again.
+        const kept = old?.headers.find((x) => x.name.toLowerCase() === hn.toLowerCase())
+        if (value === undefined && kept && old?.url !== url) throw new HttpError(400, 'invalid', `the address changed; give the value of the header ${hn} again`, { code: 'header_reenter', header: hn })
+        if (value === undefined) value = kept?.value
+        if (value === undefined) throw new HttpError(400, 'invalid', `the header ${hn} has no value yet`, { code: 'header_missing', header: hn })
         headers.push({ name: hn, value })
       }
       if (!old && site.apis.length >= 50) throw bad('最多 50 个接口')
@@ -771,7 +783,9 @@ export function createMockServer(options: MockOptions = {}) {
       const a = (isRecord(body.api) ? body.api : {}) as Record<string, unknown>
       const url = String(a.url ?? '')
       const tryHost = /^https?:\/\/([^/?#]+)/i.exec(url)?.[1]?.toLowerCase()
-      if (tryHost && !site.hosts.includes(tryHost)) return { status: 200, body: { ok: false, message: `the host ${tryHost} is not on the list of hosts`, url } }
+      if (tryHost && !site.hosts.includes(tryHost)) return { status: 200, body: { ok: false, message: `the host ${tryHost} is not on the list of hosts`, code: 'host_not_allowed', host: tryHost, url } }
+      if (url.includes('html')) return { status: 200, body: { ok: false, message: 'the answer is not JSON', code: 'not_json', url } }
+      if (url.includes('huge')) return { status: 200, body: { ok: false, message: 'the answer is too large', code: 'too_large', url } }
       if (url.includes('down')) return { status: 200, body: { ok: false, message: 'status 503', status: 503, url } }
       const raw = '{"hitokoto": "山色空蒙雨亦奇", "from": "饮湖上初晴后雨", "from_who": "苏轼"}'
       const pathErrors: Record<string, string> = {}
