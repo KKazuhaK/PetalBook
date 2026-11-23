@@ -261,7 +261,9 @@ jobs:
     name: postgres
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Above scripts/test-postgres.sh's own 30 minutes for go test plus the
+    # contract run, so a slow test ends with go test's report, not a cancel.
+    timeout-minutes: 40
     permissions:
       contents: read
     services:
