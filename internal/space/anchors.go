@@ -280,6 +280,12 @@ func own(parent *yaml.Node, i int) *yaml.Node {
 // flattenMerges writes the keys the merge keys of a mapping bring in into the
 // mapping itself, where the first merge key was, and takes the merge keys out.
 // What the mapping means stays the same.
+//
+// The comments of a merge key stay where it was: the comment above it goes
+// above the first key written in its place, the one on its line onto the line
+// of that key, the one below it below the last of them. A merge key in whose
+// place nothing is written (all it brings in is written in the mapping too)
+// leaves its comments above the key after it, or below the last key.
 func flattenMerges(m *yaml.Node) {
 	if !hasMerge(m) {
 		return
@@ -298,23 +304,69 @@ func flattenMerges(m *yaml.Node) {
 	})
 	out := make([]*yaml.Node, 0, len(m.Content)+2*len(vals))
 	placed := false
+	pending := "" // comments of merge keys that no key was written for yet
 	for i := 0; i+1 < len(m.Content); i += 2 {
-		if !isMerge(m.Content[i]) {
-			out = append(out, m.Content[i], m.Content[i+1])
+		k, v := m.Content[i], m.Content[i+1]
+		if !isMerge(k) {
+			if pending != "" {
+				nk := *k
+				nk.HeadComment = joinComments(pending, k.HeadComment)
+				k, pending = &nk, ""
+			}
+			out = append(out, k, v)
 			continue
 		}
-		if placed {
-			continue
-		}
-		placed = true
-		for _, key := range order {
-			if v := vals[key]; v != nil {
-				out = append(out, textNode(key), cloneNode(v))
-				delete(vals, key)
+		head := joinComments(k.HeadComment, v.HeadComment)
+		line := joinComments(k.LineComment, v.LineComment)
+		foot := joinComments(v.FootComment, k.FootComment)
+		first := len(out)
+		if !placed {
+			placed = true
+			for _, key := range order {
+				if val := vals[key]; val != nil {
+					out = append(out, textNode(key), cloneNode(val))
+					delete(vals, key)
+				}
 			}
 		}
+		if len(out) == first {
+			pending = joinComments(pending, head, line, foot)
+			continue
+		}
+		fk, fv := out[first], out[first+1]
+		fk.HeadComment = joinComments(pending, head)
+		pending = ""
+		if line != "" {
+			// The line of a key whose value is written under it is the key's.
+			if (fv.Kind == yaml.MappingNode || fv.Kind == yaml.SequenceNode) && fv.Style&yaml.FlowStyle == 0 && len(fv.Content) > 0 {
+				fk.LineComment = line
+			} else {
+				fv.LineComment = line
+			}
+		}
+		out[len(out)-2].FootComment = foot
+	}
+	if pending != "" && len(out) > 0 {
+		lk := *out[len(out)-2]
+		lk.FootComment = joinComments(lk.FootComment, pending)
+		out[len(out)-2] = &lk
 	}
 	m.Content = out
+}
+
+// joinComments is comments one after the other, each on lines of its own.
+func joinComments(parts ...string) string {
+	out := ""
+	for _, p := range parts {
+		switch {
+		case p == "":
+		case out == "":
+			out = p
+		default:
+			out += "\n" + p
+		}
+	}
+	return out
 }
 
 // settle makes a document that an edit took nodes out of whole again: an alias
@@ -513,6 +565,12 @@ type unreadableEditError struct{ *InvalidError }
 
 func (e *unreadableEditError) Unwrap() error { return e.InvalidError }
 
+// unreadableFileError is the refusal of a change to a settings file that cannot
+// be read as it is. It is an *InvalidError too.
+type unreadableFileError struct{ *InvalidError }
+
+func (e *unreadableFileError) Unwrap() error { return e.InvalidError }
+
 // planSettingsEdit reads a settings file, lets edit change the document and
 // returns the text to write in its place. Nothing is written here. changed is
 // false when edit says there is nothing to write. render makes the text of the
@@ -526,7 +584,12 @@ func planSettingsEdit(root string, f settingsFile, edit func(top *yaml.Node) (bo
 	for attempt := 0; ; attempt++ {
 		doc, err := loadYAMLAt(root, f.rel, int64(f.max), f.bad)
 		if errors.Is(err, f.bad) {
-			return nil, false, f.problem()
+			perr := f.problem()
+			var inv *InvalidError
+			if errors.As(perr, &inv) {
+				return nil, false, &unreadableFileError{inv}
+			}
+			return nil, false, perr
 		}
 		if err != nil {
 			return nil, false, err

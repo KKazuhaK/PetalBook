@@ -83,6 +83,11 @@ type Space struct {
 	// cfg is what was last read of the bindings in space.yml (see config.go).
 	cfgMu sync.Mutex
 	cfg   configCache
+	// settled is the folders that had a type or views when space.yml was last
+	// read; settledKnown is false until it was, and from a write of the file
+	// until it is read again (see mayHaveSettings).
+	settled      map[string]bool
+	settledKnown bool
 	// tagCfg is what was last read of the views in tags.yml (see views.go).
 	tagCfg tagCache
 	// typeCache are the type files parsed, by name (see listing.go).

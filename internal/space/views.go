@@ -925,18 +925,25 @@ func putViewsInto(top *yaml.Node, section string, section2 func(*yaml.Node, bool
 		}
 		// Every writing of the entry loses its views, or the last one that is
 		// left would be the entry and bring its views back.
-		for i := len(cont.Content) - 2; i >= 0; i -= 2 {
-			if !isEntry(i) {
-				continue
+		// One pass, whatever the number of entries: what stays is collected,
+		// not what goes cut out one at a time.
+		kept := make([]*yaml.Node, 0, len(cont.Content))
+		for i := 0; i+1 < len(cont.Content); i += 2 {
+			if isEntry(i) {
+				if e := deref(cont.Content[i+1]); e != nil && e.Kind == yaml.MappingNode && hasKey(e, "views") {
+					removeKey(own(cont, i+1), "views")
+				}
+				if emptied(cont.Content[i+1]) {
+					continue
+				}
 			}
-			if e := deref(cont.Content[i+1]); e != nil && e.Kind == yaml.MappingNode && hasKey(e, "views") {
-				removeKey(own(cont, i+1), "views")
-			}
-			if section == "folders" {
-				dropEmpty(top, cont, i)
-			} else {
-				dropEmptyTag(top, cont, i)
-			}
+			kept = append(kept, cont.Content[i], cont.Content[i+1])
+		}
+		cont.Content = kept
+		if section == "folders" {
+			dropEmpty(top, cont, -1)
+		} else {
+			dropEmptyTag(top, cont, -1)
 		}
 		return true, res, nil
 	}
@@ -1035,13 +1042,29 @@ func setKey(m *yaml.Node, key string, val *yaml.Node) {
 }
 
 // removeKey takes every writing of a key out of a mapping that is the
-// writer's own.
+// writer's own, in one pass over it.
 func removeKey(m *yaml.Node, key string) {
-	for j := len(m.Content) - 2; j >= 0; j -= 2 {
+	var out []*yaml.Node
+	for j := 0; j+1 < len(m.Content); j += 2 {
 		if k, ok := keyText(m.Content[j]); ok && k == key {
-			m.Content = append(m.Content[:j:j], m.Content[j+2:]...)
+			if out == nil {
+				out = append(make([]*yaml.Node, 0, len(m.Content)-2), m.Content[:j]...)
+			}
+			continue
+		}
+		if out != nil {
+			out = append(out, m.Content[j], m.Content[j+1])
 		}
 	}
+	if out != nil {
+		m.Content = out
+	}
+}
+
+// emptied reports whether the value of an entry is a mapping with nothing
+// left in it, as written (an alias is not: what it stands for is not ours).
+func emptied(v *yaml.Node) bool {
+	return v.Kind == yaml.MappingNode && len(v.Content) == 0
 }
 
 func filterNode(fs []ViewFilter) *yaml.Node {

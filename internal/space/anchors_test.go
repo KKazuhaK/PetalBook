@@ -706,21 +706,30 @@ func TestWritesToAFileWithNestedAliasesCostNoMoreThanTheFile(t *testing.T) {
 	}
 	// Over the budget the file is not read, so a delete or a move leaves it as
 	// it is, at once (it took seconds at depth 5 and all memory at depth 7).
+	// The folders it has entries for are not moved or deleted, since their
+	// settings could not follow; a folder it does not name is.
 	for _, depth := range []int{5, 7} {
 		s := open(t)
-		for _, f := range []string{"A", "B"} {
+		for _, f := range []string{"A", "B", "C", "D"} {
 			mustCreate(t, s, f, meta("title", f), "x\n")
 		}
 		src := "folders:\n  A:\n    type: wenan\n" + aliasBomb("    ", "views", depth) + "  B:\n    type: wenan\n    big: *l" + fmt.Sprint(depth) + "\n"
 		writeSpaceYML(t, s, src)
 		bounded(t, "a delete and a move over the budget", func() {
-			if _, err := s.DeleteFolder(Author{}, "A", true); err != nil {
+			_, err := s.DeleteFolder(Author{}, "A", true)
+			wantInvalid(t, "the delete", err, "space.yml cannot be read")
+			_, err = s.MoveFolder(Author{}, "B", "B2")
+			wantInvalid(t, "the move", err, "space.yml cannot be read")
+			if _, err := s.DeleteFolder(Author{}, "C", true); err != nil {
 				t.Error(err)
 			}
-			if _, err := s.MoveFolder(Author{}, "B", "B2"); err != nil {
+			if _, err := s.MoveFolder(Author{}, "D", "D2"); err != nil {
 				t.Error(err)
 			}
 		})
+		if !exists(s, "A") || !exists(s, "B") || exists(s, "B2") || exists(s, "C") || !exists(s, "D2") {
+			t.Errorf("depth %d: the folders are not where they should be: %v", depth, folderPaths(t, s))
+		}
 		if spaceYML(s.Root()) != src {
 			t.Errorf("depth %d: an unreadable file was written", depth)
 		}

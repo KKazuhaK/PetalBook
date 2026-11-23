@@ -1036,7 +1036,12 @@ the bindings cannot be written the folder is not moved and the request fails
 the folder is touched: a move or a delete whose edit of `space.yml` cannot be
 made is `400 invalid` with nothing renamed and nothing deleted, and the message
 says which it was ("the folder was not moved: …", "the folder was not
-deleted: …"). Moving or deleting a folder removes entries of `space.yml`; what
+deleted: …"). For a delete that is found out for the folders that will be
+gone afterwards: a folder that holds files that are not pages stays, and so
+does its entry. Should the folders turn out otherwise than was worked out
+before the delete (a file came to lie in one meanwhile) and the settings then
+cannot be taken out as the folders are, they are taken out as was worked out.
+Moving or deleting a folder removes entries of `space.yml`; what
 that does to anchors and aliases is under Anchors, aliases and merge keys below.
 A move that a crash interrupted and whose
 bindings then do not fit in `space.yml` is taken back at the next start: the
@@ -1069,7 +1074,28 @@ an object, too large, a link, over the alias budget below) is never
 overwritten: a request that would
 write it is `400 invalid` and says it has to be fixed by hand. Reads still
 work: such a type is listed with an `error`, and a `space.yml` that cannot be
-read binds nothing. Moving or deleting a folder is not stopped by one.
+read binds nothing.
+
+While `space.yml` cannot be read, a folder that has settings in it is not moved
+and not deleted: its type and views could not follow it or go with it, and once
+the file is mended they would belong to whatever folder then has the old name.
+Such a request is `400 invalid` with nothing renamed and nothing deleted ("the
+folder was not moved: …" or "the folder was not deleted: …, because space.yml
+cannot be read as it is …; fix space.yml by hand and try again"). Everything
+else goes on: pages are made, changed, moved and deleted, folders are made, and
+a folder the file has nothing for is moved and deleted as always. Which folders
+have settings is told, for a move, from the folder, the folders in it and the
+place it is moved to (settings left there would become the moved folder's), and
+for a delete from the folder and the folders in it:
+
+- from the file as it is written, when it is still YAML with keys at the top
+  (a file over the alias budget is): the folders `folders` has an entry for,
+  whatever is in the entry;
+- else from the folders that had a `type` or `views` when the server last read
+  the file, if it has read it since it started and not written it since;
+- else it is not known, and no folder is moved or deleted until the file is
+  mended. That is the case for a file that is not YAML when the server starts,
+  and for one whose `folders` come in through a merge key.
 
 #### Anchors, aliases and merge keys
 
@@ -1099,7 +1125,9 @@ every change it makes to them:
   folder deleted or moved onto, a view removed, a type or colour changed) and
   aliases of it remain, the anchor moves to the first of them and the others
   refer to it there; nothing is copied. Deleting `A` above leaves `B: {type: &t
-  wenan}`.
+  wenan}`. The comments of a merge key that is written out stay where it was:
+  the one above it above the first key written in its place, the one on its
+  line on the line of that key, the one below it below the last of them.
 - **Check.** Before the file is written the server checks that every alias
   left in it stands for what it stood for, and that the text reads back as
   what was meant. If not (an anchor name used twice can do that), the change is

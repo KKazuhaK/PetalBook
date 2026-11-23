@@ -133,6 +133,19 @@ func loadYAMLAt(root, rel string, max int64, bad error) (*yaml.Node, error) {
 // It is also what a file about to be written is checked with: a document the
 // server could not read again must not be written.
 func parseYAMLDoc(data []byte, bad error) (*yaml.Node, error) {
+	doc, err := parseYAMLWritten(data, bad)
+	// What its aliases stand for is bounded here, once, for every reader and
+	// writer of the document (see anchors.go).
+	if err == nil && doc != nil && !withinBudget(doc) {
+		return nil, bad
+	}
+	return doc, err
+}
+
+// parseYAMLWritten is parseYAMLDoc without the budget: the document as it is
+// written, its aliases not followed. Nothing may be read from it that follows
+// an alias further than one step.
+func parseYAMLWritten(data []byte, bad error) (*yaml.Node, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var doc yaml.Node
 	switch err := dec.Decode(&doc); {
@@ -160,11 +173,6 @@ func parseYAMLDoc(data []byte, bad error) (*yaml.Node, error) {
 		return emptyDoc(commentLines(data)), nil
 	}
 	if doc.Kind != yaml.DocumentNode || doc.Content[0].Kind != yaml.MappingNode {
-		return nil, bad
-	}
-	// What its aliases stand for is bounded here, once, for every reader and
-	// writer of the document (see anchors.go).
-	if !withinBudget(&doc) {
 		return nil, bad
 	}
 	return &doc, nil

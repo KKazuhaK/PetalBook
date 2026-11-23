@@ -198,7 +198,12 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	notMoved := func(reason string) error {
 		return invalidf("the folder was not moved: its type and views cannot follow it in space.yml, because %s", reason)
 	}
-	if reason, fails := s.bindingsWouldFail(moveSettings); fails {
+	// The entries the edit is about: the folder's and those below it, and the
+	// stale ones at the target.
+	movedKeys := func(folder string) bool {
+		return folder == canonFrom || strings.HasPrefix(folder, canonFrom+"/") || folder == target || strings.HasPrefix(folder, target+"/")
+	}
+	if reason, fails := s.bindingsWouldFail(moveSettings, movedKeys); fails {
 		if !tx.remote {
 			s.dropCreated(tx) // the folders made on the way to the target
 		}
@@ -268,7 +273,7 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	// it is as it was. (Finishing the edit instead would only repeat what just
 	// failed.) Should the rename not go back either, the "b" record above has
 	// the next start move the bindings to where the folder now is.
-	refused, err := s.editBindings(tx, moveSettings)
+	refused, err := s.editBindings(tx, moveSettings, movedKeys)
 	if err == nil && refused != "" {
 		err = notMoved(refused)
 	}
@@ -307,23 +312,56 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	return target, nil
 }
 
-// pagesUnder lists the ids of the pages in a folder and below it.
-func (s *Space) pagesUnder(folder string) ([]string, error) {
-	var ids []string
+// pagesUnder lists the ids of the pages in a folder and below it, and their
+// files.
+func (s *Space) pagesUnder(folder string) (ids, files []string, err error) {
 	q := index.Query{Folder: &folder, Recursive: true, Limit: 200, Sort: "created"}
 	for {
 		res, err := s.idx.List(q)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, it := range res.Items {
 			ids = append(ids, it.ID)
+			files = append(files, it.Path)
 		}
 		if res.Next == "" {
-			return ids, nil
+			return ids, files, nil
 		}
 		q.Cursor = res.Next
 	}
+}
+
+// foldersLeft looks at the folder canon before it is deleted and says which
+// folders, of it and those below it, will still be there afterwards: the ones
+// that hold, at any depth, a file the delete does not remove. It removes the
+// pages (their files are given) and the placeholders of empty folders, and
+// nothing else. seen is every folder that was looked at.
+func (s *Space) foldersLeft(canon string, pages map[string]bool) (seen, left map[string]bool, err error) {
+	abs := filepath.Join(s.root, filepath.FromSlash(canon))
+	seen, left = map[string]bool{}, map[string]bool{}
+	err = filepath.WalkDir(abs, func(p string, e fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		r, _ := filepath.Rel(abs, p)
+		rel := path.Join(canon, filepath.ToSlash(r))
+		if e.IsDir() && e.Type()&fs.ModeSymlink == 0 {
+			seen[rel] = true
+			return nil
+		}
+		if pages[rel] || (e.Name() == ".gitkeep" && e.Type().IsRegular()) {
+			return nil
+		}
+		for d := path.Dir(rel); !left[d]; d = path.Dir(d) {
+			left[d] = true
+			if d == canon || d == "." || d == "/" {
+				break
+			}
+		}
+		return nil
+	})
+	return seen, left, err
 }
 
 // DeleteFolder removes a folder. Without recursive it must hold no pages, in
@@ -355,21 +393,45 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 		}
 		// Journaled before the first deletion: the bindings of what is gone go
 		// too, at recovery if the crash comes before the edit of space.yml (see "u").
+		under := func(folder string) bool { return folder == canon || strings.HasPrefix(folder, canon+"/") }
 		forget := func(gone func(folder string) bool) func(root *yaml.Node) (bool, error) {
 			return func(root *yaml.Node) (bool, error) {
-				return forgetFolders(root, func(folder string) bool {
-					return (folder == canon || strings.HasPrefix(folder, canon+"/")) && gone(folder)
-				})
+				return forgetFolders(root, func(folder string) bool { return under(folder) && gone(folder) })
 			}
 		}
-		startU := func() error {
+		// willGo is what s.fileGone will say of a folder once the delete is
+		// done, worked out before it starts: the edit of space.yml that is tried
+		// beforehand must be the one that is made afterwards, or the trial says
+		// nothing about it (a folder that stays keeps its entry, and with it
+		// what the entry's anchors and aliases do to the rest of the file).
+		var willGo func(folder string) bool
+		startU := func(pages []string) error {
 			if len(tx.bind) > 0 {
 				return nil
 			}
+			going := make(map[string]bool, len(pages))
+			for _, p := range pages {
+				going[p] = true
+			}
+			seen, left, err := s.foldersLeft(canon, going)
+			if err != nil {
+				return err
+			}
+			willGo = func(folder string) bool {
+				switch {
+				case left[folder]:
+					return false
+				case seen[folder]:
+					return true
+				}
+				// Not a folder that was looked at under this name: gone already,
+				// or a file, or there under another spelling (which stays, as
+				// far as can be told from here).
+				return s.fileGone(folder)
+			}
 			// Refused before anything is deleted: a delete whose settings
-			// cannot be taken out of space.yml. Asked for the most that can
-			// go, every folder below this one.
-			if reason, fails := s.bindingsWouldFail(forget(func(string) bool { return true })); fails {
+			// cannot be taken out of space.yml.
+			if reason, fails := s.bindingsWouldFail(forget(willGo), under); fails {
 				return invalidf("the folder was not deleted: its type and views cannot be taken out of space.yml, because %s", reason)
 			}
 			u := jrec{Op: "u", Path: canon}
@@ -383,7 +445,7 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 		// page, so the folder is looked at again until nothing is left or a
 		// round deletes nothing.
 		for round := 0; ; round++ {
-			ids, err := s.pagesUnder(canon)
+			ids, files, err := s.pagesUnder(canon)
 			if err != nil {
 				return struct{}{}, err
 			}
@@ -396,7 +458,7 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 			if round > maxNameTries {
 				return struct{}{}, errors.New("the folder keeps showing pages after they were deleted")
 			}
-			if err := startU(); err != nil {
+			if err := startU(files); err != nil {
 				return struct{}{}, err
 			}
 			for _, id := range ids {
@@ -406,7 +468,7 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 				deleted = append(deleted, id)
 			}
 		}
-		if err := startU(); err != nil {
+		if err := startU(nil); err != nil {
 			return struct{}{}, err
 		}
 		// The folders, deepest first: their placeholders go, and each folder
@@ -447,19 +509,30 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 				}
 			}
 			// Fails, rightly, for a folder that still holds something.
-			if os.Remove(filepath.Join(s.root, filepath.FromSlash(d))) == nil {
+			if s.ops.Remove(filepath.Join(s.root, filepath.FromSlash(d))) == nil {
 				removed = append(removed, d)
 			}
 		}
 		// A folder that is gone has no type or views to keep. One that stays (it holds
 		// files that are not pages) keeps its binding.
-		refused, err := s.editBindings(tx, forget(s.fileGone))
+		refused, err := s.editBindings(tx, forget(s.fileGone), under)
+		if err == nil && refused != "" && willGo != nil {
+			// The edit that was tried before the first deletion (startU) could
+			// be made, and this one is another: a folder went or stayed that
+			// was not expected to (a page appeared in it meanwhile, say). The
+			// edit that was tried is made instead. A folder it is wrong about
+			// keeps settings it should have lost, or the other way round, which
+			// is less than the settings of every folder staying behind.
+			s.log.Warn("the settings of a deleted folder could not be taken out of space.yml as the folders are now; taking them out as planned before the delete",
+				"folder", canon, "reason", refused)
+			refused, err = s.editBindings(tx, forget(willGo), under)
+		}
 		if err != nil {
 			return struct{}{}, err
 		}
 		if refused != "" {
-			// Asked before the first deletion (startU), so this is a file that
-			// changed its mind in between. A space that follows a remote takes
+			// Not even the edit that could be made before the first deletion:
+			// the file changed in between. A space that follows a remote takes
 			// the whole change back. A local space has no undo: its pages are
 			// deleted for good (see the ids returned), the error says what is
 			// left, and the "u" record has the next start try again.

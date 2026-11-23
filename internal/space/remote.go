@@ -797,6 +797,7 @@ func (s *Space) restoreSpaceFile(tx *txn) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	s.forgetSettled() // the file is another from here on
 	if err := r.repo.Discard(ctx, tx.parent, []string{spaceFile}); err != nil {
 		// The undo as a whole discards it again, and says so if it cannot.
 		s.log.Warn("could not put space.yml back first while undoing a change", "error", err)
