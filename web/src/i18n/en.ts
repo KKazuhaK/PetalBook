@@ -377,11 +377,18 @@ export const en: Messages = {
     saved: 'View saved',
     conflict: 'Someone just changed the views here, so they were read again. Your change was not saved; you can make it again on the new views.',
     lost: (name: string) => `Your unsaved changes to "${name}" could not be kept, because someone else changed the views.`,
+    lostUnnamed: 'Your unsaved changes here could not be kept, because someone else changed the views.',
     failed: (message: string) => `The view was not saved: ${message}`,
     tooMany: (n: number) => `At most ${n} views`,
     readOnly: 'You can only look: you can switch views and change the sort and filters for yourself, but not save them.',
     loadFailed: 'Could not read the views here.',
     customSort: (key: string) => `By "${key}"`,
+  },
+  settingsNotice: {
+    unreadable: 'A settings file of this space cannot be read; the server is using settings restored from the history.',
+    lost: 'Some entries of a settings file of this space could not be read; they are only in the file and its copy.',
+    details: 'Details',
+    dismiss: 'Dismiss',
   },
   inbox: {
     folderName: 'Inbox',

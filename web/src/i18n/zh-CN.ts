@@ -377,6 +377,7 @@ export const zhCN = {
     saved: '视图已保存',
     conflict: '别人刚改过这里的视图，已经重新读取。你的改动没有保存，可以在新的视图上再改一次。',
     lost: (name: string) => `你对“${name}”的未保存改动没有保留，因为别人改过这里的视图。`,
+    lostUnnamed: '你在这里的未保存改动没有保留，因为别人改过这里的视图。',
     failed: (message: string) => `视图没有保存：${message}`,
     tooMany: (n: number) => `最多 ${n} 个视图`,
     readOnly: '你只能查看：可以切换视图、临时改排序和筛选，但存不回去。',
@@ -384,6 +385,12 @@ export const zhCN = {
     customSort: (key: string) => `按“${key}”`,
   },
   // The folder quick notes go to. A space made from the app gets this name.
+  settingsNotice: {
+    unreadable: '这个空间有设置文件读不了，服务器正在用从历史恢复的设置。',
+    lost: '这个空间的设置文件里有些条目没能读出来，它们只在文件和副本里。',
+    details: '查看详情',
+    dismiss: '不再提示',
+  },
   inbox: {
     folderName: '收件箱',
     empty: '收件箱是空的。随手记一条，之后再归类。',

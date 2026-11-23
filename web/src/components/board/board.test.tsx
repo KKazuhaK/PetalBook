@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
-import { byLabel, click, installDomShims, mount, settle, shareSpace, type Mounted } from '@/testing/harness'
+import { byLabel, click, installDomShims, mount, press, settle, shareSpace, type Mounted } from '@/testing/harness'
 import { listShell, putViews, seedWork, sender, TASK, type Send } from '@/testing/listKit'
 import { t } from '@/i18n'
 import { tb } from '@/i18n/boards'
@@ -278,6 +278,90 @@ describe('moving a card', () => {
     await drag(card('A'), col('o:todo'))
     expect(m.requests.filter((r) => r.method !== 'GET' && r.url !== '/api/login')).toEqual([])
     expect(cardsIn('o:done')).toEqual(['A'])
+  })
+})
+
+describe('moving a card without a mouse', () => {
+  const moveButton = (title: string) => card(title).querySelector<HTMLButtonElement>(`button[aria-label="${tb.board.moveTo(title)}"]`)
+  const menuItems = () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+  const openMenu = async (title: string) => {
+    await click(moveButton(title))
+    await settle(() => menuItems().length > 0, 'the menu')
+    return menuItems()
+  }
+
+  it('reaches a card with the keyboard and moves it with "Move to…", which lists only the other columns that take a drop', async () => {
+    const ids = await openBoard((send) => send('POST', '/pages', { folder: 'Work', meta: { title: 'W', status: 'weird' }, body: '' }))
+    await settle(() => cardsIn('o:todo').length === 1 && cardsIn('other').length === 1, 'cards')
+    expect(card('B').tabIndex).toBe(0)
+    expect(moveButton('B')).not.toBeNull()
+    // Not its own column, and not "other values", which is no value.
+    expect((await openMenu('B')).map((e) => e.textContent)).toEqual(['doing', 'done', tb.board.empty])
+    await click(menuItems().find((e) => e.textContent === 'doing'))
+    await settle(() => patches().length === 1, 'the request')
+    expect(JSON.parse(patches()[0].body!)).toEqual({ baseRev: ids.B.rev, set: { status: 'doing' } })
+    await settle(() => cardsIn('o:doing').includes('B'), 'the card in its new column')
+    await settle(() => document.body.textContent!.includes(tb.board.moved('B', 'doing')), 'the move is told')
+  })
+
+  it('takes the value away with "empty", and moves a card out of "other values" to an option', async () => {
+    const ids = await openBoard((send) => send('POST', '/pages', { folder: 'Work', meta: { title: 'W', status: 'weird' }, body: '' }))
+    await settle(() => cardsIn('other').length === 1, 'cards')
+    expect((await openMenu('W')).map((e) => e.textContent)).toEqual(['todo', 'doing', 'done', tb.board.empty])
+    await click(menuItems().find((e) => e.textContent === 'todo'))
+    await settle(() => cardsIn('o:todo').includes('W'), 'W moved')
+    await openMenu('A')
+    await click(menuItems().find((e) => e.textContent === tb.board.empty))
+    await settle(() => m!.server.peek(ids.A.id)!.meta.status === undefined, 'A emptied')
+  })
+
+  it('on a board of values (a tag) offers only "empty"', async () => {
+    await openBoard((send) => send('POST', '/pages', { folder: 'Work', meta: { title: 'F', tags: ['栀子'] }, body: '' }), '/s/default/t/栀子')
+    await settle(() => cardsIn('o:done').length === 1 && cardsIn('empty').length === 1, 'cards')
+    expect((await openMenu('A')).map((e) => e.textContent)).toEqual([tb.board.empty])
+    // Nothing to go to from "empty": no button.
+    expect(moveButton('F')).toBeNull()
+  })
+
+  it('is not offered for a card that cannot be moved, nor to someone who may only read', async () => {
+    await openBoard((send) => send('POST', '/pages', { folder: 'Work', meta: { title: 'MANY', status: ['todo', 'doing'] }, body: '' }))
+    await settle(() => document.querySelector('[data-card]') !== null && !!card('MANY'), 'cards')
+    expect(moveButton('MANY')).toBeNull()
+    await m!.unmount()
+    m = undefined
+    m = await mount(listShell, {
+      signIn: true,
+      server: { mode: 'accounts' },
+      entries: (server) => {
+        const { space, owner } = shareSpace(server, 'viewer')
+        const send = (method: string, path: string, body?: unknown) => owner.request(method, `/api/spaces/${space}${path}`, body)
+        send('PUT', '/types/task', TASK)
+        send('POST', '/folders', { path: 'Work' })
+        send('PUT', '/folders/type', { folder: 'Work', type: 'task' })
+        send('POST', '/pages', { folder: 'Work', meta: { title: 'A', status: 'done' }, body: '' })
+        const cur = send('GET', '/views?folder=Work').body as { rev: string }
+        send('PUT', '/views', { folder: 'Work', baseRev: cur.rev, views: [BOARD] })
+        return [`/s/${space}/f/Work`]
+      },
+    })
+    await settle(() => cardsIn('o:done').length === 1, 'the card')
+    expect(card('A').tabIndex).toBe(0)
+    expect(moveButton('A')).toBeNull()
+  })
+
+  it('moves the focus between cards with the arrow keys', async () => {
+    await openBoard((send) => send('POST', '/pages', { folder: 'Work', meta: { title: 'B2', status: 'todo' }, body: '' }))
+    await settle(() => cardsIn('o:todo').length === 2 && cardsIn('o:doing').length === 1, 'cards')
+    const [first, second] = cardsIn('o:todo') as string[]
+    card(first).focus()
+    await press(card(first), 'ArrowDown')
+    expect(document.activeElement).toBe(card(second))
+    await press(card(second), 'ArrowRight')
+    expect(document.activeElement).toBe(card('C'))
+    await press(card('C'), 'ArrowLeft')
+    expect(document.activeElement).toBe(card(first))
+    await press(card(first), 'ArrowUp')
+    expect(document.activeElement).toBe(card(first))
   })
 })
 

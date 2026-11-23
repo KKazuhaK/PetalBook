@@ -4,6 +4,7 @@ import { rememberSpace, useActiveSpace, useSpaces } from '@/api/hooks'
 import { ErrorState, PageFallback } from '@/components/common'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { t } from '@/i18n'
+import { SettingsNoticeBanner } from './SettingsNoticeBanner'
 import { SpaceDisabled } from './SpaceDisabled'
 
 // Only a space the person can open: anything else is the same "not found",
@@ -23,5 +24,10 @@ export function SpaceGate() {
   if (!current) return <NotFoundPage message={t.editor.spaceMissing} />
   if (current.disabled) return <SpaceDisabled space={current} />
   // A new key per space: nothing of the old one stays mounted.
-  return <Outlet key={space} />
+  return (
+    <>
+      <SettingsNoticeBanner key={`notice:${space}`} />
+      <Outlet key={space} />
+    </>
+  )
 }

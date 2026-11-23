@@ -780,3 +780,118 @@ describe('the name of a view', () => {
     expect(new TextEncoder().encode((await saved()).views[1].name).length).toBeLessThanOrEqual(200)
   })
 })
+
+// The sort is part of the working copy, like everything else changed in a view, and never lands on another view.
+describe('the sort of a view that someone else removes or renames', () => {
+  beforeEach(() => {
+    toast.dismiss()
+  })
+  const refetch = async () => {
+    refetchMark()
+    await act(async () => {
+      await m!.qc.invalidateQueries({ queryKey: keys.views('default', FOLDER) })
+    })
+  }
+  const sortTo = async (value: string) => type(document.querySelector<HTMLSelectElement>(`select[aria-label="${t.list.sort}"]`)!, value)
+  const sortShown = () => document.querySelector<HTMLSelectElement>(`select[aria-label="${t.list.sort}"]`)!.value
+  const lost = (name: string) => document.body.textContent!.includes(t.views.lost(name))
+  const real = (send: ReturnType<typeof sender>) => putViews(send, FOLDER, [{ name: '甲', layout: 'list' }, { name: '乙', layout: 'list' }])
+  const hand = (_send: unknown, _ids: unknown, server: MockServer) => server.seedHandWrittenViews('Work', [{ name: '甲', layout: 'list' }, { name: '乙', layout: 'list' }])
+
+  // The listings asked for from the moment the other person's change is read.
+  let from = 0
+  const refetchMark = () => (from = listUrls().length)
+  const expectDropped = async () => {
+    await settle(() => selected() === '甲' && lost('乙'), 'the first view and the message')
+    expect(modifiedMark()).toBeNull()
+    expect(textButton(t.views.save)).toBeNull()
+    expect(sortShown()).toBe('')
+    await settle(() => !locationText().includes('sort='), 'the address without the sort')
+    expect(listUrls().slice(from).filter((u) => u.includes('sort=title'))).toEqual([])
+  }
+
+  it('a real id, the sort only changed, the view deleted by another person: 甲 is shown unmodified and the person is told', async () => {
+    await open('/s/default/f/Work', real)
+    await settle(() => tabs().length === 2, 'the tabs')
+    await click(tab('乙'))
+    await sortTo('title')
+    expect(locationText()).toContain('sort=title')
+    expect(locationText()).toContain(`view=${(await saved()).views[1].id}`)
+    putViews(sender(m!.server), FOLDER, [(await saved()).views[0]])
+    await refetch()
+    await settle(() => tabs().length === 1, 'the views as they are')
+    await expectDropped()
+    expect(puts()).toHaveLength(0)
+  })
+
+  it('a real id, other changes than the sort, the view deleted by another person: dropped with a word', async () => {
+    await open('/s/default/f/Work', real)
+    await settle(() => tabs().length === 2, 'the tabs')
+    await click(tab('乙'))
+    await click(button(t.view.cards))
+    putViews(sender(m!.server), FOLDER, [(await saved()).views[0]])
+    await refetch()
+    await settle(() => tabs().length === 1, 'the views as they are')
+    await expectDropped()
+    expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('a hand-written view, the sort only changed, renamed by another person: 甲 is shown unmodified, the person is told, and nothing can save the sort into 甲', async () => {
+    await open('/s/default/f/Work', hand)
+    await settle(() => tabs().length === 2, 'the tabs')
+    await click(tab('乙'))
+    await sortTo('title')
+    expect(locationText()).toContain('view=%401')
+    putViews(sender(m!.server), FOLDER, [{ name: '甲', layout: 'list' }, { name: '乙乙', layout: 'list' }])
+    await refetch()
+    await settle(() => tabNames().join() === '甲,乙乙', 'the new tabs')
+    await expectDropped()
+    expect((await saved()).views.every((v) => v.sort === '')).toBe(true)
+  })
+
+  it('a hand-written view, the sort only changed, the file edited by hand (renamed in place): dropped with a word', async () => {
+    await open('/s/default/f/Work', hand)
+    await settle(() => tabs().length === 2, 'the tabs')
+    await click(tab('乙'))
+    await sortTo('title')
+    m!.server.seedHandWrittenViews('Work', [{ name: '甲', layout: 'list' }, { name: '乙乙', layout: 'list' }])
+    await refetch()
+    await settle(() => tabNames().join() === '甲,乙乙', 'the new tabs')
+    await expectDropped()
+  })
+
+  it('a hand-written view whose sort was changed follows the view when another person names the views, and saves the sort on it', async () => {
+    await open('/s/default/f/Work', hand)
+    await settle(() => tabs().length === 2, 'the tabs')
+    await click(tab('乙'))
+    await sortTo('title')
+    putViews(sender(m!.server), FOLDER, [{ name: '乙', layout: 'list' }, { name: '甲', layout: 'list' }])
+    await refetch()
+    await settle(() => tabNames().join() === '乙,甲' && selected() === '乙', 'followed')
+    const id = (await saved()).views[0].id
+    await settle(() => locationText().includes(`view=${id}`), 'the address follows')
+    expect(modifiedMark()).not.toBeNull()
+    expect(lost('乙')).toBe(false)
+    await click(textButton(t.views.save))
+    await settle(() => modifiedMark() === null, 'saved')
+    expect((await saved()).views.map((v) => [v.name, v.sort])).toEqual([['乙', 'title'], ['甲', '']])
+  })
+
+  it('the sort in the address belongs to the view it names: opening it shows that view with the sort, another view never gets it', async () => {
+    m = await mount(listShell, {
+      entries: (server) => {
+        const send = sender(server)
+        seedWork(server)
+        real(send)
+        return [`/s/default/f/Work?sort=title&view=${viewsOf(send, 'folder=Work').views[1].id}`]
+      },
+    })
+    await settle(() => tabs().length === 2 && selected() === '乙', 'the view named')
+    expect(sortShown()).toBe('title')
+    expect(modifiedMark()).not.toBeNull()
+    await click(tab('甲'))
+    expect(sortShown()).toBe('')
+    expect(modifiedMark()).toBeNull()
+    await settle(() => !locationText().includes('sort='), 'the address without the sort')
+  })
+})

@@ -741,10 +741,11 @@ export function useSaveViews(scope: ViewScope, written?: (list: ViewList) => voi
     mutationKey: ['saveViews'],
     mutationFn: async (input: PutViewsInput) => {
       const list = await spaceApi(space).putViews(scope, input)
+      // In the same step: what follows the views, then the cache.
       written?.(list)
+      putViewList(qc, space, scope, list)
       return list
     },
-    onSuccess: (list) => putViewList(qc, space, scope, list),
     onError: (e) => {
       const current = e instanceof ApiError && e.code === 'conflict' ? (e.current as unknown as ViewList | undefined) : undefined
       if (current && Array.isArray(current.views)) putViewList(qc, space, scope, current)

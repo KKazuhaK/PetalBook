@@ -108,12 +108,6 @@ export function viewAtMark(views: readonly SavedView[], remembered: string): Sav
   return m ? (views[Number(m[1])] ?? null) : null
 }
 
-// The view to show: the remembered one if it is still there (a hand-written "@n" that a write has named, by its
-// place), else the first (the default one), else none.
-export function pickView(views: readonly SavedView[], remembered: string): SavedView | null {
-  return views.find((v) => v.id === remembered) ?? viewAtMark(views, remembered) ?? views[0] ?? null
-}
-
 // What a view was when it was read: its name and what it saves. A view written by hand is "@n" (its place) until a
 // write names it, and another person's write may delete, move or add views before that happens, so the place says
 // nothing about which view it was. The snapshot is what is looked for again.
@@ -125,17 +119,6 @@ export interface ViewSnapshot {
 export const viewSig = (v: SavedView): string => norm(stateOfView(v))
 export const snapshotOf = (v: SavedView): ViewSnapshot => ({ id: v.id, name: v.name, sig: viewSig(v) })
 export const isHandMark = (id: string): boolean => /^@\d+$/.test(id)
-const sameAsSnapshot = (v: SavedView, s: ViewSnapshot): boolean => v.name === s.name && viewSig(v) === s.sig
-
-// Where the view of a snapshot is in `views`. `gone`: no view has its id with its name and settings (it was renamed,
-// changed, deleted, or named by a write). `to`: the one view that has its name and settings, when `gone` and there is
-// exactly one; with none or several there is no telling which it was, and `to` is null.
-export function followSnapshot(views: readonly SavedView[], s: ViewSnapshot): { gone: boolean; to: SavedView | null } {
-  const here = views.find((v) => v.id === s.id)
-  if (here && sameAsSnapshot(here, s)) return { gone: false, to: null }
-  const same = views.filter((v) => sameAsSnapshot(v, s))
-  return { gone: true, to: same.length === 1 ? same[0] : null }
-}
 
 // --- board ------------------------------------------------------------------------------
 

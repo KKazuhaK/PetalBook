@@ -3,13 +3,14 @@ import { ArrowLeft, ArrowRight, Copy, PenLine, Plus, RotateCcw, Save, Trash2 } f
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import { useSaveViews } from '@/api/hooks'
-import type { PutViewsInput, SavedView, ViewScope } from '@/api/types'
+import type { PutViewsInput, SavedView, ViewList, ViewScope } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/common'
-import { cutBytes, freshName, MAX_NAME_BYTES, MAX_VIEWS, isHandMark, moveView, nameBytes, withState, type ViewState } from '@/lib/savedViews'
+import { cutBytes, freshName, MAX_NAME_BYTES, MAX_VIEWS, moveView, nameBytes, withState, type ViewState } from '@/lib/savedViews'
+import type { ViewOp, Written } from '@/lib/workingCopy'
 import { t } from '@/i18n'
 
 // The tabs above the listing of a folder or a tag: its saved views, one of them shown. What is done to the list of
@@ -29,71 +30,48 @@ interface Props {
   modified: boolean
   write: boolean
   onPick: (id: string) => void
-  // The working copy was written (or the view it belonged to is gone): nothing is left of it.
-  onSaved: (id: string) => void
-  // A view written by hand has the id "@n" until a write gives it a real one: the view shown (and what was changed in
-  // it) goes on under the new id. Said before the views of the answer are in place.
-  onRemap: (from: string, to: string) => void
+  // The answer of a write: what was sent and what came back, in the same order, with the list it brings. Said before
+  // the cache has the views, so the view shown and its working copy move in the same step as the tabs.
+  onWritten: (w: Written, list: ViewList) => void
   onRevert: () => void
 }
 
-export function ViewBar({ scope, views, rev, active, working, modified, write, onPick, onSaved, onRemap, onRevert }: Props) {
-  // What the write in flight has to do with the view shown, when the answer comes: set by `run`, from the view as it was
-  // when the write began.
-  const answer = useRef<((list: SavedView[]) => void) | null>(null)
-  const save = useSaveViews(scope, (list) => answer.current?.(list.views))
+export function ViewBar({ scope, views, rev, active, working, modified, write, onPick, onWritten, onRevert }: Props) {
+  // What the write in flight was, for its answer.
+  const answer = useRef<((list: ViewList) => void) | null>(null)
+  const save = useSaveViews(scope, (list) => answer.current?.(list))
   const [dialog, setDialog] = useState<null | { kind: 'create' } | { kind: 'rename'; view: SavedView }>(null)
   const [removing, setRemoving] = useState<SavedView | null>(null)
   const drag = useRef<string | null>(null)
-  // Where the view shown went when the last write gave it a new id.
-  const movedTo = useRef<string | null>(null)
   const full = views.length >= MAX_VIEWS
 
   // Writes the whole list. Nothing is thrown: the person is told what happened. A 409 leaves the views as the server
   // has them in the cache (the hook puts them there), so the tabs show what the other person made.
-  const run = async (next: Draft[]): Promise<SavedView[] | null> => {
+  const run = async (op: ViewOp, on: string, next: Draft[]): Promise<SavedView[] | null> => {
     try {
-      const input: PutViewsInput = { baseRev: rev, views: next }
-      // Every write gives the "@n" views a new id, the one shown too. The answer lists the views in the order sent, so
-      // the one shown is the one at its place in what was sent; the name it was sent with is checked all the same, and if it is not the
-      // same view the page finds it again by its name and settings.
-      const shown = active && isHandMark(active.id) ? active : null
-      const at = shown ? next.findIndex((v) => v.id === shown.id) : -1
-      answer.current = (got) => {
-        if (shown && at >= 0 && got[at] && got[at].name === next[at].name && got[at].id !== shown.id) {
-          onRemap(shown.id, got[at].id)
-          movedTo.current = got[at].id
-        }
-      }
-      const list = (await save.mutateAsync(input)).views
-      return list
+      answer.current = (list) => onWritten({ op, on, sent: next, got: list.views }, list)
+      return (await save.mutateAsync({ baseRev: rev, views: next } satisfies PutViewsInput)).views
     } catch (e) {
-      answer.current = null
       if (e instanceof ApiError && e.code === 'conflict') toast.error(t.views.conflict)
       else toast.error(t.views.failed(e instanceof Error ? e.message : ''))
       return null
+    } finally {
+      answer.current = null
     }
   }
 
+  const shown = active?.id ?? ''
   const saveWorking = async () => {
     if (!active) return
-    movedTo.current = null
-    const list = await run(views.map((v) => (v.id === active.id ? withState(v, working) : v)))
-    if (list) {
-      onSaved(movedTo.current ?? active.id)
-      toast.success(t.views.saved)
-    }
+    if (await run('save', active.id, views.map((v) => (v.id === active.id ? withState(v, working) : v)))) toast.success(t.views.saved)
   }
 
   const create = async (name: string) => {
     // A new view is the way things look now (for a folder with no view yet, the implicit one).
-    const list = await run([...views, withState({ name } as Draft, working)])
-    if (!list) throw new Error('not saved')
-    onSaved(list[list.length - 1].id)
+    if (!(await run('create', shown, [...views, withState({ name } as Draft, working)]))) throw new Error('not saved')
   }
   const rename = async (view: SavedView, name: string) => {
-    const list = await run(views.map((v) => (v.id === view.id ? { ...v, name } : v)))
-    if (!list) throw new Error('not saved')
+    if (!(await run('rename', view.id, views.map((v) => (v.id === view.id ? { ...v, name } : v))))) throw new Error('not saved')
   }
   const duplicate = async (view: SavedView) => {
     const { id, ...rest } = view
@@ -102,17 +80,15 @@ export function ViewBar({ scope, views, rev, active, working, modified, write, o
     const room = MAX_NAME_BYTES - nameBytes(t.views.copyName('')) - 3
     const copy: Draft = { ...rest, name: freshName(views.map((v) => v.name), t.views.copyName(cutBytes(view.name, room))) }
     // The copy of the view being shown is made from what is shown.
-    const list = await run([...views, view.id === active?.id ? withState(copy, working) : copy])
-    if (list) onSaved(list[list.length - 1].id)
+    await run('duplicate', view.id, [...views, view.id === active?.id ? withState(copy, working) : copy])
   }
   const reorder = async (id: string, to: number) => {
     const next = moveView(views, id, to)
     if (next.every((v, i) => v.id === views[i].id)) return
-    await run(next)
+    await run('reorder', id, next)
   }
   const remove = async (view: SavedView) => {
-    const list = await run(views.filter((v) => v.id !== view.id))
-    if (list && view.id === active?.id) onSaved('')
+    await run('delete', view.id, views.filter((v) => v.id !== view.id))
   }
 
   if (views.length === 0 && !write) return null

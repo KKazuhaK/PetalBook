@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type RefObject } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type RefObject } from 'react'
 import { Link } from 'react-router'
+import { MoveRight } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import { useBoardColumn, useGroups, usePatchProps, useSpacePermissions, useUrls } from '@/api/hooks'
@@ -7,6 +8,7 @@ import type { ListParams, PageSummary, PageType, PropFilter } from '@/api/types'
 import { ErrorState, Spinner } from '@/components/common'
 import { TagChip } from '@/components/TagChip'
 import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cardTitleLine } from '@/lib/listView'
 import { boardColumns, cardFieldsOf, cardMovable, columnDroppable, columnFilter, type BoardColumn } from '@/lib/savedViews'
@@ -20,7 +22,8 @@ import { tb } from '@/i18n/boards'
 // asked for, and neither is one that has not come near the visible part of the board. Moving a card to another column
 // changes that property of its page: to an option of a select (the value is the typed one), or to "empty". The columns of
 // a board made of the values the pages have are text from the index, which is not what a page holds (a number, a
-// cut value), so nothing is dropped on them.
+// cut value), so nothing is dropped on them. Without a mouse, a card is reached with Tab (and the arrow keys between
+// cards), and its "Move to…" menu lists the columns it can be dropped on.
 
 export type BoardScope = { folder: string } | { tag: string }
 
@@ -76,7 +79,8 @@ export default function BoardView({ scope, type, group, sort, filters, cardField
   const [over, setOver] = useState<string | null>(null)
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set())
 
-  const move = (row: PageSummary, from: string, to: BoardColumn) => {
+  // `said`: the move was asked for without a mouse, and the column it went to is told when it is done.
+  const move = (row: PageSummary, from: string, to: BoardColumn, said?: string) => {
     if (!row.rev || from === to.id || !columnDroppable(to, options !== null) || !cardMovable(row.props, row.partialProps, group)) return
     const name = row.title || row.label || tb.board.untitled
     const mark = (on: boolean) =>
@@ -91,7 +95,9 @@ export default function BoardView({ scope, type, group, sort, filters, cardField
     // overtaken by another would stay marked as busy, and its failure would not be told.
     patch
       .mutateAsync({ id: row.id, baseRev: row.rev, ...(to.kind === 'empty' ? { unset: [group] } : { set: { [group]: to.value } }) })
-      .then(undefined, (e: unknown) => {
+      .then(() => {
+        if (said) toast.success(tb.board.moved(name, said))
+      }, (e: unknown) => {
         // The hook has read the card again; nothing of the move was kept.
         if (e instanceof ApiError && e.code === 'conflict') toast.error(tb.board.conflict(name))
         else toast.error(tb.board.moveFailed(name, e instanceof Error ? e.message : ''))
@@ -102,6 +108,8 @@ export default function BoardView({ scope, type, group, sort, filters, cardField
   if (group === '') return <p className="py-16 text-center text-sm text-muted-foreground">{tb.board.needsGroup}</p>
 
   const label = (c: BoardColumn) => (c.kind === 'other' ? tb.board.other : c.kind === 'empty' ? tb.board.empty : (c.value as string))
+  // Where a card can go from the keyboard: the columns a drop is taken on.
+  const targets = columns.filter((c) => columnDroppable(c, options !== null)).map((c) => ({ column: c, title: label(c) }))
   return (
     <div data-slot="board-view" data-group={group} className="grid gap-2">
       {groups.isError && <p className="text-xs text-destructive">{tb.board.groupsFailed}</p>}
@@ -135,6 +143,8 @@ export default function BoardView({ scope, type, group, sort, filters, cardField
               if (d) move(d.row, d.column, c)
             }}
             dragSource={() => drag.current}
+            targets={targets}
+            onMove={(row, to) => move(row, c.id, to, label(to))}
           />
         ))}
       </div>
@@ -162,6 +172,8 @@ function Column({
   onDragEnd,
   onDrop,
   dragSource,
+  targets,
+  onMove,
 }: {
   column: BoardColumn
   scroller: RefObject<HTMLElement | null>
@@ -180,6 +192,8 @@ function Column({
   onDragEnd: () => void
   onDrop: () => void
   dragSource: () => { column: string } | null
+  targets: { column: BoardColumn; title: string }[]
+  onMove: (row: PageSummary, to: BoardColumn) => void
 }) {
   const box = useRef<HTMLElement>(null)
   const near = useSeenIn(scroller, box, COLUMN_AHEAD_PX)
@@ -232,7 +246,9 @@ function Column({
         ) : rows.length === 0 ? (
           <p className="px-1 py-3 text-center text-xs text-muted-foreground">{tb.board.noCards}</p>
         ) : (
-          rows.map((row) => <Card key={row.id} row={row} group={group} shown={shown} write={write} busy={busy.has(row.id)} columnId={column.id} onDragStart={onDragStart} onDragEnd={onDragEnd} />)
+          rows.map((row) => (
+            <Card key={row.id} row={row} group={group} shown={shown} write={write} busy={busy.has(row.id)} columnId={column.id} onDragStart={onDragStart} onDragEnd={onDragEnd} targets={targets.filter((x) => x.column.id !== column.id)} onMove={(to) => onMove(row, to)} />
+          ))
         )}
         {hasNextPage && (
           <Button variant="ghost" size="sm" className="w-full" onClick={() => void fetchNextPage()} disabled={isFetchingNextPage}>
@@ -246,21 +262,51 @@ function Column({
   )
 }
 
-function Card({ row, group, shown, write, busy, columnId, onDragStart, onDragEnd }: { row: PageSummary; group: string; shown: { key: string; label: string }[]; write: boolean; busy: boolean; columnId: string; onDragStart: (row: PageSummary) => void; onDragEnd: () => void }) {
+// The arrow keys move the focus between cards: up and down in a column, left and right to the next column that has
+// cards (at the same place, or its last card).
+function focusNear(e: KeyboardEvent<HTMLElement>) {
+  if (e.target !== e.currentTarget || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
+  const dir = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] }[e.key]
+  if (!dir) return
+  const card = e.currentTarget
+  const board = card.closest('[data-slot="board-view"]')
+  const column = card.closest('[data-column]')
+  if (!board || !column) return
+  const cardsOf = (c: Element) => [...c.querySelectorAll<HTMLElement>('[data-card]')]
+  const here = cardsOf(column)
+  const at = here.indexOf(card)
+  let next: HTMLElement | undefined
+  if (dir[1] !== 0) next = here[at + dir[1]]
+  else {
+    const cols = [...board.querySelectorAll('[data-column]')]
+    for (let i = cols.indexOf(column) + dir[0]; i >= 0 && i < cols.length && !next; i += dir[0]) {
+      const there = cardsOf(cols[i])
+      next = there[Math.min(at, there.length - 1)]
+    }
+  }
+  if (!next) return
+  e.preventDefault()
+  next.focus()
+}
+
+function Card({ row, group, shown, write, busy, columnId, onDragStart, onDragEnd, targets, onMove }: { row: PageSummary; group: string; shown: { key: string; label: string }[]; write: boolean; busy: boolean; columnId: string; onDragStart: (row: PageSummary) => void; onDragEnd: () => void; targets: { column: BoardColumn; title: string }[]; onMove: (to: BoardColumn) => void }) {
   const urls = useUrls()
   const line = cardTitleLine(row)
   const partial = row.partialProps?.includes(group) === true
   const movable = write && !!row.rev && cardMovable(row.props, row.partialProps, group)
   const values = shown.map((f) => ({ ...f, value: row.props?.[f.key] })).filter((f) => hasValue(f.value))
+  const name = row.title || row.label || tb.board.untitled
   return (
     <div
       role="group"
+      tabIndex={0}
+      onKeyDown={focusNear}
       data-card={row.id}
       data-column-of={columnId}
       data-movable={movable || undefined}
       data-partial={partial || undefined}
       aria-busy={busy || undefined}
-      aria-label={row.title || row.label || tb.board.untitled}
+      aria-label={name}
       title={write && partial ? tb.board.partial : undefined}
       draggable={movable && !busy}
       onDragStart={(e) => {
@@ -270,8 +316,25 @@ function Card({ row, group, shown, write, busy, columnId, onDragStart, onDragEnd
         if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
       }}
       onDragEnd={onDragEnd}
-      className={`rounded-lg border bg-background p-3 text-sm shadow-xs ${movable ? 'cursor-grab active:cursor-grabbing' : ''} ${busy ? 'opacity-60' : ''}`}
+      className={`relative rounded-lg border bg-background p-3 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${movable ? 'cursor-grab active:cursor-grabbing' : ''} ${busy ? 'opacity-60' : ''}`}
     >
+      {movable && targets.length > 0 && (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            disabled={busy}
+            render={<button type="button" aria-label={tb.board.moveTo(name)} title={tb.board.moveTo(name)} className="float-right -mt-1 -mr-1 ml-1 flex size-6 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-50" />}
+          >
+            <MoveRight className="size-3.5" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="w-auto min-w-40" aria-label={tb.board.moveTo(name)}>
+            {targets.map((x) => (
+              <DropdownMenuItem key={x.column.id} data-target={x.column.id} onClick={() => onMove(x.column)}>
+                {x.title}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
       <Link to={urls.page(row.id)} draggable={false} className="block outline-none focus-visible:underline">
         {line ? (
           <>

@@ -211,6 +211,29 @@ export interface FolderBinding {
 export interface TypesResponse {
   types: PageType[]
   bindings: FolderBinding[]
+  // What the server did about a settings file it could not use (docs/api.md, "Settings files that cannot be used").
+  // Only for those who manage the space; absent for anyone else, and when there is nothing to tell.
+  settingsNotices?: SettingsNotice[]
+}
+// A version of a settings file: a commit, or (without one) a change in the folder that is in no commit yet.
+export interface SettingsVersion {
+  commit?: string
+  time: string
+}
+export interface SettingsNotice {
+  // The settings file or type file, as a path in the space.
+  file: string
+  // One entry of it (`Tang`, `Tang: views`), or "not a folder" for a link or a file where a folder belongs.
+  entry?: string
+  // The file in the space is still the one that cannot be used; false once it was put right.
+  unreadable: boolean
+  since?: SettingsVersion
+  restoredFrom?: SettingsVersion
+  // Where the file as it was is kept.
+  copy?: string
+  repairedAt?: string
+  // The entries that could not be read even one by one ("*": none of it).
+  lost?: string[]
 }
 // What `PUT .../types/{name}` takes: the whole of what the type is to be.
 export interface TypeInput {

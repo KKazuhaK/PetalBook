@@ -32,6 +32,7 @@ export const boardsZhCN = {
     conflict: (name: string) => `“${name}”刚被别人改过，已刷新这张卡片，没有移动。`,
     partial: '这个值在列表里不完整，请打开页面再改',
     moved: (name: string, column: string) => `已把“${name}”移到“${column}”`,
+    moveTo: (name: string) => `把“${name}”移到…`,
     dropOther: '“其他值”不是一个具体的值，不能把卡片拖进去',
     valuesReadOnly: '这些列是页面现有的值，不能拖动卡片；请在页面里修改该属性，或改用单选字段分组',
   },

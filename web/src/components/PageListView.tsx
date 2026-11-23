@@ -1,4 +1,3 @@
-import { useIsMutating } from '@tanstack/react-query'
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { ArrowUpDown, BookOpen, Columns3, FilePlus2, FolderPlus, LayoutGrid, List as ListIcon, PenLine, Table2, Tag as TagIcon } from 'lucide-react'
@@ -12,6 +11,7 @@ import { ErrorState, Spinner } from '@/components/common'
 import { QuickCaptureFab, useQuickCapture } from '@/components/layout/QuickCapture'
 import { TopBar } from '@/components/layout/TopBar'
 import { ViewBar } from '@/components/views/ViewBar'
+import { useWorkingCopy } from '@/components/views/useWorkingCopy'
 import { Breadcrumbs } from '@/components/files/Breadcrumbs'
 import { FolderCard, FolderRow, PageCard, PageRow, folderItem, pageItem, type EntryState } from '@/components/files/Entries'
 import { FileContextMenu } from '@/components/files/FileContextMenu'
@@ -20,7 +20,7 @@ import { SelectionBar } from '@/components/files/SelectionBar'
 import { childFolders, itemKey, type FileItem } from '@/lib/folders'
 import { loadView, saveView, viewKey, type ListViewMode } from '@/lib/listView'
 import { folderTypeName } from '@/lib/pageTypes'
-import { DEFAULT_STATE, groupFieldsOf, loadViewId, pickView, sameState, saveViewId, SORT_WORDS, snapshotOf, stateOfView, followSnapshot, isHandMark, viewIdKey, type ViewSnapshot, type ViewState } from '@/lib/savedViews'
+import { DEFAULT_STATE, groupFieldsOf, sameState, SORT_WORDS, stateOfView, viewAtMark, viewIdKey, type ViewState } from '@/lib/savedViews'
 import { applyClick, emptySelection, prune, type Selection } from '@/lib/selection'
 import { t } from '@/i18n'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
@@ -115,13 +115,6 @@ function ViewSwitch({ mode, onChange, table, board, read }: { mode: ListViewMode
   )
 }
 
-// What is changed in the view being shown without being saved: the working copy is the saved view with these on top.
-interface Edits {
-  // Whose: the id of the view, '' for the implicit one. Edits of a view that is not the one shown are ignored.
-  id: string
-  patch: Partial<ViewState>
-}
-
 const normSort = (s: string) => s || '-updated'
 
 // What is in a folder is shown like a file manager: its subfolders first, then
@@ -153,95 +146,62 @@ function Listing({ source }: { source: ListSource }) {
   const scope: ViewScope | null = source.kind === 'folder' ? { folder: source.folder } : source.kind === 'tag' ? { tag: source.tag } : null
   const views = useViews(scope)
   const viewsPending = scope !== null && views.isPending
-  const saved = useMemo(() => views.data?.views ?? [], [views.data])
   const idKey = viewIdKey(spaceId ?? '', source.kind, source.kind === 'folder' ? source.folder : source.kind === 'tag' ? source.tag : '')
-  const [remembered, setRemembered] = useState(() => loadViewId(idKey))
-  // The view shown, when it is one written by hand ("@n"), as it was read: where it is once the list changes is found by
-  // its name and what it saves, never by its place (another person may delete, move or add views).
-  const [snap, setSnap] = useState<ViewSnapshot | null>(null)
-  // Where the person's own write put the view shown (the answer lists the views in the order sent, so this is exact where
-  // the name and settings are not enough, for two views alike). It waits until the views of the answer are in the cache.
-  const [hint, setHint] = useState<{ from: string; to: string } | null>(null)
-  const [lostNotice, setLostNotice] = useState<{ name: string } | null>(null)
-  const [edits, setEdits] = useState<Edits>({ id: '', patch: {} })
-  const follow = scope && snap && views.data ? followSnapshot(saved, snap) : null
-  // A save of the views is on its way: the list may already hold what it writes (a refetch after the server committed),
-  // which is not another person's change.
-  const saving = useIsMutating({ mutationKey: ['saveViews'] }) > 0
-  const gone = ((follow?.gone ?? false) && !saving) || (hint !== null && snap !== null && hint.from === snap.id && saved.some((v) => v.id === hint.to))
-  const hinted = hint && snap && hint.from === snap.id ? (saved.find((v) => v.id === hint.to) ?? null) : null
-  const moved = hinted ?? follow?.to ?? null
-  const active = scope ? (gone ? (moved ?? saved[0] ?? null) : pickView(saved, remembered)) : null
-  const base: ViewState = active ? stateOfView(active) : { ...DEFAULT_STATE, layout: chosen }
-  const patch = edits.id === (active?.id ?? '') ? edits.patch : {}
   const sortParam = params.get('sort')
   const urlSort = sortParam !== null && (SORTS.includes(sortParam as SortKey) || (scope !== null && SORT_WORDS.test(sortParam))) ? sortParam : null
-  const state: ViewState = { ...base, ...patch, sort: urlSort ?? base.sort }
-  const modified = active !== null && !sameState({ ...state, sort: normSort(state.sort) }, { ...base, sort: normSort(base.sort) })
+  const implicit: ViewState = { ...DEFAULT_STATE, layout: chosen }
+  // The working copy of the view shown, and the tabs as they go with it (see useWorkingCopy and lib/workingCopy).
+  const working = useWorkingCopy(scope !== null, idKey, views.data, { view: params.get('view'), sort: urlSort }, (list, wc) => {
+    const v = list.find((x) => x.id === wc.viewKey)
+    return v ? stateOfView(v) : implicit
+  })
+  const saved = useMemo(() => working.list?.views ?? [], [working.list])
+  const wc = working.wc
+  // The view of the working copy; while a write of the person is on its way and cannot place it yet, another view may
+  // be shown for a moment, without the working copy (it is never put on another view).
+  const own = scope ? (saved.find((v) => v.id === wc.viewKey) ?? null) : null
+  const active = scope ? (own ?? viewAtMark(saved, wc.viewKey) ?? saved[0] ?? null) : null
+  const base: ViewState = active ? stateOfView(active) : implicit
+  const mine = own !== null || (active === null && wc.viewKey === '')
+  const patch = scope && mine ? wc.patch : {}
+  const state: ViewState = scope ? { ...base, ...patch } : { ...base, sort: urlSort ?? base.sort }
+  const modified = active !== null && !sameState(state, base)
 
-  const setPatch = (p: Partial<ViewState>) => setEdits({ id: active?.id ?? '', patch: { ...patch, ...p } })
-  const setSort = (to: string) =>
+  const setPatch = (p: Partial<ViewState>) => {
+    if (mine) working.edit(p, base)
+  }
+  const setSort = (to: string) => {
+    if (scope) return setPatch({ sort: to })
     setParams(
       (prev) => {
         const next = new URLSearchParams(prev)
-        // What the view already says needs no word in the address.
+        // What the listing already does needs no word in the address.
         if (to === base.sort || (source.kind !== 'search' && normSort(to) === normSort(base.sort))) next.delete('sort')
         else next.set('sort', to)
         return next
       },
       { replace: true },
     )
-  const clearEdits = () => {
-    setEdits({ id: '', patch: {} })
-    setParams((prev) => {
-      if (!prev.has('sort')) return prev
-      const next = new URLSearchParams(prev)
-      next.delete('sort')
-      return next
-    }, { replace: true })
   }
-  // Shows a view and drops the working copy of the one shown (a saved view has nothing left of it).
-  const select = (id: string) => {
-    // What a write of the person said about the old view (and the snapshot of it) does not apply to the one chosen now.
-    setHint(null)
-    setSnap(null)
-    setRemembered(id)
-    saveViewId(idKey, id)
-    clearEdits()
-  }
-  // Clicking the tab that is already shown changes nothing, and does not drop what was changed in it.
-  const pick = (id: string) => {
-    if (id !== (active?.id ?? '')) select(id)
-  }
-  // The view shown got a new id (a view written by hand has "@n" until a write names it): its working copy goes with it.
-  const remap = (from: string, to: string) => {
-    setRemembered(to)
-    saveViewId(idKey, to)
-    setEdits((e) => (e.id === from ? { ...e, id: to } : e))
-  }
-
-  // The view shown was "@n" and the list changed under it (a write of the person, another person's write seen by a
-  // refetch, or a refused save): the one view with its name and settings is the same view, and the remembered id, the
-  // stored one and the working copy follow it. With none or several there is no telling, so the working copy is
-  // dropped, the person is told, and the first view is shown.
-  if (snap && gone) {
-    if (moved) {
-      remap(snap.id, moved.id)
-      setHint(null)
-      setSnap(isHandMark(moved.id) ? snapshotOf(moved) : null)
-    } else {
-      setRemembered('')
-      saveViewId(idKey, '')
-      if (edits.id === snap.id && Object.keys(edits.patch).length > 0) setLostNotice({ name: snap.name })
-      setEdits({ id: '', patch: {} })
-      setSnap(null)
-    }
-  } else if (active && isHandMark(active.id)) {
-    if (snap?.id !== active.id) setSnap(snapshotOf(active))
-  } else if (snap && !saving) setSnap(null)
+  // The address shows the sort of the working copy, with the view it belongs to, so a reload or "back" finds it again
+  // and never puts it on another view.
+  const scoped = scope !== null
+  const wantSort = wc.patch.sort ?? null
+  const wantView = wantSort !== null && wc.viewKey !== '' ? wc.viewKey : null
   useEffect(() => {
-    if (lostNotice) toast.error(t.views.lost(lostNotice.name))
-  }, [lostNotice])
+    if (!scoped || (params.get('sort') === wantSort && params.get('view') === wantView)) return
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        for (const [k, v] of [['sort', wantSort], ['view', wantView]] as const) {
+          if (v === null) next.delete(k)
+          else next.set(k, v)
+        }
+        return next
+      },
+      { replace: true },
+    )
+  }, [scoped, params, setParams, wantSort, wantView])
 
   // What the layouts need: the table and the board a folder with a type (the board a single-choice field of it), a tag's
   // board a field a view named, reading any folder or tag. While the types are on their way the choice is kept.
@@ -418,15 +378,14 @@ function Listing({ source }: { source: ListSource }) {
             <ViewBar
               scope={scope}
               views={saved}
-              rev={views.data?.rev ?? ''}
+              rev={working.list?.rev ?? ''}
               active={active}
               working={state}
-              modified={modified}
-              write={write && views.data !== undefined}
-              onPick={pick}
-              onSaved={select}
-              onRemap={(from, to) => setHint({ from, to })}
-              onRevert={clearEdits}
+              modified={modified && mine}
+              write={write && working.list !== null}
+              onPick={working.pick}
+              onWritten={working.written}
+              onRevert={working.revert}
             />
           )}
           {views.isError && <p className="mb-2 text-xs text-muted-foreground">{t.views.loadFailed}</p>}

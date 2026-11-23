@@ -3,7 +3,7 @@ import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import { errorMessage, useBindFolder, useDeleteType, useSaveType, useTypes } from '@/api/hooks'
-import type { FieldKind, FolderBinding, PageType, TypeInput } from '@/api/types'
+import type { FieldKind, FolderBinding, PageType, SettingsNotice, SettingsVersion, TypeInput } from '@/api/types'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
 import { FIELD_KINDS, fieldKeyProblem, typeNameProblem } from '@/lib/pageTypes'
+import { absoluteTime } from '@/lib/time'
 import { tp } from '@/i18n/props'
 import { SettingsNote, SettingsSection } from './SettingsParts'
 
@@ -27,9 +28,12 @@ export default function TypesPanel({ canManage }: { canManage: boolean }) {
   if (types.isPending) return <PageFallback />
   if (types.isError) return <ErrorState message={tp.types.loadFailed} onRetry={() => void types.refetch()} />
   const { types: list, bindings } = types.data
+  // Only those who manage the space are told (the server leaves it out for anyone else).
+  const notices = canManage ? (types.data.settingsNotices ?? []) : []
 
   return (
     <div className="space-y-8">
+      {notices.length > 0 && <NoticesSection notices={notices} />}
       <SettingsSection title={tp.types.title} description={canManage ? tp.types.help : tp.types.helpReadOnly}>
         {list.length === 0 && open !== 'new' && <SettingsNote>{tp.types.none}</SettingsNote>}
         <ul className="grid gap-2">
@@ -71,6 +75,42 @@ export default function TypesPanel({ canManage }: { canManage: boolean }) {
       </SettingsSection>
       <BindingsSection types={list} bindings={bindings} canManage={canManage} />
     </div>
+  )
+}
+
+// --- settings files the server could not use ---------------------------------------
+
+const versionText = (v: SettingsVersion) => (v.commit ? tp.notices.commit(absoluteTime(v.time), v.commit.slice(0, 7)) : tp.notices.version(absoluteTime(v.time)))
+
+// What one notice says, sentence by sentence, in plain words.
+function noticeLines(n: SettingsNotice): string[] {
+  const out: string[] = []
+  if (n.entry === 'not a folder') out.push(tp.notices.notFolder)
+  if (n.unreadable) out.push(n.since ? tp.notices.unreadable(versionText(n.since)) : tp.notices.unreadableNow)
+  else if (n.repairedAt) out.push(tp.notices.fixed(absoluteTime(n.repairedAt)))
+  else out.push(tp.notices.fixedNow)
+  if (n.entry !== 'not a folder') {
+    if (n.restoredFrom) out.push(tp.notices.restored(versionText(n.restoredFrom)))
+    else if (n.since || n.unreadable) out.push(tp.notices.restoredNone)
+  }
+  if (n.copy) out.push(tp.notices.copy(n.copy))
+  if (n.lost?.includes('*')) out.push(tp.notices.lostAll)
+  else if (n.lost && n.lost.length > 0) out.push(tp.notices.lost(n.lost.join(', ')))
+  return out
+}
+
+function NoticesSection({ notices }: { notices: SettingsNotice[] }) {
+  return (
+    <SettingsSection title={tp.notices.title} description={tp.notices.help}>
+      <ul className="grid gap-2" data-slot="settings-notices">
+        {notices.map((n, i) => (
+          <li key={i} data-notice={n.file} className={`rounded-lg border px-3 py-2.5 text-sm ${n.unreadable || (n.lost?.length ?? 0) > 0 ? 'border-amber-500/40 bg-amber-500/5' : ''}`}>
+            <p className="font-mono text-xs font-medium break-all">{n.entry && n.entry !== 'not a folder' ? tp.notices.entry(n.file, n.entry) : tp.notices.file(n.file)}</p>
+            <p className="mt-1 text-muted-foreground">{noticeLines(n).join(' ')}</p>
+          </li>
+        ))}
+      </ul>
+    </SettingsSection>
   )
 }
 
