@@ -2,7 +2,7 @@
 
 import { t } from '@/i18n'
 
-import type { MySetting, EffectiveMemberList, GroupMember, GroupRef, MembersResponse,
+import type { RegisterInfo, RegisterInput, MySetting, EffectiveMemberList, GroupMember, GroupRef, MembersResponse,
   AccountInfo,
   AdminSpace,
   ApiToken,
@@ -561,6 +561,19 @@ export const api = {
   decideConsent: (input: ConsentDecision) => request<{ redirect: string }>('/oauth/consent', { method: 'POST', body: input }),
 
   // --- users and invites (administrators) ---
+  // --- registration, email verification and password reset (3.3) ---
+  registerInfo: (tenant?: string, signal?: AbortSignal) => request<RegisterInfo>(`/register${tenant ? `?tenant=${enc(tenant)}` : ''}`, { signal }),
+  register: (input: RegisterInput) => request<{ sent: boolean }>('/register', { method: 'POST', body: input }),
+  registerConfirm: async (token: string) => {
+    const r = await request<{ user: User }>('/register/confirm', { method: 'POST', body: { token } })
+    markSignedIn()
+    return r
+  },
+  requestEmailVerify: (lang?: string) => request<{ sent: boolean }>('/account/email/verify', { method: 'POST', body: lang ? { lang } : {} }),
+  confirmEmail: (token: string) => request<void>('/email/confirm', { method: 'POST', body: { token } }),
+  forgotPassword: (input: { tenant?: string; login: string; captcha?: CaptchaAnswer; lang?: string }) => request<{ sent: boolean }>('/password/forgot', { method: 'POST', body: input }),
+  checkReset: (token: string, signal?: AbortSignal) => request<{ username: string; expires: string }>('/password/reset/check', { method: 'POST', body: { token }, signal }),
+  resetPassword: (token: string, password: string) => request<void>('/password/reset', { method: 'POST', body: { token, password } }),
   checkInvite: (token: string, captcha?: CaptchaAnswer, signal?: AbortSignal) => request<InviteCheck>('/invites/check', { method: 'POST', body: { token, ...(captcha ? { captcha } : {}) }, signal }),
   acceptInvite: async (input: { token: string; username: string; name?: string; password: string; captcha?: CaptchaAnswer }) => {
     const r = await request<{ user: User }>('/invites/accept', { method: 'POST', body: input })

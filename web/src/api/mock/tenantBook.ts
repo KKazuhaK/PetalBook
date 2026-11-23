@@ -83,6 +83,10 @@ export interface TenantBookOptions {
   // The switches the daily text keeps in its own record (the site's value of daily.own and daily.api).
   daily: { get: () => { own: boolean; api: boolean }; set: (patch: { own?: boolean; api?: boolean }) => void }
   isSiteAdmin: (id: string) => boolean
+  // Mail is enabled (registration needs it), ssoOnly is stored on, and a change of registration.open happened.
+  mailReady: () => boolean
+  ssoOnlyStored: () => boolean
+  onRegistrationChanged: () => void
 }
 
 interface TenantRow {
@@ -118,7 +122,12 @@ export function createTenantBook(o: TenantBookOptions) {
   }
   const effectiveOf = (tenant: string, d: Def) => tenantView(tenant, d)
 
-  const tenantOut = (t: Tenant): Tenant => ({ ...t, registration: { open: false } })
+  const tenantOut = (t: Tenant): Tenant => ({ ...t, registration: { open: o.mailReady() && effectiveOf(t.id, DEFS[0]).effective === true } })
+  const checkOpening = () => {
+    if (!o.mailReady()) throw new HttpError(409, 'mail_not_configured', 'registration verifies addresses by mail, and mail is not enabled')
+    if (o.ssoOnlyStored()) throw new HttpError(409, 'sso_only_with_registration', 'password sign-in is refused (ssoOnly), so nobody could finish registering')
+  }
+  const anyOpen = () => [...tenants.keys()].some((id) => effectiveOf(id, DEFS[0]).effective === true)
   const visible = (me: string, id: string): Tenant => {
     const t = tenants.get(id)
     if (!t || (!o.isSiteAdmin(me) && id !== DEFAULT_TENANT)) throw new HttpError(404, 'not_found', 'no such tenant')
@@ -136,7 +145,7 @@ export function createTenantBook(o: TenantBookOptions) {
     const row = siteRows.get(key) ?? {}
     if ('value' in body) {
       const v = d.kind === 'doc' ? body.value : checkValue(d, body.value)
-      if (key === 'registration.open' && v === true) throw new HttpError(409, 'mail_not_configured', 'registration verifies addresses by mail, and mail is not enabled')
+      if (key === 'registration.open' && v === true) checkOpening()
       if (key === 'daily.own') o.daily.set({ own: v as boolean })
       else if (key === 'daily.api') o.daily.set({ api: v as boolean })
       else row.value = v
@@ -145,6 +154,7 @@ export function createTenantBook(o: TenantBookOptions) {
     if ('lower' in body) {
       row.lower = body.lower === null ? undefined : checkLower(d, body.lower)
       const l = row.lower ?? d.lower
+      if (key === 'registration.open' && l.mode !== 'lock' && [...tenantRows.values()].some((r) => r.get(key)?.value === true)) checkOpening()
       affected = 0
       for (const rows of tenantRows.values()) {
         const t = rows.get(key)
@@ -152,6 +162,7 @@ export function createTenantBook(o: TenantBookOptions) {
       }
     }
     siteRows.set(key, row)
+    if (key === 'registration.open') o.onRegistrationChanged()
     return { ...siteView(d), ...(affected === undefined ? {} : { affected }) }
   }
   const putTenant = (tenant: string, key: string, body: Record<string, unknown>): TenantSetting => {
@@ -165,6 +176,7 @@ export function createTenantBook(o: TenantBookOptions) {
       if (sl.mode === 'lock') throw new HttpError(409, 'setting_locked', `${key} is locked by the site's administrators`)
       const v = d.kind === 'doc' ? body.value : checkValue(d, body.value)
       if (!allows(sl, d, v)) throw new HttpError(409, 'setting_restricted', `${key}: outside the site's rule`)
+      if (key === 'registration.open' && v === true) checkOpening()
       row.value = v
     } else if ('value' in body) row.value = undefined
     if ('lower' in body) {
@@ -178,6 +190,7 @@ export function createTenantBook(o: TenantBookOptions) {
     }
     rows.set(key, row)
     tenantRows.set(tenant, rows)
+    if (key === 'registration.open') o.onRegistrationChanged()
     return effectiveOf(tenant, d)
   }
 
@@ -199,6 +212,7 @@ export function createTenantBook(o: TenantBookOptions) {
 
   return {
     mine,
+    registrationStored: anyOpen,
     // Whether daily.own / daily.api are in effect for a person's tenant (the mock has one world: the default).
     effective: (key: string): unknown => effectiveOf(DEFAULT_TENANT, DEFS.find((d) => d.key === key)!).effective,
     // Returns undefined for a path that is not this book's.

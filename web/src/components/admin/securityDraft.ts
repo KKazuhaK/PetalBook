@@ -4,7 +4,7 @@
 
 import type { CaptchaContext, CaptchaProvider, CaptchaWhen, LockoutScope, LoginMode, Role, SecurityPatch, SecuritySettings } from '@/api/types'
 
-export const CONTEXTS: readonly CaptchaContext[] = ['login', 'invite', 'setup']
+export const CONTEXTS: readonly CaptchaContext[] = ['login', 'invite', 'setup', 'forgot', 'register']
 export const LIMIT_FIELDS = ['perMinute', 'maxFailures', 'windowMinutes', 'sessionIdleDays', 'sessionMaxDays'] as const
 export type RoleChoice = 'none' | 'admins' | 'everyone'
 

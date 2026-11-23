@@ -14,6 +14,7 @@ import { DEFAULT_MAX_IMPORT, runImport } from './importer.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
 import { createGroupBook } from './groupBook.ts'
 import { createTenantBook, DEFAULT_TENANT } from './tenantBook.ts'
+import { createMailBook } from './mailBook.ts'
 import { createSignInBook, type PasskeyRec, type ProviderRec, type SignInBookOptions } from './signInBook.ts'
 
 const DEFAULT_INBOX = 'Inbox'
@@ -275,6 +276,7 @@ export function createMockServer(options: MockOptions = {}) {
     groupSource: (id) => groupBook.groups.get(id)?.source,
     onProviderDeleted: (slug) => groupBook.dropProvider(slug),
     onMappingRemoved: (slug, value, keep) => groupBook.dropMapped(slug, value, keep),
+    registrationOpen: () => tenantBook.registrationStored(),
   })
   const groupBook = createGroupBook({
     now: () => new Date(now()).toISOString().replace(/\.\d{3}Z$/, 'Z'),
@@ -482,8 +484,7 @@ export function createMockServer(options: MockOptions = {}) {
   }
   const captchaFor = (q: URLSearchParams): MockResponse => {
     const c = q.get('ctx') ?? ''
-    if (c === 'forgot' || c === 'register') return { status: 200, body: { required: false } }
-    if (c !== 'login' && c !== 'invite' && c !== 'setup') throw new HttpError(400, 'invalid', 'ctx 不对')
+    if (c !== 'login' && c !== 'invite' && c !== 'setup' && c !== 'forgot' && c !== 'register') throw new HttpError(400, 'invalid', 'ctx 不对')
     const key = c === 'login' ? (q.get('account') ?? '').toLowerCase() : 'ip'
     // `login` asks about a name; with none given, only an `always` context is known to need one.
     if (!captchaNeeded(c, key)) return { status: 200, headers: { 'Cache-Control': 'no-store' }, body: { required: false } }
@@ -543,6 +544,46 @@ export function createMockServer(options: MockOptions = {}) {
     book.record('login', { user: u.id, username, detail: { method: 'password' } })
     return { status: 200, body: { user: publicUser(u) }, headers: { 'Set-Cookie': startSession(u, { held: required && u.passkeys.length === 0 }) } }
   }
+
+  const mailBook = createMailBook({
+    now,
+    publicUrl,
+    random: (n) => randomString(n),
+    hash: hashOf,
+    users: () => users.values(),
+    user: (id) => users.get(id),
+    isSiteAdmin: (id) => isSiteAdmin(users.get(id)),
+    usernameTaken,
+    checkUsername,
+    checkPassword: (raw) => checkPassword(raw),
+    checkName: (raw) => checkName(raw),
+    checkCaptcha,
+    noteCaptchaFailure,
+    makeAccount: (p) => {
+      const u = addUser({ username: p.username, name: p.name, role: 'member' }, false)
+      u.passwordHash = p.passwordHash
+      u.email = p.email
+      u.emailVerified = true
+      book.record('login', { user: u.id, username: u.username, detail: { method: 'password', created: true } })
+      return { user: publicUser(u), cookie: startSession(u) }
+    },
+    setPassword: (id, hash) => {
+      const u = users.get(id)
+      if (u) u.passwordHash = hash
+    },
+    endSessions: (id) => endSessions(id),
+    ssoOnlyInEffect: () => book.ssoOnlyInEffect(),
+    ssoOnlyStored: () => book.security.login.ssoOnly,
+    providerName: () => 'single sign-on',
+    rules: () => ({
+      open: tenantBook.effective('registration.open') === true,
+      domains: tenantBook.effective('registration.domains') as string[],
+      termsUrl: tenantBook.effective('legal.termsUrl') as string,
+      privacyUrl: tenantBook.effective('legal.privacyUrl') as string,
+      perHour: tenantBook.effective('registration.perHour') as number,
+    }),
+    record: (kind, o) => book.record(kind, o),
+  })
 
   const checkInviteToken = (token: unknown): InviteRec => {
     const h = typeof token === 'string' ? hashOf(token) : ''
@@ -761,7 +802,11 @@ export function createMockServer(options: MockOptions = {}) {
       if (typeof body.email !== 'string' || body.email.length > 254) throw new HttpError(400, 'invalid', '邮箱不合法')
       const email = body.email.trim()
       // Changing the address takes the "verified" away.
-      if (email !== u.email) u.emailVerified = false
+      if (email !== u.email) {
+        mailBook.noteChange({ email: u.email, emailVerified: u.emailVerified })
+        mailBook.cleanUserTokens(u.id, 'verify')
+        u.emailVerified = false
+      }
       u.email = email
     }
     return { user: publicUser(u) }
@@ -776,6 +821,7 @@ export function createMockServer(options: MockOptions = {}) {
       throw new HttpError(400, 'invalid', '这个账号还没有密码，不需要当前密码')
     }
     u.passwordHash = hashOf(next)
+    mailBook.cleanUserTokens(u.id, 'reset')
     // Other sessions end; this one stays.
     endSessions(u.id, ctx.token)
   }
@@ -1074,6 +1120,9 @@ export function createMockServer(options: MockOptions = {}) {
     now: () => rfc3339(now()),
     daily: { get: () => site.allow, set: (patch) => void Object.assign(site.allow, patch) },
     isSiteAdmin: (id) => isSiteAdmin(users.get(id)),
+    mailReady: () => mailBook.ready(),
+    ssoOnlyStored: () => book.security.login.ssoOnly,
+    onRegistrationChanged: () => mailBook.cancelClosed(),
   })
   const site = { lines: new Map<string, { body: string; source: string }[]>(), default: null as SiteDefault, allow: { own: true, api: true }, languages: ['zh-Hans', 'en'], apis: [] as SiteApi[], providers: {} as Record<string, ProviderState>, notices: [] as DailyNotice[] }
   const spaceDaily = new Map<string, { inherit: boolean; apis: string[] }>()
@@ -2053,7 +2102,7 @@ export function createMockServer(options: MockOptions = {}) {
       accountsOnly()
       const mode = book.effectiveMode()
       const list = book.publicProviders()
-      return { status: 200, headers: { 'Cache-Control': 'no-store' }, body: { providers: list, loginMode: mode, local: mode !== 'sso_redirect', sso: mode !== 'local_only' && list.length > 0, passkey: book.passkeyOn() } }
+      return { status: 200, headers: { 'Cache-Control': 'no-store' }, body: { providers: list, loginMode: mode, local: mode !== 'sso_redirect', sso: mode !== 'local_only' && list.length > 0, passkey: book.passkeyOn(), register: mailBook.open(), forgot: mailBook.ready() } }
     }
     if (path === '/captcha' && method === 'GET') {
       accountsOnly()
@@ -2101,6 +2150,60 @@ export function createMockServer(options: MockOptions = {}) {
     if (path === '/invites/accept' && method === 'POST') {
       accountsOnly()
       return acceptInvite(body)
+    }
+
+    // --- mail, registration, email verification and password reset (3.3) ---
+    if (path === '/admin/mail' || path === '/admin/mail/test') {
+      accountsOnly()
+      const me = requireAdmin(ctx)
+      if (!isSiteAdmin(me)) throw new HttpError(403, 'forbidden', '只有全站管理员能改发信设置')
+      if (path === '/admin/mail' && method === 'GET') return j(mailBook.view())
+      if (path === '/admin/mail' && method === 'PUT') {
+        const r = mailBook.put(body)
+        book.record('mail_changed', { detail: { keys: Object.keys(body).map((k) => (k === 'password' ? 'password' : k)) } })
+        return j(r)
+      }
+      if (method === 'POST') return mailBook.test(body)
+    }
+    if (path === '/register' && method === 'GET') {
+      accountsOnly()
+      return { status: 200, headers: { 'Cache-Control': 'no-store' }, body: mailBook.registerInfo() }
+    }
+    if (path === '/register' && method === 'POST') {
+      accountsOnly()
+      return mailBook.register(body)
+    }
+    if (path === '/register/confirm' && method === 'POST') {
+      accountsOnly()
+      return mailBook.registerConfirm(body)
+    }
+    if (path === '/account/email/verify' && method === 'POST') {
+      accountsOnly()
+      return mailBook.requestVerify(requireUser(ctx))
+    }
+    if (path === '/email/confirm' && method === 'POST') {
+      accountsOnly()
+      return mailBook.confirmEmail(body, (id) => {
+        const u = users.get(id)
+        if (u) u.emailVerified = true
+      })
+    }
+    if (path === '/password/forgot' && method === 'POST') {
+      accountsOnly()
+      return mailBook.forgot(body)
+    }
+    if (path === '/password/reset/check' && method === 'POST') {
+      accountsOnly()
+      return mailBook.resetCheck(body)
+    }
+    if (path === '/password/reset' && method === 'POST') {
+      accountsOnly()
+      return mailBook.reset(body)
+    }
+    const adminReset = /^\/users\/([^/]+)\/password-reset$/.exec(path)
+    if (adminReset && method === 'POST') {
+      accountsOnly()
+      return mailBook.adminReset(requireAdmin(ctx), decodeURIComponent(adminReset[1]))
     }
 
     // --- account ---
@@ -2384,6 +2487,8 @@ export function createMockServer(options: MockOptions = {}) {
   const sweepAll = () => spaces.forEach((s) => s.store.sweep(idleMs, maxMs))
 
   return {
+    // The mail the mock "sent" (it sends nothing): tests and the dev page read the links from here.
+    mail: mailBook,
     // `target` is a path with query, as sent by the client ("/api/...").
     // `cookie` is the request's Cookie header.
     // `raw` is the request body as bytes, for the one request that is not JSON (uploading a file).

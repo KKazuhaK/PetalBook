@@ -172,7 +172,7 @@ describe('administrators and tenants in the Users page and the navigation', () =
   it('shows a site administrator every section, and a tenant administrator only those of their tenant', async () => {
     await open('users')
     await settle(() => navLabels().length > 0, 'the navigation')
-    expect(navLabels()).toEqual([ta.sections.users, ta.sections.groups, ta.sections.spaces, ta.sections.daily, ta.sections.access, ta.sections.security, ta.sections.settings, ta.sections.tenants, ta.sections.status])
+    expect(navLabels()).toEqual([ta.sections.users, ta.sections.groups, ta.sections.spaces, ta.sections.daily, ta.sections.access, ta.sections.security, ta.sections.mail, ta.sections.settings, ta.sections.tenants, ta.sections.status])
     await m!.unmount()
     // Another site administrator exists; the signed-in one is made a tenant administrator.
     await open('users', (server) => {

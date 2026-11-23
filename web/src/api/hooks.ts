@@ -39,6 +39,7 @@ export const keys = {
   adminSpaceList: (q: string) => ['admin', 'spaces', 'list', q] as const,
   adminStatus: ['admin', 'status'] as const,
   tenancy: ['admin', 'tenancy'] as const,
+  adminMail: ['admin', 'mail'] as const,
   tenants: ['admin', 'tenants'] as const,
   siteSettings: ['admin', 'settings', 'site'] as const,
   tenantSettings: (id: string) => ['admin', 'settings', 'tenant', id] as const,

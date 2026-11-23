@@ -1,6 +1,6 @@
 import { Link, Navigate, useParams } from 'react-router'
 import { lazy, Suspense } from 'react'
-import { ArrowLeft, Building2, HardDrive, KeyRound, Layers, Quote, ShieldCheck, SlidersHorizontal, Users, UsersRound } from 'lucide-react'
+import { ArrowLeft, Building2, Mail, HardDrive, KeyRound, Layers, Quote, ShieldCheck, SlidersHorizontal, Users, UsersRound } from 'lucide-react'
 import { TopBar } from '@/components/layout/TopBar'
 import { useActiveSpace, useSession } from '@/api/hooks'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
@@ -19,13 +19,14 @@ import { UsersPanel } from './UsersPanel'
 const DailyPanel = lazy(() => import('./DailyPanel').then((m) => ({ default: m.DailyPanel })))
 const AccessPanel = lazy(() => import('./AccessPanel').then((m) => ({ default: m.AccessPanel })))
 // The security page, with the providers and the audit log, is another.
+const MailPanel = lazy(() => import('./MailPanel').then((m) => ({ default: m.MailPanel })))
 const SecurityPanel = lazy(() => import('./AdminSecurityPanel').then((m) => ({ default: m.AdminSecurityPanel })))
 
-const ICONS: Record<AdminSection, typeof Users> = { users: Users, groups: UsersRound, spaces: Layers, daily: Quote, access: KeyRound, security: ShieldCheck, settings: SlidersHorizontal, tenants: Building2, status: HardDrive }
-const SECTIONS: readonly AdminSection[] = ['users', 'groups', 'spaces', 'daily', 'access', 'security', 'settings', 'tenants', 'status']
+const ICONS: Record<AdminSection, typeof Users> = { users: Users, groups: UsersRound, spaces: Layers, daily: Quote, access: KeyRound, security: ShieldCheck, mail: Mail, settings: SlidersHorizontal, tenants: Building2, status: HardDrive }
+const SECTIONS: readonly AdminSection[] = ['users', 'groups', 'spaces', 'daily', 'access', 'security', 'mail', 'settings', 'tenants', 'status']
 // What only an administrator of the whole server may open: the server's own settings. A tenant's
 // administrator sees the rest, for their tenant, and the settings page for their tenant's layer.
-const SITE_ONLY: readonly AdminSection[] = ['daily', 'access', 'security', 'tenants', 'status']
+const SITE_ONLY: readonly AdminSection[] = ['daily', 'access', 'security', 'mail', 'tenants', 'status']
 
 // The administration: users and invites, every space, the state of the server.
 // It is a route of its own, loaded only when an administrator goes there (see
@@ -87,6 +88,11 @@ export default function AdminRoute() {
         {section === 'security' && (
           <Suspense fallback={<PageFallback />}>
             <SecurityPanel />
+          </Suspense>
+        )}
+        {section === 'mail' && (
+          <Suspense fallback={<PageFallback />}>
+            <MailPanel />
           </Suspense>
         )}
         {section === 'settings' && <SettingsPanel />}

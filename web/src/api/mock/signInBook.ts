@@ -56,6 +56,8 @@ export interface SignInBookOptions {
   groupSource?: (id: string) => string | undefined
   onProviderDeleted?: (slug: string) => void
   onMappingRemoved?: (slug: string, value: string, keep: string) => void
+  // 3.3: whether any tenant's registration is open (ssoOnly cannot be switched on then).
+  registrationOpen?: () => boolean
   security?: MockSecurity
   providers?: (ProviderInput & { slug: string; kind: ProviderKind; name: string; sub?: string; status?: AuthProvider['status'] })[]
   notices?: SecurityNotice[]
@@ -64,7 +66,7 @@ export interface SignInBookOptions {
 const MODES: LoginMode[] = ['dual', 'sso_first', 'sso_redirect', 'local_only']
 const SCOPES = ['ip_account', 'ip', 'account']
 const CAPTCHAS: CaptchaProvider[] = ['image', 'turnstile', 'recaptcha', 'hcaptcha']
-const CONTEXTS: CaptchaContext[] = ['login', 'invite', 'setup']
+const CONTEXTS: CaptchaContext[] = ['login', 'invite', 'setup', 'forgot', 'register']
 export const SLUG = /^[a-z0-9][a-z0-9-]{0,31}$/
 export const MAX_PROVIDERS = 50
 
@@ -103,7 +105,7 @@ export function createSignInBook(o: SignInBookOptions) {
       provider: 'image' as CaptchaProvider,
       siteKey: '',
       secretFor: '' as CaptchaProvider | '',
-      contexts: { login: { on: false, when: 'after_failures', failures: 3 }, invite: { on: false, when: 'after_failures', failures: 3 }, setup: { on: false, when: 'after_failures', failures: 3 } } as SecuritySettings['captcha']['contexts'],
+      contexts: { login: { on: false, when: 'after_failures', failures: 3 }, invite: { on: false, when: 'after_failures', failures: 3 }, setup: { on: false, when: 'after_failures', failures: 3 }, forgot: { on: false, when: 'after_failures', failures: 3 }, register: { on: false, when: 'after_failures', failures: 3 } } as SecuritySettings['captcha']['contexts'],
     },
     lockout: { enabled: false, minutes: 15, scope: 'ip_account' as SecuritySettings['lockout']['scope'] },
     limits: { perMinute: 10, maxFailures: 10, windowMinutes: 15, sessionIdleDays: 30, sessionMaxDays: 90 },
@@ -386,7 +388,7 @@ export function createSignInBook(o: SignInBookOptions) {
         provider: security.captcha.provider,
         siteKey: security.captcha.siteKey,
         hasSecret: (security.captcha.secretFor as string) === security.captcha.provider,
-        contexts: { login: { ...security.captcha.contexts.login }, invite: { ...security.captcha.contexts.invite }, setup: { ...security.captcha.contexts.setup } },
+        contexts: { login: { ...security.captcha.contexts.login }, invite: { ...security.captcha.contexts.invite }, setup: { ...security.captcha.contexts.setup }, forgot: { ...security.captcha.contexts.forgot }, register: { ...security.captcha.contexts.register } },
       },
       lockout: { ...security.lockout },
       limits: { ...security.limits },
@@ -418,7 +420,10 @@ export function createSignInBook(o: SignInBookOptions) {
     if (patch.login !== undefined) {
       const b = only(patch.login, 'login', ['mode', 'ssoOnly'])
       if (b.mode !== undefined) next.login.mode = set('login', 'mode', security.login.mode, oneOf(b.mode, MODES, 'login.mode'))
-      if (b.ssoOnly !== undefined) next.login.ssoOnly = set('login', 'ssoOnly', security.login.ssoOnly, bool(b.ssoOnly, 'login.ssoOnly'))
+      if (b.ssoOnly !== undefined) {
+        if (b.ssoOnly === true && !security.login.ssoOnly && o.registrationOpen?.()) throw new HttpError(400, 'sso_only_with_registration', '有租户开着注册时不能只允许单点登录')
+        next.login.ssoOnly = set('login', 'ssoOnly', security.login.ssoOnly, bool(b.ssoOnly, 'login.ssoOnly'))
+      }
     }
     if (patch.passkeys !== undefined) {
       const b = only(patch.passkeys, 'passkeys', ['enabled', 'requireRoles'])

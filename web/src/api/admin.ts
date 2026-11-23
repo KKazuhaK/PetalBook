@@ -6,7 +6,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, enc, request } from './client'
 import { keys } from './hooks'
-import type { CreatedTenant, SettingLower, SiteSetting, Tenancy, Tenant, TenantList, TenantQuotaKey, TenantSetting, Group, GroupList, GroupPersonList, GroupSource, GroupSpaceList, AdminDaily, AdminSpaceList, AuditList, AuthProvider, Passkey, ProviderInput, SecurityPatch, SecuritySettings, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User, AdminGrantList, AdminTokenList, MachineAccess } from './types'
+import type { MailPatch, MailSettings, MailTestResult, CreatedTenant, SettingLower, SiteSetting, Tenancy, Tenant, TenantList, TenantQuotaKey, TenantSetting, Group, GroupList, GroupPersonList, GroupSource, GroupSpaceList, AdminDaily, AdminSpaceList, AuditList, AuthProvider, Passkey, ProviderInput, SecurityPatch, SecuritySettings, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User, AdminGrantList, AdminTokenList, MachineAccess } from './types'
 
 export const adminApi = {
   // --- users and invites ---
@@ -44,6 +44,12 @@ export const adminApi = {
   adminEnableSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/enable`, { method: 'POST' }),
   adminDeleteSpace: (id: string) => request<DeletedSpace>(`/admin/spaces/${enc(id)}`, { method: 'DELETE' }),
   adminStatus: (signal?: AbortSignal) => request<ServerStatus>('/admin/status', { signal }),
+
+  // --- mail and password reset (3.3) ---
+  mail: (signal?: AbortSignal) => request<MailSettings>('/admin/mail', { signal }),
+  putMail: (input: MailPatch) => request<MailSettings>('/admin/mail', { method: 'PUT', body: input }),
+  testMail: (to: string, lang?: string) => request<MailTestResult>('/admin/mail/test', { method: 'POST', body: { to, ...(lang ? { lang } : {}) } }),
+  sendPasswordReset: (id: string, lang?: string) => request<{ sent: boolean }>(`/users/${enc(id)}/password-reset`, { method: 'POST', body: lang ? { lang } : {} }),
 
   // --- tenants (3.3) ---
   tenancy: (signal?: AbortSignal) => request<Tenancy>('/admin/tenancy', { signal }),
@@ -192,6 +198,24 @@ export function useAdminSpaces(q: string, enabled = true) {
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 15_000,
+  })
+}
+
+// --- mail (3.3) ---
+
+export function useMail(enabled = true) {
+  return useQuery({ queryKey: keys.adminMail, queryFn: ({ signal }) => adminApi.mail(signal), enabled, staleTime: 5_000 })
+}
+export function usePutMail() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: MailPatch) => adminApi.putMail(input),
+    // Mail on or off changes what the sign-in page links to.
+    onSuccess: (data) => {
+      qc.setQueryData(keys.adminMail, data)
+      void qc.invalidateQueries({ queryKey: keys.providers })
+      void qc.invalidateQueries({ queryKey: keys.tenants })
+    },
   })
 }
 

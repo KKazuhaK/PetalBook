@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import { adminApi, useInvites, useSecuritySettings, useUsers } from '@/api/admin'
-import { keys, useSession } from '@/api/hooks'
+import { keys, useAuthProviders, useSession } from '@/api/hooks'
 import type { CreatedInvite, Passkey, Role, User } from '@/api/types'
 import { tt } from '@/i18n/tenants'
 import { FormMessage } from '@/components/auth/Field'
@@ -19,6 +19,8 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { absoluteTime } from '@/lib/time'
 import { t } from '@/i18n'
 import { tsec } from '@/i18n/security'
+import { tm } from '@/i18n/mail'
+import { mailLang } from '@/pages/auth/MailPages'
 
 // Users and invites, for administrators. Moved from the old users page; the
 // lists and forms are as they were.
@@ -154,6 +156,20 @@ function UserDetails({ u, busy, save }: { u: User; busy: boolean; save: (patch: 
   const [passkeys, setPasskeys] = useState<Passkey[] | null>(null)
   const [error, setError] = useState('')
   const [removing, setRemoving] = useState<Passkey | null>(null)
+  const mailOn = useAuthProviders(true).data?.forgot === true
+  const [sending, setSending] = useState(false)
+  const [resetMsg, setResetMsg] = useState('')
+  const sendReset = async () => {
+    setSending(true)
+    setResetMsg('')
+    try {
+      await adminApi.sendPasswordReset(u.id, mailLang())
+      setResetMsg(tm.users.sent(u.username))
+    } catch (e) {
+      setResetMsg(e instanceof ApiError ? (tm.users.errors[e.code] ?? e.message) : t.auth.failed)
+    }
+    setSending(false)
+  }
 
   // The person's passkeys are read when the details open, and not before.
   useEffect(() => {
@@ -209,6 +225,16 @@ function UserDetails({ u, busy, save }: { u: User; busy: boolean; save: (patch: 
           <span className="block text-xs break-words text-muted-foreground">{tsec.users.emailVerifiedHelp}</span>
         </span>
       </label>
+      {mailOn && u.email && u.emailVerified && (
+        <div className="grid gap-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" size="sm" variant="outline" disabled={sending} onClick={() => void sendReset()}>
+              {sending ? tm.users.sending : tm.users.sendReset}
+            </Button>
+            {resetMsg && <span role="status" className="text-xs text-muted-foreground">{resetMsg}</span>}
+          </div>
+        </div>
+      )}
       <div className="grid min-w-0 gap-2">
         <h4 className="text-sm font-medium">{tsec.users.passkeys}</h4>
         <p className="text-xs break-words text-muted-foreground">{tsec.users.passkeysHelp}</p>

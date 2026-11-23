@@ -998,6 +998,24 @@ function suite(target: Target) {
         expect((await call(m.browser, 'GET', '/api/settings')).status).toBe(200)
       })
 
+      it('mail is off until an administrator enables it: registration and reset answer as switched off, nothing can open registration', async () => {
+        const mail = (await call(admin, 'GET', '/api/admin/mail')).json
+        // A server this suite runs against has not been given SMTP.
+        expect(mail.enabled).toBe(false)
+        expect(mail).toMatchObject({ security: 'starttls', hasPassword: false })
+        const anon = browser()
+        expect((await call(anon, 'GET', '/api/register')).json).toEqual({ open: false })
+        const pr = (await call(anon, 'GET', '/api/auth/providers')).json
+        expect([pr.register, pr.forgot]).toEqual([false, false])
+        expect((await call(anon, 'POST', '/api/password/forgot', { login: 'nobody' })).json.error).toBe('password_reset_off')
+        expect((await call(anon, 'POST', '/api/register', { username: 'x1', name: 'x', email: 'x@example.test', password: 'a-long-password' })).json.error).toBe('registration_closed')
+        expect((await call(anon, 'POST', '/api/email/confirm', { token: 'nope' })).json.error).toBe('not_found')
+        expect((await call(admin, 'PUT', '/api/admin/settings/registration.open', { value: true })).json.error).toBe('mail_not_configured')
+        expect((await call(admin, 'PUT', '/api/admin/mail', { security: 'none', host: 'mail.example.test' })).json.error).toBe('mail_insecure')
+        const m = await newMember(uniq('ml'))
+        for (const [method, path] of [['GET', '/api/admin/mail'], ['PUT', '/api/admin/mail'], ['POST', '/api/admin/mail/test']] as const) expect((await call(m.browser, method, path, {})).status, path).toBe(403)
+      })
+
       it('the switch gates making tenants; a tenant is made, listed, renamed, disabled and deleted; the default one is kept', async () => {
         const was = ((await call(admin, 'GET', '/api/admin/tenancy')).json as { enabled: boolean }).enabled
         try {
@@ -4586,13 +4604,13 @@ function suite(target: Target) {
       const root = await inAs()
       const none = await call(b28(), 'GET', '/api/auth/providers')
       expect(none.headers.get('Cache-Control')).toBe('no-store')
-      expect(none.json).toEqual({ providers: [], loginMode: 'local_only', local: true, sso: false, passkey: true })
+      expect(none.json).toEqual({ providers: [], loginMode: 'local_only', local: true, sso: false, passkey: true, register: false, forgot: false })
       const made = await call(root, 'POST', '/api/admin/auth/providers', company)
       expect(made.status).toBe(201)
       expect(made.json).toMatchObject({ slug: 'company', kind: 'oidc', enabled: true, people: 0, status: { ok: true }, oidc: { hasSecret: true, redirectUrl: 'https://notes.example.com/api/auth/oidc/company/callback' } })
       expect(made.json.oidc).not.toHaveProperty('clientSecret')
       const list = (await call(b28(), 'GET', '/api/auth/providers')).json
-      expect(list).toEqual({ providers: [{ slug: 'company', kind: 'oidc', name: 'Company SSO', icon: 'preset:microsoft' }], loginMode: 'dual', local: true, sso: true, passkey: true })
+      expect(list).toEqual({ providers: [{ slug: 'company', kind: 'oidc', name: 'Company SSO', icon: 'preset:microsoft' }], loginMode: 'dual', local: true, sso: true, passkey: true, register: false, forgot: false })
       await call(root, 'PUT', '/api/admin/security', { login: { mode: 'sso_redirect' } })
       expect((await call(b28(), 'GET', '/api/auth/providers')).json).toMatchObject({ loginMode: 'sso_redirect', local: false, sso: true })
       await call(root, 'PUT', '/api/admin/security', { login: { mode: 'dual' } })

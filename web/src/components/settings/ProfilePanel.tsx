@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '@/api/client'
-import { keys, useAccount, useSession } from '@/api/hooks'
+import { keys, useAccount, useAuthProviders, useSession } from '@/api/hooks'
 import type { AccountInfo, SessionInfo } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
@@ -10,6 +10,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { t } from '@/i18n'
 import { tg } from '@/i18n/groups'
+import { tm } from '@/i18n/mail'
+import { mailLang } from '@/pages/auth/MailPages'
 
 // Profile: name and email (accounts mode only). The password and the linked
 // sign-ins are on the Security panel.
@@ -85,6 +87,7 @@ function Profile({ account }: { account: AccountInfo }) {
 
   return (
     <SettingsSection title={t.settings.profile}>
+      <EmailVerification user={account.user} />
       <form className="grid gap-4" onSubmit={(e) => void submit(e)}>
         <Field label={t.settings.name} value={name} onChange={(e) => { setName(e.target.value); setDone(false) }} autoComplete="name" required />
         <Field label={t.settings.email} help={t.settings.emailHelp} type="email" value={email} onChange={(e) => { setEmail(e.target.value); setDone(false) }} autoComplete="email" />
@@ -100,5 +103,42 @@ function Profile({ account }: { account: AccountInfo }) {
         </div>
       </form>
     </SettingsSection>
+  )
+}
+
+// Whether the address counts, and a way to ask for the link that makes it count (when the server can send mail).
+function EmailVerification({ user }: { user: AccountInfo['user'] }) {
+  const providers = useAuthProviders(true)
+  const mailOn = providers.data?.forgot === true
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<{ tone: 'error' | 'info'; text: string } | null>(null)
+  if (!user.email) return <p className="text-sm text-muted-foreground">{tm.account.title}: {tm.account.none}</p>
+  const ask = async () => {
+    setBusy(true)
+    setMessage(null)
+    try {
+      await api.requestEmailVerify(mailLang())
+      setMessage({ tone: 'info', text: tm.account.sent(user.email) })
+    } catch (err) {
+      const code = err instanceof ApiError ? err.code : ''
+      setMessage({ tone: 'error', text: code === 'mail_not_configured' ? tm.account.notConfigured : code === 'rate_limited' && err instanceof ApiError ? tm.account.rateLimited(t.auth.wait(err.retryAfter ?? 60)) : tm.account.failed })
+    }
+    setBusy(false)
+  }
+  return (
+    <div className="grid gap-2 text-sm" data-slot="email-verification">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium">{tm.account.title}</span>
+        <span className="break-all text-muted-foreground">{user.email}</span>
+        <Badge variant={user.emailVerified ? 'secondary' : 'outline'}>{user.emailVerified ? tm.account.verified : tm.account.unverified}</Badge>
+        {!user.emailVerified && mailOn && (
+          <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void ask()}>
+            {busy ? tm.account.sending : tm.account.verify}
+          </Button>
+        )}
+      </div>
+      {!user.emailVerified && <p className="text-xs text-muted-foreground">{tm.account.help}</p>}
+      {message && <FormMessage tone={message.tone}>{message.text}</FormMessage>}
+    </div>
   )
 }

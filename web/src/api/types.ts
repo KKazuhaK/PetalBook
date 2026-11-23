@@ -482,6 +482,15 @@ export type ErrorCode =
   | 'setting_locked'
   | 'setting_restricted'
   | 'mail_not_configured'
+  | 'mail_insecure'
+  | 'mail_from_required'
+  | 'mail_needs_public_url'
+  | 'registration_closed'
+  | 'password_reset_off'
+  | 'email_domain_not_allowed'
+  | 'terms_required'
+  | 'email_verified'
+  | 'email_unverified'
   | 'sso_only_with_registration'
   | 'bad_language'
   | 'api_not_found'
@@ -683,10 +692,56 @@ export interface AuthProviders {
   local: boolean
   sso: boolean
   passkey: boolean
+  // 3.3: whether the page links to registration and to password reset.
+  register?: boolean
+  forgot?: boolean
+}
+
+// --- mail, registration, email verification and password reset (3.3) ---
+export type MailSecurity = 'starttls' | 'tls' | 'none'
+export interface MailSettings {
+  enabled: boolean
+  host: string
+  port: number
+  security: MailSecurity
+  username: string
+  hasPassword: boolean
+  from: string
+  fromName: string
+  replyTo: string
+  status: { ok: boolean; checked: string | null; message: string }
+  queue: { waiting: number; sentLastHour: number; failedLastHour: number }
+}
+export interface MailPatch {
+  enabled?: boolean
+  host?: string
+  port?: number
+  security?: MailSecurity
+  username?: string
+  // Write only: absent keeps the stored one, '' clears it.
+  password?: string
+  from?: string
+  fromName?: string
+  replyTo?: string
+}
+export interface MailTestResult {
+  ok: boolean
+  message?: string
+}
+export type RegisterInfo = { open: false } | { open: true; tenant: { slug: string; name: string }; domains: string[]; termsUrl: string; privacyUrl: string; password: { minLength: number } }
+export interface RegisterInput {
+  tenant?: string
+  username: string
+  name: string
+  email: string
+  password: string
+  acceptTerms?: boolean
+  captcha?: CaptchaAnswer
+  lang?: string
 }
 
 export type CaptchaProvider = 'image' | 'turnstile' | 'recaptcha' | 'hcaptcha'
-export type CaptchaContext = 'login' | 'invite' | 'setup'
+export type CaptchaContext = 'login' | 'invite' | 'setup' | 'forgot' | 'register'
 export interface CaptchaChallenge {
   required: boolean
   provider?: CaptchaProvider

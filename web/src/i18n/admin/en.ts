@@ -4,7 +4,7 @@ export const adminEn: AdminMessages = {
   title: 'Administration',
   nav: 'Administration sections',
   back: 'Back to the app',
-  sections: { users: 'Users and invites', groups: 'Groups', spaces: 'Spaces', daily: 'Daily text', access: 'Machine access', security: 'Security', settings: 'Settings by layer', tenants: 'Tenants', status: 'Server status' },
+  sections: { users: 'Users and invites', groups: 'Groups', spaces: 'Spaces', daily: 'Daily text', access: 'Machine access', security: 'Security', mail: 'Mail', settings: 'Settings by layer', tenants: 'Tenants', status: 'Server status' },
   spaces: {
     title: 'All spaces',
     help: 'Every space on the server. An administrator can open any space without being a member of it.',
