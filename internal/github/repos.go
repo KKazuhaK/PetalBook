@@ -459,6 +459,13 @@ func (s *Service) ChooseCredential(ctx context.Context, p *Plan, repo *Repo) (*C
 		if ok {
 			return &Cred{Via: ViaApp, InstallationID: inst, RepoID: repo.ID}, nil
 		}
+		if p.InstallationID == 0 { // found by a lookup: forget it, it may have moved
+			if p.Org != "" {
+				st.app.ForgetLookup("org", p.Org)
+			} else {
+				st.app.ForgetLookup("user", p.Owner)
+			}
+		}
 	}
 	if p.Org != "" {
 		e := errf(http.StatusConflict, CodeRepoNotInInstall, "the App's installation on %s does not reach the new repository %s and it could not be added; add it in the installation's settings on GitHub", p.Owner, repo.FullName)
@@ -572,6 +579,7 @@ func (s *Service) existingApp(ctx context.Context, st *appState, userID, owner, 
 		return nil, nil, err
 	}
 	if !ok {
+		st.app.ForgetLookup("repo", owner+"/"+name) // it may have moved: look again next time
 		return nil, nil, errf(http.StatusConflict, CodeRepoNotInInstall, "the App's installation does not reach %s", repo.FullName)
 	}
 	return &Cred{Via: ViaApp, InstallationID: inst, RepoID: repo.ID}, repoOf(repo), nil

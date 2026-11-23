@@ -1693,6 +1693,23 @@ GitHub App 和用户授权，自动建仓库；passkey；SAML。
   建仓库已经是「要么整个成功、要么不留空间」的一步，3.1 只要在第一步前加
   检查。
 
+**2.7 做出来的样子**：
+
+- 迁移是 `0012_github.sql`（`0011` 留给 feat/mcp 的 API 令牌；迁移按编号各自
+  应用，两边合并的先后无所谓）。SQLite 和 PostgreSQL 的测试都跑。
+- 代码分三层：`internal/githubapp` 是对 GitHub 的客户端（JWT、安装令牌缓存、
+  用户授权、REST 调用，基地址可配，默认 `api.github.com` 和 `github.com`，
+  测试用 `githubapptest` 里的假 GitHub，不连真的）；`internal/github` 是服务
+  器怎么用这个 App（设置、授权与续期、可建仓库的账号、选凭据、给 Git 的令牌）；
+  `internal/spaces` 里是建空间与切换（`CreateWithGitHub`）。给 Git 的令牌还是走
+  `gitstore.Token` 的环境变量 credential helper，`gitstore` 只多了一个能说明
+  「凭据本身拿不到」的错误类型。
+- 基地址有两个隐藏的启动参数 `--github-api-url`、`--github-url`，只给测试用
+  （只支持 github.com 这一条没变）。
+- 建空间时上限按「已有的加正在建的」算，所以并发请求不会越过 `--max-spaces`。
+  首次推送的重试间隔是 1、3、7 秒（四次，共 11 秒加每次推送本身的时间）。
+- 要问所有者的六个问题，都按括号里的默认做了。
+
 2.7 不做的：
 
 - 设备码流程（网页用不上，留给第 4 期的客户端）。

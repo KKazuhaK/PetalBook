@@ -562,8 +562,9 @@ those whose page changed are stale and are shown as such.
 
 ## GitHub
 
-Accounts mode; single-user mode answers `404` here, and a `github` credential
-in `PUT …/remote` answers `400 invalid` there. The server has at most one
+Accounts mode; single-user mode answers `404` here, as it does for the whole of
+"Remote repository" (so a `github` credential in `PUT …/remote` is `404` there
+too). The server has at most one
 GitHub App, which an administrator configures (see "Administration", "GitHub
 App"); only `github.com` is supported. Three things come from it:
 
@@ -768,7 +769,10 @@ filters the page it has, and the user can type `owner/name` instead.
 - `create`: `true` when left out. `false` uses the repository `owner/name`
   that exists already, under the rules of `PUT …/remote`: an empty repository
   gets the space's history; one with content gives it to the new space, which
-  is pristine.
+  is pristine. The credential is chosen as `PUT …/remote` would with no `via`
+  given: the App when the caller may use its installation on that repository
+  (their connection can push there, or the installation is shared), otherwise
+  the caller's own connection.
 
 The repository is created empty (`auto_init: false`), so the space's first
 commit is the repository's first commit, on `main`. The order:
