@@ -2606,6 +2606,93 @@ function suite(target: Target) {
     })
   })
 
+  describe('links between pages', () => {
+    const f = `${root}/links`
+    // A page in `from` names the one in `to` as the editor writes it.
+    const linkTo = (from: string, to: Page, text = '目标') => {
+      const rel = to.path.split('/')
+      const base = from.split('/')
+      let i = 0
+      while (i < base.length && i < rel.length - 1 && base[i] === rel[i]) i++
+      const dest = [...base.slice(i).map(() => '..'), ...rel.slice(i)].map(encodeURIComponent).join('/')
+      return `[${text}](${dest} "${to.id}")`
+    }
+
+    it('lists the links of a page in the order of the text, with where they lead now', async () => {
+      const target = await mk(`${f}/a/目标`, { title: `被链到${run}` }, '正文\n')
+      const src = await mk(`${f}/a`, { title: `出链${run}` }, `先看 ${linkTo(`${f}/a`, target, '甲')}，再看[无](没有这一篇.md)，还有[外](https://example.com/x.md)。\n`)
+      const r = await S.links(src.id)
+      expect(r.items.map((l) => l.text)).toEqual(['甲', '无'])
+      expect(r.items[0]).toMatchObject({ text: '甲', id: target.id, path: target.path, broken: false })
+      expect(r.items[0].target).toMatchObject({ id: target.id, path: target.path, title: `被链到${run}`, untitled: false })
+      expect(r.items[1]).toMatchObject({ text: '无', path: `${f}/a/没有这一篇.md`, broken: true })
+      expect(r.items[1].target).toBeUndefined()
+    })
+
+    it('a link that is in code, an image or an anchor on the page is not a link', async () => {
+      const target = await mk(f, { title: `不算${run}` }, 'x\n')
+      const rel = target.path.split('/').pop()!
+      const src = await mk(f, {}, `\`[a](${rel})\`\n\n![b](${rel})\n\n[c](#节)\n\n\`\`\`\n[d](${rel})\n\`\`\`\n`)
+      expect((await S.links(src.id)).items).toEqual([])
+    })
+
+    it('a link follows the page by its id; its title is the page as it is now', async () => {
+      const target = await mk(f, { title: `旧名${run}` }, 'x\n')
+      const src = await mk(f, {}, `${linkTo(f, target)}\n`)
+      await S.savePage(target.id, { baseRev: target.rev, meta: { ...target.meta, title: `新名${run}` }, body: target.body })
+      const l = (await S.links(src.id)).items[0]
+      expect(l.broken).toBe(false)
+      expect(l.target?.title).toBe(`新名${run}`)
+    })
+
+    it('says which pages link here, with the paragraph and the total, never the page itself', async () => {
+      const made = await mk(`${f}/back`, { title: `被引用${run}` }, 'x\n')
+      const target = await S.savePage(made.id, { baseRev: made.rev, meta: made.meta, body: `自己链自己：${linkTo(`${f}/back`, made, '我')}\n` })
+      const one = await mk(`${f}/back/甲`, { title: `引用甲${run}` }, `前一段。\n\n这一段链到${linkTo(`${f}/back/甲`, target, '目标')}，写了两次${linkTo(`${f}/back/甲`, target, '又一次')}。\n\n后一段。\n`)
+      const r = await S.backlinks(target.id)
+      expect(r.total).toBe(1)
+      expect(r.next).toBe('')
+      expect(r.items).toHaveLength(1)
+      expect(r.items[0]).toMatchObject({ id: one.id, path: one.path, title: `引用甲${run}`, untitled: false })
+      expect(r.items[0].excerpt).toContain('这一段链到')
+      expect(r.items[0].excerpt).not.toContain('前一段')
+      expect(r.items[0].excerpt).not.toContain('后一段')
+    })
+
+    it('pages the backlinks 20 at a time, each page once, with a cursor that ends', async () => {
+      const target = await mk(`${f}/many`, { title: `热门${run}` }, 'x\n')
+      const made: string[] = []
+      for (let i = 0; i < 22; i++) made.push((await mk(`${f}/many`, { title: `引用${String(i).padStart(2, '0')}${run}` }, `见${linkTo(`${f}/many`, target)}\n`)).id)
+      const first = await S.backlinks(target.id)
+      expect(first.items).toHaveLength(20)
+      expect(first.total).toBe(22)
+      expect(first.next).not.toBe('')
+      const second = await S.backlinks(target.id, first.next)
+      expect(second.items).toHaveLength(2)
+      expect(second.total).toBe(22)
+      expect(second.next).toBe('')
+      expect([...first.items, ...second.items].map((b) => b.id).sort()).toEqual([...made].sort())
+    })
+
+    it('a page nothing links to has an empty list; a bad cursor is 400; an unknown page is 404', async () => {
+      const lonely = await mk(f, { title: `孤立${run}` }, 'x\n')
+      expect(await S.backlinks(lonely.id)).toEqual({ items: [], next: '', total: 0 })
+      await expect(S.backlinks(lonely.id, 'not-a-cursor')).rejects.toMatchObject({ status: 400, code: 'invalid' })
+      await expect(S.backlinks('01JZZZZZZZ')).rejects.toMatchObject({ status: 404 })
+      await expect(S.links('01JZZZZZZZ')).rejects.toMatchObject({ status: 404 })
+    })
+
+    it('deleting the target makes the link broken and changes no other file', async () => {
+      const target = await mk(f, { title: `将删${run}` }, 'x\n')
+      const src = await mk(f, {}, `${linkTo(f, target)}\n`)
+      await S.deletePage(target.id)
+      const l = (await S.links(src.id)).items[0]
+      expect(l.broken).toBe(true)
+      expect(l.target).toBeUndefined()
+      expect((await S.getPage(src.id)).body).toContain(target.id)
+    })
+  })
+
   describe('reindex', () => {
     it('rebuilds the index and answers with counts; nothing is lost', async () => {
       const p = await mk(`${root}/reindex`, { title: `重建${run}` }, '重建前\n')

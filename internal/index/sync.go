@@ -475,7 +475,7 @@ func (w *writer) queryRow(q string, args ...any) *sql.Row {
 }
 
 func (w *writer) clearAll() error {
-	for _, q := range []string{`DELETE FROM pages`, `DELETE FROM tags`, `DELETE FROM props`, `DELETE FROM problems`, `INSERT INTO fts(fts) VALUES ('delete-all')`} {
+	for _, q := range []string{`DELETE FROM pages`, `DELETE FROM tags`, `DELETE FROM props`, `DELETE FROM links`, `DELETE FROM problems`, `INSERT INTO fts(fts) VALUES ('delete-all')`} {
 		if _, err := w.tx.ExecContext(w.ctx, q); err != nil {
 			return err
 		}
@@ -500,7 +500,7 @@ func (w *writer) removePath(rel string) error {
 }
 
 func (w *writer) deleteRow(rowid int64) error {
-	for _, q := range []string{`DELETE FROM tags WHERE page = ?`, `DELETE FROM props WHERE page = ?`, `DELETE FROM fts WHERE rowid = ?`, `DELETE FROM pages WHERE rowid = ?`} {
+	for _, q := range []string{`DELETE FROM tags WHERE page = ?`, `DELETE FROM props WHERE page = ?`, `DELETE FROM links WHERE src = ?`, `DELETE FROM fts WHERE rowid = ?`, `DELETE FROM pages WHERE rowid = ?`} {
 		if _, err := w.exec(q, rowid); err != nil {
 			return err
 		}
@@ -585,6 +585,11 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 			return "", err
 		}
 	}
+	for i, l := range e.links {
+		if _, err := w.exec(`INSERT INTO links(src, dst_id, dst_path, anchor, text, pos) VALUES (?,?,?,?,?,?)`, rowid, l.ID, l.Path, l.Anchor, l.Text, i); err != nil {
+			return "", err
+		}
+	}
 	if _, err := w.exec(`INSERT INTO fts(rowid, title, subtitle, source, body) VALUES (?,?,?,?,?)`, rowid, e.ftsTitle, e.ftsSubtitle, e.ftsSource, e.ftsBody); err != nil {
 		return "", err
 	}
@@ -606,7 +611,7 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 
 // deleteRowKeepPage clears the dependent rows of a page that is about to be rewritten.
 func (w *writer) deleteRowKeepPage(rowid int64) error {
-	for _, q := range []string{`DELETE FROM tags WHERE page = ?`, `DELETE FROM props WHERE page = ?`, `DELETE FROM fts WHERE rowid = ?`} {
+	for _, q := range []string{`DELETE FROM tags WHERE page = ?`, `DELETE FROM props WHERE page = ?`, `DELETE FROM links WHERE src = ?`, `DELETE FROM fts WHERE rowid = ?`} {
 		if _, err := w.exec(q, rowid); err != nil {
 			return err
 		}

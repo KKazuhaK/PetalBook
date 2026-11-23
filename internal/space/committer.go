@@ -97,11 +97,19 @@ func (c *committer) Record(by Author, recs ...jrec) error {
 		return err
 	}
 	for _, r := range recs {
-		if r.Op == "b" || r.Op == "u" {
+		if r.Op == "b" || r.Op == "u" || r.Op == "l" {
 			c.open = append(c.open, r)
 		}
 	}
 	return nil
+}
+
+// hold keeps records that an earlier run left open, until Done says they are
+// finished (a commit's trim of the journal keeps them).
+func (c *committer) hold(recs ...jrec) {
+	c.mu.Lock()
+	c.open = append(c.open, recs...)
+	c.mu.Unlock()
 }
 
 // Done says the edit of space.yml that the "b" or "u" record rec announced has

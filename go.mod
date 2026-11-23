@@ -8,6 +8,8 @@ require (
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
+	github.com/tats-u/goldmark-cjk-friendly/v2 v2.0.3
+	github.com/yuin/goldmark v1.8.7
 	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/crypto v0.57.0
 	golang.org/x/text v0.44.0

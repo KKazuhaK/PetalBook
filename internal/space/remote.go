@@ -404,7 +404,13 @@ func (s *Space) reconcileLocked(ctx context.Context, r *remote) error {
 			// belongs: nothing of the server's own is kept there (its state is
 			// in the Git directory), and the settings behind it are read as
 			// restored until a change writes there and puts it right.
-			s.applyDelta(ctx, r, head, tip)
+			ids, all := s.applyDelta(ctx, r, head, tip)
+			// Pages the pull moved or renamed: the links that carry their ids
+			// are put right as one commit of the service, pushed on the next
+			// pass (it is a commit that was never pushed).
+			if s.repairAfterPull(ctx, r, ids, all) {
+				continue
+			}
 		case behind == 0:
 			// Commits that were never pushed (a crash). Push them as they are.
 			if err := repo.Push(ctx, r.branch); err != nil {
@@ -445,9 +451,13 @@ func (s *Space) reconcileLocked(ctx context.Context, r *remote) error {
 
 // applyDelta brings the index in line with a move of the work tree from one
 // commit to another: exactly the files that differ, not a walk of the tree.
-func (s *Space) applyDelta(ctx context.Context, r *remote, from, to string) {
+//
+// It returns the ids of the pages the pull changed, for the repair of the links
+// to them; all is true when the delta was too big to list (or could not be) and
+// every link has to be looked at.
+func (s *Space) applyDelta(ctx context.Context, r *remote, from, to string) (ids []string, all bool) {
 	if from == "" || from == to {
-		return
+		return nil, false
 	}
 	changes, err := r.repo.DiffNames(ctx, from, to)
 	if err != nil || len(changes) > bigDelta {
@@ -457,7 +467,7 @@ func (s *Space) applyDelta(ctx context.Context, r *remote, from, to string) {
 		if _, err := s.idx.Sync(s.src, false); err != nil {
 			s.log.Error("could not update the index after a pull", "error", err)
 		}
-		return
+		return nil, true
 	}
 	var pages, dirs []string
 	for _, c := range changes {
@@ -468,11 +478,56 @@ func (s *Space) applyDelta(ctx context.Context, r *remote, from, to string) {
 	}
 	if _, err := s.idx.Refresh(s.src, pages, visibleDirs(dirs)); err != nil {
 		s.log.Error("could not update the index after a pull", "error", err)
-		return
+		return nil, true
 	}
 	if err := s.idx.RetryDuplicates(s.src); err != nil {
 		s.log.Warn("could not re-check duplicate ids", "error", err)
 	}
+	if len(pages) > 0 {
+		if at, err := s.idx.PagesAt(pages); err == nil {
+			for _, id := range at {
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids, false
+}
+
+// repairAfterPull makes the links that carry the id of a page a pull moved
+// name where the page is now, in one commit made by the service, and reports
+// whether it made one. Links to ids that two files claim, or that no page has,
+// are left as they are (the validation page lists them, see design.md). A
+// failure undoes what was written and is logged: the next pull tries again.
+func (s *Space) repairAfterPull(ctx context.Context, r *remote, ids []string, all bool) bool {
+	if !all && len(ids) == 0 {
+		return false
+	}
+	if all {
+		ids = nil
+	}
+	parent := r.repo.Head(ctx)
+	tx := &txn{s: s, remote: true, parent: parent}
+	paths, err := s.repairStale(tx, ids)
+	if err != nil || len(paths) == 0 {
+		if err != nil {
+			s.log.Warn("could not repair links after a pull", "error", err)
+			s.undoLocked(ctx, r, tx, parent)
+		}
+		return false
+	}
+	tx.paths = uniq(tx.paths)
+	author, committer := s.cm.git.identities(Author{})
+	made, err := r.repo.CommitPaths(ctx, tx.paths, commitMessage, author, committer)
+	if err != nil {
+		s.log.Warn("could not commit the repair of links after a pull", "error", err)
+		s.undoLocked(ctx, r, tx, parent)
+		return false
+	}
+	s.heal.committed(tx.paths)
+	if made {
+		s.log.Info("repaired the paths of links to pages that were moved outside", "files", len(tx.paths))
+	}
+	return made
 }
 
 // Pull fetches the remote and moves the space forward to it. force fetches
@@ -612,6 +667,9 @@ type txn struct {
 	// bind are the "b" and "u" records of the change whose edit of space.yml
 	// is not yet final (see finishBindings).
 	bind []jrec
+	// links are the "l" records of the change: the moves whose links have to
+	// be made right (see relink). They are done when the change is final.
+	links []jrec
 	// undoFailed is set by a step that could not do its part: what is wrong,
 	// for the administrator.
 	undoFailed string
@@ -635,6 +693,23 @@ func (t *txn) finishBindings() {
 		t.s.cm.Done(r)
 	}
 	t.bind = nil
+	t.finishLinks()
+}
+
+// settleLinks is settleBindings for the "l" records: a local space is done with
+// them as soon as the links are right; one that follows a remote, when the
+// change is final.
+func (t *txn) settleLinks() {
+	if !t.remote {
+		t.finishLinks()
+	}
+}
+
+func (t *txn) finishLinks() {
+	for _, r := range t.links {
+		t.s.cm.Done(r)
+	}
+	t.links = nil
 }
 
 // runUndo takes back the steps of the change that the file system needs undone

@@ -822,9 +822,10 @@ is opened. A save that would write the bytes the file already has changes
 nothing and returns the same `rev`.
 
 - `200` with the page (new `rev`, possibly new `path`).
-- `409 conflict` when `baseRev` is not the file's current rev. The response
-  is `{"error": "conflict", "message": "…", "current": {/* page */}}` so the
-  client can show both versions.
+- `409 conflict` when `baseRev` is not the file's current rev, unless only the
+  server's link rewrites changed the file since (see "Links between pages").
+  The response is `{"error": "conflict", "message": "…", "current": {/* page */}}`
+  so the client can show both versions.
 - `400 invalid` for a body that is not valid UTF-8, an `id` mismatch, or a
   request without `baseRev`, `meta` or `body`.
 
@@ -898,8 +899,9 @@ store is refused when that is not what the server has, so the same person
 typing on two devices cannot silently replace one draft with the other:
 
 - `200` with `{"version": "p81c…", "baseRev": "3b18e5…", "updated": "2026-11-21T08:31:10Z", "stale": false}`.
-  `stale` is `true` when the file's rev is no longer `baseRev`: the draft is
-  kept, but it cannot be committed as it is.
+  `stale` is `true` when the file's rev is no longer `baseRev` (and not only
+  because of the server's link rewrites, see "Links between pages"): the draft
+  is kept, but it cannot be committed as it is.
 - `409 conflict` with `{"error": "conflict", "message": "…", "draft": {…} or null, "current": {/* page */}}`
   when the caller's draft on the server is not version `prev`: there is
   another one (`draft`, in the shape `GET` gives), or there is none any more
@@ -978,6 +980,76 @@ this page (it is not possible to read any other file through this endpoint).
 Going back to an old version is an ordinary edit: the app loads the old
 content into the editor and it is stored and committed like anything typed, as
 a new version. History is never rewritten.
+
+### Links between pages
+
+A page links to another with an ordinary relative Markdown link to the other
+page's file, with the target's id in the title position:
+`[暮雪](../Tang/暮雪.md#小节 "01JD3K8Q7Z")`. Only links whose destination ends in
+`.md` and stays inside the space count; links to the web, images, attachments
+and anything in code do not. A title that is exactly an id is the id (the link
+then follows the page by id); any other title is kept and the link is read by
+its path alone. A link without an id is read by path and gets the id the next
+time the page is saved, or when it is rewritten; a link whose id is that of a
+page at another path gets that path when the page is saved (only the path
+changes). A reference-style link (`[暮雪][r]` with `[r]: ../Tang/暮雪.md`
+elsewhere in the page) counts too: its definition holds the path and the id,
+and is what is rewritten.
+
+Whenever a page is renamed (a new title in `PUT`), moved (`move`, `batch`, folder
+move), the links of the space follow it in the same change, so in the same
+commit (and the same push in a space that follows a remote): the files that link
+to it have the path of those links rewritten (the text, the `#anchor`, the
+other bytes of the file are kept), and so do the links of the moved page itself,
+which are relative. If the server stops half way, the next start finishes it.
+A page that is moved or renamed outside PetalBook (a pull, an edit in the
+folder) has the paths of the links that carry its id put right by the server,
+in one commit of its own; a link whose id two files claim, or no page has, is
+left as it is, by a rename or move as well. Deleting a page changes no other
+file: links to it become broken.
+
+These rewrites are the server's, not a person's, so they never make anyone's
+work conflict: a `PUT` page or a draft whose `baseRev` is behind the file only
+by such rewrites is accepted as if it were current, with the same rewrites made
+to its text (the old path is not written back), and such a draft is not
+`stale`; `GET` page returns it with the rewrites made and the file's `rev`
+as its `baseRev`. The server remembers the last 20,000 rewrites for this,
+across restarts; a draft older than all of them is shown as stale as before.
+Reading these needs `read`; the rewrites need nothing of their own (they are part
+of the write the caller is allowed).
+
+#### `GET /api/spaces/{space}/pages/{id}/backlinks?cursor=`
+
+The pages that link to this one, the most recently changed first, 20 at a time:
+
+```json
+{"items": [{"id": "…", "path": "Notes/引用.md", "title": "引用", "untitled": false,
+            "excerpt": "见暮雪 和无"}],
+ "next": "", "total": 1}
+```
+
+`excerpt` is the paragraph the link is in, as plain text, cut to about 240
+characters around the link (`""` when the file no longer has the link). A page
+that links several times is listed once. `next` is `""` at the end, else the
+`cursor` of the next request; a `cursor` that was not handed out is `400`. `404`
+for an unknown page.
+
+#### `GET /api/spaces/{space}/pages/{id}/links`
+
+The links of this page, in the order of the text, for marking broken ones and
+for hover text:
+
+```json
+{"items": [{"text": "暮雪", "path": "Tang/暮雪.md", "id": "01JD…", "anchor": "小节",
+            "broken": false,
+            "target": {"id": "01JD…", "path": "Tang/暮雪.md", "title": "暮雪", "untitled": false}},
+           {"text": "无", "path": "Notes/无.md", "broken": true}]}
+```
+
+`path` is the file the link names, from the root of the space. The target is
+found by `id` when the link has one, else by `path`; `title` is the target's
+current title (or what stands for it, as in a page summary). `broken` is true,
+and there is no `target`, when no page is there.
 
 ### `POST /api/spaces/{space}/pages/{id}/move`
 

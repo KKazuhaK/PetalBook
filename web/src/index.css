@@ -205,6 +205,8 @@
 .pb-prose hr { border: 0; border-top: 1px solid var(--border); margin: 2em 0; }
 .pb-prose hr.ProseMirror-selectednode { border-top-color: var(--brand); }
 .pb-prose a { color: var(--brand); text-decoration: underline; text-underline-offset: 0.25em; text-decoration-thickness: 1px; cursor: text; }
+.pb-prose a.pb-page-link, .pb-prose .pb-page-link a { text-decoration-style: solid; }
+.pb-prose .pb-page-link-broken, .pb-prose a:has(.pb-page-link-broken) { color: var(--destructive); text-decoration-style: wavy; text-decoration-color: var(--destructive); }
 .pb-prose img { max-width: 100%; height: auto; border-radius: var(--radius-md); }
 .pb-prose .tableWrapper { overflow-x: auto; }
 .pb-prose table { border-collapse: collapse; width: 100%; table-layout: fixed; font-size: 0.95em; line-height: 1.7; }

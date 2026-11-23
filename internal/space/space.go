@@ -87,6 +87,9 @@ type Space struct {
 	cfg   configCache
 	// heal restores a settings file that cannot be used (see restore.go).
 	heal *healer
+	// rb remembers the service's rewrites of links, so that a save or a draft
+	// based on the rev before one is not a conflict (rebase.go).
+	rb *rebaseLog
 	// tagCfg is what was last read of the views in tags.yml (see views.go).
 	tagCfg tagCache
 	// daily is what was picked for the daily text (see daily.go).
@@ -307,11 +310,14 @@ func Open(opt Options) (*Space, error) {
 	}
 	heal.setStateDir(stateDir)
 	recovered := recoverPendingWith(heal, root, recs)
+	// Moves whose links were not all made right before the crash: they are
+	// finished once the index is ready, and the journal keeps them till then.
+	linkRecs := pendingLinkRecs(recs)
 	for _, r := range recs {
 		if r.Op == "b" || r.Op == "u" {
 			// What the records asked for is done now; they must not be made
 			// again by a later crash, after the bindings may have changed.
-			if err := jrn.rewrite(recovered, nil); err != nil {
+			if err := jrn.rewrite(recovered, linkRecs); err != nil {
 				return nil, err
 			}
 			break
@@ -325,7 +331,7 @@ func Open(opt Options) (*Space, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Space{root: root, stateDir: stateDir, name: name, idx: idx, log: log, now: time.Now, ops: osOps(), src: dirSource{root: root}, syncEvery: opt.ResyncInterval, heal: heal}
+	s := &Space{root: root, stateDir: stateDir, name: name, idx: idx, log: log, now: time.Now, ops: osOps(), src: dirSource{root: root}, syncEvery: opt.ResyncInterval, heal: heal, rb: openRebaseLog(rebaseLogPath(stateDir))}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	if s.syncEvery <= 0 {
 		s.syncEvery = 2 * time.Second
@@ -374,15 +380,28 @@ func Open(opt Options) (*Space, error) {
 		}
 		s.cm = newCommitter(g, idle, max, log, jrn, nil)
 		s.cm.setOnCommit(heal.committed)
+		s.cm.hold(linkRecs...)
 		if err := s.initRemote(opt.Remote, recovered); err != nil {
 			s.cm.Close()
 			idx.Close()
 			return nil, err
 		}
+		// Needs the remote (a change on its latest state): when it cannot be
+		// reached the records stay in the journal for the next start.
+		s.finishLinkRecs(linkRecs)
 		return s, nil
 	}
 	s.cm = newCommitter(g, idle, max, log, jrn, recovered)
 	s.cm.setOnCommit(heal.committed)
+	s.cm.hold(linkRecs...)
+	s.finishLinkRecs(linkRecs)
+	// Pages renamed or moved outside PetalBook since it last ran: the links
+	// that carry their ids follow them.
+	if n, err := s.RepairLinks(); err != nil {
+		log.Warn("could not repair links after changes made outside", "error", err)
+	} else if n > 0 {
+		log.Info("repaired the paths of links to pages that were moved outside", "files", n)
+	}
 	if len(ours) > 0 {
 		recs := make([]jrec, len(ours))
 		for i, p := range ours {
