@@ -1777,10 +1777,17 @@ protection of the network is in one place).
 `PUT` takes any of `default`, `hosts`, `languages` and `allow` (what it leaves out stays)
 and answers as `GET`; `lines`, `apis` and `presets` are read-only here.
 
-- `default` is `null`, `{"kind": "list"}` (the lines below) or
+- `default` is `null`, `{"kind": "list"}` (the lines below),
   `{"kind": "space", "space": id, "source": …}` where `source` is a source or
-  sources by language as above, checked in that space. Choosing a space shows
-  its content to everybody; a client says so.
+  sources by language as above, checked in that space (choosing a space shows
+  its content to everybody; a client says so), or
+  `{"kind": "api", "apis": {"": "quotable", "zh": "hitokoto"}}`: an
+  interface id per language, `""` for all languages not listed. Each must be an
+  interface of `apis` (`400 invalid` with `error: "api_not_found"` otherwise);
+  a disabled or unanswering interface gives the daily reason `unavailable`.
+  The interface is used exactly as when a space picks it (same cache, refresh
+  and rate limit), and the `allow.api` lock does not apply to it: it limits
+  what spaces may choose, not the administrators' own default.
 - `hosts` are the hosts (with a port when it is not the usual one) the server
   may fetch from, at most 100. Saving an interface adds its host; removing a host
   here stops the interfaces that use it (they are not asked until it is back).
