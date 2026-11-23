@@ -9,7 +9,7 @@ import { QuickCaptureProvider } from '@/components/layout/QuickCapture'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import PageEditor from '@/pages/PageEditor'
 import { t } from '@/i18n'
-import { byLabel, click, installDomShims, locationText, mount, settle, shareSpace, type Mounted } from '@/testing/harness'
+import { byLabel, click, installDomShims, locationText, mount, press, settle, shareSpace, type, type Mounted } from '@/testing/harness'
 
 // Links between pages in the page editor: the picker after `[[`, what a link looks like and where it leads,
 // the panel of backlinks, and what someone who cannot write has of it. The whole page is mounted over the mock
@@ -534,5 +534,136 @@ describe('someone who cannot write', () => {
       return page.id
     }, '没了')
     await settle(() => body().querySelector('.pb-page-link-broken') !== null, 'the broken link')
+  })
+})
+
+function cursorInText(text: string) {
+  const editor = editorOf()
+  let at = -1
+  editor.state.doc.descendants((node, pos) => {
+    if (at < 0 && node.isText && node.text!.includes(text)) at = pos + node.text!.indexOf(text) + 1
+  })
+  editor.chain().focus().setTextSelection(at).run()
+}
+async function linkInput() {
+  await settle(() => document.querySelector(`input[aria-label="${t.link.edit}"]`) !== null, 'the link popover')
+  return document.querySelector<HTMLInputElement>(`input[aria-label="${t.link.edit}"]`)!
+}
+
+describe('a link changed or typed by hand', () => {
+  it('a new address from the popover takes the id off, so the page goes where it was sent', async () => {
+    let muxue = ''
+    await openPage(
+      'editor',
+      ({ make }) => {
+        muxue = make('暮雪', 'Tang').id
+        make('别处', '')
+        return make('主页', '', `见[暮雪](Tang/暮雪.md "${muxue}")。`).id
+      },
+      '见',
+    )
+    await act(async () => cursorInText('暮雪'))
+    const input = await linkInput()
+    await type(input, './Other.md')
+    await press(input, 'Enter')
+    expect(markdown()).toBe('见[暮雪](./Other.md)。')
+  })
+
+  it('Ctrl-click on a link the report does not list yet finds the page by its file', async () => {
+    let target = ''
+    await openPage(
+      'editor',
+      ({ make }) => {
+        target = make('暮雪', 'Tang').id
+        return make('主页', 'Notes', '见').id
+      },
+      '见',
+    )
+    await settle(() => m!.requests.some((r) => r.url.includes('/links')), 'the links report')
+    await act(async () => {
+      editorOf().chain().focus('end').insertContent({ type: 'text', text: '暮雪', marks: [{ type: 'link', attrs: { href: '../Tang/暮雪.md' } }] }).run()
+    })
+    await settle(() => pageLink('暮雪') !== null, 'the page link')
+    await act(async () => {
+      linkNamed('暮雪').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true }))
+    })
+    await settle(() => locationText().endsWith(`/p/${target}`), 'the page opened in the app')
+  })
+
+  it('Ctrl-click on a typed link to a file that is not there says it is broken', async () => {
+    const scene = await openPage('editor', () => undefined)
+    await act(async () => {
+      editorOf().chain().focus('end').insertContent({ type: 'text', text: '无此页', marks: [{ type: 'link', attrs: { href: '../Tang/无此页.md' } }] }).run()
+    })
+    await act(async () => {
+      linkNamed('无此页').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true }))
+    })
+    await settle(() => document.body.textContent?.includes(t.pageLinks.broken) === true, 'the notice')
+    expect(locationText()).toContain(scene.open.id)
+  })
+})
+
+describe('the backlinks panel on a narrow screen', () => {
+  const panel = () => document.querySelector<HTMLElement>(`aside[aria-label="${t.pageLinks.backlinks}"]`)
+  const backdrop = () => document.querySelector<HTMLElement>('[data-testid="backlinks-backdrop"]')
+  let shim: typeof window.matchMedia
+  let wide = false
+  beforeEach(() => {
+    shim = window.matchMedia
+    wide = false
+    window.matchMedia = ((query: string) => ({ ...shim(query), matches: query === '(min-width: 1024px)' ? wide : shim(query).matches })) as typeof window.matchMedia
+  })
+  afterEach(() => {
+    window.matchMedia = shim
+  })
+  const build = ({ make }: Ctx) => {
+    const target = make('被链到', 'Tang')
+    make('甲', 'Notes', `见[被链到](../Tang/被链到.md "${target.id}")`)
+    return target.id
+  }
+
+  it('does not open by itself, though it was left open', async () => {
+    localStorage.setItem('pb.backlinks', '1')
+    await openPage('editor', build, '正文')
+    expect(panel()).toBeNull()
+  })
+
+  it('opens over a backdrop with the focus in it; Esc closes it and the focus goes back', async () => {
+    await openPage('editor', build, '正文')
+    const toggle = byLabel(t.pageLinks.backlinksOpen)!
+    toggle.focus()
+    await click(toggle)
+    await settle(() => panel() !== null, 'the panel')
+    expect(backdrop()).not.toBeNull()
+    expect(panel()!.contains(document.activeElement)).toBe(true)
+    await press(document, 'Escape')
+    expect(panel()).toBeNull()
+    expect(document.activeElement).toBe(toggle)
+  })
+
+  it('a click on the backdrop closes it', async () => {
+    await openPage('editor', build, '正文')
+    await click(byLabel(t.pageLinks.backlinksOpen))
+    await settle(() => backdrop() !== null, 'the backdrop')
+    await click(backdrop())
+    expect(panel()).toBeNull()
+  })
+
+  it('closes when a backlink is followed', async () => {
+    await openPage('editor', build, '正文')
+    await click(byLabel(t.pageLinks.backlinksOpen))
+    await settle(() => panel()?.querySelector('li a') != null, 'the backlinks')
+    const before = locationText()
+    await click(panel()!.querySelector('li a'))
+    await settle(() => locationText() !== before && body()?.textContent?.includes('见') === true, 'the other page')
+    expect(panel()).toBeNull()
+  })
+
+  it('on a wide screen it opens as it was left, with no backdrop', async () => {
+    wide = true
+    localStorage.setItem('pb.backlinks', '1')
+    await openPage('editor', build, '正文')
+    await settle(() => panel() !== null, 'the panel')
+    expect(backdrop()).toBeNull()
   })
 })

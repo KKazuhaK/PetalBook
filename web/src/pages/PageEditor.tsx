@@ -52,6 +52,27 @@ const PropertyPanel = lazy(() => import('@/components/editor/PropertyPanel'))
 // Who links to the page: a chunk of its own, loaded when the panel is first opened.
 const BacklinksPanel = lazy(() => import('@/components/editor/BacklinksPanel'))
 
+// The id of the page at `path` (from the root of the space), from the listing of its folder; undefined when there
+// is none. The name is matched as written first, then without regard to case (as a file system may).
+async function pageAtPath(client: SpaceApi, path: string): Promise<string | undefined> {
+  const slash = path.lastIndexOf('/')
+  const folder = slash < 0 ? '' : path.slice(0, slash)
+  const lower = path.toLowerCase()
+  let loose: string | undefined
+  let cursor: string | undefined
+  // A folder of thousands of pages is not listed to its end for one click.
+  for (let round = 0; round < 10; round++) {
+    const list = await client.listPages({ folder, limit: 200, ...(cursor ? { cursor } : {}) })
+    for (const p of list.items) {
+      if (p.path === path) return p.id
+      if (!loose && p.path.toLowerCase() === lower) loose = p.id
+    }
+    if (!list.next) break
+    cursor = list.next
+  }
+  return loose
+}
+
 // Side by side needs room: on a narrow screen that choice shows the editor alone.
 const WIDE = '(min-width: 768px)'
 const subscribeWide = (cb: () => void) => {
@@ -60,6 +81,14 @@ const subscribeWide = (cb: () => void) => {
   return () => mq.removeEventListener('change', cb)
 }
 const isWide = () => window.matchMedia(WIDE).matches
+// From `lg` on the backlinks stand beside the page; below it they cover it.
+const BESIDE = '(min-width: 1024px)'
+const subscribeBeside = (cb: () => void) => {
+  const mq = window.matchMedia(BESIDE)
+  mq.addEventListener('change', cb)
+  return () => mq.removeEventListener('change', cb)
+}
+const isBeside = () => window.matchMedia(BESIDE).matches
 
 function ModeSwitch({ mode, wide, onChange }: { mode: EditMode; wide: boolean; onChange: (m: EditMode) => void }) {
   const item = (m: EditMode, label: string, Icon: typeof Type) => (
@@ -439,21 +468,38 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
     openLink.bind((target) => {
       const found = findLink(pageLinks.data?.items ?? [], target.id, target.path)
       const dest = found?.broken ? undefined : (target.id ?? found?.target?.id)
-      if (!dest) {
+      if (dest) {
+        void navigate(urls.page(dest))
+        return
+      }
+      // A link the report does not list yet (typed since the page was last saved) is looked up by its file
+      // before it is called broken.
+      if (found) {
         toast.error(t.pageLinks.broken)
         return
       }
-      void navigate(urls.page(dest))
+      void pageAtPath(client, target.path).then(
+        (id) => (id ? void navigate(urls.page(id)) : void toast.error(t.pageLinks.broken)),
+        () => void toast.error(t.pageLinks.broken),
+      )
     })
   })
-  // The backlinks panel on the right; whether it is open is a choice of this browser.
+  // The backlinks panel on the right; whether it is open is a choice of this browser. Below `lg` it covers the
+  // page, so there it starts shut and shuts again when another page opens.
+  const beside = useSyncExternalStore(subscribeBeside, isBeside)
   const [backlinksOpen, setBacklinksOpen] = useState(() => {
+    if (!isBeside()) return false
     try {
       return localStorage.getItem('pb.backlinks') === '1'
     } catch {
       return false
     }
   })
+  const [backlinksFor, setBacklinksFor] = useState(initial.id)
+  if (backlinksFor !== initial.id) {
+    setBacklinksFor(initial.id)
+    if (!beside) setBacklinksOpen(false)
+  }
   const toggleBacklinks = () => {
     setBacklinksOpen((open) => {
       try {
@@ -973,7 +1019,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
 
       {backlinksOpen && !historyOpen && (
         <Suspense fallback={null}>
-          <BacklinksPanel pageId={initial.id} onClose={toggleBacklinks} />
+          <BacklinksPanel pageId={initial.id} onClose={toggleBacklinks} overlay={!beside} />
         </Suspense>
       )}
 
