@@ -1769,9 +1769,11 @@ function suite(target: Target) {
       })
 
       it('puts other remotes\' error states under errorCode too', async () => {
-        const sp = await ownedSpace({ browser: admin }, 'Plain')
-        await call(admin, 'PUT', `/api/spaces/${sp.id}/remote`, { url: 'https://github.com/a/b.git', credential: { type: 'token', token: 'x' } })
-        const r = await call(admin, 'GET', `/api/spaces/${sp.id}/remote`)
+        // A member of their own, so the administrator's spaces stay under the default quota of 20 for the rest of the run.
+        const m = await newMember(uniq('gh9'))
+        const sp = await ownedSpace(m, 'Plain')
+        await call(m.browser, 'PUT', `/api/spaces/${sp.id}/remote`, { url: 'https://github.com/a/b.git', credential: { type: 'token', token: 'x' } })
+        const r = await call(m.browser, 'GET', `/api/spaces/${sp.id}/remote`)
         expect(r.json.errorCode).toBe('')
       })
     })

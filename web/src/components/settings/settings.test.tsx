@@ -84,7 +84,7 @@ describe('the settings dialog, accounts mode, administrator', () => {
   it('the navigation has an icon for each entry', async () => {
     await open('/settings/profile')
     const items = [...dialog()!.querySelectorAll('nav a')]
-    expect(items).toHaveLength(12)
+    expect(items).toHaveLength(13)
     for (const a of items) expect(a.querySelector('[data-slot="section-icon"]'), a.textContent ?? '').not.toBeNull()
   })
 
