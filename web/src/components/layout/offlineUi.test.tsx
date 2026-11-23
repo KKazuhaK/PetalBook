@@ -9,6 +9,7 @@ import { QuickCaptureProvider } from '@/components/layout/QuickCapture'
 import { SearchDialogProvider } from '@/components/search/SearchDialog'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/i18n'
+import { draftRef, loadDraft, saveDraft } from '@/editor/draftStore'
 import { DEFAULT_CONFIG, configure } from '@/lib/offline'
 import { noteNetworkFailure, noteNetworkOk } from '@/lib/offline/status'
 import { freshDevice } from '@/lib/offline/testkit'
@@ -39,6 +40,7 @@ afterEach(async () => {
 const body = () => document.querySelector<HTMLElement>('.pb-prose')
 const editable = () => body()?.getAttribute('contenteditable')
 const banner = () => document.querySelector('[data-offline-banner]')
+const title = () => document.querySelector<HTMLTextAreaElement>(`textarea[aria-label="${t.editor.titlePlaceholder}"]`)!
 const chip = () => [...document.querySelectorAll('span')].find((s) => s.textContent === t.offline.readOnly)
 
 // What the editor and the dialog need around them (a data router, for the editor's guard against leaving).
@@ -90,6 +92,100 @@ describe('the editor and the banner when the server cannot be reached', () => {
     await act(async () => noteNetworkOk())
     await settle(() => editable() === 'true', 'writable again')
     expect(banner()).toBeNull()
+  })
+
+  it('an editor that was open when the network went keeps what was typed and not yet saved, and saves it when back', async () => {
+    let id = ''
+    m = await mount(null, {
+      routes: routesFor(() => id),
+      server: { mode: 'single' },
+      entries: (server) => {
+        id = (sender(server)('POST', '/pages', { meta: { title: '读写' }, body: '正文在这里\n' }).body as { id: string }).id
+        return [`/s/default/p/${id}`]
+      },
+    })
+    await settle(() => body() !== null && document.body.textContent!.includes('正文在这里'), 'the editor')
+    // Typed, and the network goes before it is stored.
+    await type(title(), '离线前打的标题')
+    const online = globalThis.fetch
+    globalThis.fetch = (async () => {
+      throw new TypeError('Failed to fetch')
+    }) as typeof fetch
+    await act(async () => noteNetworkFailure())
+    await settle(() => editable() === 'false', 'read only')
+    expect(title().value).toBe('离线前打的标题')
+
+    globalThis.fetch = online
+    await act(async () => noteNetworkOk())
+    await settle(() => editable() === 'true', 'writable again')
+    expect(title().value).toBe('离线前打的标题')
+    const s = sender(m.server)
+    await settle(() => (s('GET', `/pages/${id}`).body as { draft?: { meta: { title?: string } } }).draft?.meta.title === '离线前打的标题', 'the typed title reaches the server', 400)
+  })
+
+  it('a page opened offline shows the server draft it was kept with, and back online typing keeps that draft', async () => {
+    let id = ''
+    m = await mount(null, {
+      routes: routesFor(() => id),
+      server: { mode: 'single' },
+      entries: (server) => {
+        const s = sender(server)
+        const page = s('POST', '/pages', { folder: 'Inbox', meta: { title: '有草稿的页' }, body: '文件正文\n' }).body as { id: string; rev: string; meta: Record<string, unknown> }
+        id = page.id
+        s('PUT', `/pages/${id}/draft`, { baseRev: page.rev, meta: page.meta, body: '文件正文\n我的草稿很重要\n' })
+        return ['/']
+      },
+    })
+    const store = (await configure('local', 'default', { ...DEFAULT_CONFIG, mode: 'text', favourites: false, recent: false }))!
+    await syncSpace(store)
+    const online = globalThis.fetch
+    globalThis.fetch = (async () => {
+      throw new TypeError('Failed to fetch')
+    }) as typeof fetch
+    await act(async () => document.querySelector('a')!.click())
+    await settle(() => body() !== null && document.body.textContent!.includes('文件正文'), 'the page from the device')
+    expect(editable()).toBe('false')
+    expect(body()!.textContent).toContain('我的草稿很重要')
+
+    globalThis.fetch = online
+    await act(async () => noteNetworkOk())
+    await settle(() => editable() === 'true' && body()!.textContent!.includes('我的草稿很重要'), 'writable, on the draft')
+    await type(title(), '新标题')
+    const s = sender(m.server)
+    const draft = () => (s('GET', `/pages/${id}`).body as { draft?: { body: string; meta: { title?: string } } }).draft
+    await settle(() => draft()?.meta.title === '新标题', 'the title reaches the server draft', 400)
+    expect(draft()!.body).toBe('文件正文\n我的草稿很重要\n')
+  })
+
+  it('a page opened offline shows the browser\'s own draft, and back online it is kept and reaches the server', async () => {
+    let id = ''
+    m = await mount(null, {
+      routes: routesFor(() => id),
+      server: { mode: 'single' },
+      entries: (server) => {
+        const page = sender(server)('POST', '/pages', { folder: 'Inbox', meta: { title: '浏览器草稿' }, body: '文件正文\n' }).body as { id: string; rev: string }
+        id = page.id
+        saveDraft(draftRef('local', 'default', id), { baseRev: page.rev, fields: { title: '浏览器草稿', subtitle: '', tags: [] }, bodyText: '文件正文\n\n浏览器里没存的字\n', savedAt: Date.now(), token: 'tok-local' })
+        return ['/']
+      },
+    })
+    const store = (await configure('local', 'default', { ...DEFAULT_CONFIG, mode: 'text', favourites: false, recent: false }))!
+    await syncSpace(store)
+    const online = globalThis.fetch
+    globalThis.fetch = (async () => {
+      throw new TypeError('Failed to fetch')
+    }) as typeof fetch
+    await act(async () => document.querySelector('a')!.click())
+    await settle(() => body() !== null && document.body.textContent!.includes('文件正文'), 'the page from the device')
+    expect(editable()).toBe('false')
+    expect(body()!.textContent).toContain('浏览器里没存的字')
+
+    globalThis.fetch = online
+    await act(async () => noteNetworkOk())
+    await settle(() => editable() === 'true' && body()!.textContent!.includes('浏览器里没存的字'), 'writable, on the browser draft')
+    const s = sender(m.server)
+    await settle(() => (s('GET', `/pages/${id}`).body as { draft?: { body: string } }).draft?.body.includes('浏览器里没存的字') === true, 'the browser draft reaches the server', 400)
+    expect(loadDraft(draftRef('local', 'default', id))?.bodyText ?? '浏览器里没存的字').toContain('浏览器里没存的字')
   })
 
   it('a page that was kept opens without the server, read only, and a page that was not says it is not downloaded', async () => {
