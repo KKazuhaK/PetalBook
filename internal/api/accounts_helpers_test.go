@@ -137,6 +137,11 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The mail queue is delivered (to a fake server of the test; mail stays off
+	// until a test enables it).
+	mailCtx, stopMail := context.WithCancel(ctx)
+	t.Cleanup(stopMail)
+	go svc.RunMail(mailCtx)
 	// Nearly every test signs in from one address, many times: the allowance of
 	// a minute is lifted here, and the tests of the limits set it back.
 	var lift auth.SecurityPatch

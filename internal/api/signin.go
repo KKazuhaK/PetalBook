@@ -72,10 +72,14 @@ func (s *server) getAuthProviders(c *call) {
 	// page is for (absent: the default tenant), and an unknown or disabled one
 	// is not found. register and forgot are what the page links to; they come
 	// with mail and registration, which are the next part of 3.3.
-	if slug := c.r.URL.Query().Get("tenant"); slug != "" {
-		if _, ok := s.publicTenant(c, slug); !ok {
-			return
-		}
+	tenant, ok := s.tenantOfRequest(c, c.r.URL.Query().Get("tenant"))
+	if !ok {
+		return
+	}
+	rules, err := s.auth.Registration(c.r.Context(), tenant)
+	if err != nil {
+		s.fail(c.w, err)
+		return
 	}
 	info := s.auth.PublicInfo()
 	writeJSON(c.w, http.StatusOK, struct {
@@ -86,7 +90,7 @@ func (s *server) getAuthProviders(c *call) {
 		Passkey   bool                  `json:"passkey"`
 		Register  bool                  `json:"register"`
 		Forgot    bool                  `json:"forgot"`
-	}{info.Providers, info.Mode, info.Local, info.SSO, info.Passkey, false, false})
+	}{info.Providers, info.Mode, info.Local, info.SSO, info.Passkey, rules.Open, s.auth.MailEnabled()})
 }
 
 func (s *server) getCaptcha(c *call) {

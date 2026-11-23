@@ -26,9 +26,11 @@ import (
 	"github.com/KazuhaHub/authcore/captcha"
 	authsaml "github.com/KazuhaHub/authcore/saml"
 
+	"github.com/KKazuhaK/PetalBook/internal/mail"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/perm"
 	"github.com/KKazuhaK/PetalBook/internal/secret"
+	"github.com/KKazuhaK/PetalBook/internal/settings"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
@@ -77,8 +79,11 @@ type Config struct {
 	Secrets *secret.Box
 	// CaptchaEndpoint replaces the siteverify address of the third-party captcha (tests).
 	CaptchaEndpoint string
-	Logger          *slog.Logger
-	Now             func() time.Time
+	// Mail is for tests: the clock, backoff and trusted roots of the mail
+	// service. Mail is off until an administrator enables it, whatever this says.
+	Mail   mail.Options
+	Logger *slog.Logger
+	Now    func() time.Time
 }
 
 // Service is safe for concurrent use.
@@ -128,6 +133,15 @@ type Service struct {
 	negative map[string]time.Time
 
 	pending *pendingStore
+
+	// Mail (see mailcfg.go): the sender, the caps of an hour, and the settings
+	// that say whether registration is open (set by the API's constructor).
+	mail     *mail.Service
+	mailMu   sync.Mutex
+	mailCaps *hourCaps // messages per address and per caller
+	testCaps *hourCaps // test messages
+	regCaps  *hourCaps // registrations per tenant
+	settings atomic.Pointer[settings.Service]
 }
 
 type cachedSession struct {
@@ -242,8 +256,17 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		starts:   newBucketLimiter(10_000, 30, 20, cfg.Now),
 		audit:    newAuditLog(), provs: newProviderSet(), replay: authsaml.NewMemoryReplayCache(authsaml.DefaultReplayCacheCapacity),
 		sessions: map[string]*cachedSession{}, users: map[string]*cachedUser{}, negative: map[string]time.Time{},
-		pending: newPendingStore(cfg.Now),
+		pending:  newPendingStore(cfg.Now),
+		mailCaps: newHourCaps(maxLimitKeys), testCaps: newHourCaps(4), regCaps: newHourCaps(2000),
 	}
+	mo := cfg.Mail
+	if mo.Now == nil {
+		mo.Now = cfg.Now
+	}
+	if mo.Logger == nil {
+		mo.Logger = cfg.Logger
+	}
+	s.mail = mail.New(mo)
 	s.initCaptcha()
 	if cfg.PublicURL != "" {
 		u, err := url.Parse(cfg.PublicURL)
@@ -253,6 +276,9 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		s.secure = u.Scheme == "https"
 	}
 	s.sec(ctx) // reads the settings, and builds what depends on them
+	if err := s.loadMail(ctx); err != nil {
+		return nil, err
+	}
 	if err := s.reloadProviders(ctx); err != nil {
 		return nil, err
 	}
@@ -452,6 +478,12 @@ type CreateParams struct {
 	// site administrator of the default tenant.
 	TenantID  string
 	SiteAdmin bool
+	// PasswordHash is a hash already made (a confirmed registration); it is
+	// used instead of Password. RegistrationID is the pending registration the
+	// account uses up, and Terms what the person accepted ("" for none).
+	PasswordHash   string
+	RegistrationID string
+	Terms          string
 }
 
 // IdentityParams is an external identity to attach.
@@ -486,7 +518,7 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 	if err := checkRole(p.Role); err != nil {
 		return nil, err
 	}
-	var pwHash string
+	pwHash := p.PasswordHash
 	if p.Password != "" {
 		if err := CheckPassword(p.Password); err != nil {
 			return nil, err
@@ -551,6 +583,13 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 					return errf(NotFound, "that invite is not valid")
 				}
 			}
+			if p.RegistrationID != "" {
+				if ok, err := store.DeleteRegistration(ctx, q, p.RegistrationID); err != nil {
+					return err
+				} else if !ok {
+					return errf(NotFound, "that link is not valid, or has expired")
+				}
+			}
 			// The tenant must exist, and take new people: an invite of a disabled
 			// tenant is no invite.
 			if t, err := store.GetTenant(ctx, q, cand.TenantID); errors.Is(err, store.ErrNotFound) || err == nil && t.Disabled {
@@ -563,6 +602,11 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 			}
 			if pwHash != "" {
 				if err := store.SetPasswordHash(ctx, q, cand.ID, pwHash, s.now()); err != nil {
+					return err
+				}
+			}
+			if p.Terms != "" {
+				if err := store.SetTermsAccepted(ctx, q, cand.ID, p.Terms); err != nil {
 					return err
 				}
 			}
@@ -648,6 +692,9 @@ func (s *Service) SetPassword(ctx context.Context, username, password string) er
 	}
 	err = s.st.Tx(ctx, func(q store.Q) error {
 		if err := store.SetPasswordHash(ctx, q, u.ID, hash, s.now()); err != nil {
+			return err
+		}
+		if err := store.DeleteEmailTokens(ctx, q, u.ID, store.TokenReset); err != nil {
 			return err
 		}
 		return store.DeleteUserSessions(ctx, q, u.ID, "")

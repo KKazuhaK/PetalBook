@@ -88,6 +88,12 @@ func (s *Service) UpdateProfile(ctx context.Context, u store.User, name, email *
 	if err := store.UpdateProfile(ctx, s.st.Q(), u.ID, n, e, verified); err != nil {
 		return nil, err
 	}
+	if e != u.Email {
+		// A link sent to the old address does not confirm the new one.
+		if err := store.DeleteEmailTokens(ctx, s.st.Q(), u.ID, store.TokenVerify); err != nil {
+			return nil, err
+		}
+	}
 	s.dropUser(u.ID)
 	u.Name, u.Email, u.EmailVerified = n, e, verified
 	s.cfg.Spaces.UserChanged(ctx, u)
@@ -135,6 +141,10 @@ func (s *Service) ChangePassword(ctx context.Context, p *Principal, current *str
 	}
 	err = s.st.Tx(ctx, func(q store.Q) error {
 		if err := store.SetPasswordHash(ctx, q, p.User.ID, nh, s.now()); err != nil {
+			return err
+		}
+		// A password change makes a reset link made before it unusable.
+		if err := store.DeleteEmailTokens(ctx, q, p.User.ID, store.TokenReset); err != nil {
 			return err
 		}
 		return store.DeleteUserSessions(ctx, q, p.User.ID, p.SessionID)
@@ -465,6 +475,7 @@ func (s *Service) Run(ctx context.Context) {
 	defer daily.Stop()
 	s.Sweep(ctx)
 	s.trimAudit(ctx)
+	go s.RunMail(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -518,6 +529,15 @@ func (s *Service) Sweep(ctx context.Context) {
 	}
 	if _, err := store.DeleteOldInvites(ctx, s.st.Q(), now.Add(-30*24*time.Hour)); err != nil {
 		s.log.Warn("could not delete old invites", "error", err)
+	}
+	if _, err := store.DeleteExpiredRegistrations(ctx, s.st.Q(), now); err != nil {
+		s.log.Warn("could not delete expired registrations", "error", err)
+	}
+	if err := s.CancelClosedRegistrations(ctx); err != nil {
+		s.log.Warn("could not cancel pending registrations of closed tenants", "error", err)
+	}
+	if _, err := store.DeleteOldEmailTokens(ctx, s.st.Q(), now.Add(-24*time.Hour)); err != nil {
+		s.log.Warn("could not delete old email tokens", "error", err)
 	}
 }
 

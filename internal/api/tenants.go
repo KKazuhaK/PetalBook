@@ -66,14 +66,14 @@ func (s *server) toTenant(ctx context.Context, t store.Tenant) (tenantResp, erro
 	if err != nil {
 		return r, err
 	}
-	r.Registration.Open, _ = e.Value.(bool) // mail is not there yet (see registrationReady): never open
+	r.Registration.Open, _ = e.Value.(bool)
 	r.Registration.Open = r.Registration.Open && s.registrationReady()
 	return r, nil
 }
 
 // registrationReady says whether registration can work at all: it needs mail
-// (the next part of 3.3) and a public address. Until mail exists it is never.
-func (s *server) registrationReady() bool { return false }
+// enabled and a public address.
+func (s *server) registrationReady() bool { return s.auth != nil && s.auth.MailEnabled() }
 
 // toTenantRef names a user's tenant.
 func (s *server) toTenantRef(id string) *tenantRefResp {

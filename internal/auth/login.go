@@ -22,6 +22,10 @@ func (s *Service) allow(ctx context.Context, ip string) error {
 	return retryAfter(wait)
 }
 
+// AllowPublic spends one of the address's requests this minute, for the public
+// endpoints that have no other check (docs/api.md, "Abuse basics").
+func (s *Service) AllowPublic(ctx context.Context, ip string) error { return s.allow(ctx, ip) }
+
 // gateIP reserves one failure of the address before any hash or token is
 // looked at; the caller gives it back with refundIP when the attempt turns out
 // well. The address's failure cap is judged here.

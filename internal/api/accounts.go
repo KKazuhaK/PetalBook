@@ -307,10 +307,15 @@ func (s *server) patchAccount(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	u, err := s.auth.UpdateProfile(c.r.Context(), c.user(), req.Name, req.Email)
+	old := c.user()
+	u, err := s.auth.UpdateProfile(c.r.Context(), old, req.Name, req.Email)
 	if err != nil {
 		s.fail(c.w, err)
 		return
+	}
+	if u.Email != old.Email {
+		// The verified old address is told, with no link in the note.
+		s.auth.NoteEmailChange(old, langOf(c, ""), s.auth.ClientAddr(c.r))
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		User userResp `json:"user"`

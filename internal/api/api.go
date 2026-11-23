@@ -159,6 +159,9 @@ func New(opt Options) http.Handler {
 		}
 	}
 	s.bindDailySettings()
+	if s.auth != nil {
+		s.auth.UseSettings(s.settings)
+	}
 	mux := http.NewServeMux()
 	uploads := map[string]bool{}
 	for _, rt := range routeTable {

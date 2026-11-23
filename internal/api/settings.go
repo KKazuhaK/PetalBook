@@ -106,14 +106,40 @@ func (s *server) readChange(c *call) (settings.Change, bool) {
 // beforeOpening is the checks of "Registration" for a value that opens it.
 // Registration needs mail (the next part of 3.3), so until it exists nothing
 // opens; the check for ssoOnly joins here with it.
-func (s *server) beforeOpening(key string, ch settings.Change) error {
-	if key != settings.RegistrationOpen || !ch.HasValue || ch.Value != true {
+func (s *server) beforeOpening(ctx context.Context, key string, ch settings.Change, site bool) error {
+	if key != settings.RegistrationOpen {
+		return nil
+	}
+	opens := ch.HasValue && ch.Value == true
+	if !opens && site && ch.HasLower && ch.Lower != nil && ch.Lower.Mode != settings.Lock {
+		// Unlocking lets a tenant's stored true take effect.
+		on, err := store.AnyLayeredValue(ctx, s.opt.Store.Q(), string(settings.Tenant), key, "true")
+		if err != nil {
+			return err
+		}
+		opens = on
+	}
+	if !opens {
 		return nil
 	}
 	if !s.registrationReady() {
 		return &settings.Error{Code: "mail_not_configured", Msg: "registration verifies addresses by mail, and mail is not enabled"}
 	}
+	if s.auth.SSOOnlyStored(ctx) {
+		return &settings.Error{Code: "sso_only_with_registration", Msg: "password sign-in is refused (ssoOnly), so nobody could finish registering; switch ssoOnly off first"}
+	}
 	return nil
+}
+
+// closedRegistration cancels the pending registrations of tenants that are not
+// open now, after a change that may have closed one.
+func (s *server) closedRegistration(ctx context.Context, key string) {
+	if key != settings.RegistrationOpen {
+		return
+	}
+	if err := s.auth.CancelClosedRegistrations(ctx); err != nil {
+		s.log.Warn("could not cancel pending registrations", "error", err)
+	}
 }
 
 func (s *server) adminPutSetting(c *call) {
@@ -127,7 +153,7 @@ func (s *server) adminPutSetting(c *call) {
 		s.failSetting(c, &settings.Error{Code: settings.CodeNotFound, Msg: "no such setting"})
 		return
 	}
-	if err := s.beforeOpening(key, ch); err != nil {
+	if err := s.beforeOpening(ctx, key, ch, true); err != nil {
 		s.failSetting(c, err)
 		return
 	}
@@ -141,6 +167,7 @@ func (s *server) adminPutSetting(c *call) {
 		s.failSetting(c, err)
 		return
 	}
+	s.closedRegistration(ctx, key)
 	after, err := s.settings.Get(ctx, "", key)
 	if err != nil {
 		s.failSetting(c, err)
@@ -208,7 +235,7 @@ func (s *server) adminPutTenantSetting(c *call) {
 	}
 	// What the site locks is refused as locked, before anything else is asked of it.
 	if before.Site.Lower.Mode != settings.Lock {
-		if err := s.beforeOpening(key, ch); err != nil {
+		if err := s.beforeOpening(ctx, key, ch, false); err != nil {
 			s.failSetting(c, err)
 			return
 		}
@@ -217,6 +244,7 @@ func (s *server) adminPutTenantSetting(c *call) {
 		s.failSetting(c, err)
 		return
 	}
+	s.closedRegistration(ctx, key)
 	after, err := s.settings.Get(ctx, t.ID, key)
 	if err != nil {
 		s.failSetting(c, err)

@@ -24,7 +24,7 @@ func TestSecuritySettingsAreValidatedBeforeAnythingIsStored(t *testing.T) {
 			t.Fatal(sec.raw)
 		}
 		ctxs := sec.body["captcha"].(map[string]any)["contexts"].(map[string]any)
-		if len(ctxs) != 3 || ctxs["login"].(map[string]any)["when"] != "after_failures" || ctxs["login"].(map[string]any)["failures"] != float64(3) || ctxs["login"].(map[string]any)["on"] != false {
+		if len(ctxs) != 5 || ctxs["login"].(map[string]any)["when"] != "after_failures" || ctxs["login"].(map[string]any)["failures"] != float64(3) || ctxs["login"].(map[string]any)["on"] != false {
 			t.Fatal(sec.raw)
 		}
 		// Everything is checked first: one bad field refuses the whole request, and a value out of range is not clamped.
@@ -39,7 +39,7 @@ func TestSecuritySettingsAreValidatedBeforeAnythingIsStored(t *testing.T) {
 			"idle":        {"limits": map[string]any{"sessionIdleDays": 366}},
 			"max < idle":  {"limits": map[string]any{"sessionIdleDays": 60, "sessionMaxDays": 30}},
 			"context":     {"captcha": map[string]any{"contexts": map[string]any{"nowhere": map[string]any{"on": true}}}},
-			"reserved":    {"captcha": map[string]any{"contexts": map[string]any{"forgot": map[string]any{"on": true}}}},
+			"unknown ctx": {"captcha": map[string]any{"contexts": map[string]any{"reset": map[string]any{"on": true}}}},
 			"when":        {"captcha": map[string]any{"contexts": map[string]any{"login": map[string]any{"when": "sometimes"}}}},
 			"n failures":  {"captcha": map[string]any{"contexts": map[string]any{"login": map[string]any{"failures": 101}}}},
 			"role":        {"passkeys": map[string]any{"requireRoles": []string{"root"}}},

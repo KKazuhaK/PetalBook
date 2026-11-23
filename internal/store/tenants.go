@@ -260,6 +260,19 @@ func (s *Store) TenantIDBySlug(slug string) (string, bool) {
 	return id, ok
 }
 
+// TenantIDs lists every tenant's id, from memory.
+func (s *Store) TenantIDs() []string {
+	st := s.tenantState.Load()
+	if st == nil {
+		return nil
+	}
+	out := make([]string, 0, len(st.refs))
+	for id := range st.refs {
+		out = append(out, id)
+	}
+	return out
+}
+
 // TenantCount is how many tenants there are, from memory.
 func (s *Store) TenantCount() int {
 	if st := s.tenantState.Load(); st != nil {
