@@ -107,6 +107,43 @@ func TestSessionLifetimeIsASecuritySetting(t *testing.T) {
 	})
 }
 
+// While ssoOnly is stored, an enabled administrator with a password is kept
+// even when the setting is not in effect (local_only), so switching the page
+// to the providers, or enabling one, cannot lock everyone out.
+func TestSSOOnlyKeepsAPasswordAdminWhileNotInEffect(t *testing.T) {
+	t.Parallel()
+	f := newFakeIDP(t)
+	eachAccounts(t, f.opts(false), func(t *testing.T, a *acc) {
+		c := a.newClient("")
+		at := f.begin(t, c, "alice", map[string]any{"intent": "setup", "token": a.auth.SetupToken()})
+		finish(t, c, at.cb)
+		boss := a.addUser("boss", pw, "admin")
+		bossID := mustUserID(t, a, "boss")
+		c.putSecurity(t, map[string]any{"login": map[string]any{"ssoOnly": true, "mode": "local_only"}})
+		// Not in effect, but the only administrator with a password stays one.
+		boss.do("PATCH", "/api/users/"+bossID, map[string]any{"role": "member"}).want(t, 409, "conflict")
+		c.do("PATCH", "/api/users/"+bossID, map[string]any{"disabled": true}).want(t, 409, "conflict")
+		// A database that has no such administrator anyway (made outside the API).
+		ctx := context.Background()
+		setRole := func(role string) {
+			if err := store.SetRole(ctx, a.st.Q(), bossID, role); err != nil {
+				t.Fatal(err)
+			}
+		}
+		setRole("member")
+		// Leaving local_only would put ssoOnly in effect: refused.
+		c.do("PUT", "/api/admin/security", map[string]any{"login": map[string]any{"mode": "dual"}}).want(t, 400, "local_admin_required")
+		// Enabling a provider would too.
+		setRole("admin")
+		c.do("PATCH", "/api/admin/auth/providers/sso", map[string]any{"enabled": false}).want(t, 200, "")
+		c.putSecurity(t, map[string]any{"login": map[string]any{"mode": "dual"}})
+		setRole("member")
+		c.do("PATCH", "/api/admin/auth/providers/sso", map[string]any{"enabled": true}).want(t, 400, "local_admin_required")
+		setRole("admin")
+		c.do("PATCH", "/api/admin/auth/providers/sso", map[string]any{"enabled": true}).want(t, 200, "")
+	})
+}
+
 func TestSSOOnlyIsCheckedWhenSavedAndAfterThePassword(t *testing.T) {
 	t.Parallel()
 	f := newFakeIDP(t)

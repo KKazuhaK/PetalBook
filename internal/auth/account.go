@@ -244,7 +244,9 @@ func (s *Service) UpdateUser(ctx context.Context, actorID, ip, targetID string, 
 			} else if n <= 1 {
 				return errf(Conflict, "there must be at least one enabled administrator")
 			}
-			if s.ssoOnlyInEffect(st) {
+			// Whenever ssoOnly is stored, not only while in effect: a provider
+			// enabled later, or the page leaving local_only, puts it in effect.
+			if st.Login.SSOOnly {
 				if _, err := store.GetPasswordHash(ctx, q, u.ID); err == nil {
 					if n, err := store.CountEnabledPasswordAdmins(ctx, q); err != nil {
 						return err

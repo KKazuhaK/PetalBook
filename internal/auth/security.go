@@ -450,13 +450,10 @@ func (s *Service) UpdateSecurity(ctx context.Context, actorID, ip string, p Secu
 			}
 		}
 	}
-	if next.Login.SSOOnly && !cur.Login.SSOOnly {
-		n, err := store.CountEnabledPasswordAdmins(ctx, s.st.Q())
-		if err != nil {
+	// Turning ssoOnly on, or leaving local_only while it is on, needs a way out.
+	if next.Login.SSOOnly && (!cur.Login.SSOOnly || cur.Login.Mode == ModeLocalOnly && next.Login.Mode != ModeLocalOnly) {
+		if err := s.needPasswordAdmin(ctx); err != nil {
 			return nil, err
-		}
-		if n == 0 {
-			return nil, coded(400, "local_admin_required", "no enabled administrator has a password: refusing passwords would lock everyone out if the identity provider fails")
 		}
 	}
 	required, _, err := store.CountPasskeyRequired(ctx, s.st.Q(), next.Passkeys.RequireRoles)
@@ -606,6 +603,19 @@ func (s *Service) effectiveMode(st *secState) string {
 		return ModeLocalOnly
 	}
 	return st.Login.Mode
+}
+
+// needPasswordAdmin refuses a change that would put ssoOnly in effect while no
+// enabled administrator has a password.
+func (s *Service) needPasswordAdmin(ctx context.Context) error {
+	n, err := store.CountEnabledPasswordAdmins(ctx, s.st.Q())
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return coded(400, "local_admin_required", "no enabled administrator has a password: refusing passwords would lock everyone out if the identity provider fails")
+	}
+	return nil
 }
 
 // ssoOnlyInEffect says whether password and passkey sign-in are refused to

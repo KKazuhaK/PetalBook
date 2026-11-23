@@ -873,6 +873,11 @@ func (s *Service) CreateProvider(ctx context.Context, actorID, ip string, in Pro
 	if in.Enabled == nil && rt.statusOK {
 		b.row.Enabled = true
 	}
+	if b.row.Enabled && s.sec(ctx).Login.SSOOnly {
+		if err := s.needPasswordAdmin(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.writeBuilt(b, true); err != nil {
 		return nil, err
 	}
@@ -904,6 +909,11 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID, ip, slug string, 
 	b, err := s.applyInput(cur, in, rows)
 	if err != nil {
 		return nil, err
+	}
+	if b.row.Enabled && !cur.row.Enabled && s.sec(ctx).Login.SSOOnly {
+		if err := s.needPasswordAdmin(ctx); err != nil {
+			return nil, err
+		}
 	}
 	b.row.Updated = s.now().UTC()
 	b.row.SecretEnc = cur.row.SecretEnc

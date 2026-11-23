@@ -3199,7 +3199,7 @@ Refusals (`400` unless stated):
 | `error` | When |
 |---|---|
 | `invalid` | an unknown field value: a mode, scope, provider, context or role that does not exist, or a number out of range (the message names the field) |
-| `local_admin_required` | `ssoOnly: true` while no enabled administrator has a password |
+| `local_admin_required` | `ssoOnly: true`, or a `mode` other than `local_only` while `ssoOnly` is on and the stored mode is `local_only`, while no enabled administrator has a password. Creating or enabling a provider while `ssoOnly` is on is refused the same way, and while `ssoOnly` is stored (in effect or not) the last enabled administrator with a password cannot be made a member or disabled (`409 conflict`) |
 | `sso_only_with_registration` | `ssoOnly: true` while public registration is open (reserved: there is no public registration yet) |
 | `captcha_site_key_required` | a third-party provider with a context switched on and no `siteKey` |
 | `captcha_secret_required` | a third-party provider with a context switched on and no secret; a secret stored for another provider does not count, so changing provider needs the new secret in the same request |
