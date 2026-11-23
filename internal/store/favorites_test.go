@@ -12,7 +12,7 @@ import (
 
 func mkSpace(t *testing.T, st *store.Store, id, name string) {
 	t.Helper()
-	if err := store.InsertSpace(ctx, st.Q(), id, name, "", "", time.Now()); err != nil {
+	if err := store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, id, name, "", "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -101,7 +101,7 @@ func TestFavorites(t *testing.T) {
 			t.Fatal("another list changed")
 		}
 		// Deleting the space deletes its favourites, deleting the user theirs.
-		if err := st.Tx(ctx, func(q store.Q) error { _, err := store.DeleteSpace(ctx, q, "S2"); return err }); err != nil {
+		if err := st.Tx(ctx, func(q store.Q) error { _, err := store.DeleteSpace(ctx, q, store.AllTenants(), "S2"); return err }); err != nil {
 			t.Fatal(err)
 		}
 		if len(favs(t, st, "A", "S2")) != 0 {
@@ -285,6 +285,29 @@ func TestOpeningAnOlderDatabaseFillsNameKeys(t *testing.T) {
 		`ALTER TABLE users DROP COLUMN email_verified`,
 		`ALTER TABLE users DROP COLUMN passkey_required`,
 		`ALTER TABLE sessions DROP COLUMN held`,
+		`DROP INDEX users_tenant`,
+		`DROP INDEX spaces_tenant`,
+		`DROP INDEX invites_tenant`,
+		`DROP TABLE tenants`,
+		`DROP TABLE layered_settings`,
+		`DROP TABLE registrations`,
+		`DROP TABLE email_tokens`,
+		`DROP TABLE usage`,
+		`DROP INDEX spaces_usage_user`,
+		`ALTER TABLE spaces DROP COLUMN page_count`,
+		`ALTER TABLE spaces DROP COLUMN usage_bytes`,
+		`ALTER TABLE spaces DROP COLUMN usage_user`,
+		`ALTER TABLE invites DROP COLUMN username`,
+		`ALTER TABLE invites DROP COLUMN name`,
+		`ALTER TABLE invites DROP COLUMN email`,
+		`ALTER TABLE users DROP COLUMN quota`,
+		`ALTER TABLE users DROP COLUMN terms_accepted`,
+		`ALTER TABLE users DROP COLUMN tenant_id`,
+		`ALTER TABLE users DROP COLUMN site_admin`,
+		`ALTER TABLE users DROP COLUMN email_verified_by`,
+		`ALTER TABLE spaces DROP COLUMN tenant_id`,
+		`ALTER TABLE invites DROP COLUMN tenant_id`,
+		`ALTER TABLE invites DROP COLUMN site_admin`,
 		`DELETE FROM schema_migrations WHERE version >= 6`,
 		`INSERT INTO spaces(id, name, created) VALUES ('S1', 'Straße', 0)`,
 	} {
@@ -298,7 +321,7 @@ func TestOpeningAnOlderDatabaseFillsNameKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	rows, _, err := store.ListAllSpaces(ctx, st.Q(), store.SpaceFilter{Query: "STRASSE"})
+	rows, _, err := store.ListAllSpaces(ctx, st.Q(), store.AllTenants(), store.SpaceFilter{Query: "STRASSE"})
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("%v %v", rows, err)
 	}

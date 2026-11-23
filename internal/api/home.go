@@ -29,12 +29,12 @@ func (s *server) getDailySettings(c *call) {
 func (s *server) answerDailySettings(c *call, d *space.DailyConfig) {
 	inEffect := true
 	if !s.single {
-		site, err := s.loadSite(c.r.Context())
+		allow, err := s.dailyAllowFor(c.r.Context(), c.user().TenantID)
 		if err != nil {
 			s.fail(c.w, err)
 			return
 		}
-		inEffect = site.Allow.Own
+		inEffect = allow.Own
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Daily    *space.DailyConfig `json:"daily"`
@@ -134,7 +134,16 @@ func (s *server) getDaily(c *call) {
 	// 1. The space's own, unless the administrators do not let spaces have one.
 	var pick *space.DailyPick
 	var why space.DailyNone
-	if s.single || site.Allow.Own {
+	allowOwn := true
+	if !s.single {
+		allow, err := s.dailyAllowFor(c.r.Context(), c.user().TenantID)
+		if err != nil {
+			s.fail(c.w, err)
+			return
+		}
+		allowOwn = allow.Own
+	}
+	if allowOwn {
 		pick, why, err = c.sp.Space.DailyText(c.sp.Info.ID, date, skip, lang)
 		if err != nil {
 			s.fail(c.w, err)

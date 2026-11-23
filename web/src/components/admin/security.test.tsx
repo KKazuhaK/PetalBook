@@ -50,7 +50,7 @@ describe('the draft of the form', () => {
   const server: SecuritySettings = {
     login: { mode: 'dual', effectiveMode: 'dual', ssoOnly: false, ssoOnlyInEffect: false, ssoAvailable: true },
     passkeys: { enabled: true, available: true, requireRoles: [], required: 0, requiredWithout: 0 },
-    captcha: { provider: 'image', siteKey: '', hasSecret: false, contexts: { login: { on: false, when: 'after_failures', failures: 3 }, invite: { on: false, when: 'after_failures', failures: 3 }, setup: { on: false, when: 'after_failures', failures: 3 } } },
+    captcha: { provider: 'image', siteKey: '', hasSecret: false, contexts: { login: { on: false, when: 'after_failures', failures: 3 }, invite: { on: false, when: 'after_failures', failures: 3 }, setup: { on: false, when: 'after_failures', failures: 3 }, forgot: { on: false, when: 'after_failures', failures: 3 }, register: { on: false, when: 'after_failures', failures: 3 } } },
     lockout: { enabled: false, minutes: 15, scope: 'ip_account' },
     limits: { perMinute: 10, maxFailures: 10, windowMinutes: 15, sessionIdleDays: 30, sessionMaxDays: 90 },
     passwordAdmins: 1,

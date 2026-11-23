@@ -275,6 +275,18 @@ func (t *failTable) refund(key string) {
 	}
 }
 
+// resetWhere forgets every key the function says yes to (a password reset
+// forgives the failures of one username, whichever address they came from).
+func (t *failTable) resetWhere(match func(key string) bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for k, e := range t.entries {
+		if match(k) {
+			t.drop(e)
+		}
+	}
+}
+
 // reset forgets a key.
 func (t *failTable) reset(key string) {
 	t.mu.Lock()

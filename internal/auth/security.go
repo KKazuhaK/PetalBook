@@ -29,16 +29,15 @@ const (
 	CaptchaRecaptcha = "recaptcha"
 	CaptchaHCaptcha  = "hcaptcha"
 
-	CtxLogin  = "login"
-	CtxInvite = "invite"
-	CtxSetup  = "setup"
+	CtxLogin    = "login"
+	CtxInvite   = "invite"
+	CtxSetup    = "setup"
+	CtxForgot   = "forgot"
+	CtxRegister = "register"
 )
 
 // CaptchaContexts are the contexts that can be switched on.
-var CaptchaContexts = []string{CtxLogin, CtxInvite, CtxSetup}
-
-// reservedContexts exist in the contract but have no form yet.
-var reservedContexts = []string{"forgot", "register"}
+var CaptchaContexts = []string{CtxLogin, CtxInvite, CtxSetup, CtxForgot, CtxRegister}
 
 // CaptchaCtx is the setting of one context.
 type CaptchaCtx struct {
@@ -362,7 +361,7 @@ func (s *Service) UpdateSecurity(ctx context.Context, actorID, ip string, p Secu
 		for name, v := range c.Contexts {
 			cur, ok := next.Captcha.Contexts[name]
 			if !ok {
-				return nil, errf(Invalid, "captcha.contexts has login, invite and setup (%q is not one)", name)
+				return nil, errf(Invalid, "captcha.contexts has login, invite, setup, forgot and register (%q is not one)", name)
 			}
 			if v == nil {
 				continue
@@ -448,6 +447,14 @@ func (s *Service) UpdateSecurity(ctx context.Context, actorID, ip string, p Secu
 			if !hasSecret {
 				return nil, coded(400, "captcha_secret_required", "give the secret of the captcha provider (a secret saved for another provider is not used)")
 			}
+		}
+	}
+	// Open registration needs people who can sign in with a password.
+	if next.Login.SSOOnly && !cur.Login.SSOOnly {
+		if open, err := s.RegistrationOpenAnywhere(ctx); err != nil {
+			return nil, err
+		} else if open {
+			return nil, coded(400, "sso_only_with_registration", "registration is open for a tenant; close it before refusing password sign-in")
 		}
 	}
 	// Turning ssoOnly on, or leaving local_only while it is on, needs a way out.

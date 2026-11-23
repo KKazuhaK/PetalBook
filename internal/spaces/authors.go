@@ -64,7 +64,7 @@ func (m *Manager) userEntry(ctx context.Context, userID string) (cachedAuthor, e
 	if ok && now.Sub(c.at) < authorTTL {
 		return c, nil
 	}
-	u, err := store.GetUser(ctx, m.opt.Store.Q(), userID)
+	u, err := store.GetUser(ctx, m.opt.Store.Q(), store.AllTenants(), userID) // by id, for a user already known to the caller
 	if err != nil {
 		return cachedAuthor{}, err
 	}

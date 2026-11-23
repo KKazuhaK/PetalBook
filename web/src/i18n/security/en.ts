@@ -50,7 +50,7 @@ export const securityEn: SecurityMessages = {
     secretNew: 'New secret',
     clear: 'Clear the secret',
     contexts: 'Where a captcha is asked',
-    context: { login: 'Sign in', invite: 'Accepting an invite', setup: 'First-run setup' },
+    context: { login: 'Sign in', invite: 'Accepting an invite', setup: 'First-run setup', forgot: 'Password reset', register: 'Registering' },
     on: 'On',
     when: 'When to ask',
     whens: { always: 'Every time', after_failures: 'After some failures' },

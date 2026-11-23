@@ -388,7 +388,7 @@ func TestLastUsedIsWrittenOncePerHour(t *testing.T) {
 	each(t, func(t *testing.T, f *fixture) {
 		tok, secret := f.create("A", "read", 90, "S1")
 		lastUsed := func() time.Time {
-			rows, err := f.svc.List(ctx, store.TokenFilter{ID: tok.ID})
+			rows, err := f.svc.List(ctx, store.AllTenants(), store.TokenFilter{ID: tok.ID})
 			if err != nil || len(rows) != 1 {
 				t.Fatal(rows, err)
 			}
@@ -489,7 +489,7 @@ func TestSweepKeepsEndedTokensForNinetyDays(t *testing.T) {
 		}
 		f.clk.Advance(89 * 24 * time.Hour)
 		f.svc.Sweep(ctx)
-		rows, _ := f.svc.List(ctx, store.TokenFilter{UserID: "A"})
+		rows, _ := f.svc.List(ctx, store.AllTenants(), store.TokenFilter{UserID: "A"})
 		if len(rows) != 2 {
 			t.Fatalf("%d tokens after 89 days", len(rows))
 		}
@@ -500,7 +500,7 @@ func TestSweepKeepsEndedTokensForNinetyDays(t *testing.T) {
 		}
 		f.clk.Advance(2 * 24 * time.Hour)
 		f.svc.Sweep(ctx)
-		rows, _ = f.svc.List(ctx, store.TokenFilter{UserID: "A"})
+		rows, _ = f.svc.List(ctx, store.AllTenants(), store.TokenFilter{UserID: "A"})
 		if len(rows) != 1 || rows[0].ID != keep.ID {
 			t.Fatalf("%+v", rows)
 		}

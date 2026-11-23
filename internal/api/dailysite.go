@@ -286,7 +286,7 @@ func (s *server) checkSiteDefault(ctx context.Context, d *siteDefault, site *sit
 		if !page.ValidID(d.Space) || d.Source == nil {
 			return &space.InvalidError{Msg: "a default that is a space needs the space and a source (folder, tag or type)"}
 		}
-		if _, err := store.GetSpace(ctx, s.opt.Store.Q(), d.Space); errors.Is(err, store.ErrNotFound) {
+		if _, err := store.GetSpace(ctx, s.opt.Store.Q(), store.AllTenants(), d.Space); errors.Is(err, store.ErrNotFound) {
 			return &space.InvalidError{Msg: "there is no such space"}
 		} else if err != nil {
 			return err

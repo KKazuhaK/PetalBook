@@ -27,6 +27,8 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/index"
 	"github.com/KKazuhaK/PetalBook/internal/oauth"
 	"github.com/KKazuhaK/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/quota"
+	"github.com/KKazuhaK/PetalBook/internal/settings"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
@@ -90,19 +92,26 @@ type Options struct {
 	// DailyFetch gets the daily text from the external interfaces an
 	// administrator configured; the one that refuses private addresses when nil.
 	DailyFetch *dailyfetch.Fetcher
+	// MaxSpaces is --max-spaces when the flag was given: then it is the site's
+	// quota.spacesPerPerson, read only. Nil leaves the stored setting (20).
+	MaxSpaces *int
 	// NoMCP switches /mcp off in single-user mode (serve --mcp=false). In
 	// accounts mode the administrators' setting decides.
 	NoMCP bool
 }
 
 type server struct {
-	opt     Options
-	log     *slog.Logger
-	auth    *auth.Service
-	spaces  *spaces.Manager
-	drafts  *drafts.Service
-	tokens  *tokens.Service
-	oauth   *oauth.Service
+	opt    Options
+	log    *slog.Logger
+	auth   *auth.Service
+	spaces *spaces.Manager
+	drafts *drafts.Service
+	tokens *tokens.Service
+	oauth  *oauth.Service
+	// settings are the layered settings (site, tenant; see internal/settings).
+	settings *settings.Service
+	// quota knows which limits apply and notices crossings (accounts mode).
+	quota   *quota.Service
 	single  bool
 	started time.Time
 	local   store.User // the built-in user of single-user mode
@@ -134,7 +143,7 @@ func New(opt Options) http.Handler {
 	if opt.DailyFetch == nil {
 		opt.DailyFetch = dailyfetch.New(NewDailyBacking(opt.Store))
 	}
-	s := &server{opt: opt, log: opt.Logger, auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, oauth: opt.OAuth, single: opt.Auth == nil, started: time.Now(),
+	s := &server{opt: opt, log: opt.Logger, settings: settings.New(opt.Store), auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, oauth: opt.OAuth, single: opt.Auth == nil, started: time.Now(),
 		origins: map[string]bool{}, originHosts: map[string]bool{}, importing: make(chan struct{}, 1)}
 	if s.log == nil {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -150,10 +159,15 @@ func New(opt Options) http.Handler {
 		}
 	}
 	if s.single {
-		s.local = store.User{ID: store.LocalUserID, Username: "local", Name: "Local user", Role: "admin", Created: time.Now().UTC()}
-		if u, err := store.GetUser(context.Background(), opt.Store.Q(), store.LocalUserID); err == nil {
+		s.local = store.User{ID: store.LocalUserID, Username: "local", Name: "Local user", Role: "admin", SiteAdmin: true, TenantID: store.DefaultTenantID, Created: time.Now().UTC()}
+		if u, err := store.GetUser(context.Background(), opt.Store.Q(), store.AllTenants(), store.LocalUserID); err == nil {
 			s.local = *u
 		}
+	}
+	s.bindDailySettings()
+	if s.auth != nil {
+		s.auth.UseSettings(s.settings)
+		s.bindQuota()
 	}
 	mux := http.NewServeMux()
 	uploads := map[string]bool{}
@@ -450,6 +464,11 @@ type errorBody struct {
 	Spaces   *int     `json:"spaces,omitempty"`
 	Mappings *int     `json:"mappings,omitempty"`
 	Missing  []string `json:"missing,omitempty"`
+	// What a refused quota is about (quota_exceeded): which one, its limit, and
+	// what is used.
+	Quota string `json:"quota,omitempty"`
+	Limit *int64 `json:"limit,omitempty"`
+	Used  *int64 `json:"used,omitempty"`
 }
 
 // codedError is a 400 whose error code is code, with what it is about.
@@ -541,6 +560,7 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		ue    *space.UnavailableError
 		urle  *gitstore.URLError
 		hoste *gitstore.HostError
+		qe    *spaces.QuotaError
 	)
 	var coded *codedError
 	switch {
@@ -571,6 +591,9 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "conflict", err.Error())
 	case errors.Is(err, spaces.ErrConnected):
 		writeError(w, http.StatusConflict, "conflict", err.Error())
+	case errors.As(err, &qe):
+		writeJSON(w, http.StatusForbidden, errorBody{Error: "quota_exceeded", Message: strings.TrimPrefix(qe.Error(), spaces.ErrLimit.Error()+": "),
+			Quota: qe.Quota, Limit: &qe.Limit, Used: &qe.Used})
 	case errors.Is(err, spaces.ErrLimit):
 		writeError(w, http.StatusForbidden, "forbidden", strings.TrimPrefix(err.Error(), spaces.ErrLimit.Error()+": "))
 	case s.failGroup(w, err):

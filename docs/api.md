@@ -131,7 +131,12 @@ account an identity signs in to, with one exception the administrators switch on
 per provider (see "Which account an identity signs in to"), and then only when
 `emailVerified` is `true`: the address came from a provider that vouched for it,
 or an administrator set or confirmed it. A user changing their own `email`
-clears `emailVerified`.
+clears `emailVerified`. From 3.3 an address that only a tenant administrator
+(not a site administrator) set or confirmed shows `emailVerified: true` but does
+not count for that exception.
+
+From 3.3 a User also has `siteAdmin` and `tenant` (see "Administrators" under
+"Tenants, registration and mail").
 
 `passkeyRequired` is whether this person must sign in with a passkey: set for
 them alone (`PATCH /api/users/{id}`) or for their role (the 安全 settings,
@@ -220,6 +225,9 @@ memory, without a database query.
   and whenever no provider is enabled).
 - `passkey`: whether passkey sign-in is available (passkeys are switched on and
   the server has a public URL they can work with, see "Passkeys").
+- From 3.3, `register` and `forgot`: whether the page links to registration and
+  to password reset, for the tenant named by `?tenant={slug}` (the default
+  tenant without it); see "Registration" and "Password reset".
 
 Whether password sign-in is refused (`ssoOnly`) is never in this answer, nor
 anything about a particular account: neither may help someone choose which
@@ -557,12 +565,17 @@ For `intent: login`, in this order:
 
 1. The account that has this identity (by issuer and subject: one query).
 2. With `mergeVerifiedEmail` on for this provider, and only then: the one
-   account whose `email` equals the address the provider sent (ignoring case),
+   account of the provider's tenant (from 3.3; another tenant's accounts are
+   not looked at, here or in the `no_account` check below) whose `email`
+   equals the address the provider sent (ignoring case),
    when the provider said the address is verified (`email_verified: true` in
    OpenID Connect; a verified primary address on GitHub; for SAML, which has no
    such claim, turning the option on means the administrators vouch for every
    address the identity provider sends), and the account's `emailVerified` is
-   `true`. It is never an administrator's account, a disabled one, or one that
+   `true` because a provider vouched for the address, the person confirmed it,
+   or a site administrator set or confirmed it: an address that only a tenant
+   administrator set or confirmed does not count (they could give a person of
+   their tenant someone else's address). It is never an administrator's account, a disabled one, or one that
    already has an identity from this provider. The identity is then attached to
    it, and this is recorded in the audit log. Two accounts with the address:
    `no_account`.
@@ -594,7 +607,8 @@ switched on by itself:
 | `login` | `POST /api/login` | wrong passwords, by address and by username |
 | `invite` | `POST /api/invites/check`, `POST /api/invites/accept` | the address's failures |
 | `setup` | `POST /api/setup` | the address's failures |
-| `forgot`, `register` | reserved for password recovery and public registration; always `required: false` until they exist | |
+| `forgot` | `POST /api/password/forgot` (from 3.3; see "Password reset") | the address's failures |
+| `register` | `POST /api/register` (from 3.3; see "Registration") | the address's failures |
 
 Each context asks for a captcha either `always` or `after_failures` (the
 default, after 3): once the address, or for `login` the username, has that many
@@ -819,7 +833,14 @@ leave no enabled administrator, when an administrator tries to disable themself,
 or, while `ssoOnly` is in effect, when it would leave no enabled administrator
 with a password. `passkeyRequired: true` is refused with
 `400 passkey_unavailable` while passkeys cannot be used (see "Passkeys").
-Setting `email` without `emailVerified` makes it unverified.
+Setting `email` without `emailVerified` makes it unverified. From 3.3 the body
+may also have `quota` (see "Quotas"), and the users of the administrators' lists
+and of this answer have `quota`: `{"spaces": null, "bytes": null, "pages": null}`
+(the person's own limits; `null` follows the tenant). From 3.3,
+`emailVerified: true` sent by a tenant administrator (not a site administrator)
+is stored and shown, but the address does not count for merging a sign-in by
+address (see "Which account an identity signs in to") until a site
+administrator confirms it or the person does.
 
 An administrator cannot open another user's space through the API. Whoever
 can read the server's disk can read every file.
@@ -852,9 +873,12 @@ neither used nor expired.
 
 ### `POST /api/invites/check` (public)
 
-`{"token": "…", "captcha": {…}}`. `200` with `{"role": "member", "expires": "…"}`, or
-`404 not_found` for a token that is unknown, used or expired (a failure of the
-address). `captcha` as for the `invite` context.
+`{"token": "…", "captcha": {…}}`. `200` with
+`{"role": "member", "expires": "…", "username": "", "name": "", "email": ""}`
+(the last three are what the invite fills in: see `POST /api/admin/tenants`; an
+ordinary invite has them empty), or `404 not_found` for a token that is
+unknown, used or expired (a failure of the address). `captcha` as for the
+`invite` context.
 
 ### `POST /api/invites/accept` (public)
 
@@ -863,7 +887,9 @@ address). `captcha` as for the `invite` context.
 ```
 
 `201` with `{"user": {…}}` and a session cookie; the user gets a personal
-space. `404 not_found` for a bad token, `409 exists` when the username is
+space. A `username` or `name` left empty (or out) takes what the invite fills
+in; the invite's `email`, if it has one, becomes the account's (not verified).
+`404 not_found` for a bad token, `409 exists` when the username is
 taken (the invite stays usable). While `ssoOnly` is in effect, an invite for
 the `member` role cannot be accepted with a password: `403 local_login_refused`
 (the page offers the providers instead, which accept it with
@@ -917,7 +943,9 @@ characters; `inbox` is optional (default `Inbox`) and must be a valid folder
 path. `201` with the space.
 The server makes the Git repository. The caller is its owner. `403 forbidden` when
 the caller already owns as many spaces as the server allows (`--max-spaces`,
-20 by default).
+20 by default). From 3.3 this is `403 quota_exceeded` with `quota`, `limit` and
+`used` (see "Quotas"), and the limit is the setting `quota.spacesPerPerson`, or
+the person's own, or the tenant's total of spaces.
 
 ### `PATCH /api/spaces/{space}`
 
@@ -1188,7 +1216,7 @@ value given twice.
 
 | What | Limit |
 |---|---|
-| groups on the server | 10,000 |
+| groups of a tenant (from 3.3; before, of the server) | 10,000 |
 | people in a group | 100,000 |
 | groups a person is in | 1,000 |
 | groups that are members of one space | 200 |
@@ -4164,10 +4192,939 @@ A `.md` file with no header, a header that does not parse, no `id`, or an `id`
 another file already uses is not served as a page. The server logs each one
 at start-up, and the check page lists them (see "Checks").
 
+## Tenants, registration and mail
+
+Milestone 3.3. Accounts mode only. **Single-user mode has none of this**: there
+are no tenants, no registration, no mail and no quotas, every endpoint of this
+section answers `404`, and settings resolve site → space → personal with no
+tenant layer between (in single-user mode there are no administrators, so in
+practice only the space's own settings count, as before).
+
+What 3.3 adds is the plumbing for many tenants and for public sign-up, built so
+that a server with one tenant and registration closed (the state after the
+upgrade, and the default) behaves and costs exactly as before:
+
+- every user, space, group and invite belongs to a **tenant**; a **default
+  tenant** exists, and everything that existed before 3.3 is in it;
+- administrators are **site administrators** or **tenant administrators**;
+- settings resolve **site → tenant → space → personal**, with locks;
+- a tenant can open **registration** (off by default), which needs **outgoing
+  mail** (off until an administrator configures SMTP), as do **email
+  verification** and **password reset**;
+- **quotas** are measured per person and per tenant; only the number of spaces
+  is refused, the rest warns.
+
+**Nothing sends mail until a site administrator configures and enables SMTP**
+(see "Mail"). Until then the registration, verification and reset endpoints
+answer as switched off, and no setting can open registration.
+
+### Tenant
+
+```json
+{"id": "0000000000", "slug": "default", "name": "Default", "default": true, "disabled": false,
+ "registration": {"open": false},
+ "quota": {"people": null, "spaces": null, "bytes": null, "pages": null},
+ "usage": {"people": 40, "spaces": 212, "bytes": 18304211000, "pages": 61234, "measuredAt": "2026-11-23T02:10:00Z", "over": []},
+ "created": "2026-11-23T08:30:00Z", "updated": "2026-11-23T08:30:00Z"}
+```
+
+- `id` has the form of a page id. The default tenant's id is always
+  `0000000000` and its slug `default`; it cannot be disabled or deleted.
+- `slug`: 2 to 32 characters of `a-z`, `0-9` and `-`, starting with a letter or
+  digit, unique. It is what the public endpoints name a tenant by (below). It may
+  change; links that carry the old slug stop working.
+- `name`: 1 to 80 characters.
+- `disabled`: nobody of the tenant can sign in (`401 unauthenticated`, the same
+  message as a wrong password), their sessions end at their next request, their
+  API tokens and OAuth grants answer `401 token_owner_disabled`, and its spaces
+  cannot be opened. Nothing is deleted; enabling brings everything back.
+- `registration.open` is the effective value of the setting
+  `registration.open` for this tenant (see "Registration").
+- `quota`: the tenant's totals, set by site administrators only; `null` is no
+  limit. `usage` is what is measured (see "Quotas"): `measuredAt` is when a
+  measurement last changed it (`null`: never), and `over` lists the totals it is
+  over (`people`, `spaces`, `bytes`, `pages`).
+- The host a tenant is reached on is reserved: in 3.3 every tenant is served on
+  the one `--public-url`, and a public endpoint names its tenant by slug.
+
+### Where a request's tenant comes from
+
+- **Signed in** (session, API token, OAuth grant): the user's tenant. A user
+  belongs to exactly one tenant and never changes it in 3.3.
+- **Public endpoints** (`GET /api/auth/providers`, `GET /api/register`,
+  `POST /api/register`, `POST /api/password/forgot`): the `tenant` query
+  parameter or body field, a slug; absent means the default tenant. An unknown
+  or disabled slug is `404 not_found`.
+- **Usernames stay unique on the whole server**, so signing in needs no tenant:
+  `POST /api/login`, passkeys and single sign-on are unchanged, and the account
+  that signs in decides the tenant.
+- **New accounts**: `POST /api/setup` makes the first site administrator in the
+  default tenant; an invite makes the account in the invite's tenant; a
+  provider's `autoCreate` makes it in the provider's `tenant` (below; default
+  the default tenant); registration in the tenant registered for.
+
+### Data isolation
+
+A request sees only its own tenant's users, spaces, groups, invites, audit rows,
+API tokens and OAuth grants. A site administrator sees every tenant's, and may
+narrow a list with `?tenant={id}`. An id from another tenant answers exactly
+like an id that does not exist (`404 not_found`, `404 user_not_found`,
+`404 group_not_found`), so a tenant cannot learn what another holds.
+
+How it is held (this is a contract on the server's code, listed so it can be
+reviewed and tested):
+
+- `users`, `spaces`, `groups`, `invites` and `audit_log` have a `tenant_id`.
+  Everything else belongs to one of them (members, drafts, remotes, favourites,
+  tokens, grants, passkeys, identities) and is reached through it.
+- Every store method that reads or lists those tables by anything a client
+  sends takes a **scope** (one tenant, or every tenant for a site
+  administrator); a method without one does not compile. The few that must look
+  across tenants say why next to the code: a session or token by its id, a
+  sign-in by username or identity, the background jobs.
+- **Links between rows are checked by the database write itself**: adding a
+  member, a group to a space, a person to a group, or transferring a space is an
+  `INSERT … SELECT` that joins both rows on the same `tenant_id`, so a missed
+  check in the API cannot create a cross-tenant link; it writes nothing and the
+  request answers as for an unknown id.
+- **The per-request permission check does not change**: the 1.7/3.2 cache of a
+  person's spaces only ever holds spaces of their tenant (memberships are
+  same-tenant by construction), so no tenant comparison is added to the hot
+  path. The tenant's `disabled` state is in memory (one small map, re-read on
+  change), checked where the session is loaded.
+- Caches keyed by user id or space id need no tenant in the key (ids are unique
+  on the server); the settings cache is keyed by tenant. The daily text's
+  external interfaces are site-wide and so is their cache.
+- **Strength**: one process and one database, separated by query conditions.
+  Whoever can read the server's disk or database reads every tenant. Nothing
+  stronger is promised (no database per tenant, no encryption per tenant).
+
+How it is tested (SQLite and PostgreSQL both):
+
+1. A fixture with two tenants holding the same shapes of data (people, shared
+   and personal spaces, local and synced groups, invites, tokens, grants, audit
+   rows). Every route of `internal/api/routes.go` is called by tenant A's
+   administrator, member and token with tenant B's ids: each answers as for an
+   unknown id, and no list contains an id of B. A test fails when a route is
+   added without an entry in this table.
+2. A test over the store's package that lists the exported methods touching the
+   five tables and fails for one that takes no scope and is not on the
+   commented allowlist.
+3. After every test of the fixture, one query asserts that no membership,
+   group membership, space group or transfer joins two tenants.
+4. The single-tenant suite runs unchanged: with one tenant nothing differs.
+
+### Administrators
+
+The User object gains:
+
+```json
+{"…": "…", "role": "admin", "siteAdmin": true, "tenant": {"id": "0000000000", "slug": "default", "name": "Default"}}
+```
+
+- `role` keeps its meaning inside the user's tenant: `admin` or `member`.
+- `siteAdmin`: an administrator of the whole server. It needs `role: "admin"`.
+  The upgrade makes every existing administrator a site administrator, so
+  nobody loses anything. Only a site administrator can set `siteAdmin`
+  (`PATCH /api/users/{id}`); the rule "at least one enabled administrator" of
+  1.7 and 2.8 now counts enabled site administrators of tenants that are not
+  disabled (one of a disabled tenant cannot sign in).
+- A **tenant administrator** (`role: "admin"`, `siteAdmin: false`) has, inside
+  their tenant, everything an administrator had before 3.3 except what is the
+  server's own. A site administrator has all of it, in every tenant.
+
+| Endpoints | Tenant administrator | Site administrator |
+|---|---|---|
+| `/api/users…`, `/api/invites…` | their tenant | every tenant (`?tenant=`; `POST /api/invites` may name `tenant`) |
+| `/api/admin/spaces…`, `/api/admin/groups…`, `/api/admin/tokens…`, `/api/admin/grants…`, `/api/admin/usage` | their tenant | every tenant (`?tenant=`) |
+| `GET /api/admin/audit` | their tenant's rows, without the site's kinds (security, providers, mail, tenants, site settings) | every row (`?tenant=`) |
+| `GET /api/admin/tenants/{own}`, `PATCH` of its `name`, `…/settings` of their tenant | yes | every tenant |
+| `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/access`, `/api/admin/daily…`, `/api/admin/status`, `/api/admin/settings…` (site layer), `/api/admin/tenancy`, the tenant list, create, delete, `disabled`, `slug`, `quota`, and 3.1's `/api/admin/storage` | `403 forbidden` | yes |
+
+The daily text's tenant default is a tenant setting (see "Settings by layer"),
+not `/api/admin/daily`, which stays the site's.
+
+`GET /api/session` returns the user with these fields; the web app shows the
+site-only pages of `/admin` to site administrators only.
+
+### `GET /api/admin/tenancy`, `PUT /api/admin/tenancy`
+
+Site administrators. `{"enabled": false, "tenants": 1}`. `enabled` (default
+`false`) is whether tenants other than the default one may be made. `PUT`
+takes `{"enabled": true}`; `tenants` is read only. Switching it off does not
+touch tenants that exist: they keep working, and no new one can be made.
+
+### `GET /api/admin/tenants?q={text}&cursor={cursor}&limit={n}`
+
+Site administrators. `{"items": [Tenant], "next": "…"}`, the default tenant
+first, then by name; `q` keeps names or slugs containing it (ignoring case, as
+for spaces). `limit` 1 to 200 (default 50). One query a page; `usage` is read
+from the stored measurements.
+
+### `GET /api/admin/tenants/{tenant}`
+
+A site administrator, or an administrator of that tenant (another tenant's
+answers `404 not_found`). `{tenant}` is the id.
+
+### `POST /api/admin/tenants`
+
+Site administrators; `409 tenants_off` while `tenancy.enabled` is `false`.
+
+```json
+{"slug": "acme", "name": "Acme", "admin": {"username": "wu", "name": "Wu", "email": "wu@acme.example"}}
+```
+
+`201` with the tenant. `admin` is optional: when given, the answer also has an
+`invite` (as `POST /api/invites` answers, role `admin`, 7 days) for the first
+administrator of the tenant; the link is shown once, and nothing is mailed.
+The invite **fills in** the form that accepts it: it has `username` (normalised
+as a username is), `name` and `email` (each `""` when not given), `POST
+/api/invites/check` answers them (below), and the account the invite makes gets
+the `email` (not verified). Each of the three may be left out, `username`
+too: the person then picks one when they accept (`POST /api/invites/accept`
+needs it). They are checked as `POST /api/invites` checks them (an ASCII
+address with something on both sides of the `@`, a name of 1 to 100 characters
+with no control characters), before the tenant is made: `400 invalid` for one
+that is not valid, and no tenant is made. `409 exists` for a slug taken;
+`409 tenant_limit` at 1,000 tenants.
+
+### `PATCH /api/admin/tenants/{tenant}`
+
+`{"name": "…", "slug": "…", "disabled": true, "quota": {…}}`, each optional. A
+tenant administrator may send `name` only (`403 forbidden` for the rest).
+`200` with the tenant. `409 default_tenant` for disabling the default tenant;
+`409 exists` for a slug taken; `409 conflict` when disabling the tenant of the
+caller, or when no enabled site administrator would be left outside the tenant.
+
+### `DELETE /api/admin/tenants/{tenant}`
+
+Site administrators. Only an empty tenant: no users, spaces, groups or invites
+(pending registrations are deleted with it). `204`. `409 tenant_not_empty` with
+`{"users": n, "spaces": n, "groups": n, "invites": n}`; `409 default_tenant`
+for the default tenant. 3.3 has no way to move people or spaces between
+tenants.
+
+### Sign-in providers and groups
+
+- Providers stay the server's (site administrators only) and every tenant's
+  sign-in page lists the same ones. A provider gains `tenant` (an id, default
+  the default tenant): where `autoCreate` makes accounts. An identity signs in
+  to its account whatever tenant that is in.
+- A provider's groups mapping may point to groups of any tenant; at sign-in
+  only the entries whose group is in the person's tenant are applied, the rest
+  are ignored for that person (not an error, not audited).
+- A group belongs to a tenant; group names are unique within a tenant (no
+  longer on the whole server). `GET /api/groups?q=` finds only the caller's
+  tenant's groups.
+
+### Settings by layer
+
+The general rule of design.md ("设置的分层和锁定") as an API. A **setting** has a
+key, a kind and the layers it exists in. Each layer either sets a value or
+follows the layer above (`null`), and each layer above the last says what the
+layers below it may do (`lower`):
+
+```json
+{"mode": "allow"}
+{"mode": "restrict", "options": ["any", "github"]}
+{"mode": "restrict", "max": 20}
+{"mode": "lock"}
+```
+
+- `allow`: the layers below may set any valid value.
+- `restrict`: for a `choice` setting, one of `options`; for a `limit` setting
+  (a number where smaller is stricter), at most `max`.
+- `lock`: the layers below cannot set it.
+
+A lower layer may only tighten what is above it: a tenant's `lower` must be at
+least as strict as the site's (fewer options, a smaller `max`, or `lock`). A
+value a lower layer set that a lock or a restriction now forbids is **kept**,
+with `inEffect: false`, and counts again when the rule is lifted; nobody's
+setting is lost. Space values stay in `space.yml` and personal ones in the
+state database, as before. The effective value is computed once per (tenant,
+settings revision, space settings version) and cached; a request does not walk
+the layers.
+
+The settings of 3.3 (others join this table as they are made):
+
+| Key | Kind | Layers | Site default | Site's `lower` by default |
+|---|---|---|---|---|
+| `registration.open` | boolean | site, tenant | `false` | `lock` |
+| `registration.domains` | list of domains (`[]`: any) | site, tenant | `[]` | `allow` |
+| `registration.perHour` | limit, 1 to 10,000 | site, tenant | 50 | `restrict`, `max` 50 |
+| `legal.termsUrl`, `legal.privacyUrl` | an `https` address or `""` | site, tenant | `""` | `allow` |
+| `quota.spacesPerPerson` | limit, 0 (none) to 10,000 | site, tenant, person | 20 (`--max-spaces`) | `allow` |
+| `quota.bytesPerPerson` | limit in bytes, or `null` | site, tenant, person | `null` | `allow` |
+| `quota.pagesPerPerson` | limit, or `null` | site, tenant, person | `null` | `allow` |
+| `daily.own`, `daily.api` | boolean (what a space may do) | site, tenant | `true` | `allow` |
+| `daily.default` | the shape of `/api/admin/daily`'s `default`; a tenant may name a space of its own tenant or an interface | site, tenant | `null` | `allow` |
+
+- `daily.own` and `daily.api` are the 2.3 `allow` switches; `PUT
+  /api/admin/daily` with `allow` and `PUT /api/admin/settings/daily.own` write
+  the same record. The tenant's `daily.default` comes between the space's and
+  the site's (2.3's "以后…插在空间和全站之间"); pasted lines stay site-only.
+- `quota.spacesPerPerson` at the site is `--max-spaces` when the flag is given
+  (then it is read only, `fromFlag: true`), else the stored value, 20 to begin
+  with. The person layer is a site or tenant administrator's override on the
+  user (`PATCH /api/users/{id}` with `quota`), not something people set for
+  themselves.
+- **Reserved for 3.1** (on another branch; nothing here depends on its code):
+  `storage.remotes.require` (choice, ordered `null` < `any` < `github`),
+  `storage.remotes.graceDays` and `storage.localSpaces.maxBytes` (limits) join
+  with layers site and tenant, and the site's `lower` defaults to `lock`, as
+  3.1 decided; a tenant may only tighten them. **Reserved for 2.7**: none of
+  the GitHub App's settings have a tenant layer.
+- Security settings (`/api/admin/security`, providers, mail) are the site's
+  only and are not in this table.
+
+#### `GET /api/admin/settings`, `PUT /api/admin/settings/{key}`
+
+Site administrators. `GET` answers every setting:
+
+```json
+{"settings": [{"key": "registration.open", "kind": "boolean", "layers": ["site", "tenant"],
+               "site": {"value": false, "lower": {"mode": "lock"}, "fromFlag": false}}]}
+```
+
+`PUT` takes `{"value": …, "lower": {…}}`, either or both. `200` with that
+setting. `400 invalid` for a value of the wrong kind or out of range;
+`404 not_found` for an unknown key; `409 conflict` for a setting set by a flag;
+the checks of "Registration" for `registration.open`. A change of `lower` that
+makes tenants' values ineffective answers `affected: n` (how many tenants).
+
+#### `GET /api/admin/tenants/{tenant}/settings`, `PUT /api/admin/tenants/{tenant}/settings/{key}`
+
+A site administrator or the tenant's administrator. `GET` answers every setting
+that has a tenant layer, with the site's part and the tenant's:
+
+```json
+{"settings": [{"key": "registration.open", "kind": "boolean", "layers": ["site", "tenant"],
+               "site": {"value": false, "lower": {"mode": "allow"}},
+               "tenant": {"value": true, "lower": null, "inEffect": true},
+               "effective": true}]}
+```
+
+`PUT` takes `{"value": …, "lower": {…}}`; `value: null` follows the site.
+`409 setting_locked` when the site locks the setting (a site administrator is
+refused too: unlock at the site first); `409 setting_restricted` for a value
+outside the site's `options` or above its `max`, or a `lower` looser than the
+site's.
+
+#### `GET /api/settings?space={space}`
+
+Any signed-in user; `space` optional (needs `read`). The effective value of
+every setting that has a space or person layer, and whether that layer can
+change it, so a client greys out "set by the administrators":
+
+```json
+{"settings": [{"key": "daily.own", "effective": false, "space": {"canChange": false, "inEffect": false, "source": "tenant"}}]}
+```
+
+`source` is the layer (`site` or `tenant`) whose lock, or whose value that
+switches it off, keeps the layer from changing it; absent when nothing does.
+
+### Mail
+
+Site administrators. Outgoing mail is what verification, password reset and
+registration use; **it is off until configured**, and nothing in 3.3 sends a
+message on its own initiative except as a reply to a person's request (a link
+they asked for) or an administrator's test.
+
+#### `GET /api/admin/mail`, `PUT /api/admin/mail`
+
+```json
+{"enabled": false, "host": "smtp.example.com", "port": 587, "security": "starttls",
+ "username": "notes@example.com", "hasPassword": true,
+ "from": "notes@example.com", "fromName": "PetalBook", "replyTo": "",
+ "status": {"ok": true, "checked": "2026-11-23T08:00:00Z", "message": ""},
+ "queue": {"waiting": 0, "sentLastHour": 12, "failedLastHour": 0}}
+```
+
+- `security`: `starttls` (the default; the server refuses to go on if the
+  server does not offer it), `tls` (TLS from the first byte, usually port 465),
+  or `none`, allowed only when `host` is a loopback address (a local relay). The
+  server's certificate is always verified; there is no option to skip that.
+- `username` and the password (write-only `password`; absent keeps the stored
+  one, `""` clears it) are sent with `PLAIN` over TLS only. The password is
+  sealed with the server's key (`secret.key`) like other secrets.
+- `from` is required to enable; `fromName` (at most 60 characters) and
+  `replyTo` are optional. One sender for the whole server in 3.3.
+- `enabled: true` needs `host`, `from` and `--public-url` (the links point to
+  it). `PUT` takes any of the fields; all are checked before anything is stored.
+- Mail waits in a queue **in memory** (at most 1,000 messages), sent one
+  connection at a time, each tried up to 3 times over 10 minutes and then
+  dropped and logged. A restart loses what is waiting; every message is a link
+  the person can ask for again, so nothing that cannot be redone is lost, and
+  no token sits in the database in readable form.
+- Messages are plain text plus a simple HTML part, in the language of the
+  request that caused them (`lang` in the body, else `Accept-Language`, else
+  English), from templates in the i18n files.
+
+Refusals: `400 invalid`, `400 mail_needs_public_url`, `400 mail_insecure`
+(`security: "none"` to a host that is not loopback), `400 mail_from_required`.
+A change writes `mail_changed` to the audit log (the password as `"changed"`).
+
+#### `POST /api/admin/mail/test`
+
+`{"to": "admin@example.com", "lang": "en"}` (`lang` optional). Sends one message now, waiting up to 15 seconds,
+to the address the administrator typed, and answers `200` with
+`{"ok": false, "message": "535 authentication failed"}` (the SMTP server's
+answer, never the password) or `{"ok": true}`, and updates `status`. Works also
+while `enabled` is `false`, so the settings can be tried before anyone gets
+mail. At most 10 an hour (`429 rate_limited`). Audit `mail_test`.
+
+### Registration
+
+A person makes their own account in a tenant. Off unless all of these hold for
+the tenant: the effective `registration.open` is `true`, mail is enabled, and
+the server has `--public-url`. **Opening it is refused** (`PUT` of
+`registration.open: true` at the site or the tenant, or unlocking it while a
+tenant has `true` stored):
+
+- `409 mail_not_configured` while mail is not enabled (a registration must
+  verify its address, see below);
+- `409 sso_only_with_registration` while `ssoOnly` is stored on; and from 3.3
+  the reverse check of 2.8 is real: `PUT /api/admin/security` with
+  `ssoOnly: true` answers `400 sso_only_with_registration` while any tenant's
+  effective `registration.open` is `true`.
+
+Switching mail off while registration is open is allowed and closes it in
+effect (`GET /api/register` says `open: false`); the setting stays.
+
+Signing up through a provider (`autoCreate`) is not registration: it is the
+provider's decision and is unchanged.
+
+#### `GET /api/register?tenant={slug}`
+
+Public. `Cache-Control: no-store`. Answered from memory.
+
+```json
+{"open": true, "tenant": {"slug": "default", "name": "Default"},
+ "domains": ["example.com"], "termsUrl": "https://example.com/terms", "privacyUrl": "",
+ "password": {"minLength": 8}}
+```
+
+When `open` is `false` the other fields are absent. `GET /api/auth/providers`
+gains `register` (this boolean) and `forgot` (see "Password reset"), and takes
+the same `?tenant=`, so the sign-in page shows the links.
+
+#### `POST /api/register`
+
+```json
+{"tenant": "default", "username": "tang", "name": "Tang", "email": "tang@example.com",
+ "password": "…", "acceptTerms": true, "captcha": {"id": "…", "answer": "…"}, "lang": "zh-Hans"}
+```
+
+The server checks, in this order, and stops at the first refusal:
+
+1. The address's requests this minute (the shared allowance of 2.8):
+   `429 rate_limited`.
+2. Registration open for the tenant: `403 registration_closed`.
+3. The `register` captcha context: `400 captcha_failed`.
+4. The fields: `400 invalid` (username form as for a User, name 1 to 80
+   characters, the password rule of "Signing in", an address of at most 254
+   bytes, ASCII only, that parses as one plain `local@domain`; see "Email
+   addresses are ASCII").
+5. `registration.domains` not empty and the address's domain not in it (a
+   domain also allows its subdomains): `400 email_domain_not_allowed`.
+6. A terms or privacy address set and `acceptTerms` not `true`:
+   `400 terms_required`.
+7. The username taken by an account or by a pending registration:
+   `409 exists`. (Usernames are not secret: they are shown to fellow members.)
+8. The tenant's registrations in the last hour at `registration.perHour`, or
+   1,000 pending: `429 rate_limited`.
+
+Then `202` with `{"sent": true}`, **always the same** whether or not a message
+goes out, so the answer never tells whether an address has an account:
+
+- if an enabled account of the tenant already has this verified address (not
+  verified by a tenant administrator alone, see "Password reset"), no account
+  is made: the username is held for 24 hours by a registration whose link is
+  never sent, as it would be for a free address, so asking for the same
+  username again answers `409 exists` either way; and the account's stored
+  address (not the one typed) gets "you already have an account" with a link
+  to reset the password;
+- if the address got 3 messages of this server in the last hour, or the caller's
+  address 5, nothing is sent (and nothing is said);
+- otherwise a **pending registration** is stored (the password already hashed,
+  the username reserved) and the address gets a link
+  `<public url>/register/confirm#<token>`, valid 24 hours.
+
+The account is made only when the link is followed: an address nobody controls
+never becomes an account.
+
+#### `POST /api/register/confirm`
+
+Public. `{"token": "…"}`. Counts against the address's requests this minute.
+`201` with `{"user": {…}}` and a session cookie: a `member` of the tenant with
+`email` and `emailVerified: true`, the acceptance of the terms recorded (when and
+which addresses), and a personal space, as for an invite. Refusals:
+`404 not_found` for a token unknown, used or expired (a failure of the
+address); `403 registration_closed` when registration was closed since (pending
+registrations are not honoured after closing); `409 exists` when the username
+was taken in between by an administrator. `registered` goes to the audit log.
+
+### Email verification
+
+For any account with an `email`. It is what makes an address count for
+password reset and for 2.8's merge by verified address.
+
+#### `POST /api/account/email/verify`
+
+Signed in. `{"lang": "zh-Hans"}`. Sends a link
+`<public url>/verify-email#<token>` (valid 24 hours) to the account's current
+`email`. `202 {"sent": true}`. `409 mail_not_configured`; `400 invalid` when
+the account has no email, or one stored with characters outside ASCII; `409 email_verified` when it is verified already;
+`429 rate_limited` after 3 in an hour.
+
+#### `POST /api/email/confirm`
+
+Public, so the link works on another device. `{"token": "…"}`. `204`: the
+account's `emailVerified` becomes `true` if its `email` is still the one the
+link was sent to. `404 not_found` for a token unknown, used, expired, or made
+for an address the account no longer has. Audit `email_verified`.
+
+`PATCH /api/account` with a new `email` (which clears `emailVerified`, as
+before) also sends a note to the old address when that one was verified ("the
+address of your account was changed"), with no link in it.
+
+Any change of an account's `email` (the person's `PATCH /api/account`, an
+administrator's `PATCH /api/users/{id}`) makes every verification and reset
+link sent before it unusable; a reset link also answers `404 not_found` once
+the account's `email` is no longer the one it was sent to.
+
+#### Email addresses are ASCII
+
+An `email` (registration, `PATCH /api/account`, an administrator's
+`PATCH /api/users/{id}`, a provider's claim) with any character
+outside ASCII is refused with `400 invalid` (from a provider: the account gets
+no address). Addresses are compared with A to Z made lower case and nothing
+else, in every lookup (registration, password reset, the merge by verified
+address of 2.8, `registration.domains`). Unicode case mapping would make
+look-alikes equal: `İ` (U+0130) and the Kelvin sign (U+212A) lower to `i` and
+`k`. An address stored before 3.3 with such characters is kept as it is, but
+matches no lookup and gets no account mail (no reset link, no verification
+link): the person or an administrator sets an ASCII address.
+
+### Password reset
+
+Off unless mail is enabled (and `--public-url` set). `GET /api/auth/providers`
+says `forgot: true` when it is on.
+
+#### `POST /api/password/forgot`
+
+Public. `{"tenant": "default", "login": "tang", "captcha": {…}, "lang": "zh-Hans"}`.
+`login` is a username or an email address. Checks: the address's requests this
+minute (`429 rate_limited`), on (`403 password_reset_off`), the `forgot`
+captcha context (`400 captcha_failed`). Then `202 {"sent": true}`, always the
+same. A message goes out only to an enabled account of the tenant (any tenant
+for a username) with a verified address, at most 3 an hour per account and 5
+per caller's address. An address only a tenant administrator marked verified
+(`email_verified_by` is `tenant_admin`) does not count here, as it does not for
+2.8's merge: a tenant administrator could give a member their own address and
+reset the password. The person verifies it with the link, or a site
+administrator marks it.
+
+- an account with a password gets a link `<public url>/reset-password#<token>`,
+  valid 1 hour, usable once; asking again makes the earlier links unusable;
+- an account without a password (made through single sign-on), or one whose
+  password sign-in `ssoOnly` refuses, gets "sign in with {provider}" and no link:
+  a reset never adds a password the person could not already use;
+- an address several accounts of the tenant have verified gets one message
+  with a link for each (at most 5).
+
+`password_reset_requested` goes to the audit log for an account that got a link
+(not for logins that match nothing).
+
+#### `POST /api/password/reset/check`
+
+Public. `{"token": "…"}`. `200` with `{"username": "tang", "expires": "…"}`, or
+`404 not_found` (a failure of the address). For the page to say "this link has
+expired" before the person types a password.
+
+#### `POST /api/password/reset`
+
+Public. `{"token": "…", "password": "…"}`. `204`. The password is set, every
+session of the account ends, its username's and pairs' failures and locks are
+cleared, and `password_reset` goes to the audit log. No session is started: the
+person signs in, so `ssoOnly`, a required passkey and the rest apply as at any
+sign-in. `404 not_found` for a bad token (a failure of the address);
+`400 invalid` for a password that breaks the rule.
+
+#### `POST /api/users/{id}/password-reset`
+
+Administrators (in their scope). Sends the same link to the user's verified
+address. `202`. `409 email_unverified` (also for an address only a tenant
+administrator marked verified, whoever asks), `409 mail_not_configured`,
+`409 conflict` for an account without a password.
+
+### Quotas
+
+Measured per person and per tenant: spaces owned, bytes, pages.
+
+- **Whose**: a space counts toward its first owner (the person whose name is
+  its default Git author, as in the administration's list: the earliest owner
+  membership) and its tenant; a transfer, or any change of who the first owner
+  is, moves it. Group members, editors, viewers and later owners count nothing.
+- **Spaces** are counted when they are made, deleted or handed over, in the
+  transaction that does it: the person's and the tenant's row change by the
+  difference.
+- **Bytes and pages** come from the background measurement of 1.7, which walks
+  one space at a time at most every 6 hours; it now also stores the space's
+  page count (one `COUNT` on the space's index: from the open space, or from the
+  index file of a closed one without opening it, so a space with a remote is not
+  pulled for it; a space whose index is gone keeps its earlier count). The
+  measurement stores both in one transaction (`spaces.usage_bytes`,
+  `spaces.page_count`) and adds the difference to the first owner's and the
+  tenant's row of the `usage` table, so reading anyone's usage is one row.
+- **Drift** is corrected from the rows themselves, by one grouped query a
+  table: once when the server starts running (a crash may have left a
+  difference) and once a day. A re-measure corrects a space's own numbers the
+  same way, by the difference to what it held. Nothing on a request path walks
+  files, counts pages, or recounts anything.
+- **Reserved for 3.1**: a space that is partially cloned or evicted keeps the
+  bytes of its last full measurement (3.1's `cloneBytes` and `indexBytes` are
+  what the server holds, not what the space holds); 3.1's measuring writes
+  `usage_bytes` only from a full working tree (the listing's `sizeBytes` may be
+  written on its own), and the quota reads `usage_bytes`. On this branch the
+  measurement is the 1.7 one, and `store.RecordMeasurement` is the one place
+  that writes `usage_bytes`.
+- **What is refused**: only spaces. `POST /api/spaces` over the person's limit
+  (their own, else the tenant's `quota.spacesPerPerson`, else the site's) or the
+  tenant's `quota.spaces` answers `403 quota_exceeded` with
+  `{"quota": "spaces", "limit": 20, "used": 20}`, as `--max-spaces` answered
+  `403 forbidden` before (old clients still see a `403`). A limit of `0` is none.
+  The check reads the person's usage row (and the tenant's, when it has a total):
+  one primary-key lookup each, however many spaces there are. Bytes, pages and
+  the tenant's people are **not refused** in 3.3: going over shows a notice to
+  the person and the tenant's administrators see it in the list and the tenant,
+  and `quota_exceeded` goes to the audit log once per crossing. Uploads keep
+  3.1's `507 space_full` for its own limit; a byte quota that refuses later will
+  answer `507 quota_exceeded`.
+- **A personal space** is never refused for a quota and counts toward the
+  person's and the tenant's totals.
+- **Over** means more than the limit (at it is not). Whether a row is over is
+  looked at after each measurement; after a change of whom a space is counted
+  for (a space made or deleted, a transfer, an owner added, promoted, demoted or
+  removed: the person it was counted for, the person it is now, and the
+  tenant); after a new account (the person and the tenant's people); after a
+  change of a person's limits or a tenant's totals, after a quota setting changes (everyone in its scope, one
+  read of the usage rows in pages of 500), and after the recount; it is stored
+  (`usage.over`), so `over=1` is an index range and a crossing is reported once:
+  a row that stays over, and is looked at again, writes nothing.
+
+#### `GET /api/account/usage`
+
+Signed in.
+
+```json
+{"spaces": {"used": 3, "limit": 20}, "bytes": {"used": 52428800, "limit": null},
+ "pages": {"used": 2100, "limit": null}, "measuredAt": "2026-11-23T02:10:00Z",
+ "notices": [{"quota": "pages", "scope": "person", "limit": 2000, "used": 2100}]}
+```
+
+`limit` is `null` for none; `measuredAt` is `null` until a space of the person
+has been measured. A **notice** is a quota that is over: `scope` `person` for
+the person's own limit, `tenant` for the tenant's total (`quota` is then also
+`people`). Three lookups of rows by key; the numbers are the stored ones.
+
+#### `GET /api/admin/usage?tenant={id}&over=1&cursor={cursor}&limit={n}`
+
+Administrators (in their scope: a tenant administrator's own tenant, a site
+administrator's every tenant, or `?tenant=`: `404 not_found` for one that is not
+theirs or does not exist). People by usage, largest bytes first, then by id:
+
+```json
+{"items": [{"user": {"id": "…", "username": "tang", "name": "Tang"}, "tenant": "0000000000",
+  "spaces": 3, "bytes": 52428800, "pages": 2100,
+  "limits": {"spaces": 20, "bytes": null, "pages": 2000},
+  "own": {"spaces": null, "bytes": null, "pages": 2000},
+  "ownInEffect": {"spaces": true, "bytes": true, "pages": true},
+  "over": ["pages"], "measuredAt": "2026-11-23T02:10:00Z"}],
+ "next": "52428800:01JD3K7A2M"}
+```
+
+`limits` are the limits in force (`null` none) and `own` the person's own
+(what the edit form starts with). `ownInEffect` is `false` for an own limit
+that a lock or a restriction put on the setting later forbids (see `quota` on
+`PATCH /api/users/{id}`); it is `true` for one that is in force or not set. `over=1` keeps those over a limit (`over=0` or
+none keeps all; anything else is `400 invalid`). `limit` is 1 to 200 (default
+50). The cursor is what `next` says (`400 invalid` for any other). One query a
+page over the usage table's index; the people's names are looked up for the page
+only.
+
+#### `quota` on `PATCH /api/users/{id}`
+
+`quota: {"spaces": 50, "bytes": null, "pages": 100000}`: each key given is a
+number (`spaces` 0 to 10,000, `0` meaning none; `bytes` and `pages` at least 1)
+or `null` to follow the tenant and the site; the keys left out stay. `200` with
+the user, whose `quota` is the person's own limits as they are now.
+
+- `400 invalid` for an unknown key, a value that is no whole number in range, or
+  a `quota` that is not an object.
+- A tenant administrator may lower a person's limit, not raise it above the
+  tenant's effective value (no limit is the highest): `403 forbidden`. Only a
+  site administrator may. Both answer to a lock or a restriction the layer above
+  put on the setting (`409 setting_locked`, `409 setting_restricted`): a tenant
+  administrator to the stricter of the site's and the tenant's, a site
+  administrator to the site's.
+- A lock or a restriction put on the setting **after** the value was saved
+  binds it by the same rule, that of the layer that saved it (a site
+  administrator's value answers to the site's rule, a tenant administrator's to
+  the stricter of the site's and the tenant's). Under a lock the own value is
+  not in effect: the tenant's value applies. Under a restriction it counts up
+  to the restriction's `max` (no limit is above any `max`). The value is kept,
+  shown with `inEffect: false` (`ownInEffect` in `GET /api/admin/usage`), and
+  counts again when the rule is lifted.
+- A person of another tenant is `404 not_found`, a member `403 forbidden`.
+- It is checked before anything else of the request is applied: a refused
+  `quota` changes nothing, not the other fields either.
+- Saving writes `user_changed` (with the new `quota`) to the audit log and looks
+  at the person's numbers again.
+
+### Abuse basics
+
+- **Per-address allowance** (2.8's `limits.perMinute`, 10 by default): shared
+  with sign-in by `GET /api/register`, `POST /api/register`,
+  `POST /api/register/confirm`, `POST /api/password/forgot`,
+  `POST /api/password/reset/check`, `POST /api/password/reset` and
+  `POST /api/email/confirm`.
+- **Failures**: a wrong token on the four token endpoints counts as a failure of
+  the address (2.8's caps and lockout).
+- **Captcha**: the `register` and `forgot` contexts of 2.8 are real: they appear
+  in `GET /api/admin/security`'s `captcha.contexts` and in `GET /api/captcha`,
+  each off by default, `always` or `after_failures` like the others (counted by
+  the address).
+- **Mail caps**: at most 3 messages an hour to one address, 5 caused by one
+  caller's address, `registration.perHour` registrations a tenant an hour, 1,000
+  pending registrations a tenant, 1,000 messages waiting on the server. Counts
+  are in memory, like 2.8's.
+- **Domains**: `registration.domains` limits who may register by address.
+- Tokens are 32 random bytes, sent only in the link's fragment (never a query:
+  not in logs or `Referer`), stored only as a SHA-256 hash, single use.
+
+### Audit
+
+These rows join those of "Audit log"; every row now has a `tenant` (`""` for
+the site's own kinds):
+
+| `kind` | When | `detail` |
+|---|---|---|
+| `tenant_created`, `tenant_changed`, `tenant_deleted` | a tenant was made, changed or deleted | `tenant`, `slug`, the changed fields |
+| `setting_changed` | a site or tenant setting changed | `key`, `layer`, `from`, `to` |
+| `mail_changed`, `mail_test` | the mail settings changed; a test was sent | the changed fields (password as `"changed"`); `to`, `ok` |
+| `registered` | a registration was confirmed | `email` |
+| `email_verified` | an address was verified | `email` |
+| `password_reset_requested`, `password_reset` | a reset link was sent; a password was reset | `by` (`user`, `admin`) |
+| `quota_exceeded` | a person or a tenant went over a quota (once per crossing) | `quota` (`spaces`, `bytes`, `pages`, `people`), `limit`, `used`, `scope` (`person`, `tenant`); the row's `user` is the person, and for a tenant's total the `tenant` is the one |
+
+`POST /api/register` writes nothing until it is confirmed (made-up addresses do
+not fill the log).
+
+### Error codes of this section
+
+| Code | Status | When |
+|---|---|---|
+| `tenants_off` | 409 | making a tenant while `tenancy.enabled` is `false` |
+| `tenant_limit` | 409 | 1,000 tenants |
+| `tenant_not_empty` | 409 | deleting a tenant that has users, spaces, groups or invites (with the counts) |
+| `default_tenant` | 409 | disabling or deleting the default tenant |
+| `setting_locked` | 409 | setting a value the layer above locks |
+| `setting_restricted` | 409 | a value outside the layer above's options or `max`, or a `lower` looser than it |
+| `registration_closed` | 403 | registering or confirming while registration is not open for the tenant |
+| `password_reset_off` | 403 | asking for a reset while mail is not enabled |
+| `mail_not_configured` | 409 | opening registration, asking for a verification, or sending a reset while mail is not enabled |
+| `mail_needs_public_url` | 400 | enabling mail without `--public-url` |
+| `mail_insecure` | 400 | `security: "none"` to a host that is not loopback |
+| `mail_from_required` | 400 | enabling mail without `from` |
+| `sso_only_with_registration` | 409 (opening registration), 400 (`PUT /api/admin/security`) | `ssoOnly` and open registration together |
+| `email_domain_not_allowed` | 400 | the address's domain is not in `registration.domains` |
+| `terms_required` | 400 | `acceptTerms` missing while a terms or privacy address is set |
+| `email_verified` | 409 | asking to verify an address that is verified |
+| `email_unverified` | 409 | an administrator sending a reset to an unverified address |
+| `quota_exceeded` | 403 (spaces); 507 reserved for bytes | over a quota that is refused (with `quota`, `limit` and `used`) |
+| `captcha_failed` | 400 | as in "Signing in", for the `register` and `forgot` contexts |
+| `rate_limited` | 429 | the allowances and caps of "Abuse basics", with `Retry-After` |
+| `not_found` | 404 | a token unknown, used or expired; a tenant slug unknown or disabled; another tenant's id |
+
+### Storage
+
+Migration `0018_tenants.sql` (0013 is 2.7's, 0015 and 0017 are 3.1's, all on
+other branches). SQLite and PostgreSQL both. It is one migration for the whole
+milestone: the first part (tenants, layered settings, isolation) is below, and
+the parts that add registration, mail and quotas append their tables to it
+before the milestone is released.
+
+- `tenants` (id, slug unique, name, name_key, disabled, quota JSON, created,
+  updated), with the default row `0000000000` / `default`, made by the Go step of
+  the migration.
+- `users`, `spaces`, `groups`, `invites`, `audit_log` gain
+  `tenant_id TEXT NOT NULL DEFAULT '0000000000'`; `users` gains `site_admin`;
+  `invites` gains `site_admin` (the invited administrator is one of the server);
+  `sign_in_providers` gains `tenant_id` (where `autoCreate` puts accounts).
+- Indexes `(tenant_id, created)` on users and spaces, `(tenant_id, id)` on
+  the audit log, `(tenant_id)` on invites; groups have the unique index below.
+- Group names unique per tenant: the unique `name_key` becomes unique
+  `(tenant_id, name_key)` (a Go step of the migration: on PostgreSQL a dropped
+  constraint and a new index; on SQLite the table is rebuilt, which needs
+  foreign keys off and so runs on one pinned connection around the version's
+  transaction, which ends with `PRAGMA foreign_key_check`: a row that points
+  nowhere fails the migration, which rolls back, and foreign keys are switched
+  on again whatever happened).
+- New: `layered_settings` (layer, layer id, key, value, lower, updated).
+- Added by the second part: `registrations` (pending: id, tenant, username
+  unique, name, email, the password as a hash, the SHA-256 of the token, the
+  terms accepted as JSON, created, expires), `email_tokens` (the SHA-256 of the
+  token, kind `verify` or `reset`, user, address, created, expires, used) and the
+  column `users.terms_accepted` (JSON: `at`, `termsUrl`, `privacyUrl`). The mail
+  settings are a record of `site_settings` (key `mail`, the password sealed).
+- Added by the third part: `usage` (kind `user` or `tenant`, id, tenant_id,
+  spaces, bytes, pages, people, over, measured; primary key `(kind, id)`; indexes
+  `(kind, tenant_id, bytes DESC, id)` and `(kind, bytes DESC, id)` for the list of
+  people), and the columns `users.quota` (JSON, `''` for none), `spaces.page_count`,
+  `spaces.usage_bytes` (what the last measurement found; the 1.7 `size_bytes` is
+  its first value), `spaces.usage_user` (whom the space is counted for now, so a
+  hand-over moves exactly what was added; indexed), and `invites.username`,
+  `invites.name`, `invites.email` (what the invite fills in). The migration makes
+  the usage rows with two set statements (a fraction of a second at 20,000 people
+  and 40,000 spaces).
+- `UPDATE users SET site_admin = 1 WHERE role = 'admin'`.
+
+### What the first part of 3.3 does and does not do
+
+Done: the tenant model, `siteAdmin` and `tenant` on the User, data isolation, the
+administrator split, `/api/admin/tenancy`, the tenants, layered settings with
+locks (`/api/admin/settings`, the tenants' settings, `GET /api/settings`), the
+daily text's switches and default on that mechanism, and a provider's `tenant`.
+
+The quotas and usage (the `quota.*` settings, the tenant's `usage`,
+`/api/account/usage`, `/api/admin/usage`, `quota_exceeded`) and the prefilled
+invite of `POST /api/admin/tenants` came with the third part, below.
+
+### What the second part of 3.3 does
+
+Done: mail (`/api/admin/mail`, the test message, the queue), registration,
+email verification, password reset, the `register` and `forgot` flags of
+`GET /api/auth/providers`, the captcha contexts `register` and `forgot` (in
+`captcha.contexts`, off by default, like the others), and both directions of
+`sso_only_with_registration`. Details the implementation settled, which refine
+the text above:
+
+- **Nothing is sent by default.** Mail is off until `PUT /api/admin/mail` has
+  `enabled: true`; the tests of this repository talk to an SMTP server in the
+  test's own process and to no other.
+- `GET /api/admin/mail`'s `status.checked` is `null` until a delivery or a test
+  has happened (the status is kept in memory). `POST /api/admin/mail/test`
+  takes an optional `lang`, answers `409 mail_not_configured` while no `host`
+  is set and `400 mail_from_required` while no `from` is, and the 10 an hour are
+  counted by the server (all administrators together).
+- `PUT /api/admin/mail` checks in this order: field forms and ranges
+  (`invalid`), `mail_insecure`, then, when enabling, a missing host (`invalid`),
+  `mail_from_required`, `mail_needs_public_url`. Switching mail off drops what is
+  waiting in the queue and cancels the pending registrations.
+- The queue tries a message at once, again after 1 minute and again after 5,
+  and drops it after the third failure or 10 minutes, whichever comes first; the
+  log says why (never the address or the text, which hold a link).
+- **Closing registration deletes the pending registrations** (a change of
+  `registration.open` or of its `lower` at the site or the tenant, switching mail
+  off, deleting the tenant, and an hourly check), so their links answer
+  `404 not_found`; `403 registration_closed` at `POST /api/register/confirm` is
+  what a link of a registration that is still stored gets when its tenant is not
+  open (for instance the instant between the change and the deletion).
+- **The tenant's hour** of `registration.perHour` counts every `POST
+  /api/register` that passes the field checks, whether or not the address has an
+  account, and the pending cap of 1,000 is checked the same way, so those answers
+  do not tell either. The password is hashed in every case.
+- `GET /api/register` counts against the address's requests this minute.
+- A tenant administrator's changes of an address: `emailVerified: true` sent by a
+  site administrator always clears the `email_verified_by` mark of a tenant
+  administrator, also when the address was already shown as verified; so does the
+  person's own `POST /api/email/confirm`.
+- `POST /api/users/{id}/password-reset` answers `404 not_found` for a person
+  outside the caller's scope, `403 forbidden` for a tenant administrator and a
+  site administrator's account, and `409 conflict` also for a disabled account or
+  one whose password `ssoOnly` refuses. It counts against the address's 3 an hour
+  (`429 rate_limited`) but not against any caller's 5.
+- A reset link of an account that can no longer use a password (it is disabled,
+  or `ssoOnly` came on since) answers `404 not_found` and changes nothing.
+- A message that cannot be queued because 1,000 wait answers `503 unavailable`
+  to a signed-in person (verification) and is not said to a public caller.
+
+Details the first part settled:
+
+- An administrator invited by a site administrator into the default tenant is a
+  site administrator (what every administrator was before tenants); in any other
+  tenant, or invited by a tenant administrator, they are not. `POST
+  /api/invites` takes `tenant` and `siteAdmin` (only a site administrator may
+  send either to anything but their own tenant, or `true`), and answers both.
+  `POST /api/admin/tenants`'s invite is not a site administrator's.
+- `PATCH /api/users/{id}` with `role: "admin"` in the default tenant by a site
+  administrator also makes a site administrator unless `siteAdmin: false` is
+  sent. A demotion ends the flag. A tenant administrator who targets a site
+  administrator, or sends `siteAdmin`, is `403 forbidden`; `siteAdmin: true` for
+  a member is `400 invalid`.
+- `GET /api/admin/spaces` items have `tenant` (an id), as invites have.
+- The server's own audit kinds (`security_changed`, `provider_*`, `mail_*`,
+  `tenant_*`, `dropped`, `rate_limited`, `lockout`) are hidden from tenant
+  administrators; rows of the site layer's settings have no tenant.
+- Deleting a tenant puts the providers that named it back on the default tenant.
+
+### What the third part of 3.3 does
+
+Done: the `usage` table and its upkeep, the `quota.*` settings with their person
+layer, `GET /api/account/usage`, `GET /api/admin/usage`, `quota` on
+`PATCH /api/users/{id}`, the tenant's `usage`, `quota_exceeded` for the number of
+spaces, notices and the once-per-crossing audit row, and the prefilled invite of
+`POST /api/admin/tenants`. Details the implementation settled, which refine the
+text above:
+
+- `--max-spaces`, when it is given, is the site's value of
+  `quota.spacesPerPerson` (`fromFlag: true`, read only: a `PUT` of the value is
+  `409 conflict`); without it the stored setting counts, 20 to begin with. The
+  setting's lower rule can be set either way. `0` is no limit.
+- The quota settings are `limit` settings with layers site, tenant and person:
+  `quota.spacesPerPerson` is 0 to 10,000 (a `null` value sets it back to 20),
+  `quota.bytesPerPerson` 1 to 2^50 and `quota.pagesPerPerson` 1 to 2^40, both
+  may be `null` (no limit). The person layer is the user's own `quota`: it is
+  not among what `GET /api/settings` offers a person, who cannot set it.
+- Changing one of these settings, a person's `quota` or a tenant's `quota` looks
+  at the numbers of everyone it concerns at once, so `over`, the notices and the
+  audit follow the new limit without waiting for a measurement; the answer comes
+  after (a site-wide change reads the usage rows once: about 20 ms for 20,000
+  people when nothing changes, 0.3 s when half of them cross).
+- A tenant's `quota.people` counts people, not accounts that may sign in: a
+  disabled person counts. Nobody is refused for it: the tenant, its
+  administrators and its people see it (`over`, notices), and the audit has one
+  row.
+- A space is counted for a tenant from the moment it is made, and for its first
+  owner from the moment it has one; a space nobody owns counts for its tenant
+  only. A tenant that is deleted takes its usage row with it.
+- The audit's `quota_exceeded` for a person has the person as `user` and their
+  tenant as `tenant`; for a tenant's total it has the tenant only.
+- `POST /api/admin/spaces/{space}/size` measures with the same turn as the
+  background one (bytes, pages, usage, a look at the person), so an
+  administrator asking for a size also brings the quotas up to date.
+- A server upgraded from before quotas has its usage rows made by the migration
+  from the 1.7 measurements it already stored, with no page counts until each
+  space is measured once; the first pass of the sizer, a space at a time,
+  fills them.
+- Costs, measured on 20,000 people and 40,000 spaces (SQLite / PostgreSQL): the
+  migration's step 0.28 s / 0.7 s; the daily recount with nothing to correct
+  0.17 s / 0.19 s, correcting a thousand rows 0.20 s / 0.26 s; a person's usage
+  row 21 µs / 59 µs; a page of 50 people 0.2 ms / 0.5 ms, 1.3 ms / 2.0 ms ten
+  thousand people deep; recording a measurement 0.25 ms / 0.44 ms; making a space
+  (with its owner) 0.33 ms / 0.64 ms; handing one over 0.38 ms / 0.83 ms. For a
+  space of 20,000 pages the page count is 0.15 ms from the open space and 0.5 ms
+  from the index file of a closed one; the walk of its files (1.7's) is the turn's
+  cost, about 0.2 to 0.3 s.
+
 ## Administration
 
 Accounts mode, administrators only; single-user mode answers `404`, anyone else
-`403 forbidden`. These endpoints work on the server's records, not on a space's
+`403 forbidden`. From 3.3 an administrator is a site administrator or a tenant
+administrator, and a tenant administrator sees only their tenant and none of the
+server's own settings (see "Administrators" under "Tenants, registration and
+mail"). These endpoints work on the server's records, not on a space's
 pages: none opens a space (so they work on a disabled one), and nothing they do
 deletes a file. They are separate from "Users and invites", which is unchanged.
 
@@ -4354,7 +5311,7 @@ Refusals (`400` unless stated):
 |---|---|
 | `invalid` | an unknown field value: a mode, scope, provider, context or role that does not exist, or a number out of range (the message names the field) |
 | `local_admin_required` | `ssoOnly: true`, or a `mode` other than `local_only` while `ssoOnly` is on and the stored mode is `local_only`, while no enabled administrator has a password. Creating or enabling a provider while `ssoOnly` is on is refused the same way, and while `ssoOnly` is stored (in effect or not) the last enabled administrator with a password cannot be made a member or disabled (`409 conflict`) |
-| `sso_only_with_registration` | `ssoOnly: true` while public registration is open (reserved: there is no public registration yet) |
+| `sso_only_with_registration` | `ssoOnly: true` while any tenant's registration is open in effect (from 3.3; see "Registration") |
 | `captcha_site_key_required` | a third-party provider with a context switched on and no `siteKey` |
 | `captcha_secret_required` | a third-party provider with a context switched on and no secret; a secret stored for another provider does not count, so changing provider needs the new secret in the same request |
 | `captcha_needs_public_url` | a third-party provider without `--public-url` (its host name is what the answer is checked against) |
@@ -4507,7 +5464,8 @@ One group; `404 not_found`.
 
 `{"name": "Engineering", "description": "", "source": "local"}`; `source` is
 required. `201` with the group. `409 exists` for a name taken, `409 group_limit`
-at 10,000 groups. A synced group starts empty; map it from a provider's
+at 10,000 groups in the tenant (each tenant has its own 10,000; the message
+says how many the tenant has). A synced group starts empty; map it from a provider's
 `groups` setting.
 
 #### `PATCH /api/admin/groups/{group}`

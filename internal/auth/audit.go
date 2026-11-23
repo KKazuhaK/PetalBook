@@ -28,6 +28,9 @@ type AuditEvent struct {
 	Username string // as typed, for refused sign-ins
 	IP       string
 	Detail   map[string]any
+	// Tenant is the tenant the event belongs to; "" takes it from the user the
+	// event is about, else the actor, else it is the server's own.
+	Tenant string
 }
 
 type auditLog struct {
@@ -64,7 +67,7 @@ func (a *auditLog) row(ev AuditEvent, now time.Time) (store.AuditRow, bool) {
 	}
 	// Sorts by time, then by order of arrival.
 	id := fmt.Sprintf("%012x%06x", now.UnixMilli(), a.seq.Add(1)&0xffffff)
-	return store.AuditRow{ID: id, At: now.UTC(), Kind: ev.Kind, Actor: ev.Actor, UserID: ev.User, Username: clip(ev.Username, 100), IP: ev.IP, Detail: detail}, true
+	return store.AuditRow{ID: id, At: now.UTC(), Kind: ev.Kind, Actor: ev.Actor, UserID: ev.User, Username: clip(ev.Username, 100), IP: ev.IP, Detail: detail, TenantID: ev.Tenant}, true
 }
 
 // FlushAudit writes what is queued now. The background loop does it every
@@ -122,9 +125,9 @@ type AuditEntry struct {
 
 // ListAudit returns a page of the log, newest first, and the cursor of the
 // next page ("" at the end).
-func (s *Service) ListAudit(ctx context.Context, kind, user, cursor string, limit int) ([]AuditEntry, string, error) {
+func (s *Service) ListAudit(ctx context.Context, sc store.Scope, hideSite bool, kind, user, cursor string, limit int) ([]AuditEntry, string, error) {
 	s.FlushAudit(ctx)
-	rows, err := store.ListAudit(ctx, s.st.Q(), kind, user, cursor, limit)
+	rows, err := store.ListAudit(ctx, s.st.Q(), sc, hideSite, kind, user, cursor, limit)
 	if err != nil {
 		return nil, "", err
 	}

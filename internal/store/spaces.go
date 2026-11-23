@@ -18,6 +18,8 @@ type SpaceInfo struct {
 	// Inbox is the folder quick notes go to.
 	Inbox   string
 	Created time.Time
+	// TenantID is the tenant the space belongs to.
+	TenantID string
 }
 
 // DefaultInbox is the inbox folder of a space made without one.
@@ -25,7 +27,7 @@ const DefaultInbox = "Inbox"
 
 // InsertSpace adds a space row. personalOf is the user a personal space
 // belongs to, or "". An empty inbox is DefaultInbox.
-func InsertSpace(ctx context.Context, q Q, id, name, personalOf, inbox string, now time.Time) error {
+func InsertSpace(ctx context.Context, q Q, tenantID, id, name, personalOf, inbox string, now time.Time) error {
 	var owner any
 	if personalOf != "" {
 		owner = personalOf
@@ -33,13 +35,29 @@ func InsertSpace(ctx context.Context, q Q, id, name, personalOf, inbox string, n
 	if inbox == "" {
 		inbox = DefaultInbox
 	}
-	_, err := q.Exec(ctx, `INSERT INTO spaces(id, name, name_key, personal_of, inbox, created) VALUES (?, ?, ?, ?, ?, ?)`, id, name, FoldName(name), owner, inbox, ms(now))
-	return err
+	if tenantID == "" {
+		tenantID = DefaultTenantID
+	}
+	if _, err := q.Exec(ctx, `INSERT INTO spaces(id, name, name_key, personal_of, inbox, created, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?)`, id, name, FoldName(name), owner, inbox, ms(now), tenantID); err != nil {
+		return err
+	}
+	return usageOfNewSpace(ctx, q, tenantID)
 }
 
+// AddMember makes a user a member of a space. The statement joins the two rows
+// on the same tenant, so a space and a user of different tenants are never
+// linked, whatever the caller checked: it writes nothing and returns
+// ErrNotFound, as it does for a space or a user that does not exist.
 func AddMember(ctx context.Context, q Q, spaceID, userID, role string, now time.Time) error {
-	_, err := q.Exec(ctx, `INSERT INTO space_members(space_id, user_id, role, created) VALUES (?, ?, ?, ?)`, spaceID, userID, role, ms(now))
-	return err
+	res, err := q.Exec(ctx, `INSERT INTO space_members(space_id, user_id, role, created)
+		SELECT s.id, u.id, ?, ? FROM spaces s JOIN users u ON u.tenant_id = s.tenant_id WHERE s.id = ? AND u.id = ?`, role, ms(now), spaceID, userID)
+	if err := oneRow(res, err); err != nil {
+		return err
+	}
+	if role != "owner" {
+		return nil
+	}
+	return settleOwner(ctx, q, spaceID)
 }
 
 // ListUserSpaces returns the spaces a user is a member of, the personal one
@@ -67,13 +85,15 @@ func ListUserSpaces(ctx context.Context, q Q, userID string) ([]SpaceInfo, error
 }
 
 // GetSpace returns a space by id, with no member's role: for an administrator
-// who is not a member. One primary-key lookup.
-func GetSpace(ctx context.Context, q Q, id string) (*SpaceInfo, error) {
+// who is not a member. One primary-key lookup; a space of a tenant outside the
+// scope is not found.
+func GetSpace(ctx context.Context, q Q, sc Scope, id string) (*SpaceInfo, error) {
 	var s SpaceInfo
 	var personal sql.NullString
 	var created int64
-	err := q.QueryRow(ctx, `SELECT id, name, personal_of, inbox, created FROM spaces WHERE id = ?`, id).
-		Scan(&s.ID, &s.Name, &personal, &s.Inbox, &created)
+	cond, args := sc.cond("tenant_id")
+	err := q.QueryRow(ctx, `SELECT id, name, personal_of, inbox, created, tenant_id FROM spaces WHERE id = ? AND `+cond, append([]any{id}, args...)...).
+		Scan(&s.ID, &s.Name, &personal, &s.Inbox, &created, &s.TenantID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -164,13 +184,19 @@ func MemberRole(ctx context.Context, q Q, spaceID, userID string) (string, error
 // SetMemberRole changes a member's role.
 func SetMemberRole(ctx context.Context, q Q, spaceID, userID, role string) error {
 	res, err := q.Exec(ctx, `UPDATE space_members SET role = ? WHERE space_id = ? AND user_id = ?`, role, spaceID, userID)
-	return oneRow(res, err)
+	if err := oneRow(res, err); err != nil {
+		return err
+	}
+	return settleOwner(ctx, q, spaceID)
 }
 
 // RemoveMember removes a member from a space.
 func RemoveMember(ctx context.Context, q Q, spaceID, userID string) error {
 	res, err := q.Exec(ctx, `DELETE FROM space_members WHERE space_id = ? AND user_id = ?`, spaceID, userID)
-	return oneRow(res, err)
+	if err := oneRow(res, err); err != nil {
+		return err
+	}
+	return settleOwner(ctx, q, spaceID)
 }
 
 // CountOwners counts the owners of a space.
@@ -238,7 +264,7 @@ func SpaceOwner(ctx context.Context, q Q, spaceID string) (*User, string, error)
 		}
 		return nil, "", err
 	}
-	u, err := scanUser(q.QueryRow(ctx, `SELECT u.id, u.username, u.name, u.email, u.role, u.disabled, u.created, u.email_verified, u.passkey_required
+	u, err := scanUser(q.QueryRow(ctx, `SELECT `+prefixed("u", userCols)+`
 		FROM space_members m JOIN users u ON u.id = m.user_id
 		WHERE m.space_id = ? AND m.role = 'owner' ORDER BY m.created, u.id LIMIT 1`, spaceID))
 	if errors.Is(err, ErrNotFound) {
@@ -250,8 +276,8 @@ func SpaceOwner(ctx context.Context, q Q, spaceID string) (*User, string, error)
 // EnsureLocal makes the built-in user and the one space of single-user mode
 // exist, so drafts can refer to them like to any other user and space.
 func EnsureLocal(ctx context.Context, q Q, spaceID, spaceName string, now time.Time) error {
-	if _, err := q.Exec(ctx, `INSERT INTO users(`+userCols+`) VALUES (?, 'local', 'Local user', '', 'admin', 0, ?, 0, 0)
-		ON CONFLICT (id) DO NOTHING`, LocalUserID, ms(now)); err != nil {
+	if _, err := q.Exec(ctx, `INSERT INTO users(`+userCols+`) VALUES (?, 'local', 'Local user', '', 'admin', 0, ?, 0, 0, ?, 1)
+		ON CONFLICT (id) DO NOTHING`, LocalUserID, ms(now), DefaultTenantID); err != nil {
 		return err
 	}
 	if _, err := q.Exec(ctx, `INSERT INTO spaces(id, name, name_key, personal_of, created) VALUES (?, ?, ?, ?, ?)

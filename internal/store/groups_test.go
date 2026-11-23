@@ -30,7 +30,7 @@ func TestGroupListsPageByName(t *testing.T) {
 		var names []string
 		after := ""
 		for {
-			page, next, err := store.ListGroups(ctx, st.Q(), d, store.GroupFilter{After: after, Limit: 2})
+			page, next, err := store.ListGroups(ctx, st.Q(), d, store.AllTenants(), store.GroupFilter{After: after, Limit: 2})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -50,19 +50,19 @@ func TestGroupListsPageByName(t *testing.T) {
 		if fmt.Sprint(names) != fmt.Sprint(want) {
 			t.Fatalf("%v", names)
 		}
-		got, _, _ := store.ListGroups(ctx, st.Q(), d, store.GroupFilter{Query: "ALP"})
+		got, _, _ := store.ListGroups(ctx, st.Q(), d, store.AllTenants(), store.GroupFilter{Query: "ALP"})
 		if len(got) != 1 || got[0].Name != "Alpha" {
 			t.Fatal(got)
 		}
-		got, _, _ = store.ListGroups(ctx, st.Q(), d, store.GroupFilter{Source: store.GroupSynced})
+		got, _, _ = store.ListGroups(ctx, st.Q(), d, store.AllTenants(), store.GroupFilter{Source: store.GroupSynced})
 		if len(got) != 1 {
 			t.Fatal(got)
 		}
 		// A search treats % and _ literally.
-		if got, _, _ = store.ListGroups(ctx, st.Q(), d, store.GroupFilter{Query: "%"}); len(got) != 0 {
+		if got, _, _ = store.ListGroups(ctx, st.Q(), d, store.AllTenants(), store.GroupFilter{Query: "%"}); len(got) != 0 {
 			t.Fatal(got)
 		}
-		refs, err := store.SearchGroups(ctx, st.Q(), d, "ta", 20)
+		refs, err := store.SearchGroups(ctx, st.Q(), d, store.AllTenants(), "ta", 20)
 		if err != nil || len(refs) != 3 { // beta, delta, zeta synced
 			t.Fatal(refs, err)
 		}
@@ -107,7 +107,7 @@ func TestPeopleAndEffectiveListsAreOneQueryPages(t *testing.T) {
 			t.Fatal(page)
 		}
 
-		if err := store.InsertSpace(ctx, st.Q(), "S1", "Alpha", "", "", now); err != nil {
+		if err := store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, "S1", "Alpha", "", "", now); err != nil {
 			t.Fatal(err)
 		}
 		if err := store.AddMember(ctx, st.Q(), "S1", "U-cy", "owner", now); err != nil {
@@ -158,7 +158,7 @@ func TestPeopleAndEffectiveListsAreOneQueryPages(t *testing.T) {
 		if n, _ := store.CountSpaceGroups(ctx, st.Q(), "S1"); n != 1 {
 			t.Fatal(n)
 		}
-		if _, err := store.GetUser(ctx, st.Q(), "U-ann"); err != nil {
+		if _, err := store.GetUser(ctx, st.Q(), store.AllTenants(), "U-ann"); err != nil {
 			t.Fatal(err)
 		}
 	})

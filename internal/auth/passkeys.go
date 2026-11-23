@@ -366,14 +366,14 @@ func (s *Service) PasskeyFinish(ctx context.Context, ceremony, ip string, r *htt
 		}
 		return nil, "", fail("passkey_failed", nil)
 	}
-	u, err := store.GetUser(ctx, s.st.Q(), string(res.UserHandle))
+	u, err := store.GetUser(ctx, s.st.Q(), store.AllTenants(), string(res.UserHandle)) // a sign-in: the person decides the tenant
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, "", fail("passkey_failed", nil)
 		}
 		return nil, "", err
 	}
-	if u.Disabled {
+	if u.Disabled || s.st.TenantDisabled(u.TenantID) {
 		return nil, "", fail("disabled", u)
 	}
 	if s.ssoOnlyInEffect(st) && u.Role != "admin" {
@@ -535,6 +535,17 @@ func (s *Service) DeletePasskey(ctx context.Context, actor *Principal, userID, i
 	by := "user"
 	if actor.User.ID != userID {
 		by = "admin"
+		// A person of another tenant is no person at all.
+		u, err := store.GetUser(ctx, s.st.Q(), store.ScopeOf(actor.User), userID)
+		if errors.Is(err, store.ErrNotFound) {
+			return errf(NotFound, "no such user")
+		} else if err != nil {
+			return err
+		}
+		// The rule of UpdateUser: a site administrator is changed by site administrators only.
+		if u.SiteAdmin && !(actor.User.SiteAdmin && actor.User.Role == "admin") {
+			return errf(Forbidden, "only a site administrator may change a site administrator")
+		}
 	}
 	s.credMu.Lock()
 	defer s.credMu.Unlock()
@@ -557,7 +568,7 @@ func (s *Service) DeletePasskey(ctx context.Context, actor *Principal, userID, i
 		}
 		return err
 	}
-	u, _ := store.GetUser(ctx, s.st.Q(), userID)
+	u, _ := store.GetUser(ctx, s.st.Q(), store.AllTenants(), userID)
 	ev := AuditEvent{Kind: "passkey_removed", Actor: actor.User.ID, User: userID, IP: ip, Detail: map[string]any{"passkey": id, "by": by}}
 	if u != nil {
 		ev.Username = u.Username

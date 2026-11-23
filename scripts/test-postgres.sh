@@ -36,7 +36,9 @@ if [ -n "${PETALBOOK_TEST_POSTGRES:-}" ]; then
   if [ "$#" -eq 0 ]; then
     state_db_args
     # shellcheck disable=SC2086
-    set -- -race $pkgs
+    # -race and both databases per test: internal/api alone nears go test's default
+    # 10 minutes on a busy machine, so the run gets 30.
+    set -- -race -timeout 30m $pkgs
   fi
   exec go test "$@"
 fi
@@ -53,6 +55,8 @@ echo "PostgreSQL $(postgres --version 2>/dev/null | awk '{print $3}') on port $P
 if [ "$#" -eq 0 ]; then
   state_db_args
   # shellcheck disable=SC2086
-  set -- -race $pkgs
+  # -race and both databases per test: internal/api alone nears go test's default
+  # 10 minutes on a busy machine, so the run gets 30.
+  set -- -race -timeout 30m $pkgs
 fi
 go test "$@"

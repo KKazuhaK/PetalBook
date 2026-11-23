@@ -485,7 +485,7 @@ export const en: Messages = {
     close: 'Close settings',
     nav: 'Settings sections',
     groups: { account: 'Account', space: 'Space' },
-    sections: { profile: 'Profile', preferences: 'Preferences', security: 'Security', tokens: 'API tokens', general: 'General', types: 'Types', templates: 'Templates', home: 'Home', members: 'Members', sync: 'Sync', offline: 'Offline', import: 'Import' },
+    sections: { profile: 'Profile', preferences: 'Preferences', security: 'Security', tokens: 'API tokens', usage: 'Usage', general: 'General', types: 'Types', templates: 'Templates', home: 'Home', members: 'Members', sync: 'Sync', offline: 'Offline', import: 'Import' },
   },
   prefs: {
     appearance: 'Appearance',

@@ -3,8 +3,9 @@
 import { t } from '@/i18n'
 import { noteNetworkOk } from '@/lib/offline/status'
 
-import type { EffectiveMemberList, GroupMember, GroupRef, MembersResponse,
+import type { RegisterInfo, RegisterInput, MySetting, EffectiveMemberList, GroupMember, GroupRef, MembersResponse,
   AccountInfo,
+  AccountUsage,
   AdminSpace,
   ApiToken,
   ConsentDecision,
@@ -601,6 +602,8 @@ export const api = {
 
   // --- account ---
   account: (signal?: AbortSignal) => request<AccountInfo>('/account', { signal }),
+  // The caller's own spaces, bytes and pages against their limits (3.3): stored numbers, nothing is measured for the request.
+  accountUsage: (signal?: AbortSignal) => request<AccountUsage>('/account/usage', { signal }),
   // Finding a group by part of its name, to add it to a space: names only.
   findGroups: (q: string, signal?: AbortSignal) => request<{ groups: GroupRef[] }>(`/groups?q=${enc(q)}&limit=20`, { signal }),
   updateAccount: (input: { name?: string; email?: string }) => request<{ user: User }>('/account', { method: 'PATCH', body: input }),
@@ -614,6 +617,8 @@ export const api = {
   removePasskey: (id: string) => request<void>(`/account/passkeys/${enc(id)}`, { method: 'DELETE' }),
 
   // --- API tokens ---
+  // What each setting that a space or a person can change comes to for the caller, and who keeps it from changing (3.3).
+  settings: (space?: string, signal?: AbortSignal) => request<{ settings: MySetting[] }>(`/settings${space ? `?space=${enc(space)}` : ''}`, { signal }),
   tokens: (signal?: AbortSignal) => request<{ tokens: ApiToken[] }>('/account/tokens', { signal }),
   // `expiresInDays` 0 is a token that never expires; left out, 90 days.
   createToken: (input: { name: string; access: TokenAccess; spaces: string[]; expiresInDays?: number }) => request<CreatedToken>('/account/tokens', { method: 'POST', body: input }),
@@ -627,6 +632,19 @@ export const api = {
   decideConsent: (input: ConsentDecision) => request<{ redirect: string }>('/oauth/consent', { method: 'POST', body: input }),
 
   // --- users and invites (administrators) ---
+  // --- registration, email verification and password reset (3.3) ---
+  registerInfo: (tenant?: string, signal?: AbortSignal) => request<RegisterInfo>(`/register${tenant ? `?tenant=${enc(tenant)}` : ''}`, { signal }),
+  register: (input: RegisterInput) => request<{ sent: boolean }>('/register', { method: 'POST', body: input }),
+  registerConfirm: async (token: string) => {
+    const r = await request<{ user: User }>('/register/confirm', { method: 'POST', body: { token } })
+    markSignedIn()
+    return r
+  },
+  requestEmailVerify: (lang?: string) => request<{ sent: boolean }>('/account/email/verify', { method: 'POST', body: lang ? { lang } : {} }),
+  confirmEmail: (token: string) => request<void>('/email/confirm', { method: 'POST', body: { token } }),
+  forgotPassword: (input: { tenant?: string; login: string; captcha?: CaptchaAnswer; lang?: string }) => request<{ sent: boolean }>('/password/forgot', { method: 'POST', body: input }),
+  checkReset: (token: string, signal?: AbortSignal) => request<{ username: string; expires: string }>('/password/reset/check', { method: 'POST', body: { token }, signal }),
+  resetPassword: (token: string, password: string) => request<void>('/password/reset', { method: 'POST', body: { token, password } }),
   checkInvite: (token: string, captcha?: CaptchaAnswer, signal?: AbortSignal) => request<InviteCheck>('/invites/check', { method: 'POST', body: { token, ...(captcha ? { captcha } : {}) }, signal }),
   acceptInvite: async (input: { token: string; username: string; name?: string; password: string; captcha?: CaptchaAnswer }) => {
     const r = await request<{ user: User }>('/invites/accept', { method: 'POST', body: input })

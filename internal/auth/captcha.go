@@ -107,7 +107,7 @@ func (s *Service) CaptchaFor(ctx context.Context, ctxName, account, ip string) (
 		return nil, err
 	}
 	known := false
-	for _, c := range append(append([]string{}, CaptchaContexts...), reservedContexts...) {
+	for _, c := range CaptchaContexts {
 		known = known || c == ctxName
 	}
 	if !known {

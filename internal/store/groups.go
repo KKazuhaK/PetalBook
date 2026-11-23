@@ -23,18 +23,20 @@ const (
 // Group is a group with its two counts.
 type Group struct {
 	ID, Name, Description, Source string
-	People, Spaces                int
-	Created, Updated              time.Time
+	// TenantID is the tenant the group belongs to (names are unique within it).
+	TenantID         string
+	People, Spaces   int
+	Created, Updated time.Time
 }
 
-const groupCols = `g.id, g.name, g.description, g.source, g.created, g.updated,
+const groupCols = `g.id, g.name, g.description, g.source, g.created, g.updated, g.tenant_id,
 	(SELECT COUNT(DISTINCT gm.user_id) FROM group_members gm WHERE gm.group_id = g.id),
 	(SELECT COUNT(*) FROM space_groups sg WHERE sg.group_id = g.id)`
 
 func scanGroup(sc interface{ Scan(...any) error }) (*Group, error) {
 	var g Group
 	var cr, up int64
-	if err := sc.Scan(&g.ID, &g.Name, &g.Description, &g.Source, &cr, &up, &g.People, &g.Spaces); err != nil {
+	if err := sc.Scan(&g.ID, &g.Name, &g.Description, &g.Source, &cr, &up, &g.TenantID, &g.People, &g.Spaces); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -54,14 +56,19 @@ func bytewise(d Dialect, col string) string {
 
 // InsertGroup adds a group; a taken name is a unique violation.
 func InsertGroup(ctx context.Context, q Q, g Group) error {
-	_, err := q.Exec(ctx, `INSERT INTO groups(id, name, name_key, description, source, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		g.ID, g.Name, FoldName(g.Name), g.Description, g.Source, ms(g.Created), ms(g.Updated))
+	if g.TenantID == "" {
+		g.TenantID = DefaultTenantID
+	}
+	_, err := q.Exec(ctx, `INSERT INTO groups(id, name, name_key, description, source, created, updated, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		g.ID, g.Name, FoldName(g.Name), g.Description, g.Source, ms(g.Created), ms(g.Updated), g.TenantID)
 	return err
 }
 
-// GetGroup returns a group with its counts, or ErrNotFound.
-func GetGroup(ctx context.Context, q Q, id string) (*Group, error) {
-	return scanGroup(q.QueryRow(ctx, `SELECT `+groupCols+` FROM groups g WHERE g.id = ?`, id))
+// GetGroup returns a group with its counts, or ErrNotFound (also for a group
+// of a tenant outside the scope).
+func GetGroup(ctx context.Context, q Q, sc Scope, id string) (*Group, error) {
+	cond, args := sc.cond("g.tenant_id")
+	return scanGroup(q.QueryRow(ctx, `SELECT `+groupCols+` FROM groups g WHERE g.id = ? AND `+cond, append([]any{id}, args...)...))
 }
 
 // GroupSourceOf returns a group's source, or ErrNotFound. One primary-key lookup.
@@ -74,9 +81,10 @@ func GroupSourceOf(ctx context.Context, q Q, id string) (string, error) {
 	return s, err
 }
 
-// CountGroups counts the groups on the server.
-func CountGroups(ctx context.Context, q Q) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM groups`).Scan(&n)
+// CountGroups counts the groups in the scope.
+func CountGroups(ctx context.Context, q Q, sc Scope) (n int, err error) {
+	cond, args := sc.cond("tenant_id")
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM groups WHERE `+cond, args...).Scan(&n)
 	return
 }
 
@@ -101,12 +109,14 @@ type GroupFilter struct {
 }
 
 // ListGroups returns a page of groups by name, and the cursor of the next.
-func ListGroups(ctx context.Context, q Q, d Dialect, f GroupFilter) (out []Group, next string, err error) {
+func ListGroups(ctx context.Context, q Q, d Dialect, sc Scope, f GroupFilter) (out []Group, next string, err error) {
 	if f.Limit <= 0 {
 		f.Limit = 50
 	}
 	var where []string
 	var args []any
+	sCond, sArgs := sc.cond("g.tenant_id")
+	where, args = append(where, sCond), append(args, sArgs...)
 	if f.Query != "" {
 		where = append(where, `g.name_key LIKE ? ESCAPE '\'`)
 		args = append(args, "%"+likeEscape(FoldName(f.Query))+"%")
@@ -154,9 +164,10 @@ func ListGroups(ctx context.Context, q Q, d Dialect, f GroupFilter) (out []Group
 type GroupRef struct{ ID, Name, Source string }
 
 // SearchGroups finds groups whose name contains q, by name: for choosing one.
-func SearchGroups(ctx context.Context, q Q, d Dialect, query string, limit int) ([]GroupRef, error) {
-	rows, err := q.Query(ctx, `SELECT id, name, source FROM groups WHERE name_key LIKE ? ESCAPE '\' ORDER BY `+bytewise(d, `name_key`)+` LIMIT ?`,
-		"%"+likeEscape(FoldName(query))+"%", limit)
+func SearchGroups(ctx context.Context, q Q, d Dialect, sc Scope, query string, limit int) ([]GroupRef, error) {
+	cond, cargs := sc.cond("tenant_id")
+	rows, err := q.Query(ctx, `SELECT id, name, source FROM groups WHERE `+cond+` AND name_key LIKE ? ESCAPE '\' ORDER BY `+bytewise(d, `name_key`)+` LIMIT ?`,
+		append(cargs, "%"+likeEscape(FoldName(query))+"%", limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -353,16 +364,18 @@ func ListGroupPeople(ctx context.Context, q Q, d Dialect, groupID, query, after 
 }
 
 // ExistingUsers returns which of ids are users, in a set.
-func ExistingUsers(ctx context.Context, q Q, ids []string) (map[string]bool, error) {
+func ExistingUsers(ctx context.Context, q Q, sc Scope, ids []string) (map[string]bool, error) {
 	have := map[string]bool{}
+	cond, cargs := sc.cond("tenant_id")
 	for i := 0; i < len(ids); i += 200 {
 		chunk := ids[i:min(i+200, len(ids))]
 		ph := strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")
-		args := make([]any, len(chunk))
+		args := make([]any, len(chunk), len(chunk)+len(cargs))
 		for j, id := range chunk {
 			args[j] = id
 		}
-		got, err := strCol(ctx, q, `SELECT id FROM users WHERE id IN (`+ph+`)`, args...)
+		args = append(args, cargs...)
+		got, err := strCol(ctx, q, `SELECT id FROM users WHERE id IN (`+ph+`) AND `+cond, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -424,8 +437,12 @@ func CountGroupPeople(ctx context.Context, q Q, groupID string) (n int, err erro
 // AddLocalMembers adds people to a local group (ids are all new to it).
 func AddLocalMembers(ctx context.Context, q Q, groupID string, ids []string, now time.Time) error {
 	for _, id := range ids {
-		if _, err := q.Exec(ctx, `INSERT INTO group_members(group_id, user_id, provider, value, created) VALUES (?, ?, '', '', ?)
-			ON CONFLICT DO NOTHING`, groupID, id, ms(now)); err != nil {
+		// The statement joins the group and the person on the same tenant: a
+		// person of another tenant is not added (the callers have said so
+		// before, with ExistingUsers, so this is the second wall).
+		if _, err := q.Exec(ctx, `INSERT INTO group_members(group_id, user_id, provider, value, created)
+			SELECT g.id, u.id, '', '', ? FROM groups g JOIN users u ON u.tenant_id = g.tenant_id WHERE g.id = ? AND u.id = ?
+			ON CONFLICT DO NOTHING`, ms(now), groupID, id); err != nil {
 			return err
 		}
 	}
@@ -495,8 +512,10 @@ func ApplySynced(ctx context.Context, q Q, userID, provider string, remove, add 
 		}
 	}
 	for _, m := range add {
+		// Same tenant only: a mapping that names a group of another tenant brings
+		// nothing to this person.
 		if _, err := q.Exec(ctx, `INSERT INTO group_members(group_id, user_id, provider, value, created)
-			SELECT id, ?, ?, ?, ? FROM groups WHERE id = ? ON CONFLICT DO NOTHING`, userID, provider, m.Value, ms(now), m.GroupID); err != nil {
+			SELECT g.id, u.id, ?, ?, ? FROM groups g JOIN users u ON u.tenant_id = g.tenant_id WHERE g.id = ? AND u.id = ? ON CONFLICT DO NOTHING`, provider, m.Value, ms(now), m.GroupID, userID); err != nil {
 			return err
 		}
 	}
@@ -597,7 +616,10 @@ func CountSpaceGroups(ctx context.Context, q Q, spaceID string) (n int, err erro
 // AddSpaceGroup makes a group a member of a space; a group already there is a
 // unique violation, and a group that does not exist ErrNotFound.
 func AddSpaceGroup(ctx context.Context, q Q, spaceID, groupID, role string, now time.Time) error {
-	res, err := q.Exec(ctx, `INSERT INTO space_groups(space_id, group_id, role, created) SELECT ?, id, ?, ? FROM groups WHERE id = ?`, spaceID, role, ms(now), groupID)
+	// The space and the group are joined on the same tenant, so they are never
+	// linked across tenants; no row written is ErrNotFound.
+	res, err := q.Exec(ctx, `INSERT INTO space_groups(space_id, group_id, role, created)
+		SELECT s.id, g.id, ?, ? FROM spaces s JOIN groups g ON g.tenant_id = s.tenant_id WHERE s.id = ? AND g.id = ?`, role, ms(now), spaceID, groupID)
 	if err != nil {
 		return err
 	}

@@ -28,6 +28,8 @@ type AdminSpace struct {
 	// Owner is the first owner (the rule of SpaceOwner); nil if there is none.
 	Owner   *AdminOwner
 	Members int
+	// TenantID is the tenant the space belongs to.
+	TenantID string
 }
 
 // AdminOwner is who owns a space.
@@ -65,6 +67,28 @@ func init() {
 		}
 		return args[0], nil
 	})
+	sqlite.MustRegisterDeterministicScalarFunction(sqliteASCIILower, 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		switch v := args[0].(type) {
+		case string:
+			return asciiLowerGo(v), nil
+		case []byte:
+			return asciiLowerGo(string(v)), nil
+		}
+		return args[0], nil
+	})
+}
+
+// sqliteASCIILower lower-cases A to Z and nothing else (see asciiLower).
+const sqliteASCIILower = "petalbook_ascii_lower"
+
+func asciiLowerGo(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
 }
 
 // FoldName is a space name as it is searched: Unicode case folding, which
@@ -110,12 +134,14 @@ func likeEscape(s string) string {
 // query. The page is cut in the inner select, before the owner and the count
 // are looked up, so the work is per row returned and not per space on the
 // server. next is the cursor of the following page, "" at the end.
-func ListAllSpaces(ctx context.Context, q Q, f SpaceFilter) (out []AdminSpace, next string, err error) {
+func ListAllSpaces(ctx context.Context, q Q, sc Scope, f SpaceFilter) (out []AdminSpace, next string, err error) {
 	if f.Limit <= 0 {
 		f.Limit = 50
 	}
 	var where []string
 	var args []any
+	sCond, sArgs := sc.cond("s.tenant_id")
+	where, args = append(where, sCond), append(args, sArgs...)
 	if f.After != "" {
 		where = append(where, `s.id > ?`)
 		args = append(args, f.After)
@@ -133,8 +159,8 @@ func ListAllSpaces(ctx context.Context, q Q, f SpaceFilter) (out []AdminSpace, n
 		cond = "WHERE " + strings.Join(where, " AND ")
 	}
 	args = append(args, f.Limit+1)
-	rows, err := q.Query(ctx, `SELECT p.id, p.name, p.personal_of, p.inbox, p.created, p.disabled, p.size_bytes, p.size_at, p.members, u.id, u.username, u.name
-		FROM (SELECT s.id, s.name, s.personal_of, s.inbox, s.created, s.disabled, s.size_bytes, s.size_at,
+	rows, err := q.Query(ctx, `SELECT p.id, p.name, p.personal_of, p.inbox, p.created, p.disabled, p.size_bytes, p.size_at, p.members, p.tenant_id, u.id, u.username, u.name
+		FROM (SELECT s.id, s.name, s.personal_of, s.inbox, s.created, s.disabled, s.size_bytes, s.size_at, s.tenant_id,
 			(SELECT COUNT(*) FROM space_members m WHERE m.space_id = s.id) AS members,
 			(SELECT m.user_id FROM space_members m WHERE m.space_id = s.id AND m.role = 'owner' ORDER BY m.created, m.user_id LIMIT 1) AS owner_id
 			FROM spaces s `+cond+` ORDER BY s.id LIMIT ?) p
@@ -149,7 +175,7 @@ func ListAllSpaces(ctx context.Context, q Q, f SpaceFilter) (out []AdminSpace, n
 		var personal, ownerID, ownerUser, ownerName sql.NullString
 		var created, disabled int64
 		var size, sizeAt sql.NullInt64
-		if err := rows.Scan(&s.ID, &s.Name, &personal, &s.Inbox, &created, &disabled, &size, &sizeAt, &s.Members, &ownerID, &ownerUser, &ownerName); err != nil {
+		if err := rows.Scan(&s.ID, &s.Name, &personal, &s.Inbox, &created, &disabled, &size, &sizeAt, &s.Members, &s.TenantID, &ownerID, &ownerUser, &ownerName); err != nil {
 			return nil, "", err
 		}
 		s.Personal, s.Created, s.Disabled = personal.Valid, fromMS(created), disabled != 0
@@ -181,8 +207,8 @@ func ListAllSpaces(ctx context.Context, q Q, f SpaceFilter) (out []AdminSpace, n
 
 // GetAdminSpace returns one space as the list shows it (the same query, cut to
 // the one id), or ErrNotFound.
-func GetAdminSpace(ctx context.Context, q Q, id string) (AdminSpace, error) {
-	rows, _, err := ListAllSpaces(ctx, q, SpaceFilter{ID: id, Limit: 1})
+func GetAdminSpace(ctx context.Context, q Q, sc Scope, id string) (AdminSpace, error) {
+	rows, _, err := ListAllSpaces(ctx, q, sc, SpaceFilter{ID: id, Limit: 1})
 	if err != nil {
 		return AdminSpace{}, err
 	}
@@ -193,8 +219,9 @@ func GetAdminSpace(ctx context.Context, q Q, id string) (AdminSpace, error) {
 }
 
 // SetSpaceDisabled stops or allows opening a space.
-func SetSpaceDisabled(ctx context.Context, q Q, id string, disabled bool) error {
-	res, err := q.Exec(ctx, `UPDATE spaces SET disabled = ? WHERE id = ?`, b2i(disabled), id)
+func SetSpaceDisabled(ctx context.Context, q Q, sc Scope, id string, disabled bool) error {
+	cond, args := sc.cond("tenant_id")
+	res, err := q.Exec(ctx, `UPDATE spaces SET disabled = ? WHERE id = ? AND `+cond, append([]any{b2i(disabled), id}, args...)...)
 	return oneRow(res, err)
 }
 
@@ -271,14 +298,22 @@ func TransferOwnership(ctx context.Context, q Q, spaceID, newOwner string, now t
 		return nil, err
 	}
 	old.Close()
+	// One statement, so a membership that appeared (or was there all along) is
+	// made the owner's instead of failing on the key; it joins the space and the
+	// user on the same tenant, so nobody of another tenant becomes an owner
+	// (nothing is written and the answer is ErrNotFound). Callers also hold
+	// LockSpace, as every change of members does.
+	res, err := q.Exec(ctx, `INSERT INTO space_members(space_id, user_id, role, created)
+		SELECT s.id, u.id, 'owner', ? FROM spaces s JOIN users u ON u.tenant_id = s.tenant_id WHERE s.id = ? AND u.id = ?
+		ON CONFLICT (space_id, user_id) DO UPDATE SET role = 'owner'`, ms(now), spaceID, newOwner)
+	if err := oneRow(res, err); err != nil {
+		return nil, err
+	}
 	if _, err := q.Exec(ctx, `UPDATE space_members SET role = 'editor' WHERE space_id = ? AND role = 'owner' AND user_id <> ?`, spaceID, newOwner); err != nil {
 		return nil, err
 	}
-	// One statement, so a membership that appeared (or was there all along) is
-	// made the owner's instead of failing on the key. Callers also hold
-	// LockSpace, as every change of members does.
-	if _, err := q.Exec(ctx, `INSERT INTO space_members(space_id, user_id, role, created) VALUES (?, ?, 'owner', ?)
-		ON CONFLICT (space_id, user_id) DO UPDATE SET role = 'owner'`, spaceID, newOwner, ms(now)); err != nil {
+	// The space is now counted for its new owner.
+	if err := settleOwner(ctx, q, spaceID); err != nil {
 		return nil, err
 	}
 	return append(touched, newOwner), nil
@@ -288,7 +323,10 @@ func TransferOwnership(ctx context.Context, q Q, spaceID, newOwner string, now t
 // space itself. Call it in a transaction. It deletes nothing on disk. It
 // returns who the members were, and the people of its groups, for the caller
 // to drop their cached lists.
-func DeleteSpace(ctx context.Context, q Q, id string) (members []string, err error) {
+func DeleteSpace(ctx context.Context, q Q, sc Scope, id string) (members []string, err error) {
+	if _, err := GetSpace(ctx, q, sc, id); err != nil {
+		return nil, err
+	}
 	if members, err = SpaceMemberIDs(ctx, q, id); err != nil {
 		return nil, err
 	}
@@ -297,6 +335,9 @@ func DeleteSpace(ctx context.Context, q Q, id string) (members []string, err err
 		return nil, err
 	}
 	members = append(members, viaGroups...)
+	if err := forgetSpaceUsage(ctx, q, id); err != nil {
+		return nil, err
+	}
 	for _, stmt := range []string{
 		`DELETE FROM drafts WHERE space_id = ?`,
 		`DELETE FROM remotes WHERE space_id = ?`,
@@ -314,12 +355,14 @@ func DeleteSpace(ctx context.Context, q Q, id string) (members []string, err err
 }
 
 // CountSpaces and CountUsers are the totals for the status page.
-func CountSpaces(ctx context.Context, q Q) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM spaces`).Scan(&n)
+func CountSpaces(ctx context.Context, q Q, sc Scope) (n int, err error) {
+	cond, args := sc.cond("tenant_id")
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM spaces WHERE `+cond, args...).Scan(&n)
 	return
 }
 
-func CountUsers(ctx context.Context, q Q) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM users`).Scan(&n)
+func CountUsers(ctx context.Context, q Q, sc Scope) (n int, err error) {
+	cond, args := sc.cond("tenant_id")
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE `+cond, args...).Scan(&n)
 	return
 }

@@ -30,6 +30,8 @@ const TemplatesPanel = lazy(() => import('./TemplatesPanel'))
 const TokensPanel = lazy(() => import('./TokensPanel'))
 // And the offline copy's, with the words of it.
 const OfflinePanel = lazy(() => import('./OfflinePanel'))
+// Usage has the words of quotas with it.
+const UsagePanel = lazy(() => import('./UsagePanel'))
 
 // The settings surface: one dialog, reached from `/settings/<section>`. It is a
 // route so a link, a reload and the old addresses all work; what is behind it is
@@ -88,6 +90,13 @@ export default function SettingsRoute() {
         body = (
           <Suspense fallback={<PageFallback />}>
             <TokensPanel />
+          </Suspense>
+        )
+        break
+      case 'usage':
+        body = (
+          <Suspense fallback={<PageFallback />}>
+            <UsagePanel />
           </Suspense>
         )
         break
