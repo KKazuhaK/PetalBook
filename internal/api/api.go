@@ -452,6 +452,8 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		inv   *space.InvalidError
 		ce    *space.ConflictError
 		tce   *space.TypeConflictError
+		tpce  *space.TemplateConflictError
+		tple  *space.TemplateError
 		vce   *space.ViewsConflictError
 		ae    *auth.Error
 		dc    *drafts.Conflict
@@ -526,6 +528,14 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "exists", "it already exists")
 	case errors.As(err, &vce):
 		writeJSON(w, http.StatusConflict, viewsConflict(vce))
+	case errors.As(err, &tple):
+		writeJSON(w, http.StatusBadRequest, errorBody{Error: tple.Code, Message: tple.Msg})
+	case errors.As(err, &tpce):
+		body := errorBody{Error: "conflict", Message: "the template changed since you opened it, or is not there; here is how it is now"}
+		if tpce.Current != nil {
+			body.Current = toTemplate(*tpce.Current, true)
+		}
+		writeJSON(w, http.StatusConflict, body)
 	case errors.As(err, &tce):
 		body := errorBody{Error: "conflict", Message: "the type changed since you opened it, or is not there; here is how it is now"}
 		if tce.Current != nil {

@@ -200,7 +200,11 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 			return false, err
 		}
 		b, err := rebindDaily(root, canonFrom, target)
-		return a || b, err
+		if err != nil {
+			return false, err
+		}
+		c, err := rebindTemplates(root, canonFrom, target, false)
+		return a || b || c, err
 	}
 	notMoved := func(reason string) error {
 		return invalidf("the folder was not moved: its type and views cannot follow it in space.yml, because %s", reason)
@@ -398,7 +402,7 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 		under := func(folder string) bool { return folder == canon || strings.HasPrefix(folder, canon+"/") }
 		forget := func(gone func(folder string) bool) func(root *yaml.Node) (bool, error) {
 			return func(root *yaml.Node) (bool, error) {
-				return forgetFolders(root, func(folder string) bool { return under(folder) && gone(folder) })
+				return forgetAll(root, func(folder string) bool { return under(folder) && gone(folder) })
 			}
 		}
 		// willGo is what s.fileGone will say of a folder once the delete is

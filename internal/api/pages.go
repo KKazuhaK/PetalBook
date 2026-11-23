@@ -259,11 +259,30 @@ func (s *server) createPage(c *call) {
 		Folder string    `json:"folder"`
 		Meta   page.Meta `json:"meta"`
 		Body   string    `json:"body"`
+		// Template is the template to make the page from: absent for the
+		// folder's (or the quick-note) default, "" for none.
+		Template *string `json:"template"`
+		// TZ is the client's offset in minutes east of UTC, for the variables.
+		TZ *int `json:"tz"`
 	}
 	if !s.readJSON(c.w, c.r, &req, true) {
 		return
 	}
-	p, err := c.sp.Space.Create(s.author(c), space.CreateInput{Folder: req.Folder, Meta: req.Meta, Body: req.Body})
+	in := space.CreateInput{Folder: req.Folder, Meta: req.Meta, Body: req.Body}
+	tz := 0
+	if req.TZ != nil {
+		if *req.TZ < -840 || *req.TZ > 840 {
+			writeError(c.w, http.StatusBadRequest, "invalid", "tz is minutes east of UTC, from -840 to 840")
+			return
+		}
+		tz = *req.TZ
+	}
+	// A page made in the inbox is a quick note.
+	if err := c.sp.Space.ApplyTemplate(&in, req.Template, req.Folder != "" && page.NameKey(strings.Trim(req.Folder, "/")) == page.NameKey(c.sp.Info.Inbox), tz); err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	p, err := c.sp.Space.Create(s.author(c), in)
 	if err != nil {
 		s.fail(c.w, err)
 		return
