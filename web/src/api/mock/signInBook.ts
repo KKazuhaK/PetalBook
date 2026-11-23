@@ -43,7 +43,7 @@ export interface SignInBookOptions {
   users: () => Iterable<BookUser>
   newAuditId: () => string
   security?: Partial<{ [K in keyof SecuritySettings]: Partial<SecuritySettings[K]> }>
-  providers?: (Partial<AuthProvider> & { slug: string; kind: ProviderKind; name: string; sub?: string })[]
+  providers?: (ProviderInput & { slug: string; kind: ProviderKind; name: string; sub?: string; status?: AuthProvider['status'] })[]
   notices?: SecurityNotice[]
 }
 
