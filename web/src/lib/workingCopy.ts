@@ -1,12 +1,16 @@
 // The working copy of the saved view shown in a folder or a tag: which view is shown, what it was when it was last
 // seen, and what is changed in it without being saved (the sort too). One function decides, for everything that can
-// happen to the views (a refetch, a refused write, the person's own write, a pick, the address), what becomes of it:
-// it follows the same view (by its id, or, for a view written by hand that is still "@n", by its name and settings),
-// or it is dropped, and the person is told whenever something they changed is dropped by anything but their own doing.
-// A change is never put on a view other than the one it was made on. Pure, so it is tested without a page.
+// happen to the views (a list read, the answer of the person's own write, a pick, an edit, the address), what becomes
+// of it: it follows the same view (by its id, or, for a view written by hand that is still "@n", by its name and
+// settings), or it is dropped, and the person is told whenever something they changed is dropped by anything but their
+// own doing. A change is never put on a view other than the one it was made on. Pure, so it is tested without a page.
+//
+// The person's own writes of the views are exclusive: while one is on its way nothing can be changed, picked or
+// written (the page turns the tabs and the tools off), and no list is taken in. When it has settled, its answer only
+// says where the view just written went; the views read after it are then taken in by the usual rules (see `catchUp`).
 
 import type { SavedView } from '../api/types.ts'
-import { isHandMark, sameState, snapshotOf, stateOfView, stateSig, viewAtMark, viewSig, type ViewSnapshot, type ViewState } from './savedViews.ts'
+import { isHandMark, sameState, snapshotOf, stateOfView, viewAtMark, type ViewSnapshot, type ViewState } from './savedViews.ts'
 
 export type Patch = Partial<ViewState>
 
@@ -34,17 +38,11 @@ export interface Written {
   on: string
   sent: readonly { id?: string; name?: unknown }[]
   got: readonly SavedView[]
-  // How the view shown looked when the write was sent (what create, duplicate and save write), and what it was without
-  // the person's changes then. What is shown when the answer comes and differs from `working` was changed while the
-  // write was on its way: it is kept as a change of the view shown after the answer. No base: the same as `working`.
-  working?: ViewState
-  base?: ViewState
 }
 
 export type WorkingEvent =
-  // The views as they are now: read again, brought by a refused write, or the first reading. `pending`: a write of this
-  // person is on its way, which may explain a change it cannot place yet.
-  | { kind: 'list'; views: readonly SavedView[]; pending: boolean }
+  // The views as they are now: read again (after a write of the person too), or the first reading.
+  | { kind: 'list'; views: readonly SavedView[] }
   | ({ kind: 'written' } & Written)
   | { kind: 'pick'; id: string; views: readonly SavedView[] }
   | { kind: 'edit'; patch: Patch; base: ViewState }
@@ -52,13 +50,13 @@ export type WorkingEvent =
   // The address changed (back, forward, a link): its sort is the sort of the view it names, of no other.
   | { kind: 'address'; view: string; sort: string | null; base: ViewState }
 
+// Something the person changed was dropped by someone else's doing: the view it was made on, by name ('' unknown);
+// link: it was only the sort an address brought, for a view that is not there.
+export type Lost = { name: string; link?: boolean }
+
 export interface Outcome {
   wc: WorkingCopy
-  // false: the list of the event is not shown yet (a write of the person is on its way and will say where the view went).
-  adopt: boolean
-  // Something the person changed was dropped by someone else's doing: the view it was made on, by name ('' unknown);
-  // link: it was only the sort an address brought, for a view that is not there.
-  lost: { name: string; link?: boolean } | null
+  lost: Lost | null
   // What the browser remembers as the view of this listing from now on; null: as it was.
   remember: string | null
 }
@@ -72,15 +70,6 @@ export function prune(patch: Patch, base: ViewState): Patch {
     const v = patch[k]
     if (v !== undefined && !sameState({ ...base, [k]: v } as ViewState, base)) out[k] = v
   }
-  return out as Patch
-}
-
-// What is shown and is not what was written: compared key by key over the whole state, so a value set back to what the
-// view said before the write is kept too (it differs from what was written).
-function unwritten(shown: ViewState, written: ViewState): Patch {
-  const out: Record<string, unknown> = {}
-  const keys = new Set([...Object.keys(shown), ...Object.keys(written)] as (keyof ViewState)[])
-  for (const k of keys) if (JSON.stringify(shown[k]) !== JSON.stringify(written[k])) out[k] = shown[k]
   return out as Patch
 }
 
@@ -100,8 +89,7 @@ export function initialWorkingCopy(remembered: string, address: { view: string |
 }
 
 const showing = (to: SavedView | null, patch: Patch): WorkingCopy => (to ? { viewKey: to.id, snapshot: snapshotOf(to), patch: prune(patch, stateOfView(to)) } : { viewKey: '', snapshot: IMPLICIT, patch: {} })
-const kept = (wc: WorkingCopy, next: WorkingCopy, remember: string | null = null): Outcome => ({ wc: sameWc(wc, next) ? wc : next, adopt: true, lost: null, remember })
-const wait = (wc: WorkingCopy): Outcome => ({ wc, adopt: false, lost: null, remember: null })
+const kept = (wc: WorkingCopy, next: WorkingCopy, remember: string | null = null): Outcome => ({ wc: sameWc(wc, next) ? wc : next, lost: null, remember })
 // The same view with a change the person made in this visit.
 const changed = (wc: WorkingCopy, patch: Patch): WorkingCopy => ({ viewKey: wc.viewKey, snapshot: wc.snapshot, patch })
 
@@ -125,20 +113,14 @@ function locate(wc: WorkingCopy, views: readonly SavedView[]): { to: SavedView |
   return alike.length === 1 ? { to: alike[0], keep: true } : { to: views[0], keep: false }
 }
 
-function onList(wc: WorkingCopy, views: readonly SavedView[], pending: boolean): Outcome {
+function onList(wc: WorkingCopy, views: readonly SavedView[]): Outcome {
   const found = locate(wc, views)
   if (found.keep) {
-    // A write of the person is on its way and the view says something else now: that may be the write itself, and only
-    // its answer says what of what is shown was written. Until then the view stays as it is shown.
-    if (pending && found.to && wc.snapshot !== null && viewSig(found.to) !== wc.snapshot.sig) return wait(wc)
     const next = found.to ? showing(found.to, wc.patch) : { viewKey: '', snapshot: IMPLICIT, patch: wc.patch }
     return kept(wc, next, found.to && found.to.id !== wc.viewKey ? found.to.id : null)
   }
-  // The person's own write may be what changed the view; its answer says where the view went.
-  if (pending && wc.snapshot !== null) return wait(wc)
   return {
     wc: showing(found.to, {}),
-    adopt: true,
     // Whatever is dropped is said: a change of this visit as such, the sort of an address (a link, a reload) whose view
     // is not there as such.
     lost: !hasEdits(wc.patch) ? null : wc.snapshot === null && wc.fromAddress ? { name: '', link: true } : { name: wc.snapshot?.name ?? '' },
@@ -146,60 +128,82 @@ function onList(wc: WorkingCopy, views: readonly SavedView[], pending: boolean):
   }
 }
 
+// The answer of the person's own write. Nothing could change while it was on its way, so what is shown is what was
+// sent. The answer only says where the view just written is now; the views read after it decide the rest.
 function onWritten(wc: WorkingCopy, e: Written): Outcome {
-  // The answer lists the views in the order sent: each view sent is the one at its place, if the name is the same.
-  const map = new Map<string, SavedView>()
-  e.sent.forEach((d, i) => {
-    const g = e.got[i]
-    if (d.id !== undefined && g && g.name === d.name) map.set(d.id, g)
-  })
-  // The view the write was about, as the answer names it.
-  const onNow = map.get(e.on)
-  // The write is about the view shown (a list read while it was on its way may have named it already).
-  const mine = wc.viewKey === e.on || (onNow !== undefined && wc.viewKey === onNow.id)
-  // What was shown when the write was made went into the new view, the copy or the saved view; what is shown now and
-  // differs from that was changed while it was on its way, and stays as a change of the view shown after: no edit is
-  // lost. Nothing else is ever carried: what the person sees of the view is the same before and after the answer. When
-  // the view shown is no longer the one the write started from (a pick again, after a list with the write in it), the
-  // change is already one of the view as it is now, and stays as it is.
-  const left = (): Patch => {
-    if (!e.working) return {}
-    if (e.base && wc.viewKey !== '' && wc.snapshot !== null && wc.snapshot.sig !== stateSig(e.base)) return wc.patch
-    return unwritten({ ...(e.base ?? e.working), ...wc.patch }, e.working)
+  const mine = wc.viewKey === e.on
+  // A new view, or a copy of the view shown: what was shown went into it, and it is shown.
+  if (mine && (e.op === 'create' || e.op === 'duplicate')) {
+    const made = e.got.at(-1)
+    return made ? { wc: showing(made, wc.patch), lost: null, remember: made.id } : kept(wc, wc)
   }
-  const show = (to: SavedView | null, patch: Patch): Outcome => ({ wc: showing(to, patch), adopt: true, lost: null, remember: to ? to.id : '' })
-  if (mine && (e.op === 'create' || e.op === 'duplicate')) return show(e.got.at(-1) ?? null, left())
-  if (mine && e.op === 'save') return onNow ? show(onNow, left()) : onList(changed(wc, left()), e.got, false)
-  // The person deleted the view shown: what was changed in it goes with it, and is never put on the view shown next.
-  if (mine && e.op === 'delete') return { ...show(e.got[0] ?? null, {}), remember: '' }
-  // A rename, a move, or a write about another view: the view shown goes on under the id the answer gave it.
-  const to = map.get(wc.viewKey)
-  if (to) return kept(wc, showing(to, wc.patch), to.id !== wc.viewKey ? to.id : null)
-  return onList(wc, e.got, false)
+  // The person deleted the view shown: what was changed in it goes with it; the views read next say what is shown.
+  if (mine && e.op === 'delete') return { wc: { viewKey: '', snapshot: IMPLICIT, patch: {} }, lost: null, remember: '' }
+  // A save, a rename, a move, or a write about another view: the view shown goes on under the id the answer gave it
+  // (the answer lists the views in the order sent; a view is the one at its place, if the name is the same).
+  const i = e.sent.findIndex((d) => d.id === wc.viewKey)
+  const to = i < 0 ? undefined : e.got[i]
+  if (!to || to.name !== e.sent[i].name) return kept(wc, wc)
+  return kept(wc, showing(to, wc.patch), to.id !== wc.viewKey ? to.id : null)
 }
 
 export function reduceWorkingCopy(wc: WorkingCopy, e: WorkingEvent): Outcome {
   switch (e.kind) {
     case 'list':
-      return onList(wc, e.views, e.pending)
+      return onList(wc, e.views)
     case 'written':
       return onWritten(wc, e)
     case 'pick': {
       if (e.id === wc.viewKey) return kept(wc, wc)
       const to = e.views.find((v) => v.id === e.id)
-      return { wc: { viewKey: e.id, snapshot: to ? snapshotOf(to) : null, patch: {} }, adopt: true, lost: null, remember: e.id }
+      return { wc: { viewKey: e.id, snapshot: to ? snapshotOf(to) : null, patch: {} }, lost: null, remember: e.id }
     }
     case 'edit':
       return kept(wc, changed(wc, prune({ ...wc.patch, ...e.patch }, e.base)))
     case 'revert':
       return kept(wc, changed(wc, {}))
     case 'address': {
-      if (e.view !== wc.viewKey) return kept(wc, wc)
+      // Another view's address, or the address saying what the working copy says (it is written from it): nothing.
+      if (e.view !== wc.viewKey || e.sort === (wc.patch.sort ?? null)) return kept(wc, wc)
       const rest: Patch = { ...wc.patch }
       delete rest.sort
-      const patch = e.sort === null ? rest : prune({ ...rest, sort: e.sort }, e.base)
-      // The address saying what the working copy says (it is written from it) changes nothing.
-      return samePatch(patch, wc.patch) ? kept(wc, wc) : kept(wc, changed(wc, patch))
+      // Before the views are read there is nothing to compare the sort with: it is kept as the address gives it, and
+      // the first list decides (with the word about a link whose view is gone).
+      const unread = wc.snapshot === null
+      const patch = e.sort === null ? rest : unread ? { ...rest, sort: e.sort } : prune({ ...rest, sort: e.sort }, e.base)
+      if (samePatch(patch, wc.patch)) return kept(wc, wc)
+      return kept(wc, unread && (wc.fromAddress || !hasEdits(wc.patch)) ? { ...changed(wc, patch), fromAddress: true } : changed(wc, patch))
     }
   }
+}
+
+// What the tabs show and the working copy, as a page keeps them. `list` is what the tabs show; `seen`, the views last
+// taken in; `answer`, the answer of the person's own write, kept until the write has settled; `unread`: the views
+// could not be read after that answer, so the views there now are older than it and are not taken in.
+export interface Tabs<L extends { views: readonly SavedView[] }> {
+  list: L | null
+  wc: WorkingCopy
+  seen: L | undefined
+  answer: Written | null
+  unread?: boolean
+}
+
+// Takes in what came while nothing of the person's is on its way (never call it while a write is): first where the
+// answer of the last write put the view, then the views as read now (after that write, when there was one), by the
+// usual rules. The answer itself is never shown as the list.
+export function catchUp<L extends { views: readonly SavedView[] }>(tabs: Tabs<L>, data: L | undefined): { tabs: Tabs<L>; lost: Lost | null; remember: string | null } {
+  let { wc } = tabs
+  let remember: string | null = null
+  let lost: Lost | null = null
+  if (tabs.answer) ({ wc, remember } = reduceWorkingCopy(wc, { kind: 'written', ...tabs.answer }))
+  const skip = tabs.answer !== null && tabs.unread === true
+  const fresh = data !== undefined && data !== tabs.seen && !skip
+  if (fresh) {
+    const r = reduceWorkingCopy(wc, { kind: 'list', views: data.views })
+    wc = r.wc
+    lost = r.lost
+    remember = r.remember ?? remember
+  }
+  if (!tabs.answer && !fresh) return { tabs, lost, remember }
+  return { tabs: { list: fresh ? data : tabs.list, wc, seen: fresh || skip ? data : tabs.seen, answer: null }, lost, remember }
 }

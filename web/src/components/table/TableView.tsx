@@ -47,7 +47,7 @@ export function nextSort(current: string | undefined, asc: string): string {
 }
 
 // `sort`, `filters` and `hidden` are the view's: the listing above chooses them (and shows the filters).
-export default function TableView({ folder, typeName, type, sort, onSort, filters, hidden = [] }: { folder: string; typeName: string; type: PageType | undefined; sort?: string; onSort: (to: string) => void; filters: PropFilter[]; hidden?: readonly string[] }) {
+export default function TableView({ folder, typeName, type, sort, onSort, sortDisabled, filters, hidden = [] }: { folder: string; typeName: string; type: PageType | undefined; sort?: string; onSort: (to: string) => void; sortDisabled?: boolean; filters: PropFilter[]; hidden?: readonly string[] }) {
   const { write } = useSpacePermissions()
   const urls = useUrls()
   const all = useMemo(() => columnsOf(type), [type])
@@ -130,7 +130,7 @@ export default function TableView({ folder, typeName, type, sort, onSort, filter
                   return (
                     <div key={c.id} role="columnheader" aria-sort={active ? dir : asc ? 'none' : undefined} className="flex h-9 min-w-0 items-center border-r px-3 last:border-r-0">
                       {asc ? (
-                        <button type="button" onClick={() => setSort(asc)} title={tp.table.sortBy(c.label)} className="flex min-w-0 items-center gap-1 rounded outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50">
+                        <button type="button" disabled={sortDisabled} onClick={() => setSort(asc)} title={tp.table.sortBy(c.label)} className="flex min-w-0 items-center gap-1 rounded outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50">
                           <span className="truncate">{c.label}</span>
                           {active ? dir === 'ascending' ? <ArrowUp className="size-3.5 shrink-0" /> : <ArrowDown className="size-3.5 shrink-0" /> : <ArrowUpDown className="size-3.5 shrink-0 opacity-40" />}
                         </button>

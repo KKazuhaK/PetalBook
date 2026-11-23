@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act } from 'react'
+import { act, useEffect, type ReactNode } from 'react'
+import { useNavigate, type NavigateFunction } from 'react-router'
 import { toast } from 'sonner'
 import { byLabel, click, installDomShims, locationText, mount, settle, shareSpace, type, type Mounted } from '@/testing/harness'
 import { listShell, putViews, seedWork, sender, TASK, viewsOf } from '@/testing/listKit'
@@ -37,7 +38,7 @@ const button = (label: string) => byLabel(label) as HTMLButtonElement | null
 const textButton = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === label) ?? null
 
 async function open(path = '/s/default/f/Work', scene?: (send: ReturnType<typeof sender>, ids: ReturnType<typeof seedWork>, server: MockServer) => void, options: Parameters<typeof mount>[1] = {}) {
-  m = await mount(listShell, {
+  m = await mount(withNav(listShell), {
     ...options,
     entries: (server) => {
       const send = sender(server)
@@ -51,6 +52,22 @@ async function open(path = '/s/default/f/Work', scene?: (send: ReturnType<typeof
 }
 
 const saved = () => viewsOf(sender(m!.server), 'folder=Work')
+
+// A way to move within the app, as a link or "back" would.
+let nav: NavigateFunction | null = null
+function NavGrab() {
+  const navigate = useNavigate()
+  useEffect(() => {
+    nav = navigate
+  }, [navigate])
+  return null
+}
+const withNav = (ui: ReactNode) => (
+  <>
+    {ui}
+    <NavGrab />
+  </>
+)
 
 describe('a folder with no saved view', () => {
   it('is as it was: no tabs, only a way to make the first view; the list or cards choice of 2.1 is its layout', async () => {
@@ -276,47 +293,200 @@ describe('tabs', () => {
   })
 })
 
-describe('a change made while the person\'s own write is on its way', () => {
+// The person's own write of the views is exclusive: while it is on its way the tabs, the tools of the view, the sort,
+// Save and Revert are off (aria-busy), nothing read meanwhile is taken in, and when it has settled the views are read
+// again. The four races of review round 10 are impossible or harmless that way.
+describe('while the person\'s own write of the views is on its way', () => {
+  beforeEach(() => {
+    toast.dismiss()
+  })
   const two = (send: ReturnType<typeof sender>) => putViews(send, FOLDER, [{ name: '全部', layout: 'list' }, { name: '看板', layout: 'board', group: 'status' }])
-  const slow = { delay: (method: string, url: string) => (method === 'PUT' && url.endsWith('/views') ? 150 : 0) }
   const sortSelect = () => document.querySelector<HTMLSelectElement>(`select[aria-label="${t.list.sort}"]`)!
+  const bar = () => document.querySelector('[data-slot="view-bar"]')
+  const off = () => bar()?.getAttribute('aria-busy') === 'true' && tabs().every((e) => (e as HTMLButtonElement).disabled) && sortSelect().disabled
+  const on = () => bar() !== null && bar()!.getAttribute('aria-busy') === null && tabs().every((e) => !(e as HTMLButtonElement).disabled) && !sortSelect().disabled
+  const isViews = (method: string, input: RequestInfo | URL) => (method === 'PUT' || method === 'GET') && /\/views(\?|$)/.test(String(input instanceof Request ? input.url : input))
+  // Holds the answers of the requests that match after the server has answered them (so they are written, or read,
+  // at once, and arrive when released); `fail` makes them fail instead.
+  const hold = (which: (method: string) => boolean, how: { fail?: boolean } = {}) => {
+    const real = globalThis.fetch
+    let release: () => void = () => {}
+    const held = new Promise<void>((r) => (release = r))
+    globalThis.fetch = async (input, init) => {
+      const method = init?.method ?? 'GET'
+      if (!isViews(method, input) || !which(method)) return real(input, init)
+      const res = await real(input, init)
+      await held
+      if (how.fail) throw new TypeError('network down')
+      return res
+    }
+    return {
+      release: () => act(async () => release()),
+      restore: () => (globalThis.fetch = real),
+    }
+  }
+  const refetch = () => act(async () => void m!.qc.invalidateQueries({ queryKey: keys.views('default', FOLDER) }))
 
-  it('is not lost by a save: the view shows what was saved and the sort chosen meanwhile is still a change', async () => {
-    await open('/s/default/f/Work', two, slow)
+  it('round 10 (1): Save, then a click on another tab and back while it is on its way: the tabs are off, and the saved view is shown as saved', async () => {
+    await open('/s/default/f/Work', two)
     await settle(() => tabs().length === 2, 'the tabs')
     await click(button(t.view.cards))
+    const h = hold((method) => method === 'PUT')
     await click(textButton(t.views.save))
-    await type(sortSelect(), 'title')
-    await settle(() => puts().length === 1 && textButton(t.views.revert) !== null && !(textButton(t.views.save) as HTMLButtonElement).disabled, 'saved')
+    await settle(off, 'everything off')
+    expect(button(t.view.cards)!.disabled).toBe(true)
+    expect((textButton(t.views.revert) as HTMLButtonElement).disabled).toBe(true)
+    await click(tab('看板'))
+    await click(tab('全部'))
+    expect(selected()).toBe('全部')
+    await h.release()
+    await settle(() => on() && modifiedMark() === null, 'saved and on again')
+    expect(selected()).toBe('全部')
     expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('true')
-    expect((await saved()).views[0]).toMatchObject({ layout: 'cards', sort: '' })
-    expect(modifiedMark()).not.toBeNull()
-    expect(locationText()).toContain('sort=title')
-    expect(sortSelect().value).toBe('title')
+    // Nothing is left to save: no old settings can be written back.
+    expect(textButton(t.views.save)).toBeNull()
+    expect(puts()).toHaveLength(1)
+    expect((await saved()).views[0]).toMatchObject({ name: '全部', layout: 'cards' })
   })
 
-  it('is not lost by a copy: the copy opens with the sort chosen meanwhile as a change', async () => {
-    await open('/s/default/f/Work', two, slow)
+  it('round 10 (2): another person\'s view read during an own rename is taken in only after it, and can then be picked and changed without a word of loss', async () => {
+    await open('/s/default/f/Work', two)
     await settle(() => tabs().length === 2, 'the tabs')
-    await click(button(t.views.duplicate))
-    await type(sortSelect(), 'title')
-    await settle(() => puts().length === 1 && tabs().length === 3 && selected() !== '全部', 'copied')
+    const h = hold((method) => method === 'PUT')
+    await click(button(t.views.rename))
+    const input = document.querySelector<HTMLInputElement>(`input[aria-label="${t.views.name}"]`)!
+    await type(input, '全部二')
+    await act(async () => input.form!.requestSubmit())
+    await settle(() => puts().length === 1 && off(), 'the rename on its way')
+    // Written: another person adds a view, and the views are read again before the answer comes.
+    putViews(sender(m!.server), FOLDER, [...(await saved()).views, { name: '别人的', layout: 'list' }])
+    await refetch()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(tabNames()).toEqual(['全部', '看板'])
+    await h.release()
+    await settle(() => on() && tabNames().join() === '全部二,看板,别人的', 'the views read after the rename')
+    expect(selected()).toBe('全部二')
+    await click(tab('别人的'))
+    await click(button(t.view.cards))
+    await new Promise((r) => setTimeout(r, 50))
+    await act(async () => {})
+    expect(selected()).toBe('别人的')
     expect(modifiedMark()).not.toBeNull()
-    expect(sortSelect().value).toBe('title')
-    expect((await saved()).views[1].sort).toBe('')
+    expect(tabNames()).toEqual(['全部二', '看板', '别人的'])
+    expect(document.body.textContent!.includes(t.views.lostUnnamed)).toBe(false)
+    expect(document.body.textContent!.includes(t.views.lost('别人的'))).toBe(false)
   })
 
-  it('is not lost by a save: the sort set back to the default order meanwhile stays a change of the saved view', async () => {
-    await open('/s/default/f/Work', two, slow)
+  it('round 10 (3): a read sent before the save that arrives after it is called off: the saved settings stay, and nothing could be changed meanwhile', async () => {
+    await open('/s/default/f/Work', two)
     await settle(() => tabs().length === 2, 'the tabs')
     await type(sortSelect(), 'title')
+    // A read of the views, answered with the list before the save, held back.
+    const g = hold((method) => method === 'GET')
+    const reads = () => m!.requests.filter((r) => r.method === 'GET' && /\/views\?/.test(r.url)).length
+    const before = reads()
+    await refetch()
+    await settle(() => reads() > before, 'the read sent')
+    g.restore()
+    const h = hold((method) => method === 'PUT')
     await click(textButton(t.views.save))
+    await settle(off, 'everything off')
+    // Nothing can be changed meanwhile: the sort is off, and a change sent to it anyway is not taken.
     await type(sortSelect(), '')
-    await settle(() => puts().length === 1 && !(textButton(t.views.save) as HTMLButtonElement | null)?.disabled && textButton(t.views.revert) !== null, 'saved')
-    expect((await saved()).views[0].sort).toBe('title')
-    expect(sortSelect().value).toBe('')
+    await h.release()
+    await settle(() => on() && modifiedMark() === null && puts().length === 1, 'saved')
+    await g.release()
+    await new Promise((r) => setTimeout(r, 50))
+    await act(async () => {})
+    expect(sortSelect().value).toBe('title')
+    expect(modifiedMark()).toBeNull()
+    expect(m!.qc.getQueryData<{ views: { sort: string }[] }>(keys.views('default', FOLDER))!.views[0].sort).toBe('title')
+  })
+
+  it('nothing stays off after a save whose answer is lost on the way', async () => {
+    await open('/s/default/f/Work', two)
+    await settle(() => tabs().length === 2, 'the tabs')
+    await click(button(t.view.cards))
+    const h = hold((method) => method === 'PUT', { fail: true })
+    await click(textButton(t.views.save))
+    await settle(off, 'everything off')
+    await h.release()
+    await settle(() => on() && document.body.textContent!.includes(t.views.failed(t.errors.network)), 'on again, and told')
+    // The server wrote it before the answer was lost: the views read again say so.
+    await settle(() => modifiedMark() === null, 'the views read again')
+    expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('nothing stays off after a refused save (409)', async () => {
+    await open('/s/default/f/Work', two)
+    await settle(() => tabs().length === 2, 'the tabs')
+    putViews(sender(m!.server), FOLDER, [...(await saved()).views, { name: '别人的', layout: 'list' }])
+    await click(button(t.view.cards))
+    await click(textButton(t.views.save))
+    await settle(() => on() && document.body.textContent!.includes(t.views.conflict) && tabs().length === 3, 'refused, on again')
     expect(modifiedMark()).not.toBeNull()
-    expect(locationText()).toContain('sort=')
+  })
+
+  it('leaving the listing does not stop the write; opened again, it is off (no tabs yet) until the write settles, then on', async () => {
+    await open('/s/default/f/Work', two)
+    await settle(() => tabs().length === 2, 'the tabs')
+    await click(button(t.view.cards))
+    const h = hold((method) => method === 'PUT')
+    await click(textButton(t.views.save))
+    await settle(off, 'everything off')
+    await act(async () => nav!('/s/default/t/栀子'))
+    await settle(() => tabs().length === 0, 'another listing')
+    await act(async () => nav!('/s/default/f/Work'))
+    // Opened again while the write is on its way: nothing is taken in yet (no tabs), and the sort is off.
+    await settle(() => locationText() === '/s/default/f/Work' && sortSelect()?.disabled === true, 'still off')
+    expect(tabs()).toHaveLength(0)
+    await h.release()
+    await settle(() => tabs().length === 2 && on(), 'on again')
+    await settle(() => button(t.view.cards)!.getAttribute('aria-pressed') === 'true' && modifiedMark() === null, 'the saved view')
+    expect((await saved()).views[0].layout).toBe('cards')
+  })
+})
+
+// The address before the views are read for the first time.
+describe('an address that changes before the views are read', () => {
+  beforeEach(() => {
+    toast.dismiss()
+  })
+  const slowViews = { delay: (method: string, url: string) => (method === 'GET' && /\/views\?/.test(url) ? 300 : 0) }
+
+  it('round 10 (4): "sort=" for the view it names is kept as given, and the first list decides', async () => {
+    let id = ''
+    m = await mount(withNav(listShell), {
+      ...slowViews,
+      entries: (server) => {
+        const send = sender(server)
+        seedWork(server)
+        putViews(send, FOLDER, [{ name: '甲', layout: 'list' }, { name: '乙', layout: 'list', sort: 'title' }])
+        id = viewsOf(send, 'folder=Work').views[1].id
+        localStorage.setItem(viewIdKey('default', 'folder', 'Work'), id)
+        return ['/s/default/f/Work']
+      },
+    })
+    await act(async () => nav!(`/s/default/f/Work?view=${id}&sort=`))
+    await settle(() => tabs().length === 2, 'the tabs')
+    expect(selected()).toBe('乙')
+    expect(document.querySelector<HTMLSelectElement>(`select[aria-label="${t.list.sort}"]`)!.value).toBe('')
+    expect(modifiedMark()).not.toBeNull()
+  })
+
+  it('round 10 (4): "sort=" for the implicit view, which the first list shows is gone: dropped with the word for a link', async () => {
+    m = await mount(withNav(listShell), {
+      ...slowViews,
+      entries: (server) => {
+        seedWork(server)
+        putViews(sender(server), FOLDER, [{ name: '甲', layout: 'list', sort: 'title' }])
+        return ['/s/default/f/Work']
+      },
+    })
+    await act(async () => nav!('/s/default/f/Work?sort='))
+    await settle(() => tabs().length === 1, 'the tabs')
+    await settle(() => document.body.textContent!.includes(t.views.linkGone), 'the word')
+    expect(modifiedMark()).toBeNull()
   })
 })
 

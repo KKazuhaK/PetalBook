@@ -21,9 +21,11 @@ interface Props {
   // The field the board is grouped by, which is the first single choice of the type until a view says one.
   group: string
   onChange: (patch: Partial<ViewState>) => void
+  // A write of the views is on its way: nothing can be changed.
+  disabled?: boolean
 }
 
-export default function ViewTools({ isTag, type, state, group, onChange }: Props) {
+export default function ViewTools({ isTag, type, state, group, onChange, disabled }: Props) {
   const fields = type?.fields ?? []
   const groupFields = groupFieldsOf(type)
   const wantsGroup = state.layout === 'board' || isTag
@@ -31,7 +33,7 @@ export default function ViewTools({ isTag, type, state, group, onChange }: Props
   const wantsCard = state.layout === 'board' && fields.length > 0
 
   return (
-    <div className="mb-3 flex flex-wrap items-center gap-2" data-slot="view-tools">
+    <fieldset disabled={disabled} aria-busy={disabled || undefined} className="m-0 mb-3 flex min-w-0 flex-wrap items-center gap-2 border-0 p-0 disabled:opacity-60" data-slot="view-tools">
       <TableFilters fields={fields} filters={state.filter} onChange={(filter: PropFilter[]) => onChange({ filter })} />
       {(wantsGroup || wantsColumns || wantsCard) && (
         <Popover>
@@ -109,7 +111,7 @@ export default function ViewTools({ isTag, type, state, group, onChange }: Props
           </PopoverContent>
         </Popover>
       )}
-    </div>
+    </fieldset>
   )
 }
 

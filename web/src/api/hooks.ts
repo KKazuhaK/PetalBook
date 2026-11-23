@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react'
 import { useMatch } from 'react-router'
-import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient, type Query, type QueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery, useIsMutating, useMutation, useQuery, useQueryClient, type Query, type QueryClient } from '@tanstack/react-query'
 import { waitForSaves } from '@/editor/saveController'
 import { spaceUrls } from '@/lib/urls'
 import { api, ApiError, spaceApi } from './client'
@@ -725,31 +725,40 @@ export function useViews(scope: ViewScope | null) {
   })
 }
 
-// The views as the server has them after a change, put into the cache (a 409 brings them too).
-export function putViewList(qc: QueryClient, space: string, scope: ViewScope, list: ViewList) {
-  qc.setQueryData(keys.views(space, scope), list)
+// What a write of the views of one folder or tag is known by: while one is on its way, the page takes nothing in and
+// lets nothing be changed (see useWorkingCopy).
+export const viewsWriteKey = (space: string, scope: ViewScope) => ['saveViews', space, scope] as const
+
+// Whether a write of these views is on its way (also one started before the page was opened again).
+export function useViewsBusy(scope: ViewScope | null) {
+  const space = useSpaceId()
+  return useIsMutating({ mutationKey: viewsWriteKey(space, scope ?? { folder: '' }) }) > 0 && scope !== null
 }
 
-// Replaces the whole list. The error of a stale `baseRev` carries the views as they are, which are what the cache
-// holds from then on; the caller says so to the person.
-// `written` is called with the answer before the cache takes it, so what follows the views (the view shown, its working
-// copy) is moved in the same step as the tabs.
-export function useSaveViews(scope: ViewScope, written?: (list: ViewList) => void) {
+// Replaces the whole list. Exclusive and short: a read of the views on its way is called off first (its answer could
+// come after the write's), and when the answer is there (or a refusal, or no answer at all) the views are read again;
+// the write settles once they are. The answer is never put in the cache: a read made after it may be there already.
+// `read`: the views were read after the answer (else what the cache has may be older than it).
+export function useSaveViews(scope: ViewScope) {
   const qc = useQueryClient()
   const space = useSpaceId()
+  const key = keys.views(space, scope)
+  const count = () => qc.getQueryState(key)?.dataUpdateCount ?? 0
   return useMutation({
-    mutationKey: ['saveViews'],
-    mutationFn: async (input: PutViewsInput) => {
-      const list = await spaceApi(space).putViews(scope, input)
-      // In the same step: what follows the views, then the cache.
-      written?.(list)
-      putViewList(qc, space, scope, list)
-      return list
-    },
-    onError: (e) => {
-      const current = e instanceof ApiError && e.code === 'conflict' ? (e.current as unknown as ViewList | undefined) : undefined
-      if (current && Array.isArray(current.views)) putViewList(qc, space, scope, current)
-      else if (e instanceof ApiError && e.code === 'conflict') void qc.invalidateQueries({ queryKey: keys.views(space, scope) })
+    mutationKey: viewsWriteKey(space, scope),
+    mutationFn: async (input: PutViewsInput): Promise<{ list: ViewList; read: boolean }> => {
+      await qc.cancelQueries({ queryKey: key })
+      const readAgain = () => qc.invalidateQueries({ queryKey: key })
+      let list: ViewList
+      try {
+        list = await spaceApi(space).putViews(scope, input)
+      } catch (e) {
+        await readAgain()
+        throw e
+      }
+      const before = count()
+      await readAgain()
+      return { list, read: count() > before }
     },
   })
 }

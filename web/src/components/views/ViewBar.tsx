@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight, Copy, PenLine, Plus, RotateCcw, Save, Trash2 } f
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import { useSaveViews } from '@/api/hooks'
-import type { PutViewsInput, SavedView, ViewList, ViewScope } from '@/api/types'
+import type { PutViewsInput, SavedView, ViewScope } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -16,7 +16,7 @@ import { t } from '@/i18n'
 // The tabs above the listing of a folder or a tag: its saved views, one of them shown. What is done to the list of
 // views (a new one, a new name, a copy, the order, a removal) is saved at once; what is done inside a view (its sort,
 // filters, columns) is the working copy that "Save" writes and "Revert" drops. Only people who may write can save; the
-// others can switch and change things for themselves.
+// others can switch and change things for themselves. While a write is on its way, the tabs and every button are off.
 
 type Draft = Omit<SavedView, 'id'> & { id?: string }
 
@@ -27,39 +27,43 @@ interface Props {
   active: SavedView | null
   // The working copy of the view shown: what the layout, the sort, the filters, … are now.
   working: ViewState
-  // The view shown as it is saved, without the changes.
-  base: ViewState
   modified: boolean
   write: boolean
+  // A write of the views is on its way.
+  busy: boolean
   onPick: (id: string) => void
-  // The answer of a write: what was sent and what came back, in the same order, with the list it brings. Said before
-  // the cache has the views, so the view shown and its working copy move in the same step as the tabs.
-  onWritten: (w: Written, list: ViewList) => void
+  // A write starts; it has settled, with what was sent and what came back (in the same order) when it was written.
+  onBegin: () => void
+  // read: the views were read after the answer.
+  onEnd: (w: Written | null, read: boolean) => void
   onRevert: () => void
 }
 
-export function ViewBar({ scope, views, rev, active, working, base, modified, write, onPick, onWritten, onRevert }: Props) {
-  // What the write in flight was, for its answer.
-  const answer = useRef<((list: ViewList) => void) | null>(null)
-  const save = useSaveViews(scope, (list) => answer.current?.(list))
+export function ViewBar({ scope, views, rev, active, working, modified, write, busy, onPick, onBegin, onEnd, onRevert }: Props) {
+  const save = useSaveViews(scope)
   const [dialog, setDialog] = useState<null | { kind: 'create' } | { kind: 'rename'; view: SavedView }>(null)
   const [removing, setRemoving] = useState<SavedView | null>(null)
   const drag = useRef<string | null>(null)
   const full = views.length >= MAX_VIEWS
 
-  // Writes the whole list. Nothing is thrown: the person is told what happened. A 409 leaves the views as the server
-  // has them in the cache (the hook puts them there), so the tabs show what the other person made.
+  // Writes the whole list. Nothing is thrown: the person is told what happened. Whatever the answer, the views are read
+  // again before the write settles, so after a 409 the tabs show what the other person made.
   const run = async (op: ViewOp, on: string, next: Draft[]): Promise<SavedView[] | null> => {
+    if (busy) return null
+    onBegin()
+    let got: SavedView[] | null = null
+    let read = false
     try {
-      answer.current = (list) => onWritten({ op, on, sent: next, got: list.views, working, base }, list)
-      return (await save.mutateAsync({ baseRev: rev, views: next } satisfies PutViewsInput)).views
+      const done = await save.mutateAsync({ baseRev: rev, views: next } satisfies PutViewsInput)
+      got = done.list.views
+      read = done.read
     } catch (e) {
       if (e instanceof ApiError && e.code === 'conflict') toast.error(t.views.conflict)
       else toast.error(t.views.failed(e instanceof Error ? e.message : ''))
-      return null
     } finally {
-      answer.current = null
+      onEnd(got ? { op, on, sent: next, got } : null, read)
     }
+    return got
   }
 
   const shown = active?.id ?? ''
@@ -95,12 +99,11 @@ export function ViewBar({ scope, views, rev, active, working, base, modified, wr
 
   if (views.length === 0 && !write) return null
   const index = active ? views.findIndex((v) => v.id === active.id) : -1
-  const busy = save.isPending
 
   return (
-    <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2" data-slot="view-bar">
+    <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2" data-slot="view-bar" aria-busy={busy || undefined}>
       {views.length > 0 && (
-        <div role="tablist" aria-label={t.views.label} className="flex min-w-0 max-w-full items-center gap-1 overflow-x-auto">
+        <div role="tablist" aria-label={t.views.label} aria-busy={busy || undefined} className="flex min-w-0 max-w-full items-center gap-1 overflow-x-auto">
           {views.map((v) => {
             const on = v.id === active?.id
             return (
@@ -110,6 +113,7 @@ export function ViewBar({ scope, views, rev, active, working, base, modified, wr
                 role="tab"
                 aria-selected={on}
                 data-view={v.id}
+                disabled={busy}
                 draggable={write && !busy}
                 onClick={() => onPick(v.id)}
                 onDragStart={(e) => {
@@ -125,12 +129,12 @@ export function ViewBar({ scope, views, rev, active, working, base, modified, wr
                 onDrop={(e) => {
                   const id = drag.current
                   drag.current = null
-                  if (!id || id === v.id) return
+                  if (!id || id === v.id || busy) return
                   e.preventDefault()
                   void reorder(id, views.findIndex((x) => x.id === v.id))
                 }}
                 onDragEnd={() => (drag.current = null)}
-                className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 ${on ? 'border-transparent bg-muted font-medium text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-default disabled:opacity-60 ${on ? 'border-transparent bg-muted font-medium text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
               >
                 {v.name}
                 {on && modified && (

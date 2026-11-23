@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { ArrowUpDown, BookOpen, Columns3, FilePlus2, FolderPlus, LayoutGrid, List as ListIcon, PenLine, Table2, Tag as TagIcon } from 'lucide-react'
 import { toast } from 'sonner'
-import { useActiveSpace, useCreatePage, usePageList, useSpacePermissions, useTypes, useUrls, useViews } from '@/api/hooks'
+import { useActiveSpace, useCreatePage, usePageList, useSpacePermissions, useTypes, useUrls, useViews, useViewsBusy } from '@/api/hooks'
 import type { ListParams, PropFilter, SortKey, ViewScope } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -91,21 +91,22 @@ function useViewMode(space: string, source: ListSource): [ListViewMode, (m: List
   ]
 }
 
-function ViewSwitch({ mode, onChange, table, board, read }: { mode: ListViewMode; onChange: (m: ListViewMode) => void; table: boolean; board: boolean; read: boolean }) {
+function ViewSwitch({ mode, onChange, table, board, read, disabled }: { mode: ListViewMode; onChange: (m: ListViewMode) => void; table: boolean; board: boolean; read: boolean; disabled?: boolean }) {
   const item = (m: ListViewMode, label: string, Icon: typeof ListIcon) => (
     <button
       type="button"
       aria-pressed={mode === m}
       aria-label={label}
       title={label}
+      disabled={disabled}
       onClick={() => onChange(m)}
-      className={`flex size-7 items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 ${mode === m ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+      className={`flex size-7 disabled:opacity-60 items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 ${mode === m ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
     >
       <Icon className="size-4" />
     </button>
   )
   return (
-    <div role="group" aria-label={t.view.label} className="flex items-center rounded-lg border p-0.5">
+    <div role="group" aria-label={t.view.label} aria-busy={disabled || undefined} className="flex items-center rounded-lg border p-0.5">
       {item('list', t.view.list, ListIcon)}
       {item('cards', t.view.cards, LayoutGrid)}
       {table && item('table', t.view.table, Table2)}
@@ -145,6 +146,7 @@ function Listing({ source }: { source: ListSource }) {
   // view is shown: the layout remembered above and what is adjusted on the page.
   const scope: ViewScope | null = source.kind === 'folder' ? { folder: source.folder } : source.kind === 'tag' ? { tag: source.tag } : null
   const views = useViews(scope)
+  const writingViews = useViewsBusy(scope)
   const viewsPending = scope !== null && views.isPending
   const idKey = viewIdKey(spaceId ?? '', source.kind, source.kind === 'folder' ? source.folder : source.kind === 'tag' ? source.tag : '')
   const sortParam = params.get('sort')
@@ -153,14 +155,16 @@ function Listing({ source }: { source: ListSource }) {
   const urlSort = sortParam !== null && (SORTS.includes(sortParam as SortKey) || (scope !== null && (sortParam === '' || SORT_WORDS.test(sortParam)))) ? sortParam : null
   const implicit: ViewState = { ...DEFAULT_STATE, layout: chosen }
   // The working copy of the view shown, and the tabs as they go with it (see useWorkingCopy and lib/workingCopy).
-  const working = useWorkingCopy(scope !== null, idKey, views.data, { view: params.get('view'), sort: urlSort }, (list, wc) => {
+  const working = useWorkingCopy(scope !== null, idKey, views.data, { view: params.get('view'), sort: urlSort }, writingViews, (list, wc) => {
     const v = list.find((x) => x.id === wc.viewKey)
     return v ? stateOfView(v) : implicit
   })
   const saved = useMemo(() => working.list?.views ?? [], [working.list])
   const wc = working.wc
-  // The view of the working copy; while a write of the person is on its way and cannot place it yet, another view may
-  // be shown for a moment, without the working copy (it is never put on another view).
+  // While the person's own write of the views is on its way, the tabs, the tools of the view and the sort are off.
+  const busy = scope !== null && working.busy
+  // The view of the working copy; when the views read cannot place it (they did not come after a write), another view
+  // may be shown, without the working copy (it is never put on another view).
   const own = scope ? (saved.find((v) => v.id === wc.viewKey) ?? null) : null
   const active = scope ? (own ?? viewAtMark(saved, wc.viewKey) ?? saved[0] ?? null) : null
   const base: ViewState = active ? stateOfView(active) : implicit
@@ -324,6 +328,7 @@ function Listing({ source }: { source: ListSource }) {
             <NativeSelect
               className="h-7 text-[0.8rem] max-sm:h-8 max-sm:opacity-0"
               aria-label={t.list.sort}
+              disabled={busy}
               value={isSearch ? state.sort : normSort(state.sort) === '-updated' ? '' : state.sort}
               onChange={(e) => setSort(isSearch ? e.target.value : e.target.value || '-updated')}
             >
@@ -339,7 +344,7 @@ function Listing({ source }: { source: ListSource }) {
             </NativeSelect>
             </div>
             )}
-            <ViewSwitch mode={mode} onChange={setMode} table={tableOk} board={boardOk || typesPending} read={readOk} />
+            <ViewSwitch mode={mode} onChange={setMode} table={tableOk} board={boardOk || typesPending} read={readOk} disabled={busy} />
             {write && source.kind === 'folder' && ops && (
               <Button variant="outline" size="icon-sm" className="max-sm:hidden" onClick={() => ops.newFolder(source.folder)} title={t.manage.newFolder} aria-label={t.manage.newFolder}>
                 <FolderPlus />
@@ -383,18 +388,19 @@ function Listing({ source }: { source: ListSource }) {
               rev={working.list?.rev ?? ''}
               active={active}
               working={state}
-              base={base}
               modified={modified && mine}
               write={write && working.list !== null}
+              busy={busy}
               onPick={working.pick}
-              onWritten={working.written}
+              onBegin={working.begin}
+              onEnd={working.end}
               onRevert={working.revert}
             />
           )}
           {views.isError && <p className="mb-2 text-xs text-muted-foreground">{t.views.loadFailed}</p>}
           {scope && !viewsPending && (typeName !== '' || source.kind === 'tag' || filters.length > 0) && (
             <Suspense fallback={null}>
-              <ViewTools isTag={source.kind === 'tag'} type={type} state={{ ...state, layout: mode }} group={group} onChange={setPatch} />
+              <ViewTools isTag={source.kind === 'tag'} type={type} state={{ ...state, layout: mode }} group={group} onChange={setPatch} disabled={busy} />
             </Suspense>
           )}
           {folders.length > 0 &&
@@ -419,7 +425,7 @@ function Listing({ source }: { source: ListSource }) {
               <Skeleton className="h-40 w-full" />
             ) : (
               <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                <TableView folder={source.folder} typeName={typeName} type={type} sort={sortQ || undefined} onSort={setSort} filters={filters} hidden={state.hidden} />
+                <TableView folder={source.folder} typeName={typeName} type={type} sort={sortQ || undefined} onSort={setSort} sortDisabled={busy} filters={filters} hidden={state.hidden} />
               </Suspense>
             )
           ) : mode === 'board' && scope ? (

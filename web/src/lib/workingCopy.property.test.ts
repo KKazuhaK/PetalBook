@@ -1,13 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import type { SavedView, ViewLayout } from '../api/types.ts'
-import { DEFAULT_STATE, moveView, sameState, stateOfView, viewAtMark, withState, type ViewState } from './savedViews.ts'
-import { hasEdits, initialWorkingCopy, reduceWorkingCopy, type Patch, type ViewOp, type WorkingCopy, type WorkingEvent } from './workingCopy.ts'
+import { DEFAULT_STATE, isHandMark, moveView, sameState, snapshotOf, stateOfView, viewAtMark, withState, type ViewState } from './savedViews.ts'
+import { catchUp, hasEdits, initialWorkingCopy, reduceWorkingCopy, type Lost, type Patch, type Tabs, type ViewOp, type WorkingCopy, type WorkingEvent, type Written } from './workingCopy.ts'
 
-// Random interleavings of everything that can happen to the views of a listing, driven through the reducer the way the
-// page drives it (useWorkingCopy, PageListView, ViewBar), with the server played here. After every step:
-//  (a) every value of the change is one the person set (or chose by a revert or a pick) on the view it is shown on;
-//  (b) a change is never dropped without a notice, unless by the person's own revert, pick or delete of that view;
-//  (c) the answer of the person's own write never changes what is shown of the view (no edit made meanwhile is lost).
+// Random interleavings of everything that can happen to the views of a listing, driven the way the page drives the
+// reducer (useWorkingCopy, PageListView, ViewBar, useSaveViews), with the server and the query cache played here: edits,
+// reverts, picks, the person's own writes (with 409s, network errors and answers lost after the commit), other
+// people's writes, reads of the views that are served at one moment and arrive later, a read called off when a write
+// starts and the read made after its answer, address changes (back, forward, a link), and leaving and coming back while
+// a write is on its way. While a write is on its way the page has the tabs and the tools off: an edit, a revert or a
+// pick, or an address change, tried then is refused by the guard modelled here, and nothing of the views read is taken in. After every step:
+//  (a) every value of the change is one the person set on the view it is shown on;
+//  (b) a change is never dropped without a notice, unless by the person's own revert, pick or delete of that view, and
+//      the answer of the person's own write never changes what is shown;
+//  (c) every value of the change is the last one the person chose for it on that view, so a later Save never writes
+//      older settings;
+//  (d) once a write has settled (written, refused, failed, or with the page left and opened again) nothing is off.
 // A view is told by an identity of its own here, so a view written by hand ("@n") that a write names is the same view.
 
 const SEQUENCES = 20_000
@@ -40,15 +48,26 @@ interface Listing {
   rev: number
 }
 type Draft = Omit<SavedView, 'id'> & { id?: string }
-interface Inflight {
+// A read of the views: served (the server's list at that moment) and then arrived, or failed. At most one at a time,
+// as the query cache has it; a read asked for while one is on its way joins it.
+interface Get {
+  served: Listing | null
+}
+interface Mutation {
   op: ViewOp
   on: string
-  onIdent: string
   sent: Draft[]
   baseRev: number
-  working: ViewState
-  base: ViewState
-  result?: { ok: true; got: Listing } | { ok: false; now: Listing }
+  // The page that started it (a page opened again is another).
+  page: number
+  result: { ok: true; got: Listing } | { ok: false } | null
+  // After the answer: the read made then, which the write waits for.
+  refetch: Get | null
+}
+interface Box {
+  tabs: Tabs<Listing>
+  writing: number
+  address: string
 }
 
 const toSaved = (v: ServerView): SavedView => ({ id: v.id, name: v.name, layout: v.layout, sort: v.sort, group: '', filter: [], hidden: [] })
@@ -65,11 +84,17 @@ class Sim {
   private uid = 0
   private names = 0
   private idents = new Map<string, string>()
-  private list: Listing | null = null
-  private wc: WorkingCopy
-  private address: string
-  private inflight: Inflight | null = null
+  private cache: Listing | undefined
+  private get: Get | null = { served: null }
+  private mutation: Mutation | null = null
+  private page = 0
+  private box: Box
+  // What the browser remembers as the view of the listing.
+  private stored: string
   private history = new Map<string, Map<string, Set<string>>>()
+  private latest = new Map<string, Record<string, string>>()
+  private revOf = new WeakMap<Written, number>()
+  refused = 0
   readonly log: string[] = []
 
   constructor(seed: number) {
@@ -82,12 +107,10 @@ class Sim {
     }
     this.register()
     const ids = this.server.map((v) => v.id)
-    const remembered = this.pick(['', ...ids, '@1', 'gone'])
+    this.stored = this.pick(['', ...ids, '@1', 'gone'])
     const address = { view: this.pick<string | null>([null, ...ids, 'zz']), sort: this.r() < 0.4 ? this.pick(SORTS) : null }
-    this.wc = initialWorkingCopy(remembered, address)
-    if (address.sort !== null && (address.view !== null || remembered === '')) this.note(address.view ?? '', 'sort', address.sort)
-    this.address = JSON.stringify([address.view, address.sort])
-    this.log.push(`start ${JSON.stringify({ server: this.server, remembered, address })}`)
+    this.log.push(`start ${JSON.stringify({ server: this.server, remembered: this.stored, address })}`)
+    this.box = this.open(address)
   }
 
   private int(n: number) {
@@ -102,6 +125,9 @@ class Sim {
   private ident(id: string) {
     return id === '' ? 'implicit' : (this.idents.get(id) ?? `id:${id}`)
   }
+  private where = () => `\n${this.log.join('\n')}\n→ ${JSON.stringify(this.box.tabs.wc)}`
+
+  // What the person chose: every value ever set on a view (a), and the last one for each setting (c).
   private note(id: string, k: string, v: unknown) {
     const who = this.ident(id)
     const h = this.history.get(who) ?? new Map<string, Set<string>>()
@@ -109,9 +135,14 @@ class Sim {
     const s = h.get(k) ?? new Set<string>()
     h.set(k, s)
     s.add(val(v))
+    this.latest.set(who, { ...this.latest.get(who), [k]: val(v) })
   }
-  private noteState(id: string, s: ViewState) {
-    for (const k of KEYS) this.note(id, k, s[k])
+  private forget(id: string, k?: string) {
+    const who = this.ident(id)
+    if (k === undefined) return this.latest.set(who, {})
+    const l = { ...this.latest.get(who) }
+    delete l[k]
+    this.latest.set(who, l)
   }
   private serverList(): Listing {
     return { views: this.server.map(toSaved), rev: this.rev }
@@ -126,14 +157,33 @@ class Sim {
     return `${prefix}${this.names++}`
   }
 
+  // The listing opened (again): the working copy from the browser's memory and the address.
+  private open(address: { view: string | null; sort: string | null }): Box {
+    this.page++
+    const wc = initialWorkingCopy(this.stored, address)
+    if (wc.patch.sort !== undefined) {
+      this.forget(wc.viewKey)
+      this.note(wc.viewKey, 'sort', wc.patch.sort)
+    }
+    // A page that opens reads the views (the cache may have them already).
+    this.get ??= { served: null }
+    return { tabs: { list: null, wc, seen: undefined, answer: null }, writing: 0, address: JSON.stringify([address.view, address.sort]) }
+  }
+
+  // The guard of the page: off while a write is on its way (this page's, or one from before it was opened again).
+  private busy() {
+    return this.mutation !== null || this.box.writing > 0
+  }
+
   // What the page derives (PageListView).
   private ui() {
-    const saved = this.list?.views ?? []
-    const own = saved.find((v) => v.id === this.wc.viewKey) ?? null
-    const active = own ?? viewAtMark(saved, this.wc.viewKey) ?? saved[0] ?? null
+    const saved = this.box.tabs.list?.views ?? []
+    const wc = this.box.tabs.wc
+    const own = saved.find((v) => v.id === wc.viewKey) ?? null
+    const active = own ?? viewAtMark(saved, wc.viewKey) ?? saved[0] ?? null
     const base = active ? stateOfView(active) : DEFAULT_STATE
-    const mine = own !== null || (active === null && this.wc.viewKey === '')
-    const state: ViewState = { ...base, ...(mine ? this.wc.patch : {}) }
+    const mine = own !== null || (active === null && wc.viewKey === '')
+    const state: ViewState = { ...base, ...(mine ? wc.patch : {}) }
     return { saved, active, base, mine, state, modified: active !== null && !sameState(state, base) }
   }
   private shown(views: readonly SavedView[] | undefined, wc: WorkingCopy): ViewState | null {
@@ -142,59 +192,138 @@ class Sim {
     return v ? { ...stateOfView(v), ...wc.patch } : null
   }
 
-  // One event through the reducer, the way useWorkingCopy applies it, and the invariants checked.
-  private apply(e: WorkingEvent, listing: Listing | null, how: { exempt?: boolean; owner?: string; mine?: boolean; stale?: boolean } = {}) {
-    const before = this.wc
-    const shownBefore = this.shown(this.list?.views, before)
-    const out = reduceWorkingCopy(before, e)
-    const where = () => `\n${this.log.join('\n')}\n→ ${JSON.stringify(out)}`
-    if (!out.adopt) ok(out.wc === before, () => `held, yet changed${where()}`)
-    if (out.lost) ok(hasEdits(before.patch), () => `a notice with nothing dropped${where()}`)
-    this.wc = out.wc
-    if (out.adopt && listing) this.list = listing
-    // (a)
-    const h = this.history.get(this.ident(out.wc.viewKey))
-    for (const [k, v] of Object.entries(out.wc.patch)) ok(h?.get(k)?.has(val(v)) === true, () => `(a) ${k}=${val(v)} was never set on ${this.ident(out.wc.viewKey)}${where()}`)
-    if (out.wc === before || out.lost) return
-    const after = this.shown(this.list?.views, out.wc)
-    // (b)
-    if (!how.exempt && hasEdits(before.patch)) {
-      ok(this.ident(out.wc.viewKey) === (how.owner ?? this.ident(before.viewKey)), () => `(b) the change left its view silently${where()}`)
-      ok(after !== null, () => `(b) the view shown is not in the list${where()}`)
-      const full = { ...DEFAULT_STATE, ...before.patch }
-      for (const k of Object.keys(before.patch) as (typeof KEYS)[number][]) ok(sameKey(k, after!, full), () => `(b) ${k} dropped silently${where()}`)
+  // (a) and (c), for the working copy as it is now.
+  private checkChange() {
+    const wc = this.box.tabs.wc
+    const who = this.ident(wc.viewKey)
+    const h = this.history.get(who)
+    const last = this.latest.get(who) ?? {}
+    for (const [k, v] of Object.entries(wc.patch)) {
+      ok(h?.get(k)?.has(val(v)) === true, () => `(a) ${k}=${val(v)} was never set on ${who}${this.where()}`)
+      ok(last[k] === val(v), () => `(c) ${k}=${val(v)} is not the last choice on ${who} (${last[k]})${this.where()}`)
     }
-    // (c): the whole state shown, when the write was about the view shown. Not when the answer is older than a list
-    // already shown (read after the write landed, before its answer came): it can show older settings for a moment, and
-    // only (b) holds then (nothing the person changed is lost).
-    if (how.mine && !how.stale && !how.exempt && shownBefore) ok(after !== null && sameState(after, shownBefore), () => `(c) the answer changed what is shown${where()}`)
+  }
+
+  // (b): what the person changed is still shown on the same view, unless a notice said it was dropped.
+  private checkKept(before: WorkingCopy, after: WorkingCopy, afterList: readonly SavedView[] | undefined, lost: Lost | null, how: { unread?: boolean } = {}) {
+    if (lost) {
+      ok(hasEdits(before.patch), () => `a notice with nothing dropped${this.where()}`)
+      return ok(this.gone(before, afterList ?? []), () => `a notice for a view that is there${this.where()}`)
+    }
+    if (after === before || !hasEdits(before.patch)) return
+    ok(this.ident(after.viewKey) === this.ident(before.viewKey), () => `(b) the change left its view silently${this.where()}`)
+    const shownAfter = this.shown(afterList, after)
+    // The views could not be read after a write: the change is kept, and shown once they are.
+    if (shownAfter === null && how.unread) return ok(JSON.stringify(after.patch) === JSON.stringify(before.patch), () => `(b) changed while unread${this.where()}`)
+    ok(shownAfter !== null, () => `(b) the view shown is not in the list${this.where()}`)
+    const full = { ...DEFAULT_STATE, ...before.patch }
+    for (const k of Object.keys(before.patch) as (typeof KEYS)[number][]) ok(sameKey(k, shownAfter, full), () => `(b) ${k} dropped silently${this.where()}`)
+  }
+
+  // Whether the view of a working copy is really not there to follow in `views`: deleted, or, for a view written by
+  // hand, no longer told by its name and settings (changed, or two alike).
+  private gone(wc: WorkingCopy, views: readonly SavedView[]) {
+    if (wc.viewKey === '') return views.length > 0
+    if (wc.snapshot === null || !isHandMark(wc.viewKey)) return !views.some((v) => v.id === wc.viewKey)
+    const who = this.ident(wc.viewKey)
+    const same = (v: SavedView) => snapshotOf(v).name === wc.snapshot!.name && snapshotOf(v).sig === wc.snapshot!.sig
+    const it = views.find((v) => this.ident(v.id) === who)
+    return !it || !same(it) || views.filter(same).length !== 1
+  }
+
+  private outcome(r: { lost: Lost | null; remember: string | null }) {
+    if (r.remember !== null) this.stored = r.remember
+  }
+
+  // The page draws: when nothing is on its way, it takes in the answer of the last write and the views read.
+  private render() {
+    if (this.mutation === null) ok(this.box.writing === 0, () => `(d) a write settled and the page still counts it${this.where()}`)
+    if (!this.busy()) this.catchUp()
+    this.echo()
+  }
+
+  private catchUp() {
+    const t = this.box.tabs
+    const fresh = this.cache !== undefined && this.cache !== t.seen && !(t.answer && t.unread)
+    if (!t.answer && !fresh) return
+    const before = t.wc
+    let mid = before
+    let owner: string | undefined
+    let exempt = false
+    if (t.answer) {
+      const a = t.answer
+      const mine = before.viewKey === a.on
+      // Through the reducer on its own, to check the answer alone: it never changes what is shown.
+      mid = reduceWorkingCopy(before, { kind: 'written', ...a }).wc
+      exempt = mine && a.op === 'delete'
+      if (mine && (a.op === 'create' || a.op === 'duplicate')) {
+        const made = a.got.at(-1)!
+        owner = this.ident(made.id)
+        const from = this.ident(a.on)
+        const h = this.history.get(owner) ?? new Map<string, Set<string>>()
+        for (const [k, s] of this.history.get(from) ?? []) h.set(k, new Set([...(h.get(k) ?? []), ...s]))
+        this.history.set(owner, h)
+        this.latest.set(owner, { ...this.latest.get(from) })
+      }
+      if (!exempt && mid !== before) {
+        const was = this.shown(t.list?.views, before)
+        const now = this.shown(a.got, mid)
+        ok(was !== null && now !== null && sameState(was, now), () => `(b) the answer changed what is shown${this.where()}`)
+        ok(this.ident(mid.viewKey) === (owner ?? this.ident(before.viewKey)), () => `(b) the answer moved the change to another view${this.where()}`)
+      }
+    }
+    // The views taken in after an answer were read after it (the read before was called off).
+    if (t.answer && fresh) ok(this.cache!.rev >= this.revOf.get(t.answer)!, () => `a list older than the answer taken in after it${this.where()}`)
+    const r = catchUp(t, this.cache)
+    this.log.push(`catch up${t.answer ? ` ${t.answer.op}` : ''}${fresh ? ` + list rev ${this.cache!.rev}` : ''}`)
+    this.box = { ...this.box, tabs: r.tabs }
+    this.outcome(r)
+    if (!exempt) this.checkKept(mid, r.tabs.wc, r.tabs.list?.views, r.lost, { unread: !fresh })
+    this.checkChange()
+  }
+
+  // One event of the person's through the reducer, the way useWorkingCopy applies it.
+  private step(e: WorkingEvent) {
+    const r = reduceWorkingCopy(this.box.tabs.wc, e)
+    ok(r.lost === null, () => `a notice for the person's own doing${this.where()}`)
+    this.box = { ...this.box, tabs: { ...this.box.tabs, wc: r.wc } }
+    this.outcome(r)
+    this.checkChange()
   }
 
   // The address follows the working copy (PageListView), and the address step of useWorkingCopy sees it: never a change.
   private echo() {
-    const sort = this.wc.patch.sort ?? null
-    const view = sort !== null && this.wc.viewKey !== '' ? this.wc.viewKey : null
+    const wc = this.box.tabs.wc
+    const sort = wc.patch.sort ?? null
+    const view = sort !== null && wc.viewKey !== '' ? wc.viewKey : null
     const key = JSON.stringify([view, sort])
-    if (key === this.address) return
-    this.address = key
-    const v = this.list?.views.find((x) => x.id === this.wc.viewKey)
-    const before = this.wc
-    const out = reduceWorkingCopy(before, { kind: 'address', view: view ?? '', sort, base: v ? stateOfView(v) : DEFAULT_STATE })
-    ok(out.wc === before, () => `the address written from the working copy changed it\n${this.log.join('\n')}\n→ ${JSON.stringify(out.wc)}`)
+    if (key === this.box.address) return
+    this.box = { ...this.box, address: key }
+    const out = reduceWorkingCopy(wc, { kind: 'address', view: view ?? '', sort, base: this.baseOf(wc) })
+    ok(out.wc === wc, () => `the address written from the working copy changed it${this.where()}`)
+  }
+  private baseOf(wc: WorkingCopy) {
+    const v = this.box.tabs.list?.views.find((x) => x.id === wc.viewKey)
+    return v ? stateOfView(v) : DEFAULT_STATE
   }
 
-  step() {
+  step1() {
     const u = this.ui()
-    const f = this.inflight
+    const m = this.mutation
     const choices: [number, () => void][] = [
       [u.mine ? 30 : 0, () => this.edit()],
       [u.mine && u.modified ? 5 : 0, () => this.revert()],
       [u.saved.length > 0 ? 8 : 0, () => this.pickView()],
-      [this.list && !f ? 12 : 0, () => this.own()],
-      [f && !f.result ? 10 : 0, () => this.commit()],
-      [f?.result ? 10 : 0, () => this.answer()],
-      [8, () => this.other()],
-      [12, () => this.refetch()],
+      [this.box.tabs.list && !this.busy() ? 12 : 0, () => this.own()],
+      [m && !m.result ? 10 : 0, () => this.commit()],
+      [m?.result && !m.refetch ? 10 : 0, () => this.answer()],
+      [6, () => this.other()],
+      [8, () => this.startGet()],
+      [this.get && !this.get.served ? 8 : 0, () => this.serve()],
+      [this.get?.served ? 8 : 0, () => this.arrive()],
+      [this.get ? 2 : 0, () => this.failGet()],
+      [4, () => this.address()],
+      [2, () => this.reopen()],
     ]
     const total = choices.reduce((s, [w]) => s + w, 0)
     let x = this.r() * total
@@ -204,39 +333,61 @@ class Sim {
         break
       }
     }
-    this.echo()
+    this.render()
   }
 
+  // Everything on its way comes to an end, and the views are read once more.
   finish() {
-    if (this.inflight && !this.inflight.result) this.commit()
-    if (this.inflight) this.answer()
-    this.refetch()
-    this.echo()
+    for (let i = 0; this.mutation && i < 10; i++) {
+      const m = this.mutation
+      if (!m.result) this.commit()
+      else if (!m.refetch) this.answer()
+      else {
+        if (!this.get?.served) this.serve()
+        this.arrive()
+      }
+      this.render()
+    }
+    ok(this.mutation === null, () => `the write never settled${this.where()}`)
+    this.startGet()
+    this.serve()
+    this.arrive()
+    this.render()
+    ok(!this.busy(), () => `(d) still off after the write settled${this.where()}`)
+    ok(this.box.tabs.answer === null && this.box.tabs.seen === this.cache, () => `(d) not caught up${this.where()}`)
   }
 
   private edit() {
+    if (this.busy()) return this.guarded('edit')
     const k = this.pick(KEYS)
     const v = k === 'sort' ? this.pick(SORTS) : this.pick(LAYOUTS)
     const patch: Patch = { [k]: v }
     this.log.push(`edit ${JSON.stringify(patch)}`)
-    this.note(this.wc.viewKey, k, v)
-    this.apply({ kind: 'edit', patch, base: this.ui().base }, null, { exempt: true })
+    this.note(this.box.tabs.wc.viewKey, k, v)
+    this.step({ kind: 'edit', patch, base: this.ui().base })
   }
   private revert() {
+    if (this.busy()) return this.guarded('revert')
     this.log.push('revert')
-    this.noteState(this.wc.viewKey, this.ui().base)
-    this.apply({ kind: 'revert' }, null, { exempt: true })
+    this.forget(this.box.tabs.wc.viewKey)
+    this.step({ kind: 'revert' })
   }
   private pickView() {
+    if (this.busy()) return this.guarded('pick')
     const v = this.pick(this.ui().saved)
     this.log.push(`pick ${v.id}`)
-    this.noteState(v.id, stateOfView(v))
-    this.apply({ kind: 'pick', id: v.id, views: this.list?.views ?? [] }, null, { exempt: true })
+    if (v.id !== this.box.tabs.wc.viewKey) this.forget(v.id)
+    this.step({ kind: 'pick', id: v.id, views: this.box.tabs.list?.views ?? [] })
+  }
+  // The tabs and the tools are off: the attempt does nothing.
+  private guarded(what: string) {
+    this.refused++
+    this.log.push(`${what} refused: a write is on its way`)
   }
 
-  // A write of the person, as ViewBar makes it.
+  // A write of the person, as ViewBar makes it: the page counts it, the read on its way is called off.
   private own() {
-    const { saved: views, active, base, mine, state, modified } = this.ui()
+    const { saved: views, active, mine, state, modified } = this.ui()
     const ops: ViewOp[] = []
     if (active && mine && modified) ops.push('save')
     if (views.length < MAX) ops.push('create')
@@ -245,7 +396,6 @@ class Sim {
     if (active && views.length > 1) ops.push('reorder')
     if (ops.length === 0) return
     const op = this.pick(ops)
-    let on = active?.id ?? ''
     let sent: Draft[]
     if (op === 'save') sent = views.map((v) => (v.id === active!.id ? withState(v, state) : v))
     else if (op === 'create') sent = [...views, withState({ name: this.fresh('c') } as Draft, state)]
@@ -259,61 +409,81 @@ class Sim {
       if (target.id === active!.id) return
       sent = moveView(views, active!.id, views.indexOf(target))
     } else sent = views.filter((v) => v.id !== active!.id)
-    if (op === 'create') on = active?.id ?? ''
-    this.inflight = { op, on, onIdent: this.ident(on), sent, baseRev: this.list!.rev, working: state, base }
-    this.log.push(`own ${op} on ${on} (rev ${this.list!.rev}) working ${JSON.stringify(state)}`)
+    const on = active?.id ?? ''
+    this.box = { ...this.box, writing: this.box.writing + 1 }
+    this.mutation = { op, on, sent, baseRev: this.box.tabs.list!.rev, page: this.page, result: null, refetch: null }
+    this.get = null
+    this.log.push(`own ${op} on ${on} (rev ${this.box.tabs.list!.rev}) state ${JSON.stringify(state)}`)
   }
   private commit() {
-    const f = this.inflight!
-    if (f.baseRev !== this.rev) {
-      f.result = { ok: false, now: this.serverList() }
-      this.log.push('commit: 409')
+    const m = this.mutation!
+    const fate = this.r()
+    if (fate < 0.1) {
+      m.result = { ok: false }
+      this.log.push('put: network error, nothing written')
       return
     }
-    this.server = f.sent.map((d): ServerView => {
-      // What the app writes are views (withState keeps their fields as they are).
+    if (m.baseRev !== this.rev) {
+      m.result = { ok: false }
+      this.log.push('put: 409')
+      return
+    }
+    this.server = m.sent.map((d): ServerView => {
       const w = { name: d.name as string, layout: d.layout as ViewLayout, sort: d.sort as string }
-      if (d.id !== undefined) {
-        const s = this.server.find((x) => x.id === d.id)!
-        return { ...s, ...w }
-      }
+      if (d.id !== undefined) return { ...this.server.find((x) => x.id === d.id)!, ...w }
       const uid = this.uid++
       return { uid, id: `r${uid}`, ...w }
     })
     this.written()
-    f.result = { ok: true, got: this.serverList() }
-    this.log.push(`commit: ${JSON.stringify(this.server)}`)
+    // Written, but the answer may be lost on the way back.
+    m.result = fate < 0.2 ? { ok: false } : { ok: true, got: this.serverList() }
+    this.log.push(`put: written${m.result.ok ? '' : ', answer lost'} ${JSON.stringify(this.server)}`)
   }
+  // The answer is there (or a refusal, or an error): the views are read again, a read on its way called off, and the
+  // write settles when that read does.
   private answer() {
-    const f = this.inflight!
-    const res = f.result!
-    if (res.ok) {
-      const mine = this.ident(this.wc.viewKey) === f.onIdent
-      const made = (f.op === 'create' || f.op === 'duplicate') && mine ? res.got.views.at(-1)! : null
-      this.log.push(`answer ${f.op}`)
-      if (made) {
-        // What was changed on the view shown goes on, on the view made from it.
-        const src = this.history.get(f.onIdent)
-        const to = this.ident(made.id)
-        const h = this.history.get(to) ?? new Map<string, Set<string>>()
-        for (const [k, s] of src ?? []) h.set(k, new Set([...(h.get(k) ?? []), ...s]))
-        this.history.set(to, h)
-      }
-      this.apply({ kind: 'written', op: f.op, on: f.on, sent: f.sent, got: res.got.views, working: f.working, base: f.base }, res.got, {
-        mine,
-        stale: this.list !== null && this.list.rev > res.got.rev,
-        exempt: mine && f.op === 'delete',
-        owner: made ? this.ident(made.id) : undefined,
-      })
-      this.inflight = null
-      this.apply({ kind: 'list', views: res.got.views, pending: false }, res.got)
-    } else {
-      this.log.push(`answer 409`)
-      this.apply({ kind: 'list', views: res.now.views, pending: true }, res.now)
-      this.inflight = null
-      this.apply({ kind: 'list', views: res.now.views, pending: false }, res.now)
+    const m = this.mutation!
+    this.log.push(`answer ${m.result!.ok ? m.op : 'error'}`)
+    this.get = { served: null }
+    m.refetch = this.get
+  }
+  // read: the read made after the answer arrived (else what the cache has may be older than the answer).
+  private settle(m: Mutation, read: boolean) {
+    this.mutation = null
+    this.log.push('settled')
+    if (m.page === this.page) {
+      const w: Written | null = m.result?.ok ? { op: m.op, on: m.on, sent: m.sent, got: m.result.got.views } : null
+      if (w && m.result?.ok) this.revOf.set(w, m.result.got.rev)
+      if (w) this.box = { ...this.box, tabs: { ...this.box.tabs, answer: w, unread: !read } }
+      this.box = { ...this.box, writing: this.box.writing - 1 }
     }
   }
+
+  private startGet() {
+    if (this.get) return
+    this.get = { served: null }
+    this.log.push('read asked')
+  }
+  private serve() {
+    if (!this.get || this.get.served) return
+    this.get.served = this.serverList()
+    this.log.push(`read served rev ${this.rev}`)
+  }
+  private arrive() {
+    const g = this.get
+    if (!g?.served) return
+    this.get = null
+    this.cache = g.served
+    this.log.push(`read arrived rev ${g.served.rev}`)
+    if (this.mutation?.refetch === g) this.settle(this.mutation, true)
+  }
+  private failGet() {
+    const g = this.get!
+    this.get = null
+    this.log.push('read failed')
+    if (this.mutation?.refetch === g) this.settle(this.mutation, false)
+  }
+
   // Someone else writes the views.
   private other() {
     const s = this.server
@@ -335,21 +505,49 @@ class Sim {
     this.written()
     this.log.push(`other ${k}: ${JSON.stringify(this.server)}`)
   }
-  private refetch() {
-    const l = this.serverList()
-    this.log.push(`refetch (pending ${this.inflight !== null})`)
-    this.apply({ kind: 'list', views: l.views, pending: this.inflight !== null }, l)
+
+  // Back, forward, a link within the listing. While a write is on its way it waits, and the page writes the address
+  // back from the working copy: it comes to nothing.
+  private address() {
+    if (this.busy()) return this.guarded('address')
+    const wc = this.box.tabs.wc
+    const ids = (this.box.tabs.list?.views ?? []).map((v) => v.id)
+    const view = this.pick<string | null>([null, wc.viewKey || null, ...ids, 'zz'])
+    const sort = this.pick<string | null>([null, ...SORTS])
+    const key = JSON.stringify([view, sort])
+    if (key === this.box.address) return
+    this.log.push(`address ${key}`)
+    this.box = { ...this.box, address: key }
+    if ((view ?? '') === wc.viewKey) {
+      if (sort === null) this.forget(wc.viewKey, 'sort')
+      else this.note(wc.viewKey, 'sort', sort)
+    }
+    this.step({ kind: 'address', view: view ?? '', sort, base: this.baseOf(wc) })
+  }
+
+  // The page is left and opened again (a write may still be on its way; its answer goes to the page that is gone).
+  private reopen() {
+    const [view, sort] = JSON.parse(this.box.address) as [string | null, string | null]
+    this.log.push('left and opened again')
+    // Leaving calls off a read whose page is gone, unless a write waits for it.
+    if (this.get && this.mutation?.refetch !== this.get) this.get = null
+    this.box = this.open({ view, sort })
+    this.checkChange()
   }
 }
 
 describe('the working copy, under random interleavings', () => {
-  it(`keeps (a), (b) and (c) over ${SEQUENCES} sequences`, () => {
+  it(`keeps (a), (b), (c) and (d) over ${SEQUENCES} sequences`, () => {
+    let refused = 0
     for (let seed = 1; seed <= SEQUENCES; seed++) {
       const sim = new Sim(seed)
       const r = rng(seed ^ 0x9e3779b9)
       const n = 5 + Math.floor(r() * 40)
-      for (let i = 0; i < n; i++) sim.step()
+      for (let i = 0; i < n; i++) sim.step1()
       sim.finish()
+      refused += sim.refused
     }
-  }, 120_000)
+    // The guard was put to the test: edits, reverts and picks were tried while a write was on its way.
+    expect(refused).toBeGreaterThan(1000)
+  }, 180_000)
 })
