@@ -4041,11 +4041,11 @@ function suite(target: Target) {
       expect([again.status, again.json.error]).toEqual([409, 'exists'])
     })
 
-    it('login through the provider: an identity nobody has is redirected to /login?error=no_account; a linked one signs in and goes to the return path', async () => {
+    it('login through the provider: an identity nobody has is redirected to /login?sso_error=no_account; a linked one signs in and goes to the return path', async () => {
       const b = ssoBrowser()
       const first = await start(b, { intent: 'login', return: '/s/abc' })
       const denied = await callback(b, first.url)
-      expect([denied.status, denied.headers.get('Location')]).toEqual([303, '/login?error=no_account'])
+      expect([denied.status, denied.headers.get('Location')]).toEqual([303, '/login?sso_error=no_account'])
 
       // Link it from a signed-in account, then sign in with it.
       const me = ssoBrowser()
@@ -4074,27 +4074,27 @@ function suite(target: Target) {
       }
     })
 
-    it('an attempt is used once, belongs to the browser that started it, and expires after 10 minutes: /login?error=expired', async () => {
+    it('an attempt is used once, belongs to the browser that started it, and expires after 10 minutes: /login?sso_error=expired', async () => {
       const b = ssoBrowser()
       const s = await start(b, { intent: 'login' })
       expect((await callback(b, s.url)).headers.get('Location')).toBe('/')
-      expect((await callback(b, s.url)).headers.get('Location')).toBe('/login?error=expired')
+      expect((await callback(b, s.url)).headers.get('Location')).toBe('/login?sso_error=expired')
       const other = ssoBrowser()
       const s2 = await start(b, { intent: 'login' })
-      expect((await callback(other, s2.url)).headers.get('Location')).toBe('/login?error=expired')
+      expect((await callback(other, s2.url)).headers.get('Location')).toBe('/login?sso_error=expired')
       const s3 = await start(b, { intent: 'login' })
       clock += 11 * 60_000
-      expect((await callback(b, s3.url)).headers.get('Location')).toBe('/login?error=expired')
+      expect((await callback(b, s3.url)).headers.get('Location')).toBe('/login?sso_error=expired')
     })
 
-    it('the provider refusing is idp_error; link failures go to /settings?error=', async () => {
+    it('the provider refusing is idp_error; link failures go to /settings?sso_error=', async () => {
       const b = ssoBrowser()
       const s = await start(b, { intent: 'login' })
-      expect((await callback(b, `${s.url}&error=access_denied`)).headers.get('Location')).toBe('/login?error=idp_error')
+      expect((await callback(b, `${s.url}&error=access_denied`)).headers.get('Location')).toBe('/login?sso_error=idp_error')
       const me = ssoBrowser()
       await call(me, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })
       const l = await start(me, { intent: 'link' })
-      expect((await callback(me, `${l.url}&error=access_denied`)).headers.get('Location')).toBe('/settings?error=idp_error')
+      expect((await callback(me, `${l.url}&error=access_denied`)).headers.get('Location')).toBe('/settings?sso_error=idp_error')
     })
 
     it('link needs a session; an identity another user has is identity_in_use; invite and setup tokens are checked', async () => {
@@ -4108,18 +4108,18 @@ function suite(target: Target) {
       // `boss` already has sub-1, so an invite through the same identity cannot create a second account.
       const b = ssoBrowser()
       const s = await start(b, { intent: 'invite', token: inv.token })
-      expect((await callback(b, s.url)).headers.get('Location')).toBe('/login?error=identity_in_use')
+      expect((await callback(b, s.url)).headers.get('Location')).toBe('/login?sso_error=identity_in_use')
       const bad = await start(ssoBrowser(), { intent: 'invite', token: 'nope' })
       expect(bad.url).toContain('/api/auth/oidc/callback')
       const b2 = ssoBrowser()
       const s2 = await start(b2, { intent: 'invite', token: 'nope' })
-      expect((await callback(b2, s2.url)).headers.get('Location')).toBe('/login?error=invite_invalid')
+      expect((await callback(b2, s2.url)).headers.get('Location')).toBe('/login?sso_error=invite_invalid')
       const b3 = ssoBrowser()
       const s3 = await start(b3, { intent: 'setup', token: 'tok' })
-      expect((await callback(b3, s3.url)).headers.get('Location')).toBe('/login?error=setup_invalid')
+      expect((await callback(b3, s3.url)).headers.get('Location')).toBe('/login?sso_error=setup_invalid')
     })
 
-    it('a disabled user signing in through the provider is /login?error=disabled; the last identity of a user with no password cannot be removed (409)', async () => {
+    it('a disabled user signing in through the provider is /login?sso_error=disabled; the last identity of a user with no password cannot be removed (409)', async () => {
       const boss = ssoBrowser()
       await call(boss, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })
       const sso2 = createMockServer({ empty: true, mode: 'accounts', now: () => clock, oidc: { name: 'Company SSO', autoCreate: true, sub: 'sub-9' }, admin: { username: 'root', password: 'a-long-password' } })
@@ -4149,7 +4149,7 @@ function suite(target: Target) {
       await call(rootB, 'PATCH', `/api/users/${member.id}`, { disabled: true })
       const again = newBrowser(f2)
       const s2 = (await call(again, 'POST', '/api/auth/oidc/start', { intent: 'login' })).json
-      expect((await callback(again, s2.url)).headers.get('Location')).toBe('/login?error=disabled')
+      expect((await callback(again, s2.url)).headers.get('Location')).toBe('/login?sso_error=disabled')
     })
 
     it('too many wrong passwords against one name is 429 rate_limited with Retry-After, even for the right password, until the wait is over', async () => {

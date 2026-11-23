@@ -48,7 +48,7 @@ export function SettingsRow({ title, help, children, controlId }: { title: strin
           <div className="text-sm font-medium">{title}</div>
         )}
         {help && (
-          <p id={helpId} className="mt-0.5 text-xs text-muted-foreground">
+          <p id={helpId} className="mt-0.5 text-xs break-words text-muted-foreground">
             {help}
           </p>
         )}
