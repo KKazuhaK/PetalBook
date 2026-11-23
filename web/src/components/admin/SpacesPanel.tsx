@@ -151,7 +151,7 @@ function SpaceRow({ space: s, onAction, onEnable }: { space: AdminSpace; onActio
       <td className="px-3 py-2.5">{s.disabled ? <Badge variant="secondary">{sp.disabled}</Badge> : <span className="text-muted-foreground">{sp.active}</span>}</td>
       <td className="px-3 py-2.5">
         <div className="flex items-center justify-end gap-1">
-          <Button variant="outline" size="sm" render={<Link to={spaceUrls(s.id).recent()} aria-label={t.fmt.labelled(sp.open, s.name)} />}>
+          <Button variant="outline" size="sm" render={<Link to={spaceUrls(s.id).home()} aria-label={t.fmt.labelled(sp.open, s.name)} />}>
             {sp.open}
           </Button>
           <DropdownMenu>

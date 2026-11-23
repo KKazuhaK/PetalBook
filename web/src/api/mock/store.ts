@@ -6,6 +6,7 @@ import type { DraftReceipt, HistoryList, Page, PageDraft, PageMeta, PageSummary,
 import { BUILTIN_KEYS, RESERVED_KEYS, partialPropsOf, propsOfMeta } from '../../lib/pageTypes.ts'
 import { matches, parseFilter, sortValue, valuesOf } from './propQuery.ts'
 import { createTypeBook } from './typeBook.ts'
+import { createHomeBook } from './homeBook.ts'
 import { createViewBook } from './viewBook.ts'
 import { TAG_COLORS, parseTagColor } from '../../lib/tagColors.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
@@ -155,6 +156,28 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
   const spelledFolder = (path: string): string | null => (folders.has(path) ? path : ([...folders].find((f) => f.toLowerCase() === path.toLowerCase()) ?? null))
   const book = createTypeBook(spelledFolder)
   const viewBook = createViewBook({ random, spelledFolder, validFolder })
+  const home = createHomeBook({
+    now,
+    spelledFolder,
+    hasFolder: (path) => folders.has(path),
+    hasType: (name) => book.list().types.some((t) => t.name === name),
+    hasPage: (id) => (pages.has(id) ? toSummary(pages.get(id)!) : undefined),
+    viewName: (kind, scope, id) => (viewBook.get(kind === 'folder' ? scope : undefined, kind === 'tag' ? scope : undefined).views.find((v) => v.id === id)?.name ?? null),
+    guard: () => guard(),
+    // In the order the pages were made, which is the order of the real index.
+    matching: (src) => {
+      const filters = src.filter.map((f) => ({ key: f.key, op: f.op, ...(f.values.length ? { values: f.values } : {}) })) as ReturnType<typeof parseFilter>
+      const folder = src.folder
+      return [...pages.values()]
+        .filter((p) => {
+          if (folder !== undefined && !(folder === '' || p.folder === folder || p.folder.startsWith(folder + '/'))) return false
+          if (src.tag !== undefined && !tagsOf(p.meta).includes(src.tag)) return false
+          if (src.type !== undefined && effectiveOf(p) !== src.type) return false
+          return filters.every((f) => matches(p.meta, f))
+        })
+        .map((p) => ({ summary: toSummary(p), body: p.body }))
+    },
+  })
   // The type a page has: its header's, else its folder's.
   const effectiveOf = (p: Stored): string => stringField(p.meta, 'type')?.trim() || book.effective(p.folder)
   // userId + page id -> draft
@@ -825,6 +848,7 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     for (const f of inside) addFolder(rename(f))
     book.folderMoved(from, to)
     viewBook.folderMoved(from, to)
+    home.folderMoved(from, to)
     addFolder(to)
     for (const p of [...pages.values()].filter((x) => isUnder(x.folder, from))) {
       const moved: Stored = { ...p, folder: rename(p.folder) }
@@ -922,6 +946,7 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
       guard()
       return viewBook.put(body)
     },
+    home,
     getPage,
     create,
     save,

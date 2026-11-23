@@ -23,6 +23,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { ErrorState, PageFallback } from '@/components/common'
 import { setEditableQuietly } from '@/components/editor/editable'
 import { Breadcrumbs } from '@/components/files/Breadcrumbs'
+import { StarButton } from '@/components/favorites/StarButton'
 import { TopBar } from '@/components/layout/TopBar'
 import { AutoTextarea } from '@/components/editor/AutoTextarea'
 import { ImagePopover, LinkPopover, SelectionBubble } from '@/components/editor/BubbleToolbar'
@@ -37,6 +38,7 @@ import { SaveIndicator } from '@/components/editor/SaveIndicator'
 import { TagsEditor } from '@/components/editor/TagsEditor'
 import { useMaxUpload } from '@/components/editor/useMaxUpload'
 import { failureText } from '@/lib/failure'
+import { noteWrote, wroteKey } from '@/lib/homePrefs'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { getUploadOriginal } from '@/lib/uploadPrefs'
 import { t } from '@/i18n'
@@ -324,7 +326,11 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
         readDraft: live.readStorable,
         // The lists show the file, so they change only when the file does. This
         // also runs when the commit lands after the editor was left.
-        onCommitted: () => void invalidateListings(qc, space),
+        onStored: (id) => noteWrote(wroteKey(userId, space), id),
+        onCommitted: (page) => {
+          noteWrote(wroteKey(userId, space), page.id)
+          void invalidateListings(qc, space)
+        },
         onConflict: (info) => {
           setConflict(info)
           setConflictOpen(true)
@@ -836,6 +842,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
             ) : (
               <SaveIndicator snapshot={snapshot} draftSafe={!controller.hasUnsaved()} onRetry={() => void controller.retry()} onOpenConflict={() => setConflictOpen(true)} />
             )}
+            <StarButton target={{ kind: 'page', target: page.id }} labels={{ add: t.fav.addPage, remove: t.fav.removePage }} />
             {!historyOpen && <ModeSwitch mode={mode} wide={wide} onChange={changeMode} />}
             {!historyOpen && (
               <Button variant="ghost" size="icon-sm" aria-pressed={backlinksOpen} onClick={toggleBacklinks} title={backlinksOpen ? t.pageLinks.backlinksClose : t.pageLinks.backlinksOpen} aria-label={backlinksOpen ? t.pageLinks.backlinksClose : t.pageLinks.backlinksOpen} className={backlinksOpen ? 'bg-muted' : undefined}>

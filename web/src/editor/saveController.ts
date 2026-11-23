@@ -171,6 +171,8 @@ export interface SaveControllerOptions {
   now?: () => number
   // The file was written (by us or, as far as we can tell, by the server).
   onCommitted?: (page: Page) => void
+  // A draft of the page was stored on the server: the person has written something that outlives this tab.
+  onStored?: (id: string) => void
   onConflict?: (info: ConflictInfo) => void
 }
 
@@ -1197,6 +1199,7 @@ export class SaveController {
       return 'stop'
     }
     this.uncertain = false
+    this.opts.onStored?.(this.file.id)
     const stored: ServerDraft = { version: receipt.version, ...sent, updated: receipt.updated }
     if (!receipt.stale) {
       // 200: the server checked `prev` was its draft and the file was still at baseRev.

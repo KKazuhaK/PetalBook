@@ -54,7 +54,7 @@ func (s *server) adminListSpaces(c *call) {
 		}
 		limit = n
 	}
-	rows, next, err := store.ListAllSpaces(c.r.Context(), s.opt.Store.Q(), store.SpaceFilter{Dialect: s.opt.Store.Dialect(), Query: q.Get("q"), After: q.Get("cursor"), Limit: limit})
+	rows, next, err := store.ListAllSpaces(c.r.Context(), s.opt.Store.Q(), store.SpaceFilter{Query: q.Get("q"), After: q.Get("cursor"), Limit: limit})
 	if err != nil {
 		s.fail(c.w, err)
 		return

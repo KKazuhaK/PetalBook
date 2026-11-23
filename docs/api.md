@@ -1610,6 +1610,467 @@ the views from every writing of the folder in `space.yml`, so none comes back.
 `404 not_found` for a folder that does not exist (a tag need not be in use).
 A write that changes nothing writes nothing.
 
+## Home: the daily text and favourites
+
+### The daily text
+
+A space shows one short text a day on its home page. Where it comes from is
+decided, first match wins, by:
+
+1. **the space's own source**, written under `daily` in `.petalbook/space.yml`
+   (it is part of the space and is read and written like the bindings and the
+   views: a file that cannot be used is restored from its history, anchors and
+   aliases are kept, a change is journaled and committed like any other);
+2. **an external interface the space chose** among those the administrators
+   set up (accounts mode);
+3. **the server's default**, which administrators set, unless the space opted
+   out (accounts mode).
+
+With none of them the answer is `{"page": null, "reason": "no_source"}` and the
+block is not shown. A space with a source of its own that meets no page is
+`no_match` (it does not fall through: it was asked for). Single-user mode has
+only the first.
+
+```yaml
+daily:
+  folder: 文案        # or tag: … or type: …, one of the three
+  filter: [{key: status, op: in, values: [定稿]}]   # optional, as the filter of a listing
+```
+
+`folder` means the folder and the folders below it; `type` is the effective
+type (the header's, else the folder's, see Page types). **By language:**
+`daily: {zh: {folder: 文案}, en: {tag: quotes}}`. A source written beside the
+language keys (`daily: {folder: x, zh: {…}}`) is "all languages": the fallback
+for the languages that have none of their own; written alone it is the source
+of every language. For a language the source is that of the language, else
+that of the language without its region (`zh` for `zh-CN`), else "all
+languages", else, so that a language nobody wrote a source for still gets a
+text, the first by the order of the codes. Moving or renaming a folder carries the `folder` of
+every source with it, in the same commit as its bindings (and, after a crash,
+at the next start). Deleting a folder leaves the source as it is; it then meets
+no page.
+
+#### `GET /api/spaces/{space}/daily/settings`, `PUT …/daily/settings`
+
+`GET` needs `read`, `PUT` needs `manage`.
+
+```json
+{"daily": {"folder": "文案", "filter": [{"key": "status", "op": "in", "values": ["定稿"]}]}}
+{"daily": {"zh": {"folder": "文案", "filter": []}, "en-us": {"tag": "quotes", "filter": []}}}
+{"daily": {"folder": "all", "filter": [], "zh": {"tag": "诗", "filter": []}}}
+{"daily": null}
+```
+
+`PUT` takes the same object and answers with it as it is now; `null` removes
+the source. Language codes are lower-cased. `400 invalid` for none of
+`folder`, `tag`, `type` or more than one, an unknown key, a tag that is no tag,
+a type that does not exist, a filter that is not valid (as for a listing, at
+most 10), a language key that is not a code (`zh`, `en`, `zh-CN`) or given twice, more than
+20 languages, or a body without `daily`; `404 not_found` for a folder that is
+not there. A source that is already as asked writes nothing.
+
+#### `GET /api/spaces/{space}/daily?date=2026-11-23&skip=0&lang=zh`
+
+Needs `read`. `date` is the day in the browser's time zone (today in UTC when
+left out); `skip` (0 up to 1 000) asks for another text than the day's and
+only affects what the asker is shown; `lang` is the language of the interface
+(`zh`, `en`, `zh-CN`; left out, no language); `tz` is the browser's offset in
+minutes east of UTC (`-480` for UTC-8, from -840 to 840).
+
+The answer carries `Cache-Control: private, max-age=N` and an `ETag`, and a
+request with a matching `If-None-Match` gets `304`. `N` is how long it stays the same:
+until the end of `date` where the browser is (from `tz`; `300` when `tz` is
+left out), until the end of the refresh period for an interface that
+refreshes by the hour or the minute, at least 60 and at most 86 400 seconds, and
+60 for an answer with nothing to show or a text that is `stale`.
+
+From the space's own source (and that is also how a page of this space is
+returned):
+
+```json
+{"page": {"id": "…", "path": "文案/暮雪.md", "title": "暮雪", "label": "暮雪", "…": "(a page summary)",
+          "body": "《暮雪》｜…\n", "bodyTruncated": false},
+ "count": 12, "origin": "space"}
+```
+
+`page` is a page summary (see Page summary) with the Markdown `body` (only
+that one file is read) cut to 2 000 characters (`bodyTruncated` says it was).
+`count` is how many pages meet the source. Which one is picked: a number is
+made from the space and the day (the first 8 bytes of a SHA-256) plus `skip`,
+and the page is the one at that number modulo `count` among the pages that meet
+the source, in the order of the index; both are read from the index (the
+cost is the pages that meet the condition, tens of milliseconds for 50 000
+pages). What a day showed is remembered in memory (per source, day and `skip`),
+so pages that are added or deleted during the day do not change it; a page that
+is gone is replaced by another pick. The picks everybody sees (`skip` 0) and the
+others are remembered apart, 512 of each in a space; when either is full, the
+half whose days are farthest from today is forgotten, so asking for other texts
+or other days never changes today's.
+
+From the administrators' settings the answer has no page but a `quote`:
+
+```json
+{"page": null, "quote": {"text": "…", "source": "…", "author": "…", "link": "https://…",
+                         "fetched": "2026-11-23T08:00:00Z", "stale": false}, "origin": "external"}
+{"page": null, "quote": {"text": "…", "source": "…"}, "origin": "site"}
+```
+
+`origin` is `external` for an interface, `site` for the default (a line the
+administrators pasted, or a page of the space they named: its body as `text`,
+its title as `source`; shown to everybody, members of that space or not).
+
+Nothing to show: `{"page": null, "reason": "no_source" | "no_match" | "unavailable" | "out_of_range"}`;
+`unavailable` is an interface that did not answer or a default space that is gone;
+`out_of_range` is a `date` an interface is not asked about: only today,
+yesterday and tomorrow are (today where the browser is, by `tz`; in UTC
+without it), since each other day would be a request and a row kept. A client
+hides the block for any of them. `429 rate_limited` (with `Retry-After`) when
+another text from an interface is asked for too often. `400 invalid` for a
+`date` that is not a day (`YYYY-MM-DD`) from 1970 to 2261, a `skip` that is not
+a number from 0 up, or a `lang` that cannot be; `400 skip_too_large` for a
+`skip` above 1 000 (see "Daily text refusals").
+
+#### `GET /api/spaces/{space}/daily/prefs`, `PUT …/daily/prefs`
+
+Accounts mode only (single-user mode answers `404`). `GET` needs `read`, `PUT`
+needs `manage`: the owner of a space chooses what it takes of the
+administrators' settings. Owners never enter addresses; they choose among the
+interfaces that are set up.
+
+```json
+{"inherit": true, "apis": ["hitokoto"], "available": [{"id": "hitokoto", "name": "一言", "lang": "zh"}],
+ "languages": ["zh", "en"], "allowed": {"own": true, "api": true}, "default": {"kind": "list"}}
+```
+
+`inherit` is whether the space shows the server's default when it has nothing
+else; `apis` are the ids of the interfaces it uses (for a language, the one
+made for it, else one that takes any language, else any); `available` are all
+that are set up (never their addresses); `default` is `null` when the
+administrators set none. `languages` are the language codes the settings pages
+have a tab for (the administrators' `languages`, below; nothing is limited to
+them). `allowed` is what the administrators let spaces do (below): a field that
+is `false` is set for the whole server, and what the space has there is saved
+when asked but has no effect until it is `true` again. `PUT` takes `{"inherit": true, "apis": []}` (both are
+needed) and answers as `GET`; `400 invalid` for an id that is not in
+`available`; it saves `apis` even when `allowed.api` is `false`.
+
+### The administrators' settings of the daily text
+
+All `admin` only, accounts mode only. They are in the state database, not in
+any space. The server is the only one that ever asks an external interface:
+browsers never do (a key stays on the server, an interface is asked once a
+period however many people look, everybody sees the same text, and the
+protection of the network is in one place).
+
+#### `GET /api/admin/daily`, `PUT /api/admin/daily`
+
+```json
+{"default": {"kind": "space", "space": "01JD3K8Q7Z", "source": {"folder": "文案", "zh": {"tag": "诗"}}},
+ "allow": {"own": true, "api": true},
+ "hosts": ["international.v1.hitokoto.cn", "api.quotable.io"],
+ "languages": ["zh", "en"],
+ "apis": [ /* interfaces, below */ ],
+ "presets": [ /* interfaces to start a form from, below */ ],
+ "lines": {"total": 6, "byLang": {"zh": 3, "en": 2, "": 1}, "max": 5000}}
+```
+
+`PUT` takes any of `default`, `hosts`, `languages` and `allow` (what it leaves out stays)
+and answers as `GET`; `lines`, `apis` and `presets` are read-only here.
+
+- `default` is `null`, `{"kind": "list"}` (the lines below) or
+  `{"kind": "space", "space": id, "source": …}` where `source` is a source or
+  sources by language as above, checked in that space. Choosing a space shows
+  its content to everybody; a client says so.
+- `hosts` are the hosts (with a port when it is not the usual one) the server
+  may fetch from, at most 100. Saving an interface adds its host; removing a host
+  here stops the interfaces that use it (they are not asked until it is back).
+- `languages` are the language codes the settings pages have a tab for besides
+  "all languages" (`zh`, `en`, `pt-br`; lower-cased, each once, at most 30). It
+  is a list the administrators keep, `["zh", "en"]` to begin with; nothing is
+  limited to it: a source or an interface may name any code.
+- `allow` is what the spaces may do: `own` is whether a space may have a source
+  of its own (`daily` in its `space.yml`), `api` whether it may choose an
+  external interface. Both are `true` until set; `PUT` takes either or both
+  (`{"own": false}` leaves `api` as it is; `400 invalid` for neither, or a value
+  that is not a boolean). A lock does not remove anything: the space's `daily`
+  stays in `space.yml` and its choice of interfaces stays, they are ignored, and
+  the order of `GET …/daily` goes on to the next one (own, interface, default)
+  as if they were not set; unlocked, they count again. A space's
+  `PUT …/daily/settings` and `PUT …/daily/prefs` still save while locked.
+  `GET` and `PUT …/daily/settings` say whether the source is in effect:
+  `{"daily": …, "inEffect": false}`. In single-user mode there are no
+  administrators and everything is in effect.
+
+**Languages everywhere.** A space's `daily`, the default's `source`, the lines
+and the interfaces are all by language, with "all languages" (an unkeyed
+source, lines with `lang` `""`, an interface with `lang` `""`) as the fallback
+for the languages that have none of their own, as in `GET …/daily/settings`
+above.
+
+#### Interfaces: `PUT /api/admin/daily/apis/{id}`, `DELETE …/apis/{id}`
+
+Any number of interfaces (at most 50). An interface in `apis`:
+
+```json
+{"id": "hitokoto", "name": "一言", "lang": "zh",
+ "url": "https://international.v1.hitokoto.cn/?max_length=80&d={date}",
+ "headers": [{"name": "X-Api-Key", "set": true}],
+ "text": "hitokoto", "source": "from", "author": "from_who",
+ "link": "https://hitokoto.cn?uuid={uuid}",
+ "refresh": "daily", "refreshMinutes": 0, "skipNew": true, "rps": 20, "enabled": true}
+```
+
+- `id`: 1 to 32 lower-case letters, digits, `-`, `_`; it is the one in the
+  address. `name` at most 100 characters. `lang` is the language it answers
+  in, `""` for every language.
+- `url` is fetched with `GET`. It is `https`, with no user name, and `{lang}`
+  (the language asked for, `en` when none) and `{date}` (the day, `2026-11-23`)
+  may be in its path or query, not in its scheme, user, host or port (as the
+  address is written, in any case); they are filled in only as a checked
+  language code and day, escaped, and the host of the address really used is
+  checked against `hosts` again. An address that is an IP address
+  that is not public, `localhost` and its subdomains are refused when it is saved;
+  whatever a name resolves to is checked again when the connection is made (below).
+- `headers` are request headers, at most 10. A value is **never returned**, and
+  never reaches any output (below). It is encrypted with the server's key
+  (`DATA/secret.key`, or `PETALBOOK_SECRET_KEY`), bound to the exact request it
+  was given for: the interface's `id`, the header's name and the `url` exactly
+  as written (scheme, host, port, path, query and placeholders). The interface
+  answers with `{"name": …, "set": true}`. In a request
+  `{"name": "X-Api-Key", "value": "…"}` sets or replaces a value, and
+  `{"name": "X-Api-Key"}` keeps the one it has: `400 header_missing` when it has
+  none (another `id` has none), `400 header_reenter` when `url` is not, to the
+  character, the one the value was given for. Any change of the address, even
+  of its path or query, drops every kept value of the interface: they are
+  given again by whoever has them. `text`, `source`, `author` and `link` may
+  change freely. A header that is left out is removed. `Host`, `Content-Length`,
+  `Content-Type`, `Transfer-Encoding`, `Connection` and the like cannot be set.
+- `text` (needed), `source` and `author` are paths in the JSON answer: names
+  and positions with dots and brackets (`hitokoto`, `data.0.q`, `[0].content`);
+  the value must be text or a number; the text is cut to 2 000 characters, the
+  others to 200.
+- `link` is an optional template of a link shown with the text (an attribution):
+  `{lang}` and `{date}` are those of the request, any other `{path}` the value at
+  that path of the answer (URL-escaped); it is `http` or `https`, and is left out
+  when a value it needs is missing. It never takes a request header:
+  `400 link_uses_header` (`field` `"link"`) for a placeholder any part of whose
+  path is `header`, `headers` or the name of one of the interface's headers
+  (`{headers.Authorization}`, `{args.X-Api-Key}`), in any case.
+
+**No header value reaches an output.** Each value the server shows (`text`,
+`source`, `author`, each value of `link`, the `raw` of a trial) is taken in
+this order: the value at its path, decoded from JSON (escapes such as `\/` and
+`A` undone); checked; cut; and, in a link, escaped. A value that contains a
+header's value (of 4 characters and more), or any 8 characters in a row of
+one, in any case, as it is or with its URL escapes undone (`%2B`, `+` read as a
+space), is refused: a trial says so (`path_reveals_secret`), and an answer to
+readers with such a value is not used at all (as a failure: the last good
+text, or `unavailable`). The old blotting out of values (`•••`) is kept as a
+second line only.
+- `refresh` is how long the text everybody sees stays the same: `"daily"` (the day
+  of the request: the `date` parameter), `"hourly"`, or `"minutes"` with `refreshMinutes`
+  1 to 1440 (by the server's clock). `skipNew` says "another" (`skip` above 0)
+  asks the interface for a new text each time (at most `skip` 100); without it
+  "another" is the same text. `rps` is the most requests a second this server
+  sends the interface, 0.01 to 100, 1 when left out: a token bucket (as many
+  tokens as `rps`, at least one) shared by everybody who looks and every
+  language. With the bucket empty nothing waits: the last text the interface said
+  is used. `enabled` (true when a new interface leaves it out) says whether it may
+  be chosen by spaces and is used.
+
+`PUT` makes the interface or replaces it, adds its host to `hosts`, and answers as
+`GET /api/admin/daily`. Changes of the settings (these, `PUT /api/admin/daily`
+and `DELETE`) are made one at a time, in a transaction that holds the
+settings: two administrators saving at once both keep their change. `DELETE` removes it (its host stays on the list) and
+answers the same; `404` for an id that is not there. `400 invalid` for anything
+above that breaks a rule (the message says which), or one of the codes of
+"Daily text refusals".
+
+`presets` are interfaces a form can be filled in with (the same fields, with a
+`note`): they are **only offered**, none is created or used until an
+administrator saves it, and a service of a preset is not contacted until then.
+Today: `hitokoto` (zh; the international line, `max_length=80`, 20 requests a
+second, with the link back the service asks for) and `quotable` (en; Quotable's
+random quote, 3 requests a second).
+
+#### `POST /api/admin/daily/try`
+
+```json
+{"api": {"id": "hitokoto", "name": "…", "url": "…", "headers": [{"name": "X-Api-Key"}], "text": "hitokoto"},
+ "lang": "zh", "date": "2026-11-23"}
+```
+
+Makes one request now with the interface as it is in the form (saved or not;
+a header without a value uses the value saved for that `id` and that exact
+`url` only), at the same rules as any request, and shows what came back. The
+host must be on `hosts` already (else `400 host_not_allowed`, and nothing is
+sent): an interface on a new host is tried once the host is on the list. It
+keeps nothing and is limited to a few a second (`429`). `400 invalid`, or a
+code of "Daily text refusals", when the interface itself breaks a rule.
+
+A trial that worked, or failed for a reason that has no code (the service did
+not answer, answered with an error status, or said a header's value back
+outside every path), is a `200`:
+
+```json
+{"ok": true, "status": 200, "url": "https://…?l=zh", "raw": "{\"hitokoto\": …", "rawTruncated": false,
+ "quote": {"text": "…", "source": "…", "author": "…", "link": "https://hitokoto.cn?uuid=…"}}
+{"ok": false, "message": "status 503", "status": 503, "url": "…"}
+{"ok": false, "status": 200, "url": "…", "quote": {"text": "…"},
+ "message": "the answer repeats the value of a request header, so it is not shown"}
+```
+
+A trial whose answer is refused is a `400` with the code of the refusal, what
+it is about beside it, and what the trial showed in `result` (the shape
+above). With several path errors, the code and `field` are those of the first:
+a `path_reveals_secret` before a `path_error`, in the order text, source,
+author, link.
+
+```json
+{"error": "path_error", "message": "no text or number at from_x", "field": "source",
+ "result": {"ok": false, "status": 200, "url": "…", "raw": "…", "quote": {"text": "…"},
+            "pathErrors": [{"field": "source", "code": "path_error", "message": "no text or number at from_x"},
+                           {"field": "link", "code": "path_error", "message": "a value the link needs is not in the answer"}]}}
+{"error": "host_not_allowed", "message": "the host api.example.org is not on the list of hosts", "host": "api.example.org",
+ "result": {"ok": false, "url": "…", "message": "…"}}
+```
+
+`raw` is the start of the answer (4 000 characters), shown only when it is
+valid JSON and none of its decoded texts, names and numbers repeats a request
+header's value (see above); otherwise it is left out, and `message` says why.
+`pathErrors` is a list of `{field, code, message}` (`field` one of `text`,
+`source`, `author`, `link`; `code` `path_error` or `path_reveals_secret`); the
+fields that were found are still in `quote`. `message` says what went wrong
+with the request or the answer.
+
+#### Daily text refusals
+
+The code is the `error` of the error body; what the refusal is about is beside
+it. All are `400`.
+
+| `error` | beside it | when |
+|---|---|---|
+| `host_not_allowed` | `host` | a trial of an address whose host is not on `hosts` |
+| `header_reenter` | `header` | a header without a value whose kept value was given for another `url` |
+| `header_missing` | `header` | a header without a value, and none is kept for it (for this `id`) |
+| `not_json` | | a trial's answer does not declare JSON, or is not valid JSON |
+| `too_large` | | a trial's answer is larger than 64 KB |
+| `path_error` | `field` | a trial's path (or a value the link needs) finds no text or number |
+| `path_reveals_secret` | `field` | a trial's path (or a value of the link) would show a request header's value |
+| `link_uses_header` | `field` (`"link"`) | a link template with a request header in it (saving or trying) |
+| `skip_too_large` | | `GET …/daily` with a `skip` above 1 000 |
+
+A `date` that is a day but not today, yesterday or tomorrow, for an external
+interface, is not a refusal: `GET …/daily` answers `200` with `"reason":
+"out_of_range"`. A `date` that is not a day is `400 invalid`.
+
+**How it is fetched.** Only the interfaces the administrators wrote, only from
+`https`, only to hosts on the list. The address a name resolves to is checked
+when the connection is made, for every address (so a name that answers
+differently the second time is no way round it): loopback, private, link-local
+(the cloud metadata address included), unspecified, multicast, carrier-grade
+NAT, documentation and benchmarking addresses are refused, an IPv4 address
+written as IPv6 being judged as the IPv4 one, always, for every request and every
+trial. No redirect is followed, no proxy used. The answer must come within 5
+seconds, be `200`, declare JSON, and be at most 64 KB.
+
+**What is kept.** (1) In memory, by interface (as it is asked: its id, address,
+paths and header names), language, refresh period and skip: inside a period
+nobody asks again, however many look; requests in flight for the same item are
+one, and that one request is not cut short (nor counted as a failure) when the
+reader who started it goes away. The language is the one the answer can differ
+in: none for an address without `{lang}`, the interface's own `lang` when it
+has one, else the reader's language or its base when it is one of
+`languages`, else the first of them. What is kept by interface and language
+(last answers, waits after failures, rate limits) is bounded (1 024 of each;
+the oldest go). (2) In the state database, the same: a restart asks for nothing
+again (rows older than 7 days are removed, and at most 2 000 rows of an
+interface are kept, the newest). (3) In the browser, by `GET …/daily` (below).
+When an interface fails (an error, a bad answer, no answer in time) the last
+text it said in that language is given, marked `"stale": true` with the time it
+was got (`"fetched"`); with none, or none from the last 7 days, the answer is
+`unavailable` and the block is hidden. After a failure the interface is not asked
+again for 30 seconds, then 1, 2, 4 … minutes up to an hour, never at every
+request; a success clears the wait. A space's own source and the default
+that is a space or lines are cheap (the index, a row) and use only the memory of
+the day and the browser's.
+
+#### `PUT /api/admin/daily/lines`, `DELETE /api/admin/daily/lines?lang=zh`
+
+The lines are a source of the default that is stored here: pasted or uploaded
+text, each entry with the language it is in (`""` for any language). `PUT`
+replaces the lines of one language:
+
+```json
+{"lang": "zh", "text": "山色空蒙雨亦奇\t苏轼\n行到水穷处", "format": "lines"}
+```
+
+`format` is `lines` (each line that is not blank is an entry; a tab separates the
+text from where it is from) or `markdown` (entries are cut at the lines that
+are `---`, or at the blank lines when there are none). Entries are at most 8 000
+bytes, their source 200 characters, and the server keeps at most 5 000 in all.
+`DELETE` removes the lines of one language. Both answer as `GET /api/admin/daily`.
+For a language the lines used are those of the language, else of its
+language without region, else those for any language, else the first
+language that has some; the line is picked as a page is (from the day and
+`skip`, modulo how many there are).
+
+### Favourites
+
+A person's own list of pages, folders and saved views in a space, in the order
+they put them. It is kept in the state database, not in the space (nothing is
+committed), for a person and a space. At most 200 in a space. It is deleted
+with the space or the user; a person who leaves a space keeps theirs in the
+database but they are not returned, and are back if the person is added again.
+(An administrator who is not a member of the space has none, and cannot add
+any: `403 forbidden`.) Everything here needs `read` and works in both modes.
+
+```json
+{"items": [
+  {"kind": "page", "target": "01JD3K8Q7Z", "name": "暮雪", "path": "Tang/暮雪.md", "missing": false, "created": "2026-11-23T08:30:00Z"},
+  {"kind": "folder", "target": "Tang/七言", "name": "七言", "path": "Tang/七言", "missing": false, "created": "…"},
+  {"kind": "view", "target": "folder:Tang#k3f9a1", "name": "按作者", "of": "Tang", "ofKind": "folder", "missing": false, "created": "…"}
+ ], "limit": 200}
+```
+
+`target` is a page id, a folder path as it is on disk, or a saved view as
+`folder:<path>#<view id>` or `tag:<tag>#<view id>`. `name` is a page's label, a
+folder's last name, a view's name; `missing` is true when the page, the folder
+or the view is gone (the name is then `""` for a page or a view and the folder's
+name for a folder). The names and `missing` of the whole list are looked up in
+the index and the settings in one go: no page file is read.
+
+- `GET /api/spaces/{space}/favorites` answers the list.
+- `POST …/favorites` with `{"kind": "page", "target": "…"}` adds one at the end
+  (one that is there stays where it is) and answers the list. `404` for a page,
+  folder or view that is not there, `400 invalid` for a target that cannot be
+  one, the root folder, and a 201st favourite.
+- `DELETE …/favorites?kind=page&target=…` takes one off (target URL-encoded;
+  also one that is `missing`; one that is not there is not an error) and
+  answers the list.
+- `PUT …/favorites/order` with `{"items": [{"kind": "page", "target": "…"}, …]}`
+  puts the favourites in that order: those named first, the rest after in the
+  order they had; names that are not favourites are ignored. Answers the list.
+
+Moving or renaming a folder (see `POST …/folders/move`) changes, once it has
+succeeded, the paths of the favourites of every person in the space: of the
+folder, of the folders below it, and of the saved views of those folders. A
+person who already has a favourite at the new path keeps it, and their old one
+goes. The move is recorded in the state database before it is made, and the
+record goes with the change of the favourites, whether or not the client is
+still there; a record left by a crash or a failure is settled the next time
+the favourites of the space are read or a folder of it is moved. All records
+of a space are settled together, oldest first, in one transaction (all or
+none): a move is taken as made when its folder is gone from the old place,
+whatever its age, or a later move put a folder there, or a folder is at both
+places (the one at the old place is new: it keeps none of the old one's
+favourites); its favourites go to where the folder is, or to its new place
+from which a later move carries them on, so moves A to B and B to C take A's
+favourites to C, settled in any order. A record of a folder still where it was
+and not at the new place is forgotten after ten minutes. A move onto a folder
+that is there is refused and not recorded. Deleting a folder leaves the
+favourites, now `missing`.
+
 ## Files
 
 Images and other attachments are ordinary files of the space. The ones the
@@ -1866,9 +2327,11 @@ Every space on the server, in order of creation, one page at a time:
  "next": "01JD3K8Q7Z"}
 ```
 
-`q` keeps the spaces whose name contains it, ignoring case (on SQLite for all of
-Unicode; on PostgreSQL as its `LOWER` does, which in a database with the C
-locale folds ASCII letters only). `limit` is 1 to
+`q` keeps the spaces whose name contains it, ignoring case the same way on SQLite and
+PostgreSQL: the server compares Unicode case foldings of both (a column of the
+state database, `name_key`, written with every name), so `STRASSE` finds
+`Straße`, `唐诗` finds `唐诗 Tang`, and `İ` is the letter `i` with a dot above it
+(it is found by `i`, not by `I`). `limit` is 1 to
 200 (default 50). `next` is the `cursor` of the following page, `""` after the
 last. The list is one database query for the whole page, however many spaces
 there are.

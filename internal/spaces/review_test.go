@@ -136,7 +136,7 @@ func TestSizerSkipsADeletedSpaceAndReportsAFailedFirstMeasurementAsNone(t *testi
 		if !m.measureNext(ctx, time.Hour) {
 			t.Fatal("a failing space stopped the round")
 		}
-		rows, _, err := store.ListAllSpaces(ctx, st.Q(), store.SpaceFilter{Dialect: st.Dialect()})
+		rows, _, err := store.ListAllSpaces(ctx, st.Q(), store.SpaceFilter{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -148,24 +148,66 @@ func TestSizerSkipsADeletedSpaceAndReportsAFailedFirstMeasurementAsNone(t *testi
 	})
 }
 
-// The name search ignores case beyond ASCII where the database can fold it.
+// The name search ignores case beyond ASCII, the same on both databases: the
+// names are folded by Go (name_key), not by the database's own idea of case.
 func TestSpaceSearchIgnoresCaseBeyondASCII(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		m := testManager(t, st)
 		owner := addUser(t, st, "U1", "owner")
-		for _, n := range []string{"Éclair", "Plain"} {
+		names := []string{"Éclair", "Plain", "唐诗 Tang", "Straße", "İstanbul", "Hello World"}
+		for _, n := range names {
 			if _, err := m.Create(ctx, owner.ID, n); err != nil {
 				t.Fatal(err)
 			}
 		}
-		var folded string
-		st.Q().QueryRow(ctx, `SELECT LOWER('É')`).Scan(&folded)
-		if st.Dialect() == store.Postgres && folded != "é" {
-			t.Skip("this PostgreSQL database folds ASCII only (C locale)")
+		for _, c := range []struct {
+			query string
+			want  []string
+		}{
+			{"éCLAIR", []string{"Éclair"}},
+			{"ÉCLAIR", []string{"Éclair"}},
+			{"唐诗", []string{"唐诗 Tang"}},
+			{"tang", []string{"唐诗 Tang"}},
+			{"唐诗 TANG", []string{"唐诗 Tang"}},
+			{"STRASSE", []string{"Straße"}},
+			{"straße", []string{"Straße"}},
+			{"STRAẞE", []string{"Straße"}}, // the capital sharp s
+			{"İstan", []string{"İstanbul"}},
+			{"i", []string{"Éclair", "İstanbul", "Plain"}},
+			{"world", []string{"Hello World"}},
+			{"nothing like it", nil},
+			{"%", nil}, // a wildcard is a character
+		} {
+			rows, _, err := store.ListAllSpaces(ctx, st.Q(), store.SpaceFilter{Query: c.query})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := map[string]bool{}
+			for _, r := range rows {
+				got[r.Name] = true
+			}
+			if len(got) != len(c.want) {
+				t.Fatalf("%q found %v, want %v", c.query, got, c.want)
+			}
+			for _, w := range c.want {
+				if !got[w] {
+					t.Fatalf("%q found %v, want %v", c.query, got, c.want)
+				}
+			}
 		}
-		rows, _, err := store.ListAllSpaces(ctx, st.Q(), store.SpaceFilter{Dialect: st.Dialect(), Query: "éCLAIR"})
-		if err != nil || len(rows) != 1 || rows[0].Name != "Éclair" {
-			t.Fatalf("%v %v", rows, err)
+		// A rename is searched under its new name only.
+		rows, _, _ := store.ListAllSpaces(ctx, st.Q(), store.SpaceFilter{Query: "plain"})
+		if len(rows) != 1 {
+			t.Fatalf("%v", rows)
+		}
+		if err := store.RenameSpace(ctx, st.Q(), rows[0].ID, "Größe"); err != nil {
+			t.Fatal(err)
+		}
+		for q, n := range map[string]int{"plain": 0, "GRÖSSE": 1, "größe": 1} {
+			rows, _, _ := store.ListAllSpaces(ctx, st.Q(), store.SpaceFilter{Query: q})
+			if len(rows) != n {
+				t.Fatalf("%q after the rename: %d spaces, want %d", q, len(rows), n)
+			}
 		}
 	})
 }

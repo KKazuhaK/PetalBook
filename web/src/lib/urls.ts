@@ -7,6 +7,8 @@ export function spaceUrls(space: string) {
   const base = `/s/${encodeURIComponent(space)}`
   return {
     base,
+    // The space's home page.
+    home: () => `${base}/`,
     recent: () => `${base}/recent`,
     folder: (path: string) => (path === '' ? `${base}/f` : `${base}/f/${encodePath(path)}`),
     tag: (tag: string) => `${base}/t/${encodePath(tag)}`,
@@ -20,7 +22,7 @@ export type SpaceUrls = ReturnType<typeof spaceUrls>
 
 // The administration (administrators only, accounts mode): its own pages, kept
 // apart from the personal settings.
-export const ADMIN_SECTIONS = ['users', 'spaces', 'status'] as const
+export const ADMIN_SECTIONS = ['users', 'spaces', 'daily', 'status'] as const
 export type AdminSection = (typeof ADMIN_SECTIONS)[number]
 export const isAdminSection = (v: unknown): v is AdminSection => ADMIN_SECTIONS.some((s) => s === v)
 export const adminPath = (section?: AdminSection) => (section ? `/admin/${section}` : '/admin')

@@ -13,6 +13,12 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
+// goSteps are the migrations that need more than SQL: the function of a
+// version runs inside the same transaction, after the statements of its file.
+var goSteps = map[int]func(ctx context.Context, q Q) error{
+	7: fillSpaceNameKeys,
+}
+
 type migration struct {
 	version int
 	name    string
@@ -113,6 +119,11 @@ func (s *Store) migrate(ctx context.Context) error {
 			}
 			for _, st := range m.stmts {
 				if _, err := q.Exec(ctx, st); err != nil {
+					return fmt.Errorf("migration %s: %w", m.name, err)
+				}
+			}
+			if step := goSteps[m.version]; step != nil {
+				if err := step(ctx, q); err != nil {
 					return fmt.Errorf("migration %s: %w", m.name, err)
 				}
 			}

@@ -112,7 +112,7 @@ describe('the folder listing', () => {
       entry('f:随笔')!.querySelector('a')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }))
     })
     await settle(() => menuItems().length > 0, 'folder menu')
-    expect(menuItems()).toEqual([t.manage.open, t.manage.rename, t.manage.setType, t.manage.select, t.manage.move, t.manage.delete])
+    expect(menuItems()).toEqual([t.manage.open, t.fav.addFolder, t.manage.rename, t.manage.setType, t.manage.select, t.manage.move, t.manage.delete])
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
@@ -124,7 +124,7 @@ describe('the folder listing', () => {
     })
     await settle(() => menuItems().length > 0, 'page menu')
     // A page is not renamed here (that is its title, in the editor).
-    expect(menuItems()).toEqual([t.manage.open, t.manage.select, t.manage.move, t.manage.delete])
+    expect(menuItems()).toEqual([t.manage.open, t.fav.addFolder, t.manage.select, t.manage.move, t.manage.delete])
   })
 
   it('opens a menu on empty space with New page and New folder', async () => {
@@ -277,7 +277,7 @@ describe('the sidebar tree', () => {
       rowFor('随笔')!.querySelector('a')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 200 }))
     })
     await settle(() => menuItems().length > 0, 'tree menu')
-    expect(menuItems()).toEqual([t.manage.open, t.manage.rename, t.manage.setType, t.manage.move, t.manage.delete])
+    expect(menuItems()).toEqual([t.manage.open, t.fav.addFolder, t.manage.rename, t.manage.setType, t.manage.move, t.manage.delete])
   })
 })
 

@@ -1,7 +1,8 @@
 import { createContext, useContext, useRef, useState, type MouseEvent, type ReactNode, type TouchEvent } from 'react'
-import { FilePlus2, FolderInput, FolderPlus, ListChecks, MoreHorizontal, PenLine, Shapes, SquareArrowOutUpRight, Trash2 } from 'lucide-react'
+import { FilePlus2, FolderInput, FolderPlus, ListChecks, MoreHorizontal, PenLine, Shapes, SquareArrowOutUpRight, Star, StarOff, Trash2 } from 'lucide-react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
-import { useSpacePermissions } from '@/api/hooks'
+import { useCanFavorite, useSpacePermissions } from '@/api/hooks'
+import { useToggleFavorite } from '@/components/favorites/StarButton'
 import type { FileItem } from '@/lib/folders'
 import { t } from '@/i18n'
 import { useFileOps } from './FileOps'
@@ -36,6 +37,7 @@ export function FileContextMenu({
 }) {
   const ops = useFileOps()
   const { write, manage } = useSpacePermissions()
+  const canFavorite = useCanFavorite()
   const trigger = useRef<HTMLDivElement>(null)
   const [target, setTarget] = useState<{ key: string; items: FileItem[] } | null>(null)
 
@@ -64,8 +66,8 @@ export function FileContextMenu({
     anchor.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left, clientY: r.bottom, button: 2 }))
   }
 
-  // Everything in the menu changes something: without `write` there is none.
-  if (!ops || !write) return <div className={className}>{children}</div>
+  // Nearly everything in the menu changes pages: without `write` there is nothing, except the person's own favourites.
+  if (!ops || (!write && !canFavorite)) return <div className={className}>{children}</div>
   const items = target?.items ?? null
   const one = items?.length === 1 ? items[0] : null
 
@@ -84,7 +86,8 @@ export function FileContextMenu({
                   {t.manage.open}
                 </ContextMenuItem>
               )}
-              {one?.kind === 'folder' && (
+              {one && canFavorite && <FavoriteItem item={one} />}
+              {write && one?.kind === 'folder' && (
                 <ContextMenuItem onClick={() => ops.rename(one.path)}>
                   <PenLine />
                   {t.manage.rename}
@@ -96,23 +99,28 @@ export function FileContextMenu({
                   {t.manage.setType}
                 </ContextMenuItem>
               )}
-              {one && target && onSelect && (
+              {write && one && target && onSelect && (
                 <ContextMenuItem onClick={() => onSelect(target.key)}>
                   <ListChecks />
                   {t.manage.select}
                 </ContextMenuItem>
               )}
-              <ContextMenuItem onClick={() => ops.chooseMove(items, afterAction)}>
-                <FolderInput />
-                {t.manage.move}
-              </ContextMenuItem>
-              <ContextMenuSeparator />
-              <ContextMenuItem variant="destructive" onClick={() => ops.confirmDelete(items, afterAction)}>
-                <Trash2 />
-                {t.manage.delete}
-              </ContextMenuItem>
+              {write && (
+                <>
+                  <ContextMenuItem onClick={() => ops.chooseMove(items, afterAction)}>
+                    <FolderInput />
+                    {t.manage.move}
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem variant="destructive" onClick={() => ops.confirmDelete(items, afterAction)}>
+                    <Trash2 />
+                    {t.manage.delete}
+                  </ContextMenuItem>
+                </>
+              )}
             </>
           ) : (
+            write &&
             emptyParent !== undefined && (
               <>
                 <ContextMenuItem onClick={() => void ops.newPage(emptyParent)}>
@@ -129,6 +137,17 @@ export function FileContextMenu({
         </ContextMenuContent>
       </ContextMenu>
     </Open.Provider>
+  )
+}
+
+// "Favourite" or, for one that is, "Remove from favourites": for a single page or folder.
+function FavoriteItem({ item }: { item: FileItem }) {
+  const { on, toggle } = useToggleFavorite(item.kind === 'page' ? { kind: 'page', target: item.id } : { kind: 'folder', target: item.path })
+  return (
+    <ContextMenuItem onClick={toggle}>
+      {on ? <StarOff /> : <Star />}
+      {on ? t.fav.remove : t.fav.addFolder}
+    </ContextMenuItem>
   )
 }
 

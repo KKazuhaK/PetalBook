@@ -2,7 +2,7 @@
 // the rules (which sections a person sees, how an old address maps to one) are
 // tested without rendering anything.
 
-export type SectionId = 'profile' | 'preferences' | 'security' | 'general' | 'types' | 'members' | 'sync' | 'import'
+export type SectionId = 'profile' | 'preferences' | 'security' | 'general' | 'types' | 'home' | 'members' | 'sync' | 'import'
 export type GroupId = 'account' | 'space'
 
 export interface SectionDef {
@@ -17,6 +17,7 @@ export const SECTIONS: readonly SectionDef[] = [
   { id: 'security', group: 'account' },
   { id: 'general', group: 'space' },
   { id: 'types', group: 'space' },
+  { id: 'home', group: 'space' },
   { id: 'members', group: 'space' },
   { id: 'sync', group: 'space' },
   { id: 'import', group: 'space' },
@@ -33,6 +34,8 @@ export interface Visibility {
   canRead: boolean
   // Whether the person may change that space's pages (an import writes them).
   canWrite: boolean
+  // Whether the person may manage that space (where its home page takes its text from is for them to say).
+  canManage?: boolean
   // That space is switched off: its members cannot be listed, but a member may
   // still leave it, and that is on the members section.
   disabled?: boolean
@@ -56,6 +59,8 @@ export function visibleSections(v: Visibility): SectionDef[] {
       case 'types':
         // Reading the types is reading the space; changing them is for those who manage it.
         return v.hasSpace && v.canRead
+      case 'home':
+        return v.hasSpace && v.canRead && v.canManage === true
       case 'import':
         return v.hasSpace && v.canWrite
       case 'members':

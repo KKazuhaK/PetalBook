@@ -206,7 +206,14 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 
 	// Refused before anything is renamed: a move whose settings cannot follow
 	// the folder in space.yml.
-	moveSettings := func(root *yaml.Node) (bool, error) { return rebind(root, canonFrom, target, false) }
+	moveSettings := func(root *yaml.Node) (bool, error) {
+		a, err := rebind(root, canonFrom, target, false)
+		if err != nil {
+			return false, err
+		}
+		b, err := rebindDaily(root, canonFrom, target)
+		return a || b, err
+	}
 	notMoved := func(reason string) error {
 		return invalidf("the folder was not moved: its type and views cannot follow it in space.yml, because %s", reason)
 	}

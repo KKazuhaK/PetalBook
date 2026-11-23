@@ -38,8 +38,9 @@ export function setup(opts: { page?: Page; draft?: PageDraft; draftFields?: Part
   const onConflict = vi.fn<(info: ConflictInfo) => void>()
   const onCommitted = vi.fn<(p: Page) => void>()
   const onExternalChange = vi.fn<(p: Page) => void>()
+  const onStored = vi.fn<(id: string) => void>()
   const read = vi.fn(() => current)
-  const c = new SaveController({ page: start, draft: opts.draft, read, api, scope: 'sp', onConflict, onCommitted, onExternalChange, normalizeBody: opts.normalizeBody })
+  const c = new SaveController({ page: start, draft: opts.draft, read, api, scope: 'sp', onConflict, onCommitted, onStored, onExternalChange, normalizeBody: opts.normalizeBody })
   c.attach()
   const edit = (d: Partial<Draft>) => {
     current = { ...current, ...d }
@@ -60,7 +61,7 @@ export function setup(opts: { page?: Page; draft?: PageDraft; draftFields?: Part
     last('commit').resolve(page({ rev: `rev${++clock + 1}`, ...(stored ? { meta: stored.meta, body: stored.body } : {}), ...over }))
     await settle()
   }
-  return { c, api, calls, edit, puts, last, settle, answerPut, answerCommit, onConflict, onCommitted, onExternalChange, read, setContent: (d: Partial<Draft>) => (current = { ...current, ...d }) }
+  return { c, api, calls, edit, puts, last, settle, answerPut, answerCommit, onConflict, onCommitted, onStored, onExternalChange, read, setContent: (d: Partial<Draft>) => (current = { ...current, ...d }) }
 }
 
 // What the server's GET shows after our store: the file, and the draft we just stored.
@@ -95,6 +96,16 @@ describe('autosave stores a draft, never the file', () => {
     expect(t.puts()[0].input.meta.title).toBe('新标题')
     await t.answerPut()
     expect(t.c.state).toBe('drafted')
+  })
+
+  it('says when a draft was stored, so that closing the tab afterwards still counts as writing', async () => {
+    const t = setup()
+    t.edit({ title: '新' })
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(t.onStored).not.toHaveBeenCalled()
+    await t.answerPut()
+    expect(t.onStored).toHaveBeenCalledTimes(1)
+    expect(t.onStored).toHaveBeenCalledWith(t.c.page.id)
   })
 
   it('never commits by itself: the file is for commit to write', async () => {

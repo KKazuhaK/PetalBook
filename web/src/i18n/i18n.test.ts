@@ -8,6 +8,8 @@ import { propsEn } from './props/en'
 import { propsZhCN } from './props/zh-CN'
 import { boardsEn } from './boards/en'
 import { boardsZhCN } from './boards/zh-CN'
+import { homeEn } from './home/en'
+import { homeZhCN } from './home/zh-CN'
 
 describe('decideLanguage', () => {
   it('uses a saved choice over the browser', () => {
@@ -87,11 +89,18 @@ describe('the language in effect at load', () => {
 // values too, because a function in one language and text in the other is the
 // kind of difference a type cast could hide.
 describe('dictionaries', () => {
-  const walk = (a: unknown, b: unknown, path: string, problems: string[]) => {
+  // `lists`: arrays of sentences only have to be lists of text; each language has as many as it likes.
+  const walk = (a: unknown, b: unknown, path: string, problems: string[], lists = false) => {
     const kind = (v: unknown) => (typeof v === 'function' ? 'function' : typeof v === 'string' ? 'string' : v !== null && typeof v === 'object' ? 'object' : typeof v)
     if (kind(a) !== kind(b)) return void problems.push(`${path}: ${kind(a)} vs ${kind(b)}`)
     if (kind(a) === 'function') {
       if ((a as () => void).length !== (b as () => void).length) problems.push(`${path}: takes ${(a as () => void).length} vs ${(b as () => void).length} arguments`)
+      return
+    }
+    if (lists && Array.isArray(a)) {
+      if (!Array.isArray(b)) return void problems.push(`${path}: list vs not`)
+      if (a.length === 0 || b.length === 0) problems.push(`${path}: an empty list`)
+      if (![...a, ...b].every((x) => typeof x === 'string' && x.trim() !== '')) problems.push(`${path}: not all text`)
       return
     }
     if (kind(a) !== 'object') return
@@ -99,7 +108,7 @@ describe('dictionaries', () => {
     const kb = Object.keys(b as object).sort()
     for (const k of ka) if (!kb.includes(k)) problems.push(`${path}.${k}: missing in en`)
     for (const k of kb) if (!ka.includes(k)) problems.push(`${path}.${k}: extra in en`)
-    for (const k of ka) if (kb.includes(k)) walk((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k], `${path}.${k}`, problems)
+    for (const k of ka) if (kb.includes(k)) walk((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k], `${path}.${k}`, problems, lists)
   }
 
   it('have the same keys, with functions where the other has functions', () => {
@@ -108,6 +117,7 @@ describe('dictionaries', () => {
     walk(adminZhCN, adminEn, 'admin', problems)
     walk(propsZhCN, propsEn, 'props', problems)
     walk(boardsZhCN, boardsEn, 'boards', problems)
+    walk(homeZhCN, homeEn, 'home', problems, true)
     expect(problems).toEqual([])
   })
   it('English has no Chinese text in it', () => {
@@ -115,6 +125,7 @@ describe('dictionaries', () => {
     const found: string[] = []
     const scan = (v: unknown, path: string) => {
       if (typeof v === 'string' && cjk.test(v)) found.push(path)
+      else if (Array.isArray(v)) v.forEach((x, i) => scan(x, `${path}[${i}]`))
       else if (typeof v === 'function') {
         // Called with stand-in arguments; the one that takes a list gets a list.
         const args = Array.from({ length: v.length }, () => (path.endsWith('.list') && path.includes('fmt') ? ['x'] : 'x'))
@@ -126,7 +137,28 @@ describe('dictionaries', () => {
     scan(adminEn, 'admin')
     scan(propsEn, 'props')
     scan(boardsEn, 'boards')
+    scan(homeEn, 'home')
     expect(found).toEqual([])
+  })
+  it('the sentences of the greeting use only the placeholders the code fills, in both languages', () => {
+    const known = new Set(['name', 'years', 'days', 'n', 'term'])
+    const bad: string[] = []
+    const scan = (v: unknown, path: string) => {
+      if (typeof v === 'string') {
+        for (const m of v.matchAll(/\{(\w+)\}/g)) if (!known.has(m[1])) bad.push(`${path}: {${m[1]}}`)
+      } else if (Array.isArray(v)) v.forEach((x, i) => scan(x, `${path}[${i}]`))
+      else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) scan(x, `${path}.${k}`)
+    }
+    scan(homeZhCN.greet, 'zh')
+    scan(homeEn.greet, 'en')
+    expect(bad).toEqual([])
+    // Each situation that needs a number has it in every sentence of both languages.
+    for (const g of [homeZhCN.greet, homeEn.greet]) {
+      for (const s of g.situations.longAbsence) expect(s).toContain('{days}')
+      for (const s of g.situations.manyToday) expect(s).toContain('{n}')
+      for (const s of g.anniversary) expect(s).toContain('{years}')
+      for (const s of g.termGreetings) expect(s).toContain('{term}')
+    }
   })
   it('English plurals read correctly', () => {
     expect(en.list.allLoaded(1)).toBe('1 page')
