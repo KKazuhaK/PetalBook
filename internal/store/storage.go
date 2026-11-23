@@ -34,21 +34,24 @@ type SpaceStorage struct {
 	Pinned     bool
 	Exempt     bool
 	IndexBytes int64
+	// AssetsRepo: the space has an attachment repository.
+	AssetsRepo bool
 }
 
 // GetSpaceStorage reads the storage columns of a space.
 func GetSpaceStorage(ctx context.Context, q Q, id string) (SpaceStorage, error) {
 	var s SpaceStorage
-	var used, pinned, exempt int64
-	err := q.QueryRow(ctx, `SELECT last_used, cache_state, pinned, exempt, index_bytes FROM spaces WHERE id = ?`, id).
-		Scan(&used, &s.Cache, &pinned, &exempt, &s.IndexBytes)
+	var used, pinned, exempt, assets int64
+	err := q.QueryRow(ctx, `SELECT last_used, cache_state, pinned, exempt, index_bytes,
+		(SELECT COUNT(*) FROM asset_remotes ar WHERE ar.space_id = spaces.id AND ar.url <> '') FROM spaces WHERE id = ?`, id).
+		Scan(&used, &s.Cache, &pinned, &exempt, &s.IndexBytes, &assets)
 	if errors.Is(err, sql.ErrNoRows) {
 		return s, ErrNotFound
 	}
 	if used > 0 {
 		s.LastUsed = fromMS(used)
 	}
-	s.Pinned, s.Exempt = pinned != 0, exempt != 0
+	s.Pinned, s.Exempt, s.AssetsRepo = pinned != 0, exempt != 0, assets != 0
 	return s, err
 }
 
