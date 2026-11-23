@@ -320,11 +320,11 @@ func (x *read) prune(o *ordering, segs []segment) ([]segment, error) {
 		case s.kind == segOther:
 			first := valueSet(o.key, others)
 			first.sql += ` AND pos = 0`
-			c, err := x.countUpTo(&first, smallLead)
+			c, err := x.countUpTo(&first, x.plan.lead)
 			if err != nil {
 				return nil, err
 			}
-			if c > smallLead {
+			if c > x.plan.lead {
 				break
 			}
 			// Few rows, put in order by a sort of them.
@@ -349,14 +349,14 @@ func (x *read) prune(o *ordering, segs []segment) ([]segment, error) {
 // walk reads a page of the listing by walking its order from the cursor and
 // looking each page up against the conditions: a short stretch first, which
 // holds the page where most pages match, then longer ones. It looks at no more
-// than walkBudget pages, unless the last stretch found pages at a rate that
+// than plan.budget pages, unless the last stretch found pages at a rate that
 // says where the page will be full, and took a time that says getting there
 // costs less than walkTime (conditions that most pages fail at the first
 // lookup): then it goes on to there. ok is false when the walk is given up,
 // and nothing is returned then.
 func (x *read) walk(q Query, limit int, o *ordering, segs []segment, conds []cond) (res Result, ok bool, err error) {
 	start := time.Now()
-	allowed := walkBudget(limit) // pages that may be looked at
+	allowed := x.plan.budget(limit) // pages that may be looked at
 	looked, stretches := 0, 0
 	// What the last stretch says: the pages it looked at, those it found, and
 	// what a page cost.
@@ -375,7 +375,7 @@ func (x *read) walk(q Query, limit int, o *ordering, segs []segment, conds []con
 				// stretch says little of the cost of a page: the query has its own.)
 				more := (limit + 1 - len(rows)) * lastLooked / lastFound
 				need := looked + more + more/4 + 16
-				if need > allowed && need <= 20*walkBudget(limit) && time.Since(start)+rate*time.Duration(need-looked) <= walkTime {
+				if need > allowed && need <= 20*x.plan.budget(limit) && time.Since(start)+rate*time.Duration(need-looked) <= walkTime {
 					allowed = need
 				}
 			}
@@ -629,7 +629,7 @@ func (x *read) listPlanned(q Query, limit int, o *ordering, cur *cursor, conds [
 	switch n := m.count(); {
 	case n == 0:
 		return Result{Items: []Summary{}}, nil
-	case n <= smallSet:
+	case n <= x.plan.set:
 		return x.listFew(q, limit, o, cur, m)
 	}
 	if !pruned {

@@ -83,7 +83,7 @@ func flipSpace(t *testing.T) *Index {
 // flipRounds is how many times each reader reads each question.
 func flipRounds() int {
 	if raceDetector {
-		return 15
+		return 6 // each reader still reads each of the five orders at least once
 	}
 	return 60
 }
@@ -124,10 +124,9 @@ func checkFlipListing(t *testing.T, x *Index, q Query, status, prio string, want
 // can be read, while a writer swaps pages, and checks that each page of a
 // listing holds exactly the pages that met its conditions at one moment.
 func TestListingsReadOneSnapshot(t *testing.T) {
+	t.Parallel()
 	x := flipSpace(t)
-	old := lookupPart
-	lookupPart = 20 // many pages are looked up in parts, on several connections
-	t.Cleanup(func() { lookupPart = old })
+	x.plan.part = 20 // many pages are looked up in parts, on several connections
 	routes := []struct {
 		name              string
 		lead, set, budget int
@@ -146,7 +145,7 @@ func TestListingsReadOneSnapshot(t *testing.T) {
 	half := flipping / 2
 	for _, rt := range routes {
 		t.Run(rt.name, func(t *testing.T) {
-			setPlan(t, rt.lead, rt.set, rt.budget)
+			setPlan(t, x, rt.lead, rt.set, rt.budget)
 			var wg sync.WaitGroup
 			for w := range 3 {
 				wg.Add(1)
@@ -181,6 +180,7 @@ func TestListingsReadOneSnapshot(t *testing.T) {
 // without the remembered counts of Groups, while a writer swaps pages: every
 // count is that of one moment.
 func TestCountsReadOneSnapshot(t *testing.T) {
+	t.Parallel()
 	x := flipSpace(t)
 	half := flipping / 2
 	routes := []struct {
@@ -189,7 +189,7 @@ func TestCountsReadOneSnapshot(t *testing.T) {
 	}{{"sets", 0}, {"smallest first", 1 << 30}}
 	for _, rt := range routes {
 		t.Run(rt.name, func(t *testing.T) {
-			setPlan(t, rt.lead, smallSet, walkBudget(0))
+			setPlan(t, x, rt.lead, defaultPlan.set, defaultPlan.budget(0))
 			var wg sync.WaitGroup
 			var cached atomic.Int64
 			for w := range 3 {
@@ -248,7 +248,7 @@ func checkGroups(t *testing.T, groups func(GroupQuery) (GroupResult, error), q G
 func TestGenerationMovesAtTheCommit(t *testing.T) {
 	x := openIndex(t)
 	before := x.gen.Load()
-	if _, err := x.Put("a.md", []byte("---\nid: A\n---\nx\n"), clock); err != nil {
+	if _, err := x.Put("a.md", []byte("---\nid: A\n---\nx\n"), clock()); err != nil {
 		t.Fatal(err)
 	}
 	if err := x.AddFolder("b/c"); err != nil {

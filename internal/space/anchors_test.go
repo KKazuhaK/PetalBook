@@ -309,6 +309,7 @@ folders:
 `
 
 func TestReadersFollowAliasesAndMergeKeys(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	writeSpaceYML(t, s, sharedSettings)
 	want := map[string]string{"A": "wenan", "B": "wenan", "C": "other", "D": "other", "E": "wenan"}
@@ -350,6 +351,7 @@ tags:
 // --- writing: nothing but the target changes -----------------------------------
 
 func TestDeletingAFolderLeavesWhatItsAnchorsMeantToOthers(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	for _, f := range []string{"A", "B", "C", "D", "E"} {
 		mustCreate(t, s, f, meta("title", f), "x\n")
@@ -394,6 +396,7 @@ func TestDeletingAFolderLeavesWhatItsAnchorsMeantToOthers(t *testing.T) {
 }
 
 func TestDeletingAFolderThatIsAnAliasLeavesTheAnchor(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	for _, f := range []string{"C", "D", "E"} {
 		mustCreate(t, s, f, meta("title", f), "x\n")
@@ -421,6 +424,7 @@ func TestDeletingAFolderThatIsAnAliasLeavesTheAnchor(t *testing.T) {
 }
 
 func TestMovingAFolderLeavesWhatItsAnchorsMeantToOthers(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	for _, f := range []string{"A", "B", "C", "D"} {
 		mustCreate(t, s, f, meta("title", f), "x\n")
@@ -455,6 +459,7 @@ func TestMovingAFolderLeavesWhatItsAnchorsMeantToOthers(t *testing.T) {
 }
 
 func TestViewEditsLeaveWhatAnchorsMeanToOthers(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	for _, f := range []string{"A", "B", "C", "D", "E"} {
 		mustCreate(t, s, f, meta("title", f), "x\n")
@@ -516,6 +521,7 @@ func TestViewEditsLeaveWhatAnchorsMeanToOthers(t *testing.T) {
 }
 
 func TestUnbindingAndBindingLeaveWhatAnchorsMeanToOthers(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	for _, f := range []string{"A", "B", "C", "D", "E"} {
 		mustCreate(t, s, f, meta("title", f), "x\n")
@@ -561,6 +567,7 @@ func TestUnbindingAndBindingLeaveWhatAnchorsMeanToOthers(t *testing.T) {
 }
 
 func TestDeletingATypeUnbindsThroughAliasesAndKeepsTheRest(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	if _, err := putCurrent(s, "wenan", TypeInput{}); err != nil {
 		t.Fatal(err)
@@ -583,6 +590,7 @@ func TestDeletingATypeUnbindsThroughAliasesAndKeepsTheRest(t *testing.T) {
 }
 
 func TestTagColourWritesLeaveWhatAnchorsMeanToOthers(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	src := `tags:
   one:
@@ -636,6 +644,7 @@ func TestTagColourWritesLeaveWhatAnchorsMeanToOthers(t *testing.T) {
 }
 
 func TestAnAnchorNameUsedTwiceDoesNotChangeWhatAnAliasMeans(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	for _, f := range []string{"A", "B", "C", "D"} {
 		mustCreate(t, s, f, meta("title", f), "x\n")
@@ -663,6 +672,7 @@ func TestAnAnchorNameUsedTwiceDoesNotChangeWhatAnAliasMeans(t *testing.T) {
 }
 
 func TestAnEditThatWritesOverAnAnchorIsMadeAgainWithoutAliases(t *testing.T) {
+	t.Parallel()
 	// What the check before a write is for: an edit that does not go by the
 	// rule (it changes a node in place that an alias elsewhere refers to) still
 	// does not change what the alias means.
@@ -850,6 +860,7 @@ func TestRecoveryCostsNoMoreThanTheFileIsLarge(t *testing.T) {
 // --- a delete that cannot take its settings out ------------------------------
 
 func TestADeleteWhoseSettingsCannotBeRemovedIsRefusedBeforeAnythingIsDeleted(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	p := mustCreate(t, s, "A", meta("title", "x"), "x\n")
 	mustCreate(t, s, "B", meta("title", "y"), "y\n")
@@ -972,6 +983,7 @@ func randomSettings(r *rand.Rand) (text string, folders []string) {
 // what every folder's entry means afterwards (as the YAML library reads the
 // file) with what the write was to do.
 func TestWritesChangeOnlyWhatTheyTarget(t *testing.T) {
+	t.Parallel()
 	r := rand.New(rand.NewSource(20261122))
 	under := func(f, of string) bool { return f == of || strings.HasPrefix(f, of+"/") }
 	strip := func(e any) (any, bool) { // an entry without what the server keeps there; false if nothing is left
@@ -1143,6 +1155,7 @@ func TestWritesChangeOnlyWhatTheyTarget(t *testing.T) {
 // views the server reads from random settings with what the YAML library makes
 // of the same text.
 func TestTheServerReadsSettingsAsTheLibraryDoes(t *testing.T) {
+	t.Parallel()
 	r := rand.New(rand.NewSource(7))
 	for i := 0; i < 400; i++ {
 		text, _ := randomSettings(r)

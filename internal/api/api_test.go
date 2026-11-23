@@ -129,6 +129,7 @@ func wantError(t *testing.T, code int, r map[string]any, raw string, status int,
 var rfc3339 = regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$`)
 
 func TestMetaAndRouting(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	code, r, raw := f.do("GET", "/api/meta", nil)
 	if code != 200 || r["version"] != "test-1" || raw != "{\"version\":\"test-1\",\"maxUpload\":10485760,\"maxImport\":104857600,\"spaces\":[{\"id\":\"default\",\"name\":\"测试空间\",\"role\":\"owner\",\"permissions\":[\"read\",\"write\",\"members\",\"manage\"],\"personal\":true,\"sync\":\"local\",\"inbox\":\"Inbox\",\"disabled\":false}]}\n" {
@@ -149,6 +150,7 @@ func TestMetaAndRouting(t *testing.T) {
 }
 
 func TestHostRestriction(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, func(o *api.Options) { o.RestrictHost = true })
 	for host, want := range map[string]int{"localhost:8080": 200, "127.0.0.1:1": 200, "[::1]:9": 200, "app.localhost": 200, "evil.example.com": 403, "evil.example.com:8080": 403, "10.0.0.5": 403} {
 		req := httptest.NewRequest("GET", "/api/meta", nil)
@@ -162,6 +164,7 @@ func TestHostRestriction(t *testing.T) {
 }
 
 func TestCreatePage(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	// Sent as text so the order of meta is the one a client chose.
 	code, r, raw := f.do("POST", base+"/pages", `{"folder":"Tang","meta":{"id":"CLIENTID00","created":"1999-01-01","title":"暮雪","tags":["玉兰"],"series":"冬季"},"body":"你听得见么？\n"}`)
@@ -197,6 +200,7 @@ func TestCreatePage(t *testing.T) {
 }
 
 func TestCreateRejections(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, func(o *api.Options) { o.MaxBody = 2048 })
 	cases := []struct {
 		name   string
@@ -232,6 +236,7 @@ func TestCreateRejections(t *testing.T) {
 }
 
 func TestGetPage(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	p := f.create("", map[string]any{"title": "T"}, "body\n")
 	code, r, raw := f.do("GET", base+"/pages/"+p["id"].(string), nil)
@@ -248,6 +253,7 @@ func TestGetPage(t *testing.T) {
 }
 
 func TestSavePage(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	p := f.create("Tang", map[string]any{"title": "旧名"}, "v1\n")
 	id, path := p["id"].(string), base+"/pages/"+p["id"].(string)
@@ -324,6 +330,7 @@ func (f *fixture) getBody(id string) (string, string) {
 }
 
 func TestMoveAndDeletePage(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	p := f.create("", map[string]any{"title": "T"}, "")
 	id := p["id"].(string)
@@ -358,6 +365,7 @@ func TestMoveAndDeletePage(t *testing.T) {
 }
 
 func TestFoldersTreeAndTags(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	code, r, raw := f.do("POST", base+"/folders", map[string]any{"path": "随笔/2027"})
 	if code != 201 || r["path"] != "随笔/2027" {
@@ -394,6 +402,7 @@ func TestFoldersTreeAndTags(t *testing.T) {
 }
 
 func TestListFilterSortAndPaginate(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	for i := 0; i < 12; i++ {
 		meta := map[string]any{"tags": []string{"all"}}
@@ -551,6 +560,7 @@ func TestListFilterSortAndPaginate(t *testing.T) {
 }
 
 func TestReindexAndIndexFollowsExternalEdits(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.create("", map[string]any{"title": "A"}, "x")
 	os.WriteFile(filepath.Join(f.dir, "ext.md"), []byte("---\nid: EXTERN4001\ntitle: 外来\n---\n外来的页\n"), 0o644)

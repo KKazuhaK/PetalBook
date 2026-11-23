@@ -9,6 +9,7 @@ import (
 )
 
 func TestSideFilesLeftByACrashAfterTheDatabaseWentAreRemovedAtTheNextOpen(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	openAt(t, root).Close()
@@ -38,6 +39,7 @@ func TestSideFilesLeftByACrashAfterTheDatabaseWentAreRemovedAtTheNextOpen(t *tes
 }
 
 func TestTrackedSideFilesOfAGoneDatabaseAreLeftAlone(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	openAt(t, root).Close()

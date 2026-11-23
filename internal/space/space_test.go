@@ -88,6 +88,7 @@ func exists(s *Space, rel string) bool {
 }
 
 func TestOpenInitialisesTheDirectory(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := filepath.Join(t.TempDir(), "notes", "deep") // does not exist yet
 	s := openAt(t, root, func(o *Options) { o.Name = "我的笔记" })
@@ -124,6 +125,7 @@ func TestOpenInitialisesTheDirectory(t *testing.T) {
 }
 
 func TestCreateAndGet(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	p := mustCreate(t, s, "Tang", meta("title", "暮雪", "subtitle", "下一个路口", "tags", []any{"玉兰", "黄昏", "玉兰"}, "series", "冬季", "id", "CLIENTID00", "created", "1999-01-01"), "你听得见么？\n")
 	if !page.ValidID(p.ID) || p.ID == "CLIENTID00" {
@@ -172,6 +174,7 @@ func TestCreateAndGet(t *testing.T) {
 }
 
 func TestUntitledPage(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	p := mustCreate(t, s, "", meta("title", "   ", "subtitle", "", "tags", []any{}), "只有一句话，没有标题。\n")
 	today := time.Now().UTC().Format("2006-01-02")
@@ -213,6 +216,7 @@ func TestUntitledPage(t *testing.T) {
 }
 
 func TestNamingAndCollisions(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	var paths []string
 	for i := 0; i < 3; i++ {
@@ -263,6 +267,7 @@ func TestNamingAndCollisions(t *testing.T) {
 }
 
 func TestSaveRenamesButKeepsID(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	p := mustCreate(t, s, "Tang", meta("title", "旧名", "series", "冬季"), "正文\n")
 	n, err := s.Save(Author{}, p.ID, p.Rev, meta("id", p.ID, "title", "新名", "series", "冬季"), "正文改\n")
@@ -283,6 +288,7 @@ func TestSaveRenamesButKeepsID(t *testing.T) {
 }
 
 func TestSaveKeepsUnknownFieldsInOrder(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	p := mustCreate(t, s, "", meta("title", "T"), "b")
 	m := meta("zeta", int64(1), "id", p.ID, "title", "T", "alpha", page.Meta{{Key: "k", Value: "v"}}, "created", p.Meta.Created(), "status", "定稿")
@@ -315,6 +321,7 @@ func TestSaveKeepsUnknownFieldsInOrder(t *testing.T) {
 }
 
 func TestStaleBaseRevConflicts(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	p := mustCreate(t, s, "", meta("title", "T"), "v1\n")
 	if _, err := s.Save(Author{}, p.ID, p.Rev, p.Meta, "v2\n"); err != nil {
@@ -346,6 +353,7 @@ func TestStaleBaseRevConflicts(t *testing.T) {
 }
 
 func TestSaveValidation(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	p := mustCreate(t, s, "", meta("title", "T"), "b")
 	var inv *InvalidError
@@ -372,6 +380,7 @@ func TestSaveValidation(t *testing.T) {
 }
 
 func TestMoveAndDelete(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	a := mustCreate(t, s, "x", meta("title", "A"), "")
 	mustCreate(t, s, "y/z", meta("title", "A"), "") // the name is taken there
@@ -423,6 +432,7 @@ func TestMoveAndDelete(t *testing.T) {
 }
 
 func TestFolders(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	if _, err := s.CreateFolder(Author{}, "随笔/2027"); err != nil {
 		t.Fatal(err)
@@ -460,6 +470,7 @@ func TestFolders(t *testing.T) {
 }
 
 func TestPathTraversalIsRejected(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	p := mustCreate(t, s, "", meta("title", "T"), "")
 	outside := t.TempDir()
@@ -525,6 +536,7 @@ func TestPathTraversalIsRejected(t *testing.T) {
 }
 
 func TestExternalEditsAreSeenAtStartup(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -575,6 +587,7 @@ func TestExternalEditsAreSeenAtStartup(t *testing.T) {
 }
 
 func TestRevMatchesGitAndKeepsCRLFFilesReadable(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	raw := "---\r\nid: CRFCRF0001\r\ntitle: 行尾\r\n---\r\n第一行\r\n第二行\r\n"
@@ -604,6 +617,7 @@ func TestRevMatchesGitAndKeepsCRLFFilesReadable(t *testing.T) {
 }
 
 func TestWritesLeaveNothingBehind(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	for i := 0; i < 5; i++ {
 		p := mustCreate(t, s, "f", meta("title", fmt.Sprint("t", i)), "x")
@@ -621,6 +635,7 @@ func TestWritesLeaveNothingBehind(t *testing.T) {
 }
 
 func TestParseCommitter(t *testing.T) {
+	t.Parallel()
 	n, e, err := ParseCommitter("")
 	if err != nil || n != "PetalBook" || e != "petalbook@localhost" {
 		t.Fatalf("%q %q %v", n, e, err)
@@ -637,6 +652,7 @@ func TestParseCommitter(t *testing.T) {
 }
 
 func TestConcurrentWritersAndReaders(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	base := mustCreate(t, s, "", meta("title", "共享"), "v0\n")
 

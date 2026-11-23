@@ -335,6 +335,7 @@ func typesScenario(t *testing.T, base string, owner, editor, viewer caller, refu
 }
 
 func TestTypesAndTableViewInAccountsMode(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		tm := newTeam(t, a)
 		typesScenario(t, "/api/spaces/"+tm.sid, asClient(tm.owner), asClient(tm.editor), asClient(tm.viewer), true)
@@ -348,6 +349,7 @@ func TestTypesAndTableViewInAccountsMode(t *testing.T) {
 }
 
 func TestTypesAndTableViewInSingleUserMode(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	c := asFixture(f)
 	typesScenario(t, base, c, c, c, false)
@@ -360,6 +362,7 @@ func TestTypesAndTableViewInSingleUserMode(t *testing.T) {
 // A type file that cannot be used and has no earlier version is no type; the
 // notice says so, and a request that makes the type keeps what the file was.
 func TestATypeFileThatCannotBeUsedIsPutAside(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	if err := os.MkdirAll(filepath.Join(f.dir, ".petalbook", "types"), 0o755); err != nil {
 		t.Fatal(err)
@@ -393,6 +396,7 @@ func TestATypeFileThatCannotBeUsedIsPutAside(t *testing.T) {
 // A summary says which properties the listing holds only in part, so that a
 // table does not write a shortened copy back.
 func TestListingSaysWhichPropsArePartial(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	code, r, raw := f.do("POST", base+"/pages", map[string]any{"meta": map[string]any{"title": "P", "status": "todo",
 		"note": strings.Repeat("字", 301), "obj": map[string]any{"a": 1}}, "body": "x\n"})

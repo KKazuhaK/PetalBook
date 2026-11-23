@@ -111,6 +111,7 @@ func signedInAs(t *testing.T, c *client) string {
 }
 
 func TestOIDCStartIsBoundToTheBrowser(t *testing.T) {
+	t.Parallel()
 	f := newFakeIDP(t)
 	eachAccounts(t, f.opts(false), func(t *testing.T, a *acc) {
 		a.setup("kazuha", pw)
@@ -141,12 +142,14 @@ func TestOIDCStartIsBoundToTheBrowser(t *testing.T) {
 }
 
 func TestOIDCNotConfigured(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		a.newClient("").do("POST", "/api/auth/oidc/start", map[string]any{}).want(t, 404, "not_found")
 	})
 }
 
 func TestOIDCStartsAreRateLimited(t *testing.T) {
+	t.Parallel()
 	f := newFakeIDP(t)
 	eachAccounts(t, f.opts(false), func(t *testing.T, a *acc) {
 		c := a.newClient("203.0.113.77")
@@ -162,6 +165,7 @@ func TestOIDCStartsAreRateLimited(t *testing.T) {
 }
 
 func TestOIDCSetupCreatesTheAdministrator(t *testing.T) {
+	t.Parallel()
 	f := newFakeIDP(t)
 	eachAccounts(t, f.opts(true), func(t *testing.T, a *acc) {
 		c := a.newClient("")
@@ -219,6 +223,7 @@ func TestOIDCSetupCreatesTheAdministrator(t *testing.T) {
 }
 
 func TestOIDCLoginAndAutoCreate(t *testing.T) {
+	t.Parallel()
 	f := newFakeIDP(t)
 	for _, auto := range []bool{false, true} {
 		eachAccounts(t, f.opts(auto), func(t *testing.T, a *acc) {
@@ -275,6 +280,7 @@ func mustUsers(t *testing.T, a *acc) []store.User {
 }
 
 func TestOIDCNeverMatchesAccountsByEmail(t *testing.T) {
+	t.Parallel()
 	f := newFakeIDP(t)
 	for _, auto := range []bool{false, true} {
 		eachAccounts(t, f.opts(auto), func(t *testing.T, a *acc) {
@@ -303,6 +309,7 @@ func TestOIDCNeverMatchesAccountsByEmail(t *testing.T) {
 }
 
 func TestOIDCInvite(t *testing.T) {
+	t.Parallel()
 	f := newFakeIDP(t)
 	eachAccounts(t, f.opts(false), func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
@@ -347,6 +354,7 @@ func TestOIDCInvite(t *testing.T) {
 }
 
 func TestOIDCLinkAndUnlink(t *testing.T) {
+	t.Parallel()
 	f := newFakeIDP(t)
 	eachAccounts(t, f.opts(false), func(t *testing.T, a *acc) {
 		kazuha := a.setup("kazuha", pw)
@@ -411,6 +419,7 @@ func TestOIDCLinkAndUnlink(t *testing.T) {
 }
 
 func TestOIDCDisabledUser(t *testing.T) {
+	t.Parallel()
 	f := newFakeIDP(t)
 	eachAccounts(t, f.opts(true), func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
@@ -432,6 +441,7 @@ func TestOIDCDisabledUser(t *testing.T) {
 }
 
 func TestOIDCReplayExpiryAndForgery(t *testing.T) {
+	t.Parallel()
 	f := newFakeIDP(t)
 	eachAccounts(t, f.opts(true), func(t *testing.T, a *acc) {
 		a.setup("kazuha", pw)
@@ -532,6 +542,7 @@ func TestOIDCReplayExpiryAndForgery(t *testing.T) {
 }
 
 func TestOIDCRejectsTokensThatDoNotVerify(t *testing.T) {
+	t.Parallel()
 	f := newFakeIDP(t)
 	eachAccounts(t, f.opts(true), func(t *testing.T, a *acc) {
 		a.setup("kazuha", pw)
@@ -562,6 +573,7 @@ func TestOIDCRejectsTokensThatDoNotVerify(t *testing.T) {
 }
 
 func TestOIDCReturnPathCannotLeaveTheApp(t *testing.T) {
+	t.Parallel()
 	f := newFakeIDP(t)
 	eachAccounts(t, f.opts(true), func(t *testing.T, a *acc) {
 		a.setup("kazuha", pw)
@@ -587,6 +599,7 @@ func TestOIDCReturnPathCannotLeaveTheApp(t *testing.T) {
 }
 
 func TestOIDCProviderDown(t *testing.T) {
+	t.Parallel()
 	f := newFakeIDP(t)
 	eachAccounts(t, f.opts(false), func(t *testing.T, a *acc) {
 		f.srv.Close()

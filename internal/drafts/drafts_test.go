@@ -607,7 +607,7 @@ func TestASlowSpaceOpenInTheSweeperDoesNotBlockOtherDrafts(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	opt := spaces.Options{Store: st, DataDir: dir, Committer: "S <s@example.test>", CommitIdle: time.Hour, CommitMax: time.Hour}
+	opt := spaces.Options{Store: st, DataDir: dir, Committer: "S <s@example.test>", CloseWait: 200 * time.Millisecond, CommitIdle: time.Hour, CommitMax: time.Hour}
 	creator, err := spaces.NewAccounts(opt)
 	if err != nil {
 		t.Fatal(err)

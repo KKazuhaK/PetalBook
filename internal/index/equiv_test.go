@@ -434,6 +434,7 @@ var equivPlans = []struct {
 }
 
 func TestEveryWayOfReadingAListingGivesWhatTheModelGives(t *testing.T) {
+	t.Parallel()
 	r := rand.New(rand.NewSource(20261122))
 	pages, queries := 160, 140
 	if testing.Short() || raceDetector {
@@ -488,7 +489,7 @@ func TestEveryWayOfReadingAListingGivesWhatTheModelGives(t *testing.T) {
 					plan = equivPlans[p]
 					name = plan.name
 				}
-				setPlan(t, plan.lead, plan.set, plan.budget)
+				setPlan(t, x, plan.lead, plan.set, plan.budget)
 				res, err := x.List(q)
 				if err != nil {
 					t.Fatalf("%s\n%s: %v", describe(), name, err)
@@ -510,6 +511,7 @@ func TestEveryWayOfReadingAListingGivesWhatTheModelGives(t *testing.T) {
 }
 
 func TestEveryWayOfCountingGroupsGivesWhatTheModelGives(t *testing.T) {
+	t.Parallel()
 	r := rand.New(rand.NewSource(20261123))
 	pages, queries := 160, 200
 	if testing.Short() || raceDetector {
@@ -523,7 +525,7 @@ func TestEveryWayOfCountingGroupsGivesWhatTheModelGives(t *testing.T) {
 		q.Folder, q.Recursive, q.Tags, q.Filters = randomScope(r)
 		want := modelGroups(t, model, q)
 		for _, plan := range equivPlans {
-			setPlan(t, plan.lead, plan.set, plan.budget)
+			setPlan(t, x, plan.lead, plan.set, plan.budget)
 			got, err := x.countGroups(q)
 			if err != nil {
 				t.Fatal(err)
@@ -543,6 +545,7 @@ func TestEveryWayOfCountingGroupsGivesWhatTheModelGives(t *testing.T) {
 // way of reading it finds the pages a search by relevance finds, in the order
 // the model puts them.
 func TestEveryWayOfReadingASearchAgrees(t *testing.T) {
+	t.Parallel()
 	r := rand.New(rand.NewSource(7))
 	x := equivIndex(t, r, 120)
 	model := loadModel(t, x)
@@ -583,7 +586,7 @@ func TestEveryWayOfReadingASearchAgrees(t *testing.T) {
 					if i >= 5 && (testing.Short() || raceDetector) {
 						break
 					}
-					setPlan(t, plan.lead, plan.set, plan.budget)
+					setPlan(t, x, plan.lead, plan.set, plan.budget)
 					var got []string
 					sq.Limit, sq.Cursor = 7, ""
 					for n := 0; n < 100; n++ {

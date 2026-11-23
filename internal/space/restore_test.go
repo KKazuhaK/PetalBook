@@ -13,7 +13,6 @@ import (
 // --- a legitimate file is never taken for one that cannot be used -----------------
 
 func TestAnEntrySharedByTenThousandFoldersCostsWhatIsWritten(t *testing.T) {
-	const n = 10000
 	shared := "shared: &tmpl\n  type: wenan\n  views:\n" +
 		"    - {id: aaa111, name: one, layout: board, filter: [{key: series, op: in, values: [a, b]}]}\n" +
 		"    - {id: aaa222, name: two, layout: table}\n"
@@ -22,6 +21,15 @@ func TestAnEntrySharedByTenThousandFoldersCostsWhatIsWritten(t *testing.T) {
 		{"through a merge key", "{<<: *tmpl, x: 1}"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			// Reading YAML costs much more under the race detector, which gets a
+			// quarter of the folders where that changes nothing; the merge key
+			// needs them all, for the file to be too large once the views are
+			// written out for each. The full size of both runs without it.
+			n := 10000
+			if raceDetector && c.entry == "*tmpl" {
+				n = 2500
+			}
+			last := fmt.Sprintf("f%05d", n-1)
 			s := open(t)
 			if _, err := putCurrent(s, "wenan", allKinds()); err != nil {
 				t.Fatal(err)
@@ -35,11 +43,11 @@ func TestAnEntrySharedByTenThousandFoldersCostsWhatIsWritten(t *testing.T) {
 				fmt.Fprintf(&b, "  f%05d: %s\n", i, c.entry)
 			}
 			writeSpaceYML(t, s, b.String())
-			timed(t, "reading the bindings and views of 10000 folders", func() {
+			timed(t, fmt.Sprintf("reading the bindings and views of %d folders", n), func() {
 				if got := len(s.Bindings()); got != n {
 					t.Errorf("%d bindings", got)
 				}
-				if got := viewNames(t, s, folderScope("f09999")); got != "one,two" {
+				if got := viewNames(t, s, folderScope(last)); got != "one,two" {
 					t.Errorf("views: %q", got)
 				}
 			})
@@ -86,8 +94,8 @@ func TestAnEntrySharedByTenThousandFoldersCostsWhatIsWritten(t *testing.T) {
 					}
 				})
 				got := spaceYML(s.Root())
-				if len(s.Bindings()) != 0 || viewNames(t, s, folderScope("f09999")) != "one,two" || viewNames(t, s, folderScope("f00004")) != "one,two" {
-					t.Errorf("%d bindings are left; views %q", len(s.Bindings()), viewNames(t, s, folderScope("f09999")))
+				if len(s.Bindings()) != 0 || viewNames(t, s, folderScope(last)) != "one,two" || viewNames(t, s, folderScope("f00004")) != "one,two" {
+					t.Errorf("%d bindings are left; views %q", len(s.Bindings()), viewNames(t, s, folderScope(last)))
 				}
 				if len(got) > before+before/2 || !strings.Contains(got, "*tmpl-no-type") {
 					t.Errorf("the file went from %d to %d bytes", before, len(got))
@@ -161,6 +169,7 @@ func noticeOf(s *Space, file string, unreadable bool) *SettingsNotice {
 const notYAML = "folders: [unclosed\n"
 
 func TestAFileThatIsNotYAMLAfterARestartIsRestoredFromTheHistory(t *testing.T) {
+	t.Parallel()
 	s := settled(t)
 	root := s.Root()
 	good := git(t, root, "rev-parse", "HEAD")
@@ -241,6 +250,7 @@ func TestAFileThatIsNotYAMLAfterARestartIsRestoredFromTheHistory(t *testing.T) {
 }
 
 func TestTheSameUnusableFileIsKeptOnce(t *testing.T) {
+	t.Parallel()
 	s := settled(t)
 	root := s.Root()
 	for round := 0; round < 3; round++ {
@@ -280,6 +290,7 @@ func TestTheSameUnusableFileIsKeptOnce(t *testing.T) {
 }
 
 func TestASpaceWhoseHistoryHasNoUsableSettingsStartsEmpty(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	setSpaceYML(t, root, notYAML)
@@ -377,6 +388,7 @@ func TestEveryKindOfUnusableFileIsRestored(t *testing.T) {
 }
 
 func TestATagsFileThatCannotBeUsedIsRestoredToo(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	s := openAt(t, t.TempDir())
 	root := s.Root()
@@ -457,6 +469,7 @@ func TestRecoveryRestoresAFileThatCannotBeUsed(t *testing.T) {
 // --- a space that follows a remote ------------------------------------------------
 
 func TestAnUnusableFileThatAPullKeepsBringingIsPutRightAndPushed(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	s := f.s
 	if _, err := putCurrent(s, "wenan", allKinds()); err != nil {
@@ -521,6 +534,7 @@ func entriesOfNotices(s *Space, file string, unreadable bool) []string {
 }
 
 func TestAnEntryThatIsNotSettingsReadsAsNoneAndIsWrittenOver(t *testing.T) {
+	t.Parallel()
 	s := settled(t)
 	root := s.Root()
 	src := "folders:\n  A: yes\n  B: {type: [x], views: 7, note: mine}\n  C: {type: wenan}\n"
@@ -585,6 +599,7 @@ func TestAnEntryThatIsNotSettingsReadsAsNoneAndIsWrittenOver(t *testing.T) {
 // --- type files -------------------------------------------------------------------
 
 func TestATypeFileThatCannotBeUsedIsRestoredFromTheHistory(t *testing.T) {
+	t.Parallel()
 	s := settled(t)
 	root := s.Root()
 	made, err := putCurrent(s, "task", TypeInput{Title: "Task", Fields: []FieldInput{{Key: "status", Kind: KindSelect, Options: []string{"todo", "done"}}}})

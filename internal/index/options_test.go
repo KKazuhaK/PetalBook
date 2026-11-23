@@ -12,14 +12,30 @@ import (
 // putProps adds a page to the folder with the given header lines.
 func putProps(t *testing.T, x *Index, folder, title string, header string) {
 	t.Helper()
-	id := fmt.Sprintf("%010s", title)
-	id = strings.Map(func(r rune) rune {
+	putAt(t, x, folder+"/"+title+".md", "id: "+propID(title)+"\ntitle: "+title+"\n"+header, "正文 "+title+"\n", time.Now())
+}
+
+// propPage is a page for loadProps: what putProps takes.
+type propPage struct{ folder, title, header string }
+
+// loadProps puts many pages in an empty index in one read of a source, which
+// is much quicker than a write of each (putProps) where a test needs hundreds.
+func loadProps(t *testing.T, x *Index, pages []propPage) {
+	t.Helper()
+	m := newMem()
+	for _, p := range pages {
+		m.put(p.folder+"/"+p.title+".md", "---\nid: "+propID(p.title)+"\ntitle: "+p.title+"\n"+p.header+"---\n正文 "+p.title+"\n")
+	}
+	syncAll(t, x, m, false)
+}
+
+func propID(title string) string {
+	return strings.Map(func(r rune) rune {
 		if r == ' ' {
 			return '0'
 		}
 		return r
-	}, id)
-	putAt(t, x, folder+"/"+title+".md", "id: "+id+"\ntitle: "+title+"\n"+header, "正文 "+title+"\n", time.Now())
+	}, fmt.Sprintf("%010s", title))
 }
 
 // listAll pages through a query with the given limit and returns the labels
@@ -295,10 +311,11 @@ func TestGroupsCountsValuesAndTheEmpty(t *testing.T) {
 }
 
 func TestGroupsAreLimited(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	m := newMem()
 	for i := 0; i < MaxGroups+5; i++ {
-		m.files[fmt.Sprintf("t/%04d.md", i)] = memFile{[]byte(fmt.Sprintf("---\nid: %010d\nv: v%04d\n---\nx\n", i, i)), clock + int64(i)}
+		m.files[fmt.Sprintf("t/%04d.md", i)] = memFile{[]byte(fmt.Sprintf("---\nid: %010d\nv: v%04d\n---\nx\n", i, i)), clock() + int64(i)}
 	}
 	if _, err := x.Sync(m, false); err != nil {
 		t.Fatal(err)
@@ -440,9 +457,11 @@ func TestOptionOrderOfASmallFolderAsksOnlyForTheGroupsItHas(t *testing.T) {
 // same cursors, as what is read by walking the order group by group, and as
 // what is read as sets.
 func TestSmallListingsFollowTheOrderOfTheGroupedRead(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	opts := []string{"todo", "doing", "done", "review"}
 	vals := []string{"todo", "doing", "done", "review", "zeta", "alpha", "beta", ""}
+	var pages []propPage
 	for i := 0; i < 120; i++ {
 		h := fmt.Sprintf("points: %d\n", i%7)
 		if v := vals[i*5%len(vals)]; v != "" {
@@ -451,11 +470,12 @@ func TestSmallListingsFollowTheOrderOfTheGroupedRead(t *testing.T) {
 		if i%3 == 0 {
 			h += "flag: x\n"
 		}
-		putProps(t, x, "t", fmt.Sprintf("P%03d", i), h)
+		pages = append(pages, propPage{"t", fmt.Sprintf("P%03d", i), h})
 	}
 	for i := 0; i < 30; i++ {
-		putProps(t, x, "other", fmt.Sprintf("Q%03d", i), "status: todo\nflag: x\n")
+		pages = append(pages, propPage{"other", fmt.Sprintf("Q%03d", i), "status: todo\nflag: x\n"})
 	}
+	loadProps(t, x, pages)
 	filters := map[string][]Filter{
 		"none":        nil,
 		"in":          {{Key: "flag", Op: "in", Values: []any{"x"}}},
@@ -467,19 +487,19 @@ func TestSmallListingsFollowTheOrderOfTheGroupedRead(t *testing.T) {
 	for name, fs := range filters {
 		for _, sort := range []string{"prop:status", "-prop:status"} {
 			for _, limit := range []int{1, 7, 200} {
-				if limit == 1 && raceDetector && name != "none" {
-					continue // 120 queries a listing, each slow under the detector
+				if limit == 1 && raceDetector && name != "in" {
+					continue // one query a page, each slow under the detector: the 40 pages of "in" are enough
 				}
 				q := Query{Folder: strp("t"), Sort: sort, PropOptions: opts, Filters: fs}
-				setPlan(t, 2000, 4000, 1000)
+				setPlan(t, x, 2000, 4000, 1000)
 				before := x.queries.Load()
 				small := listAll(t, x, q, limit)
 				if n := x.queries.Load() - before; limit == 200 && n > 8 {
 					t.Errorf("%s %s: %d queries for one page", name, sort, n)
 				}
-				setPlan(t, 0, 0, 1<<30) // the order walked, each page looked up
+				setPlan(t, x, 0, 0, 1<<30) // the order walked, each page looked up
 				walked := listAll(t, x, q, limit)
-				setPlan(t, 0, 0, 0) // the conditions as sets, picked out of the order
+				setPlan(t, x, 0, 0, 0) // the conditions as sets, picked out of the order
 				sets := listAll(t, x, q, limit)
 				if !reflect.DeepEqual(small, walked) || !reflect.DeepEqual(small, sets) {
 					t.Errorf("%s %s limit %d:\n small  %v\n walked %v\n sets   %v", name, sort, limit, small, walked, sets)
@@ -493,18 +513,21 @@ func TestSmallListingsFollowTheOrderOfTheGroupedRead(t *testing.T) {
 // queries (the sizes of the conditions, the pages of the smallest, their
 // values, the summaries), not one per group.
 func TestASelectiveFilterIsReadOnceNotPerGroup(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	opts := make([]string, 40)
 	for i := range opts {
 		opts[i] = fmt.Sprintf("o%02d", i)
 	}
-	for i := 0; i < 2500; i++ {
+	pages := make([]propPage, 2500)
+	for i := range pages {
 		h := "status: " + opts[i%40] + "\n"
 		if i%250 == 0 {
 			h += "flag: x\n"
 		}
-		putProps(t, x, "big", fmt.Sprintf("B%04d", i), h)
+		pages[i] = propPage{"big", fmt.Sprintf("B%04d", i), h}
 	}
+	loadProps(t, x, pages)
 	for _, f := range []Filter{
 		{Key: "flag", Op: "in", Values: []any{"x"}},
 		{Key: "flag", Op: "notEmpty"},
@@ -569,8 +592,8 @@ func TestGroupCountsAreRememberedUntilTheIndexChanges(t *testing.T) {
 // and the matches are found from the index ranges of the conditions, not by a
 // read of every group of the options.
 func TestOptionOrderWithAFilterNoIndexServesWalksTheFolderOnce(t *testing.T) {
-	setPlan(t, 15, 15, 10)
 	x := openIndex(t)
+	setPlan(t, x, 15, 15, 10)
 	opts := make([]string, 40)
 	for i := range opts {
 		opts[i] = fmt.Sprintf("o%02d", i)

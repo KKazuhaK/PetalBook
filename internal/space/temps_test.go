@@ -98,6 +98,7 @@ func everyKindOfWrite(t *testing.T, s *Space, n string) {
 // (EXDEV) for good. Files are written in their own folder now: whatever is
 // at that name is the repository's, never followed, moved or removed.
 func TestAPulledPetalbookTmpLinkOrFileStopsNoSave(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	for _, kind := range []string{"link", "file"} {
 		t.Run(kind, func(t *testing.T) {
@@ -144,6 +145,7 @@ func TestAPulledPetalbookTmpLinkOrFileStopsNoSave(t *testing.T) {
 // of pages, in the attachments and in the settings; a file of the repository
 // is never removed, whatever its name, and none is left changed.
 func TestLeftHalfWrittenFilesGoButNoFileOfTheRepository(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -194,6 +196,7 @@ func TestLeftHalfWrittenFilesGoButNoFileOfTheRepository(t *testing.T) {
 // whose commit names a whole folder (a folder moved): git is told to leave
 // those names out.
 func TestAFileBeingWrittenIsNeverCommitted(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -221,6 +224,7 @@ func TestAFileBeingWrittenIsNeverCommitted(t *testing.T) {
 // In a space that follows a remote, files are written the same way: a pulled
 // .petalbook-tmp link stops nothing, and nothing of the server's is pushed.
 func TestARemoteSpaceWritesBesideAPulledPetalbookTmpLink(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	mustCreate(t, f.s, "", meta("title", "Mine"), "x\n")
 	out := outsideDir(t)
@@ -273,6 +277,7 @@ func earlierBeside(t *testing.T) (root, state, old string) {
 // they were), which keeps one whole copy, so the import never takes an older
 // text for the newer one.
 func TestACrashBetweenTheCopiesOfADatabaseAndItsLogLosesNothing(t *testing.T) {
+	t.Parallel()
 	root, state, old := earlierBeside(t)
 	// The copy of the database fails after its log was copied: as a crash
 	// there, the database is not taken.
@@ -319,6 +324,7 @@ func TestACrashBetweenTheCopiesOfADatabaseAndItsLogLosesNothing(t *testing.T) {
 // A crash while an imported database is renamed (the database first) leaves
 // its log under the old name: it follows the database when the space opens.
 func TestALogLeftByAnImportFollowsItsDatabase(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	firstCommit(t, root)
@@ -339,6 +345,7 @@ func TestALogLeftByAnImportFollowsItsDatabase(t *testing.T) {
 // beside it is not the server's to move: replayed into another database it
 // would be another one's text. The whole family stays as it is.
 func TestATrackedDatabaseKeepsItsUntrackedLog(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	firstCommit(t, root)

@@ -57,6 +57,7 @@ func preloaded(t *testing.T, files map[string]string, branch string) (remote str
 }
 
 func TestConnectToANewEmptyRemotePushesTheHistory(t *testing.T) {
+	t.Parallel()
 	s := localSpace(t)
 	mustCreate(t, s, "Tang", meta("title", "暮雪"), "v1\n")
 	mustCreate(t, s, "", meta("title", "Second"), "v2\n")
@@ -91,6 +92,7 @@ func TestConnectToANewEmptyRemotePushesTheHistory(t *testing.T) {
 }
 
 func TestConnectingAPristineSpaceTakesTheRemotesContentAndHistory(t *testing.T) {
+	t.Parallel()
 	remote := preloaded(t, map[string]string{
 		"Theirs.md":   pageText("THEMS00001", "Theirs", "t\n"),
 		"d/Nested.md": pageText("THEMS00002", "Nested", "n\n"),
@@ -148,6 +150,7 @@ func TestConnectingAPristineSpaceTakesTheRemotesContentAndHistory(t *testing.T) 
 }
 
 func TestConnectWhenOneHistoryContainsTheOther(t *testing.T) {
+	t.Parallel()
 	// The space is behind: it was connected before, and somebody pushed since.
 	f := newRemoteSpace(t)
 	mustCreate(t, f.s, "", meta("title", "Ours"), "o\n")
@@ -191,6 +194,7 @@ func TestConnectWhenOneHistoryContainsTheOther(t *testing.T) {
 }
 
 func TestConnectWithTwoHistoriesIsAConflictAndChangesNothing(t *testing.T) {
+	t.Parallel()
 	remote := preloaded(t, map[string]string{"Theirs.md": pageText("THEMS00001", "Theirs", "t\n")}, "main")
 	theirTip := git(t, remote, "rev-parse", "main")
 	s := localSpace(t)
@@ -237,6 +241,7 @@ func TestConnectWithTwoHistoriesIsAConflictAndChangesNothing(t *testing.T) {
 }
 
 func TestFailedConnectionLeavesTheSpaceAsItWas(t *testing.T) {
+	t.Parallel()
 	// The remote has content but no space.yml, so connecting must push one:
 	// make that push fail, after the clone has already taken the remote's content.
 	remote := preloaded(t, map[string]string{"Theirs.md": pageText("THEMS00001", "Theirs", "t\n")}, "main")
@@ -283,6 +288,7 @@ func TestFailedConnectionLeavesTheSpaceAsItWas(t *testing.T) {
 }
 
 func TestDisconnectMakesTheSpaceLocalAgain(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	mustCreate(t, f.s, "", meta("title", "Before"), "b\n")
 	tip := f.tip()
@@ -319,6 +325,7 @@ func TestDisconnectMakesTheSpaceLocalAgain(t *testing.T) {
 }
 
 func TestSpaceListsFoldersOfARemoteSpaceAfterReconnect(t *testing.T) {
+	t.Parallel()
 	// Folders made while local (with .gitkeep) are pushed like anything else.
 	s := localSpace(t)
 	if _, err := s.CreateFolder(Author{}, "Drafts/2027"); err != nil {

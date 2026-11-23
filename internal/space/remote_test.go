@@ -287,6 +287,7 @@ func consistent(t *testing.T, s *Space) {
 }
 
 func TestEveryChangeIsPushedBeforeItIsAnswered(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	if got := f.remoteLog(); len(got) != 1 {
 		t.Fatalf("connecting pushed %v", got)
@@ -345,6 +346,7 @@ func TestEveryChangeIsPushedBeforeItIsAnswered(t *testing.T) {
 }
 
 func TestSpaceFilesOfARemoteSpaceAreTracked(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	if files := git(t, f.remote, "-c", "core.quotepath=false", "ls-tree", "-r", "--name-only", "main"); !strings.Contains(files, ".petalbook/space.yml") {
 		t.Fatalf("space.yml was not pushed:\n%s", files)
@@ -360,6 +362,7 @@ func TestSpaceFilesOfARemoteSpaceAreTracked(t *testing.T) {
 }
 
 func TestRejectedPushIsReplayedOnTheNewTip(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	o := f.theirs()
 	var once sync.Once
@@ -390,6 +393,7 @@ func TestRejectedPushIsReplayedOnTheNewTip(t *testing.T) {
 }
 
 func TestReplayThatConflictsAnswersTheOrdinaryConflict(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	p := mustCreate(t, f.s, "", meta("title", "Shared"), "v1\n")
 	o := f.theirs()
@@ -424,6 +428,7 @@ func TestReplayThatConflictsAnswersTheOrdinaryConflict(t *testing.T) {
 }
 
 func TestPushWhoseAnswerWasLostIsNotAFailureAndNotRepeated(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	f.net.losePush = true
 	p, err := f.s.Create(Author{}, CreateInput{Meta: meta("title", "Lost answer"), Body: "x\n"})
@@ -447,6 +452,7 @@ func TestPushWhoseAnswerWasLostIsNotAFailureAndNotRepeated(t *testing.T) {
 }
 
 func TestUnreachableRemoteUndoesTheChangeCompletely(t *testing.T) {
+	t.Parallel()
 	for _, when := range []string{"before anything", "after the commit"} {
 		t.Run(when, func(t *testing.T) {
 			f := newRemoteSpace(t)
@@ -503,6 +509,7 @@ func TestUnreachableRemoteUndoesTheChangeCompletely(t *testing.T) {
 }
 
 func TestFetchIsSkippedRightAfterAnotherAndFailuresAreAnsweredFast(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t, func(o *RemoteOptions) { o.FetchFresh, o.FailFast = time.Hour, time.Hour })
 	for i := 0; i < 3; i++ {
 		mustCreate(t, f.s, "", meta("title", fmt.Sprint("P", i)), "x\n")
@@ -526,6 +533,7 @@ func TestFetchIsSkippedRightAfterAnotherAndFailuresAreAnsweredFast(t *testing.T)
 }
 
 func TestRewrittenHistoryPausesChangesAndAcceptingResumesThem(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	p := mustCreate(t, f.s, "", meta("title", "Kept"), "old\n")
 	o := f.theirs()
@@ -592,6 +600,7 @@ func TestRewrittenHistoryPausesChangesAndAcceptingResumesThem(t *testing.T) {
 }
 
 func TestPullUpdatesTheIndexForExactlyTheChangedFiles(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	keep := mustCreate(t, f.s, "k", meta("title", "Keep"), "keep\n")
 	edit := mustCreate(t, f.s, "k", meta("title", "Edit"), "e\n")
@@ -694,6 +703,7 @@ func (c *countingSource) Read(rel string) ([]byte, error) {
 }
 
 func TestReadsDoNotWaitForTheNetwork(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	p := mustCreate(t, f.s, "d", meta("title", "Readable"), "r\n")
 	reached, release := make(chan struct{}), make(chan struct{})
@@ -790,6 +800,7 @@ func TestReadsDoNotWaitForTheNetwork(t *testing.T) {
 }
 
 func TestEmptyFoldersStayOnTheServer(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	before := f.remoteLog()
 	subs := len(f.net.subs)
@@ -836,6 +847,7 @@ func TestEmptyFoldersStayOnTheServer(t *testing.T) {
 }
 
 func TestNoJournalOrCommitterWorkIsLeftBetweenChanges(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	mustCreate(t, f.s, "", meta("title", "A"), "a\n")
 	f.s.cm.mu.Lock()
@@ -858,6 +870,7 @@ func TestNoJournalOrCommitterWorkIsLeftBetweenChanges(t *testing.T) {
 // files stay where they are (they may be the only copy), nothing at the new
 // place is removed, and the space refuses changes until someone has looked.
 func TestFolderThatCannotBeMovedBackIsLeftWhereItIsAndTheSpaceBlocked(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	mustCreate(t, f.s, "old", meta("title", "Tracked"), "t\n")
 	hand := filepath.Join(f.root, "old", "by-hand.md")

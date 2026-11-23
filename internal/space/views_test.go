@@ -64,6 +64,7 @@ func board() View {
 }
 
 func TestViewsAreSavedUnderTheFolderAndComeBackInOrder(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "文案", meta("title", "x"), "x\n")
 	l, err := s.Views(folderScope("文案"))
@@ -136,6 +137,7 @@ func TestViewsAreSavedUnderTheFolderAndComeBackInOrder(t *testing.T) {
 }
 
 func TestViewsAreCheckedAndTheFolderMustExist(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "F", meta("title", "x"), "x\n")
 	cur, _ := s.Views(folderScope("F"))
@@ -202,6 +204,7 @@ func make21() []View {
 }
 
 func TestViewsConflictWhenTheRevIsNotTheCurrentOne(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "F", meta("title", "x"), "x\n")
 	empty, _ := s.Views(folderScope("F"))
@@ -236,6 +239,7 @@ func TestViewsConflictWhenTheRevIsNotTheCurrentOne(t *testing.T) {
 func spaceYMLHas(s *Space, text string) bool { return strings.Contains(spaceYML(s.Root()), text) }
 
 func TestSavingViewsKeepsCommentsAndKeysItDoesNotKnow(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	root := s.Root()
 	mustCreate(t, s, "F", meta("title", "x"), "x\n")
@@ -314,6 +318,7 @@ folders:
 }
 
 func TestValuesOfAFilterKeepTheirTypes(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "F", meta("title", "x"), "x\n")
 	vals := []any{"冬季", "2026-11-22", "5", "true", "null", "a: b", "", int64(7), 2.5, true}
@@ -335,6 +340,7 @@ func TestValuesOfAFilterKeepTheirTypes(t *testing.T) {
 }
 
 func TestViewIDsAreUniqueInTheWholeSpace(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	for _, f := range []string{"A", "B", "C"} {
 		mustCreate(t, s, f, meta("title", "x"), "x\n")
@@ -381,6 +387,7 @@ func TestViewIDsAreUniqueInTheWholeSpace(t *testing.T) {
 }
 
 func TestViewsOfATagLiveBesideItsColour(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	root := s.Root()
 	setTagsYML(t, root, "# my tags\ntags:\n  栀子:\n    color: rose   # pretty\n    note: x\n  其他:\n    color: blue\n")
@@ -448,6 +455,7 @@ func TestViewsOfATagLiveBesideItsColour(t *testing.T) {
 }
 
 func TestViewsAreSavedThoughTheSettingsCannotBeUsed(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "F", meta("title", "x"), "x\n")
 	broken := []byte("name: x\nfolders: [unclosed\n")
@@ -505,6 +513,7 @@ func TestViewsAreSavedThoughTheSettingsCannotBeUsed(t *testing.T) {
 }
 
 func TestViewsFollowTheirFolderWhenItMovesAndGoWhenItIsDeleted(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	root := s.Root()
 	if _, err := putCurrent(s, "t", TypeInput{}); err != nil {
@@ -597,6 +606,7 @@ func TestViewsFollowTheirFolderWhenItMovesAndGoWhenItIsDeleted(t *testing.T) {
 }
 
 func TestDeletingATypeKeepsTheViewsOfItsFolders(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	if _, err := putCurrent(s, "a", TypeInput{}); err != nil {
 		t.Fatal(err)
@@ -623,6 +633,7 @@ func TestDeletingATypeKeepsTheViewsOfItsFolders(t *testing.T) {
 }
 
 func TestViewWritesAreJournaledAndCommitted(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "F", meta("title", "x"), "x\n")
 	mustPutViews(t, s, folderScope("F"), View{Name: "v", Layout: "list"})
@@ -655,6 +666,7 @@ func viewsAt(s *Space, folder string) string {
 }
 
 func TestCrashAfterAFolderRenameFinishesTheViewsAtRecovery(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -708,6 +720,7 @@ func TestCrashAfterAFolderRenameFinishesTheViewsAtRecovery(t *testing.T) {
 }
 
 func TestCrashAfterAFolderDeleteDropsItsViewsAtRecovery(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -747,6 +760,7 @@ func TestCrashAfterAFolderDeleteDropsItsViewsAtRecovery(t *testing.T) {
 }
 
 func TestAViewsEntryThatIsNotAListIsNotAView(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "F", meta("title", "x"), "x\n")
 	for _, y := range []string{"folders:\n  F:\n    views: 5\n", "folders:\n  F:\n    views:\n      - plain\n      - [a]\n", "folders:\n  F:\n    views:\n"} {
@@ -766,6 +780,7 @@ func TestAViewsEntryThatIsNotAListIsNotAView(t *testing.T) {
 }
 
 func TestViewJSON(t *testing.T) {
+	t.Parallel()
 	var v View
 	if err := json.Unmarshal([]byte(`{"id":"a1","name":"n","layout":"table","hidden":["x"],"filter":[{"key":"k","op":"in","values":[1,"a",true]}],"custom":{"n":2},"sort":null}`), &v); err != nil {
 		t.Fatal(err)
@@ -787,6 +802,7 @@ func TestViewJSON(t *testing.T) {
 // --- through the remote commit path ----------------------------------------------------
 
 func TestViewsGoThroughTheRemoteCommitPath(t *testing.T) {
+	t.Parallel()
 	f := newRemoteSpace(t)
 	remoteFile := func(rel string) string { return git(t, f.remote, "show", "main:"+rel) }
 	mustCreate(t, f.s, "Tang/Sub", meta("title", "暮雪"), "x\n")
@@ -836,6 +852,7 @@ func TestViewsGoThroughTheRemoteCommitPath(t *testing.T) {
 // --- sorting by the options of a select field ---------------------------------------------
 
 func TestAListingSortedByASelectFollowsTheOrderOfItsOptions(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	if _, err := putCurrent(s, "task", TypeInput{Title: "task", Fields: []FieldInput{
 		{Key: "status", Kind: KindSelect, Options: []string{"todo", "doing", "done"}},
@@ -920,6 +937,7 @@ func TestAListingSortedByASelectFollowsTheOrderOfItsOptions(t *testing.T) {
 // --- the bodies of a listing --------------------------------------------------------------
 
 func TestBodiesOfAListingAreReadFromTheirFiles(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	a := mustCreate(t, s, "F", meta("title", "A"), "第一篇\n\n正文\n")
 	b := mustCreate(t, s, "F", meta("title", "B"), "")
@@ -961,6 +979,7 @@ func writeSpaceYML(t *testing.T, s *Space, content string) {
 }
 
 func TestAViewCannotMakeTheSettingsTooLargeToRead(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "F", meta("title", "x"), "x\n")
 	writeSpaceYML(t, s, "folders:\n  F:\n    type: wenan\n")
@@ -1012,6 +1031,7 @@ func TestAViewCannotMakeTheSettingsTooLargeToRead(t *testing.T) {
 }
 
 func TestViewsWrittenByHandAreReadAsUniqueAndSavable(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "F", meta("title", "x"), "x\n")
 	writeSpaceYML(t, s, `folders:
@@ -1074,6 +1094,7 @@ func TestViewsWrittenByHandAreReadAsUniqueAndSavable(t *testing.T) {
 }
 
 func TestEmptyingTheViewsOfAFolderWrittenTwiceLeavesNone(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "F", meta("title", "x"), "x\n")
 	writeSpaceYML(t, s, `folders:
@@ -1112,6 +1133,7 @@ func TestEmptyingTheViewsOfAFolderWrittenTwiceLeavesNone(t *testing.T) {
 }
 
 func TestNestedAliasesInAViewAreNotExpanded(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "F", meta("title", "x"), "x\n")
 	settings := func(depth int) string {

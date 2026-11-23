@@ -39,6 +39,7 @@ func bindingMap(s *Space) map[string]string {
 // --- types: rev ---------------------------------------------------------------
 
 func TestTypeChangesNeedTheRevTheyWereBasedOn(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	root := s.Root()
 	made, err := s.PutType(Author{}, "t", "", TypeInput{Title: "one"})
@@ -111,6 +112,7 @@ func TestTypeChangesNeedTheRevTheyWereBasedOn(t *testing.T) {
 // --- types: keys and titles that are already there ----------------------------
 
 func TestFieldsThatAreAlreadyThereKeepTheirKeysAndNonTextTitles(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	root := s.Root()
 	long := strings.Repeat("k", 70)
@@ -165,6 +167,7 @@ func TestFieldsThatAreAlreadyThereKeepTheirKeysAndNonTextTitles(t *testing.T) {
 // --- space.yml and tags.yml with nothing but comments --------------------------
 
 func TestSettingsFilesThatAreOnlyCommentsKeepThemWhenWritten(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ name, content string }{
 		{"comments", "# mine\n\n# second\n"},
 		{"marker", "---\n# mine\n\n# second\n"},
@@ -216,6 +219,7 @@ func TestSettingsFilesThatAreOnlyCommentsKeepThemWhenWritten(t *testing.T) {
 // --- bindings: duplicates -----------------------------------------------------
 
 func TestMovingAFolderOntoAStaleBindingReplacesIt(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	root := s.Root()
 	mustCreate(t, s, "A/x", meta("title", "P"), "x\n")
@@ -236,6 +240,7 @@ func TestMovingAFolderOntoAStaleBindingReplacesIt(t *testing.T) {
 }
 
 func TestReadersOfBindingsAgreeOnAFolderWrittenTwice(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	root := s.Root()
 	mustCreate(t, s, "A", meta("title", "P"), "x\n")
@@ -273,6 +278,7 @@ func journalFile(root string) string {
 }
 
 func TestCrashAfterAFolderRenameFinishesTheBindingsAtRecovery(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -325,6 +331,7 @@ func TestCrashAfterAFolderRenameFinishesTheBindingsAtRecovery(t *testing.T) {
 }
 
 func TestCrashAfterAFolderDeleteDropsItsBindingsAtRecovery(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -347,6 +354,7 @@ func TestCrashAfterAFolderDeleteDropsItsBindingsAtRecovery(t *testing.T) {
 }
 
 func TestFolderMoveIsTakenBackWhenItsBindingsCannotBeWritten(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("a file mode does not stop root")
 	}
@@ -394,6 +402,7 @@ func TestFolderMoveIsTakenBackWhenItsBindingsCannotBeWritten(t *testing.T) {
 // --- a move onto stale bindings ------------------------------------------------
 
 func TestMovingAFolderDropsEveryStaleBindingAtAndUnderTheTarget(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	root := s.Root()
 	putCurrent(s, "t", TypeInput{})
@@ -420,6 +429,7 @@ func TestMovingAFolderDropsEveryStaleBindingAtAndUnderTheTarget(t *testing.T) {
 }
 
 func TestRecoveryOfAMoveDropsStaleBindingsAtTheTargetToo(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -442,6 +452,7 @@ func TestRecoveryOfAMoveDropsStaleBindingsAtTheTargetToo(t *testing.T) {
 // --- the committer and the records of bindings -----------------------------------
 
 func TestACommitBetweenTheRecordAndTheEditOfBindingsKeepsTheRecord(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -490,6 +501,7 @@ func TestACommitBetweenTheRecordAndTheEditOfBindingsKeepsTheRecord(t *testing.T)
 // --- an undone move in a space that follows a remote -----------------------------
 
 func TestUndoOfAFolderMoveIsConsistentAtEveryCrashPoint(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name  string
 		after bool // the crash comes after the folder was renamed back
@@ -547,6 +559,7 @@ func TestUndoOfAFolderMoveIsConsistentAtEveryCrashPoint(t *testing.T) {
 // --- a move taken back leaves nothing it made -------------------------------------
 
 func TestFolderMoveTakenBackLeavesNoFoldersItMade(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("a file mode does not stop root")
 	}
@@ -596,6 +609,7 @@ func TestFolderMoveTakenBackLeavesNoFoldersItMade(t *testing.T) {
 // A record that could not be journaled is not kept open: the trim would carry it
 // for as long as the process lives.
 func TestARecordThatCouldNotBeJournaledIsNotKeptOpen(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	s := openAt(t, t.TempDir())
 	s.cm.j.f.Close() // appends fail now
