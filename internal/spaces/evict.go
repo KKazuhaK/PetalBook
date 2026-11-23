@@ -100,6 +100,9 @@ type idxEntry struct {
 	sp   *space.Space
 	refs int
 	last time.Time
+	// stale: closeIndexOnly gave up waiting for its holders. It is out of the
+	// map, so nothing new is given it, and its last release closes it.
+	stale bool
 }
 
 type evictState struct {
@@ -353,15 +356,24 @@ func (m *Manager) idxRelease(id string, e *idxEntry) func() {
 			m.ev.mu.Lock()
 			e.refs--
 			e.last = m.opt.Now()
+			closing := e.stale && e.refs <= 0
 			m.ev.mu.Unlock()
+			if closing {
+				e.sp.Close()
+			}
 		})
 	}
 }
 
+// indexCloseWait is how long closeIndexOnly waits for the requests that use
+// an index-only handle.
+var indexCloseWait = 5 * time.Second
+
 // closeIndexOnly closes the index-only handle of a space, waiting for the
 // requests that use it (they are short).
 func (m *Manager) closeIndexOnly(id string) {
-	for i := 0; i < 500; i++ {
+	deadline := time.Now().Add(indexCloseWait)
+	for time.Now().Before(deadline) {
 		m.ev.mu.Lock()
 		e := m.ev.idx[id]
 		if e == nil {
@@ -377,6 +389,23 @@ func (m *Manager) closeIndexOnly(id string) {
 		m.ev.mu.Unlock()
 		time.Sleep(10 * time.Millisecond)
 	}
+	// Still held: it leaves the map (the space is about to be opened in full)
+	// and its last holder closes it.
+	m.ev.mu.Lock()
+	e := m.ev.idx[id]
+	if e == nil {
+		m.ev.mu.Unlock()
+		return
+	}
+	delete(m.ev.idx, id)
+	refs := e.refs
+	e.stale = refs > 0
+	m.ev.mu.Unlock()
+	if refs <= 0 {
+		e.sp.Close()
+		return
+	}
+	m.log.Warn("an index-only handle is still in use after a restore; its last request closes it", "space", id, "references", refs)
 }
 
 // trimIndexOnly closes index-only handles nobody has used for IdleAfter.

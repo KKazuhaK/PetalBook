@@ -1290,3 +1290,48 @@ func TestAnAdministratorOpeningAnEvictedSpaceReadsDisabledUnderTheLock(t *testin
 		wg.Wait()
 	})
 }
+
+// A restore closes the index-only handle of the space before the full space
+// opens the index. A request that holds it longer than the restore waits
+// leaves it open until that request releases it, but nothing new is given it.
+func TestAnIndexOnlyHandleHeldThroughARestoreIsClosedOnItsLastRelease(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := remoteManager(t, st)
+		remote := filterBare(t)
+		seedRemote(t, remote, 1)
+		in, _ := f.evictable(remote)
+		if err := f.m.Evict(ctx, in.ID, EvictOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		old := indexCloseWait
+		indexCloseWait = 50 * time.Millisecond
+		defer func() { indexCloseWait = old }()
+		held, release, err := f.m.acquireIndex(ctx, in.ID)
+		if err != nil || !held.Evicted() {
+			t.Fatalf("%v", err)
+		}
+		f.m.closeIndexOnly(in.ID) // gives up waiting
+		f.m.ev.mu.Lock()
+		e := f.m.ev.idx[in.ID]
+		f.m.ev.mu.Unlock()
+		if e != nil && e.sp == held {
+			t.Fatal("a handle that is being closed is still handed out")
+		}
+		if _, err := held.List(index.Query{Recursive: true}); err != nil {
+			t.Fatalf("the holder's handle was closed under it: %v", err)
+		}
+		release()
+		if _, err := held.List(index.Query{Recursive: true}); err == nil {
+			t.Fatal("the stale handle is not closed on its last release")
+		}
+		// The next request is given a new one.
+		sp, release2, err := f.m.acquireIndex(ctx, in.ID)
+		if err != nil || sp == held {
+			t.Fatalf("%v", err)
+		}
+		if got := pageIDs(t, sp); len(got) != 2 {
+			t.Fatalf("%v", got)
+		}
+		release2()
+	})
+}
