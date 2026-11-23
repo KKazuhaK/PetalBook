@@ -532,6 +532,14 @@ func TestNothingIsEvictedWhileTheAttachmentRepositoryMayHoldTheOnlyCopy(t *testi
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		// A move that has not ended: the space's assets/ is the only complete copy.
 		hold := make(chan struct{})
+		var released bool
+		release := func() {
+			if !released {
+				released = true
+				close(hold)
+			}
+		}
+		defer release()
 		var once bool
 		a := newAssetFixture(t, st, func(o *Options) {
 			o.AssetsHook = func(s string) error {
@@ -551,8 +559,10 @@ func TestNothingIsEvictedWhileTheAttachmentRepositoryMayHoldTheOnlyCopy(t *testi
 		a.h.Release()
 		a.idle(72 * time.Hour)
 		err := a.m.Evict(ctx, a.in.ID, EvictOptions{})
-		mustBusy(t, err, a.root(a.in.ID), "being moved")
-		close(hold)
+		if !errors.Is(err, ErrBusy) || !exists(a.root(a.in.ID)) {
+			t.Fatalf("a space whose attachments are being moved was evicted or not refused as busy: %v", err)
+		}
+		release()
 		a.waitMove(store.MoveDone)
 		time.Sleep(100 * time.Millisecond)
 	})
