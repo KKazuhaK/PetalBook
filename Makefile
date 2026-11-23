@@ -126,7 +126,7 @@ actionlint:
 # Known vulnerabilities in the standard library and in modules the code calls.
 # Needs network access to the vulnerability database.
 vuln:
-	go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+	go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
 
 # All the Go checks that need nothing but a Go toolchain (SQLite only).
 check-go: fmt-check tidy-check vet test

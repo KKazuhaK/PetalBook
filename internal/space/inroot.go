@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"sync/atomic"
 )
 
 // Every read and write under .petalbook goes through the functions here. A
@@ -156,6 +157,35 @@ func readIn(root, rel string, max int64) (data []byte, fi fs.FileInfo, blocked s
 		data = []byte{}
 	}
 	return data, fi, "", nil
+}
+
+// seen is what a read found in the place of a file: the file it read, or
+// what was in the way of it (blocked, as lstatIn names it). fi is nil when the
+// read found nothing it could go by: nothing there, or something replaced
+// while it was read.
+type seen struct {
+	fi      fs.FileInfo
+	blocked string
+}
+
+// is reports whether the read found what a look made before it (fi, blocked)
+// found. What was read is kept by that look only when it is: a folder on the
+// way can be swapped for a link, or be gone, and come back between the look
+// and the read, and the file then looks as it did while what was read is
+// something else (nothing, or the settings restored for it).
+func (w seen) is(fi fs.FileInfo, blocked string) bool {
+	return w.fi != nil && fi != nil && w.blocked == blocked && os.SameFile(w.fi, fi) &&
+		w.fi.Mode() == fi.Mode() && w.fi.Size() == fi.Size() && w.fi.ModTime().Equal(fi.ModTime())
+}
+
+// lookedAt, set by the tests only, runs between the look at a file that a
+// cache is kept by and the read of it.
+var lookedAt atomic.Pointer[func(root, rel string)]
+
+func afterLook(root, rel string) {
+	if f := lookedAt.Load(); f != nil {
+		(*f)(root, rel)
+	}
 }
 
 // readlinkIn is where the link rel of root leads, read in its folder.

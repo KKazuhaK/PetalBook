@@ -1,5 +1,5 @@
 # The web app, built once on the build machine's own architecture.
-FROM --platform=$BUILDPLATFORM node:22-alpine AS web
+FROM --platform=$BUILDPLATFORM node:26-alpine AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
@@ -27,7 +27,7 @@ RUN GOOS=$TARGETOS GOARCH=$TARGETARCH \
 # git runs every repository operation and ssh reaches remotes over ssh (the
 # server starts them by those names); ca-certificates is for https remotes
 # and single sign-on providers.
-FROM alpine:3.22
+FROM alpine:3.24
 RUN apk add --no-cache git openssh-client ca-certificates \
     && adduser -D -u 10001 petalbook \
     && mkdir /data && chown petalbook:petalbook /data

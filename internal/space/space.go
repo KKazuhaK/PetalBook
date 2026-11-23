@@ -97,6 +97,10 @@ type Space struct {
 	daily   dailyMemo
 	// typeCache are the type files parsed, by name (see listing.go).
 	typeCache map[string]typeCacheEntry
+	// typesDirty is set when a change touched a type or a binding: the type
+	// problems of the pages are looked at again before the change returns
+	// (see checks.go).
+	typesDirty atomic.Bool
 
 	// src is the file tree the index mirrors. syncEvery throttles the
 	// re-sync a missed lookup triggers, so ids that do not exist (a stale
@@ -352,12 +356,14 @@ func Open(opt Options) (*Space, error) {
 	// The first sync walks every folder of pages, and the attachments, anyway:
 	// it notes what a crash left of a write there (isTempName) on the way.
 	temps := append(tempsIn(root, ".petalbook"), tempsIn(root, typesDir)...)
+	s.watchChecks()
 	st, err := idx.Sync(dirSource{root: root, temps: &temps}, false)
 	if err != nil {
 		idx.Close()
 		return nil, err
 	}
 	removeLeftTemps(root, g, temps, log)
+	s.syncTypes()
 	log.Info("index ready", "pages", st.Pages, "added", st.Added, "updated", st.Updated, "removed", st.Removed,
 		"problems", st.Problems, "ms", st.Elapsed.Milliseconds())
 	if st.Problems > 0 {

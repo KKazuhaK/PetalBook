@@ -20,6 +20,7 @@ export const en: Messages = {
     inbox: 'Inbox',
     quickNote: 'Quick note',
     recent: 'Recent',
+    check: 'Check',
     folders: 'Folders',
     tags: 'Tags',
     rootFolder: 'Top level',
@@ -120,6 +121,7 @@ export const en: Messages = {
     rename: 'Rename',
     move: 'Move to…',
     setType: 'Set type…',
+    setTemplate: 'Set default template…',
     delete: 'Delete',
     select: 'Select',
     newPage: 'New page',
@@ -483,7 +485,7 @@ export const en: Messages = {
     close: 'Close settings',
     nav: 'Settings sections',
     groups: { account: 'Account', space: 'Space' },
-    sections: { profile: 'Profile', preferences: 'Preferences', security: 'Security', general: 'General', types: 'Types', home: 'Home', members: 'Members', sync: 'Sync', import: 'Import' },
+    sections: { profile: 'Profile', preferences: 'Preferences', security: 'Security', general: 'General', types: 'Types', templates: 'Templates', home: 'Home', members: 'Members', sync: 'Sync', import: 'Import' },
   },
   prefs: {
     appearance: 'Appearance',
@@ -509,6 +511,9 @@ export const en: Messages = {
     nameSaved: 'Space name changed',
     nameReadOnly: 'In single-user mode the space name cannot be changed here.',
     noManage: 'Only an owner can change the name and the inbox of the space.',
+    checkTitle: 'Check',
+    checkHelp: 'Files with a problem: no or repeated ids, headers that cannot be read, fields that do not fit, broken links, missing attachments and titles that repeat.',
+    checkLink: 'Open the check page…',
   },
   // The search dialog (⌘K) and the tag colour menu.
   search: {

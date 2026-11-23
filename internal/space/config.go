@@ -98,15 +98,16 @@ func (r *reading) typeOf(entry *yaml.Node) string {
 // configCache remembers the bindings for as long as the file looks the same,
 // so a listing does not parse it again for every request.
 type configCache struct {
-	valid    bool
-	mode     fs.FileMode
-	size     int64
-	mtimeNs  int64
-	bindings []Binding
-	byFolder map[string]string
-	views    map[string][]View // by folder, only those that have some
-	daily    *DailyConfig      // where the daily text comes from, when the file says
-	blocked  string            // what is in the way of the file, when something is
+	valid     bool
+	mode      fs.FileMode
+	size      int64
+	mtimeNs   int64
+	bindings  []Binding
+	byFolder  map[string]string
+	views     map[string][]View // by folder, only those that have some
+	daily     *DailyConfig      // where the daily text comes from, when the file says
+	templates *TemplateDefaults // the default templates, when the file says
+	blocked   string            // what is in the way of the file, when something is
 }
 
 // config returns what is known of the settings file, read again when the file
@@ -128,7 +129,8 @@ func (s *Space) config() configCache {
 	if c := s.cfg; c.valid && c.blocked == blocked && c.mode == fi.Mode() && c.size == fi.Size() && c.mtimeNs == fi.ModTime().UnixNano() {
 		return c
 	}
-	doc, err := s.loadSettings(spaceSettings)
+	afterLook(s.root, spaceFile)
+	doc, saw, err := s.loadSettingsSeen(spaceSettings)
 	c := configCache{valid: true, mode: fi.Mode(), size: fi.Size(), mtimeNs: fi.ModTime().UnixNano(), blocked: blocked}
 	if err == nil {
 		c.bindings = bindingsOf(doc)
@@ -138,9 +140,17 @@ func (s *Space) config() configCache {
 		}
 		c.views = viewsOf(doc, "folders", bindingKey)
 		c.daily = dailyOf(doc)
+		c.templates = templatesOf(doc)
 		s.heal.setOdd(spaceSettings, oddEntries(doc, spaceSettings))
 	}
-	s.cfg = c
+	// Kept only when the read found the file the look did; else the next
+	// look, which finds the file as before, would be given what was read in
+	// the meantime for as long as the file stays as it is.
+	if saw.is(fi, blocked) {
+		s.cfg = c
+	} else {
+		s.cfg = configCache{}
+	}
 	return c
 }
 
@@ -207,6 +217,7 @@ func (s *Space) editSpaceFile(tx *txn, edit func(root *yaml.Node) (changed bool,
 	s.cfgMu.Lock()
 	s.cfg = configCache{}
 	s.cfgMu.Unlock()
+	s.typesDirty.Store(true)
 	return err
 }
 
@@ -573,6 +584,16 @@ func forgetFolders(root *yaml.Node, gone func(folder string) bool) (bool, error)
 	return changed, nil
 }
 
+// forgetAll is forgetFolders, and the default templates of the same folders go too.
+func forgetAll(root *yaml.Node, gone func(folder string) bool) (bool, error) {
+	a, err := forgetFolders(root, gone)
+	if err != nil {
+		return false, err
+	}
+	b, err := forgetTemplateFolders(root, gone)
+	return a || b, err
+}
+
 // fileGone reports whether a path of the space is not there any more.
 func (s *Space) fileGone(rel string) bool {
 	_, err := os.Lstat(filepath.Join(s.root, filepath.FromSlash(rel)))
@@ -652,12 +673,16 @@ func recoverBindings(h *healer, root string, recs []jrec) (written []string) {
 					return false, err
 				}
 				b, err := rebindDaily(top, from, to)
-				return a || b, err
+				if err != nil {
+					return false, err
+				}
+				c, err := rebindTemplates(top, from, to, true)
+				return a || b || c, err
 			}
 		case "u":
 			canon := bindingKey(r.Path)
 			edit = func(top *yaml.Node) (bool, error) {
-				return forgetFolders(top, func(folder string) bool {
+				return forgetAll(top, func(folder string) bool {
 					return (folder == canon || strings.HasPrefix(folder, canon+"/")) && gone(folder)
 				})
 			}

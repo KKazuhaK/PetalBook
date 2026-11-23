@@ -585,11 +585,17 @@ func (s *Space) tagViews() map[string][]View {
 		return c.views
 	}
 	c := tagCache{valid: true, mode: fi.Mode(), size: fi.Size(), mtimeNs: fi.ModTime().UnixNano(), blocked: blocked}
-	if doc, err := s.loadTags(); err == nil {
+	afterLook(s.root, tagsFile)
+	doc, saw, err := s.loadSettingsSeen(tagsSettings)
+	if err == nil {
 		c.views = viewsOf(doc, "tags", func(k string) string { return k })
 		s.heal.setOdd(tagsSettings, oddEntries(doc, tagsSettings))
 	}
-	s.tagCfg = c
+	if saw.is(fi, blocked) { // as in config
+		s.tagCfg = c
+	} else {
+		s.tagCfg = tagCache{}
+	}
 	return c.views
 }
 

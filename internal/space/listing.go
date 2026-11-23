@@ -43,13 +43,18 @@ func (s *Space) typeInfoCached(name string) (TypeInfo, bool) {
 	if ok && e.size == fi.Size() && e.mtimeNs == fi.ModTime().UnixNano() {
 		return e.info, true
 	}
-	data, err := s.readTypeFile(name)
+	afterLook(s.root, typesDir+"/"+name+".json")
+	data, _, saw, err := s.typeNowSeen(name)
 	if err != nil || data == nil {
 		return TypeInfo{}, false
 	}
 	info, _, err := parseType(name, data)
 	if err != nil {
 		return TypeInfo{}, false
+	}
+	if !saw.is(fi, "") {
+		// Not the file looked at (see seen): used, not remembered.
+		return info, true
 	}
 	s.cfgMu.Lock()
 	if s.typeCache == nil || len(s.typeCache) >= MaxTypes {

@@ -18,6 +18,7 @@ export const zhCN = {
     inbox: '收件箱',
     quickNote: '快速记录',
     recent: '最近',
+    check: '校验',
     folders: '文件夹',
     tags: '标签',
     rootFolder: '根目录',
@@ -118,6 +119,7 @@ export const zhCN = {
     rename: '重命名',
     move: '移动到…',
     setType: '设置类型…',
+    setTemplate: '设置默认模板…',
     delete: '删除',
     select: '选择',
     newPage: '新建页面',
@@ -485,7 +487,7 @@ export const zhCN = {
     close: '关闭设置',
     nav: '设置导航',
     groups: { account: '账号', space: '空间' },
-    sections: { profile: '个人资料', preferences: '偏好设置', security: '安全', general: '常规', types: '类型', home: '首页', members: '成员', sync: '同步', import: '导入' },
+    sections: { profile: '个人资料', preferences: '偏好设置', security: '安全', general: '常规', types: '类型', templates: '模板', home: '首页', members: '成员', sync: '同步', import: '导入' },
   },
   prefs: {
     appearance: '外观',
@@ -511,6 +513,9 @@ export const zhCN = {
     nameSaved: '空间名称已更改',
     nameReadOnly: '单人模式下空间名称不能在这里更改。',
     noManage: '只有所有者可以更改空间的名称和收件箱。',
+    checkTitle: '校验',
+    checkHelp: '列出有问题的文件：没有或重复的 id、读不了的头部、不符合类型的字段、断链、找不到的附件和重复的标题。',
+    checkLink: '打开校验页…',
   },
   // The search dialog (⌘K) and the tag colour menu.
   search: {

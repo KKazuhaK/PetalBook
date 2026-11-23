@@ -7,14 +7,14 @@ const viewer: Visibility = { ...member, canWrite: false }
 const ids = (v: Visibility) => visibleSections(v).map((s) => s.id)
 
 describe('which sections are shown', () => {
-  it('single-user mode has only what applies: preferences, and the space\'s general, types and import', () => {
-    expect(ids(single)).toEqual(['preferences', 'general', 'types', 'import'])
+  it('single-user mode has only what applies: preferences, and the space\'s general, types, templates and import', () => {
+    expect(ids(single)).toEqual(['preferences', 'general', 'types', 'templates', 'import'])
   })
   it('a member has the account and the space, with its members and sync', () => {
-    expect(ids(member)).toEqual(['profile', 'preferences', 'security', 'general', 'types', 'members', 'sync', 'import'])
+    expect(ids(member)).toEqual(['profile', 'preferences', 'security', 'general', 'types', 'templates', 'members', 'sync', 'import'])
   })
   it('someone who may only read has no import (it writes pages) but still sees the members', () => {
-    expect(ids(viewer)).toEqual(['profile', 'preferences', 'security', 'general', 'types', 'members', 'sync'])
+    expect(ids(viewer)).toEqual(['profile', 'preferences', 'security', 'general', 'types', 'templates', 'members', 'sync'])
   })
   it('a space that cannot be read shows no members', () => {
     expect(ids({ ...member, canRead: false, canWrite: false })).toEqual(['profile', 'preferences', 'security', 'general', 'sync'])
@@ -36,7 +36,7 @@ describe('which sections are shown', () => {
   it('groups the navigation: account, space', () => {
     expect(groupsOf(visibleSections(member)).map((g) => [g.group, g.sections.map((s) => s.id)])).toEqual([
       ['account', ['profile', 'preferences', 'security']],
-      ['space', ['general', 'types', 'members', 'sync', 'import']],
+      ['space', ['general', 'types', 'templates', 'members', 'sync', 'import']],
     ])
     expect(groupsOf(visibleSections(single)).map((g) => g.group)).toEqual(['account', 'space'])
   })

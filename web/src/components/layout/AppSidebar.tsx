@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { NavLink, useLocation } from 'react-router'
-import { ChevronRight, Clock, Folder, FolderOpen, FolderPlus, Home, House, Inbox, MoreHorizontal, PenLine, Search, Settings, Tag, Upload } from 'lucide-react'
+import { ChevronRight, Clock, Folder, FolderOpen, FolderPlus, Home, House, Inbox, ListChecks, MoreHorizontal, PenLine, Search, Settings, Tag, Upload } from 'lucide-react'
 import { useActiveSpace, useSession, useSpacePermissions, useTagColors, useTags, useTree, useUrls } from '@/api/hooks'
 import type { TagColor } from '@/api/types'
 import { TAG_ATTR, TagColorMenu, useOpenTagColorMenu } from '@/components/TagColorMenu'
@@ -380,6 +380,12 @@ export function AppSidebar() {
                 <SidebarMenuButton isActive={pathname === urls.recent()} render={<NavLink to={urls.recent()} />}>
                   <Clock />
                   <span>{t.nav.recent}</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton isActive={pathname === urls.check()} render={<NavLink to={urls.check()} />}>
+                  <ListChecks />
+                  <span>{t.nav.check}</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
