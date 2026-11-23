@@ -35,21 +35,22 @@ describe('the mock gives the stable codes', () => {
     expect(put(call, { link: 'https://q.example.org/{[0].id}' }).status).toBe(200)
   })
 
-  it('a try says host_not_allowed with the host, not_json and too_large', () => {
+  it('a try says host_not_allowed with the host, not_json and too_large: a 400 with what the trial showed in result', () => {
     const call = admin()
-    const tryIt = (url: string) => call('POST', '/api/admin/daily/try', { api: { ...GOOD, url }, lang: 'en', date: '2026-11-23' }).body
-    expect(tryIt('https://elsewhere.example.net/q')).toMatchObject({ ok: false, error: 'host_not_allowed', host: 'elsewhere.example.net' })
+    const tryIt = (url: string) => call('POST', '/api/admin/daily/try', { api: { ...GOOD, url }, lang: 'en', date: '2026-11-23' })
+    expect(tryIt('https://elsewhere.example.net/q')).toMatchObject({ status: 400, body: { error: 'host_not_allowed', host: 'elsewhere.example.net', result: { ok: false } } })
     put(call, {})
-    expect(tryIt('https://quotes.example.org/page.html')).toMatchObject({ ok: false, error: 'not_json' })
-    expect(tryIt('https://quotes.example.org/huge')).toMatchObject({ ok: false, error: 'too_large' })
+    expect(tryIt('https://quotes.example.org/page.html')).toMatchObject({ status: 400, body: { error: 'not_json', result: { ok: false } } })
+    expect(tryIt('https://quotes.example.org/huge')).toMatchObject({ status: 400, body: { error: 'too_large', result: { ok: false } } })
+    expect(tryIt('https://quotes.example.org/down')).toMatchObject({ status: 200, body: { ok: false, status: 503 } })
   })
 
-  it('a try reports a path that finds nothing as pathErrors with field, code and message', () => {
+  it('a try reports a path that finds nothing as path_error with the field, and pathErrors in result', () => {
     const call = admin()
     put(call, {})
-    const r = call('POST', '/api/admin/daily/try', { api: { ...GOOD, author: 'missing' }, lang: 'en', date: '2026-11-23' }).body as { ok: boolean; pathErrors: unknown }
-    expect(r.ok).toBe(false)
-    expect(r.pathErrors).toEqual([{ field: 'author', code: 'path_error', message: expect.any(String) }])
+    const r = call('POST', '/api/admin/daily/try', { api: { ...GOOD, author: 'missing' }, lang: 'en', date: '2026-11-23' })
+    expect(r).toMatchObject({ status: 400, body: { error: 'path_error', field: 'author', result: { ok: false, raw: expect.any(String) } } })
+    expect((r.body as { result: { pathErrors: unknown } }).result.pathErrors).toEqual([{ field: 'author', code: 'path_error', message: expect.any(String) }])
   })
 
   it('a skip beyond the limit is skip_too_large; a malformed date stays invalid; out_of_range is for another day with an external source', () => {

@@ -76,7 +76,9 @@ export class ApiError extends Error {
   readonly retryAfter?: number
   // The stable reason a daily-text refusal carries next to `error`, with what it is about; absent otherwise.
   readonly reason?: ReasonCode
-  constructor(status: number, code: ErrorCode, message: string, current?: Page, retryAfter?: number, draft?: PageDraft | null, reason?: ReasonCode) {
+  // The parsed answer, when it had a body: some refusals carry more than a code (the daily trial's `result`).
+  readonly body?: unknown
+  constructor(status: number, code: ErrorCode, message: string, current?: Page, retryAfter?: number, draft?: PageDraft | null, reason?: ReasonCode, body?: unknown) {
     super(message)
     this.name = 'ApiError'
     this.status = status
@@ -85,6 +87,7 @@ export class ApiError extends Error {
     this.retryAfter = retryAfter
     this.draft = draft
     this.reason = reason
+    this.body = body
   }
 }
 
@@ -265,6 +268,7 @@ export async function request<T>(path: string, { method = 'GET', body, keepalive
       res.status === 429 && Number.isFinite(retry) && retry > 0 ? retry : undefined,
       err.draft,
       typeof err.error === 'string' && DAILY_CODES.has(err.error) ? reasonOf(err as { error: string; host?: unknown; header?: unknown; field?: unknown }) : undefined,
+      json ?? undefined,
     )
   }
   return json as T

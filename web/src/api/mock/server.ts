@@ -782,16 +782,19 @@ export function createMockServer(options: MockOptions = {}) {
       const a = (isRecord(body.api) ? body.api : {}) as Record<string, unknown>
       const url = String(a.url ?? '')
       const tryHost = /^https?:\/\/([^/?#]+)/i.exec(url)?.[1]?.toLowerCase()
-      if (tryHost && !site.hosts.includes(tryHost)) return { status: 200, body: { ok: false, message: `the host ${tryHost} is not on the list of hosts`, error: 'host_not_allowed', host: tryHost, url } }
-      if (url.includes('html')) return { status: 200, body: { ok: false, message: 'the answer is not JSON', error: 'not_json', url } }
-      if (url.includes('huge')) return { status: 200, body: { ok: false, message: 'the answer is too large', error: 'too_large', url } }
+      // Like the server: a refusal with a code is a 400, the trial's output in `result`.
+      const refused = (error: string, message: string, extra: Record<string, unknown> = {}, result: Record<string, unknown> = {}) => ({ status: 400, body: { error, message, ...extra, result: { ok: false, url, message, ...result } } })
+      if (tryHost && !site.hosts.includes(tryHost)) return refused('host_not_allowed', `the host ${tryHost} is not on the list of hosts`, { host: tryHost })
+      if (url.includes('html')) return refused('not_json', 'the answer is not JSON')
+      if (url.includes('huge')) return refused('too_large', 'the answer is too large')
       if (url.includes('down')) return { status: 200, body: { ok: false, message: 'status 503', status: 503, url } }
       const raw = '{"hitokoto": "山色空蒙雨亦奇", "from": "饮湖上初晴后雨", "from_who": "苏轼"}'
       const pathErrors: { field: string; code: string; message: string }[] = []
       const pick = (k: string, v: string) => (a[k] === 'missing' ? (pathErrors.push({ field: k, code: 'path_error', message: `no text or number at ${v}` }), undefined) : a[k] ? v : undefined)
       const quote = { text: pick('text', '山色空蒙雨亦奇'), source: pick('source', '饮湖上初晴后雨'), author: pick('author', '苏轼') }
       const clean = Object.fromEntries(Object.entries(quote).filter(([, v]) => v !== undefined))
-      return { status: 200, body: { ok: pathErrors.length === 0, status: 200, url, raw, rawTruncated: false, quote: clean, ...(pathErrors.length ? { pathErrors } : {}) } }
+      if (pathErrors.length) return refused('path_error', pathErrors[0].message, { field: pathErrors[0].field }, { status: 200, raw, rawTruncated: false, quote: clean, pathErrors })
+      return { status: 200, body: { ok: true, status: 200, url, raw, rawTruncated: false, quote: clean } }
     }
     if (path === '/admin/daily/lines' && method === 'PUT') {
       const lang = typeof body.lang === 'string' ? body.lang.toLowerCase() : ''

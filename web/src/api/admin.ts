@@ -4,7 +4,7 @@
 // of it is `api.adminSpace`: the space list needs it.)
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { enc, request } from './client'
+import { ApiError, enc, request } from './client'
 import { keys } from './hooks'
 import type { AdminDaily, AdminSpaceList, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User } from './types'
 
@@ -48,7 +48,16 @@ export const adminApi = {
   // A header with a `value` sets it; one with only a `name` keeps what is saved; a header left out is removed.
   putDailyApi: (api: Omit<DailyApi, 'note'>) => request<AdminDaily>(`/admin/daily/apis/${enc(api.id)}`, { method: 'PUT', body: api }),
   deleteDailyApi: (id: string) => request<AdminDaily>(`/admin/daily/apis/${enc(id)}`, { method: 'DELETE' }),
-  tryDailyApi: (api: Omit<DailyApi, 'note'>, lang: string, date: string) => request<DailyTryResult>('/admin/daily/try', { method: 'POST', body: { api, lang, date } }),
+  // A refused trial is a 400 that carries what the trial showed in `result`; it reads as a trial with errors.
+  tryDailyApi: async (api: Omit<DailyApi, 'note'>, lang: string, date: string): Promise<DailyTryResult> => {
+    try {
+      return await request<DailyTryResult>('/admin/daily/try', { method: 'POST', body: { api, lang, date } })
+    } catch (e) {
+      const b = e instanceof ApiError && e.status === 400 ? (e.body as { result?: unknown; error?: string; field?: string; host?: string; header?: string } | undefined) : undefined
+      if (b && typeof b.result === 'object' && b.result !== null) return { ...(b.result as DailyTryResult), error: b.error, field: b.field, host: b.host, header: b.header }
+      throw e
+    }
+  },
   putDailyLines: (input: { lang: string; text: string; format: LinesFormat }) => request<AdminDaily>('/admin/daily/lines', { method: 'PUT', body: input }),
   deleteDailyLines: (lang: string) => request<AdminDaily>(`/admin/daily/lines?lang=${enc(lang)}`, { method: 'DELETE' }),
 }

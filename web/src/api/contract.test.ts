@@ -1436,6 +1436,15 @@ function suite(target: Target) {
           expect((await call(admin, 'PUT', `/api/spaces/${sp}/daily/prefs`, { inherit: true, apis: [ids[0]] })).status).toBe(400)
           const none = await call(admin, 'GET', `/api/spaces/${sp}/daily/prefs`)
           expect(none.json.available.some((a: any) => a.id === ids[0])).toBe(false)
+          // A trial: a refusal with a code is a 400 with what the trial showed in `result`; a failure with none is a 200 with ok false.
+          const trial = (url: string) => adm('POST', '/try', { api: iface({ id: ids[1], url, headers: [] }), lang: 'en', date: '2026-11-23' })
+          const offList = await trial(`https://elsewhere-${run}.example.net/q`)
+          expect(offList.status).toBe(400)
+          expect(offList.json).toMatchObject({ error: 'host_not_allowed', host: `elsewhere-${run}.example.net`, message: expect.any(String), result: { ok: false, url: expect.any(String) } })
+          const down = await trial('https://quotes.example.org/down')
+          expect(down.status).toBe(200)
+          expect(down.json).toMatchObject({ ok: false, url: expect.any(String), message: expect.any(String) })
+          expect(down.json.error).toBeUndefined()
           // Taking away.
           expect((await adm('DELETE', `/apis/${ids[0]}`)).json.apis.some((a: any) => a.id === ids[0])).toBe(false)
           expect((await adm('DELETE', `/apis/${ids[0]}`)).status).toBe(404)
