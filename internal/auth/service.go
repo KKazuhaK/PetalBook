@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,6 +27,7 @@ import (
 	authsaml "github.com/KazuhaHub/authcore/saml"
 
 	"github.com/KKazuhaK/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/perm"
 	"github.com/KKazuhaK/PetalBook/internal/secret"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
@@ -150,6 +152,59 @@ type Principal struct {
 	SessionCreated time.Time
 	// Held: the session may only register a passkey and sign out.
 	Held bool
+	// Grant is set when the request is made with a credential of narrower
+	// reach than the person (an API token, later an OAuth access token); nil
+	// for a session and for the built-in user.
+	Grant *Grant
+}
+
+// Grant is what a credential other than a session may do for its owner: the
+// owner's own permissions narrowed to some spaces and to read or read and
+// write. The owner's current permissions still apply; a grant never adds to
+// them. It is immutable once made: callers share it.
+type Grant struct {
+	// Kind is "token" for an API token.
+	Kind string
+	ID   string
+	Name string
+	// Write: the grant reaches write as well as read.
+	Write bool
+	// Spaces are the ids of the spaces it names, sorted.
+	Spaces []string
+	set    map[string]struct{}
+}
+
+// NewGrant makes a grant; spaces need not be sorted or free of repeats.
+func NewGrant(kind, id, name string, write bool, spaceIDs []string) *Grant {
+	set := make(map[string]struct{}, len(spaceIDs))
+	for _, s := range spaceIDs {
+		set[s] = struct{}{}
+	}
+	ids := make([]string, 0, len(set))
+	for s := range set {
+		ids = append(ids, s)
+	}
+	sort.Strings(ids)
+	return &Grant{Kind: kind, ID: id, Name: name, Write: write, Spaces: ids, set: set}
+}
+
+// Names reports whether the grant names the space.
+func (g *Grant) Names(spaceID string) bool { _, ok := g.set[spaceID]; return ok }
+
+// Access is "read" or "write".
+func (g *Grant) Access() string {
+	if g.Write {
+		return "write"
+	}
+	return "read"
+}
+
+// Perms is the most the grant gives in a space it names.
+func (g *Grant) Perms() perm.Set {
+	if g.Write {
+		return perm.Of(perm.Read, perm.Write)
+	}
+	return perm.Of(perm.Read)
 }
 
 // New returns the service, and while there is no user at all makes the setup

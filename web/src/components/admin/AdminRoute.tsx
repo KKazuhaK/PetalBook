@@ -1,6 +1,6 @@
 import { Link, Navigate, useParams } from 'react-router'
 import { lazy, Suspense } from 'react'
-import { ArrowLeft, HardDrive, Layers, Quote, ShieldCheck, Users } from 'lucide-react'
+import { ArrowLeft, HardDrive, KeyRound, Layers, Quote, ShieldCheck, Users } from 'lucide-react'
 import { TopBar } from '@/components/layout/TopBar'
 import { useActiveSpace } from '@/api/hooks'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
@@ -14,11 +14,12 @@ import { UsersPanel } from './UsersPanel'
 
 // The daily text's page is a chunk of its own: it is the biggest of the administration's and the least visited.
 const DailyPanel = lazy(() => import('./DailyPanel').then((m) => ({ default: m.DailyPanel })))
+const AccessPanel = lazy(() => import('./AccessPanel').then((m) => ({ default: m.AccessPanel })))
 // The security page, with the providers and the audit log, is another.
 const SecurityPanel = lazy(() => import('./AdminSecurityPanel').then((m) => ({ default: m.AdminSecurityPanel })))
 
-const ICONS: Record<AdminSection, typeof Users> = { users: Users, spaces: Layers, daily: Quote, security: ShieldCheck, status: HardDrive }
-const SECTIONS: readonly AdminSection[] = ['users', 'spaces', 'daily', 'security', 'status']
+const ICONS: Record<AdminSection, typeof Users> = { users: Users, spaces: Layers, daily: Quote, access: KeyRound, security: ShieldCheck, status: HardDrive }
+const SECTIONS: readonly AdminSection[] = ['users', 'spaces', 'daily', 'access', 'security', 'status']
 
 // The administration: users and invites, every space, the state of the server.
 // It is a route of its own, loaded only when an administrator goes there (see
@@ -66,6 +67,11 @@ export default function AdminRoute() {
         {section === 'daily' && (
           <Suspense fallback={<PageFallback />}>
             <DailyPanel />
+          </Suspense>
+        )}
+        {section === 'access' && (
+          <Suspense fallback={<PageFallback />}>
+            <AccessPanel />
           </Suspense>
         )}
         {section === 'security' && (

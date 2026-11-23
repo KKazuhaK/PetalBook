@@ -79,13 +79,6 @@ func InsertProvider(ctx context.Context, q Q, p ProviderRow) error {
 	return err
 }
 
-func zeroMS(t time.Time) int64 {
-	if t.IsZero() {
-		return 0
-	}
-	return ms(t)
-}
-
 // UpdateProvider replaces everything but the slug, the kind and the creation time.
 func UpdateProvider(ctx context.Context, q Q, p ProviderRow) error {
 	res, err := q.Exec(ctx, `UPDATE sign_in_providers SET name = ?, icon = ?, enabled = ?, position = ?, auto_create = ?, merge_verified_email = ?, legacy_callback = ?, issuer = ?,

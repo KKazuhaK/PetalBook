@@ -362,7 +362,7 @@ func (s *Service) DeletePageFile(ctx context.Context, sp *space.Space, spaceID, 
 	l.Lock()
 	defer l.Unlock()
 	s.enter(l, spaceID, pageID)
-	by, err := s.spaces.AuthorByID(ctx, userID)
+	by, err := s.authorOf(ctx, userID)
 	if err != nil {
 		return err
 	}
@@ -399,7 +399,7 @@ func (s *Service) SaveFile(ctx context.Context, sp *space.Space, spaceID, userID
 	if err != nil {
 		return nil, err
 	}
-	by, err := s.spaces.AuthorByID(ctx, userID)
+	by, err := s.authorOf(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -454,6 +454,14 @@ func (s *Service) FixNotInType(ctx context.Context, sp *space.Space, spaceID, us
 	})
 }
 
+// Write runs write, a change of one page's file made as the user, the way
+// SaveFile saves a page: the page is excluded from other writes while it is
+// written, and the user's draft of it is kept unless the file now says what the
+// draft says. It is for changes that work on the file as it is (space.Update).
+func (s *Service) Write(ctx context.Context, sp *space.Space, spaceID, userID, pageID string, write func(by space.Author) (*space.Page, error)) (*space.Page, error) {
+	return s.writeHeader(ctx, sp, spaceID, userID, pageID, write)
+}
+
 // writeHeader runs a change of a page's header as the user: the page is
 // excluded from other writes while it is written, and the user's draft of it
 // is kept unless the file now says what the draft says.
@@ -469,7 +477,7 @@ func (s *Service) writeHeader(ctx context.Context, sp *space.Space, spaceID, use
 	if err != nil {
 		return nil, err
 	}
-	by, err := s.spaces.AuthorByID(ctx, userID)
+	by, err := s.authorOf(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -537,7 +545,7 @@ func (s *Service) applyUnder(ctx context.Context, sp *space.Space, d *store.Draf
 	}
 	// The file is written as the person whose draft it is, not as whoever
 	// happens to be using the space when the sweeper gets to it.
-	by, err := s.spaces.AuthorByID(ctx, d.UserID)
+	by, err := s.authorOf(ctx, d.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -752,4 +760,15 @@ func (s *Service) delayUnavailable(ctx context.Context, d *store.Draft, now time
 func (s *Service) delay(ctx context.Context, d *store.Draft, now time.Time, r *SweepResult) {
 	r.Failed++
 	store.DelayDraft(ctx, s.st.Q(), d.SpaceID, d.PageID, d.UserID, d.Version, now.Add(retryAfter))
+}
+
+// authorOf is who a write by userID is credited to: the person, and the means
+// the request came by (an API token) when ctx says so.
+func (s *Service) authorOf(ctx context.Context, userID string) (space.Author, error) {
+	by, err := s.spaces.AuthorByID(ctx, userID)
+	if err != nil {
+		return by, err
+	}
+	by.Via = space.ViaFrom(ctx)
+	return by, nil
 }

@@ -20,6 +20,8 @@ type Version struct {
 	Commit string
 	Time   time.Time
 	Author string
+	// Via is the value of the commit's Changed-via trailer ("" if it has none).
+	Via string
 	// Path is the file's path in this commit (for a deletion, the path it had).
 	Path       string
 	Status     byte // A, M, D, R, T
@@ -134,7 +136,7 @@ func (r *Repo) FileHistory(ctx context.Context, q HistoryQuery) ([]Version, *Cur
 // NUL, then the name-status entries (status, path[, path]) each separated by NUL.
 func (r *Repo) logFollow(ctx context.Context, start, path string, n int) ([]Version, error) {
 	out, err := r.run(ctx, Cmd{Args: []string{"log", "--follow", "--name-status", "-z", "--no-color", "-n", strconv.Itoa(n),
-		"--format=%H%x00%ct%x00%an", start, "--", path}})
+		"--format=%H%x00%ct%x00%an%x00%(trailers:key=Changed-via,valueonly=true,unfold=true,separator=%x2c)", start, "--", path}})
 	if err != nil {
 		return nil, err
 	}
@@ -146,13 +148,14 @@ func parseLog(out string) []Version {
 	var vs []Version
 	for i := 0; i < len(tok); {
 		h := strings.TrimLeft(tok[i], "\n")
-		if !hexRe.MatchString(h) || i+3 > len(tok) {
+		if !hexRe.MatchString(h) || i+4 > len(tok) {
 			i++
 			continue
 		}
 		ct, _ := strconv.ParseInt(tok[i+1], 10, 64)
-		v := Version{Commit: h, Time: time.Unix(ct, 0).UTC(), Author: tok[i+2]}
-		i += 3
+		via, _, _ := strings.Cut(strings.TrimSpace(tok[i+3]), ",")
+		v := Version{Commit: h, Time: time.Unix(ct, 0).UTC(), Author: tok[i+2], Via: via}
+		i += 4
 		// The entries of this commit: --follow shows only the followed file.
 		for i < len(tok) {
 			st := strings.TrimLeft(tok[i], "\n")

@@ -23,9 +23,11 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/auth"
 	"github.com/KKazuhaK/PetalBook/internal/drafts"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"github.com/KKazuhaK/PetalBook/internal/oauth"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
+	"github.com/KKazuhaK/PetalBook/internal/tokens"
 	"github.com/KKazuhaK/PetalBook/internal/webui"
 )
 
@@ -50,7 +52,10 @@ type serveConfig struct {
 	// maxImport is the largest body of an import, in bytes.
 	maxImport int64
 	inbox     string
-	spaceIdle time.Duration
+	// noMCP switches /mcp off in single-user mode (--mcp=false); mcpSet says
+	// the flag was given.
+	noMCP, mcpSet bool
+	spaceIdle     time.Duration
 	// pullInterval is how often a space that follows a remote is fetched (0:
 	// never by itself), remoteHosts the hosts a remote may be on, remoteTimeout
 	// how long one command that talks to a remote may take. remoteSet says one
@@ -75,6 +80,7 @@ var passwordParams auth.PasswordParams
 
 func newServe() *cobra.Command {
 	var c serveConfig
+	var mcpOn bool
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Serve spaces over HTTP",
@@ -118,6 +124,8 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c.nameSet = cmd.Flags().Changed("name")
+			c.mcpSet = cmd.Flags().Changed("mcp")
+			c.noMCP = !mcpOn
 			c.remoteSet = cmd.Flags().Changed("pull-interval") || cmd.Flags().Changed("remote-host") || cmd.Flags().Changed("remote-timeout")
 			c.oidcClientSecret = os.Getenv("PETALBOOK_OIDC_CLIENT_SECRET")
 			c.logger = slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), nil))
@@ -151,6 +159,7 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 	f.DurationVar(&c.remoteTimeout, "remote-timeout", 60*time.Second, "accounts mode: how long one fetch or push may take before the remote counts as unreachable")
 	f.Int64Var(&c.maxUpload, "max-upload", api.DefaultMaxUpload, "largest file accepted as an upload, in bytes (0: the default, 10 MiB)")
 	f.Int64Var(&c.maxImport, "max-import", api.DefaultMaxImport, "largest Markdown file or zip accepted as an import, in bytes (0: the default, 100 MiB)")
+	f.BoolVar(&mcpOn, "mcp", true, "single-user mode: serve /mcp for MCP clients with an API token (false: it answers 404); in accounts mode an administrator decides, in the app")
 	f.StringVar(&c.inbox, "inbox", store.DefaultInbox, "single-user mode: the folder quick notes go to")
 	f.IntVar(&c.maxSpaces, "max-spaces", spaces.DefaultMaxSpaces, "accounts mode: how many spaces one user may own (0: no limit)")
 	f.DurationVar(&c.spaceIdle, "space-idle", spaces.DefaultIdleAfter, "accounts mode: close a space that has not been used for this long (it reopens on the next request)")
@@ -238,6 +247,9 @@ func (c serveConfig) check() (*checked, error) {
 		}
 		if c.stateDir != "" || c.nameSet {
 			return nil, errors.New("--state-dir and --name are for single-user mode (--space); in accounts mode the data directory holds everything")
+		}
+		if c.mcpSet {
+			return nil, errors.New("--mcp is for single-user mode (--space); in accounts mode an administrator switches MCP in the app")
 		}
 	} else {
 		if c.remoteSet {
@@ -404,7 +416,17 @@ func runServe(ctx context.Context, c serveConfig) error {
 		return err
 	}
 
-	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, PublicURL: cfg.publicURL, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
+	tokenSvc := api.NewTokens(tokens.Config{Store: st, Logger: log}, svc)
+	// The authorization server for MCP clients needs accounts and the address
+	// people use: it is the issuer of its tokens.
+	var oauthSvc *oauth.Service
+	if cfg.accounts && cfg.publicURL != "" {
+		if oauthSvc, err = oauth.New(ctx, oauth.Config{Store: st, Secrets: mgr.Secrets(), Users: svc, Machine: tokenSvc, Issuer: cfg.publicURL,
+			ClientIP: svc.ClientAddr, Logger: log}); err != nil {
+			return fmt.Errorf("the authorization server: %w", err)
+		}
+	}
+	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tokenSvc, OAuth: oauthSvc, PublicURL: cfg.publicURL, NoMCP: c.noMCP, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
 		RestrictHost: loopback, AllowOrigins: cfg.origins, Logger: log})
 	var webOpts []webui.Option
 	if svc != nil {
@@ -445,6 +467,10 @@ func runServe(ctx context.Context, c serveConfig) error {
 		go func() { defer wg.Done(); f(bg) }()
 	}
 	run(drf.Run)
+	run(tokenSvc.Run)
+	if oauthSvc != nil {
+		run(oauthSvc.Run)
+	}
 	if cfg.accounts {
 		run(mgr.Run)
 		run(mgr.RunPull)
@@ -493,16 +519,16 @@ func runServe(ctx context.Context, c serveConfig) error {
 	return serveErr
 }
 
-// withWebApp sends /api/ to the API and everything else to the web app. The
+// withWebApp sends /api/ and the endpoints of the authorization server to the API and everything else to the web app. The
 // prefix test, not a ServeMux, so the API sees the request path exactly as it
 // did before the app was served from here. The page and the API share one
 // origin, so the API's own-origin rules (the public URL in accounts mode, the
 // loopback address on the listen port in single-user mode) already let the
 // page call it.
-func withWebApp(api, app http.Handler) http.Handler {
+func withWebApp(apiHandler, app http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/") {
-			api.ServeHTTP(w, r)
+		if api.HandlesPath(r.URL.Path) {
+			apiHandler.ServeHTTP(w, r)
 			return
 		}
 		app.ServeHTTP(w, r)

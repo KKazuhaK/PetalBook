@@ -39,19 +39,24 @@ func queryTags(v url.Values) ([]string, bool) {
 	return out, true
 }
 
-func (s *server) listPages(c *call) {
-	v := c.r.URL.Query()
+// badQuery is a listing parameter that cannot be used: 400 invalid.
+type badQuery string
+
+func (e badQuery) Error() string { return string(e) }
+
+// parseListQuery reads the parameters of a listing (GET …/pages, and the
+// listing tools of /mcp) into a query. body says that the bodies were asked for
+// too (body=1).
+func parseListQuery(v url.Values) (q index.Query, body bool, err error) {
 	tags, ok := queryTags(v)
 	if !ok {
-		writeError(c.w, http.StatusBadRequest, "invalid", fmt.Sprintf("at most %d different tags", maxQueryTags))
-		return
+		return q, false, badQuery(fmt.Sprintf("at most %d different tags", maxQueryTags))
 	}
-	q := index.Query{Tags: tags, Text: v.Get("q"), Sort: v.Get("sort"), Cursor: v.Get("cursor")}
+	q = index.Query{Tags: tags, Text: v.Get("q"), Sort: v.Get("sort"), Cursor: v.Get("cursor")}
 	if v.Has("folder") {
 		f := v.Get("folder")
 		if err := space.ValidFolder(f); err != nil {
-			s.fail(c.w, err)
-			return
+			return q, false, err
 		}
 		q.Folder = &f
 	}
@@ -60,50 +65,47 @@ func (s *server) listPages(c *call) {
 	case "true":
 		q.Recursive = true
 	default:
-		writeError(c.w, http.StatusBadRequest, "invalid", "recursive must be true or false")
-		return
+		return q, false, badQuery("recursive must be true or false")
 	}
 	switch in := v.Get("in"); in {
 	case "":
 	case "title":
 		q.TitleOnly = true
 	default:
-		writeError(c.w, http.StatusBadRequest, "invalid", "in must be title")
-		return
+		return q, false, badQuery("in must be title")
 	}
 	// A day in UTC: "from" is its first moment, "to" its last.
-	day := func(name string) (time.Time, bool, bool) {
+	day := func(name string) (t time.Time, set bool, err error) {
 		raw := v.Get(name)
 		if raw == "" {
-			return time.Time{}, false, true
+			return t, false, nil
 		}
-		t, err := time.Parse("2006-01-02", raw)
+		t, perr := time.Parse("2006-01-02", raw)
 		// Years the index can compare: file times are kept in nanoseconds
 		// since 1970, which run out in 2262. A day outside is refused rather
 		// than turned into a bound that means something else.
-		if err != nil || t.Year() < 1970 || t.Year() > 2261 {
-			writeError(c.w, http.StatusBadRequest, "invalid", name+" must be a day like 2026-11-01, from 1970 to 2261")
-			return time.Time{}, false, false
+		if perr != nil || t.Year() < 1970 || t.Year() > 2261 {
+			return t, false, badQuery(name + " must be a day like 2026-11-01, from 1970 to 2261")
 		}
-		return t, true, true
+		return t, true, nil
 	}
-	if t, set, ok := day("updatedFrom"); !ok {
-		return
+	if t, set, err := day("updatedFrom"); err != nil {
+		return q, false, err
 	} else if set {
 		q.UpdatedFrom = t.UnixNano()
 	}
-	if t, set, ok := day("updatedTo"); !ok {
-		return
+	if t, set, err := day("updatedTo"); err != nil {
+		return q, false, err
 	} else if set {
 		q.UpdatedTo = t.AddDate(0, 0, 1).UnixNano()
 	}
-	if t, set, ok := day("createdFrom"); !ok {
-		return
+	if t, set, err := day("createdFrom"); err != nil {
+		return q, false, err
 	} else if set {
 		q.CreatedFrom = t.Format("2006-01-02")
 	}
-	if t, set, ok := day("createdTo"); !ok {
-		return
+	if t, set, err := day("createdTo"); err != nil {
+		return q, false, err
 	} else if set {
 		q.CreatedTo = t.Format("2006-01-02")
 	}
@@ -112,31 +114,26 @@ func (s *server) listPages(c *call) {
 	case "1", "true":
 		q.Props = true
 	default:
-		writeError(c.w, http.StatusBadRequest, "invalid", "props must be 1 or 0")
-		return
+		return q, false, badQuery("props must be 1 or 0")
 	}
-	body := false
 	switch v.Get("body") {
 	case "", "0", "false":
 	case "1", "true":
 		body = true
 	default:
-		writeError(c.w, http.StatusBadRequest, "invalid", "body must be 1 or 0")
-		return
+		return q, false, badQuery("body must be 1 or 0")
 	}
 	if raw := v.Get("filter"); raw != "" {
 		fs, err := parseFilters(raw)
 		if err != nil {
-			writeError(c.w, http.StatusBadRequest, "invalid", err.Error())
-			return
+			return q, false, badQuery(err.Error())
 		}
 		q.Filters = fs
 	}
 	if l := v.Get("limit"); l != "" {
 		n, err := strconv.Atoi(l)
 		if err != nil {
-			writeError(c.w, http.StatusBadRequest, "invalid", "limit must be a number from 1 to 200")
-			return
+			return q, false, badQuery("limit must be a number from 1 to 200")
 		}
 		q.Limit = n
 		if n == 0 { // 0 means "default" inside the index; over HTTP it is out of range
@@ -149,9 +146,17 @@ func (s *server) listPages(c *call) {
 			q.Limit = space.MaxBodies
 		}
 		if q.Limit > space.MaxBodies {
-			writeError(c.w, http.StatusBadRequest, "invalid", "with body=1 the limit is at most "+strconv.Itoa(space.MaxBodies))
-			return
+			return q, false, badQuery("with body=1 the limit is at most " + strconv.Itoa(space.MaxBodies))
 		}
+	}
+	return q, body, nil
+}
+
+func (s *server) listPages(c *call) {
+	q, body, err := parseListQuery(c.r.URL.Query())
+	if err != nil {
+		s.fail(c.w, err)
+		return
 	}
 	res, err := c.sp.Space.List(q)
 	if err != nil {

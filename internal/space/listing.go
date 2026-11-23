@@ -106,6 +106,12 @@ func (s *Space) List(q index.Query) (index.Result, error) {
 	return s.idx.List(q)
 }
 
+// PageSummary is the listing's summary of one page, with its properties and
+// rev, read from the index; false when the index does not have it.
+func (s *Space) PageSummary(id string) (index.Summary, bool, error) {
+	return s.idx.SummaryWithProps(id)
+}
+
 // Groups counts the pages of a scope by the values of a property, from the
 // index.
 func (s *Space) Groups(q index.GroupQuery) (index.GroupResult, error) { return s.idx.Groups(q) }

@@ -174,6 +174,9 @@ func checkTagName(tag string) error {
 	return nil
 }
 
+// CheckTagName refuses what cannot be a tag name.
+func CheckTagName(tag string) error { return checkTagName(tag) }
+
 // tagsFileProblem is what is said of a tags file that cannot be used as it is.
 func tagsFileProblem() error {
 	return unavailable(nil, "%s cannot be used as it is, and there is nothing here to restore it with", tagsFile)

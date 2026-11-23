@@ -120,6 +120,13 @@ func (s *Service) releaseHold(id string) {
 	s.cmu.Unlock()
 }
 
+// CachedUser is the user of an id, from the cache that sessions use: no query
+// until the entry is older than the cache time to live or something about the
+// user changed. store.ErrNotFound when there is no such user.
+func (s *Service) CachedUser(ctx context.Context, id string) (*store.User, error) {
+	return s.cachedUser(ctx, id)
+}
+
 func (s *Service) cachedUser(ctx context.Context, id string) (*store.User, error) {
 	now := s.now()
 	s.cmu.Lock()

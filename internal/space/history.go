@@ -18,6 +18,9 @@ type HistoryItem struct {
 	Time   time.Time
 	Author string
 	Path   string
+	// Via is "token" or "mcp" for a change made with an API token or through
+	// MCP (its Changed-via trailer), "" otherwise.
+	Via string
 	// Rev is the rev of the file in that version; "" for a deletion.
 	Rev string
 	// Change is add, edit (the content changed), move (only the path changed)
@@ -200,7 +203,7 @@ func (s *Space) History(ctx context.Context, id string, limit int, cursor string
 	}
 	items := make([]HistoryItem, len(vs))
 	for i, v := range vs {
-		items[i] = HistoryItem{Commit: v.Commit, Time: v.Time, Author: v.Author, Path: v.Path, Rev: v.Rev, Change: classify(v)}
+		items[i] = HistoryItem{Commit: v.Commit, Time: v.Time, Author: v.Author, Via: viaName(v.Via), Path: v.Path, Rev: v.Rev, Change: classify(v)}
 	}
 	n := ""
 	if next != nil {
@@ -279,4 +282,16 @@ func (s *Space) Version(ctx context.Context, id, commit string) (*VersionPage, e
 		return nil, ErrNoVersion
 	}
 	return &VersionPage{Commit: commit, Time: found.Time, Author: found.Author, Path: found.Path, Rev: oid, Meta: doc.Meta(), Body: doc.Body}, nil
+}
+
+// viaName is the short name of a Changed-via trailer value, "" for no trailer
+// or one this server does not write.
+func viaName(trailer string) string {
+	switch trailer {
+	case ViaToken:
+		return "token"
+	case ViaMCP:
+		return "mcp"
+	}
+	return ""
 }

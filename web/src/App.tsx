@@ -27,6 +27,7 @@ const LoginPage = lazy(() => import('@/pages/auth/LoginPage'))
 const SetupPage = lazy(() => import('@/pages/auth/SetupPage'))
 const InvitePage = lazy(() => import('@/pages/auth/InvitePage'))
 const HeldPage = lazy(() => import('@/pages/auth/HeldPage'))
+const ConsentPage = lazy(() => import('@/pages/auth/ConsentPage'))
 const SettingsRoute = lazy(() => import('@/components/settings/SettingsRoute'))
 const ImportPage = lazy(() => import('@/pages/ImportPage'))
 const CheckPage = lazy(() => import('@/pages/CheckPage'))
@@ -83,14 +84,26 @@ function LegacyRedirect() {
   return <Navigate to={`/s/${encodeURIComponent(space.id)}${target}${search}${hash}`} replace />
 }
 
+// The sign-in page sends the person back to `/oauth/authorize?...`, an address of
+// the server (an MCP client sent the browser there, and the server needed a
+// session first). Now there is one: ask the server again, with a page load.
+function ToTheServer() {
+  const { pathname, search } = useLocation()
+  useEffect(() => window.location.replace(pathname + search), [pathname, search])
+  return <PageFallback />
+}
+
 // useBlocker (leave-with-unsaved-text guard) needs a data router.
 const router = createBrowserRouter([
   { path: 'login', element: later(<LoginPage />) },
   { path: 'setup', element: later(<SetupPage />) },
   { path: 'invite', element: later(<InvitePage />) },
+  { path: 'oauth/authorize', element: <ToTheServer /> },
   {
     element: <AuthGate />,
     children: [
+      // The page an MCP client sends the person to; no app around it.
+      { path: 'oauth/consent', element: later(<ConsentPage />) },
       {
         element: <AppShell />,
         children: [

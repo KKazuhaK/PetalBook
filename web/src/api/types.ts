@@ -405,6 +405,8 @@ export interface HistoryItem {
   // Absent for the version in which the page was deleted.
   rev?: string
   change: VersionChange
+  // How the change was made, when it did not come from the web app.
+  via?: 'mcp' | 'token'
 }
 export interface HistoryList {
   items: HistoryItem[]
@@ -467,6 +469,7 @@ export interface ReasonCode {
 }
 
 export type ErrorCode =
+  | 'token_limit'
   | 'bad_language'
   | 'api_not_found'
   | 'builtin'
@@ -536,6 +539,82 @@ export interface SessionInfo {
   hold?: 'passkey' | null
   // Absent in single-user mode.
   methods?: { password: boolean; oidc: { name: string } | null }
+  // The API token the request was made with; the app's own requests have none.
+  token?: { id: string; name: string; access: TokenAccess; spaces: string[] } | null
+}
+
+// An API token (docs/api.md, "API tokens"). The secret is never in one of these.
+export type TokenAccess = 'read' | 'write'
+export type TokenState = 'active' | 'expired' | 'revoked'
+export interface ApiTokenSpace {
+  id: string
+  // "" for a space that is gone or that the owner has left.
+  name: string
+}
+export interface ApiToken {
+  id: string
+  name: string
+  prefix: string
+  access: TokenAccess
+  spaces: ApiTokenSpace[]
+  created: string
+  expires: string | null
+  lastUsed: string | null
+  revoked: string | null
+  state: TokenState
+}
+// The secret is in the response of the creating request only.
+export interface CreatedToken {
+  token: ApiToken
+  secret: string
+}
+export interface AdminToken extends ApiToken {
+  owner: { id: string; username: string; name: string }
+}
+export interface AdminTokenList {
+  items: AdminToken[]
+  next: string
+}
+// An OAuth grant: one approval of one client (an MCP client, say) by one person
+// (docs/api.md, "OAuth for MCP clients"). It works like a token of that access
+// and those spaces.
+export interface Grant {
+  id: string
+  client: { name: string; id: string }
+  access: TokenAccess
+  spaces: ApiTokenSpace[]
+  created: string
+  // The last refresh; the creation until the first.
+  lastUsed: string | null
+}
+export interface AdminGrant extends Grant {
+  owner: { id: string; username: string; name: string }
+}
+export interface AdminGrantList {
+  items: AdminGrant[]
+  next: string
+}
+// What the consent page shows of an authorization request.
+export interface ConsentInfo {
+  client: { name: string; id: string; host: string }
+  redirectHost: string
+  // The host may show as letters that look like others.
+  punycode: boolean
+  scopes: TokenAccess[]
+  spaces: { id: string; name: string; permissions: Permission[]; personal: boolean }[]
+  user: { id: string; name: string }
+}
+export interface ConsentDecision {
+  req: string
+  approve: boolean
+  spaces?: string[]
+  access?: TokenAccess
+}
+export interface MachineAccess {
+  tokens: boolean
+  mcp: boolean
+  // Whether the authorization server is there; read only.
+  oauth: boolean
 }
 
 export type ProviderKind = 'oidc' | 'saml' | 'github'

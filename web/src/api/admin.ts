@@ -6,7 +6,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, enc, request } from './client'
 import { keys } from './hooks'
-import type { AdminDaily, AdminSpaceList, AuditList, AuthProvider, Passkey, ProviderInput, SecurityPatch, SecuritySettings, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User } from './types'
+import type { AdminDaily, AdminSpaceList, AuditList, AuthProvider, Passkey, ProviderInput, SecurityPatch, SecuritySettings, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User, AdminGrantList, AdminTokenList, MachineAccess } from './types'
 
 export const adminApi = {
   // --- users and invites ---
@@ -63,6 +63,26 @@ export const adminApi = {
     const qs = q.toString()
     return request<AuditList>(`/admin/audit${qs ? `?${qs}` : ''}`, { signal })
   },
+
+  // --- machine access: API tokens ---
+  access: (signal?: AbortSignal) => request<MachineAccess>('/admin/access', { signal }),
+  putAccess: (input: { tokens?: boolean; mcp?: boolean }) => request<MachineAccess>('/admin/access', { method: 'PUT', body: input }),
+  adminTokens: (params: { cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<AdminTokenList>(`/admin/tokens${qs ? `?${qs}` : ''}`, { signal })
+  },
+  adminRevokeToken: (id: string) => request<void>(`/admin/tokens/${enc(id)}`, { method: 'DELETE' }),
+  adminGrants: (params: { cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<AdminGrantList>(`/admin/grants${qs ? `?${qs}` : ''}`, { signal })
+  },
+  adminRevokeGrant: (id: string) => request<void>(`/admin/grants/${enc(id)}`, { method: 'DELETE' }),
 
   // --- the daily text of the whole server ---
   daily: (signal?: AbortSignal) => request<AdminDaily>('/admin/daily', { signal }),
@@ -216,5 +236,45 @@ export function useAuditLog(kind: string, user: string) {
     queryFn: ({ pageParam, signal }) => adminApi.audit({ kind: kind || undefined, user: user || undefined, cursor: pageParam || undefined, limit: AUDIT_PAGE_SIZE }, signal),
     getNextPageParam: (last) => last.next || undefined,
     staleTime: 5_000,
+  })
+}
+
+// --- machine access ------------------------------------------------------------------
+
+export function useMachineAccess(enabled = true) {
+  return useQuery({ queryKey: keys.adminAccess, queryFn: ({ signal }) => adminApi.access(signal), enabled, staleTime: 15_000 })
+}
+
+export function useSetMachineAccess() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { tokens?: boolean; mcp?: boolean }) => adminApi.putAccess(input),
+    onSuccess: (a) => qc.setQueryData(keys.adminAccess, a),
+  })
+}
+
+export const ADMIN_TOKENS_PAGE = 50
+
+// Every person's tokens, a cursor page at a time.
+export function useAdminTokens(enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.adminTokens,
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => adminApi.adminTokens({ cursor: pageParam || undefined, limit: ADMIN_TOKENS_PAGE }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled,
+    staleTime: 15_000,
+  })
+}
+
+// Every person's OAuth grants, a cursor page at a time.
+export function useAdminGrants(enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.adminGrants,
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => adminApi.adminGrants({ cursor: pageParam || undefined, limit: ADMIN_TOKENS_PAGE }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled,
+    staleTime: 15_000,
   })
 }

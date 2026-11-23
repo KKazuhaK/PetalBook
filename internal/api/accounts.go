@@ -62,7 +62,7 @@ func toSpaces(in []spaces.Info) []spaceResp {
 func (s *server) getMeta(c *call) {
 	list := []spaceResp{}
 	if c.p != nil {
-		l, err := s.spaces.List(c.r.Context(), c.user().ID)
+		l, err := s.visibleSpaces(c)
 		if err != nil {
 			s.fail(c.w, err)
 			return
@@ -91,6 +91,13 @@ func (s *server) getSession(c *call) {
 		Setup   bool      `json:"setup"`
 		Hold    *string   `json:"hold"`
 		Methods *methods  `json:"methods,omitempty"`
+		// Token is the API token the request was made with; null for a session.
+		Token *struct {
+			ID     string   `json:"id"`
+			Name   string   `json:"name"`
+			Access string   `json:"access"`
+			Spaces []string `json:"spaces"`
+		} `json:"token"`
 	}{Mode: "single"}
 	if c.p != nil {
 		u := s.toUser(c.user())
@@ -98,6 +105,14 @@ func (s *server) getSession(c *call) {
 		if c.p.Held {
 			h := "passkey"
 			out.Hold = &h
+		}
+		if g := c.p.Grant; g != nil {
+			out.Token = &struct {
+				ID     string   `json:"id"`
+				Name   string   `json:"name"`
+				Access string   `json:"access"`
+				Spaces []string `json:"spaces"`
+			}{g.ID, g.Name, g.Access(), g.Spaces}
 		}
 	}
 	if !s.single {
@@ -438,7 +453,7 @@ func (s *server) deleteInvite(c *call) {
 // --- spaces ------------------------------------------------------------------
 
 func (s *server) listSpaces(c *call) {
-	l, err := s.spaces.List(c.r.Context(), c.user().ID)
+	l, err := s.visibleSpaces(c)
 	if err != nil {
 		s.fail(c.w, err)
 		return
