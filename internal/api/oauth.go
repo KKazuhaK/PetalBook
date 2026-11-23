@@ -322,6 +322,9 @@ func (s *server) revokeGrant(c *call, owner string) {
 		writeError(c.w, http.StatusNotFound, "not_found", "no such grant")
 		return
 	}
+	if owner == "" && s.refuseSiteAdminOwner(c, rows[0].UserID) {
+		return
+	}
 	who := "the owner"
 	if owner == "" {
 		who = "an administrator"

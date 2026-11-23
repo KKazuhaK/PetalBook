@@ -323,6 +323,9 @@ func (s *server) revokeToken(c *call, owner string) {
 		writeError(c.w, http.StatusNotFound, "not_found", "no such token")
 		return
 	}
+	if owner == "" && s.refuseSiteAdminOwner(c, rows[0].UserID) {
+		return
+	}
 	done, err := s.tokens.Revoke(c.r.Context(), id)
 	if err != nil {
 		s.fail(c.w, err)
@@ -333,6 +336,28 @@ func (s *server) revokeToken(c *call, owner string) {
 			Detail: map[string]any{"token": id, "name": rows[0].Name, "by": revokedBy(owner)}})
 	}
 	c.w.WriteHeader(http.StatusNoContent)
+}
+
+// refuseSiteAdminOwner answers 403 and returns true when the person is a site
+// administrator and the caller is not one: a tenant administrator may not end
+// what a site administrator holds (as with changing the account itself).
+func (s *server) refuseSiteAdminOwner(c *call, userID string) bool {
+	if cu := c.user(); cu.SiteAdmin && cu.Role == "admin" {
+		return false
+	}
+	u, err := store.GetUser(c.r.Context(), s.opt.Store.Q(), store.AllTenants(), userID)
+	if errors.Is(err, store.ErrNotFound) {
+		return false
+	}
+	if err != nil {
+		s.fail(c.w, err)
+		return true
+	}
+	if u.SiteAdmin {
+		writeError(c.w, http.StatusForbidden, "forbidden", "only a site administrator may change a site administrator")
+		return true
+	}
+	return false
 }
 
 // revokedBy is the "by" of a revocation's audit row: owner "" is an administrator.

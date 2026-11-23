@@ -812,6 +812,9 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 	if rt.row.Kind == KindGitHub && len(rt.cfg.Organizations) == 0 {
 		return nil, false, ssoErr("no_account")
 	}
+	if s.st.TenantDisabled(rt.row.TenantID) { // the provider's tenant was disabled after it was set up
+		return nil, false, ssoErr("no_account")
+	}
 	u, err := s.createFromClaims(ctx, c, "member", "", false, rt.row.TenantID, false)
 	return u, true, err
 }

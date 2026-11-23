@@ -4773,6 +4773,8 @@ Measured per person and per tenant: spaces owned, bytes, pages.
   and `quota_exceeded` goes to the audit log once per crossing. Uploads keep
   3.1's `507 space_full` for its own limit; a byte quota that refuses later will
   answer `507 quota_exceeded`.
+- **A personal space** is never refused for a quota and counts toward the
+  person's and the tenant's totals.
 - **Over** means more than the limit (at it is not). Whether a row is over is
   looked at after each measurement; after a change of whom a space is counted
   for (a space made or deleted, a transfer, an owner added, promoted, demoted or

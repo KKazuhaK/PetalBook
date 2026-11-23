@@ -475,3 +475,61 @@ func TestGroupAuditRowsTakeTheGroupsTenant(t *testing.T) {
 		}
 	})
 }
+
+// A tenant administrator cannot revoke a site administrator's API tokens or
+// OAuth grants (as with PATCH /api/users/{id}); a site administrator can.
+func TestATenantAdministratorCannotRevokeASiteAdministratorsTokensOrGrants(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, oa(), func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		sid := f.root.personalSpace()
+		id, secret := mkToken(t, f.root, "read", nil, sid)
+		g := grant(t, a, f.root, "read", sid)
+		gid := ""
+		for _, it := range f.root.do("GET", "/api/admin/grants?user="+mustUserID(t, a, "root"), nil).want(t, 200, "").body["items"].([]any) {
+			gid = it.(map[string]any)["id"].(string)
+		}
+		if gid == "" {
+			t.Fatal("no grant listed")
+		}
+		f.admA.do("DELETE", "/api/admin/tokens/"+id, nil).want(t, 403, "forbidden")
+		f.admA.do("DELETE", "/api/admin/grants/"+gid, nil).want(t, 403, "forbidden")
+		a.bearer(secret, "").do("GET", spacePath(sid)+"/tree", nil).want(t, 200, "")
+		refreshWith(t, a, g.cid, g.refresh).want(t, 200, "")
+		f.root.do("DELETE", "/api/admin/tokens/"+id, nil).want(t, 204, "")
+		f.root.do("DELETE", "/api/admin/grants/"+gid, nil).want(t, 204, "")
+	})
+}
+
+// A refresh token of a disabled tenant's person gets no new access token.
+func TestARefreshTokenOfADisabledTenantIsRefused(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, oa(), func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		g := grant(t, a, f.memB, "read", f.memB.personalSpace())
+		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"disabled": true}).want(t, 200, "")
+		refreshWith(t, a, g.cid, g.refresh).want(t, 400, "invalid_grant")
+		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"disabled": false}).want(t, 200, "")
+		refreshWith(t, a, g.cid, g.refresh).want(t, 200, "")
+	})
+}
+
+// A provider whose tenant was disabled afterwards makes no account: the
+// sign-in ends in no_account, not an internal error.
+func TestAProviderOfADisabledTenantCreatesNoAccount(t *testing.T) {
+	t.Parallel()
+	idpB := newIDPFor(t, "corp")
+	idpB.addUser("newbie", testidp.Claims{"sub": "s-newbie", "preferred_username": "newbie", "name": "Newbie"})
+	eachAccounts(t, accOpts{httpc: anyTLSClient()}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		f.root.do("POST", "/api/admin/auth/providers", idpB.providerBody("corp", map[string]any{"autoCreate": true, "tenant": f.tenB})).want(t, 201, "")
+		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"disabled": true}).want(t, 200, "")
+		c := a.newClient("")
+		if loc := idpB.signIn2(t, c, "corp", "newbie", map[string]any{}); loc != "/login?sso_error=no_account" || signedInAs(t, c) != "" {
+			t.Fatalf("%s (signed in as %q)", loc, signedInAs(t, c))
+		}
+		if n := f.countOf(`SELECT COUNT(*) FROM users WHERE username = 'newbie'`); n != 0 {
+			t.Fatalf("%d accounts made in a disabled tenant", n)
+		}
+	})
+}
