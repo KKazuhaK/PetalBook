@@ -294,6 +294,35 @@ func (s *Service) Get(ctx context.Context, sp *space.Space, spaceID, pageID, use
 	return out, err
 }
 
+// GetMany is Get for several pages at once: the user's drafts of the pages in
+// revs (page id to the rev of its file now), read in one query. A page without
+// a draft is not in the answer.
+func (s *Service) GetMany(ctx context.Context, sp *space.Space, spaceID, userID string, revs map[string]string) (map[string]*Draft, error) {
+	ids := make([]string, 0, len(revs))
+	for id := range revs {
+		ids = append(ids, id)
+	}
+	ds, err := store.UserDrafts(ctx, s.st.Q(), spaceID, userID, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]*Draft, len(ds))
+	for id, d := range ds {
+		cur := revs[id]
+		o, err := toDraft(d, cur)
+		if err != nil {
+			return nil, err
+		}
+		if o.Stale && sp != nil {
+			if rev, body, ok := sp.Rebase(id, d.BaseRev, d.Body); ok && rev == cur {
+				o.BaseRev, o.Body, o.Stale = rev, body, false
+			}
+		}
+		out[id] = o
+	}
+	return out, nil
+}
+
 // Delete discards the user's draft of a page, if any. With a version it
 // discards only that one, and answers a *Conflict (Draft nil when there is
 // none any more) when the draft is another; a page that is gone is ErrNotFound.

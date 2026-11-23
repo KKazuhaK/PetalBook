@@ -164,6 +164,7 @@ var routeTable = []route{
 	{"DELETE", "/api/admin/grants/{id}", admin, true, false, false, (*server).adminRevokeGrant},
 
 	{"GET", "/api/spaces", signedIn, false, false, false, (*server).listSpaces},
+	{"GET", "/api/sync/heads", signedIn, false, false, false, (*server).syncHeads},
 	{"POST", "/api/spaces", signedIn, true, false, false, (*server).createSpace},
 	{"PATCH", "/api/spaces/{space}", inSpace(perm.Manage), true, false, false, (*server).renameSpace},
 
@@ -209,6 +210,9 @@ var routeTable = []route{
 	{"POST", "/api/spaces/{space}/favorites", inSpace(perm.Read), false, false, false, (*server).addFavorite},
 	{"DELETE", "/api/spaces/{space}/favorites", inSpace(perm.Read), false, false, false, (*server).deleteFavorite},
 	{"PUT", "/api/spaces/{space}/favorites/order", inSpace(perm.Read), false, false, false, (*server).putFavoritesOrder},
+	{"GET", "/api/spaces/{space}/sync/catalog", inSpace(perm.Read), false, false, false, (*server).syncCatalog},
+	{"GET", "/api/spaces/{space}/changes", inSpace(perm.Read), false, false, false, (*server).syncChanges},
+	{"GET", "/api/spaces/{space}/sync/pages", inSpace(perm.Read), false, false, false, (*server).syncPages},
 	{"POST", "/api/spaces/{space}/reindex", inSpace(perm.Manage), false, false, false, (*server).reindex},
 
 	{"POST", "/api/spaces/{space}/pages/{id}/assets", inSpace(perm.Write), false, false, true, (*server).putAsset},

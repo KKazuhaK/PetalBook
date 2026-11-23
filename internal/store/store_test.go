@@ -284,6 +284,32 @@ func TestDraftsLifecycle(t *testing.T) {
 	})
 }
 
+func TestUserDraftsReadsSeveralPagesInOneQuery(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		mkUser(t, st, "A", "a", "admin")
+		mkUser(t, st, "B", "b", "member")
+		store.InsertSpace(ctx, st.Q(), "S", "s", "", "", time.Now())
+		store.InsertSpace(ctx, st.Q(), "T", "t", "", "", time.Now())
+		put := func(space, page, user, body string) {
+			t.Helper()
+			if _, err := store.PutDraft(ctx, st.Q(), store.Draft{SpaceID: space, PageID: page, UserID: user, BaseRev: "r", Meta: `{}`, Body: body, Updated: time.UnixMilli(1000)}, "", time.Minute, time.Hour); err != nil {
+				t.Fatal(err)
+			}
+		}
+		put("S", "P1", "A", "one")
+		put("S", "P2", "A", "two")
+		put("S", "P3", "B", "somebody else's")
+		put("T", "P4", "A", "another space")
+		got, err := store.UserDrafts(ctx, st.Q(), "S", "A", []string{"P1", "P2", "P3", "P4", "P5"})
+		if err != nil || len(got) != 2 || got["P1"].Body != "one" || got["P2"].Body != "two" {
+			t.Fatalf("%v %v", got, err)
+		}
+		if got, err := store.UserDrafts(ctx, st.Q(), "S", "A", nil); err != nil || len(got) != 0 {
+			t.Fatalf("%v %v", got, err)
+		}
+	})
+}
+
 func TestPutDraftChecksThePreviousVersion(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")

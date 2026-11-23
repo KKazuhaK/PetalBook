@@ -212,6 +212,10 @@ func TestOAuthFlowFromStartToFinish(t *testing.T) {
 		b.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 403, "token_scope")
 		b.tool("folders_list", map[string]any{"space": tm.sid}).ok(t)
 		b.do("GET", "/api/spaces", nil).want(t, 403, "token_scope")
+		for _, path := range []string{"/changes?since=x", "/sync/catalog", "/sync/pages?ids=01JD3K8Q7Z"} {
+			b.do("GET", spacePath(tm.sid)+path, nil).want(t, 403, "token_scope")
+		}
+		b.do("GET", "/api/sync/heads?space="+tm.sid, nil).want(t, 403, "token_scope")
 	})
 }
 

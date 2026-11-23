@@ -70,6 +70,8 @@ var tokenRoutes = map[string]bool{
 	"GET /api/meta":    true,
 	"GET /api/session": true,
 	"GET /api/spaces":  true,
+	// The heads of the offline sync: the spaces a token names, read only.
+	"GET /api/sync/heads": true,
 }
 
 // tokenAllowed says whether a route may be used with a token: those on a
