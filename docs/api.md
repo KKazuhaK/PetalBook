@@ -3032,6 +3032,11 @@ them. This keeps a token request free of the passkey check (no query per
 request) and leaves running scripts and MCP clients alone when an
 administrator raises the sign-in requirements.
 
+The same holds for a lockout and for `ssoOnly`: both govern signing in, not
+credentials already made. A locked-out account, or a non-administrator under
+`ssoOnly`, keeps its tokens and grants; revoke them as above. Only a disabled
+owner is refused at once (`token_owner_disabled`, `invalid_grant`).
+
 `GET /oauth/authorize` with a held session goes on to the consent page as
 usual; the web app shows the passkey page there instead, and the consent page
 once a passkey is registered (the address is kept, also through the fresh

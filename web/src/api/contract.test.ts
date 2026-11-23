@@ -170,6 +170,13 @@ function suite(target: Target) {
       const user = REAL ? CONTRACT_USER! : MOCK_ADMIN.username
       const password = REAL ? CONTRACT_PASSWORD! : MOCK_ADMIN.password
       await api.login({ username: user, password })
+      if (REAL) {
+        // The suite signs in far more often than ten times a minute from one
+        // address, so a real server's per-minute limit is raised for the run
+        // and put back afterwards. The failure caps stay as they are.
+        const r = await fetch('/api/admin/security', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limits: { perMinute: 1000 } }) })
+        if (r.status !== 200) throw new Error(`could not raise the sign-in limit for the run: ${r.status} ${await r.text()}`)
+      }
       spaceId = (await api.spaces()).spaces[0].id
     }
     S = spaceApi(spaceId)
@@ -178,6 +185,9 @@ function suite(target: Target) {
   afterAll(async () => {
     globalThis.fetch = admin.fetch
     for (const id of created.users) await adminApi.updateUser(id, { disabled: true }).catch(() => undefined)
+    if (REAL && accounts) {
+      await fetch('/api/admin/security', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limits: { perMinute: 10 } }) }).catch(() => undefined)
+    }
     globalThis.fetch = realFetch
     markSignedIn()
   })
