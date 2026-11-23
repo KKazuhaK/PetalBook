@@ -47,6 +47,8 @@ var scopeAllowlist = map[string]string{
 	"UpdateProfile":           "the caller's own account, or a user already found in scope",
 	"SetEmail":                "a user already found in scope",
 	"SetEmailVerified":        "a user already found in scope",
+	"SetTermsAccepted":        "the account just made from a registration",
+	"GetTermsAccepted":        "a user already found in scope",
 	"EmailVerifiedBy":         "a user already found in scope (by the address, in the provider's tenant)",
 	"SetPasskeyRequired":      "a user already found in scope",
 	"SetRole":                 "a user already found in scope",

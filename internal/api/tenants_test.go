@@ -395,7 +395,7 @@ func TestAPuppetAccountNeverCatchesASignIn(t *testing.T) {
 			t.Fatal(loc)
 		}
 		// A site administrator vouching for the address makes it count.
-		f.root.do("PATCH", "/api/users/"+mustUserID(t, a, "puppet-1"), map[string]any{"emailVerified": false}).want(t, 200, "")
+		// Sending true again is enough: it clears the mark without a false first.
 		f.root.do("PATCH", "/api/users/"+mustUserID(t, a, "puppet-1"), map[string]any{"emailVerified": true}).want(t, 200, "")
 		c = a.newClient("")
 		idpB.signIn2(t, c, "corp", "victim", map[string]any{})

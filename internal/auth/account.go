@@ -334,7 +334,18 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 			if verified && !isSite {
 				by = store.VerifiedByTenantAdmin
 			}
-			if newEmail != u.Email || verified != u.EmailVerified {
+			// A site administrator's true always counts: it clears the mark of
+			// an address only a tenant administrator vouched for, even when the
+			// address was already shown as verified.
+			clearMark := false
+			if verified && isSite && patch.EmailVerified != nil && newEmail == u.Email && u.EmailVerified {
+				if cur, err := store.EmailVerifiedBy(ctx, q, u.ID); err != nil {
+					return err
+				} else {
+					clearMark = cur != ""
+				}
+			}
+			if newEmail != u.Email || verified != u.EmailVerified || clearMark {
 				if err := store.SetEmail(ctx, q, u.ID, newEmail, verified, by); err != nil {
 					return err
 				}

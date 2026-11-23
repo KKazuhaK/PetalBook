@@ -320,6 +320,10 @@ func (s *Store) DeleteTenant(ctx context.Context, id string) error {
 		if _, err := q.Exec(ctx, `DELETE FROM layered_settings WHERE layer = 'tenant' AND layer_id = ?`, id); err != nil {
 			return err
 		}
+		// Pending registrations are deleted with it.
+		if _, err := q.Exec(ctx, `DELETE FROM registrations WHERE tenant_id = ?`, id); err != nil {
+			return err
+		}
 		// A provider that put new accounts here goes back to the default tenant.
 		if _, err := q.Exec(ctx, `UPDATE sign_in_providers SET tenant_id = ? WHERE tenant_id = ?`, DefaultTenantID, id); err != nil {
 			return err

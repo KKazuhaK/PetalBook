@@ -55,3 +55,40 @@ CREATE TABLE layered_settings (
   updated  BIGINT NOT NULL,
   PRIMARY KEY (layer, layer_id, key)
 );
+
+-- Registration, email verification and password reset (the second part of 3.3).
+-- When and where a person accepted the terms (JSON: at, termsUrl, privacyUrl;
+-- '' when they never were asked).
+ALTER TABLE users ADD COLUMN terms_accepted TEXT NOT NULL DEFAULT '';
+
+-- A registration waiting for its link to be followed. The password is already
+-- hashed and the username is held (unique) until the row expires or is made
+-- into an account; only the SHA-256 of the token is stored.
+CREATE TABLE registrations (
+  id            TEXT PRIMARY KEY,
+  tenant_id     TEXT NOT NULL,
+  username      TEXT NOT NULL,
+  name          TEXT NOT NULL,
+  email         TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  token_hash    TEXT NOT NULL UNIQUE,
+  terms         TEXT NOT NULL DEFAULT '',
+  created       BIGINT NOT NULL,
+  expires       BIGINT NOT NULL
+);
+CREATE UNIQUE INDEX registrations_username ON registrations(username);
+CREATE INDEX registrations_tenant ON registrations(tenant_id, expires);
+
+-- Links that confirm an address ('verify') or reset a password ('reset'): the
+-- token itself is never stored, only its SHA-256.
+CREATE TABLE email_tokens (
+  hash    TEXT PRIMARY KEY,
+  kind    TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  email   TEXT NOT NULL,
+  created BIGINT NOT NULL,
+  expires BIGINT NOT NULL,
+  used    BIGINT NOT NULL DEFAULT 0
+);
+CREATE INDEX email_tokens_user ON email_tokens(user_id, kind);
+CREATE INDEX email_tokens_expires ON email_tokens(expires);
