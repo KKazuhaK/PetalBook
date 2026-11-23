@@ -128,7 +128,9 @@ clears `emailVerified`.
 
 `passkeyRequired` is whether this person must sign in with a passkey: set for
 them alone (`PATCH /api/users/{id}`) or for their role (the 安全 settings,
-`passkeys.requireRoles`). See "When a passkey is required".
+`passkeys.requireRoles`). In a response it is the effective value, so it is
+`true` for everyone of a required role; `PATCH` changes only the person's own
+mark. See "When a passkey is required".
 
 ### `GET /api/session`
 
@@ -466,7 +468,7 @@ until its assertion expires).
 
 Public. The service provider metadata to give the identity provider
 (`application/samlmetadata+xml`): entity ID, the ACS address, the signing
-certificate. It is served for a provider that is not enabled yet, so it can be
+certificate (no encryption key is offered: encrypted assertions are refused). It is served for a provider that is not enabled yet, so it can be
 set up at the identity provider first.
 
 #### The pre-2.8 endpoints
@@ -658,7 +660,7 @@ kept.
 | `kind` | When | `detail` |
 |---|---|---|
 | `login` | a session was started | `method` (`password`, `passkey`, `oidc`, `saml`, `github`), `provider` (slug), `created` (an account was made) |
-| `login_failed` | a sign-in was refused | `method`, `reason` (`bad_password`, `disabled`, `local_login_refused`, `passkey_required`, `passkey_failed`, `captcha_failed`, an `sso_error` code), `provider`; the username as typed, also for a name nobody has |
+| `login_failed` | a sign-in was refused | `method`, `reason` (`bad_password`, `disabled`, `local_login_refused`, `passkey_required`, `passkey_failed`, `captcha_failed`, `rate_limited` for an attempt turned away by a lockout, an `sso_error` code), `provider`; the username as typed, also for a name nobody has |
 | `rate_limited` | a key first went over the per-minute limit or a failure cap in a window (once per key and window, not per request) | `limit` (`per_minute`, `ip`, `username`, `pair`) |
 | `lockout` | a key was locked | `scope`, `minutes` |
 | `passkey_clone` | a passkey's counter went backwards | `passkey` (id) |

@@ -1849,6 +1849,70 @@ GitHub App 和用户授权，自动建仓库；passkey；SAML。
 10. JSON 里用 `loginMode`、`ssoOnly` 而不是设计里写的 `login_mode`？
     （用 camelCase，和其余接口一致。）
 
+**2.8 的现状（2026-11-23）**：上面的方案都做了，接口见 `docs/api.md` 的
+「Signing in」「Account」「Users and invites」和「Administration」。「待所有者
+确认」里的十条都按括号里的默认做了。实现时定下来的：
+
+- **库**：passkey、SAML、验证码、OIDC 都用 authcore 的 `passkey`、`saml`、
+  `captcha`、`oidc`，版本没变（`f3886de`）。authcore 的 `saml` 要求使用方在自己的
+  `go.mod` 里重复它对 `crewjam/saml` 的 `replace`（换成 `openctemio/saml` 的固定
+  提交），已经加上；测试里的虚拟认证器用 `descope/virtualwebauthn`，假 IdP 用
+  `crewjam/saml` 的 `IdentityProvider`。
+- **存储**：迁移 `0014_signin.sql`（主线到 0010，`feat/mcp` 用 0011、0012，
+  `feat/github-app` 用 0013）。新表 `sign_in_providers`（密钥用 `secret.Box` 加密，
+  发现文档和元数据存 `cache` 列）、`passkeys`（凭据 JSON、`rp_id`、`synced`）、
+  `audit_log`；`users` 加 `email_verified`、`passkey_required`，`sessions` 加
+  `held`。安全设置是 `site_settings` 里键为 `security` 的一行，它的 `updated` 就是
+  修订号：命令行改了之后，运行中的服务最迟 `CacheTTL`（5 分钟）读到，每个请求
+  只比较内存里的时间，不查库。迁移数量的测试改成数文件。
+- **旧参数**：第一次启动时 `--oidc-*` 建出 slug 为 `sso` 的提供方（`legacyCallback`
+  开、启用、`autoCreate` 沿用参数），并在 `site_settings` 记一行 `oidc_imported`。
+  以后参数和库里不一致、或那个提供方被删了，只写日志并在安全页提示
+  `flags_ignored`；删了之后再带着参数启动也不会重新建。身份表没改，原来绑定的
+  身份照样能用。登录方式保持 `dual`、`ssoOnly` 关，没有人会被挡在外面。
+- **登录的判断顺序**照合同：每分钟次数、验证码、IP 失败数、锁定、密码哈希、
+  错了才记用户名和组合的失败、`sso_only`、要求 passkey。IP 那一项是「先占位、
+  成功了退回」（和以前一样），所以一批同时来的错误密码最多只有上限个进到哈希。
+  验证码答错、要求 passkey、`sso_only` 都不算密码错。被锁住的请求在审计日志里记
+  `login_failed`，原因 `rate_limited`；锁定本身记 `lockout`。
+- **SAML**：元数据里只给签名证书，不给加密证书，因为我们拒绝加密断言，而 IdP
+  看到加密证书就会加密。关联（`link`）时 ACS 收到的是别的站点的 POST，会话
+  cookie（`Lax`）不会带上，所以由发起这次尝试的记录里的用户 id 决定是谁，那条
+  记录只有已登录的人才能建、并且和这个浏览器的 `SameSite=None` cookie 绑定。
+  按地址配的元数据每 24 小时（从启动算起）后台重取，取不到时继续用库里上一次
+  好的那份。
+- **passkey**：按用户名开始的仪式记在内存里（和仪式一样 5 分钟、最多一万条），
+  结束时才知道是哪个用户；假凭据 id 用 HMAC 算，密钥第一次用时随机生成并加密存
+  在 `site_settings`，重启后不变。计数器倒退由凭据存储的写回拒绝，写审计
+  `passkey_clone`，存的计数不动。每个 passkey 记着注册时的主机（`rp_id`），
+  换了主机名之后安全页提示 `passkey_host_changed`，启动时也写日志。
+- **用户的 `passkeyRequired`**：响应里是有效值（本人被要求，或者角色被要求），
+  `PATCH` 改的只是本人的标记。
+- **GitHub**：用授权码加 PKCE；组织只看 `/user/orgs` 的前 500 个（5 页）。
+- **提供方创建**：够得着就按请求里的 `enabled`（默认开）；够不着照合同存下来、
+  默认关。两个提供方不能用同一个签发方，SAML 的签发方在取到元数据之后才知道，
+  所以那时再检查。
+- **内存**：每分钟计数、三张失败表各一万个键（被锁的最后才丢）；验证码题目、
+  passkey 仪式各一万个、5 分钟（authcore 自带的有界存储）；SSO 进行中的登录
+  一万个、10 分钟；SAML 用过的断言 id 65536 个；审计队列一万条，满了丢弃并在
+  下一批写一行 `dropped`。
+
+测试：每条流程在 SQLite 和 PostgreSQL 上都跑（`scripts/test-postgres.sh`），
+用假的 OIDC 提供方、假的 SAML IdP、假的 GitHub、假的 siteverify 和虚拟认证器。
+覆盖：从旧参数升级不锁人、`sso_only` 的保存检查和各种拒绝、验证码在哈希之前、
+限制的顺序和三种锁定范围、SAML 的攻击用例（RelayState 或 cookie 不对、另一个
+`Destination`、没签名或被改过、SHA-1、两个或加密的断言、重复属性、临时或没有
+`NameID`、重放、IdP 发起）、邮箱合并的每个排除条件、要求 passkey 的扣住和放开、
+发现文档不在登录时去取。
+
+**2.8 已知问题**
+
+- 真浏览器里的 WebAuthn 和第三方验证码的真实脚本没有测过，只有虚拟认证器和
+  假的 siteverify。
+- `sso_only_with_registration` 这条保存检查先留着，公开注册还没有。
+- SAML 的签名密钥不能轮换（合同里本来就不做），证书 10 年后过期要重建提供方。
+- OIDC 提供方的发现文档存库之后不会自己更新，要点「刷新」。
+
 **第 2 期之外，但 1.7 之后要记着的**
 
 - 1.7 的已知问题（见上文「1.7 的现状」），各自碰到相关代码时再处理。
