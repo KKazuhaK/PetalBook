@@ -245,6 +245,20 @@ describe('the captcha on the sign-in form', () => {
     expect(JSON.parse(login.body!).captcha).toEqual({ id: expect.any(String), answer: '4821' })
   })
 
+  it('"another image" asks again for the username that was left in the field', async () => {
+    await open('/login', { security: always })
+    await settle(() => image() !== null, 'the image')
+    await type(usernameInput(), 'admin')
+    await act(async () => usernameInput().dispatchEvent(new FocusEvent('focusout', { bubbles: true })))
+    await settle(() => m!.requests.some((r) => r.url === '/api/captcha?ctx=login&account=admin'), 'the question about the name')
+    const asked = () => m!.requests.filter((r) => r.url === '/api/captcha?ctx=login&account=admin').length
+    const before = asked()
+    await settle(() => buttonWith(ts.captcha.refresh) !== undefined && !buttonWith(ts.captcha.refresh)!.hasAttribute('disabled'), 'the refresh button')
+    await click(buttonWith(ts.captcha.refresh))
+    await settle(() => asked() > before, 'asked again with the name')
+    expect(m!.requests.filter((r) => r.url === '/api/captcha?ctx=login').length).toBe(1)
+  })
+
   it('a wrong answer says so and shows a new challenge', async () => {
     await open('/login', { security: always })
     await settle(() => image() !== null, 'the image')

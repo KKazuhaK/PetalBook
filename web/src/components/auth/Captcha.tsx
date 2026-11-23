@@ -19,7 +19,7 @@ export interface CaptchaState {
   setToken: (v: string) => void
   // Bumped when a widget has to start over.
   resets: number
-  // Asks again (a new image, a widget reset). `account` is the username a login is for.
+  // Asks again (a new image, a widget reset). `account` is the username a login is for; without one, the last one given is kept.
   refresh: (account?: string) => Promise<void>
   // What to send with the request, or undefined when none is needed or none is ready.
   value: () => CaptchaAnswer | undefined
@@ -35,6 +35,8 @@ export function useCaptcha(ctx: CaptchaContext, { auto = true }: { auto?: boolea
   const [token, setTokenState] = useState('')
   const [resets, setResets] = useState(0)
   const seq = useRef(0)
+  // The username last asked about, so "another image" asks about the same one.
+  const lastAccount = useRef<string | undefined>(undefined)
 
   // Asks the server; only the latest question's answer is kept.
   const run = useCallback(
@@ -60,9 +62,10 @@ export function useCaptcha(ctx: CaptchaContext, { auto = true }: { auto?: boolea
   )
   const refresh = useCallback(
     (account?: string) => {
+      if (account !== undefined) lastAccount.current = account
       setLoading(true)
       setLoadError('')
-      return run(account)
+      return run(lastAccount.current)
     },
     [run],
   )
