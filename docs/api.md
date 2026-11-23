@@ -1791,10 +1791,22 @@ and answers as `GET`; `lines`, `apis` and `presets` are read-only here.
 - `hosts` are the hosts (with a port when it is not the usual one) the server
   may fetch from, at most 100. Saving an interface adds its host; removing a host
   here stops the interfaces that use it (they are not asked until it is back).
-- `languages` are the language codes the settings pages have a tab for besides
-  "all languages" (`zh`, `en`, `pt-br`; lower-cased, each once, at most 30). It
-  is a list the administrators keep, `["zh", "en"]` to begin with; nothing is
-  limited to it: a source or an interface may name any code.
+- `languages` are the languages the settings pages have a tab for besides
+  "all languages", as BCP 47 language tags in canonical form (`zh-Hans`,
+  `zh-Hant`, `en`, `pt-BR`; each once, at most 30), `["zh-Hans", "en"]` to begin
+  with. Every language tag anywhere in the daily text (this list, per-language
+  sources, interfaces, lines, the `lang` of `GET …/daily`) must be a well-formed
+  tag whose language subtag is in the IANA registry: `cn`, `english` or
+  `zh_CN` are refused with `400 invalid`, `error: "bad_language"`. The server
+  writes tags in canonical form (`ZH-cn` is stored as `zh-CN`). A reader's
+  language is matched to the configured ones the usual BCP 47 way (`zh-CN` and
+  `zh-SG` find `zh-Hans`, `zh-TW` and `zh-HK` find `zh-Hant`, `en-GB` finds
+  `en`), then "all languages". `GET /api/admin/daily` also returns
+  `knownLanguages`: `[{"tag": "zh-Hans", "name": "中文（简体）", "english": "Chinese (Simplified)"}, …]`,
+  the common languages a client offers to pick from (any valid tag may still be
+  typed). Values saved before this rule (`zh`, `pt-br`) are read as their
+  canonical tags (`zh` → `zh-Hans`, `pt-br` → `pt-BR`) and written back in
+  that form on the next save.
 - `allow` is what the spaces may do: `own` is whether a space may have a source
   of its own (`daily` in its `space.yml`), `api` whether it may choose an
   external interface. Both are `true` until set; `PUT` takes either or both
