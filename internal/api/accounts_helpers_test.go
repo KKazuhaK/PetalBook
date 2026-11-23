@@ -75,10 +75,9 @@ type accOpts struct {
 	draftCfg func(*drafts.Config)
 	// dailyFetch replaces the fetcher of external daily text (tests talk to a server of their own).
 	dailyFetch *dailyfetch.Fetcher
-	// oauth turns the authorization server on; standIn lets /api take its access
-	// tokens (see api.NewWithMCPStandIn); cimd fetches client metadata documents.
-	oauth, standIn bool
-	cimd           *http.Client
+	// oauth turns the authorization server on; cimd fetches client metadata documents.
+	oauth bool
+	cimd  *http.Client
 }
 
 func needGit(t *testing.T) {
@@ -157,9 +156,6 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	}
 	opts := api.Options{Logger: log, Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tok, OAuth: oa, PublicURL: o.public, Version: "test-1", DailyFetch: o.dailyFetch}
 	h := api.New(opts)
-	if o.standIn {
-		h = api.NewWithMCPStandIn(opts)
-	}
 	return &acc{t: t, dir: dir, st: st, mgr: mgr, auth: svc, drafts: drf, tokens: tok, oauth: oa, clock: clk, h: h, public: o.public}
 }
 

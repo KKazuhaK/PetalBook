@@ -258,7 +258,7 @@ func (s *server) handle(rt route) http.HandlerFunc {
 			// A request with a token is judged by the token alone: never by a
 			// cookie sent with it, and never falling back to one.
 			viaOAuth := s.oauth != nil && oauth.LooksLikeAccessToken(secret)
-			if viaOAuth && !s.mcpStandIn {
+			if viaOAuth {
 				// An access token of the authorization server is for /mcp only.
 				writeError(w, http.StatusForbidden, "token_scope", "an OAuth access token can only be used on /mcp")
 				return

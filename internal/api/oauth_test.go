@@ -31,8 +31,6 @@ func pkcePair(seed string) (verifier, challenge string) {
 
 func oa() accOpts { return accOpts{oauth: true} }
 
-func oaStandIn() accOpts { return accOpts{oauth: true, standIn: true} }
-
 // registerClient registers a client the way an MCP client without a metadata
 // document does, and returns its client_id.
 func registerClient(t *testing.T, a *acc, name string, uris ...string) string {
@@ -212,6 +210,7 @@ func TestOAuthFlowFromStartToFinish(t *testing.T) {
 		// An access token is for /mcp: the API refuses it.
 		b := a.bearer(tr.body["access_token"].(string), "")
 		b.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 403, "token_scope")
+		b.tool("folders_list", map[string]any{"space": tm.sid}).ok(t)
 		b.do("GET", "/api/spaces", nil).want(t, 403, "token_scope")
 	})
 }
@@ -526,19 +525,19 @@ func TestConcurrentRefreshesGetOneAnswer(t *testing.T) {
 
 func TestRevokingAGrant(t *testing.T) {
 	t.Parallel()
-	eachAccounts(t, oaStandIn(), func(t *testing.T, a *acc) {
+	eachAccounts(t, oa(), func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		tm := newTeam(t, a)
 		g := grant(t, a, tm.owner, "write", tm.sid)
 		b := a.bearer(g.access, "")
-		b.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 200, "")
+		b.tool("folders_list", map[string]any{"space": tm.sid}).ok(t)
 		list := tm.owner.do("GET", "/api/account/grants", nil).want(t, 200, "").body["grants"].([]any)
 		id := list[0].(map[string]any)["id"].(string)
 
 		// Not someone else's.
 		tm.editor.do("DELETE", "/api/account/grants/"+id, nil).want(t, 404, "not_found")
 		tm.owner.do("DELETE", "/api/account/grants/nope", nil).want(t, 404, "not_found")
-		b.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 200, "")
+		b.tool("folders_list", map[string]any{"space": tm.sid}).ok(t)
 		// The administrator sees it, with its owner.
 		items := admin.do("GET", "/api/admin/grants", nil).want(t, 200, "").body["items"].([]any)
 		if len(items) != 1 || items[0].(map[string]any)["owner"].(map[string]any)["username"] != "olive" || items[0].(map[string]any)["id"] != id {
@@ -553,8 +552,8 @@ func TestRevokingAGrant(t *testing.T) {
 		// The owner revokes: the refresh token and the access token stop at once.
 		tm.owner.do("DELETE", "/api/account/grants/"+id, nil).want(t, 204, "")
 		refreshWith(t, a, g.cid, g.refresh).want(t, 400, "invalid_grant")
-		r := b.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 401, "token_revoked")
-		if got := r.resp.Header.Get("WWW-Authenticate"); !strings.Contains(got, "invalid_token") {
+		r := b.tool("folders_list", map[string]any{"space": tm.sid}).http(t, 401, "token_revoked")
+		if got := r.r.resp.Header.Get("WWW-Authenticate"); !strings.Contains(got, "invalid_token") {
 			t.Fatalf("%q", got)
 		}
 		tm.owner.do("DELETE", "/api/account/grants/"+id, nil).want(t, 404, "not_found")
@@ -567,7 +566,7 @@ func TestRevokingAGrant(t *testing.T) {
 		}
 		admin.do("DELETE", "/api/admin/grants/"+items[0].(map[string]any)["id"].(string), nil).want(t, 204, "")
 		admin.do("DELETE", "/api/admin/grants/"+items[0].(map[string]any)["id"].(string), nil).want(t, 404, "not_found")
-		a.bearer(g2.access, "").do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 401, "token_revoked")
+		a.bearer(g2.access, "").tool("folders_list", map[string]any{"space": tm.sid}).http(t, 401, "token_revoked")
 		refreshWith(t, a, g2.cid, g2.refresh).want(t, 400, "invalid_grant")
 	})
 }
@@ -598,32 +597,34 @@ func TestAdminGrantListPages(t *testing.T) {
 // the owner's role now, narrowed by the grant, never more.
 func TestAGrantIsNeverMoreThanItsOwner(t *testing.T) {
 	t.Parallel()
-	eachAccounts(t, oaStandIn(), func(t *testing.T, a *acc) {
+	eachAccounts(t, oa(), func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		tm := newTeam(t, a)
 		mine := tm.owner.personalSpace()
 		p := newPage(t, tm.editor, tm.sid, "Seed")
-		page := spacePath(tm.sid) + "/pages/" + p["id"].(string)
-		save := map[string]any{"baseRev": p["rev"], "meta": map[string]any{"title": "Seed"}, "body": "by an app\n"}
+		update := func(rev any, text string) map[string]any {
+			return map[string]any{"space": tm.sid, "id": p["id"], "baseRev": rev, "body": text}
+		}
+		get := map[string]any{"space": tm.sid, "id": p["id"]}
 
 		rd := a.bearer(grant(t, a, tm.editor, "read", tm.sid).access, "")
 		wr := a.bearer(grant(t, a, tm.editor, "write", tm.sid).access, "")
 		vw := a.bearer(grant(t, a, tm.viewer, "write", tm.sid).access, "")
 		ow := a.bearer(grant(t, a, tm.owner, "write", tm.sid).access, "")
 
-		rd.do("GET", page, nil).want(t, 200, "")
-		rd.do("PUT", page, save).want(t, 403, "token_scope")
-		rd.do("POST", spacePath(tm.sid)+"/favorites", map[string]any{"page": p["id"]}).want(t, 403, "token_scope")
-		vw.do("PUT", page, save).want(t, 403, "no_permission") // the owner is a viewer
-		wr.do("PUT", page, save).want(t, 200, "")
-		// Never members or manage, and no drafts, whatever the owner is.
-		ow.do("POST", spacePath(tm.sid)+"/members", map[string]any{"username": "oscar", "role": "viewer"}).want(t, 403, "token_scope")
-		ow.do("PATCH", spacePath(tm.sid), map[string]any{"name": "Mine"}).want(t, 403, "token_scope")
-		ow.do("POST", spacePath(tm.sid)+"/reindex", nil).want(t, 403, "token_scope")
-		ow.do("PUT", page+"/draft", save).want(t, 403, "token_scope")
+		rd.tool("page_get", get).ok(t)
+		rd.tool("page_update", update(p["rev"], "by an app\n")).refused(t, "token_scope")
+		vw.tool("page_update", update(p["rev"], "by an app\n")).refused(t, "no_permission") // the owner is a viewer
+		wr.tool("page_update", update(p["rev"], "by an app\n")).ok(t)
+		// Never members or manage: there is no tool for them, and no drafts.
+		for _, name := range []string{"members_add", "space_rename", "reindex", "draft_put"} {
+			if r := ow.tool(name, nil); r.rpcErr == nil {
+				t.Errorf("%s: %s", name, r.r.raw)
+			}
+		}
 		// Not the owner's other spaces, and only the grant's are listed.
-		ow.do("GET", spacePath(mine)+"/tree", nil).want(t, 403, "token_scope")
-		l := ow.do("GET", "/api/spaces", nil).want(t, 200, "").body["spaces"].([]any)
+		ow.tool("folders_list", map[string]any{"space": mine}).refused(t, "token_scope")
+		l := ow.tool("spaces_list", nil).ok(t).out["spaces"].([]any)
 		if len(l) != 1 || l[0].(map[string]any)["id"] != tm.sid || len(l[0].(map[string]any)["permissions"].([]any)) != 2 {
 			t.Fatalf("%v", l)
 		}
@@ -632,42 +633,44 @@ func TestAGrantIsNeverMoreThanItsOwner(t *testing.T) {
 			ow.do("GET", path, nil).want(t, 403, "token_scope")
 		}
 		ow.do("POST", "/api/logout", nil).want(t, 403, "token_scope")
+		// And an access token is for /mcp only.
+		ow.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 403, "token_scope")
 
 		// Demoted: the next request is a viewer's.
 		tm.owner.do("PATCH", spacePath(tm.sid)+"/members/"+tm.editorID, map[string]any{"role": "viewer"}).want(t, 200, "")
-		wr.do("GET", page, nil).want(t, 200, "")
-		wr.do("PUT", page, save).want(t, 403, "no_permission")
+		cur := wr.tool("page_get", get).ok(t).out["rev"]
+		wr.tool("page_update", update(cur, "again\n")).refused(t, "no_permission")
 		// Removed: the space is gone for it.
 		tm.owner.do("DELETE", spacePath(tm.sid)+"/members/"+tm.editorID, nil).want(t, 204, "")
-		wr.do("GET", page, nil).want(t, 404, "not_found")
+		wr.tool("page_get", get).refused(t, "not_found")
 		// Back in, it works again.
 		tm.owner.do("POST", spacePath(tm.sid)+"/members", map[string]any{"username": "edith", "role": "editor"}).want(t, 201, "")
-		wr.do("GET", page, nil).want(t, 200, "")
-		wr.do("PUT", page, map[string]any{"baseRev": p["rev"], "meta": map[string]any{"title": "Seed"}, "body": "again\n"}).want(t, 409, "") // the rev moved: a write, not a refusal
+		wr.tool("page_get", get).ok(t)
+		wr.tool("page_update", update(p["rev"], "stale\n")).refused(t, "conflict") // the rev moved: a write, not a refusal
 
 		// An administrator's grant has no way into spaces they are not a member of.
 		ag := a.bearer(grant(t, a, admin, "write", admin.personalSpace()).access, "")
 		admin.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 200, "")
-		ag.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 403, "token_scope")
+		ag.tool("folders_list", map[string]any{"space": tm.sid}).refused(t, "token_scope")
 		ag.do("GET", "/api/admin/status", nil).want(t, 403, "token_scope")
 	})
 }
 
 func TestAGrantFollowsItsOwnersAccount(t *testing.T) {
 	t.Parallel()
-	eachAccounts(t, oaStandIn(), func(t *testing.T, a *acc) {
+	eachAccounts(t, oa(), func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		tm := newTeam(t, a)
 		g := grant(t, a, tm.editor, "write", tm.sid)
 		b := a.bearer(g.access, "")
-		b.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 200, "")
+		b.tool("folders_list", map[string]any{"space": tm.sid}).ok(t)
 		admin.do("PATCH", "/api/users/"+tm.editorID, map[string]any{"disabled": true}).want(t, 200, "")
-		b.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 401, "token_owner_disabled")
+		b.tool("folders_list", map[string]any{"space": tm.sid}).http(t, 401, "token_owner_disabled")
 		// Neither a refresh nor a code makes a token for an account that is off.
 		refreshWith(t, a, g.cid, g.refresh).want(t, 400, "invalid_grant")
 		// The grant is kept: when the account is back, the app works again.
 		admin.do("PATCH", "/api/users/"+tm.editorID, map[string]any{"disabled": false}).want(t, 200, "")
-		b.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 200, "")
+		b.tool("folders_list", map[string]any{"space": tm.sid}).ok(t)
 		refreshWith(t, a, g.cid, g.refresh).want(t, 200, "")
 
 		// A person who is disabled cannot approve a code either (they have no session).
@@ -681,13 +684,13 @@ func TestAGrantFollowsItsOwnersAccount(t *testing.T) {
 
 func TestMachineAccessSwitchTurnsOAuthOff(t *testing.T) {
 	t.Parallel()
-	eachAccounts(t, oaStandIn(), func(t *testing.T, a *acc) {
+	eachAccounts(t, oa(), func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		tm := newTeam(t, a)
 		g := grant(t, a, tm.owner, "write", tm.sid)
 		anon := a.newClient("")
 		b := a.bearer(g.access, "")
-		b.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 200, "")
+		b.tool("folders_list", map[string]any{"space": tm.sid}).ok(t)
 		if got := admin.do("GET", "/api/admin/access", nil).want(t, 200, "").body; got["oauth"] != true || got["mcp"] != true || got["tokens"] != true {
 			t.Fatal(got)
 		}
@@ -706,9 +709,10 @@ func TestMachineAccessSwitchTurnsOAuthOff(t *testing.T) {
 		anon.do("OPTIONS", "/oauth/token", nil).want(t, 404, "not_found")
 		tm.owner.do("GET", "/api/oauth/consent?req=x", nil).want(t, 404, "not_found")
 		tm.owner.do("POST", "/api/oauth/consent", map[string]any{"req": "x"}).want(t, 404, "not_found")
-		// An access token is no use, and API tokens are a switch of their own.
-		b.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 404, "not_found")
+		// /mcp is gone for every credential; API tokens on /api are a switch of their own.
+		b.tool("folders_list", map[string]any{"space": tm.sid}).http(t, 404, "not_found")
 		_, secret := mkToken(t, tm.owner, "write", nil, tm.sid)
+		a.bearer(secret, "").tool("folders_list", map[string]any{"space": tm.sid}).http(t, 404, "not_found")
 		a.bearer(secret, "").do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 200, "")
 		// The grants are kept, and listed, and can be revoked while it is off.
 		l := tm.owner.do("GET", "/api/account/grants", nil).want(t, 200, "").body["grants"].([]any)
@@ -717,7 +721,7 @@ func TestMachineAccessSwitchTurnsOAuthOff(t *testing.T) {
 		}
 		// Back on: the grant works as before.
 		admin.do("PUT", "/api/admin/access", map[string]any{"mcp": true}).want(t, 200, "")
-		b.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 200, "")
+		b.tool("folders_list", map[string]any{"space": tm.sid}).ok(t)
 		refreshWith(t, a, g.cid, g.refresh).want(t, 200, "")
 		tm.owner.do("DELETE", "/api/account/grants/"+l[0].(map[string]any)["id"].(string), nil).want(t, 204, "")
 	})
@@ -937,33 +941,33 @@ func TestTheErrorPageSpeaksTheBrowsersLanguage(t *testing.T) {
 // the grant is read from memory for 30 seconds.
 func TestAnAccessTokenIsCheckedInMemory(t *testing.T) {
 	t.Parallel()
-	eachAccounts(t, oaStandIn(), func(t *testing.T, a *acc) {
+	eachAccounts(t, oa(), func(t *testing.T, a *acc) {
 		tm := newTeam(t, a)
 		g := grant(t, a, tm.owner, "write", tm.sid)
 		b := a.bearer(g.access, "")
-		b.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 200, "")
+		b.tool("folders_list", map[string]any{"space": tm.sid}).ok(t)
 		// The row goes away behind the server's back, as another process would do it.
 		if _, err := a.st.Q().Exec(context.Background(), `DELETE FROM oauth_grants`); err != nil {
 			t.Fatal(err)
 		}
 		a.clock.Advance(20 * time.Second)
-		b.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 200, "") // from memory
+		b.tool("folders_list", map[string]any{"space": tm.sid}).ok(t) // from memory
 		a.clock.Advance(15 * time.Second)
-		b.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 401, "token_revoked") // read again
+		b.tool("folders_list", map[string]any{"space": tm.sid}).http(t, 401, "token_revoked") // read again
 		// An access token lives ten minutes.
 		g2 := grant(t, a, tm.owner, "write", tm.sid)
 		b2 := a.bearer(g2.access, "")
-		b2.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 200, "")
+		b2.tool("folders_list", map[string]any{"space": tm.sid}).ok(t)
 		a.clock.Advance(9 * time.Minute)
-		b2.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 200, "")
+		b2.tool("folders_list", map[string]any{"space": tm.sid}).ok(t)
 		a.clock.Advance(2 * time.Minute)
-		b2.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 401, "token_expired")
+		b2.tool("folders_list", map[string]any{"space": tm.sid}).http(t, 401, "token_expired")
 	})
 }
 
 func TestAccessTokenForgeries(t *testing.T) {
 	t.Parallel()
-	eachAccounts(t, oaStandIn(), func(t *testing.T, a *acc) {
+	eachAccounts(t, oa(), func(t *testing.T, a *acc) {
 		tm := newTeam(t, a)
 		g := grant(t, a, tm.owner, "write", tm.sid)
 		parts := strings.Split(g.access, ".")
@@ -983,22 +987,22 @@ func TestAccessTokenForgeries(t *testing.T) {
 			"garbage":         "a.b.c",
 			"truncated":       g.access[:len(g.access)-4],
 		} {
-			if r := a.bearer(tok, "").do("GET", spacePath(tm.sid)+"/tree", nil); r.code != 401 || r.body["error"] != "token_invalid" {
-				t.Errorf("%s: %d %s", name, r.code, r.raw)
+			if r := a.bearer(tok, "").tool("folders_list", map[string]any{"space": tm.sid}); r.r.code != 401 || r.r.body["error"] != "token_invalid" {
+				t.Errorf("%s: %d %s", name, r.r.code, r.r.raw)
 			}
 		}
 		// Ten refused tokens in a minute from one address are enough.
 		for i := 0; i < 12; i++ {
-			a.bearer("a.b.c", "198.51.100.50").do("GET", spacePath(tm.sid)+"/tree", nil)
+			a.bearer("a.b.c", "198.51.100.50").tool("folders_list", map[string]any{"space": tm.sid})
 		}
-		a.bearer(g.access, "198.51.100.50").do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 429, "rate_limited")
-		a.bearer(g.access, "198.51.100.51").do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 200, "")
+		a.bearer(g.access, "198.51.100.50").tool("folders_list", map[string]any{"space": tm.sid}).http(t, 429, "rate_limited")
+		a.bearer(g.access, "198.51.100.51").tool("folders_list", map[string]any{"space": tm.sid}).ok(t)
 	})
 }
 
 func TestTheSigningKeyIsSealedAndShared(t *testing.T) {
 	t.Parallel()
-	eachAccounts(t, oaStandIn(), func(t *testing.T, a *acc) {
+	eachAccounts(t, oa(), func(t *testing.T, a *acc) {
 		tm := newTeam(t, a)
 		g := grant(t, a, tm.owner, "write", tm.sid)
 		var sealed string

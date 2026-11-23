@@ -29,7 +29,7 @@ func oauthPath(p string) bool {
 // endpoints of the authorization server, as opposed to the pages of the web app
 // (the consent page, /oauth/consent, among them).
 func HandlesPath(p string) bool {
-	return strings.HasPrefix(p, "/api/") || oauthPath(p)
+	return strings.HasPrefix(p, "/api/") || p == mcpPath || oauthPath(p)
 }
 
 // oauthNoCORS are the paths that a page of another site may call, or send the

@@ -90,22 +90,23 @@ type Options struct {
 	// DailyFetch gets the daily text from the external interfaces an
 	// administrator configured; the one that refuses private addresses when nil.
 	DailyFetch *dailyfetch.Fetcher
+	// NoMCP switches /mcp off in single-user mode (serve --mcp=false). In
+	// accounts mode the administrators' setting decides.
+	NoMCP bool
 }
 
 type server struct {
-	opt    Options
-	log    *slog.Logger
-	auth   *auth.Service
-	spaces *spaces.Manager
-	drafts *drafts.Service
-	tokens *tokens.Service
-	oauth  *oauth.Service
-	// mcpStandIn: see build.
-	mcpStandIn bool
-	single     bool
-	started    time.Time
-	local      store.User // the built-in user of single-user mode
-	origins    map[string]bool
+	opt     Options
+	log     *slog.Logger
+	auth    *auth.Service
+	spaces  *spaces.Manager
+	drafts  *drafts.Service
+	tokens  *tokens.Service
+	oauth   *oauth.Service
+	single  bool
+	started time.Time
+	local   store.User // the built-in user of single-user mode
+	origins map[string]bool
 	// importing lets one import run at a time (see importMarkdown).
 	importing chan struct{}
 	// originHosts are the hosts of the allowed origins: a request addressed to
@@ -114,12 +115,7 @@ type server struct {
 }
 
 // New returns the handler for every endpoint.
-func New(opt Options) http.Handler { return build(opt, false) }
-
-// build makes the handler. mcpStandIn lets the routes of /api take an OAuth
-// access token like an API token: tests use it for the permission rules of a
-// grant until /mcp, the one place such a token is accepted, exists.
-func build(opt Options, mcpStandIn bool) http.Handler {
+func New(opt Options) http.Handler {
 	if opt.MaxBody <= 0 {
 		opt.MaxBody = DefaultMaxBody
 	}
@@ -138,7 +134,7 @@ func build(opt Options, mcpStandIn bool) http.Handler {
 	if opt.DailyFetch == nil {
 		opt.DailyFetch = dailyfetch.New(NewDailyBacking(opt.Store))
 	}
-	s := &server{opt: opt, log: opt.Logger, auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, oauth: opt.OAuth, mcpStandIn: mcpStandIn, single: opt.Auth == nil, started: time.Now(),
+	s := &server{opt: opt, log: opt.Logger, auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, oauth: opt.OAuth, single: opt.Auth == nil, started: time.Now(),
 		origins: map[string]bool{}, originHosts: map[string]bool{}, importing: make(chan struct{}, 1)}
 	if s.log == nil {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -168,6 +164,7 @@ func build(opt Options, mcpStandIn bool) http.Handler {
 		}
 	}
 	s.mountOAuth(mux)
+	s.mountMCP(mux)
 	// A path that exists with other methods is 405 in the API's error shape
 	// (the mux would answer in plain text), anything else 404. This cannot be
 	// method-less patterns in the mux: they conflict with wildcard routes such
@@ -486,6 +483,7 @@ func (s *server) readJSONMax(w http.ResponseWriter, r *http.Request, v any, opti
 func (s *server) fail(w http.ResponseWriter, err error) {
 	var (
 		inv   *space.InvalidError
+		bq    badQuery
 		ce    *space.ConflictError
 		tce   *space.TypeConflictError
 		tpce  *space.TemplateConflictError
@@ -587,6 +585,8 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	case errors.As(err, &ce):
 		writeJSON(w, http.StatusConflict, errorBody{Error: "conflict",
 			Message: "the page changed since you opened it; here is the current version", Current: toPage(ce.Current)})
+	case errors.As(err, &bq):
+		writeError(w, http.StatusBadRequest, "invalid", bq.Error())
 	case errors.As(err, &inv):
 		writeError(w, http.StatusBadRequest, "invalid", inv.Msg)
 	case errors.Is(err, index.ErrInvalidQuery):

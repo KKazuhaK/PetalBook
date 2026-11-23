@@ -52,7 +52,10 @@ type serveConfig struct {
 	// maxImport is the largest body of an import, in bytes.
 	maxImport int64
 	inbox     string
-	spaceIdle time.Duration
+	// noMCP switches /mcp off in single-user mode (--mcp=false); mcpSet says
+	// the flag was given.
+	noMCP, mcpSet bool
+	spaceIdle     time.Duration
 	// pullInterval is how often a space that follows a remote is fetched (0:
 	// never by itself), remoteHosts the hosts a remote may be on, remoteTimeout
 	// how long one command that talks to a remote may take. remoteSet says one
@@ -77,6 +80,7 @@ var passwordParams auth.PasswordParams
 
 func newServe() *cobra.Command {
 	var c serveConfig
+	var mcpOn bool
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Serve spaces over HTTP",
@@ -117,6 +121,8 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c.nameSet = cmd.Flags().Changed("name")
+			c.mcpSet = cmd.Flags().Changed("mcp")
+			c.noMCP = !mcpOn
 			c.remoteSet = cmd.Flags().Changed("pull-interval") || cmd.Flags().Changed("remote-host") || cmd.Flags().Changed("remote-timeout")
 			c.oidcClientSecret = os.Getenv("PETALBOOK_OIDC_CLIENT_SECRET")
 			c.logger = slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), nil))
@@ -150,6 +156,7 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 	f.DurationVar(&c.remoteTimeout, "remote-timeout", 60*time.Second, "accounts mode: how long one fetch or push may take before the remote counts as unreachable")
 	f.Int64Var(&c.maxUpload, "max-upload", api.DefaultMaxUpload, "largest file accepted as an upload, in bytes (0: the default, 10 MiB)")
 	f.Int64Var(&c.maxImport, "max-import", api.DefaultMaxImport, "largest Markdown file or zip accepted as an import, in bytes (0: the default, 100 MiB)")
+	f.BoolVar(&mcpOn, "mcp", true, "single-user mode: serve /mcp for MCP clients with an API token (false: it answers 404); in accounts mode an administrator decides, in the app")
 	f.StringVar(&c.inbox, "inbox", store.DefaultInbox, "single-user mode: the folder quick notes go to")
 	f.IntVar(&c.maxSpaces, "max-spaces", spaces.DefaultMaxSpaces, "accounts mode: how many spaces one user may own (0: no limit)")
 	f.DurationVar(&c.spaceIdle, "space-idle", spaces.DefaultIdleAfter, "accounts mode: close a space that has not been used for this long (it reopens on the next request)")
@@ -237,6 +244,9 @@ func (c serveConfig) check() (*checked, error) {
 		}
 		if c.stateDir != "" || c.nameSet {
 			return nil, errors.New("--state-dir and --name are for single-user mode (--space); in accounts mode the data directory holds everything")
+		}
+		if c.mcpSet {
+			return nil, errors.New("--mcp is for single-user mode (--space); in accounts mode an administrator switches MCP in the app")
 		}
 	} else {
 		if c.remoteSet {
@@ -413,7 +423,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 			return fmt.Errorf("the authorization server: %w", err)
 		}
 	}
-	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tokenSvc, OAuth: oauthSvc, PublicURL: cfg.publicURL, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
+	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tokenSvc, OAuth: oauthSvc, PublicURL: cfg.publicURL, NoMCP: c.noMCP, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
 		RestrictHost: loopback, AllowOrigins: cfg.origins, Logger: log})
 	webApp, webBuilt := webui.Handler()
 	if !webBuilt {
