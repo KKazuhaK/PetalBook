@@ -279,6 +279,10 @@ only when the `setup` context asks for one (see "Captcha"). `201` with
 `captcha` is `{"id", "answer"}` for the self-hosted image, `{"token"}` for a
 third-party one, and left out when `GET /api/captcha` said none is required.
 
+From 3.6 the body may name an email address instead, as `identifier` (see
+"Signing in by email address" under "Tenant autonomy"); `username` keeps
+working.
+
 `200` with `{"user": {…}}` and a session cookie. The server checks, in this
 order, and stops at the first refusal:
 
@@ -4224,12 +4228,15 @@ answer as switched off, and no setting can open registration.
 ### Where a request's tenant comes from
 
 - **Signed in** (session, API token, OAuth grant): the user's tenant. A user
-  belongs to exactly one tenant and never changes it in 3.3.
+  belongs to exactly one tenant and never changes it in 3.3. (3.7 replaces this
+  with memberships and a current organisation; see "Several organisations per
+  account".)
 - **Public endpoints** (`GET /api/auth/providers`, `GET /api/register`,
   `POST /api/register`, `POST /api/password/forgot`): the `tenant` query
   parameter or body field, a slug; absent means the default tenant. An unknown
   or disabled slug is `404 not_found`.
-- **Usernames stay unique on the whole server**, so signing in needs no tenant:
+- **Usernames stay unique on the whole server** (and from 3.6 email addresses),
+  so signing in needs no tenant:
   `POST /api/login`, passkeys and single sign-on are unchanged, and the account
   that signs in decides the tenant.
 - **New accounts**: `POST /api/setup` makes the first site administrator in the
@@ -5388,6 +5395,18 @@ Their username stays taken while they are in the recycle bin.
   refers to any more (the audit log's 90 days are the usual last reference).
   Git history is never rewritten: commits keep the author name and address
   they were made with.
+- **The username after a purge.** Purging frees the email address (it is
+  personal data) and, by default, the username. Whether a username may be taken
+  again is the site setting `users.reuseUsernames` (site only): `after_purge`
+  (default; anyone may take it once the person is purged, never while they are
+  in the recycle bin) or `never`. Every purge records the username, case folded,
+  in `retired_usernames` whatever the setting, so switching to `never` later
+  also protects the names purged before; with `never`, a retired name answers
+  `409 exists` wherever a username is chosen (invites, registration, renames,
+  `autoCreate`, which then picks the next free form as 2.8 does). What is
+  stored by id (memberships, authors in the records, audit rows) never follows
+  a name; a `@mention` or link written as a username in page text points to the
+  new holder.
 
 ### Confirmations and bulk actions
 
@@ -5459,11 +5478,10 @@ recycle items, or a user (their personal space and the spaces of rules 1 and 2).
   into the zip (an evicted space is restored for it first, from the remote).
   With `history: true` (site administrators only), a `git bundle` of the
   space's repository instead of the files at the current commit.
-- **Admins cannot read people's pages through the API** (1.7); an export breaks
-  that on purpose and so it is narrow: only spaces that are being deleted or
-  are in the recycle bin may be exported (`409 not_deleting` otherwise: a space
-  is "being deleted" for 1 hour after its deletion preview was asked for by
-  that caller), it is audited (`export_created`, `export_downloaded`), and every
+- **Any space may be exported** by an administrator who may see it (a site
+  administrator: every space; a tenant administrator: their tenant's, see
+  "Viewing a space" for personal spaces from 3.7), in the recycle bin or not.
+  Every export is audited (`export_created`, `export_downloaded`), and every
   owner of the space gets a notice in their account.
 - Exports are written to `DATA/exports/`, kept 7 days (`exports.days`, site
   only) and count against `exports.maxBytes` (site only, 20 GiB by default):
@@ -5474,6 +5492,40 @@ recycle items, or a user (their personal space and the spaces of rules 1 and 2).
 and `GET /api/admin/exports/{id}/download` (`Content-Disposition: attachment`,
 `Range` supported). An export made by a tenant administrator is visible to that
 tenant's administrators and the site's.
+
+### Viewing a space
+
+Before 3.5 administrators could not read people's pages through the API (1.7).
+From 3.5 they may read any space they may manage, read only, and **every view
+is audited**.
+
+#### `POST /api/admin/spaces/{space}/view`
+
+`{"reason": "Checking a reported page"}` (1 to 500 characters, required).
+`200` with `{"space": "…", "until": "2026-11-23T10:30:00Z"}`.
+
+- For one hour the caller has `read` in the space through the ordinary read
+  endpoints (pages, folders, search within the space, files, history, diffs,
+  `GET /api/spaces/{space}`), exactly as a `viewer` member would, and nothing
+  else: no write, no draft, no member list beyond what a viewer sees, no MCP or
+  token access (a view belongs to the session that opened it). Calling it
+  again extends the hour and writes a new row.
+- The view is held in memory per session (a map from space to expiry, checked
+  where the permission cache answers "not a member"), so it adds nothing to
+  the request of a member.
+- Audit: `space_viewed` when it starts (`reason`), and `page_viewed` the first
+  time each page or file is opened in the view (at most one row per
+  administrator and page an hour).
+- A space in the recycle bin is viewed through its export, not here
+  (`404 not_found`).
+- `DELETE /api/admin/spaces/{space}/view` ends it early.
+
+The web app opens it from the space's row in the administration, asks for the
+reason, and shows a banner "管理员查看，只读，已记录" while it lasts.
+
+Regional or compliance refinements (telling the owner first, a second
+administrator's approval, a longer retention of these rows) are a later item
+(design.md, 5.14).
 
 ### The size of one file
 
@@ -5516,6 +5568,8 @@ of file, images included.
 | `space_deleted`, `space_restored`, `space_purged` | a space went into, out of, or was purged from the recycle bin | `item`, `space`, `name`, `bytes`, `reason`, `bulk` (job id) |
 | `user_deleted`, `user_restored`, `user_purged` | the same for a person | `item`, `user`, `username`, `transfers`, `recycled` (space ids), `reason`, `bulk` |
 | `export_created`, `export_downloaded`, `export_deleted` | an export | `export`, `spaces` |
+| `space_viewed` | an administrator started or extended a view | `space`, `reason`, `until` |
+| `page_viewed` | an administrator opened a page or file in a view (once an hour per page) | `space`, `page` or `path` |
 | `bulk_started`, `bulk_finished` | a bulk job | `job`, `action`, `count`, `failed` |
 
 Rows carry the tenant of the space or person. A tenant administrator sees their
@@ -5529,7 +5583,6 @@ tenant's rows of these kinds.
 | `heir_required` | 409 | deleting a person who owns shared spaces alone and no heir can be chosen, with `spaces` |
 | `owner_required` | 409 | restoring a space whose owners are all gone without naming one |
 | `confirm_stale` | 409 | a bulk confirmation whose plan no longer holds |
-| `not_deleting` | 409 | exporting a space that is neither being deleted nor in the recycle bin |
 | `exports_full` | 507 | the exports would exceed `exports.maxBytes` |
 | `busy` | 409 | as in "Administration", for one space of an action |
 
@@ -5540,6 +5593,7 @@ tenant's rows of these kinds.
 | `files.maxBytes` | limit in bytes | site, tenant | `--max-upload` (10 MiB) | `restrict`, `max` = the site value |
 | `recycle.days` | limit, 1 to 365 | site | 30 | — |
 | `exports.days`, `exports.maxBytes` | limits | site | 7, 20 GiB | — |
+| `users.reuseUsernames` | choice `after_purge`, `never` | site | `after_purge` | — |
 
 ### Storage
 
@@ -5557,6 +5611,8 @@ Migration `0020_recycle.sql` (0019 is left to phase 4), SQLite and PostgreSQL:
   indexes above; filled by set statements in the migration.
 - `exports` (id, tenant_id, made_by, spaces JSON, state, bytes, path, created,
   expires).
+- `retired_usernames` (the case-folded name, purged at), primary key on the
+  name; read only when `users.reuseUsernames` is `never`.
 - Every store method that lists users excludes deleted ones; the 3.3 scope test
   gains a check that no listing of `users` forgets it.
 
@@ -5672,6 +5728,8 @@ that the migration writes, chosen so that nothing changes for anyone (see
 | `files.maxBytes` | limit (3.5) | site, tenant | `--max-upload` | `restrict`, `max` = the site value |
 | `offline.copies` | boolean, `false` stricter (4.1) | site, tenant, space | `true` | `tighten` |
 | `tenant.selfService` | see "Organisation sign-up" | site | `false` | — |
+| `auth.idpAdmins` | boolean: a tenant's provider may map IdP groups to the tenant's `admin` | site | `false` | — |
+| `domains.checksPerMinute` | limit: manual domain checks on the server | site | 60 | — |
 
 Notes:
 
@@ -5717,8 +5775,11 @@ The inventory's (a) items, and the reasons that matter for security:
   `--trusted-proxy`, `--allow-origin`, the process limits, the secret key,
   tenancy, tenants' creation, deletion, `disabled`, `slug` and quotas, the
   server status, the cache and eviction settings of 3.1, the recycle bin's
-  retention and the exports' limits of 3.5, the outbound cap below, the list of
-  public mail domains, `--max-upload` and `--max-import` as ceilings.
+  retention and the exports' limits of 3.5, `users.reuseUsernames`, the outbound
+  cap below, the list of public mail domains, the manual domain-check cap,
+  `auth.idpAdmins`, `--max-upload` and `--max-import` as ceilings.
+- **Unique usernames and email addresses**: sign-in names no tenant, so both
+  are unique on the server (see "Signing in by email address").
 
 ### Tenant-owned resources
 
@@ -5841,12 +5902,56 @@ A tenant claims the email domains its people use; a **verified** claim routes
 sign-in for those addresses to the tenant's SSO.
 
 - `GET /api/admin/tenants/{tenant}/domains`, `POST …/domains` (`{"domain": "acme.example"}`),
-  `POST …/domains/{domain}/verify`, `DELETE …/domains/{domain}`, `PATCH
-  …/domains/{domain}` (`{"provider": slug, "autoJoin": false}`).
-- A claim is made unverified, with a token. It is verified by a DNS TXT record
-  `_petalbook.<domain>` holding `petalbook-domain=<token>`; `verify` looks it up
-  (through the system resolver, counted as one outgoing request of the tenant).
-  An unverified claim does nothing at all.
+  `POST …/domains/{domain}/verify` (check now), `POST …/domains/{domain}/code`
+  (a new code), `DELETE …/domains/{domain}`, `PATCH …/domains/{domain}`
+  (`{"provider": slug, "join": null, "restrictOrgs": false}`; `join` and
+  `restrictOrgs`, see "Joining an organisation" and "Organisation sign-up").
+
+```json
+{"domain": "acme.example", "state": "verified", "code": "k3v9q2…", "codeExpires": "2026-11-30T08:00:00Z",
+ "records": {"txt": {"name": "_petalbook.acme.example", "value": "petalbook-verify=k3v9q2…"},
+             "cname": {"name": "_petalbook.acme.example", "target": "k3v9q2….verify.notes.example.org"}},
+ "verifiedAt": "2026-11-23T09:00:00Z", "checkedAt": "2026-11-23T09:00:00Z", "missingSince": null,
+ "lastCheck": {"at": "2026-11-23T09:00:00Z", "by": "manual", "result": "found", "seen": []},
+ "nextCheckAllowedAt": "2026-11-23T09:01:00Z",
+ "provider": "acme-entra", "join": null, "restrictOrgs": false}
+```
+
+**Verification by DNS.** A claim is made unverified, with a code (20 random
+characters of `a-z0-9`, stored as a hash after it is shown; `code` is returned
+while the claim is unverified). Either record proves it:
+
+- **TXT** (the default the page shows): `_petalbook.<domain>` with a value
+  `petalbook-verify=<code>`;
+- **CNAME**: `_petalbook.<domain>` pointing to `<code>.verify.<site domain>`,
+  where the site domain is the host of `--public-url`. Only the CNAME's target
+  is compared; it is never resolved further, so the server needs no DNS for
+  `verify.<site domain>` and nothing is served there.
+
+A lookup asks for the TXT and the CNAME of `_petalbook.<domain>` through the
+system resolver (one outgoing request of the tenant each). The code is valid
+for 7 days from when it was made; a check of an unverified claim whose code has
+expired answers `409 domain_code_expired`, and `POST …/code` makes a new one
+(the old one stops counting). A verified claim keeps no code. An unverified
+claim does nothing at all.
+
+**Check now** (`POST …/domains/{domain}/verify`, for an unverified claim and
+also to re-check a verified one):
+
+- Limits: once a minute per domain, 20 an hour per tenant, and
+  `domains.checksPerMinute` on the server (site only, 60 by default). Over any
+  of them: `429 rate_limited` with `Retry-After` in seconds (the page counts
+  down on the button, from `nextCheckAllowedAt`). A refused check looks
+  nothing up and writes nothing.
+- `200` with the claim and `lastCheck`: `result` is `found` (the record is
+  there with this code: an unverified claim becomes verified), `missing` (no
+  TXT or CNAME at that name), or `wrong_value` (records are there but none
+  holds this code; `seen` lists up to 5 of them, each cut to 255 bytes, so the
+  administrator sees a typo or an old code). A DNS failure is `result:
+  "dns_error"` and changes nothing. A `found` for a domain another tenant holds
+  verified answers `409 domain_claimed` instead.
+- Every manual check is audited (`domain_checked`, with `result`). It does not
+  move the daily check.
 - A claim is for exactly that domain (subdomains are claimed one by one). Public
   mail domains (a list shipped with the server and kept by site administrators:
   `gmail.com`, `outlook.com`, `qq.com`, `163.com`, …) cannot be claimed
@@ -5858,12 +5963,17 @@ sign-in for those addresses to the tenant's SSO.
   A site administrator may move a verified claim
   (`POST /api/admin/domains/{domain}/assign`), and sees every claim
   (`GET /api/admin/domains`).
-- Verified claims are checked again every 7 days; a record missing at three
-  checks in a row (over at least 48 hours) makes the claim unverified, with a
-  notice to the tenant's administrators and an audit row. A DNS failure is not
-  a missing record.
-- The map of verified domains is in memory (domain → tenant, provider,
-  `autoJoin`), rebuilt on change.
+- **Verified claims are checked again every day** by a background job (spread
+  over the day, one domain at a time, counted against the tenant's outbound
+  share). `missingSince` is set at the first check that finds no record with
+  the code; a record found again clears it. A record missing on every check for
+  **7 days in a row** cancels the claim: it becomes unverified (with a new
+  code), routing, joining and `restrictOrgs` stop at once, the tenant's
+  administrators get a notice in the app and by mail, and `domain_lapsed` is
+  audited. A DNS failure is neither found nor missing and does not count.
+  Manual checks feed the same state (a `found` clears `missingSince`).
+- The map of verified domains is in memory (domain → tenant, provider, `join`,
+  `restrictOrgs`), rebuilt on change.
 
 **The sign-in page asks for the email or username first** when the server has
 any verified domain with SSO (`GET /api/auth/providers` gains `"identifierFirst": true`
@@ -5913,13 +6023,10 @@ them when it has several). `identifierFirst` is added to `dual` and
 lists the site's social providers the tenant allows, the site SSO providers
 offered to it, and the tenant's own SSO providers.
 
-**Joining by domain** (`autoJoin` on a verified domain, off by default): an
-account made with an address of that domain (registration after the address is
-confirmed, or `autoCreate` of a social provider that vouched for the address)
-is made in that tenant, whatever page it started on, and the person is told
-which tenant they joined. It does not move existing accounts (3.3 has no move).
-With the tenant's `auth.ssoOnly` in effect, registering with a password for
-such an address answers `409 sso_required` with the provider's `start`.
+Joining a tenant by its verified domain is in "Joining an organisation" below.
+With the tenant's `auth.ssoOnly` in effect, registering with a password for an
+address of its verified domain answers `409 sso_required` with the provider's
+`start`.
 
 #### Mail: `GET/PUT /api/admin/tenants/{tenant}/mail`, `POST …/mail/test`
 
@@ -5983,6 +6090,156 @@ it. Tenant administrators are never refused a password by `ssoOnly` (2.8's back
 door, kept per tenant). A site administrator is never refused by a tenant's
 setting.
 
+### Signing in by email address
+
+From 3.6 the email address is the main way in; the username stays.
+
+- **The username** is still the unique handle and id people see: `@mentions`,
+  commit authors, links, member lists. Nothing about it changes.
+- **The email address is unique on the server**, among all accounts (enabled,
+  disabled, and deleted ones in the recycle bin, until they are purged),
+  compared as 3.3 compares addresses (only `A` to `Z` made lower case; ASCII
+  only). It is held as `users.email_key` with a unique index, so finding an
+  account by address is one index lookup.
+- **`POST /api/login`** takes `{"identifier": "tang@acme.example", "password": "…"}`;
+  `identifier` is an email address (it contains `@`) or a username.
+  `username` is still accepted as before (old clients). The checks and their
+  order are those of "Signing in": the per-username failure counts and the
+  lockout key on the account when one is found, else on the identifier as
+  typed in lower case, so an address and a username of the same account share
+  one count. A wrong address answers like a wrong username (a dummy hash, the
+  same `401`).
+- **The sign-in page** asks for "email or username" (email first in the label
+  and the placeholder), then `POST /api/auth/discover` decides whether it goes
+  to SSO (above), then it asks for the password or offers a passkey.
+- **Setting an address** that another account holds, through
+  `PATCH /api/account`, an administrator's `PATCH /api/users/{id}`, or an
+  invite that would make a new account: `409 email_taken` (signed in or
+  administrator only, so this tells a signed-in person no more than the
+  invite and member pages do). Registration keeps 3.3's rule of answering the
+  same `202` either way; what was "an enabled account of the tenant with this
+  verified address" is now any account on the server with it.
+- **An address held only unverified by another account** goes to whoever
+  confirms it: confirming a registration (or `POST /api/email/confirm`) for an
+  address another account holds without `emailVerified` moves the address:
+  the other account's `email` is cleared, it gets a notice in the app, and
+  `email_released` is audited. A verified holder is never displaced.
+- **An identity provider's address** already held by another account follows
+  2.8's merge rules (`mergeVerifiedEmail`, within the provider's owner); when it
+  does not merge, the new account is made without an address (as for an address
+  outside ASCII).
+
+**Addresses shared by several accounts before 3.6.** The upgrade writes
+`email_key` only for an address that exactly one account has; the accounts
+that share an address keep it as their `email` with `email_key` empty, and
+nothing is deleted or changed for them.
+
+- Signing in with such an address checks the password against each account
+  that has it (oldest first, at most 5). When one matches: `409 username_required`
+  (`{"error": "username_required"}`, no account named), and the page asks for
+  the username and signs in with it. When none matches: the usual `401`. More
+  than 5 accounts with one address: only usernames sign in. The extra password
+  checks make such an address slower to answer, which shows that it is shared;
+  this lasts only until the list below is cleaned.
+- `GET /api/admin/users/email-conflicts?tenant=&cursor=&limit=` (administrators;
+  a tenant administrator sees the conflicts among their tenant's accounts, and
+  of an address shared across tenants only their own accounts):
+  `{"conflicts": [{"email": "tang@example.com", "users": [{"id", "username", "tenant", "lastActive", "emailVerified"}]}], "cursor": …}`.
+  Changing or clearing the address of all but one (`PATCH /api/users/{id}`)
+  writes `email_key` for the one left, in the same transaction.
+- `GET /api/admin/status` gains `emailConflicts` (how many addresses).
+
+### Joining an organisation
+
+Each tenant chooses how people join it; any combination of these may be on:
+
+| Way | Setting | Default |
+|---|---|---|
+| (a) invite | always available (`/api/invites`, as 3.3) | — |
+| (b) an address of a verified domain joins at once | `join.domain: "auto"` | off |
+| (c) an address of a verified domain asks, an administrator approves | `join.domain: "request"` | off |
+| (d) signing in through the tenant's own SSO joins at once | the provider's `autoCreate`, with `jit.requireGroups` | as the provider |
+
+#### `GET /api/admin/tenants/{tenant}/join`, `PUT …/join`
+
+```json
+{"domain": "off", "defaultRole": "member"}
+```
+
+- `domain`: `off`, `auto` or `request`, for every verified domain of the
+  tenant; a domain's own `join` (`PATCH …/domains/{domain}`) overrides it
+  (`null` follows the tenant). (b) and (c) are one choice per domain.
+- `defaultRole`: `member` or `viewer`, the role of anyone who joins by (b), (c)
+  or (d). Invites carry their own role, as before. An administrator approving a
+  request may choose another.
+- **`viewer` is a new tenant role** (`role` on the User: `admin`, `member` or
+  `viewer`). A tenant viewer cannot create spaces in the tenant
+  (`403 forbidden`) and their effective permission in any of the tenant's
+  spaces is at most `viewer`, whatever their direct or group role; their
+  personal space is theirs as before. The permission cache keeps the cap with
+  the person's entry, so the check stays one lookup.
+
+**(b) Automatic.** An account made with an address of the domain (registration
+after the address is confirmed, or `autoCreate` of a social provider that
+vouched for the address) is made in that tenant, whatever page it started on,
+with `defaultRole`; the person is told which tenant they joined. In 3.6 it does
+not move existing accounts (3.3 has no move); 3.7 adds a membership instead.
+
+**(c) Request and approval.** Registering with an address of such a domain, once
+the address is confirmed, does not make the account yet: it makes a **join
+request** that holds the username (30 days, then it expires and the username is
+freed). The same for `autoCreate` of a social provider that vouched for the
+address: the person sees "waiting for approval" instead of a session.
+
+- `GET /api/admin/tenants/{tenant}/join-requests?state=pending&cursor=&limit=`:
+  `{"requests": [{"id", "username", "name", "email", "via": "registration", "created", "expires", "state"}], "cursor": …}`,
+  newest first; `state` is `pending`, `approved`, `denied` or `expired`.
+- `POST …/join-requests/{id}/approve` (`{"role": "viewer"}`, optional): makes
+  the account with that role (default `defaultRole`) and a personal space, and
+  mails the person a link to sign in. `409 conflict` when the request is not
+  pending.
+- `POST …/join-requests/{id}/deny` (`{"reason": "…"}`, optional, mailed to the
+  person): frees the username.
+- `GET /api/join-requests/{id}` (public, by the id in the "waiting" page's
+  address, which is unguessable): `{"state", "tenant": {"name"}}`, so the page
+  can say what happened. `DELETE` withdraws it.
+- A tenant holds at most 1,000 pending requests (`429 rate_limited` for the
+  next one, which is answered to the person as "try again later").
+- The tenant's administrators get a notice in the app for each new request
+  (batched, at most one an hour).
+- In 3.7 a signed-in person also asks from the list of organisations they may
+  join; the endpoints stay the same.
+
+**(d) Joining through the tenant's SSO.** A tenant's SSO provider with
+`autoCreate` makes the account in its tenant at first sign-in (as 2.8 and
+above), with `defaultRole`. The Provider gains:
+
+```json
+"jit": {"requireGroups": ["5f1c…-petalbook-users"]}
+```
+
+- `requireGroups` (empty by default: everyone the provider sends): values of
+  the provider's groups claim (the `groups.claim` of 3.2); a person whose claim
+  has none of them is refused **at every sign-in through the provider**, not
+  only the first (`sso_error=not_allowed`, audited as `login_failed` with
+  `reason: "group_required"`). A missing claim is "none of them".
+- Groups and roles from the IdP reuse 3.2's `groups` setting:
+  - `groups.map` maps values to the tenant's synced groups, as 3.2.
+  - `groups.admins` (a list of values) makes a person the tenant's `admin` while
+    their claim has one of the values. **Off unless the site allows it**: the
+    site setting `auth.idpAdmins` (site only, `false` by default); while it is
+    `false`, `PUT`/`PATCH` with a non-empty `admins` answers `403 forbidden`, and
+    turning it off stops promotions at once (people promoted before keep the role
+    until their next sign-in, which demotes them). Every promotion and demotion
+    through it is audited (`role_from_idp`). It only demotes people it promoted
+    (`roleSource: "idp"` on the User, on the membership from 3.7); an
+    administrator made by hand is never touched. It never grants `siteAdmin`, and never demotes the last
+    enabled administrator of the tenant with a password (`local_admin_required`
+    is kept; the row says `skipped`).
+- Leaving a group at the IdP takes effect at the person's next sign-in through
+  the provider (3.2's rule): their sessions and tokens keep what they had until
+  then. SCIM, which would make it immediate, stays in phase 5 (5.10).
+
 ### Organisation sign-up
 
 With `tenant.selfService` on at the site (off by default; it needs
@@ -5997,15 +6254,31 @@ own organisation**.
   `role: "admin"` (not `siteAdmin`), with a personal space. The new tenant
   starts with the site's defaults, the tenant totals of `tenant.selfService.quota`
   (site only; `null` means none), and registration closed.
-- **Caps** (site only): `tenant.selfService.perPerson` tenants per address
-  (default 1, counted by the confirmed address, over the tenant's whole life,
-  deleted ones included), `tenant.selfService.perHour` on the server (default
-  20), and 3.3's 1,000 tenants. Over a cap: the same `202` and an email saying
-  the organisation could not be made (the answer stays the same for every
+- **Caps** (site only, changeable by site administrators):
+  `tenant.selfService.perPerson` tenants per person (default 3; in 3.6 counted
+  by the confirmed address, the tenants it made that still exist; from 3.7 by
+  account), `tenant.selfService.perHour` on the server (default 20), and 3.3's
+  1,000 tenants. Over a cap: the same `202` and an email saying the
+  organisation could not be made (the answer stays the same for every
   address, as 3.3 does).
+- **A domain may keep its people in one organisation.** A tenant with a verified
+  domain may set `restrictOrgs: true` on it (`PATCH …/domains/{domain}`, off by
+  default). Then asking to create an organisation with an address of that
+  domain answers `409 domain_managed` with
+  `{"tenant": {"slug", "name"}, "join": "auto" | "request" | "sso" | "invite", "start": …}`,
+  and the page offers to join that organisation instead, by its join rules.
+  It answers this before anything is stored (the domain's routing is public
+  through `discover` already). It does not stop people of the domain from
+  registering as individuals.
+- **One address, one account** (3.6, see "Signing in by email address"): an
+  address that already has an account cannot make a second one, so asking to
+  create an organisation with it gets 3.3's "you already have an account" mail
+  and nothing is made. A signed-in person creating further organisations comes
+  with 3.7.
 - Individuals keep 3.3's flow: an account and a personal space in the tenant of
-  the page (or of a domain with `autoJoin`).
-- One account in several tenants (switching workspaces) is not in 3.6.
+  the page (or of a verified domain with `join.domain`, as above).
+- One account in several tenants (switching organisations) is milestone 3.7
+  (see "Several organisations per account").
 
 `tenant_created` rows say `by: "self_service"` and the address.
 
@@ -6019,7 +6292,9 @@ own organisation**.
 | `/api/admin/recycle…` (list, restore), `/api/admin/confirm`, `/api/admin/bulk`, `/api/admin/jobs…`, `/api/admin/exports…` | their tenant | every tenant |
 | `DELETE /api/admin/recycle/{item}` (purge early), exports with `history` | `403` | yes |
 | `GET /api/admin/audit` | their tenant's rows, without the site's kinds | every row |
-| `/api/admin/tenants/{own}`: `GET`, `PATCH name`, `…/settings`, `…/security`, `…/auth/providers…`, `…/domains…`, `…/mail…`, `…/captcha`, `…/daily…`, `…/github…` | yes, within the site's rules | every tenant, and may also set every rule |
+| `/api/admin/tenants/{own}`: `GET`, `PATCH name`, `…/settings`, `…/security`, `…/auth/providers…` (`groups.admins` only with `auth.idpAdmins`), `…/domains…`, `…/join`, `…/join-requests…`, `…/mail…`, `…/captcha`, `…/daily…`, `…/github…` | yes, within the site's rules | every tenant, and may also set every rule |
+| `POST /api/admin/spaces/{space}/view` (3.5) | their tenant's spaces | every space |
+| `GET /api/admin/users/email-conflicts` | their tenant's accounts | all |
 | `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/access`, `/api/admin/daily…`, `/api/admin/github…`, `/api/admin/settings…`, `/api/admin/domains…`, `/api/admin/status`, `/api/admin/tenancy`, the tenant list, create, delete, `disabled`, `slug`, `quota`, `PUT /api/admin/storage` | `403 forbidden` | yes |
 
 `/api/admin/access` and `/api/admin/security` remain the site's layer; the
@@ -6050,13 +6325,25 @@ Migration `0021_tenant_autonomy.sql`, SQLite and PostgreSQL.
 
 New tables: `tenant_mail`, `tenant_captcha`, `tenant_daily` (and its interfaces
 and lines, by tenant), `github_apps` (the site's row moved here with owner
-`site`), `tenant_domains` (tenant, domain, token hash, verified, checked,
-failures, provider, auto_join; unique on verified domain), `site_settings` key
+`site`), `tenant_domains` (tenant, domain, code hash, code expires, verified,
+checked, missing since, last check JSON, provider, join, restrict orgs; unique
+on verified domain), `site_settings` key
 `publicMailDomains`; columns `sign_in_providers.owner`, `.class`, `.tenants`,
 `identities.owner` (unique `(owner, issuer, subject)`),
 `github_installations.tenants`, `tenants.created_by` (self-service), and
 `layered_settings.note`. The identity index is rebuilt (a set statement: all
 existing rows get `site`).
+
+Also: `tenant_join` (tenant, domain mode,
+default role); `join_requests` (id, tenant, username, name, email, password
+hash, via, state, created, expires; unique pending username, index
+`(tenant_id, state, created DESC)`); `users.role` accepts `viewer`;
+`users.email_key` with a unique index, written by one set statement for every
+address held by exactly one account (grouped by the lower-cased address), the
+others left empty; `groups.admins` and `jit` live in the provider's settings
+JSON, as `groups.map` does; `users.role_source` (`manual` for every existing
+row, `idp` for a promotion by `groups.admins`). Sign-in by username works exactly as before; sign-in by
+address is new.
 
 ### Audit
 
@@ -6069,6 +6356,11 @@ existing rows get `site`).
 | `tenant_mail_changed`, `tenant_captcha_changed`, `tenant_daily_changed`, `tenant_github_changed` | a tenant-owned resource changed | the changed fields, secrets as `"changed"` |
 | `sso_refused_site_admin` | a tenant's provider tried to sign in a site administrator | `provider`, `user` |
 | `outbound_capped` | a tenant reached its outbound share (once a minute per tenant) | `tenant`, `feature` |
+| `domain_checked` | a manual check of a domain | `domain`, `result`, `seen` |
+| `join_requested`, `join_approved`, `join_denied`, `join_expired` | a join request | `request`, `username`, `email`, `role` |
+| `joined_by_domain`, `joined_by_sso` | an account joined by (b) or (d) | `user`, `domain` or `provider`, `role` |
+| `role_from_idp` | `groups.admins` promoted or demoted a person, or skipped a demotion | `user`, `provider`, `from`, `to`, `skipped` |
+| `email_released` | an unverified address moved to the account that confirmed it | `user` (the one cleared), `to` |
 
 Tenant administrators see their tenant's rows of these kinds.
 
@@ -6078,13 +6370,299 @@ Tenant administrators see their tenant's rows of these kinds.
 |---|---|---|
 | `setting_locked`, `setting_restricted` | 409 | as 3.3; `setting_restricted` also for a value looser than a `tighten` |
 | `domain_public` | 400 | claiming a public mail domain |
-| `domain_unverified` | 409 | `verify` did not find the record (with what it looked up) |
+| `domain_code_expired` | 409 | checking an unverified claim whose code is older than 7 days |
+| `domain_managed` | 409 | creating an organisation with an address of a domain with `restrictOrgs`; with `tenant`, `join`, `start` |
+| `email_taken` | 409 | setting an address another account holds |
+| `username_required` | 409 | signing in with an address several accounts share, after the password matched one |
+| `rate_limited` | 429 | as today, also a domain check within its cooldown, with `Retry-After` |
 | `domain_claimed` | 409 | another tenant holds the verified claim |
 | `domain_limit`, `provider_limit` | 409 | a tenant's 20 domains, 10 providers |
 | `sso_required` | 409 | registering with a password for an address of a tenant that enforces SSO; with `start` |
 | `address_not_public` | 400 | a tenant's issuer, metadata, SMTP host or interface resolves to an address that is not public |
 | `unavailable` | 503 | as today, also when the outbound cap is reached |
 | `quota_exceeded` | 409 | `quota: "pinnedBytes"` |
+
+## Several organisations per account
+
+Milestone 3.7 (contract, 2026-11-23; written for after 3.6 is merged). Accounts
+mode only. Moved forward from phase 5 by the owner, modelled on Notion: one
+account, a personal home, and membership in any number of organisations
+(tenants), with the app switching between them.
+
+With one tenant, which is every server that never turned tenancy on, nothing
+changes and no switcher is shown. After the upgrade every account is a member
+of exactly the tenant it was in and everything answers as before (see
+"Upgrading to several organisations").
+
+### Home, memberships, and who administers an account
+
+- **Memberships.** `tenant_members` (tenant, user, role `admin`/`member`/`viewer`,
+  `via`, `roleSource`, joined) replaces the user's single tenant. A person reaches
+  a tenant's shared spaces, groups and settings only through a membership.
+- **Home.** Every account has a home tenant (`users.tenant_id`, renamed in the
+  code to `homeTenant`; the column keeps its name). The person's **personal
+  spaces live in their home**, settings and quotas of the account itself
+  (session length, passkey rules, per-person quota of personal spaces) resolve
+  through it.
+- **Held accounts.** `users.held`: when `true`, the home tenant's
+  administrators administer the account itself (disable, password reset, email,
+  passkeys, delete: everything 3.3 and 3.5 let a tenant administrator do to a
+  user). When `false` (a **personal account**), only site administrators and the
+  person do. Managed accounts (below) are held.
+- **Accounts made from 3.7 on** are personal: their home is the default tenant
+  and they are not held. Joining an organisation, however it happens, adds a
+  membership; it never moves the home.
+- **Personal spaces are never visible to an organisation's administrators**:
+  not in lists, storage views, `view` (3.5) or exports, whatever the account's
+  memberships. Site administrators see everything. The one exception is
+  `legacyVisible`, set by the upgrade (see "Upgrading to several organisations"
+  and the owner's question 1 in design.md).
+
+The User object gains:
+
+```json
+{"…": "…", "tenant": {"id": "0000000000", "slug": "default", "name": "Default"}, "held": false,
+ "managedBy": null,
+ "tenants": [{"id": "01JDT3NANT", "slug": "acme", "name": "Acme", "role": "member", "via": "domain", "joined": "…"}]}
+```
+
+`tenant` is the home. `role` and `siteAdmin` keep their place for old clients:
+`role` is the role in the home tenant (`member` when the person is not a member
+of it). `tenants` is shown to the person and to site administrators; a tenant
+administrator sees only the entry of their own tenant.
+
+### The current organisation
+
+- The web app's addresses carry the organisation: `/o/{slug}/…`, and `/` for the
+  personal home. Every request it makes sends `X-PetalBook-Tenant: {id}` (the
+  home's id for the personal home).
+- A request without the header uses the session's last current tenant
+  (`PUT /api/session/tenant` with `{"tenant": id}` sets it; the switcher calls
+  it), so old clients and links work.
+- The header is checked against the person's memberships held in memory with
+  their permission entry (one lookup): a tenant they are not a member of (and
+  not their home) answers `404 not_found`, as an unknown id does.
+- What it decides: lists (`GET /api/spaces`, search across spaces, recent,
+  favourites, the home page's daily text and its settings layer), where a new
+  space is made (`POST /api/spaces` makes it in the current tenant; a tenant
+  `viewer`, or a managed account in its personal home, gets `403 forbidden` or
+  `403 managed_account`), the settings layer of everything that is not a space,
+  and the administration pages (`/api/admin/…` act on the current tenant for a
+  tenant administrator; site administrators keep `?tenant=`).
+- What it does not decide: a route that names a space acts on the space's
+  tenant. The person's permission there is their effective permission
+  (memberships and groups, as 3.2), capped by their role in that tenant
+  (`viewer`); being a member of the space requires being a member of its
+  tenant, so no extra check is made.
+- Two tabs may show two organisations at once: the session is not bound to one.
+
+`GET /api/session` gains `current` (tenant id), `home` and `tenants` (the
+switcher's list: id, slug, name, role, managed), answered from the cache.
+
+### Tokens, OAuth and MCP
+
+- An API token and an OAuth grant are **bound to one tenant** when made:
+  `POST /api/tokens` takes `tenant` (default: the current one); the OAuth
+  consent page asks which organisation (or the personal home) the client may
+  reach. The binding never changes.
+- A bound token reaches only spaces of its tenant the person can reach; for any
+  other space the answer is `404 not_found`. The check is one comparison of the
+  space's tenant with the token's, next to 3.2's.
+- MCP's `tools/list`, `spaces_list` and search see only the bound tenant's spaces.
+- Leaving or being removed from a tenant revokes the tokens and grants bound to
+  it (the person's other tokens stay).
+- The upgrade binds every existing token and grant to its owner's tenant, so
+  each reaches exactly what it did.
+
+### Security rules per organisation
+
+An organisation's `auth.ssoOnly`, `auth.passkeys.requireRoles` and
+`session.idleDays`/`maxDays` (3.6) apply to the person **when they act in that
+organisation** (a request whose current tenant, or whose space's tenant, is it):
+
+- The session keeps, per tenant, how and when it proved itself there:
+  `proofs: {"<tenant>": {"method": "sso", "provider": "acme-entra", "at": "…"}}`.
+  Signing in fills the proof of the home and of every tenant whose rules the
+  method meets; signing in through an organisation's SSO later adds that
+  tenant's proof to the same session.
+- A request into an organisation whose rule the session does not meet answers
+  `403 tenant_sso_required` (with the provider's `start`), `403 passkey_required`, or
+  `401 session_expired_for_tenant` for its session length; the page offers the
+  step, and the rest of the session keeps working.
+- The account's own sign-in rules stay where 3.6 put them: per-address limits
+  and lockout on the site, and the home's settings for the account.
+- Site administrators are never refused by an organisation's rule.
+
+### Joining, leaving, and creating organisations
+
+3.6 built these for one tenant per person (new accounts only). From 3.7 they add
+a membership to an existing account; the endpoints keep their shapes.
+
+- **Invites** (`POST /api/invites`): when the address belongs to an account,
+  accepting the invite (signed in as that account) adds the membership with the
+  invite's role; otherwise it makes a personal account with the membership.
+  `POST /api/invites` answers the same either way (3.6's `409 email_taken` for
+  invites is gone).
+- **By domain, automatic** (`join.domain: "auto"`): an account whose verified
+  address is on the domain gets the membership at its next sign-in, or when it
+  verifies such an address, with `defaultRole`, and a notice. It may leave
+  (unless managed).
+- **By domain, request**: `GET /api/account/joinable` lists the organisations
+  whose verified domains match the person's verified address, with `join`
+  (`auto`, `request`, `sso`). `POST /api/join-requests` with `{"tenant": id}`
+  (signed in) makes a request for an existing account; administrators handle it
+  as in 3.6, and approving adds the membership.
+- **Through the organisation's SSO** (`autoCreate`, `jit.requireGroups`): a new
+  identity makes a personal account with the membership. For an existing
+  account see the owner's question 2 in design.md; until it is decided, an
+  organisation's provider links an identity to an existing personal account
+  only when the account's **verified** address is on a **verified** domain of
+  that tenant, never for a site administrator, and the session so made carries
+  only that tenant's proof: the personal home and other organisations need the
+  account's own way in (password, passkey, social sign-in, or an identity the
+  person linked themself).
+- **Leaving**: `DELETE /api/account/tenants/{tenant}`. Refused for the home of
+  a held account, for a managed account (`403 managed_account`), for the last
+  enabled administrator of the tenant (`409 last_admin`), and while the person
+  solely owns spaces of the tenant that have other members and no heir
+  (`409 heir_required`, as 3.5).
+- **Removing a member**: `GET /api/admin/tenants/{tenant}/members/{user}/removal`
+  (the plan) and `DELETE …/members/{user}` (`{"heir", "transfers", "reason"}`):
+  3.5's rules for deleting a person, applied only to the tenant's spaces:
+  spaces the person alone owns with no other member go to the tenant's recycle
+  bin, those with members are transferred, the rest are left; their group
+  memberships in the tenant, their tokens and grants bound to it, and the
+  tenant's proofs of their sessions are dropped. The account itself is not
+  touched. Restoring the membership from the recycle item restores the spaces
+  recycled with it, as 3.5.
+- **Members list**: `GET /api/admin/tenants/{tenant}/members?q=&role=&via=&cursor=&limit=`,
+  one query over `tenant_members` joined to `users`, keyset cursor;
+  `PATCH …/members/{user}` with `{"role"}`. Each row has `held` and `managed`;
+  account actions (`PATCH /api/users/{id}` beyond `role`, password reset,
+  disable, `DELETE /api/users/{id}`) answer `403 account_not_held` for a member
+  the tenant does not hold. `/api/users…` lists the current tenant's members, as
+  before.
+- **Creating an organisation** when signed in: `POST /api/tenants` with
+  `{"name", "slug"}` (needs `tenant.selfService`): the caller becomes its
+  `admin`. Over `tenant.selfService.perPerson` (counted by account, the tenants
+  it created that still exist): `409 tenant_limit`; the server-wide caps answer
+  `429 rate_limited`. An address of a domain with `restrictOrgs` answers `409
+  domain_managed` as in 3.6, checked on each of the person's verified
+  addresses. Managed accounts: `403 managed_account`.
+
+### Managed accounts
+
+Modelled on Notion's managed users. Per verified domain, off by default:
+`PATCH /api/admin/tenants/{tenant}/domains/{domain}` with `{"managed": true}`.
+
+- **Needs**: the claim verified, and an enabled SSO provider of the tenant (or a
+  site provider offered to it) routed to the domain; `409 conflict` otherwise.
+  If the claim later lapses or the provider is removed, managing stops (accounts
+  become personal again, below) and the administrators are told.
+- **Preview and confirmation**: `GET …/domains/{domain}/managed` returns the plan
+  (`{"accounts": n, "skipped": [{"reason": "site_admin" | "held_elsewhere"}], "personalSpaces": n}`);
+  turning it on takes a 3.5 confirmation token (`POST /api/admin/confirm` with
+  `action: "manage_accounts"`).
+- **Which accounts**: those whose **verified** address is on the domain, now
+  and later (an account that verifies such an address becomes managed). Site
+  administrators are never managed (skipped, audited). Accounts held by another
+  tenant are skipped.
+- **What it does** to such an account: `held: true`, its home becomes the
+  managing tenant, `managedBy` names it, and it gets a membership there (by the
+  join rules, `defaultRole`) if it had none. Then:
+  - it cannot create personal spaces or organisations (`403 managed_account`);
+  - it signs in only through the tenant's SSO: a password, passkey or social
+    sign-in answers `403 tenant_sso_required` with the provider's `start` (the account's
+    sessions made otherwise end at their next request);
+  - it joins by the rules above;
+  - **its existing personal spaces are not deleted** and stay invisible to the
+    organisation's administrators. The person is shown them at sign-in with two
+    choices per space: **move into the organisation**
+    (`POST /api/account/spaces/{space}/move` with `{"tenant": id}`: the space
+    becomes the organisation's, the person stays its owner, its members must be
+    members of the organisation or are listed for the person to resolve first,
+    `409 conflict`) or **export** (`POST /api/account/exports` with
+    `{"spaces": [...]}`: 3.5's export for the person's own personal spaces, kept
+    7 days, audited). Until then they stay as they are, usable by the person.
+- Each account taken in writes `account_managed`; the person sees a notice at
+  their next sign-in saying who manages the account and what changed.
+- **Turning it off** makes those accounts personal again (`held: false`, home
+  the default tenant), keeps every membership, and writes `account_released`.
+- **Without managed accounts**, people of the domain keep their own personal
+  home and are also members of the organisation; this is the main case.
+
+### Usage, quotas and audit
+
+- `usage` rows are per (tenant, user). A space counts against the tenant it is
+  in and against the per-person allowance of whoever created it, in that tenant;
+  personal spaces count against the home. 3.3's totals and their rules are
+  unchanged; `GET /api/account/usage` answers per tenant.
+- Audit rows carry the tenant they are about: a space's tenant; for a
+  membership, that tenant; for the account itself (password, passkeys, email,
+  sign-in), the home, visible to the home's administrators only when the
+  account is held; a sign-in through an organisation's SSO is also written to
+  that organisation.
+
+### Data isolation, updated
+
+3.3's contract and its three tests stay, with these changes:
+
+- The cross-tenant link check (`INSERT … SELECT`) joins the person's
+  `tenant_members` row for the space's tenant instead of comparing two
+  `tenant_id`s: adding a member, a group member, or transferring a space writes
+  nothing unless the person is a member of that tenant. A personal space may be
+  shared only with people who share at least one tenant with its owner.
+- The fixture gains an account that is a member of both tenants A and B, with a
+  personal space: every route is called with A and with B as the current tenant
+  and with tokens bound to each, and must answer only that tenant's data; A's
+  administrator must not see the personal space.
+- The final query also asserts that every space membership's person is a member
+  of the space's tenant (or its owner's personal home).
+
+### Upgrading to several organisations
+
+Migration `0022_memberships.sql`, SQLite and PostgreSQL, a few set statements:
+
+- one `tenant_members` row per user from `users.tenant_id` and `users.role`
+  (`via: "migration"`, `roleSource` from 3.6's column);
+- `users.held = true`, `users.legacy_visible = true` for every existing
+  account, so each tenant's administrators keep administering, and seeing the
+  personal spaces of, the people they had;
+- tokens, OAuth grants and sessions get the user's tenant as their binding,
+  current tenant and proof;
+- `usage` rows get the user's tenant.
+
+Afterwards every person is a member of one tenant, their home, and every answer
+is the one before. The switcher appears only for people with more than one
+place to go.
+
+New: `tenant_members` (primary key `(tenant_id, user_id)`, index `(user_id)`),
+`users.held`, `users.legacy_visible`, `users.managed_by`, a `tenant_id` on API
+tokens and OAuth grants, `current_tenant` and `proofs` on sessions,
+`tenant_domains.managed`, and `tenant_id` in the key of `usage`.
+
+### Audit
+
+| `kind` | When | `detail` |
+|---|---|---|
+| `member_added`, `member_removed`, `member_role_changed`, `member_left` | a membership changed | `tenant`, `user`, `via`, `role`, `transfers`, `recycled` |
+| `tenant_created` | as 3.6, plus `by: "member"` for a signed-in person | `tenant`, `user` |
+| `managed_enabled`, `managed_disabled` | managed accounts turned on or off for a domain | `domain`, `accounts` |
+| `account_managed`, `account_released`, `account_manage_skipped` | one account taken in, let go, or skipped | `user`, `domain`, `reason` |
+| `personal_space_moved` | a personal space moved into an organisation | `space`, `tenant` |
+| `account_export_created`, `account_export_downloaded` | a person exported their own personal spaces | `export`, `spaces` |
+
+### Errors of this section
+
+| Code | Status | When |
+|---|---|---|
+| `managed_account` | 403 | a managed account creating a personal space or an organisation, or leaving its organisation |
+| `account_not_held` | 403 | an account action by a tenant administrator on a member the tenant does not hold |
+| `last_admin` | 409 | the last enabled administrator of a tenant leaving it, or being demoted or removed |
+| `tenant_limit` | 409 | a signed-in person over `tenant.selfService.perPerson` |
+| `tenant_sso_required` | 403 | acting in an organisation that requires its SSO without that proof; a managed account signing in another way; with `start` |
+| `session_expired_for_tenant` | 401 | the organisation's session length passed for this session's proof |
+| `heir_required`, `domain_managed`, `rate_limited` | as 3.5, 3.6 | |
 
 ## Administration
 
