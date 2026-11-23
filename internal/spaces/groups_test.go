@@ -964,3 +964,31 @@ func TestASignInWithTheOldMappingCannotReAdd(t *testing.T) {
 		}
 	})
 }
+
+// A new group whose random id is taken gets another id; only a taken name is
+// "exists".
+func TestCreateGroupRetriesAnIDClash(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := newGfix(t, st)
+		first := f.group("First", "local")
+		calls := 0
+		f.m.testID = func() string {
+			calls++
+			if calls == 1 {
+				return first // the clash
+			}
+			return ""
+		}
+		g, err := f.m.CreateGroup(ctx, "Second", "", "local")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if g.ID == first || g.Name != "Second" || calls < 2 {
+			t.Fatalf("%+v after %d ids", g, calls)
+		}
+		f.m.testID = nil
+		if _, err := f.m.CreateGroup(ctx, "first", "", "local"); !errors.Is(err, ErrGroupExists) {
+			t.Fatalf("a taken name: %v", err)
+		}
+	})
+}

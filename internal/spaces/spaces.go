@@ -204,6 +204,8 @@ type Manager struct {
 
 	// testHook, set by tests only, runs at named points inside transactions.
 	testHook func(point string)
+	// testID, set by tests only, picks a new group's id ("" for a random one).
+	testID func() string
 }
 
 // at runs the test hook, if any, at a named point.

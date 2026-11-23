@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/KKazuhaK/PetalBook/internal/page"
@@ -118,24 +119,43 @@ func (m *Manager) CreateGroup(ctx context.Context, name, description, source str
 		return nil, err
 	}
 	now := m.opt.Now()
-	g := store.Group{ID: page.NewID(now), Name: name, Description: description, Source: source, Created: now, Updated: now}
-	err = m.opt.Store.Tx(ctx, func(q store.Q) error {
-		n, err := store.CountGroups(ctx, q)
-		if err != nil {
-			return err
+	g := store.Group{Name: name, Description: description, Source: source, Created: now, Updated: now}
+	for try := 0; ; try++ {
+		g.ID = m.newGroupID(now)
+		err = m.opt.Store.Tx(ctx, func(q store.Q) error {
+			n, err := store.CountGroups(ctx, q)
+			if err != nil {
+				return err
+			}
+			if n >= MaxGroups {
+				return limitErr("a server has at most %d groups", MaxGroups)
+			}
+			return store.InsertGroup(ctx, q, g)
+		})
+		on, unique := store.UniqueOn(err)
+		if !unique {
+			break
 		}
-		if n >= MaxGroups {
-			return limitErr("a server has at most %d groups", MaxGroups)
+		// The name's index is groups.name_key (SQLite) or groups_name_key_key
+		// (PostgreSQL); anything else is the id, which a new one fixes.
+		if strings.Contains(on, "name_key") || try >= 4 {
+			return nil, ErrGroupExists
 		}
-		return store.InsertGroup(ctx, q, g)
-	})
-	if store.IsUnique(err) {
-		return nil, ErrGroupExists // the id is random enough; a clash of both is the name
 	}
 	if err != nil {
 		return nil, err
 	}
 	return m.Group(ctx, g.ID)
+}
+
+// newGroupID is a fresh random id (or the test's).
+func (m *Manager) newGroupID(now time.Time) string {
+	if m.testID != nil {
+		if id := m.testID(); id != "" {
+			return id
+		}
+	}
+	return page.NewID(now)
 }
 
 // Group returns a group with its counts.
