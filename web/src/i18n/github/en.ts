@@ -22,7 +22,7 @@ export const githubEn = {
     creating: 'Creating…',
     takenAsk: (full: string) => `${full} exists already. Use that repository for this space?`,
     useExisting: 'Use the existing repository',
-    leftBehind: (full: string) => `The repository ${full} was created on GitHub and is still empty. Nothing was deleted there. Try again to connect the new space to it.`,
+    leftBehind: (full: string) => `The repository ${full} was created on GitHub and is still empty. Nothing was deleted there. Try again to connect the new space to it; if you close this, a reminder stays in Settings, GitHub.`,
     useLeft: 'Connect to that repository',
     openOnGitHub: 'Open it on GitHub',
     errors: {
@@ -78,6 +78,14 @@ export const githubEn = {
     disconnectConfirm: 'Disconnect',
     disconnected: 'GitHub disconnected',
     disconnectFailed: 'Could not disconnect',
+    leftoverTitle: 'Repositories left empty',
+    leftoverHelp: 'Making these spaces failed after their repository was created on GitHub. The repositories were kept, empty; nothing was deleted there. Connect a space to one and try again, or say you deleted it.',
+    leftoverFor: (space: string, when: string) => `For the space “${space}”, made ${when}`,
+    leftoverRetry: 'Connect it and try again',
+    leftoverDismiss: 'I deleted it',
+    leftoverRetried: (space: string, repo: string) => `The space “${space}” is connected to ${repo}`,
+    leftoverFailed: 'Could not connect a space to it',
+    leftoverDismissFailed: 'Could not forget it',
   },
   sync: {
     github: 'GitHub',
@@ -116,7 +124,7 @@ export const githubEn = {
     problems: {
       github_not_configured: 'This server has no GitHub App set up.',
       github_not_authorized: 'Connect your GitHub account first (Settings, GitHub).',
-      github_owner_not_allowed: 'You cannot use this repository: the installation is not shared and your GitHub account cannot push there.',
+      github_owner_not_allowed: 'You cannot use this repository: the installation is not shared with your tenant and your GitHub account cannot push there.',
       github_repo_not_in_installation: 'The App is not installed on this repository, or its installation does not reach it.',
       github_no_permission: 'GitHub refused.',
     },

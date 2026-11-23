@@ -491,6 +491,17 @@ export interface GitHubInfo {
   // Whether people can connect their GitHub account.
   userAuthorization: boolean
   authorization: GitHubAuthorization | null
+  // Empty repositories that failed attempts to make a space left on GitHub, newest first.
+  leftovers: GitHubLeftover[]
+}
+
+// A reminder: the repository was made and kept; `spaceName` is what the space was to be called.
+export interface GitHubLeftover {
+  repoId: number
+  fullName: string
+  htmlUrl: string
+  spaceName: string
+  created: string
 }
 
 export interface GitHubOwner {

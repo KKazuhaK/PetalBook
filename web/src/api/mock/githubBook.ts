@@ -5,7 +5,7 @@
 // repository, an authorisation that ran out). There is no real GitHub behind it.
 
 import { HttpError } from './store.ts'
-import type { AdminGitHub, GitHubAuthorization, GitHubCursorPage, GitHubInfo, GitHubInstallation, GitHubOwner, GitHubRepo, GitHubVia, PutAdminGitHubInput } from '../types.ts'
+import type { AdminGitHub, GitHubAuthorization, GitHubLeftover, GitHubCursorPage, GitHubInfo, GitHubInstallation, GitHubOwner, GitHubRepo, GitHubVia, PutAdminGitHubInput } from '../types.ts'
 
 export interface MockGitHubOptions {
   // The App is set up from the start (`npm run dev:mock:accounts`).
@@ -59,6 +59,8 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     ? { appId: '1234567', clientId: 'Iv23liMockClientId', clientSecret: true, fingerprint: 'SHA256:mockFingerprint0123456789abcdefghijklmnopqrs', permissions: { administration: 'write', contents: 'write', metadata: 'read' }, checked: deps.now() }
     : null
   const auths = new Map<string, AuthRec>()
+  // The reminders of empty repositories, by person, newest first.
+  const leftovers = new Map<string, (GitHubLeftover & { created: string })[]>()
   const attempts = new Map<string, Attempt>()
   let nextId = 5000
   let repoId = 880_000_000
@@ -113,6 +115,7 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     app: app ? { ...MOCK_GITHUB_APP, installUrl: `${MOCK_GITHUB_APP.htmlUrl}/installations/new` } : null,
     userAuthorization: userAuthorization(),
     authorization: authOf(userId),
+    leftovers: [...(leftovers.get(userId) ?? [])],
   })
 
   // --- connecting -----------------------------------------------------------------
@@ -203,19 +206,27 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     throw new HttpError(403, 'github_owner_not_allowed', `不能在 ${owner} 下建仓库`)
   }
 
-  const create = (userId: string, input: { owner: string; name: string; private: boolean }): { repo: RepoRec; via: GitHubVia; installationId: number } => {
+  const create = (userId: string, input: { owner: string; name: string; private: boolean; spaceName: string }): { repo: RepoRec; via: GitHubVia; installationId: number } => {
     const p = plan(userId, input.owner)
     if (!NAME_RE.test(input.name) || input.name === '.' || input.name === '..' || input.name.toLowerCase().endsWith('.git')) throw invalid('仓库名只能用字母、数字、点、下划线和连字符，最多 100 个字符')
     if (traps.noPermission) throw new HttpError(403, 'github_no_permission', 'GitHub 拒绝建仓库：你在这个组织里没有建仓库的权限')
     if (repos.some((r) => key(r.owner) === key(p.login) && key(r.name) === key(input.name))) throw new HttpError(409, 'github_name_taken', `${p.login} 下已经有同名仓库`)
     const repo: RepoRec = { id: ++repoId, owner: p.login, name: input.name, private: input.private }
     repos.push(repo)
+    // From here on the repository stays, and the person is reminded of it.
+    const remember = () => {
+      const list = (leftovers.get(userId) ?? []).filter((l) => l.repoId !== repo.id)
+      list.unshift({ repoId: repo.id, fullName: `${repo.owner}/${repo.name}`, htmlUrl: `https://github.com/${repo.owner}/${repo.name}`, spaceName: input.spaceName, created: new Date(deps.now()).toISOString().replace(/\.\d+Z$/, 'Z') })
+      leftovers.set(userId, list.slice(0, 20))
+    }
     if (p.installation && p.installation.selection === 'selected' && traps.notInInstallation) {
+      remember()
       throw new HttpError(409, 'github_repo_not_in_installation', `${p.login} 的安装没有包含新仓库 ${p.login}/${input.name}，也没能加进去`, {
         repo: { id: repo.id, fullName: `${repo.owner}/${repo.name}`, htmlUrl: `https://github.com/${repo.owner}/${repo.name}` },
       })
     }
     if (traps.pushFails) {
+      remember()
       // The repository was made and stays, empty: a retry with create: false connects to it.
       throw new HttpError(502, 'github_push_failed', `仓库 ${p.login}/${input.name} 已经建好，但第一次推送没有成功`, {
         repo: { id: repo.id, fullName: `${repo.owner}/${repo.name}`, htmlUrl: `https://github.com/${repo.owner}/${repo.name}` },
@@ -343,6 +354,15 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     return asInstallation(i)
   }
 
+  // "I deleted it": forgets the person's reminder; there being none is fine.
+  const dismiss = (userId: string, repoId: number) => {
+    leftovers.set(userId, (leftovers.get(userId) ?? []).filter((l) => l.repoId !== repoId))
+  }
+  // A space follows the repository: nobody needs reminding of it any more.
+  const repoConnected = (repoId: number) => {
+    for (const [u, list] of leftovers) leftovers.set(u, list.filter((l) => l.repoId !== repoId))
+  }
+
   // A deleted tenant stops being shared with.
   const tenantDeleted = (id: string) => {
     for (const i of insts) i.tenants = i.tenants.filter((x) => x !== id)
@@ -363,6 +383,8 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     installations,
     share,
     tenantDeleted,
+    dismiss,
+    repoConnected,
     // The attempt a browser holds: the cookie carries the state.
     // Mock only: what a test or a person playing with the mock can switch.
     expire: (userId: string) => {

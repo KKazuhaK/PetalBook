@@ -70,7 +70,8 @@ func GetRemote(ctx context.Context, q Q, spaceID string) (*Remote, error) {
 	return scanRemote(q.QueryRow(ctx, `SELECT `+remoteCols+` FROM remotes WHERE space_id = ?`, spaceID))
 }
 
-// PutRemote inserts or replaces a remote row.
+// PutRemote inserts or replaces a remote row. When the space follows a GitHub
+// repository, the reminders of that repository as an empty leftover are cleared.
 func PutRemote(ctx context.Context, q Q, r Remote) error {
 	var sync int64
 	if !r.LastSync.IsZero() {
@@ -84,6 +85,11 @@ func PutRemote(ctx context.Context, q Q, r Remote) error {
 		gh_via = excluded.gh_via, gh_installation_id = excluded.gh_installation_id, gh_repo_id = excluded.gh_repo_id, gh_user_id = excluded.gh_user_id`,
 		r.SpaceID, r.URL, r.Branch, r.CredType, r.Username, r.TokenEnc, r.PrivKeyEnc, r.PubKey, r.LastGood,
 		r.State, r.ErrorKind, r.LastError, r.RemoteTip, sync, ms(r.Updated), r.GHVia, r.GHInstallationID, r.GHRepoID, r.GHUserID)
+	if err != nil || r.URL == "" || r.GHRepoID == 0 {
+		return err
+	}
+	// A space that follows the repository answers every reminder of it.
+	_, err = q.Exec(ctx, `DELETE FROM github_leftovers WHERE repo_id = ?`, r.GHRepoID)
 	return err
 }
 

@@ -3,7 +3,8 @@ import { useSearchParams } from 'react-router'
 import { ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/api/client'
-import { useDisconnectGitHub, useGitHub, useSession } from '@/api/hooks'
+import type { GitHubLeftover } from '@/api/types'
+import { useCreateSpace, useDisconnectGitHub, useDismissGitHubLeftover, useGitHub, useSession } from '@/api/hooks'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
@@ -23,10 +24,11 @@ export function GitHubPanel() {
   if (info.isPending || !session.data) return <PageFallback />
   if (info.isError) return <ErrorState message={t.fmt.labelled(t.settings.loadFailed, info.error.message)} onRetry={() => void info.refetch()} />
   const admin = session.data.user?.role === 'admin'
-  const { app, userAuthorization, authorization } = info.data
+  const { app, userAuthorization, authorization, leftovers } = info.data
   return (
     <div className="space-y-8">
       <Failure />
+      {leftovers.length > 0 && <Leftovers items={leftovers} />}
       {app === null ? (
         <SettingsNote>
           {tg.account.notConfigured}
@@ -181,5 +183,75 @@ function Connected() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  )
+}
+
+// Empty repositories a failed attempt to make a space left on GitHub. Nothing there was deleted;
+// the person connects a space to one and tries again, or says they deleted it.
+function Leftovers({ items }: { items: GitHubLeftover[] }) {
+  return (
+    <SettingsSection title={tg.account.leftoverTitle} id="github-leftovers-title" description={tg.account.leftoverHelp}>
+      <ul className="divide-y rounded-lg border">
+        {items.map((l) => (
+          <Leftover key={l.repoId} item={l} />
+        ))}
+      </ul>
+    </SettingsSection>
+  )
+}
+
+function Leftover({ item: l }: { item: GitHubLeftover }) {
+  const create = useCreateSpace()
+  const dismiss = useDismissGitHubLeftover()
+  const [error, setError] = useState('')
+  const [owner, name] = l.fullName.split('/')
+  const retry = async () => {
+    setError('')
+    try {
+      const space = await create.mutateAsync({ name: l.spaceName, github: { owner, name, create: false } })
+      toast.success(tg.account.leftoverRetried(space.name, l.fullName))
+    } catch (e) {
+      setError(t.fmt.labelled(tg.account.leftoverFailed, e instanceof ApiError ? e.message : tg.account.errors.unknown))
+    }
+  }
+  const forget = async () => {
+    setError('')
+    try {
+      await dismiss.mutateAsync(l.repoId)
+    } catch (e) {
+      setError(t.fmt.labelled(tg.account.leftoverDismissFailed, e instanceof ApiError ? e.message : tg.account.errors.unknown))
+    }
+  }
+  const busy = create.isPending || dismiss.isPending
+  return (
+    <li className="grid grid-cols-1 gap-2 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+      <div className="min-w-0">
+        <p className="text-sm font-medium break-all">
+          {/^https?:\/\//.test(l.htmlUrl) ? (
+            <a className="inline-flex items-center gap-1 underline underline-offset-4" href={l.htmlUrl} target="_blank" rel="noreferrer noopener">
+              {l.fullName}
+              <ExternalLink className="size-3 shrink-0" />
+            </a>
+          ) : (
+            l.fullName
+          )}
+        </p>
+        <p className="text-xs text-muted-foreground break-words">{tg.account.leftoverFor(l.spaceName, relativeTime(l.created))}</p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" size="sm" disabled={busy} onClick={() => void retry()}>
+          {create.isPending && <Spinner />}
+          {tg.account.leftoverRetry}
+        </Button>
+        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void forget()}>
+          {tg.account.leftoverDismiss}
+        </Button>
+      </div>
+      {error && (
+        <p role="alert" className="text-sm text-destructive sm:col-span-2">
+          {error}
+        </p>
+      )}
+    </li>
   )
 }

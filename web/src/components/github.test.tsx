@@ -240,6 +240,63 @@ describe('the GitHub section of the account', () => {
 
 // --- a space's remote ------------------------------------------------------------------
 
+// A space whose repository was made but could not be used: the person is left a reminder.
+function leaveARepository(name: string) {
+  hook({ trap: 'pushFails', on: true })
+  const r = adminRequests(m!.server)
+  expect(() => r('POST', '/api/spaces', { name: 'Poems', github: { owner: 'tang-gh', name } })).toThrow(/github_push_failed/)
+  hook({ trap: 'pushFails', on: false })
+}
+
+describe('the reminder of an empty repository a failed space left on GitHub', () => {
+  it('lists it with its name and link, and connects a space to it when asked to try again', async () => {
+    await openSettings('connected')
+    await settle(() => panel()!.textContent!.includes('tang-gh'), 'the account')
+    expect(panel()!.textContent).not.toContain(tg.account.leftoverTitle)
+    leaveARepository('poems-repo')
+    await m!.qc.invalidateQueries()
+    await settle(() => panel()!.textContent!.includes(tg.account.leftoverTitle), 'the reminder')
+    expect(panel()!.textContent).toContain('tang-gh/poems-repo')
+    expect(panel()!.textContent).toContain('Poems')
+    const link = [...panel()!.querySelectorAll<HTMLAnchorElement>('a')].find((x) => x.textContent?.includes('tang-gh/poems-repo'))!
+    expect(link.getAttribute('href')).toBe('https://github.com/tang-gh/poems-repo')
+    expect(link.rel).toContain('noopener')
+    await click(button(tg.account.leftoverRetry, panel()!))
+    await settle(() => !panel()!.textContent!.includes(tg.account.leftoverTitle), 'the reminder going')
+    const post = m!.requests.filter((r) => r.method === 'POST' && r.url === '/api/spaces').at(-1)!
+    expect(JSON.parse(post.body!)).toEqual({ name: 'Poems', github: { owner: 'tang-gh', name: 'poems-repo', create: false } })
+    // The space is there, on the repository.
+    const spaces = (adminRequests(m!.server)('GET', '/api/spaces').body as { spaces: { name: string }[] }).spaces
+    expect(spaces.filter((x) => x.name === 'Poems')).toHaveLength(1)
+  })
+
+  it('keeps the reminder and says why when trying again fails', async () => {
+    await openSettings('connected')
+    await settle(() => panel()!.textContent!.includes('tang-gh'), 'the account')
+    leaveARepository('stuck-repo')
+    await m!.qc.invalidateQueries()
+    await settle(() => button(tg.account.leftoverRetry, panel()!) !== undefined, 'the reminder')
+    hook({ expire: true })
+    await click(button(tg.account.leftoverRetry, panel()!))
+    await settle(() => m!.requests.filter((r) => r.method === 'POST' && r.url === '/api/spaces').length === 1, 'the try')
+    await settle(() => document.body.textContent!.includes(tg.account.leftoverFailed), 'the failure')
+    expect(panel()!.textContent).toContain('tang-gh/stuck-repo')
+  })
+
+  it('forgets it when the person says they deleted the repository', async () => {
+    await openSettings('connected')
+    await settle(() => panel()!.textContent!.includes('tang-gh'), 'the account')
+    leaveARepository('gone-repo')
+    await m!.qc.invalidateQueries()
+    await settle(() => button(tg.account.leftoverDismiss, panel()!) !== undefined, 'the reminder')
+    await click(button(tg.account.leftoverDismiss, panel()!))
+    await settle(() => !panel()!.textContent!.includes(tg.account.leftoverTitle), 'the reminder going')
+    expect(m!.requests.some((r) => r.method === 'DELETE' && /^\/api\/github\/leftovers\/\d+$/.test(r.url))).toBe(true)
+    const spaces = (adminRequests(m!.server)('GET', '/api/spaces').body as { spaces: { name: string }[] }).spaces
+    expect(spaces.some((x) => x.name === 'Poems')).toBe(false)
+  })
+})
+
 describe('the sync settings of a space', () => {
   async function openSync(github: 'connected' | 'app') {
     m = await mount(settingsRoutes, {

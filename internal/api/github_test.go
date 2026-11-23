@@ -359,9 +359,23 @@ func TestCreatingASpaceFailsCleanly(t *testing.T) {
 		if dirs := listDir(t, a.dir+"/spaces"); len(dirs) != dirsBefore {
 			t.Fatalf("%v", dirs)
 		}
+		// The failure left a reminder the person sees later, with what they need to try again.
+		g := member.do("GET", "/api/github", nil).want(t, 200, "")
+		lo := g.body["leftovers"].([]any)
+		if len(lo) != 1 {
+			t.Fatalf("%s", g.raw)
+		}
+		one := lo[0].(map[string]any)
+		if one["repoId"] != repo["id"] || one["fullName"] != "kazuhahub/slow" || one["htmlUrl"] != repo["htmlUrl"] || one["spaceName"] != "S" || one["created"] == "" {
+			t.Fatalf("%s", g.raw)
+		}
 		// The same request with create: false, once GitHub finds it.
 		a.fake.HideRepo("kazuhahub/slow", 0)
 		member.do("POST", "/api/spaces", body("kazuhahub", "slow", false)).want(t, 201, "")
+		// ...and the space connecting to the repository cleared the reminder.
+		if g := member.do("GET", "/api/github", nil).want(t, 200, ""); fmt.Sprint(g.body["leftovers"]) != "[]" {
+			t.Fatalf("%s", g.raw)
+		}
 		// GitHub limiting the server: 429 with Retry-After.
 		a.fake.LimitUntil(a.clock.Now().Add(2 * time.Minute))
 		lim := member.do("POST", "/api/spaces", body("kazuhahub", "another", true)).want(t, 429, "rate_limited")
@@ -542,6 +556,45 @@ func TestAHeldSessionCannotUseGitHub(t *testing.T) {
 		// The connection made before the hold is untouched.
 		if g := member.do("GET", "/api/github", nil).want(t, 200, ""); g.body["authorization"].(map[string]any)["login"] != "tang-gh" {
 			t.Fatal(g.raw)
+		}
+	})
+}
+
+func TestDismissingALeftoverRepository(t *testing.T) {
+	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
+		_, member := ghSetup(t, a)
+		other := a.addUser("other", pw, "member")
+		a.fake.HiddenGit = 100
+		repoID := func(owner, name string) float64 {
+			r := member.do("POST", "/api/spaces", map[string]any{"name": "Left", "github": map[string]any{"owner": owner, "name": name}}).want(t, 502, "github_push_failed")
+			return r.body["repo"].(map[string]any)["id"].(float64)
+		}
+		id := repoID("kazuhahub", "left-a")
+		keep := repoID("kazuhahub", "left-b")
+		path := func(id float64) string { return "/api/github/leftovers/" + itoa(int64(id)) }
+		// Not another person's business.
+		other.do("DELETE", path(id), nil).want(t, 204, "")
+		if n := len(member.do("GET", "/api/github", nil).want(t, 200, "").body["leftovers"].([]any)); n != 2 {
+			t.Fatalf("%d reminders", n)
+		}
+		member.do("DELETE", path(id), nil).want(t, 204, "")
+		member.do("DELETE", path(id), nil).want(t, 204, "") // gone already: still fine
+		left := member.do("GET", "/api/github", nil).want(t, 200, "").body["leftovers"].([]any)
+		if len(left) != 1 || left[0].(map[string]any)["repoId"] != keep {
+			t.Fatalf("%v", left)
+		}
+		member.do("DELETE", "/api/github/leftovers/nope", nil).want(t, 404, "not_found")
+		member.do("DELETE", "/api/github/leftovers/0", nil).want(t, 404, "not_found")
+		a.newClient("").do("DELETE", path(keep), nil).want(t, 401, "unauthenticated")
+	})
+}
+
+func TestLeftoversAreThereWithoutAnApp(t *testing.T) {
+	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
+		admin := a.setup("root", pw)
+		g := admin.do("GET", "/api/github", nil).want(t, 200, "")
+		if fmt.Sprint(g.body["leftovers"]) != "[]" {
+			t.Fatalf("%s", g.raw)
 		}
 	})
 }

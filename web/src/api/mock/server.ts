@@ -1831,6 +1831,7 @@ export function createMockServer(options: MockOptions = {}) {
     if (via !== 'app' && via !== 'user') throw new HttpError(400, 'invalid', 'credential.via 是 app 或 user')
     const { owner, name } = githubRepoOf(input.url)
     const found = github.existing(userId, owner, name, via)
+    github.repoConnected(found.repo.id)
     const branch = input.branch === undefined || input.branch === '' ? 'main' : input.branch
     if (typeof branch !== 'string' || /\s/.test(branch)) throw new HttpError(400, 'invalid', '分支名不合法')
     space.remote = {
@@ -2154,6 +2155,12 @@ export function createMockServer(options: MockOptions = {}) {
     }
     if (method === 'DELETE' && path === '/github/authorization') {
       github.disconnect(me.id)
+      return { status: 204 }
+    }
+    const left = /^\/github\/leftovers\/([^/]+)$/.exec(path)
+    if (left && method === 'DELETE') {
+      if (!/^\d+$/.test(left[1]) || Number(left[1]) <= 0) throw new HttpError(404, 'not_found', '没有这个仓库')
+      github.dismiss(me.id, Number(left[1]))
       return { status: 204 }
     }
     if (method === 'GET' && path === '/github/owners') return j(github.owners(me.id, url.searchParams.get('cursor')))
@@ -2650,8 +2657,9 @@ export function createMockServer(options: MockOptions = {}) {
           const g = body.github
           if (!isRecord(g) || typeof g.owner !== 'string' || typeof g.name !== 'string') throw new HttpError(400, 'invalid', 'github 要有 owner 和 name')
           if (g.description !== undefined && (typeof g.description !== 'string' || g.description.length > 350)) throw new HttpError(400, 'invalid', 'description 最多 350 个字符')
-          const found = g.create === false ? github.existing(me.id, g.owner, g.name, '') : github.create(me.id, { owner: g.owner, name: g.name, private: g.private !== false })
+          const found = g.create === false ? github.existing(me.id, g.owner, g.name, '') : github.create(me.id, { owner: g.owner, name: g.name, private: g.private !== false, spaceName: name })
           const space = addSpace(newId((x) => spaces.has(x)), name, me.id, false, false, inbox)
+          github.repoConnected(found.repo.id)
           space.remote = {
             url: `https://github.com/${found.repo.owner}/${found.repo.name}.git`,
             branch: 'main',

@@ -608,3 +608,40 @@ func TestSharingIsPerTenant(t *testing.T) {
 		}
 	})
 }
+
+func TestLeftoversAreListedWithInfoAndDismissedOneByOne(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		w := newWorld(t, st)
+		w.user("U2", "other")
+		repo := &github.Repo{ID: 77, Owner: "kazuhahub", Name: "left", FullName: "kazuhahub/left", HTMLURL: "https://github.com/kazuhahub/left"}
+		if info, err := w.svc.Info(ctx, "U1"); err != nil || len(info.Leftovers) != 0 {
+			t.Fatalf("%+v %v", info, err)
+		}
+		if err := w.svc.RecordLeftover(ctx, "U1", repo, "Notes"); err != nil {
+			t.Fatal(err)
+		}
+		info, err := w.svc.Info(ctx, "U1")
+		if err != nil || len(info.Leftovers) != 1 || info.Leftovers[0].RepoID != 77 || info.Leftovers[0].FullName != "kazuhahub/left" || info.Leftovers[0].SpaceName != "Notes" {
+			t.Fatalf("%+v %v", info, err)
+		}
+		// Per user.
+		if info, _ := w.svc.Info(ctx, "U2"); len(info.Leftovers) != 0 {
+			t.Fatalf("%+v", info.Leftovers)
+		}
+		if err := w.svc.DismissLeftover(ctx, "U2", 77); err != nil {
+			t.Fatal(err)
+		}
+		if info, _ := w.svc.Info(ctx, "U1"); len(info.Leftovers) != 1 {
+			t.Fatal("another user's dismissal took it")
+		}
+		if err := w.svc.DismissLeftover(ctx, "U1", 77); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.svc.DismissLeftover(ctx, "U1", 77); err != nil {
+			t.Fatalf("dismissing twice is fine: %v", err)
+		}
+		if info, _ := w.svc.Info(ctx, "U1"); len(info.Leftovers) != 0 {
+			t.Fatalf("%+v", info.Leftovers)
+		}
+	})
+}

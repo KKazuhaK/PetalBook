@@ -1623,7 +1623,7 @@ function suite(target: Target) {
       it('starts with no App: everyone is told so, and every other endpoint answers 409 github_not_configured', async () => {
         const m = await newMember(uniq('gh0'))
         const info = await call(m.browser, 'GET', '/api/github')
-        expect([info.status, info.json]).toEqual([200, { app: null, userAuthorization: false, authorization: null }])
+        expect([info.status, info.json]).toEqual([200, { app: null, userAuthorization: false, authorization: null, leftovers: [] }])
         const off = await call(admin, 'GET', '/api/admin/github')
         expect(off.json).toMatchObject({ configured: false })
         expect(off.json.callbackUrl).toMatch(/\/api\/github\/authorization\/callback$/)
@@ -1754,6 +1754,35 @@ function suite(target: Target) {
         await mockHook({ trap: 'noPermission', on: false })
         const spaces = (await call(m.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]
         expect(spaces.filter((x) => x.name === `Repo ${run}`).length).toBe(2)
+      })
+
+      it('reminds a person of an empty repository a failed space left, until a space connects to it or they dismiss it', async () => {
+        const m = await newMember(uniq('gh6b'))
+        const other = await newMember(uniq('gh6c'))
+        await connectAccount(m.browser)
+        expect((await call(m.browser, 'GET', '/api/github')).json.leftovers).toEqual([])
+        const body = (name: string, create = true) => ({ name: 'Kept', github: { owner: 'kazuhahub', name, create } })
+        await mockHook({ trap: 'pushFails' })
+        const failed = await call(m.browser, 'POST', '/api/spaces', body(`left-${run}`))
+        expect([failed.status, codeOf(failed)]).toEqual([502, 'github_push_failed'])
+        const second = await call(m.browser, 'POST', '/api/spaces', body(`left2-${run}`))
+        await mockHook({ trap: 'pushFails', on: false })
+        const list = (await call(m.browser, 'GET', '/api/github')).json.leftovers
+        expect(list).toHaveLength(2)
+        expect(list[1]).toMatchObject({ repoId: failed.json.repo.id, fullName: `kazuhahub/left-${run}`, htmlUrl: failed.json.repo.htmlUrl, spaceName: 'Kept', created: expect.stringMatching(/Z$/) })
+        // Newest first, and only the person's own.
+        expect(list[0].repoId).toBe(second.json.repo.id)
+        expect((await call(other.browser, 'GET', '/api/github')).json.leftovers).toEqual([])
+        // A space connecting to the repository (here by create: false) answers its reminder.
+        expect((await call(m.browser, 'POST', '/api/spaces', body(`left-${run}`, false))).status).toBe(201)
+        expect((await call(m.browser, 'GET', '/api/github')).json.leftovers.map((l: any) => l.repoId)).toEqual([second.json.repo.id])
+        // Dismissing is the person's own, and fine when it is gone already.
+        expect((await call(other.browser, 'DELETE', `/api/github/leftovers/${second.json.repo.id}`)).status).toBe(204)
+        expect((await call(m.browser, 'GET', '/api/github')).json.leftovers).toHaveLength(1)
+        expect((await call(m.browser, 'DELETE', `/api/github/leftovers/${second.json.repo.id}`)).status).toBe(204)
+        expect((await call(m.browser, 'DELETE', `/api/github/leftovers/${second.json.repo.id}`)).status).toBe(204)
+        expect((await call(m.browser, 'GET', '/api/github')).json.leftovers).toEqual([])
+        expect((await call(m.browser, 'DELETE', '/api/github/leftovers/nope')).status).toBe(404)
       })
 
       it('switches a space to the App or to the user\'s connection with PUT .../remote', async () => {

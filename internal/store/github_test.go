@@ -341,3 +341,67 @@ func TestGitHubInstallationSharesGoWithTheirOwners(t *testing.T) {
 		}
 	})
 }
+
+func TestGitHubLeftovers(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		mkUser(t, st, "A", "a", "member")
+		mkUser(t, st, "B", "b", "member")
+		q := st.Q()
+		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+		put := func(user string, repo int64, at time.Time) {
+			t.Helper()
+			l := store.GitHubLeftover{UserID: user, RepoID: repo, FullName: fmt.Sprint("o/r", repo), HTMLURL: fmt.Sprint("https://github.com/o/r", repo), SpaceName: "Notes", Created: at}
+			if err := store.PutGitHubLeftover(ctx, q, l); err != nil {
+				t.Fatal(err)
+			}
+		}
+		put("A", 1, now)
+		put("A", 2, now.Add(time.Minute))
+		put("B", 1, now)
+		put("A", 1, now.Add(2*time.Minute)) // the same repository again: one reminder, the newer
+		list, err := store.ListGitHubLeftovers(ctx, q, "A")
+		if err != nil || len(list) != 2 || list[0].RepoID != 1 || list[1].RepoID != 2 || list[0].SpaceName != "Notes" || !list[0].Created.Equal(now.Add(2*time.Minute)) {
+			t.Fatalf("newest first: %+v %v", list, err)
+		}
+		// Per user: A's dismissal leaves B's.
+		if ok, err := store.DeleteGitHubLeftover(ctx, q, "A", 1); err != nil || !ok {
+			t.Fatal(ok, err)
+		}
+		if ok, _ := store.DeleteGitHubLeftover(ctx, q, "A", 1); ok {
+			t.Fatal("dismissed twice")
+		}
+		if l, _ := store.ListGitHubLeftovers(ctx, q, "B"); len(l) != 1 {
+			t.Fatalf("%+v", l)
+		}
+		// A space connecting to the repository clears the reminder, for whoever has it.
+		for _, id := range []string{"S1"} {
+			if err := store.InsertSpace(ctx, q, store.DefaultTenantID, id, id, "", "", now); err != nil {
+				t.Fatal(err)
+			}
+		}
+		r := store.Remote{SpaceID: "S1", URL: "https://github.com/o/r1.git", Branch: "main", State: "ok", Updated: now, CredType: "github", GHVia: "user", GHUserID: "A", GHRepoID: 1}
+		if err := store.PutRemote(ctx, q, r); err != nil {
+			t.Fatal(err)
+		}
+		if l, _ := store.ListGitHubLeftovers(ctx, q, "B"); len(l) != 0 {
+			t.Fatalf("a connected repository is still a leftover: %+v", l)
+		}
+		if l, _ := store.ListGitHubLeftovers(ctx, q, "A"); len(l) != 1 || l[0].RepoID != 2 {
+			t.Fatalf("%+v", l)
+		}
+		// Only the newest ones are kept.
+		for i := int64(100); i < 140; i++ {
+			put("A", i, now.Add(time.Duration(i)*time.Hour))
+		}
+		if l, _ := store.ListGitHubLeftovers(ctx, q, "A"); len(l) != store.MaxGitHubLeftovers || l[0].RepoID != 139 {
+			t.Fatalf("%d kept, first %+v", len(l), l[0])
+		}
+		// Deleting the user deletes their reminders.
+		if _, err := q.Exec(ctx, `DELETE FROM users WHERE id = 'B'`); err != nil {
+			t.Fatal(err)
+		}
+		if n := count(t, st, `SELECT COUNT(*) FROM github_leftovers WHERE user_id = 'B'`); n != 0 {
+			t.Fatal("a deleted user's reminders stayed")
+		}
+	})
+}

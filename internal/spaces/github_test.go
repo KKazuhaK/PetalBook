@@ -859,3 +859,63 @@ func TestWhatTheFirstPushTriesAgain(t *testing.T) {
 		}
 	}
 }
+
+// A repository left empty by a failure after it was made is remembered for the
+// person, until a space connects to it.
+func TestAFailureAfterTheRepositoryWasMadeLeavesAReminder(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		leftovers := func() []store.GitHubLeftover {
+			t.Helper()
+			l, err := store.ListGitHubLeftovers(ctx, st.Q(), e.user.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return l
+		}
+		// Failures before the repository exists leave nothing to remember.
+		e.f.AddRepo("kazuhahub", "taken", false)
+		if _, err := e.create("T", "kazuhahub", "taken", true); ghCode(err) != "github_name_taken" {
+			t.Fatalf("%v", err)
+		}
+		if _, err := e.create("T", "nobody-here", "x", true); ghCode(err) != "github_owner_not_allowed" {
+			t.Fatalf("%v", err)
+		}
+		if l := leftovers(); len(l) != 0 {
+			t.Fatalf("%+v", l)
+		}
+		// The push never works: the repository stays, and so does a reminder of it.
+		e.f.HiddenGit = 100
+		_, err := e.create("Slow notes", "kazuhahub", "slow", true)
+		repo := ghRepo(err)
+		if ghCode(err) != "github_push_failed" || repo == nil {
+			t.Fatalf("%v", err)
+		}
+		l := leftovers()
+		if len(l) != 1 || l[0].RepoID != repo.ID || l[0].FullName != "kazuhahub/slow" || l[0].HTMLURL != repo.HTMLURL || l[0].SpaceName != "Slow notes" || l[0].Created.IsZero() {
+			t.Fatalf("%+v (repository %+v)", l, repo)
+		}
+		// Trying again with create: false and failing again does not add or change it.
+		if _, err := e.create("Slow notes", "kazuhahub", "slow", false); err == nil {
+			t.Fatal("the push should still fail")
+		}
+		if l2 := leftovers(); len(l2) != 1 || !l2[0].Created.Equal(l[0].Created) {
+			t.Fatalf("%+v", l2)
+		}
+		// Another failure on another new repository adds its own.
+		if _, err := e.create("Other", "kazuhahub", "other", true); ghCode(err) != "github_push_failed" {
+			t.Fatalf("%v", err)
+		}
+		if n := len(leftovers()); n != 2 {
+			t.Fatalf("%d reminders", n)
+		}
+		// A space connecting to the repository clears its reminder, and only that one.
+		e.f.HideRepo("kazuhahub/slow", 0)
+		if _, err := e.create("Slow notes", "kazuhahub", "slow", false); err != nil {
+			t.Fatal(err)
+		}
+		if l = leftovers(); len(l) != 1 || l[0].FullName != "kazuhahub/other" {
+			t.Fatalf("%+v", l)
+		}
+	})
+}

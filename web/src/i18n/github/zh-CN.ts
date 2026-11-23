@@ -24,7 +24,7 @@ export const githubZhCN: GitHubMessages = {
     creating: '正在创建…',
     takenAsk: (full: string) => `${full} 已经存在。要把这个空间连到那个仓库吗？`,
     useExisting: '使用已有的仓库',
-    leftBehind: (full: string) => `仓库 ${full} 已经在 GitHub 上建好，现在还是空的，那边什么也没有删。再试一次，把新空间连到它上面。`,
+    leftBehind: (full: string) => `仓库 ${full} 已经在 GitHub 上建好，现在还是空的，那边什么也没有删。再试一次，把新空间连到它上面；关掉这里也没关系，设置的 GitHub 一栏里会留一条提醒。`,
     useLeft: '连到那个仓库',
     openOnGitHub: '在 GitHub 上打开',
     errors: {
@@ -79,6 +79,14 @@ export const githubZhCN: GitHubMessages = {
     cancel: '取消',
     disconnectConfirm: '断开',
     disconnected: '已断开 GitHub',
+    leftoverTitle: '留下的空仓库',
+    leftoverHelp: '这些空间建到一半失败了，而它们的仓库已经在 GitHub 上建好。仓库都留着，是空的，那边什么也没有删。把空间连到其中一个再试一次，或者告诉我们你已经把它删了。',
+    leftoverFor: (space: string, when: string) => `为空间「${space}」建的，${when}`,
+    leftoverRetry: '连上它再试一次',
+    leftoverDismiss: '我已经删了',
+    leftoverRetried: (space: string, repo: string) => `空间「${space}」已连到 ${repo}`,
+    leftoverFailed: '没能把空间连到它',
+    leftoverDismissFailed: '没能忘掉它',
     disconnectFailed: '没能断开',
   },
   sync: {
@@ -118,7 +126,7 @@ export const githubZhCN: GitHubMessages = {
     problems: {
       github_not_configured: '这台服务器没有设置 GitHub App。',
       github_not_authorized: '请先连接你的 GitHub 账号（设置里的 GitHub）。',
-      github_owner_not_allowed: '你不能用这个仓库：这个安装没有共享，而你的 GitHub 账号也不能推送到那里。',
+      github_owner_not_allowed: '你不能用这个仓库：这个安装没有共享给你所在的租户，而你的 GitHub 账号也不能推送到那里。',
       github_repo_not_in_installation: 'App 没有装在这个仓库上，或者它的安装够不着这个仓库。',
       github_no_permission: 'GitHub 拒绝了。',
     },

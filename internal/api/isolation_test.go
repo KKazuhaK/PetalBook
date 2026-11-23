@@ -211,6 +211,7 @@ var isolationRoutes = map[string]isoEntry{
 	"POST /api/github/authorization/start":   {kind: isoExempt, reason: "starts a connection of the caller's own account"},
 	"GET /api/github/authorization/callback": {kind: isoExempt, reason: "needs the session of the user who started it; account_in_use names nobody, in no tenant"},
 	"DELETE /api/github/authorization":       {kind: isoExempt, reason: "the caller's own connection"},
+	"DELETE /api/github/leftovers/{repoId}":  {kind: isoExempt, reason: "the caller's own reminder, by a GitHub repository id; names no PetalBook id and touches only the caller's rows"},
 	"GET /api/github/owners":                 {kind: isoList},
 	"GET /api/github/repos":                  {kind: isoExempt, reason: "what the caller's own connection, or an installation shared with the caller's tenant, reaches on GitHub; names no PetalBook id (tested in github_tenants_test.go)"},
 

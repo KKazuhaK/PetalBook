@@ -630,6 +630,7 @@ type Info struct {
 	InstallURL        string
 	UserAuthorization bool
 	Authorization     *Authorization
+	Leftovers         []Leftover // the caller's reminders of empty repositories, newest first
 }
 
 // Info is the state of GitHub on this server and of the user's connection.
@@ -647,7 +648,46 @@ func (s *Service) Info(ctx context.Context, userID string) (*Info, error) {
 	if in.Authorization, err = s.Connection(ctx, userID); err != nil {
 		return nil, err
 	}
+	if in.Leftovers, err = s.Leftovers(ctx, userID); err != nil {
+		return nil, err
+	}
 	return in, nil
+}
+
+// Leftover is a reminder of an empty repository a failed attempt to make a
+// space left on GitHub.
+type Leftover struct {
+	RepoID    int64
+	FullName  string
+	HTMLURL   string
+	SpaceName string
+	Created   time.Time
+}
+
+// Leftovers lists a user's reminders, newest first.
+func (s *Service) Leftovers(ctx context.Context, userID string) ([]Leftover, error) {
+	rows, err := store.ListGitHubLeftovers(ctx, s.opt.Store.Q(), userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Leftover, len(rows))
+	for i, r := range rows {
+		out[i] = Leftover{RepoID: r.RepoID, FullName: r.FullName, HTMLURL: r.HTMLURL, SpaceName: r.SpaceName, Created: r.Created}
+	}
+	return out, nil
+}
+
+// RecordLeftover remembers, for the user, a repository that was made for a
+// space that then could not be made.
+func (s *Service) RecordLeftover(ctx context.Context, userID string, repo *Repo, spaceName string) error {
+	return store.PutGitHubLeftover(ctx, s.opt.Store.Q(), store.GitHubLeftover{UserID: userID, RepoID: repo.ID, FullName: repo.FullName,
+		HTMLURL: repo.HTMLURL, SpaceName: spaceName, Created: s.opt.Now()})
+}
+
+// DismissLeftover forgets the user's reminder of a repository; there being none is fine.
+func (s *Service) DismissLeftover(ctx context.Context, userID string, repoID int64) error {
+	_, err := store.DeleteGitHubLeftover(ctx, s.opt.Store.Q(), userID, repoID)
+	return err
 }
 
 // Attempts is how many authorisations are in progress (tests).

@@ -120,6 +120,7 @@ var routeTable = []route{
 	{"POST", "/api/github/authorization/start", signedIn, true, false, false, (*server).githubAuthStart},
 	{"GET", githubCallbackPath, public, true, true, false, (*server).githubAuthCallback},
 	{"DELETE", "/api/github/authorization", signedIn, true, false, false, (*server).githubDisconnect},
+	{"DELETE", "/api/github/leftovers/{repoId}", signedIn, true, false, false, (*server).githubDismissLeftover},
 	{"GET", "/api/github/owners", signedIn, true, false, false, (*server).githubOwners},
 	{"GET", "/api/github/repos", signedIn, true, false, false, (*server).githubRepos},
 

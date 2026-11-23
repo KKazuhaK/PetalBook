@@ -192,6 +192,10 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 		if !created {
 			return err
 		}
+		// A reminder the person sees later, so the repository is not forgotten.
+		if rerr := gh.RecordLeftover(ctx, userID, repo, name); rerr != nil {
+			m.log.Warn("could not remember a repository left empty by a failed space", "repo", repo.FullName, "error", rerr)
+		}
 		var he *github.Error
 		if errors.As(err, &he) && he.Code == github.CodeRepoNotInInstall {
 			he.Repo = repo.Ref()

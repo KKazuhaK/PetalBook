@@ -599,6 +599,7 @@ export const api = {
   // The address to send the browser to; GitHub sends it back to `return` (a path of this site).
   githubStart: (ret?: string) => request<{ url: string }>('/github/authorization/start', { method: 'POST', body: ret ? { return: ret } : {} }),
   githubDisconnect: () => request<void>('/github/authorization', { method: 'DELETE' }),
+  githubDismissLeftover: (repoId: number) => request<void>(`/github/leftovers/${repoId}`, { method: 'DELETE' }),
   githubOwners: (cursor?: string, signal?: AbortSignal) => request<GitHubCursorPage<GitHubOwner>>(`/github/owners${cursor ? `?cursor=${enc(cursor)}` : ''}`, { signal }),
   githubRepos: (which: { installation: number } | { mine: true }, cursor?: string, signal?: AbortSignal) => {
     const q = new URLSearchParams('installation' in which ? { installation: String(which.installation) } : { mine: 'true' })

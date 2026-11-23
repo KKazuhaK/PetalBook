@@ -67,11 +67,23 @@ func (s *server) getGitHub(c *call) {
 	if info.Configured {
 		app = &appResp{info.Name, info.Slug, info.HTMLURL, info.InstallURL}
 	}
+	type leftoverResp struct {
+		RepoID    int64  `json:"repoId"`
+		FullName  string `json:"fullName"`
+		HTMLURL   string `json:"htmlUrl"`
+		SpaceName string `json:"spaceName"`
+		Created   string `json:"created"`
+	}
+	left := make([]leftoverResp, len(info.Leftovers))
+	for i, l := range info.Leftovers {
+		left[i] = leftoverResp{l.RepoID, l.FullName, l.HTMLURL, l.SpaceName, rfc3339(l.Created)}
+	}
 	writeJSON(c.w, http.StatusOK, struct {
 		App               *appResp        `json:"app"`
 		UserAuthorization bool            `json:"userAuthorization"`
 		Authorization     *githubAuthResp `json:"authorization"`
-	}{app, info.UserAuthorization, toGitHubAuth(info.Authorization)})
+		Leftovers         []leftoverResp  `json:"leftovers"`
+	}{app, info.UserAuthorization, toGitHubAuth(info.Authorization), left})
 }
 
 func (s *server) githubAuthStart(c *call) {
@@ -129,6 +141,24 @@ func (s *server) githubDisconnect(c *call) {
 	if err := gh.Disconnect(c.r.Context(), c.user().ID); err != nil {
 		s.fail(c.w, err)
 		return
+	}
+	c.w.WriteHeader(http.StatusNoContent)
+}
+
+// githubDismissLeftover forgets the caller's reminder of an empty repository.
+// It needs no App (the reminder is the caller's own) and says 204 when there is
+// no such reminder.
+func (s *server) githubDismissLeftover(c *call) {
+	id, err := strconv.ParseInt(c.r.PathValue("repoId"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(c.w, http.StatusNotFound, "not_found", "no such repository")
+		return
+	}
+	if s.opt.GitHub != nil {
+		if err := s.opt.GitHub.DismissLeftover(c.r.Context(), c.user().ID, id); err != nil {
+			s.fail(c.w, err)
+			return
+		}
 	}
 	c.w.WriteHeader(http.StatusNoContent)
 }

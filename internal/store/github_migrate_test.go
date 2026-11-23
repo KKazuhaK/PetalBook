@@ -73,12 +73,18 @@ func checkGitHubAfterMerge(t *testing.T, st *store.Store) {
 	if use, err := store.GetUsage(ctx, st.Q(), store.UsageUser, "U1"); err != nil || use.Spaces != 1 {
 		t.Fatalf("%+v %v", use, err)
 	}
+	if l, err := store.ListGitHubLeftovers(ctx, st.Q(), "U1"); err != nil || len(l) != 1 || l[0].RepoID != 78 || l[0].SpaceName != "Tang" {
+		t.Fatalf("%+v %v", l, err)
+	}
 	// The foreign key to users survives both orders.
 	if _, err := st.Q().Exec(ctx, `DELETE FROM users WHERE id = 'U1'`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.GetGitHubAuthorization(ctx, st.Q(), "U1"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("the connection outlived its user: %v", err)
+	}
+	if l, _ := store.ListGitHubLeftovers(ctx, st.Q(), "U1"); len(l) != 0 {
+		t.Fatalf("the reminders outlived their user: %+v", l)
 	}
 }
 
@@ -96,6 +102,7 @@ func seedGitHub(t *testing.T, exec func(q string, a ...any)) {
 	exec(`INSERT INTO github_authorizations(user_id, github_id, login, connected, updated) VALUES ('U1', 4242, 'tang-gh', ?, ?)`, now, now)
 	exec(`INSERT INTO github_installations(id, account, updated) VALUES (9001, 'kazuhahub', ?)`, now)
 	exec(`INSERT INTO github_installation_tenants(installation_id, tenant_id) VALUES (9001, ?)`, store.DefaultTenantID)
+	exec(`INSERT INTO github_leftovers(user_id, repo_id, full_name, html_url, space_name, created) VALUES ('U1', 78, 'tang-gh/left', 'https://github.com/tang-gh/left', 'Tang', ?)`, now)
 	exec(`INSERT INTO remotes(space_id, url, branch, cred_type, state, gh_via, gh_repo_id, gh_user_id, updated) VALUES ('S1', 'https://github.com/tang-gh/notes.git', 'main', 'github', 'ok', 'user', 77, 'U1', ?)`, now)
 }
 

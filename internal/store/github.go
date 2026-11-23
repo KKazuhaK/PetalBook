@@ -366,6 +366,67 @@ func GitHubInstallationOf(ctx context.Context, q Q, sc Scope, login string) (*Gi
 		WHERE lower(account) = ? AND `+c+` ORDER BY id LIMIT 1`, append([]any{strings.ToLower(login)}, a...)...))
 }
 
+// MaxGitHubLeftovers is how many reminders of empty repositories a user keeps:
+// the newest.
+const MaxGitHubLeftovers = 20
+
+// GitHubLeftover is a reminder that a failed attempt to make a space with a
+// new repository left an empty one on GitHub.
+type GitHubLeftover struct {
+	UserID    string
+	RepoID    int64
+	FullName  string
+	HTMLURL   string
+	SpaceName string // the name the space was to have
+	Created   time.Time
+}
+
+// PutGitHubLeftover stores a reminder for a user, replacing the one for the
+// same repository, and keeps only the user's newest MaxGitHubLeftovers.
+func PutGitHubLeftover(ctx context.Context, q Q, l GitHubLeftover) error {
+	if _, err := q.Exec(ctx, `INSERT INTO github_leftovers(user_id, repo_id, full_name, html_url, space_name, created) VALUES (?,?,?,?,?,?)
+		ON CONFLICT (user_id, repo_id) DO UPDATE SET full_name = excluded.full_name, html_url = excluded.html_url,
+		space_name = excluded.space_name, created = excluded.created`,
+		l.UserID, l.RepoID, l.FullName, l.HTMLURL, l.SpaceName, ms(l.Created)); err != nil {
+		return err
+	}
+	_, err := q.Exec(ctx, `DELETE FROM github_leftovers WHERE user_id = ? AND repo_id NOT IN
+		(SELECT repo_id FROM github_leftovers WHERE user_id = ? ORDER BY created DESC, repo_id DESC LIMIT ?)`, l.UserID, l.UserID, MaxGitHubLeftovers)
+	return err
+}
+
+// ListGitHubLeftovers returns a user's reminders, newest first.
+func ListGitHubLeftovers(ctx context.Context, q Q, userID string) ([]GitHubLeftover, error) {
+	rows, err := q.Query(ctx, `SELECT repo_id, full_name, html_url, space_name, created FROM github_leftovers
+		WHERE user_id = ? ORDER BY created DESC, repo_id DESC LIMIT ?`, userID, MaxGitHubLeftovers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GitHubLeftover
+	for rows.Next() {
+		l := GitHubLeftover{UserID: userID}
+		var c int64
+		if err := rows.Scan(&l.RepoID, &l.FullName, &l.HTMLURL, &l.SpaceName, &c); err != nil {
+			return nil, err
+		}
+		l.Created = fromMS(c)
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// DeleteGitHubLeftover removes a user's reminder of a repository and reports
+// whether there was one.
+func DeleteGitHubLeftover(ctx context.Context, q Q, userID string, repoID int64) (bool, error) {
+	res, err := q.Exec(ctx, `DELETE FROM github_leftovers WHERE user_id = ? AND repo_id = ?`, userID, repoID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 // UserTenant returns the tenant of a user, or ErrNotFound.
 func UserTenant(ctx context.Context, q Q, userID string) (string, error) {
 	var t string

@@ -12,6 +12,10 @@
 -- for each tenant a site administrator shared it with. tenant_id is a plain
 -- column, not a foreign key: the tenants table belongs to 0018, which may run
 -- before or after this file. Deleting a tenant deletes its rows in code.
+--
+-- github_leftovers remembers, per user, an empty repository a failed attempt
+-- to make a space left on GitHub: a reminder, cleared by the person or when a
+-- space connects to the repository.
 
 CREATE TABLE github_authorizations (
   user_id         TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -41,6 +45,17 @@ CREATE TABLE github_installation_tenants (
   PRIMARY KEY (installation_id, tenant_id)
 );
 CREATE INDEX github_installation_tenants_tenant ON github_installation_tenants(tenant_id, installation_id);
+
+CREATE TABLE github_leftovers (
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  repo_id    BIGINT NOT NULL,
+  full_name  TEXT NOT NULL,
+  html_url   TEXT NOT NULL,
+  space_name TEXT NOT NULL DEFAULT '',
+  created    BIGINT NOT NULL,
+  PRIMARY KEY (user_id, repo_id)
+);
+CREATE INDEX github_leftovers_repo ON github_leftovers(repo_id);
 
 ALTER TABLE remotes ADD COLUMN gh_via TEXT NOT NULL DEFAULT '';
 ALTER TABLE remotes ADD COLUMN gh_installation_id BIGINT NOT NULL DEFAULT 0;

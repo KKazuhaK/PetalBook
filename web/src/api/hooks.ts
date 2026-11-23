@@ -547,17 +547,32 @@ export function useDisconnectGitHub() {
   })
 }
 
+// Forgets a reminder of an empty repository ("I deleted it").
+export function useDismissGitHubLeftover() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (repoId: number) => api.githubDismissLeftover(repoId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.github }),
+  })
+}
+
 export function useCreateSpace() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (input: string | CreateSpaceInput) => (typeof input === 'string' ? api.createSpace(input) : api.createSpace(input.name, input.inbox, input.github)),
     // Another space, in the same list order the server gives: personal first, then by name.
-    onSuccess: (space) => {
+    onSuccess: (space, input) => {
       qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => ({
         spaces: [...(prev?.spaces ?? []), space].sort((a, b) => Number(b.personal) - Number(a.personal) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
       }))
       // One more space of theirs.
       void qc.invalidateQueries({ queryKey: keys.accountUsage })
+      // A space on a repository answers the reminders of that repository.
+      if (typeof input !== 'string' && input.github) void qc.invalidateQueries({ queryKey: keys.github })
+    },
+    // A failed attempt may have left a reminder of the repository it made.
+    onError: (_e, input) => {
+      if (typeof input !== 'string' && input.github) void qc.invalidateQueries({ queryKey: keys.github })
     },
   })
 }
