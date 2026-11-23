@@ -109,3 +109,15 @@ func RoleNames() []string {
 	}
 	return n
 }
+
+// RoleFor returns the built-in role whose permissions are exactly s, and ""
+// when none is (nothing, or a set no built-in role holds). The union of a
+// person's direct role and their groups' roles is a Set; this names it.
+func RoleFor(s Set) string {
+	for _, r := range roles {
+		if r.set == s {
+			return r.name
+		}
+	}
+	return ""
+}
