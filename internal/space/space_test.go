@@ -91,17 +91,17 @@ func TestOpenInitialisesTheDirectory(t *testing.T) {
 	needGit(t)
 	root := filepath.Join(t.TempDir(), "notes", "deep") // does not exist yet
 	s := openAt(t, root, func(o *Options) { o.Name = "我的笔记" })
-	for _, f := range []string{".git", ".petalbook/space.yml", ".petalbook/.gitignore"} {
+	for _, f := range []string{".git", ".petalbook/space.yml", ".git/petalbook-state/index.db"} {
 		if !exists(s, f) {
 			t.Errorf("%s missing", f)
 		}
 	}
+	// .petalbook is repository content only: the server's state is not there.
+	if entries, _ := os.ReadDir(filepath.Join(s.Root(), ".petalbook")); len(entries) != 1 {
+		t.Errorf(".petalbook holds %v", entries)
+	}
 	if s.Name() != "我的笔记" || !strings.Contains(readDisk(t, s, ".petalbook/space.yml"), "我的笔记") {
 		t.Fatalf("name %q, space.yml %q", s.Name(), readDisk(t, s, ".petalbook/space.yml"))
-	}
-	ign := readDisk(t, s, ".petalbook/.gitignore")
-	if !strings.Contains(ign, "cache/") || !strings.Contains(ign, "tmp/") {
-		t.Fatalf("gitignore: %q", ign)
 	}
 	s.Close()
 

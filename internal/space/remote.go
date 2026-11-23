@@ -400,10 +400,10 @@ func (s *Space) reconcileLocked(ctx context.Context, r *remote) error {
 				r.set(func(st *RemoteStatus) { st.State, st.Kind, st.Error = RemoteError, KindClone, msg })
 				return unavailable(err, "%s", msg)
 			}
-			// A pull may have put a link or a file where a folder of .petalbook
-			// belongs, which the server writes in (its index too): it is put
-			// right at once, before anything is written there.
-			s.clearOwnDirsLocked(ctx, r)
+			// A pull may put a link or a file where a folder of .petalbook
+			// belongs: nothing of the server's own is kept there (its state is
+			// in the Git directory), and the settings behind it are read as
+			// restored until a change writes there and puts it right.
 			s.applyDelta(ctx, r, head, tip)
 		case behind == 0:
 			// Commits that were never pushed (a crash). Push them as they are.
@@ -426,7 +426,6 @@ func (s *Space) reconcileLocked(ctx context.Context, r *remote) error {
 			if err := repo.ResetHard(ctx, tip); err != nil {
 				return err
 			}
-			s.clearOwnDirsLocked(ctx, r)
 			s.applyDelta(ctx, r, head, tip)
 			msg := fmt.Sprintf("%d change(s) made here were never pushed and the remote has moved on; they are kept as %s in the server's clone, and the space now follows the remote", ahead, ref)
 			s.log.Error("diverged from the remote: unpushed commits set aside", "ref", ref, "commits", ahead)
@@ -574,7 +573,6 @@ func (s *Space) Accept(ctx context.Context, commit string) error {
 	if err := r.repo.ResetHard(ctx, tip); err != nil {
 		return err
 	}
-	s.clearOwnDirsLocked(ctx, r)
 	s.applyDelta(ctx, r, old, tip)
 	if err := r.repo.WriteLastGood(ctx, r.branch, tip); err != nil {
 		s.log.Warn("could not store the last good commit", "error", err)
@@ -687,6 +685,12 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 		res, err := op(tx)
 		if err != nil {
 			s.undoLocked(ctx, r, tx, tx.parent)
+			if errors.Is(err, errRemoteMoved) {
+				// A repair the change needed first could not be pushed: it
+				// was taken back, and the change is made again on the new tip.
+				s.log.Info("push rejected, making the change again on the new tip", "attempt", attempt)
+				continue
+			}
 			return zero, err
 		}
 		tx.paths = uniq(tx.paths)
@@ -1011,9 +1015,6 @@ func (s *Space) Connect(ctx context.Context, o RemoteOptions) error {
 			if err := repo.FastForward(ctx, o.Branch); err != nil {
 				return err
 			}
-			if !s.clearOwnDirsLocked(ctx, nr) {
-				return fail(errors.New("a folder of .petalbook is not a folder and could not be put right"))
-			}
 			s.applyDelta(ctx, nr, oldHead, tip)
 		case behind == 0: // the space contains the remote: the remote moves forward
 			if err := repo.Push(ctx, o.Branch); err != nil {
@@ -1031,19 +1032,10 @@ func (s *Space) Connect(ctx context.Context, o RemoteOptions) error {
 			if err := repo.ResetHard(ctx, tip); err != nil {
 				return err
 			}
-			if !s.clearOwnDirsLocked(ctx, nr) {
-				return fail(errors.New("a folder of .petalbook is not a folder and could not be put right"))
-			}
 			s.applyDelta(ctx, nr, oldHead, tip)
 			if err := s.ensureConfigLocked(ctx, nr); err != nil {
 				return fail(err)
 			}
-		}
-	}
-	// The set-up of the space that the server keeps out of Git's way.
-	if firstBlockedOwn(s.root) == "" {
-		if err := os.MkdirAll(filepath.Join(s.root, ".petalbook"), 0o755); err == nil {
-			ensureLines(filepath.Join(s.root, ".git", "info", "exclude"), "/.petalbook/tmp/", "/.petalbook/cache/")
 		}
 	}
 	head := repo.Head(ctx)
@@ -1087,14 +1079,10 @@ func (s *Space) pristineLocked(ctx context.Context, repo *gitstore.Repo) (bool, 
 // taking a remote's content: when the remote has none, it is made, committed
 // and pushed as part of connecting (never left untracked).
 func (s *Space) ensureConfigLocked(ctx context.Context, r *remote) error {
-	file := filepath.Join(s.root, ".petalbook", "space.yml")
 	if _, blocked, err := lstatIn(s.root, spaceFile); err == nil || blocked != "" {
 		return nil // there (or behind what is put right with the next change)
 	}
-	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
-		return err
-	}
-	if _, _, err := ensureSpaceConfig(file, s.name); err != nil {
+	if _, _, err := ensureSpaceConfig(s.root, s.name); err != nil {
 		return err
 	}
 	author, committer := s.cm.git.identities(Author{})
@@ -1124,16 +1112,7 @@ func (s *Space) Disconnect() error {
 		return err
 	}
 	s.rem.Store(nil)
-	// Local mode puts its own files in order again.
-	pb := filepath.Join(s.root, ".petalbook")
-	if !isRealDir(s.root, ".petalbook") {
-		s.log.Warn("could not write .petalbook/.gitignore: .petalbook is not a folder; it is put right by the next change of the settings")
-	} else if changed, err := ensureLines(filepath.Join(pb, ".gitignore"), "cache/", "tmp/"); err != nil {
-		s.log.Warn("could not write .petalbook/.gitignore", "error", err)
-	} else if changed {
-		if err := s.cm.Record(Author{}, jrec{Op: "t", Path: ".petalbook/.gitignore"}); err == nil {
-			s.cm.Touch(Author{}, ".petalbook/.gitignore")
-		}
-	}
+	// Nothing of the server's own is in the work tree to put in order: its
+	// state is in the Git directory, in local mode as in this one.
 	return nil
 }

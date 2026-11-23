@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -448,28 +446,18 @@ func (s *Space) asideType(tx *txn, name string, from *restored, entries []string
 }
 
 func (s *Space) readTypeRaw(name string) ([]byte, error) {
-	abs := filepath.Join(s.root, filepath.FromSlash(typesDir), name+".json")
-	fi, blocked, err := lstatIn(s.root, typesDir+"/"+name+".json")
+	data, fi, blocked, err := readIn(s.root, typesDir+"/"+name+".json", MaxTypeFile)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
+	}
+	if errors.Is(err, errChanged) {
+		return nil, errTypeFile
 	}
 	if err != nil {
 		return nil, err
 	}
 	// Behind a link or a file in the place of a folder, it is read as restored.
-	if blocked != "" || !fi.Mode().IsRegular() || fi.Size() > MaxTypeFile {
-		return nil, errTypeFile
-	}
-	f, err := os.Open(abs)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, MaxTypeFile+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > MaxTypeFile {
+	if blocked != "" || !fi.Mode().IsRegular() || data == nil || len(data) > MaxTypeFile {
 		return nil, errTypeFile
 	}
 	return data, nil
@@ -478,19 +466,17 @@ func (s *Space) readTypeRaw(name string) ([]byte, error) {
 // typeDirOK reports whether the folder of the types is a folder, not a link
 // out of the space or a file. A missing folder is fine.
 func (s *Space) typeDirOK() (bool, error) {
-	for _, rel := range []string{".petalbook", typesDir} {
-		fi, err := os.Lstat(filepath.Join(s.root, filepath.FromSlash(rel)))
-		if errors.Is(err, fs.ErrNotExist) {
-			return true, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		if !fi.IsDir() {
-			return false, nil
-		}
+	d, blocked, err := openDirIn(s.root, typesDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return true, nil
 	}
-	return true, nil
+	if err != nil {
+		return false, err
+	}
+	if d != nil {
+		d.Close()
+	}
+	return blocked == "", nil
 }
 
 // makeTypeDir is for a change that writes the type file rel: something that
@@ -505,7 +491,11 @@ func (s *Space) makeTypeDir(tx *txn, rel string) (string, error) {
 	if b, err := wayBlocked(s.root, rel); err != nil || b != "" {
 		return "", errors.Join(err, fmt.Errorf("%s is not a folder", b))
 	}
-	return copy, os.MkdirAll(filepath.Join(s.root, filepath.FromSlash(typesDir)), 0o755)
+	d, err := mkdirIn(s.root, typesDir)
+	if err != nil {
+		return copy, err
+	}
+	return copy, d.Close()
 }
 
 // typeNames lists the names of the type files, in name order. When something
@@ -521,7 +511,7 @@ func (s *Space) typeNames() ([]string, error) {
 		}
 		return s.heal.typeNamesFromHistory(blocked)
 	}
-	entries, err := os.ReadDir(filepath.Join(s.root, filepath.FromSlash(typesDir)))
+	entries, err := readDirIn(s.root, typesDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
@@ -811,7 +801,6 @@ func (s *Space) PutType(by Author, name, baseRev string, in TypeInput) (TypeInfo
 			return t, nil
 		}
 		rel := typesDir + "/" + name + ".json"
-		abs := filepath.Join(s.root, filepath.FromSlash(rel))
 		moved, err := s.makeTypeDir(tx, rel)
 		if err != nil {
 			return TypeInfo{}, err
@@ -833,7 +822,7 @@ func (s *Space) PutType(by Author, name, baseRev string, in TypeInput) (TypeInfo
 			return TypeInfo{}, err
 		}
 		tx.touch(rel)
-		if err := writeAtomic(s.tmpDir(), abs, out.Bytes()); err != nil {
+		if err := writeIn(s.root, rel, out.Bytes()); err != nil {
 			return TypeInfo{}, err
 		}
 		s.heal.wroteGood(typeSettings(name), out.Bytes())
@@ -871,9 +860,8 @@ func (s *Space) DeleteType(by Author, name, baseRev string) error {
 		if err != nil {
 			return struct{}{}, err
 		}
-		abs := filepath.Join(s.root, filepath.FromSlash(rel))
 		// A link in its place is removed as a link, never followed.
-		_, err = os.Lstat(abs)
+		_, _, err = lstatIn(s.root, rel)
 		have := err == nil && dirOK
 		if err != nil && !errors.Is(err, fs.ErrNotExist) && dirOK {
 			return struct{}{}, err
@@ -923,7 +911,7 @@ func (s *Space) DeleteType(by Author, name, baseRev string) error {
 				return struct{}{}, err
 			}
 			tx.touch(rel)
-			if err := os.Remove(abs); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			if err := removeIn(s.root, rel); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				return struct{}{}, err
 			}
 			done()

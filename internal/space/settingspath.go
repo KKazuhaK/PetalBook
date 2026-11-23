@@ -15,11 +15,14 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 )
 
-// Everything the server keeps under .petalbook (the settings files, the types,
-// its temporary files, by default its state) is reached through .petalbook and
-// .petalbook/types, and those are folders of the repository: a pull, or a
-// person, can put a link or a file in their place. Nothing is ever read or
-// written through one, wherever it leads:
+// .petalbook holds the settings files and the types, and nothing else: it is
+// a folder of the repository, and a pull, or a person, can put a link or a
+// file in its place, or in the place of .petalbook/types. The server's own
+// state (index, journal, notices, temporary files) is kept in the Git
+// directory, where no pull writes (see DefaultStateDir). Nothing is ever read
+// or written through a link or a file in the place of a folder, wherever it
+// leads, and every read and write there is made in the folder as it was
+// opened (inroot.go), so a link put there meanwhile is never followed either:
 //
 //   - Reading. A settings file or type behind something that is not a folder
 //     cannot be used, like a file that is not YAML: it is read as restored from
@@ -31,81 +34,20 @@ import (
 //     that on its own, makes the folder again and puts back into it what it
 //     had (the settings as they are read), so that the change is made on all of
 //     it and nothing is lost (clearWay).
-//   - What is not in the repository's history (temporary files, the state of a
-//     space kept under .petalbook/cache) is never written behind one either:
-//     at the start, and after a pull that brought one, the folder is put right
-//     as above, and until then temporary files go into the Git directory.
-
-// wayBlocked is the first folder on the way to rel (a slash path of the space;
-// rel itself is not looked at) that is there and is not a folder: a link, a
-// file. "" when every folder on the way is one, or is not there.
-func wayBlocked(root, rel string) (string, error) {
-	parts := strings.Split(rel, "/")
-	p := root
-	for i := 0; i < len(parts)-1; i++ {
-		p = filepath.Join(p, parts[i])
-		fi, err := os.Lstat(p)
-		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrInvalid) {
-			return "", nil
-		}
-		if err != nil {
-			return "", err
-		}
-		if !fi.IsDir() {
-			return strings.Join(parts[:i+1], "/"), nil
-		}
-	}
-	return "", nil
-}
-
-// lstatIn is os.Lstat of rel in root, never through a link or a file on the
-// way: when one is in the way, it is what is looked at, and blocked names it.
-func lstatIn(root, rel string) (fi fs.FileInfo, blocked string, err error) {
-	if blocked, err = wayBlocked(root, rel); err != nil {
-		return nil, "", err
-	}
-	if blocked != "" {
-		fi, err = os.Lstat(filepath.Join(root, filepath.FromSlash(blocked)))
-		return fi, blocked, err
-	}
-	fi, err = os.Lstat(filepath.Join(root, filepath.FromSlash(rel)))
-	return fi, "", err
-}
-
-// isRealDir reports whether rel in root is a folder reached through folders.
-func isRealDir(root, rel string) bool {
-	fi, blocked, err := lstatIn(root, rel)
-	return err == nil && blocked == "" && fi.IsDir()
-}
 
 // tmpDirAt is where files of the space at root are written before they are
-// renamed into place: .petalbook/tmp, on the same file system as the space,
-// unless something that is not a folder is on that way; then a folder in the
-// Git directory, which no pull ever writes to.
+// renamed into place: a folder in the Git directory, on the same file system
+// as the space, which no pull or checkout ever writes to. (A settings file is
+// written in its own folder instead, see writeIn.)
 func tmpDirAt(root string) string {
-	rel := ".petalbook/tmp"
-	if b, err := wayBlocked(root, rel+"/x"); err == nil && b == "" {
-		return filepath.Join(root, filepath.FromSlash(rel))
-	}
-	if fi, err := os.Lstat(filepath.Join(root, ".git")); err == nil && fi.IsDir() {
-		return filepath.Join(root, ".git", "petalbook-tmp")
-	}
-	return filepath.Join(os.TempDir(), "petalbook-tmp")
+	return filepath.Join(root, ".git", "petalbook-tmp")
 }
 
-// ownDirs are the folders of .petalbook that the server itself writes in
-// without a settings file to restore through: the folder, and its temporary
-// and (by default) state folders.
-var ownDirs = []string{".petalbook", ".petalbook/tmp", ".petalbook/cache"}
-
-// firstBlockedOwn is the first of ownDirs that is there and is not a folder.
+// firstBlockedOwn is .petalbook when it is there and is not a folder: the
+// folder a local space writes in by itself when it starts (space.yml).
 func firstBlockedOwn(root string) string {
-	for _, d := range ownDirs {
-		if fi, err := os.Lstat(filepath.Join(root, filepath.FromSlash(d))); err == nil && !fi.IsDir() {
-			return d
-		} else if err != nil {
-			return "" // not there: neither is anything under it
-		}
+	if fi, err := os.Lstat(filepath.Join(root, ".petalbook")); err == nil && !fi.IsDir() {
+		return ".petalbook"
 	}
 	return ""
 }
@@ -115,7 +57,7 @@ func asideName(root, rel string) string {
 	name := rel + unreadableMark + time.Now().UTC().Format("20060102T150405Z")
 	out := name
 	for n := 2; ; n++ {
-		if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(out))); errors.Is(err, fs.ErrNotExist) {
+		if _, _, err := lstatIn(root, out); errors.Is(err, fs.ErrNotExist) {
 			return out
 		}
 		out = fmt.Sprintf("%s-%d", name, n)
@@ -246,7 +188,7 @@ func (h *healer) typeNamesFromHistory(blocked string) ([]string, error) {
 		return nil, nil
 	}
 	key := blocked + "@" + h.historyMark()
-	if fi, err := os.Lstat(filepath.Join(h.root, filepath.FromSlash(blocked))); err == nil {
+	if fi, _, err := lstatIn(h.root, blocked); err == nil {
 		key += fmt.Sprintf(":%v:%d:%d", fi.Mode(), fi.Size(), fi.ModTime().UnixNano())
 	}
 	h.mu.Lock()
@@ -312,26 +254,31 @@ func (h *healer) clearWay(rel, skip string, w wayWriter) (copy string, err error
 	if err := w.record(blocked, true); err != nil {
 		return "", err
 	}
-	if err := os.Rename(filepath.Join(h.root, filepath.FromSlash(blocked)), filepath.Join(h.root, filepath.FromSlash(copy))); err != nil {
+	if err := renameIn(h.root, blocked, copy); err != nil {
 		return "", err
 	}
 	if err := w.commitNow([]string{copy, blocked}); err != nil {
 		return copy, err
 	}
-	abs := filepath.Join(h.root, filepath.FromSlash(blocked))
-	if err := os.MkdirAll(abs, 0o755); err != nil {
+	d, err := mkdirIn(h.root, blocked)
+	if err != nil {
 		return copy, err
 	}
-	// The state of the space, when it is kept there, goes on there.
+	d.Close()
+	// The state of the space, when it is kept there (given so), goes on there.
 	h.mu.Lock()
 	state := h.stateDir
 	h.mu.Unlock()
-	if rel, err := filepath.Rel(abs, state); state != "" && err == nil && filepath.IsLocal(rel) {
-		if err := os.MkdirAll(state, 0o755); err != nil {
-			return copy, err
+	abs := filepath.Join(h.root, filepath.FromSlash(blocked))
+	if rel, err := filepath.Rel(h.root, state); state != "" && err == nil && filepath.IsLocal(rel) {
+		if in, err := filepath.Rel(abs, state); err == nil && filepath.IsLocal(in) {
+			d, err := mkdirIn(h.root, filepath.ToSlash(rel))
+			if err != nil {
+				return copy, err
+			}
+			d.Close()
 		}
 	}
-	tmp := tmpDirAt(h.root)
 	for _, f := range fill {
 		if f.rel == skip {
 			continue
@@ -342,11 +289,7 @@ func (h *healer) clearWay(rel, skip string, w wayWriter) (copy string, err error
 		if err := w.record(f.rel, false); err != nil {
 			return copy, err
 		}
-		target := filepath.Join(h.root, filepath.FromSlash(f.rel))
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return copy, err
-		}
-		if err := writeAtomic(tmp, target, f.data); err != nil {
+		if err := writeIn(h.root, f.rel, f.data); err != nil {
 			return copy, err
 		}
 	}
@@ -413,21 +356,31 @@ func (s *Space) localWay(tx *txn) wayWriter {
 	}
 }
 
+// errRemoteMoved: the remote moved on while a change was being made; it is
+// made again on the new tip.
+var errRemoteMoved = errors.New("the remote moved on; the change is made again")
+
 // repairWayLocked puts right the way to rel in a space that follows a remote,
 // as a change by nobody in particular: what is in the place of a folder is
 // moved aside (one commit) and the folder made again with what it had (a
-// second one), and both are pushed. A push that does not go through now goes
-// with the next sync: what is committed is never taken back into a link.
+// second one), and both are pushed before the change that needs it goes on.
+// A repair is the server's own business, never anybody's change: when its
+// push does not go through, the commits are dropped and the clone is put back
+// as it was, so that nothing of it is ever left unpushed for a later sync to
+// call a change of someone's. errRemoteMoved when the remote moved on: the
+// change is then made again, from the new tip (which may not need the repair
+// any more); a network failure fails the change, as any change fails then.
 func (s *Space) repairWayLocked(ctx context.Context, r *remote, rel string) (string, error) {
 	parent := r.repo.Head(ctx)
 	author, committer := s.cm.git.identities(Author{})
-	var paths []string
+	var paths, all []string
 	w := wayWriter{
 		record: func(p string, _ bool) error {
 			if err := s.cm.Record(Author{}, jrec{Op: "t", Path: p}); err != nil {
 				return err
 			}
 			paths = append(paths, p)
+			all = append(all, p)
 			return nil
 		},
 		commitNow: func(aside []string) error {
@@ -447,39 +400,76 @@ func (s *Space) repairWayLocked(ctx context.Context, r *remote, rel string) (str
 		_, err = r.repo.CommitPaths(ctx, uniq(paths), commitMessage, author, committer)
 	}
 	if err != nil {
-		if r.repo.Head(ctx) == parent && copy != "" {
-			// Nothing committed: what was moved aside goes back, so that the
-			// clone is as its last commit says.
-			at := filepath.Join(s.root, filepath.FromSlash(blocked))
-			if _, lerr := os.Lstat(at); errors.Is(lerr, fs.ErrNotExist) {
-				os.Rename(filepath.Join(s.root, filepath.FromSlash(copy)), at)
-			}
-		} else if r.repo.Head(ctx) != parent {
-			s.log.Error("a folder of the settings was moved aside, but what it had could not be committed in it again; the next change of the settings writes it", "path", blocked, "error", err)
-		}
+		s.takeBackWayLocked(ctx, parent, blocked, copy, all)
 		return "", err
 	}
 	s.heal.committed(paths)
-	if err := r.repo.Push(ctx, r.branch); err != nil {
-		if landed, lerr := s.landed(ctx, r); lerr != nil || !landed {
-			s.log.Warn("a folder of the settings was put right, but could not be pushed yet; it is pushed with the next sync", "error", err)
+	if perr := r.repo.Push(ctx, r.branch); perr != nil {
+		landed, lerr := s.landed(ctx, r)
+		if lerr == nil && landed {
+			s.pushedLocked(ctx, r)
 			return copy, nil
 		}
+		moved := lerr == nil && r.repo.RemoteTip(ctx, r.branch) != parent
+		s.takeBackWayLocked(ctx, parent, blocked, copy, all)
+		switch {
+		case lerr != nil:
+			return "", s.netFailure(r, lerr)
+		case moved:
+			r.noteFetched() // landed has just looked at the remote
+			return "", errRemoteMoved
+		}
+		return "", unavailable(perr, "%s", gitstore.Scrub(perr.Error()))
 	}
 	s.pushedLocked(ctx, r)
 	return copy, nil
 }
 
-// clearOwnDirsLocked puts right a folder of .petalbook that the server
-// writes in by itself (ownDirs) that something else took the place of, after
-// a pull. ok is false when one is still in the way after it.
-func (s *Space) clearOwnDirsLocked(ctx context.Context, r *remote) bool {
-	b := firstBlockedOwn(s.root)
-	if b == "" {
-		return true
+// takeBackWayLocked undoes a repair of the way that was not pushed: the
+// clone goes back to parent, the folder made again is taken away with what
+// was put into it, and what was moved aside goes back to its place, so that
+// the clone is as parent says and the next change repairs again.
+func (s *Space) takeBackWayLocked(ctx context.Context, parent, blocked, copy string, paths []string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	defer s.heal.committed(paths)
+	r := s.rem.Load()
+	if r == nil {
+		return
 	}
-	if _, err := s.repairWayLocked(ctx, r, b+"/x"); err != nil {
-		s.log.Error("could not put right a folder of the settings that something else took the place of; it is tried again after the next pull", "path", b, "error", err)
+	var errs []error
+	if r.repo.Head(ctx) != parent {
+		errs = append(errs, r.repo.Discard(ctx, parent, nil))
 	}
-	return firstBlockedOwn(s.root) == ""
+	if copy != "" {
+		// What was put into the folder made again, the deepest first, then the
+		// folders themselves when nothing else is in them.
+		var dirs []string
+		for _, p := range paths {
+			if p == copy || p == blocked || !strings.HasPrefix(p, blocked+"/") {
+				continue
+			}
+			if err := removeIn(s.root, p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				errs = append(errs, err)
+			}
+			for d := path.Dir(p); d != blocked && strings.HasPrefix(d, blocked+"/"); d = path.Dir(d) {
+				dirs = append(dirs, d)
+			}
+		}
+		sort.Slice(dirs, func(i, j int) bool { return len(dirs[i]) > len(dirs[j]) })
+		for _, d := range append(dirs, blocked) {
+			if fi, _, err := lstatIn(s.root, d); err == nil && fi.IsDir() {
+				removeIn(s.root, d) // fails, rightly, when something else is in it
+			}
+		}
+		if _, _, err := lstatIn(s.root, blocked); errors.Is(err, fs.ErrNotExist) {
+			errs = append(errs, renameIn(s.root, copy, blocked))
+		} else {
+			errs = append(errs, fmt.Errorf("%s could not be taken away again", blocked))
+		}
+		s.heal.forgetRepairs(copy)
+	}
+	if err := errors.Join(errs...); err != nil {
+		s.log.Error("a repair of a folder of the settings that was not pushed could not be undone completely", "path", blocked, "copy", copy, "error", err)
+	}
 }

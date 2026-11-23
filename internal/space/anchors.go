@@ -4,10 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"hash/maphash"
-	"io"
 	"io/fs"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -968,32 +965,19 @@ func loadSettingsAt(root string, f settingsFile) (*yaml.Node, error) {
 // f.bad for one that is not a regular file, is larger than the server reads,
 // or is behind something on its way that is not a folder (see settingspath.go).
 func readSettingsAt(root string, f settingsFile) ([]byte, error) {
-	abs := filepath.Join(root, filepath.FromSlash(f.rel))
-	fi, blocked, err := lstatIn(root, f.rel)
+	data, fi, blocked, err := readIn(root, f.rel, int64(f.max))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
+	}
+	if errors.Is(err, errChanged) {
+		return nil, f.bad // replaced while it was read: not used as it is
 	}
 	if err != nil {
 		return nil, err
 	}
 	// A link in the way could lead out of the space.
-	if blocked != "" || !fi.Mode().IsRegular() || fi.Size() > int64(f.max) {
+	if blocked != "" || !fi.Mode().IsRegular() || data == nil || len(data) > f.max {
 		return nil, f.bad
-	}
-	file, err := os.Open(abs)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, int64(f.max)+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > f.max {
-		return nil, f.bad
-	}
-	if data == nil {
-		data = []byte{}
 	}
 	return data, nil
 }

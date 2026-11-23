@@ -137,7 +137,7 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 	f.StringSliceVar(&c.oidcScopes, "oidc-scopes", nil, "scopes to ask for besides openid (default: profile, email)")
 	f.BoolVar(&c.oidcAutoCreate, "oidc-auto-create", false, "make a member account for an identity nobody has, at its first sign-in (otherwise only invited or existing accounts can sign in)")
 	f.StringVar(&c.name, "name", space.DefaultName, "single-user mode: display name; used when the space is created, otherwise space.yml decides unless this is given")
-	f.StringVar(&c.stateDir, "state-dir", "", "single-user mode: where the index and state database are kept (default: <space>/.petalbook/cache)")
+	f.StringVar(&c.stateDir, "state-dir", "", "single-user mode: where the index and state database are kept (default: <space>/.git/petalbook-state)")
 	f.StringVar(&c.committer, "committer", space.DefaultCommitter, "Git committer of automatic commits, \"Name <email>\" (the author is the space's owner in accounts mode)")
 	f.DurationVar(&c.commitIdle, "commit-idle", space.DefaultCommitIdle, "commit this long after the last file write")
 	f.DurationVar(&c.commitMax, "commit-max", space.DefaultCommitMax, "commit at most this long after the first uncommitted write")

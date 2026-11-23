@@ -145,8 +145,8 @@ func TestALinkedPetalbookAtTheStartIsPutRightAndNothingOutsideIsTouched(t *testi
 	if c := s.TagColors(); !reflect.DeepEqual(c, map[string]string{"x": "blue"}) {
 		t.Errorf("the tags are %v", c)
 	}
-	// The state of the space is inside it.
-	if rel, err := filepath.Rel(root, s.StateDir()); err != nil || !strings.HasPrefix(filepath.ToSlash(rel), ".petalbook/") {
+	// The state of the space is in its Git directory.
+	if rel, err := filepath.Rel(root, s.StateDir()); err != nil || filepath.ToSlash(rel) != ".git/petalbook-state" {
 		t.Errorf("the state directory is %s", s.StateDir())
 	}
 	if n := noticeOf(s, ".petalbook", false); n == nil || !strings.HasPrefix(n.Copy, ".petalbook"+unreadableMark) {
@@ -629,8 +629,10 @@ func TestALinkThatCameWhileTheServerWasDownIsPutRightAtTheStart(t *testing.T) {
 	f.reopen()
 	s = f.s
 	untouched(t, out, before)
-	if !isRealDir(f.root, ".petalbook") {
-		t.Fatal(".petalbook is not a folder again")
+	// A space that follows a remote writes nothing there by itself: the link
+	// stays until a change writes there, and the settings read as restored.
+	if !isLink(f.root, ".petalbook") {
+		t.Fatal(".petalbook was changed at the start")
 	}
 	if m := bindingMap(s); !reflect.DeepEqual(m, map[string]string{"A": "wenan"}) {
 		t.Errorf("the bindings are %v", m)
@@ -639,6 +641,12 @@ func TestALinkThatCameWhileTheServerWasDownIsPutRightAtTheStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	untouched(t, out, before)
+	if !isRealDir(f.root, ".petalbook") {
+		t.Fatal(".petalbook is not a folder again")
+	}
+	if st, _ := s.Remote(); st.Kind == KindRescued {
+		t.Errorf("the repair is shown as a change of someone's: %+v", st)
+	}
 	if got := git(t, f.remote, "show", "main:.petalbook/space.yml"); !strings.Contains(got, "A:") || !strings.Contains(got, "B:") {
 		t.Errorf("the remote has\n%s", got)
 	}

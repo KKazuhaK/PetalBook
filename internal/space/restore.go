@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -200,16 +199,16 @@ func stateOf(root string, f settingsFile) (key string, mtime time.Time) {
 		return f.rel + ":gone", time.Time{}
 	}
 	mtime = fi.ModTime()
-	at := filepath.Join(root, filepath.FromSlash(f.rel))
+	at := f.rel
 	if blocked != "" {
 		key = f.rel + ":behind:" + blocked
-		at = filepath.Join(root, filepath.FromSlash(blocked))
+		at = blocked
 	} else {
 		key = f.rel
 	}
 	switch {
 	case fi.Mode()&fs.ModeSymlink != 0:
-		to, _ := os.Readlink(at)
+		to, _ := readlinkIn(root, at)
 		return key + ":link:" + to, mtime
 	case !fi.Mode().IsRegular():
 		return key + ":" + fi.Mode().Type().String(), mtime
@@ -218,8 +217,8 @@ func stateOf(root string, f settingsFile) (key string, mtime time.Time) {
 	case fi.Size() > int64(maxSalvage(f)):
 		return fmt.Sprintf("%s:large:%d:%d", key, fi.Size(), mtime.UnixNano()), mtime
 	}
-	data, err := os.ReadFile(at)
-	if err != nil {
+	data, _, _, err := readIn(root, at, int64(maxSalvage(f)))
+	if err != nil || data == nil {
 		return fmt.Sprintf("%s:unread:%d:%d", key, fi.Size(), mtime.UnixNano()), mtime
 	}
 	sum := sha256.Sum256(data)
@@ -453,7 +452,7 @@ func copiesIn(root, dir string) []kept {
 	if dir != "" && !isRealDir(root, dir) {
 		return nil
 	}
-	entries, _ := os.ReadDir(filepath.Join(root, filepath.FromSlash(dir)))
+	entries, _ := readDirIn(root, dir)
 	var out []kept
 	for _, e := range entries {
 		i := strings.Index(e.Name(), unreadableMark)
@@ -467,43 +466,26 @@ func copiesIn(root, dir string) []kept {
 	return out
 }
 
-// sameFile reports whether two paths hold the same thing: two regular files
-// of the same content, or two links to the same place.
-func sameFile(a, b string) bool {
-	fa, errA := os.Lstat(a)
-	fb, errB := os.Lstat(b)
-	if errA != nil || errB != nil || fa.Mode().Type() != fb.Mode().Type() {
+// sameFile reports whether two paths of the space hold the same thing: two
+// regular files of the same content, or two links to the same place. Neither
+// is followed, nor anything on the way to them.
+func sameFile(root, a, b string) bool {
+	fa, blA, errA := lstatIn(root, a)
+	fb, blB, errB := lstatIn(root, b)
+	if errA != nil || errB != nil || blA != "" || blB != "" || fa.Mode().Type() != fb.Mode().Type() {
 		return false
 	}
 	switch {
 	case fa.Mode()&fs.ModeSymlink != 0:
-		ta, errA := os.Readlink(a)
-		tb, errB := os.Readlink(b)
+		ta, errA := readlinkIn(root, a)
+		tb, errB := readlinkIn(root, b)
 		return errA == nil && errB == nil && ta == tb
 	case !fa.Mode().IsRegular() || fa.Size() != fb.Size():
 		return false
 	}
-	x, errA := os.Open(a)
-	if errA != nil {
-		return false
-	}
-	defer x.Close()
-	y, errB := os.Open(b)
-	if errB != nil {
-		return false
-	}
-	defer y.Close()
-	bx, by := make([]byte, 64<<10), make([]byte, 64<<10)
-	for {
-		n, errA := io.ReadFull(x, bx)
-		m, errB := io.ReadFull(y, by)
-		if n != m || !bytes.Equal(bx[:n], by[:m]) {
-			return false
-		}
-		if errA != nil || errB != nil {
-			return errA != nil && errB != nil
-		}
-	}
+	x, _, _, errA := readIn(root, a, fa.Size())
+	y, _, _, errB := readIn(root, b, fb.Size())
+	return errA == nil && errB == nil && x != nil && y != nil && bytes.Equal(x, y)
 }
 
 // keep puts the file f, which cannot be used, aside under the name of a copy,
@@ -519,20 +501,19 @@ func (h *healer) keep(f settingsFile, record func(rel string) error) (string, er
 		// clearWay is for that; nothing is moved through it.
 		return "", errors.Join(err, fmt.Errorf("%s is not a folder", b))
 	}
-	abs := filepath.Join(h.root, filepath.FromSlash(f.rel))
 	for _, c := range copiesOf(h.root, f) {
-		if sameFile(abs, filepath.Join(h.root, filepath.FromSlash(c))) {
+		if sameFile(h.root, f.rel, c) {
 			return c, record(c)
 		}
 	}
-	fi, err := os.Lstat(abs)
+	fi, _, err := lstatIn(h.root, f.rel)
 	if err != nil {
 		return "", err
 	}
 	name := f.rel + unreadableMark + time.Now().UTC().Format("20060102T150405Z")
 	rel := name
 	for n := 2; ; n++ {
-		if _, err := os.Lstat(filepath.Join(h.root, filepath.FromSlash(rel))); errors.Is(err, fs.ErrNotExist) {
+		if _, _, err := lstatIn(h.root, rel); errors.Is(err, fs.ErrNotExist) {
 			break
 		}
 		rel = fmt.Sprintf("%s-%d", name, n)
@@ -540,11 +521,10 @@ func (h *healer) keep(f settingsFile, record func(rel string) error) (string, er
 	if err := record(rel); err != nil {
 		return "", err
 	}
-	target := filepath.Join(h.root, filepath.FromSlash(rel))
 	if !fi.Mode().IsRegular() {
-		return rel, os.Rename(abs, target)
+		return rel, renameIn(h.root, f.rel, rel)
 	}
-	return rel, linkNoClobber(abs, target)
+	return rel, linkIn(h.root, f.rel, rel)
 }
 
 // noticesFile is where the repairs made are written down, in the state
@@ -636,6 +616,40 @@ func (h *healer) noteRepairs(made []SettingsNotice, copy string) {
 	tmp := h.noticesFile() + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err == nil {
 		os.Rename(tmp, h.noticesFile())
+	}
+}
+
+// forgetRepairs takes back what was written down of repairs whose copy is
+// copy: the repair was undone (it could not be pushed).
+func (h *healer) forgetRepairs(copy string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.found, h.bySrc, h.names = nil, nil, nil
+	keep := h.pending[:0]
+	for _, n := range h.pending {
+		if n.Copy != copy {
+			keep = append(keep, n)
+		}
+	}
+	h.pending = keep
+	if h.stateDir == "" || !h.stateOK() {
+		return
+	}
+	list := h.readRepairs()
+	out := list[:0]
+	for _, n := range list {
+		if n.Copy != copy {
+			out = append(out, n)
+		}
+	}
+	if len(out) == len(list) {
+		return
+	}
+	if data, err := json.Marshal(out); err == nil {
+		tmp := h.noticesFile() + ".tmp"
+		if err := os.WriteFile(tmp, data, 0o644); err == nil {
+			os.Rename(tmp, h.noticesFile())
+		}
 	}
 }
 

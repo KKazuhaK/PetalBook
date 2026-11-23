@@ -269,7 +269,7 @@ func TestReadersOfBindingsAgreeOnAFolderWrittenTwice(t *testing.T) {
 // --- a folder move and its bindings are one change -----------------------------
 
 func journalFile(root string) string {
-	return filepath.Join(root, ".petalbook", "cache", "pending.journal")
+	return filepath.Join(DefaultStateDir(root), "pending.journal")
 }
 
 func TestCrashAfterAFolderRenameFinishesTheBindingsAtRecovery(t *testing.T) {

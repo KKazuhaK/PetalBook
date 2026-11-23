@@ -195,7 +195,7 @@ func TestMoveFolderIsJournaledBeforeTheRename(t *testing.T) {
 	if err := s.Flush(); err != nil {
 		t.Fatal(err)
 	}
-	journal := filepath.Join(root, ".petalbook", "cache", "pending.journal")
+	journal := filepath.Join(DefaultStateDir(root), "pending.journal")
 	rename := s.ops.Rename
 	var seen string
 	s.ops.Rename = func(from, to string) error {

@@ -5,8 +5,6 @@ import (
 	"errors"
 	"io"
 	"io/fs"
-	"os"
-	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
@@ -233,7 +231,6 @@ func (s *Space) editTagsFile(tx *txn, edit func(root *yaml.Node) (changed bool, 
 	if err != nil || !changed {
 		return err
 	}
-	abs := filepath.Join(s.root, filepath.FromSlash(tagsFile))
 	record := func(rel string) error {
 		if err := tx.record(jrec{Op: "t", Path: rel}); err != nil {
 			return err
@@ -263,10 +260,10 @@ func (s *Space) editTagsFile(tx *txn, edit func(root *yaml.Node) (changed bool, 
 		return err
 	}
 	if len(data) == 0 {
-		if err := os.Remove(abs); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := removeIn(s.root, tagsFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
-	} else if err := writeAtomic(s.tmpDir(), abs, data); err != nil {
+	} else if err := writeIn(s.root, tagsFile, data); err != nil {
 		return err
 	}
 	if len(data) > 0 {

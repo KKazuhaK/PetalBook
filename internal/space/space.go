@@ -41,7 +41,8 @@ type Options struct {
 	// Name is the display name. When empty it is read from .petalbook/space.yml,
 	// else DefaultName. It is written to space.yml only when that file is created.
 	Name string
-	// StateDir holds the index. Default: <Root>/.petalbook/cache.
+	// StateDir holds the index, the journal and the notices. Default:
+	// DefaultStateDir(Root), in the Git directory.
 	StateDir string
 	// Committer is the Git committer of automatic commits, "Name <email>"; it
 	// is their author too unless Author is given.
@@ -172,16 +173,20 @@ func Open(opt Options) (*Space, error) {
 	} else if err != nil {
 		return nil, err
 	}
+	if fi, err := os.Lstat(filepath.Join(root, ".git")); err != nil || !fi.IsDir() {
+		return nil, fmt.Errorf("the Git directory of this space (%s) is not a folder", filepath.Join(root, ".git"))
+	}
 
-	pb := filepath.Join(root, ".petalbook")
 	heal := &healer{root: root, repo: g.r, log: log}
-	// A link or a file where .petalbook, or a folder of it the server writes
-	// in, belongs is put right before anything is written there (see
+	// A local space writes space.yml at the start when there is none: a link
+	// or a file where .petalbook belongs is put right before (see
 	// settingspath.go): what is in its place is moved aside and that is
 	// committed, and the folder is made again with what it had. What is put
-	// back is committed with the first commit.
+	// back is committed with the first commit. A space that follows a remote
+	// writes nothing there by itself; the first change that does puts it
+	// right, and pushes that first.
 	var refilled []string
-	for i := 0; i < len(ownDirs) && firstBlockedOwn(root) != ""; i++ {
+	if opt.Remote == nil && firstBlockedOwn(root) != "" {
 		b := firstBlockedOwn(root)
 		w := wayWriter{
 			record: func(rel string, deleted bool) error {
@@ -212,28 +217,21 @@ func Open(opt Options) (*Space, error) {
 			return nil, fmt.Errorf("%s is not a folder and could not be put right: %w", b, err)
 		}
 	}
-	if err := os.MkdirAll(pb, 0o755); err != nil {
-		return nil, err
-	}
 	ours := refilled // files under .petalbook the server made, for the first commit
 	var name string
 	if opt.Remote != nil {
 		// A space that follows a remote never makes tracked files of its own
-		// here: they would be commits nobody pushes. Its temporary files are
-		// kept out of Git's way through the clone's own exclude file, and its
-		// name is read, not written.
-		if _, err := ensureLines(filepath.Join(root, ".git", "info", "exclude"), "/.petalbook/tmp/", "/.petalbook/cache/"); err != nil {
-			return nil, err
-		}
-		name = readSpaceName(filepath.Join(pb, "space.yml"), opt.Name)
+		// here: they would be commits nobody pushes. Its name is read, not
+		// written.
+		name = readSpaceName(root, opt.Name)
 	} else {
-		if changed, err := ensureLines(filepath.Join(pb, ".gitignore"), "cache/", "tmp/"); err != nil {
+		d, err := mkdirIn(root, ".petalbook")
+		if err != nil {
 			return nil, err
-		} else if changed {
-			ours = append(ours, ".petalbook/.gitignore")
 		}
+		d.Close()
 		var madeConfig bool
-		if name, madeConfig, err = ensureSpaceConfig(filepath.Join(pb, "space.yml"), opt.Name); err != nil {
+		if name, madeConfig, err = ensureSpaceConfig(root, opt.Name); err != nil {
 			return nil, err
 		}
 		if madeConfig {
@@ -243,7 +241,10 @@ func Open(opt Options) (*Space, error) {
 
 	stateDir := opt.StateDir
 	if stateDir == "" {
-		stateDir = filepath.Join(pb, "cache")
+		stateDir = DefaultStateDir(root)
+		if err := moveOldState(root, stateDir, log); err != nil {
+			return nil, err
+		}
 	}
 	if stateDir, err = filepath.Abs(stateDir); err != nil {
 		return nil, err
@@ -256,14 +257,22 @@ func Open(opt Options) (*Space, error) {
 	if stateDir, err = filepath.EvalSymlinks(stateDir); err != nil {
 		return nil, err
 	}
-	if rel, err := filepath.Rel(root, stateDir); err == nil && !strings.HasPrefix(rel, "..") && !strings.HasPrefix(filepath.ToSlash(rel), ".petalbook/") {
-		// A state directory elsewhere inside the repository must not be committed.
+	if rel, err := filepath.Rel(root, stateDir); err == nil && filepath.IsLocal(rel) && !strings.HasPrefix(filepath.ToSlash(rel)+"/", ".git/") {
+		// A state directory given inside the work tree must not be committed.
 		if err := g.exclude(filepath.ToSlash(rel) + "/"); err != nil {
 			return nil, err
 		}
 	}
-	// Half-written files from a crash.
-	os.RemoveAll(filepath.Join(pb, "tmp"))
+	// Half-written files from a crash, and the temporary folder of earlier
+	// versions, never through a link.
+	if isRealDir(root, ".petalbook/tmp") {
+		if d, _, err := openDirIn(root, ".petalbook"); err == nil && d != nil {
+			d.RemoveAll("tmp")
+			d.Close()
+		}
+	}
+	removeTemps(root, ".petalbook")
+	removeTemps(root, typesDir)
 	os.RemoveAll(filepath.Join(root, ".git", "petalbook-tmp"))
 
 	// What an earlier run changed but did not get to commit, and any move it
@@ -369,6 +378,52 @@ func Open(opt Options) (*Space, error) {
 	return s, nil
 }
 
+// DefaultStateDir is where the space at root keeps its state (index,
+// journal, notices; in single-user mode the state database too) when no
+// other place is given: in its Git directory, which no pull or checkout ever
+// writes to, so nothing a pull brings can take its place.
+func DefaultStateDir(root string) string { return filepath.Join(root, ".git", "petalbook-state") }
+
+// oldStateDir is where versions before 2.2 kept the state by default.
+const oldStateDir = ".petalbook/cache"
+
+// moveOldState moves the state an earlier version kept in .petalbook/cache to
+// dir, once: the index, the journal of what is not committed yet, the
+// notices, the state database. Only a folder reached through folders is
+// moved; a link there is left alone (and never followed).
+func moveOldState(root, dir string, log *slog.Logger) error {
+	if _, err := os.Lstat(dir); err == nil || !errors.Is(err, fs.ErrNotExist) {
+		return nil // there already (or not to be looked at): nothing to move
+	}
+	if !isRealDir(root, oldStateDir) {
+		return nil
+	}
+	fi, blocked, err := lstatIn(root, oldStateDir)
+	if err != nil || blocked != "" || !fi.IsDir() {
+		return nil
+	}
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || !filepath.IsLocal(rel) {
+		return nil
+	}
+	// The folder is renamed (one step, so a crash leaves it in one place or the
+	// other) within the space opened as a root: nothing outside it is moved,
+	// whatever is put on the way meanwhile.
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	if err := r.Rename(oldStateDir, filepath.ToSlash(rel)); err != nil {
+		return fmt.Errorf("the state of the space could not be moved from %s to %s: %w", oldStateDir, dir, err)
+	}
+	if st, err := os.Lstat(dir); err != nil || !os.SameFile(fi, st) {
+		return fmt.Errorf("the state of the space was replaced while it was moved to %s", dir)
+	}
+	log.Info("moved the state of the space into the Git directory", "from", oldStateDir, "to", dir)
+	return nil
+}
+
 type discard struct{}
 
 func (discard) Write(p []byte) (int, error) { return len(p), nil }
@@ -435,12 +490,12 @@ func ensureLines(file string, lines ...string) (bool, error) {
 }
 
 // readSpaceName is ensureSpaceConfig that never writes.
-func readSpaceName(file, name string) string {
+func readSpaceName(root, name string) string {
 	if name != "" {
 		return name
 	}
-	data, err := os.ReadFile(file)
-	if err != nil {
+	data, _, _, err := readIn(root, spaceFile, maxSpaceFile)
+	if err != nil || data == nil {
 		return DefaultName
 	}
 	var cfg struct {
@@ -455,8 +510,8 @@ func readSpaceName(file, name string) string {
 
 // ensureSpaceConfig creates space.yml with the name if it is missing, and
 // returns the name in effect.
-func ensureSpaceConfig(file, name string) (string, bool, error) {
-	data, err := os.ReadFile(file)
+func ensureSpaceConfig(root, name string) (string, bool, error) {
+	data, _, _, err := readIn(root, spaceFile, maxSpaceFile)
 	if errors.Is(err, fs.ErrNotExist) {
 		if name == "" {
 			name = DefaultName
@@ -465,7 +520,7 @@ func ensureSpaceConfig(file, name string) (string, bool, error) {
 		if err != nil {
 			return "", false, err
 		}
-		return name, true, os.WriteFile(file, out, 0o644)
+		return name, true, writeIn(root, spaceFile, out)
 	}
 	if err != nil {
 		return "", false, err

@@ -1126,7 +1126,12 @@ refused because of it:
   `folders` or `tags` that can be used by itself (with its aliases written
   out); in a file that is not YAML, every top-level key, and every entry of
   `folders` or `tags`, that reads by itself when the text is cut by its
-  indentation. So thirty new bindings and one typo keep the thirty; only the
+  indentation (a leading byte order mark is not part of the first key, and
+  the lines of a quoted value that runs over several lines stay with it,
+  wherever they start, so a line `folders:` inside a value never makes up
+  entries; a quote never closed is a typo and closes nothing). This takes
+  time in proportion to the file, also at the 4 MiB most that is read of
+  it. So thirty new bindings and one typo keep the thirty; only the
   entry with the typo is not read (`lost` in the notice), and it is in the
   file and in the copy kept of it. A type file is one JSON document and is
   read as the version restored. Bindings, views and colours are read from
@@ -1159,12 +1164,25 @@ refused because of it:
   `.petalbook.unreadable-{time}` (or `.petalbook/types.unreadable-{time}`),
   commits that, makes the folder again with everything it had (the settings
   as they are read, the other files as they were), and makes the change in
-  it. A link where `.petalbook`, `.petalbook/tmp` or `.petalbook/cache` belongs
-  (the server's own folders, where it keeps its temporary files and, by
-  default, its index and journal) is put right that way at once: when the
-  space starts, and in a space that follows a remote, right after the pull
-  that brought it, committed and pushed. Until then, no temporary file, index,
-  journal or notice is written through it.
+  it. Every read and write there is made in the folder as it was opened, so
+  a link put in its place while a file is being read or written is not
+  followed either. In a space that follows a remote, that repair is pushed
+  before the change that needed it; when its push does not go through (the
+  remote moved on, or cannot be reached) it is taken back, the clone is as
+  the remote again, and the change is made again on the new tip (or fails as
+  any change fails without the network), so a repair is never kept as a
+  change made here that was not pushed. A local space puts a link where
+  `.petalbook` belongs right that way when it starts, before it writes
+  `space.yml`.
+- **The server's own files are not in `.petalbook`.** `.petalbook` holds the
+  settings and the types only: repository content. The index, the journal of
+  what is not committed yet, the notices below, temporary files and, in
+  single-user mode, the state database are kept in the Git directory
+  (`.git/petalbook-state/`, `.git/petalbook-tmp/`; `--state-dir` puts the
+  state elsewhere), where no pull or checkout writes, so a pull that brings a
+  link where `.petalbook` was takes none of it away. A space last opened by an
+  earlier version, which kept its state in `.petalbook/cache/`, has it moved
+  there once when it starts (a link there is neither followed nor moved).
 
 What happened is told in `settingsNotices` of `GET /api/spaces/{space}/types`,
 to callers who have `manage` in the space (in single-user mode, always); for

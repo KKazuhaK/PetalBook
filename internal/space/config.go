@@ -250,7 +250,7 @@ func planSpaceYAMLWith(h *healer, root, name string, edit func(root *yaml.Node) 
 // space.yml, and the copy of a file that could not be used, put aside first.
 // clear puts right a folder on the way that is not one (clearWay); without
 // it, nothing is written through such a thing.
-func editSpaceYAML(h *healer, root, name, tmpDir string, edit func(root *yaml.Node) (bool, error), before func(rel string) error, clear func() (string, error)) ([]string, error) {
+func editSpaceYAML(h *healer, root, name, _ string, edit func(root *yaml.Node) (bool, error), before func(rel string) error, clear func() (string, error)) ([]string, error) {
 	data, changed, rep, err := planSpaceYAMLWith(h, root, name, edit)
 	if err != nil || !changed {
 		return nil, err
@@ -280,11 +280,7 @@ func editSpaceYAML(h *healer, root, name, tmpDir string, edit func(root *yaml.No
 	if err := before(spaceFile); err != nil {
 		return written, err
 	}
-	abs := filepath.Join(root, filepath.FromSlash(spaceFile))
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-		return written, err
-	}
-	if err := writeAtomic(tmpDir, abs, data); err != nil {
+	if err := writeIn(root, spaceFile, data); err != nil {
 		return written, err
 	}
 	h.wroteGood(spaceSettings, data)
