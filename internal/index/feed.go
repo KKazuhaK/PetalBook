@@ -240,12 +240,12 @@ func (w *writer) treeChanged() error {
 
 // forgetGone drops the record of a removal of a page that is there again.
 func (w *writer) forgetGone(id string) error {
+	if w.fresh {
+		return nil // the index was emptied in this transaction, the removals with it
+	}
 	f, err := w.feed()
 	if err != nil {
 		return err
-	}
-	if f.goneN == 0 {
-		return nil
 	}
 	res, err := w.exec(`DELETE FROM gone WHERE id = ?`, id)
 	if err != nil {
@@ -624,11 +624,18 @@ func (x *Index) Changes(since string, limit int) (ChangeList, error) {
 	if err != nil {
 		return ChangeList{}, err
 	}
+	onPage := make(map[string]bool, len(items))
+	for _, it := range items {
+		onPage[it.e.ID] = true
+	}
 	for grows.Next() {
 		var it item
 		if err := grows.Scan(&it.e.ID, &it.seq); err != nil {
 			grows.Close()
 			return ChangeList{}, err
+		}
+		if onPage[it.e.ID] {
+			continue // made again since: a page, not a removal
 		}
 		it.e.Deleted = true
 		items = append(items, it)

@@ -398,3 +398,24 @@ func TestFeedTreeStamp(t *testing.T) {
 		t.Fatalf("%s %s", b.Tree, x.TreeStamp())
 	}
 }
+
+func TestFeedAPageThatIsThereIsNeverAlsoARemoval(t *testing.T) {
+	x := openIndex(t)
+	base := x.Head()
+	putPage(t, x, "a.md", pageID(1), "A")
+	// A record of removal that outlived the page's coming back (not made by the index itself).
+	if _, err := x.wdb.Exec(`INSERT INTO gone(id, seq, at) VALUES (?, 1, 1)`, pageID(1)); err != nil {
+		t.Fatal(err)
+	}
+	items, _ := changesAll(t, x, base, 10)
+	if len(items) != 1 || items[0].Deleted {
+		t.Fatalf("%+v", items)
+	}
+	// Writing the page again clears the record, whatever the counter says.
+	putPage(t, x, "a.md", pageID(1), "A again")
+	var n int
+	x.wdb.QueryRow(`SELECT count(*) FROM gone`).Scan(&n)
+	if n != 0 {
+		t.Fatalf("%d records", n)
+	}
+}
