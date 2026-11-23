@@ -429,6 +429,23 @@ func (s *Service) dropIfSaved(ctx context.Context, sp *space.Space, spaceID, use
 // while it is written, and the user's draft of it is kept unless the file now
 // says what the draft says.
 func (s *Service) PatchProps(ctx context.Context, sp *space.Space, spaceID, userID, pageID, baseRev string, set page.Meta, unset []string) (*space.Page, error) {
+	return s.writeHeader(ctx, sp, spaceID, userID, pageID, func(by space.Author) (*space.Page, error) {
+		return sp.PatchProps(by, pageID, baseRev, set, unset)
+	})
+}
+
+// FixNotInType takes out of a page's header the fields its type does not have
+// (space.FixNotInType), under the same rules as PatchProps.
+func (s *Service) FixNotInType(ctx context.Context, sp *space.Space, spaceID, userID, pageID, baseRev string) (*space.Page, error) {
+	return s.writeHeader(ctx, sp, spaceID, userID, pageID, func(by space.Author) (*space.Page, error) {
+		return sp.FixNotInType(by, pageID, baseRev)
+	})
+}
+
+// writeHeader runs a change of a page's header as the user: the page is
+// excluded from other writes while it is written, and the user's draft of it
+// is kept unless the file now says what the draft says.
+func (s *Service) writeHeader(ctx context.Context, sp *space.Space, spaceID, userID, pageID string, write func(by space.Author) (*space.Page, error)) (*space.Page, error) {
 	l := s.lock(spaceID, pageID, userID)
 	l.Lock()
 	defer l.Unlock()
@@ -445,7 +462,7 @@ func (s *Service) PatchProps(ctx context.Context, sp *space.Space, spaceID, user
 		return nil, err
 	}
 	var p *space.Page
-	s.remoteCall(l, sp, spaceID, pageID, func() { p, err = sp.PatchProps(by, pageID, baseRev, set, unset) })
+	s.remoteCall(l, sp, spaceID, pageID, func() { p, err = write(by) })
 	if err != nil {
 		return nil, err
 	}

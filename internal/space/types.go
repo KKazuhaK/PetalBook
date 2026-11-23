@@ -822,6 +822,7 @@ func (s *Space) PutType(by Author, name, baseRev string, in TypeInput) (TypeInfo
 			return TypeInfo{}, err
 		}
 		tx.touch(rel)
+		s.typesDirty.Store(true)
 		if err := writeIn(s.root, rel, out.Bytes()); err != nil {
 			return TypeInfo{}, err
 		}
@@ -911,6 +912,7 @@ func (s *Space) DeleteType(by Author, name, baseRev string) error {
 				return struct{}{}, err
 			}
 			tx.touch(rel)
+			s.typesDirty.Store(true)
 			if err := removeIn(s.root, rel); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				return struct{}{}, err
 			}

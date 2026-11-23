@@ -33,6 +33,10 @@ type Entry struct {
 	PartialJSON string
 
 	props []propRow
+	// refs are the addresses of the body that point into assets/, checks the
+	// problems of the page (see annotate).
+	refs   []assetRef
+	checks []checkRow
 
 	// Text fed to the full-text index, already tokenised.
 	ftsTitle, ftsSubtitle, ftsSource, ftsBody string
@@ -66,6 +70,7 @@ func BuildEntry(rel string, data []byte, mtimeNs int64) (*Entry, *page.Problem) 
 		b, _ := json.Marshal(partial)
 		e.PartialJSON = string(b)
 	}
+	e.refs = assetRefs(doc.Body, e.Folder)
 	e.CreatedKey = mtimeNs
 	if t, err := time.Parse("2006-01-02", e.Created); err == nil {
 		e.CreatedKey = t.UnixNano()

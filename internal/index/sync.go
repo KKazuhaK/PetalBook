@@ -128,6 +128,7 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 	defer tx.Rollback()
 	w := newWriter(ctx, tx)
 	defer w.close()
+	rules := x.rules.Load()
 
 	st := Stats{}
 	if full {
@@ -147,6 +148,9 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 		st.Removed++
 	}
 	for _, f := range todo {
+		if w.fresh {
+			break // everything was cleared above
+		}
 		if err := w.removePath(f.Rel); err != nil {
 			return Stats{}, err
 		}
@@ -158,7 +162,7 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 	workers := runtime.GOMAXPROCS(0)
 	for lo := 0; lo < len(todo); lo += batch {
 		hi := min(lo+batch, len(todo))
-		results := x.loadBatch(src, todo[lo:hi], workers)
+		results := x.loadBatch(src, todo[lo:hi], workers, rules)
 		for i, r := range results {
 			f := todo[lo+i]
 			if r.gone {
@@ -173,11 +177,12 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 				}
 				if conflict != "" {
 					r.prob = &page.Problem{Code: "duplicate_id", Message: fmt.Sprintf("id %s is already used by %s", r.entry.ID, conflict)}
+					r.dupID = r.entry.ID
 					r.entry = nil
 				}
 			}
 			if r.entry == nil {
-				if err := w.setProblem(f, r.prob); err != nil {
+				if err := w.setProblem(f, r.prob, r.dupID, r.rev); err != nil {
 					return Stats{}, err
 				}
 			}
@@ -190,6 +195,15 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 	}
 	if err := w.replaceFolders(dirSet, src.DirExists); err != nil {
 		return Stats{}, err
+	}
+	if err := w.finishTitles(); err != nil {
+		return Stats{}, err
+	}
+	if full && rules != nil {
+		// Every page was checked against these rules just now.
+		if _, err := w.exec(`INSERT OR REPLACE INTO meta(key, value) VALUES ('types_fp', ?)`, rules.Fingerprint); err != nil {
+			return Stats{}, err
+		}
 	}
 	if err := x.commit(tx); err != nil {
 		return Stats{}, err
@@ -252,11 +266,15 @@ type loaded struct {
 	prob  *page.Problem
 	info  FileInfo // the file as it is now
 	gone  bool
+	// dupID is the id a file that is a duplicate shares.
+	dupID string
+	// rev is the rev of a file that is not a page.
+	rev string
 }
 
 // loadBatch reads and parses files in parallel; the results keep the order of
 // files so they can be applied deterministically.
-func (x *Index) loadBatch(src Source, files []FileInfo, workers int) []loaded {
+func (x *Index) loadBatch(src Source, files []FileInfo, workers int, rules *TypeRules) []loaded {
 	out := make([]loaded, len(files))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, workers)
@@ -289,10 +307,14 @@ func (x *Index) loadBatch(src Source, files []FileInfo, workers int) []loaded {
 				return
 			}
 			out[i].entry, out[i].prob = BuildEntry(info.Rel, data, info.MtimeNs)
+			if out[i].entry == nil {
+				out[i].rev = page.Rev(data)
+			}
 			if out[i].entry != nil {
 				// The size we recorded must be the size we parsed, in case the
 				// file changed between the walk and the read.
 				out[i].entry.Size = int64(len(data))
+				x.annotate(out[i].entry, rules)
 			}
 		}()
 	}
@@ -317,12 +339,16 @@ func (x *Index) Put(rel string, data []byte, mtimeNs int64) (bool, error) {
 	e, prob := BuildEntry(rel, data, mtimeNs)
 	ok := e != nil
 	if ok {
+		x.annotate(e, x.rules.Load())
 		if conflict, err := w.upsert(e, nil); err != nil {
 			return false, err
 		} else if conflict != "" {
 			return false, fmt.Errorf("id %s is already used by %s", e.ID, conflict)
 		}
-	} else if err := w.setProblem(FileInfo{Rel: rel, Size: int64(len(data)), MtimeNs: mtimeNs}, prob); err != nil {
+	} else if err := w.setProblem(FileInfo{Rel: rel, Size: int64(len(data)), MtimeNs: mtimeNs}, prob, "", page.Rev(data)); err != nil {
+		return false, err
+	}
+	if err := w.finishTitles(); err != nil {
 		return false, err
 	}
 	return ok, x.commit(tx)
@@ -347,6 +373,9 @@ func (x *Index) Remove(id string) error {
 		return err
 	}
 	if err := w.removePath(rel); err != nil {
+		return err
+	}
+	if err := w.finishTitles(); err != nil {
 		return err
 	}
 	return x.commit(tx)
@@ -393,6 +422,9 @@ func (x *Index) Forget(paths, dirs []string) error {
 		if _, err := w.exec(`DELETE FROM folders WHERE path = ?`, d); err != nil {
 			return err
 		}
+	}
+	if err := w.finishTitles(); err != nil {
+		return err
 	}
 	return x.commit(tx)
 }
@@ -446,6 +478,14 @@ type writer struct {
 	ctx   context.Context
 	tx    *sql.Tx
 	stmts map[string]*sql.Stmt
+	// dirty are the groups of pages with one title in one folder whose
+	// duplicate_title problems are to be looked at again; allTitles says all
+	// of them are (see finishTitles).
+	dirty     map[titleGroup]bool
+	allTitles bool
+	// fresh says the tables were emptied in this transaction (a full
+	// rebuild): there is nothing to replace.
+	fresh bool
 }
 
 func newWriter(ctx context.Context, tx *sql.Tx) *writer {
@@ -470,32 +510,39 @@ func (w *writer) exec(q string, args ...any) (sql.Result, error) {
 	return s.ExecContext(w.ctx, args...)
 }
 
+// queryRow runs a query that is asked many times in one transaction on a
+// statement prepared once.
 func (w *writer) queryRow(q string, args ...any) *sql.Row {
-	return w.tx.QueryRowContext(w.ctx, q, args...)
+	s, ok := w.stmts[q]
+	if !ok {
+		var err error
+		if s, err = w.tx.PrepareContext(w.ctx, q); err != nil {
+			return w.tx.QueryRowContext(w.ctx, q, args...)
+		}
+		w.stmts[q] = s
+	}
+	return s.QueryRowContext(w.ctx, args...)
 }
 
 func (w *writer) clearAll() error {
-	for _, q := range []string{`DELETE FROM pages`, `DELETE FROM tags`, `DELETE FROM props`, `DELETE FROM problems`, `INSERT INTO fts(fts) VALUES ('delete-all')`} {
+	for _, q := range []string{`DELETE FROM pages`, `DELETE FROM tags`, `DELETE FROM props`, `DELETE FROM problems`, `DELETE FROM checks`, `INSERT INTO fts(fts) VALUES ('delete-all')`} {
 		if _, err := w.tx.ExecContext(w.ctx, q); err != nil {
 			return err
 		}
 	}
+	w.allTitles, w.fresh = true, true
 	return nil
 }
 
 // removePath deletes whatever the index holds for a file path.
 func (w *writer) removePath(rel string) error {
-	var rowid int64
-	err := w.queryRow(`SELECT rowid FROM pages WHERE path = ?`, rel).Scan(&rowid)
-	switch {
-	case err == nil:
-		if err := w.deleteRow(rowid); err != nil {
-			return err
-		}
-	case !errors.Is(err, sql.ErrNoRows):
+	if err := w.removeIfPage(rel); err != nil {
 		return err
 	}
-	_, err = w.exec(`DELETE FROM problems WHERE path = ?`, rel)
+	if _, err := w.exec(`DELETE FROM checks WHERE path = ?`, rel); err != nil {
+		return err
+	}
+	_, err := w.exec(`DELETE FROM problems WHERE path = ?`, rel)
 	return err
 }
 
@@ -508,25 +555,31 @@ func (w *writer) deleteRow(rowid int64) error {
 	return nil
 }
 
-func (w *writer) setProblem(f FileInfo, p *page.Problem) error {
+func (w *writer) setProblem(f FileInfo, p *page.Problem, id, rev string) error {
 	if err := w.removeIfPage(f.Rel); err != nil {
 		return err
 	}
-	_, err := w.exec(`INSERT OR REPLACE INTO problems(path, code, message, size, mtime_ns) VALUES (?,?,?,?,?)`,
-		f.Rel, p.Code, p.Message, f.Size, f.MtimeNs)
+	if _, err := w.exec(`DELETE FROM checks WHERE path = ?`, f.Rel); err != nil {
+		return err
+	}
+	_, err := w.exec(`INSERT OR REPLACE INTO problems(path, code, message, size, mtime_ns, kind, id, line, rev) VALUES (?,?,?,?,?,?,?,?,?)`,
+		f.Rel, p.Code, p.Message, f.Size, f.MtimeNs, kindOfCode(p.Code), id, headerLine(p), rev)
 	return err
 }
 
 // removeIfPage drops a page row at this path, for a file that stopped being a page.
 func (w *writer) removeIfPage(rel string) error {
 	var rowid int64
-	err := w.queryRow(`SELECT rowid FROM pages WHERE path = ?`, rel).Scan(&rowid)
+	var folder, key string
+	var untitled bool
+	err := w.queryRow(`SELECT rowid, folder, title_key, untitled FROM pages WHERE path = ?`, rel).Scan(&rowid, &folder, &key, &untitled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
+	w.markTitle(folder, key, untitled)
 	return w.deleteRow(rowid)
 }
 
@@ -536,9 +589,10 @@ func (w *writer) removeIfPage(rel string) error {
 // caller reports the new file as a duplicate.
 func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, err error) {
 	var rowid int64
-	var oldPath string
+	var oldPath, oldFolder, oldKey string
+	var oldUntitled bool
 	found := true
-	if err := w.queryRow(`SELECT rowid, path FROM pages WHERE id = ?`, e.ID).Scan(&rowid, &oldPath); errors.Is(err, sql.ErrNoRows) {
+	if err := w.queryRow(`SELECT rowid, path, folder, title_key, untitled FROM pages WHERE id = ?`, e.ID).Scan(&rowid, &oldPath, &oldFolder, &oldKey, &oldUntitled); errors.Is(err, sql.ErrNoRows) {
 		found = false
 	} else if err != nil {
 		return "", err
@@ -547,18 +601,29 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 		return oldPath, nil
 	}
 	// Another page at this path whose id was edited away: that row is stale.
-	var other int64
-	switch err := w.queryRow(`SELECT rowid FROM pages WHERE path = ? AND id <> ?`, e.Path, e.ID).Scan(&other); {
-	case err == nil:
-		if err := w.deleteRow(other); err != nil {
+	if !w.fresh {
+		var other int64
+		var otherFolder, otherKey string
+		var otherUntitled bool
+		switch err := w.queryRow(`SELECT rowid, folder, title_key, untitled FROM pages WHERE path = ? AND id <> ?`, e.Path, e.ID).Scan(&other, &otherFolder, &otherKey, &otherUntitled); {
+		case err == nil:
+			w.markTitle(otherFolder, otherKey, otherUntitled)
+			if err := w.deleteRow(other); err != nil {
+				return "", err
+			}
+		case !errors.Is(err, sql.ErrNoRows):
 			return "", err
 		}
-	case !errors.Is(err, sql.ErrNoRows):
-		return "", err
 	}
 	args := []any{e.ID, e.Path, e.Folder, e.Title, e.Subtitle, e.Source, b2i(e.Untitled), strings.ToLower(e.Title), e.Label, e.Type,
 		tagsJSON(e.Tags), e.Created, e.CreatedKey, e.MtimeNs, e.Size, e.Rev, e.Excerpt, e.PropsJSON, e.PartialJSON}
+	titleKey := strings.ToLower(e.Title)
 	if found {
+		w.markTitle(oldFolder, oldKey, oldUntitled)
+		// What was recorded of the page, and of the path it had, is replaced.
+		if _, err := w.exec(`DELETE FROM checks WHERE path = ?`, oldPath); err != nil {
+			return "", err
+		}
 		if err := w.deleteRowKeepPage(rowid); err != nil {
 			return "", err
 		}
@@ -589,9 +654,20 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 		return "", err
 	}
 	// The file is a page now, whatever it was before.
-	if _, err := w.exec(`DELETE FROM problems WHERE path = ?`, e.Path); err != nil {
-		return "", err
+	if !w.fresh {
+		if _, err := w.exec(`DELETE FROM problems WHERE path = ?`, e.Path); err != nil {
+			return "", err
+		}
+		if _, err := w.exec(`DELETE FROM checks WHERE path = ?`, e.Path); err != nil {
+			return "", err
+		}
 	}
+	for i, c := range e.checks {
+		if err := w.insertCheck(e.Path, i, e.ID, c); err != nil {
+			return "", err
+		}
+	}
+	w.markTitle(e.Folder, titleKey, e.Untitled)
 	// The page row may sit in a folder the index has not seen yet.
 	for d := e.Folder; d != ""; d = path.Dir(d) {
 		if d == "." {
@@ -706,11 +782,12 @@ func (x *Index) RetryDuplicates(src Source) error {
 		}
 		e, prob := BuildEntry(p, data, info.MtimeNs)
 		if e == nil {
-			if err := w.setProblem(info, prob); err != nil {
+			if err := w.setProblem(info, prob, "", page.Rev(data)); err != nil {
 				return err
 			}
 			continue
 		}
+		x.annotate(e, x.rules.Load())
 		// Every indexed page counts as present: only a twin that is really
 		// gone from the index frees the id.
 		conflict, err := w.upsert(e, func(string) bool { return true })
@@ -718,10 +795,13 @@ func (x *Index) RetryDuplicates(src Source) error {
 			return err
 		}
 		if conflict != "" {
-			if err := w.setProblem(info, &page.Problem{Code: "duplicate_id", Message: fmt.Sprintf("id %s is already used by %s", e.ID, conflict)}); err != nil {
+			if err := w.setProblem(info, &page.Problem{Code: "duplicate_id", Message: fmt.Sprintf("id %s is already used by %s", e.ID, conflict)}, e.ID, ""); err != nil {
 				return err
 			}
 		}
+	}
+	if err := w.finishTitles(); err != nil {
+		return err
 	}
 	return x.commit(tx)
 }
@@ -780,7 +860,7 @@ func (x *Index) Refresh(src Source, paths, dirs []string) (Stats, error) {
 		}
 	}
 	onDisk := func(p string) bool { _, err := src.Stat(p); return err == nil }
-	for _, r := range x.loadBatch(src, todo, runtime.GOMAXPROCS(0)) {
+	for _, r := range x.loadBatch(src, todo, runtime.GOMAXPROCS(0), x.rules.Load()) {
 		if r.gone {
 			continue
 		}
@@ -792,11 +872,12 @@ func (x *Index) Refresh(src Source, paths, dirs []string) (Stats, error) {
 			}
 			if conflict != "" {
 				r.prob = &page.Problem{Code: "duplicate_id", Message: fmt.Sprintf("id %s is already used by %s", r.entry.ID, conflict)}
+				r.dupID = r.entry.ID
 				r.entry = nil
 			}
 		}
 		if r.entry == nil {
-			if err := w.setProblem(f, r.prob); err != nil {
+			if err := w.setProblem(f, r.prob, r.dupID, r.rev); err != nil {
 				return Stats{}, err
 			}
 		}
@@ -819,6 +900,9 @@ func (x *Index) Refresh(src Source, paths, dirs []string) (Stats, error) {
 				return Stats{}, err
 			}
 		}
+	}
+	if err := w.finishTitles(); err != nil {
+		return Stats{}, err
 	}
 	if err := x.commit(tx); err != nil {
 		return Stats{}, err

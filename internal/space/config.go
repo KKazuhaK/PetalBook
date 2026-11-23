@@ -209,6 +209,7 @@ func (s *Space) editSpaceFile(tx *txn, edit func(root *yaml.Node) (changed bool,
 	s.cfgMu.Lock()
 	s.cfg = configCache{}
 	s.cfgMu.Unlock()
+	s.typesDirty.Store(true)
 	return err
 }
 

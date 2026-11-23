@@ -454,6 +454,7 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		tce   *space.TypeConflictError
 		tpce  *space.TemplateConflictError
 		tple  *space.TemplateError
+		fixe  *space.FixError
 		vce   *space.ViewsConflictError
 		ae    *auth.Error
 		dc    *drafts.Conflict
@@ -528,6 +529,8 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "exists", "it already exists")
 	case errors.As(err, &vce):
 		writeJSON(w, http.StatusConflict, viewsConflict(vce))
+	case errors.As(err, &fixe):
+		writeJSON(w, http.StatusBadRequest, errorBody{Error: fixe.Code, Message: fixe.Msg})
 	case errors.As(err, &tple):
 		writeJSON(w, http.StatusBadRequest, errorBody{Error: tple.Code, Message: tple.Msg})
 	case errors.As(err, &tpce):

@@ -138,6 +138,12 @@ func (s *Space) putAssetLocked(tx *txn, id, name string, data []byte) (Asset, er
 	// Also when the file was there already: one an earlier attempt left behind
 	// uncommitted is committed now, and a committed one nets out to nothing.
 	tx.touch(rel)
+	if out.Created {
+		// A page that points here was missing it until now.
+		if err := s.idx.AssetAppeared(rel); err != nil {
+			s.log.Warn("could not update the missing attachments", "error", err)
+		}
+	}
 	return out, nil
 }
 

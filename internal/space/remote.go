@@ -457,6 +457,7 @@ func (s *Space) applyDelta(ctx context.Context, r *remote, from, to string) {
 		if _, err := s.idx.Sync(s.src, false); err != nil {
 			s.log.Error("could not update the index after a pull", "error", err)
 		}
+		s.syncTypes()
 		return
 	}
 	var pages, dirs []string
@@ -473,6 +474,7 @@ func (s *Space) applyDelta(ctx context.Context, r *remote, from, to string) {
 	if err := s.idx.RetryDuplicates(s.src); err != nil {
 		s.log.Warn("could not re-check duplicate ids", "error", err)
 	}
+	s.syncTypes() // a pull may have brought other types or bindings
 }
 
 // Pull fetches the remote and moves the space forward to it. force fetches
@@ -631,6 +633,9 @@ func (t *txn) settleBindings() {
 // finishBindings tells the journal that the bindings the change was to move or
 // drop are as they are to stay: a crash from here on must not touch them.
 func (t *txn) finishBindings() {
+	if len(t.bind) > 0 {
+		t.s.typesDirty.Store(true) // folders moved or went: so did their types
+	}
 	for _, r := range t.bind {
 		t.s.cm.Done(r)
 	}
@@ -670,6 +675,13 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 	if s.closed {
 		return zero, ErrClosed
 	}
+	// A change to the types or to the folders they are bound to changes which
+	// pages have problems with their type (see checks.go).
+	defer func() {
+		if s.typesDirty.Swap(false) {
+			s.syncTypes()
+		}
+	}()
 	r := s.rem.Load()
 	if r == nil {
 		s.cm.SwitchTo(by)
