@@ -83,6 +83,7 @@ var scopeAllowlist = map[string]string{
 	"GetUserState":       "whether a person is deleted, for the recycle bin's own steps, by the id of an item already found in scope",
 	"PurgeUserData":      "the purge of a person's item, which the caller found in scope; or the server's own job",
 	"RestoreUserRows":    "the restore of a person's item, which the caller found in scope",
+	"TenantsOf":          "the tenant of each id a bulk job works on, for its queue; the ids were checked in the caller's scope when the job was confirmed",
 	"LeaveSpace":         "one person's membership of a space already found, by ids; reads the other owners of that space",
 	"BeginUserDeletion":  "the record of a deletion of a person the caller found in scope (GetUser), by id",
 	"NoteUserDeletion":   "the record of a deletion of a person the caller found in scope, by id",

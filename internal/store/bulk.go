@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -14,6 +15,9 @@ const (
 	JobRunning     = "running"
 	JobDone        = "done"
 	JobInterrupted = "interrupted"
+	// JobFailed: the job broke (a panic, or its progress could not be written);
+	// failed lists what was being done.
+	JobFailed = "failed"
 )
 
 // BulkFailure is one item of a bulk job that did not work, and why.
@@ -29,7 +33,10 @@ type BulkJob struct {
 	Total, Done                  int
 	Failed                       []BulkFailure
 	State                        string
-	Created, Updated             time.Time
+	// SiteOnly: a site administrator started it; only site administrators see
+	// it (as such an export, see Export.SiteOnly).
+	SiteOnly         bool
+	Created, Updated time.Time
 }
 
 const bulkCols = `id, tenant_id, made_by, action, total, done, failed, state, created, updated`
@@ -51,14 +58,18 @@ func scanJob(sc interface{ Scan(...any) error }) (*BulkJob, error) {
 
 // InsertBulkJob adds a job.
 func InsertBulkJob(ctx context.Context, q Q, j BulkJob) error {
-	_, err := q.Exec(ctx, `INSERT INTO bulk_jobs(`+bulkCols+`) VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?, ?)`,
-		j.ID, j.TenantID, j.MadeBy, j.Action, j.Total, j.Done, j.State, ms(j.Created), ms(j.Created))
+	_, err := q.Exec(ctx, `INSERT INTO bulk_jobs(`+bulkCols+`, site_only) VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?)`,
+		j.ID, j.TenantID, j.MadeBy, j.Action, j.Total, j.Done, j.State, ms(j.Created), ms(j.Created), b2i(j.SiteOnly))
 	return err
 }
 
-// GetBulkJob returns a job of a tenant in the scope.
+// GetBulkJob returns a job of a tenant in the scope; a tenant's scope does not
+// see the site's jobs (SiteOnly).
 func GetBulkJob(ctx context.Context, q Q, sc Scope, id string) (*BulkJob, error) {
 	cond, args := sc.cond("tenant_id")
+	if !sc.all {
+		cond += " AND site_only = 0"
+	}
 	return scanJob(q.QueryRow(ctx, `SELECT `+bulkCols+` FROM bulk_jobs WHERE id = ? AND `+cond, append([]any{id}, args...)...))
 }
 
@@ -80,4 +91,43 @@ func InterruptBulkJobs(ctx context.Context, q Q, now time.Time) (int64, error) {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// TenantsOf returns the tenant of each of the spaces, people or recycle items
+// (kind "spaces", "users", "items") with these ids, whoever they belong to: what
+// a bulk job works on, for its queue. Ids that are not there are left out.
+func TenantsOf(ctx context.Context, q Q, kind string, ids []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	ph := strings.TrimSuffix(strings.Repeat("?, ", len(ids)), ", ")
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	var query string
+	switch kind {
+	case "spaces":
+		query = `SELECT id, tenant_id FROM spaces WHERE id IN (` + ph + `)`
+	case "users":
+		query = `SELECT id, tenant_id FROM users WHERE deleted_at IS NULL AND id IN (` + ph + `)`
+	case "items":
+		query = `SELECT id, tenant_id FROM recycle_items WHERE id IN (` + ph + `)`
+	default:
+		return out, nil
+	}
+	rows, err := q.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, t string
+		if err := rows.Scan(&id, &t); err != nil {
+			return nil, err
+		}
+		out[id] = t
+	}
+	return out, rows.Err()
 }

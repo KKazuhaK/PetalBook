@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/KKazuhaK/PetalBook/internal/api"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
@@ -521,7 +523,7 @@ func waitJob(t *testing.T, c *client, id string) map[string]any {
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		j := c.do("GET", "/api/admin/jobs/"+id, nil).want(t, 200, "").body["job"].(map[string]any)
-		if s := j["state"]; s == "done" || s == "interrupted" {
+		if s := j["state"]; s == "done" || s == "interrupted" || s == "failed" {
 			return j
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -967,5 +969,120 @@ func TestTheLastStepOfADeletionRemovesALeftoverMembership(t *testing.T) {
 		if lv := idsOf(r.body["left"], "space"); !hasID(lv, other) {
 			t.Fatalf("the leftover membership is not listed: %s", r.raw)
 		}
+	})
+}
+
+// A job that panics is marked failed, with the item it was on, and the server
+// goes on; a job's progress that cannot be written is retried, and a job whose
+// progress could not be written is marked failed rather than left running.
+func TestABulkJobThatBreaksIsMarkedFailed(t *testing.T) {
+	t.Parallel()
+	var boom atomic.Bool
+	opts := accOpts{spaces: func(o *spaces.Options) {
+		o.RecycleHook = func(s string) error {
+			if s == "delete-user:disabled" && boom.Load() {
+				panic("a bug in a step")
+			}
+			return nil
+		}
+	}}
+	eachAccounts(t, opts, func(t *testing.T, a *acc) {
+		f := newUdFix(t, a)
+		boom.Store(true)
+		c := f.admin.do("POST", "/api/admin/confirm", map[string]any{"action": "delete_users", "users": []string{f.viewerID}, "heir": f.editorID}).want(t, 200, "")
+		j := f.admin.do("POST", "/api/admin/bulk", map[string]any{"confirm": c.body["confirm"]}).want(t, 202, "").body["job"].(map[string]any)
+		done := waitJob(t, f.admin, j["id"].(string))
+		boom.Store(false)
+		failed := done["failed"].([]any)
+		if done["state"] != "failed" || len(failed) != 1 || failed[0].(map[string]any)["id"] != f.viewerID {
+			t.Fatalf("%v", done)
+		}
+		f.admin.do("GET", "/api/session", nil).want(t, 200, "")
+
+		// Progress that cannot be written: tried again, and the job ends.
+		kazuha := mustUserID(t, a, "kazuha")
+		restore := api.SetUpdateBulkJob(kazuha, func(state string, try int) error {
+			if state == "running" && try == 0 {
+				return errors.New("the database is busy")
+			}
+			return nil
+		})
+		c = f.admin.do("POST", "/api/admin/confirm", map[string]any{"action": "disable_users", "users": []string{f.viewerID}}).want(t, 200, "")
+		j = f.admin.do("POST", "/api/admin/bulk", map[string]any{"confirm": c.body["confirm"]}).want(t, 202, "").body["job"].(map[string]any)
+		if done := waitJob(t, f.admin, j["id"].(string)); done["state"] != "done" || done["done"] != float64(1) {
+			t.Fatalf("%v", done)
+		}
+		// Progress that can never be written: the job is marked failed at the end.
+		api.SetUpdateBulkJob(kazuha, func(state string, try int) error {
+			if state == "running" {
+				return errors.New("the database is gone")
+			}
+			return nil
+		})
+		c = f.admin.do("POST", "/api/admin/confirm", map[string]any{"action": "enable_users", "users": []string{f.viewerID}}).want(t, 200, "")
+		j = f.admin.do("POST", "/api/admin/bulk", map[string]any{"confirm": c.body["confirm"]}).want(t, 202, "").body["job"].(map[string]any)
+		if done := waitJob(t, f.admin, j["id"].(string)); done["state"] != "failed" {
+			t.Fatalf("%v", done)
+		}
+		restore()
+	})
+}
+
+// The rights of the administrator who started a job are checked again for each
+// item: one who is no longer an administrator stops being obeyed.
+func TestABulkJobChecksTheAdministratorForEachItem(t *testing.T) {
+	t.Parallel()
+	var demote atomic.Value
+	demote.Store(func() {})
+	opts := accOpts{spaces: func(o *spaces.Options) {
+		o.RecycleHook = func(s string) error {
+			if s == "recycle:rows" {
+				demote.Load().(func())()
+			}
+			return nil
+		}
+	}}
+	eachAccounts(t, opts, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		var ids []string
+		for _, n := range []string{"One", "Two"} {
+			ids = append(ids, f.admA.do("POST", "/api/spaces", map[string]any{"name": n}).want(t, 201, "").body["id"].(string))
+		}
+		c := f.admA.do("POST", "/api/admin/confirm", map[string]any{"action": "delete_spaces", "spaces": ids}).want(t, 200, "")
+		admAID := mustUserID(t, a, "adm-a")
+		var once sync.Once
+		demote.Store(func() {
+			once.Do(func() {
+				if _, err := a.st.Q().Exec(context.Background(), `UPDATE users SET role = 'member' WHERE id = ?`, admAID); err != nil {
+					t.Error(err)
+				}
+				a.auth.Forget(admAID)
+			})
+		})
+		j := f.admA.do("POST", "/api/admin/bulk", map[string]any{"confirm": c.body["confirm"]}).want(t, 202, "").body["job"].(map[string]any)
+		done := waitJob(t, f.root, j["id"].(string))
+		failed := done["failed"].([]any)
+		if done["done"] != float64(1) || len(failed) != 1 || failed[0].(map[string]any)["id"] != ids[1] || failed[0].(map[string]any)["code"] != "forbidden" {
+			t.Fatalf("%v", done)
+		}
+	})
+}
+
+// A site administrator's job waits in the queue of the tenant it works on, not
+// of their own: the row says so, and the tenant's administrators do not see it.
+func TestASiteAdministratorsJobIsQueuedByTheTenantItWorksOn(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		c := f.root.do("POST", "/api/admin/confirm", map[string]any{"action": "disable_spaces", "spaces": []string{f.spaceB}}).want(t, 200, "")
+		j := f.root.do("POST", "/api/admin/bulk", map[string]any{"confirm": c.body["confirm"]}).want(t, 202, "").body["job"].(map[string]any)
+		waitJob(t, f.root, j["id"].(string))
+		if n := f.countOf(`SELECT COUNT(*) FROM bulk_jobs WHERE id = '` + j["id"].(string) + `' AND tenant_id = '` + f.tenB + `'`); n != 1 {
+			t.Fatal("the job is not queued by the tenant it works on")
+		}
+		for _, cl := range []*client{f.admA, f.admB} {
+			cl.do("GET", "/api/admin/jobs/"+j["id"].(string), nil).want(t, 404, "not_found")
+		}
+		f.root.do("POST", "/api/admin/spaces/"+f.spaceB+"/enable", nil).want(t, 204, "")
 	})
 }

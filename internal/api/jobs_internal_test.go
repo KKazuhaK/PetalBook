@@ -41,3 +41,23 @@ func TestTheJobRunnerAllowsOnePerTenantAndTwoOnTheServer(t *testing.T) {
 		t.Fatal("the waiting job never started")
 	}
 }
+
+// A job that works on several tenants waits for the turn of each of them.
+func TestAJobOfSeveralTenantsWaitsForEachOfThem(t *testing.T) {
+	r := newJobRunner()
+	r.acquire("B")
+	got := make(chan struct{})
+	go func() { r.acquire("A", "B"); close(got) }()
+	select {
+	case <-got:
+		t.Fatal("it started while tenant B's turn was taken")
+	case <-time.After(150 * time.Millisecond):
+	}
+	r.release("B")
+	select {
+	case <-got:
+	case <-time.After(2 * time.Second):
+		t.Fatal("it never started")
+	}
+	r.release("A", "B")
+}
