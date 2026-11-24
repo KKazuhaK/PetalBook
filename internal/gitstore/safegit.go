@@ -220,8 +220,13 @@ var allowedOptions = map[string][]string{
 }
 
 // partialConfigKeys are the keys of a clone's own configuration that make it
-// partial: the only ones `git config` is run for, and only to remove them.
+// partial: the only ones `git config` is run for, to remove them or to read
+// whether the clone is one (partialKeysPattern).
 var partialConfigKeys = map[string]bool{"remote.origin.partialclonefilter": true, "remote.origin.promisor": true, "extensions.partialclone": true}
+
+// partialKeysPattern is the one pattern `git config --get-regexp` is run with:
+// the keys that say origin is a promisor remote of the clone.
+const partialKeysPattern = `^(remote\.origin\.promisor|extensions\.partialclone)$`
 
 func optionAllowed(sub, opt string) bool {
 	for _, a := range allowedOptions[sub] {
@@ -268,8 +273,12 @@ func refuseDestructive(args []string) error {
 			return fmt.Errorf("%w: remote %s", errDestructive, strings.Join(rest, " "))
 		}
 	case "config":
-		// One shape: the removal of a key that makes a clone partial, when a
-		// pinned space's clone is made full (Repo.LeavePartial).
+		// Two shapes: the removal of a key that makes a clone partial, when a
+		// pinned space's clone is made full (Repo.LeavePartial), and the read
+		// of whether it is one (Repo.IsPartial).
+		if len(rest) == 3 && rest[0] == "--local" && rest[1] == "--get-regexp" && rest[2] == partialKeysPattern {
+			break
+		}
 		if len(rest) != 3 || rest[0] != "--local" || rest[1] != "--unset-all" || !partialConfigKeys[rest[2]] {
 			return fmt.Errorf("%w: config %s", errDestructive, strings.Join(rest, " "))
 		}

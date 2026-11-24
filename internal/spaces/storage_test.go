@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -473,10 +474,13 @@ func TestACrashAtEveryStepOfAnEvictionLeavesAGoodSpace(t *testing.T) {
 	for _, step := range steps {
 		t.Run(step, func(t *testing.T) {
 			storetest.Each(t, func(t *testing.T, st *store.Store) {
-				var crash string
+				// The hook runs on the goroutine that marks the cache too
+				// ("cache:read"), so the step to crash at is shared safely.
+				var crash atomic.Value
+				crash.Store("")
 				f := remoteManager(t, st, func(o *Options) {
 					o.EvictHook = func(s string) error {
-						if s == crash {
+						if s == crash.Load().(string) {
 							return errors.New("crash at " + s)
 						}
 						return nil
@@ -485,13 +489,13 @@ func TestACrashAtEveryStepOfAnEvictionLeavesAGoodSpace(t *testing.T) {
 				remote := filterBare(t)
 				seedRemote(t, remote, 3)
 				in, root := f.evictable(remote)
-				crash = step
+				crash.Store(step)
 				if err := f.m.Evict(ctx, in.ID, EvictOptions{}); err == nil || !strings.Contains(err.Error(), "crash at "+step) {
 					t.Fatalf("%v", err)
 				}
 				// The process goes away here; the next one starts from what is on disk.
 				f.m.Close()
-				crash = ""
+				crash.Store("")
 				m2 := f.open(serving)
 				h, err := m2.Open(ctx, f.user, in.ID)
 				if err != nil {
@@ -1435,6 +1439,82 @@ func TestAPinnedSpaceStaysFullAfterLaterPulls(t *testing.T) {
 		items, _, err := h.Space.History(ctx, "SNAP000001", 30, "")
 		if err != nil || len(items) != 6 {
 			t.Fatalf("%d versions, %v", len(items), err)
+		}
+	})
+}
+
+// Making a partial clone full stops the filter first and leaves partial mode
+// last. Cut off in between (the remote goes away, the process ends), the clone
+// still lacks old versions, so it must still read as partial when it opens
+// again: they are fetched when asked for, and a retried disconnect fetches the
+// rest before the space becomes local.
+func TestAnInterruptedMakeFullLeavesAPartialCloneThatIsRepairedLater(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := remoteManager(t, st)
+		remote := filterBare(t)
+		seedRemote(t, remote, 3)
+		in, h := f.connected("Notes", remote)
+		if !h.Space.Partial() {
+			t.Fatal("not a partial clone")
+		}
+		root := f.root(in.ID)
+		f.r.setDown(true)
+		if err := f.m.Disconnect(ctx, h); err == nil {
+			t.Fatal("a disconnect that cannot fetch the old versions succeeded")
+		}
+		// The filter was stopped; old versions are still missing.
+		if cfg, _ := os.ReadFile(filepath.Join(root, ".git", "config")); strings.Contains(string(cfg), "partialclonefilter") {
+			t.Fatalf("the make-full did not get past stopping the filter:\n%s", cfg)
+		}
+		if out := runGit(t, root, "rev-list", "--objects", "--missing=print", "--all"); !strings.Contains(out, "?") {
+			t.Fatal("nothing is missing; the test does not interrupt anything")
+		}
+		if !h.Space.Partial() {
+			t.Fatal("the open space left partial mode with versions missing")
+		}
+		h.Release()
+		// The process goes away; the next one starts from what is on disk.
+		f.m.Close()
+		f.m = f.open(serving)
+		h2, err := f.m.Open(ctx, f.user, in.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer h2.Release()
+		if !h2.Space.Partial() {
+			t.Fatal("a clone that lacks old versions reopened as a full one")
+		}
+		f.r.setDown(false)
+		time.Sleep(10 * time.Millisecond)
+		items, _, err := h2.Space.History(ctx, "SNAP000001", 30, "")
+		if err != nil || len(items) != 3 {
+			t.Fatalf("%d versions, %v", len(items), err)
+		}
+		if v, err := h2.Space.Version(ctx, "SNAP000001", items[2].Commit); err != nil || v.Body != "version 1\n" {
+			t.Fatalf("%v %v", v, err)
+		}
+		// The retried disconnect makes the clone whole, then local.
+		if err := f.m.Disconnect(ctx, h2); err != nil {
+			t.Fatal(err)
+		}
+		if out := runGit(t, root, "rev-list", "--objects", "--missing=print", "--all"); strings.Contains(out, "?") {
+			t.Fatalf("the space became local with objects missing:\n%s", out)
+		}
+		if h2.Space.Partial() {
+			t.Fatal("a local space is partial")
+		}
+		cfg, _ := os.ReadFile(filepath.Join(root, ".git", "config"))
+		for _, k := range []string{"promisor", "partialclone"} {
+			if strings.Contains(string(cfg), k) {
+				t.Fatalf("%s is still configured:\n%s", k, cfg)
+			}
+		}
+		items, _, err = h2.Space.History(ctx, "SNAP000001", 30, "")
+		if err != nil || len(items) != 3 {
+			t.Fatalf("%d versions after the disconnect, %v", len(items), err)
+		}
+		if v, err := h2.Space.Version(ctx, "SNAP000001", items[2].Commit); err != nil || v.Body != "version 1\n" {
+			t.Fatalf("%v %v", v, err)
 		}
 	})
 }

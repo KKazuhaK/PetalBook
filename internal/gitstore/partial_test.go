@@ -93,6 +93,31 @@ func TestPartialCloneFetchesOnlyWhatIsAskedFor(t *testing.T) {
 	}
 }
 
+// A clone whose filter was stopped but that still lacks objects is partial:
+// only LeavePartial, run once nothing is missing, makes it a full one.
+func TestAClonePartialUntilItLeavesPartialModeNotUntilTheFilterStops(t *testing.T) {
+	needGit(t)
+	ctx := context.Background()
+	remote := filterRemote(t)
+	seedHistory(t, remote)
+	r := newClone(t, fileURL(remote), nil)
+	if err := r.FetchFiltered(ctx, "main", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.StopFilter(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !r.IsPartial(ctx) {
+		t.Fatal("a clone that lacks objects read as full once its filter stopped")
+	}
+	if err := r.LeavePartial(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if r.IsPartial(ctx) {
+		t.Fatal("a clone that left partial mode still reads as partial")
+	}
+}
+
 func TestHistoryOfAPartialCloneFetchesVersionsInOneRequest(t *testing.T) {
 	needGit(t)
 	ctx := context.Background()

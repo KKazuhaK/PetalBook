@@ -228,7 +228,10 @@ func bytesTrim(b []byte) []byte {
 // being filtered (under fetchMu, so no pull is half way), so that nothing
 // fetched from then on lacks contents; then what is missing is fetched,
 // without holding up the pulls; last, under fetchMu again, nothing may be
-// missing from any ref before the clone stops being partial.
+// missing from any ref before the clone stops being partial. Cut off in
+// between, the clone still reads as partial when it opens again (IsPartial
+// looks at the promisor, which only LeavePartial removes), so its old versions
+// are fetched when asked for and a later MakeFull finishes the work.
 func (s *Space) MakeFull(ctx context.Context) error {
 	r := s.rem.Load()
 	if r == nil || !r.partial.Load() {

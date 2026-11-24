@@ -12,12 +12,10 @@ package gitstore
 // command, or into ErrMissing for the caller to map.
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -46,20 +44,30 @@ func (r *Repo) ensure() EnsureFunc {
 	return nil
 }
 
-// IsPartial reports whether the clone was made with an object filter: its
-// configuration says so (git writes it when a fetch is given --filter).
+// IsPartial reports whether the clone is a partial one: origin is a promisor
+// remote of it. That is what a filtered fetch sets and what LeavePartial
+// removes last, once nothing is missing. The filter itself is no guide:
+// StopFilter removes it first, while old versions may still be missing, and a
+// clone cut off between the two must still read as partial.
 func (r *Repo) IsPartial(ctx context.Context) bool {
-	gd, err := r.absGitDir(ctx)
+	out, err := r.git(ctx, "config", "--local", "--get-regexp", partialKeysPattern)
 	if err != nil {
-		return false
+		return false // exit 1: neither is set
 	}
-	// The configuration is the common directory's for a linked work tree; a
-	// space's own clone is a plain repository.
-	b, err := os.ReadFile(filepath.Join(gd, "config"))
-	if err != nil {
-		return false
+	for _, l := range strings.Split(out, "\n") {
+		k, v, _ := strings.Cut(strings.TrimSpace(l), " ")
+		switch strings.ToLower(k) {
+		case "extensions.partialclone":
+			if v != "" {
+				return true
+			}
+		case "remote.origin.promisor":
+			if b := strings.ToLower(v); b == "" || b == "true" || b == "yes" || b == "on" || b == "1" {
+				return true
+			}
+		}
 	}
-	return bytes.Contains(b, []byte("partialclonefilter"))
+	return false
 }
 
 // netIn is net with something on standard input.
