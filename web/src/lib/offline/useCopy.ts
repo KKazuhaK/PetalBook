@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { existingStore } from './manager'
 import { onSynced, isSyncing, subscribeBusy } from './poller'
 import { bytesOf, totalBytes } from './registry'
-import type { OfflineConfig, SyncState } from './store'
+import { CopyClosedError, type OfflineConfig, type SyncState } from './store'
 
 export interface CopyInfo {
   config: OfflineConfig | null
@@ -36,8 +36,11 @@ export function useCopy(user: string | undefined, space: string): { info: CopyIn
           setInfo({ config: config ?? null, state, catalog, texts, bytes, deviceBytes: totalBytes(), accountBytes: bytesOf(user) })
           setFailed(false)
         }
-      } catch {
-        if (alive) setFailed(true)
+      } catch (e) {
+        if (!alive) return
+        // The copy was cleared while it was read: read again (there is no copy now, or a new one).
+        if (e instanceof CopyClosedError) setRev((r) => r + 1)
+        else setFailed(true)
       }
     })()
     return () => {

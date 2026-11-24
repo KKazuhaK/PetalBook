@@ -8,16 +8,16 @@ import { DEFAULT_CONFIG, OfflineStore, type OfflineConfig } from './store'
 const open = new Map<string, Promise<OfflineStore>>()
 const keyOf = (user: string, space: string) => `${user}\u0000${space}`
 
-// The store of a space, opened (and made, if the space had none).
-export async function storeFor(user: string, space: string): Promise<OfflineStore> {
+// The store of a space, opened (and made, if the space had none and `create` says so).
+export async function storeFor(user: string, space: string, create = true): Promise<OfflineStore> {
   const k = keyOf(user, space)
   let p = open.get(k)
   if (p) {
-    const s = await p
-    if (!s.closed) return s
-    open.delete(k)
+    const s = await p.catch(() => undefined)
+    if (s && !s.closed) return s
+    if (open.get(k) === p) open.delete(k)
   }
-  p = OfflineStore.open(user, space)
+  p = OfflineStore.open(user, space, create)
   open.set(k, p)
   try {
     return await p
@@ -27,11 +27,12 @@ export async function storeFor(user: string, space: string): Promise<OfflineStor
   }
 }
 
-// The store of a space that has a copy on this device; undefined when it has none (nothing is made).
+// The store of a space that has a copy on this device; undefined when it has none. Nothing is made: a copy cleared
+// while this was opening it is not brought back as an empty database.
 export async function existingStore(user: string, space: string): Promise<OfflineStore | undefined> {
   if (!entryOf(user, space)) return undefined
   try {
-    return await storeFor(user, space)
+    return await storeFor(user, space, false)
   } catch {
     return undefined
   }
@@ -67,8 +68,8 @@ export async function dropCopy(user: string, space: string) {
   dropEntry(user, space)
 }
 
-// Signing out: everything this account keeps on the device goes, the databases that the registry does not know of
-// included (it lives in localStorage, which can be cleared apart from IndexedDB).
+// Signing out (or offline copies turned off): everything this account keeps on the device goes, the databases that
+// the registry does not know of included (it lives in localStorage, which can be cleared apart from IndexedDB).
 export async function clearAccount(user: string) {
   const names = new Set(spacesOf(user).map((s) => dbName(user, s)))
   if (typeof indexedDB.databases === 'function') {
@@ -81,7 +82,8 @@ export async function clearAccount(user: string) {
   for (const [k, p] of [...open]) {
     if (k.startsWith(`${user}\u0000`)) {
       open.delete(k)
-      await p.then((s) => s.close()).catch(() => undefined)
+      // A sync under way is stopped and waited out before its database is deleted.
+      await p.then((s) => s.closeAndWait()).catch(() => undefined)
     }
   }
   for (const n of names) await deleteDb(n).catch(() => undefined)

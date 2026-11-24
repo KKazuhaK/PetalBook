@@ -17,7 +17,8 @@ const TEXT_BATCH = 100
 const TEXT_PARALLEL = 4
 
 // 'off': the server says offline copies are turned off for this account's tenant (403 offline_off).
-export type Outcome = 'ok' | 'offline' | 'gone' | 'disabled' | 'off' | 'error'
+// 'cleared': the copy was cleared (or the account signed out) while it synced; the sync stopped and wrote nothing.
+export type Outcome = 'ok' | 'offline' | 'gone' | 'disabled' | 'off' | 'error' | 'cleared'
 export interface SyncResult {
   outcome: Outcome
   // The catalogue or the text changed: lists on screen are out of date.
@@ -49,26 +50,59 @@ export function classify(e: unknown): { outcome: Outcome; message: string } {
 const isExpired = (e: unknown) => e instanceof ApiError && e.status === 410 && e.code === 'changes_expired'
 
 // One sync of one space. It never throws: what went wrong is the outcome. A space that answers 404 is not the
-// person's to read any more, and its copy is deleted; one that is switched off keeps its copy, read only.
+// person's to read any more, and its copy is deleted; one that is switched off keeps its copy, read only. Clearing
+// the copy meanwhile stops the sync (its requests are aborted) and waits for it to end.
 export async function syncSpace(store: OfflineStore, opts: SyncOptions = {}): Promise<SyncResult> {
-  const cfg = await store.config()
-  if (!cfg) return { outcome: 'ok', changed: false }
+  if (store.closed) return CLEARED
+  const { signal, done } = either(opts.signal, store.signal)
+  let r: SyncResult
+  try {
+    r = await store.busy(() => syncOnce(store, { ...opts, signal }))
+  } finally {
+    done()
+  }
+  // Deleted once the sync has ended: deleting waits for the work under way on the copy, this sync among it.
+  if (r.outcome === 'gone') await store.destroy()
+  return r
+}
+
+const CLEARED: SyncResult = { outcome: 'cleared', changed: false }
+
+async function syncOnce(store: OfflineStore, opts: SyncOptions): Promise<SyncResult> {
   let changed = false
   try {
+    const cfg = await store.config()
+    if (!cfg) return { outcome: 'ok', changed: false }
     changed = await run(store, cfg, opts)
     await store.setState({ error: '', disabled: false, syncedAt: (opts.now ?? Date.now)() })
     return { outcome: 'ok', changed }
   } catch (e) {
+    // The copy was closed under it: whatever failed failed for that, and nothing is written to it.
+    if (store.closed) return CLEARED
     const c = classify(e)
-    if (c.outcome === 'gone') {
-      await store.destroy()
-    } else if (c.outcome === 'disabled') {
-      await store.setState({ disabled: true, error: '' })
-    } else if (c.outcome === 'error') {
-      await store.setState({ error: c.message })
+    try {
+      if (c.outcome === 'disabled') await store.setState({ disabled: true, error: '' })
+      else if (c.outcome === 'error') await store.setState({ error: c.message })
+    } catch (w) {
+      if (store.closed) return CLEARED
+      return { outcome: 'error', changed, message: classify(w).message }
     }
     return { outcome: c.outcome, changed, message: c.message }
   }
+}
+
+// A signal that aborts when either does (AbortSignal.any is not in every browser the app supports), and what lets
+// go of the two (the copy's lives as long as the copy).
+function either(a: AbortSignal | undefined, b: AbortSignal): { signal: AbortSignal; done: () => void } {
+  if (!a) return { signal: b, done: () => undefined }
+  const c = new AbortController()
+  const onA = () => c.abort(a.reason)
+  const onB = () => c.abort(b.reason)
+  if (a.aborted) onA()
+  else if (b.aborted) onB()
+  a.addEventListener('abort', onA, { once: true })
+  b.addEventListener('abort', onB, { once: true })
+  return { signal: c.signal, done: () => (a.removeEventListener('abort', onA), b.removeEventListener('abort', onB)) }
 }
 
 async function run(store: OfflineStore, cfg: Awaited<ReturnType<OfflineStore['config']>> & object, opts: SyncOptions): Promise<boolean> {

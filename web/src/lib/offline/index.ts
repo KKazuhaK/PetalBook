@@ -16,7 +16,7 @@ export { clearAccount, configure, dropCopy, existingStore, hasCopy, storeFor } f
 export { onOfflineOff, onSynced, pollOnce, startPolling, syncNow, isSyncing, anySyncing, subscribeBusy, POLL_MS } from './poller'
 export { isOffline, useOffline } from './status'
 export { useOfflineAllowed } from './allowed'
-export { DEFAULT_CONFIG, RECENT_KEPT, type OfflineConfig, type OfflineMode, type SyncState } from './store'
+export { CopyClosedError, DEFAULT_CONFIG, RECENT_KEPT, type OfflineConfig, type OfflineMode, type SyncState } from './store'
 
 // Registers what the API client needs to answer reads from the device and to delete the copies on sign-out.
 export function installOffline() {
@@ -31,12 +31,15 @@ export async function noteOpened(space: string, page: Page, now: () => number = 
   if (!user) return
   const store = await existingStore(user, space)
   if (!store) return
-  const cfg = await store.config()
-  if (!cfg || cfg.mode !== 'text' || !cfg.recent) return
-  await store.touchOpened(page.id, now())
-  if (isOffline()) return
-  const have = (await store.textMetas()).find((m) => m.id === page.id)
-  if (have?.rev === page.rev) return
-  if (totalBytes() + pageBytes(page) > DEFAULT_CAP_BYTES) return
-  await store.putPages([page])
+  // Work on the copy that clearing it waits out; a copy cleared meanwhile ends it with CopyClosedError.
+  await store.busy(async () => {
+    const cfg = await store.config()
+    if (!cfg || cfg.mode !== 'text' || !cfg.recent) return
+    await store.touchOpened(page.id, now())
+    if (isOffline()) return
+    const have = (await store.textMetas()).find((m) => m.id === page.id)
+    if (have?.rev === page.rev) return
+    if (totalBytes() + pageBytes(page) > DEFAULT_CAP_BYTES) return
+    await store.putPages([page])
+  })
 }

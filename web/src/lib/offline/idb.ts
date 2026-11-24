@@ -14,10 +14,11 @@ export const committed = (tx: IDBTransaction): Promise<void> =>
     tx.onabort = () => reject(tx.error ?? new Error('IndexedDB transaction aborted'))
   })
 
-export function openDb(name: string, version: number, upgrade: (db: IDBDatabase, oldVersion: number) => void): Promise<IDBDatabase> {
+// `upgrade` is given the upgrade's transaction too: aborting it when the database is new leaves nothing made.
+export function openDb(name: string, version: number, upgrade: (db: IDBDatabase, oldVersion: number, tx: IDBTransaction) => void): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const r = indexedDB.open(name, version)
-    r.onupgradeneeded = (e) => upgrade(r.result, e.oldVersion)
+    r.onupgradeneeded = (e) => upgrade(r.result, e.oldVersion, r.transaction!)
     r.onsuccess = () => resolve(r.result)
     r.onerror = () => reject(r.error ?? new Error('IndexedDB could not be opened'))
     r.onblocked = () => reject(new Error('IndexedDB is blocked by another tab'))
