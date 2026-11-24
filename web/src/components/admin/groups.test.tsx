@@ -47,6 +47,9 @@ const button = (label: string, root: ParentNode = document) =>
   [...root.querySelectorAll('button')].find(
     (b) => b.textContent?.trim() === label || b.getAttribute('aria-label') === label,
   ) ?? null
+// Whether a person is among the group's members: the row with a way to take them out. The text of the dialog
+// would also match the add form (its "Username" label runs into what is typed in it).
+const isMember = (name: string) => button(ta.removePersonLabel(name), dlg()) !== null
 const dlg = () => document.querySelector<HTMLElement>('[role="dialog"]')!
 const sent = () =>
   m!.requests.filter((r) => r.method !== 'GET' && r.url !== '/api/login').map((r) => `${r.method} ${r.url}`)
@@ -132,10 +135,12 @@ describe('the Groups page', () => {
     const form = () => dlg().querySelector<HTMLElement>('[data-slot="add-people"]')!
     // Picked from a search.
     await type(form().querySelector<HTMLInputElement>('#group-pick-search')!, 'tang')
-    await settle(() => form().querySelector('input[type="checkbox"]') !== null, 'the match')
-    await click(form().querySelector('input[type="checkbox"]'))
+    // The list of everyone stays until the search for what was typed answers, so wait for that answer alone.
+    const boxes = () => [...form().querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
+    await settle(() => boxes().length === 1 && boxes()[0].getAttribute('aria-label') === '名 tang (tang)', 'the match')
+    await click(boxes()[0])
     await click(button(ta.addSelected(1), form()))
-    await settle(() => dlg().textContent!.includes('名 tang'), 'tang is in')
+    await settle(() => isMember('名 tang'), 'tang is in')
     expect(sent().at(-1)).toMatch(/^POST \/api\/admin\/groups\/.+\/members$/)
     // Pasted, with a name that is no account: nothing is sent for it.
     await type(form().querySelector<HTMLTextAreaElement>('#group-paste')!, 'wu\nnobody')
@@ -145,14 +150,14 @@ describe('the Groups page', () => {
     await settle(() => !button(ta.pasteAdd, form())!.disabled, 'ready')
     const before = sent().length
     await click(button(ta.pasteAdd, form()))
-    await settle(() => sent().length === before + 1 && dlg().textContent!.includes('名 wu'), 'wu is in')
+    await settle(() => sent().length === before + 1 && isMember('名 wu'), 'wu is in')
     const body = JSON.parse(
       m!.requests.filter((r) => r.method === 'POST' && r.url.endsWith('/members')).at(-1)!.body!,
     ) as { userIds: string[] }
     expect(body.userIds).toHaveLength(2) // tang was in already: the server says so, not the page
     // Taken out.
     await click(button(ta.removePersonLabel('名 tang'), dlg()))
-    await settle(() => !dlg().textContent!.includes('名 tang'), 'tang is out')
+    await settle(() => !isMember('名 tang'), 'tang is out')
   })
 
   it("shows a synced group's people without a way to change them, and where each came from", async () => {
