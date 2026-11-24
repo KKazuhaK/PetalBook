@@ -10,7 +10,7 @@ import { DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { t } from '@/i18n'
 import { GeneralPanel } from './GeneralPanel'
-import { GitHubPanel } from './GitHubPanel'
+import { ConnectionsPanel } from './ConnectionsPanel'
 import { ImportPanel } from './ImportPanel'
 import { PreferencesPanel } from './PreferencesPanel'
 import { ProfilePanel } from './ProfilePanel'
@@ -70,11 +70,11 @@ export default function SettingsRoute() {
   // `?sso_error=`) and where to return to are kept.
   // A link that failed comes back to plain `/settings?sso_error=…`: its message is
   // shown where the linked sign-ins are. A GitHub connection for repos that
-  // failed comes back to `/settings?github_error=…`, explained on its own section.
+  // failed comes back to `/settings?connection_error=…`, explained on its own section.
   const query = new URLSearchParams(location.search)
   const landing =
-    requested === undefined && query.has('github_error') && shown.some((s) => s.id === 'github')
-      ? 'github'
+    requested === undefined && query.has('connection_error') && shown.some((s) => s.id === 'connections')
+      ? 'connections'
       : requested === undefined && query.has('sso_error') && shown.some((s) => s.id === 'security')
         ? 'security'
         : section
@@ -99,8 +99,8 @@ export default function SettingsRoute() {
           </Suspense>
         )
         break
-      case 'github':
-        body = <GitHubPanel />
+      case 'connections':
+        body = <ConnectionsPanel />
         break
       case 'usage':
         body = (

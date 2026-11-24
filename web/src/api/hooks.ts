@@ -10,7 +10,7 @@ import { api, ApiError, spaceApi } from './client'
 import { parseTagColor } from '../lib/tagColors.ts'
 import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
 import { propsOfMeta } from '../lib/pageTypes.ts'
-import type { MembersResponse, CreateSpaceInput, BatchPagesInput, ChecksResponse, FixCheckInput, ConnectRemoteInput, DailyPrefs, DailySettings, Favorite, FavoriteList, FavoriteRef, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, ProblemKind, PutTemplateInput, PutViewsInput, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
+import type { MembersResponse, CreateSpaceInput, BatchPagesInput, ChecksResponse, FixCheckInput, ConnectRemoteInput, DailyPrefs, DailySettings, Favorite, FavoriteList, FavoriteRef, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, ProblemKind, PutTemplateInput, PutViewsInput, Provider, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
 
 // Everything of one space is under ['space', id, …], so switching space never
 // shows another space's data and one invalidation covers a space.
@@ -47,12 +47,12 @@ export const keys = {
   tenantSettings: (id: string) => ['admin', 'settings', 'tenant', id] as const,
   mySettings: (space: string) => ['settings', space] as const,
   adminDaily: ['admin', 'daily'] as const,
-  adminGitHub: ['admin', 'github'] as const,
-  adminGitHubInstallations: ['admin', 'github', 'installations'] as const,
-  // GitHub, for everyone: the App and the caller's connection; the accounts to make a repository in; a repository list.
-  github: ['github'] as const,
-  githubOwners: ['github', 'owners'] as const,
-  githubRepos: (which: string) => ['github', 'repos', which] as const,
+  adminGitHub: ['admin', 'connections', 'github'] as const,
+  adminGitHubInstallations: ['admin', 'connections', 'github', 'installations'] as const,
+  // Connections, for everyone: the providers and the caller's connection to each; the accounts to make a repository in; a repository list.
+  connections: ['connections'] as const,
+  connectionOwners: (provider: string) => ['connections', provider, 'owners'] as const,
+  connectionRepos: (provider: string, which: string) => ['connections', provider, 'repos', which] as const,
   // A space an administrator opens without being a member of it.
   viewedSpace: (space: string) => ['admin', 'spaces', 'view', space] as const,
   space: (space: string) => ['space', space] as const,
@@ -507,19 +507,30 @@ export function useCreateFolder() {
 
 // --- spaces, account, users ----------------------------------------------------
 
-// --- GitHub ---------------------------------------------------------------------
+// --- connections ------------------------------------------------------------------
 
-// The App and the caller's connection. Accounts mode only; a server with no App answers with `app: null`.
-export function useGitHub(enabled = true) {
-  return useQuery({ queryKey: keys.github, queryFn: ({ signal }) => api.github(signal), enabled, staleTime: 15_000 })
+// The providers of this server and the caller's connection to each. Accounts mode only.
+export function useConnections(enabled = true) {
+  return useQuery({ queryKey: keys.connections, queryFn: ({ signal }) => api.connections(signal), enabled, staleTime: 15_000 })
 }
 
-// The accounts a repository can be made in, a page at a time (one call to GitHub each).
-export function useGitHubOwners(enabled = true) {
+// One provider, from the same query; undefined while loading or when the server has none by that id.
+export function useProvider(id: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.connections,
+    queryFn: ({ signal }) => api.connections(signal),
+    enabled,
+    staleTime: 15_000,
+    select: (d): Provider | undefined => d.providers.find((p) => p.id === id),
+  })
+}
+
+// The accounts a repository can be made in, a page at a time (one call to the platform each).
+export function useConnectionOwners(provider: string, enabled = true) {
   return useInfiniteQuery({
-    queryKey: keys.githubOwners,
+    queryKey: keys.connectionOwners(provider),
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => api.githubOwners(pageParam || undefined, signal),
+    queryFn: ({ pageParam, signal }) => api.connectionOwners(provider, pageParam || undefined, signal),
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 30_000,
@@ -527,11 +538,11 @@ export function useGitHubOwners(enabled = true) {
 }
 
 // The repositories of an installation (or the caller's own), a page at a time.
-export function useGitHubRepos(which: { installation: number } | { mine: true } | null) {
+export function useConnectionRepos(provider: string, which: { installation: number } | { mine: true } | null) {
   return useInfiniteQuery({
-    queryKey: keys.githubRepos(which === null ? 'none' : 'installation' in which ? `i${which.installation}` : 'mine'),
+    queryKey: keys.connectionRepos(provider, which === null ? 'none' : 'installation' in which ? `i${which.installation}` : 'mine'),
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => api.githubRepos(which!, pageParam || undefined, signal),
+    queryFn: ({ pageParam, signal }) => api.connectionRepos(provider, which!, pageParam || undefined, signal),
     getNextPageParam: (last) => last.next || undefined,
     enabled: which !== null,
     staleTime: 30_000,
@@ -539,27 +550,27 @@ export function useGitHubRepos(which: { installation: number } | { mine: true } 
 }
 
 // Disconnecting ends every sync that used the connection: the spaces and the remotes read again.
-export function useDisconnectGitHub() {
+export function useDisconnect() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: () => api.githubDisconnect(),
-    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: keys.github }), qc.invalidateQueries({ queryKey: keys.spaces }), qc.invalidateQueries({ queryKey: ['space'] })]),
+    mutationFn: (provider: string) => api.connectionDisconnect(provider),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: keys.connections }), qc.invalidateQueries({ queryKey: keys.spaces }), qc.invalidateQueries({ queryKey: ['space'] })]),
   })
 }
 
 // Forgets a reminder of an empty repository ("I deleted it").
-export function useDismissGitHubLeftover() {
+export function useDismissLeftover() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (repoId: number) => api.githubDismissLeftover(repoId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.github }),
+    mutationFn: ({ provider, repoId }: { provider: string; repoId: number }) => api.connectionDismissLeftover(provider, repoId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.connections }),
   })
 }
 
 export function useCreateSpace() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: string | CreateSpaceInput) => (typeof input === 'string' ? api.createSpace(input) : api.createSpace(input.name, input.inbox, input.github)),
+    mutationFn: (input: string | CreateSpaceInput) => (typeof input === 'string' ? api.createSpace(input) : api.createSpace(input.name, input.inbox, input.sync)),
     // Another space, in the same list order the server gives: personal first, then by name.
     onSuccess: (space, input) => {
       qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => ({
@@ -568,11 +579,11 @@ export function useCreateSpace() {
       // One more space of theirs.
       void qc.invalidateQueries({ queryKey: keys.accountUsage })
       // A space on a repository answers the reminders of that repository.
-      if (typeof input !== 'string' && input.github) void qc.invalidateQueries({ queryKey: keys.github })
+      if (typeof input !== 'string' && input.sync) void qc.invalidateQueries({ queryKey: keys.connections })
     },
     // A failed attempt may have left a reminder of the repository it made.
     onError: (_e, input) => {
-      if (typeof input !== 'string' && input.github) void qc.invalidateQueries({ queryKey: keys.github })
+      if (typeof input !== 'string' && input.sync) void qc.invalidateQueries({ queryKey: keys.connections })
     },
   })
 }

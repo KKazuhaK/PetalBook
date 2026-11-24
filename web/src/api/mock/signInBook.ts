@@ -220,7 +220,7 @@ export function createSignInBook(o: SignInBookOptions) {
     } else if (kind === 'github') {
       if (!(input.github?.clientId ?? existing?.github?.clientId)) bad('缺少 clientId')
       const orgs = input.github?.organizations ?? existing?.github?.organizations ?? []
-      if ((merged.autoCreate ?? existing?.autoCreate) && orgs.length === 0) bad('GitHub 自动建号必须指定组织', 'github_auto_create_needs_org')
+      if ((merged.autoCreate ?? existing?.autoCreate) && orgs.length === 0) bad('GitHub 自动建号必须指定组织', 'auto_create_needs_org')
     } else {
       if (!/^https:\/\//.test(o.publicUrl ?? '')) bad('SAML 需要 https 的公开地址', 'saml_needs_https')
       const url = input.saml?.metadataUrl ?? existing?.saml?.metadataUrl ?? ''

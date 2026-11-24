@@ -12,7 +12,7 @@ import { GroupsPanel } from './GroupsPanel'
 import { SettingsPanel } from './SettingsPanel'
 import { TenantsPanel } from './TenantsPanel'
 import { SpacesPanel } from './SpacesPanel'
-import { GitHubPanel } from './GitHubPanel'
+import { StoragePanel } from './StoragePanel'
 import { StatusPanel } from './StatusPanel'
 import { UsagePanel } from './UsagePanel'
 import { UsersPanel } from './UsersPanel'
@@ -24,11 +24,11 @@ const AccessPanel = lazy(() => import('./AccessPanel').then((m) => ({ default: m
 const MailPanel = lazy(() => import('./MailPanel').then((m) => ({ default: m.MailPanel })))
 const SecurityPanel = lazy(() => import('./AdminSecurityPanel').then((m) => ({ default: m.AdminSecurityPanel })))
 
-const ICONS: Record<AdminSection, typeof Users> = { users: Users, groups: UsersRound, spaces: Layers, daily: Quote, access: KeyRound, github: Link2, security: ShieldCheck, mail: Mail, settings: SlidersHorizontal, tenants: Building2, usage: Gauge, status: HardDrive }
-const SECTIONS: readonly AdminSection[] = ['users', 'groups', 'spaces', 'daily', 'access', 'github', 'security', 'mail', 'settings', 'tenants', 'usage', 'status']
+const ICONS: Record<AdminSection, typeof Users> = { users: Users, groups: UsersRound, spaces: Layers, daily: Quote, access: KeyRound, storage: Link2, security: ShieldCheck, mail: Mail, settings: SlidersHorizontal, tenants: Building2, usage: Gauge, status: HardDrive }
+const SECTIONS: readonly AdminSection[] = ['users', 'groups', 'spaces', 'daily', 'access', 'storage', 'security', 'mail', 'settings', 'tenants', 'usage', 'status']
 // What only an administrator of the whole server may open: the server's own settings. A tenant's
 // administrator sees the rest, for their tenant, and the settings page for their tenant's layer.
-const SITE_ONLY: readonly AdminSection[] = ['daily', 'access', 'github', 'security', 'mail', 'tenants', 'status']
+const SITE_ONLY: readonly AdminSection[] = ['daily', 'access', 'storage', 'security', 'mail', 'tenants', 'status']
 
 // The administration: users and invites, every space, the state of the server.
 // It is a route of its own, loaded only when an administrator goes there (see
@@ -87,7 +87,7 @@ export default function AdminRoute() {
             <AccessPanel />
           </Suspense>
         )}
-        {section === 'github' && <GitHubPanel />}
+        {section === 'storage' && <StoragePanel />}
         {section === 'security' && (
           <Suspense fallback={<PageFallback />}>
             <SecurityPanel />

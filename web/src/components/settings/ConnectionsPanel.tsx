@@ -3,67 +3,81 @@ import { useSearchParams } from 'react-router'
 import { ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/api/client'
-import type { GitHubLeftover } from '@/api/types'
-import { useCreateSpace, useDisconnectGitHub, useDismissGitHubLeftover, useGitHub, useGitHubOwners, useSession } from '@/api/hooks'
+import type { ConnectionLeftover, Provider } from '@/api/types'
+import { useConnectionOwners, useConnections, useCreateSpace, useDisconnect, useDismissLeftover, useProvider, useSession } from '@/api/hooks'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
+import { BrandIcon } from '@/components/brand/BrandIcon'
 import { Button } from '@/components/ui/button'
 import { absoluteTime, relativeTime } from '@/lib/time'
 import { t } from '@/i18n'
 import { tg } from '@/i18n/github'
 import { SettingsNote, SettingsRow, SettingsRows, SettingsSection } from './SettingsParts'
 
-// The account's GitHub connection (accounts mode): connect the GitHub account
-// to the server's App, see how it stands, and disconnect, with a warning of how
-// many spaces sync through it.
-export function GitHubPanel() {
+// The account's connected accounts (accounts mode): one row per platform the server connects to. Connect an
+// account, see how it stands, and disconnect, with a warning of how many spaces sync through it.
+export function ConnectionsPanel() {
   const session = useSession()
-  const info = useGitHub(session.data?.mode === 'accounts' && !!session.data.user)
+  const info = useConnections(session.data?.mode === 'accounts' && !!session.data.user)
   if (info.isPending || !session.data) return <PageFallback />
   if (info.isError) return <ErrorState message={t.fmt.labelled(t.settings.loadFailed, info.error.message)} onRetry={() => void info.refetch()} />
   const admin = session.data.user?.role === 'admin'
-  const { app, userAuthorization, authorization, leftovers } = info.data
+  // Only the platforms a person can connect an account to, and that the server has set up.
+  const rows = info.data.providers.filter((p) => p.capabilities.connectAccount && p.configured)
   return (
     <div className="space-y-8">
       <Failure />
-      {leftovers.length > 0 && <Leftovers items={leftovers} />}
-      {app === null ? (
+      {rows.length === 0 ? (
         <SettingsNote>
           {tg.account.notConfigured}
           {admin ? ` ${tg.account.notConfiguredAdmin}` : ''}
         </SettingsNote>
       ) : (
-        <SettingsSection title={tg.account.title} id="github-title" description={tg.account.intro}>
-          {authorization === null ? (
-            <Connect enabled={userAuthorization} admin={admin} label={tg.account.connect} />
-          ) : (
-            <Connected />
-          )}
+        rows.map((p) => <ProviderRow key={p.id} provider={p} admin={admin} />)
+      )}
+    </div>
+  )
+}
+
+// One platform: its reminders of places that did not finish syncing, then the account.
+function ProviderRow({ provider, admin }: { provider: Provider; admin: boolean }) {
+  const { app, userAuthorization, connection, leftovers } = provider
+  return (
+    <div className="space-y-6" data-provider={provider.id}>
+      {leftovers.length > 0 && <Leftovers provider={provider.id} items={leftovers} />}
+      <SettingsSection title={provider.name} id={`connection-${provider.id}-title`} description={tg.account.intro} icon={<BrandIcon type={provider.type} className="size-4" />}>
+        {connection === null ? (
+          <Connect provider={provider.id} enabled={userAuthorization} admin={admin} label={tg.account.connect} />
+        ) : (
+          <Connected provider={provider.id} />
+        )}
+        {app && (
           <p className="text-xs text-muted-foreground">
             <a className="inline-flex items-center gap-1 underline underline-offset-4" href={app.installUrl} target="_blank" rel="noreferrer noopener">
               {tg.account.install(app.name)}
               <ExternalLink className="size-3 shrink-0" />
             </a>
           </p>
-        </SettingsSection>
-      )}
+        )}
+      </SettingsSection>
     </div>
   )
 }
 
-// `?github_error=` from a connection that failed at GitHub: shown once, then taken out of the address.
+// `?connection_error=` from a connection that failed at the platform: shown once, then taken out of the address.
 function Failure() {
   const [params, setParams] = useSearchParams()
-  const [code] = useState(() => params.get('github_error') ?? '')
+  const [code] = useState(() => params.get('connection_error') ?? '')
   const ref = useRef<HTMLParagraphElement>(null)
   useEffect(() => {
-    if (params.has('github_error'))
+    if (params.has('connection_error'))
       setParams(
         (p) => {
           const next = new URLSearchParams(p)
-          next.delete('github_error')
+          next.delete('connection_error')
+          next.delete('provider')
           return next
         },
         { replace: true },
@@ -81,7 +95,7 @@ function Failure() {
 // Connect goes to the App's installation page, which authorises the person in the same flow (so installing on
 // their own account and connecting it are one step); `install` false goes to the authorisation page alone, for a
 // person who has the App installed already.
-function Connect({ enabled, admin, label }: { enabled: boolean; admin: boolean; label: string }) {
+function Connect({ provider, enabled, admin, label }: { provider: string; enabled: boolean; admin: boolean; label: string }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   if (!enabled)
@@ -96,7 +110,7 @@ function Connect({ enabled, admin, label }: { enabled: boolean; admin: boolean; 
     setError('')
     try {
       // Back here, on this section.
-      const { url } = await api.githubStart('/settings/github', install)
+      const { url } = await api.connectionStart(provider, '/settings/connections', install)
       window.location.assign(url)
     } catch (e) {
       setBusy(false)
@@ -121,16 +135,16 @@ function Connect({ enabled, admin, label }: { enabled: boolean; admin: boolean; 
   )
 }
 
-function Connected() {
-  const info = useGitHub()
-  const disconnect = useDisconnectGitHub()
+function Connected({ provider }: { provider: string }) {
+  const info = useProvider(provider)
+  const disconnect = useDisconnect()
   const [confirm, setConfirm] = useState(false)
-  const a = info.data?.authorization
+  const a = info.data?.connection
   if (!a) return null
   const expired = a.state === 'expired'
   const doDisconnect = async () => {
     try {
-      await disconnect.mutateAsync()
+      await disconnect.mutateAsync(provider)
       setConfirm(false)
       toast.success(tg.account.disconnected)
     } catch (e) {
@@ -163,7 +177,7 @@ function Connected() {
           <span className="text-sm tabular-nums">{tg.account.spaces(a.spaces)}</span>
         </SettingsRow>
       </SettingsRows>
-      {!expired && <NeedsInstall login={a.login} />}
+      {!expired && <NeedsInstall provider={provider} login={a.login} />}
       {expired && (
         <div role="alert" className="grid grid-cols-1 gap-1 rounded-lg border border-warning/50 bg-warning/5 p-3 text-sm">
           <p className="font-medium">{tg.account.expiredTitle}</p>
@@ -171,7 +185,7 @@ function Connected() {
         </div>
       )}
       <div className="flex flex-wrap gap-2">
-        {expired && <Connect enabled admin={false} label={tg.account.reconnect} />}
+        {expired && <Connect provider={provider} enabled admin={false} label={tg.account.reconnect} />}
         <Button type="button" variant="outline" onClick={() => setConfirm(true)}>
           {tg.account.disconnect}
         </Button>
@@ -196,8 +210,8 @@ function Connected() {
 
 // The person's own account, when the App is not installed there: GitHub lets nothing be made in it until it is.
 // One installation page connects and installs in the same step.
-function NeedsInstall({ login }: { login: string }) {
-  const owners = useGitHubOwners()
+function NeedsInstall({ provider, login }: { provider: string; login: string }) {
+  const owners = useConnectionOwners(provider)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const own = owners.data?.pages[0]?.items.find((o) => o.type === 'User' && o.needsInstall)
@@ -206,7 +220,7 @@ function NeedsInstall({ login }: { login: string }) {
     setBusy(true)
     setError('')
     try {
-      const { url } = await api.githubStart('/settings/github', true)
+      const { url } = await api.connectionStart(provider, '/settings/connections', true)
       window.location.assign(url)
     } catch (e) {
       setBusy(false)
@@ -228,29 +242,29 @@ function NeedsInstall({ login }: { login: string }) {
   )
 }
 
-// Empty repositories a failed attempt to make a space left on GitHub. Nothing there was deleted;
-// the person connects a space to one and tries again, or says they deleted it.
-function Leftovers({ items }: { items: GitHubLeftover[] }) {
+// Places on the platform a failed attempt to make a space left empty. Nothing there was deleted;
+// the person syncs a space to one and tries again, or says they deleted it.
+function Leftovers({ provider, items }: { provider: string; items: ConnectionLeftover[] }) {
   return (
-    <SettingsSection title={tg.account.leftoverTitle} id="github-leftovers-title" description={tg.account.leftoverHelp}>
+    <SettingsSection title={tg.account.leftoverTitle} id={`connection-${provider}-leftovers-title`} description={tg.account.leftoverHelp}>
       <ul className="divide-y rounded-lg border">
         {items.map((l) => (
-          <Leftover key={l.repoId} item={l} />
+          <Leftover key={l.repoId} provider={provider} item={l} />
         ))}
       </ul>
     </SettingsSection>
   )
 }
 
-function Leftover({ item: l }: { item: GitHubLeftover }) {
+function Leftover({ provider, item: l }: { provider: string; item: ConnectionLeftover }) {
   const create = useCreateSpace()
-  const dismiss = useDismissGitHubLeftover()
+  const dismiss = useDismissLeftover()
   const [error, setError] = useState('')
   const [owner, name] = l.fullName.split('/')
   const retry = async () => {
     setError('')
     try {
-      const space = await create.mutateAsync({ name: l.spaceName, github: { owner, name, create: false } })
+      const space = await create.mutateAsync({ name: l.spaceName, sync: { provider, owner, name, create: false } })
       toast.success(tg.account.leftoverRetried(space.name, l.fullName))
     } catch (e) {
       setError(t.fmt.labelled(tg.account.leftoverFailed, e instanceof ApiError ? e.message : tg.account.errors.unknown))
@@ -259,7 +273,7 @@ function Leftover({ item: l }: { item: GitHubLeftover }) {
   const forget = async () => {
     setError('')
     try {
-      await dismiss.mutateAsync(l.repoId)
+      await dismiss.mutateAsync({ provider, repoId: l.repoId })
     } catch (e) {
       setError(t.fmt.labelled(tg.account.leftoverDismissFailed, e instanceof ApiError ? e.message : tg.account.errors.unknown))
     }

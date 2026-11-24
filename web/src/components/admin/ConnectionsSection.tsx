@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router'
 import { ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
-import { useAdminGitHub, useAdminGitHubInstallations, useCheckAdminGitHub, useDeleteAdminGitHub, useSaveAdminGitHub, useShareGitHubInstallation, useStartGitHubManifest, useTenants } from '@/api/admin'
+import { useAdminGitHub, useAdminGitHubInstallations, useCheckAdminGitHub, useDeleteAdminGitHub, useRetryGitHubManifest, useSaveAdminGitHub, useShareGitHubInstallation, useStartGitHubManifest, useTenants } from '@/api/admin'
 import { ApiError } from '@/api/client'
 import type { AdminGitHub, GitHubInstallation } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
@@ -16,12 +16,27 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from '@/components/ui/textarea'
 import { absoluteTime } from '@/lib/time'
 import { t } from '@/i18n'
+import { BrandIcon } from '@/components/brand/BrandIcon'
 import { postManifest } from './githubManifest'
 import { tg } from '@/i18n/github'
 
-// The server's one GitHub App: its settings, and where it is installed with the
-// tenants each organisation's installation is shared with (docs/api.md, "Administration").
-export function GitHubPanel() {
+// The connections of "Storage & sync": one card per platform the server can connect to. GitHub is the first;
+// the others (GitLab, Gitea) will each add a card here. A card is the platform's settings, and for GitHub where
+// the App is installed with the tenants each organisation's installation is shared with (docs/api.md,
+// "Administration", "Connections").
+export function ConnectionsSection() {
+  return (
+    <section aria-labelledby="connections-title" className="space-y-4">
+      <h2 id="connections-title" className="text-base font-semibold">
+        {tg.admin.connectionsTitle}
+      </h2>
+      <p className="text-sm text-muted-foreground">{tg.admin.connectionsIntro}</p>
+      <GitHubCard />
+    </section>
+  )
+}
+
+function GitHubCard() {
   const app = useAdminGitHub()
   if (app.isPending) return <PageFallback />
   if (app.isError) return <ErrorState message={t.fmt.labelled(tg.admin.loadFailed, app.error.message)} onRetry={() => void app.refetch()} />
@@ -34,19 +49,23 @@ export function GitHubPanel() {
   )
 }
 
-// `?github_app=created` or `?github_app_error=<code>` from the App Manifest flow: shown once, then taken out of the address.
+// `?connection_app=created` or `?connection_app_error=<code>` from the App Manifest flow: shown once, then taken out of the address.
 function Returned() {
   const [params, setParams] = useSearchParams()
-  const [made] = useState(() => params.get('github_app') === 'created')
-  const [code] = useState(() => params.get('github_app_error') ?? '')
+  const [made] = useState(() => params.get('connection_app') === 'created')
+  const [code] = useState(() => params.get('connection_app_error') ?? '')
+  const [pending] = useState(() => params.get('pending') === '1')
+  const [slug] = useState(() => params.get('app') ?? '')
   const ref = useRef<HTMLParagraphElement>(null)
   useEffect(() => {
-    if (params.has('github_app') || params.has('github_app_error'))
+    if (params.has('connection_app') || params.has('connection_app_error'))
       setParams(
         (p) => {
           const next = new URLSearchParams(p)
-          next.delete('github_app')
-          next.delete('github_app_error')
+          next.delete('connection_app')
+          next.delete('connection_app_error')
+          next.delete('pending')
+          next.delete('app')
           return next
         },
         { replace: true },
@@ -57,9 +76,45 @@ function Returned() {
   }, [])
   if (made) return <p role="status" className="rounded-md border px-3 py-2 text-sm">{tg.admin.created}</p>
   if (!code) return null
+  if (code === 'unavailable') return <MadeButNotSaved slug={slug} pending={pending} />
   // Own keys only: a code like `constructor` is not a message.
   const message = Object.hasOwn(tg.admin.returned, code) ? tg.admin.returned[code as keyof typeof tg.admin.returned] : tg.admin.returned.unknown
   return <FormMessage focusRef={ref}>{t.fmt.labelled(tg.admin.createFailed, message)}</FormMessage>
+}
+
+// GitHub made the App but the server could not ask GitHub about it: the App exists there, and what GitHub gave
+// is kept sealed for ten minutes for one more try. Without it the administrator finishes by hand.
+function MadeButNotSaved({ slug, pending }: { slug: string; pending: boolean }) {
+  const retry = useRetryGitHubManifest()
+  const [state, setState] = useState<'waiting' | 'saved' | 'gone' | 'error'>('waiting')
+  const [error, setError] = useState('')
+  const go = async () => {
+    setError('')
+    try {
+      await retry.mutateAsync()
+      setState('saved')
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) setState('gone')
+      else setError(explain(e))
+    }
+  }
+  if (state === 'saved') return <p role="status" className="rounded-md border px-3 py-2 text-sm">{tg.admin.pendingSaved}</p>
+  return (
+    <div role="alert" className="grid grid-cols-1 gap-2 rounded-lg border border-warning/50 bg-warning/5 p-3 text-sm">
+      <p className="font-medium">{tg.admin.returned.unavailable}</p>
+      {slug && <p>{tg.admin.createdOnGitHub(slug)}</p>}
+      <p className="text-muted-foreground">{state === 'gone' ? tg.admin.pendingGone : pending ? tg.admin.pendingBody : tg.admin.pendingLost}</p>
+      {pending && state !== 'gone' && (
+        <div>
+          <Button type="button" size="sm" onClick={() => void go()} disabled={retry.isPending}>
+            {retry.isPending && <Spinner />}
+            {retry.isPending ? tg.admin.pendingRetrying : tg.admin.pendingRetry}
+          </Button>
+        </div>
+      )}
+      <FormMessage>{error}</FormMessage>
+    </div>
+  )
 }
 
 function explain(e: unknown): string {
@@ -118,7 +173,7 @@ function AppSettings({ app }: { app: AdminGitHub }) {
   }
 
   return (
-    <SettingsSection title={tg.admin.title} id="github-app-title" description={tg.admin.intro}>
+    <SettingsSection title={tg.admin.title} id="github-app-title" description={tg.admin.intro} icon={<BrandIcon type="github" className="size-5" />}>
       {app.configured && (
         <div className="grid grid-cols-1 gap-2 rounded-lg border p-3 text-sm">
           <p className="flex flex-wrap items-center gap-2 font-medium break-all">

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { ExternalLink } from 'lucide-react'
 import { ApiError, api } from '@/api/client'
-import { useCreateSpace, useGitHub, useGitHubOwners } from '@/api/hooks'
-import type { GitHubOwner, NewGitHubRepo, SpaceInfo } from '@/api/types'
+import { useConnectionOwners, useConnections, useCreateSpace } from '@/api/hooks'
+import type { ConnectionOwner, NewSync, SpaceInfo } from '@/api/types'
 import { Field } from '@/components/auth/Field'
 import { Spinner } from '@/components/common'
 import { Button } from '@/components/ui/button'
@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
 import { t } from '@/i18n'
+import { BrandIcon } from '@/components/brand/BrandIcon'
 import { tg } from '@/i18n/github'
 
 // A name for a repository from the name of a space: letters, digits and the few
@@ -32,8 +33,8 @@ interface Left {
   htmlUrl: string
 }
 
-// Makes a space: its name and, when the server has a GitHub App, whether to
-// make a repository for it on GitHub too (owner, name, private, description).
+// Makes a space: its name and where it is stored: on this server, or synced with a platform the server connects
+// to (the owner, name, privacy and description of the place made there for it).
 // Mounted only while open, so the form starts empty each time.
 export function NewSpaceDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (open: boolean) => void; onCreated: (space: SpaceInfo) => void }) {
   return (
@@ -45,10 +46,14 @@ export function NewSpaceDialog({ open, onOpenChange, onCreated }: { open: boolea
 
 function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: (space: SpaceInfo) => void }) {
   const create = useCreateSpace()
-  const github = useGitHub()
-  const app = github.data?.app ?? null
+  const connections = useConnections()
+  // The platforms a space can be synced to: set up, and able to make a place for it.
+  const providers = (connections.data?.providers ?? []).filter((p) => p.configured && p.capabilities.createRepo)
   const [name, setName] = useState('')
-  const [useRepo, setUseRepo] = useState(false)
+  // Where the space is stored: '' is this server, else the id of a provider.
+  const [where, setWhere] = useState('')
+  const provider = providers.find((p) => p.id === where) ?? null
+  const useRepo = provider !== null
   const [owner, setOwner] = useState('')
   const [repo, setRepo] = useState('')
   const [repoTouched, setRepoTouched] = useState(false)
@@ -63,11 +68,11 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
   const input = useRef<HTMLInputElement>(null)
   useEffect(() => input.current?.select(), [])
 
-  const owners = useGitHubOwners(useRepo && app !== null)
-  const list: GitHubOwner[] = owners.data?.pages.flatMap((p) => p.items) ?? []
+  const owners = useConnectionOwners(where, useRepo)
+  const list: ConnectionOwner[] = owners.data?.pages.flatMap((p) => p.items) ?? []
   // The first account until the person picks one.
   const chosen = list.find((o) => o.login === owner) ?? list[0]
-  const connected = github.data?.authorization?.state === 'ok'
+  const connected = provider?.connection?.state === 'ok'
 
   const submit = async (e: FormEvent, existing?: { owner: string; name: string }) => {
     e.preventDefault()
@@ -75,7 +80,7 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
     const trimmed = name.trim()
     const problems: typeof fieldError = {}
     if (trimmed === '' || Array.from(trimmed).length > 80) problems.name = t.spaces.nameInvalid
-    let gh: NewGitHubRepo | undefined
+    let gh: NewSync | undefined
     if (useRepo) {
       const repoName = existing?.name ?? repo.trim()
       const ownerLogin = existing?.owner ?? chosen?.login ?? ''
@@ -83,7 +88,7 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
       if (Array.from(description).length > 350 || Array.from(description).some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)) problems.description = tg.newSpace.descriptionInvalid
       if (ownerLogin === '') problems.repo ??= tg.newSpace.ownerNone
       if (existing === undefined && chosen?.needsInstall) problems.repo ??= tg.newSpace.errors.notInstalled(ownerLogin)
-      gh = { owner: ownerLogin, name: repoName, private: priv, ...(description.trim() ? { description: description.trim() } : {}), create: existing === undefined }
+      gh = { provider: where, owner: ownerLogin, name: repoName, private: priv, ...(description.trim() ? { description: description.trim() } : {}), create: existing === undefined }
     }
     setFieldError(problems)
     if (Object.keys(problems).length > 0) return
@@ -93,7 +98,7 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
     setTaken(false)
     try {
       // A Chinese-language app names the inbox folder in Chinese.
-      const space = await create.mutateAsync({ name: trimmed, inbox: t.inbox.folderName, ...(gh ? { github: gh } : {}) })
+      const space = await create.mutateAsync({ name: trimmed, inbox: t.inbox.folderName, ...(gh ? { sync: gh } : {}) })
       onCreated(space)
       onClose()
     } catch (err) {
@@ -107,26 +112,26 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
     const body = err.body as { repo?: { fullName?: string; htmlUrl?: string } } | undefined
     const code = err.code as string
     switch (code) {
-      case 'github_name_taken':
+      case 'name_taken':
         setTaken(true)
         return setFieldError({ repo: tg.newSpace.errors.nameTaken })
-      case 'github_push_failed':
-      case 'github_repo_not_in_installation':
+      case 'push_failed':
+      case 'repo_not_in_installation':
       case 'internal':
         if (body?.repo?.fullName) setLeft({ fullName: body.repo.fullName, htmlUrl: body.repo.htmlUrl ?? '' })
-        return setError(code === 'github_repo_not_in_installation' ? tg.newSpace.errors.notInInstallation : code === 'github_push_failed' ? tg.newSpace.errors.pushFailed : t.spaces.failed)
-      case 'github_no_permission':
+        return setError(code === 'repo_not_in_installation' ? tg.newSpace.errors.notInInstallation : code === 'push_failed' ? tg.newSpace.errors.pushFailed : t.spaces.failed)
+      case 'provider_refused':
         return setError(tg.newSpace.errors.noPermission(err.message))
-      case 'github_app_not_installed':
+      case 'app_not_installed':
         return setError(tg.newSpace.errors.notInstalled(chosen?.login ?? ''))
-      case 'github_app_missing_permission':
+      case 'app_missing_permission':
         if (body?.repo?.fullName) setLeft({ fullName: body.repo.fullName, htmlUrl: body.repo.htmlUrl ?? '' })
         return setError(tg.newSpace.errors.missingPermission((err.body as { missing?: string[] } | undefined)?.missing ?? []))
-      case 'github_owner_not_allowed':
+      case 'owner_not_allowed':
         return setError(tg.newSpace.errors.ownerNotAllowed)
-      case 'github_not_authorized':
+      case 'not_connected':
         return setError(tg.newSpace.errors.notAuthorized)
-      case 'github_not_configured':
+      case 'provider_not_configured':
         return setError(tg.newSpace.errors.notConfigured)
       case 'rate_limited':
         return setError(tg.newSpace.errors.rateLimited)
@@ -140,7 +145,7 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
   const connect = async () => {
     try {
       // Installing the App on one's own account connects it in the same step.
-      const { url } = await api.githubStart(window.location.pathname, true)
+      const { url } = await api.connectionStart(where, window.location.pathname, true)
       window.location.assign(url)
     } catch (err) {
       explain(err)
@@ -169,16 +174,28 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
           autoComplete="off"
         />
 
-        {app && (
+        {providers.length > 0 && (
           <fieldset className="grid min-w-0 grid-cols-1 gap-3 rounded-lg border p-3">
             <legend className="px-1 text-xs text-muted-foreground">{tg.newSpace.legend}</legend>
             <label className="flex cursor-pointer items-start gap-2 text-sm">
-              <input type="checkbox" className="mt-1 accent-[var(--brand)]" checked={useRepo} onChange={(e) => setUseRepo(e.target.checked)} />
+              <input type="radio" name="new-space-where" className="mt-1 accent-[var(--brand)]" checked={where === ''} onChange={() => setWhere('')} />
               <span className="min-w-0">
-                <span className="block font-medium">{tg.newSpace.option}</span>
-                <span className="block text-xs text-muted-foreground">{tg.newSpace.optionHelp}</span>
+                <span className="block font-medium">{tg.newSpace.whereServer}</span>
+                <span className="block text-xs text-muted-foreground">{tg.newSpace.whereServerHelp}</span>
               </span>
             </label>
+            {providers.map((p) => (
+              <label key={p.id} className="flex cursor-pointer items-start gap-2 text-sm">
+                <input type="radio" name="new-space-where" className="mt-1 accent-[var(--brand)]" checked={where === p.id} onChange={() => setWhere(p.id)} />
+                <span className="min-w-0">
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <BrandIcon type={p.type} className="size-4" />
+                    {tg.newSpace.whereSync(p.name)}
+                  </span>
+                  <span className="block text-xs text-muted-foreground">{tg.newSpace.optionHelp}</span>
+                </span>
+              </label>
+            ))}
 
             {useRepo && (
               <div className="grid min-w-0 grid-cols-1 gap-3">
@@ -194,7 +211,7 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
                 ) : list.length === 0 ? (
                   <div className="grid grid-cols-1 gap-2 text-sm">
                     <p className="text-muted-foreground">{tg.newSpace.ownerNone}</p>
-                    {github.data?.userAuthorization && !connected && (
+                    {provider?.userAuthorization && !connected && (
                       <div>
                         <Button type="button" variant="outline" onClick={() => void connect()}>
                           {tg.newSpace.connect}

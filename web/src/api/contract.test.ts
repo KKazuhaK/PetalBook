@@ -1610,14 +1610,14 @@ function suite(target: Target) {
       it('are for site administrators, and a re-check needs an App', async () => {
         const m = await newMember(uniq('ghc'))
         for (const [path, body] of [
-          ['/api/admin/github/check', {}],
-          ['/api/admin/github/manifest', {}],
+          ['/api/admin/connections/github/check', {}],
+          ['/api/admin/connections/github/manifest', {}],
         ] as const) {
           const r = await call(m.browser, 'POST', path, body)
           expect([r.status, r.json?.error], path).toEqual([403, 'forbidden'])
         }
-        const none = await call(admin, 'POST', '/api/admin/github/check', {})
-        expect([none.status, none.json?.error]).toEqual([409, 'github_not_configured'])
+        const none = await call(admin, 'POST', '/api/admin/connections/github/check', {})
+        expect([none.status, none.json?.error]).toEqual([409, 'provider_not_configured'])
       })
     })
 
@@ -1625,54 +1625,56 @@ function suite(target: Target) {
     describe.skipIf(!!REAL)('GitHub (mock only)', () => {
       const KEY = '-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu\n-----END RSA PRIVATE KEY-----\n'
       const CLIENT = 'Iv23liMockClientId'
-      const putApp = (b: Browser, body: unknown) => call(b, 'PUT', '/api/admin/github', body)
+      const putApp = (b: Browser, body: unknown) => call(b, 'PUT', '/api/admin/connections/github', body)
       const mockHook = (body: unknown) => call(admin, 'POST', '/api/_mock/github', body)
       const codeOf = (r: { json: any }) => r.json?.error
+      // The GitHub provider's entry in GET /api/connections.
+      const ghProvider = async (b: Browser) => ((await call(b, 'GET', '/api/connections')).json.providers as { id: string }[]).find((p) => p.id === 'github') as any
 
       // Plays the browser through connecting a GitHub account.
-      const connectAccount = async (b: Browser, ret = '/settings/github') => {
-        const start = await call(b, 'POST', '/api/github/authorization/start', { return: ret })
+      const connectAccount = async (b: Browser, ret = '/settings/connections') => {
+        const start = await call(b, 'POST', '/api/connections/github/authorization/start', { return: ret })
         expect(start.status).toBe(200)
         const cb = await call(b, 'GET', start.json.url, undefined, {})
         return cb
       }
 
-      it('starts with no App: everyone is told so, and every other endpoint answers 409 github_not_configured', async () => {
+      it('starts with no App: everyone is told so, and every other endpoint answers 409 provider_not_configured', async () => {
         const m = await newMember(uniq('gh0'))
-        const info = await call(m.browser, 'GET', '/api/github')
-        expect([info.status, info.json]).toEqual([200, { app: null, userAuthorization: false, authorization: null, leftovers: [] }])
-        const off = await call(admin, 'GET', '/api/admin/github')
+        const info = { json: await ghProvider(m.browser) }
+        expect(info.json).toMatchObject({ id: 'github', configured: false, app: null, userAuthorization: false, connection: null, leftovers: [] })
+        const off = await call(admin, 'GET', '/api/admin/connections/github')
         expect(off.json).toMatchObject({ configured: false })
-        expect(off.json.callbackUrl).toMatch(/\/api\/github\/authorization\/callback$/)
+        expect(off.json.callbackUrl).toMatch(/\/api\/connections\/github\/authorization\/callback$/)
         for (const [method, path, body] of [
-          ['POST', '/api/github/authorization/start', {}],
-          ['GET', '/api/github/owners'],
-          ['GET', '/api/github/repos?mine=true'],
-          ['GET', '/api/admin/github/installations'],
-          ['PUT', '/api/admin/github/installations/5001', { tenants: [] }],
+          ['POST', '/api/connections/github/authorization/start', {}],
+          ['GET', '/api/connections/github/owners'],
+          ['GET', '/api/connections/github/repos?mine=true'],
+          ['GET', '/api/admin/connections/github/installations'],
+          ['PUT', '/api/admin/connections/github/installations/5001', { tenants: [] }],
         ] as const) {
           const r = await call(method.startsWith('P') && path.startsWith('/api/admin') ? admin : path.startsWith('/api/admin') ? admin : m.browser, method, path, body)
-          expect([r.status, codeOf(r)], `${method} ${path}`).toEqual([409, 'github_not_configured'])
+          expect([r.status, codeOf(r)], `${method} ${path}`).toEqual([409, 'provider_not_configured'])
         }
-        const sp = await call(m.browser, 'POST', '/api/spaces', { name: 'Gh', github: { owner: 'kazuhahub', name: 'x' } })
-        expect([sp.status, codeOf(sp)]).toEqual([409, 'github_not_configured'])
+        const sp = await call(m.browser, 'POST', '/api/spaces', { name: 'Gh', storage: { sync: { provider: 'github', owner: 'kazuhahub', name: 'x' } } })
+        expect([sp.status, codeOf(sp)]).toEqual([409, 'provider_not_configured'])
       })
 
       it('is for administrators to set up: a member gets 403, a refused check saves nothing, and no secret is ever returned', async () => {
         const m = await newMember(uniq('gh1'))
         for (const [method, path, body] of [
-          ['GET', '/api/admin/github'],
-          ['PUT', '/api/admin/github', {}],
-          ['DELETE', '/api/admin/github'],
-          ['GET', '/api/admin/github/installations'],
+          ['GET', '/api/admin/connections/github'],
+          ['PUT', '/api/admin/connections/github', {}],
+          ['DELETE', '/api/admin/connections/github'],
+          ['GET', '/api/admin/connections/github/installations'],
         ] as const) {
           const r = await call(m.browser, method, path, body)
           expect([r.status, codeOf(r)], `${method} ${path}`).toEqual([403, 'forbidden'])
         }
         expect(codeOf(await putApp(admin, { appId: '1234567' }))).toBe('invalid')
-        expect(codeOf(await putApp(admin, { appId: '1234567', privateKey: 'nonsense' }))).toBe('github_key_invalid')
-        expect(codeOf(await putApp(admin, { appId: '1234567', privateKey: KEY, clientId: CLIENT, clientSecret: 'wrong' }))).toBe('github_client_rejected')
-        expect(((await call(admin, 'GET', '/api/admin/github')).json as any).configured).toBe(false)
+        expect(codeOf(await putApp(admin, { appId: '1234567', privateKey: 'nonsense' }))).toBe('key_invalid')
+        expect(codeOf(await putApp(admin, { appId: '1234567', privateKey: KEY, clientId: CLIENT, clientSecret: 'wrong' }))).toBe('client_rejected')
+        expect(((await call(admin, 'GET', '/api/admin/connections/github')).json as any).configured).toBe(false)
         const saved = await putApp(admin, { appId: '1234567', privateKey: KEY, clientId: CLIENT, clientSecret: 'a-secret' })
         expect(saved.status).toBe(200)
         expect(saved.json).toMatchObject({ configured: true, appId: '1234567', clientId: CLIENT, slug: 'petalbook-notes', privateKey: { set: true }, clientSecret: { set: true }, userAuthorization: true, missing: [], spaces: 0 })
@@ -1682,92 +1684,92 @@ function suite(target: Target) {
         // Saving again with the key and the secret left out keeps them.
         const again = await putApp(admin, { appId: '1234567' })
         expect(again.json).toMatchObject({ privateKey: { set: true }, clientSecret: { set: true } })
-        const seen = await call(m.browser, 'GET', '/api/github')
-        expect(seen.json).toMatchObject({ app: { name: 'PetalBook Notes', slug: 'petalbook-notes', htmlUrl: expect.any(String), installUrl: expect.stringContaining('/installations/new') }, userAuthorization: true, authorization: null })
+        const seen = { json: await ghProvider(m.browser) }
+        expect(seen.json).toMatchObject({ app: { name: 'PetalBook Notes', slug: 'petalbook-notes', htmlUrl: expect.any(String), installUrl: expect.stringContaining('/installations/new') }, userAuthorization: true, connection: null })
       })
 
       it('connects an account only from the browser that started it, once, and disconnects', async () => {
         const m = await newMember(uniq('gh2'))
         const other = await newMember(uniq('gh3'))
-        const start = await call(m.browser, 'POST', '/api/github/authorization/start', { return: '/settings/github' })
-        expect(start.json.url).toContain('/api/github/authorization/callback')
+        const start = await call(m.browser, 'POST', '/api/connections/github/authorization/start', { return: '/settings/connections' })
+        expect(start.json.url).toContain('/api/connections/github/authorization/callback')
         // Another browser, or no session: expired, nothing is connected.
         const stray = await call(other.browser, 'GET', start.json.url, undefined, {})
-        expect([stray.status, stray.headers.get('Location')]).toEqual([303, '/settings?github_error=expired'])
+        expect([stray.status, stray.headers.get('Location')]).toEqual([303, '/settings?provider=github&connection_error=expired'])
         const ok = await call(m.browser, 'GET', start.json.url, undefined, {})
-        expect([ok.status, ok.headers.get('Location')]).toEqual([303, '/settings/github'])
+        expect([ok.status, ok.headers.get('Location')]).toEqual([303, '/settings/connections'])
         const replay = await call(m.browser, 'GET', start.json.url, undefined, {})
-        expect(replay.headers.get('Location')).toBe('/settings?github_error=expired')
-        const info = await call(m.browser, 'GET', '/api/github')
-        expect(info.json.authorization).toMatchObject({ state: 'ok', spaces: 0 })
-        expect(typeof info.json.authorization.login).toBe('string')
-        expect((await call(m.browser, 'DELETE', '/api/github/authorization')).status).toBe(204)
-        expect((await call(m.browser, 'GET', '/api/github')).json.authorization).toBeNull()
-        expect((await call(m.browser, 'DELETE', '/api/github/authorization')).status).toBe(204)
+        expect(replay.headers.get('Location')).toBe('/settings?provider=github&connection_error=expired')
+        const info = { json: await ghProvider(m.browser) }
+        expect(info.json.connection).toMatchObject({ state: 'ok', spaces: 0 })
+        expect(typeof info.json.connection.login).toBe('string')
+        expect((await call(m.browser, 'DELETE', '/api/connections/github/authorization')).status).toBe(204)
+        expect((await ghProvider(m.browser)).connection).toBeNull()
+        expect((await call(m.browser, 'DELETE', '/api/connections/github/authorization')).status).toBe(204)
       })
 
       it('lists the accounts to create in and the repositories to connect, a page at a time', async () => {
         const m = await newMember(uniq('gh4'))
-        expect(codeOf(await call(m.browser, 'GET', '/api/github/repos?mine=true'))).toBe('github_not_authorized')
+        expect(codeOf(await call(m.browser, 'GET', '/api/connections/github/repos?mine=true'))).toBe('not_connected')
         await connectAccount(m.browser)
-        const owners = await call(m.browser, 'GET', '/api/github/owners')
+        const owners = await call(m.browser, 'GET', '/api/connections/github/owners')
         expect(owners.status).toBe(200)
         expect(owners.json.items[0]).toMatchObject({ type: 'User', via: 'user', installationId: null })
         const org = owners.json.items.find((o: any) => o.login === 'kazuhahub')
         expect(org).toMatchObject({ type: 'Organization', via: 'user', installationId: expect.any(Number) })
         expect(typeof owners.json.next).toBe('string')
-        const repos = await call(m.browser, 'GET', `/api/github/repos?installation=${org.installationId}`)
+        const repos = await call(m.browser, 'GET', `/api/connections/github/repos?installation=${org.installationId}`)
         expect(repos.status).toBe(200)
         expect(repos.json.items[0]).toMatchObject({ id: expect.any(Number), fullName: expect.stringContaining('kazuhahub/'), private: expect.any(Boolean), defaultBranch: 'main', canPush: true })
-        expect(codeOf(await call(m.browser, 'GET', '/api/github/repos'))).toBe('invalid')
-        expect(codeOf(await call(m.browser, 'GET', `/api/github/repos?installation=${org.installationId}&mine=true`))).toBe('invalid')
-        expect((await call(m.browser, 'GET', '/api/github/repos?installation=99')).status).toBe(404)
-        expect(codeOf(await call(m.browser, 'GET', '/api/github/owners?cursor=zzz'))).toBe('invalid')
+        expect(codeOf(await call(m.browser, 'GET', '/api/connections/github/repos'))).toBe('invalid')
+        expect(codeOf(await call(m.browser, 'GET', `/api/connections/github/repos?installation=${org.installationId}&mine=true`))).toBe('invalid')
+        expect((await call(m.browser, 'GET', '/api/connections/github/repos?installation=99')).status).toBe(404)
+        expect(codeOf(await call(m.browser, 'GET', '/api/connections/github/owners?cursor=zzz'))).toBe('invalid')
       })
 
       it('shares an organisation\'s installation with a tenant, and a member without a GitHub account there can then use it', async () => {
-        const list = await call(admin, 'GET', '/api/admin/github/installations')
+        const list = await call(admin, 'GET', '/api/admin/connections/github/installations')
         expect(list.status).toBe(200)
         const item = list.json.items.find((i: any) => i.account.login === 'petal-team')
         expect(item).toMatchObject({ account: { type: 'Organization' }, repositorySelection: 'selected', suspended: false, tenants: [], spaces: 0 })
-        expect(codeOf(await call(admin, 'PUT', `/api/admin/github/installations/${item.id}`, {}))).toBe('invalid')
-        expect(codeOf(await call(admin, 'PUT', `/api/admin/github/installations/${item.id}`, { shared: true }))).toBe('invalid')
-        expect(codeOf(await call(admin, 'PUT', `/api/admin/github/installations/${item.id}`, { tenants: ['01ZZZZZZZZ'] }))).toBe('invalid')
-        expect((await call(admin, 'PUT', '/api/admin/github/installations/424242', { tenants: [] })).status).toBe(404)
-        const put = await call(admin, 'PUT', `/api/admin/github/installations/${item.id}`, { tenants: ['0000000000'] })
+        expect(codeOf(await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, {}))).toBe('invalid')
+        expect(codeOf(await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, { shared: true }))).toBe('invalid')
+        expect(codeOf(await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, { tenants: ['01ZZZZZZZZ'] }))).toBe('invalid')
+        expect((await call(admin, 'PUT', '/api/admin/connections/github/installations/424242', { tenants: [] })).status).toBe(404)
+        const put = await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, { tenants: ['0000000000'] })
         expect(put.json).toMatchObject({ id: item.id, tenants: ['0000000000'] })
         const m = await newMember(uniq('gh5'))
-        const owners = await call(m.browser, 'GET', '/api/github/owners')
+        const owners = await call(m.browser, 'GET', '/api/connections/github/owners')
         expect(owners.json.items).toEqual([{ login: 'petal-team', type: 'Organization', via: 'app', installationId: item.id, needsInstall: false }])
-        const made = await call(m.browser, 'POST', '/api/spaces', { name: `Shared ${run}`, github: { owner: 'petal-team', name: `shared-${run}`, private: false, description: 'd' } })
+        const made = await call(m.browser, 'POST', '/api/spaces', { name: `Shared ${run}`, storage: { sync: { provider: 'github', owner: 'petal-team', name: `shared-${run}`, private: false, description: 'd' } } })
         expect(made.status).toBe(201)
         const remote = await call(m.browser, 'GET', `/api/spaces/${made.json.id}/remote`)
-        expect(remote.json).toMatchObject({ state: 'ok', errorCode: '', credential: { type: 'github', via: 'app', installationId: item.id, account: 'petal-team' } })
+        expect(remote.json).toMatchObject({ state: 'ok', errorCode: '', credential: { type: 'connection', provider: 'github', via: 'app', installationId: item.id, account: 'petal-team' } })
         // The App cannot be removed while a space syncs through it.
-        expect(codeOf(await call(admin, 'DELETE', '/api/admin/github'))).toBe('github_app_in_use')
+        expect(codeOf(await call(admin, 'DELETE', '/api/admin/connections/github'))).toBe('provider_in_use')
         await call(m.browser, 'DELETE', `/api/spaces/${made.json.id}/remote`)
-        expect((await call(admin, 'PUT', `/api/admin/github/installations/${item.id}`, { tenants: [] })).json.tenants).toEqual([])
+        expect((await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, { tenants: [] })).json.tenants).toEqual([])
       })
 
       it('creates a space with a new repository, or connects it to one that is there, and says why it could not', async () => {
         const m = await newMember(uniq('gh6'))
         await connectAccount(m.browser)
-        const body = (extra: Record<string, unknown>) => ({ name: `Repo ${run}`, github: { owner: 'kazuhahub', name: `notes-${run}`, ...extra } })
+        const body = (extra: Record<string, unknown>) => ({ name: `Repo ${run}`, storage: { sync: { provider: 'github', owner: 'kazuhahub', name: `notes-${run}`, ...extra } } })
         const made = await call(m.browser, 'POST', '/api/spaces', body({ private: true, description: 'Notes' }))
         expect(made.status).toBe(201)
         expect(made.headers.get('Location')).toBe(`/api/spaces/${made.json.id}`)
         expect(made.json.sync).toBe('ok')
         const remote = await call(m.browser, 'GET', `/api/spaces/${made.json.id}/remote`)
-        expect(remote.json).toMatchObject({ url: `https://github.com/kazuhahub/notes-${run}.git`, branch: 'main', state: 'ok', errorCode: '', credential: { type: 'github', via: 'app', account: 'kazuhahub', repoId: expect.any(Number) } })
+        expect(remote.json).toMatchObject({ url: `https://github.com/kazuhahub/notes-${run}.git`, branch: 'main', state: 'ok', errorCode: '', credential: { type: 'connection', provider: 'github', via: 'app', account: 'kazuhahub', repoId: expect.any(Number) } })
         expect(JSON.stringify(remote.json)).not.toMatch(/token|secret/i)
         // The same name again: taken; create: false uses it.
-        expect(codeOf(await call(m.browser, 'POST', '/api/spaces', body({})))).toBe('github_name_taken')
+        expect(codeOf(await call(m.browser, 'POST', '/api/spaces', body({})))).toBe('name_taken')
         expect((await call(m.browser, 'POST', '/api/spaces', body({ create: false }))).status).toBe(201)
-        expect(codeOf(await call(m.browser, 'POST', '/api/spaces', { name: 'x', github: { owner: 'nobody-here', name: 'x' } }))).toBe('github_owner_not_allowed')
+        expect(codeOf(await call(m.browser, 'POST', '/api/spaces', { name: 'x', storage: { sync: { provider: 'github', owner: 'nobody-here', name: 'x' } } }))).toBe('owner_not_allowed')
         expect(codeOf(await call(m.browser, 'POST', '/api/spaces', body({ name: 'bad name' })))).toBe('invalid')
         expect((await mockHook({ trap: 'noPermission' })).status).toBe(200)
         const refused = await call(m.browser, 'POST', '/api/spaces', body({ name: `other-${run}` }))
-        expect([refused.status, codeOf(refused)]).toEqual([403, 'github_no_permission'])
+        expect([refused.status, codeOf(refused)]).toEqual([403, 'provider_refused'])
         await mockHook({ trap: 'noPermission', on: false })
         const spaces = (await call(m.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]
         expect(spaces.filter((x) => x.name === `Repo ${run}`).length).toBe(2)
@@ -1777,34 +1779,34 @@ function suite(target: Target) {
         const m = await newMember(uniq('gh6b'))
         const other = await newMember(uniq('gh6c'))
         await connectAccount(m.browser)
-        expect((await call(m.browser, 'GET', '/api/github')).json.leftovers).toEqual([])
-        const body = (name: string, create = true) => ({ name: 'Kept', github: { owner: 'kazuhahub', name, create } })
+        expect((await ghProvider(m.browser)).leftovers).toEqual([])
+        const body = (name: string, create = true) => ({ name: 'Kept', storage: { sync: { provider: 'github', owner: 'kazuhahub', name, create } } })
         await mockHook({ trap: 'pushFails' })
         const failed = await call(m.browser, 'POST', '/api/spaces', body(`left-${run}`))
-        expect([failed.status, codeOf(failed)]).toEqual([502, 'github_push_failed'])
+        expect([failed.status, codeOf(failed)]).toEqual([502, 'push_failed'])
         const second = await call(m.browser, 'POST', '/api/spaces', body(`left2-${run}`))
         await mockHook({ trap: 'pushFails', on: false })
-        const list = (await call(m.browser, 'GET', '/api/github')).json.leftovers
+        const list = (await ghProvider(m.browser)).leftovers
         expect(list).toHaveLength(2)
         expect(list[1]).toMatchObject({ repoId: failed.json.repo.id, fullName: `kazuhahub/left-${run}`, htmlUrl: failed.json.repo.htmlUrl, spaceName: 'Kept', created: expect.stringMatching(/Z$/) })
         // Newest first, and only the person's own.
         expect(list[0].repoId).toBe(second.json.repo.id)
-        expect((await call(other.browser, 'GET', '/api/github')).json.leftovers).toEqual([])
+        expect((await ghProvider(other.browser)).leftovers).toEqual([])
         // A connection that is refused (a branch name that cannot be used) leaves the reminder.
         const sp = await ownedSpace(m, 'Refused')
-        const refused = await call(m.browser, 'PUT', `/api/spaces/${sp.id}/remote`, { url: `https://github.com/kazuhahub/left2-${run}.git`, branch: 'bad branch', credential: { type: 'github', via: 'user' } })
+        const refused = await call(m.browser, 'PUT', `/api/spaces/${sp.id}/remote`, { url: `https://github.com/kazuhahub/left2-${run}.git`, branch: 'bad branch', credential: { type: 'connection', provider: 'github', via: 'user' } })
         expect([refused.status, codeOf(refused)]).toEqual([400, 'invalid'])
-        expect((await call(m.browser, 'GET', '/api/github')).json.leftovers).toHaveLength(2)
+        expect((await ghProvider(m.browser)).leftovers).toHaveLength(2)
         // A space connecting to the repository (here by create: false) answers its reminder.
         expect((await call(m.browser, 'POST', '/api/spaces', body(`left-${run}`, false))).status).toBe(201)
-        expect((await call(m.browser, 'GET', '/api/github')).json.leftovers.map((l: any) => l.repoId)).toEqual([second.json.repo.id])
+        expect((await ghProvider(m.browser)).leftovers.map((l: any) => l.repoId)).toEqual([second.json.repo.id])
         // Dismissing is the person's own, and fine when it is gone already.
-        expect((await call(other.browser, 'DELETE', `/api/github/leftovers/${second.json.repo.id}`)).status).toBe(204)
-        expect((await call(m.browser, 'GET', '/api/github')).json.leftovers).toHaveLength(1)
-        expect((await call(m.browser, 'DELETE', `/api/github/leftovers/${second.json.repo.id}`)).status).toBe(204)
-        expect((await call(m.browser, 'DELETE', `/api/github/leftovers/${second.json.repo.id}`)).status).toBe(204)
-        expect((await call(m.browser, 'GET', '/api/github')).json.leftovers).toEqual([])
-        expect((await call(m.browser, 'DELETE', '/api/github/leftovers/nope')).status).toBe(404)
+        expect((await call(other.browser, 'DELETE', `/api/connections/github/leftovers/${second.json.repo.id}`)).status).toBe(204)
+        expect((await ghProvider(m.browser)).leftovers).toHaveLength(1)
+        expect((await call(m.browser, 'DELETE', `/api/connections/github/leftovers/${second.json.repo.id}`)).status).toBe(204)
+        expect((await call(m.browser, 'DELETE', `/api/connections/github/leftovers/${second.json.repo.id}`)).status).toBe(204)
+        expect((await ghProvider(m.browser)).leftovers).toEqual([])
+        expect((await call(m.browser, 'DELETE', '/api/connections/github/leftovers/nope')).status).toBe(404)
       })
 
       it('switches a space to the App or to the user\'s connection with PUT .../remote', async () => {
@@ -1812,22 +1814,22 @@ function suite(target: Target) {
         await connectAccount(m.browser)
         const sp = await ownedSpace(m, 'Switch')
         const put = (credential: unknown, url = 'https://github.com/kazuhahub/wiki.git') => call(m.browser, 'PUT', `/api/spaces/${sp.id}/remote`, { url, credential })
-        expect(codeOf(await put({ type: 'github' }))).toBe('invalid')
-        expect(codeOf(await put({ type: 'github', via: 'app' }, 'https://example.com/a/b.git'))).toBe('invalid')
-        const app = await put({ type: 'github', via: 'app' }, 'git@github.com:kazuhahub/wiki.git')
+        expect(codeOf(await put({ type: 'connection', provider: 'github' }))).toBe('invalid')
+        expect(codeOf(await put({ type: 'connection', provider: 'github', via: 'app' }, 'https://example.com/a/b.git'))).toBe('invalid')
+        const app = await put({ type: 'connection', provider: 'github', via: 'app' }, 'git@github.com:kazuhahub/wiki.git')
         expect(app.status).toBe(200)
-        expect(app.json).toMatchObject({ url: 'https://github.com/kazuhahub/wiki.git', credential: { type: 'github', via: 'app' } })
-        const mine = await call(m.browser, 'GET', '/api/github')
-        expect(mine.json.authorization.spaces).toBe(0)
-        const user = await put({ type: 'github', via: 'user' }, 'https://github.com/kazuhahub/notes.git')
-        expect(user.json).toMatchObject({ credential: { type: 'github', via: 'user', user: { id: m.user.id, username: m.user.username }, login: expect.any(String) } })
-        expect((await call(m.browser, 'GET', '/api/github')).json.authorization.spaces).toBe(1)
-        expect([(await put({ type: 'github', via: 'app' }, 'https://github.com/none/x.git')).status]).toEqual([409])
+        expect(app.json).toMatchObject({ url: 'https://github.com/kazuhahub/wiki.git', credential: { type: 'connection', provider: 'github', via: 'app' } })
+        const mine = { json: await ghProvider(m.browser) }
+        expect(mine.json.connection.spaces).toBe(0)
+        const user = await put({ type: 'connection', provider: 'github', via: 'user' }, 'https://github.com/kazuhahub/notes.git')
+        expect(user.json).toMatchObject({ credential: { type: 'connection', provider: 'github', via: 'user', user: { id: m.user.id, username: m.user.username }, login: expect.any(String) } })
+        expect((await ghProvider(m.browser)).connection.spaces).toBe(1)
+        expect([(await put({ type: 'connection', provider: 'github', via: 'app' }, 'https://github.com/none/x.git')).status]).toEqual([409])
         // An expired connection puts the space in error with a code that says why; connecting again and syncing fixes it.
         await mockHook({ expire: true, user: m.user.id })
         const bad = await call(m.browser, 'GET', `/api/spaces/${sp.id}/remote`)
-        expect(bad.json).toMatchObject({ state: 'error', errorCode: 'github_authorization_expired' })
-        expect((await call(m.browser, 'GET', '/api/github')).json.authorization.state).toBe('expired')
+        expect(bad.json).toMatchObject({ state: 'error', errorCode: 'connection_expired' })
+        expect((await ghProvider(m.browser)).connection.state).toBe('expired')
         await connectAccount(m.browser)
         const fixed = await call(m.browser, 'POST', `/api/spaces/${sp.id}/remote/sync`)
         expect(fixed.json).toMatchObject({ state: 'ok', errorCode: '' })
@@ -1835,32 +1837,32 @@ function suite(target: Target) {
 
       it('connects through the installation page in one flow, and tells the personal account that needs the App', async () => {
         const m = await newMember(uniq('gh10'))
-        const start = await call(m.browser, 'POST', '/api/github/authorization/start', { return: '/settings/github', install: true })
+        const start = await call(m.browser, 'POST', '/api/connections/github/authorization/start', { return: '/settings/connections', install: true })
         expect(start.status).toBe(200)
         expect(start.json.url).toContain('setup_action=install')
         const cb = await call(m.browser, 'GET', start.json.url, undefined, {})
-        expect([cb.status, cb.headers.get('Location')]).toEqual([303, '/settings/github'])
-        expect((await call(m.browser, 'GET', '/api/github')).json.authorization).toMatchObject({ state: 'ok' })
+        expect([cb.status, cb.headers.get('Location')]).toEqual([303, '/settings/connections'])
+        expect((await ghProvider(m.browser)).connection).toMatchObject({ state: 'ok' })
         // An organisation that has to approve the installation first.
-        const asked = await call(m.browser, 'POST', '/api/github/authorization/start', { return: '/settings/github', install: true })
+        const asked = await call(m.browser, 'POST', '/api/connections/github/authorization/start', { return: '/settings/connections', install: true })
         const pending = await call(m.browser, 'GET', asked.json.url.replace('setup_action=install', 'setup_action=request'), undefined, {})
-        expect(pending.headers.get('Location')).toBe('/settings?github_error=requested')
+        expect(pending.headers.get('Location')).toBe('/settings?provider=github&connection_error=requested')
         // The own account of someone the App is not installed on: marked, and refused with the way out.
         const other = await newMember(uniq('gh11'))
         await connectAccount(other.browser)
         await mockHook({ trap: 'personalNeedsInstall' })
         try {
-          const owners = await call(other.browser, 'GET', '/api/github/owners')
+          const owners = await call(other.browser, 'GET', '/api/connections/github/owners')
           expect(owners.json.items[0]).toMatchObject({ type: 'User', needsInstall: true })
           expect(owners.json.items.filter((o: any) => o.needsInstall)).toHaveLength(1)
           const login = owners.json.items[0].login
-          const refused = await call(other.browser, 'POST', '/api/spaces', { name: 'Own', github: { owner: login, name: `own-${run}` } })
-          expect([refused.status, codeOf(refused)]).toEqual([409, 'github_app_not_installed'])
+          const refused = await call(other.browser, 'POST', '/api/spaces', { name: 'Own', storage: { sync: { provider: 'github', owner: login, name: `own-${run}` } } })
+          expect([refused.status, codeOf(refused)]).toEqual([409, 'app_not_installed'])
           expect(refused.json.installUrl).toContain('/installations/new')
         } finally {
           await mockHook({ trap: 'personalNeedsInstall', on: false })
         }
-        expect((await call(m.browser, 'GET', '/api/github/owners')).json.items[0].needsInstall).toBe(false)
+        expect((await call(m.browser, 'GET', '/api/connections/github/owners')).json.items[0].needsInstall).toBe(false)
       })
 
       it('names the permission an App lacks, and the re-check shows what GitHub says now', async () => {
@@ -1868,32 +1870,32 @@ function suite(target: Target) {
         await connectAccount(m.browser)
         await mockHook({ trap: 'missingPermission' })
         try {
-          const r = await call(m.browser, 'POST', '/api/spaces', { name: 'Perm', github: { owner: 'kazuhahub', name: `perm-${run}` } })
-          expect([r.status, codeOf(r)]).toEqual([403, 'github_app_missing_permission'])
+          const r = await call(m.browser, 'POST', '/api/spaces', { name: 'Perm', storage: { sync: { provider: 'github', owner: 'kazuhahub', name: `perm-${run}` } } })
+          expect([r.status, codeOf(r)]).toEqual([403, 'app_missing_permission'])
           expect(r.json.missing).toEqual(['administration'])
         } finally {
           await mockHook({ trap: 'missingPermission', on: false })
         }
         // GitHub's side changes; the view keeps the last check until it is asked again.
-        const before = (await call(admin, 'GET', '/api/admin/github')).json
+        const before = (await call(admin, 'GET', '/api/admin/connections/github')).json
         expect(before).toMatchObject({ missing: [], gaps: [], anyAccount: true })
         await mockHook({ side: { permissions: { administration: 'write', metadata: 'read' }, gaps: [{ installationId: 5001, account: 'kazuhahub', missing: ['contents'] }], anyAccount: false } })
-        expect((await call(admin, 'GET', '/api/admin/github')).json).toMatchObject({ missing: [], gaps: [], anyAccount: true })
-        const checked = await call(admin, 'POST', '/api/admin/github/check', {})
+        expect((await call(admin, 'GET', '/api/admin/connections/github')).json).toMatchObject({ missing: [], gaps: [], anyAccount: true })
+        const checked = await call(admin, 'POST', '/api/admin/connections/github/check', {})
         expect(checked.status).toBe(200)
         expect(checked.json).toMatchObject({ missing: ['contents'], gaps: [{ installationId: 5001, account: 'kazuhahub', missing: ['contents'] }], anyAccount: false })
-        expect((await call(admin, 'GET', '/api/admin/github')).json.missing).toEqual(['contents'])
+        expect((await call(admin, 'GET', '/api/admin/connections/github')).json.missing).toEqual(['contents'])
         await mockHook({ side: { permissions: { administration: 'write', contents: 'write', metadata: 'read' }, gaps: [], anyAccount: true } })
-        expect((await call(admin, 'POST', '/api/admin/github/check', {})).json).toMatchObject({ missing: [], gaps: [], anyAccount: true })
+        expect((await call(admin, 'POST', '/api/admin/connections/github/check', {})).json).toMatchObject({ missing: [], gaps: [], anyAccount: true })
       })
 
       it('checks the organisation and name before making the App, and does not replace one that is in use', async () => {
         const m = await newMember(uniq('gh13'))
         await connectAccount(m.browser)
-        expect(codeOf(await call(admin, 'POST', '/api/admin/github/manifest', { organization: 'a/b' }))).toBe('invalid')
-        expect(codeOf(await call(admin, 'POST', '/api/admin/github/manifest', { name: 'x'.repeat(35) }))).toBe('invalid')
-        const used = await call(admin, 'POST', '/api/admin/github/manifest', { organization: 'kazuhahub' })
-        expect([used.status, codeOf(used)]).toEqual([409, 'github_app_in_use'])
+        expect(codeOf(await call(admin, 'POST', '/api/admin/connections/github/manifest', { organization: 'a/b' }))).toBe('invalid')
+        expect(codeOf(await call(admin, 'POST', '/api/admin/connections/github/manifest', { name: 'x'.repeat(35) }))).toBe('invalid')
+        const used = await call(admin, 'POST', '/api/admin/connections/github/manifest', { organization: 'kazuhahub' })
+        expect([used.status, codeOf(used)]).toEqual([409, 'provider_in_use'])
       })
 
       it('puts other remotes\' error states under errorCode too', async () => {
@@ -5068,7 +5070,7 @@ function suite(target: Target) {
       expect(await refused({ ...company })).toEqual([409, 'exists'])
       expect(await refused({ ...company, slug: 'second' })).toEqual([409, 'provider_issuer_in_use'])
       expect(await refused({ ...company, slug: 'http', oidc: { issuer: 'http://x.example', clientId: 'c' } })).toEqual([400, 'oidc_issuer_invalid'])
-      expect(await refused({ slug: 'gh', kind: 'github', name: 'GitHub', autoCreate: true, github: { clientId: 'c' } })).toEqual([400, 'github_auto_create_needs_org'])
+      expect(await refused({ slug: 'gh', kind: 'github', name: 'GitHub', autoCreate: true, github: { clientId: 'c' } })).toEqual([400, 'auto_create_needs_org'])
       expect(await refused({ slug: 'saml', kind: 'saml', name: 'S', saml: { metadataUrl: 'https://x.example/bad-metadata' } })).toEqual([400, 'saml_metadata_invalid'])
       expect(await refused({ slug: 'Bad Slug', kind: 'oidc', name: 'S', oidc: { issuer: 'https://y.example', clientId: 'c' } })).toEqual([400, 'invalid'])
     })

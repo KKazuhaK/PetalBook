@@ -436,13 +436,15 @@ export type SyncState = 'local' | RemoteState
 export type RemoteCredential =
   | { type: 'ssh'; publicKey: string; fingerprint: string }
   | { type: 'token'; username: string }
-  // The server's GitHub App (docs/api.md, "GitHub"): no secret is stored for the space or returned.
-  | { type: 'github'; via: 'app'; installationId: number; account: string; repoId: number }
-  | { type: 'github'; via: 'user'; user: { id: string; username: string }; login: string; account?: string; repoId: number }
+  // A provider's connection (docs/api.md, "Connections"): no secret is stored for the space or returned.
+  | { type: 'connection'; provider: string; via: 'app'; installationId: number; account: string; repoId: number }
+  | { type: 'connection'; provider: string; via: 'user'; user: { id: string; username: string }; login: string; account?: string; repoId: number }
 
 export interface Remote {
   url: string
   branch: string
+  // The provider the remote goes through (`git` for a plain address).
+  provider: string
   credential: RemoteCredential
   state: RemoteState
   // Absent before the first time the server saw the remote.
@@ -450,7 +452,7 @@ export interface Remote {
   // In words fit to show; empty when all is well.
   error: string
   // What `error` state needs, for choosing what to offer: `auth`, `hostkey`, `clone`, `rescued` or a
-  // `github_…` code (see GitHubErrorCode). A code this client does not know is treated like `auth`.
+  // connection code (see ConnectionErrorCode). A code this client does not know is treated like `auth`.
   errorCode: string
   // SSH only: the host key trusted on first connection.
   hostKey?: string
@@ -467,36 +469,52 @@ export interface ConnectRemoteInput {
   url: string
   branch?: string
   // A token left out while the space already has one keeps it.
-  credential: { type: 'ssh' } | { type: 'token'; username?: string; token?: string } | { type: 'github'; via: GitHubVia }
+  credential: { type: 'ssh' } | { type: 'token'; username?: string; token?: string } | { type: 'connection'; provider: string; via: ConnectionVia }
 }
 
-// --- GitHub (docs/api.md, "GitHub") ----------------------------------------------------
+// --- connections (docs/api.md, "Connections") ----------------------------------------------
 
-export type GitHubVia = 'app' | 'user'
-export type GitHubErrorCode = 'github_authorization_expired' | 'github_authorization_missing' | 'github_installation_gone' | 'github_not_configured' | 'github_app_missing_permission'
+export type ConnectionVia = 'app' | 'user'
+export type ConnectionErrorCode = 'connection_expired' | 'connection_missing' | 'installation_gone' | 'provider_not_configured' | 'app_missing_permission'
 
-export interface GitHubAuthorization {
+export interface Connection {
   login: string
-  githubId: number
+  accountId: string
   state: 'ok' | 'expired'
   connected: string
-  // Absent when the App does not expire user tokens.
+  // Absent when the platform does not expire tokens.
   refreshExpires?: string
   // How many spaces sync through this connection.
   spaces: number
 }
 
-export interface GitHubInfo {
+export interface ProviderCapabilities {
+  createRepo: boolean
+  installations: boolean
+  connectAccount: boolean
+  storageTarget: boolean
+  partialSync: 'yes' | 'no' | 'unknown'
+}
+
+// A platform the server syncs spaces with, and the caller's connection to it.
+export interface Provider {
+  id: string
+  type: string
+  host: string
+  name: string
+  owner: string
+  capabilities: ProviderCapabilities
+  configured: boolean
   app: { name: string; slug: string; htmlUrl: string; installUrl: string } | null
-  // Whether people can connect their GitHub account.
+  // Whether people can connect their account.
   userAuthorization: boolean
-  authorization: GitHubAuthorization | null
-  // Empty repositories that failed attempts to make a space left on GitHub, newest first.
-  leftovers: GitHubLeftover[]
+  connection: Connection | null
+  // Empty repositories that failed attempts to make a space left on the platform, newest first.
+  leftovers: ConnectionLeftover[]
 }
 
 // A reminder: the repository was made and kept; `spaceName` is what the space was to be called.
-export interface GitHubLeftover {
+export interface ConnectionLeftover {
   repoId: number
   fullName: string
   htmlUrl: string
@@ -504,17 +522,17 @@ export interface GitHubLeftover {
   created: string
 }
 
-export interface GitHubOwner {
+export interface ConnectionOwner {
   login: string
   type: 'User' | 'Organization'
   // Whose token creates the repository: the caller's own, or the installation's.
-  via: GitHubVia
+  via: ConnectionVia
   installationId: number | null
-  // The caller's own account, where the App is not installed: GitHub lets no repository be made there until it is.
+  // The caller's own account, where the App is not installed: no repository can be made there until it is.
   needsInstall: boolean
 }
 
-export interface GitHubRepo {
+export interface ConnectionRepo {
   id: number
   fullName: string
   private: boolean
@@ -523,26 +541,27 @@ export interface GitHubRepo {
   canPush: boolean
 }
 
-export interface GitHubCursorPage<T> {
+export interface CursorPage<T> {
   items: T[]
   // Opaque; empty after the last page.
   next: string
 }
 
-// A new space with its own repository on GitHub (`POST /api/spaces`, `github`).
-export interface NewGitHubRepo {
+// A new space stored on a provider (`POST /api/spaces`, `storage.sync`).
+export interface NewSync {
+  provider: string
   owner: string
   name: string
   private?: boolean
   description?: string
-  // False connects the space to the repository that exists already.
+  // False connects the space to the one that exists already.
   create?: boolean
 }
 
 export interface CreateSpaceInput {
   name: string
   inbox?: string
-  github?: NewGitHubRepo
+  sync?: NewSync
 }
 
 // The settings of the server's one GitHub App as an administrator sees them: never a secret.
@@ -661,20 +680,20 @@ export type ErrorCode =
   | 'last_owner'
   | 'personal_space'
   | 'busy'
-  | 'github_not_configured'
-  | 'github_not_authorized'
-  | 'github_owner_not_allowed'
-  | 'github_name_taken'
-  | 'github_no_permission'
-  | 'github_repo_not_in_installation'
-  | 'github_push_failed'
-  | 'github_key_invalid'
-  | 'github_app_rejected'
-  | 'github_client_rejected'
-  | 'github_app_in_use'
-  | 'github_app_missing_permission'
-  | 'github_app_not_installed'
-  | 'github_public_url_needed'
+  | 'provider_not_configured'
+  | 'not_connected'
+  | 'owner_not_allowed'
+  | 'name_taken'
+  | 'provider_refused'
+  | 'repo_not_in_installation'
+  | 'push_failed'
+  | 'key_invalid'
+  | 'app_rejected'
+  | 'client_rejected'
+  | 'provider_in_use'
+  | 'app_missing_permission'
+  | 'app_not_installed'
+  | 'public_url_needed'
   | 'rate_limited'
   | 'captcha_failed'
   | 'local_login_refused'
