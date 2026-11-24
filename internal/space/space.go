@@ -79,6 +79,9 @@ type Space struct {
 	// evicted is set for a space opened by OpenIndexOnly: it has an index and
 	// no files, so only what the index answers is available.
 	evicted bool
+	// settingsNote is the settings stamp the space had when it was last closed
+	// with its files (SettingsStamp of an evicted space).
+	settingsNote string
 
 	mu     sync.Mutex // serialises every change to files and the index
 	closed bool       // set by Close, under mu: later changes are refused before they write
@@ -175,6 +178,13 @@ const indexFile = "index.db"
 // "" when there is none to give.
 func StoredHead(stateDir string) (string, error) {
 	return index.StoredHead(filepath.Join(stateDir, indexFile))
+}
+
+// NoteRestored notes in the closed index of the space with this state directory
+// that its clone was made again from the remote (see index.NoteRestored): the
+// change cursors handed out before stay good.
+func NoteRestored(stateDir string) error {
+	return index.NoteRestored(filepath.Join(stateDir, indexFile))
 }
 
 // Open prepares the directory (git init, .petalbook/, space.yml), opens the
@@ -490,7 +500,13 @@ func (s *Space) Close() error {
 	if s.cm != nil {
 		err = s.cm.Close()
 	}
-	if cerr := s.idx.Close(); err == nil {
+	// The settings stamp is kept with the index, for the offline sync of the
+	// space when it is evicted and has no files to stamp (SettingsStamp).
+	var notes map[string]string
+	if !s.evicted {
+		notes = map[string]string{"settings": s.SettingsStamp()}
+	}
+	if cerr := s.idx.CloseWith(notes); err == nil {
 		err = cerr
 	}
 	return err
@@ -554,6 +570,10 @@ func OpenIndexOnly(opt Options) (*Space, error) {
 		return nil, err
 	}
 	s := &Space{root: root, stateDir: stateDir, name: opt.Name, idx: idx, log: log, now: time.Now, evicted: true}
+	if s.settingsNote, err = idx.StoredNote("settings"); err != nil {
+		idx.Close()
+		return nil, err
+	}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	return s, nil
 }

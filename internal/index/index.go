@@ -127,6 +127,10 @@ type Index struct {
 	wmu  sync.Mutex
 	// synced: a sync has been committed since the index was opened (under wmu).
 	synced bool
+	// restored: the space's clone was made again from its remote while the
+	// index was closed cleanly (see NoteRestored), so the first sync's finding
+	// that files differ is the remote's changes, not lost commits.
+	restored bool
 
 	// head is where the change feed is (see feed.go), moved by every commit.
 	head atomic.Pointer[headState]
@@ -343,6 +347,14 @@ func (x *Index) markOpen() error {
 	if err := tx.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = 'clean'`).Scan(&clean); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+	var restored string
+	if err := tx.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = 'restored'`).Scan(&restored); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	x.restored = clean == "1" && restored == "1"
+	if _, err := tx.ExecContext(ctx, `DELETE FROM meta WHERE key = 'restored'`); err != nil {
+		return err
+	}
 	if clean != "1" {
 		w := x.newWriter(ctx, tx)
 		defer w.close()
@@ -387,7 +399,12 @@ func (x *Index) insertMeta(ctx context.Context, tx *sql.Tx) error {
 // Close closes the database. The last thing written is the note that it was
 // closed (see markOpen); no write can come after it. The prepared index gets
 // no note: it holds no meta row at all.
-func (x *Index) Close() error {
+func (x *Index) Close() error { return x.CloseWith(nil) }
+
+// CloseWith is Close that also stores notes in the meta table, in the same
+// last write as the clean note: what the owner of the index wants read while
+// it is closed (see StoredNote). Keys of the index's own are not allowed.
+func (x *Index) CloseWith(notes map[string]string) error {
 	var err error
 	x.closing.Do(func() {
 		close(x.stop)
@@ -398,10 +415,81 @@ func (x *Index) Close() error {
 		defer x.wmu.Unlock()
 		// When this fails the next open starts a new epoch, which is safe.
 		if !x.template {
-			x.wdb.Exec(`INSERT OR REPLACE INTO meta(key, value) VALUES ('clean', '1')`)
+			x.writeCloseNotes(notes)
 		}
 		err = x.wdb.Close()
 	})
+	return err
+}
+
+// noteKeys are the notes CloseWith may store.
+var noteKeys = map[string]bool{"settings": true}
+
+// writeCloseNotes writes the notes and the clean note in one transaction.
+// When it fails the next open starts a new epoch, which is safe.
+func (x *Index) writeCloseNotes(notes map[string]string) {
+	tx, err := x.wdb.Begin()
+	if err != nil {
+		return
+	}
+	defer tx.Rollback()
+	for k, v := range notes {
+		if !noteKeys[k] {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)`, "note_"+k, v); err != nil {
+			return
+		}
+	}
+	if _, err := tx.Exec(`INSERT OR REPLACE INTO meta(key, value) VALUES ('clean', '1')`); err != nil {
+		return
+	}
+	tx.Commit()
+}
+
+// StoredNote is a note CloseWith stored the last time it closed the index
+// ("" when there is none).
+func (x *Index) StoredNote(key string) (string, error) {
+	var v string
+	err := x.db.QueryRow(`SELECT value FROM meta WHERE key = ?`, "note_"+key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return v, err
+}
+
+// NoteRestored notes in the closed index at dbPath that the space's clone is
+// being made again from its remote (milestone 3.1's restore), so that the
+// first sync after the next open takes the files that differ from what the
+// index recorded as changes, keeping the epoch: the cursors of offline
+// clients stay good. It notes nothing unless the index was closed cleanly
+// (its commits are all there), and the note is read and removed by the next
+// open (markOpen). A missing index or one of another version is left alone:
+// its next open builds it again, with a new epoch.
+func NoteRestored(dbPath string) error {
+	if strings.ContainsAny(dbPath, "?#") {
+		return fmt.Errorf("index path %q: '?' and '#' are not supported", dbPath)
+	}
+	if _, err := os.Stat(dbPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=busy_timeout(10000)")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return err
+	}
+	if version != schemaVersion {
+		return nil
+	}
+	_, err = db.Exec(`INSERT OR REPLACE INTO meta(key, value) SELECT 'restored', '1' WHERE EXISTS (SELECT 1 FROM meta WHERE key = 'clean' AND value = '1')`)
 	return err
 }
 

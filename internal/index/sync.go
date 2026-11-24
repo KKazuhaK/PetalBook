@@ -144,9 +144,11 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 		if err := w.clearAll(); err != nil {
 			return Stats{}, err
 		}
-	} else if !x.synced && differs {
+	} else if !x.synced && differs && !x.restored {
 		// The first sync after an open found files the index did not record: its
 		// last commits may have been lost, with the sequence numbers they handed out.
+		// Not after a restore (see NoteRestored): the index was closed cleanly and
+		// the files differ because the remote moved on.
 		if err := w.newEpoch(); err != nil {
 			return Stats{}, err
 		}

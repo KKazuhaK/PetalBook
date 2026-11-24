@@ -619,3 +619,101 @@ func TestStoredHeadOfAClosedIndex(t *testing.T) {
 		t.Fatalf("%+v", items)
 	}
 }
+
+// A space restored from its remote (3.1) keeps its index: the files that
+// changed on the remote while it was evicted come in as changes, under the same
+// epoch, so a cursor from before the eviction stays good. The note is used once
+// and only on an index that was closed cleanly.
+func TestFeedRestoreKeepsTheEpoch(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "state", "index.db")
+	x, err := Open(p, "/space")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := newMem()
+	src.put("a.md", pageFile(pageID(1), "A", "", nil, "", "x"))
+	syncAll(t, x, src, false)
+	head := x.Head()
+	x.Close()
+
+	// While it was evicted the remote got a new page.
+	src.put("b.md", pageFile(pageID(2), "B", "", nil, "", "y"))
+	if err := NoteRestored(p); err != nil {
+		t.Fatal(err)
+	}
+	x, err = Open(p, "/space")
+	if err != nil {
+		t.Fatal(err)
+	}
+	syncAll(t, x, src, false)
+	items, next := changesAll(t, x, head, 10)
+	if len(items) != 1 || items[0].ID != pageID(2) {
+		t.Fatalf("changes after a restore: %+v", items)
+	}
+	if next != x.Head() || !strings.HasPrefix(next, strings.SplitN(head, "-", 2)[0]+"-") {
+		t.Fatalf("the epoch moved: %s, was %s", next, head)
+	}
+	head = x.Head()
+	x.Close()
+
+	// The note was used up: the next open whose startup sync finds changes is
+	// a new epoch, as without a restore.
+	src.put("c.md", pageFile(pageID(3), "C", "", nil, "", "z"))
+	x, err = Open(p, "/space")
+	if err != nil {
+		t.Fatal(err)
+	}
+	syncAll(t, x, src, false)
+	if _, err := x.Changes(head, 10); err != ErrExpired {
+		t.Fatalf("the restore note was used twice: %v", err)
+	}
+	head = x.Head()
+	// An index that was not closed cleanly gets no note: its next open is a
+	// new epoch whatever the restore says.
+	if err := NoteRestored(p); err != nil {
+		t.Fatal(err)
+	}
+	y, err := Open(p, "/space")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer y.Close()
+	defer x.Close()
+	if y.Head() == head {
+		t.Fatal("an unclean index kept its epoch after a restore note")
+	}
+	// No index at all: nothing to note, nothing made.
+	none := filepath.Join(t.TempDir(), "none", "index.db")
+	if err := NoteRestored(none); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Dir(none)); !os.IsNotExist(err) {
+		t.Fatalf("NoteRestored made something: %v", err)
+	}
+}
+
+// Notes stored at Close are read by the next open, and Close keeps them.
+func TestCloseWithStoresNotes(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "index.db")
+	x, err := Open(p, "/space")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := x.CloseWith(map[string]string{"settings": "abc", "epoch": "nope"}); err != nil {
+		t.Fatal(err)
+	}
+	if h, err := StoredHead(p); err != nil || h == "" {
+		t.Fatalf("CloseWith did not close cleanly: %q %v", h, err)
+	}
+	x, err = Open(p, "/space")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer x.Close()
+	if v, err := x.StoredNote("settings"); err != nil || v != "abc" {
+		t.Fatalf("note %q %v", v, err)
+	}
+	if v, _ := x.StoredNote("epoch"); v != "" {
+		t.Fatalf("a key that is not a note was stored: %q", v)
+	}
+}

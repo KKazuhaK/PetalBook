@@ -629,6 +629,14 @@ func (m *Manager) restore(ctx context.Context, id string, op *restoreOp) error {
 	if _, err := os.Lstat(root); err == nil {
 		return errors.New("the directory of the space exists while it is being restored")
 	}
+	// The index is kept: its epoch and sequence numbers stay, so the cursors of
+	// offline clients stay good, and the files that changed on the remote come
+	// in as changes at the first sync. Without the note (it fails, or the index
+	// was not closed cleanly) that sync starts a new epoch: clients walk the
+	// catalogue again, which is safe.
+	if err := space.NoteRestored(state); err != nil {
+		m.log.Warn("could not note the restore in the index; offline clients will read the catalogue again", "space", id, "error", err)
+	}
 	if err := os.Rename(tmp, root); err != nil {
 		return err
 	}
@@ -761,6 +769,10 @@ func (m *Manager) Evict(ctx context.Context, id string, o EvictOptions) error {
 		if err := sp.Close(); err != nil {
 			return busyf("it could not be closed cleanly: %v", err)
 		}
+		// The head it closed at, for the offline heads (as closeIdle keeps it).
+		m.mu.Lock()
+		m.rememberHead(id, sp.Head())
+		m.mu.Unlock()
 	}
 	if err := m.evictHook("held"); err != nil {
 		return err

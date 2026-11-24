@@ -395,6 +395,10 @@ var indexOnlyRoutes = map[string]bool{
 	"GET /api/spaces/{space}/pages/{id}/backlinks": true,
 	"GET /api/spaces/{space}/pages/{id}/links":     true,
 	"GET /api/spaces/{space}/checks":               true,
+	// The offline sync's catalogue and changes (4.1); its page bodies
+	// (sync/pages) read files and restore the space as other content reads do.
+	"GET /api/spaces/{space}/sync/catalog": true,
+	"GET /api/spaces/{space}/changes":      true,
 }
 
 // indexOnly says whether this request can be answered by the index of an

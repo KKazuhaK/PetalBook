@@ -2356,7 +2356,8 @@ reached, and tries again at the next opening.
 An evicted space has no clone on the server: `DATA/spaces/<id>` is removed. Its
 index, its records (members, remote, drafts) and its settings in the state
 database stay. Lists, the tree, tags, search (the space's and the global one),
-links and backlinks and the checks are answered from the index without
+links and backlinks, the checks, and the offline sync's catalogue, changes
+and heads (see "Offline sync") are answered from the index without
 fetching anything, as fast as for a cached space. What the index does not
 hold is left out rather than fetched: a backlink's `excerpt` is `""` (it is
 the paragraph, read from the file), a listing has no tag colours and no type
@@ -2397,7 +2398,9 @@ restore and waits for it, up to 10 seconds:
    modification time the index recorded, so the index sees them as unchanged
    and the order "by update" is what it was; only the files that changed on
    the remote meanwhile are read again, as after a pull;
-4. the space opens as usual.
+4. the space opens as usual. Its index is the one it had: the change cursors
+   of offline clients stay good (no `410`), and what changed on the remote
+   meanwhile comes to them as changes (see "Offline sync").
 
 For a space of 2 000 pages that is about 10 MB to fetch and 1 to 3 seconds;
 for 50 000 pages about 200 MB and some 20 to 40 seconds on a 100 Mbit/s link.
@@ -5331,7 +5334,9 @@ is new every time the index is built from scratch (at an upgrade that changes
 the index, `POST …/reindex`, or when the index does not match the files), when
 the server opens an index that was not closed cleanly (a crash or a power cut
 may have taken its last writes), and when the first look at the files after
-the space is opened finds changes the index did not record; and a sequence
+the space is opened finds changes the index did not record (except after a
+restore of an evicted space, see below, whose changes come from its remote);
+and a sequence
 number. Every write of a page to the index (added, its file changed,
 renamed or moved, its links rewritten by the server, read again after a change
 made outside the server) gives the page a new sequence number, higher than any
@@ -5494,6 +5499,28 @@ ask once and then read changes only where something changed. 1 to 100
   once someone opens it.
 
 `400 invalid` for no `space`, more than 100, or one given twice.
+
+### Evicted spaces
+
+A space that milestone 3.1 evicted (see "Eviction") keeps its index, closed,
+and the sync treats it like any other closed space:
+
+- `heads` answers the head it was evicted at (from memory, or after a restart
+  from its index, read without opening it), and never opens or restores it.
+  A space with no index on disk answers `""`.
+- `sync/catalog` and `changes` are answered from its index without restoring
+  it. Their `settings` stamp is the one the space had when it was last open
+  with its files (`""` for a space evicted before the server kept it).
+- `sync/pages` reads the page files, so it restores the space first, as every
+  other read of a page does: it waits up to 10 seconds, then answers `503
+  restoring` with `Retry-After` (or `503 unavailable` when the remote cannot be
+  reached), and the client tries again later.
+- A restore keeps the index: its epoch and sequence numbers stay, so a cursor
+  from before the eviction stays good, and the pages that changed on the remote
+  meanwhile are in the next `changes` with new sequence numbers. Only an index
+  that was not closed cleanly, or one that must be built again, starts a new
+  epoch (`410`). The `settings` stamp usually changes once after a restore
+  (the files were written again).
 
 ### What a client is expected to do
 

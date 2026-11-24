@@ -485,6 +485,7 @@ func TestEveryIndexOnlyRouteAnswersOnAnEvictedSpace(t *testing.T) {
 		if b := cachedBack.body["items"].([]any); len(b) != 1 || b[0].(map[string]any)["excerpt"] == "" {
 			t.Fatal(cachedBack.raw)
 		}
+		head := admin.do("GET", base+"/sync/catalog", nil).want(t, 200, "").body["changes"].(string)
 		a.clock.Advance(48 * time.Hour)
 		admin.do("POST", "/api/admin/spaces/"+sid+"/evict", nil).want(t, 204, "")
 
@@ -504,7 +505,7 @@ func TestEveryIndexOnlyRouteAnswersOnAnEvictedSpace(t *testing.T) {
 		admin.do("GET", base+"/pages/NOSUCHPAGE/links", nil).want(t, 404, "not_found")
 		admin.do("GET", base+"/pages/NOSUCHPAGE/backlinks", nil).want(t, 404, "not_found")
 
-		query := map[string]string{"GET /api/spaces/{space}/pages/groups": "?key=title&tag=a"}
+		query := map[string]string{"GET /api/spaces/{space}/pages/groups": "?key=title&tag=a", "GET /api/spaces/{space}/changes": "?since=" + head}
 		for _, rt := range api.IndexOnlyRoutes() {
 			method, pattern, _ := strings.Cut(rt, " ")
 			p := strings.ReplaceAll(pattern, "{space}", sid)
@@ -519,6 +520,102 @@ func TestEveryIndexOnlyRouteAnswersOnAnEvictedSpace(t *testing.T) {
 		}
 		if c := admin.do("GET", "/api/admin/spaces/"+sid, nil).body["storage"].(map[string]any)["cache"]; c != "evicted" {
 			t.Fatalf("an index-only read restored the space (%v)", c)
+		}
+	})
+}
+
+// The offline sync and eviction (4.1 with 3.1): the heads of an evicted space
+// come from its closed index and never open or restore it; the catalogue and
+// the changes are answered from the index; page bodies restore it as other
+// content reads do. The restore keeps the index, so a cursor from before the
+// eviction is still good afterwards (no 410), and what changed on the remote
+// meanwhile comes in as changes.
+func TestOfflineSyncOfAnEvictedSpace(t *testing.T) {
+	t.Parallel()
+	n := &netSwitch{}
+	eachAccounts(t, storageOpts(n, func(o *spaces.Options) { o.EvictEvery = -1 }), func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		remote := filterRemote(t)
+		pushVersions(t, remote, 2)
+		sid := admin.do("POST", "/api/spaces", map[string]any{"name": "Followed", "remote": connectBody("file://" + remote)}).want(t, 201, "").body["id"].(string)
+		base := "/api/spaces/" + sid
+		cat := admin.do("GET", base+"/sync/catalog", nil).want(t, 200, "")
+		cursor, settings := cat.body["changes"].(string), cat.body["settings"].(string)
+		if len(cat.body["items"].([]any)) != 1 || cursor == "" || settings == "" {
+			t.Fatal(cat.raw)
+		}
+		headOf := func() any {
+			return admin.do("GET", "/api/sync/heads?space="+sid, nil).want(t, 200, "").body["heads"].(map[string]any)[sid]
+		}
+		if h := headOf(); h != cursor {
+			t.Fatalf("head %v, cursor %s", h, cursor)
+		}
+		cacheOf := func() any {
+			return admin.do("GET", "/api/admin/spaces/"+sid, nil).body["storage"].(map[string]any)["cache"]
+		}
+		a.clock.Advance(48 * time.Hour)
+		admin.do("POST", "/api/admin/spaces/"+sid+"/evict", nil).want(t, 204, "")
+
+		// Heads: the head it was evicted at, without opening or restoring it.
+		for range 2 {
+			if h := headOf(); h != cursor {
+				t.Fatalf("head of an evicted space %v, want %s", h, cursor)
+			}
+		}
+		// The catalogue and the changes come from the index, with the settings
+		// stamp the space had.
+		ev := admin.do("GET", base+"/sync/catalog", nil).want(t, 200, "")
+		if ev.body["changes"] != cursor || ev.body["settings"] != settings || len(ev.body["items"].([]any)) != 1 {
+			t.Fatalf("catalogue of an evicted space: %s", ev.raw)
+		}
+		ch := admin.do("GET", base+"/changes?since="+cursor, nil).want(t, 200, "")
+		if ch.body["next"] != cursor || len(ch.body["items"].([]any)) != 0 || ch.body["settings"] != settings {
+			t.Fatalf("changes of an evicted space: %s", ch.raw)
+		}
+		// While its index is open for those reads, the head is still known.
+		if h := headOf(); h != cursor {
+			t.Fatalf("head while the index-only handle is open %v, want %s", h, cursor)
+		}
+		if c := cacheOf(); c != "evicted" {
+			t.Fatalf("a sync read restored the space (%v)", c)
+		}
+
+		// The remote moves on while the space is evicted.
+		pushVersions(t, remote, 1)
+		// Page bodies need the files: the space is restored, as for a page read.
+		// (503 restoring while the restore takes longer than the wait; the client
+		// tries again.)
+		var r result
+		deadline := time.Now().Add(20 * time.Second)
+		for {
+			r = admin.do("GET", base+"/sync/pages?ids=SNAP000001", nil)
+			if r.code == 200 {
+				break
+			}
+			if r.code != 503 || r.body["error"] != "restoring" || time.Now().After(deadline) {
+				t.Fatalf("sync/pages of an evicted space: %d %s", r.code, r.raw)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if c := cacheOf(); c == "evicted" {
+			t.Fatalf("sync/pages did not restore the space: %s", r.raw)
+		}
+		// The cursor from before the eviction is still good: the change on the
+		// remote comes in under the same epoch.
+		ch = admin.do("GET", base+"/changes?since="+cursor, nil).want(t, 200, "")
+		items := ch.body["items"].([]any)
+		if len(items) != 1 || items[0].(map[string]any)["id"] != "SNAP000001" {
+			t.Fatalf("changes after a restore: %s", ch.raw)
+		}
+		next := ch.body["next"].(string)
+		if epoch, _, _ := strings.Cut(cursor, "-"); !strings.HasPrefix(next, epoch+"-") || next == cursor {
+			t.Fatalf("next %s after a restore, cursor was %s", next, cursor)
+		}
+		if h := headOf(); h != next {
+			t.Fatalf("head %v after the restore, want %s", h, next)
+		}
+		if pg := r.body["pages"]; pg == nil {
+			t.Fatalf("sync/pages: %s", r.raw)
 		}
 	})
 }

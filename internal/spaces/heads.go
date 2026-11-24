@@ -16,7 +16,9 @@ import (
 // when it closed (remembered by closing, bounded by the number of spaces), and
 // a space that has not been open since the server started answers the head its
 // index was closed at, read from the index file read-only (about a millisecond,
-// once: it is remembered as if the space had closed). A space without an index,
+// once: it is remembered as if the space had closed). An evicted space (3.1)
+// keeps its index, closed: it answers like any closed space, or from its
+// index-only handle while one is open, and is never opened or restored for it. A space without an index,
 // or whose index was not closed cleanly, has no head to give ("": the client
 // asks for its changes, which opens it).
 
@@ -79,7 +81,7 @@ func (m *Manager) Heads(ctx context.Context, userID string, ids []string) (map[s
 		return nil, err
 	}
 	m.loadDisabled(ctx) // on failure nothing is shown as disabled; Open still refuses
-	cold := m.heads0(cells, ids, out)
+	cold := m.heads0(cells, ids, out, m.indexOnlyHeads(ids))
 	if len(cold) == 0 {
 		return out, nil
 	}
@@ -111,8 +113,26 @@ func (m *Manager) Heads(ctx context.Context, userID string, ids []string) (map[s
 	return out, nil
 }
 
+// indexOnlyHeads are the heads of the evicted spaces among ids whose index is
+// open for index-only reads (see acquireIndex): their index file says nothing
+// while it is open. Nothing is opened or restored here.
+func (m *Manager) indexOnlyHeads(ids []string) map[string]string {
+	m.ev.mu.Lock()
+	defer m.ev.mu.Unlock()
+	if len(m.ev.idx) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for _, id := range ids {
+		if e := m.ev.idx[id]; e != nil && !e.stale {
+			out[id] = e.sp.Head()
+		}
+	}
+	return out
+}
+
 // heads0 fills out from memory and returns the spaces whose head is not there.
-func (m *Manager) heads0(cells []spaceCell, ids []string, out map[string]SpaceHead) (cold []string) {
+func (m *Manager) heads0(cells []spaceCell, ids []string, out map[string]SpaceHead, idx map[string]string) (cold []string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, id := range ids {
@@ -129,6 +149,10 @@ func (m *Manager) heads0(cells []spaceCell, ids []string, out map[string]SpaceHe
 				}
 			default:
 			}
+		}
+		if h.Head == "" && m.open[id] == nil {
+			// An evicted space whose index is open for index-only reads.
+			h.Head = idx[id]
 		}
 		if h.Head == "" {
 			h.Head = m.heads[id]

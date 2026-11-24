@@ -35,7 +35,13 @@ func (s *Space) Changes(since string, limit int) (index.ChangeList, error) {
 // space.yml, tags.yml, the types and the templates. It looks at the names,
 // sizes and times of the files of those three folders (one listing each, as
 // many entries as the space has settings: not as many as it has pages).
+//
+// An evicted space has no files: it answers the stamp it had when it was last
+// closed with them ("" if it was evicted before this was kept).
 func (s *Space) SettingsStamp() string {
+	if s.evicted {
+		return s.settingsNote
+	}
 	h := sha1.New()
 	for _, dir := range []string{".petalbook", typesDir, templatesDir} {
 		h.Write([]byte(dir + "\x00"))
