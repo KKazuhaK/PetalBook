@@ -10,9 +10,6 @@ export function openView(view: AdminViewState | null | undefined, now = Date.now
 // Whether the space is one an administrator manages without being a member, with its view open now: only then is
 // the page under the banner "read only, recorded". Outside a view the settings open without one (the banner is not
 // there) and any page of the space asks for a reason first.
-export function inOpenView(
-  space: { role: string; view?: AdminViewState | null },
-  now = Date.now(),
-): boolean {
+export function inOpenView(space: { role: string; view?: AdminViewState | null }, now = Date.now()): boolean {
   return space.role === '' && openView(space.view, now) !== null
 }
