@@ -157,7 +157,9 @@ type Index struct {
 	// queries counts the queries of listings with conditions and of counts
 	// (read by tests); trace, when a test sets it, is called with each.
 	queries atomic.Int64
-	trace   func(query string, args []any)
+	// copied: the file was made from the prepared index of ReuseSchema.
+	copied bool
+	trace  func(query string, args []any)
 	// shared and serial count the times a read had other connections share
 	// its snapshot, and the times it read in turn because none could (tests).
 	shared, serial atomic.Int64
@@ -202,6 +204,7 @@ const readConns = 8
 
 func open(dbPath, root string) (*Index, error) {
 	x := &Index{path: dbPath, root: root, walMax: walCheckpointAt, plan: defaultPlan}
+	x.copied = root != templateRoot && copyTemplate(dbPath)
 	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(10000)&_pragma=cache_size(-65536)" +
 		fmt.Sprintf("&_pragma=journal_size_limit(%d)", x.walMax)
 	var err error
@@ -247,6 +250,11 @@ func (x *Index) init() error {
 		return err
 	}
 	fresh := version == 0
+	if x.copied && version == schemaVersion {
+		// A copy of the prepared index: only the root is to be set.
+		_, err := x.wdb.ExecContext(ctx, `UPDATE meta SET value = ? WHERE key = 'root' AND value = ?`, x.root, templateRoot)
+		return err
+	}
 	if !fresh {
 		var root string
 		err := x.wdb.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = 'root'`).Scan(&root)
