@@ -2,7 +2,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
 import { adminRequests, click, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
-import { t } from '@/i18n'
 import { tf } from '@/i18n/forge'
 import { tg } from '@/i18n/github'
 import SettingsRoute from '@/components/settings/SettingsRoute'
