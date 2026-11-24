@@ -102,7 +102,11 @@ export function CaptchaField({ captcha, disabled }: { captcha: CaptchaState; dis
     return (
       <p role="status" className="text-xs text-muted-foreground">
         {captcha.loadError}{' '}
-        <button type="button" className="underline underline-offset-4" onClick={() => void captcha.refresh()}>
+        <button
+          type="button"
+          className="inline-flex min-h-10 items-center underline underline-offset-4"
+          onClick={() => void captcha.refresh()}
+        >
           {ts.captcha.refresh}
         </button>
       </p>
@@ -119,7 +123,7 @@ export function CaptchaField({ captcha, disabled }: { captcha: CaptchaState; dis
           <Button
             type="button"
             variant="outline"
-            size="sm"
+            className="h-10"
             disabled={captcha.loading || disabled}
             onClick={() => void captcha.refresh()}
           >
@@ -135,6 +139,7 @@ export function CaptchaField({ captcha, disabled }: { captcha: CaptchaState; dis
           autoCorrect="off"
           spellCheck={false}
           disabled={disabled}
+          className="h-10"
         />
       </div>
     )

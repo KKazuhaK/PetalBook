@@ -147,7 +147,7 @@ func (s *Service) ChangePassword(ctx context.Context, p *Principal, current *str
 		if err := store.DeleteEmailTokens(ctx, q, p.User.ID, store.TokenReset); err != nil {
 			return err
 		}
-		return store.DeleteUserSessions(ctx, q, p.User.ID, p.SessionID)
+		return store.DeleteUserSessions(ctx, q, p.User.ID, p.SessionID, store.EndPassword, s.now())
 	})
 	if err != nil {
 		return err
@@ -321,7 +321,12 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 				return err
 			}
 			if disabled {
-				if err := store.DeleteUserSessions(ctx, q, u.ID, ""); err != nil {
+				if err := store.DeleteUserSessions(ctx, q, u.ID, "", store.EndDisabled, s.now()); err != nil {
+					return err
+				}
+			} else if !s.st.TenantDisabled(u.TenantID) {
+				// Enabled again (and their tenant is not disabled): their old cookies no longer say disabled.
+				if err := store.DeleteUserSessionEnds(ctx, q, u.ID, store.EndDisabled); err != nil {
 					return err
 				}
 			}
@@ -396,6 +401,9 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 		return nil, err
 	}
 	s.evictUser(targetID, "")
+	if d, ok := changed["disabled"]; ok && d == false {
+		s.forgetRefusals()
+	}
 	// The space manager remembers a user's role and whether they are disabled
 	// for a minute (the drafts sweeper asks it); a change here applies at once.
 	s.cfg.Spaces.UserChanged(ctx, *out)
@@ -545,6 +553,7 @@ func (s *Service) Run(ctx context.Context) {
 	daily := time.NewTicker(24 * time.Hour)
 	defer daily.Stop()
 	s.Sweep(ctx)
+	s.SweepSessionEnds(ctx)
 	s.trimAudit(ctx)
 	go s.RunMail(ctx)
 	for {
@@ -559,6 +568,7 @@ func (s *Service) Run(ctx context.Context) {
 			s.Sweep(ctx)
 			s.trimAudit(ctx)
 		case <-daily.C:
+			s.SweepSessionEnds(ctx)
 			s.refreshSAMLMetadata(ctx)
 		}
 	}
@@ -589,11 +599,21 @@ func (s *Service) refreshSAMLMetadata(ctx context.Context) {
 	}
 }
 
+// SessionEndKeep is how long the record of why a session ended is kept.
+const SessionEndKeep = 30 * 24 * time.Hour
+
+// SweepSessionEnds forgets the records of ended sessions older than SessionEndKeep (daily).
+func (s *Service) SweepSessionEnds(ctx context.Context) {
+	if _, err := store.DeleteOldSessionEnds(ctx, s.st.Q(), s.now().Add(-SessionEndKeep)); err != nil {
+		s.log.Warn("could not delete old session end records", "error", err)
+	}
+}
+
 // Sweep deletes expired sessions and long-expired invites once.
 func (s *Service) Sweep(ctx context.Context) {
 	now := s.now()
 	sec := s.sec(ctx)
-	if n, err := store.DeleteExpiredSessions(ctx, s.st.Q(), now.Add(-sec.idle), now.Add(-sec.max)); err != nil {
+	if n, err := store.DeleteExpiredSessions(ctx, s.st.Q(), now.Add(-sec.idle), now.Add(-sec.max), now); err != nil {
 		s.log.Warn("could not delete expired sessions", "error", err)
 	} else if n > 0 {
 		s.log.Info("deleted expired sessions", "count", n)

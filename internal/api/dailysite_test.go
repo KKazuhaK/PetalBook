@@ -667,6 +667,57 @@ func TestAdministratorsSaveAtOnce(t *testing.T) {
 	})
 }
 
+// The browser is told to ask every time, so a change of what the administrators
+// chose is seen at once: the ETag it holds from before no longer matches.
+func TestDailyDefaultChangeIsSeenThroughTheETag(t *testing.T) {
+	withExternal(t, func(x *extFixture) {
+		t := x.t
+		// The space's owner writes the pages: an administrator who is not a
+		// member reads a space only in an audited view (3.5).
+		page := func(folder, title, body string) {
+			if code, r := x.own("POST", "/api/spaces/"+x.tm.sid+"/pages", map[string]any{"folder": folder, "meta": map[string]any{"title": title}, "body": body}); code != 201 {
+				t.Fatalf("%d %v", code, r)
+			}
+		}
+		setDefault := func(folder string) {
+			if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "space", "space": x.tm.sid,
+				"source": map[string]any{"folder": folder}}}); code != 200 {
+				t.Fatalf("%d %v", code, r)
+			}
+		}
+		page("First", "One", "The first text\n")
+		page("Second", "Two", "The second text\n")
+		setDefault("First")
+		reader := x.a.addUser("otto", pw, "member")
+		base := "/api/spaces/" + reader.personalSpace()
+		get := func(etag string) *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", base+"/daily?date=2026-11-23&lang=en&tz=0", nil)
+			for _, c := range reader.cookies {
+				req.AddCookie(c)
+			}
+			if etag != "" {
+				req.Header.Set("If-None-Match", etag)
+			}
+			x.a.h.ServeHTTP(rec, req)
+			return rec
+		}
+		first := get("")
+		etag := first.Header().Get("ETag")
+		if first.Code != 200 || etag == "" || first.Header().Get("Cache-Control") != "private, no-cache" || !strings.Contains(first.Body.String(), "The first text") {
+			t.Fatalf("%d %q %q %s", first.Code, etag, first.Header().Get("Cache-Control"), first.Body)
+		}
+		if rec := get(etag); rec.Code != 304 || rec.Body.Len() != 0 || rec.Header().Get("Cache-Control") != "private, no-cache" {
+			t.Fatalf("unchanged: %d %q", rec.Code, rec.Body)
+		}
+		setDefault("Second")
+		rec := get(etag)
+		if rec.Code != 200 || !strings.Contains(rec.Body.String(), "The second text") || rec.Header().Get("ETag") == etag {
+			t.Fatalf("after the change: %d %s", rec.Code, rec.Body)
+		}
+	})
+}
+
 // The server is the only one to ask, once for each period, keeps it in memory and in
 // the database, and uses the last thing said when the interface fails.
 func TestExternalInterfacesAreCachedAndFallBack(t *testing.T) {
@@ -680,7 +731,7 @@ func TestExternalInterfacesAreCachedAndFallBack(t *testing.T) {
 		x.choose("any")
 		const day = "date=2026-11-23&lang=en"
 
-		// --- the browser's cache: until the day is over where the browser is
+		// --- the browser's cache: it keeps the answer but asks every time
 		get := func(query string, hdr ...string) *httptest.ResponseRecorder {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest("GET", x.base+"/daily?"+query, nil)
@@ -693,15 +744,14 @@ func TestExternalInterfacesAreCachedAndFallBack(t *testing.T) {
 			x.a.h.ServeHTTP(rec, req)
 			return rec
 		}
-		rec := get(day + "&tz=-480") // UTC-8: the day ends at 08:00 UTC the next day
+		rec := get(day + "&tz=-480")
 		if rec.Code != 200 {
 			t.Fatalf("%d %s", rec.Code, rec.Body)
 		}
 		cc := rec.Header().Get("Cache-Control")
 		etag := rec.Header().Get("ETag")
-		want := int(time.Date(2026, 11, 24, 8, 0, 0, 0, time.UTC).Sub(x.now) / time.Second)
-		if cc != fmt.Sprintf("private, max-age=%d", want) || !strings.HasPrefix(etag, `"`) {
-			t.Fatalf("%q %q (want max-age %d)", cc, etag, want)
+		if cc != "private, no-cache" || !strings.HasPrefix(etag, `"`) {
+			t.Fatalf("%q %q", cc, etag)
 		}
 		// The same request with the ETag is not answered again.
 		if rec := get(day+"&tz=-480", "If-None-Match", etag); rec.Code != 304 || rec.Body.Len() != 0 || rec.Header().Get("ETag") != etag {
@@ -710,22 +760,21 @@ func TestExternalInterfacesAreCachedAndFallBack(t *testing.T) {
 		if rec := get(day+"&tz=-480", "If-None-Match", `"other"`); rec.Code != 200 {
 			t.Fatalf("%d", rec.Code)
 		}
-		// Without the offset only a short time is promised; the offset is checked; an empty answer is short too.
-		if cc := get(day).Header().Get("Cache-Control"); cc != "private, max-age=300" {
-			t.Fatalf("%q", cc)
+		// Every answer asks the browser to ask again, and has an ETag; the offset is checked.
+		for _, q := range []string{day, "date=2026-11-22&lang=en&tz=0", "date=2026-11-24&lang=zh&tz=0"} {
+			rec := get(q)
+			if cc, et := rec.Header().Get("Cache-Control"), rec.Header().Get("ETag"); cc != "private, no-cache" || !strings.HasPrefix(et, `"`) {
+				t.Fatalf("%s: %q %q", q, cc, et)
+			}
+			if rec2 := get(q, "If-None-Match", rec.Header().Get("ETag")); rec2.Code != 304 || rec2.Body.Len() != 0 {
+				t.Fatalf("%s: %d %q", q, rec2.Code, rec2.Body)
+			}
 		}
 		if rec := get(day + "&tz=9999"); rec.Code != 400 {
 			t.Fatalf("%d", rec.Code)
 		}
 		if rec := get(day + "&tz=x"); rec.Code != 400 {
 			t.Fatalf("%d", rec.Code)
-		}
-		// A day that is almost over still gets a minute, and a day in the past too.
-		if cc := get("date=2026-11-22&lang=en&tz=0").Header().Get("Cache-Control"); cc != "private, max-age=60" {
-			t.Fatalf("a day that is over: %q", cc)
-		}
-		if cc := get("date=2026-11-24&lang=zh&tz=0").Header().Get("Cache-Control"); cc != "private, max-age=86400" {
-			t.Fatalf("a day ahead: %q", cc)
 		}
 		// A day far from today (where the reader is, give or take a day) is not
 		// asked for: each would be a request and a row kept.
@@ -799,14 +848,14 @@ func TestExternalInterfacesAreCachedAndFallBack(t *testing.T) {
 		if _, ok := sq["fetched"].(string); !ok || !strings.HasPrefix(sq["fetched"].(string), "2026-11-23T08:00") {
 			t.Fatalf("it does not say when it was got: %v", sq["fetched"])
 		}
-		// A stale answer is promised for a short time only.
+		// A stale answer is asked for again too.
 		rec = httptest.NewRecorder()
 		req := httptest.NewRequest("GET", x.base+"/daily?date=2026-11-25&lang=en&tz=0", nil)
 		for _, c := range v2.cookies {
 			req.AddCookie(c)
 		}
 		h2.ServeHTTP(rec, req)
-		if cc := rec.Header().Get("Cache-Control"); cc != "private, max-age=60" {
+		if cc := rec.Header().Get("Cache-Control"); cc != "private, no-cache" || rec.Header().Get("ETag") == "" {
 			t.Fatalf("%q", cc)
 		}
 		hits := qs.hits.Load()
@@ -846,14 +895,14 @@ func TestExternalRefreshIntervalAndRateLimit(t *testing.T) {
 		if text("2026-11-24") != one {
 			t.Fatal("the same hour, another item")
 		}
-		// The browser may keep it until the hour is over.
+		// The browser asks again whatever the period.
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", x.base+"/daily?date=2026-11-23&lang=en&tz=0", nil)
 		for _, c := range x.tm.viewer.cookies {
 			req.AddCookie(c)
 		}
 		x.a.h.ServeHTTP(rec, req)
-		if cc := rec.Header().Get("Cache-Control"); cc != "private, max-age=1800" {
+		if cc := rec.Header().Get("Cache-Control"); cc != "private, no-cache" || rec.Header().Get("ETag") == "" {
 			t.Fatalf("%q", cc)
 		}
 		x.now = x.now.Add(31 * time.Minute)

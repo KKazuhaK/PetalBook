@@ -10,11 +10,13 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { t } from '@/i18n'
 
-export function ThemeToggle() {
+export function ThemeToggle({ className }: { className?: string }) {
   const { theme = 'system', setTheme } = useTheme()
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label={t.theme.toggle} />}>
+      <DropdownMenuTrigger
+        render={<Button variant="ghost" size="icon" className={className} aria-label={t.theme.toggle} />}
+      >
         <Sun className="size-4 dark:hidden" />
         <Moon className="hidden size-4 dark:block" />
       </DropdownMenuTrigger>

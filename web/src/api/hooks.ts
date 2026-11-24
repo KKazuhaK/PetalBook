@@ -18,6 +18,7 @@ import { noteWrote, wroteKey } from '@/lib/homePrefs'
 import { spaceUrls } from '@/lib/urls'
 import { api, ApiError, spaceApi } from './client'
 import { noteOpened } from '@/lib/offline'
+import { clearPendingMethod } from '@/lib/lastAccount'
 import { parseTagColor } from '../lib/tagColors.ts'
 import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
 import { propsOfMeta } from '../lib/pageTypes.ts'
@@ -370,8 +371,10 @@ export function applySession(qc: QueryClient, user: User | null) {
 }
 
 // After a sign-in: the cache starts over for the new person, and the session is read again, because
-// whether it is held until a passkey is registered (`hold`) is only in the server's answer.
+// whether it is held until a passkey is registered (`hold`) is only in the server's answer. Every sign-in that comes
+// here happened on this page, not on a provider's: a provider's page that was left half way is not how it happened.
 export async function applySignIn(qc: QueryClient, user: User) {
+  clearPendingMethod()
   applySession(qc, user)
   await qc
     .fetchQuery({ queryKey: keys.session, queryFn: ({ signal }) => api.session(signal), staleTime: 0 })
@@ -1506,8 +1509,9 @@ export function dayOf(now: Date): { date: string; tz: number } {
   }
 }
 
-// The text of the day. `skip` is "another one", and only this browser sees it. The server says how long the answer
-// stays the same, so asking again within the day costs nothing; the last text stays on screen while another is read.
+// The text of the day. `skip` is "another one", and only this browser sees it. The server has the browser ask every
+// time (an unchanged answer is a 304), so only a short staleTime is kept here, and saving daily settings
+// invalidates it; the last text stays on screen while another is read.
 export function useDaily(date: string, tz: number, skip: number, lang: string, enabled = true) {
   const space = useSpaceId()
   const { read } = useSpacePermissions()

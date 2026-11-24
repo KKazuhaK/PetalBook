@@ -35,6 +35,13 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
+// negative is a cookie that is no session: until when to answer so without
+// asking again, and why it ended ("" when no record says).
+type negative struct {
+	until  time.Time
+	reason string
+}
+
 // Session lifetimes of docs/api.md.
 const (
 	DefaultSessionIdle = 30 * 24 * time.Hour
@@ -134,7 +141,7 @@ type Service struct {
 	gen      uint64 // bumped by every eviction, so a slow lookup cannot resurrect what was evicted
 	sessions map[string]*cachedSession
 	users    map[string]*cachedUser
-	negative map[string]time.Time
+	negative map[string]negative
 
 	pending *pendingStore
 
@@ -259,7 +266,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		failPair: newFailTable(maxLimitKeys, cfg.Now),
 		starts:   newBucketLimiter(10_000, 30, 20, cfg.Now),
 		audit:    newAuditLog(), provs: newProviderSet(), replay: authsaml.NewMemoryReplayCache(authsaml.DefaultReplayCacheCapacity),
-		sessions: map[string]*cachedSession{}, users: map[string]*cachedUser{}, negative: map[string]time.Time{},
+		sessions: map[string]*cachedSession{}, users: map[string]*cachedUser{}, negative: map[string]negative{},
 		pending:  newPendingStore(cfg.Now),
 		mailCaps: newHourCaps(maxLimitKeys), testCaps: newHourCaps(4), regCaps: newHourCaps(2000),
 	}
@@ -740,7 +747,7 @@ func (s *Service) SetPassword(ctx context.Context, username, password string) er
 		if err := store.DeleteEmailTokens(ctx, q, u.ID, store.TokenReset); err != nil {
 			return err
 		}
-		return store.DeleteUserSessions(ctx, q, u.ID, "")
+		return store.DeleteUserSessions(ctx, q, u.ID, "", store.EndPassword, s.now())
 	})
 	if err == nil {
 		s.evictUser(u.ID, "")

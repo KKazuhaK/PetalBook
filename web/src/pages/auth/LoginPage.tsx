@@ -3,15 +3,18 @@ import { Link, Navigate, useNavigate, useSearchParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, ApiError, providerStartUrl } from '@/api/client'
 import { applySignIn, useAuthProviders, useSession } from '@/api/hooks'
-import type { AuthProviders } from '@/api/types'
+import type { AuthProviders, EndedReason } from '@/api/types'
+import { AccountCard } from '@/components/auth/AccountCard'
 import { AuthLayout, OrDivider } from '@/components/auth/AuthLayout'
 import { CaptchaField, useCaptcha } from '@/components/auth/Captcha'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { PasskeyButton } from '@/components/auth/PasskeyButton'
-import { ProviderLinks } from '@/components/auth/ProviderButtons'
+import { ProviderLinks, WIDE } from '@/components/auth/ProviderButtons'
+import { ProviderIcon } from '@/components/auth/ProviderIcon'
 import { PageFallback, ErrorState } from '@/components/common'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { safeReturn } from '@/lib/auth'
+import { lastAccount, rememberAccount, setPendingMethod, type LastAccount, type LastMethod } from '@/lib/lastAccount'
 import { t } from '@/i18n'
 import { ts } from '@/i18n/signin'
 import { tm } from '@/i18n/mail'
@@ -20,9 +23,42 @@ import { tm } from '@/i18n/mail'
 export const ssoErrorMessage = (code: string | null): string =>
   code ? (Object.hasOwn(ts.ssoErrors, code) ? ts.ssoErrors[code] : ts.ssoErrors.unknown) : ''
 
+// A text link or button of this page: 40px high at least, for a finger on a phone or tablet.
+const LINK = 'inline-flex min-h-10 items-center self-start text-sm text-brand underline underline-offset-4'
+
+// The sign-in page's own address with `return`, and `other=1` while the person chose another account.
+function loginHref(ret: string, other: boolean, extra?: Record<string, string>): string {
+  const q = new URLSearchParams()
+  if (ret !== '/') q.set('return', ret)
+  if (other) q.set('other', '1')
+  for (const [k, v] of Object.entries(extra ?? {})) q.set(k, v)
+  const s = q.toString()
+  return s ? `/login?${s}` : '/login'
+}
+
+// Whether the person's last way of signing in can still be used here.
+function usable(m: LastMethod, p: AuthProviders): boolean {
+  if (m.type === 'password') return p.local
+  if (m.type === 'passkey') return p.passkey
+  return p.sso && p.providers.some((x) => x.kind === m.kind && x.slug === m.slug)
+}
+
 export default function LoginPage() {
   const session = useSession()
-  const [params] = useSearchParams()
+  const [params, setParams] = useSearchParams()
+  // "Use another account" (and the way back from a disabled one): the ordinary page, with nothing about the last
+  // person. It is in the address (`other=1`), so it holds for this visit whatever the session says when it is read
+  // again, or when the page is mounted afresh; signing in leaves the page.
+  const other = params.get('other') === '1'
+  const dismiss = () =>
+    setParams(
+      (p) => {
+        const next = new URLSearchParams(p)
+        next.set('other', '1')
+        return next
+      },
+      { replace: true },
+    )
   const ret = safeReturn(params.get('return'))
   const signedIn = session.data?.mode === 'accounts' && !!session.data.user
   const needsProviders = session.data?.mode === 'accounts' && !session.data.setup && !signedIn
@@ -41,6 +77,9 @@ export default function LoginPage() {
   if (s.mode === 'single') return <Navigate to="/" replace />
   if (s.setup) return <Navigate to="/setup" replace />
   if (s.user) return <Navigate to={ret} replace />
+  const reason = other ? null : (s.endedReason ?? null)
+  // A disabled account is told so, and nothing about it is offered: no name, no form.
+  if (reason === 'disabled') return <DisabledNotice ret={ret} />
   if (providers.isPending) return <PageFallback />
   if (providers.isError)
     return (
@@ -51,6 +90,11 @@ export default function LoginPage() {
     )
   return (
     <LoginForm
+      key={reason ? 'ended' : 'plain'}
+      reason={reason}
+      account={reason ? lastAccount() : null}
+      onOther={dismiss}
+      other={other}
       ret={ret}
       providers={providers.data}
       ssoError={params.get('sso_error')}
@@ -59,12 +103,36 @@ export default function LoginPage() {
   )
 }
 
+// The account of a person whose account was switched off: the message and the way back, nothing else.
+function DisabledNotice({ ret }: { ret: string }) {
+  const messageRef = useRef<HTMLParagraphElement>(null)
+  useEffect(() => messageRef.current?.focus(), [])
+  return (
+    <AuthLayout title={t.login.title}>
+      <FormMessage focusRef={messageRef}>{ts.ended.disabled}</FormMessage>
+      <Link to={loginHref(ret, true)} className={LINK}>
+        {ts.ended.backToSignIn}
+      </Link>
+    </AuthLayout>
+  )
+}
+
 function LoginForm({
+  reason,
+  account,
+  onOther,
+  other,
   ret,
   providers,
   ssoError,
   local,
 }: {
+  // Why the last session ended, and who it was (when this browser knows): the page then speaks to that person.
+  reason: EndedReason | null
+  account: LastAccount | null
+  onOther: () => void
+  // The person chose another account on this visit: the addresses this page links to keep saying so.
+  other: boolean
   ret: string
   providers: AuthProviders
   ssoError: string | null
@@ -73,11 +141,13 @@ function LoginForm({
   const qc = useQueryClient()
   const navigate = useNavigate()
   const list = providers.providers
+  // The person the page speaks to, if their last way of signing in still works here.
+  const returning = account && usable(account.method, providers) ? account : null
   // With no enabled provider the page is the form alone, whatever else the answer says.
   const mode = list.length === 0 ? 'local_only' : providers.loginMode
   const showButtons = list.length > 0 && providers.sso && mode !== 'local_only'
   // A page that sends people on to the provider never does it for someone who asked for the form, or who just came back from a failure.
-  const redirecting = mode === 'sso_redirect' && list.length === 1 && !local && !ssoError
+  const redirecting = mode === 'sso_redirect' && list.length === 1 && !local && !ssoError && !returning
   // `sso_first` folds the form behind a link; `sso_redirect` has it only on `?local=1`.
   const formByDefault = mode === 'dual' || mode === 'local_only' || (mode === 'sso_redirect' && local) || local
   // Derived, not stored: the same form stays mounted when `?local=1` is added to the address.
@@ -85,10 +155,13 @@ function LoginForm({
   const formOpen = formByDefault || openedByClick
 
   useEffect(() => {
-    if (redirecting) window.location.assign(providerStartUrl(list[0].kind, list[0].slug, ret))
+    if (redirecting) {
+      setPendingMethod({ type: 'sso', kind: list[0].kind, slug: list[0].slug, name: list[0].name })
+      window.location.assign(providerStartUrl(list[0].kind, list[0].slug, ret))
+    }
   }, [redirecting, list, ret])
 
-  const [username, setUsername] = useState('')
+  const [username, setUsername] = useState(returning?.username ?? '')
   const [pass, setPass] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(ssoErrorMessage(ssoError))
@@ -99,7 +172,15 @@ function LoginForm({
   const [now, setNow] = useState(() => Date.now())
   const messageRef = useRef<HTMLParagraphElement>(null)
   const remaining = Math.max(0, Math.ceil((until - now) / 1000))
-  const captcha = useCaptcha('login', { auto: formOpen && !redirecting })
+  const returningPassword = returning?.method.type === 'password'
+  // Someone who is back is asked about by name from the start.
+  const captcha = useCaptcha('login', { auto: formOpen && !redirecting && !returningPassword })
+  const askCaptcha = captcha.refresh
+  useEffect(() => {
+    if (returningPassword) void askCaptcha(username.trim().toLowerCase())
+    // Once, for the person the page opened with.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [returningPassword])
   const askedFor = useRef('')
 
   useEffect(() => {
@@ -137,6 +218,7 @@ function LoginForm({
         password: pass,
         ...(sent ? { captcha: sent } : {}),
       })
+      rememberAccount(user, { type: 'password' })
       await applySignIn(qc, user)
       navigate(ret, { replace: true })
     } catch (err) {
@@ -158,6 +240,7 @@ function LoginForm({
   }
 
   const passkeyDone = async (r: { user: Parameters<typeof applySignIn>[1]; return: string }) => {
+    rememberAccount(r.user, { type: 'passkey' })
     await applySignIn(qc, r.user)
     navigate(safeReturn(r.return), { replace: true })
   }
@@ -184,24 +267,99 @@ function LoginForm({
       }}
     />
   )
-  const sso = showButtons && <ProviderLinks providers={list} ret={ret} />
-  const stay = new URLSearchParams()
-  if (ret !== '/') stay.set('return', ret)
-  stay.set('local', '1')
+  const note = (p: { kind: Parameters<typeof providerStartUrl>[0]; slug: string; name: string }) =>
+    setPendingMethod({ type: 'sso', kind: p.kind, slug: p.slug, name: p.name })
+  const sso = showButtons && <ProviderLinks providers={list} ret={ret} onPick={note} />
   const retry = () => {
     // One provider: go straight to it again. Otherwise the message is cleared and the person picks.
     if (list.length === 1 && showButtons) window.location.assign(providerStartUrl(list[0].kind, list[0].slug, ret))
     else {
       setError('')
-      navigate(ret === '/' ? '/login' : `/login?return=${encodeURIComponent(ret)}`, { replace: true })
+      navigate(loginHref(ret, other), { replace: true })
     }
+  }
+
+  // The page for someone coming back after a session ended: why, who, and only the way they came in last.
+  if (returning) {
+    const m = returning.method
+    const provider = m.type === 'sso' ? list.find((x) => x.kind === m.kind && x.slug === m.slug) : undefined
+    return (
+      <AuthLayout title={t.login.title}>
+        {reason && <FormMessage tone="info">{ts.ended[reason]}</FormMessage>}
+        <FormMessage focusRef={messageRef}>
+          {waiting ? ts.login.rateLimited(t.auth.wait(remaining)) : error}
+        </FormMessage>
+        <AccountCard account={returning} />
+        {m.type === 'password' && (
+          <>
+            <form className="grid gap-4" onSubmit={(e) => void submit(e)}>
+              {/* For the browser's password manager: whose password this is. */}
+              <input
+                type="text"
+                name="username"
+                value={username}
+                autoComplete="username"
+                readOnly
+                tabIndex={-1}
+                aria-hidden="true"
+                className="sr-only"
+              />
+              <Field
+                label={t.auth.password}
+                type="password"
+                value={pass}
+                onChange={(e) => setPass(e.target.value)}
+                autoComplete="current-password"
+                className="h-10"
+                autoFocus
+                required
+              />
+              <CaptchaField captcha={captcha} disabled={busy} />
+              <Button type="submit" className="h-10" disabled={busy || waiting || !pass || captcha.missing}>
+                {busy ? t.login.submitting : t.login.submit}
+              </Button>
+            </form>
+            {providers.forgot && (
+              <Link to="/forgot" className={LINK}>
+                {tm.links.forgot}
+              </Link>
+            )}
+          </>
+        )}
+        {m.type === 'passkey' && (
+          <PasskeyButton
+            username={returning.username}
+            ret={ret}
+            onDone={(r) => void passkeyDone(r)}
+            onError={(msg) => {
+              setError(msg)
+              setPasskeyOnly(false)
+            }}
+          />
+        )}
+        {m.type === 'sso' && provider && (
+          <a
+            href={providerStartUrl(provider.kind, provider.slug, ret, returning.email)}
+            onClick={() => note(provider)}
+            className={`${buttonVariants({ variant: 'outline' })} ${WIDE}`}
+          >
+            <ProviderIcon icon={provider.icon} />
+            <span className="min-w-0 truncate">{ts.ended.continueWith(provider.name)}</span>
+          </a>
+        )}
+        <button type="button" className={LINK} onClick={onOther}>
+          {ts.ended.otherAccount}
+        </button>
+      </AuthLayout>
+    )
   }
 
   return (
     <AuthLayout title={t.login.title}>
+      {reason && <FormMessage tone="info">{ts.ended[reason]}</FormMessage>}
       <FormMessage focusRef={messageRef}>{waiting ? ts.login.rateLimited(t.auth.wait(remaining)) : error}</FormMessage>
       {ssoError && error && showButtons && (
-        <Button type="button" variant="outline" size="sm" className="self-start" onClick={retry}>
+        <Button type="button" variant="outline" className="h-10 self-start" onClick={retry}>
           {ts.login.ssoRetry}
         </Button>
       )}
@@ -215,11 +373,7 @@ function LoginForm({
         <>
           {sso}
           {passkey}
-          <button
-            type="button"
-            className="self-start text-sm text-brand underline underline-offset-4"
-            onClick={() => setOpenedByClick(true)}
-          >
+          <button type="button" className={LINK} onClick={() => setOpenedByClick(true)}>
             {ts.login.usePassword}
           </button>
         </>
@@ -228,7 +382,7 @@ function LoginForm({
         <>
           {sso}
           {passkey}
-          <Link to={`/login?${stay.toString()}`} className="self-start text-sm text-brand underline underline-offset-4">
+          <Link to={loginHref(ret, other, { local: '1' })} className={LINK}>
             {ts.login.usePassword}
           </Link>
         </>
@@ -246,6 +400,7 @@ function LoginForm({
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
+              className="h-10"
               autoFocus
               required
             />
@@ -255,22 +410,29 @@ function LoginForm({
               value={pass}
               onChange={(e) => setPass(e.target.value)}
               autoComplete="current-password"
+              className="h-10"
               required
             />
             <CaptchaField captcha={captcha} disabled={busy} />
-            <Button type="submit" disabled={busy || waiting || !username || !pass || captcha.missing}>
+            <Button type="submit" className="h-10" disabled={busy || waiting || !username || !pass || captcha.missing}>
               {busy ? t.login.submitting : t.login.submit}
             </Button>
           </form>
           {(providers.forgot || providers.register) && (
-            <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-sm">
+            <div className="flex flex-wrap justify-between gap-x-4 text-sm">
               {providers.forgot && (
-                <Link to="/forgot" className="text-brand underline underline-offset-4">
+                <Link
+                  to="/forgot"
+                  className="inline-flex min-h-10 items-center text-brand underline underline-offset-4"
+                >
                   {tm.links.forgot}
                 </Link>
               )}
               {providers.register && (
-                <Link to="/register" className="text-brand underline underline-offset-4">
+                <Link
+                  to="/register"
+                  className="inline-flex min-h-10 items-center text-brand underline underline-offset-4"
+                >
                   {tm.links.register}
                 </Link>
               )}

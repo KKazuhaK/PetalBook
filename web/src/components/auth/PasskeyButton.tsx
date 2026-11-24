@@ -61,7 +61,7 @@ export function PasskeyButton({
     <Button
       type="button"
       variant="outline"
-      className="w-full min-w-0 gap-2"
+      className="h-10 w-full min-w-0 gap-2"
       disabled={busy || disabled}
       onClick={() => void go()}
     >

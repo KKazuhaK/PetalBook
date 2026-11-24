@@ -162,7 +162,7 @@ func (s *server) ssoStartGET(c *call) {
 		writeError(c.w, http.StatusNotFound, "not_found", "no such endpoint")
 		return
 	}
-	res, err := s.auth.SSOBegin(c.r.Context(), kind, c.r.PathValue("slug"), auth.BeginParams{Intent: "login", Return: c.r.URL.Query().Get("return")}, s.auth.ClientAddr(c.r))
+	res, err := s.auth.SSOBegin(c.r.Context(), kind, c.r.PathValue("slug"), auth.BeginParams{Intent: "login", Return: c.r.URL.Query().Get("return"), LoginHint: c.r.URL.Query().Get("login_hint")}, s.auth.ClientAddr(c.r))
 	if err != nil {
 		code := "internal"
 		var ae *auth.Error

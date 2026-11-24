@@ -442,6 +442,13 @@ func (s *server) adminPatchTenant(c *call) {
 		changed["tenant"], changed["slug"] = t.ID, t.Slug
 		s.audit(c, auth.AuditEvent{Kind: "tenant_changed", Actor: c.user().ID, Tenant: t.ID, Detail: changed})
 	}
+	// Whenever it is asked for, changed or not: a repeat finishes what a failure left undone.
+	if _, ok := req["disabled"]; ok && s.auth != nil {
+		if err := s.auth.TenantAccessChanged(c.r.Context(), t.ID, t.Disabled); err != nil {
+			s.fail(c.w, err)
+			return
+		}
+	}
 	if _, ok := changed["quota"]; ok && s.quota != nil {
 		_ = s.quota.Evaluate(c.r.Context(), []store.Touched{{TenantID: t.ID}})
 	}

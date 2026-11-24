@@ -33,6 +33,8 @@ var scopeAllowlist = map[string]string{
 	"TrimAudit":                  "background job: the audit log of every tenant",
 	"NextSpaceToMeasure":         "background job: the space measured longest ago, of any tenant",
 	"DisabledSpaces":             "the server's set of disabled space ids, which is checked by id",
+	"EndTenantSessions":          "a site administrator disabling a tenant: the tenant is the one named, its people's sessions end",
+	"DeleteTenantSessionEnds":    "a site administrator enabling a tenant again: the tenant is the one named",
 	// --- rows reached through a row that was already found in scope --------------
 	"SpaceOwner":              "a space already opened by the caller",
 	"ListMembers":             "members of a space already opened by the caller",
@@ -262,6 +264,8 @@ var sqlTable = regexp.MustCompile(`(?is)\b(FROM|JOIN|INTO|UPDATE)\s+(users|space
 // (docs/api.md, "Deleting a user": a deleted person is invisible). A query on the
 // users table that does not say deleted_at is on this list with the reason.
 var deletedAllowlist = map[string]string{
+	"EndTenantSessions":       "ends every session of a tenant's people when it is disabled; ending the (already ended) sessions of a deleted person too is harmless",
+	"DeleteTenantSessionEnds": "forgets a tenant's `disabled` records when it is enabled again; a deleted person's records go with the rest",
 	"GetUserAny":              "names a deleted person on purpose: the recycle bin and the audit log show them",
 	"GetUserState":            "reads whether a person is deleted",
 	"PlanUserDeletion":        "its first read is GetUser; the other queries are of people who are members of spaces of the person, filtered where it matters",
