@@ -17,10 +17,16 @@ export GOMAXPROCS := $(SHARE)
 export VITEST_MAX_WORKERS := $(SHARE)
 endif
 
-# Every Go package with tests but the two that "test-index" and "test-space" run.
-REST_PKGS = $(shell go list ./cmd/... ./internal/... | awk '!/\/internal\/(index|space)$$/')
+# Every Go package with tests but the three that "test-index", "test-space" and
+# "test-api" run.
+REST_PKGS = $(shell go list ./cmd/... ./internal/... | awk '!/\/internal\/(index|space|api)$$/')
 
-.PHONY: build web release test test-full test-index test-space test-rest test-postgres test-casefold vet run clean \
+# internal/api is split into API_SHARDS shards that CI runs on machines of their
+# own (scripts/test-shards.sh); "make test-api" runs them all in one go.
+API_PKG    = ./internal/api
+API_SHARDS ?= 4
+
+.PHONY: build web release test test-full test-index test-space test-rest test-api test-api-shard check-api-shards check-go-rest-core test-postgres test-casefold vet run clean \
 	contract contract-postgres fmt-check tidy-check actionlint vuln check-go check-go-rest check-web check-web-static check check-full \
 	cross-compile web-typecheck web-lint web-test
 
@@ -66,6 +72,18 @@ test-space:
 
 test-rest:
 	go test -race -timeout $(GOTEST_TIMEOUT) $(REST_PKGS)
+
+test-api:
+	go test -race -timeout $(GOTEST_TIMEOUT) $(API_PKG)
+
+# One shard of internal/api: make test-api-shard SHARD=2 (1 to API_SHARDS).
+test-api-shard:
+	@test -n "$(SHARD)" || { echo "give SHARD=n, from 1 to $(API_SHARDS)" >&2; exit 2; }
+	GOTEST_TIMEOUT=$(GOTEST_TIMEOUT) bash scripts/test-shards.sh run $(API_PKG) $(API_SHARDS) $(SHARD)
+
+# Fails unless every test of internal/api is in exactly one shard.
+check-api-shards:
+	bash scripts/test-shards.sh check $(API_PKG) $(API_SHARDS)
 
 # The tests of the packages that use the state database (the ones that import
 # internal/store/storetest), run on SQLite and on PostgreSQL in a throwaway
@@ -135,9 +153,14 @@ vuln:
 # All the Go checks that need nothing but a Go toolchain (SQLite only).
 check-go: fmt-check tidy-check vet test
 
-# The same without the two slowest packages, which CI runs on machines of their
-# own (test-index, test-space): the Go checks of the third machine.
-check-go-rest: fmt-check tidy-check vet test-rest
+# The same without the packages that CI runs on machines of their own
+# (test-index, test-space and the shards of test-api): the Go checks of the
+# machine that is left, with the check that the shards are all of internal/api.
+check-go-rest-core: fmt-check tidy-check vet test-rest check-api-shards
+
+# Everything the Go checks of CI do but "test-index" and "test-space", on one
+# machine: the core, and all of internal/api.
+check-go-rest: check-go-rest-core test-api
 
 # The web app's typecheck, lint and tests (CI runs the first two and the tests
 # on machines of their own).
