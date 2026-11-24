@@ -430,15 +430,26 @@ func (s *server) restoreUser(c *call, it *store.RecycleItem) {
 	}
 	s.forgetUser(it.UserID)
 	s.auditRow(c, "user_restored", it.TenantID, map[string]any{"item": it.ID, "user": it.UserID, "username": it.Name, "transfers": transfersDetail(res.Transfers), "recycled": res.Spaces, "reason": it.Reason, "bulk": ""})
-	list := func(v []string) []string {
-		if v == nil {
-			return []string{}
+	// The audit row above is whole; the answer leaves a personal space out for
+	// a tenant's administrator and counts it.
+	skipped, spaceIDs, personal := []store.RestoreSkipped{}, []string{}, 0
+	for _, sk := range res.Skipped {
+		if sk.Personal && !c.isSiteAdmin() {
+			personal++
+			continue
 		}
-		return v
+		skipped = append(skipped, sk)
 	}
-	skipped := res.Skipped
-	if skipped == nil {
-		skipped = []store.RestoreSkipped{}
+	for _, id := range res.Spaces {
+		if res.Personal[id] && !c.isSiteAdmin() {
+			personal++
+			continue
+		}
+		spaceIDs = append(spaceIDs, id)
+	}
+	restored := map[string]any{"item": it.ID, "user": s.toUser(res.User), "spaces": spaceIDs}
+	if !c.isSiteAdmin() {
+		restored["personal"] = personal
 	}
 	if res.Transfers == nil {
 		res.Transfers = []store.UserTransfer{}
@@ -451,7 +462,7 @@ func (s *server) restoreUser(c *call, it *store.RecycleItem) {
 		Skipped   []store.RestoreSkipped `json:"skipped"`
 		Transfers []store.UserTransfer   `json:"transfers"`
 		Left      []store.UserLeft       `json:"left"`
-	}{map[string]any{"item": it.ID, "user": s.toUser(res.User), "spaces": list(res.Spaces)}, skipped, res.Transfers, res.Left})
+	}{restored, skipped, res.Transfers, res.Left})
 }
 
 // deletionDecisions is what the preview of deleting a person decides, as one

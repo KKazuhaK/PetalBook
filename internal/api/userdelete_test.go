@@ -1091,3 +1091,32 @@ func TestASiteAdministratorsJobIsQueuedByTheTenantItWorksOn(t *testing.T) {
 		f.root.do("POST", "/api/admin/spaces/"+f.spaceB+"/enable", nil).want(t, 204, "")
 	})
 }
+
+// The answer to restoring a person shows a tenant administrator no personal
+// space (its id or its name); it counts them. The site administrator and the
+// audit row see them.
+func TestRestoringAPersonShowsATenantAdministratorNoPersonalSpace(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		personal := f.memA.personalSpace()
+		del := func(c *client) string {
+			return c.do("DELETE", "/api/users/"+f.userA, nil).want(t, 200, "").body["id"].(string)
+		}
+		r := f.admA.do("POST", "/api/admin/recycle/"+del(f.admA)+"/restore", map[string]any{}).want(t, 200, "")
+		if strings.Contains(r.raw, personal) {
+			t.Fatalf("a tenant administrator sees the personal space: %s", r.raw)
+		}
+		if n, _ := r.body["restored"].(map[string]any)["personal"].(float64); n != 1 {
+			t.Fatalf("the personal spaces are not counted: %s", r.raw)
+		}
+		r = f.root.do("POST", "/api/admin/recycle/"+del(f.root)+"/restore", map[string]any{}).want(t, 200, "")
+		if !strings.Contains(r.raw, personal) {
+			t.Fatalf("the site administrator does not see it: %s", r.raw)
+		}
+		a.auth.FlushAudit(context.Background())
+		if rows := f.root.audit(t, "user_restored"); len(rows) != 2 || !strings.Contains(fmt.Sprint(rows), personal) {
+			t.Fatalf("the audit row is incomplete: %v", rows)
+		}
+	})
+}

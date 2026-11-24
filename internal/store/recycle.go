@@ -481,6 +481,9 @@ type RestoreSkipped struct {
 	Space  string `json:"space,omitempty"`
 	Name   string `json:"name"`
 	Reason string `json:"reason"`
+	// Personal: the space is a person's personal one, which only the site's
+	// administrators are told of (it is not in the JSON).
+	Personal bool `json:"-"`
 }
 
 // RestoreOutcome is what RestoreSpaceRows did.

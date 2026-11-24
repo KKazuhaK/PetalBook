@@ -91,6 +91,8 @@ type UserRestored struct {
 	Skipped   []store.RestoreSkipped
 	Transfers []store.UserTransfer
 	Left      []store.UserLeft
+	// Personal: which of Spaces are personal ones, for an answer that leaves them out.
+	Personal map[string]bool
 }
 
 // RestoreUser brings a person back from the recycle bin, with the spaces that
@@ -139,15 +141,21 @@ func (m *Manager) RestoreUser(ctx context.Context, sc store.Scope, itemID string
 	for i := range children {
 		child := &children[i]
 		if child.State != store.RecycleReady {
-			res.Skipped = append(res.Skipped, store.RestoreSkipped{Space: child.SpaceID, Name: child.Name, Reason: "busy"})
+			res.Skipped = append(res.Skipped, store.RestoreSkipped{Space: child.SpaceID, Name: child.Name, Reason: "busy", Personal: child.Personal})
 			continue
 		}
 		r, err := m.restoreSpaceItem(ctx, child, "", true)
 		if err != nil {
-			res.Skipped = append(res.Skipped, store.RestoreSkipped{Space: child.SpaceID, Name: child.Name, Reason: skipReason(err)})
+			res.Skipped = append(res.Skipped, store.RestoreSkipped{Space: child.SpaceID, Name: child.Name, Reason: skipReason(err), Personal: child.Personal})
 			continue
 		}
 		res.Spaces = append(res.Spaces, r.SpaceID)
+		if child.Personal {
+			if res.Personal == nil {
+				res.Personal = map[string]bool{}
+			}
+			res.Personal[r.SpaceID] = true
+		}
 		res.Skipped = append(res.Skipped, r.Skipped...)
 	}
 	if err := m.opt.Store.Tx(ctx, func(q store.Q) error {
