@@ -38,7 +38,10 @@ var (
 
 // Store is safe for concurrent use.
 type Store struct {
-	db      *sql.DB
+	db *sql.DB
+	// rdb is SQLite's pool of read-only connections (nil on PostgreSQL), which
+	// the reads outside a transaction use (see Q).
+	rdb     *sql.DB
 	dialect Dialect
 	rebinds sync.Map // query -> rewritten query (PostgreSQL only)
 	// people is what NoteActive and NoteWrite remember of who was written lately.
@@ -66,20 +69,54 @@ type runner interface {
 type bound struct {
 	s *Store
 	r runner
+	// reads, when set, runs the plain SELECTs (see Q).
+	reads runner
 }
 
 func (b bound) Exec(ctx context.Context, q string, a ...any) (sql.Result, error) {
 	return b.r.ExecContext(ctx, b.s.rebind(q), a...)
 }
 func (b bound) Query(ctx context.Context, q string, a ...any) (*sql.Rows, error) {
-	return b.r.QueryContext(ctx, b.s.rebind(q), a...)
+	return b.reader(q).QueryContext(ctx, b.s.rebind(q), a...)
 }
 func (b bound) QueryRow(ctx context.Context, q string, a ...any) *sql.Row {
-	return b.r.QueryRowContext(ctx, b.s.rebind(q), a...)
+	return b.reader(q).QueryRowContext(ctx, b.s.rebind(q), a...)
+}
+
+// reader is where a query runs: a plain SELECT on the read pool when there is
+// one, anything else (a PRAGMA, a statement with RETURNING) on r.
+func (b bound) reader(q string) runner {
+	if b.reads != nil && isPlainSelect(q) {
+		return b.reads
+	}
+	return b.r
+}
+
+// isPlainSelect reports whether q is a SELECT, which a read-only connection can
+// run.
+func isPlainSelect(q string) bool {
+	q = strings.TrimSpace(q)
+	return len(q) > 6 && strings.EqualFold(q[:6], "SELECT") && !strings.Contains(q, "FOR UPDATE") && !strings.Contains(q, "FOR NO KEY UPDATE")
 }
 
 // Q runs queries outside a transaction.
-func (s *Store) Q() Q { return bound{s, s.db} }
+//
+// On SQLite its SELECTs run on a pool of read-only connections (readConns),
+// beside the one connection that writes, so that reads do not wait in line
+// behind writes and each other; its other statements run on the writer. In WAL
+// mode a read sees every write committed before it starts, so a caller that
+// writes and then reads, each on Q, reads what it wrote. The rule: what must be
+// read in the same state as a write (read, decide, write; or a write and a read
+// that must not see a later write between them) runs in one Tx, which is on the
+// writer, reads and all. A read on Q while the same goroutine holds a Tx open
+// sees the database without that transaction's writes (on PostgreSQL as
+// well); a Tx is used through its own Q only.
+func (s *Store) Q() Q {
+	if s.rdb != nil {
+		return bound{s: s, r: s.db, reads: s.rdb}
+	}
+	return bound{s: s, r: s.db}
+}
 
 // Stats reports the statistics of the pool of connections that writes (on
 // PostgreSQL, the only one).
@@ -89,18 +126,23 @@ func (s *Store) Stats() sql.DBStats { return s.db.Stats() }
 func (s *Store) Dialect() Dialect { return s.dialect }
 
 // Close closes the database.
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if s.rdb != nil {
+		s.rdb.Close()
+	}
+	return s.db.Close()
+}
 
 // Tx runs fn in a transaction: committed when it returns nil, rolled back
-// otherwise. Inside fn use only the Q it is given. On SQLite the whole store
-// has one connection, so a query on s.Q() inside fn would wait for the
-// transaction forever.
+// otherwise. Inside fn use only the Q it is given. On SQLite the store has one
+// connection that writes, so a write on s.Q() inside fn would wait for the
+// transaction forever (and a read on s.Q() would not see fn's writes).
 func (s *Store) Tx(ctx context.Context, fn func(Q) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if err := fn(bound{s, tx}); err != nil {
+	if err := fn(bound{s: s, r: tx}); err != nil {
 		tx.Rollback()
 		return err
 	}
@@ -180,8 +222,8 @@ func openSQLite(path string) (*Store, error) {
 		return nil, err
 	}
 	// A file: URI keeps characters such as ? and # in the path from being
-	// read as options. One connection: SQLite has one writer anyway, and
-	// this way a write never fails with SQLITE_BUSY inside the process.
+	// read as options. One connection writes: SQLite has one writer anyway,
+	// and this way a write never fails with SQLITE_BUSY inside the process.
 	q := url.Values{}
 	q.Add("_pragma", "journal_mode(WAL)")
 	// FULL: a draft answered with 200 must survive a power cut, as a file
@@ -200,8 +242,25 @@ func openSQLite(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db, dialect: SQLite}, nil
+	// The read pool: the same file, read only. It is opened after the writer
+	// has made the file and switched it to WAL.
+	r := url.Values{}
+	r.Add("_pragma", "busy_timeout(10000)")
+	r.Add("_pragma", "foreign_keys(1)")
+	r.Add("_pragma", "query_only(1)")
+	ru := url.URL{Scheme: "file", Path: filepath.ToSlash(abs), RawQuery: r.Encode()}
+	rdb, err := sql.Open("sqlite", ru.String())
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	rdb.SetMaxOpenConns(readConns)
+	rdb.SetMaxIdleConns(readConns)
+	return &Store{db: db, rdb: rdb, dialect: SQLite}, nil
 }
+
+// readConns is the size of SQLite's read pool.
+const readConns = 4
 
 func openPostgres(dsn string) (*Store, error) {
 	db, err := sql.Open("pgx", dsn)
