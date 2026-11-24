@@ -266,6 +266,12 @@ func TestRuntimeGuardRefusesDestructiveCommands(t *testing.T) {
 		{"rev-parse", "--git-dir", "--exec-path"},
 		{"config", "user.name", "evil"},
 		{"config", "--global", "user.name"},
+		{"config", "--local", "--unset-all", "core.hooksPath"},
+		{"config", "--local", "remote.origin.promisor", "true"},
+		{"config", "--global", "--unset-all", "remote.origin.promisor"},
+		{"config", "--local", "--get-regexp", "."},
+		{"config", "--global", "--get-regexp", partialKeysPattern},
+		{"config", "--local", "--get-regexp", partialKeysPattern, "x"},
 		{"checkout", "--quiet", "-B", "x"},
 		{"checkout", "--quiet", "--orphan", "x"},
 		{"rm", "-f", "x"},
@@ -304,6 +310,9 @@ func TestRuntimeGuardRefusesDestructiveCommands(t *testing.T) {
 		{"ls-tree", "-r", "-z", "--name-only", sha, "--", "-f"},
 		{"rev-list", "--left-right", "--count", "HEAD...refs/remotes/origin/main"},
 		{"init", "--quiet", "--initial-branch=main"},
+		{"config", "--local", "--unset-all", "remote.origin.partialclonefilter"},
+		{"config", "--local", "--unset-all", "extensions.partialclone"},
+		{"config", "--local", "--get-regexp", partialKeysPattern},
 	} {
 		if err := refuseDestructive(args); err != nil {
 			t.Errorf("%v refused: %v", args, err)
@@ -432,7 +441,8 @@ func TestStaticOnlyOneGitRunnerAndOnePushBuilder(t *testing.T) {
 			continue
 		}
 		for i, line := range strings.Split(string(src), "\n") {
-			if strings.Contains(line, `"push"`) {
+			// (A field of GitHub's repository answer, `json:"push"`, is not a command.)
+			if strings.Contains(strings.ReplaceAll(line, "`json:\"push\"`", ""), `"push"`) {
 				t.Errorf("%s:%d: a push command line must be built by pushArgs in safegit.go", f, i+1)
 			}
 		}

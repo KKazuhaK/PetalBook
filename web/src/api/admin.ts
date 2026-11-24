@@ -6,7 +6,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, enc, request } from './client'
 import { keys } from './hooks'
-import type { MailPatch, MailSettings, MailTestResult, CreatedTenant, AdminUsageList, OwnQuota, SettingLower, SiteSetting, Tenancy, Tenant, TenantList, TenantQuotaKey, TenantSetting, Group, GroupList, GroupPersonList, GroupSource, GroupSpaceList, AdminDaily, AdminSpaceList, AuditList, AuthProvider, Passkey, ProviderInput, SecurityPatch, SecuritySettings, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User, AdminGrantList, AdminTokenList, MachineAccess } from './types'
+import type { AdminStorage, AdminSpace, CacheState, PutAdminStorage, MailPatch, MailSettings, MailTestResult, CreatedTenant, AdminUsageList, OwnQuota, SettingLower, SiteSetting, Tenancy, Tenant, TenantList, TenantQuotaKey, TenantSetting, Group, GroupList, GroupPersonList, GroupSource, GroupSpaceList, AdminDaily, AdminSpaceList, AuditList, AuthProvider, Passkey, ProviderInput, SecurityPatch, SecuritySettings, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User, AdminGrantList, AdminTokenList, MachineAccess, AdminGitHub, CursorPage, GitHubInstallation, GitHubManifestStart, PutAdminGitHubInput } from './types'
 
 export const adminApi = {
   // --- users and invites ---
@@ -21,7 +21,8 @@ export const adminApi = {
     return request<{ users: User[] }>(`/users${query ? `?${query}` : ''}`, { signal })
   },
   // `quota` sets the person's own limits: a number each, or null to follow the tenant; the keys left out stay.
-  updateUser: (id: string, input: { role?: Role; disabled?: boolean; passkeyRequired?: boolean; email?: string; emailVerified?: boolean; siteAdmin?: boolean; quota?: Partial<OwnQuota> }) => request<{ user: User }>(`/users/${enc(id)}`, { method: 'PATCH', body: input }),
+  // `remoteExempt` (site administrators) leaves the spaces the person owns out of the requirement of a remote.
+  updateUser: (id: string, input: { role?: Role; disabled?: boolean; passkeyRequired?: boolean; email?: string; emailVerified?: boolean; siteAdmin?: boolean; quota?: Partial<OwnQuota>; remoteExempt?: boolean }) => request<{ user: User }>(`/users/${enc(id)}`, { method: 'PATCH', body: input }),
   // The passkeys of one person, for an administrator who removes a lost one.
   userPasskeys: (id: string, signal?: AbortSignal) => request<{ passkeys: Passkey[] }>(`/users/${enc(id)}/passkeys`, { signal }),
   deleteUserPasskey: (id: string, passkey: string) => request<void>(`/users/${enc(id)}/passkeys/${enc(passkey)}`, { method: 'DELETE' }),
@@ -35,9 +36,18 @@ export const adminApi = {
     if (params.q) q.set('q', params.q)
     if (params.cursor) q.set('cursor', params.cursor)
     if (params.limit) q.set('limit', String(params.limit))
+    if (params.cache) q.set('cache', params.cache)
+    if (params.overdue) q.set('overdue', '1')
     const qs = q.toString()
     return request<AdminSpaceList>(`/admin/spaces${qs ? `?${qs}` : ''}`, { signal })
   },
+  // The site's storage policy (docs/api.md, "Server storage").
+  adminStorage: (signal?: AbortSignal) => request<AdminStorage>('/admin/storage', { signal }),
+  putAdminStorage: (input: PutAdminStorage) => request<AdminStorage>('/admin/storage', { method: 'PUT', body: input }),
+  // Keeps a space's files on the server (pin), or leaves it out of the requirement of a remote (exempt).
+  putSpaceStorage: (id: string, input: { pin?: boolean; exempt?: boolean }) => request<AdminSpace>(`/admin/spaces/${enc(id)}/storage`, { method: 'PUT', body: input }),
+  // Evicts the space now, if it may be.
+  evictSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/evict`, { method: 'POST' }),
   // Measures the space's directory now.
   adminResizeSpace: (id: string) => request<SpaceSize>(`/admin/spaces/${enc(id)}/size`, { method: 'POST' }),
   adminTransferSpace: (id: string, userId: string) => request<void>(`/admin/spaces/${enc(id)}/transfer`, { method: 'POST', body: { userId } }),
@@ -175,6 +185,19 @@ export const adminApi = {
       throw e
     }
   },
+  // --- the GitHub App of the whole server ---
+  adminGitHub: (signal?: AbortSignal) => request<AdminGitHub>('/admin/connections/github', { signal }),
+  putAdminGitHub: (input: PutAdminGitHubInput) => request<AdminGitHub>('/admin/connections/github', { method: 'PUT', body: input }),
+  deleteAdminGitHub: () => request<void>('/admin/connections/github', { method: 'DELETE' }),
+  // Reads the App and its installations from GitHub again.
+  checkAdminGitHub: () => request<AdminGitHub>('/admin/connections/github/check', { method: 'POST', body: {} }),
+  // The manifest and the address the browser posts it to, to make the App on GitHub in one click.
+  startGitHubManifest: (input: { organization?: string; name?: string }) => request<GitHubManifestStart>('/admin/connections/github/manifest', { method: 'POST', body: input }),
+  // Saves the App GitHub made when saving it failed at the time (the redirect said `pending=1`).
+  retryGitHubManifest: () => request<AdminGitHub>('/admin/connections/github/manifest/retry', { method: 'POST', body: {} }),
+  adminGitHubInstallations: (cursor?: string, signal?: AbortSignal) => request<CursorPage<GitHubInstallation>>(`/admin/connections/github/installations${cursor ? `?cursor=${enc(cursor)}` : ''}`, { signal }),
+  // Shares the installation with exactly these tenants; none stops sharing.
+  putAdminGitHubInstallation: (id: number, tenants: string[]) => request<GitHubInstallation>(`/admin/connections/github/installations/${id}`, { method: 'PUT', body: { tenants } }),
   putDailyLines: (input: { lang: string; text: string; format: LinesFormat }) => request<AdminDaily>('/admin/daily/lines', { method: 'PUT', body: input }),
   deleteDailyLines: (lang: string) => request<AdminDaily>(`/admin/daily/lines?lang=${enc(lang)}`, { method: 'DELETE' }),
 }
@@ -202,11 +225,11 @@ export function useInvites(enabled = true) {
 export const ADMIN_PAGE_SIZE = 50
 
 // Every space on the server, a cursor page at a time; `q` is the name filter.
-export function useAdminSpaces(q: string, enabled = true) {
+export function useAdminSpaces(q: string, enabled = true, filter: { cache?: CacheState; overdue?: boolean } = {}) {
   return useInfiniteQuery({
-    queryKey: keys.adminSpaceList(q),
+    queryKey: keys.adminSpaceList(q, `${filter.cache ?? ''}|${filter.overdue ? 1 : 0}`),
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => adminApi.adminSpaces({ q: q || undefined, cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE }, signal),
+    queryFn: ({ pageParam, signal }) => adminApi.adminSpaces({ q: q || undefined, cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE, cache: filter.cache, overdue: filter.overdue }, signal),
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 15_000,
@@ -256,11 +279,13 @@ export function useSetTenancy() {
   })
 }
 // Every tenant, the default one first; there are at most 1,000, so the pages are followed to the end.
-export function useTenants(enabled = true) {
+// `fresh` asks again on mounting even when the list is cached: a dialog that offers tenants to pick must not miss a new one.
+export function useTenants(enabled = true, fresh = false) {
   return useQuery({
     queryKey: keys.tenants,
     enabled,
     staleTime: 15_000,
+    refetchOnMount: fresh ? 'always' : true,
     queryFn: async ({ signal }) => {
       const out: Tenant[] = []
       let cursor = ''
@@ -533,4 +558,89 @@ export function useAdminGrants(enabled = true) {
     enabled,
     staleTime: 15_000,
   })
+}
+
+// --- the GitHub App ----------------------------------------------------------------
+
+export function useAdminGitHub(enabled = true) {
+  return useQuery({ queryKey: keys.adminGitHub, queryFn: ({ signal }) => adminApi.adminGitHub(signal), enabled, staleTime: 15_000 })
+}
+
+// What an administrator changes about the App changes what everyone is offered.
+function useGitHubChanged() {
+  const qc = useQueryClient()
+  return () => Promise.all([qc.invalidateQueries({ queryKey: keys.adminGitHub }), qc.invalidateQueries({ queryKey: keys.connections })])
+}
+
+export function useSaveAdminGitHub() {
+  const changed = useGitHubChanged()
+  return useMutation({ mutationFn: (input: PutAdminGitHubInput) => adminApi.putAdminGitHub(input), onSuccess: () => changed() })
+}
+
+export function useCheckAdminGitHub() {
+  const changed = useGitHubChanged()
+  return useMutation({ mutationFn: () => adminApi.checkAdminGitHub(), onSuccess: () => changed() })
+}
+
+export function useStartGitHubManifest() {
+  return useMutation({ mutationFn: (input: { organization?: string; name?: string }) => adminApi.startGitHubManifest(input) })
+}
+
+export function useRetryGitHubManifest() {
+  const changed = useGitHubChanged()
+  return useMutation({ mutationFn: () => adminApi.retryGitHubManifest(), onSuccess: () => changed() })
+}
+
+export function useDeleteAdminGitHub() {
+  const changed = useGitHubChanged()
+  return useMutation({ mutationFn: () => adminApi.deleteAdminGitHub(), onSuccess: () => changed() })
+}
+
+// The App's installations, a page (one call to GitHub) at a time.
+export function useAdminGitHubInstallations(enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.adminGitHubInstallations,
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }): Promise<CursorPage<GitHubInstallation>> => adminApi.adminGitHubInstallations(pageParam || undefined, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled,
+    staleTime: 15_000,
+  })
+}
+
+export function useShareGitHubInstallation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, tenants }: { id: number; tenants: string[] }) => adminApi.putAdminGitHubInstallation(id, tenants),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: keys.adminGitHubInstallations }), qc.invalidateQueries({ queryKey: ['connections'] })]),
+  })
+}
+
+// --- server storage (docs/api.md, "Server storage") ---
+
+export function useAdminStorage(enabled = true) {
+  return useQuery({ queryKey: keys.adminStorage, queryFn: ({ signal }) => adminApi.adminStorage(signal), enabled, staleTime: 10_000 })
+}
+// A change of the policy changes what the spaces show (notices, read only) and the counts of the status.
+export function useSaveAdminStorage() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: PutAdminStorage) => adminApi.putAdminStorage(input),
+    onSuccess: (data) => {
+      qc.setQueryData(keys.adminStorage, data)
+      return Promise.all([qc.invalidateQueries({ queryKey: keys.adminSpaces }), qc.invalidateQueries({ queryKey: keys.spaces }), qc.invalidateQueries({ queryKey: keys.adminStatus })])
+    },
+  })
+}
+export function usePutSpaceStorage() {
+  const changed = useAdminSpaceChanged()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...input }: { id: string; pin?: boolean; exempt?: boolean }) => adminApi.putSpaceStorage(id, input),
+    onSuccess: (_r, { id }) => Promise.all([changed(id), qc.invalidateQueries({ queryKey: keys.adminStorage })]),
+  })
+}
+export function useEvictSpace() {
+  const changed = useAdminSpaceChanged()
+  return useMutation({ mutationFn: (id: string) => adminApi.evictSpace(id), onSuccess: (_r, id) => changed(id) })
 }

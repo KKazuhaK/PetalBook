@@ -1,13 +1,16 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/KKazuhaK/PetalBook/internal/auth"
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
@@ -30,6 +33,9 @@ type userResp struct {
 	// Quota is the person's own limits (null follows the tenant); the
 	// administrators' lists and PATCH answer have it, nothing else does.
 	Quota *ownQuotaResp `json:"quota,omitempty"`
+	// RemoteExempt: the storage policy does not ask the spaces this user owns
+	// for a remote (absent when false).
+	RemoteExempt bool `json:"remoteExempt,omitempty"`
 }
 
 // toUser is the user as the API shows it. passkeyRequired is whether the
@@ -39,7 +45,7 @@ func (s *server) toUser(u store.User) userResp {
 	if s.auth != nil {
 		req = s.auth.PasskeyRequiredOf(u)
 	}
-	r := userResp{u.ID, u.Username, u.Name, u.Email, u.Role, u.Disabled, rfc3339(u.Created), u.EmailVerified, req, u.Role == "admin" && u.SiteAdmin, nil, nil}
+	r := userResp{u.ID, u.Username, u.Name, u.Email, u.Role, u.Disabled, rfc3339(u.Created), u.EmailVerified, req, u.Role == "admin" && u.SiteAdmin, nil, nil, u.RemoteExempt}
 	if !s.single {
 		r.Tenant = s.toTenantRef(u.TenantID)
 	}
@@ -63,12 +69,44 @@ type spaceResp struct {
 	// through groups; ViaGroups is whether a group of theirs is a member.
 	DirectRole string `json:"directRole"`
 	ViaGroups  bool   `json:"viaGroups"`
+	// Storage is what the space's copy on the server is and what the storage
+	// policy asks of it (see "Server storage"); absent in single-user mode.
+	Storage *spaceStorageResp `json:"storage,omitempty"`
+}
+
+// spaceStorageResp is the storage block of a Space.
+type spaceStorageResp struct {
+	Cache  string      `json:"cache"`
+	Assets string      `json:"assets"`
+	Remote *remoteNote `json:"remote"`
+}
+
+// remoteNote is a requirement a space does not meet yet.
+type remoteNote struct {
+	Required string `json:"required"`
+	Deadline string `json:"deadline"`
+	Overdue  bool   `json:"overdue"`
+}
+
+func toNote(n *spaces.RemoteNotice) *remoteNote {
+	if n == nil {
+		return nil
+	}
+	return &remoteNote{n.Required, rfc3339(n.Deadline), n.Overdue}
 }
 
 func toSpaces(in []spaces.Info) []spaceResp {
 	out := make([]spaceResp, len(in))
 	for i, s := range in {
-		out[i] = spaceResp{s.ID, s.Name, s.Role, s.Perms.Names(), s.Personal, s.Sync, s.Inbox, s.Disabled, s.DirectRole, s.ViaGroups}
+		out[i] = spaceResp{ID: s.ID, Name: s.Name, Role: s.Role, Permissions: s.Perms.Names(), Personal: s.Personal, Sync: s.Sync, Inbox: s.Inbox, Disabled: s.Disabled,
+			DirectRole: s.DirectRole, ViaGroups: s.ViaGroups}
+		if s.Cache != "" {
+			assets := s.Assets
+			if assets == "" {
+				assets = "space"
+			}
+			out[i].Storage = &spaceStorageResp{Cache: s.Cache, Assets: assets, Remote: toNote(s.RemoteNotice)}
+		}
 	}
 	return out
 }
@@ -425,6 +463,7 @@ func (s *server) patchUser(c *call) {
 		EmailVerified   *bool           `json:"emailVerified"`
 		SiteAdmin       *bool           `json:"siteAdmin"`
 		Quota           json.RawMessage `json:"quota"`
+		RemoteExempt    *bool           `json:"remoteExempt"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
@@ -438,7 +477,7 @@ func (s *server) patchUser(c *call) {
 		}
 	}
 	u, err := s.auth.UpdateUser(c.r.Context(), c.user(), s.auth.ClientAddr(c.r), c.r.PathValue("id"), auth.UserPatch{Role: req.Role, Disabled: req.Disabled,
-		PasskeyRequired: req.PasskeyRequired, Email: req.Email, EmailVerified: req.EmailVerified, SiteAdmin: req.SiteAdmin})
+		PasskeyRequired: req.PasskeyRequired, Email: req.Email, EmailVerified: req.EmailVerified, SiteAdmin: req.SiteAdmin, RemoteExempt: req.RemoteExempt})
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -531,13 +570,67 @@ func (s *server) listSpaces(c *call) {
 
 func (s *server) createSpace(c *call) {
 	var req struct {
-		Name  string `json:"name"`
-		Inbox string `json:"inbox"`
+		Name    string `json:"name"`
+		Inbox   string `json:"inbox"`
+		Storage *struct {
+			Sync *struct {
+				Provider    string `json:"provider"`
+				Owner       string `json:"owner"`
+				Name        string `json:"name"`
+				Private     *bool  `json:"private"`
+				Description string `json:"description"`
+				Create      *bool  `json:"create"`
+				// Assets asks for an attachment repository beside the space's
+				// (milestone 3.1): true, false, or {"name": "…"}.
+				Assets json.RawMessage `json:"assets"`
+			} `json:"sync"`
+		} `json:"storage"`
+		// Remote connects the new space to an existing repository at a plain
+		// address, with a token (milestone 3.1): the body of PUT …/remote.
+		Remote *struct {
+			URL        string `json:"url"`
+			Branch     string `json:"branch"`
+			Credential struct {
+				Type     string `json:"type"`
+				Username string `json:"username"`
+				Token    string `json:"token"`
+			} `json:"credential"`
+		} `json:"remote"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	in, err := s.spaces.CreateWith(c.r.Context(), c.user().ID, req.Name, req.Inbox)
+	var in spaces.Info
+	var err error
+	sync := req.Storage != nil && req.Storage.Sync != nil
+	if req.Remote != nil && sync {
+		writeError(c.w, http.StatusBadRequest, "invalid", "give remote or storage.sync, not both")
+		return
+	}
+	if r := req.Remote; r != nil {
+		in, err = s.spaces.CreateWithRemote(c.r.Context(), c.user().ID, req.Name, req.Inbox,
+			spaces.ConnectRequest{URL: r.URL, Branch: r.Branch, CredType: r.Credential.Type, Username: r.Credential.Username, Token: r.Credential.Token})
+	} else if sync {
+		g := req.Storage.Sync
+		if p, ok := s.registry().Get(g.Provider); !ok || p.Descriptor().Type == connections.GitID {
+			if !ok {
+				writeError(c.w, http.StatusBadRequest, "invalid", "storage.sync.provider is not a provider of this server")
+			} else {
+				writeError(c.w, http.StatusBadRequest, "invalid", "a plain Git address is given as remote, or connected after the space is made with PUT /api/spaces/{space}/remote")
+			}
+			return
+		}
+		sc := spaces.SyncCreate{Provider: g.Provider, Owner: g.Owner, Name: g.Name, Private: g.Private == nil || *g.Private, Description: g.Description, Create: g.Create == nil || *g.Create}
+		assets, aerr := assetsAsked(g.Assets)
+		if aerr != nil {
+			s.fail(c.w, aerr)
+			return
+		}
+		sc.Assets = assets
+		in, err = s.spaces.CreateWithSync(c.r.Context(), c.user().ID, req.Name, req.Inbox, sc)
+	} else {
+		in, err = s.spaces.CreateWith(c.r.Context(), c.user().ID, req.Name, req.Inbox)
+	}
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -564,4 +657,27 @@ func (s *server) renameSpace(c *call) {
 		return
 	}
 	writeJSON(c.w, http.StatusOK, toSpaces([]spaces.Info{in})[0])
+}
+
+// assetsAsked reads storage.sync.assets: absent (the administrator's default
+// applies), true, false, or an object that names the repository.
+func assetsAsked(raw json.RawMessage) (*spaces.SyncAssets, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return &spaces.SyncAssets{Default: true}, nil
+	}
+	var b bool
+	if err := json.Unmarshal(raw, &b); err == nil {
+		if !b {
+			return nil, nil
+		}
+		return &spaces.SyncAssets{}, nil
+	}
+	var o struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(raw, &o); err != nil || o.Name == "" {
+		return nil, fmt.Errorf("%w: storage.sync.assets is true, false or {\"name\": \"…\"}", spaces.ErrInvalid)
+	}
+	return &spaces.SyncAssets{Name: o.Name}, nil
 }

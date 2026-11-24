@@ -28,6 +28,9 @@ type Version struct {
 	Similarity int  // for R: how much of the content is unchanged, in percent
 	// Rev is the blob id of the file in this commit; "" for a deletion.
 	Rev string
+	// OldID and NewID are the ids of the file's contents before and after this
+	// commit, known only to a read of a partial clone (see logFollowRaw).
+	OldID, NewID string
 }
 
 // HistoryQuery selects a page of versions.
@@ -76,10 +79,22 @@ func (r *Repo) FileHistory(ctx context.Context, q HistoryQuery) ([]Version, *Cur
 	cur := Cursor{Commit: q.Start, Path: q.Path}
 	skip := q.SkipFirst
 	scanned := 0
+	ens := r.ensure()
 	for {
 		want := q.Limit + 1 - len(out)
 		n := min(max(want+want/2+2, minBatch), maxBatch)
-		raw, err := r.logFollow(ctx, cur.Commit, cur.Path, n+1)
+		if ens != nil {
+			// A partial clone fetches the contents of what it lists: no more than
+			// the page needs (the limit and half of it).
+			n = min(want+want/2+2, maxBatch)
+		}
+		var raw []Version
+		var err error
+		if ens != nil {
+			raw, err = r.logFollowRaw(ctx, cur.Commit, cur.Path, n+1)
+		} else {
+			raw, err = r.logFollow(ctx, cur.Commit, cur.Path, n+1)
+		}
 		if err != nil {
 			return nil, nil, err
 		}
@@ -93,6 +108,19 @@ func (r *Repo) FileHistory(ctx context.Context, q HistoryQuery) ([]Version, *Cur
 		}
 		if len(raw) == 0 {
 			break
+		}
+		if ens != nil {
+			var need []string
+			for _, v := range raw {
+				if v.Status == 'D' {
+					need = append(need, v.OldID)
+				} else {
+					need = append(need, v.NewID)
+				}
+			}
+			if err := r.EnsureBlobs(ctx, need, ens); err != nil {
+				return nil, nil, err
+			}
 		}
 		specs := make([]string, len(raw))
 		for i, v := range raw {
@@ -141,6 +169,29 @@ func (r *Repo) logFollow(ctx context.Context, start, path string, n int) ([]Vers
 		return nil, err
 	}
 	return parseLog(out), nil
+}
+
+// logFollowRaw is logFollow for a partial clone: it asks for the ids of the
+// contents (--raw) so that the ones that are missing can be fetched, and for
+// exact renames only, which need no content (a similarity search would read
+// the files). A page renamed and edited in one commit is then followed by its
+// id (Predecessor), as it already is when Git's search gives up.
+func (r *Repo) logFollowRaw(ctx context.Context, start, path string, n int) ([]Version, error) {
+	out, err := r.run(ctx, Cmd{Args: []string{"log", "--follow", "-M100%", "--raw", "--no-abbrev", "-z", "--no-color", "-n", strconv.Itoa(n),
+		"--format=%H%x00%ct%x00%an%x00%(trailers:key=Changed-via,valueonly=true,unfold=true,separator=%x2c)", start, "--", path}})
+	if err != nil {
+		return nil, err
+	}
+	return parseLogRaw(out), nil
+}
+
+func atoi(s string) (int, error) { return strconv.Atoi(s) }
+
+// logHeader reads the first fields of a log entry.
+func logHeader(ct, an, trailers string) (time.Time, string, string) {
+	t, _ := strconv.ParseInt(ct, 10, 64)
+	via, _, _ := strings.Cut(strings.TrimSpace(trailers), ",")
+	return time.Unix(t, 0).UTC(), an, via
 }
 
 func parseLog(out string) []Version {
@@ -284,6 +335,15 @@ func (r *Repo) ReadBlob(ctx context.Context, commit, path string) ([]byte, strin
 	if !commitRe.MatchString(commit) {
 		return nil, "", errors.New("not a commit id")
 	}
+	if ens := r.ensure(); ens != nil && !strings.ContainsAny(path, "\n\x00") {
+		// A blob a partial clone lacks must not read as a file that is not
+		// there: its id is known from the tree, and it is fetched first.
+		if id, err := r.git(ctx, "rev-parse", "--verify", "--quiet", commit+":"+path); err == nil && hexRe.MatchString(id) {
+			if err := r.EnsureBlobs(ctx, []string{id}, ens); err != nil {
+				return nil, "", err
+			}
+		}
+	}
 	hs, err := r.readBlobs(ctx, []string{commit + ":" + path}, 0, true)
 	if err != nil {
 		return nil, "", err
@@ -316,23 +376,42 @@ func (r *Repo) Predecessor(ctx context.Context, commit string, candidate func(pa
 	if parent == "" {
 		return "", "", nil // the first commit: nothing came before
 	}
-	changes, err := r.DiffNames(ctx, parent, commit)
-	if err != nil {
+	var changes []Change
+	var ids []string
+	if ens := r.ensure(); ens != nil {
+		raw, err := r.DiffRaw(ctx, parent, commit)
+		if err != nil {
+			return "", "", err
+		}
+		for _, c := range raw {
+			changes = append(changes, Change{Status: c.Status, Old: c.Old, New: c.New})
+			ids = append(ids, c.OldID)
+		}
+	} else if changes, err = r.DiffNames(ctx, parent, commit); err != nil {
 		return "", "", err
 	}
-	var paths, specs []string
-	for _, c := range changes {
+	var paths, specs, want []string
+	for i, c := range changes {
 		if c.Status != 'D' || (candidate != nil && !candidate(c.New)) {
 			continue
 		}
 		paths = append(paths, c.New)
 		specs = append(specs, parent+":"+c.New)
+		if ids != nil {
+			want = append(want, ids[i])
+		}
 		if len(paths) == maxPredecessorCandidates {
 			break
 		}
 	}
 	if len(paths) == 0 {
 		return "", "", nil
+	}
+	if ens := r.ensure(); ens != nil {
+		// The heads of the files this commit deleted, in one request.
+		if err := r.EnsureBlobs(ctx, want, ens); err != nil {
+			return "", "", err
+		}
 	}
 	heads, err := r.readHeads(ctx, specs, HeadWindow)
 	if err != nil {

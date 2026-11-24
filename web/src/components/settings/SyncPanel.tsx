@@ -5,23 +5,27 @@
 
 import { useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
-import { AlertTriangle, Check, CircleAlert, CirclePause, Cloud, CloudOff, Copy, KeyRound, RefreshCw } from 'lucide-react'
+import { AlertTriangle, Check, CircleAlert, CirclePause, Cloud, CloudOff, Copy, ExternalLink, KeyRound, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
-import { ApiError, spaceApi } from '@/api/client'
-import { useAcceptRemote, useConnectRemote, useDisconnectRemote, useActiveSpace, useRemote, useSyncRemote, useUpdateSpace } from '@/api/hooks'
-import type { ConnectRemoteInput, Remote, RemoteKey, RemoteState, SpaceInfo } from '@/api/types'
+import { api, ApiError, spaceApi } from '@/api/client'
+import { useAcceptRemote, useConnectRemote, useDisconnectRemote, useActiveSpace, useProvider, useConnectionOwners, useConnectionRepos, useRemote, useSession, useSyncRemote, useUpdateSpace } from '@/api/hooks'
+import type { ConnectRemoteInput, ConnectionVia, Remote, RemoteKey, RemoteState, SpaceInfo } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { can } from '@/lib/permissions'
 import { SettingsNote, SettingsSection } from './SettingsParts'
+import { AssetsSection } from './AssetsSection'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { NativeSelect } from '@/components/ui/native-select'
+import { Input } from '@/components/ui/input'
 import { checkFolderPath } from '@/lib/folders'
 import { absoluteTime, relativeTime } from '@/lib/time'
 import { spaceUrls } from '@/lib/urls'
 import { t } from '@/i18n'
+import { tg } from '@/i18n/github'
 
 // What a space owner sees under Sync: the remote repository, connected,
 // followed and disconnected as before. Moved from the old space settings page.
@@ -35,6 +39,7 @@ export function SyncPanel({ space }: { space: string }) {
   return (
     <div className="space-y-8">
       <RemoteSection space={space} />
+      <AssetsSection space={space} />
     </div>
   )
 }
@@ -163,7 +168,7 @@ function Following({ space, remote }: { space: string; remote: Remote }) {
       </div>
 
       {remote.state === 'offline' && <Notice icon={CloudOff} title={t.remote.offlineTitle} body={t.remote.offlineBody} error={remote.error} />}
-      {remote.state === 'error' && <Notice icon={AlertTriangle} title={t.remote.errorTitle} body={t.remote.errorBody} error={remote.error} tone="error" />}
+      {remote.state === 'error' && <ErrorNotice remote={remote} />}
       {remote.state === 'rewritten' && <Rewritten space={space} remote={remote} />}
 
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
@@ -172,7 +177,7 @@ function Following({ space, remote }: { space: string; remote: Remote }) {
         <dt className="text-muted-foreground">{t.remote.branch}</dt>
         <dd>{remote.branch}</dd>
         <dt className="text-muted-foreground">{t.remote.credentialLabel}</dt>
-        <dd>{remote.credential.type === 'ssh' ? t.remote.ssh : t.remote.tokenOf(remote.credential.username)}</dd>
+        <dd className="break-words">{credentialText(remote)}</dd>
         {remote.hostKey && (
           <>
             <dt className="text-muted-foreground">{t.remote.hostKey}</dt>
@@ -219,6 +224,64 @@ function Following({ space, remote }: { space: string; remote: Remote }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  )
+}
+
+// What the credential is, in words; a GitHub one names what it syncs with and holds no secret.
+function credentialText(remote: Remote): string {
+  const c = remote.credential
+  if (c.type === 'ssh') return t.remote.ssh
+  if (c.type === 'token') return t.remote.tokenOf(c.username)
+  return c.via === 'app' ? tg.sync.viaAppOf(c.account) : tg.sync.viaUserOf(c.user.username, c.login)
+}
+
+// An error state that has a code of its own says what to do about it: the GitHub ones are fixed by
+// connecting again, by installing the App again, or by an administrator.
+function ErrorNotice({ remote }: { remote: Remote }) {
+  const session = useSession()
+  const github = useProvider('github', remote.credential.type === 'connection')
+  const [busy, setBusy] = useState(false)
+  const me = session.data?.user?.id
+  const c = remote.credential
+  const owner = c.type === 'connection' && c.via === 'user' ? c.user : null
+  const mine = owner !== null && owner.id === me
+  const reconnect = async () => {
+    setBusy(true)
+    try {
+      const { url } = await api.connectionStart('github', window.location.pathname)
+      window.location.assign(url)
+    } catch (e) {
+      setBusy(false)
+      toast.error(t.fmt.labelled(tg.sync.reconnectFailed, e instanceof Error ? e.message : ''))
+    }
+  }
+  const code = remote.errorCode
+  const known = (tg.sync.codes as Record<string, { title: string; body: (who: string) => string }>)[code]
+  if (!known || !Object.hasOwn(tg.sync.codes, code)) return <Notice icon={AlertTriangle} title={t.remote.errorTitle} body={t.remote.errorBody} error={remote.error} tone="error" />
+  return (
+    <div role="alert" className="grid grid-cols-1 gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
+      <p className="flex items-center gap-1.5 font-medium">
+        <AlertTriangle className="size-4 shrink-0" />
+        {known.title}
+      </p>
+      {remote.error && <p className="font-mono text-xs break-words">{remote.error}</p>}
+      <p className="text-muted-foreground">{known.body(owner?.username ?? '')}</p>
+      <p className="text-muted-foreground">{tg.sync.keptSafe}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        {(code === 'connection_expired' || code === 'connection_missing') && mine && (
+          <Button type="button" size="sm" onClick={() => void reconnect()} disabled={busy}>
+            {busy && <Spinner />}
+            {tg.sync.reconnect}
+          </Button>
+        )}
+        {code === 'installation_gone' && github.data?.app && (
+          <a className="inline-flex items-center gap-1 text-xs break-all underline underline-offset-4" href={github.data.app.installUrl} target="_blank" rel="noreferrer noopener">
+            {tg.sync.openInstall}
+            <ExternalLink className="size-3 shrink-0" />
+          </a>
+        )}
+      </div>
     </div>
   )
 }
@@ -350,11 +413,20 @@ function PublicKey({ publicKey, fingerprint, title }: { publicKey: string; finge
 
 const looksSsh = (url: string) => /^(ssh:\/\/|[\w.-]+@[\w.-]+:)/.test(url.trim())
 const looksHttps = (url: string) => /^https:\/\//i.test(url.trim())
+const looksGitHub = (url: string) => /^(https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)[^/\s]+\/[^/\s]+/i.test(url.trim())
 
 // What the server said to a connect that did not go through, in plain words.
 function Problem({ error }: { error: unknown }) {
   if (!error) return null
   const e = error instanceof ApiError ? error : null
+  const gh = e && Object.hasOwn(tg.sync.problems, e.code) ? (tg.sync.problems as Record<string, string>)[e.code] : null
+  if (e && gh)
+    return (
+      <div role="alert" className="grid gap-1 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
+        <p className="font-medium">{gh}</p>
+        {e.message && <p className="font-mono text-xs break-words text-muted-foreground">{e.message}</p>}
+      </div>
+    )
   if (e?.status === 409)
     return (
       <div role="alert" className="grid gap-1 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
@@ -386,7 +458,10 @@ function ConnectForm({ space, existing, onDone }: { space: string; existing: Rem
   const connect = useConnectRemote(space)
   const [url, setUrl] = useState(existing?.url ?? '')
   const [branch, setBranch] = useState(existing?.branch ?? '')
-  const [kind, setKind] = useState<'ssh' | 'token'>(existing?.credential.type ?? 'ssh')
+  const [kind, setKind] = useState<'ssh' | 'token' | 'github'>(existing?.credential.type === 'connection' ? 'github' : (existing?.credential.type ?? 'ssh'))
+  const github = useProvider('github')
+  const githubOffered = !!github.data?.app || existing?.credential.type === 'connection'
+  const [via, setVia] = useState<ConnectionVia>(existing?.credential.type === 'connection' ? existing.credential.via : 'app')
   // Until the person picks one, the address decides.
   const [chose, setChose] = useState(existing !== null)
   const [username, setUsername] = useState(existing?.credential.type === 'token' ? existing.credential.username : '')
@@ -425,10 +500,12 @@ function ConnectForm({ space, existing, onDone }: { space: string; existing: Rem
     if (connect.isPending) return
     setError(null)
     const errs: typeof fieldError = {}
-    const address = url.trim()
+    // owner/name is enough for GitHub.
+    const address = kind === 'github' && /^[\w.-]+\/[\w.-]+$/.test(url.trim()) ? `https://github.com/${url.trim().replace(/\.git$/, '')}.git` : url.trim()
     if (address === '') errs.url = t.remote.urlRequired
     else if (kind === 'ssh' && !looksSsh(address)) errs.url = t.remote.mismatchSsh
     else if (kind === 'token' && !looksHttps(address)) errs.url = t.remote.mismatchToken
+    else if (kind === 'github' && !looksGitHub(address)) errs.url = tg.sync.mismatchGitHub
     if (kind === 'ssh' && !key) errs.key = t.remote.keyNeeded
     if (kind === 'token' && token === '' && !hadToken) errs.token = t.remote.tokenRequired
     setFieldError(errs)
@@ -436,7 +513,7 @@ function ConnectForm({ space, existing, onDone }: { space: string; existing: Rem
     const input: ConnectRemoteInput = {
       url: address,
       ...(branch.trim() ? { branch: branch.trim() } : {}),
-      credential: kind === 'ssh' ? { type: 'ssh' } : { type: 'token', ...(username.trim() ? { username: username.trim() } : {}), ...(token ? { token } : {}) },
+      credential: kind === 'ssh' ? { type: 'ssh' } : kind === 'github' ? { type: 'connection', provider: 'github', via } : { type: 'token', ...(username.trim() ? { username: username.trim() } : {}), ...(token ? { token } : {}) },
     }
     try {
       await connect.mutateAsync(input)
@@ -459,7 +536,7 @@ function ConnectForm({ space, existing, onDone }: { space: string; existing: Rem
       <fieldset className="grid gap-2">
         <legend className="mb-1 text-sm font-medium">{t.remote.credential}</legend>
         <div role="radiogroup" aria-label={t.remote.credential} className="flex flex-wrap gap-2">
-          {(['ssh', 'token'] as const).map((k) => (
+          {(githubOffered ? (['ssh', 'token', 'github'] as const) : (['ssh', 'token'] as const)).map((k) => (
             <label key={k} className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-sm has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50 ${kind === k ? 'border-brand bg-brand/5' : ''}`}>
               <input
                 type="radio"
@@ -471,7 +548,7 @@ function ConnectForm({ space, existing, onDone }: { space: string; existing: Rem
                   setChose(true)
                 }}
               />
-              {k === 'ssh' ? t.remote.ssh : t.remote.token}
+              {k === 'ssh' ? t.remote.ssh : k === 'token' ? t.remote.token : tg.sync.github}
             </label>
           ))}
         </div>
@@ -502,6 +579,23 @@ function ConnectForm({ space, existing, onDone }: { space: string; existing: Rem
           )}
           {fieldError.key && <p className="text-xs text-destructive">{fieldError.key}</p>}
           {keyError && <p role="alert" className="text-xs text-destructive">{keyError}</p>}
+        </div>
+      ) : kind === 'github' ? (
+        <div className="grid grid-cols-1 gap-3">
+          <p className="text-xs text-muted-foreground">{tg.sync.help}</p>
+          <div role="radiogroup" aria-label={tg.sync.viaLabel} className="grid grid-cols-1 gap-2">
+            {(['app', 'user'] as const).map((v) => (
+              <label key={v} className={`flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 text-sm has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50 ${via === v ? 'border-brand bg-brand/5' : ''}`}>
+                <input type="radio" name={`via-${space}`} className="mt-1 accent-[var(--brand)]" checked={via === v} onChange={() => setVia(v)} />
+                <span className="min-w-0">
+                  <span className="block font-medium">{v === 'app' ? tg.sync.viaApp : tg.sync.viaUser}</span>
+                  <span className="block text-xs text-muted-foreground">{v === 'app' ? tg.sync.viaAppHelp : tg.sync.viaUserHelp}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          {via === 'user' && github.data?.connection?.state !== 'ok' && <p className="text-xs text-warning">{tg.sync.needConnection}</p>}
+          <RepoPicker onPick={(fullName) => setUrl(fullName)} />
         </div>
       ) : (
         <div className="grid gap-4">
@@ -543,5 +637,87 @@ function ConnectForm({ space, existing, onDone }: { space: string; existing: Rem
         </AlertDialogContent>
       </AlertDialog>
     </form>
+  )
+}
+
+// --- choosing a repository from what GitHub lists -----------------------------------------
+
+// An account to look in, then its repositories a page (one call to GitHub) at a
+// time, filtered by what has been loaded: GitHub cannot filter by name. Choosing
+// one fills in the address; typing owner/name there works as well.
+function RepoPicker({ onPick }: { onPick: (fullName: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const owners = useConnectionOwners('github', open)
+  const list = owners.data?.pages.flatMap((p) => p.items) ?? []
+  const [login, setLogin] = useState('')
+  const chosen = list.find((o) => o.login === login) ?? list[0]
+  const which = chosen ? (chosen.installationId !== null ? { installation: chosen.installationId } : { mine: true as const }) : null
+  const repos = useConnectionRepos('github', open ? which : null)
+  const [filter, setFilter] = useState('')
+  const items = (repos.data?.pages.flatMap((p) => p.items) ?? []).filter((r) => r.fullName.toLowerCase().includes(filter.trim().toLowerCase()))
+  return (
+    <div className="grid grid-cols-1 gap-2">
+      <div>
+        <Button type="button" variant="ghost" size="sm" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+          {open ? tg.sync.hidePicker : tg.sync.showPicker}
+        </Button>
+      </div>
+      {open && (
+        <div className="grid min-w-0 grid-cols-1 gap-2 rounded-lg border p-3">
+          {owners.isPending ? (
+            <PageFallback />
+          ) : list.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{tg.sync.noOwners}</p>
+          ) : (
+            <>
+              <NativeSelect aria-label={tg.sync.pickOwner} value={chosen?.login ?? ''} onChange={(e) => setLogin(e.target.value)}>
+                {list.map((o) => (
+                  <option key={o.login} value={o.login}>
+                    {o.login}
+                  </option>
+                ))}
+              </NativeSelect>
+              {owners.hasNextPage && (
+                <div>
+                  <Button type="button" variant="ghost" size="sm" disabled={owners.isFetchingNextPage} onClick={() => void owners.fetchNextPage()}>
+                    {tg.newSpace.moreOwners}
+                  </Button>
+                </div>
+              )}
+              <Input aria-label={tg.sync.filter} placeholder={tg.sync.filter} value={filter} onChange={(e) => setFilter(e.target.value)} className="w-full min-w-0" autoComplete="off" />
+              {repos.isPending ? (
+                <PageFallback />
+              ) : repos.isError ? (
+                <p role="alert" className="text-sm text-destructive break-words">
+                  {t.fmt.labelled(tg.sync.reposFailed, repos.error.message)}
+                </p>
+              ) : items.length === 0 ? (
+                <p className="text-sm text-muted-foreground">{tg.sync.noRepos}</p>
+              ) : (
+                <ul className="max-h-56 divide-y overflow-y-auto rounded-md border">
+                  {items.map((r) => (
+                    <li key={r.id}>
+                      <button type="button" className="flex w-full min-w-0 flex-wrap items-center gap-x-2 px-3 py-1.5 text-left text-sm break-all hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none" onClick={() => onPick(r.fullName)}>
+                        {r.fullName}
+                        <span className="text-xs text-muted-foreground">{r.private ? tg.sync.private : tg.sync.public}</span>
+                        {!r.canPush && <span className="text-xs text-warning">{tg.sync.readOnly}</span>}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {repos.hasNextPage && (
+                <div>
+                  <Button type="button" variant="ghost" size="sm" disabled={repos.isFetchingNextPage} onClick={() => void repos.fetchNextPage()}>
+                    {repos.isFetchingNextPage && <Spinner />}
+                    {tg.sync.moreRepos}
+                  </Button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
   )
 }

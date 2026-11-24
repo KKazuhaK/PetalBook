@@ -14,7 +14,8 @@ import (
 // A function of this package that reads or writes one of the five tables a
 // tenant owns (users, spaces, groups, invites, audit_log) takes a Scope, or is on the allowlist below with the reason it may look
 // across tenants (or needs no scope because the row it works on has already
-// been found inside one).
+// been found inside one). The tables of 2.7 that hang off a user or a space
+// (github_authorizations, github_installations, github_installation_tenants, github_leftovers, remotes) follow the same rule.
 // scopeAllowlist is every exported function that touches the five tables
 // without a Scope parameter. The comment of each is the reason. A function
 // that gains a Scope, or is removed, must leave the list (the test says so), so
@@ -84,6 +85,56 @@ var scopeAllowlist = map[string]string{
 	"InsertAudit":  "each row carries its tenant, or takes its user's",
 	// --- the tenants table and the layers of settings are not a tenant's data -----
 	"CountTenantRows": "counts the rows of one tenant to refuse deleting it",
+	// --- 2.7: GitHub. A connection is its user's, a remote its space's; the App and
+	// its installations are the server's own (each is shared with chosen tenants, design.md 2.7) ---
+	"GetGitHubAuthorization":       "one person's connection, by the id of a user already found in scope",
+	"PutGitHubAuthorization":       "the caller's own connection; its GitHub account check is site-wide, as GitHubAccountUser's",
+	"GitHubAccountUser":            "a GitHub account links to one PetalBook user on the whole server (github_id is unique); callers learn only that it is taken (account_in_use), never by whom or in which tenant",
+	"ReplaceGitHubTokens":          "one person's connection, by the id of a user already found",
+	"ExpireGitHubAuthorization":    "one person's connection, by the id of a user already found",
+	"DeleteGitHubAuthorization":    "the caller's own connection, or that of a user being deleted",
+	"DeleteGitHubAuthorizations":   "the App was removed (site administrators only): every connection on the server goes with it",
+	"ListGitHubAuthorizations":     "the App was removed (site administrators only): every connection on the server is revoked",
+	"DueGitHubRenewals":            "background job: the daily renewal of the connections of every tenant",
+	"CountGitHubAuthorizations":    "the App's own count, shown to site administrators only",
+	"CountGitHubSpaces":            "the App's own count, shown to site administrators only",
+	"CountGitSpaces":               "the count of plain-address remotes, shown to site administrators only",
+	"GitHubSpaceCounts":            "the App's own count per installation, shown to site administrators only",
+	"CountUserGitHubSpaces":        "the spaces syncing through one person's connection: same-tenant, as connecting checks",
+	"GetGitHubInstallation":        "an installation of the server's App: the server's own",
+	"PutGitHubInstallation":        "an installation of the server's App, marked by a site administrator",
+	"UserTenant":                   "the tenant of a user already found, to scope what they may use of the App",
+	"PutGitHubLeftover":            "a reminder of the caller's own, by the id of a user already found",
+	"ListGitHubLeftovers":          "the caller's own reminders, by the id of a user already found",
+	"DeleteGitHubLeftover":         "the caller's own reminder, by the id of a user already found",
+	"SetGitHubInstallationTenants": "a site administrator chooses the tenants an installation is shared with; the tenants are checked by the caller",
+	"GitHubInstallationTenants":    "which tenants installations are shared with, shown to site administrators only",
+	"DeleteGitHubInstallations":    "the App was removed (site administrators only): the shares go with the installations",
+	"MemberStanding":               "one person's roles on a space already found: memberships are same-tenant by construction",
+	"GetRemote":                    "the remote of a space already opened by the caller",
+	"PutRemote":                    "the remote of a space already opened, or one being made in the caller's tenant",
+	"UpdateRemoteStatus":           "the remote of an open space, by its id",
+	"DeleteRemote":                 "the remote of a space already opened by the caller",
+	"RemoteStates":                 "the server's map of sync states, read by space id",
+	// --- 3.1: server storage. The disk, its policy and the cache of clones are the
+	// server's own (site administrators only, design.md 3.3's table); a space's
+	// records are reached by the id of a space already found ---
+	"GetSpaceStorage":          "the storage record of a space already found, by its id",
+	"TouchSpaceUsed":           "records the use of a space already opened, by its id",
+	"SetSpaceCache":            "the cache state of a space being evicted or restored, by its id (the eviction is the server's)",
+	"SetSpaceCacheKept":        "the cache state of an open space, by its id",
+	"SetSpacePinned":           "a site administrator keeps a space on the server's disk",
+	"SetSpaceExempt":           "a site administrator exempts a space from the site's requirement of a remote",
+	"SetSpaceIndexBytes":       "the size of the index of a space being evicted, by its id",
+	"SetRemoteExempt":          "a site administrator exempts a person already found in scope from the site's requirement of a remote",
+	"SpacesInCacheState":       "the server's map of cache states, read by space id",
+	"GetPolicyFacts":           "what the site's requirement of a remote looks at in a space already found, by its id",
+	"PolicyCounts":             "the site's requirement of a remote across the server, shown to site administrators only",
+	"SumStorage":               "the server's disk, shown to site administrators only",
+	"EvictionCandidates":       "background job: the eviction of idle spaces of every tenant from the server's disk",
+	"CloneBytesOfRemoteSpaces": "background job: the server's disk budget for clones",
+	"PinnedSpaceIDs":           "background job: the spaces kept on the server's disk, of every tenant",
+	"PutAssetRemote":           "the attachment repository of a space already opened, or one being made in the caller's tenant",
 }
 
 func TestEveryStoreMethodThatTouchesTenantTablesTakesAScope(t *testing.T) {
@@ -137,7 +188,7 @@ func TestEveryStoreMethodThatTouchesTenantTablesTakesAScope(t *testing.T) {
 	sort.Strings(missing)
 	sort.Strings(stale)
 	for _, m := range missing {
-		t.Errorf("%s touches users, spaces, groups, invites or audit_log and takes no Scope: give it one, or put it on the allowlist with the reason", m)
+		t.Errorf("%s touches users, spaces, groups, invites, audit_log or a GitHub table (github_authorizations, github_installations, github_installation_tenants, github_leftovers, remotes) and takes no Scope: give it one, or put it on the allowlist with the reason", m)
 	}
 	for _, s := range stale {
 		t.Error(s)
@@ -165,4 +216,6 @@ func touches(body *ast.BlockStmt) bool {
 	return found
 }
 
-var sqlTable = regexp.MustCompile(`(?is)\b(FROM|JOIN|INTO|UPDATE)\s+(users|spaces|groups|invites|audit_log)\b`)
+// The tables of 2.7 count as well: a GitHub connection is a user's and a remote
+// a space's, so a function that reaches them across users needs a reason.
+var sqlTable = regexp.MustCompile(`(?is)\b(FROM|JOIN|INTO|UPDATE)\s+(users|spaces|groups|invites|audit_log|github_authorizations|github_installations|github_installation_tenants|github_leftovers|remotes)\b`)

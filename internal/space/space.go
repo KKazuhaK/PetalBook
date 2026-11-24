@@ -59,6 +59,10 @@ type Options struct {
 	// remote.go): changes are pushed before they are answered, the background
 	// committer is not used for them, and what a crash left behind is dealt with.
 	Remote *RemoteOptions
+	// WriteGate, when set, is asked before every change to the files: an error
+	// it returns refuses the change (the storage policy's deadline, see
+	// internal/spaces). Drafts are not files of the space and never ask it.
+	WriteGate func() error
 }
 
 // Space is safe for concurrent use.
@@ -70,11 +74,24 @@ type Space struct {
 	cm       *committer
 	log      *slog.Logger
 
+	// gate is Options.WriteGate.
+	gate func() error
+	// evicted is set for a space opened by OpenIndexOnly: it has an index and
+	// no files, so only what the index answers is available.
+	evicted bool
+
 	mu     sync.Mutex // serialises every change to files and the index
 	closed bool       // set by Close, under mu: later changes are refused before they write
 	// rem is set while the space follows a remote repository. It is switched
 	// under mu.
 	rem atomic.Pointer[remote]
+	// assets is the attachment repository (see attachments.go).
+	assets atomic.Pointer[AssetBackend]
+	// assetsOurs caches assetsDirIsOurs: a generation times 4, plus 0 not
+	// known, 1 yes, 2 no. A change of the space, a pull, a walk and a switch of
+	// the attachments forget it (the next generation), so that an answer looked
+	// up before one of them is never kept after it.
+	assetsOurs atomic.Int64
 	// ctx ends when the space is closed; network commands run under it so that
 	// a hung remote cannot keep Close waiting.
 	ctx    context.Context
@@ -358,7 +375,7 @@ func Open(opt Options) (*Space, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Space{root: root, stateDir: stateDir, name: name, idx: idx, log: log, now: time.Now, ops: osOps(), src: dirSource{root: root}, syncEvery: opt.ResyncInterval, heal: heal, rb: openRebaseLog(rebaseLogPath(stateDir))}
+	s := &Space{root: root, stateDir: stateDir, name: name, idx: idx, log: log, now: time.Now, ops: osOps(), src: dirSource{root: root}, syncEvery: opt.ResyncInterval, heal: heal, rb: openRebaseLog(rebaseLogPath(stateDir)), gate: opt.WriteGate}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	if s.syncEvery <= 0 {
 		s.syncEvery = 2 * time.Second
@@ -469,7 +486,10 @@ func (s *Space) Close() error {
 	s.mu.Lock()
 	s.closed = true
 	s.mu.Unlock()
-	err := s.cm.Close()
+	var err error
+	if s.cm != nil {
+		err = s.cm.Close()
+	}
 	if cerr := s.idx.Close(); err == nil {
 		err = cerr
 	}
@@ -477,7 +497,66 @@ func (s *Space) Close() error {
 }
 
 // Flush commits pending changes now.
-func (s *Space) Flush() error { return s.cm.Flush() }
+func (s *Space) Flush() error {
+	if s.cm == nil {
+		return nil
+	}
+	return s.cm.Flush()
+}
+
+// Evicted reports a space opened by OpenIndexOnly.
+func (s *Space) Evicted() bool { return s.evicted }
+
+// OpenIndexOnly opens what an evicted space still has: its index. There are no
+// files (opt.Root does not exist), so lists, the tree, tags, search, links and
+// checks are answered from the index and nothing else is: reading a page,
+// writing, history and every other file operation need the space restored (the
+// spaces manager does that before it opens the space for them). Nothing is
+// created on disk but what the index database needs.
+func OpenIndexOnly(opt Options) (*Space, error) {
+	log := opt.Logger
+	if log == nil {
+		log = slog.New(slog.NewTextHandler(discard{}, nil))
+	}
+	if opt.Root == "" || opt.StateDir == "" {
+		return nil, errors.New("space directory and state directory not given")
+	}
+	root, err := filepath.Abs(opt.Root)
+	if err != nil {
+		return nil, err
+	}
+	// The index names the space's directory as Open resolved it; this one does
+	// not exist, so its parent is resolved.
+	parent, err := filepath.EvalSymlinks(filepath.Dir(root))
+	if err != nil {
+		return nil, err
+	}
+	root = filepath.Join(parent, filepath.Base(root))
+	if _, err := os.Lstat(root); err == nil {
+		return nil, errors.New("the space has files: it is not evicted")
+	}
+	stateDir, err := filepath.Abs(opt.StateDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return nil, err
+	}
+	if stateDir, err = filepath.EvalSymlinks(stateDir); err != nil {
+		return nil, err
+	}
+	dbPath := filepath.Join(stateDir, "index.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		return nil, errors.New("the index of the space is missing")
+	}
+	idx, err := index.Open(dbPath, root)
+	if err != nil {
+		return nil, err
+	}
+	s := &Space{root: root, stateDir: stateDir, name: opt.Name, idx: idx, log: log, now: time.Now, evicted: true}
+	s.ctx, s.cancel = context.WithCancel(context.Background())
+	return s, nil
+}
 
 // Problems lists files that are not usable pages (no header, no id, duplicate id).
 func (s *Space) Problems() ([]index.Problem, error) { return s.idx.Problems() }

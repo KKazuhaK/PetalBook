@@ -26,6 +26,9 @@ The web app talks to the server only through this API.
   repository"; nothing was changed), `internal` (500). Signing in has codes
   of its own (see "Sign-in error codes"), as do some sections; a section's own
   code takes the place of the general one in `error`, with the status given.
+  Server storage (milestone 3.1, see "Server storage") adds
+  `remote_required` (409), `not_cached` and `restoring` (503, with
+  `Retry-After`) and `space_full` (507).
   Requests with an API token or an OAuth access token have codes of their
   own: `token_invalid`, `token_expired`, `token_revoked`,
   `token_owner_disabled` (401), `token_scope` and `tokens_off` (403); see
@@ -65,6 +68,11 @@ The web app talks to the server only through this API.
     unless it matches a sign-in this browser started (its `state`, or for SAML
     its `RelayState` and the attempt's cookie). `GET /api/auth/saml/{slug}/metadata`
     is read by the identity provider and changes nothing.
+    `GET /api/connections/{provider}/authorization/callback`, the platform's
+    redirect back after a person connects their account for repositories (not
+    a sign-in), is the same kind of exception under the same rule (see
+    "Connections"). So is `GET /api/connections/github/manifest/callback`, where
+    GitHub sends an administrator's browser after the App is made.
 - A **space** is one tree of pages backed by one Git repository. Every page URL
   carries the space id. In single-user mode there is exactly one space, with
   the id `default`; in accounts mode a space id has the same form as a page id.
@@ -382,6 +390,10 @@ The administrators can require a passkey of chosen people
 - A held session makes no API token and approves no OAuth consent: those
   endpoints answer `403 passkey_required` like the rest (see "Held sessions,
   API tokens and OAuth grants").
+- A held session cannot connect or disconnect a GitHub account for repos,
+  list owners or repositories, finish GitHub's callback, or create a space
+  with a repository: `403 passkey_required` like the rest (see "Connections"). A
+  GitHub account connected before the hold stays connected.
 - Sign-in through an identity provider is not held: the provider decides how
   its people prove who they are.
 - If they lose every passkey, an administrator deletes the lost ones
@@ -693,6 +705,8 @@ how many. At most 100,000 rows or 90 days are kept.
 
 | `kind` | When | `detail` |
 |---|---|---|
+| `connection_provider_changed` | a provider was configured, changed or removed (administrators; secrets as `"changed"`) | `provider`, `type` |
+| `account_connected`, `account_disconnected` | a person connected or disconnected an account of a provider | `provider`, `login` |
 | `login` | a session was started | `method` (`password`, `passkey`, `oidc`, `saml`, `github`), `provider` (slug), `created` (an account was made) |
 | `login_failed` | a sign-in was refused | `method`, `reason` (`bad_password`, `disabled`, `local_login_refused`, `passkey_required`, `passkey_failed`, `captcha_failed`, `rate_limited` for an attempt turned away by a lockout or by the address's failure cap, an `sso_error` code), `provider`; the username as typed, also for a name nobody has. `captcha_failed` and an address's `rate_limited` are written at most once a minute per address (IPv6 by /64) and reason; a passkey sign-in whose ceremony was never begun, like a single sign-on callback that matches no sign-in, is not written |
 | `rate_limited` | a key first went over the per-minute limit or a failure cap in a window (once per key and window, not per request) | `limit` (`per_minute`, `ip`, `username`, `pair`) |
@@ -841,7 +855,9 @@ and of this answer have `quota`: `{"spaces": null, "bytes": null, "pages": null}
 `emailVerified: true` sent by a tenant administrator (not a site administrator)
 is stored and shown, but the address does not count for merging a sign-in by
 address (see "Which account an identity signs in to") until a site
-administrator confirms it or the person does.
+administrator confirms it or the person does. From milestone 3.1 the body may also have `remoteExempt`
+(site administrators only, `403 forbidden` for a tenant administrator; see
+"Server storage", "Exemptions").
 
 An administrator cannot open another user's space through the API. Whoever
 can read the server's disk can read every file.
@@ -932,6 +948,18 @@ administrator has switched the space off (see "Administration"): it stays in
 its members' lists, with the permissions they would have, but every request
 that opens it answers `403 space_disabled`.
 
+From milestone 3.1 a space also has `storage` (see "Server storage"):
+
+```json
+"storage": {"cache": "partial", "assets": "repository",
+            "remote": {"required": "github", "deadline": "2026-12-31T00:00:00Z", "overdue": false}}
+```
+
+`cache` is `local`, `full`, `partial`, `evicted` or `restoring`; `assets` is
+`space` (attachments are files of the space's repository) or `repository`
+(they are in an attachment repository). `remote` is `null` unless the storage
+policy requires something of this space that it does not have yet.
+
 ### `GET /api/spaces`
 
 `{"spaces": [{…}]}`: the caller's spaces, the personal one first, then by
@@ -947,6 +975,36 @@ the caller already owns as many spaces as the server allows (`--max-spaces`,
 20 by default). From 3.3 this is `403 quota_exceeded` with `quota`, `limit` and
 `used` (see "Quotas"), and the limit is the setting `quota.spacesPerPerson`, or
 the person's own, or the tenant's total of spaces.
+
+With `storage.sync`, the space follows a repository on a provider from its first
+commit (see "Connections", "Spaces and remotes", and "The GitHub provider",
+"Creating a space with a repository"):
+
+```json
+{"name": "Tang", "inbox": "收件箱",
+ "storage": {"sync": {"provider": "github", "owner": "kazuhahub", "name": "tang-notes", "private": true,
+                      "description": "Notes on Tang poetry", "create": true}}}
+```
+
+`201` with the space; its `sync` is then the state of its remote. When it
+fails, no space and no record is left on the server; what can be left on
+the provider, and how to retry, is described there.
+
+From milestone 3.1 (see "Server storage"):
+
+- `storage.sync.assets` asks for an attachment repository made with it, on the
+  same owner, with the same visibility and credential: `true` names it
+  `<name>-assets`, `{"name": "tang-notes-assets"}` names it, `false` makes
+  none, and leaving it out follows the administrators' `assets.newSpaces`.
+- `remote`, shaped like the body of `PUT …/remote` but with a `token`
+  credential only (an SSH key has to be added to the repository first, which
+  needs a space to hold it: `400 invalid`), connects the new space to an
+  existing repository on any allowed host before it becomes visible, under
+  the same all-or-nothing rule. This is the "other (by address)" choice of
+  "存在哪里". `remote` and `storage.sync` cannot both be given
+  (`400 invalid`).
+- While the storage policy requires a remote of new spaces, a request without
+  what it requires answers `409 remote_required`, before anything is made.
 
 ### `PATCH /api/spaces/{space}`
 
@@ -1299,10 +1357,12 @@ allows any).
 {
   "url": "git@github.com:kazuha/notes.git",
   "branch": "main",
+  "provider": "git",
   "credential": {"type": "ssh", "publicKey": "ssh-ed25519 AAAA… petalbook-01JD3K8Q7Z", "fingerprint": "SHA256:…"},
   "state": "ok",
   "lastSync": "2026-11-21T08:30:00Z",
   "error": "",
+  "errorCode": "",
   "hostKey": "SHA256:…",
   "rewritten": null
 }
@@ -1310,14 +1370,38 @@ allows any).
 
 - `credential.type`: `ssh` (a key pair the server made for this space; the
   private key never leaves the server and is never returned; `publicKey` is
-  what to add to the repository as a deploy key with write access) or `token`
+  what to add to the repository as a deploy key with write access), `token`
   (`{"type": "token", "username": "x-access-token"}`; the token is never
-  returned).
+  returned) or `connection` (a provider's connection, here the GitHub App; see "Connections"):
+
+  ```json
+  {"type": "connection", "provider": "github", "via": "app", "installationId": 51234567, "account": "kazuhahub", "repoId": 881234567}
+  {"type": "connection", "provider": "github", "via": "user", "user": {"id": "01JD3K7A2M", "username": "tang"}, "login": "tang-gh", "repoId": 881234567}
+  ```
+
+  `via: "app"` fetches and pushes with an installation token of the App's
+  installation on `account`; `via: "user"` with the GitHub authorisation of the
+  PetalBook user `user` (GitHub account `login`). No secret is stored for the
+  space itself and none is returned. `repoId` is GitHub's id of the
+  repository. With a GitHub connection, `url` is always `https://github.com/<owner>/<name>.git`.
+- `provider`: the id of the provider the remote goes through (`github`), or
+  `git` for a plain address with a key or a token; a client shows the
+  platform's icon and name from it.
 - `state`: `ok`; `offline` (the last attempt could not reach the remote;
   `error` says why, in words fit to show); `rewritten` (paused, see above;
   `rewritten` is then `{"lastGood": "<commit>", "remote": "<commit>"}`);
   `error` (anything else that needs attention: the credential is refused, the
   host key changed, the clone is not in the state the server left it in).
+- `errorCode` says, for a program, what `state: "error"` needs; it is `""` in
+  every other state. `auth` (the remote refused the credential), `hostkey`
+  (the SSH host key changed), `clone` (the clone is not as the server left
+  it), `rescued` (commits that could not be pushed were kept aside), and for a
+  `connection` credential `connection_expired`, `connection_missing`,
+  `installation_gone`, `app_missing_permission`, `provider_not_configured` (see
+  "The GitHub provider", "When a GitHub credential stops working"). The error
+  has `provider` too. A client shows `error` and uses `errorCode` only to choose what
+  to offer (reconnect GitHub, open the installation's settings, ...). Codes
+  may be added; a client treats one it does not know like `auth`.
 - `lastSync`: when the server last saw the remote (absent before the first).
 - `hostKey`: for SSH, the fingerprint of the host key trusted on first
   connection, to compare with what the host publishes.
@@ -1347,7 +1431,11 @@ pair replaces the old one (only while the space is local).
 
 `branch` defaults to `main`. For `ssh` the credential is `{"type": "ssh"}`
 (the key from `…/remote/key`). Leaving `credential.token` out while the space
-already has a token keeps it. The server connects before answering:
+already has a token keeps it. For a connection it is `{"type": "connection", "provider": "github", "via": "app"}`
+or `{"type": "connection", "provider": "github", "via": "user"}` (see "The GitHub
+provider", "Switching an existing space to GitHub"). On a space that already follows a remote, `PUT` replaces
+its address and credential: this is how a space moves from a deploy key or a
+token to the App, or back. The server connects before answering:
 
 - the remote has no such branch (a new, empty repository): the space's
   history is pushed to it;
@@ -1365,7 +1453,18 @@ remote cannot be reached or refuses the credential (nothing is changed, and
 ### `DELETE /api/spaces/{space}/remote`
 
 `204`. The space becomes local, with everything it has; the credential is
-deleted. Nothing is changed on the remote.
+deleted. Nothing is changed on the remote. A `connection` credential has no secret
+of its own: the App and the user's GitHub authorisation stay as they are.
+
+From milestone 3.1: `409 remote_required` while the storage policy requires a
+remote of this space (see "Server storage"), and `409 conflict` while the
+space has an attachment repository. A space whose clone is partial or evicted
+is made whole first (everything is fetched, as for a pinned space), because a
+local space must be the complete copy; the answer waits for it like any
+restore, and `503 unavailable` when the remote cannot be reached leaves the
+space following it.
+`PUT …/remote` with a credential the policy does not accept (anything but
+`github` under `require: "github"`) also answers `409 remote_required`.
 
 ### `POST /api/spaces/{space}/remote/sync`
 
@@ -1377,6 +1476,1218 @@ Fetches now. `200` with the remote.
 rewritten history: the space moves to that commit. `200` with the remote;
 `409 conflict` if the remote is no longer at that commit. Drafts are kept;
 those whose page changed are stale and are shown as such.
+
+## Connections
+
+Milestone 2.7b. A *connection* is a person's account at a platform that holds
+repositories, and a *provider* is the platform's side of it. This section is
+the general shape; "The GitHub provider" below holds what is GitHub's. Accounts
+mode only; single-user mode answers `404`.
+
+**Storage & sync.** The product calls this area "存储与同步" (Storage & sync):
+
+- the administrators' page "存储与同步" holds the connections, one card per
+  platform (the storage rules of milestone 3.1 and the budget of 3.5 go above
+  them when they land);
+- the account page's section is "已连接的账号" (connected accounts), one row per
+  platform, with the leftover reminders under their platform;
+- a new space asks "存在哪里" (where it's stored): this server, sync to GitHub,
+  sync to GitLab, …, then "other (by address)";
+- ordinary users never see the words Git or repository ("同步到 GitHub"); the
+  administrators' page and the "other (by address)" option may.
+
+**One provider interface.** The server holds its providers in memory, by id. A
+provider describes itself, connects a person (start, callback, renewal,
+disconnect), lists the places it may create repositories in and the
+repositories it reaches, creates a repository, gives Git a credential, and
+checks its own configuration. GitHub (the App: manifest creation, install and
+authorise in one step, installations shared per tenant) is the first
+implementation; GitLab and Gitea follow in 3.8; plain Git by address, with a
+deploy key or a token, is the provider `git`. Nothing is released, so the
+generic shape replaces the GitHub-only one; there are no aliases.
+
+### Provider
+
+```json
+{"id": "github", "type": "github", "host": "github.com", "name": "GitHub",
+ "owner": "site",
+ "capabilities": {"createRepo": true, "installations": true, "connectAccount": true,
+                  "storageTarget": true, "partialSync": "yes"},
+ "configured": true,
+ "app": {"name": "PetalBook Notes", "slug": "petalbook-notes",
+         "htmlUrl": "https://github.com/apps/petalbook-notes",
+         "installUrl": "https://github.com/apps/petalbook-notes/installations/new"},
+ "userAuthorization": true,
+ "connection": {"login": "tang-gh", "accountId": "1234567", "state": "ok",
+                "connected": "2026-11-23T08:30:00Z", "refreshExpires": "2027-05-23T08:30:00Z", "spaces": 2},
+ "leftovers": [{"repoId": 881234567, "fullName": "kazuhahub/tang-notes",
+                "htmlUrl": "https://github.com/kazuhahub/tang-notes",
+                "spaceName": "Tang notes", "created": "2026-11-23T08:45:00Z"}]}
+```
+
+- `id`: the provider's id, used in every path below. `github` is the site's
+  GitHub App; 3.8's are chosen by the administrator (`gitlab`, `codeberg`, …;
+  lowercase letters, digits and `-`, at most 40). `git` is always there and has
+  no connection.
+- `type`: `github` (`gitlab` and `gitea` come with 3.8), `git`.
+- `owner`: `site` (tenants' own providers come with 3.6).
+- `capabilities`: what the client may offer; it shows options by capability,
+  never by the platform's name. `partialSync` is `yes`, `no` or `unknown` (not
+  yet detected; 3.5 detects it).
+- `configured`: whether the provider is set up and can be used. Everything else
+  of the provider answers `409 provider_not_configured` while it is `false`.
+- `app` is the provider's App when it has one (GitHub) and is set up, else
+  `null`: `installUrl` is where a person installs it. `userAuthorization` is
+  whether people can connect their account: for GitHub the App's client id and
+  secret are saved and the server has `--public-url`.
+- `connection`: the caller's connection or `null`; `state` is `ok` or
+  `expired` (see "Renewal"); `accountId` is the platform's id as a string;
+  `refreshExpires` is absent when the provider does not expire tokens;
+  `spaces` counts the spaces that sync through it, so a client can warn before
+  a disconnect.
+- `leftovers`: the caller's reminders of empty repositories a failed attempt to
+  make a space left on the platform (see "Leftover repositories"): newest
+  first, at most 20, `[]` when there are none and always present.
+
+### `GET /api/connections`
+
+Any signed-in user: `{"providers": [Provider]}`, in a stable order (GitHub,
+GitLab, Gitea, then by name, `git` last). The providers are the ones the server
+has, whether set up or not (`configured`), so a client can say there is nothing
+to connect to. Read from memory; one query for the caller's connections and
+leftovers.
+
+### Routes by provider
+
+| Work | Route |
+|---|---|
+| list the providers | `GET /api/connections` |
+| connect | `POST /api/connections/{provider}/authorization/start` |
+| the platform's redirect back | `GET /api/connections/{provider}/authorization/callback` |
+| disconnect | `DELETE /api/connections/{provider}/authorization` |
+| where a repository can be made | `GET /api/connections/{provider}/owners` |
+| repositories that can be connected | `GET /api/connections/{provider}/repos` |
+| dismiss a reminder | `DELETE /api/connections/{provider}/leftovers/{repoId}` |
+| the provider's configuration | `/api/admin/connections/{provider}…` (site administrators) |
+
+- `GET /api/admin/connections`: site administrators; every provider with its
+  configuration state, `partialSync`, and counts (connections, spaces; for
+  `git` there are no connections, and `spaces` counts the spaces on a plain
+  address).
+- A `{provider}` that does not exist answers `404 not_found`; a route a
+  provider's type does not have (installations on a type without them, anything
+  but `repos` on `git`) answers `404 not_found` too. `repos` on `git` is an
+  empty list.
+- The callbacks stay exceptions to the cross-site rule; the state names the
+  provider.
+
+### Spaces and remotes
+
+- `POST /api/spaces` takes `storage.sync`:
+
+  ```json
+  {"name": "Tang notes",
+   "storage": {"sync": {"provider": "github", "owner": "kazuhahub", "name": "tang-notes",
+                        "private": true, "description": "Notes on Tang poetry", "create": true}}}
+  ```
+
+  Without `sync` the space is on this server. The fields are the GitHub
+  provider's, see "Creating a space with a repository"; from 3.1 it may also
+  have `assets` (see "Spaces", `POST /api/spaces`). `provider: "git"` is
+  `400 invalid` here: a plain address is given as `remote` (3.1, with a
+  token), or connected after the space is made with `PUT …/remote`. Failures
+  that leave a repository behind answer with `repo` (and, from 3.1,
+  `assetsRepo`).
+- The Remote object's credential is `{"type": "connection", "provider": "github",
+  "via": "app" | "user", …}`; the other fields are the provider's (for GitHub
+  `installationId`, `account`, `user`, `login`, `repoId`). `ssh` and `token` stay.
+  `PUT …/remote` takes the same shape.
+- The Remote object has `provider` (the id; `git` for a plain address) so the
+  client shows the platform's icon and name.
+
+### Error codes
+
+Every error of a connection has `provider` (the id) next to `error` and
+`message`. The codes do not carry the platform's name:
+
+| Code | Meaning |
+|---|---|
+| `provider_not_configured` | the provider is not set up (or, for user flows, lacks what connecting needs) |
+| `connection_expired` | the person's connection ran out or was revoked (as a remote's `errorCode`) |
+| `connection_missing` | the person it names has no connection (any more) (as a remote's `errorCode`) |
+| `not_connected` | the request needs the caller's connection and there is none, or it is expired |
+| `installation_gone` | the App was uninstalled or suspended, or the repository left its selection |
+| `repo_not_in_installation` | no installation reaches the repository and it could not be added |
+| `app_not_installed` | the App is not installed where the caller wants a repository (`installUrl`): their own account, or an organisation the App was removed from |
+| `app_missing_permission` | the App or its installation lacks a permission (`permission` names the first, `missing` all) |
+| `provider_refused` | the platform refused a person (`message` passes on what it said) |
+| `provider_error` | the platform failed or answered something the server could not use |
+| `name_taken` | the owner has a repository of that name |
+| `push_failed` | the repository was made but the first push failed |
+| `auto_create_needs_org` | `autoCreate` on a sign-in provider (2.8) that names no organisation: anyone with an account there could make one |
+| `app_rejected`, `client_rejected`, `key_invalid` | the platform does not accept what the administrator entered |
+| `public_url_needed` | the flow needs `--public-url` |
+| `owner_not_allowed` | the owner is not one of the caller's |
+| `provider_in_use` | the provider cannot be changed or removed while spaces or people use it |
+| `account_in_use` | the platform account is connected to another person (any tenant) |
+
+### Storage
+
+`remotes.cred_type` is `ssh`, `token` or `connection`, and `remotes.provider` is
+the provider's id (`github` for a connection, `git` for the others). The
+GitHub provider's tables keep their names (`github_authorizations`,
+`github_installations`, `github_installation_tenants`, `github_leftovers`).
+
+### Audit
+
+`connection_provider_changed` (a provider configured, changed or removed:
+`provider`, `type`, secrets as `"changed"`), `account_connected` and
+`account_disconnected` (`provider`, `user`, `login`). All three are the
+server's own kinds: a tenant administrator's `GET /api/admin/audit` does not
+list `connection_provider_changed`.
+
+## The GitHub provider
+
+Accounts mode; single-user mode answers `404` here, as it does for the whole of
+"Remote repository" (so a `connection` credential in `PUT …/remote` is `404` there
+too). The server has at most one
+GitHub App, which an administrator configures (see "Administration", "Connections", "The GitHub App"); only `github.com` is supported. Three things come from it:
+
+- **Installations**: where the App is installed (organisations, accounts). An
+  installation token pushes and fetches a space's repository, and creates
+  repositories in an organisation an administrator has shared.
+- **GitHub authorisation**: a PetalBook user connects their GitHub account to
+  the App. The user token creates repositories in the user's own account and
+  in the organisations GitHub lets that user create them in, and syncs a space
+  when no installation reaches its repository. What a user token may do is
+  what both the user and the App may do: GitHub checks the user's own rights.
+- **Spaces made with a new repository** (`POST /api/spaces` with `storage.sync`),
+  and existing spaces switched to the App (`PUT …/remote`).
+
+**Tenants (3.3).** The App and its installations are the server's: only site
+administrators reach `/api/admin/connections/github…` (a tenant administrator gets
+`403 forbidden`, as for the other site-only routes), and an installation a site
+administrator shares is shared with the people of **every** tenant (see
+`PUT /api/admin/connections/github/installations/{id}`). A GitHub connection is its user's,
+so it is in the user's tenant: it syncs only spaces of that tenant. One GitHub
+account links to one PetalBook user on the whole server, whatever their
+tenants; `account_in_use` says only that it is taken. A space made with a
+repository is the creator's tenant's and counts toward its quotas.
+
+Every route here is a person's, not a token's: with an API token, `/api/connections/github/…`
+and `/api/admin/connections/github…` answer `403 token_scope` (see "API tokens"), and so
+do `POST /api/spaces` and `PUT …/remote`.
+
+| Work | Token |
+|---|---|
+| Fetching and pushing a space with `via: "app"` | installation token, narrowed to the one repository, `contents: write` |
+| Fetching and pushing a space with `via: "user"` | the user token of the PetalBook user the remote names |
+| Creating a repository in the user's account | user token (`POST /user/repos`) |
+| Creating a repository in an organisation the user's authorisation lists | user token (`POST /orgs/{org}/repos`) |
+| Creating a repository in an organisation an administrator shared with the caller's tenant | installation token, `administration: write` (`POST /orgs/{org}/repos`) |
+| Listing installations (administrators) | the App's JWT |
+| Listing the caller's owners and repositories | user token; installation token for an installation shared with the caller's tenant |
+
+### Tokens, and how they reach Git
+
+- **App JWT**: RS256, signed with the App's private key, `iat` a minute in the
+  past, `exp` nine minutes ahead. Made in memory, reused for eight minutes.
+- **Installation tokens** are made with
+  `POST /app/installations/{id}/access_tokens`, for a space's repository
+  narrowed with `repository_ids: [repoId]` and
+  `permissions: {"contents": "write"}`; for creating a repository, with
+  `permissions: {"administration": "write"}` and no repository (one that does
+  not exist yet cannot be named), only for that request. They live in memory
+  only: never in the state database, an answer, an error message or a log.
+  A token is reused until 5 minutes before its `expires_at` (GitHub gives an
+  hour). Requests that need the same token at once share one call to GitHub,
+  and no lock is held while the network is used. The cache holds at most
+  10 000 tokens, drops expired ones, and when full drops the one that expires
+  first. Which installation reaches a repository is remembered for 10 minutes;
+  a `404` when minting forgets it.
+- **User tokens** are stored sealed (below); the decrypted access token is
+  kept in memory until 5 minutes before it expires.
+- **To Git**: exactly as a `token` credential today. Git reads the user name
+  (`x-access-token`) and the token from its environment through a credential
+  helper scoped to `https://github.com`, redirects are followed only for the
+  first request, and the token is scrubbed from Git's output. It is never on a
+  command line, in the remote address, in `.git/config` or in a log. Each Git
+  command takes the token from the cache, so a pull every minute costs no call
+  to GitHub until the token is near its end.
+- **Cost.** Only open spaces are pulled (see "Remote repository"), so a space
+  costs at most one minted token per 55 minutes while someone uses it, and none
+  while it is closed.
+
+### The provider object
+
+`GET /api/connections` (see "Connections") shows GitHub as the provider
+`github`. `app` is `null` when no App is configured; then nothing else of the
+provider works and its other endpoints answer `409 provider_not_configured`.
+`userAuthorization` is whether users can connect their GitHub account: the
+App's client id and secret are saved and the server has `--public-url`.
+`connection.state` is `ok` or `expired` (see "Renewal"). `connection.spaces`
+counts the spaces that sync through it (`via: "user"` naming the caller), so a
+client can warn before a disconnect. `leftovers` are described under "Leftover
+repositories".
+
+### `POST /api/connections/github/authorization/start`
+
+`{"return": "/s/01JD3K8Q7Z/settings", "install": true}`, with `return` treated as
+in `POST /api/auth/oidc/start`. `200` with `{"url": "…"}` and a short-lived
+cookie that ties the attempt to this browser; the client navigates to `url`.
+
+- **`install: true`** (what "Connect GitHub" uses): `url` is the App's
+  installation page,
+  `https://github.com/apps/<slug>/installations/new?state=…`. The App asks for
+  user authorisation during installation (`request_oauth_on_install`), so a
+  person installs the App on their own account (or an organisation) and
+  authorises it in one GitHub flow, and GitHub sends the browser to the callback
+  below with `code`, `state`, `installation_id` and `setup_action=install`. An
+  App entered by hand needs "Request user authorization (OAuth) during
+  installation" ticked in its settings (the one made by the manifest button has
+  it). The code of such a flow has no PKCE challenge, so none is sent back.
+  A person who already has the App installed everywhere can still authorise
+  alone with:
+- **`install` false or left out**: `url` is
+  `https://github.com/login/oauth/authorize?client_id=…&redirect_uri=…&state=…&code_challenge=…&code_challenge_method=S256`.
+
+`redirect_uri` is `redirect_uri` is
+`<public-url>/api/connections/github/authorization/callback`. `state` is 32 random
+bytes; the PKCE verifier is 64 random characters and its S256 challenge is
+sent (not for `install`). Both are held in memory only, for 10 minutes, used once, bound to the
+cookie and to the signed-in user (at most 10 000 attempts at a time: the
+oldest goes first). When reconnecting, `login=<the current login>` is sent so
+GitHub suggests the same account. `409 provider_not_configured` when
+`userAuthorization` is false.
+
+### `GET /api/connections/github/authorization/callback`
+
+GitHub redirects here. The server answers with a redirect (`303`), never JSON:
+to the `return` path on success, to `/settings?connection_error=<code>&provider=github` on failure.
+It needs the session of the user who started the attempt; another session or
+none is `expired`. The same callback serves both starts: a plain authorisation
+(`code` and `state`) and an installation (`code`, `state`, `installation_id`,
+`setup_action=install`). The server exchanges the code
+(`POST https://github.com/login/oauth/access_token` with the client id and
+secret, the code, `redirect_uri` and, for a plain authorisation, the PKCE
+verifier), then reads the account with `GET /user`. An installation that
+brought no `code` (the App does not ask for authorisation during installation)
+is `installed`; one an organisation still has to approve
+(`setup_action=request`) is `requested`.
+
+Codes: `installed` (the App was installed but GitHub sent no code: authorise
+once more with `install` false; the App needs "Request user authorization
+(OAuth) during installation"), `requested` (the organisation's owners must
+approve the installation first), `denied` (the user cancelled on GitHub), `expired` (the attempt is
+unknown, used, older than 10 minutes, or of another user), `provider_error`
+(GitHub refused the exchange or could not be reached), `account_in_use`
+(another PetalBook user has connected this GitHub account, in any tenant: the
+GitHub account id is unique on the server; the answer names neither the user
+nor the tenant), `different_account`
+(the caller has spaces syncing through another GitHub account: disconnect
+first, or switch those spaces).
+
+A user has at most one connection. It is stored in the state database: the
+GitHub account's id and login, the access token and the refresh token
+(each sealed with the server's key, bound to the user and to its purpose),
+their expiry times and the `state`. Connecting the same account again replaces
+the tokens; spaces that were waiting on it are retried at once.
+
+### `DELETE /api/connections/github/authorization`
+
+`204`. The server asks GitHub to revoke the grant
+(`DELETE /applications/{client_id}/grant`, best effort) and deletes the tokens
+from the database and from memory whatever GitHub answers. Spaces that sync
+through it go to `state: "error"`, `errorCode: "connection_missing"`
+the next time they talk to GitHub; nothing in them is deleted (see "When a
+GitHub credential stops working").
+
+### Renewal
+
+GitHub's user tokens last 8 hours and their refresh tokens 6 months, and every
+renewal hands out a new refresh token, valid 6 months again, while the old one
+stops working.
+
+- The access token is renewed when it is needed and has less than 5 minutes
+  left (`POST https://github.com/login/oauth/access_token` with
+  `grant_type=refresh_token`). One renewal per user at a time; others wait for
+  it. The new pair is written to the database, replacing the old one only if
+  it is still the one renewed from, before the new access token is used. A
+  renewal that cannot be stored is retried; the old refresh token is no longer
+  valid at that point, so failing to store it means the connection is
+  `expired`.
+- Once a day the server renews, one at a time, the connections whose refresh
+  token ends within 30 days, so someone whose spaces sit closed for months
+  stays connected. That is one request per user every five months or so.
+- A renewal GitHub refuses (`bad_refresh_token`: expired or revoked) makes the
+  connection `expired` and drops its tokens. A renewal that cannot reach GitHub
+  changes nothing: the space is `offline`, as for any unreachable remote.
+- An App that does not expire user tokens gives no refresh token; the token is
+  then kept until it is revoked, and none of the above applies.
+- The device flow is not offered: the web app does not need it. It is left for
+  the clients of phase 4.
+
+### `GET /api/connections/github/owners?cursor={cursor}&recheck=true`
+
+The accounts the caller can create a repository in, one page at a time:
+
+```json
+{"items": [
+  {"login": "tang-gh", "type": "User", "via": "user", "installationId": null, "needsInstall": false},
+  {"login": "kazuhahub", "type": "Organization", "via": "user", "installationId": 51234567, "needsInstall": false},
+  {"login": "petal-team", "type": "Organization", "via": "app", "installationId": 51239999, "needsInstall": false}],
+ "next": "…"}
+```
+
+In this order: the caller's own GitHub account, when connected; the
+organisations among the installations GitHub lists for the caller's
+connection (`GET /user/installations`, 30 to a page); the organisations whose
+installation a site administrator shared with the caller's tenant and that are not
+already listed. `needsInstall` is `true` on the caller's own account when the
+App is not installed there: GitHub lets a user token create repositories only
+in accounts the App is installed on, so a repository in that account is refused
+with `409 app_not_installed` until the person installs it (the web app
+offers "Install on my account": `installUrl` of `GET /api/connections`, or the
+`install` start above). It is found with one call to GitHub on the first page
+(`GET /users/{login}/installation`, remembered while the App is there; the answer "not installed there" is remembered for a minute per person, so a person without the App does not cost a call or a log line at every visit). `recheck=true`, on the first page, forgets that memory for the caller first: a person who has just installed the App asks again instead of waiting the minute (the web app's "check again"). It is honoured at most once a minute per person: within the minute `recheck=true` is an ordinary call that uses the remembered answer, with no call to GitHub and no error, so looping it cannot use up the App's shared rate limit. Creating a space is never refused by the client on this flag; the server answers `409 app_not_installed`.
+`via` says which token creates the repository there. Each page is at most one call
+to GitHub. `cursor` is opaque; `next` is `""` after the last page. Without a
+connection only the installations shared with the caller's tenant are listed. A repository is created with
+the caller's own token wherever it can be, so GitHub's rules for that person
+in that organisation (who may create repositories, whether private ones are
+allowed) apply.
+
+### `GET /api/connections/github/repos?installation={id}&cursor={cursor}` or `?mine=true`
+
+Repositories the caller can connect a space to, 30 to a page, for choosing one
+in `PUT …/remote` or `POST /api/spaces` with `create: false`. `installation`:
+the repositories of that installation the caller's connection reaches
+(`GET /user/installations/{id}/repositories`), or for an installation shared with the caller's tenant
+all of its repositories (installation token). `mine=true`: the caller's own
+repositories (`GET /user/repos?affiliation=owner`).
+
+```json
+{"items": [{"id": 881234567, "fullName": "kazuhahub/tang-notes", "private": true,
+            "defaultBranch": "main", "htmlUrl": "https://github.com/kazuhahub/tang-notes", "canPush": true}],
+ "next": "…"}
+```
+
+`404 not_found` for an installation the caller can neither reach nor use as
+shared with their tenant. GitHub cannot filter these lists by name, so there is no `q`: a client
+filters the page it has, and the user can type `owner/name` instead.
+
+### Creating a space with a repository
+
+`POST /api/spaces` with `storage.sync` and `provider: "github"` (see "Connections", "Spaces and remotes"):
+
+- `owner`: a `login` from `GET /api/connections/github/owners` (case is ignored).
+  `403 owner_not_allowed` for anything else.
+- `name`: 1–100 characters of `A-Z a-z 0-9 . _ -`, not `.` or `..`, not
+  ending in `.git`. Anything else is `400 invalid`: the server does not let
+  GitHub rename it.
+- `private`: `true` when left out.
+- `description`: optional, at most 350 characters, no control characters.
+- `create`: `true` when left out. `false` uses the repository `owner/name`
+  that exists already, under the rules of `PUT …/remote`: an empty repository
+  gets the space's history; one with content gives it to the new space, which
+  is pristine. The credential is chosen as `PUT …/remote` would with no `via`
+  given: the App when the caller may use its installation on that repository
+  (their connection can push there, or the installation is shared with their
+  tenant), otherwise
+  the caller's own connection.
+
+The repository is created empty (`auto_init: false`), so the space's first
+commit is the repository's first commit, on `main`. The order:
+
+1. Checks that need no network: the fields, that `github.com` is among the
+   hosts the administrator allows (`--remote-host`; otherwise `403 forbidden`,
+   as for any other remote on a host that is not allowed), the spaces quota
+   (the person's and the tenant's, as for any `POST /api/spaces`:
+   `403 quota_exceeded`; spaces still being made with a repository count as
+   made, so parallel requests cannot pass it), the
+   owner, and that the tokens it needs exist (App configured, caller connected and not
+   `expired` when `via` is `user`).
+2. The space is made on disk (`git init`, `space.yml`, the first commit). No
+   one can see it and there is no record of it yet.
+3. The repository is created on GitHub (`POST /orgs/{org}/repos` or
+   `POST /user/repos`), with the token `via` names.
+4. The space's credential is chosen and checked. For an organisation:
+   `via: "app"`, with a token minted for the new repository alone. For the
+   caller's own account: `via: "app"` when the App is installed on that
+   account and reaches the repository, otherwise `via: "user"`. When an
+   installation with "only selected repositories" does not reach the new
+   repository, and the caller's connection can see that installation, the
+   server adds it (`PUT /user/installations/{id}/repositories/{repoId}`, user
+   token) and mints again; when it cannot, the caller's own account falls back
+   to `via: "user"` and an organisation fails with
+   `409 repo_not_in_installation`. This works whether or not GitHub adds
+   a repository an App created to its installation by itself.
+5. `main` is pushed. A repository GitHub has just made is sometimes not found
+   for a few seconds, so "not found", GitHub's `5xx` and an unreachable GitHub
+   are tried again after 1, 3 and 7 seconds (up to 4 tries). One deadline of
+   15 seconds covers the tries, the waits and each push itself: a push still
+   running then is stopped, and no try starts that could not finish before it.
+   GitHub also says "Repository not found" for a credential it does not accept
+   on a private repository, which looks the same; the deadline is what bounds
+   that case. Every other refusal of the credential (`401`, `403`,
+   "Authentication failed") and a credential the server could not get at all
+   are not retried.
+6. In one transaction: the space (in the caller's tenant), the caller as its
+   owner, and its remote (`connection`, provider `github`, `via`, the installation, the repository id,
+   the user); the usage rows count it as any new space. Then the space becomes
+   visible.
+
+When a step fails:
+
+- Steps 1 and 2: nothing was made anywhere.
+- Step 3: the space on disk is removed. `409 name_taken` when the
+  owner already has a repository of that name (a client can offer
+  `create: false` when it is the caller's); `403 app_missing_permission`
+  when the App or its installation lacks the Administration permission
+  (`missing` names it); `403 provider_refused` when GitHub refuses a person
+  (the organisation does not let this person create repositories, or does not
+  allow private ones: `message` passes on what GitHub said); `400 invalid` for any other refusal
+  of the fields; `503 unavailable` when GitHub cannot be reached;
+  `429 rate_limited` when GitHub limits the server.
+- Steps 4 to 6: the space on disk is removed. The repository stays on GitHub,
+  empty: the server never deletes anything on a remote, and may not even be
+  allowed to. The answer names it, so the same request with `create: false`
+  connects a new space to it once the cause is fixed, and the server keeps a
+  reminder of it for the caller (see "Leftover repositories"):
+
+  ```json
+  {"error": "push_failed", "message": "…",
+   "repo": {"id": 881234567, "fullName": "kazuhahub/tang-notes", "htmlUrl": "https://github.com/kazuhahub/tang-notes"}}
+  ```
+
+  Codes: `409 repo_not_in_installation`, `502 push_failed`,
+  `500 internal` (the transaction failed).
+- A crash between steps 3 and 6 is the same failure without an answer: the
+  directory on disk has no record and no one sees it (the next start of the
+  server removes it once it is a quarter of an hour old; `petalbook user …`
+  does not), and the empty repository is on
+  GitHub, ready for `create: false`.
+
+Two requests for the same name: the second gets `409 name_taken`. The
+server finishes the work when the client goes away, as `PUT …/remote` does.
+
+#### Leftover repositories
+
+The repository a failed attempt leaves is kept (the server never deletes on a
+remote). So that the person does not have to remember it, the server also
+records a reminder, per user, when the failure came after the repository was
+made (steps 4 to 6, the same cases that put `repo` in the answer; a crash has
+no answer and no reminder). A client shows the reminders in
+`GET /api/connections`'s `leftovers`, for instance on the account page or beside the
+list of spaces, with the repository's name and link and two actions:
+
+- **Connect it and try again**: `POST /api/spaces` with the reminder's
+  `spaceName` as `name` and `storage: {"sync": {"provider": "github", "owner", "name", "create": false}}` taken
+  from `fullName`. Nothing else is needed; the reminder is cleared by the
+  space connecting (below). When it fails again the reminder stays, and the
+  answer says why.
+- **I deleted it**: `DELETE /api/connections/github/leftovers/{repoId}`.
+
+A reminder is cleared when the person dismisses it, and by itself when any
+space is connected to that repository with a `connection` credential (by
+`create: false`, or by `PUT …/remote`), whoever made the reminder. A space
+connected with a plain URL and a token or key does not clear it. Only the newest 20 per user are kept; a
+second failure on the same repository replaces its reminder rather than adding
+one. Reminders are the user's own: they are deleted with the user and no one
+else sees them, in any tenant.
+
+### `DELETE /api/connections/github/leftovers/{repoId}`
+
+`204`. Dismisses the caller's reminder of that repository (the id from
+`leftovers[].repoId`). Nothing happens on GitHub. It is `204` also when there
+is no such reminder (it was cleared meanwhile), as for `DELETE
+/api/connections/github/authorization`. `repoId` that is not a positive number is
+`404 not_found`.
+
+### Switching an existing space to GitHub
+
+`PUT /api/spaces/{space}/remote` (needs `manage`):
+
+```json
+{"url": "https://github.com/kazuhahub/notes.git", "credential": {"type": "connection", "provider": "github", "via": "app"}}
+```
+
+`url` must be a repository on `github.com`; `git@github.com:owner/name.git` is
+accepted and stored as `https://github.com/owner/name.git`. A space that
+already follows that repository with a deploy key or a token keeps its history
+(the histories are the same) and only its credential changes; the old key or
+token is deleted.
+
+- `via: "app"`: the installation that reaches the repository
+  (`GET /repos/{owner}/{name}/installation`). The caller must be allowed to
+  use it: their connection can push to the repository, or the installation is
+  shared. Otherwise anyone with `manage` in a space could tie it to any
+  repository the App reaches.
+- `via: "user"`: the caller's connection, which must be able to push. The
+  space then syncs as the caller on GitHub. Someone else with `manage` who
+  `PUT`s it again ties it to themself. It keeps working only while that user
+  can sign in, still has `manage` in the space (directly or through a group:
+  the union of their roles counts), and is connected. The caller must be in the
+  space's tenant (which only a site administrator, who may open a space of any
+  tenant, can fail): otherwise `403 forbidden`, before GitHub is asked.
+
+A GitHub connection does not get around `--remote-host`: when `github.com`
+is not an allowed host the answer is `403 forbidden`, as for any other remote
+on a host that is not allowed, and GitHub is not asked.
+
+Errors, besides those of `PUT …/remote`: `409 provider_not_configured`;
+`409 not_connected` (the caller has no connection, or it is
+`expired`); `409 repo_not_in_installation` (`via: "app"` and no
+installation reaches the repository); `403 owner_not_allowed` (the
+installation is not shared with the caller's tenant and the caller's connection
+cannot push there);
+`403 forbidden` (`via: "user"` and the caller is not in the space's tenant).
+
+### When a GitHub credential stops working
+
+The space goes to `state: "error"` with one of these `errorCode`s, found when
+the server next mints or renews a token, or when Git is refused:
+
+| `errorCode` | Cause | Fix |
+|---|---|---|
+| `connection_expired` | the refresh token expired or was revoked | the user the remote names connects again |
+| `connection_missing` | that user disconnected, was disabled or deleted, or lost `manage` in the space (directly and through every group) | they connect again, or someone with `manage` switches the credential |
+| `installation_gone` | the App was uninstalled or suspended there, or the repository was taken out of its selection | install it again, or add the repository |
+| `app_missing_permission` | GitHub refuses the installation's token because the App or its installation lacks Contents | an administrator gives the App Contents (write) and accepts the change in the installation's settings; then re-check in the administration |
+| `provider_not_configured` | the server's App is not configured, or its key no longer works | an administrator fixes the App |
+
+In every case nothing is lost: reads go on from what the server has; writes
+answer `503 unavailable` and change nothing, as for an unreachable remote;
+drafts keep being saved and are committed and pushed once the credential
+works again. While a space is in one of these states it is retried every 10
+minutes instead of every `--pull-interval`, and at once when its cause is
+fixed (a user connects again, an administrator saves the App).
+`POST …/remote/sync` retries now. The first sync that works clears the state.
+
+### Errors of this section
+
+| Code | Status | When |
+|---|---|---|
+| `provider_not_configured` | 409 | no App, or (for user flows) no client id and secret or no `--public-url` |
+| `not_connected` | 409 | the request needs the caller's GitHub connection and there is none, or it is `expired` |
+| `owner_not_allowed` | 403 | the owner is not one of the caller's owners; the installation is not shared with the caller's tenant and the caller's connection does not reach the repository |
+| `name_taken` | 409 | the owner has a repository of that name |
+| `provider_refused` | 403 | GitHub refused to create the repository (`message` says what GitHub said) |
+| `app_missing_permission` | 403 | the App, or its installation, lacks a permission the call needs (a token GitHub refused with a 403 or 422 that talks about permissions); `missing` lists the names (`administration`, `contents`), `repo` is set when the server had made a repository. It is not the same as the next one: the permission is the problem, not the repository. As the `errorCode` of a space's remote it says syncing needs a permission |
+| `app_not_installed` | 409 | the owner is the caller's own account and the App is not installed there; `installUrl` is where to install it (instead of GitHub's raw `403 Resource not accessible by integration`). Installed, but without Administration, it is `app_missing_permission` |
+| `repo_not_in_installation` | 409 | no installation reaches the repository and it could not be added; the answer has `repo` when the server made it |
+| `push_failed` | 502 | the repository was made but the first push failed; the answer has `repo` |
+| `invalid` | 400 | a field breaks a rule above, or GitHub refused one |
+| `rate_limited` | 429 | GitHub limits the server; `Retry-After` is taken from GitHub's reset time |
+| `unavailable` | 503 | GitHub cannot be reached; nothing was changed |
+
+The administrators' endpoints add `key_invalid`, `app_rejected`,
+`client_rejected`, `provider_in_use` and `public_url_needed`
+(see "Administration").
+
+### A site policy for remotes (milestone 3.1)
+
+Reserved in 2.7, specified in "Server storage": `GET/PUT /api/admin/storage`
+and `409 remote_required`. 2.7 already makes a space and its repository in one
+step that either succeeds whole or leaves no space, so 3.1 adds a check before
+step 1 and nothing else to that order.
+
+## Server storage
+
+Milestone 3.1. Accounts mode; in single-user mode every endpoint here answers
+`404` and none of this applies (its one space is a directory the user owns).
+
+The server's disk should grow with what people are using, not with everything
+they have ever stored. Three things do that:
+
+- a **policy** that requires spaces to follow a remote, so that the server is
+  never the only copy and may drop its own;
+- **partial caching** of spaces that follow a remote: the server keeps the
+  current text and the index; old versions and attachments are fetched when
+  someone asks for them, and a space that nobody has used for a while is
+  **evicted** down to its index;
+- an **attachment repository**: a second remote that holds a space's
+  `assets/`, read through a cache of bounded size.
+
+A local space (`sync: "local"`) is the only copy of its pages. It is never
+partially cached or evicted; the policy can only limit its size.
+
+### What a space costs on disk
+
+For the 50 000-page corpus of `spikes/search-scale` (62.2 million characters).
+The text and the index are measured; the rest are estimates under stated
+assumptions (five versions per page, 250 000 commits; 5 GB of attachments in
+20 000 files), to be measured on that corpus before 3.1 is merged.
+
+| Part | Full clone (now) | Partial clone | Evicted |
+|---|---|---|---|
+| Index (`DATA/cache/<id>`) | 166 MB | 166 MB | 166 MB |
+| Text in the working tree | 192 MB | 192 MB | 0 |
+| Current text in `.git` (zlib) | ~100 MB | ~100 MB | 0 |
+| Commits and trees | ~60–120 MB | ~60–120 MB | 0 |
+| Older versions of the text | ~100–400 MB | only those someone looked at | 0 |
+| Attachments in `assets/` of the space | 5 GB in the working tree + ~5 GB in `.git` (images do not compress) + every older version | the current ones twice, older versions only when looked at | 0 |
+| Attachments in an attachment repository | — | the space's share of the attachment cache | 0 |
+
+So such a space takes about 11 GB as a full clone, about 0.6 GB as a partial
+clone with an attachment repository (plus what of it is in the attachment
+cache), and 166 MB evicted. A more usual space of 2 000 pages and 200 MB of
+attachments: about 450 MB full, about 25 MB partial with an attachment
+repository, about 7 MB evicted. A server with 1 000 such spaces of which 100
+are in use goes from about 450 GB to about 2.5 GB of clones, 7 GB of indexes
+and the attachment cache.
+
+What a request costs does not change for a space that is cached (`partial` or
+`full`): pages, lists, search, links, checks and current attachments are read
+from the working tree and the index exactly as now. Only reads of what is not
+on the server (an old version, an attachment not in the cache, any file of an
+evicted space) wait for the network.
+
+### `GET /api/admin/storage`, `PUT /api/admin/storage`
+
+Site administrators only (3.3: the server's disk, its policy and its cache are
+the server's own, not a tenant's; a tenant administrator gets `403 forbidden`).
+In the administrators' web page these settings are the storage part of
+"存储与同步" (Storage & sync), above the connections (see "Connections").
+
+```json
+{"remotes": {"require": "github", "scope": "all", "graceDays": 30, "since": "2026-12-01T00:00:00Z"},
+ "hosts": {"allowed": ["github.com", "gitlab.com", "codeberg.org", "bitbucket.org"], "fromFlag": false},
+ "localSpaces": {"maxBytes": 524288000},
+ "cache": {"partial": true, "evictAfterDays": 14, "minIdleHours": 24,
+           "clonesBytes": null, "minFreeBytes": 10737418240, "assetsBytes": 5368709120},
+ "assets": {"newSpaces": false},
+ "git": {"version": "2.53.0", "partialClone": true},
+ "affected": {"inGrace": 3, "overdue": 0, "exempt": 1}}
+```
+
+`PUT` takes any of `remotes`, `hosts`, `localSpaces`, `cache` and `assets`,
+each partly (what it leaves out stays), and answers as `GET`; `git` and
+`affected` are read only. The settings are in the state database and apply to
+the next request, without a restart. `400 invalid` for a value outside its
+range.
+
+- `remotes.require`: `null` (no requirement, the default), `"any"` (a space
+  must follow a remote on an allowed host) or the id of a provider, such as
+  `"github"` (a repository on that platform with a `connection` credential
+  through it, see "Connections"; `409 provider_not_configured`, with
+  `provider`, while the provider is not set up; `"git"` is `400 invalid`,
+  `"any"` is what takes a plain address).
+- `remotes.scope`: `"new"` (spaces made from now on; the default) or `"all"`.
+- `remotes.graceDays`: 0 to 365, default 30. How long an existing space has to
+  meet a requirement that `scope: "all"` puts on it. `since` is when the
+  requirement took its present form (`require` or `scope` changed), set by the
+  server; a space's deadline is `since + graceDays` (below).
+- `hosts.allowed`: the hosts a remote may be on, what `--remote-host` sets
+  today (`"*"` allows any). When the server was started with `--remote-host`,
+  the flag wins: `fromFlag` is `true` and a `PUT` of `hosts` answers
+  `409 conflict`. A connection's provider is held to the same list (its host,
+  as 2.7b checks `--remote-host`): a provider whose host is not allowed cannot
+  be used to connect or make a space.
+- `localSpaces.maxBytes`: `null` (no limit, the default) or at least 1 MiB.
+  See "A limit on local spaces".
+- `cache.partial`: whether spaces that follow a remote are cloned partially
+  (default `true` when `git.partialClone` is, see "Partial clones").
+- `cache.evictAfterDays`: 1 to 365, or `null` for never; default 14. A space
+  not used for that long is evicted.
+- `cache.minIdleHours`: 1 to 720, default 24. A space used more recently than
+  this is never evicted, also when the disk is short (no space is fetched and
+  dropped over and over).
+- `cache.clonesBytes`: `null` (no budget, the default) or at least 1 GiB: the
+  most that the clones of spaces that follow a remote may take together.
+- `cache.minFreeBytes`: `null` or at least 0; default 10 GiB. When the disk of
+  the data directory has less room than this, spaces are evicted as for an
+  exceeded budget.
+- `cache.assetsBytes`: at least 64 MiB, default 5 GiB: the attachment cache,
+  shared by all spaces with an attachment repository.
+- `assets.newSpaces`: when `true`, a space made with `storage.sync` gets an
+  attachment repository too unless the request says `"assets": false`. Default
+  `false`.
+- `git.version` is the Git the server runs; `git.partialClone` is `false` when
+  it is older than 2.44 (it cannot refuse to fetch on its own, see "Partial
+  clones"). Then `cache.partial` is `false` and a `PUT` of `true` answers
+  `409 conflict`. Eviction works with any Git.
+- `affected` counts the spaces the policy now asks something of: in their grace
+  period, past their deadline, and exempted.
+
+**Layers.** These settings are the site's, stored as one record of the state
+database and not in 3.3's layered settings (`GET /api/admin/settings`
+does not list them). Following "the layering of settings and locks", each has
+a default and says whether lower layers may change it; in 3.1 every one of
+them is locked at the site: they decide how the server uses its own disk and
+whom it trusts, and a space's settings live in `space.yml`, which anyone who
+can push to its remote can change. The tenant layer is reserved (see
+"Tenants, registration and mail"): a tenant's administrators will be able to
+make `remotes.require`, `remotes.graceDays` and `localSpaces.maxBytes`
+stricter (require a remote, a provider rather than `"any"`, a shorter grace
+period, a smaller limit) and never looser. The two per-space values below
+(pinned, exempt) are records of the state database, not settings of the
+space.
+
+### Requiring a remote
+
+While `require` applies to a space, it must follow a remote of that kind.
+Exempt users' spaces and exempt spaces (below) are left out.
+
+- **New spaces** (any `scope`): `POST /api/spaces` without what is required
+  answers `409 remote_required` before anything is made: under `"any"` it
+  needs `storage.sync` or `remote`, under a provider's id it needs
+  `storage.sync` with that `provider`. `remote` is the body of `PUT …/remote`
+  with a token (an SSH key needs the space first, to hold the key); it is
+  `400 invalid` together with `storage.sync`.
+- **The personal space** is made at a user's first sign-in, when they cannot
+  have connected anything yet. It is made local, as now, and is given a
+  deadline of its creation plus `graceDays`; the app offers the one step that
+  meets the requirement (connect the provider, then a private repository
+  `petalbook-<username>` in their account).
+- **Existing spaces**, with `scope: "all"`: a space that does not meet the
+  requirement gets the deadline `since + graceDays`. Until then nothing
+  changes but the notice: `storage.remote` in the space
+  (`{"required": "github", "deadline": "…", "overdue": false}`), shown to every
+  member, with the way to connect offered to those with `manage`.
+- **After the deadline** the space is read-only: it is listed, opened, read,
+  and searched as before; drafts keep being saved (they are in the
+  state database, not in the space). Every change to its files answers
+  `409 remote_required` with the deadline:
+
+  ```json
+  {"error": "remote_required", "message": "…", "require": "github", "deadline": "2026-12-31T00:00:00Z"}
+  ```
+
+  Connecting it (`PUT …/remote`, `POST …/remote/key`) always works, and once it
+  follows a remote of the required kind it is writable again, drafts are
+  committed as usual. **Nothing is deleted** at the deadline or after it: not
+  the space, not a page, not a draft, not a setting.
+- **Removing** a remote (`DELETE …/remote`) and switching to a credential the
+  requirement does not accept (`PUT …/remote`) answer `409 remote_required`.
+- **Changing the policy.** Relaxing it (`require: null`, `scope: "new"`)
+  clears the deadlines at once, and overdue spaces are writable again.
+  Tightening it (`"any"` to `"github"`, `"new"` to `"all"`) starts a new
+  `since`, so nobody's grace period starts in the past. A new `graceDays`
+  moves the deadlines of spaces still in their grace period; when it puts a
+  deadline in the past, that space is overdue at once, which `affected` in the
+  answer shows before anyone else sees it.
+- A space whose remote stops working (offline, `rewritten`, an `errorCode`)
+  still follows it and meets the requirement: those states are handled as in
+  "Remote repository" and "The GitHub provider".
+
+#### Exemptions
+
+- `PATCH /api/users/{id}` takes `{"remoteExempt": true}`: the spaces this user
+  owns are not asked for a remote (new ones included). Site administrators
+  only, as the requirement is the site's (`403 forbidden` for a tenant
+  administrator). The User object has `remoteExempt` (absent when `false`).
+- `PUT /api/admin/spaces/{space}/storage` takes `{"exempt": true}` for one
+  space (below).
+
+### A limit on local spaces
+
+With `localSpaces.maxBytes`, an upload (`POST …/assets`) or an import into a
+local space whose measured size (`sizeBytes`, see "Administration") plus the
+request's body would exceed it answers `507 space_full`. Saving text is never
+refused, so nobody loses typing; the measurement can be up to 6 hours old,
+and an upload or import measures the space again first when the stored size
+is within 10 % of the limit. Spaces that follow a remote are not limited by
+it: their copy on the server is a cache.
+
+### Partial clones
+
+A space that follows a remote is cloned with `--filter=blob:none` (from Git
+2.44; with `cache.partial` on). The server has every commit and every tree,
+and the contents of the files only of the current version, which it checks
+out as now. Older versions of a file are fetched when someone opens them, and
+kept until the space is evicted.
+
+- **Why not a shallow clone.** A shallow clone (only the latest commits)
+  would save the commits and trees too, about 60–120 MB at 50 000 pages, but
+  the history of a page, following a page through renames, detecting a
+  rewritten history, and counting what is not pushed all walk commits. Each
+  page of history would cost a `--deepen` round trip, which also brings every
+  file of those commits. With the commits local, all of that stays local and
+  only file contents are fetched, a few kilobytes each.
+- **Git never fetches on its own.** Every Git command on the server runs with
+  `GIT_NO_LAZY_FETCH=1`. A missing object is an error the server handles, not
+  a silent network request without credentials or a deadline in the middle of
+  a read. The server fetches missing contents itself, by their ids, through
+  the same credential, deadline and error handling as every pull, in one
+  request per batch (`git fetch --filter=blob:none --stdin` with the ids).
+  The restricted Git runner allows these options and nothing more.
+- **Pulls.** The pull every minute (open spaces only, as now) fetches the new
+  commits and trees; when they changed files, the new contents of those files
+  are fetched in one more request before the space moves forward. A pull that
+  brings nothing costs what it costs now.
+- **A host that cannot filter** (it says so, and Git fetches everything)
+  leaves the space a full clone: `cache: "full"`. Nothing else changes.
+- **Existing clones** stay full until they are evicted and restored, which
+  makes them partial; `POST /api/admin/spaces/{space}/evict` does it now.
+  Git cannot drop contents from a clone in place, and re-cloning a space in use
+  is a restore anyway.
+
+#### History and versions
+
+`GET …/history` and `GET …/versions/{commit}` (and `page_history`,
+`page_version` in MCP) read the commits locally. For each page of history the
+server lists the versions with their content ids (one `git log`, as now) and
+fetches those it does not have, at most `limit` plus half of it, in one
+request (a page of 30 versions of a 4 KB text is about 100–200 KB). A
+version, once fetched, is not fetched again. Following a page through renames
+uses Git's rename detection only for exact renames, which needs no content;
+the page's id recognises the rest, as it already does when Git's detection
+gives up (the heads of the files deleted in one commit, fetched in one
+request). The versions listed are the same as with a full clone.
+
+While the server fetches, the request waits, up to 15 seconds. When the
+remote cannot be reached, refuses the credential or takes longer:
+
+```json
+{"error": "not_cached", "message": "This version is not on the server and the remote repository cannot be reached.", "fetching": false}
+```
+
+`503`, with `Retry-After` (5 seconds when `fetching` is `true`: the fetch goes
+on and the next try usually finds it; 60 seconds otherwise). A page of
+history is complete or not given: there is no partial list. Versions already
+on the server are read as now, also while the remote is down. Repairing a
+settings file from its earlier versions (see "Settings files that cannot be
+used") looks only at versions on the server when the remote cannot be
+reached, and tries again at the next opening.
+
+### Eviction
+
+An evicted space has no clone on the server: `DATA/spaces/<id>` is removed. Its
+index, its records (members, remote, drafts) and its settings in the state
+database stay. Lists, the tree, tags, search (the space's and the global one),
+links and backlinks and the checks are answered from the index without
+fetching anything, as fast as for a cached space. What the index does not
+hold is left out rather than fetched: a backlink's `excerpt` is `""` (it is
+the paragraph, read from the file), a listing has no tag colours and no type
+a folder gives its pages (both are in files of the space). Everything that
+needs a file restores the space first.
+
+**Which spaces.** Only spaces that follow a remote, and only when all of this
+holds at the moment of eviction, checked while the space is closed and held
+so that nothing can open it:
+
+- its remote is `ok` (not `offline`, `rewritten` or `error`);
+- the committer has nothing pending, the journal is empty, and a fetch made
+  just then shows the remote's branch at the space's `HEAD`: every commit of
+  the space is on the remote;
+- it holds no rescued commits (`refs/petalbook/unpushed/…`): those exist
+  nowhere else;
+- it has no draft, in the state database, of anyone's (a draft is safe there,
+  but an eviction never sits between a person and what they were typing);
+- it is not pinned, and it was not used for `minIdleHours`.
+
+When any of these fails, the space stays and is tried again at the next
+round. A space is evicted when it has not been used for `evictAfterDays`,
+and earlier, the least recently used first, while the clones together exceed
+`clonesBytes` or the disk has less than `minFreeBytes` free. "Used" is any
+request that opens the space; a pull is not a use. The time of the last use
+is in the state database, written at most once an hour per space. One round
+runs every 10 minutes, evicts one space at a time and takes a few seconds per
+space (removing its files); the sizes it adds up are the stored measurements,
+one query. The attachment cache of an evicted space goes with it.
+
+**Restoring.** The first request that needs a file of an evicted space starts a
+restore and waits for it, up to 10 seconds:
+
+1. a partial clone of the remote's branch (commits, trees, and the current
+   contents of everything but an attachment repository's files);
+2. the checkout;
+3. the files whose content id is the one the index has get back the
+   modification time the index recorded, so the index sees them as unchanged
+   and the order "by update" is what it was; only the files that changed on
+   the remote meanwhile are read again, as after a pull;
+4. the space opens as usual.
+
+For a space of 2 000 pages that is about 10 MB to fetch and 1 to 3 seconds;
+for 50 000 pages about 200 MB and some 20 to 40 seconds on a 100 Mbit/s link.
+At most two restores run at a time; others wait their turn. Requests that are
+still waiting after 10 seconds answer:
+
+```json
+{"error": "restoring", "message": "…", "phase": "fetching"}
+```
+
+`503` with `Retry-After: 5`; the restore goes on. `phase` is `waiting`,
+`fetching`, `checkout` or `indexing`. The space's `storage.cache` is
+`restoring` meanwhile. When the remote cannot be reached or the credential
+does not work, the restore fails at once: `503 unavailable` with the remote's
+`errorCode` where there is one (a connection that expired is fixed as in
+"When a GitHub credential stops working"), and the index-only answers
+above go on working. One restore is given 5 minutes once it has its turn; a
+remote that does not answer in that time fails it the same way. After a
+failure the space is not tried again for a while (3 seconds, doubled with each
+failure in a row, at most 2 minutes): requests meanwhile answer `503
+unavailable` at once, with `Retry-After` set to the seconds left. A failed restore leaves no half clone: the clone is made
+in a directory of its own and moved into place when it is complete.
+
+What a crash leaves (an eviction cut short, a restore's directory) is finished
+or removed by the next start of the server, and by nothing else: `petalbook
+user …` run against the data directory of a running server touches none of
+it. The server holds `DATA/serve.lock` while it runs; a second server on the
+same data directory does not start.
+
+Drafts are not affected by any of this: they are in the state database, with
+the rev they started from, and are committed after the restore like any other
+draft.
+
+### The attachment cache
+
+The contents of attachments from an attachment repository live in
+`DATA/assetcache/<space>/<content id>`, one file each, named by the content id
+Git gave it, so the same file is stored once however many times it is
+referred to. All spaces share one budget, `cache.assetsBytes`; when it is
+exceeded, the least recently read files go first. A file's modification time
+is its last read (updated at most once an hour), so the order survives a
+restart without a database. The total is kept in memory and is exact: the
+server writes every file in the cache itself.
+
+### Attachment repository
+
+A space that follows a remote can keep its attachments in a second Git
+repository. The space's repository then holds only the text and stays small:
+fetched quickly, restored quickly, cheap to keep in a partial clone.
+
+**A plain Git repository, not Git LFS.** It works on every host a space can
+use, with the same kinds of credential (a `connection` too), the same
+restricted Git runner and the same provider; its files can be browsed on the
+platform like any others. LFS needs
+a second protocol and service beside Git, has its own storage and bandwidth
+quotas on GitHub billed apart from the repository, is not offered by every
+host, and puts pointer files in the space's repository that other clones show
+as text unless they have LFS installed.
+
+**Layout.** The repository's root is the content of `assets/`:
+`<page id>/<name>`, on `main`. Someone who clones the space's repository and
+then this one into its `assets/` folder has the same files as before, and every
+link works in any editor. Commits are made as in the space (the editor is the
+author, the service the committer), and are pushed before the request is
+answered.
+
+**Links do not change.** A page refers to `/assets/01JD3K8Q7Z/street-3f9a1c2b.jpg`
+or to a relative path that leads into `assets/`, as before; no page is
+rewritten. `GET …/files/assets/{page id}/{name}` finds the file in the
+attachment repository instead of the working tree: the path is looked up in
+a table of the repository's current files (path, content id, size) that the
+server keeps in memory, made when the space opens (20 000 files: about 2 MB,
+some 50 ms) and updated by each pull and upload; then the file is sent from
+the attachment cache. The size of a file is known to the table only once its
+contents have been in the cache (a partial clone cannot say how large a file
+it does not have); the answer's `Content-Length` is that of the cached file. A file that is not in the cache is fetched by its id
+first (as for an old version), and later readers share that fetch. The answer
+is the same as now except that it carries `ETag` (the content id) instead of
+`Last-Modified`, so a browser revalidates with `If-None-Match` and gets `304`
+(finding a file's last commit would cost a walk of the history); `Range` and
+the other headers are as now. A path under `assets/` that the
+table does not have is `404 not_found`, without asking the remote.
+
+**Checks** ("attachment reference to a file that does not exist") use the same
+table, so they cost what they cost now. While the attachment repository
+cannot be reached, the table is the last one the server had: an unreachable
+repository does not make attachments look missing.
+
+**Unreachable.** The page text is read and written as usual. Attachments in the
+cache are served. Others answer `503 not_cached` with `Retry-After`, as an old
+version does; a client shows a placeholder where an image would be. Uploads
+answer `503 unavailable` and store nothing. The attachment repository has a
+state of its own (`ok`, `offline`, `error` with `errorCode`, as a Remote); it
+does not pause the space.
+
+**Order of writes.** An upload is pushed to the attachment repository before
+the request is answered, so a page saved after it never refers to an attachment
+that is not on its remote. An import pushes its attachments first, in one
+commit, then the pages in one commit of the space; when the second step fails,
+the attachments stay on the remote, referred to by nothing, and the import
+answers as a failed import does now (no page made). Nothing is ever pushed
+with force or deleted on either remote.
+
+#### `GET /api/spaces/{space}/remote/assets`
+
+Needs `manage`. `200` with a Remote object (see "Remote repository") with one
+more field, `move` (below); `404 not_found` when the space has none.
+
+#### `PUT /api/spaces/{space}/remote/assets`
+
+Needs `manage`. The body of `PUT …/remote` (a `connection` credential
+included), or to make a repository on a provider:
+
+```json
+{"sync": {"provider": "github", "owner": "kazuhahub", "name": "tang-notes-assets", "private": true, "create": true}}
+```
+
+with the fields and rules of `storage.sync` in "Creating a space with a
+repository" (`via` as the provider chooses, unless given; a `via: "user"`
+connection syncs only spaces of its person's tenant, as for the space's own
+remote). A repository that was made and could not be connected is named in
+`repo` and is remembered as a leftover (see "Leftover repositories"). The space must follow a
+remote: `409 remote_required` otherwise. Connecting follows the rules of
+`PUT …/remote`: an empty repository is used as it is; one with content is
+accepted while the space has never used an attachment repository and its
+`assets/` is empty (the space takes its files); otherwise `409 conflict`. On a
+space that has one, `PUT` replaces its address and credential, the same
+repository with another credential. `200` with the Remote object. Connecting
+does not move anything: the space's existing attachments stay in `assets/`
+of the space and are served from there until they are moved; new uploads go
+to the attachment repository.
+
+#### `POST /api/spaces/{space}/remote/assets/move`
+
+Needs `manage`. Moves the attachments in `assets/` of the space into the
+attachment repository. `202` with the Remote object; the move runs in the
+background, and `move` says how far it is:
+
+```json
+"move": {"state": "copying", "files": 20000, "filesDone": 8000, "bytes": 5368709120, "bytesDone": 2147483648, "error": ""}
+```
+
+`state` is `copying`, `switching`, `done` or `failed`.
+
+1. **Copying.** The files of `assets/` at the current commit are committed to
+   the attachment repository and pushed, in commits of at most 500 MB
+   (GitHub refuses a push over 2 GB). The space stays writable; uploads still
+   go into `assets/` of the space meanwhile.
+2. **Switching.** With the space's writes held for a moment, whatever
+   `assets/` gained since the copy started is pushed too; then one commit of
+   the space removes `assets/` and adds `/assets/` to its `.gitignore`, and
+   is pushed. From that commit on, attachments are read from the attachment
+   repository.
+3. The server replaces its clone of the space's repository by a new partial
+   clone, as a restore does, while the old clone goes on serving; the disk the
+   attachments took is free when the new one is in place.
+
+The space's history still has the attachments, and so does its remote: history
+is never rewritten. A failure before the switch changes nothing in the space
+(`failed`, `error` says why; the files already pushed to the attachment
+repository stay there, and the next `POST …/move` goes on from them). Only one
+move at a time: `409 conflict` while one runs, and also for `PUT` or `DELETE`
+of the attachment repository. `200` with nothing to do when `assets/` is empty.
+
+#### `DELETE /api/spaces/{space}/remote/assets`
+
+Needs `manage`. `204` while no attachment has gone to it (nothing was uploaded
+or moved): the space keeps its attachments in `assets/`. Otherwise
+`409 conflict`: moving the attachments back into the space is not part of 3.1.
+
+#### With a new space
+
+`POST /api/spaces` with `storage.sync.assets` (`true`, `false` or
+`{"name": "…"}`; absent follows `assets.newSpaces`, and the name defaults to
+`<name>-assets`) makes the attachment repository right after the space's
+repository (step 3 of "Creating a space with a repository"), with the same
+owner, visibility and credential, and checks it in step 4 the same way (an
+installation with "only selected repositories" gets it added, or the request
+fails with `409 repo_not_in_installation`).
+Failures are those of that section; once either repository has been made,
+the answer names what was made, and the same request with `create: false`
+uses both. Each repository that was made is also remembered as a leftover
+until a space uses it:
+
+```json
+{"error": "push_failed", "provider": "github", "message": "…",
+ "repo": {"id": 881234567, "fullName": "kazuhahub/tang-notes", "htmlUrl": "…"},
+ "assetsRepo": {"id": 881234568, "fullName": "kazuhahub/tang-notes-assets", "htmlUrl": "…"}}
+```
+
+When the platform refuses to make the attachment repository after the space's
+was made, the answer is the provider's own refusal as step 3 gives it (`409
+name_taken`, `403 provider_refused`, `429 rate_limited` with its
+`Retry-After`, …), with `repo` naming the space's repository and no
+`assetsRepo`. The same request with `create: false` then finds the space's
+repository but not the attachment one, and fails with the error of
+connecting to it (`403 owner_not_allowed`, `409 repo_not_in_installation`,
+…), whose `message` names the attachment repository that is missing and whose
+`repo` names the space's: make that repository on the platform (or drop
+`storage.sync.assets`) and send the request again.
+
+### Administrators: per space
+
+Site administrators only, as `/api/admin/storage` (the pin keeps the server's
+disk, the exemption is from the site's requirement, eviction is the server's
+cache): a tenant administrator gets `403 forbidden`.
+
+#### `PUT /api/admin/spaces/{space}/storage`
+
+```json
+{"pin": true, "exempt": false}
+```
+
+Each optional. `pin` keeps everything of the space on the server: it is never
+evicted, its clone becomes a full one (all versions are fetched in the
+background, and from then on every pull brings every version) and its attachments are all kept in the cache, outside
+`assetsBytes`. A pinned local space is the same as an unpinned one.
+`exempt` leaves the space out of the requirement of a remote. `200` with the
+item of `GET /api/admin/spaces`. Pinning while the remote cannot be reached is
+accepted; the full fetch waits for the remote, and an evicted space is
+restored at the next working fetch.
+
+#### `POST /api/admin/spaces/{space}/evict`
+
+Evicts the space now, if it may be evicted (the conditions of "Eviction",
+except `minIdleHours`). `204`; `409 busy` while requests use it or it holds
+something not on the remote (`message` says what); `409 conflict` for a local or
+pinned space; `503 unavailable` when the remote cannot be reached (it is not
+evicted without checking that the remote has everything).
+
+#### In the list of spaces and the status
+
+`GET /api/admin/spaces` and `GET /api/admin/spaces/{space}` (a tenant
+administrator's included, for the spaces of their tenant) add to each item:
+
+```json
+"storage": {"cache": "partial", "pinned": false, "exempt": false, "lastUsed": "2026-11-22T02:10:00Z",
+            "cloneBytes": 41943040, "indexBytes": 7340032, "assetCacheBytes": 15728640,
+            "assets": "repository", "remote": {"required": "github", "deadline": "2026-12-31T00:00:00Z", "overdue": false}}
+```
+
+`cloneBytes` is the `sizeBytes` measured as now (the directory of the space,
+0 once evicted), `indexBytes` the index measured with it, `assetCacheBytes`
+the space's files in the attachment cache (exact). `?cache=evicted` (or any
+other `cache` value) and `?overdue=1` filter the list, in the same one query.
+
+`GET /api/admin/status` (site administrators) adds:
+
+```json
+"storage": {"spaces": {"local": 12, "full": 3, "partial": 41, "evicted": 156, "restoring": 0},
+            "cloneBytes": 2147483648, "indexBytes": 1288490188, "assetCacheBytes": 4831838208,
+            "clonesBudget": null, "assetsBudget": 5368709120, "restoresWaiting": 0,
+            "remotes": {"inGrace": 3, "overdue": 0}}
+```
+
+the sums of the stored measurements (one query) and of the cache in memory.
+
+### Offline and expired credentials
+
+| Situation | Cached space | Evicted space |
+|---|---|---|
+| Remote unreachable | reads as now; writes `503 unavailable`; old versions and attachments not on the server `503 not_cached` | lists and search from the index; anything needing a file `503 unavailable` |
+| Credential refused, a connection expired or missing (`connection_expired`, `connection_missing`) | the same, with the remote's `errorCode` | the same, with the remote's `errorCode` |
+| Attachment repository unreachable | text as usual; cached attachments served; others `503 not_cached`; uploads `503 unavailable` | as above once restored |
+
+A space is never evicted in any of these states, so a space in use when its
+remote goes away keeps working from its clone. Drafts keep being saved in every
+case.
+
+### Errors of this section
+
+| Code | Status | When |
+|---|---|---|
+| `remote_required` | 409 | the policy requires a remote this request would not have: a new space without one, removing one, a credential the policy does not accept, a change to an overdue space; an attachment repository for a space without a remote. The body has `require` and, for an existing space, `deadline` |
+| `not_cached` | 503 | an old version or an attachment is not on the server and cannot be fetched now; `fetching` says whether a fetch is still running; `Retry-After` |
+| `restoring` | 503 | an evicted space is still being restored after the request's wait; `phase`; `Retry-After` |
+| `space_full` | 507 | an upload or import would take a local space over `localSpaces.maxBytes` |
+| `unavailable` | 503 | as everywhere: the remote cannot be reached or refuses the credential; for an evicted space, it cannot be restored now (`Retry-After` while a failed restore is not tried again) |
+| `busy` | 409 | an eviction asked for while the space is in use or holds what its remote does not |
+| `conflict` | 409 | a second move; a change of the attachment repository during a move or after files went to it; `hosts` set by the flag; partial clones without Git 2.44 |
+| `invalid` | 400 | a setting outside its range, `remote` and `storage.sync` together |
+
+The codes of "Connections" apply to making an attachment repository as they
+do to making a space's, with `provider`.
+
+**Usage and quotas (3.3).** What the quotas count of a space (`usage_bytes`)
+is written only by a measurement of a whole copy: a partial clone or an
+evicted space is measured for the list (`sizeBytes`, `cloneBytes`) only, and
+its usage keeps the last full measurement, so neither shrinks what a person
+uses.
 
 ## Pages
 
@@ -1836,6 +3147,11 @@ The page as it was in that version: `{"commit", "time", "author", "path",
 "rev", "meta", "body"}`. `404 not_found` when that commit is not a version of
 this page (it is not possible to read any other file through this endpoint).
 
+In a space whose clone is partial (milestone 3.1), both endpoints may fetch
+the contents of old versions from the remote first, and answer
+`503 not_cached` (with `Retry-After`) when it cannot be reached; see "Server
+storage", "History and versions".
+
 Going back to an old version is an ordinary edit: the app loads the old
 content into the editor and it is stored and committed like anything typed, as
 a new version. History is never rewritten.
@@ -1888,7 +3204,8 @@ The pages that link to this one, the most recently changed first, 20 at a time:
 ```
 
 `excerpt` is the paragraph the link is in, as plain text, cut to about 240
-characters around the link (`""` when the file no longer has the link). A page
+characters around the link (`""` when the file no longer has the link, and
+while the space is evicted: see "Eviction"). A page
 that links several times is listed once. `next` is `""` at the end, else the
 `cursor` of the next request; a `cursor` that was not handed out is `400`. `404`
 for an unknown page.
@@ -3065,6 +4382,14 @@ inline`. A PDF is sent without the policy header, because browsers' PDF
 viewers do not start under it. Everything else is `application/octet-stream` and
 `Content-Disposition: attachment`.
 
+From milestone 3.1 a space may keep its attachments in an attachment
+repository (see "Server storage", "Attachment repository"). The paths and
+links stay the same; `assets/…` is then read from the attachment cache, an
+attachment not in it is fetched first, and `503 not_cached` (with
+`Retry-After`) is the answer while that repository cannot be reached. Uploads
+are pushed to the attachment repository, and a local space over the
+administrator's limit answers `507 space_full`.
+
 ## Import
 
 ### `POST /api/spaces/{space}/import?folder={folder}&name={file name}`
@@ -3128,7 +4453,10 @@ for every change in a space that follows a remote.
 
 The whole import is one change: one commit, and in a space that follows a
 remote one push, with nothing left behind if it fails. In a local space a
-failure half way (a full disk) can leave the pages created so far.
+failure half way (a full disk) can leave the pages created so far. With an
+attachment repository (milestone 3.1) the attachments are one commit and one
+push there first; if the pages then fail, those attachments stay on that
+remote, referred to by nothing.
 
 ## Folders and tags
 
@@ -3369,11 +4697,12 @@ person's, kept for the browser; what a token writes goes straight to a commit
 (with its own `via`, like `/mcp`), so the server never commits a token's draft
 under no name, and a token never commits a browser draft as "API token".
 
-Everything else, a route that needs `members` or `manage`, and anything under
-`/api/account`, `/api/users`, `/api/invites`, `/api/admin`, `/api/oauth` and
-the sign-in routes, answers `403 token_scope`: a token cannot make tokens,
-change members, settings of a space, types or templates, or act as an
-administrator.
+Everything else, a route that needs `members` or `manage` (the remote of a
+space among them), and anything under `/api/account`, `/api/connections`,
+`/api/users`, `/api/invites`, `/api/admin`, `/api/oauth` and the sign-in
+routes, answers `403 token_scope`: a token cannot make tokens, change members,
+settings of a space, types, templates or remotes, connect or use its owner's
+GitHub account, or act as an administrator.
 
 **Permission of a request.** For a space the token names, the permissions are
 those the owner has in the space now (through the cached memberships of 1.7:
@@ -4307,6 +5636,11 @@ reviewed and tested):
   administrator); a method without one does not compile. The few that must look
   across tenants say why next to the code: a session or token by its id, a
   sign-in by username or identity, the background jobs.
+  2.7's tables follow the same rule: a GitHub connection hangs off its user and
+  a remote off its space, so they carry no `tenant_id`; the methods that reach
+  across users (the daily renewal, the App's counts and the revocation when the
+  App is removed, both site administrators only) and the App's installations
+  (site-wide) are on the same list with their reasons.
 - **Links between rows are checked by the database write itself**: adding a
   member, a group to a space, a person to a group, or transferring a space is an
   `INSERT … SELECT` that joins both rows on the same `tenant_id`, so a missed
@@ -4364,7 +5698,7 @@ The User object gains:
 | `/api/admin/spaces…`, `/api/admin/groups…`, `/api/admin/tokens…`, `/api/admin/grants…`, `/api/admin/usage` | their tenant | every tenant (`?tenant=`) |
 | `GET /api/admin/audit` | their tenant's rows, without the site's kinds (security, providers, mail, tenants, site settings) | every row (`?tenant=`) |
 | `GET /api/admin/tenants/{own}`, `PATCH` of its `name`, `…/settings` of their tenant | yes | every tenant |
-| `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/access`, `/api/admin/daily…`, `/api/admin/status`, `/api/admin/settings…` (site layer), `/api/admin/tenancy`, the tenant list, create, delete, `disabled`, `slug`, `quota`, and 3.1's `/api/admin/storage` | `403 forbidden` | yes |
+| `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/access`, `/api/admin/daily…`, `/api/admin/connections/github…` (2.7), `/api/admin/status`, `/api/admin/settings…` (site layer), `/api/admin/tenancy`, the tenant list, create, delete, `disabled`, `slug`, `quota`, and 3.1's `/api/admin/storage`, `PUT /api/admin/spaces/{space}/storage`, `POST /api/admin/spaces/{space}/evict` and a user's `remoteExempt` | `403 forbidden` | yes |
 
 The daily text's tenant default is a tenant setting (see "Settings by layer"),
 not `/api/admin/daily`, which stays the site's.
@@ -4494,11 +5828,14 @@ The settings of 3.3 (others join this table as they are made):
   with. The person layer is a site or tenant administrator's override on the
   user (`PATCH /api/users/{id}` with `quota`), not something people set for
   themselves.
-- **Reserved for 3.1** (on another branch; nothing here depends on its code):
-  `storage.remotes.require` (choice, ordered `null` < `any` < `github`),
-  `storage.remotes.graceDays` and `storage.localSpaces.maxBytes` (limits) join
-  with layers site and tenant, and the site's `lower` defaults to `lock`, as
-  3.1 decided; a tenant may only tighten them. **Reserved for 2.7**: none of
+- **Reserved for 3.1** (merged; its settings are still the site's own record,
+  `GET`/`PUT /api/admin/storage`, and not in this table yet):
+  `storage.remotes.require` (choice, ordered `null` < `any` < a provider's id,
+  2.7b), `storage.remotes.graceDays` and `storage.localSpaces.maxBytes`
+  (limits) join with layers site and tenant, and the site's `lower` defaults
+  to `lock`, as 3.1 decided; a tenant may only tighten them. 3.1's
+  `hosts.allowed` (what `--remote-host` sets) and its cache settings stay the
+  site's only. **Reserved for 2.7**: none of
   the GitHub App's settings have a tenant layer.
 - Security settings (`/api/admin/security`, providers, mail) are the site's
   only and are not in this table.
@@ -5197,6 +6534,9 @@ repository"), as the server knows it without opening the space. A space that
 has never been opened since the server started has the state it was last left
 in; nothing is opened to fill this in.
 
+Milestone 3.1 adds `storage` to each item, and the filters `cache` and
+`overdue` (see "Server storage", "Administrators: per space").
+
 ### `GET /api/admin/spaces/{space}`
 
 One space, the same object as an item of the list (same first owner, same
@@ -5265,6 +6605,7 @@ again. `409 personal_space` for a personal space, which goes with its person.
 in memory now (idle ones are closed, see `--space-idle`). `diskFreeBytes` is
 the room left for the server on the disk of the data directory; it is absent
 on platforms that cannot say (anything but Linux, macOS and FreeBSD).
+Milestone 3.1 adds `storage` (see "Server storage").
 
 ### Security settings
 
@@ -5469,7 +6810,7 @@ Fetches the discovery document or the metadata now. `200` with the provider
 | `oidc_issuer_invalid` | 400 | the issuer is not an `https` address |
 | `saml_needs_https` | 400 | SAML without an `https` `--public-url` (the cookie that crosses from the identity provider must be `Secure`) |
 | `saml_metadata_invalid` | 400 | the metadata cannot be parsed, has no signing certificate or no redirect binding for sign-in |
-| `github_auto_create_needs_org` | 400 | `autoCreate` on a GitHub provider that names no organisation: anyone with a GitHub account could make one |
+| `auto_create_needs_org` | 400 | `autoCreate` on a GitHub provider that names no organisation: anyone with a GitHub account could make one |
 | `public_url_required` | 400 | any provider without `--public-url` |
 | `provider_in_use` | 409 | `DELETE` without `force=1`, see above |
 
@@ -5586,3 +6927,232 @@ Revokes any token. `204`, also when it was revoked already; `404 not_found`.
 
 The same for OAuth grants (items as in `GET /api/account/grants`, with
 `owner`).
+
+### Connections
+
+#### `GET /api/admin/connections`
+
+Site administrators. `{"providers": [{"id": "github", "type": "github", "name": "GitHub", "host": "github.com", "configured": true, "partialSync": "yes", "connections": 3, "spaces": 4}, {"id": "git", …}]}`:
+every provider the server has, with its configuration state and counts (people
+connected, spaces syncing through it). A tenant administrator gets
+`403 forbidden`.
+
+#### The GitHub App
+
+The server's one GitHub App (see "The GitHub provider"). It is in the state database, not
+in a flag or a file, and a change takes effect at once, without a restart. The
+private key and the client secret are sealed with the server's key
+(`DATA/secret.key`, or `PETALBOOK_SECRET_KEY`), are **never returned**, and
+never reach a log or an error message. There is no webhook in 2.7 (the server
+finds out about an uninstalled App when GitHub refuses a token), and the
+administrator either makes the App on GitHub from here in one click (the
+manifest flow below) or makes it by hand and copies its details here.
+
+The App needs these permissions on GitHub: Contents read and write (Git),
+Metadata read, and Administration read and write (creating repositories;
+without it, spaces can only be connected to repositories that exist).
+"Request user authorization (OAuth) during installation" should be ticked, so
+that installing on one's own account and authorising it are one step, and the
+App must be installable on **any account** (public), or a person cannot install
+it on their own account: `anyAccount` below says which it is. Its callback URL
+is the `callbackUrl` below.
+
+#### `GET /api/admin/connections/github`
+
+```json
+{"configured": true, "appId": "1234567", "clientId": "Iv23liAbCdEfGhIjKlMn",
+ "slug": "petalbook-notes", "name": "PetalBook Notes", "owner": "kazuhahub",
+ "htmlUrl": "https://github.com/apps/petalbook-notes",
+ "installUrl": "https://github.com/apps/petalbook-notes/installations/new",
+ "privateKey": {"set": true, "fingerprint": "SHA256:…"}, "clientSecret": {"set": true},
+ "callbackUrl": "https://notes.example.com/api/connections/github/authorization/callback",
+ "permissions": {"administration": "write", "contents": "write", "metadata": "read"},
+ "missing": [], "gaps": [], "anyAccount": true,
+ "userAuthorization": true, "checked": "2026-11-23T08:30:00Z",
+ "spaces": 4, "authorizations": 3}
+```
+
+Before anything is saved: `{"configured": false, "callbackUrl": "…"}`.
+
+- `slug`, `name`, `owner` and `permissions` are what GitHub said about the App
+  (`GET /app`) when it was last saved, at `checked`. `htmlUrl` is the App's
+  public page; `installUrl` is where an organisation or a user installs it.
+- `privateKey.fingerprint` is the SHA-256 fingerprint of the public half, to
+  compare with what GitHub shows for the App's keys.
+- `missing` lists the permissions above that the App lacks (`"administration"`,
+  `"contents"`, `"metadata"`). It is a warning: saving is not refused.
+- `gaps` lists, from the last check, the installations that lack one of them
+  (an App whose permissions grew, installed where nobody has accepted that yet):
+  `[{"installationId": 51234567, "account": "kazuhahub", "missing": ["administration"]}]`,
+  at most 20. The owner accepts the new permissions in the installation's
+  settings on GitHub.
+- `anyAccount` says whether the App can be installed on any account, which a
+  person connecting their own account needs (the App must be public: "Any
+  account" in its settings). It is what GitHub says about the App when it does,
+  else `true` once an installation on an account that is not the App owner's has
+  been seen, else `null` (not known). A client warns on `false`.
+- Everything above is as of `checked`: it is read from GitHub when the App is
+  saved, by `POST /api/admin/connections/github/check`, and, at most once a minute, when a
+  token GitHub refuses (for a permission the App or an installation lacks)
+  shows the stored view is old. A plain `GET` never asks GitHub.
+- `callbackUrl` is `<public-url>/api/connections/github/authorization/callback`, `""`
+  without `--public-url`. `userAuthorization` is as in `GET /api/connections`.
+- `spaces` counts the spaces with a `github` credential; `authorizations` the
+  users connected.
+
+#### `PUT /api/admin/connections/github`
+
+```json
+{"appId": "1234567", "privateKey": "-----BEGIN RSA PRIVATE KEY-----\n…",
+ "clientId": "Iv23liAbCdEfGhIjKlMn", "clientSecret": "…"}
+```
+
+The first save needs `appId` and `privateKey`. Later, a `privateKey` or a
+`clientSecret` that is left out keeps the one stored. `clientId` and
+`clientSecret` go together; without them users cannot connect their GitHub
+accounts, and only installations shared with a tenant can be used. `"clientId": ""` removes
+both (`409 provider_in_use` while a user is connected; spaces that sync
+through an installation do not stand in the way).
+
+The server checks with GitHub before it saves anything, and saves nothing when
+a check fails:
+
+- the key is an RSA key in PEM (PKCS#1 or PKCS#8): else `400 key_invalid`;
+- GitHub accepts a JWT signed with it for `appId` (`GET /app`): else
+  `400 app_rejected`;
+- `clientId` is that App's client id: else `400 client_rejected`;
+- GitHub accepts the client id and secret (it is asked to check a made-up
+  token with them, `POST /applications/{client_id}/token`: `404` means the
+  pair is right, `401` that it is not): else `400 client_rejected`;
+- GitHub cannot be reached: `503 unavailable`.
+
+A new key or secret for the same App replaces the old one and drops the
+cached tokens. Another App (`appId` different from the saved one) is refused
+with `409 provider_in_use` while any space has a `github` credential or any
+user is connected; another or no `clientId` only while any user is connected.
+`200` as `GET`.
+
+#### `POST /api/admin/connections/github/check`
+
+No body. Reads the App (`GET /app`) and up to five pages of its installations
+(`GET /app/installations`) from GitHub again, stores what the permissions are
+now (`permissions`, `missing`, `gaps`, `anyAccount`, `checked`, and the App's
+name and page) and answers `200` as `GET /api/admin/connections/github`. `409
+provider_not_configured` without an App, or when GitHub no longer accepts its key;
+`503 unavailable` when GitHub cannot be reached (nothing is changed).
+
+#### `POST /api/admin/connections/github/manifest`
+
+Makes the App on GitHub in one click (GitHub's App Manifest flow); entering an
+App by hand with `PUT` stays possible. `{"organization": "kazuhahub", "name":
+"PetalBook Notes"}`, both optional: with `organization` the App is made in that
+organisation (else in the administrator's own account), `name` is at most 34
+characters (default `PetalBook <host of --public-url>`; GitHub's names are
+unique, so the administrator may need another). `200`:
+
+```json
+{"url": "https://github.com/organizations/kazuhahub/settings/apps/new?state=…",
+ "manifest": {"name": "PetalBook Notes", "url": "https://notes.example.com",
+   "hook_attributes": {"url": "https://notes.example.com", "active": false},
+   "redirect_url": "https://notes.example.com/api/connections/github/manifest/callback",
+   "callback_urls": ["https://notes.example.com/api/connections/github/authorization/callback"],
+   "setup_url": "https://notes.example.com/api/connections/github/manifest/callback",
+   "public": true, "request_oauth_on_install": true,
+   "default_permissions": {"administration": "write", "contents": "write", "metadata": "read"}}}
+```
+
+and a short-lived cookie that ties the attempt to this browser. The client
+posts the manifest to `url` from the administrator's browser, as a form with one
+field, `manifest`, holding the JSON (`/settings/apps/new` without
+`organization`). The App is public ("Any account"), asks for user authorisation
+during installation, and has no webhook.
+
+The `state` in `url` is 32 random bytes, held in memory for ten minutes, used
+once, bound to the cookie and to the signed-in site administrator. `409
+public_url_needed` without `--public-url`; `409 provider_in_use` while
+any space has a `github` credential or any user is connected (an App in use is
+not replaced); `400 invalid` for a bad `organization` or `name`; `403
+forbidden` for anyone but a site administrator.
+
+#### `GET /api/connections/github/manifest/callback`
+
+Where GitHub sends the administrator's browser after the App is made, with
+`code` and `state`. Like the callback of a user's connection it answers a
+redirect (`303`), never JSON, needs the cookie and the session of the
+administrator who started the attempt, and is a cross-site navigation by nature.
+The server trades the code (`POST /app-manifests/{code}/conversions`, which needs
+no other credential and works once) for the App's id, slug, client id, client
+secret, private key and webhook secret, then saves them as `PUT
+/api/admin/connections/github` does (checked with GitHub, secrets sealed with the server's
+key; the webhook secret is only kept, sealed, since there is no webhook), and
+sends the browser to `/admin/storage?connection_app=created`. A failure goes to
+`/admin/storage?connection_app_error=<code>`: `expired` (no such attempt, used, older
+than ten minutes, another browser or user), `provider_error` (GitHub did not turn
+the code into an App, or the App could not be saved), `app_in_use`,
+`unavailable` (GitHub made the App but could not be asked to check it, so it is
+not saved yet; see the next route). A visit with `installation_id` or `setup_action` and no `code`
+(the manifest names this address as the post-installation page too) goes to
+`/settings/connections`.
+
+#### `POST /api/admin/connections/github/manifest/retry`
+
+When GitHub made the App but the server could not save it (`unavailable`: GitHub
+could not be asked to check it), the redirect is
+`/admin/storage?connection_app_error=unavailable&pending=1&app=<slug>`: the App
+exists on GitHub and its credentials are kept in the server's memory, sealed,
+for ten minutes, for that administrator only (one pending App per administrator,
+the newest). The retry takes no body, saves them as the callback would, and
+answers `200` as `GET /api/admin/connections/github`. `404 not_found` when
+nothing is pending (none was made, it was used or ten minutes passed: the
+administrator then finds the App at `https://github.com/apps/<slug>` (or in the
+organisation's settings), makes a private key there and enters the details with
+`PUT`; `app` in the redirect names it); `503 unavailable` when GitHub still
+cannot be reached (the credentials stay pending); `409 provider_in_use` as
+elsewhere. The redirect has no `pending` when nothing could be kept.
+
+#### `DELETE /api/admin/connections/github`
+
+`204`. The App's details are deleted, the users' connections with them
+(GitHub is asked to revoke each grant first, best effort), and what was shared of
+the installations. `409 provider_in_use` while any space has a `github`
+credential (`message` says how many): switch or disconnect those first. Also
+`409 provider_in_use` while `remotes.require` of the storage settings names the
+provider (`message` says to change the requirement first), because nobody could
+meet the requirement without it.
+
+#### `GET /api/admin/connections/github/installations?cursor={cursor}`
+
+The App's installations, one page at a time; each page is one call to GitHub
+(`GET /app/installations`, 30 to a page) and one query of the state database.
+
+```json
+{"items": [{"id": 51234567, "account": {"login": "kazuhahub", "type": "Organization", "id": 98765},
+            "repositorySelection": "selected", "suspended": false,
+            "permissions": {"administration": "write", "contents": "write", "metadata": "read"},
+            "htmlUrl": "https://github.com/organizations/kazuhahub/settings/installations/51234567",
+            "tenants": ["01J8Z3X5K2"], "spaces": 3}],
+ "next": "…"}
+```
+
+`repositorySelection` is `all` or `selected`. `tenants` are the ids of the
+tenants the installation is shared with, sorted (`[]`: none), set below. `spaces`
+counts the spaces syncing through that installation. `409 provider_not_configured`
+when there is no App.
+
+#### `PUT /api/admin/connections/github/installations/{id}`
+
+`{"tenants": ["01J8Z3X5K2", "01J8Z3X5K3"]}`. Sharing is per tenant: the
+installation is shared with exactly these tenants, replacing what it was shared
+with before (`[]` stops sharing; it is the default). The people of a tenant it is shared
+with can create repositories in that organisation and connect spaces to its
+repositories with the installation token, without a GitHub account of their
+own; GitHub then does not know who asked (the commits still name the PetalBook
+user as author). People of any other tenant can use the organisation only when
+their own GitHub connection reaches it, and the installation does not appear
+in their owners or repositories. `tenants` is required; the old `{"shared":
+true}` is `400 invalid`. A tenant that does not exist is `400 invalid`, and
+more than 500 tenants too. A tenant that is deleted stops being shared with.
+Spaces already connected are not affected either way. Only organisations can be
+shared: `400 invalid` for a user's account. `404 not_found` when GitHub does not
+know the installation. `200` with the item.
+

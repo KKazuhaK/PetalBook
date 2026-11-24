@@ -376,7 +376,7 @@ type AuditRow struct {
 // administrator does not see (even in the rows written before tenants, which
 // all sit in the default tenant).
 var SiteAuditKinds = []string{"security_changed", "provider_created", "provider_changed", "provider_deleted",
-	"mail_changed", "mail_test", "tenant_created", "tenant_changed", "tenant_deleted", "dropped", "rate_limited", "lockout"}
+	"mail_changed", "mail_test", "connection_provider_changed", "tenant_created", "tenant_changed", "tenant_deleted", "dropped", "rate_limited", "lockout"}
 
 // InsertAudit writes rows (a repeated id is ignored).
 func InsertAudit(ctx context.Context, q Q, rows []AuditRow) error {

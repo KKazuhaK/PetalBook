@@ -70,6 +70,8 @@ func (e *QuotaError) Is(target error) bool { return target == ErrLimit }
 
 // checkSpaceQuota refuses a new space over the person's limit or the tenant's.
 // Two lookups of rows by key; createMu keeps two creations from both passing.
+// Spaces being made with a GitHub repository (reserved, reservedT) count as
+// made: the caller holds createMu.
 func (m *Manager) checkSpaceQuota(ctx context.Context, u store.User) error {
 	lim := SpaceLimits{Person: int64(m.opt.MaxSpaces)}
 	if m.quota.limits != nil {
@@ -84,8 +86,8 @@ func (m *Manager) checkSpaceQuota(ctx context.Context, u store.User) error {
 		if err != nil {
 			return err
 		}
-		if row.Spaces >= lim.Person {
-			return &QuotaError{Quota: "spaces", Limit: lim.Person, Used: row.Spaces}
+		if used := row.Spaces + int64(m.reserved[u.ID]); used >= lim.Person {
+			return &QuotaError{Quota: "spaces", Limit: lim.Person, Used: used}
 		}
 	}
 	if lim.Tenant > 0 {
@@ -93,8 +95,8 @@ func (m *Manager) checkSpaceQuota(ctx context.Context, u store.User) error {
 		if err != nil {
 			return err
 		}
-		if row.Spaces >= lim.Tenant {
-			return &QuotaError{Quota: "spaces", Limit: lim.Tenant, Used: row.Spaces, Tenant: true}
+		if used := row.Spaces + int64(m.reservedT[u.TenantID]); used >= lim.Tenant {
+			return &QuotaError{Quota: "spaces", Limit: lim.Tenant, Used: used, Tenant: true}
 		}
 	}
 	return nil

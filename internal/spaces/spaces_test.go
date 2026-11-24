@@ -806,3 +806,103 @@ func TestMembershipChangedDropsOnlyThoseUsers(t *testing.T) {
 		t.Fatal("a change does not move the generation")
 	}
 }
+
+// A crash between staging a space and recording it leaves its directories on
+// disk with no row. The next start removes those, once they are old enough
+// that no request can still be making them, and nothing else: not a space
+// that has its row, not one still being made, not a directory it did not stage.
+func TestLeftoverStagedSpacesAreRemovedAtStart(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		needGit(t)
+		dir := filepath.Join(t.TempDir(), "data")
+		opt := Options{Store: st, DataDir: dir, Serve: true, Committer: "Svc <svc@example.test>", CloseWait: 200 * time.Millisecond, CommitIdle: time.Hour, CommitMax: time.Hour}
+		m, err := NewAccounts(opt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		u := addUser(t, st, "U1", "one")
+		real, err := m.Create(ctx, u.ID, "Real")
+		if err != nil {
+			t.Fatal(err)
+		}
+		crashed, err := m.Stage("Crashed", Identity{Name: "x", Email: "x@example.test"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		fresh, err := m.Stage("Being made", Identity{Name: "x", Email: "x@example.test"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Crashed after its row was written but before Commit: it stays.
+		recorded, err := m.Stage("Recorded", Identity{Name: "x", Email: "x@example.test"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, recorded.ID(), "Recorded", "", "", time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		// A directory this code did not stage, with no row: not ours to remove.
+		foreign := filepath.Join(dir, "spaces", "01FOREIGN0000000000000000")
+		if err := os.MkdirAll(foreign, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// A space with an attachment repository has its clone made before the row:
+		// the crashed one's is removed with it; the others' and a stranger's stay.
+		for _, id := range []string{crashed.ID(), fresh.ID(), recorded.ID(), "01FOREIGN0000000000000000"} {
+			if err := os.MkdirAll(filepath.Join(dir, "assetrepos", id), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// The process "crashes": the staged spaces are closed but neither committed nor aborted.
+		crashed.sp.Close()
+		fresh.sp.Close()
+		recorded.sp.Close()
+		m.Close()
+		old := time.Now().Add(-time.Hour)
+		for _, id := range []string{crashed.ID(), recorded.ID()} {
+			if err := os.Chtimes(filepath.Join(dir, "staging", id), old, old); err != nil {
+				t.Fatalf("no staging mark for %s: %v", id, err)
+			}
+		}
+		realRoot, _ := m.paths(real.ID)
+		if err := os.Chtimes(realRoot, old, old); err != nil {
+			t.Fatal(err)
+		}
+
+		m2, err := NewAccounts(opt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer m2.Close()
+		exists := func(p string) bool { _, err := os.Stat(p); return err == nil }
+		root, state := m2.paths(crashed.ID())
+		if exists(root) || exists(state) || exists(filepath.Join(dir, "staging", crashed.ID())) {
+			t.Fatal("the crashed staged space is still on disk")
+		}
+		for name, id := range map[string]string{"the real space": real.ID, "the space still being made": fresh.ID(), "the recorded space": recorded.ID()} {
+			if root, _ := m2.paths(id); !exists(filepath.Join(root, ".git")) {
+				t.Fatalf("%s was removed", name)
+			}
+		}
+		if exists(filepath.Join(dir, "assetrepos", crashed.ID())) {
+			t.Fatal("the attachment repository of the crashed staged space is still on disk")
+		}
+		for _, id := range []string{fresh.ID(), recorded.ID(), "01FOREIGN0000000000000000"} {
+			if !exists(filepath.Join(dir, "assetrepos", id)) {
+				t.Fatalf("the attachment repository of %s was removed", id)
+			}
+		}
+		if exists(filepath.Join(dir, "staging", recorded.ID())) {
+			t.Fatal("the mark of a recorded space was kept")
+		}
+		if !exists(filepath.Join(dir, "staging", fresh.ID())) {
+			t.Fatal("the mark of a space still being made was removed")
+		}
+		if !exists(foreign) {
+			t.Fatal("a directory that was not staged was removed")
+		}
+		if l, _ := m2.List(ctx, u.ID); len(l) != 1 {
+			t.Fatalf("%v", l)
+		}
+	})
+}

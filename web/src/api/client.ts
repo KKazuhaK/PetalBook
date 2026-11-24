@@ -27,11 +27,18 @@ import type { RegisterInfo, RegisterInput, MySetting, EffectiveMemberList, Group
   DraftInput,
   DraftReceipt,
   BatchPagesInput,
+  AssetsRemote,
+  ConnectAssetsInput,
   ConnectRemoteInput,
   AuthProviders,
   CaptchaAnswer,
   CaptchaChallenge,
   CaptchaContext,
+  ConnectionOwner,
+  ConnectionRepo,
+  CursorPage,
+  NewSync,
+  Provider,
   ErrorCode,
   Passkey,
   PasskeyCeremony,
@@ -492,6 +499,11 @@ export function spaceApi(space: string) {
     connectRemote: (input: ConnectRemoteInput) => request<Remote>(base('/remote'), { method: 'PUT', body: input }),
     disconnectRemote: () => request<void>(base('/remote'), { method: 'DELETE' }),
     syncRemote: () => request<Remote>(base('/remote/sync'), { method: 'POST' }),
+    // The attachment repository (docs/api.md, "Server storage"); 404 when the space has none.
+    getAssetsRemote: (signal?: AbortSignal) => request<AssetsRemote>(base('/remote/assets'), { signal }),
+    connectAssets: (input: ConnectAssetsInput) => request<AssetsRemote>(base('/remote/assets'), { method: 'PUT', body: input }),
+    disconnectAssets: () => request<void>(base('/remote/assets'), { method: 'DELETE' }),
+    moveAssets: () => request<AssetsRemote>(base('/remote/assets/move'), { method: 'POST' }),
     acceptRemote: (commit: string) => request<Remote>(base('/remote/accept'), { method: 'POST', body: { commit } }),
 
     // The day's text. `date` is the day where the browser is and `tz` its offset in minutes east of UTC; `skip` asks for another.
@@ -655,7 +667,26 @@ export const api = {
 
   // --- spaces ---
   spaces: (signal?: AbortSignal) => request<{ spaces: SpaceInfo[] }>('/spaces', { signal }),
-  createSpace: (name: string, inbox?: string) => request<SpaceInfo>('/spaces', { method: 'POST', body: { name, ...(inbox === undefined ? {} : { inbox }) } }),
+  // `sync` makes the space's repository on a provider too (docs/api.md, "Spaces and remotes").
+  createSpace: (name: string, inbox?: string, sync?: NewSync) =>
+    request<SpaceInfo>('/spaces', { method: 'POST', body: { name, ...(inbox === undefined ? {} : { inbox }), ...(sync === undefined ? {} : { storage: { sync } }) } }),
+
+  // --- connections (accounts mode; docs/api.md, "Connections") ---
+  connections: (signal?: AbortSignal) => request<{ providers: Provider[] }>('/connections', { signal }),
+  // The address to send the browser to; the platform sends it back to `return` (a path of this site).
+  // `install` sends them to the App's installation page, which authorises them in the same flow; without it, to the authorisation page alone.
+  connectionStart: (provider: string, ret?: string, install?: boolean) =>
+    request<{ url: string }>(`/connections/${enc(provider)}/authorization/start`, { method: 'POST', body: { ...(ret ? { return: ret } : {}), ...(install ? { install: true } : {}) } }),
+  connectionDisconnect: (provider: string) => request<void>(`/connections/${enc(provider)}/authorization`, { method: 'DELETE' }),
+  connectionDismissLeftover: (provider: string, repoId: number) => request<void>(`/connections/${enc(provider)}/leftovers/${repoId}`, { method: 'DELETE' }),
+  // recheck: the first page, after the server forgets what it remembered about this person ("the App is not installed there").
+  connectionOwners: (provider: string, cursor?: string, signal?: AbortSignal, recheck = false) =>
+    request<CursorPage<ConnectionOwner>>(`/connections/${enc(provider)}/owners${cursor ? `?cursor=${enc(cursor)}` : recheck ? '?recheck=true' : ''}`, { signal }),
+  connectionRepos: (provider: string, which: { installation: number } | { mine: true }, cursor?: string, signal?: AbortSignal) => {
+    const q = new URLSearchParams('installation' in which ? { installation: String(which.installation) } : { mine: 'true' })
+    if (cursor) q.set('cursor', cursor)
+    return request<CursorPage<ConnectionRepo>>(`/connections/${enc(provider)}/repos?${q.toString()}`, { signal })
+  },
   renameSpace: (id: string, name: string) => request<SpaceInfo>(`/spaces/${enc(id)}`, { method: 'PATCH', body: { name } }),
   // Either field or both; the server refuses a body with neither.
   updateSpace: (id: string, patch: { name?: string; inbox?: string }) => request<SpaceInfo>(`/spaces/${enc(id)}`, { method: 'PATCH', body: patch }),

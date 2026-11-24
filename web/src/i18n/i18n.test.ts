@@ -8,10 +8,14 @@ import { propsEn } from './props/en'
 import { propsZhCN } from './props/zh-CN'
 import { boardsEn } from './boards/en'
 import { boardsZhCN } from './boards/zh-CN'
+import { githubEn } from './github/en'
+import { githubZhCN } from './github/zh-CN'
 import { homeEn } from './home/en'
 import { homeZhCN } from './home/zh-CN'
 import { tokensEn } from './tokens/en'
 import { tokensZhCN } from './tokens/zh-CN'
+import { storageEn } from './storage/en'
+import { storageZhCN } from './storage/zh-CN'
 import { oauthEn } from './oauth/en'
 import { oauthZhCN } from './oauth/zh-CN'
 import { offlineEn } from './offline/en'
@@ -123,9 +127,11 @@ describe('dictionaries', () => {
     walk(adminZhCN, adminEn, 'admin', problems)
     walk(propsZhCN, propsEn, 'props', problems)
     walk(boardsZhCN, boardsEn, 'boards', problems)
+    walk(githubZhCN, githubEn, 'github', problems)
     walk(homeZhCN, homeEn, 'home', problems, true)
     walk(tokensZhCN, tokensEn, 'tokens', problems)
     walk(oauthZhCN, oauthEn, 'oauth', problems)
+    walk(storageZhCN, storageEn, 'storage', problems)
     walk(offlineZhCN, offlineEn, 'offline', problems)
     expect(problems).toEqual([])
   })
@@ -146,9 +152,11 @@ describe('dictionaries', () => {
     scan(adminEn, 'admin')
     scan(propsEn, 'props')
     scan(boardsEn, 'boards')
+    scan(githubEn, 'github')
     scan(homeEn, 'home')
     scan(tokensEn, 'tokens')
     scan(oauthEn, 'oauth')
+    scan(storageEn, 'storage')
     scan(offlineEn, 'offline')
     expect(found).toEqual([])
   })

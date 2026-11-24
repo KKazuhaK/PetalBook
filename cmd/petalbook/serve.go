@@ -21,9 +21,13 @@ import (
 
 	"github.com/KKazuhaK/PetalBook/internal/api"
 	"github.com/KKazuhaK/PetalBook/internal/auth"
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/drafts"
+	"github.com/KKazuhaK/PetalBook/internal/github"
+	"github.com/KKazuhaK/PetalBook/internal/githubapp"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/oauth"
+	"github.com/KKazuhaK/PetalBook/internal/secret"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
@@ -66,6 +70,9 @@ type serveConfig struct {
 	pullInterval, remoteTimeout time.Duration
 	remoteHosts                 []string
 	remoteSet, remoteUnsafe     bool
+	// hostsSet: --remote-host was given, which wins over the setting of the
+	// administration page (milestone 3.1).
+	hostsSet bool
 	// draftTick is how often due drafts are looked for (tests shorten it).
 	draftTick         time.Duration
 	nameSet, insecure bool
@@ -75,6 +82,13 @@ type serveConfig struct {
 	onReady func(addr net.Addr)
 	// oidcHTTPClient reaches the identity provider (tests).
 	oidcHTTPClient *http.Client
+	// githubAPI and githubWeb are the base URLs of GitHub (the defaults are
+	// api.github.com and github.com; tests point them at a fake), githubHTTP
+	// reaches it, and githubRenewEvery is how often the GitHub connections are
+	// renewed (tests shorten it).
+	githubAPI, githubWeb string
+	githubHTTP           *http.Client
+	githubRenewEvery     time.Duration
 }
 
 // passwordParams are the password hashing parameters; zero means the default.
@@ -130,6 +144,7 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 			c.mcpSet = cmd.Flags().Changed("mcp")
 			c.maxSpacesSet = cmd.Flags().Changed("max-spaces")
 			c.noMCP = !mcpOn
+			c.hostsSet = cmd.Flags().Changed("remote-host")
 			c.remoteSet = cmd.Flags().Changed("pull-interval") || cmd.Flags().Changed("remote-host") || cmd.Flags().Changed("remote-timeout")
 			c.oidcClientSecret = os.Getenv("PETALBOOK_OIDC_CLIENT_SECRET")
 			c.logger = slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), nil))
@@ -161,6 +176,10 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 	f.DurationVar(&c.pullInterval, "pull-interval", spaces.DefaultPullInterval, "accounts mode: fetch the remote of every open space that follows one this often, jittered (0: never by itself; a space is also fetched when it is opened)")
 	f.StringSliceVar(&c.remoteHosts, "remote-host", gitstore.DefaultHosts, "accounts mode: a host a space's remote repository may be on (repeatable, or comma-separated; * allows any host); giving it replaces the default list")
 	f.DurationVar(&c.remoteTimeout, "remote-timeout", 60*time.Second, "accounts mode: how long one fetch or push may take before the remote counts as unreachable")
+	f.StringVar(&c.githubAPI, "github-api-url", "", "accounts mode: the REST address of GitHub (default "+githubapp.DefaultAPI+"; for tests)")
+	f.StringVar(&c.githubWeb, "github-url", "", "accounts mode: the web address of GitHub (default "+githubapp.DefaultWeb+"; for tests)")
+	f.MarkHidden("github-api-url")
+	f.MarkHidden("github-url")
 	f.Int64Var(&c.maxUpload, "max-upload", api.DefaultMaxUpload, "largest file accepted as an upload, in bytes (0: the default, 10 MiB)")
 	f.Int64Var(&c.maxImport, "max-import", api.DefaultMaxImport, "largest Markdown file or zip accepted as an import, in bytes (0: the default, 100 MiB)")
 	f.BoolVar(&mcpOn, "mcp", true, "single-user mode: serve /mcp for MCP clients with an API token (false: it answers 404); in accounts mode an administrator decides, in the app")
@@ -259,6 +278,9 @@ func (c serveConfig) check() (*checked, error) {
 		if c.remoteSet {
 			return nil, errors.New("--pull-interval, --remote-host and --remote-timeout are for accounts mode (--data): a single-user space stays local")
 		}
+		if c.githubAPI != "" || c.githubWeb != "" {
+			return nil, errors.New("--github-api-url and --github-url are for accounts mode (--data)")
+		}
 		if c.publicURL != "" || len(c.trustedProxies) > 0 || c.oidcIssuer != "" || c.oidcClientID != "" || c.oidcClientSecretFile != "" || c.oidcClientSecret != "" || c.oidcName != "" || len(c.oidcScopes) > 0 || c.oidcAutoCreate {
 			return nil, errors.New("--public-url, --trusted-proxy and --oidc-* are for accounts mode (--data)")
 		}
@@ -354,6 +376,8 @@ func runServe(ctx context.Context, c serveConfig) error {
 		mgr      *spaces.Manager
 		sp       *space.Space
 		svc      *auth.Service
+		ghs      *github.Service
+		conns    *connections.Registry
 		spClosed bool
 	)
 	defer func() {
@@ -378,13 +402,23 @@ func runServe(ctx context.Context, c serveConfig) error {
 		if st, err = store.Open(ctx, target); err != nil {
 			return err
 		}
-		if mgr, err = spaces.NewAccounts(spaces.Options{Store: st, DataDir: c.data, Committer: c.committer,
-			CommitIdle: c.commitIdle, CommitMax: c.commitMax, Logger: log,
-			MaxSpaces: c.maxSpaces, IdleAfter: c.spaceIdle, MaxOpen: c.maxOpenSpaces,
-			PullInterval: c.pullInterval, NetTimeout: c.remoteTimeout,
-			RemotePolicy: gitstore.Policy{Hosts: c.remoteHosts, AllowUnsafe: c.remoteUnsafe}}); err != nil {
+		box := secret.NewBox(c.data)
+		ghc, err := githubapp.New(githubapp.Config{API: c.githubAPI, Web: c.githubWeb, HTTP: c.githubHTTP})
+		if err != nil {
 			return err
 		}
+		if ghs, err = github.New(github.Options{Store: st, Secrets: box, Client: ghc, PublicURL: cfg.publicURL, Logger: log, RenewEvery: c.githubRenewEvery}); err != nil {
+			return err
+		}
+		conns = connections.NewRegistry(ghs, connections.NewGit())
+		if mgr, err = spaces.NewAccounts(spaces.Options{Store: st, DataDir: c.data, Serve: true, Committer: c.committer,
+			CommitIdle: c.commitIdle, CommitMax: c.commitMax, Logger: log,
+			MaxSpaces: c.maxSpaces, IdleAfter: c.spaceIdle, MaxOpen: c.maxOpenSpaces,
+			PullInterval: c.pullInterval, NetTimeout: c.remoteTimeout, Secrets: box, Connections: conns,
+			RemotePolicy: gitstore.Policy{Hosts: c.remoteHosts, AllowUnsafe: c.remoteUnsafe}, HostsFromFlag: c.hostsSet}); err != nil {
+			return err
+		}
+		conns.OnChange(func(_, userID string) { mgr.ConnectionFixed(userID) })
 		if svc, err = auth.New(ctx, auth.Config{Store: st, Spaces: mgr, PublicURL: cfg.publicURL, TrustedProxies: cfg.proxies,
 			OIDC: cfg.oidc, HTTPClient: c.oidcHTTPClient, Password: passwordParams, Logger: log}); err != nil {
 			return err
@@ -430,7 +464,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 			return fmt.Errorf("the authorization server: %w", err)
 		}
 	}
-	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tokenSvc, OAuth: oauthSvc, PublicURL: cfg.publicURL, MaxSpaces: c.maxSpacesFlag(), NoMCP: c.noMCP, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
+	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tokenSvc, OAuth: oauthSvc, Connections: conns, PublicURL: cfg.publicURL, MaxSpaces: c.maxSpacesFlag(), NoMCP: c.noMCP, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
 		RestrictHost: loopback, AllowOrigins: cfg.origins, Logger: log})
 	var webOpts []webui.Option
 	if svc != nil {
@@ -478,6 +512,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 	if cfg.accounts {
 		run(mgr.Run)
 		run(mgr.RunPull)
+		run(ghs.RunRenew)
 	}
 	if svc != nil {
 		run(svc.Run)

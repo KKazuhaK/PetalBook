@@ -116,6 +116,15 @@ var routeTable = []route{
 	{"POST", "/api/invites/check", public, true, false, false, (*server).checkInvite},
 	{"POST", "/api/invites/accept", public, true, false, false, (*server).acceptInvite},
 
+	{"GET", "/api/connections", signedIn, true, false, false, (*server).listConnections},
+	{"POST", "/api/connections/{provider}/authorization/start", signedIn, true, false, false, (*server).connectStart},
+	{"GET", connCallbackPrefix + "{provider}" + connCallbackSuffix, public, true, true, false, (*server).connectCallback},
+	{"GET", connManifestPath, public, true, true, false, (*server).connectManifestCallback},
+	{"DELETE", "/api/connections/{provider}/authorization", signedIn, true, false, false, (*server).connectDisconnect},
+	{"DELETE", "/api/connections/{provider}/leftovers/{repoId}", signedIn, true, false, false, (*server).connectDismissLeftover},
+	{"GET", "/api/connections/{provider}/owners", signedIn, true, false, false, (*server).connectOwners},
+	{"GET", "/api/connections/{provider}/repos", signedIn, true, false, false, (*server).connectRepos},
+
 	{"GET", "/api/account", signedIn, true, false, false, (*server).getAccount},
 	{"PATCH", "/api/account", signedIn, true, false, false, (*server).patchAccount},
 	{"POST", "/api/account/password", signedIn, true, false, false, (*server).changePassword},
@@ -142,6 +151,10 @@ var routeTable = []route{
 	{"GET", "/api/admin/spaces", admin, true, false, false, (*server).adminListSpaces},
 	{"GET", "/api/admin/spaces/{space}", admin, true, false, false, (*server).adminGetSpace},
 	{"POST", "/api/admin/spaces/{space}/size", admin, true, false, false, (*server).adminResizeSpace},
+	{"PUT", "/api/admin/spaces/{space}/storage", siteAdmin, true, false, false, (*server).adminPutSpaceStorage},
+	{"POST", "/api/admin/spaces/{space}/evict", siteAdmin, true, false, false, (*server).adminEvictSpace},
+	{"GET", "/api/admin/storage", siteAdmin, true, false, false, (*server).adminGetStorage},
+	{"PUT", "/api/admin/storage", siteAdmin, true, false, false, (*server).adminPutStorage},
 	{"POST", "/api/admin/spaces/{space}/transfer", admin, true, false, false, (*server).adminTransferSpace},
 	{"POST", "/api/admin/spaces/{space}/disable", admin, true, false, false, (*server).adminDisableSpace},
 	{"POST", "/api/admin/spaces/{space}/enable", admin, true, false, false, (*server).adminEnableSpace},
@@ -154,6 +167,15 @@ var routeTable = []route{
 	{"DELETE", "/api/admin/daily/apis/{id}", siteAdmin, true, false, false, (*server).adminDeleteDailyAPI},
 	{"PUT", "/api/admin/daily/providers/{id}", siteAdmin, true, false, false, (*server).adminPutDailyProvider},
 	{"POST", "/api/admin/daily/try", siteAdmin, true, false, false, (*server).adminTryDailyAPI},
+	{"GET", "/api/admin/connections", siteAdmin, true, false, false, (*server).adminListConnections},
+	{"GET", "/api/admin/connections/{provider}", siteAdmin, true, false, false, (*server).adminGetConnection},
+	{"PUT", "/api/admin/connections/{provider}", siteAdmin, true, false, false, (*server).adminPutConnection},
+	{"POST", "/api/admin/connections/{provider}/manifest", siteAdmin, true, false, false, (*server).adminConnectionManifest},
+	{"POST", "/api/admin/connections/{provider}/manifest/retry", siteAdmin, true, false, false, (*server).adminConnectionManifestRetry},
+	{"POST", "/api/admin/connections/{provider}/check", siteAdmin, true, false, false, (*server).adminCheckConnection},
+	{"DELETE", "/api/admin/connections/{provider}", siteAdmin, true, false, false, (*server).adminDeleteConnection},
+	{"GET", "/api/admin/connections/{provider}/installations", siteAdmin, true, false, false, (*server).adminConnectionInstallations},
+	{"PUT", "/api/admin/connections/{provider}/installations/{id}", siteAdmin, true, false, false, (*server).adminPutConnectionInstallation},
 	{"GET", "/api/admin/status", siteAdmin, true, false, false, (*server).adminStatus},
 	{"GET", "/api/admin/access", siteAdmin, true, false, false, (*server).adminGetAccess},
 	{"PUT", "/api/admin/access", siteAdmin, true, false, false, (*server).adminPutAccess},
@@ -256,6 +278,10 @@ var routeTable = []route{
 	{"DELETE", "/api/spaces/{space}/remote", inSpace(perm.Manage), true, false, false, (*server).deleteRemote},
 	{"POST", "/api/spaces/{space}/remote/sync", inSpace(perm.Manage), true, false, false, (*server).syncRemote},
 	{"POST", "/api/spaces/{space}/remote/accept", inSpace(perm.Manage), true, false, false, (*server).acceptRemote},
+	{"GET", "/api/spaces/{space}/remote/assets", inSpace(perm.Manage), true, false, false, (*server).getAssetsRemote},
+	{"PUT", "/api/spaces/{space}/remote/assets", inSpace(perm.Manage), true, false, false, (*server).putAssetsRemote},
+	{"DELETE", "/api/spaces/{space}/remote/assets", inSpace(perm.Manage), true, false, false, (*server).deleteAssetsRemote},
+	{"POST", "/api/spaces/{space}/remote/assets/move", inSpace(perm.Manage), true, false, false, (*server).moveAssets},
 }
 
 // RouteInfo describes a route for tests and tooling.
@@ -357,6 +383,32 @@ func (s *server) handle(rt route) http.HandlerFunc {
 	}
 }
 
+// indexOnlyRoutes are the routes whose answer comes from the index alone, so
+// an evicted space (see "Eviction") answers them without being restored: lists,
+// the tree, tags, links and backlinks, the problems of the pages. A listing
+// that asks for bodies (body=1) reads files and is not one of them.
+var indexOnlyRoutes = map[string]bool{
+	"GET /api/spaces/{space}/pages":                true,
+	"GET /api/spaces/{space}/pages/groups":         true,
+	"GET /api/spaces/{space}/tree":                 true,
+	"GET /api/spaces/{space}/tags":                 true,
+	"GET /api/spaces/{space}/pages/{id}/backlinks": true,
+	"GET /api/spaces/{space}/pages/{id}/links":     true,
+	"GET /api/spaces/{space}/checks":               true,
+}
+
+// indexOnly says whether this request can be answered by the index of an
+// evicted space.
+func indexOnly(rt route, r *http.Request) bool {
+	if !indexOnlyRoutes[rt.method+" "+rt.pattern] {
+		return false
+	}
+	if r.URL.Query().Get("body") != "" && r.URL.Query().Get("body") != "0" {
+		return false
+	}
+	return true
+}
+
 // openSpace opens the {space} of a space route for the caller and checks that
 // they hold the permission the route asks, leaving the handle in c.sp (the
 // caller releases it). It answers the refusal and returns false otherwise.
@@ -376,7 +428,13 @@ func (s *server) openSpace(c *call, rt route) bool {
 			writeError(w, http.StatusForbidden, "token_scope", "this token is read only")
 			return false
 		}
-		h, err := s.spaces.OpenMember(r.Context(), c.p.User, spaceID)
+		var h *spaces.Handle
+		var err error
+		if indexOnly(rt, r) {
+			h, err = s.spaces.OpenMemberIndex(r.Context(), c.p.User, spaceID)
+		} else {
+			h, err = s.spaces.OpenMember(r.Context(), c.p.User, spaceID)
+		}
 		if err != nil {
 			s.fail(w, err)
 			return false
@@ -399,7 +457,11 @@ func (s *server) openSpace(c *call, rt route) bool {
 		h, err = s.spaces.OpenMembership(r.Context(), c.p.User, spaceID)
 	}
 	if !self || errors.Is(err, spaces.ErrNotFound) {
-		h, err = s.spaces.Open(r.Context(), c.p.User, spaceID)
+		if indexOnly(rt, r) {
+			h, err = s.spaces.OpenIndex(r.Context(), c.p.User, spaceID)
+		} else {
+			h, err = s.spaces.Open(r.Context(), c.p.User, spaceID)
+		}
 	}
 	if err != nil {
 		s.fail(w, err)

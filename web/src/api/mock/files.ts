@@ -93,7 +93,8 @@ export function createFileStore(now: () => number) {
     }
   }
 
-  return { upload, read }
+  const count = () => files.size
+  return { upload, read, count }
 }
 
 export type FileStore = ReturnType<typeof createFileStore>

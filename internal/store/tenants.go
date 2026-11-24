@@ -333,6 +333,10 @@ func (s *Store) DeleteTenant(ctx context.Context, id string) error {
 		if _, err := q.Exec(ctx, `DELETE FROM layered_settings WHERE layer = 'tenant' AND layer_id = ?`, id); err != nil {
 			return err
 		}
+		// Installations shared with it are not any more.
+		if _, err := q.Exec(ctx, `DELETE FROM github_installation_tenants WHERE tenant_id = ?`, id); err != nil {
+			return err
+		}
 		// Pending registrations are deleted with it.
 		if _, err := q.Exec(ctx, `DELETE FROM registrations WHERE tenant_id = ?`, id); err != nil {
 			return err

@@ -141,13 +141,16 @@ export interface StoreOptions {
   // A reason why writes must fail with 503 `unavailable` right now (the space
   // follows a remote that cannot be reached, or is paused), or null.
   blocked?: () => string | null
+  // The requirement of a remote this space is past its deadline for (409
+  // `remote_required`, docs/api.md "Server storage"), or null. Drafts do not ask.
+  required?: () => { message: string; extra: Record<string, unknown> } | null
   // The folder quick notes go to (the space's `inbox`).
   inbox?: () => string
   // Whether a file of the space that is not a page exists, by its path from the root.
   fileExists?: (path: string) => boolean
 }
 
-export function createSpaceStore({ now, random, seed, author = () => 'Local user', blocked = () => null, inbox = () => 'Inbox', fileExists = () => false }: StoreOptions) {
+export function createSpaceStore({ now, random, seed, author = () => 'Local user', blocked = () => null, required = () => null, inbox = () => 'Inbox', fileExists = () => false }: StoreOptions) {
   const pages = new Map<string, Stored>()
   // Every page's commits, oldest first; kept after the page is deleted.
   const histories = new Map<string, VersionRec[]>()
@@ -155,6 +158,8 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
   // Whether any page or folder was ever made: a pristine space may take a remote's content.
   let touched = false
   const guard = () => {
+    const req = required()
+    if (req) throw new HttpError(409, 'remote_required', req.message, req.extra)
     const why = blocked()
     if (why) throw new HttpError(503, 'unavailable', why)
   }
@@ -763,7 +768,7 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
   // `maxMs` ago, is committed. A stale draft is left alone.
   const sweep = (idleMs: number, maxMs: number) => {
     // The server writes drafts once the remote is back; until then they wait.
-    if (blocked()) return
+    if (blocked() || required()) return
     const t = now()
     for (const [key, d] of [...drafts]) {
       if (t - d.updated < idleMs && t - d.first < maxMs) continue
@@ -1040,6 +1045,8 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
   }
 
   return {
+    // How many drafts the space holds (an eviction keeps a space that has any).
+    draftCount: () => drafts.size,
     links,
     backlinks,
     listPages,

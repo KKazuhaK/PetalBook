@@ -187,7 +187,7 @@ describe('administrators and tenants in the Users page and the navigation', () =
   it('shows a site administrator every section, and a tenant administrator only those of their tenant', async () => {
     await open('users')
     await settle(() => navLabels().length > 0, 'the navigation')
-    expect(navLabels()).toEqual([ta.sections.users, ta.sections.groups, ta.sections.spaces, ta.sections.daily, ta.sections.access, ta.sections.security, ta.sections.mail, ta.sections.settings, ta.sections.tenants, ta.sections.usage, ta.sections.status])
+    expect(navLabels()).toEqual([ta.sections.users, ta.sections.groups, ta.sections.spaces, ta.sections.daily, ta.sections.access, ta.sections.storage, ta.sections.security, ta.sections.mail, ta.sections.settings, ta.sections.tenants, ta.sections.usage, ta.sections.status])
     await m!.unmount()
     // Another site administrator exists; the signed-in one is made a tenant administrator.
     await open('users', (server) => {
@@ -196,6 +196,8 @@ describe('administrators and tenants in the Users page and the navigation', () =
       const me = (admin('GET', '/api/users').body as { users: { id: string; username: string }[] }).users.find((u) => u.username === 'admin')!
       expect(other.id).not.toBe(me.id)
       admin('PATCH', `/api/users/${me.id}`, { siteAdmin: false })
+      // The server's GitHub App is site-only, as on the server.
+      expect(() => admin('GET', '/api/admin/connections/github')).toThrow(/403/)
     })
     await settle(() => navLabels().length > 0, 'the navigation')
     expect(navLabels()).toEqual([ta.sections.users, ta.sections.groups, ta.sections.spaces, ta.sections.settings, ta.sections.usage])

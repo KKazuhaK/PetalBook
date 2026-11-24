@@ -22,6 +22,11 @@ package spaces
 // the files (hard links counted each time); the cache directory with the index
 // is not counted, it can be rebuilt.
 //
+// A space whose copy on the server is partial or evicted (milestone 3.1) is
+// measured for the listing only (SetSpaceSize): the quotas keep its last full
+// measurement, so a partial clone or an eviction never shrinks what a person
+// uses.
+//
 // The same turn also counts the pages of the space (one COUNT on its index: from
 // the open space, else from the index file without opening the space) and
 // stores both, with the difference added to the usage rows of the space's first
@@ -136,10 +141,23 @@ func (m *Manager) Resize(ctx context.Context, sc store.Scope, id string) (int64,
 		}
 		return 0, time.Time{}, err
 	}
+	at := m.opt.Now()
+	if !m.holdsWhole(id) {
+		// A partial clone or an evicted space (milestone 3.1): what the server
+		// holds of it is not what the space is, so only the listing's size is
+		// written and the quotas keep its last full measurement (see
+		// store.RecordMeasurement). Not the request's context, as below.
+		if err := store.SetSpaceSize(context.WithoutCancel(ctx), m.opt.Store.Q(), id, n, at); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return 0, time.Time{}, ErrNotFound
+			}
+			return 0, time.Time{}, err
+		}
+		return n, at, nil
+	}
 	pages, havePages := m.pageCount(ctx, id)
 	// Not the request's context: a measurement that was made is kept. One
 	// transaction stores the size and adds the difference to the usage rows.
-	at := m.opt.Now()
 	touched, err := m.opt.Store.RecordMeasurement(context.WithoutCancel(ctx), id, store.Measurement{Bytes: n, Pages: pages, HavePages: havePages, At: at})
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {

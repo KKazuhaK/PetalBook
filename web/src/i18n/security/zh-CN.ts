@@ -218,7 +218,7 @@ export const securityZhCN = {
       oidc_issuer_invalid: '签发方要是 https 地址。',
       saml_needs_https: 'SAML 需要 https 的公开地址（--public-url），因为从身份提供方跨站过来的 cookie 必须是 Secure 的。',
       saml_metadata_invalid: '元数据解析不了，或者里面没有签名证书、没有用于登录的重定向绑定。',
-      github_auto_create_needs_org: 'GitHub 提供方开启自动建号时必须指定组织，否则任何有 GitHub 账号的人都能建号。',
+      auto_create_needs_org: 'GitHub 提供方开启自动建号时必须指定组织，否则任何有 GitHub 账号的人都能建号。',
       public_url_required: '服务器没有公开地址（--public-url），不能添加提供方。',
       provider_in_use: '有账号只能用这个提供方登录。',
       not_found: '没有这个提供方。',

@@ -204,6 +204,10 @@ type UserPatch struct {
 	// SiteAdmin makes an administrator one of the whole server; only a site
 	// administrator may send it.
 	SiteAdmin *bool
+	// RemoteExempt leaves the spaces the user owns out of the storage policy's
+	// requirement of a remote (milestone 3.1). The requirement is the site's,
+	// so only a site administrator may send it.
+	RemoteExempt *bool
 }
 
 // UpdateUser applies a patch. It refuses to leave the instance without an
@@ -233,6 +237,7 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 	defer s.adminMu.Unlock()
 	var out *store.User
 	changed := map[string]any{}
+	exemptChanged := false
 	err := s.st.Tx(ctx, func(q store.Q) error {
 		// A person of another tenant is no person at all.
 		u, err := store.GetUser(ctx, q, store.ScopeOf(actor), targetID)
@@ -248,6 +253,9 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 		}
 		if patch.SiteAdmin != nil && !isSite {
 			return errf(Forbidden, "only a site administrator may make or end a site administrator")
+		}
+		if patch.RemoteExempt != nil && !isSite {
+			return errf(Forbidden, "only a site administrator may exempt a person from the site's requirement of a remote")
 		}
 		role, disabled := u.Role, u.Disabled
 		if patch.Role != nil {
@@ -372,6 +380,14 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 				u.Email, u.EmailVerified = newEmail, verified
 			}
 		}
+		if patch.RemoteExempt != nil && *patch.RemoteExempt != u.RemoteExempt {
+			if err := store.SetRemoteExempt(ctx, q, u.ID, *patch.RemoteExempt); err != nil {
+				return err
+			}
+			u.RemoteExempt = *patch.RemoteExempt
+			exemptChanged = true
+			changed["remoteExempt"] = u.RemoteExempt
+		}
 		u.Role, u.Disabled = role, disabled
 		out = u
 		return nil
@@ -383,6 +399,9 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 	// The space manager remembers a user's role and whether they are disabled
 	// for a minute (the drafts sweeper asks it); a change here applies at once.
 	s.cfg.Spaces.UserChanged(ctx, *out)
+	if exemptChanged {
+		s.cfg.Spaces.PolicyChanged()
+	}
 	if len(changed) > 0 {
 		s.Audit(AuditEvent{Kind: "user_changed", Actor: actorID, User: out.ID, Username: out.Username, IP: ip, Detail: changed})
 	}

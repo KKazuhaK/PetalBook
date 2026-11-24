@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -47,6 +48,9 @@ type Repo struct {
 
 	gdMu sync.Mutex
 	gd   string // the absolute git directory, once known
+
+	// ensureFn is set for a partial clone (see SetEnsure).
+	ensureFn atomic.Pointer[EnsureFunc]
 }
 
 // New returns a Repo.
@@ -111,6 +115,14 @@ func (r *Repo) net(ctx context.Context, timeout time.Duration, args ...string) (
 	if r.opt.Cred != nil {
 		e, s, cleanup, err := r.opt.Cred.prepare()
 		if err != nil {
+			var ce *CredentialError
+			if errors.As(err, &ce) {
+				kind := KindAuth
+				if ce.Offline {
+					kind = KindOffline
+				}
+				return "", &NetError{kind, Scrub(ce.Msg), err}
+			}
 			return "", &NetError{KindAuth, "the stored credential cannot be used", err}
 		}
 		defer cleanup()

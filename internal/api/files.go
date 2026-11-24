@@ -60,6 +60,10 @@ func (s *server) putAsset(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "the file is empty")
 		return
 	}
+	if err := s.spaces.CheckRoom(c.r.Context(), c.sp, int64(len(data))); err != nil {
+		s.fail(c.w, err)
+		return
+	}
 	a, err := c.sp.Space.PutAsset(s.author(c), id, name, data)
 	if err != nil {
 		s.fail(c.w, err)
@@ -106,7 +110,17 @@ func sizeText(n int64) string {
 
 func (s *server) getFile(c *call) {
 	rel := c.r.PathValue("path")
-	f, st, err := c.sp.Space.OpenFile(rel)
+	// A browser that has the file of the attachment repository already is told
+	// so from the table, before anything is fetched: also when the repository
+	// cannot be reached.
+	if tag := c.sp.Space.AssetTag(rel); tag != "" && noneMatch(c.r.Header.Get("If-None-Match"), tag) {
+		h := c.w.Header()
+		h.Set("ETag", `"`+tag+`"`)
+		h.Set("Cache-Control", "private, no-cache")
+		c.w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	f, st, etag, err := c.sp.Space.OpenFileTag(c.r.Context(), rel)
 	if err != nil {
 		if errors.Is(err, space.ErrNotFound) {
 			writeError(c.w, http.StatusNotFound, "not_found", "no such file")
@@ -132,5 +146,24 @@ func (s *server) getFile(c *call) {
 		h.Set("Content-Security-Policy", fileCSP)
 	}
 	h.Set("Cache-Control", "private, no-cache")
-	http.ServeContent(c.w, c.r, "", st.ModTime(), f)
+	modTime := st.ModTime()
+	if etag != "" {
+		// A file of the attachment repository: its content id is the tag, and it
+		// has no modification time (finding one would walk the history).
+		h.Set("ETag", `"`+etag+`"`)
+		modTime = time.Time{}
+	}
+	http.ServeContent(c.w, c.r, "", modTime, f)
+}
+
+// noneMatch reports whether an If-None-Match header names the tag (weakly, as
+// RFC 9110 has it for If-None-Match), or is "*".
+func noneMatch(header, tag string) bool {
+	for _, t := range strings.Split(header, ",") {
+		t = strings.TrimSpace(t)
+		if t == "*" || strings.TrimPrefix(t, "W/") == `"`+tag+`"` {
+			return true
+		}
+	}
+	return false
 }

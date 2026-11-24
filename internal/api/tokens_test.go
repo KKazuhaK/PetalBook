@@ -412,6 +412,30 @@ func TestWhichRoutesATokenMayUse(t *testing.T) {
 	})
 }
 
+// The GitHub endpoints act for the person (their authorisation, their owners
+// and repositories) or for the administrators: none is for a token, even one
+// of an administrator, and even with the server's GitHub service on.
+func TestNoGitHubRouteIsForAToken(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{github: true}, func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		sid := admin.do("POST", "/api/spaces", map[string]any{"name": "Mine"}).want(t, 201, "").body["id"].(string)
+		_, secret := mkToken(t, admin, "write", nil, sid)
+		b := a.bearer(secret, "")
+		var n int
+		for _, rt := range api.Routes() {
+			if !strings.HasPrefix(rt.Pattern, "/api/connections") && !strings.HasPrefix(rt.Pattern, "/api/admin/connections") {
+				continue
+			}
+			n++
+			b.do(rt.Method, routePath(rt, sid), "{}", typeFor(rt)...).want(t, 403, "token_scope")
+		}
+		if n < 11 {
+			t.Fatalf("%d GitHub routes, want at least 11", n)
+		}
+	})
+}
+
 func TestTheHeaderAloneDecides(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {

@@ -103,6 +103,10 @@ func (s *Space) putAssetLocked(tx *txn, id, name string, data []byte) (Asset, er
 	if !s.assetsDirIsOurs() {
 		return Asset{}, invalidf("a folder whose name differs from %q only in case is in the way; attachments cannot be stored", AssetsDir)
 	}
+	if b := s.Assets(); b != nil && b.Direct() && tx.remote {
+		a, _, err := s.putAssetRepo(tx, b, id, name, data)
+		return a, err
+	}
 	dirRel := path.Join(AssetsDir, id)
 	dir, err := s.assetDir(tx, dirRel)
 	if err != nil {
@@ -150,17 +154,42 @@ func (s *Space) putAssetLocked(tx *txn, id, name string, data []byte) (Asset, er
 // assetsDirIsOurs reports whether the name "assets" at the root is free or is
 // spelled exactly so. On a file system that ignores case a folder of pages
 // named "Assets" would otherwise receive the attachments, and be both.
+// The answer is kept until forgetAssetsDir.
 func (s *Space) assetsDirIsOurs() bool {
-	entries, err := os.ReadDir(s.root)
-	if err != nil {
+	seen := s.assetsOurs.Load()
+	switch seen % 4 {
+	case 1:
+		return true
+	case 2:
 		return false
 	}
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return false // not kept: the next call looks again
+	}
+	ours := true
 	for _, e := range entries {
 		if strings.EqualFold(e.Name(), AssetsDir) {
-			return e.Name() == AssetsDir
+			ours = e.Name() == AssetsDir
+			break
 		}
 	}
-	return true
+	v := int64(2)
+	if ours {
+		v = 1
+	}
+	s.assetsOurs.CompareAndSwap(seen, seen+v)
+	return ours
+}
+
+// forgetAssetsDir makes the next assetsDirIsOurs look at the root again.
+func (s *Space) forgetAssetsDir() {
+	for {
+		old := s.assetsOurs.Load()
+		if s.assetsOurs.CompareAndSwap(old, (old/4+1)*4) {
+			return
+		}
+	}
 }
 
 // sameAsset reports whether target already holds exactly data. Anything else

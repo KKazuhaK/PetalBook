@@ -11,13 +11,13 @@ describe('which sections are shown', () => {
     expect(ids(single)).toEqual(['preferences', 'general', 'types', 'templates', 'offline', 'import'])
   })
   it('a member has the account and the space, with its members, sync and the offline copy', () => {
-    expect(ids(member)).toEqual(['profile', 'preferences', 'security', 'tokens', 'usage', 'general', 'types', 'templates', 'members', 'sync', 'offline', 'import'])
+    expect(ids(member)).toEqual(['profile', 'preferences', 'security', 'tokens', 'connections', 'usage', 'general', 'types', 'templates', 'members', 'sync', 'offline', 'import'])
   })
   it('someone who may only read has no import (it writes pages) but still sees the members', () => {
-    expect(ids(viewer)).toEqual(['profile', 'preferences', 'security', 'tokens', 'usage', 'general', 'types', 'templates', 'members', 'sync', 'offline'])
+    expect(ids(viewer)).toEqual(['profile', 'preferences', 'security', 'tokens', 'connections', 'usage', 'general', 'types', 'templates', 'members', 'sync', 'offline'])
   })
   it('a space that cannot be read shows no members', () => {
-    expect(ids({ ...member, canRead: false, canWrite: false })).toEqual(['profile', 'preferences', 'security', 'tokens', 'usage', 'general', 'sync'])
+    expect(ids({ ...member, canRead: false, canWrite: false })).toEqual(['profile', 'preferences', 'security', 'tokens', 'connections', 'usage', 'general', 'sync'])
   })
   it('the offline copy is for whoever may read the space, in either mode, and not for a space that cannot be read', () => {
     expect(ids(single)).toContain('offline')
@@ -26,14 +26,14 @@ describe('which sections are shown', () => {
     expect(ids({ ...member, hasSpace: false })).not.toContain('offline')
   })
   it('a space that is switched off still has the members section, for leaving it', () => {
-    expect(ids({ ...member, canRead: false, canWrite: false, disabled: true })).toEqual(['profile', 'preferences', 'security', 'tokens', 'usage', 'general', 'members', 'sync'])
+    expect(ids({ ...member, canRead: false, canWrite: false, disabled: true })).toEqual(['profile', 'preferences', 'security', 'tokens', 'connections', 'usage', 'general', 'members', 'sync'])
   })
   it('users and invites are not a section here any more: they are in the administration', () => {
     expect(ids(member)).not.toContain('users')
     expect(isSectionId('users')).toBe(false)
   })
   it('without a space the space sections are not offered', () => {
-    expect(ids({ ...member, hasSpace: false })).toEqual(['profile', 'preferences', 'security', 'tokens', 'usage'])
+    expect(ids({ ...member, hasSpace: false })).toEqual(['profile', 'preferences', 'security', 'tokens', 'connections', 'usage'])
     expect(ids({ ...single, hasSpace: false })).toEqual(['preferences'])
   })
   it('shows nothing until the session is known', () => {
@@ -41,7 +41,7 @@ describe('which sections are shown', () => {
   })
   it('groups the navigation: account, space', () => {
     expect(groupsOf(visibleSections(member)).map((g) => [g.group, g.sections.map((s) => s.id)])).toEqual([
-      ['account', ['profile', 'preferences', 'security', 'tokens', 'usage']],
+      ['account', ['profile', 'preferences', 'security', 'tokens', 'connections', 'usage']],
       ['space', ['general', 'types', 'templates', 'members', 'sync', 'offline', 'import']],
     ])
     expect(groupsOf(visibleSections(single)).map((g) => g.group)).toEqual(['account', 'space'])

@@ -137,7 +137,8 @@ func subcommand(args []string) (string, []string) {
 // --exec, --output, -u, -o/--push-option, --ext-diff, --textconv and every
 // other option that runs a program or writes somewhere. Everything after a bare
 // "--" is a path. A new need has to be added here on purpose. push, remote,
-// update-ref and config are checked exactly below instead.
+// update-ref and config are checked exactly below instead (config: only
+// `config --local --unset-all` of a key that makes a clone partial).
 //
 // The additions to RackBook's list, and why:
 //
@@ -162,7 +163,27 @@ func subcommand(args []string) (string, []string) {
 //	             work tree is read but those of the change; what grows with the
 //	             space is only the index in memory (about 60 ms for 20 000
 //	             files). Their arguments are checked exactly in refuseDestructive.
+//	fetch --filter=blob:none, --stdin, --no-write-fetch-head: a partial clone
+//	             (milestone 3.1) is made with a filter, and the contents of the
+//	             files that are missing are fetched by their ids, in the form
+//	             Git's own lazy fetch uses, with the server's credential.
+//	cat-file --batch-check: which of a list of ids are not in the clone.
+//	rev-list --all: with --objects --missing=print, what a clone lacks in any
+//	             ref before a pinned space's clone stops being partial.
+//	log, diff    --raw, --no-abbrev: the blob ids of a change, so that the
+//	             contents a partial clone lacks can be named; log -M100%: only
+//	             exact renames, which need no content (--follow would otherwise
+//	             read the files to compare them).
+//	status       --untracked-files=normal: files in the work tree that no commit has.
 //	status       --porcelain, -z, --untracked-files=no: modified tracked files when a space opens.
+//
+//	hash-object  -w --no-filters --stdin-paths: the contents of an attachment, read from
+//	             where it is, become a blob (an attachment repository, below).
+//	mktree       -z --missing: a tree made of entries whose contents this clone does not
+//	             have; with ls-tree (no -r), commit-tree and update-ref HEAD, the commit that
+//	             adds files to an attachment repository, or takes a space's attachments
+//	             out of its repository, is built without a work tree or an index.
+//	cat-file blob <id>: the contents of a file fetched by its id, copied to the cache.
 //
 // Dropped from RackBook's list because nothing here needs them: --grep and
 // --fixed-strings (trailer search), merge-base's use for pull requests.
@@ -172,14 +193,15 @@ var allowedOptions = map[string][]string{
 	"read-tree":    {},
 	"write-tree":   {},
 	"commit-tree":  {},
+	"config":       {},
 	"ls-files":     {"-s", "-z", "--"},
 	"rm":           {"--", "--cached", "-r", "-q", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"},
-	"cat-file":     {"--batch"},
+	"cat-file":     {"--batch", "--batch-check"},
 	"checkout":     {"--quiet", "--", "--pathspec-from-file=-", "--pathspec-file-nul"},
-	"diff":         {"--cached", "--name-status", "-z", "-M", "--no-renames", "--"},
-	"fetch":        {"--quiet", "--no-tags"},
+	"diff":         {"--cached", "--name-status", "-z", "-M", "--no-renames", "--raw", "--no-abbrev", "--"},
+	"fetch":        {"--quiet", "--no-tags", "--filter=blob:none", "--stdin", "--no-write-fetch-head"},
 	"init":         {"--quiet", "-q", "--initial-branch=*"},
-	"log":          {"-n", "--format=*", "--follow", "--name-status", "-z", "--no-color", "--"},
+	"log":          {"-n", "--format=*", "--follow", "--name-status", "-z", "--no-color", "-M100%", "--raw", "--no-abbrev", "--"},
 	"ls-remote":    {"--heads"},
 	"ls-tree":      {"-r", "-z", "--name-only", "--"},
 	"merge":        {"--quiet", "--ff-only"},
@@ -187,11 +209,24 @@ var allowedOptions = map[string][]string{
 	"push":         {},
 	"remote":       {},
 	"update-ref":   {},
+	"hash-object":  {"-w", "--no-filters", "--stdin-paths"},
+	"mktree":       {"-z", "--missing"},
+	"version":      {},
+	"for-each-ref": {"--format=*"},
 	"reset":        {"--quiet", "--hard"},
-	"rev-list":     {"--count", "--left-right", "--not"},
+	"rev-list":     {"--count", "--left-right", "--not", "--objects", "--missing=print", "--all"},
 	"rev-parse":    {"--is-inside-work-tree", "--abbrev-ref", "--absolute-git-dir", "--show-prefix", "--verify", "--quiet", "--short"},
-	"status":       {"--porcelain", "-z", "--untracked-files=no"},
+	"status":       {"--porcelain", "-z", "--untracked-files=no", "--untracked-files=normal"},
 }
+
+// partialConfigKeys are the keys of a clone's own configuration that make it
+// partial: the only ones `git config` is run for, to remove them or to read
+// whether the clone is one (partialKeysPattern).
+var partialConfigKeys = map[string]bool{"remote.origin.partialclonefilter": true, "remote.origin.promisor": true, "extensions.partialclone": true}
+
+// partialKeysPattern is the one pattern `git config --get-regexp` is run with:
+// the keys that say origin is a promisor remote of the clone.
+const partialKeysPattern = `^(remote\.origin\.promisor|extensions\.partialclone)$`
 
 func optionAllowed(sub, opt string) bool {
 	for _, a := range allowedOptions[sub] {
@@ -236,6 +271,16 @@ func refuseDestructive(args []string) error {
 	case "remote":
 		if !remoteArgsOK(rest) {
 			return fmt.Errorf("%w: remote %s", errDestructive, strings.Join(rest, " "))
+		}
+	case "config":
+		// Two shapes: the removal of a key that makes a clone partial, when a
+		// pinned space's clone is made full (Repo.LeavePartial), and the read
+		// of whether it is one (Repo.IsPartial).
+		if len(rest) == 3 && rest[0] == "--local" && rest[1] == "--get-regexp" && rest[2] == partialKeysPattern {
+			break
+		}
+		if len(rest) != 3 || rest[0] != "--local" || rest[1] != "--unset-all" || !partialConfigKeys[rest[2]] {
+			return fmt.Errorf("%w: config %s", errDestructive, strings.Join(rest, " "))
 		}
 	case "update-ref":
 		// Two shapes and no other: HEAD moved from a named commit to a new one

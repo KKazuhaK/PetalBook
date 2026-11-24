@@ -101,6 +101,7 @@ export interface TenantBookOptions {
   // --max-spaces, when it was given: the site's quota.spacesPerPerson, read only.
   maxSpacesFlag?: number
   // A real invite of the server for the first administrator of a new tenant (nothing is mailed).
+  onTenantDeleted?: (id: string) => void
   makeInvite: (by: string, tenant: string, fill: { username: string; name: string; email: string }) => CreatedInvite & { tenant: string; siteAdmin: boolean }
 }
 
@@ -252,6 +253,7 @@ export function createTenantBook(o: TenantBookOptions) {
     lowerFor,
     quotaOf,
     registrationStored: anyOpen,
+    exists: (id: string) => tenants.has(id),
     // Whether daily.own / daily.api are in effect for a person's tenant (the mock has one world: the default).
     effective: (key: string): unknown => effectiveOf(DEFAULT_TENANT, DEFS.find((d) => d.key === key)!).effective,
     // Returns undefined for a path that is not this book's.
@@ -347,6 +349,7 @@ export function createTenantBook(o: TenantBookOptions) {
           if (t.default) throw new HttpError(409, 'default_tenant', 'the default tenant cannot be deleted')
           tenants.delete(id)
           tenantRows.delete(id)
+          o.onTenantDeleted?.(id)
           return { status: 204 }
         }
       }

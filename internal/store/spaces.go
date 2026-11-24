@@ -38,7 +38,7 @@ func InsertSpace(ctx context.Context, q Q, tenantID, id, name, personalOf, inbox
 	if tenantID == "" {
 		tenantID = DefaultTenantID
 	}
-	if _, err := q.Exec(ctx, `INSERT INTO spaces(id, name, name_key, personal_of, inbox, created, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?)`, id, name, FoldName(name), owner, inbox, ms(now), tenantID); err != nil {
+	if _, err := q.Exec(ctx, `INSERT INTO spaces(id, name, name_key, personal_of, inbox, created, tenant_id, last_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, id, name, FoldName(name), owner, inbox, ms(now), tenantID, ms(now)); err != nil {
 		return err
 	}
 	return usageOfNewSpace(ctx, q, tenantID)
@@ -276,7 +276,7 @@ func SpaceOwner(ctx context.Context, q Q, spaceID string) (*User, string, error)
 // EnsureLocal makes the built-in user and the one space of single-user mode
 // exist, so drafts can refer to them like to any other user and space.
 func EnsureLocal(ctx context.Context, q Q, spaceID, spaceName string, now time.Time) error {
-	if _, err := q.Exec(ctx, `INSERT INTO users(`+userCols+`) VALUES (?, 'local', 'Local user', '', 'admin', 0, ?, 0, 0, ?, 1)
+	if _, err := q.Exec(ctx, `INSERT INTO users(`+userCols+`) VALUES (?, 'local', 'Local user', '', 'admin', 0, ?, 0, 0, ?, 1, 0)
 		ON CONFLICT (id) DO NOTHING`, LocalUserID, ms(now), DefaultTenantID); err != nil {
 		return err
 	}

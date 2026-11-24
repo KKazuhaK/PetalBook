@@ -739,7 +739,7 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 		}
 		b.row.Issuer = b.cfg.BaseURL
 		if b.row.AutoCreate && len(b.cfg.Organizations) == 0 {
-			return nil, coded(400, "github_auto_create_needs_org", "name at least one organisation: anyone with a GitHub account could otherwise make an account here")
+			return nil, coded(400, "auto_create_needs_org", "name at least one organisation: anyone with a GitHub account could otherwise make an account here")
 		}
 	case KindSAML:
 		if !strings.HasPrefix(s.cfg.PublicURL, "https://") {

@@ -29,6 +29,25 @@ export interface SpaceInfo {
   // the space only through groups, and whether a group of theirs is a member.
   directRole?: SpaceRole | ''
   viaGroups?: boolean
+  // What the space's copy on the server is and what the storage policy asks of
+  // it (docs/api.md, "Server storage"). Absent in single-user mode.
+  storage?: SpaceStorage
+}
+
+// What a space's copy on the server is.
+export type CacheState = 'local' | 'full' | 'partial' | 'evicted' | 'restoring'
+// A requirement of the storage policy that the space does not meet yet: any
+// remote, or one through the provider of that id (2.7b's connections).
+export interface RemoteNotice {
+  required: string
+  deadline: string
+  overdue: boolean
+}
+export interface SpaceStorage {
+  cache: CacheState
+  assets: 'space' | 'repository'
+  // null unless the policy asks something of this space that it does not have yet.
+  remote: RemoteNotice | null
 }
 export interface MetaResponse {
   version: string
@@ -433,22 +452,51 @@ export interface PageVersion {
 export type RemoteState = 'ok' | 'offline' | 'rewritten' | 'error'
 export type SyncState = 'local' | RemoteState
 
-export type RemoteCredential = { type: 'ssh'; publicKey: string; fingerprint: string } | { type: 'token'; username: string }
+export type RemoteCredential =
+  | { type: 'ssh'; publicKey: string; fingerprint: string }
+  | { type: 'token'; username: string }
+  // A provider's connection (docs/api.md, "Connections"): no secret is stored for the space or returned.
+  | { type: 'connection'; provider: string; via: 'app'; installationId: number; account: string; repoId: number }
+  | { type: 'connection'; provider: string; via: 'user'; user: { id: string; username: string }; login: string; account?: string; repoId: number }
 
 export interface Remote {
   url: string
   branch: string
+  // The provider the remote goes through (`git` for a plain address).
+  provider: string
   credential: RemoteCredential
   state: RemoteState
   // Absent before the first time the server saw the remote.
   lastSync?: string
   // In words fit to show; empty when all is well.
   error: string
+  // What `error` state needs, for choosing what to offer: `auth`, `hostkey`, `clone`, `rescued` or a
+  // connection code (see ConnectionErrorCode). A code this client does not know is treated like `auth`.
+  errorCode: string
   // SSH only: the host key trusted on first connection.
   hostKey?: string
   // Set when `state` is `rewritten`.
   rewritten: { lastGood: string; remote: string } | null
 }
+
+// How far moving the attachments of a space into its attachment repository has come.
+export type AssetMoveState = 'copying' | 'switching' | 'done' | 'failed'
+export interface AssetMove {
+  state: AssetMoveState
+  files: number
+  filesDone: number
+  bytes: number
+  bytesDone: number
+  error: string
+}
+// The attachment repository of a space: a Remote, and the move.
+export interface AssetsRemote extends Remote {
+  move: AssetMove | null
+}
+// What `PUT .../remote/assets` takes: a Remote's body, or a repository to make or find on a provider.
+export type ConnectAssetsInput =
+  | ConnectRemoteInput
+  | { sync: { provider: string; owner: string; name: string; private?: boolean; description?: string; create?: boolean; via?: ConnectionVia } }
 
 export interface RemoteKey {
   publicKey: string
@@ -459,8 +507,164 @@ export interface ConnectRemoteInput {
   url: string
   branch?: string
   // A token left out while the space already has one keeps it.
-  credential: { type: 'ssh' } | { type: 'token'; username?: string; token?: string }
+  credential: { type: 'ssh' } | { type: 'token'; username?: string; token?: string } | { type: 'connection'; provider: string; via: ConnectionVia }
 }
+
+// --- connections (docs/api.md, "Connections") ----------------------------------------------
+
+export type ConnectionVia = 'app' | 'user'
+export type ConnectionErrorCode = 'connection_expired' | 'connection_missing' | 'installation_gone' | 'provider_not_configured' | 'app_missing_permission'
+
+export interface Connection {
+  login: string
+  accountId: string
+  state: 'ok' | 'expired'
+  connected: string
+  // Absent when the platform does not expire tokens.
+  refreshExpires?: string
+  // How many spaces sync through this connection.
+  spaces: number
+}
+
+export interface ProviderCapabilities {
+  createRepo: boolean
+  installations: boolean
+  connectAccount: boolean
+  storageTarget: boolean
+  partialSync: 'yes' | 'no' | 'unknown'
+}
+
+// A platform the server syncs spaces with, and the caller's connection to it.
+export interface Provider {
+  id: string
+  type: string
+  host: string
+  name: string
+  owner: string
+  capabilities: ProviderCapabilities
+  configured: boolean
+  app: { name: string; slug: string; htmlUrl: string; installUrl: string } | null
+  // Whether people can connect their account.
+  userAuthorization: boolean
+  connection: Connection | null
+  // Empty repositories that failed attempts to make a space left on the platform, newest first.
+  leftovers: ConnectionLeftover[]
+}
+
+// A reminder: the repository was made and kept; `spaceName` is what the space was to be called.
+export interface ConnectionLeftover {
+  repoId: number
+  fullName: string
+  htmlUrl: string
+  spaceName: string
+  created: string
+}
+
+export interface ConnectionOwner {
+  login: string
+  type: 'User' | 'Organization'
+  // Whose token creates the repository: the caller's own, or the installation's.
+  via: ConnectionVia
+  installationId: number | null
+  // The caller's own account, where the App is not installed: no repository can be made there until it is.
+  needsInstall: boolean
+}
+
+export interface ConnectionRepo {
+  id: number
+  fullName: string
+  private: boolean
+  defaultBranch: string
+  htmlUrl: string
+  canPush: boolean
+}
+
+export interface CursorPage<T> {
+  items: T[]
+  // Opaque; empty after the last page.
+  next: string
+}
+
+// A new space stored on a provider (`POST /api/spaces`, `storage.sync`).
+export interface NewSync {
+  provider: string
+  owner: string
+  name: string
+  private?: boolean
+  description?: string
+  // False connects the space to the one that exists already.
+  create?: boolean
+  // Also make an attachment repository, on the same owner and with the same credential (docs/api.md,
+  // "Server storage"): `true` names it `<name>-assets`. Left out, the administrator's default applies.
+  assets?: boolean | { name: string }
+}
+
+export interface CreateSpaceInput {
+  name: string
+  inbox?: string
+  sync?: NewSync
+}
+
+// The settings of the server's one GitHub App as an administrator sees them: never a secret.
+export type AdminGitHub =
+  | { configured: false; callbackUrl: string }
+  | {
+      configured: true
+      appId: string
+      clientId: string
+      slug: string
+      name: string
+      owner: string
+      htmlUrl: string
+      installUrl: string
+      privateKey: { set: boolean; fingerprint: string }
+      clientSecret: { set: boolean }
+      callbackUrl: string
+      permissions: Record<string, string>
+      // Of administration, contents and metadata: what the App lacks. A warning only.
+      missing: string[]
+      userAuthorization: boolean
+      checked: string
+      spaces: number
+      authorizations: number
+      // Installations that lack a permission, from the last check.
+      gaps: GitHubGap[]
+      // Whether the App can be installed on any account (a person can only install it on their own account when it can); null: not known.
+      anyAccount: boolean | null
+    }
+
+export interface GitHubGap {
+  installationId: number
+  account: string
+  missing: string[]
+}
+
+// What the administrator's browser posts to GitHub to make the App (docs/api.md, "POST /api/admin/connections/{provider}/manifest").
+export interface GitHubManifestStart {
+  url: string
+  manifest: Record<string, unknown>
+}
+
+export interface GitHubInstallation {
+  id: number
+  account: { login: string; type: 'User' | 'Organization'; id: number }
+  repositorySelection: 'all' | 'selected'
+  suspended: boolean
+  permissions: Record<string, string>
+  htmlUrl: string
+  // The ids of the tenants it is shared with, sorted; none: not shared.
+  tenants: string[]
+  spaces: number
+}
+
+export interface PutAdminGitHubInput {
+  appId?: string
+  privateKey?: string
+  // "" removes the client id and the secret.
+  clientId?: string
+  clientSecret?: string
+}
+
 
 // A refusal of the daily-text endpoints says why with a stable code in `error`, next to `message`, and the
 // thing it is about: header_reenter / header_missing (header), not_json, too_large, path_error /
@@ -521,6 +725,24 @@ export type ErrorCode =
   | 'last_owner'
   | 'personal_space'
   | 'busy'
+  | 'remote_required'
+  | 'not_cached'
+  | 'restoring'
+  | 'space_full'
+  | 'provider_not_configured'
+  | 'not_connected'
+  | 'owner_not_allowed'
+  | 'name_taken'
+  | 'provider_refused'
+  | 'repo_not_in_installation'
+  | 'push_failed'
+  | 'key_invalid'
+  | 'app_rejected'
+  | 'client_rejected'
+  | 'provider_in_use'
+  | 'app_missing_permission'
+  | 'app_not_installed'
+  | 'public_url_needed'
   | 'rate_limited'
   | 'captcha_failed'
   | 'local_login_refused'
@@ -567,6 +789,8 @@ export interface User {
   // The users list only: how many passkeys and single sign-on identities the person has.
   passkeys?: number
   sso?: number
+  // The storage policy does not ask the spaces this user owns for a remote (absent when false).
+  remoteExempt?: boolean
 }
 
 export interface SessionInfo {
@@ -907,6 +1131,47 @@ export interface AdminSpace {
   sizeBytes: number | null
   sizeAt: string | null
   sync: SyncState
+  // What the copy on the server is, per space (docs/api.md, "Server storage").
+  storage: AdminSpaceStorage
+}
+export interface AdminSpaceStorage {
+  cache: CacheState
+  pinned: boolean
+  exempt: boolean
+  lastUsed: string | null
+  cloneBytes: number
+  indexBytes: number
+  assetCacheBytes: number
+  assets: 'space' | 'repository'
+  remote: RemoteNotice | null
+}
+export interface AdminStorage {
+  // require: null, 'any', or the id of a provider (2.7b's connections, such as 'github').
+  remotes: { require: string | null; scope: 'new' | 'all'; graceDays: number; since: string | null }
+  hosts: { allowed: string[]; fromFlag: boolean }
+  localSpaces: { maxBytes: number | null }
+  cache: { partial: boolean; evictAfterDays: number | null; minIdleHours: number; clonesBytes: number | null; minFreeBytes: number | null; assetsBytes: number }
+  assets: { newSpaces: boolean }
+  git: { version: string; partialClone: boolean }
+  affected: { inGrace: number; overdue: number; exempt: number }
+}
+// What a PUT may change: any of the sections, each partly.
+export interface PutAdminStorage {
+  remotes?: Partial<AdminStorage['remotes']>
+  hosts?: { allowed?: string[] }
+  localSpaces?: { maxBytes?: number | null }
+  cache?: Partial<AdminStorage['cache']>
+  assets?: Partial<AdminStorage['assets']>
+}
+export interface StorageStatus {
+  spaces: { local: number; full: number; partial: number; evicted: number; restoring: number }
+  cloneBytes: number
+  indexBytes: number
+  assetCacheBytes: number
+  clonesBudget: number | null
+  assetsBudget: number | null
+  restoresWaiting: number
+  remotes: { inGrace: number; overdue: number }
 }
 export interface AdminSpaceList {
   items: AdminSpace[]
@@ -915,6 +1180,9 @@ export interface AdminSpaceList {
 }
 export interface AdminSpacesParams {
   q?: string
+  // Keeps the spaces in one cache state, or (overdue) those past their deadline for a remote.
+  cache?: CacheState
+  overdue?: boolean
   cursor?: string
   limit?: number
 }
@@ -939,6 +1207,7 @@ export interface ServerStatus {
   // Absent where the platform cannot say.
   diskFreeBytes?: number
   goVersion: string
+  storage: StorageStatus
 }
 
 // --- home: the daily text and favourites (docs/api.md, "Home") ---------------------

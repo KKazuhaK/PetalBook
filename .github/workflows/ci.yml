@@ -1,8 +1,8 @@
 name: ci
 
 # Every check is a make target (see the Makefile); this file only decides
-# where each one runs. A pull request gets the fast set, and a push to main
-# gets all of it. The one check branch protection requires is the "ci" job.
+# where each one runs. A pull request gets lint, go and web, and a push to main
+# gets those and the slow jobs besides. The one check branch protection requires is the "ci" job.
 on:
   pull_request:
   push:
@@ -57,14 +57,13 @@ jobs:
           else
             # --no-renames: a file moved out of the Go or web tree is listed
             # under both names, not only the new one (docs/ would skip the checks).
-            files="$(git diff --name-only --no-renames "$BASE...$HEAD")"
-            # When in doubt, run: an empty diff runs everything.
-            if [ -z "$files" ]; then
-              go=true
-              web=true
-            fi
-            while IFS= read -r f; do
-              [ -n "$f" ] || continue
+            # -z and quotePath=false: names are NUL-separated and never quoted,
+            # so a non-ASCII or odd name reaches the patterns below as it is.
+            list="$RUNNER_TEMP/changed-files"
+            git -c core.quotePath=false diff --name-only -z --no-renames "$BASE...$HEAD" > "$list"
+            seen=false
+            while IFS= read -r -d '' f; do
+              seen=true
               case "$f" in
                 web/*) web=true ;;
                 docs/*) ;;
@@ -77,133 +76,86 @@ jobs:
               case "$f" in
                 Makefile | .github/*) web=true ;;
               esac
-            done <<<"$files"
+              # internal/links/links_test.go reads this fixture, so it counts for both.
+              case "$f" in
+                web/src/markdown/__fixtures__/links.json) go=true ;;
+              esac
+            done < "$list"
+            # When in doubt, run: an empty diff runs everything.
+            if [ "$seen" = false ]; then
+              go=true
+              web=true
+            fi
           fi
           echo "go=$go" >> "$GITHUB_OUTPUT"
           echo "web=$web" >> "$GITHUB_OUTPUT"
           echo "go=$go web=$web"
 
-  # The Go tests under the race detector are split over three machines, each
-  # a make target, that together are all of "make test": the two packages that
-  # take longest, and the rest (with gofmt, go mod tidy, go vet and the
-  # vulnerability check). The tests need no web build: internal/webui/dist holds
-  # only a placeholder.
-  go-index:
-    name: go-index
-    needs: changes
-    if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # Caches the downloaded modules and the build cache (compiled packages, race
-      # builds included) under a key made of go.sum.
-      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: go.sum
-      # setup-go installs the go line of go.mod; fail if any other Go is on PATH.
-      - name: Go version matches go.mod
-        shell: bash
-        run: |
-          want="$(go list -m -f '{{.GoVersion}}')"
-          case "$(go env GOVERSION)" in
-            "go$want" | "go$want".*) ;;
-            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
-          esac
-      - run: make test-index
-
-  go-space:
-    name: go-space
-    needs: changes
-    if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # Caches the downloaded modules and the build cache (compiled packages, race
-      # builds included) under a key made of go.sum.
-      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: go.sum
-      # setup-go installs the go line of go.mod; fail if any other Go is on PATH.
-      - name: Go version matches go.mod
-        shell: bash
-        run: |
-          want="$(go list -m -f '{{.GoVersion}}')"
-          case "$(go env GOVERSION)" in
-            "go$want" | "go$want".*) ;;
-            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
-          esac
-      - run: make test-space
-
-  go-rest:
-    name: go-rest
-    needs: changes
-    if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # Caches the downloaded modules and the build cache (compiled packages, race
-      # builds included) under a key made of go.sum.
-      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: go.sum
-      # setup-go installs the go line of go.mod; fail if any other Go is on PATH.
-      - name: Go version matches go.mod
-        shell: bash
-        run: |
-          want="$(go list -m -f '{{.GoVersion}}')"
-          case "$(go env GOVERSION)" in
-            "go$want" | "go$want".*) ;;
-            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
-          esac
-      # gofmt, go mod tidy, go vet and the tests of every other package.
-      - run: make check-go-rest
-      - run: make vuln
-
-  # The web checks are two jobs: the typecheck and lint, and the tests, which
-  # take longer.
-  web-static:
-    name: web-static
-    needs: changes
-    if: needs.changes.outputs.web == 'true'
+  # Everything that only reads the code: formatting, go vet, go mod tidy, the web
+  # typecheck and ESLint, the workflow files, known vulnerabilities, and a
+  # secret scan of the commits being added. It always runs, whatever changed.
+  lint:
+    name: lint
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
     steps:
+      # The whole history: the secret scan reads the commits of the push or pull request.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
+      # Its own cache key: lint compiles little, and sharing the key would let
+      # it save a thin cache before the go job saves the race build cache.
+      - uses: ./.github/actions/go
+        with:
+          cache-suffix: lint
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26
           cache: npm
           cache-dependency-path: web/package-lock.json
-      # Installs from package-lock.json (npm ci), then typecheck and lint.
-      - run: make check-web-static
+      - name: make lint
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # A pull request: its commits. A push: the commits it brought, or only
+          # the last one when the old tip is missing: a new branch (all zeros) or
+          # a forced push (a commit this checkout does not have).
+          if [ "$EVENT" = "pull_request" ]; then
+            range="$BASE..$HEAD"
+          elif [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            range="0000000000000000000000000000000000000000..$SHA"
+          else
+            range="$BEFORE..$SHA"
+          fi
+          make lint SECRETS_RANGE="$range"
 
-  web-test:
-    name: web-test
+  # All the Go tests under the race detector. The tests need no web build:
+  # internal/webui/dist holds only a placeholder.
+  go:
+    name: go
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/go
+      - run: make test
+
+  web:
+    name: web
     needs: changes
     if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
@@ -221,47 +173,24 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: make web-test
 
-  # Cheap, and a broken workflow file should never wait for a path filter.
-  actionlint:
-    name: actionlint
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: go.sum
-      - name: Go version matches go.mod
-        shell: bash
-        run: |
-          want="$(go list -m -f '{{.GoVersion}}')"
-          case "$(go env GOVERSION)" in
-            "go$want" | "go$want".*) ;;
-            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
-          esac
-      - run: make actionlint
-
-  # From here on only pushes to main run. A pull request gets the fast set
-  # above; these need services, a second toolchain, or a long build.
+  # From here on only pushes to main run. A pull request gets the jobs above;
+  # these need services, a second toolchain, or a long build.
 
   # On a runner the database is a service container instead of the throwaway
   # cluster scripts/test-postgres.sh makes locally; the script uses the one in
   # PETALBOOK_TEST_POSTGRES when that is set, so this is still make test-postgres.
   # The same service container also serves make contract-postgres (the contract
   # tests against an accounts-mode server on PostgreSQL), which makes a database
-  # of its own in it; that is why it runs here and not in the contract job, which
-  # would need a second service container and the same connection-limit step.
+  # of its own in it. make contract runs the same tests on SQLite.
   postgres:
     name: postgres
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Above scripts/test-postgres.sh's own 30 minutes for go test plus the
+    # contract runs, so a slow test ends with go test's report, not a cancel.
+    # The timeouts follow the measured times with headroom; tune them after
+    # the first runs on main.
+    timeout-minutes: 50
     permissions:
       contents: read
     services:
@@ -284,19 +213,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: go.sum
-      - name: Go version matches go.mod
-        shell: bash
-        run: |
-          want="$(go list -m -f '{{.GoVersion}}')"
-          case "$(go env GOVERSION)" in
-            "go$want" | "go$want".*) ;;
-            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
-          esac
+      - uses: ./.github/actions/go
       # The same limit the local cluster gets: go test runs packages in
       # parallel, each with a pool of its own, and 100 is too few.
       - name: Allow more connections
@@ -318,32 +235,23 @@ jobs:
           node-version: 26
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - run: make contract
       - run: make contract-postgres
 
-  casefold:
-    name: casefold
+  # Where the code meets other platforms: the tests on a case-folding file
+  # system (as macOS and Windows have), and a build for every release target.
+  compat:
+    name: compat
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: go.sum
-      - name: Go version matches go.mod
-        shell: bash
-        run: |
-          want="$(go list -m -f '{{.GoVersion}}')"
-          case "$(go env GOVERSION)" in
-            "go$want" | "go$want".*) ;;
-            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
-          esac
+      - uses: ./.github/actions/go
       # The runner's kernel may be older than tmpfs casefold (Linux 6.13), and
       # Ubuntu restricts the user namespaces the script's local mode needs. An
       # ext4 image made with -O casefold works on any kernel since 5.2; it is
@@ -363,94 +271,26 @@ jobs:
           chattr +F "$mnt/t"
           echo "CASEFOLD_DIR=$mnt/t" >> "$GITHUB_ENV"
       - run: make test-casefold
-
-  # The same Go tests without the race detector, which gives a few of them their
-  # full size (the pull request runs those at a smaller one under the detector).
-  test-full:
-    name: test-full
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: go.sum
-      - name: Go version matches go.mod
-        shell: bash
-        run: |
-          want="$(go list -m -f '{{.GoVersion}}')"
-          case "$(go env GOVERSION)" in
-            "go$want" | "go$want".*) ;;
-            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
-          esac
-      - run: make test-full
-
-  # scripts/contract.sh runs the single-user and the accounts-mode server one
-  # after the other, so one job covers both.
-  contract:
-    name: contract
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: go.sum
-      - name: Go version matches go.mod
-        shell: bash
-        run: |
-          want="$(go list -m -f '{{.GoVersion}}')"
-          case "$(go env GOVERSION)" in
-            "go$want" | "go$want".*) ;;
-            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
-          esac
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 26
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: make contract
+      # The full-size stress tests (not under -race, see raceDetector in
+      # internal/index and internal/space) only run here, on main.
+      - run: make test-fullsize
+      # Release builds are static (no cgo): every release target must still compile.
+      - run: make cross-compile
 
   # The release build: the web app is built and embedded, so a break in
   # either, or in the way they are put together, shows up here and not on tag day.
-  release-build:
-    name: release-build
+  release:
+    name: release
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: go.sum
-      - name: Go version matches go.mod
-        shell: bash
-        run: |
-          want="$(go list -m -f '{{.GoVersion}}')"
-          case "$(go env GOVERSION)" in
-            "go$want" | "go$want".*) ;;
-            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
-          esac
+      - uses: ./.github/actions/go
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26
@@ -459,56 +299,10 @@ jobs:
       - run: make release
       # With the app embedded the handler's tests run against the real build.
       - run: go test ./internal/webui/ ./cmd/...
-
-  # Release builds are static (no cgo): every release target must still compile.
-  # Each platform builds the whole dependency tree again, which is what took
-  # the time when all six ran after the release build in one job; one machine
-  # per OS (two architectures each) is far quicker.
-  cross-compile:
-    name: cross-compile (${{ matrix.os }})
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [linux, darwin, windows]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: go.sum
-      - name: Go version matches go.mod
-        shell: bash
-        run: |
-          want="$(go list -m -f '{{.GoVersion}}')"
-          case "$(go env GOVERSION)" in
-            "go$want" | "go$want".*) ;;
-            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
-          esac
-      - run: make cross-compile OSES=${{ matrix.os }}
-
-  docker:
-    name: docker
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       # The Dockerfile builds the web app and the binary itself; nothing is
       # pushed, and one architecture is enough to prove the build works (the
       # release builds both).
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -525,7 +319,7 @@ jobs:
   ci:
     name: ci
     if: always()
-    needs: [changes, go-index, go-space, go-rest, web-static, web-test, actionlint, postgres, casefold, test-full, contract, release-build, cross-compile, docker]
+    needs: [changes, lint, go, web, postgres, compat, release]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
