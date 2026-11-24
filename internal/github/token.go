@@ -58,6 +58,8 @@ func (s *Service) gitToken(ctx context.Context, r *store.Remote, checkMember boo
 			return "", offlineErr(s.wrap(err))
 		case githubapp.IsStatus(err, http.StatusUnauthorized):
 			return "", credErr(CodeNotConfigured, "GitHub no longer accepts the App's key; an administrator must fix the App", err)
+		case githubapp.IsPermissionRefusal(err):
+			return "", credErr(CodeMissingPermission, "the App or its installation lacks the Contents permission; an administrator must add it to the App on GitHub and accept the change in the installation's settings", err)
 		case githubapp.IsStatus(err, http.StatusNotFound, http.StatusForbidden, http.StatusUnprocessableEntity):
 			return "", credErr(CodeInstallationGone, "the App is no longer installed there, or its installation no longer reaches the repository; install it again or add the repository", err)
 		}

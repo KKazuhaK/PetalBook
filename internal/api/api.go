@@ -699,6 +699,9 @@ func (s *server) failGitHub(w http.ResponseWriter, e *github.Error) {
 	if e.Repo != nil {
 		body.Repo = &githubRepoResp{e.Repo.ID, e.Repo.FullName, e.Repo.HTMLURL}
 	}
+	if len(e.Missing) > 0 {
+		body.Missing = e.Missing
+	}
 	if e.Code == github.CodeRateLimited {
 		secs := int((e.RetryAfter + time.Second - 1) / time.Second)
 		w.Header().Set("Retry-After", strconv.Itoa(max(secs, 1)))

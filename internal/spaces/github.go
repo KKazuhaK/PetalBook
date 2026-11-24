@@ -197,7 +197,7 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 			m.log.Warn("could not remember a repository left empty by a failed space", "repo", repo.FullName, "error", rerr)
 		}
 		var he *github.Error
-		if errors.As(err, &he) && he.Code == github.CodeRepoNotInInstall {
+		if errors.As(err, &he) && (he.Code == github.CodeRepoNotInInstall || he.Code == github.CodeMissingPermission) {
 			he.Repo = repo.Ref()
 			return he
 		}

@@ -343,6 +343,15 @@ func TestCreatingASpaceFailsCleanly(t *testing.T) {
 			t.Fatalf("%s", nop.raw)
 		}
 		a.fake.SetAccount("kazuhahub", func(ac *ghAccount) { ac.NoCreate = false })
+		// An App without the Contents permission: its own code, naming the permission,
+		// and the repository that was made is named too.
+		a.fake.AppPerms = map[string]string{"administration": "write", "metadata": "read"}
+		mp := member.do("POST", "/api/spaces", body("kazuhahub", "noperm", true)).want(t, 403, "github_app_missing_permission")
+		if m, _ := mp.body["missing"].([]any); len(m) != 1 || m[0] != "contents" || mp.body["repo"] == nil {
+			t.Fatalf("%s", mp.raw)
+		}
+		a.fake.AppPerms = map[string]string{"administration": "write", "contents": "write", "metadata": "read"}
+		member.do("DELETE", fmt.Sprintf("/api/github/leftovers/%v", mp.body["repo"].(map[string]any)["id"]), nil).want(t, 204, "")
 		// A first push that never works: 502 naming the empty repository, no space.
 		a.fake.HiddenGit = 100
 		r := member.do("POST", "/api/spaces", body("kazuhahub", "slow", true)).want(t, 502, "github_push_failed")

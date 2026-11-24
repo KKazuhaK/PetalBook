@@ -1354,7 +1354,7 @@ allows any).
   it), `rescued` (commits that could not be pushed were kept aside), and for a
   `github` credential `github_authorization_expired`,
   `github_authorization_missing`, `github_installation_gone`,
-  `github_not_configured` (see "GitHub", "When a GitHub credential stops
+  `github_app_missing_permission`, `github_not_configured` (see "GitHub", "When a GitHub credential stops
   working"). A client shows `error` and uses `errorCode` only to choose what
   to offer (reconnect GitHub, open the installation's settings, ...). Codes
   may be added; a client treats one it does not know like `auth`.
@@ -1710,10 +1710,11 @@ When a step fails:
 - Steps 1 and 2: nothing was made anywhere.
 - Step 3: the space on disk is removed. `409 github_name_taken` when the
   owner already has a repository of that name (a client can offer
-  `create: false` when it is the caller's); `403 github_no_permission` when
-  GitHub refuses (the App lacks Administration write, the organisation does not
-  let this person create repositories, or does not allow private ones:
-  `message` passes on what GitHub said); `400 invalid` for any other refusal
+  `create: false` when it is the caller's); `403 github_app_missing_permission`
+  when the App or its installation lacks the Administration permission
+  (`missing` names it); `403 github_no_permission` when GitHub refuses a person
+  (the organisation does not let this person create repositories, or does not
+  allow private ones: `message` passes on what GitHub said); `400 invalid` for any other refusal
   of the fields; `503 unavailable` when GitHub cannot be reached;
   `429 rate_limited` when GitHub limits the server.
 - Steps 4 to 6: the space on disk is removed. The repository stays on GitHub,
@@ -1819,6 +1820,7 @@ the server next mints or renews a token, or when Git is refused:
 | `github_authorization_expired` | the refresh token expired or was revoked | the user the remote names connects again |
 | `github_authorization_missing` | that user disconnected, was disabled or deleted, or lost `manage` in the space (directly and through every group) | they connect again, or someone with `manage` switches the credential |
 | `github_installation_gone` | the App was uninstalled or suspended there, or the repository was taken out of its selection | install it again, or add the repository |
+| `github_app_missing_permission` | GitHub refuses the installation's token because the App or its installation lacks Contents | an administrator gives the App Contents (write) and accepts the change in the installation's settings; then re-check in the administration |
 | `github_not_configured` | the server's App is not configured, or its key no longer works | an administrator fixes the App |
 
 In every case nothing is lost: reads go on from what the server has; writes
@@ -1838,6 +1840,7 @@ fixed (a user connects again, an administrator saves the App).
 | `github_owner_not_allowed` | 403 | the owner is not one of the caller's owners; the installation is not shared with the caller's tenant and the caller's connection does not reach the repository |
 | `github_name_taken` | 409 | the owner has a repository of that name |
 | `github_no_permission` | 403 | GitHub refused to create the repository (`message` says what GitHub said) |
+| `github_app_missing_permission` | 403 | the App, or its installation, lacks a permission the call needs (a token GitHub refused with a 403 or 422 that talks about permissions); `missing` lists the names (`administration`, `contents`), `repo` is set when the server had made a repository. It is not the same as the next one: the permission is the problem, not the repository. As the `errorCode` of a space's remote it says syncing needs a permission |
 | `github_repo_not_in_installation` | 409 | no installation reaches the repository and it could not be added; the answer has `repo` when the server made it |
 | `github_push_failed` | 502 | the repository was made but the first push failed; the answer has `repo` |
 | `invalid` | 400 | a field breaks a rule above, or GitHub refused one |

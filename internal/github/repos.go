@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/KKazuhaK/PetalBook/internal/githubapp"
@@ -351,8 +352,10 @@ func (s *Service) CreateRepo(ctx context.Context, p *Plan, n NewRepoSpec) (*Repo
 			switch {
 			case githubapp.IsStatus(err, http.StatusUnauthorized) && !limited(err):
 				return nil, errf(http.StatusConflict, CodeNotConfigured, "GitHub no longer accepts the App's key; an administrator must fix the App")
+			case githubapp.IsPermissionRefusal(err):
+				return nil, s.missingPermission(ctx, st, p.InstallationID, administrationWrite)
 			case githubapp.IsStatus(err, http.StatusUnprocessableEntity, http.StatusForbidden, http.StatusNotFound) && !limited(err):
-				return nil, errf(http.StatusForbidden, CodeNoPermission, "the App does not have the Administration permission there; an administrator must grant it")
+				return nil, errf(http.StatusForbidden, CodeNoPermission, "the App is not installed there, or GitHub refused it a token for the installation")
 			}
 			return nil, s.wrap(err)
 		}
@@ -391,6 +394,11 @@ func (s *Service) createError(ctx context.Context, p *Plan, err error) error {
 		}
 		return errf(http.StatusBadRequest, CodeInvalid, "GitHub refused the repository: %s", said)
 	case http.StatusForbidden, http.StatusNotFound:
+		if p.Via == ViaApp && githubapp.IsPermissionRefusal(err) { // the installation's token may not create it
+			if st, serr := s.need(ctx); serr == nil {
+				return s.missingPermission(ctx, st, p.InstallationID, administrationWrite)
+			}
+		}
 		return errf(http.StatusForbidden, CodeNoPermission, "GitHub refused to create the repository: %s", said)
 	case http.StatusUnauthorized:
 		if p.Via == ViaUser {
@@ -411,15 +419,58 @@ type Cred struct {
 	RepoID         int64
 }
 
-var contentsWrite = map[string]string{"contents": "write"}
+var (
+	contentsWrite       = map[string]string{"contents": "write"}
+	administrationWrite = map[string]string{"administration": "write"}
+)
+
+// hasPermission reports whether a set of granted permissions holds one at
+// least at the level wanted.
+func hasPermission(have map[string]string, name, want string) bool {
+	got := have[name]
+	return got != "" && (want != "write" || got == "write")
+}
+
+// missingPermission is the answer for a token GitHub refused because the App
+// or its installation lacks permissions: it names which of those asked for
+// are missing, from what GitHub says the installation has and what was stored
+// of the App. When that finds nothing (the stored view is old) it names all
+// that were asked for.
+func (s *Service) missingPermission(ctx context.Context, st *appState, installation int64, asked map[string]string) *Error {
+	var instPerms map[string]string
+	instKnown := false
+	if installation > 0 {
+		if in, err := st.app.Installation(ctx, installation); err == nil {
+			instPerms, instKnown = in.Permissions, true
+		}
+	}
+	var names []string
+	for name, want := range asked {
+		if !hasPermission(st.rec.Permissions, name, want) || (instKnown && !hasPermission(instPerms, name, want)) {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		for name := range asked {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	e := errf(http.StatusForbidden, CodeMissingPermission, "the GitHub App or its installation lacks the %s permission; an administrator must add it to the App on GitHub and accept the change in the installation's settings", strings.Join(names, ", "))
+	e.Missing = names
+	return e
+}
 
 // reaches asks for the narrow token a space syncs with: false when the
-// installation does not reach the repository (a 404 or 422 of GitHub).
+// installation does not reach the repository (a 404 or 422 of GitHub); an
+// App or installation that lacks the permission is an error of its own.
 func (s *Service) reaches(ctx context.Context, st *appState, installation, repoID int64) (bool, error) {
 	_, err := st.app.Token(ctx, githubapp.TokenSpec{Installation: installation, RepoIDs: []int64{repoID}, Perms: contentsWrite})
 	switch {
 	case err == nil:
 		return true, nil
+	case githubapp.IsPermissionRefusal(err):
+		return false, s.missingPermission(ctx, st, installation, contentsWrite)
 	case githubapp.IsStatus(err, http.StatusNotFound, http.StatusUnprocessableEntity, http.StatusForbidden) && !limited(err):
 		return false, nil
 	case githubapp.IsStatus(err, http.StatusUnauthorized) && !limited(err):
@@ -524,7 +575,7 @@ func (s *Service) resolveExisting(ctx context.Context, sc store.Scope, userID, o
 		return cred, repo, nil
 	}
 	var he *Error
-	if !errors.As(aerr, &he) || (he.Code != CodeRepoNotInInstall && he.Code != CodeOwnerNotAllowed && he.Code != CodeNotAuthorized) {
+	if !errors.As(aerr, &he) || (he.Code != CodeRepoNotInInstall && he.Code != CodeOwnerNotAllowed && he.Code != CodeNotAuthorized && he.Code != CodeMissingPermission) {
 		return nil, nil, aerr
 	}
 	cred, repo, uerr := s.existingUser(ctx, userID, owner, name)

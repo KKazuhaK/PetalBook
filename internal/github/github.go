@@ -26,23 +26,26 @@ import (
 
 // Codes of the errors of the GitHub endpoints (docs/api.md, "GitHub").
 const (
-	CodeNotConfigured    = "github_not_configured"
-	CodeNotAuthorized    = "github_not_authorized"
-	CodeOwnerNotAllowed  = "github_owner_not_allowed"
-	CodeNameTaken        = "github_name_taken"
-	CodeNoPermission     = "github_no_permission"
-	CodeRepoNotInInstall = "github_repo_not_in_installation"
-	CodePushFailed       = "github_push_failed"
-	CodeKeyInvalid       = "github_key_invalid"
-	CodeAppRejected      = "github_app_rejected"
-	CodeClientRejected   = "github_client_rejected"
-	CodeAppInUse         = "github_app_in_use"
-	CodeInvalid          = "invalid"
-	CodeForbidden        = "forbidden"
-	CodeNotFound         = "not_found"
-	CodeRateLimited      = "rate_limited"
-	CodeUnavailable      = "unavailable"
-	CodeInternal         = "internal"
+	CodeNotConfigured   = "github_not_configured"
+	CodeNotAuthorized   = "github_not_authorized"
+	CodeOwnerNotAllowed = "github_owner_not_allowed"
+	CodeNameTaken       = "github_name_taken"
+	CodeNoPermission    = "github_no_permission"
+	// CodeMissingPermission: the App, or its installation, lacks a permission
+	// (the answer names them); a refusal of GitHub to a person is CodeNoPermission.
+	CodeMissingPermission = "github_app_missing_permission"
+	CodeRepoNotInInstall  = "github_repo_not_in_installation"
+	CodePushFailed        = "github_push_failed"
+	CodeKeyInvalid        = "github_key_invalid"
+	CodeAppRejected       = "github_app_rejected"
+	CodeClientRejected    = "github_client_rejected"
+	CodeAppInUse          = "github_app_in_use"
+	CodeInvalid           = "invalid"
+	CodeForbidden         = "forbidden"
+	CodeNotFound          = "not_found"
+	CodeRateLimited       = "rate_limited"
+	CodeUnavailable       = "unavailable"
+	CodeInternal          = "internal"
 
 	// The codes a space's remote shows (errorCode) when its credential stops working.
 	CodeAuthorizationExpired = "github_authorization_expired"
@@ -59,10 +62,12 @@ type RepoRef struct {
 
 // Error is a refusal with the code, status and message the API answers with.
 type Error struct {
-	Code       string
-	Status     int
-	Msg        string
-	Repo       *RepoRef
+	Code   string
+	Status int
+	Msg    string
+	Repo   *RepoRef
+	// Missing names the permissions the App or its installation lacks.
+	Missing    []string
 	RetryAfter time.Duration
 	Err        error
 }
@@ -138,6 +143,7 @@ func New(opt Options) (*Service, error) {
 		opt.SettingsTTL = time.Minute
 	}
 	opt.PublicURL = strings.TrimRight(opt.PublicURL, "/")
+	opt.Client.UseLogger(opt.Logger) // what GitHub refuses is told in the server's log
 	return &Service{opt: opt, log: opt.Logger, c: opt.Client, tokens: map[string]cachedUser{}, renewing: map[string]*renewal{}, gens: map[string]uint64{},
 		attempts: newAttemptStore(opt.Now)}, nil
 }
