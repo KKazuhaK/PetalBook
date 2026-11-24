@@ -6725,7 +6725,19 @@ administrator deletes is gone at once. An item is kept for `recycle.days`
   creation date when it is read, so a restored space has the deadline the policy
   in force gives it.
 - The purge job is the manager's (`RunRecycle`); it also deletes exports whose
-  days are over.
+  days are over. When `recycle.days` cannot be read, the round purges nothing
+  (it is never run on the default).
+- An action on an item (moving, restoring, purging) holds it while it runs; the
+  hourly look at items that are not at rest only takes over what a crash or a
+  failure left, never an action that is still running, however long it takes. A
+  restore whose item is not `restoring` any more when it ends puts nothing back.
+- A move between `DATA/spaces` (or `DATA/cache`) and `DATA/recycle` on different
+  filesystems is a copy (synced, written beside its destination and renamed into
+  place whole) and then a delete of the source; a copy cut short is started
+  again, so an item is never stuck `moving`.
+- Deleting a space whose clone is being restored from its remote (3.1) stops
+  that restore and waits for it, and closes the space's index-only handle (4.1):
+  nothing is written at its live place after the move.
 
 #### Recycle item
 
@@ -6761,6 +6773,11 @@ was left out (`{"restored": {...}, "skipped": [{"user": "…", "reason": "delete
 Purges now. Site administrators only (it frees the server's disk early; a
 tenant administrator waits for the date): `403 forbidden` otherwise. Needs a
 confirmation token from `POST /api/admin/confirm` (below). `204`.
+
+**As built:** `202` with the item: the purge is paced and may take long, so it
+starts in the background. The item is `purging` until it is gone (a restore of
+it answers `409 busy`); `space_purged` or `user_purged` is written when it is
+over; one that fails stays `purging` and the hourly job finishes it.
 
 ### Deleting a space
 
@@ -6867,9 +6884,16 @@ Their username stays taken while they are in the recycle bin.
   transaction, makes the person's item, marks the row, takes the group memberships
   out and puts the spaces under the item. A failure anywhere leaves a disabled
   person with fewer spaces and some items waiting under the marker, never a space
-  without an owner; asking again goes on from there and adopts them. The item
-  records whether the person was disabled before step 1; asked again after a
-  failure it records `disabled`, as the person already is.
+  without an owner; asking again goes on from there and adopts them. Before step 1
+  the deletion records on the person's row whether they were disabled, and then
+  each transfer and each membership left, so a deletion asked again after a
+  failure records what the first attempt knew: the item says the person was
+  enabled if they were before the first attempt, and lists every transfer.
+- A person who is disabled or deleted is never added to a space (the statement
+  refuses them), and a deleted person never counts as another owner of a space.
+  The last step also leaves any membership that slipped in after the plan (listed
+  in `left`); one whose leaving would leave a space without an owner refuses the
+  step (`409 conflict`), and asking again plans that space.
 - `DELETE /api/users/{id}` answers `409 heir_required` with `spaces` (`id`,
   `name`) before anything is changed; `409 conflict` for the caller themself and
   the last enabled site administrator (the preview lists them as `blockers` with
@@ -6887,9 +6911,14 @@ Their username stays taken while they are in the recycle bin.
   its own.
 - **Purging** an item of a person purges the spaces recycled with them first, then
   empties their row as described, in that order, so that a purge cut short is
-  finished at the next start. An item whose person is not deleted (a restore cut
-  short) removes only itself and what waited under it: it never touches the
-  person's data.
+  finished at the next start. A purge takes only the spaces recycled with that
+  item (never those waiting under the person's marker, which belong to a
+  deletion under way), and empties the person only while that item is the one
+  that holds them (`users.recycle_item`): an item that went stale (a restore of
+  it was cut short) never touches a person who is back, or whom a later deletion
+  holds. An item whose person is not deleted (a restore cut
+  short) removes only itself and the spaces recycled with it: it never touches
+  the person's data.
 - **Usernames.** A deleted person's username stays taken (the row keeps it, so
   the unique key refuses it, and `GET /api/…` lookups by username do not find
   them). `users.reuseUsernames` is read at invites (when one is made with a
@@ -6991,7 +7020,17 @@ has another hash (ids, states, owners, members, heirs, transfers). The actions
 tenant administrator); `export` makes one export of the whole set. A job is a row
 of `bulk_jobs`; its `state` is `queued`, `running`, `done` (with `failed` listing
 `{"id", "error", "code"}` of each item that did not work, `409 busy` among them)
-or `interrupted`; `GET /api/admin/jobs/{id}` is the tenant's. A job runs on the
+or `interrupted`, and `failed` when the job broke (a panic, which the server
+survives, or progress that could not be written after a few tries; `failed` names
+the item it was on); `GET /api/admin/jobs/{id}` is the tenant's. Each item is done
+with the rights the administrator who started the job has at that moment (one who
+is no longer an administrator gets `403 forbidden` for the items left). A job
+waits in the queue of each tenant it works on (a site administrator's job on one
+tenant is that tenant's turn, not their own tenant's) and its row is that
+tenant's; a job a site administrator started is the site's: a tenant
+administrator does not see it. The hash of `delete_users` covers what each
+preview decides: the spaces recycled, each transfer and its heir, the spaces left
+and with which role, `needsHeir` and the blockers. A job runs on the
 server's own time: it does not stop when the caller's request ends.
 
 ### Exports
@@ -7041,6 +7080,11 @@ and `GET /api/admin/exports/{id}/download` (`Content-Disposition: attachment`,
 `Range` supported). An export made by a tenant administrator is visible to that
 tenant's administrators and the site's.
 
+**As built:** an export a site administrator made is the site's: only site
+administrators list, read, download or delete it, whatever spaces it holds. So is
+any export that holds a history bundle, a personal space or the spaces of more
+than one tenant (only a site administrator can make one).
+
 ### Viewing a space
 
 Before 3.5 administrators could not read people's pages through the API (1.7).
@@ -7084,7 +7128,12 @@ reason, and shows a banner "管理员查看，只读，已记录" while it lasts
   session that opened it, and nothing else.
 - A **personal space** is never reachable by a tenant administrator: not by a
   view, not by an export, not even for managing it; every endpoint answers as for
-  a space that does not exist. A site administrator reaches it as any space,
+  a space that does not exist. That is every administration route that takes a
+  space or a recycle item (the space, its deletion preview, size, transfer,
+  disable, enable, delete, view; restore; the confirmations and exports by the
+  ids of their body), and the lists: `GET /api/admin/spaces` and the recycle bin
+  leave personal spaces out (the `with` of a person's item too). The person's own
+  item is the tenant's: restoring it brings their personal space back with them. A site administrator reaches it as any space,
   with a view each time recorded.
 - `page_viewed` is recorded for `GET …/pages/{id}`, its history and versions,
   `GET …/files/{path}` and `GET …/sync/pages` (one row an hour for each
@@ -7136,7 +7185,9 @@ of file, images included.
   value in effect is never above `--max-upload` whatever the layers say. A page
   that is over the limit already (the limit was lowered) can still be saved
   again at its size or smaller: only a write that makes an over-limit file
-  larger, or a new one, is refused. A draft is judged when it is put and again
+  larger, or a new one, is refused. Templates and types are judged as pages are.
+  A draft the server commits on its own (the sweeper) is judged by its person's
+  limit; one over it is not written and is kept, held. A draft is judged when it is put and again
   when it is committed. An import is judged whole before anything is written:
   the first page or attachment over the limit is named and nothing is imported
   (`name` is the path in the zip). The upload endpoint's old `413 invalid` is
