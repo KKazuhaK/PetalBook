@@ -845,3 +845,39 @@ func TestASwitchWhoseAnswerWasLostEndsDone(t *testing.T) {
 		nothingLost(t, a, want)
 	})
 }
+
+// The attachment bytes of a tenant on a cold map look the tenants of the cached
+// spaces up together, not one query for each space.
+func TestTheAttachmentBytesOfATenantLookUpTheSpacesTogether(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := remoteManager(t, st)
+		var ids []string
+		for i := 0; i < 5; i++ {
+			in, _ := f.space(fmt.Sprintf("S%d", i))
+			ids = append(ids, in.ID)
+			if _, err := f.m.AssetCache().Put(in.ID, strings.Repeat("a", 40), strings.NewReader("1234")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// A space the database does not know (its files are dropped with it).
+		if _, err := f.m.AssetCache().Put("GONE000001", strings.Repeat("a", 40), strings.NewReader("12")); err != nil {
+			t.Fatal(err)
+		}
+		queries := 0
+		testHookTenantLookup = func() { queries++ }
+		defer func() { testHookTenantLookup = nil }()
+		got, err := f.m.AssetBytesOfTenant(ctx, store.DefaultTenantID)
+		if err != nil || got != 20 {
+			t.Fatalf("%d %v, want 20", got, err)
+		}
+		if queries != 1 {
+			t.Fatalf("%d queries for %d spaces", queries, len(ids)+1)
+		}
+		if other, err := f.m.AssetBytesOfTenant(ctx, "Other00000"); err != nil || other != 0 {
+			t.Fatalf("%d %v", other, err)
+		}
+		if queries != 2 { // the space that is gone is asked about again, the rest are remembered
+			t.Fatalf("%d queries after two calls", queries)
+		}
+	})
+}

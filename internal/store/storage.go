@@ -332,6 +332,38 @@ func GetPolicyFacts(ctx context.Context, q Q, id string) (PolicyFacts, error) {
 	return f, err
 }
 
+// SpaceTenants is the tenant of each of the spaces by id (a space that is gone is
+// not in the answer). It is for a cache's own list of spaces, which names them
+// by id, so it takes no scope.
+func SpaceTenants(ctx context.Context, q Q, ids []string) (map[string]string, error) {
+	out := make(map[string]string, len(ids))
+	for len(ids) > 0 {
+		n := min(len(ids), 500)
+		args := make([]any, n)
+		for i, id := range ids[:n] {
+			args[i] = id
+		}
+		rows, err := q.Query(ctx, `SELECT id, tenant_id FROM spaces WHERE id IN (?`+strings.Repeat(",?", n-1)+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id, tenant string
+			if err := rows.Scan(&id, &tenant); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[id] = tenant
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		ids = ids[n:]
+	}
+	return out, nil
+}
+
 // PinnedSpaceIDs lists the spaces an administrator keeps on the server.
 func PinnedSpaceIDs(ctx context.Context, q Q) ([]string, error) {
 	rows, err := q.Query(ctx, `SELECT id FROM spaces WHERE pinned <> 0`)

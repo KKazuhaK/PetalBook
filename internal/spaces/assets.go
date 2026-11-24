@@ -112,8 +112,8 @@ func (m *Manager) AssetBytes(id string) int64 {
 
 // AssetBytesOfTenant is what the attachments of one tenant's spaces take in the
 // cache: the cache's per-space map in memory, and the tenant of each space it
-// names, which is remembered (one lookup by primary key for a space not seen
-// before, none after).
+// names, which is remembered (one query for all the spaces not seen before,
+// none after).
 func (m *Manager) AssetBytesOfTenant(ctx context.Context, tenant string) (int64, error) {
 	if m.single != nil {
 		return 0, nil
@@ -122,43 +122,46 @@ func (m *Manager) AssetBytesOfTenant(ctx context.Context, tenant string) (int64,
 	if c == nil {
 		return 0, nil
 	}
-	var total int64
-	for id, b := range c.Spaces() {
-		t, err := m.tenantOfSpace(ctx, id)
-		if errors.Is(err, store.ErrNotFound) {
-			continue // a space that is gone: its files are dropped with it
+	cached := c.Spaces()
+	var unknown []string
+	m.as.mu.Lock()
+	for id := range cached {
+		if _, ok := m.as.tenants[id]; !ok {
+			unknown = append(unknown, id)
 		}
+	}
+	m.as.mu.Unlock()
+	if len(unknown) > 0 {
+		if testHookTenantLookup != nil {
+			testHookTenantLookup()
+		}
+		found, err := store.SpaceTenants(ctx, m.opt.Store.Q(), unknown) // a space that is gone is not there: its files are dropped with it
 		if err != nil {
 			return 0, err
 		}
-		if t == tenant {
+		m.as.mu.Lock()
+		if m.as.tenants == nil || len(m.as.tenants)+len(found) >= 50_000 {
+			m.as.tenants = map[string]string{}
+		}
+		for id, t := range found {
+			m.as.tenants[id] = t // a space never changes tenant
+		}
+		m.as.mu.Unlock()
+	}
+	var total int64
+	m.as.mu.Lock()
+	defer m.as.mu.Unlock()
+	for id, b := range cached {
+		if m.as.tenants[id] == tenant {
 			total += b
 		}
 	}
 	return total, nil
 }
 
-// tenantOfSpace is the tenant of a space, remembered. A space never changes
-// tenant.
-func (m *Manager) tenantOfSpace(ctx context.Context, id string) (string, error) {
-	m.as.mu.Lock()
-	t, ok := m.as.tenants[id]
-	m.as.mu.Unlock()
-	if ok {
-		return t, nil
-	}
-	sp, err := store.GetSpace(ctx, m.opt.Store.Q(), store.AllTenants(), id) // by id, from the cache's own list of spaces
-	if err != nil {
-		return "", err
-	}
-	m.as.mu.Lock()
-	if m.as.tenants == nil || len(m.as.tenants) >= 50_000 {
-		m.as.tenants = map[string]string{}
-	}
-	m.as.tenants[id] = sp.TenantID
-	m.as.mu.Unlock()
-	return sp.TenantID, nil
-}
+// testHookTenantLookup is called before each lookup of the tenants of cached
+// spaces in the database (a test counts them).
+var testHookTenantLookup func()
 
 // AssetTotals are the bytes of the attachment cache and its budget.
 func (m *Manager) AssetTotals() (total, budget int64) {

@@ -170,6 +170,7 @@ var scopeAllowlist = map[string]string{
 	"SumStorage":               "the server's disk, shown to site administrators only",
 	"EvictionCandidates":       "background job: the eviction of idle spaces of every tenant from the server's disk",
 	"CloneBytesOfRemoteSpaces": "background job: the server's disk budget for clones",
+	"SpaceTenants":             "the tenant of each space an in-memory cache names, by id",
 	"PinnedSpaceIDs":           "background job: the spaces kept on the server's disk, of every tenant",
 	"PutAssetRemote":           "the attachment repository of a space already opened, or one being made in the caller's tenant",
 }
