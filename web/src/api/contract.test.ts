@@ -871,10 +871,20 @@ function suite(target: Target) {
           const r = await call(b, method, path, body ?? (method === 'GET' ? undefined : {}))
           expect([r.status, r.json?.error], `${method} ${path}`).toEqual([404, 'not_found'])
         }
-        // An administrator is no member, but may open any space; it is not in their own list.
+        // An administrator is no member and manages the space without reading it; a view, opened with a reason, lets
+        // them read (and nothing else); it is not in their own list.
+        for (const path of [`${mineSpace}/pages`, `${mineSpace}/pages/${own.json.id}`, `${mineSpace}/tree`]) {
+          expect([(await call(admin, 'GET', path)).status, path].join(' ')).toBe(`403 ${path}`)
+        }
+        expect((await call(admin, 'POST', `/api/admin/spaces/${mine.id}/view`, {})).status).toBe(400)
+        const view = await call(admin, 'POST', `/api/admin/spaces/${mine.id}/view`, { reason: 'contract test' })
+        expect(view.status).toBe(200)
+        expect(view.json.space).toBe(mine.id)
         for (const path of [`${mineSpace}/pages`, `${mineSpace}/pages/${own.json.id}`, `${mineSpace}/tree`]) {
           expect((await call(admin, 'GET', path)).status, path).toBe(200)
         }
+        expect((await call(admin, 'POST', `${mineSpace}/pages`, { body: 'x' })).status).toBe(403)
+        expect((await call(admin, 'DELETE', `/api/admin/spaces/${mine.id}/view`)).status).toBe(204)
         expect(((await call(admin, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).map((s) => s.id)).not.toContain(mine.id)
         // Nothing of theirs shows in their lists, either way.
         expect((await walk({ q: '只有我能看', recursive: true, folder: '' })).length).toBe(0)
@@ -1580,10 +1590,10 @@ function suite(target: Target) {
         expect([refused.status, refused.json.error]).toEqual([409, 'personal_space'])
         const done = await call(admin, 'DELETE', `/api/admin/spaces/${sp.id}`)
         expect(done.status).toBe(200)
-        expect(done.json.trashed).toMatch(/^trash\//)
-        expect(done.json.trashed).toContain(sp.id)
-        expect(typeof done.json.cacheTrashed).toBe('string')
-        expect(done.json.warnings).toEqual([])
+        // Every deletion goes through the recycle bin: the answer is the item.
+        expect(done.json).toMatchObject({ kind: 'space', space: { id: sp.id, name: 'To be deleted' }, restorable: true })
+        expect(Date.parse(done.json.purgeAt)).toBeGreaterThan(Date.parse(done.json.deletedAt))
+        expect(((await call(admin, 'GET', '/api/admin/recycle?limit=200')).json.items as { id: string }[]).some((i) => i.id === done.json.id)).toBe(true)
         for (const b of [owner.browser, guest.browser, admin]) expect((await call(b, 'GET', `/api/spaces/${sp.id}/pages`)).status).toBe(404)
         expect(await roleOf(guest.browser, sp.id)).toBeUndefined()
         expect((await listAll('to be deleted')).some((s) => s.id === sp.id)).toBe(false)
@@ -1937,7 +1947,10 @@ function suite(target: Target) {
         expect(put.status).toBe(200)
         expect(put.json.cache).toMatchObject({ minIdleHours: 48, evictAfterDays: 14 })
         expect(put.json.localSpaces.maxBytes).toBe(5 * 1024 ** 2)
-        expect((await settings()).json).toEqual(put.json)
+        // The summary is the GET's alone.
+        const { summary: _summary, ...again } = (await settings()).json
+        void _summary
+        expect(again).toEqual(put.json)
         for (const bad of [
           { remotes: { graceDays: 400 } },
           { remotes: { require: 'gitlab' } },
@@ -2055,6 +2068,174 @@ function suite(target: Target) {
         await call(admin, 'PUT', '/api/admin/storage', { remotes: { require: null } })
         const back = await call(admin, 'PATCH', `/api/users/${owner.user.id}`, { remoteExempt: false })
         expect(back.json.user.remoteExempt).toBeUndefined()
+      })
+    })
+
+    // Storage management (3.5): the lists, the previews, the recycle bin, the confirmation and its jobs, exports.
+    describe('storage management (3.5)', () => {
+      const waitFor = async <T,>(read: () => Promise<T>, done: (v: T) => boolean, what: string): Promise<T> => {
+        for (let i = 0; i < 120; i++) {
+          const v = await read()
+          if (done(v)) return v
+          await new Promise((r) => setTimeout(r, REAL ? 250 : 5))
+        }
+        throw new Error(`never happened: ${what}`)
+      }
+      const LOCATIONS = ['server', 'own', 'tenant', 'site']
+
+      it('summarises what the server holds, from stored values', async () => {
+        const r = await call(admin, 'GET', '/api/admin/storage')
+        expect(r.status).toBe(200)
+        const s = r.json.summary
+        expect(s.spaces).toEqual(expect.objectContaining({ local: expect.any(Number), full: expect.any(Number), partial: expect.any(Number), evicted: expect.any(Number) }))
+        for (const k of ['people', 'dormant', 'heldBytes', 'usageBytes', 'assetCacheBytes']) expect(typeof s[k], k).toBe('number')
+        expect(s.recycle).toEqual({ items: expect.any(Number), bytes: expect.any(Number) })
+        expect(s.exports).toEqual({ items: expect.any(Number), bytes: expect.any(Number) })
+        expect(s.remotes).toEqual({ inGrace: expect.any(Number), overdue: expect.any(Number) })
+      })
+
+      it('lists spaces with where their bytes live and whether they count, sorted, with a cursor that is for one sort', async () => {
+        const owner = await newMember(uniq('sl'))
+        for (const name of [`Bb ${run}`, `Aa ${run}`, `Cc ${run}`]) await ownedSpace(owner, name)
+        const first = await call(admin, 'GET', `/api/admin/spaces?q=${encodeURIComponent(run)}&sort=name&order=desc&limit=2`)
+        expect(first.status).toBe(200)
+        const names = (first.json.items as AdminSpace[]).map((s) => s.name)
+        expect(names).toEqual([...names].sort().reverse())
+        for (const s of first.json.items as AdminSpace[]) {
+          expect(LOCATIONS).toContain(s.location)
+          expect(typeof s.counted).toBe('boolean')
+        }
+        expect(first.json.next).toBeTruthy()
+        const other = await call(admin, 'GET', `/api/admin/spaces?q=${encodeURIComponent(run)}&sort=bytes&limit=2&cursor=${encodeURIComponent(first.json.next)}`)
+        expect([other.status, other.json.error]).toEqual([400, 'invalid'])
+        for (const bad of ['sort=colour', 'order=sideways', 'remote=maybe', 'deadline=soon']) expect((await call(admin, 'GET', `/api/admin/spaces?${bad}`)).status, bad).toBe(400)
+      })
+
+      it('lists people with what they hold, and one person with their spaces', async () => {
+        const owner = await newMember(uniq('pl'))
+        await ownedSpace(owner, `Held ${run}`)
+        const list = await call(admin, 'GET', `/api/admin/storage/people?q=${encodeURIComponent(owner.user.username)}&sort=held`)
+        expect(list.status).toBe(200)
+        const row = (list.json.items as { user: { id: string }; spaces: number; usageBytes: number; heldBytes: number }[]).find((p) => p.user.id === owner.user.id)!
+        expect(row.spaces).toBeGreaterThanOrEqual(2)
+        expect(typeof row.usageBytes).toBe('number')
+        expect(typeof row.heldBytes).toBe('number')
+        const one = await call(admin, 'GET', `/api/admin/storage/people/${owner.user.id}`)
+        expect(one.status).toBe(200)
+        expect((one.json.items as AdminSpace[]).map((s) => s.name)).toContain(`Held ${run}`)
+        expect((await call(admin, 'GET', '/api/admin/storage/people?sort=colour')).status).toBe(400)
+        expect((await call(admin, 'GET', '/api/admin/storage/people/01ZZZZZZZZ')).status).toBe(404)
+      })
+
+      it('says what deleting a space would do, deletes it into the bin, restores it, and keeps its people', async () => {
+        const owner = await newMember(uniq('bin'))
+        const guest = await newMember(uniq('bing'))
+        const sp = await ownedSpace(owner, `Binned ${run}`)
+        await addMember(owner, sp.id, guest.user.username, 'viewer')
+        const preview = await call(admin, 'GET', `/api/admin/spaces/${sp.id}/deletion`)
+        expect(preview.status).toBe(200)
+        expect(preview.json).toMatchObject({ space: { id: sp.id }, members: 2, recycleDays: expect.any(Number) })
+        const del = await call(admin, 'DELETE', `/api/admin/spaces/${sp.id}`, { reason: 'contract test' })
+        expect(del.status).toBe(200)
+        expect(del.json.reason).toBe('contract test')
+        const item = del.json.id as string
+        expect((await call(owner.browser, 'GET', `/api/spaces/${sp.id}/pages`)).status).toBe(404)
+        const back = await call(admin, 'POST', `/api/admin/recycle/${item}/restore`, {})
+        expect(back.status).toBe(200)
+        expect(back.json.restored.space.id).toBe(sp.id)
+        expect((await call(owner.browser, 'GET', `/api/spaces/${sp.id}/pages`)).status).toBe(200)
+        expect((await roleOf(guest.browser, sp.id))?.role).toBe('viewer')
+      })
+
+      it('deletes a person: an heir is needed for a shared space, the person goes to the bin, and comes back whole', async () => {
+        const leaver = await newMember(uniq('dpl'))
+        const viewer = await newMember(uniq('dpv'))
+        const heir = await newMember(uniq('dph'))
+        const shared = await ownedSpace(leaver, `Shared ${run}`)
+        await addMember(leaver, shared.id, viewer.user.username, 'viewer')
+        const plan = await call(admin, 'GET', `/api/admin/users/${leaver.user.id}/deletion`)
+        expect(plan.status).toBe(200)
+        expect(plan.json.needsHeir.map((s: { id: string }) => s.id)).toEqual([shared.id])
+        expect(plan.json.recycle.some((r: { space: { personal?: boolean } }) => r.space.personal)).toBe(true)
+        const refused = await call(admin, 'DELETE', `/api/users/${leaver.user.id}`, {})
+        expect([refused.status, refused.json.error]).toEqual([409, 'heir_required'])
+        expect(refused.json.spaces.map((s: { id: string }) => s.id)).toEqual([shared.id])
+        const done = await call(admin, 'DELETE', `/api/users/${leaver.user.id}`, { heir: heir.user.id, reason: 'contract test' })
+        expect(done.status).toBe(200)
+        expect(done.json).toMatchObject({ kind: 'user', user: { id: leaver.user.id } })
+        const users = (await call(admin, 'GET', '/api/users')).json.users as User[]
+        expect(users.some((u) => u.id === leaver.user.id)).toBe(false)
+        expect((await roleOf(heir.browser, shared.id))?.role).toBe('owner')
+        const back = await call(admin, 'POST', `/api/admin/recycle/${done.json.id}/restore`, {})
+        expect(back.status).toBe(200)
+        expect(back.json.restored.user.id).toBe(leaver.user.id)
+        expect(back.json.transfers.map((t: { space: string }) => t.space)).toContain(shared.id)
+        expect(((await call(admin, 'GET', '/api/users')).json.users as User[]).some((u) => u.id === leaver.user.id)).toBe(true)
+      })
+
+      it('confirms a bulk action with a token that is for those ids, once, and refuses it when the plan changed', async () => {
+        const owner = await newMember(uniq('bk'))
+        const a = await ownedSpace(owner, `Bulk A ${run}`)
+        const b = await ownedSpace(owner, `Bulk B ${run}`)
+        const outsider = await newMember(uniq('bko'))
+        const confirm = await call(admin, 'POST', '/api/admin/confirm', { action: 'disable_spaces', spaces: [a.id, b.id] })
+        expect(confirm.status).toBe(200)
+        expect(confirm.json.count).toBe(2)
+        expect(typeof confirm.json.confirm).toBe('string')
+        const started = await call(admin, 'POST', '/api/admin/bulk', { confirm: confirm.json.confirm })
+        expect(started.status).toBe(202)
+        const job = await waitFor(async () => (await call(admin, 'GET', `/api/admin/jobs/${started.json.job.id}`)).json.job, (j) => j.state === 'done', 'the job')
+        expect([job.total, job.done, job.failed]).toEqual([2, 2, []])
+        expect((await roleOf(owner.browser, a.id))?.disabled).toBe(true)
+        // A token is spent by its use.
+        expect((await call(admin, 'POST', '/api/admin/bulk', { confirm: confirm.json.confirm })).status).toBe(404)
+        // The plan changes (a member is added) between the confirmation and the action.
+        const again = await call(admin, 'POST', '/api/admin/confirm', { action: 'enable_spaces', spaces: [a.id, b.id] })
+        await call(admin, 'POST', `/api/admin/spaces/${b.id}/enable`, {})
+        await addMember(owner, b.id, outsider.user.username, 'viewer')
+        const stale = await call(admin, 'POST', '/api/admin/bulk', { confirm: again.json.confirm })
+        expect([stale.status, stale.json.error]).toEqual([409, 'confirm_stale'])
+        for (const bad of [{ action: 'nonsense', spaces: [a.id] }, { action: 'disable_spaces', spaces: [] }, { action: 'disable_spaces', spaces: ['01ZZZZZZZZ'] }]) {
+          expect([400, 404], JSON.stringify(bad)).toContain((await call(admin, 'POST', '/api/admin/confirm', bad)).status)
+        }
+        await call(admin, 'POST', `/api/admin/spaces/${a.id}/enable`, {})
+      })
+
+      it('purges early only with a confirmation made for that item', async () => {
+        const owner = await newMember(uniq('pg'))
+        const sp = await ownedSpace(owner, `Purge ${run}`)
+        const item = (await call(admin, 'DELETE', `/api/admin/spaces/${sp.id}`, {})).json.id as string
+        expect([400, 404, 409]).toContain((await call(admin, 'DELETE', `/api/admin/recycle/${item}`)).status)
+        const other = await call(admin, 'POST', '/api/admin/confirm', { action: 'restore', items: [item] })
+        expect([400, 404, 409]).toContain((await call(admin, 'DELETE', `/api/admin/recycle/${item}?confirm=${other.json.confirm}`)).status)
+        const mine = await call(admin, 'POST', '/api/admin/confirm', { action: 'purge', items: [item] })
+        const purged = await call(admin, 'DELETE', `/api/admin/recycle/${item}?confirm=${mine.json.confirm}`)
+        expect(purged.status).toBe(202)
+        await waitFor(async () => (await call(admin, 'GET', '/api/admin/recycle?limit=200')).json.items as { id: string }[], (l) => !l.some((i) => i.id === item), 'the purge')
+      })
+
+      it('exports a space to a zip that is listed, downloaded and deleted', async () => {
+        const owner = await newMember(uniq('ex'))
+        const sp = await ownedSpace(owner, `Exported ${run}`)
+        const made = await call(admin, 'POST', '/api/admin/exports', { spaces: [sp.id] })
+        expect(made.status).toBe(202)
+        const ready = await waitFor(async () => (await call(admin, 'GET', `/api/admin/exports/${made.json.id}`)).json, (e) => e.state === 'ready' || e.state === 'failed', 'the export')
+        expect(ready.state).toBe('ready')
+        expect(Date.parse(ready.expires)).toBeGreaterThan(Date.now())
+        expect(((await call(admin, 'GET', '/api/admin/exports')).json.items as { id: string }[]).some((e) => e.id === made.json.id)).toBe(true)
+        const dl = await call(admin, 'GET', `/api/admin/exports/${made.json.id}/download`)
+        expect(dl.status).toBe(200)
+        expect(dl.headers.get('Content-Disposition')).toMatch(/attachment/)
+        expect((await call(admin, 'DELETE', `/api/admin/exports/${made.json.id}`)).status).toBe(204)
+        expect((await call(admin, 'GET', `/api/admin/exports/${made.json.id}`)).status).toBe(404)
+      })
+
+      it('a member reaches none of it', async () => {
+        const m = await newMember(uniq('sm'))
+        for (const [method, path] of [['GET', '/api/admin/storage/people'], ['GET', '/api/admin/recycle'], ['GET', '/api/admin/exports'], ['POST', '/api/admin/confirm'], ['GET', '/api/admin/storage']] as const) {
+          const r = await call(m.browser, method, path, method === 'GET' ? undefined : {})
+          expect([r.status, r.json?.error], `${method} ${path}`).toEqual([403, 'forbidden'])
+        }
       })
     })
   })
@@ -4693,12 +4874,14 @@ function suite(target: Target) {
       expect(text.status).toBe(415)
     })
 
-    it('a file over maxUpload is 413 invalid', async () => {
+    it('a file over the limit is 413 file_too_large, with the limit and the name', async () => {
       const { maxUpload } = await api.meta()
       // A server started with a huge limit would be sent too much to prove this.
       if (maxUpload > 64 * 1024 * 1024) return
       const r = await post(page.id, `big${run}.bin`, new Uint8Array(maxUpload + 1))
-      expect([r.status, (await r.json()).error]).toEqual([413, 'invalid'])
+      const refused = await r.json()
+      expect([r.status, refused.error]).toEqual([413, 'file_too_large'])
+      expect(refused.limit).toBe(maxUpload)
       const exact = await post(page.id, `edge${run}.bin`, new Uint8Array(maxUpload).fill(7))
       expect(exact.status).toBe(201)
     })

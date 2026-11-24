@@ -327,6 +327,8 @@ export function createGroupBook(o: GroupBookOptions) {
         else g.people.set(uid, left)
       }
     },
+    // How many groups a person is in (the deletion preview says they are left).
+    groupCount: (userId: string) => inGroups(userId).length,
     dropMapped: (slug: string, value: string, keep: string) => {
       for (const g of groups.values()) {
         if (g.id === keep) continue

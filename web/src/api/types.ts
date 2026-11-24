@@ -35,7 +35,7 @@ export interface SpaceInfo {
 }
 
 // What a space's copy on the server is.
-export type CacheState = 'local' | 'full' | 'partial' | 'evicted' | 'restoring'
+export type CacheState = 'local' | 'full' | 'partial' | 'evicted' | 'archived' | 'restoring'
 // A requirement of the storage policy that the space does not meet yet: any
 // remote, or one through the provider of that id (2.7b's connections).
 export interface RemoteNotice {
@@ -678,6 +678,12 @@ export interface ReasonCode {
 }
 
 export type ErrorCode =
+  | 'file_too_large'
+  | 'heir_required'
+  | 'owner_required'
+  | 'confirm_stale'
+  | 'exports_full'
+  | 'capability_off'
   | 'changes_expired'
   // The page is in the catalogue on this device but its text was not kept (offline).
   | 'not_offline'
@@ -1133,7 +1139,13 @@ export interface AdminSpace {
   sync: SyncState
   // What the copy on the server is, per space (docs/api.md, "Server storage").
   storage: AdminSpaceStorage
+  // Where the bytes live, and whether they count toward quotas (docs/api.md, "Measurements this adds").
+  location: SpaceLocation
+  counted: boolean
 }
+// `server`: only on this server; `own`: the person's own remote; `tenant`: the organisation's own storage target;
+// `site`: the site's storage organisation. The first and the last count toward quotas, the other two do not.
+export type SpaceLocation = 'server' | 'own' | 'tenant' | 'site'
 export interface AdminSpaceStorage {
   cache: CacheState
   pinned: boolean
@@ -1153,7 +1165,25 @@ export interface AdminStorage {
   cache: { partial: boolean; evictAfterDays: number | null; minIdleHours: number; clonesBytes: number | null; minFreeBytes: number | null; assetsBytes: number }
   assets: { newSpaces: boolean }
   git: { version: string; partialClone: boolean }
-  affected: { inGrace: number; overdue: number; exempt: number }
+  // `exempt` is the site's: a tenant administrator is not told it.
+  affected: { inGrace: number; overdue: number; exempt?: number }
+  // What the server holds (docs/api.md, "GET /api/admin/storage"); `diskFreeBytes` is for site administrators only.
+  summary?: StorageSummary
+}
+export interface StorageSummary {
+  // null for the whole server.
+  tenant: string | null
+  spaces: { local: number; full: number; partial: number; evicted: number; archived: number; restoring: number }
+  people: number
+  dormant: number
+  heldBytes: number
+  usageBytes: number
+  assetCacheBytes: number
+  recycle: { items: number; bytes: number }
+  exports: { items: number; bytes: number }
+  remotes: { inGrace: number; overdue: number }
+  diskFreeBytes?: number
+  measuredAt: string | null
 }
 // What a PUT may change: any of the sections, each partly.
 export interface PutAdminStorage {
@@ -1185,7 +1215,18 @@ export interface AdminSpacesParams {
   overdue?: boolean
   cursor?: string
   limit?: number
+  // 3.5: sorting and the other filters of the spaces' list (docs/api.md, "GET /api/admin/spaces").
+  sort?: SpaceSort
+  order?: 'asc' | 'desc'
+  tenant?: string
+  owner?: string
+  remote?: 'none' | 'ok' | 'offline' | 'error'
+  deadline?: 'grace' | 'overdue'
+  pinned?: boolean
+  exempt?: boolean
+  idleDays?: number
 }
+export type SpaceSort = 'created' | 'name' | 'bytes' | 'lastUsed'
 export interface SpaceSize {
   sizeBytes: number
   sizeAt: string
@@ -1659,4 +1700,176 @@ export interface MySetting {
   effective: unknown
   space?: { canChange: boolean; inEffect: boolean; source?: 'site' | 'tenant' }
   person?: { canChange: boolean; inEffect: boolean; source?: 'site' | 'tenant' }
+}
+
+// --- storage management (docs/api.md, "Storage management") --------------------------------
+
+export type PeopleSort = 'held' | 'bytes' | 'lastActive' | 'created' | 'spaces'
+export interface PeopleParams {
+  tenant?: string
+  q?: string
+  sort?: PeopleSort
+  order?: 'asc' | 'desc'
+  cursor?: string
+  limit?: number
+  dormant?: boolean
+  remote?: 'none' | 'some'
+  deadline?: 'grace' | 'overdue'
+  inactiveDays?: number
+  disabled?: boolean
+}
+// One person and what they hold. `usageBytes` is what counts toward their quota, `heldBytes` what the server keeps for them.
+export interface StoragePerson {
+  user: { id: string; username: string; name: string; disabled: boolean }
+  tenant: string
+  created: string
+  lastActive: string | null
+  firstWrite: string | null
+  dormant: boolean
+  connected: boolean
+  spaces: number
+  remoteSpaces: number
+  evictedSpaces: number
+  pinnedSpaces: number
+  graceSpaces: number
+  overdueSpaces: number
+  usageBytes: number
+  heldBytes: number
+  measuredAt: string | null
+}
+export interface StoragePeopleList {
+  items: StoragePerson[]
+  next: string
+}
+// A person's item, with the spaces counted for them (never a personal one for a tenant administrator).
+export type StoragePersonDetail = StoragePerson & { items: AdminSpace[] }
+
+export type RecycleKind = 'space' | 'user'
+// An item recycled with a person.
+export interface RecycleChild {
+  id: string
+  space: { id: string; name: string; personal: boolean }
+  bytes: number
+}
+export interface RecycleItem {
+  id: string
+  kind: RecycleKind
+  tenant: string
+  space: { id: string; name: string; personal: boolean } | null
+  user: { id: string; username: string } | null
+  with: RecycleChild[]
+  bytes: number
+  deletedAt: string
+  deletedBy: { id: string; username: string }
+  purgeAt: string
+  reason: string
+  // false (with `problems`) while the item is moving, being restored or purged, or when a directory is missing.
+  restorable: boolean
+  problems: string[]
+}
+export interface RecycleList {
+  items: RecycleItem[]
+  next: string
+}
+export interface RestoreResult {
+  restored: { item: string; space?: { id: string; name: string }; user?: User; spaces?: string[] }
+  // What was left out: a person or a group that is gone, or a space that stayed in the bin (`reason` only).
+  skipped: { user?: string; group?: string; reason: string }[]
+  transfers?: { space: string; name: string; to: string; toUsername: string }[]
+  left?: { space: string; name: string; role: string }[]
+}
+
+export interface SpaceDeletionPreview {
+  space: { id: string; name: string }
+  pages: number
+  bytes: number
+  heldBytes: number
+  attachments: { inSpace: number | null; repository: boolean }
+  members: number
+  groups: number
+  drafts: number
+  // `url` is '' when the space has none.
+  remote: { url: string; kept: boolean }
+  assetsRemote: { url: string; kept: boolean }
+  cache: CacheState
+  exportable: boolean
+  recycleDays: number
+}
+export interface PlanSpace {
+  id: string
+  name: string
+  personal?: boolean
+}
+export interface UserDeletionPlan {
+  user: { id: string; username: string }
+  recycle: { space: PlanSpace; bytes: number }[]
+  // `why`: named (you chose), editor (the earliest editor) or heir (the one asked for).
+  transfer: { space: PlanSpace; to: { id: string; username: string }; why: string; credential?: string }[]
+  leave: { space: PlanSpace; role: string }[]
+  revoke: { tokens: number; grants: number; passkeys: number; identities: number; github: boolean; sessions: number }
+  groups: number
+  needsHeir: PlanSpace[]
+  blockers: { reason: 'self' | 'last_admin' | string; message?: string }[]
+  bytes: number
+}
+export type ConfirmAction = 'delete_spaces' | 'delete_users' | 'purge' | 'restore' | 'evict' | 'pin' | 'unpin' | 'disable_spaces' | 'enable_spaces' | 'disable_users' | 'enable_users' | 'export'
+export interface ConfirmRequest {
+  action: ConfirmAction
+  spaces?: string[]
+  users?: string[]
+  items?: string[]
+  heir?: string
+  transfers?: Record<string, string>
+}
+// One line of a confirmation's plan: the preview of a deletion, or what an action does to one thing.
+export type ConfirmPlanLine = (SpaceDeletionPreview | UserDeletionPlan | { space: { id: string; name: string }; action: string } | { user: { id: string; username: string }; action: string } | { item: string; kind: RecycleKind; name: string; bytes: number; action: string; deletedAt: string }) & Record<string, unknown>
+export interface ConfirmResult {
+  confirm: string
+  expires: string
+  count: number
+  plan: ConfirmPlanLine[]
+  bytes: number
+  // The people (ids) whose shared spaces have nobody to inherit them, with those spaces.
+  needsHeir: { user: string; spaces: PlanSpace[] }[]
+  // Why something cannot be done: `user` or `space` is an id.
+  blockers: { user?: string; space?: string; reason: string }[]
+}
+export type JobState = 'queued' | 'running' | 'done' | 'interrupted' | 'failed'
+export interface BulkJob {
+  id: string
+  action: ConfirmAction
+  total: number
+  done: number
+  failed: { id: string; error: string; code?: string }[]
+  state: JobState
+}
+export type ExportState = 'queued' | 'running' | 'ready' | 'failed'
+export interface ExportRec {
+  id: string
+  tenant: string
+  madeBy: { id: string; username: string }
+  // `space` for a live space, `item` for one in the recycle bin; `name` as it was.
+  spaces: { space?: string; item?: string; name?: string }[]
+  history: boolean
+  state: ExportState
+  error?: string
+  warnings: string[]
+  bytes: number
+  created: string
+  expires: string
+}
+export interface ExportList {
+  items: ExportRec[]
+  next: string
+}
+export interface ExportRequest {
+  spaces?: string[]
+  items?: string[]
+  user?: string | null
+  history?: boolean
+}
+// What starting a view answers (docs/api.md, "Viewing a space").
+export interface SpaceView {
+  space: string
+  until: string
 }

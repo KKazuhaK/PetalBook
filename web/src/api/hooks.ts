@@ -1,5 +1,6 @@
 // TanStack Query hooks over the API client.
 
+import { hasView, useAdminViews } from '@/lib/adminView'
 import { useMemo } from 'react'
 import { useMatch } from 'react-router'
 import { keepPreviousData, useInfiniteQuery, useIsMutating, useMutation, useQuery, useQueryClient, type Query, type QueryClient } from '@tanstack/react-query'
@@ -225,7 +226,10 @@ export function useActiveSpace(): { id: string | null; spaces: SpaceInfo[]; reso
   // the person's own may still be one an administrator can open.
   const wanted = route ?? last
   const viewed = useViewedSpace(wanted, !list.isPending && !!wanted && !mine.some((s) => s.id === wanted))
-  const spaces = viewed.data ? [...mine, viewed.data] : mine
+  const views = useAdminViews()
+  // A view adds the permission to read, and nothing else.
+  const seen = viewed.data && hasView(views, viewed.data.id) && !viewed.data.permissions.includes('read') ? { ...viewed.data, permissions: [...viewed.data.permissions, 'read' as const] } : viewed.data
+  const spaces = seen ? [...mine, seen] : mine
   const id = route ?? (last && spaces.some((s) => s.id === last) ? last : (spaces[0]?.id ?? null))
   return { id, spaces, resolving: list.isPending || viewed.isLoading }
 }
@@ -247,7 +251,8 @@ function useViewedSpace(space: string | null, wanted: boolean) {
     queryFn: async ({ signal }): Promise<SpaceInfo | null> => {
       try {
         const s = await api.adminSpace(space ?? '', signal)
-        return { id: s.id, name: s.name, role: '', permissions: ['read', 'write', 'members', 'manage'], personal: s.personal, sync: s.sync, inbox: s.inbox, disabled: s.disabled }
+        // An administrator who is not a member manages the space and reads it only in a view (docs/api.md, "Viewing a space").
+        return { id: s.id, name: s.name, role: '', permissions: ['members', 'manage'], personal: s.personal, sync: s.sync, inbox: s.inbox, disabled: s.disabled }
       } catch (e) {
         if (e instanceof ApiError && e.code === 'not_found') return null
         throw e

@@ -39,7 +39,13 @@ const DEFS: Def[] = [
   { key: 'quota.spacesPerPerson', kind: 'limit', layers: ['site', 'tenant', 'person'], def: 20, lower: { mode: 'allow' }, min: 0, max: 10000 },
   { key: 'quota.bytesPerPerson', kind: 'limit', layers: ['site', 'tenant', 'person'], def: null, lower: { mode: 'allow' }, min: 1, max: 2 ** 50 },
   { key: 'quota.pagesPerPerson', kind: 'limit', layers: ['site', 'tenant', 'person'], def: null, lower: { mode: 'allow' }, min: 1, max: 2 ** 40 },
+  // The largest file one write may create or replace (3.5). The site's value is --max-upload and cannot be written;
+  // a tenant sets any value up to it.
+  { key: 'files.maxBytes', kind: 'limit', layers: ['site', 'tenant'], def: 10 * 1024 * 1024, lower: { mode: 'restrict', max: 10 * 1024 * 1024 }, min: 1, max: 256 * 1024 * 1024 },
+  // How many days a deleted space or person stays in the recycle bin (3.5); the site's alone.
+  { key: 'recycle.days', kind: 'limit', layers: ['site'], def: 30, lower: { mode: 'allow' }, min: 1, max: 365 },
 ]
+const FILES_KEY = 'files.maxBytes'
 
 function checkValue(d: Def, v: unknown): unknown {
   switch (d.kind) {
@@ -100,6 +106,8 @@ export interface TenantBookOptions {
   onQuotaChanged: () => void
   // --max-spaces, when it was given: the site's quota.spacesPerPerson, read only.
   maxSpacesFlag?: number
+  // --max-upload: the site's files.maxBytes, read only, and the ceiling of every layer.
+  maxUpload: number
   // A real invite of the server for the first administrator of a new tenant (nothing is mailed).
   onTenantDeleted?: (id: string) => void
   makeInvite: (by: string, tenant: string, fill: { username: string; name: string; email: string }) => CreatedInvite & { tenant: string; siteAdmin: boolean }
@@ -121,13 +129,13 @@ export function createTenantBook(o: TenantBookOptions) {
   const tenantRows = new Map<string, Map<string, TenantRow>>()
   let seq = 1
 
-  const siteValue = (d: Def): unknown => (d.key === 'quota.spacesPerPerson' && o.maxSpacesFlag !== undefined ? o.maxSpacesFlag : d.key === 'daily.own' ? o.daily.get().own : d.key === 'daily.api' ? o.daily.get().api : siteRows.has(d.key) && siteRows.get(d.key)!.value !== undefined ? siteRows.get(d.key)!.value : d.def)
-  const siteLower = (d: Def): SettingLower => siteRows.get(d.key)?.lower ?? d.lower
+  const siteValue = (d: Def): unknown => (d.key === FILES_KEY ? o.maxUpload : d.key === 'quota.spacesPerPerson' && o.maxSpacesFlag !== undefined ? o.maxSpacesFlag : d.key === 'daily.own' ? o.daily.get().own : d.key === 'daily.api' ? o.daily.get().api : siteRows.has(d.key) && siteRows.get(d.key)!.value !== undefined ? siteRows.get(d.key)!.value : d.def)
+  const siteLower = (d: Def): SettingLower => siteRows.get(d.key)?.lower ?? (d.key === FILES_KEY ? { mode: 'restrict', max: o.maxUpload } : d.lower)
   const siteView = (d: Def): SiteSetting => ({
     key: d.key,
     kind: d.kind,
     layers: d.layers,
-    site: { value: siteValue(d), lower: siteLower(d), ...(d.key === 'quota.spacesPerPerson' && o.maxSpacesFlag !== undefined ? { fromFlag: true } : {}) },
+    site: { value: siteValue(d), lower: siteLower(d), ...((d.key === 'quota.spacesPerPerson' && o.maxSpacesFlag !== undefined) || d.key === FILES_KEY ? { fromFlag: true } : {}) },
   })
   const tenantView = (tenant: string, d: Def): TenantSetting => {
     const row = tenantRows.get(tenant)?.get(d.key)
@@ -140,7 +148,7 @@ export function createTenantBook(o: TenantBookOptions) {
       layers: d.layers,
       site: { value: siteValue(d), lower: sl },
       tenant: { value: own ?? null, lower: row?.lower ?? null, inEffect },
-      effective: own !== undefined && own !== null && inEffect ? own : siteValue(d),
+      effective: d.key === FILES_KEY ? Math.min(o.maxUpload, (own !== undefined && own !== null && inEffect ? own : siteValue(d)) as number) : own !== undefined && own !== null && inEffect ? own : siteValue(d),
     }
   }
   const effectiveOf = (tenant: string, d: Def) => tenantView(tenant, d)
@@ -167,6 +175,7 @@ export function createTenantBook(o: TenantBookOptions) {
     if (!('value' in body) && !('lower' in body)) bad('give value, lower or both')
     const row = siteRows.get(key) ?? {}
     if ('value' in body) {
+      if (key === FILES_KEY) throw new HttpError(409, 'conflict', `${key} is set by --max-upload; change the flag`)
       if (key === 'quota.spacesPerPerson' && o.maxSpacesFlag !== undefined) throw new HttpError(409, 'conflict', `${key} is set by a command-line flag; change the flag`)
       const v = d.kind === 'doc' ? body.value : body.value === null && d.kind === 'limit' && d.def !== null ? d.def : checkValue(d, body.value)
       if (key === 'registration.open' && v === true) checkOpening()
