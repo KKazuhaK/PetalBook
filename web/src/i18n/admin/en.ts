@@ -154,7 +154,7 @@ export const adminEn: AdminMessages = {
     defaultApiAdd: 'Add another…',
     choice: {
       all: 'All',
-      optionName: (key: string) => (key === 'categories' ? 'Categories' : key),
+      optionName: (key: string) => ({ categories: 'Categories', category: 'Category' })[key] ?? key,
       up: (name: string) => `Move ${name} up`,
       down: (name: string) => `Move ${name} down`,
       remove: (name: string) => `Remove ${name}`,

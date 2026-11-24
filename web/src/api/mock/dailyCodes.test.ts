@@ -167,6 +167,11 @@ describe('the mock gives the stable codes', () => {
       ['hitokoto', false, 20],
       ['zenquotes', false, 0.1],
       ['favqs', false, 1],
+      ['animechan', false, 1 / 60],
+      ['dummyjson', false, 1],
+      ['jinrishici', false, 1],
+      ['shanbay', false, 1],
+      ['iciba', false, 1],
     ])
     expect(call('PUT', '/api/admin/daily/providers/hitokoto', {})).toMatchObject({ status: 400 })
     expect(call('PUT', '/api/admin/daily/providers/nothing', { enabled: true }).status).toBe(404)

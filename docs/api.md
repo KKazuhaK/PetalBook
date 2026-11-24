@@ -4153,7 +4153,21 @@ until an administrator enables it, and no service is contacted before that.
 Today: `hitokoto` (一言, the international line; `zh-Hans`, `zh-Hant`; link
 back to the sentence as the service asks) `zenquotes` (ZenQuotes, quote of the day; `en`; the service requires a link back,
 which is filled in, and allows 5 requests per 30 seconds per address, so `rps`
-is at most 0.1) and `favqs` (FavQs, quote of the day; `en`). A stored id that
+is at most 0.1), `favqs` (FavQs, quote of the day; `en`), `animechan`
+(Animechan, anime quotes with the anime as `source` and the character as
+`author`; `en`; 100 requests a day per address, so `rps` is at most 1/60 and
+"another" does not ask it again), `dummyjson` (DummyJSON, about 1,400 quotes made
+for developers' tests; `en`; `skipNew`), `jinrishici` (今日诗词, classical
+poetry through the service's older interface; `zh-Hans`, `zh-Hant`; `skipNew`;
+option `category`), `shanbay` (扇贝每日一句; `zh-Hans`, `en`) and `iciba`
+(金山词霸每日一句; `zh-Hans`, `en`). The last two answer in both languages at
+once: each language is a lane of its own, and a reader gets the one text in
+their language (the translation or note for `zh-Hans`, the English for `en`),
+never both. `shanbay` is the interface the service's own mini program uses, not
+a published API, so it may change. `iciba` labels its JSON `text/html`, which is
+accepted for it only (a flag only the program sets on a built-in interface; the
+body must still parse strictly as JSON, with the same size limit). None of
+them is in any default. A stored id that
 is no longer built in (the earlier `quotable`, whose service is gone) is treated
 like any unknown id: an interface of the administrators' own keeps showing as
 such, a choice that names it is not found, and nothing else is picked in its
@@ -4174,6 +4188,12 @@ address with other values is another thing to the cache: two spaces with
 different categories never share or replace an item, and the same categories
 share one. The rate limit is the interface's, across all sets of values.
 Options of an interface that is no longer chosen are dropped when saved.
+
+An option of kind `path` is one choice (a list of one value), put in the address
+where `{key}` stands, with its `default` when none is chosen (and the default is
+stored as none). `jinrishici` has `category`: `all`, the first level (`shuqing`,
+`siji`, …) and the second (`shuqing/libie`), the categories the service
+publishes that answered with JSON when checked.
 
 **Several interfaces for a language.** A language's list is in order. The
 interfaces take turns by day: the one the day starts with is the day number

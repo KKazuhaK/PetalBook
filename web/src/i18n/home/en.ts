@@ -182,7 +182,7 @@ export const homeEn: HomeMessages = {
       'With more than one for a language they take turns by day, in this order; one that does not answer is passed over for the next, and "another" moves on to the next.',
     choice: {
       all: 'All',
-      optionName: (key: string) => (key === 'categories' ? 'Categories' : key),
+      optionName: (key: string) => ({ categories: 'Categories', category: 'Category' })[key] ?? key,
       up: (name: string) => `Move ${name} up`,
       down: (name: string) => `Move ${name} down`,
       remove: (name: string) => `Remove ${name}`,

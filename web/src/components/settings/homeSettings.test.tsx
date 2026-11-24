@@ -245,6 +245,24 @@ describe('the Home section, accounts mode', () => {
     })
   })
 
+  it('a category that is a path is one choice, and the default is not sent', async () => {
+    await asOwner((admin) => admin('PUT', '/api/admin/daily/providers/jinrishici', { enabled: true }))
+    await click(tab('zh-Hans'))
+    await click(mode(th.settings.modes.api))
+    const item = dialog()!.querySelector<HTMLElement>('[data-api-item="jinrishici"]')!
+    await click(item.querySelector<HTMLInputElement>('input[type="checkbox"]')!)
+    const pick = () => dialog()!.querySelector<HTMLSelectElement>('[data-option="category"] select')!
+    expect(pick().value).toBe('all')
+    await type(pick(), 'shuqing/libie')
+    await click(save())
+    await settle(() => writes().some((w) => w.url === '/daily/prefs'), 'saved')
+    expect(writes().find((w) => w.url === '/daily/prefs')!.body).toEqual({
+      inherit: true,
+      apis: ['jinrishici'],
+      options: { jinrishici: { category: ['shuqing/libie'] } },
+    })
+  })
+
   it('an interface left chosen on a language that no longer uses one is let go', async () => {
     await asOwner((admin, space) => {
       admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans'))

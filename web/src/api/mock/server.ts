@@ -1930,6 +1930,90 @@ export function createMockServer(options: MockOptions = {}) {
       rps: 1,
       skipNew: false,
     },
+    {
+      id: 'animechan',
+      name: 'Animechan',
+      languages: ['en'],
+      site: 'https://animechan.io/',
+      note: 'Free, no key, anime quotes; 100 requests a day per address.',
+      url: 'https://api.animechan.io/v1/quotes/random',
+      text: 'data.content',
+      source: 'data.anime.name',
+      author: 'data.character.name',
+      link: '',
+      rps: 1 / 60,
+      skipNew: false,
+    },
+    {
+      id: 'dummyjson',
+      name: 'DummyJSON',
+      languages: ['en'],
+      site: 'https://dummyjson.com/docs/quotes',
+      note: "Free, no key. A fixed collection of about 1,400 quotes from a service made for developers' tests; quality varies.",
+      url: 'https://dummyjson.com/quotes/random',
+      text: 'quote',
+      source: '',
+      author: 'author',
+      link: '',
+      rps: 1,
+      skipNew: true,
+    },
+    {
+      id: 'jinrishici',
+      name: '今日诗词',
+      languages: ['zh-Hans', 'zh-Hant'],
+      site: 'https://www.jinrishici.com/',
+      note: "Free, no key; classical Chinese poetry. Uses the service's older interface, which serves categories.",
+      url: 'https://v1.jinrishici.com/all.json',
+      text: 'content',
+      source: 'origin',
+      author: 'author',
+      link: '',
+      rps: 1,
+      skipNew: true,
+      options: [
+        {
+          key: 'category',
+          kind: 'path',
+          default: 'all',
+          values: [
+            ['all', '全部', 'All'],
+            ['shuqing', '抒情', 'Lyrical'],
+            ['shuqing/libie', '抒情-离别', '抒情-离别'],
+            ['siji', '四季', 'Seasons'],
+            ['rensheng', '人生', 'Life'],
+          ].map(([value, zh, en]) => ({ value, label: { zh, en } })),
+        },
+      ],
+    },
+    {
+      id: 'shanbay',
+      name: '扇贝每日一句',
+      languages: ['zh-Hans', 'en'],
+      site: 'https://web.shanbay.com/op/quotes/',
+      note: "Free, no key. This is the interface Shanbay's own mini program uses, not a published API, so it may change. English with a Chinese translation: each reader gets one, in their language.",
+      url: 'https://apiv3.shanbay.com/weapps/dailyquote/quote/',
+      text: 'content',
+      source: '',
+      author: 'author',
+      link: 'https://web.shanbay.com/op/quotes/{assign_date}/',
+      rps: 1,
+      skipNew: false,
+    },
+    {
+      id: 'iciba',
+      name: '金山词霸每日一句',
+      languages: ['zh-Hans', 'en'],
+      site: 'https://www.iciba.com/',
+      note: 'Free, no key. A daily sentence in English with a Chinese note: each reader gets one, in their language. The service labels its JSON as text/html, which is accepted for this interface only.',
+      url: 'https://open.iciba.com/dsapi/',
+      text: 'content',
+      source: '',
+      author: '',
+      link: '',
+      rps: 1,
+      skipNew: false,
+    },
   ]
   const badLang = (tag: string) => new HttpError(400, 'bad_language', `“${tag}” 不是 zh-Hans、en、pt-BR 这样的语言标签`)
   const tagOf = (raw: unknown): string => {
@@ -2008,7 +2092,10 @@ export function createMockServer(options: MockOptions = {}) {
     const every = chosen.filter((a) => a.lang === '')
     return every.length > 0 ? every : chosen
   }
-  const valuesOf = (p: { options?: { key: string; values: { value: string }[] }[] } | undefined, chosen: unknown) => {
+  const valuesOf = (
+    p: { options?: { key: string; kind: string; default?: string; values: { value: string }[] }[] } | undefined,
+    chosen: unknown,
+  ) => {
     // Canonical as the server keeps it: only declared values, in declared order; none or all is nothing.
     const out: Record<string, string[]> = {}
     if (chosen === undefined) return out
@@ -2021,7 +2108,10 @@ export function createMockServer(options: MockOptions = {}) {
         if (typeof v !== 'string' || !opt.values.some((o) => o.value === v))
           throw new HttpError(400, 'invalid', `${String(v)} 不是 ${key} 的值`)
       const picked = opt.values.map((o) => o.value).filter((v) => values.includes(v))
-      if (picked.length > 0 && picked.length < opt.values.length) out[key] = picked
+      if (opt.kind === 'path') {
+        if (picked.length > 1) throw new HttpError(400, 'invalid', `${key} 只能选一个`)
+        if (picked.length === 1 && picked[0] !== opt.default) out[key] = picked
+      } else if (picked.length > 0 && picked.length < opt.values.length) out[key] = picked
     }
     return out
   }

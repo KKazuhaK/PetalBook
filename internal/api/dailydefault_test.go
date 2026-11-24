@@ -264,7 +264,7 @@ func TestBuiltInInterfaces(t *testing.T) {
 		x.fetcher.SetTransport(stub)
 		code, r := x.adm("GET", "/api/admin/daily", nil)
 		ps, _ := r["providers"].([]any)
-		if code != 200 || len(ps) != 3 || len(r["apis"].([]any)) != 0 || r["presets"] != nil {
+		if code != 200 || len(ps) != 8 || len(r["apis"].([]any)) != 0 || r["presets"] != nil {
 			t.Fatalf("%d %v", code, r)
 		}
 		h := asMap(ps[0])

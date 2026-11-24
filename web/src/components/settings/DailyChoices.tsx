@@ -1,6 +1,7 @@
 import { lang } from '@/i18n'
 import type { DailyOption } from '@/api/types'
 import { Button } from '@/components/ui/button'
+import { NativeSelect } from '@/components/ui/native-select'
 
 // The two small controls the places that choose external daily-text interfaces share (the administrators' default and
 // a space's own choice): the options of a built-in interface, as checkboxes with an "All" state, and the buttons that
@@ -40,6 +41,34 @@ export function OptionChoices({
     <>
       {options.map((opt) => {
         const picked = chosen?.[opt.key] ?? []
+        if (opt.kind === 'path') {
+          // One of the values, the default when none is chosen.
+          const value = picked[0] ?? opt.default ?? opt.values[0]?.value ?? ''
+          return (
+            <div key={opt.key} className="grid min-w-0 gap-1.5" data-slot="api-options" data-option={opt.key}>
+              <label htmlFor={`opt-${owner}-${opt.key}`} className="text-xs font-medium text-muted-foreground">
+                {words.optionName(opt.key)}
+              </label>
+              <NativeSelect
+                id={`opt-${owner}-${opt.key}`}
+                value={value}
+                disabled={disabled}
+                onChange={(e) => {
+                  const next = { ...chosen }
+                  if (e.target.value === opt.default) delete next[opt.key]
+                  else next[opt.key] = [e.target.value]
+                  onChange(next)
+                }}
+              >
+                {opt.values.map((v) => (
+                  <option key={v.value} value={v.value}>
+                    {labelOf(v)}
+                  </option>
+                ))}
+              </NativeSelect>
+            </div>
+          )
+        }
         const set = (values: string[]) => {
           const next = { ...chosen }
           // Every value is the same as none: nothing is sent.

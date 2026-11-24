@@ -152,7 +152,7 @@ export const adminZhCN = {
     defaultApiAdd: '再加一个…',
     choice: {
       all: '全部',
-      optionName: (key: string) => (key === 'categories' ? '类型' : key),
+      optionName: (key: string) => ({ categories: '类型', category: '分类' })[key] ?? key,
       up: (name: string) => `把 ${name} 上移`,
       down: (name: string) => `把 ${name} 下移`,
       remove: (name: string) => `去掉 ${name}`,

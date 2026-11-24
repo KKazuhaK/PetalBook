@@ -263,7 +263,16 @@ describe("the administrators' daily text page", () => {
     it('are listed with switches, off until switched on, and nothing is edited in them', async () => {
       await open()
       const rows = [...document.querySelectorAll<HTMLElement>('[data-slot="builtin"] [data-provider]')]
-      expect(rows.map((r) => r.getAttribute('data-provider'))).toEqual(['hitokoto', 'zenquotes', 'favqs'])
+      expect(rows.map((r) => r.getAttribute('data-provider'))).toEqual([
+        'hitokoto',
+        'zenquotes',
+        'favqs',
+        'animechan',
+        'dummyjson',
+        'jinrishici',
+        'shanbay',
+        'iciba',
+      ])
       expect(rows[0].textContent).toContain('一言')
       expect(rows[0].textContent).toContain(d.builtinLanguages('zh-Hans, zh-Hant'))
       expect(rows[0].querySelector('a')!.getAttribute('href')).toBe('https://hitokoto.cn')

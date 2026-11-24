@@ -3339,6 +3339,11 @@ function suite(target: Target) {
             ['hitokoto', ['zh-Hans', 'zh-Hant'], 20],
             ['zenquotes', ['en'], 0.1],
             ['favqs', ['en'], 1],
+            ['animechan', ['en'], 1 / 60],
+            ['dummyjson', ['en'], 1],
+            ['jinrishici', ['zh-Hans', 'zh-Hant'], 1],
+            ['shanbay', ['zh-Hans', 'en'], 1],
+            ['iciba', ['zh-Hans', 'en'], 1],
           ])
           expect(start.json.apis.some((a: any) => a.builtin)).toBe(false)
           // Making one: the value of a header is kept and never given back.

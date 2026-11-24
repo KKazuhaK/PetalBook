@@ -142,7 +142,7 @@ export const homeZhCN = {
     apisOrderHelp: '一种语言选了多个时按天轮换，顺序就是这里的顺序；哪个没有回应就用下一个，点「换一条」也换到下一个。',
     choice: {
       all: '全部',
-      optionName: (key: string) => (key === 'categories' ? '类型' : key),
+      optionName: (key: string) => ({ categories: '类型', category: '分类' })[key] ?? key,
       up: (name: string) => `把 ${name} 上移`,
       down: (name: string) => `把 ${name} 下移`,
       remove: (name: string) => `去掉 ${name}`,

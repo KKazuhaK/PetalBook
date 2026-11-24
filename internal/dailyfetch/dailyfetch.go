@@ -113,6 +113,14 @@ type API struct {
 	Text   string `json:"text"`
 	Source string `json:"source"`
 	Author string `json:"author"`
+	// Texts are the paths of the text for the languages whose text is not at
+	// Text (a service that answers in two languages at once): by language tag,
+	// matched to the language asked for the BCP 47 way. Built-in interfaces only.
+	Texts map[string]string `json:"texts,omitempty"`
+	// AnyContentType accepts an answer whatever its Content-Type says, when it
+	// parses strictly as JSON (a service that labels JSON as text/html). Built-in
+	// interfaces only; it is never read from a request.
+	AnyContentType bool `json:"-"`
 	// LangMap turns the language asked for (a canonical BCP 47 tag) into the
 	// code the service wants in {lang}: {"zh-Hans": "zh"}.
 	LangMap map[string]string `json:"langMap"`
@@ -332,6 +340,13 @@ func splitRaw(raw string) (scheme, authority string, ok bool) {
 // it has one; else the one of langs (the languages the server has) lang is
 // matched to the BCP 47 way, else the first of langs.
 func (a API) LaneLang(lang string, langs []string) string {
+	if len(a.Texts) > 0 {
+		// An answer in more than one language: one lane for each of its languages.
+		if m, ok := langtag.Match(lang, a.Languages); ok {
+			return m
+		}
+		return a.Lang
+	}
 	if !strings.Contains(a.URL, "{lang}") {
 		return ""
 	}
@@ -384,6 +399,22 @@ func checkLangMap(m map[string]string) (map[string]string, error) {
 	return out, nil
 }
 
+// textPath is the path of the text for a language asked for: the one of Texts
+// the language is matched to, else Text.
+func (a API) textPath(lang string) string {
+	if len(a.Texts) > 0 && lang != "" {
+		keys := make([]string, 0, len(a.Texts))
+		for k := range a.Texts {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		if m, ok := langtag.Match(lang, keys); ok {
+			return a.Texts[m]
+		}
+	}
+	return a.Text
+}
+
 // code is what {lang} is filled with for a language asked for: through the
 // language mapping (the language itself, else the one it is matched to), and
 // "en" for none.
@@ -412,6 +443,16 @@ func (a API) code(lang string) string {
 func (a API) key() string {
 	h := sha256.New()
 	fmt.Fprint(h, a.ID, "\x00", a.URL, "\x00", a.Text, "\x00", a.Source, "\x00", a.Author, "\x00", a.Link)
+	if len(a.Texts) > 0 {
+		keys := make([]string, 0, len(a.Texts))
+		for k := range a.Texts {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		for _, k := range keys {
+			fmt.Fprint(h, "\x00t:", k, "=", a.Texts[k])
+		}
+	}
 	if len(a.LangMap) > 0 {
 		keys := make([]string, 0, len(a.LangMap))
 		for k := range a.LangMap {
@@ -660,7 +701,14 @@ func (f *Fetcher) Get(ctx context.Context, a API, lang, date string, skip int) (
 	}
 	skip = max(0, min(skip, MaxSkip))
 	// A language the answer cannot differ in is not another lane.
-	if !strings.Contains(a.URL, "{lang}") {
+	if len(a.Texts) > 0 {
+		// The lane is the language the text is in (see LaneLang).
+		if m, ok := langtag.Match(lang, a.Languages); ok {
+			lang = m
+		} else {
+			lang = a.Lang
+		}
+	} else if !strings.Contains(a.URL, "{lang}") {
 		lang = ""
 	} else if a.Lang != "" {
 		lang = a.Lang
@@ -936,7 +984,7 @@ func (f *Fetcher) do(ctx context.Context, a API, lang, date string) (status int,
 	if err != nil {
 		return resp.StatusCode, nil, false, fmt.Errorf("%w: %v", ErrUnavailable, trimErr(err))
 	}
-	isJSON = strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "json")
+	isJSON = strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "json") || a.AnyContentType && json.Valid(body)
 	return resp.StatusCode, body, isJSON, nil
 }
 
@@ -1254,7 +1302,7 @@ func takeOut(a API, doc any, lang, date string, sec *secrets) (q Quote, errs, co
 		set        func(string)
 		need       bool
 	}{
-		{"text", a.Text, func(s string) { q.Text = cut(s, MaxTextChars) }, true},
+		{"text", a.textPath(lang), func(s string) { q.Text = cut(s, MaxTextChars) }, true},
 		{"source", a.Source, func(s string) { q.Source = cut(s, 200) }, false},
 		{"author", a.Author, func(s string) { q.Author = cut(s, 200) }, false},
 	} {
@@ -1446,9 +1494,12 @@ type Provider struct {
 type Option struct {
 	Key   string `json:"key"`
 	Param string `json:"param"`
-	// Kind is "multi" (any number of the values).
-	Kind   string        `json:"kind"`
-	Values []OptionValue `json:"values"`
+	// Kind is "multi" (any number of the values, each a query parameter) or
+	// "path" (one of the values, put in the address where {Key} stands).
+	Kind string `json:"kind"`
+	// Default is the value of a "path" option that is not chosen.
+	Default string        `json:"default,omitempty"`
+	Values  []OptionValue `json:"values"`
 }
 
 // OptionValue is one value of an option, with its label in each language.
@@ -1480,6 +1531,20 @@ func (p Provider) CheckOptions(chosen map[string][]string) (map[string][]string,
 			}
 			picked[v] = true
 		}
+		if opt.Kind == "path" {
+			// One value; the default is the same as none.
+			if len(picked) > 1 {
+				return nil, fmt.Errorf("the option %s of %s takes one value", key, p.ID)
+			}
+			if len(picked) == 0 || picked[values[0]] && values[0] == opt.Default {
+				continue
+			}
+			if out == nil {
+				out = map[string][]string{}
+			}
+			out[key] = []string{values[0]}
+			continue
+		}
 		if len(picked) == 0 || len(picked) == len(opt.Values) {
 			continue
 		}
@@ -1509,6 +1574,18 @@ func (p Provider) WithOptions(chosen map[string][]string) (API, error) {
 	}
 	var extra []string
 	for _, opt := range p.Options {
+		if opt.Kind == "path" {
+			v := opt.Default
+			if c := canon[opt.Key]; len(c) > 0 {
+				v = c[0]
+			}
+			segs := strings.Split(v, "/")
+			for i := range segs {
+				segs[i] = url.PathEscape(segs[i])
+			}
+			a.URL = strings.ReplaceAll(a.URL, "{"+opt.Key+"}", strings.Join(segs, "/"))
+			continue
+		}
 		for _, v := range canon[opt.Key] {
 			extra = append(extra, url.QueryEscape(opt.Param)+"="+url.QueryEscape(v))
 		}
@@ -1562,6 +1639,38 @@ func Providers() []Provider {
 			Refresh: RefreshDaily, SkipNew: false, RPS: 1, Enabled: true, Builtin: true},
 			Site: "https://favqs.com/",
 			Note: "Free, no key. Quote of the day."},
+		{API: API{ID: "animechan", Name: "Animechan", Lang: "en", Languages: []string{"en"},
+			URL:  "https://api.animechan.io/v1/quotes/random",
+			Text: "data.content", Source: "data.anime.name", Author: "data.character.name", LangMap: map[string]string{},
+			Refresh: RefreshDaily, SkipNew: false, RPS: 1.0 / 60, Enabled: true, Builtin: true},
+			Site: "https://animechan.io/",
+			Note: "Free, no key, anime quotes; 100 requests a day per address."},
+		{API: API{ID: "dummyjson", Name: "DummyJSON", Lang: "en", Languages: []string{"en"},
+			URL:  "https://dummyjson.com/quotes/random",
+			Text: "quote", Author: "author", LangMap: map[string]string{},
+			Refresh: RefreshDaily, SkipNew: true, RPS: 1, Enabled: true, Builtin: true},
+			Site: "https://dummyjson.com/docs/quotes",
+			Note: "Free, no key. A fixed collection of about 1,400 quotes from a service made for developers' tests; quality varies."},
+		{API: API{ID: "jinrishici", Name: "今日诗词", Lang: "zh-Hans", Languages: []string{"zh-Hans", "zh-Hant"},
+			URL:  "https://v1.jinrishici.com/{category}.json",
+			Text: "content", Source: "origin", Author: "author", LangMap: map[string]string{},
+			Refresh: RefreshDaily, SkipNew: true, RPS: 1, Enabled: true, Builtin: true},
+			Site:    "https://www.jinrishici.com/",
+			Note:    "Free, no key; classical Chinese poetry. Uses the service's older interface, which serves categories.",
+			Options: []Option{{Key: "category", Kind: "path", Default: "all", Values: jinrishiciCategories}}},
+		{API: API{ID: "shanbay", Name: "扇贝每日一句", Lang: "zh-Hans", Languages: []string{"zh-Hans", "en"},
+			URL:  "https://apiv3.shanbay.com/weapps/dailyquote/quote/",
+			Text: "content", Texts: map[string]string{"zh-Hans": "translation"}, Author: "author",
+			Link: "https://web.shanbay.com/op/quotes/{assign_date}/", LangMap: map[string]string{},
+			Refresh: RefreshDaily, SkipNew: false, RPS: 1, Enabled: true, Builtin: true},
+			Site: "https://web.shanbay.com/op/quotes/",
+			Note: "Free, no key. This is the interface Shanbay's own mini program uses, not a published API, so it may change. English with a Chinese translation: each reader gets one, in their language."},
+		{API: API{ID: "iciba", Name: "金山词霸每日一句", Lang: "zh-Hans", Languages: []string{"zh-Hans", "en"},
+			URL:  "https://open.iciba.com/dsapi/",
+			Text: "content", Texts: map[string]string{"zh-Hans": "note"}, LangMap: map[string]string{},
+			Refresh: RefreshDaily, SkipNew: false, RPS: 1, Enabled: true, Builtin: true, AnyContentType: true},
+			Site: "https://www.iciba.com/",
+			Note: "Free, no key. A daily sentence in English with a Chinese note: each reader gets one, in their language. The service labels its JSON as text/html, which is accepted for this interface only."},
 	}
 }
 

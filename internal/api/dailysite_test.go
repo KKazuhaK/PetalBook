@@ -116,7 +116,7 @@ func TestDailyFromTheAdministrators(t *testing.T) {
 				t.Errorf("%s: %d %v", name, code, r)
 			}
 		}
-		if _, r := adm("GET", "/api/admin/daily", nil); len(r["apis"].([]any)) != 0 || len(r["providers"].([]any)) != 3 {
+		if _, r := adm("GET", "/api/admin/daily", nil); len(r["apis"].([]any)) != 0 || len(r["providers"].([]any)) != 8 {
 			t.Fatalf("a refused change changed something: %v", r)
 		}
 

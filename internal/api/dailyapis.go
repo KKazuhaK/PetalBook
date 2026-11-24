@@ -395,6 +395,9 @@ func (s *server) resealed(a storedAPI, to string) (storedAPI, error) {
 // builtinAPI is a built-in interface as the administrators set it.
 func builtinAPI(p dailyfetch.Provider, st providerState) storedAPI {
 	a := p.API
+	if def, err := p.WithOptions(nil); err == nil {
+		a.URL = def.URL // an option that is in the address, with its default
+	}
 	a.Enabled = st.Enabled
 	a.Builtin = true
 	if st.Refresh != "" {
@@ -687,7 +690,7 @@ func (s *server) askAPI(c *call, site siteDaily, a storedAPI, opts map[string][]
 		s.log.Error("an external daily text interface cannot be set up", "interface", a.ID, "error", err)
 		return nil, dailyfetch.ErrUnavailable
 	}
-	if p, ok := dailyfetch.ProviderByID(a.ID); ok && a.Builtin && len(opts) > 0 {
+	if p, ok := dailyfetch.ProviderByID(a.ID); ok && a.Builtin {
 		if withOpts, err := p.WithOptions(opts); err != nil {
 			// What was chosen no longer fits the provider: it is asked for all.
 			s.log.Warn("options of a built-in daily text interface are not valid; they are not used", "interface", a.ID, "error", err)
@@ -784,7 +787,7 @@ const (
 // stored interface with the same id, if any.
 func (s *server) build(b apiBody, old *storedAPI) (storedAPI, dailyfetch.API, error) {
 	a := b.API
-	a.Builtin, a.Languages = false, nil // only the program makes a built-in interface
+	a.Builtin, a.Languages, a.Texts, a.AnyContentType = false, nil, nil, false // only the program makes a built-in interface
 	a.Enabled = true
 	if old != nil {
 		a.Enabled = old.Enabled
@@ -1049,8 +1052,9 @@ func (s *server) adminPutDailyAPI(c *call) {
 // putBuiltinFromAPI is a PUT of a built-in interface through the interfaces'
 // address: what is fixed must be as it is, the rest is what a provider takes.
 func (s *server) putBuiltinFromAPI(c *call, p dailyfetch.Provider, b apiBody) {
+	def, _ := p.WithOptions(nil)
 	same := func(field, got, want string) error {
-		if got != "" && got != want {
+		if got != "" && got != want && !(field == "url" && got == def.URL) {
 			return &codedError{code: codeBuiltin, field: field, msg: "the " + field + " of the built-in interface " + p.ID + " cannot be changed"}
 		}
 		return nil

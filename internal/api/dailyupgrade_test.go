@@ -244,7 +244,7 @@ func TestDailyRemovedBuiltInIsNotReplaced(t *testing.T) {
 			t.Fatal(err)
 		}
 		code, r := x.adm("GET", "/api/admin/daily", nil)
-		if code != 200 || len(asSlice(r["apis"])) != 0 || len(asSlice(r["providers"])) != 3 {
+		if code != 200 || len(asSlice(r["apis"])) != 0 || len(asSlice(r["providers"])) != 8 {
 			t.Fatalf("%d %v", code, r)
 		}
 		if code, _ := x.own("GET", x.base+"/daily/prefs", nil); code != 200 {

@@ -1295,7 +1295,9 @@ export interface DailyAnswer {
 export interface DailyOption {
   key: string
   param: string
-  kind: 'multi'
+  // multi: any number of the values; path: one of them (the default when none is chosen).
+  kind: 'multi' | 'path'
+  default?: string
   values: { value: string; label: { zh: string; en: string } }[]
 }
 // The values chosen, by interface id and option key; absent is all.

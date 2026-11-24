@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -50,8 +51,30 @@ func TestLiveProviders(t *testing.T) {
 		return res
 	}
 	for _, p := range Providers() {
-		t.Run(p.ID, func(t *testing.T) { probe(t, p.API) })
+		t.Run(p.ID, func(t *testing.T) {
+			a, err := p.WithOptions(nil) // the defaults of its options
+			if err != nil {
+				t.Fatal(err)
+			}
+			probe(t, a)
+			// A bilingual one is asked in the other language too.
+			if len(a.Texts) > 0 {
+				other := probe(t, withLang(a, "en"))
+				first := probe(t, withLang(a, "zh-Hans"))
+				if other.Quote.Text == first.Quote.Text {
+					t.Errorf("both languages gave %q", first.Quote.Text)
+				}
+			}
+		})
 	}
+	t.Run("jinrishici category", func(t *testing.T) {
+		p, _ := ProviderByID("jinrishici")
+		a, err := p.WithOptions(map[string][]string{"category": {"shuqing/libie"}})
+		if err != nil || !strings.HasSuffix(a.URL, "/shuqing/libie.json") {
+			t.Fatalf("%q %v", a.URL, err)
+		}
+		probe(t, a)
+	})
 	// The categories of 一言 reach the service: with one chosen, the type that comes back is it.
 	t.Run("hitokoto categories", func(t *testing.T) {
 		p, _ := ProviderByID("hitokoto")
@@ -67,4 +90,11 @@ func TestLiveProviders(t *testing.T) {
 			t.Fatalf("asked for c=i, got type %q (%v): %s", got.Type, err, res.Raw)
 		}
 	})
+}
+
+// withLang is the interface as it is asked for a reader of the language: the
+// probe asks in the interface's own language, so a copy has that one.
+func withLang(a API, lang string) API {
+	a.Lang = lang
+	return a
 }

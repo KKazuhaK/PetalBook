@@ -133,7 +133,7 @@ func TestProviders(t *testing.T) {
 			t.Errorf("%s is not built in", p.ID)
 		}
 	}
-	if len(ps) != 3 || ps[0].ID != "hitokoto" || ps[0].RPS != 20 || ps[0].Link != "https://hitokoto.cn?uuid={uuid}" || ps[0].URL != "https://international.v1.hitokoto.cn/?max_length=80" ||
+	if len(ps) != 8 || ps[0].ID != "hitokoto" || ps[0].RPS != 20 || ps[0].Link != "https://hitokoto.cn?uuid={uuid}" || ps[0].URL != "https://international.v1.hitokoto.cn/?max_length=80" ||
 		ps[0].Text != "hitokoto" || ps[0].Source != "from" || ps[0].Author != "from_who" || fmt.Sprint(ps[0].Languages) != "[zh-Hans zh-Hant]" || ps[0].Site != "https://hitokoto.cn" ||
 		ps[1].ID != "zenquotes" || ps[1].Text != "[0].q" || ps[1].Author != "[0].a" || ps[1].RPS != 0.1 || ps[1].Link != "https://zenquotes.io/" || ps[1].URL != "https://zenquotes.io/api/today" || ps[1].Lang != "en" || ps[1].SkipNew ||
 		ps[2].ID != "favqs" || ps[2].Text != "quote.body" || ps[2].Author != "quote.author" || ps[2].RPS != 1 || ps[2].Link != "https://favqs.com/quotes/{quote.author_permalink}/{quote.id}" || ps[2].URL != "https://favqs.com/api/qotd" || ps[2].Lang != "en" || ps[2].SkipNew {
@@ -1182,5 +1182,99 @@ func TestOptionSetsShareTheRateLimitAndNotTheCache(t *testing.T) {
 	// Each is kept for itself.
 	if again, _ := f.Get(context.Background(), a1, "", "2026-11-23", 0); again.Text != "c=a" || hits.Load() != 2 {
 		t.Fatalf("%v %d", again, hits.Load())
+	}
+}
+
+func TestNewBuiltInProviders(t *testing.T) {
+	for id, want := range map[string]struct {
+		url  string
+		rps  float64
+		skip bool
+	}{
+		"animechan":  {"https://api.animechan.io/v1/quotes/random", 1.0 / 60, false},
+		"dummyjson":  {"https://dummyjson.com/quotes/random", 1, true},
+		"jinrishici": {"https://v1.jinrishici.com/{category}.json", 1, true},
+		"shanbay":    {"https://apiv3.shanbay.com/weapps/dailyquote/quote/", 1, false},
+		"iciba":      {"https://open.iciba.com/dsapi/", 1, false},
+	} {
+		p, ok := ProviderByID(id)
+		if !ok || p.URL != want.url || p.RPS != want.rps || p.SkipNew != want.skip || p.Refresh != RefreshDaily || !p.Builtin {
+			t.Errorf("%s: %+v", id, p)
+		}
+	}
+	if p, _ := ProviderByID("iciba"); !p.AnyContentType {
+		t.Error("iciba labels its JSON as html")
+	}
+	for _, p := range Providers() {
+		if p.ID != "iciba" && p.AnyContentType {
+			t.Errorf("%s accepts any Content-Type", p.ID)
+		}
+	}
+	// The one that is picked by path: its default, and a category as a path.
+	p, _ := ProviderByID("jinrishici")
+	if len(p.Options) != 1 || p.Options[0].Kind != "path" || p.Options[0].Default != "all" || len(p.Options[0].Values) < 20 {
+		t.Fatalf("%+v", p.Options)
+	}
+	for in, want := range map[string]string{"": "https://v1.jinrishici.com/all.json", "shuqing/libie": "https://v1.jinrishici.com/shuqing/libie.json", "rensheng": "https://v1.jinrishici.com/rensheng.json", "all": "https://v1.jinrishici.com/all.json"} {
+		var chosen map[string][]string
+		if in != "" {
+			chosen = map[string][]string{"category": {in}}
+		}
+		if a, err := p.WithOptions(chosen); err != nil || a.URL != want {
+			t.Errorf("%q: %q %v", in, a.URL, err)
+		}
+	}
+	for name, in := range map[string]map[string][]string{"two": {"category": {"siji", "rensheng"}}, "none such": {"category": {"nope"}}, "traversal": {"category": {"../x"}}} {
+		if _, err := p.WithOptions(in); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	if got, _ := p.CheckOptions(map[string][]string{"category": {"all"}}); len(got) != 0 {
+		t.Errorf("the default is none: %v", got)
+	}
+}
+
+// An answer in two languages: each reader's language has its own lane and takes its own field.
+func TestBilingualProviderLanes(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8") // as iciba labels it
+		fmt.Fprint(w, `{"content":"Be kind.","note":"与人为善。","author":"x"}`)
+	}))
+	defer srv.Close()
+	a := API{ID: "bi", Name: "bi", Lang: "zh-Hans", Languages: []string{"zh-Hans", "en"}, URL: srv.URL + "/d", Text: "content", Texts: map[string]string{"zh-Hans": "note"},
+		Refresh: RefreshDaily, RPS: 5, Enabled: true, Builtin: true}
+	f := NewForTests(nil)
+	now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+	f.SetClock(func() time.Time { return now })
+	ctx := context.Background()
+	// Without the flag the answer is refused: it says it is not JSON.
+	if _, err := f.Get(ctx, a, a.LaneLang("en", nil), "2026-11-23", 0); err == nil {
+		t.Fatal("a mislabelled answer was taken")
+	}
+	a.AnyContentType = true
+	now = now.Add(time.Hour) // the failure's wait
+	for lang, want := range map[string]string{"en": "Be kind.", "en-GB": "Be kind.", "zh-CN": "与人为善。", "zh-Hans": "与人为善。", "fr": "与人为善。"} {
+		lane := a.LaneLang(lang, nil)
+		if want == "Be kind." && lane != "en" || want != "Be kind." && lane != "zh-Hans" {
+			t.Errorf("%s: lane %q", lang, lane)
+		}
+		got, err := f.Get(ctx, a, lane, "2026-11-23", 0)
+		if err != nil || got.Text != want {
+			t.Errorf("%s: %v %v", lang, got, err)
+		}
+	}
+	// Two lanes, two requests, however many readers.
+	if n := hits.Load(); n != 3 { // the refused one, and one for each language
+		t.Errorf("%d requests", n)
+	}
+	// A body that is not JSON is refused whatever the flag says.
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `<html>{"content":"x"}</html>`) }))
+	defer bad.Close()
+	b := a
+	b.URL, b.ID = bad.URL+"/d", "bad"
+	if _, err := f.Get(ctx, b, "en", "2026-11-23", 0); err == nil {
+		t.Fatal("html taken for JSON")
 	}
 }
