@@ -19,7 +19,13 @@ import { ts } from '@/i18n/signin'
 export default function SetupPage() {
   const session = useSession()
   if (session.isPending) return <PageFallback />
-  if (session.isError) return <ErrorState message={t.fmt.labelled(t.auth.loadFailed, session.error.message)} onRetry={() => void session.refetch()} />
+  if (session.isError)
+    return (
+      <ErrorState
+        message={t.fmt.labelled(t.auth.loadFailed, session.error.message)}
+        onRetry={() => void session.refetch()}
+      />
+    )
   const s = session.data
   if (s.mode === 'single') return <Navigate to="/" replace />
   if (!s.setup) return <Navigate to={s.user ? '/' : '/login'} replace />
@@ -64,7 +70,13 @@ function SetupForm() {
     setBusy(true)
     const sent = captcha.value()
     try {
-      const { user } = await api.setup({ token, username: username.trim(), name: name.trim() || undefined, password: pass, ...(sent ? { captcha: sent } : {}) })
+      const { user } = await api.setup({
+        token,
+        username: username.trim(),
+        name: name.trim() || undefined,
+        password: pass,
+        ...(sent ? { captcha: sent } : {}),
+      })
       await applySignIn(qc, user)
       navigate('/', { replace: true })
     } catch (err) {
@@ -72,7 +84,8 @@ function SetupForm() {
       if (err instanceof ApiError && err.code === 'captcha_failed') {
         setError(sent ? ts.captcha.failed : ts.captcha.required)
         void captcha.refresh()
-      } else if (err instanceof ApiError && err.code === 'rate_limited') setError(ts.login.rateLimited(t.auth.wait(err.retryAfter ?? 60)))
+      } else if (err instanceof ApiError && err.code === 'rate_limited')
+        setError(ts.login.rateLimited(t.auth.wait(err.retryAfter ?? 60)))
       else if (err instanceof ApiError && err.status === 403) setFieldError({ token: t.setup.badToken })
       else if (err instanceof ApiError && err.code === 'exists') setError(t.setup.exists)
       else if (err instanceof ApiError && err.code === 'invalid') setFieldError({ username: err.message })
@@ -100,11 +113,51 @@ function SetupForm() {
         </Link>
       )}
       <form className="grid gap-4" onSubmit={(e) => void submit(e)} noValidate>
-        {!fromLink && <Field label={t.setup.tokenLabel} help={t.setup.tokenHelp} error={fieldError.token} value={pasted} onChange={(e) => setPasted(e.target.value)} autoComplete="off" spellCheck={false} autoFocus required />}
-        <Field label={t.auth.username} help={t.auth.usernameHelp} error={fieldError.username} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoFocus={!!fromLink} required />
+        {!fromLink && (
+          <Field
+            label={t.setup.tokenLabel}
+            help={t.setup.tokenHelp}
+            error={fieldError.token}
+            value={pasted}
+            onChange={(e) => setPasted(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+            autoFocus
+            required
+          />
+        )}
+        <Field
+          label={t.auth.username}
+          help={t.auth.usernameHelp}
+          error={fieldError.username}
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          autoComplete="username"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          autoFocus={!!fromLink}
+          required
+        />
         <Field label={t.auth.nameOptional} value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
-        <Field label={t.auth.password} help={t.auth.passwordHelp} error={fieldError.password} type="password" value={pass} onChange={(e) => setPass(e.target.value)} autoComplete="new-password" required />
-        <Field label={t.auth.confirmPassword} type="password" value={again} onChange={(e) => setAgain(e.target.value)} autoComplete="new-password" required />
+        <Field
+          label={t.auth.password}
+          help={t.auth.passwordHelp}
+          error={fieldError.password}
+          type="password"
+          value={pass}
+          onChange={(e) => setPass(e.target.value)}
+          autoComplete="new-password"
+          required
+        />
+        <Field
+          label={t.auth.confirmPassword}
+          type="password"
+          value={again}
+          onChange={(e) => setAgain(e.target.value)}
+          autoComplete="new-password"
+          required
+        />
         {fromLink && fieldError.token && <FormMessage>{fieldError.token}</FormMessage>}
         <CaptchaField captcha={captcha} disabled={busy} />
         <Button type="submit" disabled={busy || captcha.missing}>

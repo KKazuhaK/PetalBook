@@ -12,11 +12,18 @@ const PAGE = '![旧说明](/assets/01HX/x.png)\n'
 function selectImage(editor: Editor) {
   editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, 1)))
 }
-const attrs = (editor: Editor) => (editor.getJSON().content![0].content![0] as { attrs: { src: string; alt: string | null } }).attrs
+const attrs = (editor: Editor) =>
+  (editor.getJSON().content![0].content![0] as { attrs: { src: string; alt: string | null } }).attrs
 
 // The fields as the popover mounts them: values from the document.
 function Fields({ editor }: { editor: Editor }) {
-  const { alt, src } = useEditorState({ editor, selector: ({ editor: e }) => ({ alt: (e.getAttributes('image').alt as string) ?? '', src: (e.getAttributes('image').src as string) ?? '' }) })
+  const { alt, src } = useEditorState({
+    editor,
+    selector: ({ editor: e }) => ({
+      alt: (e.getAttributes('image').alt as string) ?? '',
+      src: (e.getAttributes('image').src as string) ?? '',
+    }),
+  })
   return <ImageFields editor={editor} alt={alt} src={src} />
 }
 
@@ -35,8 +42,10 @@ async function open(markdown = PAGE) {
       el.dispatchEvent(new Event('input', { bubbles: true }))
     })
   }
-  const key = (el: HTMLInputElement, k: string) => act(async () => void el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true })))
-  const blur = (el: HTMLInputElement) => act(async () => void el.dispatchEvent(new FocusEvent('focusout', { bubbles: true })))
+  const key = (el: HTMLInputElement, k: string) =>
+    act(async () => void el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true })))
+  const blur = (el: HTMLInputElement) =>
+    act(async () => void el.dispatchEvent(new FocusEvent('focusout', { bubbles: true })))
   return { editor, host, input, type, key, blur, done: () => act(async () => root.unmount()).then(() => host.remove()) }
 }
 

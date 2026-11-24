@@ -1,7 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/client'
 import type { DraftInput, DraftReceipt, Page, PageDraft } from '@/api/types'
-import { applyFields, cleanFields, fieldsOf, flushAllSaves, SaveController, sameContent, waitForSaves, type ConflictInfo, type Draft } from './saveController'
+import {
+  applyFields,
+  cleanFields,
+  fieldsOf,
+  flushAllSaves,
+  SaveController,
+  sameContent,
+  waitForSaves,
+  type ConflictInfo,
+  type Draft,
+} from './saveController'
 
 const ID = '01JD3K8Q7Z'
 const page = (over: Partial<Page> = {}): Page => ({
@@ -16,12 +26,20 @@ const page = (over: Partial<Page> = {}): Page => ({
 })
 
 type Call =
-  | { kind: 'put'; input: DraftInput; keepalive: boolean; resolve: (r: DraftReceipt) => void; reject: (e: unknown) => void }
+  | {
+      kind: 'put'
+      input: DraftInput
+      keepalive: boolean
+      resolve: (r: DraftReceipt) => void
+      reject: (e: unknown) => void
+    }
   | { kind: 'delete'; version: string; resolve: () => void; reject: (e: unknown) => void }
   | { kind: 'commit'; version: string; resolve: (p: Page) => void; reject: (e: unknown) => void }
   | { kind: 'get'; resolve: (p: Page) => void; reject: (e: unknown) => void }
 
-export function setup(opts: { page?: Page; draft?: PageDraft; draftFields?: Partial<Draft>; normalizeBody?: (s: string) => string } = {}) {
+export function setup(
+  opts: { page?: Page; draft?: PageDraft; draftFields?: Partial<Draft>; normalizeBody?: (s: string) => string } = {},
+) {
   const start = opts.page ?? page()
   let current: Draft = { title: '原标题', subtitle: '', tags: ['甲'], ...opts.draftFields }
   const calls: Call[] = []
@@ -29,10 +47,18 @@ export function setup(opts: { page?: Page; draft?: PageDraft; draftFields?: Part
   const api = {
     putDraft: vi.fn(
       (_id: string, input: DraftInput, o: { keepalive: boolean }) =>
-        new Promise<DraftReceipt>((resolve, reject) => void calls.push({ kind: 'put', input, keepalive: o.keepalive, resolve, reject })),
+        new Promise<DraftReceipt>(
+          (resolve, reject) => void calls.push({ kind: 'put', input, keepalive: o.keepalive, resolve, reject }),
+        ),
     ),
-    deleteDraft: vi.fn((...[, version]: [id: string, version: string, rev: string]) => new Promise<void>((resolve, reject) => void calls.push({ kind: 'delete', version, resolve, reject }))),
-    commit: vi.fn((_id: string, version: string) => new Promise<Page>((resolve, reject) => void calls.push({ kind: 'commit', version, resolve, reject }))),
+    deleteDraft: vi.fn(
+      (...[, version]: [id: string, version: string, rev: string]) =>
+        new Promise<void>((resolve, reject) => void calls.push({ kind: 'delete', version, resolve, reject })),
+    ),
+    commit: vi.fn(
+      (_id: string, version: string) =>
+        new Promise<Page>((resolve, reject) => void calls.push({ kind: 'commit', version, resolve, reject })),
+    ),
     getPage: vi.fn(() => new Promise<Page>((resolve, reject) => void calls.push({ kind: 'get', resolve, reject }))),
   }
   const onConflict = vi.fn<(info: ConflictInfo) => void>()
@@ -40,14 +66,26 @@ export function setup(opts: { page?: Page; draft?: PageDraft; draftFields?: Part
   const onExternalChange = vi.fn<(p: Page) => void>()
   const onStored = vi.fn<(id: string) => void>()
   const read = vi.fn(() => current)
-  const c = new SaveController({ page: start, draft: opts.draft, read, api, scope: 'sp', onConflict, onCommitted, onStored, onExternalChange, normalizeBody: opts.normalizeBody })
+  const c = new SaveController({
+    page: start,
+    draft: opts.draft,
+    read,
+    api,
+    scope: 'sp',
+    onConflict,
+    onCommitted,
+    onStored,
+    onExternalChange,
+    normalizeBody: opts.normalizeBody,
+  })
   c.attach()
   const edit = (d: Partial<Draft>) => {
     current = { ...current, ...d }
     c.markDirty()
   }
   const puts = () => calls.filter((x): x is Extract<Call, { kind: 'put' }> => x.kind === 'put')
-  const last = <K extends Call['kind']>(kind: K) => calls.filter((x) => x.kind === kind).at(-1) as Extract<Call, { kind: K }>
+  const last = <K extends Call['kind']>(kind: K) =>
+    calls.filter((x) => x.kind === kind).at(-1) as Extract<Call, { kind: K }>
   const settle = () => vi.advanceTimersByTimeAsync(0)
   // Answer the newest draft store as the server would.
   const answerPut = async (over: Partial<DraftReceipt> = {}) => {
@@ -58,14 +96,35 @@ export function setup(opts: { page?: Page; draft?: PageDraft; draftFields?: Part
   // Answer the newest commit: the file takes the stored draft.
   const answerCommit = async (over: Partial<Page> = {}) => {
     const stored = puts().at(-1)?.input
-    last('commit').resolve(page({ rev: `rev${++clock + 1}`, ...(stored ? { meta: stored.meta, body: stored.body } : {}), ...over }))
+    last('commit').resolve(
+      page({ rev: `rev${++clock + 1}`, ...(stored ? { meta: stored.meta, body: stored.body } : {}), ...over }),
+    )
     await settle()
   }
-  return { c, api, calls, edit, puts, last, settle, answerPut, answerCommit, onConflict, onCommitted, onStored, onExternalChange, read, setContent: (d: Partial<Draft>) => (current = { ...current, ...d }) }
+  return {
+    c,
+    api,
+    calls,
+    edit,
+    puts,
+    last,
+    settle,
+    answerPut,
+    answerCommit,
+    onConflict,
+    onCommitted,
+    onStored,
+    onExternalChange,
+    read,
+    setContent: (d: Partial<Draft>) => (current = { ...current, ...d }),
+  }
 }
 
 // What the server's GET shows after our store: the file, and the draft we just stored.
-const afterStore = (put: { input: DraftInput }, version: string, file: Page, stale = true): Page => ({ ...file, draft: { version, baseRev: put.input.baseRev, meta: put.input.meta, body: put.input.body, updated: 'u', stale } })
+const afterStore = (put: { input: DraftInput }, version: string, file: Page, stale = true): Page => ({
+  ...file,
+  draft: { version, baseRev: put.input.baseRev, meta: put.input.meta, body: put.input.body, updated: 'u', stale },
+})
 
 const serverDraft = (over: Partial<PageDraft> = {}): PageDraft => ({
   version: 'ver0',
@@ -390,7 +449,8 @@ describe('a page opened on its server draft', () => {
 })
 
 describe('stale: the file moved on', () => {
-  const theirs = () => page({ rev: 'revX', meta: { id: ID, title: '别人的标题', created: '2026-01-01' }, body: '别人写的\n' })
+  const theirs = () =>
+    page({ rev: 'revX', meta: { id: ID, title: '别人的标题', created: '2026-01-01' }, body: '别人写的\n' })
 
   async function stale() {
     const t = setup()
@@ -474,7 +534,9 @@ describe('stale: the file moved on', () => {
     t.setContent({ title: '草稿标题', body: '草稿正文\n' })
     void t.c.commit()
     await t.settle()
-    t.last('commit').reject(new ApiError(409, 'conflict', '页面已被修改', theirs(), undefined, serverDraft({ stale: true })))
+    t.last('commit').reject(
+      new ApiError(409, 'conflict', '页面已被修改', theirs(), undefined, serverDraft({ stale: true })),
+    )
     await t.settle()
     expect(t.c.state).toBe('conflict')
     const info = t.onConflict.mock.calls[0][0]
@@ -498,8 +560,15 @@ describe('stale: the file moved on', () => {
 })
 
 describe('every request names the draft it means', () => {
-  const other = (over: Partial<PageDraft> = {}) => serverDraft({ version: 'verOther', meta: { id: ID, title: '别处的标题', created: '2026-01-01' }, body: '别处的正文\n', ...over })
-  const refused = (draft: PageDraft | null, current: Page) => new ApiError(409, 'conflict', '草稿不是这一份', current, undefined, draft)
+  const other = (over: Partial<PageDraft> = {}) =>
+    serverDraft({
+      version: 'verOther',
+      meta: { id: ID, title: '别处的标题', created: '2026-01-01' },
+      body: '别处的正文\n',
+      ...over,
+    })
+  const refused = (draft: PageDraft | null, current: Page) =>
+    new ApiError(409, 'conflict', '草稿不是这一份', current, undefined, draft)
 
   it('a store carries "" while there is no draft, then the version it got back', async () => {
     const t = setup()
@@ -634,7 +703,9 @@ describe('every request names the draft it means', () => {
     await t.answerPut({ version: 'verA' })
     t.edit({ title: '第二版' })
     await vi.advanceTimersByTimeAsync(1500)
-    t.last('put').reject(refused(null, page({ rev: 'revX', meta: { id: ID, title: '别人', created: '2026-01-01' }, body: '别人的字\n' })))
+    t.last('put').reject(
+      refused(null, page({ rev: 'revX', meta: { id: ID, title: '别人', created: '2026-01-01' }, body: '别人的字\n' })),
+    )
     await t.settle()
     expect(t.c.state).toBe('conflict')
     expect(t.onCommitted).not.toHaveBeenCalled()
@@ -705,7 +776,9 @@ describe('a store whose answer was lost', () => {
     await t.settle()
     // Nothing new is sent first: the server is asked what it holds.
     expect(t.puts()).toHaveLength(1)
-    t.last('get').resolve(page({ draft: serverDraft({ version: 'verLanded', baseRev: sent.baseRev, meta: sent.meta, body: sent.body }) }))
+    t.last('get').resolve(
+      page({ draft: serverDraft({ version: 'verLanded', baseRev: sent.baseRev, meta: sent.meta, body: sent.body }) }),
+    )
     await t.settle()
     expect(t.onConflict).not.toHaveBeenCalled()
     expect(t.c.state).toBe('drafted')
@@ -715,11 +788,20 @@ describe('a store whose answer was lost', () => {
     expect(t.puts().at(-1)!.input.prev).toBe('verLanded')
   })
 
-  it('...but a draft that differs in the header, with the same body, is another person\'s and a conflict', async () => {
+  it("...but a draft that differs in the header, with the same body, is another person's and a conflict", async () => {
     const { t, sent } = await lostFirst()
     void t.c.retry()
     await t.settle()
-    t.last('get').resolve(page({ draft: serverDraft({ version: 'verOther', baseRev: sent.baseRev, meta: { ...sent.meta, title: '别处的标题' }, body: sent.body }) }))
+    t.last('get').resolve(
+      page({
+        draft: serverDraft({
+          version: 'verOther',
+          baseRev: sent.baseRev,
+          meta: { ...sent.meta, title: '别处的标题' },
+          body: sent.body,
+        }),
+      }),
+    )
     await t.settle()
     expect(t.c.state).toBe('conflict')
     expect(t.onConflict.mock.calls[0][0].kind).toBe('draft')
@@ -793,7 +875,9 @@ describe('a store whose answer was lost', () => {
     t.c.markDirty()
     await vi.advanceTimersByTimeAsync(1500)
     expect(t.api.getPage).toHaveBeenCalledTimes(1)
-    t.last('get').resolve(page({ draft: serverDraft({ version: 'verLanded', baseRev: sent.baseRev, meta: sent.meta, body: sent.body }) }))
+    t.last('get').resolve(
+      page({ draft: serverDraft({ version: 'verLanded', baseRev: sent.baseRev, meta: sent.meta, body: sent.body }) }),
+    )
     await t.settle()
     expect(t.api.deleteDraft).toHaveBeenCalledTimes(1)
     expect(t.last('delete').version).toBe('verLanded')
@@ -821,7 +905,6 @@ describe('a store whose answer was lost', () => {
     await vi.advanceTimersByTimeAsync(1500)
     expect(t.calls).toHaveLength(0)
   })
-
 })
 
 describe('a slow answer to "what does the server have?"', () => {
@@ -866,7 +949,8 @@ describe('a slow answer to "what does the server have?"', () => {
 describe('a versioned delete the server refuses because the draft is gone', () => {
   const refused = (current: Page) => new ApiError(409, 'conflict', '草稿已经没有了', current, undefined, null)
   const X = { title: '原标题', body: '* 一\n* 二\n' }
-  const yFile = (sent: { meta: PageDraft['meta']; body: string }) => page({ rev: 'revY', meta: sent.meta, body: sent.body })
+  const yFile = (sent: { meta: PageDraft['meta']; body: string }) =>
+    page({ rev: 'revY', meta: sent.meta, body: sent.body })
 
   // Type Y, stored as draft V1, the server commits V1 on its own (we are not
   // told), then the text is undone back to X: the file keeps Y.
@@ -909,7 +993,9 @@ describe('a versioned delete the server refuses because the draft is gone', () =
 
   it('is a file conflict when the file is something else', async () => {
     const { t } = await sweptThenUndone()
-    t.last('delete').reject(refused(page({ rev: 'revZ', body: '别人写的\n', meta: { id: ID, title: '别人', created: '2026-01-01' } })))
+    t.last('delete').reject(
+      refused(page({ rev: 'revZ', body: '别人写的\n', meta: { id: ID, title: '别人', created: '2026-01-01' } })),
+    )
     await t.settle()
     expect(t.c.state).toBe('conflict')
     expect(t.onConflict.mock.calls[0][0]).toMatchObject({ kind: 'file', mine: { title: '原标题' } })
@@ -926,7 +1012,9 @@ describe('a versioned delete the server refuses because the draft is gone', () =
     t.c.markDirty()
     await vi.advanceTimersByTimeAsync(1500)
     // The page is asked what it holds: our draft (version known now).
-    t.last('get').resolve(page({ draft: serverDraft({ version: 'verLanded', baseRev: sent.baseRev, meta: sent.meta, body: sent.body }) }))
+    t.last('get').resolve(
+      page({ draft: serverDraft({ version: 'verLanded', baseRev: sent.baseRev, meta: sent.meta, body: sent.body }) }),
+    )
     await t.settle()
     expect(t.last('delete').version).toBe('verLanded')
     // The sweep lands between that answer and the delete.
@@ -960,7 +1048,14 @@ describe('a versioned delete the server refuses because the draft is gone', () =
 
   it('after "take theirs" what was discarded is no longer ours: a delete refused with that text in the file is a file conflict', async () => {
     const t = setup({ draft: serverDraft({ baseRev: 'revOld', stale: true }) })
-    t.c.enterConflict({ kind: 'file', theirs: page({ rev: 'revT' }), mine: { title: '草稿标题', subtitle: '', tags: [], body: '草稿正文\n' } }, false)
+    t.c.enterConflict(
+      {
+        kind: 'file',
+        theirs: page({ rev: 'revT' }),
+        mine: { title: '草稿标题', subtitle: '', tags: [], body: '草稿正文\n' },
+      },
+      false,
+    )
     t.c.useTheirs()
     await t.settle()
     expect(t.last('delete').version).toBe('ver0')
@@ -1303,7 +1398,9 @@ describe('two tabs on one page', () => {
     expect(t.puts()).toHaveLength(1)
     expect(t.puts()[0].input.baseRev).toBe('rev1')
     await t.answerPut({ stale: true })
-    t.last('get').resolve(page({ rev: 'rev2', body: '那边的字\n', meta: { id: ID, title: '那边的标题', created: '2026-01-01' } }))
+    t.last('get').resolve(
+      page({ rev: 'rev2', body: '那边的字\n', meta: { id: ID, title: '那边的标题', created: '2026-01-01' } }),
+    )
     await t.settle()
     expect(t.c.state).toBe('conflict')
     expect(t.onConflict).toHaveBeenCalledTimes(1)
@@ -1320,12 +1417,21 @@ describe('two tabs on one page', () => {
     expect(t.c.state).toBe('drafted')
   })
 
-  it('the other tab stored a draft and this one has unsaved text: both are the person\'s, so they choose', async () => {
+  it("the other tab stored a draft and this one has unsaved text: both are the person's, so they choose", async () => {
     const t = setup()
     t.edit({ title: '这边的字' })
     t.c.noticeExternalDraft('v9')
     await t.settle()
-    t.last('get').resolve(page({ draft: serverDraft({ version: 'v9', updated: 'u9', meta: { id: ID, title: '那边的字', created: '2026-01-01' }, body: '那边\n' }) }))
+    t.last('get').resolve(
+      page({
+        draft: serverDraft({
+          version: 'v9',
+          updated: 'u9',
+          meta: { id: ID, title: '那边的字', created: '2026-01-01' },
+          body: '那边\n',
+        }),
+      }),
+    )
     await t.settle()
     expect(t.c.state).toBe('conflict')
     const info = t.onConflict.mock.calls[0][0]
@@ -1334,13 +1440,22 @@ describe('two tabs on one page', () => {
     expect(info.theirs.meta.title).toBe('那边的字')
   })
 
-  it('keeping mine replaces the other tab\'s draft; taking theirs adopts it', async () => {
+  it("keeping mine replaces the other tab's draft; taking theirs adopts it", async () => {
     const mk = async () => {
       const t = setup()
       t.edit({ title: '这边的字' })
       t.c.noticeExternalDraft('v9')
       await t.settle()
-      t.last('get').resolve(page({ draft: serverDraft({ version: 'v9', updated: 'u9', meta: { id: ID, title: '那边的字', created: '2026-01-01' }, body: '那边\n' }) }))
+      t.last('get').resolve(
+        page({
+          draft: serverDraft({
+            version: 'v9',
+            updated: 'u9',
+            meta: { id: ID, title: '那边的字', created: '2026-01-01' },
+            body: '那边\n',
+          }),
+        }),
+      )
       await t.settle()
       return t
     }
@@ -1382,21 +1497,30 @@ describe('opening in a conflict', () => {
     expect(t.puts()[0].input).toMatchObject({ baseRev: 'revX', body: '我的\n' })
   })
 
-  it('a server draft that is stale is the person\'s text; taking the file deletes it', async () => {
+  it("a server draft that is stale is the person's text; taking the file deletes it", async () => {
     const t = setup({ draft: serverDraft({ baseRev: 'revOld', stale: true }) })
-    t.c.enterConflict({ kind: 'file', theirs: theirs(), mine: { title: '草稿标题', subtitle: '', tags: [], body: '草稿正文\n' } }, false)
+    t.c.enterConflict(
+      { kind: 'file', theirs: theirs(), mine: { title: '草稿标题', subtitle: '', tags: [], body: '草稿正文\n' } },
+      false,
+    )
     t.c.useTheirs()
     await t.settle()
     expect(t.api.deleteDraft).toHaveBeenCalledTimes(1)
   })
 
-  it('two unrelated drafts, the server\'s stale: after the choice the file is weighed as well', async () => {
+  it("two unrelated drafts, the server's stale: after the choice the file is weighed as well", async () => {
     const t = setup({ draft: serverDraft({ baseRev: 'revOld', stale: true }) })
     const info: ConflictInfo = {
       kind: 'draft',
       theirs: page({ meta: { id: ID, title: '草稿标题' }, body: '草稿正文\n' }),
       mine: { title: '本地', subtitle: '', tags: [], body: '本地正文\n' },
-      draft: { version: 'ver0', baseRev: 'revOld', meta: { id: ID, title: '草稿标题' }, body: '草稿正文\n', updated: 'u0' },
+      draft: {
+        version: 'ver0',
+        baseRev: 'revOld',
+        meta: { id: ID, title: '草稿标题' },
+        body: '草稿正文\n',
+        updated: 'u0',
+      },
       after: theirs(),
     }
     t.c.enterConflict(info, true)
@@ -1425,8 +1549,18 @@ describe('flushAllSaves', () => {
 
 describe('tags and scalars as the server serves them', () => {
   it('shows a tag written as a single string, and a numeric or boolean title as text', () => {
-    expect(fieldsOf({ id: 'X', tags: '栀子', title: 2026, subtitle: true })).toEqual({ title: '2026', subtitle: 'true', source: '', tags: ['栀子'] })
-    expect(fieldsOf({ id: 'X', tags: ['a', null, 7, 'b'] })).toEqual({ title: '', subtitle: '', source: '', tags: ['a', 'b'] })
+    expect(fieldsOf({ id: 'X', tags: '栀子', title: 2026, subtitle: true })).toEqual({
+      title: '2026',
+      subtitle: 'true',
+      source: '',
+      tags: ['栀子'],
+    })
+    expect(fieldsOf({ id: 'X', tags: ['a', null, 7, 'b'] })).toEqual({
+      title: '',
+      subtitle: '',
+      source: '',
+      tags: ['a', 'b'],
+    })
     expect(fieldsOf({ id: 'X', tags: '' }).tags).toEqual([])
     expect(fieldsOf({ id: 'X', title: null, subtitle: { a: 1 } })).toMatchObject({ title: '', subtitle: '' })
   })
@@ -1449,11 +1583,28 @@ describe('tags and scalars as the server serves them', () => {
 
   it('non-text entries of a tag list survive an edit of the tags, after the edited ones', () => {
     const meta = { id: 'X', tags: ['a', null, 7, 'b'] }
-    const out = applyFields(meta, { title: '', subtitle: '', tags: ['b', 'c'] }, { title: false, subtitle: false, source: false, tags: true })
+    const out = applyFields(
+      meta,
+      { title: '', subtitle: '', tags: ['b', 'c'] },
+      { title: false, subtitle: false, source: false, tags: true },
+    )
     expect(out.tags).toEqual(['b', 'c', null, 7])
     // Removing every text tag leaves the rest rather than deleting the key.
-    expect(applyFields(meta, { title: '', subtitle: '', tags: [] }, { title: false, subtitle: false, source: false, tags: true }).tags).toEqual([null, 7])
-    expect('tags' in applyFields({ id: 'X', tags: ['a'] }, { title: '', subtitle: '', tags: [] }, { title: false, subtitle: false, source: false, tags: true })).toBe(false)
+    expect(
+      applyFields(
+        meta,
+        { title: '', subtitle: '', tags: [] },
+        { title: false, subtitle: false, source: false, tags: true },
+      ).tags,
+    ).toEqual([null, 7])
+    expect(
+      'tags' in
+        applyFields(
+          { id: 'X', tags: ['a'] },
+          { title: '', subtitle: '', tags: [] },
+          { title: false, subtitle: false, source: false, tags: true },
+        ),
+    ).toBe(false)
   })
 
   it('a numeric title is rewritten only if the person changes it', async () => {
@@ -1471,11 +1622,20 @@ describe('tags and scalars as the server serves them', () => {
 
 describe('header handling', () => {
   it('sends unknown fields back exactly as received (the server decides their order)', async () => {
-    const p = page({ meta: { id: ID, title: '标', zeta: { a: 1 }, series: '冬季', created: '2026-01-01', alpha: [1, 2] } })
+    const p = page({
+      meta: { id: ID, title: '标', zeta: { a: 1 }, series: '冬季', created: '2026-01-01', alpha: [1, 2] },
+    })
     const t = setup({ page: p, draftFields: { title: '标', tags: [] } })
     t.edit({ title: '改标题' })
     await vi.advanceTimersByTimeAsync(1500)
-    expect(t.puts()[0].input.meta).toEqual({ id: ID, title: '改标题', zeta: { a: 1 }, series: '冬季', created: '2026-01-01', alpha: [1, 2] })
+    expect(t.puts()[0].input.meta).toEqual({
+      id: ID,
+      title: '改标题',
+      zeta: { a: 1 },
+      series: '冬季',
+      created: '2026-01-01',
+      alpha: [1, 2],
+    })
   })
 
   it('an untitled page stays untitled: no title key, never an empty string', async () => {
@@ -1489,18 +1649,29 @@ describe('header handling', () => {
   })
 
   it('clearing a title removes the key', () => {
-    const out = applyFields({ id: 'X', title: '甲', subtitle: '乙', created: 'c' }, { title: '', subtitle: '乙', tags: [] }, { title: true, subtitle: false, source: false, tags: false })
+    const out = applyFields(
+      { id: 'X', title: '甲', subtitle: '乙', created: 'c' },
+      { title: '', subtitle: '乙', tags: [] },
+      { title: true, subtitle: false, source: false, tags: false },
+    )
     expect(out).toEqual({ id: 'X', subtitle: '乙', created: 'c' })
   })
 
   it('a field that was absent is added when the person fills it in', () => {
     const base = { id: 'X', created: 'c', series: 's' }
-    const a = applyFields(base, { title: 'T', subtitle: 'S', tags: ['t'] }, { title: true, subtitle: true, source: false, tags: true })
+    const a = applyFields(
+      base,
+      { title: 'T', subtitle: 'S', tags: ['t'] },
+      { title: true, subtitle: true, source: false, tags: true },
+    )
     expect(a).toEqual({ id: 'X', created: 'c', series: 's', title: 'T', subtitle: 'S', tags: ['t'] })
   })
 
   it('never touches header values the person did not edit, whatever their type', async () => {
-    const odd = page({ meta: { id: ID, title: 5, subtitle: ['x'], tags: ['a', 'a', 7], weird: { n: null } }, body: 'b\n' })
+    const odd = page({
+      meta: { id: ID, title: 5, subtitle: ['x'], tags: ['a', 'a', 7], weird: { n: null } },
+      body: 'b\n',
+    })
     // Shown as: title "5", no subtitle, tags ["a","a"].
     const t = setup({ page: odd, draftFields: { title: '5', subtitle: '', tags: ['a', 'a'] } })
     t.edit({ title: '5' })
@@ -1520,7 +1691,11 @@ describe('header handling', () => {
   })
 
   it('cleanFields trims, flattens newlines and de-duplicates tags', () => {
-    expect(cleanFields({ title: ' 甲\n乙 ', subtitle: '', tags: [' a ', 'a', '', 'b'] })).toEqual({ title: '甲 乙', subtitle: '', tags: ['a', 'b'] })
+    expect(cleanFields({ title: ' 甲\n乙 ', subtitle: '', tags: [' a ', 'a', '', 'b'] })).toEqual({
+      title: '甲 乙',
+      subtitle: '',
+      tags: ['a', 'b'],
+    })
   })
 
   it('sameContent ignores key order and an id or created one side leaves out, nothing else', () => {
@@ -1541,7 +1716,7 @@ describe('a rev from an answer is adopted only if the content is what the contro
     expect(t.c.page.rev).toBe('rev1')
   })
 
-  it('a move whose answer has another rev (the page was changed meanwhile) is not adopted: with nothing typed the server\'s page is fetched and shown', async () => {
+  it("a move whose answer has another rev (the page was changed meanwhile) is not adopted: with nothing typed the server's page is fetched and shown", async () => {
     const t = setup()
     t.c.adopt(page({ rev: 'revB', body: '另一台设备写的\n', path: 'x/a.md', folder: 'x' }))
     await t.settle()
@@ -1569,7 +1744,8 @@ describe('a rev from an answer is adopted only if the content is what the contro
 })
 
 describe('what counts as ours', () => {
-  const refused = (draft: PageDraft | null, current: Page) => new ApiError(409, 'conflict', '', current, undefined, draft)
+  const refused = (draft: PageDraft | null, current: Page) =>
+    new ApiError(409, 'conflict', '', current, undefined, draft)
 
   it('a long offline stretch sends nothing new and ours does not grow: one store is outstanding, then the question, which fails too', async () => {
     const t = setup()
@@ -1589,7 +1765,11 @@ describe('what counts as ours', () => {
     // Back online: the server is asked, shows the first store as its draft (ours), the newest text goes up.
     t.c.noticeOnline()
     await t.settle()
-    t.last('get').resolve(page({ draft: serverDraft({ version: 'verLanded', baseRev: first.baseRev, meta: first.meta, body: first.body }) }))
+    t.last('get').resolve(
+      page({
+        draft: serverDraft({ version: 'verLanded', baseRev: first.baseRev, meta: first.meta, body: first.body }),
+      }),
+    )
     await t.settle()
     expect(t.onConflict).not.toHaveBeenCalled()
     expect(t.puts()[1].input.prev).toBe('verLanded')
@@ -1634,7 +1814,11 @@ describe('what counts as ours', () => {
     await t.settle()
     t.edit({ title: '最后', body: '最后\n' })
     await vi.advanceTimersByTimeAsync(1500)
-    t.last('get').resolve(page({ draft: serverDraft({ version: 'verLanded', baseRev: first.baseRev, meta: first.meta, body: first.body }) }))
+    t.last('get').resolve(
+      page({
+        draft: serverDraft({ version: 'verLanded', baseRev: first.baseRev, meta: first.meta, body: first.body }),
+      }),
+    )
     await t.settle()
     expect(t.c.state).toBe('conflict')
     expect(t.onConflict.mock.calls[0][0].kind).toBe('draft')
@@ -1644,7 +1828,11 @@ describe('what counts as ours', () => {
     const t = setup()
     t.edit({ title: '我的', body: '我的字\n' })
     await vi.advanceTimersByTimeAsync(1500)
-    const other = serverDraft({ version: 'verOther', meta: { id: ID, title: '别处', created: '2026-01-01' }, body: '别处的字\n' })
+    const other = serverDraft({
+      version: 'verOther',
+      meta: { id: ID, title: '别处', created: '2026-01-01' },
+      body: '别处的字\n',
+    })
     t.last('put').reject(refused(other, page()))
     await t.settle()
     expect(t.onConflict.mock.calls[0][0].kind).toBe('draft')
@@ -1667,7 +1855,9 @@ describe('what counts as ours', () => {
     t.edit({ title: '我的', body: '我的字\n' })
     await vi.advanceTimersByTimeAsync(1500)
     const mine = t.puts()[0].input
-    t.last('put').reject(refused(null, page({ rev: 'revB', body: '别人的\n', meta: { id: ID, title: '别人', created: '2026-01-01' } })))
+    t.last('put').reject(
+      refused(null, page({ rev: 'revB', body: '别人的\n', meta: { id: ID, title: '别人', created: '2026-01-01' } })),
+    )
     await t.settle()
     expect(t.c.state).toBe('conflict')
     t.c.useTheirs()

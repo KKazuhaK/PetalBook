@@ -4,11 +4,27 @@ import { toast } from 'sonner'
 import { adminApi, useSecuritySettings } from '@/api/admin'
 import { ApiError } from '@/api/client'
 import { keys } from '@/api/hooks'
-import type { CaptchaContext, CaptchaProvider, CaptchaWhen, LockoutScope, LoginMode, SecuritySettings } from '@/api/types'
+import type {
+  CaptchaContext,
+  CaptchaProvider,
+  CaptchaWhen,
+  LockoutScope,
+  LoginMode,
+  SecuritySettings,
+} from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
 import { SettingsRow, SettingsRows, SettingsSection } from '@/components/settings/SettingsParts'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -17,7 +33,17 @@ import { t } from '@/i18n'
 import { tsec } from '@/i18n/security'
 import { AuditSection } from './AuditSection'
 import { ProvidersSection } from './ProvidersSection'
-import { buildPatch, CONTEXTS, draftOf, isEmptyPatch, LIMIT_FIELDS, partOf, type Draft, type Part, type RoleChoice } from './securityDraft'
+import {
+  buildPatch,
+  CONTEXTS,
+  draftOf,
+  isEmptyPatch,
+  LIMIT_FIELDS,
+  partOf,
+  type Draft,
+  type Part,
+  type RoleChoice,
+} from './securityDraft'
 
 const MODES: readonly LoginMode[] = ['dual', 'sso_first', 'sso_redirect', 'local_only']
 const CAPTCHAS: readonly CaptchaProvider[] = ['image', 'turnstile', 'recaptcha', 'hcaptcha']
@@ -28,7 +54,13 @@ const SCOPES: readonly LockoutScope[] = ['ip_account', 'ip', 'account']
 export function AdminSecurityPanel() {
   const settings = useSecuritySettings()
   if (settings.isPending) return <PageFallback />
-  if (settings.isError) return <ErrorState message={t.fmt.labelled(tsec.loadFailed, settings.error.message)} onRetry={() => void settings.refetch()} />
+  if (settings.isError)
+    return (
+      <ErrorState
+        message={t.fmt.labelled(tsec.loadFailed, settings.error.message)}
+        onRetry={() => void settings.refetch()}
+      />
+    )
   return (
     <div className="min-w-0 space-y-10">
       <SettingsForm key={JSON.stringify(settings.data)} settings={settings.data} />
@@ -45,7 +77,9 @@ function Notices({ settings }: { settings: SecuritySettings }) {
       <h3 className="font-medium">{tsec.notices.title}</h3>
       <ul className="list-disc space-y-1 pl-5 break-words">
         {settings.notices.map((n, i) => (
-          <li key={`${n.code}-${i}`}>{tsec.noticeFor(Object.hasOwn(tsec.notices, n.code) ? tsec.notices[n.code] : n.message, n.slug, n.field)}</li>
+          <li key={`${n.code}-${i}`}>
+            {tsec.noticeFor(Object.hasOwn(tsec.notices, n.code) ? tsec.notices[n.code] : n.message, n.slug, n.field)}
+          </li>
         ))}
       </ul>
     </div>
@@ -67,7 +101,8 @@ function SettingsForm({ settings }: { settings: SecuritySettings }) {
     setError(null)
     setDraft((d) => ({ ...d, ...patch }))
   }
-  const setContext = (c: CaptchaContext, patch: Partial<Draft['contexts'][CaptchaContext]>) => set({ contexts: { ...draft.contexts, [c]: { ...draft.contexts[c], ...patch } } })
+  const setContext = (c: CaptchaContext, patch: Partial<Draft['contexts'][CaptchaContext]>) =>
+    set({ contexts: { ...draft.contexts, [c]: { ...draft.contexts[c], ...patch } } })
 
   const patch = buildPatch(settings, draft)
   const dirty = !isEmptyPatch(patch)
@@ -96,9 +131,18 @@ function SettingsForm({ settings }: { settings: SecuritySettings }) {
     setBusy(false)
   }
 
-  const err = (part: Part): ReactNode => (error?.part === part ? <FormMessage focusRef={messageRef}>{error.message}</FormMessage> : null)
+  const err = (part: Part): ReactNode =>
+    error?.part === part ? <FormMessage focusRef={messageRef}>{error.message}</FormMessage> : null
   const num = (value: string, on: (v: string) => void, id: string, label: string) => (
-    <Input id={id} aria-label={label} className="w-full min-w-0 sm:w-32" type="number" inputMode="numeric" value={value} onChange={(e) => on(e.target.value)} />
+    <Input
+      id={id}
+      aria-label={label}
+      className="w-full min-w-0 sm:w-32"
+      type="number"
+      inputMode="numeric"
+      value={value}
+      onChange={(e) => on(e.target.value)}
+    />
   )
 
   return (
@@ -117,7 +161,11 @@ function SettingsForm({ settings }: { settings: SecuritySettings }) {
         <SettingsRows>
           <SettingsRow title={tsec.login.mode} help={tsec.login.modes[draft.mode].help} controlId="security-mode">
             <div className={field}>
-              <NativeSelect id="security-mode" value={draft.mode} onChange={(e) => set({ mode: e.target.value as LoginMode })}>
+              <NativeSelect
+                id="security-mode"
+                value={draft.mode}
+                onChange={(e) => set({ mode: e.target.value as LoginMode })}
+              >
                 {MODES.map((m) => (
                   <option key={m} value={m}>
                     {tsec.login.modes[m].name}
@@ -131,24 +179,44 @@ function SettingsForm({ settings }: { settings: SecuritySettings }) {
           </SettingsRow>
         </SettingsRows>
         {noProvider && (
-          <p role="status" className="rounded-md border bg-muted/40 px-3 py-2 text-xs break-words text-muted-foreground" data-slot="no-provider">
+          <p
+            role="status"
+            className="rounded-md border bg-muted/40 px-3 py-2 text-xs break-words text-muted-foreground"
+            data-slot="no-provider"
+          >
             {tsec.login.noProvider(tsec.login.modes[settings.login.effectiveMode].name)}
             {draft.ssoOnly ? ` ${tsec.login.ssoOnlyNotInEffect}` : ''}
           </p>
         )}
-        <p className="text-xs text-muted-foreground">{settings.passwordAdmins > 0 ? tsec.login.passwordAdmins(settings.passwordAdmins) : tsec.login.noPasswordAdmins}</p>
+        <p className="text-xs text-muted-foreground">
+          {settings.passwordAdmins > 0
+            ? tsec.login.passwordAdmins(settings.passwordAdmins)
+            : tsec.login.noPasswordAdmins}
+        </p>
       </SettingsSection>
 
       <SettingsSection title={tsec.passkeys.title} description={tsec.passkeys.help} id="security-passkeys">
         {err('passkeys')}
-        {!settings.passkeys.available && <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs break-words text-muted-foreground">{tsec.passkeys.unavailable}</p>}
+        {!settings.passkeys.available && (
+          <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs break-words text-muted-foreground">
+            {tsec.passkeys.unavailable}
+          </p>
+        )}
         <SettingsRows>
           <SettingsRow title={tsec.passkeys.enabled} help={tsec.passkeys.enabledHelp} controlId="security-pk-enabled">
-            <Switch id="security-pk-enabled" checked={draft.pkEnabled} onCheckedChange={(on) => set({ pkEnabled: on })} />
+            <Switch
+              id="security-pk-enabled"
+              checked={draft.pkEnabled}
+              onCheckedChange={(on) => set({ pkEnabled: on })}
+            />
           </SettingsRow>
           <SettingsRow title={tsec.passkeys.requireRoles} controlId="security-pk-roles">
             <div className={field}>
-              <NativeSelect id="security-pk-roles" value={draft.pkRoles} onChange={(e) => set({ pkRoles: e.target.value as RoleChoice })}>
+              <NativeSelect
+                id="security-pk-roles"
+                value={draft.pkRoles}
+                onChange={(e) => set({ pkRoles: e.target.value as RoleChoice })}
+              >
                 <option value="none">{tsec.passkeys.roles.none}</option>
                 <option value="admins">{tsec.passkeys.roles.admins}</option>
                 <option value="everyone">{tsec.passkeys.roles.everyone}</option>
@@ -173,7 +241,11 @@ function SettingsForm({ settings }: { settings: SecuritySettings }) {
                   setReplacing(false)
                   const provider = e.target.value as CaptchaProvider
                   // A site key belongs to its provider: another one starts empty, the stored one gets its key back.
-                  set({ provider, secret: null, siteKey: provider === settings.captcha.provider ? settings.captcha.siteKey : '' })
+                  set({
+                    provider,
+                    secret: null,
+                    siteKey: provider === settings.captcha.provider ? settings.captcha.siteKey : '',
+                  })
                 }}
               >
                 {CAPTCHAS.map((p) => (
@@ -186,16 +258,38 @@ function SettingsForm({ settings }: { settings: SecuritySettings }) {
           </SettingsRow>
           {third && (
             <>
-              <SettingsRow title={tsec.captcha.siteKey} help={tsec.captcha.siteKeyHelp} controlId="security-sitekey" required>
-                <Input id="security-sitekey" aria-required="true" className={`${field} break-all`} value={draft.siteKey} onChange={(e) => set({ siteKey: e.target.value })} autoComplete="off" spellCheck={false} />
+              <SettingsRow
+                title={tsec.captcha.siteKey}
+                help={tsec.captcha.siteKeyHelp}
+                controlId="security-sitekey"
+                required
+              >
+                <Input
+                  id="security-sitekey"
+                  aria-required="true"
+                  className={`${field} break-all`}
+                  value={draft.siteKey}
+                  onChange={(e) => set({ siteKey: e.target.value })}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
               </SettingsRow>
-              <SettingsRow title={tsec.captcha.secret} help={tsec.captcha.secretHelp} controlId="security-secret" required>
+              <SettingsRow
+                title={tsec.captcha.secret}
+                help={tsec.captcha.secretHelp}
+                controlId="security-secret"
+                required
+              >
                 <div className={`${field} grid gap-2`}>
                   {secretStored && !replacing && draft.secret === null ? (
                     <>
                       <p className="text-sm" data-slot="secret-saved">
                         {tsec.captcha.secretSaved} ·{' '}
-                        <button type="button" className="underline underline-offset-4" onClick={() => setReplacing(true)}>
+                        <button
+                          type="button"
+                          className="underline underline-offset-4"
+                          onClick={() => setReplacing(true)}
+                        >
                           {tsec.captcha.replace}
                         </button>
                       </p>
@@ -206,7 +300,11 @@ function SettingsForm({ settings }: { settings: SecuritySettings }) {
                   ) : draft.secret === '' && !replacing ? (
                     <p className="text-sm text-muted-foreground">
                       {tsec.providers.secretWillClear} ·{' '}
-                      <button type="button" className="underline underline-offset-4" onClick={() => set({ secret: null })}>
+                      <button
+                        type="button"
+                        className="underline underline-offset-4"
+                        onClick={() => set({ secret: null })}
+                      >
                         {tsec.discard}
                       </button>
                     </p>
@@ -232,17 +330,39 @@ function SettingsForm({ settings }: { settings: SecuritySettings }) {
             {CONTEXTS.map((c) => {
               const x = draft.contexts[c]
               return (
-                <li key={c} className="grid grid-cols-1 gap-3 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center" data-context={c}>
+                <li
+                  key={c}
+                  className="grid grid-cols-1 gap-3 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center"
+                  data-context={c}
+                >
                   <label className="flex items-center gap-2 text-sm font-medium">
-                    <Switch checked={x.on} onCheckedChange={(on) => setContext(c, { on })} aria-label={`${tsec.captcha.context[c]}: ${tsec.captcha.on}`} />
+                    <Switch
+                      checked={x.on}
+                      onCheckedChange={(on) => setContext(c, { on })}
+                      aria-label={`${tsec.captcha.context[c]}: ${tsec.captcha.on}`}
+                    />
                     {tsec.captcha.context[c]}
                   </label>
-                  <NativeSelect className="w-full sm:w-44" aria-label={`${tsec.captcha.context[c]}: ${tsec.captcha.when}`} value={x.when} disabled={!x.on} onChange={(e) => setContext(c, { when: e.target.value as CaptchaWhen })}>
+                  <NativeSelect
+                    className="w-full sm:w-44"
+                    aria-label={`${tsec.captcha.context[c]}: ${tsec.captcha.when}`}
+                    value={x.when}
+                    disabled={!x.on}
+                    onChange={(e) => setContext(c, { when: e.target.value as CaptchaWhen })}
+                  >
                     <option value="always">{tsec.captcha.whens.always}</option>
                     <option value="after_failures">{tsec.captcha.whens.after_failures}</option>
                   </NativeSelect>
                   {x.when === 'after_failures' ? (
-                    <Input className="w-full sm:w-24" type="number" inputMode="numeric" aria-label={`${tsec.captcha.context[c]}: ${tsec.captcha.failures}`} disabled={!x.on} value={x.failures} onChange={(e) => setContext(c, { failures: e.target.value })} />
+                    <Input
+                      className="w-full sm:w-24"
+                      type="number"
+                      inputMode="numeric"
+                      aria-label={`${tsec.captcha.context[c]}: ${tsec.captcha.failures}`}
+                      disabled={!x.on}
+                      value={x.failures}
+                      onChange={(e) => setContext(c, { failures: e.target.value })}
+                    />
                   ) : (
                     <span className="hidden sm:block sm:w-24" />
                   )}
@@ -258,7 +378,11 @@ function SettingsForm({ settings }: { settings: SecuritySettings }) {
         {err('lockout')}
         <SettingsRows>
           <SettingsRow title={tsec.lockout.enabled} controlId="security-lock-enabled">
-            <Switch id="security-lock-enabled" checked={draft.lockEnabled} onCheckedChange={(on) => set({ lockEnabled: on })} />
+            <Switch
+              id="security-lock-enabled"
+              checked={draft.lockEnabled}
+              onCheckedChange={(on) => set({ lockEnabled: on })}
+            />
           </SettingsRow>
           <SettingsRow title={tsec.lockout.minutes} help={tsec.lockout.minutesHelp} controlId="security-lock-minutes">
             {num(draft.lockMinutes, (v) => set({ lockMinutes: v }), 'security-lock-minutes', tsec.lockout.minutes)}
@@ -284,7 +408,11 @@ function SettingsForm({ settings }: { settings: SecuritySettings }) {
           </SettingsRow>
         </SettingsRows>
         {draft.scope === 'account' && (
-          <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs break-words text-destructive" data-slot="scope-warning">
+          <p
+            role="alert"
+            className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs break-words text-destructive"
+            data-slot="scope-warning"
+          >
             {tsec.lockout.accountWarning}
           </p>
         )}
@@ -314,8 +442,26 @@ function SettingsForm({ settings }: { settings: SecuritySettings }) {
         {err('limits')}
         <SettingsRows>
           {LIMIT_FIELDS.map((f) => (
-            <SettingsRow key={f} title={tsec.limits[f]} help={f === 'sessionMaxDays' ? tsec.limits.sessionMaxHelp : f === 'perMinute' ? tsec.limits.perMinuteHelp : f === 'maxFailures' ? tsec.limits.maxFailuresHelp : undefined} controlId={`security-limit-${f}`}>
-              {num(draft.limits[f], (v) => set({ limits: { ...draft.limits, [f]: v } }), `security-limit-${f}`, tsec.limits[f])}
+            <SettingsRow
+              key={f}
+              title={tsec.limits[f]}
+              help={
+                f === 'sessionMaxDays'
+                  ? tsec.limits.sessionMaxHelp
+                  : f === 'perMinute'
+                    ? tsec.limits.perMinuteHelp
+                    : f === 'maxFailures'
+                      ? tsec.limits.maxFailuresHelp
+                      : undefined
+              }
+              controlId={`security-limit-${f}`}
+            >
+              {num(
+                draft.limits[f],
+                (v) => set({ limits: { ...draft.limits, [f]: v } }),
+                `security-limit-${f}`,
+                tsec.limits[f],
+              )}
             </SettingsRow>
           ))}
         </SettingsRows>

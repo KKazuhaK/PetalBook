@@ -30,7 +30,7 @@ function rng(seed: number) {
   }
 }
 
-describe('a merged document is valid in the editor\'s schema', () => {
+describe("a merged document is valid in the editor's schema", () => {
   it('for the cases that reshape containers', () => {
     valid('- 一\n- 二\n- 三\n', '- [ ] 一\n- [ ] 三\n')
     valid('- [x] 一\n- [ ] 二\n', '1. 一\n2. 三\n')
@@ -67,7 +67,9 @@ describe('a merged document is valid in the editor\'s schema', () => {
 
 describe('what the hover text says', () => {
   it('names the old formatting', () => {
-    expect(describeMarks(JSON.stringify([{ type: 'bold' }, { type: 'link', attrs: { href: 'https://a.example' } }]))).toBe('加粗、链接 https://a.example')
+    expect(
+      describeMarks(JSON.stringify([{ type: 'bold' }, { type: 'link', attrs: { href: 'https://a.example' } }])),
+    ).toBe('加粗、链接 https://a.example')
     expect(describeMarks('[]')).toBe('没有格式')
     expect(describeMarks('nonsense')).toBe('没有格式')
   })
@@ -82,8 +84,15 @@ describe('what the hover text says', () => {
 describe('what is drawn', () => {
   it('writes insertions, deletions and format changes as elements with a label for screen readers, and blocks with data attributes', async () => {
     const { Editor } = await import('@tiptap/core')
-    const r = diffVersions({ meta: {}, body: '这是**一段**普通的好话。\n\n## 小节\n\n- 一\n- 二\n' }, { meta: {}, body: '这是一段普通的新话。\n\n### 小节\n\n- 一\n- 二\n- 三\n' })
-    const editor = new Editor({ extensions: [...createExtensions({ linkOpensOnClick: false }), ...diffExtensions], content: r.doc, editable: false })
+    const r = diffVersions(
+      { meta: {}, body: '这是**一段**普通的好话。\n\n## 小节\n\n- 一\n- 二\n' },
+      { meta: {}, body: '这是一段普通的新话。\n\n### 小节\n\n- 一\n- 二\n- 三\n' },
+    )
+    const editor = new Editor({
+      extensions: [...createExtensions({ linkOpensOnClick: false }), ...diffExtensions],
+      content: r.doc,
+      editable: false,
+    })
     const html = editor.getHTML()
     expect(html).toMatch(/<ins [^>]*class="pb-diff-ins"[^>]*data-sr="新增：">新<\/ins>/)
     expect(html).toMatch(/<del [^>]*class="pb-diff-del"[^>]*data-sr="删除：">好<\/del>/)

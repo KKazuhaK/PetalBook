@@ -27,9 +27,11 @@ const routes = (
   </Routes>
 )
 const text = () => document.body.textContent ?? ''
-const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === label) ?? null
+const button = (label: string) =>
+  [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === label) ?? null
 const boxes = () => [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
-const decisions = () => m!.requests.filter((r) => r.method === 'POST' && r.url === '/api/oauth/consent').map((r) => JSON.parse(r.body!))
+const decisions = () =>
+  m!.requests.filter((r) => r.method === 'POST' && r.url === '/api/oauth/consent').map((r) => JSON.parse(r.body!))
 
 let req = ''
 const open = async (start: Parameters<MockServer['startAuthorization']>[1] = {}, entry?: string) => {
@@ -128,7 +130,11 @@ describe('the consent page', () => {
       server: { mode: 'accounts', oauth: true },
     })
     await settle(() => boxes().length === 2, 'both spaces')
-    expect(boxes().map((b) => b.checked).sort()).toEqual([false, true]) // only the personal one is ticked
+    expect(
+      boxes()
+        .map((b) => b.checked)
+        .sort(),
+    ).toEqual([false, true]) // only the personal one is ticked
     expect(text()).toContain('Team')
     expect(text()).toContain(hostile)
     expect(document.querySelector('img[src="x"]')).toBeNull()
@@ -154,7 +160,9 @@ describe('the consent page', () => {
     await settle(() => boxes().length === 1, 'the page')
     await click(button(oa.consent.allow))
     await settle(() => leave.mock.calls.length === 1, 'the way out')
-    expect(() => adminRequests(m!.server)('POST', '/api/oauth/consent', { req, approve: true, spaces: [], access: 'read' })).toThrow(/404/)
+    expect(() =>
+      adminRequests(m!.server)('POST', '/api/oauth/consent', { req, approve: true, spaces: [], access: 'read' }),
+    ).toThrow(/404/)
   })
 
   it('holds a phone: one narrow column, and what can be long breaks', async () => {
@@ -165,7 +173,8 @@ describe('the consent page', () => {
     const form = document.querySelector('form')!
     expect(form.className).toMatch(/min-w-0/)
     expect(form.className).toMatch(/grid-cols-1/)
-    for (const code of document.querySelectorAll('[data-slot="consent-client"] code')) expect(code.className).toMatch(/break-all/)
+    for (const code of document.querySelectorAll('[data-slot="consent-client"] code'))
+      expect(code.className).toMatch(/break-all/)
     expect(document.querySelector('[data-slot="consent-client"] dd.font-medium')!.className).toMatch(/break-words/)
     for (const b of [button(oa.consent.allow)!, button(oa.consent.deny)!]) expect(b.className).toMatch(/max-sm:w-full/)
   })

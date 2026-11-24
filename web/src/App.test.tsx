@@ -8,7 +8,15 @@ import { createMockServer, MOCK_ADMIN, type MockServer } from '@/api/mock/server
 import { t } from '@/i18n'
 import { oa } from '@/i18n/oauth'
 import { keys } from '@/api/hooks'
-import { adminRequests, click, installDomShims, makePerson, PERSON_PASSWORD, settle, shareSpace } from '@/testing/harness'
+import {
+  adminRequests,
+  click,
+  installDomShims,
+  makePerson,
+  PERSON_PASSWORD,
+  settle,
+  shareSpace,
+} from '@/testing/harness'
 
 // The real route table, in the real app shell: where the addresses go, who gets
 // the administration and what a space that was switched off shows.
@@ -34,12 +42,22 @@ afterEach(async () => {
 
 // Starts the app at `path`, as a person signed in already (or in single-user mode). The router is made
 // when the module loads, so each start loads it afresh, with the address already in place.
-async function boot(path: string | (() => string), options: { mode: 'single' | 'accounts'; as?: string; oauth?: boolean; scene?: (server: MockServer) => void }) {
+async function boot(
+  path: string | (() => string),
+  options: { mode: 'single' | 'accounts'; as?: string; oauth?: boolean; scene?: (server: MockServer) => void },
+) {
   const server = createMockServer({ now: () => Date.now(), mode: options.mode, oauth: options.oauth })
   globalThis.fetch = mockFetch(server)
   options.scene?.(server)
   if (options.mode === 'accounts') {
-    const login = await globalThis.fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: options.as ?? MOCK_ADMIN.username, password: options.as ? PERSON_PASSWORD : MOCK_ADMIN.password }) })
+    const login = await globalThis.fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: options.as ?? MOCK_ADMIN.username,
+        password: options.as ? PERSON_PASSWORD : MOCK_ADMIN.password,
+      }),
+    })
     expect(login.status).toBe(200)
   }
   window.history.pushState({}, '', typeof path === 'function' ? path() : path)
@@ -82,7 +100,11 @@ describe('the addresses of users and invites', () => {
 describe('the page an MCP client sends a person to', () => {
   it('is /oauth/consent: the page alone, with no app around it', async () => {
     let req = ''
-    await boot(() => `/oauth/consent?req=${req}`, { mode: 'accounts', oauth: true, scene: (server) => void (req = server.startAuthorization(MOCK_ADMIN.username, { clientName: 'Notes helper' })) })
+    await boot(() => `/oauth/consent?req=${req}`, {
+      mode: 'accounts',
+      oauth: true,
+      scene: (server) => void (req = server.startAuthorization(MOCK_ADMIN.username, { clientName: 'Notes helper' })),
+    })
     await settle(() => text().includes(oa.consent.titleFor('Notes helper')), 'the consent page')
     expect(where()).toBe('/oauth/consent')
     expect(document.querySelector('[data-sidebar]')).toBeNull()
@@ -92,7 +114,10 @@ describe('the page an MCP client sends a person to', () => {
     const replace = vi.fn()
     const loc = window.location
     // jsdom does not navigate; what is asked of it is what is checked.
-    Object.defineProperty(window, 'location', { configurable: true, value: { ...loc, pathname: '/oauth/authorize', search: '?client_id=x', replace } })
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { ...loc, pathname: '/oauth/authorize', search: '?client_id=x', replace },
+    })
     try {
       const { default: App } = await import('@/App')
       globalThis.fetch = mockFetch(createMockServer({ now: () => Date.now(), mode: 'accounts' }))
@@ -120,9 +145,15 @@ describe('the way into the administration', () => {
   it('an administrator finds it in the user menu', async () => {
     await boot('/s/x/recent', { mode: 'accounts', scene: () => undefined })
     // The first space in use is the personal one: the address above is not a space of theirs.
-    await settle(() => text().includes(t.spaces.switcher) || document.querySelector(`[aria-label^="${t.userMenu.label}"]`) !== null, 'the shell')
+    await settle(
+      () =>
+        text().includes(t.spaces.switcher) || document.querySelector(`[aria-label^="${t.userMenu.label}"]`) !== null,
+      'the shell',
+    )
     expect(await openUserMenu()).toEqual([t.userMenu.settings, t.userMenu.admin, t.userMenu.signOut])
-    await click([...document.querySelectorAll('[role="menuitem"]')].find((e) => e.textContent?.trim() === t.userMenu.admin))
+    await click(
+      [...document.querySelectorAll('[role="menuitem"]')].find((e) => e.textContent?.trim() === t.userMenu.admin),
+    )
     await settle(() => where() === '/admin/users', 'the administration')
   })
 
@@ -140,7 +171,7 @@ describe('the way into the administration', () => {
 })
 
 describe('a space that an administrator switched off', () => {
-  it('is in the member\'s list, marked, and opening it says why instead of failing', async () => {
+  it("is in the member's list, marked, and opening it says why instead of failing", async () => {
     let space = ''
     await boot(() => `/s/${space}/recent`, {
       mode: 'accounts',
@@ -158,7 +189,9 @@ describe('a space that an administrator switched off', () => {
     // The switcher marks it.
     await click(document.querySelector(`[aria-label^="${t.spaces.switcher}"]`))
     await settle(() => document.querySelectorAll('[role="menuitemradio"]').length > 0, 'the switcher')
-    const entry = [...document.querySelectorAll('[role="menuitemradio"]')].find((e) => e.textContent?.includes('停用的空间'))!
+    const entry = [...document.querySelectorAll('[role="menuitemradio"]')].find((e) =>
+      e.textContent?.includes('停用的空间'),
+    )!
     expect(entry.textContent).toContain(t.spaces.disabledMark)
   })
 
@@ -173,8 +206,13 @@ describe('a space that an administrator switched off', () => {
     await settle(() => document.querySelector(`[aria-label^="${t.spaces.switcher}"]`) !== null, 'the switcher')
     await click(document.querySelector(`[aria-label^="${t.spaces.switcher}"]`))
     await settle(() => document.querySelectorAll('[role="menuitemradio"]').length > 1, 'the switcher')
-    await click([...document.querySelectorAll('[role="menuitemradio"]')].find((e) => e.textContent?.includes('另一个空间')))
-    await settle(() => window.location.pathname === `/s/${other}/` || window.location.pathname === `/s/${other}`, 'its home page')
+    await click(
+      [...document.querySelectorAll('[role="menuitemradio"]')].find((e) => e.textContent?.includes('另一个空间')),
+    )
+    await settle(
+      () => window.location.pathname === `/s/${other}/` || window.location.pathname === `/s/${other}`,
+      'its home page',
+    )
   })
 
   it('an administrator is told where to switch it on again', async () => {
@@ -192,7 +230,7 @@ describe('a space that an administrator switched off', () => {
 })
 
 describe('an administrator opens a space they are not a member of', () => {
-  it('from the administration: the space\'s pages are there, and they may write', async () => {
+  it("from the administration: the space's pages are there, and they may write", async () => {
     let space = ''
     await boot('/admin/spaces', {
       mode: 'accounts',
@@ -234,10 +272,18 @@ describe('an administrator in a space they are not a member of', () => {
     let space = ''
     await boot(() => `/s/${space}/settings`, { mode: 'accounts', scene: (s) => void (space = frankSpace(s)) })
     // The old address of a space's settings lands on its sync section.
-    await settle(() => where() === '/settings/sync' && dialog() !== null && dialog()!.textContent!.includes(t.remote.title), 'the sync section')
+    await settle(
+      () => where() === '/settings/sync' && dialog() !== null && dialog()!.textContent!.includes(t.remote.title),
+      'the sync section',
+    )
     expect(dialog()!.textContent).not.toContain(t.remote.ownerOnly)
     await click([...dialog()!.querySelectorAll('nav a')].find((a) => a.textContent === t.settingsUi.sections.general))
-    await settle(() => [...dialog()!.querySelectorAll('input')].some((i) => i.value === '别人的空间') && [...dialog()!.querySelectorAll('input')].some((i) => i.value === '待整理'), 'the name and the inbox')
+    await settle(
+      () =>
+        [...dialog()!.querySelectorAll('input')].some((i) => i.value === '别人的空间') &&
+        [...dialog()!.querySelectorAll('input')].some((i) => i.value === '待整理'),
+      'the name and the inbox',
+    )
     expect(dialog()!.textContent).not.toContain(t.editor.spaceMissing)
     await click([...dialog()!.querySelectorAll('nav a')].find((a) => a.textContent === t.settingsUi.sections.members))
     await settle(() => dialog()!.textContent!.includes('frank'), 'the members')
@@ -249,7 +295,9 @@ describe('an administrator in a space they are not a member of', () => {
     await settle(() => text().includes(t.import.intro), 'the import page')
     expect(text()).not.toContain(t.permissions.readOnlyNote)
     await act(async () => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyN', altKey: true, shiftKey: true, bubbles: true, cancelable: true }))
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { code: 'KeyN', altKey: true, shiftKey: true, bubbles: true, cancelable: true }),
+      )
     })
     await settle(() => document.querySelector('[role="dialog"] textarea') !== null, 'the quick note box')
   })
@@ -265,12 +313,20 @@ describe('what the app knows of a space it is showing', () => {
   // Asks the server for something in the space, as any request of the app would.
   const ask = async (space: string) => {
     const { spaceApi } = await import('@/api/client')
-    await act(async () => void (await spaceApi(space).tree().catch(() => undefined)))
+    await act(
+      async () =>
+        void (await spaceApi(space)
+          .tree()
+          .catch(() => undefined)),
+    )
   }
 
   it('an administrator viewing a space is shown the disabled notice when it is switched off meanwhile', async () => {
     let space = ''
-    const server = await boot(() => `/s/${space}/recent`, { mode: 'accounts', scene: (s) => void (space = frankSpace(s).space) })
+    const server = await boot(() => `/s/${space}/recent`, {
+      mode: 'accounts',
+      scene: (s) => void (space = frankSpace(s).space),
+    })
     await settle(() => text().includes('别人写的页面'), 'the pages')
     adminRequests(server)('POST', `/api/admin/spaces/${space}/disable`)
     await ask(space)
@@ -294,7 +350,10 @@ describe('what the app knows of a space it is showing', () => {
 
   it('a space that is deleted while it is viewed is not found', async () => {
     let space = ''
-    const server = await boot(() => `/s/${space}/recent`, { mode: 'accounts', scene: (s) => void (space = frankSpace(s).space) })
+    const server = await boot(() => `/s/${space}/recent`, {
+      mode: 'accounts',
+      scene: (s) => void (space = frankSpace(s).space),
+    })
     // A short window, so the recheck that a 404 inside it waits for comes soon:
     // waiting the real five seconds made the test depend on a runner's speed.
     // Set on the app's own copy of the module (the modules are loaded anew per test).
@@ -325,7 +384,10 @@ describe('what the app knows of a space it is showing', () => {
   it('a member removed from a space meanwhile finds it gone once the window is looked at again', async () => {
     const x = removable()
     await boot(() => `/s/${x.space()}/recent`, { mode: 'accounts', as: 'ivy', scene: x.scene })
-    await settle(() => text().includes(t.nav.quickNote) || document.querySelector(`[aria-label="${t.list.newPage}"]`) !== null, 'the space')
+    await settle(
+      () => text().includes(t.nav.quickNote) || document.querySelector(`[aria-label="${t.list.newPage}"]`) !== null,
+      'the space',
+    )
     x.remove()
     await act(async () => {
       window.dispatchEvent(new Event('visibilitychange'))

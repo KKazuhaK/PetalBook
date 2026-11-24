@@ -1,4 +1,15 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react'
 import { useNavigate } from 'react-router'
 import { PenLine } from 'lucide-react'
 import { toast } from 'sonner'
@@ -8,7 +19,14 @@ import { can } from '@/lib/permissions'
 import { FormMessage } from '@/components/auth/Field'
 import { Spinner } from '@/components/common'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { captureKey, loadCapture, noteBody, saveCapture } from '@/lib/capture'
 import { t } from '@/i18n'
@@ -58,13 +76,33 @@ export function QuickCaptureProvider({ children }: { children: ReactNode }) {
       {children}
       <Dialog open={open && available} onOpenChange={(o) => (o || !busy.current) && setOpen(o)}>
         {/* Mounted only while open, so the text is read from storage each time. */}
-        {open && space && <CaptureForm space={space.id} inbox={space.inbox} onClose={() => !busy.current && setOpen(false)} onDone={() => setOpen(false)} onBusy={setBusy} />}
+        {open && space && (
+          <CaptureForm
+            space={space.id}
+            inbox={space.inbox}
+            onClose={() => !busy.current && setOpen(false)}
+            onDone={() => setOpen(false)}
+            onBusy={setBusy}
+          />
+        )}
       </Dialog>
     </CaptureContext.Provider>
   )
 }
 
-function CaptureForm({ space, inbox, onClose, onDone, onBusy }: { space: string; inbox: string; onClose: () => void; onDone: () => void; onBusy: (busy: boolean) => void }) {
+function CaptureForm({
+  space,
+  inbox,
+  onClose,
+  onDone,
+  onBusy,
+}: {
+  space: string
+  inbox: string
+  onClose: () => void
+  onDone: () => void
+  onBusy: (busy: boolean) => void
+}) {
   const user = useSession().data?.user?.id
   const key = captureKey(user, space)
   const [text, setText] = useState(() => loadCapture(key))

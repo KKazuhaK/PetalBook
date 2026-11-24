@@ -21,12 +21,24 @@ import { tu } from '@/i18n/usage'
 export default function InvitePage() {
   const session = useSession()
   if (session.isPending) return <PageFallback />
-  if (session.isError) return <ErrorState message={t.fmt.labelled(t.auth.loadFailed, session.error.message)} onRetry={() => void session.refetch()} />
+  if (session.isError)
+    return (
+      <ErrorState
+        message={t.fmt.labelled(t.auth.loadFailed, session.error.message)}
+        onRetry={() => void session.refetch()}
+      />
+    )
   if (session.data.mode === 'single') return <Navigate to="/" replace />
   return <InviteForm />
 }
 
-type Check = { state: 'none' } | { state: 'captcha' } | { state: 'checking' } | { state: 'ok'; invite: InviteCheck } | { state: 'invalid' } | { state: 'error'; message: string }
+type Check =
+  | { state: 'none' }
+  | { state: 'captcha' }
+  | { state: 'checking' }
+  | { state: 'ok'; invite: InviteCheck }
+  | { state: 'invalid' }
+  | { state: 'error'; message: string }
 
 function InviteForm() {
   const providers = useAuthProviders()
@@ -72,8 +84,14 @@ function InviteForm() {
           setCheck({ state: 'captcha' })
           setError(sent ? ts.captcha.failed : ts.captcha.required)
           void captcha.refresh()
-        } else if (e instanceof ApiError && e.code === 'rate_limited') setCheck({ state: 'error', message: ts.login.rateLimited(t.auth.wait(e.retryAfter ?? 60)) })
-        else setCheck(e instanceof ApiError && e.code === 'not_found' ? { state: 'invalid' } : { state: 'error', message: e instanceof ApiError ? e.message : t.auth.failed })
+        } else if (e instanceof ApiError && e.code === 'rate_limited')
+          setCheck({ state: 'error', message: ts.login.rateLimited(t.auth.wait(e.retryAfter ?? 60)) })
+        else
+          setCheck(
+            e instanceof ApiError && e.code === 'not_found'
+              ? { state: 'invalid' }
+              : { state: 'error', message: e instanceof ApiError ? e.message : t.auth.failed },
+          )
       },
     )
   }
@@ -103,7 +121,13 @@ function InviteForm() {
     setBusy(true)
     const sent = captcha.value()
     try {
-      const { user } = await api.acceptInvite({ token, username: username.trim(), name: name.trim() || undefined, password: pass, ...(sent ? { captcha: sent } : {}) })
+      const { user } = await api.acceptInvite({
+        token,
+        username: username.trim(),
+        name: name.trim() || undefined,
+        password: pass,
+        ...(sent ? { captcha: sent } : {}),
+      })
       await applySignIn(qc, user)
       navigate('/', { replace: true })
     } catch (err) {
@@ -112,7 +136,8 @@ function InviteForm() {
         setError(sent ? ts.captcha.failed : ts.captcha.required)
         void captcha.refresh()
       } else if (err instanceof ApiError && err.code === 'local_login_refused') setSsoOnly(true)
-      else if (err instanceof ApiError && err.code === 'rate_limited') setError(ts.login.rateLimited(t.auth.wait(err.retryAfter ?? 60)))
+      else if (err instanceof ApiError && err.code === 'rate_limited')
+        setError(ts.login.rateLimited(t.auth.wait(err.retryAfter ?? 60)))
       else if (err instanceof ApiError && err.code === 'exists') setFieldError({ username: t.invite.taken })
       else if (err instanceof ApiError && err.code === 'not_found') setCheck({ state: 'invalid' })
       else if (err instanceof ApiError && err.code === 'invalid') setFieldError({ username: err.message })
@@ -142,7 +167,15 @@ function InviteForm() {
             setAttempt((n) => n + 1)
           }}
         >
-          <Field label={t.invite.tokenLabel} value={pasted} onChange={(e) => setPasted(e.target.value)} autoComplete="off" spellCheck={false} autoFocus required />
+          <Field
+            label={t.invite.tokenLabel}
+            value={pasted}
+            onChange={(e) => setPasted(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+            autoFocus
+            required
+          />
           <CaptchaField captcha={captcha} />
           <Button type="submit" disabled={!pasted.trim() || captcha.missing}>
             {t.invite.check}
@@ -191,26 +224,71 @@ function InviteForm() {
   }
 
   return (
-    <AuthLayout title={t.invite.title} intro={t.fmt.sentences(t.invite.role(t.roles[check.invite.role]), t.invite.expires(absoluteTime(check.invite.expires)))}>
+    <AuthLayout
+      title={t.invite.title}
+      intro={t.fmt.sentences(
+        t.invite.role(t.roles[check.invite.role]),
+        t.invite.expires(absoluteTime(check.invite.expires)),
+      )}
+    >
       <FormMessage focusRef={messageRef}>{error}</FormMessage>
       {(check.invite.username || check.invite.name || check.invite.email) && (
-        <div className="grid gap-1 rounded-lg border bg-muted/40 px-3 py-2 text-sm" role="note" data-slot="invite-prefill">
+        <div
+          className="grid gap-1 rounded-lg border bg-muted/40 px-3 py-2 text-sm"
+          role="note"
+          data-slot="invite-prefill"
+        >
           <p>{tu.invite.prefilled}</p>
-          {check.invite.email && <p className="text-xs break-words text-muted-foreground">{tu.invite.email(check.invite.email)}</p>}
+          {check.invite.email && (
+            <p className="text-xs break-words text-muted-foreground">{tu.invite.email(check.invite.email)}</p>
+          )}
         </div>
       )}
       {ssoOnly && <FormMessage>{ts.inviteSso.ssoOnly}</FormMessage>}
       {!ssoOnly && (
-      <form className="grid gap-4" onSubmit={(e) => void submit(e)} noValidate>
-        <Field label={t.auth.username} help={t.auth.usernameHelp} error={fieldError.username} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoFocus required />
-        <Field label={t.auth.nameOptional} value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
-        <Field label={t.auth.password} help={t.auth.passwordHelp} error={fieldError.password} type="password" value={pass} onChange={(e) => setPass(e.target.value)} autoComplete="new-password" required />
-        <Field label={t.auth.confirmPassword} type="password" value={again} onChange={(e) => setAgain(e.target.value)} autoComplete="new-password" required />
-        <CaptchaField captcha={captcha} disabled={busy} />
-        <Button type="submit" disabled={busy || captcha.missing}>
-          {busy ? t.invite.submitting : t.invite.submit}
-        </Button>
-      </form>
+        <form className="grid gap-4" onSubmit={(e) => void submit(e)} noValidate>
+          <Field
+            label={t.auth.username}
+            help={t.auth.usernameHelp}
+            error={fieldError.username}
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            autoComplete="username"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            autoFocus
+            required
+          />
+          <Field
+            label={t.auth.nameOptional}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoComplete="name"
+          />
+          <Field
+            label={t.auth.password}
+            help={t.auth.passwordHelp}
+            error={fieldError.password}
+            type="password"
+            value={pass}
+            onChange={(e) => setPass(e.target.value)}
+            autoComplete="new-password"
+            required
+          />
+          <Field
+            label={t.auth.confirmPassword}
+            type="password"
+            value={again}
+            onChange={(e) => setAgain(e.target.value)}
+            autoComplete="new-password"
+            required
+          />
+          <CaptchaField captcha={captcha} disabled={busy} />
+          <Button type="submit" disabled={busy || captcha.missing}>
+            {busy ? t.invite.submitting : t.invite.submit}
+          </Button>
+        </form>
       )}
       {list.length > 0 && (
         <>

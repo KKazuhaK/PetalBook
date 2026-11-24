@@ -12,7 +12,10 @@ export function Field({
   inputRef,
   requiredMark,
   ...input
-}: { label: string; help?: string; error?: string; inputRef?: Ref<HTMLInputElement>; requiredMark?: boolean } & Omit<ComponentProps<'input'>, 'ref'>) {
+}: { label: string; help?: string; error?: string; inputRef?: Ref<HTMLInputElement>; requiredMark?: boolean } & Omit<
+  ComponentProps<'input'>,
+  'ref'
+>) {
   const id = useId()
   const helpId = `${id}-help`
   const errorId = `${id}-error`
@@ -23,7 +26,14 @@ export function Field({
         {label}
         {requiredMark && <RequiredMark />}
       </Label>
-      <Input id={id} ref={inputRef} aria-describedby={described} aria-invalid={error ? true : undefined} aria-required={requiredMark ? true : undefined} {...input} />
+      <Input
+        id={id}
+        ref={inputRef}
+        aria-describedby={described}
+        aria-invalid={error ? true : undefined}
+        aria-required={requiredMark ? true : undefined}
+        {...input}
+      />
       {help && (
         <p id={helpId} className="text-xs text-muted-foreground">
           {help}
@@ -40,7 +50,15 @@ export function Field({
 
 // A message about the whole form. `role="alert"` makes it announced when it
 // appears; it can also take focus (see `focusRef`) so keyboard users land on it.
-export function FormMessage({ children, tone = 'error', focusRef }: { children: React.ReactNode; tone?: 'error' | 'info'; focusRef?: Ref<HTMLParagraphElement> }) {
+export function FormMessage({
+  children,
+  tone = 'error',
+  focusRef,
+}: {
+  children: React.ReactNode
+  tone?: 'error' | 'info'
+  focusRef?: Ref<HTMLParagraphElement>
+}) {
   if (!children) return null
   return (
     <p

@@ -33,7 +33,12 @@ export default function ViewTools({ isTag, type, state, group, onChange, disable
   const wantsCard = state.layout === 'board' && fields.length > 0
 
   return (
-    <fieldset disabled={disabled} aria-busy={disabled || undefined} className="m-0 mb-3 flex min-w-0 flex-wrap items-center gap-2 border-0 p-0 disabled:opacity-60" data-slot="view-tools">
+    <fieldset
+      disabled={disabled}
+      aria-busy={disabled || undefined}
+      className="m-0 mb-3 flex min-w-0 flex-wrap items-center gap-2 border-0 p-0 disabled:opacity-60"
+      data-slot="view-tools"
+    >
       <TableFilters fields={fields} filters={state.filter} onChange={(filter: PropFilter[]) => onChange({ filter })} />
       {(wantsGroup || wantsColumns || wantsCard) && (
         <Popover>
@@ -66,22 +71,37 @@ export default function ViewTools({ isTag, type, state, group, onChange, disable
                 <legend className="text-xs font-medium">{tb.tools.cardFields}</legend>
                 <p className="text-xs text-muted-foreground">{tb.tools.cardFieldsHelp(MAX_CARD_FIELDS)}</p>
                 {state.cardFields && (
-                  <Button variant="ghost" size="xs" className="justify-start" onClick={() => onChange({ cardFields: undefined })}>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className="justify-start"
+                    onClick={() => onChange({ cardFields: undefined })}
+                  >
                     {tb.tools.cardFieldsDefault}
                   </Button>
                 )}
                 {fields
                   .filter((f) => f.key !== group)
                   .map((f) => {
-                    const chosen = state.cardFields ?? fields.filter((x) => x.key !== group).slice(0, MAX_CARD_FIELDS).map((x) => x.key)
+                    const chosen =
+                      state.cardFields ??
+                      fields
+                        .filter((x) => x.key !== group)
+                        .slice(0, MAX_CARD_FIELDS)
+                        .map((x) => x.key)
                     const on = chosen.includes(f.key)
                     return (
-                      <label key={f.key} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-muted">
+                      <label
+                        key={f.key}
+                        className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-muted"
+                      >
                         <input
                           type="checkbox"
                           checked={on}
                           disabled={!on && chosen.length >= MAX_CARD_FIELDS}
-                          onChange={() => onChange({ cardFields: on ? chosen.filter((k) => k !== f.key) : [...chosen, f.key] })}
+                          onChange={() =>
+                            onChange({ cardFields: on ? chosen.filter((k) => k !== f.key) : [...chosen, f.key] })
+                          }
                           className="size-4"
                         />
                         {f.title || f.key}
@@ -100,8 +120,20 @@ export default function ViewTools({ isTag, type, state, group, onChange, disable
                     const key = hiddenKeyOf(c)
                     const hidden = state.hidden.includes(key)
                     return (
-                      <label key={c.id} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-muted">
-                        <input type="checkbox" checked={!hidden} onChange={() => onChange({ hidden: hidden ? state.hidden.filter((k) => k !== key) : [...state.hidden, key] })} className="size-4" />
+                      <label
+                        key={c.id}
+                        className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-muted"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!hidden}
+                          onChange={() =>
+                            onChange({
+                              hidden: hidden ? state.hidden.filter((k) => k !== key) : [...state.hidden, key],
+                            })
+                          }
+                          className="size-4"
+                        />
                         {c.label}
                       </label>
                     )

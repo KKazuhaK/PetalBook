@@ -12,7 +12,8 @@ export const tokensEn: TokensMessages = {
   nameRequired: 'Give the token a name',
   access: 'Access',
   accessNames: { read: 'Read only', write: 'Read and write' },
-  accessHelp: 'Read only can look; read and write can also create, change and move pages. A token can never manage members or a space’s settings.',
+  accessHelp:
+    'Read only can look; read and write can also create, change and move pages. A token can never manage members or a space’s settings.',
   spaces: 'Spaces it may use',
   spacesHelp: 'The token works only in the spaces ticked.',
   spaceRequired: 'Tick at least one space',
@@ -46,14 +47,16 @@ export const tokensEn: TokensMessages = {
   revoke: 'Revoke',
   revokeLabel: (name: string) => `Revoke the token "${name}"`,
   revokeTitle: 'Revoke this token?',
-  revokeHelp: (name: string) => `"${name}" stops working at once, and a program using it is told it was revoked. This cannot be undone.`,
+  revokeHelp: (name: string) =>
+    `"${name}" stops working at once, and a program using it is told it was revoked. This cannot be undone.`,
   revokeConfirm: 'Revoke',
   revokeFailed: 'Could not revoke it',
   revoked: 'Revoked',
   admin: {
     title: 'Machine access',
     switchTitle: 'API tokens',
-    switchHelp: 'Off, every API token is refused (403 tokens_off) but none is deleted; on again, they work again. Connected apps (OAuth) keep working on MCP until MCP is switched off.',
+    switchHelp:
+      'Off, every API token is refused (403 tokens_off) but none is deleted; on again, they work again. Connected apps (OAuth) keep working on MCP until MCP is switched off.',
     switchLabel: 'Accept API tokens',
     switchFailed: 'Could not change the switch',
     loadFailed: 'Could not load the machine access settings',

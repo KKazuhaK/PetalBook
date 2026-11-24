@@ -30,9 +30,16 @@ const bytes = (s: string) => new TextEncoder().encode(s).length
 const invalid = (message: string) => new HttpError(400, 'invalid', message)
 const isUnder = (path: string, parent: string) => path === parent || path.startsWith(parent + '/')
 const oneLine = (s: string, max: number) => bytes(s) <= max && !/[\p{Cc}]/u.test(s)
-const listOf = (views: SavedView[]): ViewList => ({ views: structuredClone(views), rev: gitBlobId(JSON.stringify(views)) })
+const listOf = (views: SavedView[]): ViewList => ({
+  views: structuredClone(views),
+  rev: gitBlobId(JSON.stringify(views)),
+})
 
-export function createViewBook(opts: { random: () => number; spelledFolder: (path: string) => string | null; validFolder: (path: string) => boolean }) {
+export function createViewBook(opts: {
+  random: () => number
+  spelledFolder: (path: string) => string | null
+  validFolder: (path: string) => boolean
+}) {
   // 'f:<folder>' and 't:<tag>' -> views
   const books = new Map<string, SavedView[]>()
 
@@ -75,15 +82,19 @@ export function createViewBook(opts: { random: () => number; spelledFolder: (pat
       if (sort !== '' && !/^-?(updated|created|title|prop:.+)$/.test(sort)) throw invalid(`${at}的 sort 不支持`)
       const group = text('group')
       if (!oneLine(group, 256)) throw invalid(`${at}的 group 不合法`)
-      const filter = o.filter === undefined || o.filter === null ? [] : parseFilter(JSON.stringify(o.filter), MAX_VIEW_FILTERS)
+      const filter =
+        o.filter === undefined || o.filter === null ? [] : parseFilter(JSON.stringify(o.filter), MAX_VIEW_FILTERS)
       let hidden: string[] = []
       if (o.hidden !== undefined && o.hidden !== null) {
-        if (!Array.isArray(o.hidden) || !o.hidden.every((h) => typeof h === 'string' && h !== '' && oneLine(h, 256))) throw invalid(`${at}的 hidden 要是一串键`)
+        if (!Array.isArray(o.hidden) || !o.hidden.every((h) => typeof h === 'string' && h !== '' && oneLine(h, 256)))
+          throw invalid(`${at}的 hidden 要是一串键`)
         hidden = o.hidden as string[]
-        if (new Set(hidden).size !== hidden.length || hidden.length > 200) throw invalid(`${at}的 hidden 每个键只能出现一次，最多 200 个`)
+        if (new Set(hidden).size !== hidden.length || hidden.length > 200)
+          throw invalid(`${at}的 hidden 每个键只能出现一次，最多 200 个`)
       }
       const extra = Object.fromEntries(Object.entries(o).filter(([k]) => !KNOWN.includes(k)))
-      for (const k of Object.keys(extra)) if (k.length === 0 || bytes(k) > 64) throw invalid(`${at}的键要是 1 到 64 字节`)
+      for (const k of Object.keys(extra))
+        if (k.length === 0 || bytes(k) > 64) throw invalid(`${at}的键要是 1 到 64 字节`)
       return { ...extra, id, name, layout, sort, group, filter, hidden }
     })
   }
@@ -100,7 +111,12 @@ export function createViewBook(opts: { random: () => number; spelledFolder: (pat
     },
 
     put(body: Record<string, unknown>): ViewList {
-      const folder = typeof body.folder === 'string' ? body.folder : body.folder === undefined || body.folder === null ? undefined : invalid('folder 要是文字')
+      const folder =
+        typeof body.folder === 'string'
+          ? body.folder
+          : body.folder === undefined || body.folder === null
+            ? undefined
+            : invalid('folder 要是文字')
       if (folder instanceof HttpError) throw folder
       const tag = typeof body.tag === 'string' ? body.tag : undefined
       if (typeof body.baseRev !== 'string' || body.baseRev === '') throw invalid('缺少 baseRev')
@@ -121,7 +137,10 @@ export function createViewBook(opts: { random: () => number; spelledFolder: (pat
         if (v.id === '') {
           let id: string
           do {
-            id = Array.from({ length: 6 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(opts.random() * 36)]).join('')
+            id = Array.from(
+              { length: 6 },
+              () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(opts.random() * 36)],
+            ).join('')
           } while (used.has(id))
           used.add(id)
           return { ...v, id }
@@ -134,7 +153,10 @@ export function createViewBook(opts: { random: () => number; spelledFolder: (pat
         if (v.id.startsWith('@')) {
           let id: string
           do {
-            id = Array.from({ length: 6 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(opts.random() * 36)]).join('')
+            id = Array.from(
+              { length: 6 },
+              () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(opts.random() * 36)],
+            ).join('')
           } while (used.has(id))
           used.add(id)
           return { ...kept, ...v, id }
@@ -148,7 +170,12 @@ export function createViewBook(opts: { random: () => number; spelledFolder: (pat
 
     // Views as a person's hand in space.yml leaves them: no usable id, so each is served as "@n", n its place from 0.
     seedHandWritten(folder: string, views: Omit<SavedView, 'id'>[]) {
-      books.set('f:' + folder, views.map((v, i) => ({ filter: [], hidden: [], group: '', sort: '', ...v, id: '@' + i }) as unknown as SavedView))
+      books.set(
+        'f:' + folder,
+        views.map(
+          (v, i) => ({ filter: [], hidden: [], group: '', sort: '', ...v, id: '@' + i }) as unknown as SavedView,
+        ),
+      )
     },
 
     // Views follow their folder, and what was at the place it moves to is stale.

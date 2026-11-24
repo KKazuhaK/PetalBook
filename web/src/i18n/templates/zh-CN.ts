@@ -12,7 +12,8 @@ export const templatesZhCN = {
     title: '页面模板',
     help: '新建页面时可以从模板开始：模板的标题、头部字段和正文会成为新页面的起点。可以给文件夹设一个默认模板，给快速记录也可以设一个。',
     helpReadOnly: '新建页面时可以从模板开始。你只能查看；修改模板需要“管理”权限。',
-    variablesHelp: '标题、头部字段和正文里可以写 {{date}}（日期，如 2026-11-23）、{{time}}（时间，如 09:30）和 {{datetime}}（日期加时间），新建页面时会换成当下的值；别的 {{…}} 原样保留。',
+    variablesHelp:
+      '标题、头部字段和正文里可以写 {{date}}（日期，如 2026-11-23）、{{time}}（时间，如 09:30）和 {{datetime}}（日期加时间），新建页面时会换成当下的值；别的 {{…}} 原样保留。',
     loadFailed: '读不到模板。',
     none: '还没有模板。',
     newTemplate: '新建模板',
@@ -45,7 +46,9 @@ export const templatesZhCN = {
     delete: '删除',
     deleteTitle: (name: string) => `删除模板“${name}”？`,
     deleteHelp: (n: number, quick: boolean) => {
-      const where = [n > 0 ? `${n} 个文件夹的默认模板` : '', quick ? '快速记录的默认模板' : ''].filter((x) => x !== '').join('和')
+      const where = [n > 0 ? `${n} 个文件夹的默认模板` : '', quick ? '快速记录的默认模板' : '']
+        .filter((x) => x !== '')
+        .join('和')
       return where === '' ? '删除后无法恢复。' : `它现在是${where}，这些设置会一起去掉。删除后无法恢复。`
     },
     deleteConfirm: '删除',

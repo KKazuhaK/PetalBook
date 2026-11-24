@@ -63,7 +63,17 @@ function useDragSource(state: EntryState) {
   }
 }
 
-function Checkbox({ checked, label, onPick, className }: { checked: boolean; label: string; onPick: (m: Picked) => void; className: string }) {
+function Checkbox({
+  checked,
+  label,
+  onPick,
+  className,
+}: {
+  checked: boolean
+  label: string
+  onPick: (m: Picked) => void
+  className: string
+}) {
   return (
     <button
       type="button"
@@ -95,7 +105,11 @@ function Leading({ icon, state, label }: { icon: ReactNode; state: EntryState; l
     )
   return (
     <div className="absolute top-2.5 left-3 size-6">
-      <span className={`flex size-6 items-center justify-center text-muted-foreground group-focus-within/entry:invisible group-hover/entry:invisible ${show ? 'invisible' : ''}`}>{icon}</span>
+      <span
+        className={`flex size-6 items-center justify-center text-muted-foreground group-focus-within/entry:invisible group-hover/entry:invisible ${show ? 'invisible' : ''}`}
+      >
+        {icon}
+      </span>
       <Checkbox
         checked={state.selected}
         label={t.manage.selectItem(label)}
@@ -109,9 +123,22 @@ function Leading({ icon, state, label }: { icon: ReactNode; state: EntryState; l
 const rowClass = (selected: boolean, over: boolean, dragging: boolean) =>
   `group/entry relative rounded-lg transition-colors ${over ? 'bg-primary/15 ring-2 ring-primary/40' : selected ? 'bg-primary/10' : 'hover:bg-muted/70'} ${dragging ? 'opacity-50' : ''}`
 
-const linkClass = 'flex items-start gap-3 rounded-lg py-2.5 pr-10 pl-11 outline-none focus-visible:ring-2 focus-visible:ring-ring/50'
+const linkClass =
+  'flex items-start gap-3 rounded-lg py-2.5 pr-10 pl-11 outline-none focus-visible:ring-2 focus-visible:ring-ring/50'
 
-export function PageRow({ page, showFolder, index, urls, state }: { page: PageSummary; showFolder: boolean; index: number; urls: SpaceUrls; state: EntryState }) {
+export function PageRow({
+  page,
+  showFolder,
+  index,
+  urls,
+  state,
+}: {
+  page: PageSummary
+  showFolder: boolean
+  index: number
+  urls: SpaceUrls
+  state: EntryState
+}) {
   const onClick = useEntryClick(state)
   const drag = useDragSource(state)
   const name = page.label || t.list.blankPage
@@ -122,8 +149,12 @@ export function PageRow({ page, showFolder, index, urls, state }: { page: PageSu
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
             {/* An untitled page shows its first line, in a lighter colour. */}
-            <span className={`truncate text-[0.95rem] ${page.untitled ? 'text-muted-foreground' : 'font-medium'}`}>{name}</span>
-            {page.subtitle && <span className="hidden truncate text-sm text-muted-foreground sm:inline">{page.subtitle}</span>}
+            <span className={`truncate text-[0.95rem] ${page.untitled ? 'text-muted-foreground' : 'font-medium'}`}>
+              {name}
+            </span>
+            {page.subtitle && (
+              <span className="hidden truncate text-sm text-muted-foreground sm:inline">{page.subtitle}</span>
+            )}
           </div>
           {page.subtitle && <div className="truncate text-sm text-muted-foreground sm:hidden">{page.subtitle}</div>}
           {(page.tags?.length || showFolder) && (
@@ -140,7 +171,11 @@ export function PageRow({ page, showFolder, index, urls, state }: { page: PageSu
             </div>
           )}
         </div>
-        <time dateTime={page.updated} title={absoluteTime(page.updated)} className="shrink-0 pt-0.5 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
+        <time
+          dateTime={page.updated}
+          title={absoluteTime(page.updated)}
+          className="shrink-0 pt-0.5 text-xs whitespace-nowrap text-muted-foreground tabular-nums"
+        >
           {relativeTime(page.updated)}
         </time>
       </Link>
@@ -155,11 +190,22 @@ export function FolderRow({ folder, urls, state }: { folder: FolderEntry; urls: 
   const drag = useDragSource(state)
   const drop = useDropTarget(folder.path, ops?.index, (items, target) => void ops?.moveTo(items, target))
   return (
-    <li {...{ [ENTRY_ATTR]: `f:${folder.path}` }} className={rowClass(state.selected, drop.over, drag.dragging)} {...drop.props}>
+    <li
+      {...{ [ENTRY_ATTR]: `f:${folder.path}` }}
+      className={rowClass(state.selected, drop.over, drag.dragging)}
+      {...drop.props}
+    >
       <Leading icon={<FolderIcon className="size-[18px] fill-current/15" />} state={state} label={folder.name} />
-      <Link to={urls.folder(folder.path)} onClick={onClick} className={`${linkClass} items-center py-3`} {...drag.props}>
+      <Link
+        to={urls.folder(folder.path)}
+        onClick={onClick}
+        className={`${linkClass} items-center py-3`}
+        {...drag.props}
+      >
         <span className="min-w-0 flex-1 truncate text-[0.95rem] font-medium">{folder.name}</span>
-        <span className="shrink-0 text-xs whitespace-nowrap text-muted-foreground tabular-nums">{t.manage.folderPages(folder.total)}</span>
+        <span className="shrink-0 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
+          {t.manage.folderPages(folder.total)}
+        </span>
       </Link>
       <MoreButton label={folder.name} className="absolute top-2.5 right-2" />
     </li>
@@ -210,17 +256,32 @@ export function PageCard({ page, urls, state }: { page: PageSummary; urls: Space
 
   const empty = !page.excerpt && !titleLine
   return (
-    <li {...{ [ENTRY_ATTR]: `p:${page.id}` }} className={`mb-3 break-inside-avoid ${cardClass(state.selected, drag.dragging)}`}>
+    <li
+      {...{ [ENTRY_ATTR]: `p:${page.id}` }}
+      className={`mb-3 break-inside-avoid ${cardClass(state.selected, drag.dragging)}`}
+    >
       <CardCheck state={state} label={page.label || t.list.blankPage} />
-      <Link to={urls.page(page.id)} onClick={onClick} className="block rounded-xl p-3.5 outline-none focus-visible:ring-2 focus-visible:ring-ring/50" {...drag.props}>
-        {titleLine && <div className="mb-1.5 pr-7 text-[0.95rem] leading-snug font-medium break-words">{titleLine}</div>}
+      <Link
+        to={urls.page(page.id)}
+        onClick={onClick}
+        className="block rounded-xl p-3.5 outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+        {...drag.props}
+      >
+        {titleLine && (
+          <div className="mb-1.5 pr-7 text-[0.95rem] leading-snug font-medium break-words">{titleLine}</div>
+        )}
         {page.excerpt ? (
           <div
             ref={text}
             className="overflow-hidden text-[0.9rem] leading-relaxed break-words whitespace-pre-line"
             style={{
               maxHeight: `${CARD_LINES * 1.625}em`,
-              ...(clipped ? { maskImage: 'linear-gradient(to bottom, #000 75%, transparent)', WebkitMaskImage: 'linear-gradient(to bottom, #000 75%, transparent)' } : {}),
+              ...(clipped
+                ? {
+                    maskImage: 'linear-gradient(to bottom, #000 75%, transparent)',
+                    WebkitMaskImage: 'linear-gradient(to bottom, #000 75%, transparent)',
+                  }
+                : {}),
             }}
           >
             {page.excerpt}
@@ -249,9 +310,18 @@ export function FolderCard({ folder, urls, state }: { folder: FolderEntry; urls:
   const drag = useDragSource(state)
   const drop = useDropTarget(folder.path, ops?.index, (items, target) => void ops?.moveTo(items, target))
   return (
-    <li {...{ [ENTRY_ATTR]: `f:${folder.path}` }} className={`${cardClass(state.selected, drag.dragging)} ${drop.over ? 'border-primary bg-primary/15 ring-2 ring-primary/40' : ''}`} {...drop.props}>
+    <li
+      {...{ [ENTRY_ATTR]: `f:${folder.path}` }}
+      className={`${cardClass(state.selected, drag.dragging)} ${drop.over ? 'border-primary bg-primary/15 ring-2 ring-primary/40' : ''}`}
+      {...drop.props}
+    >
       <CardCheck state={state} label={folder.name} />
-      <Link to={urls.folder(folder.path)} onClick={onClick} className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 pr-9 outline-none focus-visible:ring-2 focus-visible:ring-ring/50" {...drag.props}>
+      <Link
+        to={urls.folder(folder.path)}
+        onClick={onClick}
+        className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 pr-9 outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+        {...drag.props}
+      >
         <FolderIcon className="size-5 shrink-0 fill-current/15 text-muted-foreground" />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[0.95rem] font-medium">{folder.name}</span>

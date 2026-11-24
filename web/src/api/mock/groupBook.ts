@@ -2,7 +2,16 @@
 // are members of spaces, and the one rule everything else reads: a person's role in a space is the
 // highest of their own and their groups'. The sign-in providers' mappings are in signInBook.ts.
 
-import type { EffectiveMember, Group, GroupMember, GroupPerson, GroupRef, GroupSource, Member, SpaceRole } from '../types.ts'
+import type {
+  EffectiveMember,
+  Group,
+  GroupMember,
+  GroupPerson,
+  GroupRef,
+  GroupSource,
+  Member,
+  SpaceRole,
+} from '../types.ts'
 import { HttpError, compareCodePoints } from './store.ts'
 import type { SignInBook } from './signInBook.ts'
 import type { MockResponse } from './server.ts'
@@ -60,7 +69,8 @@ export function createGroupBook(o: GroupBookOptions) {
   const groups = new Map<string, GroupRec>()
   const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
   const ref = (g: GroupRec): GroupRef => ({ id: g.id, name: g.name, source: g.source })
-  const byName = (a: GroupRec, b: GroupRec) => compareCodePoints(fold(a.name), fold(b.name)) || compareCodePoints(a.id, b.id)
+  const byName = (a: GroupRec, b: GroupRec) =>
+    compareCodePoints(fold(a.name), fold(b.name)) || compareCodePoints(a.id, b.id)
   const spacesOf = (id: string) => [...o.spaces().values()].filter((s) => s.groups.has(id))
 
   const view = (g: GroupRec): Group => ({
@@ -72,11 +82,18 @@ export function createGroupBook(o: GroupBookOptions) {
     created: g.created,
     updated: g.updated,
   })
-  const need = (id: string): GroupRec => groups.get(id) ?? (() => { throw new HttpError(404, 'not_found', 'there is no such group') })()
+  const need = (id: string): GroupRec =>
+    groups.get(id) ??
+    (() => {
+      throw new HttpError(404, 'not_found', 'there is no such group')
+    })()
   const inGroups = (userId: string): GroupRec[] => [...groups.values()].filter((g) => g.people.has(userId))
 
   // --- who may do what in a space: the union of the person's own role and their groups' ---
-  const reach = (s: GroupSpace, userId: string): { role: SpaceRole | undefined; direct: SpaceRole | undefined; via: boolean } => {
+  const reach = (
+    s: GroupSpace,
+    userId: string,
+  ): { role: SpaceRole | undefined; direct: SpaceRole | undefined; via: boolean } => {
     const direct = s.members.get(userId)?.role
     let best = direct
     let via = false
@@ -93,8 +110,11 @@ export function createGroupBook(o: GroupBookOptions) {
     const name = typeof raw === 'string' ? raw.trim() : bad('name is required')
     const n = Array.from(name).length
     if (n < 1 || n > 80) bad('a group name is 1 to 80 characters')
-    if (Array.from(name).some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)) bad('a group name cannot contain control characters')
-    for (const g of groups.values()) if (g.id !== except && fold(g.name) === fold(name)) throw new HttpError(409, 'exists', 'a group with that name exists already')
+    if (Array.from(name).some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f))
+      bad('a group name cannot contain control characters')
+    for (const g of groups.values())
+      if (g.id !== except && fold(g.name) === fold(name))
+        throw new HttpError(409, 'exists', 'a group with that name exists already')
     return name
   }
   const checkDescription = (raw: unknown): string => {
@@ -111,7 +131,13 @@ export function createGroupBook(o: GroupBookOptions) {
   }
 
   // --- administrators ---
-  const routeAdmin = (me: { id: string }, method: string, path: string, url: URL, body: Record<string, unknown>): MockResponse => {
+  const routeAdmin = (
+    me: { id: string },
+    method: string,
+    path: string,
+    url: URL,
+    body: Record<string, unknown>,
+  ): MockResponse => {
     const book = o.book()
     if (path === '/admin/groups' && method === 'GET') {
       const limit = limitInt(url, 50, 200)
@@ -119,8 +145,18 @@ export function createGroupBook(o: GroupBookOptions) {
       const source = url.searchParams.get('source') ?? ''
       if (source && source !== 'local' && source !== 'synced') bad('source is local or synced')
       const user = url.searchParams.get('user') ?? ''
-      const all = [...groups.values()].filter((g) => (q === '' || fold(g.name).includes(q)) && (!source || g.source === source) && (!user || g.people.has(user))).sort(byName)
-      const r = page(all, fold(url.searchParams.get('cursor') ?? '') === '' ? '' : url.searchParams.get('cursor')!, limit, (g) => fold(g.name))
+      const all = [...groups.values()]
+        .filter(
+          (g) =>
+            (q === '' || fold(g.name).includes(q)) && (!source || g.source === source) && (!user || g.people.has(user)),
+        )
+        .sort(byName)
+      const r = page(
+        all,
+        fold(url.searchParams.get('cursor') ?? '') === '' ? '' : url.searchParams.get('cursor')!,
+        limit,
+        (g) => fold(g.name),
+      )
       return j({ items: r.items.map(view), next: r.next })
     }
     if (path === '/admin/groups' && method === 'POST') {
@@ -128,9 +164,23 @@ export function createGroupBook(o: GroupBookOptions) {
       if (source !== 'local' && source !== 'synced') bad('source is local or synced')
       const name = checkName(body.name)
       const description = body.description === undefined ? '' : checkDescription(body.description)
-      if (groups.size >= GROUP_LIMITS.groups) throw new HttpError(409, 'group_limit', `a tenant has at most ${GROUP_LIMITS.groups} groups; this one has ${groups.size}`)
+      if (groups.size >= GROUP_LIMITS.groups)
+        throw new HttpError(
+          409,
+          'group_limit',
+          `a tenant has at most ${GROUP_LIMITS.groups} groups; this one has ${groups.size}`,
+        )
       const at = o.now()
-      const g: GroupRec = { id: o.newId((x) => groups.has(x)), name, description, source: source as GroupSource, created: at, updated: at, people: new Map(), addedAt: new Map() }
+      const g: GroupRec = {
+        id: o.newId((x) => groups.has(x)),
+        name,
+        description,
+        source: source as GroupSource,
+        created: at,
+        updated: at,
+        people: new Map(),
+        addedAt: new Map(),
+      }
       groups.set(g.id, g)
       book.record('group_created', { actor: me.id, detail: { group: g.id, name, source } })
       return j(view(g), 201)
@@ -152,7 +202,10 @@ export function createGroupBook(o: GroupBookOptions) {
         }
         if (renamed || Object.keys(changed).length > 0) {
           g.updated = o.now()
-          book.record('group_changed', { actor: me.id, detail: { group: g.id, name: g.name, source: g.source, ...changed } })
+          book.record('group_changed', {
+            actor: me.id,
+            detail: { group: g.id, name: g.name, source: g.source, ...changed },
+          })
         }
         return j(view(g))
       }
@@ -160,12 +213,19 @@ export function createGroupBook(o: GroupBookOptions) {
         const mappings = book.mappingsOf(g.id)
         const force = url.searchParams.get('force')
         if (force !== null && force !== '1' && force !== '0') bad('force is 1 or 0')
-        if (force !== '1' && (spacesOf(g.id).length > 0 || mappings.length > 0)) throw new HttpError(409, 'group_in_use', 'the group is a member of spaces or mapped by providers', { spaces: spacesOf(g.id).length, mappings: mappings.length })
+        if (force !== '1' && (spacesOf(g.id).length > 0 || mappings.length > 0))
+          throw new HttpError(409, 'group_in_use', 'the group is a member of spaces or mapped by providers', {
+            spaces: spacesOf(g.id).length,
+            mappings: mappings.length,
+          })
         const inSpaces = spacesOf(g.id)
         for (const s of inSpaces) s.groups.delete(g.id)
         book.unmap(g.id)
         groups.delete(g.id)
-        book.record('group_deleted', { actor: me.id, detail: { group: g.id, name: g.name, source: g.source, people: g.people.size, spaces: inSpaces.length } })
+        book.record('group_deleted', {
+          actor: me.id,
+          detail: { group: g.id, name: g.name, source: g.source, people: g.people.size, spaces: inSpaces.length },
+        })
         return { status: 204 }
       }
     }
@@ -181,19 +241,40 @@ export function createGroupBook(o: GroupBookOptions) {
           .filter((u) => q === '' || fold(u.username).includes(q) || fold(u.name).includes(q))
           .sort((a, b) => compareCodePoints(a.username, b.username))
         const r = page(all, url.searchParams.get('cursor') ?? '', limit, (u) => u.username)
-        const items: GroupPerson[] = r.items.map((u) => ({ userId: u.id, username: u.username, name: u.name, disabled: u.disabled, from: g.people.get(u.id)!.filter((f) => f.provider !== ''), added: g.addedAt.get(u.id) ?? g.created }))
+        const items: GroupPerson[] = r.items.map((u) => ({
+          userId: u.id,
+          username: u.username,
+          name: u.name,
+          disabled: u.disabled,
+          from: g.people.get(u.id)!.filter((f) => f.provider !== ''),
+          added: g.addedAt.get(u.id) ?? g.created,
+        }))
         return j({ items, next: r.next })
       }
       if (method === 'POST') {
-        if (g.source !== 'local') throw new HttpError(409, 'group_synced', 'the people of a synced group come from sign-in and cannot be changed by hand')
+        if (g.source !== 'local')
+          throw new HttpError(
+            409,
+            'group_synced',
+            'the people of a synced group come from sign-in and cannot be changed by hand',
+          )
         const ids = body.userIds
-        if (!Array.isArray(ids) || ids.length < 1 || ids.length > GROUP_LIMITS.add || ids.some((x) => typeof x !== 'string')) bad(`userIds holds 1 to ${GROUP_LIMITS.add} ids`)
+        if (
+          !Array.isArray(ids) ||
+          ids.length < 1 ||
+          ids.length > GROUP_LIMITS.add ||
+          ids.some((x) => typeof x !== 'string')
+        )
+          bad(`userIds holds 1 to ${GROUP_LIMITS.add} ids`)
         const want = [...new Set(ids as string[])]
         const missing = want.filter((id) => !users.has(id))
-        if (missing.length > 0) throw new HttpError(404, 'user_not_found', 'some of those users do not exist', { missing })
+        if (missing.length > 0)
+          throw new HttpError(404, 'user_not_found', 'some of those users do not exist', { missing })
         const fresh = want.filter((id) => !g.people.has(id))
-        if (fresh.some((id) => inGroups(id).length + 1 > GROUP_LIMITS.perUser)) throw new HttpError(409, 'group_limit', `a person is in at most ${GROUP_LIMITS.perUser} groups`)
-        if (g.people.size + fresh.length > GROUP_LIMITS.people) throw new HttpError(409, 'group_limit', `a group has at most ${GROUP_LIMITS.people} people`)
+        if (fresh.some((id) => inGroups(id).length + 1 > GROUP_LIMITS.perUser))
+          throw new HttpError(409, 'group_limit', `a person is in at most ${GROUP_LIMITS.perUser} groups`)
+        if (g.people.size + fresh.length > GROUP_LIMITS.people)
+          throw new HttpError(409, 'group_limit', `a group has at most ${GROUP_LIMITS.people} people`)
         for (const id of fresh) {
           g.people.set(id, [{ provider: '', value: '' }])
           g.addedAt.set(id, o.now())
@@ -205,7 +286,12 @@ export function createGroupBook(o: GroupBookOptions) {
     const person = /^\/admin\/groups\/([^/]+)\/members\/([^/]+)$/.exec(path)
     if (person && method === 'DELETE') {
       const g = need(decodeURIComponent(person[1]))
-      if (g.source !== 'local') throw new HttpError(409, 'group_synced', 'the people of a synced group come from sign-in and cannot be changed by hand')
+      if (g.source !== 'local')
+        throw new HttpError(
+          409,
+          'group_synced',
+          'the people of a synced group come from sign-in and cannot be changed by hand',
+        )
       const uid = decodeURIComponent(person[2])
       if (!g.people.delete(uid)) throw new HttpError(404, 'not_found', 'that user is not in this group')
       book.record('group_member_removed', { actor: me.id, user: uid, detail: { group: g.id, users: [uid] } })
@@ -215,7 +301,9 @@ export function createGroupBook(o: GroupBookOptions) {
     if (sp && method === 'GET') {
       const g = need(decodeURIComponent(sp[1]))
       const limit = limitInt(url, 50, 200)
-      const all = spacesOf(g.id).sort((a, b) => compareCodePoints(fold(a.name), fold(b.name)) || compareCodePoints(a.id, b.id))
+      const all = spacesOf(g.id).sort(
+        (a, b) => compareCodePoints(fold(a.name), fold(b.name)) || compareCodePoints(a.id, b.id),
+      )
       const r = page(all, url.searchParams.get('cursor') ?? '', limit, (s) => `${fold(s.name)}\u0000${s.id}`)
       return j({ items: r.items.map((s) => ({ id: s.id, name: s.name, role: s.groups.get(g.id)! })), next: r.next })
     }
@@ -228,13 +316,20 @@ export function createGroupBook(o: GroupBookOptions) {
     const n = Array.from(q).length
     if (n < 1 || n > 80) bad('q is 1 to 80 characters')
     const limit = limitInt(url, 20, 20)
-    const out = [...groups.values()].filter((g) => fold(g.name).includes(fold(q))).sort(byName).slice(0, limit)
+    const out = [...groups.values()]
+      .filter((g) => fold(g.name).includes(fold(q)))
+      .sort(byName)
+      .slice(0, limit)
     return j({ groups: out.map(ref) })
   }
 
   // --- the members of a space ---
   const roleName = (r: SpaceRole | undefined) => r ?? ''
-  const membersView = (s: GroupSpace, me: string, directList: Member[]): { members: Member[]; groups: GroupMember[] } => {
+  const membersView = (
+    s: GroupSpace,
+    me: string,
+    directList: Member[],
+  ): { members: Member[]; groups: GroupMember[] } => {
     const members = directList.map((m) => {
       const r = reach(s, m.userId)
       return { ...m, viaGroups: r.via, effectiveRole: r.role ?? m.role }
@@ -242,7 +337,14 @@ export function createGroupBook(o: GroupBookOptions) {
     const list: GroupMember[] = [...s.groups]
       .map(([gid, role]) => ({ g: groups.get(gid)!, role }))
       .sort((a, b) => byName(a.g, b.g))
-      .map(({ g, role }) => ({ groupId: g.id, name: g.name, source: g.source, role, people: g.people.size, yours: g.people.has(me) }))
+      .map(({ g, role }) => ({
+        groupId: g.id,
+        name: g.name,
+        source: g.source,
+        role,
+        people: g.people.size,
+        yours: g.people.has(me),
+      }))
     return { members, groups: list }
   }
   const effective = (s: GroupSpace, me: string, url: URL): MockResponse => {
@@ -255,27 +357,54 @@ export function createGroupBook(o: GroupBookOptions) {
       const r = reach(s, u.id)
       if (!r.role) continue
       if (q !== '' && !fold(u.username).includes(q) && !fold(u.name).includes(q)) continue
-      const gs = [...s.groups].filter(([gid]) => groups.get(gid)?.people.has(u.id)).map(([gid, role]) => ({ groupId: gid, name: groups.get(gid)!.name, role })).sort((a, b) => compareCodePoints(fold(a.name), fold(b.name)))
-      all.push({ userId: u.id, username: u.username, name: u.name, role: r.role, directRole: roleName(r.direct), groups: gs, you: u.id === me })
+      const gs = [...s.groups]
+        .filter(([gid]) => groups.get(gid)?.people.has(u.id))
+        .map(([gid, role]) => ({ groupId: gid, name: groups.get(gid)!.name, role }))
+        .sort((a, b) => compareCodePoints(fold(a.name), fold(b.name)))
+      all.push({
+        userId: u.id,
+        username: u.username,
+        name: u.name,
+        role: r.role,
+        directRole: roleName(r.direct),
+        groups: gs,
+        you: u.id === me,
+      })
     }
     all.sort((a, b) => compareCodePoints(a.username, b.username))
     const r = page(all, url.searchParams.get('cursor') ?? '', limit, (x) => x.username)
     return j({ items: r.items, next: r.next })
   }
-  const routeSpace = (me: { id: string }, s: GroupSpace, method: string, rest: string, body: Record<string, unknown>): MockResponse | null => {
+  const routeSpace = (
+    me: { id: string },
+    s: GroupSpace,
+    method: string,
+    rest: string,
+    body: Record<string, unknown>,
+  ): MockResponse | null => {
     const book = o.book()
     const checkRole = (raw: unknown): SpaceRole => {
-      if (typeof raw !== 'string' || !ROLE_LIST.includes(raw as SpaceRole)) return bad(`a role is one of ${ROLE_LIST.join(', ')}`)
+      if (typeof raw !== 'string' || !ROLE_LIST.includes(raw as SpaceRole))
+        return bad(`a role is one of ${ROLE_LIST.join(', ')}`)
       return raw as SpaceRole
     }
-    const member = (g: GroupRec, role: SpaceRole): GroupMember => ({ groupId: g.id, name: g.name, source: g.source, role, people: g.people.size, yours: g.people.has(me.id) })
+    const member = (g: GroupRec, role: SpaceRole): GroupMember => ({
+      groupId: g.id,
+      name: g.name,
+      source: g.source,
+      role,
+      people: g.people.size,
+      yours: g.people.has(me.id),
+    })
     if (rest === '/groups' && method === 'POST') {
       const role = checkRole(body.role)
-      if (s.personal) throw new HttpError(409, 'personal_space', 'a personal space belongs to one person and cannot be shared')
+      if (s.personal)
+        throw new HttpError(409, 'personal_space', 'a personal space belongs to one person and cannot be shared')
       const g = typeof body.groupId === 'string' ? groups.get(body.groupId) : undefined
       if (!g) throw new HttpError(404, 'group_not_found', 'there is no such group')
       if (s.groups.has(g.id)) throw new HttpError(409, 'exists', 'that group is a member of this space already')
-      if (s.groups.size >= GROUP_LIMITS.perSpace) throw new HttpError(409, 'group_limit', `a space has at most ${GROUP_LIMITS.perSpace} groups`)
+      if (s.groups.size >= GROUP_LIMITS.perSpace)
+        throw new HttpError(409, 'group_limit', `a space has at most ${GROUP_LIMITS.perSpace} groups`)
       s.groups.set(g.id, role)
       book.record('space_group_added', { actor: me.id, detail: { space: s.id, group: g.id, role } })
       return j(member(g, role), 201)
@@ -289,7 +418,10 @@ export function createGroupBook(o: GroupBookOptions) {
         if (cur === undefined) throw new HttpError(404, 'not_found', 'that group is not a member of this space')
         if (cur !== role) {
           s.groups.set(gid, role)
-          book.record('space_group_changed', { actor: me.id, detail: { space: s.id, group: gid, role: { old: cur, new: role } } })
+          book.record('space_group_changed', {
+            actor: me.id,
+            detail: { space: s.id, group: gid, role: { old: cur, new: role } },
+          })
         }
         return j(member(groups.get(gid)!, role))
       }
@@ -305,7 +437,10 @@ export function createGroupBook(o: GroupBookOptions) {
   // Someone who reaches a space only through groups cannot leave it.
   const viaGroupsOnly = (s: GroupSpace, userId: string): string[] => {
     if (s.members.has(userId)) return []
-    return [...s.groups].filter(([gid]) => groups.get(gid)?.people.has(userId)).map(([gid]) => groups.get(gid)!.name).sort(compareCodePoints)
+    return [...s.groups]
+      .filter(([gid]) => groups.get(gid)?.people.has(userId))
+      .map(([gid]) => groups.get(gid)!.name)
+      .sort(compareCodePoints)
   }
 
   return {
@@ -321,11 +456,12 @@ export function createGroupBook(o: GroupBookOptions) {
     viaGroupsOnly,
     // Providers: a provider goes, or a mapping entry leaves.
     dropProvider: (slug: string) => {
-      for (const g of groups.values()) for (const [uid, from] of g.people) {
-        const left = from.filter((f) => f.provider !== slug)
-        if (left.length === 0) g.people.delete(uid)
-        else g.people.set(uid, left)
-      }
+      for (const g of groups.values())
+        for (const [uid, from] of g.people) {
+          const left = from.filter((f) => f.provider !== slug)
+          if (left.length === 0) g.people.delete(uid)
+          else g.people.set(uid, left)
+        }
     },
     dropMapped: (slug: string, value: string, keep: string) => {
       for (const g of groups.values()) {

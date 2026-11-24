@@ -26,7 +26,13 @@ const GIB = 1024 ** 3
 export function StorageRules() {
   const storage = useAdminStorage()
   if (storage.isPending) return <PageFallback />
-  if (storage.isError) return <ErrorState message={t.fmt.labelled(ts.admin.loadFailed, storage.error.message)} onRetry={() => void storage.refetch()} />
+  if (storage.isError)
+    return (
+      <ErrorState
+        message={t.fmt.labelled(ts.admin.loadFailed, storage.error.message)}
+        onRetry={() => void storage.refetch()}
+      />
+    )
   return <StorageForm key={JSON.stringify(storage.data)} data={storage.data} />
 }
 
@@ -51,9 +57,14 @@ function StorageForm({ data }: { data: AdminStorage }) {
   // A remote through one platform can be required: every provider but a plain address (2.7b's connections), and
   // the stored one even when the server no longer lists it.
   const connections = useConnections()
-  const listed = (connections.data?.providers ?? []).filter((p) => p.type !== 'git').map((p) => ({ id: p.id, name: p.name }))
+  const listed = (connections.data?.providers ?? [])
+    .filter((p) => p.type !== 'git')
+    .map((p) => ({ id: p.id, name: p.name }))
   const stored = data.remotes.require
-  const platforms = stored && stored !== 'any' && !listed.some((p) => p.id === stored) ? [...listed, { id: stored, name: stored }] : listed
+  const platforms =
+    stored && stored !== 'any' && !listed.some((p) => p.id === stored)
+      ? [...listed, { id: stored, name: stored }]
+      : listed
   const a = ts.admin
   const [require, setRequire] = useState<string>(data.remotes.require ?? '')
   const [scope, setScope] = useState<string>(data.remotes.scope)
@@ -81,11 +92,29 @@ function StorageForm({ data }: { data: AdminStorage }) {
     const budget = parse(clones, GIB, GIB, true)
     const floor = parse(free, GIB, 0, true)
     const assetsBudget = parse(assetCache, MIB, 64 * MIB, false)
-    if (g === undefined || g === null || g > 365 || idleH === undefined || idleH === null || idleH > 720 || days === undefined || (days !== null && days > 365) || max === undefined || budget === undefined || floor === undefined || assetsBudget === undefined || assetsBudget === null) {
+    if (
+      g === undefined ||
+      g === null ||
+      g > 365 ||
+      idleH === undefined ||
+      idleH === null ||
+      idleH > 720 ||
+      days === undefined ||
+      (days !== null && days > 365) ||
+      max === undefined ||
+      budget === undefined ||
+      floor === undefined ||
+      assetsBudget === undefined ||
+      assetsBudget === null
+    ) {
       return setError(a.cache.invalid)
     }
-    const list = hosts.split('\n').map((h) => h.trim()).filter(Boolean)
-    if (!data.hosts.fromFlag && (list.length === 0 || list.some((h) => /[\s/:@]/.test(h)))) return setError(a.hosts.invalid)
+    const list = hosts
+      .split('\n')
+      .map((h) => h.trim())
+      .filter(Boolean)
+    if (!data.hosts.fromFlag && (list.length === 0 || list.some((h) => /[\s/:@]/.test(h))))
+      return setError(a.hosts.invalid)
 
     const remotes: NonNullable<PutAdminStorage['remotes']> = {}
     if ((data.remotes.require ?? '') !== require) remotes.require = require === '' ? null : require
@@ -132,16 +161,30 @@ function StorageForm({ data }: { data: AdminStorage }) {
             </NativeSelect>
           </SettingsRow>
           <SettingsRow title={a.remotes.scope} help={a.remotes.scopeHelp}>
-            <NativeSelect aria-label={a.remotes.scope} value={scope} onChange={(e) => setScope(e.target.value)} disabled={require === ''}>
+            <NativeSelect
+              aria-label={a.remotes.scope}
+              value={scope}
+              onChange={(e) => setScope(e.target.value)}
+              disabled={require === ''}
+            >
               <option value="new">{a.remotes.scopeOptions.new}</option>
               <option value="all">{a.remotes.scopeOptions.all}</option>
             </NativeSelect>
           </SettingsRow>
           <SettingsRow title={a.remotes.graceDays} help={a.remotes.graceHelp}>
-            <Input aria-label={a.remotes.graceDays} inputMode="numeric" value={grace} onChange={(e) => setGrace(e.target.value)} className="w-28" disabled={require === ''} />
+            <Input
+              aria-label={a.remotes.graceDays}
+              inputMode="numeric"
+              value={grace}
+              onChange={(e) => setGrace(e.target.value)}
+              className="w-28"
+              disabled={require === ''}
+            />
           </SettingsRow>
         </SettingsRows>
-        {data.remotes.since && <p className="text-xs text-muted-foreground">{a.remotes.since(absoluteTime(data.remotes.since))}</p>}
+        {data.remotes.since && (
+          <p className="text-xs text-muted-foreground">{a.remotes.since(absoluteTime(data.remotes.since))}</p>
+        )}
         <p className="text-xs text-muted-foreground" data-slot="storage-affected">
           {a.remotes.affected(aff.inGrace, aff.overdue, aff.exempt)}
         </p>
@@ -150,7 +193,15 @@ function StorageForm({ data }: { data: AdminStorage }) {
       <SettingsSection title={a.hosts.title} description={a.hosts.help}>
         <label className="grid gap-1.5 text-sm">
           <span className="font-medium">{a.hosts.label}</span>
-          <Textarea rows={4} value={hosts} onChange={(e) => setHosts(e.target.value)} disabled={data.hosts.fromFlag} className="w-full max-w-md font-mono text-xs" autoComplete="off" spellCheck={false} />
+          <Textarea
+            rows={4}
+            value={hosts}
+            onChange={(e) => setHosts(e.target.value)}
+            disabled={data.hosts.fromFlag}
+            className="w-full max-w-md font-mono text-xs"
+            autoComplete="off"
+            spellCheck={false}
+          />
         </label>
         {data.hosts.fromFlag && <p className="text-xs text-muted-foreground">{a.hosts.fromFlag}</p>}
       </SettingsSection>
@@ -158,27 +209,65 @@ function StorageForm({ data }: { data: AdminStorage }) {
       <SettingsSection title={a.local.title} description={a.local.help}>
         <SettingsRows>
           <SettingsRow title={a.local.maxBytes} help={a.local.maxHelp}>
-            <Input aria-label={a.local.maxBytes} inputMode="numeric" value={maxMiB} onChange={(e) => setMaxMiB(e.target.value)} className="w-28" />
+            <Input
+              aria-label={a.local.maxBytes}
+              inputMode="numeric"
+              value={maxMiB}
+              onChange={(e) => setMaxMiB(e.target.value)}
+              className="w-28"
+            />
           </SettingsRow>
         </SettingsRows>
       </SettingsSection>
 
       <SettingsSection title={a.cache.title} description={a.cache.help}>
         <SettingsRows>
-          <SettingsRow title={a.cache.partial} help={data.git.partialClone ? a.cache.partialHelp : `${a.cache.partialHelp} ${a.cache.partialOff}`}>
-            <Switch aria-label={a.cache.partial} checked={partial} disabled={!data.git.partialClone} onCheckedChange={setPartial} />
+          <SettingsRow
+            title={a.cache.partial}
+            help={data.git.partialClone ? a.cache.partialHelp : `${a.cache.partialHelp} ${a.cache.partialOff}`}
+          >
+            <Switch
+              aria-label={a.cache.partial}
+              checked={partial}
+              disabled={!data.git.partialClone}
+              onCheckedChange={setPartial}
+            />
           </SettingsRow>
           <SettingsRow title={a.cache.evictAfter} help={a.cache.evictAfterHelp}>
-            <Input aria-label={a.cache.evictAfter} inputMode="numeric" value={evictDays} onChange={(e) => setEvictDays(e.target.value)} className="w-28" />
+            <Input
+              aria-label={a.cache.evictAfter}
+              inputMode="numeric"
+              value={evictDays}
+              onChange={(e) => setEvictDays(e.target.value)}
+              className="w-28"
+            />
           </SettingsRow>
           <SettingsRow title={a.cache.minIdle} help={a.cache.minIdleHelp}>
-            <Input aria-label={a.cache.minIdle} inputMode="numeric" value={idle} onChange={(e) => setIdle(e.target.value)} className="w-28" />
+            <Input
+              aria-label={a.cache.minIdle}
+              inputMode="numeric"
+              value={idle}
+              onChange={(e) => setIdle(e.target.value)}
+              className="w-28"
+            />
           </SettingsRow>
           <SettingsRow title={a.cache.clones} help={a.cache.clonesHelp}>
-            <Input aria-label={a.cache.clones} inputMode="numeric" value={clones} onChange={(e) => setClones(e.target.value)} className="w-28" />
+            <Input
+              aria-label={a.cache.clones}
+              inputMode="numeric"
+              value={clones}
+              onChange={(e) => setClones(e.target.value)}
+              className="w-28"
+            />
           </SettingsRow>
           <SettingsRow title={a.cache.minFree} help={a.cache.minFreeHelp}>
-            <Input aria-label={a.cache.minFree} inputMode="numeric" value={free} onChange={(e) => setFree(e.target.value)} className="w-28" />
+            <Input
+              aria-label={a.cache.minFree}
+              inputMode="numeric"
+              value={free}
+              onChange={(e) => setFree(e.target.value)}
+              className="w-28"
+            />
           </SettingsRow>
         </SettingsRows>
       </SettingsSection>
@@ -186,7 +275,13 @@ function StorageForm({ data }: { data: AdminStorage }) {
       <SettingsSection title={a.assets.title} description={a.assets.help}>
         <SettingsRows>
           <SettingsRow title={a.cache.assetsBytes} help={a.cache.assetsBytesHelp}>
-            <Input aria-label={a.cache.assetsBytes} inputMode="numeric" value={assetCache} onChange={(e) => setAssetCache(e.target.value)} className="w-28" />
+            <Input
+              aria-label={a.cache.assetsBytes}
+              inputMode="numeric"
+              value={assetCache}
+              onChange={(e) => setAssetCache(e.target.value)}
+              className="w-28"
+            />
           </SettingsRow>
           <SettingsRow title={a.assets.newSpaces} help={a.assets.newSpacesHelp}>
             <Switch aria-label={a.assets.newSpaces} checked={newAssets} onCheckedChange={setNewAssets} />

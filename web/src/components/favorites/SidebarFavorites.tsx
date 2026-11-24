@@ -3,7 +3,14 @@ import { NavLink, useLocation } from 'react-router'
 import { ChevronRight, FileText, Folder, Star, Table2 } from 'lucide-react'
 import { favoriteKey, useCanFavorite, useUrls } from '@/api/hooks'
 import type { Favorite } from '@/api/types'
-import { SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar'
+import {
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from '@/components/ui/sidebar'
 import { favoriteHref, favoriteName } from '@/lib/favorites'
 import { t } from '@/i18n'
 import { FavoriteActions } from './FavoriteActions'
@@ -42,7 +49,17 @@ export function SidebarFavorites() {
     })
   return (
     <SidebarGroup data-slot="sidebar-favorites">
-      <SidebarGroupLabel render={<button type="button" aria-expanded={open} aria-label={open ? t.fav.collapse : t.fav.expand} onClick={toggle} />} className="cursor-pointer hover:bg-sidebar-accent/70 hover:text-sidebar-foreground">
+      <SidebarGroupLabel
+        render={
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-label={open ? t.fav.collapse : t.fav.expand}
+            onClick={toggle}
+          />
+        }
+        className="cursor-pointer hover:bg-sidebar-accent/70 hover:text-sidebar-foreground"
+      >
         <Star className="mr-1.5 size-3.5" />
         {t.fav.title}
         <ChevronRight className={`ml-auto size-3.5 transition-transform ${open ? 'rotate-90' : ''}`} />
@@ -51,7 +68,18 @@ export function SidebarFavorites() {
         <SidebarGroupContent className="max-h-[min(16rem,35vh)] overflow-y-auto overscroll-contain">
           <SidebarMenu aria-label={t.fav.section}>
             {items.map((f, i) => (
-              <Row key={favoriteKey(f)} f={f} index={i} count={items.length} href={favoriteHref(f, urls)} active={favoriteHref(f, urls) === pathname + search} moveBy={moveBy} clear={clear} drag={dragProps(favoriteKey(f))} keys={keyProps(favoriteKey(f))} />
+              <Row
+                key={favoriteKey(f)}
+                f={f}
+                index={i}
+                count={items.length}
+                href={favoriteHref(f, urls)}
+                active={favoriteHref(f, urls) === pathname + search}
+                moveBy={moveBy}
+                clear={clear}
+                drag={dragProps(favoriteKey(f))}
+                keys={keyProps(favoriteKey(f))}
+              />
             ))}
           </SidebarMenu>
         </SidebarGroupContent>
@@ -60,18 +88,47 @@ export function SidebarFavorites() {
   )
 }
 
-function Row({ f, index, count, href, active, moveBy, clear, drag, keys }: { f: Favorite; index: number; count: number; href: string | null; active: boolean; moveBy: (key: string, delta: number) => void; clear: (f: Favorite) => void; drag: object; keys: object }) {
+function Row({
+  f,
+  index,
+  count,
+  href,
+  active,
+  moveBy,
+  clear,
+  drag,
+  keys,
+}: {
+  f: Favorite
+  index: number
+  count: number
+  href: string | null
+  active: boolean
+  moveBy: (key: string, delta: number) => void
+  clear: (f: Favorite) => void
+  drag: object
+  keys: object
+}) {
   const Icon = KIND_ICON[f.kind]
   const name = favoriteName(f)
   return (
     <SidebarMenuItem className="group/fav" data-favorite={favoriteKey(f)} {...drag}>
       {href ? (
-        <SidebarMenuButton isActive={active} render={<NavLink to={href} {...keys} />} title={f.kind === 'view' && f.of ? t.fav.view(f.of) : name} className="pr-[4.5rem]">
+        <SidebarMenuButton
+          isActive={active}
+          render={<NavLink to={href} {...keys} />}
+          title={f.kind === 'view' && f.of ? t.fav.view(f.of) : name}
+          className="pr-[4.5rem]"
+        >
           <Icon />
           <span className="truncate">{name}</span>
         </SidebarMenuButton>
       ) : (
-        <SidebarMenuButton render={<span role="link" aria-disabled="true" tabIndex={0} {...keys} />} title={t.fav.missingHelp} className="pr-[4.5rem] text-muted-foreground">
+        <SidebarMenuButton
+          render={<span role="link" aria-disabled="true" tabIndex={0} {...keys} />}
+          title={t.fav.missingHelp}
+          className="pr-[4.5rem] text-muted-foreground"
+        >
           <Icon />
           <span className="truncate">{name}</span>
           <span className="shrink-0 rounded bg-muted px-1 text-[0.65rem]">{t.fav.missing}</span>

@@ -24,15 +24,29 @@ const routes = (
   </Routes>
 )
 const panel = () => document.querySelector<HTMLElement>('[data-slot="email-verification"]')
-const button = (label: string) => [...(panel()?.querySelectorAll('button') ?? [])].find((b) => b.textContent?.trim() === label) ?? null
+const button = (label: string) =>
+  [...(panel()?.querySelectorAll('button') ?? [])].find((b) => b.textContent?.trim() === label) ?? null
 
 async function open(mailOn: boolean) {
   m = await mount(routes, {
     entries: (server) => {
       const login = server.handle('POST', '/api/login', JSON.stringify(MOCK_ADMIN), 'application/json')
       const cookie = login.headers!['Set-Cookie'].split(';')[0]
-      server.handle('PATCH', '/api/account', JSON.stringify({ email: 'admin@example.test' }), 'application/json', cookie)
-      if (mailOn) server.handle('PUT', '/api/admin/mail', JSON.stringify({ enabled: true, host: 'smtp.example.test', from: 'notes@example.test' }), 'application/json', cookie)
+      server.handle(
+        'PATCH',
+        '/api/account',
+        JSON.stringify({ email: 'admin@example.test' }),
+        'application/json',
+        cookie,
+      )
+      if (mailOn)
+        server.handle(
+          'PUT',
+          '/api/admin/mail',
+          JSON.stringify({ enabled: true, host: 'smtp.example.test', from: 'notes@example.test' }),
+          'application/json',
+          cookie,
+        )
       return ['/settings/profile']
     },
     signIn: true,

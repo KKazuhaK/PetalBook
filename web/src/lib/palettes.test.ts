@@ -19,7 +19,11 @@ function oklchToHex(l: number, c: number, hDeg: number): string {
   const l_ = (l + 0.3963377774 * a + 0.2158037573 * b) ** 3
   const m_ = (l - 0.1055613458 * a - 0.0638541728 * b) ** 3
   const s_ = (l - 0.0894841775 * a - 1.291485548 * b) ** 3
-  const lin = [4.0767416621 * l_ - 3.3077115913 * m_ + 0.2309699292 * s_, -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_, -0.0041960863 * l_ - 0.7034186147 * m_ + 1.707614701 * s_]
+  const lin = [
+    4.0767416621 * l_ - 3.3077115913 * m_ + 0.2309699292 * s_,
+    -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_,
+    -0.0041960863 * l_ - 0.7034186147 * m_ + 1.707614701 * s_,
+  ]
   const enc = (v: number) => {
     const x = Math.min(1, Math.max(0, v))
     return Math.round(255 * (x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055))
@@ -32,7 +36,8 @@ function block(selector: string): Record<string, string> {
   expect(start, selector).toBeGreaterThan(-1)
   const body = css.slice(start, css.indexOf('}', start))
   const out: Record<string, string> = {}
-  for (const m of body.matchAll(/--([\w-]+):\s*oklch\(([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*[\d.]+%)?\)/g)) out[m[1]] = oklchToHex(+m[2], +m[3], +m[4])
+  for (const m of body.matchAll(/--([\w-]+):\s*oklch\(([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*[\d.]+%)?\)/g))
+    out[m[1]] = oklchToHex(+m[2], +m[3], +m[4])
   return out
 }
 
@@ -44,7 +49,11 @@ interface Case {
 const cases: Case[] = [
   { palette: 'default', mode: 'light', vars: block(':root') },
   { palette: 'default', mode: 'dark', vars: block('.dark') },
-  ...palettes.flatMap((p) => (['light', 'dark'] as const).filter((m) => p[m]).map((m) => ({ palette: p.id, mode: m, vars: varsOf(p[m] as Tones) }))),
+  ...palettes.flatMap((p) =>
+    (['light', 'dark'] as const)
+      .filter((m) => p[m])
+      .map((m) => ({ palette: p.id, mode: m, vars: varsOf(p[m] as Tones) })),
+  ),
 ]
 
 describe('palettes', () => {
@@ -62,19 +71,31 @@ describe('palettes', () => {
     const name = `${palette} ${mode}`
     it(`${name}: body text, muted text and primary buttons reach WCAG AA (4.5:1)`, () => {
       expect(contrast(vars.foreground, vars.background), 'foreground on background').toBeGreaterThanOrEqual(AA)
-      expect(contrast(vars['muted-foreground'], vars.background), 'muted-foreground on background').toBeGreaterThanOrEqual(AA)
-      expect(contrast(vars['primary-foreground'], vars.primary), 'primary-foreground on primary').toBeGreaterThanOrEqual(AA)
+      expect(
+        contrast(vars['muted-foreground'], vars.background),
+        'muted-foreground on background',
+      ).toBeGreaterThanOrEqual(AA)
+      expect(
+        contrast(vars['primary-foreground'], vars.primary),
+        'primary-foreground on primary',
+      ).toBeGreaterThanOrEqual(AA)
     })
 
     // The default is the app's colours as they were and is not altered here (its
     // muted text on the muted surface is 4.3:1); the schemes are held to more.
     it.skipIf(palette === 'default')(`${name}: the same text holds on the other surfaces it is drawn on`, () => {
       for (const surface of ['card', 'popover', 'muted', 'secondary', 'sidebar']) {
-        expect(contrast(vars['muted-foreground'], vars[surface]), `muted-foreground on ${surface}`).toBeGreaterThanOrEqual(AA)
+        expect(
+          contrast(vars['muted-foreground'], vars[surface]),
+          `muted-foreground on ${surface}`,
+        ).toBeGreaterThanOrEqual(AA)
         expect(contrast(vars.foreground, vars[surface]), `foreground on ${surface}`).toBeGreaterThanOrEqual(AA)
       }
       expect(contrast(vars['accent-foreground'], vars.accent), 'accent-foreground on accent').toBeGreaterThanOrEqual(AA)
-      expect(contrast(vars['sidebar-accent-foreground'], vars['sidebar-accent']), 'sidebar-accent-foreground on sidebar-accent').toBeGreaterThanOrEqual(AA)
+      expect(
+        contrast(vars['sidebar-accent-foreground'], vars['sidebar-accent']),
+        'sidebar-accent-foreground on sidebar-accent',
+      ).toBeGreaterThanOrEqual(AA)
       // Hover and selected rows keep muted text readable enough (large or secondary text).
       expect(contrast(vars['muted-foreground'], vars.accent), 'muted-foreground on accent').toBeGreaterThanOrEqual(3)
     })
@@ -86,8 +107,14 @@ describe('palettes', () => {
       if (palette !== 'default') {
         expect(contrast(vars.brand, vars.background), 'brand on background').toBeGreaterThanOrEqual(AA)
         expect(contrast(vars.destructive, vars.background), 'destructive on background').toBeGreaterThanOrEqual(AA)
-        expect(contrast(vars['sidebar-primary-foreground'], vars['sidebar-primary']), 'sidebar-primary-foreground on sidebar-primary').toBeGreaterThanOrEqual(AA)
-        expect(contrast(vars['success-foreground'], vars.success), 'success-foreground on success').toBeGreaterThanOrEqual(AA)
+        expect(
+          contrast(vars['sidebar-primary-foreground'], vars['sidebar-primary']),
+          'sidebar-primary-foreground on sidebar-primary',
+        ).toBeGreaterThanOrEqual(AA)
+        expect(
+          contrast(vars['success-foreground'], vars.success),
+          'success-foreground on success',
+        ).toBeGreaterThanOrEqual(AA)
       }
     })
   }

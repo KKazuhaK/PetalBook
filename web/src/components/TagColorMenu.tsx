@@ -6,7 +6,13 @@ import type { TagColor } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 import { TAG_COLORS, TAG_HUES, normalizeHex, parseTagColor } from '@/lib/tagColors'
 import { t } from '@/i18n'
 
@@ -24,7 +30,15 @@ export function useOpenTagColorMenu() {
   return useContext(Open)
 }
 
-export function TagColorMenu({ children, className, colorOf }: { children: ReactNode; className?: string; colorOf: (tag: string) => TagColor | undefined }) {
+export function TagColorMenu({
+  children,
+  className,
+  colorOf,
+}: {
+  children: ReactNode
+  className?: string
+  colorOf: (tag: string) => TagColor | undefined
+}) {
   const [tag, setTag] = useState<string | null>(null)
   const set = useSetTagColor()
   const { write } = useSpacePermissions()
@@ -45,14 +59,25 @@ export function TagColorMenu({ children, className, colorOf }: { children: React
 
   const openAt = (anchor: HTMLElement) => {
     const r = anchor.getBoundingClientRect()
-    anchor.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left, clientY: r.bottom, button: 2 }))
+    anchor.dispatchEvent(
+      new window.MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: r.left,
+        clientY: r.bottom,
+        button: 2,
+      }),
+    )
   }
 
   // `of` names the tag when it is not the one the menu was opened on (the
   // custom colour dialog carries its own).
   const pick = (color: TagColor | null, of: string | null = tag) => {
     if (of === null) return
-    set.mutate({ tag: of, color }, { onError: (e) => toast.error(t.fmt.labelled(t.tagColor.failed, e instanceof Error ? e.message : '')) })
+    set.mutate(
+      { tag: of, color },
+      { onError: (e) => toast.error(t.fmt.labelled(t.tagColor.failed, e instanceof Error ? e.message : '')) },
+    )
   }
   const current = tag === null ? undefined : colorOf(tag)
   const parsed = parseTagColor(current)
@@ -68,18 +93,41 @@ export function TagColorMenu({ children, className, colorOf }: { children: React
           {children}
         </ContextMenuTrigger>
         <ContextMenuContent className="w-auto min-w-0 p-1.5">
-          <div className="max-w-52 truncate px-1 pb-1.5 text-xs text-muted-foreground">{tag === null ? '' : t.tagColor.menu(tag)}</div>
-          <div role="group" aria-label={tag === null ? t.tagColor.label : t.tagColor.menu(tag)} className="grid grid-cols-5 gap-1">
+          <div className="max-w-52 truncate px-1 pb-1.5 text-xs text-muted-foreground">
+            {tag === null ? '' : t.tagColor.menu(tag)}
+          </div>
+          <div
+            role="group"
+            aria-label={tag === null ? t.tagColor.label : t.tagColor.menu(tag)}
+            className="grid grid-cols-5 gap-1"
+          >
             {TAG_COLORS.map((c) => (
-              <ContextMenuItem key={c} aria-label={t.tagColor.names[c]} title={t.tagColor.names[c]} aria-current={current === c ? 'true' : undefined} onClick={() => pick(c)} className="size-7 justify-center rounded-full p-0">
-                <span className="flex size-5 items-center justify-center rounded-full ring-1 ring-black/10" style={{ background: TAG_HUES[c] }}>
+              <ContextMenuItem
+                key={c}
+                aria-label={t.tagColor.names[c]}
+                title={t.tagColor.names[c]}
+                aria-current={current === c ? 'true' : undefined}
+                onClick={() => pick(c)}
+                className="size-7 justify-center rounded-full p-0"
+              >
+                <span
+                  className="flex size-5 items-center justify-center rounded-full ring-1 ring-black/10"
+                  style={{ background: TAG_HUES[c] }}
+                >
                   {current === c && <Check className="size-3 text-white" />}
                 </span>
               </ContextMenuItem>
             ))}
           </div>
-          <ContextMenuItem aria-current={customHex ? 'true' : undefined} onClick={() => setCustomFor(tag)} className="mt-1">
-            <span className="flex size-4 items-center justify-center rounded-full ring-1 ring-black/10" style={customHex ? { background: customHex } : undefined}>
+          <ContextMenuItem
+            aria-current={customHex ? 'true' : undefined}
+            onClick={() => setCustomFor(tag)}
+            className="mt-1"
+          >
+            <span
+              className="flex size-4 items-center justify-center rounded-full ring-1 ring-black/10"
+              style={customHex ? { background: customHex } : undefined}
+            >
               {customHex ? <Check className="size-3 text-white" /> : <Palette className="size-3" />}
             </span>
             {t.tagColor.custom}
@@ -110,7 +158,17 @@ export function TagColorMenu({ children, className, colorOf }: { children: React
 // A native colour input and a hex field that follow each other; Apply sends the
 // lower-case `#rrggbb`. It lives outside the menu, which closes on its own when
 // "Custom…" is chosen, so typing is not caught by the menu's keyboard handling.
-function CustomColorDialog({ tag, initial, onApply, onClose }: { tag: string; initial: string; onApply: (hex: TagColor) => void; onClose: () => void }) {
+function CustomColorDialog({
+  tag,
+  initial,
+  onApply,
+  onClose,
+}: {
+  tag: string
+  initial: string
+  onApply: (hex: TagColor) => void
+  onClose: () => void
+}) {
   const [text, setText] = useState(initial)
   const hex = normalizeHex(text)
   return (
@@ -127,8 +185,23 @@ function CustomColorDialog({ tag, initial, onApply, onClose }: { tag: string; in
             <DialogTitle>{t.tagColor.customTitle(tag)}</DialogTitle>
           </DialogHeader>
           <div className="flex items-center gap-2">
-            <input type="color" aria-label={t.tagColor.picker} value={hex ?? '#000000'} onChange={(e) => setText(e.target.value)} className="h-8 w-10 shrink-0 cursor-pointer rounded-md border border-input bg-transparent p-0.5" />
-            <Input aria-label={t.tagColor.hex} value={text} onChange={(e) => setText(e.target.value)} aria-invalid={hex === null} spellCheck={false} autoComplete="off" maxLength={7} className="font-mono" />
+            <input
+              type="color"
+              aria-label={t.tagColor.picker}
+              value={hex ?? '#000000'}
+              onChange={(e) => setText(e.target.value)}
+              className="h-8 w-10 shrink-0 cursor-pointer rounded-md border border-input bg-transparent p-0.5"
+            />
+            <Input
+              aria-label={t.tagColor.hex}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              aria-invalid={hex === null}
+              spellCheck={false}
+              autoComplete="off"
+              maxLength={7}
+              className="font-mono"
+            />
           </div>
           {hex === null && <p className="-mt-2 text-xs text-destructive">{t.tagColor.hexInvalid}</p>}
           <DialogFooter>

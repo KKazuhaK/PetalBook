@@ -15,5 +15,10 @@ export function can(space: Subject, permission: Permission): boolean {
 export type SpacePermissions = Record<Permission, boolean>
 
 export function permissionsOf(space: Subject): SpacePermissions {
-  return { read: can(space, 'read'), write: can(space, 'write'), members: can(space, 'members'), manage: can(space, 'manage') }
+  return {
+    read: can(space, 'read'),
+    write: can(space, 'write'),
+    members: can(space, 'members'),
+    manage: can(space, 'manage'),
+  }
 }

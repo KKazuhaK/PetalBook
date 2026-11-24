@@ -8,7 +8,9 @@ import { tb } from '@/i18n/boards'
 
 // Continuous reading against the mock server. The drawing of diagrams is not run here (it needs a real browser).
 const renderDiagram = vi.fn<(text: string, dark: boolean) => Promise<string>>()
-vi.mock('@/components/editor/code/mermaidRender', () => ({ renderDiagram: (text: string, dark: boolean) => renderDiagram(text, dark) }))
+vi.mock('@/components/editor/code/mermaidRender', () => ({
+  renderDiagram: (text: string, dark: boolean) => renderDiagram(text, dark),
+}))
 
 beforeAll(installDomShims)
 
@@ -70,8 +72,12 @@ afterEach(async () => {
 
 const articles = () => [...document.querySelectorAll<HTMLElement>('[data-reading-id]')]
 const drawn = () => articles().filter((a) => a.getAttribute('data-drawn') === 'true')
-const bodyRequests = () => m!.requests.filter((r) => r.method === 'GET' && /\/pages\?/.test(r.url) && r.url.includes('body=1')).map((r) => new URL(r.url, 'http://x').searchParams)
-const textButton = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === label) ?? null
+const bodyRequests = () =>
+  m!.requests
+    .filter((r) => r.method === 'GET' && /\/pages\?/.test(r.url) && r.url.includes('body=1'))
+    .map((r) => new URL(r.url, 'http://x').searchParams)
+const textButton = (label: string) =>
+  [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === label) ?? null
 
 async function openReading(scene: (send: Send, server: Mounted['server']) => void, path = '/s/default/f/文案') {
   m = await mount(listShell, {
@@ -79,28 +85,42 @@ async function openReading(scene: (send: Send, server: Mounted['server']) => voi
       const send = sender(server)
       send('POST', '/folders', { path: '文案' })
       scene(send, server)
-      putViews(send, path.includes('/t/') ? { tag: decodeURIComponent(path.split('/t/')[1]) } : { folder: '文案' }, [{ name: '连读', layout: 'read' }])
+      putViews(send, path.includes('/t/') ? { tag: decodeURIComponent(path.split('/t/')[1]) } : { folder: '文案' }, [
+        { name: '连读', layout: 'read' },
+      ])
       return [path]
     },
   })
   await settle(() => articles().length > 0, 'the pages')
 }
-const page = (send: Send, meta: Record<string, unknown>, body: string, folder = '文案') => send('POST', '/pages', { folder, meta, body }).body as { id: string }
+const page = (send: Send, meta: Record<string, unknown>, body: string, folder = '文案') =>
+  send('POST', '/pages', { folder, meta, body }).body as { id: string }
 
 describe('reading a folder', () => {
   it('shows the pages one after the other with their texts, in the order of the listing, with no editor mounted', async () => {
     await openReading((send) => {
-      page(send, { title: '暮雪', subtitle: '下一个路口' }, '第一段。\n\n第二段，有**粗体**和[链接](https://example.com/x)。\n')
+      page(
+        send,
+        { title: '暮雪', subtitle: '下一个路口' },
+        '第一段。\n\n第二段，有**粗体**和[链接](https://example.com/x)。\n',
+      )
       page(send, { title: '早安' }, '# 小标题\n\n- 一\n- 二\n')
     })
     await settle(() => drawn().length === 2, 'both drawn')
-    expect(articles().map((a) => a.querySelector('h2')?.textContent).sort()).toEqual(['《早安》', '《暮雪》｜下一个路口'])
+    expect(
+      articles()
+        .map((a) => a.querySelector('h2')?.textContent)
+        .sort(),
+    ).toEqual(['《早安》', '《暮雪》｜下一个路口'])
     const byTitle = (title: string) => articles().find((a) => a.querySelector('h2')?.textContent === title)!
     const first = byTitle('《暮雪》｜下一个路口')
     expect(first.querySelectorAll('p').length).toBe(2)
     expect(first.querySelector('strong')!.textContent).toBe('粗体')
     const link = first.querySelector<HTMLAnchorElement>('.pb-prose a')!
-    expect([link.getAttribute('href'), link.getAttribute('rel')]).toEqual(['https://example.com/x', 'noopener noreferrer'])
+    expect([link.getAttribute('href'), link.getAttribute('rel')]).toEqual([
+      'https://example.com/x',
+      'noopener noreferrer',
+    ])
     expect(byTitle('《早安》').querySelector('h1')!.textContent).toBe('小标题')
     expect(byTitle('《早安》').querySelectorAll('li')).toHaveLength(2)
     // A static layout: no editor, no editable text.
@@ -128,7 +148,10 @@ describe('reading a folder', () => {
     expect(untitled.querySelector('a')!.getAttribute('href')).toMatch(/\/p\//)
     expect(untitled.textContent).not.toContain('《')
     await click(link)
-    await settle(() => document.querySelector('[data-testid="location"]')!.textContent!.startsWith(`/s/default/p/${id}`), 'at the editor')
+    await settle(
+      () => document.querySelector('[data-testid="location"]')!.textContent!.startsWith(`/s/default/p/${id}`),
+      'at the editor',
+    )
   })
 
   it('looks like the editor: lists with tasks, a quote, a table with alignment, an image from the space, code with its language and colours', async () => {
@@ -169,7 +192,10 @@ describe('reading a folder', () => {
     const a = drawn()[0]
     expect(a.querySelector('blockquote')!.textContent).toBe('引用')
     const tasks = [...a.querySelectorAll<HTMLInputElement>('ul[data-type="taskList"] input')]
-    expect(tasks.map((c) => [c.checked, c.disabled])).toEqual([[true, true], [false, true]])
+    expect(tasks.map((c) => [c.checked, c.disabled])).toEqual([
+      [true, true],
+      [false, true],
+    ])
     expect(a.querySelector('li[data-checked="true"]')).not.toBeNull()
     const cells = [...a.querySelectorAll<HTMLElement>('.tableWrapper th, .tableWrapper td')]
     expect(cells.map((c) => c.textContent)).toEqual(['甲', '乙', '1', '2'])
@@ -232,7 +258,8 @@ describe('a long reading', () => {
   const MANY = 300
   async function openMany() {
     await openReading((send) => {
-      for (let i = 0; i < MANY; i++) page(send, { title: `第${String(i).padStart(3, '0')}篇` }, `这是第 ${i} 篇的正文。\n\n第二段 ${i}。\n`)
+      for (let i = 0; i < MANY; i++)
+        page(send, { title: `第${String(i).padStart(3, '0')}篇` }, `这是第 ${i} 篇的正文。\n\n第二段 ${i}。\n`)
     })
   }
   const loaded = () => articles().length
@@ -293,17 +320,18 @@ describe('a long reading', () => {
 
 describe('reading a tag', () => {
   it('reads the pages under the tag, from any folder, and the layout is offered', async () => {
-    await openReading(
-      (send) => {
-        page(send, { title: '甲', tags: ['玉兰'] }, '甲的正文\n')
-        send('POST', '/folders', { path: '别处' })
-        page(send, { title: '乙', tags: ['玉兰'] }, '乙的正文\n', '别处')
-        page(send, { title: '丙' }, '丙不在\n')
-      },
-      '/s/default/t/玉兰',
-    )
+    await openReading((send) => {
+      page(send, { title: '甲', tags: ['玉兰'] }, '甲的正文\n')
+      send('POST', '/folders', { path: '别处' })
+      page(send, { title: '乙', tags: ['玉兰'] }, '乙的正文\n', '别处')
+      page(send, { title: '丙' }, '丙不在\n')
+    }, '/s/default/t/玉兰')
     await settle(() => drawn().length === 2, 'two pages')
-    expect(drawn().map((a) => a.querySelector('h2')!.textContent).sort()).toEqual(['《乙》', '《甲》'].sort())
+    expect(
+      drawn()
+        .map((a) => a.querySelector('h2')!.textContent)
+        .sort(),
+    ).toEqual(['《乙》', '《甲》'].sort())
     expect(byLabel(t.view.read)!.getAttribute('aria-pressed')).toBe('true')
     expect(bodyRequests()[0].getAll('tag')).toEqual(['玉兰'])
   })
@@ -316,13 +344,30 @@ describe('reading by the view', () => {
       server: { mode: 'accounts' },
       entries: (server) => {
         const { space, owner } = shareSpace(server, 'viewer')
-        const send = (method: string, path: string, body?: unknown) => owner.request(method, `/api/spaces/${space}${path}`, body)
+        const send = (method: string, path: string, body?: unknown) =>
+          owner.request(method, `/api/spaces/${space}${path}`, body)
         send('PUT', '/types/task', TASK)
         send('POST', '/folders', { path: 'Work' })
         send('PUT', '/folders/type', { folder: 'Work', type: 'task' })
-        for (const [title, status, points] of [['A', 'done', 3], ['B', 'todo', 1], ['C', 'todo', 2]] as const) send('POST', '/pages', { folder: 'Work', meta: { title, status, points }, body: `${title} 的正文\n` })
+        for (const [title, status, points] of [
+          ['A', 'done', 3],
+          ['B', 'todo', 1],
+          ['C', 'todo', 2],
+        ] as const)
+          send('POST', '/pages', { folder: 'Work', meta: { title, status, points }, body: `${title} 的正文\n` })
         const cur = send('GET', '/views?folder=Work').body as { rev: string }
-        send('PUT', '/views', { folder: 'Work', baseRev: cur.rev, views: [{ name: '待办', layout: 'read', sort: 'prop:points', filter: [{ key: 'status', op: 'in', values: ['todo'] }] }] })
+        send('PUT', '/views', {
+          folder: 'Work',
+          baseRev: cur.rev,
+          views: [
+            {
+              name: '待办',
+              layout: 'read',
+              sort: 'prop:points',
+              filter: [{ key: 'status', op: 'in', values: ['todo'] }],
+            },
+          ],
+        })
         return [`/s/${space}/f/Work`]
       },
     })

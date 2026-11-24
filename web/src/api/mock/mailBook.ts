@@ -43,7 +43,10 @@ export interface MailBookOptions {
   checkCaptcha: (ctx: 'forgot' | 'register', key: string, sent: unknown) => void
   noteCaptchaFailure: (ctx: 'forgot' | 'register', key: string) => void
   // Makes the account and returns the cookie of its session.
-  makeAccount: (p: { username: string; name: string; email: string; passwordHash: string; terms: string }) => { user: User; cookie: string }
+  makeAccount: (p: { username: string; name: string; email: string; passwordHash: string; terms: string }) => {
+    user: User
+    cookie: string
+  }
   setPassword: (id: string, hash: string) => void
   endSessions: (id: string) => void
   ssoOnlyInEffect: () => boolean
@@ -81,7 +84,17 @@ const LOOPBACK = /^(localhost|127(\.\d+){3}|\[?::1\]?)$/i
 const ADDRESS = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/
 
 export function createMailBook(o: MailBookOptions) {
-  let mail = { enabled: false, host: '', port: 587, security: 'starttls' as MailSecurity, username: '', password: '', from: '', fromName: '', replyTo: '' }
+  let mail = {
+    enabled: false,
+    host: '',
+    port: 587,
+    security: 'starttls' as MailSecurity,
+    username: '',
+    password: '',
+    from: '',
+    fromName: '',
+    replyTo: '',
+  }
   let status: MailSettings['status'] = { ok: false, checked: null, message: '' }
   let sent = 0
   let testAt: number[] = []
@@ -129,7 +142,19 @@ export function createMailBook(o: MailBookOptions) {
   const resetLink = (u: MailUser): string => link('/reset-password', newToken('reset', u.id, u.email, HOUR))
   const badLink = (): never => err(404, 'not_found', '链接无效或已过期')
 
-  const view = (): MailSettings => ({ enabled: mail.enabled, host: mail.host, port: mail.port, security: mail.security, username: mail.username, hasPassword: mail.password !== '', from: mail.from, fromName: mail.fromName, replyTo: mail.replyTo, status, queue: { waiting: 0, sentLastHour: sent, failedLastHour: 0 } })
+  const view = (): MailSettings => ({
+    enabled: mail.enabled,
+    host: mail.host,
+    port: mail.port,
+    security: mail.security,
+    username: mail.username,
+    hasPassword: mail.password !== '',
+    from: mail.from,
+    fromName: mail.fromName,
+    replyTo: mail.replyTo,
+    status,
+    queue: { waiting: 0, sentLastHour: sent, failedLastHour: 0 },
+  })
 
   const put = (body: Record<string, unknown>): MailSettings => {
     const next = { ...mail }
@@ -138,7 +163,9 @@ export function createMailBook(o: MailBookOptions) {
       if (typeof body[k] !== 'string' || [...(body[k] as string)].length > max) bad(`${k} 不合法`)
       return (body[k] as string).trim()
     }
-    for (const k of Object.keys(body)) if (!['enabled', 'host', 'port', 'security', 'username', 'password', 'from', 'fromName', 'replyTo'].includes(k)) bad(`不认识 ${k}`)
+    for (const k of Object.keys(body))
+      if (!['enabled', 'host', 'port', 'security', 'username', 'password', 'from', 'fromName', 'replyTo'].includes(k))
+        bad(`不认识 ${k}`)
     if (body.enabled !== undefined) {
       if (typeof body.enabled !== 'boolean') bad('enabled 要是布尔值')
       next.enabled = body.enabled as boolean
@@ -149,7 +176,8 @@ export function createMailBook(o: MailBookOptions) {
       next.host = host
     }
     if (body.port !== undefined) {
-      if (!Number.isInteger(body.port) || (body.port as number) < 1 || (body.port as number) > 65535) bad('port 是 1 到 65535')
+      if (!Number.isInteger(body.port) || (body.port as number) < 1 || (body.port as number) > 65535)
+        bad('port 是 1 到 65535')
       next.port = body.port as number
     }
     if (body.security !== undefined) {
@@ -172,7 +200,8 @@ export function createMailBook(o: MailBookOptions) {
       if (typeof body.password !== 'string' || body.password.length > 1024) bad('password 不合法')
       next.password = body.password as string
     }
-    if (next.security === 'none' && next.host !== '' && !LOOPBACK.test(next.host)) err(400, 'mail_insecure', 'security none 只能用于回环地址的主机')
+    if (next.security === 'none' && next.host !== '' && !LOOPBACK.test(next.host))
+      err(400, 'mail_insecure', 'security none 只能用于回环地址的主机')
     if (next.enabled) {
       if (next.host === '') bad('启用发信需要 host')
       if (next.from === '') err(400, 'mail_from_required', '启用发信需要发件人地址')
@@ -197,11 +226,22 @@ export function createMailBook(o: MailBookOptions) {
     return { status: 200, body: { ok: true } }
   }
 
-  const domainOk = (email: string, domains: string[]) => domains.length === 0 || domains.some((d) => email.toLowerCase().endsWith(`@${d}`) || email.toLowerCase().endsWith(`.${d}`))
+  const domainOk = (email: string, domains: string[]) =>
+    domains.length === 0 ||
+    domains.some((d) => email.toLowerCase().endsWith(`@${d}`) || email.toLowerCase().endsWith(`.${d}`))
 
   const registerInfo = (): RegisterInfo => {
     const r = o.rules()
-    return open() ? { open: true, tenant: { slug: 'default', name: 'Default' }, domains: r.domains, termsUrl: r.termsUrl, privacyUrl: r.privacyUrl, password: { minLength: 8 } } : { open: false }
+    return open()
+      ? {
+          open: true,
+          tenant: { slug: 'default', name: 'Default' },
+          domains: r.domains,
+          termsUrl: r.termsUrl,
+          privacyUrl: r.privacyUrl,
+          password: { minLength: 8 },
+        }
+      : { open: false }
   }
 
   const register = (body: Record<string, unknown>): MockResponse => {
@@ -222,12 +262,16 @@ export function createMailBook(o: MailBookOptions) {
     const needsTerms = r.termsUrl !== '' || r.privacyUrl !== ''
     if (needsTerms && body.acceptTerms !== true) err(400, 'terms_required', '要同意条款才能注册')
     const live = [...pending.values()].filter((p) => p.expires > o.now())
-    if (o.usernameTaken(username) || live.some((p) => p.username === username)) err(409, 'exists', '这个用户名已经有人用了')
+    if (o.usernameTaken(username) || live.some((p) => p.username === username))
+      err(409, 'exists', '这个用户名已经有人用了')
     regTimes.splice(0, regTimes.length, ...regTimes.filter((t) => o.now() - t < HOUR))
-    if (regTimes.length >= r.perHour || live.length >= 1000) throw new HttpError(429, 'rate_limited', '注册太多了，请稍后再试', { __retryAfter: 600 })
+    if (regTimes.length >= r.perHour || live.length >= 1000)
+      throw new HttpError(429, 'rate_limited', '注册太多了，请稍后再试', { __retryAfter: 600 })
     regTimes.push(o.now())
     const ok = { status: 202, body: { sent: true } }
-    const have = [...o.users()].find((u) => !u.disabled && u.emailVerified && u.email.toLowerCase() === email.toLowerCase())
+    const have = [...o.users()].find(
+      (u) => !u.disabled && u.emailVerified && u.email.toLowerCase() === email.toLowerCase(),
+    )
     if (have) {
       if (take(`to:${email.toLowerCase()}`, 3)) {
         if (canUsePassword(have)) post({ to: email, kind: 'register_exists', link: resetLink(have) })
@@ -237,7 +281,14 @@ export function createMailBook(o: MailBookOptions) {
     }
     if (!take(`to:${email.toLowerCase()}`, 3)) return ok
     const raw = o.random(43)
-    pending.set(o.hash(raw), { username, name, email, passwordHash: hashed, terms: needsTerms ? JSON.stringify({ at: stamp(), termsUrl: r.termsUrl, privacyUrl: r.privacyUrl }) : '', expires: o.now() + 24 * HOUR })
+    pending.set(o.hash(raw), {
+      username,
+      name,
+      email,
+      passwordHash: hashed,
+      terms: needsTerms ? JSON.stringify({ at: stamp(), termsUrl: r.termsUrl, privacyUrl: r.privacyUrl }) : '',
+      expires: o.now() + 24 * HOUR,
+    })
     post({ to: email, kind: 'register', link: link('/register/confirm', raw), token: raw })
     return ok
   }
@@ -250,7 +301,13 @@ export function createMailBook(o: MailBookOptions) {
     if (o.ssoOnlyInEffect()) err(403, 'local_login_refused', '这个服务器只允许通过单点登录进入')
     if (o.usernameTaken(p.username)) err(409, 'exists', '这个用户名已经有人用了')
     pending.delete(h)
-    const made = o.makeAccount({ username: p.username, name: p.name, email: p.email, passwordHash: p.passwordHash, terms: p.terms })
+    const made = o.makeAccount({
+      username: p.username,
+      name: p.name,
+      email: p.email,
+      passwordHash: p.passwordHash,
+      terms: p.terms,
+    })
     o.record('registered', { user: made.user.id, detail: { email: p.email } })
     return { status: 201, body: { user: made.user }, headers: { 'Set-Cookie': made.cookie } }
   }
@@ -259,7 +316,8 @@ export function createMailBook(o: MailBookOptions) {
     if (!ready()) err(409, 'mail_not_configured', '没有启用发信')
     if (u.email === '') bad('账号没有邮箱')
     if (u.emailVerified) err(409, 'email_verified', '邮箱已经验证过了')
-    if (!take(`to:${u.email.toLowerCase()}`, 3)) throw new HttpError(429, 'rate_limited', '发得太多了', { __retryAfter: 600 })
+    if (!take(`to:${u.email.toLowerCase()}`, 3))
+      throw new HttpError(429, 'rate_limited', '发得太多了', { __retryAfter: 600 })
     const raw = newToken('verify', u.id, u.email, 24 * HOUR)
     post({ to: u.email, kind: 'verify', link: link('/verify-email', raw), token: raw })
     return { status: 202, body: { sent: true } }
@@ -286,7 +344,11 @@ export function createMailBook(o: MailBookOptions) {
     const login = typeof body.login === 'string' ? body.login.trim() : ''
     if (login === '' || login.length > 254) bad('login 是用户名或邮箱')
     const all = [...o.users()].filter((u) => !u.disabled && u.emailVerified && u.email !== '')
-    const accounts = (login.includes('@') ? all.filter((u) => u.email.toLowerCase() === login.toLowerCase()) : all.filter((u) => u.username === login.toLowerCase())).slice(0, 5)
+    const accounts = (
+      login.includes('@')
+        ? all.filter((u) => u.email.toLowerCase() === login.toLowerCase())
+        : all.filter((u) => u.username === login.toLowerCase())
+    ).slice(0, 5)
     const ok = { status: 202, body: { sent: true } }
     if (accounts.length === 0 || !take(`to:${accounts[0].email.toLowerCase()}`, 3)) return ok
     const links = accounts.filter(canUsePassword)
@@ -305,7 +367,10 @@ export function createMailBook(o: MailBookOptions) {
   const resetCheck = (body: Record<string, unknown>): MockResponse => {
     const x = usable(body.token)
     if (!x) return badLink()
-    return { status: 200, body: { username: x.u.username, expires: new Date(x.f.t.expires).toISOString().replace(/\.\d+Z$/, 'Z') } }
+    return {
+      status: 200,
+      body: { username: x.u.username, expires: new Date(x.f.t.expires).toISOString().replace(/\.\d+Z$/, 'Z') },
+    }
   }
   const reset = (body: Record<string, unknown>): MockResponse => {
     const x = usable(body.token)
@@ -324,7 +389,8 @@ export function createMailBook(o: MailBookOptions) {
     if (!ready()) err(409, 'mail_not_configured', '没有启用发信')
     if (u.email === '' || !u.emailVerified) err(409, 'email_unverified', '这个账号没有已验证的邮箱')
     if (!canUsePassword(u) || u.disabled) err(409, 'conflict', '这个账号没有可用的密码')
-    if (!take(`to:${u.email.toLowerCase()}`, 3)) throw new HttpError(429, 'rate_limited', '发得太多了', { __retryAfter: 600 })
+    if (!take(`to:${u.email.toLowerCase()}`, 3))
+      throw new HttpError(429, 'rate_limited', '发得太多了', { __retryAfter: 600 })
     const url = resetLink(u)
     o.record('password_reset_requested', { user: u.id, detail: { by: 'admin' } })
     post({ to: u.email, kind: 'reset', link: url, token: url.split('#')[1] })
@@ -332,7 +398,8 @@ export function createMailBook(o: MailBookOptions) {
   }
   // A note to the old address when a verified address is changed: no link.
   const noteChange = (old: { email: string; emailVerified: boolean }) => {
-    if (old.email !== '' && old.emailVerified && ready() && take(`to:${old.email.toLowerCase()}`, 3)) post({ to: old.email, kind: 'email_changed' })
+    if (old.email !== '' && old.emailVerified && ready() && take(`to:${old.email.toLowerCase()}`, 3))
+      post({ to: old.email, kind: 'email_changed' })
   }
   const cleanUserTokens = (userId: string, kind?: Token['kind']) => {
     for (const [h, t] of tokens) if (t.userId === userId && (!kind || t.kind === kind)) tokens.delete(h)

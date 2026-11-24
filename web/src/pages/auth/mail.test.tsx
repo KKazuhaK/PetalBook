@@ -37,7 +37,13 @@ const submit = () => click(document.querySelector('form button[type="submit"]'))
 function admin(method: string, path: string, body?: unknown, server = m!.server) {
   const login = server.handle('POST', '/api/login', JSON.stringify(MOCK_ADMIN), 'application/json')
   const cookie = login.headers!['Set-Cookie'].split(';')[0]
-  return server.handle(method, `/api${path}`, body === undefined ? undefined : JSON.stringify(body), 'application/json', cookie)
+  return server.handle(
+    method,
+    `/api${path}`,
+    body === undefined ? undefined : JSON.stringify(body),
+    'application/json',
+    cookie,
+  )
 }
 async function open(path: string, { mail = false, registration = false, terms = false, hash = '' } = {}) {
   window.location.hash = hash
@@ -70,7 +76,11 @@ describe('registration', () => {
     await settle(() => text().includes(tm.register.sentTitle), 'the confirmation notice')
     expect(text()).toContain('tang@example.test')
     expect(outbox('register')).toHaveLength(1)
-    expect(JSON.parse(m!.requests.find((r) => r.url === '/api/register' && r.method === 'POST')!.body!)).toMatchObject({ username: 'tang', email: 'tang@example.test', lang: expect.stringMatching(/^(en|zh-Hans)$/) })
+    expect(JSON.parse(m!.requests.find((r) => r.url === '/api/register' && r.method === 'POST')!.body!)).toMatchObject({
+      username: 'tang',
+      email: 'tang@example.test',
+      lang: expect.stringMatching(/^(en|zh-Hans)$/),
+    })
     expect(outbox('register')[0].link).toContain('/register/confirm#')
   })
 
@@ -79,7 +89,12 @@ describe('registration', () => {
       entries: (server) => {
         admin('PUT', '/admin/mail', { enabled: true, host: 'smtp.example.test', from: 'notes@example.test' }, server)
         admin('PUT', '/admin/settings/registration.open', { value: true }, server)
-        const sent = server.handle('POST', '/api/register', JSON.stringify({ username: 'bee', name: 'Bee', email: 'bee@example.test', password: 'a-long-password' }), 'application/json')
+        const sent = server.handle(
+          'POST',
+          '/api/register',
+          JSON.stringify({ username: 'bee', name: 'Bee', email: 'bee@example.test', password: 'a-long-password' }),
+          'application/json',
+        )
         expect(sent.status).toBe(202)
         // The token is in the fragment of the link, never in a query.
         window.location.hash = '#' + tokenOf(server.mail.outbox.find((x) => x.kind === 'register')!.link)
@@ -87,7 +102,10 @@ describe('registration', () => {
       },
       server: { mode: 'accounts' },
     })
-    await settle(() => document.querySelector('[data-testid="elsewhere"]') !== null, 'the app, after the account was made')
+    await settle(
+      () => document.querySelector('[data-testid="elsewhere"]') !== null,
+      'the app, after the account was made',
+    )
     expect(m.requests.find((r) => r.url === '/api/register/confirm')).toBeDefined()
     expect(window.location.hash).toBe('')
   })
@@ -168,7 +186,9 @@ describe('password reset', () => {
         admin('PUT', '/admin/mail', { enabled: true, host: 'smtp.example.test', from: 'notes@example.test' }, server)
         const me = admin('GET', '/session', undefined, server).body as { user: { id: string } }
         admin('PATCH', `/users/${me.user.id}`, { email: 'admin@example.test', emailVerified: true }, server)
-        expect(server.handle('POST', '/api/password/forgot', JSON.stringify({ login: 'admin' }), 'application/json').status).toBe(202)
+        expect(
+          server.handle('POST', '/api/password/forgot', JSON.stringify({ login: 'admin' }), 'application/json').status,
+        ).toBe(202)
         window.location.hash = '#' + tokenOf(server.mail.outbox.find((x) => x.kind === 'reset')!.link)
         return ['/reset-password']
       },
@@ -185,7 +205,12 @@ describe('password reset', () => {
     await settle(() => text().includes(tm.reset.done), 'the confirmation')
     // The link works once.
     expect(m.requests.filter((r) => r.url === '/api/password/reset')).toHaveLength(1)
-    const login = m.server.handle('POST', '/api/login', JSON.stringify({ username: 'admin', password: 'a brand new password' }), 'application/json')
+    const login = m.server.handle(
+      'POST',
+      '/api/login',
+      JSON.stringify({ username: 'admin', password: 'a brand new password' }),
+      'application/json',
+    )
     expect(login.status).toBe(200)
   })
 
@@ -217,9 +242,20 @@ describe('email verification link', () => {
       entries: (server) => {
         admin('PUT', '/admin/mail', { enabled: true, host: 'smtp.example.test', from: 'notes@example.test' }, server)
         const inv = admin('POST', '/invites', { role: 'member' }, server).body as { token: string }
-        const joined = server.handle('POST', '/api/invites/accept', JSON.stringify({ token: inv.token, username: 'tang', password: 'a-long-password' }), 'application/json')
+        const joined = server.handle(
+          'POST',
+          '/api/invites/accept',
+          JSON.stringify({ token: inv.token, username: 'tang', password: 'a-long-password' }),
+          'application/json',
+        )
         const cookie = joined.headers!['Set-Cookie'].split(';')[0]
-        server.handle('PATCH', '/api/account', JSON.stringify({ email: 'tang@example.test' }), 'application/json', cookie)
+        server.handle(
+          'PATCH',
+          '/api/account',
+          JSON.stringify({ email: 'tang@example.test' }),
+          'application/json',
+          cookie,
+        )
         expect(server.handle('POST', '/api/account/email/verify', '{}', 'application/json', cookie).status).toBe(202)
         window.location.hash = '#' + tokenOf(server.mail.outbox.find((x) => x.kind === 'verify')!.link)
         return ['/verify-email']

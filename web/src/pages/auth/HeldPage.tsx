@@ -41,7 +41,10 @@ export default function HeldPage() {
       {account.isPending ? (
         <PageFallback />
       ) : account.isError ? (
-        <ErrorState message={t.fmt.labelled(ts.passkeys.loadFailed, account.error.message)} onRetry={() => void account.refetch()} />
+        <ErrorState
+          message={t.fmt.labelled(ts.passkeys.loadFailed, account.error.message)}
+          onRetry={() => void account.refetch()}
+        />
       ) : (
         <PasskeysSection account={account.data} returnTo={pathname + search} />
       )}

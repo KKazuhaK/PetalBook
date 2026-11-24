@@ -7,7 +7,8 @@ export const boardsEn: BoardsMessages = {
     settings: 'View settings',
     group: 'Group by',
     groupNone: 'Not chosen',
-    groupKeyHelp: 'The name of a property in the page headers; the pages under this tag are put in columns by its value.',
+    groupKeyHelp:
+      'The name of a property in the page headers; the pages under this tag are put in columns by its value.',
     groupKey: 'Property name',
     columns: 'Table columns',
     columnsHelp: 'Columns that are unchecked are hidden in the table.',
@@ -37,7 +38,8 @@ export const boardsEn: BoardsMessages = {
     moved: (name, column) => `Moved "${name}" to "${column}"`,
     moveTo: (name) => `Move "${name}" to…`,
     dropOther: '"Other values" is not one value, so a card cannot be dropped there',
-    valuesReadOnly: 'These columns are the values the pages have; to move a card, change the property in its page, or group by a single-choice field',
+    valuesReadOnly:
+      'These columns are the values the pages have; to move a card, change the property in its page, or group by a single-choice field',
   },
   reading: {
     label: 'Reading',

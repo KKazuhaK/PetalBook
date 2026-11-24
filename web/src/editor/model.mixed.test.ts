@@ -14,18 +14,22 @@ describe('model-based: random sequences against the in-memory server', () => {
 
   it('holds them through long offline stretches and reloads', async () => {
     if (ONLY !== undefined) return
-    for (let seed = 900_000; seed < 900_000 + Math.floor(1500 * SCALE); seed++) await runSequence(seed, { steps: 20, profile: 'offline' })
+    for (let seed = 900_000; seed < 900_000 + Math.floor(1500 * SCALE); seed++)
+      await runSequence(seed, { steps: 20, profile: 'offline' })
   }, 120_000)
 
   it('holds them through a very long offline session (thousands of pauses) with no dialog and a small list of own drafts', async () => {
     if (ONLY !== undefined) return
-    for (let seed = 400_000; seed < 400_000 + Math.floor(40 * SCALE); seed++) await runSequence(seed, { steps: 6, profile: 'longoffline' })
+    for (let seed = 400_000; seed < 400_000 + Math.floor(40 * SCALE); seed++)
+      await runSequence(seed, { steps: 6, profile: 'longoffline' })
   }, 240_000)
 
   it('holds them when the server commits a stored text while newer text waits, across reopenings, with no second device or with one', async () => {
     if (ONLY !== undefined) return
-    for (let seed = 300_000; seed < 300_000 + Math.floor(600 * SCALE); seed++) await runSequence(seed, { steps: 8, profile: 'swept' })
-    for (let seed = 200_000; seed < 200_000 + Math.floor(300 * SCALE); seed++) await runSequence(seed, { steps: 6, profile: 'stores' })
+    for (let seed = 300_000; seed < 300_000 + Math.floor(600 * SCALE); seed++)
+      await runSequence(seed, { steps: 8, profile: 'swept' })
+    for (let seed = 200_000; seed < 200_000 + Math.floor(300 * SCALE); seed++)
+      await runSequence(seed, { steps: 6, profile: 'stores' })
   }, 240_000)
 
   it('holds them over long sequences too', async () => {

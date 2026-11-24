@@ -4,13 +4,15 @@ export const storageZhCN: StorageMessages = {
   admin: {
     section: '存储',
     title: '存储',
-    intro: '服务器的磁盘怎么用：空间是否必须跟随远端仓库、没有远端的空间最多占多大、闲置空间的副本什么时候清掉。不在远端的东西永远不会被删。',
+    intro:
+      '服务器的磁盘怎么用：空间是否必须跟随远端仓库、没有远端的空间最多占多大、闲置空间的副本什么时候清掉。不在远端的东西永远不会被删。',
     loadFailed: '没能读取存储设置',
     save: '保存存储规则',
     saved: '已保存。',
     saveFailed: '没能保存',
     unchanged: '没有要保存的改动',
-    git: (version, partial) => `Git ${version}。${partial ? '可以做部分克隆。' : '版本低于 2.44，做不了部分克隆；闲置的空间仍然可以清掉。'}`,
+    git: (version, partial) =>
+      `Git ${version}。${partial ? '可以做部分克隆。' : '版本低于 2.44，做不了部分克隆；闲置的空间仍然可以清掉。'}`,
     remotes: {
       title: '远端仓库',
       help: '跟随远端仓库的空间不是自己页面的唯一一份，服务器可以放心地丢掉自己的那份。',
@@ -98,7 +100,8 @@ export const storageZhCN: StorageMessages = {
     exemptOff: '恢复远端要求',
     evict: '现在清掉',
     evictTitle: (name) => `清掉「${name}」？`,
-    evictHelp: '会先确认它的远端有全部内容，再从服务器上删掉它的文件。索引和记录留着，下次用到时再取回克隆。远端不会有任何改动。',
+    evictHelp:
+      '会先确认它的远端有全部内容，再从服务器上删掉它的文件。索引和记录留着，下次用到时再取回克隆。远端不会有任何改动。',
     evictConfirm: '清掉',
     evictedDone: '已清掉。',
     pinnedDone: '已设为常驻。',
@@ -120,7 +123,8 @@ export const storageZhCN: StorageMessages = {
   status: {
     title: '存储',
     spaces: '各种副本的空间数',
-    spacesValue: (local, full, partial, evicted, restoring) => `${local} 个仅本地，${full} 个完整，${partial} 个部分，${evicted} 个已清掉${restoring > 0 ? `，${restoring} 个取回中` : ''}`,
+    spacesValue: (local, full, partial, evicted, restoring) =>
+      `${local} 个仅本地，${full} 个完整，${partial} 个部分，${evicted} 个已清掉${restoring > 0 ? `，${restoring} 个取回中` : ''}`,
     clones: '克隆',
     indexes: '索引',
     assetCache: '附件缓存',
@@ -134,7 +138,8 @@ export const storageZhCN: StorageMessages = {
   // 空间设置里的附件仓库。
   assets: {
     title: '附件仓库',
-    intro: '把这个空间的附件放在第二个 Git 仓库里。空间自己的仓库就只有文字，保持很小；附件在有人打开时才取，放进有大小上限的缓存。页面里的链接不变。',
+    intro:
+      '把这个空间的附件放在第二个 Git 仓库里。空间自己的仓库就只有文字，保持很小；附件在有人打开时才取，放进有大小上限的缓存。页面里的链接不变。',
     needsRemote: '空间要先跟随远端仓库。',
     address: '仓库地址',
     token: '令牌',
@@ -151,13 +156,19 @@ export const storageZhCN: StorageMessages = {
     offlineBody: '文字照常读写，缓存里的附件照常显示；别的附件显示占位，上传要等连上。',
     keepsOld: '空间里原来就有的附件留在空间的仓库里，直到你把它们搬过去。',
     move: '搬现有的附件',
-    moveHelp: '把 assets/ 里的文件复制到附件仓库，确认它们都在那里之后，再把 assets/ 从空间的仓库里去掉（历史里仍有）。搬的时候空间照常能用。',
+    moveHelp:
+      '把 assets/ 里的文件复制到附件仓库，确认它们都在那里之后，再把 assets/ 从空间的仓库里去掉（历史里仍有）。搬的时候空间照常能用。',
     moveStart: '搬附件',
     moveStarted: '正在搬附件。',
     moveFailed: '没能开始搬',
     moveNothing: '空间里没有要搬的附件。',
     progress: (done, total) => `${done} / ${total} 个文件`,
-    states: { copying: '正在复制到附件仓库', switching: '正在把附件从空间的仓库里拿出来', done: '已搬完', failed: '搬到一半停了' },
+    states: {
+      copying: '正在复制到附件仓库',
+      switching: '正在把附件从空间的仓库里拿出来',
+      done: '已搬完',
+      failed: '搬到一半停了',
+    },
     retry: '再试一次',
     newSpace: '附件单独同步到另一个位置',
     newSpaceHelp: '在旁边再建一个，叫 <名字>-assets，空间本身就小而快。',
@@ -165,16 +176,19 @@ export const storageZhCN: StorageMessages = {
   },
   notice: {
     graceTitle: '这个空间需要连上远端仓库',
-    graceHelp: (when) => `服务器要求每个空间跟随一个远端仓库。这个空间的期限是 ${when}，之后会变成只读（什么都不会删）。`,
+    graceHelp: (when) =>
+      `服务器要求每个空间跟随一个远端仓库。这个空间的期限是 ${when}，之后会变成只读（什么都不会删）。`,
     overdueTitle: '这个空间现在是只读的',
-    overdueHelp: (when) => `它应当在 ${when} 前连上远端仓库。现在可以阅读和搜索，草稿也照样保存；连上远端仓库后就能再修改。`,
+    overdueHelp: (when) =>
+      `它应当在 ${when} 前连上远端仓库。现在可以阅读和搜索，草稿也照样保存；连上远端仓库后就能再修改。`,
     providerHelp: (name: string) => `要同步到 ${name}。`,
     connect: '连接远端',
     dismiss: '收起',
     personalConnect: '先连接你的账号，再给你的笔记建一个私有的位置。',
   },
   errors: {
-    remoteRequired: (deadline) => (deadline ? `这个空间是只读的：它应当在 ${deadline} 前连上远端仓库。` : '服务器要求空间跟随一个远端仓库。'),
+    remoteRequired: (deadline) =>
+      deadline ? `这个空间是只读的：它应当在 ${deadline} 前连上远端仓库。` : '服务器要求空间跟随一个远端仓库。',
     notCached: '这个版本还不在服务器上，而远端仓库现在连不上。请稍后再试。',
     fetching: '这个版本正在从远端仓库取回。请稍后再试。',
     restoring: (phase) => `这个空间有一阵子没人用了，正在重新取回（${phase}）。请稍后再试。`,

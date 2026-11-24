@@ -11,7 +11,8 @@ describe('blockLines', () => {
     '',
   ]
   it('has one line per top-level block of the editor document', () => {
-    for (const md of cases) expect(blockLines(md).length, md).toBe(md.trim() === '' ? 0 : markdownToDoc(md).content!.length)
+    for (const md of cases)
+      expect(blockLines(md).length, md).toBe(md.trim() === '' ? 0 : markdownToDoc(md).content!.length)
   })
   it('gives the line each block starts on', () => {
     expect(blockLines('# 标题\n\n第一段\n第二行\n\n- a\n- b\n')).toEqual([1, 3, 6])

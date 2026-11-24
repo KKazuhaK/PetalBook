@@ -1,12 +1,31 @@
 import { useId, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { checkFolderPath } from '@/lib/folders'
 import { t } from '@/i18n'
 
-export function MovePageDialog({ open, onOpenChange, current, folders, onMove }: { open: boolean; onOpenChange: (open: boolean) => void; current: string; folders: string[]; onMove: (folder: string) => Promise<void> }) {
+export function MovePageDialog({
+  open,
+  onOpenChange,
+  current,
+  folders,
+  onMove,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  current: string
+  folders: string[]
+  onMove: (folder: string) => Promise<void>
+}) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {open && <MoveForm current={current} folders={folders} onMove={onMove} onClose={() => onOpenChange(false)} />}
@@ -14,7 +33,17 @@ export function MovePageDialog({ open, onOpenChange, current, folders, onMove }:
   )
 }
 
-function MoveForm({ current, folders, onMove, onClose }: { current: string; folders: string[]; onMove: (folder: string) => Promise<void>; onClose: () => void }) {
+function MoveForm({
+  current,
+  folders,
+  onMove,
+  onClose,
+}: {
+  current: string
+  folders: string[]
+  onMove: (folder: string) => Promise<void>
+  onClose: () => void
+}) {
   const [value, setValue] = useState(current)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -53,7 +82,15 @@ function MoveForm({ current, folders, onMove, onClose }: { current: string; fold
         </DialogHeader>
         <div className="grid gap-1.5">
           <Label htmlFor={listId}>{t.move.pathLabel}</Label>
-          <Input id={listId} list={`${listId}-folders`} autoFocus value={value} placeholder={t.nav.rootFolder} onChange={(e) => setValue(e.target.value)} aria-invalid={error ? true : undefined} />
+          <Input
+            id={listId}
+            list={`${listId}-folders`}
+            autoFocus
+            value={value}
+            placeholder={t.nav.rootFolder}
+            onChange={(e) => setValue(e.target.value)}
+            aria-invalid={error ? true : undefined}
+          />
           <datalist id={`${listId}-folders`}>
             {folders
               .filter((f) => f !== '')

@@ -1,9 +1,33 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { Editor } from '@tiptap/core'
 import { useEditorState } from '@tiptap/react'
-import { Bold, ChevronDown, Code, Code2, Italic, Link2, List, ListChecks, ListOrdered, Minus, Quote, Redo2, Strikethrough, Superscript, Table2, Undo2 } from 'lucide-react'
+import {
+  Bold,
+  ChevronDown,
+  Code,
+  Code2,
+  Italic,
+  Link2,
+  List,
+  ListChecks,
+  ListOrdered,
+  Minus,
+  Quote,
+  Redo2,
+  Strikethrough,
+  Superscript,
+  Table2,
+  Undo2,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { t } from '@/i18n'
 import { UrlInput } from './BubbleToolbar'
@@ -14,7 +38,21 @@ import { ColumnItems, RowItems, TableItems } from './table/TableMenus'
 import { cellAtSelection, insertTable } from './table/tableOps'
 import { UploadButtons } from './UploadButtons'
 
-function Tool({ label, shortcut, active, disabled, onClick, children }: { label: string; shortcut?: string; active?: boolean; disabled?: boolean; onClick: () => void; children: ReactNode }) {
+function Tool({
+  label,
+  shortcut,
+  active,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string
+  shortcut?: string
+  active?: boolean
+  disabled?: boolean
+  onClick: () => void
+  children: ReactNode
+}) {
   const title = shortcut ? withShortcut(label, shortcut) : label
   return (
     <Button
@@ -48,7 +86,17 @@ function HeadingMenu({ editor, level, disabled }: { editor: Editor; level: numbe
     <DropdownMenu>
       <DropdownMenuTrigger
         disabled={disabled}
-        render={<Button type="button" variant="ghost" size="sm" title={t.toolbar.headingMenu} aria-label={`${t.toolbar.headingMenu}: ${label}`} className="min-w-[4.5rem] justify-between gap-1 text-muted-foreground" onMouseDown={(e) => e.preventDefault()} />}
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            title={t.toolbar.headingMenu}
+            aria-label={`${t.toolbar.headingMenu}: ${label}`}
+            className="min-w-[4.5rem] justify-between gap-1 text-muted-foreground"
+            onMouseDown={(e) => e.preventDefault()}
+          />
+        }
       >
         {label}
         <ChevronDown className="size-3" />
@@ -62,7 +110,9 @@ function HeadingMenu({ editor, level, disabled }: { editor: Editor; level: numbe
             ;(next === 0 ? chain.setParagraph() : chain.setHeading({ level: next as 1 | 2 | 3 | 4 })).run()
           }}
         >
-          <DropdownMenuRadioItem value="0" closeOnClick>{t.toolbar.paragraph}</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="0" closeOnClick>
+            {t.toolbar.paragraph}
+          </DropdownMenuRadioItem>
           {OFFERED_LEVELS.map((n) => (
             <DropdownMenuRadioItem key={n} value={String(n)} closeOnClick>
               {t.toolbar.heading(n)}
@@ -81,7 +131,16 @@ function TableMenu({ editor, inTable, disabled }: { editor: Editor; inTable: boo
   const [open, setOpen] = useState(false)
   const cell = useEditorState({ editor, selector: ({ editor: e }) => cellAtSelection(e.state) })
   const trigger = (
-    <Button type="button" variant="ghost" size="icon-sm" title={t.toolbar.table} aria-label={t.toolbar.table} disabled={disabled} className={inTable ? 'bg-muted text-foreground' : 'text-muted-foreground'} onMouseDown={(e) => e.preventDefault()} />
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-sm"
+      title={t.toolbar.table}
+      aria-label={t.toolbar.table}
+      disabled={disabled}
+      className={inTable ? 'bg-muted text-foreground' : 'text-muted-foreground'}
+      onMouseDown={(e) => e.preventDefault()}
+    />
   )
   if (inTable && cell) {
     return (
@@ -153,7 +212,11 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
     const dom = editor.view.dom
     const onKey = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() !== 'k' || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return
-      if (!editor.can().setLink({ href: 'https://example.com' }) || (editor.state.selection.empty && !editor.isActive('link'))) return
+      if (
+        !editor.can().setLink({ href: 'https://example.com' }) ||
+        (editor.state.selection.empty && !editor.isActive('link'))
+      )
+        return
       e.preventDefault()
       setLinkOpen(true)
     }
@@ -162,7 +225,11 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
   }, [editor])
 
   return (
-    <div role="toolbar" aria-label={t.toolbar.label} className="flex items-center gap-0.5 overflow-x-auto px-1 py-1 [scrollbar-width:thin]">
+    <div
+      role="toolbar"
+      aria-label={t.toolbar.label}
+      className="flex items-center gap-0.5 overflow-x-auto px-1 py-1 [scrollbar-width:thin]"
+    >
       <Tool label={t.toolbar.undo} shortcut="Mod-z" disabled={!s.canUndo} onClick={() => run().undo().run()}>
         <Undo2 />
       </Tool>
@@ -173,16 +240,40 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
       {/* Headings do not go in table cells (a cell is one line of text in Markdown) or code. */}
       <HeadingMenu editor={editor} level={s.level} disabled={s.table || s.codeBlock} />
       <Sep />
-      <Tool label={t.toolbar.bold} shortcut="Mod-b" active={s.bold} disabled={!s.canMark} onClick={() => run().toggleBold().run()}>
+      <Tool
+        label={t.toolbar.bold}
+        shortcut="Mod-b"
+        active={s.bold}
+        disabled={!s.canMark}
+        onClick={() => run().toggleBold().run()}
+      >
         <Bold />
       </Tool>
-      <Tool label={t.toolbar.italic} shortcut="Mod-i" active={s.italic} disabled={!s.canMark} onClick={() => run().toggleItalic().run()}>
+      <Tool
+        label={t.toolbar.italic}
+        shortcut="Mod-i"
+        active={s.italic}
+        disabled={!s.canMark}
+        onClick={() => run().toggleItalic().run()}
+      >
         <Italic />
       </Tool>
-      <Tool label={t.toolbar.strike} shortcut="Mod-Shift-s" active={s.strike} disabled={!s.canMark} onClick={() => run().toggleStrike().run()}>
+      <Tool
+        label={t.toolbar.strike}
+        shortcut="Mod-Shift-s"
+        active={s.strike}
+        disabled={!s.canMark}
+        onClick={() => run().toggleStrike().run()}
+      >
         <Strikethrough />
       </Tool>
-      <Tool label={t.toolbar.code} shortcut="Mod-e" active={s.code} disabled={!s.canMark} onClick={() => run().toggleCode().run()}>
+      <Tool
+        label={t.toolbar.code}
+        shortcut="Mod-e"
+        active={s.code}
+        disabled={!s.canMark}
+        onClick={() => run().toggleCode().run()}
+      >
         <Code />
       </Tool>
       <Popover open={linkOpen} onOpenChange={setLinkOpen}>
@@ -193,7 +284,14 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
           aria-pressed={s.link}
           aria-keyshortcuts="Control+K"
           onMouseDown={(e) => e.preventDefault()}
-          render={<Button type="button" variant="ghost" size="icon-sm" className={s.link ? 'bg-muted text-foreground' : 'text-muted-foreground'} />}
+          render={
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className={s.link ? 'bg-muted text-foreground' : 'text-muted-foreground'}
+            />
+          }
         >
           <Link2 />
         </PopoverTrigger>
@@ -202,20 +300,45 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
         </PopoverContent>
       </Popover>
       <Sep />
-      <Tool label={t.toolbar.bulletList} shortcut="Mod-Shift-8" active={s.bullet} onClick={() => run().toggleBulletList().run()}>
+      <Tool
+        label={t.toolbar.bulletList}
+        shortcut="Mod-Shift-8"
+        active={s.bullet}
+        onClick={() => run().toggleBulletList().run()}
+      >
         <List />
       </Tool>
-      <Tool label={t.toolbar.orderedList} shortcut="Mod-Shift-7" active={s.ordered} onClick={() => run().toggleOrderedList().run()}>
+      <Tool
+        label={t.toolbar.orderedList}
+        shortcut="Mod-Shift-7"
+        active={s.ordered}
+        onClick={() => run().toggleOrderedList().run()}
+      >
         <ListOrdered />
       </Tool>
-      <Tool label={t.toolbar.taskList} shortcut="Mod-Shift-9" active={s.task} onClick={() => run().toggleTaskList().run()}>
+      <Tool
+        label={t.toolbar.taskList}
+        shortcut="Mod-Shift-9"
+        active={s.task}
+        onClick={() => run().toggleTaskList().run()}
+      >
         <ListChecks />
       </Tool>
       <Sep />
-      <Tool label={t.toolbar.blockquote} shortcut="Mod-Shift-b" active={s.quote} onClick={() => run().toggleBlockquote().run()}>
+      <Tool
+        label={t.toolbar.blockquote}
+        shortcut="Mod-Shift-b"
+        active={s.quote}
+        onClick={() => run().toggleBlockquote().run()}
+      >
         <Quote />
       </Tool>
-      <Tool label={t.toolbar.codeBlock} shortcut="Mod-Alt-c" active={s.codeBlock} onClick={() => run().toggleCodeBlock().run()}>
+      <Tool
+        label={t.toolbar.codeBlock}
+        shortcut="Mod-Alt-c"
+        active={s.codeBlock}
+        onClick={() => run().toggleCodeBlock().run()}
+      >
         <Code2 />
       </Tool>
       <Tool label={t.toolbar.rule} onClick={() => run().setHorizontalRule().run()}>

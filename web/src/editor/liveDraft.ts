@@ -83,7 +83,8 @@ export class LiveDraft {
     if (this.bodySeq === 0) return undefined
     const seq = this.bodySeq
     // A destroyed editor (the page is being left) keeps its last reading.
-    if (this.jsonCache?.seq !== seq && this.editor && !this.editor.isDestroyed) this.jsonCache = { seq, doc: this.editor.getJSON() }
+    if (this.jsonCache?.seq !== seq && this.editor && !this.editor.isDestroyed)
+      this.jsonCache = { seq, doc: this.editor.getJSON() }
     // Edits exist but cannot be read: say so rather than let a save or a draft
     // quietly go out without them.
     if (!this.jsonCache || this.jsonCache.seq !== seq) throw new Error('the editor is no longer available')

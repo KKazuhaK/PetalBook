@@ -15,7 +15,11 @@ export const committed = (tx: IDBTransaction): Promise<void> =>
   })
 
 // `upgrade` is given the upgrade's transaction too: aborting it when the database is new leaves nothing made.
-export function openDb(name: string, version: number, upgrade: (db: IDBDatabase, oldVersion: number, tx: IDBTransaction) => void): Promise<IDBDatabase> {
+export function openDb(
+  name: string,
+  version: number,
+  upgrade: (db: IDBDatabase, oldVersion: number, tx: IDBTransaction) => void,
+): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const r = indexedDB.open(name, version)
     r.onupgradeneeded = (e) => upgrade(r.result, e.oldVersion, r.transaction!)
@@ -37,7 +41,10 @@ export function deleteDb(name: string): Promise<void> {
 
 // Every key and value of a store, one batch of `step` at a time (a cursor), so a store of tens of thousands of
 // records is never held whole in one request.
-export async function eachRecord<T>(store: IDBObjectStore | IDBIndex, fn: (value: T, key: IDBValidKey) => void | false): Promise<void> {
+export async function eachRecord<T>(
+  store: IDBObjectStore | IDBIndex,
+  fn: (value: T, key: IDBValidKey) => void | false,
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const r = store.openCursor()
     r.onsuccess = () => {

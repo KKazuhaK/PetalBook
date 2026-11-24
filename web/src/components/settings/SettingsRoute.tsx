@@ -80,7 +80,8 @@ export default function SettingsRoute() {
       : requested === undefined && query.has('sso_error') && shown.some((s) => s.id === 'security')
         ? 'security'
         : section
-  if (session && spacesReady && requested !== landing) return <Navigate to={{ pathname: settingsPath(landing), search: location.search }} state={location.state} replace />
+  if (session && spacesReady && requested !== landing)
+    return <Navigate to={{ pathname: settingsPath(landing), search: location.search }} state={location.state} replace />
 
   // The sections that need a space are only offered while there is one, so
   // `sp` is a real space id whenever one of them is showing.
@@ -173,9 +174,17 @@ export default function SettingsRoute() {
                 <span className="sr-only">{t.settingsUi.close}</span>
               </DialogPrimitive.Close>
             </div>
-            <nav aria-label={t.settingsUi.nav} className="flex gap-4 overflow-x-auto [scrollbar-width:none] px-3 pb-2 md:flex-1 md:flex-col md:gap-4 md:overflow-x-visible md:overflow-y-auto md:px-3 md:pb-4">
+            <nav
+              aria-label={t.settingsUi.nav}
+              className="flex gap-4 overflow-x-auto [scrollbar-width:none] px-3 pb-2 md:flex-1 md:flex-col md:gap-4 md:overflow-x-visible md:overflow-y-auto md:px-3 md:pb-4"
+            >
               {groupsOf(shown).map(({ group, sections }) => (
-                <div key={group} role="group" aria-label={t.settingsUi.groups[group]} className="flex items-center gap-1 md:block">
+                <div
+                  key={group}
+                  role="group"
+                  aria-label={t.settingsUi.groups[group]}
+                  className="flex items-center gap-1 md:block"
+                >
                   <div className="hidden px-2 pb-1 text-xs font-medium text-muted-foreground md:block">
                     {t.settingsUi.groups[group]}
                     {group === 'space' && current && <span className="ml-1 font-normal">· {current.name}</span>}

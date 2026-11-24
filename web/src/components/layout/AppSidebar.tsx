@@ -1,6 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { NavLink, useLocation } from 'react-router'
-import { ChevronRight, Clock, Folder, FolderOpen, FolderPlus, Home, House, Inbox, ListChecks, MoreHorizontal, PenLine, Search, Settings, Tag, Upload } from 'lucide-react'
+import {
+  ChevronRight,
+  Clock,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  Home,
+  House,
+  Inbox,
+  ListChecks,
+  MoreHorizontal,
+  PenLine,
+  Search,
+  Settings,
+  Tag,
+  Upload,
+} from 'lucide-react'
 import { useActiveSpace, useSession, useSpacePermissions, useTagColors, useTags, useTree, useUrls } from '@/api/hooks'
 import type { TagColor } from '@/api/types'
 import { TAG_ATTR, TagColorMenu, useOpenTagColorMenu } from '@/components/TagColorMenu'
@@ -72,7 +88,9 @@ function SearchBox() {
     >
       <Search className="size-4" />
       <span className="flex-1 text-left">{t.nav.searchPlaceholder}</span>
-      <kbd className="pointer-events-none hidden rounded border bg-muted px-1 font-sans text-[10px] text-muted-foreground md:inline">{isMac ? '⌘K' : 'Ctrl K'}</kbd>
+      <kbd className="pointer-events-none hidden rounded border bg-muted px-1 font-sans text-[10px] text-muted-foreground md:inline">
+        {isMac ? '⌘K' : 'Ctrl K'}
+      </kbd>
     </button>
   )
 }
@@ -97,7 +115,9 @@ function QuickNoteButton() {
     >
       <PenLine className="size-4 text-muted-foreground" />
       <span className="flex-1 text-left">{t.nav.quickNote}</span>
-      <kbd className="pointer-events-none hidden rounded border bg-muted px-1 font-sans text-[10px] text-muted-foreground md:inline">{isMac ? '⌥⇧N' : 'Alt+Shift+N'}</kbd>
+      <kbd className="pointer-events-none hidden rounded border bg-muted px-1 font-sans text-[10px] text-muted-foreground md:inline">
+        {isMac ? '⌥⇧N' : 'Alt+Shift+N'}
+      </kbd>
     </button>
   )
 }
@@ -113,7 +133,11 @@ function InboxLink({ inbox, activeFolder }: { inbox: string | undefined; activeF
   if (inbox === undefined) return null
   return (
     <SidebarMenuItem {...drop.props}>
-      <SidebarMenuButton isActive={activeFolder === inbox} render={<NavLink to={urls.folder(inbox)} />} className={drop.over ? DROP_CLASS : undefined}>
+      <SidebarMenuButton
+        isActive={activeFolder === inbox}
+        render={<NavLink to={urls.folder(inbox)} />}
+        className={drop.over ? DROP_CLASS : undefined}
+      >
         <Inbox />
         <span>{t.nav.inbox}</span>
       </SidebarMenuButton>
@@ -143,7 +167,12 @@ function FolderRow({
   const open = hasChildren && isOpen(node.path)
   const Icon = open ? FolderOpen : Folder
   // A dragged item resting on a closed folder opens it, so it can be dropped deeper.
-  const drop = useDropTarget(node.path, ops?.index, (items, target) => void ops?.moveTo(items, target), hasChildren && !open ? () => expand(node.path) : undefined)
+  const drop = useDropTarget(
+    node.path,
+    ops?.index,
+    (items, target) => void ops?.moveTo(items, target),
+    hasChildren && !open ? () => expand(node.path) : undefined,
+  )
   const row = useRef<HTMLLIElement>(null)
   const active = activeFolder === node.path
   // The tree scrolls by itself, so the folder being viewed is brought into view.
@@ -187,7 +216,18 @@ function FolderRow({
         </SidebarMenuButton>
         <SidebarMenuBadge>{node.total}</SidebarMenuBadge>
       </SidebarMenuItem>
-      {open && node.children.map((c) => <FolderRow key={c.path} node={c} depth={depth + 1} activeFolder={activeFolder} isOpen={isOpen} toggle={toggle} expand={expand} />)}
+      {open &&
+        node.children.map((c) => (
+          <FolderRow
+            key={c.path}
+            node={c}
+            depth={depth + 1}
+            activeFolder={activeFolder}
+            isOpen={isOpen}
+            toggle={toggle}
+            expand={expand}
+          />
+        ))}
     </>
   )
 }
@@ -198,7 +238,10 @@ function FolderRow({
 function FolderTree({ activeFolder, inbox }: { activeFolder: string | null; inbox: string | undefined }) {
   const { data, isPending, isError } = useTree()
   const [explicit, setExplicit] = useState<Record<string, boolean>>(loadOpen)
-  const tree = useMemo(() => buildFolderTree((data?.folders ?? []).filter((f) => inbox === undefined || !isSameOrUnder(f.path, inbox))), [data, inbox])
+  const tree = useMemo(
+    () => buildFolderTree((data?.folders ?? []).filter((f) => inbox === undefined || !isSameOrUnder(f.path, inbox))),
+    [data, inbox],
+  )
   // The folder being viewed is opened to show its subfolders, unless the person closed it.
   const revealed = useMemo(() => new Set(activeFolder ? ancestorsOf(activeFolder) : []), [activeFolder])
   const isOpen = (path: string) => explicit[path] ?? revealed.has(path)
@@ -215,15 +258,32 @@ function FolderTree({ activeFolder, inbox }: { activeFolder: string | null; inbo
   const toggle = (path: string) => remember((prev) => ({ ...prev, [path]: !(prev[path] ?? revealed.has(path)) }))
   const expand = (path: string) => remember((prev) => (prev[path] === true ? prev : { ...prev, [path]: true }))
 
-  if (isPending) return <div className="space-y-1.5 px-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-6 w-full" />)}</div>
+  if (isPending)
+    return (
+      <div className="space-y-1.5 px-2">
+        {[0, 1, 2].map((i) => (
+          <Skeleton key={i} className="h-6 w-full" />
+        ))}
+      </div>
+    )
   if (isError) return null
   return (
-    <FileContextMenu resolve={(key): FileItem[] | null => (key.startsWith('f:') ? [{ kind: 'folder', path: key.slice(2) }] : null)}>
+    <FileContextMenu
+      resolve={(key): FileItem[] | null => (key.startsWith('f:') ? [{ kind: 'folder', path: key.slice(2) }] : null)}
+    >
       <SidebarMenu>
         {/* The top of the tree has a row of its own: it is where the pages that are in no folder are found. */}
         <RootRow activeFolder={activeFolder} pages={(data?.folders ?? []).find((f) => f.path === '')?.pages ?? 0} />
         {tree.nodes.map((n) => (
-          <FolderRow key={n.path} node={n} depth={1} activeFolder={activeFolder} isOpen={isOpen} toggle={toggle} expand={expand} />
+          <FolderRow
+            key={n.path}
+            node={n}
+            depth={1}
+            activeFolder={activeFolder}
+            isOpen={isOpen}
+            toggle={toggle}
+            expand={expand}
+          />
         ))}
       </SidebarMenu>
     </FileContextMenu>
@@ -237,7 +297,11 @@ function RootRow({ activeFolder, pages }: { activeFolder: string | null; pages: 
   const drop = useDropTarget('', ops?.index, (items, target) => void ops?.moveTo(items, target))
   return (
     <SidebarMenuItem {...drop.props}>
-      <SidebarMenuButton isActive={activeFolder === ''} render={<NavLink to={urls.folder('')} />} className={drop.over ? DROP_CLASS : undefined}>
+      <SidebarMenuButton
+        isActive={activeFolder === ''}
+        render={<NavLink to={urls.folder('')} />}
+        className={drop.over ? DROP_CLASS : undefined}
+      >
         <Home />
         <span className="truncate">{t.nav.rootFolder}</span>
       </SidebarMenuButton>
@@ -275,7 +339,10 @@ function TagCloud({ activeTag }: { activeTag: string | null }) {
   const [filter, setFilter] = useState('')
   const tags = useMemo(() => data?.tags ?? [], [data])
   const needle = filter.trim().toLowerCase()
-  const shown = useMemo(() => (needle ? tags.filter((x) => x.tag.toLowerCase().includes(needle)) : tags), [tags, needle])
+  const shown = useMemo(
+    () => (needle ? tags.filter((x) => x.tag.toLowerCase().includes(needle)) : tags),
+    [tags, needle],
+  )
   if (tags.length === 0) return null
   return (
     <div className="grid gap-1.5">
@@ -294,7 +361,14 @@ function TagCloud({ activeTag }: { activeTag: string | null }) {
       <TagColorMenu colorOf={(tag) => colors.get(tag)} className="max-h-48 overflow-y-auto overscroll-contain px-2">
         <div className="flex flex-wrap gap-1.5" role="list" aria-label={t.nav.tags}>
           {shown.map((tag) => (
-            <TagLink key={tag.tag} tag={tag.tag} pages={tag.pages} color={tag.color} to={urls.tag(tag.tag)} active={activeTag === tag.tag} />
+            <TagLink
+              key={tag.tag}
+              tag={tag.tag}
+              pages={tag.pages}
+              color={tag.color}
+              to={urls.tag(tag.tag)}
+              active={activeTag === tag.tag}
+            />
           ))}
           {shown.length === 0 && <p className="px-1 text-xs text-muted-foreground">{t.nav.noTagMatch}</p>}
         </div>
@@ -303,7 +377,19 @@ function TagCloud({ activeTag }: { activeTag: string | null }) {
   )
 }
 
-function TagLink({ tag, pages, color: given, to, active }: { tag: string; pages: number; color: TagColor | undefined; to: string; active: boolean }) {
+function TagLink({
+  tag,
+  pages,
+  color: given,
+  to,
+  active,
+}: {
+  tag: string
+  pages: number
+  color: TagColor | undefined
+  to: string
+  active: boolean
+}) {
   const openMenu = useOpenTagColorMenu()
   // A colour the client does not know is drawn as none.
   const color = isTagColor(given) ? given : undefined
@@ -312,7 +398,10 @@ function TagLink({ tag, pages, color: given, to, active }: { tag: string; pages:
       <NavLink
         to={to}
         style={tagPillStyle(color)}
-        className={tagPillClass(color, `pr-2 transition-colors hover:brightness-95 dark:hover:brightness-125 ${color ? '' : 'hover:bg-sidebar-accent'} ${active ? (color ? 'ring-2 ring-brand/60' : 'border-brand/50 bg-sidebar-accent text-sidebar-accent-foreground') : ''}`)}
+        className={tagPillClass(
+          color,
+          `pr-2 transition-colors hover:brightness-95 dark:hover:brightness-125 ${color ? '' : 'hover:bg-sidebar-accent'} ${active ? (color ? 'ring-2 ring-brand/60' : 'border-brand/50 bg-sidebar-accent text-sidebar-accent-foreground') : ''}`,
+        )}
       >
         <span className="max-w-32 truncate">{tag}</span>
         <span className="tabular-nums opacity-70">{pages}</span>
@@ -370,7 +459,10 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton isActive={pathname === urls.home() || pathname === urls.base} render={<NavLink to={urls.home()} end />}>
+                <SidebarMenuButton
+                  isActive={pathname === urls.home() || pathname === urls.base}
+                  render={<NavLink to={urls.home()} end />}
+                >
                   <House />
                   <span>{t.nav.home}</span>
                 </SidebarMenuButton>
@@ -396,11 +488,20 @@ export function AppSidebar() {
           <FoldersHeading activeFolder={activeFolder} />
           {write && (
             <>
-              <SidebarGroupAction title={t.nav.newFolder} aria-label={t.nav.newFolder} onClick={() => ops?.newFolder(activeFolder ?? '')}>
+              <SidebarGroupAction
+                title={t.nav.newFolder}
+                aria-label={t.nav.newFolder}
+                onClick={() => ops?.newFolder(activeFolder ?? '')}
+              >
                 <FolderPlus />
               </SidebarGroupAction>
               {/* Next to "new folder"; brings files into the folder being viewed. */}
-              <SidebarGroupAction title={t.nav.import} aria-label={t.nav.import} className="right-9" render={<NavLink to={urls.import(activeFolder ?? '')} />}>
+              <SidebarGroupAction
+                title={t.nav.import}
+                aria-label={t.nav.import}
+                className="right-9"
+                render={<NavLink to={urls.import(activeFolder ?? '')} />}
+              >
                 <Upload />
               </SidebarGroupAction>
             </>
@@ -423,7 +524,13 @@ export function AppSidebar() {
       <SidebarFooter className="flex-row items-center justify-between gap-1 border-t p-2">
         {accounts ? <UserMenu /> : null}
         <div className="ml-auto flex items-center">
-          <Button variant="ghost" size="icon" aria-label={t.nav.settings} title={t.nav.settings} onClick={() => openSettings(accounts ? 'profile' : 'preferences')}>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={t.nav.settings}
+            title={t.nav.settings}
+            onClick={() => openSettings(accounts ? 'profile' : 'preferences')}
+          >
             <Settings className="size-4" />
           </Button>
           <ThemeToggle />

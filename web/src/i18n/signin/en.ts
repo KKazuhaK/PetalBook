@@ -20,7 +20,8 @@ export const signinEn: SigninMessages = {
     ssoRetry: 'Try again',
   },
   ssoErrors: {
-    provider_unavailable: 'This sign-in method is not available right now: it is switched off, or the server cannot reach it. Try again later or ask an administrator.',
+    provider_unavailable:
+      'This sign-in method is not available right now: it is switched off, or the server cannot reach it. Try again later or ask an administrator.',
     idp_error: 'Single sign-on did not work: the identity provider refused the request, or its answer did not verify.',
     expired: 'This sign-in expired, was already used, or was started in another browser. Please start again.',
     no_account: 'Nobody has this identity yet. Ask an administrator, or use an invite link to create an account.',
@@ -31,12 +32,14 @@ export const signinEn: SigninMessages = {
     setup_invalid: 'The setup token is wrong, or there is an administrator already.',
     rate_limited: 'Too many requests. Wait a moment and try again.',
     saml_destination: 'The SAML response has no destination, or one that is not this server.',
-    saml_weak_signature: 'The SAML response is signed or digested with something weaker than SHA-256. Ask the identity provider to use a stronger algorithm.',
+    saml_weak_signature:
+      'The SAML response is signed or digested with something weaker than SHA-256. Ask the identity provider to use a stronger algorithm.',
     saml_encrypted: 'The SAML response carries an encrypted assertion, which this sign-in method does not accept.',
     saml_replay: 'This SAML assertion was already used. Please sign in again.',
     saml_multiple_assertions: 'The SAML response carries more than one assertion.',
     saml_attributes: 'The SAML response declares an attribute more than once.',
-    saml_transient_nameid: 'The SAML NameID is transient. Set the identity provider to persistent, emailAddress or unspecified.',
+    saml_transient_nameid:
+      'The SAML NameID is transient. Set the identity provider to persistent, emailAddress or unspecified.',
     saml_no_nameid: 'The SAML assertion has no NameID.',
     saml_assertion_rejected: 'The SAML response did not validate (signature, audience or time).',
     internal: 'Something failed on the server. The details are in its log.',

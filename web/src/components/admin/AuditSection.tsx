@@ -13,7 +13,26 @@ import { t } from '@/i18n'
 import { tsec } from '@/i18n/security'
 
 const ta = tsec.audit
-const KINDS = ['login', 'login_failed', 'rate_limited', 'lockout', 'passkey_clone', 'identity_linked', 'identity_unlinked', 'passkey_added', 'passkey_removed', 'security_changed', 'provider_created', 'provider_changed', 'provider_deleted', 'user_changed', 'token_created', 'token_revoked', 'grant_revoked', 'dropped']
+const KINDS = [
+  'login',
+  'login_failed',
+  'rate_limited',
+  'lockout',
+  'passkey_clone',
+  'identity_linked',
+  'identity_unlinked',
+  'passkey_added',
+  'passkey_removed',
+  'security_changed',
+  'provider_created',
+  'provider_changed',
+  'provider_deleted',
+  'user_changed',
+  'token_created',
+  'token_revoked',
+  'grant_revoked',
+  'dropped',
+]
 
 const show = (v: unknown): string => (typeof v === 'string' ? v : JSON.stringify(v))
 
@@ -21,7 +40,8 @@ const show = (v: unknown): string => (typeof v === 'string' ? v : JSON.stringify
 export function detailText(detail: Record<string, unknown>): string {
   const parts: string[] = []
   for (const [k, v] of Object.entries(detail ?? {})) {
-    if (v !== null && typeof v === 'object' && !Array.isArray(v)) for (const [k2, v2] of Object.entries(v as Record<string, unknown>)) parts.push(`${k}.${k2}=${show(v2)}`)
+    if (v !== null && typeof v === 'object' && !Array.isArray(v))
+      for (const [k2, v2] of Object.entries(v as Record<string, unknown>)) parts.push(`${k}.${k2}=${show(v2)}`)
     else parts.push(`${k}=${show(v)}`)
   }
   return parts.join(' ')
@@ -54,7 +74,15 @@ export function AuditSection() {
         </div>
         <div className="grid min-w-0 gap-1.5 sm:w-56">
           <Label htmlFor="audit-user">{ta.user}</Label>
-          <Input id="audit-user" value={userDraft} placeholder={ta.userPlaceholder} onChange={(e) => setUserDraft(e.target.value)} onBlur={() => setUser(userDraft.trim())} autoComplete="off" spellCheck={false} />
+          <Input
+            id="audit-user"
+            value={userDraft}
+            placeholder={ta.userPlaceholder}
+            onChange={(e) => setUserDraft(e.target.value)}
+            onBlur={() => setUser(userDraft.trim())}
+            autoComplete="off"
+            spellCheck={false}
+          />
         </div>
         <Button type="button" variant="outline" onClick={() => void log.refetch()}>
           {ta.refresh}
@@ -75,7 +103,12 @@ export function AuditSection() {
       )}
       {log.hasNextPage && (
         <div>
-          <Button type="button" variant="outline" disabled={log.isFetchingNextPage} onClick={() => void log.fetchNextPage()}>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={log.isFetchingNextPage}
+            onClick={() => void log.fetchNextPage()}
+          >
             {log.isFetchingNextPage ? ta.loading : ta.loadMore}
           </Button>
         </div>
@@ -85,7 +118,13 @@ export function AuditSection() {
 }
 
 function Row({ r }: { r: AuditItem }) {
-  const who = [r.username, r.user && r.user !== r.username ? r.user : '', r.actor ? ta.actor(r.actor) : r.detail?.by === 'cli' ? ta.cli : ''].filter(Boolean).join(' · ')
+  const who = [
+    r.username,
+    r.user && r.user !== r.username ? r.user : '',
+    r.actor ? ta.actor(r.actor) : r.detail?.by === 'cli' ? ta.cli : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
   return (
     <li className="grid min-w-0 grid-cols-1 gap-1 px-3 py-2.5 text-sm" data-audit={r.id}>
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
@@ -96,7 +135,9 @@ function Row({ r }: { r: AuditItem }) {
         {r.ip && <span className="text-xs break-all text-muted-foreground">{r.ip}</span>}
       </div>
       {who && <div className="text-xs break-all">{who}</div>}
-      {Object.keys(r.detail ?? {}).length > 0 && <div className="font-mono text-xs break-all text-muted-foreground">{detailText(r.detail)}</div>}
+      {Object.keys(r.detail ?? {}).length > 0 && (
+        <div className="font-mono text-xs break-all text-muted-foreground">{detailText(r.detail)}</div>
+      )}
     </li>
   )
 }

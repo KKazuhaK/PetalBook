@@ -27,7 +27,8 @@ function decodeSegment(s: string): string {
 }
 
 export function resolveAddress(address: string, folder: string): Resolved {
-  if (address === '' || SCHEME.test(address) || address.startsWith('//') || address.startsWith('#')) return { kind: 'external', url: address }
+  if (address === '' || SCHEME.test(address) || address.startsWith('//') || address.startsWith('#'))
+    return { kind: 'external', url: address }
   // A query or fragment is not part of the path (`manual.pdf#page=3`).
   const cut = address.search(/[?#]/)
   const pathPart = cut < 0 ? address : address.slice(0, cut)

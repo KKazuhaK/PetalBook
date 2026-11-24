@@ -13,7 +13,11 @@ export function normalizeDoc(json: DocJSON): DocJSON {
     let content = node.content.map(visit)
     // A Markdown heading is a single line.
     if (node.type === 'heading') {
-      content = content.map((child) => (child.type === 'hardBreak' ? { type: 'text', text: ' ', ...(child.marks ? { marks: child.marks } : {}) } : child))
+      content = content.map((child) =>
+        child.type === 'hardBreak'
+          ? { type: 'text', text: ' ', ...(child.marks ? { marks: child.marks } : {}) }
+          : child,
+      )
     }
     if (node.type === 'paragraph' || node.type === 'heading') {
       content = [...content]
@@ -21,7 +25,11 @@ export function normalizeDoc(json: DocJSON): DocJSON {
         const last = content[content.length - 1]
         if (!last) break
         if (last.type === 'hardBreak') content.pop()
-        else if (last.type === 'text' && !(last.marks ?? []).some((m) => m.type === 'code') && /[ \t]$/.test(last.text ?? '')) {
+        else if (
+          last.type === 'text' &&
+          !(last.marks ?? []).some((m) => m.type === 'code') &&
+          /[ \t]$/.test(last.text ?? '')
+        ) {
           const text = (last.text ?? '').replace(/[ \t]+$/, '')
           if (text) {
             content[content.length - 1] = { ...last, text }
@@ -43,7 +51,12 @@ export function normalizeDoc(json: DocJSON): DocJSON {
     if ((node.type === 'tableCell' || node.type === 'tableHeader') && content.length) {
       content = content.map((para) => {
         const first = para.content?.[0]
-        if (first?.type !== 'text' || (first.marks ?? []).some((m) => m.type === 'code') || !/^[ \t]/.test(first.text ?? '')) return para
+        if (
+          first?.type !== 'text' ||
+          (first.marks ?? []).some((m) => m.type === 'code') ||
+          !/^[ \t]/.test(first.text ?? '')
+        )
+          return para
         const text = (first.text ?? '').replace(/^[ \t]+/, '')
         const inner = text ? [{ ...first, text }, ...para.content!.slice(1)] : para.content!.slice(1)
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -57,6 +70,7 @@ export function normalizeDoc(json: DocJSON): DocJSON {
   }
   const doc = visit(json)
   const blocks = [...(doc.content ?? [])]
-  while (blocks.length && blocks[blocks.length - 1].type === 'paragraph' && !blocks[blocks.length - 1].content?.length) blocks.pop()
+  while (blocks.length && blocks[blocks.length - 1].type === 'paragraph' && !blocks[blocks.length - 1].content?.length)
+    blocks.pop()
   return { ...doc, content: blocks }
 }

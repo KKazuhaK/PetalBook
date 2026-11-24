@@ -60,4 +60,5 @@ export function network(opts: MockOptions = {}): Net {
 }
 
 export const S = () => spaceApi('default')
-export const make = (folder: string, title: string, body = `${title} 的正文\n`, extra: Record<string, unknown> = {}) => S().createPage({ folder, meta: { title, ...extra }, body })
+export const make = (folder: string, title: string, body = `${title} 的正文\n`, extra: Record<string, unknown> = {}) =>
+  S().createPage({ folder, meta: { title, ...extra }, body })

@@ -29,7 +29,15 @@ export function ProviderIcon({ icon, className = 'size-4' }: { icon: string; cla
   return (
     <svg aria-hidden="true" viewBox="0 0 16 16" className={className} data-icon={preset}>
       <rect width="16" height="16" rx="4" fill={mark.color} />
-      <text x="8" y="11.2" textAnchor="middle" fontSize={mark.letter.length > 1 ? 7 : 9} fontWeight="700" fill="#fff" fontFamily="system-ui, sans-serif">
+      <text
+        x="8"
+        y="11.2"
+        textAnchor="middle"
+        fontSize={mark.letter.length > 1 ? 7 : 9}
+        fontWeight="700"
+        fill="#fff"
+        fontFamily="system-ui, sans-serif"
+      >
         {mark.letter}
       </text>
     </svg>

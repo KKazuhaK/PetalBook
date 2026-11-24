@@ -28,12 +28,58 @@ export function dayNumber(d: Date): number {
 }
 
 // Festivals on fixed days of the Gregorian calendar.
-const FIXED: Record<string, string> = { '0101': 'newYear', '0214': 'valentine', '0501': 'laborDay', '0601': 'childrensDay', '1001': 'nationalDay', '1225': 'christmas' }
+const FIXED: Record<string, string> = {
+  '0101': 'newYear',
+  '0214': 'valentine',
+  '0501': 'laborDay',
+  '0601': 'childrensDay',
+  '1001': 'nationalDay',
+  '1225': 'christmas',
+}
 
-export const FESTIVALS = ['newYear', 'valentine', 'laborDay', 'childrensDay', 'nationalDay', 'christmas', 'newYearsEve', 'springFestival', 'lantern', 'qingming', 'dragonBoat', 'qixi', 'midAutumn', 'doubleNinth', 'laba', 'dongzhi'] as const
+export const FESTIVALS = [
+  'newYear',
+  'valentine',
+  'laborDay',
+  'childrensDay',
+  'nationalDay',
+  'christmas',
+  'newYearsEve',
+  'springFestival',
+  'lantern',
+  'qingming',
+  'dragonBoat',
+  'qixi',
+  'midAutumn',
+  'doubleNinth',
+  'laba',
+  'dongzhi',
+] as const
 export const TERMS = [
-  'xiaohan', 'dahan', 'lichun', 'yushui', 'jingzhe', 'chunfen', 'qingming', 'guyu', 'lixia', 'xiaoman', 'mangzhong', 'xiazhi',
-  'xiaoshu', 'dashu', 'liqiu', 'chushu', 'bailu', 'qiufen', 'hanlu', 'shuangjiang', 'lidong', 'xiaoxue', 'daxue', 'dongzhi',
+  'xiaohan',
+  'dahan',
+  'lichun',
+  'yushui',
+  'jingzhe',
+  'chunfen',
+  'qingming',
+  'guyu',
+  'lixia',
+  'xiaoman',
+  'mangzhong',
+  'xiazhi',
+  'xiaoshu',
+  'dashu',
+  'liqiu',
+  'chushu',
+  'bailu',
+  'qiufen',
+  'hanlu',
+  'shuangjiang',
+  'lidong',
+  'xiaoxue',
+  'daxue',
+  'dongzhi',
 ] as const
 
 const parsed = new Map<number, Map<string, string[]>>()
@@ -88,7 +134,10 @@ export const WROTE_SEVERAL = 3
 export function fill(sentence: string, vars: Record<string, string | number | undefined>): string {
   let out = sentence
   for (const [k, v] of Object.entries(vars)) {
-    if (v === undefined || v === '') out = out.replace(new RegExp(`^\\{${k}\\}\\s*[，,、]\\s*`), '').replace(new RegExp(`\\s*[，,、]?\\s*\\{${k}\\}`, 'g'), '')
+    if (v === undefined || v === '')
+      out = out
+        .replace(new RegExp(`^\\{${k}\\}\\s*[，,、]\\s*`), '')
+        .replace(new RegExp(`\\s*[，,、]?\\s*\\{${k}\\}`, 'g'), '')
     else out = out.replaceAll(`{${k}}`, () => String(v))
   }
   return out
@@ -121,10 +170,16 @@ export function greetingFor(input: GreetingInput, g: GreetMessages): string {
     return fill(pickBy(g.anniversary, day), { name, years: now.getFullYear() - r.getFullYear() })
   }
 
-  if (input.firstToday && input.absentDays >= LONG_ABSENCE_DAYS) return fill(pickBy(g.situations.longAbsence, day), { name, days: input.absentDays })
+  if (input.firstToday && input.absentDays >= LONG_ABSENCE_DAYS)
+    return fill(pickBy(g.situations.longAbsence, day), { name, days: input.absentDays })
 
   const newest = input.recentUpdated[0]
-  if (newest && now.getTime() - newest.getTime() >= 0 && now.getTime() - newest.getTime() <= JUST_WROTE_MINUTES * 60_000) return fill(pickBy(g.situations.justWrote, day), { name })
+  if (
+    newest &&
+    now.getTime() - newest.getTime() >= 0 &&
+    now.getTime() - newest.getTime() <= JUST_WROTE_MINUTES * 60_000
+  )
+    return fill(pickBy(g.situations.justWrote, day), { name })
   const today = localDay(now)
   const writtenToday = input.recentUpdated.filter((d) => localDay(d) === today).length
   if (writtenToday >= WROTE_SEVERAL) return fill(pickBy(g.situations.manyToday, day), { name, n: writtenToday })
@@ -142,11 +197,27 @@ export function greetingFor(input: GreetingInput, g: GreetMessages): string {
 // Everything the sentence of a day goes by besides the date: the part of the day, whether "just wrote" holds, how
 // many pages were written today (only up to where it matters), the language, the name, the variety and the
 // festivals of the date. A sentence kept for the day is reused only while all of these are as they were.
-export function greetingSignature(input: { now: Date; name?: string; lang: string; variety: boolean; wrote: Date[] }): string {
+export function greetingSignature(input: {
+  now: Date
+  name?: string
+  lang: string
+  variety: boolean
+  wrote: Date[]
+}): string {
   const { now, wrote } = input
   const newest = wrote[0]
-  const just = !!newest && now.getTime() - newest.getTime() >= 0 && now.getTime() - newest.getTime() <= JUST_WROTE_MINUTES * 60_000
+  const just =
+    !!newest && now.getTime() - newest.getTime() >= 0 && now.getTime() - newest.getTime() <= JUST_WROTE_MINUTES * 60_000
   const today = localDay(now)
   const count = Math.min(WROTE_SEVERAL, wrote.filter((d) => localDay(d) === today).length)
-  return JSON.stringify([today, bucketOf(now.getHours()), just, count, input.lang, input.name ?? '', input.variety, namesOn(now).join('+')])
+  return JSON.stringify([
+    today,
+    bucketOf(now.getHours()),
+    just,
+    count,
+    input.lang,
+    input.name ?? '',
+    input.variety,
+    namesOn(now).join('+'),
+  ])
 }

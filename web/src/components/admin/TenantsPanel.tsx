@@ -7,7 +7,14 @@ import { ErrorState, PageFallback } from '@/components/common'
 import { SettingsSection } from '@/components/settings/SettingsParts'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
 import { tt } from '@/i18n/tenants'
 import { tu } from '@/i18n/usage'
@@ -106,7 +113,14 @@ function TenantList({ enabled }: { enabled: boolean }) {
                   </div>
                   <div className="truncate text-xs text-muted-foreground">{tn.slug}</div>
                 </div>
-                <Button type="button" variant="ghost" size="sm" aria-expanded={open === tn.id} aria-label={`${tl.manage}: ${tn.name}`} onClick={() => setOpen(open === tn.id ? null : tn.id)}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-expanded={open === tn.id}
+                  aria-label={`${tl.manage}: ${tn.name}`}
+                  onClick={() => setOpen(open === tn.id ? null : tn.id)}
+                >
                   {open === tn.id ? tl.close : tl.manage}
                 </Button>
               </div>
@@ -166,7 +180,11 @@ function CreateDialog({ onClose, onMade }: { onClose: () => void; onMade: (t: Cr
   const submit = (e: FormEvent) => {
     e.preventDefault()
     setError('')
-    const input = { name: name.trim(), slug: slug.trim(), ...(admin.trim() ? { admin: { username: admin.trim() } } : {}) }
+    const input = {
+      name: name.trim(),
+      slug: slug.trim(),
+      ...(admin.trim() ? { admin: { username: admin.trim() } } : {}),
+    }
     create.mutate(input, { onSuccess: onMade, onError: (err) => setError(tenantError(err)) })
   }
   return (
@@ -178,9 +196,31 @@ function CreateDialog({ onClose, onMade }: { onClose: () => void; onMade: (t: Cr
             <DialogDescription>{tl.createHelp}</DialogDescription>
           </DialogHeader>
           <FormMessage>{error}</FormMessage>
-          <Field label={tl.nameLabel} help={tl.nameHelp} value={name} maxLength={80} required onChange={(e) => setName(e.target.value)} />
-          <Field label={tl.slugLabel} value={slug} maxLength={32} required autoCapitalize="none" spellCheck={false} onChange={(e) => setSlug(e.target.value.toLowerCase())} />
-          <Field label={tl.adminLabel} help={tl.adminHelp} value={admin} autoCapitalize="none" spellCheck={false} onChange={(e) => setAdmin(e.target.value)} />
+          <Field
+            label={tl.nameLabel}
+            help={tl.nameHelp}
+            value={name}
+            maxLength={80}
+            required
+            onChange={(e) => setName(e.target.value)}
+          />
+          <Field
+            label={tl.slugLabel}
+            value={slug}
+            maxLength={32}
+            required
+            autoCapitalize="none"
+            spellCheck={false}
+            onChange={(e) => setSlug(e.target.value.toLowerCase())}
+          />
+          <Field
+            label={tl.adminLabel}
+            help={tl.adminHelp}
+            value={admin}
+            autoCapitalize="none"
+            spellCheck={false}
+            onChange={(e) => setAdmin(e.target.value)}
+          />
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>
               {tl.cancel}
@@ -207,20 +247,35 @@ function TenantDetails({ tenant, onGone }: { tenant: Tenant; onGone: () => void 
     setMessage(null)
     update.mutate(
       { id: tenant.id, name: name.trim(), ...(tenant.default ? {} : { slug: slug.trim() }) },
-      { onSuccess: () => setMessage({ tone: 'info', text: tl.saved }), onError: (err) => setMessage({ tone: 'error', text: tenantError(err) }) },
+      {
+        onSuccess: () => setMessage({ tone: 'info', text: tl.saved }),
+        onError: (err) => setMessage({ tone: 'error', text: tenantError(err) }),
+      },
     )
   }
   const flip = () => {
     setMessage(null)
-    update.mutate({ id: tenant.id, disabled: !tenant.disabled }, { onError: (err) => setMessage({ tone: 'error', text: tenantError(err) }) })
+    update.mutate(
+      { id: tenant.id, disabled: !tenant.disabled },
+      { onError: (err) => setMessage({ tone: 'error', text: tenantError(err) }) },
+    )
   }
   const remove = () => {
     del.mutate(tenant.id, {
       onSuccess: onGone,
       onError: (err) => {
         setConfirm(false)
-        const b = err instanceof ApiError ? (err.body as { users?: number; spaces?: number; groups?: number; invites?: number } | undefined) : undefined
-        setMessage({ tone: 'error', text: err instanceof ApiError && err.code === 'tenant_not_empty' ? tl.notEmpty(b?.users ?? 0, b?.spaces ?? 0, b?.groups ?? 0, b?.invites ?? 0) : tenantError(err) })
+        const b =
+          err instanceof ApiError
+            ? (err.body as { users?: number; spaces?: number; groups?: number; invites?: number } | undefined)
+            : undefined
+        setMessage({
+          tone: 'error',
+          text:
+            err instanceof ApiError && err.code === 'tenant_not_empty'
+              ? tl.notEmpty(b?.users ?? 0, b?.spaces ?? 0, b?.groups ?? 0, b?.invites ?? 0)
+              : tenantError(err),
+        })
       },
     })
   }
@@ -229,7 +284,15 @@ function TenantDetails({ tenant, onGone }: { tenant: Tenant; onGone: () => void 
       <FormMessage tone={message?.tone}>{message?.text}</FormMessage>
       <form onSubmit={save} className="grid gap-3 sm:grid-cols-2">
         <Field label={tl.nameLabel} value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
-        <Field label={tl.slugLabel} value={slug} maxLength={32} disabled={tenant.default} autoCapitalize="none" spellCheck={false} onChange={(e) => setSlug(e.target.value.toLowerCase())} />
+        <Field
+          label={tl.slugLabel}
+          value={slug}
+          maxLength={32}
+          disabled={tenant.default}
+          autoCapitalize="none"
+          spellCheck={false}
+          onChange={(e) => setSlug(e.target.value.toLowerCase())}
+        />
         <div className="sm:col-span-2">
           <Button type="submit" size="sm" disabled={update.isPending || !name.trim()}>
             {update.isPending ? tl.saving : tl.save}
@@ -240,7 +303,14 @@ function TenantDetails({ tenant, onGone }: { tenant: Tenant; onGone: () => void 
       {!tenant.default && (
         <div className="flex flex-wrap items-start gap-3">
           <div className="grid max-w-prose gap-1">
-            <Button type="button" size="sm" variant="outline" disabled={update.isPending} onClick={flip} className="w-fit">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={update.isPending}
+              onClick={flip}
+              className="w-fit"
+            >
               {tenant.disabled ? tl.enable : tl.disable}
             </Button>
             <p className="text-xs text-muted-foreground">{tl.disableHelp}</p>
@@ -284,11 +354,19 @@ function TenantUsageBlock({ tenant }: { tenant: Tenant }) {
   const save = (e: FormEvent) => {
     e.preventDefault()
     setMessage(null)
-    const quota = { people: parseCount(people), spaces: parseCount(spaces), bytes: gbToBytes(bytes), pages: parseCount(pages) }
+    const quota = {
+      people: parseCount(people),
+      spaces: parseCount(spaces),
+      bytes: gbToBytes(bytes),
+      pages: parseCount(pages),
+    }
     if (Object.values(quota).some((v) => v === undefined)) return setMessage({ tone: 'error', text: tu.tenant.invalid })
     update.mutate(
       { id: tenant.id, quota: quota as Record<TenantQuotaKey, number | null> },
-      { onSuccess: () => setMessage({ tone: 'info', text: tu.tenant.saved }), onError: () => setMessage({ tone: 'error', text: tu.tenant.failed }) },
+      {
+        onSuccess: () => setMessage({ tone: 'info', text: tu.tenant.saved }),
+        onError: () => setMessage({ tone: 'error', text: tu.tenant.failed }),
+      },
     )
   }
   return (
@@ -305,7 +383,9 @@ function TenantUsageBlock({ tenant }: { tenant: Tenant }) {
           </div>
         ))}
       </dl>
-      {u.over.length > 0 && <p className="text-xs text-destructive">{tu.tenant.over(u.over.map((k) => tu.quotas[k]).join('、'))}</p>}
+      {u.over.length > 0 && (
+        <p className="text-xs text-destructive">{tu.tenant.over(u.over.map((k) => tu.quotas[k]).join('、'))}</p>
+      )}
       <form onSubmit={save} className="grid gap-3" noValidate>
         <div className="grid gap-0.5">
           <h4 className="text-sm font-medium">{tu.tenant.quotaTitle}</h4>
@@ -313,10 +393,34 @@ function TenantUsageBlock({ tenant }: { tenant: Tenant }) {
         </div>
         <FormMessage tone={message?.tone}>{message?.text}</FormMessage>
         <div className="grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-4">
-          <Field label={tu.tenant.people} value={people} inputMode="numeric" placeholder={tu.noLimit} onChange={(e) => setPeople(e.target.value)} />
-          <Field label={tu.tenant.spaces} value={spaces} inputMode="numeric" placeholder={tu.noLimit} onChange={(e) => setSpaces(e.target.value)} />
-          <Field label={tu.tenant.bytes} value={bytes} inputMode="decimal" placeholder={tu.noLimit} onChange={(e) => setBytes(e.target.value)} />
-          <Field label={tu.tenant.pages} value={pages} inputMode="numeric" placeholder={tu.noLimit} onChange={(e) => setPages(e.target.value)} />
+          <Field
+            label={tu.tenant.people}
+            value={people}
+            inputMode="numeric"
+            placeholder={tu.noLimit}
+            onChange={(e) => setPeople(e.target.value)}
+          />
+          <Field
+            label={tu.tenant.spaces}
+            value={spaces}
+            inputMode="numeric"
+            placeholder={tu.noLimit}
+            onChange={(e) => setSpaces(e.target.value)}
+          />
+          <Field
+            label={tu.tenant.bytes}
+            value={bytes}
+            inputMode="decimal"
+            placeholder={tu.noLimit}
+            onChange={(e) => setBytes(e.target.value)}
+          />
+          <Field
+            label={tu.tenant.pages}
+            value={pages}
+            inputMode="numeric"
+            placeholder={tu.noLimit}
+            onChange={(e) => setPages(e.target.value)}
+          />
         </div>
         <div>
           <Button type="submit" size="sm" disabled={update.isPending}>

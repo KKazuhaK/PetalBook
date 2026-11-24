@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const initialize = vi.fn()
 const render = vi.fn<(id: string, text: string) => Promise<{ svg: string }>>()
-vi.mock('mermaid', () => ({ default: { initialize: (c: unknown) => initialize(c), render: (id: string, text: string) => render(id, text) } }))
+vi.mock('mermaid', () => ({
+  default: { initialize: (c: unknown) => initialize(c), render: (id: string, text: string) => render(id, text) },
+}))
 
 const { renderDiagram, svgToDataUrl, withNaturalSize } = await import('./mermaidRender')
 
@@ -14,13 +16,17 @@ beforeEach(() => {
 
 describe('the size of a picture', () => {
   it('is the viewBox, not a percentage', () => {
-    const out = withNaturalSize('<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 120.5 80" style="max-width: 120.5px;"><g/></svg>')
+    const out = withNaturalSize(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 120.5 80" style="max-width: 120.5px;"><g/></svg>',
+    )
     expect(out).toContain('width="121"')
     expect(out).toContain('height="80"')
     expect(out).not.toContain('max-width')
   })
   it('is left alone when there is no usable viewBox, or the text is not SVG', () => {
-    expect(withNaturalSize('<svg xmlns="http://www.w3.org/2000/svg"/>')).toBe('<svg xmlns="http://www.w3.org/2000/svg"/>')
+    expect(withNaturalSize('<svg xmlns="http://www.w3.org/2000/svg"/>')).toBe(
+      '<svg xmlns="http://www.w3.org/2000/svg"/>',
+    )
     expect(withNaturalSize('not xml <')).toBe('not xml <')
   })
 })
@@ -28,7 +34,15 @@ describe('the size of a picture', () => {
 describe('drawing with mermaid', () => {
   it('runs in strict mode with plain-SVG labels, and in the theme asked for', async () => {
     await renderDiagram('graph TD\nA-->B', false)
-    expect(initialize).toHaveBeenCalledWith(expect.objectContaining({ securityLevel: 'strict', theme: 'default', startOnLoad: false, htmlLabels: false, suppressErrorRendering: true }))
+    expect(initialize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        securityLevel: 'strict',
+        theme: 'default',
+        startOnLoad: false,
+        htmlLabels: false,
+        suppressErrorRendering: true,
+      }),
+    )
     await renderDiagram('graph TD\nA-->B', true)
     expect(initialize).toHaveBeenLastCalledWith(expect.objectContaining({ securityLevel: 'strict', theme: 'dark' }))
   })

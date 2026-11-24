@@ -63,7 +63,15 @@ function measure(editor: Editor, cellEl: HTMLElement): Layout | null {
   const t = table.getBoundingClientRect()
   // Wholly out of sight, or under the top of its scroll area.
   if (clip && (t.bottom < clip.top + 8 || t.top > clip.bottom)) return null
-  return { table: box(t), visibleX: [w.left, w.right], column: box(head.getBoundingClientRect()), row: box(row.getBoundingClientRect()), cell, rows: table.rows.length, cols: head.parentElement?.children.length ?? 1 }
+  return {
+    table: box(t),
+    visibleX: [w.left, w.right],
+    column: box(head.getBoundingClientRect()),
+    row: box(row.getBoundingClientRect()),
+    cell,
+    rows: table.rows.length,
+    cols: head.parentElement?.children.length ?? 1,
+  }
 }
 
 const handle =
@@ -86,7 +94,8 @@ export function TableControls({ editor }: { editor: Editor }) {
         // Follow the cursor when the pointer is elsewhere.
         const at = cellAtSelection(editor.state)
         const dom = at ? editor.view.nodeDOM(at.tablePos) : null
-        const table = dom instanceof HTMLElement ? (dom instanceof HTMLTableElement ? dom : dom.querySelector('table')) : null
+        const table =
+          dom instanceof HTMLElement ? (dom instanceof HTMLTableElement ? dom : dom.querySelector('table')) : null
         el = (table?.rows[at!.row]?.cells[at!.col] as HTMLElement | undefined) ?? null
       }
       const next = el ? measure(editor, el) : null
@@ -147,10 +156,19 @@ export function TableControls({ editor }: { editor: Editor }) {
     // Closing hands the controls back to the pointer or the cursor.
     if (!open) refresh()
   }
-  const tableEnd = (rowIndex: number, colIndex: number): CellRef => ({ tablePos: cell.tablePos, row: rowIndex, col: colIndex })
+  const tableEnd = (rowIndex: number, colIndex: number): CellRef => ({
+    tablePos: cell.tablePos,
+    row: rowIndex,
+    col: colIndex,
+  })
 
   return createPortal(
-    <div role="group" aria-label={t.toolbar.tableControls} className="pointer-events-none fixed inset-0 z-10" onMouseEnter={() => clearTimeout(hideTimer.current)}>
+    <div
+      role="group"
+      aria-label={t.toolbar.tableControls}
+      className="pointer-events-none fixed inset-0 z-10"
+      onMouseEnter={() => clearTimeout(hideTimer.current)}
+    >
       {/* Along the bottom edge: a row at the end. */}
       <button
         type="button"
@@ -159,7 +177,12 @@ export function TableControls({ editor }: { editor: Editor }) {
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => insertRow(editor, tableEnd(layout.rows - 1, 0), 'after')}
         className="group/add pointer-events-auto absolute flex items-center justify-center outline-none"
-        style={{ left: Math.max(table.left, visibleX[0]), width: Math.min(table.left + table.width, visibleX[1]) - Math.max(table.left, visibleX[0]), top: table.top + table.height + 2, height: 14 }}
+        style={{
+          left: Math.max(table.left, visibleX[0]),
+          width: Math.min(table.left + table.width, visibleX[1]) - Math.max(table.left, visibleX[0]),
+          top: table.top + table.height + 2,
+          height: 14,
+        }}
       >
         <span className="flex h-3.5 w-full items-center justify-center rounded-sm bg-muted/0 text-muted-foreground opacity-60 group-hover/add:bg-muted group-hover/add:opacity-100 group-focus-visible/add:bg-muted group-focus-visible/add:opacity-100">
           <Plus className="size-3" />
@@ -174,7 +197,12 @@ export function TableControls({ editor }: { editor: Editor }) {
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => insertColumn(editor, tableEnd(0, layout.cols - 1), 'after')}
           className="group/add pointer-events-auto absolute flex items-center justify-center outline-none"
-          style={{ left: Math.min(table.left + table.width, visibleX[1]) + 2, width: 14, top: table.top, height: table.height }}
+          style={{
+            left: Math.min(table.left + table.width, visibleX[1]) + 2,
+            width: 14,
+            top: table.top,
+            height: table.height,
+          }}
         >
           <span className="flex h-full w-3.5 items-center justify-center rounded-sm text-muted-foreground opacity-60 group-hover/add:bg-muted group-hover/add:opacity-100 group-focus-visible/add:bg-muted group-focus-visible/add:opacity-100">
             <Plus className="size-3" />

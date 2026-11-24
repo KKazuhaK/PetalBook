@@ -2,14 +2,33 @@ import { useMemo, useState, type FormEvent } from 'react'
 import { Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { useAddGroupPeople, useAdminGroups, useCreateGroup, useDeleteGroup, useGroupPeople, useGroupSpaces, useRemoveGroupPerson, useUpdateGroup, useUserSearch, useUsers, USER_SEARCH_LIMIT } from '@/api/admin'
+import {
+  useAddGroupPeople,
+  useAdminGroups,
+  useCreateGroup,
+  useDeleteGroup,
+  useGroupPeople,
+  useGroupSpaces,
+  useRemoveGroupPerson,
+  useUpdateGroup,
+  useUserSearch,
+  useUsers,
+  USER_SEARCH_LIMIT,
+} from '@/api/admin'
 import type { Group, GroupSource } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { SettingsSection } from '@/components/settings/SettingsParts'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -61,11 +80,26 @@ export function GroupsPanel() {
     <SettingsSection title={ta.title} id="admin-groups-heading" description={ta.help}>
       <div className="flex flex-wrap items-end gap-3">
         <div className="relative min-w-48 max-w-sm flex-1">
-          <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input type="search" value={text} onChange={(e) => setText(e.target.value)} placeholder={ta.searchPlaceholder} aria-label={ta.search} className="pl-8" autoComplete="off" />
+          <Search
+            aria-hidden="true"
+            className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+          />
+          <Input
+            type="search"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={ta.searchPlaceholder}
+            aria-label={ta.search}
+            className="pl-8"
+            autoComplete="off"
+          />
         </div>
         <div className="w-40">
-          <NativeSelect aria-label={ta.source} value={source} onChange={(e) => setSource(e.target.value as GroupSource | '')}>
+          <NativeSelect
+            aria-label={ta.source}
+            value={source}
+            onChange={(e) => setSource(e.target.value as GroupSource | '')}
+          >
             <option value="">{ta.sourceAll}</option>
             <option value="local">{tg.sourceNames.local}</option>
             <option value="synced">{tg.sourceNames.synced}</option>
@@ -79,7 +113,10 @@ export function GroupsPanel() {
       {groups.isPending ? (
         <PageFallback />
       ) : groups.isError && !groups.data ? (
-        <ErrorState message={t.fmt.labelled(ta.loadFailed, groups.error.message)} onRetry={() => void groups.refetch()} />
+        <ErrorState
+          message={t.fmt.labelled(ta.loadFailed, groups.error.message)}
+          onRetry={() => void groups.refetch()}
+        />
       ) : items.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">{q ? ta.noMatch(q) : ta.empty}</p>
       ) : (
@@ -88,11 +125,21 @@ export function GroupsPanel() {
             <table className="w-full min-w-[36rem] text-left text-sm">
               <thead className="border-b bg-muted/40 text-xs text-muted-foreground">
                 <tr>
-                  <th scope="col" className="px-3 py-2 font-medium">{ta.name}</th>
-                  <th scope="col" className="px-3 py-2 font-medium">{ta.source}</th>
-                  <th scope="col" className="px-3 py-2 text-right font-medium">{ta.people}</th>
-                  <th scope="col" className="px-3 py-2 text-right font-medium">{ta.spaces}</th>
-                  <th scope="col" className="px-3 py-2 text-right font-medium">{ta.actions}</th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    {ta.name}
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    {ta.source}
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-right font-medium">
+                    {ta.people}
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-right font-medium">
+                    {ta.spaces}
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-right font-medium">
+                    {ta.actions}
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -103,12 +150,20 @@ export function GroupsPanel() {
                       {g.description && <div className="truncate text-xs text-muted-foreground">{g.description}</div>}
                     </th>
                     <td className="px-3 py-2.5 whitespace-nowrap">
-                      <Badge variant={g.source === 'synced' ? 'secondary' : 'outline'}>{tg.sourceNames[g.source]}</Badge>
+                      <Badge variant={g.source === 'synced' ? 'secondary' : 'outline'}>
+                        {tg.sourceNames[g.source]}
+                      </Badge>
                     </td>
                     <td className="px-3 py-2.5 text-right tabular-nums">{g.people}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums">{g.spaces}</td>
                     <td className="px-3 py-2.5 text-right">
-                      <Button type="button" variant="outline" size="sm" aria-label={t.fmt.labelled(ta.open, g.name)} onClick={() => setOpenId(g.id)}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        aria-label={t.fmt.labelled(ta.open, g.name)}
+                        onClick={() => setOpenId(g.id)}
+                      >
                         {ta.open}
                       </Button>
                     </td>
@@ -119,12 +174,20 @@ export function GroupsPanel() {
           </div>
           <div className="flex flex-col items-center gap-2">
             {groups.hasNextPage && (
-              <Button type="button" variant="outline" size="sm" disabled={groups.isFetchingNextPage} onClick={() => void groups.fetchNextPage()}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={groups.isFetchingNextPage}
+                onClick={() => void groups.fetchNextPage()}
+              >
                 {groups.isFetchingNextPage && <Spinner />}
                 {groups.isFetchingNextPage ? ta.loadingMore : ta.loadMore}
               </Button>
             )}
-            <span className="text-xs text-muted-foreground">{groups.hasNextPage ? ta.loaded(items.length) : ta.allLoaded(items.length)}</span>
+            <span className="text-xs text-muted-foreground">
+              {groups.hasNextPage ? ta.loaded(items.length) : ta.allLoaded(items.length)}
+            </span>
           </div>
         </>
       )}
@@ -163,11 +226,31 @@ function CreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: 
             <DialogTitle>{ta.createTitle}</DialogTitle>
             <DialogDescription>{ta.createHelp}</DialogDescription>
           </DialogHeader>
-          <Field label={ta.nameLabel} requiredMark help={ta.nameHelp} value={name} onChange={(e) => setName(e.target.value)} maxLength={80} autoComplete="off" />
-          <Field label={ta.description} help={ta.descriptionHelp} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={500} autoComplete="off" />
+          <Field
+            label={ta.nameLabel}
+            requiredMark
+            help={ta.nameHelp}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={80}
+            autoComplete="off"
+          />
+          <Field
+            label={ta.description}
+            help={ta.descriptionHelp}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            maxLength={500}
+            autoComplete="off"
+          />
           <div className="grid gap-1.5">
             <Label htmlFor="group-source">{ta.sourceLabel}</Label>
-            <NativeSelect id="group-source" value={source} onChange={(e) => setSource(e.target.value as GroupSource)} aria-describedby="group-source-help">
+            <NativeSelect
+              id="group-source"
+              value={source}
+              onChange={(e) => setSource(e.target.value as GroupSource)}
+              aria-describedby="group-source-help"
+            >
               <option value="local">{tg.sourceNames.local}</option>
               <option value="synced">{tg.sourceNames.synced}</option>
             </NativeSelect>
@@ -242,8 +325,20 @@ function Details({ group }: { group: Group }) {
     <form className="grid gap-3" onSubmit={(e) => void submit(e)} noValidate aria-label={ta.details}>
       <h3 className="text-sm font-semibold">{ta.details}</h3>
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label={ta.nameLabel} value={name} onChange={(e) => setName(e.target.value)} maxLength={80} autoComplete="off" />
-        <Field label={ta.description} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={500} autoComplete="off" />
+        <Field
+          label={ta.nameLabel}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          maxLength={80}
+          autoComplete="off"
+        />
+        <Field
+          label={ta.description}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          maxLength={500}
+          autoComplete="off"
+        />
       </div>
       {group.mappedFrom.length > 0 && (
         <p className="text-xs text-muted-foreground">
@@ -284,7 +379,15 @@ function People({ group }: { group: Group }) {
         {ta.peopleTitle} <span className="font-normal text-muted-foreground tabular-nums">({group.people})</span>
       </h3>
       {!local && <p className="text-xs text-muted-foreground">{ta.syncedPeopleNote}</p>}
-      <Input type="search" value={text} onChange={(e) => setText(e.target.value)} placeholder={ta.peopleSearch} aria-label={ta.peopleSearch} className="max-w-xs" autoComplete="off" />
+      <Input
+        type="search"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder={ta.peopleSearch}
+        aria-label={ta.peopleSearch}
+        className="max-w-xs"
+        autoComplete="off"
+      />
       <FormMessage>{error}</FormMessage>
       {people.isPending ? (
         <PageFallback />
@@ -309,7 +412,14 @@ function People({ group }: { group: Group }) {
                 )}
               </div>
               {local && (
-                <Button type="button" variant="outline" size="sm" aria-label={ta.removePersonLabel(p.name)} disabled={remove.isPending} onClick={() => void drop(p.userId, p.name)}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  aria-label={ta.removePersonLabel(p.name)}
+                  disabled={remove.isPending}
+                  onClick={() => void drop(p.userId, p.name)}
+                >
                   {ta.removePerson}
                 </Button>
               )}
@@ -319,7 +429,13 @@ function People({ group }: { group: Group }) {
       )}
       {people.hasNextPage && (
         <div>
-          <Button type="button" variant="outline" size="sm" disabled={people.isFetchingNextPage} onClick={() => void people.fetchNextPage()}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={people.isFetchingNextPage}
+            onClick={() => void people.fetchNextPage()}
+          >
             {people.isFetchingNextPage ? ta.loadingMore : ta.loadMore}
           </Button>
         </div>
@@ -343,7 +459,10 @@ function AddPeople({ group }: { group: Group }) {
 
   // The pasted usernames that are accounts, and those that are not.
   const resolved = useMemo(() => {
-    const names = pasted.split(/\r?\n/).map((l) => l.trim().toLowerCase()).filter(Boolean)
+    const names = pasted
+      .split(/\r?\n/)
+      .map((l) => l.trim().toLowerCase())
+      .filter(Boolean)
     const byName = new Map((everyone.data?.users ?? []).map((u) => [u.username, u]))
     const known = names.map((n) => byName.get(n)).filter((u): u is NonNullable<typeof u> => u !== undefined)
     const unknown = everyone.data ? names.filter((n) => !byName.has(n)) : []
@@ -379,7 +498,16 @@ function AddPeople({ group }: { group: Group }) {
       </div>
       <div className="grid gap-1.5">
         <Label htmlFor="group-pick-search">{ta.pickSearch}</Label>
-        <Input id="group-pick-search" type="search" value={term} onChange={(e) => setTerm(e.target.value)} placeholder={ta.pickPlaceholder} autoComplete="off" spellCheck={false} className="max-w-xs" />
+        <Input
+          id="group-pick-search"
+          type="search"
+          value={term}
+          onChange={(e) => setTerm(e.target.value)}
+          placeholder={ta.pickPlaceholder}
+          autoComplete="off"
+          spellCheck={false}
+          className="max-w-xs"
+        />
       </div>
       {found.isSuccess && matches.length === 0 && <p className="text-xs text-muted-foreground">{ta.pickNone}</p>}
       {matches.length > 0 && (
@@ -387,7 +515,12 @@ function AddPeople({ group }: { group: Group }) {
           {matches.map((u) => (
             <li key={u.id}>
               <label className="flex cursor-pointer items-center gap-3 px-3 py-1.5 text-sm">
-                <input type="checkbox" checked={picked.has(u.id)} onChange={(e) => toggle(u.id, u.name, e.target.checked)} aria-label={`${u.name} (${u.username})`} />
+                <input
+                  type="checkbox"
+                  checked={picked.has(u.id)}
+                  onChange={(e) => toggle(u.id, u.name, e.target.checked)}
+                  aria-label={`${u.name} (${u.username})`}
+                />
                 <span className="min-w-0 truncate">
                   {u.name} <span className="text-xs text-muted-foreground">{u.username}</span>
                 </span>
@@ -398,7 +531,12 @@ function AddPeople({ group }: { group: Group }) {
       )}
       {truncated && <p className="text-xs text-muted-foreground">{ta.pickNarrow(USER_SEARCH_LIMIT)}</p>}
       <div className="flex flex-wrap items-center gap-3">
-        <Button type="button" size="sm" disabled={picked.size === 0 || add.isPending} onClick={() => void send([...picked.keys()])}>
+        <Button
+          type="button"
+          size="sm"
+          disabled={picked.size === 0 || add.isPending}
+          onClick={() => void send([...picked.keys()])}
+        >
           {add.isPending && <Spinner />}
           {picked.size > 0 ? ta.addSelected(picked.size) : ta.adding.replace('…', '')}
         </Button>
@@ -406,10 +544,26 @@ function AddPeople({ group }: { group: Group }) {
       </div>
       <div className="grid gap-1.5">
         <Label htmlFor="group-paste">{ta.pasteLabel}</Label>
-        <Textarea id="group-paste" value={pasted} onChange={(e) => setPasted(e.target.value)} rows={3} spellCheck={false} autoCapitalize="none" className="font-mono text-xs" />
-        {resolved.unknown.length > 0 && <p className="text-xs text-destructive">{ta.pasteUnknown(resolved.unknown.join(', '))}</p>}
+        <Textarea
+          id="group-paste"
+          value={pasted}
+          onChange={(e) => setPasted(e.target.value)}
+          rows={3}
+          spellCheck={false}
+          autoCapitalize="none"
+          className="font-mono text-xs"
+        />
+        {resolved.unknown.length > 0 && (
+          <p className="text-xs text-destructive">{ta.pasteUnknown(resolved.unknown.join(', '))}</p>
+        )}
         <div>
-          <Button type="button" variant="outline" size="sm" disabled={resolved.ids.length === 0 || resolved.unknown.length > 0 || add.isPending} onClick={() => void send(resolved.ids)}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={resolved.ids.length === 0 || resolved.unknown.length > 0 || add.isPending}
+            onClick={() => void send(resolved.ids)}
+          >
             {ta.pasteAdd}
           </Button>
         </div>
@@ -446,7 +600,13 @@ function GroupSpaces({ group }: { group: Group }) {
       )}
       {spaces.hasNextPage && (
         <div>
-          <Button type="button" variant="outline" size="sm" disabled={spaces.isFetchingNextPage} onClick={() => void spaces.fetchNextPage()}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={spaces.isFetchingNextPage}
+            onClick={() => void spaces.fetchNextPage()}
+          >
             {spaces.isFetchingNextPage ? ta.loadingMore : ta.loadMore}
           </Button>
         </div>

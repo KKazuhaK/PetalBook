@@ -1,9 +1,35 @@
 import type { Editor } from '@tiptap/core'
 import { useEditorState } from '@tiptap/react'
-import { AlignCenter, AlignLeft, AlignRight, ArrowDownToLine, ArrowLeftToLine, ArrowRightToLine, ArrowUpToLine, Trash2 } from 'lucide-react'
-import { DropdownMenuGroup, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
+import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  ArrowDownToLine,
+  ArrowLeftToLine,
+  ArrowRightToLine,
+  ArrowUpToLine,
+  Trash2,
+} from 'lucide-react'
+import {
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu'
 import { t } from '@/i18n'
-import { canRemove, columnAlign, insertColumn, insertRow, removeColumn, removeRow, removeTable, setColumnAlign, type Align, type CellRef } from './tableOps'
+import {
+  canRemove,
+  columnAlign,
+  insertColumn,
+  insertRow,
+  removeColumn,
+  removeRow,
+  removeTable,
+  setColumnAlign,
+  type Align,
+  type CellRef,
+} from './tableOps'
 
 // The entries of the table menus, shared by the handles at the table's edges
 // and by the toolbar's table menu (the way in from the keyboard).
@@ -58,14 +84,19 @@ export function ColumnItems({ editor, cell }: { editor: Editor; cell: CellRef })
       </DropdownMenuGroup>
       <DropdownMenuSeparator />
       <DropdownMenuGroup>
-        <DropdownMenuRadioGroup value={s.align ?? 'default'} onValueChange={(v) => setColumnAlign(editor, cell, v === 'default' ? null : (v as Exclude<Align, null>))}>
+        <DropdownMenuRadioGroup
+          value={s.align ?? 'default'}
+          onValueChange={(v) => setColumnAlign(editor, cell, v === 'default' ? null : (v as Exclude<Align, null>))}
+        >
           {ALIGNS.map(({ value, icon: Icon, label }) => (
             <DropdownMenuRadioItem key={value} value={value} closeOnClick>
               <Icon />
               {label()}
             </DropdownMenuRadioItem>
           ))}
-          <DropdownMenuRadioItem value="default" closeOnClick>{t.toolbar.alignDefault}</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="default" closeOnClick>
+            {t.toolbar.alignDefault}
+          </DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
       </DropdownMenuGroup>
       <DropdownMenuSeparator />

@@ -6,14 +6,32 @@ import type { FieldKind, FilterOp, FolderBinding, PageMeta, TypeField } from '..
 // The header keys the app has fields of its own for, and the two the server
 // keeps back: neither is a property of a type, and a change of a property never
 // touches them.
-export const BUILTIN_KEYS: ReadonlySet<string> = new Set(['id', 'title', 'subtitle', 'source', 'tags', 'created', 'type'])
+export const BUILTIN_KEYS: ReadonlySet<string> = new Set([
+  'id',
+  'title',
+  'subtitle',
+  'source',
+  'tags',
+  'created',
+  'type',
+])
 export const RESERVED_KEYS: ReadonlySet<string> = new Set(['publish', 'slug'])
 export const isPropertyKey = (key: string) => !BUILTIN_KEYS.has(key) && !RESERVED_KEYS.has(key)
 
-export const FIELD_KINDS: readonly FieldKind[] = ['text', 'longtext', 'select', 'multiselect', 'date', 'number', 'checkbox', 'url']
+export const FIELD_KINDS: readonly FieldKind[] = [
+  'text',
+  'longtext',
+  'select',
+  'multiselect',
+  'date',
+  'number',
+  'checkbox',
+  'url',
+]
 
 // The folder a path is in, one level up; "" for a top-level folder, null for the root.
-const parentOf = (folder: string): string | null => (folder === '' ? null : folder.includes('/') ? folder.slice(0, folder.lastIndexOf('/')) : '')
+const parentOf = (folder: string): string | null =>
+  folder === '' ? null : folder.includes('/') ? folder.slice(0, folder.lastIndexOf('/')) : ''
 
 // The type a folder has: its own binding, else that of the nearest folder above
 // it, the root included. Folder names compare as the server holds them.
@@ -65,7 +83,8 @@ export function fits(field: Pick<TypeField, 'kind' | 'options'>, v: unknown): bo
 }
 
 // Whether a header has a value for a field: `false` and `0` are values.
-export const hasValue = (v: unknown): boolean => v !== undefined && v !== null && v !== '' && !(Array.isArray(v) && v.length === 0)
+export const hasValue = (v: unknown): boolean =>
+  v !== undefined && v !== null && v !== '' && !(Array.isArray(v) && v.length === 0)
 
 // The ops a filter on a field of this kind offers.
 export function filterOps(kind: FieldKind): FilterOp[] {
@@ -91,7 +110,8 @@ export function filterOps(kind: FieldKind): FilterOp[] {
 // in a summary's `props` (docs/api.md, "Page summary"), so a row changed by hand
 // reads the same as one the listing brought.
 export function propsOfMeta(meta: PageMeta): Record<string, unknown> {
-  const plain = (v: unknown): v is string | number | boolean => (typeof v === 'string' && v.trim() !== '') || typeof v === 'number' || typeof v === 'boolean'
+  const plain = (v: unknown): v is string | number | boolean =>
+    (typeof v === 'string' && v.trim() !== '') || typeof v === 'number' || typeof v === 'boolean'
   const cut = (v: string | number | boolean) => (typeof v === 'string' ? Array.from(v).slice(0, 300).join('') : v)
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(meta)) {
@@ -111,9 +131,15 @@ export function propsOfMeta(meta: PageMeta): Record<string, unknown> {
 // cut or lost an element, an object, a key past the 200th. The server says the same
 // in a listing; this is for a row a change has just brought.
 export function partialPropsOf(meta: PageMeta): string[] {
-  const plain = (v: unknown): v is string | number | boolean => (typeof v === 'string' && v.trim() !== '') || typeof v === 'number' || typeof v === 'boolean'
+  const plain = (v: unknown): v is string | number | boolean =>
+    (typeof v === 'string' && v.trim() !== '') || typeof v === 'number' || typeof v === 'boolean'
   // An integer past 2^53 is not what the file says once a browser has had it.
-  const whole = (v: string | number | boolean) => (typeof v === 'string' ? Array.from(v).length <= 300 : typeof v === 'number' ? !Number.isInteger(v) || Number.isSafeInteger(v) : true)
+  const whole = (v: string | number | boolean) =>
+    typeof v === 'string'
+      ? Array.from(v).length <= 300
+      : typeof v === 'number'
+        ? !Number.isInteger(v) || Number.isSafeInteger(v)
+        : true
   const out: string[] = []
   let held = 0
   for (const [k, v] of Object.entries(meta)) {
@@ -171,7 +197,8 @@ const bytes = (s: string) => new TextEncoder().encode(s).length
 export function typeNameProblem(name: string, taken: readonly string[]): 'empty' | 'long' | 'chars' | 'exists' | null {
   if (name.trim() === '') return 'empty'
   if (bytes(name) > 100) return 'long'
-  if (/[<>:"/\\|?*\p{Cc}]/u.test(name) || name.startsWith('.') || name.endsWith('.') || name.endsWith(' ')) return 'chars'
+  if (/[<>:"/\\|?*\p{Cc}]/u.test(name) || name.startsWith('.') || name.endsWith('.') || name.endsWith(' '))
+    return 'chars'
   if (taken.some((n) => n.toLowerCase() === name.toLowerCase())) return 'exists'
   return null
 }

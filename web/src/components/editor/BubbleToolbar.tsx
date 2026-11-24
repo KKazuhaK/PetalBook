@@ -9,9 +9,20 @@ import { t } from '@/i18n'
 import { resolveAddressIn } from './pageFiles'
 import { pageLinksOf } from './pageLinks'
 
-const panel = 'flex items-center gap-0.5 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10'
+const panel =
+  'flex items-center gap-0.5 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10'
 
-function Tool({ label, active, onClick, children }: { label: string; active?: boolean; onClick: () => void; children: ReactNode }) {
+function Tool({
+  label,
+  active,
+  onClick,
+  children,
+}: {
+  label: string
+  active?: boolean
+  onClick: () => void
+  children: ReactNode
+}) {
   return (
     <Button
       type="button"
@@ -31,7 +42,17 @@ function Tool({ label, active, onClick, children }: { label: string; active?: bo
 
 // The URL box shared by both floating panels. Remounted (by key) whenever the
 // link under the cursor changes so it always starts from that link's address.
-export function UrlInput({ editor, initial, onDone, autoFocus }: { editor: Editor; initial: string; onDone?: () => void; autoFocus?: boolean }) {
+export function UrlInput({
+  editor,
+  initial,
+  onDone,
+  autoFocus,
+}: {
+  editor: Editor
+  initial: string
+  onDone?: () => void
+  autoFocus?: boolean
+}) {
   const [value, setValue] = useState(initial)
   const apply = () => {
     const href = normalizeUrl(value)
@@ -108,10 +129,18 @@ export function SelectionBubble({ editor }: { editor: Editor }) {
             <Tool label={t.toolbar.bold} active={s.bold} onClick={() => editor.chain().focus().toggleBold().run()}>
               <Bold />
             </Tool>
-            <Tool label={t.toolbar.italic} active={s.italic} onClick={() => editor.chain().focus().toggleItalic().run()}>
+            <Tool
+              label={t.toolbar.italic}
+              active={s.italic}
+              onClick={() => editor.chain().focus().toggleItalic().run()}
+            >
               <Italic />
             </Tool>
-            <Tool label={t.toolbar.strike} active={s.strike} onClick={() => editor.chain().focus().toggleStrike().run()}>
+            <Tool
+              label={t.toolbar.strike}
+              active={s.strike}
+              onClick={() => editor.chain().focus().toggleStrike().run()}
+            >
               <Strikethrough />
             </Tool>
             <Tool label={t.toolbar.code} active={s.code} onClick={() => editor.chain().focus().toggleCode().run()}>
@@ -132,7 +161,10 @@ export function SelectionBubble({ editor }: { editor: Editor }) {
 export function LinkPopover({ editor }: { editor: Editor }) {
   const { href, title } = useEditorState({
     editor,
-    selector: ({ editor: e }) => ({ href: (e.getAttributes('link').href as string | undefined) ?? '', title: (e.getAttributes('link').title as string | null | undefined) ?? null }),
+    selector: ({ editor: e }) => ({
+      href: (e.getAttributes('link').href as string | undefined) ?? '',
+      title: (e.getAttributes('link').title as string | null | undefined) ?? null,
+    }),
   })
   // A link to a page of the space opens that page in the app.
   const pageLinks = pageLinksOf(editor)
@@ -147,7 +179,15 @@ export function LinkPopover({ editor }: { editor: Editor }) {
       <div className={panel}>
         <UrlInput key={href} editor={editor} initial={href} />
         {isPage ? (
-          <Button type="button" variant="ghost" size="icon-sm" onClick={() => pageLinks.openHref(href, title)} title={t.pageLinks.openInApp} aria-label={t.pageLinks.openInApp} className="text-muted-foreground">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => pageLinks.openHref(href, title)}
+            title={t.pageLinks.openInApp}
+            aria-label={t.pageLinks.openInApp}
+            className="text-muted-foreground"
+          >
             <ExternalLink />
           </Button>
         ) : (
@@ -173,7 +213,8 @@ export function LinkPopover({ editor }: { editor: Editor }) {
   )
 }
 
-const imageField = 'h-7 w-[min(18rem,calc(100vw-9rem))] rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 aria-invalid:border-destructive'
+const imageField =
+  'h-7 w-[min(18rem,calc(100vw-9rem))] rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 aria-invalid:border-destructive'
 
 // The two fields of the image popover. What is typed is kept as a draft until
 // it is applied (Enter, or leaving the field); then the document's own value
@@ -190,7 +231,8 @@ export function ImageFields({ editor, alt, src }: { editor: Editor; alt: string;
   const applyAlt = () => {
     if (draftAlt === null) return
     const next = draftAlt.trim() || null
-    if (next !== ((editor.getAttributes('image').alt as string | null) || null)) editor.chain().updateAttributes('image', { alt: next }).run()
+    if (next !== ((editor.getAttributes('image').alt as string | null) || null))
+      editor.chain().updateAttributes('image', { alt: next }).run()
     setDraftAlt(null)
   }
   const applySrc = (): boolean => {

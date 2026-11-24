@@ -20,7 +20,13 @@ export function storedName(given: string, hash8: string): string {
   const cleaned = last.replace(REFUSED, '_').trim()
   const dot = cleaned.lastIndexOf('.')
   let stem = dot > 0 ? cleaned.slice(0, dot) : cleaned
-  const ext = dot > 0 ? cleaned.slice(dot + 1).toLowerCase().slice(0, MAX_EXT) : ''
+  const ext =
+    dot > 0
+      ? cleaned
+          .slice(dot + 1)
+          .toLowerCase()
+          .slice(0, MAX_EXT)
+      : ''
   // A name starting with a dot could not be read back (segments with a leading dot are 404).
   stem = stem.replace(/^[.\s]+/, '')
   stem = Array.from(stem).slice(0, MAX_STEM).join('')
@@ -86,7 +92,7 @@ export function createFileStore(now: () => number) {
         'Content-Type': type ?? 'application/octet-stream',
         'Content-Disposition': type ? 'inline' : 'attachment',
         'X-Content-Type-Options': 'nosniff',
-        'Content-Security-Policy': 'sandbox; default-src \'none\'; style-src \'unsafe-inline\'',
+        'Content-Security-Policy': "sandbox; default-src 'none'; style-src 'unsafe-inline'",
         'Cache-Control': 'private, no-cache',
         'Last-Modified': new Date(f.mtime).toUTCString(),
       },

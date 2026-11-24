@@ -6,7 +6,8 @@ import type { GitHubManifestStart } from '@/api/types'
 export function postManifest(start: GitHubManifestStart): void {
   const url = new URL(start.url)
   const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]'
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) throw new Error('the manifest address is not https')
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback))
+    throw new Error('the manifest address is not https')
   const form = document.createElement('form')
   form.method = 'POST'
   form.action = url.toString()

@@ -54,7 +54,8 @@ export const visitKey = (user: string | undefined, space: string) => `pb.home.vi
 function readVisit(key: string): Visit | null {
   try {
     const raw = JSON.parse(localStorage.getItem(key) ?? 'null') as Partial<Visit> | null
-    if (raw && typeof raw.date === 'string' && typeof raw.first === 'boolean' && typeof raw.absentDays === 'number') return raw as Visit
+    if (raw && typeof raw.date === 'string' && typeof raw.first === 'boolean' && typeof raw.absentDays === 'number')
+      return raw as Visit
   } catch {
     // Unreadable: as if there were none.
   }
@@ -104,7 +105,15 @@ export interface Wrote {
 export function noteWrote(key: string, id: string, at: Date = new Date()) {
   try {
     const list = loadWroteEntries(key).filter((w) => w.id !== id)
-    localStorage.setItem(key, JSON.stringify([{ id, at }, ...list].sort((a, b) => b.at.getTime() - a.at.getTime()).slice(0, WROTE_KEEP).map((w) => ({ id: w.id, at: w.at.getTime() }))))
+    localStorage.setItem(
+      key,
+      JSON.stringify(
+        [{ id, at }, ...list]
+          .sort((a, b) => b.at.getTime() - a.at.getTime())
+          .slice(0, WROTE_KEEP)
+          .map((w) => ({ id: w.id, at: w.at.getTime() })),
+      ),
+    )
   } catch {
     // Not kept: the greeting just does not notice this one.
   }
@@ -117,8 +126,16 @@ export function loadWroteEntries(key: string): Wrote[] {
     if (!Array.isArray(raw)) return []
     const out: Wrote[] = []
     for (const e of raw as unknown[]) {
-      const n = typeof e === 'number' ? e : e && typeof e === 'object' && typeof (e as { at?: unknown }).at === 'number' ? (e as { at: number }).at : NaN
-      const id = typeof e === 'object' && e && typeof (e as { id?: unknown }).id === 'string' ? (e as { id: string }).id : `legacy-${n}`
+      const n =
+        typeof e === 'number'
+          ? e
+          : e && typeof e === 'object' && typeof (e as { at?: unknown }).at === 'number'
+            ? (e as { at: number }).at
+            : NaN
+      const id =
+        typeof e === 'object' && e && typeof (e as { id?: unknown }).id === 'string'
+          ? (e as { id: string }).id
+          : `legacy-${n}`
       const at = new Date(n)
       if (!Number.isNaN(at.getTime())) out.push({ id, at })
     }

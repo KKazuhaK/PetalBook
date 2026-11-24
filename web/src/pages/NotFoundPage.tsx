@@ -11,7 +11,10 @@ export function NotFoundPage({ message = t.notFound }: { message?: string }) {
       <TopBar />
       <div className="py-24 text-center">
         <p className="text-muted-foreground">{message}</p>
-        <Link to={id ? spaceUrls(id).home() : '/'} className="mt-3 inline-block text-sm text-brand underline underline-offset-4">
+        <Link
+          to={id ? spaceUrls(id).home() : '/'}
+          className="mt-3 inline-block text-sm text-brand underline underline-offset-4"
+        >
           {t.editor.backToList}
         </Link>
       </div>

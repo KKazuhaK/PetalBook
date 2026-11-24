@@ -3,16 +3,47 @@ import { Link } from 'react-router'
 import { MoreHorizontal, RefreshCw, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { useAdminSpaces, useDeleteSpace, useEvictSpace, usePutSpaceStorage, useResizeSpace, useSetSpaceDisabled, useTransferSpace, useUserSearch, USER_SEARCH_LIMIT } from '@/api/admin'
+import {
+  useAdminSpaces,
+  useDeleteSpace,
+  useEvictSpace,
+  usePutSpaceStorage,
+  useResizeSpace,
+  useSetSpaceDisabled,
+  useTransferSpace,
+  useUserSearch,
+  USER_SEARCH_LIMIT,
+} from '@/api/admin'
 import type { AdminSpace, CacheState, DeletedSpace, User } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { SettingsSection } from '@/components/settings/SettingsParts'
-import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -57,7 +88,10 @@ export function SpacesPanel() {
   const q = useDebounced(text.trim(), 300)
   // What to show: all spaces, those past their deadline for a remote, or those in one cache state.
   const [filter, setFilter] = useState('')
-  const spaces = useAdminSpaces(q, true, { cache: filter === 'overdue' ? undefined : (filter as CacheState) || undefined, overdue: filter === 'overdue' })
+  const spaces = useAdminSpaces(q, true, {
+    cache: filter === 'overdue' ? undefined : (filter as CacheState) || undefined,
+    overdue: filter === 'overdue',
+  })
   const setDisabled = useSetSpaceDisabled()
   const putStorage = usePutSpaceStorage()
   const [action, setAction] = useState<Action | null>(null)
@@ -85,10 +119,26 @@ export function SpacesPanel() {
     <SettingsSection title={ta.spaces.title} id="admin-spaces-heading" description={ta.spaces.help}>
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative w-full max-w-sm min-w-0">
-          <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input type="search" value={text} onChange={(e) => setText(e.target.value)} placeholder={ta.spaces.searchPlaceholder} aria-label={ta.spaces.search} className="pl-8" autoComplete="off" />
+          <Search
+            aria-hidden="true"
+            className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+          />
+          <Input
+            type="search"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={ta.spaces.searchPlaceholder}
+            aria-label={ta.spaces.search}
+            className="pl-8"
+            autoComplete="off"
+          />
         </div>
-        <NativeSelect aria-label={ts.spaces.filter} value={filter} onChange={(e) => setFilter(e.target.value)} className="w-auto max-sm:w-full">
+        <NativeSelect
+          aria-label={ts.spaces.filter}
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          className="w-auto max-sm:w-full"
+        >
           <option value="">{ts.spaces.filterAll}</option>
           <option value="overdue">{ts.spaces.filterOverdue}</option>
           {(['local', 'full', 'partial', 'evicted'] as const).map((c) => (
@@ -102,7 +152,10 @@ export function SpacesPanel() {
       {spaces.isPending ? (
         <PageFallback />
       ) : spaces.isError && !spaces.data ? (
-        <ErrorState message={t.fmt.labelled(ta.spaces.loadFailed, spaces.error.message)} onRetry={() => void spaces.refetch()} />
+        <ErrorState
+          message={t.fmt.labelled(ta.spaces.loadFailed, spaces.error.message)}
+          onRetry={() => void spaces.refetch()}
+        />
       ) : items.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">{q ? ta.spaces.noMatch(q) : ta.spaces.empty}</p>
       ) : (
@@ -111,14 +164,30 @@ export function SpacesPanel() {
             <table className="w-full min-w-[54rem] text-left text-sm">
               <thead className="border-b bg-muted/40 text-xs text-muted-foreground">
                 <tr>
-                  <th scope="col" className="px-3 py-2 font-medium">{ta.spaces.name}</th>
-                  <th scope="col" className="px-3 py-2 font-medium">{ta.spaces.owner}</th>
-                  <th scope="col" className="px-3 py-2 text-right font-medium">{ta.spaces.members}</th>
-                  <th scope="col" className="px-3 py-2 font-medium">{ta.spaces.size}</th>
-                  <th scope="col" className="px-3 py-2 font-medium">{ta.spaces.sync}</th>
-                  <th scope="col" className="px-3 py-2 font-medium">{ta.spaces.status}</th>
-                  <th scope="col" className="px-3 py-2 font-medium">{ts.spaces.cache}</th>
-                  <th scope="col" className="px-3 py-2 text-right font-medium">{ta.spaces.actions}</th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    {ta.spaces.name}
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    {ta.spaces.owner}
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-right font-medium">
+                    {ta.spaces.members}
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    {ta.spaces.size}
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    {ta.spaces.sync}
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    {ta.spaces.status}
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    {ts.spaces.cache}
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-right font-medium">
+                    {ta.spaces.actions}
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -128,7 +197,13 @@ export function SpacesPanel() {
                     space={s}
                     onAction={(kind) => setAction({ kind, space: s })}
                     onEnable={() => void enable(s)}
-                    onPin={() => void changeStorage(s, { pin: !s.storage.pinned }, s.storage.pinned ? ts.spaces.unpinnedDone : ts.spaces.pinnedDone)}
+                    onPin={() =>
+                      void changeStorage(
+                        s,
+                        { pin: !s.storage.pinned },
+                        s.storage.pinned ? ts.spaces.unpinnedDone : ts.spaces.pinnedDone,
+                      )
+                    }
                     onExempt={() => void changeStorage(s, { exempt: !s.storage.exempt }, ts.spaces.exemptDone)}
                   />
                 ))}
@@ -137,13 +212,23 @@ export function SpacesPanel() {
           </div>
           <div className="flex flex-col items-center gap-2">
             {spaces.hasNextPage && (
-              <Button type="button" variant="outline" size="sm" disabled={spaces.isFetchingNextPage} onClick={() => void spaces.fetchNextPage()}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={spaces.isFetchingNextPage}
+                onClick={() => void spaces.fetchNextPage()}
+              >
                 {spaces.isFetchingNextPage && <Spinner />}
                 {spaces.isFetchingNextPage ? ta.spaces.loadingMore : ta.spaces.loadMore}
               </Button>
             )}
-            <span className="text-xs text-muted-foreground">{spaces.hasNextPage ? ta.spaces.loaded(items.length) : ta.spaces.allLoaded(items.length)}</span>
-            {spaces.isFetchNextPageError && <ErrorState message={spaces.error.message} onRetry={() => void spaces.fetchNextPage()} />}
+            <span className="text-xs text-muted-foreground">
+              {spaces.hasNextPage ? ta.spaces.loaded(items.length) : ta.spaces.allLoaded(items.length)}
+            </span>
+            {spaces.isFetchNextPageError && (
+              <ErrorState message={spaces.error.message} onRetry={() => void spaces.fetchNextPage()} />
+            )}
           </div>
         </>
       )}
@@ -156,7 +241,19 @@ export function SpacesPanel() {
   )
 }
 
-function SpaceRow({ space: s, onAction, onEnable, onPin, onExempt }: { space: AdminSpace; onAction: (kind: Action['kind']) => void; onEnable: () => void; onPin: () => void; onExempt: () => void }) {
+function SpaceRow({
+  space: s,
+  onAction,
+  onEnable,
+  onPin,
+  onExempt,
+}: {
+  space: AdminSpace
+  onAction: (kind: Action['kind']) => void
+  onEnable: () => void
+  onPin: () => void
+  onExempt: () => void
+}) {
   const sp = ta.spaces
   return (
     <tr data-space={s.id}>
@@ -181,13 +278,23 @@ function SpaceRow({ space: s, onAction, onEnable, onPin, onExempt }: { space: Ad
         <SizeCell space={s} />
       </td>
       <td className="px-3 py-2.5 whitespace-nowrap">{sp.syncStates[s.sync]}</td>
-      <td className="px-3 py-2.5">{s.disabled ? <Badge variant="secondary">{sp.disabled}</Badge> : <span className="text-muted-foreground">{sp.active}</span>}</td>
+      <td className="px-3 py-2.5">
+        {s.disabled ? (
+          <Badge variant="secondary">{sp.disabled}</Badge>
+        ) : (
+          <span className="text-muted-foreground">{sp.active}</span>
+        )}
+      </td>
       <td className="px-3 py-2.5" data-slot="space-cache">
         <CacheCell space={s} />
       </td>
       <td className="px-3 py-2.5">
         <div className="flex items-center justify-end gap-1">
-          <Button variant="outline" size="sm" render={<Link to={spaceUrls(s.id).home()} aria-label={t.fmt.labelled(sp.open, s.name)} />}>
+          <Button
+            variant="outline"
+            size="sm"
+            render={<Link to={spaceUrls(s.id).home()} aria-label={t.fmt.labelled(sp.open, s.name)} />}
+          >
             {sp.open}
           </Button>
           <DropdownMenu>
@@ -198,11 +305,20 @@ function SpaceRow({ space: s, onAction, onEnable, onPin, onExempt }: { space: Ad
               <DropdownMenuItem disabled={s.personal} onClick={() => onAction('transfer')}>
                 {sp.transfer}
               </DropdownMenuItem>
-              {s.disabled ? <DropdownMenuItem onClick={onEnable}>{sp.enable}</DropdownMenuItem> : <DropdownMenuItem onClick={() => onAction('disable')}>{sp.disable}</DropdownMenuItem>}
+              {s.disabled ? (
+                <DropdownMenuItem onClick={onEnable}>{sp.enable}</DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem onClick={() => onAction('disable')}>{sp.disable}</DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={onPin}>{s.storage.pinned ? ts.spaces.unpin : ts.spaces.pin}</DropdownMenuItem>
-              <DropdownMenuItem onClick={onExempt}>{s.storage.exempt ? ts.spaces.exemptOff : ts.spaces.exemptOn}</DropdownMenuItem>
-              <DropdownMenuItem disabled={s.storage.cache === 'local' || s.storage.cache === 'evicted' || s.storage.pinned} onClick={() => onAction('evict')}>
+              <DropdownMenuItem onClick={onExempt}>
+                {s.storage.exempt ? ts.spaces.exemptOff : ts.spaces.exemptOn}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={s.storage.cache === 'local' || s.storage.cache === 'evicted' || s.storage.pinned}
+                onClick={() => onAction('evict')}
+              >
                 {ts.spaces.evict}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
@@ -229,10 +345,22 @@ function CacheCell({ space: s }: { space: AdminSpace }) {
         {st.pinned && <Badge variant="secondary">{c.pinned}</Badge>}
         {st.exempt && <Badge variant="outline">{c.exempt}</Badge>}
       </div>
-      <span className="text-xs text-muted-foreground">{st.lastUsed ? c.lastUsed(absoluteTime(st.lastUsed)) : c.neverUsed}</span>
-      {st.cache !== 'local' && <span className="text-xs text-muted-foreground">{c.sizes(formatBytes(st.cloneBytes), formatBytes(st.indexBytes))}</span>}
-      {st.assets === 'repository' && <span className="text-xs text-muted-foreground">{c.assetsIn(formatBytes(st.assetCacheBytes))}</span>}
-      {st.remote && <span className={`text-xs ${st.remote.overdue ? 'text-destructive' : 'text-warning'}`}>{c.deadline(absoluteTime(st.remote.deadline), st.remote.overdue)}</span>}
+      <span className="text-xs text-muted-foreground">
+        {st.lastUsed ? c.lastUsed(absoluteTime(st.lastUsed)) : c.neverUsed}
+      </span>
+      {st.cache !== 'local' && (
+        <span className="text-xs text-muted-foreground">
+          {c.sizes(formatBytes(st.cloneBytes), formatBytes(st.indexBytes))}
+        </span>
+      )}
+      {st.assets === 'repository' && (
+        <span className="text-xs text-muted-foreground">{c.assetsIn(formatBytes(st.assetCacheBytes))}</span>
+      )}
+      {st.remote && (
+        <span className={`text-xs ${st.remote.overdue ? 'text-destructive' : 'text-warning'}`}>
+          {c.deadline(absoluteTime(st.remote.deadline), st.remote.overdue)}
+        </span>
+      )}
     </div>
   )
 }
@@ -291,15 +419,33 @@ function SizeCell({ space: s }: { space: AdminSpace }) {
   const measured = s.sizeBytes !== null
   return (
     <div className="flex items-center gap-1.5 whitespace-nowrap">
-      <span className={`tabular-nums ${measured ? '' : 'text-muted-foreground'}`} title={s.sizeAt ? `${sp.measuredAt(absoluteTime(s.sizeAt))}. ${sp.measureHelp}` : sp.measureHelp}>
+      <span
+        className={`tabular-nums ${measured ? '' : 'text-muted-foreground'}`}
+        title={s.sizeAt ? `${sp.measuredAt(absoluteTime(s.sizeAt))}. ${sp.measureHelp}` : sp.measureHelp}
+      >
         {s.sizeBytes !== null ? formatBytes(s.sizeBytes) : sp.notMeasured}
       </span>
       {measured ? (
-        <Button type="button" variant="ghost" size="icon-xs" disabled={resize.isPending} onClick={() => void measure()} aria-label={t.fmt.labelled(sp.measure, s.name)} title={sp.measure}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          disabled={resize.isPending}
+          onClick={() => void measure()}
+          aria-label={t.fmt.labelled(sp.measure, s.name)}
+          title={sp.measure}
+        >
           {resize.isPending ? <Spinner className="size-3" /> : <RefreshCw className="size-3" />}
         </Button>
       ) : (
-        <Button type="button" variant="ghost" size="xs" disabled={resize.isPending} onClick={() => void measure()} aria-label={t.fmt.labelled(sp.measure, s.name)}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          disabled={resize.isPending}
+          onClick={() => void measure()}
+          aria-label={t.fmt.labelled(sp.measure, s.name)}
+        >
           {resize.isPending ? sp.measuring : sp.measure}
         </Button>
       )}
@@ -350,11 +496,24 @@ function TransferDialog({ space, onClose }: { space: AdminSpace; onClose: () => 
           </DialogHeader>
           <div className="grid gap-1.5">
             <Label htmlFor="transfer-search">{sp.transferSearch}</Label>
-            <Input id="transfer-search" type="search" value={term} onChange={(e) => setTerm(e.target.value)} placeholder={sp.transferSearchHint} autoComplete="off" spellCheck={false} />
+            <Input
+              id="transfer-search"
+              type="search"
+              value={term}
+              onChange={(e) => setTerm(e.target.value)}
+              placeholder={sp.transferSearchHint}
+              autoComplete="off"
+              spellCheck={false}
+            />
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="transfer-to">{sp.transferTo}</Label>
-            <NativeSelect id="transfer-to" value={userId} onChange={(e) => setChosen(choices.find((u) => u.id === e.target.value) ?? null)} disabled={found.isPending}>
+            <NativeSelect
+              id="transfer-to"
+              value={userId}
+              onChange={(e) => setChosen(choices.find((u) => u.id === e.target.value) ?? null)}
+              disabled={found.isPending}
+            >
               <option value="">{sp.transferChoose}</option>
               {choices.map((u) => (
                 <option key={u.id} value={u.id}>
@@ -366,7 +525,9 @@ function TransferDialog({ space, onClose }: { space: AdminSpace; onClose: () => 
               <p className="text-xs text-destructive">{t.fmt.labelled(sp.transferSearchFailed, found.error.message)}</p>
             ) : (
               !found.isPending && (
-                <p className="text-xs text-muted-foreground">{matches.length === 0 ? sp.transferNoMatch : truncated ? sp.transferNarrow(USER_SEARCH_LIMIT) : ''}</p>
+                <p className="text-xs text-muted-foreground">
+                  {matches.length === 0 ? sp.transferNoMatch : truncated ? sp.transferNarrow(USER_SEARCH_LIMIT) : ''}
+                </p>
               )
             )}
           </div>
@@ -482,7 +643,13 @@ function DeleteDialog({ space, onClose }: { space: AdminSpace; onClose: () => vo
             <div className="grid gap-1.5">
               <Label htmlFor="delete-confirm">{sp.deleteType}</Label>
               <code className="rounded-md bg-muted px-2 py-1 text-sm break-all select-all">{space.name}</code>
-              <Input id="delete-confirm" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" spellCheck={false} />
+              <Input
+                id="delete-confirm"
+                value={typed}
+                onChange={(e) => setTyped(e.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+              />
             </div>
             <FormMessage>{error}</FormMessage>
             <DialogFooter>

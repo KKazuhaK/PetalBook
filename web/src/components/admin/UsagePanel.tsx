@@ -28,19 +28,43 @@ export function UsagePanel() {
   const many = site && (tenants.data?.length ?? 0) > 1
   return (
     <div className="grid min-w-0 gap-8">
-      {site && tenants.data && (many || tenants.data.some((t) => t.usage.over.length > 0)) && <TenantUsageList tenants={tenants.data} selected={tenant} onSelect={(id) => setTenant(id === tenant ? '' : id)} />}
+      {site && tenants.data && (many || tenants.data.some((t) => t.usage.over.length > 0)) && (
+        <TenantUsageList
+          tenants={tenants.data}
+          selected={tenant}
+          onSelect={(id) => setTenant(id === tenant ? '' : id)}
+        />
+      )}
       {site && tenants.isPending && <PageFallback />}
-      <PeopleUsage tenant={many ? tenant : ''} tenants={many ? tenants.data! : []} onTenant={setTenant} overOnly={overOnly} onOverOnly={setOverOnly} />
+      <PeopleUsage
+        tenant={many ? tenant : ''}
+        tenants={many ? tenants.data! : []}
+        onTenant={setTenant}
+        overOnly={overOnly}
+        onOverOnly={setOverOnly}
+      />
     </div>
   )
 }
 
-function TenantUsageList({ tenants, selected, onSelect }: { tenants: Tenant[]; selected: string; onSelect: (id: string) => void }) {
+function TenantUsageList({
+  tenants,
+  selected,
+  onSelect,
+}: {
+  tenants: Tenant[]
+  selected: string
+  onSelect: (id: string) => void
+}) {
   return (
     <SettingsSection title={tu.admin.tenants} id="usage-tenants-heading" description={tu.admin.help}>
       <ul className="divide-y rounded-lg border" data-slot="tenant-usage">
         {tenants.map((tn) => (
-          <li key={tn.id} className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2.5" data-tenant={tn.id}>
+          <li
+            key={tn.id}
+            className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2.5"
+            data-tenant={tn.id}
+          >
             <div className="min-w-0 flex-1 basis-48">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="truncate text-sm font-medium">{tn.name}</span>
@@ -51,11 +75,19 @@ function TenantUsageList({ tenants, selected, onSelect }: { tenants: Tenant[]; s
                 )}
               </div>
               <div className="text-xs break-words text-muted-foreground">
-                {tu.admin.tenantPeople(tn.usage.people)} · {tu.admin.tenantLine(tn.usage.spaces, formatBytes(tn.usage.bytes), tn.usage.pages)}
+                {tu.admin.tenantPeople(tn.usage.people)} ·{' '}
+                {tu.admin.tenantLine(tn.usage.spaces, formatBytes(tn.usage.bytes), tn.usage.pages)}
               </div>
               <TenantTotals tenant={tn} />
             </div>
-            <Button type="button" variant={selected === tn.id ? 'secondary' : 'ghost'} size="sm" aria-pressed={selected === tn.id} aria-label={`${tu.admin.people}: ${tn.name}`} onClick={() => onSelect(tn.id)}>
+            <Button
+              type="button"
+              variant={selected === tn.id ? 'secondary' : 'ghost'}
+              size="sm"
+              aria-pressed={selected === tn.id}
+              aria-label={`${tu.admin.people}: ${tn.name}`}
+              onClick={() => onSelect(tn.id)}
+            >
               {tu.admin.people}
             </Button>
           </li>
@@ -71,12 +103,27 @@ function TenantTotals({ tenant }: { tenant: Tenant }) {
   if (set.length === 0) return null
   return (
     <div className="text-xs break-words text-muted-foreground" data-slot="tenant-totals">
-      {tu.admin.tenantTotals}: {set.map((k) => `${tu.quotas[k]} ${formatUsed(k, tenant.usage[k])} / ${formatLimit(k, tenant.quota[k])}`).join(' · ')}
+      {tu.admin.tenantTotals}:{' '}
+      {set
+        .map((k) => `${tu.quotas[k]} ${formatUsed(k, tenant.usage[k])} / ${formatLimit(k, tenant.quota[k])}`)
+        .join(' · ')}
     </div>
   )
 }
 
-function PeopleUsage({ tenant, tenants, onTenant, overOnly, onOverOnly }: { tenant: string; tenants: Tenant[]; onTenant: (id: string) => void; overOnly: boolean; onOverOnly: (on: boolean) => void }) {
+function PeopleUsage({
+  tenant,
+  tenants,
+  onTenant,
+  overOnly,
+  onOverOnly,
+}: {
+  tenant: string
+  tenants: Tenant[]
+  onTenant: (id: string) => void
+  overOnly: boolean
+  onOverOnly: (on: boolean) => void
+}) {
   const list = useAdminUsage({ tenant, over: overOnly })
   const [editing, setEditing] = useState<PersonUsage | null>(null)
   const items = list.data?.pages.flatMap((p) => p.items) ?? []
@@ -117,7 +164,14 @@ function PeopleUsage({ tenant, tenants, onTenant, overOnly, onOverOnly }: { tena
         </ul>
       )}
       {list.hasNextPage && (
-        <Button type="button" variant="outline" size="sm" className="w-fit" disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="w-fit"
+          disabled={list.isFetchingNextPage}
+          onClick={() => void list.fetchNextPage()}
+        >
           {list.isFetchingNextPage ? tu.admin.loading : tu.admin.more}
         </Button>
       )}
@@ -154,7 +208,11 @@ function PersonRow({ person: p, onEdit }: { person: PersonUsage; onEdit: () => v
         {(['spaces', 'bytes', 'pages'] as const).map((k) => {
           const part = share(p[k], p.limits[k])
           return (
-            <div key={k} className={`min-w-0 break-words ${part !== null && part > 1 ? 'text-destructive' : 'text-muted-foreground'}`} data-quota={k}>
+            <div
+              key={k}
+              className={`min-w-0 break-words ${part !== null && part > 1 ? 'text-destructive' : 'text-muted-foreground'}`}
+              data-quota={k}
+            >
               <dt className="inline">{tu.quotas[k]} </dt>
               <dd className="inline tabular-nums">
                 {formatUsed(k, p[k])}
@@ -164,7 +222,9 @@ function PersonRow({ person: p, onEdit }: { person: PersonUsage; onEdit: () => v
           )
         })}
       </dl>
-      <span className="text-xs text-muted-foreground">{p.measuredAt ? absoluteTime(p.measuredAt) : tu.neverMeasured}</span>
+      <span className="text-xs text-muted-foreground">
+        {p.measuredAt ? absoluteTime(p.measuredAt) : tu.neverMeasured}
+      </span>
       <Button type="button" variant="ghost" size="sm" aria-label={tu.admin.editLimitsFor(p.user.name)} onClick={onEdit}>
         {tu.admin.editLimits}
       </Button>

@@ -71,7 +71,9 @@ describe('the editor and the banner when the server cannot be reached', () => {
       routes: routesFor(() => id),
       server: { mode: 'single' },
       entries: (server) => {
-        id = (sender(server)('POST', '/pages', { meta: { title: '读写' }, body: '正文在这里\n' }).body as { id: string }).id
+        id = (
+          sender(server)('POST', '/pages', { meta: { title: '读写' }, body: '正文在这里\n' }).body as { id: string }
+        ).id
         return [`/s/default/p/${id}`]
       },
     })
@@ -84,7 +86,10 @@ describe('the editor and the banner when the server cannot be reached', () => {
     await settle(() => editable() === 'false', 'read only')
     expect(banner()!.textContent).toBe(t.offline.banner)
     expect(chip()!.title).toBe(t.offline.readOnlyNote)
-    expect(document.querySelector(`textarea[aria-label="${t.editor.titlePlaceholder}"]`)).toHaveProperty('readOnly', true)
+    expect(document.querySelector(`textarea[aria-label="${t.editor.titlePlaceholder}"]`)).toHaveProperty(
+      'readOnly',
+      true,
+    )
     // Nothing that changes the page is offered.
     expect(byLabel(t.editor.saveVersion)).toBeNull()
     expect(document.querySelector('[role="toolbar"]')).toBeNull()
@@ -100,7 +105,9 @@ describe('the editor and the banner when the server cannot be reached', () => {
       routes: routesFor(() => id),
       server: { mode: 'single' },
       entries: (server) => {
-        id = (sender(server)('POST', '/pages', { meta: { title: '读写' }, body: '正文在这里\n' }).body as { id: string }).id
+        id = (
+          sender(server)('POST', '/pages', { meta: { title: '读写' }, body: '正文在这里\n' }).body as { id: string }
+        ).id
         return [`/s/default/p/${id}`]
       },
     })
@@ -120,7 +127,13 @@ describe('the editor and the banner when the server cannot be reached', () => {
     await settle(() => editable() === 'true', 'writable again')
     expect(title().value).toBe('离线前打的标题')
     const s = sender(m.server)
-    await settle(() => (s('GET', `/pages/${id}`).body as { draft?: { meta: { title?: string } } }).draft?.meta.title === '离线前打的标题', 'the typed title reaches the server', 400)
+    await settle(
+      () =>
+        (s('GET', `/pages/${id}`).body as { draft?: { meta: { title?: string } } }).draft?.meta.title ===
+        '离线前打的标题',
+      'the typed title reaches the server',
+      400,
+    )
   })
 
   it('a page opened offline shows the server draft it was kept with, and back online typing keeps that draft', async () => {
@@ -130,13 +143,19 @@ describe('the editor and the banner when the server cannot be reached', () => {
       server: { mode: 'single' },
       entries: (server) => {
         const s = sender(server)
-        const page = s('POST', '/pages', { folder: 'Inbox', meta: { title: '有草稿的页' }, body: '文件正文\n' }).body as { id: string; rev: string; meta: Record<string, unknown> }
+        const page = s('POST', '/pages', { folder: 'Inbox', meta: { title: '有草稿的页' }, body: '文件正文\n' })
+          .body as { id: string; rev: string; meta: Record<string, unknown> }
         id = page.id
         s('PUT', `/pages/${id}/draft`, { baseRev: page.rev, meta: page.meta, body: '文件正文\n我的草稿很重要\n' })
         return ['/']
       },
     })
-    const store = (await configure('local', 'default', { ...DEFAULT_CONFIG, mode: 'text', favourites: false, recent: false }))!
+    const store = (await configure('local', 'default', {
+      ...DEFAULT_CONFIG,
+      mode: 'text',
+      favourites: false,
+      recent: false,
+    }))!
     await syncSpace(store)
     const online = globalThis.fetch
     globalThis.fetch = (async () => {
@@ -149,7 +168,10 @@ describe('the editor and the banner when the server cannot be reached', () => {
 
     globalThis.fetch = online
     await act(async () => noteNetworkOk())
-    await settle(() => editable() === 'true' && body()!.textContent!.includes('我的草稿很重要'), 'writable, on the draft')
+    await settle(
+      () => editable() === 'true' && body()!.textContent!.includes('我的草稿很重要'),
+      'writable, on the draft',
+    )
     await type(title(), '新标题')
     const s = sender(m.server)
     const draft = () => (s('GET', `/pages/${id}`).body as { draft?: { body: string; meta: { title?: string } } }).draft
@@ -157,19 +179,34 @@ describe('the editor and the banner when the server cannot be reached', () => {
     expect(draft()!.body).toBe('文件正文\n我的草稿很重要\n')
   })
 
-  it('a page opened offline shows the browser\'s own draft, and back online it is kept and reaches the server', async () => {
+  it("a page opened offline shows the browser's own draft, and back online it is kept and reaches the server", async () => {
     let id = ''
     m = await mount(null, {
       routes: routesFor(() => id),
       server: { mode: 'single' },
       entries: (server) => {
-        const page = sender(server)('POST', '/pages', { folder: 'Inbox', meta: { title: '浏览器草稿' }, body: '文件正文\n' }).body as { id: string; rev: string }
+        const page = sender(server)('POST', '/pages', {
+          folder: 'Inbox',
+          meta: { title: '浏览器草稿' },
+          body: '文件正文\n',
+        }).body as { id: string; rev: string }
         id = page.id
-        saveDraft(draftRef('local', 'default', id), { baseRev: page.rev, fields: { title: '浏览器草稿', subtitle: '', tags: [] }, bodyText: '文件正文\n\n浏览器里没存的字\n', savedAt: Date.now(), token: 'tok-local' })
+        saveDraft(draftRef('local', 'default', id), {
+          baseRev: page.rev,
+          fields: { title: '浏览器草稿', subtitle: '', tags: [] },
+          bodyText: '文件正文\n\n浏览器里没存的字\n',
+          savedAt: Date.now(),
+          token: 'tok-local',
+        })
         return ['/']
       },
     })
-    const store = (await configure('local', 'default', { ...DEFAULT_CONFIG, mode: 'text', favourites: false, recent: false }))!
+    const store = (await configure('local', 'default', {
+      ...DEFAULT_CONFIG,
+      mode: 'text',
+      favourites: false,
+      recent: false,
+    }))!
     await syncSpace(store)
     const online = globalThis.fetch
     globalThis.fetch = (async () => {
@@ -182,9 +219,18 @@ describe('the editor and the banner when the server cannot be reached', () => {
 
     globalThis.fetch = online
     await act(async () => noteNetworkOk())
-    await settle(() => editable() === 'true' && body()!.textContent!.includes('浏览器里没存的字'), 'writable, on the browser draft')
+    await settle(
+      () => editable() === 'true' && body()!.textContent!.includes('浏览器里没存的字'),
+      'writable, on the browser draft',
+    )
     const s = sender(m.server)
-    await settle(() => (s('GET', `/pages/${id}`).body as { draft?: { body: string } }).draft?.body.includes('浏览器里没存的字') === true, 'the browser draft reaches the server', 400)
+    await settle(
+      () =>
+        (s('GET', `/pages/${id}`).body as { draft?: { body: string } }).draft?.body.includes('浏览器里没存的字') ===
+        true,
+      'the browser draft reaches the server',
+      400,
+    )
     expect(loadDraft(draftRef('local', 'default', id))?.bodyText ?? '浏览器里没存的字').toContain('浏览器里没存的字')
   })
 
@@ -196,13 +242,24 @@ describe('the editor and the banner when the server cannot be reached', () => {
       server: { mode: 'single' },
       entries: (server) => {
         const s = sender(server)
-        kept = (s('POST', '/pages', { folder: 'Inbox', meta: { title: '带正文的页' }, body: '离线也能读到\n' }).body as { id: string }).id
-        bare = (s('POST', '/pages', { folder: 'Other', meta: { title: '没下载的页' }, body: '没有\n' }).body as { id: string }).id
+        kept = (
+          s('POST', '/pages', { folder: 'Inbox', meta: { title: '带正文的页' }, body: '离线也能读到\n' }).body as {
+            id: string
+          }
+        ).id
+        bare = (
+          s('POST', '/pages', { folder: 'Other', meta: { title: '没下载的页' }, body: '没有\n' }).body as { id: string }
+        ).id
         return ['/']
       },
     })
     // The copy: the catalogue and the text of the inbox.
-    const store = (await configure('local', 'default', { ...DEFAULT_CONFIG, mode: 'text', favourites: false, recent: false }))!
+    const store = (await configure('local', 'default', {
+      ...DEFAULT_CONFIG,
+      mode: 'text',
+      favourites: false,
+      recent: false,
+    }))!
     await syncSpace(store)
     expect((await store.textMetas()).map((x) => x.id)).toEqual([kept])
     // The network goes.
@@ -231,7 +288,12 @@ describe('the search dialog offline', () => {
         return ['/s/default/recent']
       },
     })
-    const store = (await configure('local', 'default', { ...DEFAULT_CONFIG, mode: 'text', favourites: false, recent: false }))!
+    const store = (await configure('local', 'default', {
+      ...DEFAULT_CONFIG,
+      mode: 'text',
+      favourites: false,
+      recent: false,
+    }))!
     await syncSpace(store)
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true, cancelable: true }))
@@ -245,8 +307,17 @@ describe('the search dialog offline', () => {
     }) as typeof fetch
     await type(input(), '月光')
     // The page whose text is not kept is not found by the text; the one whose text is kept is.
-    await settle(() => dialog()!.textContent!.includes(t.offline.searchNote) && dialog()!.textContent!.includes('月夜') && !dialog()!.textContent!.includes('雪天'), 'the offline results')
+    await settle(
+      () =>
+        dialog()!.textContent!.includes(t.offline.searchNote) &&
+        dialog()!.textContent!.includes('月夜') &&
+        !dialog()!.textContent!.includes('雪天'),
+      'the offline results',
+    )
     await type(input(), '雪')
-    await settle(() => dialog()!.textContent!.includes('雪天') && !dialog()!.textContent!.includes('月夜'), 'found by its title')
+    await settle(
+      () => dialog()!.textContent!.includes('雪天') && !dialog()!.textContent!.includes('月夜'),
+      'found by its title',
+    )
   })
 })

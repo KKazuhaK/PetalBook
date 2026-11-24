@@ -10,23 +10,48 @@ import { type DateFilter, type DatePreset, type SearchFilters } from './searchMo
 // or opens a small panel to choose from; a chip with a value says it and has
 // its own button to clear it.
 
-const chipBase = 'inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50'
+const chipBase =
+  'inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50'
 const chipOff = 'text-muted-foreground hover:bg-muted hover:text-foreground'
 const chipOn = 'border-ring/50 bg-accent text-accent-foreground'
 
-function Chip({ icon, label, value, onClear, children }: { icon: ReactNode; label: string; value?: string; onClear: () => void; children: (close: () => void) => ReactNode }) {
+function Chip({
+  icon,
+  label,
+  value,
+  onClear,
+  children,
+}: {
+  icon: ReactNode
+  label: string
+  value?: string
+  onClear: () => void
+  children: (close: () => void) => ReactNode
+}) {
   const [open, setOpen] = useState(false)
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <span className="inline-flex items-center">
-        <PopoverTrigger render={<button type="button" className={`${chipBase} ${value ? `${chipOn} rounded-r-none border-r-0` : chipOff}`} />}>
+        <PopoverTrigger
+          render={
+            <button
+              type="button"
+              className={`${chipBase} ${value ? `${chipOn} rounded-r-none border-r-0` : chipOff}`}
+            />
+          }
+        >
           {icon}
           <span>{label}</span>
           {value && <span className="max-w-32 truncate font-medium">{value}</span>}
           {!value && <ChevronDown className="size-3 opacity-60" />}
         </PopoverTrigger>
         {value && (
-          <button type="button" aria-label={t.search.clear(label)} onClick={onClear} className={`${chipBase} ${chipOn} rounded-l-none px-1.5`}>
+          <button
+            type="button"
+            aria-label={t.search.clear(label)}
+            onClick={onClear}
+            className={`${chipBase} ${chipOn} rounded-l-none px-1.5`}
+          >
             <X className="size-3" />
           </button>
         )}
@@ -38,7 +63,15 @@ function Chip({ icon, label, value, onClear, children }: { icon: ReactNode; labe
   )
 }
 
-function FilterInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
+function FilterInput({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string
+  onChange: (v: string) => void
+  placeholder: string
+}) {
   return (
     <input
       type="search"
@@ -104,7 +137,12 @@ function TagPicker({ value, onToggle }: { value: string[]; onToggle: (tag: strin
   return (
     <>
       <FilterInput value={filter} onChange={setFilter} placeholder={t.search.filterTags} />
-      <div role="listbox" aria-multiselectable="true" aria-label={t.search.chips.tags} className="max-h-60 overflow-y-auto overscroll-contain">
+      <div
+        role="listbox"
+        aria-multiselectable="true"
+        aria-label={t.search.chips.tags}
+        className="max-h-60 overflow-y-auto overscroll-contain"
+      >
         {isPending ? (
           <p className="px-2 py-3 text-xs text-muted-foreground">{t.search.loading}</p>
         ) : isError ? (
@@ -113,7 +151,14 @@ function TagPicker({ value, onToggle }: { value: string[]; onToggle: (tag: strin
           <p className="px-2 py-3 text-xs text-muted-foreground">{t.search.noTags}</p>
         ) : (
           tags.map((x) => (
-            <button key={x.tag} type="button" role="option" aria-selected={value.includes(x.tag)} onClick={() => onToggle(x.tag)} className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent">
+            <button
+              key={x.tag}
+              type="button"
+              role="option"
+              aria-selected={value.includes(x.tag)}
+              onClick={() => onToggle(x.tag)}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent"
+            >
               <TagChip tag={x.tag} color={x.color ?? null} />
               <span className="ml-auto text-xs text-muted-foreground tabular-nums">{x.pages}</span>
               {value.includes(x.tag) && <Check className="size-3.5" />}
@@ -146,7 +191,13 @@ function DatePicker({ value, onPick }: { value: DateFilter | null; onPick: (f: D
         {PRESETS.map((p) => {
           const on = value?.kind === 'preset' && value.preset === p
           return (
-            <button key={p} type="button" aria-pressed={on} onClick={() => onPick({ kind: 'preset', preset: p })} className="flex items-center justify-between rounded-md px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent">
+            <button
+              key={p}
+              type="button"
+              aria-pressed={on}
+              onClick={() => onPick({ kind: 'preset', preset: p })}
+              className="flex items-center justify-between rounded-md px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent"
+            >
               {t.search.presets[p]}
               {on && <Check className="size-3.5" />}
             </button>
@@ -158,11 +209,23 @@ function DatePicker({ value, onPick }: { value: DateFilter | null; onPick: (f: D
         <div className="grid grid-cols-2 gap-2">
           <label className="grid gap-1 text-xs text-muted-foreground">
             {t.search.from}
-            <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className="h-8 rounded-md border border-input bg-background px-1.5 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40" />
+            <input
+              type="date"
+              value={from}
+              max={to || undefined}
+              onChange={(e) => setFrom(e.target.value)}
+              className="h-8 rounded-md border border-input bg-background px-1.5 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+            />
           </label>
           <label className="grid gap-1 text-xs text-muted-foreground">
             {t.search.to}
-            <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className="h-8 rounded-md border border-input bg-background px-1.5 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40" />
+            <input
+              type="date"
+              value={to}
+              min={from || undefined}
+              onChange={(e) => setTo(e.target.value)}
+              className="h-8 rounded-md border border-input bg-background px-1.5 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+            />
           </label>
         </div>
         <button
@@ -178,17 +241,33 @@ function DatePicker({ value, onPick }: { value: DateFilter | null; onPick: (f: D
   )
 }
 
-export function FilterChips({ filters, onChange }: { filters: SearchFilters; onChange: (next: SearchFilters) => void }) {
+export function FilterChips({
+  filters,
+  onChange,
+}: {
+  filters: SearchFilters
+  onChange: (next: SearchFilters) => void
+}) {
   const set = (patch: Partial<SearchFilters>) => onChange({ ...filters, ...patch })
   const folderName = filters.folder === null ? undefined : filters.folder
   return (
     <div role="group" aria-label={t.search.filters} className="flex flex-wrap items-center gap-1.5">
-      <button type="button" aria-pressed={filters.titleOnly} onClick={() => set({ titleOnly: !filters.titleOnly })} className={`${chipBase} ${filters.titleOnly ? chipOn : chipOff}`}>
+      <button
+        type="button"
+        aria-pressed={filters.titleOnly}
+        onClick={() => set({ titleOnly: !filters.titleOnly })}
+        className={`${chipBase} ${filters.titleOnly ? chipOn : chipOff}`}
+      >
         <Type className="size-3" />
         {t.search.chips.titleOnly}
         {filters.titleOnly && <Check className="size-3" />}
       </button>
-      <Chip icon={<Folder className="size-3" />} label={t.search.chips.folder} value={folderName} onClear={() => set({ folder: null })}>
+      <Chip
+        icon={<Folder className="size-3" />}
+        label={t.search.chips.folder}
+        value={folderName}
+        onClear={() => set({ folder: null })}
+      >
         {(close) => (
           <FolderPicker
             value={filters.folder}
@@ -199,10 +278,33 @@ export function FilterChips({ filters, onChange }: { filters: SearchFilters; onC
           />
         )}
       </Chip>
-      <Chip icon={<TagIcon className="size-3" />} label={t.search.chips.tags} value={filters.tags.length ? (filters.tags.length === 1 ? filters.tags[0] : t.search.tagCount(filters.tags.length)) : undefined} onClear={() => set({ tags: [] })}>
-        {() => <TagPicker value={filters.tags} onToggle={(tag) => set({ tags: filters.tags.includes(tag) ? filters.tags.filter((x) => x !== tag) : [...filters.tags, tag] })} />}
+      <Chip
+        icon={<TagIcon className="size-3" />}
+        label={t.search.chips.tags}
+        value={
+          filters.tags.length
+            ? filters.tags.length === 1
+              ? filters.tags[0]
+              : t.search.tagCount(filters.tags.length)
+            : undefined
+        }
+        onClear={() => set({ tags: [] })}
+      >
+        {() => (
+          <TagPicker
+            value={filters.tags}
+            onToggle={(tag) =>
+              set({ tags: filters.tags.includes(tag) ? filters.tags.filter((x) => x !== tag) : [...filters.tags, tag] })
+            }
+          />
+        )}
       </Chip>
-      <Chip icon={<Calendar className="size-3" />} label={t.search.chips.updated} value={dateFilterLabel(filters.updated)} onClear={() => set({ updated: null })}>
+      <Chip
+        icon={<Calendar className="size-3" />}
+        label={t.search.chips.updated}
+        value={dateFilterLabel(filters.updated)}
+        onClear={() => set({ updated: null })}
+      >
         {(close) => (
           <DatePicker
             value={filters.updated}
@@ -213,7 +315,12 @@ export function FilterChips({ filters, onChange }: { filters: SearchFilters; onC
           />
         )}
       </Chip>
-      <Chip icon={<Calendar className="size-3" />} label={t.search.chips.created} value={dateFilterLabel(filters.created)} onClear={() => set({ created: null })}>
+      <Chip
+        icon={<Calendar className="size-3" />}
+        label={t.search.chips.created}
+        value={dateFilterLabel(filters.created)}
+        onClear={() => set({ created: null })}
+      >
         {(close) => (
           <DatePicker
             value={filters.created}

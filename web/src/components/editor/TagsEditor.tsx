@@ -5,7 +5,17 @@ import { t } from '@/i18n'
 // Chips plus an input. A tag is committed on Enter, comma (half or full
 // width) or when the box loses focus; Backspace in the empty box removes the
 // last one. Suggestions come from the tags already used elsewhere.
-export function TagsEditor({ tags, onChange, suggestions, readOnly = false }: { tags: string[]; onChange: (tags: string[]) => void; suggestions: { tag: string; pages: number }[]; readOnly?: boolean }) {
+export function TagsEditor({
+  tags,
+  onChange,
+  suggestions,
+  readOnly = false,
+}: {
+  tags: string[]
+  onChange: (tags: string[]) => void
+  suggestions: { tag: string; pages: number }[]
+  readOnly?: boolean
+}) {
   const [text, setText] = useState('')
   const [focused, setFocused] = useState(false)
   const [active, setActive] = useState(-1)
@@ -48,7 +58,10 @@ export function TagsEditor({ tags, onChange, suggestions, readOnly = false }: { 
       <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={t.editor.tagsLabel}>
         <Tag className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
         {tags.map((tag) => (
-          <span key={tag} className="inline-flex h-6 items-center rounded-full bg-secondary px-2.5 text-xs text-secondary-foreground">
+          <span
+            key={tag}
+            className="inline-flex h-6 items-center rounded-full bg-secondary px-2.5 text-xs text-secondary-foreground"
+          >
             {tag}
           </span>
         ))}
@@ -61,7 +74,10 @@ export function TagsEditor({ tags, onChange, suggestions, readOnly = false }: { 
       <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={t.editor.tagsLabel}>
         <Tag className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
         {tags.map((tag) => (
-          <span key={tag} className="inline-flex h-6 items-center gap-1 rounded-full bg-secondary pr-1 pl-2.5 text-xs text-secondary-foreground">
+          <span
+            key={tag}
+            className="inline-flex h-6 items-center gap-1 rounded-full bg-secondary pr-1 pl-2.5 text-xs text-secondary-foreground"
+          >
             {tag}
             <button
               type="button"
@@ -97,7 +113,10 @@ export function TagsEditor({ tags, onChange, suggestions, readOnly = false }: { 
         />
       </div>
       {focused && matches.length > 0 && (
-        <ul role="listbox" className="absolute top-full left-5 z-40 mt-1 max-h-60 w-56 overflow-auto rounded-lg bg-popover p-1 text-sm shadow-md ring-1 ring-foreground/10">
+        <ul
+          role="listbox"
+          className="absolute top-full left-5 z-40 mt-1 max-h-60 w-56 overflow-auto rounded-lg bg-popover p-1 text-sm shadow-md ring-1 ring-foreground/10"
+        >
           {matches.map((m, i) => (
             <li
               key={m.tag}

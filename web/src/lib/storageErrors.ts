@@ -27,4 +27,5 @@ export function storageErrorMessage(e: unknown): string | undefined {
 }
 
 // The text of an error, the storage kind in the page's language and any other as the server wrote it.
-export const errorText = (e: unknown, fallback = ''): string => storageErrorMessage(e) ?? (e instanceof Error ? e.message : fallback)
+export const errorText = (e: unknown, fallback = ''): string =>
+  storageErrorMessage(e) ?? (e instanceof Error ? e.message : fallback)

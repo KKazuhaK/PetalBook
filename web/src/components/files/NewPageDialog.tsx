@@ -10,7 +10,19 @@ import { tt } from '@/i18n/templates'
 
 // The choice of a template for a new page: the folder's default is selected, "blank page" sends no template at all.
 // Only asked when the space has templates. Loaded when it is first opened.
-export default function NewPageDialog({ where, templates, initial, onCreate, onClose }: { where: string; templates: PageTemplate[]; initial: string; onCreate: (template: string) => Promise<void>; onClose: () => void }) {
+export default function NewPageDialog({
+  where,
+  templates,
+  initial,
+  onCreate,
+  onClose,
+}: {
+  where: string
+  templates: PageTemplate[]
+  initial: string
+  onCreate: (template: string) => Promise<void>
+  onClose: () => void
+}) {
   const [value, setValue] = useState(initial)
   const [busy, setBusy] = useState(false)
 
@@ -41,7 +53,13 @@ export default function NewPageDialog({ where, templates, initial, onCreate, onC
           </DialogHeader>
           <div className="grid gap-1.5">
             <Label htmlFor="new-page-template">{tt.pick.label}</Label>
-            <NativeSelect id="new-page-template" autoFocus value={value} disabled={busy} onChange={(e) => setValue(e.target.value)}>
+            <NativeSelect
+              id="new-page-template"
+              autoFocus
+              value={value}
+              disabled={busy}
+              onChange={(e) => setValue(e.target.value)}
+            >
               <option value="">{tt.pick.blank}</option>
               {templates.map((x) => (
                 <option key={x.name} value={x.name}>

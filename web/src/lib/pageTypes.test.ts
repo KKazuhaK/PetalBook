@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { bindingSource, fieldKeyProblem, filterOps, fits, folderTypeName, hasValue, isDay, partialPropsOf, propsOfMeta, typeNameProblem } from './pageTypes'
+import {
+  bindingSource,
+  fieldKeyProblem,
+  filterOps,
+  fits,
+  folderTypeName,
+  hasValue,
+  isDay,
+  partialPropsOf,
+  propsOfMeta,
+  typeNameProblem,
+} from './pageTypes'
 
 describe('the type a folder has', () => {
   const bindings = [
@@ -90,7 +101,7 @@ describe('the properties a summary holds', () => {
 })
 
 describe('names and keys', () => {
-  it('a type name follows the server\'s rules, and two names that differ in case are one', () => {
+  it("a type name follows the server's rules, and two names that differ in case are one", () => {
     expect(typeNameProblem('task', [])).toBeNull()
     expect(typeNameProblem('文案', [])).toBeNull()
     expect(typeNameProblem('  ', [])).toBe('empty')
@@ -123,6 +134,16 @@ describe('the filters a kind offers', () => {
 describe('partialPropsOf', () => {
   it('lists what a cell must not write back: cut text, objects, lists that lost elements, integers past 2^53', () => {
     expect(partialPropsOf({ a: 'x', b: 3, c: [1, 'y'], d: true })).toEqual([])
-    expect(partialPropsOf({ a: '字'.repeat(301), o: { k: 1 }, l: ['a', null], big: 2 ** 53 + 2, list: [1, 2 ** 60], ok: 2 ** 53 - 1, f: 1.5 })).toEqual(['a', 'o', 'l', 'big', 'list'])
+    expect(
+      partialPropsOf({
+        a: '字'.repeat(301),
+        o: { k: 1 },
+        l: ['a', null],
+        big: 2 ** 53 + 2,
+        list: [1, 2 ** 60],
+        ok: 2 ** 53 - 1,
+        f: 1.5,
+      }),
+    ).toEqual(['a', 'o', 'l', 'big', 'list'])
   })
 })

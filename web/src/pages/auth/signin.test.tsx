@@ -9,7 +9,18 @@ import { createMockServer, MOCK_ADMIN, type MockOptions, type MockServer } from 
 import { keys } from '@/api/hooks'
 import { t } from '@/i18n'
 import { ts } from '@/i18n/signin'
-import { adminRequests, byText, click, installDomShims, locationText, makePerson, mount, settle, type, type Mounted } from '@/testing/harness'
+import {
+  adminRequests,
+  byText,
+  click,
+  installDomShims,
+  locationText,
+  makePerson,
+  mount,
+  settle,
+  type,
+  type Mounted,
+} from '@/testing/harness'
 import LoginPage from './LoginPage'
 import SetupPage from './SetupPage'
 import InvitePage from './InvitePage'
@@ -36,10 +47,24 @@ const text = () => document.body.textContent ?? ''
 const links = () => [...document.querySelectorAll<HTMLAnchorElement>('a[href^="/api/auth/"]')]
 const passwordForm = () => document.querySelector('input[type="password"]')
 const usernameInput = () => document.querySelector<HTMLInputElement>('input[autocomplete^="username"]')!
-const buttonWith = (label: string) => [...document.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent?.includes(label))
+const buttonWith = (label: string) =>
+  [...document.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent?.includes(label))
 
-const company = { slug: 'company', kind: 'oidc' as const, name: 'Company SSO', icon: 'preset:microsoft', oidc: { issuer: 'https://login.example/v2.0', clientId: 'id' } }
-const campus = { slug: 'campus', kind: 'saml' as const, name: 'Campus login', icon: '', order: 1, saml: { metadataUrl: 'https://idp.example/metadata' } }
+const company = {
+  slug: 'company',
+  kind: 'oidc' as const,
+  name: 'Company SSO',
+  icon: 'preset:microsoft',
+  oidc: { issuer: 'https://login.example/v2.0', clientId: 'id' },
+}
+const campus = {
+  slug: 'campus',
+  kind: 'saml' as const,
+  name: 'Campus login',
+  icon: '',
+  order: 1,
+  saml: { metadataUrl: 'https://idp.example/metadata' },
+}
 
 // Where the page sends the browser.
 function stubLocation() {
@@ -59,8 +84,14 @@ describe('the sign-in page, in each mode', () => {
     await settle(() => links().length === 2, 'the buttons')
     expect(passwordForm()).not.toBeNull()
     expect(text()).toContain(ts.login.orSignInWith)
-    expect(links().map((a) => a.getAttribute('href'))).toEqual(['/api/auth/oidc/company/start?return=%2F', '/api/auth/saml/campus/start?return=%2F'])
-    expect(links().map((a) => a.querySelector('span')!.textContent)).toEqual([ts.login.withProvider('Company SSO'), ts.login.withProvider('Campus login')])
+    expect(links().map((a) => a.getAttribute('href'))).toEqual([
+      '/api/auth/oidc/company/start?return=%2F',
+      '/api/auth/saml/campus/start?return=%2F',
+    ])
+    expect(links().map((a) => a.querySelector('span')!.textContent)).toEqual([
+      ts.login.withProvider('Company SSO'),
+      ts.login.withProvider('Campus login'),
+    ])
     // The icon is a drawn mark, never an address.
     expect(document.querySelector('img[src^="http"]')).toBeNull()
     expect(links()[0].querySelector('svg[data-icon="microsoft"]')).not.toBeNull()
@@ -111,7 +142,9 @@ describe('the sign-in page, in each mode', () => {
     await settle(() => links().length === 2, 'the buttons')
     expect(assign).not.toHaveBeenCalled()
     expect(passwordForm()).toBeNull()
-    const other = [...document.querySelectorAll<HTMLAnchorElement>('a')].find((a) => a.textContent === ts.login.usePassword)!
+    const other = [...document.querySelectorAll<HTMLAnchorElement>('a')].find(
+      (a) => a.textContent === ts.login.usePassword,
+    )!
     expect(other.getAttribute('href')).toBe('/login?local=1')
   })
 
@@ -153,7 +186,28 @@ describe('a failed single sign-on says why', () => {
   it('has a sentence for each code of the contract, and a generic one for an unknown code', async () => {
     const codes = Object.keys(ts.ssoErrors).filter((c) => c !== 'unknown')
     expect(codes).toEqual(
-      expect.arrayContaining(['provider_unavailable', 'idp_error', 'expired', 'no_account', 'not_allowed', 'disabled', 'identity_in_use', 'invite_invalid', 'setup_invalid', 'rate_limited', 'saml_destination', 'saml_weak_signature', 'saml_encrypted', 'saml_replay', 'saml_multiple_assertions', 'saml_attributes', 'saml_transient_nameid', 'saml_no_nameid', 'saml_assertion_rejected', 'internal']),
+      expect.arrayContaining([
+        'provider_unavailable',
+        'idp_error',
+        'expired',
+        'no_account',
+        'not_allowed',
+        'disabled',
+        'identity_in_use',
+        'invite_invalid',
+        'setup_invalid',
+        'rate_limited',
+        'saml_destination',
+        'saml_weak_signature',
+        'saml_encrypted',
+        'saml_replay',
+        'saml_multiple_assertions',
+        'saml_attributes',
+        'saml_transient_nameid',
+        'saml_no_nameid',
+        'saml_assertion_rejected',
+        'internal',
+      ]),
     )
     for (const code of ['not_allowed', 'saml_replay', 'internal']) {
       await open(`/login?sso_error=${code}`, { providers: [company] })
@@ -213,7 +267,9 @@ describe('signing in with a password', () => {
     await settle(() => passwordForm() !== null, 'the form')
     const person = makePerson(m!.server, 'carol')
     person.request('POST', '/api/account/passkeys/begin', { name: 'Key' })
-    const ceremony = (person.request('POST', '/api/account/passkeys/begin', { name: 'Key' }).body as { ceremony: string }).ceremony
+    const ceremony = (
+      person.request('POST', '/api/account/passkeys/begin', { name: 'Key' }).body as { ceremony: string }
+    ).ceremony
     person.request('POST', `/api/account/passkeys/finish?ceremony=${ceremony}`, { id: 'cred-carol' })
     adminRequests(m!.server)('PATCH', `/api/users/${person.id}`, { passkeyRequired: true })
     await submit(person.username, person.password)
@@ -233,7 +289,10 @@ describe('the captcha on the sign-in form', () => {
     const first = image()!.getAttribute('src')
     await type(usernameInput(), 'admin')
     await act(async () => usernameInput().dispatchEvent(new FocusEvent('focusout', { bubbles: true })))
-    await settle(() => m!.requests.some((r) => r.url === '/api/captcha?ctx=login&account=admin'), 'the question about the name')
+    await settle(
+      () => m!.requests.some((r) => r.url === '/api/captcha?ctx=login&account=admin'),
+      'the question about the name',
+    )
     await settle(() => image()!.getAttribute('src') !== first || true, 'the new image')
     await type(document.querySelector<HTMLInputElement>('input[type="password"]')!, MOCK_ADMIN.password)
     // Not ready until it is answered.
@@ -250,10 +309,16 @@ describe('the captcha on the sign-in form', () => {
     await settle(() => image() !== null, 'the image')
     await type(usernameInput(), 'admin')
     await act(async () => usernameInput().dispatchEvent(new FocusEvent('focusout', { bubbles: true })))
-    await settle(() => m!.requests.some((r) => r.url === '/api/captcha?ctx=login&account=admin'), 'the question about the name')
+    await settle(
+      () => m!.requests.some((r) => r.url === '/api/captcha?ctx=login&account=admin'),
+      'the question about the name',
+    )
     const asked = () => m!.requests.filter((r) => r.url === '/api/captcha?ctx=login&account=admin').length
     const before = asked()
-    await settle(() => buttonWith(ts.captcha.refresh) !== undefined && !buttonWith(ts.captcha.refresh)!.hasAttribute('disabled'), 'the refresh button')
+    await settle(
+      () => buttonWith(ts.captcha.refresh) !== undefined && !buttonWith(ts.captcha.refresh)!.hasAttribute('disabled'),
+      'the refresh button',
+    )
     await click(buttonWith(ts.captcha.refresh))
     await settle(() => asked() > before, 'asked again with the name')
     expect(m!.requests.filter((r) => r.url === '/api/captcha?ctx=login').length).toBe(1)
@@ -292,7 +357,16 @@ describe('the captcha on the sign-in form', () => {
       return el
     }) as typeof document.head.appendChild)
     try {
-      await open('/login', { security: { captcha: { provider: 'turnstile', siteKey: 'site-1', hasSecret: true, contexts: { login: { on: true, when: 'always', failures: 3 } } } } })
+      await open('/login', {
+        security: {
+          captcha: {
+            provider: 'turnstile',
+            siteKey: 'site-1',
+            hasSecret: true,
+            contexts: { login: { on: true, when: 'always', failures: 3 } },
+          },
+        },
+      })
       await settle(() => render.mock.calls.length > 0, 'the widget')
       expect(render.mock.calls[0][1]).toMatchObject({ sitekey: 'site-1' })
       await type(usernameInput(), 'admin')
@@ -309,7 +383,9 @@ describe('the captcha on the sign-in form', () => {
 describe('signing in with a passkey', () => {
   const withPasskey = () => {
     const person = makePerson(m!.server, 'carol')
-    const ceremony = (person.request('POST', '/api/account/passkeys/begin', { name: 'Key' }).body as { ceremony: string }).ceremony
+    const ceremony = (
+      person.request('POST', '/api/account/passkeys/begin', { name: 'Key' }).body as { ceremony: string }
+    ).ceremony
     person.request('POST', `/api/account/passkeys/finish?ceremony=${ceremony}`, { id: 'cred-carol' })
     return person
   }
@@ -353,7 +429,9 @@ describe('signing in with a passkey', () => {
     await type(usernameInput(), 'carol')
     await click(buttonWith(ts.login.passkeyButton))
     await settle(() => locationText() === '/', 'signed in')
-    expect(JSON.parse(m!.requests.find((r) => r.url === '/api/auth/passkey/begin')!.body!)).toEqual({ username: 'carol' })
+    expect(JSON.parse(m!.requests.find((r) => r.url === '/api/auth/passkey/begin')!.body!)).toEqual({
+      username: 'carol',
+    })
   })
 
   it('a prompt the person closes is not an error of the server', async () => {
@@ -380,7 +458,10 @@ describe('first-run setup and the invite page', () => {
   })
 
   it('setup takes the captcha of the setup context', async () => {
-    await open('/setup', { admin: false, security: { captcha: { contexts: { setup: { on: true, when: 'always', failures: 3 } } } } })
+    await open('/setup', {
+      admin: false,
+      security: { captcha: { contexts: { setup: { on: true, when: 'always', failures: 3 } } } },
+    })
     await settle(() => document.querySelector('[data-slot="captcha"] img') !== null, 'the image')
   })
 
@@ -419,9 +500,21 @@ describe('a session held until a passkey is registered', () => {
   })
 
   async function boot() {
-    server = createMockServer({ now: () => Date.now(), mode: 'accounts', security: { passkeys: { requireRoles: ['admin'] } } })
+    server = createMockServer({
+      now: () => Date.now(),
+      mode: 'accounts',
+      security: { passkeys: { requireRoles: ['admin'] } },
+    })
     globalThis.fetch = mockFetch(server)
-    expect((await globalThis.fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password }) })).status).toBe(200)
+    expect(
+      (
+        await globalThis.fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password }),
+        })
+      ).status,
+    ).toBe(200)
     window.history.pushState({}, '', '/')
     const { default: App } = await import('@/App')
     host = document.createElement('div')
@@ -444,7 +537,10 @@ describe('a session held until a passkey is registered', () => {
     await click(buttonWith(ts.passkeys.add))
     await settle(() => !text().includes(ts.held.title), 'the hold lifted')
     expect(create).toHaveBeenCalled()
-    await settle(() => document.querySelector('[data-slot="sidebar"]') !== null || window.location.pathname.startsWith('/s/'), 'the app')
+    await settle(
+      () => document.querySelector('[data-slot="sidebar"]') !== null || window.location.pathname.startsWith('/s/'),
+      'the app',
+    )
   })
 
   it('signing out from the held page goes to the sign-in page', async () => {
@@ -468,7 +564,8 @@ describe('a session held until a passkey is registered', () => {
 // GET /oauth/authorize sends a browser without a session to /login?return=/oauth/authorize?…; every way of signing
 // in must bring it back there, query and all (the app then reloads that address from the server).
 describe('the return to the authorization server', () => {
-  const authorize = '/oauth/authorize?response_type=code&client_id=pbc_x&state=s1&code_challenge=c&code_challenge_method=S256'
+  const authorize =
+    '/oauth/authorize?response_type=code&client_id=pbc_x&state=s1&code_challenge=c&code_challenge_method=S256'
   const login = `/login?return=${encodeURIComponent(authorize)}`
 
   it('sso_redirect sends the provider the whole address to come back to', async () => {
@@ -497,10 +594,19 @@ describe('the return to the authorization server', () => {
     await open(login)
     await settle(() => buttonWith(ts.login.passkeyButton) !== undefined, 'the button')
     const person = makePerson(m!.server, 'carol')
-    const ceremony = (person.request('POST', '/api/account/passkeys/begin', { name: 'Key' }).body as { ceremony: string }).ceremony
+    const ceremony = (
+      person.request('POST', '/api/account/passkeys/begin', { name: 'Key' }).body as { ceremony: string }
+    ).ceremony
     person.request('POST', `/api/account/passkeys/finish?ceremony=${ceremony}`, { id: 'cred-carol' })
     vi.stubGlobal('PublicKeyCredential', function PublicKeyCredential() {})
-    vi.stubGlobal('navigator', { ...navigator, credentials: { get: vi.fn(async () => ({ toJSON: () => ({ id: 'cred-carol', type: 'public-key', response: {} }) })) }, languages: ['zh-CN'], language: 'zh-CN' })
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      credentials: {
+        get: vi.fn(async () => ({ toJSON: () => ({ id: 'cred-carol', type: 'public-key', response: {} }) })),
+      },
+      languages: ['zh-CN'],
+      language: 'zh-CN',
+    })
     await click(buttonWith(ts.login.passkeyButton))
     await settle(() => locationText() === authorize, 'the authorization address')
     const finish = m!.requests.find((r) => r.url.startsWith('/api/auth/passkey/finish'))!

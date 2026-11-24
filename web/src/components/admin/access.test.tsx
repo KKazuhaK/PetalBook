@@ -2,7 +2,16 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
-import { adminRequests, byLabel, click, installDomShims, makePerson, mount, settle, type Mounted } from '@/testing/harness'
+import {
+  adminRequests,
+  byLabel,
+  click,
+  installDomShims,
+  makePerson,
+  mount,
+  settle,
+  type Mounted,
+} from '@/testing/harness'
 import { MOCK_ADMIN, type MockServer } from '@/api/mock/server'
 import { oa } from '@/i18n/oauth'
 import { ta } from '@/i18n/admin'
@@ -72,8 +81,15 @@ describe('machine access', () => {
     expect(carol.textContent).toContain('carol')
     await click(byLabel(tk.revokeLabel('carol script')))
     await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
-    await click([...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find((b) => b.textContent?.trim() === tk.revokeConfirm))
-    await settle(() => items().find((i) => i.textContent?.includes('carol script'))?.dataset.state === 'revoked', 'revoked')
+    await click(
+      [...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find(
+        (b) => b.textContent?.trim() === tk.revokeConfirm,
+      ),
+    )
+    await settle(
+      () => items().find((i) => i.textContent?.includes('carol script'))?.dataset.state === 'revoked',
+      'revoked',
+    )
     expect(m.requests.filter((r) => r.method === 'DELETE' && r.url.startsWith('/api/admin/tokens/'))).toHaveLength(1)
   })
 
@@ -93,7 +109,9 @@ describe('machine access', () => {
       server: { mode: 'accounts' },
     })
     await settle(() => items().length === 50, 'the first page')
-    const more = [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.includes(tk.admin.loadMore))!
+    const more = [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
+      b.textContent?.includes(tk.admin.loadMore),
+    )!
     await click(more)
     await settle(() => items().length === 51, 'the second page')
     expect([...document.querySelectorAll('button')].some((b) => b.textContent?.includes(tk.admin.loadMore))).toBe(false)
@@ -116,7 +134,9 @@ describe('MCP and OAuth in the machine access', () => {
     expect(document.querySelector('[data-slot="oauth-status"]')!.textContent).toBe(oa.admin.oauthOn)
     await click(byLabel(oa.admin.mcpLabel))
     await settle(() => document.querySelector('[data-slot="oauth-status"]')!.textContent === oa.admin.oauthOff, 'off')
-    expect(m.requests.filter((r) => r.method === 'PUT' && r.url === '/api/admin/access').map((r) => JSON.parse(r.body!))).toEqual([{ mcp: false }])
+    expect(
+      m.requests.filter((r) => r.method === 'PUT' && r.url === '/api/admin/access').map((r) => JSON.parse(r.body!)),
+    ).toEqual([{ mcp: false }])
     // The tokens' switch is its own.
     expect(adminRequests(m.server)('GET', '/api/admin/access').body).toEqual({ tokens: true, mcp: false, oauth: false })
   })
@@ -145,7 +165,11 @@ describe('MCP and OAuth in the machine access', () => {
     expect(carol.textContent).toContain('carol')
     await click(byLabel(oa.yours.revokeLabel('carol app')))
     await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
-    await click([...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find((b) => b.textContent?.trim() === oa.yours.revokeConfirm))
+    await click(
+      [...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find(
+        (b) => b.textContent?.trim() === oa.yours.revokeConfirm,
+      ),
+    )
     await settle(() => grantItems().length === 1, 'one left')
     expect(grantItems()[0].textContent).toContain('dave app')
     expect(m.requests.filter((r) => r.method === 'DELETE' && r.url.startsWith('/api/admin/grants/'))).toHaveLength(1)

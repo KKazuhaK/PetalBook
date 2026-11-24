@@ -38,7 +38,12 @@ export type Send = (method: string, path: string, body?: unknown) => { status: n
 export const sender =
   (server: MockServer, space = 'default'): Send =>
   (method, path, body) =>
-    server.handle(method, `/api/spaces/${space}${path}`, body === undefined ? undefined : JSON.stringify(body), 'application/json') as { status: number; body: any }
+    server.handle(
+      method,
+      `/api/spaces/${space}${path}`,
+      body === undefined ? undefined : JSON.stringify(body),
+      'application/json',
+    ) as { status: number; body: any }
 
 export const TASK = {
   title: '任务',
@@ -56,7 +61,8 @@ export function seedWork(server: MockServer, space = 'default', send: Send = sen
   send('PUT', '/types/task', TASK)
   send('POST', '/folders', { path: 'Work' })
   send('PUT', '/folders/type', { folder: 'Work', type: 'task' })
-  const make = (title: string, meta: Record<string, unknown>, body = `${title} 正文\n`) => send('POST', '/pages', { folder: 'Work', meta: { title, ...meta }, body }).body as { id: string; rev: string }
+  const make = (title: string, meta: Record<string, unknown>, body = `${title} 正文\n`) =>
+    send('POST', '/pages', { folder: 'Work', meta: { title, ...meta }, body }).body as { id: string; rev: string }
   return {
     A: make('A', { status: 'done', points: 5, due: '2026-03-01', labels: ['a'], tags: ['栀子'], note: '甲' }),
     B: make('B', { status: 'todo', points: 12, due: '2026-01-01', labels: ['b', 'a'] }),
@@ -70,6 +76,11 @@ export function viewsOf(send: Send, scope: string) {
   return send('GET', `/views?${scope}`).body as { views: Record<string, any>[]; rev: string }
 }
 export function putViews(send: Send, scope: Record<string, string>, views: Record<string, unknown>[]) {
-  const cur = viewsOf(send, Object.entries(scope).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&'))
+  const cur = viewsOf(
+    send,
+    Object.entries(scope)
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+      .join('&'),
+  )
   return send('PUT', '/views', { ...scope, baseRev: cur.rev, views })
 }

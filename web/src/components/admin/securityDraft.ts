@@ -2,7 +2,16 @@
 // patch it makes against what the server has (only the blocks and fields that changed), and where
 // each refusal of the server belongs.
 
-import type { CaptchaContext, CaptchaProvider, CaptchaWhen, LockoutScope, LoginMode, Role, SecurityPatch, SecuritySettings } from '@/api/types'
+import type {
+  CaptchaContext,
+  CaptchaProvider,
+  CaptchaWhen,
+  LockoutScope,
+  LoginMode,
+  Role,
+  SecurityPatch,
+  SecuritySettings,
+} from '@/api/types'
 
 export const CONTEXTS: readonly CaptchaContext[] = ['login', 'invite', 'setup', 'forgot', 'register']
 export const LIMIT_FIELDS = ['perMinute', 'maxFailures', 'windowMinutes', 'sessionIdleDays', 'sessionMaxDays'] as const
@@ -24,8 +33,10 @@ export interface Draft {
   limits: Record<(typeof LIMIT_FIELDS)[number], string>
 }
 
-export const rolesToChoice = (roles: Role[]): RoleChoice => (roles.includes('member') ? 'everyone' : roles.includes('admin') ? 'admins' : 'none')
-export const choiceToRoles = (c: RoleChoice): Role[] => (c === 'everyone' ? ['admin', 'member'] : c === 'admins' ? ['admin'] : [])
+export const rolesToChoice = (roles: Role[]): RoleChoice =>
+  roles.includes('member') ? 'everyone' : roles.includes('admin') ? 'admins' : 'none'
+export const choiceToRoles = (c: RoleChoice): Role[] =>
+  c === 'everyone' ? ['admin', 'member'] : c === 'admins' ? ['admin'] : []
 
 export function draftOf(s: SecuritySettings): Draft {
   return {
@@ -36,7 +47,16 @@ export function draftOf(s: SecuritySettings): Draft {
     provider: s.captcha.provider,
     siteKey: s.captcha.siteKey,
     secret: null,
-    contexts: Object.fromEntries(CONTEXTS.map((c) => [c, { on: s.captcha.contexts[c].on, when: s.captcha.contexts[c].when, failures: String(s.captcha.contexts[c].failures) }])) as Draft['contexts'],
+    contexts: Object.fromEntries(
+      CONTEXTS.map((c) => [
+        c,
+        {
+          on: s.captcha.contexts[c].on,
+          when: s.captcha.contexts[c].when,
+          failures: String(s.captcha.contexts[c].failures),
+        },
+      ]),
+    ) as Draft['contexts'],
     lockEnabled: s.lockout.enabled,
     lockMinutes: String(s.lockout.minutes),
     scope: s.lockout.scope,

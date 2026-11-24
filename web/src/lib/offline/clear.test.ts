@@ -41,7 +41,8 @@ function hold(pattern: RegExp) {
   return { reached, release }
 }
 
-const dbs = async () => (await indexedDB.databases()).map((d) => d.name).filter((n) => n?.startsWith('petalbook-offline'))
+const dbs = async () =>
+  (await indexedDB.databases()).map((d) => d.name).filter((n) => n?.startsWith('petalbook-offline'))
 const cfg = (over: Partial<OfflineConfig> = {}): OfflineConfig => ({ ...DEFAULT_CONFIG, ...over })
 
 describe('clearing a copy while it syncs', () => {

@@ -18,10 +18,16 @@ export function collectDefinitions(node: MdNode, into: Definitions = new Map()):
   return into
 }
 
-function inlineFromMdast(nodes: MdNode[] = [], defs: Definitions, marks: Mark[] = [], { inCell = false } = {}): DocJSON[] {
+function inlineFromMdast(
+  nodes: MdNode[] = [],
+  defs: Definitions,
+  marks: Mark[] = [],
+  { inCell = false } = {},
+): DocJSON[] {
   const out: DocJSON[] = []
   const push = (node: DocJSON) => out.push(marks.length ? { ...node, marks: [...(node.marks ?? []), ...marks] } : node)
-  const nested = (children: MdNode[] | undefined, extra: Mark[]) => out.push(...inlineFromMdast(children, defs, [...marks, ...extra], { inCell }))
+  const nested = (children: MdNode[] | undefined, extra: Mark[]) =>
+    out.push(...inlineFromMdast(children, defs, [...marks, ...extra], { inCell }))
   for (const node of nodes) {
     switch (node.type) {
       case 'text':
@@ -56,14 +62,21 @@ function inlineFromMdast(nodes: MdNode[] = [], defs: Definitions, marks: Mark[] 
           // No such definition: Markdown shows the brackets as written.
           push({ type: 'text', text: '[' })
           nested(node.children, [])
-          push({ type: 'text', text: node.referenceType === 'full' ? `][${node.label}]` : node.referenceType === 'collapsed' ? '][]' : ']' })
+          push({
+            type: 'text',
+            text: node.referenceType === 'full' ? `][${node.label}]` : node.referenceType === 'collapsed' ? '][]' : ']',
+          })
         }
         break
       }
       case 'imageReference': {
         const def = defs.get(node.identifier)
         if (def) push({ type: 'image', attrs: { src: def.url, alt: node.alt || null, title: def.title ?? null } })
-        else push({ type: 'text', text: `![${node.alt ?? ''}]${node.referenceType === 'full' ? `[${node.label}]` : node.referenceType === 'collapsed' ? '[]' : ''}` })
+        else
+          push({
+            type: 'text',
+            text: `![${node.alt ?? ''}]${node.referenceType === 'full' ? `[${node.label}]` : node.referenceType === 'collapsed' ? '[]' : ''}`,
+          })
         break
       }
       case 'html':
@@ -106,7 +119,9 @@ export function blocksFromMdast(nodes: MdNode[] = [], defs: Definitions): DocJSO
           }
           let content = blocksFromMdast(item.children, defs)
           if (!content.length || content[0].type !== 'paragraph') content = [{ type: 'paragraph' }, ...content]
-          run.content!.push(isTask ? { type: 'taskItem', attrs: { checked: item.checked }, content } : { type: 'listItem', content })
+          run.content!.push(
+            isTask ? { type: 'taskItem', attrs: { checked: item.checked }, content } : { type: 'listItem', content },
+          )
         }
         break
       }
@@ -114,7 +129,12 @@ export function blocksFromMdast(nodes: MdNode[] = [], defs: Definitions): DocJSO
         out.push({ type: 'blockquote', content: blocksFromMdast(node.children, defs) })
         break
       case 'code':
-        out.push(withContent({ type: 'codeBlock', attrs: { language: [node.lang, node.meta].filter(Boolean).join(' ') || null } }, node.value ? [{ type: 'text', text: node.value }] : []))
+        out.push(
+          withContent(
+            { type: 'codeBlock', attrs: { language: [node.lang, node.meta].filter(Boolean).join(' ') || null } },
+            node.value ? [{ type: 'text', text: node.value }] : [],
+          ),
+        )
         break
       case 'thematicBreak':
         out.push({ type: 'horizontalRule' })
@@ -135,7 +155,12 @@ export function blocksFromMdast(nodes: MdNode[] = [], defs: Definitions): DocJSO
               return {
                 type: r === 0 ? 'tableHeader' : 'tableCell',
                 ...(node.align?.[c] ? { attrs: { align: node.align[c] } } : {}),
-                content: [withContent({ type: 'paragraph' }, cell ? inlineFromMdast(cell.children, defs, [], { inCell: true }) : [])],
+                content: [
+                  withContent(
+                    { type: 'paragraph' },
+                    cell ? inlineFromMdast(cell.children, defs, [], { inCell: true }) : [],
+                  ),
+                ],
               }
             }),
           })),

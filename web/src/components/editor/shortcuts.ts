@@ -1,7 +1,8 @@
 // Keyboard shortcuts as shown in tooltips. Keys are written the way Tiptap
 // writes them ("Mod-Shift-s"); Mod is Command on a Mac and Ctrl elsewhere.
 
-export const isMac = (): boolean => typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent)
+export const isMac = (): boolean =>
+  typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent)
 
 export function shortcutText(keys: string, mac = isMac()): string {
   const parts = keys.split('-').map((k) => {

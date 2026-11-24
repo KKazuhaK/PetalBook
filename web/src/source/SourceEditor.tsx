@@ -5,7 +5,14 @@
 
 import { useEffect, useImperativeHandle, useRef, type Ref } from 'react'
 import { Annotation, Compartment, EditorState, StateEffect, StateField } from '@codemirror/state'
-import { Decoration, EditorView, drawSelection, highlightSpecialChars, keymap, type DecorationSet } from '@codemirror/view'
+import {
+  Decoration,
+  EditorView,
+  drawSelection,
+  highlightSpecialChars,
+  keymap,
+  type DecorationSet,
+} from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
@@ -59,7 +66,10 @@ const problemField = StateField.define<DecorationSet>({
     for (const e of tr.effects) {
       if (!e.is(setProblem)) continue
       const n = e.value
-      deco = n !== null && n >= 1 && n <= tr.state.doc.lines ? Decoration.set([problemMark.range(tr.state.doc.line(n).from)]) : Decoration.none
+      deco =
+        n !== null && n >= 1 && n <= tr.state.doc.lines
+          ? Decoration.set([problemMark.range(tr.state.doc.line(n).from)])
+          : Decoration.none
     }
     return deco
   },
@@ -71,9 +81,15 @@ const theme = EditorView.theme({
   '&': { height: '100%', color: 'var(--foreground)', backgroundColor: 'transparent', fontSize: '0.875rem' },
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': { fontFamily: 'var(--font-mono)', lineHeight: '1.75', overflow: 'auto' },
-  '.cm-content': { padding: '1.5rem 1.25rem 6rem', caretColor: 'var(--foreground)', maxWidth: '50rem', margin: '0 auto' },
+  '.cm-content': {
+    padding: '1.5rem 1.25rem 6rem',
+    caretColor: 'var(--foreground)',
+    maxWidth: '50rem',
+    margin: '0 auto',
+  },
   '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--foreground)' },
-  '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': { backgroundColor: 'color-mix(in oklch, var(--brand) 22%, transparent)' },
+  '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection':
+    { backgroundColor: 'color-mix(in oklch, var(--brand) 22%, transparent)' },
   '.cm-pb-problem': { backgroundColor: 'color-mix(in oklch, var(--destructive) 14%, transparent)' },
 })
 const highlight = HighlightStyle.define([
@@ -83,12 +99,24 @@ const highlight = HighlightStyle.define([
   { tag: tg.strikethrough, textDecoration: 'line-through' },
   { tag: [tg.link, tg.url], color: 'var(--brand)' },
   { tag: [tg.monospace], color: 'var(--muted-foreground)' },
-  { tag: [tg.processingInstruction, tg.meta, tg.punctuation, tg.contentSeparator, tg.quote], color: 'var(--muted-foreground)' },
+  {
+    tag: [tg.processingInstruction, tg.meta, tg.punctuation, tg.contentSeparator, tg.quote],
+    color: 'var(--muted-foreground)',
+  },
   { tag: [tg.propertyName, tg.definition(tg.propertyName)], color: 'var(--brand)' },
   { tag: tg.comment, color: 'var(--muted-foreground)', fontStyle: 'italic' },
 ])
 
-export default function SourceEditor({ ref, getInitialText, onChange, onScroll, problemLine = null, label, className, readOnly = false }: Props) {
+export default function SourceEditor({
+  ref,
+  getInitialText,
+  onChange,
+  onScroll,
+  problemLine = null,
+  label,
+  className,
+  readOnly = false,
+}: Props) {
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
   const accessSlot = useRef(new Compartment())
@@ -116,7 +144,8 @@ export default function SourceEditor({ ref, getInitialText, onChange, onScroll, 
           theme,
           EditorView.contentAttributes.of({ 'aria-label': label, spellcheck: 'false', autocapitalize: 'off' }),
           EditorView.updateListener.of((u) => {
-            if (u.docChanged && !u.transactions.some((t) => t.annotation(fromOutside))) cb.current.onChange(u.state.doc.toString())
+            if (u.docChanged && !u.transactions.some((t) => t.annotation(fromOutside)))
+              cb.current.onChange(u.state.doc.toString())
           }),
         ],
       }),

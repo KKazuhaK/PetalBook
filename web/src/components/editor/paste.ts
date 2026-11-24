@@ -52,10 +52,21 @@ function inlineNodes(schema: Schema, lines: string[], marks: readonly Mark[], jo
 }
 
 // Null when there is nothing to paste (only blank lines): ProseMirror's own handling then applies.
-export function plainTextSlice(schema: Schema, text: string, marks: readonly Mark[] = [], join: LineJoin = 'break'): Slice | null {
+export function plainTextSlice(
+  schema: Schema,
+  text: string,
+  marks: readonly Mark[] = [],
+  join: LineJoin = 'break',
+): Slice | null {
   const paragraphs = splitPlainText(text)
   if (!paragraphs.length) return null
-  return new Slice(Fragment.from(paragraphs.map((lines) => schema.nodes.paragraph.create(null, inlineNodes(schema, lines, marks, join)))), 0, 0)
+  return new Slice(
+    Fragment.from(
+      paragraphs.map((lines) => schema.nodes.paragraph.create(null, inlineNodes(schema, lines, marks, join))),
+    ),
+    0,
+    0,
+  )
 }
 
 // Markdown reads a single line break inside a paragraph as a space. Someone who
@@ -138,7 +149,8 @@ export const PlainTextPaste = Extension.create({
         key: new PluginKey('plainTextPaste'),
         props: {
           // ProseMirror falls back to its own parsing when this answers nothing; its types do not say so.
-          clipboardTextParser: (text, $context, plain, view) => parseClipboardText(view.state.schema, text, $context, plain) as Slice,
+          clipboardTextParser: (text, $context, plain, view) =>
+            parseClipboardText(view.state.schema, text, $context, plain) as Slice,
           transformPasted: (slice) => keepStructure(slice),
         },
       }),

@@ -15,7 +15,8 @@ const q = <T extends Element = HTMLElement>(sel: string, root: ParentNode = docu
 const all = (sel: string, root: ParentNode = document) => Array.from(root.querySelectorAll<HTMLElement>(sel))
 const byLabel = (label: string) => q(`[aria-label="${label}"]`)!
 const item = (label: string) => all('[role^="menuitem"]').find((el) => el.textContent?.includes(label))!
-const key = (el: Element, k: string) => act(async () => void el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true })))
+const key = (el: Element, k: string) =>
+  act(async () => void el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true })))
 
 afterEach(cleanup)
 
@@ -85,8 +86,12 @@ describe('the formatting buttons', () => {
     expect(byLabel('粗体').title).toMatch(/粗体 \((Ctrl\+B|⌘B)\)/)
     expect(byLabel('删除线').title).toMatch(/(Ctrl\+Shift\+S|⌘⇧S)/)
     for (const label of ['粗体', '斜体', '删除线', '行内代码']) await click(byLabel(label))
-    expect(['粗体', '斜体', '删除线', '行内代码'].every((l) => byLabel(l).getAttribute('aria-pressed') === 'true')).toBe(true)
-    expect(editor.isActive('bold') && editor.isActive('italic') && editor.isActive('strike') && editor.isActive('code')).toBe(true)
+    expect(
+      ['粗体', '斜体', '删除线', '行内代码'].every((l) => byLabel(l).getAttribute('aria-pressed') === 'true'),
+    ).toBe(true)
+    expect(
+      editor.isActive('bold') && editor.isActive('italic') && editor.isActive('strike') && editor.isActive('code'),
+    ).toBe(true)
     await view.unmount()
   })
 
@@ -124,7 +129,10 @@ describe('the link button', () => {
     const { editor, view } = await toolbar('一二三\n')
     editor.commands.setTextSelection({ from: 1, to: 3 })
     await settle()
-    await act(async () => void editor.view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true })))
+    await act(
+      async () =>
+        void editor.view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true })),
+    )
     expect(q('input[aria-label="修改网址"]')).not.toBeNull()
     await view.unmount()
   })
@@ -180,7 +188,19 @@ describe('the table size picker', () => {
     cursorIn(editor, '2')
     await click(byLabel('表格'))
     expect(all('[role^="menuitem"]').map((el) => el.textContent)).toEqual(
-      expect.arrayContaining(['在上方插入一行', '在下方插入一行', '在左侧插入一列', '在右侧插入一列', '左对齐', '居中', '右对齐', '默认对齐', '删除这一行', '删除这一列', '删除整个表格']),
+      expect.arrayContaining([
+        '在上方插入一行',
+        '在下方插入一行',
+        '在左侧插入一列',
+        '在右侧插入一列',
+        '左对齐',
+        '居中',
+        '右对齐',
+        '默认对齐',
+        '删除这一行',
+        '删除这一列',
+        '删除整个表格',
+      ]),
     )
     await click(item('居中'))
     expect(markdownOf(editor)).toBe('| 甲 | 乙 |\n| --- | :---: |\n| 1 | 2 |\n')
@@ -221,7 +241,8 @@ describe('the handles at the edges of a table', () => {
   it('appear over a cell: a handle for its column, its row, and the table, and a + on two edges', async () => {
     const { editor, view } = await page()
     await hover(editor, '2')
-    for (const label of ['这一列', '这一行', '整个表格', '在末尾添加一行', '在末尾添加一列']) expect(byLabel(label), label).not.toBeNull()
+    for (const label of ['这一列', '这一行', '整个表格', '在末尾添加一行', '在末尾添加一列'])
+      expect(byLabel(label), label).not.toBeNull()
     await view.unmount()
   })
 
@@ -239,7 +260,9 @@ describe('the handles at the edges of a table', () => {
     const { editor, view } = await page()
     await hover(editor, '2')
     await click(byLabel('这一列'))
-    expect(all('[role^="menuitem"]').map((el) => el.textContent)).toEqual(expect.arrayContaining(['在左侧插入一列', '在右侧插入一列', '左对齐', '居中', '右对齐', '删除这一列']))
+    expect(all('[role^="menuitem"]').map((el) => el.textContent)).toEqual(
+      expect.arrayContaining(['在左侧插入一列', '在右侧插入一列', '左对齐', '居中', '右对齐', '删除这一列']),
+    )
     await click(item('右对齐'))
     expect(markdownOf(editor)).toBe('| 甲 | 乙 |\n| --- | ---: |\n| 1 | 2 |\n')
     await closed()
@@ -335,7 +358,10 @@ describe('the language picker', () => {
 
   it('has a copy button', async () => {
     const written: string[] = []
-    Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (s: string) => void written.push(s) }, configurable: true })
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: async (s: string) => void written.push(s) },
+      configurable: true,
+    })
     const editor = pageEditor('```js\nconst a = 1\n```\n')
     const view = await mount(editor)
     await click(byLabel('复制代码'))

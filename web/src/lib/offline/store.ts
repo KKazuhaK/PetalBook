@@ -27,7 +27,14 @@ export interface OfflineConfig {
   inbox: boolean
   recent: boolean
 }
-export const DEFAULT_CONFIG: OfflineConfig = { mode: 'catalog', folders: [], tags: [], favourites: true, inbox: true, recent: true }
+export const DEFAULT_CONFIG: OfflineConfig = {
+  mode: 'catalog',
+  folders: [],
+  tags: [],
+  favourites: true,
+  inbox: true,
+  recent: true,
+}
 
 export interface Favourites {
   pages: string[]
@@ -51,7 +58,18 @@ export interface SyncState {
   // What went wrong the last time, for the settings to say.
   error: string
 }
-export const EMPTY_STATE: SyncState = { cursor: '', tree: '', settings: '', syncedAt: 0, complete: false, disabled: false, inbox: '', favourites: { pages: [], folders: [] }, overCap: false, error: '' }
+export const EMPTY_STATE: SyncState = {
+  cursor: '',
+  tree: '',
+  settings: '',
+  syncedAt: 0,
+  complete: false,
+  disabled: false,
+  inbox: '',
+  favourites: { pages: [], folders: [] },
+  overCap: false,
+  error: '',
+}
 
 export interface WalkProgress {
   changes: string
@@ -90,7 +108,8 @@ export function utf8Length(s: string): number {
   return n
 }
 // What a page costs on the device: its text, header and draft.
-export const pageBytes = (p: Page): number => utf8Length(p.body) + utf8Length(p.header ?? '') + (p.draft ? utf8Length(p.draft.body) : 0) + 400
+export const pageBytes = (p: Page): number =>
+  utf8Length(p.body) + utf8Length(p.header ?? '') + (p.draft ? utf8Length(p.draft.body) : 0) + 400
 
 // The copy was closed (cleared, signed out, deleted from another tab) while something was still using it.
 export class CopyClosedError extends Error {

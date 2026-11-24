@@ -16,7 +16,11 @@ beforeEach(() => {
 afterEach(() => net.restore())
 
 // A device with a copy of the space, then no network.
-async function offlineWith(mode: 'catalog' | 'text', build: () => Promise<void>, over: Partial<typeof DEFAULT_CONFIG> = {}) {
+async function offlineWith(
+  mode: 'catalog' | 'text',
+  build: () => Promise<void>,
+  over: Partial<typeof DEFAULT_CONFIG> = {},
+) {
   await build()
   const s = (await configure('local', 'default', { ...DEFAULT_CONFIG, mode, ...over }))!
   await syncSpace(s)
@@ -38,7 +42,9 @@ describe('reading without the server', () => {
     )
     const sp = S()
     const all = await sp.listPages({ folder: '', recursive: true, sort: 'title' })
-    expect(all.items.map((i) => i.title)).toEqual(['暮雪', '无题', '静夜思'].sort((x, y) => x.codePointAt(0)! - y.codePointAt(0)!))
+    expect(all.items.map((i) => i.title)).toEqual(
+      ['暮雪', '无题', '静夜思'].sort((x, y) => x.codePointAt(0)! - y.codePointAt(0)!),
+    )
     expect(isOffline()).toBe(true)
     const tang = await sp.listPages({ folder: 'Tang', recursive: true })
     expect(tang.items.map((i) => i.id).sort()).toEqual([ids.a.id, ids.b.id].sort())
@@ -75,7 +81,8 @@ describe('reading without the server', () => {
       { favourites: false, recent: false },
     )
     const sp = S()
-    const hit = async (q: string, extra: { in?: 'title' } = {}) => (await sp.listPages({ q, recursive: true, folder: '', ...extra })).items.map((i) => i.id).sort()
+    const hit = async (q: string, extra: { in?: 'title' } = {}) =>
+      (await sp.listPages({ q, recursive: true, folder: '', ...extra })).items.map((i) => i.id).sort()
     // The text of a page that is kept is searched; the one that is not is found by its title only.
     expect(await hit('月光')).toEqual([ids.kept.id])
     expect(await hit('明月')).toEqual([ids.title.id])
@@ -152,21 +159,37 @@ describe('reading without the server', () => {
   it('answers nothing for a space that has no copy, and never writes', async () => {
     await make('', '甲')
     net.down()
-    expect(await S().listPages({}).catch((x: unknown) => x)).toMatchObject({ code: 'network' })
+    expect(
+      await S()
+        .listPages({})
+        .catch((x: unknown) => x),
+    ).toMatchObject({ code: 'network' })
     const s = await configure('local', 'default', { ...DEFAULT_CONFIG })
     net.up()
     await syncSpace(s!)
     net.down()
     expect((await S().listPages({})).items).toHaveLength(1)
-    expect(await S().createPage({ meta: { title: 'x' } }).catch((x: unknown) => x)).toMatchObject({ code: 'network' })
-    expect(await S().savePage('01ZZZZZZZZ', { baseRev: 'x', meta: {}, body: '' }).catch((x: unknown) => x)).toMatchObject({ code: 'network' })
+    expect(
+      await S()
+        .createPage({ meta: { title: 'x' } })
+        .catch((x: unknown) => x),
+    ).toMatchObject({ code: 'network' })
+    expect(
+      await S()
+        .savePage('01ZZZZZZZZ', { baseRev: 'x', meta: {}, body: '' })
+        .catch((x: unknown) => x),
+    ).toMatchObject({ code: 'network' })
   })
 
   it('does not answer until the first walk of the catalogue has finished', async () => {
     await make('', '甲')
     await configure('local', 'default', { ...DEFAULT_CONFIG })
     net.down()
-    expect(await S().listPages({}).catch((x: unknown) => x)).toMatchObject({ code: 'network' })
+    expect(
+      await S()
+        .listPages({})
+        .catch((x: unknown) => x),
+    ).toMatchObject({ code: 'network' })
   })
 
   it('is online again as soon as a request gets through', async () => {
@@ -182,7 +205,12 @@ describe('reading without the server', () => {
 describe('a page that is opened', () => {
   it('is among the last opened, and its text is kept at once, when the space keeps those', async () => {
     const p = await make('Misc', '读过的', '读过的正文\n')
-    const s = (await configure('local', 'default', { ...DEFAULT_CONFIG, mode: 'text', favourites: false, inbox: false }))!
+    const s = (await configure('local', 'default', {
+      ...DEFAULT_CONFIG,
+      mode: 'text',
+      favourites: false,
+      inbox: false,
+    }))!
     await syncSpace(s)
     expect(await s.page(p.id)).toBeUndefined()
     await noteOpened('default', await S().getPage(p.id))

@@ -11,7 +11,9 @@ const wk = wroteKey('u1', 's1')
 const at = (h: number, min = 0, d = 25) => new Date(2026, 10, d, h, min)
 // Opening the home page at `now`: what the hello says.
 const open = (now: Date, over: { name?: string; variety?: boolean } = {}) =>
-  renderToStaticMarkup(<Greeting now={now} name={over.name} visitKey={vk} wroteKey={wk} variety={over.variety ?? true} />).replace(/<[^>]*>/g, '')
+  renderToStaticMarkup(
+    <Greeting now={now} name={over.name} visitKey={vk} wroteKey={wk} variety={over.variety ?? true} />,
+  ).replace(/<[^>]*>/g, '')
 const plain = (now: Date, name?: string) => open(now, { variety: false, name })
 const JUST = /刚写完|写得不错/
 

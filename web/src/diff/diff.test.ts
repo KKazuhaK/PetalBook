@@ -29,21 +29,50 @@ const blocks = (r: DiffResult) => r.doc.content!
 const diffAttr = (n: Node) => (n.attrs?.diff as string | undefined) ?? 'eq'
 const kinds = (r: DiffResult) => blocks(r).map((b) => `${b.type}:${diffAttr(b)}`)
 const text = (n: Node): string => (n.type === 'text' ? n.text! : (n.content ?? []).map(text).join(''))
-const marked = (r: DiffResult) => JSON.stringify(r.doc).includes(`"${INS}"`) || JSON.stringify(r.doc).includes(`"${DEL}"`) || JSON.stringify(r.doc).includes(`"${FMT}"`) || JSON.stringify(r.doc).includes('"diff"')
+const marked = (r: DiffResult) =>
+  JSON.stringify(r.doc).includes(`"${INS}"`) ||
+  JSON.stringify(r.doc).includes(`"${DEL}"`) ||
+  JSON.stringify(r.doc).includes(`"${FMT}"`) ||
+  JSON.stringify(r.doc).includes('"diff"')
 
 describe('text insertion and deletion', () => {
   it('insertion at the start, in the middle and at the end', () => {
-    expect(runs(blocks(compare('quick brown fox', 'very quick brown fox'))[0])).toEqual([['ins', 'very '], ['eq', 'quick brown fox']])
-    expect(runs(blocks(compare('quick brown fox', 'quick very brown fox'))[0])).toEqual([['eq', 'quick '], ['ins', 'very '], ['eq', 'brown fox']])
-    expect(runs(blocks(compare('quick brown fox', 'quick brown fox jumps'))[0])).toEqual([['eq', 'quick brown fox'], ['ins', ' jumps']])
+    expect(runs(blocks(compare('quick brown fox', 'very quick brown fox'))[0])).toEqual([
+      ['ins', 'very '],
+      ['eq', 'quick brown fox'],
+    ])
+    expect(runs(blocks(compare('quick brown fox', 'quick very brown fox'))[0])).toEqual([
+      ['eq', 'quick '],
+      ['ins', 'very '],
+      ['eq', 'brown fox'],
+    ])
+    expect(runs(blocks(compare('quick brown fox', 'quick brown fox jumps'))[0])).toEqual([
+      ['eq', 'quick brown fox'],
+      ['ins', ' jumps'],
+    ])
   })
   it('deletion at the start, in the middle and at the end', () => {
-    expect(runs(blocks(compare('very quick brown fox', 'quick brown fox'))[0])).toEqual([['del', 'very '], ['eq', 'quick brown fox']])
-    expect(runs(blocks(compare('quick very brown fox', 'quick brown fox'))[0])).toEqual([['eq', 'quick '], ['del', 'very '], ['eq', 'brown fox']])
-    expect(runs(blocks(compare('quick brown fox jumps', 'quick brown fox'))[0])).toEqual([['eq', 'quick brown fox'], ['del', ' jumps']])
+    expect(runs(blocks(compare('very quick brown fox', 'quick brown fox'))[0])).toEqual([
+      ['del', 'very '],
+      ['eq', 'quick brown fox'],
+    ])
+    expect(runs(blocks(compare('quick very brown fox', 'quick brown fox'))[0])).toEqual([
+      ['eq', 'quick '],
+      ['del', 'very '],
+      ['eq', 'brown fox'],
+    ])
+    expect(runs(blocks(compare('quick brown fox jumps', 'quick brown fox'))[0])).toEqual([
+      ['eq', 'quick brown fox'],
+      ['del', ' jumps'],
+    ])
   })
   it('a replaced word shows the old word, then the new one', () => {
-    expect(runs(blocks(compare('the quick brown fox', 'the quick red fox'))[0])).toEqual([['eq', 'the quick '], ['del', 'brown'], ['ins', 'red'], ['eq', ' fox']])
+    expect(runs(blocks(compare('the quick brown fox', 'the quick red fox'))[0])).toEqual([
+      ['eq', 'the quick '],
+      ['del', 'brown'],
+      ['ins', 'red'],
+      ['eq', ' fox'],
+    ])
   })
   it('counts the characters', () => {
     const r = compare('quick brown fox', 'quick very brown fox')
@@ -55,9 +84,24 @@ describe('Chinese text', () => {
   it('compares text without spaces', () => {
     const r = compare('我今天去了北京。', '我昨天去了上海。')
     const rs = runs(blocks(r)[0])
-    expect(rs.filter((x) => x[0] === 'del').map((x) => x[1]).join('')).toBe('今北京')
-    expect(rs.filter((x) => x[0] === 'ins').map((x) => x[1]).join('')).toBe('昨上海')
-    expect(rs.filter((x) => x[0] === 'eq').map((x) => x[1]).join('')).toBe('我天去了。')
+    expect(
+      rs
+        .filter((x) => x[0] === 'del')
+        .map((x) => x[1])
+        .join(''),
+    ).toBe('今北京')
+    expect(
+      rs
+        .filter((x) => x[0] === 'ins')
+        .map((x) => x[1])
+        .join(''),
+    ).toBe('昨上海')
+    expect(
+      rs
+        .filter((x) => x[0] === 'eq')
+        .map((x) => x[1])
+        .join(''),
+    ).toBe('我天去了。')
   })
   it('inserts a clause in the middle', () => {
     const r = compare('春天来了，花开了。', '春天来了，天气暖和了，花开了。')
@@ -71,13 +115,19 @@ describe('Chinese text', () => {
   })
   it('mixed Chinese and English', () => {
     const r = compare('使用 React 写页面，速度很快。', '使用 Vue 写页面，速度很快。')
-    expect(runs(blocks(r)[0])).toEqual([['eq', '使用 '], ['del', 'React'], ['ins', 'Vue'], ['eq', ' 写页面，速度很快。']])
+    expect(runs(blocks(r)[0])).toEqual([
+      ['eq', '使用 '],
+      ['del', 'React'],
+      ['ins', 'Vue'],
+      ['eq', ' 写页面，速度很快。'],
+    ])
   })
 })
 
 describe('whole blocks', () => {
   it('identical documents carry no marks at all', () => {
-    const md = '# 标题\n\n一段文字，有**加粗**和[链接](https://a.example)。\n\n- 一\n- 二\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n```js\nx\n```\n'
+    const md =
+      '# 标题\n\n一段文字，有**加粗**和[链接](https://a.example)。\n\n- 一\n- 二\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n```js\nx\n```\n'
     const r = compare(md, md)
     expect(marked(r)).toBe(false)
     expect(r.identical).toBe(true)
@@ -102,15 +152,28 @@ describe('whole blocks', () => {
     expect(r.identical).toBe(true)
   })
   it('an added and a removed paragraph', () => {
-    expect(kinds(compare('甲。\n\n乙。\n', '甲。\n\n乙。\n\n丙。\n'))).toEqual(['paragraph:eq', 'paragraph:eq', 'paragraph:ins'])
-    expect(kinds(compare('甲。\n\n乙。\n\n丙。\n', '甲。\n\n丙。\n'))).toEqual(['paragraph:eq', 'paragraph:del', 'paragraph:eq'])
+    expect(kinds(compare('甲。\n\n乙。\n', '甲。\n\n乙。\n\n丙。\n'))).toEqual([
+      'paragraph:eq',
+      'paragraph:eq',
+      'paragraph:ins',
+    ])
+    expect(kinds(compare('甲。\n\n乙。\n\n丙。\n', '甲。\n\n丙。\n'))).toEqual([
+      'paragraph:eq',
+      'paragraph:del',
+      'paragraph:eq',
+    ])
   })
   it('a paragraph that changed a little is compared inside, one that changed wholly is replaced', () => {
     expect(kinds(compare('甲乙丙丁戊己庚辛。\n', '甲乙丙丁戊己庚壬。\n'))).toEqual(['paragraph:eq'])
-    expect(kinds(compare('春天的风吹过田野，带来泥土的气息。\n', 'The committee approved the budget on Tuesday.\n'))).toEqual(['paragraph:del', 'paragraph:ins'])
+    expect(
+      kinds(compare('春天的风吹过田野，带来泥土的气息。\n', 'The committee approved the budget on Tuesday.\n')),
+    ).toEqual(['paragraph:del', 'paragraph:ins'])
   })
   it('a rewritten paragraph is not shown as confetti', () => {
-    const r = compare('今天天气很好，我们一起去公园散步，看看花草树木。\n', '明天可能下雨，大家最好待在家里，读读书喝喝茶。\n')
+    const r = compare(
+      '今天天气很好，我们一起去公园散步，看看花草树木。\n',
+      '明天可能下雨，大家最好待在家里，读读书喝喝茶。\n',
+    )
     expect(kinds(r)).toEqual(['paragraph:del', 'paragraph:ins'])
   })
 })
@@ -126,15 +189,25 @@ describe('splitting, merging and moving', () => {
     expect(r.stats.inserted + r.stats.deleted).toBeGreaterThan(0)
   })
   it('a paragraph that only moved is the old one deleted and the new one inserted, both flagged as moved', () => {
-    const r = compare('第一段，讲春天的故事。\n\n第二段，讲夏天的故事。\n\n第三段，讲秋天的故事。\n', '第二段，讲夏天的故事。\n\n第三段，讲秋天的故事。\n\n第一段，讲春天的故事。\n')
+    const r = compare(
+      '第一段，讲春天的故事。\n\n第二段，讲夏天的故事。\n\n第三段，讲秋天的故事。\n',
+      '第二段，讲夏天的故事。\n\n第三段，讲秋天的故事。\n\n第一段，讲春天的故事。\n',
+    )
     const flagged = blocks(r).filter((b) => b.attrs?.diffMove)
     expect(flagged.map(diffAttr).sort()).toEqual(['del', 'ins'])
     expect(flagged.every((b) => text(b).startsWith('第一段'))).toBe(true)
     // Nothing else is marked.
-    expect(blocks(r).filter((b) => !b.attrs?.diffMove).every((b) => diffAttr(b) === 'eq')).toBe(true)
+    expect(
+      blocks(r)
+        .filter((b) => !b.attrs?.diffMove)
+        .every((b) => diffAttr(b) === 'eq'),
+    ).toBe(true)
   })
   it('swapping two paragraphs marks one as moved', () => {
-    const r = compare('甲段，写了很多内容在这里。\n\n乙段，也写了很多内容在这里。\n', '乙段，也写了很多内容在这里。\n\n甲段，写了很多内容在这里。\n')
+    const r = compare(
+      '甲段，写了很多内容在这里。\n\n乙段，也写了很多内容在这里。\n',
+      '乙段，也写了很多内容在这里。\n\n甲段，写了很多内容在这里。\n',
+    )
     expect(blocks(r).filter((b) => b.attrs?.diffMove)).toHaveLength(2)
   })
 })
@@ -153,7 +226,11 @@ describe('format changes', () => {
   })
   it('bold added to unchanged text', () => {
     const r = compare('这是一段普通的话。\n', '这是**一段普通**的话。\n')
-    expect(runs(blocks(r)[0])).toEqual([['eq', '这是'], ['fmt', '一段普通'], ['eq', '的话。']])
+    expect(runs(blocks(r)[0])).toEqual([
+      ['eq', '这是'],
+      ['fmt', '一段普通'],
+      ['eq', '的话。'],
+    ])
     expect(r.stats).toMatchObject({ inserted: 0, deleted: 0, formatted: 4, changes: 1 })
   })
   it('bold removed from unchanged text', () => {
@@ -162,8 +239,15 @@ describe('format changes', () => {
   })
   it('a link whose address changed but not its text', () => {
     const r = compare('见[这里](https://a.example)。\n', '见[这里](https://b.example)。\n')
-    expect(runs(blocks(r)[0])).toEqual([['eq', '见'], ['fmt', '这里'], ['eq', '。']])
-    const old = JSON.parse(String(blocks(r)[0].content![1].marks!.find((m) => m.type === FMT)!.attrs!.old)) as { type: string; attrs: { href: string } }[]
+    expect(runs(blocks(r)[0])).toEqual([
+      ['eq', '见'],
+      ['fmt', '这里'],
+      ['eq', '。'],
+    ])
+    const old = JSON.parse(String(blocks(r)[0].content![1].marks!.find((m) => m.type === FMT)!.attrs!.old)) as {
+      type: string
+      attrs: { href: string }
+    }[]
     expect(old[0].attrs.href).toBe('https://a.example')
   })
   it('bold text that was deleted stays bold', () => {
@@ -197,10 +281,16 @@ describe('lists', () => {
   it('a list item whose text changed wholly stays one item: the old text struck out, the new beside it', () => {
     const items = blocks(compare('- 一二三四\n- 香蕉\n', '- 五六七八\n- 香蕉\n'))[0].content!
     expect(items.map(diffAttr)).toEqual(['eq', 'eq'])
-    expect(runs(items[0].content![0])).toEqual([['del', '一二三四'], ['ins', '五六七八']])
+    expect(runs(items[0].content![0])).toEqual([
+      ['del', '一二三四'],
+      ['ins', '五六七八'],
+    ])
   })
   it('items reordered', () => {
-    const r = compare('- 第一项内容在这里\n- 第二项内容在这里\n- 第三项内容在这里\n', '- 第三项内容在这里\n- 第一项内容在这里\n- 第二项内容在这里\n')
+    const r = compare(
+      '- 第一项内容在这里\n- 第二项内容在这里\n- 第三项内容在这里\n',
+      '- 第三项内容在这里\n- 第一项内容在这里\n- 第二项内容在这里\n',
+    )
     const items = blocks(r)[0].content!
     expect(items.filter((i) => i.attrs?.diffMove)).toHaveLength(2)
   })
@@ -254,9 +344,24 @@ describe('blockquotes', () => {
 })
 
 describe('tables', () => {
-  const t = (rows: string[][]) => `${rows.map((r) => `| ${r.join(' | ')} |`).join('\n').replace('\n', `\n|${rows[0].map(() => ' --- ').join('|')}|\n`)}\n`
+  const t = (rows: string[][]) =>
+    `${rows
+      .map((r) => `| ${r.join(' | ')} |`)
+      .join('\n')
+      .replace('\n', `\n|${rows[0].map(() => ' --- ').join('|')}|\n`)}\n`
   it('a cell edited is compared inside that cell', () => {
-    const r = compare(t([['名称', '数量'], ['苹果', '十个'], ['香蕉', '五个']]), t([['名称', '数量'], ['苹果', '十二个'], ['香蕉', '五个']]))
+    const r = compare(
+      t([
+        ['名称', '数量'],
+        ['苹果', '十个'],
+        ['香蕉', '五个'],
+      ]),
+      t([
+        ['名称', '数量'],
+        ['苹果', '十二个'],
+        ['香蕉', '五个'],
+      ]),
+    )
     const table = blocks(r)[0]
     expect(table.type).toBe('table')
     expect(diffAttr(table)).toBe('eq')
@@ -265,20 +370,60 @@ describe('tables', () => {
     expect(table.content![2].content!.every((c) => !JSON.stringify(c).includes(INS))).toBe(true)
   })
   it('a row added', () => {
-    const r = compare(t([['名称', '数量'], ['苹果', '十个']]), t([['名称', '数量'], ['苹果', '十个'], ['香蕉', '五个']]))
+    const r = compare(
+      t([
+        ['名称', '数量'],
+        ['苹果', '十个'],
+      ]),
+      t([
+        ['名称', '数量'],
+        ['苹果', '十个'],
+        ['香蕉', '五个'],
+      ]),
+    )
     const rows = blocks(r)[0].content!
     expect(rows.map(diffAttr)).toEqual(['eq', 'eq', 'ins'])
   })
   it('a row removed', () => {
-    const rows = blocks(compare(t([['名称', '数量'], ['苹果', '十个'], ['香蕉', '五个']]), t([['名称', '数量'], ['苹果', '十个']])))[0].content!
+    const rows = blocks(
+      compare(
+        t([
+          ['名称', '数量'],
+          ['苹果', '十个'],
+          ['香蕉', '五个'],
+        ]),
+        t([
+          ['名称', '数量'],
+          ['苹果', '十个'],
+        ]),
+      ),
+    )[0].content!
     expect(rows.map(diffAttr)).toEqual(['eq', 'eq', 'del'])
   })
   it('a column added changes the shape: the old table is deleted and the new one inserted', () => {
-    const r = compare(t([['名称', '数量'], ['苹果', '十个']]), t([['名称', '数量', '价格'], ['苹果', '十个', '三元']]))
+    const r = compare(
+      t([
+        ['名称', '数量'],
+        ['苹果', '十个'],
+      ]),
+      t([
+        ['名称', '数量', '价格'],
+        ['苹果', '十个', '三元'],
+      ]),
+    )
     expect(kinds(r)).toEqual(['table:del', 'table:ins'])
   })
   it('a header cell edited', () => {
-    const r = compare(t([['名称', '数量'], ['苹果', '十个']]), t([['名称', '个数'], ['苹果', '十个']]))
+    const r = compare(
+      t([
+        ['名称', '数量'],
+        ['苹果', '十个'],
+      ]),
+      t([
+        ['名称', '个数'],
+        ['苹果', '十个'],
+      ]),
+    )
     expect(diffAttr(blocks(r)[0])).toBe('eq')
     expect(JSON.stringify(blocks(r)[0].content![0])).toContain(INS)
   })
@@ -296,7 +441,12 @@ describe('blocks that are only the same or replaced', () => {
   it('an image inside a sentence is compared as one unit', () => {
     const r = compare('看图：![x](a.png) 完毕。\n', '看图：![x](b.png) 完毕。\n')
     const rs = runs(blocks(r)[0])
-    expect(rs).toEqual([['eq', '看图：'], ['del', '<image>'], ['ins', '<image>'], ['eq', ' 完毕。']])
+    expect(rs).toEqual([
+      ['eq', '看图：'],
+      ['del', '<image>'],
+      ['ins', '<image>'],
+      ['eq', ' 完毕。'],
+    ])
   })
   it('raw HTML', () => {
     const r = compare('<div class="a">x</div>\n\n正文。\n', '<div class="b">x</div>\n\n正文。\n')
@@ -304,7 +454,11 @@ describe('blocks that are only the same or replaced', () => {
   })
   it('inline raw HTML is a unit', () => {
     const r = compare('文字<br class="a">更多\n', '文字<br class="b">更多\n')
-    expect(runs(blocks(r)[0]).filter((x) => x[0] !== 'eq').map((x) => x[1])).toEqual(['<rawInline>', '<rawInline>'])
+    expect(
+      runs(blocks(r)[0])
+        .filter((x) => x[0] !== 'eq')
+        .map((x) => x[1]),
+    ).toEqual(['<rawInline>', '<rawInline>'])
   })
   it('a footnote definition edited is replaced, a footnote mark is a unit', () => {
     const r = compare('正文[^1]。\n\n[^1]: 旧的注释。\n', '正文[^1]。\n\n[^1]: 新的注释。\n')
@@ -313,7 +467,11 @@ describe('blocks that are only the same or replaced', () => {
     expect(runs(blocks(r2)[0]).some((x) => x[0] === 'del' && x[1] === '<footnoteRef>')).toBe(true)
   })
   it('a rule added', () => {
-    expect(kinds(compare('甲。\n\n乙。\n', '甲。\n\n---\n\n乙。\n'))).toEqual(['paragraph:eq', 'horizontalRule:ins', 'paragraph:eq'])
+    expect(kinds(compare('甲。\n\n乙。\n', '甲。\n\n---\n\n乙。\n'))).toEqual([
+      'paragraph:eq',
+      'horizontalRule:ins',
+      'paragraph:eq',
+    ])
   })
 })
 
@@ -332,10 +490,33 @@ describe('line breaks', () => {
 describe('header', () => {
   it('lists changes of title, subtitle, source, tags and other keys', () => {
     const r = diffVersions(
-      { meta: { id: 'x', title: '暮雪', subtitle: '旧', source: 'a', tags: ['玉兰', '黄昏'], status: '草稿', created: '2025-01-01' }, body: '' },
-      { meta: { id: 'x', title: '暮雪（改）', tags: ['玉兰', '冬'], status: '定稿', series: '冬季', created: '2025-01-01' }, body: '' },
+      {
+        meta: {
+          id: 'x',
+          title: '暮雪',
+          subtitle: '旧',
+          source: 'a',
+          tags: ['玉兰', '黄昏'],
+          status: '草稿',
+          created: '2025-01-01',
+        },
+        body: '',
+      },
+      {
+        meta: {
+          id: 'x',
+          title: '暮雪（改）',
+          tags: ['玉兰', '冬'],
+          status: '定稿',
+          series: '冬季',
+          created: '2025-01-01',
+        },
+        body: '',
+      },
     )
-    const by = Object.fromEntries(r.header.map((h) => [h.kind === 'text' ? h.field : h.kind === 'other' ? h.key : h.kind, h]))
+    const by = Object.fromEntries(
+      r.header.map((h) => [h.kind === 'text' ? h.field : h.kind === 'other' ? h.key : h.kind, h]),
+    )
     expect(by.title).toMatchObject({ kind: 'text', from: '暮雪', to: '暮雪（改）' })
     expect(by.subtitle).toMatchObject({ kind: 'text', from: '旧', to: '' })
     expect(by.source).toMatchObject({ kind: 'text', from: 'a', to: '' })
@@ -347,10 +528,20 @@ describe('header', () => {
   })
   it('the title change is compared by word', () => {
     const r = diffVersions({ meta: { title: '关于慢' }, body: '' }, { meta: { title: '关于快' }, body: '' })
-    expect(r.header[0]).toMatchObject({ kind: 'text', parts: [{ type: 'eq', text: '关于' }, { type: 'del', text: '慢' }, { type: 'ins', text: '快' }] })
+    expect(r.header[0]).toMatchObject({
+      kind: 'text',
+      parts: [
+        { type: 'eq', text: '关于' },
+        { type: 'del', text: '慢' },
+        { type: 'ins', text: '快' },
+      ],
+    })
   })
   it('ignores the id and the order of keys and tags', () => {
-    const r = diffVersions({ meta: { id: 'a', x: { p: 1, q: 2 }, tags: ['a', 'b'] }, body: '' }, { meta: { id: 'b', tags: ['b', 'a'], x: { q: 2, p: 1 } }, body: '' })
+    const r = diffVersions(
+      { meta: { id: 'a', x: { p: 1, q: 2 }, tags: ['a', 'b'] }, body: '' },
+      { meta: { id: 'b', tags: ['b', 'a'], x: { q: 2, p: 1 } }, body: '' },
+    )
     expect(r.header).toEqual([])
     expect(r.identical).toBe(true)
   })
@@ -426,7 +617,6 @@ describe('speed', () => {
 
 // --- property: both sides can always be read back --------------------------------------
 
-
 function rng(seed: number) {
   let s = seed
   return () => {
@@ -476,9 +666,13 @@ describe('property: the old side and the new side of a comparison are the two ve
     const r = rng(99)
     const alphabet = ['今', '天', '气', '好', ' ', 'a', 'b', 'cat', '，', '。', '的', '**', '*', '[x](u)']
     for (let n = 0; n < 300; n++) {
-      const mk = () => Array.from({ length: 3 + Math.floor(r() * 12) }, () => alphabet[Math.floor(r() * alphabet.length)]).join('')
+      const mk = () =>
+        Array.from({ length: 3 + Math.floor(r() * 12) }, () => alphabet[Math.floor(r() * alphabet.length)]).join('')
       const a = mk()
-      const b = n % 3 === 0 ? mk() : a.slice(0, Math.floor(r() * a.length)) + mk().slice(0, 3) + a.slice(Math.floor(r() * a.length))
+      const b =
+        n % 3 === 0
+          ? mk()
+          : a.slice(0, Math.floor(r() * a.length)) + mk().slice(0, 3) + a.slice(Math.floor(r() * a.length))
       try {
         compare(a, b)
       } catch (e) {

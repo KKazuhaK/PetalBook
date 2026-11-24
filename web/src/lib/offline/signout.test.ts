@@ -22,7 +22,22 @@ async function keepCopies() {
   await syncSpace(s)
   // Somebody else's copy of the same space, on the same browser.
   const other = (await configure('another-person', space, { ...DEFAULT_CONFIG }))!
-  await other.applyCatalog([{ id: 'X', path: 'X.md', folder: '', label: 'x', untitled: false, tags: [], type: '', updated: '2026-11-23T08:00:00Z', rev: 'r' }], [])
+  await other.applyCatalog(
+    [
+      {
+        id: 'X',
+        path: 'X.md',
+        folder: '',
+        label: 'x',
+        untitled: false,
+        tags: [],
+        type: '',
+        updated: '2026-11-23T08:00:00Z',
+        rev: 'r',
+      },
+    ],
+    [],
+  )
 }
 
 describe('signing out', () => {
@@ -30,7 +45,7 @@ describe('signing out', () => {
     expect(currentUserId()).toBe(me)
   })
 
-  it('deletes this account\'s copies from the device, and nobody else\'s', async () => {
+  it("deletes this account's copies from the device, and nobody else's", async () => {
     await keepCopies()
     expect(hasCopy(me, space)).toBe(true)
     await api.logout()
@@ -38,7 +53,9 @@ describe('signing out', () => {
     expect(hasCopy(me, space)).toBe(false)
     expect(spacesOf(me)).toEqual([])
     expect(await existingStore(me, space)).toBeUndefined()
-    expect((await indexedDB.databases()).map((d) => d.name).filter((n) => n?.includes(encodeURIComponent(me)))).toEqual([])
+    expect((await indexedDB.databases()).map((d) => d.name).filter((n) => n?.includes(encodeURIComponent(me)))).toEqual(
+      [],
+    )
     // Another account's is still there, and still readable.
     expect(hasCopy('another-person', space)).toBe(true)
     expect(await (await storeFor('another-person', space)).catalogCount()).toBe(1)

@@ -4,7 +4,16 @@
 // "measured" (POST /admin/spaces/{id}/size), as the real server's background measurement writes them: nothing is
 // counted when it is asked for.
 
-import type { AccountUsage, AdminUsageList, OwnQuota, PersonQuotaKey, PersonUsage, TenantQuotaKey, TenantUsage, UsageNotice } from '../types.ts'
+import type {
+  AccountUsage,
+  AdminUsageList,
+  OwnQuota,
+  PersonQuotaKey,
+  PersonUsage,
+  TenantQuotaKey,
+  TenantUsage,
+  UsageNotice,
+} from '../types.ts'
 import { HttpError } from './store.ts'
 
 const bad = (message: string): never => {
@@ -13,7 +22,11 @@ const bad = (message: string): never => {
 
 const KEYS: PersonQuotaKey[] = ['spaces', 'bytes', 'pages']
 const RANGE: Record<PersonQuotaKey, [number, number]> = { spaces: [0, 10000], bytes: [1, 2 ** 50], pages: [1, 2 ** 40] }
-const SETTING: Record<PersonQuotaKey, string> = { spaces: 'quota.spacesPerPerson', bytes: 'quota.bytesPerPerson', pages: 'quota.pagesPerPerson' }
+const SETTING: Record<PersonQuotaKey, string> = {
+  spaces: 'quota.spacesPerPerson',
+  bytes: 'quota.bytesPerPerson',
+  pages: 'quota.pagesPerPerson',
+}
 
 // A space as the book sees it: who it is counted for, and what its last measurement found.
 export interface UsageSpace {
@@ -63,7 +76,8 @@ export function createQuotaBook(o: QuotaBookOptions) {
       measuredAt: measured.length && Math.max(...measured) > 0 ? Math.max(...measured) : null,
     }
   }
-  const over = (row: { spaces: number; bytes: number; pages: number }, l: OwnQuota): PersonQuotaKey[] => KEYS.filter((k) => l[k] !== null && row[k] > (l[k] as number))
+  const over = (row: { spaces: number; bytes: number; pages: number }, l: OwnQuota): PersonQuotaKey[] =>
+    KEYS.filter((k) => l[k] !== null && row[k] > (l[k] as number))
 
   const tenantRow = (): TenantUsage => {
     const all = o.spaces()
@@ -76,7 +90,9 @@ export function createQuotaBook(o: QuotaBookOptions) {
       pages: all.reduce((n, s) => n + s.pages, 0),
     }
     const at = Math.max(0, ...all.map((s) => s.measuredAt ?? 0))
-    const tenantOver = (['people', 'spaces', 'bytes', 'pages'] as TenantQuotaKey[]).filter((k) => q[k] !== null && row[k] > (q[k] as number))
+    const tenantOver = (['people', 'spaces', 'bytes', 'pages'] as TenantQuotaKey[]).filter(
+      (k) => q[k] !== null && row[k] > (q[k] as number),
+    )
     return { ...row, measuredAt: at > 0 ? o.rfc3339(at) : null, over: tenantOver }
   }
 
@@ -87,13 +103,21 @@ export function createQuotaBook(o: QuotaBookOptions) {
       const row = personRow(p.id)
       const now = over(row, l)
       const before = (was.get(p.id) ?? '').split(',').filter(Boolean)
-      for (const k of now) if (!before.includes(k)) o.record('quota_exceeded', { user: p.id, tenant: o.tenant, detail: { quota: k, limit: l[k], used: row[k], scope: 'person' } })
+      for (const k of now)
+        if (!before.includes(k))
+          o.record('quota_exceeded', {
+            user: p.id,
+            tenant: o.tenant,
+            detail: { quota: k, limit: l[k], used: row[k], scope: 'person' },
+          })
       was.set(p.id, now.join(','))
     }
     const t = tenantRow()
     const q = o.tenantQuota()
     const before = (was.get('tenant') ?? '').split(',').filter(Boolean)
-    for (const k of t.over) if (!before.includes(k)) o.record('quota_exceeded', { tenant: o.tenant, detail: { quota: k, limit: q[k], used: t[k], scope: 'tenant' } })
+    for (const k of t.over)
+      if (!before.includes(k))
+        o.record('quota_exceeded', { tenant: o.tenant, detail: { quota: k, limit: q[k], used: t[k], scope: 'tenant' } })
     was.set('tenant', t.over.join(','))
   }
 
@@ -105,10 +129,20 @@ export function createQuotaBook(o: QuotaBookOptions) {
     checkSpace(userId: string) {
       const l = limitsOf(userId)
       const used = personRow(userId).spaces
-      if (l.spaces !== null && used >= l.spaces) throw new HttpError(403, 'quota_exceeded', `you already own ${used} spaces, the most you may have`, { quota: 'spaces', limit: l.spaces, used })
+      if (l.spaces !== null && used >= l.spaces)
+        throw new HttpError(403, 'quota_exceeded', `you already own ${used} spaces, the most you may have`, {
+          quota: 'spaces',
+          limit: l.spaces,
+          used,
+        })
       const q = o.tenantQuota().spaces
       const all = o.spaces().length
-      if (q !== null && q > 0 && all >= q) throw new HttpError(403, 'quota_exceeded', `this tenant already has ${all} spaces, the most it may have`, { quota: 'spaces', limit: q, used: all })
+      if (q !== null && q > 0 && all >= q)
+        throw new HttpError(403, 'quota_exceeded', `this tenant already has ${all} spaces, the most it may have`, {
+          quota: 'spaces',
+          limit: q,
+          used: all,
+        })
     },
     account(userId: string): AccountUsage {
       const l = limitsOf(userId)
@@ -177,15 +211,23 @@ export function createQuotaBook(o: QuotaBookOptions) {
           next[key] = null
           continue
         }
-        if (typeof v !== 'number' || !Number.isInteger(v) || v < RANGE[key][0] || v > RANGE[key][1]) bad(`quota.${k} is a number from ${RANGE[key][0]} to ${RANGE[key][1]}, or null to follow the tenant`)
+        if (typeof v !== 'number' || !Number.isInteger(v) || v < RANGE[key][0] || v > RANGE[key][1])
+          bad(`quota.${k} is a number from ${RANGE[key][0]} to ${RANGE[key][1]}, or null to follow the tenant`)
         const lower = o.lowerOf(SETTING[key], site)
-        if (lower.mode === 'lock') throw new HttpError(409, 'setting_locked', `${SETTING[key]} is locked: nobody below it may change it`)
-        if (lower.mode === 'restrict' && (lower.max === undefined || (v as number) > lower.max)) throw new HttpError(409, 'setting_restricted', `${SETTING[key]}: above what the layer above allows`)
+        if (lower.mode === 'lock')
+          throw new HttpError(409, 'setting_locked', `${SETTING[key]} is locked: nobody below it may change it`)
+        if (lower.mode === 'restrict' && (lower.max === undefined || (v as number) > lower.max))
+          throw new HttpError(409, 'setting_restricted', `${SETTING[key]}: above what the layer above allows`)
         if (!site) {
           // Above the tenant's value only a site administrator may go; no limit is the highest.
           const cap = o.setting(SETTING[key])
           const rank = (n: number | null) => (n === null || (key === 'spaces' && n === 0) ? Infinity : n)
-          if (rank(v as number) > rank(cap)) throw new HttpError(403, 'forbidden', "only an administrator of the whole server may give a person more than their tenant allows")
+          if (rank(v as number) > rank(cap))
+            throw new HttpError(
+              403,
+              'forbidden',
+              'only an administrator of the whole server may give a person more than their tenant allows',
+            )
         }
         next[key] = v as number
       }

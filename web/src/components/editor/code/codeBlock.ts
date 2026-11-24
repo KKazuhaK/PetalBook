@@ -28,7 +28,13 @@ export const CodeBlockWithView = CodeBlock.extend({
           for (let depth = $from.depth; depth > 0; depth--) {
             const node = $from.node(depth)
             if (node.type.name !== this.name) continue
-            if (dispatch) dispatch(tr.setNodeMarkup($from.before(depth), undefined, { ...node.attrs, language: withLanguage(node.attrs.language, id) }))
+            if (dispatch)
+              dispatch(
+                tr.setNodeMarkup($from.before(depth), undefined, {
+                  ...node.attrs,
+                  language: withLanguage(node.attrs.language, id),
+                }),
+              )
             return true
           }
           return false

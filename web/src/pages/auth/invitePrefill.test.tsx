@@ -24,16 +24,20 @@ const routes = (
   </Routes>
 )
 const text = () => document.body.textContent ?? ''
-const field = (autocomplete: string) => document.querySelector<HTMLInputElement>(`input[autocomplete="${autocomplete}"]`)!
+const field = (autocomplete: string) =>
+  document.querySelector<HTMLInputElement>(`input[autocomplete="${autocomplete}"]`)!
 
 async function open(fill?: { username: string; name: string; email: string }) {
   window.location.hash = '#inv-fill'
-  m = await mount(routes, { entries: ['/invite'], server: { mode: 'accounts', invite: { token: 'inv-fill', role: 'admin', fill } } })
+  m = await mount(routes, {
+    entries: ['/invite'],
+    server: { mode: 'accounts', invite: { token: 'inv-fill', role: 'admin', fill } },
+  })
   await settle(() => document.querySelector('form input[autocomplete="username"]') !== null, 'the form')
 }
 
 describe('an invite that fills in the form', () => {
-  it('starts the username and name with what it says, shows the address that will be the account\'s, and accepts with the password alone', async () => {
+  it("starts the username and name with what it says, shows the address that will be the account's, and accepts with the password alone", async () => {
     await open({ username: 'wu', name: 'Wu Wei', email: 'wu@acme.example' })
     await settle(() => field('username').value === 'wu', 'the username')
     expect(field('name').value).toBe('Wu Wei')

@@ -6,11 +6,31 @@ import { createContext, lazy, Suspense, useContext, useEffect, useMemo, useRef, 
 import { useLocation, useNavigate } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { useActiveSpace, useCreatePage, useSpaceApi, useTree, useUrls, invalidateListings, keys, useSpaceId } from '@/api/hooks'
+import {
+  useActiveSpace,
+  useCreatePage,
+  useSpaceApi,
+  useTree,
+  useUrls,
+  invalidateListings,
+  keys,
+  useSpaceId,
+} from '@/api/hooks'
 import type { PageMeta, PageTemplate } from '@/api/types'
 import { defaultFor, tzOffset } from '@/lib/templates'
 import { ApiError } from '@/api/client'
-import { baseName, buildFolderIndex, isSameOrUnder, joinPath, pagesInside, parentOf, pathAfter, planDrop, type FileItem, type FolderIndex } from '@/lib/folders'
+import {
+  baseName,
+  buildFolderIndex,
+  isSameOrUnder,
+  joinPath,
+  pagesInside,
+  parentOf,
+  pathAfter,
+  planDrop,
+  type FileItem,
+  type FolderIndex,
+} from '@/lib/folders'
 import { t } from '@/i18n'
 import { DeleteItemsDialog } from './DeleteItemsDialog'
 import { MoveItemsDialog } from './MoveItemsDialog'
@@ -90,7 +110,8 @@ export function FileOpsProvider({ children }: { children: ReactNode }) {
   // is followed to its new address instead of leaving a page that is gone.
   const follow = (from: string, to: string) => {
     const here = viewing()
-    if (here !== null && here !== '' && isSameOrUnder(here, from)) navigate(where.current.folder(to + here.slice(from.length)), { replace: true })
+    if (here !== null && here !== '' && isSameOrUnder(here, from))
+      navigate(where.current.folder(to + here.slice(from.length)), { replace: true })
   }
 
   const refresh = () => invalidateListings(qc, space)
@@ -101,54 +122,55 @@ export function FileOpsProvider({ children }: { children: ReactNode }) {
   }
 
   const moveTo = async (items: FileItem[], target: string): Promise<boolean> => {
-      const plan = planDrop(items, target, index)
-      if (!plan.ok) {
-        if (plan.reason === 'self') toast.error(t.manage.cannotMoveIntoSelf)
-        else if (plan.reason === 'exists') toast.error(t.manage.folderExistsThere(target === '' ? spaceName : baseName(target)))
-        return false
+    const plan = planDrop(items, target, index)
+    if (!plan.ok) {
+      if (plan.reason === 'self') toast.error(t.manage.cannotMoveIntoSelf)
+      else if (plan.reason === 'exists')
+        toast.error(t.manage.folderExistsThere(target === '' ? spaceName : baseName(target)))
+      return false
+    }
+    if (plan.conflicts.length > 0) toast.error(t.manage.folderExistsThere(target === '' ? spaceName : baseName(target)))
+    const pages = plan.moving.filter((i): i is Extract<FileItem, { kind: 'page' }> => i.kind === 'page')
+    const folders = plan.moving.filter((i): i is Extract<FileItem, { kind: 'folder' }> => i.kind === 'folder')
+    // What is needed to put it all back, newest first.
+    const undo: (() => Promise<unknown>)[] = []
+    let moved = 0
+    try {
+      if (pages.length > 0) {
+        await api.batchPages({ op: 'move', ids: pages.map((p) => p.id), folder: target })
+        moved += pages.length
+        const from = new Map<string, string[]>()
+        for (const p of pages) from.set(p.folder, [...(from.get(p.folder) ?? []), p.id])
+        for (const [folder, ids] of from) undo.unshift(() => api.batchPages({ op: 'move', ids, folder }))
       }
-      if (plan.conflicts.length > 0) toast.error(t.manage.folderExistsThere(target === '' ? spaceName : baseName(target)))
-      const pages = plan.moving.filter((i): i is Extract<FileItem, { kind: 'page' }> => i.kind === 'page')
-      const folders = plan.moving.filter((i): i is Extract<FileItem, { kind: 'folder' }> => i.kind === 'folder')
-      // What is needed to put it all back, newest first.
-      const undo: (() => Promise<unknown>)[] = []
-      let moved = 0
-      try {
-        if (pages.length > 0) {
-          await api.batchPages({ op: 'move', ids: pages.map((p) => p.id), folder: target })
-          moved += pages.length
-          const from = new Map<string, string[]>()
-          for (const p of pages) from.set(p.folder, [...(from.get(p.folder) ?? []), p.id])
-          for (const [folder, ids] of from) undo.unshift(() => api.batchPages({ op: 'move', ids, folder }))
-        }
-        for (const f of folders) {
-          const to = joinPath(target, baseName(f.path))
-          await moveFolderNow(f.path, to)
-          moved += 1
-          undo.unshift(() => moveFolderNow(to, f.path))
-        }
-      } catch (e) {
-        toast.error(t.fmt.labelled(t.manage.moveFailed, failureText(e)))
+      for (const f of folders) {
+        const to = joinPath(target, baseName(f.path))
+        await moveFolderNow(f.path, to)
+        moved += 1
+        undo.unshift(() => moveFolderNow(to, f.path))
       }
-      await refresh()
-      if (moved === 0) return false
-      toast(t.manage.moved(moved, target === '' ? spaceName : baseName(target)), {
-        action: {
-          label: t.manage.undo,
-          onClick: () => {
-            void (async () => {
-              try {
-                for (const step of undo) await step()
-                toast.success(t.manage.undone)
-              } catch (e) {
-                toast.error(t.fmt.labelled(t.manage.moveFailed, failureText(e)))
-              }
-              await refresh()
-            })()
-          },
+    } catch (e) {
+      toast.error(t.fmt.labelled(t.manage.moveFailed, failureText(e)))
+    }
+    await refresh()
+    if (moved === 0) return false
+    toast(t.manage.moved(moved, target === '' ? spaceName : baseName(target)), {
+      action: {
+        label: t.manage.undo,
+        onClick: () => {
+          void (async () => {
+            try {
+              for (const step of undo) await step()
+              toast.success(t.manage.undone)
+            } catch (e) {
+              toast.error(t.fmt.labelled(t.manage.moveFailed, failureText(e)))
+            }
+            await refresh()
+          })()
         },
-      })
-      return true
+      },
+    })
+    return true
   }
 
   const deleteNow = async (items: FileItem[]) => {
@@ -165,7 +187,8 @@ export function FileOpsProvider({ children }: { children: ReactNode }) {
         await api.deleteFolder(f.path, true)
         done += 1
         const here = viewing()
-        if (here !== null && here !== '' && isSameOrUnder(here, f.path)) navigate(where.current.folder(parentOf(f.path)), { replace: true })
+        if (here !== null && here !== '' && isSameOrUnder(here, f.path))
+          navigate(where.current.folder(parentOf(f.path)), { replace: true })
       }
       toast.success(t.manage.deleted(done))
     } catch (e) {
@@ -180,12 +203,20 @@ export function FileOpsProvider({ children }: { children: ReactNode }) {
   // `template` is left out for the server's choice (the folder's default, or the quick note's), "" is a blank page.
   const makePage = async (folder: string, meta?: PageMeta, template?: string) => {
     try {
-      const page = await createPage.mutateAsync({ folder, body: '', tz: tzOffset(), ...(meta ? { meta } : {}), ...(template === undefined ? {} : { template }) })
+      const page = await createPage.mutateAsync({
+        folder,
+        body: '',
+        tz: tzOffset(),
+        ...(meta ? { meta } : {}),
+        ...(template === undefined ? {} : { template }),
+      })
       navigate(urls.page(page.id))
     } catch (e) {
       // A refusal with a code of its own is told in the words of templates (loaded only now).
       const code = e instanceof ApiError ? (e.code as string) : ''
-      const text = code.startsWith('template_') ? (await import('@/lib/templateErrors')).templateMessage(e, failureText(e)) : failureText(e)
+      const text = code.startsWith('template_')
+        ? (await import('@/lib/templateErrors')).templateMessage(e, failureText(e))
+        : failureText(e)
       toast.error(t.fmt.labelled(t.list.createFailed, text))
     }
   }
@@ -201,9 +232,17 @@ export function FileOpsProvider({ children }: { children: ReactNode }) {
       const quick = inbox !== '' && folder.toLowerCase() === inbox.toLowerCase()
       if (!quick) {
         // Read now, not from what was read a while ago: the folder's default may have changed since.
-        const list = await qc.fetchQuery({ queryKey: keys.templates(space), queryFn: ({ signal }) => api.templates(signal), staleTime: 0 }).catch(() => null)
+        const list = await qc
+          .fetchQuery({ queryKey: keys.templates(space), queryFn: ({ signal }) => api.templates(signal), staleTime: 0 })
+          .catch(() => null)
         if (list && list.templates.length > 0) {
-          setDialog({ kind: 'newPage', folder, meta, templates: list.templates, initial: defaultFor(folder, list.defaults, list.templates) })
+          setDialog({
+            kind: 'newPage',
+            folder,
+            meta,
+            templates: list.templates,
+            initial: defaultFor(folder, list.defaults, list.templates),
+          })
           return
         }
       }
@@ -226,8 +265,15 @@ export function FileOpsProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={ops}>
       {children}
-      <NewFolderDialog open={dialog?.kind === 'newFolder'} onOpenChange={(o) => !o && close()} parent={dialog?.kind === 'newFolder' ? dialog.parent : ''} spaceName={spaceName} />
-      {dialog?.kind === 'rename' && <RenameFolderDialog path={dialog.path} index={index} onRename={ops.renameFolder} onClose={close} />}
+      <NewFolderDialog
+        open={dialog?.kind === 'newFolder'}
+        onOpenChange={(o) => !o && close()}
+        parent={dialog?.kind === 'newFolder' ? dialog.parent : ''}
+        spaceName={spaceName}
+      />
+      {dialog?.kind === 'rename' && (
+        <RenameFolderDialog path={dialog.path} index={index} onRename={ops.renameFolder} onClose={close} />
+      )}
       {dialog?.kind === 'setType' && (
         <Suspense fallback={null}>
           <SetTypeDialog path={dialog.path} spaceName={spaceName} onClose={close} />
@@ -240,7 +286,13 @@ export function FileOpsProvider({ children }: { children: ReactNode }) {
       )}
       {dialog?.kind === 'newPage' && (
         <Suspense fallback={null}>
-          <NewPageDialog where={dialog.folder === '' ? spaceName : baseName(dialog.folder)} templates={dialog.templates} initial={dialog.initial} onCreate={(template) => makePage(dialog.folder, dialog.meta, template)} onClose={close} />
+          <NewPageDialog
+            where={dialog.folder === '' ? spaceName : baseName(dialog.folder)}
+            templates={dialog.templates}
+            initial={dialog.initial}
+            onCreate={(template) => makePage(dialog.folder, dialog.meta, template)}
+            onClose={close}
+          />
         </Suspense>
       )}
       {dialog?.kind === 'move' && (

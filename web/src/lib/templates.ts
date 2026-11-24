@@ -14,7 +14,8 @@ export function templateNameProblem(name: string, others: string[]): NameProblem
   if (name === '') return 'empty'
   if (Array.from(name).length > 80) return 'long'
   if (name === 'defaults' || /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(name)) return 'reserved'
-  if (/[<>:"/\\|?*\p{Cc}]/u.test(name) || name.startsWith('.') || /[.\s]$/.test(name) || name !== name.trim()) return 'chars'
+  if (/[<>:"/\\|?*\p{Cc}]/u.test(name) || name.startsWith('.') || /[.\s]$/.test(name) || name !== name.trim())
+    return 'chars'
   if (others.some((o) => o.toLowerCase() === name.toLowerCase())) return 'exists'
   return null
 }
@@ -42,10 +43,18 @@ export function draftOf(meta: PageMeta | undefined): HeaderDraft {
   }
 }
 
-export const tagList = (s: string): string[] => [...new Set(s.split(/[,，]/).map((x) => x.trim()).filter((x) => x !== ''))]
+export const tagList = (s: string): string[] => [
+  ...new Set(
+    s
+      .split(/[,，]/)
+      .map((x) => x.trim())
+      .filter((x) => x !== ''),
+  ),
+]
 
 // How many header fields the form leaves as they are.
-export const otherKeys = (meta: PageMeta | undefined): string[] => Object.keys(meta ?? {}).filter((k) => !(FORM_KEYS as readonly string[]).includes(k) && k !== 'id' && k !== 'created')
+export const otherKeys = (meta: PageMeta | undefined): string[] =>
+  Object.keys(meta ?? {}).filter((k) => !(FORM_KEYS as readonly string[]).includes(k) && k !== 'id' && k !== 'created')
 
 // The header to send: the fields the form does not have as the template had them, the others as typed (left out when empty).
 export function metaOf(base: PageMeta | undefined, d: HeaderDraft): PageMeta {

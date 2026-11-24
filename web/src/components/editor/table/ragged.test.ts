@@ -28,7 +28,9 @@ describe('a table whose rows differ in length', () => {
 // changes column when the table is first edited.
 describe('rows of different lengths keep their columns', () => {
   it('a short row gets empty cells at its end, a long row widens the table', () => {
-    expect(docToMarkdown(markdownToDoc('| a | b | c |\n| --- | --- | --- |\n| 1 |\n'))).toBe('| a | b | c |\n| --- | --- | --- |\n| 1 | | |\n')
+    expect(docToMarkdown(markdownToDoc('| a | b | c |\n| --- | --- | --- |\n| 1 |\n'))).toBe(
+      '| a | b | c |\n| --- | --- | --- |\n| 1 | | |\n',
+    )
     const wide = markdownToDoc('| a | b |\n| --- | --- |\n| 1 | 2 | 3 |\n')
     const editor = new Editor({ extensions: [...createExtensions(), TableTools], content: wide })
     let first = -1

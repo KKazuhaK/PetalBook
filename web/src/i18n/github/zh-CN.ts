@@ -10,7 +10,8 @@ export const githubZhCN: GitHubMessages = {
     ownerNone: '没有可以同步到的 GitHub 账号。请先连接你自己的。',
     connect: '连接 GitHub',
     needsInstall: '需要安装',
-    needsInstallHelp: (login: string) => `App 装到 ${login} 这个账号上之前，GitHub 不让在里面建任何东西。安装的同时就完成了连接。`,
+    needsInstallHelp: (login: string) =>
+      `App 装到 ${login} 这个账号上之前，GitHub 不让在里面建任何东西。安装的同时就完成了连接。`,
     installOnMine: '安装到我的账号',
     checkAgain: '重新检查',
     checkingAgain: '正在检查…',
@@ -30,7 +31,8 @@ export const githubZhCN: GitHubMessages = {
     creating: '正在创建…',
     takenAsk: (full: string) => `${full} 已经存在。要把这个空间同步到它吗？`,
     useExisting: '使用已有的',
-    leftBehind: (full: string) => `${full} 已经在 GitHub 上建好，现在还是空的，那边什么也没有删。再试一次，把新空间同步到它；关掉这里也没关系，设置的「已连接的账号」里会留一条提醒。`,
+    leftBehind: (full: string) =>
+      `${full} 已经在 GitHub 上建好，现在还是空的，那边什么也没有删。再试一次，把新空间同步到它；关掉这里也没关系，设置的「已连接的账号」里会留一条提醒。`,
     useLeft: '同步到它',
     openOnGitHub: '在 GitHub 上打开',
     whereServer: '这台服务器',
@@ -40,7 +42,8 @@ export const githubZhCN: GitHubMessages = {
     whereOtherHelp: '先在这台服务器上建好空间，再到它的同步设置里填写同步的地址。',
     errors: {
       nameTaken: '这个所有者下已经有同名的了。',
-      notInInstallation: 'App 在那里的安装够不着新建的位置，也没能把它加进去。请在 GitHub 上的安装设置里加上它，再试一次。',
+      notInInstallation:
+        'App 在那里的安装够不着新建的位置，也没能把它加进去。请在 GitHub 上的安装设置里加上它，再试一次。',
       pushFailed: '在 GitHub 上建好了，但空间没能同步上去。',
       noPermission: (reason: string) => `GitHub 拒绝创建：${reason}`,
       ownerNotAllowed: '你不能在这个所有者下创建。',
@@ -48,8 +51,10 @@ export const githubZhCN: GitHubMessages = {
       notConfigured: '这台服务器没有设置 GitHub App。',
       rateLimited: 'GitHub 暂时在限制这台服务器，请稍后再试。',
       unavailable: '连不上 GitHub，什么也没有建，请再试。',
-      notInstalled: (login: string) => `App 还没有装到你的账号 ${login} 上，装好之前 GitHub 不让在里面创建。请先点「安装到我的账号」。`,
-      missingPermission: (names: readonly string[]) => `App 或它的安装缺少 ${[...names].join('、')} 权限。需要管理员在 GitHub 上给 App 加上，并在安装设置里接受变更。`,
+      notInstalled: (login: string) =>
+        `App 还没有装到你的账号 ${login} 上，装好之前 GitHub 不让在里面创建。请先点「安装到我的账号」。`,
+      missingPermission: (names: readonly string[]) =>
+        `App 或它的安装缺少 ${[...names].join('、')} 权限。需要管理员在 GitHub 上给 App 加上，并在安装设置里接受变更。`,
     },
   },
   account: {
@@ -58,7 +63,8 @@ export const githubZhCN: GitHubMessages = {
     notConfigured: '这台服务器没有设置 GitHub，没有什么可连接的。',
     notConfiguredAdmin: '你可以在管理页的「存储与同步」里设置。',
     userAuthOff: '这台服务器上暂时还不能连接个人的 GitHub 账号。',
-    userAuthOffAdmin: '需要 App 的 client id 和 secret，以及服务器的公开地址（--public-url）；见管理页的「存储与同步」。',
+    userAuthOffAdmin:
+      '需要 App 的 client id 和 secret，以及服务器的公开地址（--public-url）；见管理页的「存储与同步」。',
     install: (app: string) => `把 ${app} 安装到某个 GitHub 账号或组织`,
     notConnected: '你的 GitHub 账号还没有连接。',
     connect: '连接 GitHub',
@@ -91,16 +97,19 @@ export const githubZhCN: GitHubMessages = {
     usedByHelp: '通过你的连接（而不是 App）同步的空间。',
     spaces: (n: number) => `${n} 个空间`,
     expiredTitle: '连接已经过期',
-    expiredBody: 'GitHub 不再接受它（过期或被撤销了）。用它同步的空间仍然可以阅读；修改会先等着，草稿都在，重新连接后就会继续。',
+    expiredBody:
+      'GitHub 不再接受它（过期或被撤销了）。用它同步的空间仍然可以阅读；修改会先等着，草稿都在，重新连接后就会继续。',
     disconnect: '断开连接',
     disconnectTitle: '断开 GitHub？',
-    disconnectWarn: (n: number) => `有 ${n} 个空间通过这个连接同步。断开后它们会停止同步并显示错误，直到换成别的凭据或你重新连接。空间里的内容不会丢。`,
+    disconnectWarn: (n: number) =>
+      `有 ${n} 个空间通过这个连接同步。断开后它们会停止同步并显示错误，直到换成别的凭据或你重新连接。空间里的内容不会丢。`,
     disconnectNone: '没有空间通过这个连接同步。服务器也会请 GitHub 撤销授权。',
     cancel: '取消',
     disconnectConfirm: '断开',
     disconnected: '已断开 GitHub',
     leftoverTitle: '同步出了问题的空间',
-    leftoverHelp: '这些空间创建到一半失败了，但它们在 GitHub 上的位置已经建好，现在是空的，那边什么也没有删。把空间同步到其中一个再试一次，或者告诉我们你已经把它删了。',
+    leftoverHelp:
+      '这些空间创建到一半失败了，但它们在 GitHub 上的位置已经建好，现在是空的，那边什么也没有删。把空间同步到其中一个再试一次，或者告诉我们你已经把它删了。',
     leftoverFor: (space: string, when: string) => `为空间「${space}」建的，${when}`,
     leftoverRetry: '同步到它再试一次',
     leftoverDismiss: '我已经删了',
@@ -132,7 +141,8 @@ export const githubZhCN: GitHubMessages = {
       },
       connection_missing: {
         title: '没有可用来同步的 GitHub 连接',
-        body: (who: string) => `${who || '这个空间用来同步的那个人'}已经断开了 GitHub、不能再登录，或者不再能管理这个空间。请你自己连接并换一个凭据，或者换成 App。`,
+        body: (who: string) =>
+          `${who || '这个空间用来同步的那个人'}已经断开了 GitHub、不能再登录，或者不再能管理这个空间。请你自己连接并换一个凭据，或者换成 App。`,
       },
       installation_gone: {
         title: 'App 已经够不着这个同步位置',
@@ -140,7 +150,8 @@ export const githubZhCN: GitHubMessages = {
       },
       app_missing_permission: {
         title: 'App 缺少一项权限',
-        body: () => 'GitHub 拒绝发令牌，因为 App 或它的安装缺少 Contents 权限。需要管理员在 GitHub 上给 App 加上，在安装设置里接受变更，再到管理页点「重新检查」。',
+        body: () =>
+          'GitHub 拒绝发令牌，因为 App 或它的安装缺少 Contents 权限。需要管理员在 GitHub 上给 App 加上，在安装设置里接受变更，再到管理页点「重新检查」。',
       },
       provider_not_configured: {
         title: '服务器的 GitHub App 不能用了',
@@ -172,24 +183,30 @@ export const githubZhCN: GitHubMessages = {
     connectionsIntro: '每个平台一张卡片：配好了没有、谁连着、空间在不在用。下面是 GitHub。',
     loadFailed: '没能读到 GitHub App',
     title: 'GitHub App',
-    intro: '整台服务器共用一个 GitHub App。最省事的是用下面的按钮，由它替你在 GitHub 上建好。也可以自己在 GitHub 上建（设置里的 Developer settings）：要能装到任意账号、勾上「Request user authorization (OAuth) during installation」，权限要有 Contents（读写）、Metadata（读）和 Administration（读写），再把它的信息填在这里。密钥和 secret 加密保存，之后不会再显示。',
+    intro:
+      '整台服务器共用一个 GitHub App。最省事的是用下面的按钮，由它替你在 GitHub 上建好。也可以自己在 GitHub 上建（设置里的 Developer settings）：要能装到任意账号、勾上「Request user authorization (OAuth) during installation」，权限要有 Contents（读写）、Metadata（读）和 Administration（读写），再把它的信息填在这里。密钥和 secret 加密保存，之后不会再显示。',
     openApp: '在 GitHub 上打开',
     fingerprint: '密钥指纹',
     permissions: '权限',
     usage: '使用情况',
     usageValue: (spaces: number, users: number) => `${spaces} 个空间通过它同步，${users} 个用户已连接`,
-    missing: (list: readonly string[]) => `App 缺少这些权限：${[...list].join('、')}。仍然可以保存，但缺少 Administration 时只能把空间连到已有的仓库，同步则需要 Contents。在 GitHub 上改完后请点「重新检查」。`,
-    userAuthOff: '用户暂时还不能连接自己的 GitHub 账号：需要下面的 client id 和 secret，以及服务器的公开地址（--public-url）。',
+    missing: (list: readonly string[]) =>
+      `App 缺少这些权限：${[...list].join('、')}。仍然可以保存，但缺少 Administration 时只能把空间连到已有的仓库，同步则需要 Contents。在 GitHub 上改完后请点「重新检查」。`,
+    userAuthOff:
+      '用户暂时还不能连接自己的 GitHub 账号：需要下面的 client id 和 secret，以及服务器的公开地址（--public-url）。',
     recheck: '重新检查',
     rechecking: '正在检查…',
     rechecked: '已向 GitHub 重新检查',
     checkedAt: '上次检查',
-    gaps: (list: readonly string[]) => `这些安装还没有接受 App 的权限：${[...list].join('；')}。要由它们的所有者在 GitHub 的安装设置里接受变更。`,
-    anyAccountNo: 'App 只能装在一个账号上。个人没法把它装到自己的账号，所以个人账号下的仓库用不了。请在 GitHub 上 App 的设置里，把「Install App」一栏选成「Any account」。',
+    gaps: (list: readonly string[]) =>
+      `这些安装还没有接受 App 的权限：${[...list].join('；')}。要由它们的所有者在 GitHub 的安装设置里接受变更。`,
+    anyAccountNo:
+      'App 只能装在一个账号上。个人没法把它装到自己的账号，所以个人账号下的仓库用不了。请在 GitHub 上 App 的设置里，把「Install App」一栏选成「Any account」。',
     anyAccountUnknown: 'GitHub 没有说这个 App 能不能装到任意账号。个人账号需要在 App 的设置里选「Any account」。',
     anyAccountYes: 'App 可以安装到任意账号。',
     createTitle: '在 GitHub 上建 App',
-    createHelp: '点一下就在 GitHub 上建好设置正确的 App：可以装到任意账号、安装时请求授权，带 Administration、Contents、Metadata 权限，不用 webhook。GitHub 会先给你看将要建的内容，请你确认；确认后回到这里，详情自动保存。',
+    createHelp:
+      '点一下就在 GitHub 上建好设置正确的 App：可以装到任意账号、安装时请求授权，带 Administration、Contents、Metadata 权限，不用 webhook。GitHub 会先给你看将要建的内容，请你确认；确认后回到这里，详情自动保存。',
     createOrg: '组织（可不填）',
     createOrgHelp: '留空就建在你自己的 GitHub 账号下。',
     createName: 'App 名称（可不填）',
@@ -205,11 +222,13 @@ export const githubZhCN: GitHubMessages = {
     pendingRetry: '再试一次保存',
     pendingRetrying: '正在保存…',
     pendingSaved: 'GitHub App 已保存',
-    pendingGone: '暂存的已经没有了（超过十分钟，或已经用过）。请在 GitHub 上打开这个 App，给它生成一个私钥，再在下面手填它的详情。',
+    pendingGone:
+      '暂存的已经没有了（超过十分钟，或已经用过）。请在 GitHub 上打开这个 App，给它生成一个私钥，再在下面手填它的详情。',
     pendingLost: '没能暂存。请在 GitHub 上打开这个 App，给它生成一个私钥，再在下面手填它的详情。',
     returned: {
       expired: '这次操作超时了，或者不是从这个浏览器发起的。请重试。',
-      provider_error: 'GitHub 没有交出 App，或者保存失败。如果 GitHub 上已经建出来了，请在那边删掉后重试，或者在下面手填它的详情。',
+      provider_error:
+        'GitHub 没有交出 App，或者保存失败。如果 GitHub 上已经建出来了，请在那边删掉后重试，或者在下面手填它的详情。',
       app_in_use: '还有空间通过 App 同步，或有用户已连接，所以没有换掉它。',
       unavailable: 'GitHub 已经建好了 App，但这台服务器没能向 GitHub 核对它，所以还没有保存。',
       unknown: '出了点问题。',
@@ -234,7 +253,8 @@ export const githubZhCN: GitHubMessages = {
     saved: 'GitHub App 已保存',
     delete: '删除这个 App',
     deleteTitle: '删除 GitHub App？',
-    deleteDescription: (users: number) => `服务器上保存的 App 信息会被删除${users > 0 ? `，${users} 个用户的连接也会一起删除（并请 GitHub 撤销授权）` : ''}。GitHub 上什么也不会删。`,
+    deleteDescription: (users: number) =>
+      `服务器上保存的 App 信息会被删除${users > 0 ? `，${users} 个用户的连接也会一起删除（并请 GitHub 撤销授权）` : ''}。GitHub 上什么也不会删。`,
     deleteBlocked: (spaces: number) => `还有 ${spaces} 个空间通过这个 App 同步。请先把它们换掉或断开。`,
     cancel: '取消',
     deleteConfirm: '删除',
@@ -252,7 +272,8 @@ export const githubZhCN: GitHubMessages = {
       },
     },
     installations: '安装',
-    installationsHelp: 'App 装在哪里。把一个组织的安装共享给某个租户后，这个租户的成员都可以在那个组织里建仓库、把空间连到它的仓库，不需要自己的 GitHub 账号；GitHub 那边不会知道是谁在操作。',
+    installationsHelp:
+      'App 装在哪里。把一个组织的安装共享给某个租户后，这个租户的成员都可以在那个组织里建仓库、把空间连到它的仓库，不需要自己的 GitHub 账号；GitHub 那边不会知道是谁在操作。',
     installationsFailed: '没能读到安装列表',
     noInstallations: 'App 还没有装在任何地方。',
     loadMore: '加载更多',

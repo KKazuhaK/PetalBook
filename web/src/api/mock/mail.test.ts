@@ -8,13 +8,22 @@ function world() {
   let clock = Date.parse('2026-11-23T08:00:00Z')
   const server = createMockServer({ empty: true, mode: 'accounts', now: () => clock, oidc: null })
   const req = (method: string, path: string, body?: unknown, cookie = '') => {
-    const r = server.handle(method, `/api${path}`, body === undefined ? undefined : JSON.stringify(body), 'application/json', cookie)
+    const r = server.handle(
+      method,
+      `/api${path}`,
+      body === undefined ? undefined : JSON.stringify(body),
+      'application/json',
+      cookie,
+    )
     const set = r.headers?.['Set-Cookie']
     return { status: r.status, body: (r.body ?? {}) as any, cookie: set ? set.split(';')[0] : '' }
   }
   const login = (username: string, password: string) => req('POST', '/login', { username, password }).cookie
   const root = login(MOCK_ADMIN.username, MOCK_ADMIN.password)
-  const enable = () => expect(req('PUT', '/admin/mail', { enabled: true, host: 'smtp.example.test', from: 'notes@example.test' }, root).status).toBe(200)
+  const enable = () =>
+    expect(
+      req('PUT', '/admin/mail', { enabled: true, host: 'smtp.example.test', from: 'notes@example.test' }, root).status,
+    ).toBe(200)
   const open = () => {
     enable()
     expect(req('PUT', '/admin/settings/registration.open', { value: true }, root).status).toBe(200)
@@ -26,11 +35,18 @@ const tokenOf = (link?: string) => link!.split('#')[1]
 describe('the mock mail', () => {
   it('is off by default: nothing is sent, nothing opens, the sign-in page links to nothing', () => {
     const w = world()
-    expect(w.req('GET', '/admin/mail', undefined, w.root).body).toMatchObject({ enabled: false, security: 'starttls', hasPassword: false, status: { ok: false, checked: null } })
+    expect(w.req('GET', '/admin/mail', undefined, w.root).body).toMatchObject({
+      enabled: false,
+      security: 'starttls',
+      hasPassword: false,
+      status: { ok: false, checked: null },
+    })
     expect(w.req('GET', '/auth/providers').body).toMatchObject({ register: false, forgot: false })
     expect(w.req('GET', '/register').body).toEqual({ open: false })
     expect(w.req('POST', '/password/forgot', { login: 'admin' }).body.error).toBe('password_reset_off')
-    expect(w.req('PUT', '/admin/settings/registration.open', { value: true }, w.root).body.error).toBe('mail_not_configured')
+    expect(w.req('PUT', '/admin/settings/registration.open', { value: true }, w.root).body.error).toBe(
+      'mail_not_configured',
+    )
     expect(w.server.mail.outbox).toHaveLength(0)
   })
 
@@ -40,7 +56,9 @@ describe('the mock mail', () => {
     expect(put({ security: 'none', host: 'mail.example.test' }).body.error).toBe('mail_insecure')
     expect(put({ enabled: true, host: '127.0.0.1' }).body.error).toBe('mail_from_required')
     expect(put({ port: 0 }).body.error).toBe('invalid')
-    expect(put({ host: 'localhost', security: 'none', password: 'secret-pass', from: 'a@example.test' }).status).toBe(200)
+    expect(put({ host: 'localhost', security: 'none', password: 'secret-pass', from: 'a@example.test' }).status).toBe(
+      200,
+    )
     const view = w.req('GET', '/admin/mail', undefined, w.root)
     expect(view.body.hasPassword).toBe(true)
     expect(JSON.stringify(view.body)).not.toContain('secret-pass')
@@ -54,7 +72,11 @@ describe('the mock mail', () => {
   it('registration: the link makes the account, once; a pending one holds its username; closing cancels it', () => {
     const w = world()
     w.open()
-    expect(w.req('GET', '/register').body).toMatchObject({ open: true, tenant: { slug: 'default' }, password: { minLength: 8 } })
+    expect(w.req('GET', '/register').body).toMatchObject({
+      open: true,
+      tenant: { slug: 'default' },
+      password: { minLength: 8 },
+    })
     expect(w.req('GET', '/auth/providers').body).toMatchObject({ register: true, forgot: true })
     const body = { username: 'tang', name: 'Tang', email: 'tang@example.test', password: 'a long password' }
     expect(w.req('POST', '/register', body).status).toBe(202)
@@ -63,7 +85,12 @@ describe('the mock mail', () => {
     expect(sent).toHaveLength(1)
     const made = w.req('POST', '/register/confirm', { token: tokenOf(sent[0].link) })
     expect(made.status).toBe(201)
-    expect(made.body.user).toMatchObject({ username: 'tang', emailVerified: true, role: 'member', email: 'tang@example.test' })
+    expect(made.body.user).toMatchObject({
+      username: 'tang',
+      emailVerified: true,
+      role: 'member',
+      email: 'tang@example.test',
+    })
     expect(w.req('GET', '/account', undefined, made.cookie).status).toBe(200)
     expect(w.req('POST', '/register/confirm', { token: tokenOf(sent[0].link) }).status).toBe(404)
     // A second one, then the switch goes off.
@@ -87,23 +114,34 @@ describe('the mock mail', () => {
     expect(w.req('POST', '/register', { ...body, acceptTerms: true }).status).toBe(202)
     // An address with a verified account: the same 202, and no registration.
     const admin = w.req('GET', '/session', undefined, w.root).body.user
-    expect(w.req('PATCH', `/users/${admin.id}`, { email: 'admin@example.test', emailVerified: true }, w.root).status).toBe(200)
+    expect(
+      w.req('PATCH', `/users/${admin.id}`, { email: 'admin@example.test', emailVerified: true }, w.root).status,
+    ).toBe(200)
     const before = w.server.mail.pendingCount()
-    expect(w.req('POST', '/register', { ...body, username: 'other', email: 'admin@example.test', acceptTerms: true }).status).toBe(202)
+    expect(
+      w.req('POST', '/register', { ...body, username: 'other', email: 'admin@example.test', acceptTerms: true }).status,
+    ).toBe(202)
     expect(w.server.mail.pendingCount()).toBe(before)
     w.req('PUT', '/admin/settings/registration.perHour', { value: 2 }, w.root)
     w.req('POST', '/register', { ...body, username: 'third', email: 'third@example.test', acceptTerms: true })
-    expect(w.req('POST', '/register', { ...body, username: 'fourth', email: 'fourth@example.test', acceptTerms: true }).status).toBe(429)
+    expect(
+      w.req('POST', '/register', { ...body, username: 'fourth', email: 'fourth@example.test', acceptTerms: true })
+        .status,
+    ).toBe(429)
   })
 
   it('ssoOnly and open registration exclude each other, in both directions', () => {
     const w = world()
     w.enable()
     expect(w.req('PUT', '/admin/security', { login: { ssoOnly: true } }, w.root).status).toBe(200)
-    expect(w.req('PUT', '/admin/settings/registration.open', { value: true }, w.root).body.error).toBe('sso_only_with_registration')
+    expect(w.req('PUT', '/admin/settings/registration.open', { value: true }, w.root).body.error).toBe(
+      'sso_only_with_registration',
+    )
     w.req('PUT', '/admin/security', { login: { ssoOnly: false } }, w.root)
     expect(w.req('PUT', '/admin/settings/registration.open', { value: true }, w.root).status).toBe(200)
-    expect(w.req('PUT', '/admin/security', { login: { ssoOnly: true } }, w.root).body.error).toBe('sso_only_with_registration')
+    expect(w.req('PUT', '/admin/security', { login: { ssoOnly: true } }, w.root).body.error).toBe(
+      'sso_only_with_registration',
+    )
   })
 
   it('email verification: a link on another device, once, only for the address it was sent to', () => {
@@ -141,8 +179,12 @@ describe('the mock mail', () => {
     const link = w.server.mail.outbox.find((m) => m.kind === 'reset')!.link
     expect(w.req('POST', '/password/reset/check', { token: tokenOf(link) }).body.username).toBe('tang')
     expect(w.req('POST', '/password/reset', { token: tokenOf(link), password: 'short' }).body.error).toBe('invalid')
-    expect(w.req('POST', '/password/reset', { token: tokenOf(link), password: 'a brand new password' }).status).toBe(204)
-    expect(w.req('POST', '/password/reset', { token: tokenOf(link), password: 'a brand new password' }).status).toBe(404)
+    expect(w.req('POST', '/password/reset', { token: tokenOf(link), password: 'a brand new password' }).status).toBe(
+      204,
+    )
+    expect(w.req('POST', '/password/reset', { token: tokenOf(link), password: 'a brand new password' }).status).toBe(
+      404,
+    )
     expect(w.req('GET', '/account', undefined, joined.cookie).status).toBe(401)
     expect(w.req('POST', '/login', { username: 'tang', password: 'a brand new password' }).status).toBe(200)
     // Three an hour to one address.

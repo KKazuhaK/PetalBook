@@ -18,7 +18,8 @@ export interface SearchFilters {
 
 export const emptyFilters: SearchFilters = { titleOnly: false, folder: null, tags: [], updated: null, created: null }
 
-export const hasFilters = (f: SearchFilters) => f.titleOnly || f.folder !== null || f.tags.length > 0 || f.updated !== null || f.created !== null
+export const hasFilters = (f: SearchFilters) =>
+  f.titleOnly || f.folder !== null || f.tags.length > 0 || f.updated !== null || f.created !== null
 
 const DAY = 86_400_000
 
@@ -50,7 +51,12 @@ export const effectiveSort = (text: string, sort: SearchSort): SearchSort => (te
 // The request for what is typed and chosen. Without text and without a filter
 // it is just the recent pages. `sort` is left out for relevance, which is what
 // the server does with text and no sort.
-export function buildSearchParams(text: string, filters: SearchFilters, sort: SearchSort, now: Date): Omit<ListParams, 'cursor' | 'limit'> {
+export function buildSearchParams(
+  text: string,
+  filters: SearchFilters,
+  sort: SearchSort,
+  now: Date,
+): Omit<ListParams, 'cursor' | 'limit'> {
   const q = text.trim()
   const params: Omit<ListParams, 'cursor' | 'limit'> = {}
   if (q) {
@@ -90,7 +96,10 @@ export function filtersToQuery(text: string, filters: SearchFilters, now: Date):
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/
 
 // What the results page lists, from its address; anything not understood is left out.
-export function paramsFromQuery(q: URLSearchParams): { text: string; extra: Omit<ListParams, 'cursor' | 'limit' | 'q' | 'sort'> } {
+export function paramsFromQuery(q: URLSearchParams): {
+  text: string
+  extra: Omit<ListParams, 'cursor' | 'limit' | 'q' | 'sort'>
+} {
   const extra: Omit<ListParams, 'cursor' | 'limit' | 'q' | 'sort'> = {}
   if (q.get('in') === 'title') extra.in = 'title'
   const folder = q.get('folder')
@@ -127,7 +136,10 @@ export function timeGroupOf(iso: string, now: Date): TimeGroup {
 }
 
 // Keeps the order it is given (newest first from the server) and drops empty groups.
-export function groupByTime<T extends { updated: string }>(items: readonly T[], now: Date): { group: TimeGroup; items: T[] }[] {
+export function groupByTime<T extends { updated: string }>(
+  items: readonly T[],
+  now: Date,
+): { group: TimeGroup; items: T[] }[] {
   const buckets = new Map<TimeGroup, T[]>()
   for (const item of items) {
     const g = timeGroupOf(item.updated, now)

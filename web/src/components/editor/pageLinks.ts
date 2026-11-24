@@ -40,7 +40,8 @@ export interface PageLinksStorage {
   isPage: (href: string) => boolean
 }
 
-export const pageLinksOf = (editor: Editor): PageLinksStorage | undefined => (editor.storage as unknown as { pageLinks?: PageLinksStorage }).pageLinks
+export const pageLinksOf = (editor: Editor): PageLinksStorage | undefined =>
+  (editor.storage as unknown as { pageLinks?: PageLinksStorage }).pageLinks
 
 // What the page's links are known to be, handed over after the editor exists (the editor is made before the
 // query for them has an answer).
@@ -99,7 +100,13 @@ export function indexOf(links: PageLink[]): LinkIndex {
 // old address would undo the change: it becomes the id of the page the new address names, where the report knows
 // it, and is dropped otherwise. Any other title stays, and so does the id while the address names the same file
 // (another anchor, another way of writing the path).
-export function retitle(folder: string, links: PageLink[] | undefined, oldHref: string, newHref: string, title: string | null): string | null {
+export function retitle(
+  folder: string,
+  links: PageLink[] | undefined,
+  oldHref: string,
+  newHref: string,
+  title: string | null,
+): string | null {
   if (!isPageId(title) || oldHref === newHref) return title
   const after = resolveHref(folder, newHref)
   if (!after) return null
@@ -177,7 +184,11 @@ export const PageLinks = Extension.create<PageLinksOptions, PageLinksStorage>({
             class: broken ? 'pb-page-link pb-page-link-broken' : 'pb-page-link',
             'data-page-link': broken ? 'broken' : '',
             // The native tooltip: what the link leads to now, or that it leads nowhere.
-            ...(broken ? { title: t.pageLinks.broken } : found?.target ? { title: t.pageLinks.hover(found.target.title || t.editor.untitled) } : {}),
+            ...(broken
+              ? { title: t.pageLinks.broken }
+              : found?.target
+                ? { title: t.pageLinks.hover(found.target.title || t.editor.untitled) }
+                : {}),
           }),
         )
       })
@@ -208,7 +219,12 @@ export const PageLinks = Extension.create<PageLinksOptions, PageLinksStorage>({
           const fixes: { from: number; to: number; mark: PMMark; title: string | null }[] = []
           trs.forEach((tr, k) => {
             tr.steps.forEach((step, i) => {
-              if (!(step instanceof AddMarkStep) || step.mark.type.name !== 'link' || !isPageId(step.mark.attrs.title as string | null)) return
+              if (
+                !(step instanceof AddMarkStep) ||
+                step.mark.type.name !== 'link' ||
+                !isPageId(step.mark.attrs.title as string | null)
+              )
+                return
               const newHref = String(step.mark.attrs.href ?? '')
               // Compared with the link as it was before the transaction: setting a mark can take more than one
               // step over the same text (tiptap first sets it with the new attributes alone, then merged).
@@ -219,7 +235,13 @@ export const PageLinks = Extension.create<PageLinksOptions, PageLinksStorage>({
               tr.before.nodesBetween(start, end, (node, pos) => {
                 const old = node.isText ? node.marks.find((m) => m.type.name === 'link') : undefined
                 if (!old || old.attrs.title !== step.mark.attrs.title || old.attrs.href === newHref) return
-                const title = retitle(options.getFolder(), options.getLinks(), String(old.attrs.href ?? ''), newHref, step.mark.attrs.title as string)
+                const title = retitle(
+                  options.getFolder(),
+                  options.getLinks(),
+                  String(old.attrs.href ?? ''),
+                  newHref,
+                  step.mark.attrs.title as string,
+                )
                 if (title === step.mark.attrs.title) return
                 let mapping = tr.mapping
                 let from = mapping.map(Math.max(pos, start), 1)

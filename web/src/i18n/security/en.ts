@@ -13,16 +13,29 @@ export const securityEn: SecurityMessages = {
     help: 'How the sign-in page lays out the sign-in methods, and whether passwords are still accepted.',
     mode: 'Sign-in mode',
     modes: {
-      dual: { name: 'Password and single sign-on side by side', help: 'The sign-in page has the password form and a button for each provider.' },
-      sso_first: { name: 'Single sign-on first', help: 'The sign-in page leads with the provider buttons; the password form is folded behind “Use a password instead”.' },
-      sso_redirect: { name: 'Go straight to single sign-on', help: 'With one provider the page goes straight to it; with several it lists the buttons. The password form is at /login?local=1.' },
+      dual: {
+        name: 'Password and single sign-on side by side',
+        help: 'The sign-in page has the password form and a button for each provider.',
+      },
+      sso_first: {
+        name: 'Single sign-on first',
+        help: 'The sign-in page leads with the provider buttons; the password form is folded behind “Use a password instead”.',
+      },
+      sso_redirect: {
+        name: 'Go straight to single sign-on',
+        help: 'With one provider the page goes straight to it; with several it lists the buttons. The password form is at /login?local=1.',
+      },
       local_only: { name: 'Password only', help: 'The sign-in page has only the password form and shows no provider.' },
     },
     ssoOnly: 'Single sign-on only',
-    ssoOnlyHelp: 'Refuse password and passkey sign-in for everyone who is not an administrator, and refuse accepting a member invite with a password. Administrators can always use their password, so they can fix things when a provider breaks.',
-    ssoOnlyNotInEffect: 'No provider is enabled, so the sign-in page shows the password form only and this switch has no effect for now (the setting is kept).',
-    noProvider: (effective: string) => `No provider is enabled, so the sign-in page behaves as “${effective}” for now. Your choice is kept and applies once a provider is enabled.`,
-    passwordAdmins: (n: number) => `${n} enabled administrator${n === 1 ? '' : 's'} with a password: they can still sign in if every provider fails.`,
+    ssoOnlyHelp:
+      'Refuse password and passkey sign-in for everyone who is not an administrator, and refuse accepting a member invite with a password. Administrators can always use their password, so they can fix things when a provider breaks.',
+    ssoOnlyNotInEffect:
+      'No provider is enabled, so the sign-in page shows the password form only and this switch has no effect for now (the setting is kept).',
+    noProvider: (effective: string) =>
+      `No provider is enabled, so the sign-in page behaves as “${effective}” for now. Your choice is kept and applies once a provider is enabled.`,
+    passwordAdmins: (n: number) =>
+      `${n} enabled administrator${n === 1 ? '' : 's'} with a password: they can still sign in if every provider fails.`,
     noPasswordAdmins: 'No enabled administrator has a password: turning on “Single sign-on only” would be refused.',
   },
   passkeys: {
@@ -33,13 +46,19 @@ export const securityEn: SecurityMessages = {
     unavailable: 'Passkeys cannot be used right now: the server needs a public https address (--public-url).',
     requireRoles: 'Roles that must use a passkey',
     roles: { none: 'No role is required', admins: 'Administrators', everyone: 'Administrators and members' },
-    required: (n: number, without: number) => `${n} ${n === 1 ? 'person is' : 'people are'} required to use a passkey; ${without} of them ${without === 1 ? 'has' : 'have'} none yet and will be held at “Set up a passkey” at their next sign-in.`,
+    required: (n: number, without: number) =>
+      `${n} ${n === 1 ? 'person is' : 'people are'} required to use a passkey; ${without} of them ${without === 1 ? 'has' : 'have'} none yet and will be held at “Set up a passkey” at their next sign-in.`,
   },
   captcha: {
     title: 'Captcha',
     help: 'The built-in image captcha stays on the server. A third-party service needs a site key and a secret, and the server needs a public address.',
     provider: 'Provider',
-    providers: { image: 'Built-in image (stays on the server)', turnstile: 'Cloudflare Turnstile', recaptcha: 'Google reCAPTCHA (v2)', hcaptcha: 'hCaptcha' },
+    providers: {
+      image: 'Built-in image (stays on the server)',
+      turnstile: 'Cloudflare Turnstile',
+      recaptcha: 'Google reCAPTCHA (v2)',
+      hcaptcha: 'hCaptcha',
+    },
     siteKey: 'Site key',
     siteKeyHelp: 'Public: it goes into the page.',
     secret: 'Secret',
@@ -50,7 +69,13 @@ export const securityEn: SecurityMessages = {
     secretNew: 'New secret',
     clear: 'Clear the secret',
     contexts: 'Where a captcha is asked',
-    context: { login: 'Sign in', invite: 'Accepting an invite', setup: 'First-run setup', forgot: 'Password reset', register: 'Registering' },
+    context: {
+      login: 'Sign in',
+      invite: 'Accepting an invite',
+      setup: 'First-run setup',
+      forgot: 'Password reset',
+      register: 'Registering',
+    },
     on: 'On',
     when: 'When to ask',
     whens: { always: 'Every time', after_failures: 'After some failures' },
@@ -64,10 +89,16 @@ export const securityEn: SecurityMessages = {
     minutes: 'Minutes locked',
     minutesHelp: '1 to 10080',
     scope: 'What is locked',
-    scopes: { ip_account: 'Address and username together (recommended)', ip: 'Address (every username)', account: 'Username (from every address)' },
-    accountWarning: 'Locking by username refuses the right password while the lock lasts: anyone who knows a username can keep that person out.',
+    scopes: {
+      ip_account: 'Address and username together (recommended)',
+      ip: 'Address (every username)',
+      account: 'Username (from every address)',
+    },
+    accountWarning:
+      'Locking by username refuses the right password while the lock lasts: anyone who knows a username can keep that person out.',
     confirmTitle: 'Lock by username?',
-    confirmHelp: 'Anyone who knows a person’s username can keep them out, administrators included, by getting the password wrong on purpose. Unless you are sure, use “Address and username together”.',
+    confirmHelp:
+      'Anyone who knows a person’s username can keep them out, administrators included, by getting the password wrong on purpose. Unless you are sure, use “Address and username together”.',
     confirm: 'I understand, lock by username',
     cancel: 'Cancel',
   },
@@ -85,20 +116,27 @@ export const securityEn: SecurityMessages = {
   },
   notices: {
     title: 'Worth a look',
-    flags_ignored: 'The --oidc-* flags on the command line differ from the stored provider. The stored one counts; the flags do nothing and will be removed in a later version.',
+    flags_ignored:
+      'The --oidc-* flags on the command line differ from the stored provider. The stored one counts; the flags do nothing and will be removed in a later version.',
     secret_unreadable: 'A stored secret cannot be opened with this server’s key. Enter it again.',
     passkey_host_changed: 'The host of the public address changed, so passkeys registered before no longer work.',
   },
-  noticeFor: (message: string, slug?: string, field?: string) => [message, slug ? ` (${slug}${field ? ` · ${field}` : ''})` : field ? ` (${field})` : ''].join(''),
+  noticeFor: (message: string, slug?: string, field?: string) =>
+    [message, slug ? ` (${slug}${field ? ` · ${field}` : ''})` : field ? ` (${field})` : ''].join(''),
   errors: {
     invalid: 'A value is not right.',
-    local_admin_required: 'No enabled administrator has a password, so “Single sign-on only” cannot be turned on. Give an administrator a password first.',
+    local_admin_required:
+      'No enabled administrator has a password, so “Single sign-on only” cannot be turned on. Give an administrator a password first.',
     sso_only_with_registration: '“Single sign-on only” cannot be on while public registration is open.',
     captcha_site_key_required: 'A third-party captcha needs a site key.',
-    captcha_secret_required: 'A third-party captcha needs a secret. One stored for another provider does not count: when you change provider, give the new secret in the same save.',
-    captcha_needs_public_url: 'A third-party captcha is checked against the host name, so the server needs a public address (--public-url).',
-    passkey_unavailable: 'Passkeys cannot be used right now (the server needs a public https address), so nobody can be required to use one.',
-    passkey_requirement_unsatisfiable: 'Some people are required to use a passkey, so passkeys cannot be switched off. Lift the requirements first.',
+    captcha_secret_required:
+      'A third-party captcha needs a secret. One stored for another provider does not count: when you change provider, give the new secret in the same save.',
+    captcha_needs_public_url:
+      'A third-party captcha is checked against the host name, so the server needs a public address (--public-url).',
+    passkey_unavailable:
+      'Passkeys cannot be used right now (the server needs a public https address), so nobody can be required to use one.',
+    passkey_requirement_unsatisfiable:
+      'Some people are required to use a passkey, so passkeys cannot be switched off. Lift the requirements first.',
     conflict: 'That change would leave nobody able to sign in or administer, so it was not saved.',
     unknown: 'Saving did not work.',
   },
@@ -132,21 +170,32 @@ export const securityEn: SecurityMessages = {
     cancel: 'Cancel',
     common: 'General',
     slug: 'Slug',
-    slugHelp: '1 to 32 characters: lower-case letters, digits and hyphens, starting with a letter or digit. It is in the callback addresses and cannot change.',
+    slugHelp:
+      '1 to 32 characters: lower-case letters, digits and hyphens, starting with a letter or digit. It is in the callback addresses and cannot change.',
     kind: 'Kind',
     kindFixed: 'The kind cannot change once made.',
     name: 'Name',
     nameHelp: 'The name on the sign-in button, 1 to 60 characters.',
     icon: 'Icon',
     iconNone: 'No icon',
-    icons: { google: 'Google', microsoft: 'Microsoft', github: 'GitHub', gitlab: 'GitLab', okta: 'Okta', keycloak: 'Keycloak', authentik: 'authentik', key: 'Key' },
+    icons: {
+      google: 'Google',
+      microsoft: 'Microsoft',
+      github: 'GitHub',
+      gitlab: 'GitLab',
+      okta: 'Okta',
+      keycloak: 'Keycloak',
+      authentik: 'authentik',
+      key: 'Key',
+    },
     enabledLabel: 'Enabled',
     order: 'Order',
     orderHelp: 'Lower numbers come first.',
     autoCreate: 'Create an account at the first sign-in',
     autoCreateHelp: 'When nobody has the identity, make a member account. Off by default.',
     mergeVerifiedEmail: 'Merge into an existing account by verified email',
-    mergeVerifiedEmailHelp: 'When on, an address this provider says is verified signs people in to the existing account with the same verified address (never an administrator’s). SAML has no “verified” claim, so turning it on means you vouch for every address it sends. Only for providers you trust.',
+    mergeVerifiedEmailHelp:
+      'When on, an address this provider says is verified signs people in to the existing account with the same verified address (never an administrator’s). SAML has no “verified” claim, so turning it on means you vouch for every address it sends. Only for providers you trust.',
     oidc: {
       issuer: 'Issuer',
       issuerHelp: 'An address starting with https.',
@@ -156,7 +205,8 @@ export const securityEn: SecurityMessages = {
       scopes: 'Scopes',
       scopesHelp: 'Besides openid, separated by spaces.',
       legacyCallback: 'Use the old callback address',
-      legacyCallbackHelp: 'The address used before 2.8. At most one provider may have it, so nothing has to change at the identity provider.',
+      legacyCallbackHelp:
+        'The address used before 2.8. At most one provider may have it, so nothing has to change at the identity provider.',
       redirectUrl: 'Redirect address to register at the identity provider',
     },
     saml: {
@@ -170,7 +220,8 @@ export const securityEn: SecurityMessages = {
       acsHelp: 'The assertion consumer address to register at the identity provider.',
       metadataPath: 'Metadata path of this service',
       attributes: 'Attribute mapping',
-      attributesHelp: 'The attribute names in the identity provider that hold the email, display name and username; empty uses the NameID.',
+      attributesHelp:
+        'The attribute names in the identity provider that hold the email, display name and username; empty uses the NameID.',
       attrEmail: 'Email attribute',
       attrName: 'Display name attribute',
       attrUsername: 'Username attribute',
@@ -180,7 +231,8 @@ export const securityEn: SecurityMessages = {
       allowIdpInitiated: 'Allow sign-ins started by the identity provider',
       allowIdpInitiatedHelp: 'Off by default. When on they can only sign in, and only to /.',
       certificate: 'Signing certificate of this service',
-      certificateHelp: 'Made by the server when the provider is created (RSA 2048, 10 years); the key is never shown. Give it to the identity provider.',
+      certificateHelp:
+        'Made by the server when the provider is created (RSA 2048, 10 years); the key is never shown. Give it to the identity provider.',
       certificateExpires: (when: string) => `Valid until ${when}`,
     },
     github: {
@@ -189,7 +241,8 @@ export const securityEn: SecurityMessages = {
       clientId: 'Client ID',
       clientSecret: 'Client secret',
       organizations: 'Organisations',
-      organizationsHelp: 'One per line. When not empty, only members of one of them may sign in; required when accounts are created automatically.',
+      organizationsHelp:
+        'One per line. When not empty, only members of one of them may sign in; required when accounts are created automatically.',
       redirectUrl: 'Callback address to register at GitHub',
     },
     copy: 'Copy',
@@ -204,23 +257,29 @@ export const securityEn: SecurityMessages = {
     deleteTitle: (name: string) => `Delete ${name}?`,
     deleteHelp: 'The identities people linked stay, and come back if a provider with the same issuer is added again.',
     deleteInUseTitle: (name: string) => `${name} is the only way in for some people`,
-    deleteInUse: (n: number) => `${n} account${n === 1 ? ' has' : 's have'} no password, no passkey and no other provider, so deleting it would lock ${n === 1 ? 'it' : 'them'} out. Delete anyway?`,
+    deleteInUse: (n: number) =>
+      `${n} account${n === 1 ? ' has' : 's have'} no password, no passkey and no other provider, so deleting it would lock ${n === 1 ? 'it' : 'them'} out. Delete anyway?`,
     deleteConfirm: 'Delete',
     deleteForce: 'Delete anyway',
     deleted: 'Provider deleted',
     created: 'Provider added',
     updated: 'Provider updated',
-    unreachable: 'The provider was saved, but the server could not reach it, so it stays switched off. Check the address and use “Fetch again”.',
+    unreachable:
+      'The provider was saved, but the server could not reach it, so it stays switched off. Check the address and use “Fetch again”.',
     errors: {
       invalid: 'A value is not right.',
       exists: 'That slug is taken.',
-      provider_issuer_in_use: 'Another provider has this issuer (the OpenID Connect issuer, the SAML entity ID or the GitHub address).',
+      provider_issuer_in_use:
+        'Another provider has this issuer (the OpenID Connect issuer, the SAML entity ID or the GitHub address).',
       provider_limit: 'There are 50 providers already.',
       legacy_callback_in_use: 'Another provider already has the old callback address.',
       oidc_issuer_invalid: 'The issuer has to be an https address.',
-      saml_needs_https: 'SAML needs an https public address (--public-url): the cookie that crosses from the identity provider must be Secure.',
-      saml_metadata_invalid: 'The metadata cannot be parsed, has no signing certificate or has no redirect binding for sign-in.',
-      auto_create_needs_org: 'A GitHub provider that creates accounts must name an organisation: otherwise anyone with a GitHub account could make one.',
+      saml_needs_https:
+        'SAML needs an https public address (--public-url): the cookie that crosses from the identity provider must be Secure.',
+      saml_metadata_invalid:
+        'The metadata cannot be parsed, has no signing certificate or has no redirect binding for sign-in.',
+      auto_create_needs_org:
+        'A GitHub provider that creates accounts must name an organisation: otherwise anyone with a GitHub account could make one.',
       public_url_required: 'The server has no public address (--public-url), so no provider can be added.',
       provider_in_use: 'Some accounts can only sign in with this provider.',
       not_found: 'There is no such provider.',
@@ -262,7 +321,7 @@ export const securityEn: SecurityMessages = {
       groups_claim_missing: 'Groups claim missing',
       groups_claim_truncated: 'Groups claim over a limit',
       space_group_added: 'Group added to a space',
-      space_group_changed: 'Group\'s role in a space changed',
+      space_group_changed: "Group's role in a space changed",
       space_group_removed: 'Group removed from a space',
       dropped: 'Rows dropped',
     },
@@ -284,16 +343,19 @@ export const securityEn: SecurityMessages = {
     passkeyRequiredFor: (name: string) => `Require ${name} to use a passkey`,
     passkeyByRole: '(required by role)',
     passkeyUnavailable: 'Passkeys cannot be used right now, so nobody can be required to use one.',
-    counts: (passkeys: number, sso: number) => `${passkeys} passkey${passkeys === 1 ? '' : 's'} · ${sso} single sign-on identit${sso === 1 ? 'y' : 'ies'}`,
+    counts: (passkeys: number, sso: number) =>
+      `${passkeys} passkey${passkeys === 1 ? '' : 's'} · ${sso} single sign-on identit${sso === 1 ? 'y' : 'ies'}`,
     passkeys: 'Passkeys',
     showPasskeys: 'Manage passkeys',
     hidePasskeys: 'Hide passkeys',
     noPasskeys: 'This person has no passkeys.',
-    passkeysHelp: 'For someone who lost a device: delete the lost passkeys. If they are required to use one, their next password sign-in asks them to set a new one up.',
+    passkeysHelp:
+      'For someone who lost a device: delete the lost passkeys. If they are required to use one, their next password sign-in asks them to set a new one up.',
     deletePasskey: 'Delete',
     deletePasskeyFor: (name: string) => `Delete passkey ${name}`,
     deletePasskeyTitle: 'Delete this passkey?',
-    deletePasskeyHelp: (name: string, who: string) => `${who} will no longer be able to sign in with “${name}”. This goes in the audit log.`,
+    deletePasskeyHelp: (name: string, who: string) =>
+      `${who} will no longer be able to sign in with “${name}”. This goes in the audit log.`,
     passkeyDeleted: 'Passkey deleted',
     loadPasskeysFailed: 'Could not load the passkeys',
     email: 'Email',

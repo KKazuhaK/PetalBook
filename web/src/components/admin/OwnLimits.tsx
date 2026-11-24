@@ -44,7 +44,8 @@ export function OwnLimits({ userId, own, onSaved }: { userId: string; own: OwnQu
     const s = parseCount(spaces)
     const b = gbToBytes(bytes)
     const p = parseCount(pages)
-    if (s === undefined || b === undefined || p === undefined || (p !== null && p < 1) || (s !== null && s > 10000)) return setMessage({ tone: 'error', text: tu.own.invalid })
+    if (s === undefined || b === undefined || p === undefined || (p !== null && p < 1) || (s !== null && s > 10000))
+      return setMessage({ tone: 'error', text: tu.own.invalid })
     const quota: Partial<OwnQuota> = {}
     if (spaces !== countToText(base.spaces)) quota.spaces = s
     if (bytes !== bytesToGb(base.bytes)) quota.bytes = b
@@ -71,9 +72,27 @@ export function OwnLimits({ userId, own, onSaved }: { userId: string; own: OwnQu
       </div>
       <FormMessage tone={message?.tone}>{message?.text}</FormMessage>
       <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
-        <Field label={tu.own.spaces} value={spaces} inputMode="numeric" placeholder={tu.own.follow} onChange={(e) => setSpaces(e.target.value)} />
-        <Field label={tu.own.bytesGb} value={bytes} inputMode="decimal" placeholder={tu.own.follow} onChange={(e) => setBytes(e.target.value)} />
-        <Field label={tu.own.pages} value={pages} inputMode="numeric" placeholder={tu.own.follow} onChange={(e) => setPages(e.target.value)} />
+        <Field
+          label={tu.own.spaces}
+          value={spaces}
+          inputMode="numeric"
+          placeholder={tu.own.follow}
+          onChange={(e) => setSpaces(e.target.value)}
+        />
+        <Field
+          label={tu.own.bytesGb}
+          value={bytes}
+          inputMode="decimal"
+          placeholder={tu.own.follow}
+          onChange={(e) => setBytes(e.target.value)}
+        />
+        <Field
+          label={tu.own.pages}
+          value={pages}
+          inputMode="numeric"
+          placeholder={tu.own.follow}
+          onChange={(e) => setPages(e.target.value)}
+        />
       </div>
       <div>
         <Button type="submit" size="sm" disabled={busy}>

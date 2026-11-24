@@ -10,14 +10,32 @@ import { errorMessage, useActiveSpace, useChecks, useFixCheck, useSpacePermissio
 import type { Problem, ProblemKind } from '@/api/types'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { TopBar } from '@/components/layout/TopBar'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { ct } from '@/i18n/checks'
 import { t } from '@/i18n'
 
 // In the order the server lists them.
-const KINDS: readonly ProblemKind[] = ['no_id', 'duplicate_id', 'bad_header', 'type_mismatch', 'not_in_type', 'broken_link', 'missing_asset', 'duplicate_title']
+const KINDS: readonly ProblemKind[] = [
+  'no_id',
+  'duplicate_id',
+  'bad_header',
+  'type_mismatch',
+  'not_in_type',
+  'broken_link',
+  'missing_asset',
+  'duplicate_title',
+]
 const PAGE = 50
 const isKind = (v: unknown): v is ProblemKind => KINDS.some((k) => k === v)
 
@@ -49,7 +67,15 @@ export default function CheckPage() {
         onSuccess: () => toast.success(p.fix === 'add_id' ? ct.fix.addIdDone(p.path) : ct.fix.removeFieldsDone(p.path)),
         onError: (e) => {
           const code = e instanceof ApiError ? (e.code as string) : ''
-          toast.error(code === 'conflict' ? ct.fix.conflict : code === 'not_found' ? ct.fix.gone : code === 'not_fixable' ? ct.fix.notFixable : errorMessage(e, ct.fix.failed))
+          toast.error(
+            code === 'conflict'
+              ? ct.fix.conflict
+              : code === 'not_found'
+                ? ct.fix.gone
+                : code === 'not_fixable'
+                  ? ct.fix.notFixable
+                  : errorMessage(e, ct.fix.failed),
+          )
         },
       },
     )
@@ -85,10 +111,19 @@ export default function CheckPage() {
           <nav aria-label={ct.filterLabel} className="flex flex-wrap gap-1.5" data-testid="check-summary">
             <Chip active={kind === ''} onClick={() => pick('')} label={ct.all} count={total} kind="all" />
             {KINDS.filter((k) => (counts[k] ?? 0) > 0 || k === kind).map((k) => (
-              <Chip key={k} active={kind === k} onClick={() => pick(k)} label={ct.kinds[k].title} count={counts[k] ?? 0} kind={k} />
+              <Chip
+                key={k}
+                active={kind === k}
+                onClick={() => pick(k)}
+                label={ct.kinds[k].title}
+                count={counts[k] ?? 0}
+                kind={k}
+              />
             ))}
           </nav>
-          {!write && fixable > 0 && <p className="rounded-lg border p-3 text-xs text-muted-foreground">{ct.fix.readOnly}</p>}
+          {!write && fixable > 0 && (
+            <p className="rounded-lg border p-3 text-xs text-muted-foreground">{ct.fix.readOnly}</p>
+          )}
           {shown === 0 && kind !== '' && (
             <div className="flex flex-col items-center gap-3 py-10 text-center">
               <p className="text-sm text-muted-foreground">{ct.emptyKind}</p>
@@ -116,7 +151,11 @@ export default function CheckPage() {
           {checks.hasNextPage && (
             <div className="flex flex-col items-center gap-2 pt-1">
               {checks.isFetchNextPageError && <p className="text-xs text-destructive">{ct.moreFailed}</p>}
-              <Button variant="outline" disabled={checks.isFetchingNextPage} onClick={() => void checks.fetchNextPage()}>
+              <Button
+                variant="outline"
+                disabled={checks.isFetchingNextPage}
+                onClick={() => void checks.fetchNextPage()}
+              >
                 {checks.isFetchingNextPage ? (
                   <>
                     <Spinner />
@@ -139,14 +178,20 @@ export default function CheckPage() {
     <>
       <TopBar>
         <h1 className="truncate text-sm font-medium">{ct.title}</h1>
-        {checks.data && <span className="shrink-0 text-xs text-muted-foreground">{ct.summary(KINDS.reduce((n, k) => n + (checks.data.pages[0].counts[k] ?? 0), 0))}</span>}
+        {checks.data && (
+          <span className="shrink-0 text-xs text-muted-foreground">
+            {ct.summary(KINDS.reduce((n, k) => n + (checks.data.pages[0].counts[k] ?? 0), 0))}
+          </span>
+        )}
       </TopBar>
       <div className="mx-auto w-full max-w-[760px] min-w-0 flex-1 space-y-5 px-4 py-6 sm:px-5">{body}</div>
       <AlertDialog open={asking !== null} onOpenChange={(open) => !open && setAsking(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{ct.fix.confirmTitle}</AlertDialogTitle>
-            <AlertDialogDescription className="break-words">{asking ? ct.fix.confirmHelp(asking.path, fields) : ''}</AlertDialogDescription>
+            <AlertDialogDescription className="break-words">
+              {asking ? ct.fix.confirmHelp(asking.path, fields) : ''}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{ct.fix.cancel}</AlertDialogCancel>
@@ -165,7 +210,19 @@ export default function CheckPage() {
   )
 }
 
-function Chip({ active, onClick, label, count, kind }: { active: boolean; onClick: () => void; label: string; count: number; kind: string }) {
+function Chip({
+  active,
+  onClick,
+  label,
+  count,
+  kind,
+}: {
+  active: boolean
+  onClick: () => void
+  label: string
+  count: number
+  kind: string
+}) {
   return (
     <button
       type="button"
@@ -198,7 +255,23 @@ function Group({ kind, count, children }: { kind: ProblemKind; count: number; ch
 
 const linkClass = 'break-all underline-offset-2 hover:underline focus-visible:underline'
 
-function Row({ problem: p, pageUrl, folderUrl, canFix, working, disabled, onFix }: { problem: Problem; pageUrl: (id: string) => string; folderUrl: (path: string) => string; canFix: boolean; working: boolean; disabled: boolean; onFix: (p: Problem) => void }) {
+function Row({
+  problem: p,
+  pageUrl,
+  folderUrl,
+  canFix,
+  working,
+  disabled,
+  onFix,
+}: {
+  problem: Problem
+  pageUrl: (id: string) => string
+  folderUrl: (path: string) => string
+  canFix: boolean
+  working: boolean
+  disabled: boolean
+  onFix: (p: Problem) => void
+}) {
   // A file that is a page opens in the editor; one that is not (no id, a header that cannot be read, an id another
   // file has) can only be shown in its folder.
   const isPage = !!p.id && p.kind !== 'duplicate_id'
@@ -207,7 +280,11 @@ function Row({ problem: p, pageUrl, folderUrl, canFix, working, disabled, onFix 
   return (
     <li data-problem={p.kind} data-path={p.path} className="grid min-w-0 gap-1.5 px-3 py-2.5">
       <div className="flex min-w-0 flex-wrap items-start justify-between gap-x-3 gap-y-1.5">
-        <Link to={to} title={isPage ? ct.openPage : ct.openFolder} className={`min-w-0 text-sm font-medium ${linkClass}`}>
+        <Link
+          to={to}
+          title={isPage ? ct.openPage : ct.openFolder}
+          className={`min-w-0 text-sm font-medium ${linkClass}`}
+        >
           {p.path}
         </Link>
         {canFix && p.fix && (
@@ -222,7 +299,17 @@ function Row({ problem: p, pageUrl, folderUrl, canFix, working, disabled, onFix 
   )
 }
 
-function Detail({ problem: p, detail: d, pageUrl, folderUrl }: { problem: Problem; detail: Record<string, unknown>; pageUrl: (id: string) => string; folderUrl: (path: string) => string }) {
+function Detail({
+  problem: p,
+  detail: d,
+  pageUrl,
+  folderUrl,
+}: {
+  problem: Problem
+  detail: Record<string, unknown>
+  pageUrl: (id: string) => string
+  folderUrl: (path: string) => string
+}) {
   const muted = 'text-xs text-muted-foreground'
   const code = 'rounded bg-muted px-1.5 py-0.5 font-mono text-xs break-all'
   switch (p.kind) {
@@ -247,7 +334,15 @@ function Detail({ problem: p, detail: d, pageUrl, folderUrl }: { problem: Proble
       return (
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <span className={muted}>{ct.fields}</span>
-          {fields.length > 0 ? fields.map((f) => <code key={f} className={code}>{f}</code>) : <span className={muted}>{p.message}</span>}
+          {fields.length > 0 ? (
+            fields.map((f) => (
+              <code key={f} className={code}>
+                {f}
+              </code>
+            ))
+          ) : (
+            <span className={muted}>{p.message}</span>
+          )}
         </div>
       )
     }

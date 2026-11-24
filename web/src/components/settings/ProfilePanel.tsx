@@ -19,7 +19,13 @@ export function ProfilePanel() {
   const session = useSession()
   const account = useAccount(session.data?.mode === 'accounts' && !!session.data.user)
   if (account.isPending || !session.data) return <PageFallback />
-  if (account.isError) return <ErrorState message={t.fmt.labelled(t.settings.loadFailed, account.error.message)} onRetry={() => void account.refetch()} />
+  if (account.isError)
+    return (
+      <ErrorState
+        message={t.fmt.labelled(t.settings.loadFailed, account.error.message)}
+        onRetry={() => void account.refetch()}
+      />
+    )
   return (
     <div className="space-y-8">
       <Sections account={account.data} />
@@ -89,8 +95,27 @@ function Profile({ account }: { account: AccountInfo }) {
     <SettingsSection title={t.settings.profile}>
       <EmailVerification user={account.user} />
       <form className="grid gap-4" onSubmit={(e) => void submit(e)}>
-        <Field label={t.settings.name} value={name} onChange={(e) => { setName(e.target.value); setDone(false) }} autoComplete="name" required />
-        <Field label={t.settings.email} help={t.settings.emailHelp} type="email" value={email} onChange={(e) => { setEmail(e.target.value); setDone(false) }} autoComplete="email" />
+        <Field
+          label={t.settings.name}
+          value={name}
+          onChange={(e) => {
+            setName(e.target.value)
+            setDone(false)
+          }}
+          autoComplete="name"
+          required
+        />
+        <Field
+          label={t.settings.email}
+          help={t.settings.emailHelp}
+          type="email"
+          value={email}
+          onChange={(e) => {
+            setEmail(e.target.value)
+            setDone(false)
+          }}
+          autoComplete="email"
+        />
         <FormMessage>{error}</FormMessage>
         <div className="flex items-center gap-3">
           <Button type="submit" disabled={busy || !name.trim()}>
@@ -112,7 +137,12 @@ function EmailVerification({ user }: { user: AccountInfo['user'] }) {
   const mailOn = providers.data?.forgot === true
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<{ tone: 'error' | 'info'; text: string } | null>(null)
-  if (!user.email) return <p className="text-sm text-muted-foreground">{tm.account.title}: {tm.account.none}</p>
+  if (!user.email)
+    return (
+      <p className="text-sm text-muted-foreground">
+        {tm.account.title}: {tm.account.none}
+      </p>
+    )
   const ask = async () => {
     setBusy(true)
     setMessage(null)
@@ -121,7 +151,15 @@ function EmailVerification({ user }: { user: AccountInfo['user'] }) {
       setMessage({ tone: 'info', text: tm.account.sent(user.email) })
     } catch (err) {
       const code = err instanceof ApiError ? err.code : ''
-      setMessage({ tone: 'error', text: code === 'mail_not_configured' ? tm.account.notConfigured : code === 'rate_limited' && err instanceof ApiError ? tm.account.rateLimited(t.auth.wait(err.retryAfter ?? 60)) : tm.account.failed })
+      setMessage({
+        tone: 'error',
+        text:
+          code === 'mail_not_configured'
+            ? tm.account.notConfigured
+            : code === 'rate_limited' && err instanceof ApiError
+              ? tm.account.rateLimited(t.auth.wait(err.retryAfter ?? 60))
+              : tm.account.failed,
+      })
     }
     setBusy(false)
   }
@@ -130,7 +168,9 @@ function EmailVerification({ user }: { user: AccountInfo['user'] }) {
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium">{tm.account.title}</span>
         <span className="break-all text-muted-foreground">{user.email}</span>
-        <Badge variant={user.emailVerified ? 'secondary' : 'outline'}>{user.emailVerified ? tm.account.verified : tm.account.unverified}</Badge>
+        <Badge variant={user.emailVerified ? 'secondary' : 'outline'}>
+          {user.emailVerified ? tm.account.verified : tm.account.unverified}
+        </Badge>
         {!user.emailVerified && mailOn && (
           <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void ask()}>
             {busy ? tm.account.sending : tm.account.verify}

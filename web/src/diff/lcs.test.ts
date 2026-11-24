@@ -5,7 +5,9 @@ import { diffLines } from './lines'
 // The reference: the textbook table.
 function lcsLength(a: number[], b: number[]): number {
   const f = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0))
-  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) f[i][j] = a[i - 1] === b[j - 1] ? f[i - 1][j - 1] + 1 : Math.max(f[i - 1][j], f[i][j - 1])
+  for (let i = 1; i <= a.length; i++)
+    for (let j = 1; j <= b.length; j++)
+      f[i][j] = a[i - 1] === b[j - 1] ? f[i - 1][j - 1] + 1 : Math.max(f[i - 1][j], f[i][j - 1])
   return f[a.length][b.length]
 }
 
@@ -37,7 +39,10 @@ describe('lcsPairs', () => {
   it('handles empty and identical input', () => {
     expect(lcsPairs([], [])).toEqual([])
     expect(lcsPairs([1, 2], [])).toEqual([])
-    expect(lcsPairs([1, 2], [1, 2])).toEqual([[0, 0], [1, 1]])
+    expect(lcsPairs([1, 2], [1, 2])).toEqual([
+      [0, 0],
+      [1, 1],
+    ])
   })
 
   it('gives up (null) beyond the cost cap', () => {

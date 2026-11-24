@@ -27,13 +27,18 @@ const routes = (
 const dialog = () => document.querySelector<HTMLElement>('[data-slot="settings-dialog"]')!
 const text = () => dialog()?.textContent ?? ''
 const items = () => [...document.querySelectorAll<HTMLElement>('[data-slot="token-item"]')]
-const button = (label: string) => [...dialog().querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === label) ?? null
+const button = (label: string) =>
+  [...dialog().querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === label) ?? null
 const open = async (server: { mode: 'accounts' | 'single' } = { mode: 'accounts' }) => {
   m = await mount(routes, { entries: ['/settings/tokens'], signIn: server.mode === 'accounts', server })
-  await settle(() => dialog() !== null && (text().includes(tk.title) || text().includes(t.settingsUi.sections.preferences)), 'the dialog')
+  await settle(
+    () => dialog() !== null && (text().includes(tk.title) || text().includes(t.settingsUi.sections.preferences)),
+    'the dialog',
+  )
 }
 const name = () => dialog().querySelector<HTMLInputElement>('input[maxlength="80"]')!
-const apiCalls = (method: string) => m!.requests.filter((r) => r.method === method && r.url.startsWith('/api/account/tokens'))
+const apiCalls = (method: string) =>
+  m!.requests.filter((r) => r.method === method && r.url.startsWith('/api/account/tokens'))
 
 describe('API tokens in the settings', () => {
   it('is an entry of the account group, with a page of its own', async () => {
@@ -120,7 +125,9 @@ describe('API tokens in the settings', () => {
     const request = adminRequests(m!.server)
     const space = (request('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
     request('POST', '/api/account/tokens', { name: 'keep', spaces: [space] })
-    const gone = (request('POST', '/api/account/tokens', { name: 'drop', spaces: [space] }).body as { token: { id: string } }).token.id
+    const gone = (
+      request('POST', '/api/account/tokens', { name: 'drop', spaces: [space] }).body as { token: { id: string } }
+    ).token.id
     await m!.qc.invalidateQueries({ queryKey: ['tokens'] })
     await settle(() => items().length === 2, 'both tokens')
     await click(byLabel(tk.revokeLabel('drop')))
@@ -128,8 +135,15 @@ describe('API tokens in the settings', () => {
     expect(document.querySelector('[role="alertdialog"]')!.textContent).toContain(tk.revokeHelp('drop'))
     // Asking does nothing yet.
     expect(m!.requests.filter((r) => r.method === 'DELETE')).toEqual([])
-    await click([...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find((b) => b.textContent?.trim() === tk.revokeConfirm))
-    await settle(() => m!.requests.some((r) => r.method === 'DELETE' && r.url === `/api/account/tokens/${gone}`), 'the revocation')
+    await click(
+      [...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find(
+        (b) => b.textContent?.trim() === tk.revokeConfirm,
+      ),
+    )
+    await settle(
+      () => m!.requests.some((r) => r.method === 'DELETE' && r.url === `/api/account/tokens/${gone}`),
+      'the revocation',
+    )
     await settle(() => items().some((i) => i.dataset.state === 'revoked'), 'the list shows it revoked')
     const revoked = items().find((i) => i.dataset.state === 'revoked')!
     expect(revoked.textContent).toContain(tk.states.revoked)
@@ -139,7 +153,11 @@ describe('API tokens in the settings', () => {
 
   it('an expired token is listed as expired and cannot be revoked again', async () => {
     let clock = Date.now()
-    m = await mount(routes, { entries: ['/settings/tokens'], signIn: true, server: { mode: 'accounts', now: () => clock } })
+    m = await mount(routes, {
+      entries: ['/settings/tokens'],
+      signIn: true,
+      server: { mode: 'accounts', now: () => clock },
+    })
     await settle(() => dialog() !== null && text().includes(tk.none), 'the dialog')
     const request = adminRequests(m.server)
     const space = (request('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
@@ -161,7 +179,9 @@ describe('what the mock keeps to the contract', () => {
     expect((r.body as { token: { expires: unknown } }).token.expires).toBeNull()
     expect(() => request('POST', '/api/account/tokens', { name: 'n', spaces: ['nope'] })).toThrow(/404/)
     expect(() => request('POST', '/api/account/tokens', { name: '', spaces: [spaces[0].id] })).toThrow(/400/)
-    expect(() => request('POST', '/api/account/tokens', { name: 'n', spaces: [spaces[0].id], expiresInDays: 400 })).toThrow(/400/)
+    expect(() =>
+      request('POST', '/api/account/tokens', { name: 'n', spaces: [spaces[0].id], expiresInDays: 400 }),
+    ).toThrow(/400/)
     expect(MOCK_ADMIN.username).toBeTruthy()
   })
 })

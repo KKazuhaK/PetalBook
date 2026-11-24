@@ -3,7 +3,17 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { act, useEffect, type ReactNode } from 'react'
 import { useNavigate, type NavigateFunction } from 'react-router'
 import { toast } from 'sonner'
-import { byLabel, click, installDomShims, locationText, mount, settle, shareSpace, type, type Mounted } from '@/testing/harness'
+import {
+  byLabel,
+  click,
+  installDomShims,
+  locationText,
+  mount,
+  settle,
+  shareSpace,
+  type,
+  type Mounted,
+} from '@/testing/harness'
 import { listShell, putViews, seedWork, sender, TASK, viewsOf } from '@/testing/listKit'
 import type { MockServer } from '@/api/mock/server'
 import { keys, viewsTiming } from '@/api/hooks'
@@ -32,12 +42,18 @@ const selected = () => tabs().find((e) => e.getAttribute('aria-selected') === 't
 const tab = (name: string) => tabs().find((e) => e.firstChild?.textContent === name)!
 const modifiedMark = () => document.querySelector('[data-slot="modified"]')
 const puts = () => m!.requests.filter((r) => r.method === 'PUT' && r.url.endsWith('/views'))
-const listUrls = () => m!.requests.filter((r) => r.method === 'GET' && /\/pages\?/.test(r.url)).map((r) => decodeURIComponent(r.url))
+const listUrls = () =>
+  m!.requests.filter((r) => r.method === 'GET' && /\/pages\?/.test(r.url)).map((r) => decodeURIComponent(r.url))
 const rowTitles = () => [...document.querySelectorAll('[data-file-key^="p:"]')].map((e) => e.textContent ?? '')
 const button = (label: string) => byLabel(label) as HTMLButtonElement | null
-const textButton = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === label) ?? null
+const textButton = (label: string) =>
+  [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === label) ?? null
 
-async function open(path = '/s/default/f/Work', scene?: (send: ReturnType<typeof sender>, ids: ReturnType<typeof seedWork>, server: MockServer) => void, options: Parameters<typeof mount>[1] = {}) {
+async function open(
+  path = '/s/default/f/Work',
+  scene?: (send: ReturnType<typeof sender>, ids: ReturnType<typeof seedWork>, server: MockServer) => void,
+  options: Parameters<typeof mount>[1] = {},
+) {
   m = await mount(withNav(listShell), {
     ...options,
     entries: (server) => {
@@ -95,7 +111,10 @@ describe('a folder with no saved view', () => {
     expect(selected()).toBe('卡片')
     expect(puts()).toHaveLength(1)
     const body = JSON.parse(puts()[0].body!)
-    expect(body).toMatchObject({ folder: 'Work', views: [{ name: '卡片', layout: 'cards', sort: '', group: '', filter: [], hidden: [] }] })
+    expect(body).toMatchObject({
+      folder: 'Work',
+      views: [{ name: '卡片', layout: 'cards', sort: '', group: '', filter: [], hidden: [] }],
+    })
     expect(typeof body.baseRev).toBe('string')
     const [view] = (await saved()).views
     expect(view.id).toMatch(/^[a-z0-9]{6}$/)
@@ -116,7 +135,11 @@ describe('a folder with no saved view', () => {
 })
 
 describe('tabs', () => {
-  const two = (send: ReturnType<typeof sender>) => putViews(send, FOLDER, [{ name: '全部', layout: 'list' }, { name: '看板', layout: 'board', group: 'status', color: 'teal' }])
+  const two = (send: ReturnType<typeof sender>) =>
+    putViews(send, FOLDER, [
+      { name: '全部', layout: 'list' },
+      { name: '看板', layout: 'board', group: 'status', color: 'teal' },
+    ])
 
   it('show the views in order, the first one at first, and switching shows the layout of the view', async () => {
     await open('/s/default/f/Work', two)
@@ -203,7 +226,10 @@ describe('tabs', () => {
     await settle(() => puts().length === before + 1, 'the save')
     const body = JSON.parse(puts().at(-1)!.body!)
     expect(body.baseRev).toBe(rev)
-    expect(body.views.map((v: any) => [v.name, v.layout])).toEqual([['全部', 'list'], ['看板', 'table']])
+    expect(body.views.map((v: any) => [v.name, v.layout])).toEqual([
+      ['全部', 'list'],
+      ['看板', 'table'],
+    ])
     // The first view is as it was; the other keeps its id and its colour.
     expect(body.views[0].id).toBeTruthy()
     expect(body.views[1].color).toBe('teal')
@@ -211,14 +237,19 @@ describe('tabs', () => {
     expect((await saved()).views[1]).toMatchObject({ layout: 'table', color: 'teal' })
   })
 
-  it('filters are the view\'s too: a filter changes the listing and the tab, and is saved with the view', async () => {
+  it("filters are the view's too: a filter changes the listing and the tab, and is saved with the view", async () => {
     await open('/s/default/f/Work', two)
     await settle(() => tabs().length === 2, 'the tabs')
     await settle(() => rowTitles().length === 4, 'four pages')
     await click(await settleFor(() => textButton(tp().filter.add)))
     const field = document.querySelector<HTMLSelectElement>(`select[aria-label="${tp().filter.field}"]`)!
     await type(field, 'status')
-    const chip = await settleFor(() => [...document.querySelectorAll<HTMLButtonElement>('[role="group"] button')].find((b) => b.textContent === 'todo') ?? null)
+    const chip = await settleFor(
+      () =>
+        [...document.querySelectorAll<HTMLButtonElement>('[role="group"] button')].find(
+          (b) => b.textContent === 'todo',
+        ) ?? null,
+    )
     await click(chip)
     await click(textButton(tp().filter.apply))
     await settle(() => rowTitles().length === 1, 'one page left')
@@ -250,7 +281,10 @@ describe('tabs', () => {
     // move it to the front
     // (the button is off while a move is being written: the second click waits for the first to settle)
     await click(button(t.views.moveLeft))
-    await settle(() => tabNames()[1] === t.views.copyName('所有页面') && !button(t.views.moveLeft)!.disabled, 'moved once')
+    await settle(
+      () => tabNames()[1] === t.views.copyName('所有页面') && !button(t.views.moveLeft)!.disabled,
+      'moved once',
+    )
     await click(button(t.views.moveLeft))
     await settle(() => tabNames()[0] === t.views.copyName('所有页面'), 'moved')
     expect((await saved()).views.map((v) => v.name)).toEqual([t.views.copyName('所有页面'), '所有页面', '看板'])
@@ -269,14 +303,21 @@ describe('tabs', () => {
   })
 
   it('are put in another order by dragging a tab onto another', async () => {
-    await open('/s/default/f/Work', (send) => putViews(send, FOLDER, [{ name: '甲', layout: 'list' }, { name: '乙', layout: 'cards' }, { name: '丙', layout: 'list' }]))
+    await open('/s/default/f/Work', (send) =>
+      putViews(send, FOLDER, [
+        { name: '甲', layout: 'list' },
+        { name: '乙', layout: 'cards' },
+        { name: '丙', layout: 'list' },
+      ]),
+    )
     await settle(() => tabs().length === 3, 'the tabs')
     const dt = { setData() {}, effectAllowed: '' }
-    const fire = (el: Element, type: string) => act(async () => {
-      const e = new Event(type, { bubbles: true, cancelable: true })
-      Object.assign(e, { dataTransfer: dt })
-      el.dispatchEvent(e)
-    })
+    const fire = (el: Element, type: string) =>
+      act(async () => {
+        const e = new Event(type, { bubbles: true, cancelable: true })
+        Object.assign(e, { dataTransfer: dt })
+        el.dispatchEvent(e)
+      })
     await fire(tab('丙'), 'dragstart')
     await fire(tab('甲'), 'dragover')
     await fire(tab('甲'), 'drop')
@@ -285,27 +326,51 @@ describe('tabs', () => {
   })
 
   it('at most twenty: the buttons that would make a twenty-first are off', async () => {
-    await open('/s/default/f/Work', (send) => putViews(send, FOLDER, Array.from({ length: 20 }, (_, i) => ({ name: `v${i}`, layout: 'list' }))))
+    await open('/s/default/f/Work', (send) =>
+      putViews(
+        send,
+        FOLDER,
+        Array.from({ length: 20 }, (_, i) => ({ name: `v${i}`, layout: 'list' })),
+      ),
+    )
     await settle(() => tabs().length === 20, 'twenty tabs')
     expect(button(t.views.tooMany(20))).not.toBeNull()
-    expect((document.querySelectorAll(`[aria-label="${t.views.tooMany(20)}"]`) as NodeListOf<HTMLButtonElement>).length).toBe(2)
-    expect([...document.querySelectorAll<HTMLButtonElement>(`[aria-label="${t.views.tooMany(20)}"]`)].every((b) => b.disabled)).toBe(true)
+    expect(
+      (document.querySelectorAll(`[aria-label="${t.views.tooMany(20)}"]`) as NodeListOf<HTMLButtonElement>).length,
+    ).toBe(2)
+    expect(
+      [...document.querySelectorAll<HTMLButtonElement>(`[aria-label="${t.views.tooMany(20)}"]`)].every(
+        (b) => b.disabled,
+      ),
+    ).toBe(true)
   })
 })
 
 // The person's own write of the views is exclusive: while it is on its way the tabs, the tools of the view, the sort,
 // Save and Revert are off (aria-busy), nothing read meanwhile is taken in, and when it has settled the views are read
 // again. The four races of review round 10 are impossible or harmless that way.
-describe('while the person\'s own write of the views is on its way', () => {
+describe("while the person's own write of the views is on its way", () => {
   beforeEach(() => {
     toast.dismiss()
   })
-  const two = (send: ReturnType<typeof sender>) => putViews(send, FOLDER, [{ name: '全部', layout: 'list' }, { name: '看板', layout: 'board', group: 'status' }])
+  const two = (send: ReturnType<typeof sender>) =>
+    putViews(send, FOLDER, [
+      { name: '全部', layout: 'list' },
+      { name: '看板', layout: 'board', group: 'status' },
+    ])
   const sortSelect = () => document.querySelector<HTMLSelectElement>(`select[aria-label="${t.list.sort}"]`)!
   const bar = () => document.querySelector('[data-slot="view-bar"]')
-  const off = () => bar()?.getAttribute('aria-busy') === 'true' && tabs().every((e) => (e as HTMLButtonElement).disabled) && sortSelect().disabled
-  const on = () => bar() !== null && bar()!.getAttribute('aria-busy') === null && tabs().every((e) => !(e as HTMLButtonElement).disabled) && !sortSelect().disabled
-  const isViews = (method: string, input: RequestInfo | URL) => (method === 'PUT' || method === 'GET') && /\/views(\?|$)/.test(String(input instanceof Request ? input.url : input))
+  const off = () =>
+    bar()?.getAttribute('aria-busy') === 'true' &&
+    tabs().every((e) => (e as HTMLButtonElement).disabled) &&
+    sortSelect().disabled
+  const on = () =>
+    bar() !== null &&
+    bar()!.getAttribute('aria-busy') === null &&
+    tabs().every((e) => !(e as HTMLButtonElement).disabled) &&
+    !sortSelect().disabled
+  const isViews = (method: string, input: RequestInfo | URL) =>
+    (method === 'PUT' || method === 'GET') && /\/views(\?|$)/.test(String(input instanceof Request ? input.url : input))
   // Holds the answers of the requests that match after the server has answered them (so they are written, or read,
   // at once, and arrive when released); `fail` makes them fail instead.
   const hold = (which: (method: string) => boolean, how: { fail?: boolean } = {}) => {
@@ -349,7 +414,7 @@ describe('while the person\'s own write of the views is on its way', () => {
     expect((await saved()).views[0]).toMatchObject({ name: '全部', layout: 'cards' })
   })
 
-  it('round 10 (2): another person\'s view read during an own rename is taken in only after it, and can then be picked and changed without a word of loss', async () => {
+  it("round 10 (2): another person's view read during an own rename is taken in only after it, and can then be picked and changed without a word of loss", async () => {
     await open('/s/default/f/Work', two)
     await settle(() => tabs().length === 2, 'the tabs')
     const h = hold((method) => method === 'PUT')
@@ -400,7 +465,9 @@ describe('while the person\'s own write of the views is on its way', () => {
     await act(async () => {})
     expect(sortSelect().value).toBe('title')
     expect(modifiedMark()).toBeNull()
-    expect(m!.qc.getQueryData<{ views: { sort: string }[] }>(keys.views('default', FOLDER))!.views[0].sort).toBe('title')
+    expect(m!.qc.getQueryData<{ views: { sort: string }[] }>(keys.views('default', FOLDER))!.views[0].sort).toBe(
+      'title',
+    )
   })
 
   it('nothing stays off after a save whose answer is lost on the way', async () => {
@@ -411,7 +478,10 @@ describe('while the person\'s own write of the views is on its way', () => {
     await click(textButton(t.views.save))
     await settle(off, 'everything off')
     await h.release()
-    await settle(() => on() && document.body.textContent!.includes(t.views.failed(t.errors.network)), 'on again, and told')
+    await settle(
+      () => on() && document.body.textContent!.includes(t.views.failed(t.errors.network)),
+      'on again, and told',
+    )
     // The server wrote it before the answer was lost: the views read again say so.
     await settle(() => modifiedMark() === null, 'the views read again')
     expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('true')
@@ -423,7 +493,10 @@ describe('while the person\'s own write of the views is on its way', () => {
     putViews(sender(m!.server), FOLDER, [...(await saved()).views, { name: '别人的', layout: 'list' }])
     await click(button(t.view.cards))
     await click(textButton(t.views.save))
-    await settle(() => on() && document.body.textContent!.includes(t.views.conflict) && tabs().length === 3, 'refused, on again')
+    await settle(
+      () => on() && document.body.textContent!.includes(t.views.conflict) && tabs().length === 3,
+      'refused, on again',
+    )
     expect(modifiedMark()).not.toBeNull()
   })
 
@@ -442,7 +515,10 @@ describe('while the person\'s own write of the views is on its way', () => {
     expect(tabs()).toHaveLength(0)
     await h.release()
     await settle(() => tabs().length === 2 && on(), 'on again')
-    await settle(() => button(t.view.cards)!.getAttribute('aria-pressed') === 'true' && modifiedMark() === null, 'the saved view')
+    await settle(
+      () => button(t.view.cards)!.getAttribute('aria-pressed') === 'true' && modifiedMark() === null,
+      'the saved view',
+    )
     expect((await saved()).views[0].layout).toBe('cards')
   })
 })
@@ -461,7 +537,10 @@ describe('an address that changes before the views are read', () => {
       entries: (server) => {
         const send = sender(server)
         seedWork(server)
-        putViews(send, FOLDER, [{ name: '甲', layout: 'list' }, { name: '乙', layout: 'list', sort: 'title' }])
+        putViews(send, FOLDER, [
+          { name: '甲', layout: 'list' },
+          { name: '乙', layout: 'list', sort: 'title' },
+        ])
         id = viewsOf(send, 'folder=Work').views[1].id
         localStorage.setItem(viewIdKey('default', 'folder', 'Work'), id)
         return ['/s/default/f/Work']
@@ -491,17 +570,25 @@ describe('an address that changes before the views are read', () => {
 })
 
 describe('when someone else changed the views', () => {
-  const two = (send: ReturnType<typeof sender>) => putViews(send, FOLDER, [{ name: '全部', layout: 'list' }, { name: '看板', layout: 'board', group: 'status' }])
+  const two = (send: ReturnType<typeof sender>) =>
+    putViews(send, FOLDER, [
+      { name: '全部', layout: 'list' },
+      { name: '看板', layout: 'board', group: 'status' },
+    ])
 
   it('a save from an old rev is refused: the person is told, the tabs show the views as they are now, and nothing was overwritten', async () => {
     await open('/s/default/f/Work', two)
     await settle(() => tabs().length === 2, 'the tabs')
     // Another person adds a view and renames one.
-    putViews(sender(m!.server), FOLDER, [{ ...(await saved()).views[0], name: '别人改的' }, (await saved()).views[1], { name: '别人的新视图', layout: 'cards' }])
+    putViews(sender(m!.server), FOLDER, [
+      { ...(await saved()).views[0], name: '别人改的' },
+      (await saved()).views[1],
+      { name: '别人的新视图', layout: 'cards' },
+    ])
     await click(button(t.view.cards))
     await click(textButton(t.views.save))
     await settle(() => document.body.textContent!.includes(t.views.conflict), 'the message')
-    await settle(() => tabs().length === 3, 'the other person\'s tabs')
+    await settle(() => tabs().length === 3, "the other person's tabs")
     expect(tabNames()).toEqual(['别人改的', '看板', '别人的新视图'])
     expect((await saved()).views[0]).toMatchObject({ name: '别人改的', layout: 'list' })
     // The view shown is still the one the person was in, with the change not yet saved: it can be saved again.
@@ -543,13 +630,21 @@ describe('someone who may only read', () => {
       server: { mode: 'accounts' },
       entries: (server) => {
         const { space, owner } = shareSpace(server, 'viewer')
-        const send = (method: string, path: string, body?: unknown) => owner.request(method, `/api/spaces/${space}${path}`, body)
+        const send = (method: string, path: string, body?: unknown) =>
+          owner.request(method, `/api/spaces/${space}${path}`, body)
         send('PUT', '/types/task', TASK)
         send('POST', '/folders', { path: 'Work' })
         send('PUT', '/folders/type', { folder: 'Work', type: 'task' })
         send('POST', '/pages', { folder: 'Work', meta: { title: 'A', status: 'done' }, body: '' })
         const cur = send('GET', '/views?folder=Work').body as { rev: string }
-        send('PUT', '/views', { folder: 'Work', baseRev: cur.rev, views: [{ name: '全部', layout: 'list' }, { name: '表格', layout: 'table' }] })
+        send('PUT', '/views', {
+          folder: 'Work',
+          baseRev: cur.rev,
+          views: [
+            { name: '全部', layout: 'list' },
+            { name: '表格', layout: 'table' },
+          ],
+        })
         return [`/s/${space}/f/Work`]
       },
     })
@@ -604,9 +699,13 @@ describe('a tag', () => {
     // The settings take the property's name.
     const settings = await settleFor(() => button(tb().tools.settings))
     await click(settings)
-    const key = await settleFor(() => document.querySelector<HTMLInputElement>(`input[aria-label="${tb().tools.groupKey}"]`))
+    const key = await settleFor(() =>
+      document.querySelector<HTMLInputElement>(`input[aria-label="${tb().tools.groupKey}"]`),
+    )
     await type(key, 'status')
-    await act(async () => key.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })))
+    await act(async () =>
+      key.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })),
+    )
     await settle(() => button(t.view.board) !== null, 'the board option')
     // A view made now is the tag's, and is written under the tag.
     await click(button(t.view.board))
@@ -655,14 +754,19 @@ async function settleFor<T>(find: () => T | null | undefined): Promise<T> {
 }
 
 describe('a view written by hand', () => {
-  const hand = (_send: unknown, _ids: unknown, server: MockServer) => server.seedHandWrittenViews('Work', [{ name: '甲', layout: 'list' }, { name: '乙', layout: 'list' }])
+  const hand = (_send: unknown, _ids: unknown, server: MockServer) =>
+    server.seedHandWrittenViews('Work', [
+      { name: '甲', layout: 'list' },
+      { name: '乙', layout: 'list' },
+    ])
   const dragOnto = async (from: string, to: string) => {
     const dt = { setData() {}, effectAllowed: '' }
-    const fire = (el: Element, type: string) => act(async () => {
-      const e = new Event(type, { bubbles: true, cancelable: true })
-      Object.assign(e, { dataTransfer: dt })
-      el.dispatchEvent(e)
-    })
+    const fire = (el: Element, type: string) =>
+      act(async () => {
+        const e = new Event(type, { bubbles: true, cancelable: true })
+        Object.assign(e, { dataTransfer: dt })
+        el.dispatchEvent(e)
+      })
     await fire(tab(from), 'dragstart')
     await fire(tab(to), 'dragover')
     await fire(tab(to), 'drop')
@@ -700,7 +804,11 @@ describe('a view written by hand', () => {
 
   // Another person writes the list: every "@n" gets a real id, in the same order, and a third view is added.
   const otherWrites = async () => {
-    putViews(sender(m!.server), FOLDER, [{ name: '甲', layout: 'list' }, { name: '乙', layout: 'list' }, { name: '丙', layout: 'cards' }])
+    putViews(sender(m!.server), FOLDER, [
+      { name: '甲', layout: 'list' },
+      { name: '乙', layout: 'list' },
+      { name: '丙', layout: 'cards' },
+    ])
     expect((await saved()).views.map((v) => v.id).some((id) => id.startsWith('@'))).toBe(false)
   }
   const stillInTheSecond = async () => {
@@ -747,7 +855,12 @@ describe('a view written by hand while another person changes the list', () => {
   beforeEach(() => {
     toast.dismiss()
   })
-  const three = (_send: unknown, _ids: unknown, server: MockServer) => server.seedHandWrittenViews('Work', [{ name: '甲', layout: 'list' }, { name: '乙', layout: 'list' }, { name: '丙', layout: 'list' }])
+  const three = (_send: unknown, _ids: unknown, server: MockServer) =>
+    server.seedHandWrittenViews('Work', [
+      { name: '甲', layout: 'list' },
+      { name: '乙', layout: 'list' },
+      { name: '丙', layout: 'list' },
+    ])
   const list = (...names: string[]) => names.map((name) => ({ name, layout: 'list' }))
   const other = (views: Record<string, unknown>[]) => putViews(sender(m!.server), FOLDER, views)
   const refetch = async () => {
@@ -765,7 +878,10 @@ describe('a view written by hand while another person changes the list', () => {
   const layouts = async () => Object.fromEntries((await saved()).views.map((v) => [v.name, v.layout]))
   const lostMessage = (name: string) => document.body.textContent!.includes(t.views.lost(name))
   const staysOnSecond = async () => {
-    await settle(() => !(localStorage.getItem(viewIdKey('default', 'folder', 'Work')) ?? '').startsWith('@'), 'the remembered id follows')
+    await settle(
+      () => !(localStorage.getItem(viewIdKey('default', 'folder', 'Work')) ?? '').startsWith('@'),
+      'the remembered id follows',
+    )
     expect(selected()).toBe('乙')
     expect(modifiedMark()).not.toBeNull()
     expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('true')
@@ -821,7 +937,12 @@ describe('a view written by hand while another person changes the list', () => {
   })
 
   it('drops the changes when two views have the same name and settings, rather than guess', async () => {
-    await editSecond((_s, _i, server) => server.seedHandWrittenViews('Work', [{ name: '甲', layout: 'list' }, { name: '乙', layout: 'list' }]))
+    await editSecond((_s, _i, server) =>
+      server.seedHandWrittenViews('Work', [
+        { name: '甲', layout: 'list' },
+        { name: '乙', layout: 'list' },
+      ]),
+    )
     other(list('丙', '乙', '乙'))
     await refetch()
     await dropped('丙,乙,乙')
@@ -839,14 +960,20 @@ describe('a view written by hand while another person changes the list', () => {
     await editSecond()
     other(list('乙', '丙'))
     await click(textButton(t.views.save))
-    await settle(() => document.body.textContent!.includes(t.views.conflict) && tabNames().join() === '乙,丙', 'the conflict')
+    await settle(
+      () => document.body.textContent!.includes(t.views.conflict) && tabNames().join() === '乙,丙',
+      'the conflict',
+    )
     expect(puts()).toHaveLength(1)
     expect((await saved()).views.every((v) => v.layout === 'list')).toBe(true)
     await staysOnSecondAfterRefusal()
   })
   // The refused attempt was one PUT; the next one is the second.
   const staysOnSecondAfterRefusal = async () => {
-    await settle(() => !(localStorage.getItem(viewIdKey('default', 'folder', 'Work')) ?? '').startsWith('@'), 'the remembered id follows')
+    await settle(
+      () => !(localStorage.getItem(viewIdKey('default', 'folder', 'Work')) ?? '').startsWith('@'),
+      'the remembered id follows',
+    )
     expect(selected()).toBe('乙')
     expect(modifiedMark()).not.toBeNull()
     await click(textButton(t.views.save))
@@ -866,9 +993,22 @@ describe('a view written by hand while another person changes the list', () => {
   })
 
   it('keeps the view the person moved: the write answers in the order sent, even for views with the same name', async () => {
-    await editSecond((_s, _i, server) => server.seedHandWrittenViews('Work', [{ name: '乙', layout: 'list' }, { name: '乙', layout: 'list' }, { name: '丙', layout: 'list' }]))
+    await editSecond((_s, _i, server) =>
+      server.seedHandWrittenViews('Work', [
+        { name: '乙', layout: 'list' },
+        { name: '乙', layout: 'list' },
+        { name: '丙', layout: 'list' },
+      ]),
+    )
     await click(button(t.views.moveLeft))
-    await settle(() => puts().length === 1 && tabs().map((e) => e.getAttribute('aria-selected')).join() === 'true,false,false', 'moved to the first place')
+    await settle(
+      () =>
+        puts().length === 1 &&
+        tabs()
+          .map((e) => e.getAttribute('aria-selected'))
+          .join() === 'true,false,false',
+      'moved to the first place',
+    )
     expect(modifiedMark()).not.toBeNull()
     expect(document.body.textContent!.includes(t.views.lost('乙'))).toBe(false)
     expect(button(t.view.cards)!.getAttribute('aria-pressed')).toBe('true')
@@ -897,7 +1037,11 @@ describe('a view written by hand, then a new view or a copy', () => {
   beforeEach(() => {
     toast.dismiss()
   })
-  const hand = (_send: unknown, _ids: unknown, server: MockServer) => server.seedHandWrittenViews('Work', [{ name: '甲', layout: 'list' }, { name: '乙', layout: 'list' }])
+  const hand = (_send: unknown, _ids: unknown, server: MockServer) =>
+    server.seedHandWrittenViews('Work', [
+      { name: '甲', layout: 'list' },
+      { name: '乙', layout: 'list' },
+    ])
   const showSecond = async () => {
     await open('/s/default/f/Work', hand)
     await settle(() => tabs().length === 2, 'the tabs')
@@ -936,7 +1080,8 @@ describe('a view written by hand, then a new view or a copy', () => {
     const held = new Promise<void>((r) => (release = r))
     globalThis.fetch = async (input, init) => {
       const res = await real(input, init)
-      if ((init?.method ?? 'GET') === 'PUT' && String(input instanceof Request ? input.url : input).endsWith('/views')) await held
+      if ((init?.method ?? 'GET') === 'PUT' && String(input instanceof Request ? input.url : input).endsWith('/views'))
+        await held
       return res
     }
     await click(textButton(t.views.save))
@@ -958,7 +1103,12 @@ describe('a view written by hand, then a new view or a copy', () => {
 
 describe('the tab that is shown', () => {
   it('keeps what was changed in it when it is clicked again; another tab is the way to leave it', async () => {
-    await open('/s/default/f/Work', (send) => putViews(send, FOLDER, [{ name: '全部', layout: 'list' }, { name: '看板', layout: 'board', group: 'status' }]))
+    await open('/s/default/f/Work', (send) =>
+      putViews(send, FOLDER, [
+        { name: '全部', layout: 'list' },
+        { name: '看板', layout: 'board', group: 'status' },
+      ]),
+    )
     await settle(() => tabs().length === 2, 'the tabs')
     await click(button(t.view.cards))
     expect(modifiedMark()).not.toBeNull()
@@ -1006,11 +1156,20 @@ describe('the sort of a view that someone else removes or renames', () => {
       await m!.qc.invalidateQueries({ queryKey: keys.views('default', FOLDER) })
     })
   }
-  const sortTo = async (value: string) => type(document.querySelector<HTMLSelectElement>(`select[aria-label="${t.list.sort}"]`)!, value)
+  const sortTo = async (value: string) =>
+    type(document.querySelector<HTMLSelectElement>(`select[aria-label="${t.list.sort}"]`)!, value)
   const sortShown = () => document.querySelector<HTMLSelectElement>(`select[aria-label="${t.list.sort}"]`)!.value
   const lost = (name: string) => document.body.textContent!.includes(t.views.lost(name))
-  const real = (send: ReturnType<typeof sender>) => putViews(send, FOLDER, [{ name: '甲', layout: 'list' }, { name: '乙', layout: 'list' }])
-  const hand = (_send: unknown, _ids: unknown, server: MockServer) => server.seedHandWrittenViews('Work', [{ name: '甲', layout: 'list' }, { name: '乙', layout: 'list' }])
+  const real = (send: ReturnType<typeof sender>) =>
+    putViews(send, FOLDER, [
+      { name: '甲', layout: 'list' },
+      { name: '乙', layout: 'list' },
+    ])
+  const hand = (_send: unknown, _ids: unknown, server: MockServer) =>
+    server.seedHandWrittenViews('Work', [
+      { name: '甲', layout: 'list' },
+      { name: '乙', layout: 'list' },
+    ])
 
   // The listings asked for from the moment the other person's change is read.
   let from = 0
@@ -1021,7 +1180,11 @@ describe('the sort of a view that someone else removes or renames', () => {
     expect(textButton(t.views.save)).toBeNull()
     expect(sortShown()).toBe('')
     await settle(() => !locationText().includes('sort='), 'the address without the sort')
-    expect(listUrls().slice(from).filter((u) => u.includes('sort=title'))).toEqual([])
+    expect(
+      listUrls()
+        .slice(from)
+        .filter((u) => u.includes('sort=title')),
+    ).toEqual([])
   }
 
   it('a real id, the sort only changed, the view deleted by another person: 甲 is shown unmodified and the person is told', async () => {
@@ -1056,7 +1219,10 @@ describe('the sort of a view that someone else removes or renames', () => {
     await click(tab('乙'))
     await sortTo('title')
     expect(locationText()).toContain('view=%401')
-    putViews(sender(m!.server), FOLDER, [{ name: '甲', layout: 'list' }, { name: '乙乙', layout: 'list' }])
+    putViews(sender(m!.server), FOLDER, [
+      { name: '甲', layout: 'list' },
+      { name: '乙乙', layout: 'list' },
+    ])
     await refetch()
     await settle(() => tabNames().join() === '甲,乙乙', 'the new tabs')
     await expectDropped()
@@ -1068,7 +1234,10 @@ describe('the sort of a view that someone else removes or renames', () => {
     await settle(() => tabs().length === 2, 'the tabs')
     await click(tab('乙'))
     await sortTo('title')
-    m!.server.seedHandWrittenViews('Work', [{ name: '甲', layout: 'list' }, { name: '乙乙', layout: 'list' }])
+    m!.server.seedHandWrittenViews('Work', [
+      { name: '甲', layout: 'list' },
+      { name: '乙乙', layout: 'list' },
+    ])
     await refetch()
     await settle(() => tabNames().join() === '甲,乙乙', 'the new tabs')
     await expectDropped()
@@ -1079,7 +1248,10 @@ describe('the sort of a view that someone else removes or renames', () => {
     await settle(() => tabs().length === 2, 'the tabs')
     await click(tab('乙'))
     await sortTo('title')
-    putViews(sender(m!.server), FOLDER, [{ name: '乙', layout: 'list' }, { name: '甲', layout: 'list' }])
+    putViews(sender(m!.server), FOLDER, [
+      { name: '乙', layout: 'list' },
+      { name: '甲', layout: 'list' },
+    ])
     await refetch()
     await settle(() => tabNames().join() === '乙,甲' && selected() === '乙', 'followed')
     const id = (await saved()).views[0].id
@@ -1088,7 +1260,10 @@ describe('the sort of a view that someone else removes or renames', () => {
     expect(lost('乙')).toBe(false)
     await click(textButton(t.views.save))
     await settle(() => modifiedMark() === null, 'saved')
-    expect((await saved()).views.map((v) => [v.name, v.sort])).toEqual([['乙', 'title'], ['甲', '']])
+    expect((await saved()).views.map((v) => [v.name, v.sort])).toEqual([
+      ['乙', 'title'],
+      ['甲', ''],
+    ])
   })
 
   it('the sort in the address belongs to the view it names: opening it shows that view with the sort, another view never gets it', async () => {
@@ -1110,17 +1285,25 @@ describe('the sort of a view that someone else removes or renames', () => {
   })
 })
 
-describe('when the views cannot be read after the person\'s own write, or an answer does not come', () => {
+describe("when the views cannot be read after the person's own write, or an answer does not come", () => {
   const timing = { ...viewsTiming }
   beforeEach(() => {
     toast.dismiss()
     Object.assign(viewsTiming, { timeoutMs: 300, retryMs: 50, retries: 5 })
   })
   afterEach(() => Object.assign(viewsTiming, timing))
-  const two = (send: ReturnType<typeof sender>) => putViews(send, FOLDER, [{ name: '全部', layout: 'list' }, { name: '看板', layout: 'board', group: 'status' }])
+  const two = (send: ReturnType<typeof sender>) =>
+    putViews(send, FOLDER, [
+      { name: '全部', layout: 'list' },
+      { name: '看板', layout: 'board', group: 'status' },
+    ])
   const sortSelect = () => document.querySelector<HTMLSelectElement>(`select[aria-label="${t.list.sort}"]`)!
   const bar = () => document.querySelector('[data-slot="view-bar"]')
-  const on = () => bar() !== null && bar()!.getAttribute('aria-busy') === null && tabs().every((e) => !(e as HTMLButtonElement).disabled) && !sortSelect().disabled
+  const on = () =>
+    bar() !== null &&
+    bar()!.getAttribute('aria-busy') === null &&
+    tabs().every((e) => !(e as HTMLButtonElement).disabled) &&
+    !sortSelect().disabled
   const said = (text: string) => document.body.textContent!.includes(text)
   const viewsReads = () => m!.requests.filter((r) => r.method === 'GET' && /\/views\?/.test(r.url)).length
   const urlOf = (input: RequestInfo | URL) => String(input instanceof Request ? input.url : input)
@@ -1212,7 +1395,11 @@ describe('when the views cannot be read after the person\'s own write, or an ans
     r.restore()
     await click(textButton(t.views.save))
     await settle(() => on() && modifiedMark() === null && puts().length === 2, 'saved')
-    expect((await saved()).views.map((v) => [v.name, v.layout])).toEqual([['全部', 'list'], ['看板', 'board'], ['新的', 'cards']])
+    expect((await saved()).views.map((v) => [v.name, v.layout])).toEqual([
+      ['全部', 'list'],
+      ['看板', 'board'],
+      ['新的', 'cards'],
+    ])
   })
 
   it('a copy written, the read after it offline: its tab is there and shown, with what was shown in it', async () => {

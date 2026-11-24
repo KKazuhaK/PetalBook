@@ -103,7 +103,11 @@ function similarity(a: Node, b: Node): number {
 
 // --- entries ---------------------------------------------------------------------
 
-type Entry = { t: 'eq'; b: Node } | { t: 'pair'; a: Node; b: Node } | { t: 'del'; a: Node; move: boolean } | { t: 'ins'; b: Node; move: boolean }
+type Entry =
+  | { t: 'eq'; b: Node }
+  | { t: 'pair'; a: Node; b: Node }
+  | { t: 'del'; a: Node; move: boolean }
+  | { t: 'ins'; b: Node; move: boolean }
 
 // A block long enough that finding it elsewhere is not a coincidence.
 const movable = (n: Node) => n.type !== 'horizontalRule' && plainText(n).length >= 6
@@ -129,7 +133,8 @@ function alignGap(A: Node[], B: Node[], movedA: boolean[], movedB: boolean[]): E
   if (n === 1 && m === 1 && !movedA[0] && !movedB[0] && comparable(A[0], B[0])) return [{ t: 'pair', a: A[0], b: B[0] }]
   // Far from the diagonal a pairing is unlikely and not worth computing.
   const band = n * m <= 400 ? Infinity : Math.max(10, Math.abs(n - m) + 10)
-  const sim = (i: number, j: number) => (movedA[i] || movedB[j] || Math.abs((i * m) / n - j) > band ? 0 : similarity(A[i], B[j]))
+  const sim = (i: number, j: number) =>
+    movedA[i] || movedB[j] || Math.abs((i * m) / n - j) > band ? 0 : similarity(A[i], B[j])
   const W = m + 1
   const f = new Float64Array((n + 1) * W)
   for (let i = 1; i <= n; i++) {
@@ -256,9 +261,16 @@ export function diffBlocks(a: readonly Node[], b: readonly Node[]): Node[] {
 // --- one pair ---------------------------------------------------------------------
 
 const DIFF_ATTRS = new Set(['diff', 'diffOld', 'diffMove'])
-const plainAttrs = (n: Node): Record<string, unknown> => Object.fromEntries(Object.entries(n.attrs ?? {}).filter(([k]) => !DIFF_ATTRS.has(k)))
-const sameAttrs = (a: Node, b: Node) => a.type === b.type && JSON.stringify(sorted(plainAttrs(a))) === JSON.stringify(sorted(plainAttrs(b)))
-const sorted = (o: Record<string, unknown>) => Object.fromEntries(Object.keys(o).sort().map((k) => [k, o[k]]))
+const plainAttrs = (n: Node): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(n.attrs ?? {}).filter(([k]) => !DIFF_ATTRS.has(k)))
+const sameAttrs = (a: Node, b: Node) =>
+  a.type === b.type && JSON.stringify(sorted(plainAttrs(a))) === JSON.stringify(sorted(plainAttrs(b)))
+const sorted = (o: Record<string, unknown>) =>
+  Object.fromEntries(
+    Object.keys(o)
+      .sort()
+      .map((k) => [k, o[k]]),
+  )
 
 // The merged node is the new one; when the old one was another type or had
 // other attributes it is flagged, with what it was.
@@ -336,7 +348,8 @@ function mergeItem(a: Node, b: Node): Node {
 // other rows are lined up like any list of blocks (a row can be added or
 // removed), and the cells of two matching rows are compared one by one.
 function mergeTable(a: Node, b: Node): Node | null {
-  if (colCount(a) !== colCount(b) || !rectangular(a) || !rectangular(b) || rowCount(a) === 0 || rowCount(b) === 0) return null
+  if (colCount(a) !== colCount(b) || !rectangular(a) || !rectangular(b) || rowCount(a) === 0 || rowCount(b) === 0)
+    return null
   const ra = a.content!
   const rb = b.content!
   const head = mergeRow(ra[0], rb[0])

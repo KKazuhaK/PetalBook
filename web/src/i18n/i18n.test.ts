@@ -101,10 +101,18 @@ describe('the language in effect at load', () => {
 describe('dictionaries', () => {
   // `lists`: arrays of sentences only have to be lists of text; each language has as many as it likes.
   const walk = (a: unknown, b: unknown, path: string, problems: string[], lists = false) => {
-    const kind = (v: unknown) => (typeof v === 'function' ? 'function' : typeof v === 'string' ? 'string' : v !== null && typeof v === 'object' ? 'object' : typeof v)
+    const kind = (v: unknown) =>
+      typeof v === 'function'
+        ? 'function'
+        : typeof v === 'string'
+          ? 'string'
+          : v !== null && typeof v === 'object'
+            ? 'object'
+            : typeof v
     if (kind(a) !== kind(b)) return void problems.push(`${path}: ${kind(a)} vs ${kind(b)}`)
     if (kind(a) === 'function') {
-      if ((a as () => void).length !== (b as () => void).length) problems.push(`${path}: takes ${(a as () => void).length} vs ${(b as () => void).length} arguments`)
+      if ((a as () => void).length !== (b as () => void).length)
+        problems.push(`${path}: takes ${(a as () => void).length} vs ${(b as () => void).length} arguments`)
       return
     }
     if (lists && Array.isArray(a)) {
@@ -118,7 +126,9 @@ describe('dictionaries', () => {
     const kb = Object.keys(b as object).sort()
     for (const k of ka) if (!kb.includes(k)) problems.push(`${path}.${k}: missing in en`)
     for (const k of kb) if (!ka.includes(k)) problems.push(`${path}.${k}: extra in en`)
-    for (const k of ka) if (kb.includes(k)) walk((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k], `${path}.${k}`, problems, lists)
+    for (const k of ka)
+      if (kb.includes(k))
+        walk((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k], `${path}.${k}`, problems, lists)
   }
 
   it('have the same keys, with functions where the other has functions', () => {
@@ -143,7 +153,9 @@ describe('dictionaries', () => {
       else if (Array.isArray(v)) v.forEach((x, i) => scan(x, `${path}[${i}]`))
       else if (typeof v === 'function') {
         // Called with stand-in arguments; the one that takes a list gets a list.
-        const args = Array.from({ length: v.length }, () => (path.endsWith('.list') && path.includes('fmt') ? ['x'] : 'x'))
+        const args = Array.from({ length: v.length }, () =>
+          path.endsWith('.list') && path.includes('fmt') ? ['x'] : 'x',
+        )
         const out = (v as (...a: unknown[]) => unknown)(...args)
         if (typeof out === 'string' && cjk.test(out)) found.push(path)
       } else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) scan(x, `${path}.${k}`)

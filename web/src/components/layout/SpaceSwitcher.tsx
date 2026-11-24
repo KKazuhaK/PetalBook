@@ -3,7 +3,15 @@ import { NavLink, useNavigate } from 'react-router'
 import { ChevronsUpDown } from 'lucide-react'
 import { rememberSpace, syncOf, useActiveSpace, useRenameSpace } from '@/api/hooks'
 import { can } from '@/lib/permissions'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { spaceUrls } from '@/lib/urls'
 import { t } from '@/i18n'
 import { settingsPath } from '@/components/settings/sections'
@@ -25,7 +33,11 @@ export function SpaceSwitcher() {
   return (
     <>
       <div className="flex items-center gap-1">
-        <NavLink to={id ? spaceUrls(id).home() : '/'} className="flex shrink-0 items-center px-1 pt-0.5" aria-label={t.nav.home}>
+        <NavLink
+          to={id ? spaceUrls(id).home() : '/'}
+          className="flex shrink-0 items-center px-1 pt-0.5"
+          aria-label={t.nav.home}
+        >
           <img src="/favicon.svg" alt="" className="size-6 rounded-md" />
         </NavLink>
         <DropdownMenu>
@@ -42,7 +54,11 @@ export function SpaceSwitcher() {
                 <DropdownMenuRadioItem key={s.id} value={s.id}>
                   <span className="truncate">{s.name}</span>
                   {s.personal && <span className="text-xs text-muted-foreground">{t.spaces.personal}</span>}
-                  {s.disabled && <span className="rounded border px-1 text-[0.65rem] leading-4 text-muted-foreground">{t.spaces.disabledMark}</span>}
+                  {s.disabled && (
+                    <span className="rounded border px-1 text-[0.65rem] leading-4 text-muted-foreground">
+                      {t.spaces.disabledMark}
+                    </span>
+                  )}
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>
@@ -60,13 +76,17 @@ export function SpaceSwitcher() {
         </DropdownMenu>
         {id && <SyncIndicator space={id} sync={syncOf(current)} />}
       </div>
-      <NewSpaceDialog open={dialog === 'new'} onOpenChange={(o) => !o && setDialog(null)} onCreated={(space, then) => {
+      <NewSpaceDialog
+        open={dialog === 'new'}
+        onOpenChange={(o) => !o && setDialog(null)}
+        onCreated={(space, then) => {
           const home = spaceUrls(space.id).home()
           if (!then?.openSync) return navigate(home)
           // Made on this server: the address is given in the new space's sync settings.
           rememberSpace(space.id)
           navigate(settingsPath('sync'), { state: { from: home } satisfies SettingsState })
-        }} />
+        }}
+      />
       <NameDialog
         open={dialog === 'rename'}
         onOpenChange={(o) => !o && setDialog(null)}
