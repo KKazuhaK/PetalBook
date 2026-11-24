@@ -112,6 +112,12 @@ func atomically(ctx context.Context, q Q, fn func(Q) error) error {
 	return fn(q)
 }
 
+// isPostgres reports whether q runs on PostgreSQL.
+func isPostgres(q Q) bool {
+	b, ok := q.(bound)
+	return ok && b.s.dialect == Postgres
+}
+
 // rebind rewrites ? placeholders to $1, $2... for PostgreSQL.
 func (s *Store) rebind(q string) string {
 	if s.dialect != Postgres {

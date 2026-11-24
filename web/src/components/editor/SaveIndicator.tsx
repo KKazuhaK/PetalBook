@@ -96,10 +96,12 @@ export function SaveIndicator({
             title={fileTooLargeText(e)}
             role="alert"
             data-slot="file-too-large"
-            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-destructive hover:bg-destructive/10"
+            // On a phone the bar is narrow: the words are cut short there rather than pushing the page sideways, and
+            // the button is tall enough for a finger.
+            className="inline-flex max-w-[45vw] min-w-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-destructive hover:bg-destructive/10 max-md:min-h-10 pointer-coarse:min-h-10 sm:max-w-none"
           >
-            <AlertTriangle className="size-3.5" />
-            {t.fmt.note(big, s.retry)}
+            <AlertTriangle className="size-3.5 shrink-0" />
+            <span className="truncate">{t.fmt.note(big, s.retry)}</span>
           </button>
         )
       }

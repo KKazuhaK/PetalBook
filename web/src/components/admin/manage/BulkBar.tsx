@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button'
 import type { ConfirmAction } from '@/api/types'
 import { tg } from '@/i18n/manage'
+import { tapTarget } from './shared'
 
 // The actions on what is ticked in a list.
 export function BulkBar({
@@ -24,6 +25,7 @@ export function BulkBar({
       <span className="text-sm font-medium">{tg.bulk.selected(count)}</span>
       {actions.map((a) => (
         <Button
+          className={tapTarget}
           key={a}
           type="button"
           size="sm"
@@ -33,7 +35,7 @@ export function BulkBar({
           {tg.bulk.actions[a]}
         </Button>
       ))}
-      <Button type="button" size="sm" variant="ghost" onClick={onClear}>
+      <Button className={tapTarget} type="button" size="sm" variant="ghost" onClick={onClear}>
         {tg.bulk.clear}
       </Button>
     </div>

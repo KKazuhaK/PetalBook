@@ -25,7 +25,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { formatBytes } from '@/lib/bytes'
 import { tg } from '@/i18n/manage'
-import { manageError, UserPicker } from './shared'
+import { manageError, UserPicker, tapTarget, fitScreen } from './shared'
 
 const isSpacePreview = (l: unknown): l is SpaceDeletionPreview =>
   !!l && typeof l === 'object' && 'heldBytes' in l && 'recycleDays' in l
@@ -138,6 +138,8 @@ export function BulkDialog({
   const confirm = useConfirm()
   const start = useStartBulk()
   const [plan, setPlan] = useState<ConfirmResult | null>(null)
+  // The heir the plan was made with ('' for none): a plan made for another can never be confirmed.
+  const [planHeir, setPlanHeir] = useState('')
   const [error, setError] = useState('')
   const [stale, setStale] = useState(false)
   const [typed, setTyped] = useState('')
@@ -158,7 +160,9 @@ export function BulkDialog({
         { action, ...request, ...(withHeir ? { heir: withHeir } : {}) },
         {
           onSuccess: (r) => {
-            if (mine === asked.current) setPlan(r)
+            if (mine !== asked.current) return
+            setPlan(r)
+            setPlanHeir(withHeir ?? '')
           },
           onError: (e) => {
             if (mine === asked.current) setError(manageError(e, tg.bulk.checkFailed))
@@ -176,7 +180,9 @@ export function BulkDialog({
       { action, ...request },
       {
         onSuccess: (r) => {
-          if (mine === asked.current) setPlan(r)
+          if (mine !== asked.current) return
+          setPlan(r)
+          setPlanHeir('')
         },
         onError: (e) => {
           if (mine === asked.current) setError(manageError(e, tg.bulk.checkFailed))
@@ -192,7 +198,7 @@ export function BulkDialog({
   const days = first && 'recycleDays' in first && typeof first.recycleDays === 'number' ? first.recycleDays : null
   const blockers = plan?.blockers ?? []
   const needs = plan?.needsHeir ?? []
-  const blocked = blockers.length > 0 || (needs.length > 0 && !heir)
+  const blocked = blockers.length > 0 || (needs.length > 0 && !heir) || planHeir !== (heir?.id ?? '')
   const matches = plan !== null && typed.trim() === String(plan.count)
 
   const go = () => {
@@ -212,7 +218,7 @@ export function BulkDialog({
   const finished = job.data && job.data.state !== 'queued' && job.data.state !== 'running'
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-lg" data-slot="bulk-dialog">
+      <DialogContent className={`${fitScreen} sm:max-w-lg`} data-slot="bulk-dialog">
         <DialogHeader>
           <DialogTitle>
             {tg.bulk.title(label, plan?.count ?? (request.spaces ?? request.users ?? request.items ?? []).length)}
@@ -276,7 +282,13 @@ export function BulkDialog({
                 data-slot="stale"
               >
                 <p>{tg.bulk.stale}</p>
-                <Button type="button" variant="outline" size="sm" className="w-fit" onClick={() => look(heir?.id)}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className={`w-fit ${tapTarget}`}
+                  onClick={() => look(heir?.id)}
+                >
                   {tg.bulk.lookAgain}
                 </Button>
               </div>
@@ -296,21 +308,28 @@ export function BulkDialog({
         ) : null}
         <FormMessage>{error}</FormMessage>
         {error && !plan && (
-          <Button type="button" variant="outline" size="sm" className="w-fit" onClick={() => look()}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={`w-fit ${tapTarget}`}
+            onClick={() => look(heir?.id)}
+          >
             {tg.retry}
           </Button>
         )}
         <DialogFooter>
           {running ? (
-            <Button type="button" onClick={onClose} disabled={!finished}>
+            <Button className={tapTarget} type="button" onClick={onClose} disabled={!finished}>
               {tg.bulk.close}
             </Button>
           ) : (
             <>
-              <Button type="button" variant="outline" onClick={onClose}>
+              <Button className={tapTarget} type="button" variant="outline" onClick={onClose}>
                 {tg.cancel}
               </Button>
               <Button
+                className={tapTarget}
                 type="button"
                 variant={action.startsWith('delete') || action === 'purge' ? 'destructive' : 'default'}
                 disabled={!plan || !matches || blocked || start.isPending || stale}

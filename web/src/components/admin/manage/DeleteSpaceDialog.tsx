@@ -23,7 +23,7 @@ import { adminPath } from '@/lib/urls'
 import { tg } from '@/i18n/manage'
 import { ts } from '@/i18n/storage'
 import { ExportDialog } from './ExportDialog'
-import { manageError } from './shared'
+import { manageError, tapTarget, fitScreen } from './shared'
 
 const sameName = (a: string, b: string) => a.trim().normalize('NFC') === b.trim().normalize('NFC')
 
@@ -57,7 +57,7 @@ export function DeleteSpaceDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-lg" data-slot="delete-space">
+      <DialogContent className={`${fitScreen} sm:max-w-lg`} data-slot="delete-space">
         {done ? (
           <div className="grid gap-4">
             <DialogHeader>
@@ -65,10 +65,15 @@ export function DeleteSpaceDialog({
               <DialogDescription>{tg.del.space.deletedHelp(absoluteTime(done.purgeAt))}</DialogDescription>
             </DialogHeader>
             <DialogFooter>
-              <Button type="button" variant="outline" render={<Link to={adminPath('recycle')} onClick={onClose} />}>
+              <Button
+                className={tapTarget}
+                type="button"
+                variant="outline"
+                render={<Link to={adminPath('recycle')} onClick={onClose} />}
+              >
                 {tg.del.space.goBin}
               </Button>
-              <Button type="button" onClick={onClose}>
+              <Button className={tapTarget} type="button" onClick={onClose}>
                 {tg.bulk.close}
               </Button>
             </DialogFooter>
@@ -118,7 +123,7 @@ export function DeleteSpaceDialog({
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="w-fit"
+                      className={`w-fit ${tapTarget}`}
                       disabled={!p.exportable}
                       onClick={() => setExporting(true)}
                     >
@@ -156,10 +161,15 @@ export function DeleteSpaceDialog({
             </div>
             <FormMessage>{error}</FormMessage>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={onClose}>
+              <Button className={tapTarget} type="button" variant="outline" onClick={onClose}>
                 {tg.cancel}
               </Button>
-              <Button type="submit" variant="destructive" disabled={!ok || del.isPending || preview.isPending}>
+              <Button
+                className={tapTarget}
+                type="submit"
+                variant="destructive"
+                disabled={!ok || del.isPending || preview.isPending}
+              >
                 {del.isPending && <Spinner />}
                 {tg.del.space.confirm}
               </Button>

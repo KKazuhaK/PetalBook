@@ -22,6 +22,15 @@ export function manageError(e: unknown, fallback = tg.failed): string {
   return codes[e.code] ?? (e.message || fallback)
 }
 
+// A dialog of storage management fits a phone screen: never taller than the screen (the dynamic height, so a
+// browser's own bars do not hide its top or its buttons), scrolled inside, and a long name or address wraps rather
+// than widening it. A long title stops short of the close button rather than running under it.
+export const fitScreen =
+  'max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain wrap-anywhere [&_[data-slot=dialog-title]]:pr-6'
+
+// A main action is at least 40px tall for a finger: on a narrow screen and on any touch screen.
+export const tapTarget = 'max-md:h-10 pointer-coarse:h-10'
+
 export const daysLeft = (iso: string, now = Date.now()): number =>
   Math.max(0, Math.ceil((Date.parse(iso) - now) / 86_400_000))
 
@@ -113,7 +122,7 @@ export function ListFooter({
           type="button"
           disabled={loading}
           onClick={onMore}
-          className="h-8 rounded-lg border px-3 text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-50"
+          className={`h-8 rounded-lg border px-3 text-sm ${tapTarget} outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-50`}
         >
           {loading ? tg.loading : tg.loadMore}
         </button>

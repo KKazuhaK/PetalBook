@@ -21,7 +21,7 @@ import { formatBytes } from '@/lib/bytes'
 import { absoluteTime } from '@/lib/time'
 import { adminPath } from '@/lib/urls'
 import { tg } from '@/i18n/manage'
-import { manageError, UserPicker, useIsSite } from './shared'
+import { manageError, UserPicker, useIsSite, tapTarget, fitScreen } from './shared'
 
 // Deleting one person: what happens to each of their spaces, who inherits, what stops working; then their username
 // typed, and where they went. The person goes to the recycle bin, never away.
@@ -64,7 +64,7 @@ export function DeletePersonDialog({ id, username, onClose }: { id: string; user
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-auto sm:max-w-xl" data-slot="delete-person">
+      <DialogContent className={`${fitScreen} sm:max-w-xl`} data-slot="delete-person">
         {done ? (
           <div className="grid gap-4">
             <DialogHeader>
@@ -74,10 +74,15 @@ export function DeletePersonDialog({ id, username, onClose }: { id: string; user
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
-              <Button type="button" variant="outline" render={<Link to={adminPath('recycle')} onClick={onClose} />}>
+              <Button
+                className={tapTarget}
+                type="button"
+                variant="outline"
+                render={<Link to={adminPath('recycle')} onClick={onClose} />}
+              >
                 {tg.del.space.goBin}
               </Button>
-              <Button type="button" onClick={onClose}>
+              <Button className={tapTarget} type="button" onClick={onClose}>
                 {tg.bulk.close}
               </Button>
             </DialogFooter>
@@ -225,10 +230,15 @@ export function DeletePersonDialog({ id, username, onClose }: { id: string; user
             </div>
             <FormMessage>{error}</FormMessage>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={onClose}>
+              <Button className={tapTarget} type="button" variant="outline" onClick={onClose}>
                 {tg.cancel}
               </Button>
-              <Button type="submit" variant="destructive" disabled={!ok || del.isPending || plan.isPending}>
+              <Button
+                className={tapTarget}
+                type="submit"
+                variant="destructive"
+                disabled={!ok || del.isPending || plan.isPending}
+              >
                 {del.isPending && <Spinner />}
                 {tg.del.user.confirm}
               </Button>

@@ -186,7 +186,23 @@ func hasConnectionSQL(id string) string {
 // settleConnected makes the person's usage row say whether they have a
 // connection (a GitHub authorization, any provider of 2.7b), and the tenant's
 // count with it. Call it in the transaction that adds or removes a connection.
+//
+// Two such transactions for one person (a GitHub disconnect beside another
+// provider's connect) must not each decide from a view without the other's
+// change. On PostgreSQL the usage row is locked first, in a statement of its own,
+// so the look at the connections below takes its snapshot only once any other
+// transaction that held the row has committed. SQLite has one writer at a time.
 func settleConnected(ctx context.Context, q Q, userID string) error {
+	if isPostgres(q) {
+		var one int
+		err := q.QueryRow(ctx, `SELECT 1 FROM usage WHERE kind = 'user' AND id = ? FOR UPDATE`, userID).Scan(&one)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
 	var tenant string
 	var have, want int64
 	err := q.QueryRow(ctx, `SELECT u.tenant_id, u.connected, CASE WHEN `+hasConnectionSQL("u.id")+` THEN 1 ELSE 0 END

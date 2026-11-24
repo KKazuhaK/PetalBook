@@ -876,8 +876,27 @@ func TestTheAttachmentBytesOfATenantLookUpTheSpacesTogether(t *testing.T) {
 		if other, err := f.m.AssetBytesOfTenant(ctx, "Other00000"); err != nil || other != 0 {
 			t.Fatalf("%d %v", other, err)
 		}
-		if queries != 2 { // the space that is gone is asked about again, the rest are remembered
+		if queries != 1 { // the space that is gone is remembered as gone, like the rest
 			t.Fatalf("%d queries after two calls", queries)
+		}
+
+		// A space not seen before is looked up; the memory cleared meanwhile (by
+		// another call reaching its bound) does not take the known ones out of the sum.
+		in, _ := f.space("S5")
+		if _, err := f.m.AssetCache().Put(in.ID, strings.Repeat("a", 40), strings.NewReader("1234")); err != nil {
+			t.Fatal(err)
+		}
+		testHookTenantLookup = func() {
+			queries++
+			f.m.as.mu.Lock()
+			f.m.as.tenants = map[string]string{}
+			f.m.as.mu.Unlock()
+		}
+		if got, err := f.m.AssetBytesOfTenant(ctx, store.DefaultTenantID); err != nil || got != 24 {
+			t.Fatalf("%d %v, want 24", got, err)
+		}
+		if queries != 2 {
+			t.Fatalf("%d queries after three calls", queries)
 		}
 	})
 }

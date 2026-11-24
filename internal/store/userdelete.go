@@ -225,26 +225,42 @@ func PlanUserDeletion(ctx context.Context, q Q, sc Scope, userID, heir string, t
 			p.Leave = append(p.Leave, s)
 		}
 	}
-	one := func(query string, args ...any) int {
-		var n int
-		_ = q.QueryRow(ctx, query, args...).Scan(&n)
-		return n
+	counts := []struct {
+		to    *int
+		query string
+	}{
+		{&p.Groups, `SELECT COUNT(*) FROM group_members WHERE user_id = ?`},
+		{&p.Tokens, `SELECT COUNT(*) FROM api_tokens WHERE user_id = ? AND revoked = 0`},
+		{&p.Grants, `SELECT COUNT(*) FROM oauth_grants WHERE user_id = ?`},
+		{&p.Passkeys, `SELECT COUNT(*) FROM passkeys WHERE user_id = ?`},
+		{&p.Identity, `SELECT COUNT(*) FROM identities WHERE user_id = ?`},
+		{&p.Sessions, `SELECT COUNT(*) FROM sessions WHERE user_id = ?`},
 	}
-	p.Groups = one(`SELECT COUNT(*) FROM group_members WHERE user_id = ?`, userID)
-	p.Tokens = one(`SELECT COUNT(*) FROM api_tokens WHERE user_id = ? AND revoked = 0`, userID)
-	p.Grants = one(`SELECT COUNT(*) FROM oauth_grants WHERE user_id = ?`, userID)
-	p.Passkeys = one(`SELECT COUNT(*) FROM passkeys WHERE user_id = ?`, userID)
-	p.Identity = one(`SELECT COUNT(*) FROM identities WHERE user_id = ?`, userID)
-	p.Sessions = one(`SELECT COUNT(*) FROM sessions WHERE user_id = ?`, userID)
-	p.GitHub = one(`SELECT COUNT(*) FROM github_authorizations WHERE user_id = ?`, userID) > 0
-	if rows, err := q.Query(ctx, `SELECT provider FROM provider_authorizations WHERE user_id = ? ORDER BY provider`, userID); err == nil {
-		for rows.Next() {
-			var id string
-			if rows.Scan(&id) == nil {
-				p.Connections = append(p.Connections, id)
-			}
+	for _, c := range counts {
+		if err := q.QueryRow(ctx, c.query, userID).Scan(c.to); err != nil {
+			return nil, err
 		}
-		rows.Close()
+	}
+	var gh int
+	if err := q.QueryRow(ctx, `SELECT COUNT(*) FROM github_authorizations WHERE user_id = ?`, userID).Scan(&gh); err != nil {
+		return nil, err
+	}
+	p.GitHub = gh > 0
+	rows, err = q.Query(ctx, `SELECT provider FROM provider_authorizations WHERE user_id = ? ORDER BY provider`, userID)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		p.Connections = append(p.Connections, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return p, nil
 }

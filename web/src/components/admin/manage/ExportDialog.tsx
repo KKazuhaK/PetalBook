@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/dialog'
 import { adminPath } from '@/lib/urls'
 import { tg } from '@/i18n/manage'
-import { daysLeft, manageError, useIsSite } from './shared'
+import { daysLeft, manageError, useIsSite, tapTarget, fitScreen } from './shared'
 
 // Starts an export of some spaces (or recycle items). The history is the site's.
 export function ExportDialog({
@@ -41,7 +41,7 @@ export function ExportDialog({
   }
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-md" data-slot="export-dialog">
+      <DialogContent className={`${fitScreen} sm:max-w-md`} data-slot="export-dialog">
         <DialogHeader>
           <DialogTitle>
             {tg.exports.dialogTitle}：{name}
@@ -74,19 +74,24 @@ export function ExportDialog({
         <DialogFooter>
           {made ? (
             <>
-              <Button type="button" variant="outline" render={<Link to={adminPath('recycle')} onClick={onClose} />}>
+              <Button
+                className={tapTarget}
+                type="button"
+                variant="outline"
+                render={<Link to={adminPath('recycle')} onClick={onClose} />}
+              >
                 {tg.exports.goList}
               </Button>
-              <Button type="button" onClick={onClose}>
+              <Button className={tapTarget} type="button" onClick={onClose}>
                 {tg.bulk.close}
               </Button>
             </>
           ) : (
             <>
-              <Button type="button" variant="outline" onClick={onClose}>
+              <Button className={tapTarget} type="button" variant="outline" onClick={onClose}>
                 {tg.cancel}
               </Button>
-              <Button type="button" disabled={make.isPending} onClick={go}>
+              <Button className={tapTarget} type="button" disabled={make.isPending} onClick={go}>
                 {make.isPending && <Spinner />}
                 {tg.exports.start}
               </Button>

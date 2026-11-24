@@ -113,3 +113,20 @@ func TestAStaleDeletionRecordIsNotReused(t *testing.T) {
 		}
 	})
 }
+
+// The preview of a deletion fails when it cannot read the person's connections,
+// rather than showing a plan that leaves some out.
+func TestTheDeletionPreviewReturnsAConnectionsError(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		mkUser(t, st, "U1", "u1", "member")
+		if _, err := store.PlanUserDeletion(ctx, st.Q(), store.AllTenants(), "U1", "", nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.Q().Exec(ctx, `DROP TABLE provider_authorizations`); err != nil {
+			t.Fatal(err)
+		}
+		if p, err := store.PlanUserDeletion(ctx, st.Q(), store.AllTenants(), "U1", "", nil); err == nil {
+			t.Fatalf("no error, plan %+v", p)
+		}
+	})
+}

@@ -1150,3 +1150,57 @@ func TestTheRecountRefillsTheBytesOfASpaceBackOnTheServer(t *testing.T) {
 		consistent(t, st)
 	})
 }
+
+// A connection removed while another is added for the same person leaves them
+// connected, whichever transaction settles first: on PostgreSQL the usage row is
+// locked before the connections are looked at, so the later one sees the
+// earlier one's change.
+func TestConnectedHoldsWhenADisconnectRacesAConnect(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		twoTenants(t, st)
+		q := st.Q()
+		now := time.Now()
+		if err := store.PutGitHubAuthorization(ctx, q, store.GitHubAuthorization{UserID: "Ub", GitHubID: 99, Login: "b", State: "ok", Connected: now, Updated: now}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.InsertConnProviderRow(ctx, q, store.ConnProviderRow{ID: "gl", Type: "gitlab", Host: "gl.example.com", Scheme: "https", Name: "gl", Owner: store.ConnProviderSite,
+			State: "ok", Created: now, Updated: now}); err != nil {
+			t.Fatal(err)
+		}
+		wantCounters(t, st, store.UsageUser, "Ub", counters{connected: 1})
+
+		// The connect settles first and holds its transaction open.
+		settled, release, connectDone := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+		go func() {
+			connectDone <- st.Tx(ctx, func(q store.Q) error {
+				if err := store.PutProviderAuthorization(ctx, q, store.ProviderAuthorization{Provider: "gl", UserID: "Ub", AccountID: "7", Login: "b", State: "ok", Connected: now, Updated: now}); err != nil {
+					return err
+				}
+				close(settled)
+				<-release
+				return nil
+			})
+		}()
+		<-settled
+		disconnectDone := make(chan error, 1)
+		go func() { disconnectDone <- store.DeleteGitHubAuthorization(ctx, st.Q(), "Ub") }()
+		select {
+		case err := <-disconnectDone: // it did not wait for the connect (the fault)
+			close(release)
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(300 * time.Millisecond):
+			close(release)
+			if err := <-disconnectDone; err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := <-connectDone; err != nil {
+			t.Fatal(err)
+		}
+		wantCounters(t, st, store.UsageUser, "Ub", counters{connected: 1})
+		wantCounters(t, st, store.UsageTenant, tenB, counters{spaces: 1, connected: 1})
+		consistent(t, st)
+	})
+}

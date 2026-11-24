@@ -123,10 +123,15 @@ func (m *Manager) AssetBytesOfTenant(ctx context.Context, tenant string) (int64,
 		return 0, nil
 	}
 	cached := c.Spaces()
+	// The tenants are copied out for this call: another may clear the memory
+	// (at its bound) between the lookup and the sum, which must not undercount.
+	tenants := make(map[string]string, len(cached))
 	var unknown []string
 	m.as.mu.Lock()
 	for id := range cached {
-		if _, ok := m.as.tenants[id]; !ok {
+		if t, ok := m.as.tenants[id]; ok {
+			tenants[id] = t
+		} else {
 			unknown = append(unknown, id)
 		}
 	}
@@ -140,24 +145,31 @@ func (m *Manager) AssetBytesOfTenant(ctx context.Context, tenant string) (int64,
 			return 0, err
 		}
 		m.as.mu.Lock()
-		if m.as.tenants == nil || len(m.as.tenants)+len(found) >= 50_000 {
+		if m.as.tenants == nil || len(m.as.tenants)+len(unknown) >= 50_000 {
 			m.as.tenants = map[string]string{}
 		}
-		for id, t := range found {
+		for _, id := range unknown {
+			t, ok := found[id]
+			if !ok {
+				t = goneTenant // remembered too, so it is not asked about on every call
+			}
 			m.as.tenants[id] = t // a space never changes tenant
+			tenants[id] = t
 		}
 		m.as.mu.Unlock()
 	}
 	var total int64
-	m.as.mu.Lock()
-	defer m.as.mu.Unlock()
 	for id, b := range cached {
-		if m.as.tenants[id] == tenant {
+		if t := tenants[id]; t != goneTenant && t == tenant {
 			total += b
 		}
 	}
 	return total, nil
 }
+
+// goneTenant is the tenant remembered for a cached space the database no longer
+// has: no tenant's id.
+const goneTenant = "\x00gone"
 
 // testHookTenantLookup is called before each lookup of the tenants of cached
 // spaces in the database (a test counts them).

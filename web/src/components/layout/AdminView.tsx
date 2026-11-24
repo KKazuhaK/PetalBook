@@ -4,6 +4,7 @@ import { manageApi } from '@/api/manage'
 import { useQueryClient } from '@tanstack/react-query'
 import { keys } from '@/api/hooks'
 import type { SpaceInfo } from '@/api/types'
+import { tapTarget } from '@/components/admin/manage/shared'
 import { ViewForm } from '@/components/admin/manage/ViewForm'
 import { TopBar } from '@/components/layout/TopBar'
 import { Button } from '@/components/ui/button'
@@ -57,7 +58,7 @@ export function AdminViewBanner({ space }: { space: SpaceInfo }) {
       <Eye aria-hidden className="size-4 shrink-0" />
       <span className="font-medium">{tg.view.banner}</span>
       {until && <span className="text-xs">{tg.view.until(clockTime(new Date(until)))}</span>}
-      <Button type="button" variant="ghost" size="xs" className="ml-auto" onClick={() => void end()}>
+      <Button type="button" variant="ghost" size="xs" className={`ml-auto ${tapTarget}`} onClick={() => void end()}>
         {tg.view.end}
       </Button>
     </div>

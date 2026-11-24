@@ -19,6 +19,7 @@ import {
   type Mounted,
 } from '@/testing/harness'
 import { AdminGate } from './AdminGate'
+import { fitScreen, tapTarget } from './manage/shared'
 
 // Storage management in the administration: the summary, the lists of people and spaces, what counts toward quotas,
 // deleting a space or a person with a preview, bulk actions with a second confirmation and a job, and the differences
@@ -325,10 +326,9 @@ describe('bulk actions', () => {
   it('lists what did not work and goes on with the rest', async () => {
     await open('spaces', three)
     await settle(() => rows().length === 5, 'spaces')
-    const ids = rows().map((r) => r.dataset.space!)
-    m!.server.manage.busy(ids[ids.length - 1])
-    const last = rows()[rows().length - 1].querySelector('th')!.textContent!.replace(tg.spaces.where, '')
-    await bulk([last.replace(ta.spaces.personal, ''), '甲'], tg.bulk.actions.delete_spaces)
+    // One named space is busy (by name: spaces made in the same millisecond list in either order).
+    m!.server.manage.busy(rowOf('乙').dataset.space!)
+    await bulk(['乙', '甲'], tg.bulk.actions.delete_spaces)
     await typeCount(2)
     await click(confirmButton())
     await settle(() => document.querySelector('[data-slot="job"]')?.getAttribute('data-state') === 'done', 'done')
@@ -415,5 +415,78 @@ describe('bulk actions', () => {
     await settle(() => document.querySelector('[data-slot="needs-heir"]') !== null, 'the heir is asked for again')
     expect(confirmButton().disabled).toBe(true)
     expect(sent('POST', '/api/admin/bulk')).toHaveLength(0)
+  })
+
+  it('asks again with the chosen heir when the plan for them failed, and confirms only a plan made with them', async () => {
+    await open('manage', (server) => {
+      const leaver = makePerson(server, 'leaver')
+      makePerson(server, 'viewer')
+      makePerson(server, 'heir')
+      const shared = (leaver.request('POST', '/api/spaces', { name: '共有的' }).body as { id: string }).id
+      leaver.request('POST', `/api/spaces/${shared}/members`, { username: 'viewer', role: 'viewer' })
+    })
+    await settle(() => personRows().length >= 4, 'people')
+    await click(byLabel(tg.people.selectFor('名 leaver')))
+    await click(buttonIn(document.querySelector('[data-slot="bulk-bar"]'), tg.bulk.actions.delete_users))
+    await settle(() => document.querySelector('[data-slot="needs-heir"]') !== null, 'the heir is asked for')
+    // The plan with the heir fails once.
+    let failing = true
+    const through = globalThis.fetch
+    globalThis.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url
+      if (failing && init?.method === 'POST' && url.startsWith('/api/admin/confirm')) {
+        failing = false
+        await through(input, init) // noted, and its answer dropped
+        return new Response(JSON.stringify({ error: 'down', code: 'internal' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return through(input, init)
+    }
+    const pick = () => document.querySelector<HTMLSelectElement>('select[aria-label="' + tg.bulk.heir + '"]')!
+    await settle(() => pick().options.length > 1, 'people to choose')
+    const heirId = [...pick().options].find((o) => o.textContent?.includes('heir'))!.value
+    await type(pick(), heirId)
+    await settle(() => buttonIn(dlg(), tg.retry) !== undefined, 'the retry')
+    await click(buttonIn(dlg(), tg.retry)!)
+    await settle(() => sent('POST', '/api/admin/confirm').length === 3, 'the plan asked again')
+    const last = JSON.parse(sent('POST', '/api/admin/confirm')[2].body!) as { heir?: string }
+    expect(last.heir).toBe(heirId)
+    await typeCount(1)
+    await settle(() => !confirmButton().disabled, 'ready')
+  })
+})
+
+// A short phone screen: a dialog never grows past it and scrolls inside, and its main buttons are big enough for a
+// finger (jsdom has no layout, so what is checked is that the classes that do it are there).
+describe('on a phone', () => {
+  const fits = (slot: string) => {
+    const box = document.querySelector<HTMLElement>(`[data-slot="${slot}"]`)!
+    for (const c of fitScreen.split(' ')) expect(box.classList, `${slot} ${c}`).toContain(c)
+    const footer = box.querySelector('[data-slot="dialog-footer"]')!
+    const buttons = [...footer.querySelectorAll<HTMLElement>('button, a')]
+    expect(buttons.length).toBeGreaterThan(0)
+    for (const b of buttons)
+      for (const c of tapTarget.split(' ')) expect(b.classList, `${slot} ${b.textContent}`).toContain(c)
+  }
+
+  it('fits the deletion of a space and the bulk dialog to the screen, with big enough buttons', async () => {
+    await open('spaces', (server) => {
+      const tang = makePerson(server, 'tang')
+      for (const n of ['甲', '乙']) tang.request('POST', '/api/spaces', { name: n })
+    })
+    await settle(() => rows().length === 4, 'spaces')
+    await openMenu('甲')
+    await click(menuItem(tg.spaces.delete))
+    await settle(() => document.querySelector('[data-slot="deletion-preview"]') !== null, 'the preview')
+    fits('delete-space')
+    await click(buttonIn(dlg(), tg.cancel)!)
+    await settle(() => document.querySelector('[data-slot="delete-space"]') === null, 'closed')
+    await bulk(['甲', '乙'], tg.bulk.actions.disable_spaces)
+    await settle(() => document.querySelectorAll('[data-slot="plan-line"]').length === 2, 'the plan')
+    fits('bulk-dialog')
+    for (const b of document.querySelectorAll<HTMLElement>('[data-slot="bulk-bar"] button'))
+      for (const c of tapTarget.split(' ')) expect(b.classList).toContain(c)
   })
 })

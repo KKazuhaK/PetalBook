@@ -17,7 +17,7 @@ import { ts } from '@/i18n/storage'
 import { BulkBar } from './BulkBar'
 import { BulkDialog } from './BulkDialog'
 import { DeletePersonDialog } from './DeletePersonDialog'
-import { ListFooter, LocationBadge, useIsSite } from './shared'
+import { ListFooter, LocationBadge, useIsSite, tapTarget, fitScreen } from './shared'
 
 type Filter = '' | 'dormant' | 'some' | 'none' | 'grace' | 'overdue' | 'inactive' | 'disabled'
 const SORTS: PeopleSort[] = ['held', 'bytes', 'lastActive', 'created', 'spaces']
@@ -204,6 +204,7 @@ export function PeopleSection() {
                     </td>
                     <td className="px-3 py-2.5 text-right">
                       <Button
+                        className={tapTarget}
                         type="button"
                         variant="outline"
                         size="sm"
@@ -254,7 +255,7 @@ function PersonDialog({ id, row, onClose }: { id: string; row?: StoragePerson; o
   const site = useIsSite()
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-auto sm:max-w-2xl" data-slot="person-dialog">
+      <DialogContent className={`${fitScreen} sm:max-w-2xl`} data-slot="person-dialog">
         <DialogHeader>
           <DialogTitle>{p ? `${p.user.name}（${p.user.username}）` : ''}</DialogTitle>
           <DialogDescription>
@@ -308,10 +309,16 @@ function PersonDialog({ id, row, onClose }: { id: string; row?: StoragePerson; o
           </div>
         )}
         <div className="flex justify-between gap-2">
-          <Button type="button" variant="destructive" disabled={!p} onClick={() => setDeleting(true)}>
+          <Button
+            className={tapTarget}
+            type="button"
+            variant="destructive"
+            disabled={!p}
+            onClick={() => setDeleting(true)}
+          >
             {tg.people.deletePerson}
           </Button>
-          <Button type="button" variant="outline" onClick={onClose}>
+          <Button className={tapTarget} type="button" variant="outline" onClick={onClose}>
             {tg.people.close}
           </Button>
         </div>

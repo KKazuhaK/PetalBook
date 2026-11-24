@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { tg } from '@/i18n/manage'
-import { manageError } from './shared'
+import { manageError, tapTarget } from './shared'
 
 // The reason for an audited, read-only view of a space an administrator is not a member of. The view is recorded on
 // the server; the server also says whether one is open.
@@ -67,11 +67,11 @@ export function ViewForm({
       <FormMessage>{error}</FormMessage>
       <div className="flex justify-end gap-2">
         {onCancel && (
-          <Button type="button" variant="outline" onClick={onCancel}>
+          <Button className={tapTarget} type="button" variant="outline" onClick={onCancel}>
             {tg.cancel}
           </Button>
         )}
-        <Button type="submit" disabled={!ok || busy}>
+        <Button className={tapTarget} type="submit" disabled={!ok || busy}>
           {busy && <Spinner />}
           {busy ? tg.view.starting : tg.view.start}
         </Button>

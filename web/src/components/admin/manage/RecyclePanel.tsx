@@ -36,7 +36,7 @@ import { tg } from '@/i18n/manage'
 import { BulkBar } from './BulkBar'
 import { BulkDialog } from './BulkDialog'
 import { ExportDialog } from './ExportDialog'
-import { daysLeft, ListFooter, manageError, UserPicker, useIsSite } from './shared'
+import { daysLeft, ListFooter, manageError, UserPicker, useIsSite, tapTarget, fitScreen } from './shared'
 
 const nameOf = (i: RecycleItem) => (i.kind === 'user' ? (i.user?.username ?? '') : (i.space?.name ?? ''))
 
@@ -171,6 +171,7 @@ function Bin() {
                   </div>
                   <div className="flex flex-wrap items-center gap-1">
                     <Button
+                      className={tapTarget}
                       type="button"
                       variant="outline"
                       size="sm"
@@ -182,6 +183,7 @@ function Bin() {
                     </Button>
                     {i.kind === 'space' && (
                       <Button
+                        className={tapTarget}
                         type="button"
                         variant="ghost"
                         size="sm"
@@ -193,6 +195,7 @@ function Bin() {
                     )}
                     {site && (
                       <Button
+                        className={tapTarget}
                         type="button"
                         variant="ghost"
                         size="sm"
@@ -259,7 +262,7 @@ function RestoreDialog({ item, onClose }: { item: RecycleItem; onClose: () => vo
   }
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-auto sm:max-w-lg" data-slot="restore-dialog">
+      <DialogContent className={`${fitScreen} sm:max-w-lg`} data-slot="restore-dialog">
         {done ? (
           <div className="grid gap-4">
             <DialogHeader>
@@ -311,7 +314,7 @@ function RestoreDialog({ item, onClose }: { item: RecycleItem; onClose: () => vo
               </section>
             )}
             <DialogFooter>
-              <Button type="button" onClick={onClose}>
+              <Button className={tapTarget} type="button" onClick={onClose}>
                 {tg.bulk.close}
               </Button>
             </DialogFooter>
@@ -332,10 +335,15 @@ function RestoreDialog({ item, onClose }: { item: RecycleItem; onClose: () => vo
             )}
             <FormMessage>{error}</FormMessage>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={onClose}>
+              <Button className={tapTarget} type="button" variant="outline" onClick={onClose}>
                 {tg.cancel}
               </Button>
-              <Button type="button" disabled={restore.isPending || (needsOwner && !owner)} onClick={go}>
+              <Button
+                className={tapTarget}
+                type="button"
+                disabled={restore.isPending || (needsOwner && !owner)}
+                onClick={go}
+              >
                 {restore.isPending && <Spinner />}
                 {tg.recycle.restoreConfirm}
               </Button>
@@ -398,7 +406,7 @@ function PurgeDialog({ item, onClose }: { item: RecycleItem; onClose: () => void
   }
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-md" data-slot="purge-dialog">
+      <DialogContent className={`${fitScreen} sm:max-w-md`} data-slot="purge-dialog">
         <DialogHeader>
           <DialogTitle>{tg.recycle.purgeTitle(name)}</DialogTitle>
           <DialogDescription>{tg.recycle.purgeHelp}</DialogDescription>
@@ -424,7 +432,7 @@ function PurgeDialog({ item, onClose }: { item: RecycleItem; onClose: () => void
             {!token && !error && <p className="text-xs text-muted-foreground">{tg.recycle.purgeChecking}</p>}
             <FormMessage>{error}</FormMessage>
             {!token && error && (
-              <Button type="button" variant="outline" size="sm" className="w-fit" onClick={look}>
+              <Button type="button" variant="outline" size="sm" className={`w-fit ${tapTarget}`} onClick={look}>
                 {tg.bulk.lookAgain}
               </Button>
             )}
@@ -432,15 +440,16 @@ function PurgeDialog({ item, onClose }: { item: RecycleItem; onClose: () => void
         )}
         <DialogFooter>
           {started ? (
-            <Button type="button" onClick={onClose}>
+            <Button className={tapTarget} type="button" onClick={onClose}>
               {tg.bulk.close}
             </Button>
           ) : (
             <>
-              <Button type="button" variant="outline" onClick={onClose}>
+              <Button className={tapTarget} type="button" variant="outline" onClick={onClose}>
                 {tg.cancel}
               </Button>
               <Button
+                className={tapTarget}
                 type="button"
                 variant="destructive"
                 disabled={!token || purge.isPending || typed.trim().normalize('NFC') !== name.normalize('NFC')}
@@ -518,6 +527,7 @@ function ExportsSection() {
               <div className="flex items-center gap-1">
                 {e.state === 'ready' && (
                   <Button
+                    className={tapTarget}
                     variant="outline"
                     size="sm"
                     render={<a href={exportDownloadUrl(e.id)} download aria-label={tg.exports.downloadFor(e.id)} />}
@@ -526,6 +536,7 @@ function ExportsSection() {
                   </Button>
                 )}
                 <Button
+                  className={tapTarget}
                   type="button"
                   variant="ghost"
                   size="sm"
