@@ -39,16 +39,34 @@ func newJobRunner() *jobRunner {
 }
 
 // acquire waits for the turn of every tenant the job works on and a place on
-// the server, and takes them all at once.
-func (r *jobRunner) acquire(tenants ...string) {
+// the server, and takes them all at once. It reports false, having taken
+// nothing, when ctx ends first (wake makes a waiting acquire look at it).
+func (r *jobRunner) acquire(ctx context.Context, tenants ...string) bool {
 	r.mu.Lock()
 	for r.running >= maxJobsAtOnce || r.anyTaken(tenants) {
+		if ctx.Err() != nil {
+			r.mu.Unlock()
+			return false
+		}
 		r.cond.Wait()
+	}
+	if ctx.Err() != nil {
+		r.mu.Unlock()
+		return false
 	}
 	for _, t := range tenants {
 		r.tenants[t] = true
 	}
 	r.running++
+	r.mu.Unlock()
+	return true
+}
+
+// wake makes the waiting acquires check their contexts again. It takes the lock
+// so that an acquire between its check and its wait cannot miss it.
+func (r *jobRunner) wake() {
+	r.mu.Lock()
+	r.cond.Broadcast()
 	r.mu.Unlock()
 }
 
@@ -74,6 +92,17 @@ func (r *jobRunner) release(tenants ...string) {
 // jobWriteFaults makes the writes of a job's progress fail, by who started the
 // job (tests; see SetUpdateBulkJob).
 var jobWriteFaults sync.Map
+
+// jobHooks are called at named points of the jobs a user starts ("item" before
+// each item, with its id; "end" when the job has ended), by who started the job
+// (tests; see SetBulkJobHook).
+var jobHooks sync.Map
+
+func jobHook(ctx context.Context, job *store.BulkJob, point, item string) {
+	if f, ok := jobHooks.Load(job.MadeBy); ok {
+		f.(func(context.Context, string, string))(ctx, point, item)
+	}
+}
 
 // jobWriteTries is how many times a write of a job's progress is tried.
 const jobWriteTries = 3
@@ -219,11 +248,13 @@ func (s *server) adminBulk(c *call) {
 		return
 	}
 	actor, ip := c.user(), s.auth.ClientAddr(c.r)
-	s.jobWG.Add(1)
-	go func() {
-		defer s.jobWG.Done()
-		s.runJob(job, e.req, actor, ip, queue)
-	}()
+	if !s.goBg(func(ctx context.Context) { s.runJob(ctx, job, e.req, actor, ip, queue) }) {
+		// The server is stopping: the job never starts, and reads as a restart
+		// leaves it.
+		s.writeJob(&job, store.JobInterrupted, 0, nil)
+		writeError(c.w, http.StatusServiceUnavailable, "unavailable", "the server is stopping: ask again once it has started")
+		return
+	}
 	s.auditRow(c, "bulk_started", job.TenantID, map[string]any{"job": job.ID, "action": job.Action, "count": job.Total, "failed": 0})
 	writeJSON(c.w, http.StatusAccepted, struct {
 		Job jobResp `json:"job"`
@@ -248,10 +279,16 @@ func (s *server) adminGetJob(c *call) {
 // runJob runs a job's items, in the queue of each of the tenants it works on.
 // A panic in an item marks the job failed (with that item) and the server goes
 // on; progress that cannot be written is tried again, and a job whose progress
-// could not be written ends failed rather than read as running.
-func (s *server) runJob(job store.BulkJob, req confirmRequest, actor store.User, ip string, queue []string) {
-	ctx := context.Background()
-	s.jobs.acquire(queue...)
+// could not be written ends failed rather than read as running. When ctx ends
+// (the handler is closed) the job stops before its next item, or with the item
+// it was on cut short as a request whose client went away is, and ends
+// interrupted with what was done: as a restart leaves it.
+func (s *server) runJob(ctx context.Context, job store.BulkJob, req confirmRequest, actor store.User, ip string, queue []string) {
+	defer jobHook(ctx, &job, "end", "")
+	if !s.jobs.acquire(ctx, queue...) {
+		s.writeJob(&job, store.JobInterrupted, 0, nil)
+		return
+	}
 	defer s.jobs.release(queue...)
 	var failed []store.BulkFailure
 	done, current, broken := 0, "", false
@@ -267,7 +304,9 @@ func (s *server) runJob(job store.BulkJob, req confirmRequest, actor store.User,
 		if err := s.writeJob(&job, state, done, failed); err != nil {
 			s.log.Error("a bulk job ended and could not be recorded; the next start reads it as interrupted", "job", job.ID, "error", err)
 		}
-		if s.auth != nil {
+		// An interrupted job did not finish (as after a restart, nothing says so
+		// but its row).
+		if s.auth != nil && state != store.JobInterrupted {
 			s.auth.Audit(auth.AuditEvent{Kind: "bulk_finished", Actor: actor.ID, Tenant: job.TenantID, IP: ip,
 				Detail: map[string]any{"job": job.ID, "action": job.Action, "count": job.Total, "failed": len(failed)}})
 		}
@@ -291,19 +330,42 @@ func (s *server) runJob(job store.BulkJob, req confirmRequest, actor store.User,
 	if req.Action == "export" {
 		// One zip of the whole set, with the rights of the administrator now.
 		current = "*"
-		if cur, err := s.jobActor(ctx, actor.ID); err != nil {
-			fail("*", err)
-		} else if err := s.bulkExport(ctx, req, cur); err != nil {
-			fail("*", err)
-		} else {
+		jobHook(ctx, &job, "item", "*")
+		err := ctx.Err()
+		if err == nil {
+			var cur store.User
+			if cur, err = s.jobActor(ctx, actor.ID); err == nil {
+				err = s.bulkExport(ctx, req, cur)
+			}
+		}
+		switch {
+		case err == nil:
 			done = job.Total
+		case ctx.Err() != nil:
+			current = ""
+			finish(store.JobInterrupted)
+			return
+		default:
+			fail("*", err)
 		}
 	} else {
 		for _, id := range req.idList() {
 			current = id
+			jobHook(ctx, &job, "item", id)
+			if ctx.Err() != nil {
+				current = ""
+				finish(store.JobInterrupted)
+				return
+			}
 			cur, err := s.jobActor(ctx, actor.ID)
 			if err == nil {
 				err = s.bulkItem(ctx, req, id, cur, ip, job.ID)
+			}
+			if err != nil && ctx.Err() != nil {
+				// Cut short by the close: not this item's failure.
+				current = ""
+				finish(store.JobInterrupted)
+				return
 			}
 			if err != nil {
 				fail(id, err)

@@ -822,6 +822,7 @@ func TestExternalInterfacesAreCachedAndFallBack(t *testing.T) {
 		fetcher2 := dailyfetch.NewForTests(api.NewDailyBacking(x.a.st))
 		fetcher2.SetClock(x.clock)
 		h2 := api.New(api.Options{Store: x.a.st, Spaces: x.a.mgr, Drafts: x.a.drafts, Auth: x.a.auth, PublicURL: x.a.public, Version: "test-1", DailyFetch: fetcher2})
+		t.Cleanup(h2.Close)
 		a2 := *x.a
 		a2.h = h2
 		v2 := *x.tm.viewer

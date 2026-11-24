@@ -550,6 +550,9 @@ func runServe(ctx context.Context, c serveConfig) error {
 	}
 	stopBg()
 	wg.Wait()
+	// The API's own background work (bulk jobs) ends before what it works on is
+	// closed: a job cut off here reads as interrupted.
+	handler.Close()
 	// Requests are done; commit what is pending before exiting.
 	closeErr := func(what string, err error) {
 		if err != nil {

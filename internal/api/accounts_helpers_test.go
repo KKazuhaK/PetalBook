@@ -66,7 +66,7 @@ type acc struct {
 	tokens *tokens.Service
 	oauth  *oauth.Service
 	clock  *clock
-	h      http.Handler
+	h      *api.Handler
 	public string
 	// apiOpts are the options the handler was made with (see restart).
 	apiOpts api.Options
@@ -237,6 +237,9 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 		opts.MaxSpaces = &n
 	}
 	h := api.New(opts)
+	// Registered after the manager's: cleanups run last first, so the handler's
+	// background work has ended before the spaces under it are closed.
+	t.Cleanup(h.Close)
 	return &acc{apiOpts: opts, t: t, dir: dir, st: st, mgr: mgr, auth: svc, drafts: drf, tokens: tok, oauth: oa, clock: clk, h: h, public: o.public, fake: fake, ghsvc: ghsvc, gl: gl, gt: gt, fm: fm}
 }
 
@@ -399,5 +402,7 @@ func (a *acc) dropMembershipCache(t *testing.T, username string) {
 // restart of the server does: what it reads at its start it reads again.
 func (a *acc) restart(t *testing.T) {
 	t.Helper()
+	a.h.Close()
 	a.h = api.New(a.apiOpts)
+	t.Cleanup(a.h.Close)
 }

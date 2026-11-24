@@ -130,9 +130,15 @@ type server struct {
 	// that administrators opened (see confirm.go and adminview.go).
 	confirms *confirmStore
 	views    *viewTable
-	// jobs runs the bulk jobs; jobWG lets a test wait for them.
-	jobs  *jobRunner
-	jobWG sync.WaitGroup
+	// jobs runs the bulk jobs (see bulk.go).
+	jobs *jobRunner
+	// Background work (the bulk jobs) is started with goBg: it runs with bgCtx,
+	// which Close cancels, and Close waits for it on bg.
+	bgCtx    context.Context
+	bgCancel context.CancelFunc
+	bgMu     sync.Mutex // guards bgClosed and the Adds to bg
+	bgClosed bool       // Close has begun: no background work starts any more
+	bg       sync.WaitGroup
 	// now is the clock of what has an end (confirmations, views).
 	now func() time.Time
 	// originHosts are the hosts of the allowed origins: a request addressed to
@@ -140,8 +146,50 @@ type server struct {
 	originHosts map[string]bool
 }
 
+// Handler is the API: the handler of every endpoint, and the work it runs in
+// the background (the bulk jobs), which Close stops and waits for.
+type Handler struct {
+	h http.Handler
+	s *server
+}
+
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.h.ServeHTTP(w, r) }
+
+// Close stops the background work the handler started and waits for it to
+// end. Call it after the HTTP server has stopped and before the spaces, the
+// services and the database under it are closed; it may be called again.
+func (h *Handler) Close() { h.s.close() }
+
+// goBg runs f in the background, tracked: Close cancels its context and waits
+// for it, so nothing runs on after the handler is closed (into spaces and a
+// database that are closed next). It reports false, without running f, when
+// Close has begun.
+func (s *server) goBg(f func(ctx context.Context)) bool {
+	s.bgMu.Lock()
+	if s.bgClosed {
+		s.bgMu.Unlock()
+		return false
+	}
+	s.bg.Add(1)
+	s.bgMu.Unlock()
+	go func() {
+		defer s.bg.Done()
+		f(s.bgCtx)
+	}()
+	return true
+}
+
+func (s *server) close() {
+	s.bgMu.Lock()
+	s.bgClosed = true
+	s.bgMu.Unlock()
+	s.bgCancel()
+	s.jobs.wake() // a job waiting for its turn stops waiting
+	s.bg.Wait()
+}
+
 // New returns the handler for every endpoint.
-func New(opt Options) http.Handler {
+func New(opt Options) *Handler {
 	if opt.MaxBody <= 0 {
 		opt.MaxBody = DefaultMaxBody
 	}
@@ -170,6 +218,7 @@ func New(opt Options) http.Handler {
 	if s.now == nil {
 		s.now = time.Now
 	}
+	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	if s.log == nil {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
@@ -231,7 +280,7 @@ func New(opt Options) http.Handler {
 		}
 		return "application/json"
 	}
-	return s.wrap(mux, bodyType)
+	return &Handler{h: s.wrap(mux, bodyType), s: s}
 }
 
 // methodsFor lists the methods of the routes a path matches, preferring the
