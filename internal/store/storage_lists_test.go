@@ -1124,3 +1124,29 @@ func TestTheNameCursorIsTheStoredKey(t *testing.T) {
 		}
 	})
 }
+
+// The recount that finds a space back on the server counts its last measurement
+// again, as the change of the remote does.
+func TestTheRecountRefillsTheBytesOfASpaceBackOnTheServer(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		twoTenants(t, st)
+		putRemote(t, st, "Sa", "ok")
+		if _, err := st.RecordMeasurement(ctx, "Sa", store.Measurement{Bytes: 700, At: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		if n := count(t, st, `SELECT usage_bytes FROM spaces WHERE id = 'Sa'`); n != 0 {
+			t.Fatalf("a space on its own remote counts %d", n)
+		}
+		// The remote goes without the change being seen (a restored backup, say).
+		if _, err := st.Q().Exec(ctx, `DELETE FROM remotes WHERE space_id = 'Sa'`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.RecountUsage(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if n := count(t, st, `SELECT usage_bytes FROM spaces WHERE id = 'Sa'`); n != 700 {
+			t.Fatalf("the space counts %d, want its measurement, 700", n)
+		}
+		consistent(t, st)
+	})
+}

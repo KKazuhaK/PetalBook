@@ -244,7 +244,11 @@ func locationSQL(via string) string {
 // how many spaces it changed. It is the first step of the daily recount.
 func settleSpaceFacts(ctx context.Context, q Q) (int, error) {
 	via, state := remoteViaSQL("spaces.id"), remoteStateSQL("spaces.id")
-	res, err := q.Exec(ctx, `UPDATE spaces SET remote_via = `+via+`, remote_state = `+state+`, location = `+locationSQL(via)+`
+	// A space that goes back to where its bytes count (server) counts what it was
+	// last measured at, as the change of its remote does; the SET list reads the
+	// columns as they were.
+	res, err := q.Exec(ctx, `UPDATE spaces SET remote_via = `+via+`, remote_state = `+state+`, location = `+locationSQL(via)+`,
+		usage_bytes = CASE WHEN `+locationSQL(via)+` = '`+LocationServer+`' AND location NOT IN ('`+LocationServer+`', '`+LocationSite+`') THEN COALESCE(size_bytes, 0) ELSE usage_bytes END
 		WHERE remote_via <> `+via+` OR remote_state <> `+state+` OR location <> `+locationSQL(via))
 	if err != nil {
 		return 0, err
