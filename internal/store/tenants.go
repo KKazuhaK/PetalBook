@@ -71,7 +71,9 @@ func (sc Scope) ofUser(col string) (string, []any) {
 	case sc.tenant == "":
 		return "1 = 0", nil
 	}
-	return col + " IN (SELECT id FROM users WHERE tenant_id = ?)", []any{sc.tenant}
+	// A probe of each row's user by its key: no index of users by tenant is
+	// needed, and a page of a list stops after its rows.
+	return "EXISTS (SELECT 1 FROM users ou WHERE ou.id = " + col + " AND ou.tenant_id = ?)", []any{sc.tenant}
 }
 
 // AdminScopeOf is ScopeOf for what an administrator reaches of spaces through

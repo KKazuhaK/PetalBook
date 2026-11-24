@@ -102,7 +102,7 @@ func ListUsers(ctx context.Context, q Q, sc Scope) ([]User, error) {
 }
 
 // SearchUsers returns the users whose username or name contains query, ignoring
-// case, oldest first; an empty query matches everyone. enabledOnly leaves out the
+// case (both folded as FoldName folds, the name in users.name_key), oldest first; an empty query matches everyone. enabledOnly leaves out the
 // disabled accounts before the limit counts. limit <= 0 means no limit.
 func SearchUsers(ctx context.Context, q Q, d Dialect, sc Scope, query string, enabledOnly bool, limit int) ([]User, error) {
 	conds := []string{`deleted_at IS NULL`}
@@ -110,13 +110,8 @@ func SearchUsers(ctx context.Context, q Q, d Dialect, sc Scope, query string, en
 	sCond, sArgs := sc.cond("tenant_id")
 	conds, args = append(conds, sCond), append(args, sArgs...)
 	if query != "" {
-		lower := "LOWER"
-		if d == SQLite {
-			lower = sqliteLower
-		}
-		conds = append(conds, `(`+lower+`(username) LIKE ? ESCAPE '\' OR `+lower+`(name) LIKE ? ESCAPE '\')`)
-		pat := "%" + likeEscape(strings.ToLower(query)) + "%"
-		args = append(args, pat, pat)
+		c, a := personMatches("", query)
+		conds, args = append(conds, c), append(args, a...)
 	}
 	if enabledOnly {
 		conds = append(conds, `disabled = 0`)
@@ -151,8 +146,9 @@ func InsertUser(ctx context.Context, q Q, u User) error {
 	if u.TenantID == "" {
 		u.TenantID = DefaultTenantID
 	}
-	_, err := q.Exec(ctx, `INSERT INTO users(`+userCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		u.ID, u.Username, u.Name, u.Email, u.Role, b2i(u.Disabled), ms(u.Created), b2i(u.EmailVerified), b2i(u.PasskeyRequired), u.TenantID, b2i(u.SiteAdmin), b2i(u.RemoteExempt))
+	_, err := q.Exec(ctx, `INSERT INTO users(`+userCols+`, name_key, email_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		u.ID, u.Username, u.Name, u.Email, u.Role, b2i(u.Disabled), ms(u.Created), b2i(u.EmailVerified), b2i(u.PasskeyRequired), u.TenantID, b2i(u.SiteAdmin), b2i(u.RemoteExempt),
+		FoldName(u.Name), storedEmailKey(u.Email))
 	if err != nil {
 		return err
 	}
@@ -161,7 +157,8 @@ func InsertUser(ctx context.Context, q Q, u User) error {
 
 // UpdateProfile sets the name and email, and whether the email is verified.
 func UpdateProfile(ctx context.Context, q Q, id, name, email string, verified bool) error {
-	res, err := q.Exec(ctx, `UPDATE users SET name = ?, email = ?, email_verified = ? WHERE id = ?`, name, email, b2i(verified), id)
+	res, err := q.Exec(ctx, `UPDATE users SET name = ?, name_key = ?, email = ?, email_key = ?, email_verified = ? WHERE id = ?`,
+		name, FoldName(name), email, storedEmailKey(email), b2i(verified), id)
 	return oneRow(res, err)
 }
 
@@ -178,7 +175,7 @@ const VerifiedByTenantAdmin = "tenant_admin"
 // SetEmail sets a user's address, whether it is verified, and who vouched for
 // it ("" or VerifiedByTenantAdmin).
 func SetEmail(ctx context.Context, q Q, id, email string, verified bool, by string) error {
-	res, err := q.Exec(ctx, `UPDATE users SET email = ?, email_verified = ?, email_verified_by = ? WHERE id = ?`, email, b2i(verified), by, id)
+	res, err := q.Exec(ctx, `UPDATE users SET email = ?, email_key = ?, email_verified = ?, email_verified_by = ? WHERE id = ?`, email, storedEmailKey(email), b2i(verified), by, id)
 	return oneRow(res, err)
 }
 
@@ -223,25 +220,40 @@ func EmailKey(email string) (key string, ok bool) {
 	return string(b), true
 }
 
-// asciiLower is the SQL that lower-cases A to Z of a column and nothing else
-// (LOWER follows the database's locale).
-func asciiLower(d Dialect, col string) string {
-	if d == SQLite {
-		return sqliteASCIILower + `(` + col + `)`
+// storedEmailKey is what users.email_key holds for an address: its EmailKey, or
+// ” for an empty address and for one that is not ASCII (which no lookup finds).
+// Every write of users.email writes it too.
+func storedEmailKey(email string) string {
+	key, ok := EmailKey(email)
+	if !ok {
+		return ""
 	}
-	return `translate(` + col + `, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')`
+	return key
+}
+
+// personMatches is the condition that the person (users row with the alias
+// prefix, "" or "u.") has query in their username or name, ignoring case: the
+// query is folded as FoldName folds and compared with the username (stored in
+// lower case) and users.name_key (the folded name), so both databases find the
+// same people and no function runs per row.
+func personMatches(alias, query string) (string, []any) {
+	pat := "%" + likeEscape(FoldName(query)) + "%"
+	return `(` + alias + `username LIKE ? ESCAPE '\' OR ` + alias + `name_key LIKE ? ESCAPE '\')`, []any{pat, pat}
 }
 
 // UsersByEmail returns the users whose address equals email in EmailKey form
-// (at most limit; limit <= 0: all). An address that is not ASCII matches
-// nobody, and a stored one that is not ASCII is matched by nothing.
+// (at most limit; limit <= 0: all), by the index users_email on the stored key.
+// An address that is not ASCII matches nobody, and a stored one that is not
+// ASCII is matched by nothing.
 func UsersByEmail(ctx context.Context, q Q, d Dialect, sc Scope, email string, limit int) ([]User, error) {
 	key, ok := EmailKey(email)
 	if !ok || key == "" {
 		return nil, nil
 	}
 	cond, cargs := sc.cond("tenant_id")
-	sqlText := `SELECT ` + userCols + ` FROM users WHERE deleted_at IS NULL AND email <> '' AND ` + asciiLower(d, "email") + ` = ? AND ` + cond + ` ORDER BY created, id`
+	// email_key <> '' is the partial index's condition, written out so that
+	// SQLite (which cannot infer it from "= ?") uses it.
+	sqlText := `SELECT ` + userCols + ` FROM users WHERE email_key = ? AND email_key <> '' AND deleted_at IS NULL AND ` + cond + ` ORDER BY created, id`
 	args := append([]any{key}, cargs...)
 	if limit > 0 {
 		sqlText += ` LIMIT ?`

@@ -306,13 +306,9 @@ func ListGroupPeople(ctx context.Context, q Q, d Dialect, groupID, query, after 
 	where := `u.deleted_at IS NULL AND u.id IN (SELECT user_id FROM group_members WHERE group_id = ?)`
 	args := []any{groupID}
 	if query != "" {
-		lower := "LOWER"
-		if d == SQLite {
-			lower = sqliteLower
-		}
-		where += ` AND (` + lower + `(u.username) LIKE ? ESCAPE '\' OR ` + lower + `(u.name) LIKE ? ESCAPE '\')`
-		pat := "%" + likeEscape(strings.ToLower(query)) + "%"
-		args = append(args, pat, pat)
+		c, a := personMatches("u.", query)
+		where += ` AND ` + c
+		args = append(args, a...)
 	}
 	if after != "" {
 		where += ` AND ` + `u.username` + ` > ?`
@@ -690,13 +686,9 @@ func ListEffective(ctx context.Context, q Q, d Dialect, spaceID, query, after st
 		OR u.id IN (SELECT gm.user_id FROM space_groups sg JOIN group_members gm ON gm.group_id = sg.group_id WHERE sg.space_id = ?))`
 	args := []any{spaceID, spaceID}
 	if query != "" {
-		lower := "LOWER"
-		if d == SQLite {
-			lower = sqliteLower
-		}
-		where += ` AND (` + lower + `(u.username) LIKE ? ESCAPE '\' OR ` + lower + `(u.name) LIKE ? ESCAPE '\')`
-		pat := "%" + likeEscape(strings.ToLower(query)) + "%"
-		args = append(args, pat, pat)
+		c, a := personMatches("u.", query)
+		where += ` AND ` + c
+		args = append(args, a...)
 	}
 	if after != "" {
 		where += ` AND ` + `u.username` + ` > ?`

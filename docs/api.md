@@ -887,7 +887,9 @@ otherwise) except the two invite endpoints marked public.
 
 `{"users": [{…}]}`, ordered by `created`. Without parameters, every user.
 `?q={text}` keeps the users whose `username` or `name` contains the text,
-ignoring case (as the name filter of the administration's list of spaces does);
+ignoring case (as the name filter of the administration's list of spaces does:
+Unicode case folding, so `STRASSE` finds `Straße`, the same on SQLite and
+PostgreSQL);
 `?limit={n}` (1 to 200) returns at most that many, the oldest first. Either may
 be sent alone; `400 invalid` for a `limit` outside the range. `?enabled=1`
 leaves out the disabled accounts, before the limit counts (`enabled=0`, the

@@ -546,12 +546,8 @@ func ListPeople(ctx context.Context, q Q, d Dialect, sc Scope, f PeopleFilter) (
 		add(`p.id = ?`, f.ID)
 	}
 	if f.Query != "" {
-		lower := "LOWER"
-		if d == SQLite {
-			lower = sqliteLower
-		}
-		pat := "%" + likeEscape(strings.ToLower(f.Query)) + "%"
-		add(`(`+lower+`(u.username) LIKE ? ESCAPE '\' OR `+lower+`(u.name) LIKE ? ESCAPE '\')`, pat, pat)
+		c, a := personMatches("u.", f.Query)
+		add(c, a...)
 	}
 	if f.Dormant {
 		add(`p.dormant = 1`)

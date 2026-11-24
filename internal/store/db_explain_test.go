@@ -51,12 +51,18 @@ func explain(t *testing.T, st *store.Store, q store.Q, sqlText string, args ...a
 // scans and sorts whenever an index can do instead.
 func withDearScans(t *testing.T, st *store.Store, fn func(q store.Q)) {
 	t.Helper()
+	withDear(t, st, []string{"enable_seqscan", "enable_sort"}, fn)
+}
+
+// withDear is withDearScans with the planner settings to switch off named.
+func withDear(t *testing.T, st *store.Store, off []string, fn func(q store.Q)) {
+	t.Helper()
 	if _, err := st.Q().Exec(ctx, `ANALYZE`); err != nil {
 		t.Fatal(err)
 	}
 	err := st.Tx(ctx, func(q store.Q) error {
 		if st.Dialect() == store.Postgres {
-			for _, set := range []string{"enable_seqscan", "enable_sort"} {
+			for _, set := range off {
 				if _, err := q.Exec(ctx, `SET LOCAL `+set+` = off`); err != nil {
 					return err
 				}
@@ -153,5 +159,78 @@ func TestCollatedSortsUseTheirIndexes(t *testing.T) {
 				t.Errorf("the list of groups does not page over its index:\n%s", strings.Join(pq.plans, "\n--\n"))
 			}
 		})
+	})
+}
+
+// A lookup by address reads users_email (it scanned every person of the tenant,
+// 88 ms on 30,000 people, when it lower-cased each stored address); the cascades
+// of a person's deletion read the child indexes; the sweep of old session ends
+// and the attachment moves read theirs.
+func TestLookupsUseTheirIndexes(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		now := time.Now().UnixMilli()
+		const n = 3000
+		bulk(t, st, "users", "id, username, name, name_key, email, email_key, role, created", n, 200, func(i int) []any {
+			return []any{fmt.Sprintf("U%05d", i), fmt.Sprintf("user%d", i), fmt.Sprintf("User %d", i), fmt.Sprintf("user %d", i),
+				fmt.Sprintf("User%d@Example.com", i), fmt.Sprintf("user%d@example.com", i), "member", now}
+		})
+		bulk(t, st, "session_ends", "id, user_id, reason, ended", n, 200, func(i int) []any {
+			return []any{fmt.Sprintf("E%05d", i), fmt.Sprintf("U%05d", i), "disabled", now - int64(i)*1000}
+		})
+		bulk(t, st, "spaces", "id, name, name_key, created", n, 200, func(i int) []any {
+			return []any{fmt.Sprintf("S%05d", i), "s", "s", now}
+		})
+		bulk(t, st, "asset_remotes", "space_id, updated, move_state", n, 200, func(i int) []any {
+			state := ""
+			if i%500 == 0 {
+				state = store.MoveCopying
+			}
+			return []any{fmt.Sprintf("S%05d", i), now, state}
+		})
+		// A lookup sorts its few rows: only scans of whole tables are made dear.
+		withDear(t, st, []string{"enable_seqscan"}, func(q store.Q) {
+			pq := &planQ{Q: q, d: st.Dialect()}
+			if _, err := store.UsersByEmail(ctx, pq, st.Dialect(), store.InTenant(store.DefaultTenantID), "USER42@example.com", 2); err != nil {
+				t.Fatal(err)
+			}
+			if len(pq.plans) != 1 || !strings.Contains(pq.plans[0], "users_email") {
+				t.Errorf("the lookup by address does not read users_email:\n%s", strings.Join(pq.plans, "\n--\n"))
+			}
+			for _, c := range []struct{ sql, index string }{
+				{`SELECT 1 FROM drafts WHERE user_id = ?`, "drafts_user"},
+				{`SELECT 1 FROM invites WHERE created_by = ?`, "invites_created_by"},
+				{`SELECT 1 FROM provider_leftovers WHERE user_id = ?`, "provider_leftovers_user"},
+				{`SELECT id FROM session_ends WHERE ended < ?`, "session_ends_ended"},
+				{`SELECT space_id FROM asset_remotes WHERE move_state IN (?, ?) AND move_state <> '' ORDER BY space_id`, "asset_remotes_move"},
+			} {
+				var arg any = "U00042"
+				if strings.Contains(c.sql, "ended") {
+					// The sweep's cutoff is 30 days back: few rows are older.
+					arg = now - int64(n-10)*1000
+				}
+				args := []any{arg}
+				if strings.Contains(c.sql, "move_state") {
+					args = []any{store.MoveCopying, store.MoveSwitching}
+				}
+				if plan := explain(t, st, q, c.sql, args...); !strings.Contains(plan, c.index) {
+					t.Errorf("%s does not read %s:\n%s", c.sql, c.index, plan)
+				}
+			}
+		})
+	})
+}
+
+// PostgreSQL leaves room in the pages of the tables that are rewritten often, so
+// that their updates can be HOT.
+func TestOftenUpdatedTablesHaveAFillFactor(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		if st.Dialect() != store.Postgres {
+			t.Skip("a PostgreSQL storage parameter")
+		}
+		for _, table := range []string{"usage", "spaces", "users", "sessions", "remotes"} {
+			if n := count(t, st, `SELECT COUNT(*) FROM pg_class WHERE oid = to_regclass(?) AND 'fillfactor=85' = ANY(reloptions)`, table); n != 1 {
+				t.Errorf("%s has no fillfactor 85", table)
+			}
+		}
 	})
 }

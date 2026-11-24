@@ -690,7 +690,7 @@ func PurgeUserData(ctx context.Context, q Q, userID, itemID string, now time.Tim
 	if _, err := q.Exec(ctx, `INSERT INTO retired_usernames(name, purged_at) VALUES (?, ?) ON CONFLICT (name) DO NOTHING`, RetiredKey(username), ms(now)); err != nil {
 		return err
 	}
-	res, err := q.Exec(ctx, `UPDATE users SET username = ?, name = '', email = '', email_verified = 0, email_verified_by = '', quota = '', terms_accepted = '',
+	res, err := q.Exec(ctx, `UPDATE users SET username = ?, name = '', name_key = '', email = '', email_key = '', email_verified = 0, email_verified_by = '', quota = '', terms_accepted = '',
 		passkey_required = 0, recycle_item = '' WHERE id = ? AND deleted_at IS NOT NULL AND recycle_item = ?`, TombstoneName(userID), userID, itemID)
 	return oneRow(res, err)
 }

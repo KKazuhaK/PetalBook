@@ -300,7 +300,6 @@ var deletedAllowlist = map[string]string{
 	"SetEmail":                "a person already found",
 	"UserQuota":               "a person already found",
 	"SetUserQuota":            "a person already found",
-	"UsersWithQuota":          "the quotas set on people: a deleted person's is purged with them",
 	"UserUsageRows":           "the usage rows of people, read to put them right: a deleted person has one until they are purged",
 	"RecountUsage":            "puts the usage rows right: it counts the tenant's people without the deleted",
 	"CountEnabledAdmins":      "counts enabled administrators: through CountEnabledAdminsOutside, which leaves the deleted out",

@@ -30,6 +30,11 @@ CREATE TABLE tenants (
 );
 
 -- People. username is stored in lower case and unique on the whole server.
+-- name_key is the name folded by Go (FoldName) and email_key the address as
+-- addresses are compared (EmailKey: ASCII with A to Z in lower case; '' for an
+-- address that is not ASCII, which matches nothing): every write of name or
+-- email writes them too, so a search or a lookup by address reads a column
+-- instead of calling a function on every row.
 -- email_verified_by says who vouched for a verified address ('' the person, a
 -- provider or a site administrator; 'tenant_admin' a tenant administrator
 -- alone, which does not count for merging a sign-in by address).
@@ -45,7 +50,9 @@ CREATE TABLE users (
   tenant_id         TEXT COLLATE "C" NOT NULL DEFAULT '0000000000' REFERENCES tenants(id),
   username          TEXT COLLATE "C" NOT NULL UNIQUE,
   name              TEXT COLLATE "C" NOT NULL,
+  name_key          TEXT COLLATE "C" NOT NULL DEFAULT '',
   email             TEXT COLLATE "C" NOT NULL DEFAULT '',
+  email_key         TEXT COLLATE "C" NOT NULL DEFAULT '',
   role              TEXT COLLATE "C" NOT NULL,
   disabled          BIGINT NOT NULL DEFAULT 0,
   created           BIGINT NOT NULL,
@@ -64,7 +71,9 @@ CREATE TABLE users (
 );
 CREATE INDEX users_created ON users(created);
 CREATE INDEX users_role ON users(role, disabled);
-CREATE INDEX users_tenant ON users(tenant_id, created);
+-- Sign-in, password reset and the merge of a sign-in by address look people up
+-- by address within a tenant.
+CREATE INDEX users_email ON users(tenant_id, email_key) WHERE email_key <> '';
 -- The lists of people read this partial index, which holds only those who are
 -- not deleted.
 CREATE INDEX users_live ON users(tenant_id, created, id) WHERE deleted_at IS NULL;
@@ -133,6 +142,8 @@ CREATE TABLE invites (
 );
 CREATE INDEX invites_expires ON invites(expires);
 CREATE INDEX invites_tenant ON invites(tenant_id);
+-- Deleting a person deletes their invites (the foreign key's cascade).
+CREATE INDEX invites_created_by ON invites(created_by);
 
 -- Spaces. name_key is the name folded by Go (FoldName), so that both databases
 -- search and sort the same. inbox is the folder quick notes go to. size_bytes
@@ -167,8 +178,6 @@ CREATE TABLE spaces (
   remote_state TEXT COLLATE "C" NOT NULL DEFAULT ''
 );
 CREATE INDEX spaces_size_at ON spaces(size_at);
-CREATE INDEX spaces_last_used ON spaces(last_used);
-CREATE INDEX spaces_usage_user ON spaces(usage_user);
 -- The lists of spaces: one index for each sort, within a tenant and across all
 -- of them; the filters that pick a few rows (a pin, an exemption) or a column
 -- (where the remote stands) have their own.
@@ -214,6 +223,8 @@ CREATE TABLE drafts (
   PRIMARY KEY (space_id, page_id, user_id)
 );
 CREATE INDEX drafts_due ON drafts(held, due);
+-- Deleting a person deletes their drafts (the foreign key's cascade).
+CREATE INDEX drafts_user ON drafts(user_id);
 
 -- The remote repository a space follows, and its credential. A row with an
 -- empty url is a space that only has an SSH key pair so far. Tokens and private
@@ -278,7 +289,8 @@ CREATE TABLE asset_remotes (
   move_error         TEXT COLLATE "C" NOT NULL DEFAULT '',
   move_updated       BIGINT NOT NULL DEFAULT 0
 );
-CREATE INDEX asset_remotes_move ON asset_remotes(move_state);
+-- The few attachment repositories a move is under way for.
+CREATE INDEX asset_remotes_move ON asset_remotes(move_state) WHERE move_state <> '';
 
 -- Server-wide settings as text by key (most are JSON): the daily text, the
 -- security settings, the storage policy, the GitHub App, and 'first_user', the
@@ -636,19 +648,23 @@ CREATE TABLE usage (
   PRIMARY KEY (kind, id)
 );
 -- The lists of people: one index for each sort, within a tenant and across all
--- of them (a site administrator's).
-CREATE INDEX usage_rank ON usage(kind, tenant_id, bytes DESC, id);
-CREATE INDEX usage_rank_all ON usage(kind, bytes DESC, id);
-CREATE INDEX usage_held ON usage(kind, tenant_id, held_bytes DESC, id);
-CREATE INDEX usage_held_all ON usage(kind, held_bytes DESC, id);
-CREATE INDEX usage_active ON usage(kind, tenant_id, last_active, id);
-CREATE INDEX usage_active_all ON usage(kind, last_active, id);
-CREATE INDEX usage_created ON usage(kind, tenant_id, created, id);
-CREATE INDEX usage_created_all ON usage(kind, created, id);
-CREATE INDEX usage_dormant ON usage(kind, tenant_id, dormant, created, id);
-CREATE INDEX usage_dormant_all ON usage(kind, dormant, created, id);
-CREATE INDEX usage_nspaces ON usage(kind, tenant_id, spaces DESC, id);
-CREATE INDEX usage_nspaces_all ON usage(kind, spaces DESC, id);
+-- of them (a site administrator's). They hold the people's rows only (kind
+-- 'user'): the tenants' rows are read by their key. The indexes across all
+-- tenants keep kind in front, which SQLite's planner needs to take them for the
+-- ORDER BY: without an equality on a leading column it costs the partial index
+-- as a scan and prefers the primary key and a sort.
+CREATE INDEX usage_rank ON usage(tenant_id, bytes DESC, id) WHERE kind = 'user';
+CREATE INDEX usage_rank_all ON usage(kind, bytes DESC, id) WHERE kind = 'user';
+CREATE INDEX usage_held ON usage(tenant_id, held_bytes DESC, id) WHERE kind = 'user';
+CREATE INDEX usage_held_all ON usage(kind, held_bytes DESC, id) WHERE kind = 'user';
+CREATE INDEX usage_active ON usage(tenant_id, last_active, id) WHERE kind = 'user';
+CREATE INDEX usage_active_all ON usage(kind, last_active, id) WHERE kind = 'user';
+CREATE INDEX usage_created ON usage(tenant_id, created, id) WHERE kind = 'user';
+CREATE INDEX usage_created_all ON usage(kind, created, id) WHERE kind = 'user';
+CREATE INDEX usage_dormant ON usage(tenant_id, dormant, created, id) WHERE kind = 'user';
+CREATE INDEX usage_dormant_all ON usage(kind, dormant, created, id) WHERE kind = 'user';
+CREATE INDEX usage_nspaces ON usage(tenant_id, spaces DESC, id) WHERE kind = 'user';
+CREATE INDEX usage_nspaces_all ON usage(kind, spaces DESC, id) WHERE kind = 'user';
 -- The people with a deadline running or passed are few: a partial index each.
 CREATE INDEX usage_grace ON usage(tenant_id, id) WHERE kind = 'user' AND grace_spaces > 0;
 CREATE INDEX usage_overdue ON usage(tenant_id, id) WHERE kind = 'user' AND overdue_spaces > 0;
@@ -708,6 +724,8 @@ CREATE TABLE provider_leftovers (
   created    BIGINT NOT NULL,
   PRIMARY KEY (provider, user_id, repo_id)
 );
+-- Deleting a person deletes their reminders (the foreign key's cascade).
+CREATE INDEX provider_leftovers_user ON provider_leftovers(user_id);
 
 -- The recycle bin (3.5): one row per space or person that went into it. A
 -- space's rows are kept whole in records (JSON) and are gone from the live
@@ -785,3 +803,20 @@ CREATE TABLE bulk_jobs (
   updated   BIGINT NOT NULL
 );
 CREATE INDEX bulk_jobs_state ON bulk_jobs(state) WHERE state IN ('queued', 'running');
+
+-- PostgreSQL: the tables whose rows are rewritten often (usage counters,
+-- measurements of spaces, a person's last activity, a session's last use, a
+-- remote's sync state) leave room in each page, so that an update that changes
+-- no indexed column is a HOT update: no new index entries, and the old row is
+-- reclaimed within the page. (With 80, 4891 of 5000 such updates were HOT,
+-- against none at the default 100.)
+-- dialect: postgres
+ALTER TABLE usage SET (fillfactor = 85);
+-- dialect: postgres
+ALTER TABLE spaces SET (fillfactor = 85);
+-- dialect: postgres
+ALTER TABLE users SET (fillfactor = 85);
+-- dialect: postgres
+ALTER TABLE sessions SET (fillfactor = 85);
+-- dialect: postgres
+ALTER TABLE remotes SET (fillfactor = 85);

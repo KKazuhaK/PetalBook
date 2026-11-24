@@ -3,13 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
 	"strings"
 	"time"
 
 	"golang.org/x/text/cases"
-	"modernc.org/sqlite"
 )
 
 // AdminSpace is a space as the administration list shows it.
@@ -56,47 +54,10 @@ type AdminOwner struct {
 	ID, Username, Name string
 }
 
-// sqliteLower is the name of the function that lower-cases text on SQLite
-// (registered in init), for the search of users.
-const sqliteLower = "petalbook_lower"
-
-func init() {
-	sqlite.MustRegisterDeterministicScalarFunction(sqliteLower, 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
-		switch v := args[0].(type) {
-		case string:
-			return strings.ToLower(v), nil
-		case []byte:
-			return strings.ToLower(string(v)), nil
-		}
-		return args[0], nil
-	})
-	sqlite.MustRegisterDeterministicScalarFunction(sqliteASCIILower, 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
-		switch v := args[0].(type) {
-		case string:
-			return asciiLowerGo(v), nil
-		case []byte:
-			return asciiLowerGo(string(v)), nil
-		}
-		return args[0], nil
-	})
-}
-
-// sqliteASCIILower lower-cases A to Z and nothing else (see asciiLower).
-const sqliteASCIILower = "petalbook_ascii_lower"
-
-func asciiLowerGo(s string) string {
-	b := []byte(s)
-	for i, c := range b {
-		if 'A' <= c && c <= 'Z' {
-			b[i] = c + 'a' - 'A'
-		}
-	}
-	return string(b)
-}
-
 // FoldName is a space name as it is searched: Unicode case folding, which
 // makes "STRASSE" and "Straße" the same, and the two spellings of an
-// i with a dot the same too. It is stored in spaces.name_key.
+// i with a dot the same too. It is stored in spaces.name_key, users.name_key,
+// groups.name_key and tenants.name_key.
 func FoldName(s string) string { return cases.Fold().String(s) }
 
 // likeEscape makes s a literal inside a LIKE pattern (ESCAPE '\').

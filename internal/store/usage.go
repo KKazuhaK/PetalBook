@@ -579,10 +579,11 @@ func SetUserQuota(ctx context.Context, q Q, sc Scope, id, quota string) error {
 }
 
 // UsersWithQuota lists the ids and own limits of the people in a tenant who
-// have limits of their own (a person's limit applies over the tenant's).
+// have limits of their own (a person's limit applies over the tenant's); a
+// deleted person counts for nobody's quota. It reads the index users_live.
 func UsersWithQuota(ctx context.Context, q Q, sc Scope) (map[string]string, error) {
 	cond, args := sc.cond("tenant_id")
-	rows, err := q.Query(ctx, `SELECT id, quota FROM users WHERE quota <> '' AND `+cond, args...)
+	rows, err := q.Query(ctx, `SELECT id, quota FROM users WHERE quota <> '' AND deleted_at IS NULL AND `+cond, args...)
 	if err != nil {
 		return nil, err
 	}
