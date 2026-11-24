@@ -2301,7 +2301,11 @@ export function createMockServer(options: MockOptions = {}) {
           if (list.length > 8) throw new HttpError(400, 'invalid', '每种语言最多 8 个来源')
           sources[tag] = list.map((e): MockSource => {
             if (!isRecord(e)) throw new HttpError(400, 'invalid', '来源是 {kind, …}')
-            if (e.kind === 'list') return { kind: 'list' }
+            if (e.kind === 'list') {
+              if (e.id !== undefined || e.options !== undefined || e.source !== undefined)
+                throw new HttpError(400, 'invalid', '管理员的文案没有别的字段')
+              return { kind: 'list' }
+            }
             if (e.kind === 'own') {
               if (!isRecord(e.source)) throw new HttpError(400, 'invalid', '要给出 folder、tag 或 type')
               return { kind: 'own', source: { filter: [], ...e.source } as unknown as DailySource }
