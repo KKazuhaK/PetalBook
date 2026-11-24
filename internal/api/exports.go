@@ -246,7 +246,7 @@ func (s *server) exportUserSources(c *call, spaceIDs, itemIDs *[]string, user st
 		return false
 	}
 	if st.Deleted {
-		children, err := store.UserSpaceItems(ctx, q, user, st.Item)
+		children, err := store.UserSpaceItems(ctx, q, st.Item)
 		if err != nil {
 			s.fail(c.w, err)
 			return false

@@ -43,8 +43,26 @@ func (m *Manager) LeaveSpace(ctx context.Context, spaceID, userID string) error 
 func (m *Manager) FinishUserDeletion(ctx context.Context, sc store.Scope, in store.FinishUserDeletionIn) (*store.RecycleItem, error) {
 	in.Now = m.opt.Now()
 	var item *store.RecycleItem
+	var moved [][2]store.Touched
 	err := m.opt.Store.Tx(ctx, func(q store.Q) error {
-		var err error
+		moved = moved[:0]
+		// A membership that slipped in after the plan (made before the person
+		// was disabled) is left here, in the transaction that marks them, so a
+		// deleted person is never in a live space; one they would leave a space
+		// without an owner of refuses the step (ErrLastOwnerOfSpace: asked
+		// again, the deletion plans that space).
+		left, err := store.ListUserSpaces(ctx, q, in.UserID)
+		if err != nil {
+			return err
+		}
+		for _, sp := range left {
+			before, after, err := store.LeaveSpace(ctx, q, sp.ID, in.UserID)
+			if err != nil {
+				return err
+			}
+			moved = append(moved, [2]store.Touched{before, after})
+			in.Left = append(in.Left, store.UserLeft{Space: sp.ID, Name: sp.Name, Role: sp.Role})
+		}
 		item, err = store.FinishUserDeletion(ctx, q, sc, in)
 		return err
 	})
@@ -53,6 +71,9 @@ func (m *Manager) FinishUserDeletion(ctx context.Context, sc store.Scope, in sto
 			return nil, ErrUserNotFound
 		}
 		return nil, err
+	}
+	for _, mv := range moved {
+		m.usageMoved(ctx, mv[0], mv[1])
 	}
 	m.MembershipChanged(in.UserID)
 	m.forgetAuthor(in.UserID)
@@ -107,7 +128,7 @@ func (m *Manager) RestoreUser(ctx context.Context, sc store.Scope, itemID string
 	}
 	// The spaces that went with the person, now that the person is there for the
 	// personal one to belong to.
-	children, err := store.UserSpaceItems(ctx, m.opt.Store.Q(), it.UserID, it.ID)
+	children, err := store.UserSpaceItems(ctx, m.opt.Store.Q(), it.ID)
 	if err != nil {
 		return res, err
 	}
@@ -127,7 +148,7 @@ func (m *Manager) RestoreUser(ctx context.Context, sc store.Scope, itemID string
 	}
 	if err := m.opt.Store.Tx(ctx, func(q store.Q) error {
 		// What could not be restored stays in the bin as an item of its own.
-		if _, err := q.Exec(ctx, `UPDATE recycle_items SET parent = '' WHERE parent IN (?, ?)`, it.ID, store.UserPendingMarker(it.UserID)); err != nil {
+		if _, err := q.Exec(ctx, `UPDATE recycle_items SET parent = '' WHERE parent = ?`, it.ID); err != nil {
 			return err
 		}
 		return store.DeleteUserItem(ctx, q, it.ID)
@@ -148,10 +169,13 @@ func (m *Manager) RestoreUser(ctx context.Context, sc store.Scope, itemID string
 
 // purgeUserItem is what purging a person's item does: the spaces recycled with
 // them are purged first (each is an item of its own at rest), then their data,
-// leaving the tombstone. A person whose row is not marked deleted (a deletion
-// cut short before its last step) keeps their data: only the item goes.
+// leaving the tombstone. Only this item's own spaces go (never those waiting
+// under the person's marker, which a later deletion holds), and the person's
+// data only while this item is the one that holds them (users.recycle_item): a
+// stale item (a restore of it was cut short) leaves a person who is back, or
+// whom a later item holds, as they are.
 func (m *Manager) purgeUserItem(ctx context.Context, it *store.RecycleItem) error {
-	children, err := store.UserSpaceItems(ctx, m.opt.Store.Q(), it.UserID, it.ID)
+	children, err := store.UserSpaceItems(ctx, m.opt.Store.Q(), it.ID)
 	if err != nil {
 		return err
 	}
@@ -172,7 +196,7 @@ func (m *Manager) purgeUserItem(ctx context.Context, it *store.RecycleItem) erro
 	if err := m.recycleStep("purge-user:spaces"); err != nil {
 		return err
 	}
-	err = m.opt.Store.Tx(ctx, func(q store.Q) error { return store.PurgeUserData(ctx, q, it.UserID, m.opt.Now()) })
+	err = m.opt.Store.Tx(ctx, func(q store.Q) error { return store.PurgeUserData(ctx, q, it.UserID, it.ID, m.opt.Now()) })
 	if err != nil && !errors.Is(err, store.ErrUserNotDeleted) {
 		return err
 	}

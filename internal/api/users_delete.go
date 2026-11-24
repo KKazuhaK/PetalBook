@@ -241,10 +241,21 @@ func (s *server) deleteUser(ctx context.Context, in deleteUserIn, id string) (*d
 	if len(plan.NeedsHeir) > 0 {
 		return nil, &heirRequiredError{Spaces: plan.NeedsHeir}
 	}
-	wasDisabled := target.Disabled
+	// What the person was before the first attempt (a deletion asked again after
+	// a failure finds them disabled by it) is recorded before anything is done.
+	pending, began, err := store.BeginUserDeletion(ctx, s.opt.Store.Q(), id, target.Disabled)
+	if err != nil {
+		return nil, err
+	}
 	// 1. disabled at once: sessions end, tokens and grants answer 401.
 	disabled := true
 	if _, err := s.auth.UpdateUser(ctx, in.Actor, in.IP, id, auth.UserPatch{Disabled: &disabled}); err != nil {
+		if began {
+			// Nothing was done: no deletion is under way.
+			if ferr := store.ForgetUserDeletion(context.WithoutCancel(ctx), s.opt.Store.Q(), id); ferr != nil {
+				s.log.Warn("could not drop the record of a deletion that was refused", "user", id, "error", ferr)
+			}
+		}
 		return nil, err
 	}
 	if err := s.spaces.StepHook("delete-user:disabled"); err != nil {
@@ -257,7 +268,11 @@ func (s *server) deleteUser(ctx context.Context, in deleteUserIn, id string) (*d
 		if err := s.spaces.Transfer(ctx, sc, t.Space.ID, t.To); err != nil {
 			return nil, err
 		}
-		out.Transfers = append(out.Transfers, store.UserTransfer{Space: t.Space.ID, Name: t.Space.Name, To: t.To, ToUsername: t.ToUsername})
+		tr := store.UserTransfer{Space: t.Space.ID, Name: t.Space.Name, To: t.To, ToUsername: t.ToUsername}
+		out.Transfers = append(out.Transfers, tr)
+		if err := store.NoteUserDeletion(ctx, s.opt.Store.Q(), id, &tr, nil); err != nil {
+			return nil, err
+		}
 		if err := s.spaces.StepHook("delete-user:transferred"); err != nil {
 			return nil, err
 		}
@@ -267,13 +282,21 @@ func (s *server) deleteUser(ctx context.Context, in deleteUserIn, id string) (*d
 		if err := s.spaces.LeaveSpace(ctx, t.Space.ID, id); err != nil {
 			return nil, leaveError(err)
 		}
-		left = append(left, store.UserLeft{Space: t.Space.ID, Name: t.Space.Name, Role: "owner"})
+		lv := store.UserLeft{Space: t.Space.ID, Name: t.Space.Name, Role: "owner"}
+		left = append(left, lv)
+		if err := store.NoteUserDeletion(ctx, s.opt.Store.Q(), id, nil, &lv); err != nil {
+			return nil, err
+		}
 	}
 	for _, l := range plan.Leave {
 		if err := s.spaces.LeaveSpace(ctx, l.ID, id); err != nil {
 			return nil, leaveError(err)
 		}
-		left = append(left, store.UserLeft{Space: l.ID, Name: l.Name, Role: l.Role})
+		lv := store.UserLeft{Space: l.ID, Name: l.Name, Role: l.Role}
+		left = append(left, lv)
+		if err := store.NoteUserDeletion(ctx, s.opt.Store.Q(), id, nil, &lv); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.spaces.StepHook("delete-user:left"); err != nil {
 		return nil, err
@@ -294,11 +317,12 @@ func (s *server) deleteUser(ctx context.Context, in deleteUserIn, id string) (*d
 	// and last the row is marked, in one transaction with the item.
 	s.revokeUserAccess(ctx, id)
 	item, err := s.spaces.FinishUserDeletion(ctx, sc, store.FinishUserDeletionIn{ItemID: page.NewID(s.now()), UserID: id, By: in.Actor.ID, ByName: in.Actor.Username,
-		Reason: in.Reason, WasDisabled: wasDisabled, Transfers: out.Transfers, Left: left, Recycled: out.Recycled})
+		Reason: in.Reason, WasDisabled: target.Disabled, Transfers: out.Transfers, Left: left, Recycled: out.Recycled})
 	if err != nil {
-		return nil, err
+		return nil, leaveError(err)
 	}
 	out.Item = item
+	out.Transfers = store.MergeTransfers(pending.Transfers, out.Transfers)
 	s.forgetUser(id)
 	if s.auth != nil {
 		ids := out.Recycled
@@ -428,6 +452,34 @@ func (s *server) restoreUser(c *call, it *store.RecycleItem) {
 	}{map[string]any{"item": it.ID, "user": s.toUser(res.User), "spaces": list(res.Spaces)}, skipped, res.Transfers, res.Left})
 }
 
+// deletionDecisions is what the preview of deleting a person decides, as one
+// string for the hash of a confirmation: the spaces recycled, each space handed
+// on and to whom, the spaces left and with which role, the spaces that need an
+// heir, and the blockers. A member added to a space of the person, or another
+// heir, changes it; a measurement does not.
+func deletionDecisions(d userDeletionResp) string {
+	var b []string
+	for _, r := range d.Recycle {
+		b = append(b, "r:"+r.Space.ID)
+	}
+	for _, t := range d.Transfer {
+		b = append(b, "t:"+t.Space.ID+">"+t.To.ID+":"+t.Credential)
+	}
+	for _, l := range d.Leave {
+		b = append(b, "l:"+l.Space.ID+":"+l.Role)
+	}
+	for _, n := range d.NeedsHeir {
+		b = append(b, "h:"+n.ID)
+	}
+	for _, x := range d.Blockers {
+		if r, ok := x["reason"].(string); ok {
+			b = append(b, "b:"+r)
+		}
+	}
+	sort.Strings(b)
+	return hashOf(b...)
+}
+
 // planUsers is the plan of delete_users, disable_users and enable_users over
 // people: for a deletion, the previews of each; blockers and spaces without an
 // heir are listed for the whole set.
@@ -454,6 +506,7 @@ func (s *server) planUsers(c *call, sc store.Scope, req confirmRequest) (confirm
 				return plan, false
 			}
 			plan.Plan = append(plan.Plan, d)
+			parts = append(parts, deletionDecisions(d))
 			plan.Bytes += d.Bytes
 			if len(d.NeedsHeir) > 0 {
 				plan.NeedsHeir = append(plan.NeedsHeir, map[string]any{"user": id, "spaces": d.NeedsHeir})

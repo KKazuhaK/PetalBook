@@ -777,3 +777,195 @@ func TestAnExportOfAPersonHoldsTheirPersonalSpaceAndTheSpacesNobodyElseIsIn(t *t
 		}
 	})
 }
+
+// A person's item that went stale (a restore of it was cut short, so the person
+// is back) and is purged later must never take what a later deletion of the same
+// person holds: not the spaces waiting under the marker of a deletion cut short,
+// and not the person's data once a later item holds them.
+func TestPurgingAStaleItemOfAPersonLeavesALaterDeletionWhole(t *testing.T) {
+	t.Parallel()
+	var stop atomic.Value
+	stop.Store("")
+	opts := accOpts{spaces: func(o *spaces.Options) {
+		o.RecycleHook = func(s string) error {
+			if v, _ := stop.Load().(string); v == s {
+				return errors.New("crash at " + s)
+			}
+			return nil
+		}
+	}}
+	eachAccounts(t, opts, func(t *testing.T, a *acc) {
+		f := newUdFix(t, a)
+		purge := func(item string) {
+			t.Helper()
+			tok := confirmFor(t, f.admin, "purge", "items", item)
+			f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 204, "")
+			if err := a.mgr.FinishRecycle(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// staleItem deletes olive and cuts the restore of the item short: olive is
+		// back and the item is in the bin again.
+		staleItem := func() string {
+			t.Helper()
+			item := f.admin.do("DELETE", "/api/users/"+f.ownerID, map[string]any{"heir": f.viewerID}).want(t, 200, "").body["id"].(string)
+			stop.Store("restore-user:person")
+			f.admin.do("POST", "/api/admin/recycle/"+item+"/restore", map[string]any{}).want(t, 500, "")
+			stop.Store("")
+			if err := a.mgr.FinishRecycle(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			f.owner.do("POST", "/api/login", map[string]any{"username": "olive", "password": pw}).want(t, 200, "")
+			return item
+		}
+
+		// 1. A later deletion cut short: its space waits under the marker.
+		i1 := staleItem()
+		fresh := f.owner.do("POST", "/api/spaces", map[string]any{"name": "Fresh"}).want(t, 201, "").body["id"].(string)
+		stop.Store("delete-user:recycled")
+		f.admin.do("DELETE", "/api/users/"+f.ownerID, map[string]any{}).want(t, 500, "")
+		stop.Store("")
+		marker := `SELECT COUNT(*) FROM recycle_items WHERE parent = 'u:` + f.ownerID + `' AND space_id = '` + fresh + `'`
+		if a.countRows(t, marker) != 1 {
+			t.Fatal("the space is not waiting under the marker")
+		}
+		purge(i1)
+		if a.countRows(t, marker) != 1 {
+			t.Fatal("purging a stale item took the spaces of a later deletion")
+		}
+		// That deletion, asked again, adopts its space and can be restored whole.
+		i2 := f.admin.do("DELETE", "/api/users/"+f.ownerID, map[string]any{}).want(t, 200, "")
+		if with := idsOf(i2.body["with"], "space", "id"); len(with) != 1 || with[0] != fresh {
+			t.Fatalf("%s", i2.raw)
+		}
+
+		// 2. A later deletion that finished: the person's data is that item's.
+		stop.Store("restore-user:person")
+		f.admin.do("POST", "/api/admin/recycle/"+i2.body["id"].(string)+"/restore", map[string]any{}).want(t, 500, "")
+		stop.Store("")
+		if err := a.mgr.FinishRecycle(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		i3 := f.admin.do("DELETE", "/api/users/"+f.ownerID, map[string]any{}).want(t, 200, "").body["id"].(string)
+		purge(i2.body["id"].(string))
+		if n := a.countRows(t, `SELECT COUNT(*) FROM users WHERE id = '`+f.ownerID+`' AND username = 'olive' AND recycle_item = '`+i3+`'`); n != 1 {
+			t.Fatal("purging a stale item emptied the person a later item holds")
+		}
+		if n := a.countRows(t, `SELECT COUNT(*) FROM passwords WHERE user_id = '`+f.ownerID+`'`); n != 1 {
+			t.Fatal("purging a stale item deleted the data of a later deletion")
+		}
+		f.admin.do("POST", "/api/admin/recycle/"+i3+"/restore", map[string]any{}).want(t, 200, "")
+		f.owner.do("POST", "/api/login", map[string]any{"username": "olive", "password": pw}).want(t, 200, "")
+	})
+}
+
+// A deletion asked again after a failure records what the person was before the
+// first attempt (enabled), not what that attempt made them (disabled), and keeps
+// the transfers the first attempt made: a restore brings them back enabled and
+// lists every space that was handed on.
+func TestADeletionAskedAgainKeepsWhatTheFirstAttemptKnew(t *testing.T) {
+	t.Parallel()
+	var stop atomic.Value
+	stop.Store("")
+	opts := accOpts{spaces: func(o *spaces.Options) {
+		o.RecycleHook = func(s string) error {
+			if v, _ := stop.Load().(string); v == s {
+				return errors.New("crash at " + s)
+			}
+			return nil
+		}
+	}}
+	eachAccounts(t, opts, func(t *testing.T, a *acc) {
+		f := newUdFix(t, a)
+		stop.Store("delete-user:left")
+		f.admin.do("DELETE", "/api/users/"+f.ownerID, map[string]any{"heir": f.viewerID}).want(t, 500, "")
+		stop.Store("")
+		item := f.admin.do("DELETE", "/api/users/"+f.ownerID, map[string]any{"heir": f.viewerID}).want(t, 200, "").body["id"].(string)
+		r := f.admin.do("POST", "/api/admin/recycle/"+item+"/restore", map[string]any{}).want(t, 200, "")
+		if tr := idsOf(r.body["transfers"], "space"); len(tr) != 2 || !hasID(tr, f.sid) || !hasID(tr, f.readers) {
+			t.Fatalf("the transfers of the first attempt are not listed: %s", r.raw)
+		}
+		if lv := idsOf(r.body["left"], "space"); !hasID(lv, f.joint) || !hasID(lv, f.sid) {
+			t.Fatalf("left %s", r.raw)
+		}
+		f.owner.do("POST", "/api/login", map[string]any{"username": "olive", "password": pw}).want(t, 200, "")
+		if n := a.countRows(t, `SELECT COUNT(*) FROM users WHERE id = '`+f.ownerID+`' AND disabled = 0`); n != 1 {
+			t.Fatal("came back disabled")
+		}
+		// And a person who was disabled before the first attempt comes back disabled.
+		f.admin.do("PATCH", "/api/users/"+f.viewerID, map[string]any{"disabled": true}).want(t, 200, "")
+		stop.Store("delete-user:disabled")
+		f.admin.do("DELETE", "/api/users/"+f.viewerID, map[string]any{"heir": f.editorID}).want(t, 500, "")
+		stop.Store("")
+		it2 := f.admin.do("DELETE", "/api/users/"+f.viewerID, map[string]any{"heir": f.editorID}).want(t, 200, "").body["id"].(string)
+		f.admin.do("POST", "/api/admin/recycle/"+it2+"/restore", map[string]any{}).want(t, 200, "")
+		if n := a.countRows(t, `SELECT COUNT(*) FROM users WHERE id = '`+f.viewerID+`' AND disabled = 1 AND deleted_at IS NULL`); n != 1 {
+			t.Fatal("a person who was disabled came back enabled")
+		}
+	})
+}
+
+// The confirmation of deleting people covers what the plan decides: which spaces
+// are recycled, handed on and to whom, left, and which need an heir. A member
+// added to a space of the person, or another heir, makes it stale.
+func TestAConfirmationOfDeletingPeopleIsStaleWhenWhatThePlanDecidesChanged(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newUdFix(t, a)
+		ask := func() string {
+			return f.admin.do("POST", "/api/admin/confirm", map[string]any{"action": "delete_users", "users": []string{f.ownerID}, "heir": f.viewerID}).
+				want(t, 200, "").body["confirm"].(string)
+		}
+		// A member added to the space nobody else was in: it is handed on now, not recycled.
+		tok := ask()
+		f.owner.do("POST", "/api/spaces/"+f.alone+"/members", map[string]any{"username": "oscar", "role": "viewer"}).want(t, 201, "")
+		f.admin.do("POST", "/api/admin/bulk", map[string]any{"confirm": tok}).want(t, 409, "confirm_stale")
+		// Another heir: Team's earliest editor is someone else now.
+		tok = ask()
+		f.owner.do("PATCH", "/api/spaces/"+f.sid+"/members/"+f.editorID, map[string]any{"role": "viewer"}).want(t, 200, "")
+		f.owner.do("POST", "/api/spaces/"+f.sid+"/members", map[string]any{"username": "oscar", "role": "editor"}).want(t, 201, "")
+		f.admin.do("POST", "/api/admin/bulk", map[string]any{"confirm": tok}).want(t, 409, "confirm_stale")
+		// Unchanged, it holds.
+		tok = ask()
+		j := f.admin.do("POST", "/api/admin/bulk", map[string]any{"confirm": tok}).want(t, 202, "").body["job"].(map[string]any)
+		if done := waitJob(t, f.admin, j["id"].(string)); done["done"] != float64(1) {
+			t.Fatalf("%v", done)
+		}
+	})
+}
+
+// A membership that slipped in while a person was being deleted (made before
+// their deletion disabled them, after it planned) is removed by the last step
+// and listed with the others: a deleted person is never left in a live space.
+func TestTheLastStepOfADeletionRemovesALeftoverMembership(t *testing.T) {
+	t.Parallel()
+	var slip atomic.Value
+	slip.Store(func() {})
+	opts := accOpts{spaces: func(o *spaces.Options) {
+		o.RecycleHook = func(s string) error {
+			if s == "delete-user:left" {
+				slip.Load().(func())()
+			}
+			return nil
+		}
+	}}
+	eachAccounts(t, opts, func(t *testing.T, a *acc) {
+		f := newUdFix(t, a)
+		other := f.editor.do("POST", "/api/spaces", map[string]any{"name": "Other"}).want(t, 201, "").body["id"].(string)
+		slip.Store(func() {
+			if _, err := a.st.Q().Exec(context.Background(), `INSERT INTO space_members(space_id, user_id, role, created) VALUES (?, ?, 'editor', 1)`, other, f.ownerID); err != nil {
+				t.Error(err)
+			}
+		})
+		item := f.admin.do("DELETE", "/api/users/"+f.ownerID, map[string]any{"heir": f.viewerID}).want(t, 200, "").body["id"].(string)
+		slip.Store(func() {})
+		if n := a.countRows(t, `SELECT COUNT(*) FROM space_members WHERE user_id = '`+f.ownerID+`'`); n != 0 {
+			t.Fatalf("a deleted person is still a member of %d spaces", n)
+		}
+		f.noSpaceWithoutAnOwner(t)
+		r := f.admin.do("POST", "/api/admin/recycle/"+item+"/restore", map[string]any{}).want(t, 200, "")
+		if lv := idsOf(r.body["left"], "space"); !hasID(lv, other) {
+			t.Fatalf("the leftover membership is not listed: %s", r.raw)
+		}
+	})
+}

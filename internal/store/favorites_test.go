@@ -282,6 +282,7 @@ func TestOpeningAnOlderDatabaseFillsNameKeys(t *testing.T) {
 		`DROP INDEX users_live`,
 		`ALTER TABLE users DROP COLUMN deleted_at`,
 		`ALTER TABLE users DROP COLUMN recycle_item`,
+		`ALTER TABLE users DROP COLUMN delete_pending`,
 		`DROP TABLE recycle_items`,
 		`DROP TABLE exports`,
 		`DROP TABLE retired_usernames`,

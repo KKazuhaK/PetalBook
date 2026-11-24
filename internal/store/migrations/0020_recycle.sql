@@ -45,6 +45,11 @@ CREATE INDEX recycle_items_busy ON recycle_items(state) WHERE state <> 'ready';
 -- people read the partial index, which holds only those who are not deleted.
 ALTER TABLE users ADD COLUMN deleted_at BIGINT;
 ALTER TABLE users ADD COLUMN recycle_item TEXT NOT NULL DEFAULT '';
+-- A deletion of the person under way (JSON: whether they were disabled before
+-- its first attempt, and the transfers and memberships removed so far), so that
+-- asking again after a failure records what the first attempt knew. '' when
+-- none is.
+ALTER TABLE users ADD COLUMN delete_pending TEXT NOT NULL DEFAULT '';
 CREATE INDEX users_live ON users(tenant_id, created, id) WHERE deleted_at IS NULL;
 
 -- A zip of what some spaces hold, made on request (state: queued, running,

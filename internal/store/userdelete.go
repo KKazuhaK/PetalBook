@@ -257,7 +257,9 @@ func LeaveSpace(ctx context.Context, q Q, spaceID, userID string) (Touched, Touc
 	}
 	if role == "owner" {
 		var others int
-		if err := q.QueryRow(ctx, `SELECT COUNT(*) FROM space_members WHERE space_id = ? AND role = 'owner' AND user_id <> ?`, spaceID, userID).Scan(&others); err != nil {
+		// A deleted person's row is nobody: it never counts as another owner.
+		if err := q.QueryRow(ctx, `SELECT COUNT(*) FROM space_members m JOIN users u ON u.id = m.user_id
+			WHERE m.space_id = ? AND m.role = 'owner' AND m.user_id <> ? AND u.deleted_at IS NULL`, spaceID, userID).Scan(&others); err != nil {
 			return before, after, err
 		}
 		if others == 0 {
@@ -309,6 +311,101 @@ type userRecords struct {
 	Recycled    []string       `json:"recycled"`
 }
 
+// UserDeletionPending is what a deletion of a person under way has done so far,
+// kept on the person's row (users.delete_pending) from before its first step,
+// so that a deletion asked again after a failure records what the first attempt
+// knew: whether the person was disabled before it disabled them, and the spaces
+// it handed on and left.
+type UserDeletionPending struct {
+	WasDisabled bool           `json:"wasDisabled"`
+	Transfers   []UserTransfer `json:"transfers"`
+	Left        []UserLeft     `json:"left"`
+}
+
+// BeginUserDeletion records that a deletion of the person starts, before
+// anything is done (wasDisabled: whether they are disabled now), unless one is
+// under way already; it returns what the deletion under way has done (the one
+// just begun, or the earlier attempt's), and began when it is this one.
+func BeginUserDeletion(ctx context.Context, q Q, userID string, wasDisabled bool) (p UserDeletionPending, began bool, err error) {
+	raw, _ := json.Marshal(UserDeletionPending{WasDisabled: wasDisabled})
+	res, err := q.Exec(ctx, `UPDATE users SET delete_pending = ? WHERE id = ? AND delete_pending = '' AND deleted_at IS NULL`, string(raw), userID)
+	if err != nil {
+		return p, false, err
+	}
+	n, _ := res.RowsAffected()
+	p, _, err = userDeletionPending(ctx, q, userID)
+	return p, n == 1, err
+}
+
+// ForgetUserDeletion drops the record of a deletion that changed nothing (its
+// first step was refused).
+func ForgetUserDeletion(ctx context.Context, q Q, userID string) error {
+	_, err := q.Exec(ctx, `UPDATE users SET delete_pending = '' WHERE id = ? AND deleted_at IS NULL`, userID)
+	return err
+}
+
+// userDeletionPending reads the deletion under way of the person (ok false:
+// none is).
+func userDeletionPending(ctx context.Context, q Q, userID string) (p UserDeletionPending, ok bool, err error) {
+	var raw string
+	if err := q.QueryRow(ctx, `SELECT delete_pending FROM users WHERE id = ?`, userID).Scan(&raw); err != nil {
+		return p, false, mapNoRows(err)
+	}
+	if raw == "" {
+		return p, false, nil
+	}
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		return p, false, err
+	}
+	return p, true, nil
+}
+
+// NoteUserDeletion adds a transfer or a membership left to the deletion under
+// way (one at a time, after each is done).
+func NoteUserDeletion(ctx context.Context, q Q, userID string, t *UserTransfer, l *UserLeft) error {
+	p, _, err := userDeletionPending(ctx, q, userID)
+	if err != nil {
+		return err
+	}
+	if t != nil {
+		p.Transfers = MergeTransfers(p.Transfers, []UserTransfer{*t})
+	}
+	if l != nil {
+		p.Left = mergeLeft(p.Left, []UserLeft{*l})
+	}
+	raw, _ := json.Marshal(p)
+	_, err = q.Exec(ctx, `UPDATE users SET delete_pending = ? WHERE id = ? AND deleted_at IS NULL`, string(raw), userID)
+	return err
+}
+
+// MergeTransfers is a, then what of b is not in it (by space): an earlier
+// attempt's entry wins.
+func MergeTransfers(a, b []UserTransfer) []UserTransfer {
+	seen := map[string]bool{}
+	for _, t := range a {
+		seen[t.Space] = true
+	}
+	for _, t := range b {
+		if !seen[t.Space] {
+			a, seen[t.Space] = append(a, t), true
+		}
+	}
+	return a
+}
+
+func mergeLeft(a, b []UserLeft) []UserLeft {
+	seen := map[string]bool{}
+	for _, l := range a {
+		seen[l.Space] = true
+	}
+	for _, l := range b {
+		if !seen[l.Space] {
+			a, seen[l.Space] = append(a, l), true
+		}
+	}
+	return a
+}
+
 // FinishUserDeletionIn says what FinishUserDeletion records.
 type FinishUserDeletionIn struct {
 	ItemID, UserID  string
@@ -339,6 +436,16 @@ func FinishUserDeletion(ctx context.Context, q Q, sc Scope, in FinishUserDeletio
 	if err != nil {
 		return nil, err
 	}
+	// What an earlier attempt of this deletion did and knew comes first.
+	pending, ok, err := userDeletionPending(ctx, q, in.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		in.WasDisabled = pending.WasDisabled
+		in.Transfers = MergeTransfers(pending.Transfers, in.Transfers)
+		in.Left = mergeLeft(pending.Left, in.Left)
+	}
 	raw, err := json.Marshal(userRecords{Version: 1, WasDisabled: in.WasDisabled, Groups: groups, Transfers: in.Transfers, Left: in.Left, Recycled: in.Recycled})
 	if err != nil {
 		return nil, err
@@ -352,7 +459,7 @@ func FinishUserDeletion(ctx context.Context, q Q, sc Scope, in FinishUserDeletio
 		in.ItemID, u.TenantID, u.ID, u.Username, FoldName(u.Username), string(raw), bytesHeld, ms(in.Now), in.By, in.ByName, in.Reason, ms(in.Now)); err != nil {
 		return nil, err
 	}
-	res, err := q.Exec(ctx, `UPDATE users SET deleted_at = ?, recycle_item = ?, disabled = 1 WHERE id = ? AND deleted_at IS NULL`, ms(in.Now), in.ItemID, in.UserID)
+	res, err := q.Exec(ctx, `UPDATE users SET deleted_at = ?, recycle_item = ?, disabled = 1, delete_pending = '' WHERE id = ? AND deleted_at IS NULL`, ms(in.Now), in.ItemID, in.UserID)
 	if err := oneRow(res, err); err != nil {
 		return nil, err
 	}
@@ -413,7 +520,7 @@ func RestoreUserRows(ctx context.Context, q Q, it *RecycleItem, now time.Time) (
 	// A person whose row is not marked (a deletion cut short before its last step)
 	// is only enabled again as they were; a marked one is brought back.
 	if deleted.Valid && recycleItem == it.ID {
-		res, err := q.Exec(ctx, `UPDATE users SET deleted_at = NULL, recycle_item = '', disabled = ? WHERE id = ?`, b2i(rec.WasDisabled), it.UserID)
+		res, err := q.Exec(ctx, `UPDATE users SET deleted_at = NULL, recycle_item = '', delete_pending = '', disabled = ? WHERE id = ?`, b2i(rec.WasDisabled), it.UserID)
 		if err := oneRow(res, err); err != nil {
 			return out, err
 		}
@@ -464,10 +571,13 @@ func DeleteUserItem(ctx context.Context, q Q, id string) error {
 	return oneRow(res, err)
 }
 
-// UserSpaceItems are the items of the spaces recycled with the person's item or
-// waiting under their pending marker.
-func UserSpaceItems(ctx context.Context, q Q, userID, itemID string) ([]RecycleItem, error) {
-	rows, err := q.Query(ctx, `SELECT `+recycleCols+` FROM recycle_items WHERE parent IN (?, ?) ORDER BY deleted_at, id`, itemID, UserPendingMarker(userID))
+// UserSpaceItems are the items of the spaces recycled with the person's item.
+// The spaces waiting under the person's pending marker are not among them: they
+// belong to a deletion of the person that is under way (one cut short), which
+// adopts them when it finishes, never to an item that exists already (a stale
+// one, whose restore was cut short, may be older than that deletion).
+func UserSpaceItems(ctx context.Context, q Q, itemID string) ([]RecycleItem, error) {
+	rows, err := q.Query(ctx, `SELECT `+recycleCols+` FROM recycle_items WHERE parent = ? ORDER BY deleted_at, id`, itemID)
 	if err != nil {
 		return nil, err
 	}
@@ -492,14 +602,18 @@ func UserSpaceItems(ctx context.Context, q Q, userID, itemID string) ([]RecycleI
 // stay, the username becomes deleted-<id>, the name and address go. The username
 // is recorded as retired, folded. Nothing else is touched: audit rows, the
 // groups and invites they made, and everything stored by their id refer to the
-// tombstone. Call it inside Tx.
-func PurgeUserData(ctx context.Context, q Q, userID string, now time.Time) error {
-	var username string
+// tombstone. itemID is the person's item being purged: the data is purged only
+// while that item is the one that holds the person (users.recycle_item), so that
+// purging a stale item never touches a person who is back or who a later
+// deletion holds (ErrUserNotDeleted then, and nothing is changed). Call it
+// inside Tx.
+func PurgeUserData(ctx context.Context, q Q, userID, itemID string, now time.Time) error {
+	var username, holder string
 	var deleted sql.NullInt64
-	if err := q.QueryRow(ctx, `SELECT username, deleted_at FROM users WHERE id = ?`, userID).Scan(&username, &deleted); err != nil {
+	if err := q.QueryRow(ctx, `SELECT username, deleted_at, recycle_item FROM users WHERE id = ?`, userID).Scan(&username, &deleted, &holder); err != nil {
 		return mapNoRows(err)
 	}
-	if !deleted.Valid {
+	if !deleted.Valid || holder != itemID || itemID == "" {
 		return ErrUserNotDeleted
 	}
 	for _, stmt := range []string{
@@ -528,11 +642,12 @@ func PurgeUserData(ctx context.Context, q Q, userID string, now time.Time) error
 		return err
 	}
 	res, err := q.Exec(ctx, `UPDATE users SET username = ?, name = '', email = '', email_verified = 0, email_verified_by = '', quota = '', terms_accepted = '',
-		passkey_required = 0, recycle_item = '' WHERE id = ? AND deleted_at IS NOT NULL`, TombstoneName(userID), userID)
+		passkey_required = 0, recycle_item = '' WHERE id = ? AND deleted_at IS NOT NULL AND recycle_item = ?`, TombstoneName(userID), userID, itemID)
 	return oneRow(res, err)
 }
 
-// ErrUserNotDeleted: a purge of a person who is not in the recycle bin.
+// ErrUserNotDeleted: a purge of a person who is not in the recycle bin under
+// the item being purged.
 var ErrUserNotDeleted = errors.New("the person is not deleted")
 
 // TombstoneName is the username a purged person's row keeps.
