@@ -45,8 +45,10 @@ GOTEST_TIMEOUT ?= 30m
 
 # All the Go tests, under the race detector. A few stress and model tests use a
 # smaller size there (see raceDetector in internal/index and internal/space).
+# PKGS narrows the run; CI's go job splits the packages into three groups.
+PKGS ?= ./cmd/... ./internal/...
 test:
-	go test -race -timeout $(GOTEST_TIMEOUT) ./cmd/... ./internal/...
+	go test -race -timeout $(GOTEST_TIMEOUT) $(PKGS)
 
 # The full-size stress tests: index and space use a smaller size under -race
 # (raceDetector), so this runs them without it. Main runs it in the compat job.
