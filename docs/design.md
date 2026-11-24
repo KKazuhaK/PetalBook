@@ -2956,6 +2956,47 @@ contract 测试（mock 一步一步播放搬迁）。
 `cloneBytes` 不含 `DATA/assetrepos`（每个只有几百 KB 到几 MB 的提交和目录树）；
 GitHub 安装被引用的仓库数（`github_installations` 的统计）不算附件仓库。
 
+**3.1 第一部分第二轮审查的修复（2026-11-23）**：`MakeFull` 先 `StopFilter`、最后才
+`LeavePartial`，而 `IsPartial` 原来只看 `remote.origin.partialclonefilter`：在两者之间
+被打断（取不到、空间关了、重启）的克隆缺着旧版本却被当成完整的，重新打开后没有按需取，
+旧版本读不出来，`MakeFull` 又直接返回，永远补不回来；断开远端重试时会在缺历史的情况下
+成功，是丢数据。现在 `IsPartial` 看 `remote.origin.promisor`／`extensions.partialclone`
+（只有 `LeavePartial` 在 `MissingAll` 为空之后才去掉），受限的 Git 只多放行这一种
+`git config --local --get-regexp`。测试：`TestAnInterruptedMakeFullLeavesAPartialCloneThatIsRepairedLater`
+（远端断开让断开远端停在 `StopFilter` 之后，重启后仍是部分克隆、旧版本可取，重试的断开
+把历史补全后才变成本地空间）和 gitstore 的 `TestAClonePartialUntilItLeavesPartialModeNotUntilTheFilterStops`。
+
+**3.1 合进 main（2.7b、3.3 之后，2026-11-23）**：按上面「2.7b 的约定」和 3.3 的钩子：
+
+- **连接**：`POST /api/spaces` 的 `github` 和 `github.assets` 变成 `storage.sync` 和
+  `storage.sync.assets`；3.1 的 `remote`（按地址、带令牌）留在顶层，就是「存在哪里」的
+  「其他（按地址）」，和 `storage.sync` 一起给是 `400 invalid`。`PUT …/remote/assets` 的
+  `github` 变成 `sync`（带 `provider`），凭据类型 `connection` 带 `provider`；
+  `asset_remotes` 也有 `provider` 列（就地改 `0017_assets.sql`，和 2.7 改 0013 一样，
+  还没发布）。错误码用通用的（`push_failed`、`repo_not_in_installation`……带 `provider`），
+  `connections.Error` 多了 `AssetsRepo`。建空间或附件仓库失败后留下的空仓库两个都记成
+  提醒；附件仓库接上时也清掉它的提醒。GitHub 的计数（安装、用户、全部）和 `git` 提供方的
+  计数都把附件仓库算进去，一个空间算一次。
+- **要求远端**：`remotes.require` 取 `null`、`"any"` 或一个提供方 id；服务器没有的 id
+  是 `400 invalid`，有但没配好是 `409 provider_not_configured`；只有经过这个提供方的
+  连接算满足。查询里按 `cred_type = 'connection' AND provider = ?` 判断。
+- **允许的主机**：2.7b 的 `hostAllowed` 改用 3.1 的 `hostPolicy()`，也就是设置里的
+  `hosts.allowed`（给了 `--remote-host` 时还是旗标说了算）。3.1 的设置仍是全站的一条记录，
+  不进 3.3 的分层设置表；`require`、`graceDays`、`localSpaces.maxBytes` 的租户层照 3.3
+  的预留以后再加。
+- **租户**：`/api/admin/storage`、`PUT /api/admin/spaces/{space}/storage`、
+  `POST /api/admin/spaces/{space}/evict` 和用户的 `remoteExempt` 只给全站管理员（服务器的
+  磁盘、全站的要求）；`/api/admin/spaces` 的 `storage` 块照 3.3 的范围（租户管理员看自己
+  租户的）。3.1 新的存储查询都是全站的后台任务、全站管理员的统计或按已找到的空间 id，
+  进了范围白名单并写了理由；附件仓库的连接和空间自己的一样检查 `via: "user"` 的人在
+  空间的租户里。
+- **用量**：部分克隆、清掉和正在清掉的空间测大小时只写列表的 `size_bytes`
+  （`SetSpaceSize`），不调 `RecordMeasurement`，`usage_bytes` 保留上一次完整测量的值；
+  测试 `TestMeasuringAPartialCloneLeavesItsUsageAlone`。附件仓库的空间测到的工作区不含附件，
+  仍走 `RecordMeasurement`，这一点留给 3.5 的测量一起定。
+- **迁移**：0015、0017 和 main 的 0016、0018 两种顺序都测了（`storage_migrate_test.go`）；
+  迁移数的测试本来就数文件。
+
 #### 第 3 期的里程碑（计划，2026-11-23）
 
 排序的依据：先做团队马上用得上、又是后面几步前提的（组），再做多租户和注册的
