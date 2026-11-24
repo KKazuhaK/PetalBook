@@ -798,11 +798,6 @@ func (s *server) askAPI(c *call, site siteDaily, a storedAPI, opts map[string][]
 		return nil, err
 	}
 	q := &dailyQuote{Text: r.Text, Source: r.Source, Author: r.Author, Link: r.Link, Fetched: rfc3339(r.Fetched), Stale: r.Stale, origin: "external"}
-	if r.Stale {
-		q.expires = s.opt.DailyFetch.Now().Add(time.Minute)
-	} else if _, ends := rt.Period(s.opt.DailyFetch.Now(), date); !ends.IsZero() {
-		q.expires = ends
-	}
 	return q, nil
 }
 
@@ -1597,25 +1592,6 @@ func (s *server) putDailyPrefs(c *call) {
 	}
 	s.getDailyPrefs(c)
 }
-
-// --- how long a browser may keep an answer -------------------------------------------
-
-// maxAgeFor is how many seconds an answer about a day stays right: until the
-// day ends where the asker is (tz is minutes east of UTC); without tz, a short
-// time, since the end of their day is not known. Between a minute and a day.
-func maxAgeFor(date string, tz *int, now time.Time) int {
-	if tz == nil {
-		return 300
-	}
-	t, err := time.Parse("2006-01-02", date)
-	if err != nil {
-		return 60
-	}
-	end := t.Add(24*time.Hour - time.Duration(*tz)*time.Minute)
-	return clampAge(int(end.Sub(now) / time.Second))
-}
-
-func clampAge(sec int) int { return max(60, min(sec, 86400)) }
 
 // nearToday reports whether date is today, yesterday or tomorrow where the
 // asker is (tz is minutes east of UTC; without it, in UTC).
