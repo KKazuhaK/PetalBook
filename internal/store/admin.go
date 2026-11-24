@@ -99,34 +99,6 @@ func asciiLowerGo(s string) string {
 // i with a dot the same too. It is stored in spaces.name_key.
 func FoldName(s string) string { return cases.Fold().String(s) }
 
-// fillSpaceNameKeys folds the names of the spaces that exist (migration 7).
-func fillSpaceNameKeys(ctx context.Context, q Q) error {
-	rows, err := q.Query(ctx, `SELECT id, name FROM spaces`)
-	if err != nil {
-		return err
-	}
-	type row struct{ id, key string }
-	var all []row
-	for rows.Next() {
-		var id, name string
-		if err := rows.Scan(&id, &name); err != nil {
-			rows.Close()
-			return err
-		}
-		all = append(all, row{id, FoldName(name)})
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, r := range all {
-		if _, err := q.Exec(ctx, `UPDATE spaces SET name_key = ? WHERE id = ?`, r.key, r.id); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // likeEscape makes s a literal inside a LIKE pattern (ESCAPE '\').
 func likeEscape(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)

@@ -23,36 +23,6 @@ import (
 // EnvPostgres names the variable that switches the PostgreSQL runs on.
 const EnvPostgres = "PETALBOOK_TEST_POSTGRES"
 
-// EachAtVersion runs fn per available database, on a schema that stops at
-// version max (see OpenAtVersion).
-func EachAtVersion(t *testing.T, max int, fn func(t *testing.T, st *store.Store)) {
-	t.Helper()
-	t.Run("sqlite", func(t *testing.T) { fn(t, OpenAtVersion(t, "sqlite", max)) })
-	if postgresDSN() != "" {
-		t.Run("postgres", func(t *testing.T) { fn(t, OpenAtVersion(t, "postgres", max)) })
-	}
-}
-
-// EachWithoutVersion runs fn per available database, on a schema that has every
-// version but those of skip (see store.OpenWithoutVersion).
-func EachWithoutVersion(t *testing.T, skip []int, fn func(t *testing.T, st *store.Store)) {
-	t.Helper()
-	open := func(ctx context.Context, target string) (*store.Store, error) {
-		return store.OpenWithoutVersion(ctx, target, skip...)
-	}
-	t.Run("sqlite", func(t *testing.T) {
-		st, err := open(context.Background(), filepath.Join(t.TempDir(), "state.db"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { st.Close() })
-		fn(t, st)
-	})
-	if postgresDSN() != "" {
-		t.Run("postgres", func(t *testing.T) { fn(t, openPostgresWith(context.Background(), t, open)) })
-	}
-}
-
 // Each runs fn as a subtest per available database.
 func Each(t *testing.T, fn func(t *testing.T, st *store.Store)) {
 	t.Helper()
@@ -88,11 +58,10 @@ func Open(t testing.TB, backend string) *store.Store {
 	return st
 }
 
-// The migrations of a fresh SQLite database take far longer than a test that
-// uses it, most of all under the race detector, so they run once per test
-// binary: every test gets a copy of that file. (store.Open on an empty path,
-// which the tests of the migrations themselves use, still runs them all, and
-// PostgreSQL schemas are made as before.)
+// The migration of a fresh SQLite database takes longer than a test that uses
+// it, most of all under the race detector, so it runs once per test binary:
+// every test gets a copy of that file. (store.Open on an empty path still runs
+// it, and PostgreSQL schemas are made as before.)
 var template struct {
 	once sync.Once
 	data []byte
@@ -131,33 +100,8 @@ func buildTemplate() ([]byte, error) {
 	return os.ReadFile(path)
 }
 
-// OpenAtVersion is Open for a database whose schema stops at version max, to
-// be filled as an older version would have and then brought up with Migrate.
-func OpenAtVersion(t testing.TB, backend string, max int) *store.Store {
-	t.Helper()
-	ctx := context.Background()
-	if backend == "postgres" {
-		return openPostgresAt(ctx, t, max)
-	}
-	st, err := store.OpenAtVersion(ctx, filepath.Join(t.TempDir(), "state.db"), max)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
-	return st
-}
-
 func openPostgres(ctx context.Context, t testing.TB) *store.Store {
-	return openPostgresAt(ctx, t, 0)
-}
-
-func openPostgresAt(ctx context.Context, t testing.TB, max int) *store.Store {
-	return openPostgresWith(ctx, t, func(ctx context.Context, target string) (*store.Store, error) {
-		if max > 0 {
-			return store.OpenAtVersion(ctx, target, max)
-		}
-		return store.Open(ctx, target)
-	})
+	return openPostgresWith(ctx, t, store.Open)
 }
 
 // openPostgresWith opens a store with open in a schema of its own, dropped when

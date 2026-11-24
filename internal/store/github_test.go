@@ -112,6 +112,11 @@ func TestGitHubInstallationsAndSpaces(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+		for _, tn := range []string{"t1", "t2", "t3"} {
+			if err := st.CreateTenant(ctx, store.Tenant{ID: tn, Slug: tn, Name: tn, Created: now, Updated: now}); err != nil {
+				t.Fatal(err)
+			}
+		}
 		// Shared per tenant: 30 with t1 and t2, 10 with t1, 20 with nobody.
 		for id, ts := range map[int64][]string{30: {"t2", "t1"}, 10: {"t1"}} {
 			if err := store.SetGitHubInstallationTenants(ctx, q, id, ts); err != nil {

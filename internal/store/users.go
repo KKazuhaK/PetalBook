@@ -333,7 +333,7 @@ func MarkFirstUser(ctx context.Context, q Q, strict bool, now time.Time) error {
 		if ok {
 			return ErrExists
 		}
-		if _, err := q.Exec(ctx, `INSERT INTO settings(key, value) VALUES ('first_user', ?)`, now.UTC().Format(time.RFC3339)); err != nil {
+		if _, err := q.Exec(ctx, `INSERT INTO site_settings(key, value, updated) VALUES ('first_user', ?, ?)`, now.UTC().Format(time.RFC3339), ms(now)); err != nil {
 			if IsUnique(err) {
 				return ErrExists
 			}
@@ -341,7 +341,7 @@ func MarkFirstUser(ctx context.Context, q Q, strict bool, now time.Time) error {
 		}
 		return nil
 	}
-	_, err := q.Exec(ctx, `INSERT INTO settings(key, value) VALUES ('first_user', ?) ON CONFLICT (key) DO NOTHING`, now.UTC().Format(time.RFC3339))
+	_, err := q.Exec(ctx, `INSERT INTO site_settings(key, value, updated) VALUES ('first_user', ?, ?) ON CONFLICT (key) DO NOTHING`, now.UTC().Format(time.RFC3339), ms(now))
 	return err
 }
 

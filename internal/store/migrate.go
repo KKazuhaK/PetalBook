@@ -15,28 +15,33 @@ var migrationFS embed.FS
 
 // goSteps are the migrations that need more than SQL: the function of a
 // version runs inside the same transaction, after the statements of its file.
-//
-// A step is made by a function of the dialect so that one version can do
-// different things on SQLite and PostgreSQL (see tenantsStep).
-var goSteps = map[int]func(d Dialect) func(ctx context.Context, q Q) error{
-	7:  func(Dialect) func(context.Context, Q) error { return fillSpaceNameKeys },
-	18: tenantsStep,
+var goSteps = map[int]func(ctx context.Context, q Q) error{
+	1: defaultTenantStep,
 }
 
-// foreignKeysOff lists the versions whose step rebuilds a table on SQLite. A
-// rebuild must run with foreign keys off (dropping the table would otherwise
-// delete the rows that reference it), and that pragma does nothing inside a
-// transaction. So when such a version is pending, SQLite runs the whole
-// migration on one pinned connection: foreign keys are switched off before the
-// transaction starts, PRAGMA foreign_key_check ends the transaction (a failure
-// rolls everything back), and they are switched on again after it, whatever
-// happened. PostgreSQL has no such need and runs as always.
-var foreignKeysOff = map[int]bool{18: true}
+// defaultTenantStep is the Go part of the baseline: the default tenant, made
+// with the time of the first start, and its (empty) usage row.
+func defaultTenantStep(ctx context.Context, q Q) error {
+	now := ms(time.Now())
+	if _, err := q.Exec(ctx, `INSERT INTO tenants(id, slug, name, name_key, disabled, quota, created, updated) VALUES (?, ?, 'Default', ?, 0, '{}', ?, ?)`,
+		DefaultTenantID, DefaultTenantSlug, FoldName("Default"), now, now); err != nil {
+		return err
+	}
+	_, err := q.Exec(ctx, `INSERT INTO usage(kind, id, tenant_id) VALUES ('tenant', ?, ?)`, DefaultTenantID, DefaultTenantID)
+	return err
+}
 
 type migration struct {
 	version int
 	name    string
-	stmts   []string
+	stmts   []statement
+}
+
+// statement is one statement of a migration file, and the database it is for
+// ("" for both).
+type statement struct {
+	sql     string
+	dialect Dialect
 }
 
 func loadMigrations() ([]migration, error) {
@@ -55,7 +60,11 @@ func loadMigrations() ([]migration, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, migration{version: v, name: e.Name(), stmts: splitStatements(string(raw))})
+		stmts, err := splitStatements(string(raw))
+		if err != nil {
+			return nil, fmt.Errorf("migration %q: %w", e.Name(), err)
+		}
+		out = append(out, migration{version: v, name: e.Name(), stmts: stmts})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].version < out[j].version })
 	for i := 1; i < len(out); i++ {
@@ -66,175 +75,133 @@ func loadMigrations() ([]migration, error) {
 	return out, nil
 }
 
-// splitStatements cuts a migration at semicolons, dropping comment lines.
-func splitStatements(sql string) []string {
-	var lines []string
+// dialectMark is the comment line that makes the next statement run on one
+// database only: "-- dialect: postgres" or "-- dialect: sqlite".
+const dialectMark = "-- dialect:"
+
+// splitStatements cuts a migration at semicolons, dropping comment lines. A
+// dialect mark applies to the statement that starts after it.
+func splitStatements(sql string) ([]statement, error) {
+	var out []statement
+	var cur []string
+	var mark Dialect
+	flush := func() {
+		if s := strings.TrimSpace(strings.Join(cur, "\n")); s != "" {
+			out = append(out, statement{sql: s, dialect: mark})
+			mark = ""
+		}
+		cur = nil
+	}
 	for _, l := range strings.Split(sql, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(l), "--") {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, dialectMark) {
+			d := Dialect(strings.TrimSpace(strings.TrimPrefix(t, dialectMark)))
+			if d != SQLite && d != Postgres {
+				return nil, fmt.Errorf("unknown dialect %q", d)
+			}
+			if strings.TrimSpace(strings.Join(cur, "\n")) != "" {
+				return nil, fmt.Errorf("a dialect mark inside a statement: %q", t)
+			}
+			mark = d
 			continue
 		}
-		lines = append(lines, l)
-	}
-	var out []string
-	for _, s := range strings.Split(strings.Join(lines, "\n"), ";") {
-		if s = strings.TrimSpace(s); s != "" {
-			out = append(out, s)
+		if strings.HasPrefix(t, "--") {
+			continue
+		}
+		for {
+			before, after, found := strings.Cut(l, ";")
+			cur = append(cur, before)
+			if !found {
+				break
+			}
+			flush()
+			l = after
 		}
 	}
-	return out
+	flush()
+	return out, nil
+}
+
+// forDialect is a statement as the database d runs it: PostgreSQL runs the file
+// as written; SQLite compares text bytewise with its built-in BINARY collation,
+// which is what COLLATE "C" means on PostgreSQL.
+func (st statement) forDialect(d Dialect) (string, bool) {
+	if st.dialect != "" && st.dialect != d {
+		return "", false
+	}
+	if d == SQLite {
+		return strings.ReplaceAll(st.sql, `COLLATE "C"`, `COLLATE BINARY`), true
+	}
+	return st.sql, true
 }
 
 // migrate applies the migrations that have not run yet, in one transaction, so
 // a failure leaves the database as it was. It is safe to run at every start,
 // and on PostgreSQL two servers starting together take turns.
-func (s *Store) migrate(ctx context.Context) error { return s.migrateTo(ctx, 0) }
-
-// migrateTo is migrate, stopping after version max (0: no limit); tests use it
-// to make a database as an older version left it.
-func (s *Store) migrateTo(ctx context.Context, max int) error {
-	return s.migrateWhere(ctx, func(v int) bool { return max <= 0 || v <= max })
-}
-
-// migrateWhere is migrate, applying only the versions keep accepts; tests use
-// it to make a database that lacks one version, as one migrated on another
-// branch does.
-func (s *Store) migrateWhere(ctx context.Context, keep func(version int) bool) error {
+func (s *Store) migrate(ctx context.Context) error {
 	list, err := loadMigrations()
 	if err != nil {
 		return err
 	}
-	var cut []migration
-	for _, m := range list {
-		if keep(m.version) {
-			cut = append(cut, m)
-		}
-	}
-	list = cut
-	run := func(q Q) error { return s.applyMigrations(ctx, q, list) }
-	if s.dialect != SQLite {
-		return s.Tx(ctx, run)
-	}
-	pending, err := s.pendingForeignKeysOff(ctx, list)
-	if err != nil || !pending {
-		if err != nil {
-			return err
-		}
-		return s.Tx(ctx, run)
-	}
-	conn, err := s.db.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
-		return err
-	}
-	// Whatever happens next, the connection goes back to the pool with foreign
-	// keys on.
-	defer conn.ExecContext(context.WithoutCancel(ctx), `PRAGMA foreign_keys = ON`)
-	tx, err := conn.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	if err := run(bound{s, tx}); err != nil {
-		tx.Rollback()
-		return err
-	}
-	return tx.Commit()
-}
-
-// pendingForeignKeysOff reports whether a migration that must run with foreign
-// keys off has not been applied yet.
-func (s *Store) pendingForeignKeysOff(ctx context.Context, list []migration) (bool, error) {
-	var has int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'`).Scan(&has); err != nil {
-		return false, err
-	}
-	done := map[int]bool{}
-	if has > 0 {
-		rows, err := s.db.QueryContext(ctx, `SELECT version FROM schema_migrations`)
-		if err != nil {
-			return false, err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var v int
-			if err := rows.Scan(&v); err != nil {
-				return false, err
-			}
-			done[v] = true
-		}
-		if err := rows.Err(); err != nil {
-			return false, err
-		}
-	}
-	for _, m := range list {
-		if foreignKeysOff[m.version] && !done[m.version] {
-			return true, nil
-		}
-	}
-	return false, nil
+	return s.Tx(ctx, func(q Q) error { return s.applyMigrations(ctx, q, list) })
 }
 
 func (s *Store) applyMigrations(ctx context.Context, q Q, list []migration) error {
-	{
-		if s.dialect == Postgres {
-			if _, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(727274001)`); err != nil {
-				return err
-			}
-		}
-		if _, err := q.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version BIGINT PRIMARY KEY, applied BIGINT NOT NULL)`); err != nil {
+	if s.dialect == Postgres {
+		if _, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(727274001)`); err != nil {
 			return err
 		}
-		rows, err := q.Query(ctx, `SELECT version FROM schema_migrations`)
-		if err != nil {
+	}
+	if _, err := q.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version BIGINT PRIMARY KEY, applied BIGINT NOT NULL)`); err != nil {
+		return err
+	}
+	rows, err := q.Query(ctx, `SELECT version FROM schema_migrations`)
+	if err != nil {
+		return err
+	}
+	done := map[int]bool{}
+	for rows.Next() {
+		var v int
+		if err := rows.Scan(&v); err != nil {
+			rows.Close()
 			return err
 		}
-		done := map[int]bool{}
-		for rows.Next() {
-			var v int
-			if err := rows.Scan(&v); err != nil {
-				rows.Close()
-				return err
-			}
-			done[v] = true
+		done[v] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	known := map[int]bool{}
+	for _, m := range list {
+		known[m.version] = true
+	}
+	for v := range done {
+		if !known[v] {
+			return fmt.Errorf("the database was made by a newer version of PetalBook, or by one before the baseline of 2026-11-24 (schema %d): make it again", v)
 		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return err
+	}
+	for _, m := range list {
+		if done[m.version] {
+			continue
 		}
-		known := map[int]bool{}
-		for _, m := range list {
-			known[m.version] = true
-		}
-		for v := range done {
-			if !known[v] {
-				return fmt.Errorf("the database was made by a newer version of PetalBook (schema %d)", v)
-			}
-		}
-		for _, m := range list {
-			if done[m.version] {
+		for _, st := range m.stmts {
+			text, ok := st.forDialect(s.dialect)
+			if !ok {
 				continue
 			}
-			for _, st := range m.stmts {
-				if _, err := q.Exec(ctx, st); err != nil {
-					return fmt.Errorf("migration %s: %w", m.name, err)
-				}
-			}
-			if mk := goSteps[m.version]; mk != nil {
-				if err := mk(s.dialect)(ctx, q); err != nil {
-					return fmt.Errorf("migration %s: %w", m.name, err)
-				}
-			}
-			if s.dialect == SQLite && foreignKeysOff[m.version] {
-				if err := checkForeignKeys(ctx, q); err != nil {
-					return fmt.Errorf("migration %s: %w", m.name, err)
-				}
-			}
-			if _, err := q.Exec(ctx, `INSERT INTO schema_migrations(version, applied) VALUES (?, ?)`, m.version, ms(time.Now())); err != nil {
-				return err
+			if _, err := q.Exec(ctx, text); err != nil {
+				return fmt.Errorf("migration %s: %w", m.name, err)
 			}
 		}
-		return nil
+		if step := goSteps[m.version]; step != nil {
+			if err := step(ctx, q); err != nil {
+				return fmt.Errorf("migration %s: %w", m.name, err)
+			}
+		}
+		if _, err := q.Exec(ctx, `INSERT INTO schema_migrations(version, applied) VALUES (?, ?)`, m.version, ms(time.Now())); err != nil {
+			return err
+		}
 	}
+	return nil
 }

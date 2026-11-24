@@ -286,7 +286,6 @@ var deletedAllowlist = map[string]string{
 	"SettleDeadlines":         "whether an owner of a space is exempt: the owners of a live space are not deleted",
 	"InsertAudit":             "the tenant of the person an audit row is about, by id: the log names deleted people too",
 	"ofUser":                  "the condition of a person's tenant, for the lists of tokens and grants (a deleted person's are revoked)",
-	"seedUsage":               "runs in the migration that makes the usage table, before deleted_at exists",
 	"UserTenant":              "the tenant of a person by id, for what they may use of the GitHub App; a deleted person has no connection left",
 	"ListMembers":             "the members of a space: a deleted person has none left",
 	"GetMember":               "a member of a space: a deleted person has none left",

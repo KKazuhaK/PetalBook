@@ -36,21 +36,15 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 	})
 }
 
-// The numbers may leave gaps (another branch owns them until it merges); every
-// file is applied once, by its own number.
-func TestMigrationsWithAGapApplyByNumber(t *testing.T) {
+// The schema starts at one baseline (0001_baseline.sql, 2026-11-24); every
+// later file is applied once, by its own number.
+func TestMigrationsApplyByNumber(t *testing.T) {
 	names, err := store.MigrationNames()
 	if err != nil {
 		t.Fatal(err)
 	}
-	found := false
-	for _, n := range names {
-		if n == "0013_github.sql" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("no 0013_github.sql in %v", names)
+	if len(names) == 0 || names[0] != "0001_baseline.sql" {
+		t.Fatalf("the first migration is not the baseline: %v", names)
 	}
 	files, _ := store.MigrationVersions()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {

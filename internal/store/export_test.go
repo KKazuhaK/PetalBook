@@ -1,13 +1,8 @@
 package store
 
-import "context"
-
 // SetDraftRaceHook makes every PutDraft call fn between reading the current
 // draft and writing the new one; nil removes it.
 func SetDraftRaceHook(fn func()) { testHookAfterDraftRead = fn }
-
-// FillSpaceNameKeys runs the step that fills name_key of migration 7.
-func FillSpaceNameKeys(ctx context.Context, q Q) error { return fillSpaceNameKeys(ctx, q) }
 
 // MigrationVersions lists the version of every embedded migration, in order.
 func MigrationVersions() ([]int, error) {
@@ -38,6 +33,3 @@ func MigrationNames() ([]string, error) {
 // SetGitHubPutRaceHook makes every PutGitHubAuthorization call fn between its
 // check of the GitHub account and its write; nil removes it.
 func SetGitHubPutRaceHook(fn func()) { testHookBeforeGitHubPut = fn }
-
-// SeedUsage runs the step that makes the usage rows of migration 18 (the table must be empty).
-func SeedUsage(ctx context.Context, q Q) error { return seedUsage(ctx, q) }
