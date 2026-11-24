@@ -37,9 +37,11 @@ function parseMethod(v: unknown): LastMethod | null {
   return null
 }
 
-// An address that is safe to put in an `<img>`: this site's own path, or https.
+// An address that is safe to put in an `<img>`: this site's own path (one `/` and then neither `/` nor `\`, which a
+// browser reads as another host), or https. No whitespace, control character or backslash anywhere: browsers drop
+// tabs and newlines from addresses, so `/\t/host` would be `//host`.
 export const safeAvatar = (u: unknown): string | undefined =>
-  str(u, 2000) && (/^\/(?!\/)/.test(u) || /^https:\/\/[^\s]+$/.test(u)) ? u : undefined
+  str(u, 2000) && !/[\s\p{Cc}\\]/u.test(u) && (/^\/[^/]/.test(u) || /^https:\/\/[^/]/.test(u)) ? u : undefined
 
 export function lastAccount(): LastAccount | null {
   try {
@@ -69,6 +71,8 @@ export function rememberAccount(
   user: Pick<User, 'name' | 'username' | 'email'> & { avatarUrl?: string },
   method: LastMethod,
 ) {
+  // A sign-in some other way: a provider's page that was left half way no longer stands for it.
+  if (method.type !== 'sso') clearPendingMethod()
   const avatarUrl = safeAvatar(user.avatarUrl)
   store({
     name: user.name,
@@ -92,6 +96,15 @@ export function forgetLastAccount() {
 export function setPendingMethod(m: LastMethod) {
   try {
     sessionStorage.setItem(PENDING, JSON.stringify({ method: m, at: Date.now() }))
+  } catch {
+    // As above.
+  }
+}
+
+// A sign-in that did not go through a provider's page succeeded: what was pending is not how it happened.
+export function clearPendingMethod() {
+  try {
+    sessionStorage.removeItem(PENDING)
   } catch {
     // As above.
   }

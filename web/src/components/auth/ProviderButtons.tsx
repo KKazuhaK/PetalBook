@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/button'
 import { ts } from '@/i18n/signin'
 import { ProviderIcon } from './ProviderIcon'
 
-export const WIDE = 'w-full min-w-0 justify-center gap-2.5 px-3 h-9'
+// 40px high: a touch target on a phone or tablet.
+export const WIDE = 'w-full min-w-0 justify-center gap-2.5 px-3 h-10'
 
 // The sign-in page's buttons: each is a plain navigation to the provider's `start` (docs/api.md,
 // "Starting"), so they work without scripts and another site cannot start one for the person.

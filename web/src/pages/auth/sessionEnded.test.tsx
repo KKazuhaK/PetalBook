@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useState } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router'
 import { api } from '@/api/client'
 import { keys, useSession } from '@/api/hooks'
@@ -10,7 +11,17 @@ import { forgetLastAccount, lastAccount, rememberAccount, type LastMethod } from
 import { ts } from '@/i18n/signin'
 import { signinEn } from '@/i18n/signin/en'
 import { t } from '@/i18n'
-import { click, installDomShims, locationText, makePerson, mount, settle, type, type Mounted } from '@/testing/harness'
+import {
+  adminRequests,
+  click,
+  installDomShims,
+  locationText,
+  makePerson,
+  mount,
+  settle,
+  type,
+  type Mounted,
+} from '@/testing/harness'
 import { RememberAccount } from '@/components/auth/RememberAccount'
 import LoginPage from './LoginPage'
 
@@ -118,7 +129,7 @@ describe('the sign-in page after a session ended', () => {
     expect(document.querySelector('form')).toBeNull()
     expect(document.querySelector('button[type="submit"]')).toBeNull()
     const back = linkWith(ts.ended.backToSignIn)!
-    expect(back.getAttribute('href')).toBe('/login?return=%2Fs%2Fabc')
+    expect(back.getAttribute('href')).toBe('/login?return=%2Fs%2Fabc&other=1')
     await click(back)
     // The ordinary page: empty, and nothing said about the last person.
     await settle(() => visibleUsername() !== null, 'the ordinary form')
@@ -246,12 +257,110 @@ describe('the last way of signing in is offered again', () => {
     expect(visibleUsername()!.value).toBe('')
     expect(text()).not.toContain(ts.ended.expired)
     expect(document.querySelector('[role="group"]')).toBeNull()
-    expect(locationText()).toBe('/login?return=%2Fs%2Fabc')
+    expect(locationText()).toBe('/login?return=%2Fs%2Fabc&other=1')
     // Another person can sign in there, and goes to the page too.
     await type(visibleUsername()!, MOCK_ADMIN.username)
     await type(passwordInput()!, MOCK_ADMIN.password)
     await click(document.querySelector('form button[type="submit"]'))
     await settle(() => locationText() === '/s/abc', 'back on the page')
+  })
+})
+
+describe('choosing another account', () => {
+  // The sign-in page, with a way to mount it afresh (as coming back to it does), keeping the address.
+  function Remount() {
+    const [n, setN] = useState(0)
+    return (
+      <>
+        <button type="button" data-testid="remount" onClick={() => setN(n + 1)} />
+        <LoginPage key={n} />
+      </>
+    )
+  }
+  const remountable = (
+    <Routes>
+      <Route path="/login" element={<Remount />} />
+      <Route path="*" element={<Gate />} />
+    </Routes>
+  )
+
+  it('sticks for this visit: the session read again, or the page mounted afresh, does not bring the account back', async () => {
+    rememberAccount(admin, { type: 'password' })
+    m = await mount(remountable, { entries: ['/s/abc'], signIn: true, server: { mode: 'accounts' } })
+    await settle(() => document.querySelector('[data-testid="app"]') !== null, 'the app')
+    await endSession(m, 'expired')
+    await settle(() => buttonWith(ts.ended.otherAccount) !== undefined, 'the link')
+    const requests = m.requests.length
+    await click(buttonWith(ts.ended.otherAccount))
+    await settle(() => visibleUsername() !== null, 'the ordinary form')
+    // Without asking the server.
+    expect(m.requests.slice(requests).filter((r) => r.url === '/api/session')).toHaveLength(0)
+    // The server still says why, for the same cookie.
+    await m.qc.invalidateQueries({ queryKey: keys.session })
+    await click(document.querySelector('[data-testid="remount"]'))
+    await settle(() => visibleUsername() !== null, 'the ordinary form again')
+    expect(document.querySelector('[role="group"]')).toBeNull()
+    expect(text()).not.toContain(ts.ended.expired)
+  })
+})
+
+describe('a session that ended for a reason the server does not give', () => {
+  it('is the plain sign-in page: no line and no remembered account', async () => {
+    await endedAt('/s/abc', '' as EndedReason, { type: 'password' })
+    await settle(() => visibleUsername() !== null, 'the ordinary form')
+    expect(document.querySelector('[role="group"]')).toBeNull()
+    expect(document.querySelector('[role="status"]')).toBeNull()
+  })
+})
+
+// Phones and tablets: every control of the sign-in page, the header's too, is at least 40px high (h-10, size-10, or
+// min-h-10 for a text link).
+describe('touch targets', () => {
+  const TALL = /(^|\s)((min-)?h|size)-(1[0-9]|[2-9][0-9])(\s|$)/
+  const tooSmall = () =>
+    [...document.querySelectorAll<HTMLElement>('button, a, input, select')]
+      .filter((e) => !e.classList.contains('sr-only') && e.getAttribute('type') !== 'hidden')
+      .filter((e) => !TALL.test(e.className))
+      .map((e) => e.outerHTML.slice(0, 120))
+
+  it('the ordinary page, with every way of signing in and the links', async () => {
+    m = await mount(routes, { entries: ['/login'], server: { mode: 'accounts', providers: [company] } })
+    adminRequests(m.server)('PUT', '/api/admin/mail', {
+      enabled: true,
+      host: 'smtp.example.test',
+      from: 'notes@example.test',
+    })
+    adminRequests(m.server)('PUT', '/api/admin/settings/registration.open', { value: true })
+    await m.qc.invalidateQueries()
+    await settle(() => linkWith(ts.login.withProvider('Company SSO')) !== undefined, 'the page')
+    await settle(() => buttonWith(ts.login.passkeyButton) !== undefined, 'the passkey button')
+    expect(document.querySelectorAll('main a').length).toBeGreaterThanOrEqual(3)
+    expect(tooSmall()).toEqual([])
+  })
+
+  it('single sign-on first, with the form folded', async () => {
+    m = await mount(routes, {
+      entries: ['/login'],
+      server: { mode: 'accounts', providers: [company], security: { login: { mode: 'sso_first' } } },
+    })
+    await settle(() => buttonWith(ts.login.usePassword) !== undefined, 'the page')
+    expect(tooSmall()).toEqual([])
+  })
+
+  it.each([
+    ['password', { type: 'password' }],
+    ['passkey', { type: 'passkey' }],
+    ['single sign-on', { type: 'sso', kind: 'oidc', slug: 'company', name: 'Company SSO' }],
+  ] as const)('the page for someone coming back: %s', async (_, last) => {
+    await endedAt('/', 'expired', last, { providers: [company] })
+    await settle(() => buttonWith(ts.ended.otherAccount) !== undefined, 'the page')
+    expect(tooSmall()).toEqual([])
+  })
+
+  it('the page of a disabled account', async () => {
+    await endedAt('/', 'disabled', null)
+    await settle(() => linkWith(ts.ended.backToSignIn) !== undefined, 'the page')
+    expect(tooSmall()).toEqual([])
   })
 })
 

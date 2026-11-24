@@ -42,13 +42,10 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 	s.cmu.Unlock()
 
 	if cs == nil {
-		row, err := store.GetSession(ctx, s.st.Q(), id)
+		// The session, or why it ended if it was one: one query by the hash, and a
+		// refusal is then remembered with its reason.
+		row, reason, err := store.LookupSession(ctx, s.st.Q(), id)
 		if errors.Is(err, store.ErrNotFound) {
-			// Why it ended, if it was a session: one lookup by the hash, then remembered with the refusal.
-			reason, rerr := store.SessionEndReason(ctx, s.st.Q(), id)
-			if rerr != nil {
-				return nil, rerr
-			}
 			s.cmu.Lock()
 			if len(s.negative) >= maxNegative {
 				for k := range s.negative {
@@ -67,13 +64,13 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 	}
 	sec := s.sec(ctx)
 	if now.Sub(snap.lastUsed) > sec.idle || now.Sub(snap.created) > sec.max {
-		s.endSession(ctx, id, store.EndExpired)
+		s.endSession(ctx, id, snap.userID, store.EndExpired)
 		return nil, ended(store.EndExpired, "your session has ended; sign in again")
 	}
 	u, err := s.cachedUser(ctx, snap.userID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			s.endSession(ctx, id, "")
+			s.endSession(ctx, id, "", "")
 			return nil, errf(Unauthenticated, "sign in to continue")
 		}
 		return nil, err
@@ -81,7 +78,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 	// A disabled tenant is a disabled account: one atomic load, and a map lookup
 	// only while some tenant is disabled.
 	if u.Disabled || s.st.TenantDisabled(u.TenantID) {
-		s.endSession(ctx, id, store.EndDisabled)
+		s.endSession(ctx, id, u.ID, store.EndDisabled)
 		return nil, ended(store.EndDisabled, "sign in to continue")
 	}
 
@@ -172,8 +169,8 @@ func ended(reason, msg string) *Error {
 }
 
 // endSession removes one session from the database and the cache. With a
-// reason, a record of why is kept (a sign-out on purpose has none).
-func (s *Service) endSession(ctx context.Context, id, reason string) {
+// reason, a record of why is kept for the user (a sign-out on purpose has none).
+func (s *Service) endSession(ctx context.Context, id, userID, reason string) {
 	s.cmu.Lock()
 	s.gen++
 	delete(s.sessions, id)
@@ -182,7 +179,7 @@ func (s *Service) endSession(ctx context.Context, id, reason string) {
 	if reason == "" {
 		err = store.DeleteSession(ctx, s.st.Q(), id)
 	} else {
-		err = store.EndSession(ctx, s.st.Q(), id, reason, s.now())
+		err = store.EndSession(ctx, s.st.Q(), id, userID, reason, s.now())
 	}
 	if err != nil {
 		s.log.Warn("could not delete a session", "error", err)
@@ -204,6 +201,35 @@ func (s *Service) evictUser(userID, keep string) {
 	}
 }
 
+// forgetRefusals empties the cache of refused cookies, so that a reason that is
+// no longer true (a person enabled again) is not given for its 30 seconds.
+func (s *Service) forgetRefusals() {
+	s.cmu.Lock()
+	clear(s.negative)
+	s.cmu.Unlock()
+}
+
+// TenantAccessChanged follows a tenant being disabled or enabled again. Disabled:
+// every session of its people ends now, recorded as `disabled`, so a cookie that
+// is idle until long after says so rather than `expired`. Enabled: those records
+// are forgotten. Either way the caches are emptied (a rare administrator action).
+// Safe to repeat.
+func (s *Service) TenantAccessChanged(ctx context.Context, tenantID string, disabled bool) error {
+	var err error
+	if disabled {
+		err = store.EndTenantSessions(ctx, s.st.Q(), tenantID, store.EndDisabled, s.now())
+	} else {
+		err = store.DeleteTenantSessionEnds(ctx, s.st.Q(), tenantID, store.EndDisabled)
+	}
+	s.cmu.Lock()
+	s.gen++
+	clear(s.sessions)
+	clear(s.users)
+	clear(s.negative)
+	s.cmu.Unlock()
+	return err
+}
+
 func (s *Service) dropUser(userID string) {
 	s.cmu.Lock()
 	s.gen++
@@ -216,7 +242,7 @@ func (s *Service) Logout(ctx context.Context, token string) {
 	if token == "" || len(token) > 256 {
 		return
 	}
-	s.endSession(ctx, hashToken(token), "")
+	s.endSession(ctx, hashToken(token), "", "")
 }
 
 // SignOutEverywhere ends every session of the user but keep ("" keeps none),

@@ -312,7 +312,7 @@ describe('being signed out', () => {
     expect(isSignedOut()).toBe(true)
   })
 
-  it('tells the app why, when the 401 says so; a 401 with no reason, or one it does not know, is an expired session', async () => {
+  it('tells the app why, when the 401 says so; a 401 with no reason, or one it does not know, gives none', async () => {
     const withAdmin = createMockServer({ mode: 'accounts', empty: true, admin: MOCK_ADMIN })
     for (const reason of [
       'expired',
@@ -331,11 +331,12 @@ describe('being signed out', () => {
           status: 401,
           headers: { 'Content-Type': 'application/json' },
         })
-      const told: string[] = []
+      const told: (string | undefined)[] = []
       const off = onSignedOut((r) => told.push(r))
       await api.tags().catch(() => undefined)
       off()
-      expect(told).toEqual([reason && ENDED_REASONS.includes(reason as never) ? reason : 'expired'])
+      // No reason is a cookie the server knows nothing of (a deleted person, an old record): not an expired one.
+      expect(told).toEqual([reason && ENDED_REASONS.includes(reason as never) ? reason : undefined])
     }
   })
 

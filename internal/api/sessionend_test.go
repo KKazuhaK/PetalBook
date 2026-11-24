@@ -204,3 +204,43 @@ func TestTheRecordOfAnEndedSessionIsSweptAfterThirtyDays(t *testing.T) {
 		wantReason(t, tang, "")
 	})
 }
+
+// Disabling a tenant ends its people's sessions there and then, as `disabled`: a
+// cookie that is idle until after it would have expired still says disabled,
+// whether the sweeper or the next request finds it.
+func TestADisabledTenantAnswersDisabledLongAfter(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"disabled": true}).want(t, 200, "")
+		a.clock.Advance(31 * 24 * time.Hour)
+		wantReason(t, f.admB, "disabled")
+		a.auth.Sweep(context.Background())
+		wantReason(t, f.memB, "disabled")
+	})
+}
+
+// Enabling a person, or their tenant, again forgets that their sessions ended
+// for being disabled: the old cookie is then one the server knows nothing of.
+func TestEnablingAgainForgetsDisabled(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		tang := a.addUser("tang", pw, "member")
+		id := mustUserID(t, a, "tang")
+		admin.do("PATCH", "/api/users/"+id, map[string]any{"disabled": true}).want(t, 200, "")
+		wantReason(t, tang, "disabled")
+		admin.do("PATCH", "/api/users/"+id, map[string]any{"disabled": false}).want(t, 200, "")
+		wantReason(t, tang, "") // at once: the cache of refusals is not trusted either
+	})
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		// One of them is disabled on their own, and stays so when the tenant is enabled again.
+		f.admB.do("PATCH", "/api/users/"+f.userB, map[string]any{"disabled": true}).want(t, 200, "")
+		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"disabled": true}).want(t, 200, "")
+		wantReason(t, f.admB, "disabled")
+		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"disabled": false}).want(t, 200, "")
+		wantReason(t, f.admB, "")
+		wantReason(t, f.memB, "disabled")
+	})
+}

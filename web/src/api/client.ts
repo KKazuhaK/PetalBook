@@ -210,8 +210,8 @@ export function onForbidden(fn: ForbiddenListener): () => void {
 // and an editor that leaves in the meantime does not hammer the server with
 // saves that cannot work. Nothing here touches local drafts.
 
-// `reason` is why, as the 401 said it (an expired one when it said nothing: see `markSignedOut`).
-type SignedOutListener = (reason: EndedReason) => void
+// `reason` is why, as the 401 said it; none when it said nothing (see `markSignedOut`).
+type SignedOutListener = (reason: EndedReason | undefined) => void
 const signedOutListeners = new Set<SignedOutListener>()
 export function onSignedOut(fn: SignedOutListener): () => void {
   signedOutListeners.add(fn)
@@ -223,12 +223,13 @@ export const isSignedOut = () => signedOut
 export function markSignedIn() {
   signedOut = false
 }
-// `reason` is the one the 401 carried. A session lost with none given (the server keeps no record of it: it was
-// signed out on purpose elsewhere, or the record is old) is told as an expired one.
+// `reason` is the one the 401 carried. None given means the server keeps no record of the cookie (signed out on
+// purpose elsewhere, a deleted account, a record past its 30 days): no reason is made up, and the sign-in page is the
+// plain one.
 function markSignedOut(reason: EndedReason | undefined) {
   if (signedOut) return
   signedOut = true
-  signedOutListeners.forEach((fn) => fn(reason ?? 'expired'))
+  signedOutListeners.forEach((fn) => fn(reason))
 }
 
 // --- a session held until a passkey is registered ---------------------------------------

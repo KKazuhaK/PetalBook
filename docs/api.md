@@ -332,7 +332,7 @@ record: it is the person's own doing, so nothing is said to its cookie later.
 
 When a session ends without the person signing out, the server keeps one small
 record for 30 days: the SHA-256 of the session cookie value (never the value),
-the reason and the time. A daily sweep removes records older than that. A `401
+whose session it was, the reason and the time. A daily sweep removes records older than that. A `401
 unauthenticated` answer to a request that carries the cookie of such a session
 has one more field, `reason`:
 
@@ -347,6 +347,12 @@ has one more field, `reason`:
 | `password_changed` | the password was changed or reset (the session that made the change stays) |
 | `disabled` | the account, or its tenant, was disabled |
 
+Disabling an account or a tenant (`PATCH /api/users/{id}`, `PATCH
+/api/admin/tenants/{id}` with `disabled: true`) ends the sessions of the people
+concerned at once, as `disabled`, so a cookie that stays idle until after it
+would have expired still says `disabled`. Enabling them again forgets those
+records: the old cookies then get the plain 401.
+
 An unknown cookie, a malformed one, one of a session that was signed out with
 `POST /api/logout`, and a record older than 30 days get the plain 401 with no
 `reason`: nothing is told to a cookie that cannot prove it was a session. `GET
@@ -356,8 +362,11 @@ not change: a disabled account signing in is refused like any wrong password.
 The web app keeps the last person's display name, username or email, avatar URL
 and last sign-in method in this browser's `localStorage` (never a secret), shows
 the reason on the sign-in page and offers that person's last method again, then
-returns to the page they were on. It forgets the person when they sign out on
-purpose, and never shows them for `disabled`.
+returns to the page they were on. Only an explicit `reason` does this: a 401
+without one gives the plain sign-in page. "Use another account" adds `other=1`
+to the sign-in page's address, which keeps the plain page for that visit. The
+app forgets the person when they sign out on purpose, and never shows them for
+`disabled`.
 
 ### Passkeys
 

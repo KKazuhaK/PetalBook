@@ -2,8 +2,8 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, ApiError, providerStartUrl } from '@/api/client'
-import { applySignIn, keys, useAuthProviders, useSession } from '@/api/hooks'
-import type { AuthProviders, EndedReason, SessionInfo } from '@/api/types'
+import { applySignIn, useAuthProviders, useSession } from '@/api/hooks'
+import type { AuthProviders, EndedReason } from '@/api/types'
 import { AccountCard } from '@/components/auth/AccountCard'
 import { AuthLayout, OrDivider } from '@/components/auth/AuthLayout'
 import { CaptchaField, useCaptcha } from '@/components/auth/Captcha'
@@ -23,6 +23,19 @@ import { tm } from '@/i18n/mail'
 export const ssoErrorMessage = (code: string | null): string =>
   code ? (Object.hasOwn(ts.ssoErrors, code) ? ts.ssoErrors[code] : ts.ssoErrors.unknown) : ''
 
+// A text link or button of this page: 40px high at least, for a finger on a phone or tablet.
+const LINK = 'inline-flex min-h-10 items-center self-start text-sm text-brand underline underline-offset-4'
+
+// The sign-in page's own address with `return`, and `other=1` while the person chose another account.
+function loginHref(ret: string, other: boolean, extra?: Record<string, string>): string {
+  const q = new URLSearchParams()
+  if (ret !== '/') q.set('return', ret)
+  if (other) q.set('other', '1')
+  for (const [k, v] of Object.entries(extra ?? {})) q.set(k, v)
+  const s = q.toString()
+  return s ? `/login?${s}` : '/login'
+}
+
 // Whether the person's last way of signing in can still be used here.
 function usable(m: LastMethod, p: AuthProviders): boolean {
   if (m.type === 'password') return p.local
@@ -32,14 +45,20 @@ function usable(m: LastMethod, p: AuthProviders): boolean {
 
 export default function LoginPage() {
   const session = useSession()
-  const qc = useQueryClient()
-  const [params] = useSearchParams()
-  // "Use another account" (and the way back from a disabled one): the ordinary page, with nothing about the last person.
-  const [dismissed, setDismissed] = useState(false)
-  const dismiss = () => {
-    setDismissed(true)
-    qc.setQueryData<SessionInfo>(keys.session, (prev) => prev && { ...prev, endedReason: undefined })
-  }
+  const [params, setParams] = useSearchParams()
+  // "Use another account" (and the way back from a disabled one): the ordinary page, with nothing about the last
+  // person. It is in the address (`other=1`), so it holds for this visit whatever the session says when it is read
+  // again, or when the page is mounted afresh; signing in leaves the page.
+  const other = params.get('other') === '1'
+  const dismiss = () =>
+    setParams(
+      (p) => {
+        const next = new URLSearchParams(p)
+        next.set('other', '1')
+        return next
+      },
+      { replace: true },
+    )
   const ret = safeReturn(params.get('return'))
   const signedIn = session.data?.mode === 'accounts' && !!session.data.user
   const needsProviders = session.data?.mode === 'accounts' && !session.data.setup && !signedIn
@@ -58,9 +77,9 @@ export default function LoginPage() {
   if (s.mode === 'single') return <Navigate to="/" replace />
   if (s.setup) return <Navigate to="/setup" replace />
   if (s.user) return <Navigate to={ret} replace />
-  const reason = dismissed ? null : (s.endedReason ?? null)
+  const reason = other ? null : (s.endedReason ?? null)
   // A disabled account is told so, and nothing about it is offered: no name, no form.
-  if (reason === 'disabled') return <DisabledNotice ret={ret} onBack={dismiss} />
+  if (reason === 'disabled') return <DisabledNotice ret={ret} />
   if (providers.isPending) return <PageFallback />
   if (providers.isError)
     return (
@@ -75,6 +94,7 @@ export default function LoginPage() {
       reason={reason}
       account={reason ? lastAccount() : null}
       onOther={dismiss}
+      other={other}
       ret={ret}
       providers={providers.data}
       ssoError={params.get('sso_error')}
@@ -84,17 +104,13 @@ export default function LoginPage() {
 }
 
 // The account of a person whose account was switched off: the message and the way back, nothing else.
-function DisabledNotice({ ret, onBack }: { ret: string; onBack: () => void }) {
+function DisabledNotice({ ret }: { ret: string }) {
   const messageRef = useRef<HTMLParagraphElement>(null)
   useEffect(() => messageRef.current?.focus(), [])
   return (
     <AuthLayout title={t.login.title}>
       <FormMessage focusRef={messageRef}>{ts.ended.disabled}</FormMessage>
-      <Link
-        to={ret === '/' ? '/login' : `/login?return=${encodeURIComponent(ret)}`}
-        onClick={onBack}
-        className="inline-flex min-h-10 items-center self-start text-sm text-brand underline underline-offset-4"
-      >
+      <Link to={loginHref(ret, true)} className={LINK}>
         {ts.ended.backToSignIn}
       </Link>
     </AuthLayout>
@@ -105,6 +121,7 @@ function LoginForm({
   reason,
   account,
   onOther,
+  other,
   ret,
   providers,
   ssoError,
@@ -114,6 +131,8 @@ function LoginForm({
   reason: EndedReason | null
   account: LastAccount | null
   onOther: () => void
+  // The person chose another account on this visit: the addresses this page links to keep saying so.
+  other: boolean
   ret: string
   providers: AuthProviders
   ssoError: string | null
@@ -251,15 +270,12 @@ function LoginForm({
   const note = (p: { kind: Parameters<typeof providerStartUrl>[0]; slug: string; name: string }) =>
     setPendingMethod({ type: 'sso', kind: p.kind, slug: p.slug, name: p.name })
   const sso = showButtons && <ProviderLinks providers={list} ret={ret} onPick={note} />
-  const stay = new URLSearchParams()
-  if (ret !== '/') stay.set('return', ret)
-  stay.set('local', '1')
   const retry = () => {
     // One provider: go straight to it again. Otherwise the message is cleared and the person picks.
     if (list.length === 1 && showButtons) window.location.assign(providerStartUrl(list[0].kind, list[0].slug, ret))
     else {
       setError('')
-      navigate(ret === '/' ? '/login' : `/login?return=${encodeURIComponent(ret)}`, { replace: true })
+      navigate(loginHref(ret, other), { replace: true })
     }
   }
 
@@ -304,10 +320,7 @@ function LoginForm({
               </Button>
             </form>
             {providers.forgot && (
-              <Link
-                to="/forgot"
-                className="inline-flex min-h-10 items-center self-start text-sm text-brand underline underline-offset-4"
-              >
+              <Link to="/forgot" className={LINK}>
                 {tm.links.forgot}
               </Link>
             )}
@@ -317,7 +330,6 @@ function LoginForm({
           <PasskeyButton
             username={returning.username}
             ret={ret}
-            size="lg"
             onDone={(r) => void passkeyDone(r)}
             onError={(msg) => {
               setError(msg)
@@ -329,17 +341,13 @@ function LoginForm({
           <a
             href={providerStartUrl(provider.kind, provider.slug, ret, returning.email)}
             onClick={() => note(provider)}
-            className={`${buttonVariants({ variant: 'outline' })} ${WIDE} h-10`}
+            className={`${buttonVariants({ variant: 'outline' })} ${WIDE}`}
           >
             <ProviderIcon icon={provider.icon} />
             <span className="min-w-0 truncate">{ts.ended.continueWith(provider.name)}</span>
           </a>
         )}
-        <button
-          type="button"
-          className="inline-flex min-h-10 items-center self-start text-sm text-brand underline underline-offset-4"
-          onClick={onOther}
-        >
+        <button type="button" className={LINK} onClick={onOther}>
           {ts.ended.otherAccount}
         </button>
       </AuthLayout>
@@ -351,7 +359,7 @@ function LoginForm({
       {reason && <FormMessage tone="info">{ts.ended[reason]}</FormMessage>}
       <FormMessage focusRef={messageRef}>{waiting ? ts.login.rateLimited(t.auth.wait(remaining)) : error}</FormMessage>
       {ssoError && error && showButtons && (
-        <Button type="button" variant="outline" size="sm" className="self-start" onClick={retry}>
+        <Button type="button" variant="outline" className="h-10 self-start" onClick={retry}>
           {ts.login.ssoRetry}
         </Button>
       )}
@@ -365,11 +373,7 @@ function LoginForm({
         <>
           {sso}
           {passkey}
-          <button
-            type="button"
-            className="self-start text-sm text-brand underline underline-offset-4"
-            onClick={() => setOpenedByClick(true)}
-          >
+          <button type="button" className={LINK} onClick={() => setOpenedByClick(true)}>
             {ts.login.usePassword}
           </button>
         </>
@@ -378,7 +382,7 @@ function LoginForm({
         <>
           {sso}
           {passkey}
-          <Link to={`/login?${stay.toString()}`} className="self-start text-sm text-brand underline underline-offset-4">
+          <Link to={loginHref(ret, other, { local: '1' })} className={LINK}>
             {ts.login.usePassword}
           </Link>
         </>
@@ -396,6 +400,7 @@ function LoginForm({
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
+              className="h-10"
               autoFocus
               required
             />
@@ -405,22 +410,29 @@ function LoginForm({
               value={pass}
               onChange={(e) => setPass(e.target.value)}
               autoComplete="current-password"
+              className="h-10"
               required
             />
             <CaptchaField captcha={captcha} disabled={busy} />
-            <Button type="submit" disabled={busy || waiting || !username || !pass || captcha.missing}>
+            <Button type="submit" className="h-10" disabled={busy || waiting || !username || !pass || captcha.missing}>
               {busy ? t.login.submitting : t.login.submit}
             </Button>
           </form>
           {(providers.forgot || providers.register) && (
-            <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-sm">
+            <div className="flex flex-wrap justify-between gap-x-4 text-sm">
               {providers.forgot && (
-                <Link to="/forgot" className="text-brand underline underline-offset-4">
+                <Link
+                  to="/forgot"
+                  className="inline-flex min-h-10 items-center text-brand underline underline-offset-4"
+                >
                   {tm.links.forgot}
                 </Link>
               )}
               {providers.register && (
-                <Link to="/register" className="text-brand underline underline-offset-4">
+                <Link
+                  to="/register"
+                  className="inline-flex min-h-10 items-center text-brand underline underline-offset-4"
+                >
                   {tm.links.register}
                 </Link>
               )}

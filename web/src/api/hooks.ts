@@ -17,6 +17,7 @@ import { noteWrote, wroteKey } from '@/lib/homePrefs'
 import { spaceUrls } from '@/lib/urls'
 import { api, ApiError, spaceApi } from './client'
 import { noteOpened } from '@/lib/offline'
+import { clearPendingMethod } from '@/lib/lastAccount'
 import { parseTagColor } from '../lib/tagColors.ts'
 import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
 import { propsOfMeta } from '../lib/pageTypes.ts'
@@ -361,8 +362,10 @@ export function applySession(qc: QueryClient, user: User | null) {
 }
 
 // After a sign-in: the cache starts over for the new person, and the session is read again, because
-// whether it is held until a passkey is registered (`hold`) is only in the server's answer.
+// whether it is held until a passkey is registered (`hold`) is only in the server's answer. Every sign-in that comes
+// here happened on this page, not on a provider's: a provider's page that was left half way is not how it happened.
 export async function applySignIn(qc: QueryClient, user: User) {
+  clearPendingMethod()
   applySession(qc, user)
   await qc
     .fetchQuery({ queryKey: keys.session, queryFn: ({ signal }) => api.session(signal), staleTime: 0 })

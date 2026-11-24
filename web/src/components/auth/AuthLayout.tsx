@@ -16,8 +16,9 @@ export function AuthLayout({ title, intro, children }: { title: string; intro?: 
           <span className="text-sm font-semibold">{t.appName}</span>
         </div>
         <div className="flex items-center">
-          <LanguageToggle />
-          <ThemeToggle />
+          {/* 40px: these pages are used on phones and tablets. */}
+          <LanguageToggle className="size-10" />
+          <ThemeToggle className="size-10" />
         </div>
       </header>
       <main className="mx-auto flex w-full max-w-[400px] flex-1 flex-col justify-center gap-5 px-4 pt-4 pb-16">

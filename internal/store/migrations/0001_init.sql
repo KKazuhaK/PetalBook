@@ -45,14 +45,17 @@ CREATE INDEX sessions_created ON sessions(created);
 -- when they come back). One row is kept for 30 days with the SHA-256 of the
 -- session cookie value (never the value), the reason and the time. It is looked
 -- up only by the hash of a cookie the browser sent, so it tells nothing to a
--- cookie that was never a session. No user column and no foreign key: nothing
--- needs to know whose it was.
+-- cookie that was never a session. user_id is whose it was, so that enabling a
+-- person (or their tenant) again can forget their `disabled` records. No foreign
+-- key: the record of a deleted person goes with the daily sweep like any other.
 CREATE TABLE session_ends (
-  id     TEXT PRIMARY KEY,
-  reason TEXT NOT NULL,
-  ended  BIGINT NOT NULL
+  id      TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  reason  TEXT NOT NULL,
+  ended   BIGINT NOT NULL
 );
 CREATE INDEX session_ends_ended ON session_ends(ended);
+CREATE INDEX session_ends_user ON session_ends(user_id);
 
 CREATE TABLE invites (
   id         TEXT PRIMARY KEY,

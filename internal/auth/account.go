@@ -324,6 +324,11 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 				if err := store.DeleteUserSessions(ctx, q, u.ID, "", store.EndDisabled, s.now()); err != nil {
 					return err
 				}
+			} else if !s.st.TenantDisabled(u.TenantID) {
+				// Enabled again (and their tenant is not disabled): their old cookies no longer say disabled.
+				if err := store.DeleteUserSessionEnds(ctx, q, u.ID, store.EndDisabled); err != nil {
+					return err
+				}
 			}
 			changed["disabled"] = disabled
 		}
@@ -396,6 +401,9 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 		return nil, err
 	}
 	s.evictUser(targetID, "")
+	if d, ok := changed["disabled"]; ok && d == false {
+		s.forgetRefusals()
+	}
 	// The space manager remembers a user's role and whether they are disabled
 	// for a minute (the drafts sweeper asks it); a change here applies at once.
 	s.cfg.Spaces.UserChanged(ctx, *out)
