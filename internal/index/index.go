@@ -181,7 +181,11 @@ type Index struct {
 	copied bool
 	// template: this is the prepared index itself, made with no meta rows.
 	template bool
-	trace    func(query string, args []any)
+	// closeGuard, when set, is asked inside the last write of Close, with the
+	// database's write lock held: false leaves the clean note (and the other
+	// notes) unwritten (see SetCloseGuard).
+	closeGuard func() bool
+	trace      func(query string, args []any)
 	// shared and serial count the times a read had other connections share
 	// its snapshot, and the times it read in turn because none could (tests).
 	shared, serial atomic.Int64
@@ -207,6 +211,66 @@ func Open(dbPath, root string) (*Index, error) {
 	}
 	return x, nil
 }
+
+// ErrUnusable: the index at a path is missing, of another schema version, of
+// another space or unreadable. OpenExisting returns it and changes nothing.
+var ErrUnusable = errors.New("the index is missing, of another version or of another space")
+
+// OpenExisting opens the index at dbPath for the space at root only when it
+// is there and is one Open would keep: of this schema version, of this root
+// and readable. It is for reading an index whose files are not there to build
+// it again from (an evicted space). Anything else gives ErrUnusable, and the
+// file is left exactly as it was: it is looked at on a read-only connection
+// first, and never removed or created.
+func OpenExisting(dbPath, root string) (*Index, error) {
+	if strings.ContainsAny(dbPath, "?#") {
+		return nil, fmt.Errorf("index path %q: '?' and '#' are not supported", dbPath)
+	}
+	if err := usable(dbPath, root); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnusable, err)
+	}
+	x, err := open(dbPath, root)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnusable, err)
+	}
+	return x, nil
+}
+
+// usable checks, without writing anything, that the index at dbPath is there,
+// of this schema version and of root.
+func usable(dbPath, root string) error {
+	if _, err := os.Stat(dbPath); err != nil {
+		return err
+	}
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_pragma=busy_timeout(10000)")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return err
+	}
+	if version != schemaVersion {
+		return fmt.Errorf("schema version %d, not %d", version, schemaVersion)
+	}
+	var r string
+	if err := db.QueryRow(`SELECT value FROM meta WHERE key = 'root'`).Scan(&r); err != nil {
+		return err
+	}
+	if r != root {
+		return errors.New("the index is of another directory")
+	}
+	return nil
+}
+
+// SetCloseGuard sets what Close asks before it notes the index closed cleanly.
+// It is asked inside the last write, with the write lock of the database held,
+// so nothing else can open the index and write between the answer and the
+// commit. An index opened for reads beside its owner (an evicted space's) says
+// false once the owner may have it open.
+func (x *Index) SetCloseGuard(f func() bool) { x.closeGuard = f }
 
 func removeDB(p string) {
 	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
@@ -442,6 +506,11 @@ func (x *Index) writeCloseNotes(notes map[string]string) {
 		}
 	}
 	if _, err := tx.Exec(`INSERT OR REPLACE INTO meta(key, value) VALUES ('clean', '1')`); err != nil {
+		return
+	}
+	// The write above holds the write lock: what the guard sees stays so
+	// until the commit.
+	if x.closeGuard != nil && !x.closeGuard() {
 		return
 	}
 	tx.Commit()

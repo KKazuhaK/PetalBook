@@ -523,6 +523,11 @@ func (s *Space) Flush() error {
 // Evicted reports a space opened by OpenIndexOnly.
 func (s *Space) Evicted() bool { return s.evicted }
 
+// ErrIndexUnusable: the index of an evicted space is missing, of another
+// schema version or otherwise cannot answer as it is (OpenIndexOnly). The space
+// is to be restored, which builds it again from the files.
+var ErrIndexUnusable = errors.New("the index of the evicted space cannot be read as it is")
+
 // OpenIndexOnly opens what an evicted space still has: its index. There are no
 // files (opt.Root does not exist), so lists, the tree, tags, search, links and
 // checks are answered from the index and nothing else is: reading a page,
@@ -561,14 +566,23 @@ func OpenIndexOnly(opt Options) (*Space, error) {
 	if stateDir, err = filepath.EvalSymlinks(stateDir); err != nil {
 		return nil, err
 	}
-	dbPath := filepath.Join(stateDir, "index.db")
-	if _, err := os.Stat(dbPath); err != nil {
-		return nil, errors.New("the index of the space is missing")
-	}
-	idx, err := index.Open(dbPath, root)
+	// The index must be one that answers as it is: Open would build one of
+	// another version (or a missing one) again, empty, with no files to fill
+	// it. Such an index is left as it is, for the restore.
+	idx, err := index.OpenExisting(filepath.Join(stateDir, "index.db"), root)
 	if err != nil {
+		if errors.Is(err, index.ErrUnusable) {
+			return nil, fmt.Errorf("%w: %v", ErrIndexUnusable, err)
+		}
 		return nil, err
 	}
+	// Once the space's directory is there, the full space owns the index
+	// (a restore moved it into place): this handle does not say, on closing,
+	// that the index was closed cleanly.
+	idx.SetCloseGuard(func() bool {
+		_, err := os.Lstat(root)
+		return errors.Is(err, fs.ErrNotExist)
+	})
 	s := &Space{root: root, stateDir: stateDir, name: opt.Name, idx: idx, log: log, now: time.Now, evicted: true}
 	if s.settingsNote, err = idx.StoredNote("settings"); err != nil {
 		idx.Close()

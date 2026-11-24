@@ -373,6 +373,12 @@ func (s *server) handle(rt route) http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "forbidden", "only an administrator of the whole server may do that")
 			return
 		}
+		// The switch for offline copies comes before the space is opened: an
+		// evicted space is not restored for a request that is refused anyway,
+		// and the answer is the same for every space.
+		if offlineRoutes[rt.method+" "+rt.pattern] && s.offlineOff(c) {
+			return
+		}
 		if rt.access.kind == kindSpace {
 			if !s.openSpace(c, rt) {
 				return
@@ -381,6 +387,16 @@ func (s *server) handle(rt route) http.HandlerFunc {
 		}
 		rt.h(s, c)
 	}
+}
+
+// offlineRoutes are the routes of the offline sync, refused with 403
+// offline_off when the caller's tenant does not allow offline copies (see
+// offlineOff). handle decides it before anything is opened.
+var offlineRoutes = map[string]bool{
+	"GET /api/sync/heads":                  true,
+	"GET /api/spaces/{space}/sync/catalog": true,
+	"GET /api/spaces/{space}/changes":      true,
+	"GET /api/spaces/{space}/sync/pages":   true,
 }
 
 // indexOnlyRoutes are the routes whose answer comes from the index alone, so

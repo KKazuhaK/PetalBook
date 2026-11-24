@@ -5305,9 +5305,11 @@ site's value is the tenant's, so a locked `false` is off for every tenant) or
 restrict it to off (`lower` `restrict`, `options` `[false]`: a tenant may only
 turn it off). When it is
 off for the caller's tenant, **all four endpoints** (`sync/catalog`, `changes`,
-`sync/pages`, `heads`) answer `403 offline_off` (after the sign-in, token and
-space checks, so a space of another tenant still answers as one that does not
-exist). Nothing else changes: the rest of the API works as before. A client
+`sync/pages`, `heads`) answer `403 offline_off`. This is decided after the
+sign-in and the token's own checks but before the space is opened: an evicted
+space is never restored for a request that is refused, and the answer is the
+same for every space id (one of another tenant, or one that does not exist,
+answers it too), so it tells nothing about the space. Nothing else changes: the rest of the API works as before. A client
 reads the effective value from `GET /api/settings`; when it is off it stops
 syncing and polling, and deletes the offline copies of the signed-in account
 on the next start or poll. The app does not encrypt the copies; the client
@@ -5515,6 +5517,18 @@ and the sync treats it like any other closed space:
   other read of a page does: it waits up to 10 seconds, then answers `503
   restoring` with `Retry-After` (or `503 unavailable` when the remote cannot be
   reached), and the client tries again later.
+- An index that cannot answer as it is (missing, or of another index version
+  because the server was upgraded while the space was evicted) is not used for
+  `sync/catalog`, `changes` or any other route answered from the index: the
+  space is restored instead, exactly as for `sync/pages` (`503 restoring`
+  while it takes longer than the wait). The old index is only looked at,
+  read-only, and is replaced only by the rebuild from the restored files; it is
+  never answered from empty. Such a rebuild starts a new epoch (`410` for older
+  cursors), like any index that must be built again.
+- While a restore puts the files in place (from the moment it closes the
+  index-only reader until the space is open in full), the routes answered from
+  the index answer `503 restoring` too, instead of reading the index the full
+  space is about to own.
 - A restore keeps the index: its epoch and sequence numbers stay, so a cursor
   from before the eviction stays good, and the pages that changed on the remote
   meanwhile are in the next `changes` with new sequence numbers. Only an index

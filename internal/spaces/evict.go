@@ -93,6 +93,10 @@ type restoreOp struct {
 	done  chan struct{}
 	phase atomic.Value // string
 	err   error
+	// indexClosed: the restore is past its stamped step and closes, or has
+	// closed, the index-only handle of the space; no new one is given (under
+	// ev.mu).
+	indexClosed bool
 }
 
 func (o *restoreOp) setPhase(p string) { o.phase.Store(p) }
@@ -130,9 +134,14 @@ func (m *Manager) restoreBackoff(n int) time.Duration {
 }
 
 type idxEntry struct {
-	sp   *space.Space
-	refs int
-	last time.Time
+	// ready is closed when the opener is done: sp is open, or err says why not.
+	// The entry is in the map while it opens, holding the opener's reference,
+	// so a restore waits for an open under way as for a request.
+	ready chan struct{}
+	sp    *space.Space
+	err   error
+	refs  int
+	last  time.Time
 	// stale: closeIndexOnly gave up waiting for its holders. It is out of the
 	// map, so nothing new is given it, and its last release closes it.
 	stale bool
@@ -352,36 +361,59 @@ func (m *Manager) acquireIndex(ctx context.Context, id string) (*space.Space, fu
 	}
 	m.mu.Unlock()
 	m.ev.mu.Lock()
-	if e := m.ev.idx[id]; e != nil {
-		e.refs++
-		e.last = m.opt.Now()
+	if op := m.ev.restores[id]; op != nil && op.indexClosed {
+		// The restore closed the index-only handle, or is about to: a new one
+		// would stay beside the full space (an old head, a clean note under it).
 		m.ev.mu.Unlock()
-		return e.sp, m.idxRelease(id, e), nil
+		return nil, nil, &RestoringError{Phase: op.getPhase()}
 	}
+	e := m.ev.idx[id]
+	opener := e == nil
+	if opener {
+		e = &idxEntry{ready: make(chan struct{})}
+		m.ev.idx[id] = e
+	}
+	e.refs++
+	e.last = m.opt.Now()
 	m.ev.mu.Unlock()
+	release := m.idxRelease(id, e)
+	if opener {
+		sp, err := m.openIndexOnly(ctx, id)
+		m.ev.mu.Lock()
+		e.sp, e.err = sp, err
+		if err != nil && m.ev.idx[id] == e {
+			delete(m.ev.idx, id)
+		}
+		m.ev.mu.Unlock()
+		close(e.ready)
+	} else {
+		select {
+		case <-e.ready:
+		case <-ctx.Done():
+			release()
+			return nil, nil, ctx.Err()
+		}
+	}
+	if err := e.err; err != nil {
+		release()
+		// An index that cannot answer as it is (missing, of another version)
+		// is never opened index-only: the space is restored, which builds it
+		// again from the files. And a space restored meanwhile is opened in full.
+		if errors.Is(err, space.ErrIndexUnusable) || !m.isEvicted(id) {
+			return m.acquire(ctx, id, false)
+		}
+		return nil, nil, err
+	}
+	return e.sp, release, nil
+}
+
+func (m *Manager) openIndexOnly(ctx context.Context, id string) (*space.Space, error) {
 	root, state := m.paths(id)
 	_, name, err := store.SpaceOwner(ctx, m.opt.Store.Q(), id)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	sp, err := space.OpenIndexOnly(space.Options{Root: root, StateDir: state, Name: name, Logger: m.log.With("space", id)})
-	if err != nil {
-		if m.isEvicted(id) {
-			return nil, nil, err
-		}
-		return m.acquire(ctx, id, false) // restored meanwhile
-	}
-	m.ev.mu.Lock()
-	if e := m.ev.idx[id]; e != nil { // another request opened it first
-		e.refs++
-		m.ev.mu.Unlock()
-		sp.Close()
-		return e.sp, m.idxRelease(id, e), nil
-	}
-	e := &idxEntry{sp: sp, refs: 1, last: m.opt.Now()}
-	m.ev.idx[id] = e
-	m.ev.mu.Unlock()
-	return sp, m.idxRelease(id, e), nil
+	return space.OpenIndexOnly(space.Options{Root: root, StateDir: state, Name: name, Logger: m.log.With("space", id)})
 }
 
 func (m *Manager) idxRelease(id string, e *idxEntry) func() {
@@ -391,7 +423,7 @@ func (m *Manager) idxRelease(id string, e *idxEntry) func() {
 			m.ev.mu.Lock()
 			e.refs--
 			e.last = m.opt.Now()
-			closing := e.stale && e.refs <= 0
+			closing := e.stale && e.refs <= 0 && e.sp != nil
 			m.ev.mu.Unlock()
 			if closing {
 				e.sp.Close()
@@ -418,7 +450,9 @@ func (m *Manager) closeIndexOnly(id string) {
 		if e.refs <= 0 {
 			delete(m.ev.idx, id)
 			m.ev.mu.Unlock()
-			e.sp.Close()
+			if e.sp != nil {
+				e.sp.Close()
+			}
 			return
 		}
 		m.ev.mu.Unlock()
@@ -437,7 +471,9 @@ func (m *Manager) closeIndexOnly(id string) {
 	e.stale = refs > 0
 	m.ev.mu.Unlock()
 	if refs <= 0 {
-		e.sp.Close()
+		if e.sp != nil {
+			e.sp.Close()
+		}
 		return
 	}
 	m.log.Warn("an index-only handle is still in use after a restore; its last request closes it", "space", id, "references", refs)
@@ -449,7 +485,7 @@ func (m *Manager) trimIndexOnly() {
 	var closing []*idxEntry
 	m.ev.mu.Lock()
 	for id, e := range m.ev.idx {
-		if e.refs <= 0 && now.Sub(e.last) >= m.opt.IdleAfter {
+		if e.refs <= 0 && e.sp != nil && now.Sub(e.last) >= m.opt.IdleAfter {
 			delete(m.ev.idx, id)
 			closing = append(closing, e)
 		}
@@ -624,8 +660,15 @@ func (m *Manager) restore(ctx context.Context, id string, op *restoreOp) error {
 		return err
 	}
 	// In place: the index-only handle goes first (the index is opened again by
-	// the full space), then one rename.
+	// the full space), then one rename. From here on no request is given a new
+	// one: it answers restoring (see acquireIndex).
+	m.ev.mu.Lock()
+	op.indexClosed = true
+	m.ev.mu.Unlock()
 	m.closeIndexOnly(id)
+	if err := m.evictHook("restore:closed"); err != nil {
+		return err
+	}
 	if _, err := os.Lstat(root); err == nil {
 		return errors.New("the directory of the space exists while it is being restored")
 	}

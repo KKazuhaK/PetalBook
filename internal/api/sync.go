@@ -29,7 +29,8 @@ var syncPagesBytes = 8 << 20
 
 // offlineOff answers 403 offline_off, and reports true, when the caller's
 // tenant does not allow offline copies (the setting offline.copies, as set by
-// the site and the tenant).
+// the site and the tenant). handle asks it for the offlineRoutes, before the
+// space is opened.
 func (s *server) offlineOff(c *call) bool {
 	e, err := s.settings.Get(c.r.Context(), c.user().TenantID, settings.OfflineCopies)
 	if err != nil {
@@ -70,9 +71,6 @@ func (s *server) failFeed(c *call, err error) {
 }
 
 func (s *server) syncCatalog(c *call) {
-	if s.offlineOff(c) {
-		return
-	}
 	q := c.r.URL.Query()
 	limit, bad := syncLimit(c.r, index.DefaultCatalog, index.MaxCatalog)
 	if bad != "" {
@@ -99,9 +97,6 @@ func (s *server) syncCatalog(c *call) {
 }
 
 func (s *server) syncChanges(c *call) {
-	if s.offlineOff(c) {
-		return
-	}
 	since := c.r.URL.Query().Get("since")
 	if since == "" {
 		writeError(c.w, http.StatusBadRequest, "invalid", "since is required: a change cursor")
@@ -127,9 +122,6 @@ func (s *server) syncChanges(c *call) {
 }
 
 func (s *server) syncPages(c *call) {
-	if s.offlineOff(c) {
-		return
-	}
 	raw := c.r.URL.Query().Get("ids")
 	if raw == "" {
 		writeError(c.w, http.StatusBadRequest, "invalid", "ids is required: 1 to "+strconv.Itoa(maxSyncPages)+" page ids, separated by commas")
@@ -197,9 +189,6 @@ func (s *server) syncPages(c *call) {
 }
 
 func (s *server) syncHeads(c *call) {
-	if s.offlineOff(c) {
-		return
-	}
 	ids := c.r.URL.Query()["space"]
 	if len(ids) == 0 || len(ids) > maxHeadSpaces {
 		writeError(c.w, http.StatusBadRequest, "invalid", "give 1 to "+strconv.Itoa(maxHeadSpaces)+" space parameters")

@@ -124,7 +124,7 @@ func (m *Manager) indexOnlyHeads(ids []string) map[string]string {
 	}
 	out := map[string]string{}
 	for _, id := range ids {
-		if e := m.ev.idx[id]; e != nil && !e.stale {
+		if e := m.ev.idx[id]; e != nil && !e.stale && e.sp != nil {
 			out[id] = e.sp.Head()
 		}
 	}
