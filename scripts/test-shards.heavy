@@ -1,9 +1,0 @@
-# Tests that take far longer than the others under the race detector (about
-# 25 s each, or several seconds). scripts/test-shards.sh deals them out one
-# shard after another before it splits the rest by hash. A name that is not a
-# test any more is ignored, and the list is not needed for correctness: only
-# to keep the shards even.
-TestMCPPageGetWithALargeHeader
-TestMCPTooLarge
-TestMemberRoutesAreNotForOtherPeopleSpaces
-TestMCPCreate

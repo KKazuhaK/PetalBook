@@ -41,19 +41,16 @@ Every check is defined in the `Makefile` only; CI just calls those targets.
 
 ## 什么在哪里跑 / What runs where
 
-- **拉取请求 / Pull request**：Go 分六台机器并行：`make test-index`、`make test-space`、`make test-api-shard` 的四个分片
-  （`internal/api`，`SHARD=1` 到 `4`），以及 `make check-go-rest-core`（gofmt、`go mod tidy`、`go vet`、
-  其余各包的测试，和分片恰好覆盖 `internal/api` 全部测试的检查）加 `make vuln`
+- **拉取请求 / Pull request**：Go 分三台机器并行：`make test-index`、`make test-space`，
+  以及 `make check-go-rest`（gofmt、`go mod tidy`、`go vet` 和其余各包的测试）加 `make vuln`
   （只在改了 Go 相关文件时）；网页端两台：`make check-web-static`（类型检查和 lint）和
   `make web-test`（只在改了网页端、`Makefile` 或 `.github/` 时）；再加 actionlint。
-  这些 Go 机器合起来就是 `make test` 加上 `make check-go-rest` 里的检查。
-  Go runs on six machines, side by side: `make test-index`, `make test-space`, the four shards of
-  `make test-api-shard` (`internal/api`, `SHARD=1` to `4`), and `make check-go-rest-core` (gofmt,
-  `go mod tidy`, `go vet`, the tests of every other package, and the check that the shards are exactly
-  all the tests of `internal/api`) with `make vuln`
+  三台 Go 机器合起来就是 `make test` 加上 `make check-go-rest` 里的检查。
+  Go runs on three machines, side by side: `make test-index`, `make test-space`, and
+  `make check-go-rest` (gofmt, `go mod tidy`, `go vet` and the tests of every other package) with `make vuln`
   (only when a change can affect Go); the web app on two: `make check-web-static` (typecheck and lint) and
   `make web-test` (only when it changed the web app, the `Makefile` or `.github/`); and actionlint.
-  The Go machines together are `make test` plus the checks in `make check-go-rest`.
+  The three Go machines together are `make test` plus the checks in `make check-go-rest`.
 - **合并到 main / Push to main**：以上全部，再加不带 `-race` 的完整规模测试（`make test-full`）、
   PostgreSQL（只跑用到状态数据库的包，含 PostgreSQL 上的契约测试）、大小写折叠、契约测试、
   单文件构建（`make release`）加交叉编译、容器镜像构建。
@@ -84,10 +81,8 @@ Do not wait in real time: use a short, configurable interval (for example `space
 `time.Sleep` that bets on a duration. The web model test is split over the `src/editor/model.*.test.ts` files
 (sharing `modelHarness.ts`) so that vitest runs them side by side.
 
-`make test-index`, `make test-space`, `make test-rest` and `make test-api` are `make test` in four parts
-(CI splits `test-api` into shards, see `scripts/test-shards.sh`; its slowest tests are listed in
-`scripts/test-shards.heavy` to keep the shards even); `make check-go` is all of it, and is what to run
-on one machine.
+`make test-index`, `make test-space` and `make test-rest` are `make test` in three parts, for CI;
+`make check-go` is all of it, and is what to run on one machine.
 
 ## 分支与合并 / Branches and merging
 

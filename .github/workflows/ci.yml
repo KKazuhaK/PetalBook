@@ -36,7 +36,6 @@ jobs:
     outputs:
       go: ${{ steps.diff.outputs.go }}
       web: ${{ steps.diff.outputs.web }}
-      shards: ${{ steps.shards.outputs.shards }}
     steps:
       # The whole history, so the diff against the base branch has both ends.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -83,22 +82,10 @@ jobs:
           echo "go=$go" >> "$GITHUB_OUTPUT"
           echo "web=$web" >> "$GITHUB_OUTPUT"
           echo "go=$go web=$web"
-      # The shards of internal/api, as a JSON list 1..N made from the one N there
-      # is (API_SHARDS in the Makefile), so the matrix of go-api is exactly every
-      # shard once and no copy of the number can drift from it.
-      - id: shards
-        run: |
-          set -euo pipefail
-          n="$(sed -n 's/^API_SHARDS[[:space:]]*?=[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p' Makefile)"
-          case "$n" in '' | *[!0-9]* | 0) echo "API_SHARDS not found in the Makefile" >&2; exit 1 ;; esac
-          list="[$(seq -s, 1 "$n")]"
-          echo "shards=$list" >> "$GITHUB_OUTPUT"
-          echo "shards=$list"
 
-  # The Go tests under the race detector are split over machines, each a make
-  # target, that together are all of "make test": the two packages that take
-  # longest, internal/api in shards (go-api), and the rest (with gofmt, go mod
-  # tidy, go vet, the check that the shards are all of internal/api, and the
+  # The Go tests under the race detector are split over three machines, each
+  # a make target, that together are all of "make test": the two packages that
+  # take longest, and the rest (with gofmt, go mod tidy, go vet and the
   # vulnerability check). The tests need no web build: internal/webui/dist holds
   # only a placeholder.
   go-index:
@@ -161,57 +148,6 @@ jobs:
           esac
       - run: make test-space
 
-  # internal/api is the package that takes longest: its tests are split over
-  # API_SHARDS machines (scripts/test-shards.sh). The matrix is made by the
-  # changes job from API_SHARDS (1..N), the shard count passed on is the size of
-  # the matrix, and go-rest checks, with the same API_SHARDS, that the shards
-  # are exactly all the tests.
-  go-api:
-    name: go-api (${{ matrix.shard }})
-    needs: changes
-    if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: ${{ fromJSON(needs.changes.outputs.shards) }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # Caches the downloaded modules and the build cache (compiled packages, race
-      # builds included) under a key made of go.sum.
-      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: go.sum
-      # setup-go installs the go line of go.mod; fail if any other Go is on PATH.
-      - name: Go version matches go.mod
-        shell: bash
-        run: |
-          want="$(go list -m -f '{{.GoVersion}}')"
-          case "$(go env GOVERSION)" in
-            "go$want" | "go$want".*) ;;
-            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
-          esac
-      # Never run a shard that does not exist: the shard must be a number from 1
-      # to the size of the matrix.
-      - name: Shard is within the matrix
-        env:
-          SHARD: ${{ matrix.shard }}
-          TOTAL: ${{ strategy.job-total }}
-        run: |
-          case "$SHARD$TOTAL" in '' | *[!0-9]*) echo "shard $SHARD of $TOTAL is not a number"; exit 1 ;; esac
-          if [ "$SHARD" -lt 1 ] || [ "$SHARD" -gt "$TOTAL" ]; then
-            echo "shard $SHARD is not in 1..$TOTAL"
-            exit 1
-          fi
-      - run: make test-api-shard SHARD=${{ matrix.shard }} API_SHARDS=${{ strategy.job-total }}
-
   go-rest:
     name: go-rest
     needs: changes
@@ -240,9 +176,8 @@ jobs:
             "go$want" | "go$want".*) ;;
             *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
           esac
-      # gofmt, go mod tidy, go vet, the tests of every other package, and that the
-      # shards of go-api are exactly all the tests of internal/api.
-      - run: make check-go-rest-core
+      # gofmt, go mod tidy, go vet and the tests of every other package.
+      - run: make check-go-rest
       - run: make vuln
 
   # The web checks are two jobs: the typecheck and lint, and the tests, which
@@ -459,38 +394,6 @@ jobs:
           esac
       - run: make test-full
 
-  # internal/api whole, in one process under the race detector. A pull request
-  # runs it in shards (go-api), each a process of its own, so a race between
-  # two tests that fall in different shards shows up only here. It is a job of
-  # its own, so that it is off the critical path of the pull request and does
-  # not lengthen the other checks of a push.
-  go-api-full:
-    name: go-api-full
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    # Above go test's own GOTEST_TIMEOUT (30m), so a slow test ends with its report.
-    timeout-minutes: 40
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: go.sum
-      - name: Go version matches go.mod
-        shell: bash
-        run: |
-          want="$(go list -m -f '{{.GoVersion}}')"
-          case "$(go env GOVERSION)" in
-            "go$want" | "go$want".*) ;;
-            *) echo "go.mod says $want but $(go env GOVERSION) is running"; exit 1 ;;
-          esac
-      - run: make test-api
-
   # scripts/contract.sh runs the single-user and the accounts-mode server one
   # after the other, so one job covers both.
   contract:
@@ -624,7 +527,7 @@ jobs:
   ci:
     name: ci
     if: always()
-    needs: [changes, go-index, go-space, go-api, go-rest, web-static, web-test, actionlint, postgres, casefold, test-full, go-api-full, contract, release-build, cross-compile, docker]
+    needs: [changes, go-index, go-space, go-rest, web-static, web-test, actionlint, postgres, casefold, test-full, contract, release-build, cross-compile, docker]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
