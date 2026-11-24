@@ -58,9 +58,10 @@ PETALBOOK_DATABASE='postgres://petalbook:…@db.example.com/petalbook' ./petalbo
 （PostgreSQL 16 及更早：`CREATE DATABASE petalbook TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C.UTF-8'`，
 或 `LOCALE 'C'`。/ On 16 and earlier use `LC_COLLATE 'C'`.)
 
-2026-11-24 起状态库从一个新的基线开始（`0001_baseline.sql`）：之前的开发库、演示库打不开，要删掉重建。
-From 2026-11-24 the state database starts from a new baseline: development and demonstration databases
-made before it are refused at start and must be made again.
+正式发布之前，状态库的结构只有一个基线（`internal/store/schema.sql`），改动直接改它，不写迁移；
+库里记着它是哪个基线建的，用别的基线建的开发库、演示库启动时会被拒绝，要删掉重建。
+Until the first release the state database has one baseline schema, edited in place with no migrations;
+a development or demonstration database made from another baseline is refused at start and must be made again.
 
 **容器镜像 / Container image.** 镜像里有 `git` 和 `ssh`，以非 root 用户运行，数据放在卷 `/data`，
 默认命令是 `petalbook serve --data /data --listen :8080`（多用户模式）。

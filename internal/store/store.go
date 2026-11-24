@@ -156,7 +156,7 @@ func Open(ctx context.Context, target string) (*Store, error) {
 	if err != nil {
 		return nil, redact(err, target)
 	}
-	if err := s.migrate(ctx); err != nil {
+	if err := s.prepareSchema(ctx); err != nil {
 		s.Close()
 		return nil, redact(err, target)
 	}

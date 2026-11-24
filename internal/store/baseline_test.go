@@ -43,22 +43,34 @@ func TestFreshDatabaseHasTheDefaultTenant(t *testing.T) {
 	})
 }
 
-// A database made by the migrations before the baseline (0001 to 0020) is not
-// opened: it has to be made again.
-func TestDatabaseBeforeTheBaselineIsRefused(t *testing.T) {
-	path := t.TempDir() + "/s.db"
-	st, err := store.Open(ctx, path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for v := 2; v <= 20; v++ {
-		if _, err := st.Q().Exec(ctx, `INSERT INTO schema_migrations(version, applied) VALUES (?, 0)`, v); err != nil {
-			t.Fatal(err)
-		}
-	}
-	st.Close()
-	if _, err := store.Open(ctx, path); err == nil || !strings.Contains(err.Error(), "baseline") {
-		t.Fatalf("%v", err)
+// A database made from another baseline is refused with a message that says to
+// make it again, and so is one made before baselines were recorded (it has the
+// schema_migrations table of the numbered migrations); nothing is converted.
+func TestDatabaseOfAnotherBaselineIsRefused(t *testing.T) {
+	for name, stmt := range map[string]string{
+		"another baseline":    `UPDATE schema_baseline SET hash = '0123456789abcdef'`,
+		"numbered migrations": `DROP TABLE schema_baseline`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := t.TempDir() + "/s.db"
+			st, err := store.Open(ctx, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if name == "numbered migrations" {
+				if _, err := st.Q().Exec(ctx, `CREATE TABLE schema_migrations (version BIGINT PRIMARY KEY, applied BIGINT NOT NULL)`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := st.Q().Exec(ctx, stmt); err != nil {
+				t.Fatal(err)
+			}
+			st.Close()
+			_, err = store.Open(ctx, path)
+			if !errors.Is(err, store.ErrOtherBaseline) && (err == nil || !strings.Contains(err.Error(), "recreate it")) {
+				t.Fatalf("%v", err)
+			}
+		})
 	}
 }
 

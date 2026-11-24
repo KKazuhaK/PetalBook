@@ -1,23 +1,26 @@
--- The schema of PetalBook's state database, for SQLite and PostgreSQL alike.
--- It replaces the migrations 0001 to 0020 of the milestones up to 3.5: nothing
--- was ever deployed, so there is no upgrade path from them, and a development
--- or demonstration database made by them must be made again (docs/design.md,
--- "数据库基线（2026-11-24）"). The next change of the schema is 0002.
+-- The schema of PetalBook's state database, for SQLite and PostgreSQL alike:
+-- the baseline. Until the first release it is edited in place, and nothing
+-- converts a database from one version of it to another: a database records
+-- the hash of the baseline it was made from (schema_baseline), and one made from
+-- another is refused at start and must be made again. After the first release,
+-- upgrades are code of their own in internal/store/upgrade, never edits that
+-- assume an old database (docs/design.md, "数据库基线（2026-11-24）").
 --
 -- One schema for both databases: TEXT and BIGINT columns only, times as Unix
 -- milliseconds, booleans as 0/1. Every TEXT column is COLLATE "C": text
 -- compares and sorts by its bytes on PostgreSQL as it does on SQLite (where the
--- runner writes COLLATE BINARY), whatever the database's locale, so the two
--- give the same order and a cursor means the same on both, and the indexes
--- serve the ORDER BYs and the cursor comparisons as they are written. Statements end with a semicolon at the end of
--- a line; keep semicolons out of everything else in this file. A comment line
--- "-- dialect: postgres" (or sqlite) right before a statement runs it on that
--- database only (see migrate.go).
+-- statements are run with COLLATE BINARY), whatever the database's locale, so
+-- the two give the same order, a cursor means the same on both, and the
+-- indexes serve the ORDER BYs and cursor comparisons as they are written.
+--
+-- Statements end with a semicolon at the end of a line; keep semicolons out of
+-- everything else in this file. A comment line "-- dialect: postgres" (or
+-- sqlite) right before a statement runs it on that database only (schema.go).
 
 -- Tenants (3.3). Every user, space, group, invite, registration, usage row,
 -- recycle item, export and bulk job belongs to one, by a foreign key. The
--- default tenant (0000000000, slug default) is made by the Go step of this
--- version (migrate.go), with the time it was made.
+-- default tenant (0000000000, slug default) is made with the database
+-- (schema.go), with the time it was made.
 CREATE TABLE tenants (
   id       TEXT COLLATE "C" PRIMARY KEY,
   slug     TEXT COLLATE "C" NOT NULL UNIQUE,

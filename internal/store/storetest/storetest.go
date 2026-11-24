@@ -36,7 +36,7 @@ func postgresDSN() string {
 	return os.Getenv(EnvPostgres)
 }
 
-// Open returns a fresh, migrated store on the named backend; it is closed, and
+// Open returns a fresh store with the schema made on the named backend; it is closed, and
 // for PostgreSQL its schema dropped, when the test ends.
 func Open(t testing.TB, backend string) *store.Store {
 	t.Helper()
@@ -48,8 +48,9 @@ func Open(t testing.TB, backend string) *store.Store {
 	if err := os.WriteFile(path, sqliteTemplate(t), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// The copy has every migration applied, so Open only checks that and loads
-	// the tenant state, as a start of the server on an existing database does.
+	// The copy has the schema made already, so Open only checks its baseline
+	// and loads the tenant state, as a start of the server on an existing
+	// database does.
 	st, err := store.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -58,10 +59,10 @@ func Open(t testing.TB, backend string) *store.Store {
 	return st
 }
 
-// The migration of a fresh SQLite database takes longer than a test that uses
-// it, most of all under the race detector, so it runs once per test binary:
-// every test gets a copy of that file. (store.Open on an empty path still runs
-// it, and PostgreSQL schemas are made as before.)
+// Making the schema of a fresh SQLite database takes longer than a test that
+// uses it, most of all under the race detector, so it is done once per test
+// binary: every test gets a copy of that file. (store.Open on an empty path
+// still makes it, and PostgreSQL schemas are made as before.)
 var template struct {
 	once sync.Once
 	data []byte
