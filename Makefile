@@ -17,11 +17,8 @@ export GOMAXPROCS := $(SHARE)
 export VITEST_MAX_WORKERS := $(SHARE)
 endif
 
-# Every Go package with tests but the two that "test-index" and "test-space" run.
-REST_PKGS = $(shell go list ./cmd/... ./internal/... | awk '!/\/internal\/(index|space)$$/')
-
-.PHONY: build web release test test-full test-index test-space test-rest test-postgres test-casefold vet run clean \
-	contract contract-postgres fmt-check tidy-check actionlint vuln check-go check-go-rest check-web check-web-static check check-full \
+.PHONY: build web release test test-postgres test-casefold vet run clean \
+	contract contract-postgres fmt-check tidy-check actionlint vuln secrets lint hooks check-go check-web check check-full \
 	cross-compile web-typecheck web-lint web-test
 
 # Go binary only, no Node needed: it serves the API, and the web app is run
@@ -46,26 +43,15 @@ release: web
 # race detector is close to that on a busy CI machine, so every run gets 30.
 GOTEST_TIMEOUT ?= 30m
 
-# Under the race detector a few tests use smaller sizes (see raceDetector in
-# internal/index and internal/space): this is the run for pull requests.
+# All the Go tests, under the race detector. A few stress and model tests use a
+# smaller size there (see raceDetector in internal/index and internal/space).
 test:
 	go test -race -timeout $(GOTEST_TIMEOUT) ./cmd/... ./internal/...
 
-# The same tests without the race detector, so that those tests run at their
-# full size. It is quick, and is what main runs beside "test".
-test-full:
-	go test -timeout $(GOTEST_TIMEOUT) ./cmd/... ./internal/...
-
-# "test" in three parts that together are all of it, so that CI runs them on
-# machines of their own: the two packages that take longest, and the rest.
-test-index:
-	go test -race -timeout $(GOTEST_TIMEOUT) ./internal/index
-
-test-space:
-	go test -race -timeout $(GOTEST_TIMEOUT) ./internal/space
-
-test-rest:
-	go test -race -timeout $(GOTEST_TIMEOUT) $(REST_PKGS)
+# The full-size stress tests: index and space use a smaller size under -race
+# (raceDetector), so this runs them without it. Main runs it in the compat job.
+test-fullsize:
+	go test -timeout $(GOTEST_TIMEOUT) ./internal/index ./internal/space
 
 # The tests of the packages that use the state database (the ones that import
 # internal/store/storetest), run on SQLite and on PostgreSQL in a throwaway
@@ -100,7 +86,7 @@ contract-postgres: build web/node_modules/.package-lock.json
 # Every check is defined here and nowhere else: CI only calls these targets,
 # so what passes on a laptop is what passes on the runner.
 #
-#   make check        before every push (the pull request checks)
+#   make check        before every push (the pull request jobs: lint, go, web)
 #   make check-full   before a risky change (what main runs after a merge)
 
 # The web dependencies, installed only when missing so local runs stay fast.
@@ -132,15 +118,29 @@ actionlint:
 vuln:
 	go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
 
-# All the Go checks that need nothing but a Go toolchain (SQLite only).
+# Scans the git history for secrets with gitleaks (rules and the few allowed
+# test values: .gitleaks.toml). The output is redacted, so a log never shows one.
+# The whole history by default; CI passes the commits of the push or pull
+# request: make secrets SECRETS_RANGE=main..HEAD
+GITLEAKS = github.com/zricethezav/gitleaks/v8@v8.30.1
+secrets:
+	@range="$(SECRETS_RANGE)"; \
+	case "$$range" in 0000000000000000000000000000000000000000..*) range="-1 $${range#*..}";; esac; \
+	if [ -n "$$range" ]; then set -- --log-opts="$$range"; else set --; fi; \
+	go run $(GITLEAKS) git --no-banner --redact=100 "$$@" .
+
+# Everything that only reads the code: the "lint" job of CI.
+lint: fmt-check tidy-check vet web-typecheck web-lint actionlint vuln secrets
+
+# Use the hooks in .githooks (gofmt and eslint --fix on what is staged).
+hooks:
+	git config core.hooksPath .githooks
+
+# The Go checks and tests that need nothing but a Go toolchain (SQLite only),
+# which is also what a release re-runs on every platform.
 check-go: fmt-check tidy-check vet test
 
-# The same without the two slowest packages, which CI runs on machines of their
-# own (test-index, test-space): the Go checks of the third machine.
-check-go-rest: fmt-check tidy-check vet test-rest
-
-# The web app's typecheck, lint and tests (CI runs the first two and the tests
-# on machines of their own).
+# The web app's typecheck, lint and tests.
 web-typecheck: web/node_modules/.package-lock.json
 	npm --prefix web run typecheck
 
@@ -152,16 +152,13 @@ web-test: web/node_modules/.package-lock.json
 
 check-web: web-typecheck web-lint web-test
 
-# The typecheck and lint, without the tests.
-check-web-static: web-typecheck web-lint
-
 # The presubmit: what a pull request must pass, and what to run before
-# pushing. No PostgreSQL, no root, no Docker. The Go and web checks run side by
-# side (scripts/lanes.sh), each target's output comes whole when it ends, and a
-# table of how long each took closes the run. "make check-go check-web vuln
-# actionlint" runs the same checks one after the other.
+# pushing: "make lint", "make test" and "make web-test" in one run. No
+# PostgreSQL, no root, no Docker. The lanes run side by side (scripts/lanes.sh),
+# each target's output comes whole when it ends, and a table of how long each
+# took closes the run.
 check:
-	@bash scripts/lanes.sh go:$(HALF)='fmt-check tidy-check vet test' web:$(HALF)='web-typecheck web-lint web-test' vuln actionlint
+	@bash scripts/lanes.sh go:$(HALF)='fmt-check tidy-check vet test' web:$(HALF)='web-typecheck web-lint web-test' static='vuln actionlint secrets'
 
 # The tests on a case-folding tmpfs, the way macOS and Windows treat file
 # names (Linux only, needs a kernel with tmpfs casefold and user namespaces).
@@ -171,8 +168,7 @@ test-casefold:
 # The server builds without cgo for every release platform. The web app is
 # not embedded here: this only proves the Go code compiles for each target.
 # Each platform compiles the whole dependency tree again, so the work is the
-# same for all six and CPU bound: CI runs one machine per OS
-# ("make cross-compile OSES=darwin"), and a bare "make cross-compile" does all.
+# same for all six and CPU bound; "make cross-compile OSES=darwin" does one OS.
 OSES ?= linux darwin windows
 cross-compile:
 	@dir="$$(mktemp -d)"; trap 'rm -rf "$$dir"' EXIT; \
@@ -185,13 +181,12 @@ cross-compile:
 
 # The postsubmit: everything main runs after a merge. Needs the PostgreSQL
 # tools (initdb, pg_ctl, psql) and a Linux kernel with tmpfs casefold. Like
-# "check" it runs in lanes: first the checks, the full-size tests, PostgreSQL and
-# the case-folding file system side by side, then the release build (which puts
-# the web app into internal/webui, so it must not run beside the Go tests) with the
-# contract tests that use its binary.
+# "check" it runs in lanes: first the checks, PostgreSQL, and the case-folding
+# file system with the cross-compile side by side, then the release build (which
+# puts the web app into internal/webui, so it must not run beside the Go tests)
+# with the contract tests that use its binary.
 check-full:
 	@bash scripts/lanes.sh \
-	  go:$(THIRD)='fmt-check tidy-check vet test test-full' web:$(QUARTER)='web-typecheck web-lint web-test' static='vuln actionlint cross-compile' \
-	  postgres:$(QUARTER)=test-postgres casefold:$(THIRD)=test-casefold \
+	  go:$(THIRD)='fmt-check tidy-check vet test' web:$(QUARTER)='web-typecheck web-lint web-test' static='vuln actionlint secrets' \
+	  postgres:$(QUARTER)=test-postgres compat:$(THIRD)='test-casefold cross-compile test-fullsize' \
 	  -- release='release contract contract-postgres'
-

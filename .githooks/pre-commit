@@ -1,0 +1,60 @@
+#!/bin/bash
+# Keeps what is committed formatted: gofmt on the staged Go files, and
+# eslint --fix on the staged web files. Turn it on once with "make hooks".
+# A file that is staged in part is only checked, never rewritten, so changes
+# you did not stage are not pulled into the commit.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+# Whether a file has changes that are not staged.
+partial() { ! git diff --quiet -- "$1"; }
+
+have_gofmt=true
+command -v gofmt >/dev/null 2>&1 || {
+  have_gofmt=false
+  echo "pre-commit: gofmt is not on PATH, Go files not checked" >&2
+}
+have_web=true
+[ -d web/node_modules ] || have_web=false
+web_warned=false
+status=0
+
+# Staged files, NUL-separated so a name with spaces works: added, copied or
+# modified, not deleted (renames show as added).
+while IFS= read -r -d '' f; do
+  case "$f" in
+    # The same tree the Makefile's fmt-check covers (spikes/ is left alone).
+    cmd/*.go | internal/*.go)
+      "$have_gofmt" || continue
+      if partial "$f"; then
+        if [ -n "$(git show ":$f" | gofmt -l)" ]; then
+          echo "pre-commit: $f is not gofmt-formatted and also has changes that are not staged, so it is left alone; run gofmt -w on it and stage it again" >&2
+          status=1
+        fi
+      elif [ -n "$(gofmt -l -- "$f")" ]; then
+        gofmt -w -- "$f"
+        git add -- "$f"
+        echo "pre-commit: gofmt formatted $f"
+      fi
+      ;;
+    web/src/*.ts | web/src/*.tsx)
+      if ! "$have_web"; then
+        if ! "$web_warned"; then
+          echo "pre-commit: web/node_modules is missing (make web), web files not linted" >&2
+          web_warned=true
+        fi
+        continue
+      fi
+      rel="${f#web/}"
+      if partial "$f"; then
+        # Lint what is staged, not the working copy.
+        git show ":$f" | (cd web && npx --no-install eslint --stdin --stdin-filename "$rel") || status=1
+      else
+        (cd web && npx --no-install eslint --fix -- "$rel") || status=1
+        git add -- "$f"
+      fi
+      ;;
+  esac
+done < <(git diff --cached --name-only -z --diff-filter=ACM)
+
+exit "$status"
