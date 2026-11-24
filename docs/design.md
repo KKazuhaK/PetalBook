@@ -4661,6 +4661,82 @@ organisations per account」一节。所有者同一天把「一个账号在几�
 1. GitLab（gitlab.com 和自托管）和 Gitea／Forgejo／Codeberg 在自己的里程碑里做：每个主机
    一个管理员配的 OAuth 应用，用户连一次。
 
+**3.8 的现状（2026-11-24）**：上面的约定做了，租户自己配提供方和租户存储目标留给 3.6（见
+下面「没做的」）。接口见 `docs/api.md` 的「Connections to GitLab and Gitea」和它的
+「As built」。
+
+- **代码**：新的包 `internal/forge`。一个 `Provider` 就是一台主机的一个 OAuth 应用，实现
+  2.7b 的 `connections.Provider` 和 `Administered`；两个平台只在 `driver`（`gitlab.go`、
+  `gitea.go`：授权地址、令牌地址、版本探测、用户、可建的地方、建和列和读仓库）上不同，
+  连接、续期、给 Git 的令牌、管理页都是同一份。`Manager` 在启动时从库里读出全部提供方放进
+  注册表，按管理员的请求新建（`connections.Creator`），每天续期一次。注册表因此改成
+  可以增删、加锁（`Add`、`Remove`、`GetFor`、`ListFor`）。`forgetest` 是进程里的假 GitLab
+  和假 Gitea（授权码加 PKCE、刷新令牌轮换、REST、`git http-backend` 上的 Git），在
+  `internal/forge/forgetest`；`conntest.Run` 对两者各跑一遍。
+- **状态库**（迁移 0019，SQLite 和 PostgreSQL 都测）：`providers`、`provider_authorizations`、
+  `provider_leftovers`。`providers.owner` 是 `site` 或租户 id，`(owner, host)` 唯一；GitHub 的
+  表不动。`remotes` 的 `provider` 列存提供方 id，`gh_via` 只会是 `user`。scope 测试的表名单
+  加了这三张表。
+- **主机检查**（保存前、`PATCH`、`POST …/check`）：版本接口按平台的样子答（GitLab 对没登录
+  的人答 `401 {"message": "401 Unauthorized"}`，也算它；Gitea 答版本号；Forgejo 的版本号
+  带 `+gitea-X.Y.Z`，按后者比），GitLab 至少 15、Gitea 至少 1.19（有 PKCE）；然后用假授权码走
+  一次令牌地址：`invalid_grant` 说明主机认得这个 client，`invalid_client` 就拒绝。拒绝是
+  `400 invalid` 加 `reason`（`host_invalid`、`host_not_public`、`host_unreachable`、
+  `not_this_platform`、`unsupported_version`、`client_rejected`、`type_invalid`）。GitLab 不对没登录
+  的人说版本，所以第一个人连上之后再读一次记下来；版本太旧就把提供方置为没配好。
+- **出站**：提供方对主机的每个请求都走同一个客户端：解析之后、连接之前检查地址是公网的
+  （复用每日文案的 `dailyfetch.Public`），不跟重定向，不走环境里的代理；`--remote-unsafe`
+  （测试用）才允许普通 http 和内网地址。主机还要过 `storage.hosts`（`spaces.Manager.HostAllowed`，
+  从原来的 `hostAllowed` 里提出来的）。
+- **权限范围**：GitLab 要 `api`（建项目只有它行；`read_repository`、`write_repository` 只管
+  Git 数据）。Gitea 的 OAuth 应用令牌和那个人自己的权限一样宽，授权请求不带范围，管理页
+  这样说。Git 用的用户名是 `oauth2`，令牌当密码。
+- **令牌和续期**：访问令牌和刷新令牌分开封存（用提供方 id 和人的 id 作绑定），续期照
+  GitHub 那一套：快到 5 分钟时续，每人同时一个，新的一对先写库再用，库里版本号防覆盖。
+  GitLab 的刷新令牌不过期；Gitea 的刷新令牌是 JWT，读它的 `exp`（不验签，只是为了每天续期
+  时知道哪些快到期）。刷新被拒（`invalid_grant`）就把连接置为 `expired`，用它的空间的远端
+  是 `connection_expired`，读照常、写 `503`，草稿留着。重新连接后 `ConnectionFixed` 叫醒空间。
+- **建仓库和给 Git 的凭据**：个人命名空间，或这个人有权建的组（GitLab 的组和子组，Gitea 的
+  组织，按团队的 `can_create_org_repo`）。`ChooseCredential` 一律是 `via: "user"`：OAuth 令牌
+  不能像 GitHub 安装令牌那样缩到一个仓库，所以这个人的令牌就是这个空间的凭据。同一个人的
+  连接只给这个人是管理者的空间用；别人的连接从不借用（有测试）。`via: "app"` 对它们是
+  `400 invalid`。
+- **部分同步**：每个提供方在第一次建仓库或连上已有仓库时，用那个人的令牌向仓库的
+  `info/refs?service=git-upload-pack` 要 Git 协议 v2 的广告，看 `fetch=` 里有没有 `filter`，
+  记在 `providers.partial_sync`，之后每 30 天重新看；`capabilities.partialSync` 和管理页的
+  `partialSync` 取它。3.5 的按主机表做出来后，这一栏由它取代。
+- **网页**：管理页「存储与同步」的连接部分，GitHub 卡片下面是「主机」：每台主机一张卡
+  （名字、主机、能不能用、版本、是否支持部分同步、回调地址、申请的范围、用量、检查、编辑、
+  移除）和「添加主机」的表单；账号页「已连接的账号」对这些提供方换成不带「安装」的一个
+  「连接 X」按钮，字都用服务器给的提供方名字（`src/i18n/forge`），界面只看
+  `capabilities.installations`。新建空间的「存在哪里」本来就是按能力列的，新的提供方直接
+  出现。品牌图标仍只有 GitHub（其余是 3.9）。
+- **审计**：`connection_provider_changed`（`created`、`saved`、`removed`）、`account_connected`、
+  `account_disconnected`，里面没有任何密钥。
+
+做出来时对合同的几处理解：
+
+- **租户自己配提供方没做**。合同里 `POST /api/admin/tenants/{tenant}/connections` 要
+  `integrations.connections` 这个能力，那是 3.6 的。3.8 做了它要的底子：`providers.owner`、
+  `Descriptor.TenantID`、`Registry.GetFor/ListFor`、提供方自己拒绝别的租户的人（`404`）、
+  `GET /api/connections` 里的 `owner` 是 `"site"` 或 `{"tenant": id}`、管理员列表看得到全部、
+  `(owner, host)` 唯一、秘密的 purpose 里带租户 id；测试把一行写进库里再 `Reload`
+  来验证。路由、5 个的上限（常量 `TenantLimit` 已有，没用）和 `tenant_connection_changed` 审计
+  留给 3.6。租户存储目标（`via: "tenant"`）同样是 3.6，`capabilities.storageTarget` 对两个
+  新提供方是 `true`。
+- **重名**：合同写「slug 重名时照 3.6 加后缀」，那是 3.6 的存储目标；这里照 2.7 的
+  `name_taken`（`409`），没有自动后缀。
+- **`PUT` 和 `PATCH`** 对 `/api/admin/connections/{provider}` 都收，都是「给哪个改哪个」
+  （GitHub 的 `PUT` 本来就是这样）；id、类型、主机不能改。重名的 id 或主机是 `409 exists`，
+  上限是 `409 provider_limit`，删除时有连接或空间用着是 `409 provider_in_use` 带
+  `connections` 和 `spaces`。
+- **公网检查只管服务器自己对主机的请求**（OAuth、REST、部分同步的探测）。`git` 子进程自己连
+  主机，不经过它；那一层仍只靠 `storage.hosts`，和别的远端一样。3.6 若要管 Git 的出站，
+  要在 gitstore 的运行器里做。
+- **提供方只在一个进程的内存里**。一个共用数据库的多个进程，新建的提供方在别的进程里要等
+  下一次每日的 `Reload`（或重启）才有；删除也一样。同一时间多进程不是 3.8 要解决的。
+- **迁移编号**用了 0019（现在 `main` 上下一个空着的）。3.5 若也用 0019，合并时后合的改号。
+
 **3.9 的约定**（2026-11-23）：头像和品牌图标。接口和错误码写在 `docs/api.md` 新的
 「Avatars and brand icons」一节。所有者 2026-11-23 加，设计按 3.5 合并之后写（品牌图标
 那一部分不依赖别的）。
