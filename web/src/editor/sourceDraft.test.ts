@@ -41,7 +41,7 @@ function fakeStorage(): KeyValueStorage {
 }
 
 describe('LiveDraft with a typed body', () => {
-  const fields = { title: '题', subtitle: '', tags: [] }
+  const fields = { title: '题', subtitle: '', source: '', tags: [] }
   it('sends the typed text as it is, without asking the editor', () => {
     const conv = vi.fn(() => 'from the document\n')
     const d = new LiveDraft(fields, conv)
@@ -87,7 +87,7 @@ describe('the local copy of a typed body', () => {
     baseRev: 'rev1',
     token: 't',
     savedAt: 1,
-    fields: { title: '题', subtitle: '', tags: [] },
+    fields: { title: '题', subtitle: '', source: '', tags: [] },
     ...over,
   })
   it('is kept and read back as text', () => {
@@ -98,7 +98,7 @@ describe('the local copy of a typed body', () => {
         baseRev: 'rev1',
         token: 't',
         savedAt: Date.now(),
-        fields: { title: '题', subtitle: '', tags: [], others: { series: '夏' } },
+        fields: { title: '题', subtitle: '', source: '', tags: [], others: { series: '夏' } },
         bodyText: '* a\n',
       },
       st,
@@ -148,7 +148,9 @@ describe('the local copy of a typed body', () => {
   it('header keys alone (no body edit) are something to restore', () => {
     const plan = planRestore(
       page(),
-      stored({ fields: { title: '题', subtitle: '', tags: [], others: { created: '2026-01-01', series: '夏' } } }),
+      stored({
+        fields: { title: '题', subtitle: '', source: '', tags: [], others: { created: '2026-01-01', series: '夏' } },
+      }),
       toMd,
       (md) => md,
     )
@@ -158,7 +160,13 @@ describe('the local copy of a typed body', () => {
     const input = draftToCreateInput(
       stored({
         bodyText: '* a\n',
-        fields: { title: '题', subtitle: '', tags: [], others: { series: '夏', created: '2020-01-01', id: 'X' } },
+        fields: {
+          title: '题',
+          subtitle: '',
+          source: '',
+          tags: [],
+          others: { series: '夏', created: '2020-01-01', id: 'X' },
+        },
       }),
       toMd,
     )
@@ -170,11 +178,15 @@ describe('other header keys in a save', () => {
   const base = page()
   const none = () => base.body
   it('absent means untouched', () => {
-    expect(buildSave(base, { title: '题', subtitle: '', tags: [] }, none)).toBeNull()
+    expect(buildSave(base, { title: '题', subtitle: '', source: '', tags: [] }, none)).toBeNull()
   })
   it('the same keys in another order are no change', () => {
     expect(
-      buildSave(base, { title: '题', subtitle: '', tags: [], others: { series: '冬', created: '2026-01-01' } }, none),
+      buildSave(
+        base,
+        { title: '题', subtitle: '', source: '', tags: [], others: { series: '冬', created: '2026-01-01' } },
+        none,
+      ),
     ).toBeNull()
   })
   it('replaces the other keys and leaves id and the named fields alone', () => {
@@ -183,6 +195,7 @@ describe('other header keys in a save', () => {
       {
         title: '题',
         subtitle: '',
+        source: '',
         tags: [],
         others: { created: '2026-01-01', status: '定稿', id: 'ignored', title: 'ignored' },
       },
@@ -194,17 +207,25 @@ describe('other header keys in a save', () => {
   it('nested values are compared as data', () => {
     const b = page({ meta: { id: ID, extra: { a: [1, { b: 2 }] } } })
     expect(
-      buildSave(b, { title: '', subtitle: '', tags: [], others: { extra: { a: [1, { b: 2 }] } } }, () => b.body),
+      buildSave(
+        b,
+        { title: '', subtitle: '', source: '', tags: [], others: { extra: { a: [1, { b: 2 }] } } },
+        () => b.body,
+      ),
     ).toBeNull()
     expect(
-      buildSave(b, { title: '', subtitle: '', tags: [], others: { extra: { a: [1, { b: 3 }] } } }, () => b.body)?.meta,
+      buildSave(
+        b,
+        { title: '', subtitle: '', source: '', tags: [], others: { extra: { a: [1, { b: 3 }] } } },
+        () => b.body,
+      )?.meta,
     ).toEqual({ id: ID, extra: { a: [1, { b: 3 }] } })
   })
 })
 
 describe('a body typed in the source view is compared as typed', () => {
   const base = page({ body: '* a\n* b\n' })
-  const fields = { title: '题', subtitle: '', tags: [] }
+  const fields = { title: '题', subtitle: '', source: '', tags: [] }
   const normalized = () => '- a\n- b\n'
   it("rewriting the file into the editor's own style by hand is a change", () => {
     expect(buildSave(base, { ...fields, body: '- a\n- b\n', bodyTyped: true }, normalized)?.body).toBe('- a\n- b\n')
@@ -256,7 +277,7 @@ describe("keys the person never changed are not sent over someone else's", () =>
 
 describe('other keys as the server will write them', () => {
   const base = page()
-  const f = { title: '题', subtitle: '', tags: [] }
+  const f = { title: '题', subtitle: '', source: '', tags: [] }
   it("a header typed without `created` is the file's header: the server keeps that key", () => {
     expect(buildSave(base, { ...f, others: { series: '冬' } }, () => base.body)).toBeNull()
   })

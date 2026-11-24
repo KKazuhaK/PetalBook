@@ -3,7 +3,6 @@ import {
   defaultSection,
   groupsOf,
   isSectionId,
-  legacySettingsTarget,
   resolveSection,
   sectionFromPath,
   settingsPath,
@@ -135,26 +134,10 @@ describe('settings addresses', () => {
   })
 })
 
-describe('the old addresses', () => {
-  it('/settings goes to the profile (accounts) or the preferences (single-user)', () => {
-    expect(legacySettingsTarget('/settings', member)).toEqual({ section: 'profile' })
-    expect(legacySettingsTarget('/settings', single)).toEqual({ section: 'preferences' })
-  })
-  it('the sign-in link flow returns to the security section, where the linked sign-ins are', () => {
+describe('the sign-in link flow', () => {
+  it('returns to the security section, where the linked sign-ins are', () => {
     expect(resolveSection('security', member)).toBe('security')
     expect(resolveSection('security', single)).toBe('preferences')
     expect(sectionFromPath('/settings/security')).toBe('security')
-  })
-  it('/users is not a settings address any more (the router sends it to /admin/users)', () => {
-    expect(legacySettingsTarget('/users', member)).toBeNull()
-  })
-  it('/s/<space>/settings goes to sync (general in single-user mode), naming the space', () => {
-    expect(legacySettingsTarget('/s/team/settings', member)).toEqual({ section: 'sync', space: 'team' })
-    expect(legacySettingsTarget('/s/default/settings', single)).toEqual({ section: 'general', space: 'default' })
-    expect(legacySettingsTarget('/s/%E5%AE%B6/settings/', member)).toEqual({ section: 'sync', space: '家' })
-  })
-  it('anything else is not an old settings address', () => {
-    expect(legacySettingsTarget('/s/team/import', member)).toBeNull()
-    expect(legacySettingsTarget('/recent', member)).toBeNull()
   })
 })

@@ -15,8 +15,7 @@ export function useOfflineSetting(user: string | undefined) {
     refetchOnWindowFocus: true,
     queryFn: async ({ signal }) => {
       const r = await api.settings(undefined, signal)
-      // A server that does not say (an older one) allows it.
-      return r.settings.find((x) => x.key === 'offline.copies')?.effective !== false
+      return r.settings.find((x) => x.key === 'offline.copies')?.effective === true
     },
   })
 }

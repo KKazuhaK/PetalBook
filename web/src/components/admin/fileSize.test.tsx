@@ -85,7 +85,7 @@ describe('a save that is refused for its size', () => {
       if (!allowed) throw refusal(2048, 5000, '标题')
       return { version: 'v1', baseRev: input.baseRev, updated: 'u1', stale: false }
     })
-    let current: Draft = { title: '标题', subtitle: '', tags: [], body: '一\n' }
+    let current: Draft = { title: '标题', subtitle: '', source: '', tags: [], body: '一\n' }
     const c = new SaveController({
       page,
       read: () => current,

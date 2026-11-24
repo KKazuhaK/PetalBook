@@ -279,7 +279,7 @@ export const adminApi = {
 
   // --- the daily text of the whole server ---
   daily: (signal?: AbortSignal) => request<AdminDaily>('/admin/daily', { signal }),
-  putDaily: (input: { default?: DailyDefault; languages?: string[]; allow?: DailyAllow; notices?: [] }) =>
+  putDaily: (input: { default?: DailyDefault; languages?: string[]; allow?: DailyAllow }) =>
     request<AdminDaily>('/admin/daily', { method: 'PUT', body: input }),
   // A header with a `value` sets it; one with only a `name` keeps what is saved; a header left out is removed.
   putDailyApi: (api: Omit<DailyApi, 'note'>) =>
@@ -743,7 +743,7 @@ function useDailyWrite<V>(write: (v: V) => Promise<AdminDaily>) {
   })
 }
 export const useSaveDailySite = () =>
-  useDailyWrite((input: { default?: DailyDefault; languages?: string[]; allow?: DailyAllow; notices?: [] }) =>
+  useDailyWrite((input: { default?: DailyDefault; languages?: string[]; allow?: DailyAllow }) =>
     adminApi.putDaily(input),
   )
 export const useSaveDailyApi = () => useDailyWrite((api: Omit<DailyApi, 'note'>) => adminApi.putDailyApi(api))

@@ -4,12 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // otherFileSystem is a folder for a Git directory on another file system than
@@ -246,130 +244,5 @@ func TestARemoteSpaceWritesBesideAPulledPetalbookTmpLink(t *testing.T) {
 	}
 	if st := git(t, f.root, "status", "--porcelain", "--untracked-files=all"); st != "" {
 		t.Errorf("the clone is not clean:\n%s", st)
-	}
-}
-
-// --- the state databases of an earlier version, kept beside the current one -----------------
-
-// earlierBeside makes a space whose state directory is in use, with an
-// earlier version's state in .petalbook/cache: a database and its log.
-func earlierBeside(t *testing.T) (root, state, old string) {
-	t.Helper()
-	needGit(t)
-	root = t.TempDir()
-	s := openAt(t, root)
-	mustCreate(t, s, "", meta("title", "Kept"), "x\n")
-	if err := s.Flush(); err != nil {
-		t.Fatal(err)
-	}
-	s.Close()
-	state = DefaultStateDir(root)
-	old = filepath.Join(root, ".petalbook", "cache")
-	os.MkdirAll(old, 0o755)
-	os.WriteFile(filepath.Join(old, "state.db"), []byte("earlier"), 0o644)
-	os.WriteFile(filepath.Join(old, "state.db-wal"), []byte("earlier-wal"), 0o644)
-	return root, state, old
-}
-
-// A crash while the family is copied beside the current state leaves no
-// database without its log: the database is copied last, and what a crash
-// left before it is removed at the next start (the originals are still where
-// they were), which keeps one whole copy, so the import never takes an older
-// text for the newer one.
-func TestACrashBetweenTheCopiesOfADatabaseAndItsLogLosesNothing(t *testing.T) {
-	t.Parallel()
-	root, state, old := earlierBeside(t)
-	// The copy of the database fails after its log was copied: as a crash
-	// there, the database is not taken.
-	main := filepath.Join(old, "state.db")
-	os.Rename(main, main+".away")
-	o, err := os.OpenRoot(old)
-	if err != nil {
-		t.Fatal(err)
-	}
-	quiet := slog.New(slog.NewTextHandler(discard{}, nil))
-	err = mergeOld(o, []string{"state.db", "state.db-wal"}, state, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), quiet)
-	o.Close()
-	if err == nil {
-		t.Fatal("the copy did not fail")
-	}
-	if m, _ := filepath.Glob(filepath.Join(state, EarlierStatePattern)); len(m) != 0 {
-		t.Fatalf("a database was kept without its log: %v", m)
-	}
-	if b, _ := os.ReadFile(filepath.Join(old, "state.db-wal")); string(b) != "earlier-wal" {
-		t.Fatalf("the original log: %q", b)
-	}
-	os.Rename(main+".away", main)
-
-	s := openAt(t, root)
-	defer s.Close()
-	dbs := s.EarlierStateDBs()
-	if len(dbs) != 1 {
-		t.Fatalf("earlier state databases: %v", dbs)
-	}
-	if b, _ := os.ReadFile(dbs[0]); string(b) != "earlier" {
-		t.Errorf("the database: %q", b)
-	}
-	if b, _ := os.ReadFile(dbs[0] + "-wal"); string(b) != "earlier-wal" {
-		t.Errorf("its log: %q", b)
-	}
-	if m, _ := filepath.Glob(filepath.Join(state, "state-earlier-*")); len(m) != 2 {
-		t.Errorf("what is kept: %v", m)
-	}
-	if _, err := os.Lstat(old); err == nil {
-		t.Error(".petalbook/cache is still there")
-	}
-}
-
-// A crash while an imported database is renamed (the database first) leaves
-// its log under the old name: it follows the database when the space opens.
-func TestALogLeftByAnImportFollowsItsDatabase(t *testing.T) {
-	t.Parallel()
-	needGit(t)
-	root := t.TempDir()
-	firstCommit(t, root)
-	state := DefaultStateDir(root)
-	os.WriteFile(filepath.Join(state, "state-imported-20260101T000000Z.db"), []byte("db"), 0o644)
-	os.WriteFile(filepath.Join(state, "state-earlier-20260101T000000Z.db-wal"), []byte("wal"), 0o644)
-	s := openAt(t, root)
-	defer s.Close()
-	if b, _ := os.ReadFile(filepath.Join(state, "state-imported-20260101T000000Z.db-wal")); string(b) != "wal" {
-		t.Errorf("the log did not follow its database: %q", b)
-	}
-	if dbs := s.EarlierStateDBs(); len(dbs) != 0 {
-		t.Errorf("earlier state databases: %v", dbs)
-	}
-}
-
-// When the repository has the database an earlier version kept, its log
-// beside it is not the server's to move: replayed into another database it
-// would be another one's text. The whole family stays as it is.
-func TestATrackedDatabaseKeepsItsUntrackedLog(t *testing.T) {
-	t.Parallel()
-	needGit(t)
-	root := t.TempDir()
-	firstCommit(t, root)
-	old := filepath.Join(root, ".petalbook", "cache")
-	os.MkdirAll(old, 0o755)
-	os.WriteFile(filepath.Join(old, "state.db"), []byte("theirs"), 0o644)
-	gitO(t, root, "add", "-f", ".petalbook/cache/state.db")
-	gitO(t, root, "commit", "-qm", "a database")
-	os.WriteFile(filepath.Join(old, "state.db-wal"), []byte("a log"), 0o644)
-	os.WriteFile(filepath.Join(old, "index.db-wal"), []byte("a log of nothing"), 0o644)
-	os.RemoveAll(DefaultStateDir(root))
-	s := openAt(t, root)
-	defer s.Close()
-	for _, n := range []string{"state.db", "state.db-wal", "index.db-wal"} {
-		if _, err := os.Lstat(filepath.Join(s.StateDir(), n)); err == nil && n != "index.db-wal" {
-			t.Errorf("%s was moved into the state", n)
-		}
-	}
-	for n, want := range map[string]string{"state.db": "theirs", "state.db-wal": "a log", "index.db-wal": "a log of nothing"} {
-		if b, err := os.ReadFile(filepath.Join(old, n)); err != nil || string(b) != want {
-			t.Errorf("%s: %q %v", n, b, err)
-		}
-	}
-	if st := git(t, root, "status", "--porcelain", "--untracked-files=no"); st != "" {
-		t.Errorf("a change nobody made:\n%s", st)
 	}
 }

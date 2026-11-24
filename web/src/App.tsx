@@ -7,7 +7,6 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { toast } from 'sonner'
 import { ApiError, onForbidden, onHold, onSignedOut, onSpaceAccess, onUnavailable } from '@/api/client'
 import { keys, lastSpace, refreshSpaceAccess, useSession, useSpaces } from '@/api/hooks'
-import { SpaceSettingsRedirect } from '@/components/settings/SpaceSettingsRedirect'
 import { AdminGate } from '@/components/admin/AdminGate'
 import { SpaceGate } from '@/components/layout/SpaceGate'
 import type { SessionInfo } from '@/api/types'
@@ -86,12 +85,10 @@ function AuthGate() {
   return <Outlet />
 }
 
-// Old (milestone 1.1) addresses had no space: `/recent`, `/f/…`, `/t/…`,
-// `/search`, `/p/<id>`. They go to the same place in the space used last, or
-// the first one.
-function LegacyRedirect() {
+// `/` goes to the space used last, or the first one.
+function ToLastSpace() {
   const spaces = useSpaces()
-  const { pathname, search, hash } = useLocation()
+  const { search, hash } = useLocation()
   if (spaces.isPending) return <PageFallback />
   if (spaces.isError && !spaces.data)
     return <ErrorState message={spaces.error.message} onRetry={() => void spaces.refetch()} />
@@ -99,8 +96,7 @@ function LegacyRedirect() {
   const last = lastSpace()
   const space = list.find((s) => s.id === last) ?? list[0]
   if (!space) return <NotFoundPage message={t.editor.spaceMissing} />
-  const target = pathname === '/' ? '' : pathname
-  return <Navigate to={`/s/${encodeURIComponent(space.id)}${target}${search}${hash}`} replace />
+  return <Navigate to={`/s/${encodeURIComponent(space.id)}${search}${hash}`} replace />
 }
 
 // The sign-in page sends the person back to `/oauth/authorize?...`, an address of
@@ -131,17 +127,9 @@ const router = createBrowserRouter([
       {
         element: <AppShell />,
         children: [
-          { index: true, element: <LegacyRedirect /> },
-          { path: 'recent', element: <LegacyRedirect /> },
-          { path: 'f/*', element: <LegacyRedirect /> },
-          { path: 't/*', element: <LegacyRedirect /> },
-          { path: 'search', element: <LegacyRedirect /> },
-          { path: 'p/:id', element: <LegacyRedirect /> },
+          { index: true, element: <ToLastSpace /> },
           // The settings dialog. `/settings` with no section picks the first one.
           { path: 'settings/:section?', element: later(<SettingsRoute />) },
-          // Users and invites moved from the settings to the administration.
-          { path: 'users', element: <Navigate to="/admin/users" replace /> },
-          { path: 'settings/users', element: <Navigate to="/admin/users" replace /> },
           { path: 'admin/:section?', element: <AdminGate /> },
           {
             path: 's/:space',
@@ -152,7 +140,6 @@ const router = createBrowserRouter([
               { path: 'f/*', element: <FolderList /> },
               { path: 't/*', element: <TagList /> },
               { path: 'search', element: <SearchList /> },
-              { path: 'settings', element: <SpaceSettingsRedirect /> },
               { path: 'import', element: later(<ImportPage />) },
               { path: 'check', element: later(<CheckPage />) },
               { path: 'p/:id', element: later(<PageEditor />) },

@@ -119,25 +119,18 @@ export function noteWrote(key: string, id: string, at: Date = new Date()) {
   }
 }
 
-// Newest first. A bare number (the older format) is a page of its own.
+// Newest first.
 export function loadWroteEntries(key: string): Wrote[] {
   try {
     const raw = JSON.parse(localStorage.getItem(key) ?? '[]') as unknown
     if (!Array.isArray(raw)) return []
     const out: Wrote[] = []
     for (const e of raw as unknown[]) {
-      const n =
-        typeof e === 'number'
-          ? e
-          : e && typeof e === 'object' && typeof (e as { at?: unknown }).at === 'number'
-            ? (e as { at: number }).at
-            : NaN
-      const id =
-        typeof e === 'object' && e && typeof (e as { id?: unknown }).id === 'string'
-          ? (e as { id: string }).id
-          : `legacy-${n}`
-      const at = new Date(n)
-      if (!Number.isNaN(at.getTime())) out.push({ id, at })
+      if (!e || typeof e !== 'object') continue
+      const { id, at } = e as { id?: unknown; at?: unknown }
+      if (typeof id !== 'string' || typeof at !== 'number') continue
+      const when = new Date(at)
+      if (!Number.isNaN(when.getTime())) out.push({ id, at: when })
     }
     return out.sort((a, b) => b.at.getTime() - a.at.getTime())
   } catch {

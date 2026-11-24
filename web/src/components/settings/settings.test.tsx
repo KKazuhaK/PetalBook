@@ -23,7 +23,6 @@ import {
   type Mounted,
 } from '@/testing/harness'
 import SettingsRoute from './SettingsRoute'
-import { SpaceSettingsRedirect } from './SpaceSettingsRedirect'
 
 // The dialog is built only when it is open, and each section is a different
 // piece of code: each one is opened here.
@@ -44,7 +43,6 @@ afterEach(async () => {
 const routes = (
   <Routes>
     <Route path="/settings/:section?" element={<SettingsRoute />} />
-    <Route path="/s/:space/settings" element={<SpaceSettingsRedirect />} />
     <Route path="*" element={<div data-testid="elsewhere">elsewhere</div>} />
   </Routes>
 )
@@ -186,11 +184,6 @@ describe('the settings dialog, accounts mode, administrator', () => {
     await settle(() => locationText() === '/settings/profile', 'redirected')
   })
 
-  it("the old address of a space's settings lands on the right section (users and invites moved to /admin, see admin.test.tsx)", async () => {
-    await open('/s/default/settings')
-    await settle(() => locationText() === '/settings/sync', '/s/default/settings')
-  })
-
   it('moving between sections replaces the entry, so one Close leaves settings', async () => {
     m = await mount(routes, {
       entries: ['/s/default/recent', { pathname: '/settings/profile', state: { from: '/s/default/recent' } }],
@@ -254,11 +247,6 @@ describe('the settings dialog, single-user mode', () => {
     expect(inputs).toHaveLength(2)
     expect(inputs.every((i) => i.readOnly)).toBe(true)
     expect(panelText()).toContain(t.inboxSetting.readOnly)
-  })
-
-  it('/s/<space>/settings goes to general', async () => {
-    await open('/s/default/settings')
-    await settle(() => locationText() === '/settings/general', 'redirect')
   })
 })
 

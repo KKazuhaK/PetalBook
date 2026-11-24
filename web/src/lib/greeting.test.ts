@@ -307,16 +307,13 @@ describe('what is remembered of visits', () => {
     expect(loadWrote(wroteKey('u2', 's1'))).toEqual([])
     expect(loadWrote(wroteKey('u1', 's2'))).toEqual([])
   })
-  it('counts a page once however often it is saved, and reads the older format as pages of their own', () => {
+  it('counts a page once however often it is saved, and ignores what is not an entry', () => {
     const key = wroteKey('u1', 's1')
     for (let h = 9; h < 13; h++) noteWrote(key, 'same', new Date(2026, 10, 24, h))
     noteWrote(key, 'other', new Date(2026, 10, 24, 13))
     expect(loadWrote(key).map((d) => d.getHours())).toEqual([13, 12])
-    localStorage.setItem(
-      key,
-      JSON.stringify([new Date(2026, 10, 24, 9).getTime(), new Date(2026, 10, 24, 10).getTime()]),
-    )
-    expect(loadWrote(key)).toHaveLength(2)
+    localStorage.setItem(key, JSON.stringify([new Date(2026, 10, 24, 9).getTime(), { at: 1 }, null]))
+    expect(loadWrote(key)).toEqual([])
   })
   it('counts the days since the visit before', () => {
     const key = visitKey('u1', 's1')

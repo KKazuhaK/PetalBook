@@ -3,9 +3,7 @@ package space
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -68,72 +66,6 @@ func TestAPullThatPutsALinkForPetalbookLeavesTheIndexWhole(t *testing.T) {
 		t.Errorf("the clone has changes:\n%s", st)
 	}
 	consistent(t, s)
-}
-
-func TestTheStateOfAnEarlierVersionIsMovedIntoTheGitDirectoryOnce(t *testing.T) {
-	t.Parallel()
-	needGit(t)
-	root := t.TempDir()
-	s := openAt(t, root)
-	p := mustCreate(t, s, "", meta("title", "Kept"), "x\n")
-	if err := s.Flush(); err != nil {
-		t.Fatal(err)
-	}
-	s.Close()
-	// What an earlier version left: its state under .petalbook/cache, with a
-	// state database and a change that was written and not committed yet.
-	old := filepath.Join(root, ".petalbook", "cache")
-	if err := os.Rename(DefaultStateDir(root), old); err != nil {
-		t.Fatal(err)
-	}
-	os.WriteFile(filepath.Join(old, "state.db"), []byte("drafts"), 0o644)
-	os.WriteFile(filepath.Join(root, "Late.md"), []byte(pageText("LATEPAGE01", "Late", "l\n")), 0o644)
-	os.WriteFile(filepath.Join(old, "pending.journal"), []byte(`{"op":"t","p":"Late.md"}`+"\n"), 0o644)
-
-	s = openAt(t, root)
-	defer s.Close()
-	if _, err := os.Lstat(old); !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf(".petalbook/cache is still there: %v", err)
-	}
-	if b, _ := os.ReadFile(filepath.Join(DefaultStateDir(root), "state.db")); string(b) != "drafts" {
-		t.Errorf("the state database: %q", b)
-	}
-	if _, err := s.Get(p.ID); err != nil {
-		t.Error(err)
-	}
-	if err := s.Flush(); err != nil {
-		t.Fatal(err)
-	}
-	if files := git(t, root, "ls-files"); !strings.Contains(files, "Late.md") {
-		t.Errorf("the journal was not carried over:\n%s", files)
-	}
-	if st := git(t, root, "status", "--porcelain", "--untracked-files=all"); st != "" {
-		t.Errorf("not all committed:\n%s", st)
-	}
-}
-
-func TestALinkWhereTheOldStateWasIsNeitherFollowedNorMoved(t *testing.T) {
-	t.Parallel()
-	needGit(t)
-	root := t.TempDir()
-	s := openAt(t, root)
-	mustCreate(t, s, "", meta("title", "Kept"), "x\n")
-	s.Close()
-	os.RemoveAll(DefaultStateDir(root))
-	out := outsideDir(t)
-	before := treeOf(t, out)
-	if err := os.Symlink(out, filepath.Join(root, ".petalbook", "cache")); err != nil {
-		t.Fatal(err)
-	}
-	s = openAt(t, root)
-	defer s.Close()
-	untouched(t, out, before)
-	if !isLink(root, ".petalbook/cache") {
-		t.Error("the link was moved")
-	}
-	if _, err := os.Stat(filepath.Join(DefaultStateDir(root), "index.db")); err != nil {
-		t.Error(err)
-	}
 }
 
 // --- a repair is never left behind as someone's change ---------------------------------

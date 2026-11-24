@@ -155,15 +155,15 @@ func TestFallbackFromAnInterfaceToOurLines(t *testing.T) {
 	})
 }
 
-func TestSourcesAreReadFromOlderConfigsAndChecked(t *testing.T) {
+func TestSourcesAreChecked(t *testing.T) {
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		x.fetcher.SetTransport(&twoServices{})
 		x.enableAll()
 		x.putLines("", "Ours", "lines")
-		// A single source, an id, and a list are all lists.
-		for name, v := range map[string]any{"one source": map[string]any{"kind": "list"}, "an id": "favqs", "ids": []any{"favqs"}, "sources": []any{map[string]any{"kind": "list"}}} {
-			if code, r := x.setSources(map[string]any{"": v}); code != 200 {
+		// Each language is a list of sources: a single source, an id or a list of ids is none.
+		for name, v := range map[string]any{"one source": map[string]any{"kind": "list"}, "an id": "favqs", "ids": []any{"favqs"}} {
+			if code, r := x.setSources(map[string]any{"": v}); code != 400 {
 				t.Errorf("%s: %d %v", name, code, r)
 			}
 		}
@@ -362,13 +362,13 @@ func TestAChosenInterfaceThatIsGoneIsToldAndNothingElseIsPicked(t *testing.T) {
 		x.putLines("", "Ours", "lines")
 		x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "list"}})
 		ctx := context.Background()
-		// What an earlier version had chosen: an interface that is not built in any more.
-		for name, raw := range map[string]string{"ids": `["quotable"]`, "sources": `{"apis":[],"sources":{"":[{"kind":"api","id":"quotable"}]}}`} {
+		// What the space chose: an interface that is not set up any more.
+		for name, raw := range map[string]string{"ids": `{"apis":["retired"]}`, "sources": `{"apis":[],"sources":{"":[{"kind":"api","id":"retired"}]}}`} {
 			if err := store.SetSpaceDaily(ctx, x.a.st.Q(), x.tm.sid, store.SpaceDaily{Inherit: true, APIs: raw}); err != nil {
 				t.Fatal(err)
 			}
 			_, p := x.own("GET", x.base+"/daily/prefs", nil)
-			if fmt.Sprint(p["apis"]) != "[]" || asMap(p["unavailable"])["quotable"] != "gone" {
+			if fmt.Sprint(p["apis"]) != "[]" || asMap(p["unavailable"])["retired"] != "gone" {
 				t.Fatalf("%s: %v", name, p)
 			}
 			// The space does not fall through to the default: no text, and why.
@@ -378,7 +378,7 @@ func TestAChosenInterfaceThatIsGoneIsToldAndNothingElseIsPicked(t *testing.T) {
 			}
 		}
 		// A list that still has something usable is used.
-		if err := store.SetSpaceDaily(ctx, x.a.st.Q(), x.tm.sid, store.SpaceDaily{Inherit: true, APIs: `{"apis":[],"sources":{"":[{"kind":"api","id":"quotable"},{"kind":"list"}]}}`}); err != nil {
+		if err := store.SetSpaceDaily(ctx, x.a.st.Q(), x.tm.sid, store.SpaceDaily{Inherit: true, APIs: `{"apis":[],"sources":{"":[{"kind":"api","id":"retired"},{"kind":"list"}]}}`}); err != nil {
 			t.Fatal(err)
 		}
 		if got := quoteText(quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang=en")); got != "Ours" {

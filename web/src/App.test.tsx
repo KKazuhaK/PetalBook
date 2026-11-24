@@ -73,22 +73,10 @@ async function boot(
 const text = () => document.body.textContent ?? ''
 const where = () => window.location.pathname
 
-describe('the addresses of users and invites', () => {
-  it('/users and /settings/users go to the administration', async () => {
-    await boot('/users', { mode: 'accounts' })
-    await settle(() => where() === '/admin/users' && text().includes(t.users.createInvite), '/users')
-    await act(async () => root!.unmount())
-    root = undefined
-    host!.remove()
-    vi.resetModules()
-    await boot('/settings/users', { mode: 'accounts' })
-    await settle(() => where() === '/admin/users' && text().includes(t.users.createInvite), '/settings/users')
-  })
-
-  it('a member who follows an old link to them gets the not-found page, and a single-user server too', async () => {
-    await boot('/users', { mode: 'accounts', as: 'dora', scene: (s) => void makePerson(s, 'dora') })
+describe('the address of the administration', () => {
+  it('a member gets the not-found page, and a single-user server too', async () => {
+    await boot('/admin/users', { mode: 'accounts', as: 'dora', scene: (s) => void makePerson(s, 'dora') })
     await settle(() => text().includes(t.notFound), 'a member')
-    expect(where()).toBe('/admin/users')
     expect(text()).not.toContain(t.users.createInvite)
     await act(async () => root!.unmount())
     root = undefined
@@ -276,8 +264,13 @@ describe('an administrator in a space they are not a member of', () => {
 
   it('has the settings of that space: its name, its real inbox, its members and sync', async () => {
     let space = ''
-    await boot(() => `/s/${space}/settings`, { mode: 'accounts', scene: (s) => void (space = frankSpace(s)) })
-    // The old address of a space's settings lands on its sync section.
+    await boot(() => `/s/${space}/recent`, { mode: 'accounts', scene: (s) => void (space = frankSpace(s)) })
+    await settle(() => text().includes('别人的空间'), 'the space')
+    // The space in use is the one whose settings open.
+    await act(async () => {
+      window.history.pushState({}, '', '/settings/sync')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
     await settle(
       () => where() === '/settings/sync' && dialog() !== null && dialog()!.textContent!.includes(t.remote.title),
       'the sync section',

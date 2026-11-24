@@ -102,10 +102,10 @@ func TestSpaceDailyChoice(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkSpace(t, st, "S1", "one")
 		d, err := store.GetSpaceDaily(ctx, st.Q(), "S1")
-		if err != nil || !d.Inherit || d.APIs != "[]" {
+		if err != nil || !d.Inherit || d.APIs != `{"apis":[]}` {
 			t.Fatalf("%+v %v", d, err)
 		}
-		for _, want := range []store.SpaceDaily{{Inherit: false, APIs: `["a","b"]`}, {Inherit: true, APIs: `[]`}} {
+		for _, want := range []store.SpaceDaily{{Inherit: false, APIs: `{"apis":["a","b"]}`}, {Inherit: true, APIs: `{"apis":[]}`}} {
 			if err := store.SetSpaceDaily(ctx, st.Q(), "S1", want); err != nil {
 				t.Fatal(err)
 			}
@@ -113,7 +113,7 @@ func TestSpaceDailyChoice(t *testing.T) {
 				t.Fatalf("%+v %v", got, err)
 			}
 		}
-		store.SetSpaceDaily(ctx, st.Q(), "S1", store.SpaceDaily{APIs: `["x"]`})
+		store.SetSpaceDaily(ctx, st.Q(), "S1", store.SpaceDaily{APIs: `{"apis":["x"]}`})
 		if err := st.Tx(ctx, func(q store.Q) error { _, err := store.DeleteSpace(ctx, q, store.AllTenants(), "S1"); return err }); err != nil {
 			t.Fatal(err)
 		}
@@ -248,9 +248,9 @@ func TestCompareAndSetSiteSetting(t *testing.T) {
 	})
 }
 
-func TestSpaceChoiceKeepsItsOptions(t *testing.T) {
-	c := store.ParseSpaceChoice(`["a","b"]`)
-	if len(c.APIs) != 2 || c.Options != nil || c.JSON() != `["a","b"]` {
+func TestSpaceChoiceKeepsItsOptionsAndSources(t *testing.T) {
+	c := store.ParseSpaceChoice(`{"apis":["a","b"]}`)
+	if len(c.APIs) != 2 || c.Options != nil || c.JSON() != `{"apis":["a","b"]}` {
 		t.Fatalf("%+v %s", c, c.JSON())
 	}
 	c.Options = map[string]map[string][]string{"a": {"categories": {"i"}}}
@@ -261,33 +261,11 @@ func TestSpaceChoiceKeepsItsOptions(t *testing.T) {
 	if got := store.ParseSpaceChoice("not json"); len(got.APIs) != 0 {
 		t.Fatal(got)
 	}
-	if got := store.ParseSpaceChoice(`[]`).JSON(); got != `[]` {
+	if got := (store.SpaceChoice{}).JSON(); got != `{"apis":[]}` {
 		t.Fatal(got)
 	}
-}
-
-func TestSpaceChoiceKeepsSourcesAndTheyFollowARename(t *testing.T) {
-	raw := `{"apis":[],"sources":{"":[{"kind":"api","id":"old"},{"kind":"list"},{"kind":"own","source":{"tag":"x"}}]}}`
-	c := store.ParseSpaceChoice(raw)
-	if len(c.Sources) == 0 || c.JSON() != `{"apis":[],"sources":{"":[{"kind":"api","id":"old"},{"kind":"list"},{"kind":"own","source":{"tag":"x"}}]}}` {
+	raw := `{"apis":[],"sources":{"":[{"kind":"api","id":"a"},{"kind":"list"},{"kind":"own","source":{"tag":"x"}}]}}`
+	if c := store.ParseSpaceChoice(raw); len(c.Sources) == 0 || c.JSON() != raw {
 		t.Fatalf("%s", c.JSON())
 	}
-	// Without sources it is still the plain list.
-	if got := (store.SpaceChoice{APIs: []string{"a"}}).JSON(); got != `["a"]` {
-		t.Fatal(got)
-	}
-	storetest.Each(t, func(t *testing.T, st *store.Store) {
-		mkSpace(t, st, "S9", "nine")
-		sp := "S9"
-		if err := store.SetSpaceDaily(ctx, st.Q(), sp, store.SpaceDaily{Inherit: true, APIs: raw}); err != nil {
-			t.Fatal(err)
-		}
-		if err := store.RenameSpaceDailyAPI(ctx, st.Q(), "old", "new"); err != nil {
-			t.Fatal(err)
-		}
-		got, err := store.GetSpaceDaily(ctx, st.Q(), sp)
-		if err != nil || !strings.Contains(got.APIs, `"id":"new"`) || strings.Contains(got.APIs, `"id":"old"`) {
-			t.Fatalf("%v %s", err, got.APIs)
-		}
-	})
 }

@@ -124,8 +124,7 @@ func ValidLang(s string) bool {
 }
 
 // NormalLang is a language tag in canonical form (`ZH-cn` is `zh-CN`, `zh`
-// is `zh-Hans`); text that is no tag is left in lower case, so that a value
-// saved before the rule is still read.
+// is `zh-Hans`); text that is no tag is left in lower case.
 func NormalLang(s string) string { return langtag.Read(s) }
 
 // For is the source for a language: that of the language the reader's is
@@ -220,67 +219,6 @@ func (c *DailyConfig) UnmarshalJSON(data []byte) error {
 	}
 	*c = out
 	return nil
-}
-
-// ReadStoredDailyConfig reads a configuration that was saved earlier, under
-// rules that may have been looser (the site's default in the state database):
-// a language that is a tag is read as its canonical tag; one that is not
-// (`cn`), a second spelling of a language (`zh` beside `zh-Hans`; the
-// canonical key wins, else the first by order), a source that cannot be read
-// and the languages past the most there may be are dropped, and their keys are
-// returned. The rest is kept. It is nil when nothing is left.
-func ReadStoredDailyConfig(data []byte) (*DailyConfig, []string) {
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(data, &m); err != nil {
-		return nil, []string{"(all)"}
-	}
-	var dropped []string
-	out := DailyConfig{}
-	whole := map[string]json.RawMessage{}
-	for k, raw := range m {
-		if k == "folder" || k == "tag" || k == "type" || k == "filter" {
-			whole[k] = raw
-		}
-	}
-	if len(whole) > 0 {
-		b, _ := json.Marshal(whole)
-		var d DailySource
-		if err := json.Unmarshal(b, &d); err != nil {
-			dropped = append(dropped, "(all languages)")
-		} else {
-			out.All = &d
-		}
-	}
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		if _, ok := whole[k]; !ok {
-			keys = append(keys, k)
-		}
-	}
-	// The canonical spelling of a language first, then the others by order.
-	sort.Slice(keys, func(i, j int) bool {
-		ci, cj := NormalLang(keys[i]) == keys[i], NormalLang(keys[j]) == keys[j]
-		if ci != cj {
-			return ci
-		}
-		return keys[i] < keys[j]
-	})
-	for _, k := range keys {
-		var d DailySource
-		_, taken := out.ByLang[NormalLang(k)]
-		if !ValidLang(k) || taken || len(out.ByLang) >= maxDailyLangs || json.Unmarshal(m[k], &d) != nil {
-			dropped = append(dropped, k)
-			continue
-		}
-		if out.ByLang == nil {
-			out.ByLang = map[string]DailySource{}
-		}
-		out.ByLang[NormalLang(k)] = d
-	}
-	if out.All == nil && out.ByLang == nil {
-		return nil, dropped
-	}
-	return &out, dropped
 }
 
 // key identifies the configuration, for what is remembered of a pick.

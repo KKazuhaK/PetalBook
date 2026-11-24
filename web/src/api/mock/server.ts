@@ -10,7 +10,6 @@ import type {
   SpaceLocation,
   CaptchaContext,
   ConnectRemoteInput,
-  DailyNotice,
   FieldKind,
   Identity,
   Invite,
@@ -1926,7 +1925,6 @@ export function createMockServer(options: MockOptions = {}) {
     languages: ['zh-Hans', 'en'],
     apis: [] as SiteApi[],
     providers: {} as Record<string, ProviderState>,
-    notices: [] as DailyNotice[],
   }
   const spaceDaily = new Map<
     string,
@@ -2189,7 +2187,6 @@ export function createMockServer(options: MockOptions = {}) {
         }
       }),
       lines: { total, byLang, max: 5000 },
-      notices: site.notices.map((n) => ({ ...n })),
     }
   }
   // The interfaces for a language of a space's choice, in the order it listed them: those made for the language the
@@ -2518,10 +2515,8 @@ export function createMockServer(options: MockOptions = {}) {
   const routeSiteDaily = (method: string, path: string, url: URL, body: Record<string, unknown>): MockResponse => {
     if (path === '/admin/daily' && method === 'GET') return { status: 200, body: siteView() }
     if (path === '/admin/daily' && method === 'PUT') {
-      // A `hosts` sent by an older client is ignored: there is no list of hosts.
       for (const k of Object.keys(body))
-        if (!['default', 'hosts', 'languages', 'allow', 'notices'].includes(k))
-          throw new HttpError(400, 'invalid', `不认识 ${k}`)
+        if (!['default', 'languages', 'allow'].includes(k)) throw new HttpError(400, 'invalid', `不认识 ${k}`)
       let languages = site.languages
       if ('languages' in body) {
         if (!Array.isArray(body.languages))
@@ -2569,7 +2564,7 @@ export function createMockServer(options: MockOptions = {}) {
           for (const [k, value] of Object.entries(d.apis)) {
             const tag = k === '' ? '' : tagOf(k)
             if (tag in apis) throw new HttpError(400, 'invalid', `${tag} 写了两次`)
-            const list = typeof value === 'string' ? [value] : value
+            const list = value
             if (!Array.isArray(list) || list.length < 1 || list.length > 8)
               throw new HttpError(400, 'invalid', '每种语言 1 到 8 个接口')
             for (const id of list) {
@@ -2589,10 +2584,9 @@ export function createMockServer(options: MockOptions = {}) {
           for (const [k, value] of Object.entries(d.sources)) {
             const tag = k === '' ? '' : tagOf(k)
             if (tag in sources) throw new HttpError(400, 'invalid', `${tag} 写了两次`)
-            const list = Array.isArray(value) ? value : [value]
-            if (list.length < 1 || list.length > 8) throw new HttpError(400, 'invalid', '每种语言 1 到 8 个来源')
-            sources[tag] = list.map((e): MockSource => {
-              const src = typeof e === 'string' ? { kind: 'api', id: e } : e
+            if (!Array.isArray(value) || value.length < 1 || value.length > 8)
+              throw new HttpError(400, 'invalid', '每种语言 1 到 8 个来源')
+            sources[tag] = value.map((src): MockSource => {
               if (!isRecord(src)) throw new HttpError(400, 'invalid', '来源是 {kind, …}')
               if (src.kind === 'list') return { kind: 'list' }
               if (src.kind === 'space') return { kind: 'space', space: String(src.space), source: src.source }
@@ -2610,12 +2604,6 @@ export function createMockServer(options: MockOptions = {}) {
           next = { kind: 'sources', sources }
         } else
           throw new HttpError(400, 'invalid', 'the mock takes a default that is a list, interfaces or sources, or null')
-      }
-      // The notices are dismissed with an empty list.
-      if ('notices' in body) {
-        if (!Array.isArray(body.notices) || body.notices.length !== 0)
-          throw new HttpError(400, 'invalid', 'notices 只能是 []（表示知道了）')
-        site.notices = []
       }
       site.default = next
       site.languages = languages
@@ -4875,7 +4863,6 @@ export function createMockServer(options: MockOptions = {}) {
     },
     seedSettingsNotices: (notices: SettingsNotice[], space = 'default') => void settingsNotices.set(space, notices),
     // What GET /admin/daily says the server changed by itself in the daily text settings on an upgrade.
-    seedDailyNotices: (notices: DailyNotice[]) => void (site.notices = notices.map((n) => ({ ...n }))),
     seedHandWrittenViews: (folder: string, views: Record<string, unknown>[], space = 'default') =>
       spaces.get(space)!.store.seedHandWrittenViews(folder, views as never),
     // Let the server's own draft commits run now (they also run on every request).

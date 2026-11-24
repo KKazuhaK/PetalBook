@@ -14,6 +14,8 @@ import (
 
 func asMap(v any) map[string]any { m, _ := v.(map[string]any); return m }
 
+func asSlice(v any) []any { s, _ := v.([]any); return s }
+
 // The default of the administrators may be an interface for each language.
 func TestSiteDefaultIsAnInterfaceForEachLanguage(t *testing.T) {
 	withExternal(t, func(x *extFixture) {
@@ -31,8 +33,8 @@ func TestSiteDefaultIsAnInterfaceForEachLanguage(t *testing.T) {
 		}
 		// Each must be an interface that is set up; the languages are tags.
 		for name, apis := range map[string]map[string]any{
-			"an unknown id":            {"": "nothing"},
-			"an unknown id for a lang": {"": "en-quotes", "zh": "nothing"},
+			"an unknown id":            {"": []any{"nothing"}},
+			"an unknown id for a lang": {"": []any{"en-quotes"}, "zh": []any{"nothing"}},
 			"nothing":                  {},
 		} {
 			if code, r := setDefault(apis); code != 400 || (name != "nothing" && r["error"] != "api_not_found") {
@@ -40,23 +42,23 @@ func TestSiteDefaultIsAnInterfaceForEachLanguage(t *testing.T) {
 			}
 		}
 		for _, l := range []string{"cn", "english", "zh_CN"} {
-			if code, r := setDefault(map[string]any{l: "en-quotes"}); code != 400 || r["error"] != "bad_language" {
+			if code, r := setDefault(map[string]any{l: []any{"en-quotes"}}); code != 400 || r["error"] != "bad_language" {
 				t.Errorf("%s: %d %v", l, code, r)
 			}
 		}
-		if code, r := setDefault(map[string]any{"zh": "zh-quotes", "zh-Hans": "en-quotes"}); code != 400 {
+		if code, r := setDefault(map[string]any{"zh": []any{"zh-quotes"}, "zh-Hans": []any{"en-quotes"}}); code != 400 {
 			t.Errorf("a language twice: %d %v", code, r)
 		}
-		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "api", "apis": map[string]any{"": "en-quotes"}, "space": x.tm.sid}}); code != 400 {
+		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "api", "apis": map[string]any{"": []any{"en-quotes"}}, "space": x.tm.sid}}); code != 400 {
 			t.Errorf("an interface with a space: %d %v", code, r)
 		}
-		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "list", "apis": map[string]any{"": "en-quotes"}}}); code != 400 {
+		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "list", "apis": map[string]any{"": []any{"en-quotes"}}}}); code != 400 {
 			t.Errorf("a list with interfaces: %d %v", code, r)
 		}
 		if _, g := x.adm("GET", "/api/admin/daily", nil); g["default"] != nil {
 			t.Fatalf("a refused default was saved: %v", g["default"])
 		}
-		code, r := setDefault(map[string]any{"": "en-quotes", "zh": "zh-quotes"})
+		code, r := setDefault(map[string]any{"": []any{"en-quotes"}, "zh": []any{"zh-quotes"}})
 		if d := asMap(r["default"]); code != 200 || d["kind"] != "api" || fmt.Sprint(d["apis"]) != "map[:[en-quotes] zh-Hans:[zh-quotes]]" {
 			t.Fatalf("%d %v", code, r)
 		}
@@ -91,7 +93,7 @@ func TestSiteDefaultIsAnInterfaceForEachLanguage(t *testing.T) {
 			t.Errorf("%d", code)
 		}
 		// A language with no interface of its own and no "all languages" has no source.
-		if code, r := setDefault(map[string]any{"en": "en-quotes"}); code != 200 {
+		if code, r := setDefault(map[string]any{"en": []any{"en-quotes"}}); code != 200 {
 			t.Fatalf("%d %v", code, r)
 		}
 		if r := read("fr"); r["quote"] != nil || r["reason"] != "no_source" {
@@ -122,42 +124,60 @@ func TestSiteDefaultIsAnInterfaceForEachLanguage(t *testing.T) {
 	})
 }
 
-// Languages are canonical BCP 47 tags everywhere; what was saved before the
-// rule is read as such and written back canonical on the next save.
-func TestDailyLanguagesAreCanonicalAndOldValuesAreRead(t *testing.T) {
+// Settings that cannot be read are an error, and a save never writes over them.
+func TestDailySettingsThatCannotBeReadAreNotOverwritten(t *testing.T) {
+	withExternal(t, func(x *extFixture) {
+		t := x.t
+		ctx := context.Background()
+		const bad = `{"languages": "not a list"}`
+		if err := store.SetSiteSetting(ctx, x.a.st.Q(), "daily", bad, x.now); err != nil {
+			t.Fatal(err)
+		}
+		if code, _ := x.adm("GET", "/api/admin/daily", nil); code != 500 {
+			t.Errorf("GET: %d", code)
+		}
+		if code, _ := x.adm("PUT", "/api/admin/daily", map[string]any{"languages": []any{"en"}}); code != 500 {
+			t.Errorf("PUT: %d", code)
+		}
+		if raw, _, err := store.GetSiteSetting(ctx, x.a.st.Q(), "daily"); err != nil || raw != bad {
+			t.Fatalf("%v %s", err, raw)
+		}
+	})
+}
+
+// Languages are canonical BCP 47 tags everywhere: what is given in another
+// spelling is written canonical, and what is no tag is refused.
+func TestDailyLanguagesAreCanonical(t *testing.T) {
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		ctx := context.Background()
 		st := x.a.st
-		old := `{"default":{"kind":"list"},"hosts":["gone.example"],"languages":["zh","pt-br","en"],"apis":[{"id":"old","name":"Old","lang":"zh","url":"` + x.qs.URL + `/q?lang={lang}","text":"data.0.q","refresh":"daily","rps":100,"skipNew":true,"enabled":true,"headers":[]}],"allow":{"own":true,"api":true}}`
-		if err := store.SetSiteSetting(ctx, st.Q(), "daily", old, x.now); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := store.ReplaceDailyLines(ctx, st.Q(), "zh", []store.DailyLine{{Lang: "zh", Body: "旧的一行"}}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := store.ReplaceDailyLines(ctx, st.Q(), "en", []store.DailyLine{{Lang: "en", Body: "an english line"}}); err != nil {
-			t.Fatal(err)
-		}
-		code, r := x.adm("GET", "/api/admin/daily", nil)
-		if code != 200 || fmt.Sprint(r["languages"]) != "[zh-Hans pt-BR en]" || asMap(r["apis"].([]any)[0])["lang"] != "zh-Hans" || r["hosts"] != nil {
+		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"languages": []any{"zh", "pt-br", "en"}}); code != 200 || fmt.Sprint(r["languages"]) != "[zh-Hans pt-BR en]" {
 			t.Fatalf("%d %v", code, r)
 		}
-		if l := asMap(r["lines"]); l["total"] != float64(2) || asMap(l["byLang"])["zh-Hans"] != float64(1) || asMap(l["byLang"])["en"] != float64(1) || asMap(l["byLang"])["zh"] != nil {
-			t.Fatalf("%v", r["lines"])
+		raw, _, err := store.GetSiteSetting(ctx, st.Q(), "daily")
+		if err != nil || !strings.Contains(raw, `"languages":["zh-Hans","pt-BR","en"]`) {
+			t.Fatalf("%v %s", err, raw)
 		}
-		for lang, want := range map[string]string{"zh-CN": "旧的一行", "zh-Hans": "旧的一行", "en-GB": "an english line"} {
-			if got := quoteText(quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang="+lang)); got != want {
-				t.Errorf("%s: %q", lang, got)
-			}
+		// The lines of a language are written under its tag.
+		if code, r := x.adm("PUT", "/api/admin/daily/lines", map[string]any{"lang": "ZH-hans", "text": "新的一行\n另一行"}); code != 200 || asMap(asMap(r["lines"])["byLang"])["zh-Hans"] != float64(2) {
+			t.Fatalf("%d %v", code, r)
 		}
-		// Saving the lines of the language writes them under its tag, once.
-		if code, r := x.adm("PUT", "/api/admin/daily/lines", map[string]any{"lang": "ZH-hans", "text": "新的一行\n另一行"}); code != 200 || asMap(asMap(r["lines"])["byLang"])["zh-Hans"] != float64(2) || r["lines"].(map[string]any)["total"] != float64(3) {
+		if code, r := x.adm("PUT", "/api/admin/daily/lines", map[string]any{"lang": "en", "text": "an english line"}); code != 200 || r["lines"].(map[string]any)["total"] != float64(3) {
 			t.Fatalf("%d %v", code, r)
 		}
 		counts, _ := store.DailyLineCounts(ctx, st.Q())
-		if counts["zh"] != 0 || counts["zh-Hans"] != 2 || counts["en"] != 1 {
+		if counts["zh-Hans"] != 2 || counts["en"] != 1 || len(counts) != 2 {
 			t.Fatalf("%v", counts)
+		}
+		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "list"}}); code != 200 {
+			t.Fatalf("%d %v", code, r)
+		}
+		for lang, want := range map[string]string{"zh-CN": "新的一行", "zh-Hans": "新的一行", "en-GB": "an english line"} {
+			got := quoteText(quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang="+lang))
+			if lang == "en-GB" && got != want || lang != "en-GB" && got != "新的一行" && got != "另一行" {
+				t.Errorf("%s: %q", lang, got)
+			}
 		}
 		for _, l := range []string{"cn", "english", "zh_CN"} {
 			if code, r := x.adm("PUT", "/api/admin/daily/lines", map[string]any{"lang": l, "text": "x"}); code != 400 || r["error"] != "bad_language" {
@@ -167,16 +187,11 @@ func TestDailyLanguagesAreCanonicalAndOldValuesAreRead(t *testing.T) {
 				t.Errorf("delete %s: %d %v", l, code, r)
 			}
 		}
-		// The next save of the settings writes everything back canonical.
-		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"languages": []any{"zh", "pt-br"}}); code != 200 || fmt.Sprint(r["languages"]) != "[zh-Hans pt-BR]" {
+		// An interface in zh is in zh-Hans, and is chosen for readers of zh-CN.
+		if code, r := x.putAPI("zh-one", x.qs.api("zh-one", "zh")); code != 200 || asMap(asSlice(r["apis"])[0])["lang"] != "zh-Hans" {
 			t.Fatalf("%d %v", code, r)
 		}
-		raw, _, err := store.GetSiteSetting(ctx, st.Q(), "daily")
-		if err != nil || !strings.Contains(raw, `"languages":["zh-Hans","pt-BR"]`) || !strings.Contains(raw, `"lang":"zh-Hans"`) || strings.Contains(raw, "gone.example") {
-			t.Fatalf("%v %s", err, raw)
-		}
-		// An old interface in zh is chosen for readers of zh-CN, and the language of an interface is a tag.
-		x.choose("old")
+		x.choose("zh-one")
 		if got := quoteText(quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang=zh-CN")); !strings.HasSuffix(got, "in zh-Hans") {
 			t.Errorf("%q", got)
 		}
@@ -378,15 +393,15 @@ func TestBuiltInInterfaces(t *testing.T) {
 	})
 }
 
-// There is no list of hosts: one that is sent is ignored, and an interface may
-// only contact the host and port of its own address.
+// There is no list of hosts: one that is sent is refused as an unknown key, and
+// an interface may only contact the host and port of its own address.
 func TestNoListOfHosts(t *testing.T) {
 	withExternal(t, func(x *extFixture) {
 		t := x.t
-		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"hosts": []any{"a.example"}, "languages": []any{"en"}}); code != 200 || r["hosts"] != nil || fmt.Sprint(r["languages"]) != "[en]" {
+		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"hosts": []any{"a.example"}, "languages": []any{"en"}}); code != 400 {
 			t.Fatalf("%d %v", code, r)
 		}
-		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"hosts": "not a list"}); code != 200 || r["hosts"] != nil {
+		if code, r := x.adm("GET", "/api/admin/daily", nil); code != 200 || r["hosts"] != nil || fmt.Sprint(r["languages"]) != "[zh-Hans en]" {
 			t.Fatalf("%d %v", code, r)
 		}
 		// An interface works with no host saved anywhere, and a trial too.

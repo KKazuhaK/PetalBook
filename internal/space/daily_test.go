@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -586,20 +585,6 @@ func TestDailyTwoSpellingsOfALanguageAreMergedOnSave(t *testing.T) {
 
 // Stored settings are read leniently: what can be is made canonical, what
 // cannot is dropped and named, and the rest is kept.
-func TestReadStoredDailyConfig(t *testing.T) {
-	c, dropped := ReadStoredDailyConfig([]byte(`{"folder":"any","cn":{"folder":"x"},"zh":{"tag":"a"},"zh-Hans":{"tag":"b"},"pt-br":{"tag":"c"},"en":{"folder":"e","tag":"f"}}`))
-	if c == nil || c.All == nil || *c.All.Folder != "any" || len(c.ByLang) != 2 || c.ByLang["zh-Hans"].Tag != "b" || c.ByLang["pt-BR"].Tag != "c" {
-		t.Fatalf("%+v", c)
-	}
-	sort.Strings(dropped)
-	if fmt.Sprint(dropped) != "[cn en zh]" {
-		t.Fatalf("%v", dropped)
-	}
-	if c, dropped := ReadStoredDailyConfig([]byte(`{"cn":{"folder":"x"}}`)); c != nil || fmt.Sprint(dropped) != "[cn]" {
-		t.Fatalf("%+v %v", c, dropped)
-	}
-}
-
 // A pick says who wrote the page and where it is from, only when the page does.
 func TestDailyPickCarriesTheAuthorAndSourceOfAPage(t *testing.T) {
 	s := open(t)

@@ -86,13 +86,6 @@ export const adminZhCN = {
   daily: {
     help: '这里决定所有空间的每日文案：空间能做什么、语言、全站默认、粘贴的文案，以及外部接口。服务器统一去取并缓存，浏览器从不直接请求外部接口。',
     loadFailed: '读不到每日文案的设置',
-    noticesTitle: '升级时自动做的调整',
-    noticesDismiss: '知道了',
-    noticeRenamed: (id: string, to: string) =>
-      `接口 ${id} 和同名的内置接口不一样，已保留为 ${to}；选了它的空间和全站默认都跟着改了。`,
-    noticeKept: (id: string) => `接口 ${id} 和内置接口同名，它的请求头没法迁移，所以保留原名；删掉它就能启用内置接口。`,
-    noticeDropped: (code: string) =>
-      `全站默认里的「${code}」不是语言标签（或是同一语言的另一种写法），已去掉；其余设置都保留了。`,
     failed: '没有成功',
     saved: '已保存',
     deleted: '已删除',

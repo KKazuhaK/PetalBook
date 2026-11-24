@@ -1520,18 +1520,10 @@ export type DailyDefault =
   | null
   | { kind: 'list' }
   | { kind: 'space'; space: string; source: DailySettings }
-  // Each language lists its interfaces in order; the server also reads a single id.
+  // Each language lists its interfaces in order.
   | { kind: 'api'; apis: Record<string, string[]>; options?: DailyOptionChoice }
   // Each language lists sources of any kind, in order: tried in turn by day, the next when one has nothing.
   | { kind: 'sources'; sources: Record<string, DailySourceItem[]> }
-export interface DailyNotice {
-  code: 'builtin_adopted' | 'builtin_renamed' | 'builtin_kept' | 'dropped_language' | 'unreadable' | (string & {})
-  id?: string
-  to?: string
-  lang?: string
-  field?: string
-  message: string
-}
 export interface AdminDaily {
   default: DailyDefault
   languages: string[]
@@ -1540,8 +1532,6 @@ export interface AdminDaily {
   apis: DailyApi[]
   providers: DailyProvider[]
   lines: { total: number; byLang: Record<string, number>; max: number }
-  // What the server changed in the settings by itself, reading what an earlier version saved; absent from older servers.
-  notices?: DailyNotice[]
   // Whether spaces may use a source of their own and pick an external interface; absent until the server has them.
   allow?: DailyAllow
 }

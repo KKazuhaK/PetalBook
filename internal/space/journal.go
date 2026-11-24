@@ -43,8 +43,8 @@ type jrec struct {
 	// one, and the folder's own names are not paths to commit.
 	Dir bool `json:"dir,omitempty"`
 	// AuthorName and AuthorEmail say who made the change, so a commit after a
-	// crash is still theirs. Journals from before authors were recorded have
-	// neither: those changes get the space's default author.
+	// crash is still theirs. A record without them gets the space's default
+	// author.
 	AuthorName  string `json:"an,omitempty"`
 	AuthorEmail string `json:"ae,omitempty"`
 	// Via is the means of the change (Author.Via).
