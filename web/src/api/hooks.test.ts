@@ -3,8 +3,25 @@ import { MutationObserver, QueryClient } from '@tanstack/react-query'
 import { applySession, keys, putTableRow, lastSpace, refreshSpaceAccess, rememberSpace, secretMutation } from './hooks'
 import type { Page, SessionInfo, User } from './types'
 
-const user = (over: Partial<User> = {}): User => ({ id: 'u1', username: 'ada', name: 'Ada', email: '', emailVerified: false, role: 'member', disabled: false, passkeyRequired: false, created: '2026-11-21T08:30:00Z', ...over })
-const session = (over: Partial<SessionInfo> = {}): SessionInfo => ({ mode: 'accounts', user: null, setup: false, methods: { password: true, oidc: null }, ...over })
+const user = (over: Partial<User> = {}): User => ({
+  id: 'u1',
+  username: 'ada',
+  name: 'Ada',
+  email: '',
+  emailVerified: false,
+  role: 'member',
+  disabled: false,
+  passkeyRequired: false,
+  created: '2026-11-21T08:30:00Z',
+  ...over,
+})
+const session = (over: Partial<SessionInfo> = {}): SessionInfo => ({
+  mode: 'accounts',
+  user: null,
+  setup: false,
+  methods: { password: true, oidc: null },
+  ...over,
+})
 
 describe('signing in and out', () => {
   it('replaces the session and drops every cached query, so nothing of one person shows for another', () => {
@@ -15,7 +32,12 @@ describe('signing in and out', () => {
     applySession(qc, user({ id: 'u2', name: 'Bo' }))
     expect(qc.getQueryData(keys.list('sp1', {}))).toBeUndefined()
     expect(qc.getQueryData(keys.account)).toBeUndefined()
-    expect(qc.getQueryData<SessionInfo>(keys.session)).toMatchObject({ mode: 'accounts', setup: false, user: { id: 'u2' }, methods: { password: true } })
+    expect(qc.getQueryData<SessionInfo>(keys.session)).toMatchObject({
+      mode: 'accounts',
+      setup: false,
+      user: { id: 'u2' },
+      methods: { password: true },
+    })
   })
 
   it('signing out keeps the mode and the sign-in methods and clears the user', () => {
@@ -61,7 +83,12 @@ describe('a mutation that carries a secret', () => {
       obs.reset()
       off()
       await new Promise((r) => setTimeout(r, 0))
-      return JSON.stringify(qc.getMutationCache().getAll().map((m) => m.state))
+      return JSON.stringify(
+        qc
+          .getMutationCache()
+          .getAll()
+          .map((m) => m.state),
+      )
     }
     expect(await run(secretMutation)).not.toContain('SECRET-123')
     // Without it the default keeps the variables around: this is what the option is for.
@@ -74,7 +101,10 @@ describe('a request refused for access or not found inside a space', () => {
   const setup = () => {
     vi.useFakeTimers()
     const qc = new QueryClient()
-    const stale = () => [qc.getQueryState(keys.spaces)?.isInvalidated, qc.getQueryState(keys.viewedSpace('sp1'))?.isInvalidated]
+    const stale = () => [
+      qc.getQueryState(keys.spaces)?.isInvalidated,
+      qc.getQueryState(keys.viewedSpace('sp1'))?.isInvalidated,
+    ]
     const answered = () => {
       qc.setQueryData(keys.spaces, { spaces: [] })
       qc.setQueryData(keys.viewedSpace('sp1'), null)
@@ -135,8 +165,12 @@ describe('a request refused for access or not found inside a space', () => {
   it('counts the window from a failed fetch as well', async () => {
     vi.useFakeTimers()
     const qc = new QueryClient()
-    await qc.fetchQuery({ queryKey: keys.viewedSpace('sp1'), queryFn: () => Promise.reject(new Error('down')), retry: false }).catch(() => {})
-    await qc.fetchQuery({ queryKey: keys.spaces, queryFn: () => Promise.reject(new Error('down')), retry: false }).catch(() => {})
+    await qc
+      .fetchQuery({ queryKey: keys.viewedSpace('sp1'), queryFn: () => Promise.reject(new Error('down')), retry: false })
+      .catch(() => {})
+    await qc
+      .fetchQuery({ queryKey: keys.spaces, queryFn: () => Promise.reject(new Error('down')), retry: false })
+      .catch(() => {})
     const spy = vi.spyOn(qc, 'invalidateQueries')
     refreshSpaceAccess(qc, 'sp1', true)
     expect(spy).not.toHaveBeenCalled()
@@ -147,9 +181,19 @@ describe('a request refused for access or not found inside a space', () => {
 
 describe('putTableRow', () => {
   const row = { id: 'p1', rev: 'r0', updated: 'x', props: {}, partialProps: ['old'] }
-  const page = (over: Partial<Page>): Page => ({ id: 'p1', path: 'p1.md', folder: '', rev: 'r1', updated: 'y', meta: { title: 'T', hex: 16 }, body: '', ...over })
+  const page = (over: Partial<Page>): Page => ({
+    id: 'p1',
+    path: 'p1.md',
+    folder: '',
+    rev: 'r1',
+    updated: 'y',
+    meta: { title: 'T', hex: 16 },
+    body: '',
+    ...over,
+  })
   const key = [...keys.pages('sp'), 'table', 'x']
-  const read = (qc: QueryClient) => (qc.getQueryData(key) as { pages: { items: Record<string, unknown>[] }[] }).pages[0].items[0]
+  const read = (qc: QueryClient) =>
+    (qc.getQueryData(key) as { pages: { items: Record<string, unknown>[] }[] }).pages[0].items[0]
 
   it('takes the partial keys from the server, which sees how the file spells a value, not from the header it was given', () => {
     const qc = new QueryClient()

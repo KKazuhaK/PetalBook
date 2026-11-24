@@ -2,7 +2,21 @@
 // the rules (which sections a person sees, how an old address maps to one) are
 // tested without rendering anything.
 
-export type SectionId = 'profile' | 'preferences' | 'security' | 'tokens' | 'connections' | 'usage' | 'general' | 'types' | 'templates' | 'home' | 'members' | 'sync' | 'offline' | 'import'
+export type SectionId =
+  | 'profile'
+  | 'preferences'
+  | 'security'
+  | 'tokens'
+  | 'connections'
+  | 'usage'
+  | 'general'
+  | 'types'
+  | 'templates'
+  | 'home'
+  | 'members'
+  | 'sync'
+  | 'offline'
+  | 'import'
 export type GroupId = 'account' | 'space'
 
 export interface SectionDef {

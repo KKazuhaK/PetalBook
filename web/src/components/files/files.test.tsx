@@ -28,7 +28,16 @@ let restoreFetch: typeof fetch
 beforeAll(() => {
   ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
   // jsdom has no media queries; the sidebar and the breadcrumbs ask for one.
-  window.matchMedia ??= ((query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false, onchange: null })) as typeof window.matchMedia
+  window.matchMedia ??= ((query: string) => ({
+    matches: false,
+    media: query,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+    dispatchEvent: () => false,
+    onchange: null,
+  })) as typeof window.matchMedia
   window.ResizeObserver ??= class {
     observe() {}
     unobserve() {}
@@ -50,7 +59,11 @@ const settle = async (check: () => boolean, what: string) => {
 const byLabel = (label: string) => document.querySelector<HTMLElement>(`[aria-label="${label}"]`)
 const menuItems = () => [...document.querySelectorAll('[role="menuitem"]')].map((e) => e.textContent?.trim())
 
-async function mount(initial: string, ui: (path: string) => React.ReactNode, options: Parameters<typeof createMockServer>[0] = {}) {
+async function mount(
+  initial: string,
+  ui: (path: string) => React.ReactNode,
+  options: Parameters<typeof createMockServer>[0] = {},
+) {
   const server = createMockServer({ now: () => Date.now(), ...options })
   restoreFetch = globalThis.fetch
   globalThis.fetch = mockFetch(server)
@@ -96,7 +109,10 @@ describe('the folder listing', () => {
 
   it('lists the subfolders before the pages, with the pages in and below each', async () => {
     await listing()
-    await settle(() => entry('f:随笔') !== null && document.querySelectorAll('[data-file-key^="p:"]').length > 0, 'listing')
+    await settle(
+      () => entry('f:随笔') !== null && document.querySelectorAll('[data-file-key^="p:"]').length > 0,
+      'listing',
+    )
     const keys = [...document.querySelectorAll('[data-file-key]')].map((e) => e.getAttribute('data-file-key')!)
     expect(keys.findIndex((k) => k.startsWith('p:'))).toBeGreaterThan(keys.lastIndexOf('f:随笔'))
     // 随笔 holds 5 pages, 2026 four more below it.
@@ -109,10 +125,21 @@ describe('the folder listing', () => {
     await listing()
     await settle(() => entry('f:随笔') !== null, 'folders')
     await act(async () => {
-      entry('f:随笔')!.querySelector('a')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }))
+      entry('f:随笔')!
+        .querySelector('a')!
+        .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }))
     })
     await settle(() => menuItems().length > 0, 'folder menu')
-    expect(menuItems()).toEqual([t.manage.open, t.fav.addFolder, t.manage.rename, t.manage.setType, t.manage.setTemplate, t.manage.select, t.manage.move, t.manage.delete])
+    expect(menuItems()).toEqual([
+      t.manage.open,
+      t.fav.addFolder,
+      t.manage.rename,
+      t.manage.setType,
+      t.manage.setTemplate,
+      t.manage.select,
+      t.manage.move,
+      t.manage.delete,
+    ])
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
@@ -120,7 +147,9 @@ describe('the folder listing', () => {
 
     const page = document.querySelector<HTMLElement>('[data-file-key^="p:"]')!
     await act(async () => {
-      page.querySelector('a')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }))
+      page
+        .querySelector('a')!
+        .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }))
     })
     await settle(() => menuItems().length > 0, 'page menu')
     // A page is not renamed here (that is its title, in the editor).
@@ -131,7 +160,9 @@ describe('the folder listing', () => {
     await listing()
     await settle(() => entry('f:随笔') !== null, 'folders')
     await act(async () => {
-      document.querySelector('[data-slot="context-menu-trigger"]')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 500 }))
+      document
+        .querySelector('[data-slot="context-menu-trigger"]')!
+        .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 500 }))
     })
     await settle(() => menuItems().length > 0, 'empty-space menu')
     expect(menuItems()).toEqual([t.manage.newPage, t.manage.newFolder])
@@ -167,7 +198,9 @@ describe('the folder listing', () => {
     const keys = [...document.querySelectorAll('[data-file-key]')].map((e) => e.getAttribute('data-file-key')!)
     await act(async () => byLabel(t.manage.selectItem('读书'))!.click())
     const last = entry(keys[3])!.querySelector<HTMLElement>('[role="checkbox"]')!
-    await act(async () => last.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: true })))
+    await act(async () =>
+      last.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: true })),
+    )
     const from = keys.indexOf('f:读书')
     expect(document.querySelector('[role="toolbar"]')!.textContent).toContain(t.manage.selected(Math.abs(from - 3) + 1))
   })
@@ -184,7 +217,9 @@ describe('the folder listing', () => {
     expect(dialog).toContain(t.manage.deleteTitleOne('随笔'))
     expect(dialog).toContain(t.manage.deleteFolderPages(9))
     await act(async () => {
-      ;[...document.querySelectorAll<HTMLElement>('[role="alertdialog"] button')].find((b) => b.textContent === t.manage.cancel)!.click()
+      ;[...document.querySelectorAll<HTMLElement>('[role="alertdialog"] button')]
+        .find((b) => b.textContent === t.manage.cancel)!
+        .click()
     })
     await settle(() => document.querySelector('[role="alertdialog"]') === null, 'dialog closed')
     await act(async () => {
@@ -198,7 +233,9 @@ describe('the folder listing', () => {
     await settle(() => entry('f:随笔') !== null, 'folders')
     await act(async () => byLabel(t.manage.selectItem('随笔'))!.click())
     await act(async () => {
-      ;[...document.querySelectorAll<HTMLElement>('[role="toolbar"] button')].find((b) => b.textContent === t.manage.move)!.click()
+      ;[...document.querySelectorAll<HTMLElement>('[role="toolbar"] button')]
+        .find((b) => b.textContent === t.manage.move)!
+        .click()
     })
     await settle(() => document.querySelector('[role="radiogroup"]') !== null, 'picker')
     const options = [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')]
@@ -215,11 +252,15 @@ describe('the folder listing', () => {
     await listing()
     await settle(() => entry('f:随笔') !== null, 'folders')
     await act(async () => {
-      document.querySelector('[data-slot="context-menu-trigger"]')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 500 }))
+      document
+        .querySelector('[data-slot="context-menu-trigger"]')!
+        .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 500 }))
     })
     await settle(() => menuItems().length > 0, 'menu')
     await act(async () => {
-      ;[...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((e) => e.textContent?.trim() === t.manage.newFolder)!.click()
+      ;[...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+        .find((e) => e.textContent?.trim() === t.manage.newFolder)!
+        .click()
     })
     await settle(() => document.querySelector('[role="dialog"]') !== null, 'new folder dialog')
     const dialog = document.querySelector('[role="dialog"]')!
@@ -274,10 +315,20 @@ describe('the sidebar tree', () => {
     await sidebar()
     await settle(() => rowFor('随笔') !== null, 'tree')
     await act(async () => {
-      rowFor('随笔')!.querySelector('a')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 200 }))
+      rowFor('随笔')!
+        .querySelector('a')!
+        .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 200 }))
     })
     await settle(() => menuItems().length > 0, 'tree menu')
-    expect(menuItems()).toEqual([t.manage.open, t.fav.addFolder, t.manage.rename, t.manage.setType, t.manage.setTemplate, t.manage.move, t.manage.delete])
+    expect(menuItems()).toEqual([
+      t.manage.open,
+      t.fav.addFolder,
+      t.manage.rename,
+      t.manage.setType,
+      t.manage.setTemplate,
+      t.manage.move,
+      t.manage.delete,
+    ])
   })
 })
 
@@ -303,7 +354,10 @@ describe('dragging in the listing', () => {
     await settle(() => document.body.textContent!.includes(t.manage.moved(1, '归档')), 'moved toast')
     expect(document.body.textContent).toContain(t.manage.undo)
     // The page left the root listing.
-    await settle(() => document.querySelector(`[data-file-key="${page.getAttribute('data-file-key')}"]`) === null, 'page gone from the root')
+    await settle(
+      () => document.querySelector(`[data-file-key="${page.getAttribute('data-file-key')}"]`) === null,
+      'page gone from the root',
+    )
     await act(async () => void page.querySelector('a')?.dispatchEvent(dragEvent('dragend')))
   })
 

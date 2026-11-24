@@ -18,7 +18,12 @@ function scalar(v: string): unknown {
   if (s === 'true') return true
   if (s === 'false') return false
   if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s)
-  if (s.startsWith('[') && s.endsWith(']')) return s.slice(1, -1).split(',').map((x) => String(scalar(x))).filter((x) => x !== '')
+  if (s.startsWith('[') && s.endsWith(']'))
+    return s
+      .slice(1, -1)
+      .split(',')
+      .map((x) => String(scalar(x)))
+      .filter((x) => x !== '')
   if (/^(".*"|'.*')$/.test(s) && s.length >= 2) return s.slice(1, -1)
   return s
 }
@@ -56,7 +61,12 @@ export function pageFromMarkdown(text: string, name: string): { meta: Record<str
   return { meta: { ...given, title }, body: rest.replace(/^(\r?\n)+/, '') }
 }
 
-export function runImport(create: (body: Record<string, unknown>) => Page, raw: Uint8Array, folder: string, name: string): ImportReport {
+export function runImport(
+  create: (body: Record<string, unknown>) => Page,
+  raw: Uint8Array,
+  folder: string,
+  name: string,
+): ImportReport {
   if (isZip(raw)) {
     const at = (sub: string) => (folder ? `${folder}/${sub}` : sub)
     const samples: [string, string, string][] = [
@@ -65,7 +75,11 @@ export function runImport(create: (body: Record<string, unknown>) => Page, raw: 
       [at('details'), 'Imported note in a subfolder', 'A page below the target folder.\n'],
     ]
     for (const [f, title, body] of samples) create({ folder: f, meta: { title }, body })
-    return { pages: samples.length, files: 1, skipped: [{ path: 'notes/draft.docx', reason: 'not a Markdown file and no page refers to it' }] }
+    return {
+      pages: samples.length,
+      files: 1,
+      skipped: [{ path: 'notes/draft.docx', reason: 'not a Markdown file and no page refers to it' }],
+    }
   }
   if (!isMarkdownName(name)) throw new HttpError(400, 'invalid', '单个文件需要 name，而且要以 .md 或 .markdown 结尾')
   const text = new TextDecoder().decode(raw)

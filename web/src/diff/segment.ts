@@ -10,7 +10,8 @@ export const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Scri
 
 // Without Intl.Segmenter: one unit per CJK character, whole runs of other
 // letters and digits, one per space run, and any other character on its own.
-const FALLBACK_UNIT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]|(?:(?![\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}])[\p{L}\p{N}_])+|\s+|[\s\S]/gu
+const FALLBACK_UNIT =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]|(?:(?![\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}])[\p{L}\p{N}_])+|\s+|[\s\S]/gu
 
 // Offsets (UTF-16) at which a new word unit starts, ascending, ending with
 // text.length. Never empty for non-empty text.

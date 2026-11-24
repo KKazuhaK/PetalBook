@@ -51,7 +51,8 @@ export function compressibleKind(file: { type: string; name: string }): 'png' | 
   return null
 }
 
-export const needsCompression = (size: number, width: number, height: number) => size > COMPRESS_MIN_BYTES || width > COMPRESS_MAX_SIDE || height > COMPRESS_MAX_SIDE
+export const needsCompression = (size: number, width: number, height: number) =>
+  size > COMPRESS_MIN_BYTES || width > COMPRESS_MAX_SIDE || height > COMPRESS_MAX_SIDE
 
 // Scaled down to fit the longest side, never up.
 export function fitSize(width: number, height: number, max = COMPRESS_MAX_SIDE): { width: number; height: number } {
@@ -59,7 +60,8 @@ export function fitSize(width: number, height: number, max = COMPRESS_MAX_SIDE):
   return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) }
 }
 
-export const worthKeeping = (originalSize: number, newSize: number) => newSize <= originalSize * (1 - COMPRESS_MIN_SAVING)
+export const worthKeeping = (originalSize: number, newSize: number) =>
+  newSize <= originalSize * (1 - COMPRESS_MIN_SAVING)
 
 export const withExtension = (name: string, ext: string) => `${name.replace(/\.[^./\\]+$/, '')}.${ext}`
 

@@ -7,7 +7,16 @@ import type { ApiToken, CreatedToken, TokenAccess } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
 import { TokenItem } from '@/components/tokens/TokenItem'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -83,7 +92,14 @@ export default function TokensPanel() {
                 token={token}
                 action={
                   token.state === 'active' ? (
-                    <Button type="button" variant="outline" size="sm" className="max-sm:w-full" aria-label={tk.revokeLabel(token.name)} onClick={() => setRevoking(token)}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="max-sm:w-full"
+                      aria-label={tk.revokeLabel(token.name)}
+                      onClick={() => setRevoking(token)}
+                    >
                       {tk.revoke}
                     </Button>
                   ) : undefined
@@ -98,7 +114,9 @@ export default function TokensPanel() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{tk.revokeTitle}</AlertDialogTitle>
-            <AlertDialogDescription className="break-words">{revoking ? tk.revokeHelp(revoking.name) : ''}</AlertDialogDescription>
+            <AlertDialogDescription className="break-words">
+              {revoking ? tk.revokeHelp(revoking.name) : ''}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{tk.cancel}</AlertDialogCancel>
@@ -145,7 +163,14 @@ function MakeForm({ onCancel, onMade }: { onCancel: () => void; onMade: (c: Crea
     setBusy(true)
     try {
       // In the order of the list, not of the ticking.
-      onMade(await api.createToken({ name: name.trim(), access, spaces: mine.filter((s) => chosen.has(s.id)).map((s) => s.id), expiresInDays: days }))
+      onMade(
+        await api.createToken({
+          name: name.trim(),
+          access,
+          spaces: mine.filter((s) => chosen.has(s.id)).map((s) => s.id),
+          expiresInDays: days,
+        }),
+      )
       return
     } catch (err) {
       setError(err instanceof ApiError ? (err.code === 'token_limit' ? tk.limit : err.message) : tk.createFailed)
@@ -155,11 +180,31 @@ function MakeForm({ onCancel, onMade }: { onCancel: () => void; onMade: (c: Crea
   }
 
   return (
-    <form className="grid w-full min-w-0 grid-cols-1 gap-4 rounded-lg border p-3 sm:p-4" onSubmit={(e) => void submit(e)} noValidate aria-label={tk.createTitle}>
-      <Field label={tk.name} help={tk.nameHelp} error={problems.name} value={name} onChange={(e) => setName(e.target.value)} maxLength={80} placeholder={tk.namePlaceholder} autoComplete="off" required />
+    <form
+      className="grid w-full min-w-0 grid-cols-1 gap-4 rounded-lg border p-3 sm:p-4"
+      onSubmit={(e) => void submit(e)}
+      noValidate
+      aria-label={tk.createTitle}
+    >
+      <Field
+        label={tk.name}
+        help={tk.nameHelp}
+        error={problems.name}
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        maxLength={80}
+        placeholder={tk.namePlaceholder}
+        autoComplete="off"
+        required
+      />
       <div className="grid min-w-0 gap-1.5">
         <Label htmlFor="token-access">{tk.access}</Label>
-        <NativeSelect id="token-access" value={access} onChange={(e) => setAccess(e.target.value as TokenAccess)} aria-describedby="token-access-help">
+        <NativeSelect
+          id="token-access"
+          value={access}
+          onChange={(e) => setAccess(e.target.value as TokenAccess)}
+          aria-describedby="token-access-help"
+        >
           <option value="read">{tk.accessNames.read}</option>
           <option value="write">{tk.accessNames.write}</option>
         </NativeSelect>
@@ -176,7 +221,12 @@ function MakeForm({ onCancel, onMade }: { onCancel: () => void; onMade: (c: Crea
             {mine.map((s) => (
               <li key={s.id} className="min-w-0">
                 <label className="flex min-w-0 items-start gap-2 text-sm">
-                  <input type="checkbox" className="mt-0.5 size-4 shrink-0 accent-[var(--color-primary)]" checked={chosen.has(s.id)} onChange={() => toggle(s.id)} />
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 size-4 shrink-0 accent-[var(--color-primary)]"
+                    checked={chosen.has(s.id)}
+                    onChange={() => toggle(s.id)}
+                  />
                   <span className="min-w-0 break-words">{s.name}</span>
                 </label>
               </li>
@@ -194,7 +244,12 @@ function MakeForm({ onCancel, onMade }: { onCancel: () => void; onMade: (c: Crea
       </fieldset>
       <div className="grid min-w-0 gap-1.5">
         <Label htmlFor="token-days">{tk.expires}</Label>
-        <NativeSelect id="token-days" value={String(days)} onChange={(e) => setDays(Number(e.target.value))} aria-describedby="token-days-help">
+        <NativeSelect
+          id="token-days"
+          value={String(days)}
+          onChange={(e) => setDays(Number(e.target.value))}
+          aria-describedby="token-days-help"
+        >
           {EXPIRY_CHOICES.map((n) => (
             <option key={n} value={n}>
               {n === 0 ? tk.never : tk.days(n)}
@@ -237,13 +292,24 @@ function FreshToken({ created, onDone }: { created: CreatedToken; onDone: () => 
   }
 
   return (
-    <div className="grid w-full min-w-0 gap-2 rounded-lg border border-brand/40 bg-brand/5 p-3" role="group" aria-labelledby="fresh-token-title">
+    <div
+      className="grid w-full min-w-0 gap-2 rounded-lg border border-brand/40 bg-brand/5 p-3"
+      role="group"
+      aria-labelledby="fresh-token-title"
+    >
       <h3 id="fresh-token-title" className="text-sm font-medium break-words">
         {tk.secretTitle}
       </h3>
       <p className="text-xs break-words text-muted-foreground">{tk.secretHelp}</p>
       <div className="flex min-w-0 flex-wrap gap-2">
-        <Input ref={input} className="w-full min-w-0 flex-1 basis-56 font-mono text-xs" readOnly value={created.secret} aria-label={created.token.name} onFocus={(e) => e.currentTarget.select()} />
+        <Input
+          ref={input}
+          className="w-full min-w-0 flex-1 basis-56 font-mono text-xs"
+          readOnly
+          value={created.secret}
+          aria-label={created.token.name}
+          onFocus={(e) => e.currentTarget.select()}
+        />
         <Button type="button" onClick={() => void copy()}>
           {copied ? tk.copied : tk.copy}
         </Button>

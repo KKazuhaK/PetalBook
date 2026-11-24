@@ -11,7 +11,17 @@ const quiet = 'inline-flex items-center gap-1 text-xs text-muted-foreground'
 // (offline or error, with a retry), or in conflict. Each state has its own
 // icon and words, so it does not depend on colour.
 // `draftSafe`: the server holds everything that was typed (nothing is only in this browser).
-export function SaveIndicator({ snapshot, draftSafe, onRetry, onOpenConflict }: { snapshot: SaveSnapshot; draftSafe: boolean; onRetry: () => void; onOpenConflict: () => void }) {
+export function SaveIndicator({
+  snapshot,
+  draftSafe,
+  onRetry,
+  onOpenConflict,
+}: {
+  snapshot: SaveSnapshot
+  draftSafe: boolean
+  onRetry: () => void
+  onOpenConflict: () => void
+}) {
   const s = t.editor.save
   switch (snapshot.state) {
     case 'saved':
@@ -61,7 +71,13 @@ export function SaveIndicator({ snapshot, draftSafe, onRetry, onOpenConflict }: 
           <button
             type="button"
             onClick={onRetry}
-            title={e.message ? t.fmt.note(draftSafe ? u.commitDraftHint : u.commitLocalHint, e.message) : draftSafe ? u.commitDraftHint : u.commitLocalHint}
+            title={
+              e.message
+                ? t.fmt.note(draftSafe ? u.commitDraftHint : u.commitLocalHint, e.message)
+                : draftSafe
+                  ? u.commitDraftHint
+                  : u.commitLocalHint
+            }
             role="alert"
             className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-warning hover:bg-warning/10"
           >
@@ -96,7 +112,11 @@ export function SaveIndicator({ snapshot, draftSafe, onRetry, onOpenConflict }: 
     }
     case 'conflict':
       return (
-        <button type="button" onClick={onOpenConflict} className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-warning hover:bg-warning/10">
+        <button
+          type="button"
+          onClick={onOpenConflict}
+          className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-warning hover:bg-warning/10"
+        >
           <AlertTriangle className="size-3.5" />
           {s.conflict}
         </button>

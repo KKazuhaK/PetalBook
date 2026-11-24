@@ -501,9 +501,14 @@ type errorBody struct {
 	Accounts *int `json:"accounts,omitempty"`
 	// What a refused group request is about: how many spaces and provider
 	// entries keep a group, the ids of people that do not exist.
-	Spaces   *int     `json:"spaces,omitempty"`
-	Mappings *int     `json:"mappings,omitempty"`
-	Missing  []string `json:"missing,omitempty"`
+	Spaces *int `json:"spaces,omitempty"`
+	// Reason says what is wrong with a configuration (invalid, of a provider).
+	Reason string `json:"reason,omitempty"`
+	// Connections is how many people are connected through a provider that cannot
+	// be removed (provider_in_use).
+	Connections *int     `json:"connections,omitempty"`
+	Mappings    *int     `json:"mappings,omitempty"`
+	Missing     []string `json:"missing,omitempty"`
 	// What a refused quota is about (quota_exceeded): which one, its limit, and
 	// what is used.
 	Quota string `json:"quota,omitempty"`
@@ -812,6 +817,11 @@ func (s *server) failConnection(w http.ResponseWriter, e *connections.Error) {
 		}
 	}
 	body.InstallURL = e.InstallURL
+	if e.Counts != nil {
+		c, sp := e.Counts["connections"], e.Counts["spaces"]
+		body.Connections, body.Spaces = &c, &sp
+	}
+	body.Reason = e.Reason
 	if e.Code == connections.CodeRateLimited {
 		secs := int((e.RetryAfter + time.Second - 1) / time.Second)
 		w.Header().Set("Retry-After", strconv.Itoa(max(secs, 1)))

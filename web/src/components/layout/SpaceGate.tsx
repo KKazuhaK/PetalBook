@@ -23,7 +23,8 @@ export function SpaceGate() {
     if (current && !current.disabled) rememberSpace(space)
   }, [current, space])
   if (spaces.isPending || resolving) return <PageFallback />
-  if (spaces.isError && !spaces.data) return <ErrorState message={spaces.error.message} onRetry={() => void spaces.refetch()} />
+  if (spaces.isError && !spaces.data)
+    return <ErrorState message={spaces.error.message} onRetry={() => void spaces.refetch()} />
   if (!current) return <NotFoundPage message={t.editor.spaceMissing} />
   if (current.disabled) return <SpaceDisabled space={current} />
   // An administrator who is not a member manages the space but reads it only in an audited view. The settings are the

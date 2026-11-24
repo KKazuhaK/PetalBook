@@ -5,17 +5,49 @@
 
 import { useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
-import { AlertTriangle, Check, CircleAlert, CirclePause, Cloud, CloudOff, Copy, ExternalLink, KeyRound, RefreshCw } from 'lucide-react'
+import {
+  AlertTriangle,
+  Check,
+  CircleAlert,
+  CirclePause,
+  Cloud,
+  CloudOff,
+  Copy,
+  ExternalLink,
+  KeyRound,
+  RefreshCw,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { api, ApiError, spaceApi } from '@/api/client'
-import { useAcceptRemote, useConnectRemote, useDisconnectRemote, useActiveSpace, useProvider, useConnectionOwners, useConnectionRepos, useRemote, useSession, useSyncRemote, useUpdateSpace } from '@/api/hooks'
+import {
+  useAcceptRemote,
+  useConnectRemote,
+  useDisconnectRemote,
+  useActiveSpace,
+  useProvider,
+  useConnectionOwners,
+  useConnectionRepos,
+  useRemote,
+  useSession,
+  useSyncRemote,
+  useUpdateSpace,
+} from '@/api/hooks'
 import type { ConnectRemoteInput, ConnectionVia, Remote, RemoteKey, RemoteState, SpaceInfo } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { can } from '@/lib/permissions'
 import { SettingsNote, SettingsSection } from './SettingsParts'
 import { AssetsSection } from './AssetsSection'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -69,7 +101,8 @@ export function InboxSection({ space, readOnly = false, why }: { space: SpaceInf
     e.preventDefault()
     if (update.isPending) return
     const checked = checkFolderPath(value)
-    if ('error' in checked) return setError(checked.error === t.folderRules.empty ? t.inboxSetting.invalid : checked.error)
+    if ('error' in checked)
+      return setError(checked.error === t.folderRules.empty ? t.inboxSetting.invalid : checked.error)
     setError('')
     if (checked.path === space.inbox) return setValue(checked.path)
     try {
@@ -77,14 +110,27 @@ export function InboxSection({ space, readOnly = false, why }: { space: SpaceInf
       setValue(saved.inbox)
       toast.success(t.inboxSetting.saved)
     } catch (err) {
-      setError(err instanceof ApiError && err.code === 'invalid' ? err.message : t.fmt.labelled(t.inboxSetting.failed, err instanceof Error ? err.message : ''))
+      setError(
+        err instanceof ApiError && err.code === 'invalid'
+          ? err.message
+          : t.fmt.labelled(t.inboxSetting.failed, err instanceof Error ? err.message : ''),
+      )
     }
   }
 
   return (
     <SettingsSection title={t.inboxSetting.title} id="inbox-title">
       <form className="grid gap-3" onSubmit={(e) => void submit(e)} noValidate>
-        <Field label={t.inboxSetting.label} help={readOnly ? (why ?? t.inboxSetting.readOnly) : t.inboxSetting.help} value={readOnly ? space.inbox : value} onChange={(e) => setValue(e.target.value)} readOnly={readOnly} error={error} autoComplete="off" spellCheck={false} />
+        <Field
+          label={t.inboxSetting.label}
+          help={readOnly ? (why ?? t.inboxSetting.readOnly) : t.inboxSetting.help}
+          value={readOnly ? space.inbox : value}
+          onChange={(e) => setValue(e.target.value)}
+          readOnly={readOnly}
+          error={error}
+          autoComplete="off"
+          spellCheck={false}
+        />
         {!readOnly && (
           <div>
             <Button type="submit" disabled={update.isPending || value === space.inbox}>
@@ -105,7 +151,10 @@ function RemoteSection({ space }: { space: string }) {
       {remote.isPending ? (
         <PageFallback />
       ) : remote.isError ? (
-        <ErrorState message={t.fmt.labelled(t.remote.loadFailed, remote.error.message)} onRetry={() => void remote.refetch()} />
+        <ErrorState
+          message={t.fmt.labelled(t.remote.loadFailed, remote.error.message)}
+          onRetry={() => void remote.refetch()}
+        />
       ) : remote.data === null ? (
         <>
           <p className="text-sm text-muted-foreground">{t.remote.intro}</p>
@@ -120,12 +169,20 @@ function RemoteSection({ space }: { space: string }) {
 
 // --- the state of the connection ----------------------------------------------------
 
-const STATE_ICON: Record<RemoteState, typeof Cloud> = { ok: Cloud, offline: CloudOff, rewritten: CirclePause, error: CircleAlert }
+const STATE_ICON: Record<RemoteState, typeof Cloud> = {
+  ok: Cloud,
+  offline: CloudOff,
+  rewritten: CirclePause,
+  error: CircleAlert,
+}
 
 function StateBadge({ state }: { state: RemoteState }) {
   const Icon = STATE_ICON[state]
   return (
-    <Badge variant={state === 'ok' ? 'secondary' : state === 'error' ? 'destructive' : 'outline'} className={state === 'offline' || state === 'rewritten' ? 'border-warning text-warning' : ''}>
+    <Badge
+      variant={state === 'ok' ? 'secondary' : state === 'error' ? 'destructive' : 'outline'}
+      className={state === 'offline' || state === 'rewritten' ? 'border-warning text-warning' : ''}
+    >
       <Icon />
       {t.remote.state[state]}
     </Badge>
@@ -163,11 +220,18 @@ function Following({ space, remote }: { space: string; remote: Remote }) {
       <div className="flex flex-wrap items-center gap-2">
         <StateBadge state={remote.state} />
         <span className="text-sm text-muted-foreground" role="status">
-          {remote.lastSync ? t.fmt.labelled(t.remote.lastSync, t.fmt.note(relativeTime(remote.lastSync), absoluteTime(remote.lastSync))) : t.remote.never}
+          {remote.lastSync
+            ? t.fmt.labelled(
+                t.remote.lastSync,
+                t.fmt.note(relativeTime(remote.lastSync), absoluteTime(remote.lastSync)),
+              )
+            : t.remote.never}
         </span>
       </div>
 
-      {remote.state === 'offline' && <Notice icon={CloudOff} title={t.remote.offlineTitle} body={t.remote.offlineBody} error={remote.error} />}
+      {remote.state === 'offline' && (
+        <Notice icon={CloudOff} title={t.remote.offlineTitle} body={t.remote.offlineBody} error={remote.error} />
+      )}
       {remote.state === 'error' && <ErrorNotice remote={remote} />}
       {remote.state === 'rewritten' && <Rewritten space={space} remote={remote} />}
 
@@ -189,7 +253,13 @@ function Following({ space, remote }: { space: string; remote: Remote }) {
         )}
       </dl>
 
-      {remote.credential.type === 'ssh' && <PublicKey publicKey={remote.credential.publicKey} fingerprint={remote.credential.fingerprint} title={t.remote.sshKeyOf} />}
+      {remote.credential.type === 'ssh' && (
+        <PublicKey
+          publicKey={remote.credential.publicKey}
+          fingerprint={remote.credential.fingerprint}
+          title={t.remote.sshKeyOf}
+        />
+      )}
 
       <div className="flex flex-wrap gap-2">
         <Button onClick={() => void syncNow()} disabled={sync.isPending}>
@@ -218,7 +288,11 @@ function Following({ space, remote }: { space: string; remote: Remote }) {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t.remote.disconnectCancel}</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" disabled={disconnect.isPending} onClick={() => void doDisconnect()}>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={disconnect.isPending}
+              onClick={() => void doDisconnect()}
+            >
               {t.remote.disconnectConfirm}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -258,9 +332,21 @@ function ErrorNotice({ remote }: { remote: Remote }) {
   }
   const code = remote.errorCode
   const known = (tg.sync.codes as Record<string, { title: string; body: (who: string) => string }>)[code]
-  if (!known || !Object.hasOwn(tg.sync.codes, code)) return <Notice icon={AlertTriangle} title={t.remote.errorTitle} body={t.remote.errorBody} error={remote.error} tone="error" />
+  if (!known || !Object.hasOwn(tg.sync.codes, code))
+    return (
+      <Notice
+        icon={AlertTriangle}
+        title={t.remote.errorTitle}
+        body={t.remote.errorBody}
+        error={remote.error}
+        tone="error"
+      />
+    )
   return (
-    <div role="alert" className="grid grid-cols-1 gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
+    <div
+      role="alert"
+      className="grid grid-cols-1 gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm"
+    >
       <p className="flex items-center gap-1.5 font-medium">
         <AlertTriangle className="size-4 shrink-0" />
         {known.title}
@@ -276,7 +362,12 @@ function ErrorNotice({ remote }: { remote: Remote }) {
           </Button>
         )}
         {code === 'installation_gone' && github.data?.app && (
-          <a className="inline-flex items-center gap-1 text-xs break-all underline underline-offset-4" href={github.data.app.installUrl} target="_blank" rel="noreferrer noopener">
+          <a
+            className="inline-flex items-center gap-1 text-xs break-all underline underline-offset-4"
+            href={github.data.app.installUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+          >
             {tg.sync.openInstall}
             <ExternalLink className="size-3 shrink-0" />
           </a>
@@ -286,9 +377,24 @@ function ErrorNotice({ remote }: { remote: Remote }) {
   )
 }
 
-function Notice({ icon: Icon, title, body, error, tone = 'warning' }: { icon: typeof Cloud; title: string; body: string; error?: string; tone?: 'warning' | 'error' }) {
+function Notice({
+  icon: Icon,
+  title,
+  body,
+  error,
+  tone = 'warning',
+}: {
+  icon: typeof Cloud
+  title: string
+  body: string
+  error?: string
+  tone?: 'warning' | 'error'
+}) {
   return (
-    <div role="alert" className={`grid gap-1 rounded-lg border p-3 text-sm ${tone === 'error' ? 'border-destructive/40 bg-destructive/5' : 'border-warning/50 bg-warning/5'}`}>
+    <div
+      role="alert"
+      className={`grid gap-1 rounded-lg border p-3 text-sm ${tone === 'error' ? 'border-destructive/40 bg-destructive/5' : 'border-warning/50 bg-warning/5'}`}
+    >
       <p className="flex items-center gap-1.5 font-medium">
         <Icon className="size-4 shrink-0" />
         {title}
@@ -391,7 +497,15 @@ function PublicKey({ publicKey, fingerprint, title }: { publicKey: string; finge
   return (
     <div className="grid gap-2 rounded-lg border p-3" role="group" aria-label={title}>
       <h3 className="text-sm font-medium">{t.remote.addKeyTitle}</h3>
-      <Textarea ref={area} readOnly rows={3} value={publicKey} aria-label={t.remote.publicKey} className="font-mono text-xs break-all" onFocus={(e) => e.currentTarget.select()} />
+      <Textarea
+        ref={area}
+        readOnly
+        rows={3}
+        value={publicKey}
+        aria-label={t.remote.publicKey}
+        className="font-mono text-xs break-all"
+        onFocus={(e) => e.currentTarget.select()}
+      />
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" variant="outline" size="sm" onClick={() => void copy()}>
           {copied ? <Check /> : <Copy />}
@@ -403,7 +517,9 @@ function PublicKey({ publicKey, fingerprint, title }: { publicKey: string; finge
       </div>
       <p className="text-xs text-muted-foreground">{t.remote.addKeyHow}</p>
       <p className="text-xs text-muted-foreground">
-        {t.remote.fingerprint}{t.fmt.colon}<code className="font-mono break-all">{fingerprint}</code>
+        {t.remote.fingerprint}
+        {t.fmt.colon}
+        <code className="font-mono break-all">{fingerprint}</code>
       </p>
     </div>
   )
@@ -413,7 +529,8 @@ function PublicKey({ publicKey, fingerprint, title }: { publicKey: string; finge
 
 const looksSsh = (url: string) => /^(ssh:\/\/|[\w.-]+@[\w.-]+:)/.test(url.trim())
 const looksHttps = (url: string) => /^https:\/\//i.test(url.trim())
-const looksGitHub = (url: string) => /^(https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)[^/\s]+\/[^/\s]+/i.test(url.trim())
+const looksGitHub = (url: string) =>
+  /^(https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)[^/\s]+\/[^/\s]+/i.test(url.trim())
 
 // What the server said to a connect that did not go through, in plain words.
 function Problem({ error }: { error: unknown }) {
@@ -458,15 +575,23 @@ function ConnectForm({ space, existing, onDone }: { space: string; existing: Rem
   const connect = useConnectRemote(space)
   const [url, setUrl] = useState(existing?.url ?? '')
   const [branch, setBranch] = useState(existing?.branch ?? '')
-  const [kind, setKind] = useState<'ssh' | 'token' | 'github'>(existing?.credential.type === 'connection' ? 'github' : (existing?.credential.type ?? 'ssh'))
+  const [kind, setKind] = useState<'ssh' | 'token' | 'github'>(
+    existing?.credential.type === 'connection' ? 'github' : (existing?.credential.type ?? 'ssh'),
+  )
   const github = useProvider('github')
   const githubOffered = !!github.data?.app || existing?.credential.type === 'connection'
-  const [via, setVia] = useState<ConnectionVia>(existing?.credential.type === 'connection' ? existing.credential.via : 'app')
+  const [via, setVia] = useState<ConnectionVia>(
+    existing?.credential.type === 'connection' ? existing.credential.via : 'app',
+  )
   // Until the person picks one, the address decides.
   const [chose, setChose] = useState(existing !== null)
   const [username, setUsername] = useState(existing?.credential.type === 'token' ? existing.credential.username : '')
   const [token, setToken] = useState('')
-  const [key, setKey] = useState<RemoteKey | null>(existing?.credential.type === 'ssh' ? { publicKey: existing.credential.publicKey, fingerprint: existing.credential.fingerprint } : null)
+  const [key, setKey] = useState<RemoteKey | null>(
+    existing?.credential.type === 'ssh'
+      ? { publicKey: existing.credential.publicKey, fingerprint: existing.credential.fingerprint }
+      : null,
+  )
   const [keyBusy, setKeyBusy] = useState(false)
   const [keyError, setKeyError] = useState('')
   const [rotateOpen, setRotateOpen] = useState(false)
@@ -501,7 +626,10 @@ function ConnectForm({ space, existing, onDone }: { space: string; existing: Rem
     setError(null)
     const errs: typeof fieldError = {}
     // owner/name is enough for GitHub.
-    const address = kind === 'github' && /^[\w.-]+\/[\w.-]+$/.test(url.trim()) ? `https://github.com/${url.trim().replace(/\.git$/, '')}.git` : url.trim()
+    const address =
+      kind === 'github' && /^[\w.-]+\/[\w.-]+$/.test(url.trim())
+        ? `https://github.com/${url.trim().replace(/\.git$/, '')}.git`
+        : url.trim()
     if (address === '') errs.url = t.remote.urlRequired
     else if (kind === 'ssh' && !looksSsh(address)) errs.url = t.remote.mismatchSsh
     else if (kind === 'token' && !looksHttps(address)) errs.url = t.remote.mismatchToken
@@ -513,7 +641,12 @@ function ConnectForm({ space, existing, onDone }: { space: string; existing: Rem
     const input: ConnectRemoteInput = {
       url: address,
       ...(branch.trim() ? { branch: branch.trim() } : {}),
-      credential: kind === 'ssh' ? { type: 'ssh' } : kind === 'github' ? { type: 'connection', provider: 'github', via } : { type: 'token', ...(username.trim() ? { username: username.trim() } : {}), ...(token ? { token } : {}) },
+      credential:
+        kind === 'ssh'
+          ? { type: 'ssh' }
+          : kind === 'github'
+            ? { type: 'connection', provider: 'github', via }
+            : { type: 'token', ...(username.trim() ? { username: username.trim() } : {}), ...(token ? { token } : {}) },
     }
     try {
       await connect.mutateAsync(input)
@@ -530,14 +663,35 @@ function ConnectForm({ space, existing, onDone }: { space: string; existing: Rem
 
   return (
     <form className="grid gap-4" onSubmit={(e) => void submit(e)} noValidate>
-      <Field label={t.remote.url} help={t.remote.urlHelp} value={url} onChange={(e) => pickByAddress(e.target.value)} placeholder={t.remote.urlPlaceholder} error={fieldError.url} autoComplete="off" spellCheck={false} inputMode="url" />
-      <Field label={t.remote.branch} help={t.remote.branchHelp} value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="main" autoComplete="off" spellCheck={false} />
+      <Field
+        label={t.remote.url}
+        help={t.remote.urlHelp}
+        value={url}
+        onChange={(e) => pickByAddress(e.target.value)}
+        placeholder={t.remote.urlPlaceholder}
+        error={fieldError.url}
+        autoComplete="off"
+        spellCheck={false}
+        inputMode="url"
+      />
+      <Field
+        label={t.remote.branch}
+        help={t.remote.branchHelp}
+        value={branch}
+        onChange={(e) => setBranch(e.target.value)}
+        placeholder="main"
+        autoComplete="off"
+        spellCheck={false}
+      />
 
       <fieldset className="grid gap-2">
         <legend className="mb-1 text-sm font-medium">{t.remote.credential}</legend>
         <div role="radiogroup" aria-label={t.remote.credential} className="flex flex-wrap gap-2">
           {(githubOffered ? (['ssh', 'token', 'github'] as const) : (['ssh', 'token'] as const)).map((k) => (
-            <label key={k} className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-sm has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50 ${kind === k ? 'border-brand bg-brand/5' : ''}`}>
+            <label
+              key={k}
+              className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-sm has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50 ${kind === k ? 'border-brand bg-brand/5' : ''}`}
+            >
               <input
                 type="radio"
                 name={`credential-${space}`}
@@ -563,7 +717,13 @@ function ConnectForm({ space, existing, onDone }: { space: string; existing: Rem
               {/* A new key replaces the old one, which only a space not yet connected allows. */}
               {!existing && (
                 <div>
-                  <Button type="button" variant="ghost" size="sm" onClick={() => setRotateOpen(true)} disabled={keyBusy}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setRotateOpen(true)}
+                    disabled={keyBusy}
+                  >
                     {t.remote.rotateKey}
                   </Button>
                 </div>
@@ -578,28 +738,53 @@ function ConnectForm({ space, existing, onDone }: { space: string; existing: Rem
             </div>
           )}
           {fieldError.key && <p className="text-xs text-destructive">{fieldError.key}</p>}
-          {keyError && <p role="alert" className="text-xs text-destructive">{keyError}</p>}
+          {keyError && (
+            <p role="alert" className="text-xs text-destructive">
+              {keyError}
+            </p>
+          )}
         </div>
       ) : kind === 'github' ? (
         <div className="grid grid-cols-1 gap-3">
           <p className="text-xs text-muted-foreground">{tg.sync.help}</p>
           <div role="radiogroup" aria-label={tg.sync.viaLabel} className="grid grid-cols-1 gap-2">
             {(['app', 'user'] as const).map((v) => (
-              <label key={v} className={`flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 text-sm has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50 ${via === v ? 'border-brand bg-brand/5' : ''}`}>
-                <input type="radio" name={`via-${space}`} className="mt-1 accent-[var(--brand)]" checked={via === v} onChange={() => setVia(v)} />
+              <label
+                key={v}
+                className={`flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 text-sm has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50 ${via === v ? 'border-brand bg-brand/5' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name={`via-${space}`}
+                  className="mt-1 accent-[var(--brand)]"
+                  checked={via === v}
+                  onChange={() => setVia(v)}
+                />
                 <span className="min-w-0">
                   <span className="block font-medium">{v === 'app' ? tg.sync.viaApp : tg.sync.viaUser}</span>
-                  <span className="block text-xs text-muted-foreground">{v === 'app' ? tg.sync.viaAppHelp : tg.sync.viaUserHelp}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {v === 'app' ? tg.sync.viaAppHelp : tg.sync.viaUserHelp}
+                  </span>
                 </span>
               </label>
             ))}
           </div>
-          {via === 'user' && github.data?.connection?.state !== 'ok' && <p className="text-xs text-warning">{tg.sync.needConnection}</p>}
+          {via === 'user' && github.data?.connection?.state !== 'ok' && (
+            <p className="text-xs text-warning">{tg.sync.needConnection}</p>
+          )}
           <RepoPicker onPick={(fullName) => setUrl(fullName)} />
         </div>
       ) : (
         <div className="grid gap-4">
-          <Field label={t.remote.username} help={t.remote.usernameHelp} value={username} onChange={(e) => setUsername(e.target.value)} placeholder="x-access-token" autoComplete="off" spellCheck={false} />
+          <Field
+            label={t.remote.username}
+            help={t.remote.usernameHelp}
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="x-access-token"
+            autoComplete="off"
+            spellCheck={false}
+          />
           <Field
             label={t.remote.tokenField}
             help={hadToken ? t.remote.tokenKeep : t.remote.tokenHelp}
@@ -651,10 +836,16 @@ function RepoPicker({ onPick }: { onPick: (fullName: string) => void }) {
   const list = owners.data?.pages.flatMap((p) => p.items) ?? []
   const [login, setLogin] = useState('')
   const chosen = list.find((o) => o.login === login) ?? list[0]
-  const which = chosen ? (chosen.installationId !== null ? { installation: chosen.installationId } : { mine: true as const }) : null
+  const which = chosen
+    ? chosen.installationId !== null
+      ? { installation: chosen.installationId }
+      : { mine: true as const }
+    : null
   const repos = useConnectionRepos('github', open ? which : null)
   const [filter, setFilter] = useState('')
-  const items = (repos.data?.pages.flatMap((p) => p.items) ?? []).filter((r) => r.fullName.toLowerCase().includes(filter.trim().toLowerCase()))
+  const items = (repos.data?.pages.flatMap((p) => p.items) ?? []).filter((r) =>
+    r.fullName.toLowerCase().includes(filter.trim().toLowerCase()),
+  )
   return (
     <div className="grid grid-cols-1 gap-2">
       <div>
@@ -670,7 +861,11 @@ function RepoPicker({ onPick }: { onPick: (fullName: string) => void }) {
             <p className="text-sm text-muted-foreground">{tg.sync.noOwners}</p>
           ) : (
             <>
-              <NativeSelect aria-label={tg.sync.pickOwner} value={chosen?.login ?? ''} onChange={(e) => setLogin(e.target.value)}>
+              <NativeSelect
+                aria-label={tg.sync.pickOwner}
+                value={chosen?.login ?? ''}
+                onChange={(e) => setLogin(e.target.value)}
+              >
                 {list.map((o) => (
                   <option key={o.login} value={o.login}>
                     {o.login}
@@ -679,12 +874,25 @@ function RepoPicker({ onPick }: { onPick: (fullName: string) => void }) {
               </NativeSelect>
               {owners.hasNextPage && (
                 <div>
-                  <Button type="button" variant="ghost" size="sm" disabled={owners.isFetchingNextPage} onClick={() => void owners.fetchNextPage()}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={owners.isFetchingNextPage}
+                    onClick={() => void owners.fetchNextPage()}
+                  >
                     {tg.newSpace.moreOwners}
                   </Button>
                 </div>
               )}
-              <Input aria-label={tg.sync.filter} placeholder={tg.sync.filter} value={filter} onChange={(e) => setFilter(e.target.value)} className="w-full min-w-0" autoComplete="off" />
+              <Input
+                aria-label={tg.sync.filter}
+                placeholder={tg.sync.filter}
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                className="w-full min-w-0"
+                autoComplete="off"
+              />
               {repos.isPending ? (
                 <PageFallback />
               ) : repos.isError ? (
@@ -697,9 +905,15 @@ function RepoPicker({ onPick }: { onPick: (fullName: string) => void }) {
                 <ul className="max-h-56 divide-y overflow-y-auto rounded-md border">
                   {items.map((r) => (
                     <li key={r.id}>
-                      <button type="button" className="flex w-full min-w-0 flex-wrap items-center gap-x-2 px-3 py-1.5 text-left text-sm break-all hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none" onClick={() => onPick(r.fullName)}>
+                      <button
+                        type="button"
+                        className="flex w-full min-w-0 flex-wrap items-center gap-x-2 px-3 py-1.5 text-left text-sm break-all hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none"
+                        onClick={() => onPick(r.fullName)}
+                      >
                         {r.fullName}
-                        <span className="text-xs text-muted-foreground">{r.private ? tg.sync.private : tg.sync.public}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {r.private ? tg.sync.private : tg.sync.public}
+                        </span>
                         {!r.canPush && <span className="text-xs text-warning">{tg.sync.readOnly}</span>}
                       </button>
                     </li>
@@ -708,7 +922,13 @@ function RepoPicker({ onPick }: { onPick: (fullName: string) => void }) {
               )}
               {repos.hasNextPage && (
                 <div>
-                  <Button type="button" variant="ghost" size="sm" disabled={repos.isFetchingNextPage} onClick={() => void repos.fetchNextPage()}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={repos.isFetchingNextPage}
+                    onClick={() => void repos.fetchNextPage()}
+                  >
                     {repos.isFetchingNextPage && <Spinner />}
                     {tg.sync.moreRepos}
                   </Button>

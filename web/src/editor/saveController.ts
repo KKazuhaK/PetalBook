@@ -194,7 +194,8 @@ type FieldKey = (typeof FIELD_KEYS)[number]
 // `fileMeta` is the header of the file when `meta` is a draft's or a version's:
 // other keys that differ from the file's come along (see Fields.others).
 export function fieldsOf(meta: PageMeta, fileMeta?: PageMeta): Fields {
-  const text = (v: unknown) => (typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : '')
+  const text = (v: unknown) =>
+    typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : ''
   let tags: string[] = []
   if (typeof meta.tags === 'string') tags = meta.tags === '' ? [] : [meta.tags]
   else if (Array.isArray(meta.tags)) tags = meta.tags.filter((t): t is string => typeof t === 'string')
@@ -211,7 +212,13 @@ export function cleanFields(f: Fields): Fields {
     const t = line(raw)
     if (t && !tags.includes(t)) tags.push(t)
   }
-  return { title: line(f.title), subtitle: line(f.subtitle), ...(f.source === undefined ? {} : { source: line(f.source) }), tags, ...(f.others === undefined ? {} : { others: f.others }) }
+  return {
+    title: line(f.title),
+    subtitle: line(f.subtitle),
+    ...(f.source === undefined ? {} : { source: line(f.source) }),
+    tags,
+    ...(f.others === undefined ? {} : { others: f.others }),
+  }
 }
 
 // The keys of a header that `others` stands for.
@@ -228,9 +235,15 @@ export function sameData(a: unknown, b: unknown): boolean {
   if (a === b) return true
   if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
   if (Array.isArray(a) !== Array.isArray(b)) return false
-  if (Array.isArray(a)) return a.length === (b as unknown[]).length && a.every((v, i) => sameData(v, (b as unknown[])[i]))
+  if (Array.isArray(a))
+    return a.length === (b as unknown[]).length && a.every((v, i) => sameData(v, (b as unknown[])[i]))
   const ka = Object.keys(a)
-  return ka.length === Object.keys(b).length && ka.every((k) => k in (b as object) && sameData((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]))
+  return (
+    ka.length === Object.keys(b).length &&
+    ka.every(
+      (k) => k in (b as object) && sameData((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]),
+    )
+  )
 }
 
 // Other keys as the server will have them once written (internal/space/pages.go):
@@ -266,7 +279,8 @@ export function changedFields(served: Fields, typed: Fields): FieldChanges {
   return {
     title: typed.title !== served.title && clean.title !== served.title,
     subtitle: typed.subtitle !== served.subtitle && clean.subtitle !== served.subtitle,
-    source: typed.source !== undefined && typed.source !== (served.source ?? '') && clean.source !== (served.source ?? ''),
+    source:
+      typed.source !== undefined && typed.source !== (served.source ?? '') && clean.source !== (served.source ?? ''),
     tags: !sameTags(typed.tags, served.tags) && !sameTags(clean.tags, served.tags),
   }
 }
@@ -298,7 +312,10 @@ export function applyFields(meta: PageMeta, typed: Fields, changed: FieldChanges
 // other save sends the original body string untouched.
 export function buildSave(base: Page, draft: Draft, normalizedBase: () => string): SavePageInput | null {
   const changed = changedFields(fieldsOf(base.meta), draft)
-  const bodyChanged = draft.body !== undefined && draft.body !== base.body && (draft.bodyTyped === true || draft.body !== normalizedBase())
+  const bodyChanged =
+    draft.body !== undefined &&
+    draft.body !== base.body &&
+    (draft.bodyTyped === true || draft.body !== normalizedBase())
   const settled = draft.others === undefined ? undefined : settleOthers(draft.others, base.meta)
   const others = settled !== undefined && !sameData(settled, othersOf(base.meta)) ? settled : undefined
   if (!bodyChanged && !changed.title && !changed.subtitle && !changed.source && !changed.tags && !others) return null
@@ -316,7 +333,12 @@ export { sameContent }
 const OURS_CAP = 500
 
 // The file with the header and body of a draft: what the editor was loaded with.
-export const draftAsPage = (file: Page, d: { meta: PageMeta; body: string; baseRev?: string }): Page => ({ ...file, meta: d.meta, body: d.body, ...(d.baseRev ? { rev: d.baseRev } : {}) })
+export const draftAsPage = (file: Page, d: { meta: PageMeta; body: string; baseRev?: string }): Page => ({
+  ...file,
+  meta: d.meta,
+  body: d.body,
+  ...(d.baseRev ? { rev: d.baseRev } : {}),
+})
 
 // --- controller --------------------------------------------------------------
 
@@ -516,8 +538,20 @@ export class SaveController {
       const token = `${at}-${++this.tokenSeq}-${Math.random().toString(36).slice(2, 8)}`
       // `sent` says what was sent on this rev, so the
       // next visit can tell "newer than the server's" from "unrelated to it".
-      const confirmed = !this.hasUnsaved() && !this.uncertain && this.serverDraft && !this.stale ? { confirmed: this.serverDraft.version } : {}
-      drafts.write({ baseRev: this.lineageRev(), fields, bodyJson, ...(bodyText === undefined ? {} : { bodyText }), savedAt: at, token, sent: this.knownOurs(), ...confirmed } satisfies DraftContent)
+      const confirmed =
+        !this.hasUnsaved() && !this.uncertain && this.serverDraft && !this.stale
+          ? { confirmed: this.serverDraft.version }
+          : {}
+      drafts.write({
+        baseRev: this.lineageRev(),
+        fields,
+        bodyJson,
+        ...(bodyText === undefined ? {} : { bodyText }),
+        savedAt: at,
+        token,
+        sent: this.knownOurs(),
+        ...confirmed,
+      } satisfies DraftContent)
       this.draftToken = token
     } catch {
       // The draft is a safety net; failing to take it must not break typing.
@@ -606,14 +640,16 @@ export class SaveController {
   // still to store: that goes through the loop, which finds out by itself.
   noticeVisible() {
     this.noticeOnline()
-    if (this.closed || this.running || this.conflict || this.hasUnsaved() || this.uncertain || this.state === 'error') return
+    if (this.closed || this.running || this.conflict || this.hasUnsaved() || this.uncertain || this.state === 'error')
+      return
     void this.refresh()
   }
 
   // The browser is back online.
   noticeOnline() {
     this.backoffUntil = 0
-    if (this.state === 'error' && this.snapshot.error instanceof ApiError && this.snapshot.error.code === 'network') void this.retry()
+    if (this.state === 'error' && this.snapshot.error instanceof ApiError && this.snapshot.error.code === 'network')
+      void this.retry()
   }
 
   private async refresh(again = 1) {
@@ -851,7 +887,11 @@ export class SaveController {
         // The file the dialog showed.
         this.file = info.after
         this.stale = true
-        this.raise({ kind: 'file', theirs: info.after, mine: { ...fieldsOf(info.draft.meta, info.after.meta), body: info.draft.body } })
+        this.raise({
+          kind: 'file',
+          theirs: info.after,
+          mine: { ...fieldsOf(info.draft.meta, info.after.meta), body: info.draft.body },
+        })
       } else this.settle()
     }
     return info.theirs
@@ -934,7 +974,12 @@ export class SaveController {
       for (let guard = 0; guard < 12; guard++) {
         const step = this.nextStep()
         if (step === 'none') break
-        const r = step === 'delete' ? await this.deleteStep() : step === 'store' ? await this.storeStep() : await this.commitStep()
+        const r =
+          step === 'delete'
+            ? await this.deleteStep()
+            : step === 'store'
+              ? await this.storeStep()
+              : await this.commitStep()
         if (r === 'stop') break
         this.failures = 0
         this.backoffUntil = 0
@@ -1089,7 +1134,11 @@ export class SaveController {
     const norm = (p: Page) => () => this.normalize(p.body)
     const equalsFile = buildSave(file, mine, norm(file)) === null
     const equalsDraft = dv ? buildSave(draftAsPage(file, dv), mine, () => this.normalize(dv.body)) === null : false
-    const d = reconcile({ fileRev: this.file.rev, ours: this.knownOurs() }, { file, draft: dv }, { equalsFile, equalsDraft })
+    const d = reconcile(
+      { fileRev: this.file.rev, ours: this.knownOurs() },
+      { file, draft: dv },
+      { equalsFile, equalsDraft },
+    )
     switch (d.kind) {
       case 'conflict-draft':
         // `reconcile` decided; every assignment in this method follows its answer.
@@ -1194,7 +1243,8 @@ export class SaveController {
     try {
       receipt = await this.opts.api.putDraft(this.file.id, { ...input, prev }, { keepalive })
     } catch (e) {
-      if (isConflict(e) && e.draft !== undefined && e.current) return this.diverged({ file: e.current, draft: e.draft }, seq)
+      if (isConflict(e) && e.draft !== undefined && e.current)
+        return this.diverged({ file: e.current, draft: e.draft }, seq)
       this.fail(e)
       return 'stop'
     }
@@ -1241,7 +1291,8 @@ export class SaveController {
     try {
       page = await this.opts.api.commit(this.file.id, version)
     } catch (e) {
-      if (isConflict(e) && e.current && e.draft !== undefined) return this.diverged({ file: e.current, draft: e.draft }, this.editSeq)
+      if (isConflict(e) && e.current && e.draft !== undefined)
+        return this.diverged({ file: e.current, draft: e.draft }, this.editSeq)
       this.fail(e)
       return 'stop'
     }
@@ -1282,5 +1333,12 @@ const draftConflict = (file: Page, other: PageDraft, mine: Draft, afterFile = ot
   draft: toServerDraft(other),
   ...(afterFile ? { after: file } : {}),
 })
-const toServerDraft = (d: PageDraft): ServerDraft => ({ version: d.version, baseRev: d.baseRev, meta: d.meta, body: d.body, updated: d.updated })
-const sameServerDraft = (a: PageDraft | undefined, b: ServerDraft | null) => (a?.version ?? null) === (b?.version ?? null)
+const toServerDraft = (d: PageDraft): ServerDraft => ({
+  version: d.version,
+  baseRev: d.baseRev,
+  meta: d.meta,
+  body: d.body,
+  updated: d.updated,
+})
+const sameServerDraft = (a: PageDraft | undefined, b: ServerDraft | null) =>
+  (a?.version ?? null) === (b?.version ?? null)

@@ -30,7 +30,15 @@ export function lcsPairs(a: ArrayLike<number>, b: ArrayLike<number>, maxD = 1000
   return out
 }
 
-function middle(a: ArrayLike<number>, a0: number, a1: number, b: ArrayLike<number>, b0: number, b1: number, maxD: number): [number, number][] | null {
+function middle(
+  a: ArrayLike<number>,
+  a0: number,
+  a1: number,
+  b: ArrayLike<number>,
+  b0: number,
+  b1: number,
+  maxD: number,
+): [number, number][] | null {
   const N = a1 - a0
   const M = b1 - b0
   const max = Math.min(N + M, maxD)
@@ -54,7 +62,15 @@ function middle(a: ArrayLike<number>, a0: number, a1: number, b: ArrayLike<numbe
   return null
 }
 
-function walkBack(trace: Int32Array[], dEnd: number, N: number, M: number, offset: number, a0: number, b0: number): [number, number][] {
+function walkBack(
+  trace: Int32Array[],
+  dEnd: number,
+  N: number,
+  M: number,
+  offset: number,
+  a0: number,
+  b0: number,
+): [number, number][] {
   const out: [number, number][] = []
   let x = N
   let y = M

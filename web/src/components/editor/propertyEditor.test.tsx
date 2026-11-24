@@ -36,7 +36,8 @@ afterEach(async () => {
 })
 
 const json = 'application/json'
-const send = (server: MockServer, method: string, path: string, body: unknown) => server.handle(method, `/api/spaces/default${path}`, JSON.stringify(body), json)
+const send = (server: MockServer, method: string, path: string, body: unknown) =>
+  server.handle(method, `/api/spaces/default${path}`, JSON.stringify(body), json)
 
 const routes = (element: React.ReactNode) => [
   {
@@ -57,15 +58,28 @@ async function open(which: 'typed' | 'untyped', meta: Record<string, unknown> = 
   m = await mount(null, {
     routes: routes(<PageEditor />),
     entries: (server) => {
-      send(server, 'PUT', '/types/task', { title: '任务', fields: [{ key: 'status', title: '状态', kind: 'select', options: ['todo', 'doing', 'done'] }, { key: 'points', title: '点数', kind: 'number' }] })
+      send(server, 'PUT', '/types/task', {
+        title: '任务',
+        fields: [
+          { key: 'status', title: '状态', kind: 'select', options: ['todo', 'doing', 'done'] },
+          { key: 'points', title: '点数', kind: 'number' },
+        ],
+      })
       send(server, 'POST', '/folders', { path: 'Work' })
       send(server, 'PUT', '/folders/type', { folder: 'Work', type: 'task' })
-      const page = send(server, 'POST', '/pages', { folder: which === 'typed' ? 'Work' : 'Other', meta: { title: '一页', ...meta }, body: '正文\n' }).body as { id: string }
+      const page = send(server, 'POST', '/pages', {
+        folder: which === 'typed' ? 'Work' : 'Other',
+        meta: { title: '一页', ...meta },
+        body: '正文\n',
+      }).body as { id: string }
       id = page.id
       return [`/s/default/p/${id}`]
     },
   })
-  await settle(() => document.querySelector('.pb-prose') !== null && document.body.textContent?.includes('正文') === true, 'the editor')
+  await settle(
+    () => document.querySelector('.pb-prose') !== null && document.body.textContent?.includes('正文') === true,
+    'the editor',
+  )
   return id
 }
 
@@ -87,8 +101,12 @@ describe('the property panel in the page editor', () => {
     expect((byLabel('状态') as HTMLSelectElement).value).toBe('todo')
     // Placed after the title, the subtitle and the tags, before the text.
     const panel = document.querySelector('[data-slot="property-panel"]')!
-    expect(document.querySelector('.pb-title')!.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(panel.compareDocumentPosition(document.querySelector('.pb-prose')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(
+      document.querySelector('.pb-title')!.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(
+      panel.compareDocumentPosition(document.querySelector('.pb-prose')!) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
     expect(panel.querySelector('[data-slot="not-in-type"]')!.textContent).toContain('owner')
   })
 
@@ -133,10 +151,17 @@ describe('the property panel for someone who may only read', () => {
       routes: routes(<PageEditor />),
       entries: (server) => {
         const { space, owner } = shareSpace(server, 'viewer')
-        owner.request('PUT', `/api/spaces/${space}/types/task`, { title: '任务', fields: [{ key: 'status', title: '状态', kind: 'select', options: ['todo', 'doing'] }] })
+        owner.request('PUT', `/api/spaces/${space}/types/task`, {
+          title: '任务',
+          fields: [{ key: 'status', title: '状态', kind: 'select', options: ['todo', 'doing'] }],
+        })
         owner.request('POST', `/api/spaces/${space}/folders`, { path: 'Work' })
         owner.request('PUT', `/api/spaces/${space}/folders/type`, { folder: 'Work', type: 'task' })
-        const page = owner.request('POST', `/api/spaces/${space}/pages`, { folder: 'Work', meta: { title: '共享页', status: 'doing', owner: 'Ann' }, body: '正文' }).body as { id: string }
+        const page = owner.request('POST', `/api/spaces/${space}/pages`, {
+          folder: 'Work',
+          meta: { title: '共享页', status: 'doing', owner: 'Ann' },
+          body: '正文',
+        }).body as { id: string }
         return [`/s/${space}/p/${page.id}`]
       },
     })

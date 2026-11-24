@@ -5,7 +5,17 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 export const propsEn: PropsMessages = {
   cancel: 'Cancel',
   close: 'Close',
-  kinds: { text: 'Text', longtext: 'Long text', select: 'Select', multiselect: 'Multi-select', date: 'Date', number: 'Number', checkbox: 'Checkbox', url: 'URL', other: 'Other' },
+  kinds: {
+    text: 'Text',
+    longtext: 'Long text',
+    select: 'Select',
+    multiselect: 'Multi-select',
+    date: 'Date',
+    number: 'Number',
+    checkbox: 'Checkbox',
+    url: 'URL',
+    other: 'Other',
+  },
   panel: {
     label: (name) => `Properties: ${name}`,
     heading: (name) => `Properties · ${name}`,
@@ -23,16 +33,19 @@ export const propsEn: PropsMessages = {
   types: {
     title: 'Page types',
     help: 'A type says which properties a kind of page has. Once a folder is given a type, the pages in it carry those properties and the folder gets a table view.',
-    helpReadOnly: 'A type says which properties a kind of page has. You can look at them; changing types needs the manage permission.',
+    helpReadOnly:
+      'A type says which properties a kind of page has. You can look at them; changing types needs the manage permission.',
     loadFailed: 'Could not load the types.',
     none: 'There are no types yet.',
     newType: 'New type',
     broken: 'Cannot be read',
     fieldCount: (n) => plural(n, 'field', 'fields'),
-    brokenHelp: 'The file of this type is damaged, most likely by a hand edit, and has to be repaired in the file itself. For now it can only be deleted.',
+    brokenHelp:
+      'The file of this type is damaged, most likely by a hand edit, and has to be repaired in the file itself. For now it can only be deleted.',
     name: 'Name',
     nameLabel: (name) => `Name: ${name}`,
-    nameHelp: 'A page header uses the name to say which type it has. The name cannot be changed once the type is made; for another name, make a new type.',
+    nameHelp:
+      'A page header uses the name to say which type it has. The name cannot be changed once the type is made; for another name, make a new type.',
     nameEmpty: 'Enter a name',
     nameLong: 'The name is too long',
     nameChars: 'A name cannot contain < > : " / \\ | ? *, start with a dot, or end with a dot or a space',
@@ -50,7 +63,8 @@ export const propsEn: PropsMessages = {
     fieldTitlePlaceholder: 'Title (optional)',
     optionsPlaceholder: 'One option per line',
     optionsHelp: 'One option per line; none blank, none twice.',
-    keyFixedHelp: 'The key of an existing field cannot be changed. To use another key, remove the field and add a new one; the values already in pages are left alone and are shown under “Not in this type”.',
+    keyFixedHelp:
+      'The key of an existing field cannot be changed. To use another key, remove the field and add a new one; the values already in pages are left alone and are shown under “Not in this type”.',
     keyEmpty: 'Enter a key',
     keyLong: 'The key is too long (64 bytes at most)',
     keyChars: 'A key cannot contain a colon or control characters',
@@ -66,10 +80,14 @@ export const propsEn: PropsMessages = {
     create: 'Create',
     saved: 'Type saved',
     saveFailed: 'Could not save the type',
-    changedMeanwhile: 'Not saved: the type was changed by someone else in the meantime. It has been loaded again with their change, and your edit is gone from the form; make it again.',
+    changedMeanwhile:
+      'Not saved: the type was changed by someone else in the meantime. It has been loaded again with their change, and your edit is gone from the form; make it again.',
     delete: 'Delete type',
     deleteTitle: (name) => `Delete the type “${name}”?`,
-    deleteHelp: (folders) => (folders > 0 ? `The values already written in pages are left alone. ${plural(folders, 'folder', 'folders')} using this type will lose the binding.` : 'The values already written in pages are left alone.'),
+    deleteHelp: (folders) =>
+      folders > 0
+        ? `The values already written in pages are left alone. ${plural(folders, 'folder', 'folders')} using this type will lose the binding.`
+        : 'The values already written in pages are left alone.',
     deleteConfirm: 'Delete',
     deleted: 'Type deleted',
     deleteFailed: 'Could not delete the type',
@@ -138,12 +156,20 @@ export const propsEn: PropsMessages = {
     yes: 'Yes',
     no: 'No',
     remove: (what) => `Remove the filter: ${what}`,
-    ops: { in: 'is one of', notIn: 'is none of', range: 'is within', empty: 'is empty', notEmpty: 'is not empty', contains: 'contains' },
+    ops: {
+      in: 'is one of',
+      notIn: 'is none of',
+      range: 'is within',
+      empty: 'is empty',
+      notEmpty: 'is not empty',
+      contains: 'contains',
+    },
     describeEmpty: (field) => `${field} is empty`,
     describeNotEmpty: (field) => `${field} is not empty`,
     describeIn: (field, values) => `${field} is ${values}`,
     describeNotIn: (field, values) => `${field} is not ${values}`,
     describeContains: (field, text) => `${field} contains “${text}”`,
-    describeRange: (field, from, to) => (from && to ? `${field} from ${from} to ${to}` : from ? `${field} ≥ ${from}` : `${field} ≤ ${to}`),
+    describeRange: (field, from, to) =>
+      from && to ? `${field} from ${from} to ${to}` : from ? `${field} ≥ ${from}` : `${field} ≤ ${to}`,
   },
 }

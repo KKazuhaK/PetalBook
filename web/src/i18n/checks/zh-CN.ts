@@ -28,11 +28,23 @@ export const checksZhCN = {
     no_id: { title: '没有 id', help: '文件的头部里没有 id，所以它还不是一个页面，搜索、链接和列表里都看不到它。' },
     duplicate_id: { title: 'id 重复', help: '几个文件用了同一个 id。只有一个会当作页面，其余的要手动改掉 id。' },
     bad_header: { title: '头部读不了', help: '文件头部不是合法的 YAML，所以读不出标题和字段。打开文件，把头部改对。' },
-    type_mismatch: { title: '字段和类型不符', help: '页面的类型字段里，有的值不符合类型的规定（比如选项不在列表里、数字写成了文字）。到页面里改一下。' },
-    not_in_type: { title: '字段不在类型里', help: '页面头部里有类型没有定义的字段。可以直接去掉，也可以到类型里把它加上。' },
-    broken_link: { title: '断链', help: '页面里的链接指向一个不存在的页面：它的 id 没有对应的页面，或者那个路径上没有页面。' },
+    type_mismatch: {
+      title: '字段和类型不符',
+      help: '页面的类型字段里，有的值不符合类型的规定（比如选项不在列表里、数字写成了文字）。到页面里改一下。',
+    },
+    not_in_type: {
+      title: '字段不在类型里',
+      help: '页面头部里有类型没有定义的字段。可以直接去掉，也可以到类型里把它加上。',
+    },
+    broken_link: {
+      title: '断链',
+      help: '页面里的链接指向一个不存在的页面：它的 id 没有对应的页面，或者那个路径上没有页面。',
+    },
     missing_asset: { title: '找不到附件', help: '页面里的图片或附件指向一个不存在的文件。重新上传，或者改正文件名。' },
-    duplicate_title: { title: '标题重复', help: '同一个文件夹里有几个页面标题一样，在列表里分不出来。改掉其中一个的标题。' },
+    duplicate_title: {
+      title: '标题重复',
+      help: '同一个文件夹里有几个页面标题一样，在列表里分不出来。改掉其中一个的标题。',
+    },
   },
   fix: {
     addId: '补上 id',
@@ -42,7 +54,8 @@ export const checksZhCN = {
     addIdDone: (path: string) => `已给 ${path} 补上 id，它现在是一个页面了`,
     removeFieldsDone: (path: string) => `已去掉 ${path} 里不在类型里的字段`,
     confirmTitle: '去掉这些字段？',
-    confirmHelp: (path: string, fields: string) => `${path} 的头部里会删掉这些字段的值：${fields}。头部的其余部分不变，之后可以在历史里找回。`,
+    confirmHelp: (path: string, fields: string) =>
+      `${path} 的头部里会删掉这些字段的值：${fields}。头部的其余部分不变，之后可以在历史里找回。`,
     confirm: '去掉',
     cancel: '取消',
     conflict: '这个文件刚刚被改过，已经重新读取，请再看一眼再修。',

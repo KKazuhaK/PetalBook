@@ -28,7 +28,9 @@ function blockDecorations(node: PMNode, pos: number, hl: Highlighter): Decoratio
   const word = highlightWord(node.attrs.language)
   if (!word || node.content.size > MAX_HIGHLIGHTED_CHARS || !hl.registered(word)) return []
   // The block holds one run of text, so an offset in the text is an offset in the document.
-  return spansOf(hl.highlight(word, node.textContent)).map((s) => Decoration.inline(pos + 1 + s.from, pos + 1 + s.to, { class: s.className }))
+  return spansOf(hl.highlight(word, node.textContent)).map((s) =>
+    Decoration.inline(pos + 1 + s.from, pos + 1 + s.to, { class: s.className }),
+  )
 }
 
 export function codeHighlightPlugin(typeName: string) {
@@ -61,11 +63,16 @@ export function codeHighlightPlugin(typeName: string) {
     state: {
       init: (_, { doc }) => {
         const hl = currentHighlighter()
-        return hl ? { decorations: paintAll(doc, hl), wanted: false } : { decorations: DecorationSet.empty, wanted: anyWanted(doc) }
+        return hl
+          ? { decorations: paintAll(doc, hl), wanted: false }
+          : { decorations: DecorationSet.empty, wanted: anyWanted(doc) }
       },
       apply: (tr, state, _old, next) => {
         const hl = currentHighlighter()
-        if (!hl) return tr.docChanged && !state.wanted ? { ...state, wanted: getChangedRanges(tr).some((r) => anyWanted(tr.doc, r.newRange.from, r.newRange.to)) } : state
+        if (!hl)
+          return tr.docChanged && !state.wanted
+            ? { ...state, wanted: getChangedRanges(tr).some((r) => anyWanted(tr.doc, r.newRange.from, r.newRange.to)) }
+            : state
         if (tr.getMeta(key) === 'ready') return { decorations: paintAll(next.doc, hl), wanted: false }
         if (!tr.docChanged) return state
         let decorations = state.decorations.map(tr.mapping, tr.doc)
@@ -79,7 +86,9 @@ export function codeHighlightPlugin(typeName: string) {
         }
         for (const pos of touched) {
           const node = tr.doc.nodeAt(pos)!
-          decorations = decorations.remove(decorations.find(pos + 1, pos + node.nodeSize - 1)).add(tr.doc, blockDecorations(node, pos, hl))
+          decorations = decorations
+            .remove(decorations.find(pos + 1, pos + node.nodeSize - 1))
+            .add(tr.doc, blockDecorations(node, pos, hl))
         }
         return { decorations, wanted: false }
       },

@@ -48,12 +48,14 @@ export const tenantsZhCN = {
     saved: '已保存',
     disable: '停用',
     enable: '启用',
-    disableHelp: '停用后这个租户的人不能登录，现有会话在下一次请求结束，令牌也失效，空间打不开；什么都不删，启用就全部回来。',
+    disableHelp:
+      '停用后这个租户的人不能登录，现有会话在下一次请求结束，令牌也失效，空间打不开；什么都不删，启用就全部回来。',
     delete: '删除',
     deleting: '删除中…',
     deleteTitle: (name: string) => `删除「${name}」？`,
     deleteHelp: '只能删空的租户：没有用户、空间、组和邀请。3.3 里没法把人或空间搬到别的租户。',
-    notEmpty: (u: number, s: number, g: number, i: number) => `这个租户还有 ${u} 个用户、${s} 个空间、${g} 个组、${i} 个邀请。`,
+    notEmpty: (u: number, s: number, g: number, i: number) =>
+      `这个租户还有 ${u} 个用户、${s} 个空间、${g} 个组、${i} 个邀请。`,
     deleted: (name: string) => `已删除「${name}」`,
     loading: '读取中…',
     empty: '没有租户。',
@@ -128,9 +130,11 @@ export const tenantsZhCN = {
     helps: {
       'registration.open': '默认关，并且对租户锁定：要开，全站管理员先放开，再在租户上打开。需要已启用的发信。',
       'registration.perHour': '一个租户一小时最多接受多少个注册。',
-      'offline.copies': '默认开。关掉后，同步接口答 403 offline_off，网页端停止同步，并在下次启动或轮询时删除当前账号的离线副本。应用不对离线副本加密，人退出登录时会清掉。租户可以给自己关掉；全站的值是没有表态的租户的默认，全站可以锁定它（锁定的关对所有租户都是关）或限制为只能关。',
+      'offline.copies':
+        '默认开。关掉后，同步接口答 403 offline_off，网页端停止同步，并在下次启动或轮询时删除当前账号的离线副本。应用不对离线副本加密，人退出登录时会清掉。租户可以给自己关掉；全站的值是没有表态的租户的默认，全站可以锁定它（锁定的关对所有租户都是关）或限制为只能关。',
       'daily.default': '租户可以选本租户的空间或全站的外部接口；贴的文案仍只在全站。',
-      'quota.spacesPerPerson': '一个人最多可以拥有多少个空间，0 是不限，到了上限就不能再建新的。给了 --max-spaces 时以参数为准。个人的上限在「用户和邀请」里设。',
+      'quota.spacesPerPerson':
+        '一个人最多可以拥有多少个空间，0 是不限，到了上限就不能再建新的。给了 --max-spaces 时以参数为准。个人的上限在「用户和邀请」里设。',
       'quota.bytesPerPerson': '一个人的空间占多少字节，留空是不限。超出只提醒，不拒绝。',
       'quota.pagesPerPerson': '一个人的空间一共有多少页，留空是不限。超出只提醒，不拒绝。',
       'files.maxBytes': '一次写入最大能有多大，页面、附件和导入里的每个文件都算，图片也算。站点的值来自 --max-upload，不能在这里改；组织可以设一个不超过它的值。超过时保存会被拒绝，你写的内容会留在原处，不会丢。',

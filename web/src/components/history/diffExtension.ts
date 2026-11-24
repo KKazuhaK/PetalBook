@@ -13,12 +13,18 @@ import { t } from '@/i18n'
 const markName = (type: string): string => {
   const d = t.history.describe
   switch (type) {
-    case 'bold': return d.bold
-    case 'italic': return d.italic
-    case 'strike': return d.strike
-    case 'code': return d.code
-    case 'link': return d.link
-    default: return type
+    case 'bold':
+      return d.bold
+    case 'italic':
+      return d.italic
+    case 'strike':
+      return d.strike
+    case 'code':
+      return d.code
+    case 'link':
+      return d.link
+    default:
+      return type
   }
 }
 
@@ -30,20 +36,29 @@ export function describeMarks(json: unknown): string {
   } catch {
     // Unreadable: say nothing about it.
   }
-  const parts = marks.map((m) => (m.type === 'link' && m.attrs?.href ? t.history.describe.linkTo(m.attrs.href) : markName(m.type)))
+  const parts = marks.map((m) =>
+    m.type === 'link' && m.attrs?.href ? t.history.describe.linkTo(m.attrs.href) : markName(m.type),
+  )
   return parts.length ? t.fmt.list(parts) : t.history.describe.noFormat
 }
 
 const blockName = (type: string): string | undefined => {
   const d = t.history.describe
   switch (type) {
-    case 'paragraph': return d.paragraph
-    case 'bulletList': return d.bulletList
-    case 'orderedList': return d.orderedList
-    case 'taskList': return d.taskList
-    case 'listItem': return d.listItem
-    case 'blockquote': return d.blockquote
-    default: return undefined
+    case 'paragraph':
+      return d.paragraph
+    case 'bulletList':
+      return d.bulletList
+    case 'orderedList':
+      return d.orderedList
+    case 'taskList':
+      return d.taskList
+    case 'listItem':
+      return d.listItem
+    case 'blockquote':
+      return d.blockquote
+    default:
+      return undefined
   }
 }
 
@@ -54,7 +69,8 @@ export function describeBlock(json: unknown): string {
     const old = JSON.parse(String(json)) as { type: string; attrs?: Record<string, unknown> }
     if (old.type === 'heading') return d.heading(Number(old.attrs?.level))
     if (old.type === 'taskItem') return old.attrs?.checked ? d.taskDone : d.taskOpen
-    if (old.type === 'orderedList' && old.attrs?.start && old.attrs.start !== 1) return d.orderedFrom(Number(old.attrs.start))
+    if (old.type === 'orderedList' && old.attrs?.start && old.attrs.start !== 1)
+      return d.orderedFrom(Number(old.attrs.start))
     return blockName(old.type) ?? old.type
   } catch {
     return ''
@@ -69,7 +85,11 @@ const inlineMark = (name: string, tag: 'ins' | 'del' | 'span', cls: string, sr: 
     excludes: '',
     addAttributes: () => ({ old: { default: null, rendered: false } }),
     renderHTML: ({ mark }) => {
-      const attrs: Record<string, string> = { class: cls, 'data-diff': tag === 'ins' ? 'ins' : tag === 'del' ? 'del' : 'fmt', 'data-sr': sr }
+      const attrs: Record<string, string> = {
+        class: cls,
+        'data-diff': tag === 'ins' ? 'ins' : tag === 'del' ? 'del' : 'fmt',
+        'data-sr': sr,
+      }
       if (name === 'diffFmt') attrs.title = t.history.formattedWas(describeMarks(mark.attrs.old))
       return [tag, attrs, 0]
     },
@@ -79,7 +99,24 @@ export const DiffIns = inlineMark('diffIns', 'ins', 'pb-diff-ins', t.history.srA
 export const DiffDel = inlineMark('diffDel', 'del', 'pb-diff-del', t.history.srRemoved)
 export const DiffFmt = inlineMark('diffFmt', 'span', 'pb-diff-fmt', t.history.srFormat)
 
-const BLOCKS = ['paragraph', 'heading', 'blockquote', 'bulletList', 'orderedList', 'taskList', 'listItem', 'taskItem', 'codeBlock', 'horizontalRule', 'table', 'tableRow', 'tableCell', 'tableHeader', 'rawBlock', 'footnoteDef']
+const BLOCKS = [
+  'paragraph',
+  'heading',
+  'blockquote',
+  'bulletList',
+  'orderedList',
+  'taskList',
+  'listItem',
+  'taskItem',
+  'codeBlock',
+  'horizontalRule',
+  'table',
+  'tableRow',
+  'tableCell',
+  'tableHeader',
+  'rawBlock',
+  'footnoteDef',
+]
 
 export const DiffBlocks = Extension.create({
   name: 'diffBlocks',
@@ -93,9 +130,28 @@ export const DiffBlocks = Extension.create({
           renderHTML: (a) => {
             if (!a.diff) return {}
             const moved = Boolean(a.diffMove)
-            const sr = moved ? (a.diff === 'del' ? t.history.srMovedAway : t.history.srMovedHere) : a.diff === 'ins' ? t.history.srBlockAdded : a.diff === 'del' ? t.history.srBlockRemoved : t.history.srFormatWas(describeBlock(a.diffOld))
-            const title = moved ? (a.diff === 'del' ? t.history.movedFrom : t.history.movedTo) : a.diff === 'fmt' ? t.history.formattedWasBlock(describeBlock(a.diffOld)) : undefined
-            return { 'data-diff': a.diff as string, 'data-sr': sr, ...(moved ? { 'data-diff-move': '' } : {}), ...(title ? { title } : {}) }
+            const sr = moved
+              ? a.diff === 'del'
+                ? t.history.srMovedAway
+                : t.history.srMovedHere
+              : a.diff === 'ins'
+                ? t.history.srBlockAdded
+                : a.diff === 'del'
+                  ? t.history.srBlockRemoved
+                  : t.history.srFormatWas(describeBlock(a.diffOld))
+            const title = moved
+              ? a.diff === 'del'
+                ? t.history.movedFrom
+                : t.history.movedTo
+              : a.diff === 'fmt'
+                ? t.history.formattedWasBlock(describeBlock(a.diffOld))
+                : undefined
+            return {
+              'data-diff': a.diff as string,
+              'data-sr': sr,
+              ...(moved ? { 'data-diff-move': '' } : {}),
+              ...(title ? { title } : {}),
+            }
           },
         },
         diffOld: { default: null, parseHTML: () => null, renderHTML: () => ({}) },

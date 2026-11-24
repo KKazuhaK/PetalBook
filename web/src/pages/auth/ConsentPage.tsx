@@ -49,7 +49,10 @@ export default function ConsentPage({ leave = leaveTo }: { leave?: (url: string)
   if (info.isError) {
     return (
       <AuthLayout title={oa.consent.title}>
-        <ErrorState message={t.fmt.labelled(oa.consent.loadFailed, info.error.message)} onRetry={() => void info.refetch()} />
+        <ErrorState
+          message={t.fmt.labelled(oa.consent.loadFailed, info.error.message)}
+          onRetry={() => void info.refetch()}
+        />
       </AuthLayout>
     )
   }
@@ -86,7 +89,14 @@ function ConsentForm({ req, info, leave }: { req: string; info: ConsentInfo; lea
     setBusy(approve ? 'allow' : 'deny')
     try {
       const { redirect } = await api.decideConsent(
-        approve ? { req, approve: true, spaces: info.spaces.filter((s) => chosen.has(s.id)).map((s) => s.id), access: canWrite ? access : 'read' } : { req, approve: false },
+        approve
+          ? {
+              req,
+              approve: true,
+              spaces: info.spaces.filter((s) => chosen.has(s.id)).map((s) => s.id),
+              access: canWrite ? access : 'read',
+            }
+          : { req, approve: false },
       )
       setLeft(true)
       leave(redirect)
@@ -130,7 +140,11 @@ function ConsentForm({ req, info, leave }: { req: string; info: ConsentInfo; lea
             <dd className="text-xs text-muted-foreground">{oa.consent.redirectHelp(info.redirectHost)}</dd>
           </div>
           {info.punycode && (
-            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive" role="alert" data-slot="punycode">
+            <p
+              className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+              role="alert"
+              data-slot="punycode"
+            >
               {oa.consent.punycode}
             </p>
           )}
@@ -139,7 +153,12 @@ function ConsentForm({ req, info, leave }: { req: string; info: ConsentInfo; lea
         {canWrite ? (
           <div className="grid min-w-0 gap-1.5">
             <Label htmlFor="consent-access">{oa.consent.access}</Label>
-            <NativeSelect id="consent-access" value={access} onChange={(e) => setAccess(e.target.value as TokenAccess)} aria-describedby="consent-access-help">
+            <NativeSelect
+              id="consent-access"
+              value={access}
+              onChange={(e) => setAccess(e.target.value as TokenAccess)}
+              aria-describedby="consent-access-help"
+            >
               <option value="read">{oa.consent.accessNames.read}</option>
               <option value="write">{oa.consent.accessNames.write}</option>
             </NativeSelect>
@@ -160,7 +179,12 @@ function ConsentForm({ req, info, leave }: { req: string; info: ConsentInfo; lea
               {info.spaces.map((s) => (
                 <li key={s.id} className="min-w-0">
                   <label className="flex min-w-0 items-start gap-2 text-sm">
-                    <input type="checkbox" className="mt-0.5 size-4 shrink-0 accent-[var(--color-primary)]" checked={chosen.has(s.id)} onChange={() => toggle(s.id)} />
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 size-4 shrink-0 accent-[var(--color-primary)]"
+                      checked={chosen.has(s.id)}
+                      onChange={() => toggle(s.id)}
+                    />
                     <span className="min-w-0 break-words">{s.name}</span>
                   </label>
                 </li>
@@ -183,7 +207,13 @@ function ConsentForm({ req, info, leave }: { req: string; info: ConsentInfo; lea
           <Button type="submit" disabled={busy !== null || left || info.spaces.length === 0} className="max-sm:w-full">
             {busy === 'allow' ? oa.consent.allowing : oa.consent.allow}
           </Button>
-          <Button type="button" variant="outline" disabled={busy !== null || left} onClick={() => void decide(false)} className="max-sm:w-full">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy !== null || left}
+            onClick={() => void decide(false)}
+            className="max-sm:w-full"
+          >
             {busy === 'deny' ? oa.consent.denying : oa.consent.deny}
           </Button>
         </div>
@@ -193,4 +223,3 @@ function ConsentForm({ req, info, leave }: { req: string; info: ConsentInfo; lea
     </AuthLayout>
   )
 }
-

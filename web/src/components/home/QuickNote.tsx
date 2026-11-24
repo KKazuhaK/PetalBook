@@ -50,7 +50,15 @@ export function QuickNote({ space, inbox }: { space: string; inbox: string }) {
         void save()
       }}
     >
-      <Textarea value={text} readOnly={create.isPending} onChange={(e) => change(e.target.value)} onKeyDown={onKeyDown} placeholder={th.quick.placeholder} aria-label={th.quick.label} className="max-h-[40dvh] min-h-20 resize-none overflow-y-auto" />
+      <Textarea
+        value={text}
+        readOnly={create.isPending}
+        onChange={(e) => change(e.target.value)}
+        onKeyDown={onKeyDown}
+        placeholder={th.quick.placeholder}
+        aria-label={th.quick.label}
+        className="max-h-[40dvh] min-h-20 resize-none overflow-y-auto"
+      />
       <FormMessage>{error}</FormMessage>
       <div className="flex items-center justify-between gap-2">
         <span className="hidden text-xs text-muted-foreground sm:inline">{th.quick.hint}</span>

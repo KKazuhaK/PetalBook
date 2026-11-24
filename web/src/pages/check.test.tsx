@@ -29,28 +29,50 @@ const routes = (
   </SidebarProvider>
 )
 const json = 'application/json'
-const send = (server: MockServer, method: string, path: string, body: unknown, space = 'default') => server.handle(method, `/api/spaces/${space}${path}`, JSON.stringify(body), json)
-const make = (server: MockServer, folder: string, meta: Record<string, unknown>, body = 'x\n') => send(server, 'POST', '/pages', { folder, meta, body }).body as Page
+const send = (server: MockServer, method: string, path: string, body: unknown, space = 'default') =>
+  server.handle(method, `/api/spaces/${space}${path}`, JSON.stringify(body), json)
+const make = (server: MockServer, folder: string, meta: Record<string, unknown>, body = 'x\n') =>
+  send(server, 'POST', '/pages', { folder, meta, body }).body as Page
 const typed = (server: MockServer) => {
   send(server, 'POST', '/folders', { path: 'Work' })
-  send(server, 'PUT', '/types/任务', { title: '任务', fields: [{ key: 'status', kind: 'select', options: ['todo', 'done'] }] })
+  send(server, 'PUT', '/types/任务', {
+    title: '任务',
+    fields: [{ key: 'status', kind: 'select', options: ['todo', 'done'] }],
+  })
   send(server, 'PUT', '/folders/type', { folder: 'Work', type: '任务' })
 }
 
 const page = () => document.body
 const text = () => page().textContent ?? ''
-const rows = (kind?: string) => [...document.querySelectorAll<HTMLElement>(kind ? `li[data-problem="${kind}"]` : 'li[data-problem]')]
+const rows = (kind?: string) => [
+  ...document.querySelectorAll<HTMLElement>(kind ? `li[data-problem="${kind}"]` : 'li[data-problem]'),
+]
 const row = (kind: string, path: string) => rows(kind).find((r) => r.dataset.path === path)
 const group = (kind: string) => document.querySelector<HTMLElement>(`section[data-kind="${kind}"]`)
 const chip = (kind: string) => document.querySelector<HTMLElement>(`[data-chip="${kind}"]`)
-const fixButton = (kind: string, path: string) => row(kind, path)?.querySelector<HTMLButtonElement>('button[data-fix]') ?? null
-const fixes = () => m!.requests.filter((r) => r.method === 'POST' && r.url.endsWith('/checks/fix')).map((r) => JSON.parse(r.body!) as { kind: string; path: string; baseRev: string })
-const listed = (server: MockServer) => server.handle('GET', '/api/spaces/default/checks', undefined, null).body as { counts: Record<string, number>; items: { kind: string; path: string; rev: string }[]; next: string }
+const fixButton = (kind: string, path: string) =>
+  row(kind, path)?.querySelector<HTMLButtonElement>('button[data-fix]') ?? null
+const fixes = () =>
+  m!.requests
+    .filter((r) => r.method === 'POST' && r.url.endsWith('/checks/fix'))
+    .map((r) => JSON.parse(r.body!) as { kind: string; path: string; baseRev: string })
+const listed = (server: MockServer) =>
+  server.handle('GET', '/api/spaces/default/checks', undefined, null).body as {
+    counts: Record<string, number>
+    items: { kind: string; path: string; rev: string }[]
+    next: string
+  }
 const confirmDialog = () => document.querySelector<HTMLElement>('[role="alertdialog"]')
-const buttonIn = (root: ParentNode | null | undefined, label: string) => [...(root?.querySelectorAll('button') ?? [])].find((b) => b.textContent?.trim() === label) as HTMLButtonElement | undefined
+const buttonIn = (root: ParentNode | null | undefined, label: string) =>
+  [...(root?.querySelectorAll('button') ?? [])].find((b) => b.textContent?.trim() === label) as
+    HTMLButtonElement | undefined
 
 async function open(scene: (server: MockServer) => void, extra: Parameters<typeof mount>[1] = {}) {
-  m = await mount(routes, { entries: (server) => (scene(server), ['/s/default/check']), server: { mode: 'single' }, ...extra })
+  m = await mount(routes, {
+    entries: (server) => (scene(server), ['/s/default/check']),
+    server: { mode: 'single' },
+    ...extra,
+  })
   await settle(() => rows().length > 0 || text().includes(ct.empty), 'the check page')
 }
 
@@ -82,7 +104,16 @@ describe('the check page', () => {
   it('counts every kind, hides the kinds with none, and groups the problems with a title and a sentence each', async () => {
     await open(everything)
     expect(chip('all')?.textContent).toContain('9')
-    for (const k of ['no_id', 'duplicate_id', 'bad_header', 'type_mismatch', 'not_in_type', 'broken_link', 'missing_asset', 'duplicate_title'] as const) {
+    for (const k of [
+      'no_id',
+      'duplicate_id',
+      'bad_header',
+      'type_mismatch',
+      'not_in_type',
+      'broken_link',
+      'missing_asset',
+      'duplicate_title',
+    ] as const) {
       expect(chip(k), k).not.toBeNull()
       expect(group(k)?.textContent, k).toContain(ct.kinds[k].title)
       expect(group(k)?.textContent, k).toContain(ct.kinds[k].help)
@@ -90,7 +121,17 @@ describe('the check page', () => {
     expect(chip('duplicate_title')?.textContent).toContain('2')
     expect(group('duplicate_title')?.querySelectorAll('li[data-problem]')).toHaveLength(2)
     // In the order of the kinds.
-    expect(rows().map((r) => r.dataset.problem)).toEqual(['no_id', 'duplicate_id', 'bad_header', 'type_mismatch', 'not_in_type', 'broken_link', 'missing_asset', 'duplicate_title', 'duplicate_title'])
+    expect(rows().map((r) => r.dataset.problem)).toEqual([
+      'no_id',
+      'duplicate_id',
+      'bad_header',
+      'type_mismatch',
+      'not_in_type',
+      'broken_link',
+      'missing_asset',
+      'duplicate_title',
+      'duplicate_title',
+    ])
   })
 
   it('hides a kind that has no problems', async () => {
@@ -105,7 +146,10 @@ describe('the check page', () => {
 
   it('shows what each kind knows: the page to open, the fields, the target and its line, the header line, the files', async () => {
     await open(everything)
-    const idOf = (kind: string, path: string) => (listed(m!.server).items as { kind: string; path: string; id?: string }[]).find((p) => p.kind === kind && p.path === path)?.id
+    const idOf = (kind: string, path: string) =>
+      (listed(m!.server).items as { kind: string; path: string; id?: string }[]).find(
+        (p) => p.kind === kind && p.path === path,
+      )?.id
     expect(listed(m!.server).items.length).toBe(9)
 
     // no_id: not a page, so the path leads to its folder.
@@ -116,20 +160,27 @@ describe('the check page', () => {
     // not_in_type: the fields, listed, and the page to open.
     const notIn = rows('not_in_type')[0]
     expect([...notIn.querySelectorAll('code')].map((c) => c.textContent)).toEqual(['colour', 'size'])
-    expect(notIn.querySelector('a')?.getAttribute('href')).toBe(`/s/default/p/${idOf('not_in_type', notIn.dataset.path!)}`)
+    expect(notIn.querySelector('a')?.getAttribute('href')).toBe(
+      `/s/default/p/${idOf('not_in_type', notIn.dataset.path!)}`,
+    )
     // type_mismatch: the field.
     expect([...rows('type_mismatch')[0].querySelectorAll('code')].map((c) => c.textContent)).toEqual(['status'])
     // broken_link: where it points and on which line.
     const broken = rows('broken_link')[0]
     expect(broken.querySelector('code')?.textContent).toBe('Notes/nowhere.md')
-    const line = (listed(m!.server).items.find((p) => p.kind === 'broken_link') as unknown as { detail: { line: number } }).detail.line
+    const line = (
+      listed(m!.server).items.find((p) => p.kind === 'broken_link') as unknown as { detail: { line: number } }
+    ).detail.line
     expect(line).toBeGreaterThan(1)
     expect(broken.textContent).toContain(ct.line(line))
     // missing_asset: the file.
     expect(rows('missing_asset')[0].textContent).toContain('/assets/NOSUCH/gone.png')
     // duplicate_title: both files, as links.
     const dup = rows('duplicate_title')[0]
-    expect([...dup.querySelectorAll(':scope ul a')].map((a) => a.textContent)).toEqual(['Notes/同名 2.md', 'Notes/同名.md'])
+    expect([...dup.querySelectorAll(':scope ul a')].map((a) => a.textContent)).toEqual([
+      'Notes/同名 2.md',
+      'Notes/同名.md',
+    ])
     expect(dup.querySelector(':scope ul a')?.getAttribute('href')).toBe('/s/default/f/Notes')
     // duplicate_id: the id shared opens the page that has it; the file itself is shown in its folder.
     const twin = row('duplicate_id', 'Notes/twin.md')!
@@ -142,7 +193,8 @@ describe('the check page', () => {
   it('shows 50 at a time and then the rest', async () => {
     await open((s) => {
       typed(s)
-      for (let i = 0; i < 105; i++) make(s, 'Work', { title: `页${String(i).padStart(3, '0')}`, status: 'todo', extra: i + 1 })
+      for (let i = 0; i < 105; i++)
+        make(s, 'Work', { title: `页${String(i).padStart(3, '0')}`, status: 'todo', extra: i + 1 })
     })
     expect(rows()).toHaveLength(50)
     expect(chip('all')?.textContent).toContain('105')
@@ -155,7 +207,11 @@ describe('the check page', () => {
     await settle(() => rows().length === 105, 'the last batch')
     expect(more()).toBeUndefined()
     // The cursor of each batch was the one the last gave.
-    expect(m!.requests.filter((r) => /\/checks(\?|$)/.test(r.url)).map((r) => /cursor=/.test(r.url))).toEqual([false, true, true])
+    expect(m!.requests.filter((r) => /\/checks(\?|$)/.test(r.url)).map((r) => /cursor=/.test(r.url))).toEqual([
+      false,
+      true,
+      true,
+    ])
   })
 
   it('filters by kind, asking only for that kind, and goes back to all of them', async () => {
@@ -209,13 +265,22 @@ describe('the check page', () => {
     })
     const old = listed(m!.server).items.find((x) => x.kind === 'not_in_type')!
     // Someone else adds a field behind the page's back.
-    send(m!.server, 'PUT', `/pages/${target!.id}`, { baseRev: target!.rev, meta: { ...target!.meta, shape: 'round' }, body: target!.body })
+    send(m!.server, 'PUT', `/pages/${target!.id}`, {
+      baseRev: target!.rev,
+      meta: { ...target!.meta, shape: 'round' },
+      body: target!.body,
+    })
     await click(fixButton('not_in_type', old.path))
     await click(buttonIn(confirmDialog(), ct.fix.confirm))
     await settle(() => text().includes(ct.fix.conflict), 'the notice')
     expect(fixes()).toHaveLength(1)
     // Read again: the row has both fields now, and the new rev.
-    await settle(() => [...(row('not_in_type', old.path)?.querySelectorAll('code') ?? [])].map((c) => c.textContent).join() === 'colour,shape', 'the list read again')
+    await settle(
+      () =>
+        [...(row('not_in_type', old.path)?.querySelectorAll('code') ?? [])].map((c) => c.textContent).join() ===
+        'colour,shape',
+      'the list read again',
+    )
     const fresh = listed(m!.server).items.find((x) => x.kind === 'not_in_type')!
     expect(fresh.rev).not.toBe(old.rev)
     await click(fixButton('not_in_type', old.path))
@@ -230,7 +295,8 @@ describe('the check page', () => {
       server: { mode: 'accounts' },
       entries: (server) => {
         const { space, owner } = shareSpace(server, 'viewer')
-        const as = (method: string, path: string, body: unknown) => owner.request(method, `/api/spaces/${space}${path}`, body)
+        const as = (method: string, path: string, body: unknown) =>
+          owner.request(method, `/api/spaces/${space}${path}`, body)
         as('POST', '/folders', { path: 'Work' })
         as('PUT', '/types/任务', { title: '任务', fields: [{ key: 'status', kind: 'text' }] })
         as('PUT', '/folders/type', { folder: 'Work', type: '任务' })

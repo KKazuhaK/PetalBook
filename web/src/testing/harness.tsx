@@ -3,7 +3,15 @@
 
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { createMemoryRouter, MemoryRouter, Outlet, RouterProvider, useLocation, type InitialEntry, type RouteObject } from 'react-router'
+import {
+  createMemoryRouter,
+  MemoryRouter,
+  Outlet,
+  RouterProvider,
+  useLocation,
+  type InitialEntry,
+  type RouteObject,
+} from 'react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from 'sonner'
 import { api, markSignedIn } from '@/api/client'
@@ -24,7 +32,16 @@ export interface Mounted {
 // jsdom has no media queries, resize observers or scrolling; the components ask for them.
 export function installDomShims() {
   ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-  window.matchMedia ??= ((query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false, onchange: null })) as typeof window.matchMedia
+  window.matchMedia ??= ((query: string) => ({
+    matches: false,
+    media: query,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+    dispatchEvent: () => false,
+    onchange: null,
+  })) as typeof window.matchMedia
   window.ResizeObserver ??= class {
     observe() {}
     unobserve() {}
@@ -36,10 +53,15 @@ export function installDomShims() {
 // Shows where the router is, for assertions.
 export function LocationProbe() {
   const l = useLocation()
-  return <div data-testid="location" data-state={JSON.stringify(l.state ?? null)}>{l.pathname + l.search}</div>
+  return (
+    <div data-testid="location" data-state={JSON.stringify(l.state ?? null)}>
+      {l.pathname + l.search}
+    </div>
+  )
 }
 export const locationText = () => document.querySelector('[data-testid="location"]')?.textContent ?? ''
-export const locationState = () => JSON.parse(document.querySelector('[data-testid="location"]')?.getAttribute('data-state') ?? 'null')
+export const locationState = () =>
+  JSON.parse(document.querySelector('[data-testid="location"]')?.getAttribute('data-state') ?? 'null')
 
 export async function mount(
   ui: ReactNode,
@@ -154,7 +176,12 @@ export const click = (el: Element | null | undefined) => {
 // Types into a controlled input the way a person would.
 export const type = (input: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement, value: string) =>
   act(async () => {
-    const proto = input instanceof HTMLSelectElement ? HTMLSelectElement.prototype : input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+    const proto =
+      input instanceof HTMLSelectElement
+        ? HTMLSelectElement.prototype
+        : input instanceof HTMLTextAreaElement
+          ? HTMLTextAreaElement.prototype
+          : HTMLInputElement.prototype
     Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(input, value)
     input.dispatchEvent(new Event(input instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }))
   })
@@ -172,7 +199,8 @@ export async function startView(reason = '检查一个举报') {
 }
 
 export const byLabel = (label: string) => document.querySelector<HTMLElement>(`[aria-label="${label}"]`)
-export const byText = (selector: string, text: string) => [...document.querySelectorAll<HTMLElement>(selector)].find((e) => e.textContent?.trim() === text) ?? null
+export const byText = (selector: string, text: string) =>
+  [...document.querySelectorAll<HTMLElement>(selector)].find((e) => e.textContent?.trim() === text) ?? null
 
 // --- people and shared spaces, made behind the app's back ----------------------------
 //
@@ -194,7 +222,13 @@ export function asPerson(server: MockServer, cookie: string | null) {
 const cookieOf = (setCookie: string | undefined) => setCookie?.split(';')[0] ?? null
 
 export const adminRequests = (server: MockServer) => {
-  const login = server.handle('POST', '/api/login', JSON.stringify({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password }), WRITE_HEADERS, null)
+  const login = server.handle(
+    'POST',
+    '/api/login',
+    JSON.stringify({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password }),
+    WRITE_HEADERS,
+    null,
+  )
   return asPerson(server, cookieOf(login.headers?.['Set-Cookie']))
 }
 
@@ -203,13 +237,28 @@ export const PERSON_PASSWORD = 'a-long-password'
 // An account made through an invite. `request` acts as that person.
 export function makePerson(server: MockServer, username: string, role: 'member' | 'admin' = 'member') {
   const invite = adminRequests(server)('POST', '/api/invites', { role }).body as { token: string }
-  const r = asPerson(server, null)('POST', '/api/invites/accept', { token: invite.token, username, name: `名 ${username}`, password: PERSON_PASSWORD })
+  const r = asPerson(server, null)('POST', '/api/invites/accept', {
+    token: invite.token,
+    username,
+    name: `名 ${username}`,
+    password: PERSON_PASSWORD,
+  })
   const user = (r.body as { user: { id: string } }).user
-  return { id: user.id, username, password: PERSON_PASSWORD, request: asPerson(server, cookieOf(r.headers?.['Set-Cookie'])) }
+  return {
+    id: user.id,
+    username,
+    password: PERSON_PASSWORD,
+    request: asPerson(server, cookieOf(r.headers?.['Set-Cookie'])),
+  }
 }
 
 // A space that `owner` made, which the signed-in administrator belongs to in `role`.
-export function shareSpace(server: MockServer, role: 'owner' | 'editor' | 'viewer', name = '团队', ownerName = 'sharer'): { space: string; owner: ReturnType<typeof makePerson> } {
+export function shareSpace(
+  server: MockServer,
+  role: 'owner' | 'editor' | 'viewer',
+  name = '团队',
+  ownerName = 'sharer',
+): { space: string; owner: ReturnType<typeof makePerson> } {
   const owner = makePerson(server, ownerName)
   const space = (owner.request('POST', '/api/spaces', { name }).body as { id: string }).id
   owner.request('POST', `/api/spaces/${space}/members`, { username: MOCK_ADMIN.username, role })

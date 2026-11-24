@@ -29,11 +29,21 @@ const routes = (
   </SidebarProvider>
 )
 const text = () => document.body.textContent ?? ''
-const button = (label: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === label) ?? null
-const field = (label: string) => [...document.querySelectorAll<HTMLInputElement>('input')].find((i) => document.querySelector(`label[for="${i.id}"]`)?.textContent?.trim() === label)!
+const button = (label: string) =>
+  [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === label) ?? null
+const field = (label: string) =>
+  [...document.querySelectorAll<HTMLInputElement>('input')].find(
+    (i) => document.querySelector(`label[for="${i.id}"]`)?.textContent?.trim() === label,
+  )!
 const rootCall = (method: string, path: string, body?: unknown) => {
   const login = m!.server.handle('POST', '/api/login', JSON.stringify(MOCK_ADMIN), 'application/json')
-  return m!.server.handle(method, `/api${path}`, body === undefined ? undefined : JSON.stringify(body), 'application/json', login.headers!['Set-Cookie'].split(';')[0])
+  return m!.server.handle(
+    method,
+    `/api${path}`,
+    body === undefined ? undefined : JSON.stringify(body),
+    'application/json',
+    login.headers!['Set-Cookie'].split(';')[0],
+  )
 }
 
 async function open(section: string) {
@@ -62,7 +72,12 @@ describe('the Mail page', () => {
     await click(button(tm.admin.save))
     await settle(() => text().includes(tm.admin.saved), 'saved')
     const stored = rootCall('GET', '/admin/mail').body as Record<string, unknown>
-    expect(stored).toMatchObject({ enabled: true, host: 'smtp.example.test', hasPassword: true, from: 'notes@example.test' })
+    expect(stored).toMatchObject({
+      enabled: true,
+      host: 'smtp.example.test',
+      hasPassword: true,
+      from: 'notes@example.test',
+    })
     expect(JSON.stringify(stored)).not.toContain('hunter2')
     expect(field(tm.admin.password).value).toBe('')
     expect(field(tm.admin.password).placeholder).toBe(tm.admin.passwordSet)

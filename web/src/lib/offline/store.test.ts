@@ -8,8 +8,28 @@ import { wantedText } from './scope'
 
 beforeEach(freshDevice)
 
-const entry = (id: string, over: Partial<CatalogEntry> = {}): CatalogEntry => ({ id, path: `${id}.md`, folder: '', label: id, untitled: false, tags: [], type: '', updated: '2026-11-23T08:00:00Z', rev: `rev-${id}`, ...over })
-const page = (id: string, body = '正文\n', rev = `rev-${id}`): Page => ({ id, path: `${id}.md`, folder: '', rev, updated: '2026-11-23T08:00:00Z', meta: { id, title: id }, header: `id: ${id}\n`, body })
+const entry = (id: string, over: Partial<CatalogEntry> = {}): CatalogEntry => ({
+  id,
+  path: `${id}.md`,
+  folder: '',
+  label: id,
+  untitled: false,
+  tags: [],
+  type: '',
+  updated: '2026-11-23T08:00:00Z',
+  rev: `rev-${id}`,
+  ...over,
+})
+const page = (id: string, body = '正文\n', rev = `rev-${id}`): Page => ({
+  id,
+  path: `${id}.md`,
+  folder: '',
+  rev,
+  updated: '2026-11-23T08:00:00Z',
+  meta: { id, title: id },
+  header: `id: ${id}\n`,
+  body,
+})
 
 describe('the store of one space', () => {
   it('keeps the choice and the sync state, with defaults for what was not written', async () => {
@@ -20,7 +40,12 @@ describe('the store of one space', () => {
     expect((await s.state()).cursor).toBe('')
     await s.setState({ cursor: 'c-1', complete: true })
     await s.setState({ tree: 't' })
-    expect(await s.state()).toMatchObject({ cursor: 'c-1', complete: true, tree: 't', favourites: { pages: [], folders: [] } })
+    expect(await s.state()).toMatchObject({
+      cursor: 'c-1',
+      complete: true,
+      tree: 't',
+      favourites: { pages: [], folders: [] },
+    })
   })
 
   it('writes the catalogue with its cursor in one step, and a removed page takes its text with it', async () => {
@@ -48,7 +73,13 @@ describe('the store of one space', () => {
     await s.applyCatalog([], ['A'])
     expect((await s.opened()).map((o) => o.id)).toEqual(['A'])
     await s.applyCatalog([entry('A', { folder: 'Moved' })], [])
-    const w = wantedText(await s.catalog(), { ...DEFAULT_CONFIG, mode: 'text', inbox: false, favourites: false, recent: true }, '', { pages: [], folders: [] }, await s.opened())
+    const w = wantedText(
+      await s.catalog(),
+      { ...DEFAULT_CONFIG, mode: 'text', inbox: false, favourites: false, recent: true },
+      '',
+      { pages: [], folders: [] },
+      await s.opened(),
+    )
     expect(w.recent).toEqual(['A'])
   })
 
@@ -67,7 +98,17 @@ describe('the store of one space', () => {
 
   it('keeps the draft that came with a page', async () => {
     const s = await storeFor('u1', 'sp')
-    const p = { ...page('A'), draft: { version: 'v1', baseRev: 'rev-A', meta: {}, body: '写到一半', updated: '2026-11-23T08:00:00Z', stale: false } }
+    const p = {
+      ...page('A'),
+      draft: {
+        version: 'v1',
+        baseRev: 'rev-A',
+        meta: {},
+        body: '写到一半',
+        updated: '2026-11-23T08:00:00Z',
+        stale: false,
+      },
+    }
     await s.putPages([p])
     expect((await s.page('A'))?.page.draft?.body).toBe('写到一半')
     expect(await s.bytes()).toBe(pageBytes(p))
@@ -133,7 +174,7 @@ describe('the copies of an account', () => {
     expect(totalBytes()).toBe(bytesOf('u1') + bytesOf('u2'))
   })
 
-  it('are deleted with the account: its databases, the ones the registry lost included, and nobody else\'s', async () => {
+  it("are deleted with the account: its databases, the ones the registry lost included, and nobody else's", async () => {
     await configure('u1', 'a', { ...DEFAULT_CONFIG })
     await configure('u1', 'b', { ...DEFAULT_CONFIG })
     await configure('u2', 'c', { ...DEFAULT_CONFIG })

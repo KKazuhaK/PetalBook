@@ -47,14 +47,36 @@ export function nextSort(current: string | undefined, asc: string): string {
 }
 
 // `sort`, `filters` and `hidden` are the view's: the listing above chooses them (and shows the filters).
-export default function TableView({ folder, typeName, type, sort, onSort, sortDisabled, filters, hidden = [] }: { folder: string; typeName: string; type: PageType | undefined; sort?: string; onSort: (to: string) => void; sortDisabled?: boolean; filters: PropFilter[]; hidden?: readonly string[] }) {
+export default function TableView({
+  folder,
+  typeName,
+  type,
+  sort,
+  onSort,
+  sortDisabled,
+  filters,
+  hidden = [],
+}: {
+  folder: string
+  typeName: string
+  type: PageType | undefined
+  sort?: string
+  onSort: (to: string) => void
+  sortDisabled?: boolean
+  filters: PropFilter[]
+  hidden?: readonly string[]
+}) {
   const { write } = useSpacePermissions()
   const urls = useUrls()
   const all = useMemo(() => columnsOf(type), [type])
   // The title is always there; the other columns can be hidden by the view.
   const columns = useMemo(() => all.filter((c) => c.id === 'title' || !hidden.includes(hiddenKeyOf(c))), [all, hidden])
 
-  const query = useTablePages({ folder, ...(sort ? { sort: sort as ListParams['sort'] } : {}), ...(filters.length ? { filter: filters } : {}) })
+  const query = useTablePages({
+    folder,
+    ...(sort ? { sort: sort as ListParams['sort'] } : {}),
+    ...(filters.length ? { filter: filters } : {}),
+  })
   const rows = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data])
 
   const setSort = (asc: string) => onSort(nextSort(sort, asc))
@@ -75,7 +97,11 @@ export default function TableView({ folder, typeName, type, sort, onSort, sortDi
       // Not the callbacks of mutate(): the observer keeps only those of its latest call, so a row whose change was
       // overtaken by another would stay marked as busy, and its failure would not be told.
       patch
-        .mutateAsync({ id: row.id, baseRev: row.rev, ...(value === undefined ? { unset: [key] } : { set: { [key]: value } }) })
+        .mutateAsync({
+          id: row.id,
+          baseRev: row.rev,
+          ...(value === undefined ? { unset: [key] } : { set: { [key]: value } }),
+        })
         .then(undefined, (e: unknown) => {
           const name = row.title || row.label || t.editor.untitled
           // The row has been read again by the hook; nothing of the change was kept.
@@ -93,13 +119,22 @@ export default function TableView({ folder, typeName, type, sort, onSort, sortDi
   const scroller = useRef<HTMLDivElement>(null)
   // The virtualizer's functions are used only here, in this component's own render.
   // eslint-disable-next-line react-hooks/incompatible-library
-  const virt = useVirtualizer({ count: rows.length, getScrollElement: () => scroller.current, estimateSize: () => ROW_HEIGHT, overscan: 8, observeElementRect: (instance, cb) => observeElementRect(instance, (rect) => cb(rect.height > 0 ? rect : FALLBACK_RECT)), getItemKey: (i) => rows[i]?.id ?? i })
+  const virt = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scroller.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 8,
+    observeElementRect: (instance, cb) =>
+      observeElementRect(instance, (rect) => cb(rect.height > 0 ? rect : FALLBACK_RECT)),
+    getItemKey: (i) => rows[i]?.id ?? i,
+  })
   const visible = virt.getVirtualItems()
   const last = visible.length ? visible[visible.length - 1].index : -1
   const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = query
   useEffect(() => {
     // A failed batch is not asked for again by itself: the person retries.
-    if (last >= 0 && last >= rows.length - AHEAD && hasNextPage && !isFetchingNextPage && !isFetchNextPageError) void fetchNextPage()
+    if (last >= 0 && last >= rows.length - AHEAD && hasNextPage && !isFetchingNextPage && !isFetchNextPageError)
+      void fetchNextPage()
   }, [last, rows.length, hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage])
 
   const sortValue = sort ?? '-updated'
@@ -115,24 +150,63 @@ export default function TableView({ folder, typeName, type, sort, onSort, sortDi
           ))}
         </div>
       ) : query.isError && rows.length === 0 ? (
-        <ErrorState message={t.fmt.labelled(t.list.loadFailed, query.error.message)} onRetry={() => void query.refetch()} />
+        <ErrorState
+          message={t.fmt.labelled(t.list.loadFailed, query.error.message)}
+          onRetry={() => void query.refetch()}
+        />
       ) : rows.length === 0 ? (
-        <p className="py-16 text-center text-sm text-muted-foreground">{filters.length ? t.list.emptyFiltered : t.list.emptyFolder}</p>
+        <p className="py-16 text-center text-sm text-muted-foreground">
+          {filters.length ? t.list.emptyFiltered : t.list.emptyFolder}
+        </p>
       ) : (
         <>
-          <div ref={scroller} aria-busy={query.isPlaceholderData || undefined} className={`relative max-h-[calc(100dvh-14rem)] min-h-64 overflow-auto rounded-lg border transition-opacity ${query.isPlaceholderData ? 'opacity-60' : ''}`} data-slot="table-scroller">
-            <div role="table" aria-label={tp.table.label} aria-rowcount={rows.length + 1} style={{ width: total, minWidth: '100%' }}>
-              <div role="row" aria-rowindex={1} className="sticky top-0 z-10 grid border-b bg-muted/80 text-xs font-medium backdrop-blur" style={{ gridTemplateColumns: grid }}>
+          <div
+            ref={scroller}
+            aria-busy={query.isPlaceholderData || undefined}
+            className={`relative max-h-[calc(100dvh-14rem)] min-h-64 overflow-auto rounded-lg border transition-opacity ${query.isPlaceholderData ? 'opacity-60' : ''}`}
+            data-slot="table-scroller"
+          >
+            <div
+              role="table"
+              aria-label={tp.table.label}
+              aria-rowcount={rows.length + 1}
+              style={{ width: total, minWidth: '100%' }}
+            >
+              <div
+                role="row"
+                aria-rowindex={1}
+                className="sticky top-0 z-10 grid border-b bg-muted/80 text-xs font-medium backdrop-blur"
+                style={{ gridTemplateColumns: grid }}
+              >
                 {columns.map((c) => {
                   const asc = c.sort
                   const active = asc !== undefined && (sortValue === asc || sortValue === `-${asc}`)
                   const dir = sortValue.startsWith('-') ? 'descending' : 'ascending'
                   return (
-                    <div key={c.id} role="columnheader" aria-sort={active ? dir : asc ? 'none' : undefined} className="flex h-9 min-w-0 items-center border-r px-3 last:border-r-0">
+                    <div
+                      key={c.id}
+                      role="columnheader"
+                      aria-sort={active ? dir : asc ? 'none' : undefined}
+                      className="flex h-9 min-w-0 items-center border-r px-3 last:border-r-0"
+                    >
                       {asc ? (
-                        <button type="button" disabled={sortDisabled} onClick={() => setSort(asc)} title={tp.table.sortBy(c.label)} className="flex min-w-0 items-center gap-1 rounded outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50">
+                        <button
+                          type="button"
+                          disabled={sortDisabled}
+                          onClick={() => setSort(asc)}
+                          title={tp.table.sortBy(c.label)}
+                          className="flex min-w-0 items-center gap-1 rounded outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+                        >
                           <span className="truncate">{c.label}</span>
-                          {active ? dir === 'ascending' ? <ArrowUp className="size-3.5 shrink-0" /> : <ArrowDown className="size-3.5 shrink-0" /> : <ArrowUpDown className="size-3.5 shrink-0 opacity-40" />}
+                          {active ? (
+                            dir === 'ascending' ? (
+                              <ArrowUp className="size-3.5 shrink-0" />
+                            ) : (
+                              <ArrowDown className="size-3.5 shrink-0" />
+                            )
+                          ) : (
+                            <ArrowUpDown className="size-3.5 shrink-0 opacity-40" />
+                          )}
                         </button>
                       ) : (
                         <span className="truncate">{c.label}</span>
@@ -146,10 +220,34 @@ export default function TableView({ folder, typeName, type, sort, onSort, sortDi
                   const row = rows[v.index]
                   if (!row) return null
                   return (
-                    <div key={row.id} role="row" aria-rowindex={v.index + 2} data-row={row.id} className="absolute top-0 left-0 grid items-center border-b hover:bg-muted/30" style={{ gridTemplateColumns: grid, height: v.size, transform: `translateY(${v.start}px)`, width: total }}>
+                    <div
+                      key={row.id}
+                      role="row"
+                      aria-rowindex={v.index + 2}
+                      data-row={row.id}
+                      className="absolute top-0 left-0 grid items-center border-b hover:bg-muted/30"
+                      style={{
+                        gridTemplateColumns: grid,
+                        height: v.size,
+                        transform: `translateY(${v.start}px)`,
+                        width: total,
+                      }}
+                    >
                       {columns.map((c) => (
-                        <div key={c.id} role="cell" data-col={c.id} className="flex h-full min-w-0 items-center border-r px-2 text-sm last:border-r-0">
-                          <Cell col={c} row={row} readOnly={!write || !row.rev} busy={busy.has(row.id)} onChange={change} href={urls.page(row.id)} />
+                        <div
+                          key={c.id}
+                          role="cell"
+                          data-col={c.id}
+                          className="flex h-full min-w-0 items-center border-r px-2 text-sm last:border-r-0"
+                        >
+                          <Cell
+                            col={c}
+                            row={row}
+                            readOnly={!write || !row.rev}
+                            busy={busy.has(row.id)}
+                            onChange={change}
+                            href={urls.page(row.id)}
+                          />
                         </div>
                       ))}
                     </div>
@@ -161,7 +259,12 @@ export default function TableView({ folder, typeName, type, sort, onSort, sortDi
           <div className="flex flex-col items-center gap-2 text-xs text-muted-foreground">
             {query.hasNextPage ? (
               <>
-                <Button variant="outline" size="sm" onClick={() => void query.fetchNextPage()} disabled={query.isFetchingNextPage}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void query.fetchNextPage()}
+                  disabled={query.isFetchingNextPage}
+                >
                   {query.isFetchingNextPage ? <Spinner /> : null}
                   {query.isFetchingNextPage ? t.list.loadingMore : t.list.loadMore}
                 </Button>
@@ -170,7 +273,9 @@ export default function TableView({ folder, typeName, type, sort, onSort, sortDi
             ) : (
               <span>{t.list.allLoaded(rows.length)}</span>
             )}
-            {query.isFetchNextPageError && <ErrorState message={query.error.message} onRetry={() => void query.fetchNextPage()} />}
+            {query.isFetchNextPageError && (
+              <ErrorState message={query.error.message} onRetry={() => void query.fetchNextPage()} />
+            )}
           </div>
         </>
       )}
@@ -180,10 +285,28 @@ export default function TableView({ folder, typeName, type, sort, onSort, sortDi
 
 // --- the cells -------------------------------------------------------------------------
 
-function Cell({ col, row, readOnly, busy, onChange, href }: { col: Column; row: PageSummary; readOnly: boolean; busy: boolean; onChange: (row: PageSummary, key: string, value: unknown) => void; href: string }) {
+function Cell({
+  col,
+  row,
+  readOnly,
+  busy,
+  onChange,
+  href,
+}: {
+  col: Column
+  row: PageSummary
+  readOnly: boolean
+  busy: boolean
+  onChange: (row: PageSummary, key: string, value: unknown) => void
+  href: string
+}) {
   if (col.base === 'title') {
     return (
-      <Link to={href} className="min-w-0 truncate font-medium outline-none hover:underline focus-visible:underline" title={row.title ?? row.label}>
+      <Link
+        to={href}
+        className="min-w-0 truncate font-medium outline-none hover:underline focus-visible:underline"
+        title={row.title ?? row.label}
+      >
         {row.title || row.label || <span className="text-muted-foreground">{t.editor.untitled}</span>}
       </Link>
     )
@@ -215,44 +338,82 @@ function Cell({ col, row, readOnly, busy, onChange, href }: { col: Column; row: 
   if (row.partialProps?.includes(field.key)) {
     const text = hasValue(value) ? showValue(value) : ''
     return (
-      <span className="flex min-w-0 items-center gap-1 text-muted-foreground" title={tp.table.partial} data-partial="true">
+      <span
+        className="flex min-w-0 items-center gap-1 text-muted-foreground"
+        title={tp.table.partial}
+        data-partial="true"
+      >
         <span className="min-w-0 truncate" aria-label={`${label}: ${tp.table.partial}`}>
           {text}
         </span>
-        <span aria-hidden className="shrink-0">…</span>
+        <span aria-hidden className="shrink-0">
+          …
+        </span>
       </span>
     )
   }
 
   // Read only, or a kind with no control here: the value as text, marked when it does not fit.
   const plain = (text: string) => (
-    <span className={`min-w-0 truncate ${wrong ? 'text-destructive' : ''}`} title={text} data-wrong={wrong || undefined}>
+    <span
+      className={`min-w-0 truncate ${wrong ? 'text-destructive' : ''}`}
+      title={text}
+      data-wrong={wrong || undefined}
+    >
       {text}
     </span>
   )
   if (field.kind === 'url' && typeof value === 'string' && /^(https?:\/\/|mailto:)/i.test(value.trim())) {
     return (
-      <a href={value.trim()} target="_blank" rel="noreferrer noopener" className={`flex min-w-0 items-center gap-1 hover:underline ${wrong ? 'text-destructive' : ''}`} title={value}>
+      <a
+        href={value.trim()}
+        target="_blank"
+        rel="noreferrer noopener"
+        className={`flex min-w-0 items-center gap-1 hover:underline ${wrong ? 'text-destructive' : ''}`}
+        title={value}
+      >
         <span className="truncate">{value}</span>
         <ExternalLink className="size-3 shrink-0" />
       </a>
     )
   }
   if (field.kind === 'checkbox') {
-    if (readOnly) return value === undefined ? null : plain(value === true ? '✓' : value === false ? '–' : showValue(value))
+    if (readOnly)
+      return value === undefined ? null : plain(value === true ? '✓' : value === false ? '–' : showValue(value))
     return <CheckboxControl field={field} value={value} onChange={set} label={label} readOnly={busy} />
   }
   if (readOnly) return plain(hasValue(value) ? showValue(value) : '')
   switch (field.kind) {
     case 'select':
-      return <SelectControl field={field} value={value} onChange={set} label={label} readOnly={busy} className="h-7 text-sm" />
+      return (
+        <SelectControl
+          field={field}
+          value={value}
+          onChange={set}
+          label={label}
+          readOnly={busy}
+          className="h-7 text-sm"
+        />
+      )
     case 'multiselect':
       return <MultiCell field={field} value={value} onChange={set} label={label} busy={busy} />
     case 'date':
-      return <DateControl field={field} value={value} onChange={set} label={label} readOnly={busy} className="h-7 text-sm" />
+      return (
+        <DateControl field={field} value={value} onChange={set} label={label} readOnly={busy} className="h-7 text-sm" />
+      )
     case 'number':
       // One request per number, not per keystroke: it is sent when the person leaves the cell or presses Enter.
-      return <NumberControl field={field} value={value} onChange={set} label={label} readOnly={busy} commit="blur" className="h-7 text-sm" />
+      return (
+        <NumberControl
+          field={field}
+          value={value}
+          onChange={set}
+          label={label}
+          readOnly={busy}
+          commit="blur"
+          className="h-7 text-sm"
+        />
+      )
     default:
       return plain(hasValue(value) ? showValue(value) : '')
   }
@@ -260,7 +421,19 @@ function Cell({ col, row, readOnly, busy, onChange, href }: { col: Column; row: 
 
 // A list of choices in a cell: the picked ones as they are, and a small menu to pick from.
 // While a change of the page is on its way the controls cannot be used again: the next one needs its new rev.
-function MultiCell({ field, value, onChange, label, busy }: { field: TypeField; value: unknown; onChange: (v: unknown) => void; label: string; busy: boolean }) {
+function MultiCell({
+  field,
+  value,
+  onChange,
+  label,
+  busy,
+}: {
+  field: TypeField
+  value: unknown
+  onChange: (v: unknown) => void
+  label: string
+  busy: boolean
+}) {
   const options = field.options ?? []
   const list: unknown[] = Array.isArray(value) ? value : hasValue(value) ? [value] : []
   const wrong = isWrong(field, value)
@@ -270,8 +443,24 @@ function MultiCell({ field, value, onChange, label, busy }: { field: TypeField; 
   }
   return (
     <Popover>
-      <PopoverTrigger render={<button type="button" disabled={busy} aria-label={label} aria-invalid={wrong || undefined} className={`flex h-7 min-w-0 flex-1 items-center truncate rounded-md px-1.5 text-left text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 ${wrong ? 'text-destructive' : ''}`} />}>
-        <span className="truncate">{list.length ? list.map(showValue).join(', ') : <span className="text-muted-foreground">{tp.panel.none}</span>}</span>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            disabled={busy}
+            aria-label={label}
+            aria-invalid={wrong || undefined}
+            className={`flex h-7 min-w-0 flex-1 items-center truncate rounded-md px-1.5 text-left text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 ${wrong ? 'text-destructive' : ''}`}
+          />
+        }
+      >
+        <span className="truncate">
+          {list.length ? (
+            list.map(showValue).join(', ')
+          ) : (
+            <span className="text-muted-foreground">{tp.panel.none}</span>
+          )}
+        </span>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-56 gap-1">
         {options.map((o) => (
@@ -283,8 +472,17 @@ function MultiCell({ field, value, onChange, label, busy }: { field: TypeField; 
         {list
           .filter((x) => !options.includes(x as string))
           .map((x, i) => (
-            <label key={`${showValue(x)}-${i}`} data-wrong="true" className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm text-destructive hover:bg-muted">
-              <input type="checkbox" checked onChange={() => onChange(list.filter((y) => y !== x).length ? list.filter((y) => y !== x) : undefined)} className="size-4" />
+            <label
+              key={`${showValue(x)}-${i}`}
+              data-wrong="true"
+              className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm text-destructive hover:bg-muted"
+            >
+              <input
+                type="checkbox"
+                checked
+                onChange={() => onChange(list.filter((y) => y !== x).length ? list.filter((y) => y !== x) : undefined)}
+                className="size-4"
+              />
               {showValue(x)}
             </label>
           ))}

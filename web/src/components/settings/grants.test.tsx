@@ -85,7 +85,11 @@ describe('connected apps in the account settings', () => {
     expect(document.querySelector('[role="alertdialog"]')!.textContent).toContain(oa.yours.revokeHelp('Drop'))
     // Asking does nothing yet.
     expect(m!.requests.filter((r) => r.method === 'DELETE')).toEqual([])
-    await click([...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find((b) => b.textContent?.trim() === oa.yours.revokeConfirm))
+    await click(
+      [...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find(
+        (b) => b.textContent?.trim() === oa.yours.revokeConfirm,
+      ),
+    )
     await settle(() => items().length === 1, 'the list without it')
     expect(items()[0].textContent).toContain('Keep')
     expect(m!.requests.filter((r) => r.method === 'DELETE' && r.url.startsWith('/api/account/grants/'))).toHaveLength(1)

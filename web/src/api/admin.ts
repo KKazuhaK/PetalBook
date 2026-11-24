@@ -6,7 +6,63 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, enc, request } from './client'
 import { keys } from './hooks'
-import type { AdminStorage, AdminSpace, PutAdminStorage, MailPatch, MailSettings, MailTestResult, CreatedTenant, AdminUsageList, OwnQuota, SettingLower, SiteSetting, Tenancy, Tenant, TenantList, TenantQuotaKey, TenantSetting, Group, GroupList, GroupPersonList, GroupSource, GroupSpaceList, AdminDaily, AdminSpaceList, AuditList, AuthProvider, Passkey, ProviderInput, SecurityPatch, SecuritySettings, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, RecycleItem, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User, AdminGrantList, AdminTokenList, MachineAccess, AdminGitHub, CursorPage, GitHubInstallation, GitHubManifestStart, PutAdminGitHubInput } from './types'
+import type {
+  AdminForge,
+  AdminProviderRow,
+  CreateAdminForgeInput,
+  PatchAdminForgeInput,
+  AdminStorage,
+  AdminSpace,
+  PutAdminStorage,
+  MailPatch,
+  MailSettings,
+  MailTestResult,
+  CreatedTenant,
+  AdminUsageList,
+  OwnQuota,
+  SettingLower,
+  SiteSetting,
+  Tenancy,
+  Tenant,
+  TenantList,
+  TenantQuotaKey,
+  TenantSetting,
+  Group,
+  GroupList,
+  GroupPersonList,
+  GroupSource,
+  GroupSpaceList,
+  AdminDaily,
+  AdminSpaceList,
+  AuditList,
+  AuthProvider,
+  Passkey,
+  ProviderInput,
+  SecurityPatch,
+  SecuritySettings,
+  DailyAllow,
+  AdminSpacesParams,
+  CreatedInvite,
+  DailyApi,
+  DailyDefault,
+  DailyProvider,
+  DailyTryResult,
+  RecycleItem,
+  Invite,
+  LinesFormat,
+  Role,
+  ServerStatus,
+  SpaceSize,
+  User,
+  AdminGrantList,
+  AdminTokenList,
+  MachineAccess,
+  AdminGitHub,
+  CursorPage,
+  GitHubInstallation,
+  GitHubManifestStart,
+  PutAdminGitHubInput,
+} from './types'
 
 export const adminApi = {
   // --- users and invites ---
@@ -22,11 +78,26 @@ export const adminApi = {
   },
   // `quota` sets the person's own limits: a number each, or null to follow the tenant; the keys left out stay.
   // `remoteExempt` (site administrators) leaves the spaces the person owns out of the requirement of a remote.
-  updateUser: (id: string, input: { role?: Role; disabled?: boolean; passkeyRequired?: boolean; email?: string; emailVerified?: boolean; siteAdmin?: boolean; quota?: Partial<OwnQuota>; remoteExempt?: boolean }) => request<{ user: User }>(`/users/${enc(id)}`, { method: 'PATCH', body: input }),
+  updateUser: (
+    id: string,
+    input: {
+      role?: Role
+      disabled?: boolean
+      passkeyRequired?: boolean
+      email?: string
+      emailVerified?: boolean
+      siteAdmin?: boolean
+      quota?: Partial<OwnQuota>
+      remoteExempt?: boolean
+    },
+  ) => request<{ user: User }>(`/users/${enc(id)}`, { method: 'PATCH', body: input }),
   // The passkeys of one person, for an administrator who removes a lost one.
-  userPasskeys: (id: string, signal?: AbortSignal) => request<{ passkeys: Passkey[] }>(`/users/${enc(id)}/passkeys`, { signal }),
-  deleteUserPasskey: (id: string, passkey: string) => request<void>(`/users/${enc(id)}/passkeys/${enc(passkey)}`, { method: 'DELETE' }),
-  createInvite: (input: { role?: Role; days?: number } = {}) => request<CreatedInvite>('/invites', { method: 'POST', body: input }),
+  userPasskeys: (id: string, signal?: AbortSignal) =>
+    request<{ passkeys: Passkey[] }>(`/users/${enc(id)}/passkeys`, { signal }),
+  deleteUserPasskey: (id: string, passkey: string) =>
+    request<void>(`/users/${enc(id)}/passkeys/${enc(passkey)}`, { method: 'DELETE' }),
+  createInvite: (input: { role?: Role; days?: number } = {}) =>
+    request<CreatedInvite>('/invites', { method: 'POST', body: input }),
   invites: (signal?: AbortSignal) => request<{ invites: Invite[] }>('/invites', { signal }),
   revokeInvite: (id: string) => request<void>(`/invites/${enc(id)}`, { method: 'DELETE' }),
 
@@ -54,16 +125,19 @@ export const adminApi = {
   adminStorage: (signal?: AbortSignal) => request<AdminStorage>('/admin/storage', { signal }),
   putAdminStorage: (input: PutAdminStorage) => request<AdminStorage>('/admin/storage', { method: 'PUT', body: input }),
   // Keeps a space's files on the server (pin), or leaves it out of the requirement of a remote (exempt).
-  putSpaceStorage: (id: string, input: { pin?: boolean; exempt?: boolean }) => request<AdminSpace>(`/admin/spaces/${enc(id)}/storage`, { method: 'PUT', body: input }),
+  putSpaceStorage: (id: string, input: { pin?: boolean; exempt?: boolean }) =>
+    request<AdminSpace>(`/admin/spaces/${enc(id)}/storage`, { method: 'PUT', body: input }),
   // Evicts the space now, if it may be.
   evictSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/evict`, { method: 'POST' }),
   // Measures the space's directory now.
   adminResizeSpace: (id: string) => request<SpaceSize>(`/admin/spaces/${enc(id)}/size`, { method: 'POST' }),
-  adminTransferSpace: (id: string, userId: string) => request<void>(`/admin/spaces/${enc(id)}/transfer`, { method: 'POST', body: { userId } }),
+  adminTransferSpace: (id: string, userId: string) =>
+    request<void>(`/admin/spaces/${enc(id)}/transfer`, { method: 'POST', body: { userId } }),
   adminDisableSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/disable`, { method: 'POST' }),
   adminEnableSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/enable`, { method: 'POST' }),
   // Deleting recycles the space (3.5): the answer is the recycle item. `reason` is for the audit log.
-  adminDeleteSpace: (id: string, reason = '') => request<RecycleItem>(`/admin/spaces/${enc(id)}`, { method: 'DELETE', body: reason ? { reason } : {} }),
+  adminDeleteSpace: (id: string, reason = '') =>
+    request<RecycleItem>(`/admin/spaces/${enc(id)}`, { method: 'DELETE', body: reason ? { reason } : {} }),
   adminStatus: (signal?: AbortSignal) => request<ServerStatus>('/admin/status', { signal }),
 
   // --- usage (3.3): people by bytes, in the caller's scope; a site administrator may narrow to one tenant ---
@@ -80,8 +154,10 @@ export const adminApi = {
   // --- mail and password reset (3.3) ---
   mail: (signal?: AbortSignal) => request<MailSettings>('/admin/mail', { signal }),
   putMail: (input: MailPatch) => request<MailSettings>('/admin/mail', { method: 'PUT', body: input }),
-  testMail: (to: string, lang?: string) => request<MailTestResult>('/admin/mail/test', { method: 'POST', body: { to, ...(lang ? { lang } : {}) } }),
-  sendPasswordReset: (id: string, lang?: string) => request<{ sent: boolean }>(`/users/${enc(id)}/password-reset`, { method: 'POST', body: lang ? { lang } : {} }),
+  testMail: (to: string, lang?: string) =>
+    request<MailTestResult>('/admin/mail/test', { method: 'POST', body: { to, ...(lang ? { lang } : {}) } }),
+  sendPasswordReset: (id: string, lang?: string) =>
+    request<{ sent: boolean }>(`/users/${enc(id)}/password-reset`, { method: 'POST', body: lang ? { lang } : {} }),
 
   // --- tenants (3.3) ---
   tenancy: (signal?: AbortSignal) => request<Tenancy>('/admin/tenancy', { signal }),
@@ -95,18 +171,28 @@ export const adminApi = {
     return request<TenantList>(`/admin/tenants${qs ? `?${qs}` : ''}`, { signal })
   },
   tenant: (id: string, signal?: AbortSignal) => request<Tenant>(`/admin/tenants/${enc(id)}`, { signal }),
-  createTenant: (input: { slug: string; name: string; admin?: { username: string; name?: string; email?: string } }) => request<CreatedTenant>('/admin/tenants', { method: 'POST', body: input }),
-  updateTenant: (id: string, input: { name?: string; slug?: string; disabled?: boolean; quota?: Partial<Record<TenantQuotaKey, number | null>> }) => request<Tenant>(`/admin/tenants/${enc(id)}`, { method: 'PATCH', body: input }),
+  createTenant: (input: { slug: string; name: string; admin?: { username: string; name?: string; email?: string } }) =>
+    request<CreatedTenant>('/admin/tenants', { method: 'POST', body: input }),
+  updateTenant: (
+    id: string,
+    input: { name?: string; slug?: string; disabled?: boolean; quota?: Partial<Record<TenantQuotaKey, number | null>> },
+  ) => request<Tenant>(`/admin/tenants/${enc(id)}`, { method: 'PATCH', body: input }),
   deleteTenant: (id: string) => request<void>(`/admin/tenants/${enc(id)}`, { method: 'DELETE' }),
 
   // --- layered settings (3.3) ---
   siteSettings: (signal?: AbortSignal) => request<{ settings: SiteSetting[] }>('/admin/settings', { signal }),
-  putSiteSetting: (key: string, input: { value?: unknown; lower?: SettingLower | null }) => request<SiteSetting>(`/admin/settings/${enc(key)}`, { method: 'PUT', body: input }),
-  tenantSettings: (tenant: string, signal?: AbortSignal) => request<{ settings: TenantSetting[] }>(`/admin/tenants/${enc(tenant)}/settings`, { signal }),
-  putTenantSetting: (tenant: string, key: string, input: { value?: unknown; lower?: SettingLower | null }) => request<TenantSetting>(`/admin/tenants/${enc(tenant)}/settings/${enc(key)}`, { method: 'PUT', body: input }),
+  putSiteSetting: (key: string, input: { value?: unknown; lower?: SettingLower | null }) =>
+    request<SiteSetting>(`/admin/settings/${enc(key)}`, { method: 'PUT', body: input }),
+  tenantSettings: (tenant: string, signal?: AbortSignal) =>
+    request<{ settings: TenantSetting[] }>(`/admin/tenants/${enc(tenant)}/settings`, { signal }),
+  putTenantSetting: (tenant: string, key: string, input: { value?: unknown; lower?: SettingLower | null }) =>
+    request<TenantSetting>(`/admin/tenants/${enc(tenant)}/settings/${enc(key)}`, { method: 'PUT', body: input }),
 
   // --- groups ---
-  adminGroups: (params: { q?: string; source?: GroupSource | ''; user?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+  adminGroups: (
+    params: { q?: string; source?: GroupSource | ''; user?: string; cursor?: string; limit?: number } = {},
+    signal?: AbortSignal,
+  ) => {
     const q = new URLSearchParams()
     if (params.q) q.set('q', params.q)
     if (params.source) q.set('source', params.source)
@@ -116,9 +202,12 @@ export const adminApi = {
     const qs = q.toString()
     return request<GroupList>(`/admin/groups${qs ? `?${qs}` : ''}`, { signal })
   },
-  createGroup: (input: { name: string; description?: string; source: GroupSource }) => request<Group>('/admin/groups', { method: 'POST', body: input }),
-  updateGroup: (id: string, input: { name?: string; description?: string }) => request<Group>(`/admin/groups/${enc(id)}`, { method: 'PATCH', body: input }),
-  deleteGroup: (id: string, force = false) => request<void>(`/admin/groups/${enc(id)}${force ? '?force=1' : ''}`, { method: 'DELETE' }),
+  createGroup: (input: { name: string; description?: string; source: GroupSource }) =>
+    request<Group>('/admin/groups', { method: 'POST', body: input }),
+  updateGroup: (id: string, input: { name?: string; description?: string }) =>
+    request<Group>(`/admin/groups/${enc(id)}`, { method: 'PATCH', body: input }),
+  deleteGroup: (id: string, force = false) =>
+    request<void>(`/admin/groups/${enc(id)}${force ? '?force=1' : ''}`, { method: 'DELETE' }),
   groupPeople: (id: string, params: { q?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
     const q = new URLSearchParams()
     if (params.q) q.set('q', params.q)
@@ -128,8 +217,13 @@ export const adminApi = {
     return request<GroupPersonList>(`/admin/groups/${enc(id)}/members${qs ? `?${qs}` : ''}`, { signal })
   },
   // 1 to 500 users, all or nothing.
-  addGroupPeople: (id: string, userIds: string[]) => request<{ added: number; already: number }>(`/admin/groups/${enc(id)}/members`, { method: 'POST', body: { userIds } }),
-  removeGroupPerson: (id: string, userId: string) => request<void>(`/admin/groups/${enc(id)}/members/${enc(userId)}`, { method: 'DELETE' }),
+  addGroupPeople: (id: string, userIds: string[]) =>
+    request<{ added: number; already: number }>(`/admin/groups/${enc(id)}/members`, {
+      method: 'POST',
+      body: { userIds },
+    }),
+  removeGroupPerson: (id: string, userId: string) =>
+    request<void>(`/admin/groups/${enc(id)}/members/${enc(userId)}`, { method: 'DELETE' }),
   groupSpaces: (id: string, params: { cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
     const q = new URLSearchParams()
     if (params.cursor) q.set('cursor', params.cursor)
@@ -143,10 +237,14 @@ export const adminApi = {
   // Only the blocks and fields that changed; `captcha.secret` is write-only ("" clears it).
   putSecurity: (patch: SecurityPatch) => request<SecuritySettings>('/admin/security', { method: 'PUT', body: patch }),
   authProviders: (signal?: AbortSignal) => request<{ providers: AuthProvider[] }>('/admin/auth/providers', { signal }),
-  createAuthProvider: (input: ProviderInput) => request<AuthProvider>('/admin/auth/providers', { method: 'POST', body: input }),
-  patchAuthProvider: (slug: string, input: ProviderInput) => request<AuthProvider>(`/admin/auth/providers/${enc(slug)}`, { method: 'PATCH', body: input }),
-  deleteAuthProvider: (slug: string, force = false) => request<void>(`/admin/auth/providers/${enc(slug)}${force ? '?force=1' : ''}`, { method: 'DELETE' }),
-  refreshAuthProvider: (slug: string) => request<AuthProvider>(`/admin/auth/providers/${enc(slug)}/refresh`, { method: 'POST' }),
+  createAuthProvider: (input: ProviderInput) =>
+    request<AuthProvider>('/admin/auth/providers', { method: 'POST', body: input }),
+  patchAuthProvider: (slug: string, input: ProviderInput) =>
+    request<AuthProvider>(`/admin/auth/providers/${enc(slug)}`, { method: 'PATCH', body: input }),
+  deleteAuthProvider: (slug: string, force = false) =>
+    request<void>(`/admin/auth/providers/${enc(slug)}${force ? '?force=1' : ''}`, { method: 'DELETE' }),
+  refreshAuthProvider: (slug: string) =>
+    request<AuthProvider>(`/admin/auth/providers/${enc(slug)}/refresh`, { method: 'POST' }),
   audit: (params: { kind?: string; user?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
     const q = new URLSearchParams()
     if (params.kind) q.set('kind', params.kind)
@@ -159,7 +257,8 @@ export const adminApi = {
 
   // --- machine access: API tokens ---
   access: (signal?: AbortSignal) => request<MachineAccess>('/admin/access', { signal }),
-  putAccess: (input: { tokens?: boolean; mcp?: boolean }) => request<MachineAccess>('/admin/access', { method: 'PUT', body: input }),
+  putAccess: (input: { tokens?: boolean; mcp?: boolean }) =>
+    request<MachineAccess>('/admin/access', { method: 'PUT', body: input }),
   adminTokens: (params: { cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
     const q = new URLSearchParams()
     if (params.cursor) q.set('cursor', params.cursor)
@@ -179,43 +278,76 @@ export const adminApi = {
 
   // --- the daily text of the whole server ---
   daily: (signal?: AbortSignal) => request<AdminDaily>('/admin/daily', { signal }),
-  putDaily: (input: { default?: DailyDefault; languages?: string[]; allow?: DailyAllow; notices?: [] }) => request<AdminDaily>('/admin/daily', { method: 'PUT', body: input }),
+  putDaily: (input: { default?: DailyDefault; languages?: string[]; allow?: DailyAllow; notices?: [] }) =>
+    request<AdminDaily>('/admin/daily', { method: 'PUT', body: input }),
   // A header with a `value` sets it; one with only a `name` keeps what is saved; a header left out is removed.
-  putDailyApi: (api: Omit<DailyApi, 'note'>) => request<AdminDaily>(`/admin/daily/apis/${enc(api.id)}`, { method: 'PUT', body: api }),
-  putDailyProvider: (id: string, input: { enabled: boolean; refresh?: DailyProvider['refresh']; minutes?: number; rps?: number; skipNew?: boolean }) =>
-    request<AdminDaily>(`/admin/daily/providers/${enc(id)}`, { method: 'PUT', body: input }),
+  putDailyApi: (api: Omit<DailyApi, 'note'>) =>
+    request<AdminDaily>(`/admin/daily/apis/${enc(api.id)}`, { method: 'PUT', body: api }),
+  putDailyProvider: (
+    id: string,
+    input: { enabled: boolean; refresh?: DailyProvider['refresh']; minutes?: number; rps?: number; skipNew?: boolean },
+  ) => request<AdminDaily>(`/admin/daily/providers/${enc(id)}`, { method: 'PUT', body: input }),
   deleteDailyApi: (id: string) => request<AdminDaily>(`/admin/daily/apis/${enc(id)}`, { method: 'DELETE' }),
   // A refused trial is a 400 that carries what the trial showed in `result`; it reads as a trial with errors.
   tryDailyApi: async (api: Omit<DailyApi, 'note'>, lang: string, date: string): Promise<DailyTryResult> => {
     try {
       return await request<DailyTryResult>('/admin/daily/try', { method: 'POST', body: { api, lang, date } })
     } catch (e) {
-      const b = e instanceof ApiError && e.status === 400 ? (e.body as { result?: unknown; error?: string; field?: string; header?: string } | undefined) : undefined
-      if (b && typeof b.result === 'object' && b.result !== null) return { ...(b.result as DailyTryResult), error: b.error, field: b.field, header: b.header }
+      const b =
+        e instanceof ApiError && e.status === 400
+          ? (e.body as { result?: unknown; error?: string; field?: string; header?: string } | undefined)
+          : undefined
+      if (b && typeof b.result === 'object' && b.result !== null)
+        return { ...(b.result as DailyTryResult), error: b.error, field: b.field, header: b.header }
       throw e
     }
   },
+  // --- the hosts of GitLab and Gitea an administrator sets up ---
+  adminConnectionProviders: (signal?: AbortSignal) =>
+    request<{ providers: AdminProviderRow[] }>('/admin/connections', { signal }),
+  createAdminForge: (input: CreateAdminForgeInput) =>
+    request<AdminForge>('/admin/connections', { method: 'POST', body: input }),
+  adminForge: (id: string, signal?: AbortSignal) => request<AdminForge>(`/admin/connections/${enc(id)}`, { signal }),
+  patchAdminForge: (id: string, input: PatchAdminForgeInput) =>
+    request<AdminForge>(`/admin/connections/${enc(id)}`, { method: 'PATCH', body: input }),
+  checkAdminForge: (id: string) =>
+    request<AdminForge>(`/admin/connections/${enc(id)}/check`, { method: 'POST', body: {} }),
+  deleteAdminForge: (id: string) => request<void>(`/admin/connections/${enc(id)}`, { method: 'DELETE' }),
   // --- the GitHub App of the whole server ---
   adminGitHub: (signal?: AbortSignal) => request<AdminGitHub>('/admin/connections/github', { signal }),
-  putAdminGitHub: (input: PutAdminGitHubInput) => request<AdminGitHub>('/admin/connections/github', { method: 'PUT', body: input }),
+  putAdminGitHub: (input: PutAdminGitHubInput) =>
+    request<AdminGitHub>('/admin/connections/github', { method: 'PUT', body: input }),
   deleteAdminGitHub: () => request<void>('/admin/connections/github', { method: 'DELETE' }),
   // Reads the App and its installations from GitHub again.
   checkAdminGitHub: () => request<AdminGitHub>('/admin/connections/github/check', { method: 'POST', body: {} }),
   // The manifest and the address the browser posts it to, to make the App on GitHub in one click.
-  startGitHubManifest: (input: { organization?: string; name?: string }) => request<GitHubManifestStart>('/admin/connections/github/manifest', { method: 'POST', body: input }),
+  startGitHubManifest: (input: { organization?: string; name?: string }) =>
+    request<GitHubManifestStart>('/admin/connections/github/manifest', { method: 'POST', body: input }),
   // Saves the App GitHub made when saving it failed at the time (the redirect said `pending=1`).
-  retryGitHubManifest: () => request<AdminGitHub>('/admin/connections/github/manifest/retry', { method: 'POST', body: {} }),
-  adminGitHubInstallations: (cursor?: string, signal?: AbortSignal) => request<CursorPage<GitHubInstallation>>(`/admin/connections/github/installations${cursor ? `?cursor=${enc(cursor)}` : ''}`, { signal }),
+  retryGitHubManifest: () =>
+    request<AdminGitHub>('/admin/connections/github/manifest/retry', { method: 'POST', body: {} }),
+  adminGitHubInstallations: (cursor?: string, signal?: AbortSignal) =>
+    request<CursorPage<GitHubInstallation>>(
+      `/admin/connections/github/installations${cursor ? `?cursor=${enc(cursor)}` : ''}`,
+      { signal },
+    ),
   // Shares the installation with exactly these tenants; none stops sharing.
-  putAdminGitHubInstallation: (id: number, tenants: string[]) => request<GitHubInstallation>(`/admin/connections/github/installations/${id}`, { method: 'PUT', body: { tenants } }),
-  putDailyLines: (input: { lang: string; text: string; format: LinesFormat }) => request<AdminDaily>('/admin/daily/lines', { method: 'PUT', body: input }),
+  putAdminGitHubInstallation: (id: number, tenants: string[]) =>
+    request<GitHubInstallation>(`/admin/connections/github/installations/${id}`, { method: 'PUT', body: { tenants } }),
+  putDailyLines: (input: { lang: string; text: string; format: LinesFormat }) =>
+    request<AdminDaily>('/admin/daily/lines', { method: 'PUT', body: input }),
   deleteDailyLines: (lang: string) => request<AdminDaily>(`/admin/daily/lines?lang=${enc(lang)}`, { method: 'DELETE' }),
 }
 
 // --- users and invites ----------------------------------------------------------
 
 export function useUsers(enabled = true) {
-  return useQuery({ queryKey: keys.users, queryFn: ({ signal }) => adminApi.users({}, signal), staleTime: 30_000, enabled })
+  return useQuery({
+    queryKey: keys.users,
+    queryFn: ({ signal }) => adminApi.users({}, signal),
+    staleTime: 30_000,
+    enabled,
+  })
 }
 
 // A few users by (part of) a username or name, for a picker: the server does the
@@ -223,11 +355,21 @@ export function useUsers(enabled = true) {
 // accounts is never loaded for it.
 export const USER_SEARCH_LIMIT = 20
 export function useUserSearch(q: string, enabled = true) {
-  return useQuery({ queryKey: keys.userSearch(q), queryFn: ({ signal }) => adminApi.users({ q, limit: USER_SEARCH_LIMIT, enabled: true }, signal), staleTime: 15_000, enabled })
+  return useQuery({
+    queryKey: keys.userSearch(q),
+    queryFn: ({ signal }) => adminApi.users({ q, limit: USER_SEARCH_LIMIT, enabled: true }, signal),
+    staleTime: 15_000,
+    enabled,
+  })
 }
 
 export function useInvites(enabled = true) {
-  return useQuery({ queryKey: keys.invites, queryFn: ({ signal }) => adminApi.invites(signal), staleTime: 30_000, enabled })
+  return useQuery({
+    queryKey: keys.invites,
+    queryFn: ({ signal }) => adminApi.invites(signal),
+    staleTime: 30_000,
+    enabled,
+  })
 }
 
 // --- administration ----------------------------------------------------------------
@@ -240,7 +382,11 @@ export function useAdminSpaces(q: string, enabled = true, filter: AdminSpacesFil
   return useInfiniteQuery({
     queryKey: keys.adminSpaceList(q, JSON.stringify(filter)),
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => adminApi.adminSpaces({ ...filter, q: q || undefined, cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE }, signal),
+    queryFn: ({ pageParam, signal }) =>
+      adminApi.adminSpaces(
+        { ...filter, q: q || undefined, cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE },
+        signal,
+      ),
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 15_000,
@@ -252,7 +398,16 @@ export function useAdminUsage(params: { tenant: string; over: boolean }, enabled
   return useInfiniteQuery({
     queryKey: keys.adminUsage(params.tenant, params.over),
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => adminApi.usage({ tenant: params.tenant || undefined, over: params.over, cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE }, signal),
+    queryFn: ({ pageParam, signal }) =>
+      adminApi.usage(
+        {
+          tenant: params.tenant || undefined,
+          over: params.over,
+          cursor: pageParam || undefined,
+          limit: ADMIN_PAGE_SIZE,
+        },
+        signal,
+      ),
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 10_000,
@@ -262,7 +417,12 @@ export function useAdminUsage(params: { tenant: string; over: boolean }, enabled
 // --- mail (3.3) ---
 
 export function useMail(enabled = true) {
-  return useQuery({ queryKey: keys.adminMail, queryFn: ({ signal }) => adminApi.mail(signal), enabled, staleTime: 5_000 })
+  return useQuery({
+    queryKey: keys.adminMail,
+    queryFn: ({ signal }) => adminApi.mail(signal),
+    enabled,
+    staleTime: 5_000,
+  })
 }
 export function usePutMail() {
   const qc = useQueryClient()
@@ -280,7 +440,12 @@ export function usePutMail() {
 // --- tenants and layered settings (3.3) ---
 
 export function useTenancy(enabled = true) {
-  return useQuery({ queryKey: keys.tenancy, queryFn: ({ signal }) => adminApi.tenancy(signal), enabled, staleTime: 15_000 })
+  return useQuery({
+    queryKey: keys.tenancy,
+    queryFn: ({ signal }) => adminApi.tenancy(signal),
+    enabled,
+    staleTime: 15_000,
+  })
 }
 export function useSetTenancy() {
   const qc = useQueryClient()
@@ -313,13 +478,15 @@ export function useCreateTenant() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (input: Parameters<typeof adminApi.createTenant>[0]) => adminApi.createTenant(input),
-    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: keys.tenants }), qc.invalidateQueries({ queryKey: keys.tenancy })]),
+    onSuccess: () =>
+      Promise.all([qc.invalidateQueries({ queryKey: keys.tenants }), qc.invalidateQueries({ queryKey: keys.tenancy })]),
   })
 }
 export function useUpdateTenant() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...input }: { id: string } & Parameters<typeof adminApi.updateTenant>[1]) => adminApi.updateTenant(id, input),
+    mutationFn: ({ id, ...input }: { id: string } & Parameters<typeof adminApi.updateTenant>[1]) =>
+      adminApi.updateTenant(id, input),
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.tenants }),
   })
 }
@@ -327,27 +494,56 @@ export function useDeleteTenant() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => adminApi.deleteTenant(id),
-    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: keys.tenants }), qc.invalidateQueries({ queryKey: keys.tenancy })]),
+    onSuccess: () =>
+      Promise.all([qc.invalidateQueries({ queryKey: keys.tenants }), qc.invalidateQueries({ queryKey: keys.tenancy })]),
   })
 }
 export function useSiteSettings(enabled = true) {
-  return useQuery({ queryKey: keys.siteSettings, queryFn: ({ signal }) => adminApi.siteSettings(signal), enabled, staleTime: 10_000 })
+  return useQuery({
+    queryKey: keys.siteSettings,
+    queryFn: ({ signal }) => adminApi.siteSettings(signal),
+    enabled,
+    staleTime: 10_000,
+  })
 }
 export function useTenantSettings(tenant: string, enabled = true) {
-  return useQuery({ queryKey: keys.tenantSettings(tenant), queryFn: ({ signal }) => adminApi.tenantSettings(tenant, signal), enabled: enabled && tenant !== '', staleTime: 10_000 })
+  return useQuery({
+    queryKey: keys.tenantSettings(tenant),
+    queryFn: ({ signal }) => adminApi.tenantSettings(tenant, signal),
+    enabled: enabled && tenant !== '',
+    staleTime: 10_000,
+  })
 }
 // A change at one layer can change what every other layer shows (a lock, a restriction), so all of them are read again.
 export function usePutSetting() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ tenant, key, ...input }: { tenant?: string; key: string; value?: unknown; lower?: SettingLower | null }) =>
-      tenant ? adminApi.putTenantSetting(tenant, key, input) : adminApi.putSiteSetting(key, input),
-    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: ['admin', 'settings'] }), qc.invalidateQueries({ queryKey: ['settings'] }), qc.invalidateQueries({ queryKey: keys.adminDaily })]),
+    mutationFn: ({
+      tenant,
+      key,
+      ...input
+    }: {
+      tenant?: string
+      key: string
+      value?: unknown
+      lower?: SettingLower | null
+    }) => (tenant ? adminApi.putTenantSetting(tenant, key, input) : adminApi.putSiteSetting(key, input)),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ['admin', 'settings'] }),
+        qc.invalidateQueries({ queryKey: ['settings'] }),
+        qc.invalidateQueries({ queryKey: keys.adminDaily }),
+      ]),
   })
 }
 
 export function useAdminStatus(enabled = true) {
-  return useQuery({ queryKey: keys.adminStatus, queryFn: ({ signal }) => adminApi.adminStatus(signal), enabled, staleTime: 5_000 })
+  return useQuery({
+    queryKey: keys.adminStatus,
+    queryFn: ({ signal }) => adminApi.adminStatus(signal),
+    enabled,
+    staleTime: 5_000,
+  })
 }
 
 // What an administrator does to a space changes the administration's list, and
@@ -370,18 +566,30 @@ export function useResizeSpace() {
   return useMutation({
     mutationFn: (id: string) => adminApi.adminResizeSpace(id),
     onSuccess: (size, id) => {
-      const patch = (list: AdminSpaceList) => ({ ...list, items: list.items.map((s) => (s.id === id ? { ...s, ...size } : s)) })
-      qc.setQueriesData<{ pages: AdminSpaceList[]; pageParams: unknown[] }>({ queryKey: keys.adminSpaces }, (prev) => prev && 'pages' in prev ? { ...prev, pages: prev.pages.map(patch) } : prev)
+      const patch = (list: AdminSpaceList) => ({
+        ...list,
+        items: list.items.map((s) => (s.id === id ? { ...s, ...size } : s)),
+      })
+      qc.setQueriesData<{ pages: AdminSpaceList[]; pageParams: unknown[] }>({ queryKey: keys.adminSpaces }, (prev) =>
+        prev && 'pages' in prev ? { ...prev, pages: prev.pages.map(patch) } : prev,
+      )
     },
   })
 }
 export function useTransferSpace() {
   const changed = useAdminSpaceChanged()
-  return useMutation({ mutationFn: ({ id, userId }: { id: string; userId: string }) => adminApi.adminTransferSpace(id, userId), onSuccess: (_r, { id }) => changed(id) })
+  return useMutation({
+    mutationFn: ({ id, userId }: { id: string; userId: string }) => adminApi.adminTransferSpace(id, userId),
+    onSuccess: (_r, { id }) => changed(id),
+  })
 }
 export function useSetSpaceDisabled() {
   const changed = useAdminSpaceChanged()
-  return useMutation({ mutationFn: ({ id, disabled }: { id: string; disabled: boolean }) => (disabled ? adminApi.adminDisableSpace(id) : adminApi.adminEnableSpace(id)), onSuccess: (_r, { id }) => changed(id) })
+  return useMutation({
+    mutationFn: ({ id, disabled }: { id: string; disabled: boolean }) =>
+      disabled ? adminApi.adminDisableSpace(id) : adminApi.adminEnableSpace(id),
+    onSuccess: (_r, { id }) => changed(id),
+  })
 }
 export function useDeleteSpace() {
   const changed = useAdminSpaceChanged()
@@ -405,7 +613,11 @@ export function useAdminGroups(q: string, source: GroupSource | '', enabled = tr
   return useInfiniteQuery({
     queryKey: keys.adminGroupList(q, source),
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => adminApi.adminGroups({ q: q || undefined, source, cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE }, signal),
+    queryFn: ({ pageParam, signal }) =>
+      adminApi.adminGroups(
+        { q: q || undefined, source, cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE },
+        signal,
+      ),
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 15_000,
@@ -428,7 +640,8 @@ export function useGroupPeople(id: string, q: string, enabled = true) {
   return useInfiniteQuery({
     queryKey: keys.adminGroupPeople(id, q),
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => adminApi.groupPeople(id, { q: q || undefined, cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE }, signal),
+    queryFn: ({ pageParam, signal }) =>
+      adminApi.groupPeople(id, { q: q || undefined, cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE }, signal),
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 10_000,
@@ -439,7 +652,8 @@ export function useGroupSpaces(id: string, enabled = true) {
   return useInfiniteQuery({
     queryKey: keys.adminGroupSpaces(id),
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => adminApi.groupSpaces(id, { cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE }, signal),
+    queryFn: ({ pageParam, signal }) =>
+      adminApi.groupSpaces(id, { cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE }, signal),
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 10_000,
@@ -460,11 +674,18 @@ function useGroupsChanged() {
 }
 export function useCreateGroup() {
   const changed = useGroupsChanged()
-  return useMutation({ mutationFn: (input: { name: string; description?: string; source: GroupSource }) => adminApi.createGroup(input), onSuccess: changed })
+  return useMutation({
+    mutationFn: (input: { name: string; description?: string; source: GroupSource }) => adminApi.createGroup(input),
+    onSuccess: changed,
+  })
 }
 export function useUpdateGroup() {
   const changed = useGroupsChanged()
-  return useMutation({ mutationFn: ({ id, ...input }: { id: string; name?: string; description?: string }) => adminApi.updateGroup(id, input), onSuccess: changed })
+  return useMutation({
+    mutationFn: ({ id, ...input }: { id: string; name?: string; description?: string }) =>
+      adminApi.updateGroup(id, input),
+    onSuccess: changed,
+  })
 }
 export function useDeleteGroup() {
   const changed = useGroupsChanged()
@@ -477,17 +698,28 @@ export function useDeleteGroup() {
 }
 export function useAddGroupPeople() {
   const changed = useGroupsChanged()
-  return useMutation({ mutationFn: ({ id, userIds }: { id: string; userIds: string[] }) => adminApi.addGroupPeople(id, userIds), onSuccess: changed })
+  return useMutation({
+    mutationFn: ({ id, userIds }: { id: string; userIds: string[] }) => adminApi.addGroupPeople(id, userIds),
+    onSuccess: changed,
+  })
 }
 export function useRemoveGroupPerson() {
   const changed = useGroupsChanged()
-  return useMutation({ mutationFn: ({ id, userId }: { id: string; userId: string }) => adminApi.removeGroupPerson(id, userId), onSuccess: changed })
+  return useMutation({
+    mutationFn: ({ id, userId }: { id: string; userId: string }) => adminApi.removeGroupPerson(id, userId),
+    onSuccess: changed,
+  })
 }
 
 // --- the daily text of the whole server ----------------------------------------------
 
 export function useAdminDaily(enabled = true) {
-  return useQuery({ queryKey: keys.adminDaily, queryFn: ({ signal }) => adminApi.daily(signal), enabled, staleTime: 15_000 })
+  return useQuery({
+    queryKey: keys.adminDaily,
+    queryFn: ({ signal }) => adminApi.daily(signal),
+    enabled,
+    staleTime: 15_000,
+  })
 }
 
 // Every write answers with the settings as they are now, which replace the cached ones.
@@ -498,28 +730,59 @@ function useDailyWrite<V>(write: (v: V) => Promise<AdminDaily>) {
     onSuccess: (data) => {
       qc.setQueryData(keys.adminDaily, data)
       // What spaces may choose from, and what they show, comes from these.
-      void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'space' && String(q.queryKey[2]).startsWith('daily') })
+      void qc.invalidateQueries({
+        predicate: (q) => q.queryKey[0] === 'space' && String(q.queryKey[2]).startsWith('daily'),
+      })
     },
   })
 }
-export const useSaveDailySite = () => useDailyWrite((input: { default?: DailyDefault; languages?: string[]; allow?: DailyAllow; notices?: [] }) => adminApi.putDaily(input))
+export const useSaveDailySite = () =>
+  useDailyWrite((input: { default?: DailyDefault; languages?: string[]; allow?: DailyAllow; notices?: [] }) =>
+    adminApi.putDaily(input),
+  )
 export const useSaveDailyApi = () => useDailyWrite((api: Omit<DailyApi, 'note'>) => adminApi.putDailyApi(api))
-export const useSaveDailyProvider = () => useDailyWrite(({ id, ...input }: { id: string; enabled: boolean; refresh?: DailyProvider['refresh']; minutes?: number; rps?: number; skipNew?: boolean }) => adminApi.putDailyProvider(id, input))
+export const useSaveDailyProvider = () =>
+  useDailyWrite(
+    ({
+      id,
+      ...input
+    }: {
+      id: string
+      enabled: boolean
+      refresh?: DailyProvider['refresh']
+      minutes?: number
+      rps?: number
+      skipNew?: boolean
+    }) => adminApi.putDailyProvider(id, input),
+  )
 export const useDeleteDailyApi = () => useDailyWrite((id: string) => adminApi.deleteDailyApi(id))
-export const useSaveDailyLines = () => useDailyWrite((input: { lang: string; text: string; format: LinesFormat }) => adminApi.putDailyLines(input))
+export const useSaveDailyLines = () =>
+  useDailyWrite((input: { lang: string; text: string; format: LinesFormat }) => adminApi.putDailyLines(input))
 export const useDeleteDailyLines = () => useDailyWrite((lang: string) => adminApi.deleteDailyLines(lang))
 export function useTryDailyApi() {
-  return useMutation({ mutationFn: ({ api, lang, date }: { api: Omit<DailyApi, 'note'>; lang: string; date: string }) => adminApi.tryDailyApi(api, lang, date) })
+  return useMutation({
+    mutationFn: ({ api, lang, date }: { api: Omit<DailyApi, 'note'>; lang: string; date: string }) =>
+      adminApi.tryDailyApi(api, lang, date),
+  })
 }
 
 // --- security ----------------------------------------------------------------------------
 
 export function useSecuritySettings(enabled = true) {
-  return useQuery({ queryKey: keys.adminSecurity, queryFn: ({ signal }) => adminApi.security(signal), enabled, staleTime: 15_000 })
+  return useQuery({
+    queryKey: keys.adminSecurity,
+    queryFn: ({ signal }) => adminApi.security(signal),
+    enabled,
+    staleTime: 15_000,
+  })
 }
 
 export function useAuthProviders() {
-  return useQuery({ queryKey: keys.adminProviders, queryFn: ({ signal }) => adminApi.authProviders(signal), staleTime: 15_000 })
+  return useQuery({
+    queryKey: keys.adminProviders,
+    queryFn: ({ signal }) => adminApi.authProviders(signal),
+    staleTime: 15_000,
+  })
 }
 
 export const AUDIT_PAGE_SIZE = 50
@@ -528,7 +791,11 @@ export function useAuditLog(kind: string, user: string) {
   return useInfiniteQuery({
     queryKey: keys.adminAudit(kind, user),
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => adminApi.audit({ kind: kind || undefined, user: user || undefined, cursor: pageParam || undefined, limit: AUDIT_PAGE_SIZE }, signal),
+    queryFn: ({ pageParam, signal }) =>
+      adminApi.audit(
+        { kind: kind || undefined, user: user || undefined, cursor: pageParam || undefined, limit: AUDIT_PAGE_SIZE },
+        signal,
+      ),
     getNextPageParam: (last) => last.next || undefined,
     staleTime: 5_000,
   })
@@ -537,7 +804,12 @@ export function useAuditLog(kind: string, user: string) {
 // --- machine access ------------------------------------------------------------------
 
 export function useMachineAccess(enabled = true) {
-  return useQuery({ queryKey: keys.adminAccess, queryFn: ({ signal }) => adminApi.access(signal), enabled, staleTime: 15_000 })
+  return useQuery({
+    queryKey: keys.adminAccess,
+    queryFn: ({ signal }) => adminApi.access(signal),
+    enabled,
+    staleTime: 15_000,
+  })
 }
 
 export function useSetMachineAccess() {
@@ -555,7 +827,8 @@ export function useAdminTokens(enabled = true) {
   return useInfiniteQuery({
     queryKey: keys.adminTokens,
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => adminApi.adminTokens({ cursor: pageParam || undefined, limit: ADMIN_TOKENS_PAGE }, signal),
+    queryFn: ({ pageParam, signal }) =>
+      adminApi.adminTokens({ cursor: pageParam || undefined, limit: ADMIN_TOKENS_PAGE }, signal),
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 15_000,
@@ -567,28 +840,99 @@ export function useAdminGrants(enabled = true) {
   return useInfiniteQuery({
     queryKey: keys.adminGrants,
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => adminApi.adminGrants({ cursor: pageParam || undefined, limit: ADMIN_TOKENS_PAGE }, signal),
+    queryFn: ({ pageParam, signal }) =>
+      adminApi.adminGrants({ cursor: pageParam || undefined, limit: ADMIN_TOKENS_PAGE }, signal),
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 15_000,
   })
 }
 
+// --- the hosts of GitLab and Gitea ---------------------------------------------------
+
+// Every provider the server has, with its counts; the cards of the hosts are made from it.
+export function useAdminConnectionProviders(enabled = true) {
+  return useQuery({
+    queryKey: keys.adminConnectionList,
+    queryFn: ({ signal }) => adminApi.adminConnectionProviders(signal),
+    enabled,
+    staleTime: 15_000,
+  })
+}
+
+export function useAdminForge(id: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.adminForge(id),
+    queryFn: ({ signal }) => adminApi.adminForge(id, signal),
+    enabled,
+    staleTime: 15_000,
+  })
+}
+
+// What an administrator changes about a host changes what everyone is offered.
+function useForgeChanged() {
+  const qc = useQueryClient()
+  return () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: keys.adminConnectionList }),
+      qc.invalidateQueries({ queryKey: ['admin', 'connections'] }),
+      qc.invalidateQueries({ queryKey: keys.connections }),
+    ])
+}
+
+export function useCreateAdminForge() {
+  const changed = useForgeChanged()
+  return useMutation({
+    mutationFn: (input: CreateAdminForgeInput) => adminApi.createAdminForge(input),
+    onSuccess: () => changed(),
+  })
+}
+
+export function usePatchAdminForge(id: string) {
+  const changed = useForgeChanged()
+  return useMutation({
+    mutationFn: (input: PatchAdminForgeInput) => adminApi.patchAdminForge(id, input),
+    onSuccess: () => changed(),
+  })
+}
+
+export function useCheckAdminForge(id: string) {
+  const changed = useForgeChanged()
+  return useMutation({ mutationFn: () => adminApi.checkAdminForge(id), onSuccess: () => changed() })
+}
+
+export function useDeleteAdminForge(id: string) {
+  const changed = useForgeChanged()
+  return useMutation({ mutationFn: () => adminApi.deleteAdminForge(id), onSuccess: () => changed() })
+}
+
 // --- the GitHub App ----------------------------------------------------------------
 
 export function useAdminGitHub(enabled = true) {
-  return useQuery({ queryKey: keys.adminGitHub, queryFn: ({ signal }) => adminApi.adminGitHub(signal), enabled, staleTime: 15_000 })
+  return useQuery({
+    queryKey: keys.adminGitHub,
+    queryFn: ({ signal }) => adminApi.adminGitHub(signal),
+    enabled,
+    staleTime: 15_000,
+  })
 }
 
 // What an administrator changes about the App changes what everyone is offered.
 function useGitHubChanged() {
   const qc = useQueryClient()
-  return () => Promise.all([qc.invalidateQueries({ queryKey: keys.adminGitHub }), qc.invalidateQueries({ queryKey: keys.connections })])
+  return () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: keys.adminGitHub }),
+      qc.invalidateQueries({ queryKey: keys.connections }),
+    ])
 }
 
 export function useSaveAdminGitHub() {
   const changed = useGitHubChanged()
-  return useMutation({ mutationFn: (input: PutAdminGitHubInput) => adminApi.putAdminGitHub(input), onSuccess: () => changed() })
+  return useMutation({
+    mutationFn: (input: PutAdminGitHubInput) => adminApi.putAdminGitHub(input),
+    onSuccess: () => changed(),
+  })
 }
 
 export function useCheckAdminGitHub() {
@@ -597,7 +941,9 @@ export function useCheckAdminGitHub() {
 }
 
 export function useStartGitHubManifest() {
-  return useMutation({ mutationFn: (input: { organization?: string; name?: string }) => adminApi.startGitHubManifest(input) })
+  return useMutation({
+    mutationFn: (input: { organization?: string; name?: string }) => adminApi.startGitHubManifest(input),
+  })
 }
 
 export function useRetryGitHubManifest() {
@@ -615,7 +961,8 @@ export function useAdminGitHubInstallations(enabled = true) {
   return useInfiniteQuery({
     queryKey: keys.adminGitHubInstallations,
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }): Promise<CursorPage<GitHubInstallation>> => adminApi.adminGitHubInstallations(pageParam || undefined, signal),
+    queryFn: ({ pageParam, signal }): Promise<CursorPage<GitHubInstallation>> =>
+      adminApi.adminGitHubInstallations(pageParam || undefined, signal),
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 15_000,
@@ -625,15 +972,25 @@ export function useAdminGitHubInstallations(enabled = true) {
 export function useShareGitHubInstallation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, tenants }: { id: number; tenants: string[] }) => adminApi.putAdminGitHubInstallation(id, tenants),
-    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: keys.adminGitHubInstallations }), qc.invalidateQueries({ queryKey: ['connections'] })]),
+    mutationFn: ({ id, tenants }: { id: number; tenants: string[] }) =>
+      adminApi.putAdminGitHubInstallation(id, tenants),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: keys.adminGitHubInstallations }),
+        qc.invalidateQueries({ queryKey: ['connections'] }),
+      ]),
   })
 }
 
 // --- server storage (docs/api.md, "Server storage") ---
 
 export function useAdminStorage(enabled = true) {
-  return useQuery({ queryKey: keys.adminStorage, queryFn: ({ signal }) => adminApi.adminStorage(signal), enabled, staleTime: 10_000 })
+  return useQuery({
+    queryKey: keys.adminStorage,
+    queryFn: ({ signal }) => adminApi.adminStorage(signal),
+    enabled,
+    staleTime: 10_000,
+  })
 }
 // A change of the policy changes what the spaces show (notices, read only) and the counts of the status.
 export function useSaveAdminStorage() {
@@ -642,7 +999,11 @@ export function useSaveAdminStorage() {
     mutationFn: (input: PutAdminStorage) => adminApi.putAdminStorage(input),
     onSuccess: (data) => {
       qc.setQueryData(keys.adminStorage, data)
-      return Promise.all([qc.invalidateQueries({ queryKey: keys.adminSpaces }), qc.invalidateQueries({ queryKey: keys.spaces }), qc.invalidateQueries({ queryKey: keys.adminStatus })])
+      return Promise.all([
+        qc.invalidateQueries({ queryKey: keys.adminSpaces }),
+        qc.invalidateQueries({ queryKey: keys.spaces }),
+        qc.invalidateQueries({ queryKey: keys.adminStatus }),
+      ])
     },
   })
 }
@@ -650,7 +1011,8 @@ export function usePutSpaceStorage() {
   const changed = useAdminSpaceChanged()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...input }: { id: string; pin?: boolean; exempt?: boolean }) => adminApi.putSpaceStorage(id, input),
+    mutationFn: ({ id, ...input }: { id: string; pin?: boolean; exempt?: boolean }) =>
+      adminApi.putSpaceStorage(id, input),
     onSuccess: (_r, { id }) => Promise.all([changed(id), qc.invalidateQueries({ queryKey: keys.adminStorage })]),
   })
 }

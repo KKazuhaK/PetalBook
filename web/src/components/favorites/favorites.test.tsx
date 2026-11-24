@@ -12,7 +12,20 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import HomePage from '@/components/home/HomePage'
 import { t } from '@/i18n'
 import { th } from '@/i18n/home'
-import { adminRequests, byLabel, click, installDomShims, locationText, makePerson, mount, press, settle, shareSpace, startView, type Mounted } from '@/testing/harness'
+import {
+  adminRequests,
+  byLabel,
+  click,
+  installDomShims,
+  locationText,
+  makePerson,
+  mount,
+  press,
+  settle,
+  shareSpace,
+  startView,
+  type Mounted,
+} from '@/testing/harness'
 import { listShell, putViews, sender, type Send } from '@/testing/listKit'
 
 beforeAll(installDomShims)
@@ -57,15 +70,26 @@ const gatedShell = (
 
 const group = () => document.querySelector<HTMLElement>('[data-slot="sidebar-favorites"]')
 const sideRows = () => [...(group()?.querySelectorAll<HTMLElement>('[data-favorite]') ?? [])]
-const homeRows = () => [...(document.querySelector('[data-slot="home"] ul[aria-label="' + t.fav.section + '"]')?.querySelectorAll<HTMLElement>('[data-favorite]') ?? [])]
-const names = (rows: HTMLElement[]) => rows.map((r) => r.querySelector('a span, [role="link"] span')?.textContent?.trim())
-const favRequests = () => m!.requests.filter((r) => r.url.includes('/favorites') && r.method !== 'GET').map((r) => `${r.method} ${decodeURIComponent(r.url.replace(/^\/api\/spaces\/[^/]+/, ''))}`)
+const homeRows = () => [
+  ...(document
+    .querySelector('[data-slot="home"] ul[aria-label="' + t.fav.section + '"]')
+    ?.querySelectorAll<HTMLElement>('[data-favorite]') ?? []),
+]
+const names = (rows: HTMLElement[]) =>
+  rows.map((r) => r.querySelector('a span, [role="link"] span')?.textContent?.trim())
+const favRequests = () =>
+  m!.requests
+    .filter((r) => r.url.includes('/favorites') && r.method !== 'GET')
+    .map((r) => `${r.method} ${decodeURIComponent(r.url.replace(/^\/api\/spaces\/[^/]+/, ''))}`)
 
 // A page, a folder and a view, all favourites of the local person.
 function seed(send: Send) {
-  const page = (send('POST', '/pages', { folder: '', meta: { title: '暮雪' }, body: '正文\n' }).body as { id: string }).id
+  const page = (send('POST', '/pages', { folder: '', meta: { title: '暮雪' }, body: '正文\n' }).body as { id: string })
+    .id
   send('POST', '/folders', { path: '诗' })
-  const id = (putViews(send, { folder: '诗' }, [{ name: '按作者', layout: 'list' }]).body as { views: { id: string }[] }).views[0].id
+  const id = (
+    putViews(send, { folder: '诗' }, [{ name: '按作者', layout: 'list' }]).body as { views: { id: string }[] }
+  ).views[0].id
   send('POST', '/favorites', { kind: 'page', target: page })
   send('POST', '/favorites', { kind: 'folder', target: '诗' })
   send('POST', '/favorites', { kind: 'view', target: `folder:诗#${id}` })
@@ -82,7 +106,7 @@ const open = (scene?: (send: Send) => unknown) =>
   })
 
 describe('favourites in the sidebar and on the home page', () => {
-  it('both show the same list in the person\'s order, as links to what they are', async () => {
+  it("both show the same list in the person's order, as links to what they are", async () => {
     m = await open(seed)
     await settle(() => sideRows().length === 3 && homeRows().length === 3, 'both lists')
     expect(names(sideRows())).toEqual(['暮雪', '诗', '按作者'])
@@ -98,7 +122,9 @@ describe('favourites in the sidebar and on the home page', () => {
   it('the logo link in the sidebar is named as the way home, not as the recent pages', async () => {
     m = await mount(shell, { entries: ['/s/default'], signIn: true, server: { mode: 'accounts' } })
     await settle(() => document.querySelector('a[aria-label="' + t.nav.home + '"]') !== null, 'the logo link')
-    expect(document.querySelector('a[aria-label="' + t.nav.home + '"]')!.getAttribute('href')).toMatch(/^\/s\/[^/]+\/?$/)
+    expect(document.querySelector('a[aria-label="' + t.nav.home + '"]')!.getAttribute('href')).toMatch(
+      /^\/s\/[^/]+\/?$/,
+    )
     expect(document.querySelector('a[aria-label="' + t.nav.recent + '"] img[src="/favicon.svg"]')).toBeNull()
   })
 
@@ -154,7 +180,8 @@ describe('favourites in the sidebar and on the home page', () => {
     m = await open(seed)
     await settle(() => sideRows().length === 3, 'rows')
     const dt = { setData() {}, effectAllowed: '' }
-    const ev = (type: string) => Object.assign(new Event(type, { bubbles: true, cancelable: true }), { dataTransfer: dt })
+    const ev = (type: string) =>
+      Object.assign(new Event(type, { bubbles: true, cancelable: true }), { dataTransfer: dt })
     await act(async () => void sideRows()[2].dispatchEvent(ev('dragstart')))
     await act(async () => void sideRows()[0].dispatchEvent(ev('dragover')))
     await act(async () => void sideRows()[0].dispatchEvent(ev('drop')))
@@ -191,7 +218,9 @@ describe('favourites in the sidebar and on the home page', () => {
 describe('the ways to favourite', () => {
   it('the star: pressed when it is one, adds and takes off, says so', async () => {
     let page = ''
-    const Star = () => <StarButton target={{ kind: 'page', target: page }} labels={{ add: t.fav.addPage, remove: t.fav.removePage }} />
+    const Star = () => (
+      <StarButton target={{ kind: 'page', target: page }} labels={{ add: t.fav.addPage, remove: t.fav.removePage }} />
+    )
     m = await mount(
       <Routes>
         <Route path="/s/:space" element={<Star />} />
@@ -225,7 +254,9 @@ describe('the ways to favourite', () => {
               element={
                 <FileOpsProvider>
                   <FileContextMenu resolve={(key) => (key === 'f:诗' ? [{ kind: 'folder', path: '诗' }] : null)}>
-                    <div {...{ [ENTRY_ATTR]: 'f:诗' }} data-testid="entry"><a href="#x">诗</a></div>
+                    <div {...{ [ENTRY_ATTR]: 'f:诗' }} data-testid="entry">
+                      <a href="#x">诗</a>
+                    </div>
                   </FileContextMenu>
                 </FileOpsProvider>
               }
@@ -233,11 +264,19 @@ describe('the ways to favourite', () => {
           </Routes>
         </QuickCaptureProvider>
       </SidebarProvider>,
-      { entries: (server) => (sender(server)('POST', '/folders', { path: '诗' }), ['/s/default']), server: { mode: 'single' } },
+      {
+        entries: (server) => (sender(server)('POST', '/folders', { path: '诗' }), ['/s/default']),
+        server: { mode: 'single' },
+      },
     )
     const entry = () => document.querySelector('[data-testid="entry"]')!
     const menu = async () => {
-      await act(async () => void entry().querySelector('a')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 5, clientY: 5 })))
+      await act(
+        async () =>
+          void entry()
+            .querySelector('a')!
+            .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 5, clientY: 5 })),
+      )
       await settle(() => document.querySelector('[role="menuitem"]') !== null, 'the menu')
       return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
     }
@@ -248,7 +287,10 @@ describe('the ways to favourite', () => {
     await settle(() => favRequests().length === 1, 'added')
     expect(favRequests()[0]).toBe('POST /favorites')
     await settle(() => document.querySelector('[role="menuitem"]') === null, 'closed')
-    await settle(() => m!.requests.filter((r) => r.url.endsWith('/favorites') && r.method === 'GET').length >= 1, 'listed')
+    await settle(
+      () => m!.requests.filter((r) => r.url.endsWith('/favorites') && r.method === 'GET').length >= 1,
+      'listed',
+    )
     items = await menu()
     expect(items.some((i) => i.textContent === t.fav.remove)).toBe(true)
   })
@@ -261,7 +303,12 @@ describe('the view tabs', () => {
       entries: (server) => {
         const send = sender(server)
         send('POST', '/folders', { path: '诗' })
-        id = (putViews(send, { folder: '诗' }, [{ name: '全部', layout: 'list' }, { name: '按作者', layout: 'list' }]).body as { views: { id: string }[] }).views[1].id
+        id = (
+          putViews(send, { folder: '诗' }, [
+            { name: '全部', layout: 'list' },
+            { name: '按作者', layout: 'list' },
+          ]).body as { views: { id: string }[] }
+        ).views[1].id
         return ['/s/default/f/诗']
       },
       server: { mode: 'single' },
@@ -317,7 +364,7 @@ describe('who can have favourites', () => {
     expect(locationText()).toMatch(/^\/s\//)
   })
 
-  it('the favourites are one person\'s own', async () => {
+  it("the favourites are one person's own", async () => {
     m = await mount(shell, {
       signIn: true,
       server: { mode: 'accounts' },
@@ -329,7 +376,7 @@ describe('who can have favourites', () => {
         return [`/s/${space}`]
       },
     })
-    await settle(() => document.body.textContent!.includes(th.favorites.empty), 'none of the owner\'s shows')
+    await settle(() => document.body.textContent!.includes(th.favorites.empty), "none of the owner's shows")
     expect(group()).toBeNull()
   })
 })

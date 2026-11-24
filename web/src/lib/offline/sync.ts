@@ -105,7 +105,11 @@ function either(a: AbortSignal | undefined, b: AbortSignal): { signal: AbortSign
   return { signal: c.signal, done: () => (a.removeEventListener('abort', onA), b.removeEventListener('abort', onB)) }
 }
 
-async function run(store: OfflineStore, cfg: Awaited<ReturnType<OfflineStore['config']>> & object, opts: SyncOptions): Promise<boolean> {
+async function run(
+  store: OfflineStore,
+  cfg: Awaited<ReturnType<OfflineStore['config']>> & object,
+  opts: SyncOptions,
+): Promise<boolean> {
   const sp = spaceApi(store.space)
   const signal = opts.signal
   let state = await store.state()
@@ -159,7 +163,10 @@ async function run(store: OfflineStore, cfg: Awaited<ReturnType<OfflineStore['co
     const ups = r.items.filter((i): i is CatalogEntry => !isRemoved(i))
     // A page is in an answer once; were it in as both, it is there.
     const here = new Set(ups.map((e) => e.id))
-    const removed = r.items.filter(isRemoved).map((i) => i.id).filter((id) => !here.has(id))
+    const removed = r.items
+      .filter(isRemoved)
+      .map((i) => i.id)
+      .filter((id) => !here.has(id))
     if (ups.length || removed.length) {
       changed = true
       await store.applyCatalog(ups, removed, { cursor: r.next })
@@ -190,15 +197,27 @@ async function run(store: OfflineStore, cfg: Awaited<ReturnType<OfflineStore['co
 }
 
 // Fetches the text the scope wants and the device has room for; drops what it does not want any more.
-async function fillText(store: OfflineStore, cfg: NonNullable<Awaited<ReturnType<OfflineStore['config']>>>, opts: SyncOptions, refreshScope: boolean): Promise<boolean> {
+async function fillText(
+  store: OfflineStore,
+  cfg: NonNullable<Awaited<ReturnType<OfflineStore['config']>>>,
+  opts: SyncOptions,
+  refreshScope: boolean,
+): Promise<boolean> {
   const sp = spaceApi(store.space)
   const signal = opts.signal
   let state = await store.state()
   if (refreshScope || state.inbox === '') {
     // What the scope is made of besides the catalogue: the person's favourites and the space's inbox.
-    const [favs, spaces] = await Promise.all([cfg.favourites ? sp.favorites(signal).catch(() => null) : null, state.inbox === '' || refreshScope ? api.spaces(signal).catch(() => null) : null])
+    const [favs, spaces] = await Promise.all([
+      cfg.favourites ? sp.favorites(signal).catch(() => null) : null,
+      state.inbox === '' || refreshScope ? api.spaces(signal).catch(() => null) : null,
+    ])
     const patch: Partial<typeof state> = {}
-    if (favs) patch.favourites = { pages: favs.items.filter((f) => f.kind === 'page' && !f.missing).map((f) => f.target), folders: favs.items.filter((f) => f.kind === 'folder' && !f.missing).map((f) => f.target) }
+    if (favs)
+      patch.favourites = {
+        pages: favs.items.filter((f) => f.kind === 'page' && !f.missing).map((f) => f.target),
+        folders: favs.items.filter((f) => f.kind === 'folder' && !f.missing).map((f) => f.target),
+      }
     const inbox = spaces?.spaces.find((s) => s.id === store.space)?.inbox
     if (inbox) patch.inbox = inbox
     if (Object.keys(patch).length) {
@@ -268,7 +287,12 @@ async function fillText(store: OfflineStore, cfg: NonNullable<Awaited<ReturnType
 }
 
 // The text that can go first: kept only because it was opened lately, the longest ago (and before the incoming one).
-async function evictable(store: OfflineStore, have: Map<string, { id: string; bytes: number }>, pinned: Set<string>, incoming: string) {
+async function evictable(
+  store: OfflineStore,
+  have: Map<string, { id: string; bytes: number }>,
+  pinned: Set<string>,
+  incoming: string,
+) {
   const opened = new Map((await store.opened()).map((o) => [o.id, o.at]))
   // A page that is only recent never pushes out one opened after it.
   const limit = pinned.has(incoming) ? Infinity : (opened.get(incoming) ?? 0)

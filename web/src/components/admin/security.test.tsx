@@ -7,7 +7,18 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/i18n'
 import { ta } from '@/i18n/admin'
 import { tsec } from '@/i18n/security'
-import { adminRequests, byLabel, byText, click, installDomShims, makePerson, mount, settle, type, type Mounted } from '@/testing/harness'
+import {
+  adminRequests,
+  byLabel,
+  byText,
+  click,
+  installDomShims,
+  makePerson,
+  mount,
+  settle,
+  type,
+  type Mounted,
+} from '@/testing/harness'
 import { AdminGate } from './AdminGate'
 import { buildPatch, draftOf } from './securityDraft'
 import { detailText } from './AuditSection'
@@ -33,12 +44,19 @@ const routes = (
 )
 const text = () => document.body.textContent ?? ''
 const q = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel)
-const buttonWith = (label: string) => [...document.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent?.trim() === label)
+const buttonWith = (label: string) =>
+  [...document.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent?.trim() === label)
 const section = (id: string) => q(`section[aria-labelledby="${id}"]`)!
 const dialog = () => q('[role="alertdialog"], [role="dialog"]')!
 const calls = (method: string, url: string) => m!.requests.filter((r) => r.method === method && r.url.startsWith(url))
 
-const company = { slug: 'company', kind: 'oidc' as const, name: 'Company SSO', icon: 'preset:microsoft', oidc: { issuer: 'https://login.example/v2.0', clientId: 'id', clientSecret: 'x' } }
+const company = {
+  slug: 'company',
+  kind: 'oidc' as const,
+  name: 'Company SSO',
+  icon: 'preset:microsoft',
+  oidc: { issuer: 'https://login.example/v2.0', clientId: 'id', clientSecret: 'x' },
+}
 
 async function open(server: MockOptions = {}) {
   m = await mount(routes, { entries: ['/admin/security'], signIn: true, server: { mode: 'accounts', ...server } })
@@ -50,7 +68,18 @@ describe('the draft of the form', () => {
   const server: SecuritySettings = {
     login: { mode: 'dual', effectiveMode: 'dual', ssoOnly: false, ssoOnlyInEffect: false, ssoAvailable: true },
     passkeys: { enabled: true, available: true, requireRoles: [], required: 0, requiredWithout: 0 },
-    captcha: { provider: 'image', siteKey: '', hasSecret: false, contexts: { login: { on: false, when: 'after_failures', failures: 3 }, invite: { on: false, when: 'after_failures', failures: 3 }, setup: { on: false, when: 'after_failures', failures: 3 }, forgot: { on: false, when: 'after_failures', failures: 3 }, register: { on: false, when: 'after_failures', failures: 3 } } },
+    captcha: {
+      provider: 'image',
+      siteKey: '',
+      hasSecret: false,
+      contexts: {
+        login: { on: false, when: 'after_failures', failures: 3 },
+        invite: { on: false, when: 'after_failures', failures: 3 },
+        setup: { on: false, when: 'after_failures', failures: 3 },
+        forgot: { on: false, when: 'after_failures', failures: 3 },
+        register: { on: false, when: 'after_failures', failures: 3 },
+      },
+    },
     lockout: { enabled: false, minutes: 15, scope: 'ip_account' },
     limits: { perMinute: 10, maxFailures: 10, windowMinutes: 15, sessionIdleDays: 30, sessionMaxDays: 90 },
     passwordAdmins: 1,
@@ -63,7 +92,12 @@ describe('the draft of the form', () => {
     d.contexts.login.on = true
     d.lockMinutes = '30'
     d.limits.perMinute = '20'
-    expect(buildPatch(server, d)).toEqual({ login: { mode: 'sso_first' }, captcha: { contexts: { login: { on: true } } }, lockout: { minutes: 30 }, limits: { perMinute: 20 } })
+    expect(buildPatch(server, d)).toEqual({
+      login: { mode: 'sso_first' },
+      captcha: { contexts: { login: { on: true } } },
+      lockout: { minutes: 30 },
+      limits: { perMinute: 20 },
+    })
   })
   it('sends the secret only when it was touched: a new one, or "" to clear', () => {
     const d = draftOf(server)
@@ -85,7 +119,9 @@ describe('the draft of the form', () => {
 describe('the audit detail as key=value', () => {
   it('flattens one level and keeps it short', () => {
     expect(detailText({ method: 'password', created: true })).toBe('method=password created=true')
-    expect(detailText({ from: { 'login.mode': 'dual' }, to: { 'login.mode': 'sso_first' } })).toBe('from.login.mode=dual to.login.mode=sso_first')
+    expect(detailText({ from: { 'login.mode': 'dual' }, to: { 'login.mode': 'sso_first' } })).toBe(
+      'from.login.mode=dual to.login.mode=sso_first',
+    )
     expect(detailText({})).toBe('')
   })
 })
@@ -93,17 +129,27 @@ describe('the audit detail as key=value', () => {
 describe('the security page', () => {
   it('is a section of the administration, after the daily text', async () => {
     await open()
-    expect(document.querySelector('nav[aria-label="' + ta.nav + '"] [aria-current="page"]')?.textContent).toBe(ta.sections.security)
+    expect(document.querySelector('nav[aria-label="' + ta.nav + '"] [aria-current="page"]')?.textContent).toBe(
+      ta.sections.security,
+    )
   })
 
   it('loads the settings into the form', async () => {
-    await open({ security: { login: { mode: 'sso_first' }, lockout: { minutes: 20 }, limits: { perMinute: 7 } }, providers: [company] })
+    await open({
+      security: { login: { mode: 'sso_first' }, lockout: { minutes: 20 }, limits: { perMinute: 7 } },
+      providers: [company],
+    })
     expect(q<HTMLSelectElement>('#security-mode')!.value).toBe('sso_first')
     expect(q<HTMLInputElement>('#security-lock-minutes')!.value).toBe('20')
     expect(q<HTMLInputElement>('#security-limit-perMinute')!.value).toBe('7')
     expect(q('[data-slot="passkeys-required"]')!.textContent).toBe(tsec.passkeys.required(0, 0))
     // The four modes are all offered.
-    expect([...q<HTMLSelectElement>('#security-mode')!.options].map((o) => o.value)).toEqual(['dual', 'sso_first', 'sso_redirect', 'local_only'])
+    expect([...q<HTMLSelectElement>('#security-mode')!.options].map((o) => o.value)).toEqual([
+      'dual',
+      'sso_first',
+      'sso_redirect',
+      'local_only',
+    ])
   })
 
   it('saves only what was changed, and shows what the server answered', async () => {
@@ -131,7 +177,13 @@ describe('the security page', () => {
   it('local_admin_required: the refusal is in words, next to the sign-in settings, and nothing is saved', async () => {
     await open({ providers: [company] })
     // The only administrator has no password any more (a person whose account single sign-on made).
-    m!.server.handle('POST', '/api/_mock/drop-password', JSON.stringify({ username: 'admin' }), 'application/json', null)
+    m!.server.handle(
+      'POST',
+      '/api/_mock/drop-password',
+      JSON.stringify({ username: 'admin' }),
+      'application/json',
+      null,
+    )
     await click(q('#security-ssoonly'))
     await click(buttonWith(tsec.save))
     await settle(() => text().includes(tsec.errors.local_admin_required), 'the refusal')
@@ -187,7 +239,11 @@ describe('the security page', () => {
     const label = (id: string) => q(`label[for="${id}"]`)!
     expect(label('security-sitekey').querySelector('[data-slot="required-mark"]')?.textContent).toBe('*')
     expect(q('#security-sitekey')!.getAttribute('aria-required')).toBe('true')
-    expect(q('[data-slot="settings-row"]:has(#security-secret), [data-slot="settings-row"]:has([data-slot="secret-saved"])')!.querySelector('[data-slot="required-mark"]')).not.toBeNull()
+    expect(
+      q(
+        '[data-slot="settings-row"]:has(#security-secret), [data-slot="settings-row"]:has([data-slot="secret-saved"])',
+      )!.querySelector('[data-slot="required-mark"]'),
+    ).not.toBeNull()
     expect(label('security-captcha-provider').querySelector('[data-slot="required-mark"]')).toBeNull()
     expect(q('[data-slot="secret-saved"]')!.textContent).toBe(`${tsec.captcha.secretSaved} · ${tsec.captcha.replace}`)
     expect(tsec.captcha.replace).toBe(ta.daily.headerChange)
@@ -212,7 +268,7 @@ describe('the security page', () => {
     expect(lastPut()).toEqual({ lockout: { scope: 'account' } })
   })
 
-  it('a number out of range is refused with the server\'s message, not clamped', async () => {
+  it("a number out of range is refused with the server's message, not clamped", async () => {
     await open()
     await type(q<HTMLInputElement>('#security-limit-sessionIdleDays')!, '9999')
     await click(buttonWith(tsec.save))
@@ -230,7 +286,12 @@ describe('the security page', () => {
   })
 
   it('shows the notices the server has', async () => {
-    await open({ securityNotices: [{ code: 'flags_ignored', message: 'flags differ' }, { code: 'secret_unreadable', message: 'x', slug: 'company' }] })
+    await open({
+      securityNotices: [
+        { code: 'flags_ignored', message: 'flags differ' },
+        { code: 'secret_unreadable', message: 'x', slug: 'company' },
+      ],
+    })
     const notices = q('[data-slot="security-notices"]')!.textContent!
     expect(notices).toContain(tsec.notices.flags_ignored)
     expect(notices).toContain('company')
@@ -250,11 +311,25 @@ describe('the sign-in providers', () => {
   const form = () => q('[data-slot="provider-form"]')!
   // A label's words, without the star of a required field.
   const words = (el: Element | null | undefined) => (el?.textContent ?? '').replace(/\*$/, '')
-  const inputIn = (label: string) => [...form().querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea')].find((i) => words(i.closest('div')?.querySelector('label')) === label || i.getAttribute('aria-label') === label)!
+  const inputIn = (label: string) =>
+    [...form().querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea')].find(
+      (i) => words(i.closest('div')?.querySelector('label')) === label || i.getAttribute('aria-label') === label,
+    )!
   const labelOf = (label: string) => [...form().querySelectorAll('label')].find((l) => words(l) === label)!
 
   it('lists the providers with their status and how many people use them', async () => {
-    await open({ providers: [company, { slug: 'campus', kind: 'saml', name: 'Campus login', saml: { metadataUrl: 'https://idp.example/m' }, status: { ok: false, checked: '2026-11-23T08:00:00Z', message: 'no route to host' } }] })
+    await open({
+      providers: [
+        company,
+        {
+          slug: 'campus',
+          kind: 'saml',
+          name: 'Campus login',
+          saml: { metadataUrl: 'https://idp.example/m' },
+          status: { ok: false, checked: '2026-11-23T08:00:00Z', message: 'no route to host' },
+        },
+      ],
+    })
     await settle(() => listed().length === 2, 'the list')
     expect(listed()[0].textContent).toContain('Company SSO')
     expect(listed()[0].textContent).toContain(tsec.providers.kinds.oidc)
@@ -276,12 +351,24 @@ describe('the sign-in providers', () => {
     await click(buttonWith(tsec.providers.create))
     await settle(() => listed().length === 1, 'the new provider')
     const post = JSON.parse(calls('POST', '/api/admin/auth/providers')[0].body!)
-    expect(post).toMatchObject({ slug: 'acme', kind: 'oidc', name: 'Acme SSO', oidc: { issuer: 'https://login.acme.example', clientId: 'client-1', clientSecret: 'shh', scopes: ['profile', 'email'] } })
+    expect(post).toMatchObject({
+      slug: 'acme',
+      kind: 'oidc',
+      name: 'Acme SSO',
+      oidc: {
+        issuer: 'https://login.acme.example',
+        clientId: 'client-1',
+        clientSecret: 'shh',
+        scopes: ['profile', 'email'],
+      },
+    })
     // Editing it shows the redirect address and that a secret is saved, but not the secret.
     await click(byLabel(tsec.providers.editFor('Acme SSO')))
     await settle(() => q('[data-slot="provider-form"]') !== null, 'the edit form')
     expect(inputIn(tsec.providers.oidc.redirectUrl).value).toBe('https://notes.example.com/api/auth/oidc/acme/callback')
-    expect(q('[data-slot="secret-saved"]')!.textContent).toContain(`${tsec.providers.secretSaved} · ${tsec.providers.secretReplace}`)
+    expect(q('[data-slot="secret-saved"]')!.textContent).toContain(
+      `${tsec.providers.secretSaved} · ${tsec.providers.secretReplace}`,
+    )
     expect(tsec.providers.secretReplace).toBe(ta.daily.headerChange)
     expect(document.body.innerHTML).not.toContain('shh')
   })
@@ -292,26 +379,43 @@ describe('the sign-in providers', () => {
     await click(buttonWith(tsec.providers.add))
     await settle(() => q('[data-slot="provider-form"]') !== null, 'the form')
     const marked = (label: string) => labelOf(label).querySelector('[data-slot="required-mark"]') !== null
-    for (const l of [tsec.providers.slug, tsec.providers.name, tsec.providers.oidc.issuer, tsec.providers.oidc.clientId]) {
+    for (const l of [
+      tsec.providers.slug,
+      tsec.providers.name,
+      tsec.providers.oidc.issuer,
+      tsec.providers.oidc.clientId,
+    ]) {
       expect(marked(l), l).toBe(true)
       expect(inputIn(l).getAttribute('aria-required'), l).toBe('true')
     }
-    for (const l of [tsec.providers.order, tsec.providers.oidc.scopes, tsec.providers.oidc.clientSecret]) expect(marked(l), l).toBe(false)
+    for (const l of [tsec.providers.order, tsec.providers.oidc.scopes, tsec.providers.oidc.clientSecret])
+      expect(marked(l), l).toBe(false)
     await type(q<HTMLSelectElement>('#provider-kind')!, 'github')
-    for (const l of [tsec.providers.github.clientId, tsec.providers.github.clientSecret]) expect(marked(l), l).toBe(true)
+    for (const l of [tsec.providers.github.clientId, tsec.providers.github.clientSecret])
+      expect(marked(l), l).toBe(true)
     expect(marked(tsec.providers.github.baseUrl)).toBe(false)
   })
 
   it('SAML shows what to give the identity provider: entity id, ACS address, metadata path and certificate', async () => {
-    await open({ providers: [{ slug: 'campus', kind: 'saml', name: 'Campus login', saml: { metadataUrl: 'https://idp.example/m' } }] })
+    await open({
+      providers: [
+        { slug: 'campus', kind: 'saml', name: 'Campus login', saml: { metadataUrl: 'https://idp.example/m' } },
+      ],
+    })
     await settle(() => listed().length === 1, 'the list')
     await click(byLabel(tsec.providers.editFor('Campus login')))
     await settle(() => q('[data-slot="saml-readonly"]') !== null, 'the SAML fields')
     const ro = q('[data-slot="saml-readonly"]')!
     expect(ro.textContent).toContain(tsec.providers.saml.acsUrl)
-    expect((ro.querySelector('[aria-label="' + tsec.providers.saml.acsUrl + '"]') as HTMLInputElement).value).toBe('https://notes.example.com/api/auth/saml/campus/acs')
-    expect((ro.querySelector('[aria-label="' + tsec.providers.saml.metadataPath + '"]') as HTMLInputElement).value).toBe('/api/auth/saml/campus/metadata')
-    expect((ro.querySelector('[aria-label="' + tsec.providers.saml.certificate + '"]') as HTMLTextAreaElement).value).toContain('BEGIN CERTIFICATE')
+    expect((ro.querySelector('[aria-label="' + tsec.providers.saml.acsUrl + '"]') as HTMLInputElement).value).toBe(
+      'https://notes.example.com/api/auth/saml/campus/acs',
+    )
+    expect(
+      (ro.querySelector('[aria-label="' + tsec.providers.saml.metadataPath + '"]') as HTMLInputElement).value,
+    ).toBe('/api/auth/saml/campus/metadata')
+    expect(
+      (ro.querySelector('[aria-label="' + tsec.providers.saml.certificate + '"]') as HTMLTextAreaElement).value,
+    ).toContain('BEGIN CERTIFICATE')
   })
 
   it('maps the refusals to words: a taken slug, an issuer in use, a GitHub provider that creates accounts without an organisation', async () => {
@@ -363,7 +467,7 @@ describe('the sign-in providers', () => {
     await settle(() => calls('POST', '/api/admin/auth/providers/company/refresh').length === 1, 'refreshed')
   })
 
-  it('deleting asks first; a provider that is somebody\'s only way in asks again, and then force-deletes', async () => {
+  it("deleting asks first; a provider that is somebody's only way in asks again, and then force-deletes", async () => {
     await open({ providers: [company] })
     await settle(() => listed().length === 1, 'the list')
     // Somebody whose only way in is this provider (single sign-on made the account).
@@ -404,7 +508,13 @@ describe('the sign-in providers', () => {
 // An account made by the provider, with nothing else to sign in with.
 async function signInThroughProvider(): Promise<boolean> {
   const server = m!.server
-  const start = server.handle('POST', '/api/auth/oidc/company/start', JSON.stringify({ intent: 'login' }), 'application/json', null)
+  const start = server.handle(
+    'POST',
+    '/api/auth/oidc/company/start',
+    JSON.stringify({ intent: 'login' }),
+    'application/json',
+    null,
+  )
   const cookie = start.headers!['Set-Cookie'].split(';')[0]
   const url = (start.body as { url: string }).url
   // The provider creates accounts here: switch that on for the scene.

@@ -3,16 +3,46 @@ import { Link } from 'react-router'
 import { MoreHorizontal, RefreshCw, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { useAdminSpaces, useEvictSpace, usePutSpaceStorage, useResizeSpace, useSetSpaceDisabled, useTransferSpace, useUserSearch, USER_SEARCH_LIMIT } from '@/api/admin'
+import {
+  useAdminSpaces,
+  useEvictSpace,
+  usePutSpaceStorage,
+  useResizeSpace,
+  useSetSpaceDisabled,
+  useTransferSpace,
+  useUserSearch,
+  USER_SEARCH_LIMIT,
+} from '@/api/admin'
 import type { AdminSpace, CacheState, ConfirmAction, SpaceSort, User } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { SettingsSection } from '@/components/settings/SettingsParts'
-import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -107,10 +137,26 @@ export function SpacesPanel() {
     <SettingsSection title={ta.spaces.title} id="admin-spaces-heading" description={ta.spaces.help}>
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative w-full max-w-sm min-w-0">
-          <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input type="search" value={text} onChange={(e) => setText(e.target.value)} placeholder={ta.spaces.searchPlaceholder} aria-label={ta.spaces.search} className="pl-8" autoComplete="off" />
+          <Search
+            aria-hidden="true"
+            className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+          />
+          <Input
+            type="search"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={ta.spaces.searchPlaceholder}
+            aria-label={ta.spaces.search}
+            className="pl-8"
+            autoComplete="off"
+          />
         </div>
-        <NativeSelect aria-label={ts.spaces.filter} value={filter} onChange={(e) => setFilter(e.target.value)} className="w-auto max-sm:w-full">
+        <NativeSelect
+          aria-label={ts.spaces.filter}
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          className="w-auto max-sm:w-full"
+        >
           <option value="">{ts.spaces.filterAll}</option>
           <option value="overdue">{ts.spaces.filterOverdue}</option>
           {(['local', 'full', 'partial', 'evicted', 'archived'] as const).map((c) => (
@@ -134,18 +180,33 @@ export function SpacesPanel() {
             </option>
           ))}
         </NativeSelect>
-        <NativeSelect aria-label={`${tg.spaces.sort} ↕`} value={order} onChange={(e) => setOrder(e.target.value as 'asc' | 'desc')} className="w-auto max-sm:w-full">
+        <NativeSelect
+          aria-label={`${tg.spaces.sort} ↕`}
+          value={order}
+          onChange={(e) => setOrder(e.target.value as 'asc' | 'desc')}
+          className="w-auto max-sm:w-full"
+        >
           <option value="asc">{tg.spaces.order.asc}</option>
           <option value="desc">{tg.spaces.order.desc}</option>
         </NativeSelect>
-        <NativeSelect aria-label={tg.spaces.remote} value={remote} onChange={(e) => setRemote(e.target.value)} className="w-auto max-sm:w-full">
+        <NativeSelect
+          aria-label={tg.spaces.remote}
+          value={remote}
+          onChange={(e) => setRemote(e.target.value)}
+          className="w-auto max-sm:w-full"
+        >
           {(['', 'none', 'ok', 'offline', 'error'] as const).map((k) => (
             <option key={k} value={k}>
               {tg.spaces.remote}：{tg.spaces.remotes[k]}
             </option>
           ))}
         </NativeSelect>
-        <NativeSelect aria-label={tg.spaces.idle} value={idle} onChange={(e) => setIdle(e.target.value)} className="w-auto max-sm:w-full">
+        <NativeSelect
+          aria-label={tg.spaces.idle}
+          value={idle}
+          onChange={(e) => setIdle(e.target.value)}
+          className="w-auto max-sm:w-full"
+        >
           {(['', '30', '90', '180'] as const).map((k) => (
             <option key={k} value={k}>
               {k === '' ? `${tg.spaces.idle}：${tg.spaces.idles['']}` : tg.spaces.idles[k]}
@@ -153,18 +214,32 @@ export function SpacesPanel() {
           ))}
         </NativeSelect>
         <label className="flex items-center gap-1.5 text-xs">
-          <input type="checkbox" className="size-4 accent-[var(--color-primary)]" checked={pinnedOnly} onChange={(e) => setPinnedOnly(e.target.checked)} />
+          <input
+            type="checkbox"
+            className="size-4 accent-[var(--color-primary)]"
+            checked={pinnedOnly}
+            onChange={(e) => setPinnedOnly(e.target.checked)}
+          />
           {tg.spaces.pinned}
         </label>
         <label className="flex items-center gap-1.5 text-xs">
-          <input type="checkbox" className="size-4 accent-[var(--color-primary)]" checked={exemptOnly} onChange={(e) => setExemptOnly(e.target.checked)} />
+          <input
+            type="checkbox"
+            className="size-4 accent-[var(--color-primary)]"
+            checked={exemptOnly}
+            onChange={(e) => setExemptOnly(e.target.checked)}
+          />
           {tg.spaces.exempt}
         </label>
       </div>
       {!site && <p className="text-xs text-muted-foreground">{tg.spaces.personalNote}</p>}
       <BulkBar
         count={picked.size}
-        actions={site ? ['delete_spaces', 'disable_spaces', 'enable_spaces', 'export', 'evict', 'pin', 'unpin'] : ['delete_spaces', 'disable_spaces', 'enable_spaces', 'export']}
+        actions={
+          site
+            ? ['delete_spaces', 'disable_spaces', 'enable_spaces', 'export', 'evict', 'pin', 'unpin']
+            : ['delete_spaces', 'disable_spaces', 'enable_spaces', 'export']
+        }
         onAction={setBulk}
         onClear={() => setPicked(new Set())}
       />
@@ -172,7 +247,10 @@ export function SpacesPanel() {
       {spaces.isPending ? (
         <PageFallback />
       ) : spaces.isError && !spaces.data ? (
-        <ErrorState message={t.fmt.labelled(ta.spaces.loadFailed, spaces.error.message)} onRetry={() => void spaces.refetch()} />
+        <ErrorState
+          message={t.fmt.labelled(ta.spaces.loadFailed, spaces.error.message)}
+          onRetry={() => void spaces.refetch()}
+        />
       ) : items.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">{q ? ta.spaces.noMatch(q) : ta.spaces.empty}</p>
       ) : (
@@ -182,17 +260,43 @@ export function SpacesPanel() {
               <thead className="border-b bg-muted/40 text-xs text-muted-foreground">
                 <tr>
                   <th scope="col" className="w-8 px-3 py-2">
-                    <input type="checkbox" aria-label={tg.spaces.selectAll} className="size-4 accent-[var(--color-primary)]" checked={items.length > 0 && items.every((s) => picked.has(s.id))} onChange={() => setPicked(items.every((s) => picked.has(s.id)) ? new Set() : new Set(items.map((s) => s.id)))} />
+                    <input
+                      type="checkbox"
+                      aria-label={tg.spaces.selectAll}
+                      className="size-4 accent-[var(--color-primary)]"
+                      checked={items.length > 0 && items.every((s) => picked.has(s.id))}
+                      onChange={() =>
+                        setPicked(items.every((s) => picked.has(s.id)) ? new Set() : new Set(items.map((s) => s.id)))
+                      }
+                    />
                   </th>
-                  <th scope="col" className="px-3 py-2 font-medium">{ta.spaces.name}</th>
-                  <th scope="col" className="px-3 py-2 font-medium">{ta.spaces.owner}</th>
-                  <th scope="col" className="px-3 py-2 text-right font-medium">{ta.spaces.members}</th>
-                  <th scope="col" className="px-3 py-2 font-medium">{ta.spaces.size}</th>
-                  <th scope="col" className="px-3 py-2 font-medium">{tg.spaces.where}</th>
-                  <th scope="col" className="px-3 py-2 font-medium">{ta.spaces.sync}</th>
-                  <th scope="col" className="px-3 py-2 font-medium">{ta.spaces.status}</th>
-                  <th scope="col" className="px-3 py-2 font-medium">{ts.spaces.cache}</th>
-                  <th scope="col" className="px-3 py-2 text-right font-medium">{ta.spaces.actions}</th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    {ta.spaces.name}
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    {ta.spaces.owner}
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-right font-medium">
+                    {ta.spaces.members}
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    {ta.spaces.size}
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    {tg.spaces.where}
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    {ta.spaces.sync}
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    {ta.spaces.status}
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    {ts.spaces.cache}
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-right font-medium">
+                    {ta.spaces.actions}
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -211,7 +315,13 @@ export function SpacesPanel() {
                     site={site}
                     onAction={(kind) => setAction({ kind, space: s })}
                     onEnable={() => void enable(s)}
-                    onPin={() => void changeStorage(s, { pin: !s.storage.pinned }, s.storage.pinned ? ts.spaces.unpinnedDone : ts.spaces.pinnedDone)}
+                    onPin={() =>
+                      void changeStorage(
+                        s,
+                        { pin: !s.storage.pinned },
+                        s.storage.pinned ? ts.spaces.unpinnedDone : ts.spaces.pinnedDone,
+                      )
+                    }
                     onExempt={() => void changeStorage(s, { exempt: !s.storage.exempt }, ts.spaces.exemptDone)}
                   />
                 ))}
@@ -220,22 +330,47 @@ export function SpacesPanel() {
           </div>
           <div className="flex flex-col items-center gap-2">
             {spaces.hasNextPage && (
-              <Button type="button" variant="outline" size="sm" disabled={spaces.isFetchingNextPage} onClick={() => void spaces.fetchNextPage()}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={spaces.isFetchingNextPage}
+                onClick={() => void spaces.fetchNextPage()}
+              >
                 {spaces.isFetchingNextPage && <Spinner />}
                 {spaces.isFetchingNextPage ? ta.spaces.loadingMore : ta.spaces.loadMore}
               </Button>
             )}
-            <span className="text-xs text-muted-foreground">{spaces.hasNextPage ? ta.spaces.loaded(items.length) : ta.spaces.allLoaded(items.length)}</span>
-            {spaces.isFetchNextPageError && <ErrorState message={spaces.error.message} onRetry={() => void spaces.fetchNextPage()} />}
+            <span className="text-xs text-muted-foreground">
+              {spaces.hasNextPage ? ta.spaces.loaded(items.length) : ta.spaces.allLoaded(items.length)}
+            </span>
+            {spaces.isFetchNextPageError && (
+              <ErrorState message={spaces.error.message} onRetry={() => void spaces.fetchNextPage()} />
+            )}
           </div>
         </>
       )}
 
       {action?.kind === 'transfer' && <TransferDialog space={action.space} onClose={() => setAction(null)} />}
       {action?.kind === 'disable' && <DisableDialog space={action.space} onClose={() => setAction(null)} />}
-      {action?.kind === 'delete' && <DeleteSpaceDialog id={action.space.id} name={action.space.name} personal={action.space.personal} onClose={() => setAction(null)} />}
-      {action?.kind === 'view' && <ViewDialog space={action.space.id} name={action.space.name} onClose={() => setAction(null)} />}
-      {action?.kind === 'export' && <ExportDialog request={{ spaces: [action.space.id] }} name={action.space.name} onClose={() => setAction(null)} />}
+      {action?.kind === 'delete' && (
+        <DeleteSpaceDialog
+          id={action.space.id}
+          name={action.space.name}
+          personal={action.space.personal}
+          onClose={() => setAction(null)}
+        />
+      )}
+      {action?.kind === 'view' && (
+        <ViewDialog space={action.space.id} name={action.space.name} onClose={() => setAction(null)} />
+      )}
+      {action?.kind === 'export' && (
+        <ExportDialog
+          request={{ spaces: [action.space.id] }}
+          name={action.space.name}
+          onClose={() => setAction(null)}
+        />
+      )}
       {bulk && (
         <BulkDialog
           action={bulk}
@@ -252,12 +387,36 @@ export function SpacesPanel() {
   )
 }
 
-function SpaceRow({ space: s, picked, onPick, site, onAction, onEnable, onPin, onExempt }: { space: AdminSpace; picked: boolean; onPick: () => void; site: boolean; onAction: (kind: Action['kind']) => void; onEnable: () => void; onPin: () => void; onExempt: () => void }) {
+function SpaceRow({
+  space: s,
+  picked,
+  onPick,
+  site,
+  onAction,
+  onEnable,
+  onPin,
+  onExempt,
+}: {
+  space: AdminSpace
+  picked: boolean
+  onPick: () => void
+  site: boolean
+  onAction: (kind: Action['kind']) => void
+  onEnable: () => void
+  onPin: () => void
+  onExempt: () => void
+}) {
   const sp = ta.spaces
   return (
     <tr data-space={s.id}>
       <td className="px-3 py-2.5">
-        <input type="checkbox" aria-label={tg.spaces.selectFor(s.name)} className="size-4 accent-[var(--color-primary)]" checked={picked} onChange={onPick} />
+        <input
+          type="checkbox"
+          aria-label={tg.spaces.selectFor(s.name)}
+          className="size-4 accent-[var(--color-primary)]"
+          checked={picked}
+          onChange={onPick}
+        />
       </td>
       <th scope="row" className="max-w-56 px-3 py-2.5 font-normal">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -283,13 +442,23 @@ function SpaceRow({ space: s, picked, onPick, site, onAction, onEnable, onPin, o
         <LocationBadge location={s.location} counted={s.counted} />
       </td>
       <td className="px-3 py-2.5 whitespace-nowrap">{sp.syncStates[s.sync]}</td>
-      <td className="px-3 py-2.5">{s.disabled ? <Badge variant="secondary">{sp.disabled}</Badge> : <span className="text-muted-foreground">{sp.active}</span>}</td>
+      <td className="px-3 py-2.5">
+        {s.disabled ? (
+          <Badge variant="secondary">{sp.disabled}</Badge>
+        ) : (
+          <span className="text-muted-foreground">{sp.active}</span>
+        )}
+      </td>
       <td className="px-3 py-2.5" data-slot="space-cache">
         <CacheCell space={s} />
       </td>
       <td className="px-3 py-2.5">
         <div className="flex items-center justify-end gap-1">
-          <Button variant="outline" size="sm" render={<Link to={spaceUrls(s.id).home()} aria-label={t.fmt.labelled(sp.open, s.name)} />}>
+          <Button
+            variant="outline"
+            size="sm"
+            render={<Link to={spaceUrls(s.id).home()} aria-label={t.fmt.labelled(sp.open, s.name)} />}
+          >
             {sp.open}
           </Button>
           <DropdownMenu>
@@ -300,15 +469,26 @@ function SpaceRow({ space: s, picked, onPick, site, onAction, onEnable, onPin, o
               <DropdownMenuItem disabled={s.personal} onClick={() => onAction('transfer')}>
                 {sp.transfer}
               </DropdownMenuItem>
-              {s.disabled ? <DropdownMenuItem onClick={onEnable}>{sp.enable}</DropdownMenuItem> : <DropdownMenuItem onClick={() => onAction('disable')}>{sp.disable}</DropdownMenuItem>}
+              {s.disabled ? (
+                <DropdownMenuItem onClick={onEnable}>{sp.enable}</DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem onClick={() => onAction('disable')}>{sp.disable}</DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={() => onAction('view')}>{tg.spaces.view}</DropdownMenuItem>
               <DropdownMenuItem onClick={() => onAction('export')}>{tg.spaces.export}</DropdownMenuItem>
               {site && (
                 <>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={onPin}>{s.storage.pinned ? ts.spaces.unpin : ts.spaces.pin}</DropdownMenuItem>
-                  <DropdownMenuItem onClick={onExempt}>{s.storage.exempt ? ts.spaces.exemptOff : ts.spaces.exemptOn}</DropdownMenuItem>
-                  <DropdownMenuItem disabled={s.storage.cache === 'local' || s.storage.cache === 'evicted' || s.storage.pinned} onClick={() => onAction('evict')}>
+                  <DropdownMenuItem onClick={onPin}>
+                    {s.storage.pinned ? ts.spaces.unpin : ts.spaces.pin}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={onExempt}>
+                    {s.storage.exempt ? ts.spaces.exemptOff : ts.spaces.exemptOn}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={s.storage.cache === 'local' || s.storage.cache === 'evicted' || s.storage.pinned}
+                    onClick={() => onAction('evict')}
+                  >
                     {ts.spaces.evict}
                   </DropdownMenuItem>
                 </>
@@ -337,10 +517,22 @@ function CacheCell({ space: s }: { space: AdminSpace }) {
         {st.pinned && <Badge variant="secondary">{c.pinned}</Badge>}
         {st.exempt && <Badge variant="outline">{c.exempt}</Badge>}
       </div>
-      <span className="text-xs text-muted-foreground">{st.lastUsed ? c.lastUsed(absoluteTime(st.lastUsed)) : c.neverUsed}</span>
-      {st.cache !== 'local' && <span className="text-xs text-muted-foreground">{c.sizes(formatBytes(st.cloneBytes), formatBytes(st.indexBytes))}</span>}
-      {st.assets === 'repository' && <span className="text-xs text-muted-foreground">{c.assetsIn(formatBytes(st.assetCacheBytes))}</span>}
-      {st.remote && <span className={`text-xs ${st.remote.overdue ? 'text-destructive' : 'text-warning'}`}>{c.deadline(absoluteTime(st.remote.deadline), st.remote.overdue)}</span>}
+      <span className="text-xs text-muted-foreground">
+        {st.lastUsed ? c.lastUsed(absoluteTime(st.lastUsed)) : c.neverUsed}
+      </span>
+      {st.cache !== 'local' && (
+        <span className="text-xs text-muted-foreground">
+          {c.sizes(formatBytes(st.cloneBytes), formatBytes(st.indexBytes))}
+        </span>
+      )}
+      {st.assets === 'repository' && (
+        <span className="text-xs text-muted-foreground">{c.assetsIn(formatBytes(st.assetCacheBytes))}</span>
+      )}
+      {st.remote && (
+        <span className={`text-xs ${st.remote.overdue ? 'text-destructive' : 'text-warning'}`}>
+          {c.deadline(absoluteTime(st.remote.deadline), st.remote.overdue)}
+        </span>
+      )}
     </div>
   )
 }
@@ -399,15 +591,33 @@ function SizeCell({ space: s }: { space: AdminSpace }) {
   const measured = s.sizeBytes !== null
   return (
     <div className="flex items-center gap-1.5 whitespace-nowrap">
-      <span className={`tabular-nums ${measured ? '' : 'text-muted-foreground'}`} title={s.sizeAt ? `${sp.measuredAt(absoluteTime(s.sizeAt))}. ${sp.measureHelp}` : sp.measureHelp}>
+      <span
+        className={`tabular-nums ${measured ? '' : 'text-muted-foreground'}`}
+        title={s.sizeAt ? `${sp.measuredAt(absoluteTime(s.sizeAt))}. ${sp.measureHelp}` : sp.measureHelp}
+      >
         {s.sizeBytes !== null ? formatBytes(s.sizeBytes) : sp.notMeasured}
       </span>
       {measured ? (
-        <Button type="button" variant="ghost" size="icon-xs" disabled={resize.isPending} onClick={() => void measure()} aria-label={t.fmt.labelled(sp.measure, s.name)} title={sp.measure}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          disabled={resize.isPending}
+          onClick={() => void measure()}
+          aria-label={t.fmt.labelled(sp.measure, s.name)}
+          title={sp.measure}
+        >
           {resize.isPending ? <Spinner className="size-3" /> : <RefreshCw className="size-3" />}
         </Button>
       ) : (
-        <Button type="button" variant="ghost" size="xs" disabled={resize.isPending} onClick={() => void measure()} aria-label={t.fmt.labelled(sp.measure, s.name)}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          disabled={resize.isPending}
+          onClick={() => void measure()}
+          aria-label={t.fmt.labelled(sp.measure, s.name)}
+        >
           {resize.isPending ? sp.measuring : sp.measure}
         </Button>
       )}
@@ -458,11 +668,24 @@ function TransferDialog({ space, onClose }: { space: AdminSpace; onClose: () => 
           </DialogHeader>
           <div className="grid gap-1.5">
             <Label htmlFor="transfer-search">{sp.transferSearch}</Label>
-            <Input id="transfer-search" type="search" value={term} onChange={(e) => setTerm(e.target.value)} placeholder={sp.transferSearchHint} autoComplete="off" spellCheck={false} />
+            <Input
+              id="transfer-search"
+              type="search"
+              value={term}
+              onChange={(e) => setTerm(e.target.value)}
+              placeholder={sp.transferSearchHint}
+              autoComplete="off"
+              spellCheck={false}
+            />
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="transfer-to">{sp.transferTo}</Label>
-            <NativeSelect id="transfer-to" value={userId} onChange={(e) => setChosen(choices.find((u) => u.id === e.target.value) ?? null)} disabled={found.isPending}>
+            <NativeSelect
+              id="transfer-to"
+              value={userId}
+              onChange={(e) => setChosen(choices.find((u) => u.id === e.target.value) ?? null)}
+              disabled={found.isPending}
+            >
               <option value="">{sp.transferChoose}</option>
               {choices.map((u) => (
                 <option key={u.id} value={u.id}>
@@ -474,7 +697,9 @@ function TransferDialog({ space, onClose }: { space: AdminSpace; onClose: () => 
               <p className="text-xs text-destructive">{t.fmt.labelled(sp.transferSearchFailed, found.error.message)}</p>
             ) : (
               !found.isPending && (
-                <p className="text-xs text-muted-foreground">{matches.length === 0 ? sp.transferNoMatch : truncated ? sp.transferNarrow(USER_SEARCH_LIMIT) : ''}</p>
+                <p className="text-xs text-muted-foreground">
+                  {matches.length === 0 ? sp.transferNoMatch : truncated ? sp.transferNarrow(USER_SEARCH_LIMIT) : ''}
+                </p>
               )
             )}
           </div>

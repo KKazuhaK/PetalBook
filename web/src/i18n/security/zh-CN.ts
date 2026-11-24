@@ -13,13 +13,18 @@ export const securityZhCN = {
     modes: {
       dual: { name: '密码和单点登录并列', help: '登录页同时有密码表单和各个提供方的按钮。' },
       sso_first: { name: '单点登录优先', help: '登录页先放提供方的按钮，密码表单收在“改用密码登录”后面。' },
-      sso_redirect: { name: '直接跳转到单点登录', help: '只有一个提供方时登录页直接跳过去；有几个就列出按钮。密码表单在 /login?local=1。' },
+      sso_redirect: {
+        name: '直接跳转到单点登录',
+        help: '只有一个提供方时登录页直接跳过去；有几个就列出按钮。密码表单在 /login?local=1。',
+      },
       local_only: { name: '只用密码', help: '登录页只有密码表单，不显示任何提供方。' },
     },
     ssoOnly: '只许单点登录',
-    ssoOnlyHelp: '拒绝非管理员用密码或 passkey 登录，也不能用密码接受成员邀请。管理员始终可以用密码登录，提供方出问题时还能进来修。',
+    ssoOnlyHelp:
+      '拒绝非管理员用密码或 passkey 登录，也不能用密码接受成员邀请。管理员始终可以用密码登录，提供方出问题时还能进来修。',
     ssoOnlyNotInEffect: '现在没有启用的提供方，登录页按“只用密码”显示，所以这个开关暂时不起作用（设置会保留）。',
-    noProvider: (effective: string) => `没有启用的提供方，登录页现在按“${effective}”显示。你选的方式会保留，等有提供方启用后生效。`,
+    noProvider: (effective: string) =>
+      `没有启用的提供方，登录页现在按“${effective}”显示。你选的方式会保留，等有提供方启用后生效。`,
     passwordAdmins: (n: number) => `有 ${n} 个带密码的可用管理员，提供方都坏了时他们仍能登录。`,
     noPasswordAdmins: '没有带密码的可用管理员：开启“只许单点登录”会被拒绝。',
   },
@@ -31,13 +36,19 @@ export const securityZhCN = {
     unavailable: '现在不能使用 passkey：服务器需要一个 https 的公开地址（--public-url）。',
     requireRoles: '要求使用 passkey 的角色',
     roles: { none: '不按角色要求', admins: '管理员', everyone: '管理员和成员' },
-    required: (n: number, without: number) => `${n} 个人被要求使用 passkey，其中 ${without} 个还没有，下次登录会被扣在“设置 passkey”这一步。`,
+    required: (n: number, without: number) =>
+      `${n} 个人被要求使用 passkey，其中 ${without} 个还没有，下次登录会被扣在“设置 passkey”这一步。`,
   },
   captcha: {
     title: '验证码',
     help: '默认的图片验证码不出网。第三方服务需要站点密钥和密钥，并且服务器要有公开地址。',
     provider: '提供方',
-    providers: { image: '自带图片（不出网）', turnstile: 'Cloudflare Turnstile', recaptcha: 'Google reCAPTCHA（v2）', hcaptcha: 'hCaptcha' },
+    providers: {
+      image: '自带图片（不出网）',
+      turnstile: 'Cloudflare Turnstile',
+      recaptcha: 'Google reCAPTCHA（v2）',
+      hcaptcha: 'hCaptcha',
+    },
     siteKey: '站点密钥',
     siteKeyHelp: '公开的，会放进页面里。',
     secret: '密钥',
@@ -65,7 +76,8 @@ export const securityZhCN = {
     scopes: { ip_account: 'IP 加用户名（推荐）', ip: 'IP（对所有用户名）', account: '用户名（从任何 IP）' },
     accountWarning: '按用户名锁定会在锁定期间拒绝正确的密码：任何知道用户名的人都能让这个人一直进不来。',
     confirmTitle: '按用户名锁定？',
-    confirmHelp: '任何知道某人用户名的人，只要故意输错密码，就能让他在锁定期间进不来，包括管理员。除非你很清楚后果，否则请用“IP 加用户名”。',
+    confirmHelp:
+      '任何知道某人用户名的人，只要故意输错密码，就能让他在锁定期间进不来，包括管理员。除非你很清楚后果，否则请用“IP 加用户名”。',
     confirm: '我明白，按用户名锁定',
     cancel: '取消',
   },
@@ -87,7 +99,8 @@ export const securityZhCN = {
     secret_unreadable: '有一个保存的密钥用这台服务器的密钥打不开，请重新填写它。',
     passkey_host_changed: '公开地址的主机名变了，之前登记的 passkey 都不能用了。',
   } as Record<string, string>,
-  noticeFor: (message: string, slug?: string, field?: string) => [message, slug ? `（${slug}${field ? ` · ${field}` : ''}）` : field ? `（${field}）` : ''].join(''),
+  noticeFor: (message: string, slug?: string, field?: string) =>
+    [message, slug ? `（${slug}${field ? ` · ${field}` : ''}）` : field ? `（${field}）` : ''].join(''),
   errors: {
     invalid: '有一个值不对。',
     local_admin_required: '没有带密码的可用管理员，不能开启“只许单点登录”。请先给一个管理员设置密码。',
@@ -137,14 +150,24 @@ export const securityZhCN = {
     nameHelp: '登录按钮上的名字，1 到 60 个字符。',
     icon: '图标',
     iconNone: '没有图标',
-    icons: { google: 'Google', microsoft: 'Microsoft', github: 'GitHub', gitlab: 'GitLab', okta: 'Okta', keycloak: 'Keycloak', authentik: 'authentik', key: '钥匙' } as Record<string, string>,
+    icons: {
+      google: 'Google',
+      microsoft: 'Microsoft',
+      github: 'GitHub',
+      gitlab: 'GitLab',
+      okta: 'Okta',
+      keycloak: 'Keycloak',
+      authentik: 'authentik',
+      key: '钥匙',
+    } as Record<string, string>,
     enabledLabel: '启用',
     order: '顺序',
     orderHelp: '数字小的按钮在前。',
     autoCreate: '第一次登录时自动建号',
     autoCreateHelp: '没有人有这个身份时，建一个成员账号。默认关闭。',
     mergeVerifiedEmail: '按已验证的邮箱并入已有账号',
-    mergeVerifiedEmailHelp: '开启后，这个提供方声明已验证的邮箱，会让人进入邮箱相同且已验证的现有账号（不含管理员）。SAML 没有“已验证”的声明，开启就等于你担保它给的每个邮箱。请只对你信任的提供方开启。',
+    mergeVerifiedEmailHelp:
+      '开启后，这个提供方声明已验证的邮箱，会让人进入邮箱相同且已验证的现有账号（不含管理员）。SAML 没有“已验证”的声明，开启就等于你担保它给的每个邮箱。请只对你信任的提供方开启。',
     oidc: {
       issuer: '签发方（issuer）',
       issuerHelp: '以 https 开头的地址。',
@@ -202,7 +225,8 @@ export const securityZhCN = {
     deleteTitle: (name: string) => `删除 ${name}？`,
     deleteHelp: '人们已绑定的身份会保留，如果之后用同一个签发方再加回来，它们就恢复。',
     deleteInUseTitle: (name: string) => `${name} 是一些人唯一的登录方式`,
-    deleteInUse: (n: number) => `有 ${n} 个账号既没有密码和 passkey，也没有别的提供方，删掉它他们就进不来了。仍然要删吗？`,
+    deleteInUse: (n: number) =>
+      `有 ${n} 个账号既没有密码和 passkey，也没有别的提供方，删掉它他们就进不来了。仍然要删吗？`,
     deleteConfirm: '删除',
     deleteForce: '仍然删除',
     deleted: '提供方已删除',
@@ -212,11 +236,13 @@ export const securityZhCN = {
     errors: {
       invalid: '有一个值不对。',
       exists: '这个标识已经有人用了。',
-      provider_issuer_in_use: '另一个提供方已经用了这个签发方（OpenID Connect 的 issuer、SAML 的实体 ID 或 GitHub 的地址）。',
+      provider_issuer_in_use:
+        '另一个提供方已经用了这个签发方（OpenID Connect 的 issuer、SAML 的实体 ID 或 GitHub 的地址）。',
       provider_limit: '已经有 50 个提供方了，不能再加。',
       legacy_callback_in_use: '另一个提供方已经在用旧的回调地址。',
       oidc_issuer_invalid: '签发方要是 https 地址。',
-      saml_needs_https: 'SAML 需要 https 的公开地址（--public-url），因为从身份提供方跨站过来的 cookie 必须是 Secure 的。',
+      saml_needs_https:
+        'SAML 需要 https 的公开地址（--public-url），因为从身份提供方跨站过来的 cookie 必须是 Secure 的。',
       saml_metadata_invalid: '元数据解析不了，或者里面没有签名证书、没有用于登录的重定向绑定。',
       auto_create_needs_org: 'GitHub 提供方开启自动建号时必须指定组织，否则任何有 GitHub 账号的人都能建号。',
       public_url_required: '服务器没有公开地址（--public-url），不能添加提供方。',

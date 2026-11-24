@@ -85,7 +85,8 @@ async function listPages(store: OfflineStore, q: URLSearchParams): Promise<PageL
   if (updatedFrom && day(updatedFrom)) items = items.filter((e) => e.updated.slice(0, 10) >= updatedFrom)
   if (updatedTo && day(updatedTo)) items = items.filter((e) => e.updated.slice(0, 10) <= updatedTo)
   if (createdFrom && day(createdFrom)) items = items.filter((e) => (e.created ?? '') >= createdFrom)
-  if (createdTo && day(createdTo)) items = items.filter((e) => (e.created ?? '') !== '' && (e.created ?? '') <= createdTo)
+  if (createdTo && day(createdTo))
+    items = items.filter((e) => (e.created ?? '') !== '' && (e.created ?? '') <= createdTo)
 
   const bodies = new Map<string, Page>()
   if (text !== '') {
@@ -96,7 +97,13 @@ async function listPages(store: OfflineStore, q: URLSearchParams): Promise<PageL
       await store.eachPage((r) => {
         if (!wanted.has(r.id)) return
         const m = r.page.meta
-        kept.set(r.id, [m.title, m.subtitle, m.source, r.page.body].filter((x) => typeof x === 'string').join('\n').toLowerCase())
+        kept.set(
+          r.id,
+          [m.title, m.subtitle, m.source, r.page.body]
+            .filter((x) => typeof x === 'string')
+            .join('\n')
+            .toLowerCase(),
+        )
         bodies.set(r.id, r.page)
       })
     }
@@ -111,14 +118,28 @@ async function listPages(store: OfflineStore, q: URLSearchParams): Promise<PageL
   const key = desc ? sort.slice(1) : sort
   const byId = (a: CatalogEntry, b: CatalogEntry) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
   if (key === 'title') {
-    items = [...items].sort((a, b) => Number(a.untitled) - Number(b.untitled) || (desc ? -1 : 1) * compareCodePoints((a.title ?? '').toLowerCase(), (b.title ?? '').toLowerCase()) || byId(a, b))
+    items = [...items].sort(
+      (a, b) =>
+        Number(a.untitled) - Number(b.untitled) ||
+        (desc ? -1 : 1) * compareCodePoints((a.title ?? '').toLowerCase(), (b.title ?? '').toLowerCase()) ||
+        byId(a, b),
+    )
   } else if (key === 'created') {
-    items = [...items].sort((a, b) => (desc ? -1 : 1) * ((a.created ?? '') < (b.created ?? '') ? -1 : (a.created ?? '') > (b.created ?? '') ? 1 : 0) || byId(a, b))
+    items = [...items].sort(
+      (a, b) =>
+        (desc ? -1 : 1) *
+          ((a.created ?? '') < (b.created ?? '') ? -1 : (a.created ?? '') > (b.created ?? '') ? 1 : 0) || byId(a, b),
+    )
   } else if (key === 'updated' || key === 'relevance') {
     // Newest first unless asked the other way; when searching, the titles that match come first.
     const rank = (e: CatalogEntry) => (text !== '' && (e.title ?? e.label).toLowerCase().includes(text) ? 0 : 1)
     const dir = key === 'updated' && !desc ? 1 : -1
-    items = [...items].sort((a, b) => (key === 'relevance' ? rank(a) - rank(b) : 0) || dir * (a.updated < b.updated ? -1 : a.updated > b.updated ? 1 : 0) || byId(a, b))
+    items = [...items].sort(
+      (a, b) =>
+        (key === 'relevance' ? rank(a) - rank(b) : 0) ||
+        dir * (a.updated < b.updated ? -1 : a.updated > b.updated ? 1 : 0) ||
+        byId(a, b),
+    )
   } else return undefined // a sort by a property
 
   const limit = Math.min(Math.max(Number(q.get('limit')) || PAGE_SIZE, 1), MAX_LIMIT)
@@ -136,9 +157,12 @@ async function treeOf(store: OfflineStore): Promise<TreeResponse> {
   const counts = new Map<string, number>([['', 0]])
   for (const e of await store.catalog()) {
     counts.set(e.folder, (counts.get(e.folder) ?? 0) + 1)
-    for (let f = e.folder; f !== ''; f = f.includes('/') ? f.slice(0, f.lastIndexOf('/')) : '') if (!counts.has(f)) counts.set(f, 0)
+    for (let f = e.folder; f !== ''; f = f.includes('/') ? f.slice(0, f.lastIndexOf('/')) : '')
+      if (!counts.has(f)) counts.set(f, 0)
   }
-  return { folders: [...counts].sort((a, b) => compareCodePoints(a[0], b[0])).map(([path, pages]) => ({ path, pages })) }
+  return {
+    folders: [...counts].sort((a, b) => compareCodePoints(a[0], b[0])).map(([path, pages]) => ({ path, pages })),
+  }
 }
 
 async function tagsOf(store: OfflineStore): Promise<TagsResponse> {
@@ -146,7 +170,11 @@ async function tagsOf(store: OfflineStore): Promise<TagsResponse> {
   if (stored) return stored
   const counts = new Map<string, number>()
   for (const e of await store.catalog()) for (const t of new Set(e.tags)) counts.set(t, (counts.get(t) ?? 0) + 1)
-  return { tags: [...counts].map(([tag, pages]) => ({ tag, pages })).sort((a, b) => b.pages - a.pages || compareCodePoints(a.tag, b.tag)) }
+  return {
+    tags: [...counts]
+      .map(([tag, pages]) => ({ tag, pages }))
+      .sort((a, b) => b.pages - a.pages || compareCodePoints(a.tag, b.tag)),
+  }
 }
 
 // `path` is what the client asked for, without the API prefix. undefined: not something the copy answers.

@@ -8,7 +8,16 @@ import { BUILTIN_KEYS, RESERVED_KEYS } from '../../lib/pageTypes.ts'
 import { HttpError } from './store.ts'
 
 // In the order the check page lists them.
-export const PROBLEM_KINDS: readonly ProblemKind[] = ['no_id', 'duplicate_id', 'bad_header', 'type_mismatch', 'not_in_type', 'broken_link', 'missing_asset', 'duplicate_title']
+export const PROBLEM_KINDS: readonly ProblemKind[] = [
+  'no_id',
+  'duplicate_id',
+  'bad_header',
+  'type_mismatch',
+  'not_in_type',
+  'broken_link',
+  'missing_asset',
+  'duplicate_title',
+]
 export const CHECK_PAGE = 50
 const MAX_PATHS = 20
 
@@ -59,12 +68,15 @@ const compare = (a: string, b: string): number => {
   return x.length - y.length
 }
 
-const isNone = (v: unknown) => v === null || v === undefined || (typeof v === 'string' && v.trim() === '') || (Array.isArray(v) && v.length === 0)
+const isNone = (v: unknown) =>
+  v === null || v === undefined || (typeof v === 'string' && v.trim() === '') || (Array.isArray(v) && v.length === 0)
 
 // The header fields a type does not have: those with a value, except the ones the application keeps.
 export function strayKeys(meta: PageMeta, fields: TypeField[]): string[] {
   const known = new Set(fields.map((f) => f.key))
-  return Object.keys(meta).filter((k) => !BUILTIN_KEYS.has(k) && !RESERVED_KEYS.has(k) && !isNone(meta[k]) && !known.has(k))
+  return Object.keys(meta).filter(
+    (k) => !BUILTIN_KEYS.has(k) && !RESERVED_KEYS.has(k) && !isNone(meta[k]) && !known.has(k),
+  )
 }
 
 function fits(f: { kind: FieldKind; options?: string[] }, v: unknown): boolean {
@@ -78,7 +90,12 @@ function fits(f: { kind: FieldKind; options?: string[] }, v: unknown): boolean {
     case 'multiselect':
       return Array.isArray(v) && v.every((e) => typeof e === 'string' && inOptions(e))
     case 'date':
-      return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v + 'T00:00:00Z')) && new Date(v + 'T00:00:00Z').toISOString().slice(0, 10) === v
+      return (
+        typeof v === 'string' &&
+        /^\d{4}-\d{2}-\d{2}$/.test(v) &&
+        !Number.isNaN(Date.parse(v + 'T00:00:00Z')) &&
+        new Date(v + 'T00:00:00Z').toISOString().slice(0, 10) === v
+      )
     case 'number':
       return typeof v === 'number'
     case 'checkbox':
@@ -128,7 +145,8 @@ function addressesOf(body: string): string[] {
       continue
     }
     if (fence) continue
-    for (const m of line.matchAll(/\]\(\s*(?:<([^>]*)>|((?:[^\s()\\]|\\.|\([^\s()]*\))*))/g)) out.push(m[1] ?? m[2] ?? '')
+    for (const m of line.matchAll(/\]\(\s*(?:<([^>]*)>|((?:[^\s()\\]|\\.|\([^\s()]*\))*))/g))
+      out.push(m[1] ?? m[2] ?? '')
   }
   return out
 }
@@ -140,8 +158,16 @@ export function problemsOf(input: CheckInput): Problem[] {
   const pageAt = new Map(input.pages.map((p) => [p.id, p]))
 
   for (const o of input.orphans) {
-    if (o.kind === 'no_id') add({ kind: 'no_id', path: o.path, rev: o.rev, message: 'The header has no id', fix: 'add_id' })
-    else if (o.kind === 'bad_header') add({ kind: 'bad_header', path: o.path, rev: o.rev, message: 'The header is not valid YAML', ...(o.line ? { detail: { line: o.line } } : {}) })
+    if (o.kind === 'no_id')
+      add({ kind: 'no_id', path: o.path, rev: o.rev, message: 'The header has no id', fix: 'add_id' })
+    else if (o.kind === 'bad_header')
+      add({
+        kind: 'bad_header',
+        path: o.path,
+        rev: o.rev,
+        message: 'The header is not valid YAML',
+        ...(o.line ? { detail: { line: o.line } } : {}),
+      })
     else {
       const served = o.id ? pageAt.get(o.id) : undefined
       const same = input.orphans.filter((x) => x.kind === 'duplicate_id' && x.id === o.id).map((x) => x.path)
@@ -165,21 +191,53 @@ export function problemsOf(input: CheckInput): Problem[] {
         const f = fields.find((x) => x.key === k)
         return f !== undefined && !isNone(p.meta[k]) && !fits(f, p.meta[k])
       })
-      if (bad.length) add({ kind: 'type_mismatch', path: p.path, id: p.id, rev: p.rev, message: 'These fields do not fit their type: ' + bad.join(', '), detail: { fields: bad } })
+      if (bad.length)
+        add({
+          kind: 'type_mismatch',
+          path: p.path,
+          id: p.id,
+          rev: p.rev,
+          message: 'These fields do not fit their type: ' + bad.join(', '),
+          detail: { fields: bad },
+        })
       const stray = strayKeys(p.meta, fields)
-      if (stray.length) add({ kind: 'not_in_type', path: p.path, id: p.id, rev: p.rev, message: "These fields are not in the page's type: " + stray.join(', '), detail: { fields: stray }, fix: 'remove_fields' })
+      if (stray.length)
+        add({
+          kind: 'not_in_type',
+          path: p.path,
+          id: p.id,
+          rev: p.rev,
+          message: "These fields are not in the page's type: " + stray.join(', '),
+          detail: { fields: stray },
+          fix: 'remove_fields',
+        })
     }
     const broken = p.links.filter((l) => !input.linkResolves(l)).slice(0, MAX_PATHS)
     for (const l of broken) {
       const message = l.id ? `No page has the id ${l.id}` : `No page is at ${l.path}`
-      add({ kind: 'broken_link', path: p.path, id: p.id, rev: p.rev, message, detail: { target: l.path, line: l.line } })
+      add({
+        kind: 'broken_link',
+        path: p.path,
+        id: p.id,
+        rev: p.rev,
+        message,
+        detail: { target: l.path, line: l.line },
+      })
     }
     const seen = new Set<string>()
     for (const address of addressesOf(p.body)) {
       const rel = assetOf(address, p.folder)
       if (rel === null || seen.has(rel) || seen.size >= MAX_PATHS) continue
       seen.add(rel)
-      if (!input.fileExists(rel)) add({ kind: 'missing_asset', path: p.path, id: p.id, rev: p.rev, message: `The file ${address} does not exist`, detail: { target: address } })
+      if (!input.fileExists(rel))
+        add({
+          kind: 'missing_asset',
+          path: p.path,
+          id: p.id,
+          rev: p.rev,
+          message: `The file ${address} does not exist`,
+          detail: { target: address },
+        })
     }
     if (title) {
       const key = p.folder + '\u0000' + title.toLowerCase()
@@ -188,18 +246,36 @@ export function problemsOf(input: CheckInput): Problem[] {
   }
   for (const group of titled.values()) {
     if (group.length < 2) continue
-    const paths = group.map((p) => p.path).sort(compare).slice(0, MAX_PATHS)
-    for (const p of group) add({ kind: 'duplicate_title', path: p.path, id: p.id, rev: p.rev, message: 'Another page in this folder has the same title', detail: { paths } })
+    const paths = group
+      .map((p) => p.path)
+      .sort(compare)
+      .slice(0, MAX_PATHS)
+    for (const p of group)
+      add({
+        kind: 'duplicate_title',
+        path: p.path,
+        id: p.id,
+        rev: p.rev,
+        message: 'Another page in this folder has the same title',
+        detail: { paths },
+      })
   }
 
   const rank = (k: ProblemKind) => PROBLEM_KINDS.indexOf(k)
-  return out.map((p, i) => ({ p, i })).sort((a, b) => rank(a.p.kind) - rank(b.p.kind) || compare(a.p.path, b.p.path) || a.i - b.i).map((x) => x.p)
+  return out
+    .map((p, i) => ({ p, i }))
+    .sort((a, b) => rank(a.p.kind) - rank(b.p.kind) || compare(a.p.path, b.p.path) || a.i - b.i)
+    .map((x) => x.p)
 }
 
 // GET .../checks: the counts of every kind and a page of the problems.
 export function checksPage(all: Problem[], kind: string | null, cursor: string | null) {
-  if (kind !== null && kind !== '' && !PROBLEM_KINDS.includes(kind as ProblemKind)) throw new HttpError(400, 'invalid', `unknown kind “${kind}”`)
-  const counts = Object.fromEntries(PROBLEM_KINDS.map((k) => [k, all.filter((p) => p.kind === k).length])) as Record<ProblemKind, number>
+  if (kind !== null && kind !== '' && !PROBLEM_KINDS.includes(kind as ProblemKind))
+    throw new HttpError(400, 'invalid', `unknown kind “${kind}”`)
+  const counts = Object.fromEntries(PROBLEM_KINDS.map((k) => [k, all.filter((p) => p.kind === k).length])) as Record<
+    ProblemKind,
+    number
+  >
   const rows = kind ? all.filter((p) => p.kind === kind) : all
   // The cursor is the position of the last problem given: its kind, path and place among those with the same.
   const key = (p: Problem, i: number) => {

@@ -32,7 +32,11 @@ function sortKeys(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(sortKeys)
   if (v && typeof v === 'object') {
     const o = v as Record<string, unknown>
-    return Object.fromEntries(Object.keys(o).sort().map((k) => [k, sortKeys(o[k])]))
+    return Object.fromEntries(
+      Object.keys(o)
+        .sort()
+        .map((k) => [k, sortKeys(o[k])]),
+    )
   }
   return v
 }
@@ -67,7 +71,10 @@ export function plainText(node: Node): string {
   if (node.type === 'hardBreak') s = '\n'
   else if (node.type === 'image' || node.type === 'rawInline' || node.type === 'footnoteRef') s = '￼'
   // Inline content runs together; blocks inside a block are told apart by a space.
-  else s = (node.content ?? []).map(plainText).join(node.type === 'paragraph' || node.type === 'heading' || node.type === 'codeBlock' ? '' : ' ')
+  else
+    s = (node.content ?? [])
+      .map(plainText)
+      .join(node.type === 'paragraph' || node.type === 'heading' || node.type === 'codeBlock' ? '' : ' ')
   textCache.set(node, s)
   return s
 }
@@ -81,7 +88,11 @@ export function withMarks(node: Node, marks: Mark[]): Node {
   return marks.length ? { ...rest, marks } : rest
 }
 
-export function setDiff(node: Node, diff: BlockDiff | null, extra: { old?: { type: string; attrs?: Record<string, unknown> }; move?: boolean } = {}): Node {
+export function setDiff(
+  node: Node,
+  diff: BlockDiff | null,
+  extra: { old?: { type: string; attrs?: Record<string, unknown> }; move?: boolean } = {},
+): Node {
   const attrs: Record<string, unknown> = { ...node.attrs }
   if (diff) attrs.diff = diff
   else delete attrs.diff
@@ -94,6 +105,6 @@ export function setDiff(node: Node, diff: BlockDiff | null, extra: { old?: { typ
 // is no blocks at all.
 export function blocksOf(doc: Node): Node[] {
   const c = doc.content ?? []
-  if (c.length === 1 && c[0].type === 'paragraph' && !(c[0].content?.length)) return []
+  if (c.length === 1 && c[0].type === 'paragraph' && !c[0].content?.length) return []
   return c
 }

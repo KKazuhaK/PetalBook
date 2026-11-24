@@ -9,6 +9,7 @@ describe('model-based: random sequences against the in-memory server', () => {
 
   it('holds them in a world where the second device mostly copies what the person sent or gave up', async () => {
     if (ONLY !== undefined) return
-    for (let seed = 800_000; seed < 800_000 + Math.floor(3500 * SCALE); seed++) await runSequence(seed, { steps: 24, profile: 'copy' })
+    for (let seed = 800_000; seed < 800_000 + Math.floor(3500 * SCALE); seed++)
+      await runSequence(seed, { steps: 24, profile: 'copy' })
   }, 120_000)
 })

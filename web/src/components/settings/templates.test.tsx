@@ -31,17 +31,33 @@ const routes = (
 )
 const dialog = () => document.querySelector<HTMLElement>('[data-slot="settings-dialog"]')!
 const panelText = () => dialog().textContent ?? ''
-const button = (label: string) => [...dialog().querySelectorAll('button')].find((b) => b.textContent?.trim() === label || b.getAttribute('aria-label') === label) as HTMLButtonElement | undefined
+const button = (label: string) =>
+  [...dialog().querySelectorAll('button')].find(
+    (b) => b.textContent?.trim() === label || b.getAttribute('aria-label') === label,
+  ) as HTMLButtonElement | undefined
 const row = (name: string) => dialog().querySelector<HTMLElement>(`li[data-template="${name}"]`)
-const field = (id: string) => dialog().querySelector<HTMLInputElement & HTMLTextAreaElement & HTMLSelectElement>(`#${id}`)!
-const puts = () => m!.requests.filter((r) => r.method === 'PUT' && /\/templates\/[^/]+$/.test(r.url) && !r.url.endsWith('/defaults'))
-const lastPut = () => JSON.parse(puts().at(-1)!.body!) as { baseRev: string; meta: Record<string, unknown>; body: string }
-const defaultsPuts = () => m!.requests.filter((r) => r.method === 'PUT' && r.url.endsWith('/templates/defaults')).map((r) => JSON.parse(r.body!))
+const field = (id: string) =>
+  dialog().querySelector<HTMLInputElement & HTMLTextAreaElement & HTMLSelectElement>(`#${id}`)!
+const puts = () =>
+  m!.requests.filter((r) => r.method === 'PUT' && /\/templates\/[^/]+$/.test(r.url) && !r.url.endsWith('/defaults'))
+const lastPut = () =>
+  JSON.parse(puts().at(-1)!.body!) as { baseRev: string; meta: Record<string, unknown>; body: string }
+const defaultsPuts = () =>
+  m!.requests.filter((r) => r.method === 'PUT' && r.url.endsWith('/templates/defaults')).map((r) => JSON.parse(r.body!))
 const json = 'application/json'
-const send = (server: MockServer, method: string, path: string, body: unknown) => server.handle(method, `/api/spaces/default${path}`, JSON.stringify(body), json)
-const listed = () => (m!.server.handle('GET', '/api/spaces/default/templates', undefined, null).body as { templates: { name: string; rev: string; meta: Record<string, unknown> }[]; defaults: { folders: Record<string, string>; quickNote: string } })
+const send = (server: MockServer, method: string, path: string, body: unknown) =>
+  server.handle(method, `/api/spaces/default${path}`, JSON.stringify(body), json)
+const listed = () =>
+  m!.server.handle('GET', '/api/spaces/default/templates', undefined, null).body as {
+    templates: { name: string; rev: string; meta: Record<string, unknown> }[]
+    defaults: { folders: Record<string, string>; quickNote: string }
+  }
 
-const DIARY = { baseRev: '', meta: { title: '{{date}} 日记', tags: ['日记'], status: 'draft' }, body: '## 今天\n{{time}}\n' }
+const DIARY = {
+  baseRev: '',
+  meta: { title: '{{date}} 日记', tags: ['日记'], status: 'draft' },
+  body: '## 今天\n{{time}}\n',
+}
 const seed = (s: MockServer) => {
   send(s, 'PUT', '/templates/日记', DIARY)
   send(s, 'PUT', '/templates/会议', { baseRev: '', meta: { title: '会议' }, body: '议程\n' })
@@ -119,7 +135,11 @@ describe('the templates section: someone who manages the space', () => {
     await click(create())
     await settle(() => puts().length === 1, 'the request')
     expect(puts()[0].url).toContain('/templates/%E5%91%A8%E6%8A%A5')
-    expect(lastPut()).toEqual({ baseRev: '', meta: { title: '周报 {{date}}', tags: ['周报', '工作'] }, body: '## 本周\n' })
+    expect(lastPut()).toEqual({
+      baseRev: '',
+      meta: { title: '周报 {{date}}', tags: ['周报', '工作'] },
+      body: '## 本周\n',
+    })
     await settle(() => row('周报') !== null, 'the template in the list')
   })
 
@@ -151,7 +171,11 @@ describe('the templates section: someone who manages the space', () => {
     await type(field('template-body'), '## 今天\n{{datetime}}\n')
     await click(button(tt.settings.save))
     await settle(() => puts().length === 1, 'the request')
-    expect(lastPut()).toEqual({ baseRev: rev, meta: { status: 'draft', title: '{{date}} 日记', tags: ['日记'] }, body: '## 今天\n{{datetime}}\n' })
+    expect(lastPut()).toEqual({
+      baseRev: rev,
+      meta: { status: 'draft', title: '{{date}} 日记', tags: ['日记'] },
+      body: '## 今天\n{{datetime}}\n',
+    })
     await settle(() => button(tt.settings.save)?.disabled === true, 'saved')
     expect(listed().templates.find((x) => x.name === '日记')!.rev).not.toBe(rev)
   })
@@ -162,11 +186,17 @@ describe('the templates section: someone who manages the space', () => {
     await settle(() => field('template-body') !== null && field('template-body').value !== '', 'the body')
     await type(field('template-body'), '我的正文')
     const rev = listed().templates.find((x) => x.name === '日记')!.rev
-    expect(send(m!.server, 'PUT', '/templates/日记', { baseRev: rev, meta: { title: '别人的标题' }, body: '别人的正文' }).status).toBe(200)
+    expect(
+      send(m!.server, 'PUT', '/templates/日记', { baseRev: rev, meta: { title: '别人的标题' }, body: '别人的正文' })
+        .status,
+    ).toBe(200)
     await click(button(tt.settings.save))
     await settle(() => document.body.textContent!.includes(tt.settings.changedMeanwhile), 'the message')
     // The form is made again from the template as it is now, not from what was typed.
-    await settle(() => field('template-title')?.value === '别人的标题' && field('template-body').value === '别人的正文', 'the template read again')
+    await settle(
+      () => field('template-title')?.value === '别人的标题' && field('template-body').value === '别人的正文',
+      'the template read again',
+    )
     expect(listed().templates.find((x) => x.name === '日记')!.meta.title).toBe('别人的标题')
   })
 
@@ -189,7 +219,11 @@ describe('the templates section: someone who manages the space', () => {
     await settle(() => alertDialog() !== null, 'the question')
     await click([...alertDialog()!.querySelectorAll('button')].find((b) => b.textContent === tt.settings.deleteConfirm))
     await settle(() => row('日记') === null, 'the template gone')
-    expect(m!.requests.some((r) => r.method === 'DELETE' && /\/templates\/%E6%97%A5%E8%AE%B0\?baseRev=[0-9a-f]{40}$/.test(r.url))).toBe(true)
+    expect(
+      m!.requests.some(
+        (r) => r.method === 'DELETE' && /\/templates\/%E6%97%A5%E8%AE%B0\?baseRev=[0-9a-f]{40}$/.test(r.url),
+      ),
+    ).toBe(true)
     // The defaults that named it went with it.
     await settle(() => dialog().querySelector('li[data-default]') === null, 'the folder default gone')
     expect(field('template-quick').value).toBe('')
@@ -212,7 +246,10 @@ describe('the templates section: someone who manages the space', () => {
   it('sets the default template of a folder from the list, takes it away, and sets the one of quick notes', async () => {
     await openSingle()
     expect(button(tt.defaults.setFolder)!.disabled).toBe(true)
-    await settle(() => dialog().querySelector(`select[aria-label="${tt.defaults.folder}"] option[value="Work"]`) !== null, 'the folders')
+    await settle(
+      () => dialog().querySelector(`select[aria-label="${tt.defaults.folder}"] option[value="Work"]`) !== null,
+      'the folders',
+    )
     await type(dialog().querySelector<HTMLSelectElement>(`select[aria-label="${tt.defaults.folder}"]`)!, 'Work')
     await type(dialog().querySelector<HTMLSelectElement>(`select[aria-label="${tt.defaults.template}"]`)!, '会议')
     await click(button(tt.defaults.setFolder))
@@ -227,7 +264,9 @@ describe('the templates section: someone who manages the space', () => {
     await type(field('template-quick'), '')
     await settle(() => listed().defaults.quickNote === '', 'the quick note default gone')
     // Only folders can have one: the root is not offered.
-    const folders = [...dialog().querySelectorAll<HTMLOptionElement>(`select[aria-label="${tt.defaults.folder}"] option`)].map((o) => o.value)
+    const folders = [
+      ...dialog().querySelectorAll<HTMLOptionElement>(`select[aria-label="${tt.defaults.folder}"] option`),
+    ].map((o) => o.value)
     expect(folders.slice(1)).not.toContain('')
     expect(folders).toContain('Work')
   })
@@ -259,7 +298,9 @@ describe('the templates section: what the server refuses', () => {
     await openSingle()
     // Someone deletes it after this page was read.
     const rev = listed().templates.find((x) => x.name === '会议')!.rev
-    expect(m!.server.handle('DELETE', `/api/spaces/default/templates/会议?baseRev=${rev}`, undefined, json).status).toBe(204)
+    expect(
+      m!.server.handle('DELETE', `/api/spaces/default/templates/会议?baseRev=${rev}`, undefined, json).status,
+    ).toBe(204)
     await type(field('template-quick'), '会议')
     await settle(() => document.body.textContent!.includes(tt.errors.template_not_found), 'the message')
     // What the server has is read again: the box is back to what it was.
@@ -268,23 +309,26 @@ describe('the templates section: what the server refuses', () => {
 })
 
 describe('the templates section: someone who cannot manage the space', () => {
-  it.each(['editor', 'viewer'] as const)('%s reads the templates, and finds nothing to change them with', async (role) => {
-    await openAs(role)
-    expect(panelText()).toContain(tt.settings.helpReadOnly)
-    expect(row('日记')).not.toBeNull()
-    expect(button(tt.settings.newTemplate)).toBeUndefined()
-    await click(row('日记')!.querySelector('button'))
-    // The header and the body are text, not boxes; no save, delete or defaults to set.
-    await settle(() => row('日记')!.textContent!.includes('## 今天'), 'the body')
-    expect(row('日记')!.textContent).toContain('{{date}} 日记')
-    expect(row('日记')!.querySelector('input, textarea, select')).toBeNull()
-    expect(button(tt.settings.save)).toBeUndefined()
-    expect(button(tt.settings.delete)).toBeUndefined()
-    expect(button(tt.defaults.removeOf('Work'))).toBeUndefined()
-    expect(button(tt.defaults.setFolder)).toBeUndefined()
-    expect(field('template-quick').disabled).toBe(true)
-    // The default is shown all the same.
-    expect(dialog().querySelector('li[data-default="Work"]')).not.toBeNull()
-    expect(m!.requests.filter((r) => r.method !== 'GET' && r.url !== '/api/login')).toEqual([])
-  })
+  it.each(['editor', 'viewer'] as const)(
+    '%s reads the templates, and finds nothing to change them with',
+    async (role) => {
+      await openAs(role)
+      expect(panelText()).toContain(tt.settings.helpReadOnly)
+      expect(row('日记')).not.toBeNull()
+      expect(button(tt.settings.newTemplate)).toBeUndefined()
+      await click(row('日记')!.querySelector('button'))
+      // The header and the body are text, not boxes; no save, delete or defaults to set.
+      await settle(() => row('日记')!.textContent!.includes('## 今天'), 'the body')
+      expect(row('日记')!.textContent).toContain('{{date}} 日记')
+      expect(row('日记')!.querySelector('input, textarea, select')).toBeNull()
+      expect(button(tt.settings.save)).toBeUndefined()
+      expect(button(tt.settings.delete)).toBeUndefined()
+      expect(button(tt.defaults.removeOf('Work'))).toBeUndefined()
+      expect(button(tt.defaults.setFolder)).toBeUndefined()
+      expect(field('template-quick').disabled).toBe(true)
+      // The default is shown all the same.
+      expect(dialog().querySelector('li[data-default="Work"]')).not.toBeNull()
+      expect(m!.requests.filter((r) => r.method !== 'GET' && r.url !== '/api/login')).toEqual([])
+    },
+  )
 })

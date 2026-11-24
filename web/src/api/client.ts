@@ -3,7 +3,14 @@
 import { t } from '@/i18n'
 import { noteNetworkOk } from '@/lib/offline/status'
 
-import type { RegisterInfo, RegisterInput, MySetting, EffectiveMemberList, GroupMember, GroupRef, MembersResponse,
+import type {
+  RegisterInfo,
+  RegisterInput,
+  MySetting,
+  EffectiveMemberList,
+  GroupMember,
+  GroupRef,
+  MembersResponse,
   AccountInfo,
   AccountUsage,
   AdminSpace,
@@ -92,7 +99,19 @@ export const API_BASE = '/api'
 export const DEFAULT_SPACE = 'default'
 
 // The codes the daily-text endpoints put in `error` (with what they are about next to it).
-const DAILY_CODES = new Set(['bad_language', 'api_not_found', 'builtin', 'header_reenter', 'header_missing', 'not_json', 'too_large', 'path_error', 'path_reveals_secret', 'link_uses_header', 'skip_too_large'])
+const DAILY_CODES = new Set([
+  'bad_language',
+  'api_not_found',
+  'builtin',
+  'header_reenter',
+  'header_missing',
+  'not_json',
+  'too_large',
+  'path_error',
+  'path_reveals_secret',
+  'link_uses_header',
+  'skip_too_large',
+])
 const reasonOf = (b: { error: string; header?: unknown; field?: unknown }): ReasonCode => ({
   code: b.error,
   ...(typeof b.header === 'string' ? { header: b.header } : {}),
@@ -113,7 +132,16 @@ export class ApiError extends Error {
   readonly reason?: ReasonCode
   // The parsed answer, when it had a body: some refusals carry more than a code (the daily trial's `result`).
   readonly body?: unknown
-  constructor(status: number, code: ErrorCode, message: string, current?: Page, retryAfter?: number, draft?: PageDraft | null, reason?: ReasonCode, body?: unknown) {
+  constructor(
+    status: number,
+    code: ErrorCode,
+    message: string,
+    current?: Page,
+    retryAfter?: number,
+    draft?: PageDraft | null,
+    reason?: ReasonCode,
+    body?: unknown,
+  ) {
     super(message)
     this.name = 'ApiError'
     this.status = status
@@ -209,7 +237,8 @@ export function onHold(fn: HoldListener): () => void {
 
 // Paths where a 401 is an answer to the request itself (wrong password), not
 // a lost session.
-const SIGN_IN_PATHS = /^\/(login|logout|setup|session|meta|captcha|invites\/(check|accept)|auth\/(providers|passkey\/(begin|finish)|oidc\/start|(oidc|saml|github)\/[^/]+\/start))$/
+const SIGN_IN_PATHS =
+  /^\/(login|logout|setup|session|meta|captcha|invites\/(check|accept)|auth\/(providers|passkey\/(begin|finish)|oidc\/start|(oidc|saml|github)\/[^/]+\/start))$/
 // Paths where 403 is an answer about the request itself (a wrong setup token,
 // a wrong current password, a member asking for admin things), not a refused
 // origin. Page and space endpoints have no such 403: a space of someone else
@@ -221,7 +250,8 @@ const SIGN_IN_PATHS = /^\/(login|logout|setup|session|meta|captcha|invites\/(che
 // and no path has to be listed for it. What is listed here answers `forbidden` for
 // reasons of its own (the limit on spaces, a host that is not allowed, favourites of a space the
 // administrator is not a member of).
-const USER_LEVEL_403 = /^\/(setup|account(\/.*)?|users(\/.*)?|invites(\/.*)?|admin(\/.*)?)$|^\/spaces(\/[^/]+\/(remote|favorites)(\/.*)?)?$/
+const USER_LEVEL_403 =
+  /^\/(setup|account(\/.*)?|users(\/.*)?|invites(\/.*)?|admin(\/.*)?)$|^\/spaces(\/[^/]+\/(remote|favorites)(\/.*)?)?$/
 
 // --- a remote that cannot be reached ---------------------------------------------
 //
@@ -271,10 +301,15 @@ interface RequestOptions {
 }
 
 // Called off for taking too long (AbortSignal.timeout), as opposed to called off on purpose.
-const isTimeout = (e: unknown) => typeof e === 'object' && e !== null && (e as { name?: unknown }).name === 'TimeoutError'
-const timedOut = (e: unknown, signal: AbortSignal | undefined) => isTimeout(e) || (signal?.aborted === true && isTimeout(signal.reason))
+const isTimeout = (e: unknown) =>
+  typeof e === 'object' && e !== null && (e as { name?: unknown }).name === 'TimeoutError'
+const timedOut = (e: unknown, signal: AbortSignal | undefined) =>
+  isTimeout(e) || (signal?.aborted === true && isTimeout(signal.reason))
 
-export async function request<T>(path: string, { method = 'GET', body, keepalive, signal, blob }: RequestOptions = {}): Promise<T> {
+export async function request<T>(
+  path: string,
+  { method = 'GET', body, keepalive, signal, blob }: RequestOptions = {},
+): Promise<T> {
   const barePath = path.split('?')[0]
   const isSignIn = SIGN_IN_PATHS.test(barePath)
   if (signedOut && !isSignIn) throw new ApiError(401, 'unauthenticated', t.errors.signedOut)
@@ -284,7 +319,13 @@ export async function request<T>(path: string, { method = 'GET', body, keepalive
   const isWrite = method !== 'GET'
   // A file goes out as its bytes: every fetch implementation sends those the
   // same way, which cannot be said of a Blob made by another library.
-  const payload: string | ArrayBuffer | undefined = blob ? await blob.arrayBuffer() : body === undefined ? (isWrite ? '{}' : undefined) : JSON.stringify(body)
+  const payload: string | ArrayBuffer | undefined = blob
+    ? await blob.arrayBuffer()
+    : body === undefined
+      ? isWrite
+        ? '{}'
+        : undefined
+      : JSON.stringify(body)
   let res: Response
   try {
     res = await fetch(API_BASE + path, {
@@ -292,7 +333,10 @@ export async function request<T>(path: string, { method = 'GET', body, keepalive
       signal,
       // The session is a same-origin cookie.
       credentials: 'same-origin',
-      headers: { Accept: 'application/json', ...(payload === undefined ? {} : { 'Content-Type': blob ? 'application/octet-stream' : 'application/json' }) },
+      headers: {
+        Accept: 'application/json',
+        ...(payload === undefined ? {} : { 'Content-Type': blob ? 'application/octet-stream' : 'application/json' }),
+      },
       body: payload,
       keepalive: keepalive && typeof payload === 'string' && byteLength(payload) < KEEPALIVE_LIMIT ? true : undefined,
     })
@@ -332,7 +376,15 @@ export async function request<T>(path: string, { method = 'GET', body, keepalive
     }
   }
   if (!res.ok) {
-    const err = (json ?? {}) as { error?: string; message?: string; current?: Page; draft?: PageDraft | null; host?: unknown; header?: unknown; field?: unknown }
+    const err = (json ?? {}) as {
+      error?: string
+      message?: string
+      current?: Page
+      draft?: PageDraft | null
+      host?: unknown
+      header?: unknown
+      field?: unknown
+    }
     if (err.error === 'forbidden' && !USER_LEVEL_403.test(barePath)) {
       const message = forbiddenMessage(globalThis.location?.origin ?? '')
       forbiddenListeners.forEach((fn) => fn(message))
@@ -344,7 +396,8 @@ export async function request<T>(path: string, { method = 'GET', body, keepalive
     if (err.error === 'space_disabled' || err.error === 'no_permission' || err.error === 'not_found') {
       const space = /^\/spaces\/([^/]+)/.exec(barePath)?.[1]
       // Only requests inside a space say anything about the space.
-      if (space || err.error !== 'not_found') accessListeners.forEach((fn) => fn(space ? decodeURIComponent(space) : null, err.error === 'not_found'))
+      if (space || err.error !== 'not_found')
+        accessListeners.forEach((fn) => fn(space ? decodeURIComponent(space) : null, err.error === 'not_found'))
     }
     const retry = Number(res.headers.get('Retry-After'))
     throw new ApiError(
@@ -354,7 +407,9 @@ export async function request<T>(path: string, { method = 'GET', body, keepalive
       err.current,
       res.status === 429 && Number.isFinite(retry) && retry > 0 ? retry : undefined,
       err.draft,
-      typeof err.error === 'string' && DAILY_CODES.has(err.error) ? reasonOf(err as { error: string; header?: unknown; field?: unknown }) : undefined,
+      typeof err.error === 'string' && DAILY_CODES.has(err.error)
+        ? reasonOf(err as { error: string; header?: unknown; field?: unknown })
+        : undefined,
       json ?? undefined,
     )
   }
@@ -409,35 +464,51 @@ export function spaceApi(space: string) {
   const base = (rest = '') => `/spaces/${enc(space)}${rest}`
   const pageBase = (id: string, rest = '') => base(`/pages/${enc(id)}${rest}`)
   return {
-    listPages: (params: ListParams = {}, signal?: AbortSignal) => request<PageList>(base(`/pages${listParamsToQuery(params)}`), { signal }),
+    listPages: (params: ListParams = {}, signal?: AbortSignal) =>
+      request<PageList>(base(`/pages${listParamsToQuery(params)}`), { signal }),
     // How many pages have each value of a property (the heads of a board's columns).
-    groups: (params: GroupsParams, signal?: AbortSignal) => request<GroupsResponse>(base(`/pages/groups${groupsParamsToQuery(params)}`), { signal }),
+    groups: (params: GroupsParams, signal?: AbortSignal) =>
+      request<GroupsResponse>(base(`/pages/groups${groupsParamsToQuery(params)}`), { signal }),
     // The saved views of a folder or a tag; a save replaces the whole list and 409s (with `current`) on a stale `baseRev`.
-    views: (scope: ViewScope, signal?: AbortSignal) => request<ViewList>(base(`/views?${scopeQuery(scope)}`), { signal }),
-    putViews: (scope: ViewScope, input: PutViewsInput, signal?: AbortSignal) => request<ViewList>(base('/views'), { method: 'PUT', body: { ...scope, ...input }, signal }),
+    views: (scope: ViewScope, signal?: AbortSignal) =>
+      request<ViewList>(base(`/views?${scopeQuery(scope)}`), { signal }),
+    putViews: (scope: ViewScope, input: PutViewsInput, signal?: AbortSignal) =>
+      request<ViewList>(base('/views'), { method: 'PUT', body: { ...scope, ...input }, signal }),
     getPage: (id: string, signal?: AbortSignal) => request<Page>(pageBase(id), { signal }),
     createPage: (input: CreatePageInput = {}) => request<Page>(base('/pages'), { method: 'POST', body: input }),
-    savePage: (id: string, input: SavePageInput, opts: { keepalive?: boolean } = {}) => request<Page>(pageBase(id), { method: 'PUT', body: input, keepalive: opts.keepalive }),
+    savePage: (id: string, input: SavePageInput, opts: { keepalive?: boolean } = {}) =>
+      request<Page>(pageBase(id), { method: 'PUT', body: input, keepalive: opts.keepalive }),
     // Changes properties of the header only; the body does not travel. 409 with the page on a stale rev.
-    patchProps: (id: string, input: PatchPropsInput) => request<Page>(pageBase(id, '/props'), { method: 'PATCH', body: input }),
-    movePage: (id: string, folder: string) => request<Page>(pageBase(id, '/move'), { method: 'POST', body: { folder } }),
+    patchProps: (id: string, input: PatchPropsInput) =>
+      request<Page>(pageBase(id, '/props'), { method: 'PATCH', body: input }),
+    movePage: (id: string, folder: string) =>
+      request<Page>(pageBase(id, '/move'), { method: 'POST', body: { folder } }),
     deletePage: (id: string) => request<void>(pageBase(id), { method: 'DELETE' }),
     // Several pages as one change. Resolves to how many were moved or deleted.
-    batchPages: (input: BatchPagesInput) => request<{ pages: number }>(base('/pages/batch'), { method: 'POST', body: input }),
+    batchPages: (input: BatchPagesInput) =>
+      request<{ pages: number }>(base('/pages/batch'), { method: 'POST', body: input }),
 
     // Drafts: what autosave writes. The file changes only on commit.
-    putDraft: (id: string, input: DraftInput, opts: { keepalive?: boolean } = {}) => request<DraftReceipt>(pageBase(id, '/draft'), { method: 'PUT', body: input, keepalive: opts.keepalive }),
+    putDraft: (id: string, input: DraftInput, opts: { keepalive?: boolean } = {}) =>
+      request<DraftReceipt>(pageBase(id, '/draft'), { method: 'PUT', body: input, keepalive: opts.keepalive }),
     // With a version, only that draft is deleted (409 when it is another).
-    deleteDraft: (id: string, version?: string, rev?: string) => request<void>(pageBase(id, `/draft${version ? `?version=${enc(version)}${rev ? `&rev=${enc(rev)}` : ''}` : ''}`), { method: 'DELETE' }),
+    deleteDraft: (id: string, version?: string, rev?: string) =>
+      request<void>(
+        pageBase(id, `/draft${version ? `?version=${enc(version)}${rev ? `&rev=${enc(rev)}` : ''}` : ''}`),
+        { method: 'DELETE' },
+      ),
     // Only the draft of that version is committed (409 with the page and the draft otherwise).
-    commitPage: (id: string, version: string) => request<Page>(pageBase(id, '/commit'), { method: 'POST', body: { version } }),
+    commitPage: (id: string, version: string) =>
+      request<Page>(pageBase(id, '/commit'), { method: 'POST', body: { version } }),
 
     // Who links to a page (20 at a time), and where its own links lead.
-    backlinks: (id: string, cursor?: string, signal?: AbortSignal) => request<BacklinkList>(pageBase(id, `/backlinks${cursor ? `?cursor=${enc(cursor)}` : ''}`), { signal }),
+    backlinks: (id: string, cursor?: string, signal?: AbortSignal) =>
+      request<BacklinkList>(pageBase(id, `/backlinks${cursor ? `?cursor=${enc(cursor)}` : ''}`), { signal }),
     links: (id: string, signal?: AbortSignal) => request<PageLinkList>(pageBase(id, '/links'), { signal }),
 
     // Stores a file for a page; the answer's `path` is what the page refers to.
-    uploadAsset: (id: string, file: Blob, name: string, signal?: AbortSignal) => request<UploadedAsset>(pageBase(id, `/assets?name=${enc(name)}`), { method: 'POST', blob: file, signal }),
+    uploadAsset: (id: string, file: Blob, name: string, signal?: AbortSignal) =>
+      request<UploadedAsset>(pageBase(id, `/assets?name=${enc(name)}`), { method: 'POST', blob: file, signal }),
 
     // One Markdown file (`name` is required) or a .zip of them; the server tells
     // which from the bytes. Everything lands in `folder`, made if missing.
@@ -452,17 +523,22 @@ export function spaceApi(space: string) {
     tree: (signal?: AbortSignal) => request<TreeResponse>(base('/tree'), { signal }),
     createFolder: (path: string) => request<{ path: string }>(base('/folders'), { method: 'POST', body: { path } }),
     // Moves a folder with its contents; renaming is a move to a sibling path.
-    moveFolder: (from: string, to: string) => request<{ path: string }>(base('/folders/move'), { method: 'POST', body: { from, to } }),
+    moveFolder: (from: string, to: string) =>
+      request<{ path: string }>(base('/folders/move'), { method: 'POST', body: { from, to } }),
     // Without `recursive` the folder must hold no pages.
-    deleteFolder: (path: string, recursive = false) => request<void>(base(`/folders?path=${enc(path)}${recursive ? '&recursive=true' : ''}`), { method: 'DELETE' }),
+    deleteFolder: (path: string, recursive = false) =>
+      request<void>(base(`/folders?path=${enc(path)}${recursive ? '&recursive=true' : ''}`), { method: 'DELETE' }),
     tags: (signal?: AbortSignal) => request<TagsResponse>(base('/tags'), { signal }),
     // Sets a tag's colour, or removes it with null. The answer leaves `color` out when removed.
-    setTagColor: (tag: string, color: TagColor | null) => request<{ tag: string; color?: TagColor }>(base(`/tags/${enc(tag)}`), { method: 'PUT', body: { color } }),
+    setTagColor: (tag: string, color: TagColor | null) =>
+      request<{ tag: string; color?: TagColor }>(base(`/tags/${enc(tag)}`), { method: 'PUT', body: { color } }),
 
     // Page types and the folders bound to them. Writing needs `manage`.
     types: (signal?: AbortSignal) => request<TypesResponse>(base('/types'), { signal }),
-    putType: (name: string, input: TypeInput) => request<PageType>(base(`/types/${enc(name)}`), { method: 'PUT', body: input }),
-    deleteType: (name: string, baseRev: string) => request<void>(base(`/types/${enc(name)}?baseRev=${enc(baseRev)}`), { method: 'DELETE' }),
+    putType: (name: string, input: TypeInput) =>
+      request<PageType>(base(`/types/${enc(name)}`), { method: 'PUT', body: input }),
+    deleteType: (name: string, baseRev: string) =>
+      request<void>(base(`/types/${enc(name)}?baseRev=${enc(baseRev)}`), { method: 'DELETE' }),
     // The check page (docs/api.md, "Checks"). Fixing needs `write`.
     checks: (params: ChecksParams = {}, signal?: AbortSignal) => {
       const q = new URLSearchParams()
@@ -474,14 +550,20 @@ export function spaceApi(space: string) {
     fixCheck: (input: FixCheckInput) => request<Page>(base('/checks/fix'), { method: 'POST', body: input }),
     // Templates (docs/api.md, "Templates"). Writing needs `manage`.
     templates: (signal?: AbortSignal) => request<TemplatesResponse>(base('/templates'), { signal }),
-    template: (name: string, signal?: AbortSignal) => request<PageTemplate>(base(`/templates/${enc(name)}`), { signal }),
-    putTemplate: (name: string, input: PutTemplateInput) => request<PageTemplate>(base(`/templates/${enc(name)}`), { method: 'PUT', body: input }),
-    deleteTemplate: (name: string, baseRev: string) => request<void>(base(`/templates/${enc(name)}?baseRev=${enc(baseRev)}`), { method: 'DELETE' }),
+    template: (name: string, signal?: AbortSignal) =>
+      request<PageTemplate>(base(`/templates/${enc(name)}`), { signal }),
+    putTemplate: (name: string, input: PutTemplateInput) =>
+      request<PageTemplate>(base(`/templates/${enc(name)}`), { method: 'PUT', body: input }),
+    deleteTemplate: (name: string, baseRev: string) =>
+      request<void>(base(`/templates/${enc(name)}?baseRev=${enc(baseRev)}`), { method: 'DELETE' }),
     // `template` "" removes the default.
-    setFolderTemplate: (folder: string, template: string) => request<TemplateDefaults>(base('/templates/defaults'), { method: 'PUT', body: { folder, template } }),
-    setQuickNoteTemplate: (quickNote: string) => request<TemplateDefaults>(base('/templates/defaults'), { method: 'PUT', body: { quickNote } }),
+    setFolderTemplate: (folder: string, template: string) =>
+      request<TemplateDefaults>(base('/templates/defaults'), { method: 'PUT', body: { folder, template } }),
+    setQuickNoteTemplate: (quickNote: string) =>
+      request<TemplateDefaults>(base('/templates/defaults'), { method: 'PUT', body: { quickNote } }),
     // `type` "" removes the binding.
-    bindFolder: (folder: string, type: string) => request<FolderBinding>(base('/folders/type'), { method: 'PUT', body: { folder, type } }),
+    bindFolder: (folder: string, type: string) =>
+      request<FolderBinding>(base('/folders/type'), { method: 'PUT', body: { folder, type } }),
 
     // History: nothing here is asked for until the history panel is open.
     history: (id: string, params: { limit?: number; cursor?: string } = {}, signal?: AbortSignal) => {
@@ -491,17 +573,20 @@ export function spaceApi(space: string) {
       const qs = q.toString()
       return request<HistoryList>(pageBase(id, `/history${qs ? `?${qs}` : ''}`), { signal })
     },
-    version: (id: string, commit: string, signal?: AbortSignal) => request<PageVersion>(pageBase(id, `/versions/${enc(commit)}`), { signal }),
+    version: (id: string, commit: string, signal?: AbortSignal) =>
+      request<PageVersion>(pageBase(id, `/versions/${enc(commit)}`), { signal }),
 
     // The remote repository of the space (accounts mode, owner only).
     getRemote: (signal?: AbortSignal) => request<Remote>(base('/remote'), { signal }),
-    remoteKey: (rotate = false) => request<RemoteKey>(base('/remote/key'), { method: 'POST', body: rotate ? { rotate: true } : {} }),
+    remoteKey: (rotate = false) =>
+      request<RemoteKey>(base('/remote/key'), { method: 'POST', body: rotate ? { rotate: true } : {} }),
     connectRemote: (input: ConnectRemoteInput) => request<Remote>(base('/remote'), { method: 'PUT', body: input }),
     disconnectRemote: () => request<void>(base('/remote'), { method: 'DELETE' }),
     syncRemote: () => request<Remote>(base('/remote/sync'), { method: 'POST' }),
     // The attachment repository (docs/api.md, "Server storage"); 404 when the space has none.
     getAssetsRemote: (signal?: AbortSignal) => request<AssetsRemote>(base('/remote/assets'), { signal }),
-    connectAssets: (input: ConnectAssetsInput) => request<AssetsRemote>(base('/remote/assets'), { method: 'PUT', body: input }),
+    connectAssets: (input: ConnectAssetsInput) =>
+      request<AssetsRemote>(base('/remote/assets'), { method: 'PUT', body: input }),
     disconnectAssets: () => request<void>(base('/remote/assets'), { method: 'DELETE' }),
     moveAssets: () => request<AssetsRemote>(base('/remote/assets/move'), { method: 'POST' }),
     acceptRemote: (commit: string) => request<Remote>(base('/remote/accept'), { method: 'POST', body: { commit } }),
@@ -514,17 +599,25 @@ export function spaceApi(space: string) {
       if (q.tz !== undefined) p.set('tz', String(q.tz))
       return request<DailyAnswer>(base(`/daily?${p.toString()}`), { signal })
     },
-    dailySettings: (signal?: AbortSignal) => request<{ daily: DailySettings | null; inEffect?: boolean }>(base('/daily/settings'), { signal }),
-    putDailySettings: (daily: DailySettings | null) => request<{ daily: DailySettings | null; inEffect?: boolean }>(base('/daily/settings'), { method: 'PUT', body: { daily } }),
+    dailySettings: (signal?: AbortSignal) =>
+      request<{ daily: DailySettings | null; inEffect?: boolean }>(base('/daily/settings'), { signal }),
+    putDailySettings: (daily: DailySettings | null) =>
+      request<{ daily: DailySettings | null; inEffect?: boolean }>(base('/daily/settings'), {
+        method: 'PUT',
+        body: { daily },
+      }),
     // Accounts mode only (the single-user server answers 404).
     dailyPrefs: (signal?: AbortSignal) => request<DailyPrefs>(base('/daily/prefs'), { signal }),
-    putDailyPrefs: (input: { inherit: boolean; apis: string[] }) => request<DailyPrefs>(base('/daily/prefs'), { method: 'PUT', body: input }),
+    putDailyPrefs: (input: { inherit: boolean; apis: string[] }) =>
+      request<DailyPrefs>(base('/daily/prefs'), { method: 'PUT', body: input }),
 
     // A person's own favourites of the space.
     favorites: (signal?: AbortSignal) => request<FavoriteList>(base('/favorites'), { signal }),
     addFavorite: (ref: FavoriteRef) => request<FavoriteList>(base('/favorites'), { method: 'POST', body: ref }),
-    removeFavorite: (ref: FavoriteRef) => request<FavoriteList>(base(`/favorites?kind=${enc(ref.kind)}&target=${enc(ref.target)}`), { method: 'DELETE' }),
-    orderFavorites: (items: FavoriteRef[]) => request<FavoriteList>(base('/favorites/order'), { method: 'PUT', body: { items } }),
+    removeFavorite: (ref: FavoriteRef) =>
+      request<FavoriteList>(base(`/favorites?kind=${enc(ref.kind)}&target=${enc(ref.target)}`), { method: 'DELETE' }),
+    orderFavorites: (items: FavoriteRef[]) =>
+      request<FavoriteList>(base('/favorites/order'), { method: 'PUT', body: { items } }),
 
     reindex: () => request<{ pages: number; ms: number }>(base('/reindex'), { method: 'POST' }),
 
@@ -538,8 +631,10 @@ export function spaceApi(space: string) {
       const qs = q.toString()
       return request<CatalogBatch>(base(`/sync/catalog${qs ? `?${qs}` : ''}`), { signal })
     },
-    changes: (since: string, limit?: number, signal?: AbortSignal) => request<ChangeList>(base(`/changes?since=${enc(since)}${limit ? `&limit=${limit}` : ''}`), { signal }),
-    syncPages: (ids: string[], signal?: AbortSignal) => request<SyncPages>(base(`/sync/pages?ids=${ids.map(enc).join(',')}`), { signal }),
+    changes: (since: string, limit?: number, signal?: AbortSignal) =>
+      request<ChangeList>(base(`/changes?since=${enc(since)}${limit ? `&limit=${limit}` : ''}`), { signal }),
+    syncPages: (ids: string[], signal?: AbortSignal) =>
+      request<SyncPages>(base(`/sync/pages?ids=${ids.map(enc).join(',')}`), { signal }),
 
     // The people of the space (accounts mode). `user` is a member's `userId`.
     members: (signal?: AbortSignal) => request<MembersResponse>(base('/members'), { signal }),
@@ -553,11 +648,15 @@ export function spaceApi(space: string) {
       return request<EffectiveMemberList>(base(`/members/effective${qs ? `?${qs}` : ''}`), { signal })
     },
     // Groups as members of the space (shared spaces only).
-    addGroup: (groupId: string, role: SpaceRole) => request<GroupMember>(base('/groups'), { method: 'POST', body: { groupId, role } }),
-    setGroupRole: (groupId: string, role: SpaceRole) => request<GroupMember>(base(`/groups/${enc(groupId)}`), { method: 'PATCH', body: { role } }),
+    addGroup: (groupId: string, role: SpaceRole) =>
+      request<GroupMember>(base('/groups'), { method: 'POST', body: { groupId, role } }),
+    setGroupRole: (groupId: string, role: SpaceRole) =>
+      request<GroupMember>(base(`/groups/${enc(groupId)}`), { method: 'PATCH', body: { role } }),
     removeGroup: (groupId: string) => request<void>(base(`/groups/${enc(groupId)}`), { method: 'DELETE' }),
-    addMember: (username: string, role: SpaceRole) => request<Member>(base('/members'), { method: 'POST', body: { username, role } }),
-    setMemberRole: (user: string, role: SpaceRole) => request<Member>(base(`/members/${enc(user)}`), { method: 'PATCH', body: { role } }),
+    addMember: (username: string, role: SpaceRole) =>
+      request<Member>(base('/members'), { method: 'POST', body: { username, role } }),
+    setMemberRole: (user: string, role: SpaceRole) =>
+      request<Member>(base(`/members/${enc(user)}`), { method: 'PATCH', body: { role } }),
     // Removing yourself is leaving the space.
     removeMember: (user: string) => request<void>(base(`/members/${enc(user)}`), { method: 'DELETE' }),
   }
@@ -576,7 +675,13 @@ export const api = {
     }
     return s
   },
-  setup: async (input: { token: string; username: string; name?: string; password: string; captcha?: CaptchaAnswer }) => {
+  setup: async (input: {
+    token: string
+    username: string
+    name?: string
+    password: string
+    captcha?: CaptchaAnswer
+  }) => {
     const r = await request<{ user: User }>('/setup', { method: 'POST', body: input })
     markSignedIn()
     rememberUser(r.user.id)
@@ -601,12 +706,20 @@ export const api = {
   captcha: (ctx: CaptchaContext, account?: string, signal?: AbortSignal) =>
     request<CaptchaChallenge>(`/captcha?ctx=${enc(ctx)}${account ? `&account=${enc(account)}` : ''}`, { signal }),
   // Setup, invite and link carry a token or a session, so they ask for the address with a POST; a login is a plain navigation (see `providerStartUrl`).
-  providerStart: (kind: ProviderKind, slug: string, input: { intent: ProviderIntent; token?: string; return?: string }) =>
-    request<{ url: string }>(`/auth/${enc(kind)}/${enc(slug)}/start`, { method: 'POST', body: input }),
-  oidcStart: (input: { intent: OidcIntent; token?: string; return?: string }) => request<{ url: string }>('/auth/oidc/start', { method: 'POST', body: input }),
-  passkeyBegin: (username?: string) => request<PasskeyCeremony>('/auth/passkey/begin', { method: 'POST', body: username ? { username } : {} }),
+  providerStart: (
+    kind: ProviderKind,
+    slug: string,
+    input: { intent: ProviderIntent; token?: string; return?: string },
+  ) => request<{ url: string }>(`/auth/${enc(kind)}/${enc(slug)}/start`, { method: 'POST', body: input }),
+  oidcStart: (input: { intent: OidcIntent; token?: string; return?: string }) =>
+    request<{ url: string }>('/auth/oidc/start', { method: 'POST', body: input }),
+  passkeyBegin: (username?: string) =>
+    request<PasskeyCeremony>('/auth/passkey/begin', { method: 'POST', body: username ? { username } : {} }),
   passkeyFinish: async (ceremony: string, ret: string, credential: unknown) => {
-    const r = await request<{ user: User; return: string }>(`/auth/passkey/finish?ceremony=${enc(ceremony)}&return=${enc(ret)}`, { method: 'POST', body: credential })
+    const r = await request<{ user: User; return: string }>(
+      `/auth/passkey/finish?ceremony=${enc(ceremony)}&return=${enc(ret)}`,
+      { method: 'POST', body: credential },
+    )
     markSignedIn()
     rememberUser(r.user.id)
     return r
@@ -617,23 +730,34 @@ export const api = {
   // The caller's own spaces, bytes and pages against their limits (3.3): stored numbers, nothing is measured for the request.
   accountUsage: (signal?: AbortSignal) => request<AccountUsage>('/account/usage', { signal }),
   // Finding a group by part of its name, to add it to a space: names only.
-  findGroups: (q: string, signal?: AbortSignal) => request<{ groups: GroupRef[] }>(`/groups?q=${enc(q)}&limit=20`, { signal }),
-  updateAccount: (input: { name?: string; email?: string }) => request<{ user: User }>('/account', { method: 'PATCH', body: input }),
+  findGroups: (q: string, signal?: AbortSignal) =>
+    request<{ groups: GroupRef[] }>(`/groups?q=${enc(q)}&limit=20`, { signal }),
+  updateAccount: (input: { name?: string; email?: string }) =>
+    request<{ user: User }>('/account', { method: 'PATCH', body: input }),
   // `current` is left out when the account has no password yet.
-  changePassword: (input: { current?: string; new: string }) => request<void>('/account/password', { method: 'POST', body: input }),
+  changePassword: (input: { current?: string; new: string }) =>
+    request<void>('/account/password', { method: 'POST', body: input }),
   removeIdentity: (id: string) => request<void>(`/account/identities/${enc(id)}`, { method: 'DELETE' }),
   // Registering a passkey: a ceremony, the browser's credential, then the list as it is.
-  passkeyRegisterBegin: (name: string) => request<PasskeyCeremony>('/account/passkeys/begin', { method: 'POST', body: { name } }),
-  passkeyRegisterFinish: (ceremony: string, credential: unknown) => request<{ passkeys: Passkey[] }>(`/account/passkeys/finish?ceremony=${enc(ceremony)}`, { method: 'POST', body: credential }),
-  renamePasskey: (id: string, name: string) => request<Passkey>(`/account/passkeys/${enc(id)}`, { method: 'PATCH', body: { name } }),
+  passkeyRegisterBegin: (name: string) =>
+    request<PasskeyCeremony>('/account/passkeys/begin', { method: 'POST', body: { name } }),
+  passkeyRegisterFinish: (ceremony: string, credential: unknown) =>
+    request<{ passkeys: Passkey[] }>(`/account/passkeys/finish?ceremony=${enc(ceremony)}`, {
+      method: 'POST',
+      body: credential,
+    }),
+  renamePasskey: (id: string, name: string) =>
+    request<Passkey>(`/account/passkeys/${enc(id)}`, { method: 'PATCH', body: { name } }),
   removePasskey: (id: string) => request<void>(`/account/passkeys/${enc(id)}`, { method: 'DELETE' }),
 
   // --- API tokens ---
   // What each setting that a space or a person can change comes to for the caller, and who keeps it from changing (3.3).
-  settings: (space?: string, signal?: AbortSignal) => request<{ settings: MySetting[] }>(`/settings${space ? `?space=${enc(space)}` : ''}`, { signal }),
+  settings: (space?: string, signal?: AbortSignal) =>
+    request<{ settings: MySetting[] }>(`/settings${space ? `?space=${enc(space)}` : ''}`, { signal }),
   tokens: (signal?: AbortSignal) => request<{ tokens: ApiToken[] }>('/account/tokens', { signal }),
   // `expiresInDays` 0 is a token that never expires; left out, 90 days.
-  createToken: (input: { name: string; access: TokenAccess; spaces: string[]; expiresInDays?: number }) => request<CreatedToken>('/account/tokens', { method: 'POST', body: input }),
+  createToken: (input: { name: string; access: TokenAccess; spaces: string[]; expiresInDays?: number }) =>
+    request<CreatedToken>('/account/tokens', { method: 'POST', body: input }),
   revokeToken: (id: string) => request<void>(`/account/tokens/${enc(id)}`, { method: 'DELETE' }),
 
   // --- connected apps (OAuth grants) and the consent page ---
@@ -641,24 +765,45 @@ export const api = {
   grants: (signal?: AbortSignal) => request<{ grants: Grant[] }>('/account/grants', { signal }),
   revokeGrant: (id: string) => request<void>(`/account/grants/${enc(id)}`, { method: 'DELETE' }),
   consent: (req: string, signal?: AbortSignal) => request<ConsentInfo>(`/oauth/consent?req=${enc(req)}`, { signal }),
-  decideConsent: (input: ConsentDecision) => request<{ redirect: string }>('/oauth/consent', { method: 'POST', body: input }),
+  decideConsent: (input: ConsentDecision) =>
+    request<{ redirect: string }>('/oauth/consent', { method: 'POST', body: input }),
 
   // --- users and invites (administrators) ---
   // --- registration, email verification and password reset (3.3) ---
-  registerInfo: (tenant?: string, signal?: AbortSignal) => request<RegisterInfo>(`/register${tenant ? `?tenant=${enc(tenant)}` : ''}`, { signal }),
+  registerInfo: (tenant?: string, signal?: AbortSignal) =>
+    request<RegisterInfo>(`/register${tenant ? `?tenant=${enc(tenant)}` : ''}`, { signal }),
   register: (input: RegisterInput) => request<{ sent: boolean }>('/register', { method: 'POST', body: input }),
   registerConfirm: async (token: string) => {
     const r = await request<{ user: User }>('/register/confirm', { method: 'POST', body: { token } })
     markSignedIn()
     return r
   },
-  requestEmailVerify: (lang?: string) => request<{ sent: boolean }>('/account/email/verify', { method: 'POST', body: lang ? { lang } : {} }),
+  requestEmailVerify: (lang?: string) =>
+    request<{ sent: boolean }>('/account/email/verify', { method: 'POST', body: lang ? { lang } : {} }),
   confirmEmail: (token: string) => request<void>('/email/confirm', { method: 'POST', body: { token } }),
-  forgotPassword: (input: { tenant?: string; login: string; captcha?: CaptchaAnswer; lang?: string }) => request<{ sent: boolean }>('/password/forgot', { method: 'POST', body: input }),
-  checkReset: (token: string, signal?: AbortSignal) => request<{ username: string; expires: string }>('/password/reset/check', { method: 'POST', body: { token }, signal }),
-  resetPassword: (token: string, password: string) => request<void>('/password/reset', { method: 'POST', body: { token, password } }),
-  checkInvite: (token: string, captcha?: CaptchaAnswer, signal?: AbortSignal) => request<InviteCheck>('/invites/check', { method: 'POST', body: { token, ...(captcha ? { captcha } : {}) }, signal }),
-  acceptInvite: async (input: { token: string; username: string; name?: string; password: string; captcha?: CaptchaAnswer }) => {
+  forgotPassword: (input: { tenant?: string; login: string; captcha?: CaptchaAnswer; lang?: string }) =>
+    request<{ sent: boolean }>('/password/forgot', { method: 'POST', body: input }),
+  checkReset: (token: string, signal?: AbortSignal) =>
+    request<{ username: string; expires: string }>('/password/reset/check', {
+      method: 'POST',
+      body: { token },
+      signal,
+    }),
+  resetPassword: (token: string, password: string) =>
+    request<void>('/password/reset', { method: 'POST', body: { token, password } }),
+  checkInvite: (token: string, captcha?: CaptchaAnswer, signal?: AbortSignal) =>
+    request<InviteCheck>('/invites/check', {
+      method: 'POST',
+      body: { token, ...(captcha ? { captcha } : {}) },
+      signal,
+    }),
+  acceptInvite: async (input: {
+    token: string
+    username: string
+    name?: string
+    password: string
+    captcha?: CaptchaAnswer
+  }) => {
     const r = await request<{ user: User }>('/invites/accept', { method: 'POST', body: input })
     markSignedIn()
     rememberUser(r.user.id)
@@ -669,30 +814,51 @@ export const api = {
   spaces: (signal?: AbortSignal) => request<{ spaces: SpaceInfo[] }>('/spaces', { signal }),
   // `sync` makes the space's repository on a provider too (docs/api.md, "Spaces and remotes").
   createSpace: (name: string, inbox?: string, sync?: NewSync) =>
-    request<SpaceInfo>('/spaces', { method: 'POST', body: { name, ...(inbox === undefined ? {} : { inbox }), ...(sync === undefined ? {} : { storage: { sync } }) } }),
+    request<SpaceInfo>('/spaces', {
+      method: 'POST',
+      body: { name, ...(inbox === undefined ? {} : { inbox }), ...(sync === undefined ? {} : { storage: { sync } }) },
+    }),
 
   // --- connections (accounts mode; docs/api.md, "Connections") ---
   connections: (signal?: AbortSignal) => request<{ providers: Provider[] }>('/connections', { signal }),
   // The address to send the browser to; the platform sends it back to `return` (a path of this site).
   // `install` sends them to the App's installation page, which authorises them in the same flow; without it, to the authorisation page alone.
   connectionStart: (provider: string, ret?: string, install?: boolean) =>
-    request<{ url: string }>(`/connections/${enc(provider)}/authorization/start`, { method: 'POST', body: { ...(ret ? { return: ret } : {}), ...(install ? { install: true } : {}) } }),
-  connectionDisconnect: (provider: string) => request<void>(`/connections/${enc(provider)}/authorization`, { method: 'DELETE' }),
-  connectionDismissLeftover: (provider: string, repoId: number) => request<void>(`/connections/${enc(provider)}/leftovers/${repoId}`, { method: 'DELETE' }),
+    request<{ url: string }>(`/connections/${enc(provider)}/authorization/start`, {
+      method: 'POST',
+      body: { ...(ret ? { return: ret } : {}), ...(install ? { install: true } : {}) },
+    }),
+  connectionDisconnect: (provider: string) =>
+    request<void>(`/connections/${enc(provider)}/authorization`, { method: 'DELETE' }),
+  connectionDismissLeftover: (provider: string, repoId: number) =>
+    request<void>(`/connections/${enc(provider)}/leftovers/${repoId}`, { method: 'DELETE' }),
   // recheck: the first page, after the server forgets what it remembered about this person ("the App is not installed there").
   connectionOwners: (provider: string, cursor?: string, signal?: AbortSignal, recheck = false) =>
-    request<CursorPage<ConnectionOwner>>(`/connections/${enc(provider)}/owners${cursor ? `?cursor=${enc(cursor)}` : recheck ? '?recheck=true' : ''}`, { signal }),
-  connectionRepos: (provider: string, which: { installation: number } | { mine: true }, cursor?: string, signal?: AbortSignal) => {
-    const q = new URLSearchParams('installation' in which ? { installation: String(which.installation) } : { mine: 'true' })
+    request<CursorPage<ConnectionOwner>>(
+      `/connections/${enc(provider)}/owners${cursor ? `?cursor=${enc(cursor)}` : recheck ? '?recheck=true' : ''}`,
+      { signal },
+    ),
+  connectionRepos: (
+    provider: string,
+    which: { installation: number } | { mine: true },
+    cursor?: string,
+    signal?: AbortSignal,
+  ) => {
+    const q = new URLSearchParams(
+      'installation' in which ? { installation: String(which.installation) } : { mine: 'true' },
+    )
     if (cursor) q.set('cursor', cursor)
     return request<CursorPage<ConnectionRepo>>(`/connections/${enc(provider)}/repos?${q.toString()}`, { signal })
   },
-  renameSpace: (id: string, name: string) => request<SpaceInfo>(`/spaces/${enc(id)}`, { method: 'PATCH', body: { name } }),
+  renameSpace: (id: string, name: string) =>
+    request<SpaceInfo>(`/spaces/${enc(id)}`, { method: 'PATCH', body: { name } }),
   // Either field or both; the server refuses a body with neither.
-  updateSpace: (id: string, patch: { name?: string; inbox?: string }) => request<SpaceInfo>(`/spaces/${enc(id)}`, { method: 'PATCH', body: patch }),
+  updateSpace: (id: string, patch: { name?: string; inbox?: string }) =>
+    request<SpaceInfo>(`/spaces/${enc(id)}`, { method: 'PATCH', body: patch }),
 
   // The change cursor each of the spaces is at (1 to 100), from the server's memory.
-  syncHeads: (spaces: string[], signal?: AbortSignal) => request<SyncHeads>(`/sync/heads?${spaces.map((s) => `space=${enc(s)}`).join('&')}`, { signal }),
+  syncHeads: (spaces: string[], signal?: AbortSignal) =>
+    request<SyncHeads>(`/sync/heads?${spaces.map((s) => `space=${enc(s)}`).join('&')}`, { signal }),
 
   // --- administration (administrators, accounts mode) ---
   // One space as the list has it; 404 for an id that is no space.
@@ -700,4 +866,5 @@ export const api = {
 }
 
 // Where a sign-in button goes: a full-page navigation (docs/api.md, "Starting").
-export const providerStartUrl = (kind: ProviderKind, slug: string, ret: string) => `${API_BASE}/auth/${enc(kind)}/${enc(slug)}/start?return=${enc(ret)}`
+export const providerStartUrl = (kind: ProviderKind, slug: string, ret: string) =>
+  `${API_BASE}/auth/${enc(kind)}/${enc(slug)}/start?return=${enc(ret)}`

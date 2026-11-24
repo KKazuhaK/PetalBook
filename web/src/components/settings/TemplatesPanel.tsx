@@ -2,16 +2,43 @@ import { useMemo, useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { errorMessage, useDeleteTemplate, useSaveTemplate, useSetFolderTemplate, useSetQuickNoteTemplate, useTemplate, useTemplates, useTree, useTypes } from '@/api/hooks'
+import {
+  errorMessage,
+  useDeleteTemplate,
+  useSaveTemplate,
+  useSetFolderTemplate,
+  useSetQuickNoteTemplate,
+  useTemplate,
+  useTemplates,
+  useTree,
+  useTypes,
+} from '@/api/hooks'
 import type { PageTemplate, PutTemplateInput, TemplateDefaults } from '@/api/types'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
-import { draftOf, metaOf, otherKeys, tagList, templateLabel, templateNameProblem, type HeaderDraft } from '@/lib/templates'
+import {
+  draftOf,
+  metaOf,
+  otherKeys,
+  tagList,
+  templateLabel,
+  templateNameProblem,
+  type HeaderDraft,
+} from '@/lib/templates'
 import { templateMessage } from '@/lib/templateErrors'
 import { tt } from '@/i18n/templates'
 import { SettingsNote, SettingsSection } from './SettingsParts'
@@ -48,7 +75,9 @@ export default function TemplatesPanel({ canManage }: { canManage: boolean }) {
                 >
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-medium">{tpl.name}</span>
-                    <span className="block truncate text-xs text-muted-foreground">{typeof tpl.meta?.title === 'string' ? tpl.meta.title : ''}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {typeof tpl.meta?.title === 'string' ? tpl.meta.title : ''}
+                    </span>
                   </span>
                   <span className="flex shrink-0 flex-wrap justify-end gap-x-2 text-xs text-muted-foreground">
                     {defaults.quickNote === tpl.name && <span>{tt.settings.quickBadge}</span>}
@@ -57,7 +86,14 @@ export default function TemplatesPanel({ canManage }: { canManage: boolean }) {
                 </button>
                 {open === tpl.name && (
                   <div className="border-t p-3">
-                    <OneTemplate key={tpl.rev} template={tpl} others={names} defaults={defaults} canManage={canManage} onClose={() => setOpen(null)} />
+                    <OneTemplate
+                      key={tpl.rev}
+                      template={tpl}
+                      others={names}
+                      defaults={defaults}
+                      canManage={canManage}
+                      onClose={() => setOpen(null)}
+                    />
                   </div>
                 )}
               </li>
@@ -65,7 +101,14 @@ export default function TemplatesPanel({ canManage }: { canManage: boolean }) {
           })}
           {open === 'new' && (
             <li className="rounded-lg border p-3" data-template="new">
-              <TemplateEditor template={null} body="" others={names} defaults={defaults} onClose={() => setOpen(null)} onCreated={(name) => setOpen(name)} />
+              <TemplateEditor
+                template={null}
+                body=""
+                others={names}
+                defaults={defaults}
+                onClose={() => setOpen(null)}
+                onCreated={(name) => setOpen(name)}
+              />
             </li>
           )}
         </ul>
@@ -85,14 +128,35 @@ export default function TemplatesPanel({ canManage }: { canManage: boolean }) {
 
 // --- one template: read with its body first -----------------------------------------------
 
-function OneTemplate({ template, others, defaults, canManage, onClose }: { template: PageTemplate; others: string[]; defaults: TemplateDefaults; canManage: boolean; onClose: () => void }) {
+function OneTemplate({
+  template,
+  others,
+  defaults,
+  canManage,
+  onClose,
+}: {
+  template: PageTemplate
+  others: string[]
+  defaults: TemplateDefaults
+  canManage: boolean
+  onClose: () => void
+}) {
   // The list leaves the body out; it is read when the template is opened.
   const one = useTemplate(template.name)
   if (one.isPending) return <PageFallback />
   if (one.isError) return <ErrorState message={tt.settings.loadOne} onRetry={() => void one.refetch()} />
   // Made again from what the server has when it has changed (someone else's save, or a conflict).
   if (!canManage) return <TemplateView template={one.data} />
-  return <TemplateEditor key={one.data.rev} template={one.data} body={one.data.body ?? ''} others={others} defaults={defaults} onClose={onClose} />
+  return (
+    <TemplateEditor
+      key={one.data.rev}
+      template={one.data}
+      body={one.data.body ?? ''}
+      others={others}
+      defaults={defaults}
+      onClose={onClose}
+    />
+  )
 }
 
 // What someone who may not manage sees: the header and the body, as text.
@@ -117,14 +181,24 @@ function TemplateView({ template }: { template: PageTemplate }) {
           ))}
       </dl>
       <h4 className="text-xs font-medium text-muted-foreground">{tt.settings.view}</h4>
-      <pre className="max-h-72 overflow-auto rounded-md bg-muted/40 p-2.5 font-mono text-xs whitespace-pre-wrap">{template.body ? template.body : tt.settings.emptyBody}</pre>
+      <pre className="max-h-72 overflow-auto rounded-md bg-muted/40 p-2.5 font-mono text-xs whitespace-pre-wrap">
+        {template.body ? template.body : tt.settings.emptyBody}
+      </pre>
     </div>
   )
 }
 
 // --- delete -------------------------------------------------------------------------------------
 
-function DeleteTemplate({ template, defaults, onGone }: { template: PageTemplate; defaults: TemplateDefaults; onGone: () => void }) {
+function DeleteTemplate({
+  template,
+  defaults,
+  onGone,
+}: {
+  template: PageTemplate
+  defaults: TemplateDefaults
+  onGone: () => void
+}) {
   const del = useDeleteTemplate()
   const [asking, setAsking] = useState(false)
   const folders = Object.values(defaults.folders).filter((x) => x === template.name).length
@@ -138,7 +212,9 @@ function DeleteTemplate({ template, defaults, onGone }: { template: PageTemplate
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{tt.settings.deleteTitle(template.name)}</AlertDialogTitle>
-            <AlertDialogDescription>{tt.settings.deleteHelp(folders, defaults.quickNote === template.name)}</AlertDialogDescription>
+            <AlertDialogDescription>
+              {tt.settings.deleteHelp(folders, defaults.quickNote === template.name)}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{tt.cancel}</AlertDialogCancel>
@@ -153,7 +229,12 @@ function DeleteTemplate({ template, defaults, onGone }: { template: PageTemplate
                       toast.success(tt.settings.deleted)
                       onGone()
                     },
-                    onError: (e) => toast.error(e instanceof ApiError && e.code === 'conflict' ? tt.settings.deleteChanged : templateMessage(e, errorMessage(e, tt.settings.deleteFailed))),
+                    onError: (e) =>
+                      toast.error(
+                        e instanceof ApiError && e.code === 'conflict'
+                          ? tt.settings.deleteChanged
+                          : templateMessage(e, errorMessage(e, tt.settings.deleteFailed)),
+                      ),
                   },
                 )
               }
@@ -169,9 +250,29 @@ function DeleteTemplate({ template, defaults, onGone }: { template: PageTemplate
 
 // --- the editor of one template --------------------------------------------------------------
 
-const nameText = { empty: tt.settings.nameEmpty, long: tt.settings.nameLong, chars: tt.settings.nameChars, reserved: tt.settings.nameReserved, exists: tt.settings.nameExists }
+const nameText = {
+  empty: tt.settings.nameEmpty,
+  long: tt.settings.nameLong,
+  chars: tt.settings.nameChars,
+  reserved: tt.settings.nameReserved,
+  exists: tt.settings.nameExists,
+}
 
-function TemplateEditor({ template, body: savedBody, others, defaults, onClose, onCreated }: { template: PageTemplate | null; body: string; others: string[]; defaults: TemplateDefaults; onClose: () => void; onCreated?: (name: string) => void }) {
+function TemplateEditor({
+  template,
+  body: savedBody,
+  others,
+  defaults,
+  onClose,
+  onCreated,
+}: {
+  template: PageTemplate | null
+  body: string
+  others: string[]
+  defaults: TemplateDefaults
+  onClose: () => void
+  onCreated?: (name: string) => void
+}) {
   const save = useSaveTemplate()
   const types = useTypes()
   const isNew = template === null
@@ -180,7 +281,10 @@ function TemplateEditor({ template, body: savedBody, others, defaults, onClose, 
   const [body, setBody] = useState(savedBody)
   const [error, setError] = useState('')
 
-  const before = useMemo(() => JSON.stringify([metaOf(template?.meta, draftOf(template?.meta)), savedBody]), [template, savedBody])
+  const before = useMemo(
+    () => JSON.stringify([metaOf(template?.meta, draftOf(template?.meta)), savedBody]),
+    [template, savedBody],
+  )
   const meta = metaOf(template?.meta, header)
   const dirty = isNew || JSON.stringify([meta, body]) !== before
   const nameProblem = isNew ? templateNameProblem(name.trim(), others) : null
@@ -217,30 +321,59 @@ function TemplateEditor({ template, body: savedBody, others, defaults, onClose, 
       <div className="grid gap-1.5">
         <Label htmlFor="template-name">{tt.settings.name}</Label>
         {isNew ? (
-          <Input id="template-name" autoFocus autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} aria-invalid={nameProblem !== null && name !== '' ? true : undefined} aria-describedby="template-name-help" />
+          <Input
+            id="template-name"
+            autoFocus
+            autoComplete="off"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            aria-invalid={nameProblem !== null && name !== '' ? true : undefined}
+            aria-describedby="template-name-help"
+          />
         ) : (
-          <Input id="template-name" readOnly value={template.name} className="font-mono" aria-describedby="template-name-help" />
+          <Input
+            id="template-name"
+            readOnly
+            value={template.name}
+            className="font-mono"
+            aria-describedby="template-name-help"
+          />
         )}
-        <p id="template-name-help" className={`text-xs ${nameProblem && name !== '' ? 'text-destructive' : 'text-muted-foreground'}`}>
+        <p
+          id="template-name-help"
+          className={`text-xs ${nameProblem && name !== '' ? 'text-destructive' : 'text-muted-foreground'}`}
+        >
           {nameProblem && name !== '' ? nameText[nameProblem] : tt.settings.nameHelp}
         </p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="grid gap-1.5">
           <Label htmlFor="template-title">{tt.settings.pageTitle}</Label>
-          <Input id="template-title" autoComplete="off" value={header.title} onChange={(e) => set({ title: e.target.value })} />
+          <Input
+            id="template-title"
+            autoComplete="off"
+            value={header.title}
+            onChange={(e) => set({ title: e.target.value })}
+          />
           <p className="text-xs text-muted-foreground">{tt.settings.pageTitleHelp}</p>
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="template-subtitle">{tt.settings.subtitle}</Label>
-          <Input id="template-subtitle" autoComplete="off" value={header.subtitle} onChange={(e) => set({ subtitle: e.target.value })} />
+          <Input
+            id="template-subtitle"
+            autoComplete="off"
+            value={header.subtitle}
+            onChange={(e) => set({ subtitle: e.target.value })}
+          />
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="template-type">{tt.settings.pageType}</Label>
           <NativeSelect id="template-type" value={header.type} onChange={(e) => set({ type: e.target.value })}>
             <option value="">{tt.settings.noType}</option>
             {/* A type the template names that the space no longer has stays selectable, so saving does not drop it. */}
-            {header.type !== '' && !typeList.some((x) => x.name === header.type) && <option value={header.type}>{header.type}</option>}
+            {header.type !== '' && !typeList.some((x) => x.name === header.type) && (
+              <option value={header.type}>{header.type}</option>
+            )}
             {typeList.map((x) => (
               <option key={x.name} value={x.name}>
                 {x.title || x.name}
@@ -250,7 +383,13 @@ function TemplateEditor({ template, body: savedBody, others, defaults, onClose, 
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="template-tags">{tt.settings.tags}</Label>
-          <Input id="template-tags" autoComplete="off" value={header.tags} onChange={(e) => set({ tags: e.target.value })} aria-describedby="template-tags-help" />
+          <Input
+            id="template-tags"
+            autoComplete="off"
+            value={header.tags}
+            onChange={(e) => set({ tags: e.target.value })}
+            aria-describedby="template-tags-help"
+          />
           <p id="template-tags-help" className="text-xs text-muted-foreground">
             {tagList(header.tags).length > 0 ? tagList(header.tags).join(' · ') : tt.settings.tagsHelp}
           </p>
@@ -259,7 +398,15 @@ function TemplateEditor({ template, body: savedBody, others, defaults, onClose, 
       {extra > 0 && <p className="text-xs text-muted-foreground">{tt.settings.otherFields(extra)}</p>}
       <div className="grid gap-1.5">
         <Label htmlFor="template-body">{tt.settings.body}</Label>
-        <Textarea id="template-body" rows={10} value={body} spellCheck={false} className="font-mono text-xs" onChange={(e) => setBody(e.target.value)} aria-describedby="template-body-help" />
+        <Textarea
+          id="template-body"
+          rows={10}
+          value={body}
+          spellCheck={false}
+          className="font-mono text-xs"
+          onChange={(e) => setBody(e.target.value)}
+          aria-describedby="template-body-help"
+        />
         <p id="template-body-help" className="text-xs text-muted-foreground">
           {tt.settings.bodyHelp} {tt.settings.variablesHelp}
         </p>
@@ -287,7 +434,15 @@ function TemplateEditor({ template, body: savedBody, others, defaults, onClose, 
 
 // --- the default templates ---------------------------------------------------------------------
 
-function DefaultsSection({ templates, defaults, canManage }: { templates: PageTemplate[]; defaults: TemplateDefaults; canManage: boolean }) {
+function DefaultsSection({
+  templates,
+  defaults,
+  canManage,
+}: {
+  templates: PageTemplate[]
+  defaults: TemplateDefaults
+  canManage: boolean
+}) {
   const setFolder = useSetFolderTemplate()
   const setQuick = useSetQuickNoteTemplate()
   const tree = useTree()
@@ -304,10 +459,18 @@ function DefaultsSection({ templates, defaults, canManage }: { templates: PageTe
     <SettingsSection title={tt.defaults.title} description={tt.defaults.help}>
       <div className="grid gap-1.5">
         <Label htmlFor="template-quick">{tt.defaults.quick}</Label>
-        <NativeSelect id="template-quick" value={defaults.quickNote} disabled={!canManage || setQuick.isPending} onChange={(e) => {
-          const to = e.target.value
-          setQuick.mutate(to, { onSuccess: () => toast.success(to === '' ? tt.defaults.removed : tt.defaults.saved), onError: fail })
-        }}>
+        <NativeSelect
+          id="template-quick"
+          value={defaults.quickNote}
+          disabled={!canManage || setQuick.isPending}
+          onChange={(e) => {
+            const to = e.target.value
+            setQuick.mutate(to, {
+              onSuccess: () => toast.success(to === '' ? tt.defaults.removed : tt.defaults.saved),
+              onError: fail,
+            })
+          }}
+        >
           <option value="">{tt.defaults.none}</option>
           {templates.map((x) => (
             <option key={x.name} value={x.name}>
@@ -329,7 +492,13 @@ function DefaultsSection({ templates, defaults, canManage }: { templates: PageTe
                 <span>{titleOf(name)}</span>
               </span>
               {canManage && (
-                <Button variant="ghost" size="sm" disabled={setFolder.isPending} aria-label={tt.defaults.removeOf(path)} onClick={() => setFolder.mutate({ folder: path, template: '' }, { onError: fail })}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={setFolder.isPending}
+                  aria-label={tt.defaults.removeOf(path)}
+                  onClick={() => setFolder.mutate({ folder: path, template: '' }, { onError: fail })}
+                >
                   {tt.defaults.remove}
                 </Button>
               )}
@@ -356,7 +525,11 @@ function DefaultsSection({ templates, defaults, canManage }: { templates: PageTe
             )
           }}
         >
-          <NativeSelect aria-label={tt.defaults.folder} value={folder} onChange={(e) => setPickedFolder(e.target.value)}>
+          <NativeSelect
+            aria-label={tt.defaults.folder}
+            value={folder}
+            onChange={(e) => setPickedFolder(e.target.value)}
+          >
             <option value="">{tt.defaults.pickFolder}</option>
             {choices.map((p) => (
               <option key={p} value={p}>
@@ -364,7 +537,12 @@ function DefaultsSection({ templates, defaults, canManage }: { templates: PageTe
               </option>
             ))}
           </NativeSelect>
-          <NativeSelect aria-label={tt.defaults.template} value={template} disabled={templates.length === 0} onChange={(e) => setPickedTemplate(e.target.value)}>
+          <NativeSelect
+            aria-label={tt.defaults.template}
+            value={template}
+            disabled={templates.length === 0}
+            onChange={(e) => setPickedTemplate(e.target.value)}
+          >
             <option value="">{templates.length === 0 ? tt.defaults.noTemplates : tt.defaults.pickTemplate}</option>
             {templates.map((x) => (
               <option key={x.name} value={x.name}>
@@ -372,7 +550,12 @@ function DefaultsSection({ templates, defaults, canManage }: { templates: PageTe
               </option>
             ))}
           </NativeSelect>
-          <Button type="submit" variant="outline" size="sm" disabled={folder === '' || template === '' || setFolder.isPending}>
+          <Button
+            type="submit"
+            variant="outline"
+            size="sm"
+            disabled={folder === '' || template === '' || setFolder.isPending}
+          >
             {tt.defaults.setFolder}
           </Button>
         </form>

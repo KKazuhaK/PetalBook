@@ -13,24 +13,48 @@ import { ts } from '@/i18n/storage'
 export function StatusPanel() {
   const status = useAdminStatus()
   if (status.isPending) return <PageFallback />
-  if (status.isError) return <ErrorState message={t.fmt.labelled(ta.status.loadFailed, status.error.message)} onRetry={() => void status.refetch()} />
+  if (status.isError)
+    return (
+      <ErrorState
+        message={t.fmt.labelled(ta.status.loadFailed, status.error.message)}
+        onRetry={() => void status.refetch()}
+      />
+    )
   const s = status.data
   const st = ta.status
   const uptime = Math.max(0, s.uptimeSeconds)
   const rows: [string, string, string?][] = [
     [st.version, s.version],
     [st.started, absoluteTime(s.startedAt)],
-    [st.uptime, st.duration(Math.floor(uptime / 86_400), Math.floor((uptime % 86_400) / 3600), Math.floor((uptime % 3600) / 60))],
+    [
+      st.uptime,
+      st.duration(Math.floor(uptime / 86_400), Math.floor((uptime % 86_400) / 3600), Math.floor((uptime % 3600) / 60)),
+    ],
     [st.database, s.database],
     [st.spaces, String(s.spaces)],
     [st.users, String(s.users)],
     [st.openSpaces, String(s.openSpaces), st.openSpacesHelp],
     [st.disk, s.diskFreeBytes === undefined ? st.unknown : formatBytes(s.diskFreeBytes)],
     [st.goVersion, s.goVersion],
-    [ts.status.spaces, ts.status.spacesValue(s.storage.spaces.local, s.storage.spaces.full, s.storage.spaces.partial, s.storage.spaces.evicted, s.storage.spaces.restoring)],
+    [
+      ts.status.spaces,
+      ts.status.spacesValue(
+        s.storage.spaces.local,
+        s.storage.spaces.full,
+        s.storage.spaces.partial,
+        s.storage.spaces.evicted,
+        s.storage.spaces.restoring,
+      ),
+    ],
     [ts.status.clones, formatBytes(s.storage.cloneBytes)],
     [ts.status.indexes, formatBytes(s.storage.indexBytes)],
-    [ts.status.assetCache, ts.status.assetCacheValue(formatBytes(s.storage.assetCacheBytes), s.storage.assetsBudget === null ? ts.status.noBudget : formatBytes(s.storage.assetsBudget))],
+    [
+      ts.status.assetCache,
+      ts.status.assetCacheValue(
+        formatBytes(s.storage.assetCacheBytes),
+        s.storage.assetsBudget === null ? ts.status.noBudget : formatBytes(s.storage.assetsBudget),
+      ),
+    ],
     [ts.status.budget, s.storage.clonesBudget === null ? ts.status.noBudget : formatBytes(s.storage.clonesBudget)],
     [ts.status.restoresWaiting, String(s.storage.restoresWaiting)],
     [ts.status.remotes, ts.status.remotesValue(s.storage.remotes.inGrace, s.storage.remotes.overdue)],
@@ -49,7 +73,13 @@ export function StatusPanel() {
         ))}
       </dl>
       <div>
-        <Button type="button" variant="outline" size="sm" disabled={status.isFetching} onClick={() => void status.refetch()}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={status.isFetching}
+          onClick={() => void status.refetch()}
+        >
           {status.isFetching ? <Spinner /> : <RefreshCw />}
           {st.refresh}
         </Button>

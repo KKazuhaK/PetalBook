@@ -9,39 +9,86 @@ import { createMockServer } from './server'
 // A refusal of the daily endpoints says why with a code; the mock answers the way the server does.
 const admin = () => {
   const s = createMockServer({ mode: 'accounts' })
-  const login = s.handle('POST', '/api/login', JSON.stringify({ username: 'admin', password: 'petalbook-admin' }), 'application/json', null)
+  const login = s.handle(
+    'POST',
+    '/api/login',
+    JSON.stringify({ username: 'admin', password: 'petalbook-admin' }),
+    'application/json',
+    null,
+  )
   const cookie = login.headers?.['Set-Cookie']?.split(';')[0]
-  return (method: string, url: string, body?: unknown) => s.handle(method, url, body === undefined ? undefined : JSON.stringify(body), method === 'GET' ? null : 'application/json', cookie)
+  return (method: string, url: string, body?: unknown) =>
+    s.handle(
+      method,
+      url,
+      body === undefined ? undefined : JSON.stringify(body),
+      method === 'GET' ? null : 'application/json',
+      cookie,
+    )
 }
-const GOOD = { name: 'Quotes', lang: 'en', url: 'https://quotes.example.org/api/{lang}', text: '[0].q', source: '[0].s', author: '[0].a', link: '', refresh: 'daily', skipNew: true, rps: 2, headers: [{ name: 'X-Api-Key', value: 'v1' }] }
-const put = (call: ReturnType<typeof admin>, over: Record<string, unknown>) => call('PUT', '/api/admin/daily/apis/quotes', { ...GOOD, ...over })
+const GOOD = {
+  name: 'Quotes',
+  lang: 'en',
+  url: 'https://quotes.example.org/api/{lang}',
+  text: '[0].q',
+  source: '[0].s',
+  author: '[0].a',
+  link: '',
+  refresh: 'daily',
+  skipNew: true,
+  rps: 2,
+  headers: [{ name: 'X-Api-Key', value: 'v1' }],
+}
+const put = (call: ReturnType<typeof admin>, over: Record<string, unknown>) =>
+  call('PUT', '/api/admin/daily/apis/quotes', { ...GOOD, ...over })
 
 describe('the mock gives the stable codes', () => {
   it('a header without a value is header_missing, and a changed address asks for kept values again (header_reenter)', () => {
     const call = admin()
-    expect(put(call, { headers: [{ name: 'X-New' }] })).toMatchObject({ status: 400, body: { error: 'header_missing', header: 'X-New' } })
+    expect(put(call, { headers: [{ name: 'X-New' }] })).toMatchObject({
+      status: 400,
+      body: { error: 'header_missing', header: 'X-New' },
+    })
     expect(put(call, {}).status).toBe(200)
     // The same address keeps the value; another one drops it.
     expect(put(call, { headers: [{ name: 'X-Api-Key' }] }).status).toBe(200)
-    expect(put(call, { url: 'https://quotes.example.org/other/{lang}', headers: [{ name: 'X-Api-Key' }] })).toMatchObject({ status: 400, body: { error: 'header_reenter', header: 'X-Api-Key' } })
-    expect(put(call, { url: 'https://quotes.example.org/other/{lang}', headers: [{ name: 'X-Api-Key', value: 'v2' }] }).status).toBe(200)
+    expect(
+      put(call, { url: 'https://quotes.example.org/other/{lang}', headers: [{ name: 'X-Api-Key' }] }),
+    ).toMatchObject({ status: 400, body: { error: 'header_reenter', header: 'X-Api-Key' } })
+    expect(
+      put(call, { url: 'https://quotes.example.org/other/{lang}', headers: [{ name: 'X-Api-Key', value: 'v2' }] })
+        .status,
+    ).toBe(200)
   })
 
   it('paths and the link: path_error and path_reveals_secret with the field, link_uses_header', () => {
     const call = admin()
     expect(put(call, { author: 'a b' })).toMatchObject({ status: 400, body: { error: 'path_error', field: 'author' } })
-    expect(put(call, { source: 'headers.secret' })).toMatchObject({ status: 400, body: { error: 'path_reveals_secret', field: 'source' } })
-    expect(put(call, { link: 'https://q.example.org/{header.X-Api-Key}' })).toMatchObject({ status: 400, body: { error: 'link_uses_header' } })
+    expect(put(call, { source: 'headers.secret' })).toMatchObject({
+      status: 400,
+      body: { error: 'path_reveals_secret', field: 'source' },
+    })
+    expect(put(call, { link: 'https://q.example.org/{header.X-Api-Key}' })).toMatchObject({
+      status: 400,
+      body: { error: 'link_uses_header' },
+    })
     expect(put(call, { link: 'https://q.example.org/{[0].id}' }).status).toBe(200)
   })
 
   it('a try needs no list of hosts, and says not_json and too_large: a 400 with what the trial showed in result', () => {
     const call = admin()
-    const tryIt = (url: string) => call('POST', '/api/admin/daily/try', { api: { ...GOOD, url }, lang: 'en', date: '2026-11-23' })
+    const tryIt = (url: string) =>
+      call('POST', '/api/admin/daily/try', { api: { ...GOOD, url }, lang: 'en', date: '2026-11-23' })
     expect(tryIt('https://elsewhere.example.net/q')).toMatchObject({ status: 200, body: { ok: true } })
     put(call, {})
-    expect(tryIt('https://quotes.example.org/page.html')).toMatchObject({ status: 400, body: { error: 'not_json', result: { ok: false } } })
-    expect(tryIt('https://quotes.example.org/huge')).toMatchObject({ status: 400, body: { error: 'too_large', result: { ok: false } } })
+    expect(tryIt('https://quotes.example.org/page.html')).toMatchObject({
+      status: 400,
+      body: { error: 'not_json', result: { ok: false } },
+    })
+    expect(tryIt('https://quotes.example.org/huge')).toMatchObject({
+      status: 400,
+      body: { error: 'too_large', result: { ok: false } },
+    })
     expect(tryIt('https://quotes.example.org/down')).toMatchObject({ status: 200, body: { ok: false, status: 503 } })
   })
 
@@ -49,17 +96,38 @@ describe('the mock gives the stable codes', () => {
     const call = admin()
     const space = (call('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
     for (const bad of ['cn', 'english', 'zh_CN']) {
-      expect(call('PUT', '/api/admin/daily', { languages: [bad] })).toMatchObject({ status: 400, body: { error: 'bad_language' } })
+      expect(call('PUT', '/api/admin/daily', { languages: [bad] })).toMatchObject({
+        status: 400,
+        body: { error: 'bad_language' },
+      })
       expect(put(call, { lang: bad })).toMatchObject({ status: 400, body: { error: 'bad_language' } })
-      expect(call('PUT', '/api/admin/daily/lines', { lang: bad, text: 'x' })).toMatchObject({ status: 400, body: { error: 'bad_language' } })
-      expect(call('DELETE', `/api/admin/daily/lines?lang=${bad}`)).toMatchObject({ status: 400, body: { error: 'bad_language' } })
-      expect(call('GET', `/api/spaces/${space}/daily?date=2026-11-23&lang=${bad}`)).toMatchObject({ status: 400, body: { error: 'bad_language' } })
-      expect(call('PUT', `/api/spaces/${space}/daily/settings`, { daily: { [bad]: { tag: 'x' } } })).toMatchObject({ status: 400, body: { error: 'bad_language' } })
-      expect(call('POST', '/api/admin/daily/try', { api: { ...GOOD, url: 'https://quotes.example.org/q' }, lang: bad })).toMatchObject({ status: 400, body: { error: 'bad_language' } })
+      expect(call('PUT', '/api/admin/daily/lines', { lang: bad, text: 'x' })).toMatchObject({
+        status: 400,
+        body: { error: 'bad_language' },
+      })
+      expect(call('DELETE', `/api/admin/daily/lines?lang=${bad}`)).toMatchObject({
+        status: 400,
+        body: { error: 'bad_language' },
+      })
+      expect(call('GET', `/api/spaces/${space}/daily?date=2026-11-23&lang=${bad}`)).toMatchObject({
+        status: 400,
+        body: { error: 'bad_language' },
+      })
+      expect(call('PUT', `/api/spaces/${space}/daily/settings`, { daily: { [bad]: { tag: 'x' } } })).toMatchObject({
+        status: 400,
+        body: { error: 'bad_language' },
+      })
+      expect(
+        call('POST', '/api/admin/daily/try', { api: { ...GOOD, url: 'https://quotes.example.org/q' }, lang: bad }),
+      ).toMatchObject({ status: 400, body: { error: 'bad_language' } })
     }
     const r = call('PUT', '/api/admin/daily', { languages: ['zh', 'ZH-hant', 'pt-br', 'en', 'EN'] })
     expect(r).toMatchObject({ status: 200, body: { languages: ['zh-Hans', 'zh-Hant', 'pt-BR', 'en'] } })
-    expect((r.body as { knownLanguages: { tag: string }[] }).knownLanguages[0]).toEqual({ tag: 'zh-Hans', name: '中文（简体）', english: 'Chinese (Simplified)' })
+    expect((r.body as { knownLanguages: { tag: string }[] }).knownLanguages[0]).toEqual({
+      tag: 'zh-Hans',
+      name: '中文（简体）',
+      english: 'Chinese (Simplified)',
+    })
     expect(put(call, { lang: 'ZH-cn' })).toMatchObject({ status: 200 })
     expect(call('GET', '/api/admin/daily').body).toMatchObject({ apis: [{ id: 'quotes', lang: 'zh-CN' }] })
   })
@@ -67,25 +135,45 @@ describe('the mock gives the stable codes', () => {
   it('the default may be an interface for each language: api_not_found for one that is not set up', () => {
     const call = admin()
     put(call, {})
-    expect(call('PUT', '/api/admin/daily', { default: { kind: 'api', apis: { '': 'nothing' } } })).toMatchObject({ status: 400, body: { error: 'api_not_found' } })
-    expect(call('PUT', '/api/admin/daily', { default: { kind: 'api', apis: { zh: 'quotes', '': 'quotes' } } })).toMatchObject({ status: 200, body: { default: { kind: 'api', apis: { 'zh-Hans': 'quotes', '': 'quotes' } } } })
+    expect(call('PUT', '/api/admin/daily', { default: { kind: 'api', apis: { '': 'nothing' } } })).toMatchObject({
+      status: 400,
+      body: { error: 'api_not_found' },
+    })
+    expect(
+      call('PUT', '/api/admin/daily', { default: { kind: 'api', apis: { zh: 'quotes', '': 'quotes' } } }),
+    ).toMatchObject({ status: 200, body: { default: { kind: 'api', apis: { 'zh-Hans': 'quotes', '': 'quotes' } } } })
     const space = (call('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
-    const daily = (lang: string) => call('GET', `/api/spaces/${space}/daily?date=${new Date().toISOString().slice(0, 10)}&lang=${lang}`).body as { quote?: { text: string }; origin?: string }
+    const daily = (lang: string) =>
+      call('GET', `/api/spaces/${space}/daily?date=${new Date().toISOString().slice(0, 10)}&lang=${lang}`).body as {
+        quote?: { text: string }
+        origin?: string
+      }
     expect(daily('zh-CN')).toMatchObject({ origin: 'external' })
     expect(daily('fr')).toMatchObject({ origin: 'external' })
   })
 
   it('the built-in interfaces are switched on and off, appear in apis once on, and cannot be changed or deleted (builtin)', () => {
     const call = admin()
-    const view = () => call('GET', '/api/admin/daily').body as { apis: { id: string; builtin?: boolean }[]; providers: { id: string; enabled: boolean; rps: number; languages: string[] }[] }
+    const view = () =>
+      call('GET', '/api/admin/daily').body as {
+        apis: { id: string; builtin?: boolean }[]
+        providers: { id: string; enabled: boolean; rps: number; languages: string[] }[]
+      }
     expect(view().apis).toEqual([])
-    expect(view().providers.map((p) => [p.id, p.enabled, p.rps])).toEqual([['hitokoto', false, 20], ['quotable', false, 3]])
+    expect(view().providers.map((p) => [p.id, p.enabled, p.rps])).toEqual([
+      ['hitokoto', false, 20],
+      ['quotable', false, 3],
+    ])
     expect(call('PUT', '/api/admin/daily/providers/hitokoto', {})).toMatchObject({ status: 400 })
     expect(call('PUT', '/api/admin/daily/providers/nothing', { enabled: true }).status).toBe(404)
     expect(call('PUT', '/api/admin/daily/providers/hitokoto', { enabled: true, rps: 21 }).status).toBe(400)
     expect(call('PUT', '/api/admin/daily/providers/hitokoto', { enabled: true }).status).toBe(200)
-    expect(view().apis).toMatchObject([{ id: 'hitokoto', builtin: true, lang: 'zh-Hans', languages: ['zh-Hans', 'zh-Hant'] }])
-    expect(call('PUT', '/api/admin/daily/apis/hitokoto', { name: '一言', url: 'https://evil.example/q', enabled: true })).toMatchObject({ status: 400, body: { error: 'builtin', field: 'url' } })
+    expect(view().apis).toMatchObject([
+      { id: 'hitokoto', builtin: true, lang: 'zh-Hans', languages: ['zh-Hans', 'zh-Hant'] },
+    ])
+    expect(
+      call('PUT', '/api/admin/daily/apis/hitokoto', { name: '一言', url: 'https://evil.example/q', enabled: true }),
+    ).toMatchObject({ status: 400, body: { error: 'builtin', field: 'url' } })
     expect(call('DELETE', '/api/admin/daily/apis/hitokoto')).toMatchObject({ status: 400, body: { error: 'builtin' } })
     expect(call('PUT', '/api/admin/daily/providers/hitokoto', { enabled: false }).status).toBe(200)
     expect(view().apis).toEqual([])
@@ -94,16 +182,29 @@ describe('the mock gives the stable codes', () => {
   it('a try reports a text path that finds nothing as path_error with the field, and pathErrors in result', () => {
     const call = admin()
     put(call, {})
-    const r = call('POST', '/api/admin/daily/try', { api: { ...GOOD, text: 'missing' }, lang: 'en', date: '2026-11-23' })
-    expect(r).toMatchObject({ status: 400, body: { error: 'path_error', field: 'text', result: { ok: false, raw: expect.any(String) } } })
-    expect((r.body as { result: { pathErrors: unknown } }).result.pathErrors).toEqual([{ field: 'text', code: 'path_error', message: expect.any(String) }])
+    const r = call('POST', '/api/admin/daily/try', {
+      api: { ...GOOD, text: 'missing' },
+      lang: 'en',
+      date: '2026-11-23',
+    })
+    expect(r).toMatchObject({
+      status: 400,
+      body: { error: 'path_error', field: 'text', result: { ok: false, raw: expect.any(String) } },
+    })
+    expect((r.body as { result: { pathErrors: unknown } }).result.pathErrors).toEqual([
+      { field: 'text', code: 'path_error', message: expect.any(String) },
+    ])
   })
 
   it('a source or author path with no value (null or missing) is no error', () => {
     const call = admin()
     put(call, {})
     for (const v of ['missing', 'null']) {
-      const r = call('POST', '/api/admin/daily/try', { api: { ...GOOD, author: v, source: v }, lang: 'en', date: '2026-11-23' })
+      const r = call('POST', '/api/admin/daily/try', {
+        api: { ...GOOD, author: v, source: v },
+        lang: 'en',
+        date: '2026-11-23',
+      })
       expect(r).toMatchObject({ status: 200, body: { ok: true } })
       expect((r.body as { pathErrors?: unknown }).pathErrors).toBeUndefined()
     }
@@ -136,19 +237,32 @@ describe('what each code says, in both languages', () => {
   ]
   const expected = (w: typeof adminEn.daily, c: (typeof cases)[number]): string => {
     switch (c.code) {
-      case 'bad_language': return w.badLanguage
-      case 'api_not_found': return w.apiNotFound
-      case 'builtin': return w.builtinField(w.fieldUrl)
-      case 'header_reenter': return w.headerNeedsValue('X-Api-Key')
-      case 'header_missing': return w.headerValueMissing('X-Api-Key')
-      case 'not_json': return w.tryNotJson
-      case 'too_large': return w.tryTooLarge
-      case 'path_error': return w.pathError(w.fieldSource)
-      case 'path_reveals_secret': return w.pathRevealsSecret(w.fieldAuthor)
-      default: return w.linkUsesHeader
+      case 'bad_language':
+        return w.badLanguage
+      case 'api_not_found':
+        return w.apiNotFound
+      case 'builtin':
+        return w.builtinField(w.fieldUrl)
+      case 'header_reenter':
+        return w.headerNeedsValue('X-Api-Key')
+      case 'header_missing':
+        return w.headerValueMissing('X-Api-Key')
+      case 'not_json':
+        return w.tryNotJson
+      case 'too_large':
+        return w.tryTooLarge
+      case 'path_error':
+        return w.pathError(w.fieldSource)
+      case 'path_reveals_secret':
+        return w.pathRevealsSecret(w.fieldAuthor)
+      default:
+        return w.linkUsesHeader
     }
   }
-  for (const [name, w] of [['English', adminEn.daily], ['Chinese', adminZhCN.daily]] as const) {
+  for (const [name, w] of [
+    ['English', adminEn.daily],
+    ['Chinese', adminZhCN.daily],
+  ] as const) {
     it(`${name}: every code has its own words, with what it is about`, () => {
       const said = cases.map((c) => dailyCodeMessage(c, w as typeof adminEn.daily))
       expect(said).toEqual(cases.map((c) => expected(w as typeof adminEn.daily, c)))
@@ -159,7 +273,7 @@ describe('what each code says, in both languages', () => {
     })
   }
 
-  it('a code that is not known, or none, is left to the server\'s own words', () => {
+  it("a code that is not known, or none, is left to the server's own words", () => {
     expect(dailyCodeMessage({ code: 'something_new' }, adminEn.daily)).toBeNull()
     expect(dailyCodeMessage(undefined, adminEn.daily)).toBeNull()
     expect(dailyCodeMessage({}, adminZhCN.daily as typeof adminEn.daily)).toBeNull()

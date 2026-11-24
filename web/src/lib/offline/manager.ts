@@ -41,7 +41,11 @@ export async function existingStore(user: string, space: string): Promise<Offlin
 export const hasCopy = (user: string, space: string) => entryOf(user, space) !== undefined
 
 // Chooses what the space keeps. `null` is nothing: the copy is deleted.
-export async function configure(user: string, space: string, cfg: OfflineConfig | null): Promise<OfflineStore | undefined> {
+export async function configure(
+  user: string,
+  space: string,
+  cfg: OfflineConfig | null,
+): Promise<OfflineStore | undefined> {
   if (cfg === null) {
     await dropCopy(user, space)
     return undefined
@@ -74,7 +78,8 @@ export async function clearAccount(user: string) {
   const names = new Set(spacesOf(user).map((s) => dbName(user, s)))
   if (typeof indexedDB.databases === 'function') {
     try {
-      for (const d of await indexedDB.databases()) if (d.name?.startsWith(`${DB_PREFIX}:${encodeURIComponent(user)}:`)) names.add(d.name)
+      for (const d of await indexedDB.databases())
+        if (d.name?.startsWith(`${DB_PREFIX}:${encodeURIComponent(user)}:`)) names.add(d.name)
     } catch {
       // A browser that cannot list databases: the registry's are deleted.
     }

@@ -26,7 +26,12 @@ async function show(readOnly: boolean) {
   root = createRoot(host)
   const ref = createRef<SourceHandle>()
   const onChange = vi.fn()
-  const render = (ro: boolean) => act(async () => root!.render(<SourceEditor ref={ref} getInitialText={() => 'hello'} onChange={onChange} label="source" readOnly={ro} />))
+  const render = (ro: boolean) =>
+    act(async () =>
+      root!.render(
+        <SourceEditor ref={ref} getInitialText={() => 'hello'} onChange={onChange} label="source" readOnly={ro} />,
+      ),
+    )
   await render(readOnly)
   const content = () => host!.querySelector<HTMLElement>('.cm-content')!
   return { render, content, onChange, ref }

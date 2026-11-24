@@ -13,7 +13,8 @@ export const tenantsEn: TenantsMessages = {
     count: (n: number) => (n === 1 ? 'There is 1 tenant' : `There are ${n} tenants`),
     loadFailed: 'Could not load the tenancy settings',
     saveFailed: 'Could not change the switch',
-    isolation: 'Tenants are kept apart by query conditions in one process and one database: whoever can read the server\'s disk or database reads every tenant.',
+    isolation:
+      "Tenants are kept apart by query conditions in one process and one database: whoever can read the server's disk or database reads every tenant.",
   },
   list: {
     title: 'All tenants',
@@ -30,12 +31,14 @@ export const tenantsEn: TenantsMessages = {
     close: 'Close',
     create: 'New tenant',
     createTitle: 'Make a tenant',
-    createHelp: 'The slug is 2 to 32 characters of a-z, 0-9 and -, starting with a letter or digit; public pages name the tenant by it.',
+    createHelp:
+      'The slug is 2 to 32 characters of a-z, 0-9 and -, starting with a letter or digit; public pages name the tenant by it.',
     nameLabel: 'Name',
     nameHelp: '1 to 80 characters.',
     slugLabel: 'Slug',
     adminLabel: 'Username of the first administrator',
-    adminHelp: 'Optional. If given, an administrator invite is made for the tenant; the link is shown once and nothing is mailed.',
+    adminHelp:
+      'Optional. If given, an administrator invite is made for the tenant; the link is shown once and nothing is mailed.',
     creating: 'Creating…',
     created: (name: string) => `Made "${name}"`,
     inviteTitle: 'Invite link for the first administrator',
@@ -48,12 +51,15 @@ export const tenantsEn: TenantsMessages = {
     saved: 'Saved',
     disable: 'Disable',
     enable: 'Enable',
-    disableHelp: 'While it is disabled nobody of the tenant can sign in, their sessions end at their next request, their tokens stop working and its spaces cannot be opened. Nothing is deleted; enabling brings everything back.',
+    disableHelp:
+      'While it is disabled nobody of the tenant can sign in, their sessions end at their next request, their tokens stop working and its spaces cannot be opened. Nothing is deleted; enabling brings everything back.',
     delete: 'Delete',
     deleting: 'Deleting…',
     deleteTitle: (name: string) => `Delete "${name}"?`,
-    deleteHelp: 'Only an empty tenant can be deleted: no users, spaces, groups or invites. 3.3 cannot move people or spaces to another tenant.',
-    notEmpty: (u: number, s: number, g: number, i: number) => `The tenant still has ${u} users, ${s} spaces, ${g} groups and ${i} invites.`,
+    deleteHelp:
+      'Only an empty tenant can be deleted: no users, spaces, groups or invites. 3.3 cannot move people or spaces to another tenant.',
+    notEmpty: (u: number, s: number, g: number, i: number) =>
+      `The tenant still has ${u} users, ${s} spaces, ${g} groups and ${i} invites.`,
     deleted: (name: string) => `Deleted "${name}"`,
     loading: 'Loading…',
     empty: 'There are no tenants.',
@@ -73,7 +79,7 @@ export const tenantsEn: TenantsMessages = {
     loadFailed: 'Could not load the settings',
     saveFailed: 'Could not save this setting',
     siteLayer: 'The site layer',
-    siteHelp: 'The server\'s own value, and the rule for the layers below.',
+    siteHelp: "The server's own value, and the rule for the layers below.",
     tenantLayer: (name: string) => `The layer of tenant "${name}"`,
     tenantHelp: 'Leave a value empty to follow the site. What the site locks or restricts cannot be changed here.',
     tenantPick: 'Tenant',
@@ -92,7 +98,10 @@ export const tenantsEn: TenantsMessages = {
     onlyOff: 'The layers below can only turn it off',
     atMost: (n: number) => `At most ${n}`,
     fromFlag: 'Set by a command-line flag; read only here',
-    affected: (n: number) => (n === 1 ? '1 tenant\'s own value is no longer in effect because of this' : `${n} tenants' own values are no longer in effect because of this`),
+    affected: (n: number) =>
+      n === 1
+        ? "1 tenant's own value is no longer in effect because of this"
+        : `${n} tenants' own values are no longer in effect because of this`,
     on: 'On',
     off: 'Off',
     save: 'Save',
@@ -126,15 +135,21 @@ export const tenantsEn: TenantsMessages = {
       'recycle.days': 'Days the recycle bin keeps things',
     },
     helps: {
-      'registration.open': 'Off by default and locked for tenants: to open it, a site administrator unlocks it first, then it is switched on in the tenant. Needs mail to be enabled.',
+      'registration.open':
+        'Off by default and locked for tenants: to open it, a site administrator unlocks it first, then it is switched on in the tenant. Needs mail to be enabled.',
       'registration.perHour': 'How many registrations one tenant takes in an hour.',
-      'offline.copies': 'On by default. Off: the sync endpoints answer 403 offline_off, and the web app stops syncing and deletes the offline copies of the signed-in account on its next start or poll. Copies are not encrypted by the app and are deleted when a person signs out. A tenant can turn it off for itself; the site\'s value is what tenants that say nothing follow, and the site can lock it (a locked off is off for every tenant) or restrict it to off.',
-      'daily.default': 'A tenant may name one of its own spaces or one of the site\'s external interfaces; pasted lines stay with the site.',
-      'quota.spacesPerPerson': 'How many spaces one person may own; 0 is no limit, and at the limit they cannot make another. --max-spaces, when given, decides. A person\'s own limit is set under Users and invites.',
-      'quota.bytesPerPerson': 'How many bytes a person\'s spaces take; empty is no limit. Going over only warns.',
-      'quota.pagesPerPerson': 'How many pages a person\'s spaces hold in all; empty is no limit. Going over only warns.',
-      'files.maxBytes': "The largest a single write may be: every page, attachment and file of an import counts, images too. The site's value is --max-upload and cannot be changed here; an organisation may set any value up to it. Over it, saving is refused and what you wrote stays where it is.",
-      'recycle.days': 'How many days deleted spaces and people stay in the recycle bin before they are purged. Site administrators only.',
+      'offline.copies':
+        "On by default. Off: the sync endpoints answer 403 offline_off, and the web app stops syncing and deletes the offline copies of the signed-in account on its next start or poll. Copies are not encrypted by the app and are deleted when a person signs out. A tenant can turn it off for itself; the site's value is what tenants that say nothing follow, and the site can lock it (a locked off is off for every tenant) or restrict it to off.",
+      'daily.default':
+        "A tenant may name one of its own spaces or one of the site's external interfaces; pasted lines stay with the site.",
+      'quota.spacesPerPerson':
+        "How many spaces one person may own; 0 is no limit, and at the limit they cannot make another. --max-spaces, when given, decides. A person's own limit is set under Users and invites.",
+      'quota.bytesPerPerson': "How many bytes a person's spaces take; empty is no limit. Going over only warns.",
+      'quota.pagesPerPerson': "How many pages a person's spaces hold in all; empty is no limit. Going over only warns.",
+      'files.maxBytes':
+        "The largest a single write may be: every page, attachment and file of an import counts, images too. The site's value is --max-upload and cannot be changed here; an organisation may set any value up to it. Over it, saving is refused and what you wrote stays where it is.",
+      'recycle.days':
+        'How many days deleted spaces and people stay in the recycle bin before they are purged. Site administrators only.',
     },
   },
 }

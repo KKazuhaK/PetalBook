@@ -6,7 +6,18 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/i18n'
 import { tg } from '@/i18n/groups'
 import { tsec } from '@/i18n/security'
-import { adminRequests, byLabel, click, installDomShims, makePerson, mount, settle, shareSpace, type, type Mounted } from '@/testing/harness'
+import {
+  adminRequests,
+  byLabel,
+  click,
+  installDomShims,
+  makePerson,
+  mount,
+  settle,
+  shareSpace,
+  type,
+  type Mounted,
+} from '@/testing/harness'
 import { AdminGate } from './AdminGate'
 
 // The administration's Groups page and the groups mapping of a sign-in provider, against the mock server.
@@ -32,9 +43,13 @@ const routes = (
 const text = () => document.body.textContent ?? ''
 const rows = () => [...document.querySelectorAll<HTMLElement>('tbody tr[data-group]')]
 const rowOf = (name: string) => rows().find((r) => r.querySelector('th')?.textContent?.includes(name))!
-const button = (label: string, root: ParentNode = document) => [...root.querySelectorAll('button')].find((b) => b.textContent?.trim() === label || b.getAttribute('aria-label') === label) ?? null
+const button = (label: string, root: ParentNode = document) =>
+  [...root.querySelectorAll('button')].find(
+    (b) => b.textContent?.trim() === label || b.getAttribute('aria-label') === label,
+  ) ?? null
 const dlg = () => document.querySelector<HTMLElement>('[role="dialog"]')!
-const sent = () => m!.requests.filter((r) => r.method !== 'GET' && r.url !== '/api/login').map((r) => `${r.method} ${r.url}`)
+const sent = () =>
+  m!.requests.filter((r) => r.method !== 'GET' && r.url !== '/api/login').map((r) => `${r.method} ${r.url}`)
 
 async function openPage(scene?: (server: MockServer) => unknown) {
   m = await mount(routes, {
@@ -54,7 +69,12 @@ async function make(name: string, source: 'local' | 'synced') {
   await type(dlg().querySelector<HTMLInputElement>('input[maxlength="80"]')!, name)
   await type(dlg().querySelector<HTMLSelectElement>('#group-source')!, source)
   await click(button(ta.create, dlg()))
-  await settle(() => dlg()?.textContent?.includes(tg.sourceNames[source]) === true && dlg().textContent?.includes(ta.peopleTitle) === true, 'the new group')
+  await settle(
+    () =>
+      dlg()?.textContent?.includes(tg.sourceNames[source]) === true &&
+      dlg().textContent?.includes(ta.peopleTitle) === true,
+    'the new group',
+  )
 }
 
 describe('the Groups page', () => {
@@ -62,7 +82,9 @@ describe('the Groups page', () => {
     await openPage()
     expect(text()).toContain(ta.empty)
     await make('Engineering', 'local')
-    expect(m!.requests.find((r) => r.method === 'POST' && r.url === '/api/admin/groups')!.body).toBe(JSON.stringify({ name: 'Engineering', description: '', source: 'local' }))
+    expect(m!.requests.find((r) => r.method === 'POST' && r.url === '/api/admin/groups')!.body).toBe(
+      JSON.stringify({ name: 'Engineering', description: '', source: 'local' }),
+    )
     await settle(() => dlg().textContent!.includes(ta.noPeople), 'no people yet')
     // A local group has the form for adding people.
     expect(dlg().querySelector('[data-slot="add-people"]')).not.toBeNull()
@@ -124,14 +146,16 @@ describe('the Groups page', () => {
     const before = sent().length
     await click(button(ta.pasteAdd, form()))
     await settle(() => sent().length === before + 1 && dlg().textContent!.includes('名 wu'), 'wu is in')
-    const body = JSON.parse(m!.requests.filter((r) => r.method === 'POST' && r.url.endsWith('/members')).at(-1)!.body!) as { userIds: string[] }
+    const body = JSON.parse(
+      m!.requests.filter((r) => r.method === 'POST' && r.url.endsWith('/members')).at(-1)!.body!,
+    ) as { userIds: string[] }
     expect(body.userIds).toHaveLength(2) // tang was in already: the server says so, not the page
     // Taken out.
     await click(button(ta.removePersonLabel('名 tang'), dlg()))
     await settle(() => !dlg().textContent!.includes('名 tang'), 'tang is out')
   })
 
-  it('shows a synced group\'s people without a way to change them, and where each came from', async () => {
+  it("shows a synced group's people without a way to change them, and where each came from", async () => {
     await openPage((server) => adminRequests(server)('POST', '/api/admin/groups', { name: 'Staff', source: 'synced' }))
     await settle(() => rows().length === 1, 'the group')
     await click(button(t_open('Staff')))
@@ -168,7 +192,17 @@ describe('the groups mapping of a sign-in provider', () => {
   const openProviders = async () => {
     m = await mount(routes, {
       signIn: true,
-      server: { mode: 'accounts', providers: [{ slug: 'company', kind: 'oidc', name: 'Company SSO', oidc: { issuer: 'https://sso.example', clientId: 'x' } }] },
+      server: {
+        mode: 'accounts',
+        providers: [
+          {
+            slug: 'company',
+            kind: 'oidc',
+            name: 'Company SSO',
+            oidc: { issuer: 'https://sso.example', clientId: 'x' },
+          },
+        ],
+      },
       entries: (server) => {
         const admin = adminRequests(server)
         admin('POST', '/api/admin/groups', { name: 'Staff', source: 'synced' })
@@ -187,16 +221,32 @@ describe('the groups mapping of a sign-in provider', () => {
     await click(button(tg.provider.addRow, fields()))
     await type(fields().querySelector<HTMLInputElement>('#groups-value-0')!, '/staff')
     // Only synced groups are offered.
-    const options = [...fields().querySelectorAll<HTMLOptionElement>('#groups-group-0 option')].map((o) => o.textContent)
-    await settle(() => [...fields().querySelectorAll<HTMLOptionElement>('#groups-group-0 option')].some((o) => o.textContent === 'Staff'), 'the synced group is offered')
+    const options = [...fields().querySelectorAll<HTMLOptionElement>('#groups-group-0 option')].map(
+      (o) => o.textContent,
+    )
+    await settle(
+      () =>
+        [...fields().querySelectorAll<HTMLOptionElement>('#groups-group-0 option')].some(
+          (o) => o.textContent === 'Staff',
+        ),
+      'the synced group is offered',
+    )
     expect(options).not.toContain('Local one')
     const select = fields().querySelector<HTMLSelectElement>('#groups-group-0')!
     await type(select, [...select.options].find((o) => o.textContent === 'Staff')!.value)
     await click(fields().querySelector('[role="switch"]'))
     await click(button(tsec.providers.save, document.querySelector('[data-slot="provider-form"]')!))
-    await settle(() => m!.requests.some((r) => r.method === 'PATCH' && r.url === '/api/admin/auth/providers/company') || document.querySelector('[role="alert"]') !== null, 'saved')
+    await settle(
+      () =>
+        m!.requests.some((r) => r.method === 'PATCH' && r.url === '/api/admin/auth/providers/company') ||
+        document.querySelector('[role="alert"]') !== null,
+      'saved',
+    )
     expect(document.querySelector('[role="alert"]')?.textContent ?? '').toBe('')
-    const body = JSON.parse(m!.requests.find((r) => r.method === 'PATCH')!.body!) as { groups: { enabled: boolean; map: { value: string }[] }; oidc?: unknown }
+    const body = JSON.parse(m!.requests.find((r) => r.method === 'PATCH')!.body!) as {
+      groups: { enabled: boolean; map: { value: string }[] }
+      oidc?: unknown
+    }
     expect(body.groups.enabled).toBe(true)
     expect(body.groups.map).toEqual([{ value: '/staff', groupId: expect.any(String) }])
     expect(body.oidc).toBeUndefined()
@@ -205,10 +255,21 @@ describe('the groups mapping of a sign-in provider', () => {
   it('finds a synced group past the first 200 by its name', async () => {
     m = await mount(routes, {
       signIn: true,
-      server: { mode: 'accounts', providers: [{ slug: 'company', kind: 'oidc', name: 'Company SSO', oidc: { issuer: 'https://sso.example', clientId: 'x' } }] },
+      server: {
+        mode: 'accounts',
+        providers: [
+          {
+            slug: 'company',
+            kind: 'oidc',
+            name: 'Company SSO',
+            oidc: { issuer: 'https://sso.example', clientId: 'x' },
+          },
+        ],
+      },
       entries: (server) => {
         const admin = adminRequests(server)
-        for (let i = 0; i < 200; i++) admin('POST', '/api/admin/groups', { name: `A${String(i).padStart(3, '0')}`, source: 'synced' })
+        for (let i = 0; i < 200; i++)
+          admin('POST', '/api/admin/groups', { name: `A${String(i).padStart(3, '0')}`, source: 'synced' })
         admin('POST', '/api/admin/groups', { name: 'Staff', source: 'synced' })
         return ['/admin/security']
       },
@@ -218,7 +279,8 @@ describe('the groups mapping of a sign-in provider', () => {
     await settle(() => document.querySelector('[data-slot="groups-fields"]') !== null, 'the form')
     const fields = () => document.querySelector<HTMLElement>('[data-slot="groups-fields"]')!
     await click(button(tg.provider.addRow, fields()))
-    const offered = () => [...fields().querySelectorAll<HTMLOptionElement>('#groups-group-0 option')].map((o) => o.textContent)
+    const offered = () =>
+      [...fields().querySelectorAll<HTMLOptionElement>('#groups-group-0 option')].map((o) => o.textContent)
     await settle(() => offered().includes('A000'), 'the first page')
     expect(offered()).not.toContain('Staff')
     await type(byLabel(tg.provider.findGroup) as HTMLInputElement, 'staf')

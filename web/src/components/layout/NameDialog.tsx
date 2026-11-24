@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Field } from '@/components/auth/Field'
 import { ApiError } from '@/api/client'
 import { t } from '@/i18n'
@@ -25,12 +32,32 @@ export function NameDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {open && <NameForm title={title} initial={initial} submitLabel={submitLabel} onSubmit={onSubmit} onClose={() => onOpenChange(false)} />}
+      {open && (
+        <NameForm
+          title={title}
+          initial={initial}
+          submitLabel={submitLabel}
+          onSubmit={onSubmit}
+          onClose={() => onOpenChange(false)}
+        />
+      )}
     </Dialog>
   )
 }
 
-function NameForm({ title, initial, submitLabel, onSubmit, onClose }: { title: string; initial: string; submitLabel: string; onSubmit: (name: string) => Promise<void>; onClose: () => void }) {
+function NameForm({
+  title,
+  initial,
+  submitLabel,
+  onSubmit,
+  onClose,
+}: {
+  title: string
+  initial: string
+  submitLabel: string
+  onSubmit: (name: string) => Promise<void>
+  onClose: () => void
+}) {
   const [value, setValue] = useState(initial)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -51,7 +78,13 @@ function NameForm({ title, initial, submitLabel, onSubmit, onClose }: { title: s
       onClose()
     } catch (err) {
       setBusy(false)
-      setError(err instanceof ApiError && err.code === 'quota_exceeded' ? tu.account.createRefused(Number((err.body as { limit?: number } | undefined)?.limit ?? 0)) : err instanceof ApiError ? err.message : t.spaces.failed)
+      setError(
+        err instanceof ApiError && err.code === 'quota_exceeded'
+          ? tu.account.createRefused(Number((err.body as { limit?: number } | undefined)?.limit ?? 0))
+          : err instanceof ApiError
+            ? err.message
+            : t.spaces.failed,
+      )
     }
   }
 
@@ -62,7 +95,15 @@ function NameForm({ title, initial, submitLabel, onSubmit, onClose }: { title: s
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{t.spaces.nameHelp}</DialogDescription>
         </DialogHeader>
-        <Field label={t.spaces.nameLabel} inputRef={input} value={value} onChange={(e) => setValue(e.target.value)} error={error} autoFocus autoComplete="off" />
+        <Field
+          label={t.spaces.nameLabel}
+          inputRef={input}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          error={error}
+          autoFocus
+          autoComplete="off"
+        />
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose}>
             {t.spaces.cancel}

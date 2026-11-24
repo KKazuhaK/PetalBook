@@ -10,7 +10,18 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import { viewKey } from '@/lib/listView'
 import { t } from '@/i18n'
 import { tp } from '@/i18n/props'
-import { byLabel, click, installDomShims, locationText, mount, press, settle, shareSpace, type, type Mounted } from '@/testing/harness'
+import {
+  byLabel,
+  click,
+  installDomShims,
+  locationText,
+  mount,
+  press,
+  settle,
+  shareSpace,
+  type,
+  type Mounted,
+} from '@/testing/harness'
 import { columnsOf, nextSort, tableSortOf } from './TableView'
 
 // The table view of a folder that has a type, against the mock server.
@@ -44,7 +55,15 @@ const shell = (
 
 const json = 'application/json'
 type Send = (method: string, path: string, body?: unknown) => { status: number; body: any }
-const sender = (server: MockServer): Send => (method, path, body) => server.handle(method, `/api/spaces/default${path}`, body === undefined ? undefined : JSON.stringify(body), json) as { status: number; body: any }
+const sender =
+  (server: MockServer): Send =>
+  (method, path, body) =>
+    server.handle(
+      method,
+      `/api/spaces/default${path}`,
+      body === undefined ? undefined : JSON.stringify(body),
+      json,
+    ) as { status: number; body: any }
 
 const TASK = {
   title: '任务',
@@ -64,7 +83,11 @@ function seed(server: MockServer) {
   send('PUT', '/types/task', TASK)
   send('POST', '/folders', { path: 'Work' })
   send('PUT', '/folders/type', { folder: 'Work', type: 'task' })
-  const make = (title: string, meta: Record<string, unknown>) => send('POST', '/pages', { folder: 'Work', meta: { title, ...meta }, body: `${title} 正文\n` }).body as { id: string; rev: string }
+  const make = (title: string, meta: Record<string, unknown>) =>
+    send('POST', '/pages', { folder: 'Work', meta: { title, ...meta }, body: `${title} 正文\n` }).body as {
+      id: string
+      rev: string
+    }
   return {
     A: make('A', { status: 'done', points: 5, due: '2026-03-01', labels: ['a'], done: true, tags: ['x'], note: '甲' }),
     B: make('B', { status: 'todo', points: 12, due: '2026-01-01', labels: ['b', 'a'] }),
@@ -82,7 +105,11 @@ async function openWork(options: { server?: Parameters<typeof mount>[1] } = {}) 
 const showTable = async () => {
   await settle(() => byLabel(t.view.table) !== null, 'the table option')
   await click(byLabel(t.view.table))
-  await settle(() => document.querySelector('[role="columnheader"]') !== null && document.querySelectorAll('[data-row]').length > 0, 'the table')
+  await settle(
+    () =>
+      document.querySelector('[role="columnheader"]') !== null && document.querySelectorAll('[data-row]').length > 0,
+    'the table',
+  )
 }
 
 const headers = () => [...document.querySelectorAll('[role="columnheader"]')].map((h) => h.textContent?.trim())
@@ -102,7 +129,10 @@ describe('the table option', () => {
     await m.unmount()
     m = undefined
     m = await mount(shell, { entries: (server) => (seed(server), ['/s/default/f/随笔']) })
-    await settle(() => byLabel(t.view.list) !== null && document.querySelector('[data-file-key^="p:"]') !== null, 'the listing')
+    await settle(
+      () => byLabel(t.view.list) !== null && document.querySelector('[data-file-key^="p:"]') !== null,
+      'the listing',
+    )
     await new Promise((r) => setTimeout(r, 50))
     expect(byLabel(t.view.table)).toBeNull()
   })
@@ -146,10 +176,20 @@ describe('the table option', () => {
 const rowOfList = () => document.querySelector('[data-file-key^="p:"]')
 
 describe('the table', () => {
-  it('has the title, then the type\'s fields in order, then tags and updated, and a row per page', async () => {
+  it("has the title, then the type's fields in order, then tags and updated, and a row per page", async () => {
     await openWork()
     await showTable()
-    expect(headers()).toEqual([tp.table.title, '状态', '点数', '截止', '标签组', '完成', '备注', tp.table.tags, tp.table.updated])
+    expect(headers()).toEqual([
+      tp.table.title,
+      '状态',
+      '点数',
+      '截止',
+      '标签组',
+      '完成',
+      '备注',
+      tp.table.tags,
+      tp.table.updated,
+    ])
     expect(rowEls()).toHaveLength(4)
     // A title is a link to the page.
     expect(rowOf('A').querySelector('a')!.getAttribute('href')).toMatch(/\/p\//)
@@ -184,7 +224,8 @@ describe('the table', () => {
   it('sorts by a column when its header is clicked, and the other way round when it is clicked again', async () => {
     await openWork()
     await showTable()
-    const header = (label: string) => [...document.querySelectorAll('[role="columnheader"]')].find((h) => h.textContent?.trim() === label)!
+    const header = (label: string) =>
+      [...document.querySelectorAll('[role="columnheader"]')].find((h) => h.textContent?.trim() === label)!
     await click(header('点数').querySelector('button'))
     await settle(() => titlesInOrder().join('') === 'ACBD', 'ascending by points')
     expect(decoded(listRequests().at(-1)!.url)).toContain('sort=prop:points')
@@ -209,8 +250,10 @@ describe('the table', () => {
     await showTable()
     const addButton = () => [...document.querySelectorAll('button')].find((b) => b.textContent === tp.filter.add)!
     const form = () => document.querySelector<HTMLFormElement>(`form[aria-label="${tp.filter.add}"]`)!
-    const choose = async (field: string) => type(form().querySelector(`select[aria-label="${tp.filter.field}"]`)!, field)
-    const ops = () => [...form().querySelectorAll<HTMLOptionElement>(`select[aria-label="${tp.filter.op}"] option`)].map((o) => o.value)
+    const choose = async (field: string) =>
+      type(form().querySelector(`select[aria-label="${tp.filter.field}"]`)!, field)
+    const ops = () =>
+      [...form().querySelectorAll<HTMLOptionElement>(`select[aria-label="${tp.filter.op}"] option`)].map((o) => o.value)
     const apply = () => click([...form().querySelectorAll('button')].find((b) => b.textContent === tp.filter.apply))
 
     await click(addButton())
@@ -234,7 +277,9 @@ describe('the table', () => {
     expect(titlesInOrder().sort()).toEqual(['B', 'C'])
     const sent = JSON.parse(new URL(listRequests().at(-1)!.url, 'http://x').searchParams.get('filter')!)
     expect(sent).toEqual([{ key: 'status', op: 'in', values: ['todo', 'doing'] }])
-    expect(document.querySelector('[data-slot="table-filters"]')!.textContent).toContain(tp.filter.describeIn('状态', 'todo, doing'))
+    expect(document.querySelector('[data-slot="table-filters"]')!.textContent).toContain(
+      tp.filter.describeIn('状态', 'todo, doing'),
+    )
 
     // A second condition: the points from 10 on. Both must hold.
     await click(addButton())
@@ -295,7 +340,10 @@ describe('editing a cell', () => {
     await new Promise((r) => setTimeout(r, 50))
     expect(tableReads()).toBe(before)
     // The page's other keys, its title and its text, were left alone.
-    expect(m!.server.peek(ids.B.id)).toMatchObject({ body: 'B 正文\n', meta: { title: 'B', status: 'done', due: '2026-01-01', labels: ['b', 'a'] } })
+    expect(m!.server.peek(ids.B.id)).toMatchObject({
+      body: 'B 正文\n',
+      meta: { title: 'B', status: 'done', due: '2026-01-01', labels: ['b', 'a'] },
+    })
   })
 
   it('sends a number once, when the person leaves the cell or presses Enter, and not at all for Escape or for what is not a number', async () => {
@@ -321,7 +369,10 @@ describe('editing a cell', () => {
     await press(points(), 'Enter')
     await settle(() => patches().length === 2, 'the request for Enter')
     expect(JSON.parse(patches()[1].body!).set).toEqual({ points: 3 })
-    await settle(() => m!.server.peek(ids.C.id)!.meta.points === 3 && !points().hasAttribute('readonly'), 'the second number')
+    await settle(
+      () => m!.server.peek(ids.C.id)!.meta.points === 3 && !points().hasAttribute('readonly'),
+      'the second number',
+    )
     // Escape drops what was typed and keeps the value.
     await focus()
     await type(points(), '99')
@@ -353,7 +404,11 @@ describe('editing a cell', () => {
     m = await mount(shell, {
       entries: (server) => {
         seed(server)
-        const made = sender(server)('POST', '/pages', { folder: 'Work', meta: { title: 'E', points: { a: 1 }, note: long, labels: ['a', { x: 1 }], status: 'done' }, body: '' })
+        const made = sender(server)('POST', '/pages', {
+          folder: 'Work',
+          meta: { title: 'E', points: { a: 1 }, note: long, labels: ['a', { x: 1 }], status: 'done' },
+          body: '',
+        })
         expect(made.status).toBe(201)
         return ['/s/default/f/Work']
       },
@@ -387,7 +442,11 @@ describe('editing a cell', () => {
     await settle(() => m!.server.peek(ids.C.id)!.meta.done === true, 'the checkbox')
     await click(cell('C', 'f:labels').querySelector('button'))
     await settle(() => document.querySelector('[data-slot="popover-content"]') !== null, 'the choices')
-    await click([...document.querySelectorAll('[data-slot="popover-content"] input')].find((i) => i.closest('label')!.textContent === 'c'))
+    await click(
+      [...document.querySelectorAll('[data-slot="popover-content"] input')].find(
+        (i) => i.closest('label')!.textContent === 'c',
+      ),
+    )
     await settle(() => JSON.stringify(m!.server.peek(ids.C.id)!.meta.labels) === '["c"]', 'the list')
     await type(cell('C', 'f:status').querySelector('select')!, '')
     await settle(() => !('status' in m!.server.peek(ids.C.id)!.meta), 'the key removed')
@@ -398,13 +457,19 @@ describe('editing a cell', () => {
     const ids = await openWork()
     await showTable()
     // Someone else changed B after the table was read.
-    const other = sender(m!.server)('PATCH', `/pages/${ids.B.id}/props`, { baseRev: ids.B.rev, set: { status: 'doing' } })
+    const other = sender(m!.server)('PATCH', `/pages/${ids.B.id}/props`, {
+      baseRev: ids.B.rev,
+      set: { status: 'doing' },
+    })
     expect(other.status).toBe(200)
     await type(cell('B', 'f:status').querySelector('select')!, 'done')
     await settle(() => document.body.textContent!.includes(tp.table.conflict('B')), 'the message')
     // Nothing of the edit was applied, and the row shows what the server has.
     expect(m!.server.peek(ids.B.id)!.meta.status).toBe('doing')
-    await settle(() => (cell('B', 'f:status').querySelector('select') as HTMLSelectElement).value === 'doing', 'the row refreshed')
+    await settle(
+      () => (cell('B', 'f:status').querySelector('select') as HTMLSelectElement).value === 'doing',
+      'the row refreshed',
+    )
     // The row has the new rev: the same edit made again goes through.
     await type(cell('B', 'f:status').querySelector('select')!, 'done')
     await settle(() => m!.server.peek(ids.B.id)!.meta.status === 'done', 'the second try')
@@ -412,7 +477,10 @@ describe('editing a cell', () => {
 
   it('of two rows edited in a row frees both when the answers come, and tells of the one that failed', async () => {
     let ids: ReturnType<typeof seed> | undefined
-    m = await mount(shell, { entries: (server) => ((ids = seed(server)), ['/s/default/f/Work']), delay: (method) => (method === 'PATCH' ? 300 : 0) })
+    m = await mount(shell, {
+      entries: (server) => ((ids = seed(server)), ['/s/default/f/Work']),
+      delay: (method) => (method === 'PATCH' ? 300 : 0),
+    })
     await settle(() => byLabel(t.view.list) !== null, 'the listing')
     await showTable()
     // B was changed elsewhere, so its edit is refused; C is edited before B has been answered.
@@ -422,7 +490,12 @@ describe('editing a cell', () => {
     await settle(() => patches().length === 2, 'both requests')
     await settle(() => document.body.textContent!.includes(tp.table.conflict('B')), 'the message for B')
     await settle(() => m!.server.peek(ids!.C.id)!.meta.status === 'todo', 'C changed')
-    await settle(() => [...document.querySelectorAll('[data-row] [aria-busy="true"], [data-row][aria-busy="true"]')].length === 0 && !(cell('B', 'f:status').querySelector('select') as HTMLSelectElement).disabled, 'no row left busy')
+    await settle(
+      () =>
+        [...document.querySelectorAll('[data-row] [aria-busy="true"], [data-row][aria-busy="true"]')].length === 0 &&
+        !(cell('B', 'f:status').querySelector('select') as HTMLSelectElement).disabled,
+      'no row left busy',
+    )
   })
 
   it('cannot be done by someone who may only read: the values are text, and nothing is sent', async () => {
@@ -434,7 +507,11 @@ describe('editing a cell', () => {
         owner.request('PUT', `/api/spaces/${space}/types/task`, TASK)
         owner.request('POST', `/api/spaces/${space}/folders`, { path: 'Work' })
         owner.request('PUT', `/api/spaces/${space}/folders/type`, { folder: 'Work', type: 'task' })
-        owner.request('POST', `/api/spaces/${space}/pages`, { folder: 'Work', meta: { title: 'A', status: 'done', points: 5, done: true, labels: ['a'] }, body: '' })
+        owner.request('POST', `/api/spaces/${space}/pages`, {
+          folder: 'Work',
+          meta: { title: 'A', status: 'done', points: 5, done: true, labels: ['a'] },
+          body: '',
+        })
         return [`/s/${space}/f/Work`]
       },
     })
@@ -459,13 +536,21 @@ describe('a long folder', () => {
         send('PUT', '/types/task', TASK)
         send('POST', '/folders', { path: 'Big' })
         send('PUT', '/folders/type', { folder: 'Big', type: 'task' })
-        for (let i = 0; i < MANY; i++) send('POST', '/pages', { folder: 'Big', meta: { title: `行${String(i).padStart(3, '0')}`, points: i }, body: '' })
+        for (let i = 0; i < MANY; i++)
+          send('POST', '/pages', {
+            folder: 'Big',
+            meta: { title: `行${String(i).padStart(3, '0')}`, points: i },
+            body: '',
+          })
         return ['/s/default/f/Big']
       },
     })
     await settle(() => byLabel(t.view.table) !== null, 'the option')
     await showTable()
-    const limits = () => listRequests().filter((r) => r.url.includes('props=1')).map((r) => new URL(r.url, 'http://x').searchParams.get('limit'))
+    const limits = () =>
+      listRequests()
+        .filter((r) => r.url.includes('props=1'))
+        .map((r) => new URL(r.url, 'http://x').searchParams.get('limit'))
     expect(limits()).toEqual(['100'])
     // Far fewer rows than are loaded are in the page, and the footer says how many are.
     expect(rowEls().length).toBeLessThan(40)
@@ -477,7 +562,14 @@ describe('a long folder', () => {
       scroller.dispatchEvent(new Event('scroll'))
     })
     await settle(() => limits().length === 2, 'the second batch')
-    expect(new URL(listRequests().filter((r) => r.url.includes('props=1')).at(-1)!.url, 'http://x').searchParams.get('cursor')).toBeTruthy()
+    expect(
+      new URL(
+        listRequests()
+          .filter((r) => r.url.includes('props=1'))
+          .at(-1)!.url,
+        'http://x',
+      ).searchParams.get('cursor'),
+    ).toBeTruthy()
     await settle(() => document.body.textContent!.includes(t.list.loaded(200)), 'two hundred loaded')
     expect(rowEls().length).toBeLessThan(40)
     await act(async () => {
@@ -493,7 +585,15 @@ describe('a long folder', () => {
 describe('what the table is made of', () => {
   it('the columns follow the type, and a type that is missing leaves the title, tags and update time', () => {
     expect(columnsOf(undefined).map((c) => c.id)).toEqual(['title', 'tags', 'updated'])
-    const cols = columnsOf({ name: 'x', title: '', rev: '', fields: [{ key: 'a', title: '', kind: 'text' }, { key: 'b', title: 'B', kind: 'number' }] })
+    const cols = columnsOf({
+      name: 'x',
+      title: '',
+      rev: '',
+      fields: [
+        { key: 'a', title: '', kind: 'text' },
+        { key: 'b', title: 'B', kind: 'number' },
+      ],
+    })
     expect(cols.map((c) => [c.id, c.label, c.sort])).toEqual([
       ['title', tp.table.title, 'title'],
       ['f:a', 'a', 'prop:a'],

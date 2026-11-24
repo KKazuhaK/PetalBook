@@ -1,6 +1,25 @@
 import { createContext, useContext, useRef, useState, type MouseEvent, type ReactNode, type TouchEvent } from 'react'
-import { FilePlus2, FolderInput, FolderPlus, LayoutTemplate, ListChecks, MoreHorizontal, PenLine, Shapes, SquareArrowOutUpRight, Star, StarOff, Trash2 } from 'lucide-react'
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
+import {
+  FilePlus2,
+  FolderInput,
+  FolderPlus,
+  LayoutTemplate,
+  ListChecks,
+  MoreHorizontal,
+  PenLine,
+  Shapes,
+  SquareArrowOutUpRight,
+  Star,
+  StarOff,
+  Trash2,
+} from 'lucide-react'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 import { useCanFavorite, useSpacePermissions } from '@/api/hooks'
 import { useToggleFavorite } from '@/components/favorites/StarButton'
 import type { FileItem } from '@/lib/folders'
@@ -63,7 +82,15 @@ export function FileContextMenu({
   // The "…" button asks the menu to open as if the entry had been right-clicked, just below the button.
   const openAt = (anchor: HTMLElement) => {
     const r = anchor.getBoundingClientRect()
-    anchor.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left, clientY: r.bottom, button: 2 }))
+    anchor.dispatchEvent(
+      new window.MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: r.left,
+        clientY: r.bottom,
+        button: 2,
+      }),
+    )
   }
 
   // Nearly everything in the menu changes pages: without `write` there is nothing, except the person's own favourites.
@@ -74,7 +101,12 @@ export function FileContextMenu({
   return (
     <Open.Provider value={openAt}>
       <ContextMenu>
-        <ContextMenuTrigger ref={trigger} className={className} onContextMenuCapture={capture} onTouchStartCapture={note}>
+        <ContextMenuTrigger
+          ref={trigger}
+          className={className}
+          onContextMenuCapture={capture}
+          onTouchStartCapture={note}
+        >
           {children}
         </ContextMenuTrigger>
         <ContextMenuContent>
@@ -148,7 +180,9 @@ export function FileContextMenu({
 
 // "Favourite" or, for one that is, "Remove from favourites": for a single page or folder.
 function FavoriteItem({ item }: { item: FileItem }) {
-  const { on, toggle } = useToggleFavorite(item.kind === 'page' ? { kind: 'page', target: item.id } : { kind: 'folder', target: item.path })
+  const { on, toggle } = useToggleFavorite(
+    item.kind === 'page' ? { kind: 'page', target: item.id } : { kind: 'folder', target: item.path },
+  )
   return (
     <ContextMenuItem onClick={toggle}>
       {on ? <StarOff /> : <Star />}

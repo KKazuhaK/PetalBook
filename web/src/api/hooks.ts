@@ -2,7 +2,16 @@
 
 import { useMemo } from 'react'
 import { useMatch } from 'react-router'
-import { keepPreviousData, useInfiniteQuery, useIsMutating, useMutation, useQuery, useQueryClient, type Query, type QueryClient } from '@tanstack/react-query'
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useIsMutating,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type Query,
+  type QueryClient,
+} from '@tanstack/react-query'
 import { waitForSaves } from '@/editor/saveController'
 import { noteWrote, wroteKey } from '@/lib/homePrefs'
 import { spaceUrls } from '@/lib/urls'
@@ -11,7 +20,44 @@ import { noteOpened } from '@/lib/offline'
 import { parseTagColor } from '../lib/tagColors.ts'
 import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
 import { propsOfMeta } from '../lib/pageTypes.ts'
-import type { AssetsRemote, ConnectAssetsInput, MembersResponse, CreateSpaceInput, BatchPagesInput, ChecksResponse, FixCheckInput, ConnectRemoteInput, DailyPrefs, DailySettings, Favorite, FavoriteList, FavoriteRef, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, ProblemKind, PutTemplateInput, PutViewsInput, Provider, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
+import type {
+  AssetsRemote,
+  ConnectAssetsInput,
+  MembersResponse,
+  CreateSpaceInput,
+  BatchPagesInput,
+  ChecksResponse,
+  FixCheckInput,
+  ConnectRemoteInput,
+  DailyPrefs,
+  DailySettings,
+  Favorite,
+  FavoriteList,
+  FavoriteRef,
+  CreatePageInput,
+  GroupsParams,
+  ListParams,
+  Member,
+  Page,
+  PageList,
+  PatchPropsInput,
+  Permission,
+  ProblemKind,
+  PutTemplateInput,
+  PutViewsInput,
+  Provider,
+  Remote,
+  SessionInfo,
+  SpaceInfo,
+  SpaceRole,
+  SyncState,
+  TagColor,
+  TagsResponse,
+  TypeInput,
+  User,
+  ViewList,
+  ViewScope,
+} from './types'
 
 // Everything of one space is under ['space', id, …], so switching space never
 // shows another space's data and one invalidation covers a space.
@@ -49,6 +95,8 @@ export const keys = {
   tenantSettings: (id: string) => ['admin', 'settings', 'tenant', id] as const,
   mySettings: (space: string) => ['settings', space] as const,
   adminDaily: ['admin', 'daily'] as const,
+  adminConnectionList: ['admin', 'connections', 'list'] as const,
+  adminForge: (id: string) => ['admin', 'connections', 'host', id] as const,
   adminGitHub: ['admin', 'connections', 'github'] as const,
   adminGitHubInstallations: ['admin', 'connections', 'github', 'installations'] as const,
   // Connections, for everyone: the providers and the caller's connection to each; the accounts to make a repository in; a repository list.
@@ -91,7 +139,8 @@ export const keys = {
   effectiveMembers: (space: string, q: string) => ['space', space, 'members', 'effective', q] as const,
   groupSearch: (q: string) => ['groups', 'search', q] as const,
   // The home page: the day's text (by day, "another" and language), where it comes from, and a person's favourites.
-  daily: (space: string, date: string, skip: number, lang: string) => ['space', space, 'daily', date, skip, lang] as const,
+  daily: (space: string, date: string, skip: number, lang: string) =>
+    ['space', space, 'daily', date, skip, lang] as const,
   dailySettings: (space: string) => ['space', space, 'dailySettings'] as const,
   dailyPrefs: (space: string) => ['space', space, 'dailyPrefs'] as const,
   favorites: (space: string) => ['space', space, 'favorites'] as const,
@@ -113,7 +162,12 @@ export const syncOf = (s: SpaceInfo | undefined): SyncState => s?.sync ?? 'local
 // Fetched once and kept: it only changes when this app signs in or out, or a
 // request comes back 401 (see App.tsx), and each of those updates the cache.
 export function useSession() {
-  return useQuery({ queryKey: keys.session, queryFn: ({ signal }) => api.session(signal), staleTime: Infinity, gcTime: Infinity })
+  return useQuery({
+    queryKey: keys.session,
+    queryFn: ({ signal }) => api.session(signal),
+    staleTime: Infinity,
+    gcTime: Infinity,
+  })
 }
 
 // Changes with create and rename, which update the cache themselves. While a
@@ -227,7 +281,10 @@ export function useActiveSpace(): { id: string | null; spaces: SpaceInfo[]; reso
   const viewed = useViewedSpace(wanted, !list.isPending && !!wanted && !mine.some((s) => s.id === wanted))
   // A view the server says is open adds the permission to read, and nothing else.
   const open = !!viewed.data?.view && Date.parse(viewed.data.view.until) > Date.now()
-  const seen = viewed.data && open && !viewed.data.permissions.includes('read') ? { ...viewed.data, permissions: [...viewed.data.permissions, 'read' as const] } : viewed.data
+  const seen =
+    viewed.data && open && !viewed.data.permissions.includes('read')
+      ? { ...viewed.data, permissions: [...viewed.data.permissions, 'read' as const] }
+      : viewed.data
   const spaces = seen ? [...mine, seen] : mine
   const id = route ?? (last && spaces.some((s) => s.id === last) ? last : (spaces[0]?.id ?? null))
   return { id, spaces, resolving: list.isPending || viewed.isLoading }
@@ -251,7 +308,17 @@ function useViewedSpace(space: string | null, wanted: boolean) {
       try {
         const s = await api.adminSpace(space ?? '', signal)
         // An administrator who is not a member manages the space and reads it only in a view (docs/api.md, "Viewing a space").
-        return { id: s.id, name: s.name, role: '', permissions: ['members', 'manage'], personal: s.personal, sync: s.sync, inbox: s.inbox, disabled: s.disabled, view: s.view }
+        return {
+          id: s.id,
+          name: s.name,
+          role: '',
+          permissions: ['members', 'manage'],
+          personal: s.personal,
+          sync: s.sync,
+          inbox: s.inbox,
+          disabled: s.disabled,
+          view: s.view,
+        }
       } catch (e) {
         if (e instanceof ApiError && e.code === 'not_found') return null
         throw e
@@ -284,7 +351,13 @@ export function useUrls() {
 
 // What the sign-in pages draw: the enabled providers and what is available (read again each time a page opens).
 export function useAuthProviders(enabled = true) {
-  return useQuery({ queryKey: keys.providers, queryFn: ({ signal }) => api.providers(signal), staleTime: 0, gcTime: 0, enabled })
+  return useQuery({
+    queryKey: keys.providers,
+    queryFn: ({ signal }) => api.providers(signal),
+    staleTime: 0,
+    gcTime: 0,
+    enabled,
+  })
 }
 
 // What changes when someone signs in or out: nothing cached may carry over to
@@ -299,7 +372,9 @@ export function applySession(qc: QueryClient, user: User | null) {
 // whether it is held until a passkey is registered (`hold`) is only in the server's answer.
 export async function applySignIn(qc: QueryClient, user: User) {
   applySession(qc, user)
-  await qc.fetchQuery({ queryKey: keys.session, queryFn: ({ signal }) => api.session(signal), staleTime: 0 }).catch(() => undefined)
+  await qc
+    .fetchQuery({ queryKey: keys.session, queryFn: ({ signal }) => api.session(signal), staleTime: 0 })
+    .catch(() => undefined)
 }
 
 // --- space data ----------------------------------------------------------------
@@ -314,13 +389,23 @@ export function useSpaceApi() {
 export function useTree() {
   const space = useSpaceId()
   const { read } = useSpacePermissions()
-  return useQuery({ queryKey: keys.tree(space), queryFn: ({ signal }) => spaceApi(space).tree(signal), staleTime: 15_000, enabled: space !== '' && read })
+  return useQuery({
+    queryKey: keys.tree(space),
+    queryFn: ({ signal }) => spaceApi(space).tree(signal),
+    staleTime: 15_000,
+    enabled: space !== '' && read,
+  })
 }
 
 export function useTags() {
   const space = useSpaceId()
   const { read } = useSpacePermissions()
-  return useQuery({ queryKey: keys.tags(space), queryFn: ({ signal }) => spaceApi(space).tags(signal), staleTime: 15_000, enabled: space !== '' && read })
+  return useQuery({
+    queryKey: keys.tags(space),
+    queryFn: ({ signal }) => spaceApi(space).tags(signal),
+    staleTime: 15_000,
+    enabled: space !== '' && read,
+  })
 }
 
 // Tag name -> colour, for every tag that has one. Built from the tags listing
@@ -352,7 +437,11 @@ export function useSetTagColor() {
         const found = prev.tags.some((t) => t.tag === tag)
         // A tag in no page is not in the listing; nothing to repaint.
         if (!found) return prev
-        return { tags: prev.tags.map((t) => (t.tag === tag ? { tag: t.tag, pages: t.pages, ...(res.color ? { color: res.color } : {}) } : t)) }
+        return {
+          tags: prev.tags.map((t) =>
+            t.tag === tag ? { tag: t.tag, pages: t.pages, ...(res.color ? { color: res.color } : {}) } : t,
+          ),
+        }
       }),
   })
 }
@@ -365,7 +454,8 @@ export function usePageList(params: Omit<ListParams, 'cursor' | 'limit'>, enable
     enabled,
     queryKey: keys.list(space, params),
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => spaceApi(space).listPages({ ...params, limit: PAGE_SIZE, cursor: pageParam || undefined }, signal),
+    queryFn: ({ pageParam, signal }) =>
+      spaceApi(space).listPages({ ...params, limit: PAGE_SIZE, cursor: pageParam || undefined }, signal),
     getNextPageParam: (last) => last.next || undefined,
     staleTime: 10_000,
   })
@@ -381,7 +471,8 @@ export function useTablePages(params: Omit<ListParams, 'cursor' | 'limit' | 'pro
     enabled: enabled && space !== '',
     queryKey: keys.table(space, full),
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => spaceApi(space).listPages({ ...full, limit: TABLE_PAGE_SIZE, cursor: pageParam || undefined }, signal),
+    queryFn: ({ pageParam, signal }) =>
+      spaceApi(space).listPages({ ...full, limit: TABLE_PAGE_SIZE, cursor: pageParam || undefined }, signal),
     getNextPageParam: (last) => last.next || undefined,
     staleTime: 10_000,
     // A new sort or filter keeps the rows on screen until the new ones arrive.
@@ -437,11 +528,16 @@ export function useBacklinks(id: string, enabled = true) {
 // Pages move between listings, folder counts and tag counts when a file is
 // written. Storing a draft does not: lists show the file.
 export function invalidateListings(qc: QueryClient, space: string) {
-  return Promise.all([qc.invalidateQueries({ queryKey: keys.pages(space) }), qc.invalidateQueries({ queryKey: keys.tree(space) }), qc.invalidateQueries({ queryKey: keys.tags(space) })])
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: keys.pages(space) }),
+    qc.invalidateQueries({ queryKey: keys.tree(space) }),
+    qc.invalidateQueries({ queryKey: keys.tags(space) }),
+  ])
 }
 
 // A favourite names a page, a folder or a view: what moves or goes changes what they say (and whether they are gone).
-export const invalidateFavorites = (qc: QueryClient, space: string) => qc.invalidateQueries({ queryKey: keys.favorites(space) })
+export const invalidateFavorites = (qc: QueryClient, space: string) =>
+  qc.invalidateQueries({ queryKey: keys.favorites(space) })
 
 export function useCreatePage() {
   const qc = useQueryClient()
@@ -493,7 +589,13 @@ export function useMoveFolder() {
   return useMutation({
     mutationFn: ({ from, to }: { from: string; to: string }) => spaceApi(space).moveFolder(from, to),
     // The views of a folder go with it.
-    onSuccess: () => Promise.all([invalidateListings(qc, space), invalidateFavorites(qc, space), qc.invalidateQueries({ queryKey: ['space', space, 'views'] }), qc.invalidateQueries({ queryKey: keys.dailySettings(space) })]),
+    onSuccess: () =>
+      Promise.all([
+        invalidateListings(qc, space),
+        invalidateFavorites(qc, space),
+        qc.invalidateQueries({ queryKey: ['space', space, 'views'] }),
+        qc.invalidateQueries({ queryKey: keys.dailySettings(space) }),
+      ]),
   })
 }
 
@@ -501,8 +603,14 @@ export function useDeleteFolder() {
   const qc = useQueryClient()
   const space = useSpaceId()
   return useMutation({
-    mutationFn: ({ path, recursive }: { path: string; recursive?: boolean }) => spaceApi(space).deleteFolder(path, recursive),
-    onSuccess: () => Promise.all([invalidateListings(qc, space), invalidateFavorites(qc, space), qc.invalidateQueries({ queryKey: ['space', space, 'views'] })]),
+    mutationFn: ({ path, recursive }: { path: string; recursive?: boolean }) =>
+      spaceApi(space).deleteFolder(path, recursive),
+    onSuccess: () =>
+      Promise.all([
+        invalidateListings(qc, space),
+        invalidateFavorites(qc, space),
+        qc.invalidateQueries({ queryKey: ['space', space, 'views'] }),
+      ]),
   })
 }
 
@@ -521,7 +629,12 @@ export function useCreateFolder() {
 
 // The providers of this server and the caller's connection to each. Accounts mode only.
 export function useConnections(enabled = true) {
-  return useQuery({ queryKey: keys.connections, queryFn: ({ signal }) => api.connections(signal), enabled, staleTime: 15_000 })
+  return useQuery({
+    queryKey: keys.connections,
+    queryFn: ({ signal }) => api.connections(signal),
+    enabled,
+    staleTime: 15_000,
+  })
 }
 
 // One provider, from the same query; undefined while loading or when the server has none by that id.
@@ -559,7 +672,10 @@ export function useRecheckOwners(provider: string) {
 // The repositories of an installation (or the caller's own), a page at a time.
 export function useConnectionRepos(provider: string, which: { installation: number } | { mine: true } | null) {
   return useInfiniteQuery({
-    queryKey: keys.connectionRepos(provider, which === null ? 'none' : 'installation' in which ? `i${which.installation}` : 'mine'),
+    queryKey: keys.connectionRepos(
+      provider,
+      which === null ? 'none' : 'installation' in which ? `i${which.installation}` : 'mine',
+    ),
     initialPageParam: '',
     queryFn: ({ pageParam, signal }) => api.connectionRepos(provider, which!, pageParam || undefined, signal),
     getNextPageParam: (last) => last.next || undefined,
@@ -573,7 +689,12 @@ export function useDisconnect() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (provider: string) => api.connectionDisconnect(provider),
-    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: keys.connections }), qc.invalidateQueries({ queryKey: keys.spaces }), qc.invalidateQueries({ queryKey: ['space'] })]),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: keys.connections }),
+        qc.invalidateQueries({ queryKey: keys.spaces }),
+        qc.invalidateQueries({ queryKey: ['space'] }),
+      ]),
   })
 }
 
@@ -581,7 +702,8 @@ export function useDisconnect() {
 export function useDismissLeftover() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ provider, repoId }: { provider: string; repoId: number }) => api.connectionDismissLeftover(provider, repoId),
+    mutationFn: ({ provider, repoId }: { provider: string; repoId: number }) =>
+      api.connectionDismissLeftover(provider, repoId),
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.connections }),
   })
 }
@@ -589,11 +711,14 @@ export function useDismissLeftover() {
 export function useCreateSpace() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: string | CreateSpaceInput) => (typeof input === 'string' ? api.createSpace(input) : api.createSpace(input.name, input.inbox, input.sync)),
+    mutationFn: (input: string | CreateSpaceInput) =>
+      typeof input === 'string' ? api.createSpace(input) : api.createSpace(input.name, input.inbox, input.sync),
     // Another space, in the same list order the server gives: personal first, then by name.
     onSuccess: (space, input) => {
       qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => ({
-        spaces: [...(prev?.spaces ?? []), space].sort((a, b) => Number(b.personal) - Number(a.personal) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
+        spaces: [...(prev?.spaces ?? []), space].sort(
+          (a, b) => Number(b.personal) - Number(a.personal) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0),
+        ),
       }))
       // One more space of theirs.
       void qc.invalidateQueries({ queryKey: keys.accountUsage })
@@ -627,17 +752,29 @@ export function useUpdateSpace() {
 // A space that changed (name, inbox) in the list, and in the cache of the one an
 // administrator is viewing without being a member, if that is it.
 function spaceChanged(qc: QueryClient, space: SpaceInfo) {
-  qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => ({ spaces: (prev?.spaces ?? []).map((s) => (s.id === space.id ? space : s)) }))
+  qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => ({
+    spaces: (prev?.spaces ?? []).map((s) => (s.id === space.id ? space : s)),
+  }))
   qc.setQueryData<SpaceInfo | null | undefined>(keys.viewedSpace(space.id), (prev) => (prev ? space : prev))
 }
 
 export function useAccount(enabled = true) {
-  return useQuery({ queryKey: keys.account, queryFn: ({ signal }) => api.account(signal), staleTime: Infinity, enabled })
+  return useQuery({
+    queryKey: keys.account,
+    queryFn: ({ signal }) => api.account(signal),
+    staleTime: Infinity,
+    enabled,
+  })
 }
 
 // The caller's own usage. Measurements are made in the background, so a minute is as fresh as it gets.
 export function useAccountUsage(enabled = true) {
-  return useQuery({ queryKey: keys.accountUsage, queryFn: ({ signal }) => api.accountUsage(signal), staleTime: 60_000, enabled })
+  return useQuery({
+    queryKey: keys.accountUsage,
+    queryFn: ({ signal }) => api.accountUsage(signal),
+    staleTime: 60_000,
+    enabled,
+  })
 }
 
 // What a person is told about a failed request, for the pages that show errors inline.
@@ -655,7 +792,8 @@ export function useHistory(space: string, id: string, enabled: boolean) {
   return useInfiniteQuery({
     queryKey: keys.history(space, id),
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => spaceApi(space).history(id, { limit: HISTORY_PAGE_SIZE, cursor: pageParam || undefined }, signal),
+    queryFn: ({ pageParam, signal }) =>
+      spaceApi(space).history(id, { limit: HISTORY_PAGE_SIZE, cursor: pageParam || undefined }, signal),
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 0,
@@ -700,8 +838,17 @@ function useRemoteCache(space: string) {
   const qc = useQueryClient()
   return (remote: Remote | null) => {
     qc.setQueryData(keys.remote(space), remote)
-    qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => prev && { spaces: prev.spaces.map((s) => (s.id === space ? { ...s, sync: remote ? remote.state : 'local' } : s)) })
-    qc.setQueryData<SpaceInfo | null | undefined>(keys.viewedSpace(space), (prev) => prev && { ...prev, sync: remote ? remote.state : 'local' })
+    qc.setQueryData<{ spaces: SpaceInfo[] }>(
+      keys.spaces,
+      (prev) =>
+        prev && {
+          spaces: prev.spaces.map((s) => (s.id === space ? { ...s, sync: remote ? remote.state : 'local' } : s)),
+        },
+    )
+    qc.setQueryData<SpaceInfo | null | undefined>(
+      keys.viewedSpace(space),
+      (prev) => prev && { ...prev, sync: remote ? remote.state : 'local' },
+    )
   }
 }
 
@@ -771,12 +918,24 @@ function useAssetsCache(space: string) {
   const qc = useQueryClient()
   return (v: AssetsRemote | null) => {
     qc.setQueryData(keys.assetsRemote(space), v)
-    qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => prev && { spaces: prev.spaces.map((s) => (s.id === space && s.storage ? { ...s, storage: { ...s.storage, assets: v ? 'repository' : 'space' } } : s)) })
+    qc.setQueryData<{ spaces: SpaceInfo[] }>(
+      keys.spaces,
+      (prev) =>
+        prev && {
+          spaces: prev.spaces.map((s) =>
+            s.id === space && s.storage ? { ...s, storage: { ...s.storage, assets: v ? 'repository' : 'space' } } : s,
+          ),
+        },
+    )
   }
 }
 export function useConnectAssets(space: string) {
   const put = useAssetsCache(space)
-  return useMutation({ ...secretMutation, mutationFn: (input: ConnectAssetsInput) => spaceApi(space).connectAssets(input), onSuccess: put })
+  return useMutation({
+    ...secretMutation,
+    mutationFn: (input: ConnectAssetsInput) => spaceApi(space).connectAssets(input),
+    onSuccess: put,
+  })
 }
 export function useDisconnectAssets(space: string) {
   const put = useAssetsCache(space)
@@ -794,7 +953,12 @@ export function useMoveAssets(space: string) {
 
 // The people of one space, owners first. Asked for only where they are shown.
 export function useMembers(space: string, enabled = true) {
-  return useQuery({ queryKey: keys.members(space), queryFn: ({ signal }) => spaceApi(space).members(signal), enabled: enabled && space !== '', staleTime: 10_000 })
+  return useQuery({
+    queryKey: keys.members(space),
+    queryFn: ({ signal }) => spaceApi(space).members(signal),
+    enabled: enabled && space !== '',
+    staleTime: 10_000,
+  })
 }
 
 // A change of members changes the list of members, and what the space list
@@ -802,7 +966,11 @@ export function useMembers(space: string, enabled = true) {
 // they leave).
 function useMembersChanged(space: string) {
   const qc = useQueryClient()
-  return () => Promise.all([qc.invalidateQueries({ queryKey: keys.members(space) }), qc.invalidateQueries({ queryKey: keys.spaces })])
+  return () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: keys.members(space) }),
+      qc.invalidateQueries({ queryKey: keys.spaces }),
+    ])
 }
 
 // Everyone who can reach the space, a cursor page at a time; `q` is the name filter.
@@ -810,7 +978,8 @@ export function useEffectiveMembers(space: string, q: string, enabled = true) {
   return useInfiniteQuery({
     queryKey: keys.effectiveMembers(space, q),
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => spaceApi(space).effectiveMembers({ q: q || undefined, cursor: pageParam || undefined, limit: 50 }, signal),
+    queryFn: ({ pageParam, signal }) =>
+      spaceApi(space).effectiveMembers({ q: q || undefined, cursor: pageParam || undefined, limit: 50 }, signal),
     getNextPageParam: (last) => last.next || undefined,
     enabled: enabled && space !== '',
     staleTime: 10_000,
@@ -819,16 +988,28 @@ export function useEffectiveMembers(space: string, q: string, enabled = true) {
 
 // A few groups by part of the name, for choosing one to add to a space.
 export function useGroupSearch(q: string, enabled = true) {
-  return useQuery({ queryKey: keys.groupSearch(q), queryFn: ({ signal }) => api.findGroups(q, signal), enabled: enabled && q !== '', staleTime: 15_000 })
+  return useQuery({
+    queryKey: keys.groupSearch(q),
+    queryFn: ({ signal }) => api.findGroups(q, signal),
+    enabled: enabled && q !== '',
+    staleTime: 15_000,
+  })
 }
 
 export function useAddGroup(space: string) {
   const changed = useMembersChanged(space)
-  return useMutation({ mutationFn: ({ groupId, role }: { groupId: string; role: SpaceRole }) => spaceApi(space).addGroup(groupId, role), onSuccess: changed })
+  return useMutation({
+    mutationFn: ({ groupId, role }: { groupId: string; role: SpaceRole }) => spaceApi(space).addGroup(groupId, role),
+    onSuccess: changed,
+  })
 }
 export function useSetGroupRole(space: string) {
   const changed = useMembersChanged(space)
-  return useMutation({ mutationFn: ({ groupId, role }: { groupId: string; role: SpaceRole }) => spaceApi(space).setGroupRole(groupId, role), onSuccess: changed })
+  return useMutation({
+    mutationFn: ({ groupId, role }: { groupId: string; role: SpaceRole }) =>
+      spaceApi(space).setGroupRole(groupId, role),
+    onSuccess: changed,
+  })
 }
 export function useRemoveGroup(space: string) {
   const changed = useMembersChanged(space)
@@ -837,11 +1018,18 @@ export function useRemoveGroup(space: string) {
 
 export function useAddMember(space: string) {
   const changed = useMembersChanged(space)
-  return useMutation({ mutationFn: ({ username, role }: { username: string; role: SpaceRole }) => spaceApi(space).addMember(username, role), onSuccess: changed })
+  return useMutation({
+    mutationFn: ({ username, role }: { username: string; role: SpaceRole }) =>
+      spaceApi(space).addMember(username, role),
+    onSuccess: changed,
+  })
 }
 export function useSetMemberRole(space: string) {
   const changed = useMembersChanged(space)
-  return useMutation({ mutationFn: ({ user, role }: { user: string; role: SpaceRole }) => spaceApi(space).setMemberRole(user, role), onSuccess: changed })
+  return useMutation({
+    mutationFn: ({ user, role }: { user: string; role: SpaceRole }) => spaceApi(space).setMemberRole(user, role),
+    onSuccess: changed,
+  })
 }
 export function useRemoveMember(space: string) {
   const changed = useMembersChanged(space)
@@ -850,7 +1038,10 @@ export function useRemoveMember(space: string) {
 
 // Updates one member in the cached list (a role change), without asking again.
 export function putMember(qc: QueryClient, space: string, member: Member) {
-  qc.setQueryData<MembersResponse>(keys.members(space), (prev) => prev && { ...prev, members: prev.members.map((m) => (m.userId === member.userId ? member : m)) })
+  qc.setQueryData<MembersResponse>(
+    keys.members(space),
+    (prev) => prev && { ...prev, members: prev.members.map((m) => (m.userId === member.userId ? member : m)) },
+  )
 }
 
 // --- page types ------------------------------------------------------------------
@@ -860,7 +1051,12 @@ export function putMember(qc: QueryClient, space: string, member: Member) {
 export function useTypes(enabled = true) {
   const space = useSpaceId()
   const { read } = useSpacePermissions()
-  return useQuery({ queryKey: keys.types(space), queryFn: ({ signal }) => spaceApi(space).types(signal), staleTime: 15_000, enabled: enabled && space !== '' && read })
+  return useQuery({
+    queryKey: keys.types(space),
+    queryFn: ({ signal }) => spaceApi(space).types(signal),
+    staleTime: 15_000,
+    enabled: enabled && space !== '' && read,
+  })
 }
 
 // A change of a type or of a binding changes what pages are shown with: the
@@ -868,24 +1064,40 @@ export function useTypes(enabled = true) {
 function useTypesChanged() {
   const qc = useQueryClient()
   const space = useSpaceId()
-  return () => Promise.all([qc.invalidateQueries({ queryKey: keys.types(space) }), qc.invalidateQueries({ queryKey: keys.pages(space) }), qc.invalidateQueries({ queryKey: ['space', space, 'page'] })])
+  return () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: keys.types(space) }),
+      qc.invalidateQueries({ queryKey: keys.pages(space) }),
+      qc.invalidateQueries({ queryKey: ['space', space, 'page'] }),
+    ])
 }
 
 export function useSaveType() {
   const space = useSpaceId()
   const changed = useTypesChanged()
   // A 409 means the type is not as it was opened: read it again.
-  return useMutation({ mutationFn: ({ name, input }: { name: string; input: TypeInput }) => spaceApi(space).putType(name, input), onSuccess: changed, onError: (e) => (e instanceof ApiError && e.code === 'conflict' ? void changed() : undefined) })
+  return useMutation({
+    mutationFn: ({ name, input }: { name: string; input: TypeInput }) => spaceApi(space).putType(name, input),
+    onSuccess: changed,
+    onError: (e) => (e instanceof ApiError && e.code === 'conflict' ? void changed() : undefined),
+  })
 }
 export function useDeleteType() {
   const space = useSpaceId()
   const changed = useTypesChanged()
-  return useMutation({ mutationFn: ({ name, baseRev }: { name: string; baseRev: string }) => spaceApi(space).deleteType(name, baseRev), onSuccess: changed, onError: (e) => (e instanceof ApiError && e.code === 'conflict' ? void changed() : undefined) })
+  return useMutation({
+    mutationFn: ({ name, baseRev }: { name: string; baseRev: string }) => spaceApi(space).deleteType(name, baseRev),
+    onSuccess: changed,
+    onError: (e) => (e instanceof ApiError && e.code === 'conflict' ? void changed() : undefined),
+  })
 }
 export function useBindFolder() {
   const space = useSpaceId()
   const changed = useTypesChanged()
-  return useMutation({ mutationFn: ({ folder, type }: { folder: string; type: string }) => spaceApi(space).bindFolder(folder, type), onSuccess: changed })
+  return useMutation({
+    mutationFn: ({ folder, type }: { folder: string; type: string }) => spaceApi(space).bindFolder(folder, type),
+    onSuccess: changed,
+  })
 }
 
 // --- templates -------------------------------------------------------------------
@@ -894,13 +1106,24 @@ export function useBindFolder() {
 export function useTemplates(enabled = true) {
   const space = useSpaceId()
   const { read } = useSpacePermissions()
-  return useQuery({ queryKey: keys.templates(space), queryFn: ({ signal }) => spaceApi(space).templates(signal), staleTime: 15_000, enabled: enabled && space !== '' && read })
+  return useQuery({
+    queryKey: keys.templates(space),
+    queryFn: ({ signal }) => spaceApi(space).templates(signal),
+    staleTime: 15_000,
+    enabled: enabled && space !== '' && read,
+  })
 }
 
 // One template with its body, for the editor: never kept once it is not looked at.
 export function useTemplate(name: string) {
   const space = useSpaceId()
-  return useQuery({ queryKey: keys.template(space, name), queryFn: ({ signal }) => spaceApi(space).template(name, signal), staleTime: 0, gcTime: 0, enabled: space !== '' })
+  return useQuery({
+    queryKey: keys.template(space, name),
+    queryFn: ({ signal }) => spaceApi(space).template(name, signal),
+    staleTime: 0,
+    gcTime: 0,
+    enabled: space !== '',
+  })
 }
 
 // A change of a template, of the defaults or a 409 (the template is not as it was opened) reads them again.
@@ -914,23 +1137,41 @@ const isConflict = (e: unknown) => e instanceof ApiError && e.code === 'conflict
 export function useSaveTemplate() {
   const space = useSpaceId()
   const changed = useTemplatesChanged()
-  return useMutation({ mutationFn: ({ name, input }: { name: string; input: PutTemplateInput }) => spaceApi(space).putTemplate(name, input), onSuccess: changed, onError: (e) => (isConflict(e) ? void changed() : undefined) })
+  return useMutation({
+    mutationFn: ({ name, input }: { name: string; input: PutTemplateInput }) =>
+      spaceApi(space).putTemplate(name, input),
+    onSuccess: changed,
+    onError: (e) => (isConflict(e) ? void changed() : undefined),
+  })
 }
 export function useDeleteTemplate() {
   const space = useSpaceId()
   const changed = useTemplatesChanged()
-  return useMutation({ mutationFn: ({ name, baseRev }: { name: string; baseRev: string }) => spaceApi(space).deleteTemplate(name, baseRev), onSuccess: changed, onError: (e) => (isConflict(e) ? void changed() : undefined) })
+  return useMutation({
+    mutationFn: ({ name, baseRev }: { name: string; baseRev: string }) => spaceApi(space).deleteTemplate(name, baseRev),
+    onSuccess: changed,
+    onError: (e) => (isConflict(e) ? void changed() : undefined),
+  })
 }
 // `template` "" takes the default away.
 export function useSetFolderTemplate() {
   const space = useSpaceId()
   const changed = useTemplatesChanged()
-  return useMutation({ mutationFn: ({ folder, template }: { folder: string; template: string }) => spaceApi(space).setFolderTemplate(folder, template), onSuccess: changed, onError: () => void changed() })
+  return useMutation({
+    mutationFn: ({ folder, template }: { folder: string; template: string }) =>
+      spaceApi(space).setFolderTemplate(folder, template),
+    onSuccess: changed,
+    onError: () => void changed(),
+  })
 }
 export function useSetQuickNoteTemplate() {
   const space = useSpaceId()
   const changed = useTemplatesChanged()
-  return useMutation({ mutationFn: (template: string) => spaceApi(space).setQuickNoteTemplate(template), onSuccess: changed, onError: () => void changed() })
+  return useMutation({
+    mutationFn: (template: string) => spaceApi(space).setQuickNoteTemplate(template),
+    onSuccess: changed,
+    onError: () => void changed(),
+  })
 }
 
 // A row with `partialProps` as the server gave them for the page (a response leaves them out when there
@@ -951,11 +1192,22 @@ export function putTableRow(qc: QueryClient, space: string, page: Page) {
     if (!prev || !prev.pages.some((p) => p.items.some((i) => i.id === page.id))) return prev
     return {
       ...prev,
-      pages: prev.pages.map((p) => ({ ...p, items: p.items.map((i) => (i.id === page.id ? withPartial({ ...i, props: propsOfMeta(page.meta), rev: page.rev, updated: page.updated }, page.partialProps) : i)) })),
+      pages: prev.pages.map((p) => ({
+        ...p,
+        items: p.items.map((i) =>
+          i.id === page.id
+            ? withPartial(
+                { ...i, props: propsOfMeta(page.meta), rev: page.rev, updated: page.updated },
+                page.partialProps,
+              )
+            : i,
+        ),
+      })),
     }
   }
   // The cards of a board hold the same rows (with their props) as the table does.
-  for (const part of ['table', 'board']) qc.setQueriesData<{ pages: PageList[]; pageParams: unknown[] }>({ queryKey: [...keys.pages(space), part] }, put)
+  for (const part of ['table', 'board'])
+    qc.setQueriesData<{ pages: PageList[]; pageParams: unknown[] }>({ queryKey: [...keys.pages(space), part] }, put)
 }
 
 // Whether a loaded column of a board can be changed by the patch: it holds the page, or its filters would now pick it.
@@ -993,7 +1245,10 @@ export function usePatchProps() {
       putTableRow(qc, space, page)
       void qc.invalidateQueries({ queryKey: [...keys.pages(space), 'list'] })
       // A card that changed its column: the column it left and the one it joined are read again, and the counts.
-      void qc.invalidateQueries({ queryKey: [...keys.pages(space), 'board'], predicate: (q) => columnAffected(q, page.id, input) })
+      void qc.invalidateQueries({
+        queryKey: [...keys.pages(space), 'board'],
+        predicate: (q) => columnAffected(q, page.id, input),
+      })
       // The counts of the column heads change only when the property they count by, or one they filter by, was changed.
       const changed = new Set([...Object.keys(input.set ?? {}), ...(input.unset ?? [])])
       void qc.invalidateQueries({
@@ -1047,7 +1302,12 @@ export const viewsTiming = { timeoutMs: 20_000, retryMs: 1_000, retries: 5 }
 // first (it may have been served before the write), so what arrives from then on was served after it. When the read
 // does not come and the write was answered, the answer is the views as they are now: it is newer than what the cache
 // has, unless a read made after it arrived meanwhile. Gives what went wrong with the read, or null.
-async function readViewsAfter(qc: QueryClient, space: string, scope: ViewScope, answer: ViewList | null): Promise<unknown> {
+async function readViewsAfter(
+  qc: QueryClient,
+  space: string,
+  scope: ViewScope,
+  answer: ViewList | null,
+): Promise<unknown> {
   const key = keys.views(space, scope)
   await qc.cancelQueries({ queryKey: key })
   const count = qc.getQueryState(key)?.dataUpdateCount ?? 0
@@ -1065,17 +1325,20 @@ async function readViewsAfter(qc: QueryClient, space: string, scope: ViewScope, 
 // these views any more (they are marked stale, and read when shown).
 function readViewsLater(qc: QueryClient, space: string, scope: ViewScope, attempt = 0) {
   if (attempt >= viewsTiming.retries) return
-  setTimeout(() => {
-    void (async () => {
-      const key = keys.views(space, scope)
-      if (qc.isMutating({ mutationKey: viewsWriteKey(space, scope) }) > 0) return
-      const before = qc.getQueryState(key)?.dataUpdateCount ?? 0
-      await qc.invalidateQueries({ queryKey: key, exact: true })
-      if ((qc.getQueryState(key)?.dataUpdateCount ?? 0) > before) return
-      if (!qc.getQueryCache().find({ queryKey: key, exact: true })?.isActive()) return
-      readViewsLater(qc, space, scope, attempt + 1)
-    })()
-  }, viewsTiming.retryMs * 2 ** attempt)
+  setTimeout(
+    () => {
+      void (async () => {
+        const key = keys.views(space, scope)
+        if (qc.isMutating({ mutationKey: viewsWriteKey(space, scope) }) > 0) return
+        const before = qc.getQueryState(key)?.dataUpdateCount ?? 0
+        await qc.invalidateQueries({ queryKey: key, exact: true })
+        if ((qc.getQueryState(key)?.dataUpdateCount ?? 0) > before) return
+        if (!qc.getQueryCache().find({ queryKey: key, exact: true })?.isActive()) return
+        readViewsLater(qc, space, scope, attempt + 1)
+      })()
+    },
+    viewsTiming.retryMs * 2 ** attempt,
+  )
 }
 
 // What a write of the views gives: the answer, and what went wrong with the read made after it (null: none). When that
@@ -1119,7 +1382,13 @@ export function useSaveViews(scope: ViewScope) {
 // How many pages hold each value of a property, for the heads of a board's columns.
 export function useGroups(params: GroupsParams, enabled = true) {
   const space = useSpaceId()
-  return useQuery({ queryKey: keys.groups(space, params), queryFn: ({ signal }) => spaceApi(space).groups(params, signal), enabled: enabled && space !== '', staleTime: 10_000, placeholderData: keepPreviousData })
+  return useQuery({
+    queryKey: keys.groups(space, params),
+    queryFn: ({ signal }) => spaceApi(space).groups(params, signal),
+    enabled: enabled && space !== '',
+    staleTime: 10_000,
+    placeholderData: keepPreviousData,
+  })
 }
 
 // One column of a board: its cards, twenty at a time.
@@ -1130,7 +1399,8 @@ export function useBoardColumn(params: Omit<ListParams, 'cursor' | 'limit' | 'pr
     enabled: enabled && space !== '',
     queryKey: keys.column(space, full),
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => spaceApi(space).listPages({ ...full, limit: BOARD_PAGE_SIZE, cursor: pageParam || undefined }, signal),
+    queryFn: ({ pageParam, signal }) =>
+      spaceApi(space).listPages({ ...full, limit: BOARD_PAGE_SIZE, cursor: pageParam || undefined }, signal),
     getNextPageParam: (last) => last.next || undefined,
     staleTime: 10_000,
   })
@@ -1144,7 +1414,8 @@ export function useReadingPages(params: Omit<ListParams, 'cursor' | 'limit' | 'b
     enabled: enabled && space !== '',
     queryKey: keys.reading(space, full),
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => spaceApi(space).listPages({ ...full, limit: READING_PAGE_SIZE, cursor: pageParam || undefined }, signal),
+    queryFn: ({ pageParam, signal }) =>
+      spaceApi(space).listPages({ ...full, limit: READING_PAGE_SIZE, cursor: pageParam || undefined }, signal),
     getNextPageParam: (last) => last.next || undefined,
     gcTime: 0,
     staleTime: Infinity,
@@ -1165,7 +1436,12 @@ export function useCanFavorite(): boolean {
 export function useFavorites(enabled = true) {
   const space = useSpaceId()
   const { read } = useSpacePermissions()
-  return useQuery({ queryKey: keys.favorites(space), queryFn: ({ signal }) => spaceApi(space).favorites(signal), staleTime: 30_000, enabled: enabled && space !== '' && read })
+  return useQuery({
+    queryKey: keys.favorites(space),
+    queryFn: ({ signal }) => spaceApi(space).favorites(signal),
+    staleTime: 30_000,
+    enabled: enabled && space !== '' && read,
+  })
 }
 
 export const favoriteKey = (f: FavoriteRef) => `${f.kind}:${f.target}`
@@ -1177,7 +1453,10 @@ export function useFavorite(ref: FavoriteRef | null): Favorite | undefined {
 }
 
 // Every write answers with the list as it is now, which replaces the cached one.
-function useFavoritesWrite<V>(write: (space: string, v: V) => Promise<FavoriteList>, optimistic?: (prev: FavoriteList, v: V) => FavoriteList) {
+function useFavoritesWrite<V>(
+  write: (space: string, v: V) => Promise<FavoriteList>,
+  optimistic?: (prev: FavoriteList, v: V) => FavoriteList,
+) {
   const qc = useQueryClient()
   const space = useSpaceId()
   return useMutation({
@@ -1208,14 +1487,22 @@ export const useOrderFavorites = () =>
     (space, items: FavoriteRef[]) => spaceApi(space).orderFavorites(items),
     (prev, items) => {
       const rank = new Map(items.map((r, i) => [favoriteKey(r), i]))
-      return { ...prev, items: [...prev.items].sort((a, b) => (rank.get(favoriteKey(a)) ?? Infinity) - (rank.get(favoriteKey(b)) ?? Infinity)) }
+      return {
+        ...prev,
+        items: [...prev.items].sort(
+          (a, b) => (rank.get(favoriteKey(a)) ?? Infinity) - (rank.get(favoriteKey(b)) ?? Infinity),
+        ),
+      }
     },
   )
 
 // The day the browser is in, as the server wants it, and how far east of UTC it is.
 export function dayOf(now: Date): { date: string; tz: number } {
   const p = (n: number) => String(n).padStart(2, '0')
-  return { date: `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`, tz: -now.getTimezoneOffset() || 0 }
+  return {
+    date: `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`,
+    tz: -now.getTimezoneOffset() || 0,
+  }
 }
 
 // The text of the day. `skip` is "another one", and only this browser sees it. The server says how long the answer
@@ -1238,7 +1525,12 @@ export function useDaily(date: string, tz: number, skip: number, lang: string, e
 export function useDailySettings(enabled = true) {
   const space = useSpaceId()
   const { read } = useSpacePermissions()
-  return useQuery({ queryKey: keys.dailySettings(space), queryFn: ({ signal }) => spaceApi(space).dailySettings(signal), enabled: enabled && space !== '' && read, staleTime: 15_000 })
+  return useQuery({
+    queryKey: keys.dailySettings(space),
+    queryFn: ({ signal }) => spaceApi(space).dailySettings(signal),
+    enabled: enabled && space !== '' && read,
+    staleTime: 15_000,
+  })
 }
 export function useSaveDailySettings() {
   const qc = useQueryClient()
@@ -1304,7 +1596,8 @@ export function useChecks(kind: ProblemKind | '') {
   const { read } = useSpacePermissions()
   return useInfiniteQuery({
     queryKey: keys.checks(space, kind),
-    queryFn: ({ pageParam, signal }): Promise<ChecksResponse> => spaceApi(space).checks({ kind: kind || undefined, cursor: pageParam || undefined }, signal),
+    queryFn: ({ pageParam, signal }): Promise<ChecksResponse> =>
+      spaceApi(space).checks({ kind: kind || undefined, cursor: pageParam || undefined }, signal),
     initialPageParam: '',
     getNextPageParam: (last) => last.next || undefined,
     staleTime: 0,
@@ -1317,10 +1610,12 @@ export function useChecks(kind: ProblemKind | '') {
 export function useFixCheck() {
   const qc = useQueryClient()
   const space = useSpaceId()
-  const changed = () => Promise.all([qc.invalidateQueries({ queryKey: ['space', space, 'checks'] }), invalidateListings(qc, space)])
+  const changed = () =>
+    Promise.all([qc.invalidateQueries({ queryKey: ['space', space, 'checks'] }), invalidateListings(qc, space)])
   return useMutation({
     mutationFn: (input: FixCheckInput) => spaceApi(space).fixCheck(input),
     onSuccess: changed,
-    onError: (e) => (e instanceof ApiError && (e.code === 'conflict' || e.code === 'not_found') ? void changed() : undefined),
+    onError: (e) =>
+      e instanceof ApiError && (e.code === 'conflict' || e.code === 'not_found') ? void changed() : undefined,
   })
 }

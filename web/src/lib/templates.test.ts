@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { defaultFor, draftOf, metaOf, otherKeys, tagList, templateLabel, templateNameProblem, tzOffset } from './templates'
+import {
+  defaultFor,
+  draftOf,
+  metaOf,
+  otherKeys,
+  tagList,
+  templateLabel,
+  templateNameProblem,
+  tzOffset,
+} from './templates'
 
 describe('the time zone sent to the server', () => {
   it('is minutes east of UTC, the opposite of what Date reports', () => {
@@ -27,7 +36,13 @@ describe('the header of a template as a form', () => {
     const meta = { title: 'T', tags: ['a', 'b'], type: 'task', status: 'todo', id: 'x', created: '2026-01-01' }
     expect(draftOf(meta)).toEqual({ title: 'T', subtitle: '', type: 'task', tags: 'a, b' })
     expect(otherKeys(meta)).toEqual(['status'])
-    expect(metaOf(meta, { title: ' N ', subtitle: '', type: '', tags: 'x，y, x,' })).toEqual({ id: 'x', created: '2026-01-01', status: 'todo', title: 'N', tags: ['x', 'y'] })
+    expect(metaOf(meta, { title: ' N ', subtitle: '', type: '', tags: 'x，y, x,' })).toEqual({
+      id: 'x',
+      created: '2026-01-01',
+      status: 'todo',
+      title: 'N',
+      tags: ['x', 'y'],
+    })
   })
   it('leaves empty fields out', () => {
     expect(metaOf(undefined, draftOf(undefined))).toEqual({})

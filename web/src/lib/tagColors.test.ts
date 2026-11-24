@@ -2,7 +2,16 @@
 // @ts-expect-error TS2591
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { TAG_BG_PERCENT, TAG_COLORS, TAG_HUES, isTagColor, normalizeHex, parseTagColor, tagColorClass, tagColorStyle } from './tagColors'
+import {
+  TAG_BG_PERCENT,
+  TAG_COLORS,
+  TAG_HUES,
+  isTagColor,
+  normalizeHex,
+  parseTagColor,
+  tagColorClass,
+  tagColorStyle,
+} from './tagColors'
 
 const css: string = readFileSync('src/index.css', 'utf8')
 
@@ -34,7 +43,7 @@ describe('tag colours', () => {
   it('each has a class and a hue in index.css, the same as here', () => {
     for (const c of TAG_COLORS) {
       expect(tagColorClass(c)).toBe(`tag-${c}`)
-      expect(css).toContain(`.tag-${c} { --tag-hue: ${TAG_HUES[c]}; }`)
+      expect(css).toMatch(new RegExp(`\\.tag-${c} \\{\\s*--tag-hue: ${TAG_HUES[c]};\\s*\\}`))
     }
     expect(css).toContain(`color-mix(in srgb, var(--tag-hue) ${TAG_BG_PERCENT}%, transparent)`)
     expect(tagColorClass(undefined)).toBe('')

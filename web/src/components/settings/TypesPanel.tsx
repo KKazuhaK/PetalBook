@@ -5,7 +5,16 @@ import { ApiError } from '@/api/client'
 import { errorMessage, useBindFolder, useDeleteType, useSaveType, useTypes } from '@/api/hooks'
 import type { FieldKind, FolderBinding, PageType, SettingsNotice, SettingsVersion, TypeInput } from '@/api/types'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -49,18 +58,40 @@ export default function TypesPanel({ canManage }: { canManage: boolean }) {
                   <span className="block truncate text-sm font-medium">{type.title || type.name}</span>
                   <span className="block truncate font-mono text-xs text-muted-foreground">{type.name}</span>
                 </span>
-                <span className="shrink-0 text-xs text-muted-foreground">{type.error ? tp.types.broken : tp.types.fieldCount(type.fields.length)}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {type.error ? tp.types.broken : tp.types.fieldCount(type.fields.length)}
+                </span>
               </button>
               {open === type.name && (
                 <div className="border-t p-3">
-                  {type.error ? <BrokenType type={type} canManage={canManage} bindings={bindings} onGone={() => setOpen(null)} /> : <TypeEditor key={JSON.stringify(type)} type={type} others={list.map((x) => x.name)} bindings={bindings} canManage={canManage} onClose={() => setOpen(null)} onGone={() => setOpen(null)} />}
+                  {type.error ? (
+                    <BrokenType type={type} canManage={canManage} bindings={bindings} onGone={() => setOpen(null)} />
+                  ) : (
+                    <TypeEditor
+                      key={JSON.stringify(type)}
+                      type={type}
+                      others={list.map((x) => x.name)}
+                      bindings={bindings}
+                      canManage={canManage}
+                      onClose={() => setOpen(null)}
+                      onGone={() => setOpen(null)}
+                    />
+                  )}
                 </div>
               )}
             </li>
           ))}
           {open === 'new' && (
             <li className="rounded-lg border p-3" data-type="new">
-              <TypeEditor type={null} others={list.map((x) => x.name)} bindings={bindings} canManage={canManage} onClose={() => setOpen(null)} onGone={() => setOpen(null)} onCreated={(name) => setOpen(name)} />
+              <TypeEditor
+                type={null}
+                others={list.map((x) => x.name)}
+                bindings={bindings}
+                canManage={canManage}
+                onClose={() => setOpen(null)}
+                onGone={() => setOpen(null)}
+                onCreated={(name) => setOpen(name)}
+              />
             </li>
           )}
         </ul>
@@ -80,7 +111,8 @@ export default function TypesPanel({ canManage }: { canManage: boolean }) {
 
 // --- settings files the server could not use ---------------------------------------
 
-const versionText = (v: SettingsVersion) => (v.commit ? tp.notices.commit(absoluteTime(v.time), v.commit.slice(0, 7)) : tp.notices.version(absoluteTime(v.time)))
+const versionText = (v: SettingsVersion) =>
+  v.commit ? tp.notices.commit(absoluteTime(v.time), v.commit.slice(0, 7)) : tp.notices.version(absoluteTime(v.time))
 
 // What one notice says, sentence by sentence, in plain words.
 function noticeLines(n: SettingsNotice): string[] {
@@ -104,8 +136,14 @@ function NoticesSection({ notices }: { notices: SettingsNotice[] }) {
     <SettingsSection title={tp.notices.title} description={tp.notices.help}>
       <ul className="grid gap-2" data-slot="settings-notices">
         {notices.map((n, i) => (
-          <li key={i} data-notice={n.file} className={`rounded-lg border px-3 py-2.5 text-sm ${n.unreadable || (n.lost?.length ?? 0) > 0 ? 'border-amber-500/40 bg-amber-500/5' : ''}`}>
-            <p className="font-mono text-xs font-medium break-all">{n.entry && n.entry !== 'not a folder' ? tp.notices.entry(n.file, n.entry) : tp.notices.file(n.file)}</p>
+          <li
+            key={i}
+            data-notice={n.file}
+            className={`rounded-lg border px-3 py-2.5 text-sm ${n.unreadable || (n.lost?.length ?? 0) > 0 ? 'border-amber-500/40 bg-amber-500/5' : ''}`}
+          >
+            <p className="font-mono text-xs font-medium break-all">
+              {n.entry && n.entry !== 'not a folder' ? tp.notices.entry(n.file, n.entry) : tp.notices.file(n.file)}
+            </p>
             <p className="mt-1 text-muted-foreground">{noticeLines(n).join(' ')}</p>
           </li>
         ))}
@@ -116,7 +154,15 @@ function NoticesSection({ notices }: { notices: SettingsNotice[] }) {
 
 // --- the folders bound to types ---------------------------------------------------
 
-function BindingsSection({ types, bindings, canManage }: { types: PageType[]; bindings: FolderBinding[]; canManage: boolean }) {
+function BindingsSection({
+  types,
+  bindings,
+  canManage,
+}: {
+  types: PageType[]
+  bindings: FolderBinding[]
+  canManage: boolean
+}) {
   const bind = useBindFolder()
   const title = (name: string) => types.find((x) => x.name === name)?.title || name
   return (
@@ -138,7 +184,12 @@ function BindingsSection({ types, bindings, canManage }: { types: PageType[]; bi
                   size="sm"
                   disabled={bind.isPending}
                   aria-label={tp.bindings.unbindOf(b.folder === '' ? tp.bindings.root : b.folder)}
-                  onClick={() => bind.mutate({ folder: b.folder, type: '' }, { onError: (e) => toast.error(errorMessage(e, tp.bindings.failed)) })}
+                  onClick={() =>
+                    bind.mutate(
+                      { folder: b.folder, type: '' },
+                      { onError: (e) => toast.error(errorMessage(e, tp.bindings.failed)) },
+                    )
+                  }
                 >
                   {tp.bindings.unbind}
                 </Button>
@@ -153,7 +204,17 @@ function BindingsSection({ types, bindings, canManage }: { types: PageType[]; bi
 
 // --- a type whose file cannot be read -----------------------------------------------
 
-function BrokenType({ type, canManage, bindings, onGone }: { type: PageType; canManage: boolean; bindings: FolderBinding[]; onGone: () => void }) {
+function BrokenType({
+  type,
+  canManage,
+  bindings,
+  onGone,
+}: {
+  type: PageType
+  canManage: boolean
+  bindings: FolderBinding[]
+  onGone: () => void
+}) {
   return (
     <div className="grid gap-3">
       <p role="alert" className="text-sm text-destructive">
@@ -196,7 +257,12 @@ function DeleteType({ type, bindings, onGone }: { type: PageType; bindings: Fold
                       toast.success(tp.types.deleted)
                       onGone()
                     },
-                    onError: (e) => toast.error(e instanceof ApiError && e.code === 'conflict' ? tp.types.deleteChanged : errorMessage(e, tp.types.deleteFailed)),
+                    onError: (e) =>
+                      toast.error(
+                        e instanceof ApiError && e.code === 'conflict'
+                          ? tp.types.deleteChanged
+                          : errorMessage(e, tp.types.deleteFailed),
+                      ),
                   },
                 )
               }
@@ -224,11 +290,22 @@ interface FieldDraft {
 }
 
 const picks = (k: FieldKind) => k === 'select' || k === 'multiselect'
-const optionList = (text: string) => text.split('\n').map((l) => l.trim()).filter((l) => l !== '')
+const optionList = (text: string) =>
+  text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l !== '')
 
 let nextId = 1
 function draftsOf(type: PageType | null): FieldDraft[] {
-  return (type?.fields ?? []).map((f) => ({ id: nextId++, key: f.key, title: f.title, kind: f.kind, options: (f.options ?? []).join('\n'), existing: true }))
+  return (type?.fields ?? []).map((f) => ({
+    id: nextId++,
+    key: f.key,
+    title: f.title,
+    kind: f.kind,
+    options: (f.options ?? []).join('\n'),
+    existing: true,
+  }))
 }
 
 function inputOf(title: string, fields: FieldDraft[]): TypeInput {
@@ -244,7 +321,23 @@ function inputOf(title: string, fields: FieldDraft[]): TypeInput {
   }
 }
 
-function TypeEditor({ type, others, bindings, canManage, onClose, onGone, onCreated }: { type: PageType | null; others: string[]; bindings: FolderBinding[]; canManage: boolean; onClose: () => void; onGone: () => void; onCreated?: (name: string) => void }) {
+function TypeEditor({
+  type,
+  others,
+  bindings,
+  canManage,
+  onClose,
+  onGone,
+  onCreated,
+}: {
+  type: PageType | null
+  others: string[]
+  bindings: FolderBinding[]
+  canManage: boolean
+  onClose: () => void
+  onGone: () => void
+  onCreated?: (name: string) => void
+}) {
   const save = useSaveType()
   const [name, setName] = useState('')
   const [title, setTitle] = useState(type?.title ?? '')
@@ -274,7 +367,8 @@ function TypeEditor({ type, others, bindings, canManage, onClose, onGone, onCrea
 
   if (!canManage && type) return <TypeView type={type} />
 
-  const patch = (i: number, change: Partial<FieldDraft>) => setFields((list) => list.map((f, j) => (j === i ? { ...f, ...change } : f)))
+  const patch = (i: number, change: Partial<FieldDraft>) =>
+    setFields((list) => list.map((f, j) => (j === i ? { ...f, ...change } : f)))
   const move = (i: number, by: -1 | 1) =>
     setFields((list) => {
       const to = i + by
@@ -289,7 +383,11 @@ function TypeEditor({ type, others, bindings, canManage, onClose, onGone, onCrea
     setError('')
     // Keys are as typed, trimmed; the server takes them as they are.
     // Made from the rev the form was opened at: someone else's change in between is a 409, not lost.
-    const body: TypeInput = { ...input, baseRev: type?.rev ?? '', fields: input.fields.map((f) => ({ ...f, key: f.key.trim() })) }
+    const body: TypeInput = {
+      ...input,
+      baseRev: type?.rev ?? '',
+      fields: input.fields.map((f) => ({ ...f, key: f.key.trim() })),
+    }
     try {
       const saved = await save.mutateAsync({ name: isNew ? name.trim() : type.name, input: body })
       toast.success(tp.types.saved)
@@ -302,7 +400,12 @@ function TypeEditor({ type, others, bindings, canManage, onClose, onGone, onCrea
     }
   }
 
-  const nameText = { empty: tp.types.nameEmpty, long: tp.types.nameLong, chars: tp.types.nameChars, exists: tp.types.nameExists }
+  const nameText = {
+    empty: tp.types.nameEmpty,
+    long: tp.types.nameLong,
+    chars: tp.types.nameChars,
+    exists: tp.types.nameExists,
+  }
 
   return (
     <form
@@ -316,11 +419,22 @@ function TypeEditor({ type, others, bindings, canManage, onClose, onGone, onCrea
         <div className="grid gap-1.5">
           <Label htmlFor="type-name">{tp.types.name}</Label>
           {isNew ? (
-            <Input id="type-name" autoFocus autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} aria-invalid={nameProblem !== null && name !== '' ? true : undefined} aria-describedby="type-name-help" />
+            <Input
+              id="type-name"
+              autoFocus
+              autoComplete="off"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              aria-invalid={nameProblem !== null && name !== '' ? true : undefined}
+              aria-describedby="type-name-help"
+            />
           ) : (
             <Input id="type-name" readOnly value={type.name} className="font-mono" aria-describedby="type-name-help" />
           )}
-          <p id="type-name-help" className={`text-xs ${nameProblem && name !== '' ? 'text-destructive' : 'text-muted-foreground'}`}>
+          <p
+            id="type-name-help"
+            className={`text-xs ${nameProblem && name !== '' ? 'text-destructive' : 'text-muted-foreground'}`}
+          >
             {nameProblem && name !== '' ? nameText[nameProblem] : tp.types.nameHelp}
           </p>
         </div>
@@ -341,14 +455,39 @@ function TypeEditor({ type, others, bindings, canManage, onClose, onGone, onCrea
             return (
               <li key={f.id} data-field={f.key} className="grid gap-2 rounded-lg border bg-muted/20 p-2.5">
                 <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_9rem_auto] items-start gap-2 max-sm:grid-cols-2">
-                  <Input aria-label={tp.types.fieldKey(label)} value={f.key} readOnly={f.existing} placeholder={tp.types.fieldKeyPlaceholder} autoComplete="off" className={f.existing ? 'font-mono text-muted-foreground' : 'font-mono'} onChange={(e) => patch(i, { key: e.target.value })} aria-invalid={problem === 'empty' ? undefined : problem && problem !== 'noOptions' && problem !== 'dupOptions' ? true : undefined} />
-                  <Input aria-label={tp.types.fieldTitle(label)} value={f.title} placeholder={tp.types.fieldTitlePlaceholder} autoComplete="off" onChange={(e) => patch(i, { title: e.target.value })} />
+                  <Input
+                    aria-label={tp.types.fieldKey(label)}
+                    value={f.key}
+                    readOnly={f.existing}
+                    placeholder={tp.types.fieldKeyPlaceholder}
+                    autoComplete="off"
+                    className={f.existing ? 'font-mono text-muted-foreground' : 'font-mono'}
+                    onChange={(e) => patch(i, { key: e.target.value })}
+                    aria-invalid={
+                      problem === 'empty'
+                        ? undefined
+                        : problem && problem !== 'noOptions' && problem !== 'dupOptions'
+                          ? true
+                          : undefined
+                    }
+                  />
+                  <Input
+                    aria-label={tp.types.fieldTitle(label)}
+                    value={f.title}
+                    placeholder={tp.types.fieldTitlePlaceholder}
+                    autoComplete="off"
+                    onChange={(e) => patch(i, { title: e.target.value })}
+                  />
                   {f.kind === 'other' ? (
                     <div className="flex h-8 items-center text-xs text-muted-foreground" title={tp.types.otherHelp}>
                       {tp.kinds.other}
                     </div>
                   ) : (
-                    <NativeSelect aria-label={tp.types.fieldKind(label)} value={f.kind} onChange={(e) => patch(i, { kind: e.target.value as FieldKind })}>
+                    <NativeSelect
+                      aria-label={tp.types.fieldKind(label)}
+                      value={f.kind}
+                      onChange={(e) => patch(i, { kind: e.target.value as FieldKind })}
+                    >
                       {FIELD_KINDS.map((k) => (
                         <option key={k} value={k}>
                           {tp.kinds[k]}
@@ -357,26 +496,63 @@ function TypeEditor({ type, others, bindings, canManage, onClose, onGone, onCrea
                     </NativeSelect>
                   )}
                   <div className="flex items-center gap-0.5 max-sm:col-span-2 max-sm:justify-end">
-                    <Button type="button" variant="ghost" size="icon-sm" aria-label={tp.types.moveUp(label)} disabled={i === 0} onClick={() => move(i, -1)}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={tp.types.moveUp(label)}
+                      disabled={i === 0}
+                      onClick={() => move(i, -1)}
+                    >
                       <ArrowUp />
                     </Button>
-                    <Button type="button" variant="ghost" size="icon-sm" aria-label={tp.types.moveDown(label)} disabled={i === fields.length - 1} onClick={() => move(i, 1)}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={tp.types.moveDown(label)}
+                      disabled={i === fields.length - 1}
+                      onClick={() => move(i, 1)}
+                    >
                       <ArrowDown />
                     </Button>
-                    <Button type="button" variant="ghost" size="icon-sm" aria-label={tp.types.removeField(label)} onClick={() => setFields((list) => list.filter((_, j) => j !== i))}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={tp.types.removeField(label)}
+                      onClick={() => setFields((list) => list.filter((_, j) => j !== i))}
+                    >
                       <Trash2 />
                     </Button>
                   </div>
                 </div>
                 {picks(f.kind) && (
                   <div className="grid gap-1">
-                    <Textarea aria-label={tp.types.fieldOptions(label)} rows={3} value={f.options} placeholder={tp.types.optionsPlaceholder} onChange={(e) => patch(i, { options: e.target.value })} aria-invalid={problem === 'noOptions' || problem === 'dupOptions' ? true : undefined} />
+                    <Textarea
+                      aria-label={tp.types.fieldOptions(label)}
+                      rows={3}
+                      value={f.options}
+                      placeholder={tp.types.optionsPlaceholder}
+                      onChange={(e) => patch(i, { options: e.target.value })}
+                      aria-invalid={problem === 'noOptions' || problem === 'dupOptions' ? true : undefined}
+                    />
                     <p className="text-xs text-muted-foreground">{tp.types.optionsHelp}</p>
                   </div>
                 )}
                 {problem && (
                   <p role="alert" className="text-xs text-destructive">
-                    {{ empty: tp.types.keyEmpty, long: tp.types.keyLong, chars: tp.types.keyChars, builtin: tp.types.keyBuiltin, twice: tp.types.keyTwice, noOptions: tp.types.noOptions, dupOptions: tp.types.dupOptions }[problem]}
+                    {
+                      {
+                        empty: tp.types.keyEmpty,
+                        long: tp.types.keyLong,
+                        chars: tp.types.keyChars,
+                        builtin: tp.types.keyBuiltin,
+                        twice: tp.types.keyTwice,
+                        noOptions: tp.types.noOptions,
+                        dupOptions: tp.types.dupOptions,
+                      }[problem]
+                    }
                   </p>
                 )}
               </li>
@@ -384,7 +560,17 @@ function TypeEditor({ type, others, bindings, canManage, onClose, onGone, onCrea
           })}
         </ul>
         <div>
-          <Button type="button" variant="outline" size="sm" onClick={() => setFields((list) => [...list, { id: nextId++, key: '', title: '', kind: 'text', options: '', existing: false }])}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              setFields((list) => [
+                ...list,
+                { id: nextId++, key: '', title: '', kind: 'text', options: '', existing: false },
+              ])
+            }
+          >
             <Plus />
             {tp.types.addField}
           </Button>
@@ -428,7 +614,9 @@ function TypeView({ type }: { type: PageType }) {
                 <span className="font-medium">{f.title || f.key}</span>
                 <span className="text-xs text-muted-foreground">{tp.kinds[f.kind]}</span>
               </span>
-              {f.options && f.options.length > 0 && <span className="text-xs text-muted-foreground">{f.options.join(', ')}</span>}
+              {f.options && f.options.length > 0 && (
+                <span className="text-xs text-muted-foreground">{f.options.join(', ')}</span>
+              )}
             </li>
           ))}
         </ul>

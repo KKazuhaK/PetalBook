@@ -5,7 +5,8 @@ export const usageEn: UsageMessages = {
   noLimit: 'No limit',
   neverMeasured: 'Not measured yet',
   measuredAt: (when) => `Last measured ${when}`,
-  measuredHelp: 'Disk and pages are measured by the server in the background, one space at a time, so they can lag a little; the number of spaces is live.',
+  measuredHelp:
+    'Disk and pages are measured by the server in the background, one space at a time, so they can lag a little; the number of spaces is live.',
   account: {
     title: 'Usage',
     help: 'The spaces you own, the disk and the pages they take, and your limits. A space counts for its first owner; members, editors and viewers count nothing.',
@@ -13,13 +14,16 @@ export const usageEn: UsageMessages = {
     used: (used, limit) => `${used} / ${limit}`,
     of: (used) => `${used} used`,
     barLabel: (what, used, limit) => `${what}: ${used}, limit ${limit}`,
-    createRefused: (limit) => `You are at the limit of ${limit} spaces and cannot make another. Delete one you do not use, or ask an administrator to raise it.`,
+    createRefused: (limit) =>
+      `You are at the limit of ${limit} spaces and cannot make another. Delete one you do not use, or ask an administrator to raise it.`,
     overHelp: 'Going over does not stop you: you and the administrators are only told.',
     spacesHelp: 'At the limit you cannot make another space.',
     notices: {
       title: 'Notices',
-      person: (what, used, limit) => `Your ${what} is ${used}, over your limit of ${limit}. You can go on, but tell an administrator or tidy up.`,
-      tenant: (what, used, limit) => `Your tenant's ${what} is ${used}, over its total of ${limit}. You can go on; the administrators can see it.`,
+      person: (what, used, limit) =>
+        `Your ${what} is ${used}, over your limit of ${limit}. You can go on, but tell an administrator or tidy up.`,
+      tenant: (what, used, limit) =>
+        `Your tenant's ${what} is ${used}, over its total of ${limit}. You can go on; the administrators can see it.`,
     },
   },
   admin: {
@@ -43,7 +47,8 @@ export const usageEn: UsageMessages = {
     limit: (v) => `limit ${v}`,
     tenantTotals: 'Totals',
     tenantPeople: (n) => `${n} ${n === 1 ? 'person' : 'people'}`,
-    tenantLine: (spaces, bytes, pages) => `${spaces} ${spaces === 1 ? 'space' : 'spaces'} · ${bytes} · ${pages} ${pages === 1 ? 'page' : 'pages'}`,
+    tenantLine: (spaces, bytes, pages) =>
+      `${spaces} ${spaces === 1 ? 'space' : 'spaces'} · ${bytes} · ${pages} ${pages === 1 ? 'page' : 'pages'}`,
     editLimits: 'Edit limits',
     editLimitsFor: (name) => `Edit the limits of ${name}`,
   },
@@ -68,7 +73,8 @@ export const usageEn: UsageMessages = {
     usageTitle: 'Usage',
     usageHelp: 'What everyone in the tenant uses together.',
     quotaTitle: 'Totals',
-    quotaHelp: 'Only an administrator of the whole server can set them. Going over for people, disk or pages only warns; going over for spaces refuses new ones. Empty is no limit.',
+    quotaHelp:
+      'Only an administrator of the whole server can set them. Going over for people, disk or pages only warns; going over for spaces refuses new ones. Empty is no limit.',
     people: 'People',
     spaces: 'Spaces',
     bytes: 'Disk (GB)',

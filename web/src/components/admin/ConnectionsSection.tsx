@@ -2,26 +2,53 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router'
 import { ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
-import { useAdminGitHub, useAdminGitHubInstallations, useCheckAdminGitHub, useDeleteAdminGitHub, useRetryGitHubManifest, useSaveAdminGitHub, useShareGitHubInstallation, useStartGitHubManifest, useTenants } from '@/api/admin'
+import {
+  useAdminGitHub,
+  useAdminGitHubInstallations,
+  useCheckAdminGitHub,
+  useDeleteAdminGitHub,
+  useRetryGitHubManifest,
+  useSaveAdminGitHub,
+  useShareGitHubInstallation,
+  useStartGitHubManifest,
+  useTenants,
+} from '@/api/admin'
 import { ApiError } from '@/api/client'
 import type { AdminGitHub, GitHubInstallation } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { SettingsSection } from '@/components/settings/SettingsParts'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { absoluteTime } from '@/lib/time'
 import { t } from '@/i18n'
 import { BrandIcon } from '@/components/brand/BrandIcon'
 import { postManifest } from './githubManifest'
+import { ForgeCards } from './ForgeCards'
 import { tg } from '@/i18n/github'
 
 // The connections of "Storage & sync": one card per platform the server can connect to. GitHub is the first;
-// the others (GitLab, Gitea) will each add a card here. A card is the platform's settings, and for GitHub where
+// the hosts with an OAuth application (GitLab, Gitea) follow it, one card each. A card is the platform's settings, and for GitHub where
 // the App is installed with the tenants each organisation's installation is shared with (docs/api.md,
 // "Administration", "Connections").
 export function ConnectionsSection() {
@@ -32,6 +59,7 @@ export function ConnectionsSection() {
       </h2>
       <p className="text-sm text-muted-foreground">{tg.admin.connectionsIntro}</p>
       <GitHubCard />
+      <ForgeCards />
     </section>
   )
 }
@@ -39,7 +67,10 @@ export function ConnectionsSection() {
 function GitHubCard() {
   const app = useAdminGitHub()
   if (app.isPending) return <PageFallback />
-  if (app.isError) return <ErrorState message={t.fmt.labelled(tg.admin.loadFailed, app.error.message)} onRetry={() => void app.refetch()} />
+  if (app.isError)
+    return (
+      <ErrorState message={t.fmt.labelled(tg.admin.loadFailed, app.error.message)} onRetry={() => void app.refetch()} />
+    )
   return (
     <div className="space-y-8">
       <Returned />
@@ -74,11 +105,18 @@ function Returned() {
     // Once, on arrival.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-  if (made) return <p role="status" className="rounded-md border px-3 py-2 text-sm">{tg.admin.created}</p>
+  if (made)
+    return (
+      <p role="status" className="rounded-md border px-3 py-2 text-sm">
+        {tg.admin.created}
+      </p>
+    )
   if (!code) return null
   if (code === 'unavailable') return <MadeButNotSaved slug={slug} pending={pending} />
   // Own keys only: a code like `constructor` is not a message.
-  const message = Object.hasOwn(tg.admin.returned, code) ? tg.admin.returned[code as keyof typeof tg.admin.returned] : tg.admin.returned.unknown
+  const message = Object.hasOwn(tg.admin.returned, code)
+    ? tg.admin.returned[code as keyof typeof tg.admin.returned]
+    : tg.admin.returned.unknown
   return <FormMessage focusRef={ref}>{t.fmt.labelled(tg.admin.createFailed, message)}</FormMessage>
 }
 
@@ -98,12 +136,19 @@ function MadeButNotSaved({ slug, pending }: { slug: string; pending: boolean }) 
       else setError(explain(e))
     }
   }
-  if (state === 'saved') return <p role="status" className="rounded-md border px-3 py-2 text-sm">{tg.admin.pendingSaved}</p>
+  if (state === 'saved')
+    return (
+      <p role="status" className="rounded-md border px-3 py-2 text-sm">
+        {tg.admin.pendingSaved}
+      </p>
+    )
   return (
     <div role="alert" className="grid grid-cols-1 gap-2 rounded-lg border border-warning/50 bg-warning/5 p-3 text-sm">
       <p className="font-medium">{tg.admin.returned.unavailable}</p>
       {slug && <p>{tg.admin.createdOnGitHub(slug)}</p>}
-      <p className="text-muted-foreground">{state === 'gone' ? tg.admin.pendingGone : pending ? tg.admin.pendingBody : tg.admin.pendingLost}</p>
+      <p className="text-muted-foreground">
+        {state === 'gone' ? tg.admin.pendingGone : pending ? tg.admin.pendingBody : tg.admin.pendingLost}
+      </p>
       {pending && state !== 'gone' && (
         <div>
           <Button type="button" size="sm" onClick={() => void go()} disabled={retry.isPending}>
@@ -140,7 +185,12 @@ function AppSettings({ app }: { app: AdminGitHub }) {
     if (save.isPending) return
     setError('')
     if (appId.trim() === '' || (!configured && key.trim() === '')) return setError(tg.admin.needIds)
-    if (clientId.trim() !== '' && secret === '' && !(app.configured && app.clientSecret.set && app.clientId === clientId.trim())) return setError(tg.admin.needSecret)
+    if (
+      clientId.trim() !== '' &&
+      secret === '' &&
+      !(app.configured && app.clientSecret.set && app.clientId === clientId.trim())
+    )
+      return setError(tg.admin.needSecret)
     try {
       await save.mutateAsync({
         appId: appId.trim(),
@@ -173,13 +223,23 @@ function AppSettings({ app }: { app: AdminGitHub }) {
   }
 
   return (
-    <SettingsSection title={tg.admin.title} id="github-app-title" description={tg.admin.intro} icon={<BrandIcon type="github" className="size-5" />}>
+    <SettingsSection
+      title={tg.admin.title}
+      id="github-app-title"
+      description={tg.admin.intro}
+      icon={<BrandIcon type="github" className="size-5" />}
+    >
       {app.configured && (
         <div className="grid grid-cols-1 gap-2 rounded-lg border p-3 text-sm">
           <p className="flex flex-wrap items-center gap-2 font-medium break-all">
             {app.name}
             <Badge variant="secondary">{app.slug}</Badge>
-            <a className="inline-flex items-center gap-1 text-xs font-normal underline underline-offset-4" href={app.htmlUrl} target="_blank" rel="noreferrer noopener">
+            <a
+              className="inline-flex items-center gap-1 text-xs font-normal underline underline-offset-4"
+              href={app.htmlUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+            >
               {tg.admin.openApp}
               <ExternalLink className="size-3 shrink-0" />
             </a>
@@ -188,7 +248,11 @@ function AppSettings({ app }: { app: AdminGitHub }) {
             <dt className="text-muted-foreground">{tg.admin.fingerprint}</dt>
             <dd className="font-mono break-all">{app.privateKey.fingerprint}</dd>
             <dt className="text-muted-foreground">{tg.admin.permissions}</dt>
-            <dd className="break-words">{Object.entries(app.permissions).map(([k, v]) => `${k}: ${v}`).join(', ')}</dd>
+            <dd className="break-words">
+              {Object.entries(app.permissions)
+                .map(([k, v]) => `${k}: ${v}`)
+                .join(', ')}
+            </dd>
             <dt className="text-muted-foreground">{tg.admin.usage}</dt>
             <dd>{tg.admin.usageValue(app.spaces, app.authorizations)}</dd>
           </dl>
@@ -207,7 +271,9 @@ function AppSettings({ app }: { app: AdminGitHub }) {
               {tg.admin.anyAccountNo}
             </p>
           )}
-          {app.anyAccount === null && <p className="text-xs text-muted-foreground break-words">{tg.admin.anyAccountUnknown}</p>}
+          {app.anyAccount === null && (
+            <p className="text-xs text-muted-foreground break-words">{tg.admin.anyAccountUnknown}</p>
+          )}
           {!app.userAuthorization && <p className="text-xs text-muted-foreground">{tg.admin.userAuthOff}</p>}
           <Recheck checked={app.checked} />
         </div>
@@ -216,7 +282,15 @@ function AppSettings({ app }: { app: AdminGitHub }) {
       <CreateApp app={app} />
 
       <form className="grid grid-cols-1 gap-4" onSubmit={(e) => void submit(e)} noValidate>
-        <Field label={tg.admin.appId} help={tg.admin.appIdHelp} value={appId} onChange={(e) => setAppId(e.target.value)} autoComplete="off" spellCheck={false} className="w-full min-w-0" />
+        <Field
+          label={tg.admin.appId}
+          help={tg.admin.appIdHelp}
+          value={appId}
+          onChange={(e) => setAppId(e.target.value)}
+          autoComplete="off"
+          spellCheck={false}
+          className="w-full min-w-0"
+        />
         <div className="grid grid-cols-1 gap-1.5">
           <Label htmlFor="github-private-key">{tg.admin.privateKey}</Label>
           <Textarea
@@ -229,9 +303,19 @@ function AppSettings({ app }: { app: AdminGitHub }) {
             autoComplete="off"
             spellCheck={false}
           />
-          <p className="text-xs text-muted-foreground">{configured ? tg.admin.privateKeyKept : tg.admin.privateKeyHelp}</p>
+          <p className="text-xs text-muted-foreground">
+            {configured ? tg.admin.privateKeyKept : tg.admin.privateKeyHelp}
+          </p>
         </div>
-        <Field label={tg.admin.clientId} help={tg.admin.clientIdHelp} value={clientId} onChange={(e) => setClientId(e.target.value)} autoComplete="off" spellCheck={false} className="w-full min-w-0" />
+        <Field
+          label={tg.admin.clientId}
+          help={tg.admin.clientIdHelp}
+          value={clientId}
+          onChange={(e) => setClientId(e.target.value)}
+          autoComplete="off"
+          spellCheck={false}
+          className="w-full min-w-0"
+        />
         <Field
           label={tg.admin.clientSecret}
           help={app.configured && app.clientSecret.set ? tg.admin.secretKept : tg.admin.secretHelp}
@@ -264,11 +348,19 @@ function AppSettings({ app }: { app: AdminGitHub }) {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{tg.admin.deleteTitle}</AlertDialogTitle>
-            <AlertDialogDescription>{app.configured && app.spaces > 0 ? tg.admin.deleteBlocked(app.spaces) : tg.admin.deleteDescription(app.configured ? app.authorizations : 0)}</AlertDialogDescription>
+            <AlertDialogDescription>
+              {app.configured && app.spaces > 0
+                ? tg.admin.deleteBlocked(app.spaces)
+                : tg.admin.deleteDescription(app.configured ? app.authorizations : 0)}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{tg.admin.cancel}</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" disabled={remove.isPending || (app.configured && app.spaces > 0)} onClick={() => void doDelete()}>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={remove.isPending || (app.configured && app.spaces > 0)}
+              onClick={() => void doDelete()}
+            >
               {tg.admin.deleteConfirm}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -312,7 +404,10 @@ function CreateApp({ app }: { app: AdminGitHub }) {
   const go = async () => {
     setError('')
     try {
-      const m = await start.mutateAsync({ ...(org.trim() ? { organization: org.trim() } : {}), ...(name.trim() ? { name: name.trim() } : {}) })
+      const m = await start.mutateAsync({
+        ...(org.trim() ? { organization: org.trim() } : {}),
+        ...(name.trim() ? { name: name.trim() } : {}),
+      })
       postManifest(m)
     } catch (err) {
       setError(explain(err))
@@ -325,8 +420,24 @@ function CreateApp({ app }: { app: AdminGitHub }) {
         <p className="text-xs text-muted-foreground">{tg.admin.createHelp}</p>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label={tg.admin.createOrg} help={tg.admin.createOrgHelp} value={org} onChange={(e) => setOrg(e.target.value)} autoComplete="off" spellCheck={false} className="w-full min-w-0" />
-        <Field label={tg.admin.createName} help={tg.admin.createNameHelp} value={name} onChange={(e) => setName(e.target.value)} maxLength={34} autoComplete="off" className="w-full min-w-0" />
+        <Field
+          label={tg.admin.createOrg}
+          help={tg.admin.createOrgHelp}
+          value={org}
+          onChange={(e) => setOrg(e.target.value)}
+          autoComplete="off"
+          spellCheck={false}
+          className="w-full min-w-0"
+        />
+        <Field
+          label={tg.admin.createName}
+          help={tg.admin.createNameHelp}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          maxLength={34}
+          autoComplete="off"
+          className="w-full min-w-0"
+        />
       </div>
       {inUse && <p className="text-xs text-muted-foreground">{tg.admin.createInUse}</p>}
       <FormMessage>{error}</FormMessage>
@@ -345,11 +456,18 @@ function Installations() {
   const list = useAdminGitHubInstallations()
   const items = list.data?.pages.flatMap((p) => p.items) ?? []
   return (
-    <SettingsSection title={tg.admin.installations} id="github-installations-title" description={tg.admin.installationsHelp}>
+    <SettingsSection
+      title={tg.admin.installations}
+      id="github-installations-title"
+      description={tg.admin.installationsHelp}
+    >
       {list.isPending ? (
         <PageFallback />
       ) : list.isError ? (
-        <ErrorState message={t.fmt.labelled(tg.admin.installationsFailed, explain(list.error))} onRetry={() => void list.refetch()} />
+        <ErrorState
+          message={t.fmt.labelled(tg.admin.installationsFailed, explain(list.error))}
+          onRetry={() => void list.refetch()}
+        />
       ) : items.length === 0 ? (
         <p className="text-sm text-muted-foreground">{tg.admin.noInstallations}</p>
       ) : (
@@ -361,7 +479,13 @@ function Installations() {
       )}
       {list.hasNextPage && (
         <div>
-          <Button type="button" variant="outline" size="sm" disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={list.isFetchingNextPage}
+            onClick={() => void list.fetchNextPage()}
+          >
             {list.isFetchingNextPage && <Spinner />}
             {tg.admin.loadMore}
           </Button>
@@ -384,20 +508,35 @@ function Installation({ installation: i }: { installation: GitHubInstallation })
             {i.account.login}
           </a>
           <Badge variant="outline">{org ? tg.admin.organisation : tg.admin.user}</Badge>
-          <Badge variant="outline">{i.repositorySelection === 'all' ? tg.admin.selectionAll : tg.admin.selectionSelected}</Badge>
+          <Badge variant="outline">
+            {i.repositorySelection === 'all' ? tg.admin.selectionAll : tg.admin.selectionSelected}
+          </Badge>
           {i.suspended && <Badge variant="destructive">{tg.admin.suspended}</Badge>}
         </p>
         <p className="text-xs text-muted-foreground">{tg.admin.spacesUsing(i.spaces)}</p>
       </div>
       {org && (
         <div className="flex items-center gap-2">
-          <Button type="button" variant="outline" size="sm" data-testid="share-choose" aria-label={tg.admin.chooseFor(i.account.login)} onClick={() => setChoosing(true)}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="share-choose"
+            aria-label={tg.admin.chooseFor(i.account.login)}
+            onClick={() => setChoosing(true)}
+          >
             {tg.admin.choose}
           </Button>
         </div>
       )}
       {!org && <p className="text-xs text-muted-foreground sm:col-span-2">{tg.admin.notShareable}</p>}
-      {org && <p className="text-xs text-muted-foreground sm:col-span-2">{i.tenants.length > 0 ? t.fmt.sentences(tg.admin.sharedWith(names), tg.admin.sharedHelpOn) : t.fmt.sentences(tg.admin.notShared, tg.admin.sharedHelpOff)}</p>}
+      {org && (
+        <p className="text-xs text-muted-foreground sm:col-span-2">
+          {i.tenants.length > 0
+            ? t.fmt.sentences(tg.admin.sharedWith(names), tg.admin.sharedHelpOn)
+            : t.fmt.sentences(tg.admin.notShared, tg.admin.sharedHelpOff)}
+        </p>
+      )}
       {choosing && <ShareDialog installation={i} onClose={() => setChoosing(false)} />}
     </li>
   )
@@ -442,7 +581,12 @@ function ShareDialog({ installation: i, onClose }: { installation: GitHubInstall
             {tenants.data.map((x) => (
               <li key={x.id}>
                 <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" className="size-4" checked={picked.has(x.id)} onChange={(e) => toggle(x.id, e.target.checked)} />
+                  <input
+                    type="checkbox"
+                    className="size-4"
+                    checked={picked.has(x.id)}
+                    onChange={(e) => toggle(x.id, e.target.checked)}
+                  />
                   <span>{x.name}</span>
                 </label>
               </li>

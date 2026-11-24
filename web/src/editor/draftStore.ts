@@ -63,13 +63,19 @@ const keyOf = (ref: string) => PREFIX + ref
 // A local draft belongs to a person, a space and a page: a second user of the
 // same browser is never offered someone else's text. In single-user mode that
 // is `local`, `default`.
-export const draftRef = (userId: string, spaceId: string, pageId: string) => [userId, spaceId, pageId].map(encodeURIComponent).join('/')
+export const draftRef = (userId: string, spaceId: string, pageId: string) =>
+  [userId, spaceId, pageId].map(encodeURIComponent).join('/')
 
 // Milestone 1.1 kept drafts under the page id alone. In single-user mode (the
 // only person there can have been) such a draft moves to the new key, so it is
 // not orphaned. In accounts mode there is no telling whose it was, so it is
 // left alone (and expires like any other).
-export function draftRefFor(userId: string, spaceId: string, pageId: string, storage: KeyValueStorage | null = browserStorage()): string {
+export function draftRefFor(
+  userId: string,
+  spaceId: string,
+  pageId: string,
+  storage: KeyValueStorage | null = browserStorage(),
+): string {
   const ref = draftRef(userId, spaceId, pageId)
   if (!storage || userId !== 'local' || spaceId !== 'default') return ref
   try {
@@ -98,10 +104,22 @@ export function browserStorage(): KeyValueStorage | null {
 
 const isFields = (f: unknown): f is Fields => {
   const x = f as Fields | null
-  return !!x && typeof x.title === 'string' && typeof x.subtitle === 'string' && (x.source === undefined || typeof x.source === 'string') && Array.isArray(x.tags) && x.tags.every((t) => typeof t === 'string') && (x.others === undefined || (typeof x.others === 'object' && x.others !== null && !Array.isArray(x.others)))
+  return (
+    !!x &&
+    typeof x.title === 'string' &&
+    typeof x.subtitle === 'string' &&
+    (x.source === undefined || typeof x.source === 'string') &&
+    Array.isArray(x.tags) &&
+    x.tags.every((t) => typeof t === 'string') &&
+    (x.others === undefined || (typeof x.others === 'object' && x.others !== null && !Array.isArray(x.others)))
+  )
 }
 
-export function loadDraft(id: string, storage: KeyValueStorage | null = browserStorage(), now: number = Date.now()): StoredDraft | null {
+export function loadDraft(
+  id: string,
+  storage: KeyValueStorage | null = browserStorage(),
+  now: number = Date.now(),
+): StoredDraft | null {
   if (!storage) return null
   let raw: string | null
   try {
@@ -112,7 +130,20 @@ export function loadDraft(id: string, storage: KeyValueStorage | null = browserS
   if (raw === null) return null
   try {
     const d = JSON.parse(raw) as StoredDraft
-    if (d && d.v === 1 && d.id === id && typeof d.baseRev === 'string' && typeof d.token === 'string' && isFields(d.fields) && (d.bodyText === undefined || typeof d.bodyText === 'string') && typeof d.savedAt === 'number' && (d.confirmed === undefined || typeof d.confirmed === 'string') && (d.sent === undefined || (Array.isArray(d.sent) && d.sent.every((x) => x && typeof x.baseRev === 'string' && typeof x.digest === 'string')))) {
+    if (
+      d &&
+      d.v === 1 &&
+      d.id === id &&
+      typeof d.baseRev === 'string' &&
+      typeof d.token === 'string' &&
+      isFields(d.fields) &&
+      (d.bodyText === undefined || typeof d.bodyText === 'string') &&
+      typeof d.savedAt === 'number' &&
+      (d.confirmed === undefined || typeof d.confirmed === 'string') &&
+      (d.sent === undefined ||
+        (Array.isArray(d.sent) &&
+          d.sent.every((x) => x && typeof x.baseRev === 'string' && typeof x.digest === 'string')))
+    ) {
       if (now - d.savedAt <= DRAFT_MAX_AGE_MS) return d
       // Too old to be what anyone still means to recover.
       clearDraft(id, storage)
@@ -149,7 +180,11 @@ function otherDrafts(id: string, storage: KeyValueStorage): { key: string; saved
 
 // Returns whether the draft is now stored. When storage is full, the oldest
 // drafts of other pages are dropped one at a time to make room.
-export function saveDraft(id: string, content: DraftContent, storage: KeyValueStorage | null = browserStorage()): boolean {
+export function saveDraft(
+  id: string,
+  content: DraftContent,
+  storage: KeyValueStorage | null = browserStorage(),
+): boolean {
   if (!storage) return false
   let payload: string
   try {
@@ -234,7 +269,13 @@ export function clearDraftIf(id: string, token: string, storage: KeyValueStorage
 
 // Point the draft with `token` at newer server state (same content): the file
 // revision it sits on and what had been sent on it.
-export function rebaseDraft(id: string, token: string, baseRev: string, sent: DraftContent['sent'], storage: KeyValueStorage | null = browserStorage()): void {
+export function rebaseDraft(
+  id: string,
+  token: string,
+  baseRev: string,
+  sent: DraftContent['sent'],
+  storage: KeyValueStorage | null = browserStorage(),
+): void {
   if (!storage) return
   try {
     const raw = storage.getItem(keyOf(id))
@@ -256,7 +297,13 @@ export interface SavedMarker {
   draft: string | null
   at: number
 }
-export function announce(id: string, rev: string, draft: string | null, storage: KeyValueStorage | null = browserStorage(), now: number = Date.now()): void {
+export function announce(
+  id: string,
+  rev: string,
+  draft: string | null,
+  storage: KeyValueStorage | null = browserStorage(),
+  now: number = Date.now(),
+): void {
   try {
     storage?.setItem(savedMarkerKey(id), JSON.stringify({ rev, draft, at: now } satisfies SavedMarker))
   } catch {
@@ -267,7 +314,9 @@ export function parseSavedMarker(value: string | null): SavedMarker | null {
   if (!value) return null
   try {
     const m = JSON.parse(value) as Partial<SavedMarker>
-    return typeof m.rev === 'string' ? { rev: m.rev, draft: typeof m.draft === 'string' ? m.draft : null, at: typeof m.at === 'number' ? m.at : 0 } : null
+    return typeof m.rev === 'string'
+      ? { rev: m.rev, draft: typeof m.draft === 'string' ? m.draft : null, at: typeof m.at === 'number' ? m.at : 0 }
+      : null
   } catch {
     return null
   }

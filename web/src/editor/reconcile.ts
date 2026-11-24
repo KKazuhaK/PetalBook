@@ -126,7 +126,10 @@ export function reconcile(known: Known, server: ServerView, editor: EditorView):
 
   if (d && !draftOurs) return { kind: 'conflict-draft', afterFile: d.stale || (moved && !fileOurs) }
   if (moved && !fileOurs) return { kind: 'conflict-file' }
-  if (!d) return editor.equalsFile ? { kind: 'holds', where: 'file', adoptFile: moved } : { kind: 'proceed', then: 'store', adoptFile: moved }
+  if (!d)
+    return editor.equalsFile
+      ? { kind: 'holds', where: 'file', adoptFile: moved }
+      : { kind: 'proceed', then: 'store', adoptFile: moved }
   if (editor.equalsFile) return { kind: 'proceed', then: 'delete', adoptFile: moved }
   if (!moved && editor.equalsDraft && !d.stale) return { kind: 'holds', where: 'draft', adoptFile: false }
   return { kind: 'proceed', then: 'store', adoptFile: moved }

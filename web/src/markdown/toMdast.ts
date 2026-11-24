@@ -13,7 +13,8 @@ interface Item {
   marks: Mark[]
 }
 
-const sameMark = (a: Mark, b: Mark) => a.type === b.type && JSON.stringify(a.attrs ?? {}) === JSON.stringify(b.attrs ?? {})
+const sameMark = (a: Mark, b: Mark) =>
+  a.type === b.type && JSON.stringify(a.attrs ?? {}) === JSON.stringify(b.attrs ?? {})
 
 function inlineToMdast(nodes: DocJSON[] = []): MdNode[] {
   // Flat runs with mark sets -> nested tree. At each step wrap the longest
@@ -40,7 +41,9 @@ function nest(items: Item[]): MdNode[] {
       if (!best || j > best.end || (j === best.end && mark.type === 'link')) best = { mark, end: j }
     }
     const chosen = best!
-    const inner = items.slice(i, chosen.end).map((it) => ({ node: it.node, marks: it.marks.filter((m) => !sameMark(m, chosen.mark)) }))
+    const inner = items
+      .slice(i, chosen.end)
+      .map((it) => ({ node: it.node, marks: it.marks.filter((m) => !sameMark(m, chosen.mark)) }))
     out.push(...wrap(chosen.mark, nest(inner)))
     i = chosen.end
   }
@@ -78,7 +81,9 @@ function wrap(mark: Mark, children: MdNode[]): MdNode[] {
 function leaf(node: DocJSON): MdNode {
   switch (node.type) {
     case 'text':
-      return (node.marks ?? []).some((m) => m.type === 'code') ? { type: 'inlineCode', value: node.text } : { type: 'text', value: node.text }
+      return (node.marks ?? []).some((m) => m.type === 'code')
+        ? { type: 'inlineCode', value: node.text }
+        : { type: 'text', value: node.text }
     case 'hardBreak':
       return { type: 'break' }
     case 'image':
@@ -110,11 +115,16 @@ export function blocksToMdast(nodes: DocJSON[] = [], { inItem = false } = {}): M
         // that paragraph is empty and a non-paragraph follows, the item really
         // starts with that block ("- > quote"); alone, it is an empty item.
         // Before another paragraph it is a visible blank line and is kept.
-        else if (!(inItem && index === 0 && nodes[1]?.type !== 'paragraph')) out.push({ type: 'html', value: EMPTY_PARAGRAPH })
+        else if (!(inItem && index === 0 && nodes[1]?.type !== 'paragraph'))
+          out.push({ type: 'html', value: EMPTY_PARAGRAPH })
         break
       }
       case 'heading':
-        out.push({ type: 'heading', depth: node.attrs!.level, children: trimTrailingBreaks(inlineToMdast(node.content)) })
+        out.push({
+          type: 'heading',
+          depth: node.attrs!.level,
+          children: trimTrailingBreaks(inlineToMdast(node.content)),
+        })
         break
       case 'bulletList':
       case 'orderedList':
@@ -164,7 +174,12 @@ export function blocksToMdast(nodes: DocJSON[] = [], { inItem = false } = {}): M
         out.push({ type: 'html', value: node.attrs!.value })
         break
       case 'footnoteDef':
-        out.push({ type: 'footnoteDefinition', identifier: node.attrs!.id, label: node.attrs!.id, children: blocksToMdast(node.content) })
+        out.push({
+          type: 'footnoteDefinition',
+          identifier: node.attrs!.id,
+          label: node.attrs!.id,
+          children: blocksToMdast(node.content),
+        })
         break
       default:
         throw new Error(`no Markdown form for block node "${node.type}"`)

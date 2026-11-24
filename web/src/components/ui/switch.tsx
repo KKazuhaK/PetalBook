@@ -1,5 +1,5 @@
-import { Switch as SwitchPrimitive } from "@base-ui/react/switch"
-import { cn } from "cn"
+import { Switch as SwitchPrimitive } from '@base-ui/react/switch'
+import { cn } from 'cn'
 
 // An on/off control. Built on the library's switch, so it is a real
 // role="switch" with the keyboard and screen-reader behaviour that comes with it.
@@ -8,8 +8,8 @@ function Switch({ className, ...props }: SwitchPrimitive.Root.Props) {
     <SwitchPrimitive.Root
       data-slot="switch"
       className={cn(
-        "relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent bg-input outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 data-checked:bg-primary data-disabled:cursor-not-allowed data-disabled:opacity-50",
-        className
+        'relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent bg-input outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 data-checked:bg-primary data-disabled:cursor-not-allowed data-disabled:opacity-50',
+        className,
       )}
       {...props}
     >

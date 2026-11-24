@@ -11,8 +11,10 @@ export const templatesEn: TemplatesMessages = {
   settings: {
     title: 'Page templates',
     help: 'A new page can start from a template: its title, header fields and body become the starting point. A folder can have a default template, and so can quick notes.',
-    helpReadOnly: 'A new page can start from a template. You can only look at them; changing templates needs the "manage" permission.',
-    variablesHelp: 'In the title, the header fields and the body, {{date}} (the date, 2026-11-23), {{time}} (the time, 09:30) and {{datetime}} (both) are filled in with the current values when a page is created. Any other {{…}} stays as written.',
+    helpReadOnly:
+      'A new page can start from a template. You can only look at them; changing templates needs the "manage" permission.',
+    variablesHelp:
+      'In the title, the header fields and the body, {{date}} (the date, 2026-11-23), {{time}} (the time, 09:30) and {{datetime}} (both) are filled in with the current values when a page is created. Any other {{…}} stays as written.',
     loadFailed: 'Could not read the templates.',
     none: 'No templates yet.',
     newTemplate: 'New template',
@@ -35,18 +37,29 @@ export const templatesEn: TemplatesMessages = {
     tagsHelp: 'Separated by commas.',
     body: 'Body (Markdown)',
     bodyHelp: 'The body of the new page, written in Markdown.',
-    otherFields: (n: number) => (n === 1 ? 'The header has 1 more field, which is kept as it is when saved.' : `The header has ${n} more fields, which are kept as they are when saved.`),
+    otherFields: (n: number) =>
+      n === 1
+        ? 'The header has 1 more field, which is kept as it is when saved.'
+        : `The header has ${n} more fields, which are kept as they are when saved.`,
     loadOne: 'Could not read this template.',
     create: 'Create',
     save: 'Save',
     saved: 'Template saved',
     saveFailed: 'Could not save the template',
-    changedMeanwhile: 'Someone else changed this template just now. It has been read again and your changes were not saved. Have a look and make them again.',
+    changedMeanwhile:
+      'Someone else changed this template just now. It has been read again and your changes were not saved. Have a look and make them again.',
     delete: 'Delete',
     deleteTitle: (name: string) => `Delete the template "${name}"?`,
     deleteHelp: (n: number, quick: boolean) => {
-      const where = [n > 0 ? (n === 1 ? 'the default of 1 folder' : `the default of ${n} folders`) : '', quick ? 'the quick note default' : ''].filter((x) => x !== '').join(' and ')
-      return where === '' ? 'This cannot be undone.' : `It is ${where}, which are removed with it. This cannot be undone.`
+      const where = [
+        n > 0 ? (n === 1 ? 'the default of 1 folder' : `the default of ${n} folders`) : '',
+        quick ? 'the quick note default' : '',
+      ]
+        .filter((x) => x !== '')
+        .join(' and ')
+      return where === ''
+        ? 'This cannot be undone.'
+        : `It is ${where}, which are removed with it. This cannot be undone.`
     },
     deleteConfirm: 'Delete',
     deleted: 'Template deleted',

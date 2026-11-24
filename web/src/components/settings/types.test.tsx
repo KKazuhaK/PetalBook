@@ -31,14 +31,18 @@ const routes = (
 )
 const dialog = () => document.querySelector<HTMLElement>('[data-slot="settings-dialog"]')!
 const panelText = () => dialog().textContent ?? ''
-const button = (label: string) => [...dialog().querySelectorAll('button')].find((b) => b.textContent?.trim() === label || b.getAttribute('aria-label') === label) as HTMLButtonElement | undefined
+const button = (label: string) =>
+  [...dialog().querySelectorAll('button')].find(
+    (b) => b.textContent?.trim() === label || b.getAttribute('aria-label') === label,
+  ) as HTMLButtonElement | undefined
 const typeRow = (name: string) => dialog().querySelector<HTMLElement>(`li[data-type="${name}"]`)
 const rowsOf = () => [...dialog().querySelectorAll<HTMLElement>('li[data-field]')]
 const fieldKeys = () => rowsOf().map((r) => r.querySelector<HTMLInputElement>('input')!.value)
 const puts = () => m!.requests.filter((r) => r.method === 'PUT' && /\/types\//.test(r.url))
 const lastPut = () => JSON.parse(puts().at(-1)!.body!) as { title: string; fields: Record<string, unknown>[] }
 const json = 'application/json'
-const send = (server: MockServer, method: string, path: string, body: unknown) => server.handle(method, `/api/spaces/default${path}`, JSON.stringify(body), json)
+const send = (server: MockServer, method: string, path: string, body: unknown) =>
+  server.handle(method, `/api/spaces/default${path}`, JSON.stringify(body), json)
 
 const TASK = {
   title: '任务',
@@ -155,7 +159,7 @@ describe('the types section: someone who manages the space', () => {
     expect(puts()).toHaveLength(0)
   })
 
-  it('changes a type: the title, a field\'s title, kind and options, a field added, one removed, and the order', async () => {
+  it("changes a type: the title, a field's title, kind and options, a field added, one removed, and the order", async () => {
     await openSingle()
     await click(typeRow('task')!.querySelector('button'))
     expect(button(tp.types.save)!.disabled).toBe(true)
@@ -171,7 +175,9 @@ describe('the types section: someone who manages the space', () => {
     await click(button(tp.types.addField))
     await type(rowsOf()[2].querySelectorAll('input')[0], 'owner')
     expect(fieldKeys()).toEqual(['due', 'status', 'owner'])
-    const rev = (m!.server.handle('GET', '/api/spaces/default/types', undefined, null).body as { types: { rev: string }[] }).types[0].rev
+    const rev = (
+      m!.server.handle('GET', '/api/spaces/default/types', undefined, null).body as { types: { rev: string }[] }
+    ).types[0].rev
     await click(button(tp.types.save))
     await settle(() => puts().length === 1, 'the request')
     expect(lastPut()).toEqual({
@@ -185,7 +191,11 @@ describe('the types section: someone who manages the space', () => {
     })
     // What the server now has is what the list shows.
     await settle(() => typeRow('task')!.textContent!.includes('任务单'), 'the new title')
-    const listed = (m!.server.handle('GET', '/api/spaces/default/types', undefined, null).body as { types: { fields: { key: string }[] }[] }).types[0]
+    const listed = (
+      m!.server.handle('GET', '/api/spaces/default/types', undefined, null).body as {
+        types: { fields: { key: string }[] }[]
+      }
+    ).types[0]
     expect(listed.fields.map((f) => f.key)).toEqual(['due', 'status', 'owner'])
   })
 
@@ -207,9 +217,15 @@ describe('the types section: someone who manages the space', () => {
     expect(m!.requests.some((r) => r.method === 'DELETE')).toBe(false)
     await click(button(tp.types.delete))
     await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
-    await click([...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent === tp.types.deleteConfirm))
+    await click(
+      [...document.querySelectorAll('[role="alertdialog"] button')].find(
+        (b) => b.textContent === tp.types.deleteConfirm,
+      ),
+    )
     await settle(() => typeRow('task') === null, 'the type gone')
-    expect(m!.requests.some((r) => r.method === 'DELETE' && /\/types\/task\?baseRev=[0-9a-f]{40}$/.test(r.url))).toBe(true)
+    expect(m!.requests.some((r) => r.method === 'DELETE' && /\/types\/task\?baseRev=[0-9a-f]{40}$/.test(r.url))).toBe(
+      true,
+    )
     await settle(() => dialog().querySelector('li[data-binding]') === null, 'the binding gone')
     expect(panelText()).toContain(tp.types.none)
   })
@@ -219,14 +235,24 @@ describe('the types section: someone who manages the space', () => {
     await click(typeRow('task')!.querySelector('button'))
     await type(dialog().querySelector<HTMLInputElement>('#type-title')!, '我的标题')
     // Someone else changes the type after the form was opened.
-    const rev = (m!.server.handle('GET', '/api/spaces/default/types', undefined, null).body as { types: { rev: string }[] }).types[0].rev
-    expect(send(m!.server, 'PUT', '/types/task', { baseRev: rev, title: '别人的标题', fields: TASK.fields.map((f) => ({ key: f.key })) }).status).toBe(200)
+    const rev = (
+      m!.server.handle('GET', '/api/spaces/default/types', undefined, null).body as { types: { rev: string }[] }
+    ).types[0].rev
+    expect(
+      send(m!.server, 'PUT', '/types/task', {
+        baseRev: rev,
+        title: '别人的标题',
+        fields: TASK.fields.map((f) => ({ key: f.key })),
+      }).status,
+    ).toBe(200)
     await click(button(tp.types.save))
     await settle(() => document.body.textContent!.includes(tp.types.changedMeanwhile), 'the message')
     expect(puts().filter((r) => r.url.includes('/types/task')).length).toBeGreaterThan(0)
     // The form is made again from the type as it is now, not from what was typed.
     await settle(() => typeRow('task')!.textContent!.includes('别人的标题'), 'the type read again')
-    expect(m!.server.handle('GET', '/api/spaces/default/types', undefined, null).body).toMatchObject({ types: [{ title: '别人的标题' }] })
+    expect(m!.server.handle('GET', '/api/spaces/default/types', undefined, null).body).toMatchObject({
+      types: [{ title: '别人的标题' }],
+    })
     // The server refuses a change from the old rev too.
     const old = rev
     expect(send(m!.server, 'PUT', '/types/task', { baseRev: old, title: 'x', fields: [] }).status).toBe(409)

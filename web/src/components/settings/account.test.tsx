@@ -27,14 +27,28 @@ const routes = (
 )
 const dialog = () => document.querySelector<HTMLElement>('[data-slot="settings-dialog"]')
 const panelText = () => dialog()?.textContent ?? ''
-const buttonWith = (label: string, within: ParentNode = document) => [...within.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent?.trim() === label)
+const buttonWith = (label: string, within: ParentNode = document) =>
+  [...within.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent?.trim() === label)
 // A button whose label contains `text` (a provider's button also holds its drawn icon).
-const buttonHolding = (text: string) => [...document.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent?.includes(text))
+const buttonHolding = (text: string) =>
+  [...document.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent?.includes(text))
 const rows = () => [...document.querySelectorAll<HTMLElement>('[data-passkey]')]
 const calls = (method: string, url: string) => m!.requests.filter((r) => r.method === method && r.url.startsWith(url))
 
-const company = { slug: 'company', kind: 'oidc' as const, name: 'Company SSO', icon: 'preset:microsoft', oidc: { issuer: 'https://login.example/v2.0', clientId: 'id' } }
-const github = { slug: 'gh', kind: 'github' as const, name: 'GitHub', icon: 'preset:github', github: { clientId: 'id' } }
+const company = {
+  slug: 'company',
+  kind: 'oidc' as const,
+  name: 'Company SSO',
+  icon: 'preset:microsoft',
+  oidc: { issuer: 'https://login.example/v2.0', clientId: 'id' },
+}
+const github = {
+  slug: 'gh',
+  kind: 'github' as const,
+  name: 'GitHub',
+  icon: 'preset:github',
+  github: { clientId: 'id' },
+}
 
 async function open(path = '/settings/security', server: MockOptions = {}) {
   m = await mount(routes, { entries: [path], signIn: true, server: { mode: 'accounts', ...server } })
@@ -50,7 +64,7 @@ function stubCreate(json: Record<string, unknown> = { id: 'cred-1', type: 'publi
 }
 
 describe('the passkeys of the account', () => {
-  it('starts with none, and adds one with a name through the browser\'s prompt', async () => {
+  it("starts with none, and adds one with a name through the browser's prompt", async () => {
     await open()
     expect(panelText()).toContain(ts.passkeys.empty)
     const create = stubCreate({ id: 'cred-1', type: 'public-key', response: {}, synced: true })
@@ -59,7 +73,8 @@ describe('the passkeys of the account', () => {
     await settle(() => rows().length === 1, 'the passkey')
     expect(JSON.parse(calls('POST', '/api/account/passkeys/begin')[0].body!)).toEqual({ name: 'MacBook' })
     // The options were decoded for the browser: the user handle and the challenge are bytes.
-    const opts = (create.mock.calls[0] as unknown as [{ publicKey: { challenge: unknown; user: { id: unknown } } }])[0].publicKey
+    const opts = (create.mock.calls[0] as unknown as [{ publicKey: { challenge: unknown; user: { id: unknown } } }])[0]
+      .publicKey
     expect(opts.challenge).toBeInstanceOf(Uint8Array)
     expect(opts.user.id).toBeInstanceOf(Uint8Array)
     expect(calls('POST', '/api/account/passkeys/finish?ceremony=')).toHaveLength(1)
@@ -122,7 +137,14 @@ describe('the passkeys of the account', () => {
   it('a prompt the person closes says so, and nothing is added', async () => {
     await open()
     vi.stubGlobal('PublicKeyCredential', function PublicKeyCredential() {})
-    vi.stubGlobal('navigator', { ...navigator, credentials: { create: vi.fn(async () => Promise.reject(Object.assign(new Error('x'), { name: 'NotAllowedError' }))) }, languages: ['zh-CN'], language: 'zh-CN' })
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      credentials: {
+        create: vi.fn(async () => Promise.reject(Object.assign(new Error('x'), { name: 'NotAllowedError' }))),
+      },
+      languages: ['zh-CN'],
+      language: 'zh-CN',
+    })
     await click(buttonWith(ts.passkeys.add))
     await settle(() => panelText().includes(ts.passkeys.cancelled), 'the message')
     expect(rows()).toHaveLength(0)
@@ -144,7 +166,10 @@ describe('the linked sign-ins', () => {
     vi.stubGlobal('location', { ...window.location, assign })
     await click(buttonHolding(ts.identities.link('Company SSO')))
     await settle(() => assign.mock.calls.length > 0, 'the redirect')
-    expect(JSON.parse(calls('POST', '/api/auth/oidc/company/start')[0].body!)).toEqual({ intent: 'link', return: '/settings' })
+    expect(JSON.parse(calls('POST', '/api/auth/oidc/company/start')[0].body!)).toEqual({
+      intent: 'link',
+      return: '/settings',
+    })
     expect(assign.mock.calls[0][0]).toContain('/api/auth/oidc/company/callback')
   })
 

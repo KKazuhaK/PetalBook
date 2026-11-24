@@ -9,6 +9,7 @@ describe('model-based: random sequences against the in-memory server', () => {
 
   it('holds them when the person gives a text up and the second device later writes it', async () => {
     if (ONLY !== undefined) return
-    for (let seed = 700_000; seed < 700_000 + Math.floor(2000 * SCALE); seed++) await runSequence(seed, { steps: 16, profile: 'giveup' })
+    for (let seed = 700_000; seed < 700_000 + Math.floor(2000 * SCALE); seed++)
+      await runSequence(seed, { steps: 16, profile: 'giveup' })
   }, 120_000)
 })

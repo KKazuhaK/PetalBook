@@ -4,7 +4,13 @@ import { LogOut, Settings, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { applySession, useSession } from '@/api/hooks'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { useOpenSettings } from '@/components/settings/useSettings'
 import { flushAllSaves } from '@/editor/saveController'
 import { adminPath } from '@/lib/urls'
@@ -40,7 +46,10 @@ export function UserMenu() {
         aria-label={t.fmt.labelled(t.userMenu.label, user.name)}
         className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-left text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring/50"
       >
-        <span aria-hidden="true" className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand/15 text-xs font-medium text-brand">
+        <span
+          aria-hidden="true"
+          className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand/15 text-xs font-medium text-brand"
+        >
           {Array.from(user.name)[0]?.toUpperCase() ?? '?'}
         </span>
         <span className="truncate">{user.name}</span>

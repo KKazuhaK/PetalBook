@@ -25,7 +25,11 @@ export function draftToCreateInput(draft: StoredDraft, toMarkdown: (doc: DocJSON
 export async function recoverDraft(
   id: string,
   draft: StoredDraft,
-  deps: { create: (input: CreatePageInput) => Promise<Page>; toMarkdown: (doc: DocJSON) => string; storage?: KeyValueStorage | null },
+  deps: {
+    create: (input: CreatePageInput) => Promise<Page>
+    toMarkdown: (doc: DocJSON) => string
+    storage?: KeyValueStorage | null
+  },
 ): Promise<Page> {
   const page = await deps.create(draftToCreateInput(draft, deps.toMarkdown))
   if (deps.storage === undefined) clearDraft(id)

@@ -1,13 +1,30 @@
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { useDailyPrefs, useDailySettings, useSaveDailyPrefs, useSaveDailySettings, useTags, useTree, useTypes } from '@/api/hooks'
+import {
+  useDailyPrefs,
+  useDailySettings,
+  useSaveDailyPrefs,
+  useSaveDailySettings,
+  useTags,
+  useTree,
+  useTypes,
+} from '@/api/hooks'
 import type { DailyPrefs, DailySettings } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { apisOfTab, draftsFrom, emptyDraft, settingsFrom, tabsOf, type Drafts, type LangDraft, type Mode } from '@/lib/dailySettings'
+import {
+  apisOfTab,
+  draftsFrom,
+  emptyDraft,
+  settingsFrom,
+  tabsOf,
+  type Drafts,
+  type LangDraft,
+  type Mode,
+} from '@/lib/dailySettings'
 import { th } from '@/i18n/home'
 import { SettingsNote, SettingsRow, SettingsRows, SettingsSection } from './SettingsParts'
 import { SourceFields, type SourceChoices } from './SourceFields'
@@ -28,7 +45,13 @@ export default function HomePanel({ canManage }: { canManage: boolean }) {
   const types = useTypes()
   if (!canManage) return <SettingsNote>{th.settings.noManage}</SettingsNote>
   if (settings.isPending || prefs.isPending) return <PageFallback />
-  if (settings.isError || prefs.isError) return <ErrorState message={th.settings.loadFailed} onRetry={() => void (settings.isError ? settings.refetch() : prefs.refetch())} />
+  if (settings.isError || prefs.isError)
+    return (
+      <ErrorState
+        message={th.settings.loadFailed}
+        onRetry={() => void (settings.isError ? settings.refetch() : prefs.refetch())}
+      />
+    )
   const choices: SourceChoices = {
     folders: (tree.data?.folders ?? []).map((f) => f.path).filter((p) => p !== ''),
     tags: (tags.data?.tags ?? []).map((x) => x.tag),
@@ -39,13 +62,23 @@ export default function HomePanel({ canManage }: { canManage: boolean }) {
   return <Editor saved={settings.data.daily} prefs={prefs.data} choices={choices} />
 }
 
-function Editor({ saved, prefs, choices }: { saved: DailySettings | null; prefs: DailyPrefs | null; choices: SourceChoices }) {
+function Editor({
+  saved,
+  prefs,
+  choices,
+}: {
+  saved: DailySettings | null
+  prefs: DailyPrefs | null
+  choices: SourceChoices
+}) {
   const saveSettings = useSaveDailySettings()
   const savePrefs = useSaveDailyPrefs()
   const [drafts, setDrafts] = useState<Drafts>(() => {
     const d = draftsFrom(saved)
     // A language whose interface is chosen shows as such.
-    for (const tab of tabsOf([], saved, prefs)) if (!d[tab] && apisOfTab(prefs, tab).some((a) => prefs?.apis.includes(a.id))) d[tab] = { ...emptyDraft(), mode: 'api' }
+    for (const tab of tabsOf([], saved, prefs))
+      if (!d[tab] && apisOfTab(prefs, tab).some((a) => prefs?.apis.includes(a.id)))
+        d[tab] = { ...emptyDraft(), mode: 'api' }
     return d
   })
   const [apis, setApis] = useState<Set<string>>(() => new Set(prefs?.apis ?? []))
@@ -56,7 +89,8 @@ function Editor({ saved, prefs, choices }: { saved: DailySettings | null; prefs:
   const [error, setError] = useState('')
   const busy = saveSettings.isPending || savePrefs.isPending
   const draft: LangDraft = drafts[tab] ?? emptyDraft()
-  const set = (patch: Partial<LangDraft>) => setDrafts((d) => ({ ...d, [tab]: { ...(d[tab] ?? emptyDraft()), ...patch } }))
+  const set = (patch: Partial<LangDraft>) =>
+    setDrafts((d) => ({ ...d, [tab]: { ...(d[tab] ?? emptyDraft()), ...patch } }))
   const tabName = (code: string) => (code === '' ? th.settings.all : code)
 
   const save = async () => {
@@ -77,17 +111,23 @@ function Editor({ saved, prefs, choices }: { saved: DailySettings | null; prefs:
           const owner = tabs.find((c) => apisOfTab(prefs, c).some((a) => a.id === id))
           return owner === undefined || (drafts[owner]?.mode ?? 'default') === 'api'
         })
-        if (inherit !== prefs.inherit || JSON.stringify([...keep].sort()) !== JSON.stringify([...prefs.apis].sort())) await savePrefs.mutateAsync({ inherit, apis: keep })
+        if (inherit !== prefs.inherit || JSON.stringify([...keep].sort()) !== JSON.stringify([...prefs.apis].sort()))
+          await savePrefs.mutateAsync({ inherit, apis: keep })
       }
       toast.success(th.settings.saved)
     } catch (e) {
-      setError(e instanceof ApiError && (e.code === 'invalid' || e.code === 'not_found') ? e.message : `${th.settings.failed}${e instanceof Error && e.message ? `: ${e.message}` : ''}`)
+      setError(
+        e instanceof ApiError && (e.code === 'invalid' || e.code === 'not_found')
+          ? e.message
+          : `${th.settings.failed}${e instanceof Error && e.message ? `: ${e.message}` : ''}`,
+      )
     }
   }
 
   const modes: Mode[] = prefs ? ['default', 'own', 'api'] : ['default', 'own']
   // Set for the whole server by the administrators: the choice is shown, not changeable.
-  const locked = (m: Mode) => (m === 'own' ? prefs?.allowed?.own === false : m === 'api' ? prefs?.allowed?.api === false : false)
+  const locked = (m: Mode) =>
+    m === 'own' ? prefs?.allowed?.own === false : m === 'api' ? prefs?.allowed?.api === false : false
   const tabApis = apisOfTab(prefs, tab)
   return (
     <div className="space-y-8">
@@ -104,7 +144,9 @@ function Editor({ saved, prefs, choices }: { saved: DailySettings | null; prefs:
               className={`inline-flex h-8 items-center rounded-lg px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${tab === code ? 'bg-muted font-medium' : 'text-muted-foreground hover:text-foreground'}`}
             >
               {tabName(code)}
-              {(drafts[code]?.mode ?? 'default') !== 'default' && <span aria-hidden="true" className="ml-1.5 size-1.5 rounded-full bg-brand" />}
+              {(drafts[code]?.mode ?? 'default') !== 'default' && (
+                <span aria-hidden="true" className="ml-1.5 size-1.5 rounded-full bg-brand" />
+              )}
             </button>
           ))}
         </div>
@@ -113,13 +155,21 @@ function Editor({ saved, prefs, choices }: { saved: DailySettings | null; prefs:
           <div role="radiogroup" aria-label={th.settings.sourceLabel} className="grid gap-2">
             {modes.map((m) => (
               <label key={m} className="flex items-center gap-2 text-sm">
-                <input type="radio" name="daily-mode" checked={draft.mode === m} onChange={() => set({ mode: m })} disabled={busy || locked(m)} />
+                <input
+                  type="radio"
+                  name="daily-mode"
+                  checked={draft.mode === m}
+                  onChange={() => set({ mode: m })}
+                  disabled={busy || locked(m)}
+                />
                 {th.settings.modes[m]}
                 {locked(m) && <span className="text-xs text-muted-foreground">{th.settings.lockedByAdmin}</span>}
               </label>
             ))}
           </div>
-          {draft.mode === 'default' && <p className="text-xs text-muted-foreground">{prefs ? th.settings.defaultHelp : ''}</p>}
+          {draft.mode === 'default' && (
+            <p className="text-xs text-muted-foreground">{prefs ? th.settings.defaultHelp : ''}</p>
+          )}
           {draft.mode === 'own' && (
             <>
               <p className="text-xs text-muted-foreground">{th.settings.ownHelp}</p>
@@ -156,7 +206,11 @@ function Editor({ saved, prefs, choices }: { saved: DailySettings | null; prefs:
       {prefs && (
         <SettingsSection title={th.settings.inheritTitle}>
           <SettingsRows>
-            <SettingsRow title={th.settings.inherit} help={prefs.default ? th.settings.inheritHelp : th.settings.noDefault} controlId="daily-inherit">
+            <SettingsRow
+              title={th.settings.inherit}
+              help={prefs.default ? th.settings.inheritHelp : th.settings.noDefault}
+              controlId="daily-inherit"
+            >
               <Switch id="daily-inherit" checked={inherit} disabled={busy} onCheckedChange={setInherit} />
             </SettingsRow>
           </SettingsRows>

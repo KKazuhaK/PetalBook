@@ -54,14 +54,16 @@ interface Fav {
 }
 
 export const validLang = (s: string): boolean => canonicalTag(s) !== null
-const badLanguage = (tag: string) => new HttpError(400, 'bad_language', `“${tag}” 不是 zh-Hans、en、pt-BR 这样的语言标签`)
+const badLanguage = (tag: string) =>
+  new HttpError(400, 'bad_language', `“${tag}” 不是 zh-Hans、en、pt-BR 这样的语言标签`)
 
 // The number a day starts at: the first 8 bytes of a hash of the space and the day.
 const dayNumber = (key: string, date: string): bigint => {
   const hex = sha256Hex(new TextEncoder().encode(`${key}\u0000${date}`)).slice(0, 16)
   return BigInt('0x' + hex)
 }
-export const pickNumber = (key: string, date: string, skip: number, total: number): number => Number((dayNumber(key, date) + BigInt(skip)) % BigInt(total))
+export const pickNumber = (key: string, date: string, skip: number, total: number): number =>
+  Number((dayNumber(key, date) + BigInt(skip)) % BigInt(total))
 
 const cut = (text: string, max: number): [string, boolean] => {
   const chars = Array.from(text)
@@ -88,25 +90,33 @@ export function createHomeBook(env: HomeEnv) {
   const checkSource = (raw: unknown, where = ''): DailySource => {
     const at = where ? `${where}: ` : ''
     if (!isSource(raw)) throw invalid(`${at}给一个来源：folder、tag 或 type`)
-    for (const k of Object.keys(raw)) if (!['folder', 'tag', 'type', 'filter'].includes(k)) throw invalid(`${at}不认识 ${k}`)
+    for (const k of Object.keys(raw))
+      if (!['folder', 'tag', 'type', 'filter'].includes(k)) throw invalid(`${at}不认识 ${k}`)
     const given = ['folder', 'tag', 'type'].filter((k) => raw[k] !== undefined && raw[k] !== null)
     if (given.length !== 1) throw invalid(`${at}folder、tag、type 要给且只给一个`)
     const out: DailySource = { filter: [] }
     if (given[0] === 'folder') {
       if (typeof raw.folder !== 'string') throw invalid(`${at}folder 要是文字`)
-      if (raw.folder.startsWith('/') || raw.folder.endsWith('/') || raw.folder.split('/').some((s) => s === '..' || s === '.')) throw invalid(`${at}文件夹路径不合法`)
+      if (
+        raw.folder.startsWith('/') ||
+        raw.folder.endsWith('/') ||
+        raw.folder.split('/').some((s) => s === '..' || s === '.')
+      )
+        throw invalid(`${at}文件夹路径不合法`)
       const spelled = env.spelledFolder(raw.folder)
       if (spelled === null) throw new HttpError(404, 'not_found', '找不到这个文件夹')
       out.folder = spelled
     } else if (given[0] === 'tag') {
-      if (typeof raw.tag !== 'string' || raw.tag.trim() === '' || /[\0\n\r]/.test(raw.tag)) throw invalid(`${at}这不是标签`)
+      if (typeof raw.tag !== 'string' || raw.tag.trim() === '' || /[\0\n\r]/.test(raw.tag))
+        throw invalid(`${at}这不是标签`)
       out.tag = raw.tag
     } else {
       if (typeof raw.type !== 'string' || !env.hasType(raw.type)) throw invalid(`${at}没有这个类型`)
       out.type = raw.type
     }
     if (raw.filter !== undefined && raw.filter !== null) {
-      if (!Array.isArray(raw.filter) || raw.filter.length > MAX_VIEW_FILTERS) throw invalid(`${at}filter 最多 ${MAX_VIEW_FILTERS} 条`)
+      if (!Array.isArray(raw.filter) || raw.filter.length > MAX_VIEW_FILTERS)
+        throw invalid(`${at}filter 最多 ${MAX_VIEW_FILTERS} 条`)
       const parsed = parseFilter(JSON.stringify(raw.filter))
       out.filter = parsed.map((f) => ({ key: f.key, op: f.op, values: f.values ?? [] }))
     }
@@ -114,9 +124,12 @@ export function createHomeBook(env: HomeEnv) {
   }
 
   const checkConfig = (raw: unknown): DailyConfig => {
-    if (!isSource(raw) || Object.keys(raw).length === 0) throw invalid('给一个来源：folder、tag 或 type，或每种语言一个')
+    if (!isSource(raw) || Object.keys(raw).length === 0)
+      throw invalid('给一个来源：folder、tag 或 type，或每种语言一个')
     const out: DailyConfig = { by: {} }
-    const whole = Object.fromEntries(Object.entries(raw).filter(([k]) => ['folder', 'tag', 'type', 'filter'].includes(k)))
+    const whole = Object.fromEntries(
+      Object.entries(raw).filter(([k]) => ['folder', 'tag', 'type', 'filter'].includes(k)),
+    )
     if (Object.keys(whole).length) out.all = checkSource(whole)
     const keys = Object.keys(raw).filter((k) => !(k in whole))
     if (keys.length > MAX_LANGS) throw invalid(`最多 ${MAX_LANGS} 种语言`)
@@ -129,15 +142,23 @@ export function createHomeBook(env: HomeEnv) {
     return out
   }
 
-  const dayKey = (spaceId: string, src: DailySource, date: string, skip: number) => JSON.stringify([spaceId, src, date, skip])
+  const dayKey = (spaceId: string, src: DailySource, date: string, skip: number) =>
+    JSON.stringify([spaceId, src, date, skip])
 
-  const mapPick = (src: DailySource, spaceId: string, date: string, skip: number): { c: Candidate; count: number } | null => {
+  const mapPick = (
+    src: DailySource,
+    spaceId: string,
+    date: string,
+    skip: number,
+  ): { c: Candidate; count: number } | null => {
     const cands = env.matching(src)
     if (cands.length === 0) return null
     const key = dayKey(spaceId, src, date, skip)
     const kept = memo.get(key)
     if (kept) {
-      const c = cands.find((x) => x.summary.id === kept) ?? (env.hasPage(kept) ? { summary: env.hasPage(kept)!, body: '' } : undefined)
+      const c =
+        cands.find((x) => x.summary.id === kept) ??
+        (env.hasPage(kept) ? { summary: env.hasPage(kept)!, body: '' } : undefined)
       if (c) return { c, count: cands.length }
     }
     const c = cands[pickNumber(spaceId, date, skip, cands.length)]
@@ -148,7 +169,12 @@ export function createHomeBook(env: HomeEnv) {
   const validDate = (date: string): boolean => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false
     const t = new Date(date + 'T00:00:00Z')
-    return !Number.isNaN(t.getTime()) && t.toISOString().slice(0, 10) === date && t.getUTCFullYear() >= 1970 && t.getUTCFullYear() <= 2261
+    return (
+      !Number.isNaN(t.getTime()) &&
+      t.toISOString().slice(0, 10) === date &&
+      t.getUTCFullYear() >= 1970 &&
+      t.getUTCFullYear() <= 2261
+    )
   }
 
   const favLabel = (f: Fav) => {
@@ -156,15 +182,26 @@ export function createHomeBook(env: HomeEnv) {
       const p = env.hasPage(f.target)
       return p ? { name: p.label, path: p.path, missing: false } : { name: '', missing: true }
     }
-    if (f.kind === 'folder') return { name: f.target.split('/').pop() ?? f.target, path: f.target, missing: !env.hasFolder(f.target) }
+    if (f.kind === 'folder')
+      return { name: f.target.split('/').pop() ?? f.target, path: f.target, missing: !env.hasFolder(f.target) }
     const m = /^(folder|tag):(.*)#([^#]+)$/s.exec(f.target)
     if (!m) return { name: '', missing: true }
     const kind = m[1] as 'folder' | 'tag'
     const name = env.viewName(kind, m[2], m[3])
-    return { name: name ?? '', of: m[2], ofKind: kind, missing: name === null || (kind === 'folder' && !env.hasFolder(m[2])) }
+    return {
+      name: name ?? '',
+      of: m[2],
+      ofKind: kind,
+      missing: name === null || (kind === 'folder' && !env.hasFolder(m[2])),
+    }
   }
   const favList = (userId: string) => ({
-    items: (favs.get(userId) ?? []).map((f) => ({ kind: f.kind, target: f.target, ...favLabel(f), created: new Date(f.created).toISOString().replace(/\.\d{3}Z$/, 'Z') })),
+    items: (favs.get(userId) ?? []).map((f) => ({
+      kind: f.kind,
+      target: f.target,
+      ...favLabel(f),
+      created: new Date(f.created).toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    })),
     limit: MAX_FAVORITES,
   })
   const checkKind = (kind: unknown): 'page' | 'folder' | 'view' => {
@@ -176,7 +213,8 @@ export function createHomeBook(env: HomeEnv) {
     config: () => (daily ? structuredClone(jsonOf(daily)) : null),
     setConfig(body: Record<string, unknown>) {
       env.guard()
-      if (!('daily' in body) || Object.keys(body).length !== 1) throw invalid('给 daily：每日文案的来源，或 null 来去掉它')
+      if (!('daily' in body) || Object.keys(body).length !== 1)
+        throw invalid('给 daily：每日文案的来源，或 null 来去掉它')
       daily = body.daily === null ? null : checkConfig(body.daily)
       return { daily: this.config() }
     },
@@ -236,7 +274,8 @@ export function createHomeBook(env: HomeEnv) {
           if (s === null) throw new HttpError(404, 'not_found', '找不到这个文件夹')
           scope = s
         }
-        if (env.viewName(m[1] as 'folder' | 'tag', scope, m[3]) === null) throw new HttpError(404, 'not_found', '找不到这个视图')
+        if (env.viewName(m[1] as 'folder' | 'tag', scope, m[3]) === null)
+          throw new HttpError(404, 'not_found', '找不到这个视图')
         target = `${m[1]}:${scope}#${m[3]}`
       }
       const list = favs.get(userId) ?? []
@@ -248,8 +287,12 @@ export function createHomeBook(env: HomeEnv) {
       return favList(userId)
     },
     removeFavorite(userId: string, kind: string | null, target: string | null) {
-      if ((kind !== 'page' && kind !== 'folder' && kind !== 'view') || !target) throw invalid('用 kind 和 target 说明是哪一个收藏')
-      favs.set(userId, (favs.get(userId) ?? []).filter((f) => !(f.kind === kind && f.target === target)))
+      if ((kind !== 'page' && kind !== 'folder' && kind !== 'view') || !target)
+        throw invalid('用 kind 和 target 说明是哪一个收藏')
+      favs.set(
+        userId,
+        (favs.get(userId) ?? []).filter((f) => !(f.kind === kind && f.target === target)),
+      )
       return favList(userId)
     },
     orderFavorites(userId: string, body: Record<string, unknown>) {

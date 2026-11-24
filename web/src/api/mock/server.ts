@@ -3,11 +3,51 @@
 // cookie stand-in), invites, spaces per user and a fake OpenID Connect
 // provider. It has no DOM or Node dependencies.
 
-import type { AssetsRemote, CacheState, AdminSpace, SpaceLocation, CaptchaContext, ConnectRemoteInput, DailyNotice, FieldKind, Identity, Invite, Member, Page, Permission, Remote, RemoteKey, RemoteState, Role, ServerStatus, SettingsNotice, SpaceInfo, SpaceRole, User, AdminGrant, AdminToken, ApiToken, ConsentInfo, Grant, GitHubGap, Provider } from '../types.ts'
+import type {
+  AssetsRemote,
+  CacheState,
+  AdminSpace,
+  SpaceLocation,
+  CaptchaContext,
+  ConnectRemoteInput,
+  DailyNotice,
+  FieldKind,
+  Identity,
+  Invite,
+  Member,
+  Page,
+  Permission,
+  Remote,
+  RemoteKey,
+  RemoteState,
+  Role,
+  ServerStatus,
+  SettingsNotice,
+  SpaceInfo,
+  SpaceRole,
+  User,
+  AdminGrant,
+  AdminToken,
+  ApiToken,
+  ConsentInfo,
+  Grant,
+  GitHubGap,
+  Provider,
+} from '../types.ts'
 import { gitBlobId } from './sha1.ts'
-import { ALPHABET, HttpError, compareCodePoints, createSpaceStore, isRecord, rfc3339, validFolder, type SpaceStore } from './store.ts'
+import {
+  ALPHABET,
+  HttpError,
+  compareCodePoints,
+  createSpaceStore,
+  isRecord,
+  rfc3339,
+  validFolder,
+  type SpaceStore,
+} from './store.ts'
 import { SPACE_NAME } from './seed.ts'
 import { createGitHubBook, type MockGitHubOptions } from './githubBook.ts'
+import { createForgeBook, FORGE_COOKIE } from './forgeBook.ts'
 import { pickNumber } from './homeBook.ts'
 import { canonicalTag, matchTag } from '../../lib/langTags.ts'
 import { createFileStore, DEFAULT_MAX_UPLOAD, type FileStore } from './files.ts'
@@ -107,14 +147,46 @@ export const SESSION_COOKIE = 'pb_session'
 const OIDC_COOKIE = 'pb_oidc'
 const GITHUB_COOKIE = 'pb_github'
 // The provider that is a plain address: nothing to connect (docs/api.md, "Connections").
-const isConnectionCode = (c: string | undefined) => ['connection_expired', 'connection_missing', 'installation_gone', 'app_missing_permission', 'provider_not_configured', 'repo_not_in_installation'].includes(c ?? '')
+const isConnectionCode = (c: string | undefined) =>
+  [
+    'connection_expired',
+    'connection_missing',
+    'installation_gone',
+    'app_missing_permission',
+    'provider_not_configured',
+    'repo_not_in_installation',
+  ].includes(c ?? '')
 const GIT_PROVIDER: Provider = {
-  id: 'git', type: 'git', host: '', name: 'Git', owner: 'site',
-  capabilities: { createRepo: false, installations: false, connectAccount: false, storageTarget: false, partialSync: 'unknown' },
-  configured: true, app: null, userAuthorization: false, connection: null, leftovers: [],
+  id: 'git',
+  type: 'git',
+  host: '',
+  name: 'Git',
+  owner: 'site',
+  capabilities: {
+    createRepo: false,
+    installations: false,
+    connectAccount: false,
+    storageTarget: false,
+    partialSync: 'unknown',
+  },
+  configured: true,
+  app: null,
+  userAuthorization: false,
+  connection: null,
+  leftovers: [],
 }
 const GITHUB_MANIFEST_COOKIE = 'pb_github_manifest'
-const LOCAL_USER: User = { id: 'local', username: 'local', name: 'Local user', email: '', emailVerified: false, role: 'admin', disabled: false, passkeyRequired: false, created: '2026-01-01T00:00:00Z' }
+const LOCAL_USER: User = {
+  id: 'local',
+  username: 'local',
+  name: 'Local user',
+  email: '',
+  emailVerified: false,
+  role: 'admin',
+  disabled: false,
+  passkeyRequired: false,
+  created: '2026-01-01T00:00:00Z',
+}
 
 interface UserRec extends Omit<User, 'passkeyRequired' | 'passkeys' | 'sso'> {
   passwordHash?: string
@@ -230,7 +302,15 @@ interface AssetsRec {
   branch: string
   credential: RemoteRec['credential']
   used: boolean
-  move: { state: 'copying' | 'switching' | 'done' | 'failed'; files: number; filesDone: number; bytes: number; bytesDone: number; error: string; step: number } | null
+  move: {
+    state: 'copying' | 'switching' | 'done' | 'failed'
+    files: number
+    filesDone: number
+    bytes: number
+    bytesDone: number
+    error: string
+    step: number
+  } | null
   // Bytes of the space's attachments in the cache (a mock number).
   cacheBytes: number
 }
@@ -252,7 +332,8 @@ const ROLE_PERMISSIONS: Record<SpaceRole, Permission[]> = {
   viewer: ['read'],
 }
 const ROLES = Object.keys(ROLE_PERMISSIONS)
-const NO_PERMISSION = (need: Permission) => `your role in this space does not allow that; it needs the ${need} permission`
+const NO_PERMISSION = (need: Permission) =>
+  `your role in this space does not allow that; it needs the ${need} permission`
 
 const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{1,31}$/
 const hashOf = (s: string) => gitBlobId(`mock:${s}`)
@@ -266,10 +347,12 @@ const parseCookies = (header: string | null | undefined): Record<string, string>
   }
   return out
 }
-const setCookie = (name: string, value: string, maxAge?: number) => `${name}=${value}; Path=/; HttpOnly; SameSite=Lax${maxAge === undefined ? '' : `; Max-Age=${maxAge}`}`
+const setCookie = (name: string, value: string, maxAge?: number) =>
+  `${name}=${value}; Path=/; HttpOnly; SameSite=Lax${maxAge === undefined ? '' : `; Max-Age=${maxAge}`}`
 
 // What the sign-in cookie holds is meaningless to the client, as in the real server.
-const plainPath = (p: unknown): string => (typeof p === 'string' && p.startsWith('/') && !p.startsWith('//') && !p.includes('\\') ? p : '/')
+const plainPath = (p: unknown): string =>
+  typeof p === 'string' && p.startsWith('/') && !p.startsWith('//') && !p.includes('\\') ? p : '/'
 
 export function createMockServer(options: MockOptions = {}) {
   const now = options.now ?? Date.now
@@ -301,17 +384,28 @@ export function createMockServer(options: MockOptions = {}) {
   const github = createGitHubBook(options.github ?? {}, {
     now,
     random,
-    spacesUsing: (uid) => [...spaces.values()].filter((s) => s.remote?.credential.type === 'github' && s.remote.credential.via === 'user' && s.remote.credential.userId === uid).length,
+    spacesUsing: (uid) =>
+      [...spaces.values()].filter(
+        (s) =>
+          s.remote?.credential.type === 'github' &&
+          s.remote.credential.via === 'user' &&
+          s.remote.credential.userId === uid,
+      ).length,
     // The mock keeps a connection through GitHub as type "github" (the API shows it as type "connection", provider "github").
     spacesOnApp: () => [...spaces.values()].filter((s) => s.remote?.credential.type === 'github').length,
     // The mock has one world: everyone is in the default tenant.
     tenantOf: () => DEFAULT_TENANT,
     tenantExists: (id) => tenantBook.exists(id),
   })
+  // The hosts with an OAuth application (GitLab, Gitea): a spaces here never sync through one, so they are not counted.
+  const forge = createForgeBook({ now, random, spacesUsing: () => 0, hasSpaces: () => 0 })
   // Sessions held until a passkey is registered, and when each session began (registering needs a recent sign-in).
   const held = new Set<string>()
   const sessionAt = new Map<string, number>()
-  const ceremonies = new Map<string, { kind: 'login' | 'register'; username?: string; userId?: string; name?: string; created: number }>()
+  const ceremonies = new Map<
+    string,
+    { kind: 'login' | 'register'; username?: string; userId?: string; name?: string; created: number }
+  >()
   // Failures counted toward a captcha, by context and key (the username for a login, `ip` otherwise).
   const captchaFails = new Map<string, number>()
   let auditCounter = 0
@@ -353,9 +447,27 @@ export function createMockServer(options: MockOptions = {}) {
 
   // An administrator is one of the whole server unless a site administrator said otherwise (3.3).
   const isSiteAdmin = (u: UserRec | undefined) => u?.role === 'admin' && u.siteAdmin !== false
-  const publicUser = (u: UserRec): User => ({ id: u.id, username: u.username, name: u.name, email: u.email, emailVerified: u.emailVerified, role: u.role, disabled: u.disabled, passkeyRequired: book.requiredOf(u), siteAdmin: isSiteAdmin(u), tenant: { id: DEFAULT_TENANT, slug: 'default', name: 'Default' }, created: u.created, ...(u.remoteExempt ? { remoteExempt: true } : {}) })
+  const publicUser = (u: UserRec): User => ({
+    id: u.id,
+    username: u.username,
+    name: u.name,
+    email: u.email,
+    emailVerified: u.emailVerified,
+    role: u.role,
+    disabled: u.disabled,
+    passkeyRequired: book.requiredOf(u),
+    siteAdmin: isSiteAdmin(u),
+    tenant: { id: DEFAULT_TENANT, slug: 'default', name: 'Default' },
+    created: u.created,
+    ...(u.remoteExempt ? { remoteExempt: true } : {}),
+  })
   // In the users list a person also has how many passkeys and sign-in identities.
-  const listedUser = (u: UserRec): User => ({ ...publicUser(u), passkeys: u.passkeys.length, sso: u.identities.length, quota: quotaBook.ownOf(u.id) })
+  const listedUser = (u: UserRec): User => ({
+    ...publicUser(u),
+    passkeys: u.passkeys.length,
+    sso: u.identities.length,
+    quota: quotaBook.ownOf(u.id),
+  })
   // The first owner: who the space's own commits are credited to.
   const ownerOf = (s: SpaceRec): UserRec | undefined => {
     const owners = [...s.members].filter(([, m]) => m.role === 'owner').sort((a, b) => a[1].joined - b[1].joined)
@@ -371,12 +483,24 @@ export function createMockServer(options: MockOptions = {}) {
       viaGroups: via,
       // An administrator who is not a member may do everything.
       // An administrator who is not a member manages the space and, without a view, does not read it (docs/api.md, "Viewing a space").
-      permissions: role ? [...ROLE_PERMISSIONS[role]] : accounts ? (['members', 'manage'] as Permission[]) : [...ROLE_PERMISSIONS.owner],
+      permissions: role
+        ? [...ROLE_PERMISSIONS[role]]
+        : accounts
+          ? (['members', 'manage'] as Permission[])
+          : [...ROLE_PERMISSIONS.owner],
       personal: s.personal,
       sync: s.remote ? s.remote.state : 'local',
       inbox: s.inbox,
       disabled: s.disabled,
-      ...(accounts ? { storage: { cache: cacheOf(s), assets: (s.assets ? 'repository' : 'space') as 'space' | 'repository', remote: noticeOf(s) } } : {}),
+      ...(accounts
+        ? {
+            storage: {
+              cache: cacheOf(s),
+              assets: (s.assets ? 'repository' : 'space') as 'space' | 'repository',
+              remote: noticeOf(s),
+            },
+          }
+        : {}),
     }
   }
 
@@ -384,14 +508,27 @@ export function createMockServer(options: MockOptions = {}) {
   const GIB = 1024 ** 3
   const DAY = 86_400_000
   const storage = {
-    remotes: { require: null as 'any' | 'github' | null, scope: 'new' as 'new' | 'all', graceDays: 30, since: null as number | null },
+    remotes: {
+      require: null as 'any' | 'github' | null,
+      scope: 'new' as 'new' | 'all',
+      graceDays: 30,
+      since: null as number | null,
+    },
     hosts: { allowed: [...(options.remote?.hosts ?? DEFAULT_HOSTS)] },
     localSpaces: { maxBytes: null as number | null },
-    cache: { partial: true, evictAfterDays: 14 as number | null, minIdleHours: 24, clonesBytes: null as number | null, minFreeBytes: 10 * GIB as number | null, assetsBytes: 5 * GIB },
+    cache: {
+      partial: true,
+      evictAfterDays: 14 as number | null,
+      minIdleHours: 24,
+      clonesBytes: null as number | null,
+      minFreeBytes: (10 * GIB) as number | null,
+      assetsBytes: 5 * GIB,
+    },
     assets: { newSpaces: false },
   }
   const cacheOf = (s: SpaceRec): CacheState => (!s.remote ? 'local' : s.cache)
-  const ownerExempt = (s: SpaceRec) => [...s.members].some(([id, m]) => m.role === 'owner' && users.get(id)?.remoteExempt === true)
+  const ownerExempt = (s: SpaceRec) =>
+    [...s.members].some(([id, m]) => m.role === 'owner' && users.get(id)?.remoteExempt === true)
   // What the requirement asks of a space that does not meet it yet: the deadline is the space's creation (or the time
   // the requirement took its form, for an older space under scope "all") plus the grace period.
   const noticeOf = (s: SpaceRec): { required: 'any' | 'github'; deadline: string; overdue: boolean } | null => {
@@ -408,13 +545,22 @@ export function createMockServer(options: MockOptions = {}) {
   const requiredBlock = (s: SpaceRec) => {
     const n = noticeOf(s)
     if (!n?.overdue) return null
-    return { message: '这个空间已经过了必须跟随远端仓库的期限，现在只读；连上远端后就能再改。', extra: { require: n.required, deadline: n.deadline } }
+    return {
+      message: '这个空间已经过了必须跟随远端仓库的期限，现在只读；连上远端后就能再改。',
+      extra: { require: n.required, deadline: n.deadline },
+    }
   }
   const storageBody = () => {
     const all = [...spaces.values()]
     const notices = all.map(noticeOf).filter((n) => n !== null)
     const asked = storage.remotes.require
-    const exempt = asked ? all.filter((s) => (s.exempt || ownerExempt(s)) && (asked === 'github' ? s.remote?.credential.type !== 'github' : s.remote === null)).length : 0
+    const exempt = asked
+      ? all.filter(
+          (s) =>
+            (s.exempt || ownerExempt(s)) &&
+            (asked === 'github' ? s.remote?.credential.type !== 'github' : s.remote === null),
+        ).length
+      : 0
     return {
       remotes: { ...storage.remotes, since: storage.remotes.since === null ? null : rfc3339(storage.remotes.since) },
       hosts: { allowed: storage.hosts.allowed, fromFlag: false },
@@ -422,7 +568,11 @@ export function createMockServer(options: MockOptions = {}) {
       cache: storage.cache,
       assets: storage.assets,
       git: { version: '2.53.0', partialClone: true },
-      affected: { inGrace: notices.filter((n) => !n.overdue).length, overdue: notices.filter((n) => n.overdue).length, exempt },
+      affected: {
+        inGrace: notices.filter((n) => !n.overdue).length,
+        overdue: notices.filter((n) => n.overdue).length,
+        exempt,
+      },
     }
   }
   const storageStatus = () => {
@@ -431,7 +581,13 @@ export function createMockServer(options: MockOptions = {}) {
     const aff = storageBody().affected
     const sizeOfClone = (s: SpaceRec) => (s.remote && s.cache === 'evicted' ? 0 : (s.size?.bytes ?? 0))
     return {
-      spaces: { local: count((s) => !s.remote), full: count((s) => !!s.remote && s.cache === 'full'), partial: count((s) => !!s.remote && s.cache === 'partial'), evicted: count((s) => !!s.remote && s.cache === 'evicted'), restoring: 0 },
+      spaces: {
+        local: count((s) => !s.remote),
+        full: count((s) => !!s.remote && s.cache === 'full'),
+        partial: count((s) => !!s.remote && s.cache === 'partial'),
+        evicted: count((s) => !!s.remote && s.cache === 'evicted'),
+        restoring: 0,
+      },
       cloneBytes: all.reduce((n, s) => n + sizeOfClone(s), 0),
       indexBytes: all.reduce((n, s) => n + (s.size ? Math.round(s.size.bytes / 8) : 0), 0),
       assetCacheBytes: all.reduce((n, s) => n + (s.assets?.cacheBytes ?? 0), 0),
@@ -445,38 +601,57 @@ export function createMockServer(options: MockOptions = {}) {
     const section = (v: unknown, known: string[], name: string): Record<string, unknown> => {
       if (v === undefined) return {}
       if (!isRecord(v)) throw new HttpError(400, 'invalid', `${name} 要是一个对象`)
-      for (const k of Object.keys(v)) if (!known.includes(k)) throw new HttpError(400, 'invalid', `${name}.${k} 不是这里的设置`)
+      for (const k of Object.keys(v))
+        if (!known.includes(k)) throw new HttpError(400, 'invalid', `${name}.${k} 不是这里的设置`)
       return v
     }
     const int = (v: unknown, lo: number, hi: number, what: string): number => {
-      if (typeof v !== 'number' || !Number.isInteger(v) || v < lo || v > hi) throw new HttpError(400, 'invalid', `${what} 要在 ${lo} 到 ${hi} 之间`)
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < lo || v > hi)
+        throw new HttpError(400, 'invalid', `${what} 要在 ${lo} 到 ${hi} 之间`)
       return v
     }
     const nullable = (v: unknown, lo: number, what: string): number | null => {
       if (v === null) return null
-      if (typeof v !== 'number' || !Number.isInteger(v) || v < lo) throw new HttpError(400, 'invalid', `${what} 要么是 null，要么至少 ${lo}`)
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < lo)
+        throw new HttpError(400, 'invalid', `${what} 要么是 null，要么至少 ${lo}`)
       return v
     }
-    for (const k of Object.keys(body)) if (!['remotes', 'hosts', 'localSpaces', 'cache', 'assets'].includes(k)) throw new HttpError(400, 'invalid', `不认识 ${k}`)
+    for (const k of Object.keys(body))
+      if (!['remotes', 'hosts', 'localSpaces', 'cache', 'assets'].includes(k))
+        throw new HttpError(400, 'invalid', `不认识 ${k}`)
     const rem = section(body.remotes, ['require', 'scope', 'graceDays'], 'remotes')
     const hosts = section(body.hosts, ['allowed'], 'hosts')
     const local = section(body.localSpaces, ['maxBytes'], 'localSpaces')
-    const cache = section(body.cache, ['partial', 'evictAfterDays', 'minIdleHours', 'clonesBytes', 'minFreeBytes', 'assetsBytes'], 'cache')
+    const cache = section(
+      body.cache,
+      ['partial', 'evictAfterDays', 'minIdleHours', 'clonesBytes', 'minFreeBytes', 'assetsBytes'],
+      'cache',
+    )
     const assets = section(body.assets, ['newSpaces'], 'assets')
     const next = structuredClone(storage)
     if ('require' in rem) {
       // null, "any", or the id of a provider the server has (the mock has GitHub only).
-      if (rem.require !== null && rem.require !== 'any' && rem.require !== 'github') throw new HttpError(400, 'invalid', 'remotes.require 是 null、"any" 或一个提供方的 id')
-      if (rem.require === 'github' && !github.admin().configured) throw new HttpError(409, 'provider_not_configured', '服务器还没有配好 GitHub，不能要求用它', { provider: 'github' })
+      if (rem.require !== null && rem.require !== 'any' && rem.require !== 'github')
+        throw new HttpError(400, 'invalid', 'remotes.require 是 null、"any" 或一个提供方的 id')
+      if (rem.require === 'github' && !github.admin().configured)
+        throw new HttpError(409, 'provider_not_configured', '服务器还没有配好 GitHub，不能要求用它', {
+          provider: 'github',
+        })
       next.remotes.require = rem.require
     }
     if ('scope' in rem) {
-      if (rem.scope !== 'new' && rem.scope !== 'all') throw new HttpError(400, 'invalid', 'remotes.scope 是 "new" 或 "all"')
+      if (rem.scope !== 'new' && rem.scope !== 'all')
+        throw new HttpError(400, 'invalid', 'remotes.scope 是 "new" 或 "all"')
       next.remotes.scope = rem.scope
     }
     if ('graceDays' in rem) next.remotes.graceDays = int(rem.graceDays, 0, 365, 'remotes.graceDays')
     if ('allowed' in hosts) {
-      if (!Array.isArray(hosts.allowed) || hosts.allowed.length === 0 || !hosts.allowed.every((h) => typeof h === 'string' && h.trim() !== '' && !/[\s/:@]/.test(h))) throw new HttpError(400, 'invalid', 'hosts.allowed 要是一个主机名的列表')
+      if (
+        !Array.isArray(hosts.allowed) ||
+        hosts.allowed.length === 0 ||
+        !hosts.allowed.every((h) => typeof h === 'string' && h.trim() !== '' && !/[\s/:@]/.test(h))
+      )
+        throw new HttpError(400, 'invalid', 'hosts.allowed 要是一个主机名的列表')
       next.hosts.allowed = hosts.allowed.map((h) => (h as string).trim().toLowerCase())
     }
     if ('maxBytes' in local) next.localSpaces.maxBytes = nullable(local.maxBytes, 1024 ** 2, 'localSpaces.maxBytes')
@@ -484,30 +659,43 @@ export function createMockServer(options: MockOptions = {}) {
       if (typeof cache.partial !== 'boolean') throw new HttpError(400, 'invalid', 'cache.partial 要是布尔值')
       next.cache.partial = cache.partial
     }
-    if ('evictAfterDays' in cache) next.cache.evictAfterDays = cache.evictAfterDays === null ? null : int(cache.evictAfterDays, 1, 365, 'cache.evictAfterDays')
+    if ('evictAfterDays' in cache)
+      next.cache.evictAfterDays =
+        cache.evictAfterDays === null ? null : int(cache.evictAfterDays, 1, 365, 'cache.evictAfterDays')
     if ('minIdleHours' in cache) next.cache.minIdleHours = int(cache.minIdleHours, 1, 720, 'cache.minIdleHours')
     if ('clonesBytes' in cache) next.cache.clonesBytes = nullable(cache.clonesBytes, GIB, 'cache.clonesBytes')
     if ('minFreeBytes' in cache) next.cache.minFreeBytes = nullable(cache.minFreeBytes, 0, 'cache.minFreeBytes')
-    if ('assetsBytes' in cache) next.cache.assetsBytes = int(cache.assetsBytes, 64 * 1024 ** 2, Number.MAX_SAFE_INTEGER, 'cache.assetsBytes')
+    if ('assetsBytes' in cache)
+      next.cache.assetsBytes = int(cache.assetsBytes, 64 * 1024 ** 2, Number.MAX_SAFE_INTEGER, 'cache.assetsBytes')
     if ('newSpaces' in assets) {
       if (typeof assets.newSpaces !== 'boolean') throw new HttpError(400, 'invalid', 'assets.newSpaces 要是布尔值')
       next.assets.newSpaces = assets.newSpaces
     }
     // The requirement's "since" is when it took its present form.
     if (next.remotes.require === null) next.remotes.since = null
-    else if (storage.remotes.require !== next.remotes.require || storage.remotes.scope !== next.remotes.scope) next.remotes.since = now()
+    else if (storage.remotes.require !== next.remotes.require || storage.remotes.scope !== next.remotes.scope)
+      next.remotes.since = now()
     Object.assign(storage, next)
   }
 
   // Why writes fail right now, if they do (docs/api.md: 503 `unavailable`).
   const blockedReason = (s: SpaceRec): string | null => {
     if (!s.remote) return null
-    if (s.remote.state === 'offline') return `远端仓库现在连不上${s.remote.error ? `（${s.remote.error}）` : ''}。这次修改没有写入，已写的草稿还在。`
-    if (s.remote.state === 'rewritten') return '远端仓库的历史被改写过，这个空间已暂停写入。请空间的所有者在空间设置里查看并决定是否接受远端的历史。'
+    if (s.remote.state === 'offline')
+      return `远端仓库现在连不上${s.remote.error ? `（${s.remote.error}）` : ''}。这次修改没有写入，已写的草稿还在。`
+    if (s.remote.state === 'rewritten')
+      return '远端仓库的历史被改写过，这个空间已暂停写入。请空间的所有者在空间设置里查看并决定是否接受远端的历史。'
     return null
   }
 
-  const addSpace = (id: string, name: string, ownerId: string, personal: boolean, seed: boolean, inbox = options.inbox ?? DEFAULT_INBOX) => {
+  const addSpace = (
+    id: string,
+    name: string,
+    ownerId: string,
+    personal: boolean,
+    seed: boolean,
+    inbox = options.inbox ?? DEFAULT_INBOX,
+  ) => {
     const rec: SpaceRec = {
       id,
       name,
@@ -529,12 +717,30 @@ export function createMockServer(options: MockOptions = {}) {
       exempt: false,
       assets: null,
     }
-    rec.store = createSpaceStore({ now, random, seed, author: () => ownerOf(rec)?.name ?? 'Local user', blocked: () => blockedReason(rec), required: () => requiredBlock(rec), inbox: () => rec.inbox, fileExists: (path) => rec.files.read(path.split('/')) !== null })
+    rec.store = createSpaceStore({
+      now,
+      random,
+      seed,
+      author: () => ownerOf(rec)?.name ?? 'Local user',
+      blocked: () => blockedReason(rec),
+      required: () => requiredBlock(rec),
+      inbox: () => rec.inbox,
+      fileExists: (path) => rec.files.read(path.split('/')) !== null,
+    })
     spaces.set(id, rec)
     return rec
   }
 
-  const addUser = (input: { username: string; name?: string; role: Role; password?: string; identity?: { sub: string; label: string; provider: string } }, seedSpace: boolean) => {
+  const addUser = (
+    input: {
+      username: string
+      name?: string
+      role: Role
+      password?: string
+      identity?: { sub: string; label: string; provider: string }
+    },
+    seedSpace: boolean,
+  ) => {
     const id = newId((x) => users.has(x))
     const u: UserRec = {
       id,
@@ -550,10 +756,23 @@ export function createMockServer(options: MockOptions = {}) {
       identities: [],
       passkeys: [],
     }
-    if (input.identity) u.identities.push({ id: newId(() => false), providerSlug: input.identity.provider, label: input.identity.label, created: rfc3339(now()), sub: input.identity.sub })
+    if (input.identity)
+      u.identities.push({
+        id: newId(() => false),
+        providerSlug: input.identity.provider,
+        label: input.identity.label,
+        created: rfc3339(now()),
+        sub: input.identity.sub,
+      })
     users.set(id, u)
     // Every account gets a personal space.
-    addSpace(newId((x) => spaces.has(x)), SPACE_NAME, id, true, seedSpace)
+    addSpace(
+      newId((x) => spaces.has(x)),
+      SPACE_NAME,
+      id,
+      true,
+      seedSpace,
+    )
     return u
   }
 
@@ -568,7 +787,16 @@ export function createMockServer(options: MockOptions = {}) {
     }
     if (options.invite) {
       const id = newId((x) => invites.has(x))
-      invites.set(id, { id, tokenHash: hashOf(options.invite.token), role: options.invite.role ?? 'member', created: now(), expires: now() + 7 * 86_400_000, createdBy: [...users.keys()][0] ?? '', used: false, fill: options.invite.fill })
+      invites.set(id, {
+        id,
+        tokenHash: hashOf(options.invite.token),
+        role: options.invite.role ?? 'member',
+        created: now(),
+        expires: now() + 7 * 86_400_000,
+        createdBy: [...users.keys()][0] ?? '',
+        used: false,
+        fill: options.invite.fill,
+      })
     }
   }
 
@@ -624,7 +852,12 @@ export function createMockServer(options: MockOptions = {}) {
   const checkUsername = (raw: unknown): string => {
     if (typeof raw !== 'string') throw new HttpError(400, 'invalid', '缺少用户名')
     const name = raw.toLowerCase()
-    if (!USERNAME_RE.test(name)) throw new HttpError(400, 'invalid', '用户名是 2 到 32 个字符，只能用小写字母、数字、点、下划线和连字符，且以字母或数字开头')
+    if (!USERNAME_RE.test(name))
+      throw new HttpError(
+        400,
+        'invalid',
+        '用户名是 2 到 32 个字符，只能用小写字母、数字、点、下划线和连字符，且以字母或数字开头',
+      )
     return name
   }
   const checkPassword = (raw: unknown, what = '密码'): string => {
@@ -635,7 +868,8 @@ export function createMockServer(options: MockOptions = {}) {
   }
   const checkName = (raw: unknown, fallback?: string): string => {
     if (raw === undefined && fallback !== undefined) return fallback
-    if (typeof raw !== 'string' || raw.trim() === '' || codePoints(raw.trim()) > 80) throw new HttpError(400, 'invalid', '名称需要 1 到 80 个字符')
+    if (typeof raw !== 'string' || raw.trim() === '' || codePoints(raw.trim()) > 80)
+      throw new HttpError(400, 'invalid', '名称需要 1 到 80 个字符')
     return raw.trim()
   }
   // The inbox is a folder path that is never empty.
@@ -653,23 +887,38 @@ export function createMockServer(options: MockOptions = {}) {
     const x = captchaSettings(c)
     return x.on && (x.when === 'always' || (captchaFails.get(`${c}:${key}`) ?? 0) >= x.failures)
   }
-  const noteCaptchaFailure = (c: CaptchaContext, key: string) => captchaFails.set(`${c}:${key}`, (captchaFails.get(`${c}:${key}`) ?? 0) + 1)
+  const noteCaptchaFailure = (c: CaptchaContext, key: string) =>
+    captchaFails.set(`${c}:${key}`, (captchaFails.get(`${c}:${key}`) ?? 0) + 1)
   // What a form sent with its request must be right when the context asked for one.
   const checkCaptcha = (c: CaptchaContext, key: string, sent: unknown) => {
     if (!captchaNeeded(c, key)) return
     const x = isRecord(sent) ? sent : {}
-    const ok = book.security.captcha.provider === 'image' ? book.takeChallenge(x.id, x.answer) : typeof x.token === 'string' && x.token !== '' && x.token !== 'bad'
+    const ok =
+      book.security.captcha.provider === 'image'
+        ? book.takeChallenge(x.id, x.answer)
+        : typeof x.token === 'string' && x.token !== '' && x.token !== 'bad'
     if (!ok) throw new HttpError(400, 'captcha_failed', '验证码不对或已过期')
   }
   const captchaFor = (q: URLSearchParams): MockResponse => {
     const c = q.get('ctx') ?? ''
-    if (c !== 'login' && c !== 'invite' && c !== 'setup' && c !== 'forgot' && c !== 'register') throw new HttpError(400, 'invalid', 'ctx 不对')
+    if (c !== 'login' && c !== 'invite' && c !== 'setup' && c !== 'forgot' && c !== 'register')
+      throw new HttpError(400, 'invalid', 'ctx 不对')
     const key = c === 'login' ? (q.get('account') ?? '').toLowerCase() : 'ip'
     // `login` asks about a name; with none given, only an `always` context is known to need one.
-    if (!captchaNeeded(c, key)) return { status: 200, headers: { 'Cache-Control': 'no-store' }, body: { required: false } }
+    if (!captchaNeeded(c, key))
+      return { status: 200, headers: { 'Cache-Control': 'no-store' }, body: { required: false } }
     const provider = book.security.captcha.provider
-    if (provider !== 'image') return { status: 200, headers: { 'Cache-Control': 'no-store' }, body: { required: true, provider, siteKey: book.security.captcha.siteKey } }
-    return { status: 200, headers: { 'Cache-Control': 'no-store' }, body: { required: true, provider, siteKey: '', ...book.issue() } }
+    if (provider !== 'image')
+      return {
+        status: 200,
+        headers: { 'Cache-Control': 'no-store' },
+        body: { required: true, provider, siteKey: book.security.captcha.siteKey },
+      }
+    return {
+      status: 200,
+      headers: { 'Cache-Control': 'no-store' },
+      body: { required: true, provider, siteKey: '', ...book.issue() },
+    }
   }
 
   // --- sign in ---
@@ -701,16 +950,29 @@ export function createMockServer(options: MockOptions = {}) {
       throw new HttpError(429, 'rate_limited', '尝试次数太多，请稍后再试', { __retryAfter: wait })
     }
     const u = [...users.values()].find((x) => x.username === username)
-    const ok = !!u && !u.disabled && u.passwordHash !== undefined && typeof body.password === 'string' && u.passwordHash === hashOf(body.password)
+    const ok =
+      !!u &&
+      !u.disabled &&
+      u.passwordHash !== undefined &&
+      typeof body.password === 'string' &&
+      u.passwordHash === hashOf(body.password)
     if (!ok) {
       failures.set(username, { count: (live?.count ?? 0) + 1, first: live?.first ?? now() })
       noteCaptchaFailure('login', username)
-      book.record('login_failed', { user: u?.id, username, detail: { method: 'password', reason: u?.disabled ? 'disabled' : 'bad_password' } })
+      book.record('login_failed', {
+        user: u?.id,
+        username,
+        detail: { method: 'password', reason: u?.disabled ? 'disabled' : 'bad_password' },
+      })
       throw new HttpError(401, 'unauthenticated', '用户名或密码不对')
     }
     // The password is right: the rules of who may use one come next.
     if (book.ssoOnlyInEffect() && u.role !== 'admin') {
-      book.record('login_failed', { user: u.id, username, detail: { method: 'password', reason: 'local_login_refused' } })
+      book.record('login_failed', {
+        user: u.id,
+        username,
+        detail: { method: 'password', reason: 'local_login_refused' },
+      })
       throw new HttpError(403, 'local_login_refused', '这个服务器只允许通过单点登录进入')
     }
     const required = book.requiredOf(u)
@@ -721,7 +983,11 @@ export function createMockServer(options: MockOptions = {}) {
     failures.delete(username)
     captchaFails.delete(`login:${username}`)
     book.record('login', { user: u.id, username, detail: { method: 'password' } })
-    return { status: 200, body: { user: publicUser(u) }, headers: { 'Set-Cookie': startSession(u, { held: required && u.passkeys.length === 0 }) } }
+    return {
+      status: 200,
+      body: { user: publicUser(u) },
+      headers: { 'Set-Cookie': startSession(u, { held: required && u.passkeys.length === 0 }) },
+    }
   }
 
   const mailBook = createMailBook({
@@ -777,9 +1043,12 @@ export function createMockServer(options: MockOptions = {}) {
   const acceptInvite = (body: Record<string, unknown>): MockResponse => {
     checkCaptcha('invite', 'ip', body.captcha)
     const inv = checkInviteToken(body.token)
-    if (book.ssoOnlyInEffect() && inv.role === 'member') throw new HttpError(403, 'local_login_refused', '这个服务器只允许通过单点登录创建账号', { ssoOnly: true })
+    if (book.ssoOnlyInEffect() && inv.role === 'member')
+      throw new HttpError(403, 'local_login_refused', '这个服务器只允许通过单点登录创建账号', { ssoOnly: true })
     // A field left empty takes what the invite fills in.
-    const username = checkUsername(body.username === undefined || body.username === '' ? (inv.fill?.username ?? body.username) : body.username)
+    const username = checkUsername(
+      body.username === undefined || body.username === '' ? (inv.fill?.username ?? body.username) : body.username,
+    )
     const password = checkPassword(body.password)
     const given = body.name === undefined || body.name === '' ? inv.fill?.name : body.name
     const name = given === undefined || given === '' ? username : checkName(given)
@@ -794,24 +1063,40 @@ export function createMockServer(options: MockOptions = {}) {
   // --- single sign-on (the provider is a fake that signs in one person) ---
   const ssoStart = (ctx: Ctx, rec: ProviderRec, body: Record<string, unknown>, legacy: boolean): MockResponse => {
     const intent = body.intent === undefined || body.intent === '' ? 'login' : body.intent
-    if (typeof intent !== 'string' || !['login', 'setup', 'invite', 'link'].includes(intent)) throw new HttpError(400, 'invalid', 'intent 不对')
+    if (typeof intent !== 'string' || !['login', 'setup', 'invite', 'link'].includes(intent))
+      throw new HttpError(400, 'invalid', 'intent 不对')
     let userId: string | null = null
     if (intent === 'link') userId = requireUser(ctx).id
     const state = randomString(24)
-    oidcAttempts.set(state, { provider: rec.view.slug, intent, token: typeof body.token === 'string' ? body.token : '', ret: plainPath(body.return), userId, created: now(), used: false })
+    oidcAttempts.set(state, {
+      provider: rec.view.slug,
+      intent,
+      token: typeof body.token === 'string' ? body.token : '',
+      ret: plainPath(body.return),
+      userId,
+      created: now(),
+      used: false,
+    })
     const callback = legacy ? '/api/auth/oidc/callback' : `/api/auth/${rec.view.kind}/${rec.view.slug}/callback`
     const url = `${callback}?state=${state}&sub=${encodeURIComponent(rec.sub)}`
     return { status: 200, body: { url }, headers: { 'Set-Cookie': setCookie(OIDC_COOKIE, state, 600) } }
   }
   // A navigation (`GET …/start`) that answers with a redirect to the pretend identity provider.
   const ssoNavigate = (ctx: Ctx, rec: ProviderRec | undefined, q: URLSearchParams): MockResponse => {
-    if (!rec || !rec.view.enabled) return { status: 303, headers: { Location: '/login?sso_error=provider_unavailable' } }
+    if (!rec || !rec.view.enabled)
+      return { status: 303, headers: { Location: '/login?sso_error=provider_unavailable' } }
     const r = ssoStart(ctx, rec, { intent: 'login', return: q.get('return') ?? '/' }, false)
-    return { status: 303, headers: { Location: (r.body as { url: string }).url, 'Set-Cookie': r.headers!['Set-Cookie'] } }
+    return {
+      status: 303,
+      headers: { Location: (r.body as { url: string }).url, 'Set-Cookie': r.headers!['Set-Cookie'] },
+    }
   }
 
   const uniqueUsername = (wanted: string) => {
-    let base = wanted.toLowerCase().replace(/[^a-z0-9._-]/g, '').replace(/^[^a-z0-9]+/, '')
+    let base = wanted
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]/g, '')
+      .replace(/^[^a-z0-9]+/, '')
     if (base.length < 2) base = (base + 'user').slice(0, 32)
     base = base.slice(0, 28)
     let name = base
@@ -823,9 +1108,19 @@ export function createMockServer(options: MockOptions = {}) {
     const state = q.get('state') ?? ''
     const attempt = oidcAttempts.get(state)
     const rec = book.providers.get(slug)
-    const redirect = (to: string, session?: string): MockResponse => ({ status: 303, headers: { Location: to, ...(session ? { 'Set-Cookie': session } : {}) } })
+    const redirect = (to: string, session?: string): MockResponse => ({
+      status: 303,
+      headers: { Location: to, ...(session ? { 'Set-Cookie': session } : {}) },
+    })
     // Nothing changes unless this browser started the attempt, it is unused and young.
-    if (!attempt || attempt.provider !== slug || attempt.used || ctx.cookies[OIDC_COOKIE] !== state || now() - attempt.created > 600_000) return redirect('/login?sso_error=expired')
+    if (
+      !attempt ||
+      attempt.provider !== slug ||
+      attempt.used ||
+      ctx.cookies[OIDC_COOKIE] !== state ||
+      now() - attempt.created > 600_000
+    )
+      return redirect('/login?sso_error=expired')
     attempt.used = true
     const fail = (code: string) => {
       book.record('login_failed', { detail: { method: rec?.view.kind ?? 'oidc', provider: slug, reason: code } })
@@ -848,20 +1143,34 @@ export function createMockServer(options: MockOptions = {}) {
           return redirect(attempt.ret, startSession(holder))
         }
         // The one account with this verified address, when the provider is allowed to merge by it.
-        const merge = rec.view.mergeVerifiedEmail ? [...users.values()].filter((u) => u.email.toLowerCase() === claims.label && u.emailVerified) : []
+        const merge = rec.view.mergeVerifiedEmail
+          ? [...users.values()].filter((u) => u.email.toLowerCase() === claims.label && u.emailVerified)
+          : []
         if (merge.length === 1 && merge[0].role !== 'admin' && !merge[0].disabled) {
-          merge[0].identities.push({ id: newId(() => false), providerSlug: slug, label: claims.label, created: rfc3339(now()), sub })
+          merge[0].identities.push({
+            id: newId(() => false),
+            providerSlug: slug,
+            label: claims.label,
+            created: rfc3339(now()),
+            sub,
+          })
           book.record('identity_linked', { user: merge[0].id, detail: { provider: slug, by: 'email' } })
           return redirect(attempt.ret, startSession(merge[0]))
         }
         if (merge.length > 1 || !rec.view.autoCreate) return fail('no_account')
-        const u = addUser({ username: uniqueUsername(claims.username), name: claims.name, role: 'member', identity }, false)
+        const u = addUser(
+          { username: uniqueUsername(claims.username), name: claims.name, role: 'member', identity },
+          false,
+        )
         book.record('login', { user: u.id, username: u.username, detail: { method, provider: slug, created: true } })
         return redirect(attempt.ret, startSession(u))
       }
       case 'setup': {
         if (users.size > 0 || attempt.token !== setupToken) return fail('setup_invalid')
-        const u = addUser({ username: uniqueUsername(claims.username), name: claims.name, role: 'admin', identity }, false)
+        const u = addUser(
+          { username: uniqueUsername(claims.username), name: claims.name, role: 'admin', identity },
+          false,
+        )
         return redirect(attempt.ret, startSession(u))
       }
       case 'invite': {
@@ -872,7 +1181,10 @@ export function createMockServer(options: MockOptions = {}) {
           return fail('invite_invalid')
         }
         if (holder) return fail('identity_in_use')
-        const u = addUser({ username: uniqueUsername(claims.username), name: claims.name, role: inv.role, identity }, false)
+        const u = addUser(
+          { username: uniqueUsername(claims.username), name: claims.name, role: inv.role, identity },
+          false,
+        )
         inv.used = true
         return redirect(attempt.ret, startSession(u))
       }
@@ -882,7 +1194,13 @@ export function createMockServer(options: MockOptions = {}) {
         if (!me || me.id !== attempt.userId) return fail('expired')
         if (holder && holder.id !== me.id) return fail('identity_in_use')
         if (!holder) {
-          me.identities.push({ id: newId(() => false), providerSlug: slug, label: claims.label, created: rfc3339(now()), sub })
+          me.identities.push({
+            id: newId(() => false),
+            providerSlug: slug,
+            label: claims.label,
+            created: rfc3339(now()),
+            sub,
+          })
           book.record('identity_linked', { user: me.id, detail: { provider: slug, by: 'user' } })
         }
         return redirect(attempt.ret)
@@ -892,7 +1210,13 @@ export function createMockServer(options: MockOptions = {}) {
 
   // --- passkeys ---
   const b64u = (s: string) => btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-  const passkeyView = (p: PasskeyRec) => ({ id: p.id, name: p.name, created: p.created, lastUsed: p.lastUsed, synced: p.synced })
+  const passkeyView = (p: PasskeyRec) => ({
+    id: p.id,
+    name: p.name,
+    created: p.created,
+    lastUsed: p.lastUsed,
+    synced: p.synced,
+  })
   const needPasskeys = () => {
     if (!book.passkeyOn()) throw new HttpError(404, 'not_found', '没有这个接口')
   }
@@ -904,15 +1228,23 @@ export function createMockServer(options: MockOptions = {}) {
   const takeCeremony = (id: string | null, kind: 'login' | 'register') => {
     const c = id ? ceremonies.get(id) : undefined
     if (id) ceremonies.delete(id)
-    if (!c || c.kind !== kind || now() - c.created > 300_000) throw new HttpError(kind === 'login' ? 401 : 400, 'passkey_failed', 'passkey 没有通过验证')
+    if (!c || c.kind !== kind || now() - c.created > 300_000)
+      throw new HttpError(kind === 'login' ? 401 : 400, 'passkey_failed', 'passkey 没有通过验证')
     return c
   }
   const passkeyBegin = (body: Record<string, unknown>): MockResponse => {
     needPasskeys()
     const username = typeof body.username === 'string' ? body.username.toLowerCase() : ''
     const u = username ? [...users.values()].find((x) => x.username === username) : undefined
-    const ids = u && u.passkeys.length > 0 ? u.passkeys.map((p) => p.credId) : username ? [b64u(`made-up:${username}`)] : null
-    const options = { challenge: b64u(randomString(16)), rpId: new URL(publicUrl ?? 'http://localhost').hostname, timeout: 300_000, userVerification: 'required', ...(ids ? { allowCredentials: ids.map((id) => ({ type: 'public-key', id })) } : {}) }
+    const ids =
+      u && u.passkeys.length > 0 ? u.passkeys.map((p) => p.credId) : username ? [b64u(`made-up:${username}`)] : null
+    const options = {
+      challenge: b64u(randomString(16)),
+      rpId: new URL(publicUrl ?? 'http://localhost').hostname,
+      timeout: 300_000,
+      userVerification: 'required',
+      ...(ids ? { allowCredentials: ids.map((id) => ({ type: 'public-key', id })) } : {}),
+    }
     return { status: 200, body: { ceremony: newCeremony({ kind: 'login', username }), options } }
   }
   const passkeyFinish = (q: URLSearchParams, body: Record<string, unknown>): MockResponse => {
@@ -922,41 +1254,66 @@ export function createMockServer(options: MockOptions = {}) {
     const owner = [...users.values()].find((u) => u.passkeys.some((p) => p.credId === credId))
     const key = owner?.passkeys.find((p) => p.credId === credId)
     const fail = (reason: string) => {
-      book.record('login_failed', { user: owner?.id, username: c.username || owner?.username, detail: { method: 'passkey', reason } })
+      book.record('login_failed', {
+        user: owner?.id,
+        username: c.username || owner?.username,
+        detail: { method: 'passkey', reason },
+      })
       return new HttpError(401, 'passkey_failed', 'passkey 没有通过验证')
     }
     if (!owner || !key || owner.disabled || (c.username && owner.username !== c.username)) throw fail('passkey_failed')
-    if (book.ssoOnlyInEffect() && owner.role !== 'admin') throw new HttpError(403, 'local_login_refused', '这个服务器只允许通过单点登录进入')
+    if (book.ssoOnlyInEffect() && owner.role !== 'admin')
+      throw new HttpError(403, 'local_login_refused', '这个服务器只允许通过单点登录进入')
     key.lastUsed = rfc3339(now())
     book.record('login', { user: owner.id, username: owner.username, detail: { method: 'passkey' } })
-    return { status: 200, body: { user: publicUser(owner), return: plainPath(q.get('return')) }, headers: { 'Set-Cookie': startSession(owner) } }
+    return {
+      status: 200,
+      body: { user: publicUser(owner), return: plainPath(q.get('return')) },
+      headers: { 'Set-Cookie': startSession(owner) },
+    }
   }
   const RECENT_MS = 600_000
   const registerBegin = (ctx: Ctx, me: UserRec, body: Record<string, unknown>): MockResponse => {
     needPasskeys()
     const name = body.name === undefined || body.name === '' ? 'Passkey' : body.name
-    if (typeof name !== 'string' || Array.from(name.trim()).length < 1 || Array.from(name).length > 64) throw new HttpError(400, 'invalid', 'name 要 1 到 64 个字符')
-    if (now() - (sessionAt.get(ctx.token ?? '') ?? 0) > RECENT_MS) throw new HttpError(403, 'recent_login_required', '需要刚刚登录过')
+    if (typeof name !== 'string' || Array.from(name.trim()).length < 1 || Array.from(name).length > 64)
+      throw new HttpError(400, 'invalid', 'name 要 1 到 64 个字符')
+    if (now() - (sessionAt.get(ctx.token ?? '') ?? 0) > RECENT_MS)
+      throw new HttpError(403, 'recent_login_required', '需要刚刚登录过')
     if (me.passkeys.length >= 20) throw new HttpError(409, 'too_many_passkeys', '最多 20 个 passkey')
     const options = {
       challenge: b64u(randomString(16)),
       rp: { name: 'PetalBook', id: new URL(publicUrl ?? 'http://localhost').hostname },
       user: { id: b64u(me.id), name: me.username, displayName: me.name },
-      pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+      pubKeyCredParams: [
+        { type: 'public-key', alg: -7 },
+        { type: 'public-key', alg: -257 },
+      ],
       timeout: 300_000,
       attestation: 'none',
       authenticatorSelection: { residentKey: 'preferred', userVerification: 'required' },
       excludeCredentials: me.passkeys.map((p) => ({ type: 'public-key', id: p.credId })),
     }
-    return { status: 200, body: { ceremony: newCeremony({ kind: 'register', userId: me.id, name: name.trim() }), options } }
+    return {
+      status: 200,
+      body: { ceremony: newCeremony({ kind: 'register', userId: me.id, name: name.trim() }), options },
+    }
   }
   const registerFinish = (ctx: Ctx, me: UserRec, q: URLSearchParams, body: Record<string, unknown>): MockResponse => {
     needPasskeys()
     const c = takeCeremony(q.get('ceremony'), 'register')
     const credId = typeof body.id === 'string' ? body.id : ''
     if (c.userId !== me.id || credId === '') throw new HttpError(400, 'passkey_failed', 'passkey 没有通过验证')
-    if ([...users.values()].some((u) => u.passkeys.some((p) => p.credId === credId))) throw new HttpError(409, 'exists', '这个 passkey 已经登记过了')
-    const rec: PasskeyRec = { id: newId(() => false), credId, name: c.name ?? 'Passkey', created: rfc3339(now()), lastUsed: null, synced: body.synced === true }
+    if ([...users.values()].some((u) => u.passkeys.some((p) => p.credId === credId)))
+      throw new HttpError(409, 'exists', '这个 passkey 已经登记过了')
+    const rec: PasskeyRec = {
+      id: newId(() => false),
+      credId,
+      name: c.name ?? 'Passkey',
+      created: rfc3339(now()),
+      lastUsed: null,
+      synced: body.synced === true,
+    }
     me.passkeys.push(rec)
     // The first passkey lifts the hold at once.
     if (ctx.token) held.delete(ctx.token)
@@ -964,7 +1321,10 @@ export function createMockServer(options: MockOptions = {}) {
     return { status: 201, body: { passkeys: me.passkeys.map(passkeyView) } }
   }
   // Without a password, another identity or another passkey, nothing is left to sign in with.
-  const lastWay = (u: UserRec, except: 'passkey' | 'identity') => u.passwordHash === undefined && u.identities.length + u.passkeys.length <= 1 && (except === 'passkey' ? u.passkeys.length === 1 : u.identities.length === 1)
+  const lastWay = (u: UserRec, except: 'passkey' | 'identity') =>
+    u.passwordHash === undefined &&
+    u.identities.length + u.passkeys.length <= 1 &&
+    (except === 'passkey' ? u.passkeys.length === 1 : u.identities.length === 1)
 
   // --- account ---
   const accountInfo = (u: UserRec) => ({
@@ -972,7 +1332,14 @@ export function createMockServer(options: MockOptions = {}) {
     hasPassword: u.passwordHash !== undefined,
     identities: u.identities.map((i) => {
       const p = book.providers.get(i.providerSlug)
-      return { id: i.id, provider: p?.view.name ?? 'sso.example', providerSlug: p ? i.providerSlug : '', kind: p?.view.kind ?? '', label: i.label, created: i.created }
+      return {
+        id: i.id,
+        provider: p?.view.name ?? 'sso.example',
+        providerSlug: p ? i.providerSlug : '',
+        kind: p?.view.kind ?? '',
+        label: i.label,
+        created: i.created,
+      }
     }),
     passkeys: u.passkeys.map(passkeyView),
     groups: groupBook.inGroups(u.id),
@@ -1012,7 +1379,11 @@ export function createMockServer(options: MockOptions = {}) {
     const i = u.identities.findIndex((x) => x.id === id)
     if (i < 0) throw new HttpError(404, 'not_found', '没有这个登录方式')
     if (lastWay(u, 'identity')) throw new HttpError(409, 'conflict', '这是你唯一的登录方式，移除后就无法登录了')
-    book.record('identity_unlinked', { actor: u.id, user: u.id, detail: { provider: u.identities[i].providerSlug, by: 'user' } })
+    book.record('identity_unlinked', {
+      actor: u.id,
+      user: u.id,
+      detail: { provider: u.identities[i].providerSlug, by: 'user' },
+    })
     u.identities.splice(i, 1)
   }
 
@@ -1020,15 +1391,23 @@ export function createMockServer(options: MockOptions = {}) {
   const patchUser = (me: UserRec, id: string, body: Record<string, unknown>) => {
     const u = users.get(id)
     if (!u) throw new HttpError(404, 'not_found', '没有这个用户')
-    if (body.role !== undefined && body.role !== 'admin' && body.role !== 'member') throw new HttpError(400, 'invalid', 'role 不对')
-    if (body.disabled !== undefined && typeof body.disabled !== 'boolean') throw new HttpError(400, 'invalid', 'disabled 要是布尔值')
-    if (body.passkeyRequired !== undefined && typeof body.passkeyRequired !== 'boolean') throw new HttpError(400, 'invalid', 'passkeyRequired 要是布尔值')
-    if (body.emailVerified !== undefined && typeof body.emailVerified !== 'boolean') throw new HttpError(400, 'invalid', 'emailVerified 要是布尔值')
-    if (body.siteAdmin !== undefined && typeof body.siteAdmin !== 'boolean') throw new HttpError(400, 'invalid', 'siteAdmin 要是布尔值')
-    if (body.remoteExempt !== undefined && typeof body.remoteExempt !== 'boolean') throw new HttpError(400, 'invalid', 'remoteExempt 要是布尔值')
+    if (body.role !== undefined && body.role !== 'admin' && body.role !== 'member')
+      throw new HttpError(400, 'invalid', 'role 不对')
+    if (body.disabled !== undefined && typeof body.disabled !== 'boolean')
+      throw new HttpError(400, 'invalid', 'disabled 要是布尔值')
+    if (body.passkeyRequired !== undefined && typeof body.passkeyRequired !== 'boolean')
+      throw new HttpError(400, 'invalid', 'passkeyRequired 要是布尔值')
+    if (body.emailVerified !== undefined && typeof body.emailVerified !== 'boolean')
+      throw new HttpError(400, 'invalid', 'emailVerified 要是布尔值')
+    if (body.siteAdmin !== undefined && typeof body.siteAdmin !== 'boolean')
+      throw new HttpError(400, 'invalid', 'siteAdmin 要是布尔值')
+    if (body.remoteExempt !== undefined && typeof body.remoteExempt !== 'boolean')
+      throw new HttpError(400, 'invalid', 'remoteExempt 要是布尔值')
     // The requirement of a remote is the site's: only a site administrator exempts anyone from it.
-    if (body.remoteExempt !== undefined && !isSiteAdmin(me)) throw new HttpError(403, 'forbidden', '只有全站管理员能免除远端要求')
-    if (body.email !== undefined && (typeof body.email !== 'string' || body.email.length > 254)) throw new HttpError(400, 'invalid', '邮箱不合法')
+    if (body.remoteExempt !== undefined && !isSiteAdmin(me))
+      throw new HttpError(403, 'forbidden', '只有全站管理员能免除远端要求')
+    if (body.email !== undefined && (typeof body.email !== 'string' || body.email.length > 254))
+      throw new HttpError(400, 'invalid', '邮箱不合法')
     // A refused quota changes nothing: it is checked before the rest is applied.
     const applyQuota = body.quota === undefined ? null : quotaBook.patch(u.id, body.quota, isSiteAdmin(me))
     const role = (body.role as Role | undefined) ?? u.role
@@ -1038,16 +1417,28 @@ export function createMockServer(options: MockOptions = {}) {
     const after = [...users.values()].map((x) => (x.id === u.id ? { ...x, role, disabled } : x)) as UserRec[]
     if (enabledAdmins(after) === 0) throw new HttpError(409, 'conflict', '至少要留一个可用的管理员')
     // While only single sign-on lets people in, someone with a password has to be left to fix it.
-    if (book.ssoOnlyInEffect() && after.filter((x) => x.role === 'admin' && !x.disabled && x.passwordHash !== undefined).length === 0) throw new HttpError(409, 'conflict', '至少要留一个带密码的可用管理员')
-    if (body.passkeyRequired === true && !(book.security.passkeys.enabled && book.view().passkeys.available)) throw new HttpError(400, 'passkey_unavailable', '现在不能使用 passkey')
+    if (
+      book.ssoOnlyInEffect() &&
+      after.filter((x) => x.role === 'admin' && !x.disabled && x.passwordHash !== undefined).length === 0
+    )
+      throw new HttpError(409, 'conflict', '至少要留一个带密码的可用管理员')
+    if (body.passkeyRequired === true && !(book.security.passkeys.enabled && book.view().passkeys.available))
+      throw new HttpError(400, 'passkey_unavailable', '现在不能使用 passkey')
     const changed: Record<string, unknown> = {}
     const note = (k: string, v: unknown) => (changed[k] = v)
     // A site administrator is an administrator of the whole server (3.3): only one may make or end another.
-    if ((body.siteAdmin !== undefined || isSiteAdmin(u)) && !isSiteAdmin(me)) throw new HttpError(403, 'forbidden', '只有全站管理员可以改全站管理员')
+    if ((body.siteAdmin !== undefined || isSiteAdmin(u)) && !isSiteAdmin(me))
+      throw new HttpError(403, 'forbidden', '只有全站管理员可以改全站管理员')
     if (body.siteAdmin === true && role !== 'admin') throw new HttpError(400, 'invalid', '全站管理员必须是管理员')
     const wasSite = isSiteAdmin(u)
     const nowSite = role === 'admin' && (body.siteAdmin !== undefined ? body.siteAdmin === true : u.siteAdmin !== false)
-    if (wasSite && !u.disabled && (!nowSite || disabled) && [...users.values()].filter((x) => x.id !== u.id && isSiteAdmin(x) && !x.disabled).length === 0) throw new HttpError(409, 'conflict', '至少要留一个可用的全站管理员')
+    if (
+      wasSite &&
+      !u.disabled &&
+      (!nowSite || disabled) &&
+      [...users.values()].filter((x) => x.id !== u.id && isSiteAdmin(x) && !x.disabled).length === 0
+    )
+      throw new HttpError(409, 'conflict', '至少要留一个可用的全站管理员')
     if (nowSite !== wasSite) note('siteAdmin', nowSite)
     u.siteAdmin = nowSite
     if (role !== u.role) note('role', role)
@@ -1082,21 +1473,37 @@ export function createMockServer(options: MockOptions = {}) {
     const role = body.role === undefined ? 'member' : body.role
     if (role !== 'admin' && role !== 'member') throw new HttpError(400, 'invalid', 'role 不对')
     const days = body.days === undefined ? 7 : body.days
-    if (typeof days !== 'number' || !Number.isInteger(days) || days < 1 || days > 30) throw new HttpError(400, 'invalid', 'days 要在 1 到 30 之间')
+    if (typeof days !== 'number' || !Number.isInteger(days) || days < 1 || days > 30)
+      throw new HttpError(400, 'invalid', 'days 要在 1 到 30 之间')
     const id = newId((x) => invites.has(x))
     const token = randomString(32)
-    const rec: InviteRec = { id, tokenHash: hashOf(token), role, created: now(), expires: now() + days * 86_400_000, createdBy: me.id, used: false }
+    const rec: InviteRec = {
+      id,
+      tokenHash: hashOf(token),
+      role,
+      created: now(),
+      expires: now() + days * 86_400_000,
+      createdBy: me.id,
+      used: false,
+    }
     invites.set(id, rec)
     return { status: 201, body: { id, token, role, created: rfc3339(rec.created), expires: rfc3339(rec.expires) } }
   }
   const openInvites = (): Invite[] =>
     [...invites.values()]
       .filter((i) => !i.used && i.expires > now())
-      .map((i) => ({ id: i.id, role: i.role, created: rfc3339(i.created), expires: rfc3339(i.expires), createdBy: i.createdBy }))
+      .map((i) => ({
+        id: i.id,
+        role: i.role,
+        created: rfc3339(i.created),
+        expires: rfc3339(i.expires),
+        createdBy: i.createdBy,
+      }))
 
   // --- API tokens ---
   const TOKEN_LIMIT = 50
-  const tokenState = (t: TokenRec): ApiToken['state'] => (t.revoked !== null ? 'revoked' : t.expires !== null && t.expires <= now() ? 'expired' : 'active')
+  const tokenState = (t: TokenRec): ApiToken['state'] =>
+    t.revoked !== null ? 'revoked' : t.expires !== null && t.expires <= now() ? 'expired' : 'active'
   const publicToken = (t: TokenRec): ApiToken => {
     const owner = users.get(t.userId)
     return {
@@ -1105,7 +1512,10 @@ export function createMockServer(options: MockOptions = {}) {
       prefix: t.prefix,
       access: t.access,
       // A space is named only while its owner is a member of it.
-      spaces: t.spaces.map((id) => ({ id, name: groupBook.has(spaces.get(id), t.userId) && owner ? spaces.get(id)!.name : '' })),
+      spaces: t.spaces.map((id) => ({
+        id,
+        name: groupBook.has(spaces.get(id), t.userId) && owner ? spaces.get(id)!.name : '',
+      })),
       created: rfc3339(t.created),
       expires: t.expires === null ? null : rfc3339(t.expires),
       lastUsed: null,
@@ -1120,10 +1530,18 @@ export function createMockServer(options: MockOptions = {}) {
     const access = body.access === undefined || body.access === '' ? 'read' : body.access
     if (access !== 'read' && access !== 'write') throw new HttpError(400, 'invalid', 'access 要是 read 或 write')
     const days = body.expiresInDays === undefined ? 90 : body.expiresInDays
-    if (typeof days !== 'number' || !Number.isInteger(days) || days < 0 || days > 365) throw new HttpError(400, 'invalid', 'expiresInDays 要在 1 到 365 之间，0 是永不过期')
-    if (!Array.isArray(body.spaces) || body.spaces.length < 1 || body.spaces.length > 100 || !body.spaces.every((x) => typeof x === 'string')) throw new HttpError(400, 'invalid', '要选 1 到 100 个空间')
+    if (typeof days !== 'number' || !Number.isInteger(days) || days < 0 || days > 365)
+      throw new HttpError(400, 'invalid', 'expiresInDays 要在 1 到 365 之间，0 是永不过期')
+    if (
+      !Array.isArray(body.spaces) ||
+      body.spaces.length < 1 ||
+      body.spaces.length > 100 ||
+      !body.spaces.every((x) => typeof x === 'string')
+    )
+      throw new HttpError(400, 'invalid', '要选 1 到 100 个空间')
     const ids = [...new Set(body.spaces as string[])]
-    for (const id of ids) if (!groupBook.has(spaces.get(id), me.id)) throw new HttpError(404, 'not_found', `没有这个空间：${id}`)
+    for (const id of ids)
+      if (!groupBook.has(spaces.get(id), me.id)) throw new HttpError(404, 'not_found', `没有这个空间：${id}`)
     const live = [...apiTokens.values()].filter((t) => t.userId === me.id && tokenState(t) === 'active').length
     if (live >= TOKEN_LIMIT) throw new HttpError(400, 'token_limit', '有效的令牌已有 50 个，先吊销一个')
     const secret = 'pbk_' + randomString(43)
@@ -1147,9 +1565,14 @@ export function createMockServer(options: MockOptions = {}) {
     if (!t || (owner !== null && t.userId !== owner)) throw new HttpError(404, 'not_found', '没有这个令牌')
     if (t.revoked !== null) return
     t.revoked = now()
-    book.record('token_revoked', { actor, user: t.userId, detail: { token: t.id, name: t.name, by: owner === null ? 'admin' : 'user' } })
+    book.record('token_revoked', {
+      actor,
+      user: t.userId,
+      detail: { token: t.id, name: t.name, by: owner === null ? 'admin' : 'user' },
+    })
   }
-  const recordGrantRevoked = (g: GrantRec, actor: string, by: 'user' | 'admin') => book.record('grant_revoked', { actor, user: g.userId, detail: { grant: g.id, client: g.clientName, by } })
+  const recordGrantRevoked = (g: GrantRec, actor: string, by: 'user' | 'admin') =>
+    book.record('grant_revoked', { actor, user: g.userId, detail: { grant: g.id, client: g.clientName, by } })
   const adminTokens = (url: URL): MockResponse => {
     let limit = 50
     if (url.searchParams.has('limit')) {
@@ -1207,7 +1630,12 @@ export function createMockServer(options: MockOptions = {}) {
   }
   const takePending = (me: UserRec, id: string | null, keep: boolean): PendingRec => {
     const p = id ? pending.get(id) : undefined
-    if (!id || !p || p.expires <= now() || p.userId !== me.id) throw new HttpError(404, 'not_found', 'this authorization request has expired, was decided already or is not yours; start again from the client')
+    if (!id || !p || p.expires <= now() || p.userId !== me.id)
+      throw new HttpError(
+        404,
+        'not_found',
+        'this authorization request has expired, was decided already or is not yours; start again from the client',
+      )
     if (!keep) pending.delete(id)
     return p
   }
@@ -1234,17 +1662,38 @@ export function createMockServer(options: MockOptions = {}) {
     }
     if (body.approve !== true) {
       pending.delete(id!)
-      return { status: 200, body: { redirect: back({ error: 'access_denied', error_description: 'the user denied the request' }) } }
+      return {
+        status: 200,
+        body: { redirect: back({ error: 'access_denied', error_description: 'the user denied the request' }) },
+      }
     }
     const access = body.access === undefined || body.access === '' ? 'read' : body.access
     if (access !== 'read' && access !== 'write') throw new HttpError(400, 'invalid', 'access must be read or write')
-    if (access === 'write' && !p.scopes.includes('write')) throw new HttpError(400, 'invalid', 'the client asked for read only')
-    if (!Array.isArray(body.spaces) || body.spaces.length < 1 || body.spaces.length > 100 || !body.spaces.every((x) => typeof x === 'string')) throw new HttpError(400, 'invalid', 'choose 1 to 100 spaces')
+    if (access === 'write' && !p.scopes.includes('write'))
+      throw new HttpError(400, 'invalid', 'the client asked for read only')
+    if (
+      !Array.isArray(body.spaces) ||
+      body.spaces.length < 1 ||
+      body.spaces.length > 100 ||
+      !body.spaces.every((x) => typeof x === 'string')
+    )
+      throw new HttpError(400, 'invalid', 'choose 1 to 100 spaces')
     const ids = [...new Set(body.spaces as string[])]
-    for (const sid of ids) if (!groupBook.has(spaces.get(sid), me.id)) throw new HttpError(400, 'invalid', `you are not a member of the space ${sid}`)
+    for (const sid of ids)
+      if (!groupBook.has(spaces.get(sid), me.id))
+        throw new HttpError(400, 'invalid', `you are not a member of the space ${sid}`)
     pending.delete(id!)
     // The real server makes the grant when the client exchanges the code; the mock has no client.
-    const g: GrantRec = { id: newId((x) => grants.has(x)), userId: me.id, clientId: p.clientId, clientName: p.clientName, access, spaces: ids, created: now(), lastUsed: now() }
+    const g: GrantRec = {
+      id: newId((x) => grants.has(x)),
+      userId: me.id,
+      clientId: p.clientId,
+      clientName: p.clientName,
+      access,
+      spaces: ids,
+      created: now(),
+      lastUsed: now(),
+    }
     grants.set(g.id, g)
     return { status: 200, body: { redirect: back({ code: randomString(43) }) } }
   }
@@ -1254,7 +1703,13 @@ export function createMockServer(options: MockOptions = {}) {
   // no administrator, is told it does not exist, the same as for a space that
   // does not; a disabled space opens for no one; a member without the
   // permission the route needs is refused.
-  const openSpace = (u: UserRec, id: string, need: Permission, token: string | null = null, listing = false): SpaceRec => {
+  const openSpace = (
+    u: UserRec,
+    id: string,
+    need: Permission,
+    token: string | null = null,
+    listing = false,
+  ): SpaceRec => {
     const s = spaces.get(id)
     if (!s || (!groupBook.has(s, u.id) && u.role !== 'admin')) throw new HttpError(404, 'not_found', '没有这个空间')
     if (s.disabled) throw new HttpError(403, 'space_disabled', 'this space has been disabled by an administrator')
@@ -1262,7 +1717,12 @@ export function createMockServer(options: MockOptions = {}) {
     const member = groupBook.has(s, u.id) || !accounts
     // A tenant administrator never reaches a personal space of someone else.
     if (!member && s.personal && !isSiteAdmin(u)) throw new HttpError(404, 'not_found', '没有这个空间')
-    const permissions = member ? spaceInfo(s, u).permissions : [...spaceInfo(s, u).permissions, ...(manage.viewing(token, s.id) || (listing && need === 'read') ? (['read'] as Permission[]) : [])]
+    const permissions = member
+      ? spaceInfo(s, u).permissions
+      : [
+          ...spaceInfo(s, u).permissions,
+          ...(manage.viewing(token, s.id) || (listing && need === 'read') ? (['read'] as Permission[]) : []),
+        ]
     if (!permissions.includes(need)) throw new HttpError(403, 'no_permission', NO_PERMISSION(need))
     return s
   }
@@ -1270,9 +1730,17 @@ export function createMockServer(options: MockOptions = {}) {
   const needOf = (me: UserRec, method: string, rest: string): Permission => {
     // Types and their bindings are for those who manage the space; reading them is reading.
     if (rest.startsWith('/templates/') && method !== 'GET') return 'manage'
-    if ((rest.startsWith('/types/') && method !== 'GET') || (rest === '/folders/type' && method === 'PUT')) return 'manage'
-    if ((rest === '/daily/settings' && method === 'PUT') || (rest === '/daily/prefs' && method === 'PUT') || (rest === '/favorites' && method !== 'GET') || rest === '/favorites/order') return rest.startsWith('/favorites') ? 'read' : 'manage'
-    if ((rest === '' && method === 'PATCH') || rest === '/reindex' || rest === '/remote' || rest.startsWith('/remote/')) return 'manage'
+    if ((rest.startsWith('/types/') && method !== 'GET') || (rest === '/folders/type' && method === 'PUT'))
+      return 'manage'
+    if (
+      (rest === '/daily/settings' && method === 'PUT') ||
+      (rest === '/daily/prefs' && method === 'PUT') ||
+      (rest === '/favorites' && method !== 'GET') ||
+      rest === '/favorites/order'
+    )
+      return rest.startsWith('/favorites') ? 'read' : 'manage'
+    if ((rest === '' && method === 'PATCH') || rest === '/reindex' || rest === '/remote' || rest.startsWith('/remote/'))
+      return 'manage'
     if (rest === '/groups' || rest.startsWith('/groups/')) return 'members'
     if (rest === '/members' || rest.startsWith('/members/')) {
       if (method === 'GET') return 'read'
@@ -1328,17 +1796,41 @@ export function createMockServer(options: MockOptions = {}) {
     makeInvite: (by, tenant, fill) => {
       const id = newId((x) => invites.has(x))
       const token = randomString(32)
-      const rec: InviteRec = { id, tokenHash: hashOf(token), role: 'admin', created: now(), expires: now() + 7 * 86_400_000, createdBy: by, used: false, fill }
+      const rec: InviteRec = {
+        id,
+        tokenHash: hashOf(token),
+        role: 'admin',
+        created: now(),
+        expires: now() + 7 * 86_400_000,
+        createdBy: by,
+        used: false,
+        fill,
+      }
       invites.set(id, rec)
-      return { id, token, role: 'admin', created: rfc3339(rec.created), expires: rfc3339(rec.expires), tenant, siteAdmin: false, ...fill }
+      return {
+        id,
+        token,
+        role: 'admin',
+        created: rfc3339(rec.created),
+        expires: rfc3339(rec.expires),
+        tenant,
+        siteAdmin: false,
+        ...fill,
+      }
     },
   })
   // The largest file one write may create or replace for this caller's tenant (files.maxBytes, never above --max-upload).
-  const fileLimit = (u: UserRec | null | undefined): number => (u ? Math.min(maxUpload, tenantBook.effective('files.maxBytes') as number) : maxUpload)
+  const fileLimit = (u: UserRec | null | undefined): number =>
+    u ? Math.min(maxUpload, tenantBook.effective('files.maxBytes') as number) : maxUpload
   const tooLarge = (limit: number, size: number | undefined, name: string) =>
-    new HttpError(413, 'file_too_large', `${name} is over the limit of ${limit} bytes`, { limit, ...(size === undefined ? {} : { size }), name })
+    new HttpError(413, 'file_too_large', `${name} is over the limit of ${limit} bytes`, {
+      limit,
+      ...(size === undefined ? {} : { size }),
+      name,
+    })
   // The size of a page file as it would be written. A page over the limit already may be saved again at its size or smaller.
-  const pageFileSize = (b: Record<string, unknown>) => new TextEncoder().encode(JSON.stringify(b.meta ?? {}) + (typeof b.body === 'string' ? b.body : '')).length
+  const pageFileSize = (b: Record<string, unknown>) =>
+    new TextEncoder().encode(JSON.stringify(b.meta ?? {}) + (typeof b.body === 'string' ? b.body : '')).length
   const checkPageSize = (u: UserRec, b: Record<string, unknown>, before: number | null) => {
     const limit = fileLimit(u)
     const size = pageFileSize(b)
@@ -1349,7 +1841,8 @@ export function createMockServer(options: MockOptions = {}) {
   }
   // The four sync endpoints are refused when offline copies are off for the caller's tenant (offline.copies).
   const offlineAllowed = () => {
-    if (tenantBook.effective('offline.copies') === false) throw new HttpError(403, 'offline_off', 'offline copies are turned off for this tenant')
+    if (tenantBook.effective('offline.copies') === false)
+      throw new HttpError(403, 'offline_off', 'offline copies are turned off for this tenant')
   }
   // Storage management (docs/api.md, "Storage management"): where bytes live, the lists, the recycle bin, the previews,
   // the confirmations and jobs, the exports and the audited view. Everything it calls on is read when asked for.
@@ -1391,13 +1884,28 @@ export function createMockServer(options: MockOptions = {}) {
     rfc3339: (ms) => rfc3339(ms),
     tenant: DEFAULT_TENANT,
     people: () => [...users.values()].map((u) => ({ id: u.id, username: u.username, name: u.name })),
-    spaces: () => [...spaces.values()].map((s) => ({ id: s.id, ownerId: ownerOf(s)?.id ?? null, bytes: manage.counted(s) ? (s.size?.bytes ?? 0) : 0, pages: s.size?.pages ?? 0, measuredAt: s.size?.at ?? null })),
+    spaces: () =>
+      [...spaces.values()].map((s) => ({
+        id: s.id,
+        ownerId: ownerOf(s)?.id ?? null,
+        bytes: manage.counted(s) ? (s.size?.bytes ?? 0) : 0,
+        pages: s.size?.pages ?? 0,
+        measuredAt: s.size?.at ?? null,
+      })),
     setting: (key) => tenantBook.effective(key) as number | null,
     lowerOf: (key, site) => tenantBook.lowerFor(key, site),
     tenantQuota: () => tenantBook.quotaOf(DEFAULT_TENANT),
     record: (kind, o) => book.record(kind, o),
   })
-  const site = { lines: new Map<string, { body: string; source: string }[]>(), default: null as SiteDefault, allow: { own: true, api: true }, languages: ['zh-Hans', 'en'], apis: [] as SiteApi[], providers: {} as Record<string, ProviderState>, notices: [] as DailyNotice[] }
+  const site = {
+    lines: new Map<string, { body: string; source: string }[]>(),
+    default: null as SiteDefault,
+    allow: { own: true, api: true },
+    languages: ['zh-Hans', 'en'],
+    apis: [] as SiteApi[],
+    providers: {} as Record<string, ProviderState>,
+    notices: [] as DailyNotice[],
+  }
   const spaceDaily = new Map<string, { inherit: boolean; apis: string[] }>()
   const KNOWN_LANGUAGES = [
     { tag: 'zh-Hans', name: '中文（简体）', english: 'Chinese (Simplified)' },
@@ -1443,8 +1951,32 @@ export function createMockServer(options: MockOptions = {}) {
     { tag: 'yue-Hant', name: '粵語（繁體）', english: 'Cantonese (Traditional)' },
   ]
   const PROVIDERS = [
-    { id: 'hitokoto', name: '一言', languages: ['zh-Hans', 'zh-Hant'], site: 'https://hitokoto.cn', note: 'Free, no key.', url: 'https://international.v1.hitokoto.cn/?max_length=80', text: 'hitokoto', source: 'from', author: 'from_who', link: 'https://hitokoto.cn?uuid={uuid}', rps: 20 },
-    { id: 'quotable', name: 'Quotable', languages: ['en'], site: 'https://github.com/lukePeavey/quotable', note: 'Open source, no key.', url: 'https://api.quotable.io/quotes/random', text: '[0].content', source: '', author: '[0].author', link: '', rps: 3 },
+    {
+      id: 'hitokoto',
+      name: '一言',
+      languages: ['zh-Hans', 'zh-Hant'],
+      site: 'https://hitokoto.cn',
+      note: 'Free, no key.',
+      url: 'https://international.v1.hitokoto.cn/?max_length=80',
+      text: 'hitokoto',
+      source: 'from',
+      author: 'from_who',
+      link: 'https://hitokoto.cn?uuid={uuid}',
+      rps: 20,
+    },
+    {
+      id: 'quotable',
+      name: 'Quotable',
+      languages: ['en'],
+      site: 'https://github.com/lukePeavey/quotable',
+      note: 'Open source, no key.',
+      url: 'https://api.quotable.io/quotes/random',
+      text: '[0].content',
+      source: '',
+      author: '[0].author',
+      link: '',
+      rps: 3,
+    },
   ]
   const badLang = (tag: string) => new HttpError(400, 'bad_language', `“${tag}” 不是 zh-Hans、en、pt-BR 这样的语言标签`)
   const tagOf = (raw: unknown): string => {
@@ -1472,7 +2004,10 @@ export function createMockServer(options: MockOptions = {}) {
     builtin: true,
   })
   // The interfaces that are set up: the administrators' own, and the built-in ones that are switched on.
-  const allApis = (): SiteApi[] => [...site.apis, ...PROVIDERS.filter((p) => site.providers[p.id]?.enabled).map((p) => providerApi(p, site.providers[p.id]))]
+  const allApis = (): SiteApi[] => [
+    ...site.apis,
+    ...PROVIDERS.filter((p) => site.providers[p.id]?.enabled).map((p) => providerApi(p, site.providers[p.id])),
+  ]
   const apiTags = (a: SiteApi): string[] => a.languages ?? (a.lang === '' ? [] : [a.lang])
   const siteView = () => {
     const byLang: Record<string, number> = {}
@@ -1486,11 +2021,26 @@ export function createMockServer(options: MockOptions = {}) {
       languages: [...site.languages],
       knownLanguages: KNOWN_LANGUAGES,
       allow: { ...site.allow },
-      apis: allApis().map(({ headers, ...rest }) => ({ ...rest, headers: headers.map((h) => ({ name: h.name, set: true })) })),
+      apis: allApis().map(({ headers, ...rest }) => ({
+        ...rest,
+        headers: headers.map((h) => ({ name: h.name, set: true })),
+      })),
       providers: PROVIDERS.map((p) => {
         const st = site.providers[p.id] ?? { enabled: false }
         const a = providerApi(p, st)
-        return { id: p.id, name: p.name, languages: p.languages, site: p.site, note: p.note, enabled: st.enabled, refresh: a.refresh, minutes: a.refreshMinutes, rps: a.rps, maxRps: p.rps, skipNew: a.skipNew }
+        return {
+          id: p.id,
+          name: p.name,
+          languages: p.languages,
+          site: p.site,
+          note: p.note,
+          enabled: st.enabled,
+          refresh: a.refresh,
+          minutes: a.refreshMinutes,
+          rps: a.rps,
+          maxRps: p.rps,
+          skipNew: a.skipNew,
+        }
       }),
       lines: { total, byLang, max: 5000 },
       notices: site.notices.map((n) => ({ ...n })),
@@ -1500,12 +2050,25 @@ export function createMockServer(options: MockOptions = {}) {
   // one for every language, else any.
   const chooseApi = (chosen: SiteApi[], lang: string): SiteApi | undefined => {
     const m = matchTag(lang, chosen.flatMap(apiTags))
-    return (m !== null ? chosen.find((a) => apiTags(a).includes(m)) : undefined) ?? chosen.find((a) => a.lang === '') ?? chosen[0]
+    return (
+      (m !== null ? chosen.find((a) => apiTags(a).includes(m)) : undefined) ??
+      chosen.find((a) => a.lang === '') ??
+      chosen[0]
+    )
   }
   const quoteFrom = (api: SiteApi, date: string, skip: number): Record<string, unknown> => {
     // An external interface knows only today and the days next to it: another date is no error, there is just no text.
-    if (Math.abs(Date.parse(date + 'T00:00:00Z') - Date.parse(new Date(now()).toISOString().slice(0, 10) + 'T00:00:00Z')) > 86400_000) return { page: null, reason: 'out_of_range' }
-    const quote: Record<string, unknown> = { text: `${api.name} ${date}${skip ? ` #${skip}` : ''}`, ...(api.source ? { source: 'src' } : {}), ...(api.author ? { author: 'au' } : {}) }
+    if (
+      Math.abs(
+        Date.parse(date + 'T00:00:00Z') - Date.parse(new Date(now()).toISOString().slice(0, 10) + 'T00:00:00Z'),
+      ) > 86400_000
+    )
+      return { page: null, reason: 'out_of_range' }
+    const quote: Record<string, unknown> = {
+      text: `${api.name} ${date}${skip ? ` #${skip}` : ''}`,
+      ...(api.source ? { source: 'src' } : {}),
+      ...(api.author ? { author: 'au' } : {}),
+    }
     if (api.link) quote.link = api.link.replaceAll('{uuid}', 'u1')
     if (api.id.includes('stale')) Object.assign(quote, { stale: true, fetched: '2026-11-20T08:00:00Z' })
     return { page: null, quote, origin: 'external' }
@@ -1526,7 +2089,10 @@ export function createMockServer(options: MockOptions = {}) {
       if (site.default.kind === 'api') {
         // The administrators' own choice, not limited by what spaces may choose.
         const map = site.default.apis
-        const m = matchTag(lang, Object.keys(map).filter((k) => k !== ''))
+        const m = matchTag(
+          lang,
+          Object.keys(map).filter((k) => k !== ''),
+        )
         const id = m !== null ? map[m] : map['']
         if (id === undefined) return { page: null, reason: 'no_source' }
         const one = apis.find((a) => a.id === id && a.enabled)
@@ -1538,7 +2104,11 @@ export function createMockServer(options: MockOptions = {}) {
       const list = use === undefined ? [] : (site.lines.get(use) ?? [])
       if (list.length) {
         const line = list[pickNumber('site:' + use, date, skip, list.length)]
-        return { page: null, quote: { text: line.body, ...(line.source ? { source: line.source } : {}) }, origin: 'site' }
+        return {
+          page: null,
+          quote: { text: line.body, ...(line.source ? { source: line.source } : {}) },
+          origin: 'site',
+        }
       }
     }
     return { page: null, reason: 'no_source' }
@@ -1546,9 +2116,12 @@ export function createMockServer(options: MockOptions = {}) {
   const routeDailyPrefs = (space: SpaceRec, method: string, body: Record<string, unknown>): MockResponse => {
     const available = allApis().filter((a) => a.enabled)
     if (method === 'PUT') {
-      if (typeof body.inherit !== 'boolean' || !Array.isArray(body.apis)) throw new HttpError(400, 'invalid', '给 inherit 和 apis')
+      if (typeof body.inherit !== 'boolean' || !Array.isArray(body.apis))
+        throw new HttpError(400, 'invalid', '给 inherit 和 apis')
       const usable = new Set(available.map((a) => a.id))
-      for (const id of body.apis) if (typeof id !== 'string' || !usable.has(id)) throw new HttpError(400, 'invalid', `没有接口 ${String(id)}：只能用管理员设好并启用的`)
+      for (const id of body.apis)
+        if (typeof id !== 'string' || !usable.has(id))
+          throw new HttpError(400, 'invalid', `没有接口 ${String(id)}：只能用管理员设好并启用的`)
       spaceDaily.set(space.id, { inherit: body.inherit, apis: [...new Set(body.apis as string[])] })
     } else if (method !== 'GET') throw new HttpError(404, 'not_found', '没有这个接口')
     const now = spaceDaily.get(space.id) ?? { inherit: true, apis: [] }
@@ -1557,7 +2130,12 @@ export function createMockServer(options: MockOptions = {}) {
       body: {
         inherit: now.inherit,
         apis: now.apis.filter((id) => available.some((a) => a.id === id)),
-        available: available.map((a) => ({ id: a.id, name: a.name, lang: a.lang, ...(a.builtin ? { languages: PROVIDERS.find((p) => p.id === a.id)?.languages } : {}) })),
+        available: available.map((a) => ({
+          id: a.id,
+          name: a.name,
+          lang: a.lang,
+          ...(a.builtin ? { languages: PROVIDERS.find((p) => p.id === a.id)?.languages } : {}),
+        })),
         languages: [...site.languages],
         allowed: { ...site.allow },
         default: site.default === null ? null : { kind: site.default.kind },
@@ -1572,7 +2150,8 @@ export function createMockServer(options: MockOptions = {}) {
     else if (fromApi && !st.enabled) st.enabled = true
     else if (!fromApi) throw bad('给 enabled（true 或 false）')
     if (body.refresh !== undefined && body.refresh !== '') {
-      if (!['daily', 'hourly', 'minutes'].includes(String(body.refresh))) throw bad('refresh 是 daily、hourly 或 minutes')
+      if (!['daily', 'hourly', 'minutes'].includes(String(body.refresh)))
+        throw bad('refresh 是 daily、hourly 或 minutes')
       st.refresh = String(body.refresh)
       st.minutes = 0
       if (st.refresh === 'minutes') {
@@ -1593,31 +2172,58 @@ export function createMockServer(options: MockOptions = {}) {
     if (path === '/admin/daily' && method === 'GET') return { status: 200, body: siteView() }
     if (path === '/admin/daily' && method === 'PUT') {
       // A `hosts` sent by an older client is ignored: there is no list of hosts.
-      for (const k of Object.keys(body)) if (!['default', 'hosts', 'languages', 'allow', 'notices'].includes(k)) throw new HttpError(400, 'invalid', `不认识 ${k}`)
+      for (const k of Object.keys(body))
+        if (!['default', 'hosts', 'languages', 'allow', 'notices'].includes(k))
+          throw new HttpError(400, 'invalid', `不认识 ${k}`)
       let languages = site.languages
       if ('languages' in body) {
-        if (!Array.isArray(body.languages)) throw new HttpError(400, 'invalid', 'languages 是 zh-Hans、en 这样的语言标签的列表')
+        if (!Array.isArray(body.languages))
+          throw new HttpError(400, 'invalid', 'languages 是 zh-Hans、en 这样的语言标签的列表')
         if (body.languages.length > 30) throw new HttpError(400, 'invalid', '最多 30 种语言')
         languages = [...new Set((body.languages as unknown[]).map(tagOf))]
       }
       let allow = site.allow
       if ('allow' in body) {
         const a = body.allow
-        if (!isRecord(a) || (a.own === undefined && a.api === undefined) || (a.own !== undefined && typeof a.own !== 'boolean') || (a.api !== undefined && typeof a.api !== 'boolean')) throw new HttpError(400, 'invalid', 'allow 是 {own: true 或 false, api: true 或 false}')
-        allow = { own: typeof a.own === 'boolean' ? a.own : allow.own, api: typeof a.api === 'boolean' ? a.api : allow.api }
+        if (
+          !isRecord(a) ||
+          (a.own === undefined && a.api === undefined) ||
+          (a.own !== undefined && typeof a.own !== 'boolean') ||
+          (a.api !== undefined && typeof a.api !== 'boolean')
+        )
+          throw new HttpError(400, 'invalid', 'allow 是 {own: true 或 false, api: true 或 false}')
+        allow = {
+          own: typeof a.own === 'boolean' ? a.own : allow.own,
+          api: typeof a.api === 'boolean' ? a.api : allow.api,
+        }
       }
       let next = site.default
       if ('default' in body) {
         const d = body.default
         if (d === null) next = null
-        else if (isRecord(d) && d.kind === 'list' && d.space === undefined && d.source === undefined && d.apis === undefined) next = { kind: 'list' }
-        else if (isRecord(d) && d.kind === 'api' && d.space === undefined && d.source === undefined && isRecord(d.apis) && Object.keys(d.apis).length > 0) {
+        else if (
+          isRecord(d) &&
+          d.kind === 'list' &&
+          d.space === undefined &&
+          d.source === undefined &&
+          d.apis === undefined
+        )
+          next = { kind: 'list' }
+        else if (
+          isRecord(d) &&
+          d.kind === 'api' &&
+          d.space === undefined &&
+          d.source === undefined &&
+          isRecord(d.apis) &&
+          Object.keys(d.apis).length > 0
+        ) {
           const ids = new Set(allApis().map((a) => a.id))
           const apis: Record<string, string> = {}
           for (const [k, id] of Object.entries(d.apis)) {
             const tag = k === '' ? '' : tagOf(k)
             if (tag in apis) throw new HttpError(400, 'invalid', `${tag} 写了两次`)
-            if (typeof id !== 'string' || !ids.has(id)) throw new HttpError(400, 'api_not_found', `没有接口 ${String(id)}`)
+            if (typeof id !== 'string' || !ids.has(id))
+              throw new HttpError(400, 'api_not_found', `没有接口 ${String(id)}`)
             apis[tag] = id
           }
           next = { kind: 'api', apis }
@@ -1625,7 +2231,8 @@ export function createMockServer(options: MockOptions = {}) {
       }
       // The notices are dismissed with an empty list.
       if ('notices' in body) {
-        if (!Array.isArray(body.notices) || body.notices.length !== 0) throw new HttpError(400, 'invalid', 'notices 只能是 []（表示知道了）')
+        if (!Array.isArray(body.notices) || body.notices.length !== 0)
+          throw new HttpError(400, 'invalid', 'notices 只能是 []（表示知道了）')
         site.notices = []
       }
       site.default = next
@@ -1643,7 +2250,8 @@ export function createMockServer(options: MockOptions = {}) {
     const apiOne = /^\/admin\/daily\/apis\/([^/]+)$/.exec(path)
     if (apiOne && method === 'DELETE') {
       const id = decodeURIComponent(apiOne[1])
-      if (PROVIDERS.some((p) => p.id === id)) throw new HttpError(400, 'builtin', '内置接口不能删除，请关闭它', { field: '' })
+      if (PROVIDERS.some((p) => p.id === id))
+        throw new HttpError(400, 'builtin', '内置接口不能删除，请关闭它', { field: '' })
       if (!site.apis.some((a) => a.id === id)) throw new HttpError(404, 'not_found', '没有这个接口')
       site.apis = site.apis.filter((a) => a.id !== id)
       return { status: 200, body: siteView() }
@@ -1656,11 +2264,33 @@ export function createMockServer(options: MockOptions = {}) {
       const provider = PROVIDERS.find((p) => p.id === id)
       if (provider) {
         // What is fixed must be as it is; the rest is what a provider takes.
-        const fixed: [string, unknown][] = [['name', provider.name], ['lang', provider.languages[0]], ['url', provider.url], ['text', provider.text], ['source', provider.source], ['author', provider.author], ['link', provider.link]]
-        for (const [f, want] of fixed) if (body[f] !== undefined && body[f] !== '' && body[f] !== want) throw new HttpError(400, 'builtin', `内置接口 ${id} 的 ${f} 不能改`, { field: f })
-        if (Array.isArray(body.headers) && body.headers.length > 0) throw new HttpError(400, 'builtin', '内置接口不能有请求头', { field: 'headers' })
-        if (isRecord(body.langMap) && Object.keys(body.langMap).length > 0) throw new HttpError(400, 'builtin', '内置接口的语言对照不能改', { field: 'langMap' })
-        putProvider(provider, { enabled: body.enabled, refresh: body.refresh, minutes: body.refreshMinutes, rps: body.rps, skipNew: body.skipNew }, true)
+        const fixed: [string, unknown][] = [
+          ['name', provider.name],
+          ['lang', provider.languages[0]],
+          ['url', provider.url],
+          ['text', provider.text],
+          ['source', provider.source],
+          ['author', provider.author],
+          ['link', provider.link],
+        ]
+        for (const [f, want] of fixed)
+          if (body[f] !== undefined && body[f] !== '' && body[f] !== want)
+            throw new HttpError(400, 'builtin', `内置接口 ${id} 的 ${f} 不能改`, { field: f })
+        if (Array.isArray(body.headers) && body.headers.length > 0)
+          throw new HttpError(400, 'builtin', '内置接口不能有请求头', { field: 'headers' })
+        if (isRecord(body.langMap) && Object.keys(body.langMap).length > 0)
+          throw new HttpError(400, 'builtin', '内置接口的语言对照不能改', { field: 'langMap' })
+        putProvider(
+          provider,
+          {
+            enabled: body.enabled,
+            refresh: body.refresh,
+            minutes: body.refreshMinutes,
+            rps: body.rps,
+            skipNew: body.skipNew,
+          },
+          true,
+        )
         return { status: 200, body: siteView() }
       }
       if (!/^[a-z0-9_-]{1,32}$/.test(id)) throw bad('接口 id 是 1 到 32 个小写字母、数字、- 或 _')
@@ -1673,7 +2303,8 @@ export function createMockServer(options: MockOptions = {}) {
         if (!isRecord(body.langMap)) throw bad('langMap 是 {语言: 代码}')
         for (const [k, v] of Object.entries(body.langMap)) {
           const tag = tagOf(k)
-          if (typeof v !== 'string' || !/^[A-Za-z0-9_-]{1,35}$/.test(v)) throw bad(`langMap 里 ${tag} 的代码是 1 到 35 个字母、数字、- 或 _`)
+          if (typeof v !== 'string' || !/^[A-Za-z0-9_-]{1,35}$/.test(v))
+            throw bad(`langMap 里 ${tag} 的代码是 1 到 35 个字母、数字、- 或 _`)
           if (tag in langMap) throw bad(`langMap 里 ${tag} 写了两次`)
           langMap[tag] = v
         }
@@ -1685,34 +2316,52 @@ export function createMockServer(options: MockOptions = {}) {
       } catch {
         throw bad('这不是网址')
       }
-      if (u.protocol !== 'https:' || u.username || u.password || u.hash || /\s/.test(url)) throw bad('网址要是 https，不带用户名')
+      if (u.protocol !== 'https:' || u.username || u.password || u.hash || /\s/.test(url))
+        throw bad('网址要是 https，不带用户名')
       const host = u.hostname.replace(/^\[|\]$/g, '')
-      if (host === 'localhost' || host.endsWith('.localhost') || /^(127\.|10\.|192\.168\.|169\.254\.|0\.0\.0\.0)/.test(host) || host === '::1') throw bad('服务器不会连内网或本机地址')
+      if (
+        host === 'localhost' ||
+        host.endsWith('.localhost') ||
+        /^(127\.|10\.|192\.168\.|169\.254\.|0\.0\.0\.0)/.test(host) ||
+        host === '::1'
+      )
+        throw bad('服务器不会连内网或本机地址')
       if (str('text') === '') throw bad('text 是正文的 JSON 路径，必填')
       for (const f of ['text', 'source', 'author'] as const) {
         const v = str(f)
-        if (/secret/i.test(v)) throw new HttpError(400, 'path_reveals_secret', `${f} 的路径会露出保密的内容`, { field: f })
-        if (v !== '' && !/^[\w.[\]-]+$/.test(v)) throw new HttpError(400, 'path_error', `${f} 不是合法的路径`, { field: f })
+        if (/secret/i.test(v))
+          throw new HttpError(400, 'path_reveals_secret', `${f} 的路径会露出保密的内容`, { field: f })
+        if (v !== '' && !/^[\w.[\]-]+$/.test(v))
+          throw new HttpError(400, 'path_error', `${f} 不是合法的路径`, { field: f })
       }
       if (/\{header[.:_]/i.test(str('link'))) throw new HttpError(400, 'link_uses_header', 'link 不能用请求头')
       const refresh = str('refresh') || 'daily'
       if (!['daily', 'hourly', 'minutes'].includes(refresh)) throw bad('refresh 是 daily、hourly 或 minutes')
       const refreshMinutes = refresh === 'minutes' ? Number(body.refreshMinutes) : 0
-      if (refresh === 'minutes' && !(Number.isInteger(refreshMinutes) && refreshMinutes >= 1 && refreshMinutes <= 1440)) throw bad('refreshMinutes 是 1 到 1440')
+      if (refresh === 'minutes' && !(Number.isInteger(refreshMinutes) && refreshMinutes >= 1 && refreshMinutes <= 1440))
+        throw bad('refreshMinutes 是 1 到 1440')
       const rps = body.rps === undefined || body.rps === 0 ? 1 : Number(body.rps)
       if (!(rps >= 0.01 && rps <= 100)) throw bad('rps 是 0.01 到 100')
       if (body.headers !== undefined && !Array.isArray(body.headers)) throw bad('headers 是列表')
       const headers: { name: string; value: string }[] = []
       for (const h of (body.headers ?? []) as Record<string, unknown>[]) {
         const hn = typeof h.name === 'string' ? h.name : ''
-        if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,100}$/.test(hn) || ['host', 'content-length', 'transfer-encoding', 'connection', 'content-type'].includes(hn.toLowerCase())) throw bad(`${hn} 不能作请求头`)
+        if (
+          !/^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,100}$/.test(hn) ||
+          ['host', 'content-length', 'transfer-encoding', 'connection', 'content-type'].includes(hn.toLowerCase())
+        )
+          throw bad(`${hn} 不能作请求头`)
         if (headers.some((x) => x.name.toLowerCase() === hn.toLowerCase())) throw bad(`请求头 ${hn} 写了两次`)
         let value = typeof h.value === 'string' ? h.value : undefined
         // The saved values go with the saved address: with another one they are given again.
         const kept = old?.headers.find((x) => x.name.toLowerCase() === hn.toLowerCase())
-        if (value === undefined && kept && old?.url !== url) throw new HttpError(400, 'header_reenter', `the address changed; give the value of the header ${hn} again`, { header: hn })
+        if (value === undefined && kept && old?.url !== url)
+          throw new HttpError(400, 'header_reenter', `the address changed; give the value of the header ${hn} again`, {
+            header: hn,
+          })
         if (value === undefined) value = kept?.value
-        if (value === undefined) throw new HttpError(400, 'header_missing', `the header ${hn} has no value yet`, { header: hn })
+        if (value === undefined)
+          throw new HttpError(400, 'header_missing', `the header ${hn} has no value yet`, { header: hn })
         headers.push({ name: hn, value })
       }
       if (!old && site.apis.length >= 50) throw bad('最多 50 个接口')
@@ -1743,7 +2392,12 @@ export function createMockServer(options: MockOptions = {}) {
       const url = String(a.url ?? '')
       if (typeof body.lang === 'string' && body.lang !== '') tagOf(body.lang)
       // Like the server: a refusal with a code is a 400, the trial's output in `result`.
-      const refused = (error: string, message: string, extra: Record<string, unknown> = {}, result: Record<string, unknown> = {}) => ({ status: 400, body: { error, message, ...extra, result: { ok: false, url, message, ...result } } })
+      const refused = (
+        error: string,
+        message: string,
+        extra: Record<string, unknown> = {},
+        result: Record<string, unknown> = {},
+      ) => ({ status: 400, body: { error, message, ...extra, result: { ok: false, url, message, ...result } } })
       if (url.includes('html')) return refused('not_json', 'the answer is not JSON')
       if (url.includes('huge')) return refused('too_large', 'the answer is too large')
       if (url.includes('down')) return { status: 200, body: { ok: false, message: 'status 503', status: 503, url } }
@@ -1758,22 +2412,35 @@ export function createMockServer(options: MockOptions = {}) {
         }
         return a[k] ? v : undefined
       }
-      const quote = { text: pick('text', '山色空蒙雨亦奇'), source: pick('source', '饮湖上初晴后雨'), author: pick('author', '苏轼') }
+      const quote = {
+        text: pick('text', '山色空蒙雨亦奇'),
+        source: pick('source', '饮湖上初晴后雨'),
+        author: pick('author', '苏轼'),
+      }
       const clean = Object.fromEntries(Object.entries(quote).filter(([, v]) => v !== undefined))
-      if (pathErrors.length) return refused('path_error', pathErrors[0].message, { field: pathErrors[0].field }, { status: 200, raw, rawTruncated: false, quote: clean, pathErrors })
+      if (pathErrors.length)
+        return refused(
+          'path_error',
+          pathErrors[0].message,
+          { field: pathErrors[0].field },
+          { status: 200, raw, rawTruncated: false, quote: clean, pathErrors },
+        )
       return { status: 200, body: { ok: true, status: 200, url, raw, rawTruncated: false, quote: clean } }
     }
     if (path === '/admin/daily/lines' && method === 'PUT') {
       const lang = body.lang === undefined || body.lang === '' ? '' : tagOf(body.lang)
       const format = body.format ?? 'lines'
-      if (format !== 'lines' && format !== 'markdown') throw new HttpError(400, 'invalid', 'format 是 lines 或 markdown')
+      if (format !== 'lines' && format !== 'markdown')
+        throw new HttpError(400, 'invalid', 'format 是 lines 或 markdown')
       const text = typeof body.text === 'string' ? body.text.replace(/\r\n/g, '\n') : ''
       if (text.includes('\0')) throw new HttpError(400, 'invalid', '有空字符')
       let parts: string[]
       if (format === 'lines') parts = text.split('\n').filter((l) => l.trim() !== '')
       else {
         const hasRule = text.split('\n').some((l) => l.trim() === '---')
-        parts = (hasRule ? text.split(/^\s*---\s*$/m) : text.split(/\n\s*\n/)).map((x) => x.trim()).filter((x) => x !== '')
+        parts = (hasRule ? text.split(/^\s*---\s*$/m) : text.split(/\n\s*\n/))
+          .map((x) => x.trim())
+          .filter((x) => x !== '')
       }
       if (parts.length === 0) throw new HttpError(400, 'invalid', '里面没有文字；要去掉这些行，请删除')
       const total = [...site.lines].filter(([l]) => l !== lang).reduce((n, [, v]) => n + v.length, 0) + parts.length
@@ -1801,16 +2468,27 @@ export function createMockServer(options: MockOptions = {}) {
     return { userId, username: u.username, name: u.name, role: s.members.get(userId)!.role, you: userId === you }
   }
   const checkRole = (raw: unknown): SpaceRole => {
-    if (typeof raw !== 'string' || !ROLES.includes(raw)) throw new HttpError(400, 'invalid', `a role is one of ${ROLES.join(', ')}`)
+    if (typeof raw !== 'string' || !ROLES.includes(raw))
+      throw new HttpError(400, 'invalid', `a role is one of ${ROLES.join(', ')}`)
     return raw as SpaceRole
   }
   // A space always keeps one owner who can sign in: a disabled user cannot be the
   // one that remains (as the real server counts).
   const keepOneOwner = (s: SpaceRec, userId: string, leaving: SpaceRole) => {
-    const others = [...s.members].filter(([id, m]) => m.role === 'owner' && id !== userId && !users.get(id)?.disabled).length
-    if (leaving === 'owner' && others < 1) throw new HttpError(409, 'last_owner', 'a space needs at least one owner; make someone else an owner first')
+    const others = [...s.members].filter(
+      ([id, m]) => m.role === 'owner' && id !== userId && !users.get(id)?.disabled,
+    ).length
+    if (leaving === 'owner' && others < 1)
+      throw new HttpError(409, 'last_owner', 'a space needs at least one owner; make someone else an owner first')
   }
-  const routeMembers = (me: UserRec, s: SpaceRec, method: string, rest: string, body: Record<string, unknown>, query = ''): MockResponse => {
+  const routeMembers = (
+    me: UserRec,
+    s: SpaceRec,
+    method: string,
+    rest: string,
+    body: Record<string, unknown>,
+    query = '',
+  ): MockResponse => {
     const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
     if (rest === '/members' && method === 'GET') {
       const list = [...s.members.keys()].map((id) => memberOf(s, id, me.id))
@@ -1819,7 +2497,8 @@ export function createMockServer(options: MockOptions = {}) {
     }
     if (rest === '/members' && method === 'POST') {
       const role = checkRole(body.role)
-      if (s.personal) throw new HttpError(409, 'personal_space', 'a personal space belongs to one person and cannot be shared')
+      if (s.personal)
+        throw new HttpError(409, 'personal_space', 'a personal space belongs to one person and cannot be shared')
       const name = typeof body.username === 'string' ? body.username.trim().toLowerCase() : ''
       const u = [...users.values()].find((x) => x.username === name)
       if (!u || u.disabled) throw new HttpError(404, 'user_not_found', 'there is no such user')
@@ -1827,7 +2506,8 @@ export function createMockServer(options: MockOptions = {}) {
       s.members.set(u.id, { role, joined: ++counter })
       return j(memberOf(s, u.id, me.id), 201)
     }
-    if (rest === '/members/effective' && method === 'GET') return groupBook.effective(s, me.id, new URL(`http://mock${rest}${query}`))
+    if (rest === '/members/effective' && method === 'GET')
+      return groupBook.effective(s, me.id, new URL(`http://mock${rest}${query}`))
     const one = /^\/members\/([^/]+)$/.exec(rest)
     if (one) {
       const userId = decodeURIComponent(one[1])
@@ -1845,7 +2525,12 @@ export function createMockServer(options: MockOptions = {}) {
         const cur = s.members.get(userId)
         if (!cur && userId === me.id) {
           const via = groupBook.viaGroupsOnly(s, userId)
-          if (via.length > 0) throw new HttpError(409, 'member_via_group', `you are in this space through ${via.join(', ')}; ask a space owner to remove the group, or its administrator to remove you from it`)
+          if (via.length > 0)
+            throw new HttpError(
+              409,
+              'member_via_group',
+              `you are in this space through ${via.join(', ')}; ask a space owner to remove the group, or its administrator to remove you from it`,
+            )
         }
         if (!cur) throw new HttpError(404, 'not_found', 'that user is not a member of this space')
         keepOneOwner(s, userId, cur.role)
@@ -1899,7 +2584,14 @@ export function createMockServer(options: MockOptions = {}) {
     }
     return bytes
   }
-  const routeAdmin = (me: UserRec, token: string | null, method: string, path: string, url: URL, body: Record<string, unknown>): MockResponse => {
+  const routeAdmin = (
+    me: UserRec,
+    token: string | null,
+    method: string,
+    path: string,
+    url: URL,
+    body: Record<string, unknown>,
+  ): MockResponse => {
     const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
     const managed = manage.route(me, token, method, path, url, body)
     if (managed) return managed
@@ -1926,7 +2618,12 @@ export function createMockServer(options: MockOptions = {}) {
       return j({ ...body, summary: manage.summary(me) })
     }
     if (path === '/admin/storage' && method === 'PUT') {
-      if (!isSiteAdmin(me)) throw new HttpError(403, 'forbidden', 'only an administrator of the whole server may change the storage settings')
+      if (!isSiteAdmin(me))
+        throw new HttpError(
+          403,
+          'forbidden',
+          'only an administrator of the whole server may change the storage settings',
+        )
       putStorage(body)
       return j(storageBody())
     }
@@ -1944,7 +2641,12 @@ export function createMockServer(options: MockOptions = {}) {
           return j({ sizeBytes: s.size.bytes, sizeAt: rfc3339(s.size.at) })
         case 'transfer': {
           if (method !== 'POST') break
-          if (s.personal) throw new HttpError(409, 'personal_space', 'a personal space belongs to one person and cannot be transferred or deleted')
+          if (s.personal)
+            throw new HttpError(
+              409,
+              'personal_space',
+              'a personal space belongs to one person and cannot be transferred or deleted',
+            )
           const u = typeof body.userId === 'string' ? users.get(body.userId) : undefined
           if (!u) throw new HttpError(404, 'user_not_found', 'there is no such user')
           if (u.disabled) throw new HttpError(409, 'user_disabled', 'that user is disabled and cannot own a space')
@@ -1961,8 +2663,10 @@ export function createMockServer(options: MockOptions = {}) {
           return { status: 204 }
         case 'storage':
           if (method !== 'PUT') break
-          if (body.pin !== undefined && typeof body.pin !== 'boolean') throw new HttpError(400, 'invalid', 'pin 要是布尔值')
-          if (body.exempt !== undefined && typeof body.exempt !== 'boolean') throw new HttpError(400, 'invalid', 'exempt 要是布尔值')
+          if (body.pin !== undefined && typeof body.pin !== 'boolean')
+            throw new HttpError(400, 'invalid', 'pin 要是布尔值')
+          if (body.exempt !== undefined && typeof body.exempt !== 'boolean')
+            throw new HttpError(400, 'invalid', 'exempt 要是布尔值')
           if (typeof body.pin === 'boolean') {
             s.pinned = body.pin
             if (body.pin && s.remote) s.cache = 'full'
@@ -1971,11 +2675,18 @@ export function createMockServer(options: MockOptions = {}) {
           return j(manage.decorate(s, token))
         case 'evict': {
           if (method !== 'POST') break
-          if (!s.remote) throw new HttpError(409, 'conflict', '这个空间不跟随远端仓库，它是自己页面的唯一一份，不能清掉。')
+          if (!s.remote)
+            throw new HttpError(409, 'conflict', '这个空间不跟随远端仓库，它是自己页面的唯一一份，不能清掉。')
           if (s.pinned) throw new HttpError(409, 'conflict', '这个空间被设为常驻。')
           if (s.cache === 'evicted') throw new HttpError(409, 'conflict', '这个空间已经清掉了。')
-          if (!s.reachable) throw new HttpError(503, 'unavailable', '远端仓库连不上；没有确认远端有全部内容之前不清掉空间。')
-          if (s.remote.state !== 'ok') throw new HttpError(409, 'busy', `空间没有清掉：它的远端仓库是 ${s.remote.state}，没法核对空间里的东西是否都在远端。`)
+          if (!s.reachable)
+            throw new HttpError(503, 'unavailable', '远端仓库连不上；没有确认远端有全部内容之前不清掉空间。')
+          if (s.remote.state !== 'ok')
+            throw new HttpError(
+              409,
+              'busy',
+              `空间没有清掉：它的远端仓库是 ${s.remote.state}，没法核对空间里的东西是否都在远端。`,
+            )
           if (s.store.draftCount() > 0) throw new HttpError(409, 'busy', '空间没有清掉：它还有没提交的草稿。')
           s.cache = 'evicted'
           return { status: 204 }
@@ -1997,7 +2708,10 @@ export function createMockServer(options: MockOptions = {}) {
   const fakeCommit = () => gitBlobId(`remote ${++counter} ${random()}`)
   const hostKeyOf = (host: string) => `SHA256:${btoa(gitBlobId(host)).replace(/=+$/, '').slice(0, 43)}`
 
-  const makeKey = (space: SpaceRec): RemoteKey => ({ publicKey: `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI${b64(43)} petalbook-${space.id}`, fingerprint: `SHA256:${b64(43)}` })
+  const makeKey = (space: SpaceRec): RemoteKey => ({
+    publicKey: `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI${b64(43)} petalbook-${space.id}`,
+    fingerprint: `SHA256:${b64(43)}`,
+  })
 
   const remoteInfo = (s: SpaceRec): Remote => {
     const r = s.remote!
@@ -2009,8 +2723,23 @@ export function createMockServer(options: MockOptions = {}) {
       const account = /^https:\/\/github\.com\/([^/]+)\//.exec(r.url)?.[1] ?? ''
       credential =
         c.via === 'app'
-          ? { type: 'connection', provider: 'github', via: 'app', installationId: c.installationId, account, repoId: c.repoId }
-          : { type: 'connection', provider: 'github', via: 'user', user: { id: c.userId, username: users.get(c.userId)?.username ?? '' }, login: github.connectedLogin(c.userId) ?? '', account, repoId: c.repoId }
+          ? {
+              type: 'connection',
+              provider: 'github',
+              via: 'app',
+              installationId: c.installationId,
+              account,
+              repoId: c.repoId,
+            }
+          : {
+              type: 'connection',
+              provider: 'github',
+              via: 'user',
+              user: { id: c.userId, username: users.get(c.userId)?.username ?? '' },
+              login: github.connectedLogin(c.userId) ?? '',
+              account,
+              repoId: c.repoId,
+            }
     }
     return {
       url: r.url,
@@ -2035,18 +2764,30 @@ export function createMockServer(options: MockOptions = {}) {
       return
     }
     space.key ??= makeKey(space)
-    space.remote ??= { url: 'git@github.com:mock/notes.git', branch: 'main', credential: { type: 'ssh' }, state: 'ok', lastSync: now(), error: '', hostKey: hostKeyOf('github.com'), rewritten: null }
+    space.remote ??= {
+      url: 'git@github.com:mock/notes.git',
+      branch: 'main',
+      credential: { type: 'ssh' },
+      state: 'ok',
+      lastSync: now(),
+      error: '',
+      hostKey: hostKeyOf('github.com'),
+      rewritten: null,
+    }
     const r = space.remote
     r.state = state
     space.reachable = state !== 'offline'
-    r.error = patch.error ?? (state === 'offline' ? '连接超时' : state === 'error' ? '远端拒绝了这个凭据，请检查令牌或部署密钥' : '')
+    r.error =
+      patch.error ??
+      (state === 'offline' ? '连接超时' : state === 'error' ? '远端拒绝了这个凭据，请检查令牌或部署密钥' : '')
     r.rewritten = state === 'rewritten' ? { lastGood: fakeCommit(), remote: fakeCommit() } : null
     if (state === 'ok') r.lastSync = now()
   }
 
   // `https://host/path` or an SSH address, with no password in it.
   const parseRemoteUrl = (raw: unknown): { kind: 'https' | 'ssh'; host: string } => {
-    const bad = () => new HttpError(400, 'invalid', '只接受 https://主机/路径 或 SSH 地址（git@主机:路径），地址里不能带密码')
+    const bad = () =>
+      new HttpError(400, 'invalid', '只接受 https://主机/路径 或 SSH 地址（git@主机:路径），地址里不能带密码')
     if (typeof raw !== 'string' || raw.trim() === '' || /\s/.test(raw.trim())) throw bad()
     const url = raw.trim()
     let m: RegExpExecArray | null
@@ -2067,8 +2808,14 @@ export function createMockServer(options: MockOptions = {}) {
 
   // `https://github.com/owner/name(.git)` or `git@github.com:owner/name.git`.
   const githubRepoOf = (raw: unknown): { owner: string; name: string } => {
-    const m = typeof raw === 'string' ? /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?\/?$/.exec(raw.trim()) : null
-    if (!m) throw new HttpError(400, 'invalid', 'github 凭据要配 GitHub 上的仓库地址（https://github.com/所有者/仓库.git）')
+    const m =
+      typeof raw === 'string'
+        ? /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?\/?$/.exec(
+            raw.trim(),
+          )
+        : null
+    if (!m)
+      throw new HttpError(400, 'invalid', 'github 凭据要配 GitHub 上的仓库地址（https://github.com/所有者/仓库.git）')
     return { owner: m[1], name: m[2] }
   }
 
@@ -2082,7 +2829,10 @@ export function createMockServer(options: MockOptions = {}) {
     space.remote = {
       url: `https://github.com/${found.repo.owner}/${found.repo.name}.git`,
       branch,
-      credential: found.via === 'app' ? { type: 'github', via: 'app', installationId: found.installationId, repoId: found.repo.id } : { type: 'github', via: 'user', userId, repoId: found.repo.id },
+      credential:
+        found.via === 'app'
+          ? { type: 'github', via: 'app', installationId: found.installationId, repoId: found.repo.id }
+          : { type: 'github', via: 'user', userId, repoId: found.repo.id },
       state: 'ok',
       lastSync: now(),
       error: '',
@@ -2095,14 +2845,17 @@ export function createMockServer(options: MockOptions = {}) {
 
   const connectRemote = (space: SpaceRec, userId: string, body: Record<string, unknown>): Remote => {
     const input = body as unknown as Partial<ConnectRemoteInput>
-    if ((input.credential as { type?: unknown } | undefined)?.type === 'connection') return connectGitHub(space, userId, input)
+    if ((input.credential as { type?: unknown } | undefined)?.type === 'connection')
+      return connectGitHub(space, userId, input)
     const { kind, host } = parseRemoteUrl(input.url)
-    if (!hostAllowed(host)) throw new HttpError(403, 'forbidden', `管理员没有允许连接 ${host}。需要在服务器启动时用 --remote-host 加上它。`)
+    if (!hostAllowed(host))
+      throw new HttpError(403, 'forbidden', `管理员没有允许连接 ${host}。需要在服务器启动时用 --remote-host 加上它。`)
     const branch = input.branch === undefined || input.branch === '' ? 'main' : input.branch
     if (typeof branch !== 'string' || /\s/.test(branch)) throw new HttpError(400, 'invalid', '分支名不合法')
     const cred = input.credential
     if (!cred || (cred.type !== 'ssh' && cred.type !== 'token')) throw new HttpError(400, 'invalid', '缺少 credential')
-    if ((cred.type === 'ssh') !== (kind === 'ssh')) throw new HttpError(400, 'invalid', cred.type === 'ssh' ? 'SSH 密钥要配 SSH 地址' : '令牌要配 https 地址')
+    if ((cred.type === 'ssh') !== (kind === 'ssh'))
+      throw new HttpError(400, 'invalid', cred.type === 'ssh' ? 'SSH 密钥要配 SSH 地址' : '令牌要配 https 地址')
     let credential: RemoteRec['credential']
     if (cred.type === 'ssh') {
       space.key ??= makeKey(space)
@@ -2111,15 +2864,22 @@ export function createMockServer(options: MockOptions = {}) {
       const kept = space.remote?.credential.type === 'token' ? space.remote.credential : null
       const token = typeof cred.token === 'string' && cred.token !== '' ? cred.token : kept?.token
       if (!token) throw new HttpError(400, 'invalid', '缺少令牌')
-      const username = typeof cred.username === 'string' && cred.username.trim() !== '' ? cred.username.trim() : (kept?.username ?? 'x-access-token')
+      const username =
+        typeof cred.username === 'string' && cred.username.trim() !== ''
+          ? cred.username.trim()
+          : (kept?.username ?? 'x-access-token')
       credential = { type: 'token', username, token }
     }
 
     // What the pretend remote is like.
     const word = /unreachable|refused|diverged|behind|ahead|empty/.exec(String(input.url))?.[0]
-    const found = word === 'empty' ? 'no-branch' : ((word as NonNullable<MockRemoteOptions['find']> | undefined) ?? options.remote?.find ?? 'no-branch')
+    const found =
+      word === 'empty'
+        ? 'no-branch'
+        : ((word as NonNullable<MockRemoteOptions['find']> | undefined) ?? options.remote?.find ?? 'no-branch')
     if (found === 'unreachable') throw new HttpError(503, 'unavailable', `连不上 ${host}：连接超时。什么也没有改。`)
-    if (found === 'refused') throw new HttpError(503, 'unavailable', `${host} 拒绝了这个凭据（认证失败）。什么也没有改。`)
+    if (found === 'refused')
+      throw new HttpError(503, 'unavailable', `${host} 拒绝了这个凭据（认证失败）。什么也没有改。`)
     if (found !== 'no-branch') {
       if (space.store.pristine()) {
         // A space nothing was ever made in takes the remote's content and history.
@@ -2128,12 +2888,25 @@ export function createMockServer(options: MockOptions = {}) {
           { folder: '笔记', title: '远端的笔记', body: '远端仓库里的第二个页面。\n' },
         ])
       } else if (found === 'diverged') {
-        throw new HttpError(409, 'conflict', '这个空间和远端仓库各自都有内容，两边的历史互不包含。PetalBook 不会合并两份历史，请为这个仓库新建一个空间。')
+        throw new HttpError(
+          409,
+          'conflict',
+          '这个空间和远端仓库各自都有内容，两边的历史互不包含。PetalBook 不会合并两份历史，请为这个仓库新建一个空间。',
+        )
       } else if (found === 'ahead') {
         space.store.adopt([{ folder: '', title: '远端新增的页面', body: '这个页面是在远端新增的。\n' }])
       }
     }
-    space.remote = { url: String(input.url).trim(), branch, credential, state: 'ok', lastSync: now(), error: '', hostKey: kind === 'ssh' ? hostKeyOf(host) : undefined, rewritten: null }
+    space.remote = {
+      url: String(input.url).trim(),
+      branch,
+      credential,
+      state: 'ok',
+      lastSync: now(),
+      error: '',
+      hostKey: kind === 'ssh' ? hostKeyOf(host) : undefined,
+      rewritten: null,
+    }
     space.reachable = true
     return remoteInfo(space)
   }
@@ -2150,20 +2923,31 @@ export function createMockServer(options: MockOptions = {}) {
       error: '',
       errorCode: '',
       rewritten: null,
-      move: a.move && { state: a.move.state, files: a.move.files, filesDone: a.move.filesDone, bytes: a.move.bytes, bytesDone: a.move.bytesDone, error: a.move.error },
+      move: a.move && {
+        state: a.move.state,
+        files: a.move.files,
+        filesDone: a.move.filesDone,
+        bytes: a.move.bytes,
+        bytesDone: a.move.bytesDone,
+        error: a.move.error,
+      },
     }
   }
   // What the mock plays for the attachment repository: connecting works for any address on an allowed host,
   // a move shows its progress one step at each look, and a repository that was used cannot be taken away.
   const routeAssets = (space: SpaceRec, method: string, rest: string, body: Record<string, unknown>): MockResponse => {
-    if (!space.remote && method === 'PUT') throw new HttpError(409, 'remote_required', '空间要先跟随远端仓库，才能有附件仓库。', { require: storage.remotes.require ?? 'any' })
+    if (!space.remote && method === 'PUT')
+      throw new HttpError(409, 'remote_required', '空间要先跟随远端仓库，才能有附件仓库。', {
+        require: storage.remotes.require ?? 'any',
+      })
     const has = () => {
       if (!space.assets) throw new HttpError(404, 'not_found', '这个空间没有附件仓库')
       return space.assets
     }
     if (rest === '/remote/assets/move') {
       const a = has()
-      if (a.move && (a.move.state === 'copying' || a.move.state === 'switching')) throw new HttpError(409, 'conflict', '附件正在搬')
+      if (a.move && (a.move.state === 'copying' || a.move.state === 'switching'))
+        throw new HttpError(409, 'conflict', '附件正在搬')
       const files = space.files.count()
       if (files === 0) return { status: 200, body: assetsView(space) }
       const bytes = files * 48_000
@@ -2191,25 +2975,42 @@ export function createMockServer(options: MockOptions = {}) {
     }
     if (method === 'PUT') {
       const gh = isRecord(body.sync) ? body.sync : null
-      if (gh && gh.provider !== 'github') throw new HttpError(400, 'invalid', 'sync.provider 不是这台服务器能建仓库的提供方')
+      if (gh && gh.provider !== 'github')
+        throw new HttpError(400, 'invalid', 'sync.provider 不是这台服务器能建仓库的提供方')
       const url = gh ? `https://github.com/${String(gh.owner)}/${String(gh.name)}.git` : String(body.url ?? '').trim()
       if (url === '') throw new HttpError(400, 'invalid', '缺少仓库地址')
-      if (space.assets?.move && (space.assets.move.state === 'copying' || space.assets.move.state === 'switching')) throw new HttpError(409, 'conflict', '附件正在搬')
-      if (space.assets && (space.assets.used || space.assets.move?.state === 'done') && space.assets.url !== url) throw new HttpError(409, 'conflict', '附件已经进了附件仓库，不能换成另一个')
+      if (space.assets?.move && (space.assets.move.state === 'copying' || space.assets.move.state === 'switching'))
+        throw new HttpError(409, 'conflict', '附件正在搬')
+      if (space.assets && (space.assets.used || space.assets.move?.state === 'done') && space.assets.url !== url)
+        throw new HttpError(409, 'conflict', '附件已经进了附件仓库，不能换成另一个')
       const credential = space.remote!.credential
-      space.assets = { url, branch: 'main', credential, used: space.assets?.used ?? false, move: space.assets?.move ?? null, cacheBytes: space.assets?.cacheBytes ?? 0 }
+      space.assets = {
+        url,
+        branch: 'main',
+        credential,
+        used: space.assets?.used ?? false,
+        move: space.assets?.move ?? null,
+        cacheBytes: space.assets?.cacheBytes ?? 0,
+      }
       return { status: 200, body: assetsView(space) }
     }
     if (method === 'DELETE') {
       const a = has()
-      if (a.used || a.move?.state === 'done') throw new HttpError(409, 'conflict', '附件已经进了附件仓库，不能再搬回空间仓库')
+      if (a.used || a.move?.state === 'done')
+        throw new HttpError(409, 'conflict', '附件已经进了附件仓库，不能再搬回空间仓库')
       space.assets = null
       return { status: 204 }
     }
     throw new HttpError(404, 'not_found', '没有这个接口')
   }
 
-  const routeRemote = (space: SpaceRec, userId: string, method: string, rest: string, body: Record<string, unknown>): MockResponse => {
+  const routeRemote = (
+    space: SpaceRec,
+    userId: string,
+    method: string,
+    rest: string,
+    body: Record<string, unknown>,
+  ): MockResponse => {
     // Accounts mode only, like the other space-management endpoints.
     accountsOnly()
     const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
@@ -2231,8 +3032,16 @@ export function createMockServer(options: MockOptions = {}) {
       }
       if (method === 'PUT') {
         const cred = isRecord(body.credential) ? body.credential.type : undefined
-        if (storage.remotes.require === 'github' && cred !== 'github' && !space.exempt && !ownerExempt(space) && storage.remotes.since !== null) {
-          throw new HttpError(409, 'remote_required', '服务器要求空间用 GitHub 仓库，请换成 GitHub 凭据。', { require: 'github' })
+        if (
+          storage.remotes.require === 'github' &&
+          cred !== 'github' &&
+          !space.exempt &&
+          !ownerExempt(space) &&
+          storage.remotes.since !== null
+        ) {
+          throw new HttpError(409, 'remote_required', '服务器要求空间用 GitHub 仓库，请换成 GitHub 凭据。', {
+            require: 'github',
+          })
         }
         const info = connectRemote(space, userId, body)
         space.cache = 'partial'
@@ -2240,8 +3049,15 @@ export function createMockServer(options: MockOptions = {}) {
       }
       if (method === 'DELETE') {
         following()
-        if (storage.remotes.require && !space.exempt && !ownerExempt(space) && noticeOf({ ...space, remote: null }) !== null) {
-          throw new HttpError(409, 'remote_required', '服务器要求空间跟随远端仓库，不能移除。', { require: storage.remotes.require })
+        if (
+          storage.remotes.require &&
+          !space.exempt &&
+          !ownerExempt(space) &&
+          noticeOf({ ...space, remote: null }) !== null
+        ) {
+          throw new HttpError(409, 'remote_required', '服务器要求空间跟随远端仓库，不能移除。', {
+            require: storage.remotes.require,
+          })
         }
         space.remote = null
         space.reachable = true
@@ -2272,7 +3088,10 @@ export function createMockServer(options: MockOptions = {}) {
         // The connection this space syncs with has not been renewed: nothing changes until it is connected again.
         r.state = 'error'
         r.errorCode = github.connectedLogin(r.credential.userId) ? 'connection_expired' : 'connection_missing'
-        r.error = r.errorCode === 'connection_expired' ? '这个空间用的 GitHub 授权已过期或被撤销，要由连接它的人重新连接' : '连接这个空间的人已经断开了 GitHub'
+        r.error =
+          r.errorCode === 'connection_expired'
+            ? '这个空间用的 GitHub 授权已过期或被撤销，要由连接它的人重新连接'
+            : '连接这个空间的人已经断开了 GitHub'
       } else {
         r.lastSync = now()
         if (r.state === 'offline' || (r.state === 'error' && isConnectionCode(r.errorCode))) {
@@ -2286,7 +3105,8 @@ export function createMockServer(options: MockOptions = {}) {
     if (rest === '/remote/accept' && method === 'POST') {
       const r = following()
       if (typeof body.commit !== 'string' || body.commit === '') throw new HttpError(400, 'invalid', '缺少 commit')
-      if (r.state !== 'rewritten' || !r.rewritten || r.rewritten.remote !== body.commit) throw new HttpError(409, 'conflict', '远端已经不在这个提交上了，请刷新后再看')
+      if (r.state !== 'rewritten' || !r.rewritten || r.rewritten.remote !== body.commit)
+        throw new HttpError(409, 'conflict', '远端已经不在这个提交上了，请刷新后再看')
       r.state = 'ok'
       r.rewritten = null
       r.error = ''
@@ -2296,7 +3116,15 @@ export function createMockServer(options: MockOptions = {}) {
     throw new HttpError(404, 'not_found', '没有这个接口')
   }
 
-  const routeSpace = (u: UserRec, space: SpaceRec, method: string, rest: string, url: URL, body: Record<string, unknown>, raw?: Uint8Array): MockResponse => {
+  const routeSpace = (
+    u: UserRec,
+    space: SpaceRec,
+    method: string,
+    rest: string,
+    url: URL,
+    body: Record<string, unknown>,
+    raw?: Uint8Array,
+  ): MockResponse => {
     const st = space.store
     if (rest === '/pages') {
       if (method === 'GET') return { status: 200, body: st.listPages(url.searchParams) }
@@ -2308,7 +3136,10 @@ export function createMockServer(options: MockOptions = {}) {
     if (rest === '/pages/groups' && method === 'GET') return { status: 200, body: st.groups(url.searchParams) }
     if (rest === '/views' && method === 'GET') {
       const v = url.searchParams
-      return { status: 200, body: st.views(v.has('folder') ? (v.get('folder') ?? '') : undefined, v.get('tag') ?? undefined) }
+      return {
+        status: 200,
+        body: st.views(v.has('folder') ? (v.get('folder') ?? '') : undefined, v.get('tag') ?? undefined),
+      }
     }
     if (rest === '/views' && method === 'PUT') return { status: 200, body: st.putViews(body) }
     if (rest === '/daily' && method === 'GET') {
@@ -2318,41 +3149,69 @@ export function createMockServer(options: MockOptions = {}) {
       let age = 300
       if (tzRaw !== null && tzRaw !== '') {
         const tz = Number(tzRaw)
-        if (!/^-?\d+$/.test(tzRaw) || tz < -840 || tz > 840) throw new HttpError(400, 'invalid', 'tz 是东偏 UTC 的分钟数，-840 到 840')
+        if (!/^-?\d+$/.test(tzRaw) || tz < -840 || tz > 840)
+          throw new HttpError(400, 'invalid', 'tz 是东偏 UTC 的分钟数，-840 到 840')
         const date = url.searchParams.get('date') ?? new Date(now()).toISOString().slice(0, 10)
-        age = Math.max(60, Math.min(86400, Math.floor((Date.parse(date + 'T00:00:00Z') + 86400_000 - tz * 60_000 - now()) / 1000)))
+        age = Math.max(
+          60,
+          Math.min(86400, Math.floor((Date.parse(date + 'T00:00:00Z') + 86400_000 - tz * 60_000 - now()) / 1000)),
+        )
       }
       if (body.page === null && body.quote === undefined) age = 60
-      return { status: 200, body, headers: { 'Cache-Control': `private, max-age=${age}`, ETag: `"${gitBlobId(JSON.stringify(body)).slice(0, 24)}"` } }
+      return {
+        status: 200,
+        body,
+        headers: {
+          'Cache-Control': `private, max-age=${age}`,
+          ETag: `"${gitBlobId(JSON.stringify(body)).slice(0, 24)}"`,
+        },
+      }
     }
-    if (rest === '/daily/settings' && method === 'GET') return { status: 200, body: { daily: st.home.config(), inEffect: !accounts || site.allow.own } }
-    if (rest === '/daily/settings' && method === 'PUT') return { status: 200, body: { ...st.home.setConfig(body), inEffect: !accounts || site.allow.own } }
+    if (rest === '/daily/settings' && method === 'GET')
+      return { status: 200, body: { daily: st.home.config(), inEffect: !accounts || site.allow.own } }
+    if (rest === '/daily/settings' && method === 'PUT')
+      return { status: 200, body: { ...st.home.setConfig(body), inEffect: !accounts || site.allow.own } }
     if (rest === '/daily/prefs') {
       accountsOnly()
       return routeDailyPrefs(space, method, body)
     }
     if (rest === '/favorites' && method === 'GET') return { status: 200, body: st.home.favorites(u.id) }
     if (rest === '/favorites' && method === 'POST') return { status: 200, body: st.home.addFavorite(u.id, body) }
-    if (rest === '/favorites' && method === 'DELETE') return { status: 200, body: st.home.removeFavorite(u.id, url.searchParams.get('kind'), url.searchParams.get('target')) }
-    if (rest === '/favorites/order' && method === 'PUT') return { status: 200, body: st.home.orderFavorites(u.id, body) }
+    if (rest === '/favorites' && method === 'DELETE')
+      return {
+        status: 200,
+        body: st.home.removeFavorite(u.id, url.searchParams.get('kind'), url.searchParams.get('target')),
+      }
+    if (rest === '/favorites/order' && method === 'PUT')
+      return { status: 200, body: st.home.orderFavorites(u.id, body) }
     if (rest === '/pages/batch' && method === 'POST') return { status: 200, body: st.batch(body) }
     const hist = /^\/pages\/([^/]+)\/history$/.exec(rest)
-    if (hist && method === 'GET') return { status: 200, body: st.history(decodeURIComponent(hist[1]), url.searchParams) }
+    if (hist && method === 'GET')
+      return { status: 200, body: st.history(decodeURIComponent(hist[1]), url.searchParams) }
     const bl = /^\/pages\/([^/]+)\/backlinks$/.exec(rest)
     if (bl && method === 'GET') return { status: 200, body: st.backlinks(decodeURIComponent(bl[1]), url.searchParams) }
     const ln = /^\/pages\/([^/]+)\/links$/.exec(rest)
     if (ln && method === 'GET') return { status: 200, body: st.links(decodeURIComponent(ln[1])) }
     const ver = /^\/pages\/([^/]+)\/versions\/([^/]+)$/.exec(rest)
-    if (ver && method === 'GET') return { status: 200, body: st.version(decodeURIComponent(ver[1]), decodeURIComponent(ver[2])) }
+    if (ver && method === 'GET')
+      return { status: 200, body: st.version(decodeURIComponent(ver[1]), decodeURIComponent(ver[2])) }
     if (rest === '/remote' || rest.startsWith('/remote/')) return routeRemote(space, u.id, method, rest, body)
     const props = /^\/pages\/([^/]+)\/props$/.exec(rest)
-    if (props && method === 'PATCH') return { status: 200, body: st.patchProps(u.id, decodeURIComponent(props[1]), body) }
+    if (props && method === 'PATCH')
+      return { status: 200, body: st.patchProps(u.id, decodeURIComponent(props[1]), body) }
     if (rest === '/types' && method === 'GET') {
       // Only for those who manage the space; for anyone else the key is absent.
       const notices = settingsNotices.get(space.id) ?? []
-      return { status: 200, body: notices.length > 0 && spaceInfo(space, u).permissions.includes('manage') ? { ...st.types(), settingsNotices: notices } : st.types() }
+      return {
+        status: 200,
+        body:
+          notices.length > 0 && spaceInfo(space, u).permissions.includes('manage')
+            ? { ...st.types(), settingsNotices: notices }
+            : st.types(),
+      }
     }
-    if (rest === '/checks' && method === 'GET') return { status: 200, body: st.checks(url.searchParams.get('kind'), url.searchParams.get('cursor')) }
+    if (rest === '/checks' && method === 'GET')
+      return { status: 200, body: st.checks(url.searchParams.get('kind'), url.searchParams.get('cursor')) }
     if (rest === '/checks/fix' && method === 'POST') return { status: 200, body: st.fixCheck(u.id, body) }
     if (rest === '/templates' && method === 'GET') return { status: 200, body: st.templates() }
     if (rest === '/templates/defaults' && method === 'PUT') return { status: 200, body: st.setTemplateDefault(body) }
@@ -2386,7 +3245,8 @@ export function createMockServer(options: MockOptions = {}) {
       return { status: 200, body: st.putType(name, body as never) }
     }
     if (rest === '/folders/type' && method === 'PUT') {
-      if (typeof body.folder !== 'string' || (body.type !== undefined && typeof body.type !== 'string')) throw new HttpError(400, 'invalid', '缺少 folder 或 type')
+      if (typeof body.folder !== 'string' || (body.type !== undefined && typeof body.type !== 'string'))
+        throw new HttpError(400, 'invalid', '缺少 folder 或 type')
       return { status: 200, body: st.bindFolder(body.folder, (body.type as string | undefined) ?? '') }
     }
     const one = /^\/pages\/([^/]+)(\/(move|draft|commit))?$/.exec(rest)
@@ -2432,7 +3292,8 @@ export function createMockServer(options: MockOptions = {}) {
       const why = blockedReason(space)
       if (why) throw new HttpError(503, 'unavailable', why)
       const name = url.searchParams.get('name') ?? ''
-      if (name.trim() === '' || !(name.split(/[\\/]/).pop() ?? '').trim()) throw new HttpError(400, 'invalid', '缺少文件名')
+      if (name.trim() === '' || !(name.split(/[\\/]/).pop() ?? '').trim())
+        throw new HttpError(400, 'invalid', '缺少文件名')
       if (!raw || raw.length === 0) throw new HttpError(400, 'invalid', '文件是空的')
       if (raw.length > fileLimit(u)) throw tooLarge(fileLimit(u), raw.length, name)
       const r = space.files.upload(id, name, raw)
@@ -2446,7 +3307,12 @@ export function createMockServer(options: MockOptions = {}) {
       if (!raw || raw.length === 0) throw new HttpError(400, 'invalid', '文件是空的')
       if (raw.length > maxImport) throw new HttpError(413, 'invalid', `文件太大，上限是 ${maxImport} 字节`)
       // A file that is a page of its own is judged whole before anything is written (a zip is not opened by the mock).
-      if (url.searchParams.get('name') && !/\.zip$/i.test(url.searchParams.get('name') ?? '') && raw.length > fileLimit(u)) throw tooLarge(fileLimit(u), raw.length, url.searchParams.get('name') ?? '')
+      if (
+        url.searchParams.get('name') &&
+        !/\.zip$/i.test(url.searchParams.get('name') ?? '') &&
+        raw.length > fileLimit(u)
+      )
+        throw tooLarge(fileLimit(u), raw.length, url.searchParams.get('name') ?? '')
       return { status: 200, body: runImport(st.create, raw, folder, url.searchParams.get('name') ?? '') }
     }
     if (rest.startsWith('/files/') && method === 'GET') {
@@ -2479,26 +3345,46 @@ export function createMockServer(options: MockOptions = {}) {
       return { status: 204 }
     }
     if (rest === '/reindex' && method === 'POST') return { status: 200, body: st.reindex() }
-    if ((rest === '/sync/catalog' || rest === '/changes' || rest === '/sync/pages') && method === 'GET') offlineAllowed()
+    if ((rest === '/sync/catalog' || rest === '/changes' || rest === '/sync/pages') && method === 'GET')
+      offlineAllowed()
     if (rest === '/sync/catalog' && method === 'GET') return { status: 200, body: st.syncCatalog(url.searchParams) }
     if (rest === '/changes' && method === 'GET') return { status: 200, body: st.syncChanges(url.searchParams) }
-    if (rest === '/sync/pages' && method === 'GET') return { status: 200, body: st.syncPages(u.id, url.searchParams.get('ids')) }
+    if (rest === '/sync/pages' && method === 'GET')
+      return { status: 200, body: st.syncPages(u.id, url.searchParams.get('ids')) }
     throw new HttpError(404, 'not_found', '没有这个接口')
   }
 
   // --- GitHub (accounts mode) ---
-  const routeGitHub = (ctx: Ctx, method: string, path: string, url: URL, body: Record<string, unknown>): MockResponse => {
+  const routeGitHub = (
+    ctx: Ctx,
+    method: string,
+    path: string,
+    url: URL,
+    body: Record<string, unknown>,
+  ): MockResponse => {
     const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
     if (method === 'GET' && path === '/connections/github/authorization/callback') {
       const r = github.callback(ctx.user?.id ?? null, ctx.cookies[GITHUB_COOKIE], url.searchParams)
-      return { status: 303, headers: { Location: r.to, ...(r.clear ? { 'Set-Cookie': setCookie(GITHUB_COOKIE, '', 0) } : {}) } }
+      return {
+        status: 303,
+        headers: { Location: r.to, ...(r.clear ? { 'Set-Cookie': setCookie(GITHUB_COOKIE, '', 0) } : {}) },
+      }
     }
     if (method === 'GET' && path === '/connections/github/manifest/callback') {
-      const r = github.manifestCallback(ctx.user?.id ?? null, isSiteAdmin(ctx.user ?? undefined), ctx.cookies[GITHUB_MANIFEST_COOKIE], url.searchParams)
-      return { status: 303, headers: { Location: r.to, ...(r.clear ? { 'Set-Cookie': setCookie(GITHUB_MANIFEST_COOKIE, '', 0) } : {}) } }
+      const r = github.manifestCallback(
+        ctx.user?.id ?? null,
+        isSiteAdmin(ctx.user ?? undefined),
+        ctx.cookies[GITHUB_MANIFEST_COOKIE],
+        url.searchParams,
+      )
+      return {
+        status: 303,
+        headers: { Location: r.to, ...(r.clear ? { 'Set-Cookie': setCookie(GITHUB_MANIFEST_COOKIE, '', 0) } : {}) },
+      }
     }
     const me = requireUser(ctx)
-    if (method === 'GET' && path === '/connections') return j({ providers: [github.info(me.id), GIT_PROVIDER] })
+    if (method === 'GET' && path === '/connections')
+      return j({ providers: [github.info(me.id), ...forge.info(me.id), GIT_PROVIDER] })
     if (method === 'POST' && path === '/connections/github/authorization/start') {
       const r = github.start(me.id, body)
       return { status: 200, body: { url: r.url }, headers: { 'Set-Cookie': setCookie(GITHUB_COOKIE, r.state, 600) } }
@@ -2513,28 +3399,137 @@ export function createMockServer(options: MockOptions = {}) {
       github.dismiss(me.id, Number(left[1]))
       return { status: 204 }
     }
-    if (method === 'GET' && path === '/connections/github/owners') return j(github.owners(me.id, url.searchParams.get('cursor')))
+    if (method === 'GET' && path === '/connections/github/owners')
+      return j(github.owners(me.id, url.searchParams.get('cursor')))
     if (method === 'GET' && path === '/connections/github/repos') {
       const inst = url.searchParams.get('installation')
       const mine = url.searchParams.get('mine') === 'true'
       if ((inst === null) === !mine) throw new HttpError(400, 'invalid', '给 installation 或 mine=true，二选一')
       if (inst !== null && !/^\d+$/.test(inst)) throw new HttpError(400, 'invalid', 'installation 是数字')
-      return j(github.reposOf(me.id, inst !== null ? { installation: Number(inst) } : { mine: true }, url.searchParams.get('cursor')))
+      return j(
+        github.reposOf(
+          me.id,
+          inst !== null ? { installation: Number(inst) } : { mine: true },
+          url.searchParams.get('cursor'),
+        ),
+      )
     }
     throw new HttpError(404, 'not_found', '没有这个接口')
   }
 
-  const routeAdminGitHub = (me: UserRec, method: string, path: string, url: URL, body: Record<string, unknown>): MockResponse => {
+  // The hosts with an OAuth application (accounts mode).
+  const routeForge = (
+    ctx: Ctx,
+    id: string,
+    method: string,
+    path: string,
+    url: URL,
+    body: Record<string, unknown>,
+  ): MockResponse => {
+    const cookie = FORGE_COOKIE + id
+    if (method === 'GET' && path === `/connections/${id}/authorization/callback`) {
+      const r = forge.callback(id, ctx.user?.id ?? null, ctx.cookies[cookie], url.searchParams)
+      return {
+        status: 303,
+        headers: { Location: r.to, ...(r.clear ? { 'Set-Cookie': setCookie(cookie, '', 0) } : {}) },
+      }
+    }
+    const me = requireUser(ctx)
+    if (method === 'POST' && path === `/connections/${id}/authorization/start`) {
+      const r = forge.start(id, me.id, body)
+      return { status: 200, body: { url: r.url }, headers: { 'Set-Cookie': setCookie(cookie, r.state, 600) } }
+    }
+    if (method === 'DELETE' && path === `/connections/${id}/authorization`) {
+      forge.disconnect(id, me.id)
+      return { status: 204 }
+    }
+    const left = new RegExp(`^/connections/${id}/leftovers/([^/]+)$`).exec(path)
+    if (left && method === 'DELETE') {
+      if (!/^\d+$/.test(left[1]) || Number(left[1]) <= 0) throw new HttpError(404, 'not_found', '没有这个仓库')
+      forge.dismiss(id, me.id, Number(left[1]))
+      return { status: 204 }
+    }
+    if (method === 'GET' && path === `/connections/${id}/owners`)
+      return {
+        status: 200,
+        body: forge.owners(id, me.id, url.searchParams.get('cursor'), url.searchParams.get('q') ?? ''),
+      }
+    if (method === 'GET' && path === `/connections/${id}/repos`) {
+      if (url.searchParams.get('installation') !== null)
+        throw new HttpError(400, 'invalid', 'this provider has no installations', { provider: id })
+      return {
+        status: 200,
+        body: forge.repos(id, me.id, url.searchParams.get('cursor'), url.searchParams.get('q') ?? ''),
+      }
+    }
+    throw new HttpError(404, 'not_found', '没有这个接口')
+  }
+
+  const routeAdminForge = (id: string, method: string, path: string, body: Record<string, unknown>): MockResponse => {
+    const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
+    if (path === '/admin/connections' && method === 'GET') {
+      const gh = github.admin()
+      const providers = [
+        {
+          id: 'github',
+          type: 'github',
+          name: 'GitHub',
+          host: 'github.com',
+          configured: gh.configured,
+          partialSync: 'yes' as const,
+          connections: gh.configured ? gh.authorizations : 0,
+          spaces: gh.configured ? gh.spaces : 0,
+        },
+        ...forge.list(),
+        {
+          id: 'git',
+          type: 'git',
+          name: 'Git',
+          host: '',
+          configured: true,
+          partialSync: 'unknown' as const,
+          connections: 0,
+          spaces: 0,
+        },
+      ]
+      return j({ providers })
+    }
+    if (path === '/admin/connections' && method === 'POST') return j(forge.create(body), 201)
+    if (path === `/admin/connections/${id}/check` && method === 'POST') return j(forge.check(id))
+    if (path === `/admin/connections/${id}` && method === 'GET') return j(forge.admin(id))
+    if (path === `/admin/connections/${id}` && (method === 'PATCH' || method === 'PUT')) return j(forge.patch(id, body))
+    if (path === `/admin/connections/${id}` && method === 'DELETE') {
+      forge.remove(id)
+      return { status: 204 }
+    }
+    throw new HttpError(404, 'not_found', '没有这个接口')
+  }
+
+  const routeAdminGitHub = (
+    me: UserRec,
+    method: string,
+    path: string,
+    url: URL,
+    body: Record<string, unknown>,
+  ): MockResponse => {
     const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
     // No App is waiting to be saved in the mock: the retry has nothing to finish.
-    if (path === '/admin/connections/github/manifest/retry' && method === 'POST') throw new HttpError(404, 'not_found', 'no App is waiting to be saved')
+    if (path === '/admin/connections/github/manifest/retry' && method === 'POST')
+      throw new HttpError(404, 'not_found', 'no App is waiting to be saved')
     if (path === '/admin/connections/github' && method === 'GET') return j(github.admin())
     if (path === '/admin/connections/github' && method === 'PUT') {
       const str = (v: unknown, name: string) => {
         if (v !== undefined && typeof v !== 'string') throw new HttpError(400, 'invalid', `${name} 要是字符串`)
         return v as string | undefined
       }
-      return j(github.putAdmin({ appId: str(body.appId, 'appId'), privateKey: str(body.privateKey, 'privateKey'), clientId: str(body.clientId, 'clientId'), clientSecret: str(body.clientSecret, 'clientSecret') }))
+      return j(
+        github.putAdmin({
+          appId: str(body.appId, 'appId'),
+          privateKey: str(body.privateKey, 'privateKey'),
+          clientId: str(body.clientId, 'clientId'),
+          clientSecret: str(body.clientSecret, 'clientSecret'),
+        }),
+      )
     }
     if (path === '/admin/connections/github' && method === 'DELETE') {
       github.deleteAdmin()
@@ -2545,10 +3540,12 @@ export function createMockServer(options: MockOptions = {}) {
       const r = github.manifestStart(me.id, body)
       return { status: 200, body: r.start, headers: { 'Set-Cookie': setCookie(GITHUB_MANIFEST_COOKIE, r.state, 600) } }
     }
-    if (path === '/admin/connections/github/installations' && method === 'GET') return j(github.installations(url.searchParams.get('cursor')))
+    if (path === '/admin/connections/github/installations' && method === 'GET')
+      return j(github.installations(url.searchParams.get('cursor')))
     const inst = /^\/admin\/connections\/github\/installations\/(\d+)$/.exec(path)
     if (inst && method === 'PUT') {
-      if (body.tenants === undefined) throw new HttpError(400, 'invalid', '给 tenants：要共享给的租户 id（不共享就是 []）')
+      if (body.tenants === undefined)
+        throw new HttpError(400, 'invalid', '给 tenants：要共享给的租户 id（不共享就是 []）')
       return j(github.share(Number(inst[1]), body.tenants))
     }
     throw new HttpError(404, 'not_found', '没有这个接口')
@@ -2560,16 +3557,31 @@ export function createMockServer(options: MockOptions = {}) {
 
     // A session held until a passkey is registered may do only what leads to registering one, and sign out.
     if (accounts && ctx.user && ctx.token && held.has(ctx.token)) {
-      const allowed = (method === 'GET' && ['/session', '/meta', '/auth/providers', '/account', '/account/passkeys'].includes(path)) || path.startsWith('/account/passkeys/') || (method === 'POST' && path === '/logout')
+      const allowed =
+        (method === 'GET' &&
+          ['/session', '/meta', '/auth/providers', '/account', '/account/passkeys'].includes(path)) ||
+        path.startsWith('/account/passkeys/') ||
+        (method === 'POST' && path === '/logout')
       if (!allowed) throw new HttpError(403, 'passkey_required', '请先设置一个 passkey')
     }
 
     if (method === 'GET' && path === '/meta') {
       const u = ctx.user
-      return j({ version: 'mock', maxUpload: fileLimit(u), maxImport, spaces: u ? callerSpaces(u).map((s) => spaceInfo(s, u)) : [] })
+      return j({
+        version: 'mock',
+        maxUpload: fileLimit(u),
+        maxImport,
+        spaces: u ? callerSpaces(u).map((s) => spaceInfo(s, u)) : [],
+      })
     }
     if (method === 'GET' && path === '/session') {
-      const base = { mode, user: ctx.user ? publicUser(ctx.user) : null, setup: accounts && users.size === 0, hold: accounts && ctx.token && ctx.user && held.has(ctx.token) ? ('passkey' as const) : null, token: null }
+      const base = {
+        mode,
+        user: ctx.user ? publicUser(ctx.user) : null,
+        setup: accounts && users.size === 0,
+        hold: accounts && ctx.token && ctx.user && held.has(ctx.token) ? ('passkey' as const) : null,
+        token: null,
+      }
       return {
         status: 200,
         // Never cached: it says who is signed in.
@@ -2582,9 +3594,22 @@ export function createMockServer(options: MockOptions = {}) {
     // `git pull` would, to exercise the conflict path by hand.
     const touch = /^\/_mock\/touch\/([^/]+)$/.exec(path)
     if (method === 'POST' && touch) {
-      const target = [...spaces.values()].find((s) => s.id === (url.searchParams.get('space') ?? '') || (!url.searchParams.get('space') && s.store.peek(touch[1])))
+      const target = [...spaces.values()].find(
+        (s) =>
+          s.id === (url.searchParams.get('space') ?? '') || (!url.searchParams.get('space') && s.store.peek(touch[1])),
+      )
       if (!target) throw new HttpError(404, 'not_found', '没有这个页面')
       return j(target.store.touch(touch[1], body))
+    }
+
+    // Mock only: a person is connected to a host without the round trip, or their connection ran out, or the host goes down.
+    if (method === 'POST' && path === '/_mock/forge') {
+      const uid = typeof body.user === 'string' ? body.user : (ctx.user?.id ?? '')
+      const id = typeof body.provider === 'string' ? body.provider : ''
+      if (typeof body.connect === 'string') forge.connect(id, uid, body.connect, body.admin === true)
+      if (body.expire === true) forge.expire(id, uid)
+      if (typeof body.down === 'boolean') forge.setDown(id, body.down)
+      return j({})
     }
 
     // Mock only: a person's GitHub connection ran out (their spaces that sync through it go to error), or a trap for the next creation.
@@ -2602,9 +3627,25 @@ export function createMockServer(options: MockOptions = {}) {
           }
         }
       }
-      if (typeof body.trap === 'string' && (body.trap === 'noPermission' || body.trap === 'notInInstallation' || body.trap === 'pushFails' || body.trap === 'missingPermission' || body.trap === 'personalNeedsInstall')) github.setTrap(body.trap, body.on !== false)
+      if (
+        typeof body.trap === 'string' &&
+        (body.trap === 'noPermission' ||
+          body.trap === 'notInInstallation' ||
+          body.trap === 'pushFails' ||
+          body.trap === 'missingPermission' ||
+          body.trap === 'personalNeedsInstall')
+      )
+        github.setTrap(body.trap, body.on !== false)
       // What GitHub says about the App now: the administration sees it after a re-check.
-      if (isRecord(body.side)) github.setSide({ permissions: isRecord(body.side.permissions) ? (body.side.permissions as Record<string, string>) : undefined, gaps: Array.isArray(body.side.gaps) ? (body.side.gaps as GitHubGap[]) : undefined, anyAccount: typeof body.side.anyAccount === 'boolean' || body.side.anyAccount === null ? (body.side.anyAccount as boolean | null) : undefined })
+      if (isRecord(body.side))
+        github.setSide({
+          permissions: isRecord(body.side.permissions) ? (body.side.permissions as Record<string, string>) : undefined,
+          gaps: Array.isArray(body.side.gaps) ? (body.side.gaps as GitHubGap[]) : undefined,
+          anyAccount:
+            typeof body.side.anyAccount === 'boolean' || body.side.anyAccount === null
+              ? (body.side.anyAccount as boolean | null)
+              : undefined,
+        })
       return j({})
     }
 
@@ -2621,7 +3662,8 @@ export function createMockServer(options: MockOptions = {}) {
       const target = spaces.get(url.searchParams.get('space') ?? '') ?? [...spaces.values()][0]
       if (!target) throw new HttpError(404, 'not_found', '没有这个空间')
       const state = body.state
-      if (state !== 'local' && state !== 'ok' && state !== 'offline' && state !== 'rewritten' && state !== 'error') throw new HttpError(400, 'invalid', 'state 不对')
+      if (state !== 'local' && state !== 'ok' && state !== 'offline' && state !== 'rewritten' && state !== 'error')
+        throw new HttpError(400, 'invalid', 'state 不对')
       setRemoteState(target, state, { error: typeof body.error === 'string' ? body.error : undefined })
       return j(spaceInfo(target, ownerOf(target) ?? [...users.values()][0]))
     }
@@ -2651,7 +3693,19 @@ export function createMockServer(options: MockOptions = {}) {
       accountsOnly()
       const mode = book.effectiveMode()
       const list = book.publicProviders()
-      return { status: 200, headers: { 'Cache-Control': 'no-store' }, body: { providers: list, loginMode: mode, local: mode !== 'sso_redirect', sso: mode !== 'local_only' && list.length > 0, passkey: book.passkeyOn(), register: mailBook.open(), forgot: mailBook.ready() } }
+      return {
+        status: 200,
+        headers: { 'Cache-Control': 'no-store' },
+        body: {
+          providers: list,
+          loginMode: mode,
+          local: mode !== 'sso_redirect',
+          sso: mode !== 'local_only' && list.length > 0,
+          passkey: book.passkeyOn(),
+          register: mailBook.open(),
+          forgot: mailBook.ready(),
+        },
+      }
     }
     if (path === '/captcha' && method === 'GET') {
       accountsOnly()
@@ -2686,15 +3740,23 @@ export function createMockServer(options: MockOptions = {}) {
         if (!known || !known.view.enabled) throw new HttpError(404, 'not_found', '没有这个登录方式')
         return ssoStart(ctx, known, body, false)
       }
-      if ((sso[3] === 'callback' && method === 'GET') || (sso[3] === 'acs' && method === 'POST')) return ssoCallback(ctx, known?.view.slug ?? '', url.searchParams)
-      if (sso[3] === 'metadata' && method === 'GET' && known?.view.saml) return { status: 200, body: { entityId: known.view.saml.entityId } }
+      if ((sso[3] === 'callback' && method === 'GET') || (sso[3] === 'acs' && method === 'POST'))
+        return ssoCallback(ctx, known?.view.slug ?? '', url.searchParams)
+      if (sso[3] === 'metadata' && method === 'GET' && known?.view.saml)
+        return { status: 200, body: { entityId: known.view.saml.entityId } }
       throw new HttpError(404, 'not_found', '没有这个接口')
     }
     if (path === '/invites/check' && method === 'POST') {
       accountsOnly()
       checkCaptcha('invite', 'ip', body.captcha)
       const inv = checkInviteToken(body.token)
-      return j({ role: inv.role, expires: rfc3339(inv.expires), username: inv.fill?.username ?? '', name: inv.fill?.name ?? '', email: inv.fill?.email ?? '' })
+      return j({
+        role: inv.role,
+        expires: rfc3339(inv.expires),
+        username: inv.fill?.username ?? '',
+        name: inv.fill?.name ?? '',
+        email: inv.fill?.email ?? '',
+      })
     }
     if (path === '/invites/accept' && method === 'POST') {
       accountsOnly()
@@ -2709,7 +3771,9 @@ export function createMockServer(options: MockOptions = {}) {
       if (path === '/admin/mail' && method === 'GET') return j(mailBook.view())
       if (path === '/admin/mail' && method === 'PUT') {
         const r = mailBook.put(body)
-        book.record('mail_changed', { detail: { keys: Object.keys(body).map((k) => (k === 'password' ? 'password' : k)) } })
+        book.record('mail_changed', {
+          detail: { keys: Object.keys(body).map((k) => (k === 'password' ? 'password' : k)) },
+        })
         return j(r)
       }
       if (method === 'POST') return mailBook.test(body)
@@ -2756,10 +3820,23 @@ export function createMockServer(options: MockOptions = {}) {
     }
 
     // --- account ---
-    if (path === '/account' || path === '/account/password' || path.startsWith('/account/identities/') || path.startsWith('/account/passkeys') || path === '/account/tokens' || path.startsWith('/account/tokens/')) {
+    if (
+      path === '/account' ||
+      path === '/account/password' ||
+      path.startsWith('/account/identities/') ||
+      path.startsWith('/account/passkeys') ||
+      path === '/account/tokens' ||
+      path.startsWith('/account/tokens/')
+    ) {
       accountsOnly()
       const me = requireUser(ctx)
-      if (path === '/account/tokens' && method === 'GET') return j({ tokens: [...apiTokens.values()].filter((t) => t.userId === me.id).sort(newestFirst).map(publicToken) })
+      if (path === '/account/tokens' && method === 'GET')
+        return j({
+          tokens: [...apiTokens.values()]
+            .filter((t) => t.userId === me.id)
+            .sort(newestFirst)
+            .map(publicToken),
+        })
       if (path === '/account/tokens' && method === 'POST') return createToken(me, body)
       const tok = /^\/account\/tokens\/([^/]+)$/.exec(path)
       if (tok && method === 'DELETE') {
@@ -2774,12 +3851,18 @@ export function createMockServer(options: MockOptions = {}) {
       }
       if (path === '/account/passkeys' && method === 'GET') return j({ passkeys: me.passkeys.map(passkeyView) })
       if (path === '/account/passkeys/begin' && method === 'POST') return registerBegin(ctx, me, body)
-      if (path === '/account/passkeys/finish' && method === 'POST') return registerFinish(ctx, me, url.searchParams, body)
+      if (path === '/account/passkeys/finish' && method === 'POST')
+        return registerFinish(ctx, me, url.searchParams, body)
       const pk = /^\/account\/passkeys\/([^/]+)$/.exec(path)
       if (pk && method === 'PATCH') {
         const rec = me.passkeys.find((x) => x.id === decodeURIComponent(pk[1]))
         if (!rec) throw new HttpError(404, 'not_found', '没有这个 passkey')
-        if (typeof body.name !== 'string' || Array.from(body.name.trim()).length < 1 || Array.from(body.name).length > 64) throw new HttpError(400, 'invalid', 'name 要 1 到 64 个字符')
+        if (
+          typeof body.name !== 'string' ||
+          Array.from(body.name.trim()).length < 1 ||
+          Array.from(body.name).length > 64
+        )
+          throw new HttpError(400, 'invalid', 'name 要 1 到 64 个字符')
         rec.name = body.name.trim()
         return j(passkeyView(rec))
       }
@@ -2787,7 +3870,11 @@ export function createMockServer(options: MockOptions = {}) {
         const at = me.passkeys.findIndex((x) => x.id === decodeURIComponent(pk[1]))
         if (at < 0) throw new HttpError(404, 'not_found', '没有这个 passkey')
         if (lastWay(me, 'passkey')) throw new HttpError(409, 'conflict', '这是你唯一的登录方式')
-        book.record('passkey_removed', { actor: me.id, user: me.id, detail: { passkey: me.passkeys[at].id, by: 'user' } })
+        book.record('passkey_removed', {
+          actor: me.id,
+          user: me.id,
+          detail: { passkey: me.passkeys[at].id, by: 'user' },
+        })
         me.passkeys.splice(at, 1)
         return { status: 204 }
       }
@@ -2807,7 +3894,8 @@ export function createMockServer(options: MockOptions = {}) {
         // Without parameters, everyone; `q` (username or name contains it, ignoring case), `enabled=1` and `limit` narrow it.
         const q = url.searchParams.get('q')
         const enabled = url.searchParams.get('enabled')
-        if (enabled !== null && enabled !== '1' && enabled !== '0') throw new HttpError(400, 'invalid', 'enabled is 1 or 0')
+        if (enabled !== null && enabled !== '1' && enabled !== '0')
+          throw new HttpError(400, 'invalid', 'enabled is 1 or 0')
         if (enabled === '1') list = list.filter((u) => !u.disabled)
         if (q !== null && q.trim() !== '') {
           const needle = q.trim().toLowerCase()
@@ -2832,7 +3920,11 @@ export function createMockServer(options: MockOptions = {}) {
         if (userKeys[2] && method === 'DELETE') {
           const at = target.passkeys.findIndex((x) => x.id === decodeURIComponent(userKeys[2]))
           if (at < 0) throw new HttpError(404, 'not_found', '没有这个 passkey')
-          book.record('passkey_removed', { actor: me.id, user: target.id, detail: { passkey: target.passkeys[at].id, by: 'admin' } })
+          book.record('passkey_removed', {
+            actor: me.id,
+            user: target.id,
+            detail: { passkey: target.passkeys[at].id, by: 'admin' },
+          })
           target.passkeys.splice(at, 1)
           return { status: 204 }
         }
@@ -2868,6 +3960,22 @@ export function createMockServer(options: MockOptions = {}) {
       if (method === 'POST') return decideConsent(me, body)
     }
 
+    // --- the hosts with an OAuth application ---
+    const forgeId = /^\/connections\/([^/]+)\//.exec(path)?.[1] ?? ''
+    if (forgeId !== '' && forge.has(forgeId)) {
+      accountsOnly()
+      return routeForge(ctx, forgeId, method, path, url, body)
+    }
+    if (path === '/admin/connections' || /^\/admin\/connections\/([^/]+)(\/check)?$/.test(path)) {
+      const id = /^\/admin\/connections\/([^/]+)/.exec(path)?.[1] ?? ''
+      if (id === '' || forge.has(id) || !(id === 'github' || id === 'git')) {
+        accountsOnly()
+        const me = requireAdmin(ctx)
+        if (!isSiteAdmin(me))
+          throw new HttpError(403, 'forbidden', 'only an administrator of the whole server may do that')
+        return routeAdminForge(id, method, path, body)
+      }
+    }
     // --- GitHub ---
     if (path === '/connections' || path === '/connections/github' || path.startsWith('/connections/github/')) {
       accountsOnly()
@@ -2877,7 +3985,8 @@ export function createMockServer(options: MockOptions = {}) {
       accountsOnly()
       // The server's GitHub App is the whole server's: a tenant's administrator is refused, as on the server.
       const me = requireAdmin(ctx)
-      if (!isSiteAdmin(me)) throw new HttpError(403, 'forbidden', 'only an administrator of the whole server may do that')
+      if (!isSiteAdmin(me))
+        throw new HttpError(403, 'forbidden', 'only an administrator of the whole server may do that')
       return routeAdminGitHub(me, method, path, url, body)
     }
     // --- usage (3.3): one's own, and everyone's for the administrators ---
@@ -2892,7 +4001,19 @@ export function createMockServer(options: MockOptions = {}) {
     }
 
     // --- administration (administrators only; accounts mode) ---
-    if (path === '/admin/status' || path === '/admin/storage' || path.startsWith('/admin/storage/') || path === '/admin/spaces' || path.startsWith('/admin/spaces/') || path.startsWith('/admin/recycle') || path === '/admin/confirm' || path === '/admin/bulk' || path.startsWith('/admin/jobs/') || path.startsWith('/admin/exports') || /^\/admin\/users\/[^/]+\/deletion$/.test(path)) {
+    if (
+      path === '/admin/status' ||
+      path === '/admin/storage' ||
+      path.startsWith('/admin/storage/') ||
+      path === '/admin/spaces' ||
+      path.startsWith('/admin/spaces/') ||
+      path.startsWith('/admin/recycle') ||
+      path === '/admin/confirm' ||
+      path === '/admin/bulk' ||
+      path.startsWith('/admin/jobs/') ||
+      path.startsWith('/admin/exports') ||
+      /^\/admin\/users\/[^/]+\/deletion$/.test(path)
+    ) {
       accountsOnly()
       const me = requireAdmin(ctx)
       return routeAdmin(me, ctx.token, method, path, url, body)
@@ -2917,7 +4038,12 @@ export function createMockServer(options: MockOptions = {}) {
       const me = requireAdmin(ctx)
       return groupBook.routeAdmin(me, method, path, url, body)
     }
-    if (path === '/admin/security' || path === '/admin/audit' || path === '/admin/auth/providers' || path.startsWith('/admin/auth/providers/')) {
+    if (
+      path === '/admin/security' ||
+      path === '/admin/audit' ||
+      path === '/admin/auth/providers' ||
+      path.startsWith('/admin/auth/providers/')
+    ) {
       accountsOnly()
       const me = requireAdmin(ctx)
       if (path === '/admin/security' && method === 'GET') return j(book.view())
@@ -2926,9 +4052,19 @@ export function createMockServer(options: MockOptions = {}) {
         const raw = url.searchParams.get('limit')
         const limit = raw === null ? 50 : /^\d+$/.test(raw) ? Number(raw) : NaN
         if (!(limit >= 1 && limit <= 200)) throw new HttpError(400, 'invalid', 'limit 要是 1 到 200')
-        return j(book.auditList(url.searchParams.get('kind') || null, url.searchParams.get('user') || null, url.searchParams.get('cursor') || null, limit))
+        return j(
+          book.auditList(
+            url.searchParams.get('kind') || null,
+            url.searchParams.get('user') || null,
+            url.searchParams.get('cursor') || null,
+            limit,
+          ),
+        )
       }
-      if (path === '/admin/auth/providers' && method === 'GET') return j({ providers: [...book.providers.values()].sort((a, b) => a.view.order - b.view.order).map(book.withDerived) })
+      if (path === '/admin/auth/providers' && method === 'GET')
+        return j({
+          providers: [...book.providers.values()].sort((a, b) => a.view.order - b.view.order).map(book.withDerived),
+        })
       if (path === '/admin/auth/providers' && method === 'POST') return j(book.createProvider(body, me.id), 201)
       const one = /^\/admin\/auth\/providers\/([^/]+)(\/refresh)?$/.exec(path)
       if (one) {
@@ -3014,30 +4150,62 @@ export function createMockServer(options: MockOptions = {}) {
         quotaBook.checkSpace(me.id)
         const inbox = body.inbox === undefined ? DEFAULT_INBOX : checkInbox(body.inbox)
         const sync = isRecord(body.storage) ? body.storage.sync : undefined
-        if (body.remote !== undefined && sync !== undefined) throw new HttpError(400, 'invalid', 'remote 和 storage.sync 不能一起给')
+        if (body.remote !== undefined && sync !== undefined)
+          throw new HttpError(400, 'invalid', 'remote 和 storage.sync 不能一起给')
         const wanted = storage.remotes.require
-        const meets = wanted === 'any' ? sync !== undefined || body.remote !== undefined : isRecord(sync) && sync.provider === wanted
+        const meets =
+          wanted === 'any'
+            ? sync !== undefined || body.remote !== undefined
+            : isRecord(sync) && sync.provider === wanted
         if (wanted && !me.remoteExempt && !meets) {
-          throw new HttpError(409, 'remote_required', wanted === 'any' ? '服务器要求新空间跟随远端仓库。' : `服务器要求新空间同步到 ${wanted}。`, { require: wanted })
+          throw new HttpError(
+            409,
+            'remote_required',
+            wanted === 'any' ? '服务器要求新空间跟随远端仓库。' : `服务器要求新空间同步到 ${wanted}。`,
+            { require: wanted },
+          )
         }
         if (body.remote !== undefined) {
           const r = body.remote
-          if (!isRecord(r) || typeof r.url !== 'string' || !isRecord(r.credential) || r.credential.type !== 'token') throw new HttpError(400, 'invalid', '新空间只能用令牌连接远端')
-          const space = addSpace(newId((x) => spaces.has(x)), name, me.id, false, false, inbox)
+          if (!isRecord(r) || typeof r.url !== 'string' || !isRecord(r.credential) || r.credential.type !== 'token')
+            throw new HttpError(400, 'invalid', '新空间只能用令牌连接远端')
+          const space = addSpace(
+            newId((x) => spaces.has(x)),
+            name,
+            me.id,
+            false,
+            false,
+            inbox,
+          )
           connectRemote(space, me.id, r)
           return { status: 201, body: spaceInfo(space, me), headers: { Location: `/api/spaces/${space.id}` } }
         }
         if (sync !== undefined) {
           const g = sync
-          if (!isRecord(g) || g.provider !== 'github' || typeof g.owner !== 'string' || typeof g.name !== 'string') throw new HttpError(400, 'invalid', 'storage.sync 要有 provider（github）、owner 和 name')
-          if (g.description !== undefined && (typeof g.description !== 'string' || g.description.length > 350)) throw new HttpError(400, 'invalid', 'description 最多 350 个字符')
-          const found = g.create === false ? github.existing(me.id, g.owner, g.name, '') : github.create(me.id, { owner: g.owner, name: g.name, private: g.private !== false, spaceName: name })
-          const space = addSpace(newId((x) => spaces.has(x)), name, me.id, false, false, inbox)
+          if (!isRecord(g) || g.provider !== 'github' || typeof g.owner !== 'string' || typeof g.name !== 'string')
+            throw new HttpError(400, 'invalid', 'storage.sync 要有 provider（github）、owner 和 name')
+          if (g.description !== undefined && (typeof g.description !== 'string' || g.description.length > 350))
+            throw new HttpError(400, 'invalid', 'description 最多 350 个字符')
+          const found =
+            g.create === false
+              ? github.existing(me.id, g.owner, g.name, '')
+              : github.create(me.id, { owner: g.owner, name: g.name, private: g.private !== false, spaceName: name })
+          const space = addSpace(
+            newId((x) => spaces.has(x)),
+            name,
+            me.id,
+            false,
+            false,
+            inbox,
+          )
           github.repoConnected(found.repo.id)
           space.remote = {
             url: `https://github.com/${found.repo.owner}/${found.repo.name}.git`,
             branch: 'main',
-            credential: found.via === 'app' ? { type: 'github', via: 'app', installationId: found.installationId, repoId: found.repo.id } : { type: 'github', via: 'user', userId: me.id, repoId: found.repo.id },
+            credential:
+              found.via === 'app'
+                ? { type: 'github', via: 'app', installationId: found.installationId, repoId: found.repo.id }
+                : { type: 'github', via: 'user', userId: me.id, repoId: found.repo.id },
             state: 'ok',
             lastSync: now(),
             error: '',
@@ -3045,13 +4213,32 @@ export function createMockServer(options: MockOptions = {}) {
           }
           // An attachment repository next to it: asked for, or the administrator's default when the request is silent.
           const ask = g.assets
-          if (ask === true || (isRecord(ask) && typeof ask.name === 'string') || (ask === undefined && storage.assets.newSpaces)) {
+          if (
+            ask === true ||
+            (isRecord(ask) && typeof ask.name === 'string') ||
+            (ask === undefined && storage.assets.newSpaces)
+          ) {
             const aname = isRecord(ask) && typeof ask.name === 'string' ? ask.name : `${found.repo.name}-assets`
-            space.assets = { url: `https://github.com/${found.repo.owner}/${aname}.git`, branch: 'main', credential: space.remote.credential, used: false, move: null, cacheBytes: 0 }
-          } else if (ask !== undefined && ask !== false) throw new HttpError(400, 'invalid', 'github.assets 是 true、false 或 {"name": "…"}')
+            space.assets = {
+              url: `https://github.com/${found.repo.owner}/${aname}.git`,
+              branch: 'main',
+              credential: space.remote.credential,
+              used: false,
+              move: null,
+              cacheBytes: 0,
+            }
+          } else if (ask !== undefined && ask !== false)
+            throw new HttpError(400, 'invalid', 'github.assets 是 true、false 或 {"name": "…"}')
           return { status: 201, body: spaceInfo(space, me), headers: { Location: `/api/spaces/${space.id}` } }
         }
-        const plain = addSpace(newId((x) => spaces.has(x)), name, me.id, false, false, inbox)
+        const plain = addSpace(
+          newId((x) => spaces.has(x)),
+          name,
+          me.id,
+          false,
+          false,
+          inbox,
+        )
         return { status: 201, body: spaceInfo(plain, me), headers: { Location: `/api/spaces/${plain.id}` } }
       }
     }
@@ -3066,7 +4253,8 @@ export function createMockServer(options: MockOptions = {}) {
       const missing: string[] = []
       for (const id of ids) {
         const s = spaces.get(id)
-        if (s && !s.disabled && groupBook.has(s, me.id) && spaceInfo(s, me).permissions.includes('read')) heads[id] = s.store.feedHead()
+        if (s && !s.disabled && groupBook.has(s, me.id) && spaceInfo(s, me).permissions.includes('read'))
+          heads[id] = s.store.feedHead()
         else missing.push(id)
       }
       return j({ heads, ...(missing.length ? { missing } : {}) })
@@ -3077,17 +4265,47 @@ export function createMockServer(options: MockOptions = {}) {
       const id = decodeURIComponent(m[1])
       const rest = m[2] ?? ''
       // These do not exist in single-user mode, whoever asks.
-      if ((rest === '' && method === 'PATCH') || rest === '/remote' || rest.startsWith('/remote/') || rest === '/members' || rest.startsWith('/members/') || rest === '/groups' || rest.startsWith('/groups/')) accountsOnly()
+      if (
+        (rest === '' && method === 'PATCH') ||
+        rest === '/remote' ||
+        rest.startsWith('/remote/') ||
+        rest === '/members' ||
+        rest.startsWith('/members/') ||
+        rest === '/groups' ||
+        rest.startsWith('/groups/')
+      )
+        accountsOnly()
       // Leaving touches only the membership: it works in a space that is switched off.
-      const leaving = method === 'DELETE' && rest.startsWith('/members/') && decodeURIComponent(rest.slice('/members/'.length)) === me.id
+      const leaving =
+        method === 'DELETE' &&
+        rest.startsWith('/members/') &&
+        decodeURIComponent(rest.slice('/members/'.length)) === me.id
       const own = leaving ? spaces.get(id) : undefined
-      const s = own && groupBook.has(own, me.id) ? own : openSpace(me, id, needOf(me, method, rest), ctx.token, method === 'GET' && (rest === '/members' || rest === '/members/effective'))
+      const s =
+        own && groupBook.has(own, me.id)
+          ? own
+          : openSpace(
+              me,
+              id,
+              needOf(me, method, rest),
+              ctx.token,
+              method === 'GET' && (rest === '/members' || rest === '/members/effective'),
+            )
       // Any request that opens the space is a use; one that needs files restores an evicted space (the lists are
       // answered by the index, which an evicted space keeps).
       s.lastUsed = now()
-      if (s.cache === 'evicted' && !(method === 'GET' && /^(\/pages|\/tree|\/tags|\/checks|\/pages\/[^/]+\/(backlinks|links))$/.test(rest) && url.searchParams.get('body') === null)) s.cache = 'partial'
+      if (
+        s.cache === 'evicted' &&
+        !(
+          method === 'GET' &&
+          /^(\/pages|\/tree|\/tags|\/checks|\/pages\/[^/]+\/(backlinks|links))$/.test(rest) &&
+          url.searchParams.get('body') === null
+        )
+      )
+        s.cache = 'partial'
       if (rest === '' && method === 'PATCH') {
-        if (body.name === undefined && body.inbox === undefined) throw new HttpError(400, 'invalid', '至少要给出 name 或 inbox')
+        if (body.name === undefined && body.inbox === undefined)
+          throw new HttpError(400, 'invalid', '至少要给出 name 或 inbox')
         // Check both before changing either, so a bad one leaves the space as it was.
         const name = body.name === undefined ? s.name : checkName(body.name)
         const inbox = body.inbox === undefined ? s.inbox : checkInbox(body.inbox)
@@ -3123,17 +4341,33 @@ export function createMockServer(options: MockOptions = {}) {
     // `target` is a path with query, as sent by the client ("/api/...").
     // `cookie` is the request's Cookie header.
     // `raw` is the request body as bytes, for the one request that is not JSON (uploading a file).
-    handle(method: string, target: string, bodyText?: string, contentType?: string | null, cookie?: string | null, raw?: Uint8Array): MockResponse {
+    handle(
+      method: string,
+      target: string,
+      bodyText?: string,
+      contentType?: string | null,
+      cookie?: string | null,
+      raw?: Uint8Array,
+    ): MockResponse {
       counter++
       try {
         sweepAll()
-        const upload = method.toUpperCase() === 'POST' && /^\/api\/spaces\/[^/?]+\/(pages\/[^/?]+\/assets|import)(\?|$)/.test(target)
+        const upload =
+          method.toUpperCase() === 'POST' && /^\/api\/spaces\/[^/?]+\/(pages\/[^/?]+\/assets|import)(\?|$)/.test(target)
         // Writes must say they are JSON, like the real server insists; a file says it is bytes.
         if (upload) {
-          if (!/^application\/octet-stream\s*(;|$)/i.test(contentType ?? '')) throw new HttpError(415, 'invalid', '上传文件和导入需要 Content-Type: application/octet-stream')
-          return route('POST', new URL(target, 'http://mock.local'), {}, contextOf(cookie), raw ?? new TextEncoder().encode(bodyText ?? ''))
+          if (!/^application\/octet-stream\s*(;|$)/i.test(contentType ?? ''))
+            throw new HttpError(415, 'invalid', '上传文件和导入需要 Content-Type: application/octet-stream')
+          return route(
+            'POST',
+            new URL(target, 'http://mock.local'),
+            {},
+            contextOf(cookie),
+            raw ?? new TextEncoder().encode(bodyText ?? ''),
+          )
         }
-        if (method.toUpperCase() !== 'GET' && !/^application\/json\s*(;|$)/i.test(contentType ?? '')) throw new HttpError(415, 'invalid', '请求需要 Content-Type: application/json')
+        if (method.toUpperCase() !== 'GET' && !/^application\/json\s*(;|$)/i.test(contentType ?? ''))
+          throw new HttpError(415, 'invalid', '请求需要 Content-Type: application/json')
         let body: Record<string, unknown> = {}
         if (bodyText) {
           try {
@@ -3162,16 +4396,21 @@ export function createMockServer(options: MockOptions = {}) {
       return counter
     },
     // The first space of the single-user server, or the one named.
-    peek: (id: string, space?: string): Page | undefined => (space ? spaces.get(space) : [...spaces.values()].find((s) => s.store.peek(id)))?.store.peek(id),
+    peek: (id: string, space?: string): Page | undefined =>
+      (space ? spaces.get(space) : [...spaces.values()].find((s) => s.store.peek(id)))?.store.peek(id),
     // Mock only: storage management's scenes (a busy space, jobs held back or interrupted, an export that expired) and
     // where a space's bytes live (the mock has no way to make one that is the site's or the tenant's).
-    manage: { ...manage.seed, setLocation: (space: string, location: SpaceLocation) => void (spaces.get(space)!.location = location) },
+    manage: {
+      ...manage.seed,
+      setLocation: (space: string, location: SpaceLocation) => void (spaces.get(space)!.location = location),
+    },
     // Mock only: the file of a type was damaged by hand.
     damageType: (space: string, name: string, message: string) => spaces.get(space)!.store.damageType(name, message),
     // A file that is not a page, for the check page: the mock has no files of its own.
     addOrphan: (space: string, o: Parameters<SpaceStore['addOrphan']>[0]) => spaces.get(space)!.store.addOrphan(o),
     // Mock only: a field of a kind the app does not know.
-    forceKind: (space: string, name: string, key: string, kind: FieldKind) => spaces.get(space)!.store.forceKind(name, key, kind),
+    forceKind: (space: string, name: string, key: string, kind: FieldKind) =>
+      spaces.get(space)!.store.forceKind(name, key, kind),
     ids: (space = 'default') => spaces.get(space)?.store.ids() ?? [],
     spaceIds: () => [...spaces.keys()],
     peekDraft: (userId: string, id: string, space = 'default') => spaces.get(space)?.store.peekDraft(userId, id),
@@ -3187,11 +4426,13 @@ export function createMockServer(options: MockOptions = {}) {
     seedSettingsNotices: (notices: SettingsNotice[], space = 'default') => void settingsNotices.set(space, notices),
     // What GET /admin/daily says the server changed by itself in the daily text settings on an upgrade.
     seedDailyNotices: (notices: DailyNotice[]) => void (site.notices = notices.map((n) => ({ ...n }))),
-    seedHandWrittenViews: (folder: string, views: Record<string, unknown>[], space = 'default') => spaces.get(space)!.store.seedHandWrittenViews(folder, views as never),
+    seedHandWrittenViews: (folder: string, views: Record<string, unknown>[], space = 'default') =>
+      spaces.get(space)!.store.seedHandWrittenViews(folder, views as never),
     // Let the server's own draft commits run now (they also run on every request).
     sweep: sweepAll,
     // Put a space's remote in a state, as the dev route does.
-    setRemote: (space: string, state: RemoteState | 'local', patch: { error?: string } = {}) => setRemoteState(spaces.get(space)!, state, patch),
+    setRemote: (space: string, state: RemoteState | 'local', patch: { error?: string } = {}) =>
+      setRemoteState(spaces.get(space)!, state, patch),
     // Whether the pretend remote can be reached by `sync`.
     remoteReachable: (space: string, on: boolean) => {
       spaces.get(space)!.reachable = on

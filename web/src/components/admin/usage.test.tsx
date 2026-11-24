@@ -29,11 +29,15 @@ const routes = (
   </SidebarProvider>
 )
 const text = () => document.body.textContent ?? ''
-const button = (label: string, root: ParentNode = document) => [...root.querySelectorAll('button')].find((b) => b.textContent?.trim() === label || b.getAttribute('aria-label') === label) ?? null
+const button = (label: string, root: ParentNode = document) =>
+  [...root.querySelectorAll('button')].find(
+    (b) => b.textContent?.trim() === label || b.getAttribute('aria-label') === label,
+  ) ?? null
 const dlg = () => document.querySelector<HTMLElement>('[role="dialog"]')!
 const people = () => [...document.querySelectorAll<HTMLElement>('[data-slot="people-usage"] > li')]
 const personRow = (name: string) => people().find((r) => r.textContent?.includes(name))!
-const usageCalls = () => m!.requests.filter((r) => r.method === 'GET' && r.url.startsWith('/api/admin/usage')).map((r) => r.url)
+const usageCalls = () =>
+  m!.requests.filter((r) => r.method === 'GET' && r.url.startsWith('/api/admin/usage')).map((r) => r.url)
 const switchOf = (label: string) => document.querySelector<HTMLElement>(`[role="switch"][aria-label="${label}"]`)!
 
 async function open(section: string, scene?: (server: MockServer) => unknown, server = {}) {
@@ -51,7 +55,11 @@ async function open(section: string, scene?: (server: MockServer) => unknown, se
 function sized(server: MockServer, username: string, chars: number, role: 'member' | 'admin' = 'member') {
   const person = makePerson(server, username, role)
   const space = (person.request('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
-  person.request('POST', `/api/spaces/${space}/pages`, { folder: '', meta: { title: username }, body: 'x'.repeat(chars) })
+  person.request('POST', `/api/spaces/${space}/pages`, {
+    folder: '',
+    meta: { title: username },
+    body: 'x'.repeat(chars),
+  })
   adminRequests(server)('POST', `/api/admin/spaces/${space}/size`)
   return person
 }
@@ -98,7 +106,7 @@ describe('the Usage page', () => {
     await settle(() => text().includes(tu.admin.noneOver), 'nobody over')
   })
 
-  it('loads more people on request, and edits one person\'s own limits in a dialog', async () => {
+  it("loads more people on request, and edits one person's own limits in a dialog", async () => {
     await open('usage', (server) => {
       for (let i = 1; i <= 55; i++) makePerson(server, `p${String(i).padStart(2, '0')}`)
     })
@@ -118,7 +126,10 @@ describe('the Usage page', () => {
     const patch = m!.requests.find((r) => r.method === 'PATCH' && r.url.startsWith('/api/users/'))!
     expect(JSON.parse(patch.body!)).toEqual({ quota: { spaces: 40, bytes: Math.round(1.5 * 1024 ** 3) } })
     // The page reads the list again: the person's limit is on their row now.
-    await settle(() => personRow('名 p03').querySelector('[data-quota="spaces"]')!.textContent?.includes('/ 40') === true, 'the limit on the row')
+    await settle(
+      () => personRow('名 p03').querySelector('[data-quota="spaces"]')!.textContent?.includes('/ 40') === true,
+      'the limit on the row',
+    )
   })
 
   it('refuses what is not a number, before asking the server', async () => {
@@ -132,7 +143,7 @@ describe('the Usage page', () => {
     expect(m!.requests.some((r) => r.method === 'PATCH')).toBe(false)
   })
 
-  it('shows a site administrator the tenants with what each uses, and a tenant\'s people when it is picked', async () => {
+  it("shows a site administrator the tenants with what each uses, and a tenant's people when it is picked", async () => {
     await open('usage', (server) => {
       const admin = adminRequests(server)
       admin('PUT', '/api/admin/tenancy', { enabled: true })
@@ -162,18 +173,25 @@ describe('the Usage page', () => {
       adminRequests(server)('PUT', '/api/admin/tenancy', { enabled: true })
       adminRequests(server)('POST', '/api/admin/tenants', { slug: 'acme', name: 'Acme' })
     })
-    await settle(() => people().length === 2 && document.querySelectorAll('[data-slot="tenant-usage"] > li').length === 2, 'the page')
+    await settle(
+      () => people().length === 2 && document.querySelectorAll('[data-slot="tenant-usage"] > li').length === 2,
+      'the page',
+    )
     const has = (el: Element | null, ...c: string[]) => c.every((x) => el?.classList.contains(x))
     for (const li of people()) {
       expect(has(li, 'flex-wrap', 'min-w-0')).toBe(true)
       expect(has(li.querySelector('dl'), 'grid-cols-1', 'min-w-0')).toBe(true)
     }
-    for (const li of document.querySelectorAll('[data-slot="tenant-usage"] > li')) expect(has(li, 'flex-wrap', 'min-w-0')).toBe(true)
-    for (const id of ['usage-tenants-heading', 'usage-people-heading']) expect(document.querySelector(`section[aria-labelledby="${id}"]`)!.classList.contains('grid-cols-1')).toBe(true)
+    for (const li of document.querySelectorAll('[data-slot="tenant-usage"] > li'))
+      expect(has(li, 'flex-wrap', 'min-w-0')).toBe(true)
+    for (const id of ['usage-tenants-heading', 'usage-people-heading'])
+      expect(document.querySelector(`section[aria-labelledby="${id}"]`)!.classList.contains('grid-cols-1')).toBe(true)
     // The limits form is one column on a phone and three from the small breakpoint up.
     await click(button(tu.admin.editLimitsFor('名 amy')))
     await settle(() => dlg()?.querySelector('[data-slot="own-limits"]') !== null, 'the form')
-    expect(has(dlg().querySelector('[data-slot="own-limits"] > div:nth-of-type(2)'), 'grid-cols-1', 'min-w-0')).toBe(true)
+    expect(has(dlg().querySelector('[data-slot="own-limits"] > div:nth-of-type(2)'), 'grid-cols-1', 'min-w-0')).toBe(
+      true,
+    )
   })
 
   it('shows a tenant administrator only their people, with no tenant list', async () => {
@@ -181,7 +199,11 @@ describe('the Usage page', () => {
       const admin = adminRequests(server)
       sized(server, 'amy', 100)
       makePerson(server, 'second', 'admin') // another site administrator must remain
-      admin('PATCH', `/api/users/${(admin('GET', '/api/users').body as { users: { id: string; username: string }[] }).users.find((u) => u.username === 'admin')!.id}`, { siteAdmin: false })
+      admin(
+        'PATCH',
+        `/api/users/${(admin('GET', '/api/users').body as { users: { id: string; username: string }[] }).users.find((u) => u.username === 'admin')!.id}`,
+        { siteAdmin: false },
+      )
     })
     await settle(() => people().length > 0, 'the people')
     expect(document.querySelector('[data-slot="tenant-usage"]')).toBeNull()
@@ -190,10 +212,12 @@ describe('the Usage page', () => {
 })
 
 describe('limits on a user, and the usage of a tenant', () => {
-  it('the user\'s details have the person\'s own limits, which are saved with the other details of the person unchanged', async () => {
+  it("the user's details have the person's own limits, which are saved with the other details of the person unchanged", async () => {
     await open('users', (server) => makePerson(server, 'amy'))
     await settle(() => button(t.fmt.labelled(t.users.disable, '名 amy')) !== null, 'the users')
-    const edit = [...document.querySelectorAll('button')].find((b) => b.getAttribute('aria-label')?.includes('名 amy') && b.textContent === '编辑')!
+    const edit = [...document.querySelectorAll('button')].find(
+      (b) => b.getAttribute('aria-label')?.includes('名 amy') && b.textContent === '编辑',
+    )!
     await click(edit)
     await settle(() => document.querySelector('[data-slot="own-limits"]') !== null, 'the limits form')
     const fields = [...document.querySelectorAll<HTMLInputElement>('[data-slot="own-limits"] input')]
@@ -211,7 +235,9 @@ describe('limits on a user, and the usage of a tenant', () => {
       adminRequests(server)('PATCH', `/api/users/${amy.id}`, { quota: { spaces: 7, bytes: exact } })
     })
     await settle(() => button(t.fmt.labelled(t.users.disable, '名 amy')) !== null, 'the users')
-    const edit = [...document.querySelectorAll('button')].find((b) => b.getAttribute('aria-label')?.includes('名 amy') && b.textContent === '编辑')!
+    const edit = [...document.querySelectorAll('button')].find(
+      (b) => b.getAttribute('aria-label')?.includes('名 amy') && b.textContent === '编辑',
+    )!
     await click(edit)
     await settle(() => document.querySelector('[data-slot="own-limits"]') !== null, 'the limits form')
     const fields = [...document.querySelectorAll<HTMLInputElement>('[data-slot="own-limits"] input')]
@@ -226,7 +252,9 @@ describe('limits on a user, and the usage of a tenant', () => {
     await click(button(tu.own.save))
     await settle(() => patches().length === 2, 'the second save')
     expect(JSON.parse(patches()[1].body!)).toEqual({ quota: { spaces: null } })
-    const users = adminRequests(m!.server)('GET', '/api/users').body as { users: { username: string; quota: { bytes: number | null } }[] }
+    const users = adminRequests(m!.server)('GET', '/api/users').body as {
+      users: { username: string; quota: { bytes: number | null } }[]
+    }
     expect(users.users.find((u) => u.username === 'amy')!.quota.bytes).toBe(exact)
   })
 
@@ -235,12 +263,16 @@ describe('limits on a user, and the usage of a tenant', () => {
       const admin = adminRequests(server)
       makePerson(server, 'amy')
       admin('PUT', '/api/admin/settings/quota.spacesPerPerson', { value: 3 })
-      const me = (admin('GET', '/api/users').body as { users: { id: string; username: string }[] }).users.find((u) => u.username === 'admin')!
+      const me = (admin('GET', '/api/users').body as { users: { id: string; username: string }[] }).users.find(
+        (u) => u.username === 'admin',
+      )!
       makePerson(server, 'boss', 'admin')
       admin('PATCH', `/api/users/${me.id}`, { siteAdmin: false })
     })
     await settle(() => button(t.fmt.labelled(t.users.disable, '名 amy')) !== null, 'the users')
-    const edit = [...document.querySelectorAll('button')].find((b) => b.getAttribute('aria-label')?.includes('名 amy') && b.textContent === '编辑')!
+    const edit = [...document.querySelectorAll('button')].find(
+      (b) => b.getAttribute('aria-label')?.includes('名 amy') && b.textContent === '编辑',
+    )!
     await click(edit)
     await settle(() => document.querySelector('[data-slot="own-limits"]') !== null, 'the limits form')
     await type(document.querySelectorAll<HTMLInputElement>('[data-slot="own-limits"] input')[0], '9')
@@ -248,7 +280,7 @@ describe('limits on a user, and the usage of a tenant', () => {
     await settle(() => text().includes(tu.own.forbidden), 'the refusal')
   })
 
-  it('a tenant\'s details show what it uses and its totals, which a site administrator sets', async () => {
+  it("a tenant's details show what it uses and its totals, which a site administrator sets", async () => {
     await open('tenants', (server) => {
       const admin = adminRequests(server)
       admin('PUT', '/api/admin/tenancy', { enabled: true })
@@ -269,12 +301,20 @@ describe('limits on a user, and the usage of a tenant', () => {
     const patch = m!.requests.find((r) => r.method === 'PATCH' && r.url === '/api/admin/tenants/0000000000')!
     expect(JSON.parse(patch.body!)).toEqual({ quota: { people: 1, spaces: null, bytes: 2 * 1024 ** 3, pages: null } })
     // Now it is over for people: the block says so.
-    await settle(() => document.querySelector('[data-slot="tenant-usage-block"]')!.textContent!.includes(tu.tenant.over(tu.quotas.people)), 'over')
+    await settle(
+      () =>
+        document
+          .querySelector('[data-slot="tenant-usage-block"]')!
+          .textContent!.includes(tu.tenant.over(tu.quotas.people)),
+      'over',
+    )
   })
 })
 
 describe('the quotas on the Settings page', () => {
-  const rows = (key: string) => [...document.querySelectorAll<HTMLElement>(`[data-slot="setting-row"][data-key="${key}"]`)]
+  const rows = (key: string) => [
+    ...document.querySelectorAll<HTMLElement>(`[data-slot="setting-row"][data-key="${key}"]`),
+  ]
 
   it('has the three limits on the site layer and the tenant layer, named in words', async () => {
     await open('settings')

@@ -68,15 +68,15 @@ describe('when the browser cannot store the list', () => {
   })
 })
 
-describe('setting the view\'s text aside', () => {
+describe("setting the view's text aside", () => {
   beforeEach(() => window.localStorage.clear())
   const C = { rev: 'r1', text: 'C' }
-  it('stores it, says so, and clears the same text from the page\'s key', () => {
+  it("stores it, says so, and clears the same text from the page's key", () => {
     saveRawSource('k', C)
     expect(setAsideSource('k', C)).toEqual({ stored: true, list: [C] })
     expect(loadRawSource('k')).toBeNull()
   })
-  it('leaves other text under the page\'s key alone', () => {
+  it("leaves other text under the page's key alone", () => {
     saveRawSource('k', { rev: 'r1', text: 'older keystroke' })
     expect(setAsideSource('k', C).stored).toBe(true)
     expect(loadRawSource('k')).toEqual({ rev: 'r1', text: 'older keystroke' })

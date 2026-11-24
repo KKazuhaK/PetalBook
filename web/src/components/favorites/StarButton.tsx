@@ -14,7 +14,8 @@ export function useToggleFavorite(ref: FavoriteRef | null) {
   const on = current !== undefined
   const toggle = () => {
     if (!ref) return
-    const fail = (e: unknown) => void toast.error(e instanceof ApiError && e.code === 'invalid' ? e.message : t.fav.failed)
+    const fail = (e: unknown) =>
+      void toast.error(e instanceof ApiError && e.code === 'invalid' ? e.message : t.fav.failed)
     if (on) remove.mutate(ref, { onSuccess: () => void toast.success(t.fav.removed), onError: fail })
     else add.mutate(ref, { onSuccess: () => void toast.success(t.fav.added), onError: fail })
   }
@@ -28,7 +29,16 @@ export function StarButton({ target, labels }: { target: FavoriteRef; labels: { 
   if (!allowed) return null
   const label = on ? labels.remove : labels.add
   return (
-    <Button variant="ghost" size="icon-sm" aria-label={label} title={label} aria-pressed={on} disabled={busy} onClick={toggle} data-slot="favorite-star">
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      aria-label={label}
+      title={label}
+      aria-pressed={on}
+      disabled={busy}
+      onClick={toggle}
+      data-slot="favorite-star"
+    >
       <Star className={on ? 'fill-amber-400 text-amber-500' : ''} />
     </Button>
   )

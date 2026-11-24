@@ -14,7 +14,9 @@ import { fromMarkdown, knownDifferences, normalize, toMarkdown } from './testHar
 type Child = string | DocJSON
 type MarkArg = string | { type: string; attrs?: Record<string, unknown> }
 const t = (text: string, ...marks: MarkArg[]): DocJSON =>
-  marks.length ? { type: 'text', text, marks: marks.map((m) => (typeof m === 'string' ? { type: m } : m)) } : { type: 'text', text }
+  marks.length
+    ? { type: 'text', text, marks: marks.map((m) => (typeof m === 'string' ? { type: m } : m)) }
+    : { type: 'text', text }
 const link = (href: string, title: string | null = null) => ({ type: 'link', attrs: { href, title } })
 const br = (): DocJSON => ({ type: 'hardBreak' })
 const kids = (c: Child[]) => c.map((x) => (typeof x === 'string' ? t(x) : x))
@@ -27,9 +29,16 @@ const ol = (start: number, ...items: DocJSON[]): DocJSON => ({ type: 'orderedLis
 const task = (checked: boolean, ...c: DocJSON[]): DocJSON => ({ type: 'taskItem', attrs: { checked }, content: c })
 const tasks = (...items: DocJSON[]): DocJSON => ({ type: 'taskList', content: items })
 const quote = (...c: DocJSON[]): DocJSON => ({ type: 'blockquote', content: c })
-const code = (language: string | null, text: string): DocJSON => ({ type: 'codeBlock', attrs: { language }, content: text ? [t(text)] : undefined })
+const code = (language: string | null, text: string): DocJSON => ({
+  type: 'codeBlock',
+  attrs: { language },
+  content: text ? [t(text)] : undefined,
+})
 const hr = (): DocJSON => ({ type: 'horizontalRule' })
-const img = (src: string, alt: string | null = null, title: string | null = null): DocJSON => ({ type: 'image', attrs: { src, alt, title } })
+const img = (src: string, alt: string | null = null, title: string | null = null): DocJSON => ({
+  type: 'image',
+  attrs: { src, alt, title },
+})
 const cell = (type: string, ...c: DocJSON[]): DocJSON => ({ type, content: c })
 const row = (...cells: DocJSON[]): DocJSON => ({ type: 'tableRow', content: cells })
 const table = (...rows: DocJSON[]): DocJSON => ({ type: 'table', content: rows })
@@ -161,7 +170,12 @@ export const cases: Record<string, DocJSON> = {
 
   // --- tables ---------------------------------------------------------------
   'table/基本': doc(table(row(th(p('花')), th(p('季节'))), row(td(p('栀子')), td(p('夏'))))),
-  'table/含格式': doc(table(row(th(p('名')), th(p('说明'))), row(td(p(t('粗', 'bold'))), td(p('含', t('a|b', 'code'), '和', t('链接', link('https://example.com'))))))),
+  'table/含格式': doc(
+    table(
+      row(th(p('名')), th(p('说明'))),
+      row(td(p(t('粗', 'bold'))), td(p('含', t('a|b', 'code'), '和', t('链接', link('https://example.com'))))),
+    ),
+  ),
   'table/含竖线文字': doc(table(row(th(p('a'))), row(td(p('x | y'))))),
   'table/空单元格': doc(table(row(th(p('a')), th(p('b'))), row(td(empty()), td(p('有'))))),
   'table/单元格内硬换行': doc(table(row(th(p('a'))), row(td(p('第一行', br(), '第二行'))))),
@@ -174,7 +188,15 @@ export const cases: Record<string, DocJSON> = {
   // --- a realistic page -----------------------------------------------------
   'mix/随笔': doc(
     h(1, '关于栀子'),
-    p('夏天的', t('栀子', 'bold'), '是最好的。它不如玫瑰', t('妖娆', 'strike'), '热烈，但', t('香。', 'bold'), '真的。'),
+    p(
+      '夏天的',
+      t('栀子', 'bold'),
+      '是最好的。它不如玫瑰',
+      t('妖娆', 'strike'),
+      '热烈，但',
+      t('香。', 'bold'),
+      '真的。',
+    ),
     h(2, '为什么是白色'),
     ol(1, li(p('白色不抢眼')), li(p('白色', t('耐看', 'italic')), ul(li(p('信纸是白的')), li(p('雪也是白的'))))),
     quote(p('可是，信纸为什么是白的')),

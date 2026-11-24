@@ -8,7 +8,8 @@ import { tt } from '@/i18n/templates'
 export function templateMessage(e: unknown, fallback: string): string {
   if (e instanceof ApiError) {
     const code = e.code as string
-    if (code === 'template_limit' || code === 'template_too_large' || code === 'template_not_found') return tt.errors[code]
+    if (code === 'template_limit' || code === 'template_too_large' || code === 'template_not_found')
+      return tt.errors[code]
   }
   return fallback
 }

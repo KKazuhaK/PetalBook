@@ -9,7 +9,17 @@ import { baseName, checkFolderName, parentOf, type FolderIndex } from '@/lib/fol
 import { t } from '@/i18n'
 
 // A rename is a move to the sibling path with the new name; nothing else about the folder changes.
-export function RenameFolderDialog({ path, index, onRename, onClose }: { path: string; index: FolderIndex; onRename: (from: string, to: string) => Promise<void>; onClose: () => void }) {
+export function RenameFolderDialog({
+  path,
+  index,
+  onRename,
+  onClose,
+}: {
+  path: string
+  index: FolderIndex
+  onRename: (from: string, to: string) => Promise<void>
+  onClose: () => void
+}) {
   const current = baseName(path)
   const [value, setValue] = useState(current)
   const [error, setError] = useState('')

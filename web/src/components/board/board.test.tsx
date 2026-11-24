@@ -20,33 +20,56 @@ afterEach(async () => {
 
 const BOARD = { name: '看板', layout: 'board', group: 'status', cardFields: ['points', 'due'] }
 const col = (id: string) => document.querySelector<HTMLElement>(`[data-column="${id}"]`)!
-const cardsIn = (id: string) => [...(col(id) ?? document.createElement('div')).querySelectorAll<HTMLElement>('[data-card]')].map((c) => c.getAttribute('aria-label'))
-const card = (title: string) => [...document.querySelectorAll<HTMLElement>('[data-card]')].find((c) => c.getAttribute('aria-label') === title)!
+const cardsIn = (id: string) =>
+  [...(col(id) ?? document.createElement('div')).querySelectorAll<HTMLElement>('[data-card]')].map((c) =>
+    c.getAttribute('aria-label'),
+  )
+const card = (title: string) =>
+  [...document.querySelectorAll<HTMLElement>('[data-card]')].find((c) => c.getAttribute('aria-label') === title)!
 // A card once it is drawn: the columns fill in one by one, so a card in another column may not be there yet.
 const shown = async (title: string) => {
-  await settle(() => [...document.querySelectorAll('[data-card]')].some((c) => c.getAttribute('aria-label') === title), `the card ${title}`)
+  await settle(
+    () => [...document.querySelectorAll('[data-card]')].some((c) => c.getAttribute('aria-label') === title),
+    `the card ${title}`,
+  )
   return card(title)
 }
 const count = (id: string) => col(id).querySelector('[data-slot="column-count"]')!.textContent
 const columnIds = () => [...document.querySelectorAll('[data-column]')].map((c) => c.getAttribute('data-column'))
-const listRequests = () => m!.requests.filter((r) => r.method === 'GET' && /\/pages\?/.test(r.url)).map((r) => new URL(r.url, 'http://x').searchParams)
-const filterOf = (q: URLSearchParams) => JSON.parse(q.get('filter') ?? '[]') as { key: string; op: string; values?: unknown[] }[]
+const listRequests = () =>
+  m!.requests
+    .filter((r) => r.method === 'GET' && /\/pages\?/.test(r.url))
+    .map((r) => new URL(r.url, 'http://x').searchParams)
+const filterOf = (q: URLSearchParams) =>
+  JSON.parse(q.get('filter') ?? '[]') as { key: string; op: string; values?: unknown[] }[]
 const patches = () => m!.requests.filter((r) => r.method === 'PATCH')
-const textButton = (label: string, within: ParentNode = document) => [...within.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === label) ?? null
+const textButton = (label: string, within: ParentNode = document) =>
+  [...within.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === label) ?? null
 
-async function openBoard(scene?: (send: Send, ids: ReturnType<typeof seedWork>) => void, path = '/s/default/f/Work', options: Parameters<typeof mount>[1] = {}) {
+async function openBoard(
+  scene?: (send: Send, ids: ReturnType<typeof seedWork>) => void,
+  path = '/s/default/f/Work',
+  options: Parameters<typeof mount>[1] = {},
+) {
   let made: ReturnType<typeof seedWork> | undefined
   m = await mount(listShell, {
     ...options,
     entries: (server) => {
       const send = sender(server)
       made = seedWork(server)
-      putViews(send, path.includes('/t/') ? { tag: decodeURIComponent(path.split('/t/')[1]) } : { folder: 'Work' }, [BOARD])
+      putViews(send, path.includes('/t/') ? { tag: decodeURIComponent(path.split('/t/')[1]) } : { folder: 'Work' }, [
+        BOARD,
+      ])
       scene?.(send, made)
       return [path]
     },
   })
-  await settle(() => document.querySelector('[data-slot="board-view"]') !== null && document.querySelectorAll('[data-column]').length > 0, 'the board')
+  await settle(
+    () =>
+      document.querySelector('[data-slot="board-view"]') !== null &&
+      document.querySelectorAll('[data-column]').length > 0,
+    'the board',
+  )
   return made!
 }
 
@@ -82,7 +105,9 @@ describe('the columns', () => {
   })
 
   it('have an "other values" column only when some page has a value that is not an option, and a card cannot be dropped on it', async () => {
-    await openBoard((send) => send('POST', '/pages', { folder: 'Work', meta: { title: 'E', status: 'dropped' }, body: '' }))
+    await openBoard((send) =>
+      send('POST', '/pages', { folder: 'Work', meta: { title: 'E', status: 'dropped' }, body: '' }),
+    )
     await settle(() => cardsIn('other').length === 1, 'the other column')
     expect(columnIds()).toEqual(['o:todo', 'o:doing', 'o:done', 'other', 'empty'])
     expect(count('other')).toBe('1')
@@ -97,7 +122,11 @@ describe('the columns', () => {
     await openBoard((send) => {
       // An option nobody has.
       const rev = (send('GET', '/types').body as { types: { rev: string }[] }).types[0].rev
-      send('PUT', '/types/task', { ...TASK, baseRev: rev, fields: [{ ...TASK.fields[0], options: ['todo', 'doing', 'done', 'never'] }, ...TASK.fields.slice(1)] })
+      send('PUT', '/types/task', {
+        ...TASK,
+        baseRev: rev,
+        fields: [{ ...TASK.fields[0], options: ['todo', 'doing', 'done', 'never'] }, ...TASK.fields.slice(1)],
+      })
     })
     await settle(() => columnIds().includes('o:never'), 'the new option')
     await settle(() => cardsIn('o:done').length === 1, 'cards')
@@ -105,18 +134,30 @@ describe('the columns', () => {
     expect(col('o:never').textContent).toContain(tb.board.noCards)
     const qs = listRequests().filter((q) => q.get('props') === '1' && filterOf(q).length)
     for (const q of qs) expect(q.get('limit')).toBe('20')
-    const ops = qs.map((q) => filterOf(q).map((f) => `${f.op}:${(f.values ?? []).join('|')}`).join())
+    const ops = qs.map((q) =>
+      filterOf(q)
+        .map((f) => `${f.op}:${(f.values ?? []).join('|')}`)
+        .join(),
+    )
     expect(ops).toEqual(expect.arrayContaining(['in:todo', 'in:doing', 'in:done', 'empty:']))
     expect(ops.some((o) => o.includes('never'))).toBe(false)
   })
 
   it('page by their own cursor: a column of forty-five pages is read in three batches, and the others are not read again', async () => {
     await openBoard((send) => {
-      for (let i = 0; i < 44; i++) send('POST', '/pages', { folder: 'Work', meta: { title: `T${String(i).padStart(2, '0')}`, status: 'todo' }, body: '' })
+      for (let i = 0; i < 44; i++)
+        send('POST', '/pages', {
+          folder: 'Work',
+          meta: { title: `T${String(i).padStart(2, '0')}`, status: 'todo' },
+          body: '',
+        })
     })
     await settle(() => cardsIn('o:todo').length === 20, 'the first twenty')
     expect(count('o:todo')).toBe('45')
-    const todoQ = () => listRequests().filter((q) => q.get('props') === '1' && filterOf(q).some((f) => f.op === 'in' && f.values?.[0] === 'todo'))
+    const todoQ = () =>
+      listRequests().filter(
+        (q) => q.get('props') === '1' && filterOf(q).some((f) => f.op === 'in' && f.values?.[0] === 'todo'),
+      )
     expect(todoQ()).toHaveLength(1)
     const doneBefore = listRequests().filter((q) => filterOf(q).some((f) => f.values?.[0] === 'done')).length
     await click(textButton(tb.board.loadMore, col('o:todo')))
@@ -140,7 +181,11 @@ describe('the columns', () => {
 describe('a card', () => {
   it('shows the title, two lines of the text, the chosen fields and the tags; an untitled page is its text', async () => {
     await openBoard((send) => {
-      send('POST', '/pages', { folder: 'Work', meta: { status: 'doing', tags: ['栀子'] }, body: '没有标题的一页，从这里开始写。\n' })
+      send('POST', '/pages', {
+        folder: 'Work',
+        meta: { status: 'doing', tags: ['栀子'] },
+        body: '没有标题的一页，从这里开始写。\n',
+      })
     })
     await settle(() => cardsIn('o:done').length === 1, 'cards')
     const a = await shown('A')
@@ -153,8 +198,13 @@ describe('a card', () => {
     expect(a.querySelector('.line-clamp-2')).not.toBeNull()
     // A field the page has no value for is not shown.
     expect((await shown('D')).querySelector('[data-field]')).toBeNull()
-    await settle(() => [...col('o:doing').querySelectorAll('[data-card]')].some((c) => c.textContent!.includes('没有标题的一页')), 'the untitled card')
-    const untitled = [...col('o:doing').querySelectorAll<HTMLElement>('[data-card]')].find((c) => c.textContent!.includes('没有标题的一页'))!
+    await settle(
+      () => [...col('o:doing').querySelectorAll('[data-card]')].some((c) => c.textContent!.includes('没有标题的一页')),
+      'the untitled card',
+    )
+    const untitled = [...col('o:doing').querySelectorAll<HTMLElement>('[data-card]')].find((c) =>
+      c.textContent!.includes('没有标题的一页'),
+    )!
     expect(untitled.querySelector('a')!.textContent).toContain('没有标题的一页')
     expect(untitled.textContent).not.toContain('《')
     // The title opens the page.
@@ -240,15 +290,20 @@ describe('moving a card', () => {
     await settle(() => patches().length === 2, 'both requests')
     await settle(() => document.body.textContent!.includes(tb.board.conflict('B')), 'the message for B')
     await settle(() => m!.server.peek(ids.C.id)!.meta.status === 'done', 'C moved')
-    await settle(() => [...document.querySelectorAll('[data-card]')].every((c) => c.getAttribute('aria-busy') !== 'true'), 'no card left busy')
+    await settle(
+      () => [...document.querySelectorAll('[data-card]')].every((c) => c.getAttribute('aria-busy') !== 'true'),
+      'no card left busy',
+    )
     expect((await shown('B')).getAttribute('draggable')).toBe('true')
     expect(m!.server.peek(ids.B.id)!.meta.status).toBe('todo')
   })
 
   it('is not offered for a card whose value the listing holds only in part', async () => {
-    await openBoard((send) => send('POST', '/pages', { folder: 'Work', meta: { title: 'LONG', status: 'x'.repeat(400) }, body: '' }))
+    await openBoard((send) =>
+      send('POST', '/pages', { folder: 'Work', meta: { title: 'LONG', status: 'x'.repeat(400) }, body: '' }),
+    )
     await settle(() => cardsIn('other').length === 1, 'the other column')
-    const long = (await shown('LONG'))
+    const long = await shown('LONG')
     expect(long.getAttribute('draggable')).toBe('false')
     expect(long.getAttribute('data-partial')).toBe('true')
     expect(long.getAttribute('title')).toBe(tb.board.partial)
@@ -257,7 +312,9 @@ describe('moving a card', () => {
   })
 
   it('is not offered for a card whose value is a list', async () => {
-    await openBoard((send) => send('POST', '/pages', { folder: 'Work', meta: { title: 'MANY', status: ['todo', 'doing'] }, body: '' }))
+    await openBoard((send) =>
+      send('POST', '/pages', { folder: 'Work', meta: { title: 'MANY', status: ['todo', 'doing'] }, body: '' }),
+    )
     await settle(() => document.querySelector('[data-card]') !== null, 'cards')
     await settle(() => (card('MANY')?.getAttribute('draggable') ?? '') !== '', 'the card')
     expect((await shown('MANY')).getAttribute('draggable')).toBe('false')
@@ -269,7 +326,8 @@ describe('moving a card', () => {
       server: { mode: 'accounts' },
       entries: (server) => {
         const { space, owner } = shareSpace(server, 'viewer')
-        const send = (method: string, path: string, body?: unknown) => owner.request(method, `/api/spaces/${space}${path}`, body)
+        const send = (method: string, path: string, body?: unknown) =>
+          owner.request(method, `/api/spaces/${space}${path}`, body)
         send('PUT', '/types/task', TASK)
         send('POST', '/folders', { path: 'Work' })
         send('PUT', '/folders/type', { folder: 'Work', type: 'task' })
@@ -288,7 +346,8 @@ describe('moving a card', () => {
 })
 
 describe('moving a card without a mouse', () => {
-  const moveButton = (title: string) => card(title).querySelector<HTMLButtonElement>(`button[aria-label="${tb.board.moveTo(title)}"]`)
+  const moveButton = (title: string) =>
+    card(title).querySelector<HTMLButtonElement>(`button[aria-label="${tb.board.moveTo(title)}"]`)
   const menuItems = () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
   const openMenu = async (title: string) => {
     await click(moveButton(title))
@@ -297,7 +356,9 @@ describe('moving a card without a mouse', () => {
   }
 
   it('reaches a card with the keyboard and moves it with "Move to…", which lists only the other columns that take a drop', async () => {
-    const ids = await openBoard((send) => send('POST', '/pages', { folder: 'Work', meta: { title: 'W', status: 'weird' }, body: '' }))
+    const ids = await openBoard((send) =>
+      send('POST', '/pages', { folder: 'Work', meta: { title: 'W', status: 'weird' }, body: '' }),
+    )
     await settle(() => cardsIn('o:todo').length === 1 && cardsIn('other').length === 1, 'cards')
     expect((await shown('B')).tabIndex).toBe(0)
     expect(moveButton('B')).not.toBeNull()
@@ -311,7 +372,9 @@ describe('moving a card without a mouse', () => {
   })
 
   it('takes the value away with "empty", and moves a card out of "other values" to an option', async () => {
-    const ids = await openBoard((send) => send('POST', '/pages', { folder: 'Work', meta: { title: 'W', status: 'weird' }, body: '' }))
+    const ids = await openBoard((send) =>
+      send('POST', '/pages', { folder: 'Work', meta: { title: 'W', status: 'weird' }, body: '' }),
+    )
     await settle(() => cardsIn('other').length === 1, 'cards')
     expect((await openMenu('W')).map((e) => e.textContent)).toEqual(['todo', 'doing', 'done', tb.board.empty])
     await click(menuItems().find((e) => e.textContent === 'todo'))
@@ -322,7 +385,10 @@ describe('moving a card without a mouse', () => {
   })
 
   it('on a board of values (a tag) offers only "empty"', async () => {
-    await openBoard((send) => send('POST', '/pages', { folder: 'Work', meta: { title: 'F', tags: ['栀子'] }, body: '' }), '/s/default/t/栀子')
+    await openBoard(
+      (send) => send('POST', '/pages', { folder: 'Work', meta: { title: 'F', tags: ['栀子'] }, body: '' }),
+      '/s/default/t/栀子',
+    )
     await settle(() => cardsIn('o:done').length === 1 && cardsIn('empty').length === 1, 'cards')
     expect((await openMenu('A')).map((e) => e.textContent)).toEqual([tb.board.empty])
     // Nothing to go to from "empty": no button.
@@ -330,7 +396,9 @@ describe('moving a card without a mouse', () => {
   })
 
   it('is not offered for a card that cannot be moved, nor to someone who may only read', async () => {
-    await openBoard((send) => send('POST', '/pages', { folder: 'Work', meta: { title: 'MANY', status: ['todo', 'doing'] }, body: '' }))
+    await openBoard((send) =>
+      send('POST', '/pages', { folder: 'Work', meta: { title: 'MANY', status: ['todo', 'doing'] }, body: '' }),
+    )
     await settle(() => document.querySelector('[data-card]') !== null && !!card('MANY'), 'cards')
     expect(moveButton('MANY')).toBeNull()
     await m!.unmount()
@@ -340,7 +408,8 @@ describe('moving a card without a mouse', () => {
       server: { mode: 'accounts' },
       entries: (server) => {
         const { space, owner } = shareSpace(server, 'viewer')
-        const send = (method: string, path: string, body?: unknown) => owner.request(method, `/api/spaces/${space}${path}`, body)
+        const send = (method: string, path: string, body?: unknown) =>
+          owner.request(method, `/api/spaces/${space}${path}`, body)
         send('PUT', '/types/task', TASK)
         send('POST', '/folders', { path: 'Work' })
         send('PUT', '/folders/type', { folder: 'Work', type: 'task' })
@@ -356,15 +425,17 @@ describe('moving a card without a mouse', () => {
   })
 
   it('moves the focus between cards with the arrow keys', async () => {
-    await openBoard((send) => send('POST', '/pages', { folder: 'Work', meta: { title: 'B2', status: 'todo' }, body: '' }))
+    await openBoard((send) =>
+      send('POST', '/pages', { folder: 'Work', meta: { title: 'B2', status: 'todo' }, body: '' }),
+    )
     await settle(() => cardsIn('o:todo').length === 2 && cardsIn('o:doing').length === 1, 'cards')
     const [first, second] = cardsIn('o:todo') as string[]
     card(first).focus()
     await press(card(first), 'ArrowDown')
     expect(document.activeElement).toBe(card(second))
     await press(card(second), 'ArrowRight')
-    expect(document.activeElement).toBe((await shown('C')))
-    await press((await shown('C')), 'ArrowLeft')
+    expect(document.activeElement).toBe(await shown('C'))
+    await press(await shown('C'), 'ArrowLeft')
     expect(document.activeElement).toBe(card(first))
     await press(card(first), 'ArrowUp')
     expect(document.activeElement).toBe(card(first))
@@ -373,13 +444,10 @@ describe('moving a card without a mouse', () => {
 
 describe('the board of a tag', () => {
   it('has a column for each value the pages have, most pages first, and "empty"; a card can be taken out of a value column but not dropped on one', async () => {
-    const ids = await openBoard(
-      (send) => {
-        send('POST', '/pages', { folder: 'Work', meta: { title: 'E', status: 'done', tags: ['栀子'] }, body: '' })
-        send('POST', '/pages', { folder: 'Work', meta: { title: 'F', tags: ['栀子'] }, body: '' })
-      },
-      '/s/default/t/栀子',
-    )
+    const ids = await openBoard((send) => {
+      send('POST', '/pages', { folder: 'Work', meta: { title: 'E', status: 'done', tags: ['栀子'] }, body: '' })
+      send('POST', '/pages', { folder: 'Work', meta: { title: 'F', tags: ['栀子'] }, body: '' })
+    }, '/s/default/t/栀子')
     await settle(() => document.querySelectorAll('[data-card]').length === 3, 'three cards')
     // A has "done" and so does E; F has nothing.
     expect(columnIds()).toEqual(['o:done', 'empty'])
@@ -402,12 +470,14 @@ describe('the board of a tag', () => {
 
 describe('a board with many columns', () => {
   it('of values shows the first fifty and one "other values", which asks for what the fifty are not', async () => {
-    await openBoard(
-      (send) => {
-        for (let i = 0; i < 60; i++) send('POST', '/pages', { folder: 'Work', meta: { title: `V${i}`, status: `s${String(i).padStart(2, '0')}`, tags: ['many'] }, body: '' })
-      },
-      '/s/default/t/many',
-    )
+    await openBoard((send) => {
+      for (let i = 0; i < 60; i++)
+        send('POST', '/pages', {
+          folder: 'Work',
+          meta: { title: `V${i}`, status: `s${String(i).padStart(2, '0')}`, tags: ['many'] },
+          body: '',
+        })
+    }, '/s/default/t/many')
     await settle(() => document.querySelectorAll('[data-column]').length > 0, 'columns')
     expect(columnIds()).toHaveLength(52)
     expect(columnIds().at(-2)).toBe('other')
@@ -453,13 +523,24 @@ describe('a board with many columns', () => {
 
   it('refreshes only the columns a moved card leaves and joins', async () => {
     await openBoard()
-    await settle(() => cardsIn('o:todo').length === 1 && cardsIn('o:done').length === 1 && cardsIn('o:doing').length === 1, 'cards')
+    await settle(
+      () => cardsIn('o:todo').length === 1 && cardsIn('o:done').length === 1 && cardsIn('o:doing').length === 1,
+      'cards',
+    )
     const before = listRequests().filter((q) => q.get('props') === '1').length
     await drag(await shown('B'), col('o:done'))
     await settle(() => cardsIn('o:done').length === 2, 'moved')
     // todo (left) and done (joined) are asked for again; doing and empty are not.
-    const again = listRequests().filter((q) => q.get('props') === '1').slice(before)
-    const ops = again.map((q) => filterOf(q).map((f) => `${f.op}:${(f.values ?? []).join('|')}`).join()).sort()
+    const again = listRequests()
+      .filter((q) => q.get('props') === '1')
+      .slice(before)
+    const ops = again
+      .map((q) =>
+        filterOf(q)
+          .map((f) => `${f.op}:${(f.values ?? []).join('|')}`)
+          .join(),
+      )
+      .sort()
     expect(ops).toEqual(['in:done', 'in:todo'])
   })
 })

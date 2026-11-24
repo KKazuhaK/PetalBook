@@ -26,7 +26,8 @@ export function useDiagram(text: string, dark: boolean, delay = DIAGRAM_DELAY_MS
         setState((s) => ({ ...s, busy: true }))
         renderDiagram(text, dark).then(
           (url) => !stale && setState({ url, error: null, busy: false }),
-          (e: unknown) => !stale && setState((s) => ({ ...s, error: e instanceof Error ? e.message : String(e), busy: false })),
+          (e: unknown) =>
+            !stale && setState((s) => ({ ...s, error: e instanceof Error ? e.message : String(e), busy: false })),
         )
         drawn.current = true
       },
@@ -62,4 +63,9 @@ function subscribe(onChange: () => void) {
   }
 }
 
-export const useDarkTheme = (): boolean => useSyncExternalStore(subscribe, () => document.documentElement.classList.contains('dark'), () => false)
+export const useDarkTheme = (): boolean =>
+  useSyncExternalStore(
+    subscribe,
+    () => document.documentElement.classList.contains('dark'),
+    () => false,
+  )

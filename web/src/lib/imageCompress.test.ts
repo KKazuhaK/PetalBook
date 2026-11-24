@@ -1,17 +1,41 @@
 import { describe, expect, it } from 'vitest'
-import { compressibleKind, fitSize, isAnimatedPng, needsCompression, prepareImage, withExtension, worthKeeping, type DecodedImage, type ImageCodec } from './imageCompress'
+import {
+  compressibleKind,
+  fitSize,
+  isAnimatedPng,
+  needsCompression,
+  prepareImage,
+  withExtension,
+  worthKeeping,
+  type DecodedImage,
+  type ImageCodec,
+} from './imageCompress'
 import { formatBytes } from './bytes'
 
 const KB = 1024
-const file = (name: string, type: string, size: number) => Object.assign(new Blob([new Uint8Array(size)], { type }), { name })
+const file = (name: string, type: string, size: number) =>
+  Object.assign(new Blob([new Uint8Array(size)], { type }), { name })
 
 interface Fake {
   codec: ImageCodec
   calls: string[]
 }
-function fake(opts: { width?: number; height?: number; out?: { size: number; type: string } | null; decodeNull?: boolean; animated?: boolean; throws?: boolean } = {}): Fake {
+function fake(
+  opts: {
+    width?: number
+    height?: number
+    out?: { size: number; type: string } | null
+    decodeNull?: boolean
+    animated?: boolean
+    throws?: boolean
+  } = {},
+): Fake {
   const calls: string[] = []
-  const image: DecodedImage = { width: opts.width ?? 1000, height: opts.height ?? 800, close: () => void calls.push('close') }
+  const image: DecodedImage = {
+    width: opts.width ?? 1000,
+    height: opts.height ?? 800,
+    close: () => void calls.push('close'),
+  }
   return {
     calls,
     codec: {
@@ -26,7 +50,9 @@ function fake(opts: { width?: number; height?: number; out?: { size: number; typ
       },
       encode: async (_i, w, h) => {
         calls.push(`encode ${w}x${h}`)
-        return opts.out === null ? null : new Blob([new Uint8Array(opts.out?.size ?? 100 * KB)], { type: opts.out?.type ?? 'image/webp' })
+        return opts.out === null
+          ? null
+          : new Blob([new Uint8Array(opts.out?.size ?? 100 * KB)], { type: opts.out?.type ?? 'image/webp' })
       },
     },
   }
@@ -38,7 +64,16 @@ describe('the decision', () => {
     expect(compressibleKind({ type: 'image/jpeg', name: 'a' })).toBe('jpeg')
     expect(compressibleKind({ type: '', name: 'A.JPG' })).toBe('jpeg')
     expect(compressibleKind({ type: '', name: 'a.png' })).toBe('png')
-    for (const [type, name] of [['image/gif', 'a.gif'], ['image/svg+xml', 'a.svg'], ['image/webp', 'a.webp'], ['image/avif', 'a.avif'], ['application/pdf', 'a.pdf'], ['text/plain', 'a.png'], ['', 'a.gif'], ['', 'png']]) {
+    for (const [type, name] of [
+      ['image/gif', 'a.gif'],
+      ['image/svg+xml', 'a.svg'],
+      ['image/webp', 'a.webp'],
+      ['image/avif', 'a.avif'],
+      ['application/pdf', 'a.pdf'],
+      ['text/plain', 'a.png'],
+      ['', 'a.gif'],
+      ['', 'png'],
+    ]) {
       expect(compressibleKind({ type, name }), `${type} ${name}`).toBeNull()
     }
   })
@@ -78,7 +113,10 @@ describe('prepareImage', () => {
   })
   it('compresses a PNG over 300 KB that is small in pixels', async () => {
     const f = fake({ width: 800, height: 600, out: { size: 100 * KB, type: 'image/webp' } })
-    expect(await prepareImage(file('shot.png', 'image/png', 500 * KB), f.codec)).toMatchObject({ name: 'shot.webp', compressed: true })
+    expect(await prepareImage(file('shot.png', 'image/png', 500 * KB), f.codec)).toMatchObject({
+      name: 'shot.webp',
+      compressed: true,
+    })
     expect(f.calls).toContain('encode 800x600')
   })
   it('compresses a small file that is over 2560 px', async () => {
@@ -112,7 +150,14 @@ describe('prepareImage', () => {
     expect((await prepareImage(original, fake({ throws: true }).codec)).blob).toBe(original)
   })
   it('never touches GIF, SVG, WebP, AVIF or other files: the codec is not even asked', async () => {
-    for (const [name, type] of [['a.gif', 'image/gif'], ['a.svg', 'image/svg+xml'], ['a.webp', 'image/webp'], ['a.avif', 'image/avif'], ['a.pdf', 'application/pdf'], ['a.zip', 'application/zip']]) {
+    for (const [name, type] of [
+      ['a.gif', 'image/gif'],
+      ['a.svg', 'image/svg+xml'],
+      ['a.webp', 'image/webp'],
+      ['a.avif', 'image/avif'],
+      ['a.pdf', 'application/pdf'],
+      ['a.zip', 'application/zip'],
+    ]) {
       const f = fake({ width: 9000, height: 9000 })
       const original = file(name, type, 5000 * KB)
       const r = await prepareImage(original, f.codec)
@@ -144,7 +189,8 @@ describe('isAnimatedPng', () => {
     }
     return out
   }
-  it('finds acTL before the first IDAT', () => expect(isAnimatedPng(png(['IHDR', 13], ['acTL', 8], ['IDAT', 50], ['IEND', 0]))).toBe(true))
+  it('finds acTL before the first IDAT', () =>
+    expect(isAnimatedPng(png(['IHDR', 13], ['acTL', 8], ['IDAT', 50], ['IEND', 0]))).toBe(true))
   it('a still PNG', () => expect(isAnimatedPng(png(['IHDR', 13], ['sRGB', 1], ['IDAT', 50], ['IEND', 0]))).toBe(false))
   it('does not run past the data on a truncated file', () => expect(isAnimatedPng(png(['IHDR', 13]))).toBe(false))
 })

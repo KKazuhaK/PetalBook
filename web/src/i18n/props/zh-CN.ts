@@ -1,7 +1,17 @@
 export const propsZhCN = {
   cancel: '取消',
   close: '关闭',
-  kinds: { text: '文字', longtext: '长文字', select: '单选', multiselect: '多选', date: '日期', number: '数字', checkbox: '勾选', url: '网址', other: '其他' },
+  kinds: {
+    text: '文字',
+    longtext: '长文字',
+    select: '单选',
+    multiselect: '多选',
+    date: '日期',
+    number: '数字',
+    checkbox: '勾选',
+    url: '网址',
+    other: '其他',
+  },
   // The property panel of the page editor.
   panel: {
     label: (name: string) => `属性：${name}`,
@@ -48,7 +58,8 @@ export const propsZhCN = {
     fieldTitlePlaceholder: '显示名（可以不填）',
     optionsPlaceholder: '每行一个选项',
     optionsHelp: '每行一个选项，不能空，也不能重复。',
-    keyFixedHelp: '已有字段的键不能改。想换键，就删掉这个字段再添加新的；页面里原来的值不会被改动，会列在“不在这个类型里”。',
+    keyFixedHelp:
+      '已有字段的键不能改。想换键，就删掉这个字段再添加新的；页面里原来的值不会被改动，会列在“不在这个类型里”。',
     keyEmpty: '请填写键',
     keyLong: '键太长了（最多 64 字节）',
     keyChars: '键里不能有冒号和控制字符',
@@ -64,10 +75,14 @@ export const propsZhCN = {
     create: '创建',
     saved: '类型已保存',
     saveFailed: '没能保存类型',
-    changedMeanwhile: '没有保存：这个类型在这期间被别人改过了。已重新载入含他人改动的版本，表单里你改的内容已被丢弃，请重新改一次。',
+    changedMeanwhile:
+      '没有保存：这个类型在这期间被别人改过了。已重新载入含他人改动的版本，表单里你改的内容已被丢弃，请重新改一次。',
     delete: '删除类型',
     deleteTitle: (name: string) => `删除类型“${name}”？`,
-    deleteHelp: (folders: number) => (folders > 0 ? `页面里已经写好的值不会动。绑定了这个类型的 ${folders} 个文件夹会解除绑定。` : '页面里已经写好的值不会动。'),
+    deleteHelp: (folders: number) =>
+      folders > 0
+        ? `页面里已经写好的值不会动。绑定了这个类型的 ${folders} 个文件夹会解除绑定。`
+        : '页面里已经写好的值不会动。',
     deleteConfirm: '删除',
     deleted: '类型已删除',
     deleteFailed: '没能删除类型',
@@ -138,12 +153,20 @@ export const propsZhCN = {
     yes: '是',
     no: '否',
     remove: (what: string) => `去掉筛选：${what}`,
-    ops: { in: '是其中之一', notIn: '不是其中任何一个', range: '在范围内', empty: '为空', notEmpty: '不为空', contains: '包含' },
+    ops: {
+      in: '是其中之一',
+      notIn: '不是其中任何一个',
+      range: '在范围内',
+      empty: '为空',
+      notEmpty: '不为空',
+      contains: '包含',
+    },
     describeNotIn: (field: string, values: string) => `${field} 不是 ${values}`,
     describeEmpty: (field: string) => `${field} 为空`,
     describeNotEmpty: (field: string) => `${field} 不为空`,
     describeIn: (field: string, values: string) => `${field} 是 ${values}`,
     describeContains: (field: string, text: string) => `${field} 包含“${text}”`,
-    describeRange: (field: string, from: string, to: string) => (from && to ? `${field} 在 ${from} 到 ${to}` : from ? `${field} ≥ ${from}` : `${field} ≤ ${to}`),
+    describeRange: (field: string, from: string, to: string) =>
+      from && to ? `${field} 在 ${from} 到 ${to}` : from ? `${field} ≥ ${from}` : `${field} ≤ ${to}`,
   },
 }

@@ -1,11 +1,29 @@
 import { useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { forgetSpace, putMember, useActiveSpace, useAddMember, useMembers, useRemoveMember, useSession, useSetMemberRole } from '@/api/hooks'
+import {
+  forgetSpace,
+  putMember,
+  useActiveSpace,
+  useAddMember,
+  useMembers,
+  useRemoveMember,
+  useSession,
+  useSetMemberRole,
+} from '@/api/hooks'
 import type { Member, SpaceInfo, SpaceRole } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -53,12 +71,24 @@ export function MembersPanel({ space }: { space: string }) {
   if (!current) return <SettingsNote>{t.editor.spaceMissing}</SettingsNote>
   if (current.disabled) return <DisabledSpace space={current} />
   if (members.isPending) return <PageFallback />
-  if (members.isError) return <ErrorState message={t.fmt.labelled(t.members.loadFailed, members.error.message)} onRetry={() => void members.refetch()} />
+  if (members.isError)
+    return (
+      <ErrorState
+        message={t.fmt.labelled(t.members.loadFailed, members.error.message)}
+        onRetry={() => void members.refetch()}
+      />
+    )
   const manage = can(current, 'members')
   return (
     <div className="space-y-8">
       <MemberList space={current} members={members.data.members} manage={manage} />
-      {current.personal ? <SettingsNote>{t.members.personalNote}</SettingsNote> : manage ? <AddMember space={space} /> : <SettingsNote>{t.members.noManage}</SettingsNote>}
+      {current.personal ? (
+        <SettingsNote>{t.members.personalNote}</SettingsNote>
+      ) : manage ? (
+        <AddMember space={space} />
+      ) : (
+        <SettingsNote>{t.members.noManage}</SettingsNote>
+      )}
       {!current.personal && <GroupMembers space={current} groups={members.data.groups} manage={manage} />}
       {!current.personal && <EffectiveMembers space={space} />}
     </div>
@@ -159,13 +189,26 @@ function MemberList({ space, members, manage }: { space: SpaceInfo; members: Mem
               <div className="flex items-center gap-2">
                 <span className="truncate text-sm font-medium">{m.name}</span>
                 {m.you && <span className="text-xs text-muted-foreground">{t.members.you}</span>}
-                {m.viaGroups && <span className="text-xs text-muted-foreground">{tg.space.viaGroups}{m.effectiveRole && m.effectiveRole !== m.role ? ` · ${tg.space.effective(t.roles[m.effectiveRole])}` : ''}</span>}
+                {m.viaGroups && (
+                  <span className="text-xs text-muted-foreground">
+                    {tg.space.viaGroups}
+                    {m.effectiveRole && m.effectiveRole !== m.role
+                      ? ` · ${tg.space.effective(t.roles[m.effectiveRole])}`
+                      : ''}
+                  </span>
+                )}
               </div>
               <div className="truncate text-xs text-muted-foreground">{m.username}</div>
             </div>
             <div className="w-32">
               {manage ? (
-                <NativeSelect className="h-8" aria-label={t.fmt.labelled(m.name, t.members.role)} value={m.role} disabled={setRole.isPending} onChange={(e) => void change(m, e.target.value as SpaceRole)}>
+                <NativeSelect
+                  className="h-8"
+                  aria-label={t.fmt.labelled(m.name, t.members.role)}
+                  value={m.role}
+                  disabled={setRole.isPending}
+                  onChange={(e) => void change(m, e.target.value as SpaceRole)}
+                >
                   {ROLES.map((r) => (
                     <option key={r} value={r}>
                       {t.roles[r]}
@@ -181,7 +224,13 @@ function MemberList({ space, members, manage }: { space: SpaceInfo; members: Mem
                 {t.members.leave}
               </Button>
             ) : manage && !m.you ? (
-              <Button type="button" variant="outline" size="sm" aria-label={t.fmt.labelled(t.members.remove, m.name)} onClick={() => setAsking(m)}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                aria-label={t.fmt.labelled(t.members.remove, m.name)}
+                onClick={() => setAsking(m)}
+              >
                 {t.members.remove}
               </Button>
             ) : null}
@@ -192,7 +241,9 @@ function MemberList({ space, members, manage }: { space: SpaceInfo; members: Mem
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{t.members.demoteTitle}</AlertDialogTitle>
-            <AlertDialogDescription>{demoting ? t.members.demoteHelp(space.name, t.roles[demoting.role]) : ''}</AlertDialogDescription>
+            <AlertDialogDescription>
+              {demoting ? t.members.demoteHelp(space.name, t.roles[demoting.role]) : ''}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t.members.cancel}</AlertDialogCancel>
@@ -213,7 +264,9 @@ function MemberList({ space, members, manage }: { space: SpaceInfo; members: Mem
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{asking?.you ? t.members.leaveTitle : t.members.removeTitle}</AlertDialogTitle>
-            <AlertDialogDescription>{asking ? (asking.you ? t.members.leaveHelp(space.name) : t.members.removeHelp(asking.name)) : ''}</AlertDialogDescription>
+            <AlertDialogDescription>
+              {asking ? (asking.you ? t.members.leaveHelp(space.name) : t.members.removeHelp(asking.name)) : ''}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t.members.cancel}</AlertDialogCancel>
@@ -252,12 +305,24 @@ function AddMember({ space }: { space: string }) {
     <SettingsSection title={t.members.addTitle} id="add-member-heading" description={t.members.addHelp}>
       <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => void submit(e)} noValidate>
         <div className="min-w-48 flex-1">
-          <Field label={t.members.username} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} />
+          <Field
+            label={t.members.username}
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+          />
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="add-member-role">{t.members.role}</Label>
           <div className="w-32">
-            <NativeSelect id="add-member-role" value={role} onChange={(e) => setRole(e.target.value as SpaceRole)} aria-describedby="add-member-role-help">
+            <NativeSelect
+              id="add-member-role"
+              value={role}
+              onChange={(e) => setRole(e.target.value as SpaceRole)}
+              aria-describedby="add-member-role-help"
+            >
               {ROLES.map((r) => (
                 <option key={r} value={r}>
                   {t.roles[r]}

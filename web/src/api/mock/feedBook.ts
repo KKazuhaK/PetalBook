@@ -77,7 +77,8 @@ export function createFeedBook({ entries, tree, settings, random, fail }: FeedOp
     return n
   }
 
-  const inFolders = (folder: string, folders: string[]) => folders.length === 0 || folders.some((f) => folder === f || folder.startsWith(f + '/'))
+  const inFolders = (folder: string, folders: string[]) =>
+    folders.length === 0 || folders.some((f) => folder === f || folder.startsWith(f + '/'))
 
   return {
     head,
@@ -94,11 +95,19 @@ export function createFeedBook({ entries, tree, settings, random, fail }: FeedOp
       const limit = limitOf(q.get('limit'), 1000, 5000)
       const all: { seq: number; item: ChangeItem }[] = [
         ...[...known.values()].filter((k) => k.seq > since).map((k) => ({ seq: k.seq, item: k.entry as ChangeItem })),
-        ...gone.filter((g) => g.seq > since).map((g) => ({ seq: g.seq, item: { id: g.id, deleted: true } as ChangeItem })),
+        ...gone
+          .filter((g) => g.seq > since)
+          .map((g) => ({ seq: g.seq, item: { id: g.id, deleted: true } as ChangeItem })),
       ].sort((a, b) => a.seq - b.seq)
       const more = all.length > limit
       const items = all.slice(0, limit)
-      return { items: items.map((i) => i.item), next: more ? cursorOf(items[items.length - 1].seq) : cursorOf(seq), more, tree: treeToken(), settings: settings() }
+      return {
+        items: items.map((i) => i.item),
+        next: more ? cursorOf(items[items.length - 1].seq) : cursorOf(seq),
+        more,
+        tree: treeToken(),
+        settings: settings(),
+      }
     },
     catalog: (q: URLSearchParams) => {
       sweep()

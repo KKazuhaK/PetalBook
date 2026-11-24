@@ -14,7 +14,8 @@
 
 export const PALETTE_IDS = ['default', 'catppuccin', 'nord', 'solarized', 'gruvbox', 'rose-pine'] as const
 export type PaletteId = (typeof PALETTE_IDS)[number]
-export const isPaletteId = (v: unknown): v is PaletteId => typeof v === 'string' && (PALETTE_IDS as readonly string[]).includes(v)
+export const isPaletteId = (v: unknown): v is PaletteId =>
+  typeof v === 'string' && (PALETTE_IDS as readonly string[]).includes(v)
 
 // What one palette in one mode says, as `#rrggbb`.
 export interface Tones {
@@ -338,7 +339,8 @@ export function varsOf(t: Tones): Record<string, string> {
   }
 }
 
-export const PALETTE_CSS_BEGIN = '/* ---- colour palettes: generated from src/lib/palettes.ts (palettes.test.ts checks it) ---- */'
+export const PALETTE_CSS_BEGIN =
+  '/* ---- colour palettes: generated from src/lib/palettes.ts (palettes.test.ts checks it) ---- */'
 export const PALETTE_CSS_END = '/* ---- end of colour palettes ---- */'
 
 // The block for index.css. `html[data-palette]` beats `:root`, and with `.dark`

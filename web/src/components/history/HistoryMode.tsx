@@ -13,7 +13,15 @@ import { useHistory, useVersion } from '@/api/hooks'
 import type { HistoryItem } from '@/api/types'
 import type { SaveState } from '@/editor/saveController'
 import { diffLines, diffVersions, type DiffResult, type VersionContent } from '@/diff'
-import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
@@ -65,7 +73,16 @@ function useContent(space: string, pageId: string, item: HistoryItem | null) {
   return { content, error: q.isError ? q.error : null, retry: () => void q.refetch() }
 }
 
-export default function HistoryMode({ space, pageId, folder = '', getCurrent, saveState, onClose, onRestore, readOnly = false }: HistoryModeProps) {
+export default function HistoryMode({
+  space,
+  pageId,
+  folder = '',
+  getCurrent,
+  saveState,
+  onClose,
+  onRestore,
+  readOnly = false,
+}: HistoryModeProps) {
   const isMobile = useIsMobile()
   const history = useHistory(space, pageId, true)
   const items = useMemo(() => history.data?.pages.flatMap((p) => p.items) ?? [], [history.data])
@@ -119,8 +136,17 @@ export default function HistoryMode({ space, pageId, folder = '', getCurrent, sa
   const targetContent: Content = targetIsCurrent ? current : target.content
   const loadError = base.error ?? target.error
 
-  const result = useMemo<DiffResult | null>(() => (baseContent === undefined || targetContent === undefined ? null : diffVersions(baseContent, targetContent)), [baseContent, targetContent])
-  const lines = useMemo(() => (view === 'raw' && baseContent !== undefined && targetContent !== undefined ? diffLines(baseContent?.body ?? '', targetContent?.body ?? '') : null), [view, baseContent, targetContent])
+  const result = useMemo<DiffResult | null>(
+    () => (baseContent === undefined || targetContent === undefined ? null : diffVersions(baseContent, targetContent)),
+    [baseContent, targetContent],
+  )
+  const lines = useMemo(
+    () =>
+      view === 'raw' && baseContent !== undefined && targetContent !== undefined
+        ? diffLines(baseContent?.body ?? '', targetContent?.body ?? '')
+        : null,
+    [view, baseContent, targetContent],
+  )
 
   // --- jumping between changes ---
   const [stops, setStops] = useState<HTMLElement[][]>([])
@@ -134,7 +160,10 @@ export default function HistoryMode({ space, pageId, folder = '', getCurrent, sa
     const next = at < 0 ? (delta > 0 ? 0 : stops.length - 1) : (at + delta + stops.length) % stops.length
     for (const group of stops) for (const el of group) el.classList.remove('pb-diff-current')
     for (const el of stops[next]) el.classList.add('pb-diff-current')
-    stops[next][0].scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+    stops[next][0].scrollIntoView({
+      block: 'center',
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    })
     setAt(next)
   }
 
@@ -159,7 +188,10 @@ export default function HistoryMode({ space, pageId, folder = '', getCurrent, sa
 
   // --- restoring ---
   const subject = useContent(space, pageId, selItem)
-  const subjectResult = useMemo(() => (restoreOpen && subject.content ? diffVersions(subject.content, current) : null), [restoreOpen, subject.content, current])
+  const subjectResult = useMemo(
+    () => (restoreOpen && subject.content ? diffVersions(subject.content, current) : null),
+    [restoreOpen, subject.content, current],
+  )
   const conflict = saveState === 'conflict'
   const unsaved = !conflict && saveState !== 'saved'
   const canRestore = !!selItem && selItem.change !== 'delete' && !!subject.content
@@ -197,7 +229,11 @@ export default function HistoryMode({ space, pageId, folder = '', getCurrent, sa
 
   const pickOptions = (withCurrent: boolean) => (
     <>
-      {withCurrent && <option value={CURRENT}>{saveState === 'saved' ? t.history.currentContent : t.history.currentContentUnsaved}</option>}
+      {withCurrent && (
+        <option value={CURRENT}>
+          {saveState === 'saved' ? t.history.currentContent : t.history.currentContentUnsaved}
+        </option>
+      )}
       {items.map((i) => (
         <option key={i.commit} value={i.commit}>
           {when(i.time)} · {i.author} · {describeVersion(i, undefined).kind}
@@ -218,17 +254,31 @@ export default function HistoryMode({ space, pageId, folder = '', getCurrent, sa
             </Button>
             <div className="flex min-w-0 flex-1 items-center gap-1.5 text-sm">
               <History className="size-4 shrink-0 text-muted-foreground" />
-              <h1 className="truncate font-medium max-sm:sr-only">{selItem ? `${whenShort(selItem.time)} · ${selItem.author}` : t.history.open}</h1>
+              <h1 className="truncate font-medium max-sm:sr-only">
+                {selItem ? `${whenShort(selItem.time)} · ${selItem.author}` : t.history.open}
+              </h1>
             </div>
             {view === 'rendered' && result && stops.length > 0 && (
               <div className="flex shrink-0 items-center gap-0.5">
                 <span className="mr-1 hidden text-xs text-muted-foreground tabular-nums sm:inline" aria-live="polite">
                   {at >= 0 ? t.history.changePosition(at + 1, stops.length) : ''}
                 </span>
-                <Button variant="ghost" size="icon-sm" onClick={() => goTo(-1)} aria-label={t.history.prevChange} title={t.history.prevChange}>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => goTo(-1)}
+                  aria-label={t.history.prevChange}
+                  title={t.history.prevChange}
+                >
                   <ChevronUp />
                 </Button>
-                <Button variant="ghost" size="icon-sm" onClick={() => goTo(1)} aria-label={t.history.nextChange} title={t.history.nextChange}>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => goTo(1)}
+                  aria-label={t.history.nextChange}
+                  title={t.history.nextChange}
+                >
                   <ChevronDown />
                 </Button>
               </div>
@@ -246,7 +296,11 @@ export default function HistoryMode({ space, pageId, folder = '', getCurrent, sa
           <div className="mx-auto flex max-w-[720px] flex-wrap items-end gap-x-4 gap-y-2 px-4 pt-3 md:px-5">
             <label className="grid gap-1 text-xs text-muted-foreground">
               {t.history.compareWith}
-              <NativeSelect value={mode} onChange={(e) => chooseMode(e.target.value as Mode)} className="w-auto min-w-36">
+              <NativeSelect
+                value={mode}
+                onChange={(e) => chooseMode(e.target.value as Mode)}
+                className="w-auto min-w-36"
+              >
                 <option value="previous">{t.history.modes.previous}</option>
                 <option value="current">{t.history.modes.current}</option>
                 <option value="pick">{t.history.modes.pick}</option>
@@ -256,28 +310,52 @@ export default function HistoryMode({ space, pageId, folder = '', getCurrent, sa
               <>
                 <label className="grid min-w-0 gap-1 text-xs text-muted-foreground">
                   {t.history.from}
-                  <NativeSelect value={pick.from} onChange={(e) => setPick((p) => ({ ...p, from: e.target.value }))} className="w-auto max-w-56">
+                  <NativeSelect
+                    value={pick.from}
+                    onChange={(e) => setPick((p) => ({ ...p, from: e.target.value }))}
+                    className="w-auto max-w-56"
+                  >
                     {pickOptions(false)}
                   </NativeSelect>
                 </label>
                 <label className="grid min-w-0 gap-1 text-xs text-muted-foreground">
                   {t.history.to}
-                  <NativeSelect value={pick.to} onChange={(e) => setPick((p) => ({ ...p, to: e.target.value }))} className="w-auto max-w-56">
+                  <NativeSelect
+                    value={pick.to}
+                    onChange={(e) => setPick((p) => ({ ...p, to: e.target.value }))}
+                    className="w-auto max-w-56"
+                  >
                     {pickOptions(true)}
                   </NativeSelect>
                 </label>
               </>
             )}
             <div role="group" aria-label={t.history.view} className="flex items-center gap-1">
-              <Button variant={view === 'rendered' ? 'secondary' : 'ghost'} size="sm" aria-pressed={view === 'rendered'} onClick={() => setView('rendered')}>
+              <Button
+                variant={view === 'rendered' ? 'secondary' : 'ghost'}
+                size="sm"
+                aria-pressed={view === 'rendered'}
+                onClick={() => setView('rendered')}
+              >
                 {t.history.rendered}
               </Button>
-              <Button variant={view === 'raw' ? 'secondary' : 'ghost'} size="sm" aria-pressed={view === 'raw'} onClick={() => setView('raw')}>
+              <Button
+                variant={view === 'raw' ? 'secondary' : 'ghost'}
+                size="sm"
+                aria-pressed={view === 'raw'}
+                onClick={() => setView('raw')}
+              >
                 {t.history.raw}
               </Button>
             </div>
             {!readOnly && (
-              <Button size="sm" className="ml-auto" disabled={!canRestore || restoring} onClick={() => setRestoreOpen(true)} title={selItem ? t.history.restoreAt(when(selItem.time)) : undefined}>
+              <Button
+                size="sm"
+                className="ml-auto"
+                disabled={!canRestore || restoring}
+                onClick={() => setRestoreOpen(true)}
+                title={selItem ? t.history.restoreAt(when(selItem.time)) : undefined}
+              >
                 <RotateCcw />
                 {t.history.restore}
               </Button>
@@ -293,7 +371,15 @@ export default function HistoryMode({ space, pageId, folder = '', getCurrent, sa
               {t.history.loading}
             </p>
           )}
-          {status === 'error' && <ErrorState message={t.fmt.labelled(t.history.loadFailed, errorText(history.error))} onRetry={() => { askedFor.current = null; void history.refetch() }} />}
+          {status === 'error' && (
+            <ErrorState
+              message={t.fmt.labelled(t.history.loadFailed, errorText(history.error))}
+              onRetry={() => {
+                askedFor.current = null
+                void history.refetch()
+              }}
+            />
+          )}
           {status === 'empty' && (
             <div className="py-12 text-center">
               <p className="text-sm">{t.history.empty}</p>
@@ -302,9 +388,24 @@ export default function HistoryMode({ space, pageId, folder = '', getCurrent, sa
           )}
           {status === 'ok' && (
             <>
-              <Summary mode={mode} item={selItem} kind={selItem ? describeVersion(selItem, items[selIndex + 1]).kind : ''} base={baseItem} targetIsCurrent={targetIsCurrent} counts={counts} />
+              <Summary
+                mode={mode}
+                item={selItem}
+                kind={selItem ? describeVersion(selItem, items[selIndex + 1]).kind : ''}
+                base={baseItem}
+                targetIsCurrent={targetIsCurrent}
+                counts={counts}
+              />
               {view === 'rendered' && <Legend />}
-              {loadError && <ErrorState message={t.fmt.labelled(t.history.versionFailed, loadError.message)} onRetry={() => { base.retry(); target.retry() }} />}
+              {loadError && (
+                <ErrorState
+                  message={t.fmt.labelled(t.history.versionFailed, loadError.message)}
+                  onRetry={() => {
+                    base.retry()
+                    target.retry()
+                  }}
+                />
+              )}
               {!loadError && !result && (
                 <p role="status" className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
                   <Spinner />
@@ -316,8 +417,20 @@ export default function HistoryMode({ space, pageId, folder = '', getCurrent, sa
                   <HeaderChanges changes={result.header} />
                   {view === 'rendered' ? (
                     <>
-                      {result.identical && <p className="mb-4 rounded-md border bg-muted/40 px-3 py-2 text-sm">{selItem?.change === 'move' && mode === 'previous' ? t.history.onlyMoved : t.history.identical}</p>}
-                      <DiffView doc={result.doc} label={t.history.open} onRendered={onRendered} space={space} folder={folder} />
+                      {result.identical && (
+                        <p className="mb-4 rounded-md border bg-muted/40 px-3 py-2 text-sm">
+                          {selItem?.change === 'move' && mode === 'previous'
+                            ? t.history.onlyMoved
+                            : t.history.identical}
+                        </p>
+                      )}
+                      <DiffView
+                        doc={result.doc}
+                        label={t.history.open}
+                        onRendered={onRendered}
+                        space={space}
+                        folder={folder}
+                      />
                     </>
                   ) : (
                     lines && <RawDiff diff={lines} />
@@ -330,14 +443,25 @@ export default function HistoryMode({ space, pageId, folder = '', getCurrent, sa
       </div>
 
       {!isMobile && (
-        <aside aria-label={t.history.list} className="sticky top-12 hidden h-[calc(100svh-3rem)] w-72 shrink-0 self-start overflow-y-auto border-l md:block lg:w-80">
-          {status === 'ok' ? versionList(true) : <div className="p-3 text-xs text-muted-foreground">{status === 'loading' ? t.history.loading : ''}</div>}
+        <aside
+          aria-label={t.history.list}
+          className="sticky top-12 hidden h-[calc(100svh-3rem)] w-72 shrink-0 self-start overflow-y-auto border-l md:block lg:w-80"
+        >
+          {status === 'ok' ? (
+            versionList(true)
+          ) : (
+            <div className="p-3 text-xs text-muted-foreground">{status === 'loading' ? t.history.loading : ''}</div>
+          )}
         </aside>
       )}
 
       {isMobile && (
         <Sheet open={listOpen} onOpenChange={setListOpen}>
-          <SheetContent side="right" showCloseButton className="w-full data-[side=right]:w-full data-[side=right]:sm:max-w-none">
+          <SheetContent
+            side="right"
+            showCloseButton
+            className="w-full data-[side=right]:w-full data-[side=right]:sm:max-w-none"
+          >
             <SheetHeader className="border-b">
               <SheetTitle>{t.history.list}</SheetTitle>
             </SheetHeader>
@@ -360,18 +484,43 @@ export default function HistoryMode({ space, pageId, folder = '', getCurrent, sa
   )
 }
 
-function Summary({ mode, item, kind, base, targetIsCurrent, counts }: { mode: Mode; item: HistoryItem | null; kind: string; base: HistoryItem | null; targetIsCurrent: boolean; counts: DiffResult['stats'] | undefined }) {
+function Summary({
+  mode,
+  item,
+  kind,
+  base,
+  targetIsCurrent,
+  counts,
+}: {
+  mode: Mode
+  item: HistoryItem | null
+  kind: string
+  base: HistoryItem | null
+  targetIsCurrent: boolean
+  counts: DiffResult['stats'] | undefined
+}) {
   if (!item) return null
   const against = mode === 'previous' ? (base ? when(base.time) : null) : null
   return (
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
       <span className="font-medium">{`${when(item.time)} · ${item.author} · ${kind}`}</span>
-      {mode === 'previous' && <span className="text-muted-foreground">{against ? t.fmt.labelled(t.history.modes.previous, against) : t.history.firstVersion}</span>}
+      {mode === 'previous' && (
+        <span className="text-muted-foreground">
+          {against ? t.fmt.labelled(t.history.modes.previous, against) : t.history.firstVersion}
+        </span>
+      )}
       {mode === 'current' && <span className="text-muted-foreground">{t.history.modes.current}</span>}
-      {mode === 'pick' && <span className="text-muted-foreground">{targetIsCurrent ? t.history.currentContent : ''}</span>}
+      {mode === 'pick' && (
+        <span className="text-muted-foreground">{targetIsCurrent ? t.history.currentContent : ''}</span>
+      )}
       {counts && (
-        <span className="ml-auto font-medium tabular-nums" aria-label={t.history.counts(counts.changes, counts.inserted, counts.deleted)}>
-          {counts.changes === 0 ? t.history.changes(0) : `${t.history.changes(counts.changes)} · ${t.history.countsShort(counts.inserted, counts.deleted)}`}
+        <span
+          className="ml-auto font-medium tabular-nums"
+          aria-label={t.history.counts(counts.changes, counts.inserted, counts.deleted)}
+        >
+          {counts.changes === 0
+            ? t.history.changes(0)
+            : `${t.history.changes(counts.changes)} · ${t.history.countsShort(counts.inserted, counts.deleted)}`}
           {counts.formatted > 0 && ` · ${t.history.formatChanges(counts.formatted)}`}
         </span>
       )}
@@ -399,7 +548,25 @@ function Legend() {
   )
 }
 
-function RestoreDialog({ open, onOpenChange, busy, item, conflict, unsaved, same, onRestore }: { open: boolean; onOpenChange: (o: boolean) => void; busy: boolean; item: HistoryItem | null; conflict: boolean; unsaved: boolean; same: boolean; onRestore: (saveFirst: boolean) => void }) {
+function RestoreDialog({
+  open,
+  onOpenChange,
+  busy,
+  item,
+  conflict,
+  unsaved,
+  same,
+  onRestore,
+}: {
+  open: boolean
+  onOpenChange: (o: boolean) => void
+  busy: boolean
+  item: HistoryItem | null
+  conflict: boolean
+  unsaved: boolean
+  same: boolean
+  onRestore: (saveFirst: boolean) => void
+}) {
   const h = t.history
   const info = conflict ? h.restoreConflict : same ? h.restoreSame : null
   return (
@@ -407,7 +574,9 @@ function RestoreDialog({ open, onOpenChange, busy, item, conflict, unsaved, same
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{h.restoreTitle}</AlertDialogTitle>
-          <AlertDialogDescription>{info ?? (item ? h.restoreDescription(when(item.time), item.author) : '')}</AlertDialogDescription>
+          <AlertDialogDescription>
+            {info ?? (item ? h.restoreDescription(when(item.time), item.author) : '')}
+          </AlertDialogDescription>
           {!info && unsaved && <p className="text-sm font-medium text-warning">{h.restoreUnsaved}</p>}
         </AlertDialogHeader>
         <AlertDialogFooter>

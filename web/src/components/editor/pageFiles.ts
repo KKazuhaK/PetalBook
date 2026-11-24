@@ -108,7 +108,11 @@ function placeholder(name: string): HTMLElement {
   return el
 }
 
-export function uploadFiles(editor: Editor, files: File[], opts: { mode?: UploadMode; pos?: number; replaceSelection?: boolean } = {}): void {
+export function uploadFiles(
+  editor: Editor,
+  files: File[],
+  opts: { mode?: UploadMode; pos?: number; replaceSelection?: boolean } = {},
+): void {
   const st = store(editor)
   const o = st.options
   if (!o.pageId) {
@@ -154,7 +158,10 @@ async function runBatch(editor: Editor, files: File[], items: Pending[], mode: U
     const asImage = mode !== 'file' && isImageFile(file)
     try {
       // Only a picture inserted as a picture is recompressed.
-      const prepared = asImage && !o.getOriginal() ? await prepareImage(file, o.codec ?? browserCodec) : { blob: file as Blob, name: file.name }
+      const prepared =
+        asImage && !o.getOriginal()
+          ? await prepareImage(file, o.codec ?? browserCodec)
+          : { blob: file as Blob, name: file.name }
       const asset = await o.upload(prepared.blob, prepared.name)
       if (editor.isDestroyed) return
       insertUploaded(editor, items[i].id, asset, file.name, asImage, inserted)
@@ -167,7 +174,14 @@ async function runBatch(editor: Editor, files: File[], items: Pending[], mode: U
   }
 }
 
-function insertUploaded(editor: Editor, id: number, asset: UploadedAsset, originalName: string, asImage: boolean, afterAnother: boolean) {
+function insertUploaded(
+  editor: Editor,
+  id: number,
+  asset: UploadedAsset,
+  originalName: string,
+  asImage: boolean,
+  afterAnother: boolean,
+) {
   ;(editor.storage as unknown as { pageFiles?: Store }).pageFiles?.options.beforeInsert?.()
   const { state } = editor
   const item = key.getState(state)?.find((p) => p.id === id)
@@ -176,14 +190,22 @@ function insertUploaded(editor: Editor, id: number, asset: UploadedAsset, origin
   const inline: PMNode[] = []
   // Files of one batch go on separate lines, not run together.
   if (afterAnother) inline.push(schema.nodes.hardBreak.create())
-  inline.push(asImage ? schema.nodes.image.create({ src: asset.path, alt: stemOf(originalName) }) : schema.text(originalName, [schema.marks.link.create({ href: asset.path })]))
+  inline.push(
+    asImage
+      ? schema.nodes.image.create({ src: asset.path, alt: stemOf(originalName) })
+      : schema.text(originalName, [schema.marks.link.create({ href: asset.path })]),
+  )
   const tr = state.tr
   const $pos = tr.doc.resolve(Math.min(item.pos, tr.doc.content.size))
-  const content = $pos.parent.inlineContent ? Fragment.from(inline) : Fragment.from(schema.nodes.paragraph.create(null, afterAnother ? inline.slice(1) : inline))
+  const content = $pos.parent.inlineContent
+    ? Fragment.from(inline)
+    : Fragment.from(schema.nodes.paragraph.create(null, afterAnother ? inline.slice(1) : inline))
   tr.insert($pos.pos, content).setMeta(key, { remove: id })
   editor.view.dispatch(tr)
   const label = (asImage ? stemOf(originalName) : originalName).replace(/[\\[\]]/g, '\\$&')
-  ;(editor.storage as unknown as { pageFiles?: Store }).pageFiles?.options.afterInsert?.(`${asImage ? '!' : ''}[${label}](<${asset.path}>)`)
+  ;(editor.storage as unknown as { pageFiles?: Store }).pageFiles?.options.afterInsert?.(
+    `${asImage ? '!' : ''}[${label}](<${asset.path}>)`,
+  )
 }
 
 export const PageFiles = Extension.create<PageFilesOptions>({
@@ -233,13 +255,27 @@ export const PageFiles = Extension.create<PageFilesOptions>({
             return DecorationSet.create(
               state.doc,
               // `side` keeps several placeholders at one position in the order of their files.
-              items.map((p) => Decoration.widget(p.pos, () => placeholder(p.name), { side: p.seq, key: `upload-${p.id}`, ignoreSelection: true })),
+              items.map((p) =>
+                Decoration.widget(p.pos, () => placeholder(p.name), {
+                  side: p.seq,
+                  key: `upload-${p.id}`,
+                  ignoreSelection: true,
+                }),
+              ),
             )
           },
           handlePaste(_view, event) {
             const data = event.clipboardData
             const files = data ? Array.from(data.files) : []
-            if (!data || !clipboardMeansFiles({ html: data.getData('text/html'), text: data.getData('text/plain'), fileCount: files.length })) return false
+            if (
+              !data ||
+              !clipboardMeansFiles({
+                html: data.getData('text/html'),
+                text: data.getData('text/plain'),
+                fileCount: files.length,
+              })
+            )
+              return false
             event.preventDefault()
             uploadFiles(editor, files, { replaceSelection: true })
             return true

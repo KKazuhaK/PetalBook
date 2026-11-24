@@ -48,7 +48,11 @@ const paletteName = (p: Palette) => (p.id === 'default' ? t.prefs.paletteDefault
 function PaletteControl() {
   const { palette, setPalette, dark } = useTheme()
   return (
-    <div role="radiogroup" aria-label={t.prefs.palette} className="grid grid-cols-3 gap-2 max-sm:grid-cols-2 sm:w-[21rem]">
+    <div
+      role="radiogroup"
+      aria-label={t.prefs.palette}
+      className="grid grid-cols-3 gap-2 max-sm:grid-cols-2 sm:w-[21rem]"
+    >
       {palettes.map((p) => {
         const [bg, fg, accent] = swatchOf(p, dark ? 'dark' : 'light')
         const on = palette === p.id
@@ -63,7 +67,11 @@ function PaletteControl() {
             onClick={() => setPalette(p.id)}
             className={`group flex flex-col gap-1.5 rounded-lg border p-1.5 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 ${on ? 'border-ring ring-2 ring-ring/40' : 'hover:border-ring/60'}`}
           >
-            <span aria-hidden="true" className="flex h-9 items-center gap-1.5 rounded-md px-2 ring-1 ring-black/10" style={{ background: bg }}>
+            <span
+              aria-hidden="true"
+              className="flex h-9 items-center gap-1.5 rounded-md px-2 ring-1 ring-black/10"
+              style={{ background: bg }}
+            >
               <span className="text-[0.8rem] leading-none font-semibold" style={{ color: fg }}>
                 Aa
               </span>

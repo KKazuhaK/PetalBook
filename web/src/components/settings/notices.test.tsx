@@ -6,7 +6,17 @@ import { SpaceGate } from '@/components/layout/SpaceGate'
 import { t } from '@/i18n'
 import { tp } from '@/i18n/props'
 import { absoluteTime } from '@/lib/time'
-import { byLabel, click, installDomShims, locationState, locationText, mount, settle, shareSpace, type Mounted } from '@/testing/harness'
+import {
+  byLabel,
+  click,
+  installDomShims,
+  locationState,
+  locationText,
+  mount,
+  settle,
+  shareSpace,
+  type Mounted,
+} from '@/testing/harness'
 import SettingsRoute from './SettingsRoute'
 
 // What the server says to those who manage a space about settings files it could not use: in the settings (Types),
@@ -51,9 +61,16 @@ const banner = () => document.querySelector<HTMLElement>('[data-slot="settings-n
 const noticeItems = () => [...document.querySelectorAll<HTMLElement>('[data-slot="settings-notices"] li')]
 
 async function openSingle(path: string, notices: SettingsNotice[]) {
-  m = await mount(routes, { server: { mode: 'single' }, entries: (server) => (server.seedSettingsNotices(notices), [path]) })
+  m = await mount(routes, {
+    server: { mode: 'single' },
+    entries: (server) => (server.seedSettingsNotices(notices), [path]),
+  })
 }
-async function openShared(role: 'owner' | 'editor' | 'viewer', path: (space: string) => string, notices: SettingsNotice[]) {
+async function openShared(
+  role: 'owner' | 'editor' | 'viewer',
+  path: (space: string) => string,
+  notices: SettingsNotice[],
+) {
   m = await mount(routes, {
     signIn: true,
     server: { mode: 'accounts' },
@@ -84,7 +101,9 @@ describe('settings notices in the settings', () => {
   })
 
   it('say when nothing of a file could be read, and when no earlier version could be used', async () => {
-    await openSingle('/settings/types', [{ file: '.petalbook/space.yml', unreadable: true, since: { time: '2026-11-22T16:20:11Z' }, lost: ['*'] }])
+    await openSingle('/settings/types', [
+      { file: '.petalbook/space.yml', unreadable: true, since: { time: '2026-11-22T16:20:11Z' }, lost: ['*'] },
+    ])
     await settle(() => noticeItems().length === 1, 'the notice')
     const text = noticeItems()[0].textContent ?? ''
     expect(text).toContain(tp.notices.unreadable(tp.notices.version(absoluteTime('2026-11-22T16:20:11Z'))))

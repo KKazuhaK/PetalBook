@@ -16,3 +16,8 @@ paths = [
 description = "Made-up sealed value written straight into the test database"
 targetRules = ["generic-api-key"]
 paths = ['''^internal/api/signin_providers_test\.go$''']
+
+[[allowlists]]
+description = "A made-up JWT in the test that checks host errors never carry a token (an earlier commit on the 3.8 branch held it as one literal)"
+targetRules = ["jwt"]
+paths = ['''^internal/forge/client_internal_test\.go$''']

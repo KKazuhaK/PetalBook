@@ -86,7 +86,9 @@ export function CodeBlockView({ node, editor, getPos, updateAttributes, HTMLAttr
   }, [editor, getPos, node.nodeSize, diagram])
 
   // The page's attributes for a changed block in the history view (see history/diffExtension.ts).
-  const marks = Object.fromEntries(Object.entries(HTMLAttributes).filter(([k]) => k.startsWith('data-') || k === 'title'))
+  const marks = Object.fromEntries(
+    Object.entries(HTMLAttributes).filter(([k]) => k.startsWith('data-') || k === 'title'),
+  )
   // A text that never drew shows its code, so the error has something to point at.
   const forced = diagram && picture.error !== null && picture.url === null
   const shown = diagram ? showCode || forced : true
@@ -95,9 +97,15 @@ export function CodeBlockView({ node, editor, getPos, updateAttributes, HTMLAttr
     <NodeViewWrapper className="pb-code" data-language={languageLabel(language) ?? undefined} {...marks}>
       <div contentEditable={false} className="pb-code-bar">
         {editable ? (
-          <LanguagePicker value={language} onPick={(id) => updateAttributes({ language: withLanguage(language, id) })} onClosed={() => editor.commands.focus(null, { scrollIntoView: false })} />
+          <LanguagePicker
+            value={language}
+            onPick={(id) => updateAttributes({ language: withLanguage(language, id) })}
+            onClosed={() => editor.commands.focus(null, { scrollIntoView: false })}
+          />
         ) : (
-          languageLabel(language) && <span className="px-1.5 text-xs text-muted-foreground">{languageLabel(language)}</span>
+          languageLabel(language) && (
+            <span className="px-1.5 text-xs text-muted-foreground">{languageLabel(language)}</span>
+          )
         )}
         {diagram && (
           <button

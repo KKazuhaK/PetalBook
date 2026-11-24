@@ -11,7 +11,15 @@ interface Choice {
 
 // The language of a code block: the current one as a button, and under it a
 // searchable list. Arrow keys move through the list from the search box.
-export function LanguagePicker({ value, onPick, onClosed }: { value: unknown; onPick: (id: string | null) => void; onClosed?: () => void }) {
+export function LanguagePicker({
+  value,
+  onPick,
+  onClosed,
+}: {
+  value: unknown
+  onPick: (id: string | null) => void
+  onClosed?: () => void
+}) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)

@@ -17,7 +17,9 @@ export function useOpenSettings() {
   return useCallback(
     (section?: SectionId) => {
       const inSettings = location.pathname.startsWith('/settings')
-      const state: SettingsState = inSettings ? ((location.state as SettingsState | null) ?? {}) : { from: location.pathname + location.search + location.hash }
+      const state: SettingsState = inSettings
+        ? ((location.state as SettingsState | null) ?? {})
+        : { from: location.pathname + location.search + location.hash }
       navigate(section ? settingsPath(section) : '/settings', { state, replace: inSettings })
     },
     [navigate, location],

@@ -15,7 +15,17 @@ const LIMIT = 8
 
 // The list that opens at the cursor after `[[`: the pages whose title has what was typed (the
 // recent ones before anything is), chosen with the arrow keys and Enter, or the pointer.
-export function PageLinkPicker({ editor, space, pageId, getFolder }: { editor: Editor; space: string; pageId: string; getFolder: () => string }) {
+export function PageLinkPicker({
+  editor,
+  space,
+  pageId,
+  getFolder,
+}: {
+  editor: Editor
+  space: string
+  pageId: string
+  getFolder: () => string
+}) {
   const storage = pickerOf(editor)
   const trigger = useSyncExternalStore(
     (cb) => {
@@ -24,23 +34,53 @@ export function PageLinkPicker({ editor, space, pageId, getFolder }: { editor: E
     },
     () => storage.trigger,
   )
-  return trigger ? <Open editor={editor} space={space} pageId={pageId} getFolder={getFolder} from={trigger.from} to={trigger.to} query={trigger.query} /> : null
+  return trigger ? (
+    <Open
+      editor={editor}
+      space={space}
+      pageId={pageId}
+      getFolder={getFolder}
+      from={trigger.from}
+      to={trigger.to}
+      query={trigger.query}
+    />
+  ) : null
 }
 
 const labelOf = (p: PageSummary) => p.title || p.label || t.editor.untitled
 
-function Open({ editor, space, pageId, getFolder, from, to, query }: { editor: Editor; space: string; pageId: string; getFolder: () => string; from: number; to: number; query: string }) {
+function Open({
+  editor,
+  space,
+  pageId,
+  getFolder,
+  from,
+  to,
+  query,
+}: {
+  editor: Editor
+  space: string
+  pageId: string
+  getFolder: () => string
+  from: number
+  to: number
+  query: string
+}) {
   const storage = pickerOf(editor)
   const q = useDebounced(query.trim(), 120)
   const found = useQuery({
     queryKey: [...keys.pages(space), 'link-picker', q],
-    queryFn: ({ signal }) => spaceApi(space).listPages({ ...(q ? { q, in: 'title' as const } : {}), limit: LIMIT + 1 }, signal),
+    queryFn: ({ signal }) =>
+      spaceApi(space).listPages({ ...(q ? { q, in: 'title' as const } : {}), limit: LIMIT + 1 }, signal),
     enabled: space !== '',
     placeholderData: keepPreviousData,
     staleTime: 5_000,
   })
   // The page itself is not a target.
-  const items = useMemo(() => (found.data?.items ?? []).filter((p) => p.id !== pageId).slice(0, LIMIT), [found.data, pageId])
+  const items = useMemo(
+    () => (found.data?.items ?? []).filter((p) => p.id !== pageId).slice(0, LIMIT),
+    [found.data, pageId],
+  )
   const [active, setActive] = useState(0)
   const [prevQuery, setPrevQuery] = useState(q)
   if (prevQuery !== q) {
@@ -50,7 +90,8 @@ function Open({ editor, space, pageId, getFolder, from, to, query }: { editor: E
   const index = Math.min(active, Math.max(items.length - 1, 0))
   const base = useId()
 
-  const choose = (p: PageSummary) => insertPageLink(editor, { from, to }, getFolder(), { id: p.id, path: p.path, label: labelOf(p) })
+  const choose = (p: PageSummary) =>
+    insertPageLink(editor, { from, to }, getFolder(), { id: p.id, path: p.path, label: labelOf(p) })
 
   // The keys go to the list while it is open.
   useEffect(() => {
@@ -62,7 +103,9 @@ function Open({ editor, space, pageId, getFolder, from, to, query }: { editor: E
       }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         if (items.length === 0) return true
-        setActive((i) => (Math.min(i, items.length - 1) + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length)
+        setActive(
+          (i) => (Math.min(i, items.length - 1) + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length,
+        )
         return true
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
@@ -124,18 +167,27 @@ function Open({ editor, space, pageId, getFolder, from, to, query }: { editor: E
             id={rowId(i)}
             role="option"
             aria-selected={i === index}
-            className={cn('flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm', i === index && 'bg-accent text-accent-foreground')}
+            className={cn(
+              'flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm',
+              i === index && 'bg-accent text-accent-foreground',
+            )}
             onMouseMove={() => i !== index && setActive(i)}
             onClick={() => choose(p)}
           >
             <FileText className="size-4 shrink-0 text-muted-foreground" />
             <span className="min-w-0 flex-1 truncate">{labelOf(p)}</span>
-            {p.folder && <span className="max-w-[40%] shrink-0 truncate text-xs text-muted-foreground">{p.folder}</span>}
+            {p.folder && (
+              <span className="max-w-[40%] shrink-0 truncate text-xs text-muted-foreground">{p.folder}</span>
+            )}
           </div>
         ))}
         {items.length === 0 && (
           <div role="status" className="px-2 py-2 text-sm text-muted-foreground">
-            {found.isError ? t.pageLinks.pickerError : found.isFetching ? t.pageLinks.pickerLoading : t.pageLinks.pickerEmpty}
+            {found.isError
+              ? t.pageLinks.pickerError
+              : found.isFetching
+                ? t.pageLinks.pickerLoading
+                : t.pageLinks.pickerEmpty}
           </div>
         )}
       </div>

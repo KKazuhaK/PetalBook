@@ -1,8 +1,29 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest'
-import { bucketOf, dayNumber, fill, FESTIVALS, greetingFor, greetingSignature, hasCalendar, namesOn, TERMS, type GreetingInput } from './greeting'
+import {
+  bucketOf,
+  dayNumber,
+  fill,
+  FESTIVALS,
+  greetingFor,
+  greetingSignature,
+  hasCalendar,
+  namesOn,
+  TERMS,
+  type GreetingInput,
+} from './greeting'
 import { CALENDAR_YEARS } from './calendarTable'
-import { daysBetween, getVariety, loadWrote, localDay, noteVisit, noteWrote, setVariety, visitKey, wroteKey } from './homePrefs'
+import {
+  daysBetween,
+  getVariety,
+  loadWrote,
+  localDay,
+  noteVisit,
+  noteWrote,
+  setVariety,
+  visitKey,
+  wroteKey,
+} from './homePrefs'
 import { homeEn } from '@/i18n/home/en'
 import { homeZhCN } from '@/i18n/home/zh-CN'
 
@@ -10,17 +31,30 @@ const zh = homeZhCN.greet
 const en = homeEn.greet
 // 2026-11-24 is a Tuesday; local time, as the browser has it.
 const at = (y: number, m: number, d: number, h = 9, min = 0) => new Date(y, m - 1, d, h, min)
-const base = (over: Partial<GreetingInput> = {}): GreetingInput => ({ now: at(2026, 11, 24, 9), name: '小花', firstToday: false, absentDays: 0, recentUpdated: [], variety: true, ...over })
-const has = (list: string[], text: string) => list.some((s) => fill(s, { name: '小花', days: 20, n: 3, years: 2, term: '' }) === text)
-const anyOf = (lists: string[][], text: string, vars: Record<string, string | number | undefined> = { name: '小花' }) => lists.some((l) => l.some((s) => fill(s, vars) === text))
+const base = (over: Partial<GreetingInput> = {}): GreetingInput => ({
+  now: at(2026, 11, 24, 9),
+  name: '小花',
+  firstToday: false,
+  absentDays: 0,
+  recentUpdated: [],
+  variety: true,
+  ...over,
+})
+const has = (list: string[], text: string) =>
+  list.some((s) => fill(s, { name: '小花', days: 20, n: 3, years: 2, term: '' }) === text)
+const anyOf = (lists: string[][], text: string, vars: Record<string, string | number | undefined> = { name: '小花' }) =>
+  lists.some((l) => l.some((s) => fill(s, vars) === text))
 
 describe('the table of festivals and solar terms', () => {
   it('covers ten years from 2026, each with all 24 terms', () => {
     for (let y = 2026; y <= 2036; y++) {
       expect(hasCalendar(y)).toBe(true)
-      const names = Object.values(CALENDAR_YEARS[y]).join('') && CALENDAR_YEARS[y].split(' ').flatMap((e) => e.split('=')[1].split('+'))
+      const names =
+        Object.values(CALENDAR_YEARS[y]).join('') &&
+        CALENDAR_YEARS[y].split(' ').flatMap((e) => e.split('=')[1].split('+'))
       for (const term of TERMS) expect(names, `${y} ${term}`).toContain(term)
-      for (const f of ['springFestival', 'newYearsEve', 'lantern', 'dragonBoat', 'qixi', 'midAutumn', 'doubleNinth']) expect(names, `${y} ${f}`).toContain(f)
+      for (const f of ['springFestival', 'newYearsEve', 'lantern', 'dragonBoat', 'qixi', 'midAutumn', 'doubleNinth'])
+        expect(names, `${y} ${f}`).toContain(f)
     }
     expect(hasCalendar(2025)).toBe(false)
     expect(hasCalendar(2037)).toBe(false)
@@ -54,12 +88,34 @@ describe('the table of festivals and solar terms', () => {
 
 describe('parts of the day', () => {
   it('cuts the day at the hours the design names', () => {
-    const cases: [number, string][] = [[0, 'lateNight'], [1, 'lateNight'], [2, 'dawn'], [4, 'dawn'], [5, 'earlyMorning'], [7, 'earlyMorning'], [8, 'morning'], [11, 'morning'], [12, 'afternoon'], [17, 'afternoon'], [18, 'evening'], [21, 'evening'], [22, 'lateNight'], [23, 'lateNight']]
+    const cases: [number, string][] = [
+      [0, 'lateNight'],
+      [1, 'lateNight'],
+      [2, 'dawn'],
+      [4, 'dawn'],
+      [5, 'earlyMorning'],
+      [7, 'earlyMorning'],
+      [8, 'morning'],
+      [11, 'morning'],
+      [12, 'afternoon'],
+      [17, 'afternoon'],
+      [18, 'evening'],
+      [21, 'evening'],
+      [22, 'lateNight'],
+      [23, 'lateNight'],
+    ]
     for (const [h, b] of cases) expect(bucketOf(h), `${h}:00`).toBe(b)
   })
   it('says something of its own at each part of the day', () => {
     const buckets = zh.buckets
-    for (const [hour, key] of [[3, 'dawn'], [6, 'earlyMorning'], [9, 'morning'], [14, 'afternoon'], [19, 'evening'], [23, 'lateNight']] as const) {
+    for (const [hour, key] of [
+      [3, 'dawn'],
+      [6, 'earlyMorning'],
+      [9, 'morning'],
+      [14, 'afternoon'],
+      [19, 'evening'],
+      [23, 'lateNight'],
+    ] as const) {
       // A Wednesday, which adds nothing of its own.
       const text = greetingFor(base({ now: at(2026, 11, 25, hour) }), zh)
       expect(anyOf([buckets[key]], text), `${hour}h: ${text}`).toBe(true)
@@ -73,7 +129,10 @@ describe('parts of the day', () => {
 
 describe('what is chosen first', () => {
   it('a festival beats everything else, a solar term comes after festivals', () => {
-    const t = greetingFor(base({ now: at(2026, 2, 17), firstToday: true, absentDays: 40, recentUpdated: [at(2026, 2, 17, 8, 50)] }), zh)
+    const t = greetingFor(
+      base({ now: at(2026, 2, 17), firstToday: true, absentDays: 40, recentUpdated: [at(2026, 2, 17, 8, 50)] }),
+      zh,
+    )
     expect(anyOf([zh.festivals.springFestival], t)).toBe(true)
     const term = greetingFor(base({ now: at(2026, 11, 22) }), zh)
     expect(term).toContain('小雪')
@@ -113,7 +172,12 @@ describe('what is chosen first', () => {
     const t = greetingFor(base({ now, recentUpdated: pages }), zh)
     expect(anyOf([zh.situations.manyToday], t, { name: '小花', n: 3 })).toBe(true)
     expect(t).toContain('3')
-    expect(anyOf([zh.situations.manyToday], greetingFor(base({ now, recentUpdated: pages.slice(0, 2) }), zh), { name: '小花', n: 2 })).toBe(false)
+    expect(
+      anyOf([zh.situations.manyToday], greetingFor(base({ now, recentUpdated: pages.slice(0, 2) }), zh), {
+        name: '小花',
+        n: 2,
+      }),
+    ).toBe(false)
   })
   it('the first visit of the day, and the weekdays, add sentences to the part of the day', () => {
     // Over a run of Mondays and first visits the extra sentences turn up and the part of the day's still do.
@@ -143,7 +207,9 @@ describe('rotation', () => {
   it('with variety off is only the plain greeting', () => {
     expect(greetingFor(base({ now: at(2026, 2, 17, 9), variety: false }), zh)).toBe('早上好，小花')
     expect(greetingFor(base({ now: at(2026, 11, 25, 14), variety: false }), zh)).toBe('下午好，小花')
-    expect(greetingFor(base({ now: at(2026, 11, 25, 20), variety: false, firstToday: true, absentDays: 50 }), zh)).toBe('晚上好，小花')
+    expect(greetingFor(base({ now: at(2026, 11, 25, 20), variety: false, firstToday: true, absentDays: 50 }), zh)).toBe(
+      '晚上好，小花',
+    )
     expect(greetingFor(base({ now: at(2026, 11, 25, 3), variety: false }), zh)).toBe('晚上好，小花')
     expect(greetingFor(base({ now: at(2026, 11, 25, 9), variety: false, name: 'Ann' }), en)).toBe('Good morning, Ann')
   })
@@ -160,7 +226,16 @@ describe('rotation', () => {
         for (const hour of [1, 3, 6, 9, 14, 19, 23]) {
           for (const name of ['小花', undefined]) {
             const now = new Date(2026, 0, 1 + day, hour)
-            const text = greetingFor(base({ now, name, firstToday: day % 2 === 0, absentDays: day % 3 === 0 ? 30 : 0, registered: new Date(2020, 5, 5) }), g)
+            const text = greetingFor(
+              base({
+                now,
+                name,
+                firstToday: day % 2 === 0,
+                absentDays: day % 3 === 0 ? 30 : 0,
+                registered: new Date(2020, 5, 5),
+              }),
+              g,
+            )
             expect(text, `${localDay(now)} ${hour}`).not.toMatch(/[{}]/)
             expect(text.trim()).not.toBe('')
           }
@@ -237,7 +312,10 @@ describe('what is remembered of visits', () => {
     for (let h = 9; h < 13; h++) noteWrote(key, 'same', new Date(2026, 10, 24, h))
     noteWrote(key, 'other', new Date(2026, 10, 24, 13))
     expect(loadWrote(key).map((d) => d.getHours())).toEqual([13, 12])
-    localStorage.setItem(key, JSON.stringify([new Date(2026, 10, 24, 9).getTime(), new Date(2026, 10, 24, 10).getTime()]))
+    localStorage.setItem(
+      key,
+      JSON.stringify([new Date(2026, 10, 24, 9).getTime(), new Date(2026, 10, 24, 10).getTime()]),
+    )
     expect(loadWrote(key)).toHaveLength(2)
   })
   it('counts the days since the visit before', () => {

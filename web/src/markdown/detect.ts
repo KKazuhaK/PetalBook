@@ -38,11 +38,13 @@ const BOLD = /(?<![*\\])\*\*(?=[^\s*])[^*\n]*[^\s*\\]\*\*(?!\*)/
 // Double underscores are a Python habit as much as bold (`__init__.py`).
 const BOLD_UNDERSCORE = /(?<![\p{L}\p{N}_\\])__(?=[^\s_])[^_\n]*[^\s_\\]__(?![\p{L}\p{N}_])/u
 const STRIKE = /(?<![~\\])~~(?=[^\s~])[^~\n]*[^\s~\\]~~(?!~)/
-const ITALIC = /(?<![*\\])\*(?=[^\s*])[^*\n]*[^\s*\\]\*(?![*])|(?<![\p{L}\p{N}_\\])_(?=[^\s_])[^_\n]*[^\s_\\]_(?![\p{L}\p{N}_])/u
+const ITALIC =
+  /(?<![*\\])\*(?=[^\s*])[^*\n]*[^\s*\\]\*(?![*])|(?<![\p{L}\p{N}_\\])_(?=[^\s_])[^_\n]*[^\s_\\]_(?![\p{L}\p{N}_])/u
 const CODE_SPAN = /(?<!`)`[^`\n]*[^`\s\n][^`\n]*`(?!`)/
 
 // Lines that read as program code rather than prose.
-const CODE_LINE = /[;{}]\s*$|^\s*(?:import\s|from\s+\S+\s+import\s|def\s+\w+\s*\(|function\s+\w+\s*\(|(?:const|let|var)\s+\w+\s*=|#include\b|package\s+\w+|\$\s)/
+const CODE_LINE =
+  /[;{}]\s*$|^\s*(?:import\s|from\s+\S+\s+import\s|def\s+\w+\s*\(|function\s+\w+\s*\(|(?:const|let|var)\s+\w+\s*=|#include\b|package\s+\w+|\$\s)/
 
 export function detectMarkdown(text: string): Detection {
   const lines = text.replace(/\r\n?/g, '\n').split('\n')

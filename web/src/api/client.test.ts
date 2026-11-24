@@ -1,7 +1,18 @@
 // The API client against the in-memory server, which implements docs/api.md.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { api as accountApi, ApiError, forbiddenMessage, isSignedOut, listParamsToQuery, markSignedIn, onForbidden, onSignedOut, onSpaceAccess, spaceApi } from './client'
+import {
+  api as accountApi,
+  ApiError,
+  forbiddenMessage,
+  isSignedOut,
+  listParamsToQuery,
+  markSignedIn,
+  onForbidden,
+  onSignedOut,
+  onSpaceAccess,
+  spaceApi,
+} from './client'
 import { adminApi } from './admin'
 import { mockFetch } from './mock/fetch'
 import { createMockServer, MOCK_ADMIN, type MockServer } from './mock/server'
@@ -16,7 +27,9 @@ const NOW = Date.parse('2026-11-21T08:30:00Z')
 beforeEach(() => {
   server = createMockServer({ now: () => NOW })
   calls = []
-  globalThis.fetch = mockFetch(server, { onRequest: (method, url, body, init) => calls.push({ method, url, body, init }) })
+  globalThis.fetch = mockFetch(server, {
+    onRequest: (method, url, body, init) => calls.push({ method, url, body, init }),
+  })
 })
 afterEach(() => {
   globalThis.fetch = realFetch
@@ -25,8 +38,21 @@ afterEach(() => {
 describe('listing query', () => {
   it('builds the query string', () => {
     expect(listParamsToQuery({})).toBe('')
-    expect(listParamsToQuery({ folder: '', recursive: true, tag: ['a', 'b c'], q: '栀子', sort: '-title', limit: 20, cursor: 'x' })).toBe(
-      '?folder=&recursive=true&tag=a&tag=b+c&q=%E6%A0%80%E5%AD%90&sort=-title&limit=20&cursor=x'.replace('%E6%A0%80%E5%AD%90', encodeURIComponent('栀子')),
+    expect(
+      listParamsToQuery({
+        folder: '',
+        recursive: true,
+        tag: ['a', 'b c'],
+        q: '栀子',
+        sort: '-title',
+        limit: 20,
+        cursor: 'x',
+      }),
+    ).toBe(
+      '?folder=&recursive=true&tag=a&tag=b+c&q=%E6%A0%80%E5%AD%90&sort=-title&limit=20&cursor=x'.replace(
+        '%E6%A0%80%E5%AD%90',
+        encodeURIComponent('栀子'),
+      ),
     )
   })
 })
@@ -63,7 +89,8 @@ describe('transport', () => {
   })
 
   it('turns an HTML answer (proxy with no server) into a network error', async () => {
-    globalThis.fetch = (() => Promise.resolve(new Response('<html>bad gateway</html>', { status: 502 }))) as typeof fetch
+    globalThis.fetch = (() =>
+      Promise.resolve(new Response('<html>bad gateway</html>', { status: 502 }))) as typeof fetch
     await expect(api.meta()).rejects.toMatchObject({ code: 'network' })
   })
 })
@@ -71,9 +98,14 @@ describe('transport', () => {
 describe('403 forbidden', () => {
   const refuse = () =>
     (globalThis.fetch = (() =>
-      Promise.resolve(new Response(JSON.stringify({ error: 'forbidden', message: 'host not allowed' }), { status: 403, headers: { 'Content-Type': 'application/json' } }))) as typeof fetch)
+      Promise.resolve(
+        new Response(JSON.stringify({ error: 'forbidden', message: 'host not allowed' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )) as typeof fetch)
 
-  it('is mapped to a clear Chinese message that names this page\'s origin', async () => {
+  it("is mapped to a clear Chinese message that names this page's origin", async () => {
     refuse()
     const err = await api.createPage({}).catch((e) => e)
     expect(err.code).toBe('forbidden')
@@ -96,9 +128,12 @@ describe('403 forbidden', () => {
     expect(seen[0]).toContain(location.origin)
   })
 
-  it('a member refused for want of a permission keeps the server\'s words and is no refused origin; the app is told the space\'s access changed', async () => {
+  it("a member refused for want of a permission keeps the server's words and is no refused origin; the app is told the space's access changed", async () => {
     const message = 'your role in this space does not allow that; it needs the write permission'
-    globalThis.fetch = (() => Promise.resolve(new Response(JSON.stringify({ error: 'no_permission', message }), { status: 403 }))) as typeof fetch
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: 'no_permission', message }), { status: 403 }),
+      )) as typeof fetch
     const origin: string[] = []
     let access = 0
     const offOrigin = onForbidden((m) => origin.push(m))
@@ -112,12 +147,19 @@ describe('403 forbidden', () => {
   })
 
   it('is told apart by its code, not its words: a refusal with the permission wording but the code forbidden is still the origin notice', async () => {
-    globalThis.fetch = (() => Promise.resolve(new Response(JSON.stringify({ error: 'forbidden', message: 'your role in this space does not allow that' }), { status: 403 }))) as typeof fetch
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: 'forbidden', message: 'your role in this space does not allow that' }), {
+          status: 403,
+        }),
+      )) as typeof fetch
     const origin: string[] = []
     let access = 0
     const offOrigin = onForbidden((m) => origin.push(m))
     const offAccess = onSpaceAccess(() => access++)
-    const err = await spaceApi('01SPACE0001').members().catch((e) => e)
+    const err = await spaceApi('01SPACE0001')
+      .members()
+      .catch((e) => e)
     offOrigin()
     offAccess()
     expect(err).toMatchObject({ status: 403, code: 'forbidden', message: forbiddenMessage(location.origin) })
@@ -126,7 +168,13 @@ describe('403 forbidden', () => {
   })
 
   it('a disabled space says so (space_disabled) and tells the app too', async () => {
-    globalThis.fetch = (() => Promise.resolve(new Response(JSON.stringify({ error: 'space_disabled', message: 'this space has been disabled by an administrator' }), { status: 403 }))) as typeof fetch
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ error: 'space_disabled', message: 'this space has been disabled by an administrator' }),
+          { status: 403 },
+        ),
+      )) as typeof fetch
     let access = 0
     const off = onSpaceAccess(() => access++)
     const err = await api.tree().catch((e) => e)
@@ -166,7 +214,10 @@ describe('403 forbidden', () => {
   })
 
   it('other errors keep the server message', async () => {
-    globalThis.fetch = (() => Promise.resolve(new Response(JSON.stringify({ error: 'invalid', message: '不对' }), { status: 400 }))) as typeof fetch
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: 'invalid', message: '不对' }), { status: 400 }),
+      )) as typeof fetch
     const err = await api.createPage({}).catch((e) => e)
     expect(err.message).toBe('不对')
   })
@@ -185,15 +236,20 @@ describe('spaces in URLs', () => {
       'POST /api/spaces/01JD3K8Q7Z/pages/01AAAAAAAA/commit',
       'DELETE /api/spaces/01JD3K8Q7Z/pages/01AAAAAAAA/draft',
     ])
-    await spaceApi('a/b c').tags().catch(() => undefined)
+    await spaceApi('a/b c')
+      .tags()
+      .catch(() => undefined)
     expect(calls.at(-1)!.url).toBe('/api/spaces/a%2Fb%20c/tags')
   })
 
   it('a commit and a draft delete carry the JSON content type even with nothing to say', async () => {
     const [{ id }] = (await api.listPages({ limit: 1 })).items
-    await spaceApi('default').commitPage(id, 'nope').catch(() => undefined)
+    await spaceApi('default')
+      .commitPage(id, 'nope')
+      .catch(() => undefined)
     await spaceApi('default').deleteDraft(id)
-    for (const c of calls.slice(-2)) expect((c.init?.headers as Record<string, string>)['Content-Type']).toBe('application/json')
+    for (const c of calls.slice(-2))
+      expect((c.init?.headers as Record<string, string>)['Content-Type']).toBe('application/json')
   })
 
   it('a draft store uses keepalive when small, like a save', async () => {
@@ -230,7 +286,9 @@ describe('being signed out', () => {
   let accounts: MockServer
   beforeEach(() => {
     accounts = createMockServer({ mode: 'accounts', empty: true })
-    globalThis.fetch = mockFetch(accounts, { onRequest: (method, url, body, init) => calls.push({ method, url, body, init }) })
+    globalThis.fetch = mockFetch(accounts, {
+      onRequest: (method, url, body, init) => calls.push({ method, url, body, init }),
+    })
     markSignedIn()
   })
   afterEach(() => markSignedIn())
@@ -238,9 +296,17 @@ describe('being signed out', () => {
   it('the first 401 tells the app once; several failing requests do not make a storm', async () => {
     let told = 0
     const off = onSignedOut(() => told++)
-    const results = await Promise.allSettled([api.tags(), api.tree(), api.listPages(), api.getPage('01AAAAAAAA'), accountApi.account()])
+    const results = await Promise.allSettled([
+      api.tags(),
+      api.tree(),
+      api.listPages(),
+      api.getPage('01AAAAAAAA'),
+      accountApi.account(),
+    ])
     off()
-    expect(results.every((r) => r.status === 'rejected' && r.reason instanceof ApiError && r.reason.status === 401)).toBe(true)
+    expect(
+      results.every((r) => r.status === 'rejected' && r.reason instanceof ApiError && r.reason.status === 401),
+    ).toBe(true)
     expect(told).toBe(1)
     expect(isSignedOut()).toBe(true)
   })
@@ -277,11 +343,15 @@ describe('being signed out', () => {
     const spaceId = (await accountApi.spaces()).spaces[0].id
     expect(await spaceApi(spaceId).tags()).toEqual({ tags: [] })
     await accountApi.logout()
-    await spaceApi(spaceId).tags().catch(() => undefined)
+    await spaceApi(spaceId)
+      .tags()
+      .catch(() => undefined)
     expect(isSignedOut()).toBe(true)
     markSignedIn()
     await accountApi.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
-    await spaceApi(spaceId).tags().catch(() => undefined)
+    await spaceApi(spaceId)
+      .tags()
+      .catch(() => undefined)
     expect((await accountApi.session()).user?.username).toBe(MOCK_ADMIN.username)
     expect(isSignedOut()).toBe(false)
   })
@@ -289,13 +359,22 @@ describe('being signed out', () => {
 
 describe('429 and 403 that are not about the origin', () => {
   it('a 429 carries how long to wait, from Retry-After', async () => {
-    globalThis.fetch = (() => Promise.resolve(new Response(JSON.stringify({ error: 'rate_limited', message: '慢一点' }), { status: 429, headers: { 'Retry-After': '42' } }))) as typeof fetch
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: 'rate_limited', message: '慢一点' }), {
+          status: 429,
+          headers: { 'Retry-After': '42' },
+        }),
+      )) as typeof fetch
     const e = await accountApi.login({ username: 'a', password: 'b' }).catch((x) => x)
     expect(e).toMatchObject({ status: 429, code: 'rate_limited', retryAfter: 42, message: '慢一点' })
   })
 
   it('a 403 on account, user, invite and setup requests keeps the server message and does not raise the origin notice', async () => {
-    globalThis.fetch = (() => Promise.resolve(new Response(JSON.stringify({ error: 'forbidden', message: '当前密码不对' }), { status: 403 }))) as typeof fetch
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: 'forbidden', message: '当前密码不对' }), { status: 403 }),
+      )) as typeof fetch
     const seen: string[] = []
     const off = onForbidden((m) => seen.push(m))
     const results = await Promise.all([
@@ -312,19 +391,28 @@ describe('429 and 403 that are not about the origin', () => {
   })
 
   it('a 403 on a page request is still the origin notice', async () => {
-    globalThis.fetch = (() => Promise.resolve(new Response(JSON.stringify({ error: 'forbidden', message: 'x' }), { status: 403 }))) as typeof fetch
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: 'forbidden', message: 'x' }), { status: 403 }),
+      )) as typeof fetch
     const seen: string[] = []
     const off = onForbidden((m) => seen.push(m))
-    await spaceApi('default').tags().catch(() => undefined)
+    await spaceApi('default')
+      .tags()
+      .catch(() => undefined)
     off()
     expect(seen).toHaveLength(1)
   })
 })
 
 describe('a remote that cannot be reached', () => {
-  const answer = (status: number, body: unknown) => (() => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))) as typeof fetch
+  const answer = (status: number, body: unknown) =>
+    (() =>
+      Promise.resolve(
+        new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }),
+      )) as typeof fetch
 
-  it('503 unavailable is its own error code with the server\'s message, and tells the listeners once', async () => {
+  it("503 unavailable is its own error code with the server's message, and tells the listeners once", async () => {
     const { onUnavailable, isUnavailable } = await import('./client')
     globalThis.fetch = answer(503, { error: 'unavailable', message: '远端仓库现在连不上' })
     let told = 0
@@ -341,7 +429,9 @@ describe('a remote that cannot be reached', () => {
     const seen: string[] = []
     const off = onForbidden((m) => seen.push(m))
     globalThis.fetch = answer(403, { error: 'forbidden', message: '管理员没有允许连接 example.org' })
-    const e = await api.connectRemote({ url: 'https://example.org/a.git', credential: { type: 'ssh' } }).catch((x: unknown) => x)
+    const e = await api
+      .connectRemote({ url: 'https://example.org/a.git', credential: { type: 'ssh' } })
+      .catch((x: unknown) => x)
     off()
     expect(e).toMatchObject({ status: 403, code: 'forbidden', message: '管理员没有允许连接 example.org' })
     expect(seen).toEqual([])
@@ -352,6 +442,10 @@ describe('a remote that cannot be reached', () => {
     await api.history(id, { limit: 5 })
     await expect(api.version(id, 'abc')).rejects.toMatchObject({ status: 404 })
     await expect(api.getRemote()).rejects.toMatchObject({ status: 404 })
-    expect(calls.slice(-3).map((c) => `${c.method} ${c.url}`)).toEqual([`GET /api/spaces/default/pages/${id}/history?limit=5`, `GET /api/spaces/default/pages/${id}/versions/abc`, 'GET /api/spaces/default/remote'])
+    expect(calls.slice(-3).map((c) => `${c.method} ${c.url}`)).toEqual([
+      `GET /api/spaces/default/pages/${id}/history?limit=5`,
+      `GET /api/spaces/default/pages/${id}/versions/abc`,
+      'GET /api/spaces/default/remote',
+    ])
   })
 })

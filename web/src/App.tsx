@@ -26,7 +26,9 @@ const PageEditor = lazy(() => import('@/pages/PageEditor'))
 const LoginPage = lazy(() => import('@/pages/auth/LoginPage'))
 const SetupPage = lazy(() => import('@/pages/auth/SetupPage'))
 const InvitePage = lazy(() => import('@/pages/auth/InvitePage'))
-const MailPage = (name: 'RegisterPage' | 'RegisterConfirmPage' | 'VerifyEmailPage' | 'ForgotPage' | 'ResetPasswordPage') => lazy(() => import('@/pages/auth/MailPages').then((m) => ({ default: m[name] })))
+const MailPage = (
+  name: 'RegisterPage' | 'RegisterConfirmPage' | 'VerifyEmailPage' | 'ForgotPage' | 'ResetPasswordPage',
+) => lazy(() => import('@/pages/auth/MailPages').then((m) => ({ default: m[name] })))
 const RegisterPage = MailPage('RegisterPage')
 const RegisterConfirmPage = MailPage('RegisterConfirmPage')
 const VerifyEmailPage = MailPage('VerifyEmailPage')
@@ -66,7 +68,13 @@ function AuthGate() {
   if (session.isPending) return <PageFallback />
   // Only when there is nothing to go on: a failed refresh in the background
   // (offline for a moment) must not take away the page someone is typing in.
-  if (session.isError && !session.data) return <ErrorState message={t.fmt.labelled(t.auth.loadFailed, session.error.message)} onRetry={() => void session.refetch()} />
+  if (session.isError && !session.data)
+    return (
+      <ErrorState
+        message={t.fmt.labelled(t.auth.loadFailed, session.error.message)}
+        onRetry={() => void session.refetch()}
+      />
+    )
   const s = session.data
   if (s.mode === 'accounts') {
     if (s.setup) return <Navigate to="/setup" replace />
@@ -84,7 +92,8 @@ function LegacyRedirect() {
   const spaces = useSpaces()
   const { pathname, search, hash } = useLocation()
   if (spaces.isPending) return <PageFallback />
-  if (spaces.isError && !spaces.data) return <ErrorState message={spaces.error.message} onRetry={() => void spaces.refetch()} />
+  if (spaces.isError && !spaces.data)
+    return <ErrorState message={spaces.error.message} onRetry={() => void spaces.refetch()} />
   const list = spaces.data.spaces
   const last = lastSpace()
   const space = list.find((s) => s.id === last) ?? list[0]
@@ -186,7 +195,9 @@ export default function App() {
     () =>
       onUnavailable(() => {
         void queryClient.invalidateQueries({ queryKey: keys.spaces })
-        void queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'space' && q.queryKey[2] === 'remote' })
+        void queryClient.invalidateQueries({
+          predicate: (q) => q.queryKey[0] === 'space' && q.queryKey[2] === 'remote',
+        })
       }),
     [],
   )

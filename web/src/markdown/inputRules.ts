@@ -45,7 +45,10 @@ export const CjkBold = Bold.extend({
   // documents list marks the way they always did.
   priority: 101,
   addInputRules() {
-    return [markInputRule({ find: boldStarRule, type: this.type }), markInputRule({ find: boldUnderscoreRule, type: this.type })]
+    return [
+      markInputRule({ find: boldStarRule, type: this.type }),
+      markInputRule({ find: boldUnderscoreRule, type: this.type }),
+    ]
   },
   addPasteRules: () => [],
 })
@@ -53,7 +56,10 @@ export const CjkBold = Bold.extend({
 export const CjkItalic = Italic.extend({
   priority: 101,
   addInputRules() {
-    return [markInputRule({ find: italicStarRule, type: this.type }), markInputRule({ find: italicUnderscoreRule, type: this.type })]
+    return [
+      markInputRule({ find: italicStarRule, type: this.type }),
+      markInputRule({ find: italicUnderscoreRule, type: this.type }),
+    ]
   },
   addPasteRules: () => [],
 })

@@ -64,7 +64,8 @@ export const PageLinkPicker = Extension.create<Record<string, never>, PickerStor
       const sel = state.selection
       if (!view.editable || !sel.empty) return set(null)
       const $from = sel.$from
-      if (!$from.parent.isTextblock || $from.parent.type.spec.code || $from.marks().some((m) => m.type.name === 'code')) return set(null)
+      if (!$from.parent.isTextblock || $from.parent.type.spec.code || $from.marks().some((m) => m.type.name === 'code'))
+        return set(null)
       const before = $from.parent.textBetween(0, $from.parentOffset, undefined, '￼')
       const m = TRIGGER.exec(before)
       if (!m) {
@@ -113,16 +114,29 @@ export const PageLinkPicker = Extension.create<Record<string, never>, PickerStor
   },
 })
 
-export const pickerOf = (editor: Editor): PickerStorage => (editor.storage as unknown as { pageLinkPicker: PickerStorage }).pageLinkPicker
+export const pickerOf = (editor: Editor): PickerStorage =>
+  (editor.storage as unknown as { pageLinkPicker: PickerStorage }).pageLinkPicker
 
 // Replaces what was typed (`[[` and the query) with a link to the page: the title as the
 // text, the file as a path relative to the folder of this page, the id as the link's title.
-export function insertPageLink(editor: Editor, at: { from: number; to: number }, fromFolder: string, page: { id: string; path: string; label: string }) {
+export function insertPageLink(
+  editor: Editor,
+  at: { from: number; to: number },
+  fromFolder: string,
+  page: { id: string; path: string; label: string },
+) {
   const text = page.label
   editor
     .chain()
     .focus()
-    .insertContentAt({ from: at.from, to: at.to }, { type: 'text', text, marks: [{ type: 'link', attrs: { href: linkDest(fromFolder, page.path), title: page.id } }] })
+    .insertContentAt(
+      { from: at.from, to: at.to },
+      {
+        type: 'text',
+        text,
+        marks: [{ type: 'link', attrs: { href: linkDest(fromFolder, page.path), title: page.id } }],
+      },
+    )
     // What is typed next is not part of the link.
     .unsetMark('link', { extendEmptyMarkRange: false })
     .run()

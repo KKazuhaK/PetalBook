@@ -54,7 +54,13 @@ interface ThemeContext {
   palette: PaletteId
   setPalette: (p: PaletteId) => void
 }
-const Ctx = createContext<ThemeContext>({ theme: 'system', setTheme: () => {}, dark: false, palette: 'default', setPalette: () => {} })
+const Ctx = createContext<ThemeContext>({
+  theme: 'system',
+  setTheme: () => {},
+  dark: false,
+  palette: 'default',
+  setPalette: () => {},
+})
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(stored)
@@ -94,7 +100,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  const value = useMemo(() => ({ theme, setTheme, dark, palette, setPalette }), [theme, setTheme, dark, palette, setPalette])
+  const value = useMemo(
+    () => ({ theme, setTheme, dark, palette, setPalette }),
+    [theme, setTheme, dark, palette, setPalette],
+  )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
 

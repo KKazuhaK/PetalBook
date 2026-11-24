@@ -1,7 +1,29 @@
 import { describe, expect, it } from 'vitest'
 import type { SavedView, ViewLayout } from '../api/types.ts'
-import { DEFAULT_STATE, isHandMark, moveView, sameState, snapshotOf, stateOfView, viewAtMark, withState, type ViewState } from './savedViews.ts'
-import { catchUp, hasEdits, initialWorkingCopy, reduceWorkingCopy, type Lost, type Patch, type Tabs, type ViewOp, type WorkingCopy, type WorkingEvent, type Written } from './workingCopy.ts'
+import {
+  DEFAULT_STATE,
+  isHandMark,
+  moveView,
+  sameState,
+  snapshotOf,
+  stateOfView,
+  viewAtMark,
+  withState,
+  type ViewState,
+} from './savedViews.ts'
+import {
+  catchUp,
+  hasEdits,
+  initialWorkingCopy,
+  reduceWorkingCopy,
+  type Lost,
+  type Patch,
+  type Tabs,
+  type ViewOp,
+  type WorkingCopy,
+  type WorkingEvent,
+  type Written,
+} from './workingCopy.ts'
 
 // Random interleavings of everything that can happen to the views of a listing, driven the way the page drives the
 // reducer (useWorkingCopy, PageListView, ViewBar, useSaveViews), with the server and the query cache played here: edits,
@@ -77,12 +99,21 @@ interface Box {
   address: string
 }
 
-const toSaved = (v: ServerView): SavedView => ({ id: v.id, name: v.name, layout: v.layout, sort: v.sort, group: '', filter: [], hidden: [] })
+const toSaved = (v: ServerView): SavedView => ({
+  id: v.id,
+  name: v.name,
+  layout: v.layout,
+  sort: v.sort,
+  group: '',
+  filter: [],
+  hidden: [],
+})
 const val = (v: unknown) => JSON.stringify(v ?? null)
 function ok(cond: boolean, msg: () => string): asserts cond {
   if (!cond) expect.fail(msg())
 }
-const sameKey = (k: (typeof KEYS)[number], a: ViewState, b: ViewState) => sameState({ ...DEFAULT_STATE, [k]: a[k] }, { ...DEFAULT_STATE, [k]: b[k] })
+const sameKey = (k: (typeof KEYS)[number], a: ViewState, b: ViewState) =>
+  sameState({ ...DEFAULT_STATE, [k]: a[k] }, { ...DEFAULT_STATE, [k]: b[k] })
 
 class Sim {
   private r: () => number
@@ -115,12 +146,21 @@ class Sim {
     const hand = n > 0 && this.r() < 0.4
     for (let i = 0; i < n; i++) {
       const uid = this.uid++
-      this.server.push({ uid, id: hand ? `@${i}` : `r${uid}`, name: `v${uid}`, layout: this.pick(LAYOUTS), sort: this.pick(SORTS) })
+      this.server.push({
+        uid,
+        id: hand ? `@${i}` : `r${uid}`,
+        name: `v${uid}`,
+        layout: this.pick(LAYOUTS),
+        sort: this.pick(SORTS),
+      })
     }
     this.register()
     const ids = this.server.map((v) => v.id)
     this.stored = this.pick(['', ...ids, '@1', 'gone'])
-    const address = { view: this.pick<string | null>([null, ...ids, 'zz']), sort: this.r() < 0.4 ? this.pick(SORTS) : null }
+    const address = {
+      view: this.pick<string | null>([null, ...ids, 'zz']),
+      sort: this.r() < 0.4 ? this.pick(SORTS) : null,
+    }
     this.log.push(`start ${JSON.stringify({ server: this.server, remembered: this.stored, address })}`)
     this.box = this.open(address)
   }
@@ -179,7 +219,11 @@ class Sim {
     }
     // A page that opens reads the views (the cache may have them already).
     this.get ??= { served: null }
-    return { tabs: { list: null, wc, seen: undefined, answer: null }, writing: 0, address: JSON.stringify([address.view, address.sort]) }
+    return {
+      tabs: { list: null, wc, seen: undefined, answer: null },
+      writing: 0,
+      address: JSON.stringify([address.view, address.sort]),
+    }
   }
 
   // The guard of the page: off while a write is on its way (this page's, or one from before it was opened again).
@@ -217,17 +261,26 @@ class Sim {
   }
 
   // (b): what the person changed is still shown on the same view, unless a notice said it was dropped.
-  private checkKept(before: WorkingCopy, after: WorkingCopy, afterList: readonly SavedView[] | undefined, lost: Lost | null) {
+  private checkKept(
+    before: WorkingCopy,
+    after: WorkingCopy,
+    afterList: readonly SavedView[] | undefined,
+    lost: Lost | null,
+  ) {
     if (lost) {
       ok(hasEdits(before.patch), () => `a notice with nothing dropped${this.where()}`)
       return ok(this.gone(before, afterList ?? []), () => `a notice for a view that is there${this.where()}`)
     }
     if (after === before || !hasEdits(before.patch)) return
-    ok(this.ident(after.viewKey) === this.ident(before.viewKey), () => `(b) the change left its view silently${this.where()}`)
+    ok(
+      this.ident(after.viewKey) === this.ident(before.viewKey),
+      () => `(b) the change left its view silently${this.where()}`,
+    )
     const shownAfter = this.shown(afterList, after)
     ok(shownAfter !== null, () => `(b) the view shown is not in the list${this.where()}`)
     const full = { ...DEFAULT_STATE, ...before.patch }
-    for (const k of Object.keys(before.patch) as (typeof KEYS)[number][]) ok(sameKey(k, shownAfter, full), () => `(b) ${k} dropped silently${this.where()}`)
+    for (const k of Object.keys(before.patch) as (typeof KEYS)[number][])
+      ok(sameKey(k, shownAfter, full), () => `(b) ${k} dropped silently${this.where()}`)
   }
 
   // Whether the view of a working copy is really not there to follow in `views`: deleted, or, for a view written by
@@ -247,7 +300,8 @@ class Sim {
 
   // The page draws: when nothing is on its way, it takes in the answer of the last write and the views read.
   private render() {
-    if (this.mutation === null) ok(this.box.writing === 0, () => `(d) a write settled and the page still counts it${this.where()}`)
+    if (this.mutation === null)
+      ok(this.box.writing === 0, () => `(d) a write settled and the page still counts it${this.where()}`)
     if (!this.busy()) this.catchUp()
     this.echo()
   }
@@ -281,12 +335,22 @@ class Sim {
       if (!exempt && mid !== before) {
         const was = this.shown(t.list?.views, before)
         const now = this.shown(a.got, mid)
-        ok(was !== null && now !== null && sameState(was, now), () => `(b) the answer changed what is shown${this.where()}`)
-        ok(this.ident(mid.viewKey) === (owner ?? this.ident(before.viewKey)), () => `(b) the answer moved the change to another view${this.where()}`)
+        ok(
+          was !== null && now !== null && sameState(was, now),
+          () => `(b) the answer changed what is shown${this.where()}`,
+        )
+        ok(
+          this.ident(mid.viewKey) === (owner ?? this.ident(before.viewKey)),
+          () => `(b) the answer moved the change to another view${this.where()}`,
+        )
       }
     }
     // The views taken in after an answer were read after it (the read before was called off).
-    if (t.answer && fresh) ok(this.cache!.rev >= this.revOf.get(t.answer)!, () => `a list older than the answer taken in after it${this.where()}`)
+    if (t.answer && fresh)
+      ok(
+        this.cache!.rev >= this.revOf.get(t.answer)!,
+        () => `a list older than the answer taken in after it${this.where()}`,
+      )
     const r = catchUp(t, this.cache)
     this.log.push(`catch up${t.answer ? ` ${t.answer.op}` : ''}${fresh ? ` + list rev ${this.cache!.rev}` : ''}`)
     this.box = { ...this.box, tabs: r.tabs }
@@ -294,7 +358,10 @@ class Sim {
     if (!exempt) this.checkKept(mid, r.tabs.wc, r.tabs.list?.views, r.lost)
     // What is shown is a view of the list shown (or the implicit view when there is none), and it is the person's own.
     const shownNow = this.shown(r.tabs.list?.views, r.tabs.wc)
-    ok(shownNow !== null || (r.tabs.list?.views.length ?? 0) === 0, () => `(b) the view shown is not among the tabs${this.where()}`)
+    ok(
+      shownNow !== null || (r.tabs.list?.views.length ?? 0) === 0,
+      () => `(b) the view shown is not among the tabs${this.where()}`,
+    )
     this.checkChange()
   }
 
@@ -430,7 +497,16 @@ class Sim {
     } else sent = views.filter((v) => v.id !== active!.id)
     const on = active?.id ?? ''
     this.box = { ...this.box, writing: this.box.writing + 1 }
-    this.mutation = { op, on, sent, baseRev: this.box.tabs.list!.rev, page: this.page, result: null, refetch: null, cacheAtAnswer: 0 }
+    this.mutation = {
+      op,
+      on,
+      sent,
+      baseRev: this.box.tabs.list!.rev,
+      page: this.page,
+      result: null,
+      refetch: null,
+      cacheAtAnswer: 0,
+    }
     this.get = null
     this.log.push(`own ${op} on ${on} (rev ${this.box.tabs.list!.rev}) state ${JSON.stringify(state)}`)
   }
@@ -551,7 +627,13 @@ class Sim {
     const k = this.pick(kinds)
     if (k === 'add' && s.length < MAX) {
       const uid = this.uid++
-      s.splice(this.int(s.length + 1), 0, { uid, id: `r${uid}`, name: this.fresh('o'), layout: this.pick(LAYOUTS), sort: this.pick(SORTS) })
+      s.splice(this.int(s.length + 1), 0, {
+        uid,
+        id: `r${uid}`,
+        name: this.fresh('o'),
+        layout: this.pick(LAYOUTS),
+        sort: this.pick(SORTS),
+      })
     } else if (k === 'delete') s.splice(this.int(s.length), 1)
     else if (k === 'rename') this.pick(s).name = this.fresh('o')
     else if (k === 'state') {

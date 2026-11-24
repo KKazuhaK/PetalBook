@@ -29,12 +29,29 @@ const nameOf = (key: string) => ts.names[key] ?? key
 function RuleText({ lower, kind }: { lower: SettingLower; kind: string }) {
   if (lower.mode === 'allow') return null
   if (lower.mode === 'lock') return <Badge variant="secondary">{ts.lockedBy.site}</Badge>
-  const what = kind === 'limit' && lower.max !== undefined ? ts.atMost(lower.max) : kind === 'boolean' ? ts.onlyOff : (lower.options ?? []).join(', ')
+  const what =
+    kind === 'limit' && lower.max !== undefined
+      ? ts.atMost(lower.max)
+      : kind === 'boolean'
+        ? ts.onlyOff
+        : (lower.options ?? []).join(', ')
   return <Badge variant="secondary">{ts.restrictedBy(what)}</Badge>
 }
 
 // The value of one layer. `null` is "follows the layer above" (tenant layer only).
-function ValueEditor({ kind, value, disabled, label, onChange }: { kind: string; value: unknown; disabled: boolean; label: string; onChange: (v: unknown) => void }) {
+function ValueEditor({
+  kind,
+  value,
+  disabled,
+  label,
+  onChange,
+}: {
+  kind: string
+  value: unknown
+  disabled: boolean
+  label: string
+  onChange: (v: unknown) => void
+}) {
   switch (kind) {
     case 'boolean':
       return <Switch checked={value === true} disabled={disabled} aria-label={label} onCheckedChange={onChange} />
@@ -59,26 +76,66 @@ function ValueEditor({ kind, value, disabled, label, onChange }: { kind: string;
           placeholder={ts.listHint}
           disabled={disabled}
           value={Array.isArray(value) ? (value as string[]).join('\n') : ''}
-          onChange={(e) => onChange(e.target.value.split('\n').map((x) => x.trim()).filter(Boolean))}
+          onChange={(e) =>
+            onChange(
+              e.target.value
+                .split('\n')
+                .map((x) => x.trim())
+                .filter(Boolean),
+            )
+          }
         />
       )
     case 'text':
-      return <Input className="h-8 w-full max-w-sm" aria-label={label} disabled={disabled} value={typeof value === 'string' ? value : ''} onChange={(e) => onChange(e.target.value)} />
+      return (
+        <Input
+          className="h-8 w-full max-w-sm"
+          aria-label={label}
+          disabled={disabled}
+          value={typeof value === 'string' ? value : ''}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )
     default:
       return null
   }
 }
 
 // What a layer lets the layers below it do.
-function RuleEditor({ kind, lower, disabled, label, onChange }: { kind: string; lower: SettingLower; disabled: boolean; label: string; onChange: (l: SettingLower) => void }) {
+function RuleEditor({
+  kind,
+  lower,
+  disabled,
+  label,
+  onChange,
+}: {
+  kind: string
+  lower: SettingLower
+  disabled: boolean
+  label: string
+  onChange: (l: SettingLower) => void
+}) {
   const canRestrict = kind === 'boolean' || kind === 'limit' || kind === 'choice'
   const set = (mode: string) => {
-    if (mode === 'restrict') onChange(kind === 'boolean' ? { mode: 'restrict', options: [false] } : kind === 'limit' ? { mode: 'restrict', max: lower.max ?? 1 } : lower)
+    if (mode === 'restrict')
+      onChange(
+        kind === 'boolean'
+          ? { mode: 'restrict', options: [false] }
+          : kind === 'limit'
+            ? { mode: 'restrict', max: lower.max ?? 1 }
+            : lower,
+      )
     else onChange({ mode: mode as SettingLower['mode'] })
   }
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <NativeSelect className="h-8 w-28" aria-label={label} disabled={disabled} value={lower.mode} onChange={(e) => set(e.target.value)}>
+      <NativeSelect
+        className="h-8 w-28"
+        aria-label={label}
+        disabled={disabled}
+        value={lower.mode}
+        onChange={(e) => set(e.target.value)}
+      >
         <option value="allow">{ts.modes.allow}</option>
         {canRestrict && <option value="restrict">{ts.modes.restrict}</option>}
         <option value="lock">{ts.modes.lock}</option>
@@ -86,10 +143,19 @@ function RuleEditor({ kind, lower, disabled, label, onChange }: { kind: string; 
       {lower.mode === 'restrict' && kind === 'limit' && (
         <>
           <Label className="text-xs text-muted-foreground">{ts.maxLabel}</Label>
-          <Input type="number" className="h-8 w-24" aria-label={`${label}: ${ts.maxLabel}`} disabled={disabled} value={lower.max ?? ''} onChange={(e) => onChange({ mode: 'restrict', max: Number(e.target.value) })} />
+          <Input
+            type="number"
+            className="h-8 w-24"
+            aria-label={`${label}: ${ts.maxLabel}`}
+            disabled={disabled}
+            value={lower.max ?? ''}
+            onChange={(e) => onChange({ mode: 'restrict', max: Number(e.target.value) })}
+          />
         </>
       )}
-      {lower.mode === 'restrict' && kind === 'boolean' && <span className="text-xs text-muted-foreground">{ts.onlyOff}</span>}
+      {lower.mode === 'restrict' && kind === 'boolean' && (
+        <span className="text-xs text-muted-foreground">{ts.onlyOff}</span>
+      )}
     </div>
   )
 }
@@ -131,14 +197,32 @@ function SiteRow({ s }: { s: SiteSetting }) {
         {!doc && (
           <div className="grid gap-1">
             <span className="text-xs text-muted-foreground">{ts.value}</span>
-            <ValueEditor kind={s.kind} value={value} disabled={!!s.site.fromFlag || put.isPending} label={name} onChange={setValue} />
+            <ValueEditor
+              kind={s.kind}
+              value={value}
+              disabled={!!s.site.fromFlag || put.isPending}
+              label={name}
+              onChange={setValue}
+            />
           </div>
         )}
         <div className="grid gap-1">
           <span className="text-xs text-muted-foreground">{ts.rule}</span>
-          <RuleEditor kind={s.kind} lower={lower} disabled={put.isPending} label={`${name}: ${ts.rule}`} onChange={setLower} />
+          <RuleEditor
+            kind={s.kind}
+            lower={lower}
+            disabled={put.isPending}
+            label={`${name}: ${ts.rule}`}
+            onChange={setLower}
+          />
         </div>
-        <Button type="button" size="sm" className="self-end" disabled={put.isPending || (!dirtyValue && !dirtyLower)} onClick={save}>
+        <Button
+          type="button"
+          size="sm"
+          className="self-end"
+          disabled={put.isPending || (!dirtyValue && !dirtyLower)}
+          onClick={save}
+        >
           {put.isPending ? ts.saving : ts.save}
         </Button>
       </div>
@@ -163,7 +247,10 @@ function TenantRow({ tenant, s }: { tenant: string; s: TenantSetting }) {
     setMessage(null)
     put.mutate(
       { tenant, key: s.key, ...(dirtyValue ? { value: follow ? null : value } : {}), ...(dirtyLower ? { lower } : {}) },
-      { onSuccess: () => setMessage({ tone: 'info', text: ts.saved }), onError: (e) => setMessage({ tone: 'error', text: settingError(e) }) },
+      {
+        onSuccess: () => setMessage({ tone: 'info', text: ts.saved }),
+        onError: (e) => setMessage({ tone: 'error', text: settingError(e) }),
+      },
     )
   }
   const kept = mine && mine.value != null && !mine.inEffect
@@ -187,18 +274,43 @@ function TenantRow({ tenant, s }: { tenant: string; s: TenantSetting }) {
             <span className="text-xs text-muted-foreground">{ts.value}</span>
             <div className="flex flex-wrap items-center gap-3">
               <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Switch checked={follow} disabled={locked || put.isPending} aria-label={`${name}: ${ts.follow}`} onCheckedChange={setFollow} />
+                <Switch
+                  checked={follow}
+                  disabled={locked || put.isPending}
+                  aria-label={`${name}: ${ts.follow}`}
+                  onCheckedChange={setFollow}
+                />
                 {ts.follow}
               </label>
-              {!follow && <ValueEditor kind={s.kind} value={value} disabled={locked || put.isPending} label={name} onChange={setValue} />}
+              {!follow && (
+                <ValueEditor
+                  kind={s.kind}
+                  value={value}
+                  disabled={locked || put.isPending}
+                  label={name}
+                  onChange={setValue}
+                />
+              )}
             </div>
           </div>
         )}
         <div className="grid gap-1">
           <span className="text-xs text-muted-foreground">{ts.rule}</span>
-          <RuleEditor kind={s.kind} lower={lower} disabled={put.isPending} label={`${name}: ${ts.rule}`} onChange={setLower} />
+          <RuleEditor
+            kind={s.kind}
+            lower={lower}
+            disabled={put.isPending}
+            label={`${name}: ${ts.rule}`}
+            onChange={setLower}
+          />
         </div>
-        <Button type="button" size="sm" className="self-end" disabled={put.isPending || (!dirtyValue && !dirtyLower)} onClick={save}>
+        <Button
+          type="button"
+          size="sm"
+          className="self-end"
+          disabled={put.isPending || (!dirtyValue && !dirtyLower)}
+          onClick={save}
+        >
           {put.isPending ? ts.saving : ts.save}
         </Button>
       </div>
@@ -247,7 +359,7 @@ export function SettingsPanel() {
   const [picked, setPicked] = useState('')
   const own = me?.tenant
   const list = tenants.data ?? []
-  const tenantId = isSite ? (picked || own?.id || '') : (own?.id ?? '')
+  const tenantId = isSite ? picked || own?.id || '' : (own?.id ?? '')
   const tenantName = list.find((x) => x.id === tenantId)?.name ?? (tenantId === own?.id ? own?.name : '') ?? ''
   return (
     <div className="grid gap-8">
@@ -256,7 +368,12 @@ export function SettingsPanel() {
       {isSite && list.length > 1 && (
         <div className="flex items-center gap-2">
           <Label htmlFor="settings-tenant-pick">{ts.tenantPick}</Label>
-          <NativeSelect id="settings-tenant-pick" className="h-8 w-56" value={tenantId} onChange={(e) => setPicked(e.target.value)}>
+          <NativeSelect
+            id="settings-tenant-pick"
+            className="h-8 w-56"
+            value={tenantId}
+            onChange={(e) => setPicked(e.target.value)}
+          >
             {list.map((x) => (
               <option key={x.id} value={x.id}>
                 {x.name}

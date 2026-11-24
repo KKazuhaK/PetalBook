@@ -43,12 +43,17 @@ export function tableFixes(table: PMNode, tablePos: number): CellFix[] {
     for (let c = 0; c < map.width; c++) {
       const offset = map.map[r * map.width + c]
       // A cell spanning several slots is looked at once, at its first.
-      if ((c > 0 && map.map[r * map.width + c - 1] === offset) || (r > 0 && map.map[(r - 1) * map.width + c] === offset)) continue
+      if (
+        (c > 0 && map.map[r * map.width + c - 1] === offset) ||
+        (r > 0 && map.map[(r - 1) * map.width + c] === offset)
+      )
+        continue
       const cell = cellAt(offset)
       if (!cell) continue
       const type = r === 0 ? 'tableHeader' : 'tableCell'
       const align = aligns[c] ?? null
-      if (cell.type.name !== type || ((cell.attrs.align as Align) ?? null) !== align) fixes.push({ pos: tablePos + 1 + offset, type, align })
+      if (cell.type.name !== type || ((cell.attrs.align as Align) ?? null) !== align)
+        fixes.push({ pos: tablePos + 1 + offset, type, align })
     }
   }
   return fixes
@@ -105,12 +110,18 @@ const hasCell = (state: EditorState, ref: CellRef): boolean => {
   const map = TableMap.get(table)
   return ref.row >= 0 && ref.col >= 0 && ref.row < map.height && ref.col < map.width
 }
-const act = (editor: Editor, ref: CellRef, then: (chain: Chain) => Chain): boolean => hasCell(editor.state, ref) && then(editor.chain().command(selectCell(ref))).focus().run()
+const act = (editor: Editor, ref: CellRef, then: (chain: Chain) => Chain): boolean =>
+  hasCell(editor.state, ref) &&
+  then(editor.chain().command(selectCell(ref)))
+    .focus()
+    .run()
 
 // --- the actions of the controls ---
 
-export const insertRow = (editor: Editor, ref: CellRef, where: 'before' | 'after') => act(editor, ref, (c) => (where === 'before' ? c.addRowBefore() : c.addRowAfter()))
-export const insertColumn = (editor: Editor, ref: CellRef, where: 'before' | 'after') => act(editor, ref, (c) => (where === 'before' ? c.addColumnBefore() : c.addColumnAfter()))
+export const insertRow = (editor: Editor, ref: CellRef, where: 'before' | 'after') =>
+  act(editor, ref, (c) => (where === 'before' ? c.addRowBefore() : c.addRowAfter()))
+export const insertColumn = (editor: Editor, ref: CellRef, where: 'before' | 'after') =>
+  act(editor, ref, (c) => (where === 'before' ? c.addColumnBefore() : c.addColumnAfter()))
 export const removeRow = (editor: Editor, ref: CellRef) => act(editor, ref, (c) => c.deleteRow())
 export const removeColumn = (editor: Editor, ref: CellRef) => act(editor, ref, (c) => c.deleteColumn())
 export const removeTable = (editor: Editor, ref: CellRef) => act(editor, ref, (c) => c.deleteTable())
@@ -126,7 +137,8 @@ export function setColumnAlign(editor: Editor, ref: CellRef, align: Align): bool
       for (let r = 0; r < map.height; r++) {
         const pos = ref.tablePos + 1 + map.map[r * map.width + ref.col]
         const cell = tr.doc.nodeAt(pos)
-        if (cell && ((cell.attrs.align as Align) ?? null) !== align) tr.setNodeMarkup(pos, undefined, { ...cell.attrs, align })
+        if (cell && ((cell.attrs.align as Align) ?? null) !== align)
+          tr.setNodeMarkup(pos, undefined, { ...cell.attrs, align })
       }
       return true
     }),

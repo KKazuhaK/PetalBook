@@ -1,6 +1,22 @@
 import { Link, Navigate, useParams } from 'react-router'
 import { lazy, Suspense } from 'react'
-import { ArrowLeft, Building2, Database, Gauge, Mail, HardDrive, KeyRound, Layers, Link2, Quote, ShieldCheck, Trash2, SlidersHorizontal, Users, UsersRound } from 'lucide-react'
+import {
+  ArrowLeft,
+  Building2,
+  Database,
+  Gauge,
+  Mail,
+  HardDrive,
+  KeyRound,
+  Layers,
+  Link2,
+  Quote,
+  ShieldCheck,
+  Trash2,
+  SlidersHorizontal,
+  Users,
+  UsersRound,
+} from 'lucide-react'
 import { TopBar } from '@/components/layout/TopBar'
 import { useActiveSpace, useSession } from '@/api/hooks'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
@@ -27,8 +43,38 @@ const StoragePanel = lazy(() => import('./StoragePanel').then((m) => ({ default:
 const MailPanel = lazy(() => import('./MailPanel').then((m) => ({ default: m.MailPanel })))
 const SecurityPanel = lazy(() => import('./AdminSecurityPanel').then((m) => ({ default: m.AdminSecurityPanel })))
 
-const ICONS: Record<AdminSection, typeof Users> = { users: Users, groups: UsersRound, spaces: Layers, manage: Database, recycle: Trash2, daily: Quote, access: KeyRound, storage: Link2, security: ShieldCheck, mail: Mail, settings: SlidersHorizontal, tenants: Building2, usage: Gauge, status: HardDrive }
-const SECTIONS: readonly AdminSection[] = ['users', 'groups', 'spaces', 'manage', 'recycle', 'daily', 'access', 'storage', 'security', 'mail', 'settings', 'tenants', 'usage', 'status']
+const ICONS: Record<AdminSection, typeof Users> = {
+  users: Users,
+  groups: UsersRound,
+  spaces: Layers,
+  manage: Database,
+  recycle: Trash2,
+  daily: Quote,
+  access: KeyRound,
+  storage: Link2,
+  security: ShieldCheck,
+  mail: Mail,
+  settings: SlidersHorizontal,
+  tenants: Building2,
+  usage: Gauge,
+  status: HardDrive,
+}
+const SECTIONS: readonly AdminSection[] = [
+  'users',
+  'groups',
+  'spaces',
+  'manage',
+  'recycle',
+  'daily',
+  'access',
+  'storage',
+  'security',
+  'mail',
+  'settings',
+  'tenants',
+  'usage',
+  'status',
+]
 // What only an administrator of the whole server may open: the server's own settings. A tenant's
 // administrator sees the rest, for their tenant, and the settings page for their tenant's layer.
 const SITE_ONLY: readonly AdminSection[] = ['daily', 'access', 'storage', 'security', 'mail', 'tenants', 'status']
@@ -72,7 +118,10 @@ export default function AdminRoute() {
               })}
             </ul>
           </nav>
-          <Link to={id ? spaceUrls(id).home() : '/'} className="ml-auto flex items-center gap-1 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
+          <Link
+            to={id ? spaceUrls(id).home() : '/'}
+            className="ml-auto flex items-center gap-1 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >
             <ArrowLeft className="size-3.5" />
             {ta.back}
           </Link>

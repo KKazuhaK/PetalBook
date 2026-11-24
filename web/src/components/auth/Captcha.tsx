@@ -77,10 +77,23 @@ export function useCaptcha(ctx: CaptchaContext, { auto = true }: { auto?: boolea
   const required = challenge?.required === true
   const value = (): CaptchaAnswer | undefined => {
     if (!required) return undefined
-    if (challenge?.provider === 'image') return challenge.id && answer.trim() ? { id: challenge.id, answer: answer.trim() } : undefined
+    if (challenge?.provider === 'image')
+      return challenge.id && answer.trim() ? { id: challenge.id, answer: answer.trim() } : undefined
     return token ? { token } : undefined
   }
-  return { challenge, required, loading, loadError, answer, setAnswer, setToken: setTokenState, resets, refresh, value, missing: required && value() === undefined }
+  return {
+    challenge,
+    required,
+    loading,
+    loadError,
+    answer,
+    setAnswer,
+    setToken: setTokenState,
+    resets,
+    refresh,
+    value,
+    missing: required && value() === undefined,
+  }
 }
 
 export function CaptchaField({ captcha, disabled }: { captcha: CaptchaState; disabled?: boolean }) {
@@ -100,12 +113,29 @@ export function CaptchaField({ captcha, disabled }: { captcha: CaptchaState; dis
     return (
       <div className="grid gap-2" data-slot="captcha">
         <div className="flex min-w-0 items-center gap-2">
-          {c.image && <img src={c.image} alt={ts.captcha.imageAlt} className="h-12 max-w-[70%] rounded-md border bg-white" />}
-          <Button type="button" variant="outline" size="sm" disabled={captcha.loading || disabled} onClick={() => void captcha.refresh()}>
+          {c.image && (
+            <img src={c.image} alt={ts.captcha.imageAlt} className="h-12 max-w-[70%] rounded-md border bg-white" />
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={captcha.loading || disabled}
+            onClick={() => void captcha.refresh()}
+          >
             {captcha.loading ? ts.captcha.refreshing : ts.captcha.refresh}
           </Button>
         </div>
-        <Field label={ts.captcha.answer} value={captcha.answer} onChange={(e) => captcha.setAnswer(e.target.value)} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} disabled={disabled} />
+        <Field
+          label={ts.captcha.answer}
+          value={captcha.answer}
+          onChange={(e) => captcha.setAnswer(e.target.value)}
+          autoComplete="off"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          disabled={disabled}
+        />
       </div>
     )
   }
@@ -120,7 +150,10 @@ interface WidgetApi {
   remove?: (id?: string | number) => void
   ready?: (fn: () => void) => void
 }
-const SCRIPTS: Record<Exclude<CaptchaProvider, 'image'>, { src: string; global: 'turnstile' | 'grecaptcha' | 'hcaptcha' }> = {
+const SCRIPTS: Record<
+  Exclude<CaptchaProvider, 'image'>,
+  { src: string; global: 'turnstile' | 'grecaptcha' | 'hcaptcha' }
+> = {
   turnstile: { src: 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit', global: 'turnstile' },
   recaptcha: { src: 'https://www.google.com/recaptcha/api.js?render=explicit', global: 'grecaptcha' },
   hcaptcha: { src: 'https://js.hcaptcha.com/1/api.js?render=explicit', global: 'hcaptcha' },
@@ -146,7 +179,17 @@ function loadScript(src: string): Promise<void> {
 }
 const globalApi = (name: string) => (window as unknown as Record<string, WidgetApi | undefined>)[name]
 
-function Widget({ provider, siteKey, resets, onToken }: { provider: Exclude<CaptchaProvider, 'image'>; siteKey: string; resets: number; onToken: (t: string) => void }) {
+function Widget({
+  provider,
+  siteKey,
+  resets,
+  onToken,
+}: {
+  provider: Exclude<CaptchaProvider, 'image'>
+  siteKey: string
+  resets: number
+  onToken: (t: string) => void
+}) {
   const host = useRef<HTMLDivElement>(null)
   const widget = useRef<string | number | null>(null)
   const [failed, setFailed] = useState(false)
@@ -170,7 +213,12 @@ function Widget({ provider, siteKey, resets, onToken }: { provider: Exclude<Capt
         if (!live || !host.current) return
         setFailed(false)
         host.current.replaceChildren()
-        widget.current = api.render(host.current, { sitekey: siteKey, callback: (t: string) => onToken(t), 'expired-callback': () => onToken(''), 'error-callback': () => onToken('') })
+        widget.current = api.render(host.current, {
+          sitekey: siteKey,
+          callback: (t: string) => onToken(t),
+          'expired-callback': () => onToken(''),
+          'error-callback': () => onToken(''),
+        })
       })
       .catch(() => live && setFailed(true))
     return () => {

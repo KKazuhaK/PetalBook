@@ -17,7 +17,8 @@ export function favoriteHref(f: Favorite, urls: SpaceUrls): string | null {
 }
 
 // The address of a saved view as a favourite names it.
-export const viewTarget = (scope: { folder: string } | { tag: string }, id: string): string => ('folder' in scope ? `folder:${scope.folder}#${id}` : `tag:${scope.tag}#${id}`)
+export const viewTarget = (scope: { folder: string } | { tag: string }, id: string): string =>
+  'folder' in scope ? `folder:${scope.folder}#${id}` : `tag:${scope.tag}#${id}`
 
 export function favoriteName(f: Favorite): string {
   if (f.name) return f.name

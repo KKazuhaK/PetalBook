@@ -28,7 +28,8 @@ export function mockFetch(
     const raw = await bytesOf(init?.body)
     hooks.onRequest?.(method, url, body, init)
     const headers = new Headers(init?.headers)
-    const cookie = headers.get('cookie') ?? (hooks.jar === false ? null : [...cookies].map(([k, v]) => `${k}=${v}`).join('; '))
+    const cookie =
+      headers.get('cookie') ?? (hooks.jar === false ? null : [...cookies].map(([k, v]) => `${k}=${v}`).join('; '))
     const r = server.handle(method, url, body, headers.get('content-type'), cookie, raw)
     const out = new Headers({ 'Content-Type': 'application/json', ...r.headers })
     if (hooks.jar !== false && r.headers?.['Set-Cookie']) {
@@ -38,6 +39,9 @@ export function mockFetch(
       else cookies.set(pair.slice(0, i), pair.slice(i + 1))
     }
     if (r.bytes) return new Response(r.bytes as BodyInit, { status: r.status, headers: out })
-    return new Response(r.status === 204 || r.status === 303 ? null : JSON.stringify(r.body), { status: r.status, headers: out })
+    return new Response(r.status === 204 || r.status === 303 ? null : JSON.stringify(r.body), {
+      status: r.status,
+      headers: out,
+    })
   }
 }

@@ -17,7 +17,9 @@ export function RawDiff({ diff }: { diff: LineDiff }) {
           </span>
           <span className="pb-sign" role="cell">
             <span aria-hidden>{op.type === 'ins' ? '+' : op.type === 'del' ? '−' : ''}</span>
-            <span className="sr-only">{op.type === 'ins' ? t.history.srAdded : op.type === 'del' ? t.history.srRemoved : ''}</span>
+            <span className="sr-only">
+              {op.type === 'ins' ? t.history.srAdded : op.type === 'del' ? t.history.srRemoved : ''}
+            </span>
           </span>
           <span className="pb-text" role="cell">
             {op.text === '' ? ' ' : op.text}

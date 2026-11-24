@@ -29,7 +29,10 @@ const routes = (
 const dialog = () => document.querySelector<HTMLElement>('[data-slot="settings-dialog"]')!
 const text = () => dialog()?.textContent ?? ''
 const meter = (k: string) => document.querySelector<HTMLElement>(`[data-slot="usage-meter"][data-quota="${k}"]`)!
-const open = async (scene?: (server: Mounted['server']) => void, server: { mode: 'accounts' | 'single'; empty?: boolean } = { mode: 'accounts' }) => {
+const open = async (
+  scene?: (server: Mounted['server']) => void,
+  server: { mode: 'accounts' | 'single'; empty?: boolean } = { mode: 'accounts' },
+) => {
   m = await mount(routes, {
     entries: (s) => {
       scene?.(s)
@@ -38,7 +41,11 @@ const open = async (scene?: (server: Mounted['server']) => void, server: { mode:
     signIn: server.mode === 'accounts',
     server,
   })
-  await settle(() => dialog() !== null && (text().includes(tu.account.title) || text().includes(t.settingsUi.sections.preferences)), 'the dialog')
+  await settle(
+    () =>
+      dialog() !== null && (text().includes(tu.account.title) || text().includes(t.settingsUi.sections.preferences)),
+    'the dialog',
+  )
 }
 
 describe('Usage in the account settings', () => {
@@ -61,13 +68,16 @@ describe('Usage in the account settings', () => {
   })
 
   it('shows measured numbers in human units against the limit, with the bar full only up to the limit', async () => {
-    await open((server) => {
-      const admin = adminRequests(server)
-      const space = (admin('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
-      admin('POST', `/api/spaces/${space}/pages`, { folder: '', meta: { title: 'one' }, body: 'x'.repeat(3000) })
-      admin('POST', `/api/admin/spaces/${space}/size`)
-      admin('PUT', '/api/admin/settings/quota.bytesPerPerson', { value: 10 * 1024 * 1024 })
-    }, { mode: 'accounts', empty: true })
+    await open(
+      (server) => {
+        const admin = adminRequests(server)
+        const space = (admin('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
+        admin('POST', `/api/spaces/${space}/pages`, { folder: '', meta: { title: 'one' }, body: 'x'.repeat(3000) })
+        admin('POST', `/api/admin/spaces/${space}/size`)
+        admin('PUT', '/api/admin/settings/quota.bytesPerPerson', { value: 10 * 1024 * 1024 })
+      },
+      { mode: 'accounts', empty: true },
+    )
     await settle(() => document.querySelector('[data-slot="usage-meters"]') !== null, 'the meters')
     const bytes = meter('bytes')
     expect(bytes.textContent).toMatch(/\d+(\.\d)? KB \/ 10 MB/)
@@ -79,19 +89,25 @@ describe('Usage in the account settings', () => {
     expect(meter('pages').textContent).toContain(tu.account.used('1', tu.noLimit))
   })
 
-  it('tells a person who is over a limit, and the tenant\'s total, without stopping them', async () => {
-    await open((server) => {
-      const admin = adminRequests(server)
-      const space = (admin('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
-      for (const title of ['one', 'two', 'three']) admin('POST', `/api/spaces/${space}/pages`, { folder: '', meta: { title }, body: 'text' })
-      admin('PUT', '/api/admin/settings/quota.pagesPerPerson', { value: 2 })
-      admin('PATCH', '/api/admin/tenants/0000000000', { quota: { bytes: 1 } })
-      admin('POST', `/api/admin/spaces/${space}/size`)
-    }, { mode: 'accounts', empty: true })
+  it("tells a person who is over a limit, and the tenant's total, without stopping them", async () => {
+    await open(
+      (server) => {
+        const admin = adminRequests(server)
+        const space = (admin('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
+        for (const title of ['one', 'two', 'three'])
+          admin('POST', `/api/spaces/${space}/pages`, { folder: '', meta: { title }, body: 'text' })
+        admin('PUT', '/api/admin/settings/quota.pagesPerPerson', { value: 2 })
+        admin('PATCH', '/api/admin/tenants/0000000000', { quota: { bytes: 1 } })
+        admin('POST', `/api/admin/spaces/${space}/size`)
+      },
+      { mode: 'accounts', empty: true },
+    )
     await settle(() => document.querySelector('[data-slot="usage-notices"]') !== null, 'the notices')
     const notices = [...document.querySelectorAll('[data-notice]')].map((n) => n.getAttribute('data-notice'))
     expect(notices.sort()).toEqual(['person-pages', 'tenant-bytes'])
-    expect(document.querySelector('[data-notice="person-pages"]')!.textContent).toBe(tu.account.notices.person(tu.quotas.pages, '3', '2'))
+    expect(document.querySelector('[data-notice="person-pages"]')!.textContent).toBe(
+      tu.account.notices.person(tu.quotas.pages, '3', '2'),
+    )
     expect(meter('pages').getAttribute('data-over')).toBe('true')
     expect(text()).toContain(tu.account.overHelp)
     expect(text()).toContain(formatBytes(1))
@@ -100,7 +116,9 @@ describe('Usage in the account settings', () => {
   it('nothing on it can be wider than a phone', async () => {
     await open()
     await settle(() => document.querySelector('[data-slot="usage-meters"]') !== null, 'the meters')
-    expect(dialog().querySelector('section[aria-labelledby="usage-heading"]')!.classList.contains('grid-cols-1')).toBe(true)
+    expect(dialog().querySelector('section[aria-labelledby="usage-heading"]')!.classList.contains('grid-cols-1')).toBe(
+      true,
+    )
     for (const li of document.querySelectorAll('[data-slot="usage-meter"]')) {
       expect(li.classList.contains('min-w-0')).toBe(true)
       expect(li.firstElementChild!.classList.contains('flex-wrap')).toBe(true)
@@ -113,7 +131,7 @@ describe('Usage in the account settings', () => {
     expect(m!.requests.filter((r) => r.url === '/api/account/usage')).toEqual([])
   })
 
-  it('a refusal to make a space says what the limit is, in the page\'s language', async () => {
+  it("a refusal to make a space says what the limit is, in the page's language", async () => {
     m = await mount(
       <NameDialog
         open
@@ -121,12 +139,28 @@ describe('Usage in the account settings', () => {
         title="x"
         initial="Notes"
         submitLabel="make"
-        onSubmit={() => Promise.reject(new ApiError(403, 'quota_exceeded', 'you already own 3 spaces', undefined, undefined, undefined, undefined, { quota: 'spaces', limit: 3, used: 3 }))}
+        onSubmit={() =>
+          Promise.reject(
+            new ApiError(
+              403,
+              'quota_exceeded',
+              'you already own 3 spaces',
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              { quota: 'spaces', limit: 3, used: 3 },
+            ),
+          )
+        }
       />,
       { server: { mode: 'accounts' } },
     )
     await settle(() => document.querySelector('[role="dialog"] form') !== null, 'the dialog')
     await click([...document.querySelectorAll('button')].find((b) => b.textContent === 'make'))
-    await settle(() => (document.querySelector('[role="dialog"]')?.textContent ?? '').includes(tu.account.createRefused(3)), 'the refusal')
+    await settle(
+      () => (document.querySelector('[role="dialog"]')?.textContent ?? '').includes(tu.account.createRefused(3)),
+      'the refusal',
+    )
   })
 })

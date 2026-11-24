@@ -1120,3 +1120,31 @@ func TestARequirementOfAProviderTakesOnlyAConnectionThroughIt(t *testing.T) {
 		}
 	})
 }
+
+func TestAHostsGitUserNameIsKnownBeforeItsProviderIsLoaded(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		now := e.clk.Now()
+		for _, typ := range []string{"gitlab", "gitea"} {
+			row := store.ConnProviderRow{ID: "h-" + typ, Type: typ, Host: typ + ".example.com", Scheme: "https", Name: typ, Owner: store.ConnProviderSite,
+				ClientID: "c", SecretEnc: "s", State: "ok", PartialSync: "unknown", Created: now, Updated: now}
+			if err := store.InsertConnProviderRow(ctx, st.Q(), row); err != nil {
+				t.Fatal(err)
+			}
+			// No provider of this id is in the registry (a restart that has not loaded it yet).
+			cred := e.m.credential("S1", &store.Remote{SpaceID: "S1", CredType: CredConnection, Provider: row.ID, URL: "https://" + row.Host + "/a/b.git"})
+			tok, ok := cred.(gitstore.Token)
+			if !ok || tok.Username != "oauth2" {
+				t.Fatalf("%s: %+v", typ, cred)
+			}
+			if _, err := tok.Get(); err == nil {
+				t.Fatalf("%s: a token without a provider", typ)
+			}
+		}
+		// GitHub keeps its own name.
+		cred := e.m.credential("S1", &store.Remote{SpaceID: "S1", CredType: CredConnection, Provider: "github", URL: "https://github.com/a/b.git"})
+		if tok, ok := cred.(gitstore.Token); !ok || tok.Username != "x-access-token" {
+			t.Fatalf("%+v", cred)
+		}
+	})
+}

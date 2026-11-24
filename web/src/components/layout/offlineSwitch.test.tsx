@@ -41,10 +41,14 @@ const lateRoutes = (
   </Routes>
 )
 const heads = () => m!.requests.filter((r) => r.url.startsWith('/api/sync/heads')).length
-const setting = (value: boolean) => adminRequests(m!.server)('PUT', '/api/admin/settings/offline.copies', { value, lower: { mode: value ? 'allow' : 'lock' } })
+const setting = (value: boolean) =>
+  adminRequests(m!.server)('PUT', '/api/admin/settings/offline.copies', {
+    value,
+    lower: { mode: value ? 'allow' : 'lock' },
+  })
 
 describe('the app when offline copies are allowed or not', () => {
-  it('polls while allowed; when turned off it deletes this account\'s copies and stops asking', async () => {
+  it("polls while allowed; when turned off it deletes this account's copies and stops asking", async () => {
     m = await mount(routes, { signIn: true, server: { mode: 'accounts' }, entries: ['/'] })
     const user = (await api.session()).user!.id
     const space = (await api.spaces()).spaces[0].id

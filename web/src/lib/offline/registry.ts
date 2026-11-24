@@ -5,7 +5,8 @@
 export const DB_PREFIX = 'petalbook-offline'
 export const REGISTRY_KEY = 'petalbook.offline'
 
-export const dbName = (user: string, space: string) => `${DB_PREFIX}:${encodeURIComponent(user)}:${encodeURIComponent(space)}`
+export const dbName = (user: string, space: string) =>
+  `${DB_PREFIX}:${encodeURIComponent(user)}:${encodeURIComponent(space)}`
 
 export interface RegistryEntry {
   // Bytes of text kept, pages with text, pages in the catalogue.

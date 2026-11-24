@@ -2,8 +2,27 @@ import { useMemo, useState } from 'react'
 import { Plus, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { useAdminDaily, useAdminSpaces, useDeleteDailyApi, useDeleteDailyLines, useSaveDailyApi, useSaveDailyLines, useSaveDailyProvider, useSaveDailySite, useTryDailyApi } from '@/api/admin'
-import type { AdminDaily, DailyApi, DailyDefault, DailyNotice, DailySettings, DailyTryResult, KnownLanguage, LinesFormat } from '@/api/types'
+import {
+  useAdminDaily,
+  useAdminSpaces,
+  useDeleteDailyApi,
+  useDeleteDailyLines,
+  useSaveDailyApi,
+  useSaveDailyLines,
+  useSaveDailyProvider,
+  useSaveDailySite,
+  useTryDailyApi,
+} from '@/api/admin'
+import type {
+  AdminDaily,
+  DailyApi,
+  DailyDefault,
+  DailyNotice,
+  DailySettings,
+  DailyTryResult,
+  KnownLanguage,
+  LinesFormat,
+} from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { SettingsRow, SettingsRows, SettingsSection } from '@/components/settings/SettingsParts'
@@ -26,7 +45,10 @@ const d = ta.daily
 // The server says why it refused with a code (and what it is about); it is put in the language of the page here.
 // A code that is not known shows the server's own words.
 const localised = (r: Parameters<typeof dailyCodeMessage>[0]) => dailyCodeMessage(r, d)
-const message = (e: unknown) => (e instanceof ApiError && (e.reason || e.code === 'invalid' || e.code === 'not_found' || e.code === 'rate_limited') ? (localised(e.reason) ?? e.message) : t.fmt.labelled(d.failed, e instanceof Error ? e.message : ''))
+const message = (e: unknown) =>
+  e instanceof ApiError && (e.reason || e.code === 'invalid' || e.code === 'not_found' || e.code === 'rate_limited')
+    ? (localised(e.reason) ?? e.message)
+    : t.fmt.labelled(d.failed, e instanceof Error ? e.message : '')
 
 // What administrators decide about the daily text of every space: what spaces may do, the languages, the default,
 // the pasted lines, the built-in interfaces (switches) and the external interfaces (any number, with a button to
@@ -34,7 +56,8 @@ const message = (e: unknown) => (e instanceof ApiError && (e.reason || e.code ==
 export function DailyPanel() {
   const q = useAdminDaily()
   if (q.isPending) return <PageFallback />
-  if (q.isError) return <ErrorState message={t.fmt.labelled(d.loadFailed, q.error.message)} onRetry={() => void q.refetch()} />
+  if (q.isError)
+    return <ErrorState message={t.fmt.labelled(d.loadFailed, q.error.message)} onRetry={() => void q.refetch()} />
   const data = q.data
   return (
     <div className="min-w-0 space-y-10" data-slot="admin-daily">
@@ -75,7 +98,12 @@ function NoticesSection({ data }: { data: AdminDaily }) {
           <li key={i}>{noticeText(n)}</li>
         ))}
       </ul>
-      <Button size="sm" variant="outline" disabled={save.isPending} onClick={() => save.mutate({ notices: [] }, { onError: (e) => void toast.error(message(e)) })}>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={save.isPending}
+        onClick={() => save.mutate({ notices: [] }, { onError: (e) => void toast.error(message(e)) })}
+      >
         {d.noticesDismiss}
       </Button>
     </div>
@@ -95,10 +123,20 @@ function AllowSection({ data }: { data: AdminDaily }) {
     <SettingsSection title={d.allowTitle} description={allow ? undefined : d.allowPending}>
       <SettingsRows>
         <SettingsRow title={d.allowOwn} help={d.allowOwnHelp} controlId="daily-allow-own">
-          <Switch id="daily-allow-own" checked={allow?.own ?? true} disabled={!allow || save.isPending} onCheckedChange={(on) => set({ own: on })} />
+          <Switch
+            id="daily-allow-own"
+            checked={allow?.own ?? true}
+            disabled={!allow || save.isPending}
+            onCheckedChange={(on) => set({ own: on })}
+          />
         </SettingsRow>
         <SettingsRow title={d.allowApi} help={d.allowApiHelp} controlId="daily-allow-api">
-          <Switch id="daily-allow-api" checked={allow?.api ?? true} disabled={!allow || save.isPending} onCheckedChange={(on) => set({ api: on })} />
+          <Switch
+            id="daily-allow-api"
+            checked={allow?.api ?? true}
+            disabled={!allow || save.isPending}
+            onCheckedChange={(on) => set({ api: on })}
+          />
         </SettingsRow>
       </SettingsRows>
     </SettingsSection>
@@ -107,11 +145,32 @@ function AllowSection({ data }: { data: AdminDaily }) {
 
 // A language to pick: the common ones, searchable by tag, native name or English name; any other valid language tag
 // may be typed (and is offered as it is written canonically). Pressing Enter takes the typed tag, else the first match.
-function LanguagePicker({ id, known, taken = [], onPick, disabled, required }: { id: string; known: readonly KnownLanguage[]; taken?: readonly string[]; onPick: (tag: string) => void; disabled?: boolean; required?: boolean }) {
+function LanguagePicker({
+  id,
+  known,
+  taken = [],
+  onPick,
+  disabled,
+  required,
+}: {
+  id: string
+  known: readonly KnownLanguage[]
+  taken?: readonly string[]
+  onPick: (tag: string) => void
+  disabled?: boolean
+  required?: boolean
+}) {
   const [text, setText] = useState('')
   const q = text.trim().toLowerCase()
   const typed = q === '' ? null : canonicalTag(text)
-  const matches = known.filter((k) => !taken.includes(k.tag) && (q === '' || k.tag.toLowerCase().includes(q) || k.name.toLowerCase().includes(q) || k.english.toLowerCase().includes(q)))
+  const matches = known.filter(
+    (k) =>
+      !taken.includes(k.tag) &&
+      (q === '' ||
+        k.tag.toLowerCase().includes(q) ||
+        k.name.toLowerCase().includes(q) ||
+        k.english.toLowerCase().includes(q)),
+  )
   const extra = typed !== null && !known.some((k) => k.tag === typed) && !taken.includes(typed) ? typed : null
   const pick = (tag: string) => {
     onPick(tag)
@@ -139,17 +198,34 @@ function LanguagePicker({ id, known, taken = [], onPick, disabled, required }: {
         autoComplete="off"
         className="w-full max-w-sm min-w-0"
       />
-      <ul id={`${id}-list`} role="listbox" aria-label={d.languagesTitle} className="grid max-h-44 max-w-sm min-w-0 grid-cols-1 overflow-y-auto rounded-lg border">
+      <ul
+        id={`${id}-list`}
+        role="listbox"
+        aria-label={d.languagesTitle}
+        className="grid max-h-44 max-w-sm min-w-0 grid-cols-1 overflow-y-auto rounded-lg border"
+      >
         {extra !== null && (
           <li role="option" aria-selected="false">
-            <button type="button" data-tag={extra} disabled={disabled} onClick={() => pick(extra)} className="flex w-full min-w-0 items-center justify-between gap-2 px-3 py-1.5 text-left text-sm break-words outline-none hover:bg-muted focus-visible:bg-muted">
+            <button
+              type="button"
+              data-tag={extra}
+              disabled={disabled}
+              onClick={() => pick(extra)}
+              className="flex w-full min-w-0 items-center justify-between gap-2 px-3 py-1.5 text-left text-sm break-words outline-none hover:bg-muted focus-visible:bg-muted"
+            >
               {d.languageTyped(extra)}
             </button>
           </li>
         )}
         {matches.map((k) => (
           <li key={k.tag} role="option" aria-selected="false">
-            <button type="button" data-tag={k.tag} disabled={disabled} onClick={() => pick(k.tag)} className="flex w-full min-w-0 items-center justify-between gap-3 px-3 py-1.5 text-left text-sm outline-none hover:bg-muted focus-visible:bg-muted">
+            <button
+              type="button"
+              data-tag={k.tag}
+              disabled={disabled}
+              onClick={() => pick(k.tag)}
+              className="flex w-full min-w-0 items-center justify-between gap-3 px-3 py-1.5 text-left text-sm outline-none hover:bg-muted focus-visible:bg-muted"
+            >
               <span className="min-w-0 break-words">
                 {k.name}
                 {k.english !== k.name && <span className="text-muted-foreground"> · {k.english}</span>}
@@ -171,7 +247,8 @@ function LanguagePicker({ id, known, taken = [], onPick, disabled, required }: {
 function LanguagesSection({ data }: { data: AdminDaily }) {
   const save = useSaveDailySite()
   const [error, setError] = useState('')
-  const write = (languages: string[]) => save.mutate({ languages }, { onSuccess: () => setError(''), onError: (e) => setError(message(e)) })
+  const write = (languages: string[]) =>
+    save.mutate({ languages }, { onSuccess: () => setError(''), onError: (e) => setError(message(e)) })
   return (
     <SettingsSection title={d.languagesTitle} description={d.languagesHelp}>
       <ul className="flex flex-wrap gap-1.5" aria-label={d.languagesTitle}>
@@ -179,7 +256,13 @@ function LanguagesSection({ data }: { data: AdminDaily }) {
         {data.languages.map((l) => (
           <li key={l} className="flex items-center gap-1 rounded-full border py-0.5 pr-1 pl-2.5 text-sm">
             {l}
-            <button type="button" aria-label={d.removeLanguage(l)} title={d.removeLanguage(l)} onClick={() => write(data.languages.filter((x) => x !== l))} className="rounded-full p-0.5 hover:bg-muted">
+            <button
+              type="button"
+              aria-label={d.removeLanguage(l)}
+              title={d.removeLanguage(l)}
+              onClick={() => write(data.languages.filter((x) => x !== l))}
+              className="rounded-full p-0.5 hover:bg-muted"
+            >
               <X className="size-3" />
             </button>
           </li>
@@ -190,7 +273,14 @@ function LanguagesSection({ data }: { data: AdminDaily }) {
           {d.languageCode}
           <RequiredMark />
         </Label>
-        <LanguagePicker id="daily-lang" required known={data.knownLanguages} taken={data.languages} disabled={save.isPending} onPick={(tag) => write([...data.languages, tag])} />
+        <LanguagePicker
+          id="daily-lang"
+          required
+          known={data.knownLanguages}
+          taken={data.languages}
+          disabled={save.isPending}
+          onPick={(tag) => write([...data.languages, tag])}
+        />
       </div>
       <FormMessage>{error}</FormMessage>
     </SettingsSection>
@@ -198,11 +288,29 @@ function LanguagesSection({ data }: { data: AdminDaily }) {
 }
 
 // A tab per language, "all languages" first.
-function LangTabs({ langs, value, onChange, label }: { langs: string[]; value: string; onChange: (l: string) => void; label: string }) {
+function LangTabs({
+  langs,
+  value,
+  onChange,
+  label,
+}: {
+  langs: string[]
+  value: string
+  onChange: (l: string) => void
+  label: string
+}) {
   return (
     <div role="tablist" aria-label={label} className="flex flex-wrap gap-1">
       {langs.map((l) => (
-        <button key={l || 'all'} type="button" role="tab" aria-selected={value === l} data-lang={l} onClick={() => onChange(l)} className={`inline-flex h-8 items-center rounded-lg px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${value === l ? 'bg-muted font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
+        <button
+          key={l || 'all'}
+          type="button"
+          role="tab"
+          aria-selected={value === l}
+          data-lang={l}
+          onClick={() => onChange(l)}
+          className={`inline-flex h-8 items-center rounded-lg px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${value === l ? 'bg-muted font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+        >
           {l === '' ? d.allLanguages : l}
         </button>
       ))}
@@ -220,7 +328,10 @@ function DefaultSection({ data }: { data: AdminDaily }) {
   const [drafts, setDrafts] = useState<Drafts>(() => (initial?.kind === 'space' ? draftsFrom(initial.source) : {}))
   const [tab, setTab] = useState('')
   const [error, setError] = useState('')
-  const tabs = useMemo(() => tabsOf(data.languages, initial?.kind === 'space' ? initial.source : null, null), [data.languages, initial])
+  const tabs = useMemo(
+    () => tabsOf(data.languages, initial?.kind === 'space' ? initial.source : null, null),
+    [data.languages, initial],
+  )
   const draft = drafts[tab] ?? { ...emptyDraft(), mode: 'own' as const }
   const items = spaces.data?.pages.flatMap((p) => p.items) ?? []
 
@@ -234,7 +345,9 @@ function DefaultSection({ data }: { data: AdminDaily }) {
       value = { kind: 'api', apis: chosen }
     }
     if (kind === 'space') {
-      const source = settingsFrom(Object.fromEntries(Object.entries(drafts).map(([k, v]) => [k, { ...v, mode: 'own' as const }])))
+      const source = settingsFrom(
+        Object.fromEntries(Object.entries(drafts).map(([k, v]) => [k, { ...v, mode: 'own' as const }])),
+      )
       if (space === '' || !source) return setError(d.defaultSpaceIncomplete)
       value = { kind: 'space', space, source: source as DailySettings }
     }
@@ -254,23 +367,36 @@ function DefaultSection({ data }: { data: AdminDaily }) {
       {kind === 'api' && (
         <div className="grid grid-cols-1 gap-3 rounded-lg border p-4" data-slot="default-apis">
           <p className="text-xs break-words text-muted-foreground">{d.defaultApiHelp}</p>
-          {[...data.languages, ...Object.keys(apis).filter((l) => l !== '' && !data.languages.includes(l)), ''].map((l) => (
-            <div key={l || 'rest'} className="grid min-w-0 grid-cols-1 items-center gap-1.5 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)]">
-              <Label htmlFor={`daily-default-api-${l || 'rest'}`} className="break-words">
-                {l === '' ? d.defaultApiRest : d.defaultApiFor(l)}
-              </Label>
-              <NativeSelect id={`daily-default-api-${l || 'rest'}`} value={apis[l] ?? ''} onChange={(e) => setApis((all) => ({ ...all, [l]: e.target.value }))}>
-                <option value="">{d.defaultApiNone}</option>
-                {apis[l] !== undefined && apis[l] !== '' && !data.apis.some((a) => a.id === apis[l]) && <option value={apis[l]}>{apis[l]} ({d.defaultApiOff})</option>}
-                {data.apis.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                    {a.enabled ? '' : ` (${d.enabledOff})`}
-                  </option>
-                ))}
-              </NativeSelect>
-            </div>
-          ))}
+          {[...data.languages, ...Object.keys(apis).filter((l) => l !== '' && !data.languages.includes(l)), ''].map(
+            (l) => (
+              <div
+                key={l || 'rest'}
+                className="grid min-w-0 grid-cols-1 items-center gap-1.5 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)]"
+              >
+                <Label htmlFor={`daily-default-api-${l || 'rest'}`} className="break-words">
+                  {l === '' ? d.defaultApiRest : d.defaultApiFor(l)}
+                </Label>
+                <NativeSelect
+                  id={`daily-default-api-${l || 'rest'}`}
+                  value={apis[l] ?? ''}
+                  onChange={(e) => setApis((all) => ({ ...all, [l]: e.target.value }))}
+                >
+                  <option value="">{d.defaultApiNone}</option>
+                  {apis[l] !== undefined && apis[l] !== '' && !data.apis.some((a) => a.id === apis[l]) && (
+                    <option value={apis[l]}>
+                      {apis[l]} ({d.defaultApiOff})
+                    </option>
+                  )}
+                  {data.apis.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                      {a.enabled ? '' : ` (${d.enabledOff})`}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </div>
+            ),
+          )}
         </div>
       )}
       {kind === 'space' && (
@@ -281,7 +407,12 @@ function DefaultSection({ data }: { data: AdminDaily }) {
               {d.spaceLabel}
               <RequiredMark />
             </Label>
-            <NativeSelect id="daily-default-space" aria-required="true" value={space} onChange={(e) => setSpace(e.target.value)}>
+            <NativeSelect
+              id="daily-default-space"
+              aria-required="true"
+              value={space}
+              onChange={(e) => setSpace(e.target.value)}
+            >
               <option value="">{d.spaceChoose}</option>
               {space !== '' && !items.some((s) => s.id === space) && <option value={space}>{space}</option>}
               {items.map((s) => (
@@ -293,16 +424,26 @@ function DefaultSection({ data }: { data: AdminDaily }) {
           </div>
           <LangTabs langs={tabs} value={tab} onChange={setTab} label={d.languagesTitle} />
           <p className="text-xs break-words text-muted-foreground">{d.sourceHelp}</p>
-          <SourceFields draft={draft} onChange={(next) => setDrafts((all) => ({ ...all, [tab]: { ...(all[tab] ?? emptyDraft()), ...next, mode: 'own' } }))} />
+          <SourceFields
+            draft={draft}
+            onChange={(next) =>
+              setDrafts((all) => ({ ...all, [tab]: { ...(all[tab] ?? emptyDraft()), ...next, mode: 'own' } }))
+            }
+          />
           {drafts[tab] && (
             <div>
-              <Button type="button" variant="ghost" size="sm" onClick={() =>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() =>
                   setDrafts((all) => {
                     const next = { ...all }
                     delete next[tab]
                     return next
                   })
-                }>
+                }
+              >
                 {d.sourceClear}
               </Button>
             </div>
@@ -323,7 +464,14 @@ function DefaultSection({ data }: { data: AdminDaily }) {
 function LinesSection({ data }: { data: AdminDaily }) {
   const save = useSaveDailyLines()
   const del = useDeleteDailyLines()
-  const tabs = useMemo(() => ['', ...data.languages, ...Object.keys(data.lines.byLang).filter((l) => l !== '' && !data.languages.includes(l))], [data])
+  const tabs = useMemo(
+    () => [
+      '',
+      ...data.languages,
+      ...Object.keys(data.lines.byLang).filter((l) => l !== '' && !data.languages.includes(l)),
+    ],
+    [data],
+  )
   const [tab, setTab] = useState('')
   const [text, setText] = useState('')
   const [format, setFormat] = useState<LinesFormat>('lines')
@@ -331,16 +479,36 @@ function LinesSection({ data }: { data: AdminDaily }) {
   const count = data.lines.byLang[tab] ?? 0
   const send = () => {
     setError('')
-    save.mutate({ lang: tab, text, format }, { onSuccess: () => { setText(''); toast.success(d.linesSaved) }, onError: (e) => setError(message(e)) })
+    save.mutate(
+      { lang: tab, text, format },
+      {
+        onSuccess: () => {
+          setText('')
+          toast.success(d.linesSaved)
+        },
+        onError: (e) => setError(message(e)),
+      },
+    )
   }
   return (
     <SettingsSection title={d.linesTitle} description={d.linesHelp}>
       <p className="text-xs text-muted-foreground">{d.linesTotal(data.lines.total, data.lines.max)}</p>
       <LangTabs langs={tabs} value={tab} onChange={setTab} label={d.linesTitle} />
       <p className="text-sm">{d.linesOfLang(count)}</p>
-      <Textarea value={text} onChange={(e) => setText(e.target.value)} aria-label={d.linesText} placeholder={d.linesPlaceholder} className="min-h-28" />
+      <Textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        aria-label={d.linesText}
+        placeholder={d.linesPlaceholder}
+        className="min-h-28"
+      />
       <div className="flex flex-wrap items-center gap-2">
-        <NativeSelect value={format} onChange={(e) => setFormat(e.target.value as LinesFormat)} aria-label={d.linesFormat} className="w-44">
+        <NativeSelect
+          value={format}
+          onChange={(e) => setFormat(e.target.value as LinesFormat)}
+          aria-label={d.linesFormat}
+          className="w-44"
+        >
           <option value="lines">{d.formatLines}</option>
           <option value="markdown">{d.formatMarkdown}</option>
         </NativeSelect>
@@ -363,7 +531,13 @@ function LinesSection({ data }: { data: AdminDaily }) {
           {save.isPending && <Spinner />}
           {d.linesSave}
         </Button>
-        <Button variant="outline" disabled={del.isPending || count === 0} onClick={() => del.mutate(tab, { onSuccess: () => toast.success(d.linesDeleted), onError: (e) => setError(message(e)) })}>
+        <Button
+          variant="outline"
+          disabled={del.isPending || count === 0}
+          onClick={() =>
+            del.mutate(tab, { onSuccess: () => toast.success(d.linesDeleted), onError: (e) => setError(message(e)) })
+          }
+        >
           <Trash2 />
           {d.linesDelete}
         </Button>
@@ -375,9 +549,28 @@ function LinesSection({ data }: { data: AdminDaily }) {
 
 type HeaderRow = { name: string; set: boolean; value: string; changing: boolean }
 type MapRow = { tag: string; code: string }
-type Form = Omit<DailyApi, 'headers' | 'note' | 'langMap' | 'builtin' | 'languages'> & { headers: HeaderRow[]; langMap: MapRow[] }
+type Form = Omit<DailyApi, 'headers' | 'note' | 'langMap' | 'builtin' | 'languages'> & {
+  headers: HeaderRow[]
+  langMap: MapRow[]
+}
 
-const blankForm = (): Form => ({ id: '', name: '', lang: '', url: 'https://', headers: [], langMap: [], text: '', source: '', author: '', link: '', refresh: 'daily', refreshMinutes: 60, skipNew: true, rps: 1, enabled: true })
+const blankForm = (): Form => ({
+  id: '',
+  name: '',
+  lang: '',
+  url: 'https://',
+  headers: [],
+  langMap: [],
+  text: '',
+  source: '',
+  author: '',
+  link: '',
+  refresh: 'daily',
+  refreshMinutes: 60,
+  skipNew: true,
+  rps: 1,
+  enabled: true,
+})
 const formOf = (a: DailyApi): Form => ({
   id: a.id,
   name: a.name,
@@ -401,8 +594,18 @@ const formOf = (a: DailyApi): Form => ({
 const payloadOf = (f: Form, saved: string): Omit<DailyApi, 'note'> => ({
   ...f,
   refreshMinutes: f.refresh === 'minutes' ? f.refreshMinutes : 0,
-  headers: f.headers.filter((h) => h.name.trim() !== '').map((h) => (h.set && f.url === saved && (!h.changing || h.value === '') ? { name: h.name.trim() } : { name: h.name.trim(), value: h.value })),
-  langMap: Object.fromEntries(f.langMap.filter((r) => r.tag.trim() !== '' && r.code.trim() !== '').map((r) => [canonicalTag(r.tag) ?? r.tag.trim(), r.code.trim()])),
+  headers: f.headers
+    .filter((h) => h.name.trim() !== '')
+    .map((h) =>
+      h.set && f.url === saved && (!h.changing || h.value === '')
+        ? { name: h.name.trim() }
+        : { name: h.name.trim(), value: h.value },
+    ),
+  langMap: Object.fromEntries(
+    f.langMap
+      .filter((r) => r.tag.trim() !== '' && r.code.trim() !== '')
+      .map((r) => [canonicalTag(r.tag) ?? r.tag.trim(), r.code.trim()]),
+  ),
 })
 
 // The built-in interfaces: services the server knows how to ask, switched on and off. Nothing is asked of one until it
@@ -414,16 +617,32 @@ function BuiltinSection({ data }: { data: AdminDaily }) {
     <SettingsSection title={d.builtinTitle} description={d.builtinHelp}>
       <ul className="grid grid-cols-1 gap-2" data-slot="builtin">
         {data.providers.map((p) => (
-          <li key={p.id} data-provider={p.id} className="flex min-w-0 items-start justify-between gap-3 rounded-lg border p-3">
+          <li
+            key={p.id}
+            data-provider={p.id}
+            className="flex min-w-0 items-start justify-between gap-3 rounded-lg border p-3"
+          >
             <div className="grid min-w-0 gap-0.5">
               <span className="text-sm font-medium break-words">{p.name}</span>
-              <span className="text-xs break-words text-muted-foreground">{d.builtinLanguages(p.languages.join(', '))}</span>
+              <span className="text-xs break-words text-muted-foreground">
+                {d.builtinLanguages(p.languages.join(', '))}
+              </span>
               <span className="text-xs break-words text-muted-foreground">{p.note}</span>
-              <a href={p.site} target="_blank" rel="noreferrer noopener" className="text-xs break-all text-muted-foreground underline">
+              <a
+                href={p.site}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="text-xs break-all text-muted-foreground underline"
+              >
                 {d.builtinSite}: {p.site}
               </a>
             </div>
-            <Switch checked={p.enabled} disabled={save.isPending} aria-label={d.builtinOn(p.name)} onCheckedChange={(on) => save.mutate({ id: p.id, enabled: on }, { onError: (e) => setError(message(e)) })} />
+            <Switch
+              checked={p.enabled}
+              disabled={save.isPending}
+              aria-label={d.builtinOn(p.name)}
+              onCheckedChange={(on) => save.mutate({ id: p.id, enabled: on }, { onError: (e) => setError(message(e)) })}
+            />
           </li>
         ))}
       </ul>
@@ -443,16 +662,30 @@ function ApisSection({ data }: { data: AdminDaily }) {
       <ul className="grid grid-cols-1 gap-2">
         {custom.map((a) => (
           <li key={a.id} data-api={a.id} className="rounded-lg border">
-            <button type="button" aria-expanded={open?.id === a.id} onClick={() => setOpen(open?.id === a.id ? null : { id: a.id, form: formOf(a) })} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50">
+            <button
+              type="button"
+              aria-expanded={open?.id === a.id}
+              onClick={() => setOpen(open?.id === a.id ? null : { id: a.id, form: formOf(a) })}
+              className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50"
+            >
               <span className="min-w-0">
                 <span className="block truncate text-sm font-medium">{a.name}</span>
-                <span className="block truncate font-mono text-xs text-muted-foreground">{a.id} · {a.lang || d.allLanguages}</span>
+                <span className="block truncate font-mono text-xs text-muted-foreground">
+                  {a.id} · {a.lang || d.allLanguages}
+                </span>
               </span>
               <span className="shrink-0 text-xs text-muted-foreground">{a.enabled ? d.enabledOn : d.enabledOff}</span>
             </button>
             {open?.id === a.id && (
               <div className="border-t p-3">
-                <ApiEditor key={JSON.stringify(a)} initial={open.form} existing languages={data.languages} known={data.knownLanguages} onClose={() => setOpen(null)} />
+                <ApiEditor
+                  key={JSON.stringify(a)}
+                  initial={open.form}
+                  existing
+                  languages={data.languages}
+                  known={data.knownLanguages}
+                  onClose={() => setOpen(null)}
+                />
               </div>
             )}
           </li>
@@ -460,7 +693,13 @@ function ApisSection({ data }: { data: AdminDaily }) {
       </ul>
       {open?.id === 'new' && (
         <div className="rounded-lg border p-3">
-          <ApiEditor initial={open.form} existing={false} languages={data.languages} known={data.knownLanguages} onClose={() => setOpen(null)} />
+          <ApiEditor
+            initial={open.form}
+            existing={false}
+            languages={data.languages}
+            known={data.knownLanguages}
+            onClose={() => setOpen(null)}
+          />
         </div>
       )}
       {open?.id !== 'new' && (
@@ -477,7 +716,19 @@ function ApisSection({ data }: { data: AdminDaily }) {
   )
 }
 
-function ApiEditor({ initial, existing, languages, known, onClose }: { initial: Form; existing: boolean; languages: string[]; known: readonly KnownLanguage[]; onClose: () => void }) {
+function ApiEditor({
+  initial,
+  existing,
+  languages,
+  known,
+  onClose,
+}: {
+  initial: Form
+  existing: boolean
+  languages: string[]
+  known: readonly KnownLanguage[]
+  onClose: () => void
+}) {
   const [f, setF] = useState<Form>(initial)
   const [error, setError] = useState('')
   const [confirming, setConfirming] = useState(false)
@@ -489,17 +740,33 @@ function ApiEditor({ initial, existing, languages, known, onClose }: { initial: 
   // The saved values go with the saved address: with another one they are typed again.
   const urlChanged = f.url !== initial.url
   const set = (patch: Partial<Form>) => setF((x) => ({ ...x, ...patch }))
-  const setHeader = (i: number, patch: Partial<HeaderRow>) => setF((x) => ({ ...x, headers: x.headers.map((h, j) => (j === i ? { ...h, ...patch } : h)) }))
+  const setHeader = (i: number, patch: Partial<HeaderRow>) =>
+    setF((x) => ({ ...x, headers: x.headers.map((h, j) => (j === i ? { ...h, ...patch } : h)) }))
   const langs = ['', ...languages, ...(f.lang !== '' && !languages.includes(f.lang) ? [f.lang] : [])]
-  const setMapRow = (i: number, patch: Partial<MapRow>) => setF((x) => ({ ...x, langMap: x.langMap.map((r, j) => (j === i ? { ...r, ...patch } : r)) }))
+  const setMapRow = (i: number, patch: Partial<MapRow>) =>
+    setF((x) => ({ ...x, langMap: x.langMap.map((r, j) => (j === i ? { ...r, ...patch } : r)) }))
   // `required` marks the label with a star and the input aria-required; the others say (optional).
-  const field = (key: 'id' | 'name' | 'url' | 'text' | 'source' | 'author' | 'link', label: string, required: boolean, help?: string, extra?: Partial<React.ComponentProps<'input'>>) => (
+  const field = (
+    key: 'id' | 'name' | 'url' | 'text' | 'source' | 'author' | 'link',
+    label: string,
+    required: boolean,
+    help?: string,
+    extra?: Partial<React.ComponentProps<'input'>>,
+  ) => (
     <div className="grid min-w-0 grid-cols-1 gap-1.5">
       <Label htmlFor={`api-${key}`}>
         {label}
         {required ? <RequiredMark /> : <OptionalMark />}
       </Label>
-      <Input id={`api-${key}`} value={f[key]} onChange={(e) => set({ [key]: e.target.value })} autoComplete="off" aria-required={required ? 'true' : undefined} className="w-full min-w-0" {...extra} />
+      <Input
+        id={`api-${key}`}
+        value={f[key]}
+        onChange={(e) => set({ [key]: e.target.value })}
+        autoComplete="off"
+        aria-required={required ? 'true' : undefined}
+        className="w-full min-w-0"
+        {...extra}
+      />
       {help && <p className="text-xs break-words text-muted-foreground">{help}</p>}
     </div>
   )
@@ -513,7 +780,13 @@ function ApiEditor({ initial, existing, languages, known, onClose }: { initial: 
         setError('')
         const missing = urlChanged ? f.headers.find((h) => h.set && h.name.trim() !== '' && h.value === '') : undefined
         if (missing) return setError(d.headerNeedsValue(missing.name))
-        save.mutate(payloadOf(f, initial.url), { onSuccess: () => { toast.success(d.saved); onClose() }, onError: (err) => setError(message(err)) })
+        save.mutate(payloadOf(f, initial.url), {
+          onSuccess: () => {
+            toast.success(d.saved)
+            onClose()
+          },
+          onError: (err) => setError(message(err)),
+        })
       }}
     >
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -545,16 +818,42 @@ function ApiEditor({ initial, existing, languages, known, onClose }: { initial: 
         <p className="text-xs break-words text-muted-foreground">{d.fieldLangMapHelp}</p>
         {f.langMap.map((r, i) => (
           <div key={i} className="flex flex-wrap items-center gap-2" data-slot="api-langmap-row">
-            <Input aria-label={d.langMapTag} placeholder="zh-Hans" value={r.tag} onChange={(e) => setMapRow(i, { tag: e.target.value })} className="w-full min-w-0 sm:w-40" autoComplete="off" />
+            <Input
+              aria-label={d.langMapTag}
+              placeholder="zh-Hans"
+              value={r.tag}
+              onChange={(e) => setMapRow(i, { tag: e.target.value })}
+              className="w-full min-w-0 sm:w-40"
+              autoComplete="off"
+            />
             <span aria-hidden="true">→</span>
-            <Input aria-label={d.langMapCode} placeholder="zh" value={r.code} onChange={(e) => setMapRow(i, { code: e.target.value })} className="w-full min-w-0 sm:w-40" autoComplete="off" />
-            <Button type="button" variant="ghost" size="icon-sm" aria-label={d.langMapRemove} title={d.langMapRemove} onClick={() => setF((x) => ({ ...x, langMap: x.langMap.filter((_, j) => j !== i) }))}>
+            <Input
+              aria-label={d.langMapCode}
+              placeholder="zh"
+              value={r.code}
+              onChange={(e) => setMapRow(i, { code: e.target.value })}
+              className="w-full min-w-0 sm:w-40"
+              autoComplete="off"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={d.langMapRemove}
+              title={d.langMapRemove}
+              onClick={() => setF((x) => ({ ...x, langMap: x.langMap.filter((_, j) => j !== i) }))}
+            >
               <Trash2 />
             </Button>
           </div>
         ))}
         <div>
-          <Button type="button" variant="outline" size="sm" onClick={() => setF((x) => ({ ...x, langMap: [...x.langMap, { tag: '', code: '' }] }))}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setF((x) => ({ ...x, langMap: [...x.langMap, { tag: '', code: '' }] }))}
+          >
             <Plus />
             {d.langMapAdd}
           </Button>
@@ -566,10 +865,22 @@ function ApiEditor({ initial, existing, languages, known, onClose }: { initial: 
           {d.headers} <OptionalMark />
         </legend>
         <p className="text-xs break-words text-muted-foreground">{d.headersHelp}</p>
-        {urlChanged && f.headers.some((h) => h.set) && <p className="text-xs break-words text-muted-foreground" data-slot="header-again">{d.headerAgain}</p>}
+        {urlChanged && f.headers.some((h) => h.set) && (
+          <p className="text-xs break-words text-muted-foreground" data-slot="header-again">
+            {d.headerAgain}
+          </p>
+        )}
         {f.headers.map((h, i) => (
           <div key={i} className="flex flex-wrap items-center gap-2" data-slot="api-header">
-            <Input aria-label={d.headerName} placeholder="X-Api-Key" value={h.name} readOnly={h.set} onChange={(e) => setHeader(i, { name: e.target.value })} className="w-full min-w-0 sm:w-44" autoComplete="off" />
+            <Input
+              aria-label={d.headerName}
+              placeholder="X-Api-Key"
+              value={h.name}
+              readOnly={h.set}
+              onChange={(e) => setHeader(i, { name: e.target.value })}
+              className="w-full min-w-0 sm:w-44"
+              autoComplete="off"
+            />
             {h.set && !h.changing && !urlChanged ? (
               <>
                 <span className="text-sm text-muted-foreground">{d.headerSet}</span>
@@ -578,15 +889,37 @@ function ApiEditor({ initial, existing, languages, known, onClose }: { initial: 
                 </Button>
               </>
             ) : (
-              <Input aria-label={d.headerValue} type="password" placeholder={h.set && !urlChanged ? d.headerKeep : d.headerValue} value={h.value} onChange={(e) => setHeader(i, { value: e.target.value })} className="w-full min-w-0 sm:w-60" autoComplete="off" />
+              <Input
+                aria-label={d.headerValue}
+                type="password"
+                placeholder={h.set && !urlChanged ? d.headerKeep : d.headerValue}
+                value={h.value}
+                onChange={(e) => setHeader(i, { value: e.target.value })}
+                className="w-full min-w-0 sm:w-60"
+                autoComplete="off"
+              />
             )}
-            <Button type="button" variant="ghost" size="icon-sm" aria-label={d.headerRemove} title={d.headerRemove} onClick={() => setF((x) => ({ ...x, headers: x.headers.filter((_, j) => j !== i) }))}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={d.headerRemove}
+              title={d.headerRemove}
+              onClick={() => setF((x) => ({ ...x, headers: x.headers.filter((_, j) => j !== i) }))}
+            >
               <Trash2 />
             </Button>
           </div>
         ))}
         <div>
-          <Button type="button" variant="outline" size="sm" onClick={() => setF((x) => ({ ...x, headers: [...x.headers, { name: '', set: false, value: '', changing: false }] }))}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              setF((x) => ({ ...x, headers: [...x.headers, { name: '', set: false, value: '', changing: false }] }))
+            }
+          >
             <Plus />
             {d.headerAdd}
           </Button>
@@ -603,7 +936,11 @@ function ApiEditor({ initial, existing, languages, known, onClose }: { initial: 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="grid min-w-0 gap-1.5">
           <Label htmlFor="api-refresh">{d.fieldRefresh}</Label>
-          <NativeSelect id="api-refresh" value={f.refresh} onChange={(e) => set({ refresh: e.target.value as Form['refresh'] })}>
+          <NativeSelect
+            id="api-refresh"
+            value={f.refresh}
+            onChange={(e) => set({ refresh: e.target.value as Form['refresh'] })}
+          >
             <option value="daily">{d.refreshDaily}</option>
             <option value="hourly">{d.refreshHourly}</option>
             <option value="minutes">{d.refreshMinutes}</option>
@@ -612,12 +949,27 @@ function ApiEditor({ initial, existing, languages, known, onClose }: { initial: 
         {f.refresh === 'minutes' && (
           <div className="grid gap-1.5">
             <Label htmlFor="api-minutes">{d.fieldMinutes}</Label>
-            <Input id="api-minutes" type="number" min={1} max={1440} value={f.refreshMinutes} onChange={(e) => set({ refreshMinutes: Number(e.target.value) })} />
+            <Input
+              id="api-minutes"
+              type="number"
+              min={1}
+              max={1440}
+              value={f.refreshMinutes}
+              onChange={(e) => set({ refreshMinutes: Number(e.target.value) })}
+            />
           </div>
         )}
         <div className="grid gap-1.5">
           <Label htmlFor="api-rps">{d.fieldRps}</Label>
-          <Input id="api-rps" type="number" min={0.01} max={100} step="any" value={f.rps} onChange={(e) => set({ rps: Number(e.target.value) })} />
+          <Input
+            id="api-rps"
+            type="number"
+            min={0.01}
+            max={100}
+            step="any"
+            value={f.rps}
+            onChange={(e) => set({ rps: Number(e.target.value) })}
+          />
           <p className="text-xs break-words text-muted-foreground">{d.fieldRpsHelp}</p>
         </div>
       </div>
@@ -635,12 +987,19 @@ function ApiEditor({ initial, existing, languages, known, onClose }: { initial: 
 
       <div className="grid min-w-0 grid-cols-1 gap-2 rounded-lg border bg-muted/30 p-3" data-slot="api-try">
         <div className="flex flex-wrap items-center gap-2">
-          <NativeSelect aria-label={d.tryLang} value={tryLang} onChange={(e) => setTryLang(e.target.value)} className="w-32">
-            {langs.filter((l) => l !== '').map((l) => (
-              <option key={l} value={l}>
-                {l}
-              </option>
-            ))}
+          <NativeSelect
+            aria-label={d.tryLang}
+            value={tryLang}
+            onChange={(e) => setTryLang(e.target.value)}
+            className="w-32"
+          >
+            {langs
+              .filter((l) => l !== '')
+              .map((l) => (
+                <option key={l} value={l}>
+                  {l}
+                </option>
+              ))}
           </NativeSelect>
           <Button
             type="button"
@@ -672,11 +1031,29 @@ function ApiEditor({ initial, existing, languages, known, onClose }: { initial: 
         </Button>
         {existing &&
           (confirming ? (
-            <Button type="button" variant="destructive" disabled={del.isPending} onClick={() => del.mutate(f.id, { onSuccess: () => { toast.success(d.deleted); onClose() }, onError: (e) => setError(message(e)) })}>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={del.isPending}
+              onClick={() =>
+                del.mutate(f.id, {
+                  onSuccess: () => {
+                    toast.success(d.deleted)
+                    onClose()
+                  },
+                  onError: (e) => setError(message(e)),
+                })
+              }
+            >
               {d.deleteConfirm}
             </Button>
           ) : (
-            <Button type="button" variant="ghost" className="ml-auto text-destructive" onClick={() => setConfirming(true)}>
+            <Button
+              type="button"
+              variant="ghost"
+              className="ml-auto text-destructive"
+              onClick={() => setConfirming(true)}
+            >
               <Trash2 />
               {d.delete}
             </Button>
@@ -701,16 +1078,24 @@ export function TryResult({ result }: { result: DailyTryResult }) {
   ]
   const errors = (result.pathErrors ?? []).filter((e) => !optionalGap(e))
   // The refusal of a trial with only such gaps (an older server) is no refusal.
-  const gapOnly = !result.ok && result.error === 'path_error' && result.field !== 'text' && errors.length === 0 && !!q?.text
+  const gapOnly =
+    !result.ok && result.error === 'path_error' && result.field !== 'text' && errors.length === 0 && !!q?.text
   const ok = result.ok || gapOnly
   return (
     <div className="grid min-w-0 grid-cols-1 gap-2 text-sm" data-slot="try-result" role="status">
-      <p className={`break-words ${ok ? 'text-green-700 dark:text-green-400' : 'text-destructive'}`}>{ok ? d.tryOk(result.status ?? 200) : (localised(result.error ? { ...result, code: result.error } : undefined) ?? result.message ?? d.tryFailed)}</p>
+      <p className={`break-words ${ok ? 'text-green-700 dark:text-green-400' : 'text-destructive'}`}>
+        {ok
+          ? d.tryOk(result.status ?? 200)
+          : (localised(result.error ? { ...result, code: result.error } : undefined) ?? result.message ?? d.tryFailed)}
+      </p>
       {result.url && <p className="font-mono text-xs break-all text-muted-foreground">{result.url}</p>}
       {result.raw !== undefined && (
         <div className="min-w-0">
           <p className="text-xs font-medium">{d.tryRaw}</p>
-          <pre className="max-h-48 max-w-full overflow-auto rounded-md border bg-background p-2 text-xs whitespace-pre">{result.raw}{result.rawTruncated ? ' …' : ''}</pre>
+          <pre className="max-h-48 max-w-full overflow-auto rounded-md border bg-background p-2 text-xs whitespace-pre">
+            {result.raw}
+            {result.rawTruncated ? ' …' : ''}
+          </pre>
         </div>
       )}
       {(q || errors.length > 0) && (

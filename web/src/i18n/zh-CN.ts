@@ -208,8 +208,10 @@ export const zhCN = {
     moveFailed: '移动失败',
     deleted: '页面已删除',
     deleteFailed: '删除失败',
-    leaveConflict: '这个页面有尚未解决的冲突。你的文字不会丢：它们保留为草稿，下次打开这个页面时再选择保留哪一份。现在离开吗？',
-    leaveUnsaved: '最新的修改还没有送到服务器。它们保存在这台设备的浏览器里，下次在这里打开这个页面时会接着用。现在离开吗？',
+    leaveConflict:
+      '这个页面有尚未解决的冲突。你的文字不会丢：它们保留为草稿，下次打开这个页面时再选择保留哪一份。现在离开吗？',
+    leaveUnsaved:
+      '最新的修改还没有送到服务器。它们保存在这台设备的浏览器里，下次在这里打开这个页面时会接着用。现在离开吗？',
     leftInConflict: '这个页面还有没解决的冲突。你的文字保留为草稿，下次打开这个页面时再选择保留哪一份。',
     spaceMissing: '没有这个空间，或者你不是它的成员。',
   },
@@ -305,7 +307,8 @@ export const zhCN = {
     keepOriginal: '上传原图，不压缩',
     attach: '添加附件',
     uploading: (name: string) => `正在上传 ${name}…`,
-    tooLarge: (name: string, size: string, limit: string) => `「${name}」有 ${size}，超过了 ${limit} 的上传上限，没有上传。`,
+    tooLarge: (name: string, size: string, limit: string) =>
+      `「${name}」有 ${size}，超过了 ${limit} 的上传上限，没有上传。`,
     failed: (name: string, why: string) => `「${name}」上传失败${why ? `：${why}` : ''}`,
     noPage: '这个页面还不能上传文件。',
     altPlaceholder: '图片说明',
@@ -332,7 +335,8 @@ export const zhCN = {
   },
   conflict: {
     title: '这个页面在别处被修改了',
-    description: '你的草稿是在页面的旧版本上写的，之后页面文件又被改动过（可能是另一个窗口，另一台设备，或者直接改了文件）。你写的内容还在，不会丢。请选择要保留哪一份。',
+    description:
+      '你的草稿是在页面的旧版本上写的，之后页面文件又被改动过（可能是另一个窗口，另一台设备，或者直接改了文件）。你写的内容还在，不会丢。请选择要保留哪一份。',
     mine: '我的草稿',
     theirs: '页面文件的版本',
     keepMine: '保留我的',
@@ -340,13 +344,15 @@ export const zhCN = {
     useTheirs: '采用文件的版本',
     useTheirsHint: '删除我的草稿，载入文件的版本',
     olderTitle: '这里有一份较早的文字副本',
-    olderDescription: (when: string) => `你之前写的这份文字（${when}）曾经保存为服务器上的草稿，但那份草稿已经不在了，页面文件也有了新的版本。这份副本只留在这个浏览器里，没有丢。默认建议采用页面文件的版本；如果这份副本里有你还想要的内容，请选择保留它。`,
+    olderDescription: (when: string) =>
+      `你之前写的这份文字（${when}）曾经保存为服务器上的草稿，但那份草稿已经不在了，页面文件也有了新的版本。这份副本只留在这个浏览器里，没有丢。默认建议采用页面文件的版本；如果这份副本里有你还想要的内容，请选择保留它。`,
     olderMine: (when: string) => `这个浏览器里的较早副本（${when}）`,
     olderTheirs: '页面文件的当前版本',
     olderKeepMine: '保留较早的副本',
     olderKeepMineHint: '把这份较早的副本存到文件最新版本之上',
     draftTitle: '服务器上还有另一份草稿',
-    draftDescription: '这个页面在服务器上已经有一份草稿（可能来自另一个窗口或另一台设备），和你这里的文字不一样。两份都还在，请选择保留哪一份。',
+    draftDescription:
+      '这个页面在服务器上已经有一份草稿（可能来自另一个窗口或另一台设备），和你这里的文字不一样。两份都还在，请选择保留哪一份。',
     draftMine: '这里的文字',
     draftTheirs: '服务器上的草稿',
     draftKeepMine: '保留这里的',
@@ -367,7 +373,8 @@ export const zhCN = {
     signedOut: '登录已失效，请重新登录',
     badResponse: '服务器返回了无法识别的内容',
     requestFailed: (status: number) => `请求失败（${status}）`,
-    forbidden: (origin: string) => `服务器拒绝了这个页面的地址（${origin}）：它不在服务器允许的来源里。请让服务器允许 ${origin}（启动时加 --allow-origin ${origin}），然后刷新本页。`,
+    forbidden: (origin: string) =>
+      `服务器拒绝了这个页面的地址（${origin}）：它不在服务器允许的来源里。请让服务器允许 ${origin}（启动时加 --allow-origin ${origin}），然后刷新本页。`,
   },
   // Why a folder path is refused (src/lib/folderRules.ts).
   folderRules: {
@@ -487,7 +494,22 @@ export const zhCN = {
     close: '关闭设置',
     nav: '设置导航',
     groups: { account: '账号', space: '空间' },
-    sections: { profile: '个人资料', preferences: '偏好设置', security: '安全', tokens: 'API 令牌', connections: '已连接的账号', usage: '用量', general: '常规', types: '类型', templates: '模板', home: '首页', members: '成员', sync: '同步', offline: '离线', import: '导入' },
+    sections: {
+      profile: '个人资料',
+      preferences: '偏好设置',
+      security: '安全',
+      tokens: 'API 令牌',
+      connections: '已连接的账号',
+      usage: '用量',
+      general: '常规',
+      types: '类型',
+      templates: '模板',
+      home: '首页',
+      members: '成员',
+      sync: '同步',
+      offline: '离线',
+      import: '导入',
+    },
   },
   prefs: {
     appearance: '外观',
@@ -570,7 +592,18 @@ export const zhCN = {
     hex: '十六进制颜色',
     hexInvalid: '请输入六位十六进制数，如 #3b82f6',
     apply: '应用',
-    names: { gray: '灰色', red: '红色', orange: '橙色', amber: '琥珀色', green: '绿色', teal: '青色', blue: '蓝色', purple: '紫色', pink: '粉色', rose: '玫瑰色' },
+    names: {
+      gray: '灰色',
+      red: '红色',
+      orange: '橙色',
+      amber: '琥珀色',
+      green: '绿色',
+      teal: '青色',
+      blue: '蓝色',
+      purple: '紫色',
+      pink: '粉色',
+      rose: '玫瑰色',
+    },
   },
   userMenu: { label: '账号菜单', settings: '设置', admin: '管理后台', signOut: '退出登录' },
   roles: { admin: '管理员', member: '成员', owner: '所有者', editor: '可编辑', viewer: '只读' },
@@ -707,7 +740,11 @@ export const zhCN = {
     loadFailed: '无法读取成员列表',
     you: '（你）',
     role: '角色',
-    roleHelp: { owner: '所有权限：管理成员、改设置和同步、查看和编辑页面', editor: '查看和编辑页面', viewer: '只能查看' },
+    roleHelp: {
+      owner: '所有权限：管理成员、改设置和同步、查看和编辑页面',
+      editor: '查看和编辑页面',
+      viewer: '只能查看',
+    },
     changed: '角色已更改',
     remove: '移除',
     removeTitle: '移除这个成员？',
@@ -720,7 +757,8 @@ export const zhCN = {
     leaveConfirm: '退出',
     left: '你已退出这个空间',
     demoteTitle: '放弃所有者身份？',
-    demoteHelp: (space: string, role: string) => `你在「${space}」里将变成${role}，不能再管理它的成员和设置。只有其他所有者能把所有者身份还给你。`,
+    demoteHelp: (space: string, role: string) =>
+      `你在「${space}」里将变成${role}，不能再管理它的成员和设置。只有其他所有者能把所有者身份还给你。`,
     demoteConfirm: '更改我的角色',
     disabledLeaveHelp: '管理员已停用这个空间，暂时看不到它的成员。你仍然可以退出它。',
     cancel: '取消',
@@ -805,7 +843,8 @@ export const zhCN = {
       taskList: '待办列表',
       listItem: '列表项',
       blockquote: '引用',
-      heading: (level: number) => ['', '一级标题', '二级标题', '三级标题', '四级标题', '五级标题', '六级标题'][level] ?? '标题',
+      heading: (level: number) =>
+        ['', '一级标题', '二级标题', '三级标题', '四级标题', '五级标题', '六级标题'][level] ?? '标题',
       taskDone: '已完成的待办项',
       taskOpen: '未完成的待办项',
     },
@@ -831,7 +870,8 @@ export const zhCN = {
     restore: '恢复这个版本',
     restoreAt: (when: string) => `恢复到 ${when} 的版本`,
     restoreTitle: '恢复到这个版本？',
-    restoreDescription: (when: string, who: string) => `会把标题、副标题、来源、标签和正文换成 ${who} 在 ${when} 保存的内容，放进编辑器，当作你刚刚输入的修改。它会像平时的修改一样先存成草稿，保存后成为一个新版本。现有的所有版本都还在，什么也不会丢。`,
+    restoreDescription: (when: string, who: string) =>
+      `会把标题、副标题、来源、标签和正文换成 ${who} 在 ${when} 保存的内容，放进编辑器，当作你刚刚输入的修改。它会像平时的修改一样先存成草稿，保存后成为一个新版本。现有的所有版本都还在，什么也不会丢。`,
     restoreSame: '这个版本和现在编辑器里的内容一样，不需要恢复。',
     restoreConflict: '这个页面现在有没解决的冲突。请先回到编辑器，处理完冲突，再恢复历史版本。',
     restoreUnsaved: '编辑器里有还没保存成版本的修改。恢复会把它们换掉。',
@@ -861,12 +901,14 @@ export const zhCN = {
     spaceSettings: '空间设置',
     title: '远端仓库',
     pageTitle: (space: string) => `${space} · 空间设置`,
-    intro: '默认情况下，这个空间的 Git 仓库只在服务器上。也可以让它跟着一个远端仓库（比如 GitHub 上的）：远端分支的内容就是准的，服务器每分钟取一次，你的每个修改都先推送过去。',
+    intro:
+      '默认情况下，这个空间的 Git 仓库只在服务器上。也可以让它跟着一个远端仓库（比如 GitHub 上的）：远端分支的内容就是准的，服务器每分钟取一次，你的每个修改都先推送过去。',
     singleUser: '单人模式（--space）下没有远端仓库的设置。用 --data 启动账号模式就有了。',
     ownerOnly: '只有这个空间的所有者可以改远端仓库的设置。',
     loadFailed: '读取远端设置失败',
     url: '仓库地址',
-    urlHelp: '只接受 https://主机/路径，或 SSH 地址（git@主机:路径、ssh://主机/路径）。地址里不能带密码，管理员只允许部分主机。',
+    urlHelp:
+      '只接受 https://主机/路径，或 SSH 地址（git@主机:路径、ssh://主机/路径）。地址里不能带密码，管理员只允许部分主机。',
     urlPlaceholder: 'git@github.com:你的名字/notes.git',
     urlRequired: '请填仓库地址',
     branch: '分支',
@@ -890,7 +932,8 @@ export const zhCN = {
     copyFailed: '复制没有成功，请手动选中复制。',
     fingerprint: '指纹',
     addKeyTitle: '把这把公钥加到仓库',
-    addKeyHow: '在仓库的设置里找到「部署密钥」（Deploy keys），添加上面的公钥，并勾选「允许写入」（Allow write access）。没有写权限，修改就推送不过去。',
+    addKeyHow:
+      '在仓库的设置里找到「部署密钥」（Deploy keys），添加上面的公钥，并勾选「允许写入」（Allow write access）。没有写权限，修改就推送不过去。',
     keyNeeded: '先生成部署密钥，把公钥加到仓库，再连接。',
     username: '用户名',
     usernameHelp: '不填就是 x-access-token（GitHub 的令牌用这个）。',
@@ -906,7 +949,8 @@ export const zhCN = {
     connected: '已连接，这个空间现在跟着远端走',
     updated: '连接设置已更新',
     conflictTitle: '这个空间和远端仓库各有各的内容，没法连接',
-    conflictBody: '空间里已经有页面或文件夹，远端分支上也有自己的内容，两边的历史互不包含。PetalBook 不会把两份历史合并在一起，也没有改动任何东西。',
+    conflictBody:
+      '空间里已经有页面或文件夹，远端分支上也有自己的内容，两边的历史互不包含。PetalBook 不会把两份历史合并在一起，也没有改动任何东西。',
     conflictAdvice: '办法：新建一个空间，再把那个空间连到这个仓库；那个空间会直接拿到仓库里的内容。',
     unreachableTitle: '连不上远端，没有连接',
     unreachableAdvice: '什么也没有改。请检查地址、网络，以及令牌或部署密钥是否有权限，然后再试。',
@@ -927,23 +971,28 @@ export const zhCN = {
     syncFailed: '同步没有成功',
     disconnect: '断开连接',
     disconnectTitle: '断开远端仓库？',
-    disconnectDescription: '空间会变回只在这台服务器上，已有的页面和历史都保留。保存的令牌或密钥会被删除。远端仓库上的东西不会被动。',
+    disconnectDescription:
+      '空间会变回只在这台服务器上，已有的页面和历史都保留。保存的令牌或密钥会被删除。远端仓库上的东西不会被动。',
     disconnectConfirm: '断开',
     disconnectCancel: '取消',
     disconnected: '已断开，这个空间现在只在服务器上',
     disconnectFailed: '断开没有成功',
     offlineTitle: '远端现在连不上',
-    offlineBody: '你的修改先存成草稿，留在服务器上，不会丢。远端恢复后，服务器会把它们写进页面并推送过去。在那之前，保存版本、新建、移动、删除都会失败。',
+    offlineBody:
+      '你的修改先存成草稿，留在服务器上，不会丢。远端恢复后，服务器会把它们写进页面并推送过去。在那之前，保存版本、新建、移动、删除都会失败。',
     errorTitle: '需要处理',
     errorBody: '常见原因：令牌过期或没有权限、部署密钥被删掉了、主机密钥变了。处理好以后点「立即同步」。',
     rewrittenTitle: '远端的历史被改写了，这个空间已暂停',
-    rewrittenBody: '远端分支已经不包含服务器上次同步到的那个提交了（比如有人强制推送，或者分支被重建）。为了不覆盖任何东西，这个空间现在只能看，不能保存修改；草稿还在，照常存。',
+    rewrittenBody:
+      '远端分支已经不包含服务器上次同步到的那个提交了（比如有人强制推送，或者分支被重建）。为了不覆盖任何东西，这个空间现在只能看，不能保存修改；草稿还在，照常存。',
     rewrittenLastGood: '服务器上次同步到的提交',
     rewrittenRemote: '远端现在的提交',
-    rewrittenChoices: '你可以：在远端把历史改回去，再点「立即同步」；或者接受远端的新历史，空间就移到远端现在的提交上。',
+    rewrittenChoices:
+      '你可以：在远端把历史改回去，再点「立即同步」；或者接受远端的新历史，空间就移到远端现在的提交上。',
     accept: '接受远端的历史',
     acceptTitle: '接受远端的历史？',
-    acceptDescription: '空间会移到远端现在的提交上，之后的修改都建立在它上面。草稿都保留；对应的页面如果在远端变了，这些草稿会显示为过期，打开页面时由你选择保留哪一份。服务器上原来的、远端没有的提交，不会再出现在空间里。',
+    acceptDescription:
+      '空间会移到远端现在的提交上，之后的修改都建立在它上面。草稿都保留；对应的页面如果在远端变了，这些草稿会显示为过期，打开页面时由你选择保留哪一份。服务器上原来的、远端没有的提交，不会再出现在空间里。',
     acceptConfirm: '接受',
     acceptCancel: '取消',
     accepted: '已接受远端的历史，空间恢复正常',
@@ -951,10 +1000,12 @@ export const zhCN = {
     acceptStale: '远端又变了，已经不在这个提交上。已重新读取，请看清楚再决定。',
     unavailable: {
       title: '远端仓库连不上，或已暂停',
-      write: '远端仓库连不上，或者这个空间已暂停写入。这次操作没有执行，已有的内容都没有丢。可以稍后再试；如果一直这样，请空间的所有者到「空间设置」里看看同步状态。',
+      write:
+        '远端仓库连不上，或者这个空间已暂停写入。这次操作没有执行，已有的内容都没有丢。可以稍后再试；如果一直这样，请空间的所有者到「空间设置」里看看同步状态。',
       commit: '远端连不上，内容没有丢',
       commitDraft: '远端连不上，草稿已存在服务器',
-      commitDraftHint: '你的内容已经作为草稿存在服务器上，没有丢。远端恢复后，服务器会把它写进页面。在那之前「保存版本」不会成功。点一下可以再试。',
+      commitDraftHint:
+        '你的内容已经作为草稿存在服务器上，没有丢。远端恢复后，服务器会把它写进页面。在那之前「保存版本」不会成功。点一下可以再试。',
       commitLocal: '远端连不上，内容还在本机',
       commitLocalHint: '最新的内容还没送到服务器，先保存在这个浏览器里，没有丢。点一下可以再试。',
     },
@@ -970,10 +1021,12 @@ export const zhCN = {
     problemHelp: '改好之前，头部的改动不会保存，也不能切回所见即所得；正文照常保存。',
     cannotLeave: '头部有问题，先改好再切换',
     discardBroken: '放弃这些改动',
-    staleRaw: '这一页有一份没写完的原文（头部当时有问题，没有保存）。接着改会以那份原文为准，页面在那之后的改动会被它盖掉。',
+    staleRaw:
+      '这一页有一份没写完的原文（头部当时有问题，没有保存）。接着改会以那份原文为准，页面在那之后的改动会被它盖掉。',
     staleRawResume: '接着改',
     staleRawDrop: '丢弃',
-    changedUnderBroken: '这一页刚在别处被更新了。你这份没写完的原文还在这里（浏览器存不下它，没法放到一边）；把头部改好后会以它为准，盖掉那边的改动。',
+    changedUnderBroken:
+      '这一页刚在别处被更新了。你这份没写完的原文还在这里（浏览器存不下它，没法放到一边）；把头部改好后会以它为准，盖掉那边的改动。',
     leaveBroken: '头部还没改好的原文没有保存，浏览器也存不下它。现在离开，这些文字就没有了。确定离开吗？',
     cannotSetAside: '浏览器的存储空间满了，现在这份没写完的原文没法先放到一边。先把它改好或放弃，再接着改另一份。',
     problem: {
@@ -991,7 +1044,8 @@ export const zhCN = {
     settingsTitle: '导入',
     settingsHelp: '把已有的 Markdown 文件（单个文件，或一个 .zip）导入成页面。',
     settingsLink: '导入 Markdown…',
-    intro: '可以一次选几个 .md 或 .markdown 文件，也可以选一个 .zip（里面是 Markdown 文件和文件夹）。已有的页面不会被替换。',
+    intro:
+      '可以一次选几个 .md 或 .markdown 文件，也可以选一个 .zip（里面是 Markdown 文件和文件夹）。已有的页面不会被替换。',
     filesLabel: '要导入的文件',
     drop: '把文件拖到这里，或',
     choose: '选择文件',
@@ -1009,7 +1063,8 @@ export const zhCN = {
     notImportable: (names: string) => `这些文件不是 Markdown（.md、.markdown）或 .zip，已跳过：${names}`,
     zipAlone: '.zip 要单独导入，不能和别的文件一起选。',
     oneZip: '一次只能导入一个 .zip。',
-    tooLarge: (name: string, size: string, limit: string) => `「${name}」有 ${size}，超过了 ${limit} 的导入上限，没有发送。`,
+    tooLarge: (name: string, size: string, limit: string) =>
+      `「${name}」有 ${size}，超过了 ${limit} 的导入上限，没有发送。`,
     failed: '导入没有成功',
     leaveWhileRunning: '导入还没做完。现在离开，剩下的文件不会导入。确定离开吗？',
     failedAfter: (done: number, total: number) => `前 ${done} 个文件（共 ${total} 个）已经导入，其余的没有。`,

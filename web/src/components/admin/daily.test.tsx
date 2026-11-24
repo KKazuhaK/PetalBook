@@ -37,18 +37,39 @@ const open = async (scene?: (admin: ReturnType<typeof adminRequests>) => void) =
   })
   await settle(() => document.querySelector('[data-slot="admin-daily"]') !== null, 'the page')
 }
-const calls = () => m!.requests.filter((r) => r.method !== 'GET' && r.url.startsWith('/api/admin/daily')).map((r) => ({ method: r.method, url: r.url, body: r.body ? JSON.parse(r.body) : undefined }))
-const byText = (selector: string, text: string) => [...document.querySelectorAll<HTMLElement>(selector)].find((e) => e.textContent?.trim() === text) ?? null
+const calls = () =>
+  m!.requests
+    .filter((r) => r.method !== 'GET' && r.url.startsWith('/api/admin/daily'))
+    .map((r) => ({ method: r.method, url: r.url, body: r.body ? JSON.parse(r.body) : undefined }))
+const byText = (selector: string, text: string) =>
+  [...document.querySelectorAll<HTMLElement>(selector)].find((e) => e.textContent?.trim() === text) ?? null
 // The save button of the interface form when one is open (the sections above have their own).
-const formSave = () => document.querySelector<HTMLElement>('[data-slot="api-form"] button[type="submit"]') ?? byText('button', d.save)
+const formSave = () =>
+  document.querySelector<HTMLElement>('[data-slot="api-form"] button[type="submit"]') ?? byText('button', d.save)
 const api = (id: string) => document.querySelector<HTMLElement>(`[data-api="${id}"]`)
 const input = (id: string) => document.getElementById(id) as HTMLInputElement
-const GOOD = { id: 'quotes', name: '语录', lang: 'zh-Hans', url: 'https://example.org/q?l={lang}', text: 'hitokoto', source: 'from', author: 'from_who', link: '', refresh: 'daily', refreshMinutes: 0, skipNew: true, rps: 2, enabled: true }
+const GOOD = {
+  id: 'quotes',
+  name: '语录',
+  lang: 'zh-Hans',
+  url: 'https://example.org/q?l={lang}',
+  text: 'hitokoto',
+  source: 'from',
+  author: 'from_who',
+  link: '',
+  refresh: 'daily',
+  refreshMinutes: 0,
+  skipNew: true,
+  rps: 2,
+  enabled: true,
+}
 
-describe('the administrators\' daily text page', () => {
+describe("the administrators' daily text page", () => {
   it('is a section of the administration with its own address, for administrators only', async () => {
     await open()
-    expect(document.querySelector('nav[aria-label="' + ta.nav + '"] [aria-current="page"]')?.textContent).toBe(ta.sections.daily)
+    expect(document.querySelector('nav[aria-label="' + ta.nav + '"] [aria-current="page"]')?.textContent).toBe(
+      ta.sections.daily,
+    )
     await m!.unmount()
     // A member never gets it, nor fetches it.
     m = await mount(routes, { entries: ['/admin/daily'], server: { mode: 'accounts' } })
@@ -90,24 +111,46 @@ describe('the administrators\' daily text page', () => {
 
   it('the languages are tabs: pick one from the known ones, search them, type any valid tag, take one away', async () => {
     await open()
-    expect([...document.querySelectorAll('[data-slot="admin-daily"] ul[aria-label="' + d.languagesTitle + '"]:not([role="listbox"]) li')].map((l) => l.textContent?.trim())).toEqual([d.allLanguages, 'zh-Hans', 'en'])
+    expect(
+      [
+        ...document.querySelectorAll(
+          '[data-slot="admin-daily"] ul[aria-label="' + d.languagesTitle + '"]:not([role="listbox"]) li',
+        ),
+      ].map((l) => l.textContent?.trim()),
+    ).toEqual([d.allLanguages, 'zh-Hans', 'en'])
     // The known languages are offered by tag, native name and English name, searchable.
     const picker = () => document.querySelector<HTMLElement>('[data-slot="admin-daily"] [data-slot="language-picker"]')!
     expect(picker().querySelector('[data-tag="pt-BR"]')).not.toBeNull()
     expect(picker().querySelector('[data-tag="en"]')).toBeNull() // already a tab
     await type(input('daily-lang'), 'portug')
-    expect([...picker().querySelectorAll('[data-tag]')].map((b) => b.getAttribute('data-tag'))).toEqual(['pt-BR', 'pt-PT'])
+    expect([...picker().querySelectorAll('[data-tag]')].map((b) => b.getAttribute('data-tag'))).toEqual([
+      'pt-BR',
+      'pt-PT',
+    ])
     await type(input('daily-lang'), '繁體')
-    expect([...picker().querySelectorAll('[data-tag]')].map((b) => b.getAttribute('data-tag'))).toEqual(['zh-Hant', 'yue-Hant'])
+    expect([...picker().querySelectorAll('[data-tag]')].map((b) => b.getAttribute('data-tag'))).toEqual([
+      'zh-Hant',
+      'yue-Hant',
+    ])
     await type(input('daily-lang'), 'pt-br')
     await click(picker().querySelector('[data-tag="pt-BR"]'))
-    await settle(() => calls().some((c) => c.method === 'PUT' && c.url === '/api/admin/daily' && c.body.languages?.includes('pt-BR')), 'saved')
-    await settle(() => document.querySelector('button[aria-label="' + d.removeLanguage('pt-BR') + '"]') !== null, 'the new one')
+    await settle(
+      () =>
+        calls().some((c) => c.method === 'PUT' && c.url === '/api/admin/daily' && c.body.languages?.includes('pt-BR')),
+      'saved',
+    )
+    await settle(
+      () => document.querySelector('button[aria-label="' + d.removeLanguage('pt-BR') + '"]') !== null,
+      'the new one',
+    )
     // A valid tag that is not among the known ones may be typed, and is offered canonically.
     await type(input('daily-lang'), 'SV-fi')
     expect(picker().querySelector('[data-tag="sv-FI"]')!.textContent).toBe(d.languageTyped('sv-FI'))
     await click(picker().querySelector('[data-tag="sv-FI"]'))
-    await settle(() => document.querySelector('button[aria-label="' + d.removeLanguage('sv-FI') + '"]') !== null, 'the typed one')
+    await settle(
+      () => document.querySelector('button[aria-label="' + d.removeLanguage('sv-FI') + '"]') !== null,
+      'the typed one',
+    )
     // What is no tag is not offered.
     await type(input('daily-lang'), 'zz_q')
     expect(picker().querySelector('[data-slot="language-none"]')!.textContent).toBe(d.languageBad)
@@ -125,10 +168,17 @@ describe('the administrators\' daily text page', () => {
     await type(lines, 'Keep going\tSomeone\nAnother one')
     await click(byText('button', d.linesSave))
     await settle(() => calls().some((c) => c.url === '/api/admin/daily/lines'), 'saved')
-    expect(calls().find((c) => c.url === '/api/admin/daily/lines')!.body).toEqual({ lang: 'en', text: 'Keep going\tSomeone\nAnother one', format: 'lines' })
+    expect(calls().find((c) => c.url === '/api/admin/daily/lines')!.body).toEqual({
+      lang: 'en',
+      text: 'Keep going\tSomeone\nAnother one',
+      format: 'lines',
+    })
     await settle(() => document.body.textContent!.includes(d.linesOfLang(2)), 'two lines')
     await click(byText('button', d.linesDelete))
-    await settle(() => calls().some((c) => c.method === 'DELETE' && c.url === '/api/admin/daily/lines?lang=en'), 'deleted')
+    await settle(
+      () => calls().some((c) => c.method === 'DELETE' && c.url === '/api/admin/daily/lines?lang=en'),
+      'deleted',
+    )
   })
 
   it('the default can be the lines, or a space, with the warning that everybody sees it', async () => {
@@ -160,7 +210,9 @@ describe('the administrators\' daily text page', () => {
     await type(select('rest'), 'english')
     await click(formSave())
     await settle(() => calls().some((c) => c.body?.default?.kind === 'api'), 'saved')
-    expect(calls().find((c) => c.body?.default?.kind === 'api')!.body).toEqual({ default: { kind: 'api', apis: { 'zh-Hans': 'quotes', '': 'english' } } })
+    expect(calls().find((c) => c.body?.default?.kind === 'api')!.body).toEqual({
+      default: { kind: 'api', apis: { 'zh-Hans': 'quotes', '': 'english' } },
+    })
     await settle(() => document.getElementById('daily-default-api-zh-Hans') !== null, 'still there')
     expect(select('zh-Hans').value).toBe('quotes')
   })
@@ -191,7 +243,6 @@ describe('the administrators\' daily text page', () => {
   })
 
   describe('an interface', () => {
-
     it('makes any number of them, edits and deletes', async () => {
       await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', GOOD))
       await settle(() => api('quotes') !== null, 'the interface')
@@ -202,7 +253,14 @@ describe('the administrators\' daily text page', () => {
       await type(input('api-text'), '[0].q')
       await click(formSave())
       await settle(() => api('second') !== null, 'the second')
-      expect(calls().at(-1)!.body).toMatchObject({ id: 'second', name: '第二个', url: 'https://example.net/x', text: '[0].q', refresh: 'daily', enabled: true })
+      expect(calls().at(-1)!.body).toMatchObject({
+        id: 'second',
+        name: '第二个',
+        url: 'https://example.net/x',
+        text: '[0].q',
+        refresh: 'daily',
+        enabled: true,
+      })
       // There is no list of hosts to keep.
       expect(document.querySelector('textarea[aria-label]')?.getAttribute('aria-label')).not.toBe('hosts')
       // Edit one.
@@ -221,7 +279,12 @@ describe('the administrators\' daily text page', () => {
     })
 
     it('shows a header\'s value never: "saved · change", and an untouched one keeps its value', async () => {
-      await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', { ...GOOD, headers: [{ name: 'X-Api-Key', value: 'secret-value-123' }] }))
+      await open((admin) =>
+        admin('PUT', '/api/admin/daily/apis/quotes', {
+          ...GOOD,
+          headers: [{ name: 'X-Api-Key', value: 'secret-value-123' }],
+        }),
+      )
       await settle(() => api('quotes') !== null, 'the interface')
       await click(api('quotes')!.querySelector('button'))
       await settle(() => document.querySelector('[data-slot="api-header"]') !== null, 'the header')
@@ -234,11 +297,15 @@ describe('the administrators\' daily text page', () => {
       await click(formSave())
       await settle(() => calls().some((c) => c.url === '/api/admin/daily/apis/quotes'), 'saved')
       // Only the name travels: the server keeps what it has.
-      expect(calls().find((c) => c.url === '/api/admin/daily/apis/quotes')!.body.headers).toEqual([{ name: 'X-Api-Key' }])
+      expect(calls().find((c) => c.url === '/api/admin/daily/apis/quotes')!.body.headers).toEqual([
+        { name: 'X-Api-Key' },
+      ])
     })
 
     it('changing a header is typing a new value, which is sent; a new header has a value box', async () => {
-      await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', { ...GOOD, headers: [{ name: 'X-Api-Key', value: 'old' }] }))
+      await open((admin) =>
+        admin('PUT', '/api/admin/daily/apis/quotes', { ...GOOD, headers: [{ name: 'X-Api-Key', value: 'old' }] }),
+      )
       await settle(() => api('quotes') !== null, 'the interface')
       await click(api('quotes')!.querySelector('button'))
       await settle(() => byText('button', d.headerChange) !== null, 'change')
@@ -252,23 +319,33 @@ describe('the administrators\' daily text page', () => {
       await click(formSave())
       await settle(() => calls().some((c) => c.url === '/api/admin/daily/apis/quotes'), 'saved')
       // The second row has no name: it is left out.
-      expect(calls().find((c) => c.url === '/api/admin/daily/apis/quotes')!.body.headers).toEqual([{ name: 'X-Api-Key', value: 'new-one' }])
+      expect(calls().find((c) => c.url === '/api/admin/daily/apis/quotes')!.body.headers).toEqual([
+        { name: 'X-Api-Key', value: 'new-one' },
+      ])
     })
 
     it('pressing Change and saving without typing keeps the stored value: only the name is sent', async () => {
-      await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', { ...GOOD, headers: [{ name: 'X-Api-Key', value: 'old' }] }))
+      await open((admin) =>
+        admin('PUT', '/api/admin/daily/apis/quotes', { ...GOOD, headers: [{ name: 'X-Api-Key', value: 'old' }] }),
+      )
       await settle(() => api('quotes') !== null, 'the interface')
       await click(api('quotes')!.querySelector('button'))
       await settle(() => byText('button', d.headerChange) !== null, 'change')
       await click(byText('button', d.headerChange))
-      expect(document.querySelector<HTMLInputElement>('input[aria-label="' + d.headerValue + '"]')!.placeholder).toBe(d.headerKeep)
+      expect(document.querySelector<HTMLInputElement>('input[aria-label="' + d.headerValue + '"]')!.placeholder).toBe(
+        d.headerKeep,
+      )
       await click(formSave())
       await settle(() => calls().some((c) => c.url === '/api/admin/daily/apis/quotes'), 'saved')
-      expect(calls().find((c) => c.url === '/api/admin/daily/apis/quotes')!.body.headers).toEqual([{ name: 'X-Api-Key' }])
+      expect(calls().find((c) => c.url === '/api/admin/daily/apis/quotes')!.body.headers).toEqual([
+        { name: 'X-Api-Key' },
+      ])
     })
 
     it('another address than the saved one means the saved header values are not kept: they are typed again', async () => {
-      await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', { ...GOOD, headers: [{ name: 'X-Api-Key', value: 'old' }] }))
+      await open((admin) =>
+        admin('PUT', '/api/admin/daily/apis/quotes', { ...GOOD, headers: [{ name: 'X-Api-Key', value: 'old' }] }),
+      )
       await settle(() => api('quotes') !== null, 'the interface')
       await click(api('quotes')!.querySelector('button'))
       await settle(() => byText('button', d.headerChange) !== null, 'change')
@@ -287,11 +364,15 @@ describe('the administrators\' daily text page', () => {
       await type(value, 'fresh')
       await click(formSave())
       await settle(() => calls().filter((c) => c.url === '/api/admin/daily/apis/quotes').length === 1, 'saved')
-      expect(calls().filter((c) => c.url === '/api/admin/daily/apis/quotes')[0].body.headers).toEqual([{ name: 'X-Api-Key', value: 'fresh' }])
+      expect(calls().filter((c) => c.url === '/api/admin/daily/apis/quotes')[0].body.headers).toEqual([
+        { name: 'X-Api-Key', value: 'fresh' },
+      ])
     })
 
     it('an address put back as saved gets the saved value back', async () => {
-      await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', { ...GOOD, headers: [{ name: 'X-Api-Key', value: 'old' }] }))
+      await open((admin) =>
+        admin('PUT', '/api/admin/daily/apis/quotes', { ...GOOD, headers: [{ name: 'X-Api-Key', value: 'old' }] }),
+      )
       await settle(() => api('quotes') !== null, 'the interface')
       await click(api('quotes')!.querySelector('button'))
       await settle(() => input('api-url') !== null, 'form')
@@ -301,7 +382,7 @@ describe('the administrators\' daily text page', () => {
       expect(document.querySelector('[data-slot="header-again"]')).toBeNull()
     })
 
-    it('the link template says that request headers cannot be used in it, and a refusal by code is shown in the page\'s language', async () => {
+    it("the link template says that request headers cannot be used in it, and a refusal by code is shown in the page's language", async () => {
       await open()
       await click(byText('button', d.addApi))
       await settle(() => input('api-link') !== null, 'form')
@@ -315,7 +396,7 @@ describe('the administrators\' daily text page', () => {
       await settle(() => document.body.textContent!.includes(d.linkUsesHeader), 'the refusal')
     })
 
-    it('needs no list of hosts: a trial of another address is just made, and a refusal by code is said in the page\'s language', async () => {
+    it("needs no list of hosts: a trial of another address is just made, and a refusal by code is said in the page's language", async () => {
       await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', GOOD))
       await settle(() => api('quotes') !== null, 'the interface')
       await click(api('quotes')!.querySelector('button'))
@@ -350,7 +431,10 @@ describe('the administrators\' daily text page', () => {
       await click(byText('button', d.langMapAdd))
       await click(formSave())
       await settle(() => calls().some((c) => c.url === '/api/admin/daily/apis/quotes'), 'saved')
-      expect(calls().find((c) => c.url === '/api/admin/daily/apis/quotes')!.body).toMatchObject({ lang: 'ja', langMap: { 'zh-Hans': 'zh', 'zh-Hant': 'zh_tw' } })
+      expect(calls().find((c) => c.url === '/api/admin/daily/apis/quotes')!.body).toMatchObject({
+        lang: 'ja',
+        langMap: { 'zh-Hans': 'zh', 'zh-Hant': 'zh_tw' },
+      })
       // A language that is not a tag is refused by code, in the page's words.
       await click(api('quotes')!.querySelector('button'))
       await settle(() => rows().length > 0, 'form again')
@@ -361,7 +445,12 @@ describe('the administrators\' daily text page', () => {
 
     it('"Try it" shows the raw answer and the fields the paths found, for the form as it is', async () => {
       await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', GOOD))
-      await click(await (async () => { await settle(() => api('quotes') !== null, 'the interface'); return api('quotes')!.querySelector('button') })())
+      await click(
+        await (async () => {
+          await settle(() => api('quotes') !== null, 'the interface')
+          return api('quotes')!.querySelector('button')
+        })(),
+      )
       await settle(() => byText('button', d.tryButton) !== null, 'try')
       await click(byText('button', d.tryButton))
       await settle(() => document.querySelector('[data-slot="try-result"]') !== null, 'the result')
@@ -412,7 +501,15 @@ describe('the administrators\' daily text page', () => {
       await act(async () => {
         root.render(
           <TryResult
-            result={{ ok: false, status: 200, error: 'path_error', field: 'author', message: 'no text or number at from_who', quote: { text: 'x' }, pathErrors: [{ field: 'author', code: 'path_error', message: 'no text or number at from_who' }] }}
+            result={{
+              ok: false,
+              status: 200,
+              error: 'path_error',
+              field: 'author',
+              message: 'no text or number at from_who',
+              quote: { text: 'x' },
+              pathErrors: [{ field: 'author', code: 'path_error', message: 'no text or number at from_who' }],
+            }}
           />,
         )
       })
@@ -458,21 +555,28 @@ describe('the administrators\' daily text page', () => {
       const has = (el: Element | null, ...c: string[]) => c.every((x) => el?.classList.contains(x))
       // The address the trial used, and the raw answer.
       expect(has(document.querySelector('[data-slot="try-result"] p.font-mono'), 'break-all')).toBe(true)
-      expect(has(document.querySelector('[data-slot="try-result"] pre'), 'max-w-full', 'overflow-auto', 'whitespace-pre')).toBe(true)
+      expect(
+        has(document.querySelector('[data-slot="try-result"] pre'), 'max-w-full', 'overflow-auto', 'whitespace-pre'),
+      ).toBe(true)
       // The inputs fill their column and may shrink; the editor's grids have a column that may shrink.
-      for (const id of ['api-id', 'api-name', 'api-url', 'api-text', 'api-source', 'api-author', 'api-link']) expect(has(input(id), 'w-full', 'min-w-0')).toBe(true)
+      for (const id of ['api-id', 'api-name', 'api-url', 'api-text', 'api-source', 'api-author', 'api-link'])
+        expect(has(input(id), 'w-full', 'min-w-0')).toBe(true)
       expect(has(document.querySelector('[data-slot="api-form"]'), 'grid-cols-1', 'min-w-0')).toBe(true)
       expect(has(document.querySelector('[data-slot="api-try"]'), 'grid-cols-1', 'min-w-0')).toBe(true)
       // Help texts wrap.
-      const helps = [...document.querySelectorAll('[data-slot="api-form"] p.text-xs.text-muted-foreground:not(.font-mono)')]
+      const helps = [
+        ...document.querySelectorAll('[data-slot="api-form"] p.text-xs.text-muted-foreground:not(.font-mono)'),
+      ]
       expect(helps.length).toBeGreaterThan(2)
       for (const h of helps) expect(h.classList.contains('break-words')).toBe(true)
       expect(has(page.querySelector(':scope > p'), 'break-words')).toBe(true)
       for (const s of page.querySelectorAll('section')) expect(s.classList.contains('grid-cols-1')).toBe(true)
       // The language pickers and the built-in interfaces wrap and shrink too.
-      for (const l of page.querySelectorAll('[data-slot="language-picker"] ul')) expect(has(l, 'min-w-0', 'max-w-sm')).toBe(true)
+      for (const l of page.querySelectorAll('[data-slot="language-picker"] ul'))
+        expect(has(l, 'min-w-0', 'max-w-sm')).toBe(true)
       for (const li of page.querySelectorAll('[data-slot="builtin"] li')) expect(has(li, 'min-w-0')).toBe(true)
-      for (const b of page.querySelectorAll('[data-slot="builtin"] a')) expect(b.classList.contains('break-all')).toBe(true)
+      for (const b of page.querySelectorAll('[data-slot="builtin"] a'))
+        expect(b.classList.contains('break-all')).toBe(true)
     })
 
     it('an interface that did not answer says why', async () => {
@@ -485,7 +589,7 @@ describe('the administrators\' daily text page', () => {
       expect(document.querySelector('[data-slot="try-result"]')!.textContent).toContain('status 503')
     })
 
-    it('a refused interface (an address on the network inside) shows the server\'s reason and creates nothing', async () => {
+    it("a refused interface (an address on the network inside) shows the server's reason and creates nothing", async () => {
       await open()
       await click(byText('button', d.addApi))
       await type(input('api-id'), 'bad')
@@ -511,7 +615,10 @@ describe('the administrators\' daily text page', () => {
       await type(input('api-minutes'), '15')
       await click(formSave())
       await settle(() => calls().some((c) => c.url === '/api/admin/daily/apis/m1'), 'saved')
-      expect(calls().find((c) => c.url === '/api/admin/daily/apis/m1')!.body).toMatchObject({ refresh: 'minutes', refreshMinutes: 15 })
+      expect(calls().find((c) => c.url === '/api/admin/daily/apis/m1')!.body).toMatchObject({
+        refresh: 'minutes',
+        refreshMinutes: 15,
+      })
     })
   })
 })

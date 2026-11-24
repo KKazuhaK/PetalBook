@@ -29,4 +29,5 @@ export function endDrag(): void {
 }
 
 // Whether something of ours is being dragged over an element.
-export const isOurDrag = (dt: DataTransfer | null): boolean => current !== null && !!dt && Array.from(dt.types).includes(MIME)
+export const isOurDrag = (dt: DataTransfer | null): boolean =>
+  current !== null && !!dt && Array.from(dt.types).includes(MIME)

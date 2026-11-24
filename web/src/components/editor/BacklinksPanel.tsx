@@ -11,7 +11,15 @@ import { t } from '@/i18n'
 //
 // On a narrow screen (`overlay`) it covers the page: a backdrop behind it closes it, so does Esc, and the focus
 // goes into it while it is open and back to where it was when it closes.
-export default function BacklinksPanel({ pageId, onClose, overlay = false }: { pageId: string; onClose: () => void; overlay?: boolean }) {
+export default function BacklinksPanel({
+  pageId,
+  onClose,
+  overlay = false,
+}: {
+  pageId: string
+  onClose: () => void
+  overlay?: boolean
+}) {
   const urls = useUrls()
   const q = useBacklinks(pageId)
   const items = q.data?.pages.flatMap((p) => p.items) ?? []
@@ -38,11 +46,30 @@ export default function BacklinksPanel({ pageId, onClose, overlay = false }: { p
   }, [overlay])
   return (
     <>
-      {overlay && <div data-testid="backlinks-backdrop" aria-hidden="true" onClick={onClose} className="fixed inset-0 top-12 z-30 bg-black/30" />}
-      <aside ref={ref} tabIndex={-1} aria-label={t.pageLinks.backlinks} className="fixed top-12 right-0 bottom-0 z-30 flex w-80 max-w-[calc(100%-3rem)] flex-col border-l bg-background shadow-lg outline-none lg:shadow-none">
+      {overlay && (
+        <div
+          data-testid="backlinks-backdrop"
+          aria-hidden="true"
+          onClick={onClose}
+          className="fixed inset-0 top-12 z-30 bg-black/30"
+        />
+      )}
+      <aside
+        ref={ref}
+        tabIndex={-1}
+        aria-label={t.pageLinks.backlinks}
+        className="fixed top-12 right-0 bottom-0 z-30 flex w-80 max-w-[calc(100%-3rem)] flex-col border-l bg-background shadow-lg outline-none lg:shadow-none"
+      >
         <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
           <h2 className="flex-1 text-sm font-medium">{t.pageLinks.backlinks}</h2>
-          <Button type="button" variant="ghost" size="icon-sm" onClick={onClose} title={t.pageLinks.backlinksClose} aria-label={t.pageLinks.backlinksClose}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onClick={onClose}
+            title={t.pageLinks.backlinksClose}
+            aria-label={t.pageLinks.backlinksClose}
+          >
             <X />
           </Button>
         </header>
@@ -53,7 +80,10 @@ export default function BacklinksPanel({ pageId, onClose, overlay = false }: { p
               {t.pageLinks.backlinksLoading}
             </div>
           ) : q.isError && items.length === 0 ? (
-            <ErrorState message={t.fmt.labelled(t.pageLinks.backlinksError, q.error.message)} onRetry={() => void q.refetch()} />
+            <ErrorState
+              message={t.fmt.labelled(t.pageLinks.backlinksError, q.error.message)}
+              onRetry={() => void q.refetch()}
+            />
           ) : items.length === 0 ? (
             <p className="py-6 text-sm text-muted-foreground">{t.pageLinks.backlinksEmpty}</p>
           ) : (
@@ -64,17 +94,34 @@ export default function BacklinksPanel({ pageId, onClose, overlay = false }: { p
               <ul className="flex flex-col gap-3">
                 {items.map((b) => (
                   <li key={b.id}>
-                    <Link to={urls.page(b.id)} className="flex items-center gap-1.5 text-sm font-medium hover:underline">
+                    <Link
+                      to={urls.page(b.id)}
+                      className="flex items-center gap-1.5 text-sm font-medium hover:underline"
+                    >
                       <FileText className="size-3.5 shrink-0 text-muted-foreground" />
                       <span className="truncate">{b.untitled ? b.title || t.editor.untitled : b.title}</span>
                     </Link>
-                    <p className="mt-0.5 line-clamp-4 text-xs text-muted-foreground">{b.excerpt || t.pageLinks.backlinksNoExcerpt}</p>
+                    <p className="mt-0.5 line-clamp-4 text-xs text-muted-foreground">
+                      {b.excerpt || t.pageLinks.backlinksNoExcerpt}
+                    </p>
                   </li>
                 ))}
               </ul>
-              {q.isError && <ErrorState message={t.fmt.labelled(t.pageLinks.backlinksError, q.error.message)} onRetry={() => void q.fetchNextPage()} />}
+              {q.isError && (
+                <ErrorState
+                  message={t.fmt.labelled(t.pageLinks.backlinksError, q.error.message)}
+                  onRetry={() => void q.fetchNextPage()}
+                />
+              )}
               {q.hasNextPage && (
-                <Button type="button" variant="ghost" size="sm" className="mt-3 w-full" disabled={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="mt-3 w-full"
+                  disabled={q.isFetchingNextPage}
+                  onClick={() => void q.fetchNextPage()}
+                >
                   {q.isFetchingNextPage ? t.pageLinks.backlinksLoading : t.pageLinks.backlinksMore}
                 </Button>
               )}

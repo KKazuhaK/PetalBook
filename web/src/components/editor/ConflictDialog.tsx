@@ -1,5 +1,12 @@
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { fieldsOf, type ConflictInfo } from '@/editor/saveController'
 import { t } from '@/i18n'
 import { absoluteTime } from '@/lib/time'
@@ -15,7 +22,9 @@ interface Shown {
 const line = (label: string, value: string) => (
   <div className="grid grid-cols-[3.5rem_1fr] gap-2 text-sm">
     <span className="text-muted-foreground">{label}</span>
-    <span className="min-w-0 break-words">{value || <span className="text-muted-foreground">{t.conflict.none}</span>}</span>
+    <span className="min-w-0 break-words">
+      {value || <span className="text-muted-foreground">{t.conflict.none}</span>}
+    </span>
   </div>
 )
 
@@ -29,7 +38,9 @@ function Version({ heading, shown }: { heading: string; shown: Shown }) {
       {line(t.conflict.tags_, t.fmt.list(shown.tags))}
       <div className="text-sm text-muted-foreground">{t.conflict.body_}</div>
       {/* Plain Markdown text: it is the file's content, shown as written. */}
-      <pre className="max-h-72 overflow-auto rounded-md bg-muted p-2.5 text-xs leading-relaxed whitespace-pre-wrap break-words">{shown.body || t.conflict.none}</pre>
+      <pre className="max-h-72 overflow-auto rounded-md bg-muted p-2.5 text-xs leading-relaxed whitespace-pre-wrap break-words">
+        {shown.body || t.conflict.none}
+      </pre>
     </section>
   )
 }
@@ -61,17 +72,41 @@ export function ConflictDialog({
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl" showCloseButton={false}>
         <DialogHeader>
           <DialogTitle>{info.older ? c.olderTitle : draft ? c.draftTitle : c.title}</DialogTitle>
-          <DialogDescription>{info.older ? c.olderDescription(when) : draft ? c.draftDescription : c.description}</DialogDescription>
+          <DialogDescription>
+            {info.older ? c.olderDescription(when) : draft ? c.draftDescription : c.description}
+          </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 md:grid-cols-2">
-          <Version heading={info.older ? c.olderMine(when) : draft ? c.draftMine : c.mine} shown={{ title: mine.title, subtitle: mine.subtitle, source: mine.source, tags: mine.tags, body: mine.body ?? '' }} />
-          <Version heading={info.older ? c.olderTheirs : draft ? c.draftTheirs : c.theirs} shown={{ ...theirs, body: info.theirs.body }} />
+          <Version
+            heading={info.older ? c.olderMine(when) : draft ? c.draftMine : c.mine}
+            shown={{
+              title: mine.title,
+              subtitle: mine.subtitle,
+              source: mine.source,
+              tags: mine.tags,
+              body: mine.body ?? '',
+            }}
+          />
+          <Version
+            heading={info.older ? c.olderTheirs : draft ? c.draftTheirs : c.theirs}
+            shown={{ ...theirs, body: info.theirs.body }}
+          />
         </div>
         <DialogFooter className="gap-2 sm:justify-between">
-          <Button type="button" variant={info.older ? 'default' : 'outline'} onClick={onUseTheirs} title={draft ? c.draftUseTheirsHint : c.useTheirsHint}>
+          <Button
+            type="button"
+            variant={info.older ? 'default' : 'outline'}
+            onClick={onUseTheirs}
+            title={draft ? c.draftUseTheirsHint : c.useTheirsHint}
+          >
             {draft ? c.draftUseTheirs : c.useTheirs}
           </Button>
-          <Button type="button" variant={info.older ? 'outline' : 'default'} onClick={onKeepMine} title={info.older ? c.olderKeepMineHint : draft ? c.draftKeepMineHint : c.keepMineHint}>
+          <Button
+            type="button"
+            variant={info.older ? 'outline' : 'default'}
+            onClick={onKeepMine}
+            title={info.older ? c.olderKeepMineHint : draft ? c.draftKeepMineHint : c.keepMineHint}
+          >
             {info.older ? c.olderKeepMine : draft ? c.draftKeepMine : c.keepMine}
           </Button>
         </DialogFooter>

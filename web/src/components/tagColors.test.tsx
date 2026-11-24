@@ -70,7 +70,9 @@ describe('tag chips', () => {
   it('wear the colour the space gave the tag; a given colour wins, null forces none', async () => {
     m = await mount(ui, { entries: ['/s/default/recent'], server: { mode: 'single' } })
     await settle(() => document.querySelector('[data-testid="colors"]')?.textContent !== '', 'colours loaded')
-    const chips = [...document.querySelectorAll<HTMLElement>('span[data-tag-color], span.rounded-full')].filter((e) => /随笔|日常/.test(e.textContent ?? ''))
+    const chips = [...document.querySelectorAll<HTMLElement>('span[data-tag-color], span.rounded-full')].filter((e) =>
+      /随笔|日常/.test(e.textContent ?? ''),
+    )
     expect(chips).toHaveLength(4)
     expect(chips[0].className).toContain('tag-rose')
     // No colour of its own: the quiet outline.
@@ -96,14 +98,15 @@ describe('tag chips', () => {
       </Routes>,
       { entries: ['/s/default/recent'], server: { mode: 'single' } },
     )
-    const chip = (name: string) => [...document.querySelectorAll<HTMLElement>('span.rounded-full')].find((e) => e.textContent === name)!
+    const chip = (name: string) =>
+      [...document.querySelectorAll<HTMLElement>('span.rounded-full')].find((e) => e.textContent === name)!
     expect(chip('定制').className).toContain('tag-custom')
     expect(chip('定制').style.getPropertyValue('--tag-hue')).toBe('#a1b2c3')
     expect(chip('乱码').className).not.toMatch(/tag-/)
     expect(chip('乱码').style.getPropertyValue('--tag-hue')).toBe('')
   })
 
-  it('the listing shows each page\'s tags in their colours', async () => {
+  it("the listing shows each page's tags in their colours", async () => {
     m = await mount(
       <Routes>
         <Route
@@ -140,7 +143,9 @@ describe('the sidebar tags', () => {
     await settle(() => menuItems().length > 0, 'menu')
     const items = menuItems()
     expect(items).toHaveLength(12)
-    expect(items.slice(0, 10).map((i) => i.getAttribute('aria-label'))).toEqual(TAG_COLORS.map((c) => t.tagColor.names[c]))
+    expect(items.slice(0, 10).map((i) => i.getAttribute('aria-label'))).toEqual(
+      TAG_COLORS.map((c) => t.tagColor.names[c]),
+    )
     expect(items[10].textContent).toBe(t.tagColor.custom)
     expect(items[11].textContent).toBe(t.tagColor.none)
     // It names the tag, and "no colour" has nothing to do for a tag without one.
@@ -176,7 +181,8 @@ describe('the sidebar tags', () => {
     await settle(() => menuItems().length > 0, 'menu')
     await click(menuItems().find((i) => i.textContent === t.tagColor.custom))
     await settle(() => byLabel(t.tagColor.hex) !== null, 'hex field')
-    const apply = () => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === t.tagColor.apply)!
+    const apply = () =>
+      [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === t.tagColor.apply)!
     // A bad value cannot be applied; the `#` is optional.
     await type(byLabel(t.tagColor.hex) as HTMLInputElement, 'xyz')
     expect(apply().disabled).toBe(true)
@@ -210,7 +216,13 @@ describe('the sidebar tags', () => {
     await contextMenu(tagLink('日常')!)
     await settle(() => menuItems().length > 0, 'menu')
     const real = globalThis.fetch
-    globalThis.fetch = async (input, init) => (init?.method === 'PUT' ? new Response(JSON.stringify({ error: 'invalid', message: '不行' }), { status: 400, headers: { 'Content-Type': 'application/json' } }) : real(input, init))
+    globalThis.fetch = async (input, init) =>
+      init?.method === 'PUT'
+        ? new Response(JSON.stringify({ error: 'invalid', message: '不行' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        : real(input, init)
     await click(byLabel(t.tagColor.names.red))
     await settle(() => document.body.textContent!.includes(t.tagColor.failed), 'toast')
     expect(tagLink('日常')!.className).not.toMatch(/tag-/)
@@ -222,7 +234,8 @@ describe('the sidebar tags', () => {
     await settle(() => tagLink('随笔') !== null, 'tags')
     // A few tags: no filter box.
     expect(document.querySelector(`input[aria-label="${t.nav.filterTags}"]`)).toBeNull()
-    for (let i = 0; i < 25; i++) await spaceApi('default').createPage({ meta: { title: `多${i}`, tags: [`批量${String(i).padStart(2, '0')}`] } })
+    for (let i = 0; i < 25; i++)
+      await spaceApi('default').createPage({ meta: { title: `多${i}`, tags: [`批量${String(i).padStart(2, '0')}`] } })
     await act(async () => {
       await m!.qc.invalidateQueries({ queryKey: keys.tags('default') })
     })

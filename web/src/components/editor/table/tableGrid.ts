@@ -14,7 +14,10 @@ export const DEFAULT_SIZE: GridSize = { cols: 3, rows: 3 }
 
 const clamp = (n: number, max: number) => Math.min(Math.max(Math.round(n), 1), max)
 
-export const clampSize = ({ cols, rows }: GridSize): GridSize => ({ cols: clamp(cols, MAX_COLS), rows: clamp(rows, MAX_ROWS) })
+export const clampSize = ({ cols, rows }: GridSize): GridSize => ({
+  cols: clamp(cols, MAX_COLS),
+  rows: clamp(rows, MAX_ROWS),
+})
 
 // The size picked by pointing at the cell in column `col` and row `row` (both from 0).
 export const sizeAtCell = (col: number, row: number): GridSize => clampSize({ cols: col + 1, rows: row + 1 })

@@ -6,7 +6,16 @@ import { keys } from '@/api/hooks'
 import type { Grant } from '@/api/types'
 import { PageFallback } from '@/components/common'
 import { GrantItem } from '@/components/tokens/GrantItem'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { oa } from '@/i18n/oauth'
 import { SettingsSection } from './SettingsParts'
@@ -57,7 +66,14 @@ export default function GrantsSection() {
               key={g.id}
               grant={g}
               action={
-                <Button type="button" variant="outline" size="sm" className="max-sm:w-full" aria-label={oa.yours.revokeLabel(g.client.name)} onClick={() => setRevoking(g)}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="max-sm:w-full"
+                  aria-label={oa.yours.revokeLabel(g.client.name)}
+                  onClick={() => setRevoking(g)}
+                >
                   {oa.yours.revoke}
                 </Button>
               }
@@ -69,7 +85,9 @@ export default function GrantsSection() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{oa.yours.revokeTitle}</AlertDialogTitle>
-            <AlertDialogDescription className="break-words">{revoking ? oa.yours.revokeHelp(revoking.client.name) : ''}</AlertDialogDescription>
+            <AlertDialogDescription className="break-words">
+              {revoking ? oa.yours.revokeHelp(revoking.client.name) : ''}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{oa.yours.cancel}</AlertDialogCancel>

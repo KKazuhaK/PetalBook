@@ -1,5 +1,15 @@
 import { useOffline } from '@/lib/offline/status'
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react'
 import { useNavigate } from 'react-router'
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
@@ -15,7 +25,17 @@ import { absoluteTime, relativeTime } from '@/lib/time'
 import { useDebounced } from '@/lib/useDebounced'
 import { t } from '@/i18n'
 import { FilterChips } from './FilterChips'
-import { buildSearchParams, effectiveSort, emptyFilters, filtersToQuery, groupByTime, hasFilters, snippetOf, type SearchFilters, type SearchSort } from './searchModel'
+import {
+  buildSearchParams,
+  effectiveSort,
+  emptyFilters,
+  filtersToQuery,
+  groupByTime,
+  hasFilters,
+  snippetOf,
+  type SearchFilters,
+  type SearchSort,
+} from './searchModel'
 
 // ⌘K / Ctrl+K, and the sidebar's search box, open this dialog: results as you
 // type, filters as chips, and on a wide screen a preview of the highlighted page.
@@ -36,7 +56,10 @@ export function useSearchDialog(): SearchControl {
 
 // Another dialog is on screen (settings, the quick note): the shortcut must not
 // stack the search on it. The search's own dialog is not counted.
-const otherDialogOpen = () => [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')].some((el) => !el.hasAttribute('data-search-dialog'))
+const otherDialogOpen = () =>
+  [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')].some(
+    (el) => !el.hasAttribute('data-search-dialog'),
+  )
 
 export function SearchDialogProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false)
@@ -197,7 +220,9 @@ export function SearchDialog({ onClose }: { onClose: () => void }) {
               aria-label={t.search.title}
               className="h-12 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground md:text-sm"
             />
-            {refreshing && <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" aria-label={t.search.loading} />}
+            {refreshing && (
+              <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" aria-label={t.search.loading} />
+            )}
             <DialogPrimitive.Close render={<Button variant="ghost" size="icon-sm" className="md:hidden" />}>
               <X />
               <span className="sr-only">{t.common.close}</span>
@@ -207,7 +232,12 @@ export function SearchDialog({ onClose }: { onClose: () => void }) {
             <FilterChips filters={filters} onChange={setFilters} />
             {showSort && (
               <div className="w-36">
-                <NativeSelect className="h-7 text-xs" aria-label={t.search.sortLabel} value={sort} onChange={(e) => setSort(e.target.value as SearchSort)}>
+                <NativeSelect
+                  className="h-7 text-xs"
+                  aria-label={t.search.sortLabel}
+                  value={sort}
+                  onChange={(e) => setSort(e.target.value as SearchSort)}
+                >
                   <option value="relevance">{t.search.sorts.relevance}</option>
                   <option value="updated">{t.search.sorts.updated}</option>
                 </NativeSelect>
@@ -223,7 +253,9 @@ export function SearchDialog({ onClose }: { onClose: () => void }) {
             <div className="min-w-0 flex-1 overflow-y-auto overscroll-contain" aria-busy={refreshing}>
               {query.isError ? (
                 <div className="flex flex-col items-center gap-3 px-4 py-12 text-center">
-                  <p className="text-sm text-muted-foreground">{t.fmt.labelled(t.search.failed, query.error.message)}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {t.fmt.labelled(t.search.failed, query.error.message)}
+                  </p>
                   <Button variant="outline" size="sm" onClick={() => void query.refetch()}>
                     {t.list.retry}
                   </Button>
@@ -231,9 +263,17 @@ export function SearchDialog({ onClose }: { onClose: () => void }) {
               ) : query.isPending ? (
                 <p className="px-4 py-10 text-center text-sm text-muted-foreground">{t.search.loading}</p>
               ) : items.length === 0 ? (
-                <p className="px-4 py-12 text-center text-sm text-muted-foreground">{filtered ? t.search.empty : t.search.emptyRecent}</p>
+                <p className="px-4 py-12 text-center text-sm text-muted-foreground">
+                  {filtered ? t.search.empty : t.search.emptyRecent}
+                </p>
               ) : (
-                <ul id="search-results" ref={list} role="listbox" aria-label={filtered ? t.search.results : t.search.recent} className="py-1">
+                <ul
+                  id="search-results"
+                  ref={list}
+                  role="listbox"
+                  aria-label={filtered ? t.search.results : t.search.recent}
+                  className="py-1"
+                >
                   {groups.map((g) => (
                     <li key={g.group ?? 'all'} role="presentation">
                       <div role="presentation" className="px-4 pt-2.5 pb-1 text-xs font-medium text-muted-foreground">
@@ -241,7 +281,14 @@ export function SearchDialog({ onClose }: { onClose: () => void }) {
                       </div>
                       <ul role="presentation">
                         {g.items.map((p) => (
-                          <Result key={p.id} page={p} query={debounced} selected={p.id === active?.id} onHover={() => setActiveId(p.id)} onOpen={(newTab) => open(p, newTab)} />
+                          <Result
+                            key={p.id}
+                            page={p}
+                            query={debounced}
+                            selected={p.id === active?.id}
+                            onHover={() => setActiveId(p.id)}
+                            onOpen={(newTab) => open(p, newTab)}
+                          />
                         ))}
                       </ul>
                     </li>
@@ -276,7 +323,19 @@ export function SearchDialog({ onClose }: { onClose: () => void }) {
   )
 }
 
-function Result({ page, query, selected, onHover, onOpen }: { page: PageSummary; query: string; selected: boolean; onHover: () => void; onOpen: (newTab: boolean) => void }) {
+function Result({
+  page,
+  query,
+  selected,
+  onHover,
+  onOpen,
+}: {
+  page: PageSummary
+  query: string
+  selected: boolean
+  onHover: () => void
+  onOpen: (newTab: boolean) => void
+}) {
   const name = page.label || t.list.blankPage
   return (
     <li
@@ -293,7 +352,11 @@ function Result({ page, query, selected, onHover, onOpen }: { page: PageSummary;
           <span className={`truncate text-[0.95rem] ${page.untitled ? 'text-muted-foreground' : 'font-medium'}`}>
             <Highlighted text={name} query={query} />
           </span>
-          <time dateTime={page.updated} title={absoluteTime(page.updated)} className="ml-auto shrink-0 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
+          <time
+            dateTime={page.updated}
+            title={absoluteTime(page.updated)}
+            className="ml-auto shrink-0 text-xs whitespace-nowrap text-muted-foreground tabular-nums"
+          >
             {relativeTime(page.updated)}
           </time>
         </div>
@@ -321,11 +384,16 @@ function Result({ page, query, selected, onHover, onOpen }: { page: PageSummary;
 // What the listing already carries about the highlighted page; nothing more is asked for.
 function Preview({ page }: { page: PageSummary | undefined }) {
   return (
-    <aside aria-label={t.search.preview} className="hidden w-[22rem] shrink-0 overflow-y-auto overscroll-contain border-l bg-muted/30 p-5 lg:block">
+    <aside
+      aria-label={t.search.preview}
+      className="hidden w-[22rem] shrink-0 overflow-y-auto overscroll-contain border-l bg-muted/30 p-5 lg:block"
+    >
       {page ? (
         <div className="grid gap-3">
           <div>
-            <h3 className={`text-base leading-snug font-semibold ${page.untitled ? 'text-muted-foreground' : ''}`}>{page.label || t.list.blankPage}</h3>
+            <h3 className={`text-base leading-snug font-semibold ${page.untitled ? 'text-muted-foreground' : ''}`}>
+              {page.label || t.list.blankPage}
+            </h3>
             {page.subtitle && <p className="mt-0.5 text-sm text-muted-foreground">{page.subtitle}</p>}
           </div>
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
@@ -353,7 +421,11 @@ function Preview({ page }: { page: PageSummary | undefined }) {
               ))}
             </div>
           )}
-          {page.excerpt ? <p className="text-[0.85rem] leading-relaxed break-words whitespace-pre-line">{page.excerpt}</p> : <p className="text-sm text-muted-foreground">{t.search.previewEmpty}</p>}
+          {page.excerpt ? (
+            <p className="text-[0.85rem] leading-relaxed break-words whitespace-pre-line">{page.excerpt}</p>
+          ) : (
+            <p className="text-sm text-muted-foreground">{t.search.previewEmpty}</p>
+          )}
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">{t.search.previewNone}</p>

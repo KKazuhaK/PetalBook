@@ -5,12 +5,23 @@ const file = (path: string, suffix = '') => ({ kind: 'file', path, suffix })
 
 describe('resolveAddress', () => {
   it('leaves what has a scheme alone', () => {
-    for (const a of ['https://example.com/a.png', 'http://x/y', 'data:image/png;base64,AAAA', 'mailto:a@b.c', 'tel:123', 'blob:abc', 'HTTPS://X.COM']) {
+    for (const a of [
+      'https://example.com/a.png',
+      'http://x/y',
+      'data:image/png;base64,AAAA',
+      'mailto:a@b.c',
+      'tel:123',
+      'blob:abc',
+      'HTTPS://X.COM',
+    ]) {
       expect(resolveAddress(a, 'notes')).toEqual({ kind: 'external', url: a })
     }
   })
   it('leaves // and # alone', () => {
-    expect(resolveAddress('//cdn.example.com/a.png', 'notes')).toEqual({ kind: 'external', url: '//cdn.example.com/a.png' })
+    expect(resolveAddress('//cdn.example.com/a.png', 'notes')).toEqual({
+      kind: 'external',
+      url: '//cdn.example.com/a.png',
+    })
     expect(resolveAddress('#section', 'notes')).toEqual({ kind: 'external', url: '#section' })
     expect(resolveAddress('', 'notes')).toEqual({ kind: 'external', url: '' })
   })
@@ -39,23 +50,32 @@ describe('resolveAddress', () => {
     expect(resolveAddress('/assets/a/%E6%88%91.png', '')).toEqual(file('/assets/a/我.png'))
     expect(resolveAddress('/assets/a/100%.png', '')).toEqual(file('/assets/a/100%.png'))
   })
-  it('collapses empty segments', () => expect(resolveAddress('/assets//a///b.png', '')).toEqual(file('/assets/a/b.png')))
+  it('collapses empty segments', () =>
+    expect(resolveAddress('/assets//a///b.png', '')).toEqual(file('/assets/a/b.png')))
 })
 
 describe('addressToUrl', () => {
   it('maps a file to the files endpoint, each segment encoded', () => {
-    expect(addressToUrl('default', 'notes', '/assets/01JD/街景 (1)-3f9a1c2b.jpg')).toBe('/api/spaces/default/files/assets/01JD/%E8%A1%97%E6%99%AF%20(1)-3f9a1c2b.jpg')
+    expect(addressToUrl('default', 'notes', '/assets/01JD/街景 (1)-3f9a1c2b.jpg')).toBe(
+      '/api/spaces/default/files/assets/01JD/%E8%A1%97%E6%99%AF%20(1)-3f9a1c2b.jpg',
+    )
     expect(addressToUrl('s p', '', 'a.png')).toBe('/api/spaces/s%20p/files/a.png')
   })
-  it('does not double-encode an address that is already encoded', () => expect(addressToUrl('default', '', '/assets/a/my%20file.png')).toBe('/api/spaces/default/files/assets/a/my%20file.png'))
-  it('keeps the fragment', () => expect(addressToUrl('default', '', '/assets/a/m.pdf#page=3')).toBe('/api/spaces/default/files/assets/a/m.pdf#page=3'))
+  it('does not double-encode an address that is already encoded', () =>
+    expect(addressToUrl('default', '', '/assets/a/my%20file.png')).toBe(
+      '/api/spaces/default/files/assets/a/my%20file.png',
+    ))
+  it('keeps the fragment', () =>
+    expect(addressToUrl('default', '', '/assets/a/m.pdf#page=3')).toBe(
+      '/api/spaces/default/files/assets/a/m.pdf#page=3',
+    ))
   it('returns an external address unchanged', () => {
     expect(addressToUrl('default', 'n', 'https://example.com/a.png')).toBe('https://example.com/a.png')
     expect(addressToUrl('default', 'n', '#top')).toBe('#top')
   })
 })
 
-describe('an address never leads out of the space\'s files', () => {
+describe("an address never leads out of the space's files", () => {
   it('resolves encoded dots and slashes like plain ones', () => {
     expect(addressToUrl('S1', 'a/b', '%2e%2e/%2e%2e/%2e%2e/%2e%2e/auth/x')).toBe('/api/spaces/S1/files/auth/x')
     expect(addressToUrl('S1', '', '/assets/..%2F..%2F..%2Fsession')).toBe('/api/spaces/S1/files/session')

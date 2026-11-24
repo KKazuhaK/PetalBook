@@ -63,7 +63,12 @@ export function tokenize(content: readonly Node[] | undefined, forceFallback = f
       while (ci < cuts.length && cuts[ci] <= pos) ci++
       const stop = Math.min(ci < cuts.length ? cuts[ci] : end, end)
       const text = flat.slice(pos, stop)
-      toks.push({ key: text, node: { type: 'text', text, ...(node.marks?.length ? { marks: node.marks } : {}) }, marks, size: graphemeCount(text) })
+      toks.push({
+        key: text,
+        node: { type: 'text', text, ...(node.marks?.length ? { marks: node.marks } : {}) },
+        marks,
+        size: graphemeCount(text),
+      })
       pos = stop
     }
   }
@@ -283,7 +288,11 @@ export type TextPart = { type: 'eq' | 'ins' | 'del'; text: string }
 
 // Two plain strings (a header field) as text parts.
 export function diffText(a: string, b: string): TextPart[] {
-  const d = diffTokens(tokenize(a === '' ? [] : [{ type: 'text', text: a }]), tokenize(b === '' ? [] : [{ type: 'text', text: b }])) ?? replaceAll(tokenize([{ type: 'text', text: a }]), tokenize([{ type: 'text', text: b }]))
+  const d =
+    diffTokens(
+      tokenize(a === '' ? [] : [{ type: 'text', text: a }]),
+      tokenize(b === '' ? [] : [{ type: 'text', text: b }]),
+    ) ?? replaceAll(tokenize([{ type: 'text', text: a }]), tokenize([{ type: 'text', text: b }]))
   const parts: TextPart[] = []
   for (const o of d.ops) {
     const type = o.k === 'del' ? 'del' : o.k === 'ins' ? 'ins' : 'eq'

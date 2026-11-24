@@ -10,7 +10,10 @@ const dirOf = (path: string) => (path.includes('/') ? path.slice(0, path.lastInd
 
 // What a version did, in a word, and the path change if it came with one.
 // `older` is the version before it, when the list has it.
-export function describeVersion(item: HistoryItem, older: HistoryItem | undefined): { kind: string; detail: string | null } {
+export function describeVersion(
+  item: HistoryItem,
+  older: HistoryItem | undefined,
+): { kind: string; detail: string | null } {
   const moved = older && older.path !== item.path ? t.history.kindDetail(older.path, item.path) : null
   switch (item.change) {
     case 'add':
@@ -18,7 +21,10 @@ export function describeVersion(item: HistoryItem, older: HistoryItem | undefine
     case 'delete':
       return { kind: t.history.kind.delete, detail: null }
     case 'move':
-      return { kind: older && dirOf(older.path) === dirOf(item.path) ? t.history.kind.rename : t.history.kind.move, detail: moved ?? item.path }
+      return {
+        kind: older && dirOf(older.path) === dirOf(item.path) ? t.history.kind.rename : t.history.kind.move,
+        detail: moved ?? item.path,
+      }
     default:
       return { kind: t.history.kind.edit, detail: moved }
   }
@@ -30,11 +36,22 @@ const dayKey = (iso: string) => {
 }
 function dayLabel(iso: string, now = new Date()): string {
   const d = new Date(iso)
-  const days = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() - new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()) / 86_400_000)
+  const days = Math.round(
+    (new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() -
+      new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()) /
+      86_400_000,
+  )
   if (days === 0) return t.history.dayToday
   if (days === 1) return t.history.dayYesterday
   const sameYear = d.getFullYear() === now.getFullYear()
-  return t.history.dayOf(d.toLocaleDateString(lang, { year: sameYear ? undefined : 'numeric', month: 'long', day: 'numeric', weekday: 'short' }))
+  return t.history.dayOf(
+    d.toLocaleDateString(lang, {
+      year: sameYear ? undefined : 'numeric',
+      month: 'long',
+      day: 'numeric',
+      weekday: 'short',
+    }),
+  )
 }
 const clock = (iso: string) => clockTime(new Date(iso))
 
@@ -53,7 +70,17 @@ export interface VersionListProps {
 
 // Versions grouped by day, newest first; more are fetched when the end of the
 // list scrolls into view.
-export function VersionList({ items, selected, onSelect, hasMore, loadingMore, onLoadMore, onRefresh, refreshing, showTitle = true }: VersionListProps) {
+export function VersionList({
+  items,
+  selected,
+  onSelect,
+  hasMore,
+  loadingMore,
+  onLoadMore,
+  onRefresh,
+  refreshing,
+  showTitle = true,
+}: VersionListProps) {
   const groups = useMemo(() => {
     const out: { key: string; label: string; rows: { item: HistoryItem; index: number }[] }[] = []
     items.forEach((item, index) => {
@@ -74,7 +101,9 @@ export function VersionList({ items, selected, onSelect, hasMore, loadingMore, o
   useEffect(() => {
     const el = end.current
     if (!el || !hasMore || typeof IntersectionObserver === 'undefined') return
-    const io = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && more.current(), { rootMargin: '120px' })
+    const io = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && more.current(), {
+      rootMargin: '120px',
+    })
     io.observe(el)
     return () => io.disconnect()
   }, [hasMore, items.length])
@@ -91,7 +120,9 @@ export function VersionList({ items, selected, onSelect, hasMore, loadingMore, o
       <ul className="flex flex-col pb-4">
         {groups.map((g) => (
           <li key={g.key} className="flex flex-col">
-            <h3 className="sticky top-0 z-10 bg-background/95 px-3 py-1 text-xs font-medium text-muted-foreground backdrop-blur">{g.label}</h3>
+            <h3 className="sticky top-0 z-10 bg-background/95 px-3 py-1 text-xs font-medium text-muted-foreground backdrop-blur">
+              {g.label}
+            </h3>
             <ul>
               {g.rows.map(({ item, index }) => {
                 const { kind, detail } = describeVersion(item, items[index + 1])

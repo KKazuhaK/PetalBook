@@ -34,7 +34,15 @@ export function Breadcrumbs({ folder, currentLast = true }: { folder: string; cu
             {start.length > 0 && <Sep />}
             <li className="shrink-0">
               <DropdownMenu>
-                <DropdownMenuTrigger render={<button type="button" aria-label={t.manage.trailMore} className="flex size-6 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50" />}>
+                <DropdownMenuTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label={t.manage.trailMore}
+                      className="flex size-6 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+                    />
+                  }
+                >
                   <MoreHorizontal className="size-4" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent className="w-auto min-w-40">

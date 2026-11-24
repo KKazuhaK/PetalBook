@@ -3,7 +3,17 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
 import { t } from '@/i18n'
 import { MOCK_ADMIN } from '@/api/mock/server'
-import { adminRequests, click, installDomShims, makePerson, mount, settle, shareSpace, type, type Mounted } from '@/testing/harness'
+import {
+  adminRequests,
+  click,
+  installDomShims,
+  makePerson,
+  mount,
+  settle,
+  shareSpace,
+  type,
+  type Mounted,
+} from '@/testing/harness'
 import SettingsRoute from './SettingsRoute'
 
 // The members section of a space's settings, against the mock server.
@@ -24,14 +34,22 @@ const routes = (
 )
 const dialog = () => document.querySelector<HTMLElement>('[data-slot="settings-dialog"]')
 const panelText = () => dialog()?.textContent ?? ''
-const button = (label: string) => [...(dialog()?.querySelectorAll('button') ?? [])].find((b) => b.textContent?.trim() === label || b.getAttribute('aria-label') === label)
+const button = (label: string) =>
+  [...(dialog()?.querySelectorAll('button') ?? [])].find(
+    (b) => b.textContent?.trim() === label || b.getAttribute('aria-label') === label,
+  )
 const select = (label: string) => dialog()!.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)
 const rows = () => [...dialog()!.querySelectorAll('ul.divide-y > li')].map((li) => li.textContent ?? '')
-const sentToServer = () => m!.requests.filter((r) => r.method !== 'GET' && r.url !== '/api/login').map((r) => `${r.method} ${r.url}`)
+const sentToServer = () =>
+  m!.requests.filter((r) => r.method !== 'GET' && r.url !== '/api/login').map((r) => `${r.method} ${r.url}`)
 
 const confirmDemotion = async () => {
   await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
-  await click([...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent === t.members.demoteConfirm))
+  await click(
+    [...document.querySelectorAll('[role="alertdialog"] button')].find(
+      (b) => b.textContent === t.members.demoteConfirm,
+    ),
+  )
 }
 
 // The signed-in administrator, owner of 'Team', with another person to add; Team is the space in use.
@@ -119,7 +137,11 @@ describe('the members section: an owner', () => {
     await click(button(t.fmt.labelled(t.members.remove, '名 tang')))
     await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
     expect(document.querySelector('[role="alertdialog"]')!.textContent).toContain(t.members.removeHelp('名 tang'))
-    await click([...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent === t.members.removeConfirm))
+    await click(
+      [...document.querySelectorAll('[role="alertdialog"] button')].find(
+        (b) => b.textContent === t.members.removeConfirm,
+      ),
+    )
     await settle(() => rows().length === 1, 'removed')
     expect(sentToServer().some((r) => r.startsWith('DELETE'))).toBe(true)
   })
@@ -145,7 +167,9 @@ describe('the members section: an owner', () => {
     expect(document.querySelector('[role="alertdialog"]')!.textContent).toContain(t.members.demoteTitle)
     // Nothing has been sent yet; saying no keeps the role.
     expect(sentToServer().some((r) => r.startsWith('PATCH'))).toBe(false)
-    await click([...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent === t.members.cancel))
+    await click(
+      [...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent === t.members.cancel),
+    )
     await settle(() => document.querySelector('[role="alertdialog"]') === null, 'the question gone')
     expect(select(mine)!.value).toBe('owner')
     expect(sentToServer().some((r) => r.startsWith('PATCH'))).toBe(false)
@@ -157,7 +181,7 @@ describe('the members section: an owner', () => {
     expect(sentToServer().filter((r) => r.startsWith('PATCH'))).toHaveLength(1)
   })
 
-  it('does not ask when someone else\'s role is changed', async () => {
+  it("does not ask when someone else's role is changed", async () => {
     await openAsOwner()
     await type(dialog()!.querySelector<HTMLInputElement>('input[autocomplete="off"]')!, 'tang')
     await click(button(t.members.add))
@@ -190,7 +214,11 @@ describe('the members section: without the members permission', () => {
     expect(buttons).toEqual([t.members.leave])
     await click(button(t.members.leave))
     await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
-    await click([...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent === t.members.leaveConfirm))
+    await click(
+      [...document.querySelectorAll('[role="alertdialog"] button')].find(
+        (b) => b.textContent === t.members.leaveConfirm,
+      ),
+    )
     await settle(() => sentToServer().some((r) => r.startsWith('DELETE')), 'leaving')
     expect(sentToServer()[0]).toMatch(/^DELETE \/api\/spaces\/[^/]+\/members\/[^/]+$/)
     // The space is gone from the list, so the settings are about another one now.
@@ -221,7 +249,11 @@ describe('a space that an administrator switched off', () => {
     expect(rows()).toHaveLength(0)
     await click(button(t.members.leave))
     await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
-    await click([...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent === t.members.leaveConfirm))
+    await click(
+      [...document.querySelectorAll('[role="alertdialog"] button')].find(
+        (b) => b.textContent === t.members.leaveConfirm,
+      ),
+    )
     await settle(() => sentToServer().some((r) => r.startsWith('DELETE')), 'leaving')
     expect(sentToServer()[0]).toMatch(/^DELETE \/api\/spaces\/[^/]+\/members\/[^/]+$/)
     // It is gone from the list: the settings are about another space now.
@@ -233,7 +265,12 @@ describe('single-user mode', () => {
   it('has no members section, and the address goes to the preferences', async () => {
     m = await mount(routes, { server: { mode: 'single' }, entries: ['/settings/members'] })
     await settle(() => dialog() !== null && [...dialog()!.querySelectorAll('nav a')].length > 0, 'dialog')
-    expect([...dialog()!.querySelectorAll('nav a')].map((a) => a.textContent)).not.toContain(t.settingsUi.sections.members)
-    await settle(() => document.querySelector('[data-testid="location"]')?.textContent === '/settings/preferences', 'redirected')
+    expect([...dialog()!.querySelectorAll('nav a')].map((a) => a.textContent)).not.toContain(
+      t.settingsUi.sections.members,
+    )
+    await settle(
+      () => document.querySelector('[data-testid="location"]')?.textContent === '/settings/preferences',
+      'redirected',
+    )
   })
 })
