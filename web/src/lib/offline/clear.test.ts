@@ -116,3 +116,23 @@ describe('clearing a copy while it syncs', () => {
     expect(await dbs()).toEqual([])
   })
 })
+
+// A choice made while a sync runs must not be lost: the sync under way read the choice before it, so the choice is
+// synced once that sync has ended.
+describe('choosing while a sync runs', () => {
+  it('a folder chosen while the first sync is held has its page kept when that sync ends', async () => {
+    await make('选定', '甲')
+    const none = { mode: 'text' as const, folders: [], tags: [], favourites: false, inbox: false, recent: false }
+    const s = (await configure('local', 'default', cfg(none)))!
+    const h = hold(/sync\/catalog/)
+    const first = syncNow('local', 'default')
+    await h.reached
+    await configure('local', 'default', cfg({ ...none, folders: ['选定'] }))
+    // What the choice's own sync does: it finds one under way.
+    const second = await syncNow('local', 'default')
+    expect(second.outcome).toBe('ok')
+    h.release()
+    await first
+    expect(await s.textCount()).toBe(1)
+  })
+})

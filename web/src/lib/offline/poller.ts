@@ -65,22 +65,40 @@ const setBusy = (space: string, on: boolean) => {
   busyListeners.forEach((l) => l())
 }
 
-// One sync of one space, never two at once.
+// Spaces whose copy was asked to sync while a sync of it was under way: that sync read the choice before the ask,
+// so it is followed by another.
+const again = new Set<string>()
+
+// One sync of one space, never two at once. A call that finds one under way does not start another, and does not
+// get lost either: the one under way is followed by a sync of what was asked since.
 export async function syncNow(user: string, space: string, opts: SyncOptions = {}): Promise<SyncResult> {
-  if (busy.has(space)) return { outcome: 'ok', changed: false }
+  if (busy.has(space)) {
+    again.add(space)
+    return { outcome: 'ok', changed: false }
+  }
   // Taken before anything is waited for, so two calls at once cannot both start.
   setBusy(space, true)
+  let changed = false
   try {
-    const store = await existingStore(user, space)
-    if (!store) return { outcome: 'ok', changed: false }
-    const result = await syncSpace(store, opts)
-    noteOutcome(user, space, result, (opts.now ?? Date.now)())
-    if (result.outcome === 'ok') noteNetworkOk()
-    else if (result.outcome === 'offline') noteNetworkFailure()
-    listeners.forEach((l) => l({ space, result }))
-    if (result.outcome === 'off') await refused(user)
-    return result
+    for (;;) {
+      again.delete(space)
+      const store = await existingStore(user, space)
+      if (!store) return { outcome: 'ok', changed: false }
+      const run = await syncSpace(store, opts)
+      changed ||= run.changed
+      // What the run changed, and what the ones before it did, is one change to whoever asked.
+      const result = { ...run, changed }
+      noteOutcome(user, space, result, (opts.now ?? Date.now)())
+      if (result.outcome === 'ok') noteNetworkOk()
+      else if (result.outcome === 'offline') noteNetworkFailure()
+      listeners.forEach((l) => l({ space, result }))
+      if (result.outcome === 'off') await refused(user)
+      // Asked again meanwhile: only after a sync that got through (a failing one is left to the next poll).
+      if (result.outcome === 'ok' && again.has(space) && !opts.signal?.aborted) continue
+      return result
+    }
   } finally {
+    again.delete(space)
     setBusy(space, false)
   }
 }
