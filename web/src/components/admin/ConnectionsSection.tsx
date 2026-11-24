@@ -44,10 +44,11 @@ import { absoluteTime } from '@/lib/time'
 import { t } from '@/i18n'
 import { BrandIcon } from '@/components/brand/BrandIcon'
 import { postManifest } from './githubManifest'
+import { ForgeCards } from './ForgeCards'
 import { tg } from '@/i18n/github'
 
 // The connections of "Storage & sync": one card per platform the server can connect to. GitHub is the first;
-// the others (GitLab, Gitea) will each add a card here. A card is the platform's settings, and for GitHub where
+// the hosts with an OAuth application (GitLab, Gitea) follow it, one card each. A card is the platform's settings, and for GitHub where
 // the App is installed with the tenants each organisation's installation is shared with (docs/api.md,
 // "Administration", "Connections").
 export function ConnectionsSection() {
@@ -58,6 +59,7 @@ export function ConnectionsSection() {
       </h2>
       <p className="text-sm text-muted-foreground">{tg.admin.connectionsIntro}</p>
       <GitHubCard />
+      <ForgeCards />
     </section>
   )
 }
