@@ -86,6 +86,7 @@ func (s *server) author(c *call) space.Author {
 	if c.p.Grant != nil {
 		a.Via = space.ViaToken
 	}
+	a.MaxFile = s.fileLimit(c)
 	return a
 }
 
@@ -384,6 +385,7 @@ func (s *server) handle(rt route) http.HandlerFunc {
 				return
 			}
 			defer c.sp.Release()
+			s.withFileLimit(c)
 		}
 		rt.h(s, c)
 	}

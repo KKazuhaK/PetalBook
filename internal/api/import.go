@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/importer"
+	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 )
 
@@ -65,6 +66,22 @@ func (s *server) importMarkdown(c *call) {
 		s.fail(c.w, err)
 		return
 	}
+	// Every file the import would write is judged before the first is: the
+	// refusal names the first that is over the limit and nothing is written.
+	if limit := s.fileLimit(c); limit > 0 {
+		for _, p := range plan.Pages {
+			if n := pageFileSize(p.Meta, p.Body); n > limit {
+				tooLarge(c.w, limit, n, importName(p.Source, p.Meta))
+				return
+			}
+			for _, a := range p.Assets {
+				if n := int64(len(a.Data)); n > limit {
+					tooLarge(c.w, limit, n, a.Name)
+					return
+				}
+			}
+		}
+	}
 	items := make([]space.ImportPage, len(plan.Pages))
 	for i, p := range plan.Pages {
 		it := space.ImportPage{Folder: p.Folder, Meta: p.Meta, Body: p.Body}
@@ -103,4 +120,13 @@ func (s *server) importMarkdown(c *call) {
 		Skipped     []importer.Skipped `json:"skipped"`
 		SkippedMore int                `json:"skippedMore,omitempty"`
 	}{pages, files, skipped, plan.SkippedMore})
+}
+
+// importName is how a page of an import is called in a refusal: the path it
+// came from, else its title.
+func importName(source string, meta page.Meta) string {
+	if source != "" {
+		return source
+	}
+	return meta.Title()
 }

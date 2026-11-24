@@ -625,6 +625,10 @@ func (s *server) putDraft(c *call) {
 	if !ok {
 		return
 	}
+	if err := c.sp.Space.CheckSaveSize(s.author(c), id, *req.Meta, *req.Body); err != nil {
+		s.fail(c.w, err)
+		return
+	}
 	st, err := s.drafts.Put(c.r.Context(), c.sp.Space, c.sp.Info.ID, c.user().ID, id, req.Prev, req.BaseRev, *req.Meta, *req.Body)
 	if err != nil {
 		s.fail(c.w, err)

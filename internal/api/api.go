@@ -172,6 +172,7 @@ func New(opt Options) http.Handler {
 			s.local = *u
 		}
 	}
+	s.settings.SetFileCeiling(opt.MaxUpload)
 	s.bindDailySettings()
 	if s.auth != nil {
 		s.auth.UseSettings(s.settings)
@@ -488,6 +489,10 @@ type errorBody struct {
 	Quota string `json:"quota,omitempty"`
 	Limit *int64 `json:"limit,omitempty"`
 	Used  *int64 `json:"used,omitempty"`
+	// What file_too_large is about: the size of the file (absent when the body
+	// was cut off at the limit) and its name; the limit is Limit.
+	Size *int64 `json:"size,omitempty"`
+	Name string `json:"name,omitempty"`
 	// What the storage refusals say (see "Server storage"): remote_required has
 	// the requirement and, for an existing space, its deadline; not_cached says
 	// whether a fetch goes on; restoring says how far the restore is; an
@@ -589,6 +594,7 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		urle  *gitstore.URLError
 		hoste *gitstore.HostError
 		qe    *spaces.QuotaError
+		ftl   *space.FileTooLargeError
 	)
 	var coded *codedError
 	var ghe *connections.Error
@@ -598,6 +604,12 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	var rst *spaces.RestoringError
 	var rf *spaces.RestoreFailed
 	switch {
+	case errors.As(err, &ftl):
+		var size int64
+		if ftl.Size > 0 {
+			size = ftl.Size
+		}
+		tooLarge(w, ftl.Limit, size, ftl.Name)
 	case errors.As(err, &ghe):
 		s.failConnection(w, ghe)
 	case errors.As(err, &req):

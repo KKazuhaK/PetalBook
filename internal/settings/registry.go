@@ -19,6 +19,11 @@ const (
 	// device (4.1): the four sync endpoints answer 403 offline_off when it is off.
 	OfflineCopies = "offline.copies"
 
+	// FilesMaxBytes is the largest file a write may create or replace (3.5):
+	// site and tenant. The site's value is --max-upload and its lower rule
+	// restricts a tenant to at most that (see Service.SetFileCeiling).
+	FilesMaxBytes = "files.maxBytes"
+
 	QuotaSpacesPerPerson = "quota.spacesPerPerson"
 	QuotaBytesPerPerson  = "quota.bytesPerPerson"
 	QuotaPagesPerPerson  = "quota.pagesPerPerson"
@@ -55,6 +60,10 @@ func Definitions() []*Def {
 		// off. No space or person layer: a person who is not allowed has none, and
 		// one who is allowed chooses by which spaces they keep on the device.
 		{Key: OfflineCopies, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: true, Lower: Lower{Mode: Allow}},
+		// The size of one file (3.5). The default and the site's lower rule are the
+		// site's --max-upload, which the server sets (SetFileCeiling).
+		{Key: FilesMaxBytes, Kind: Limit, Layers: []Layer{Site, Tenant}, Default: int64(10 << 20), Min: 1, Max: 256 << 20,
+			Lower: Lower{Mode: Restrict, Max: i64(10 << 20)}},
 		// What one person may use. Only the number of spaces is refused (0 is no
 		// limit, as --max-spaces 0 was); bytes and pages warn. null is no limit.
 		{Key: QuotaSpacesPerPerson, Kind: Limit, Layers: []Layer{Site, Tenant, Person}, Default: int64(20), Min: 0, Max: 10000, Lower: Lower{Mode: Allow}},

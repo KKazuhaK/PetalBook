@@ -7009,6 +7009,19 @@ of file, images included.
   (the site's for a caller not signed in); 4.1's offline uploads use it.
 - The effective value is read from the settings cache (one map lookup), never
   per layer on a request.
+- **As built.** The site's value is `--max-upload` and cannot be written
+  (`PUT /api/admin/settings/files.maxBytes` with a `value` answers `409
+  conflict`, as for any setting a flag sets); its `lower` can be changed, but the
+  value in effect is never above `--max-upload` whatever the layers say. A page
+  that is over the limit already (the limit was lowered) can still be saved
+  again at its size or smaller: only a write that makes an over-limit file
+  larger, or a new one, is refused. A draft is judged when it is put and again
+  when it is committed. An import is judged whole before anything is written:
+  the first page or attachment over the limit is named and nothing is imported
+  (`name` is the path in the zip). The upload endpoint's old `413 invalid` is
+  now `413 file_too_large`; the `413 invalid` of a request body over `maxBody`
+  or `maxImport` stays as it was. 4.2's offline replay does not exist yet; it
+  goes through the same page writes, so it is judged by them.
 
 ### Audit
 

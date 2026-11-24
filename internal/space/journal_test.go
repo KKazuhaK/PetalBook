@@ -436,7 +436,7 @@ func TestRecoveryOfAFolderRespellingListsOnlyFiles(t *testing.T) {
 		{Op: "t", Path: "Notes (renaming 1)/a.md"},
 	})
 	if strings.Join(pathsOf(got), ",") != "Notes (renaming 1)/a.md,Notes/a.md,notes/a.md" {
-		t.Fatalf("%q", got)
+		t.Fatalf("%v", got)
 	}
 }
 

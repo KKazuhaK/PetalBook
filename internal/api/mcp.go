@@ -239,6 +239,14 @@ func (s *server) toolError(err error) *mcpError {
 		return &mcpError{Code: "conflict", Message: "the page changed since you read it; read it again with page_get and redo the change",
 			Details: map[string]any{"current": map[string]any{"rev": cur.Rev, "path": cur.Path, "meta": cur.Meta}}}
 	}
+	var ftl *space.FileTooLargeError
+	if errors.As(err, &ftl) {
+		d := map[string]any{"limit": ftl.Limit, "name": ftl.Name}
+		if ftl.Size > 0 {
+			d["size"] = ftl.Size
+		}
+		return &mcpError{Code: "file_too_large", Message: ftl.Error(), Details: d}
+	}
 	w := &memWriter{h: http.Header{}}
 	s.fail(w, err)
 	var b errorBody
@@ -263,6 +271,7 @@ type mcpCall struct {
 func (c *mcpCall) author() space.Author {
 	a := c.s.spaces.AuthorOf(c.p.User)
 	a.Via = space.ViaMCP
+	a.MaxFile = c.s.fileLimitFor(c.ctx, c.p.User.TenantID)
 	return a
 }
 
@@ -329,7 +338,7 @@ func addTool[In any](t *mcpTools, name, desc string, write bool, kinds map[strin
 		if p == nil {
 			return t.errorResult(mcpErr("internal", "the request has no credential")), nil, nil
 		}
-		c := &mcpCall{t: t, s: t.s, ctx: space.ContextWithVia(ctx, space.ViaMCP), p: p, req: req}
+		c := &mcpCall{t: t, s: t.s, ctx: space.ContextWithMaxFile(space.ContextWithVia(ctx, space.ViaMCP), t.s.fileLimitFor(ctx, p.User.TenantID)), p: p, req: req}
 		out, err := fn(c, in)
 		if err != nil {
 			return t.errorResult(t.s.toolError(err)), nil, nil

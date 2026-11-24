@@ -799,5 +799,6 @@ func (s *Service) authorOf(ctx context.Context, userID string) (space.Author, er
 		return by, err
 	}
 	by.Via = space.ViaFrom(ctx)
+	by.MaxFile = space.MaxFileFrom(ctx)
 	return by, nil
 }

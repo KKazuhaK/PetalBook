@@ -39,7 +39,13 @@ func (s *server) putAsset(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "give the file's name in the name parameter")
 		return
 	}
-	max := s.opt.MaxUpload
+	max := s.fileLimit(c)
+	// The declared length is judged first: a file that says it is too large is
+	// refused before a byte of it is read.
+	if n := c.r.ContentLength; n > max {
+		tooLarge(c.w, max, n, name)
+		return
+	}
 	// The server's read timeout is sized for JSON; a file over a slow link
 	// needs longer. A failure to extend it only means the default applies.
 	// The write deadline runs from when the request began, so it moves as well.
@@ -50,7 +56,7 @@ func (s *server) putAsset(c *call) {
 	if err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
-			writeError(c.w, http.StatusRequestEntityTooLarge, "invalid", "the file is larger than "+sizeText(max)+", the most this server accepts")
+			tooLarge(c.w, max, 0, name)
 		} else {
 			writeError(c.w, http.StatusBadRequest, "invalid", "could not read the file")
 		}

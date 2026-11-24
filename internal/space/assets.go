@@ -91,6 +91,9 @@ func (s *Space) PutAsset(by Author, id, name string, data []byte) (Asset, error)
 	if len(data) == 0 {
 		return Asset{}, invalidf("the file is empty")
 	}
+	if err := by.checkFileSize(name, int64(len(data)), 0); err != nil {
+		return Asset{}, err
+	}
 	stored := AssetName(name, data)
 	s.refresh(id)
 	return mutate(s, by, func(tx *txn) (Asset, error) { return s.putAssetLocked(tx, id, stored, data) })
