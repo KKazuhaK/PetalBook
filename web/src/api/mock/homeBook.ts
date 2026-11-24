@@ -80,9 +80,8 @@ export function createHomeBook(env: HomeEnv) {
   const sourceFor = (c: DailyConfig, lang: string): DailySource | null => {
     const m = matchTag(lang, Object.keys(c.by))
     if (m !== null && c.by[m]) return c.by[m]
-    if (c.all) return c.all
-    const keys = Object.keys(c.by).sort()
-    return keys.length ? c.by[keys[0]] : null
+    // The source for all the other languages; never the source of another language.
+    return c.all ?? null
   }
   // The shape of the JSON: the source keys and the language keys side by side.
   const jsonOf = (c: DailyConfig): Record<string, unknown> => ({ ...(c.all ?? {}), ...c.by })

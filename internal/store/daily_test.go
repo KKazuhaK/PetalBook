@@ -247,3 +247,47 @@ func TestCompareAndSetSiteSetting(t *testing.T) {
 		}
 	})
 }
+
+func TestSpaceChoiceKeepsItsOptions(t *testing.T) {
+	c := store.ParseSpaceChoice(`["a","b"]`)
+	if len(c.APIs) != 2 || c.Options != nil || c.JSON() != `["a","b"]` {
+		t.Fatalf("%+v %s", c, c.JSON())
+	}
+	c.Options = map[string]map[string][]string{"a": {"categories": {"i"}}}
+	back := store.ParseSpaceChoice(c.JSON())
+	if len(back.APIs) != 2 || back.Options["a"]["categories"][0] != "i" {
+		t.Fatalf("%s", c.JSON())
+	}
+	if got := store.ParseSpaceChoice("not json"); len(got.APIs) != 0 {
+		t.Fatal(got)
+	}
+	if got := store.ParseSpaceChoice(`[]`).JSON(); got != `[]` {
+		t.Fatal(got)
+	}
+}
+
+func TestSpaceChoiceKeepsSourcesAndTheyFollowARename(t *testing.T) {
+	raw := `{"apis":[],"sources":{"":[{"kind":"api","id":"old"},{"kind":"list"},{"kind":"own","source":{"tag":"x"}}]}}`
+	c := store.ParseSpaceChoice(raw)
+	if len(c.Sources) == 0 || c.JSON() != `{"apis":[],"sources":{"":[{"kind":"api","id":"old"},{"kind":"list"},{"kind":"own","source":{"tag":"x"}}]}}` {
+		t.Fatalf("%s", c.JSON())
+	}
+	// Without sources it is still the plain list.
+	if got := (store.SpaceChoice{APIs: []string{"a"}}).JSON(); got != `["a"]` {
+		t.Fatal(got)
+	}
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		mkSpace(t, st, "S9", "nine")
+		sp := "S9"
+		if err := store.SetSpaceDaily(ctx, st.Q(), sp, store.SpaceDaily{Inherit: true, APIs: raw}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.RenameSpaceDailyAPI(ctx, st.Q(), "old", "new"); err != nil {
+			t.Fatal(err)
+		}
+		got, err := store.GetSpaceDaily(ctx, st.Q(), sp)
+		if err != nil || !strings.Contains(got.APIs, `"id":"new"`) || strings.Contains(got.APIs, `"id":"old"`) {
+			t.Fatalf("%v %s", err, got.APIs)
+		}
+	})
+}

@@ -133,12 +133,13 @@ func TestProviders(t *testing.T) {
 			t.Errorf("%s is not built in", p.ID)
 		}
 	}
-	if len(ps) != 2 || ps[0].ID != "hitokoto" || ps[0].RPS != 20 || ps[0].Link != "https://hitokoto.cn?uuid={uuid}" || ps[0].URL != "https://international.v1.hitokoto.cn/?max_length=80" ||
+	if len(ps) != 8 || ps[0].ID != "hitokoto" || ps[0].RPS != 20 || ps[0].Link != "https://hitokoto.cn?uuid={uuid}" || ps[0].URL != "https://international.v1.hitokoto.cn/?max_length=80" ||
 		ps[0].Text != "hitokoto" || ps[0].Source != "from" || ps[0].Author != "from_who" || fmt.Sprint(ps[0].Languages) != "[zh-Hans zh-Hant]" || ps[0].Site != "https://hitokoto.cn" ||
-		ps[1].ID != "quotable" || ps[1].Text != "[0].content" || ps[1].Author != "[0].author" || ps[1].RPS != 3 || ps[1].Link != "" || ps[1].URL != "https://api.quotable.io/quotes/random" || ps[1].Lang != "en" {
+		ps[1].ID != "zenquotes" || ps[1].Text != "[0].q" || ps[1].Author != "[0].a" || ps[1].RPS != 0.1 || ps[1].Link != "https://zenquotes.io/" || ps[1].URL != "https://zenquotes.io/api/today" || ps[1].Lang != "en" || ps[1].SkipNew ||
+		ps[2].ID != "favqs" || ps[2].Text != "quote.body" || ps[2].Author != "quote.author" || ps[2].RPS != 1 || ps[2].Link != "https://favqs.com/quotes/{quote.author_permalink}/{quote.id}" || ps[2].URL != "https://favqs.com/api/qotd" || ps[2].Lang != "en" || ps[2].SkipNew {
 		t.Fatalf("%+v", ps)
 	}
-	if p, ok := ProviderByID("quotable"); !ok || p.ID != "quotable" {
+	if p, ok := ProviderByID("zenquotes"); !ok || p.ID != "zenquotes" {
 		t.Fatal("ProviderByID")
 	}
 	if _, ok := ProviderByID("nope"); ok {
@@ -1099,5 +1100,223 @@ func TestAnInterfaceContactsOnlyItsOwnHostAndPort(t *testing.T) {
 	b.URL = strings.Replace(a.URL, "127.0.0.1:", "127.0.0.1:{lang}", 1)
 	if _, err := f.request(ctx, b, "1", "2026-11-23"); err == nil {
 		t.Error("a port made with the language was asked")
+	}
+}
+
+// A service that is no longer built in is simply not found.
+func TestProviderByIDRemoved(t *testing.T) {
+	if _, ok := ProviderByID("quotable"); ok {
+		t.Fatal("quotable is gone")
+	}
+}
+
+func TestProviderOptions(t *testing.T) {
+	p, _ := ProviderByID("hitokoto")
+	if len(p.Options) != 1 || p.Options[0].Key != "categories" || p.Options[0].Param != "c" || len(p.Options[0].Values) != 12 {
+		t.Fatalf("%+v", p.Options)
+	}
+	if z, _ := ProviderByID("zenquotes"); len(z.Options) != 0 {
+		t.Fatal("zenquotes has none")
+	}
+	// Canonical: declared order, each once; none or all is nothing.
+	got, err := p.CheckOptions(map[string][]string{"categories": {"k", "d", "k"}})
+	if err != nil || fmt.Sprint(got) != "map[categories:[d k]]" {
+		t.Fatalf("%v %v", got, err)
+	}
+	for _, in := range []map[string][]string{nil, {"categories": nil}, {"categories": {"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"}}} {
+		if got, err := p.CheckOptions(in); err != nil || len(got) != 0 {
+			t.Errorf("%v: %v %v", in, got, err)
+		}
+	}
+	for _, in := range []map[string][]string{{"categories": {"z"}}, {"categories": {"a&c=b"}}, {"genre": {"a"}}, {"categories": {""}}} {
+		if _, err := p.CheckOptions(in); err == nil {
+			t.Errorf("%v accepted", in)
+		}
+	}
+	// The address.
+	a, err := p.WithOptions(map[string][]string{"categories": {"i", "d"}})
+	if err != nil || a.URL != "https://international.v1.hitokoto.cn/?max_length=80&c=d&c=i" || a.ID != "hitokoto" {
+		t.Fatalf("%q %v", a.URL, err)
+	}
+	if a, _ := p.WithOptions(nil); a.URL != p.URL {
+		t.Fatalf("%q", a.URL)
+	}
+	if _, err := p.WithOptions(map[string][]string{"categories": {"nope"}}); err == nil {
+		t.Fatal("accepted")
+	}
+	// A parameter is joined with ? when the address has none, and values are escaped.
+	q := Provider{API: API{ID: "x", URL: "https://example.org/q"}, Options: []Option{{Key: "k", Param: "a b", Kind: "multi", Values: []OptionValue{{Value: "é/1"}, {Value: "2"}}}}}
+	if a, err := q.WithOptions(map[string][]string{"k": {"é/1"}}); err != nil || a.URL != "https://example.org/q?a+b=%C3%A9%2F1" {
+		t.Fatalf("%q %v", a.URL, err)
+	}
+}
+
+// Another address is another cache entry, and the rate limit is the id's.
+func TestOptionSetsShareTheRateLimitAndNotTheCache(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"text":"%s"}`, r.URL.RawQuery)
+	}))
+	defer srv.Close()
+	f := NewForTests(nil)
+	now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+	f.SetClock(func() time.Time { return now })
+	base := API{ID: "x", Name: "x", URL: srv.URL + "/q", Text: "text", Refresh: RefreshDaily, RPS: 0.5, Enabled: true}
+	p := Provider{API: base, Options: []Option{{Key: "k", Param: "c", Kind: "multi", Values: []OptionValue{{Value: "a"}, {Value: "b"}}}}}
+	a1, _ := p.WithOptions(map[string][]string{"k": {"a"}})
+	a2, _ := p.WithOptions(map[string][]string{"k": {"b"}})
+	r1, err := f.Get(context.Background(), a1, "", "2026-11-23", 0)
+	if err != nil || r1.Text != "c=a" {
+		t.Fatalf("%v %v", r1, err)
+	}
+	if _, err := f.Get(context.Background(), a2, "", "2026-11-23", 0); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("the second set was not limited: %v", err)
+	}
+	now = now.Add(3 * time.Second)
+	r2, err := f.Get(context.Background(), a2, "", "2026-11-23", 0)
+	if err != nil || r2.Text != "c=b" {
+		t.Fatalf("%v %v", r2, err)
+	}
+	// Each is kept for itself.
+	if again, _ := f.Get(context.Background(), a1, "", "2026-11-23", 0); again.Text != "c=a" || hits.Load() != 2 {
+		t.Fatalf("%v %d", again, hits.Load())
+	}
+}
+
+func TestNewBuiltInProviders(t *testing.T) {
+	for id, want := range map[string]struct {
+		url  string
+		rps  float64
+		skip bool
+	}{
+		"animechan":  {"https://api.animechan.io/v1/quotes/random", 1.0 / 60, false},
+		"dummyjson":  {"https://dummyjson.com/quotes/random", 1, true},
+		"jinrishici": {"https://v1.jinrishici.com/{category}.json", 1, true},
+		"shanbay":    {"https://apiv3.shanbay.com/weapps/dailyquote/quote/", 1, false},
+		"iciba":      {"https://open.iciba.com/dsapi/", 1, false},
+	} {
+		p, ok := ProviderByID(id)
+		if !ok || p.URL != want.url || p.RPS != want.rps || p.SkipNew != want.skip || p.Refresh != RefreshDaily || !p.Builtin {
+			t.Errorf("%s: %+v", id, p)
+		}
+	}
+	if p, _ := ProviderByID("iciba"); !p.AnyContentType {
+		t.Error("iciba labels its JSON as html")
+	}
+	for _, p := range Providers() {
+		if p.ID != "iciba" && p.AnyContentType {
+			t.Errorf("%s accepts any Content-Type", p.ID)
+		}
+	}
+	// The one that is picked by path: its default, and a category as a path.
+	p, _ := ProviderByID("jinrishici")
+	if len(p.Options) != 1 || p.Options[0].Kind != "path" || p.Options[0].Default != "all" || len(p.Options[0].Values) < 20 {
+		t.Fatalf("%+v", p.Options)
+	}
+	for in, want := range map[string]string{"": "https://v1.jinrishici.com/all.json", "shuqing/libie": "https://v1.jinrishici.com/shuqing/libie.json", "rensheng": "https://v1.jinrishici.com/rensheng.json", "all": "https://v1.jinrishici.com/all.json"} {
+		var chosen map[string][]string
+		if in != "" {
+			chosen = map[string][]string{"category": {in}}
+		}
+		if a, err := p.WithOptions(chosen); err != nil || a.URL != want {
+			t.Errorf("%q: %q %v", in, a.URL, err)
+		}
+	}
+	for name, in := range map[string]map[string][]string{"two": {"category": {"siji", "rensheng"}}, "none such": {"category": {"nope"}}, "traversal": {"category": {"../x"}}} {
+		if _, err := p.WithOptions(in); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	if got, _ := p.CheckOptions(map[string][]string{"category": {"all"}}); len(got) != 0 {
+		t.Errorf("the default is none: %v", got)
+	}
+}
+
+// An answer in two languages: each reader's language has its own lane and takes its own field.
+func TestBilingualProviderLanes(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8") // as iciba labels it
+		fmt.Fprint(w, `{"content":"Be kind.","note":"与人为善。","author":"x"}`)
+	}))
+	defer srv.Close()
+	a := API{ID: "bi", Name: "bi", Lang: "zh-Hans", Languages: []string{"zh-Hans", "en"}, URL: srv.URL + "/d", Text: "content", Texts: map[string]string{"zh-Hans": "note"},
+		Refresh: RefreshDaily, RPS: 5, Enabled: true, Builtin: true}
+	f := NewForTests(nil)
+	now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+	f.SetClock(func() time.Time { return now })
+	ctx := context.Background()
+	// Without the flag the answer is refused: it says it is not JSON.
+	if _, err := f.Get(ctx, a, a.LaneLang("en", nil), "2026-11-23", 0); err == nil {
+		t.Fatal("a mislabelled answer was taken")
+	}
+	a.AnyContentType = true
+	now = now.Add(time.Hour) // the failure's wait
+	for lang, want := range map[string]string{"en": "Be kind.", "en-GB": "Be kind.", "zh-CN": "与人为善。", "zh-Hans": "与人为善。", "fr": "与人为善。"} {
+		lane := a.LaneLang(lang, nil)
+		if want == "Be kind." && lane != "en" || want != "Be kind." && lane != "zh-Hans" {
+			t.Errorf("%s: lane %q", lang, lane)
+		}
+		got, err := f.Get(ctx, a, lane, "2026-11-23", 0)
+		if err != nil || got.Text != want {
+			t.Errorf("%s: %v %v", lang, got, err)
+		}
+	}
+	// Two lanes, two requests, however many readers.
+	if n := hits.Load(); n != 3 { // the refused one, and one for each language
+		t.Errorf("%d requests", n)
+	}
+	// A body that is not JSON is refused whatever the flag says.
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `<html>{"content":"x"}</html>`) }))
+	defer bad.Close()
+	b := a
+	b.URL, b.ID = bad.URL+"/d", "bad"
+	if _, err := f.Get(ctx, b, "en", "2026-11-23", 0); err == nil {
+		t.Fatal("html taken for JSON")
+	}
+}
+
+func TestServes(t *testing.T) {
+	for _, id := range []string{"shanbay", "iciba"} {
+		p, _ := ProviderByID(id)
+		for lang, want := range map[string]bool{"en": true, "en-GB": true, "zh-Hans": true, "zh-CN": true, "zh-Hant": true, "zh-TW": true, "fr": false, "ja": false, "pt-BR": false} {
+			if got := p.Serves(lang); got != want {
+				t.Errorf("%s serves %s: %v", id, lang, got)
+			}
+		}
+	}
+	// Each built-in interface serves the languages it has, and no other: 一言 is never used for English.
+	for id, langs := range map[string]map[string]bool{
+		"hitokoto":   {"zh-CN": true, "zh-Hant": true, "en": false, "fr": false},
+		"jinrishici": {"zh-Hans": true, "zh-TW": true, "en": false},
+		"zenquotes":  {"en": true, "en-GB": true, "zh-CN": false, "fr": false},
+		"favqs":      {"en": true, "de": false},
+	} {
+		p, _ := ProviderByID(id)
+		for lang, want := range langs {
+			if got := p.Serves(lang); got != want {
+				t.Errorf("%s serves %s: %v", id, lang, got)
+			}
+		}
+	}
+	// An interface of the administrators' own has no list of languages and serves the ones a default gives it.
+	if !(API{ID: "mine", Lang: "zh-Hans"}).Serves("en") {
+		t.Error("an interface of their own")
+	}
+}
+
+// ZenQuotes' terms ask for a link back, which is not shown, so it says so and is in no default.
+func TestZenQuotesSaysItsTermsNeedALink(t *testing.T) {
+	p, _ := ProviderByID("zenquotes")
+	for _, want := range []string{"link back", "does not show", "enable it only if you accept"} {
+		if !strings.Contains(p.Note, want) {
+			t.Errorf("the note does not say %q: %s", want, p.Note)
+		}
+	}
+	if h, _ := ProviderByID("hitokoto"); !strings.Contains(h.Note, "Chinese only") {
+		t.Error(h.Note)
 	}
 }

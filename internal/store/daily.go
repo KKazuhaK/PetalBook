@@ -51,6 +51,7 @@ func CompareAndSetSiteSetting(ctx context.Context, q Q, key, old, value string, 
 type DailyLine struct {
 	Lang   string
 	Body   string
+	Author string
 	Source string
 }
 
@@ -89,11 +90,29 @@ func ReplaceDailyLines(ctx context.Context, q Q, lang string, lines []DailyLine)
 		return 0, ErrTooManyLines
 	}
 	for i, l := range lines {
-		if _, err := q.Exec(ctx, `INSERT INTO daily_lines(position, lang, body, source) VALUES (?, ?, ?, ?)`, last+int64(i)+1, lang, l.Body, l.Source); err != nil {
+		if _, err := q.Exec(ctx, `INSERT INTO daily_lines(position, lang, body, author, source) VALUES (?, ?, ?, ?, ?)`, last+int64(i)+1, lang, l.Body, l.Author, l.Source); err != nil {
 			return 0, err
 		}
 	}
 	return n + len(lines), nil
+}
+
+// DailyLines are the lines of one language, in the order they were added.
+func DailyLines(ctx context.Context, q Q, lang string) ([]DailyLine, error) {
+	rows, err := q.Query(ctx, `SELECT body, author, source FROM daily_lines WHERE lang = ? ORDER BY position`, lang)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []DailyLine{}
+	for rows.Next() {
+		l := DailyLine{Lang: lang}
+		if err := rows.Scan(&l.Body, &l.Author, &l.Source); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
 }
 
 // DeleteDailyLines removes the lines of one language.
@@ -107,7 +126,7 @@ func DeleteDailyLines(ctx context.Context, q Q, lang string) error {
 func NthDailyLine(ctx context.Context, q Q, lang string, n int) (DailyLine, error) {
 	var l DailyLine
 	l.Lang = lang
-	err := q.QueryRow(ctx, `SELECT body, source FROM daily_lines WHERE lang = ? ORDER BY position LIMIT 1 OFFSET ?`, lang, n).Scan(&l.Body, &l.Source)
+	err := q.QueryRow(ctx, `SELECT body, author, source FROM daily_lines WHERE lang = ? ORDER BY position LIMIT 1 OFFSET ?`, lang, n).Scan(&l.Body, &l.Author, &l.Source)
 	if errors.Is(err, sql.ErrNoRows) {
 		return l, ErrNotFound
 	}
@@ -120,6 +139,59 @@ type SpaceDaily struct {
 	Inherit bool
 	// APIs are the ids of the external interfaces the space uses, as JSON.
 	APIs string
+}
+
+// SpaceChoice is the external interfaces a space uses, in order, and the
+// options chosen for each (interface id, option key, values). Stored in
+// SpaceDaily.APIs as the JSON list of the ids when there are no options (the
+// first form), else as {"apis": [...], "options": {...}}.
+type SpaceChoice struct {
+	APIs    []string
+	Options map[string]map[string][]string
+	// Sources are the sources of each language in order, of any kind (JSON the
+	// API reads and writes: {"": [{"kind": "api", "id": …}, …]}); absent when the
+	// space only lists interfaces.
+	Sources json.RawMessage
+}
+
+// ParseSpaceChoice reads what SpaceDaily.APIs holds; what cannot be read is no choice.
+func ParseSpaceChoice(raw string) SpaceChoice {
+	var c SpaceChoice
+	var ids []string
+	if json.Unmarshal([]byte(raw), &ids) == nil {
+		c.APIs = ids
+		return c
+	}
+	var obj struct {
+		APIs    []string                       `json:"apis"`
+		Options map[string]map[string][]string `json:"options"`
+		Sources json.RawMessage                `json:"sources"`
+	}
+	if json.Unmarshal([]byte(raw), &obj) == nil {
+		c.APIs, c.Options = obj.APIs, obj.Options
+		if string(obj.Sources) != "null" {
+			c.Sources = obj.Sources
+		}
+	}
+	return c
+}
+
+// JSON is the choice as SpaceDaily.APIs keeps it.
+func (c SpaceChoice) JSON() string {
+	ids := c.APIs
+	if ids == nil {
+		ids = []string{}
+	}
+	if len(c.Options) == 0 && len(c.Sources) == 0 {
+		b, _ := json.Marshal(ids)
+		return string(b)
+	}
+	b, _ := json.Marshal(struct {
+		APIs    []string                       `json:"apis"`
+		Options map[string]map[string][]string `json:"options,omitempty"`
+		Sources json.RawMessage                `json:"sources,omitempty"`
+	}{ids, c.Options, c.Sources})
+	return string(b)
 }
 
 // GetSpaceDaily returns the choice of a space; the default (inherit, no
@@ -157,12 +229,9 @@ func RenameSpaceDailyAPI(ctx context.Context, q Q, from, to string) error {
 			rows.Close()
 			return err
 		}
-		var ids []string
-		if json.Unmarshal([]byte(apis), &ids) != nil {
-			continue
-		}
-		out, changed, seen := make([]string, 0, len(ids)), false, map[string]bool{}
-		for _, v := range ids {
+		c := ParseSpaceChoice(apis)
+		out, changed, seen := make([]string, 0, len(c.APIs)), false, map[string]bool{}
+		for _, v := range c.APIs {
 			if v == from {
 				v, changed = to, true
 			}
@@ -171,9 +240,37 @@ func RenameSpaceDailyAPI(ctx context.Context, q Q, from, to string) error {
 				out = append(out, v)
 			}
 		}
+		if o, ok := c.Options[from]; ok {
+			opts := map[string]map[string][]string{}
+			for k, v := range c.Options {
+				opts[k] = v
+			}
+			delete(opts, from)
+			if _, taken := opts[to]; !taken {
+				opts[to] = o
+			}
+			c.Options, changed = opts, true
+		}
+		if len(c.Sources) > 0 {
+			var lists map[string][]map[string]any
+			if json.Unmarshal(c.Sources, &lists) == nil {
+				moved := false
+				for _, list := range lists {
+					for _, src := range list {
+						if src["kind"] == "api" && src["id"] == from {
+							src["id"], moved = to, true
+						}
+					}
+				}
+				if moved {
+					c.Sources, _ = json.Marshal(lists)
+					changed = true
+				}
+			}
+		}
 		if changed {
-			b, _ := json.Marshal(out)
-			changes = append(changes, change{id, string(b)})
+			c.APIs = out
+			changes = append(changes, change{id, c.JSON()})
 		}
 	}
 	if err := rows.Err(); err != nil {

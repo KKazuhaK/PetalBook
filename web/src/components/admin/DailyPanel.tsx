@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { Plus, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
+import { adminApi } from '@/api/admin'
 import {
   useAdminDaily,
   useAdminSpaces,
@@ -17,6 +18,10 @@ import type {
   AdminDaily,
   DailyApi,
   DailyDefault,
+  DailyLine,
+  DailyOptionChoice,
+  DailySource,
+  DailySourceItem,
   DailyNotice,
   DailySettings,
   DailyTryResult,
@@ -26,6 +31,7 @@ import type {
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { SettingsRow, SettingsRows, SettingsSection } from '@/components/settings/SettingsParts'
+import { ListButtons, moved, OptionChoices } from '@/components/settings/DailyChoices'
 import { SourceFields } from '@/components/settings/SourceFields'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -34,9 +40,18 @@ import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import { draftsFrom, emptyDraft, settingsFrom, tabsOf, type Drafts } from '@/lib/dailySettings'
+import {
+  draftsFrom,
+  draftToSource,
+  emptyDraft,
+  settingsFrom,
+  sourceToDraft,
+  tabsOf,
+  type Drafts,
+  type SourceDraft,
+} from '@/lib/dailySettings'
 import { dayOf } from '@/api/hooks'
-import { canonicalTag } from '@/lib/langTags'
+import { canonicalTag, matchTag } from '@/lib/langTags'
 import { dailyCodeMessage } from './dailyCodes'
 import { t } from '@/i18n'
 import { ta } from '@/i18n/admin'
@@ -318,12 +333,52 @@ function LangTabs({
   )
 }
 
+// One source in the list of a language of the default (see DailyDefault).
+type Item = { kind: 'api'; id: string } | { kind: 'list' } | { kind: 'space'; space: string; draft: SourceDraft }
+
+// The lists of the default as the editor holds them: whatever the kind it was saved as.
+function itemsOf(def: DailyDefault): Record<string, Item[]> {
+  if (def?.kind === 'api')
+    return Object.fromEntries(
+      Object.entries(def.apis).map(([l, ids]) => [l, ids.map((id): Item => ({ kind: 'api', id }))]),
+    )
+  if (def?.kind !== 'sources') return {}
+  return Object.fromEntries(
+    Object.entries(def.sources).map(([l, list]) => [
+      l,
+      list.map((src): Item => {
+        if (src.kind === 'list') return { kind: 'list' }
+        if (src.kind === 'space')
+          return {
+            kind: 'space',
+            space: src.space,
+            draft: sourceToDraft(src.source as DailySource) ?? { ...emptyDraft() },
+          }
+        return { kind: 'api', id: src.id }
+      }),
+    ]),
+  )
+}
+function optionsOfItems(def: DailyDefault): DailyOptionChoice {
+  const out: DailyOptionChoice = {}
+  if (def?.kind === 'sources')
+    for (const list of Object.values(def.sources))
+      for (const src of list) if (src.kind === 'api' && src.options) out[src.id] = structuredClone(src.options)
+  return out
+}
+
 function DefaultSection({ data }: { data: AdminDaily }) {
   const save = useSaveDailySite()
   const spaces = useAdminSpaces('')
   const initial = data.default
-  const [kind, setKind] = useState<'none' | 'list' | 'space' | 'api'>(initial === null ? 'none' : initial.kind)
-  const [apis, setApis] = useState<Record<string, string>>(() => (initial?.kind === 'api' ? { ...initial.apis } : {}))
+  const [kind, setKind] = useState<'none' | 'list' | 'space' | 'api'>(
+    initial === null ? 'none' : initial.kind === 'sources' ? 'api' : initial.kind,
+  )
+  // The sources of each language, in order: external interfaces, our own lines, pages of a space.
+  const [apis, setApis] = useState<Record<string, Item[]>>(() => itemsOf(initial))
+  const [options, setOptions] = useState<DailyOptionChoice>(() =>
+    initial?.kind === 'api' ? structuredClone(initial.options ?? {}) : optionsOfItems(initial),
+  )
   const [space, setSpace] = useState(initial?.kind === 'space' ? initial.space : '')
   const [drafts, setDrafts] = useState<Drafts>(() => (initial?.kind === 'space' ? draftsFrom(initial.source) : {}))
   const [tab, setTab] = useState('')
@@ -334,15 +389,45 @@ function DefaultSection({ data }: { data: AdminDaily }) {
   )
   const draft = drafts[tab] ?? { ...emptyDraft(), mode: 'own' as const }
   const items = spaces.data?.pages.flatMap((p) => p.items) ?? []
+  const spaceItems = items
 
   const submit = () => {
     setError('')
     let value: DailyDefault = null
     if (kind === 'list') value = { kind: 'list' }
     if (kind === 'api') {
-      const chosen = Object.fromEntries(Object.entries(apis).filter(([, id]) => id !== ''))
+      const chosen = Object.fromEntries(Object.entries(apis).filter(([, items]) => items.length > 0))
       if (Object.keys(chosen).length === 0) return setError(d.defaultApiIncomplete)
-      value = { kind: 'api', apis: chosen }
+      const all = Object.values(chosen).flat()
+      if (all.some((i) => i.kind === 'space' && (i.space === '' || i.draft.value === '')))
+        return setError(d.defaultSpaceIncomplete)
+      if (all.every((i) => i.kind === 'api')) {
+        // Interfaces only: as the earlier shape, which every server reads.
+        const used = new Set(all.map((i) => (i.kind === 'api' ? i.id : '')))
+        const kept = Object.fromEntries(Object.entries(options).filter(([id]) => used.has(id)))
+        value = {
+          kind: 'api',
+          apis: Object.fromEntries(
+            Object.entries(chosen).map(([l, items]) => [l, items.map((i) => (i.kind === 'api' ? i.id : ''))]),
+          ),
+          ...(Object.keys(kept).length > 0 ? { options: kept } : {}),
+        }
+      } else {
+        value = {
+          kind: 'sources',
+          sources: Object.fromEntries(
+            Object.entries(chosen).map(([l, items]) => [
+              l,
+              items.map((i): DailySourceItem => {
+                if (i.kind === 'list') return { kind: 'list' }
+                if (i.kind === 'space')
+                  return { kind: 'space', space: i.space, source: draftToSource(i.draft) as DailySettings }
+                return { kind: 'api', id: i.id, ...(options[i.id] ? { options: options[i.id] } : {}) }
+              }),
+            ]),
+          ),
+        }
+      }
     }
     if (kind === 'space') {
       const source = settingsFrom(
@@ -368,34 +453,126 @@ function DefaultSection({ data }: { data: AdminDaily }) {
         <div className="grid grid-cols-1 gap-3 rounded-lg border p-4" data-slot="default-apis">
           <p className="text-xs break-words text-muted-foreground">{d.defaultApiHelp}</p>
           {[...data.languages, ...Object.keys(apis).filter((l) => l !== '' && !data.languages.includes(l)), ''].map(
-            (l) => (
-              <div
-                key={l || 'rest'}
-                className="grid min-w-0 grid-cols-1 items-center gap-1.5 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)]"
-              >
-                <Label htmlFor={`daily-default-api-${l || 'rest'}`} className="break-words">
-                  {l === '' ? d.defaultApiRest : d.defaultApiFor(l)}
-                </Label>
-                <NativeSelect
-                  id={`daily-default-api-${l || 'rest'}`}
-                  value={apis[l] ?? ''}
-                  onChange={(e) => setApis((all) => ({ ...all, [l]: e.target.value }))}
+            (l) => {
+              const items = apis[l] ?? []
+              const setItems = (next: Item[]) => setApis((all) => ({ ...all, [l]: next }))
+              const setItem = (i: number, patch: Partial<Item>) =>
+                setItems(items.map((x, at) => (at === i ? ({ ...x, ...patch } as Item) : x)))
+              const nameOf = (id: string) => data.apis.find((a) => a.id === id)?.name ?? id
+              const label = (i: Item) =>
+                i.kind === 'api' ? nameOf(i.id) : i.kind === 'list' ? d.sourceLines : d.sourceSpace
+              return (
+                <div
+                  key={l || 'rest'}
+                  className="grid min-w-0 grid-cols-1 items-start gap-1.5 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)]"
+                  data-lang={l}
                 >
-                  <option value="">{d.defaultApiNone}</option>
-                  {apis[l] !== undefined && apis[l] !== '' && !data.apis.some((a) => a.id === apis[l]) && (
-                    <option value={apis[l]}>
-                      {apis[l]} ({d.defaultApiOff})
-                    </option>
-                  )}
-                  {data.apis.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                      {a.enabled ? '' : ` (${d.enabledOff})`}
-                    </option>
-                  ))}
-                </NativeSelect>
-              </div>
-            ),
+                  <Label htmlFor={`daily-default-api-${l || 'rest'}`} className="break-words">
+                    {l === '' ? d.defaultApiRest : d.defaultApiFor(l)}
+                  </Label>
+                  <div className="grid min-w-0 gap-2">
+                    {items.length > 0 && (
+                      <ol className="grid gap-2" data-slot="default-api-list">
+                        {items.map((it, i) => {
+                          const known = it.kind === 'api' ? data.apis.find((a) => a.id === it.id) : undefined
+                          const opts =
+                            it.kind === 'api' ? (data.providers.find((p) => p.id === it.id)?.options ?? []) : []
+                          const key = it.kind === 'api' ? it.id : `${it.kind}-${i}`
+                          return (
+                            <li
+                              key={key}
+                              data-api-item={it.kind === 'api' ? it.id : undefined}
+                              data-source-kind={it.kind}
+                              className="grid min-w-0 gap-1.5 rounded-lg border p-2"
+                            >
+                              <div className="flex min-w-0 items-center justify-between gap-2">
+                                <span className="min-w-0 text-sm break-words">
+                                  {i + 1}. {label(it)}
+                                  {it.kind === 'api' && (!known || !known.enabled) && (
+                                    <span className="text-xs text-muted-foreground"> ({d.defaultApiOff})</span>
+                                  )}
+                                </span>
+                                <ListButtons
+                                  name={label(it)}
+                                  first={i === 0}
+                                  last={i === items.length - 1}
+                                  onUp={() => setItems(moved(items, i, -1))}
+                                  onDown={() => setItems(moved(items, i, 1))}
+                                  onRemove={() => setItems(items.filter((_, at) => at !== i))}
+                                  words={d.choice}
+                                />
+                              </div>
+                              {it.kind === 'space' && (
+                                <div className="grid gap-2">
+                                  <NativeSelect
+                                    aria-label={d.spaceLabel}
+                                    value={it.space}
+                                    onChange={(e) => setItem(i, { space: e.target.value })}
+                                  >
+                                    <option value="">{d.spaceChoose}</option>
+                                    {it.space !== '' && !spaceItems.some((sp) => sp.id === it.space) && (
+                                      <option value={it.space}>{it.space}</option>
+                                    )}
+                                    {spaceItems.map((sp) => (
+                                      <option key={sp.id} value={sp.id}>
+                                        {sp.name}
+                                      </option>
+                                    ))}
+                                  </NativeSelect>
+                                  <SourceFields draft={it.draft} onChange={(draft) => setItem(i, { draft })} />
+                                </div>
+                              )}
+                              {opts.length > 0 && it.kind === 'api' && (
+                                <OptionChoices
+                                  options={opts}
+                                  chosen={options[it.id]}
+                                  owner={`${l || 'rest'}-${it.id}`}
+                                  words={d.choice}
+                                  onChange={(next) =>
+                                    setOptions((all) => {
+                                      const out = { ...all }
+                                      if (Object.keys(next).length === 0) delete out[it.id]
+                                      else out[it.id] = next
+                                      return out
+                                    })
+                                  }
+                                />
+                              )}
+                            </li>
+                          )
+                        })}
+                      </ol>
+                    )}
+                    <NativeSelect
+                      id={`daily-default-api-${l || 'rest'}`}
+                      value=""
+                      onChange={(e) => {
+                        const v = e.target.value
+                        if (v === '') return
+                        if (v === '@list') setItems([...items, { kind: 'list' }])
+                        else if (v === '@space') setItems([...items, { kind: 'space', space: '', draft: emptyDraft() }])
+                        else setItems([...items, { kind: 'api', id: v }])
+                      }}
+                    >
+                      <option value="">{items.length === 0 ? d.defaultApiNone : d.defaultApiAdd}</option>
+                      <optgroup label={d.sourceInterfaces}>
+                        {data.apis
+                          .filter((a) => !items.some((x) => x.kind === 'api' && x.id === a.id))
+                          .filter((a) => l === '' || !a.builtin || matchTag(l, a.languages ?? [a.lang]) !== null)
+                          .map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {a.name}
+                              {a.enabled ? '' : ` (${d.enabledOff})`}
+                            </option>
+                          ))}
+                      </optgroup>
+                      {!items.some((x) => x.kind === 'list') && <option value="@list">{d.sourceLines}</option>}
+                      <option value="@space">{d.sourceSpace}</option>
+                    </NativeSelect>
+                  </div>
+                </div>
+              )
+            },
           )}
         </div>
       )}
@@ -476,20 +653,36 @@ function LinesSection({ data }: { data: AdminDaily }) {
   const [text, setText] = useState('')
   const [format, setFormat] = useState<LinesFormat>('lines')
   const [error, setError] = useState('')
+  // The lines as split, shown to be corrected before they are kept (null: the text is sent as it is).
+  const [rows, setRows] = useState<DailyLine[] | null>(null)
+  const [busy, setBusy] = useState(false)
   const count = data.lines.byLang[tab] ?? 0
   const send = () => {
     setError('')
-    save.mutate(
-      { lang: tab, text, format },
-      {
-        onSuccess: () => {
-          setText('')
-          toast.success(d.linesSaved)
-        },
-        onError: (e) => setError(message(e)),
+    save.mutate(rows ? { lang: tab, lines: rows.filter((r) => r.text.trim() !== '') } : { lang: tab, text, format }, {
+      onSuccess: () => {
+        setText('')
+        setRows(null)
+        toast.success(d.linesSaved)
       },
-    )
+      onError: (e) => setError(message(e)),
+    })
   }
+  const load = async (what: 'preview' | 'saved') => {
+    setError('')
+    setBusy(true)
+    try {
+      const got =
+        what === 'preview' ? await adminApi.previewDailyLines({ text, format }) : await adminApi.dailyLines(tab)
+      setRows(got.lines)
+    } catch (e) {
+      setError(message(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const setRow = (i: number, patch: Partial<DailyLine>) =>
+    setRows((all) => (all ? all.map((r, at) => (at === i ? { ...r, ...patch } : r)) : all))
   return (
     <SettingsSection title={d.linesTitle} description={d.linesHelp}>
       <p className="text-xs text-muted-foreground">{d.linesTotal(data.lines.total, data.lines.max)}</p>
@@ -511,23 +704,31 @@ function LinesSection({ data }: { data: AdminDaily }) {
         >
           <option value="lines">{d.formatLines}</option>
           <option value="markdown">{d.formatMarkdown}</option>
+          <option value="csv">{d.formatCsv}</option>
         </NativeSelect>
         <label className="inline-flex h-8 cursor-pointer items-center rounded-lg border px-3 text-sm hover:bg-muted">
           {d.linesUpload}
           <input
             type="file"
-            accept=".txt,.md,text/plain,text/markdown"
+            accept=".txt,.md,.csv,text/plain,text/markdown,text/csv"
             className="sr-only"
             onChange={(e) => {
               const f = e.target.files?.[0]
               if (!f) return
               if (/\.md$/i.test(f.name)) setFormat('markdown')
+              if (/\.csv$/i.test(f.name)) setFormat('csv')
               void f.text().then(setText)
               e.target.value = ''
             }}
           />
         </label>
-        <Button onClick={send} disabled={save.isPending || text.trim() === ''}>
+        <Button variant="outline" onClick={() => void load('preview')} disabled={busy || text.trim() === ''}>
+          {d.linesPreview}
+        </Button>
+        <Button variant="outline" onClick={() => void load('saved')} disabled={busy || count === 0}>
+          {d.linesEditSaved}
+        </Button>
+        <Button onClick={send} disabled={save.isPending || (rows ? rows.length === 0 : text.trim() === '')}>
           {save.isPending && <Spinner />}
           {d.linesSave}
         </Button>
@@ -542,6 +743,58 @@ function LinesSection({ data }: { data: AdminDaily }) {
           {d.linesDelete}
         </Button>
       </div>
+      {rows && (
+        <div className="grid gap-2 rounded-lg border p-3" data-slot="lines-preview">
+          <p className="text-xs break-words text-muted-foreground">{d.linesPreviewHelp(rows.length)}</p>
+          <ol className="grid gap-2">
+            {rows.slice(0, 200).map((r, i) => (
+              <li key={i} className="grid min-w-0 gap-1.5 rounded-md border p-2" data-slot="lines-row">
+                <Textarea
+                  value={r.text}
+                  onChange={(e) => setRow(i, { text: e.target.value })}
+                  aria-label={d.linesRowText(i + 1)}
+                  className="min-h-12"
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    value={r.author ?? ''}
+                    onChange={(e) => setRow(i, { author: e.target.value })}
+                    aria-label={d.linesRowAuthor(i + 1)}
+                    placeholder={d.lineAuthor}
+                    className="w-40"
+                    data-field="author"
+                  />
+                  <Input
+                    value={r.source ?? ''}
+                    onChange={(e) => setRow(i, { source: e.target.value })}
+                    aria-label={d.linesRowSource(i + 1)}
+                    placeholder={d.lineSource}
+                    className="w-48"
+                    data-field="source"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label={d.linesRowRemove(i + 1)}
+                    onClick={() => setRows((all) => (all ? all.filter((_, at) => at !== i) : all))}
+                  >
+                    <X />
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ol>
+          {rows.length > 200 && (
+            <p className="text-xs text-muted-foreground">{d.linesPreviewMore(rows.length - 200)}</p>
+          )}
+          <div>
+            <Button variant="ghost" size="sm" onClick={() => setRows(null)}>
+              {d.linesPreviewClose}
+            </Button>
+          </div>
+        </div>
+      )}
       <FormMessage>{error}</FormMessage>
     </SettingsSection>
   )

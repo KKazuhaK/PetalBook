@@ -3986,15 +3986,20 @@ administrators' settings. Owners never enter addresses; they choose among the
 interfaces that are set up.
 
 ```json
-{"inherit": true, "apis": ["hitokoto"],
- "available": [{"id": "hitokoto", "name": "一言", "lang": "zh-Hans", "languages": ["zh-Hans", "zh-Hant"]},
+{"inherit": true, "apis": ["hitokoto"], "options": {"hitokoto": {"categories": ["d", "i"]}},
+ "available": [{"id": "hitokoto", "name": "一言", "lang": "zh-Hans", "languages": ["zh-Hans", "zh-Hant"],
+                "options": [{"key": "categories", "param": "c", "kind": "multi",
+                             "values": [{"value": "a", "label": {"zh": "动画", "en": "Anime"}}, "…"]}]},
                {"id": "quotes", "name": "Quotes", "lang": "en"}],
  "languages": ["zh-Hans", "en"], "allowed": {"own": true, "api": true}, "default": {"kind": "list"}}
 ```
 
 `inherit` is whether the space shows the server's default when it has nothing
 else; `apis` are the ids of the interfaces it uses (for a language, the one
-made for it, else one that takes any language, else any); `available` are all
+made for it, else one that takes every language, and none when there is no such: never one made for another language; with several for the language
+they are in this order, see "Several interfaces for a language"); `options` are
+the values chosen for the built-in interfaces of `apis`, by interface id and
+option key (see "Options of a built-in interface"; absent is all); `available` are all
 that are set up (never their addresses), a built-in one with each of the
 languages it answers in (`languages`; `lang` is the first of them); `default` is `null` when the
 administrators set none. `languages` are the language codes the settings pages
@@ -4002,8 +4007,41 @@ have a tab for (the administrators' `languages`, below; nothing is limited to
 them). `allowed` is what the administrators let spaces do (below): a field that
 is `false` is set for the whole server, and what the space has there is saved
 when asked but has no effect until it is `true` again. `PUT` takes `{"inherit": true, "apis": []}` (both are
-needed) and answers as `GET`; `400 invalid` for an id that is not in
-`available`; it saves `apis` even when `allowed.api` is `false`.
+needed) and optionally `options` and `sources`, and answers as `GET`; `400 invalid` for an id
+that is not in `available`, and for an option or value its interface does not
+declare, or one for an interface that is not in `apis`; it saves `apis` even when `allowed.api` is `false`.
+
+**Interfaces that are off or gone.** What a space chose and the administrators
+switched off (or deleted) since is not lost by a save from the settings page.
+`GET` keeps an interface that is switched off in `apis` and in `sources`, with
+`"available": false, "reason": "disabled"` on a source, and lists it in
+`unavailable` (`{"favqs": "disabled"}`); it is skipped when the text is read, and
+`PUT` takes it back as it is (it cannot be newly chosen while it is off: `400
+invalid`). One that no longer exists is left out of the answer and listed in
+`unavailable` as `"gone"`, so the settings page can say so. Reading then gives no
+text with the reason `unavailable` when nothing the space chose can be used: the
+default is not shown in its place, unless the space's list has another source
+that works (the lines, its own pages). Locks (`allowed`) are another matter:
+what a lock stops is kept and not used, and the default is shown.
+
+**A space's own list of sources.** `sources` is, as in the administrators'
+default, a list for each language in order (`""` for the languages not listed;
+at most 8 each), the sources taking turns by day with the same rotation and
+fallback ("Several interfaces for a language"), but its kinds are
+`{"kind": "api", "id", "options"?}` (an interface that is set up and enabled),
+`{"kind": "list"}` (the administrators' lines) and
+`{"kind": "own", "source": {"folder"|"tag"|"type": …, "filter"?}}` (pages of this
+space, checked in it; the text has the page's body, its `author`/`作者` as the
+author and its source or title as the source, and no link). A space that
+chooses no `sources` keeps its `apis` as before (an ordered list of interface
+ids and their `options`, read in order for the language); a language that has a
+list uses it in place of `apis`. `GET` gives `sources` when the space has them,
+without the interfaces that are no longer set up. The locks apply to what is
+listed and leave it saved: with `allowed.api` off a listed interface is skipped,
+with `allowed.own` off the pages of the space are, and what is left is used
+(`list` is the administrators' own). The tenant's default takes the same lists
+(`kind: "sources"`, with `space` sources of the tenant's own spaces and no
+`list`), through the settings API only: its editor comes with 3.6.
 
 ### The administrators' settings of the daily text
 
@@ -4037,7 +4075,7 @@ that one part that cannot be read (`unreadable`, logged with its value) loses
 nothing else, and the repairs are saved once, at the first read:
 
 - An interface saved by 2.3's "use preset" with the id of a built-in one
-  (`hitokoto`, `quotable`) becomes the built-in one when its address, paths and
+  (`hitokoto`, `zenquotes`, `favqs`) becomes the built-in one when its address, paths and
   link are the built-in's and it has no headers: switched on or off as it was,
   with its `refresh`, `rps` (at most the service's limit) and `skipNew`; the
   spaces that chose it and the default keep the id. One the administrators
@@ -4053,13 +4091,33 @@ nothing else, and the repairs are saved once, at the first read:
   default, the interfaces and their header values are kept.
 
 - `default` is `null`, `{"kind": "list"}` (the lines below),
+  `{"kind": "sources", "sources": {"": [ … ], "zh": [ … ]}}`, a list of sources
+  for each language in order, each `{"kind": "api", "id": "hitokoto", "options":
+  {…}}`, `{"kind": "list"}` (the lines; once in a list is enough) or
+  `{"kind": "space", "space": id, "source": {"folder"|"tag"|"type": …}}`
+  (1 to 8 for each language; a string is the id of an interface, a single
+  source is a list of one; `400 invalid` for a source that is none, an
+  interface that is not set up or a space that is not there; a tenant's
+  default may not have `list`, and its spaces are its own). The earlier kinds
+  are lists of one, or of the interfaces they list, and are read as such. The
+  sources of a language take turns by day, the way the interfaces of one do
+  (see "Several interfaces for a language"): the one the day starts with is
+  made from the day and the scope, "another" moves to the next source that gives
+  a text after the one that gave today's (a source that had nothing is not
+  stopped at twice), and a source
+  that fails, is asked too often or has nothing (no lines, a space with no
+  page that meets the source) is passed over for the next. Only one text is
+  ever given. The source of a page of a space says who wrote it and where
+  from, only when the page does (below),
   `{"kind": "space", "space": id, "source": …}` where `source` is a source or
   sources by language as above, checked in that space (choosing a space shows
   its content to everybody; a client says so), or
-  `{"kind": "api", "apis": {"": "quotable", "zh": "hitokoto"}}`: an
-  interface id per language, `""` for all languages not listed. Each must be an
-  interface of `apis` (`400 invalid` with `error: "api_not_found"` otherwise);
-  a disabled or unanswering interface gives the daily reason `unavailable`.
+  `{"kind": "api", "apis": {"": ["favqs", "dummyjson"], "zh": ["hitokoto"]}, "options": {"hitokoto": {"categories": ["i"]}}}`:
+  the interface ids per language, in order, `""` for all languages not listed
+  (a single id written as a string is read as a list of one; 1 to 8 for each
+  language). Each must be an interface of `apis` (`400 invalid` with
+  `error: "api_not_found"` otherwise); `options` as for a space's choice. When
+  none of the listed interfaces is enabled the daily reason is `unavailable`.
   The interface is used exactly as when a space picks it (same cache, refresh
   and rate limit), and the `allow.api` lock does not apply to it: it limits
   what spaces may choose, not the administrators' own default.
@@ -4183,8 +4241,8 @@ above that breaks a rule (the message says which), or one of the codes of
 **Built-in interfaces** (`providers`): services the server knows how to ask,
 so an administrator only switches one on — no address, paths or language
 codes to fill in. `GET /api/admin/daily` lists them as
-`{"id": "hitokoto", "name": "一言", "languages": ["zh-Hans", "zh-Hant"], "site": "https://hitokoto.cn", "note": "…", "enabled": false, "refresh": "daily", "minutes": 0, "rps": 20, "maxRps": 20, "skipNew": true}`
-(`minutes` is set when `refresh` is `"minutes"`; `maxRps` is the service's own limit, the most `rps` may be).
+`{"id": "hitokoto", "name": "一言", "languages": ["zh-Hans", "zh-Hant"], "site": "https://hitokoto.cn", "note": "…", "enabled": false, "refresh": "daily", "minutes": 0, "rps": 20, "maxRps": 20, "skipNew": true, "options": [{"key": "categories", "param": "c", "kind": "multi", "values": [{"value": "a", "label": {"zh": "动画", "en": "Anime"}}, "…"]}]}`
+(`options` are what a reader may choose of the service, `[]` for none; `minutes` is set when `refresh` is `"minutes"`; `maxRps` is the service's own limit, the most `rps` may be).
 `PUT /api/admin/daily/providers/{id}` takes `{"enabled": true}` and optionally
 `refresh`, `minutes`, `rps` (not above the service's own limit) and
 `skipNew`; needs admin; answers as `GET /api/admin/daily`. An enabled built-in
@@ -4193,7 +4251,84 @@ and as the site default like any other; its address, paths, link and language
 mapping cannot be changed (`400 invalid`, `error: "builtin"`). None is enabled
 until an administrator enables it, and no service is contacted before that.
 Today: `hitokoto` (一言, the international line; `zh-Hans`, `zh-Hant`; link
-back to the sentence as the service asks) and `quotable` (Quotable; `en`).
+back to the sentence as the service asks, kept in the answer but never shown as a
+link by the web app) `zenquotes` (ZenQuotes, quote of the day; `en`; its terms
+require a link back to ZenQuotes, which PetalBook does not show, so it is in no
+default and an administrator enables it at their own judgement; it allows 5
+requests per 30 seconds per address, so `rps` is at most 0.1), `favqs` (FavQs, quote of the day; `en`), `animechan`
+(Animechan, anime quotes with the anime as `source` and the character as
+`author`; `en`; 100 requests a day per address, so `rps` is at most 1/60 and
+"another" does not ask it again), `dummyjson` (DummyJSON, about 1,400 quotes made
+for developers' tests; `en`; `skipNew`), `jinrishici` (今日诗词, classical
+poetry through the service's older interface; `zh-Hans`, `zh-Hant`; `skipNew`;
+option `category`), `shanbay` (扇贝每日一句; `zh-Hans`, `en`) and `iciba`
+(金山词霸每日一句; `zh-Hans`, `en`). The last two answer in both languages at
+once: each language is a lane of its own, and a reader gets the one text in
+their language (the translation or note for `zh-Hans`, the English for `en`),
+never both. `shanbay` and `iciba` serve only the languages they have, `zh-Hans`
+and `en`, matched the way languages are everywhere (`zh-Hant` and `zh-TW` are
+matched to `zh-Hans`, `en-GB` to `en`): a reader of another language (`fr`) is
+given none of their text, they are skipped, and the next source of the list
+answers (with none the reason is `no_source`). `shanbay` is the interface the service's own mini program uses, not
+a published API, so it may change. `iciba` labels its JSON `text/html`, which is
+accepted for it only (a flag only the program sets on a built-in interface; the
+body must still parse strictly as JSON, with the same size limit). None of
+them is in any default. A stored id that
+is no longer built in (the earlier `quotable`, whose service is gone) is an
+interface that does not exist: an interface of the administrators' own with that
+id keeps showing as such; in a default, a choice that names it gives the reason
+`unavailable` when read; and a space that chose it is shown nothing, with the
+reason `unavailable`: nothing else is picked in its place, not the tenant's or
+the site's default (see "Interfaces that are off or gone", below).
+
+**Options of a built-in interface.** A provider may declare options: a `key`, the
+query parameter `param` the values are sent as, a `kind` (`multi`: any number of
+the `values`) and the values with a label in `zh` and `en`. `hitokoto` has
+`categories` (`c`): a 动画, b 漫画, c 游戏, d 文学, e 原创, f 来自网络, g 其他,
+h 影视, i 诗词, j 网易云, k 哲学, l 抖机灵. What is chosen is stored with the
+choice (a space's `options`, a default's `options`, which a tenant's default
+has as well), by interface id and option key. Choosing none, or every value, is
+all, and is what is stored when nothing is chosen: settings saved before options
+behave as before. Values are kept once each in the order they are declared and
+are added to the address as repeated, URL-encoded parameters
+(`…?max_length=80&c=d&c=i`); a value that is not declared is `400 invalid`. An
+address with other values is another thing to the cache: two spaces with
+different categories never share or replace an item, and the same categories
+share one. The rate limit is the interface's, across all sets of values.
+Options of an interface that is no longer chosen are dropped when saved.
+
+An option of kind `path` is one choice (a list of one value), put in the address
+where `{key}` stands, with its `default` when none is chosen (and the default is
+stored as none). `jinrishici` has `category`: `all`, the first level (`shuqing`,
+`siji`, …) and the second (`shuqing/libie`), the categories the service
+publishes that answered with JSON when checked.
+
+**Only the reader's language.** The daily text is in the language of the reader
+and no other: the source for the language they are matched to (BCP 47, so
+`zh-Hant` finds `zh-Hans`), else the one for "all other languages", and when
+there is none the answer has no text and the page shows its greeting alone. Lines
+and pages of another language are not used in its place, and neither is an
+interface a space chose that is made for another language. A built-in interface
+serves the languages it has (`languages` of the provider): `hitokoto` and
+`jinrishici` have Chinese only, `zenquotes`, `favqs`, `animechan` and
+`dummyjson` English only; listing one under a language it does not have is `400
+invalid`, and one listed under `""` is skipped for the readers it has no text for.
+The web app shows the author and source as text, `—— 作者《出处》`, and never as
+a link: `link` is kept in the answer and not drawn.
+
+**Several interfaces for a language.** A language's list is in order. The
+interfaces take turns by day: the one the day starts with is the day number
+plus a number made from the scope (the space, the tenant or the site) modulo
+the length of the list, so everybody in a scope sees the same one that day and
+a space with a choice of its own is in its own scope. One that is switched off,
+fails, is asked too often or has no usable answer is passed over for the next,
+within the same request; its last answer, shown as `stale`, is used only if no
+other has a fresh one, and when none answers the reason is `unavailable` (or
+`429 rate_limited` when every one was asked too often). "Another" (`skip`) moves
+to the next of the list; after the last it is the first again, which asks for a
+new item if its `skipNew` allows. With one interface nothing changes. For a
+space the list is its `apis` in order, for the reader's language (made for it,
+or else for every language, and none otherwise).
 
 **Language codes in the address**: `{lang}` is filled with the reader's
 language as matched (a canonical BCP 47 tag, e.g. `zh-Hans`). Services that
@@ -4304,7 +4439,7 @@ request; a success clears the wait. A space's own source and the default
 that is a space or lines are cheap (the index, a row) and use only the memory of
 the day and the browser's.
 
-#### `PUT /api/admin/daily/lines`, `DELETE /api/admin/daily/lines?lang=zh`
+#### `GET /api/admin/daily/lines?lang=`, `POST …/lines/preview`, `PUT …/lines`, `DELETE …/lines?lang=zh`
 
 The lines are a source of the default that is stored here: pasted or uploaded
 text, each entry with the language it is in (`""` for any language). `PUT`
@@ -4315,16 +4450,44 @@ replaces the lines of one language:
 ```
 
 `format` is `lines` (each line that is not blank is an entry; a tab separates the
-text from where it is from) or `markdown` (entries are cut at the lines that
-are `---`, or at the blank lines when there are none). Entries are at most 8 000
-bytes, their source 200 characters, and the server keeps at most 5 000 in all.
-`DELETE` removes the lines of one language. Both answer as `GET /api/admin/daily`.
+text from where it is from), `markdown` (entries are cut at the lines that
+are `---`, or at the blank lines when there are none) or `csv` (columns text,
+author, source; a first row that says `text` (or `文案`, `正文`, `内容`) is a
+header). Entries are at most 8 000 bytes, their author and source 200
+characters each, and the server keeps at most 5 000 in all.
+
+**Author and source.** An entry has `text`, `author` and `source`. In `lines`
+and `markdown` they are cut off the end of the entry when it ends with
+` —— `, ` — ` or ` -- ` (with the spaces) and an attribution, the last mark
+only, and only when a dash is not inside a sentence: what is before the mark
+ends a sentence or a quotation (`。！？…」』”’` or `. ! ? " '`), or what is
+after it has a `《source》`. So `春眠不觉晓 —— 处处闻啼鸟`, `人生如梦 —— 一尊还酹江月`,
+`Never give up — Never` and `War — Peace and Love` are text only, while
+`春眠不觉晓 —— 孟浩然《春晓》` is split: `人到情多情转薄，而今真个不多情。 —— 纳兰性德《山花子》` is the author 纳兰性德
+and the source 山花子 (the source is what is in `《…》`); `The best way out is always
+through. — Robert Frost` has the author Robert Frost, and `… — Author, Source`
+both. What follows the mark must look like an attribution, else the entry is the
+text only: a name of a few words each beginning with a capital letter (the small
+words of names such as `van` and `de` allowed), or in Chinese up to 12
+characters, or anything with `《…》` that ends there, and no sentence
+punctuation, so `I think — therefore I am` and `Wait — what? — Douglas Adams`
+(split only at the last mark) are cut right. A tab gives the source and
+leaves the text to be cut for its author. `POST …/lines/preview` takes
+`{"text", "format"}` and answers `{"lines": [{"text", "author"?, "source"?}]}`,
+the split as it would be kept, and keeps nothing; so a wrong split can be
+seen. `PUT` takes `"lines": [{"text", "author", "source"}]` in place of `text`
+and `format`, to keep the lines as the administrators corrected them, and
+`GET` gives the lines kept for a language in that shape. All of these show
+the text as `{"text", "author", "source"}` of the daily quote (below).
+
+`DELETE` removes the lines of one language. `PUT` and `DELETE` answer as `GET /api/admin/daily`.
 Lines saved by 2.3 under a code that is not a language tag (`cn`) are shown
 under that code in `byLang`, and `PUT` and `DELETE` take that code exactly as
 it is stored, so they can still be replaced or deleted.
-For a language the lines used are those of the language, else of its
-language without region, else those for any language, else the first
-language that has some; the line is picked as a page is (from the day and
+For a language the lines used are those of the language (matched as languages
+are everywhere), else those for any language ("all other languages"); never
+those of another language: a reader of a language with none of its own and no
+lines for any language is given none. The line is picked as a page is (from the day and
 `skip`, modulo how many there are).
 
 ### Favourites

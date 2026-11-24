@@ -47,8 +47,9 @@ import {
 import { SPACE_NAME } from './seed.ts'
 import { createGitHubBook, type MockGitHubOptions } from './githubBook.ts'
 import { createForgeBook, FORGE_COOKIE } from './forgeBook.ts'
-import { pickNumber } from './homeBook.ts'
+import { pickNumber, type DailySource } from './homeBook.ts'
 import { canonicalTag, matchTag } from '../../lib/langTags.ts'
+import { parseAttribution } from './attribution.ts'
 import { createFileStore, DEFAULT_MAX_UPLOAD, type FileStore } from './files.ts'
 import { DEFAULT_MAX_IMPORT, runImport } from './importer.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
@@ -1757,7 +1758,18 @@ export function createMockServer(options: MockOptions = {}) {
     enabled: boolean
     builtin?: boolean
   }
-  type SiteDefault = null | { kind: 'list' } | { kind: 'api'; apis: Record<string, string> }
+  type OptionChoice = Record<string, Record<string, string[]>>
+  type MockSource =
+    | { kind: 'api'; id: string; options?: Record<string, string[]> }
+    | { kind: 'list' }
+    | { kind: 'space'; space: string; source: unknown }
+    // Pages of the space asking: only a space's own list has it.
+    | { kind: 'own'; source: DailySource }
+  type SiteDefault =
+    | null
+    | { kind: 'list' }
+    | { kind: 'api'; apis: Record<string, string[]>; options?: OptionChoice }
+    | { kind: 'sources'; sources: Record<string, MockSource[]> }
   interface ProviderState {
     enabled: boolean
     refresh?: string
@@ -1827,7 +1839,7 @@ export function createMockServer(options: MockOptions = {}) {
     record: (kind, o) => book.record(kind, o),
   })
   const site = {
-    lines: new Map<string, { body: string; source: string }[]>(),
+    lines: new Map<string, { body: string; author: string; source: string }[]>(),
     default: null as SiteDefault,
     allow: { own: true, api: true },
     languages: ['zh-Hans', 'en'],
@@ -1835,7 +1847,10 @@ export function createMockServer(options: MockOptions = {}) {
     providers: {} as Record<string, ProviderState>,
     notices: [] as DailyNotice[],
   }
-  const spaceDaily = new Map<string, { inherit: boolean; apis: string[] }>()
+  const spaceDaily = new Map<
+    string,
+    { inherit: boolean; apis: string[]; options?: OptionChoice; sources?: Record<string, MockSource[]> }
+  >()
   const KNOWN_LANGUAGES = [
     { tag: 'zh-Hans', name: '中文（简体）', english: 'Chinese (Simplified)' },
     { tag: 'zh-Hant', name: '中文（繁體）', english: 'Chinese (Traditional)' },
@@ -1892,19 +1907,139 @@ export function createMockServer(options: MockOptions = {}) {
       author: 'from_who',
       link: 'https://hitokoto.cn?uuid={uuid}',
       rps: 20,
+      options: [
+        {
+          key: 'categories',
+          param: 'c',
+          kind: 'multi',
+          values: [
+            ['a', '动画', 'Anime'],
+            ['b', '漫画', 'Comics'],
+            ['c', '游戏', 'Games'],
+            ['d', '文学', 'Literature'],
+            ['e', '原创', 'Original'],
+            ['f', '来自网络', 'From the web'],
+            ['g', '其他', 'Other'],
+            ['h', '影视', 'Film & TV'],
+            ['i', '诗词', 'Poetry'],
+            ['j', '网易云', 'NetEase Music'],
+            ['k', '哲学', 'Philosophy'],
+            ['l', '抖机灵', 'Wit'],
+          ].map(([value, zh, en]) => ({ value, label: { zh, en } })),
+        },
+      ],
     },
     {
-      id: 'quotable',
-      name: 'Quotable',
+      id: 'zenquotes',
+      name: 'ZenQuotes',
       languages: ['en'],
-      site: 'https://github.com/lukePeavey/quotable',
-      note: 'Open source, no key.',
-      url: 'https://api.quotable.io/quotes/random',
-      text: '[0].content',
+      site: 'https://zenquotes.io/',
+      note: 'Free, no key. Quote of the day. Its terms require a link back to ZenQuotes, which PetalBook does not show: enable it only if you accept that. 5 requests per 30 seconds per address.',
+      url: 'https://zenquotes.io/api/today',
+      text: '[0].q',
       source: '',
-      author: '[0].author',
+      author: '[0].a',
+      link: 'https://zenquotes.io/',
+      rps: 0.1,
+      skipNew: false,
+    },
+    {
+      id: 'favqs',
+      name: 'FavQs',
+      languages: ['en'],
+      site: 'https://favqs.com/',
+      note: 'Free, no key. Quote of the day.',
+      url: 'https://favqs.com/api/qotd',
+      text: 'quote.body',
+      source: '',
+      author: 'quote.author',
+      link: 'https://favqs.com/quotes/{quote.author_permalink}/{quote.id}',
+      rps: 1,
+      skipNew: false,
+    },
+    {
+      id: 'animechan',
+      name: 'Animechan',
+      languages: ['en'],
+      site: 'https://animechan.io/',
+      note: 'Free, no key, anime quotes; 100 requests a day per address.',
+      url: 'https://api.animechan.io/v1/quotes/random',
+      text: 'data.content',
+      source: 'data.anime.name',
+      author: 'data.character.name',
       link: '',
-      rps: 3,
+      rps: 1 / 60,
+      skipNew: false,
+    },
+    {
+      id: 'dummyjson',
+      name: 'DummyJSON',
+      languages: ['en'],
+      site: 'https://dummyjson.com/docs/quotes',
+      note: "Free, no key. A fixed collection of about 1,400 quotes from a service made for developers' tests; quality varies.",
+      url: 'https://dummyjson.com/quotes/random',
+      text: 'quote',
+      source: '',
+      author: 'author',
+      link: '',
+      rps: 1,
+      skipNew: true,
+    },
+    {
+      id: 'jinrishici',
+      name: '今日诗词',
+      languages: ['zh-Hans', 'zh-Hant'],
+      site: 'https://www.jinrishici.com/',
+      note: "Free, no key; classical Chinese poetry. Uses the service's older interface, which serves categories.",
+      url: 'https://v1.jinrishici.com/all.json',
+      text: 'content',
+      source: 'origin',
+      author: 'author',
+      link: '',
+      rps: 1,
+      skipNew: true,
+      options: [
+        {
+          key: 'category',
+          kind: 'path',
+          default: 'all',
+          values: [
+            ['all', '全部', 'All'],
+            ['shuqing', '抒情', 'Lyrical'],
+            ['shuqing/libie', '抒情-离别', '抒情-离别'],
+            ['siji', '四季', 'Seasons'],
+            ['rensheng', '人生', 'Life'],
+          ].map(([value, zh, en]) => ({ value, label: { zh, en } })),
+        },
+      ],
+    },
+    {
+      id: 'shanbay',
+      name: '扇贝每日一句',
+      languages: ['zh-Hans', 'en'],
+      site: 'https://web.shanbay.com/op/quotes/',
+      note: "Free, no key. This is the interface Shanbay's own mini program uses, not a published API, so it may change. English with a Chinese translation: each reader gets one, in their language.",
+      url: 'https://apiv3.shanbay.com/weapps/dailyquote/quote/',
+      text: 'content',
+      source: '',
+      author: 'author',
+      link: 'https://web.shanbay.com/op/quotes/{assign_date}/',
+      rps: 1,
+      skipNew: false,
+    },
+    {
+      id: 'iciba',
+      name: '金山词霸每日一句',
+      languages: ['zh-Hans', 'en'],
+      site: 'https://www.iciba.com/',
+      note: 'Free, no key. A daily sentence in English with a Chinese note: each reader gets one, in their language. The service labels its JSON as text/html, which is accepted for this interface only.',
+      url: 'https://open.iciba.com/dsapi/',
+      text: 'content',
+      source: '',
+      author: '',
+      link: '',
+      rps: 1,
+      skipNew: false,
     },
   ]
   const badLang = (tag: string) => new HttpError(400, 'bad_language', `“${tag}” 不是 zh-Hans、en、pt-BR 这样的语言标签`)
@@ -1927,7 +2062,7 @@ export function createMockServer(options: MockOptions = {}) {
     langMap: {},
     refresh: st.refresh ?? 'daily',
     refreshMinutes: st.refresh === 'minutes' ? (st.minutes ?? 0) : 0,
-    skipNew: st.skipNew ?? true,
+    skipNew: st.skipNew ?? p.skipNew ?? true,
     rps: st.rps ?? p.rps,
     enabled: true,
     builtin: true,
@@ -1969,23 +2104,65 @@ export function createMockServer(options: MockOptions = {}) {
           rps: a.rps,
           maxRps: p.rps,
           skipNew: a.skipNew,
+          options: p.options ?? [],
         }
       }),
       lines: { total, byLang, max: 5000 },
       notices: site.notices.map((n) => ({ ...n })),
     }
   }
-  // The interface for a language of a space's choice: the one made for the language the reader's is matched to, else
-  // one for every language, else any.
-  const chooseApi = (chosen: SiteApi[], lang: string): SiteApi | undefined => {
+  // The interfaces for a language of a space's choice, in the order it listed them: those made for the language the
+  // reader's is matched to, else those for every language, else all of them.
+  const chooseApis = (chosen: SiteApi[], lang: string): SiteApi[] => {
     const m = matchTag(lang, chosen.flatMap(apiTags))
-    return (
-      (m !== null ? chosen.find((a) => apiTags(a).includes(m)) : undefined) ??
-      chosen.find((a) => a.lang === '') ??
-      chosen[0]
-    )
+    if (m !== null) return chosen.filter((a) => apiTags(a).includes(m))
+    // Those that take every language; never one made for another language.
+    return chosen.filter((a) => a.lang === '')
   }
-  const quoteFrom = (api: SiteApi, date: string, skip: number): Record<string, unknown> => {
+  const valuesOf = (
+    p: { options?: { key: string; kind: string; default?: string; values: { value: string }[] }[] } | undefined,
+    chosen: unknown,
+  ) => {
+    // Canonical as the server keeps it: only declared values, in declared order; none or all is nothing.
+    const out: Record<string, string[]> = {}
+    if (chosen === undefined) return out
+    if (!isRecord(chosen)) throw new HttpError(400, 'invalid', 'options are values by key')
+    for (const [key, values] of Object.entries(chosen)) {
+      const opt = p?.options?.find((o) => o.key === key)
+      if (!opt) throw new HttpError(400, 'invalid', `没有选项 ${key}`)
+      if (!Array.isArray(values)) throw new HttpError(400, 'invalid', 'values are a list')
+      for (const v of values)
+        if (typeof v !== 'string' || !opt.values.some((o) => o.value === v))
+          throw new HttpError(400, 'invalid', `${String(v)} 不是 ${key} 的值`)
+      const picked = opt.values.map((o) => o.value).filter((v) => values.includes(v))
+      if (opt.kind === 'path') {
+        if (picked.length > 1) throw new HttpError(400, 'invalid', `${key} 只能选一个`)
+        if (picked.length === 1 && picked[0] !== opt.default) out[key] = picked
+      } else if (picked.length > 0 && picked.length < opt.values.length) out[key] = picked
+    }
+    return out
+  }
+  // The options chosen for the built-in interfaces among ids, checked.
+  const checkOptions = (ids: string[], given: unknown): OptionChoice => {
+    const out: OptionChoice = {}
+    if (given === undefined || given === null) return out
+    if (!isRecord(given)) throw new HttpError(400, 'invalid', 'options are by interface id')
+    for (const [id, chosen] of Object.entries(given)) {
+      const p = PROVIDERS.find((x) => x.id === id)
+      if (!p || !ids.includes(id) || !site.providers[id]?.enabled)
+        throw new HttpError(400, 'invalid', `选项只给选了的内置接口：${id}`)
+      const one = valuesOf(p, chosen)
+      if (Object.keys(one).length > 0) out[id] = one
+    }
+    return out
+  }
+  const scopeNumber = (text: string) => [...text].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7)
+  const quoteFrom = (
+    api: SiteApi,
+    date: string,
+    skip: number,
+    options?: Record<string, string[]>,
+  ): Record<string, unknown> => {
     // An external interface knows only today and the days next to it: another date is no error, there is just no text.
     if (
       Math.abs(
@@ -1994,7 +2171,7 @@ export function createMockServer(options: MockOptions = {}) {
     )
       return { page: null, reason: 'out_of_range' }
     const quote: Record<string, unknown> = {
-      text: `${api.name} ${date}${skip ? ` #${skip}` : ''}`,
+      text: `${api.name} ${date}${skip ? ` #${skip}` : ''}${options ? ` [${Object.values(options).flat().join(',')}]` : ''}`,
       ...(api.source ? { source: 'src' } : {}),
       ...(api.author ? { author: 'au' } : {}),
     }
@@ -2011,36 +2188,129 @@ export function createMockServer(options: MockOptions = {}) {
     // An interface the space chose. The mock makes no requests: the text names the interface, and an id with
     // "stale" in it plays one that did not answer.
     const apis = allApis()
-    const chosen = apis.filter((a) => a.enabled && locked.api && (spaceDaily.get(space.id)?.apis ?? []).includes(a.id))
-    const api = chooseApi(chosen, lang)
-    if (accounts && api) return quoteFrom(api, date, skip)
+    const mine = spaceDaily.get(space.id)
+    const chosen = (mine?.apis ?? [])
+      .map((id) => apis.find((a) => a.id === id))
+      .filter((a): a is SiteApi => a !== undefined && a.enabled && locked.api)
+    // What a source gives: an item (with its reason when it has none), as the server's fromSource.
+    const fromLines = (): Record<string, unknown> => {
+      const have = [...site.lines.keys()].filter((l) => l !== '' && (site.lines.get(l)?.length ?? 0) > 0)
+      const m = matchTag(lang, have)
+      // The language of the reader, or the lines for all the others; never those of another language.
+      const use = m ?? ((site.lines.get('')?.length ?? 0) > 0 ? '' : undefined)
+      const list = use === undefined ? [] : (site.lines.get(use) ?? [])
+      if (!list.length) return { page: null }
+      const line = list[pickNumber('site:' + use, date, skip, list.length)]
+      return {
+        page: null,
+        quote: {
+          text: line.body,
+          ...(line.author ? { author: line.author } : {}),
+          ...(line.source ? { source: line.source } : {}),
+        },
+        origin: 'site',
+      }
+    }
+    const fromSource = (src: MockSource, lap: number, options: OptionChoice | undefined): Record<string, unknown> => {
+      if (src.kind === 'list') return fromLines()
+      if (src.kind === 'space') return { page: null } // the mock has no space to draw from
+      if (src.kind === 'own') {
+        const got = home.pick(space.id, q, src.source)
+        const page = got?.page as { body: string; title?: string; label: string; source?: string } | undefined
+        if (!page) return { page: null, reason: 'no_match' }
+        return {
+          page: null,
+          quote: { text: page.body.trim() || page.label, ...(page.title ? { source: page.title } : {}) },
+          origin: 'space',
+        }
+      }
+      const a = apis.find((x) => x.id === src.id && x.enabled)
+      // A built-in interface gives text in the languages it has only (一言 is never used for English).
+      if (a?.builtin && !servesLang(a.id, lang)) return { page: null }
+      return a ? quoteFrom(a, date, lap, src.options ?? options?.[a.id]) : { page: null, reason: 'unavailable' }
+    }
+    // Sources take turns by day, one text at a time; one with nothing is passed over for the next, and "another"
+    // moves to the next. A stale answer is used only when no other has a fresh one.
+    const ask = (list: MockSource[], scope: string, options?: OptionChoice): Record<string, unknown> => {
+      const n = list.length
+      const day = Math.floor(Date.parse(date + 'T00:00:00Z') / 86400_000)
+      const first = (day + (scopeNumber(scope) % n) + skip) % n
+      let stale: Record<string, unknown> | undefined
+      let reason = ''
+      for (let i = 0; i < n; i++) {
+        const r = fromSource(list[(first + i) % n], Math.floor(skip / n), options)
+        if (r.quote === undefined) {
+          if (typeof r.reason === 'string' && r.reason > reason) reason = r.reason
+          continue
+        }
+        if ((r.quote as { stale?: boolean }).stale) stale ??= r
+        else return r
+      }
+      return stale ?? (reason ? { page: null, reason } : { page: null, reason: 'no_source' })
+    }
+    // The space's own list of sources, for the reader's language, without what is locked.
+    if (accounts && mine?.sources) {
+      const m = matchTag(
+        lang,
+        Object.keys(mine.sources).filter((k) => k !== ''),
+      )
+      const list = (m !== null ? mine.sources[m] : mine.sources['']) ?? []
+      // An interface that is gone or switched off is not there: when that is all there is, nothing else is picked.
+      const lost = list.some(
+        (src) => src.kind === 'api' && locked.api && !apis.some((a) => a.id === src.id && a.enabled),
+      )
+      const usable = list.filter((src) =>
+        src.kind === 'api'
+          ? locked.api && apis.some((a) => a.id === src.id && a.enabled)
+          : src.kind === 'own'
+            ? locked.own
+            : true,
+      )
+      if (usable.length > 0) return ask(usable, 'space:' + space.id)
+      if (lost) return { page: null, reason: 'unavailable' }
+    }
+    if (accounts && locked.api && (mine?.apis.length ?? 0) > 0 && chosen.length === 0)
+      return { page: null, reason: 'unavailable' }
+    const own_ = accounts ? chooseApis(chosen, lang) : []
+    if (own_.length > 0)
+      return ask(
+        own_.map((a): MockSource => ({ kind: 'api', id: a.id })),
+        'space:' + space.id,
+        mine?.options,
+      )
     if (accounts && site.default !== null && (spaceDaily.get(space.id)?.inherit ?? true)) {
-      if (site.default.kind === 'api') {
-        // The administrators' own choice, not limited by what spaces may choose.
-        const map = site.default.apis
+      const d = site.default
+      let list: MockSource[] | undefined
+      if (d.kind === 'list') list = [{ kind: 'list' }]
+      else {
+        const map: Record<string, MockSource[]> =
+          d.kind === 'api'
+            ? Object.fromEntries(
+                Object.entries(d.apis).map(([l, ids]) => [l, ids.map((id): MockSource => ({ kind: 'api', id }))]),
+              )
+            : d.sources
         const m = matchTag(
           lang,
           Object.keys(map).filter((k) => k !== ''),
         )
-        const id = m !== null ? map[m] : map['']
-        if (id === undefined) return { page: null, reason: 'no_source' }
-        const one = apis.find((a) => a.id === id && a.enabled)
-        return one ? quoteFrom(one, date, skip) : { page: null, reason: 'unavailable' }
+        list = m !== null ? map[m] : map['']
       }
-      const have = [...site.lines.keys()].filter((l) => l !== '' && (site.lines.get(l)?.length ?? 0) > 0)
-      const m = matchTag(lang, have)
-      const use = m ?? ((site.lines.get('')?.length ?? 0) > 0 ? '' : have.sort()[0])
-      const list = use === undefined ? [] : (site.lines.get(use) ?? [])
-      if (list.length) {
-        const line = list[pickNumber('site:' + use, date, skip, list.length)]
-        return {
-          page: null,
-          quote: { text: line.body, ...(line.source ? { source: line.source } : {}) },
-          origin: 'site',
-        }
-      }
+      if (list === undefined || list.length === 0) return { page: null, reason: 'no_source' }
+      return ask(list, 'site', d.kind === 'api' ? d.options : undefined)
     }
     return { page: null, reason: 'no_source' }
+  }
+  // Whether a built-in interface has text in a language (matched as languages are): 一言 has Chinese only.
+  const servesLang = (id: string, lang: string): boolean => {
+    const have = PROVIDERS.find((p) => p.id === id)?.languages
+    return have === undefined || matchTag(lang, have) !== null
+  }
+  // How an interface stands: set up and on, switched off, or not there at all.
+  const statusOf = (id: string): 'ok' | 'disabled' | 'gone' => {
+    const custom = site.apis.find((a) => a.id === id)
+    if (custom) return custom.enabled ? 'ok' : 'disabled'
+    if (PROVIDERS.some((p) => p.id === id)) return site.providers[id]?.enabled ? 'ok' : 'disabled'
+    return 'gone'
   }
   const routeDailyPrefs = (space: SpaceRec, method: string, body: Record<string, unknown>): MockResponse => {
     const available = allApis().filter((a) => a.enabled)
@@ -2048,22 +2318,89 @@ export function createMockServer(options: MockOptions = {}) {
       if (typeof body.inherit !== 'boolean' || !Array.isArray(body.apis))
         throw new HttpError(400, 'invalid', '给 inherit 和 apis')
       const usable = new Set(available.map((a) => a.id))
+      // What the space chose and was switched off since is kept when the page sends it back.
+      const before = spaceDaily.get(space.id)
+      for (const id of [
+        ...(before?.apis ?? []),
+        ...Object.values(before?.sources ?? {}).flatMap((l) => l.flatMap((x) => (x.kind === 'api' ? [x.id] : []))),
+      ])
+        if (statusOf(id) === 'disabled') usable.add(id)
       for (const id of body.apis)
         if (typeof id !== 'string' || !usable.has(id))
           throw new HttpError(400, 'invalid', `没有接口 ${String(id)}：只能用管理员设好并启用的`)
-      spaceDaily.set(space.id, { inherit: body.inherit, apis: [...new Set(body.apis as string[])] })
+      const ids = [...new Set(body.apis as string[])]
+      const options = checkOptions(ids, body.options)
+      let sources: Record<string, MockSource[]> | undefined
+      if (body.sources !== undefined) {
+        if (!isRecord(body.sources)) throw new HttpError(400, 'invalid', 'sources are lists by language')
+        sources = {}
+        for (const [k, value] of Object.entries(body.sources)) {
+          const tag = k === '' ? '' : tagOf(k)
+          const list = Array.isArray(value) ? value : [value]
+          if (list.length > 8) throw new HttpError(400, 'invalid', '每种语言最多 8 个来源')
+          sources[tag] = list.map((e): MockSource => {
+            if (!isRecord(e)) throw new HttpError(400, 'invalid', '来源是 {kind, …}')
+            if (e.kind === 'list') {
+              if (e.id !== undefined || e.options !== undefined || e.source !== undefined)
+                throw new HttpError(400, 'invalid', '管理员的文案没有别的字段')
+              return { kind: 'list' }
+            }
+            if (e.kind === 'own') {
+              if (!isRecord(e.source)) throw new HttpError(400, 'invalid', '要给出 folder、tag 或 type')
+              return { kind: 'own', source: { filter: [], ...e.source } as unknown as DailySource }
+            }
+            if (e.kind !== 'api') throw new HttpError(400, 'invalid', '来源的 kind 是 api、list 或 own')
+            if (typeof e.id !== 'string' || !usable.has(e.id))
+              throw new HttpError(400, 'invalid', `没有接口 ${String(e.id)}：只能用管理员设好并启用的`)
+            const opts = checkOptions([e.id], e.options === undefined ? undefined : { [e.id]: e.options })[e.id]
+            return { kind: 'api', id: e.id, ...(opts ? { options: opts } : {}) }
+          })
+        }
+      }
+      spaceDaily.set(space.id, {
+        inherit: body.inherit,
+        apis: ids,
+        ...(Object.keys(options).length > 0 ? { options } : {}),
+        ...(sources && Object.keys(sources).length > 0 ? { sources } : {}),
+      })
     } else if (method !== 'GET') throw new HttpError(404, 'not_found', '没有这个接口')
     const now = spaceDaily.get(space.id) ?? { inherit: true, apis: [] }
+    const unavailable: Record<string, string> = {}
+    const kept = now.apis.filter((id) => {
+      const st = statusOf(id)
+      if (st !== 'ok') unavailable[id] = st
+      return st !== 'gone'
+    })
+    const sources = now.sources
+      ? Object.fromEntries(
+          Object.entries(now.sources).map(([l, list]) => [
+            l,
+            list.flatMap((src): Record<string, unknown>[] => {
+              if (src.kind !== 'api') return [src]
+              const st = statusOf(src.id)
+              if (st === 'ok') return [src]
+              unavailable[src.id] = st
+              return st === 'gone' ? [] : [{ ...src, available: false, reason: 'disabled' }]
+            }),
+          ]),
+        )
+      : undefined
     return {
       status: 200,
       body: {
         inherit: now.inherit,
-        apis: now.apis.filter((id) => available.some((a) => a.id === id)),
+        apis: kept,
+        ...(sources ? { sources } : {}),
+        ...(Object.keys(unavailable).length > 0 ? { unavailable } : {}),
+        options: Object.fromEntries(Object.entries(now.options ?? {}).filter(([id]) => kept.includes(id))),
         available: available.map((a) => ({
           id: a.id,
           name: a.name,
           lang: a.lang,
           ...(a.builtin ? { languages: PROVIDERS.find((p) => p.id === a.id)?.languages } : {}),
+          ...(a.builtin && PROVIDERS.find((p) => p.id === a.id)?.options
+            ? { options: PROVIDERS.find((p) => p.id === a.id)?.options }
+            : {}),
         })),
         languages: [...site.languages],
         allowed: { ...site.allow },
@@ -2147,16 +2484,51 @@ export function createMockServer(options: MockOptions = {}) {
           Object.keys(d.apis).length > 0
         ) {
           const ids = new Set(allApis().map((a) => a.id))
-          const apis: Record<string, string> = {}
-          for (const [k, id] of Object.entries(d.apis)) {
+          const apis: Record<string, string[]> = {}
+          for (const [k, value] of Object.entries(d.apis)) {
             const tag = k === '' ? '' : tagOf(k)
             if (tag in apis) throw new HttpError(400, 'invalid', `${tag} 写了两次`)
-            if (typeof id !== 'string' || !ids.has(id))
-              throw new HttpError(400, 'api_not_found', `没有接口 ${String(id)}`)
-            apis[tag] = id
+            const list = typeof value === 'string' ? [value] : value
+            if (!Array.isArray(list) || list.length < 1 || list.length > 8)
+              throw new HttpError(400, 'invalid', '每种语言 1 到 8 个接口')
+            for (const id of list) {
+              if (typeof id !== 'string' || !ids.has(id))
+                throw new HttpError(400, 'api_not_found', `没有接口 ${String(id)}`)
+              if (tag !== '' && !servesLang(id, tag)) throw new HttpError(400, 'invalid', `${id} 没有 ${tag} 的文案`)
+            }
+            apis[tag] = [...new Set(list as string[])]
           }
-          next = { kind: 'api', apis }
-        } else throw new HttpError(400, 'invalid', 'the mock takes a default that is a list or interfaces, or null')
+          const options = checkOptions([...new Set(Object.values(apis).flat())], d.options)
+          next = { kind: 'api', apis, ...(Object.keys(options).length > 0 ? { options } : {}) }
+        } else if (isRecord(d) && d.kind === 'sources' && isRecord(d.sources) && Object.keys(d.sources).length > 0) {
+          if (d.options !== undefined)
+            throw new HttpError(400, 'invalid', 'options go with a source, not with the default')
+          const ids = new Set(allApis().map((a) => a.id))
+          const sources: Record<string, MockSource[]> = {}
+          for (const [k, value] of Object.entries(d.sources)) {
+            const tag = k === '' ? '' : tagOf(k)
+            if (tag in sources) throw new HttpError(400, 'invalid', `${tag} 写了两次`)
+            const list = Array.isArray(value) ? value : [value]
+            if (list.length < 1 || list.length > 8) throw new HttpError(400, 'invalid', '每种语言 1 到 8 个来源')
+            sources[tag] = list.map((e): MockSource => {
+              const src = typeof e === 'string' ? { kind: 'api', id: e } : e
+              if (!isRecord(src)) throw new HttpError(400, 'invalid', '来源是 {kind, …}')
+              if (src.kind === 'list') return { kind: 'list' }
+              if (src.kind === 'space') return { kind: 'space', space: String(src.space), source: src.source }
+              if (src.kind !== 'api') throw new HttpError(400, 'invalid', '来源的 kind 是 api、list 或 space')
+              if (typeof src.id !== 'string' || !ids.has(src.id))
+                throw new HttpError(400, 'api_not_found', `没有接口 ${String(src.id)}`)
+              if (tag !== '' && !servesLang(src.id, tag))
+                throw new HttpError(400, 'invalid', `${src.id} 没有 ${tag} 的文案`)
+              const options = checkOptions([src.id], src.options === undefined ? undefined : { [src.id]: src.options })[
+                src.id
+              ]
+              return { kind: 'api', id: src.id, ...(options ? { options } : {}) }
+            })
+          }
+          next = { kind: 'sources', sources }
+        } else
+          throw new HttpError(400, 'invalid', 'the mock takes a default that is a list, interfaces or sources, or null')
       }
       // The notices are dismissed with an empty list.
       if ('notices' in body) {
@@ -2356,30 +2728,92 @@ export function createMockServer(options: MockOptions = {}) {
         )
       return { status: 200, body: { ok: true, status: 200, url, raw, rawTruncated: false, quote: clean } }
     }
-    if (path === '/admin/daily/lines' && method === 'PUT') {
-      const lang = body.lang === undefined || body.lang === '' ? '' : tagOf(body.lang)
-      const format = body.format ?? 'lines'
+    // The lines of an upload or a paste, with the author and source cut off (as the server does).
+    const parseLines = (text: string, format: string): { text: string; author: string; source: string }[] => {
+      const clean = text.replace(/\r\n/g, '\n')
+      if (clean.includes('\0')) throw new HttpError(400, 'invalid', '有空字符')
+      if (format === 'csv') {
+        const rows = clean
+          .split('\n')
+          .filter((l) => l.trim() !== '')
+          .map((l) => {
+            const cells: string[] = []
+            let cur = ''
+            let quoted = false
+            for (const ch of l) {
+              if (ch === '"') quoted = !quoted
+              else if (ch === ',' && !quoted) {
+                cells.push(cur.trim())
+                cur = ''
+              } else cur += ch
+            }
+            cells.push(cur.trim())
+            return cells
+          })
+        const body =
+          rows.length > 0 && ['text', '文案', '正文', '内容'].includes(rows[0][0].toLowerCase()) ? rows.slice(1) : rows
+        return body.filter((r) => r[0] !== '').map((r) => ({ text: r[0], author: r[1] ?? '', source: r[2] ?? '' }))
+      }
       if (format !== 'lines' && format !== 'markdown')
-        throw new HttpError(400, 'invalid', 'format 是 lines 或 markdown')
-      const text = typeof body.text === 'string' ? body.text.replace(/\r\n/g, '\n') : ''
-      if (text.includes('\0')) throw new HttpError(400, 'invalid', '有空字符')
+        throw new HttpError(400, 'invalid', 'format 是 lines、markdown 或 csv')
       let parts: string[]
-      if (format === 'lines') parts = text.split('\n').filter((l) => l.trim() !== '')
+      if (format === 'lines') parts = clean.split('\n').filter((l) => l.trim() !== '')
       else {
-        const hasRule = text.split('\n').some((l) => l.trim() === '---')
-        parts = (hasRule ? text.split(/^\s*---\s*$/m) : text.split(/\n\s*\n/))
+        const hasRule = clean.split('\n').some((l) => l.trim() === '---')
+        parts = (hasRule ? clean.split(/^\s*---\s*$/m) : clean.split(/\n\s*\n/))
           .map((x) => x.trim())
           .filter((x) => x !== '')
       }
+      return parts.map((p) => {
+        const [b, ...rest] = p.split('\t')
+        const a = parseAttribution(b.trim())
+        const tabSource = rest.join('\t').trim()
+        return { text: a.text, author: a.author, source: tabSource || a.source }
+      })
+    }
+    if (path === '/admin/daily/lines/preview' && method === 'POST') {
+      const lines = parseLines(typeof body.text === 'string' ? body.text : '', String(body.format ?? 'lines'))
+      return {
+        status: 200,
+        body: {
+          lines: lines.map(({ text, author, source }) => ({
+            text,
+            ...(author ? { author } : {}),
+            ...(source ? { source } : {}),
+          })),
+        },
+      }
+    }
+    if (path === '/admin/daily/lines' && method === 'GET') {
+      const raw = url.searchParams.get('lang') ?? ''
+      const list = site.lines.get(raw === '' ? '' : tagOf(raw)) ?? []
+      return {
+        status: 200,
+        body: {
+          lines: list.map((l) => ({
+            text: l.body,
+            ...(l.author ? { author: l.author } : {}),
+            ...(l.source ? { source: l.source } : {}),
+          })),
+        },
+      }
+    }
+    if (path === '/admin/daily/lines' && method === 'PUT') {
+      const lang = body.lang === undefined || body.lang === '' ? '' : tagOf(body.lang)
+      const given = Array.isArray(body.lines)
+        ? (body.lines as Record<string, unknown>[]).map((l) => ({
+            text: String(l.text ?? '').trim(),
+            author: String(l.author ?? '').trim(),
+            source: String(l.source ?? '').trim(),
+          }))
+        : parseLines(typeof body.text === 'string' ? body.text : '', String(body.format ?? 'lines'))
+      const parts = given.filter((l) => l.text !== '')
       if (parts.length === 0) throw new HttpError(400, 'invalid', '里面没有文字；要去掉这些行，请删除')
       const total = [...site.lines].filter(([l]) => l !== lang).reduce((n, [, v]) => n + v.length, 0) + parts.length
       if (total > 5000) throw new HttpError(400, 'invalid', '服务器一共最多保留 5000 行')
       site.lines.set(
         lang,
-        parts.map((p) => {
-          const [b, ...rest] = p.split('\t')
-          return { body: b.trim(), source: rest.join('\t').trim() }
-        }),
+        parts.map((p) => ({ body: p.text, author: p.author, source: p.source })),
       )
       return { status: 200, body: siteView() }
     }

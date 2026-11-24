@@ -1,7 +1,7 @@
 // The daily text's source as the settings pages edit it: one draft per language ("" is all languages), and the
 // conversion to and from the shape the server speaks (docs/api.md, "The daily text").
 
-import type { DailyPrefs, DailySettings, DailySource, FilterOp, PropFilter } from '@/api/types'
+import type { DailyPrefs, DailySettings, DailySource, DailySpaceSource, FilterOp, PropFilter } from '@/api/types'
 import { canonicalTag } from './langTags'
 
 export type SourceKind = 'folder' | 'tag' | 'type'
@@ -118,3 +118,62 @@ export const parseValues = (text: string): string[] =>
     .map((v) => v.trim())
     .filter((v) => v !== '')
 export const opTakesValues = (op: PropFilter['op']) => op === 'in' || op === 'notIn' || op === 'contains'
+
+// --- a space's list of sources for each language (docs/api.md, "daily/prefs") ----------------------------------
+
+// One source in the list of a language of a space: an interface the administrators set up, the administrators' lines,
+// or pages of this space.
+export type SpaceItem = { kind: 'api'; id: string } | { kind: 'list' } | { kind: 'own'; draft: SourceDraft }
+
+// The lists as the editor holds them, by tab: a space's own `sources`, else its interfaces (the earlier shape) each
+// on the tab of the language it is made for, in the order they were chosen.
+export function listsFromPrefs(prefs: DailyPrefs | null, tabs: readonly string[]): Record<string, SpaceItem[]> {
+  const out: Record<string, SpaceItem[]> = {}
+  if (!prefs) return out
+  if (prefs.sources) {
+    for (const [lang, list] of Object.entries(prefs.sources)) {
+      const tab = lang === '' ? '' : (tabs.find((t) => t.toLowerCase() === lang.toLowerCase()) ?? lang)
+      out[tab] = list.map((s): SpaceItem => {
+        if (s.kind === 'list') return { kind: 'list' }
+        if (s.kind === 'own')
+          return { kind: 'own', draft: sourceToDraft(s.source) ?? { kind: 'folder', value: '', filter: [] } }
+        return { kind: 'api', id: s.id }
+      })
+    }
+    return out
+  }
+  for (const id of prefs.apis) {
+    // One that is switched off is on no tab (it is not offered): it stays where all languages are, marked.
+    const tab = tabs.find((t) => apisOfTab(prefs, t).some((a) => a.id === id)) ?? ''
+    ;(out[tab] ??= []).push({ kind: 'api', id })
+  }
+  return out
+}
+
+// What to send for the lists of the tabs that take "an interface" as their source. Only interfaces: the earlier
+// shape (an ordered list of ids and their options), which every server reads; else `sources` by language.
+export function prefsPayload(
+  lists: Record<string, SpaceItem[]>,
+  options: Record<string, Record<string, string[]>>,
+  tabs: readonly string[],
+): {
+  apis: string[]
+  options?: Record<string, Record<string, string[]>>
+  sources?: Record<string, DailySpaceSource[]>
+} {
+  const kept = tabs.filter((t) => (lists[t] ?? []).length > 0)
+  const all = kept.flatMap((t) => lists[t])
+  if (all.every((i) => i.kind === 'api')) {
+    const apis = [...new Set(all.map((i) => (i.kind === 'api' ? i.id : '')))]
+    const used = Object.fromEntries(Object.entries(options).filter(([id]) => apis.includes(id)))
+    return { apis, ...(Object.keys(used).length > 0 ? { options: used } : {}) }
+  }
+  const sources: Record<string, DailySpaceSource[]> = {}
+  for (const t of kept)
+    sources[t] = lists[t].map((i): DailySpaceSource => {
+      if (i.kind === 'list') return { kind: 'list' }
+      if (i.kind === 'own') return { kind: 'own', source: draftToSource(i.draft) }
+      return { kind: 'api', id: i.id, ...(options[i.id] ? { options: options[i.id] } : {}) }
+    })
+  return { apis: [], sources }
+}

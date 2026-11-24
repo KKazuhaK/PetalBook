@@ -1342,18 +1342,39 @@ export interface DailyQuote {
 export type DailyReason = 'no_source' | 'no_match' | 'unavailable' | 'out_of_range'
 // What `GET …/daily` says: a page of the space, a text from the administrators, or nothing to show.
 export interface DailyAnswer {
-  page: (PageSummary & { body: string; bodyTruncated?: boolean }) | null
+  page: (PageSummary & { body: string; bodyTruncated?: boolean; author?: string }) | null
   count?: number
   quote?: DailyQuote
   origin?: 'space' | 'external' | 'site'
   reason?: DailyReason
 }
 
+// What a reader may choose of a built-in service (docs/api.md, "Built-in interfaces"): each value is sent as a
+// repeated query parameter; choosing none is choosing all.
+export interface DailyOption {
+  key: string
+  param: string
+  // multi: any number of the values; path: one of them (the default when none is chosen).
+  kind: 'multi' | 'path'
+  default?: string
+  values: { value: string; label: { zh: string; en: string } }[]
+}
+// The values chosen, by interface id and option key; absent is all.
+export type DailyOptionChoice = Record<string, Record<string, string[]>>
+
 export interface DailyPrefs {
   inherit: boolean
+  // In order: the first for the day, the next ones when it does not answer and for "another".
   apis: string[]
+  options?: DailyOptionChoice
+  // The space's own list of sources for each language, when it has one: api, the administrators' lines (`list`) or
+  // pages of this space (`own`). Read in place of `apis` for a language that has a list.
+  sources?: Record<string, DailySpaceSource[]>
+  // What is the matter with an interface the space chose: `disabled` (switched off; kept, marked and skipped) or `gone`
+  // (it no longer exists; left out of the answer, and nothing else is shown in its place).
+  unavailable?: Record<string, 'disabled' | 'gone'>
   // A built-in interface that answers in more than one language lists them in `languages`.
-  available: { id: string; name: string; lang: string; languages?: string[] }[]
+  available: { id: string; name: string; lang: string; languages?: string[]; options?: DailyOption[] }[]
   // The languages the settings pages have a tab for (besides "all languages").
   languages?: string[]
   default: { kind: string } | null
@@ -1427,17 +1448,30 @@ export interface DailyProvider {
   rps: number
   maxRps?: number
   skipNew: boolean
+  options?: DailyOption[]
 }
 export interface KnownLanguage {
   tag: string
   name: string
   english: string
 }
+export type DailySpaceSource =
+  // An interface the administrators switched off stays in the list, marked `available: false`, and is skipped.
+  | { kind: 'api'; id: string; options?: Record<string, string[]>; available?: boolean; reason?: string }
+  | { kind: 'list' }
+  | { kind: 'own'; source: DailySource }
+export type DailySourceItem =
+  | { kind: 'api'; id: string; options?: Record<string, string[]> }
+  | { kind: 'list' }
+  | { kind: 'space'; space: string; source: DailySettings }
 export type DailyDefault =
   | null
   | { kind: 'list' }
   | { kind: 'space'; space: string; source: DailySettings }
-  | { kind: 'api'; apis: Record<string, string> }
+  // Each language lists its interfaces in order; the server also reads a single id.
+  | { kind: 'api'; apis: Record<string, string[]>; options?: DailyOptionChoice }
+  // Each language lists sources of any kind, in order: tried in turn by day, the next when one has nothing.
+  | { kind: 'sources'; sources: Record<string, DailySourceItem[]> }
 export interface DailyNotice {
   code: 'builtin_adopted' | 'builtin_renamed' | 'builtin_kept' | 'dropped_language' | 'unreadable' | (string & {})
   id?: string
@@ -1473,7 +1507,13 @@ export interface DailyTryResult {
   quote?: DailyQuote
   pathErrors?: { field: string; code: string; message: string }[]
 }
-export type LinesFormat = 'lines' | 'markdown'
+export type LinesFormat = 'lines' | 'markdown' | 'csv'
+// A line of the administrators' own text: the text, and who said it and where it is from, each split off.
+export interface DailyLine {
+  text: string
+  author?: string
+  source?: string
+}
 
 // --- security settings, providers and the audit log (docs/api.md, "Administration") ------------
 
