@@ -4328,6 +4328,21 @@ management」一节。设计按 2.7、3.1 都合并之后写。
     或 id 比较）」，不写成一个 OR，否则 SQLite 会取两个范围再排序。
     **没有索引的只有 `q`（名字包含）**：按排序的顺序读名字，直到页满。
 
+- **审查后的修正（2026-11-24，第 4 部分和界面）**：
+  - `connected`（和 `dormant`）数的是任何提供方的连接：`github_authorizations` 或
+    `provider_authorizations`。实时判断和每天的对账都看两张表；连接 3.8 的账号、断开、删提供方
+    （连带的连接）都会重算那个人的 `connected`。只连了 GitLab 或 Codeberg 的人不再被当成休眠。
+  - 租户管理员恢复一个人时，答案里不出现个人空间（`skipped` 和 `restored.spaces` 都不带它的 id
+    和名字），只在 `restored.personal` 里给个数；审计行仍然完整。
+  - `GET /api/admin/storage`：`hosts.fromFlag`、`cache.minFreeBytes`、`git.version` 和概要里的
+    `spaces.restoring`（全服务器的）只给全站管理员。
+  - 删人的预览 `revoke.connections` 按提供方列出所有连接（含 3.8 的）；删人时也断开 3.8 的连接
+    （能撤销的向对方撤销），清除人时删掉 `provider_authorizations` 和提醒的行。
+  - 空间列表按名字排序的游标用存下的 `name_key`；对账把回到服务器上的空间的计入字节按最后一次
+    测量补回；`AssetBytesOfTenant` 一次查出冷表里所有缓存空间的租户。
+  - 界面：批量对话框里换掉或清掉继承人，会丢掉旧令牌并重新取计划（早到的回答不覆盖后问的）；
+    「管理员查看，只读，已记录」的横幅只在查看真的开着时显示。
+
 - **审查后的修正（2026-11-23，第 1 到 3 部分）**：
   - 导出：全站管理员做的导出只给全站管理员看（列表、读、下载、删除），不论它的租户字段；
     含历史、含个人空间、含多个租户空间的导出同样只给全站（`exports.site_only`）。租户管理员

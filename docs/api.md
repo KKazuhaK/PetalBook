@@ -6645,6 +6645,14 @@ memory (per space, summed for the tenant's spaces from the in-memory map);
 `diskFreeBytes` is for site administrators only. `recycleDays` is
 `recycle.days` as it is now (how long the recycle bin keeps an item).
 
+What is the server's own is the site's alone: a tenant administrator's answer
+has no `hosts.fromFlag`, `cache.minFreeBytes`, `git.version` (`git.partialClone`
+stays, it says what the settings can do) and no `summary.spaces.restoring` (the
+restores that run on the server, of every tenant); a site administrator's has
+them. In the summary of a tenant `assetCacheBytes` is summed over the tenant's
+spaces, the tenant of the cached spaces looked up in one query for the ones not
+seen before and remembered.
+
 ### `GET /api/admin/spaces` (filters and sorting added)
 
 The 1.7 list, with 3.1's `storage` block, gains:
@@ -6707,11 +6715,15 @@ most 200, by `lastUsed`).
   state, a change of first owner, a deletion, a restore) is made in one
   transaction with the space's lock taken first, and adds the difference to the
   rows of the tenant and of the person the space is counted for. A person's
-  `connected` follows their connection rows, and `dormant` is worked out again
+  `connected` follows their connection rows (a GitHub authorization or one of
+  any provider of 3.8: connecting, disconnecting, deleting the provider and
+  deleting the person all settle it, and the recount reads both tables), and `dormant` is worked out again
   whenever `remote_spaces`, `connected` or `first_write` changes (the tenant's
   count with it). The daily recount puts every one of these right from the rows,
   and also the `location`, `remote_via` and `remote_state` of spaces, and the
-  counted bytes of spaces that do not count.
+  counted bytes of spaces that do not count; a space that the recount finds back
+  on the server (`own` to `server`) counts its last measurement again, as the
+  change of its remote does.
 - **`grace_spaces` and `overdue_spaces` are not kept by difference.** They change
   with the clock and with the policy, not only with a write, so one grouped
   query over the spaces that lack what is required sets them: every hour, when
@@ -6727,7 +6739,8 @@ most 200, by `lastUsed`).
   author of the change, which is where it is noted).
 - **Spaces** are listed by one query over an index for each sort, with and
   without the tenant in front (site administrators see every tenant). A cursor
-  is `<sort>.<order>:<value>:<id>`; spaces with no value of the sort (never
+  is `<sort>.<order>:<value>:<id>` (for the name, the stored `name_key` of the
+  last row, not the name folded again); spaces with no value of the sort (never
   measured, never used) come after the others in id order, as a second range
   (`<sort>.<order>.none::<id>`). Two spaces with the same value are ordered by
   id, ascending in the index's own direction and descending in the other. The
@@ -6951,9 +6964,16 @@ grants, groups, GitHub connection), never from files:
  "transfer": [{"space": {"id": "…", "name": "Team"}, "to": {"id": "…", "username": "li"}, "why": "editor",
                "credential": "user"}],
  "leave": [{"space": {"id": "…", "name": "Shared"}, "role": "owner"}],
- "revoke": {"tokens": 2, "grants": 1, "passkeys": 1, "identities": 1, "github": true, "sessions": 3},
+ "revoke": {"tokens": 2, "grants": 1, "passkeys": 1, "identities": 1, "github": true, "sessions": 3,
+            "connections": [{"provider": "github", "name": "GitHub"}, {"provider": "gitlab-1", "name": "GitLab"}]},
  "groups": 4, "needsHeir": [], "blockers": [], "bytes": 4194304, "recycleDays": 30}
 ```
+
+`revoke.connections` has one line for each provider the person is connected to
+(GitHub and the providers of 3.8); `github` stays as it was. Deleting the person
+ends each of them as the person's own disconnect does (the host is asked to
+revoke the token where it can be, best effort), and removes any row left of a
+provider that is not up; purging removes the rest with the person's data.
 
 The rules:
 
@@ -7041,7 +7061,10 @@ Their username stays taken while they are in the recycle bin.
   whose group is still there, then the spaces that went with them, a personal one
   too. `200` `{"restored": {"item", "user", "spaces"}, "skipped": [...],
   "transfers": [...], "left": [...]}`; a space that cannot be restored is left in
-  the bin as an item of its own and listed in `skipped`. A personal space whose
+  the bin as an item of its own and listed in `skipped`. A tenant administrator's
+  answer leaves personal spaces out of `spaces` and `skipped` (neither their id
+  nor their name) and says how many there were in `restored.personal`; a site
+  administrator's answer names them, and the audit row (`recycled`) is whole. A personal space whose
   person is there (a deletion cut short, or a restore that left it) is restored on
   its own.
 - **Purging** an item of a person purges the spaces recycled with them first, then
