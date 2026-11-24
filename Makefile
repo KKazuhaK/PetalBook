@@ -17,7 +17,7 @@ export GOMAXPROCS := $(SHARE)
 export VITEST_MAX_WORKERS := $(SHARE)
 endif
 
-.PHONY: build web release test test-postgres test-casefold vet run clean \
+.PHONY: build web release test test-live-daily test-postgres test-casefold vet run clean \
 	contract contract-postgres fmt-check tidy-check actionlint vuln secrets lint hooks check-go check-web check check-full \
 	cross-compile web-typecheck web-lint web-format-check web-test
 
@@ -54,6 +54,11 @@ test:
 # (raceDetector), so this runs them without it. Main runs it in the compat job.
 test-fullsize:
 	go test -timeout $(GOTEST_TIMEOUT) ./internal/index ./internal/space
+
+# Asks every built-in daily-text provider over the real network (build tag
+# live). Not part of check or CI: run it when a built-in provider changes.
+test-live-daily:
+	go test -tags live -count=1 -run TestLiveProviders -v -timeout 10m ./internal/dailyfetch
 
 # The tests of the packages that use the state database (the ones that import
 # internal/store/storetest), run on SQLite and on PostgreSQL in a throwaway

@@ -116,7 +116,7 @@ func TestDailyFromTheAdministrators(t *testing.T) {
 				t.Errorf("%s: %d %v", name, code, r)
 			}
 		}
-		if _, r := adm("GET", "/api/admin/daily", nil); len(r["apis"].([]any)) != 0 || len(r["providers"].([]any)) != 2 {
+		if _, r := adm("GET", "/api/admin/daily", nil); len(r["apis"].([]any)) != 0 || len(r["providers"].([]any)) != 8 {
 			t.Fatalf("a refused change changed something: %v", r)
 		}
 
@@ -458,12 +458,18 @@ func TestAdministratorsConfigureExternalInterfaces(t *testing.T) {
 		if code, r := x.putAPI("any", body); code != 200 || r["apis"].([]any)[0].(map[string]any)["enabled"] != false {
 			t.Fatalf("%d %v", code, r)
 		}
-		if _, pr := x.own("GET", x.base+"/daily/prefs", nil); len(pr["available"].([]any)) != 0 || len(pr["apis"].([]any)) != 0 {
+		// Not offered; what the space chose stays, marked, so that a save does not lose it.
+		if _, pr := x.own("GET", x.base+"/daily/prefs", nil); len(pr["available"].([]any)) != 0 || fmt.Sprint(pr["apis"]) != "[any]" || asMap(pr["unavailable"])["any"] != "disabled" {
 			t.Fatalf("%v", pr)
 		}
 		if r := quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang=en"); r["quote"] != nil {
 			t.Fatalf("a disabled interface is used: %v", r)
 		}
+		if code, r := x.own("PUT", x.base+"/daily/prefs", map[string]any{"inherit": true, "apis": []any{"any"}}); code != 200 {
+			t.Fatalf("what was chosen is kept on a save: %d %v", code, r)
+		}
+		// Let go of it, and it cannot be chosen again while it is off.
+		x.own("PUT", x.base+"/daily/prefs", map[string]any{"inherit": true, "apis": []any{}})
 		if code, r := x.own("PUT", x.base+"/daily/prefs", map[string]any{"inherit": true, "apis": []any{"any"}}); code != 400 {
 			t.Fatalf("a disabled interface is chosen: %d %v", code, r)
 		}

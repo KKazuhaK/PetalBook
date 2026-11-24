@@ -135,13 +135,16 @@ describe('the mock gives the stable codes', () => {
   it('the default may be an interface for each language: api_not_found for one that is not set up', () => {
     const call = admin()
     put(call, {})
-    expect(call('PUT', '/api/admin/daily', { default: { kind: 'api', apis: { '': 'nothing' } } })).toMatchObject({
+    expect(call('PUT', '/api/admin/daily', { default: { kind: 'api', apis: { '': ['nothing'] } } })).toMatchObject({
       status: 400,
       body: { error: 'api_not_found' },
     })
     expect(
-      call('PUT', '/api/admin/daily', { default: { kind: 'api', apis: { zh: 'quotes', '': 'quotes' } } }),
-    ).toMatchObject({ status: 200, body: { default: { kind: 'api', apis: { 'zh-Hans': 'quotes', '': 'quotes' } } } })
+      call('PUT', '/api/admin/daily', { default: { kind: 'api', apis: { zh: ['quotes'], '': 'quotes' } } }),
+    ).toMatchObject({
+      status: 200,
+      body: { default: { kind: 'api', apis: { 'zh-Hans': ['quotes'], '': ['quotes'] } } },
+    })
     const space = (call('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
     const daily = (lang: string) =>
       call('GET', `/api/spaces/${space}/daily?date=${new Date().toISOString().slice(0, 10)}&lang=${lang}`).body as {
@@ -162,7 +165,13 @@ describe('the mock gives the stable codes', () => {
     expect(view().apis).toEqual([])
     expect(view().providers.map((p) => [p.id, p.enabled, p.rps])).toEqual([
       ['hitokoto', false, 20],
-      ['quotable', false, 3],
+      ['zenquotes', false, 0.1],
+      ['favqs', false, 1],
+      ['animechan', false, 1 / 60],
+      ['dummyjson', false, 1],
+      ['jinrishici', false, 1],
+      ['shanbay', false, 1],
+      ['iciba', false, 1],
     ])
     expect(call('PUT', '/api/admin/daily/providers/hitokoto', {})).toMatchObject({ status: 400 })
     expect(call('PUT', '/api/admin/daily/providers/nothing', { enabled: true }).status).toBe(404)
@@ -216,7 +225,7 @@ describe('the mock gives the stable codes', () => {
     const daily = (q: string) => call('GET', `/api/spaces/${space}/daily?${q}`)
     expect(daily('date=2026-11-23&skip=99999999')).toMatchObject({ status: 400, body: { error: 'skip_too_large' } })
     expect(daily('date=1969-12-31')).toMatchObject({ status: 400, body: { error: 'invalid' } })
-    put(call, {})
+    put(call, { lang: '' })
     expect(call('PUT', `/api/spaces/${space}/daily/prefs`, { inherit: true, apis: ['quotes'] }).status).toBe(200)
     expect(daily('date=2001-01-01')).toMatchObject({ status: 200, body: { page: null, reason: 'out_of_range' } })
   })
@@ -283,5 +292,24 @@ describe('what each code says, in both languages', () => {
     expect(homeEn.daily.skipLimit).not.toBe('')
     expect(homeZhCN.daily.skipLimit).not.toBe('')
     expect(homeEn.daily.skipLimit).not.toBe(homeZhCN.daily.skipLimit)
+  })
+})
+
+describe("the daily text is in the reader's language only", () => {
+  it('lines in Chinese are not given to an English reader, and 一言 is refused under English', () => {
+    const call = admin()
+    expect(call('PUT', '/api/admin/daily', { default: { kind: 'list' } }).status).toBe(200)
+    expect(call('PUT', '/api/admin/daily/lines', { lang: 'zh-Hans', text: '中文的一行', format: 'lines' }).status).toBe(
+      200,
+    )
+    const space = (call('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
+    const daily = (lang: string) =>
+      call('GET', `/api/spaces/${space}/daily?date=2026-11-23&lang=${lang}`).body as { quote?: { text: string } }
+    expect(daily('zh-CN').quote?.text).toBe('中文的一行')
+    expect(daily('en').quote).toBeUndefined()
+    expect(call('PUT', '/api/admin/daily/providers/hitokoto', { enabled: true }).status).toBe(200)
+    expect(call('PUT', '/api/admin/daily', { default: { kind: 'api', apis: { en: ['hitokoto'] } } })).toMatchObject({
+      status: 400,
+    })
   })
 })

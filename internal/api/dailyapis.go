@@ -211,16 +211,18 @@ func (s *server) decodeSite(raw string) siteDaily {
 		d.APIs = append(d.APIs, a)
 	}
 	var def *struct {
-		Kind   string            `json:"kind"`
-		Space  string            `json:"space"`
-		Source json.RawMessage   `json:"source"`
-		APIs   map[string]string `json:"apis"`
+		Kind    string                         `json:"kind"`
+		Space   string                         `json:"space"`
+		Source  json.RawMessage                `json:"source"`
+		APIs    apiLists                       `json:"apis"`
+		Options map[string]map[string][]string `json:"options"`
+		Sources sourceLists                    `json:"sources"`
 	}
 	part("default", &def)
 	if def == nil {
 		return d
 	}
-	d.Default = &siteDefault{Kind: def.Kind, Space: def.Space}
+	d.Default = &siteDefault{Kind: def.Kind, Space: def.Space, Options: def.Options, Sources: def.Sources}
 	dropped := func(field, code string) {
 		s.log.Warn("a language of the daily text default is not a language tag; it is dropped", "field", field, "code", code)
 		d.notify(siteNotice{Code: "dropped_language", Lang: code, Field: field,
@@ -237,7 +239,7 @@ func (s *server) decodeSite(raw string) siteDaily {
 		keys := slices.Sorted(maps.Keys(def.APIs))
 		// The canonical spelling of a language first, then the others by order.
 		sort.SliceStable(keys, func(i, j int) bool { return langtag.Read(keys[i]) == keys[i] && langtag.Read(keys[j]) != keys[j] })
-		d.Default.APIs = map[string]string{}
+		d.Default.APIs = apiLists{}
 		for _, k := range keys {
 			l := k
 			if k != "" {
@@ -316,16 +318,40 @@ func (s *server) adoptBuiltins(d *siteDaily) {
 		}
 		d.renames[a.ID] = to
 		if d.Default != nil {
-			for l, id := range d.Default.APIs {
-				if id == a.ID {
-					d.Default.APIs[l] = to
+			for l, ids := range d.Default.APIs {
+				d.Default.APIs[l] = renamed(ids, a.ID, to)
+			}
+			for l, list := range d.Default.Sources {
+				for i := range list {
+					if list[i].Kind == "api" && list[i].ID == a.ID {
+						list[i].ID = to
+					}
 				}
+				d.Default.Sources[l] = list
+			}
+			if o, ok := d.Default.Options[a.ID]; ok {
+				delete(d.Default.Options, a.ID)
+				d.Default.Options[to] = o
 			}
 		}
 		d.notify(siteNotice{Code: "builtin_renamed", ID: a.ID, To: to,
 			Message: "the interface " + a.ID + " differs from the built-in one of that id; it is kept as " + to})
 	}
 	d.APIs = kept
+}
+
+// renamed is the ids with from replaced by to, each once.
+func renamed(ids []string, from, to string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == from {
+			id = to
+		}
+		if !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // stateFrom is the built-in's state that keeps what a stored interface had,
@@ -378,6 +404,9 @@ func (s *server) resealed(a storedAPI, to string) (storedAPI, error) {
 // builtinAPI is a built-in interface as the administrators set it.
 func builtinAPI(p dailyfetch.Provider, st providerState) storedAPI {
 	a := p.API
+	if def, err := p.WithOptions(nil); err == nil {
+		a.URL = def.URL // an option that is in the address, with its default
+	}
 	a.Enabled = st.Enabled
 	a.Builtin = true
 	if st.Refresh != "" {
@@ -546,46 +575,53 @@ func (s *server) siteDaily(c *call, site siteDaily, date string, skip int, lang 
 	if err != nil {
 		return nil, "", err
 	}
-	var ids []string
-	if allow.API { // when it is not allowed, the choice is kept and not used
-		json.Unmarshal([]byte(prefs.APIs), &ids)
+	// What a space chose is kept when it is not allowed, and not used: the interfaces
+	// while api is off, its own pages in a list while own is (see spaceSources).
+	choice := store.ParseSpaceChoice(prefs.APIs)
+	if !allow.API {
+		choice.APIs, choice.Options = nil, nil
 	}
 	all := site.all()
-	if a := chooseAPI(all, ids, lang); a != nil {
-		return s.dailyFromAPI(c, site, *a, date, skip, lang, tz)
+	// The space's own list of sources, of any kind, for the reader's language.
+	srcs, lost := s.spaceSources(choice, all, allow, lang)
+	if len(srcs) > 0 {
+		return s.dailyFromSources(c, site, srcs, "space:"+c.sp.Info.ID, date, skip, lang, tz)
+	}
+	if lost {
+		// What the space chose is not there (gone, or switched off): nothing else is
+		// picked in its place, and the owner is told in settings.
+		return nil, "unavailable", nil
+	}
+	cands := chooseAPIs(all, choice.APIs, lang)
+	if len(cands) == 0 && slices.ContainsFunc(choice.APIs, func(id string) bool { return site.ifaceStatus(id) != "" }) {
+		return nil, "unavailable", nil // one it chose is gone or off, and none else gives a text
+	}
+	if len(cands) > 0 {
+		srcs := make([]dailySource, len(cands))
+		for i, a := range cands {
+			srcs[i] = dailySource{Kind: "api", ID: a.ID, Options: choice.Options[a.ID]}
+		}
+		return s.dailyFromSources(c, site, srcs, "space:"+c.sp.Info.ID, date, skip, lang, tz)
 	}
 	// The default of the person's tenant comes between the space's and the site's.
-	def, err := s.dailyDefaultFor(ctx, c.user().TenantID, site.Default)
+	def, scope, err := s.dailyDefaultFor(ctx, c.user().TenantID, site.Default)
 	if err != nil {
 		return nil, "", err
 	}
 	if !prefs.Inherit || def == nil {
 		return nil, "", nil
 	}
-	switch def.Kind {
-	case "list":
-		return s.dailyFromLines(ctx, date, skip, lang)
-	case "space":
-		return s.dailyFromSpace(ctx, *def, date, skip, lang)
-	case "api":
-		// The administrators' own choice: not limited by what spaces may choose.
-		id, ok := defaultAPIFor(def.APIs, lang)
-		if !ok {
-			return nil, "", nil
-		}
-		for i := range all {
-			if all[i].ID == id && all[i].Enabled {
-				return s.dailyFromAPI(c, site, all[i], date, skip, lang, tz)
-			}
-		}
-		return nil, "unavailable", nil // gone, or switched off
+	// The administrators' own choice: not limited by what spaces may choose.
+	srcs, ok := def.sourcesFor(lang)
+	if !ok {
+		return nil, "", nil
 	}
-	return nil, "", nil
+	return s.dailyFromSources(c, site, srcs, scope, date, skip, lang, tz)
 }
 
-// defaultAPIFor is the interface of the default for a reader's language: the
-// one for the language it is matched to, else the one for all languages.
-func defaultAPIFor(apis map[string]string, lang string) (string, bool) {
+// defaultAPIsFor are the interfaces of the default for a reader's language, in
+// order: those for the language it is matched to, else those for all languages.
+func defaultAPIsFor(apis apiLists, lang string) ([]string, bool) {
 	keys := make([]string, 0, len(apis))
 	for k := range apis {
 		if k != "" {
@@ -596,29 +632,170 @@ func defaultAPIFor(apis map[string]string, lang string) (string, bool) {
 	if m, ok := langtag.Match(lang, keys); ok {
 		return apis[m], true
 	}
-	id, ok := apis[""]
-	return id, ok
+	ids, ok := apis[""]
+	return ids, ok
 }
 
-// dailyFromAPI asks an external interface (or what is kept of it), for a space's
-// choice and for the site's default alike: the same cache, refresh and rate limit.
-func (s *server) dailyFromAPI(c *call, site siteDaily, a storedAPI, date string, skip int, lang string, tz *int) (*dailyQuote, string, error) {
-	// An interface is asked about the days around today only: each other
-	// day would be a request, a row kept and a lane of its own.
-	if !nearToday(date, s.opt.DailyFetch.Now(), tz) {
-		return nil, "out_of_range", nil
+// rotation is which of n interfaces the scope (a space, a tenant, the site)
+// starts with on a day: the scope has its own place in the order and the
+// interfaces take turns by day, so that everybody in the scope sees the same
+// one that day.
+func rotation(scope, date string, n int) int {
+	t, err := time.Parse("2006-01-02", date)
+	if err != nil || n <= 1 {
+		return 0
 	}
+	day := int(t.Unix() / 86400)
+	return ((day+int(space.DailyNumber("rotate:"+scope, "")%uint64(n)))%n + n) % n
+}
+
+// dailyFromSources gives the text of the sources a choice lists for a
+// language (a space's, a tenant's, the site's; scope names which): one a day, in
+// turn. A source is an external interface, the lines the administrators gave or
+// pages of a space; one alone is used as it is. "Another" (skip) moves to the
+// next; after the last it is the first again, which then asks for a new item if
+// it can. A source that fails, is switched off, is asked too often or has
+// nothing is passed over for the next; only when none gives anything is there
+// nothing. What an interface said last (stale) is used only when no other source
+// has a fresh one. Exactly one text is ever given.
+func (s *server) dailyFromSources(c *call, site siteDaily, srcs []dailySource, scope, date string, skip int, lang string, tz *int) (*dailyQuote, string, error) {
+	ctx := c.r.Context()
+	n := len(srcs)
+	start := rotation(scope, date, n)
+	var stale *dailyQuote
+	limited, tried := 0, 0
+	reason := ""
+	rank := map[string]int{"": 0, "no_match": 1, "out_of_range": 2, "unavailable": 3}
+	// A step is a place in the turns: the source after the start, and the one after it, round and round;
+	// each time round the list (the lap) an interface that can asks for a new item. "Another" is the next
+	// step that gives a text, so it moves on from the source that gave today's, not from the one the day
+	// started with when that one had nothing. With one source, step and skip are the same.
+	steps := n * (skip + 2)
+	if n == 1 {
+		steps = skip + 1
+	}
+	found := 0
+	for step := 0; step < steps; step++ {
+		if n == 1 && step < skip {
+			continue
+		}
+		q, why, err := s.fromSource(c, ctx, site, srcs[(start+step)%n], date, step/n, lang, tz)
+		tried++
+		switch {
+		case errors.Is(err, dailyfetch.ErrRateLimited):
+			limited++
+		case err != nil:
+			return nil, "", err
+		case q != nil && q.Stale:
+			if stale == nil {
+				stale = q
+			}
+		case q != nil:
+			if found == skip || n == 1 {
+				return q, "", nil
+			}
+			found++
+		default:
+			if rank[why] >= rank[reason] {
+				reason = why
+			}
+		}
+		if found == 0 && step == n-1 && n > 1 {
+			break // nothing gives a text today: later steps would not
+		}
+	}
+	switch {
+	case stale != nil && found == 0:
+		return stale, "", nil
+	case limited == tried:
+		return nil, "", dailyfetch.ErrRateLimited
+	}
+	return nil, reason, nil
+}
+
+// fromSource is the text of one source: a text, or nothing with the reason
+// (and the error when the interface was asked too often).
+func (s *server) fromSource(c *call, ctx context.Context, site siteDaily, src dailySource, date string, skip int, lang string, tz *int) (*dailyQuote, string, error) {
+	switch src.Kind {
+	case "list":
+		return s.dailyFromLines(ctx, date, skip, lang)
+	case "space":
+		return s.dailyFromSpace(ctx, siteDefault{Space: src.Space, Source: src.Source}, date, skip, lang)
+	case "own":
+		// Pages of the space the reader is in: one text, in the same fields as the others.
+		if src.Source == nil {
+			return nil, "", nil
+		}
+		ds := src.Source.For(lang)
+		if ds == nil {
+			return nil, "", nil
+		}
+		pick, none, err := c.sp.Space.DailyFrom(c.sp.Info.ID, date, skip, *ds)
+		if err != nil {
+			return nil, "", err
+		}
+		if pick == nil {
+			if none == space.DailyNoMatch {
+				return nil, "no_match", nil
+			}
+			return nil, "", nil
+		}
+		source := pick.Page.Source
+		if source == "" {
+			source = pick.Page.Title
+		}
+		return &dailyQuote{Text: pick.Body, Author: pick.Author, Source: source, origin: "space"}, "", nil
+	case "api":
+		// An interface is asked about the days around today only: each other
+		// day would be a request, a row kept and a lane of its own.
+		if !nearToday(date, s.opt.DailyFetch.Now(), tz) {
+			return nil, "out_of_range", nil
+		}
+		var api *storedAPI
+		for _, a := range site.all() {
+			if a.ID == src.ID && a.Enabled {
+				api = &a
+				break
+			}
+		}
+		if api == nil {
+			return nil, "unavailable", nil // gone, or switched off
+		}
+		if !api.Serves(lang) {
+			return nil, "", nil // it has no text in this language: the next source answers
+		}
+		q, err := s.askAPI(c, site, *api, src.Options, date, skip, lang)
+		switch {
+		case errors.Is(err, dailyfetch.ErrRateLimited):
+			return nil, "", err
+		case err != nil:
+			return nil, "unavailable", nil
+		}
+		return q, "", nil
+	}
+	return nil, "", nil
+}
+
+// askAPI asks an external interface (or what is kept of it), for a space's
+// choice and for the site's default alike: the same cache, refresh and rate
+// limit. opts are the options chosen for it, used when it is a built-in one.
+func (s *server) askAPI(c *call, site siteDaily, a storedAPI, opts map[string][]string, date string, skip int, lang string) (*dailyQuote, error) {
 	rt, err := s.runtime(a)
 	if err != nil {
 		s.log.Error("an external daily text interface cannot be set up", "interface", a.ID, "error", err)
-		return nil, "unavailable", nil
+		return nil, dailyfetch.ErrUnavailable
+	}
+	if p, ok := dailyfetch.ProviderByID(a.ID); ok && a.Builtin {
+		if withOpts, err := p.WithOptions(opts); err != nil {
+			// What was chosen no longer fits the provider: it is asked for all.
+			s.log.Warn("options of a built-in daily text interface are not valid; they are not used", "interface", a.ID, "error", err)
+		} else {
+			rt.URL = withOpts.URL
+		}
 	}
 	r, err := s.opt.DailyFetch.Get(c.r.Context(), rt, rt.LaneLang(lang, site.Languages), date, skip)
-	switch {
-	case errors.Is(err, dailyfetch.ErrRateLimited):
-		return nil, "", err
-	case err != nil:
-		return nil, "unavailable", nil
+	if err != nil {
+		return nil, err
 	}
 	q := &dailyQuote{Text: r.Text, Source: r.Source, Author: r.Author, Link: r.Link, Fetched: rfc3339(r.Fetched), Stale: r.Stale, origin: "external"}
 	if r.Stale {
@@ -626,7 +803,7 @@ func (s *server) dailyFromAPI(c *call, site siteDaily, a storedAPI, date string,
 	} else if _, ends := rt.Period(s.opt.DailyFetch.Now(), date); !ends.IsZero() {
 		q.expires = ends
 	}
-	return q, "", nil
+	return q, nil
 }
 
 // apiLangs are the languages an interface answers in: its own list when it
@@ -641,38 +818,38 @@ func apiLangs(a storedAPI) []string {
 	return nil
 }
 
-// chooseAPI picks, among the enabled interfaces a space chose, the one for the
-// language: made for the language the reader's is matched to (the BCP 47 way),
-// else one that takes every language, else any.
-func chooseAPI(all []storedAPI, ids []string, lang string) *storedAPI {
-	chosen := map[string]bool{}
-	for _, id := range ids {
-		chosen[id] = true
-	}
+// chooseAPIs picks, among the enabled interfaces a space chose, those for the
+// language, in the order the space listed them: made for the language the
+// reader's is matched to (the BCP 47 way), else those that take every
+// language; none when there is no such, never one made for another language.
+func chooseAPIs(all []storedAPI, ids []string, lang string) []storedAPI {
 	var mine []storedAPI
 	var tags []string
-	for _, a := range all {
-		if chosen[a.ID] && a.Enabled {
-			mine = append(mine, a)
-			tags = append(tags, apiLangs(a)...)
+	for _, id := range ids {
+		for _, a := range all {
+			if a.ID == id && a.Enabled && !slices.ContainsFunc(mine, func(m storedAPI) bool { return m.ID == id }) {
+				mine = append(mine, a)
+				tags = append(tags, apiLangs(a)...)
+			}
 		}
 	}
 	if len(mine) == 0 {
 		return nil
 	}
-	if m, ok := langtag.Match(lang, tags); ok {
-		for i := range mine {
-			if slices.Contains(apiLangs(mine[i]), m) {
-				return &mine[i]
+	pick := func(keep func(storedAPI) bool) []storedAPI {
+		var out []storedAPI
+		for _, a := range mine {
+			if keep(a) {
+				out = append(out, a)
 			}
 		}
+		return out
 	}
-	for i := range mine {
-		if mine[i].Lang == "" {
-			return &mine[i]
-		}
+	if m, ok := langtag.Match(lang, tags); ok {
+		return pick(func(a storedAPI) bool { return slices.Contains(apiLangs(a), m) })
 	}
-	return &mine[0]
+	// Those that take every language; never one made for another language.
+	return pick(func(a storedAPI) bool { return a.Lang == "" })
 }
 
 // --- the administrators' side -------------------------------------------------------
@@ -703,7 +880,7 @@ const (
 // stored interface with the same id, if any.
 func (s *server) build(b apiBody, old *storedAPI) (storedAPI, dailyfetch.API, error) {
 	a := b.API
-	a.Builtin, a.Languages = false, nil // only the program makes a built-in interface
+	a.Builtin, a.Languages, a.Texts, a.AnyContentType = false, nil, nil, false // only the program makes a built-in interface
 	a.Enabled = true
 	if old != nil {
 		a.Enabled = old.Enabled
@@ -968,8 +1145,9 @@ func (s *server) adminPutDailyAPI(c *call) {
 // putBuiltinFromAPI is a PUT of a built-in interface through the interfaces'
 // address: what is fixed must be as it is, the rest is what a provider takes.
 func (s *server) putBuiltinFromAPI(c *call, p dailyfetch.Provider, b apiBody) {
+	def, _ := p.WithOptions(nil)
 	same := func(field, got, want string) error {
-		if got != "" && got != want {
+		if got != "" && got != want && !(field == "url" && got == def.URL) {
 			return &codedError{code: codeBuiltin, field: field, msg: "the " + field + " of the built-in interface " + p.ID + " cannot be changed"}
 		}
 		return nil
@@ -1209,9 +1387,19 @@ func probeRefusal(res dailyfetch.ProbeResult) *codedError {
 // --- what the owner of a space chooses ---------------------------------------------
 
 type dailyPrefsResp struct {
-	Inherit   bool       `json:"inherit"`
-	APIs      []string   `json:"apis"`
-	Available []availAPI `json:"available"`
+	Inherit bool     `json:"inherit"`
+	APIs    []string `json:"apis"`
+	// Unavailable says, by interface id, what is the matter with an interface the
+	// space chose: "disabled" (switched off: kept, marked and skipped) or "gone"
+	// (it no longer exists: left out of the answer).
+	Unavailable map[string]string `json:"unavailable,omitempty"`
+	// Sources are the space's own lists of sources by language, when it has
+	// them (see putDailyPrefs); interfaces that are not set up are left out.
+	Sources sourceLists `json:"sources,omitempty"`
+	// Options are the options chosen for the built-in interfaces of apis, by
+	// interface id and option key; absent is all.
+	Options   map[string]map[string][]string `json:"options"`
+	Available []availAPI                     `json:"available"`
 	// Languages are the languages there is a settings tab for.
 	Languages []string `json:"languages"`
 	// Allowed is what the administrators let the spaces do; what is false here
@@ -1229,11 +1417,13 @@ type availAPI struct {
 	// Languages are those of a built-in interface that answers in more than
 	// its first (see dailyfetch.API.Languages).
 	Languages []string `json:"languages,omitempty"`
+	// Options are what a reader may choose of a built-in interface.
+	Options []dailyfetch.Option `json:"options,omitempty"`
 }
 
 func (s *server) dailyPrefs(c *call) (dailyPrefsResp, error) {
 	ctx := c.r.Context()
-	out := dailyPrefsResp{APIs: []string{}, Available: []availAPI{}}
+	out := dailyPrefsResp{APIs: []string{}, Options: map[string]map[string][]string{}, Available: []availAPI{}}
 	prefs, err := store.GetSpaceDaily(ctx, s.opt.Store.Q(), c.sp.Info.ID)
 	if err != nil {
 		return out, err
@@ -1245,19 +1435,56 @@ func (s *server) dailyPrefs(c *call) (dailyPrefsResp, error) {
 	out.Inherit = prefs.Inherit
 	out.Languages = site.Languages
 	out.Allowed = *site.Allow
-	var ids []string
-	json.Unmarshal([]byte(prefs.APIs), &ids)
+	choice := store.ParseSpaceChoice(prefs.APIs)
 	known := map[string]bool{}
 	for _, a := range site.all() {
 		if !a.Enabled {
 			continue
 		}
 		known[a.ID] = true
-		out.Available = append(out.Available, availAPI{a.ID, a.Name, a.Lang, a.Languages})
+		var opts []dailyfetch.Option
+		if p, ok := dailyfetch.ProviderByID(a.ID); ok && a.Builtin {
+			opts = p.Options
+		}
+		out.Available = append(out.Available, availAPI{a.ID, a.Name, a.Lang, a.Languages, opts})
 	}
-	for _, id := range ids {
-		if known[id] {
-			out.APIs = append(out.APIs, id)
+	if len(choice.Sources) > 0 {
+		var lists sourceLists
+		if json.Unmarshal(choice.Sources, &lists) == nil {
+			out.Sources = sourceLists{}
+			for l, list := range lists {
+				kept := []dailySource{}
+				for _, src := range list {
+					src.Available, src.Reason = nil, ""
+					if src.Kind == "api" && !known[src.ID] {
+						switch site.ifaceStatus(src.ID) {
+						case "gone":
+							out.markUnavailable(src.ID, "gone")
+							continue
+						default:
+							no := false
+							src.Available, src.Reason = &no, "disabled"
+							out.markUnavailable(src.ID, "disabled")
+						}
+					}
+					kept = append(kept, src)
+				}
+				out.Sources[l] = kept
+			}
+		}
+	}
+	for _, id := range choice.APIs {
+		switch {
+		case known[id]:
+		case site.ifaceStatus(id) == "gone":
+			out.markUnavailable(id, "gone")
+			continue
+		default:
+			out.markUnavailable(id, "disabled")
+		}
+		out.APIs = append(out.APIs, id)
+		if o, ok := choice.Options[id]; ok {
+			out.Options[id] = o
 		}
 	}
 	if site.Default != nil {
@@ -1266,6 +1493,33 @@ func (s *server) dailyPrefs(c *call) (dailyPrefsResp, error) {
 		}{site.Default.Kind}
 	}
 	return out, nil
+}
+
+func (r *dailyPrefsResp) markUnavailable(id, why string) {
+	if r.Unavailable == nil {
+		r.Unavailable = map[string]string{}
+	}
+	r.Unavailable[id] = why
+}
+
+// ifaceStatus is how an interface stands: "" when it is set up and enabled,
+// "disabled" when it exists and is switched off, "gone" when there is none.
+func (d *siteDaily) ifaceStatus(id string) string {
+	for _, a := range d.APIs {
+		if a.ID == id {
+			if a.Enabled {
+				return ""
+			}
+			return "disabled"
+		}
+	}
+	if _, ok := dailyfetch.ProviderByID(id); ok {
+		if d.Providers[id].Enabled {
+			return ""
+		}
+		return "disabled"
+	}
+	return "gone"
 }
 
 func (s *server) getDailyPrefs(c *call) {
@@ -1279,8 +1533,10 @@ func (s *server) getDailyPrefs(c *call) {
 
 func (s *server) putDailyPrefs(c *call) {
 	var req struct {
-		Inherit *bool     `json:"inherit"`
-		APIs    *[]string `json:"apis"`
+		Inherit *bool                          `json:"inherit"`
+		APIs    *[]string                      `json:"apis"`
+		Options map[string]map[string][]string `json:"options"`
+		Sources sourceLists                    `json:"sources"`
 	}
 	if !s.readJSON(c.w, c.r, &req, false) {
 		return
@@ -1295,6 +1551,14 @@ func (s *server) putDailyPrefs(c *call) {
 		s.fail(c.w, err)
 		return
 	}
+	// What the space already chose and the administrators switched off since stays
+	// as it is (the page sends it back); it cannot be newly chosen.
+	prefs, err := store.GetSpaceDaily(ctx, s.opt.Store.Q(), c.sp.Info.ID)
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	site = site.withKept(store.ParseSpaceChoice(prefs.APIs))
 	known := map[string]bool{}
 	for _, a := range site.all() {
 		if a.Enabled {
@@ -1313,8 +1577,21 @@ func (s *server) putDailyPrefs(c *call) {
 			ids = append(ids, id)
 		}
 	}
-	b, _ := json.Marshal(ids)
-	if err := store.SetSpaceDaily(ctx, s.opt.Store.Q(), c.sp.Info.ID, store.SpaceDaily{Inherit: *req.Inherit, APIs: string(b)}); err != nil {
+	opts, err := checkOptions(&site, ids, req.Options)
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	choice := store.SpaceChoice{APIs: ids, Options: opts}
+	if len(req.Sources) > 0 {
+		checked, err := s.checkSpaceSources(c, req.Sources, &site)
+		if err != nil {
+			s.fail(c.w, err)
+			return
+		}
+		choice.Sources, _ = json.Marshal(checked)
+	}
+	if err := store.SetSpaceDaily(ctx, s.opt.Store.Q(), c.sp.Info.ID, store.SpaceDaily{Inherit: *req.Inherit, APIs: choice.JSON()}); err != nil {
 		s.fail(c.w, err)
 		return
 	}
@@ -1371,4 +1648,149 @@ func parseTZ(v url.Values) (*int, bool) {
 func atoiRange(s string, lo, hi int) (int, bool) {
 	n, err := strconv.Atoi(s)
 	return n, err == nil && n >= lo && n <= hi
+}
+
+// spaceSources are the sources of a space's own list for a reader's language,
+// in order, without those the administrators do not let spaces use (an
+// interface while `allow.api` is off, the space's own pages while `allow.own`
+// is) or that are not set up or are switched off; they are kept and not used.
+func (s *server) spaceSources(choice store.SpaceChoice, all []storedAPI, allow dailyAllow, lang string) (out []dailySource, lost bool) {
+	if len(choice.Sources) == 0 {
+		return nil, false
+	}
+	var lists sourceLists
+	if json.Unmarshal(choice.Sources, &lists) != nil {
+		return nil, false
+	}
+	d := siteDefault{Kind: "sources", Sources: lists}
+	list, ok := d.sourcesFor(lang)
+	if !ok {
+		return nil, false
+	}
+	for _, src := range list {
+		switch src.Kind {
+		case "api":
+			if !allow.API {
+				continue // locked: kept and not used, the way it always was
+			}
+			if !slices.ContainsFunc(all, func(a storedAPI) bool { return a.ID == src.ID && a.Enabled }) {
+				lost = true
+				continue
+			}
+		case "own":
+			if !allow.Own {
+				continue
+			}
+		}
+		out = append(out, src)
+	}
+	return out, lost
+}
+
+// checkSpaceSources checks the sources a space's owner lists: interfaces that
+// are set up and enabled (with their options), the administrators' lines, and
+// pages of this space, as a folder, tag or type with filters.
+func (s *server) checkSpaceSources(c *call, in sourceLists, site *siteDaily) (sourceLists, error) {
+	if len(in) > 31 {
+		return nil, &space.InvalidError{Msg: "at most 30 languages"}
+	}
+	out := make(sourceLists, len(in))
+	for l, list := range in {
+		if l != "" {
+			cl, ok := langtag.Canonical(l)
+			if !ok {
+				return nil, badLangError(l)
+			}
+			if _, dup := out[cl]; dup {
+				return nil, &space.InvalidError{Msg: fmt.Sprintf("%s is given twice", cl)}
+			}
+			l = cl
+		}
+		if len(list) > maxAPIsPerLanguage {
+			return nil, &space.InvalidError{Msg: fmt.Sprintf("each language has at most %d sources", maxAPIsPerLanguage)}
+		}
+		checked := make([]dailySource, 0, len(list))
+		for _, src := range list {
+			src.Available, src.Reason = nil, "" // marks of an answer, sent back
+			switch src.Kind {
+			case "api":
+				if src.Space != "" || src.Source != nil {
+					return nil, &space.InvalidError{Msg: "a source that is an interface has an id and options only"}
+				}
+				api := slices.IndexFunc(site.all(), func(a storedAPI) bool { return a.ID == src.ID && a.Enabled })
+				if api < 0 {
+					return nil, &space.InvalidError{Msg: "there is no interface " + src.ID + "; only those the administrators set up and enabled can be used"}
+				}
+				if len(src.Options) > 0 {
+					p, ok := dailyfetch.ProviderByID(src.ID)
+					if !ok || !site.all()[api].Builtin {
+						return nil, &space.InvalidError{Msg: "options are for built-in interfaces; " + src.ID + " is not one"}
+					}
+					canon, err := p.CheckOptions(src.Options)
+					if err != nil {
+						return nil, &space.InvalidError{Msg: err.Error()}
+					}
+					src.Options = canon
+				}
+			case "list":
+				if src.ID != "" || src.Options != nil || src.Space != "" || src.Source != nil {
+					return nil, &space.InvalidError{Msg: "a source that is the lines has nothing else"}
+				}
+			case "own":
+				if src.ID != "" || src.Options != nil || src.Space != "" || src.Source == nil {
+					return nil, &space.InvalidError{Msg: "a source that is pages of this space needs a source (folder, tag or type)"}
+				}
+				cfg, err := c.sp.Space.CheckDailyConfig(*src.Source)
+				if err != nil {
+					return nil, err
+				}
+				src.Source = &cfg
+			default:
+				return nil, &space.InvalidError{Msg: "kind of a source is api, list or own"}
+			}
+			checked = append(checked, src)
+		}
+		out[l] = checked
+	}
+	return out, nil
+}
+
+// withKept is the settings with the interfaces a space chose earlier and that
+// are switched off counted as on, for checking what the space sends back (a
+// copy: nothing is saved of it).
+func (d siteDaily) withKept(choice store.SpaceChoice) siteDaily {
+	ids := map[string]bool{}
+	for _, id := range choice.APIs {
+		ids[id] = true
+	}
+	if len(choice.Sources) > 0 {
+		var lists sourceLists
+		if json.Unmarshal(choice.Sources, &lists) == nil {
+			for _, list := range lists {
+				for _, src := range list {
+					if src.Kind == "api" {
+						ids[src.ID] = true
+					}
+				}
+			}
+		}
+	}
+	d.APIs = slices.Clone(d.APIs)
+	d.Providers = maps.Clone(d.Providers)
+	if d.Providers == nil {
+		d.Providers = map[string]providerState{}
+	}
+	for id := range ids {
+		if d.ifaceStatus(id) != "disabled" {
+			continue
+		}
+		if i := slices.IndexFunc(d.APIs, func(a storedAPI) bool { return a.ID == id }); i >= 0 {
+			d.APIs[i].Enabled = true
+		} else {
+			st := d.Providers[id]
+			st.Enabled = true
+			d.Providers[id] = st
+		}
+	}
+	return d
 }

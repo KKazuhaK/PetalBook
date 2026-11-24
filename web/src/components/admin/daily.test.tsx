@@ -92,7 +92,7 @@ describe("the administrators' daily text page", () => {
     m = await mount(routes, {
       entries: (server) => {
         server.seedDailyNotices([
-          { code: 'builtin_renamed', id: 'quotable', to: 'quotable-custom', message: 'renamed' },
+          { code: 'builtin_renamed', id: 'zenquotes', to: 'zenquotes-custom', message: 'renamed' },
           { code: 'dropped_language', lang: 'cn', field: 'source', message: 'dropped' },
         ])
         return ['/admin/daily']
@@ -102,7 +102,7 @@ describe("the administrators' daily text page", () => {
     })
     await settle(() => document.querySelector('[data-slot="daily-notices"]') !== null, 'the notices')
     const text = document.querySelector('[data-slot="daily-notices"]')!.textContent
-    expect(text).toContain(d.noticeRenamed('quotable', 'quotable-custom'))
+    expect(text).toContain(d.noticeRenamed('zenquotes', 'zenquotes-custom'))
     expect(text).toContain(d.noticeDropped('cn'))
     await click(byText('button', d.noticesDismiss))
     await settle(() => document.querySelector('[data-slot="daily-notices"]') === null, 'dismissed')
@@ -211,17 +211,127 @@ describe("the administrators' daily text page", () => {
     await click(formSave())
     await settle(() => calls().some((c) => c.body?.default?.kind === 'api'), 'saved')
     expect(calls().find((c) => c.body?.default?.kind === 'api')!.body).toEqual({
-      default: { kind: 'api', apis: { 'zh-Hans': 'quotes', '': 'english' } },
+      default: { kind: 'api', apis: { 'zh-Hans': ['quotes'], '': ['english'] } },
     })
     await settle(() => document.getElementById('daily-default-api-zh-Hans') !== null, 'still there')
-    expect(select('zh-Hans').value).toBe('quotes')
+    expect(document.querySelector('[data-lang="zh-Hans"] [data-api-item="quotes"]')).not.toBeNull()
+  })
+
+  it('a language lists several interfaces in order, and a built-in one has its categories', async () => {
+    await open((admin) => {
+      admin('PUT', '/api/admin/daily/apis/quotes', GOOD)
+      admin('PUT', '/api/admin/daily/providers/hitokoto', { enabled: true })
+    })
+    await settle(() => api('quotes') !== null, 'the interfaces')
+    await click([...document.querySelectorAll<HTMLInputElement>('input[name="daily-default"]')][3])
+    const select = (l: string) => document.getElementById(`daily-default-api-${l}`) as unknown as HTMLSelectElement
+    await type(select('zh-Hans'), 'quotes')
+    await type(select('zh-Hans'), 'hitokoto')
+    const items = () =>
+      [...document.querySelectorAll('[data-lang="zh-Hans"] [data-api-item]')].map((e) =>
+        e.getAttribute('data-api-item'),
+      )
+    expect(items()).toEqual(['quotes', 'hitokoto'])
+    // Moved up, it goes first.
+    const up = document.querySelector<HTMLElement>('[data-api-item="hitokoto"] [data-action="up"]')!
+    await click(up)
+    expect(items()).toEqual(['hitokoto', 'quotes'])
+    // Categories: none is "All"; two are sent in the order they are declared.
+    const box = (v: string) =>
+      document.querySelector<HTMLInputElement>(
+        `[data-api-item="hitokoto"] [data-option="categories"] [data-value="${v}"]`,
+      )!
+    expect(box('').checked).toBe(true)
+    await click(box('i'))
+    await click(box('d'))
+    expect(box('').checked).toBe(false)
+    await click(formSave())
+    await settle(() => calls().some((c) => c.body?.default?.kind === 'api'), 'saved')
+    expect(calls().find((c) => c.body?.default?.kind === 'api')!.body).toEqual({
+      default: {
+        kind: 'api',
+        apis: { 'zh-Hans': ['hitokoto', 'quotes'] },
+        options: { hitokoto: { categories: ['d', 'i'] } },
+      },
+    })
+    // "All" takes the choice back.
+    await click(box(''))
+    expect(box('d').checked).toBe(false)
+  })
+
+  it('lines are split into text, author and source for a preview that can be corrected before it is kept', async () => {
+    await open()
+    const lines = [...document.querySelectorAll('textarea')].find((t) => t.getAttribute('aria-label') === d.linesText)!
+    await type(lines, '人到情多情转薄，而今真个不多情。 —— 纳兰性德《山花子》\nI think — therefore I am')
+    await click(byText('button', d.linesPreview))
+    await settle(() => document.querySelectorAll('[data-slot="lines-row"]').length === 2, 'two rows')
+    const field = (row: number, name: string) =>
+      document
+        .querySelectorAll('[data-slot="lines-row"]')
+        [row].querySelector<HTMLInputElement>(`[data-field="${name}"]`)!
+    expect(field(0, 'author').value).toBe('纳兰性德')
+    expect(field(0, 'source').value).toBe('山花子')
+    // A dash inside a sentence is not a split.
+    expect(field(1, 'author').value).toBe('')
+    await type(field(1, 'author'), 'Descartes')
+    await click(byText('button', d.linesSave))
+    await settle(() => calls().some((c) => c.url === '/api/admin/daily/lines' && c.method === 'PUT'), 'saved')
+    expect(calls().find((c) => c.url === '/api/admin/daily/lines' && c.method === 'PUT')!.body).toEqual({
+      lang: '',
+      lines: [
+        { text: '人到情多情转薄，而今真个不多情。', author: '纳兰性德', source: '山花子' },
+        { text: 'I think — therefore I am', author: 'Descartes' },
+      ],
+    })
+  })
+
+  it('一言 is offered for Chinese and for all the other languages, never for English', async () => {
+    await open((admin) => admin('PUT', '/api/admin/daily/providers/hitokoto', { enabled: true }))
+    await settle(() => document.querySelectorAll('input[name="daily-default"]').length === 4, 'the default editor')
+    await click([...document.querySelectorAll<HTMLInputElement>('input[name="daily-default"]')][3])
+    const offered = (l: string) =>
+      [...document.getElementById(`daily-default-api-${l}`)!.querySelectorAll('option')].map((o) => o.value)
+    expect(offered('en')).not.toContain('hitokoto')
+    expect(offered('zh-Hans')).toContain('hitokoto')
+    expect(offered('rest')).toContain('hitokoto')
+  })
+
+  it('the default can list sources of several kinds for a language, one text at a time', async () => {
+    await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', GOOD))
+    await settle(() => api('quotes') !== null, 'the interface')
+    await click([...document.querySelectorAll<HTMLInputElement>('input[name="daily-default"]')][3])
+    const add = (l: string) => document.getElementById(`daily-default-api-${l}`) as unknown as HTMLSelectElement
+    await type(add('rest'), 'quotes')
+    await type(add('rest'), '@list')
+    // The lines can be in the list once.
+    expect([...add('rest').querySelectorAll('option')].some((o) => o.value === '@list')).toBe(false)
+    expect(
+      [...document.querySelectorAll('[data-lang=""] [data-source-kind]')].map((e) =>
+        e.getAttribute('data-source-kind'),
+      ),
+    ).toEqual(['api', 'list'])
+    await click(document.querySelector<HTMLElement>('[data-lang=""] [data-source-kind="list"] [data-action="up"]')!)
+    await click(formSave())
+    await settle(() => calls().some((c) => c.body?.default?.kind === 'sources'), 'saved')
+    expect(calls().find((c) => c.body?.default?.kind === 'sources')!.body).toEqual({
+      default: { kind: 'sources', sources: { '': [{ kind: 'list' }, { kind: 'api', id: 'quotes' }] } },
+    })
   })
 
   describe('the built-in interfaces', () => {
     it('are listed with switches, off until switched on, and nothing is edited in them', async () => {
       await open()
       const rows = [...document.querySelectorAll<HTMLElement>('[data-slot="builtin"] [data-provider]')]
-      expect(rows.map((r) => r.getAttribute('data-provider'))).toEqual(['hitokoto', 'quotable'])
+      expect(rows.map((r) => r.getAttribute('data-provider'))).toEqual([
+        'hitokoto',
+        'zenquotes',
+        'favqs',
+        'animechan',
+        'dummyjson',
+        'jinrishici',
+        'shanbay',
+        'iciba',
+      ])
       expect(rows[0].textContent).toContain('一言')
       expect(rows[0].textContent).toContain(d.builtinLanguages('zh-Hans, zh-Hant'))
       expect(rows[0].querySelector('a')!.getAttribute('href')).toBe('https://hitokoto.cn')

@@ -73,8 +73,26 @@ func (s *server) bindDailySettings() {
 			if tenant != "" {
 				// A tenant chooses a space of its own or one of the interfaces; the
 				// pasted lines are the site's.
-				if def.Kind != "space" && def.Kind != "api" {
-					return nil, &settings.Error{Code: settings.CodeInvalid, Msg: "a tenant's default is a space of the tenant or an interface"}
+				if def.Kind != "space" && def.Kind != "api" && def.Kind != "sources" {
+					return nil, &settings.Error{Code: settings.CodeInvalid, Msg: "a tenant's default is a space of the tenant, an interface, or sources of those"}
+				}
+				if def.Kind == "sources" {
+					// The pasted lines are the site's; a space has to be one of the tenant's.
+					for _, list := range def.Sources {
+						for _, src := range list {
+							if src.Kind == "list" {
+								return nil, &settings.Error{Code: settings.CodeInvalid, Msg: "the lines are the site's: a tenant's sources are interfaces and spaces of the tenant"}
+							}
+							if src.Kind == "space" {
+								if _, err := store.GetSpace(ctx, s.opt.Store.Q(), store.InTenant(tenant), src.Space); err != nil {
+									if err == store.ErrNotFound {
+										return nil, &settings.Error{Code: settings.CodeInvalid, Msg: "there is no such space in this tenant"}
+									}
+									return nil, err
+								}
+							}
+						}
+					}
 				}
 				if def.Kind == "space" {
 					if !page.ValidID(def.Space) {
@@ -147,14 +165,17 @@ func (s *server) dailyAllowFor(ctx context.Context, tenantID string) (dailyAllow
 }
 
 // dailyDefaultFor is the default of the daily text for a tenant: the tenant's
-// own when it has one in effect, else the site's.
-func (s *server) dailyDefaultFor(ctx context.Context, tenantID string, site *siteDefault) (*siteDefault, error) {
+// own when it has one in effect, else the site's. scope names whose it is
+// ("tenant:<id>" or "site"), for what is chosen in turn among several
+// interfaces.
+func (s *server) dailyDefaultFor(ctx context.Context, tenantID string, site *siteDefault) (*siteDefault, string, error) {
 	e, err := s.settings.Get(ctx, tenantID, settings.DailyDefault)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if e.Tenant != nil && e.Tenant.InEffect && e.Tenant.Value != nil {
-		return fromGeneric(e.Tenant.Value)
+		def, err := fromGeneric(e.Tenant.Value)
+		return def, "tenant:" + tenantID, err
 	}
-	return site, nil
+	return site, "site", nil
 }
