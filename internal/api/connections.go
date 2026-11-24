@@ -3,6 +3,7 @@ package api
 import (
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -57,7 +58,8 @@ func (s *server) registry() *connections.Registry { return s.opt.Connections }
 
 // provider is the {provider} of the path, or a 404.
 func (s *server) provider(c *call) (connections.Provider, bool) {
-	p, ok := s.registry().Get(c.r.PathValue("provider"))
+	// A provider of another tenant is as good as not there.
+	p, ok := s.registry().GetFor(c.r.PathValue("provider"), c.user().TenantID)
 	if !ok {
 		s.connError(c, c.r.PathValue("provider"), http.StatusNotFound, connections.CodeNotFound, "no such provider")
 		return nil, false
@@ -108,7 +110,7 @@ type providerResp struct {
 	Type              string           `json:"type"`
 	Host              string           `json:"host"`
 	Name              string           `json:"name"`
-	Owner             string           `json:"owner"`
+	Owner             any              `json:"owner"`
 	Capabilities      capabilitiesResp `json:"capabilities"`
 	Configured        bool             `json:"configured"`
 	App               *appResp         `json:"app"`
@@ -129,7 +131,11 @@ func toConnection(a *connections.Connection) *connectionResp {
 }
 
 func toProvider(d connections.Descriptor, in *connections.Info) providerResp {
-	p := providerResp{ID: d.ID, Type: d.Type, Host: d.Host, Name: d.Name, Owner: d.Owner,
+	var owner any = d.Owner
+	if d.TenantID != "" {
+		owner = map[string]string{"tenant": d.TenantID}
+	}
+	p := providerResp{ID: d.ID, Type: d.Type, Host: d.Host, Name: d.Name, Owner: owner,
 		Capabilities: capabilitiesResp{d.Capabilities.CreateRepo, d.Capabilities.Installations, d.Capabilities.ConnectAccount,
 			d.Capabilities.StorageTarget, d.Capabilities.PartialSync},
 		Configured: in.Configured, UserAuthorization: in.UserAuthorization, Connection: toConnection(in.Connection),
@@ -144,7 +150,7 @@ func toProvider(d connections.Descriptor, in *connections.Info) providerResp {
 }
 
 func (s *server) listConnections(c *call) {
-	list := s.registry().List()
+	list := s.registry().ListFor(c.user().TenantID)
 	out := make([]providerResp, 0, len(list))
 	for _, p := range list {
 		in, err := p.Info(c.r.Context(), c.user().ID)
@@ -269,7 +275,14 @@ func (s *server) connectOwners(c *call) {
 	if rc, ok := p.(connections.Rechecker); ok && q.Get("recheck") == "true" && q.Get("cursor") == "" {
 		rc.RecheckPerson(c.r.Context(), c.user().ID)
 	}
-	items, next, err := p.Owners(c.r.Context(), c.user().ID, q.Get("cursor"))
+	var items []connections.Owner
+	var next string
+	var err error
+	if sr, ok := p.(connections.Searcher); ok && q.Get("q") != "" {
+		items, next, err = sr.OwnersQ(c.r.Context(), c.user().ID, q.Get("cursor"), q.Get("q"))
+	} else {
+		items, next, err = p.Owners(c.r.Context(), c.user().ID, q.Get("cursor"))
+	}
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -301,7 +314,7 @@ func (s *server) connectRepos(c *call) {
 		return
 	}
 	q := c.r.URL.Query()
-	if p.Descriptor().Type != connections.GitID {
+	if d := p.Descriptor(); d.Type != connections.GitID && d.Capabilities.Installations {
 		var inst int64
 		if v := q.Get("installation"); v != "" {
 			n, err := strconv.ParseInt(v, 10, 64)
@@ -321,7 +334,10 @@ func (s *server) connectRepos(c *call) {
 	if v := q.Get("installation"); v != "" {
 		inst, _ = strconv.ParseInt(v, 10, 64)
 	}
-	items, next, err := p.Repos(c.r.Context(), c.user().ID, connections.RepoQuery{Installation: inst, Mine: q.Get("mine") == "true", Cursor: q.Get("cursor")})
+	// A provider without installations lists the repositories the caller's own
+	// connection reaches, whether or not mine=true is said.
+	items, next, err := p.Repos(c.r.Context(), c.user().ID, connections.RepoQuery{Installation: inst, Mine: q.Get("mine") == "true" || !p.Descriptor().Capabilities.Installations,
+		Cursor: q.Get("cursor"), Q: q.Get("q")})
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -424,7 +440,7 @@ func (s *server) adminPutConnection(c *call) {
 		s.connError(c, p.Descriptor().ID, http.StatusBadRequest, connections.CodeInvalid, "the body could not be read")
 		return
 	}
-	v, err := a.AdminSave(c.r.Context(), body)
+	v, err := a.AdminSave(connections.WithActor(c.r.Context(), c.user().ID), body)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -433,6 +449,31 @@ func (s *server) adminPutConnection(c *call) {
 	// Spaces that were waiting for the provider are fetched again at once.
 	s.spaces.ConnectionFixed("")
 	writeJSON(c.w, http.StatusOK, v)
+}
+
+// adminCreateConnection sets up a provider at a host (GitLab, Gitea): an OAuth
+// application per host. The host is checked against the storage settings' allowed
+// hosts, and asked (public address, version, the client's credentials) before
+// anything is kept.
+func (s *server) adminCreateConnection(c *call) {
+	cr := s.registry().Creator()
+	if cr == nil {
+		s.connError(c, "", http.StatusNotFound, connections.CodeNotFound, "this server makes no providers")
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(c.w, c.r.Body, authBodyLimit))
+	if err != nil {
+		s.connError(c, "", http.StatusBadRequest, connections.CodeInvalid, "the body could not be read")
+		return
+	}
+	p, v, err := cr.CreateProvider(c.r.Context(), c.user().ID, body)
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	s.providerChanged(c, p, "created")
+	c.w.Header().Set("Location", "/api/admin/connections/"+url.PathEscape(p.Descriptor().ID))
+	writeJSON(c.w, http.StatusCreated, v)
 }
 
 // providerChanged records that a provider was configured, changed or removed;

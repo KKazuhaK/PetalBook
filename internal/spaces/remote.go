@@ -126,7 +126,13 @@ func (m *Manager) credential(id string, r *store.Remote) gitstore.Credential {
 	case CredConnection:
 		row := *r
 		prov := r.Provider
-		return gitstore.Token{Username: "x-access-token", URL: r.URL, Get: func() (string, error) {
+		user := "x-access-token"
+		if p, ok := m.opt.Connections.Get(prov); ok {
+			if gu, ok := p.(connections.GitUser); ok {
+				user = gu.GitUsername()
+			}
+		}
+		return gitstore.Token{Username: user, URL: r.URL, Get: func() (string, error) {
 			p, ok := m.opt.Connections.Get(prov)
 			if !ok {
 				return "", &gitstore.CredentialError{Code: connections.CodeNotConfigured, Msg: "this server has no connection to " + prov + " any more"}
@@ -275,7 +281,10 @@ func (m *Manager) viewOf(h *Handle, r *store.Remote) *RemoteView {
 func (m *Manager) connectionView(r *store.Remote) *ConnectionView {
 	g := &ConnectionView{Via: r.GHVia, InstallationID: r.GHInstallationID, RepoID: r.GHRepoID, UserID: r.GHUserID}
 	if u, err := url.Parse(r.URL); err == nil {
-		g.Account, _, _ = strings.Cut(strings.TrimPrefix(u.Path, "/"), "/")
+		// The account is the namespace: a person's, an organisation's, or a group
+		// with its subgroups.
+		full := strings.TrimSuffix(strings.TrimPrefix(u.Path, "/"), ".git")
+		g.Account = full[:max(strings.LastIndex(full, "/"), 0)]
 	}
 	if r.GHVia == connections.ViaUser && r.GHUserID != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -285,8 +294,14 @@ func (m *Manager) connectionView(r *store.Remote) *ConnectionView {
 		if sp, err := store.GetSpace(ctx, m.opt.Store.Q(), store.AllTenants(), r.SpaceID); err == nil { // the space being viewed, by id
 			if u, err := store.GetUser(ctx, m.opt.Store.Q(), store.InTenant(sp.TenantID), r.GHUserID); err == nil {
 				g.Username = u.Username
-				if a, err := store.GetGitHubAuthorization(ctx, m.opt.Store.Q(), r.GHUserID); err == nil {
-					g.Login = a.Login
+				if r.Provider == store.ProviderGitHub || r.Provider == "" {
+					if a, err := store.GetGitHubAuthorization(ctx, m.opt.Store.Q(), r.GHUserID); err == nil {
+						g.Login = a.Login
+					}
+				} else if p, ok := m.opt.Connections.Get(r.Provider); ok {
+					if c, ok := p.(connections.Connected); ok {
+						g.Login = c.Login(ctx, r.GHUserID)
+					}
 				}
 			}
 		}

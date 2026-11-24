@@ -23,6 +23,7 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/auth"
 	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/drafts"
+	"github.com/KKazuhaK/PetalBook/internal/forge"
 	"github.com/KKazuhaK/PetalBook/internal/github"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
@@ -377,6 +378,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 		sp       *space.Space
 		svc      *auth.Service
 		ghs      *github.Service
+		fgs      *forge.Manager
 		conns    *connections.Registry
 		spClosed bool
 	)
@@ -411,6 +413,10 @@ func runServe(ctx context.Context, c serveConfig) error {
 			return err
 		}
 		conns = connections.NewRegistry(ghs, connections.NewGit())
+		// The GitLab and Gitea hosts the administrators set up; --remote-unsafe also lets one be plain http.
+		if fgs, err = forge.NewManager(ctx, forge.Options{Store: st, Secrets: box, Registry: conns, PublicURL: cfg.publicURL, Logger: log, Unsafe: c.remoteUnsafe}); err != nil {
+			return err
+		}
 		if mgr, err = spaces.NewAccounts(spaces.Options{Store: st, DataDir: c.data, Serve: true, Committer: c.committer,
 			CommitIdle: c.commitIdle, CommitMax: c.commitMax, Logger: log,
 			MaxSpaces: c.maxSpaces, IdleAfter: c.spaceIdle, MaxOpen: c.maxOpenSpaces,
@@ -418,6 +424,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 			RemotePolicy: gitstore.Policy{Hosts: c.remoteHosts, AllowUnsafe: c.remoteUnsafe}, HostsFromFlag: c.hostsSet}); err != nil {
 			return err
 		}
+		fgs.SetHostAllowed(mgr.HostAllowed)
 		conns.OnChange(func(_, userID string) { mgr.ConnectionFixed(userID) })
 		if svc, err = auth.New(ctx, auth.Config{Store: st, Spaces: mgr, PublicURL: cfg.publicURL, TrustedProxies: cfg.proxies,
 			OIDC: cfg.oidc, HTTPClient: c.oidcHTTPClient, Password: passwordParams, Logger: log}); err != nil {
@@ -513,6 +520,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 		run(mgr.Run)
 		run(mgr.RunPull)
 		run(ghs.RunRenew)
+		run(fgs.RunRenew)
 	}
 	if svc != nil {
 		run(svc.Run)

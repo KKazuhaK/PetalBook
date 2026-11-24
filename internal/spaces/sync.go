@@ -38,7 +38,7 @@ func (m *Manager) provider(id string) (connections.Provider, error) {
 // around the administrator's list. Only the host is checked here (the address
 // itself is the provider's own).
 func (m *Manager) hostAllowed(p connections.Provider) error {
-	_, err := gitstore.ParseURL("https://"+p.Descriptor().Host+"/owner/name.git", gitstore.Policy{Hosts: m.hostPolicy().Hosts})
+	err := m.HostAllowed(p.Descriptor().Host)
 	var he *gitstore.HostError
 	if errors.As(err, &he) {
 		return he
@@ -47,6 +47,14 @@ func (m *Manager) hostAllowed(p connections.Provider) error {
 		return invalidAt(p.Descriptor().ID, "the address of this provider is not usable")
 	}
 	return nil
+}
+
+// HostAllowed holds a host (with its port, if it has one) to the allowed hosts:
+// a *gitstore.HostError when the administrator has not allowed it. A provider
+// an administrator sets up (GitLab, Gitea) is held to it the same way.
+func (m *Manager) HostAllowed(host string) error {
+	_, err := gitstore.ParseURL("https://"+host+"/owner/name.git", gitstore.Policy{Hosts: m.hostPolicy().Hosts})
+	return err
 }
 
 // resolveConnection reads the address of a space's repository and decides how

@@ -97,17 +97,31 @@ func NewManager(ctx context.Context, opt Options) (*Manager, error) {
 	}
 	opt.PublicURL = strings.TrimRight(opt.PublicURL, "/")
 	m := &Manager{opt: opt, log: opt.Logger, hc: newHTTPClient(opt.Unsafe), provs: map[string]*Provider{}}
-	rows, err := store.ListConnProviderRows(ctx, opt.Store.Q())
-	if err != nil {
+	if err := m.Reload(ctx); err != nil {
 		return nil, err
-	}
-	for _, r := range rows {
-		p := m.build(r)
-		m.provs[r.ID] = p
-		opt.Registry.Add(p)
 	}
 	opt.Registry.SetCreator(m)
 	return m, nil
+}
+
+// Reload adds the providers of the database that this process does not have yet
+// (set up by another process sharing the database, or a tenant's own).
+func (m *Manager) Reload(ctx context.Context) error {
+	rows, err := store.ListConnProviderRows(ctx, m.opt.Store.Q())
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, r := range rows {
+		if _, ok := m.provs[r.ID]; ok {
+			continue
+		}
+		p := m.build(r)
+		m.provs[r.ID] = p
+		m.opt.Registry.Add(p)
+	}
+	return nil
 }
 
 // SetHostAllowed says how a provider's host is held to the allowed hosts of the
@@ -514,4 +528,13 @@ func (m *Manager) RunRenew(ctx context.Context) {
 		}
 		t.Reset(m.opt.RenewEvery)
 	}
+}
+
+// SealForTest seals a client secret as the provider id and owner would have it
+// sealed (tests that write a provider's row by hand); owner "" is the site.
+func (m *Manager) SealForTest(id, owner, clientSecret string) (string, error) {
+	if owner == "site" {
+		owner = ""
+	}
+	return m.opt.Secrets.Seal(id, secretPurpose(owner), []byte(clientSecret))
 }
