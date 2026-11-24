@@ -143,7 +143,7 @@ function StorageForm({ data }: { data: AdminStorage }) {
         </SettingsRows>
         {data.remotes.since && <p className="text-xs text-muted-foreground">{a.remotes.since(absoluteTime(data.remotes.since))}</p>}
         <p className="text-xs text-muted-foreground" data-slot="storage-affected">
-          {a.remotes.affected(aff.inGrace, aff.overdue, aff.exempt)}
+          {a.remotes.affected(aff.inGrace, aff.overdue, aff.exempt ?? 0)}
         </p>
       </SettingsSection>
 

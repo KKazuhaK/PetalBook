@@ -41,6 +41,8 @@ export interface Visibility {
   canWrite: boolean
   // Whether the person may manage that space (where its home page takes its text from is for them to say).
   canManage?: boolean
+  // Whether the person may manage the people of that space: an administrator who is not a member may, and sees the names without reading the pages.
+  canMembers?: boolean
   // That space is switched off: its members cannot be listed, but a member may
   // still leave it, and that is on the members section.
   disabled?: boolean
@@ -73,7 +75,7 @@ export function visibleSections(v: Visibility): SectionDef[] {
       case 'import':
         return v.hasSpace && v.canWrite
       case 'members':
-        return v.mode === 'accounts' && v.hasSpace && (v.canRead || v.disabled === true)
+        return v.mode === 'accounts' && v.hasSpace && (v.canRead || v.canMembers === true || v.disabled === true)
       case 'offline':
         // A copy of the space on this device: for anyone who may read it, in either mode.
         return v.hasSpace && v.canRead

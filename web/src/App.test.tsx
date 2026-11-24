@@ -8,7 +8,8 @@ import { createMockServer, MOCK_ADMIN, type MockServer } from '@/api/mock/server
 import { t } from '@/i18n'
 import { oa } from '@/i18n/oauth'
 import { keys } from '@/api/hooks'
-import { adminRequests, click, installDomShims, makePerson, PERSON_PASSWORD, settle, shareSpace } from '@/testing/harness'
+import { tg } from '@/i18n/manage'
+import { adminRequests, click, installDomShims, makePerson, PERSON_PASSWORD, settle, shareSpace, startView } from '@/testing/harness'
 
 // The real route table, in the real app shell: where the addresses go, who gets
 // the administration and what a space that was switched off shows.
@@ -192,7 +193,7 @@ describe('a space that an administrator switched off', () => {
 })
 
 describe('an administrator opens a space they are not a member of', () => {
-  it('from the administration: the space\'s pages are there, and they may write', async () => {
+  it('from the administration: the space asks why first, then its pages are there, read only, under the banner', async () => {
     let space = ''
     await boot('/admin/spaces', {
       mode: 'accounts',
@@ -204,9 +205,13 @@ describe('an administrator opens a space they are not a member of', () => {
     })
     await settle(() => document.querySelector(`a[href="/s/${space}/"]`) !== null, 'the table')
     await click(document.querySelector(`a[href="/s/${space}/"]`))
+    await settle(() => text().includes(tg.view.gateTitle), 'the gate')
+    expect(text()).not.toContain('别人写的页面')
+    await startView()
     await settle(() => text().includes('别人写的页面'), 'the pages')
     expect(where()).toBe(`/s/${space}/`)
     expect(document.querySelector(`[data-slot="home"]`)).not.toBeNull()
+    expect(document.querySelector('[data-slot="admin-view-banner"]')!.textContent).toContain(tg.view.banner)
   })
 
   it('a member is told it does not exist', async () => {
@@ -243,15 +248,13 @@ describe('an administrator in a space they are not a member of', () => {
     await settle(() => dialog()!.textContent!.includes('frank'), 'the members')
   })
 
-  it('can import into it, and write a quick note into its inbox', async () => {
+  it('cannot import into it, even in a view: a view only reads', async () => {
     let space = ''
     await boot(() => `/s/${space}/import`, { mode: 'accounts', scene: (s) => void (space = frankSpace(s)) })
-    await settle(() => text().includes(t.import.intro), 'the import page')
-    expect(text()).not.toContain(t.permissions.readOnlyNote)
-    await act(async () => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyN', altKey: true, shiftKey: true, bubbles: true, cancelable: true }))
-    })
-    await settle(() => document.querySelector('[role="dialog"] textarea') !== null, 'the quick note box')
+    await settle(() => text().includes(tg.view.gateTitle), 'the gate')
+    await startView()
+    await settle(() => text().includes(t.permissions.readOnlyNote), 'read only')
+    expect(text()).not.toContain(t.import.intro)
   })
 })
 
@@ -271,6 +274,7 @@ describe('what the app knows of a space it is showing', () => {
   it('an administrator viewing a space is shown the disabled notice when it is switched off meanwhile', async () => {
     let space = ''
     const server = await boot(() => `/s/${space}/recent`, { mode: 'accounts', scene: (s) => void (space = frankSpace(s).space) })
+    await startView()
     await settle(() => text().includes('别人写的页面'), 'the pages')
     adminRequests(server)('POST', `/api/admin/spaces/${space}/disable`)
     await ask(space)
@@ -302,6 +306,7 @@ describe('what the app knows of a space it is showing', () => {
     const window = notFoundRecheck.ms
     notFoundRecheck.ms = 200
     onTestFinished(() => void (notFoundRecheck.ms = window))
+    await startView()
     await settle(() => text().includes('别人写的页面'), 'the pages')
     adminRequests(server)('DELETE', `/api/admin/spaces/${space}`)
     await ask(space)

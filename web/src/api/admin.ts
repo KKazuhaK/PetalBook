@@ -6,7 +6,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, enc, request } from './client'
 import { keys } from './hooks'
-import type { AdminStorage, AdminSpace, CacheState, PutAdminStorage, MailPatch, MailSettings, MailTestResult, CreatedTenant, AdminUsageList, OwnQuota, SettingLower, SiteSetting, Tenancy, Tenant, TenantList, TenantQuotaKey, TenantSetting, Group, GroupList, GroupPersonList, GroupSource, GroupSpaceList, AdminDaily, AdminSpaceList, AuditList, AuthProvider, Passkey, ProviderInput, SecurityPatch, SecuritySettings, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User, AdminGrantList, AdminTokenList, MachineAccess, AdminGitHub, CursorPage, GitHubInstallation, GitHubManifestStart, PutAdminGitHubInput } from './types'
+import type { AdminStorage, AdminSpace, PutAdminStorage, MailPatch, MailSettings, MailTestResult, CreatedTenant, AdminUsageList, OwnQuota, SettingLower, SiteSetting, Tenancy, Tenant, TenantList, TenantQuotaKey, TenantSetting, Group, GroupList, GroupPersonList, GroupSource, GroupSpaceList, AdminDaily, AdminSpaceList, AuditList, AuthProvider, Passkey, ProviderInput, SecurityPatch, SecuritySettings, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, RecycleItem, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User, AdminGrantList, AdminTokenList, MachineAccess, AdminGitHub, CursorPage, GitHubInstallation, GitHubManifestStart, PutAdminGitHubInput } from './types'
 
 export const adminApi = {
   // --- users and invites ---
@@ -38,6 +38,15 @@ export const adminApi = {
     if (params.limit) q.set('limit', String(params.limit))
     if (params.cache) q.set('cache', params.cache)
     if (params.overdue) q.set('overdue', '1')
+    if (params.sort) q.set('sort', params.sort)
+    if (params.order) q.set('order', params.order)
+    if (params.tenant) q.set('tenant', params.tenant)
+    if (params.owner) q.set('owner', params.owner)
+    if (params.remote) q.set('remote', params.remote)
+    if (params.deadline) q.set('deadline', params.deadline)
+    if (params.pinned) q.set('pinned', '1')
+    if (params.exempt) q.set('exempt', '1')
+    if (params.idleDays) q.set('idleDays', String(params.idleDays))
     const qs = q.toString()
     return request<AdminSpaceList>(`/admin/spaces${qs ? `?${qs}` : ''}`, { signal })
   },
@@ -53,7 +62,8 @@ export const adminApi = {
   adminTransferSpace: (id: string, userId: string) => request<void>(`/admin/spaces/${enc(id)}/transfer`, { method: 'POST', body: { userId } }),
   adminDisableSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/disable`, { method: 'POST' }),
   adminEnableSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/enable`, { method: 'POST' }),
-  adminDeleteSpace: (id: string) => request<DeletedSpace>(`/admin/spaces/${enc(id)}`, { method: 'DELETE' }),
+  // Deleting recycles the space (3.5): the answer is the recycle item. `reason` is for the audit log.
+  adminDeleteSpace: (id: string, reason = '') => request<RecycleItem>(`/admin/spaces/${enc(id)}`, { method: 'DELETE', body: reason ? { reason } : {} }),
   adminStatus: (signal?: AbortSignal) => request<ServerStatus>('/admin/status', { signal }),
 
   // --- usage (3.3): people by bytes, in the caller's scope; a site administrator may narrow to one tenant ---
@@ -225,11 +235,12 @@ export function useInvites(enabled = true) {
 export const ADMIN_PAGE_SIZE = 50
 
 // Every space on the server, a cursor page at a time; `q` is the name filter.
-export function useAdminSpaces(q: string, enabled = true, filter: { cache?: CacheState; overdue?: boolean } = {}) {
+export type AdminSpacesFilter = Omit<AdminSpacesParams, 'q' | 'cursor' | 'limit'>
+export function useAdminSpaces(q: string, enabled = true, filter: AdminSpacesFilter = {}) {
   return useInfiniteQuery({
-    queryKey: keys.adminSpaceList(q, `${filter.cache ?? ''}|${filter.overdue ? 1 : 0}`),
+    queryKey: keys.adminSpaceList(q, JSON.stringify(filter)),
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => adminApi.adminSpaces({ q: q || undefined, cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE, cache: filter.cache, overdue: filter.overdue }, signal),
+    queryFn: ({ pageParam, signal }) => adminApi.adminSpaces({ ...filter, q: q || undefined, cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE }, signal),
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 15_000,
@@ -376,9 +387,12 @@ export function useDeleteSpace() {
   const changed = useAdminSpaceChanged()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => adminApi.adminDeleteSpace(id),
-    onSuccess: (_r, id) => {
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) => adminApi.adminDeleteSpace(id, reason),
+    onSuccess: (_r, { id }) => {
       qc.removeQueries({ queryKey: keys.space(id) })
+      // The space is in the recycle bin now, and the storage numbers moved with it.
+      void qc.invalidateQueries({ queryKey: ['admin', 'recycle'] })
+      void qc.invalidateQueries({ queryKey: keys.adminStorage })
       return changed(id)
     },
   })

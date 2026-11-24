@@ -1,6 +1,6 @@
 import { Link, Navigate, useParams } from 'react-router'
 import { lazy, Suspense } from 'react'
-import { ArrowLeft, Building2, Gauge, Mail, HardDrive, KeyRound, Layers, Link2, Quote, ShieldCheck, SlidersHorizontal, Users, UsersRound } from 'lucide-react'
+import { ArrowLeft, Building2, Database, Gauge, Mail, HardDrive, KeyRound, Layers, Link2, Quote, ShieldCheck, Trash2, SlidersHorizontal, Users, UsersRound } from 'lucide-react'
 import { TopBar } from '@/components/layout/TopBar'
 import { useActiveSpace, useSession } from '@/api/hooks'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
@@ -18,6 +18,8 @@ import { UsersPanel } from './UsersPanel'
 
 // The daily text's page is a chunk of its own: it is the biggest of the administration's and the least visited.
 const DailyPanel = lazy(() => import('./DailyPanel').then((m) => ({ default: m.DailyPanel })))
+const ManagePanel = lazy(() => import('./manage/ManagePanel').then((m) => ({ default: m.ManagePanel })))
+const RecyclePanel = lazy(() => import('./manage/RecyclePanel').then((m) => ({ default: m.RecyclePanel })))
 const AccessPanel = lazy(() => import('./AccessPanel').then((m) => ({ default: m.AccessPanel })))
 // "存储与同步" with 3.1's storage rules is another.
 const StoragePanel = lazy(() => import('./StoragePanel').then((m) => ({ default: m.StoragePanel })))
@@ -25,8 +27,8 @@ const StoragePanel = lazy(() => import('./StoragePanel').then((m) => ({ default:
 const MailPanel = lazy(() => import('./MailPanel').then((m) => ({ default: m.MailPanel })))
 const SecurityPanel = lazy(() => import('./AdminSecurityPanel').then((m) => ({ default: m.AdminSecurityPanel })))
 
-const ICONS: Record<AdminSection, typeof Users> = { users: Users, groups: UsersRound, spaces: Layers, daily: Quote, access: KeyRound, storage: Link2, security: ShieldCheck, mail: Mail, settings: SlidersHorizontal, tenants: Building2, usage: Gauge, status: HardDrive }
-const SECTIONS: readonly AdminSection[] = ['users', 'groups', 'spaces', 'daily', 'access', 'storage', 'security', 'mail', 'settings', 'tenants', 'usage', 'status']
+const ICONS: Record<AdminSection, typeof Users> = { users: Users, groups: UsersRound, spaces: Layers, manage: Database, recycle: Trash2, daily: Quote, access: KeyRound, storage: Link2, security: ShieldCheck, mail: Mail, settings: SlidersHorizontal, tenants: Building2, usage: Gauge, status: HardDrive }
+const SECTIONS: readonly AdminSection[] = ['users', 'groups', 'spaces', 'manage', 'recycle', 'daily', 'access', 'storage', 'security', 'mail', 'settings', 'tenants', 'usage', 'status']
 // What only an administrator of the whole server may open: the server's own settings. A tenant's
 // administrator sees the rest, for their tenant, and the settings page for their tenant's layer.
 const SITE_ONLY: readonly AdminSection[] = ['daily', 'access', 'storage', 'security', 'mail', 'tenants', 'status']
@@ -78,6 +80,16 @@ export default function AdminRoute() {
         {section === 'users' && <UsersPanel />}
         {section === 'groups' && <GroupsPanel />}
         {section === 'spaces' && <SpacesPanel />}
+        {section === 'manage' && (
+          <Suspense fallback={<PageFallback />}>
+            <ManagePanel />
+          </Suspense>
+        )}
+        {section === 'recycle' && (
+          <Suspense fallback={<PageFallback />}>
+            <RecyclePanel />
+          </Suspense>
+        )}
         {section === 'daily' && (
           <Suspense fallback={<PageFallback />}>
             <DailyPanel />

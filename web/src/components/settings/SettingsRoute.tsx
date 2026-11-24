@@ -54,6 +54,7 @@ export default function SettingsRoute() {
     canRead: can(current, 'read'),
     canWrite: can(current, 'write'),
     canManage: can(current, 'manage'),
+    canMembers: can(current, 'members'),
     disabled: current?.disabled === true,
   }
   const shown = visibleSections(visibility)

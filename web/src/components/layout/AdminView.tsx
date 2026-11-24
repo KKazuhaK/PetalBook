@@ -1,0 +1,66 @@
+import { Link } from 'react-router'
+import { Eye, ShieldAlert } from 'lucide-react'
+import { manageApi } from '@/api/manage'
+import { useQueryClient } from '@tanstack/react-query'
+import { keys } from '@/api/hooks'
+import type { SpaceInfo } from '@/api/types'
+import { ViewForm } from '@/components/admin/manage/ViewForm'
+import { TopBar } from '@/components/layout/TopBar'
+import { Button } from '@/components/ui/button'
+import { forgetView, viewUntil } from '@/lib/adminView'
+import { clockTime } from '@/lib/time'
+import { adminPath } from '@/lib/urls'
+import { tg } from '@/i18n/manage'
+
+// Shown in place of a space an administrator manages without being a member of it: reading takes an audited view.
+export function AdminViewGate({ space }: { space: SpaceInfo }) {
+  return (
+    <>
+      <TopBar>
+        <h1 className="truncate text-sm font-medium">{space.name}</h1>
+      </TopBar>
+      <div className="mx-auto flex max-w-md flex-col gap-4 px-5 py-16" data-slot="admin-view-gate">
+        <div className="flex flex-col items-center gap-2 text-center">
+          <ShieldAlert aria-hidden="true" className="size-8 text-muted-foreground" strokeWidth={1.5} />
+          <h2 className="text-base font-medium">{tg.view.gateTitle}</h2>
+          <p className="text-sm text-muted-foreground">{tg.view.gateHelp}</p>
+        </div>
+        <ViewForm space={space.id} name={space.name} onStarted={() => undefined} />
+        <Link
+          to={adminPath('spaces')}
+          className="text-center text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground"
+        >
+          {tg.view.back}
+        </Link>
+      </div>
+    </>
+  )
+}
+
+// While a view is open, on every page of the space: it is read only and it is recorded.
+export function AdminViewBanner({ space }: { space: string }) {
+  const qc = useQueryClient()
+  const until = viewUntil(space)
+  const end = async () => {
+    try {
+      await manageApi.endView(space)
+    } finally {
+      forgetView(space)
+      void qc.invalidateQueries({ queryKey: keys.viewedSpace(space) })
+    }
+  }
+  return (
+    <div
+      role="status"
+      data-slot="admin-view-banner"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-900 dark:text-amber-200"
+    >
+      <Eye aria-hidden className="size-4 shrink-0" />
+      <span className="font-medium">{tg.view.banner}</span>
+      {until && <span className="text-xs">{tg.view.until(clockTime(new Date(until)))}</span>}
+      <Button type="button" variant="ghost" size="xs" className="ml-auto" onClick={() => void end()}>
+        {tg.view.end}
+      </Button>
+    </div>
+  )
+}

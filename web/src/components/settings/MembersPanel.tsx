@@ -46,7 +46,8 @@ export function memberError(e: unknown): string {
 export function MembersPanel({ space }: { space: string }) {
   const { spaces, resolving } = useActiveSpace()
   const current = spaces.find((s) => s.id === space)
-  const readable = can(current, 'read')
+  // The names of a space's people are open to whoever manages them, in a view or not.
+  const readable = can(current, 'read') || can(current, 'members')
   const members = useMembers(space, readable)
   if (resolving) return <PageFallback />
   if (!current) return <SettingsNote>{t.editor.spaceMissing}</SettingsNote>
