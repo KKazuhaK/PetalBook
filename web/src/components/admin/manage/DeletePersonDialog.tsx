@@ -170,7 +170,13 @@ export function DeletePersonDialog({ id, username, onClose }: { id: string; user
                         p.revoke.sessions,
                       )}
                     </p>
-                    {p.revoke.github && <p className="text-xs text-muted-foreground">{tg.del.user.github}</p>}
+                    {p.revoke.connections.length > 0 ? (
+                      <p className="text-xs text-muted-foreground">
+                        {tg.del.user.connections(p.revoke.connections.map((c) => c.name).join(', '))}
+                      </p>
+                    ) : (
+                      p.revoke.github && <p className="text-xs text-muted-foreground">{tg.del.user.github}</p>
+                    )}
                     {p.groups > 0 && <p className="text-xs text-muted-foreground">{tg.del.user.groups(p.groups)}</p>}
                   </section>
                   {(needs.length > 0 || heir) && (

@@ -1963,7 +1963,7 @@ export interface UserDeletionPlan {
   // `why`: named (you chose), editor (the earliest editor) or heir (the one asked for).
   transfer: { space: PlanSpace; to: { id: string; username: string }; why: string; credential?: string }[]
   leave: { space: PlanSpace; role: string }[]
-  revoke: { tokens: number; grants: number; passkeys: number; identities: number; github: boolean; sessions: number }
+  revoke: { tokens: number; grants: number; passkeys: number; identities: number; github: boolean; sessions: number; connections: { provider: string; name: string }[] }
   groups: number
   needsHeir: PlanSpace[]
   blockers: { reason: 'self' | 'last_admin' | string; message?: string }[]

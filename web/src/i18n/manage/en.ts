@@ -279,6 +279,7 @@ export const manageEn = {
       revokeLine: (tokens: number, grants: number, passkeys: number, identities: number, sessions: number) =>
         `${tokens} tokens, ${grants} grants, ${passkeys} passkeys, ${identities} sign-in identities, ${sessions} sessions`,
       github: 'Their GitHub authorisation is revoked too.',
+      connections: (names: string) => `Their connections to ${names} are ended too.`,
       groups: (n: number) => `Removed from ${n} groups`,
       needsHeir: 'These spaces have nobody to take them over. Choose an heir',
       heir: 'Heir',

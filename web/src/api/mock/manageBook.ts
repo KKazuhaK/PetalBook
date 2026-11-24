@@ -759,7 +759,7 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
       recycle,
       transfer,
       leave,
-      revoke: { ...access, github: false, sessions: 1 },
+      revoke: { ...access, github: false, sessions: 1, connections: [] },
       groups: o.groupCount(u.id),
       needsHeir,
       blockers,

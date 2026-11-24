@@ -265,6 +265,7 @@ export const manageZhCN: ManageMessages = {
       revokeLine: (tokens, grants, passkeys, identities, sessions) =>
         `${tokens} 个令牌、${grants} 个授权、${passkeys} 个通行密钥、${identities} 个登录身份、${sessions} 个会话`,
       github: '他的 GitHub 授权也会被撤销。',
+      connections: (names: string) => `他与 ${names} 的连接也会被断开。`,
       groups: (n) => `从 ${n} 个组里去掉`,
       needsHeir: '这些空间没人可以接手，请选一位继承人',
       heir: '继承人',
