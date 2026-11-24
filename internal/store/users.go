@@ -156,7 +156,7 @@ func InsertUser(ctx context.Context, q Q, u User) error {
 	if err != nil {
 		return err
 	}
-	return usageOfNewUser(ctx, q, u.ID, u.TenantID)
+	return usageOfNewUser(ctx, q, u.ID, u.TenantID, u.Created)
 }
 
 // UpdateProfile sets the name and email, and whether the email is verified.

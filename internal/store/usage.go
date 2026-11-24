@@ -56,31 +56,111 @@ type usageDelta struct {
 	kind, id, tenant             string
 	spaces, bytes, pages, people int64
 	measured                     int64 // Unix milliseconds, 0: not a measurement
+
+	// What 3.5 part 4 adds (docs/api.md, "Measurements this adds").
+	held, remote, partial, evicted, archived, pinned int64
+	connected, dormant                               int64
+	// created is the person's creation time, written when their row is made.
+	created int64
+	// refresh asks for the person's dormant flag to be worked out again once the
+	// deltas are in (it is also done for any delta that moves remote or connected).
+	refresh bool
 }
 
 func (d usageDelta) key() string { return d.kind + "\x00" + d.id }
 
+// merge adds the counters of o to d (the same row).
+func (d *usageDelta) merge(o usageDelta) {
+	d.spaces, d.bytes, d.pages, d.people = d.spaces+o.spaces, d.bytes+o.bytes, d.pages+o.pages, d.people+o.people
+	d.held, d.remote, d.partial, d.evicted = d.held+o.held, d.remote+o.remote, d.partial+o.partial, d.evicted+o.evicted
+	d.archived, d.pinned, d.connected = d.archived+o.archived, d.pinned+o.pinned, d.connected+o.connected
+	d.dormant += o.dormant
+	if o.measured > 0 {
+		d.measured = o.measured
+	}
+	d.refresh = d.refresh || o.refresh
+}
+
 // addUsage applies deltas, the rows in a fixed order. A row that does not exist
-// yet is made.
+// yet is made. A person whose remote spaces or connection changed has their
+// dormant flag worked out again afterwards, and the tenant's count with it (the
+// tenant's row is taken with the others, so the order of locks stays one).
 func addUsage(ctx context.Context, q Q, ds ...usageDelta) error {
-	sort.Slice(ds, func(i, j int) bool { return ds[i].key() < ds[j].key() })
+	byKey := map[string]*usageDelta{}
+	var list []usageDelta
 	for _, d := range ds {
-		if _, err := q.Exec(ctx, `INSERT INTO usage(kind, id, tenant_id, spaces, bytes, pages, people, measured) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		if p := byKey[d.key()]; p != nil {
+			p.merge(d)
+			continue
+		}
+		d := d
+		byKey[d.key()] = &d
+	}
+	for _, p := range byKey {
+		list = append(list, *p)
+	}
+	for _, d := range list {
+		if d.kind == UsageUser && (d.remote != 0 || d.connected != 0 || d.refresh) {
+			t := usageDelta{kind: UsageTenant, id: d.tenant, tenant: d.tenant}
+			if byKey[t.key()] == nil {
+				byKey[t.key()] = &t
+				list = append(list, t)
+			}
+		}
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].key() < list[j].key() })
+	for _, d := range list {
+		if _, err := q.Exec(ctx, `INSERT INTO usage(kind, id, tenant_id, spaces, bytes, pages, people, measured, held_bytes, remote_spaces, partial_spaces, evicted_spaces, archived_spaces, pinned_spaces, connected, dormant, created)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (kind, id) DO UPDATE SET spaces = usage.spaces + excluded.spaces, bytes = usage.bytes + excluded.bytes,
 				pages = usage.pages + excluded.pages, people = usage.people + excluded.people,
+				held_bytes = usage.held_bytes + excluded.held_bytes, remote_spaces = usage.remote_spaces + excluded.remote_spaces,
+				partial_spaces = usage.partial_spaces + excluded.partial_spaces, evicted_spaces = usage.evicted_spaces + excluded.evicted_spaces,
+				archived_spaces = usage.archived_spaces + excluded.archived_spaces, pinned_spaces = usage.pinned_spaces + excluded.pinned_spaces,
+				connected = usage.connected + excluded.connected, dormant = usage.dormant + excluded.dormant,
 				measured = CASE WHEN excluded.measured > 0 THEN excluded.measured ELSE usage.measured END`,
-			d.kind, d.id, d.tenant, d.spaces, d.bytes, d.pages, d.people, d.measured); err != nil {
+			d.kind, d.id, d.tenant, d.spaces, d.bytes, d.pages, d.people, d.measured, d.held, d.remote, d.partial, d.evicted, d.archived, d.pinned, d.connected, d.dormant, d.created); err != nil {
 			return err
+		}
+	}
+	for _, d := range list {
+		if d.kind == UsageUser && (d.remote != 0 || d.connected != 0 || d.refresh) {
+			if err := refreshDormant(ctx, q, d.id, d.tenant); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-// usageOfNewUser is what InsertUser adds: the person's own row, and one more
-// person in the tenant.
-func usageOfNewUser(ctx context.Context, q Q, id, tenant string) error {
+// dormantNow is the SQL of whether the person whose usage row is u is dormant:
+// registered, never changed anything, follows no remote, has no connection.
+const dormantNow = `(CASE WHEN u.remote_spaces = 0 AND u.connected = 0 AND NOT EXISTS (SELECT 1 FROM users p WHERE p.id = u.id AND p.first_write IS NOT NULL) THEN 1 ELSE 0 END)`
+
+// refreshDormant works out a person's dormant flag again, and moves the
+// tenant's count by the difference. The tenant's row is already locked by the
+// caller (addUsage).
+func refreshDormant(ctx context.Context, q Q, userID, tenant string) error {
+	var old, now int64
+	err := q.QueryRow(ctx, `SELECT u.dormant, `+dormantNow+` FROM usage u WHERE u.kind = 'user' AND u.id = ?`, userID).Scan(&old, &now)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && old == now) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := q.Exec(ctx, `UPDATE usage SET dormant = ? WHERE kind = 'user' AND id = ?`, now, userID); err != nil {
+		return err
+	}
+	_, err = q.Exec(ctx, `UPDATE usage SET dormant = dormant + ? WHERE kind = 'tenant' AND id = ?`, now-old, tenant)
+	return err
+}
+
+// usageOfNewUser is what InsertUser adds: the person's own row (dormant until
+// they do something), and one more person in the tenant.
+func usageOfNewUser(ctx context.Context, q Q, id, tenant string, created time.Time) error {
 	return addUsage(ctx, q,
-		usageDelta{kind: UsageUser, id: id, tenant: tenant},
+		usageDelta{kind: UsageUser, id: id, tenant: tenant, created: ms(created), refresh: true},
 		usageDelta{kind: UsageTenant, id: tenant, tenant: tenant, people: 1})
 }
 
@@ -90,20 +170,115 @@ func usageOfNewSpace(ctx context.Context, q Q, tenant string) error {
 	return addUsage(ctx, q, usageDelta{kind: UsageTenant, id: tenant, tenant: tenant, spaces: 1})
 }
 
+// spaceUsageRow is what a space contributes to the usage rows it is counted in:
+// a tenant, and the person it is counted for. Every field but the two names is
+// a number a row adds up.
 type spaceUsageRow struct {
 	tenant, user  string
 	bytes, pages  int64
+	held          int64
+	remote        int64 // 1: it follows a remote
+	partial       int64 // 1: a remote space whose clone is partial
+	evicted       int64
+	archived      int64
+	pinned        int64
+	location      string
 	firstOwner    string
 	hasFirstOwner bool
 }
 
+// heldSQL is the SQL of what the server holds for a space (3.1): the clone
+// (nothing once it is evicted or archived) and the index (nothing once it is
+// archived), from the stored measurements. col adds a table alias to the
+// columns.
+func heldSQL(alias string) string {
+	cs, sz, ix := alias+"cache_state", alias+"size_bytes", alias+"index_bytes"
+	return `(CASE WHEN ` + cs + ` IN ('evicted', 'archived') THEN 0 ELSE COALESCE(` + sz + `, 0) END + CASE WHEN ` + cs + ` = 'archived' THEN 0 ELSE ` + ix + ` END)`
+}
+
+// flagSQL is the SQL of a 0/1 number a usage row counts, for a space.
+func flagSQL(alias, what string) string {
+	switch what {
+	case "remote":
+		return `(CASE WHEN ` + alias + `remote_via <> '' THEN 1 ELSE 0 END)`
+	case "partial", "evicted", "archived":
+		return `(CASE WHEN ` + alias + `remote_via <> '' AND ` + alias + `cache_state = '` + what + `' THEN 1 ELSE 0 END)`
+	case "pinned":
+		return `(CASE WHEN ` + alias + `pinned <> 0 THEN 1 ELSE 0 END)`
+	}
+	panic("flagSQL: " + what)
+}
+
 func readSpaceUsage(ctx context.Context, q Q, id string) (spaceUsageRow, error) {
 	var r spaceUsageRow
-	err := q.QueryRow(ctx, `SELECT tenant_id, usage_user, usage_bytes, page_count FROM spaces WHERE id = ?`, id).Scan(&r.tenant, &r.user, &r.bytes, &r.pages)
+	err := q.QueryRow(ctx, `SELECT tenant_id, usage_user, usage_bytes, page_count, `+heldSQL("")+`, `+flagSQL("", "remote")+`, `+flagSQL("", "partial")+`,
+		`+flagSQL("", "evicted")+`, `+flagSQL("", "archived")+`, `+flagSQL("", "pinned")+`, location FROM spaces WHERE id = ?`, id).
+		Scan(&r.tenant, &r.user, &r.bytes, &r.pages, &r.held, &r.remote, &r.partial, &r.evicted, &r.archived, &r.pinned, &r.location)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}
 	return r, err
+}
+
+// delta is the space's contribution to the row of kind and id, times sign (1
+// adds the space, -1 takes it out).
+func (r spaceUsageRow) delta(kind, id string, sign int64) usageDelta {
+	return usageDelta{kind: kind, id: id, tenant: r.tenant, spaces: sign, bytes: sign * r.bytes, pages: sign * r.pages,
+		held: sign * r.held, remote: sign * r.remote, partial: sign * r.partial, evicted: sign * r.evicted, archived: sign * r.archived, pinned: sign * r.pinned}
+}
+
+// deltas are the contribution to the tenant and to the person the space is
+// counted for.
+func (r spaceUsageRow) deltas(sign int64) []usageDelta {
+	ds := []usageDelta{r.delta(UsageTenant, r.tenant, sign)}
+	if r.user != "" {
+		ds = append(ds, r.delta(UsageUser, r.user, sign))
+	}
+	return ds
+}
+
+// changed is the difference from before to r, for the rows the space is counted
+// in (the number of spaces does not change).
+func (r spaceUsageRow) changed(before spaceUsageRow) []usageDelta {
+	var ds []usageDelta
+	for _, d := range r.deltas(1) {
+		o := before.delta(d.kind, d.id, 1)
+		d.spaces = 0
+		d.bytes, d.pages, d.held, d.remote = d.bytes-o.bytes, d.pages-o.pages, d.held-o.held, d.remote-o.remote
+		d.partial, d.evicted, d.archived, d.pinned = d.partial-o.partial, d.evicted-o.evicted, d.archived-o.archived, d.pinned-o.pinned
+		if d.bytes|d.pages|d.held|d.remote|d.partial|d.evicted|d.archived|d.pinned != 0 {
+			ds = append(ds, d)
+		}
+	}
+	return ds
+}
+
+// withSpace runs a change of a space in one transaction, takes the space's lock
+// first, and puts the rows the space is counted in right by the difference it
+// made: its bytes, what the server holds for it, whether it follows a remote,
+// is partial, evicted, archived or pinned. The derived columns that follow the
+// remote (where it lives, whether it counts) are settled after the change.
+func withSpace(ctx context.Context, q Q, spaceID string, change func(Q) error) error {
+	return atomically(ctx, q, func(q Q) error {
+		if err := LockSpace(ctx, q, spaceID); err != nil {
+			return err
+		}
+		before, err := readSpaceUsage(ctx, q, spaceID)
+		if err != nil {
+			return err
+		}
+		if err := change(q); err != nil {
+			return err
+		}
+		if err := settleDerived(ctx, q, spaceID); err != nil {
+			return err
+		}
+		after, err := readSpaceUsage(ctx, q, spaceID)
+		if err != nil {
+			return err
+		}
+		return addUsage(ctx, q, after.changed(before)...)
+	})
 }
 
 // firstOwnerOf is the person a space is counted for: the earliest owner, the
@@ -144,10 +319,10 @@ func settleOwner(ctx context.Context, q Q, spaceID string) error {
 	}
 	var ds []usageDelta
 	if r.user != "" {
-		ds = append(ds, usageDelta{kind: UsageUser, id: r.user, tenant: r.tenant, spaces: -1, bytes: -r.bytes, pages: -r.pages})
+		ds = append(ds, r.delta(UsageUser, r.user, -1))
 	}
 	if first != "" {
-		ds = append(ds, usageDelta{kind: UsageUser, id: first, tenant: r.tenant, spaces: 1, bytes: r.bytes, pages: r.pages})
+		ds = append(ds, r.delta(UsageUser, first, 1))
 	}
 	return addUsage(ctx, q, ds...)
 }
@@ -167,11 +342,7 @@ func forgetSpaceUsage(ctx context.Context, q Q, spaceID string) error {
 	if err != nil {
 		return err
 	}
-	ds := []usageDelta{{kind: UsageTenant, id: r.tenant, tenant: r.tenant, spaces: -1, bytes: -r.bytes, pages: -r.pages}}
-	if r.user != "" {
-		ds = append(ds, usageDelta{kind: UsageUser, id: r.user, tenant: r.tenant, spaces: -1, bytes: -r.bytes, pages: -r.pages})
-	}
-	return addUsage(ctx, q, ds...)
+	return addUsage(ctx, q, r.deltas(-1)...)
 }
 
 // Measurement is what the background measurement found in one space.
@@ -197,34 +368,48 @@ type Touched struct {
 // the space had is added to the rows of its first owner and its tenant in the
 // same transaction. It returns ErrNotFound for a space that is gone.
 //
-// A space whose measurement covers only part of it (a partial clone, or one
-// whose files were evicted, as 3.1 will have) must not call this: its last full
-// measurement stays what the quotas count, because what the server holds of such
-// a space is not what the space is. Such code writes the listing's size with
-// SetSpaceSize and leaves usage alone.
+// The bytes the quotas count are the measurement only where the space lives on
+// the server (LocationCounts): a space whose remote belongs to the person or the
+// tenant is measured and shown, and counts nothing, and what the server holds of
+// it (the clone, the index) is the pressure controller's business.
 func (s *Store) RecordMeasurement(ctx context.Context, spaceID string, m Measurement) (t Touched, err error) {
 	err = s.Tx(ctx, func(q Q) error {
 		if err := LockSpace(ctx, q, spaceID); err != nil {
 			return err
 		}
-		r, err := readSpaceUsage(ctx, q, spaceID)
+		before, err := readSpaceUsage(ctx, q, spaceID)
 		if err != nil {
 			return err
 		}
-		pages := r.pages
+		pages := before.pages
 		if m.HavePages {
 			pages = m.Pages
 		}
+		counted := int64(0)
+		if LocationCounts(before.location) {
+			counted = m.Bytes
+		}
 		if _, err := q.Exec(ctx, `UPDATE spaces SET size_bytes = ?, size_at = ?, usage_bytes = ?, page_count = ? WHERE id = ?`,
-			m.Bytes, ms(m.At), m.Bytes, pages, spaceID); err != nil {
+			m.Bytes, ms(m.At), counted, pages, spaceID); err != nil {
 			return err
 		}
-		db, dp := m.Bytes-r.bytes, pages-r.pages
-		ds := []usageDelta{{kind: UsageTenant, id: r.tenant, tenant: r.tenant, bytes: db, pages: dp, measured: ms(m.At)}}
-		if r.user != "" {
-			ds = append(ds, usageDelta{kind: UsageUser, id: r.user, tenant: r.tenant, bytes: db, pages: dp, measured: ms(m.At)})
+		after, err := readSpaceUsage(ctx, q, spaceID)
+		if err != nil {
+			return err
 		}
-		t = Touched{UserID: r.user, TenantID: r.tenant}
+		ds := after.changed(before)
+		// The row is stamped even when nothing moved.
+		seen := map[string]bool{}
+		for i := range ds {
+			ds[i].measured = ms(m.At)
+			seen[ds[i].key()] = true
+		}
+		for _, d := range after.deltas(1) {
+			if !seen[d.key()] {
+				ds = append(ds, usageDelta{kind: d.kind, id: d.id, tenant: d.tenant, measured: ms(m.At)})
+			}
+		}
+		t = Touched{UserID: after.user, TenantID: after.tenant}
 		return addUsage(ctx, q, ds...)
 	})
 	return t, err
@@ -369,8 +554,12 @@ func ListUserUsage(ctx context.Context, q Q, sc Scope, f UsageFilter) (out []Usa
 	return out, next, nil
 }
 
-// ErrBadCursor is a cursor that is not one a list gave.
-var ErrBadCursor = errors.New("bad cursor")
+// ErrBadCursor is a cursor that is not one a list gave (or was made for another
+// sort), and ErrBadFilter a sort, order or filter value the list does not know.
+var (
+	ErrBadCursor = errors.New("bad cursor")
+	ErrBadFilter = errors.New("bad filter")
+)
 
 // UserQuota returns a person's own limits (JSON, "" for none) and tenant.
 func UserQuota(ctx context.Context, q Q, sc Scope, id string) (quota string, err error) {
@@ -477,7 +666,11 @@ func seedUsage(ctx context.Context, q Q) error {
 func (s *Store) RecountUsage(ctx context.Context) (corrected int, err error) {
 	var moved int
 	err = s.Tx(ctx, func(q Q) error {
-		moved, err = settleUsageUsers(ctx, q)
+		if moved, err = settleSpaceFacts(ctx, q); err != nil {
+			return err
+		}
+		m, err := settleUsageUsers(ctx, q)
+		moved += m
 		return err
 	})
 	if err != nil {
@@ -509,71 +702,107 @@ func settleUsageUsers(ctx context.Context, q Q) (int, error) {
 	return int(c), err
 }
 
+// sums is what one usage row adds up: the columns the recount compares.
+type sums struct {
+	spaces, bytes, pages, people                     int64
+	held, remote, partial, evicted, archived, pinned int64
+	connected, dormant                               int64
+	created, lastActive                              int64 // a person's own, not summed
+}
+
+func (a sums) delta(kind, id, tenant string, from sums) usageDelta {
+	return usageDelta{kind: kind, id: id, tenant: tenant, spaces: a.spaces - from.spaces, bytes: a.bytes - from.bytes, pages: a.pages - from.pages,
+		people: a.people - from.people, held: a.held - from.held, remote: a.remote - from.remote, partial: a.partial - from.partial,
+		evicted: a.evicted - from.evicted, archived: a.archived - from.archived, pinned: a.pinned - from.pinned,
+		connected: a.connected - from.connected, dormant: a.dormant - from.dormant, created: a.created}
+}
+
+// spaceSums is the SQL that adds up what spaces contribute to a usage row, in
+// the order scanSpaceSums reads it.
+const spaceSums = `COUNT(*), COALESCE(SUM(usage_bytes), 0), COALESCE(SUM(page_count), 0), COALESCE(SUM(` + "%HELD%" + `), 0),
+	COALESCE(SUM(%remote%), 0), COALESCE(SUM(%partial%), 0), COALESCE(SUM(%evicted%), 0), COALESCE(SUM(%archived%), 0), COALESCE(SUM(%pinned%), 0)`
+
+func spaceSumsSQL() string {
+	r := strings.NewReplacer("%HELD%", heldSQL(""), "%remote%", flagSQL("", "remote"), "%partial%", flagSQL("", "partial"),
+		"%evicted%", flagSQL("", "evicted"), "%archived%", flagSQL("", "archived"), "%pinned%", flagSQL("", "pinned"))
+	return r.Replace(spaceSums)
+}
+
 func recountUsage(ctx context.Context, q Q) (int, error) {
 	n := 0
-	type sum struct{ spaces, bytes, pages, people int64 }
-	want := map[string]*sum{} // by usageDelta key
+	want := map[string]*sums{} // by usageDelta key
 	tenantOf := map[string]string{}
-	get := func(kind, id string) *sum {
+	get := func(kind, id string) *sums {
 		k := kind + "\x00" + id
 		if want[k] == nil {
-			want[k] = &sum{}
+			want[k] = &sums{}
 		}
 		return want[k]
 	}
-	rows, err := q.Query(ctx, `SELECT usage_user, tenant_id, COUNT(*), SUM(usage_bytes), SUM(page_count) FROM spaces WHERE usage_user <> '' GROUP BY usage_user, tenant_id`)
+	scan := func(rows *sql.Rows, s *sums, extra ...any) error {
+		return rows.Scan(append(extra, &s.spaces, &s.bytes, &s.pages, &s.held, &s.remote, &s.partial, &s.evicted, &s.archived, &s.pinned)...)
+	}
+	rows, err := q.Query(ctx, `SELECT usage_user, tenant_id, `+spaceSumsSQL()+` FROM spaces WHERE usage_user <> '' GROUP BY usage_user, tenant_id`)
 	if err != nil {
 		return 0, err
 	}
 	for rows.Next() {
 		var id, tenant string
-		var c, b, p int64
-		if err := rows.Scan(&id, &tenant, &c, &b, &p); err != nil {
+		var s sums
+		if err := scan(rows, &s, &id, &tenant); err != nil {
 			rows.Close()
 			return 0, err
 		}
-		s := get(UsageUser, id)
-		s.spaces, s.bytes, s.pages = c, b, p
+		*get(UsageUser, id) = s
 		tenantOf[UsageUser+"\x00"+id] = tenant
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
-	rows, err = q.Query(ctx, `SELECT tenant_id, COUNT(*), SUM(usage_bytes), SUM(page_count) FROM spaces GROUP BY tenant_id`)
+	rows, err = q.Query(ctx, `SELECT tenant_id, `+spaceSumsSQL()+` FROM spaces GROUP BY tenant_id`)
 	if err != nil {
 		return 0, err
 	}
 	for rows.Next() {
 		var id string
-		var c, b, p int64
-		if err := rows.Scan(&id, &c, &b, &p); err != nil {
+		var s sums
+		if err := scan(rows, &s, &id); err != nil {
 			rows.Close()
 			return 0, err
 		}
-		s := get(UsageTenant, id)
-		s.spaces, s.bytes, s.pages = c, b, p
+		*get(UsageTenant, id) = s
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
-	// Every person and every tenant has a row, with the people counted.
-	rows, err = q.Query(ctx, `SELECT tenant_id, id, CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END FROM users`)
+	// Every person and every tenant has a row, with the people counted, and
+	// what a person is (connected, dormant) worked out again.
+	rows, err = q.Query(ctx, `SELECT tenant_id, id, CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END, created, COALESCE(last_active, 0),
+		CASE WHEN first_write IS NULL THEN 0 ELSE 1 END, CASE WHEN EXISTS (SELECT 1 FROM github_authorizations a WHERE a.user_id = users.id) THEN 1 ELSE 0 END FROM users`)
 	if err != nil {
 		return 0, err
 	}
 	for rows.Next() {
 		var tenant, id string
-		var gone int
-		if err := rows.Scan(&tenant, &id, &gone); err != nil {
+		var gone, written, connected int64
+		var created, active int64
+		if err := rows.Scan(&tenant, &id, &gone, &created, &active, &written, &connected); err != nil {
 			rows.Close()
 			return 0, err
 		}
-		get(UsageUser, id)
+		u := get(UsageUser, id)
+		u.created, u.lastActive, u.connected = created, active, connected
+		if written == 0 && u.remote == 0 && connected == 0 {
+			u.dormant = 1
+		}
 		tenantOf[UsageUser+"\x00"+id] = tenant
 		if gone == 0 {
-			get(UsageTenant, tenant).people++ // a deleted person is not one of the tenant's people
+			t := get(UsageTenant, tenant)
+			t.people++ // a deleted person is not one of the tenant's people
+			t.connected += u.connected
+			t.dormant += u.dormant
 		}
 	}
 	rows.Close()
@@ -597,16 +826,16 @@ func recountUsage(ctx context.Context, q Q) (int, error) {
 		return 0, err
 	}
 	// What the table says.
-	have := map[string]*sum{}
-	rows, err = q.Query(ctx, `SELECT kind, id, spaces, bytes, pages, people FROM usage`)
+	have := map[string]*sums{}
+	rows, err = q.Query(ctx, `SELECT kind, id, spaces, bytes, pages, people, held_bytes, remote_spaces, partial_spaces, evicted_spaces, archived_spaces, pinned_spaces, connected, dormant, created, last_active FROM usage`)
 	if err != nil {
 		return 0, err
 	}
 	var stale []usageDelta
 	for rows.Next() {
 		var kind, id string
-		var s sum
-		if err := rows.Scan(&kind, &id, &s.spaces, &s.bytes, &s.pages, &s.people); err != nil {
+		var s sums
+		if err := rows.Scan(&kind, &id, &s.spaces, &s.bytes, &s.pages, &s.people, &s.held, &s.remote, &s.partial, &s.evicted, &s.archived, &s.pinned, &s.connected, &s.dormant, &s.created, &s.lastActive); err != nil {
 			rows.Close()
 			return 0, err
 		}
@@ -616,11 +845,16 @@ func recountUsage(ctx context.Context, q Q) (int, error) {
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
+	type own struct {
+		id               string
+		created, last_ac int64
+	}
 	var ds []usageDelta
+	var owns []own
 	for k, w := range want {
 		h := have[k]
 		if h == nil {
-			h = &sum{}
+			h = &sums{}
 		}
 		if *h == *w {
 			continue
@@ -630,7 +864,10 @@ func recountUsage(ctx context.Context, q Q) (int, error) {
 		if kind == UsageUser {
 			tenant = tenantOf[k]
 		}
-		ds = append(ds, usageDelta{kind: kind, id: id, tenant: tenant, spaces: w.spaces - h.spaces, bytes: w.bytes - h.bytes, pages: w.pages - h.pages, people: w.people - h.people})
+		ds = append(ds, w.delta(kind, id, tenant, *h))
+		if kind == UsageUser && (h.created != w.created || h.lastActive != w.lastActive) {
+			owns = append(owns, own{id, w.created, w.lastActive})
+		}
 	}
 	// A row of a person or tenant that is gone.
 	for k := range have {
@@ -641,6 +878,11 @@ func recountUsage(ctx context.Context, q Q) (int, error) {
 	}
 	if err := addUsage(ctx, q, ds...); err != nil {
 		return 0, err
+	}
+	for _, o := range owns {
+		if _, err := q.Exec(ctx, `UPDATE usage SET created = ?, last_active = ? WHERE kind = 'user' AND id = ?`, o.created, o.last_ac, o.id); err != nil {
+			return 0, err
+		}
 	}
 	for _, d := range stale {
 		if _, err := q.Exec(ctx, `DELETE FROM usage WHERE kind = ? AND id = ?`, d.kind, d.id); err != nil {

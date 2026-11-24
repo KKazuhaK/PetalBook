@@ -103,3 +103,102 @@ CREATE TABLE bulk_jobs (
   updated    BIGINT NOT NULL
 );
 CREATE INDEX bulk_jobs_state ON bulk_jobs(state) WHERE state IN ('queued', 'running');
+
+-- Part 4: storage management lists and summaries. Every number a list or the
+-- summary shows is read from a column, never found by walking a disk or a
+-- repository on a request.
+--
+-- What a space is, where it lives, and what its remote says, kept with the space
+-- so that each filter of the list is a column. location says where the bytes
+-- live: server (only here), own (a remote that belongs to the person), tenant
+-- and site (3.6; the quota counts server and site, never own and tenant).
+-- remote_via is '' without a remote, the provider of a connection, or 'git' for
+-- a plain remote; remote_state is the remote's state ('' without one).
+ALTER TABLE spaces ADD COLUMN location TEXT NOT NULL DEFAULT 'server';
+ALTER TABLE spaces ADD COLUMN remote_via TEXT NOT NULL DEFAULT '';
+ALTER TABLE spaces ADD COLUMN remote_state TEXT NOT NULL DEFAULT '';
+-- A database that has spaces already gets the columns worked out here, from
+-- what 0003 and 0013 knew (a connection is GitHub's, the only provider until
+-- 3.8; the daily recount works them out again from the remotes' own provider).
+UPDATE spaces SET
+  remote_via = COALESCE((SELECT CASE WHEN r.cred_type = 'connection' THEN 'github' ELSE 'git' END FROM remotes r WHERE r.space_id = spaces.id AND r.url <> ''), ''),
+  remote_state = COALESCE((SELECT r.state FROM remotes r WHERE r.space_id = spaces.id AND r.url <> ''), ''),
+  location = CASE WHEN EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = spaces.id AND r.url <> '') THEN 'own' ELSE 'server' END;
+UPDATE spaces SET usage_bytes = 0 WHERE location NOT IN ('server', 'site');
+
+-- When a person last used the server (a session or a token, written at most once
+-- an hour) and when they first changed anything in a space; NULL until then.
+ALTER TABLE users ADD COLUMN last_active BIGINT;
+ALTER TABLE users ADD COLUMN first_write BIGINT;
+
+-- The usage rows gain what the people and the summary list: what the server
+-- holds for the spaces counted for the row (held_bytes), how many of them
+-- follow a remote, are partial clones, are in their grace period or past it,
+-- are evicted, archived or pinned, whether the person has a connection, and the
+-- stored flag dormant (never used, never connected, no remote). A tenant's row
+-- holds the sums over its people and spaces. created and last_active copy the
+-- person's, so that a list of people is one index. (last_active 0: never.)
+ALTER TABLE usage ADD COLUMN held_bytes BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE usage ADD COLUMN remote_spaces BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE usage ADD COLUMN partial_spaces BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE usage ADD COLUMN grace_spaces BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE usage ADD COLUMN overdue_spaces BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE usage ADD COLUMN evicted_spaces BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE usage ADD COLUMN archived_spaces BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE usage ADD COLUMN pinned_spaces BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE usage ADD COLUMN connected BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE usage ADD COLUMN dormant BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE usage ADD COLUMN created BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE usage ADD COLUMN last_active BIGINT NOT NULL DEFAULT 0;
+
+-- What the rows hold now, for a database that has some: the same as the daily
+-- recount works out (the connection flag starts at 0; the recount sets it).
+UPDATE usage SET
+  held_bytes = COALESCE((SELECT SUM(CASE WHEN s.cache_state IN ('evicted', 'archived') THEN 0 ELSE COALESCE(s.size_bytes, 0) END + CASE WHEN s.cache_state = 'archived' THEN 0 ELSE s.index_bytes END)
+    FROM spaces s WHERE CASE WHEN usage.kind = 'user' THEN s.usage_user = usage.id ELSE s.tenant_id = usage.id END), 0),
+  remote_spaces = (SELECT COUNT(*) FROM spaces s WHERE s.remote_via <> '' AND CASE WHEN usage.kind = 'user' THEN s.usage_user = usage.id ELSE s.tenant_id = usage.id END),
+  partial_spaces = (SELECT COUNT(*) FROM spaces s WHERE s.remote_via <> '' AND s.cache_state = 'partial' AND CASE WHEN usage.kind = 'user' THEN s.usage_user = usage.id ELSE s.tenant_id = usage.id END),
+  evicted_spaces = (SELECT COUNT(*) FROM spaces s WHERE s.remote_via <> '' AND s.cache_state = 'evicted' AND CASE WHEN usage.kind = 'user' THEN s.usage_user = usage.id ELSE s.tenant_id = usage.id END),
+  archived_spaces = (SELECT COUNT(*) FROM spaces s WHERE s.remote_via <> '' AND s.cache_state = 'archived' AND CASE WHEN usage.kind = 'user' THEN s.usage_user = usage.id ELSE s.tenant_id = usage.id END),
+  pinned_spaces = (SELECT COUNT(*) FROM spaces s WHERE s.pinned <> 0 AND CASE WHEN usage.kind = 'user' THEN s.usage_user = usage.id ELSE s.tenant_id = usage.id END);
+UPDATE usage SET created = COALESCE((SELECT u.created FROM users u WHERE u.id = usage.id), 0) WHERE kind = 'user';
+UPDATE usage SET dormant = 1 WHERE kind = 'user' AND remote_spaces = 0 AND EXISTS (SELECT 1 FROM users u WHERE u.id = usage.id AND u.deleted_at IS NULL);
+UPDATE usage SET dormant = (SELECT COUNT(*) FROM usage p WHERE p.kind = 'user' AND p.tenant_id = usage.id AND p.dormant = 1) WHERE kind = 'tenant';
+
+-- The lists of people: one index for each sort, within a tenant and across all
+-- of them (a site administrator's), and the dormant filter as a range. The sort
+-- by bytes is usage_rank and usage_rank_all (0018).
+CREATE INDEX usage_held ON usage(kind, tenant_id, held_bytes DESC, id);
+CREATE INDEX usage_held_all ON usage(kind, held_bytes DESC, id);
+CREATE INDEX usage_active ON usage(kind, tenant_id, last_active, id);
+CREATE INDEX usage_active_all ON usage(kind, last_active, id);
+CREATE INDEX usage_created ON usage(kind, tenant_id, created, id);
+CREATE INDEX usage_created_all ON usage(kind, created, id);
+CREATE INDEX usage_dormant ON usage(kind, tenant_id, dormant, created, id);
+CREATE INDEX usage_dormant_all ON usage(kind, dormant, created, id);
+CREATE INDEX usage_nspaces ON usage(kind, tenant_id, spaces DESC, id);
+CREATE INDEX usage_nspaces_all ON usage(kind, spaces DESC, id);
+-- The people with a deadline running or passed are few: a partial index each.
+CREATE INDEX usage_grace ON usage(tenant_id, id) WHERE kind = 'user' AND grace_spaces > 0;
+CREATE INDEX usage_overdue ON usage(tenant_id, id) WHERE kind = 'user' AND overdue_spaces > 0;
+
+-- The lists of spaces: one index for each sort, within a tenant and across all of
+-- them; the filters that pick a few rows (a pin, an exemption, a remote that
+-- needs attention) or a column (where the remote stands) have their own.
+-- (0018's spaces_tenant on (tenant_id, created) is this with the id, which the keyset needs.)
+DROP INDEX spaces_tenant;
+CREATE INDEX spaces_created_t ON spaces(tenant_id, created, id);
+CREATE INDEX spaces_created ON spaces(created, id);
+CREATE INDEX spaces_name_t ON spaces(tenant_id, name_key, id);
+CREATE INDEX spaces_name ON spaces(name_key, id);
+CREATE INDEX spaces_bytes_t ON spaces(tenant_id, size_bytes DESC, id);
+CREATE INDEX spaces_bytes ON spaces(size_bytes DESC, id);
+CREATE INDEX spaces_used_t ON spaces(tenant_id, last_used DESC, id);
+CREATE INDEX spaces_used ON spaces(last_used DESC, id);
+CREATE INDEX spaces_via_t ON spaces(tenant_id, remote_via, created, id);
+CREATE INDEX spaces_via ON spaces(remote_via, created, id);
+CREATE INDEX spaces_rstate_t ON spaces(tenant_id, remote_state, created, id);
+CREATE INDEX spaces_rstate ON spaces(remote_state, created, id);
+CREATE INDEX spaces_pinned ON spaces(created, id) WHERE pinned <> 0;
+CREATE INDEX spaces_exempt ON spaces(created, id) WHERE exempt <> 0;
+CREATE INDEX spaces_owner ON spaces(usage_user, created, id);

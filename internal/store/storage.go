@@ -63,27 +63,38 @@ func TouchSpaceUsed(ctx context.Context, q Q, id string, at time.Time) error {
 
 // SetSpaceCache records the state of the space's copy ("" for unknown).
 func SetSpaceCache(ctx context.Context, q Q, id, state string) error {
-	res, err := q.Exec(ctx, `UPDATE spaces SET cache_state = ? WHERE id = ?`, state, id)
-	return oneRow(res, err)
+	return withSpace(ctx, q, id, func(q Q) error {
+		_, err := q.Exec(ctx, `UPDATE spaces SET cache_state = ? WHERE id = ?`, state, id)
+		return err
+	})
 }
 
 // SetSpaceCacheKept records the state of the space's copy unless the space is
 // evicted or being evicted: the record that a clone is partial or full, which
 // is written after the space opens, never undoes an eviction marked
 // meanwhile. It reports whether it wrote.
-func SetSpaceCacheKept(ctx context.Context, q Q, id, state string) (bool, error) {
-	res, err := q.Exec(ctx, `UPDATE spaces SET cache_state = ? WHERE id = ? AND cache_state NOT IN (?, ?)`, state, id, CacheEvicted, CacheEvicting)
-	if err != nil {
-		return false, err
+func SetSpaceCacheKept(ctx context.Context, q Q, id, state string) (wrote bool, err error) {
+	err = withSpace(ctx, q, id, func(q Q) error {
+		res, err := q.Exec(ctx, `UPDATE spaces SET cache_state = ? WHERE id = ? AND cache_state NOT IN (?, ?)`, state, id, CacheEvicted, CacheEvicting)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		wrote = n > 0
+		return err
+	})
+	if errors.Is(err, ErrNotFound) {
+		return false, nil // a space that is gone is not written
 	}
-	n, err := res.RowsAffected()
-	return n > 0, err
+	return wrote, err
 }
 
 // SetSpacePinned sets the pin of a space.
 func SetSpacePinned(ctx context.Context, q Q, id string, v bool) error {
-	res, err := q.Exec(ctx, `UPDATE spaces SET pinned = ? WHERE id = ?`, b2i(v), id)
-	return oneRow(res, err)
+	return withSpace(ctx, q, id, func(q Q) error {
+		_, err := q.Exec(ctx, `UPDATE spaces SET pinned = ? WHERE id = ?`, b2i(v), id)
+		return err
+	})
 }
 
 // SetSpaceExempt sets whether the requirement of a remote leaves the space out.
@@ -94,8 +105,10 @@ func SetSpaceExempt(ctx context.Context, q Q, id string, v bool) error {
 
 // SetSpaceIndexBytes stores a measurement of the space's index.
 func SetSpaceIndexBytes(ctx context.Context, q Q, id string, n int64) error {
-	res, err := q.Exec(ctx, `UPDATE spaces SET index_bytes = ? WHERE id = ?`, n, id)
-	return oneRow(res, err)
+	return withSpace(ctx, q, id, func(q Q) error {
+		_, err := q.Exec(ctx, `UPDATE spaces SET index_bytes = ? WHERE id = ?`, n, id)
+		return err
+	})
 }
 
 // SpacesInCacheState maps the id of each space in one of these cache states to

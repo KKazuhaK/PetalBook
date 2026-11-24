@@ -51,7 +51,8 @@ type assetState struct {
 	repos     map[string]*assetrepo.Repo
 	moving    map[string]bool // moves running now
 	pinned    map[string]bool
-	connected map[string]bool // spaces that have an attachment repository; nil until first needed
+	tenants   map[string]string // the tenant of each space the cache named, remembered (AssetBytesOfTenant)
+	connected map[string]bool   // spaces that have an attachment repository; nil until first needed
 }
 
 func (m *Manager) assetsDir(id string) string { return filepath.Join(m.opt.DataDir, "assetrepos", id) }
@@ -107,6 +108,56 @@ func (m *Manager) AssetBytes(id string) int64 {
 		return c.SpaceBytes(id)
 	}
 	return 0
+}
+
+// AssetBytesOfTenant is what the attachments of one tenant's spaces take in the
+// cache: the cache's per-space map in memory, and the tenant of each space it
+// names, which is remembered (one lookup by primary key for a space not seen
+// before, none after).
+func (m *Manager) AssetBytesOfTenant(ctx context.Context, tenant string) (int64, error) {
+	if m.single != nil {
+		return 0, nil
+	}
+	c := m.AssetCache()
+	if c == nil {
+		return 0, nil
+	}
+	var total int64
+	for id, b := range c.Spaces() {
+		t, err := m.tenantOfSpace(ctx, id)
+		if errors.Is(err, store.ErrNotFound) {
+			continue // a space that is gone: its files are dropped with it
+		}
+		if err != nil {
+			return 0, err
+		}
+		if t == tenant {
+			total += b
+		}
+	}
+	return total, nil
+}
+
+// tenantOfSpace is the tenant of a space, remembered. A space never changes
+// tenant.
+func (m *Manager) tenantOfSpace(ctx context.Context, id string) (string, error) {
+	m.as.mu.Lock()
+	t, ok := m.as.tenants[id]
+	m.as.mu.Unlock()
+	if ok {
+		return t, nil
+	}
+	sp, err := store.GetSpace(ctx, m.opt.Store.Q(), store.AllTenants(), id) // by id, from the cache's own list of spaces
+	if err != nil {
+		return "", err
+	}
+	m.as.mu.Lock()
+	if m.as.tenants == nil || len(m.as.tenants) >= 50_000 {
+		m.as.tenants = map[string]string{}
+	}
+	m.as.tenants[id] = sp.TenantID
+	m.as.mu.Unlock()
+	return sp.TenantID, nil
 }
 
 // AssetTotals are the bytes of the attachment cache and its budget.

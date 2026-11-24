@@ -472,7 +472,13 @@ func FinishUserDeletion(ctx context.Context, q Q, sc Scope, in FinishUserDeletio
 	if _, err := q.Exec(ctx, `UPDATE recycle_items SET parent = ? WHERE parent = ?`, in.ItemID, UserPendingMarker(in.UserID)); err != nil {
 		return nil, err
 	}
-	if err := addUsage(ctx, q, usageDelta{kind: UsageTenant, id: u.TenantID, tenant: u.TenantID, people: -1}); err != nil {
+	conn, dorm, err := personFlags(ctx, q, in.UserID)
+	if err != nil {
+		return nil, err
+	}
+	// A deleted person is not one of the tenant's people, nor of its dormant or
+	// connected ones.
+	if err := addUsage(ctx, q, usageDelta{kind: UsageTenant, id: u.TenantID, tenant: u.TenantID, people: -1, connected: -conn, dormant: -dorm}); err != nil {
 		return nil, err
 	}
 	return scanRecycle(q.QueryRow(ctx, `SELECT `+recycleCols+` FROM recycle_items WHERE id = ?`, in.ItemID), false)
@@ -527,7 +533,11 @@ func RestoreUserRows(ctx context.Context, q Q, it *RecycleItem, now time.Time) (
 		if err := oneRow(res, err); err != nil {
 			return out, err
 		}
-		if err := addUsage(ctx, q, usageDelta{kind: UsageTenant, id: it.TenantID, tenant: it.TenantID, people: 1}); err != nil {
+		conn, dorm, err := personFlags(ctx, q, it.UserID)
+		if err != nil {
+			return out, err
+		}
+		if err := addUsage(ctx, q, usageDelta{kind: UsageTenant, id: it.TenantID, tenant: it.TenantID, people: 1, connected: conn, dormant: dorm}); err != nil {
 			return out, err
 		}
 		for _, r := range rec.Groups.Rows {

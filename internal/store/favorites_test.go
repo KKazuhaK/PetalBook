@@ -262,6 +262,11 @@ func TestOpeningAnOlderDatabaseFillsNameKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, stmt := range []string{
+		`DROP INDEX spaces_created`, `DROP INDEX spaces_created_t`, `DROP INDEX spaces_name_t`, `DROP INDEX spaces_name`, `DROP INDEX spaces_bytes_t`, `DROP INDEX spaces_bytes`,
+		`DROP INDEX spaces_used_t`, `DROP INDEX spaces_used`, `DROP INDEX spaces_via_t`, `DROP INDEX spaces_via`, `DROP INDEX spaces_rstate_t`,
+		`DROP INDEX spaces_rstate`, `DROP INDEX spaces_pinned`, `DROP INDEX spaces_exempt`, `DROP INDEX spaces_owner`,
+		`ALTER TABLE spaces DROP COLUMN location`, `ALTER TABLE spaces DROP COLUMN remote_via`, `ALTER TABLE spaces DROP COLUMN remote_state`,
+		`ALTER TABLE users DROP COLUMN last_active`, `ALTER TABLE users DROP COLUMN first_write`,
 		`DROP TABLE space_groups`,
 		`DROP TABLE group_members`,
 		`DROP TABLE groups`,
@@ -314,6 +319,7 @@ func TestOpeningAnOlderDatabaseFillsNameKeys(t *testing.T) {
 		`ALTER TABLE users DROP COLUMN passkey_required`,
 		`ALTER TABLE sessions DROP COLUMN held`,
 		`DROP INDEX users_tenant`,
+		`CREATE INDEX spaces_tenant ON spaces(tenant_id, created)`,
 		`DROP INDEX spaces_tenant`,
 		`DROP INDEX invites_tenant`,
 		`DROP TABLE tenants`,

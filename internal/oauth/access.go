@@ -97,6 +97,11 @@ func (s *Service) Authenticate(ctx context.Context, raw, ip string) (*auth.Princ
 	if e.write && !v.write { // a refresh asked for less than the grant
 		g = auth.NewGrant(GrantKind, e.id, e.name, false, e.spaces)
 	}
+	if s.st != nil {
+		if err := s.st.NoteActive(ctx, u.ID, now); err != nil {
+			s.log.Warn("could not record a person's last use", "error", err)
+		}
+	}
 	return &auth.Principal{User: *u, Grant: g}, nil
 }
 

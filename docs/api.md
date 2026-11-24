@@ -6589,21 +6589,40 @@ what the first does.
 - On each person's `usage` row (3.3), kept by difference in the same
   transactions that change what they count, and corrected by the daily recount:
   `held_bytes` (what the server holds for the spaces counted for the person:
-  `cloneBytes + indexBytes` of 3.1, summed), `remote_spaces` (those that follow
-  a remote), `grace_spaces`, `overdue_spaces` (3.1's deadline states),
-  `evicted_spaces`, `archived_spaces`, `pinned_spaces`, and `connected` (the person has
-  a connection of any provider, 2.7b). The tenant's row gets the same sums.
-- Open from 3.1: a space with an attachment repository is measured without its
-  attachments, so its usage misses them. 3.5 decides, before its part 4,
-  whether and how the attachment repository counts; until then 3.1's rule
-  stands (the text repository only).
+  `cloneBytes + indexBytes` of 3.1, summed, wherever the space lives),
+  `remote_spaces` (those that follow a remote), `partial_spaces`, `grace_spaces`,
+  `overdue_spaces` (3.1's deadline states), `evicted_spaces`, `archived_spaces`,
+  `pinned_spaces`, and `connected` (the person has a connection of any provider,
+  2.7b). The tenant's row gets the same sums. (`usage.bytes` is, from now on,
+  what is counted: see above.)
+- **Usage counts where the bytes live** (owner, 2026-11-23; this closes the
+  question 3.1 left open about attachment repositories). Every space has a
+  `location`, stored with it:
+  - `server`: only on this server (a space without a remote). Counted in full.
+  - `own`: the remote belongs to the person (their repository, their token, key
+    or connection). Measured and shown, **never counted**: a quota limits what
+    costs us, and this costs the person. What the server keeps for it (the
+    partial clone, the index, the attachment cache) is the pressure controller's
+    business, not quota (it is `held_bytes`, below).
+  - `tenant` and `site` (3.6): a tenant's own storage target (shown, not
+    counted) and the site's storage organisation (counted, with the size the
+    provider's API reports for the repository, text and attachments both).
+  The size of a remote repository is never found by downloading it. Counted
+  means `LocationCounts(location)`; 3.6 changes where a space's location is
+  decided (the one function `locationOf`) and where a `site` space's size comes
+  from (the provider, a repository at a time, at most every few hours, in the
+  background); nothing else here needs to change. A space that has an
+  attachment repository counts where that repository lives: with the space on
+  the server, or not at all in the person's own.
 - A person is **dormant** when `first_write IS NULL`, `remote_spaces = 0` and
   `connected = false`: registered, never connected anything, never used. It is
   a stored flag (`usage.dormant`), so the filter is an index range.
 
 Indexes: `(kind, tenant_id, held_bytes DESC, id)`, `(kind, tenant_id, last_active, id)`,
 `(kind, tenant_id, dormant, created, id)` on `usage`; `(tenant_id, size_bytes DESC, id)`,
-`(tenant_id, last_used, id)` and `(tenant_id, created, id)` on `spaces`.
+`(tenant_id, last_used, id)` and `(tenant_id, created, id)` on `spaces`, each also
+without the tenant for a site administrator's list across tenants; and the ones the
+filters need (see "As built").
 
 ### `GET /api/admin/storage`
 
@@ -6632,15 +6651,20 @@ The 1.7 list, with 3.1's `storage` block, gains:
 - `sort`: `created` (the default, as before), `name`, `bytes` (`sizeBytes`),
   `lastUsed`; `order`: `asc` or `desc` (default `asc` for `created` and `name`,
   `desc` for the others). Spaces never measured, or never used, sort last.
+- Each item gains `location` (`server`, `own`, `tenant` or `site`) and
+  `counted` (whether its bytes count toward quotas: see "Measurements this
+  adds").
 - Filters, combinable: `tenant`, `q` (as before), `owner={user}`, `cache`
   (3.1), `remote=none|ok|offline|error`, `deadline=grace|overdue`, `pinned=1`,
   `exempt=1`, `idleDays={n}` (not used for at least `n` days, or never).
 - `400 invalid` for an unknown `sort`, `order` or filter value, and for a
   cursor that was made for another `sort`.
 
-Each filter is a column of `spaces` (3.1 stores the cache state, the remote
-state and the deadline state with the space), so a page is one query; the
-owners and member counts are looked up for the page only.
+Each filter is a column of `spaces` (the cache state, the remote's state, how
+it is followed, the pin and the exemption are stored with the space), so a page
+is one query; the owners and member counts are looked up for the page only. The
+cursor is opaque (`next` of the page before): a cursor of another sort or order
+is `400 invalid`.
 
 ### `GET /api/admin/storage/people?tenant=&q=&sort=&order=&cursor=&limit=`
 
@@ -6653,7 +6677,7 @@ People and what they hold, one page at a time:
   "spaces": 3, "remoteSpaces": 2, "evictedSpaces": 1, "pinnedSpaces": 0,
   "graceSpaces": 1, "overdueSpaces": 0, "usageBytes": 52428800, "heldBytes": 9437184,
   "measuredAt": "2026-11-23T02:10:00Z"}],
- "next": "9437184:01JD3K7A2M"}
+ "next": "held.desc:9437184:01JD3K7A2M"}
 ```
 
 - `sort`: `held` (the default: what the server holds, largest first), `bytes`
@@ -6667,6 +6691,87 @@ People and what they hold, one page at a time:
 `GET /api/admin/storage/people/{user}` is one item, plus `items` of the person's
 spaces in the shape of `GET /api/admin/spaces` (spaces counted for them, at
 most 200, by `lastUsed`).
+
+**As built (part 4: the measurements, the lists and the summary).**
+
+- **Where each number is kept.** `spaces` gains `location`, `remote_via` (`''`
+  without a remote, the provider of a connection, or `git`) and `remote_state`;
+  `users` gains `last_active` and `first_write`; `usage` gains `held_bytes`,
+  `remote_spaces`, `partial_spaces`, `grace_spaces`, `overdue_spaces`,
+  `evicted_spaces`, `archived_spaces`, `pinned_spaces`, `connected`, `dormant`,
+  and a copy of the person's `created` and `last_active` (so a list of people is
+  one index). All in migration `0020`.
+- **Deltas.** Every change of what a space contributes (a measurement, the
+  index size, the cache state, a pin, the remote coming, going or changing
+  state, a change of first owner, a deletion, a restore) is made in one
+  transaction with the space's lock taken first, and adds the difference to the
+  rows of the tenant and of the person the space is counted for. A person's
+  `connected` follows their connection rows, and `dormant` is worked out again
+  whenever `remote_spaces`, `connected` or `first_write` changes (the tenant's
+  count with it). The daily recount puts every one of these right from the rows,
+  and also the `location`, `remote_via` and `remote_state` of spaces, and the
+  counted bytes of spaces that do not count.
+- **`grace_spaces` and `overdue_spaces` are not kept by difference.** They change
+  with the clock and with the policy, not only with a write, so one grouped
+  query over the spaces that lack what is required sets them: every hour, when
+  `PUT /api/admin/storage` changes the policy, and with the daily recount. They
+  can be an hour behind the clock; the filters `deadline=grace|overdue` of the
+  list of spaces compute from the policy and `created` at the time of the
+  request and are not behind.
+- **Held bytes** are `size_bytes + index_bytes` of 3.1, nothing for the clone of
+  an evicted or archived space and nothing at all for an archived one.
+- **`last_active`** is written by a session, an API token or an OAuth grant,
+  once an hour for a person, from memory. **`first_write`** is written once, the
+  first time a change is credited to the person (every write goes through the
+  author of the change, which is where it is noted).
+- **Spaces** are listed by one query over an index for each sort, with and
+  without the tenant in front (site administrators see every tenant). A cursor
+  is `<sort>.<order>:<value>:<id>`; spaces with no value of the sort (never
+  measured, never used) come after the others in id order, as a second range
+  (`<sort>.<order>.none::<id>`). Two spaces with the same value are ordered by
+  id, ascending in the index's own direction and descending in the other. The
+  filters: `cache=local|full|partial|evicted|archived|restoring` (`restoring` is
+  in memory only and keeps nothing), `remote=none|ok|offline|error` (`error`
+  keeps a rewritten history too), `deadline` and the older `overdue=1` (the
+  policy's ranges of `created`, then the lack of a remote, the exemption of the
+  space and of its owners), `pinned=1`, `exempt=1` (the space's own exemption,
+  not an owner's), `owner` (the first owner), `idleDays`, `q` (a name contains;
+  the one filter no index serves: it reads names in the order of the sort until
+  the page is full). `0` for `pinned`, `exempt`, `overdue` means not asked.
+- **People** are listed from the usage rows joined to their person by key, with
+  no one deleted. `sort=lastActive` puts people who were never active last in
+  both orders, `q` is a contains match as in `GET /api/users`. The person's
+  item counts the spaces as the list does: a tenant administrator is never shown
+  a personal space, in a list or in the person's `items`. The person's own row
+  (spaces, bytes, held bytes) does count their personal space, as the quota
+  does, so for a tenant administrator the total can be more than the spaces they
+  are shown add up to. (Aggregates are not split into personal and shared: 3.7
+  does that when the organisation's share and the person's home are separate.)
+- **Summary.** `GET /api/admin/storage` is open to tenant administrators (the
+  route is admin; `PUT` stays the site's). The body is 3.1's settings and
+  `summary`; `affected` is 3.1's aggregate for a site administrator and the
+  stored counts of grace and overdue spaces for a tenant administrator (who is
+  not told about exemptions). The summary is the tenant's usage row or one
+  aggregate over the tenants' rows, one count over the recycle bin and one over
+  the exports (each an index range of the tenant), the attachment cache from
+  memory and, for site administrators, the free room of the disk. Nothing walks
+  a disk or a repository. `GET ?tenant=` narrows it for a site administrator and
+  is a tenant that does not exist for anyone else. `PUT` answers the settings
+  only, as before.
+- **Indexes.** On `spaces`: `(tenant_id, created, id)` (replacing 0018's without
+  the id), `(created, id)`, `(tenant_id, name_key, id)`, `(name_key, id)`,
+  `(tenant_id, size_bytes DESC, id)`, `(size_bytes DESC, id)`,
+  `(tenant_id, last_used DESC, id)`, `(last_used DESC, id)`,
+  `(tenant_id, remote_via, created, id)` and `(remote_via, created, id)` (the
+  deadline filter and `cache=local`), `(tenant_id, remote_state, created, id)`
+  and `(remote_state, created, id)`, `(usage_user, created, id)`, and partial
+  ones for `pinned` and for `exempt`. On `usage`: for each sort of the people's
+  list one index with the tenant and one without, `(kind, tenant_id, dormant,
+  created, id)`, and partial ones for people with a grace period or an overdue
+  space. `internal/store/storage_explain_test.go` asks the database for the plan
+  of every list, sort and main filter, on a server of 16,000 rows, on SQLite and
+  on PostgreSQL, and fails on a scan of a whole table or a sort of the rows found.
+- Single-user mode answers `404` for all of it, as before.
 
 ### The recycle bin
 

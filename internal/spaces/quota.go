@@ -127,10 +127,31 @@ func (m *Manager) RecountUsage(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	d, err := m.SettleDeadlines(ctx)
+	if err != nil {
+		return n, err
+	}
+	n += d
 	if m.quota.usage != nil {
 		m.quota.usage(ctx, UsageEvent{Everyone: true})
 	}
 	return n, nil
+}
+
+// DeadlineEvery is how often the counts of spaces in their grace period and past
+// their deadline are worked out again: they change with the clock, not only with
+// a write.
+const DeadlineEvery = time.Hour
+
+// SettleDeadlines sets how many spaces of each person and tenant are in their
+// grace period and past their deadline under the policy in force (the usage
+// rows of 3.5's storage management read them). It returns how many rows changed.
+func (m *Manager) SettleDeadlines(ctx context.Context) (int, error) {
+	if m.single != nil {
+		return 0, nil
+	}
+	m.initStorage(ctx)
+	return m.opt.Store.SettleDeadlines(ctx, m.remotePolicy())
 }
 
 // runRecount recounts once when it starts (a crash may have left a difference,
@@ -146,6 +167,8 @@ func (m *Manager) runRecount(ctx context.Context) {
 	}
 	t := time.NewTicker(every)
 	defer t.Stop()
+	dl := time.NewTicker(DeadlineEvery)
+	defer dl.Stop()
 	for {
 		if n, err := m.RecountUsage(ctx); err != nil {
 			if ctx.Err() != nil {
@@ -155,10 +178,16 @@ func (m *Manager) runRecount(ctx context.Context) {
 		} else if n > 0 {
 			m.log.Info("usage recounted", "corrected", n)
 		}
+	wait:
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+		case <-dl.C:
+			if _, err := m.SettleDeadlines(ctx); err != nil && ctx.Err() == nil {
+				m.log.Warn("could not count the spaces by deadline", "error", err)
+			}
+			goto wait
 		}
 	}
 }

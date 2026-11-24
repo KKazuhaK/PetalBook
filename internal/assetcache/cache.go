@@ -257,6 +257,19 @@ func (c *Cache) SpaceBytes(space string) int64 {
 	return c.space[space]
 }
 
+// Spaces is a copy of the bytes each space takes, from memory.
+func (c *Cache) Spaces() map[string]int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]int64, len(c.space))
+	for sp, b := range c.space {
+		if b > 0 {
+			out[sp] = b
+		}
+	}
+	return out
+}
+
 // Budget is the limit now.
 func (c *Cache) Budget() int64 {
 	if c.budget == nil {

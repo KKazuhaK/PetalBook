@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"runtime"
-	"strconv"
 	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/store"
@@ -45,43 +44,11 @@ type adminSpaceResp struct {
 	Sync string `json:"sync"`
 	// Storage is what the space's copy on the server is (milestone 3.1).
 	Storage *adminStorageResp `json:"storage"`
-}
-
-func (s *server) adminListSpaces(c *call) {
-	q := c.r.URL.Query()
-	limit := defaultAdminLimit
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 || n > maxAdminLimit {
-			writeError(c.w, http.StatusBadRequest, "invalid", "limit is a number from 1 to "+strconv.Itoa(maxAdminLimit))
-			return
-		}
-		limit = n
-	}
-	sc, ok := s.adminScope(c)
-	if !ok {
-		return
-	}
-	f := store.SpaceFilter{Query: q.Get("q"), After: q.Get("cursor"), Limit: limit, Cache: q.Get("cache")}
-	switch q.Get("overdue") {
-	case "", "0":
-	case "1":
-		p := s.spaces.RemotePolicy()
-		f.Overdue = &p
-	default:
-		writeError(c.w, http.StatusBadRequest, "invalid", "overdue is 1 or 0")
-		return
-	}
-	rows, next, err := store.ListAllSpaces(c.r.Context(), s.opt.Store.Q(), sc, f)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	items := s.adminSpaceItems(c, rows)
-	writeJSON(c.w, http.StatusOK, struct {
-		Items []adminSpaceResp `json:"items"`
-		Next  string           `json:"next"`
-	}{items, next})
+	// Location is where the space's bytes live: server (only here), own (a
+	// remote of the person's), tenant or site (3.6). Counted says the quotas
+	// count them (server and site, never own and tenant).
+	Location string `json:"location"`
+	Counted  bool   `json:"counted"`
 }
 
 // adminSpaceItems is the answer's form of rows read by the store.
@@ -94,7 +61,8 @@ func (s *server) adminSpaceItems(c *call, rows []store.AdminSpace) []adminSpaceR
 	items := make([]adminSpaceResp, len(rows))
 	for i, r := range rows {
 		it := adminSpaceResp{ID: r.ID, Name: r.Name, Personal: r.Personal, Inbox: r.Inbox, Created: rfc3339(r.Created), Disabled: r.Disabled,
-			Members: r.Members, SizeBytes: r.SizeBytes, Sync: syncs[i], Tenant: r.TenantID, Storage: s.adminStorageOf(c.r.Context(), r)}
+			Members: r.Members, SizeBytes: r.SizeBytes, Sync: syncs[i], Tenant: r.TenantID, Storage: s.adminStorageOf(c.r.Context(), r),
+			Location: r.Location, Counted: r.Counted()}
 		if r.Owner != nil {
 			it.Owner = &adminOwner{r.Owner.ID, r.Owner.Username, r.Owner.Name}
 		}

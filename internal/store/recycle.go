@@ -582,13 +582,6 @@ func RestoreSpaceRows(ctx context.Context, q Q, item *RecycleItem, owner string,
 	}
 	set("tenant_id", item.TenantID)
 	set("usage_user", "")
-	var usageBytes, pages int64
-	if i := sc.col("usage_bytes"); i >= 0 {
-		usageBytes, _ = jsonValue(row[i]).(int64)
-	}
-	if i := sc.col("page_count"); i >= 0 {
-		pages, _ = jsonValue(row[i]).(int64)
-	}
 	if i := sc.col("cache_state"); i >= 0 {
 		out.Cache, _ = row[i].(string)
 	}
@@ -603,7 +596,11 @@ func RestoreSpaceRows(ctx context.Context, q Q, item *RecycleItem, owner string,
 		}
 		return out, err
 	}
-	if err := addUsage(ctx, q, usageDelta{kind: UsageTenant, id: item.TenantID, tenant: item.TenantID, spaces: 1, bytes: usageBytes, pages: pages}); err != nil {
+	back, err := readSpaceUsage(ctx, q, item.SpaceID)
+	if err != nil {
+		return out, err
+	}
+	if err := addUsage(ctx, q, back.delta(UsageTenant, item.TenantID, 1)); err != nil {
 		return out, err
 	}
 	for _, t := range recycledTables {
@@ -677,6 +674,12 @@ func RestoreSpaceRows(ctx context.Context, q Q, item *RecycleItem, owner string,
 	}
 	if owners == 0 {
 		return out, ErrOwnerRequired
+	}
+	// The remote came back as a row of its own (or did not): what follows it is
+	// settled, and the tenant's row says so; the first owner's row gets the space
+	// with it (settleOwner).
+	if err := settleRestored(ctx, q, item.SpaceID); err != nil {
+		return out, err
 	}
 	if err := settleOwner(ctx, q, item.SpaceID); err != nil {
 		return out, err

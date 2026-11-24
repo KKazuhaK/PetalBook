@@ -78,7 +78,7 @@ func TestStoragePolicyQueries(t *testing.T) {
 			t.Fatal("counted without a requirement")
 		}
 		// The list filters.
-		over, _, err := store.ListAllSpaces(ctx, q, store.AllTenants(), store.SpaceFilter{Overdue: &pol, Limit: 50})
+		over, _, err := store.ListAllSpaces(ctx, q, store.AllTenants(), store.SpaceFilter{Deadline: "overdue", Policy: &pol, Limit: 50})
 		if err != nil || len(over) != 1 || over[0].ID != "S1" || over[0].Storage.Exempt {
 			t.Fatalf("%+v %v", over, err)
 		}

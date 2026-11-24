@@ -70,13 +70,41 @@ func (s *server) storageBody(set spaces.StorageSettings, aff spaces.Affected) st
 	return r
 }
 
+// storageGetResp is the settings and, from 3.5, the summary of what the server
+// holds, for the whole server or for one tenant.
+type storageGetResp struct {
+	storageResp
+	Summary storageSummaryResp `json:"summary"`
+}
+
+// adminGetStorage answers the settings and the summary. A site administrator
+// reads the server's (?tenant= narrows the summary); a tenant administrator the
+// effective settings, read only, and the summary of their tenant. The summary is
+// stored values only (docs/api.md, "GET /api/admin/storage").
 func (s *server) adminGetStorage(c *call) {
-	aff, err := s.spaces.Affected(c.r.Context())
+	sc, ok := s.adminScope(c)
+	if !ok {
+		return
+	}
+	var aff spaces.Affected
+	if sc.All() {
+		var err error
+		if aff, err = s.spaces.Affected(c.r.Context()); err != nil {
+			s.fail(c.w, err)
+			return
+		}
+	}
+	sum, err := s.storageSummary(c, sc)
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	writeJSON(c.w, http.StatusOK, s.storageBody(s.spaces.Storage(), aff))
+	if !sc.All() {
+		// A tenant sees its own spaces in their grace period or past it (the
+		// exemptions are the site's to count).
+		aff = spaces.Affected{InGrace: int(sum.Remotes.InGrace), Overdue: int(sum.Remotes.Overdue)}
+	}
+	writeJSON(c.w, http.StatusOK, storageGetResp{s.storageBody(s.spaces.Storage(), aff), sum})
 }
 
 // section decodes one section of a PUT: an object of known keys.

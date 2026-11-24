@@ -272,6 +272,10 @@ func (m *Manager) SetStorage(ctx context.Context, patch StoragePatch) (StorageSe
 	}
 	m.st.cur.set(next)
 	m.dropFacts("")
+	// The people's counts of spaces by deadline follow the policy.
+	if _, err := m.opt.Store.SettleDeadlines(ctx, m.remotePolicy()); err != nil {
+		m.log.Warn("could not count the spaces by deadline", "error", err)
+	}
 	aff, err := m.Affected(ctx)
 	return m.Storage(), aff, err
 }

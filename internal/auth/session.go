@@ -110,6 +110,10 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 			s.log.Warn("could not record session use", "error", err)
 		}
 	}
+	// The person's last use: a lookup in memory unless an hour has passed.
+	if err := s.st.NoteActive(ctx, u.ID, now); err != nil {
+		s.log.Warn("could not record a person's last use", "error", err)
+	}
 	return &Principal{User: *u, SessionID: id, SessionCreated: snap.created, Held: snap.held}, nil
 }
 

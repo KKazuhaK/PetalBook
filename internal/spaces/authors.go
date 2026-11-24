@@ -40,8 +40,20 @@ func (m *Manager) AuthorOf(u store.User) space.Author {
 	if m.single != nil {
 		return space.Author{}
 	}
+	m.noteWrite(u.ID)
 	id := IdentityOf(u)
 	return space.Author{Name: id.Name, Email: id.Email}
+}
+
+// noteWrite records that the person is changing something in a space (the first
+// time sets users.first_write; afterwards it is a lookup in memory). Every change
+// is credited through AuthorOf, so this is the one place all of them pass.
+func (m *Manager) noteWrite(userID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := m.opt.Store.NoteWrite(ctx, userID, m.opt.Now()); err != nil {
+		m.log.Debug("could not record a person's first change", "error", err)
+	}
 }
 
 // AuthorByID is AuthorOf for a user known only by id, as the drafts sweeper

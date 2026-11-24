@@ -249,6 +249,13 @@ var isolationRoutes = map[string]isoEntry{
 
 	"GET /api/admin/spaces":         {kind: isoList},
 	"GET /api/admin/spaces/{space}": {kind: isoParam},
+	// 3.5 part 4: the storage summary and the lists of people. They read the
+	// usage rows through the caller's scope; B's people are B's ids (the item) or
+	// are not in the list (the others), and ?tenant=B is answered as a tenant
+	// that does not exist.
+	"GET /api/admin/storage":               {kind: isoList},
+	"GET /api/admin/storage/people":        {kind: isoList},
+	"GET /api/admin/storage/people/{user}": {kind: isoParam},
 	// 3.5: the recycle bin, exports, views and confirmations. Every id is B's item,
 	// export or space; a tenant administrator of A is answered as for one that is
 	// not there. DELETE /api/admin/recycle/{item} is the server's (isoSite).
@@ -655,7 +662,13 @@ func TestPersonalSpacesDoNotExistForATenantAdministratorOnEveryRoute(t *testing.
 			t.Fatalf("only %d calls were made: the table is not being read", checked)
 		}
 		// No list shows one.
-		for _, path := range []string{"/api/admin/spaces", "/api/admin/spaces?q=My", "/api/admin/recycle", "/api/admin/recycle?kind=space"} {
+		// 3.5 part 4: every sort and filter of the lists of spaces, and the item of
+		// the person the personal space belongs to, which lists the spaces counted for them.
+		lists := []string{"/api/admin/spaces", "/api/admin/spaces?q=My", "/api/admin/recycle", "/api/admin/recycle?kind=space",
+			"/api/admin/spaces?sort=name", "/api/admin/spaces?sort=bytes", "/api/admin/spaces?sort=lastUsed&order=asc", "/api/admin/spaces?owner=" + f.userA,
+			"/api/admin/spaces?remote=none", "/api/admin/spaces?cache=local", "/api/admin/spaces?idleDays=0", "/api/admin/spaces?deadline=overdue",
+			"/api/admin/storage/people/" + f.userA}
+		for _, path := range lists {
 			r := f.admA.do("GET", path, nil).want(t, 200, "")
 			for _, it := range r.body["items"].([]any) {
 				m := it.(map[string]any)
@@ -671,6 +684,21 @@ func TestPersonalSpacesDoNotExistForATenantAdministratorOnEveryRoute(t *testing.
 					t.Errorf("%s lists %s: %s", path, id, r.raw)
 				}
 			}
+		}
+		// The list of people has no space in it at all; nothing there is a personal space.
+		pl := f.admA.do("GET", "/api/admin/storage/people", nil).want(t, 200, "")
+		if strings.Contains(pl.raw, own) || strings.Contains(pl.raw, patSpace) {
+			t.Errorf("the people's list names a personal space: %s", pl.raw)
+		}
+		// A person who has only a personal space shows no spaces of theirs to a tenant administrator, and a site administrator sees it.
+		if r := f.admA.do("GET", "/api/admin/storage/people/"+f.userA, nil).want(t, 200, ""); len(r.body["items"].([]any)) != 0 {
+			t.Errorf("a tenant administrator sees a person's spaces: %s", r.raw)
+		}
+		if r := f.root.do("GET", "/api/admin/storage/people/"+f.userA, nil).want(t, 200, ""); !strings.Contains(r.raw, `"id":"`+own+`"`) {
+			t.Errorf("a site administrator does not see the person's personal space: %s", r.raw)
+		}
+		if r := f.root.do("GET", "/api/admin/spaces?owner="+f.userA, nil).want(t, 200, ""); !strings.Contains(r.raw, `"id":"`+own+`"`) {
+			t.Errorf("a site administrator does not see the personal space in the list: %s", r.raw)
 		}
 		// The person's own item is the tenant's: restoring it brings their personal space back with them.
 		f.admA.do("POST", "/api/admin/recycle/"+userItem+"/restore", map[string]any{}).want(t, 200, "")

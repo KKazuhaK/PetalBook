@@ -42,6 +42,8 @@ type Store struct {
 	db      *sql.DB
 	dialect Dialect
 	rebinds sync.Map // query -> rewritten query (PostgreSQL only)
+	// people is what NoteActive and NoteWrite remember of who was written lately.
+	people noted
 	// tenantState is which tenants are disabled (see TenantDisabled).
 	tenantState atomic.Pointer[tenantState]
 }
