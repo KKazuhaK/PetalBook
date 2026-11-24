@@ -388,4 +388,32 @@ describe('bulk actions', () => {
     await settle(() => document.querySelector('[data-slot="job"]')?.getAttribute('data-state') === 'failed', 'failed')
     expect(dlg().textContent).toContain(tg.bulk.states.failed)
   })
+  it('drops the confirmation of an heir that was cleared and asks for the plan again', async () => {
+    await open('manage', (server) => {
+      const leaver = makePerson(server, 'leaver')
+      makePerson(server, 'viewer')
+      makePerson(server, 'heir')
+      const shared = (leaver.request('POST', '/api/spaces', { name: '共有的' }).body as { id: string }).id
+      leaver.request('POST', `/api/spaces/${shared}/members`, { username: 'viewer', role: 'viewer' })
+    })
+    await settle(() => personRows().length >= 4, 'people')
+    await click(byLabel(tg.people.selectFor('名 leaver')))
+    await click(buttonIn(document.querySelector('[data-slot="bulk-bar"]'), tg.bulk.actions.delete_users))
+    await settle(() => document.querySelector('[data-slot="needs-heir"]') !== null, 'the heir is asked for')
+    const pick = () => document.querySelector<HTMLSelectElement>('select[aria-label="' + tg.bulk.heir + '"]')!
+    await settle(() => pick().options.length > 1, 'people to choose')
+    await type(pick(), [...pick().options].find((o) => o.textContent?.includes('heir'))!.value)
+    await settle(() => sent('POST', '/api/admin/confirm').length === 2, 'the plan with the heir')
+    await settle(() => !document.querySelector<HTMLInputElement>('#bulk-count')?.disabled, 'the count box')
+    await typeCount(1)
+    await settle(() => !confirmButton().disabled, 'ready')
+    // Clearing the heir drops the confirmation made with them and asks again, without.
+    await type(pick(), '')
+    await settle(() => sent('POST', '/api/admin/confirm').length === 3, 'the plan again')
+    const last = JSON.parse(sent('POST', '/api/admin/confirm')[2].body!) as { heir?: string }
+    expect(last.heir).toBeUndefined()
+    await settle(() => document.querySelector('[data-slot="needs-heir"]') !== null, 'the heir is asked for again')
+    expect(confirmButton().disabled).toBe(true)
+    expect(sent('POST', '/api/admin/bulk')).toHaveLength(0)
+  })
 })

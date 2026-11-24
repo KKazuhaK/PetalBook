@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError } from '@/api/client'
 import { useConfirm, useJob, useStartBulk } from '@/api/manage'
 import type {
@@ -145,17 +145,24 @@ export function BulkDialog({
   const [jobId, setJobId] = useState<string | null>(null)
   const job = useJob(jobId)
   const { mutate: ask } = confirm
+  // Which plan was asked for last: an answer to an earlier question is not shown.
+  const asked = useRef(0)
 
   const look = useCallback(
     (withHeir?: string) => {
       setError('')
       setStale(false)
       setTyped('')
+      const mine = ++asked.current
       ask(
         { action, ...request, ...(withHeir ? { heir: withHeir } : {}) },
         {
-          onSuccess: setPlan,
-          onError: (e) => setError(manageError(e, tg.bulk.checkFailed)),
+          onSuccess: (r) => {
+            if (mine === asked.current) setPlan(r)
+          },
+          onError: (e) => {
+            if (mine === asked.current) setError(manageError(e, tg.bulk.checkFailed))
+          },
         },
       )
     },
@@ -164,11 +171,16 @@ export function BulkDialog({
     [action, ask],
   )
   useEffect(() => {
+    const mine = ++asked.current
     ask(
       { action, ...request },
       {
-        onSuccess: setPlan,
-        onError: (e) => setError(manageError(e, tg.bulk.checkFailed)),
+        onSuccess: (r) => {
+          if (mine === asked.current) setPlan(r)
+        },
+        onError: (e) => {
+          if (mine === asked.current) setError(manageError(e, tg.bulk.checkFailed))
+        },
       },
     )
     // The request is the caller's selection, fixed while the dialog is open.
@@ -236,17 +248,22 @@ export function BulkDialog({
                 ))}
               </ul>
             )}
-            {needs.length > 0 && (
+            {(needs.length > 0 || heir) && (
               <div className="grid gap-2" data-slot="needs-heir">
-                <p className="text-sm">
-                  {tg.bulk.needsHeirFor}: {needs.flatMap((n) => n.spaces.map((s) => s.name)).join('、')}
-                </p>
+                {needs.length > 0 && (
+                  <p className="text-sm">
+                    {tg.bulk.needsHeirFor}: {needs.flatMap((n) => n.spaces.map((s) => s.name)).join('、')}
+                  </p>
+                )}
                 <UserPicker
                   label={tg.bulk.heir}
                   value={heir}
                   onChange={(u) => {
+                    // The plan was made for the heir that was there: its confirmation is dropped and the
+                    // plan is made again for the one chosen (or for none).
                     setHeir(u)
-                    if (u) look(u.id)
+                    setPlan(null)
+                    look(u?.id)
                   }}
                 />
                 <p className="text-xs text-muted-foreground">{tg.bulk.heirHelp}</p>
