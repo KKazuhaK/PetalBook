@@ -6,6 +6,7 @@ import (
 
 	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/space"
+	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
 // The size of one file (files.maxBytes, docs/api.md "The size of one file").
@@ -21,6 +22,23 @@ func (s *server) fileLimitFor(ctx context.Context, tenant string) int64 {
 		return n
 	}
 	return s.opt.MaxUpload
+}
+
+// bindDraftFileLimit gives the draft service the limit of a person, for the
+// drafts its sweeper commits with no request to carry it: their tenant's.
+func (s *server) bindDraftFileLimit() {
+	if s.opt.Drafts == nil {
+		return
+	}
+	s.opt.Drafts.SetFileLimit(func(ctx context.Context, userID string) int64 {
+		tenant := ""
+		if !s.single {
+			if t, err := store.UserTenant(ctx, s.opt.Store.Q(), userID); err == nil {
+				tenant = t
+			}
+		}
+		return s.fileLimitFor(ctx, tenant)
+	})
 }
 
 // fileLimit is fileLimitFor the caller's tenant.

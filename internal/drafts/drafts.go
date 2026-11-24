@@ -107,6 +107,20 @@ type Service struct {
 	// the network right now (see remoteCall and enter).
 	pmu     sync.Mutex
 	writing map[string]chan struct{}
+	// fileLimit is files.maxBytes for a person (their tenant's), for the
+	// commits the sweeper makes with no request to carry it (see SetFileLimit).
+	fmu       sync.Mutex
+	fileLimit func(ctx context.Context, userID string) int64
+}
+
+// SetFileLimit gives the service the largest file a write by a person may make
+// (files.maxBytes of their tenant), for the drafts the sweeper commits on its
+// own: they are judged as a commit by the person is (the server binds it). A
+// draft over it is not written and is kept, held.
+func (s *Service) SetFileLimit(f func(ctx context.Context, userID string) int64) {
+	s.fmu.Lock()
+	s.fileLimit = f
+	s.fmu.Unlock()
 }
 
 // New returns the service and brings the due times of waiting drafts in line
@@ -752,13 +766,16 @@ func (s *Service) sweepOne(ctx context.Context, d store.Draft, now time.Time, r 
 		ce  *space.ConflictError
 		inv *space.InvalidError
 		ue  *space.UnavailableError
+		ftl *space.FileTooLargeError
 	)
 	bk, cancel := bookkeeping(ctx)
 	defer cancel()
 	switch {
 	case err == nil:
 		r.Applied++
-	case errors.Is(err, space.ErrNotFound), errors.As(err, &ce), errors.As(err, &inv):
+	case errors.Is(err, space.ErrNotFound), errors.As(err, &ce), errors.As(err, &inv), errors.As(err, &ftl):
+		// Kept, held: its person sees it, and a commit of theirs says why (a
+		// file over files.maxBytes answers 413 file_too_large).
 		store.HoldDraft(bk, s.st.Q(), cur.SpaceID, cur.PageID, cur.UserID, cur.Version)
 		r.Held++
 		if errors.Is(err, space.ErrNotFound) {
@@ -800,5 +817,14 @@ func (s *Service) authorOf(ctx context.Context, userID string) (space.Author, er
 	}
 	by.Via = space.ViaFrom(ctx)
 	by.MaxFile = space.MaxFileFrom(ctx)
+	if by.MaxFile <= 0 {
+		// No request carries the limit (the sweeper): the person's own.
+		s.fmu.Lock()
+		f := s.fileLimit
+		s.fmu.Unlock()
+		if f != nil {
+			by.MaxFile = f(ctx, userID)
+		}
+	}
 	return by, nil
 }

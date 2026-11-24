@@ -191,6 +191,7 @@ func New(opt Options) http.Handler {
 	}
 	s.settings.SetFileCeiling(opt.MaxUpload)
 	s.bindRecycle()
+	s.bindDraftFileLimit()
 	s.markJobsInterrupted()
 	s.bindDailySettings()
 	if s.auth != nil {
