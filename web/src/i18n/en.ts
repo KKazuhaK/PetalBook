@@ -485,7 +485,7 @@ export const en: Messages = {
     close: 'Close settings',
     nav: 'Settings sections',
     groups: { account: 'Account', space: 'Space' },
-    sections: { profile: 'Profile', preferences: 'Preferences', security: 'Security', tokens: 'API tokens', connections: 'Connected accounts', usage: 'Usage', general: 'General', types: 'Types', templates: 'Templates', home: 'Home', members: 'Members', sync: 'Sync', import: 'Import' },
+    sections: { profile: 'Profile', preferences: 'Preferences', security: 'Security', tokens: 'API tokens', connections: 'Connected accounts', usage: 'Usage', general: 'General', types: 'Types', templates: 'Templates', home: 'Home', members: 'Members', sync: 'Sync', offline: 'Offline', import: 'Import' },
   },
   prefs: {
     appearance: 'Appearance',
@@ -688,6 +688,15 @@ export const en: Messages = {
   permissions: {
     readOnly: 'Read only',
     readOnlyNote: 'You can only read in this space; you cannot change it.',
+  },
+  // Reading what is on this device when the server cannot be reached (milestone 4.1).
+  offline: {
+    banner: 'Offline: this is what is saved on this device. You can read and search; changes are not possible for now.',
+    readOnly: 'Offline, read only',
+    readOnlyNote: 'The server cannot be reached: pages can be read but not changed. You can edit again once you are back online.',
+    notDownloaded: 'The text of this page is not downloaded to this device, so it cannot be opened offline.',
+    notHere: 'This page is not on this device.',
+    searchNote: 'Offline, only what is downloaded is searched: titles everywhere, text only in pages whose text is saved.',
   },
   // The members section of the space settings.
   members: {

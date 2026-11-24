@@ -1,6 +1,7 @@
 // Typed functions for every endpoint of docs/api.md.
 
 import { t } from '@/i18n'
+import { noteNetworkOk } from '@/lib/offline/status'
 
 import type { RegisterInfo, RegisterInput, MySetting, EffectiveMemberList, GroupMember, GroupRef, MembersResponse,
   AccountInfo,
@@ -18,7 +19,11 @@ import type { RegisterInfo, RegisterInput, MySetting, EffectiveMemberList, Group
   DailySettings,
   FavoriteList,
   FavoriteRef,
+  CatalogBatch,
+  ChangeList,
   CreatePageInput,
+  SyncHeads,
+  SyncPages,
   DraftInput,
   DraftReceipt,
   BatchPagesInput,
@@ -119,6 +124,32 @@ export class ApiError extends Error {
     this.reason = reason
     this.body = body
   }
+}
+
+// --- the copy on this device (milestone 4.1) ---------------------------------------------
+//
+// When a read cannot reach the server, the copy of the space on this device answers it, if there is one
+// (src/lib/offline). The module that does so registers itself here, so this one needs nothing from it; and when the
+// person signs out, it is told whose copy to delete.
+
+export interface OfflineHooks {
+  // Answers a GET (`path` is without the /api prefix) from the device; undefined when it does not. May throw an
+  // ApiError (a page that was not kept).
+  read?: (user: string | null, path: string) => Promise<unknown>
+  // Called after a sign-out with the id of the person who signed out, to delete their copies.
+  signedOut?: (user: string) => Promise<void>
+  // Called when a request was answered from the device, not by the server.
+  answered?: () => void
+}
+let offlineHooks: OfflineHooks = {}
+export function setOfflineHooks(h: OfflineHooks) {
+  offlineHooks = h
+}
+// Who is signed in, as far as this tab has seen: the copies on the device are theirs.
+let knownUser: string | null = null
+export const currentUserId = () => knownUser
+export function rememberUser(id: string | null) {
+  knownUser = id
 }
 
 // 403 `forbidden` normally means the server will not talk to this page's
@@ -266,10 +297,22 @@ export async function request<T>(path: string, { method = 'GET', body, keepalive
       keepalive: keepalive && typeof payload === 'string' && byteLength(payload) < KEEPALIVE_LIMIT ? true : undefined,
     })
   } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError' && !timedOut(e, signal)) throw e
+    // A read that cannot reach the server may be answered by the copy on this device.
+    if (method === 'GET' && offlineHooks.read) {
+      const local = await offlineHooks.read(knownUser, path).catch((err) => {
+        if (err instanceof ApiError) throw err
+        return undefined
+      })
+      if (local !== undefined) {
+        offlineHooks.answered?.()
+        return local as T
+      }
+    }
     if (timedOut(e, signal)) throw new ApiError(0, 'timeout', t.errors.timeout)
-    if (e instanceof DOMException && e.name === 'AbortError') throw e
     throw new ApiError(0, 'network', t.errors.network)
   }
+  noteNetworkOk()
   if (res.status === 204) return undefined as T
   let text: string
   try {
@@ -485,6 +528,19 @@ export function spaceApi(space: string) {
 
     reindex: () => request<{ pages: number; ms: number }>(base('/reindex'), { method: 'POST' }),
 
+    // Offline sync (docs/api.md, "Offline sync"): the catalogue a batch at a time, what changed after a change
+    // cursor (410 `changes_expired` when it is too old), and several pages at once.
+    syncCatalog: (params: { folders?: string[]; limit?: number; cursor?: string } = {}, signal?: AbortSignal) => {
+      const q = new URLSearchParams()
+      for (const f of params.folders ?? []) q.append('folder', f)
+      if (params.limit) q.set('limit', String(params.limit))
+      if (params.cursor) q.set('cursor', params.cursor)
+      const qs = q.toString()
+      return request<CatalogBatch>(base(`/sync/catalog${qs ? `?${qs}` : ''}`), { signal })
+    },
+    changes: (since: string, limit?: number, signal?: AbortSignal) => request<ChangeList>(base(`/changes?since=${enc(since)}${limit ? `&limit=${limit}` : ''}`), { signal }),
+    syncPages: (ids: string[], signal?: AbortSignal) => request<SyncPages>(base(`/sync/pages?ids=${ids.map(enc).join(',')}`), { signal }),
+
     // The people of the space (accounts mode). `user` is a member's `userId`.
     members: (signal?: AbortSignal) => request<MembersResponse>(base('/members'), { signal }),
     // Everyone who can reach the space, through their own role or a group, a cursor page at a time.
@@ -514,20 +570,31 @@ export const api = {
   // --- session and signing in ---
   session: async (signal?: AbortSignal) => {
     const s = await request<SessionInfo>('/session', { signal })
-    if (s.user) markSignedIn()
+    if (s.user) {
+      markSignedIn()
+      rememberUser(s.user.id)
+    }
     return s
   },
   setup: async (input: { token: string; username: string; name?: string; password: string; captcha?: CaptchaAnswer }) => {
     const r = await request<{ user: User }>('/setup', { method: 'POST', body: input })
     markSignedIn()
+    rememberUser(r.user.id)
     return r
   },
   login: async (input: { username: string; password: string; captcha?: CaptchaAnswer }) => {
     const r = await request<{ user: User }>('/login', { method: 'POST', body: input })
     markSignedIn()
+    rememberUser(r.user.id)
     return r
   },
-  logout: () => request<void>('/logout', { method: 'POST' }),
+  // Signing out deletes this person's copies on the device (they are not encrypted: see the offline settings).
+  logout: async () => {
+    const who = knownUser
+    await request<void>('/logout', { method: 'POST' })
+    knownUser = null
+    if (who) await offlineHooks.signedOut?.(who).catch(() => undefined)
+  },
   // What the sign-in page draws: the enabled providers, the mode in effect and whether passkeys work.
   providers: (signal?: AbortSignal) => request<AuthProviders>('/auth/providers', { signal }),
   // Whether a captcha is needed now, and the challenge when it is. `account` matters for `login` only.
@@ -541,6 +608,7 @@ export const api = {
   passkeyFinish: async (ceremony: string, ret: string, credential: unknown) => {
     const r = await request<{ user: User; return: string }>(`/auth/passkey/finish?ceremony=${enc(ceremony)}&return=${enc(ret)}`, { method: 'POST', body: credential })
     markSignedIn()
+    rememberUser(r.user.id)
     return r
   },
 
@@ -593,6 +661,7 @@ export const api = {
   acceptInvite: async (input: { token: string; username: string; name?: string; password: string; captcha?: CaptchaAnswer }) => {
     const r = await request<{ user: User }>('/invites/accept', { method: 'POST', body: input })
     markSignedIn()
+    rememberUser(r.user.id)
     return r
   },
 
@@ -621,6 +690,9 @@ export const api = {
   renameSpace: (id: string, name: string) => request<SpaceInfo>(`/spaces/${enc(id)}`, { method: 'PATCH', body: { name } }),
   // Either field or both; the server refuses a body with neither.
   updateSpace: (id: string, patch: { name?: string; inbox?: string }) => request<SpaceInfo>(`/spaces/${enc(id)}`, { method: 'PATCH', body: patch }),
+
+  // The change cursor each of the spaces is at (1 to 100), from the server's memory.
+  syncHeads: (spaces: string[], signal?: AbortSignal) => request<SyncHeads>(`/sync/heads?${spaces.map((s) => `space=${enc(s)}`).join('&')}`, { signal }),
 
   // --- administration (administrators, accounts mode) ---
   // One space as the list has it; 404 for an id that is no space.

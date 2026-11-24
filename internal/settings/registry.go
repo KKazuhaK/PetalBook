@@ -15,6 +15,9 @@ const (
 	DailyOwn            = "daily.own"
 	DailyAPI            = "daily.api"
 	DailyDefault        = "daily.default"
+	// OfflineCopies is whether a person may keep offline copies of spaces on a
+	// device (4.1): the four sync endpoints answer 403 offline_off when it is off.
+	OfflineCopies = "offline.copies"
 
 	QuotaSpacesPerPerson = "quota.spacesPerPerson"
 	QuotaBytesPerPerson  = "quota.bytesPerPerson"
@@ -48,6 +51,10 @@ func Definitions() []*Def {
 		// the tenant's comes between the space's and the site's. Validated by
 		// the daily text's code (see Service.BindCheck).
 		{Key: DailyDefault, Kind: Doc, Layers: []Layer{Site, Tenant}, Default: nil, Lower: Lower{Mode: Allow}},
+		// Offline copies (4.1): allowed unless the site or the tenant turns them
+		// off. No space or person layer: a person who is not allowed has none, and
+		// one who is allowed chooses by which spaces they keep on the device.
+		{Key: OfflineCopies, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: true, Lower: Lower{Mode: Allow}},
 		// What one person may use. Only the number of spaces is refused (0 is no
 		// limit, as --max-spaces 0 was); bytes and pages warn. null is no limit.
 		{Key: QuotaSpacesPerPerson, Kind: Limit, Layers: []Layer{Site, Tenant, Person}, Default: int64(20), Min: 0, Max: 10000, Lower: Lower{Mode: Allow}},

@@ -158,7 +158,7 @@ func (x *Index) ApplyTypes(r *TypeRules) error {
 		return err
 	}
 	defer tx.Rollback()
-	w := newWriter(ctx, tx)
+	w := x.newWriter(ctx, tx)
 	defer w.close()
 	if err := w.recheckTypes(r); err != nil {
 		return err
@@ -670,7 +670,10 @@ func (w *writer) finish() error {
 	if err := w.finishTitles(); err != nil {
 		return err
 	}
-	return w.finishLinks()
+	if err := w.finishLinks(); err != nil {
+		return err
+	}
+	return w.flushFeed()
 }
 
 // --- titles ------------------------------------------------------------------

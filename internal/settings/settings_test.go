@@ -244,3 +244,81 @@ func TestTheEffectiveValuesAreCachedAndInvalidated(t *testing.T) {
 		}
 	})
 }
+
+func TestOfflineCopiesIsOnUntilSiteOrTenantTurnsItOff(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		s := setup(t, st)
+		d, _ := s.Def(settings.OfflineCopies)
+		if d.Kind != settings.Bool || d.Has(settings.Space) || d.Has(settings.Person) || !d.Has(settings.Site) || !d.Has(settings.Tenant) {
+			t.Fatalf("layers: %+v", d.Layers)
+		}
+		on := func() bool {
+			e, err := s.Get(ctx, ten, settings.OfflineCopies)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return e.Value == true
+		}
+		if !on() {
+			t.Fatal("not allowed by default")
+		}
+		// A tenant turns it off for itself, and on again.
+		if err := s.SetTenant(ctx, ten, settings.OfflineCopies, settings.Change{HasValue: true, Value: false}); err != nil {
+			t.Fatal(err)
+		}
+		if on() {
+			t.Fatal("the tenant's off did not count")
+		}
+		if e, _ := s.Get(ctx, "", settings.OfflineCopies); e.Value != true {
+			t.Fatal("a tenant's value leaked into the site's")
+		}
+		if err := s.SetTenant(ctx, ten, settings.OfflineCopies, settings.Change{HasValue: true, Value: true}); err != nil {
+			t.Fatal(err)
+		}
+		if !on() {
+			t.Fatal("on again")
+		}
+		// The site's off is a default: a tenant that says on is on. Locked, it is off for every tenant.
+		if _, err := s.SetSite(ctx, settings.OfflineCopies, settings.Change{HasValue: true, Value: false}); err != nil {
+			t.Fatal(err)
+		}
+		if !on() {
+			t.Fatal("the tenant's own on did not count under an unlocked site off")
+		}
+		if _, err := s.SetSite(ctx, settings.OfflineCopies, settings.Change{HasLower: true, Lower: lower("lock")}); err != nil {
+			t.Fatal(err)
+		}
+		if on() {
+			t.Fatal("the site's locked off did not count")
+		}
+		if _, err := s.SetSite(ctx, settings.OfflineCopies, settings.Change{HasValue: true, Value: true, HasLower: true, Lower: lower("allow")}); err != nil {
+			t.Fatal(err)
+		}
+		// A lock: the tenant cannot change it, and what it kept before stays.
+		if err := s.SetTenant(ctx, ten, settings.OfflineCopies, settings.Change{HasValue: true, Value: false}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.SetSite(ctx, settings.OfflineCopies, settings.Change{HasLower: true, Lower: lower("lock")}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetTenant(ctx, ten, settings.OfflineCopies, settings.Change{HasValue: true, Value: false}); code(err) != settings.CodeLocked {
+			t.Fatalf("%v", err)
+		}
+		if !on() {
+			t.Fatal("a locked tenant value counted")
+		}
+		// Restricted to off: the tenant may only turn it off.
+		if _, err := s.SetSite(ctx, settings.OfflineCopies, settings.Change{HasLower: true, Lower: &settings.Lower{Mode: settings.Restrict, Options: []any{false}}}); err != nil {
+			t.Fatal(err)
+		}
+		if on() {
+			t.Fatal("the tenant's kept off counts again")
+		}
+		if err := s.SetTenant(ctx, ten, settings.OfflineCopies, settings.Change{HasValue: true, Value: true}); code(err) != settings.CodeRestricted {
+			t.Fatalf("%v", err)
+		}
+		if err := s.SetTenant(ctx, ten, settings.OfflineCopies, settings.Change{HasValue: true, Value: "yes"}); code(err) != settings.CodeInvalid {
+			t.Fatalf("%v", err)
+		}
+	})
+}

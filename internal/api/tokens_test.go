@@ -380,7 +380,7 @@ func TestWhichRoutesATokenMayUse(t *testing.T) {
 		tm := newTeam(t, a)
 		_, secret := mkToken(t, tm.owner, "write", nil, tm.sid)
 		b := a.bearer(secret, "")
-		outside := map[string]bool{"GET /api/meta": true, "GET /api/session": true, "GET /api/spaces": true}
+		outside := map[string]bool{"GET /api/meta": true, "GET /api/session": true, "GET /api/spaces": true, "GET /api/sync/heads": true}
 		var allowed, refused int
 		for _, rt := range api.Routes() {
 			path := routePath(rt, tm.sid)

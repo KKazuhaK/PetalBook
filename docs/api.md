@@ -19,7 +19,8 @@ The web app talks to the server only through this API.
   actions the signed-in user may not take that are not a matter of a role in a
   space), `no_permission` (403: a member whose role in the space lacks the
   permission the request needs; the message names it), `space_disabled` (403: an
-  administrator has disabled the space, see "Administration"), `rate_limited` (429, with a
+  administrator has disabled the space, see "Administration"), `offline_off`
+  (403: offline copies are turned off, see "Offline sync"), `rate_limited` (429, with a
   `Retry-After` header in seconds), `unavailable` (503: the space follows a
   remote repository that cannot be reached or is paused, see "Remote
   repository"; nothing was changed), `internal` (500). Signing in has codes
@@ -2355,7 +2356,8 @@ reached, and tries again at the next opening.
 An evicted space has no clone on the server: `DATA/spaces/<id>` is removed. Its
 index, its records (members, remote, drafts) and its settings in the state
 database stay. Lists, the tree, tags, search (the space's and the global one),
-links and backlinks and the checks are answered from the index without
+links and backlinks, the checks, and the offline sync's catalogue, changes
+and heads (see "Offline sync") are answered from the index without
 fetching anything, as fast as for a cached space. What the index does not
 hold is left out rather than fetched: a backlink's `excerpt` is `""` (it is
 the paragraph, read from the file), a listing has no tag colours and no type
@@ -2396,7 +2398,9 @@ restore and waits for it, up to 10 seconds:
    modification time the index recorded, so the index sees them as unchanged
    and the order "by update" is what it was; only the files that changed on
    the remote meanwhile are read again, as after a pull;
-4. the space opens as usual.
+4. the space opens as usual. Its index is the one it had: the change cursors
+   of offline clients stay good (no `410`), and what changed on the remote
+   meanwhile comes to them as changes (see "Offline sync").
 
 For a space of 2 000 pages that is about 10 MB to fetch and 1 to 3 seconds;
 for 50 000 pages about 200 MB and some 20 to 40 seconds on a 100 Mbit/s link.
@@ -5286,6 +5290,31 @@ Every endpoint here works in both modes (in single-user mode the space is
 `default`) and with an API token; an OAuth access token is still for `/mcp`
 only (`403 token_scope`).
 
+They follow the rules of reads, tenants included (see "Tenants, registration
+and mail"): a space of another tenant answers as one that does not exist, and
+a person of a disabled tenant, or their token, is refused as on every other
+route (`401`). The spaces of a disabled tenant are `403 space_disabled` to
+everyone, as for their pages, and are never in `heads`.
+
+**Allowing offline copies.** The layered setting `offline.copies` (site, tenant;
+allowed unless turned off, see "Settings by layer") decides whether the people
+of a tenant may keep copies on a device. A tenant administrator can turn it off
+for its own tenant. A site administrator (`PUT /api/admin/settings/offline.copies`)
+sets what tenants that say nothing follow, and can lock it (`lower` `lock`: the
+site's value is the tenant's, so a locked `false` is off for every tenant) or
+restrict it to off (`lower` `restrict`, `options` `[false]`: a tenant may only
+turn it off). When it is
+off for the caller's tenant, **all four endpoints** (`sync/catalog`, `changes`,
+`sync/pages`, `heads`) answer `403 offline_off`. This is decided after the
+sign-in and the token's own checks but before the space is opened: an evicted
+space is never restored for a request that is refused, and the answer is the
+same for every space id (one of another tenant, or one that does not exist,
+answers it too), so it tells nothing about the space. Nothing else changes: the rest of the API works as before. A client
+reads the effective value from `GET /api/settings`; when it is off it stops
+syncing and polling, and deletes the offline copies of the signed-in account
+on the next start or poll. The app does not encrypt the copies; the client
+clears them on sign-out.
+
 The server keeps no record of devices. A client holds a **change cursor** per
 space and asks what changed after it; nothing is registered, and a device that
 is never seen again leaves nothing behind.
@@ -5304,8 +5333,13 @@ A client typically:
 
 An opaque string. It names a point in the index of one space: an epoch, which
 is new every time the index is built from scratch (at an upgrade that changes
-the index, `POST …/reindex`, or when the index does not match the files), and
-a sequence number. Every write of a page to the index (added, its file changed,
+the index, `POST …/reindex`, or when the index does not match the files), when
+the server opens an index that was not closed cleanly (a crash or a power cut
+may have taken its last writes), and when the first look at the files after
+the space is opened finds changes the index did not record (except after a
+restore of an evicted space, see below, whose changes come from its remote);
+and a sequence
+number. Every write of a page to the index (added, its file changed,
 renamed or moved, its links rewritten by the server, read again after a change
 made outside the server) gives the page a new sequence number, higher than any
 before; a page that is removed leaves a record of its removal. So "what changed
@@ -5381,8 +5415,11 @@ and the pages removed, in the order they last changed.
  "next": "change cursor", "more": false, "tree": "k2f0…", "settings": "9a1c…"}
 ```
 
-- `next` is the cursor to keep: the client asks with it next time. With no
-  changes `items` is empty and `next` is `since`.
+- `next` is the cursor to keep: the client asks with it next time. It is the
+  head the answer was read at (so `GET /api/sync/heads` gives the same string
+  while nothing else changes), or, when `more` is `true`, the position of the
+  last change in `items`. When `since` is already the head, `items` is empty and
+  `next` is `since`.
 - `more` is `true` when there were more changes than `limit`; the client asks
   again with `next` at once.
 - Each page is in the answer at most once, as it is now. A page removed and
@@ -5440,17 +5477,64 @@ ask once and then read changes only where something changed. 1 to 100
 
 - `heads` holds every space the caller may `read`; `missing` (left out when
   empty) every other one, not telling a space that does not exist from one the
-  caller may not see. A disabled space is in `missing`.
+  caller may not see. A disabled space is in `missing`, and so is every space
+  of a disabled tenant.
 - A head equal to the client's cursor means nothing changed; a different one
   means the client calls `GET …/changes`. A head is not a promise that there are
   changes: comparing it is cheap, reading the changes settles it.
-- The answer comes from memory and never opens or pulls a space: a space that
-  is closed (idle, or cleared from the disk by milestone 3.1) answers the
-  head it had when it closed. So a device polling heads keeps no space open, and
+- A space that has not been open since the server started answers the head
+  its index was closed at, read from the index without opening the space. A
+  space with no index, or whose index was not closed cleanly, has no head to
+  give: its head is `""`, which is never a cursor, so the client asks for its
+  changes (which opens it); from then on its head is known, also after it
+  closes. A head read this way can be followed, when the space is opened, by
+  a new epoch (see "Change cursor"): the client then gets `410` and walks the
+  catalogue again.
+- A person who reaches a space only as an administrator, without being a member
+  of it, has no head for it (it is in `missing`): heads come from the
+  membership the server holds in memory, and a client that can read such a
+  space asks its changes directly.
+- The answer never opens or pulls a space: a space that is closed (idle, or
+  cleared from the disk by milestone 3.1) answers the head it had when it
+  closed, from memory, or after a restart from its index as above. So a device polling heads keeps no space open, and
   a space that follows a remote and is closed shows the remote's changes only
   once someone opens it.
 
 `400 invalid` for no `space`, more than 100, or one given twice.
+
+### Evicted spaces
+
+A space that milestone 3.1 evicted (see "Eviction") keeps its index, closed,
+and the sync treats it like any other closed space:
+
+- `heads` answers the head it was evicted at (from memory, or after a restart
+  from its index, read without opening it), and never opens or restores it.
+  A space with no index on disk answers `""`.
+- `sync/catalog` and `changes` are answered from its index without restoring
+  it. Their `settings` stamp is the one the space had when it was last open
+  with its files (`""` for a space evicted before the server kept it).
+- `sync/pages` reads the page files, so it restores the space first, as every
+  other read of a page does: it waits up to 10 seconds, then answers `503
+  restoring` with `Retry-After` (or `503 unavailable` when the remote cannot be
+  reached), and the client tries again later.
+- An index that cannot answer as it is (missing, or of another index version
+  because the server was upgraded while the space was evicted) is not used for
+  `sync/catalog`, `changes` or any other route answered from the index: the
+  space is restored instead, exactly as for `sync/pages` (`503 restoring`
+  while it takes longer than the wait). The old index is only looked at,
+  read-only, and is replaced only by the rebuild from the restored files; it is
+  never answered from empty. Such a rebuild starts a new epoch (`410` for older
+  cursors), like any index that must be built again.
+- While a restore puts the files in place (from the moment it closes the
+  index-only reader until the space is open in full), the routes answered from
+  the index answer `503 restoring` too, instead of reading the index the full
+  space is about to own.
+- A restore keeps the index: its epoch and sequence numbers stay, so a cursor
+  from before the eviction stays good, and the pages that changed on the remote
+  meanwhile are in the next `changes` with new sequence numbers. Only an index
+  that was not closed cleanly, or one that must be built again, starts a new
+  epoch (`410`). The `settings` stamp usually changes once after a restore
+  (the files were written again).
 
 ### What a client is expected to do
 
@@ -5460,17 +5544,27 @@ Not enforced by the server, but what it is built for:
   when it comes back to the foreground or the network returns. Do not poll
   `changes` for spaces whose head did not move.
 - Walk a catalogue in batches one after another, not in parallel; fetch bodies
-  at most 4 requests at a time.
+  at most 4 requests at a time. A walk that is cut off goes on with the `next`
+  it had (the batch cursor outlives changes to the space).
+- After a failure that is not the network (a `5xx`, say), wait before asking
+  that space again, longer each time (the web app: one poll period, doubling,
+  at most 30 minutes).
 - On `404` from any of these for a space, remove that space's copy from the
   device (the caller can no longer read it). On `403 space_disabled`, keep the
   copy, show it as read-only and stop asking until the space is in `heads`
   again.
 
-**What it costs**, in a space of 50 000 pages (targets, measured before 4.1 is
-merged): a `changes` with nothing new under a millisecond; a catalogue batch of
-2000 under 20 ms; 100 bodies under 100 ms on an SSD; `heads` for 100 spaces
-a few microseconds each. The index grows by one column and one small table,
-under 1% of its size.
+**What it costs**, in a space of 50 000 pages (measured with
+`PETALBOOK_TIMING=1 go test -run TestChangeFeedInALargeSpace ./internal/space/`;
+the numbers are in docs/design.md, "4.1 的现状"): a `changes` with nothing new
+under a millisecond; a catalogue batch of 2000 about 15 to 20 ms; 100 bodies
+about 20 ms on an SSD; `heads` for 100 spaces a few microseconds each, and no
+disk (after a restart, about a millisecond once for each closed space, to read
+its head from its index). The index grows by one column and one small table, under 1% of its size.
+The `settings` stamp of an answer is made from the names, sizes and times of
+the files in `.petalbook/`, `.petalbook/types/` and `.petalbook/templates/` (three
+directory listings, as many entries as the space has settings, not as many as
+it has pages).
 
 ## Maintenance
 
@@ -5763,6 +5857,7 @@ The settings of 3.3 (others join this table as they are made):
 | `quota.bytesPerPerson` | limit in bytes, or `null` | site, tenant, person | `null` | `allow` |
 | `quota.pagesPerPerson` | limit, or `null` | site, tenant, person | `null` | `allow` |
 | `daily.own`, `daily.api` | boolean (what a space may do) | site, tenant | `true` | `allow` |
+| `offline.copies` | boolean (may people keep offline copies; see "Offline sync") | site, tenant | `true` | `allow` |
 | `daily.default` | the shape of `/api/admin/daily`'s `default`; a tenant may name a space of its own tenant or an interface | site, tenant | `null` | `allow` |
 
 - `daily.own` and `daily.api` are the 2.3 `allow` switches; `PUT
@@ -5823,7 +5918,9 @@ site's.
 
 Any signed-in user; `space` optional (needs `read`). The effective value of
 every setting that has a space or person layer, and whether that layer can
-change it, so a client greys out "set by the administrators":
+change it, so a client greys out "set by the administrators". `offline.copies`
+is also in the list, with only its `effective` value (a person cannot change
+it; a client reads it to know whether it may keep offline copies):
 
 ```json
 {"settings": [{"key": "daily.own", "effective": false, "space": {"canChange": false, "inEffect": false, "source": "tenant"}}]}

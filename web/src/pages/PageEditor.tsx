@@ -1,3 +1,4 @@
+import { isOffline, useOffline } from '@/lib/offline/status'
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Link, useBlocker, useNavigate, useParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
@@ -166,9 +167,13 @@ export default function PageEditor() {
       </>
     )
   }
+  // A session opened without the server read the page from this device. Once the server answers again the page is
+  // read from it and the editor opens afresh, so the drafts (here and on the server) are weighed against what the
+  // server has before anything can be typed.
+  const reopen = () => void qc.resetQueries({ queryKey: keys.page(space, id) }).then(() => setGained((n) => n + 1))
   // One session per page id. It reads `data` once: later cache updates must
   // never reset what the person is typing.
-  return <EditorSession key={`${userId}/${space}/${data.id}/${gained}`} space={space} userId={userId} initial={data} />
+  return <EditorSession key={`${userId}/${space}/${data.id}/${gained}`} space={space} userId={userId} initial={data} onBackOnline={reopen} />
 }
 
 function MissingPage({ space, id, userId }: { space: string; id: string; userId: string }) {
@@ -253,7 +258,7 @@ function watchLeave(done: Promise<void>, c: SaveController, id: string) {
   })
 }
 
-function EditorSession({ space, userId, initial }: { space: string; userId: string; initial: Page }) {
+function EditorSession({ space, userId, initial, onBackOnline }: { space: string; userId: string; initial: Page; onBackOnline: () => void }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const urls = useUrls()
@@ -263,11 +268,23 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
   // Without `write` the page is shown and nothing about it can be changed: no
   // typing, no draft, no move or delete, no going back to a version.
   const { write } = useSpacePermissions()
-  const readOnly = !write
+  // Offline the page can be read and not changed (4.2 makes offline editing); what was typed stays in the browser's
+  // own draft.
+  const offline = useOffline()
+  const readOnly = !write || offline
   const readOnlyRef = useRef(readOnly)
   useEffect(() => {
     readOnlyRef.current = readOnly
   })
+  // Opened from the copy on this device: the drafts are shown and nothing is sent; the editor opens afresh from the
+  // server once it answers (see PageEditor). One that was open when the network went stays, with what was typed.
+  const [openedOffline] = useState(isOffline)
+  const reopened = useRef(false)
+  useEffect(() => {
+    if (!openedOffline || offline || reopened.current) return
+    reopened.current = true
+    onBackOnline()
+  }, [openedOffline, offline, onBackOnline])
 
   // The page file, without the draft that came with it.
   const [file] = useState<Page>(() => {
@@ -281,8 +298,9 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
   const [ref] = useState(() => draftRefFor(userId, space, initial.id))
   const [drafts] = useState(() => draftStoreFor(ref))
   // What this browser kept is the text of someone who could write; it is not offered back.
-  const [local] = useState(() => (readOnly ? null : loadDraft(ref)))
-  const [restore] = useState(() => planRestore(readOnly ? file : initial, local, docToMarkdown, (md) => docToMarkdown(markdownToDoc(md))))
+  // Being offline only stops typing: the drafts are weighed as on any open.
+  const [local] = useState(() => (write ? loadDraft(ref) : null))
+  const [restore] = useState(() => planRestore(write ? initial : file, local, docToMarkdown, (md) => docToMarkdown(markdownToDoc(md))))
   const content: Content | null = restore.kind === 'file' ? null : restore.content
   // A local copy from before the source field existed carries none: the box then shows
   // what the server has, so the person never types over a value they were not shown.
@@ -381,8 +399,10 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
     }
   }, [controller, initial.id])
 
-  // Once, on open: show the draft that was found, or raise the conflict it implies.
+  // Once, on open: show the draft that was found, or raise the conflict it implies. Offline the draft is only shown;
+  // the session that opens when the server is back does the rest.
   useEffect(() => {
+    if (openedOffline) return
     switch (restore.kind) {
       case 'file':
         if (restore.dropLocal && local) drafts.clearIf(local.token)
@@ -405,7 +425,7 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
         if (restore.dropLocal && local) drafts.clearIf(local.token)
         controller.enterConflict(restore.info, restore.unsaved)
     }
-  }, [restore, local, drafts, live, controller])
+  }, [restore, local, drafts, live, controller, openedOffline])
 
   // Tells the source view (when it is open) that something changed outside it.
   const noteRich = useRef<(what?: { fields?: boolean; force?: boolean }) => void>(() => {})
@@ -836,8 +856,8 @@ function EditorSession({ space, userId, initial }: { space: string; userId: stri
         actions={
           <>
             {readOnly ? (
-              <span className="rounded-md border px-1.5 py-0.5 text-xs text-muted-foreground" title={t.permissions.readOnlyNote}>
-                {t.permissions.readOnly}
+              <span className="rounded-md border px-1.5 py-0.5 text-xs text-muted-foreground" title={offline ? t.offline.readOnlyNote : t.permissions.readOnlyNote}>
+                {offline ? t.offline.readOnly : t.permissions.readOnly}
               </span>
             ) : (
               <SaveIndicator snapshot={snapshot} draftSafe={!controller.hasUnsaved()} onRetry={() => void controller.retry()} onOpenConflict={() => setConflictOpen(true)} />

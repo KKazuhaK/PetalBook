@@ -205,6 +205,7 @@ var routeTable = []route{
 	{"DELETE", "/api/admin/grants/{id}", admin, true, false, false, (*server).adminRevokeGrant},
 
 	{"GET", "/api/spaces", signedIn, false, false, false, (*server).listSpaces},
+	{"GET", "/api/sync/heads", signedIn, false, false, false, (*server).syncHeads},
 	{"POST", "/api/spaces", signedIn, true, false, false, (*server).createSpace},
 	{"PATCH", "/api/spaces/{space}", inSpace(perm.Manage), true, false, false, (*server).renameSpace},
 
@@ -250,6 +251,9 @@ var routeTable = []route{
 	{"POST", "/api/spaces/{space}/favorites", inSpace(perm.Read), false, false, false, (*server).addFavorite},
 	{"DELETE", "/api/spaces/{space}/favorites", inSpace(perm.Read), false, false, false, (*server).deleteFavorite},
 	{"PUT", "/api/spaces/{space}/favorites/order", inSpace(perm.Read), false, false, false, (*server).putFavoritesOrder},
+	{"GET", "/api/spaces/{space}/sync/catalog", inSpace(perm.Read), false, false, false, (*server).syncCatalog},
+	{"GET", "/api/spaces/{space}/changes", inSpace(perm.Read), false, false, false, (*server).syncChanges},
+	{"GET", "/api/spaces/{space}/sync/pages", inSpace(perm.Read), false, false, false, (*server).syncPages},
 	{"POST", "/api/spaces/{space}/reindex", inSpace(perm.Manage), false, false, false, (*server).reindex},
 
 	{"POST", "/api/spaces/{space}/pages/{id}/assets", inSpace(perm.Write), false, false, true, (*server).putAsset},
@@ -369,6 +373,12 @@ func (s *server) handle(rt route) http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "forbidden", "only an administrator of the whole server may do that")
 			return
 		}
+		// The switch for offline copies comes before the space is opened: an
+		// evicted space is not restored for a request that is refused anyway,
+		// and the answer is the same for every space.
+		if offlineRoutes[rt.method+" "+rt.pattern] && s.offlineOff(c) {
+			return
+		}
 		if rt.access.kind == kindSpace {
 			if !s.openSpace(c, rt) {
 				return
@@ -377,6 +387,16 @@ func (s *server) handle(rt route) http.HandlerFunc {
 		}
 		rt.h(s, c)
 	}
+}
+
+// offlineRoutes are the routes of the offline sync, refused with 403
+// offline_off when the caller's tenant does not allow offline copies (see
+// offlineOff). handle decides it before anything is opened.
+var offlineRoutes = map[string]bool{
+	"GET /api/sync/heads":                  true,
+	"GET /api/spaces/{space}/sync/catalog": true,
+	"GET /api/spaces/{space}/changes":      true,
+	"GET /api/spaces/{space}/sync/pages":   true,
 }
 
 // indexOnlyRoutes are the routes whose answer comes from the index alone, so
@@ -391,6 +411,10 @@ var indexOnlyRoutes = map[string]bool{
 	"GET /api/spaces/{space}/pages/{id}/backlinks": true,
 	"GET /api/spaces/{space}/pages/{id}/links":     true,
 	"GET /api/spaces/{space}/checks":               true,
+	// The offline sync's catalogue and changes (4.1); its page bodies
+	// (sync/pages) read files and restore the space as other content reads do.
+	"GET /api/spaces/{space}/sync/catalog": true,
+	"GET /api/spaces/{space}/changes":      true,
 }
 
 // indexOnly says whether this request can be answered by the index of an

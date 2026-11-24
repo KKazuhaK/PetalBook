@@ -46,6 +46,32 @@ func GetDraft(ctx context.Context, q Q, spaceID, pageID, userID string) (*Draft,
 	return scanDraft(q.QueryRow(ctx, `SELECT `+draftCols+` FROM drafts WHERE space_id = ? AND page_id = ? AND user_id = ?`, spaceID, pageID, userID))
 }
 
+// UserDrafts reads one user's drafts of several pages of a space in one query,
+// by page id. A page without a draft of theirs is not in the answer.
+func UserDrafts(ctx context.Context, q Q, spaceID, userID string, pageIDs []string) (map[string]*Draft, error) {
+	out := map[string]*Draft{}
+	if len(pageIDs) == 0 {
+		return out, nil
+	}
+	args := []any{spaceID, userID}
+	for _, id := range pageIDs {
+		args = append(args, id)
+	}
+	rows, err := q.Query(ctx, `SELECT `+draftCols+` FROM drafts WHERE space_id = ? AND user_id = ? AND page_id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(pageIDs)), ",")+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		d, err := scanDraft(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[d.PageID] = d
+	}
+	return out, rows.Err()
+}
+
 // DraftConflict means the draft on the server is not the version the caller
 // expected. Current is the draft there is, or nil when there is none.
 type DraftConflict struct{ Current *Draft }

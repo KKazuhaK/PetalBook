@@ -2,7 +2,7 @@
 // Strict about the parts the web app depends on (revs, 409 conflicts, header
 // order, untitled pages, cursors, draft semantics), simple about the rest.
 
-import type { DraftReceipt, HistoryList, Page, PageDraft, PageMeta, PageSummary, PageVersion, TagColor, VersionChange } from '../types.ts'
+import type { CatalogEntry, DraftReceipt, HistoryList, Page, PageDraft, PageMeta, PageSummary, PageVersion, TagColor, VersionChange } from '../types.ts'
 import { BUILTIN_KEYS, RESERVED_KEYS, partialPropsOf, propsOfMeta } from '../../lib/pageTypes.ts'
 import { matches, parseFilter, sortValue, valuesOf } from './propQuery.ts'
 import { createTypeBook } from './typeBook.ts'
@@ -13,6 +13,7 @@ import { checksPage, problemsOf, strayKeys, type Orphan } from './checkBook.ts'
 import { TAG_COLORS, parseTagColor } from '../../lib/tagColors.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
 import { gitBlobId } from './sha1.ts'
+import { createFeedBook, SYNC_PAGES_BYTES } from './feedBook.ts'
 import { excerptAround, linksOf } from './linkBook.ts'
 import { SEED_EMPTY_FOLDERS, seedPages } from './seed.ts'
 
@@ -283,6 +284,35 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
   // Kept apart from the pages, as `.petalbook/tags.yml` is on the server; a
   // colour outlives the last page that uses the tag.
   const tagColors = new Map<string, TagColor>()
+
+  // The change feed of the offline sync (see feedBook.ts).
+  const catalogOf = (p: Stored): CatalogEntry => {
+    const title = stringField(p.meta, 'title')
+    return {
+      id: p.id,
+      path: pathOf(p),
+      folder: p.folder,
+      ...(title ? { title } : {}),
+      label: title ?? Array.from(firstLine(p.body)).slice(0, 30).join(''),
+      untitled: !title,
+      tags: tagsOf(p.meta),
+      type: stringField(p.meta, 'type') ?? '',
+      ...(typeof p.meta.created === 'string' ? { created: p.meta.created } : {}),
+      updated: rfc3339(p.updated),
+      rev: p.rev,
+    }
+  }
+  const feedBook = createFeedBook({
+    entries: () => [...pages.values()].map(catalogOf),
+    tree: () => {
+      const counts = new Map<string, number>()
+      for (const p of pages.values()) counts.set(p.folder, (counts.get(p.folder) ?? 0) + 1)
+      return JSON.stringify([...folders].sort().map((f) => [f, counts.get(f) ?? 0]))
+    },
+    settings: () => gitBlobId(JSON.stringify([book.list(), templateBook.list(), [...tagColors]])).slice(0, 12),
+    random,
+    fail: (status, code, message) => new HttpError(status, code, message),
+  })
 
   // --- seed ---------------------------------------------------------------
   if (seed) {
@@ -1082,7 +1112,42 @@ export function createSpaceStore({ now, random, seed, author = () => 'Local user
     version,
     adopt,
     pristine: () => !touched,
-    reindex: () => ({ pages: pages.size, ms: 1 }),
+    reindex: () => {
+      feedBook.reindex()
+      return { pages: pages.size, ms: 1 }
+    },
+    feedHead: feedBook.head,
+    syncCatalog: feedBook.catalog,
+    syncChanges: feedBook.changes,
+    // Several pages as `GET …/sync/pages` gives them: with the caller's draft, at most 100, in the order asked.
+    syncPages: (userId: string, idsParam: string | null, cap = SYNC_PAGES_BYTES) => {
+      if (!idsParam) throw new HttpError(400, 'invalid', 'ids is required: 1 to 100 page ids, separated by commas')
+      const ids = idsParam.split(',')
+      if (ids.length > 100) throw new HttpError(400, 'invalid', 'at most 100 pages at a time')
+      for (const [i, id] of ids.entries()) {
+        if (!ID_RE.test(id)) throw new HttpError(400, 'invalid', `not a page id: ${id}`)
+        if (ids.indexOf(id) !== i) throw new HttpError(400, 'invalid', `a page id given twice: ${id}`)
+      }
+      const out: Page[] = []
+      const missing: string[] = []
+      const rest: string[] = []
+      let size = 0
+      for (const [i, id] of ids.entries()) {
+        const p = pages.get(id)
+        if (!p) {
+          missing.push(id)
+          continue
+        }
+        const n = p.body.length
+        if (out.length > 0 && size + n > cap) {
+          rest.push(...ids.slice(i))
+          break
+        }
+        size += n
+        out.push(getPage(userId, id))
+      }
+      return { pages: out, ...(missing.length ? { missing } : {}), ...(rest.length ? { rest } : {}) }
+    },
     peek: (id: string) => (pages.has(id) ? toPage(get(id)) : undefined),
     peekDraft: (userId: string, id: string) => {
       const p = pages.get(id)

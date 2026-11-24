@@ -29,6 +29,8 @@ const HomePanel = lazy(() => import('./HomePanel'))
 const TemplatesPanel = lazy(() => import('./TemplatesPanel'))
 // And the API tokens', which have their own words.
 const TokensPanel = lazy(() => import('./TokensPanel'))
+// And the offline copy's, with the words of it.
+const OfflinePanel = lazy(() => import('./OfflinePanel'))
 // Usage has the words of quotas with it.
 const UsagePanel = lazy(() => import('./UsagePanel'))
 
@@ -141,6 +143,13 @@ export default function SettingsRoute() {
         break
       case 'sync':
         body = <SyncPanel space={sp} />
+        break
+      case 'offline':
+        body = (
+          <Suspense fallback={<PageFallback />}>
+            <OfflinePanel space={sp} />
+          </Suspense>
+        )
         break
       case 'import':
         body = <ImportPanel space={sp} />

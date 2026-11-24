@@ -79,6 +79,9 @@ type Space struct {
 	// evicted is set for a space opened by OpenIndexOnly: it has an index and
 	// no files, so only what the index answers is available.
 	evicted bool
+	// settingsNote is the settings stamp the space had when it was last closed
+	// with its files (SettingsStamp of an evicted space).
+	settingsNote string
 
 	mu     sync.Mutex // serialises every change to files and the index
 	closed bool       // set by Close, under mu: later changes are refused before they write
@@ -166,6 +169,23 @@ func BadLanguage(tag string) error {
 type ConflictError struct{ Current *Page }
 
 func (e *ConflictError) Error() string { return "the page was changed by someone else" }
+
+// indexFile is the name of a space's index in its state directory.
+const indexFile = "index.db"
+
+// StoredHead is the change cursor the index of the closed space with this state
+// directory was left at, read without opening the space (see index.StoredHead):
+// "" when there is none to give.
+func StoredHead(stateDir string) (string, error) {
+	return index.StoredHead(filepath.Join(stateDir, indexFile))
+}
+
+// NoteRestored notes in the closed index of the space with this state directory
+// that its clone was made again from the remote (see index.NoteRestored): the
+// change cursors handed out before stay good.
+func NoteRestored(stateDir string) error {
+	return index.NoteRestored(filepath.Join(stateDir, indexFile))
+}
 
 // Open prepares the directory (git init, .petalbook/, space.yml), opens the
 // index, brings it up to date with the files and starts the committer. On a
@@ -361,7 +381,7 @@ func Open(opt Options) (*Space, error) {
 		log.Info("recovered uncommitted changes from the journal", "paths", len(recovered))
 	}
 
-	idx, err := index.Open(filepath.Join(stateDir, "index.db"), root)
+	idx, err := index.Open(filepath.Join(stateDir, indexFile), root)
 	if err != nil {
 		return nil, err
 	}
@@ -480,7 +500,13 @@ func (s *Space) Close() error {
 	if s.cm != nil {
 		err = s.cm.Close()
 	}
-	if cerr := s.idx.Close(); err == nil {
+	// The settings stamp is kept with the index, for the offline sync of the
+	// space when it is evicted and has no files to stamp (SettingsStamp).
+	var notes map[string]string
+	if !s.evicted {
+		notes = map[string]string{"settings": s.SettingsStamp()}
+	}
+	if cerr := s.idx.CloseWith(notes); err == nil {
 		err = cerr
 	}
 	return err
@@ -496,6 +522,11 @@ func (s *Space) Flush() error {
 
 // Evicted reports a space opened by OpenIndexOnly.
 func (s *Space) Evicted() bool { return s.evicted }
+
+// ErrIndexUnusable: the index of an evicted space is missing, of another
+// schema version or otherwise cannot answer as it is (OpenIndexOnly). The space
+// is to be restored, which builds it again from the files.
+var ErrIndexUnusable = errors.New("the index of the evicted space cannot be read as it is")
 
 // OpenIndexOnly opens what an evicted space still has: its index. There are no
 // files (opt.Root does not exist), so lists, the tree, tags, search, links and
@@ -535,15 +566,28 @@ func OpenIndexOnly(opt Options) (*Space, error) {
 	if stateDir, err = filepath.EvalSymlinks(stateDir); err != nil {
 		return nil, err
 	}
-	dbPath := filepath.Join(stateDir, "index.db")
-	if _, err := os.Stat(dbPath); err != nil {
-		return nil, errors.New("the index of the space is missing")
-	}
-	idx, err := index.Open(dbPath, root)
+	// The index must be one that answers as it is: Open would build one of
+	// another version (or a missing one) again, empty, with no files to fill
+	// it. Such an index is left as it is, for the restore.
+	idx, err := index.OpenExisting(filepath.Join(stateDir, "index.db"), root)
 	if err != nil {
+		if errors.Is(err, index.ErrUnusable) {
+			return nil, fmt.Errorf("%w: %v", ErrIndexUnusable, err)
+		}
 		return nil, err
 	}
+	// Once the space's directory is there, the full space owns the index
+	// (a restore moved it into place): this handle does not say, on closing,
+	// that the index was closed cleanly.
+	idx.SetCloseGuard(func() bool {
+		_, err := os.Lstat(root)
+		return errors.Is(err, fs.ErrNotExist)
+	})
 	s := &Space{root: root, stateDir: stateDir, name: opt.Name, idx: idx, log: log, now: time.Now, evicted: true}
+	if s.settingsNote, err = idx.StoredNote("settings"); err != nil {
+		idx.Close()
+		return nil, err
+	}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	return s, nil
 }

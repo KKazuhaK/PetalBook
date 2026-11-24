@@ -7,6 +7,7 @@ import { waitForSaves } from '@/editor/saveController'
 import { noteWrote, wroteKey } from '@/lib/homePrefs'
 import { spaceUrls } from '@/lib/urls'
 import { api, ApiError, spaceApi } from './client'
+import { noteOpened } from '@/lib/offline'
 import { parseTagColor } from '../lib/tagColors.ts'
 import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
 import { propsOfMeta } from '../lib/pageTypes.ts'
@@ -393,7 +394,10 @@ export function usePage(space: string, id: string) {
     queryKey: keys.page(space, id),
     queryFn: async ({ signal }) => {
       await waitForSaves(space, id)
-      return spaceApi(space).getPage(id, signal)
+      const page = await spaceApi(space).getPage(id, signal)
+      // A page that was opened is one of the last opened, for the copy on this device.
+      void noteOpened(space, page).catch(() => undefined)
+      return page
     },
     gcTime: 0,
     staleTime: Infinity,

@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"testing"
@@ -260,6 +261,51 @@ func TestADisabledTenantSignsNobodyIn(t *testing.T) {
 		f.root.do("GET", "/api/spaces/"+f.spaceB+"/pages", nil).want(t, 200, "")
 		// A site administrator cannot disable their own tenant.
 		f.root.do("PATCH", "/api/admin/tenants/"+store.DefaultTenantID, map[string]any{"disabled": true}).want(t, 409, "default_tenant")
+	})
+}
+
+// Offline sync (4.1) in a disabled tenant: its people and their tokens are
+// refused as on every other route, its spaces cannot be read through the sync
+// routes by anyone, and heads does not show them.
+func TestADisabledTenantSyncsNothing(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		tokB := a.bearer(f.secretB, "")
+		q := "?space=" + f.spaceB
+		if h := f.memB.do("GET", "/api/sync/heads"+q, nil).want(t, 200, "").body["heads"].(map[string]any); h[f.spaceB] == nil {
+			t.Fatalf("B's member has no head of B's space: %v", h)
+		}
+		tokB.do("GET", "/api/sync/heads"+q, nil).want(t, 200, "")
+		sb := "/api/spaces/" + f.spaceB
+		routes := []string{"/api/sync/heads" + q, sb + "/sync/catalog", sb + "/changes?since=" + url.QueryEscape(f.cursorB), sb + "/sync/pages?ids=0000000AAA"}
+
+		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"disabled": true}).want(t, 200, "")
+		for _, p := range routes {
+			f.memB.do("GET", p, nil).want(t, 401, "unauthenticated")
+			tokB.do("GET", p, nil).want(t, 401, "token_owner_disabled")
+		}
+		// Nobody else reads its spaces: an administrator of the server is refused
+		// as on the pages, and no head of them is given to anyone.
+		for _, p := range routes[1:] {
+			f.root.do("GET", p, nil).want(t, 403, "space_disabled")
+		}
+		for _, c := range []*client{f.root, f.admA, f.memA} {
+			r := c.do("GET", "/api/sync/heads?space="+f.spaceB+"&space="+f.spaceA, nil).want(t, 200, "")
+			if _, ok := r.body["heads"].(map[string]any)[f.spaceB]; ok || !strings.Contains(r.raw, `"`+f.spaceB+`"`) {
+				t.Fatalf("heads shows a space of a disabled tenant: %s", r.raw)
+			}
+		}
+
+		// Enabled again, the device goes on from the cursor it had.
+		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"disabled": false}).want(t, 200, "")
+		mb := a.newClient("")
+		mb.do("POST", "/api/login", map[string]any{"username": "mem-b", "password": pw}).want(t, 200, "")
+		if h := mb.do("GET", "/api/sync/heads"+q, nil).want(t, 200, "").body["heads"].(map[string]any); h[f.spaceB] == nil {
+			t.Fatalf("no head after the tenant is enabled again: %v", h)
+		}
+		mb.do("GET", routes[2], nil).want(t, 200, "")
+		tokB.do("GET", routes[1], nil).want(t, 200, "")
 	})
 }
 

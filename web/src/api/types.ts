@@ -678,6 +678,9 @@ export interface ReasonCode {
 }
 
 export type ErrorCode =
+  | 'changes_expired'
+  // The page is in the catalogue on this device but its text was not kept (offline).
+  | 'not_offline'
   | 'token_limit'
   | 'quota_exceeded'
   | 'tenants_off'
@@ -716,6 +719,7 @@ export type ErrorCode =
   | 'forbidden'
   | 'no_permission'
   | 'space_disabled'
+  | 'offline_off'
   | 'user_not_found'
   | 'user_disabled'
   | 'last_owner'
@@ -1497,6 +1501,57 @@ export interface AuditItem {
 export interface AuditList {
   items: AuditItem[]
   next: string
+}
+
+// --- offline sync (docs/api.md, "Offline sync") -------------------------------------
+//
+// The light summary of a page that a catalogue and a change list hold.
+export interface CatalogEntry {
+  id: string
+  path: string
+  folder: string
+  title?: string
+  label: string
+  untitled: boolean
+  tags: string[]
+  type: string
+  created?: string
+  updated: string
+  rev: string
+}
+// A page that was removed, in a change list.
+export interface RemovedEntry {
+  id: string
+  deleted: true
+}
+export type ChangeItem = CatalogEntry | RemovedEntry
+export const isRemoved = (e: ChangeItem): e is RemovedEntry => 'deleted' in e && e.deleted === true
+
+export interface CatalogBatch {
+  items: CatalogEntry[]
+  // "" after the last batch.
+  next: string
+  // The change cursor as it was before the walk began; in the first batch only.
+  changes?: string
+  tree: string
+  settings: string
+}
+export interface ChangeList {
+  items: ChangeItem[]
+  next: string
+  more: boolean
+  tree: string
+  settings: string
+}
+export interface SyncPages {
+  pages: Page[]
+  missing?: string[]
+  // What did not fit in the answer, in the order asked.
+  rest?: string[]
+}
+export interface SyncHeads {
+  heads: Record<string, string>
+  missing?: string[]
 }
 
 // --- tenants and layered settings (3.3, docs/api.md "Tenants, registration and mail") ---

@@ -32,6 +32,8 @@ const DEFS: Def[] = [
   { key: 'legal.privacyUrl', kind: 'text', layers: ['site', 'tenant'], def: '', lower: { mode: 'allow' } },
   { key: 'daily.own', kind: 'boolean', layers: ['site', 'tenant', 'space'], def: true, lower: { mode: 'allow' } },
   { key: 'daily.api', kind: 'boolean', layers: ['site', 'tenant', 'space'], def: true, lower: { mode: 'allow' } },
+  // Whether people may keep offline copies on a device (4.1); the sync endpoints answer 403 offline_off when it is off.
+  { key: 'offline.copies', kind: 'boolean', layers: ['site', 'tenant'], def: true, lower: { mode: 'allow' } },
   { key: 'daily.default', kind: 'doc', layers: ['site', 'tenant'], def: null, lower: { mode: 'allow' } },
   // What one person may use: only the number of spaces is refused (0 is none); bytes and pages warn (null is none).
   { key: 'quota.spacesPerPerson', kind: 'limit', layers: ['site', 'tenant', 'person'], def: 20, lower: { mode: 'allow' }, min: 0, max: 10000 },
@@ -226,8 +228,10 @@ export function createTenantBook(o: TenantBookOptions) {
 
   // The settings of one person's layers (GET /api/settings).
   const mine = (tenant: string) =>
-    DEFS.filter((d) => d.layers.includes('space')).map((d) => {
+    DEFS.filter((d) => d.layers.includes('space') || d.key === 'offline.copies').map((d) => {
       const e = effectiveOf(tenant, d)
+      // Not the person's to change: a client only reads whether it may keep offline copies.
+      if (!d.layers.includes('space')) return { key: d.key, effective: e.effective }
       const on = e.effective === true
       const lockedBy = siteLower(d).mode === 'lock' ? 'site' : e.tenant?.lower?.mode === 'lock' ? 'tenant' : undefined
       const source = lockedBy ?? (!on ? (e.tenant && e.tenant.value !== null && e.tenant.inEffect ? 'tenant' : 'site') : undefined)

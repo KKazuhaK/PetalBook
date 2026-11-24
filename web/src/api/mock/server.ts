@@ -1322,6 +1322,10 @@ export function createMockServer(options: MockOptions = {}) {
       return { id, token, role: 'admin', created: rfc3339(rec.created), expires: rfc3339(rec.expires), tenant, siteAdmin: false, ...fill }
     },
   })
+  // The four sync endpoints are refused when offline copies are off for the caller's tenant (offline.copies).
+  const offlineAllowed = () => {
+    if (tenantBook.effective('offline.copies') === false) throw new HttpError(403, 'offline_off', 'offline copies are turned off for this tenant')
+  }
   // What people and the tenant use and may use (docs/api.md, "Quotas"); the numbers are the spaces' last measurements.
   const quotaBook = createQuotaBook({
     now,
@@ -2422,6 +2426,10 @@ export function createMockServer(options: MockOptions = {}) {
       return { status: 204 }
     }
     if (rest === '/reindex' && method === 'POST') return { status: 200, body: st.reindex() }
+    if ((rest === '/sync/catalog' || rest === '/changes' || rest === '/sync/pages') && method === 'GET') offlineAllowed()
+    if (rest === '/sync/catalog' && method === 'GET') return { status: 200, body: st.syncCatalog(url.searchParams) }
+    if (rest === '/changes' && method === 'GET') return { status: 200, body: st.syncChanges(url.searchParams) }
+    if (rest === '/sync/pages' && method === 'GET') return { status: 200, body: st.syncPages(u.id, url.searchParams.get('ids')) }
     throw new HttpError(404, 'not_found', '没有这个接口')
   }
 
@@ -2836,7 +2844,6 @@ export function createMockServer(options: MockOptions = {}) {
       return routeAdmin(method, path, url, body)
     }
     if (path === '/settings' && method === 'GET') {
-      accountsOnly()
       requireUser(ctx)
       return { status: 200, body: { settings: tenantBook.mine(DEFAULT_TENANT) } }
     }
@@ -2993,6 +3000,22 @@ export function createMockServer(options: MockOptions = {}) {
         const plain = addSpace(newId((x) => spaces.has(x)), name, me.id, false, false, inbox)
         return { status: 201, body: spaceInfo(plain, me), headers: { Location: `/api/spaces/${plain.id}` } }
       }
+    }
+    // The change cursor of each of up to 100 spaces, from memory: no space is opened.
+    if (path === '/sync/heads' && method === 'GET') {
+      const me = requireUser(ctx)
+      offlineAllowed()
+      const ids = url.searchParams.getAll('space')
+      if (ids.length < 1 || ids.length > 100) throw new HttpError(400, 'invalid', 'give 1 to 100 space parameters')
+      if (new Set(ids).size !== ids.length) throw new HttpError(400, 'invalid', 'a space given twice')
+      const heads: Record<string, string> = {}
+      const missing: string[] = []
+      for (const id of ids) {
+        const s = spaces.get(id)
+        if (s && !s.disabled && groupBook.has(s, me.id) && spaceInfo(s, me).permissions.includes('read')) heads[id] = s.store.feedHead()
+        else missing.push(id)
+      }
+      return j({ heads, ...(missing.length ? { missing } : {}) })
     }
     const m = /^\/spaces\/([^/]+)(\/.*)?$/.exec(path)
     if (m) {

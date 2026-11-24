@@ -293,6 +293,11 @@ func (s *server) mySettings(c *call) {
 	}
 	out := []item{}
 	for _, d := range s.settings.Defs() {
+		if d.Key == settings.OfflineCopies {
+			// Not the person's to change: the client only reads whether it may keep copies.
+			out = append(out, item{Key: d.Key, Effective: eff[d.Key].Value})
+			continue
+		}
 		if !d.Has(settings.Space) && !d.Has(settings.Person) || strings.HasPrefix(d.Key, "quota.") {
 			continue // the quotas' person layer is an administrator's override, not the person's own
 		}

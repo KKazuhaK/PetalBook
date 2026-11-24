@@ -165,6 +165,13 @@ type Options struct {
 	// and of a restore; an error it returns stops there as a crash would (tests).
 	EvictEvery time.Duration
 	EvictHook  func(step string) error
+	// RestoreWait is how long a request that needs the files of an evicted
+	// space waits for its restore before it answers 503 restoring (default 10
+	// seconds).
+	RestoreWait time.Duration
+	// RestoreDeadline bounds one restore once it has its turn (default 5
+	// minutes): a remote that hangs does not hold one of the two turns longer.
+	RestoreDeadline time.Duration
 	// AssetsHook is called at each step of moving a space's attachments into
 	// its attachment repository; an error ends the move there, without
 	// recording a failure, as a crash would (tests).
@@ -251,6 +258,7 @@ type Manager struct {
 
 	authors authorCache // names for commits, by user id (see AuthorByID)
 
+	heads    map[string]string // space id -> the change cursor it had when it was last closed (guarded by mu; see heads.go)
 	syncs    map[string]string // space id -> state of its remote, for Info.Sync (guarded by mu; nil until first needed)
 	disabled map[string]bool   // ids of the disabled spaces, and of deleted ones, which stay refused (guarded by mu; nil until first needed)
 	adminMu  sync.Mutex        // one administrator action (disable, transfer, delete) at a time
@@ -1145,6 +1153,9 @@ func (m *Manager) Close() error {
 			if err := e.sp.Close(); err != nil {
 				errs = append(errs, err)
 			}
+			m.mu.Lock()
+			m.rememberHead(openID(open, e), e.sp.Head())
+			m.mu.Unlock()
 		}
 	}
 	m.mu.Lock()
@@ -1286,6 +1297,7 @@ func (m *Manager) closeIdle(id string, e *opening) bool {
 		m.log.Warn("closing an idle space", "space", id, "error", err)
 	}
 	m.mu.Lock()
+	m.rememberHead(id, e.sp.Head())
 	if m.open[id] == e {
 		delete(m.open, id)
 	}

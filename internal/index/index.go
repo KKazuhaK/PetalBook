@@ -16,13 +16,14 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	_ "modernc.org/sqlite" // pure-Go driver, keeps the binary static
 )
 
 // schemaVersion changes whenever the tables or the way text is tokenised
 // change; an index with another version is thrown away and rebuilt.
-const schemaVersion = 9
+const schemaVersion = 10
 
 const schema = `
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -46,8 +47,16 @@ CREATE TABLE pages (
 	rev         TEXT NOT NULL,
 	excerpt     TEXT NOT NULL,
 	props       TEXT NOT NULL DEFAULT '',
-	partial     TEXT NOT NULL DEFAULT ''
+	partial     TEXT NOT NULL DEFAULT '',
+	seq         INTEGER NOT NULL DEFAULT 0
 );
+CREATE INDEX pages_seq ON pages(seq);
+-- The pages that were removed, for the change feed (see feed.go): the sequence
+-- number the removal got and when it happened (Unix seconds). Bounded by
+-- goneMax records and goneAge.
+CREATE TABLE gone (id TEXT PRIMARY KEY, seq INTEGER NOT NULL, at INTEGER NOT NULL) WITHOUT ROWID;
+CREATE INDEX gone_seq ON gone(seq);
+CREATE INDEX gone_at ON gone(at);
 CREATE INDEX pages_folder_mtime ON pages(folder, mtime_ns);
 CREATE INDEX pages_mtime ON pages(mtime_ns);
 CREATE INDEX pages_created ON pages(created_key);
@@ -116,6 +125,17 @@ type Index struct {
 	path string
 	root string
 	wmu  sync.Mutex
+	// synced: a sync has been committed since the index was opened (under wmu).
+	synced bool
+	// restored: the space's clone was made again from its remote while the
+	// index was closed cleanly (see NoteRestored), so the first sync's finding
+	// that files differ is the remote's changes, not lost commits.
+	restored bool
+
+	// head is where the change feed is (see feed.go), moved by every commit.
+	head atomic.Pointer[headState]
+	// now is the clock of the removal records (tests set it).
+	now func() time.Time
 
 	// plan holds the bounds that choose how a listing or a count is read.
 	plan planBounds
@@ -161,7 +181,11 @@ type Index struct {
 	copied bool
 	// template: this is the prepared index itself, made with no meta rows.
 	template bool
-	trace    func(query string, args []any)
+	// closeGuard, when set, is asked inside the last write of Close, with the
+	// database's write lock held: false leaves the clean note (and the other
+	// notes) unwritten (see SetCloseGuard).
+	closeGuard func() bool
+	trace      func(query string, args []any)
 	// shared and serial count the times a read had other connections share
 	// its snapshot, and the times it read in turn because none could (tests).
 	shared, serial atomic.Int64
@@ -188,6 +212,66 @@ func Open(dbPath, root string) (*Index, error) {
 	return x, nil
 }
 
+// ErrUnusable: the index at a path is missing, of another schema version, of
+// another space or unreadable. OpenExisting returns it and changes nothing.
+var ErrUnusable = errors.New("the index is missing, of another version or of another space")
+
+// OpenExisting opens the index at dbPath for the space at root only when it
+// is there and is one Open would keep: of this schema version, of this root
+// and readable. It is for reading an index whose files are not there to build
+// it again from (an evicted space). Anything else gives ErrUnusable, and the
+// file is left exactly as it was: it is looked at on a read-only connection
+// first, and never removed or created.
+func OpenExisting(dbPath, root string) (*Index, error) {
+	if strings.ContainsAny(dbPath, "?#") {
+		return nil, fmt.Errorf("index path %q: '?' and '#' are not supported", dbPath)
+	}
+	if err := usable(dbPath, root); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnusable, err)
+	}
+	x, err := open(dbPath, root)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnusable, err)
+	}
+	return x, nil
+}
+
+// usable checks, without writing anything, that the index at dbPath is there,
+// of this schema version and of root.
+func usable(dbPath, root string) error {
+	if _, err := os.Stat(dbPath); err != nil {
+		return err
+	}
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_pragma=busy_timeout(10000)")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return err
+	}
+	if version != schemaVersion {
+		return fmt.Errorf("schema version %d, not %d", version, schemaVersion)
+	}
+	var r string
+	if err := db.QueryRow(`SELECT value FROM meta WHERE key = 'root'`).Scan(&r); err != nil {
+		return err
+	}
+	if r != root {
+		return errors.New("the index is of another directory")
+	}
+	return nil
+}
+
+// SetCloseGuard sets what Close asks before it notes the index closed cleanly.
+// It is asked inside the last write, with the write lock of the database held,
+// so nothing else can open the index and write between the answer and the
+// commit. An index opened for reads beside its owner (an evicted space's) says
+// false once the owner may have it open.
+func (x *Index) SetCloseGuard(f func() bool) { x.closeGuard = f }
+
 func removeDB(p string) {
 	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
 		os.Remove(p + suffix)
@@ -205,7 +289,7 @@ var walCheckpointAt int64 = 16 << 20
 const readConns = 8
 
 func open(dbPath, root string) (*Index, error) {
-	x := &Index{path: dbPath, root: root, walMax: walCheckpointAt, plan: defaultPlan}
+	x := &Index{path: dbPath, root: root, walMax: walCheckpointAt, plan: defaultPlan, now: time.Now}
 	x.template = root == templateRoot
 	x.copied = !x.template && copyTemplate(dbPath)
 	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(10000)&_pragma=cache_size(-65536)" +
@@ -220,6 +304,18 @@ func open(dbPath, root string) (*Index, error) {
 	if err := x.init(); err != nil {
 		x.wdb.Close()
 		return nil, err
+	}
+	// The prepared index stays without meta rows: the feed of a copy is
+	// started by insertMeta and markOpen of the copy.
+	if !x.template {
+		if err := x.markOpen(); err != nil {
+			x.wdb.Close()
+			return nil, err
+		}
+		if err := x.loadHead(); err != nil {
+			x.wdb.Close()
+			return nil, err
+		}
 	}
 	// Reads cannot change the database: no write can end up on their
 	// connections by mistake.
@@ -289,6 +385,56 @@ func (x *Index) inTx(ctx context.Context, f func(*sql.Tx) error) error {
 	return tx.Commit()
 }
 
+// markOpen starts a new epoch of the change feed when the index was not closed
+// since it was last opened, and notes that it is open now. The commits are not
+// synced one by one (synchronous NORMAL): a power cut can take the last of them
+// and leave the epoch, and the sequence numbers they handed out would then be
+// handed out again. The note is synced before any other write, so an index
+// whose last commits can have been lost always says so.
+func (x *Index) markOpen() error {
+	ctx := context.Background()
+	conn, err := x.wdb.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `PRAGMA synchronous = FULL`); err != nil {
+		return err
+	}
+	defer conn.ExecContext(ctx, `PRAGMA synchronous = NORMAL`)
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var clean string
+	if err := tx.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = 'clean'`).Scan(&clean); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	var restored string
+	if err := tx.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = 'restored'`).Scan(&restored); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	x.restored = clean == "1" && restored == "1"
+	if _, err := tx.ExecContext(ctx, `DELETE FROM meta WHERE key = 'restored'`); err != nil {
+		return err
+	}
+	if clean != "1" {
+		w := x.newWriter(ctx, tx)
+		defer w.close()
+		if err := w.newEpoch(); err != nil {
+			return err
+		}
+		if err := w.flushFeed(); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO meta(key, value) VALUES ('clean', '0')`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // createSchema makes the tables and sets the schema version: the step a copy
 // of the prepared index has already had.
 func (x *Index) createSchema(ctx context.Context, tx *sql.Tx) error {
@@ -300,24 +446,119 @@ func (x *Index) createSchema(ctx context.Context, tx *sql.Tx) error {
 	return err
 }
 
-// insertMeta writes the rows that belong to this index alone (its root, and
-// whatever else is added here). The prepared index has none, so nothing of one
-// index can reach another through a copy.
+// insertMeta writes the rows that belong to this index alone: its root and
+// the start of its change feed (a new epoch, sequence and tree at zero, no
+// removals held). The prepared index has none, so nothing of one index can
+// reach another through a copy, and a copy starts its feed exactly as a fresh
+// index does. markOpen then runs for both alike (the clean flag is absent, so
+// it starts a further epoch and notes the index open).
 func (x *Index) insertMeta(ctx context.Context, tx *sql.Tx) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO meta(key, value) VALUES ('root', ?)`, x.root)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meta(key, value) VALUES ('root', ?)`, x.root); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO meta(key, value) VALUES ('epoch', ?), ('seq', '0'), ('tree', '0'), ('gone_n', '0'), ('gone_floor', '0')`, newEpoch())
 	return err
 }
 
-// Close closes the database.
-func (x *Index) Close() error {
+// Close closes the database. The last thing written is the note that it was
+// closed (see markOpen); no write can come after it. The prepared index gets
+// no note: it holds no meta row at all.
+func (x *Index) Close() error { return x.CloseWith(nil) }
+
+// CloseWith is Close that also stores notes in the meta table, in the same
+// last write as the clean note: what the owner of the index wants read while
+// it is closed (see StoredNote). Keys of the index's own are not allowed.
+func (x *Index) CloseWith(notes map[string]string) error {
 	var err error
 	x.closing.Do(func() {
 		close(x.stop)
 		<-x.ckptDone
 		x.aux.Close()
 		x.db.Close()
+		x.wmu.Lock()
+		defer x.wmu.Unlock()
+		// When this fails the next open starts a new epoch, which is safe.
+		if !x.template {
+			x.writeCloseNotes(notes)
+		}
 		err = x.wdb.Close()
 	})
+	return err
+}
+
+// noteKeys are the notes CloseWith may store.
+var noteKeys = map[string]bool{"settings": true}
+
+// writeCloseNotes writes the notes and the clean note in one transaction.
+// When it fails the next open starts a new epoch, which is safe.
+func (x *Index) writeCloseNotes(notes map[string]string) {
+	tx, err := x.wdb.Begin()
+	if err != nil {
+		return
+	}
+	defer tx.Rollback()
+	for k, v := range notes {
+		if !noteKeys[k] {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)`, "note_"+k, v); err != nil {
+			return
+		}
+	}
+	if _, err := tx.Exec(`INSERT OR REPLACE INTO meta(key, value) VALUES ('clean', '1')`); err != nil {
+		return
+	}
+	// The write above holds the write lock: what the guard sees stays so
+	// until the commit.
+	if x.closeGuard != nil && !x.closeGuard() {
+		return
+	}
+	tx.Commit()
+}
+
+// StoredNote is a note CloseWith stored the last time it closed the index
+// ("" when there is none).
+func (x *Index) StoredNote(key string) (string, error) {
+	var v string
+	err := x.db.QueryRow(`SELECT value FROM meta WHERE key = ?`, "note_"+key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return v, err
+}
+
+// NoteRestored notes in the closed index at dbPath that the space's clone is
+// being made again from its remote (milestone 3.1's restore), so that the
+// first sync after the next open takes the files that differ from what the
+// index recorded as changes, keeping the epoch: the cursors of offline
+// clients stay good. It notes nothing unless the index was closed cleanly
+// (its commits are all there), and the note is read and removed by the next
+// open (markOpen). A missing index or one of another version is left alone:
+// its next open builds it again, with a new epoch.
+func NoteRestored(dbPath string) error {
+	if strings.ContainsAny(dbPath, "?#") {
+		return fmt.Errorf("index path %q: '?' and '#' are not supported", dbPath)
+	}
+	if _, err := os.Stat(dbPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=busy_timeout(10000)")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return err
+	}
+	if version != schemaVersion {
+		return nil
+	}
+	_, err = db.Exec(`INSERT OR REPLACE INTO meta(key, value) SELECT 'restored', '1' WHERE EXISTS (SELECT 1 FROM meta WHERE key = 'clean' AND value = '1')`)
 	return err
 }
 
@@ -330,11 +571,22 @@ func (x *Index) unlockWrite() { x.wmu.Unlock() }
 // commit commits a write, with gen odd for as long as the commit may be under
 // way: a read that took its snapshot while gen held one even value cannot have
 // seen a part of what it changed.
-func (x *Index) commit(tx *sql.Tx) error {
+func (x *Index) commit(tx *sql.Tx) error { return x.commitW(tx, nil) }
+
+// commitW is commit for a write that has a writer: when the commit succeeds,
+// the head of the change feed moves to where the writer left it (inside the
+// odd generation, so a read that sees the commit sees the head too).
+func (x *Index) commitW(tx *sql.Tx, w *writer) error {
 	err := func() error {
 		x.gen.Add(1)
 		defer x.gen.Add(1)
-		return tx.Commit()
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		if w != nil {
+			x.publish(w)
+		}
+		return nil
 	}()
 	if err == nil {
 		x.checkWAL()
