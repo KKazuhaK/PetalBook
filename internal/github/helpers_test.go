@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/github"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp/githubapptest"
@@ -104,7 +105,7 @@ func (h *harness) space(id string, r store.Remote) {
 	if err := store.InsertSpace(ctx, h.st.Q(), store.DefaultTenantID, id, id, "", "", h.now); err != nil {
 		h.t.Fatal(err)
 	}
-	r.SpaceID, r.URL, r.Branch, r.CredType, r.State, r.Updated = id, "https://github.com/x/y.git", "main", "github", "ok", h.now
+	r.SpaceID, r.URL, r.Branch, r.CredType, r.State, r.Updated = id, "https://github.com/x/y.git", "main", "connection", "ok", h.now
 	if err := store.PutRemote(ctx, h.st.Q(), r); err != nil {
 		h.t.Fatal(err)
 	}
@@ -127,7 +128,7 @@ func (h *harness) connect(userID, login string) string {
 }
 
 func code(err error) string {
-	var he *github.Error
+	var he *connections.Error
 	if errors.As(err, &he) {
 		return he.Code
 	}
@@ -135,7 +136,7 @@ func code(err error) string {
 }
 
 func status(err error) int {
-	var he *github.Error
+	var he *connections.Error
 	if errors.As(err, &he) {
 		return he.Status
 	}

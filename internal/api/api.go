@@ -21,9 +21,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/KKazuhaK/PetalBook/internal/auth"
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
 	"github.com/KKazuhaK/PetalBook/internal/drafts"
-	"github.com/KKazuhaK/PetalBook/internal/github"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/index"
 	"github.com/KKazuhaK/PetalBook/internal/oauth"
@@ -93,9 +93,9 @@ type Options struct {
 	// DailyFetch gets the daily text from the external interfaces an
 	// administrator configured; the one that refuses private addresses when nil.
 	DailyFetch *dailyfetch.Fetcher
-	// GitHub is the server's use of its GitHub App (accounts mode); nil when
-	// there is none, and the GitHub endpoints then answer github_not_configured.
-	GitHub *github.Service
+	// Connections are the server's providers of repositories (accounts mode); the
+	// provider "git" is added when it is missing.
+	Connections *connections.Registry
 	// MaxSpaces is --max-spaces when the flag was given: then it is the site's
 	// quota.spacesPerPerson, read only. Nil leaves the stored setting (20).
 	MaxSpaces *int
@@ -146,6 +146,10 @@ func New(opt Options) http.Handler {
 	}
 	if opt.DailyFetch == nil {
 		opt.DailyFetch = dailyfetch.New(NewDailyBacking(opt.Store))
+	}
+	if _, ok := opt.Connections.Get(connections.GitID); !ok {
+		ps := opt.Connections.List()
+		opt.Connections = connections.NewRegistry(append(ps, connections.NewGit())...)
 	}
 	s := &server{opt: opt, log: opt.Logger, settings: settings.New(opt.Store), auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, oauth: opt.OAuth, single: opt.Auth == nil, started: time.Now(),
 		origins: map[string]bool{}, originHosts: map[string]bool{}, importing: make(chan struct{}, 1)}
@@ -288,8 +292,8 @@ func (s *server) wrap(next http.Handler, bodyType func(*http.Request) string) ht
 		// The endpoints of the authorization server are called, or the browser is
 		// sent to them, by other sites by design (see oauthCrossSite), and so are
 		// the sign-in endpoints an identity provider sends the browser to, and
-		// GitHub's return from connecting an account for repos (githubCallbackPath).
-		if !fromIdentityProvider(r) && !githubAuthorizationReturn(r) && !oauthCrossSite(r) {
+		// A platform's return from connecting an account for repos (connectionReturn).
+		if !fromIdentityProvider(r) && !connectionReturn(r) && !oauthCrossSite(r) {
 			if why := s.crossSite(r); why != "" {
 				if !oauthRefuse(sw, r, http.StatusForbidden, "invalid_request", why) {
 					writeError(sw, http.StatusForbidden, "forbidden", why)
@@ -330,14 +334,6 @@ func (s *server) wrap(next http.Handler, bodyType func(*http.Request) string) ht
 }
 
 const oidcCallbackPath = "/api/auth/oidc/callback"
-
-// githubAuthorizationReturn is true for GitHub's redirect back after a person
-// connects their GitHub account for repos. It is not a sign-in (that is
-// /api/auth/github/{slug}/callback, in fromIdentityProvider) and changes
-// nothing unless its state matches an attempt this browser started.
-func githubAuthorizationReturn(r *http.Request) bool {
-	return r.Method == http.MethodGet && (r.URL.Path == githubCallbackPath || r.URL.Path == githubManifestPath)
-}
 
 // fromIdentityProvider is true for the requests an identity provider's site
 // sends the browser to, or the provider itself makes: the redirects of
@@ -466,10 +462,14 @@ type errorBody struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
 	Current any    `json:"current,omitempty"`
-	// Repo is the empty repository a failed space creation left on GitHub.
-	Repo *githubRepoResp `json:"repo,omitempty"`
-	// InstallURL is where the App is installed (github_app_not_installed).
+	// Provider is the id of the provider an error of a connection is about.
+	Provider string `json:"provider,omitempty"`
+	// Repo is the empty repository a failed space creation left on the platform.
+	Repo *repoRefResp `json:"repo,omitempty"`
+	// InstallURL is where the App is installed (app_not_installed).
 	InstallURL string `json:"installUrl,omitempty"`
+	// Permission is the first permission an App lacks (app_missing_permission).
+	Permission string `json:"permission,omitempty"`
 	// What some refusals are about (docs/api.md, "Daily text refusals"): a
 	// request header, a field of an interface.
 	Header string `json:"header,omitempty"`
@@ -580,10 +580,10 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		qe    *spaces.QuotaError
 	)
 	var coded *codedError
-	var ghe *github.Error
+	var ghe *connections.Error
 	switch {
 	case errors.As(err, &ghe):
-		s.failGitHub(w, ghe)
+		s.failConnection(w, ghe)
 	case errors.As(err, &coded):
 		writeCoded(w, coded)
 	case errors.As(err, &te):
@@ -690,27 +690,30 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	}
 }
 
-type githubRepoResp struct {
+type repoRefResp struct {
 	ID       int64  `json:"id"`
 	FullName string `json:"fullName"`
 	HTMLURL  string `json:"htmlUrl"`
 }
 
-func (s *server) failGitHub(w http.ResponseWriter, e *github.Error) {
-	body := errorBody{Error: e.Code, Message: e.Msg}
+func (s *server) failConnection(w http.ResponseWriter, e *connections.Error) {
+	body := errorBody{Error: e.Code, Message: e.Msg, Provider: e.Provider}
 	if e.Repo != nil {
-		body.Repo = &githubRepoResp{e.Repo.ID, e.Repo.FullName, e.Repo.HTMLURL}
+		body.Repo = &repoRefResp{e.Repo.ID, e.Repo.FullName, e.Repo.HTMLURL}
 	}
 	if len(e.Missing) > 0 {
 		body.Missing = e.Missing
+		if e.Code == connections.CodeMissingPermission {
+			body.Permission = e.Missing[0]
+		}
 	}
 	body.InstallURL = e.InstallURL
-	if e.Code == github.CodeRateLimited {
+	if e.Code == connections.CodeRateLimited {
 		secs := int((e.RetryAfter + time.Second - 1) / time.Second)
 		w.Header().Set("Retry-After", strconv.Itoa(max(secs, 1)))
 	}
-	if e.Status >= 500 && e.Code == github.CodeInternal {
-		s.log.Error("a space made with a GitHub repository could not be recorded", "error", e.Err)
+	if e.Status >= 500 && e.Code == connections.CodeInternal {
+		s.log.Error("a space made with a repository on a provider could not be recorded", "error", e.Err)
 	}
 	writeJSON(w, e.Status, body)
 }

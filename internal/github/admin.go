@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
@@ -113,7 +114,7 @@ type SaveRequest struct {
 	WebhookSecret string
 }
 
-func appInUse(spaces, auths int) *Error {
+func appInUse(spaces, auths int) *connections.Error {
 	var parts []string
 	if spaces > 0 {
 		parts = append(parts, strconv.Itoa(spaces)+" space(s) sync through the App")
@@ -121,7 +122,7 @@ func appInUse(spaces, auths int) *Error {
 	if auths > 0 {
 		parts = append(parts, strconv.Itoa(auths)+" user(s) are connected")
 	}
-	return errf(http.StatusConflict, CodeAppInUse, "another GitHub App cannot be set while %s: switch or disconnect those first", strings.Join(parts, " and "))
+	return errf(http.StatusConflict, CodeInUse, "another GitHub App cannot be set while %s: switch or disconnect those first", strings.Join(parts, " and "))
 }
 
 // Save checks the App with GitHub and stores it. It saves nothing when a check
@@ -192,7 +193,7 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (*AppView, error) {
 		}
 		if spaces > 0 || auths > 0 {
 			if !appChanged {
-				return nil, errf(http.StatusConflict, CodeAppInUse, "the client id cannot be changed or removed while %d user(s) are connected: they disconnect first", auths)
+				return nil, errf(http.StatusConflict, CodeInUse, "the client id cannot be changed or removed while %d user(s) are connected: they disconnect first", auths)
 			}
 			return nil, appInUse(spaces, auths)
 		}
@@ -261,7 +262,7 @@ func limited(err error) bool {
 // unreachable answers for a check that could not be made.
 func (s *Service) unreachable(err error) error {
 	if e := s.wrap(err); e != nil {
-		var he *Error
+		var he *connections.Error
 		if errors.As(e, &he) {
 			return he
 		}
@@ -285,7 +286,7 @@ func (s *Service) Delete(ctx context.Context) error {
 		return err
 	}
 	if n > 0 {
-		return errf(http.StatusConflict, CodeAppInUse, "%d space(s) sync through the App: switch or disconnect those first", n)
+		return errf(http.StatusConflict, CodeInUse, "%d space(s) sync through the App: switch or disconnect those first", n)
 	}
 	auths, err := store.ListGitHubAuthorizations(ctx, q)
 	if err != nil {

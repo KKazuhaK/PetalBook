@@ -1,8 +1,7 @@
 package spaces
 
-// Spaces that follow a repository on GitHub through the server's GitHub App:
-// connecting an existing space, and making a space together with a new
-// repository.
+// Spaces that follow a repository on a provider (GitHub's App, ...): connecting
+// an existing space, and making a space together with a new repository.
 
 import (
 	"context"
@@ -13,66 +12,77 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/KKazuhaK/PetalBook/internal/github"
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/perm"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
-func (m *Manager) needGitHub() (*github.Service, error) {
-	if m.opt.GitHub == nil {
-		return nil, &github.Error{Code: github.CodeNotConfigured, Status: http.StatusConflict, Msg: "this server has no GitHub App set up"}
+// provider is the provider with the id, or the "not configured" answer.
+func (m *Manager) provider(id string) (connections.Provider, error) {
+	p, ok := m.opt.Connections.Get(id)
+	if ok && id != connections.GitID {
+		return p, nil
 	}
-	return m.opt.GitHub, nil
+	name := id
+	if ok {
+		name = p.Descriptor().Name
+	}
+	return nil, connections.Errorf(id, http.StatusConflict, connections.CodeNotConfigured, "this server has no %s connection set up", name)
 }
 
-// githubHostAllowed holds the server's GitHub to --remote-host, as every other
-// remote is: a github credential is no way around the administrator's list.
-// Only the host is checked here (the address itself is GitHub's own).
-func (m *Manager) githubHostAllowed(gh *github.Service) error {
-	_, err := gitstore.ParseURL("https://"+gh.Client().Host()+"/owner/name.git", gitstore.Policy{Hosts: m.opt.RemotePolicy.Hosts})
+// hostAllowed holds a provider's host to --remote-host, as every other remote
+// is: a connection is no way around the administrator's list. Only the host is
+// checked here (the address itself is the provider's own).
+func (m *Manager) hostAllowed(p connections.Provider) error {
+	_, err := gitstore.ParseURL("https://"+p.Descriptor().Host+"/owner/name.git", gitstore.Policy{Hosts: m.opt.RemotePolicy.Hosts})
 	var he *gitstore.HostError
 	if errors.As(err, &he) {
 		return he
 	}
 	if err != nil {
-		return fmt.Errorf("%w: the GitHub address of this server is not usable", ErrInvalid)
+		return fmt.Errorf("%w: the address of this provider is not usable", ErrInvalid)
 	}
 	return nil
 }
 
-// resolveGitHub reads the address of a space's repository and decides how it
-// syncs: the address is stored in https form on the server's GitHub.
-func (m *Manager) resolveGitHub(ctx context.Context, tenantID string, req ConnectRequest) (gitstore.Remote, *github.Cred, error) {
-	gh, err := m.needGitHub()
+// resolveConnection reads the address of a space's repository and decides how
+// it syncs: the address is stored in https form on the provider's host.
+func (m *Manager) resolveConnection(ctx context.Context, tenantID string, req ConnectRequest) (gitstore.Remote, *connections.Cred, error) {
+	if req.Provider == "" {
+		return gitstore.Remote{}, nil, fmt.Errorf("%w: credential.provider is required for a connection", ErrInvalid)
+	}
+	p, err := m.provider(req.Provider)
 	if err != nil {
 		return gitstore.Remote{}, nil, err
 	}
-	owner, name, ok := gh.ParseRepoURL(req.URL)
+	d := p.Descriptor()
+	owner, name, ok := p.ParseRepoURL(req.URL)
 	if !ok {
-		return gitstore.Remote{}, nil, fmt.Errorf("%w: a github credential goes with a repository on GitHub (https://github.com/owner/name.git or git@github.com:owner/name.git)", ErrInvalid)
+		return gitstore.Remote{}, nil, fmt.Errorf("%w: a connection goes with a repository on %s (https://%s/owner/name.git or git@%s:owner/name.git)", ErrInvalid, d.Name, d.Host, d.Host)
 	}
-	if req.Via != github.ViaApp && req.Via != github.ViaUser {
+	if req.Via != connections.ViaApp && req.Via != connections.ViaUser {
 		return gitstore.Remote{}, nil, fmt.Errorf("%w: credential.via must be app or user", ErrInvalid)
 	}
-	if err := m.githubHostAllowed(gh); err != nil {
+	if err := m.hostAllowed(p); err != nil {
 		return gitstore.Remote{}, nil, err
 	}
-	cred, repo, err := gh.ResolveExistingIn(ctx, tenantID, req.UserID, owner, name, req.Via)
+	cred, repo, err := p.ResolveExistingIn(ctx, tenantID, req.UserID, owner, name, req.Via)
 	if err != nil {
 		return gitstore.Remote{}, nil, err
 	}
-	u := gh.Client().RepoURL(repo.Owner, repo.Name)
+	u := p.RepoURL(repo.Owner, repo.Name)
 	scheme := "https"
 	if strings.HasPrefix(u, "http://") {
 		scheme = "http"
 	}
-	return gitstore.Remote{URL: u, Scheme: scheme, Host: strings.ToLower(gh.Client().Host())}, cred, nil
+	return gitstore.Remote{URL: u, Scheme: scheme, Host: strings.ToLower(d.Host)}, cred, nil
 }
 
-// GitHubCreate is a new space's repository on GitHub.
-type GitHubCreate struct {
+// SyncCreate is a new space's repository on a provider.
+type SyncCreate struct {
+	Provider    string
 	Owner, Name string
 	Private     bool
 	Description string
@@ -81,16 +91,16 @@ type GitHubCreate struct {
 	Create bool
 }
 
-// CreateWithGitHub makes a space together with its repository on GitHub, in the
-// order of docs/api.md ("Creating a space with a GitHub repository"): nothing
-// is visible, and nothing stays on the server, unless every step works. An
-// empty repository left on GitHub by a failure after it was made is named in
+// CreateWithSync makes a space together with its repository on a provider, in
+// the order of docs/api.md ("Creating a space with a repository"): nothing is
+// visible, and nothing stays on the server, unless every step works. An empty
+// repository left on the platform by a failure after it was made is named in
 // the error, so the same request with Create false can use it.
-func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox string, g GitHubCreate) (Info, error) {
+func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string, g SyncCreate) (Info, error) {
 	if m.single != nil {
 		return Info{}, ErrNotFound
 	}
-	gh, err := m.needGitHub()
+	gh, err := m.provider(g.Provider)
 	if err != nil {
 		return Info{}, err
 	}
@@ -103,15 +113,15 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 	if name, err = ValidName(name); err != nil {
 		return Info{}, err
 	}
-	if err := m.githubHostAllowed(gh); err != nil {
+	if err := m.hostAllowed(gh); err != nil {
 		return Info{}, err
 	}
-	if !github.ValidRepoName(g.Name) {
-		return Info{}, fmt.Errorf("%w: github.name is 1 to 100 characters of letters, digits, '.', '_' and '-', not '.' or '..' and not ending in .git", ErrInvalid)
+	if !gh.ValidRepoName(g.Name) {
+		return Info{}, fmt.Errorf("%w: storage.sync.name is 1 to 100 characters of letters, digits, '.', '_' and '-', not '.' or '..' and not ending in .git", ErrInvalid)
 	}
 	if utf8.RuneCountInString(g.Description) > 350 || !utf8.ValidString(g.Description) ||
 		strings.IndexFunc(g.Description, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
-		return Info{}, fmt.Errorf("%w: github.description is at most 350 characters, without control characters", ErrInvalid)
+		return Info{}, fmt.Errorf("%w: storage.sync.description is at most 350 characters, without control characters", ErrInvalid)
 	}
 	// The limit counts the spaces being made as well as the ones that exist.
 	// The space is the creator's tenant's, as Create's is.
@@ -154,9 +164,9 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
 	defer cancel()
 
-	var plan *github.Plan
-	var cred *github.Cred
-	var repo *github.Repo
+	var plan *connections.Plan
+	var cred *connections.Cred
+	var repo *connections.Repo
 	if g.Create {
 		if plan, err = gh.PlanCreate(ctx, userID, g.Owner); err != nil {
 			return Info{}, err
@@ -180,7 +190,7 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 
 	created := false
 	if g.Create {
-		if repo, err = gh.CreateRepo(ctx, plan, github.NewRepoSpec{Name: g.Name, Private: g.Private, Description: g.Description}); err != nil {
+		if repo, err = gh.CreateRepo(ctx, plan, connections.NewRepoSpec{Name: g.Name, Private: g.Private, Description: g.Description}); err != nil {
 			return Info{}, err
 		}
 		created = true
@@ -196,16 +206,16 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 		if rerr := gh.RecordLeftover(ctx, userID, repo, name); rerr != nil {
 			m.log.Warn("could not remember a repository left empty by a failed space", "repo", repo.FullName, "error", rerr)
 		}
-		var he *github.Error
-		if errors.As(err, &he) && (he.Code == github.CodeRepoNotInInstall || he.Code == github.CodeMissingPermission) {
+		var he *connections.Error
+		if errors.As(err, &he) && (he.Code == connections.CodeRepoNotInInstall || he.Code == connections.CodeMissingPermission) {
 			he.Repo = repo.Ref()
 			return he
 		}
-		return &github.Error{Code: code, Status: status, Msg: err.Error(), Repo: repo.Ref(), Err: err}
+		return &connections.Error{Provider: g.Provider, Code: code, Status: status, Msg: err.Error(), Repo: repo.Ref(), Err: err}
 	}
 	if created {
 		if cred, err = gh.ChooseCredential(ctx, plan, repo); err != nil {
-			return Info{}, failed(github.CodePushFailed, http.StatusBadGateway, err)
+			return Info{}, failed(connections.CodePushFailed, http.StatusBadGateway, err)
 		}
 	}
 	id := stg.ID()
@@ -214,10 +224,10 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 	m.mu.Unlock()
 	endStaging := func() { m.mu.Lock(); delete(m.staging, id); m.mu.Unlock() }
 	defer endStaging()
-	row := store.Remote{SpaceID: id, URL: gh.Client().RepoURL(repo.Owner, repo.Name), Branch: "main", CredType: CredGitHub, State: store.RemoteOK,
+	row := store.Remote{SpaceID: id, URL: gh.RepoURL(repo.Owner, repo.Name), Branch: "main", CredType: CredConnection, Provider: g.Provider, State: store.RemoteOK,
 		GHVia: cred.Via, GHInstallationID: cred.InstallationID, GHRepoID: cred.RepoID, GHUserID: cred.UserID, Updated: m.opt.Now()}
 	if err := m.connectRetry(ctx, stg.sp, *m.remoteOptions(id, &row)); err != nil {
-		return Info{}, failed(github.CodePushFailed, http.StatusBadGateway, err)
+		return Info{}, failed(connections.CodePushFailed, http.StatusBadGateway, err)
 	}
 	m.hook("connected")
 	st, _ := stg.sp.Remote()
@@ -236,8 +246,8 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 	})
 	if err != nil {
 		m.createMu.Unlock()
-		m.log.Error("could not record a space made with a GitHub repository", "error", err)
-		return Info{}, failed(github.CodeInternal, http.StatusInternalServerError, errors.New("the space could not be recorded; nothing was kept"))
+		m.log.Error("could not record a space made with a repository on a provider", "error", err)
+		return Info{}, failed(connections.CodeInternal, http.StatusInternalServerError, errors.New("the space could not be recorded; nothing was kept"))
 	}
 	m.createMu.Unlock()
 	endStaging() // the space has its member now: the checks apply from here on
@@ -250,8 +260,8 @@ func (m *Manager) CreateWithGitHub(ctx context.Context, userID, name, inbox stri
 }
 
 func (m *Manager) hook(step string) {
-	if m.opt.GitHubHook != nil {
-		m.opt.GitHubHook(step)
+	if m.opt.SyncHook != nil {
+		m.opt.SyncHook(step)
 	}
 }
 
@@ -311,11 +321,11 @@ func retryable(err error) bool {
 	return false
 }
 
-// GitHubFixed tells the manager that what spaces with a GitHub credential were
-// waiting on is fixed (userID connected again; "" the App was saved): the open
-// spaces that were in one of those states are fetched now, without waiting for
-// their turn.
-func (m *Manager) GitHubFixed(userID string) {
+// ConnectionFixed tells the manager that what spaces with a connection
+// credential were waiting on is fixed (userID connected again; "" the
+// provider was saved): the open spaces that were in one of those states are
+// fetched now, without waiting for their turn.
+func (m *Manager) ConnectionFixed(userID string) {
 	if m.single != nil {
 		return
 	}
@@ -334,7 +344,7 @@ func (m *Manager) GitHubFixed(userID string) {
 		if e.closing != nil || e.sp == nil {
 			continue
 		}
-		if st, ok := e.sp.Remote(); ok && st.State == space.RemoteError && space.IsGitHubKind(st.Kind) {
+		if st, ok := e.sp.Remote(); ok && st.State == space.RemoteError && space.IsConnectionKind(st.Kind) {
 			e.refs++
 			due = append(due, e)
 		}
@@ -347,7 +357,7 @@ func (m *Manager) GitHubFixed(userID string) {
 			defer cancel()
 			var ue *space.UnavailableError
 			if err := e.sp.Pull(ctx, true); err != nil && !errors.As(err, &ue) && !errors.Is(err, space.ErrClosed) {
-				m.log.Warn("fetching a space again after its GitHub credential was fixed failed", "error", err)
+				m.log.Warn("fetching a space again after its connection was fixed failed", "error", err)
 			}
 		}()
 	}

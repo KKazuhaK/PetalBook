@@ -180,7 +180,7 @@ func TestGitHubInstallationsAndSpaces(t *testing.T) {
 			}
 		}
 		put := func(id string, r store.Remote) {
-			r.SpaceID, r.URL, r.Branch, r.State, r.Updated, r.CredType = id, "https://github.com/o/"+id+".git", "main", "ok", now, "github"
+			r.SpaceID, r.URL, r.Branch, r.State, r.Updated, r.CredType = id, "https://github.com/o/"+id+".git", "main", "ok", now, "connection"
 			if err := store.PutRemote(ctx, q, r); err != nil {
 				t.Fatal(err)
 			}
@@ -379,7 +379,7 @@ func TestGitHubLeftovers(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		r := store.Remote{SpaceID: "S1", URL: "https://github.com/o/r1.git", Branch: "main", State: "ok", Updated: now, CredType: "github", GHVia: "user", GHUserID: "A", GHRepoID: 1}
+		r := store.Remote{SpaceID: "S1", URL: "https://github.com/o/r1.git", Branch: "main", State: "ok", Updated: now, CredType: "connection", GHVia: "user", GHUserID: "A", GHRepoID: 1}
 		if err := store.PutRemote(ctx, q, r); err != nil {
 			t.Fatal(err)
 		}

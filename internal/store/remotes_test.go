@@ -89,7 +89,7 @@ func TestPutRemoteIsAtomic(t *testing.T) {
 		if _, err := st.Q().Exec(ctx, `DROP TABLE github_leftovers`); err != nil {
 			t.Fatal(err)
 		}
-		r := store.Remote{SpaceID: "S1", URL: "https://github.com/o/r.git", Branch: "main", CredType: "github", State: store.RemoteOK, Updated: now, GHVia: "app", GHInstallationID: 1, GHRepoID: 7}
+		r := store.Remote{SpaceID: "S1", URL: "https://github.com/o/r.git", Branch: "main", CredType: "connection", State: store.RemoteOK, Updated: now, GHVia: "app", GHInstallationID: 1, GHRepoID: 7}
 		if err := store.PutRemote(ctx, st.Q(), r); err == nil {
 			t.Fatal("the reminders could not be cleared, and it did not fail")
 		}

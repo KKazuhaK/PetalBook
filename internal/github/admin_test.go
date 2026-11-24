@@ -16,7 +16,7 @@ import (
 func TestSaveChecksWithGitHubAndStoresSealed(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		h := newHarness(t, st)
-		if v, err := h.svc.View(ctx); err != nil || v.Configured || v.CallbackURL != publicURL+"/api/github/authorization/callback" {
+		if v, err := h.svc.View(ctx); err != nil || v.Configured || v.CallbackURL != publicURL+"/api/connections/github/authorization/callback" {
 			t.Fatalf("%+v %v", v, err)
 		}
 		v := h.configure()
@@ -54,11 +54,11 @@ func TestSaveRefusesWhatGitHubRefusesAndSavesNothing(t *testing.T) {
 		}{
 			{"nothing", github.SaveRequest{}, "invalid", 400},
 			{"no key", github.SaveRequest{AppID: "424242"}, "invalid", 400},
-			{"not a key", github.SaveRequest{AppID: "424242", PrivateKey: "hello"}, "github_key_invalid", 400},
-			{"another key", github.SaveRequest{AppID: "424242", PrivateKey: githubapptest.KeyPEM(githubapptest.NewKey(t))}, "github_app_rejected", 400},
-			{"another app id", github.SaveRequest{AppID: "7", PrivateKey: h.f.KeyPEM()}, "github_app_rejected", 400},
-			{"another client id", github.SaveRequest{AppID: "424242", PrivateKey: h.f.KeyPEM(), ClientID: &bad, ClientSecret: "x"}, "github_client_rejected", 400},
-			{"wrong secret", github.SaveRequest{AppID: "424242", PrivateKey: h.f.KeyPEM(), ClientID: &id, ClientSecret: "wrong"}, "github_client_rejected", 400},
+			{"not a key", github.SaveRequest{AppID: "424242", PrivateKey: "hello"}, "key_invalid", 400},
+			{"another key", github.SaveRequest{AppID: "424242", PrivateKey: githubapptest.KeyPEM(githubapptest.NewKey(t))}, "app_rejected", 400},
+			{"another app id", github.SaveRequest{AppID: "7", PrivateKey: h.f.KeyPEM()}, "app_rejected", 400},
+			{"another client id", github.SaveRequest{AppID: "424242", PrivateKey: h.f.KeyPEM(), ClientID: &bad, ClientSecret: "x"}, "client_rejected", 400},
+			{"wrong secret", github.SaveRequest{AppID: "424242", PrivateKey: h.f.KeyPEM(), ClientID: &id, ClientSecret: "wrong"}, "client_rejected", 400},
 			{"id without secret", github.SaveRequest{AppID: "424242", PrivateKey: h.f.KeyPEM(), ClientID: &id}, "invalid", 400},
 		}
 		for _, c := range cases {
@@ -108,15 +108,15 @@ func TestAnotherAppIsRefusedWhileInUse(t *testing.T) {
 		}
 		empty := ""
 		_, err := h.svc.Save(ctx, github.SaveRequest{ClientID: &empty})
-		if code(err) != "github_app_in_use" || status(err) != http.StatusConflict {
+		if code(err) != "provider_in_use" || status(err) != http.StatusConflict {
 			t.Fatalf("removing the client id while a user is connected: %v", err)
 		}
-		if _, err := h.svc.Save(ctx, github.SaveRequest{AppID: "999", PrivateKey: githubapptestKeyPEM(h)}); code(err) != "github_app_in_use" {
+		if _, err := h.svc.Save(ctx, github.SaveRequest{AppID: "999", PrivateKey: githubapptestKeyPEM(h)}); code(err) != "provider_in_use" {
 			t.Fatalf("another App id: %v", err)
 		}
 		// Deleting is refused while a space syncs through the App; connections go with it otherwise.
 		h.space("S1", store.Remote{GHVia: "user", GHUserID: "U1", GHRepoID: 5})
-		if err := h.svc.Delete(ctx); code(err) != "github_app_in_use" {
+		if err := h.svc.Delete(ctx); code(err) != "provider_in_use" {
 			t.Fatalf("%v", err)
 		}
 		if err := store.DeleteRemote(ctx, st.Q(), "S1"); err != nil {
@@ -143,7 +143,7 @@ func githubapptestKeyPEM(h *harness) string { return h.f.KeyPEM() }
 func TestInstallationsListAndSharing(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		h := newHarness(t, st)
-		if _, _, err := h.svc.Installations(ctx, ""); code(err) != "github_not_configured" || status(err) != 409 {
+		if _, _, err := h.svc.Installations(ctx, ""); code(err) != "provider_not_configured" || status(err) != 409 {
 			t.Fatalf("%v", err)
 		}
 		h.configure()
@@ -234,7 +234,7 @@ func TestRemovingTheClientIDCountsOnlyConnectedUsers(t *testing.T) {
 			t.Fatalf("%+v", v)
 		}
 		// Another App is still refused while the space syncs through this one.
-		if _, err := h.svc.Save(ctx, github.SaveRequest{AppID: "999", PrivateKey: githubapptestKeyPEM(h)}); code(err) != "github_app_in_use" {
+		if _, err := h.svc.Save(ctx, github.SaveRequest{AppID: "999", PrivateKey: githubapptestKeyPEM(h)}); code(err) != "provider_in_use" {
 			t.Fatalf("another App id: %v", err)
 		}
 	})
@@ -287,7 +287,7 @@ func TestRecheckReadsThePermissionsAgain(t *testing.T) {
 		}
 		// A key GitHub no longer accepts is the App's problem, said so.
 		h.f.Key = githubapptest.NewKey(t)
-		if _, err = h.svc.Recheck(ctx); code(err) != "github_not_configured" || status(err) != 409 {
+		if _, err = h.svc.Recheck(ctx); code(err) != "provider_not_configured" || status(err) != 409 {
 			t.Fatalf("%v", err)
 		}
 		h.mustNotLeak()
@@ -297,7 +297,7 @@ func TestRecheckReadsThePermissionsAgain(t *testing.T) {
 func TestRecheckWithoutAnApp(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		h := newHarness(t, st)
-		if _, err := h.svc.Recheck(ctx); code(err) != "github_not_configured" {
+		if _, err := h.svc.Recheck(ctx); code(err) != "provider_not_configured" {
 			t.Fatalf("%v", err)
 		}
 	})
@@ -316,7 +316,7 @@ func TestAPermissionRefusalRechecksTheAppByItself(t *testing.T) {
 			t.Fatalf("%+v", v)
 		}
 		before := appReads(w.harness)
-		if _, err := w.svc.GitToken(ctx, rem); err == nil {
+		if _, err := w.svc.GitToken(ctx, rem, false); err == nil {
 			t.Fatal("a token was made without the permission")
 		}
 		v, _ := w.svc.View(ctx)
@@ -325,7 +325,7 @@ func TestAPermissionRefusalRechecksTheAppByItself(t *testing.T) {
 		}
 		// A storm of refusals costs one read a minute.
 		for i := 0; i < 5; i++ {
-			w.svc.GitToken(ctx, rem)
+			w.svc.GitToken(ctx, rem, false)
 		}
 		if n := appReads(w.harness) - before; n != 1 {
 			t.Fatalf("%d reads of the App for six refusals", n)
@@ -335,7 +335,7 @@ func TestAPermissionRefusalRechecksTheAppByItself(t *testing.T) {
 		w.f.SetInstall(w.kazuhahub, func(i *githubapptest.Install) {
 			i.Perms = map[string]string{"administration": "write", "metadata": "read"}
 		})
-		w.svc.GitToken(ctx, rem)
+		w.svc.GitToken(ctx, rem, false)
 		if v, _ = w.svc.View(ctx); len(v.Missing) != 0 || appReads(w.harness) != before+2 || len(v.Gaps) != 1 {
 			t.Fatalf("after a minute: %+v", v)
 		}

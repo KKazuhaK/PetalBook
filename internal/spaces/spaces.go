@@ -15,7 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/KKazuhaK/PetalBook/internal/github"
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/perm"
@@ -159,22 +159,21 @@ type Options struct {
 	// RemoteRunner replaces the git runner of remote spaces (tests).
 	RemoteRunner gitstore.Runner
 
-	// GitHub is the server's use of its GitHub App; nil when this server has
-	// none to offer (spaces with a github credential then show
-	// github_not_configured).
-	GitHub *github.Service
-	// GitHubRetry is how often a space whose GitHub credential does not work is
-	// tried again (default 10 minutes); a fix triggers it at once.
-	GitHubRetry time.Duration
+	// Connections are the server's providers; nil when it has none to offer
+	// (spaces with a connection credential then show provider_not_configured).
+	Connections *connections.Registry
+	// ConnectionRetry is how often a space whose connection credential does not
+	// work is tried again (default 10 minutes); a fix triggers it at once.
+	ConnectionRetry time.Duration
 	// PushRetry are the waits between the tries of the first push of a space
 	// made with a new repository (default 1 s, 3 s, 7 s: four tries in 15 s).
 	PushRetry []time.Duration
 	// PushDeadline bounds the first push of such a space, tries, waits and
 	// each push itself together (default 15 s).
 	PushDeadline time.Duration
-	// GitHubHook, if set, is told the steps of making a space with a GitHub
+	// SyncHook, if set, is told the steps of making a space with a provider's
 	// repository ("repo-created", "connected"), before the next one (tests).
-	GitHubHook func(step string)
+	SyncHook func(step string)
 }
 
 // Defaults for closing spaces that are not in use.
@@ -227,8 +226,8 @@ type Manager struct {
 	trimMu    sync.Mutex      // one trim at a time
 	trimming  bool            // a background trim is queued or running (guarded by mu)
 	createMu  sync.Mutex      // space creation is one at a time, so the limit cannot be passed by racing
-	staging   map[string]bool // spaces being made with a GitHub repository, whose first push needs no member yet (guarded by mu)
-	reserved  map[string]int  // spaces being made with a GitHub repository, by owner (guarded by createMu)
+	staging   map[string]bool // spaces being made with a repository on a provider, whose first push needs no member yet (guarded by mu)
+	reserved  map[string]int  // spaces being made with a repository on a provider, by owner (guarded by createMu)
 	reservedT map[string]int  // the same, by tenant (guarded by createMu)
 
 	quota quotaHooks // see SetQuota
@@ -306,8 +305,8 @@ func newManager(opt Options, single *space.Space) *Manager {
 	if opt.CloseWait <= 0 {
 		opt.CloseWait = 5 * time.Second
 	}
-	if opt.GitHubRetry <= 0 {
-		opt.GitHubRetry = 10 * time.Minute
+	if opt.ConnectionRetry <= 0 {
+		opt.ConnectionRetry = 10 * time.Minute
 	}
 	if opt.PushRetry == nil {
 		opt.PushRetry = []time.Duration{time.Second, 3 * time.Second, 7 * time.Second}

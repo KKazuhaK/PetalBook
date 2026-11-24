@@ -1,4 +1,4 @@
--- The GitHub App, users' GitHub authorisations and shared installations.
+-- The GitHub provider: the App, users' GitHub authorisations and shared installations.
 -- 0011 and 0012 belong to the MCP milestone (feat/mcp: API tokens and OAuth).
 -- Each migration is recorded by its own number and the missing ones run at the
 -- next start, so a database migrated on this branch alone picks up 0011 and
@@ -57,6 +57,9 @@ CREATE TABLE github_leftovers (
 );
 CREATE INDEX github_leftovers_repo ON github_leftovers(repo_id);
 
+-- provider is the id of the provider a remote goes through (milestone 2.7b): 'git'
+-- for a plain address with a key or a token, 'github' for cred_type 'connection'.
+ALTER TABLE remotes ADD COLUMN provider TEXT NOT NULL DEFAULT 'git';
 ALTER TABLE remotes ADD COLUMN gh_via TEXT NOT NULL DEFAULT '';
 ALTER TABLE remotes ADD COLUMN gh_installation_id BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE remotes ADD COLUMN gh_repo_id BIGINT NOT NULL DEFAULT 0;

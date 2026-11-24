@@ -58,7 +58,7 @@ func checkGitHubAfterMerge(t *testing.T, st *store.Store) {
 		t.Fatalf("%q %v", id, err)
 	}
 	r, err := store.GetRemote(ctx, st.Q(), "S1")
-	if err != nil || r.CredType != "github" || r.GHVia != "user" || r.GHUserID != "U1" || r.GHRepoID != 77 {
+	if err != nil || r.CredType != "connection" || r.Provider != "github" || r.GHVia != "user" || r.GHUserID != "U1" || r.GHRepoID != 77 {
 		t.Fatalf("%+v %v", r, err)
 	}
 	if n, err := store.CountUserGitHubSpaces(ctx, st.Q(), "U1"); err != nil || n != 1 {
@@ -103,7 +103,7 @@ func seedGitHub(t *testing.T, exec func(q string, a ...any)) {
 	exec(`INSERT INTO github_installations(id, account, updated) VALUES (9001, 'kazuhahub', ?)`, now)
 	exec(`INSERT INTO github_installation_tenants(installation_id, tenant_id) VALUES (9001, ?)`, store.DefaultTenantID)
 	exec(`INSERT INTO github_leftovers(user_id, repo_id, full_name, html_url, space_name, created) VALUES ('U1', 78, 'tang-gh/left', 'https://github.com/tang-gh/left', 'Tang', ?)`, now)
-	exec(`INSERT INTO remotes(space_id, url, branch, cred_type, state, gh_via, gh_repo_id, gh_user_id, updated) VALUES ('S1', 'https://github.com/tang-gh/notes.git', 'main', 'github', 'ok', 'user', 77, 'U1', ?)`, now)
+	exec(`INSERT INTO remotes(space_id, url, branch, cred_type, provider, state, gh_via, gh_repo_id, gh_user_id, updated) VALUES ('S1', 'https://github.com/tang-gh/notes.git', 'main', 'connection', 'github', 'ok', 'user', 77, 'U1', ?)`, now)
 }
 
 func execer(t *testing.T, st *store.Store) func(q string, a ...any) {

@@ -9,31 +9,23 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
 // ManifestCallbackPath is where GitHub sends the browser back after the App is
 // made from a manifest.
-const ManifestCallbackPath = "/api/github/manifest/callback"
+const ManifestCallbackPath = "/api/connections/github/manifest/callback"
 
 const (
 	manifestKind = "manifest"
 	// maxAppName is GitHub's limit for an App's name.
 	maxAppName = 34
 	// Where the browser goes when it is over: the administration's GitHub section.
-	manifestDone = "/admin/github?github_app=created"
-	manifestFail = "/admin/github?github_app_error="
+	manifestDone = "/admin/storage?connection_app=created"
+	manifestFail = "/admin/storage?connection_app_error="
 )
-
-// ManifestStart is what the browser needs to send the administrator to GitHub:
-// it posts the manifest (as the form field "manifest") to URL.
-type ManifestStart struct {
-	URL      string
-	Manifest githubapp.Manifest
-	// Binding is the value of the cookie that ties the attempt to this browser.
-	Binding string
-}
 
 // manifestReturn is where GitHub sends the browser back to; "" without a public URL.
 func (s *Service) manifestReturn() string {
@@ -59,7 +51,8 @@ func defaultAppName(publicURL string) string {
 // flow). org, when given, makes it in that organisation; name is the App's name
 // (a default from the server's address when empty). The attempt is bound to
 // the browser and to the administrator, single use, and lasts ten minutes.
-func (s *Service) StartManifest(ctx context.Context, userID, org, name string) (*ManifestStart, error) {
+func (s *Service) StartManifest(ctx context.Context, userID string, req connections.ManifestRequest) (*connections.ManifestStart, error) {
+	org, name := req.Organization, req.Name
 	if s.opt.PublicURL == "" {
 		return nil, errf(http.StatusConflict, CodePublicURLNeeded, "making the App needs the server's public address (--public-url): GitHub sends the browser back to it")
 	}
@@ -104,7 +97,7 @@ func (s *Service) StartManifest(ctx context.Context, userID, org, name string) (
 		RequestOAuthOnInst: true,
 		DefaultPermissions: map[string]string{"administration": "write", "contents": "write", "metadata": "read"},
 	}
-	return &ManifestStart{URL: s.c.ManifestURL(org, state), Manifest: m, Binding: binding}, nil
+	return &connections.ManifestStart{URL: s.c.ManifestURL(org, state), Manifest: m, Binding: binding}, nil
 }
 
 // CompleteManifest finishes the flow from GitHub's redirect: it trades the code
@@ -123,7 +116,7 @@ func (s *Service) CompleteManifest(ctx context.Context, binding, userID string, 
 	if code == "" && (one("setup_action") != "" || one("installation_id") != "") {
 		// The page GitHub sends people to after installing (the manifest names
 		// this address for it too): nothing to do here, show their account.
-		return "/settings/github", false
+		return "/settings/connections", false
 	}
 	fail := func(c string) (string, bool) { return manifestFail + c, true }
 	if binding == "" || state == "" || len(q["code"]) > 1 || len(q["state"]) > 1 {
@@ -134,25 +127,30 @@ func (s *Service) CompleteManifest(ctx context.Context, binding, userID string, 
 		return manifestFail + "expired", res == takeUnknown
 	}
 	if code == "" {
-		return fail("github_error")
+		return fail("provider_error")
 	}
 	creds, err := s.c.ConvertManifest(ctx, code)
 	if err != nil {
 		s.log.Warn("GitHub did not turn the manifest into an App", "reason", reason(err))
-		return fail("github_error")
+		return fail("provider_error")
 	}
 	secretID := creds.ClientID
 	_, err = s.Save(ctx, SaveRequest{AppID: strconv.FormatInt(creds.ID, 10), PrivateKey: creds.PEM, ClientID: &secretID, ClientSecret: creds.ClientSecret, WebhookSecret: creds.WebhookSecret})
 	if err != nil {
-		var he *Error
+		var he *connections.Error
 		switch {
-		case errors.As(err, &he) && he.Code == CodeAppInUse:
+		case errors.As(err, &he) && he.Code == CodeInUse:
 			return fail("app_in_use")
 		case errors.As(err, &he) && he.Code == CodeUnavailable:
 			return fail("unavailable")
 		}
 		s.log.Warn("the App GitHub made could not be saved", "reason", reason(err))
-		return fail("github_error")
+		return fail("provider_error")
 	}
 	return manifestDone, true
+}
+
+// RetryManifest saves an App GitHub made but the server could not save at the time.
+func (s *Service) RetryManifest(ctx context.Context, userID string) (any, error) {
+	return nil, errf(http.StatusNotFound, CodeNotFound, "no App is waiting to be saved")
 }

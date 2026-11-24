@@ -32,7 +32,7 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 func ghSetup(t *testing.T, a *acc) (admin, member *client) {
 	t.Helper()
 	admin = a.setup("root", pw)
-	admin.do("PUT", "/api/admin/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM(),
+	admin.do("PUT", "/api/admin/connections/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM(),
 		"clientId": a.fake.ClientID, "clientSecret": a.fake.ClientSecret}).want(t, 200, "")
 	member = a.addUser("tang", pw, "member")
 	a.fake.AddUser("tang-gh")
@@ -45,7 +45,7 @@ func ghSetup(t *testing.T, a *acc) (admin, member *client) {
 // connectGitHub plays the browser through the whole authorisation.
 func connectGitHub(t *testing.T, a *acc, c *client, login string) {
 	t.Helper()
-	r := c.do("POST", "/api/github/authorization/start", map[string]any{"return": "/s/ABC/settings"}).want(t, 200, "")
+	r := c.do("POST", "/api/connections/github/authorization/start", map[string]any{"return": "/s/ABC/settings"}).want(t, 200, "")
 	back, _ := url.Parse(a.fake.Authorize(r.body["url"].(string), login))
 	cb := c.do("GET", back.Path+"?"+back.RawQuery, nil, "Sec-Fetch-Site", "cross-site")
 	if cb.code != 303 || cb.resp.Header.Get("Location") != "/s/ABC/settings" {
@@ -56,19 +56,19 @@ func connectGitHub(t *testing.T, a *acc, c *client, login string) {
 func TestGitHubIsNotConfiguredByDefault(t *testing.T) {
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin := a.setup("root", pw)
-		r := admin.do("GET", "/api/github", nil).want(t, 200, "")
-		if r.body["app"] != nil || r.body["userAuthorization"] != false || r.body["authorization"] != nil {
+		r := ghProvider(t, admin)
+		if r.body["app"] != nil || r.body["userAuthorization"] != false || r.body["connection"] != nil {
 			t.Fatalf("%s", r.raw)
 		}
-		a0 := admin.do("GET", "/api/admin/github", nil).want(t, 200, "")
-		if a0.body["configured"] != false || a0.body["callbackUrl"] != "https://notes.example.test/api/github/authorization/callback" {
+		a0 := admin.do("GET", "/api/admin/connections/github", nil).want(t, 200, "")
+		if a0.body["configured"] != false || a0.body["callbackUrl"] != "https://notes.example.test/api/connections/github/authorization/callback" {
 			t.Fatalf("%s", a0.raw)
 		}
-		for _, p := range []string{"/api/github/owners", "/api/github/repos?mine=true", "/api/admin/github/installations"} {
-			admin.do("GET", p, nil).want(t, 409, "github_not_configured")
+		for _, p := range []string{"/api/connections/github/owners", "/api/connections/github/repos?mine=true", "/api/admin/connections/github/installations"} {
+			admin.do("GET", p, nil).want(t, 409, "provider_not_configured")
 		}
-		admin.do("POST", "/api/github/authorization/start", map[string]any{}).want(t, 409, "github_not_configured")
-		admin.do("POST", "/api/spaces", map[string]any{"name": "X", "github": map[string]any{"owner": "o", "name": "n"}}).want(t, 409, "github_not_configured")
+		admin.do("POST", "/api/connections/github/authorization/start", map[string]any{}).want(t, 409, "provider_not_configured")
+		admin.do("POST", "/api/spaces", map[string]any{"name": "X", "storage": ghSync(map[string]any{"owner": "o", "name": "n"})}).want(t, 409, "provider_not_configured")
 	})
 }
 
@@ -76,20 +76,20 @@ func TestTheAdministratorsSaveTheApp(t *testing.T) {
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin := a.setup("root", pw)
 		member := a.addUser("tang", pw, "member")
-		member.do("GET", "/api/admin/github", nil).want(t, 403, "forbidden")
-		member.do("PUT", "/api/admin/github", map[string]any{}).want(t, 403, "forbidden")
-		member.do("DELETE", "/api/admin/github", nil).want(t, 403, "forbidden")
-		member.do("GET", "/api/admin/github/installations", nil).want(t, 403, "forbidden")
-		member.do("PUT", "/api/admin/github/installations/1", map[string]any{"shared": true}).want(t, 403, "forbidden")
+		member.do("GET", "/api/admin/connections/github", nil).want(t, 403, "forbidden")
+		member.do("PUT", "/api/admin/connections/github", map[string]any{}).want(t, 403, "forbidden")
+		member.do("DELETE", "/api/admin/connections/github", nil).want(t, 403, "forbidden")
+		member.do("GET", "/api/admin/connections/github/installations", nil).want(t, 403, "forbidden")
+		member.do("PUT", "/api/admin/connections/github/installations/1", map[string]any{"shared": true}).want(t, 403, "forbidden")
 
-		admin.do("PUT", "/api/admin/github", map[string]any{"appId": "424242"}).want(t, 400, "invalid")
-		admin.do("PUT", "/api/admin/github", map[string]any{"appId": "424242", "privateKey": "nonsense"}).want(t, 400, "github_key_invalid")
-		admin.do("PUT", "/api/admin/github", map[string]any{"appId": "1", "privateKey": a.fake.KeyPEM()}).want(t, 400, "github_app_rejected")
-		admin.do("PUT", "/api/admin/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM(), "clientId": a.fake.ClientID, "clientSecret": "no"}).want(t, 400, "github_client_rejected")
-		if r := admin.do("GET", "/api/admin/github", nil); r.body["configured"] != false {
+		admin.do("PUT", "/api/admin/connections/github", map[string]any{"appId": "424242"}).want(t, 400, "invalid")
+		admin.do("PUT", "/api/admin/connections/github", map[string]any{"appId": "424242", "privateKey": "nonsense"}).want(t, 400, "key_invalid")
+		admin.do("PUT", "/api/admin/connections/github", map[string]any{"appId": "1", "privateKey": a.fake.KeyPEM()}).want(t, 400, "app_rejected")
+		admin.do("PUT", "/api/admin/connections/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM(), "clientId": a.fake.ClientID, "clientSecret": "no"}).want(t, 400, "client_rejected")
+		if r := admin.do("GET", "/api/admin/connections/github", nil); r.body["configured"] != false {
 			t.Fatalf("a refused save left settings: %s", r.raw)
 		}
-		r := admin.do("PUT", "/api/admin/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM(), "clientId": a.fake.ClientID, "clientSecret": a.fake.ClientSecret}).want(t, 200, "")
+		r := admin.do("PUT", "/api/admin/connections/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM(), "clientId": a.fake.ClientID, "clientSecret": a.fake.ClientSecret}).want(t, 200, "")
 		if r.body["configured"] != true || r.body["appId"] != "424242" || r.body["slug"] != "petalbook-notes" || r.body["userAuthorization"] != true ||
 			r.body["installUrl"] != "https://github.com/apps/petalbook-notes/installations/new" {
 			t.Fatalf("%s", r.raw)
@@ -102,20 +102,20 @@ func TestTheAdministratorsSaveTheApp(t *testing.T) {
 			t.Fatalf("%s", r.raw)
 		}
 		// Nothing secret is ever returned.
-		got := admin.do("GET", "/api/admin/github", nil)
+		got := admin.do("GET", "/api/admin/connections/github", nil)
 		for _, secret := range []string{a.fake.ClientSecret, "PRIVATE KEY", "MII"} {
 			if strings.Contains(r.raw, secret) || strings.Contains(got.raw, secret) {
 				t.Fatalf("the response holds %q", secret)
 			}
 		}
 		// Anyone signed in sees the App's name and where to install it.
-		g := member.do("GET", "/api/github", nil).want(t, 200, "")
+		g := ghProvider(t, member)
 		app := g.body["app"].(map[string]any)
 		if app["name"] != "PetalBook Notes" || app["installUrl"] == "" || g.body["userAuthorization"] != true {
 			t.Fatalf("%s", g.raw)
 		}
-		admin.do("DELETE", "/api/admin/github", nil).want(t, 204, "")
-		if r := admin.do("GET", "/api/admin/github", nil); r.body["configured"] != false {
+		admin.do("DELETE", "/api/admin/connections/github", nil).want(t, 204, "")
+		if r := admin.do("GET", "/api/admin/connections/github", nil); r.body["configured"] != false {
 			t.Fatal(r.raw)
 		}
 	})
@@ -128,7 +128,7 @@ func TestInstallationsAndTheirSharing(t *testing.T) {
 			a.fake.AddOrg("org-" + strings.Repeat("x", i+1))
 			a.fake.Install("org-"+strings.Repeat("x", i+1), "all")
 		}
-		r := admin.do("GET", "/api/admin/github/installations", nil).want(t, 200, "")
+		r := admin.do("GET", "/api/admin/connections/github/installations", nil).want(t, 200, "")
 		items := r.body["items"].([]any)
 		next, _ := r.body["next"].(string)
 		if len(items) != 30 || next == "" {
@@ -139,13 +139,13 @@ func TestInstallationsAndTheirSharing(t *testing.T) {
 		if acct["login"] != "kazuhahub" || acct["type"] != "Organization" || first["repositorySelection"] != "all" || fmt.Sprint(first["tenants"]) != "[]" || first["suspended"] != false {
 			t.Fatalf("%v", first)
 		}
-		r2 := admin.do("GET", "/api/admin/github/installations?cursor="+url.QueryEscape(next), nil).want(t, 200, "")
+		r2 := admin.do("GET", "/api/admin/connections/github/installations?cursor="+url.QueryEscape(next), nil).want(t, 200, "")
 		if len(r2.body["items"].([]any)) != 6 || r2.body["next"] != "" {
 			t.Fatalf("%s", r2.raw)
 		}
-		admin.do("GET", "/api/admin/github/installations?cursor=junk", nil).want(t, 400, "invalid")
+		admin.do("GET", "/api/admin/connections/github/installations?cursor=junk", nil).want(t, 400, "invalid")
 		id := int64(first["id"].(float64))
-		path := "/api/admin/github/installations/" + itoa(id)
+		path := "/api/admin/connections/github/installations/" + itoa(id)
 		admin.do("PUT", path, map[string]any{}).want(t, 400, "invalid")
 		admin.do("PUT", path, map[string]any{"shared": true}).want(t, 400, "invalid") // the old shape
 		admin.do("PUT", path, map[string]any{"tenants": []string{"nope"}}).want(t, 400, "invalid")
@@ -153,18 +153,18 @@ func TestInstallationsAndTheirSharing(t *testing.T) {
 		if fmt.Sprint(put.body["tenants"]) != "["+store.DefaultTenantID+"]" || put.body["id"] != float64(id) {
 			t.Fatalf("%s", put.raw)
 		}
-		admin.do("PUT", "/api/admin/github/installations/999999", map[string]any{"tenants": []string{store.DefaultTenantID}}).want(t, 404, "not_found")
-		admin.do("PUT", "/api/admin/github/installations/nope", map[string]any{"tenants": []string{store.DefaultTenantID}}).want(t, 404, "not_found")
+		admin.do("PUT", "/api/admin/connections/github/installations/999999", map[string]any{"tenants": []string{store.DefaultTenantID}}).want(t, 404, "not_found")
+		admin.do("PUT", "/api/admin/connections/github/installations/nope", map[string]any{"tenants": []string{store.DefaultTenantID}}).want(t, 404, "not_found")
 		// A member without a GitHub connection can then create in the shared organisation.
 		other := a.addUser("nobody", pw, "member")
-		o := other.do("GET", "/api/github/owners", nil).want(t, 200, "")
+		o := other.do("GET", "/api/connections/github/owners", nil).want(t, 200, "")
 		list := o.body["items"].([]any)
 		if len(list) != 1 || list[0].(map[string]any)["login"] != "kazuhahub" || list[0].(map[string]any)["via"] != "app" {
 			t.Fatalf("%s", o.raw)
 		}
 		// Stopping to share takes it away again.
 		admin.do("PUT", path, map[string]any{"tenants": []string{}}).want(t, 200, "")
-		o = other.do("GET", "/api/github/owners", nil).want(t, 200, "")
+		o = other.do("GET", "/api/connections/github/owners", nil).want(t, 200, "")
 		if len(o.body["items"].([]any)) != 0 {
 			t.Fatalf("%s", o.raw)
 		}
@@ -181,16 +181,16 @@ type ghAccount = githubapptest.Account
 func TestConnectingAnAccountThroughTheApi(t *testing.T) {
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin, member := ghSetup(t, a)
-		g := member.do("GET", "/api/github", nil).want(t, 200, "")
-		au := g.body["authorization"].(map[string]any)
-		if au["login"] != "tang-gh" || au["state"] != "ok" || au["spaces"] != float64(0) || au["refreshExpires"] == nil || au["githubId"] == nil {
+		g := ghProvider(t, member)
+		au := g.body["connection"].(map[string]any)
+		if au["login"] != "tang-gh" || au["state"] != "ok" || au["spaces"] != float64(0) || au["refreshExpires"] == nil || au["accountId"] == nil {
 			t.Fatalf("%s", g.raw)
 		}
 		// The callback is the one cross-site navigation; it needs the browser's cookie and the user's own session.
-		start := member.do("POST", "/api/github/authorization/start", map[string]any{"return": "https://evil.example/x"}).want(t, 200, "")
+		start := member.do("POST", "/api/connections/github/authorization/start", map[string]any{"return": "https://evil.example/x"}).want(t, 200, "")
 		u, _ := url.Parse(start.body["url"].(string))
 		q := u.Query()
-		if q.Get("redirect_uri") != "https://notes.example.test/api/github/authorization/callback" || q.Get("code_challenge_method") != "S256" || q.Get("login") != "tang-gh" {
+		if q.Get("redirect_uri") != "https://notes.example.test/api/connections/github/authorization/callback" || q.Get("code_challenge_method") != "S256" || q.Get("login") != "tang-gh" {
 			t.Fatalf("%s", u)
 		}
 		back, _ := url.Parse(a.fake.Authorize(start.body["url"].(string), "tang-gh"))
@@ -203,7 +203,7 @@ func TestConnectingAnAccountThroughTheApi(t *testing.T) {
 			}
 		}
 		r := other.do("GET", cbPath, nil, "Sec-Fetch-Site", "cross-site")
-		if r.code != 303 || r.resp.Header.Get("Location") != "/settings?github_error=expired" {
+		if r.code != 303 || r.resp.Header.Get("Location") != "/settings?provider=github&connection_error=expired" {
 			t.Fatalf("%d %q", r.code, r.resp.Header.Get("Location"))
 		}
 		// No session at all.
@@ -213,7 +213,7 @@ func TestConnectingAnAccountThroughTheApi(t *testing.T) {
 				anon.cookies[k] = v
 			}
 		}
-		if r := anon.do("GET", cbPath, nil, "Sec-Fetch-Site", "cross-site"); r.code != 303 || r.resp.Header.Get("Location") != "/settings?github_error=expired" {
+		if r := anon.do("GET", cbPath, nil, "Sec-Fetch-Site", "cross-site"); r.code != 303 || r.resp.Header.Get("Location") != "/settings?provider=github&connection_error=expired" {
 			t.Fatalf("%d %q", r.code, r.resp.Header.Get("Location"))
 		}
 		// The right browser: back to a safe return path (an address elsewhere becomes /).
@@ -222,25 +222,25 @@ func TestConnectingAnAccountThroughTheApi(t *testing.T) {
 			t.Fatalf("%d %q", r.code, r.resp.Header.Get("Location"))
 		}
 		// Replay.
-		if r := member.do("GET", cbPath, nil, "Sec-Fetch-Site", "cross-site"); r.resp.Header.Get("Location") != "/settings?github_error=expired" {
+		if r := member.do("GET", cbPath, nil, "Sec-Fetch-Site", "cross-site"); r.resp.Header.Get("Location") != "/settings?provider=github&connection_error=expired" {
 			t.Fatalf("%q", r.resp.Header.Get("Location"))
 		}
 		// Cross-site requests to anything else are still refused.
-		member.do("POST", "/api/github/authorization/start", map[string]any{}, "Sec-Fetch-Site", "cross-site").want(t, 403, "forbidden")
+		member.do("POST", "/api/connections/github/authorization/start", map[string]any{}, "Sec-Fetch-Site", "cross-site").want(t, 403, "forbidden")
 		// Another PetalBook user cannot take the same GitHub account.
-		start = other.do("POST", "/api/github/authorization/start", map[string]any{}).want(t, 200, "")
+		start = other.do("POST", "/api/connections/github/authorization/start", map[string]any{}).want(t, 200, "")
 		back, _ = url.Parse(a.fake.Authorize(start.body["url"].(string), "tang-gh"))
-		if r := other.do("GET", back.Path+"?"+back.RawQuery, nil, "Sec-Fetch-Site", "cross-site"); r.resp.Header.Get("Location") != "/settings?github_error=account_in_use" {
+		if r := other.do("GET", back.Path+"?"+back.RawQuery, nil, "Sec-Fetch-Site", "cross-site"); r.resp.Header.Get("Location") != "/settings?provider=github&connection_error=account_in_use" {
 			t.Fatalf("%q", r.resp.Header.Get("Location"))
 		}
 		// Disconnecting.
-		member.do("DELETE", "/api/github/authorization", nil).want(t, 204, "")
-		if g := member.do("GET", "/api/github", nil); g.body["authorization"] != nil {
+		member.do("DELETE", "/api/connections/github/authorization", nil).want(t, 204, "")
+		if g := ghProvider(t, member); g.body["connection"] != nil {
 			t.Fatal(g.raw)
 		}
-		member.do("DELETE", "/api/github/authorization", nil).want(t, 204, "")
+		member.do("DELETE", "/api/connections/github/authorization", nil).want(t, 204, "")
 		// Signed-out visitors cannot start.
-		a.newClient("").do("POST", "/api/github/authorization/start", map[string]any{}).want(t, 401, "unauthenticated")
+		a.newClient("").do("POST", "/api/connections/github/authorization/start", map[string]any{}).want(t, 401, "unauthenticated")
 		_ = admin
 	})
 }
@@ -248,7 +248,7 @@ func TestConnectingAnAccountThroughTheApi(t *testing.T) {
 func TestOwnersAndRepositoriesAreListedByPage(t *testing.T) {
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		_, member := ghSetup(t, a)
-		o := member.do("GET", "/api/github/owners", nil).want(t, 200, "")
+		o := member.do("GET", "/api/connections/github/owners", nil).want(t, 200, "")
 		items := o.body["items"].([]any)
 		if len(items) != 2 || items[0].(map[string]any)["login"] != "tang-gh" || items[0].(map[string]any)["installationId"] != nil ||
 			items[1].(map[string]any)["via"] != "user" || items[1].(map[string]any)["installationId"] == nil {
@@ -258,33 +258,33 @@ func TestOwnersAndRepositoriesAreListedByPage(t *testing.T) {
 			a.fake.AddRepo("kazuhahub", "r"+fmtInt(int64(100+i)), true)
 		}
 		inst := int64(items[1].(map[string]any)["installationId"].(float64))
-		r := member.do("GET", "/api/github/repos?installation="+fmtInt(inst), nil).want(t, 200, "")
+		r := member.do("GET", "/api/connections/github/repos?installation="+fmtInt(inst), nil).want(t, 200, "")
 		list := r.body["items"].([]any)
 		first := list[0].(map[string]any)
 		if len(list) != 30 || r.body["next"] == "" || first["fullName"] == nil || first["canPush"] != true || first["defaultBranch"] != "main" {
 			t.Fatalf("%s", r.raw)
 		}
-		r2 := member.do("GET", "/api/github/repos?installation="+fmtInt(inst)+"&cursor="+url.QueryEscape(r.body["next"].(string)), nil).want(t, 200, "")
+		r2 := member.do("GET", "/api/connections/github/repos?installation="+fmtInt(inst)+"&cursor="+url.QueryEscape(r.body["next"].(string)), nil).want(t, 200, "")
 		if len(r2.body["items"].([]any)) != 5 || r2.body["next"] != "" {
 			t.Fatalf("%s", r2.raw)
 		}
-		member.do("GET", "/api/github/repos", nil).want(t, 400, "invalid")
-		member.do("GET", "/api/github/repos?installation=x", nil).want(t, 400, "invalid")
-		member.do("GET", "/api/github/repos?installation=5&mine=true", nil).want(t, 400, "invalid")
-		member.do("GET", "/api/github/repos?installation=4242424", nil).want(t, 404, "not_found")
-		mine := member.do("GET", "/api/github/repos?mine=true", nil).want(t, 200, "")
+		member.do("GET", "/api/connections/github/repos", nil).want(t, 400, "invalid")
+		member.do("GET", "/api/connections/github/repos?installation=x", nil).want(t, 400, "invalid")
+		member.do("GET", "/api/connections/github/repos?installation=5&mine=true", nil).want(t, 400, "invalid")
+		member.do("GET", "/api/connections/github/repos?installation=4242424", nil).want(t, 404, "not_found")
+		mine := member.do("GET", "/api/connections/github/repos?mine=true", nil).want(t, 200, "")
 		if len(mine.body["items"].([]any)) != 0 {
 			t.Fatalf("%s", mine.raw)
 		}
-		a.newClient("").do("GET", "/api/github/owners", nil).want(t, 401, "unauthenticated")
+		a.newClient("").do("GET", "/api/connections/github/owners", nil).want(t, 401, "unauthenticated")
 	})
 }
 
 func TestCreatingASpaceWithANewRepository(t *testing.T) {
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		_, member := ghSetup(t, a)
-		r := member.do("POST", "/api/spaces", map[string]any{"name": "Tang", "inbox": "收件箱", "github": map[string]any{
-			"owner": "kazuhahub", "name": "tang-notes", "private": true, "description": "Notes on Tang poetry", "create": true}}).want(t, 201, "")
+		r := member.do("POST", "/api/spaces", map[string]any{"name": "Tang", "inbox": "收件箱", "storage": ghSync(map[string]any{
+			"owner": "kazuhahub", "name": "tang-notes", "private": true, "description": "Notes on Tang poetry", "create": true})}).want(t, 201, "")
 		if r.body["name"] != "Tang" || r.body["sync"] != "ok" || r.resp.Header.Get("Location") != "/api/spaces/"+r.body["id"].(string) {
 			t.Fatalf("%s", r.raw)
 		}
@@ -296,7 +296,7 @@ func TestCreatingASpaceWithANewRepository(t *testing.T) {
 		rem := member.do("GET", "/api/spaces/"+id+"/remote", nil).want(t, 200, "")
 		cred := rem.body["credential"].(map[string]any)
 		if rem.body["url"] != a.fake.URL+"/kazuhahub/tang-notes.git" || rem.body["state"] != "ok" || rem.body["errorCode"] != "" ||
-			cred["type"] != "github" || cred["via"] != "app" || cred["account"] != "kazuhahub" || cred["repoId"] != float64(repo.ID) || cred["installationId"] == nil {
+			cred["type"] != "connection" || cred["via"] != "app" || cred["account"] != "kazuhahub" || cred["repoId"] != float64(repo.ID) || cred["installationId"] == nil {
 			t.Fatalf("%s", rem.raw)
 		}
 		for _, secret := range []string{"ghs_", "ghu_", "ghr_"} {
@@ -313,7 +313,7 @@ func TestCreatingASpaceWithANewRepository(t *testing.T) {
 			t.Fatalf("%s", n)
 		}
 		// In the user's own account the remote names the user and the GitHub login.
-		own := member.do("POST", "/api/spaces", map[string]any{"name": "Own", "github": map[string]any{"owner": "tang-gh", "name": "own"}}).want(t, 201, "")
+		own := member.do("POST", "/api/spaces", map[string]any{"name": "Own", "storage": ghSync(map[string]any{"owner": "tang-gh", "name": "own"})}).want(t, 201, "")
 		ownRemote := member.do("GET", "/api/spaces/"+own.body["id"].(string)+"/remote", nil).want(t, 200, "")
 		oc := ownRemote.body["credential"].(map[string]any)
 		u := oc["user"].(map[string]any)
@@ -330,16 +330,16 @@ func TestCreatingASpaceFailsCleanly(t *testing.T) {
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		_, member := ghSetup(t, a)
 		body := func(owner, name string, create bool) map[string]any {
-			return map[string]any{"name": "S", "github": map[string]any{"owner": owner, "name": name, "create": create}}
+			return map[string]any{"name": "S", "storage": ghSync(map[string]any{"owner": owner, "name": name, "create": create})}
 		}
 		dirsBefore := len(listDir(t, a.dir+"/spaces"))
 		a.fake.AddRepo("kazuhahub", "taken", false)
-		member.do("POST", "/api/spaces", body("kazuhahub", "taken", true)).want(t, 409, "github_name_taken")
-		member.do("POST", "/api/spaces", body("nobody-i-know", "x", true)).want(t, 403, "github_owner_not_allowed")
+		member.do("POST", "/api/spaces", body("kazuhahub", "taken", true)).want(t, 409, "name_taken")
+		member.do("POST", "/api/spaces", body("nobody-i-know", "x", true)).want(t, 403, "owner_not_allowed")
 		member.do("POST", "/api/spaces", body("kazuhahub", "bad name", true)).want(t, 400, "invalid")
-		member.do("POST", "/api/spaces", map[string]any{"name": "S", "github": map[string]any{"owner": "kazuhahub"}}).want(t, 400, "invalid")
+		member.do("POST", "/api/spaces", map[string]any{"name": "S", "storage": ghSync(map[string]any{"owner": "kazuhahub"})}).want(t, 400, "invalid")
 		a.fake.SetAccount("kazuhahub", func(ac *ghAccount) { ac.NoCreate = true })
-		nop := member.do("POST", "/api/spaces", body("kazuhahub", "fresh", true)).want(t, 403, "github_no_permission")
+		nop := member.do("POST", "/api/spaces", body("kazuhahub", "fresh", true)).want(t, 403, "provider_refused")
 		if !strings.Contains(nop.body["message"].(string), "permission") {
 			t.Fatalf("%s", nop.raw)
 		}
@@ -347,15 +347,15 @@ func TestCreatingASpaceFailsCleanly(t *testing.T) {
 		// An App without the Contents permission: its own code, naming the permission,
 		// and the repository that was made is named too.
 		a.fake.AppPerms = map[string]string{"administration": "write", "metadata": "read"}
-		mp := member.do("POST", "/api/spaces", body("kazuhahub", "noperm", true)).want(t, 403, "github_app_missing_permission")
+		mp := member.do("POST", "/api/spaces", body("kazuhahub", "noperm", true)).want(t, 403, "app_missing_permission")
 		if m, _ := mp.body["missing"].([]any); len(m) != 1 || m[0] != "contents" || mp.body["repo"] == nil {
 			t.Fatalf("%s", mp.raw)
 		}
 		a.fake.AppPerms = map[string]string{"administration": "write", "contents": "write", "metadata": "read"}
-		member.do("DELETE", fmt.Sprintf("/api/github/leftovers/%v", mp.body["repo"].(map[string]any)["id"]), nil).want(t, 204, "")
+		member.do("DELETE", fmt.Sprintf("/api/connections/github/leftovers/%v", mp.body["repo"].(map[string]any)["id"]), nil).want(t, 204, "")
 		// A first push that never works: 502 naming the empty repository, no space.
 		a.fake.HiddenGit = 100
-		r := member.do("POST", "/api/spaces", body("kazuhahub", "slow", true)).want(t, 502, "github_push_failed")
+		r := member.do("POST", "/api/spaces", body("kazuhahub", "slow", true)).want(t, 502, "push_failed")
 		repo := r.body["repo"].(map[string]any)
 		if repo["fullName"] != "kazuhahub/slow" || repo["id"] == nil || repo["htmlUrl"] == "" {
 			t.Fatalf("%s", r.raw)
@@ -370,7 +370,7 @@ func TestCreatingASpaceFailsCleanly(t *testing.T) {
 			t.Fatalf("%v", dirs)
 		}
 		// The failure left a reminder the person sees later, with what they need to try again.
-		g := member.do("GET", "/api/github", nil).want(t, 200, "")
+		g := ghProvider(t, member)
 		lo := g.body["leftovers"].([]any)
 		if len(lo) != 1 {
 			t.Fatalf("%s", g.raw)
@@ -383,7 +383,7 @@ func TestCreatingASpaceFailsCleanly(t *testing.T) {
 		a.fake.HideRepo("kazuhahub/slow", 0)
 		member.do("POST", "/api/spaces", body("kazuhahub", "slow", false)).want(t, 201, "")
 		// ...and the space connecting to the repository cleared the reminder.
-		if g := member.do("GET", "/api/github", nil).want(t, 200, ""); fmt.Sprint(g.body["leftovers"]) != "[]" {
+		if g := ghProvider(t, member); fmt.Sprint(g.body["leftovers"]) != "[]" {
 			t.Fatalf("%s", g.raw)
 		}
 		// GitHub limiting the server: 429 with Retry-After.
@@ -401,7 +401,7 @@ func TestMaxSpacesAppliesToSpacesWithRepositories(t *testing.T) {
 	eachAccounts(t, o, func(t *testing.T, a *acc) {
 		_, member := ghSetup(t, a)
 		before := a.fake.Count("POST", "/orgs/kazuhahub/repos")
-		member.do("POST", "/api/spaces", map[string]any{"name": "S", "github": map[string]any{"owner": "kazuhahub", "name": "x"}}).want(t, 403, "quota_exceeded")
+		member.do("POST", "/api/spaces", map[string]any{"name": "S", "storage": ghSync(map[string]any{"owner": "kazuhahub", "name": "x"})}).want(t, 403, "quota_exceeded")
 		if a.fake.Count("POST", "/orgs/kazuhahub/repos") != before {
 			t.Fatal("a repository was made for a refused space")
 		}
@@ -414,26 +414,28 @@ func TestSwitchingASpaceToGitHubThroughTheRemoteEndpoint(t *testing.T) {
 		repo := a.fake.AddRepo("kazuhahub", "wiki", true)
 		sp := member.do("POST", "/api/spaces", map[string]any{"name": "Wiki"}).want(t, 201, "").body["id"].(string)
 		put := func(body map[string]any) result { return member.do("PUT", "/api/spaces/"+sp+"/remote", body) }
-		cred := func(via string) map[string]any { return map[string]any{"type": "github", "via": via} }
-		put(map[string]any{"url": a.fake.URL + "/kazuhahub/wiki.git", "credential": map[string]any{"type": "github"}}).want(t, 400, "invalid")
+		cred := func(via string) map[string]any {
+			return map[string]any{"type": "connection", "provider": "github", "via": via}
+		}
+		put(map[string]any{"url": a.fake.URL + "/kazuhahub/wiki.git", "credential": map[string]any{"type": "connection", "provider": "github"}}).want(t, 400, "invalid")
 		put(map[string]any{"url": "https://example.com/a/b.git", "credential": cred("app")}).want(t, 400, "invalid")
 		r := put(map[string]any{"url": "git@" + strings.Split(strings.TrimPrefix(a.fake.URL, "http://"), ":")[0] + ":kazuhahub/wiki.git", "credential": cred("app")}).want(t, 200, "")
 		c := r.body["credential"].(map[string]any)
-		if r.body["url"] != a.fake.URL+"/kazuhahub/wiki.git" || c["type"] != "github" || c["repoId"] != float64(repo.ID) || r.body["state"] != "ok" {
+		if r.body["url"] != a.fake.URL+"/kazuhahub/wiki.git" || c["type"] != "connection" || c["repoId"] != float64(repo.ID) || r.body["state"] != "ok" {
 			t.Fatalf("%s", r.raw)
 		}
 		a.fake.AddOrg("none")
 		a.fake.AddRepo("none", "x", true)
-		put(map[string]any{"url": a.fake.URL + "/none/x.git", "credential": cred("app")}).want(t, 409, "github_repo_not_in_installation")
-		put(map[string]any{"url": a.fake.URL + "/none/x.git", "credential": cred("user")}).want(t, 403, "github_owner_not_allowed")
+		put(map[string]any{"url": a.fake.URL + "/none/x.git", "credential": cred("app")}).want(t, 409, "repo_not_in_installation")
+		put(map[string]any{"url": a.fake.URL + "/none/x.git", "credential": cred("user")}).want(t, 403, "owner_not_allowed")
 		// Without a connection.
 		other := a.addUser("nobody", pw, "member")
 		osp := other.do("POST", "/api/spaces", map[string]any{"name": "O"}).want(t, 201, "").body["id"].(string)
-		other.do("PUT", "/api/spaces/"+osp+"/remote", map[string]any{"url": a.fake.URL + "/kazuhahub/wiki.git", "credential": cred("user")}).want(t, 409, "github_not_authorized")
-		other.do("PUT", "/api/spaces/"+osp+"/remote", map[string]any{"url": a.fake.URL + "/kazuhahub/wiki.git", "credential": cred("app")}).want(t, 409, "github_not_authorized")
+		other.do("PUT", "/api/spaces/"+osp+"/remote", map[string]any{"url": a.fake.URL + "/kazuhahub/wiki.git", "credential": cred("user")}).want(t, 409, "not_connected")
+		other.do("PUT", "/api/spaces/"+osp+"/remote", map[string]any{"url": a.fake.URL + "/kazuhahub/wiki.git", "credential": cred("app")}).want(t, 409, "not_connected")
 		// Deleting the remote leaves the App and the authorisation as they are.
 		member.do("DELETE", "/api/spaces/"+sp+"/remote", nil).want(t, 204, "")
-		if g := member.do("GET", "/api/github", nil); g.body["authorization"] == nil {
+		if g := ghProvider(t, member); g.body["connection"] == nil {
 			t.Fatal("the connection went with the remote")
 		}
 	})
@@ -451,7 +453,7 @@ func TestManageThroughAGroupCoversGitHub(t *testing.T) {
 		sp := ann.do("POST", "/api/spaces", map[string]any{"name": "Team"}).want(t, 201, "").body["id"].(string)
 		base := "/api/spaces/" + sp
 		ann.do("POST", base+"/members", map[string]any{"username": "tang", "role": "editor"}).want(t, 201, "")
-		body := map[string]any{"url": a.fake.URL + "/kazuhahub/team.git", "credential": map[string]any{"type": "github", "via": "user"}}
+		body := map[string]any{"url": a.fake.URL + "/kazuhahub/team.git", "credential": map[string]any{"type": "connection", "provider": "github", "via": "user"}}
 
 		// A direct editor may not switch the remote.
 		tang.do("PUT", base+"/remote", body).want(t, 403, "no_permission")
@@ -462,7 +464,7 @@ func TestManageThroughAGroupCoversGitHub(t *testing.T) {
 		admin.groupAdd(t, g, tangID).want(t, 200, "")
 		ann.do("POST", base+"/groups", map[string]any{"groupId": g, "role": "owner"}).want(t, 201, "")
 		r := tang.do("PUT", base+"/remote", body).want(t, 200, "")
-		if c := r.body["credential"].(map[string]any); c["type"] != "github" || r.body["state"] != "ok" {
+		if c := r.body["credential"].(map[string]any); c["type"] != "connection" || r.body["state"] != "ok" {
 			t.Fatalf("%s", r.raw)
 		}
 		newPage(t, ann, sp, "while tang manages")
@@ -472,7 +474,7 @@ func TestManageThroughAGroupCoversGitHub(t *testing.T) {
 		tang.do("PUT", base+"/remote", body).want(t, 403, "no_permission")
 		ann.do("POST", base+"/pages", map[string]any{"meta": map[string]any{"title": "after"}, "body": "x"}).want(t, 503, "unavailable")
 		rem := ann.do("GET", base+"/remote", nil).want(t, 200, "")
-		if rem.body["state"] != "error" || rem.body["errorCode"] != "github_authorization_missing" {
+		if rem.body["state"] != "error" || rem.body["errorCode"] != "connection_missing" {
 			t.Fatalf("%s", rem.raw)
 		}
 	})
@@ -481,17 +483,17 @@ func TestManageThroughAGroupCoversGitHub(t *testing.T) {
 func TestAnExpiredAuthorizationShowsItsCodeAndRefusesWrites(t *testing.T) {
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		_, member := ghSetup(t, a)
-		id := member.do("POST", "/api/spaces", map[string]any{"name": "Mine", "github": map[string]any{"owner": "tang-gh", "name": "mine"}}).want(t, 201, "").body["id"].(string)
+		id := member.do("POST", "/api/spaces", map[string]any{"name": "Mine", "storage": ghSync(map[string]any{"owner": "tang-gh", "name": "mine"})}).want(t, 201, "").body["id"].(string)
 		page := member.do("POST", "/api/spaces/"+id+"/pages", map[string]any{"meta": map[string]any{"title": "first"}, "body": "one"}).want(t, 201, "").body["id"].(string)
 		a.fake.ExpireRefresh("tang-gh")
 		a.clock.Advance(9 * time.Hour)
 		// The first write finds out: 503, and nothing changed.
 		member.do("POST", "/api/spaces/"+id+"/pages", map[string]any{"meta": map[string]any{"title": "second"}, "body": "two"}).want(t, 503, "unavailable")
 		rem := member.do("GET", "/api/spaces/"+id+"/remote", nil).want(t, 200, "")
-		if rem.body["state"] != "error" || rem.body["errorCode"] != "github_authorization_expired" || rem.body["error"] == "" {
+		if rem.body["state"] != "error" || rem.body["errorCode"] != "connection_expired" || rem.body["error"] == "" {
 			t.Fatalf("%s", rem.raw)
 		}
-		if g := member.do("GET", "/api/github", nil); g.body["authorization"].(map[string]any)["state"] != "expired" || g.body["authorization"].(map[string]any)["spaces"] != float64(1) {
+		if g := ghProvider(t, member); g.body["connection"].(map[string]any)["state"] != "expired" || g.body["connection"].(map[string]any)["spaces"] != float64(1) {
 			t.Fatalf("%s", g.raw)
 		}
 		// Reads work, and a draft is kept.
@@ -538,7 +540,7 @@ func TestRemoteObjectsOfOtherKindsHaveAnErrorCode(t *testing.T) {
 func TestAHeldSessionCannotUseGitHub(t *testing.T) {
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin, member := ghSetup(t, a)
-		start := member.do("POST", "/api/github/authorization/start", map[string]any{}).want(t, 200, "")
+		start := member.do("POST", "/api/connections/github/authorization/start", map[string]any{}).want(t, 200, "")
 		back, _ := url.Parse(a.fake.Authorize(start.body["url"].(string), "tang-gh"))
 		admin.putSecurity(t, map[string]any{"passkeys": map[string]any{"requireRoles": []string{"member"}}})
 
@@ -552,19 +554,19 @@ func TestAHeldSessionCannotUseGitHub(t *testing.T) {
 				held.cookies[k] = v
 			}
 		}
-		for _, p := range []string{"/api/github", "/api/github/owners", "/api/github/repos?mine=1"} {
+		for _, p := range []string{"/api/connections", "/api/connections/github/owners", "/api/connections/github/repos?mine=1"} {
 			held.do("GET", p, nil).want(t, 403, "passkey_required")
 		}
-		held.do("POST", "/api/github/authorization/start", map[string]any{}).want(t, 403, "passkey_required")
+		held.do("POST", "/api/connections/github/authorization/start", map[string]any{}).want(t, 403, "passkey_required")
 		held.do("GET", back.Path+"?"+back.RawQuery, nil, "Sec-Fetch-Site", "cross-site").want(t, 403, "passkey_required")
-		held.do("DELETE", "/api/github/authorization", nil).want(t, 403, "passkey_required")
-		held.do("POST", "/api/spaces", map[string]any{"name": "Tang", "github": map[string]any{
-			"owner": "kazuhahub", "name": "tang-notes", "private": true, "create": true}}).want(t, 403, "passkey_required")
+		held.do("DELETE", "/api/connections/github/authorization", nil).want(t, 403, "passkey_required")
+		held.do("POST", "/api/spaces", map[string]any{"name": "Tang", "storage": ghSync(map[string]any{
+			"owner": "kazuhahub", "name": "tang-notes", "private": true, "create": true})}).want(t, 403, "passkey_required")
 		if a.fake.RepoByName("kazuhahub/tang-notes") != nil {
 			t.Fatal("a repository was made")
 		}
 		// The connection made before the hold is untouched.
-		if g := member.do("GET", "/api/github", nil).want(t, 200, ""); g.body["authorization"].(map[string]any)["login"] != "tang-gh" {
+		if g := ghProvider(t, member); g.body["connection"].(map[string]any)["login"] != "tang-gh" {
 			t.Fatal(g.raw)
 		}
 	})
@@ -576,25 +578,25 @@ func TestDismissingALeftoverRepository(t *testing.T) {
 		other := a.addUser("other", pw, "member")
 		a.fake.HiddenGit = 100
 		repoID := func(owner, name string) float64 {
-			r := member.do("POST", "/api/spaces", map[string]any{"name": "Left", "github": map[string]any{"owner": owner, "name": name}}).want(t, 502, "github_push_failed")
+			r := member.do("POST", "/api/spaces", map[string]any{"name": "Left", "storage": ghSync(map[string]any{"owner": owner, "name": name})}).want(t, 502, "push_failed")
 			return r.body["repo"].(map[string]any)["id"].(float64)
 		}
 		id := repoID("kazuhahub", "left-a")
 		keep := repoID("kazuhahub", "left-b")
-		path := func(id float64) string { return "/api/github/leftovers/" + itoa(int64(id)) }
+		path := func(id float64) string { return "/api/connections/github/leftovers/" + itoa(int64(id)) }
 		// Not another person's business.
 		other.do("DELETE", path(id), nil).want(t, 204, "")
-		if n := len(member.do("GET", "/api/github", nil).want(t, 200, "").body["leftovers"].([]any)); n != 2 {
+		if n := len(ghProvider(t, member).body["leftovers"].([]any)); n != 2 {
 			t.Fatalf("%d reminders", n)
 		}
 		member.do("DELETE", path(id), nil).want(t, 204, "")
 		member.do("DELETE", path(id), nil).want(t, 204, "") // gone already: still fine
-		left := member.do("GET", "/api/github", nil).want(t, 200, "").body["leftovers"].([]any)
+		left := ghProvider(t, member).body["leftovers"].([]any)
 		if len(left) != 1 || left[0].(map[string]any)["repoId"] != keep {
 			t.Fatalf("%v", left)
 		}
-		member.do("DELETE", "/api/github/leftovers/nope", nil).want(t, 404, "not_found")
-		member.do("DELETE", "/api/github/leftovers/0", nil).want(t, 404, "not_found")
+		member.do("DELETE", "/api/connections/github/leftovers/nope", nil).want(t, 404, "not_found")
+		member.do("DELETE", "/api/connections/github/leftovers/0", nil).want(t, 404, "not_found")
 		a.newClient("").do("DELETE", path(keep), nil).want(t, 401, "unauthenticated")
 	})
 }
@@ -602,7 +604,7 @@ func TestDismissingALeftoverRepository(t *testing.T) {
 func TestLeftoversAreThereWithoutAnApp(t *testing.T) {
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin := a.setup("root", pw)
-		g := admin.do("GET", "/api/github", nil).want(t, 200, "")
+		g := ghProvider(t, admin)
 		if fmt.Sprint(g.body["leftovers"]) != "[]" {
 			t.Fatalf("%s", g.raw)
 		}
@@ -613,10 +615,10 @@ func TestTheAdministratorsCheckTheAppAgain(t *testing.T) {
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin := a.setup("root", pw)
 		member := a.addUser("tang", pw, "member")
-		member.do("POST", "/api/admin/github/check", nil).want(t, 403, "forbidden")
-		admin.do("POST", "/api/admin/github/check", nil).want(t, 409, "github_not_configured")
+		member.do("POST", "/api/admin/connections/github/check", nil).want(t, 403, "forbidden")
+		admin.do("POST", "/api/admin/connections/github/check", nil).want(t, 409, "provider_not_configured")
 		a.fake.AppPerms = map[string]string{"contents": "write", "metadata": "read"}
-		saved := admin.do("PUT", "/api/admin/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM()}).want(t, 200, "")
+		saved := admin.do("PUT", "/api/admin/connections/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM()}).want(t, 200, "")
 		if m := saved.body["missing"].([]any); len(m) != 1 || m[0] != "administration" {
 			t.Fatalf("%s", saved.raw)
 		}
@@ -625,10 +627,10 @@ func TestTheAdministratorsCheckTheAppAgain(t *testing.T) {
 		a.fake.AddOrg("kazuhahub")
 		inst := a.fake.Install("kazuhahub", "all")
 		a.fake.SetInstall(inst, func(i *githubapptest.Install) { i.Perms = map[string]string{"contents": "write", "metadata": "read"} })
-		if r := admin.do("GET", "/api/admin/github", nil).want(t, 200, ""); len(r.body["missing"].([]any)) != 1 {
+		if r := admin.do("GET", "/api/admin/connections/github", nil).want(t, 200, ""); len(r.body["missing"].([]any)) != 1 {
 			t.Fatalf("a GET asked GitHub: %s", r.raw)
 		}
-		r := admin.do("POST", "/api/admin/github/check", nil).want(t, 200, "")
+		r := admin.do("POST", "/api/admin/connections/github/check", nil).want(t, 200, "")
 		gaps := r.body["gaps"].([]any)
 		if len(r.body["missing"].([]any)) != 0 || len(gaps) != 1 || r.body["anyAccount"] != true {
 			t.Fatalf("%s", r.raw)
@@ -637,7 +639,7 @@ func TestTheAdministratorsCheckTheAppAgain(t *testing.T) {
 		if g["account"] != "kazuhahub" || g["installationId"] != float64(inst) || g["missing"].([]any)[0] != "administration" {
 			t.Fatalf("%s", r.raw)
 		}
-		if got := admin.do("GET", "/api/admin/github", nil).want(t, 200, ""); len(got.body["gaps"].([]any)) != 1 {
+		if got := admin.do("GET", "/api/admin/connections/github", nil).want(t, 200, ""); len(got.body["gaps"].([]any)) != 1 {
 			t.Fatalf("the check was not kept: %s", got.raw)
 		}
 	})
@@ -648,42 +650,42 @@ func TestTheAdministratorsCheckTheAppAgain(t *testing.T) {
 func TestConnectingByInstallingAndThePersonalAccountNeedsTheApp(t *testing.T) {
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin := a.setup("root", pw)
-		admin.do("PUT", "/api/admin/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM(),
+		admin.do("PUT", "/api/admin/connections/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM(),
 			"clientId": a.fake.ClientID, "clientSecret": a.fake.ClientSecret}).want(t, 200, "")
 		a.fake.PersonalNeedsInstall = true
 		member := a.addUser("tang", pw, "member")
 		a.fake.AddUser("tang-gh")
-		r := member.do("POST", "/api/github/authorization/start", map[string]any{"return": "/settings/github", "install": true}).want(t, 200, "")
+		r := member.do("POST", "/api/connections/github/authorization/start", map[string]any{"return": "/settings/connections", "install": true}).want(t, 200, "")
 		installURL := r.body["url"].(string)
 		if !strings.Contains(installURL, "/installations/new?state=") {
 			t.Fatalf("%s", installURL)
 		}
-		back, _ := url.Parse(a.fake.InstallApp(installURL, "tang-gh", "https://notes.example.test/api/github/authorization/callback"))
+		back, _ := url.Parse(a.fake.InstallApp(installURL, "tang-gh", "https://notes.example.test/api/connections/github/authorization/callback"))
 		cb := member.do("GET", back.Path+"?"+back.RawQuery, nil, "Sec-Fetch-Site", "cross-site")
-		if cb.code != 303 || cb.resp.Header.Get("Location") != "/settings/github" {
+		if cb.code != 303 || cb.resp.Header.Get("Location") != "/settings/connections" {
 			t.Fatalf("the callback answered %d %q", cb.code, cb.resp.Header.Get("Location"))
 		}
-		g := member.do("GET", "/api/github", nil).want(t, 200, "")
-		if g.body["authorization"].(map[string]any)["login"] != "tang-gh" {
+		g := ghProvider(t, member)
+		if g.body["connection"].(map[string]any)["login"] != "tang-gh" {
 			t.Fatalf("%s", g.raw)
 		}
 		// It was installed in the same flow: a repository in the account is made.
-		member.do("POST", "/api/spaces", map[string]any{"name": "Mine", "github": map[string]any{"owner": "tang-gh", "name": "mine"}}).want(t, 201, "")
+		member.do("POST", "/api/spaces", map[string]any{"name": "Mine", "storage": ghSync(map[string]any{"owner": "tang-gh", "name": "mine"})}).want(t, 201, "")
 
 		// Another person authorises without installing: the owners say so and creating is refused with the way out.
 		other := a.addUser("kai", pw, "member")
 		a.fake.AddUser("kai-gh")
 		connectGitHub(t, a, other, "kai-gh")
-		o := other.do("GET", "/api/github/owners", nil).want(t, 200, "")
+		o := other.do("GET", "/api/connections/github/owners", nil).want(t, 200, "")
 		first := o.body["items"].([]any)[0].(map[string]any)
 		if first["login"] != "kai-gh" || first["needsInstall"] != true {
 			t.Fatalf("%s", o.raw)
 		}
-		e := other.do("POST", "/api/spaces", map[string]any{"name": "Kai", "github": map[string]any{"owner": "kai-gh", "name": "kai"}}).want(t, 409, "github_app_not_installed")
+		e := other.do("POST", "/api/spaces", map[string]any{"name": "Kai", "storage": ghSync(map[string]any{"owner": "kai-gh", "name": "kai"})}).want(t, 409, "app_not_installed")
 		if e.body["installUrl"] != "https://github.com/apps/petalbook-notes/installations/new" || strings.Contains(e.raw, "integration") {
 			t.Fatalf("%s", e.raw)
 		}
-		if m := member.do("GET", "/api/github/owners", nil).want(t, 200, ""); m.body["items"].([]any)[0].(map[string]any)["needsInstall"] != false {
+		if m := member.do("GET", "/api/connections/github/owners", nil).want(t, 200, ""); m.body["items"].([]any)[0].(map[string]any)["needsInstall"] != false {
 			t.Fatalf("%s", m.raw)
 		}
 	})
@@ -695,13 +697,13 @@ func TestMakingTheAppFromAManifestThroughTheAPI(t *testing.T) {
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin := a.setup("root", pw)
 		member := a.addUser("tang", pw, "member")
-		member.do("POST", "/api/admin/github/manifest", map[string]any{}).want(t, 403, "forbidden")
-		admin.do("POST", "/api/admin/github/manifest", map[string]any{"organization": "a/b"}).want(t, 400, "invalid")
-		r := admin.do("POST", "/api/admin/github/manifest", map[string]any{"organization": "kazuhahub", "name": "Team notes"}).want(t, 200, "")
+		member.do("POST", "/api/admin/connections/github/manifest", map[string]any{}).want(t, 403, "forbidden")
+		admin.do("POST", "/api/admin/connections/github/manifest", map[string]any{"organization": "a/b"}).want(t, 400, "invalid")
+		r := admin.do("POST", "/api/admin/connections/github/manifest", map[string]any{"organization": "kazuhahub", "name": "Team notes"}).want(t, 200, "")
 		postURL := r.body["url"].(string)
 		m := r.body["manifest"].(map[string]any)
 		if !strings.Contains(postURL, "/organizations/kazuhahub/settings/apps/new?state=") || m["name"] != "Team notes" || m["public"] != true ||
-			m["request_oauth_on_install"] != true || m["redirect_url"] != "https://notes.example.test/api/github/manifest/callback" ||
+			m["request_oauth_on_install"] != true || m["redirect_url"] != "https://notes.example.test/api/connections/github/manifest/callback" ||
 			m["hook_attributes"].(map[string]any)["active"] != false {
 			t.Fatalf("%s", r.raw)
 		}
@@ -709,17 +711,17 @@ func TestMakingTheAppFromAManifestThroughTheAPI(t *testing.T) {
 		back, _ := url.Parse(a.fake.SubmitManifest(postURL, string(manifest)))
 		path := back.Path + "?" + back.RawQuery
 		// Someone else's browser (no cookie, or a member's session) finishes nothing.
-		if cb := member.do("GET", path, nil, "Sec-Fetch-Site", "cross-site"); cb.code != 303 || cb.resp.Header.Get("Location") != "/admin/github?github_app_error=expired" {
+		if cb := member.do("GET", path, nil, "Sec-Fetch-Site", "cross-site"); cb.code != 303 || cb.resp.Header.Get("Location") != "/admin/storage?connection_app_error=expired" {
 			t.Fatalf("%d %q", cb.code, cb.resp.Header.Get("Location"))
 		}
-		if admin.do("GET", "/api/admin/github", nil).body["configured"] != false {
+		if admin.do("GET", "/api/admin/connections/github", nil).body["configured"] != false {
 			t.Fatal("a refused return configured the App")
 		}
 		cb := admin.do("GET", path, nil, "Sec-Fetch-Site", "cross-site")
-		if cb.code != 303 || cb.resp.Header.Get("Location") != "/admin/github?github_app=created" {
+		if cb.code != 303 || cb.resp.Header.Get("Location") != "/admin/storage?connection_app=created" {
 			t.Fatalf("%d %q", cb.code, cb.resp.Header.Get("Location"))
 		}
-		got := admin.do("GET", "/api/admin/github", nil).want(t, 200, "")
+		got := admin.do("GET", "/api/admin/connections/github", nil).want(t, 200, "")
 		if got.body["configured"] != true || got.body["appId"] != "424242" || got.body["userAuthorization"] != true || got.body["clientSecret"].(map[string]any)["set"] != true {
 			t.Fatalf("%s", got.raw)
 		}
@@ -729,8 +731,32 @@ func TestMakingTheAppFromAManifestThroughTheAPI(t *testing.T) {
 			}
 		}
 		// The state worked once.
-		if cb := admin.do("GET", path, nil, "Sec-Fetch-Site", "cross-site"); cb.resp.Header.Get("Location") != "/admin/github?github_app_error=expired" {
+		if cb := admin.do("GET", path, nil, "Sec-Fetch-Site", "cross-site"); cb.resp.Header.Get("Location") != "/admin/storage?connection_app_error=expired" {
 			t.Fatalf("a replay: %q", cb.resp.Header.Get("Location"))
 		}
 	})
+}
+
+// ghSync is the storage of a new space that syncs with GitHub (docs/api.md,
+// "Spaces and remotes"): fields are the sync's, the provider is added.
+func ghSync(fields map[string]any) map[string]any {
+	f := map[string]any{"provider": "github"}
+	for k, v := range fields {
+		f[k] = v
+	}
+	return map[string]any{"sync": f}
+}
+
+// ghProvider is the GitHub provider's entry in GET /api/connections.
+func ghProvider(t *testing.T, c *client) result {
+	t.Helper()
+	r := c.do("GET", "/api/connections", nil).want(t, 200, "")
+	for _, p := range r.body["providers"].([]any) {
+		if m := p.(map[string]any); m["id"] == "github" {
+			raw, _ := json.Marshal(m)
+			return result{code: 200, body: m, raw: string(raw)}
+		}
+	}
+	t.Fatalf("no GitHub provider in %s", r.raw)
+	return result{}
 }

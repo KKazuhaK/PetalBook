@@ -424,7 +424,7 @@ func TestNoGitHubRouteIsForAToken(t *testing.T) {
 		b := a.bearer(secret, "")
 		var n int
 		for _, rt := range api.Routes() {
-			if !strings.HasPrefix(rt.Pattern, "/api/github") && !strings.HasPrefix(rt.Pattern, "/api/admin/github") {
+			if !strings.HasPrefix(rt.Pattern, "/api/connections") && !strings.HasPrefix(rt.Pattern, "/api/admin/connections") {
 				continue
 			}
 			n++

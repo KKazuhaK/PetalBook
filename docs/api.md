@@ -1575,7 +1575,7 @@ Every error of a connection has `provider` (the id) next to `error` and
 | `provider_error` | the platform failed or answered something the server could not use |
 | `name_taken` | the owner has a repository of that name |
 | `push_failed` | the repository was made but the first push failed |
-| `auto_create_needs_org` | (2.8's sign-in providers, unchanged) |
+| `auto_create_needs_org` | `autoCreate` on a sign-in provider (2.8) that names no organisation: anyone with an account there could make one |
 | `app_rejected`, `client_rejected`, `key_invalid` | the platform does not accept what the administrator entered |
 | `public_url_needed` | the flow needs `--public-url` |
 | `owner_not_allowed` | the owner is not one of the caller's |
@@ -6095,7 +6095,7 @@ Fetches the discovery document or the metadata now. `200` with the provider
 | `oidc_issuer_invalid` | 400 | the issuer is not an `https` address |
 | `saml_needs_https` | 400 | SAML without an `https` `--public-url` (the cookie that crosses from the identity provider must be `Secure`) |
 | `saml_metadata_invalid` | 400 | the metadata cannot be parsed, has no signing certificate or no redirect binding for sign-in |
-| `github_auto_create_needs_org` | 400 | `autoCreate` on a GitHub provider that names no organisation: anyone with a GitHub account could make one |
+| `auto_create_needs_org` | 400 | `autoCreate` on a GitHub provider that names no organisation: anyone with a GitHub account could make one |
 | `public_url_required` | 400 | any provider without `--public-url` |
 | `provider_in_use` | 409 | `DELETE` without `force=1`, see above |
 

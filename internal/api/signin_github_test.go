@@ -42,7 +42,7 @@ func TestGitHubSignInNeedsAnOrganisationToCreateAccounts(t *testing.T) {
 		gh.users["outsider"] = ghFake{ID: 99, Login: "outsider", Orgs: []string{"somewhere"}}
 		gh.users["unverified"] = ghFake{ID: 100, Login: "newbie", Email: "n@example.test", Verified: false, Orgs: []string{"KazuhaHub"}}
 		admin := a.setup("kazuha", pw)
-		admin.do("POST", "/api/admin/auth/providers", gh.body("gh", map[string]any{"autoCreate": true})).want(t, 400, "github_auto_create_needs_org")
+		admin.do("POST", "/api/admin/auth/providers", gh.body("gh", map[string]any{"autoCreate": true})).want(t, 400, "auto_create_needs_org")
 		body := gh.body("gh", map[string]any{"autoCreate": true})
 		body["github"].(map[string]any)["organizations"] = []string{"KazuhaHub"}
 		p := admin.do("POST", "/api/admin/auth/providers", body).want(t, 201, "")

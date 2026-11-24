@@ -8,8 +8,15 @@ import (
 	"time"
 )
 
-// Credential type of a remote that syncs through the server's GitHub App.
-const CredGitHub = "github"
+// Credential type of a remote that syncs through a provider's connection (the
+// remote's Provider says which: here only "github").
+const CredConnection = "connection"
+
+// ProviderGit is the provider of a remote with a plain address, a deploy key or a token.
+const ProviderGit = "git"
+
+// ProviderGitHub is the id of the GitHub provider, the one the tables below belong to.
+const ProviderGitHub = "github"
 
 // States of a user's GitHub authorisation.
 const (
@@ -202,13 +209,13 @@ func CountGitHubAuthorizations(ctx context.Context, q Q) (n int, err error) {
 
 // CountGitHubSpaces is how many spaces have a github credential.
 func CountGitHubSpaces(ctx context.Context, q Q) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM remotes WHERE url <> '' AND cred_type = 'github'`).Scan(&n)
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM remotes WHERE url <> '' AND cred_type = 'connection' AND provider = 'github'`).Scan(&n)
 	return
 }
 
 // CountUserGitHubSpaces is how many spaces sync through a user's authorisation.
 func CountUserGitHubSpaces(ctx context.Context, q Q, userID string) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM remotes WHERE url <> '' AND cred_type = 'github' AND gh_via = 'user' AND gh_user_id = ?`, userID).Scan(&n)
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM remotes WHERE url <> '' AND cred_type = 'connection' AND provider = 'github' AND gh_via = 'user' AND gh_user_id = ?`, userID).Scan(&n)
 	return
 }
 
@@ -224,7 +231,7 @@ func GitHubSpaceCounts(ctx context.Context, q Q, ids []int64) (map[int64]int, er
 		args[i], marks[i] = id, "?"
 	}
 	rows, err := q.Query(ctx, `SELECT gh_installation_id, COUNT(*) FROM remotes
-		WHERE url <> '' AND cred_type = 'github' AND gh_via = 'app' AND gh_installation_id IN (`+strings.Join(marks, ",")+`) GROUP BY gh_installation_id`, args...)
+		WHERE url <> '' AND cred_type = 'connection' AND provider = 'github' AND gh_via = 'app' AND gh_installation_id IN (`+strings.Join(marks, ",")+`) GROUP BY gh_installation_id`, args...)
 	if err != nil {
 		return nil, err
 	}

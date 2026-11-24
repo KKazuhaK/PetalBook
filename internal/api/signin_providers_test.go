@@ -72,9 +72,9 @@ func TestProviderCRUDAndRefusals(t *testing.T) {
 		admin.do("POST", "/api/admin/auth/providers", bad).want(t, 400, "invalid") // the settings of another kind
 		// GitHub that creates accounts must name an organisation.
 		gh := newFakeGitHub(t)
-		admin.do("POST", "/api/admin/auth/providers", gh.body("gh", map[string]any{"autoCreate": true})).want(t, 400, "github_auto_create_needs_org")
+		admin.do("POST", "/api/admin/auth/providers", gh.body("gh", map[string]any{"autoCreate": true})).want(t, 400, "auto_create_needs_org")
 		admin.do("POST", "/api/admin/auth/providers", gh.body("gh", map[string]any{"autoCreate": true, "github": map[string]any{"baseUrl": gh.srv.URL, "clientId": "gh-client", "clientSecret": "gh-secret", "organizations": []string{"KazuhaHub"}}})).want(t, 201, "")
-		admin.do("PATCH", "/api/admin/auth/providers/gh", map[string]any{"github": map[string]any{"organizations": []string{}}}).want(t, 400, "github_auto_create_needs_org")
+		admin.do("PATCH", "/api/admin/auth/providers/gh", map[string]any{"github": map[string]any{"organizations": []string{}}}).want(t, 400, "auto_create_needs_org")
 		// Only one provider has the legacy callback.
 		admin.do("PATCH", "/api/admin/auth/providers/one", map[string]any{"oidc": map[string]any{"legacyCallback": true}}).want(t, 200, "")
 		r = admin.do("POST", "/api/admin/auth/providers", other.providerBody("other", map[string]any{"oidc": map[string]any{"issuer": other.srv.URL, "clientId": idpClient, "legacyCallback": true}})).want(t, 409, "legacy_callback_in_use")

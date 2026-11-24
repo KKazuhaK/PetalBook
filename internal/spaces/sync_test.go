@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/github"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp/githubapptest"
@@ -95,8 +96,8 @@ func newGHEnv(t *testing.T, st *store.Store, mod ...func(*Options)) *ghEnv {
 	e := &ghEnv{t: t, st: st, f: f, clk: clk, svc: svc, run: &argvRunner{}, logs: logs, dir: filepath.Join(base, "data")}
 	opt := Options{Store: st, DataDir: e.dir, Committer: "Svc <svc@example.test>", CloseWait: 200 * time.Millisecond, CommitIdle: time.Hour, CommitMax: time.Hour,
 		Now: clk.Now, PullInterval: time.Minute, RemoteRunner: e.run, FetchFresh: time.Nanosecond, FailFast: time.Nanosecond, Logger: log, Secrets: box,
-		RemotePolicy: gitstore.Policy{Hosts: []string{"*"}, AllowUnsafe: true}, GitHub: svc, PushRetry: []time.Duration{5 * time.Millisecond, 5 * time.Millisecond, 5 * time.Millisecond},
-		GitHubHook: func(step string) {
+		RemotePolicy: gitstore.Policy{Hosts: []string{"*"}, AllowUnsafe: true}, Connections: connections.NewRegistry(svc, connections.NewGit()), PushRetry: []time.Duration{5 * time.Millisecond, 5 * time.Millisecond, 5 * time.Millisecond},
+		SyncHook: func(step string) {
 			if e.hook != nil {
 				e.hook(step)
 			}
@@ -108,7 +109,7 @@ func newGHEnv(t *testing.T, st *store.Store, mod ...func(*Options)) *ghEnv {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { e.m.Close() })
-	svc.OnChange(e.m.GitHubFixed)
+	svc.OnChange(e.m.ConnectionFixed)
 	id := f.ClientID
 	if _, err := svc.Save(ctx, github.SaveRequest{AppID: "424242", PrivateKey: f.KeyPEM(), ClientID: &id, ClientSecret: f.ClientSecret}); err != nil {
 		t.Fatal(err)
@@ -134,7 +135,7 @@ func (e *ghEnv) connect() {
 }
 
 func (e *ghEnv) create(name, owner, repo string, create bool) (Info, error) {
-	return e.m.CreateWithGitHub(ctx, e.user.ID, name, "", GitHubCreate{Owner: owner, Name: repo, Private: true, Description: "Notes", Create: create})
+	return e.m.CreateWithSync(ctx, e.user.ID, name, "", SyncCreate{Provider: "github", Owner: owner, Name: repo, Private: true, Description: "Notes", Create: create})
 }
 
 func (e *ghEnv) spaceDirs() []string {
@@ -172,15 +173,15 @@ func (e *ghEnv) nothingLeft() {
 }
 
 func ghCode(err error) string {
-	var he *github.Error
+	var he *connections.Error
 	if errors.As(err, &he) {
 		return he.Code
 	}
 	return ""
 }
 
-func ghRepo(err error) *github.RepoRef {
-	var he *github.Error
+func ghRepo(err error) *connections.RepoRef {
+	var he *connections.Error
 	if errors.As(err, &he) {
 		return he.Repo
 	}
@@ -261,7 +262,7 @@ func TestCreateASpaceWithAnOrganisationsNewRepository(t *testing.T) {
 		}
 		// The space follows it: the organisation's repository syncs with the installation's token.
 		row, err := store.GetRemote(ctx, st.Q(), in.ID)
-		if err != nil || row.CredType != "github" || row.GHVia != "app" || row.GHInstallationID != e.kazuhub || row.GHRepoID != repo.ID ||
+		if err != nil || row.CredType != "connection" || row.GHVia != "app" || row.GHInstallationID != e.kazuhub || row.GHRepoID != repo.ID ||
 			row.TokenEnc != "" || row.PrivKeyEnc != "" || row.URL != e.f.URL+"/kazuhahub/tang-notes.git" || row.State != "ok" || row.Branch != "main" {
 			t.Fatalf("%+v %v", row, err)
 		}
@@ -281,7 +282,7 @@ func TestCreateASpaceWithAnOrganisationsNewRepository(t *testing.T) {
 			t.Fatalf("%s commits after a change", got)
 		}
 		v, err := e.m.Remote(ctx, h)
-		if err != nil || v.CredType != "github" || v.GitHub == nil || v.GitHub.Via != "app" || v.GitHub.Account != "kazuhahub" || v.GitHub.RepoID != repo.ID || v.ErrorCode != "" {
+		if err != nil || v.CredType != "connection" || v.Connection == nil || v.Connection.Via != "app" || v.Connection.Account != "kazuhahub" || v.Connection.RepoID != repo.ID || v.ErrorCode != "" {
 			t.Fatalf("%+v %v", v, err)
 		}
 		// One repository made, with the caller's token; the installation's token was narrowed to it.
@@ -306,8 +307,8 @@ func TestCreateASpaceInTheUsersOwnAccount(t *testing.T) {
 		h, _ := e.m.Open(ctx, e.user, in.ID)
 		defer h.Release()
 		v, _ := e.m.Remote(ctx, h)
-		if v.GitHub.Via != "user" || v.GitHub.Username != "kazuha" || v.GitHub.Login != "tang" {
-			t.Fatalf("%+v", v.GitHub)
+		if v.Connection.Via != "user" || v.Connection.Username != "kazuha" || v.Connection.Login != "tang" {
+			t.Fatalf("%+v", v.Connection)
 		}
 		if _, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "Pushed"}}}); err != nil {
 			t.Fatal(err)
@@ -334,18 +335,18 @@ func TestNothingIsLeftWhenGitHubRefusesTheRepository(t *testing.T) {
 		e := newGHEnv(t, st)
 		e.f.AddRepo("kazuhahub", "taken", true)
 		_, err := e.create("A", "kazuhahub", "taken", true)
-		if ghCode(err) != "github_name_taken" || ghRepo(err) != nil {
+		if ghCode(err) != "name_taken" || ghRepo(err) != nil {
 			t.Fatalf("%v", err)
 		}
 		e.nothingLeft()
 		e.f.SetAccount("kazuhahub", func(a *githubapptest.Account) { a.NoCreate = true })
 		_, err = e.create("A", "kazuhahub", "fresh", true)
-		if ghCode(err) != "github_no_permission" || ghRepo(err) != nil || !strings.Contains(err.Error(), "permission") {
+		if ghCode(err) != "provider_refused" || ghRepo(err) != nil || !strings.Contains(err.Error(), "permission") {
 			t.Fatalf("%v", err)
 		}
 		e.nothingLeft()
 		// Not an owner of the caller's.
-		if _, err = e.create("A", "someone-else", "fresh", true); ghCode(err) != "github_owner_not_allowed" {
+		if _, err = e.create("A", "someone-else", "fresh", true); ghCode(err) != "owner_not_allowed" {
 			t.Fatalf("%v", err)
 		}
 		// A bad name never reaches GitHub.
@@ -355,7 +356,7 @@ func TestNothingIsLeftWhenGitHubRefusesTheRepository(t *testing.T) {
 				t.Fatalf("%q: %v", name, err)
 			}
 		}
-		if _, err = e.m.CreateWithGitHub(ctx, e.user.ID, "A", "", GitHubCreate{Owner: "tang", Name: "ok", Description: "bad\x01", Create: true}); !errors.Is(err, ErrInvalid) {
+		if _, err = e.m.CreateWithSync(ctx, e.user.ID, "A", "", SyncCreate{Provider: "github", Owner: "tang", Name: "ok", Description: "bad\x01", Create: true}); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("%v", err)
 		}
 		if len(e.f.Requests()) != before {
@@ -366,7 +367,7 @@ func TestNothingIsLeftWhenGitHubRefusesTheRepository(t *testing.T) {
 		if err := e.svc.Delete(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = e.create("A", "tang", "x", true); ghCode(err) != "github_not_configured" {
+		if _, err = e.create("A", "tang", "x", true); ghCode(err) != "provider_not_configured" {
 			t.Fatalf("%v", err)
 		}
 		e.nothingLeft()
@@ -400,10 +401,10 @@ func TestAnEmptyRepositoryIsLeftAndNamedWhenThePushNeverWorks(t *testing.T) {
 		e.f.HiddenGit = 100 // more than the four tries
 		_, err := e.create("Slow", "kazuhahub", "slow", true)
 		repo := ghRepo(err)
-		if ghCode(err) != "github_push_failed" || repo == nil || repo.FullName != "kazuhahub/slow" || repo.ID == 0 || repo.HTMLURL == "" {
+		if ghCode(err) != "push_failed" || repo == nil || repo.FullName != "kazuhahub/slow" || repo.ID == 0 || repo.HTMLURL == "" {
 			t.Fatalf("%v %+v", err, repo)
 		}
-		var he *github.Error
+		var he *connections.Error
 		if !errors.As(err, &he) || he.Status != 502 {
 			t.Fatalf("%v", err)
 		}
@@ -441,7 +442,7 @@ func TestARefusedCredentialIsNotRetried(t *testing.T) {
 		e.f.RejectGit = true
 		before := e.f.Count("GET", "/kazuhahub/refused.git")
 		_, err := e.create("R", "kazuhahub", "refused", true)
-		if ghCode(err) != "github_push_failed" || ghRepo(err) == nil {
+		if ghCode(err) != "push_failed" || ghRepo(err) == nil {
 			t.Fatalf("%v", err)
 		}
 		// One try: one request without credentials, one with.
@@ -469,7 +470,7 @@ func TestSelectedRepositoriesInstallation(t *testing.T) {
 		e.f.SetInstall(sel, func(i *githubapptest.Install) { i.NoAdd = true })
 		_, err = e.create("Sel2", "sel", "stuck", true)
 		repo := ghRepo(err)
-		if ghCode(err) != "github_repo_not_in_installation" || repo == nil || repo.FullName != "sel/stuck" {
+		if ghCode(err) != "repo_not_in_installation" || repo == nil || repo.FullName != "sel/stuck" {
 			t.Fatalf("%v", err)
 		}
 		if l, _ := e.m.List(ctx, e.user.ID); len(l) != 1 {
@@ -500,7 +501,7 @@ func TestAFailureAfterTheRepositoryLeavesNoSpace(t *testing.T) {
 		}
 		_, err := e.create("Late", "kazuhahub", "late", true)
 		repo := ghRepo(err)
-		var he *github.Error
+		var he *connections.Error
 		if !errors.As(err, &he) || he.Code != "internal" || he.Status != 500 || repo == nil || repo.FullName != "kazuhahub/late" {
 			t.Fatalf("%v", err)
 		}
@@ -580,7 +581,7 @@ func TestConnectingAnotherTenantsSpaceChecksTheSpacesTenant(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer h.Release()
-		req := ConnectRequest{URL: e.f.URL + "/kazuhahub/wiki.git", CredType: CredGitHub, Via: "app", UserID: admin.ID}
+		req := ConnectRequest{URL: e.f.URL + "/kazuhahub/wiki.git", CredType: CredConnection, Provider: "github", Via: "app", UserID: admin.ID}
 		// Shared with the administrator's tenant only: the space's tenant has no right to it.
 		if _, err := e.svc.SetTenants(ctx, e.kazuhub, []string{store.DefaultTenantID}); err != nil {
 			t.Fatal(err)
@@ -592,7 +593,7 @@ func TestConnectingAnotherTenantsSpaceChecksTheSpacesTenant(t *testing.T) {
 		if _, err := e.svc.SetTenants(ctx, e.kazuhub, []string{tenB}); err != nil {
 			t.Fatal(err)
 		}
-		if v, err := e.m.Connect(ctx, h, req); err != nil || v.GitHub == nil || v.GitHub.Via != "app" {
+		if v, err := e.m.Connect(ctx, h, req); err != nil || v.Connection == nil || v.Connection.Via != "app" {
 			t.Fatalf("%+v %v", v, err)
 		}
 	})
@@ -629,11 +630,11 @@ func TestSwitchingASpaceToTheApp(t *testing.T) {
 			t.Fatal("no token stored")
 		}
 		// The same repository, now through the App: the address and credential are replaced in place.
-		v, err = e.m.Connect(ctx, h, ConnectRequest{URL: "git@" + strings.Split(strings.TrimPrefix(e.f.URL, "http://"), ":")[0] + ":kazuhahub/wiki.git", CredType: CredGitHub, Via: "app", UserID: e.user.ID})
+		v, err = e.m.Connect(ctx, h, ConnectRequest{URL: "git@" + strings.Split(strings.TrimPrefix(e.f.URL, "http://"), ":")[0] + ":kazuhahub/wiki.git", CredType: CredConnection, Provider: "github", Via: "app", UserID: e.user.ID})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if v.CredType != CredGitHub || v.GitHub == nil || v.GitHub.Via != "app" || v.URL != e.f.URL+"/kazuhahub/wiki.git" || v.State != "ok" {
+		if v.CredType != CredConnection || v.Connection == nil || v.Connection.Via != "app" || v.URL != e.f.URL+"/kazuhahub/wiki.git" || v.State != "ok" {
 			t.Fatalf("%+v", v)
 		}
 		row, _ := store.GetRemote(ctx, st.Q(), in.ID)
@@ -657,15 +658,15 @@ func TestSwitchingASpaceToTheApp(t *testing.T) {
 			t.Fatalf("%+v", row)
 		}
 		// A repository outside GitHub, or one the App does not reach, is refused.
-		if _, err = e.m.Connect(ctx, h, ConnectRequest{URL: "https://example.com/a/b.git", CredType: CredGitHub, Via: "app", UserID: e.user.ID}); !errors.Is(err, ErrInvalid) {
+		if _, err = e.m.Connect(ctx, h, ConnectRequest{URL: "https://example.com/a/b.git", CredType: CredConnection, Provider: "github", Via: "app", UserID: e.user.ID}); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("%v", err)
 		}
 		e.f.AddOrg("none")
 		e.f.AddRepo("none", "x", true)
-		if _, err = e.m.Connect(ctx, h, ConnectRequest{URL: e.f.URL + "/none/x.git", CredType: CredGitHub, Via: "app", UserID: e.user.ID}); ghCode(err) != "github_repo_not_in_installation" {
+		if _, err = e.m.Connect(ctx, h, ConnectRequest{URL: e.f.URL + "/none/x.git", CredType: CredConnection, Provider: "github", Via: "app", UserID: e.user.ID}); ghCode(err) != "repo_not_in_installation" {
 			t.Fatalf("%v", err)
 		}
-		if _, err = e.m.Connect(ctx, h, ConnectRequest{URL: e.f.URL + "/kazuhahub/wiki.git", CredType: CredGitHub, Via: "both", UserID: e.user.ID}); !errors.Is(err, ErrInvalid) {
+		if _, err = e.m.Connect(ctx, h, ConnectRequest{URL: e.f.URL + "/kazuhahub/wiki.git", CredType: CredConnection, Provider: "github", Via: "both", UserID: e.user.ID}); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("%v", err)
 		}
 		e.noLeak()
@@ -693,7 +694,7 @@ func TestAnExpiredAuthorizationPutsTheSpaceInErrorAndKeepsEverything(t *testing.
 			t.Fatalf("%v", err)
 		}
 		v, _ := e.m.Remote(ctx, h)
-		if v.State != "error" || v.ErrorCode != "github_authorization_expired" || v.Error == "" {
+		if v.State != "error" || v.ErrorCode != "connection_expired" || v.Error == "" {
 			t.Fatalf("%+v", v)
 		}
 		if l, _ := e.m.List(ctx, e.user.ID); l[0].Sync != "error" {
@@ -739,7 +740,7 @@ func waitFor(t *testing.T, cond func() bool) {
 
 func TestASpaceWhoseCredentialIsMissingIsTriedAgainEveryTenMinutes(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
-		e := newGHEnv(t, st, func(o *Options) { o.GitHubRetry = 10 * time.Minute })
+		e := newGHEnv(t, st, func(o *Options) { o.ConnectionRetry = 10 * time.Minute })
 		in, err := e.create("Mine", "tang", "notes", true)
 		if err != nil {
 			t.Fatal(err)
@@ -752,7 +753,7 @@ func TestASpaceWhoseCredentialIsMissingIsTriedAgainEveryTenMinutes(t *testing.T)
 		e.clk.Advance(9 * time.Hour)
 		h.Space.Pull(ctx, true)
 		v, _ := e.m.Remote(ctx, h)
-		if v.State != "error" || v.ErrorCode != "github_authorization_missing" {
+		if v.State != "error" || v.ErrorCode != "connection_missing" {
 			t.Fatalf("%+v", v)
 		}
 		// The puller looked at it once more and then waits ten minutes (jittered), not one.
@@ -812,7 +813,7 @@ func TestAGitHubCredentialObeysTheRemoteHostPolicy(t *testing.T) {
 		}
 		h, _ := e.m.Open(ctx, e.user, in.ID)
 		defer h.Release()
-		if _, err := e.m.Connect(ctx, h, ConnectRequest{URL: e.f.URL + "/kazuhahub/wiki.git", CredType: CredGitHub, Via: "app", UserID: e.user.ID}); !errors.As(err, &he) {
+		if _, err := e.m.Connect(ctx, h, ConnectRequest{URL: e.f.URL + "/kazuhahub/wiki.git", CredType: CredConnection, Provider: "github", Via: "app", UserID: e.user.ID}); !errors.As(err, &he) {
 			t.Fatalf("connecting: %v", err)
 		}
 		if n := len(e.f.Requests()) - before; n != 0 {
@@ -862,7 +863,7 @@ func TestTheFirstPushWaitsKeepToItsDeadline(t *testing.T) {
 			o.PushDeadline = 300 * time.Millisecond
 		})
 		e.f.HiddenGit = 100
-		if err := firstPushWithin(t, e, "slow"); ghCode(err) != "github_push_failed" || ghRepo(err) == nil {
+		if err := firstPushWithin(t, e, "slow"); ghCode(err) != "push_failed" || ghRepo(err) == nil {
 			t.Fatalf("%v", err)
 		}
 		e.nothingLeft()
@@ -876,7 +877,7 @@ func TestAHangingFirstPushKeepsToItsDeadline(t *testing.T) {
 			o.RemoteRunner = &hangingPush{}
 			o.PushDeadline = 300 * time.Millisecond
 		})
-		if err := firstPushWithin(t, e, "hang"); ghCode(err) != "github_push_failed" || ghRepo(err) == nil {
+		if err := firstPushWithin(t, e, "hang"); ghCode(err) != "push_failed" || ghRepo(err) == nil {
 			t.Fatalf("%v", err)
 		}
 		e.nothingLeft()
@@ -898,7 +899,7 @@ func TestWhatTheFirstPushTriesAgain(t *testing.T) {
 		{git("fatal: unable to access 'https://github.com/o/n.git/': The requested URL returned error: 502"), true},
 		{git("fatal: Authentication failed for 'https://github.com/o/n.git/'"), false},
 		{git("fatal: unable to access 'https://github.com/o/n.git/': The requested URL returned error: 403"), false},
-		{&space.UnavailableError{Msg: "the installation was not found", Err: &gitstore.CredentialError{Code: "github_installation_missing", Msg: "the installation was not found"}}, false},
+		{&space.UnavailableError{Msg: "the installation was not found", Err: &gitstore.CredentialError{Code: "installation_missing", Msg: "the installation was not found"}}, false},
 		{errors.New("not found"), false},
 	} {
 		if got := retryable(c.err); got != c.retry {
@@ -922,10 +923,10 @@ func TestAFailureAfterTheRepositoryWasMadeLeavesAReminder(t *testing.T) {
 		}
 		// Failures before the repository exists leave nothing to remember.
 		e.f.AddRepo("kazuhahub", "taken", false)
-		if _, err := e.create("T", "kazuhahub", "taken", true); ghCode(err) != "github_name_taken" {
+		if _, err := e.create("T", "kazuhahub", "taken", true); ghCode(err) != "name_taken" {
 			t.Fatalf("%v", err)
 		}
-		if _, err := e.create("T", "nobody-here", "x", true); ghCode(err) != "github_owner_not_allowed" {
+		if _, err := e.create("T", "nobody-here", "x", true); ghCode(err) != "owner_not_allowed" {
 			t.Fatalf("%v", err)
 		}
 		if l := leftovers(); len(l) != 0 {
@@ -935,7 +936,7 @@ func TestAFailureAfterTheRepositoryWasMadeLeavesAReminder(t *testing.T) {
 		e.f.HiddenGit = 100
 		_, err := e.create("Slow notes", "kazuhahub", "slow", true)
 		repo := ghRepo(err)
-		if ghCode(err) != "github_push_failed" || repo == nil {
+		if ghCode(err) != "push_failed" || repo == nil {
 			t.Fatalf("%v", err)
 		}
 		l := leftovers()
@@ -950,7 +951,7 @@ func TestAFailureAfterTheRepositoryWasMadeLeavesAReminder(t *testing.T) {
 			t.Fatalf("%+v", l2)
 		}
 		// Another failure on another new repository adds its own.
-		if _, err := e.create("Other", "kazuhahub", "other", true); ghCode(err) != "github_push_failed" {
+		if _, err := e.create("Other", "kazuhahub", "other", true); ghCode(err) != "push_failed" {
 			t.Fatalf("%v", err)
 		}
 		if n := len(leftovers()); n != 2 {

@@ -16,16 +16,17 @@ type credentialResp struct {
 	Username    string `json:"username,omitempty"`
 	PublicKey   string `json:"publicKey,omitempty"`
 	Fingerprint string `json:"fingerprint,omitempty"`
-	// A github credential: how it syncs, and what it syncs.
-	Via            string          `json:"via,omitempty"`
-	InstallationID *int64          `json:"installationId,omitempty"`
-	Account        string          `json:"account,omitempty"`
-	RepoID         *int64          `json:"repoId,omitempty"`
-	User           *githubUserResp `json:"user,omitempty"`
-	Login          string          `json:"login,omitempty"`
+	// A connection credential: the provider, how it syncs, and what it syncs.
+	Provider       string        `json:"provider,omitempty"`
+	Via            string        `json:"via,omitempty"`
+	InstallationID *int64        `json:"installationId,omitempty"`
+	Account        string        `json:"account,omitempty"`
+	RepoID         *int64        `json:"repoId,omitempty"`
+	User           *connUserResp `json:"user,omitempty"`
+	Login          string        `json:"login,omitempty"`
 }
 
-type githubUserResp struct {
+type connUserResp struct {
 	ID       string `json:"id"`
 	Username string `json:"username"`
 }
@@ -38,6 +39,7 @@ type rewrittenResp struct {
 type remoteResp struct {
 	URL        string         `json:"url"`
 	Branch     string         `json:"branch"`
+	Provider   string         `json:"provider"`
 	Credential credentialResp `json:"credential"`
 	State      string         `json:"state"`
 	LastSync   string         `json:"lastSync,omitempty"`
@@ -48,10 +50,11 @@ type remoteResp struct {
 }
 
 func toRemote(v *spaces.RemoteView) remoteResp {
-	r := remoteResp{URL: v.URL, Branch: v.Branch, State: v.State, Error: v.Error, ErrorCode: v.ErrorCode, HostKey: v.HostKey,
+	r := remoteResp{URL: v.URL, Branch: v.Branch, Provider: v.Provider, State: v.State, Error: v.Error, ErrorCode: v.ErrorCode, HostKey: v.HostKey,
 		Credential: credentialResp{Type: v.CredType, Username: v.Username, PublicKey: v.PublicKey, Fingerprint: v.Fingerprint}}
-	if g := v.GitHub; g != nil {
+	if g := v.Connection; g != nil {
 		c := &r.Credential
+		c.Provider = v.Provider
 		c.Via, c.Account, c.Login = g.Via, g.Account, g.Login
 		repo := g.RepoID
 		c.RepoID = &repo
@@ -59,7 +62,7 @@ func toRemote(v *spaces.RemoteView) remoteResp {
 			inst := g.InstallationID
 			c.InstallationID = &inst
 		} else {
-			c.User = &githubUserResp{ID: g.UserID, Username: g.Username}
+			c.User = &connUserResp{ID: g.UserID, Username: g.Username}
 		}
 	}
 	if !v.LastSync.IsZero() {
@@ -106,6 +109,7 @@ func (s *server) putRemote(c *call) {
 			Type     string `json:"type"`
 			Username string `json:"username"`
 			Token    string `json:"token"`
+			Provider string `json:"provider"`
 			Via      string `json:"via"`
 		} `json:"credential"`
 	}
@@ -116,7 +120,7 @@ func (s *server) putRemote(c *call) {
 	// client going away must not leave it half done.
 	v, err := s.spaces.Connect(c.r.Context(), c.sp, spaces.ConnectRequest{URL: req.URL, Branch: req.Branch,
 		CredType: req.Credential.Type, Username: req.Credential.Username, Token: req.Credential.Token,
-		Via: req.Credential.Via, UserID: c.user().ID})
+		Provider: req.Credential.Provider, Via: req.Credential.Via, UserID: c.user().ID})
 	if err != nil {
 		s.fail(c.w, err)
 		return

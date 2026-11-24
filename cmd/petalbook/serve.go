@@ -21,6 +21,7 @@ import (
 
 	"github.com/KKazuhaK/PetalBook/internal/api"
 	"github.com/KKazuhaK/PetalBook/internal/auth"
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/drafts"
 	"github.com/KKazuhaK/PetalBook/internal/github"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp"
@@ -372,6 +373,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 		sp       *space.Space
 		svc      *auth.Service
 		ghs      *github.Service
+		conns    *connections.Registry
 		spClosed bool
 	)
 	defer func() {
@@ -404,14 +406,15 @@ func runServe(ctx context.Context, c serveConfig) error {
 		if ghs, err = github.New(github.Options{Store: st, Secrets: box, Client: ghc, PublicURL: cfg.publicURL, Logger: log, RenewEvery: c.githubRenewEvery}); err != nil {
 			return err
 		}
+		conns = connections.NewRegistry(ghs, connections.NewGit())
 		if mgr, err = spaces.NewAccounts(spaces.Options{Store: st, DataDir: c.data, Committer: c.committer,
 			CommitIdle: c.commitIdle, CommitMax: c.commitMax, Logger: log,
 			MaxSpaces: c.maxSpaces, IdleAfter: c.spaceIdle, MaxOpen: c.maxOpenSpaces,
-			PullInterval: c.pullInterval, NetTimeout: c.remoteTimeout, Secrets: box, GitHub: ghs,
+			PullInterval: c.pullInterval, NetTimeout: c.remoteTimeout, Secrets: box, Connections: conns,
 			RemotePolicy: gitstore.Policy{Hosts: c.remoteHosts, AllowUnsafe: c.remoteUnsafe}}); err != nil {
 			return err
 		}
-		ghs.OnChange(mgr.GitHubFixed)
+		conns.OnChange(func(_, userID string) { mgr.ConnectionFixed(userID) })
 		if svc, err = auth.New(ctx, auth.Config{Store: st, Spaces: mgr, PublicURL: cfg.publicURL, TrustedProxies: cfg.proxies,
 			OIDC: cfg.oidc, HTTPClient: c.oidcHTTPClient, Password: passwordParams, Logger: log}); err != nil {
 			return err
@@ -457,7 +460,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 			return fmt.Errorf("the authorization server: %w", err)
 		}
 	}
-	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tokenSvc, OAuth: oauthSvc, GitHub: ghs, PublicURL: cfg.publicURL, MaxSpaces: c.maxSpacesFlag(), NoMCP: c.noMCP, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
+	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tokenSvc, OAuth: oauthSvc, Connections: conns, PublicURL: cfg.publicURL, MaxSpaces: c.maxSpacesFlag(), NoMCP: c.noMCP, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
 		RestrictHost: loopback, AllowOrigins: cfg.origins, Logger: log})
 	var webOpts []webui.Option
 	if svc != nil {

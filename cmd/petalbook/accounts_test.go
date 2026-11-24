@@ -582,10 +582,10 @@ func TestGitHubFlagsAndTheAppThroughTheServer(t *testing.T) {
 	if code, r := b.do("POST", "/api/setup", map[string]any{"token": strings.Trim(m[1], `"`), "username": "kazuha", "password": "a long enough password"}); code != 201 {
 		t.Fatalf("%d %v", code, r)
 	}
-	if code, r := b.do("GET", "/api/admin/github", nil); code != 200 || r["configured"] != false {
+	if code, r := b.do("GET", "/api/admin/connections/github", nil); code != 200 || r["configured"] != false {
 		t.Fatalf("%d %v", code, r)
 	}
-	code, r := b.do("PUT", "/api/admin/github", map[string]any{"appId": "424242", "privateKey": f.KeyPEM()})
+	code, r := b.do("PUT", "/api/admin/connections/github", map[string]any{"appId": "424242", "privateKey": f.KeyPEM()})
 	if code != 200 || r["configured"] != true || r["slug"] != "petalbook-notes" {
 		t.Fatalf("%d %v", code, r)
 	}
