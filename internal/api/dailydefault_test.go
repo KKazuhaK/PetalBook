@@ -124,6 +124,27 @@ func TestSiteDefaultIsAnInterfaceForEachLanguage(t *testing.T) {
 	})
 }
 
+// Settings that cannot be read are an error, and a save never writes over them.
+func TestDailySettingsThatCannotBeReadAreNotOverwritten(t *testing.T) {
+	withExternal(t, func(x *extFixture) {
+		t := x.t
+		ctx := context.Background()
+		const bad = `{"languages": "not a list"}`
+		if err := store.SetSiteSetting(ctx, x.a.st.Q(), "daily", bad, x.now); err != nil {
+			t.Fatal(err)
+		}
+		if code, _ := x.adm("GET", "/api/admin/daily", nil); code != 500 {
+			t.Errorf("GET: %d", code)
+		}
+		if code, _ := x.adm("PUT", "/api/admin/daily", map[string]any{"languages": []any{"en"}}); code != 500 {
+			t.Errorf("PUT: %d", code)
+		}
+		if raw, _, err := store.GetSiteSetting(ctx, x.a.st.Q(), "daily"); err != nil || raw != bad {
+			t.Fatalf("%v %s", err, raw)
+		}
+	})
+}
+
 // Languages are canonical BCP 47 tags everywhere: what is given in another
 // spelling is written canonical, and what is no tag is refused.
 func TestDailyLanguagesAreCanonical(t *testing.T) {

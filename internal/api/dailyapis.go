@@ -92,8 +92,8 @@ func (s *server) loadSite(ctx context.Context) (siteDaily, error) {
 	return s.loadSiteQ(ctx, s.opt.Store.Q())
 }
 
-// loadSiteQ reads the settings through q. Settings that cannot be read are
-// logged and taken as not set.
+// loadSiteQ reads the settings through q. Settings that cannot be read are an
+// error, never taken as not set: a save would then write over them.
 func (s *server) loadSiteQ(ctx context.Context, q store.Q) (siteDaily, error) {
 	var d siteDaily
 	raw, ok, err := store.GetSiteSetting(ctx, q, siteDailyKey)
@@ -102,8 +102,7 @@ func (s *server) loadSiteQ(ctx context.Context, q store.Q) (siteDaily, error) {
 	}
 	if ok {
 		if err := json.Unmarshal([]byte(raw), &d); err != nil {
-			s.log.Error("the daily text settings of the server cannot be read; they are taken as not set", "error", err)
-			d = siteDaily{}
+			return siteDaily{}, fmt.Errorf("the daily text settings of the server cannot be read: %w", err)
 		}
 	}
 	d.fill()
