@@ -5873,9 +5873,9 @@ answer as switched off, and no setting can open registration.
 - `quota`: the tenant's totals, set by site administrators only; `null` is no
   limit. From 3.6 they are part of the tenant's capabilities (`storage.quota`,
   `other.people`; see "Capabilities" under "Tenant autonomy") and `quota` here is
-  read only. `usage` is what is measured (see "Quotas"): `measuredAt` is when a
-  measurement last changed it (`null`: never), and `over` lists the totals it is
-  over (`people`, `spaces`, `bytes`, `pages`).
+  read only. `usage` is what is measured (see "Quotas"): `measuredAt` is when a space
+  of the tenant was last measured (`null`: never), and `over` lists the totals it
+  is over (`people`, `spaces`, `bytes`, `pages`).
 - The host a tenant is reached on is reserved: in 3.3 every tenant is served on
   the one `--public-url`, and a public endpoint names its tenant by slug.
 

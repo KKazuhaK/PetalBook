@@ -150,7 +150,8 @@ CREATE INDEX invites_created_by ON invites(created_by);
 
 -- Spaces. name_key is the name folded by Go (FoldName), so that both databases
 -- search and sort the same. inbox is the folder quick notes go to. size_bytes
--- and size_at are the background measurement (NULL until the first one).
+-- is the background measurement (NULL until the first one; when it was made is
+-- in space_measure).
 -- last_used, cache_state, pinned, exempt and index_bytes are the server storage
 -- of 3.1. page_count and usage_bytes are what the quotas count, usage_user the
 -- person the space is counted for (its first owner, '' when none). location
@@ -167,7 +168,6 @@ CREATE TABLE spaces (
   inbox        TEXT COLLATE "C" NOT NULL DEFAULT 'Inbox',
   disabled     BIGINT NOT NULL DEFAULT 0,
   size_bytes   BIGINT,
-  size_at      BIGINT,
   last_used    BIGINT NOT NULL DEFAULT 0,
   cache_state  TEXT COLLATE "C" NOT NULL DEFAULT '',
   pinned       BIGINT NOT NULL DEFAULT 0,
@@ -180,7 +180,6 @@ CREATE TABLE spaces (
   remote_via   TEXT COLLATE "C" NOT NULL DEFAULT '',
   remote_state TEXT COLLATE "C" NOT NULL DEFAULT ''
 );
-CREATE INDEX spaces_size_at ON spaces(size_at);
 -- The lists of spaces: one index for each sort, within a tenant and across all
 -- of them; the filters that pick a few rows (a pin, an exemption) or a column
 -- (where the remote stands) have their own.
@@ -199,6 +198,20 @@ CREATE INDEX spaces_rstate ON spaces(remote_state, created, id);
 CREATE INDEX spaces_pinned ON spaces(created, id) WHERE pinned <> 0;
 CREATE INDEX spaces_exempt ON spaces(created, id) WHERE exempt <> 0;
 CREATE INDEX spaces_owner ON spaces(usage_user, created, id);
+
+-- The queue of the background measurement: when each space was last measured
+-- (NULL: never). It is a table of its own so that the measurement, which
+-- visits every space again and again, writes this narrow row and leaves the
+-- space's wide, many-indexed row alone unless what it found changed.
+-- tenant_id is the space's (spaces do not move between tenants), so that when
+-- a tenant was last measured is one index lookup (its newest size_at).
+CREATE TABLE space_measure (
+  space_id  TEXT COLLATE "C" PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE,
+  tenant_id TEXT COLLATE "C" NOT NULL REFERENCES tenants(id),
+  size_at   BIGINT
+);
+CREATE INDEX space_measure_due ON space_measure(size_at, space_id);
+CREATE INDEX space_measure_tenant ON space_measure(tenant_id, size_at);
 
 CREATE TABLE space_members (
   space_id TEXT COLLATE "C" NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,

@@ -103,11 +103,31 @@ func DisabledSpaces(ctx context.Context, q Q) (map[string]bool, error) {
 	return out, rows.Err()
 }
 
-// SetSpaceSize stores a measurement of the space's directory.
+// queueMeasure puts a space in the queue of the background measurement, as
+// never measured (a space that is in it already keeps its place).
+func queueMeasure(ctx context.Context, q Q, spaceID string) error {
+	_, err := q.Exec(ctx, `INSERT INTO space_measure(space_id, tenant_id) SELECT id, tenant_id FROM spaces WHERE id = ?
+		ON CONFLICT (space_id) DO NOTHING`, spaceID)
+	return err
+}
+
+// stampMeasured records when a space was measured (or its measurement was
+// tried): its place in the queue. ErrNotFound for a space that is gone.
+func stampMeasured(ctx context.Context, q Q, spaceID string, at time.Time) error {
+	res, err := q.Exec(ctx, `INSERT INTO space_measure(space_id, tenant_id, size_at) SELECT id, tenant_id, ? FROM spaces WHERE id = ?
+		ON CONFLICT (space_id) DO UPDATE SET size_at = excluded.size_at`, ms(at), spaceID)
+	return oneRow(res, err)
+}
+
+// SetSpaceSize stores a measurement of the space's directory (for the listing
+// only: the quotas keep what RecordMeasurement counts). The space's row is
+// written only when the size changed.
 func SetSpaceSize(ctx context.Context, q Q, id string, bytes int64, at time.Time) error {
 	return withSpace(ctx, q, id, func(q Q) error {
-		_, err := q.Exec(ctx, `UPDATE spaces SET size_bytes = ?, size_at = ? WHERE id = ?`, bytes, ms(at), id)
-		return err
+		if _, err := q.Exec(ctx, `UPDATE spaces SET size_bytes = ? WHERE id = ? AND (size_bytes IS NULL OR size_bytes <> ?)`, bytes, id, bytes); err != nil {
+			return err
+		}
+		return stampMeasured(ctx, q, id, at)
 	})
 }
 
@@ -116,26 +136,38 @@ func SetSpaceSize(ctx context.Context, q Q, id string, bytes int64, at time.Time
 // again at the next turn, for ever. For a space never measured this sets the
 // time but no size, which the list reports as not measured (both null).
 func SkipSpaceSize(ctx context.Context, q Q, id string, at time.Time) error {
-	res, err := q.Exec(ctx, `UPDATE spaces SET size_at = ? WHERE id = ?`, ms(at), id)
-	return oneRow(res, err)
+	return stampMeasured(ctx, q, id, at)
 }
 
 // NextSpaceToMeasure returns the space that was measured longest ago, if it
 // was before olderThan: one never measured first. ok is false when every space
-// is recent enough. Two index lookups.
+// is recent enough. Two lookups of the queue's index (space_measure_due).
 func NextSpaceToMeasure(ctx context.Context, q Q, olderThan time.Time) (id string, ok bool, err error) {
-	err = q.QueryRow(ctx, `SELECT id FROM spaces WHERE size_at IS NULL ORDER BY id LIMIT 1`).Scan(&id)
+	err = q.QueryRow(ctx, `SELECT space_id FROM space_measure WHERE size_at IS NULL ORDER BY space_id LIMIT 1`).Scan(&id)
 	if err == nil {
 		return id, true, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return "", false, err
 	}
-	err = q.QueryRow(ctx, `SELECT id FROM spaces WHERE size_at < ? ORDER BY size_at, id LIMIT 1`, ms(olderThan)).Scan(&id)
+	err = q.QueryRow(ctx, `SELECT space_id FROM space_measure WHERE size_at < ? ORDER BY size_at, space_id LIMIT 1`, ms(olderThan)).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
 	return id, err == nil, err
+}
+
+// queueMissingSpaces puts in the queue of the measurement any space that is
+// not in it (a space every path that makes one puts there; this is the daily
+// pass's safety net). It reports how many it added.
+func queueMissingSpaces(ctx context.Context, q Q) (int, error) {
+	res, err := q.Exec(ctx, `INSERT INTO space_measure(space_id, tenant_id)
+		SELECT s.id, s.tenant_id FROM spaces s WHERE NOT EXISTS (SELECT 1 FROM space_measure m WHERE m.space_id = s.id)`)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }
 
 // TransferOwnership makes newOwner the owner of the space, adding them as a

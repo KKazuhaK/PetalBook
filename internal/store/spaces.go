@@ -41,6 +41,9 @@ func InsertSpace(ctx context.Context, q Q, tenantID, id, name, personalOf, inbox
 	if _, err := q.Exec(ctx, `INSERT INTO spaces(id, name, name_key, personal_of, inbox, created, tenant_id, last_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, id, name, FoldName(name), owner, inbox, ms(now), tenantID, ms(now)); err != nil {
 		return err
 	}
+	if err := queueMeasure(ctx, q, id); err != nil {
+		return err
+	}
 	return usageOfNewSpace(ctx, q, tenantID)
 }
 
@@ -303,6 +306,9 @@ func EnsureLocal(ctx context.Context, q Q, spaceID, spaceName string, now time.T
 	}
 	if _, err := q.Exec(ctx, `INSERT INTO spaces(id, name, name_key, personal_of, created) VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET name = excluded.name, name_key = excluded.name_key`, spaceID, spaceName, FoldName(spaceName), LocalUserID, ms(now)); err != nil {
+		return err
+	}
+	if err := queueMeasure(ctx, q, spaceID); err != nil {
 		return err
 	}
 	_, err := q.Exec(ctx, `INSERT INTO space_members(space_id, user_id, role, created) VALUES (?, ?, 'owner', ?)

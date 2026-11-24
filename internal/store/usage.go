@@ -363,10 +363,18 @@ type Touched struct {
 	UserID, TenantID string
 }
 
-// RecordMeasurement stores a measurement of a space: its listing size (size_bytes
-// and size_at), and the bytes and pages the quotas count. The difference to what
-// the space had is added to the rows of its first owner and its tenant in the
-// same transaction. It returns ErrNotFound for a space that is gone.
+// RecordMeasurement stores a measurement of a space: when it was made (the
+// space's row of the queue, space_measure), its listing size (size_bytes), and
+// the bytes and pages the quotas count. The difference to what the space had is
+// added to the rows of its first owner and its tenant in the same transaction.
+// It returns ErrNotFound for a space that is gone.
+//
+// Most measurements find what the one before found: then only the queue's
+// narrow row is written. The space's row and the usage rows are written when the
+// bytes or the pages changed (and the person's row once, the first time a space
+// of theirs is measured, so that it says when). The tenant's row is never
+// stamped: when it was measured is read from the queue (measuredSQL), so the
+// measurements of a tenant's spaces do not all write one row.
 //
 // The bytes the quotas count are the measurement only where the space lives on
 // the server (LocationCounts): a space whose remote belongs to the person or the
@@ -381,6 +389,9 @@ func (s *Store) RecordMeasurement(ctx context.Context, spaceID string, m Measure
 		if err != nil {
 			return err
 		}
+		if err := stampMeasured(ctx, q, spaceID, m.At); err != nil {
+			return err
+		}
 		pages := before.pages
 		if m.HavePages {
 			pages = m.Pages
@@ -389,31 +400,49 @@ func (s *Store) RecordMeasurement(ctx context.Context, spaceID string, m Measure
 		if LocationCounts(before.location) {
 			counted = m.Bytes
 		}
-		if _, err := q.Exec(ctx, `UPDATE spaces SET size_bytes = ?, size_at = ?, usage_bytes = ?, page_count = ? WHERE id = ?`,
-			m.Bytes, ms(m.At), counted, pages, spaceID); err != nil {
-			return err
-		}
-		after, err := readSpaceUsage(ctx, q, spaceID)
+		res, err := q.Exec(ctx, `UPDATE spaces SET size_bytes = ?, usage_bytes = ?, page_count = ?
+			WHERE id = ? AND (size_bytes IS NULL OR size_bytes <> ? OR usage_bytes <> ? OR page_count <> ?)`,
+			m.Bytes, counted, pages, spaceID, m.Bytes, counted, pages)
 		if err != nil {
 			return err
 		}
-		ds := after.changed(before)
-		// The row is stamped even when nothing moved.
-		seen := map[string]bool{}
-		for i := range ds {
-			ds[i].measured = ms(m.At)
-			seen[ds[i].key()] = true
+		t = Touched{UserID: before.user, TenantID: before.tenant}
+		var ds []usageDelta
+		if n, _ := res.RowsAffected(); n > 0 {
+			after, err := readSpaceUsage(ctx, q, spaceID)
+			if err != nil {
+				return err
+			}
+			ds = after.changed(before)
 		}
-		for _, d := range after.deltas(1) {
-			if !seen[d.key()] {
-				ds = append(ds, usageDelta{kind: d.kind, id: d.id, tenant: d.tenant, measured: ms(m.At)})
+		stamped := false
+		for i := range ds {
+			if ds[i].kind == UsageUser {
+				ds[i].measured, stamped = ms(m.At), true
 			}
 		}
-		t = Touched{UserID: after.user, TenantID: after.tenant}
+		if !stamped && before.user != "" {
+			// The first measurement of a space of this person says when, even
+			// if it found nothing.
+			var measured int64
+			err := q.QueryRow(ctx, `SELECT measured FROM usage WHERE kind = 'user' AND id = ?`, before.user).Scan(&measured)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if measured == 0 {
+				ds = append(ds, usageDelta{kind: UsageUser, id: before.user, tenant: before.tenant, measured: ms(m.At)})
+			}
+		}
 		return addUsage(ctx, q, ds...)
 	})
 	return t, err
 }
+
+// measuredSQL is when a usage row was last measured: a person's row is stamped
+// by a measurement that changes it (RecordMeasurement); a tenant's is not
+// written by the measurement at all, so it is when a space of the tenant was
+// last measured, the newest of its rows of the queue (one index lookup).
+const measuredSQL = `CASE WHEN usage.kind = 'tenant' THEN COALESCE((SELECT MAX(sm.size_at) FROM space_measure sm WHERE sm.tenant_id = usage.id), 0) ELSE usage.measured END`
 
 // GetUsage returns the row of a person or a tenant; a row that does not exist
 // yet is all zeros.
@@ -421,7 +450,7 @@ func GetUsage(ctx context.Context, q Q, kind, id string) (Usage, error) {
 	u := Usage{Kind: kind, ID: id}
 	var over string
 	var measured int64
-	err := q.QueryRow(ctx, `SELECT tenant_id, spaces, bytes, pages, people, over, measured FROM usage WHERE kind = ? AND id = ?`, kind, id).
+	err := q.QueryRow(ctx, `SELECT tenant_id, spaces, bytes, pages, people, over, `+measuredSQL+` FROM usage WHERE kind = ? AND id = ?`, kind, id).
 		Scan(&u.TenantID, &u.Spaces, &u.Bytes, &u.Pages, &u.People, &over, &measured)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return u, err
@@ -445,7 +474,7 @@ func UsageOfTenants(ctx context.Context, q Q, ids []string) (map[string]Usage, e
 	for i, id := range ids {
 		args[i] = id
 	}
-	rows, err := q.Query(ctx, `SELECT id, tenant_id, spaces, bytes, pages, people, over, measured FROM usage WHERE kind = 'tenant' AND id IN (`+marks+`)`, args...)
+	rows, err := q.Query(ctx, `SELECT id, tenant_id, spaces, bytes, pages, people, over, `+measuredSQL+` FROM usage WHERE kind = 'tenant' AND id IN (`+marks+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -644,6 +673,11 @@ func (s *Store) RecountUsage(ctx context.Context) (corrected int, err error) {
 	var moved int
 	err = s.Tx(ctx, func(q Q) error {
 		if moved, err = settleSpaceFacts(ctx, q); err != nil {
+			return err
+		}
+		queued, err := queueMissingSpaces(ctx, q)
+		moved += queued
+		if err != nil {
 			return err
 		}
 		m, err := settleUsageUsers(ctx, q)
