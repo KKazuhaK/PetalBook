@@ -1,6 +1,11 @@
 name: Go
 description: Install the Go version in go.mod, with the module and build caches, and fail if any other Go is on PATH.
 
+inputs:
+  cache-suffix:
+    description: Added to the cache key. A job that builds little (lint) gives its own, so it does not save a thin cache under the key of the job that builds the most (go, the race build).
+    default: ""
+
 runs:
   using: composite
   steps:
@@ -11,6 +16,7 @@ runs:
         go-version-file: go.mod
         cache: true
         cache-dependency-path: go.sum
+        cache-suffix: ${{ inputs.cache-suffix }}
     # setup-go installs the go line of go.mod; fail if any other Go is on PATH.
     - name: Go version matches go.mod
       shell: bash

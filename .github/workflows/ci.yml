@@ -57,14 +57,13 @@ jobs:
           else
             # --no-renames: a file moved out of the Go or web tree is listed
             # under both names, not only the new one (docs/ would skip the checks).
-            files="$(git diff --name-only --no-renames "$BASE...$HEAD")"
-            # When in doubt, run: an empty diff runs everything.
-            if [ -z "$files" ]; then
-              go=true
-              web=true
-            fi
-            while IFS= read -r f; do
-              [ -n "$f" ] || continue
+            # -z and quotePath=false: names are NUL-separated and never quoted,
+            # so a non-ASCII or odd name reaches the patterns below as it is.
+            list="$RUNNER_TEMP/changed-files"
+            git -c core.quotePath=false diff --name-only -z --no-renames "$BASE...$HEAD" > "$list"
+            seen=false
+            while IFS= read -r -d '' f; do
+              seen=true
               case "$f" in
                 web/*) web=true ;;
                 docs/*) ;;
@@ -77,7 +76,16 @@ jobs:
               case "$f" in
                 Makefile | .github/*) web=true ;;
               esac
-            done <<<"$files"
+              # internal/links/links_test.go reads this fixture, so it counts for both.
+              case "$f" in
+                web/src/markdown/__fixtures__/links.json) go=true ;;
+              esac
+            done < "$list"
+            # When in doubt, run: an empty diff runs everything.
+            if [ "$seen" = false ]; then
+              go=true
+              web=true
+            fi
           fi
           echo "go=$go" >> "$GITHUB_OUTPUT"
           echo "web=$web" >> "$GITHUB_OUTPUT"
@@ -98,17 +106,36 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # Its own cache key: lint compiles little, and sharing the key would let
+      # it save a thin cache before the go job saves the race build cache.
       - uses: ./.github/actions/go
+        with:
+          cache-suffix: lint
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: make lint SECRETS_RANGE="$RANGE"
+      - name: make lint
         env:
-          # A pull request: its commits. A push: the commits it brought, or the
-          # last one when the old tip is missing (a new branch, a forced push).
-          RANGE: ${{ github.event_name == 'pull_request' && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || format('{0}..{1}', github.event.before, github.sha) }}
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # A pull request: its commits. A push: the commits it brought, or only
+          # the last one when the old tip is missing: a new branch (all zeros) or
+          # a forced push (a commit this checkout does not have).
+          if [ "$EVENT" = "pull_request" ]; then
+            range="$BASE..$HEAD"
+          elif [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            range="0000000000000000000000000000000000000000..$SHA"
+          else
+            range="$BEFORE..$SHA"
+          fi
+          make lint SECRETS_RANGE="$range"
 
   # All the Go tests under the race detector. The tests need no web build:
   # internal/webui/dist holds only a placeholder.
@@ -117,7 +144,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
@@ -161,7 +188,9 @@ jobs:
     runs-on: ubuntu-latest
     # Above scripts/test-postgres.sh's own 30 minutes for go test plus the
     # contract runs, so a slow test ends with go test's report, not a cancel.
-    timeout-minutes: 40
+    # The timeouts follow the measured times with headroom; tune them after
+    # the first runs on main.
+    timeout-minutes: 50
     permissions:
       contents: read
     services:
@@ -242,6 +271,9 @@ jobs:
           chattr +F "$mnt/t"
           echo "CASEFOLD_DIR=$mnt/t" >> "$GITHUB_ENV"
       - run: make test-casefold
+      # The full-size stress tests (not under -race, see raceDetector in
+      # internal/index and internal/space) only run here, on main.
+      - run: make test-fullsize
       # Release builds are static (no cgo): every release target must still compile.
       - run: make cross-compile
 
@@ -251,7 +283,7 @@ jobs:
     name: release
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:

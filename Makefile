@@ -48,6 +48,11 @@ GOTEST_TIMEOUT ?= 30m
 test:
 	go test -race -timeout $(GOTEST_TIMEOUT) ./cmd/... ./internal/...
 
+# The full-size stress tests: index and space use a smaller size under -race
+# (raceDetector), so this runs them without it. Main runs it in the compat job.
+test-fullsize:
+	go test -timeout $(GOTEST_TIMEOUT) ./internal/index ./internal/space
+
 # The tests of the packages that use the state database (the ones that import
 # internal/store/storetest), run on SQLite and on PostgreSQL in a throwaway
 # cluster (needs initdb, pg_ctl and psql on PATH). The other packages never
@@ -183,5 +188,5 @@ cross-compile:
 check-full:
 	@bash scripts/lanes.sh \
 	  go:$(THIRD)='fmt-check tidy-check vet test' web:$(QUARTER)='web-typecheck web-lint web-test' static='vuln actionlint secrets' \
-	  postgres:$(QUARTER)=test-postgres compat:$(THIRD)='test-casefold cross-compile' \
+	  postgres:$(QUARTER)=test-postgres compat:$(THIRD)='test-casefold cross-compile test-fullsize' \
 	  -- release='release contract contract-postgres'

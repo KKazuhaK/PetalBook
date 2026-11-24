@@ -8,11 +8,11 @@ useDefault = true
 description = "RSA private key text that the GitHub App form and its API tests send, to check that it is never echoed back"
 targetRules = ["private-key"]
 paths = [
-  '''web/src/api/contract\.test\.ts''',
-  '''web/src/components/github\.test\.tsx''',
+  '''^web/src/api/contract\.test\.ts$''',
+  '''^web/src/components/github\.test\.tsx$''',
 ]
 
 [[allowlists]]
 description = "Made-up sealed value written straight into the test database"
 targetRules = ["generic-api-key"]
-paths = ['''internal/api/signin_providers_test\.go''']
+paths = ['''^internal/api/signin_providers_test\.go$''']

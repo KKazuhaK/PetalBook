@@ -54,10 +54,10 @@ Every check is defined in the `Makefile` only; CI just calls those targets.
   app, the `Makefile` or `.github/`.
 - **合并到 main / Push to main**：以上三个，再加三个：`postgres`（`make test-postgres`，只跑用到状态数据库的包，
   再加 `make contract` 和 `make contract-postgres` 两种契约测试）、`compat`（大小写折叠的文件系统上的测试，
-  加交叉编译）、`release`（`make release` 单文件构建，加容器镜像构建）。
+  交叉编译，以及不带 `-race` 的 `make test-fullsize`，即全尺寸的压力测试）、`release`（`make release` 单文件构建，加容器镜像构建）。
   Those three, plus three more: `postgres` (`make test-postgres`, only the packages that use the state database,
-  then the contract tests on SQLite and on PostgreSQL), `compat` (the tests on a case-folding file system, and
-  the cross-compile), and `release` (the single-binary build `make release`, and the image build).
+  then the contract tests on SQLite and on PostgreSQL), `compat` (the tests on a case-folding file system, the
+  cross-compile, and `make test-fullsize`: the full-size stress tests, without `-race`), and `release` (the single-binary build `make release`, and the image build).
 - **发布 / Release**（推送 `v*` 标签）：标签必须在 main 上，且 ci 在该提交上已通过；
   然后在 Linux amd64、arm64 和 macOS 上再跑 `make check-go`，构建四个平台的二进制和
   多架构镜像（签名并带来源证明），最后才公开草稿发布。
@@ -86,7 +86,8 @@ CI 和 `make check` 都带 `-race`，所以跑的就是这个规模。需要完�
 
 A few stress and model tests use a smaller size under `-race` (see `raceDetector` in `internal/index` and
 `internal/space`); CI and `make check` both use `-race`, so that is the size they run. For the full size run
-`go test ./internal/index ./internal/space` locally. A new test of that kind does the same: both sizes. A test
+`make test-fullsize` (that is `go test ./internal/index ./internal/space` without `-race`); the `compat` job
+runs it on every push to main. A new test of that kind does the same: both sizes. A test
 that changes a package variable cannot run in parallel; the others that
 share nothing use `t.Parallel()`, but those that measure time or memory (`timed`, `bounded`) stay serial.
 Do not wait in real time: use a short, configurable interval (for example `spaces.Options.CloseWait`), and no

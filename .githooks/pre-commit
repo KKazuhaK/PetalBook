@@ -1,62 +1,60 @@
-#!/bin/sh
+#!/bin/bash
 # Keeps what is committed formatted: gofmt on the staged Go files, and
 # eslint --fix on the staged web files. Turn it on once with "make hooks".
 # A file that is staged in part is only checked, never rewritten, so changes
 # you did not stage are not pulled into the commit.
-set -eu
+set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-# Staged files of a kind, one per line. Added, copied, modified or renamed, not deleted.
-staged() { git diff --cached --name-only --diff-filter=ACMR -- "$@"; }
 # Whether a file has changes that are not staged.
 partial() { ! git diff --quiet -- "$1"; }
 
-# The same tree the Makefile's fmt-check covers (spikes/ is left alone).
-go_files="$(staged 'cmd/*.go' 'internal/*.go')"
-if [ -n "$go_files" ]; then
-  if ! command -v gofmt >/dev/null 2>&1; then
-    echo "pre-commit: gofmt is not on PATH, Go files not checked" >&2
-  else
-    fix=""
-    bad=""
-    for f in $go_files; do
-      if partial "$f"; then
-        [ -z "$(git show ":$f" | gofmt -l)" ] || bad="$bad $f"
-      elif [ -n "$(gofmt -l "$f")" ]; then
-        fix="$fix $f"
-      fi
-    done
-    if [ -n "$fix" ]; then
-      # shellcheck disable=SC2086
-      gofmt -w $fix && git add $fix
-      echo "pre-commit: gofmt formatted:$fix"
-    fi
-    if [ -n "$bad" ]; then
-      echo "pre-commit: not gofmt-formatted, and also changed beyond what is staged, so left alone:$bad" >&2
-      echo "run gofmt -w on them, then stage them again" >&2
-      exit 1
-    fi
-  fi
-fi
+have_gofmt=true
+command -v gofmt >/dev/null 2>&1 || {
+  have_gofmt=false
+  echo "pre-commit: gofmt is not on PATH, Go files not checked" >&2
+}
+have_web=true
+[ -d web/node_modules ] || have_web=false
+web_warned=false
+status=0
 
-web_files="$(staged 'web/src/*.ts' 'web/src/*.tsx' | sed 's|^web/||')"
-if [ -n "$web_files" ]; then
-  if [ ! -d web/node_modules ]; then
-    echo "pre-commit: web/node_modules is missing (make web), web files not linted" >&2
-  else
-    fix=""
-    check=""
-    for f in $web_files; do
-      if partial "web/$f"; then check="$check $f"; else fix="$fix $f"; fi
-    done
-    status=0
-    cd web
-    # shellcheck disable=SC2086
-    if [ -n "$fix" ]; then npx --no-install eslint --fix $fix || status=1; fi
-    # shellcheck disable=SC2086
-    if [ -n "$check" ]; then npx --no-install eslint $check || status=1; fi
-    cd ..
-    for f in $fix; do git add "web/$f"; done
-    [ "$status" -eq 0 ] || exit 1
-  fi
-fi
+# Staged files, NUL-separated so a name with spaces works: added, copied or
+# modified, not deleted (renames show as added).
+while IFS= read -r -d '' f; do
+  case "$f" in
+    # The same tree the Makefile's fmt-check covers (spikes/ is left alone).
+    cmd/*.go | internal/*.go)
+      "$have_gofmt" || continue
+      if partial "$f"; then
+        if [ -n "$(git show ":$f" | gofmt -l)" ]; then
+          echo "pre-commit: $f is not gofmt-formatted and also has changes that are not staged, so it is left alone; run gofmt -w on it and stage it again" >&2
+          status=1
+        fi
+      elif [ -n "$(gofmt -l -- "$f")" ]; then
+        gofmt -w -- "$f"
+        git add -- "$f"
+        echo "pre-commit: gofmt formatted $f"
+      fi
+      ;;
+    web/src/*.ts | web/src/*.tsx)
+      if ! "$have_web"; then
+        if ! "$web_warned"; then
+          echo "pre-commit: web/node_modules is missing (make web), web files not linted" >&2
+          web_warned=true
+        fi
+        continue
+      fi
+      rel="${f#web/}"
+      if partial "$f"; then
+        # Lint what is staged, not the working copy.
+        git show ":$f" | (cd web && npx --no-install eslint --stdin --stdin-filename "$rel") || status=1
+      else
+        (cd web && npx --no-install eslint --fix -- "$rel") || status=1
+        git add -- "$f"
+      fi
+      ;;
+  esac
+done < <(git diff --cached --name-only -z --diff-filter=ACM)
+
+exit "$status"
