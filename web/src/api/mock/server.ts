@@ -3,10 +3,11 @@
 // cookie stand-in), invites, spaces per user and a fake OpenID Connect
 // provider. It has no DOM or Node dependencies.
 
-import type { AdminSpace, CaptchaContext, ConnectRemoteInput, DailyNotice, FieldKind, Identity, Invite, Member, Page, Permission, Remote, RemoteKey, RemoteState, Role, ServerStatus, SettingsNotice, SpaceInfo, SpaceRole, User, AdminGrant, AdminToken, ApiToken, ConsentInfo, Grant } from '../types.ts'
+import type { AdminSpace, CaptchaContext, ConnectRemoteInput, DailyNotice, FieldKind, Identity, Invite, Member, Page, Permission, Remote, RemoteKey, RemoteState, Role, ServerStatus, SettingsNotice, SpaceInfo, SpaceRole, User, AdminGrant, AdminToken, ApiToken, ConsentInfo, Grant, GitHubGap, Provider } from '../types.ts'
 import { gitBlobId } from './sha1.ts'
 import { ALPHABET, HttpError, compareCodePoints, createSpaceStore, isRecord, rfc3339, validFolder, type SpaceStore } from './store.ts'
 import { SPACE_NAME } from './seed.ts'
+import { createGitHubBook, type MockGitHubOptions } from './githubBook.ts'
 import { pickNumber } from './homeBook.ts'
 import { canonicalTag, matchTag } from '../../lib/langTags.ts'
 import { createFileStore, DEFAULT_MAX_UPLOAD, type FileStore } from './files.ts'
@@ -67,6 +68,8 @@ export interface MockOptions {
   draftMaxMs?: number
   // Following a remote repository (docs/api.md, "Remote repository").
   remote?: MockRemoteOptions
+  // GitHub (docs/api.md, "GitHub"): whether the App is set up from the start.
+  github?: MockGitHubOptions
   // The largest upload in bytes (`--max-upload`); 10 MiB by default.
   maxUpload?: number
   // The largest import in bytes (`--max-import`); 100 MiB by default.
@@ -101,6 +104,15 @@ export const MOCK_SETUP_TOKEN = 'mock-setup-token'
 export const MOCK_INVITE_TOKEN = 'mock-invite-token'
 export const SESSION_COOKIE = 'pb_session'
 const OIDC_COOKIE = 'pb_oidc'
+const GITHUB_COOKIE = 'pb_github'
+// The provider that is a plain address: nothing to connect (docs/api.md, "Connections").
+const isConnectionCode = (c: string | undefined) => ['connection_expired', 'connection_missing', 'installation_gone', 'app_missing_permission', 'provider_not_configured', 'repo_not_in_installation'].includes(c ?? '')
+const GIT_PROVIDER: Provider = {
+  id: 'git', type: 'git', host: '', name: 'Git', owner: 'site',
+  capabilities: { createRepo: false, installations: false, connectAccount: false, storageTarget: false, partialSync: 'unknown' },
+  configured: true, app: null, userAuthorization: false, connection: null, leftovers: [],
+}
+const GITHUB_MANIFEST_COOKIE = 'pb_github_manifest'
 const LOCAL_USER: User = { id: 'local', username: 'local', name: 'Local user', email: '', emailVerified: false, role: 'admin', disabled: false, passkeyRequired: false, created: '2026-01-01T00:00:00Z' }
 
 interface UserRec extends Omit<User, 'passkeyRequired' | 'passkeys' | 'sso'> {
@@ -162,8 +174,14 @@ interface StartOptions {
 interface RemoteRec {
   url: string
   branch: string
-  credential: { type: 'ssh' } | { type: 'token'; username: string; token: string }
+  credential:
+    | { type: 'ssh' }
+    | { type: 'token'; username: string; token: string }
+    | { type: 'github'; via: 'app'; installationId: number; repoId: number }
+    | { type: 'github'; via: 'user'; userId: string; repoId: number }
   state: RemoteState
+  // What the error state needs (docs/api.md, "Remote repository"); "" otherwise.
+  errorCode?: string
   lastSync?: number
   error: string
   hostKey?: string
@@ -259,6 +277,16 @@ export function createMockServer(options: MockOptions = {}) {
   const settingsNotices = new Map<string, SettingsNotice[]>()
   const oidcAttempts = new Map<string, OidcAttempt>()
   const failures = new Map<string, { count: number; first: number }>()
+  const github = createGitHubBook(options.github ?? {}, {
+    now,
+    random,
+    spacesUsing: (uid) => [...spaces.values()].filter((s) => s.remote?.credential.type === 'github' && s.remote.credential.via === 'user' && s.remote.credential.userId === uid).length,
+    // The mock keeps a connection through GitHub as type "github" (the API shows it as type "connection", provider "github").
+    spacesOnApp: () => [...spaces.values()].filter((s) => s.remote?.credential.type === 'github').length,
+    // The mock has one world: everyone is in the default tenant.
+    tenantOf: () => DEFAULT_TENANT,
+    tenantExists: (id) => tenantBook.exists(id),
+  })
   // Sessions held until a passkey is registered, and when each session began (registering needs a recent sign-in).
   const held = new Set<string>()
   const sessionAt = new Map<string, number>()
@@ -1137,6 +1165,7 @@ export function createMockServer(options: MockOptions = {}) {
     onRegistrationChanged: () => mailBook.cancelClosed(),
     usageOf: () => quotaBook.tenantUsage(),
     onQuotaChanged: () => quotaBook.evaluate(),
+    onTenantDeleted: (id) => github.tenantDeleted(id),
     maxSpacesFlag: options.maxSpaces,
     makeInvite: (by, tenant, fill) => {
       const id = newId((x) => invites.has(x))
@@ -1736,13 +1765,26 @@ export function createMockServer(options: MockOptions = {}) {
 
   const remoteInfo = (s: SpaceRec): Remote => {
     const r = s.remote!
+    const c = r.credential
+    let credential: Remote['credential']
+    if (c.type === 'ssh') credential = { type: 'ssh', publicKey: s.key!.publicKey, fingerprint: s.key!.fingerprint }
+    else if (c.type === 'token') credential = { type: 'token', username: c.username }
+    else {
+      const account = /^https:\/\/github\.com\/([^/]+)\//.exec(r.url)?.[1] ?? ''
+      credential =
+        c.via === 'app'
+          ? { type: 'connection', provider: 'github', via: 'app', installationId: c.installationId, account, repoId: c.repoId }
+          : { type: 'connection', provider: 'github', via: 'user', user: { id: c.userId, username: users.get(c.userId)?.username ?? '' }, login: github.connectedLogin(c.userId) ?? '', account, repoId: c.repoId }
+    }
     return {
       url: r.url,
       branch: r.branch,
-      credential: r.credential.type === 'ssh' ? { type: 'ssh', publicKey: s.key!.publicKey, fingerprint: s.key!.fingerprint } : { type: 'token', username: r.credential.username },
+      provider: c.type === 'github' ? 'github' : 'git',
+      credential,
       state: r.state,
       ...(r.lastSync !== undefined ? { lastSync: rfc3339(r.lastSync) } : {}),
       error: r.error,
+      errorCode: r.state === 'error' ? (r.errorCode ?? 'auth') : '',
       ...(r.hostKey ? { hostKey: r.hostKey } : {}),
       rewritten: r.rewritten,
     }
@@ -1787,8 +1829,37 @@ export function createMockServer(options: MockOptions = {}) {
     throw bad()
   }
 
-  const connectRemote = (space: SpaceRec, body: Record<string, unknown>): Remote => {
+  // `https://github.com/owner/name(.git)` or `git@github.com:owner/name.git`.
+  const githubRepoOf = (raw: unknown): { owner: string; name: string } => {
+    const m = typeof raw === 'string' ? /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?\/?$/.exec(raw.trim()) : null
+    if (!m) throw new HttpError(400, 'invalid', 'github 凭据要配 GitHub 上的仓库地址（https://github.com/所有者/仓库.git）')
+    return { owner: m[1], name: m[2] }
+  }
+
+  const connectGitHub = (space: SpaceRec, userId: string, input: Partial<ConnectRemoteInput>): Remote => {
+    const via = (input.credential as { via?: unknown } | undefined)?.via
+    if (via !== 'app' && via !== 'user') throw new HttpError(400, 'invalid', 'credential.via 是 app 或 user')
+    const { owner, name } = githubRepoOf(input.url)
+    const found = github.existing(userId, owner, name, via)
+    const branch = input.branch === undefined || input.branch === '' ? 'main' : input.branch
+    if (typeof branch !== 'string' || /\s/.test(branch)) throw new HttpError(400, 'invalid', '分支名不合法')
+    space.remote = {
+      url: `https://github.com/${found.repo.owner}/${found.repo.name}.git`,
+      branch,
+      credential: found.via === 'app' ? { type: 'github', via: 'app', installationId: found.installationId, repoId: found.repo.id } : { type: 'github', via: 'user', userId, repoId: found.repo.id },
+      state: 'ok',
+      lastSync: now(),
+      error: '',
+      rewritten: null,
+    }
+    space.reachable = true
+    github.repoConnected(found.repo.id) // only once everything is valid
+    return remoteInfo(space)
+  }
+
+  const connectRemote = (space: SpaceRec, userId: string, body: Record<string, unknown>): Remote => {
     const input = body as unknown as Partial<ConnectRemoteInput>
+    if ((input.credential as { type?: unknown } | undefined)?.type === 'connection') return connectGitHub(space, userId, input)
     const { kind, host } = parseRemoteUrl(input.url)
     if (!hostAllowed(host)) throw new HttpError(403, 'forbidden', `管理员没有允许连接 ${host}。需要在服务器启动时用 --remote-host 加上它。`)
     const branch = input.branch === undefined || input.branch === '' ? 'main' : input.branch
@@ -1831,7 +1902,7 @@ export function createMockServer(options: MockOptions = {}) {
     return remoteInfo(space)
   }
 
-  const routeRemote = (space: SpaceRec, method: string, rest: string, body: Record<string, unknown>): MockResponse => {
+  const routeRemote = (space: SpaceRec, userId: string, method: string, rest: string, body: Record<string, unknown>): MockResponse => {
     // Accounts mode only, like the other space-management endpoints.
     accountsOnly()
     const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
@@ -1839,12 +1910,19 @@ export function createMockServer(options: MockOptions = {}) {
       if (!space.remote) throw new HttpError(404, 'not_found', '这个空间没有连接远端仓库')
       return space.remote
     }
+    // Whether a person may still manage this space as a member, directly or through a group (as the server checks
+    // before using their GitHub connection; being an administrator does not count).
+    const canManage = (uid: string) => {
+      const u = users.get(uid)
+      const { role } = groupBook.reach(space, uid)
+      return !!u && !u.disabled && !!role && ROLE_PERMISSIONS[role].includes('manage')
+    }
     if (rest === '/remote') {
       if (method === 'GET') {
         following()
         return j(remoteInfo(space))
       }
-      if (method === 'PUT') return j(connectRemote(space, body))
+      if (method === 'PUT') return j(connectRemote(space, userId, body))
       if (method === 'DELETE') {
         following()
         space.remote = null
@@ -1866,11 +1944,22 @@ export function createMockServer(options: MockOptions = {}) {
           r.state = 'offline'
           r.error ||= '连接超时'
         }
+      } else if (r.credential.type === 'github' && r.credential.via === 'user' && !canManage(r.credential.userId)) {
+        // Its owner may no longer manage the space (directly or through a group): their connection is not used.
+        r.state = 'error'
+        r.errorCode = 'connection_missing'
+        r.error = '这个空间同步用的 GitHub 连接属于一个已不能管理它的人，请换一个连接'
+      } else if (r.credential.type === 'github' && r.credential.via === 'user' && !github.userOf(r.credential.userId)) {
+        // The connection this space syncs with has not been renewed: nothing changes until it is connected again.
+        r.state = 'error'
+        r.errorCode = github.connectedLogin(r.credential.userId) ? 'connection_expired' : 'connection_missing'
+        r.error = r.errorCode === 'connection_expired' ? '这个空间用的 GitHub 授权已过期或被撤销，要由连接它的人重新连接' : '连接这个空间的人已经断开了 GitHub'
       } else {
         r.lastSync = now()
-        if (r.state === 'offline') {
+        if (r.state === 'offline' || (r.state === 'error' && isConnectionCode(r.errorCode))) {
           r.state = 'ok'
           r.error = ''
+          r.errorCode = ''
         }
       }
       return j(remoteInfo(space))
@@ -1933,7 +2022,7 @@ export function createMockServer(options: MockOptions = {}) {
     if (ln && method === 'GET') return { status: 200, body: st.links(decodeURIComponent(ln[1])) }
     const ver = /^\/pages\/([^/]+)\/versions\/([^/]+)$/.exec(rest)
     if (ver && method === 'GET') return { status: 200, body: st.version(decodeURIComponent(ver[1]), decodeURIComponent(ver[2])) }
-    if (rest === '/remote' || rest.startsWith('/remote/')) return routeRemote(space, method, rest, body)
+    if (rest === '/remote' || rest.startsWith('/remote/')) return routeRemote(space, u.id, method, rest, body)
     const props = /^\/pages\/([^/]+)\/props$/.exec(rest)
     if (props && method === 'PATCH') return { status: 200, body: st.patchProps(u.id, decodeURIComponent(props[1]), body) }
     if (rest === '/types' && method === 'GET') {
@@ -2061,6 +2150,74 @@ export function createMockServer(options: MockOptions = {}) {
     throw new HttpError(404, 'not_found', '没有这个接口')
   }
 
+  // --- GitHub (accounts mode) ---
+  const routeGitHub = (ctx: Ctx, method: string, path: string, url: URL, body: Record<string, unknown>): MockResponse => {
+    const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
+    if (method === 'GET' && path === '/connections/github/authorization/callback') {
+      const r = github.callback(ctx.user?.id ?? null, ctx.cookies[GITHUB_COOKIE], url.searchParams)
+      return { status: 303, headers: { Location: r.to, ...(r.clear ? { 'Set-Cookie': setCookie(GITHUB_COOKIE, '', 0) } : {}) } }
+    }
+    if (method === 'GET' && path === '/connections/github/manifest/callback') {
+      const r = github.manifestCallback(ctx.user?.id ?? null, isSiteAdmin(ctx.user ?? undefined), ctx.cookies[GITHUB_MANIFEST_COOKIE], url.searchParams)
+      return { status: 303, headers: { Location: r.to, ...(r.clear ? { 'Set-Cookie': setCookie(GITHUB_MANIFEST_COOKIE, '', 0) } : {}) } }
+    }
+    const me = requireUser(ctx)
+    if (method === 'GET' && path === '/connections') return j({ providers: [github.info(me.id), GIT_PROVIDER] })
+    if (method === 'POST' && path === '/connections/github/authorization/start') {
+      const r = github.start(me.id, body)
+      return { status: 200, body: { url: r.url }, headers: { 'Set-Cookie': setCookie(GITHUB_COOKIE, r.state, 600) } }
+    }
+    if (method === 'DELETE' && path === '/connections/github/authorization') {
+      github.disconnect(me.id)
+      return { status: 204 }
+    }
+    const left = /^\/connections\/github\/leftovers\/([^/]+)$/.exec(path)
+    if (left && method === 'DELETE') {
+      if (!/^\d+$/.test(left[1]) || Number(left[1]) <= 0) throw new HttpError(404, 'not_found', '没有这个仓库')
+      github.dismiss(me.id, Number(left[1]))
+      return { status: 204 }
+    }
+    if (method === 'GET' && path === '/connections/github/owners') return j(github.owners(me.id, url.searchParams.get('cursor')))
+    if (method === 'GET' && path === '/connections/github/repos') {
+      const inst = url.searchParams.get('installation')
+      const mine = url.searchParams.get('mine') === 'true'
+      if ((inst === null) === !mine) throw new HttpError(400, 'invalid', '给 installation 或 mine=true，二选一')
+      if (inst !== null && !/^\d+$/.test(inst)) throw new HttpError(400, 'invalid', 'installation 是数字')
+      return j(github.reposOf(me.id, inst !== null ? { installation: Number(inst) } : { mine: true }, url.searchParams.get('cursor')))
+    }
+    throw new HttpError(404, 'not_found', '没有这个接口')
+  }
+
+  const routeAdminGitHub = (me: UserRec, method: string, path: string, url: URL, body: Record<string, unknown>): MockResponse => {
+    const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
+    // No App is waiting to be saved in the mock: the retry has nothing to finish.
+    if (path === '/admin/connections/github/manifest/retry' && method === 'POST') throw new HttpError(404, 'not_found', 'no App is waiting to be saved')
+    if (path === '/admin/connections/github' && method === 'GET') return j(github.admin())
+    if (path === '/admin/connections/github' && method === 'PUT') {
+      const str = (v: unknown, name: string) => {
+        if (v !== undefined && typeof v !== 'string') throw new HttpError(400, 'invalid', `${name} 要是字符串`)
+        return v as string | undefined
+      }
+      return j(github.putAdmin({ appId: str(body.appId, 'appId'), privateKey: str(body.privateKey, 'privateKey'), clientId: str(body.clientId, 'clientId'), clientSecret: str(body.clientSecret, 'clientSecret') }))
+    }
+    if (path === '/admin/connections/github' && method === 'DELETE') {
+      github.deleteAdmin()
+      return { status: 204 }
+    }
+    if (path === '/admin/connections/github/check' && method === 'POST') return j(github.check())
+    if (path === '/admin/connections/github/manifest' && method === 'POST') {
+      const r = github.manifestStart(me.id, body)
+      return { status: 200, body: r.start, headers: { 'Set-Cookie': setCookie(GITHUB_MANIFEST_COOKIE, r.state, 600) } }
+    }
+    if (path === '/admin/connections/github/installations' && method === 'GET') return j(github.installations(url.searchParams.get('cursor')))
+    const inst = /^\/admin\/connections\/github\/installations\/(\d+)$/.exec(path)
+    if (inst && method === 'PUT') {
+      if (body.tenants === undefined) throw new HttpError(400, 'invalid', '给 tenants：要共享给的租户 id（不共享就是 []）')
+      return j(github.share(Number(inst[1]), body.tenants))
+    }
+    throw new HttpError(404, 'not_found', '没有这个接口')
+  }
+
   const route = (method: string, url: URL, body: Record<string, unknown>, ctx: Ctx, raw?: Uint8Array): MockResponse => {
     const path = url.pathname.replace(/^\/api/, '')
     const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
@@ -2092,6 +2249,27 @@ export function createMockServer(options: MockOptions = {}) {
       const target = [...spaces.values()].find((s) => s.id === (url.searchParams.get('space') ?? '') || (!url.searchParams.get('space') && s.store.peek(touch[1])))
       if (!target) throw new HttpError(404, 'not_found', '没有这个页面')
       return j(target.store.touch(touch[1], body))
+    }
+
+    // Mock only: a person's GitHub connection ran out (their spaces that sync through it go to error), or a trap for the next creation.
+    if (method === 'POST' && path === '/_mock/github') {
+      const uid = typeof body.user === 'string' ? body.user : (ctx.user?.id ?? '')
+      if (typeof body.connect === 'string') github.connect(uid, body.connect)
+      if (body.expire === true) {
+        github.expire(uid)
+        for (const sp of spaces.values()) {
+          const c = sp.remote?.credential
+          if (sp.remote && c?.type === 'github' && c.via === 'user' && c.userId === uid) {
+            sp.remote.state = 'error'
+            sp.remote.errorCode = 'connection_expired'
+            sp.remote.error = '这个空间用的 GitHub 授权已过期或被撤销，要由连接它的人重新连接'
+          }
+        }
+      }
+      if (typeof body.trap === 'string' && (body.trap === 'noPermission' || body.trap === 'notInInstallation' || body.trap === 'pushFails' || body.trap === 'missingPermission' || body.trap === 'personalNeedsInstall')) github.setTrap(body.trap, body.on !== false)
+      // What GitHub says about the App now: the administration sees it after a re-check.
+      if (isRecord(body.side)) github.setSide({ permissions: isRecord(body.side.permissions) ? (body.side.permissions as Record<string, string>) : undefined, gaps: Array.isArray(body.side.gaps) ? (body.side.gaps as GitHubGap[]) : undefined, anyAccount: typeof body.side.anyAccount === 'boolean' || body.side.anyAccount === null ? (body.side.anyAccount as boolean | null) : undefined })
+      return j({})
     }
 
     // Mock only: an account that single sign-on made has no password; this takes one away.
@@ -2353,6 +2531,18 @@ export function createMockServer(options: MockOptions = {}) {
       if (method === 'POST') return decideConsent(me, body)
     }
 
+    // --- GitHub ---
+    if (path === '/connections' || path === '/connections/github' || path.startsWith('/connections/github/')) {
+      accountsOnly()
+      return routeGitHub(ctx, method, path, url, body)
+    }
+    if (path === '/admin/connections/github' || path.startsWith('/admin/connections/github/')) {
+      accountsOnly()
+      // The server's GitHub App is the whole server's: a tenant's administrator is refused, as on the server.
+      const me = requireAdmin(ctx)
+      if (!isSiteAdmin(me)) throw new HttpError(403, 'forbidden', 'only an administrator of the whole server may do that')
+      return routeAdminGitHub(me, method, path, url, body)
+    }
     // --- usage (3.3): one's own, and everyone's for the administrators ---
     if (path === '/account/usage' && method === 'GET') {
       accountsOnly()
@@ -2487,7 +2677,27 @@ export function createMockServer(options: MockOptions = {}) {
         const name = checkName(body.name)
         quotaBook.checkSpace(me.id)
         const inbox = body.inbox === undefined ? DEFAULT_INBOX : checkInbox(body.inbox)
-        return j(spaceInfo(addSpace(newId((x) => spaces.has(x)), name, me.id, false, false, inbox), me), 201)
+        const sync = isRecord(body.storage) ? body.storage.sync : undefined
+        if (sync !== undefined) {
+          const g = sync
+          if (!isRecord(g) || g.provider !== 'github' || typeof g.owner !== 'string' || typeof g.name !== 'string') throw new HttpError(400, 'invalid', 'storage.sync 要有 provider（github）、owner 和 name')
+          if (g.description !== undefined && (typeof g.description !== 'string' || g.description.length > 350)) throw new HttpError(400, 'invalid', 'description 最多 350 个字符')
+          const found = g.create === false ? github.existing(me.id, g.owner, g.name, '') : github.create(me.id, { owner: g.owner, name: g.name, private: g.private !== false, spaceName: name })
+          const space = addSpace(newId((x) => spaces.has(x)), name, me.id, false, false, inbox)
+          github.repoConnected(found.repo.id)
+          space.remote = {
+            url: `https://github.com/${found.repo.owner}/${found.repo.name}.git`,
+            branch: 'main',
+            credential: found.via === 'app' ? { type: 'github', via: 'app', installationId: found.installationId, repoId: found.repo.id } : { type: 'github', via: 'user', userId: me.id, repoId: found.repo.id },
+            state: 'ok',
+            lastSync: now(),
+            error: '',
+            rewritten: null,
+          }
+          return { status: 201, body: spaceInfo(space, me), headers: { Location: `/api/spaces/${space.id}` } }
+        }
+        const plain = addSpace(newId((x) => spaces.has(x)), name, me.id, false, false, inbox)
+        return { status: 201, body: spaceInfo(plain, me), headers: { Location: `/api/spaces/${plain.id}` } }
       }
     }
     const m = /^\/spaces\/([^/]+)(\/.*)?$/.exec(path)

@@ -372,6 +372,21 @@ func (s *Service) newCookie(name, value string, maxAge int) *http.Cookie {
 	return &http.Cookie{Name: name, Value: value, Path: "/", MaxAge: maxAge, HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteLaxMode}
 }
 
+// FlowCookieName is the name of a cookie that ties a short flow (connecting a
+// GitHub account) to the browser that started it, with the same prefix rule as
+// the session cookie.
+func (s *Service) FlowCookieName(base string) string { return s.cookieName(base) }
+
+// FlowCookie carries the binding value of such a flow to the browser for ttl.
+func (s *Service) FlowCookie(base, value string, ttl time.Duration) *http.Cookie {
+	return s.newCookie(s.cookieName(base), value, int(ttl/time.Second))
+}
+
+// ClearFlowCookie tells the browser to drop it.
+func (s *Service) ClearFlowCookie(base string) *http.Cookie {
+	return s.newCookie(s.cookieName(base), "", -1)
+}
+
 // SessionCookie carries a new session token to the browser.
 func (s *Service) SessionCookie(token string) *http.Cookie {
 	return s.newCookie(s.SessionCookieName(), token, int(s.secPtr.Load().max/time.Second))

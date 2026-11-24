@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from 'react'
-import { Download, Gauge, GitBranch, House, KeyRound, LayoutTemplate, Settings, Shapes, ShieldCheck, SlidersHorizontal, User, Users } from 'lucide-react'
+import { Download, Gauge, GitBranch, House, KeyRound, LayoutTemplate, Link2, Settings, Shapes, ShieldCheck, SlidersHorizontal, User, Users } from 'lucide-react'
 import type { SectionId } from './sections'
 import { RequiredMark } from '@/components/ui/field-mark'
 
@@ -7,13 +7,14 @@ import { RequiredMark } from '@/components/ui/field-mark'
 // look the same everywhere: a heading with a rule under it, then rows of
 // "name + one line of help + the control on the right".
 
-export function SettingsSection({ title, children, id, description }: { title: string; children: ReactNode; id?: string; description?: string }) {
+export function SettingsSection({ title, children, id, description, icon }: { title: string; children: ReactNode; id?: string; description?: string; icon?: ReactNode }) {
   const auto = useId()
   const headingId = id ?? auto
   return (
     <section aria-labelledby={headingId} className="grid grid-cols-1 gap-3">
       <div className="grid gap-0.5 border-b pb-2">
-        <h3 id={headingId} className="text-sm font-semibold">
+        <h3 id={headingId} className="flex items-center gap-2 text-sm font-semibold">
+          {icon}
           {title}
         </h3>
         {description && <p className="text-xs text-muted-foreground">{description}</p>}
@@ -70,6 +71,7 @@ const ICONS: Record<Exclude<SectionId, 'profile'>, typeof User> = {
   preferences: SlidersHorizontal,
   security: ShieldCheck,
   tokens: KeyRound,
+  connections: Link2,
   usage: Gauge,
   general: Settings,
   types: Shapes,

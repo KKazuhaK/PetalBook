@@ -26,12 +26,48 @@ func mkUser(t *testing.T, st *store.Store, id, username, role string) {
 
 func TestMigrationsAreIdempotent(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
-		// Open already migrated once; running again must change nothing.
+		// Open already migrated once; running again must change nothing. The
+		// count follows the files, so a branch that adds one need not edit it.
 		var n int
 		if err := st.Q().QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil || n != migrationFiles(t) {
-			t.Fatalf("%d %v", n, err)
+			t.Fatalf("%d %v, want %d", n, err, migrationFiles(t))
 		}
 		mkUser(t, st, "A", "a", "admin")
+	})
+}
+
+// The numbers may leave gaps (another branch owns them until it merges); every
+// file is applied once, by its own number.
+func TestMigrationsWithAGapApplyByNumber(t *testing.T) {
+	names, err := store.MigrationNames()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, n := range names {
+		if n == "0013_github.sql" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no 0013_github.sql in %v", names)
+	}
+	files, _ := store.MigrationVersions()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		rows, err := st.Q().Query(ctx, `SELECT version FROM schema_migrations ORDER BY version`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var got []int
+		for rows.Next() {
+			var v int
+			rows.Scan(&v)
+			got = append(got, v)
+		}
+		if fmt.Sprint(got) != fmt.Sprint(files) {
+			t.Fatalf("applied %v, files %v", got, files)
+		}
 	})
 }
 

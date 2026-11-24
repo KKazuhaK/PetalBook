@@ -433,17 +433,27 @@ export interface PageVersion {
 export type RemoteState = 'ok' | 'offline' | 'rewritten' | 'error'
 export type SyncState = 'local' | RemoteState
 
-export type RemoteCredential = { type: 'ssh'; publicKey: string; fingerprint: string } | { type: 'token'; username: string }
+export type RemoteCredential =
+  | { type: 'ssh'; publicKey: string; fingerprint: string }
+  | { type: 'token'; username: string }
+  // A provider's connection (docs/api.md, "Connections"): no secret is stored for the space or returned.
+  | { type: 'connection'; provider: string; via: 'app'; installationId: number; account: string; repoId: number }
+  | { type: 'connection'; provider: string; via: 'user'; user: { id: string; username: string }; login: string; account?: string; repoId: number }
 
 export interface Remote {
   url: string
   branch: string
+  // The provider the remote goes through (`git` for a plain address).
+  provider: string
   credential: RemoteCredential
   state: RemoteState
   // Absent before the first time the server saw the remote.
   lastSync?: string
   // In words fit to show; empty when all is well.
   error: string
+  // What `error` state needs, for choosing what to offer: `auth`, `hostkey`, `clone`, `rescued` or a
+  // connection code (see ConnectionErrorCode). A code this client does not know is treated like `auth`.
+  errorCode: string
   // SSH only: the host key trusted on first connection.
   hostKey?: string
   // Set when `state` is `rewritten`.
@@ -459,8 +469,161 @@ export interface ConnectRemoteInput {
   url: string
   branch?: string
   // A token left out while the space already has one keeps it.
-  credential: { type: 'ssh' } | { type: 'token'; username?: string; token?: string }
+  credential: { type: 'ssh' } | { type: 'token'; username?: string; token?: string } | { type: 'connection'; provider: string; via: ConnectionVia }
 }
+
+// --- connections (docs/api.md, "Connections") ----------------------------------------------
+
+export type ConnectionVia = 'app' | 'user'
+export type ConnectionErrorCode = 'connection_expired' | 'connection_missing' | 'installation_gone' | 'provider_not_configured' | 'app_missing_permission'
+
+export interface Connection {
+  login: string
+  accountId: string
+  state: 'ok' | 'expired'
+  connected: string
+  // Absent when the platform does not expire tokens.
+  refreshExpires?: string
+  // How many spaces sync through this connection.
+  spaces: number
+}
+
+export interface ProviderCapabilities {
+  createRepo: boolean
+  installations: boolean
+  connectAccount: boolean
+  storageTarget: boolean
+  partialSync: 'yes' | 'no' | 'unknown'
+}
+
+// A platform the server syncs spaces with, and the caller's connection to it.
+export interface Provider {
+  id: string
+  type: string
+  host: string
+  name: string
+  owner: string
+  capabilities: ProviderCapabilities
+  configured: boolean
+  app: { name: string; slug: string; htmlUrl: string; installUrl: string } | null
+  // Whether people can connect their account.
+  userAuthorization: boolean
+  connection: Connection | null
+  // Empty repositories that failed attempts to make a space left on the platform, newest first.
+  leftovers: ConnectionLeftover[]
+}
+
+// A reminder: the repository was made and kept; `spaceName` is what the space was to be called.
+export interface ConnectionLeftover {
+  repoId: number
+  fullName: string
+  htmlUrl: string
+  spaceName: string
+  created: string
+}
+
+export interface ConnectionOwner {
+  login: string
+  type: 'User' | 'Organization'
+  // Whose token creates the repository: the caller's own, or the installation's.
+  via: ConnectionVia
+  installationId: number | null
+  // The caller's own account, where the App is not installed: no repository can be made there until it is.
+  needsInstall: boolean
+}
+
+export interface ConnectionRepo {
+  id: number
+  fullName: string
+  private: boolean
+  defaultBranch: string
+  htmlUrl: string
+  canPush: boolean
+}
+
+export interface CursorPage<T> {
+  items: T[]
+  // Opaque; empty after the last page.
+  next: string
+}
+
+// A new space stored on a provider (`POST /api/spaces`, `storage.sync`).
+export interface NewSync {
+  provider: string
+  owner: string
+  name: string
+  private?: boolean
+  description?: string
+  // False connects the space to the one that exists already.
+  create?: boolean
+}
+
+export interface CreateSpaceInput {
+  name: string
+  inbox?: string
+  sync?: NewSync
+}
+
+// The settings of the server's one GitHub App as an administrator sees them: never a secret.
+export type AdminGitHub =
+  | { configured: false; callbackUrl: string }
+  | {
+      configured: true
+      appId: string
+      clientId: string
+      slug: string
+      name: string
+      owner: string
+      htmlUrl: string
+      installUrl: string
+      privateKey: { set: boolean; fingerprint: string }
+      clientSecret: { set: boolean }
+      callbackUrl: string
+      permissions: Record<string, string>
+      // Of administration, contents and metadata: what the App lacks. A warning only.
+      missing: string[]
+      userAuthorization: boolean
+      checked: string
+      spaces: number
+      authorizations: number
+      // Installations that lack a permission, from the last check.
+      gaps: GitHubGap[]
+      // Whether the App can be installed on any account (a person can only install it on their own account when it can); null: not known.
+      anyAccount: boolean | null
+    }
+
+export interface GitHubGap {
+  installationId: number
+  account: string
+  missing: string[]
+}
+
+// What the administrator's browser posts to GitHub to make the App (docs/api.md, "POST /api/admin/connections/{provider}/manifest").
+export interface GitHubManifestStart {
+  url: string
+  manifest: Record<string, unknown>
+}
+
+export interface GitHubInstallation {
+  id: number
+  account: { login: string; type: 'User' | 'Organization'; id: number }
+  repositorySelection: 'all' | 'selected'
+  suspended: boolean
+  permissions: Record<string, string>
+  htmlUrl: string
+  // The ids of the tenants it is shared with, sorted; none: not shared.
+  tenants: string[]
+  spaces: number
+}
+
+export interface PutAdminGitHubInput {
+  appId?: string
+  privateKey?: string
+  // "" removes the client id and the secret.
+  clientId?: string
+  clientSecret?: string
+}
+
 
 // A refusal of the daily-text endpoints says why with a stable code in `error`, next to `message`, and the
 // thing it is about: header_reenter / header_missing (header), not_json, too_large, path_error /
@@ -517,6 +680,20 @@ export type ErrorCode =
   | 'last_owner'
   | 'personal_space'
   | 'busy'
+  | 'provider_not_configured'
+  | 'not_connected'
+  | 'owner_not_allowed'
+  | 'name_taken'
+  | 'provider_refused'
+  | 'repo_not_in_installation'
+  | 'push_failed'
+  | 'key_invalid'
+  | 'app_rejected'
+  | 'client_rejected'
+  | 'provider_in_use'
+  | 'app_missing_permission'
+  | 'app_not_installed'
+  | 'public_url_needed'
   | 'rate_limited'
   | 'captcha_failed'
   | 'local_login_refused'

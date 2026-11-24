@@ -220,7 +220,7 @@ export const securityEn: SecurityMessages = {
       oidc_issuer_invalid: 'The issuer has to be an https address.',
       saml_needs_https: 'SAML needs an https public address (--public-url): the cookie that crosses from the identity provider must be Secure.',
       saml_metadata_invalid: 'The metadata cannot be parsed, has no signing certificate or has no redirect binding for sign-in.',
-      github_auto_create_needs_org: 'A GitHub provider that creates accounts must name an organisation: otherwise anyone with a GitHub account could make one.',
+      auto_create_needs_org: 'A GitHub provider that creates accounts must name an organisation: otherwise anyone with a GitHub account could make one.',
       public_url_required: 'The server has no public address (--public-url), so no provider can be added.',
       provider_in_use: 'Some accounts can only sign in with this provider.',
       not_found: 'There is no such provider.',

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/KKazuhaK/PetalBook/internal/auth"
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
@@ -531,13 +532,39 @@ func (s *server) listSpaces(c *call) {
 
 func (s *server) createSpace(c *call) {
 	var req struct {
-		Name  string `json:"name"`
-		Inbox string `json:"inbox"`
+		Name    string `json:"name"`
+		Inbox   string `json:"inbox"`
+		Storage *struct {
+			Sync *struct {
+				Provider    string `json:"provider"`
+				Owner       string `json:"owner"`
+				Name        string `json:"name"`
+				Private     *bool  `json:"private"`
+				Description string `json:"description"`
+				Create      *bool  `json:"create"`
+			} `json:"sync"`
+		} `json:"storage"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	in, err := s.spaces.CreateWith(c.r.Context(), c.user().ID, req.Name, req.Inbox)
+	var in spaces.Info
+	var err error
+	if req.Storage != nil && req.Storage.Sync != nil {
+		g := req.Storage.Sync
+		if p, ok := s.registry().Get(g.Provider); !ok || p.Descriptor().Type == connections.GitID {
+			if !ok {
+				writeError(c.w, http.StatusBadRequest, "invalid", "storage.sync.provider is not a provider of this server")
+			} else {
+				writeError(c.w, http.StatusBadRequest, "invalid", "a plain Git address is connected after the space is made, with PUT /api/spaces/{space}/remote")
+			}
+			return
+		}
+		sc := spaces.SyncCreate{Provider: g.Provider, Owner: g.Owner, Name: g.Name, Private: g.Private == nil || *g.Private, Description: g.Description, Create: g.Create == nil || *g.Create}
+		in, err = s.spaces.CreateWithSync(c.r.Context(), c.user().ID, req.Name, req.Inbox, sc)
+	} else {
+		in, err = s.spaces.CreateWith(c.r.Context(), c.user().ID, req.Name, req.Inbox)
+	}
 	if err != nil {
 		s.fail(c.w, err)
 		return

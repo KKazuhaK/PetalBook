@@ -42,7 +42,7 @@ function optionsFromEnv(): MockOptions {
   const start = process.env.MOCK_REMOTE
   if (start && !['ok', 'offline', 'rewritten', 'error'].includes(start)) throw new Error(`MOCK_REMOTE must be ok, offline, rewritten or error, not ${start}`)
   // MOCK_OAUTH=1 plays a server with an authorization server: /api/_mock/oauth opens the consent page.
-  return { mode: 'accounts', oidc, providers, oauth: process.env.MOCK_OAUTH === '1', invite: { token: MOCK_INVITE_TOKEN }, ...(start ? { remote: { start: start as RemoteState } } : {}) }
+  return { mode: 'accounts', oidc, providers, oauth: process.env.MOCK_OAUTH === '1', invite: { token: MOCK_INVITE_TOKEN }, github: { configured: true }, ...(start ? { remote: { start: start as RemoteState } } : {}) }
 }
 
 export function mockApi(): Plugin {

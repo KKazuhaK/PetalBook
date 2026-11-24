@@ -225,3 +225,25 @@ func TestLockSiteSetting(t *testing.T) {
 		}
 	})
 }
+
+func TestCompareAndSetSiteSetting(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		q, now := st.Q(), time.Now()
+		if ok, err := store.CompareAndSetSiteSetting(ctx, q, "k", "a", "b", now); err != nil || ok {
+			t.Fatalf("a setting that is not there was set: %v %v", ok, err)
+		}
+		if err := store.SetSiteSetting(ctx, q, "k", "a", now); err != nil {
+			t.Fatal(err)
+		}
+		if ok, err := store.CompareAndSetSiteSetting(ctx, q, "k", "a", "b", now); err != nil || !ok {
+			t.Fatalf("%v %v", ok, err)
+		}
+		// Read as "a", but it is "b" now: not written.
+		if ok, err := store.CompareAndSetSiteSetting(ctx, q, "k", "a", "c", now); err != nil || ok {
+			t.Fatalf("%v %v", ok, err)
+		}
+		if v, _, _ := store.GetSiteSetting(ctx, q, "k"); v != "b" {
+			t.Fatal(v)
+		}
+	})
+}

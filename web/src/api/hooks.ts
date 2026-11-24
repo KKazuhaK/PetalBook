@@ -10,7 +10,7 @@ import { api, ApiError, spaceApi } from './client'
 import { parseTagColor } from '../lib/tagColors.ts'
 import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
 import { propsOfMeta } from '../lib/pageTypes.ts'
-import type { MembersResponse, BatchPagesInput, ChecksResponse, FixCheckInput, ConnectRemoteInput, DailyPrefs, DailySettings, Favorite, FavoriteList, FavoriteRef, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, ProblemKind, PutTemplateInput, PutViewsInput, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
+import type { MembersResponse, CreateSpaceInput, BatchPagesInput, ChecksResponse, FixCheckInput, ConnectRemoteInput, DailyPrefs, DailySettings, Favorite, FavoriteList, FavoriteRef, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, ProblemKind, PutTemplateInput, PutViewsInput, Provider, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
 
 // Everything of one space is under ['space', id, …], so switching space never
 // shows another space's data and one invalidation covers a space.
@@ -47,6 +47,12 @@ export const keys = {
   tenantSettings: (id: string) => ['admin', 'settings', 'tenant', id] as const,
   mySettings: (space: string) => ['settings', space] as const,
   adminDaily: ['admin', 'daily'] as const,
+  adminGitHub: ['admin', 'connections', 'github'] as const,
+  adminGitHubInstallations: ['admin', 'connections', 'github', 'installations'] as const,
+  // Connections, for everyone: the providers and the caller's connection to each; the accounts to make a repository in; a repository list.
+  connections: ['connections'] as const,
+  connectionOwners: (provider: string) => ['connections', provider, 'owners'] as const,
+  connectionRepos: (provider: string, which: string) => ['connections', provider, 'repos', which] as const,
   // A space an administrator opens without being a member of it.
   viewedSpace: (space: string) => ['admin', 'spaces', 'view', space] as const,
   space: (space: string) => ['space', space] as const,
@@ -501,17 +507,92 @@ export function useCreateFolder() {
 
 // --- spaces, account, users ----------------------------------------------------
 
+// --- connections ------------------------------------------------------------------
+
+// The providers of this server and the caller's connection to each. Accounts mode only.
+export function useConnections(enabled = true) {
+  return useQuery({ queryKey: keys.connections, queryFn: ({ signal }) => api.connections(signal), enabled, staleTime: 15_000 })
+}
+
+// One provider, from the same query; undefined while loading or when the server has none by that id.
+export function useProvider(id: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.connections,
+    queryFn: ({ signal }) => api.connections(signal),
+    enabled,
+    staleTime: 15_000,
+    select: (d): Provider | undefined => d.providers.find((p) => p.id === id),
+  })
+}
+
+// The accounts a repository can be made in, a page at a time (one call to the platform each).
+export function useConnectionOwners(provider: string, enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.connectionOwners(provider),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => api.connectionOwners(provider, pageParam || undefined, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled,
+    staleTime: 30_000,
+  })
+}
+
+// "Check again": asks the platform about the caller's accounts anew, ignoring what the server remembered for a minute.
+export function useRecheckOwners(provider: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.connectionOwners(provider, undefined, undefined, true),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.connectionOwners(provider) }),
+  })
+}
+
+// The repositories of an installation (or the caller's own), a page at a time.
+export function useConnectionRepos(provider: string, which: { installation: number } | { mine: true } | null) {
+  return useInfiniteQuery({
+    queryKey: keys.connectionRepos(provider, which === null ? 'none' : 'installation' in which ? `i${which.installation}` : 'mine'),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => api.connectionRepos(provider, which!, pageParam || undefined, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled: which !== null,
+    staleTime: 30_000,
+  })
+}
+
+// Disconnecting ends every sync that used the connection: the spaces and the remotes read again.
+export function useDisconnect() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (provider: string) => api.connectionDisconnect(provider),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: keys.connections }), qc.invalidateQueries({ queryKey: keys.spaces }), qc.invalidateQueries({ queryKey: ['space'] })]),
+  })
+}
+
+// Forgets a reminder of an empty repository ("I deleted it").
+export function useDismissLeftover() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ provider, repoId }: { provider: string; repoId: number }) => api.connectionDismissLeftover(provider, repoId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.connections }),
+  })
+}
+
 export function useCreateSpace() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: string | { name: string; inbox?: string }) => (typeof input === 'string' ? api.createSpace(input) : api.createSpace(input.name, input.inbox)),
+    mutationFn: (input: string | CreateSpaceInput) => (typeof input === 'string' ? api.createSpace(input) : api.createSpace(input.name, input.inbox, input.sync)),
     // Another space, in the same list order the server gives: personal first, then by name.
-    onSuccess: (space) => {
+    onSuccess: (space, input) => {
       qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => ({
         spaces: [...(prev?.spaces ?? []), space].sort((a, b) => Number(b.personal) - Number(a.personal) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
       }))
       // One more space of theirs.
       void qc.invalidateQueries({ queryKey: keys.accountUsage })
+      // A space on a repository answers the reminders of that repository.
+      if (typeof input !== 'string' && input.sync) void qc.invalidateQueries({ queryKey: keys.connections })
+    },
+    // A failed attempt may have left a reminder of the repository it made.
+    onError: (_e, input) => {
+      if (typeof input !== 'string' && input.sync) void qc.invalidateQueries({ queryKey: keys.connections })
     },
   })
 }

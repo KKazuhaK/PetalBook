@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/perm"
@@ -157,6 +158,22 @@ type Options struct {
 	NetTimeout, FetchFresh, FailFast time.Duration
 	// RemoteRunner replaces the git runner of remote spaces (tests).
 	RemoteRunner gitstore.Runner
+
+	// Connections are the server's providers; nil when it has none to offer
+	// (spaces with a connection credential then show provider_not_configured).
+	Connections *connections.Registry
+	// ConnectionRetry is how often a space whose connection credential does not
+	// work is tried again (default 10 minutes); a fix triggers it at once.
+	ConnectionRetry time.Duration
+	// PushRetry are the waits between the tries of the first push of a space
+	// made with a new repository (default 1 s, 3 s, 7 s: four tries in 15 s).
+	PushRetry []time.Duration
+	// PushDeadline bounds the first push of such a space, tries, waits and
+	// each push itself together (default 15 s).
+	PushDeadline time.Duration
+	// SyncHook, if set, is told the steps of making a space with a provider's
+	// repository ("repo-created", "connected"), before the next one (tests).
+	SyncHook func(step string)
 }
 
 // Defaults for closing spaces that are not in use.
@@ -206,9 +223,12 @@ type Manager struct {
 	remoteMu sync.Mutex        // one connect, disconnect or key change at a time
 	pullWake chan struct{}     // a space with a remote was just opened: pull it now
 
-	trimMu   sync.Mutex // one trim at a time
-	trimming bool       // a background trim is queued or running (guarded by mu)
-	createMu sync.Mutex // space creation is one at a time, so the limit cannot be passed by racing
+	trimMu    sync.Mutex      // one trim at a time
+	trimming  bool            // a background trim is queued or running (guarded by mu)
+	createMu  sync.Mutex      // space creation is one at a time, so the limit cannot be passed by racing
+	staging   map[string]bool // spaces being made with a repository on a provider, whose first push needs no member yet (guarded by mu)
+	reserved  map[string]int  // spaces being made with a repository on a provider, by owner (guarded by createMu)
+	reservedT map[string]int  // the same, by tenant (guarded by createMu)
 
 	quota quotaHooks // see SetQuota
 
@@ -246,7 +266,13 @@ func NewAccounts(opt Options) (*Manager, error) {
 	if opt.Secrets == nil {
 		opt.Secrets = secret.NewBox(abs)
 	}
-	return newManager(opt, nil), nil
+	m := newManager(opt, nil)
+	if n, err := m.SweepStaged(context.Background()); err != nil {
+		m.log.Warn("could not remove the spaces a crash left half made", "error", err)
+	} else if n > 0 {
+		m.log.Info("removed spaces a crash left half made", "count", n)
+	}
+	return m, nil
 }
 
 // Secrets is the box that encrypts the credentials the server keeps; nil in
@@ -279,7 +305,16 @@ func newManager(opt Options, single *space.Space) *Manager {
 	if opt.CloseWait <= 0 {
 		opt.CloseWait = 5 * time.Second
 	}
-	return &Manager{opt: opt, single: single, singleInbox: store.DefaultInbox, log: log, open: map[string]*opening{}, cache: newAccessCache(opt.CacheEntries), pullWake: make(chan struct{}, 1), sizeSem: make(chan struct{}, 1)}
+	if opt.ConnectionRetry <= 0 {
+		opt.ConnectionRetry = 10 * time.Minute
+	}
+	if opt.PushRetry == nil {
+		opt.PushRetry = []time.Duration{time.Second, 3 * time.Second, 7 * time.Second}
+	}
+	if opt.PushDeadline <= 0 {
+		opt.PushDeadline = 15 * time.Second
+	}
+	return &Manager{staging: map[string]bool{}, reserved: map[string]int{}, reservedT: map[string]int{}, opt: opt, single: single, singleInbox: store.DefaultInbox, log: log, open: map[string]*opening{}, cache: newAccessCache(opt.CacheEntries), pullWake: make(chan struct{}, 1), sizeSem: make(chan struct{}, 1)}
 }
 
 // SetSingleInbox sets the inbox folder of single-user mode (the --inbox flag).
@@ -632,14 +667,29 @@ func (m *Manager) Stage(name string, author Identity) (*Staged, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := os.MkdirAll(m.stagingDir(), 0o755); err != nil {
+		return nil, err
+	}
 	var id, root, state string
 	for i := 0; ; i++ {
 		id = page.NewID(m.opt.Now())
 		root, state = m.paths(id)
+		// The mark comes first, so whatever a crash leaves of this space on
+		// disk is marked; see SweepStaged.
+		mark, err := os.OpenFile(m.stagedMark(id), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err != nil {
+			if os.IsExist(err) && i < 10 {
+				continue
+			}
+			return nil, err
+		}
+		mark.Close()
 		// Mkdir fails when the directory exists: it claims the id.
-		if err := os.Mkdir(root, 0o755); err == nil {
+		if err = os.Mkdir(root, 0o755); err == nil {
 			break
-		} else if !os.IsExist(err) || i >= 10 {
+		}
+		os.Remove(m.stagedMark(id))
+		if !os.IsExist(err) || i >= 10 {
 			return nil, err
 		}
 	}
@@ -650,6 +700,7 @@ func (m *Manager) Stage(name string, author Identity) (*Staged, error) {
 	if err != nil {
 		os.RemoveAll(root)
 		os.RemoveAll(state)
+		os.Remove(m.stagedMark(id))
 		return nil, err
 	}
 	return &Staged{m: m, id: id, name: name, sp: sp}, nil
@@ -662,6 +713,7 @@ func (s *Staged) Commit(ownerID string) {
 	}
 	s.done = true
 	m := s.m
+	os.Remove(m.stagedMark(s.id)) // the row exists now
 	e := &opening{done: make(chan struct{}), sp: s.sp, last: m.opt.Now()}
 	close(e.done)
 	m.mu.Lock()
@@ -688,6 +740,66 @@ func (s *Staged) Abort() {
 	s.sp.Close()
 	os.RemoveAll(root)
 	os.RemoveAll(state)
+	os.Remove(s.m.stagedMark(s.id))
+}
+
+// stagedSweepAge is how old a staged space's mark must be before SweepStaged
+// removes the space: well past the longest a request spends making one (three
+// minutes), so a space another request is still making is never touched.
+const stagedSweepAge = 15 * time.Minute
+
+func (m *Manager) stagingDir() string { return filepath.Join(m.opt.DataDir, "staging") }
+
+// stagedMark is the file that says the space id was staged and is not yet
+// known to be recorded: made before its directory, removed by Commit or Abort.
+func (m *Manager) stagedMark(id string) string { return filepath.Join(m.stagingDir(), id) }
+
+// SweepStaged removes what a crash between Stage and Commit (or Abort) left:
+// the directories of a staged space that has no row, once its mark is older
+// than stagedSweepAge. Only a marked id is looked at, so a real space, or a
+// directory this code did not stage, is never removed; a marked space that has
+// its row (the crash came after the transaction) only loses the mark. It
+// returns how many spaces it removed.
+func (m *Manager) SweepStaged(ctx context.Context) (int, error) {
+	if m.single != nil {
+		return 0, nil
+	}
+	ents, err := os.ReadDir(m.stagingDir())
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, e := range ents {
+		id := e.Name()
+		if !e.Type().IsRegular() || !page.ValidID(id) {
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil || time.Since(fi.ModTime()) < stagedSweepAge {
+			continue
+		}
+		_, err = store.GetSpace(ctx, m.opt.Store.Q(), store.AllTenants(), id) // background sweep: a staged id of any tenant
+		switch {
+		case err == nil:
+			os.Remove(m.stagedMark(id))
+			continue
+		case !errors.Is(err, store.ErrNotFound):
+			return n, err
+		}
+		root, state := m.paths(id)
+		if err := os.RemoveAll(root); err != nil {
+			return n, err
+		}
+		if err := os.RemoveAll(state); err != nil {
+			return n, err
+		}
+		os.Remove(m.stagedMark(id))
+		n++
+	}
+	return n, nil
 }
 
 // Create makes a space owned by the user, unless they own as many as the

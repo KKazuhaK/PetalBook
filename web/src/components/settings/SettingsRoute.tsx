@@ -10,6 +10,7 @@ import { DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { t } from '@/i18n'
 import { GeneralPanel } from './GeneralPanel'
+import { ConnectionsPanel } from './ConnectionsPanel'
 import { ImportPanel } from './ImportPanel'
 import { PreferencesPanel } from './PreferencesPanel'
 import { ProfilePanel } from './ProfilePanel'
@@ -68,8 +69,15 @@ export default function SettingsRoute() {
   // to the section they would get; the query (a failed sign-in link says why in
   // `?sso_error=`) and where to return to are kept.
   // A link that failed comes back to plain `/settings?sso_error=…`: its message is
-  // shown where the linked sign-ins are.
-  const landing = requested === undefined && new URLSearchParams(location.search).has('sso_error') && shown.some((s) => s.id === 'security') ? 'security' : section
+  // shown where the linked sign-ins are. A GitHub connection for repos that
+  // failed comes back to `/settings?connection_error=…`, explained on its own section.
+  const query = new URLSearchParams(location.search)
+  const landing =
+    requested === undefined && query.has('connection_error') && shown.some((s) => s.id === 'connections')
+      ? 'connections'
+      : requested === undefined && query.has('sso_error') && shown.some((s) => s.id === 'security')
+        ? 'security'
+        : section
   if (session && spacesReady && requested !== landing) return <Navigate to={{ pathname: settingsPath(landing), search: location.search }} state={location.state} replace />
 
   // The sections that need a space are only offered while there is one, so
@@ -90,6 +98,9 @@ export default function SettingsRoute() {
             <TokensPanel />
           </Suspense>
         )
+        break
+      case 'connections':
+        body = <ConnectionsPanel />
         break
       case 'usage':
         body = (

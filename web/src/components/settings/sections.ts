@@ -2,7 +2,7 @@
 // the rules (which sections a person sees, how an old address maps to one) are
 // tested without rendering anything.
 
-export type SectionId = 'profile' | 'preferences' | 'security' | 'tokens' | 'usage' | 'general' | 'types' | 'templates' | 'home' | 'members' | 'sync' | 'import'
+export type SectionId = 'profile' | 'preferences' | 'security' | 'tokens' | 'connections' | 'usage' | 'general' | 'types' | 'templates' | 'home' | 'members' | 'sync' | 'import'
 export type GroupId = 'account' | 'space'
 
 export interface SectionDef {
@@ -16,6 +16,7 @@ export const SECTIONS: readonly SectionDef[] = [
   { id: 'preferences', group: 'account' },
   { id: 'security', group: 'account' },
   { id: 'tokens', group: 'account' },
+  { id: 'connections', group: 'account' },
   { id: 'usage', group: 'account' },
   { id: 'general', group: 'space' },
   { id: 'types', group: 'space' },
@@ -55,6 +56,7 @@ export function visibleSections(v: Visibility): SectionDef[] {
       case 'profile':
       case 'security':
       case 'tokens':
+      case 'connections':
       case 'usage':
         return v.mode === 'accounts' && v.signedIn
       case 'preferences':

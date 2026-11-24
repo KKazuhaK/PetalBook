@@ -92,19 +92,24 @@ func (s *Store) migrate(ctx context.Context) error { return s.migrateTo(ctx, 0) 
 // migrateTo is migrate, stopping after version max (0: no limit); tests use it
 // to make a database as an older version left it.
 func (s *Store) migrateTo(ctx context.Context, max int) error {
+	return s.migrateWhere(ctx, func(v int) bool { return max <= 0 || v <= max })
+}
+
+// migrateWhere is migrate, applying only the versions keep accepts; tests use
+// it to make a database that lacks one version, as one migrated on another
+// branch does.
+func (s *Store) migrateWhere(ctx context.Context, keep func(version int) bool) error {
 	list, err := loadMigrations()
 	if err != nil {
 		return err
 	}
-	if max > 0 {
-		var cut []migration
-		for _, m := range list {
-			if m.version <= max {
-				cut = append(cut, m)
-			}
+	var cut []migration
+	for _, m := range list {
+		if keep(m.version) {
+			cut = append(cut, m)
 		}
-		list = cut
 	}
+	list = cut
 	run := func(q Q) error { return s.applyMigrations(ctx, q, list) }
 	if s.dialect != SQLite {
 		return s.Tx(ctx, run)
