@@ -780,10 +780,9 @@ func ListUserAccess(ctx context.Context, q Q, userID string) ([]UserAccess, erro
 }
 
 // LockGroup makes the rest of the transaction the only one changing the people
-// of the group (a no-op write, as LockSpace does).
+// of the group (see lockRow).
 func LockGroup(ctx context.Context, q Q, groupID string) error {
-	res, err := q.Exec(ctx, `UPDATE groups SET id = id WHERE id = ?`, groupID)
-	return oneRow(res, err)
+	return lockRow(ctx, q, "groups", groupID)
 }
 
 // LockGroups locks several groups, in the order of their ids so that two

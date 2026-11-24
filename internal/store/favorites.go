@@ -77,12 +77,10 @@ func AddFavorite(ctx context.Context, q Q, userID, spaceID string, f Favorite, n
 }
 
 // LockFavorites makes the rest of the transaction the only one changing the
-// favourites of this person in this space: the user's row is the lock (a
-// no-op write; PostgreSQL holds the row until commit, SQLite's transactions
-// are serialized already).
+// favourites of this person in this space: the user's row is the lock (see
+// lockRow).
 func LockFavorites(ctx context.Context, q Q, userID string) error {
-	res, err := q.Exec(ctx, `UPDATE users SET id = id WHERE id = ?`, userID)
-	return oneRow(res, err)
+	return lockRow(ctx, q, "users", userID)
 }
 
 // RemoveFavorite takes a favourite off the list; it reports whether there was one.

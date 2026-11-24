@@ -218,12 +218,31 @@ func CountOtherEnabledOwners(ctx context.Context, q Q, spaceID, except string) (
 
 // LockSpace makes the rest of the transaction the only one changing who is a
 // member of the space: the "keep one owner" rule reads a count and then
-// writes, and two people leaving at once must not both pass. A no-op write is
-// the lock that works the same on both databases (PostgreSQL holds the row
-// until commit; SQLite's transactions are serialized already).
+// writes, and two people leaving at once must not both pass. See lockRow.
 func LockSpace(ctx context.Context, q Q, spaceID string) error {
-	res, err := q.Exec(ctx, `UPDATE spaces SET id = id WHERE id = ?`, spaceID)
-	return oneRow(res, err)
+	return lockRow(ctx, q, "spaces", spaceID)
+}
+
+// lockRow takes the row of table with this id for the rest of the transaction,
+// or reports ErrNotFound. On PostgreSQL it is SELECT ... FOR NO KEY UPDATE: two
+// transactions that lock one row take turns, and, as the no-op UPDATE it
+// replaces, it does not block the foreign-key checks of rows that refer to it
+// (FOR UPDATE would), but it writes nothing: no new row version, no index
+// entries, no dead tuple to vacuum. On SQLite every write transaction holds
+// the database's one write lock from its start (BEGIN IMMEDIATE on the one
+// write connection), so the transactions are one after the other already and
+// the lock is only the check that the row exists.
+func lockRow(ctx context.Context, q Q, table, id string) error {
+	stmt := `SELECT 1 FROM ` + table + ` WHERE id = ?`
+	if isPostgres(q) {
+		stmt += ` FOR NO KEY UPDATE`
+	}
+	var one int
+	err := q.QueryRow(ctx, stmt, id).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	return err
 }
 
 // RenameSpace changes a space's display name.

@@ -40,7 +40,6 @@ var scopeAllowlist = map[string]string{
 	"ListMembers":             "members of a space already opened by the caller",
 	"GetMember":               "a member of a space already opened by the caller",
 	"CountOtherEnabledOwners": "owners of a space already opened by the caller",
-	"LockSpace":               "a space already found in scope",
 	"RenameSpace":             "a space already opened by the caller",
 	"SetSpaceInbox":           "a space already opened by the caller",
 	"ListUserSpaces":          "the caller's own spaces: memberships are same-tenant by construction",
@@ -64,7 +63,6 @@ var scopeAllowlist = map[string]string{
 	"ListGroupPeople":         "a group already found in scope",
 	"UserGroups":              "the groups of one person: memberships are same-tenant by construction",
 	"GroupSources":            "groups by ids already read in scope",
-	"LockGroup":               "a group already found in scope",
 	"ListSpaceGroups":         "a space already opened by the caller",
 	"UserSpaceGroups":         "a space already opened by the caller",
 	"ListEffective":           "a space already opened by the caller",
@@ -72,7 +70,6 @@ var scopeAllowlist = map[string]string{
 	"ListHeldDrafts":          "background job: held drafts of every tenant",
 	"SpaceDrafts":             "a space already found in scope, for its deletion",
 	"PageDrafts":              "a space already opened",
-	"LockFavorites":           "locks one user's row to serialise changes of their own favourites",
 	// --- linking statements: the statement itself joins both rows on one tenant ---
 	"AddMember":          "INSERT ... SELECT joining the space and the user on tenant_id",
 	"AddSpaceGroup":      "INSERT ... SELECT joining the space and the group on tenant_id",
