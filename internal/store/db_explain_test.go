@@ -3,6 +3,7 @@ package store_test
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -231,6 +232,30 @@ func TestOftenUpdatedTablesHaveAFillFactor(t *testing.T) {
 			if n := count(t, st, `SELECT COUNT(*) FROM pg_class WHERE oid = to_regclass(?) AND 'fillfactor=85' = ANY(reloptions)`, table); n != 1 {
 				t.Errorf("%s has no fillfactor 85", table)
 			}
+		}
+	})
+}
+
+// PostgreSQL keeps its connections between bursts: as many idle as open.
+func TestPostgresKeepsItsConnections(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		if st.Dialect() != store.Postgres {
+			t.Skip("a PostgreSQL pool")
+		}
+		if got := st.Stats().MaxOpenConnections; got != 20 {
+			t.Fatalf("max open %d", got)
+		}
+		var wg sync.WaitGroup
+		for i := 0; i < 10; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				st.Tx(ctx, func(q store.Q) error { _, err := q.Exec(ctx, `SELECT pg_sleep(0.05)`); return err })
+			}()
+		}
+		wg.Wait()
+		if s := st.Stats(); s.Idle < 10 || s.MaxIdleClosed != 0 {
+			t.Fatalf("after a burst of 10: %d idle, %d closed for want of room", s.Idle, s.MaxIdleClosed)
 		}
 	})
 }

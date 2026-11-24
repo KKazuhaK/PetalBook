@@ -81,6 +81,10 @@ func (b bound) QueryRow(ctx context.Context, q string, a ...any) *sql.Row {
 // Q runs queries outside a transaction.
 func (s *Store) Q() Q { return bound{s, s.db} }
 
+// Stats reports the statistics of the pool of connections that writes (on
+// PostgreSQL, the only one).
+func (s *Store) Stats() sql.DBStats { return s.db.Stats() }
+
 // Dialect reports which database this is.
 func (s *Store) Dialect() Dialect { return s.dialect }
 
@@ -205,6 +209,10 @@ func openPostgres(dsn string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(20)
+	// As many idle as open: Go keeps 2 by default, so a burst of requests
+	// closed the connections it had just opened and the next burst opened them
+	// again (a TCP and TLS handshake and a backend start each).
+	db.SetMaxIdleConns(20)
 	db.SetConnMaxLifetime(30 * time.Minute)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

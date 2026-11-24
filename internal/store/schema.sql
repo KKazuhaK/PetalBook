@@ -822,6 +822,8 @@ CREATE TABLE bulk_jobs (
   updated   BIGINT NOT NULL
 );
 CREATE INDEX bulk_jobs_state ON bulk_jobs(state) WHERE state IN ('queued', 'running');
+-- The daily pass deletes the jobs that ended long ago (PruneBulkJobs).
+CREATE INDEX bulk_jobs_updated ON bulk_jobs(updated);
 
 -- PostgreSQL: the tables whose rows are rewritten often (usage counters,
 -- measurements of spaces, a person's last activity, a session's last use, a
