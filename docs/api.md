@@ -6399,8 +6399,7 @@ Measured per person and per tenant: spaces owned, bytes, pages.
 - **What is refused**: only spaces. `POST /api/spaces` over the person's limit
   (their own, else the tenant's `quota.spacesPerPerson`, else the site's) or the
   tenant's `quota.spaces` answers `403 quota_exceeded` with
-  `{"quota": "spaces", "limit": 20, "used": 20}`, as `--max-spaces` answered
-  `403 forbidden` before (old clients still see a `403`). A limit of `0` is none.
+  `{"quota": "spaces", "limit": 20, "used": 20}`. A limit of `0` is none.
   The check reads the person's usage row (and the tenant's, when it has a total):
   one primary-key lookup each, however many spaces there are. Bytes, pages and
   the tenant's people are **not refused** in 3.3: going over shows a notice to
